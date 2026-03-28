@@ -1,305 +1,335 @@
-# 🔌 Plugin Lifecycle Specification
+# 🔌 Plugin Lifecycle Specification (v1 — In-Process)
 
 ## 1. Overview
 
-Plugins extend the system via a **process-based model**.
+Plugins extend the system via an **in-process model**.
 
 Each plugin:
 
-* is a standalone executable (binary)
-* resides in the `/plugins` directory
-* communicates with the core via a defined protocol (HTTP/gRPC/JSON)
+* is a Go module (compiled or dynamically loaded)
+* runs inside the application process
+* registers functionality during initialization
 
-Design goals:
+---
 
-* zero coupling to core internals
-* safe execution and isolation
-* simple installation (drop-in)
-* deterministic lifecycle
+### Key Principle
+
+> Plugins are initialized at startup and register extensions explicitly.
 
 ---
 
 ## 2. Plugin Structure
 
-Example:
+---
 
-```
-/plugins/
-  stripe/
-    plugin        # executable
-    manifest.json
+### Development (source-based)
+
+```plaintext
+/plugins/my-plugin
+  plugin.go
+  README.md
 ```
 
 ---
 
-## 3. Manifest
+### Optional (dynamic loading)
 
-Each plugin must provide a `manifest.json`:
+```plaintext
+/plugins
+  my-plugin.so
+```
 
-```json
-{
-  "name": "stripe",
-  "version": "1.0.0",
-  "description": "Stripe payment integration",
-  "entry": "./plugin",
-  "capabilities": {
-    "events": ["order.placed"],
-    "services": ["payment.processor"]
-  }
+---
+
+👉 `.so` loading is optional and not required for MVP.
+
+---
+
+---
+
+## 3. Plugin Interface
+
+---
+
+```go
+type Plugin interface {
+    Name() string
+    Init(app *App) error
 }
 ```
+
+---
+
+Optional:
+
+```go
+type Plugin interface {
+    Name() string
+    Version() string
+    Init(app *App) error
+}
+```
+
+---
 
 ---
 
 ## 4. Lifecycle Stages
 
-### 4.1 Discovery
+---
 
-On startup, the core:
+### 4.1 Registration (Compile-Time or Load-Time)
 
-1. Scans `/plugins` directory
-2. Validates structure
-3. Reads `manifest.json`
+Plugins are:
 
-Invalid plugins are skipped with warnings.
+* imported (compile-time), OR
+* loaded from `.so` (optional)
 
 ---
 
-### 4.2 Boot
+Example:
 
-Core starts each plugin process:
-
-* assigns a port or communication channel
-* passes environment variables:
-
-```
-PLUGIN_NAME=stripe
-PLUGIN_PORT=4101
-CORE_URL=http://localhost:8080
+```go
+import (
+    _ "plugins/stripe"
+    _ "plugins/flat_shipping"
+)
 ```
 
 ---
 
-### 4.3 Handshake
-
-Plugin must expose a `/health` or `/init` endpoint.
-
-Core performs handshake:
-
-```
-GET /init
-```
-
-Expected response:
-
-```json
-{
-  "status": "ok",
-  "name": "stripe",
-  "version": "1.0.0"
-}
-```
-
-Failure → plugin is disabled.
-
 ---
 
-### 4.4 Registration
+### 4.2 Initialization
 
-After handshake, plugin registers capabilities:
+At startup:
 
-```
-POST /register
-```
-
-Response:
-
-```json
-{
-  "events": ["order.placed"],
-  "services": ["payment.processor"]
-}
-```
-
-Core updates internal registry.
-
----
-
-### 4.5 Runtime Operation
-
-#### Event Flow
-
-Core emits events:
-
-```
-POST /event
-```
-
-Payload:
-
-```json
-{
-  "event": "order.placed",
-  "data": { ... }
-}
-```
-
-Plugin processes asynchronously or synchronously.
-
----
-
-#### Service Invocation
-
-Core calls plugin services:
-
-```
-POST /service/payment.processor
-```
-
-Payload:
-
-```json
-{
-  "action": "charge",
-  "data": { ... }
-}
+```text
+for each plugin:
+    plugin.Init(app)
 ```
 
 ---
 
-### 4.6 Health Monitoring
+Responsibilities:
 
-Core periodically checks:
-
-```
-GET /health
-```
-
-Expected:
-
-```json
-{
-  "status": "ok"
-}
-```
-
-If unhealthy:
-
-* mark plugin degraded
-* optionally restart
+* register providers
+* register pipeline steps
+* register event handlers
+* register config
 
 ---
 
-### 4.7 Shutdown
+---
 
-On core shutdown:
+### 4.3 Registration Phase
 
-1. send signal (SIGTERM)
-2. allow graceful shutdown window
-3. force kill if timeout exceeded
+During `Init()`, plugin may call:
+
+```go
+RegisterPaymentProvider(...)
+RegisterProductStep(...)
+RegisterCheckoutStep(...)
+On(...)
+RegisterConfig(...)
+```
+
+---
+
+👉 This is the ONLY time plugins modify system behavior.
+
+---
+
+---
+
+### 4.4 Runtime Operation
+
+After initialization:
+
+* plugins are passive
+* invoked via:
+
+  * pipelines
+  * workflows
+  * events
+
+---
 
 ---
 
 ## 5. Plugin States
 
-* `discovered`
-* `booting`
+---
+
+* `loaded`
+* `initialized`
 * `active`
-* `degraded`
 * `failed`
-* `disabled`
+
+---
 
 ---
 
 ## 6. Failure Handling
 
-* plugin crash → restart (configurable)
-* repeated failure → disable plugin
-* errors must not crash core
+---
+
+### Initialization failure
+
+If `Init()` returns error:
+
+* plugin is disabled
+* error is logged
+* system continues
 
 ---
 
-## 7. Isolation Rules
+### Runtime failure
+
+* errors must be returned (not panic)
+* failure must not crash system
+
+---
+
+---
+
+## 7. Isolation Model
+
+---
 
 Plugins:
 
-* must not access core database directly
-* must not modify core state outside APIs/events
-* operate as external systems
+* run in same process
+* share memory
+* have no sandboxing
 
 ---
 
-## 8. Security Considerations
+### Implications
 
-* plugins run with limited permissions
-* future:
-
-  * sandboxing (jails, containers)
-  * signed plugins
-  * permission scopes
+* faster execution
+* simpler model
+* requires trust in plugin code
 
 ---
 
-## 9. Versioning
+---
 
-Plugins must declare:
+## 8. Safety Rules
 
-```json
-"engine_version": ">=1.0.0"
+---
+
+Plugins:
+
+* must not panic
+* must be idempotent where applicable
+* must not corrupt shared state
+* must not bypass domain logic
+
+---
+
+---
+
+## 9. No Runtime Discovery (v1)
+
+---
+
+Plugins are:
+
+* explicitly imported OR
+* explicitly loaded
+
+---
+
+❌ No automatic discovery
+❌ No manifest scanning
+
+---
+
+---
+
+## 10. No Process Management
+
+---
+
+This system does NOT include:
+
+* process spawning
+* port allocation
+* health checks
+* IPC protocols
+
+---
+
+👉 Those belong to external systems, not plugins.
+
+---
+
+---
+
+## 11. External Systems (Clarification)
+
+---
+
+External integrations (Stripe, Meilisearch, etc.):
+
+* are NOT plugins
+* are accessed via providers
+
+---
+
+Example:
+
+```go
+type StripeProvider struct{}
 ```
 
-Core may:
-
-* reject incompatible plugins
-* warn on mismatch
+---
 
 ---
 
-## 10. Development Mode
-
-In development:
-
-* plugins may run from source
-* hot reload supported (optional)
-* verbose logging enabled
+## 12. Development Mode
 
 ---
 
-## 11. CLI Integration (Future)
-
-Examples:
-
-```
-app plugins:list
-app plugins:enable stripe
-app plugins:disable stripe
-app plugins:logs stripe
-```
+* plugins compiled together with app
+* fast iteration
+* no orchestration required
 
 ---
-
-## 12. Design Principles
-
-* fail-safe: plugin failure must not affect core
-* observable: every plugin action is traceable
-* explicit: no hidden behavior
-* minimal: protocol should stay simple
 
 ---
 
 ## 13. Future Extensions
 
-* WASM plugin support
-* remote plugins (network)
-* plugin marketplace
-* permission system (scopes)
+---
+
+Optional (not core):
+
+* dynamic plugin loading (.so)
+* sandboxed plugins (rare cases)
+* process-based plugins (advanced, optional)
+
+---
 
 ---
 
 ## 14. Summary
 
+Plugin lifecycle is:
+
+> load → init → register → execute (via system)
+
 Plugins are:
 
-> isolated, event-driven extensions that communicate via explicit contracts and can be installed by dropping a binary into a directory.
+* in-process
+* explicit
+* lightweight
+
+---
+
+## Guiding Principle
+
+> Plugins register behavior at startup and are executed by the system — they do not run independently.
 
 ---

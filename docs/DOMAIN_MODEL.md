@@ -40,7 +40,7 @@ Represents a logical product (e.g. "T-Shirt")
 
 ```sql
 CREATE TABLE products (
-    id              TEXT PRIMARY KEY,
+    id              UUID PRIMARY KEY,
     name            TEXT NOT NULL,
     slug            TEXT UNIQUE NOT NULL,
     description     TEXT,
@@ -59,8 +59,8 @@ Sellable units (e.g. size M, color red)
 
 ```sql
 CREATE TABLE variants (
-    id              TEXT PRIMARY KEY,
-    product_id      TEXT NOT NULL REFERENCES products(id) ON DELETE CASCADE,
+    id              UUID PRIMARY KEY,
+        product_id      UUID NOT NULL REFERENCES products(id) ON DELETE CASCADE,
     sku             TEXT UNIQUE NOT NULL,
     name            TEXT,
     attributes      JSONB DEFAULT '{}'::jsonb,
@@ -95,8 +95,8 @@ CREATE TABLE variants (
 
 ```sql
 CREATE TABLE prices (
-    id              TEXT PRIMARY KEY,
-    variant_id      TEXT NOT NULL REFERENCES variants(id) ON DELETE CASCADE,
+    id              UUID PRIMARY KEY,
+        variant_id      UUID NOT NULL REFERENCES variants(id) ON DELETE CASCADE,
     currency        TEXT NOT NULL,
     amount          NUMERIC(12,2) NOT NULL,
     created_at      TIMESTAMP NOT NULL DEFAULT NOW()
@@ -109,7 +109,7 @@ CREATE TABLE prices (
 
 ```sql
 CREATE TABLE price_rules (
-    id              TEXT PRIMARY KEY,
+    id              UUID PRIMARY KEY,
     name            TEXT,
     priority        INT NOT NULL DEFAULT 0,
     conditions      JSONB,
@@ -135,7 +135,7 @@ CREATE TABLE price_rules (
 
 ```sql
 CREATE TABLE inventory (
-    variant_id      TEXT PRIMARY KEY REFERENCES variants(id) ON DELETE CASCADE,
+    variant_id      UUID PRIMARY KEY REFERENCES variants(id) ON DELETE CASCADE,
     quantity        INT NOT NULL DEFAULT 0,
     updated_at      TIMESTAMP NOT NULL DEFAULT NOW()
 );
@@ -147,10 +147,10 @@ CREATE TABLE inventory (
 
 ```sql
 CREATE TABLE inventory_reservations (
-    id              TEXT PRIMARY KEY,
-    variant_id      TEXT NOT NULL REFERENCES variants(id),
+    id              UUID PRIMARY KEY,
+        variant_id      UUID NOT NULL REFERENCES variants(id),
     quantity        INT NOT NULL,
-    order_id        TEXT,
+        order_id        UUID,
     expires_at      TIMESTAMP,
     created_at      TIMESTAMP NOT NULL DEFAULT NOW()
 );
@@ -177,7 +177,7 @@ available = quantity - SUM(active reservations)
 
 ## 6. Relationships Overview
 
-```id="p1g8oz"
+```
 products (1) ──── (N) variants
 variants (1) ──── (N) prices
 variants (1) ──── (1) inventory

@@ -1,4 +1,4 @@
-# 🧩 Composition Pipeline Specification
+# 🧩 Composition Pipeline Specification (v1 — Typed)
 
 ## 1. Overview
 
@@ -14,6 +14,7 @@ Design goals:
 
 * extensibility (plugins can enrich responses)
 * determinism (predictable output)
+* **type safety (no runtime casting)**
 * separation of concerns (data vs presentation)
 * frontend flexibility (headless-first)
 
@@ -37,13 +38,13 @@ controller → context → composition pipeline → enriched response
 
 ## 3. Context Objects
 
-Each composition pipeline operates on a **context struct**.
+Each composition pipeline operates on a **typed context struct**.
 
 ---
 
 ### 3.1 Product Context (PDP)
 
-```go id="5m1l0f"
+```go
 type ProductContext struct {
     Product     *Product
     Variants    []Variant
@@ -60,7 +61,7 @@ type ProductContext struct {
 
 ### 3.2 Listing Context (PLP)
 
-```go id="9w4zjz"
+```go
 type ListingContext struct {
     Products    []Product
 
@@ -82,7 +83,7 @@ type ListingContext struct {
 
 Blocks represent UI-agnostic components.
 
-```go id="2yq7o2"
+```go
 type Block struct {
     Type string
     Data map[string]interface{}
@@ -91,54 +92,71 @@ type Block struct {
 
 ---
 
-### Example:
+---
 
-```json id="tw4sl8"
-{
-  "type": "shipping_estimator",
-  "data": {
-    "cost": 12.99
-  }
-}
-```
+## 5. Pipeline Step Interface (Typed)
 
 ---
 
-## 5. Composition Step Interface
-
-```go id="qz9t1m"
-type CompositionStep interface {
+```go
+type PipelineStep[T any] interface {
     Name() string
-    Apply(ctx interface{}) error
+    Apply(ctx *T) error
 }
 ```
 
 ---
 
-## 6. Pipeline Execution
+### Key Rule
 
-* steps execute sequentially
-* each step mutates context
-* order is deterministic
+> Steps are strongly typed and must operate on a specific context type.
 
 ---
 
-## 7. Step Registration
+## 6. Pipeline
 
-```go id="i6p3cs"
-RegisterCompositionStep(target string, step CompositionStep, position string)
+---
+
+```go
+type Pipeline[T any] struct {
+    steps []PipelineStep[T]
+}
+
+func (p *Pipeline[T]) Execute(ctx *T) error {
+    for _, step := range p.steps {
+        if err := step.Apply(ctx); err != nil {
+            return err
+        }
+    }
+    return nil
+}
 ```
 
 ---
 
-### Targets:
+---
 
-* `product`
-* `listing`
+## 7. Pipeline Registration (Typed)
 
 ---
 
-### Positions:
+### Product pipeline
+
+```go
+func RegisterProductStep(step PipelineStep[ProductContext], position string)
+```
+
+---
+
+### Listing pipeline
+
+```go
+func RegisterListingStep(step PipelineStep[ListingContext], position string)
+```
+
+---
+
+### Positions
 
 * `start`
 * `end`
@@ -147,11 +165,19 @@ RegisterCompositionStep(target string, step CompositionStep, position string)
 
 ---
 
-### Example:
+---
 
-```go id="9k4yyt"
-RegisterCompositionStep("product", ShippingEstimator{}, "after:base")
+### Example
+
+```go
+RegisterProductStep(ShippingEstimator{}, "after:pricing")
 ```
+
+---
+
+👉 Type safety is enforced at compile time.
+
+---
 
 ---
 
@@ -161,7 +187,7 @@ RegisterCompositionStep("product", ShippingEstimator{}, "after:base")
 
 ### Product Pipeline
 
-```text id="5tcx2t"
+```text
 1. base
 2. pricing
 3. availability
@@ -171,11 +197,13 @@ RegisterCompositionStep("product", ShippingEstimator{}, "after:base")
 
 ### Listing Pipeline
 
-```text id="m0ckbp"
+```text
 1. base
 2. filters
 3. sorting
 ```
+
+---
 
 ---
 
@@ -208,21 +236,25 @@ RegisterCompositionStep("product", ShippingEstimator{}, "after:base")
 
 ---
 
-## 10. Plugin Use Cases
+---
+
+## 10. Plugin Use Cases (Typed)
 
 ---
 
 ### Add computed block
 
-```go id="q3rsm9"
+```go
 type ShippingEstimator struct{}
 
-func (s ShippingEstimator) Apply(ctx interface{}) error {
-    pctx := ctx.(*ProductContext)
+func (s ShippingEstimator) Name() string {
+    return "shipping_estimator"
+}
 
-    cost := calculateShipping(pctx.Product.Weight, pctx.Country)
+func (s ShippingEstimator) Apply(ctx *ProductContext) error {
+    cost := calculateShipping(ctx.Product.Weight, ctx.Country)
 
-    pctx.Blocks = append(pctx.Blocks, Block{
+    ctx.Blocks = append(ctx.Blocks, Block{
         Type: "shipping_estimator",
         Data: map[string]interface{}{
             "cost": cost,
@@ -239,19 +271,23 @@ func (s ShippingEstimator) Apply(ctx interface{}) error {
 
 ### Modify filters (listing)
 
-```go id="i7h9kj"
+```go
 type CustomFilter struct{}
 
-func (f CustomFilter) Apply(ctx interface{}) error {
-    lctx := ctx.(*ListingContext)
+func (f CustomFilter) Name() string {
+    return "custom_filter"
+}
 
-    lctx.Filters = append(lctx.Filters, Filter{
+func (f CustomFilter) Apply(ctx *ListingContext) error {
+    ctx.Filters = append(ctx.Filters, Filter{
         Name: "custom",
     })
 
     return nil
 }
 ```
+
+---
 
 ---
 
@@ -276,11 +312,9 @@ func (f CustomFilter) Apply(ctx interface{}) error {
 
 ---
 
-## 14. Events Integration
+## 14. Events Integration (Optional)
 
-Optional:
-
-```text id="g3l6w5"
+```text
 composition.step.started
 composition.step.completed
 ```
@@ -308,7 +342,7 @@ Plugins:
 
 Backend returns:
 
-```json id="c9k0y1"
+```json
 {
   "product": { ... },
   "blocks": [
@@ -317,6 +351,8 @@ Backend returns:
   ]
 }
 ```
+
+---
 
 Frontend:
 
@@ -345,7 +381,7 @@ Frontend:
 
 Composition pipeline is:
 
-> a structured way to build API responses by incrementally enriching context objects.
+> a **type-safe, extensible system** for building API responses by enriching context objects step-by-step.
 
 It enables:
 
@@ -356,7 +392,13 @@ It enables:
 without:
 
 * controller bloat
-* core modification
-* template chaos
+* runtime casting
+* hidden behavior
+
+---
+
+## Guiding Principle
+
+> If it compiles, it should be safe to execute.
 
 ---

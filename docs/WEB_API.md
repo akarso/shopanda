@@ -1,24 +1,19 @@
-# 🌐 API Design — REST Endpoints & Flows
+# 🌐 API Design — REST Endpoints & Flows (WEB_API.md, v2)
 
 ## 1. Overview
 
-The system exposes a **REST-first API** designed for:
+REST-first API designed for:
 
 * simplicity
-* predictability
 * performance
-* compatibility with multiple clients (web, mobile, headless)
-
-Guidelines:
-
-* pragmatic REST (not dogmatic)
-* action-based endpoints allowed
-* JSON only
-* stateless
+* extensibility
+* device-agnostic usage (SSR + headless)
 
 ---
 
 ## 2. Conventions
+
+---
 
 ### Base URL
 
@@ -32,8 +27,8 @@ Guidelines:
 
 ```http
 Content-Type: application/json
-Idempotency-Key: <optional>
 Authorization: Bearer <token>
+Idempotency-Key: <optional>
 ```
 
 ---
@@ -47,369 +42,354 @@ Authorization: Bearer <token>
 }
 ```
 
-Error:
+---
 
-```json
-{
-  "data": null,
-  "error": {
-    "code": "invalid_request",
-    "message": "Something went wrong"
-  }
-}
+---
+
+## 3. Auth
+
+---
+
+### Register
+
+```http
+POST /auth/register
 ```
 
 ---
 
-## 3. Products
+### Login
+
+```http
+POST /auth/login
+```
 
 ---
 
-### List products
+### Current user
+
+```http
+GET /auth/me
+```
+
+---
+
+### Logout
+
+```http
+POST /auth/logout
+```
+
+---
+
+---
+
+## 4. Products
+
+---
 
 ```http
 GET /products
-```
-
-Query params:
-
-* `search`
-* `limit`
-* `offset`
-* filters (e.g. `color=red`)
-
----
-
-### Get product
-
-```http
 GET /products/{id}
-```
-
----
-
-### Get variants
-
-```http
 GET /products/{id}/variants
 ```
 
 ---
 
-### Optional: Field selection
+---
+
+## 5. Categories & Collections
+
+---
 
 ```http
-GET /products/{id}?fields=name,slug
+GET /categories
+GET /categories/{id}
+GET /categories/{id}/products
+
+GET /collections
+GET /collections/{id}/products
 ```
 
 ---
 
-## 4. Cart
+---
+
+## 6. Search
 
 ---
 
-### Create cart
+```http
+GET /search?q=shoes&limit=20
+```
+
+---
+
+---
+
+## 7. Cart
+
+---
 
 ```http
 POST /carts
-```
-
-Response:
-
-```json
-{
-  "id": "cart_123",
-  "currency": "EUR"
-}
-```
-
----
-
-### Get cart
-
-```http
 GET /carts/{id}
-```
 
----
-
-### Add item
-
-```http
 POST /carts/{id}/items
-```
-
-```json
-{
-  "variant_id": "var_123",
-  "quantity": 2
-}
-```
-
----
-
-### Update item
-
-```http
 PATCH /carts/{id}/items/{item_id}
-```
-
----
-
-### Remove item
-
-```http
 DELETE /carts/{id}/items/{item_id}
-```
 
----
-
-### Recalculate cart (optional explicit)
-
-```http
 POST /carts/{id}/recalculate
 ```
 
 ---
 
-## 5. Checkout
-
 ---
 
-### Start checkout
+## 8. Checkout (Creates Order)
+
+---
 
 ```http
 POST /checkout
 ```
 
-```json
-{
-  "cart_id": "cart_123"
-}
-```
+---
 
-Response:
+Behavior:
 
-* validated cart
-* pricing snapshot
-* next actions
+* validates cart
+* calculates pricing
+* selects shipping
+* creates order
+* initiates payment
 
 ---
 
-## 6. Orders
-
 ---
 
-### Create order
-
-```http
-POST /orders
-```
-
-```json
-{
-  "cart_id": "cart_123"
-}
-```
+## 9. Orders (Read Only)
 
 ---
-
-### Get order
 
 ```http
 GET /orders/{id}
-```
-
----
-
-### List orders
-
-```http
-GET /orders?customer_id=cus_123
-```
-
----
-
-### Cancel order
-
-```http
+GET /orders
 POST /orders/{id}/cancel
 ```
 
 ---
 
-## 7. Payments (Plugin-driven)
+> Orders are created ONLY via checkout.
 
 ---
 
-### Initiate payment
+---
+
+## 10. Payments
+
+---
 
 ```http
-POST /payments
+POST /payments/webhook/{provider}
+```
+
+---
+
+---
+
+## 11. Shipping
+
+---
+
+### Get available shipping methods
+
+```http
+POST /shipping/rates
 ```
 
 ```json
 {
-  "order_id": "ord_123",
-  "provider": "stripe"
+  "cart_id": "cart_123",
+  "address": { ... }
 }
 ```
 
 ---
 
-### Payment webhook
+Response:
 
-```http
-POST /payments/webhook/{provider}
+```json
+{
+  "methods": [
+    {
+      "id": "flat_rate",
+      "label": "Flat Rate",
+      "price": 5.00
+    }
+  ]
+}
 ```
 
 ---
 
-## 8. Inventory (Optional exposure)
+---
+
+## 12. Media
 
 ---
 
-### Get stock
-
 ```http
-GET /inventory/{variant_id}
+POST /media/upload
 ```
 
 ---
 
-## 9. Query Enhancements
+---
+
+## 13. Admin (Schema-Driven)
 
 ---
 
-### Expand related resources
+> Admin UI is schema-driven (forms & grids).
+
+---
+
+### Get form schema
 
 ```http
-GET /orders/{id}?expand=items
+GET /admin/forms/{resource}
 ```
 
 ---
 
-### Field selection
+### Submit form
 
 ```http
-GET /orders/{id}?fields=id,total_amount,status
+POST /admin/forms/{resource}
 ```
 
 ---
 
-## 10. Idempotency
+---
+
+### Get grid schema
+
+```http
+GET /admin/grids/{resource}
+```
+
+---
+
+### Fetch grid data
+
+```http
+GET /admin/grids/{resource}/data
+```
+
+---
+
+---
+
+## 14. Access Control
+
+---
+
+### Public
+
+* products
+* categories
+* search
+
+---
+
+### Auth Required
+
+* orders
+* profile
+* checkout (optional guest support)
+
+---
+
+### Admin Only
+
+* `/admin/*`
+* product management
+* configuration
+
+---
+
+---
+
+## 15. Idempotency
+
+---
 
 Used for:
 
-* order creation
+* checkout
 * payments
 
-Header:
+---
 
 ```http
-Idempotency-Key: unique-key
+Idempotency-Key: <unique>
 ```
 
 ---
 
-## 11. Core Flow: Cart → Order
+---
+
+## 16. Core Flow
 
 ---
 
-### 1. Create cart
-
-```http
-POST /carts
+```text
+cart → checkout → order → payment webhook
 ```
 
 ---
 
-### 2. Add items
+---
 
-```http
-POST /carts/{id}/items
-```
+## 17. Status Codes
 
 ---
 
-### 3. Recalculate (optional)
-
-```http
-POST /carts/{id}/recalculate
-```
-
----
-
-### 4. Checkout
-
-```http
-POST /checkout
-```
+* 200 OK
+* 201 Created
+* 400 Bad Request
+* 401 Unauthorized
+* 403 Forbidden
+* 404 Not Found
+* 409 Conflict
+* 422 Unprocessable Entity
+* 500 Internal Server Error
 
 ---
 
-### 5. Create order
+---
 
-```http
-POST /orders
-```
+## 18. Non-Goals
 
 ---
 
-### 6. Initiate payment
-
-```http
-POST /payments
-```
+* no GraphQL (MVP)
+* no generic query DSL
+* no over-engineered endpoints
 
 ---
 
-### 7. Payment webhook updates order
-
-```http
-POST /payments/webhook/{provider}
-```
-
 ---
 
-## 12. Status Codes
+## 19. Summary
 
-* `200 OK`
-* `201 Created`
-* `400 Bad Request`
-* `401 Unauthorized`
-* `404 Not Found`
-* `409 Conflict`
-* `500 Internal Server Error`
+API is:
 
----
+> simple, explicit, and aligned with domain workflows.
 
-## 13. Non-Goals
+Key rule:
 
-* No GraphQL in MVP
-* No overly generic query language
-* No RPC-style API explosion
-
----
-
-## 14. Future Extensions
-
-* GraphQL (read-only layer)
-* bulk endpoints
-* streaming / realtime updates
-
----
-
-## 15. Summary
-
-The API is:
-
-> simple, explicit, and aligned with domain flows—not abstracted for its own sake.
-
-It prioritizes:
-
-* clarity over flexibility
-* stability over trendiness
-* real-world workflows over theoretical purity
+> Orders are created ONLY via checkout.
 
 ---

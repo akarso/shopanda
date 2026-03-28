@@ -18,8 +18,8 @@
 
 ```sql
 CREATE TABLE carts (
-    id              TEXT PRIMARY KEY,
-    customer_id     TEXT,
+    id              UUID PRIMARY KEY,
+        customer_id     UUID,
     status          TEXT NOT NULL DEFAULT 'active',
     currency        TEXT NOT NULL,
     meta            JSONB DEFAULT '{}'::jsonb,
@@ -34,8 +34,8 @@ CREATE TABLE carts (
 
 ```sql
 CREATE TABLE cart_items (
-    id              TEXT PRIMARY KEY,
-    cart_id         TEXT NOT NULL REFERENCES carts(id) ON DELETE CASCADE,
+    id              UUID PRIMARY KEY,
+        cart_id         UUID NOT NULL REFERENCES carts(id) ON DELETE CASCADE,
     variant_id      TEXT NOT NULL,
     quantity        INT NOT NULL,
     unit_price      NUMERIC(12,2),
@@ -145,8 +145,8 @@ Event:
 
 ```sql
 CREATE TABLE orders (
-    id              TEXT PRIMARY KEY,
-    customer_id     TEXT,
+    id              UUID PRIMARY KEY,
+        customer_id     UUID,
     status          TEXT NOT NULL,
     currency        TEXT NOT NULL,
     total_amount    NUMERIC(12,2) NOT NULL,
@@ -171,8 +171,8 @@ CREATE TABLE orders (
 
 ```sql
 CREATE TABLE order_items (
-    id              TEXT PRIMARY KEY,
-    order_id        TEXT NOT NULL REFERENCES orders(id) ON DELETE CASCADE,
+    id              UUID PRIMARY KEY,
+        order_id        UUID NOT NULL REFERENCES orders(id) ON DELETE CASCADE,
     variant_id      TEXT NOT NULL,
     sku             TEXT NOT NULL,
     name            TEXT,

@@ -17,6 +17,17 @@ Design goals:
 * safety (idempotent, retryable)
 * observability (traceable execution)
 
+### ⚠️ Order Creation Rule
+
+Order creation is part of the checkout workflow.
+
+> Orders MUST NOT be created directly via API outside of checkout.
+
+This ensures:
+- consistent validation
+- correct pricing and inventory handling
+- proper payment initialization
+
 ---
 
 ## 2. Core Concepts
@@ -101,6 +112,8 @@ type CheckoutStep interface {
 
 * persist order + items
 * snapshot pricing
+
+⚠️ This is the ONLY place where orders are created in the system.
 
 ---
 
@@ -332,6 +345,8 @@ RegisterCheckoutStep(FraudCheck{}, "before:initiate_payment")
 Checkout workflow is:
 
 > a structured, extensible pipeline of steps that transforms a cart into an order.
+
+Order creation is an internal step of checkout and cannot be triggered independently.
 
 It enables:
 
