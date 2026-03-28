@@ -36,7 +36,7 @@ CREATE TABLE carts (
 CREATE TABLE cart_items (
     id              UUID PRIMARY KEY,
         cart_id         UUID NOT NULL REFERENCES carts(id) ON DELETE CASCADE,
-    variant_id      TEXT NOT NULL,
+    variant_id      UUID NOT NULL,
     quantity        INT NOT NULL,
     unit_price      NUMERIC(12,2),
     total_price     NUMERIC(12,2),
@@ -173,7 +173,7 @@ CREATE TABLE orders (
 CREATE TABLE order_items (
     id              UUID PRIMARY KEY,
         order_id        UUID NOT NULL REFERENCES orders(id) ON DELETE CASCADE,
-    variant_id      TEXT NOT NULL,
+    variant_id      UUID NOT NULL,
     sku             TEXT NOT NULL,
     name            TEXT,
     quantity        INT NOT NULL,

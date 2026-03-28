@@ -191,7 +191,7 @@ The system is extended via **explicit mechanisms only**:
 
 ## Repository-Specific Rules
 
-Future documents:
+Additional documents:
 
 * `BACKEND.md` — backend-specific modules & sequencing
 * `FRONTEND.md` — frontend strategy (optional/headless)

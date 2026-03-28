@@ -30,6 +30,28 @@
 
 ---
 
+## 2.4 Shared Types
+
+### Money
+
+Used across all domains for monetary values.
+
+```go
+type Money struct {
+    Amount   int64  // in smallest currency unit (e.g. cents)
+    Currency string // ISO 4217 (e.g. "EUR", "USD")
+}
+```
+
+Rules:
+
+* always use smallest unit (cents) to avoid floating-point errors
+* currency is explicit — never implicit
+* arithmetic operates on `Amount` directly
+* display formatting is a presentation concern
+
+---
+
 ## 3. Products & Variants
 
 ---
