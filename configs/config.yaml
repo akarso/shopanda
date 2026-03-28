@@ -1,0 +1,20 @@
+# Shopanda Configuration
+#
+# Override any value with environment variables:
+#   SHOPANDA_SERVER_PORT=9090
+
+server:
+  host: "0.0.0.0"
+  port: 8080
+
+database:
+  host: "localhost"
+  port: 5432
+  user: "shopanda"
+  password: "shopanda"
+  name: "shopanda"
+  sslmode: "disable"
+
+log:
+  level: "info"
+  format: "json"
