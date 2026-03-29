@@ -21,10 +21,18 @@ type ErrorBody struct {
 }
 
 // JSON writes a JSON response with the given status code and data.
+// It marshals the body first so the status header is only committed on success.
 func JSON(w http.ResponseWriter, status int, data interface{}) {
+	body, err := json.Marshal(Response{Data: data})
+	if err != nil {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusInternalServerError)
+		w.Write([]byte(`{"data":null,"error":{"code":"internal","message":"response encoding failed"}}`))
+		return
+	}
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
-	json.NewEncoder(w).Encode(Response{Data: data})
+	w.Write(body)
 }
 
 // JSONError writes a JSON error response derived from err.
@@ -34,12 +42,18 @@ func JSONError(w http.ResponseWriter, err error) {
 	var appErr *apperror.Error
 	if errors.As(err, &appErr) {
 		status := StatusFromCode(appErr.Code)
+		code := string(appErr.Code)
+		msg := appErr.Message
+		if status == http.StatusInternalServerError {
+			code = string(apperror.CodeInternal)
+			msg = "internal server error"
+		}
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(status)
 		json.NewEncoder(w).Encode(Response{
 			Error: &ErrorBody{
-				Code:    string(appErr.Code),
-				Message: appErr.Message,
+				Code:    code,
+				Message: msg,
 			},
 		})
 		return

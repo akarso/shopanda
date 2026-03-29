@@ -87,6 +87,29 @@ func TestJSONError_GenericError(t *testing.T) {
 	}
 }
 
+func TestJSONError_InternalRedactsMessage(t *testing.T) {
+	w := httptest.NewRecorder()
+	shophttp.JSONError(w, apperror.Internal("db timeout"))
+
+	if w.Code != http.StatusInternalServerError {
+		t.Errorf("status = %d, want %d", w.Code, http.StatusInternalServerError)
+	}
+
+	var resp shophttp.Response
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if resp.Error == nil {
+		t.Fatal("error should not be nil")
+	}
+	if resp.Error.Code != "internal" {
+		t.Errorf("error.code = %q, want internal", resp.Error.Code)
+	}
+	if resp.Error.Message != "internal server error" {
+		t.Errorf("error.message = %q, want 'internal server error' (should not leak 'db timeout')", resp.Error.Message)
+	}
+}
+
 func TestStatusFromCode(t *testing.T) {
 	tests := []struct {
 		code   apperror.Code
