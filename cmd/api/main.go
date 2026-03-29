@@ -34,6 +34,8 @@ func run() error {
 		switch os.Args[1] {
 		case "migrate":
 			return runMigrate(cfg, log)
+		default:
+			return fmt.Errorf("unknown command: %s", os.Args[1])
 		}
 	}
 
