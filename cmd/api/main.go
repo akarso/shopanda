@@ -3,6 +3,8 @@ package main
 import (
 	"fmt"
 	"os"
+
+	"github.com/shopanda/shopanda/internal/platform/config"
 )
 
 func main() {
@@ -15,6 +17,12 @@ func main() {
 }
 
 func run() error {
+	cfg, err := config.Load(config.FindConfigFile())
+	if err != nil {
+		return fmt.Errorf("load config: %w", err)
+	}
+
+	fmt.Println("config:", cfg)
 	fmt.Println("shopanda ready")
 	return nil
 }
