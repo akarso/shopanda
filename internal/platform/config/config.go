@@ -1,0 +1,209 @@
+package config
+
+import (
+	"fmt"
+	"os"
+	"strconv"
+	"strings"
+
+	"gopkg.in/yaml.v3"
+)
+
+// Config holds all application configuration.
+type Config struct {
+	Server   ServerConfig   `yaml:"server"`
+	Database DatabaseConfig `yaml:"database"`
+	Log      LogConfig      `yaml:"log"`
+}
+
+type ServerConfig struct {
+	Host string `yaml:"host"`
+	Port int    `yaml:"port"`
+}
+
+type DatabaseConfig struct {
+	Host     string `yaml:"host"`
+	Port     int    `yaml:"port"`
+	User     string `yaml:"user"`
+	Password string `yaml:"password"`
+	Name     string `yaml:"name"`
+	SSLMode  string `yaml:"sslmode"`
+}
+
+func (d DatabaseConfig) DSN() string {
+	return fmt.Sprintf(
+		"postgres://%s:%s@%s:%d/%s?sslmode=%s",
+		d.User, d.Password, d.Host, d.Port, d.Name, d.SSLMode,
+	)
+}
+
+type LogConfig struct {
+	Level  string `yaml:"level"`
+	Format string `yaml:"format"`
+}
+
+// values holds flattened dot-notation keys for generic access.
+var values map[string]string
+
+// Load reads a YAML config file and overlays environment variables.
+// Env vars use the prefix SHOPANDA_ and replace dots/nesting with underscores.
+// Example: server.port -> SHOPANDA_SERVER_PORT
+func Load(path string) (*Config, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, fmt.Errorf("config: read %s: %w", path, err)
+	}
+
+	cfg := defaults()
+
+	if err := yaml.Unmarshal(data, &cfg); err != nil {
+		return nil, fmt.Errorf("config: parse %s: %w", path, err)
+	}
+
+	applyEnv(&cfg)
+	values = flatten(&cfg)
+
+	return &cfg, nil
+}
+
+// Get returns a config value by dot-notation key, or empty string if not found.
+func Get(key string) string {
+	return values[key]
+}
+
+// GetOrDefault returns the value for key, or fallback if not found.
+func GetOrDefault(key, fallback string) string {
+	if v, ok := values[key]; ok && v != "" {
+		return v
+	}
+	return fallback
+}
+
+// GetString is an alias for Get.
+func GetString(key string) string {
+	return Get(key)
+}
+
+// GetInt returns the value as int, or 0 if not found or not parseable.
+func GetInt(key string) int {
+	v, _ := strconv.Atoi(Get(key))
+	return v
+}
+
+// GetFloat returns the value as float64, or 0 if not found or not parseable.
+func GetFloat(key string) float64 {
+	v, _ := strconv.ParseFloat(Get(key), 64)
+	return v
+}
+
+func defaults() Config {
+	return Config{
+		Server: ServerConfig{
+			Host: "0.0.0.0",
+			Port: 8080,
+		},
+		Database: DatabaseConfig{
+			Host:    "localhost",
+			Port:    5432,
+			User:    "shopanda",
+			Name:    "shopanda",
+			SSLMode: "disable",
+		},
+		Log: LogConfig{
+			Level:  "info",
+			Format: "json",
+		},
+	}
+}
+
+// applyEnv overlays environment variables with SHOPANDA_ prefix.
+func applyEnv(cfg *Config) {
+	if v := os.Getenv("SHOPANDA_SERVER_HOST"); v != "" {
+		cfg.Server.Host = v
+	}
+	if v := os.Getenv("SHOPANDA_SERVER_PORT"); v != "" {
+		if p, err := strconv.Atoi(v); err == nil {
+			cfg.Server.Port = p
+		}
+	}
+	if v := os.Getenv("SHOPANDA_DATABASE_HOST"); v != "" {
+		cfg.Database.Host = v
+	}
+	if v := os.Getenv("SHOPANDA_DATABASE_PORT"); v != "" {
+		if p, err := strconv.Atoi(v); err == nil {
+			cfg.Database.Port = p
+		}
+	}
+	if v := os.Getenv("SHOPANDA_DATABASE_USER"); v != "" {
+		cfg.Database.User = v
+	}
+	if v := os.Getenv("SHOPANDA_DATABASE_PASSWORD"); v != "" {
+		cfg.Database.Password = v
+	}
+	if v := os.Getenv("SHOPANDA_DATABASE_NAME"); v != "" {
+		cfg.Database.Name = v
+	}
+	if v := os.Getenv("SHOPANDA_DATABASE_SSLMODE"); v != "" {
+		cfg.Database.SSLMode = v
+	}
+	if v := os.Getenv("SHOPANDA_LOG_LEVEL"); v != "" {
+		cfg.Log.Level = v
+	}
+	if v := os.Getenv("SHOPANDA_LOG_FORMAT"); v != "" {
+		cfg.Log.Format = v
+	}
+}
+
+// flatten converts the Config struct into a dot-notation key-value map.
+func flatten(cfg *Config) map[string]string {
+	m := make(map[string]string)
+	m["server.host"] = cfg.Server.Host
+	m["server.port"] = strconv.Itoa(cfg.Server.Port)
+	m["database.host"] = cfg.Database.Host
+	m["database.port"] = strconv.Itoa(cfg.Database.Port)
+	m["database.user"] = cfg.Database.User
+	m["database.password"] = cfg.Database.Password
+	m["database.name"] = cfg.Database.Name
+	m["database.sslmode"] = cfg.Database.SSLMode
+	m["log.level"] = cfg.Log.Level
+	m["log.format"] = cfg.Log.Format
+	return m
+}
+
+// DatabaseDSN is a convenience for building a DSN from env var or config.
+// If DATABASE_URL env var is set, it takes precedence.
+func DatabaseDSN(cfg *Config) string {
+	if v := os.Getenv("DATABASE_URL"); v != "" {
+		return v
+	}
+	return cfg.Database.DSN()
+}
+
+// FindConfigFile looks for config.yaml in common locations.
+func FindConfigFile() string {
+	candidates := []string{
+		"configs/config.yaml",
+		"config.yaml",
+	}
+	for _, c := range candidates {
+		if _, err := os.Stat(c); err == nil {
+			return c
+		}
+	}
+	return candidates[0]
+}
+
+// String returns a redacted summary suitable for logging.
+func (c *Config) String() string {
+	password := "***"
+	if c.Database.Password == "" {
+		password = "(empty)"
+	}
+	return strings.Join([]string{
+		fmt.Sprintf("server=%s:%d", c.Server.Host, c.Server.Port),
+		fmt.Sprintf("database=%s@%s:%d/%s?sslmode=%s password=%s",
+			c.Database.User, c.Database.Host, c.Database.Port,
+			c.Database.Name, c.Database.SSLMode, password),
+		fmt.Sprintf("log.level=%s log.format=%s", c.Log.Level, c.Log.Format),
+	}, " ")
+}
