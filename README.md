@@ -23,13 +23,23 @@ Combines the extensibility of Magento, the simplicity of Shopware, and the perfo
 |---|---|
 | Catalog | Products, variants, categories, collections |
 | Pricing | Deterministic pipeline (discounts, taxes, fees) |
+| Taxes | Country-based VAT, exclusive/inclusive modes |
+| Promotions | Catalog rules, cart rules, coupons |
 | Cart & Orders | Mutable cart → immutable order with inventory reservations |
+| Inventory | Stock tracking per SKU, reservation system |
 | Customers & Auth | Email/password, token-based, extensible via plugins |
 | Payments | Provider-agnostic with manual default |
 | Shipping | Flat rate default, pluggable providers |
+| Invoicing | Immutable invoices, credit notes, PDF export |
 | Search | Postgres full-text default, pluggable engines |
+| CMS | Simple content pages with URL routing |
 | Media | Local storage default, CDN-ready |
 | Admin | Schema-driven forms and grids |
+| SEO | Structured data, sitemap, canonical URLs |
+| Multi-Store | Store contexts, scoped pricing and tax |
+| Localization | System + content translations, multi-language |
+| Legal | GDPR, cookie consent, EU price indication |
+| Mailer | Async email delivery, pluggable providers |
 
 ## Quick Start
 
@@ -82,6 +92,19 @@ All specs live in [`docs/`](docs/):
 - [Plugin Guide](docs/PLUGINS.md) — authoring plugins
 - [Backend Guide](docs/BACKEND.md) — implementation patterns
 - [Frontend Guide](docs/FRONTEND.md) — rendering strategy
+- [Taxes](docs/TAXES.md) — VAT calculation
+- [Promotions](docs/PROMOTIONS.md) — discounts and coupons
+- [Rules](docs/RULES.md) — condition primitives
+- [Invoicing](docs/INVOICING.md) — invoice generation
+- [Routing](docs/ROUTING.md) — URL rewrites
+- [CMS](docs/CMS.md) — content pages
+- [SEO](docs/SEO.md) — structured data and discoverability
+- [Inventory](docs/STOCK.md) — stock management
+- [Mailer](docs/MAILER.md) — email delivery
+- [Multi-Store](docs/STORES_CURRENCIES.md) — stores and currencies
+- [Localization](docs/I18N.md) — translations
+- [Legal](docs/LEGAL.md) — GDPR and compliance
+- [Performance](docs/PERFORMANCE.md) — CDN and caching
 
 ## Tech Stack
 

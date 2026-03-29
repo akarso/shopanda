@@ -263,6 +263,125 @@ Goal: drop-in usability.
 
 ---
 
+## Phase 20 — Taxes
+
+Goal: country-based VAT calculation integrated into the pricing pipeline.
+
+| PR  | Title                        | Scope                                              |
+| --- | ---------------------------- | -------------------------------------------------- |
+| 075 | Tax domain + rate storage    | `TaxClass`, `TaxRate`, repo, migration             |
+| 076 | Tax pipeline step            | Tax calculation step in pricing pipeline, per-item + total, exclusive/inclusive modes |
+
+Spec: [`docs/TAXES.md`](docs/TAXES.md)
+
+---
+
+## Phase 21 — Rules & Promotions
+
+Goal: reusable rule primitives powering catalog and cart discounts.
+
+| PR  | Title                        | Scope                                              |
+| --- | ---------------------------- | -------------------------------------------------- |
+| 077 | Rule primitives              | `Condition[T]`, `Rule[T]`, sequential executor     |
+| 078 | Promotion domain + storage   | Catalog rules, cart rules, coupon entity, repo, migration |
+| 079 | Promotion HTTP endpoints     | Apply catalog rules in pricing pipeline, `POST/DELETE /cart/{id}/coupon` |
+
+Specs: [`docs/RULES.md`](docs/RULES.md), [`docs/PROMOTIONS.md`](docs/PROMOTIONS.md)
+
+---
+
+## Phase 22 — Invoicing
+
+Goal: immutable invoice generation from orders with credit note support.
+
+| PR  | Title                        | Scope                                              |
+| --- | ---------------------------- | -------------------------------------------------- |
+| 080 | Invoice domain + storage     | Invoice entity, credit notes, DB sequence numbering, repo, migration |
+| 081 | Invoice generation + PDF     | Order → invoice snapshot, HTML → PDF, events (`invoice.created`) |
+
+Spec: [`docs/INVOICING.md`](docs/INVOICING.md)
+
+---
+
+## Phase 23 — URL Routing & CMS
+
+Goal: SEO-friendly URLs and static content pages.
+
+| PR  | Title                        | Scope                                              |
+| --- | ---------------------------- | -------------------------------------------------- |
+| 082 | URL rewrite system           | `url_rewrites` table, migration, resolver middleware, catch-all route |
+| 083 | Wire entity slugs            | Product/category slugs registered in rewrite table on create/update |
+| 084 | CMS pages                    | Page domain, storage, `GET /pages/{slug}`, admin integration |
+
+Specs: [`docs/ROUTING.md`](docs/ROUTING.md), [`docs/CMS.md`](docs/CMS.md)
+
+---
+
+## Phase 24 — SEO
+
+Goal: structured data and discoverability.
+
+| PR  | Title                        | Scope                                              |
+| --- | ---------------------------- | -------------------------------------------------- |
+| 085 | Meta + structured data       | Composition step for meta tags, JSON-LD for products (price, availability) |
+| 086 | Sitemap + robots             | `GET /sitemap.xml` generation, `GET /robots.txt`, canonical URLs |
+
+Spec: [`docs/SEO.md`](docs/SEO.md)
+
+---
+
+## Phase 25 — Multi-Store & Currency
+
+Goal: multiple store contexts with scoped pricing and tax.
+
+| PR  | Title                        | Scope                                              |
+| --- | ---------------------------- | -------------------------------------------------- |
+| 087 | Store domain + resolution    | `Store` entity, repo, migration, domain-based resolution middleware |
+| 088 | Scoped pricing + tax         | Prices per store (`variant_id + store_id → price`), tax by `store.country` |
+
+Spec: [`docs/STORES_CURRENCIES.md`](docs/STORES_CURRENCIES.md)
+
+---
+
+## Phase 26 — Localization
+
+Goal: unified translation system across backend and frontend.
+
+| PR  | Title                        | Scope                                              |
+| --- | ---------------------------- | -------------------------------------------------- |
+| 089 | Translation system           | System translations table, `t()` function, language resolution (param → header → default) |
+| 090 | Content translations         | Entity translation table (`entity_id + language + field → value`), API integration |
+
+Spec: [`docs/I18N.md`](docs/I18N.md)
+
+---
+
+## Phase 27 — Legal & Compliance
+
+Goal: essential EU compliance features.
+
+| PR  | Title                        | Scope                                              |
+| --- | ---------------------------- | -------------------------------------------------- |
+| 091 | Cookie consent + GDPR        | Consent model, `GET /account/data`, `GET /account/export`, `DELETE /account` |
+| 092 | Price history                | Price tracking table, lowest-price-in-30-days display for discounted products |
+
+Spec: [`docs/LEGAL.md`](docs/LEGAL.md)
+
+---
+
+## Phase 28 — Performance & CDN
+
+Goal: caching strategy and CDN integration.
+
+| PR  | Title                        | Scope                                              |
+| --- | ---------------------------- | -------------------------------------------------- |
+| 093 | Cache headers + CDN config   | `Cache-Control` middleware (public vs no-store), `cdn.base_url` config |
+| 094 | Cache invalidation           | Product/price change → invalidation trigger, cache keys include store + language + currency |
+
+Spec: [`docs/PERFORMANCE.md`](docs/PERFORMANCE.md)
+
+---
+
 ## Milestone Summary
 
 | Milestone                 | After PR | What works                                  |
@@ -282,6 +401,14 @@ Goal: drop-in usability.
 | **Schema-driven admin**   | 066      | Form/grid registry, schema-driven UI        |
 | **Data exchange**         | 071      | Attribute mapping, export                   |
 | **Drop-in usable**        | 074      | `migrate → seed → serve` = working store    |
+| **Tax-aware pricing**     | 076      | VAT calculation in pricing pipeline         |
+| **Discounts & coupons**   | 079      | Catalog rules, cart rules, coupon support   |
+| **Invoicing**             | 081      | Invoice + credit note generation, PDF       |
+| **SEO-ready storefront**  | 086      | URL rewrites, CMS pages, sitemap, JSON-LD   |
+| **Multi-store**           | 088      | Store resolution, scoped pricing + tax      |
+| **Localized**             | 090      | System + content translations               |
+| **EU-compliant**          | 092      | GDPR, cookie consent, price history         |
+| **CDN-optimized**         | 094      | Cache headers, CDN config, invalidation     |
 
 ---
 
