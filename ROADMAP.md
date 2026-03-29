@@ -382,6 +382,19 @@ Spec: [`docs/PERFORMANCE.md`](docs/PERFORMANCE.md)
 
 ---
 
+## Phase 29 — Admin RBAC
+
+Goal: permission-based access control for admin users.
+
+| PR  | Title                        | Scope                                              |
+| --- | ---------------------------- | -------------------------------------------------- |
+| 095 | Roles + permissions model    | Role entity (admin/manager/editor/support), permission strings, role-permission mapping, migration |
+| 096 | Permission middleware + UI   | `RequirePermission()` middleware, admin forms/grids respect permissions, plugin permission registration |
+
+Spec: [`docs/ROLES.md`](docs/ROLES.md)
+
+---
+
 ## Milestone Summary
 
 | Milestone                 | After PR | What works                                  |
@@ -409,6 +422,7 @@ Spec: [`docs/PERFORMANCE.md`](docs/PERFORMANCE.md)
 | **Localized**             | 090      | System + content translations               |
 | **EU-compliant**          | 092      | GDPR, cookie consent, price history         |
 | **CDN-optimized**         | 094      | Cache headers, CDN config, invalidation     |
+| **Admin RBAC**            | 096      | Role-based permissions for admin routes     |
 
 ---
 
