@@ -197,6 +197,10 @@ Additional documents:
 * `FRONTEND.md` — frontend strategy (optional/headless)
 * `PLUGINS.md` — plugin authoring guide
 
+## Documentation
+
+* create /docs/prs/PR-00n.md with summary of changes after each implementation phase
+
 ---
 
 ## Guiding Principle
