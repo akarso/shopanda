@@ -45,7 +45,9 @@ func RecoveryMiddleware(log logger.Logger) Middleware {
 						"path":       r.URL.Path,
 						"request_id": requestctx.RequestID(r.Context()),
 					})
-					http.Error(w, `{"error":"internal server error"}`, http.StatusInternalServerError)
+					w.Header().Set("Content-Type", "application/json")
+					w.WriteHeader(http.StatusInternalServerError)
+					w.Write([]byte(`{"error":"internal server error"}`))
 				}
 			}()
 			next.ServeHTTP(w, r)

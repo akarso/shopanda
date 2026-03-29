@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strconv"
 	"syscall"
 	"time"
 
@@ -23,7 +24,7 @@ type Server struct {
 func NewServer(host string, port int, handler http.Handler, log logger.Logger) *Server {
 	return &Server{
 		srv: &http.Server{
-			Addr:         fmt.Sprintf("%s:%d", host, port),
+			Addr:         net.JoinHostPort(host, strconv.Itoa(port)),
 			Handler:      handler,
 			ReadTimeout:  10 * time.Second,
 			WriteTimeout: 30 * time.Second,
