@@ -45,9 +45,15 @@ func TestNew_HasCorrectFormat(t *testing.T) {
 }
 
 func TestIsValid_AcceptsValidUUID(t *testing.T) {
-	valid := "550e8400-e29b-41d4-a716-446655440000"
-	if !id.IsValid(valid) {
-		t.Fatalf("IsValid(%q) = false, want true", valid)
+	cases := []string{
+		"550e8400-e29b-41d4-a716-446655440000",
+		"550E8400-E29B-41D4-A716-446655440000",
+		"550e8400-E29B-41d4-a716-446655440000",
+	}
+	for _, valid := range cases {
+		if !id.IsValid(valid) {
+			t.Fatalf("IsValid(%q) = false, want true", valid)
+		}
 	}
 }
 
@@ -58,7 +64,7 @@ func TestIsValid_RejectsInvalidStrings(t *testing.T) {
 		"550e8400-e29b-41d4-a716",
 		"550e8400-e29b-31d4-a716-446655440000", // version 3
 		"550e8400-e29b-41d4-c716-446655440000", // wrong variant
-		"550e8400e29b41d4a716446655440000",      // no dashes
+		"550e8400e29b41d4a716446655440000",     // no dashes
 	}
 	for _, c := range cases {
 		if id.IsValid(c) {
