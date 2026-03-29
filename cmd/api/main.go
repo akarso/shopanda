@@ -8,6 +8,8 @@ import (
 	"github.com/akarso/shopanda/internal/platform/db"
 	"github.com/akarso/shopanda/internal/platform/logger"
 	"github.com/akarso/shopanda/internal/platform/migrate"
+
+	shophttp "github.com/akarso/shopanda/internal/interfaces/http"
 )
 
 func main() {
@@ -34,13 +36,30 @@ func run() error {
 		switch os.Args[1] {
 		case "migrate":
 			return runMigrate(cfg, log)
+		case "serve":
+			return runServe(cfg, log)
 		default:
 			return fmt.Errorf("unknown command: %s", os.Args[1])
 		}
 	}
 
-	log.Info("app.ready", nil)
-	return nil
+	// Default: start HTTP server.
+	return runServe(cfg, log)
+}
+
+func runServe(cfg *config.Config, log logger.Logger) error {
+	router := shophttp.NewRouter()
+
+	// Middleware: outermost first.
+	router.Use(shophttp.RecoveryMiddleware(log))
+	router.Use(shophttp.RequestIDMiddleware())
+	router.Use(shophttp.LoggingMiddleware(log))
+
+	// Routes.
+	router.HandleFunc("GET /healthz", shophttp.HealthHandler())
+
+	srv := shophttp.NewServer(cfg.Server.Host, cfg.Server.Port, router.Handler(), log)
+	return srv.ListenAndServe()
 }
 
 func runMigrate(cfg *config.Config, log logger.Logger) error {
