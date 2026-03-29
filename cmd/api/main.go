@@ -4,7 +4,8 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/shopanda/shopanda/internal/platform/config"
+	"github.com/akarso/shopanda/internal/platform/config"
+	"github.com/akarso/shopanda/internal/platform/logger"
 )
 
 func main() {
@@ -22,7 +23,11 @@ func run() error {
 		return fmt.Errorf("load config: %w", err)
 	}
 
-	fmt.Println("config:", cfg)
-	fmt.Println("shopanda ready")
+	log := logger.New(cfg.Log.Level)
+
+	log.Info("app.config.loaded", map[string]interface{}{
+		"config": cfg.String(),
+	})
+	log.Info("app.ready", nil)
 	return nil
 }

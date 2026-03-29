@@ -1,4 +1,4 @@
-module github.com/shopanda/shopanda
+module github.com/akarso/shopanda
 
 go 1.25.6
 
