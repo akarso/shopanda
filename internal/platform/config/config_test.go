@@ -3,6 +3,7 @@ package config
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -220,10 +221,10 @@ database:
 	}
 
 	s := cfg.String()
-	if contains(s, "supersecret") {
+	if strings.Contains(s, "supersecret") {
 		t.Error("String() should not contain the actual password")
 	}
-	if !contains(s, "***") {
+	if !strings.Contains(s, "***") {
 		t.Error("String() should contain redacted password marker")
 	}
 }
@@ -240,17 +241,4 @@ func writeYAML(t *testing.T, content string) string {
 		t.Fatalf("write temp config: %v", err)
 	}
 	return path
-}
-
-func contains(s, substr string) bool {
-	return len(s) >= len(substr) && searchString(s, substr)
-}
-
-func searchString(s, sub string) bool {
-	for i := 0; i <= len(s)-len(sub); i++ {
-		if s[i:i+len(sub)] == sub {
-			return true
-		}
-	}
-	return false
 }

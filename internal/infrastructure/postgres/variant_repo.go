@@ -83,8 +83,22 @@ func (r *VariantRepo) ListByProductID(ctx context.Context, productID string) ([]
 	return variants, nil
 }
 
+// skuConflict returns an apperror.Conflict when err is a unique-constraint
+// violation on the variants_sku_key index; otherwise it returns nil.
+func skuConflict(err error) error {
+	var pqErr *pq.Error
+	if errors.As(err, &pqErr) && pqErr.Code == "23505" && pqErr.Constraint == "variants_sku_key" {
+		return apperror.Conflict("variant with this sku already exists")
+	}
+	return nil
+}
+
 // Create persists a new variant.
 func (r *VariantRepo) Create(ctx context.Context, v *catalog.Variant) error {
+	if v == nil {
+		return fmt.Errorf("variant_repo: create: variant must not be nil")
+	}
+
 	attrs, err := json.Marshal(v.Attributes)
 	if err != nil {
 		return fmt.Errorf("variant_repo: marshal attributes: %w", err)
@@ -98,9 +112,8 @@ func (r *VariantRepo) Create(ctx context.Context, v *catalog.Variant) error {
 		attrs, v.CreatedAt, v.UpdatedAt,
 	)
 	if err != nil {
-		var pqErr *pq.Error
-		if errors.As(err, &pqErr) && pqErr.Code == "23505" {
-			return apperror.Conflict("variant with this sku already exists")
+		if ce := skuConflict(err); ce != nil {
+			return ce
 		}
 		return fmt.Errorf("variant_repo: create: %w", err)
 	}
@@ -109,6 +122,10 @@ func (r *VariantRepo) Create(ctx context.Context, v *catalog.Variant) error {
 
 // Update persists changes to an existing variant.
 func (r *VariantRepo) Update(ctx context.Context, v *catalog.Variant) error {
+	if v == nil {
+		return fmt.Errorf("variant_repo: update: variant must not be nil")
+	}
+
 	attrs, err := json.Marshal(v.Attributes)
 	if err != nil {
 		return fmt.Errorf("variant_repo: marshal attributes: %w", err)
@@ -124,6 +141,9 @@ func (r *VariantRepo) Update(ctx context.Context, v *catalog.Variant) error {
 		v.SKU, v.Name, attrs, updatedAt, v.ID,
 	)
 	if err != nil {
+		if ce := skuConflict(err); ce != nil {
+			return ce
+		}
 		return fmt.Errorf("variant_repo: update: %w", err)
 	}
 

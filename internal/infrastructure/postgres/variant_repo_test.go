@@ -9,28 +9,18 @@ import (
 	"github.com/akarso/shopanda/internal/infrastructure/postgres"
 	"github.com/akarso/shopanda/internal/platform/apperror"
 	"github.com/akarso/shopanda/internal/platform/id"
+	"github.com/akarso/shopanda/internal/platform/migrate"
 )
 
-// ensureVariantsTable creates the variants table (and products for FK).
+// ensureVariantsTable applies all migrations and cleans up variant and product data after the test.
 func ensureVariantsTable(t *testing.T, db *sql.DB) {
 	t.Helper()
-	ensureProductsTable(t, db)
-	_, err := db.Exec(`
-		CREATE TABLE IF NOT EXISTS variants (
-			id          UUID PRIMARY KEY,
-			product_id  UUID NOT NULL REFERENCES products(id) ON DELETE CASCADE,
-			sku         TEXT UNIQUE NOT NULL,
-			name        TEXT NOT NULL DEFAULT '',
-			attributes  JSONB NOT NULL DEFAULT '{}'::jsonb,
-			created_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
-			updated_at  TIMESTAMPTZ NOT NULL DEFAULT now()
-		)
-	`)
-	if err != nil {
-		t.Fatalf("ensure variants table: %v", err)
+	if _, err := migrate.Run(db, "../../../migrations"); err != nil {
+		t.Fatalf("run migrations: %v", err)
 	}
 	t.Cleanup(func() {
 		db.Exec("DELETE FROM variants")
+		db.Exec("DELETE FROM products")
 	})
 }
 

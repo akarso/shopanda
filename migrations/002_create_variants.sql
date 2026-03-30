@@ -1,7 +1,7 @@
 CREATE TABLE variants (
     id          UUID PRIMARY KEY,
     product_id  UUID NOT NULL REFERENCES products(id) ON DELETE CASCADE,
-    sku         TEXT UNIQUE NOT NULL,
+    sku         TEXT UNIQUE NOT NULL CHECK (length(trim(sku)) > 0),
     name        TEXT NOT NULL DEFAULT '',
     attributes  JSONB NOT NULL DEFAULT '{}'::jsonb,
     created_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
