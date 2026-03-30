@@ -120,7 +120,7 @@ func (r *ProductRepo) Update(ctx context.Context, p *catalog.Product) error {
 		return fmt.Errorf("product_repo: marshal attributes: %w", err)
 	}
 
-	p.UpdatedAt = time.Now().UTC()
+	updatedAt := time.Now().UTC()
 
 	const q = `UPDATE products
 		SET name = $1, slug = $2, description = $3, status = $4, attributes = $5, updated_at = $6
@@ -128,7 +128,7 @@ func (r *ProductRepo) Update(ctx context.Context, p *catalog.Product) error {
 
 	result, err := r.db.ExecContext(ctx, q,
 		p.Name, p.Slug, p.Description, string(p.Status),
-		attrs, p.UpdatedAt, p.ID,
+		attrs, updatedAt, p.ID,
 	)
 	if err != nil {
 		return fmt.Errorf("product_repo: update: %w", err)

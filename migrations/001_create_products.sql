@@ -9,5 +9,4 @@ CREATE TABLE products (
     updated_at  TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
-CREATE INDEX idx_products_slug ON products (slug);
 CREATE INDEX idx_products_status ON products (status);
