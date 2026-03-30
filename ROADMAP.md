@@ -237,6 +237,8 @@ Goal: optional SSR layer.
 | 067 | Theme engine (basic SSR)     | Template loading, `Render()`, layout           |
 | 068 | Product page template        | `product.html` consuming composition pipeline  |
 
+Spec: [`docs/PAGES_RENDERING.md`](docs/PAGES_RENDERING.md)
+
 ---
 
 ## Phase 18 — Data Exchange (Advanced)
