@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"os"
 
+	"github.com/akarso/shopanda/internal/application/composition"
+	"github.com/akarso/shopanda/internal/infrastructure/postgres"
 	"github.com/akarso/shopanda/internal/platform/config"
 	"github.com/akarso/shopanda/internal/platform/db"
 	"github.com/akarso/shopanda/internal/platform/logger"
@@ -48,6 +50,24 @@ func run() error {
 }
 
 func runServe(cfg *config.Config, log logger.Logger) error {
+	// Database.
+	dsn := config.DatabaseDSN(cfg)
+	conn, err := db.Open(dsn)
+	if err != nil {
+		return fmt.Errorf("database: %w", err)
+	}
+	defer conn.Close()
+
+	// Repositories.
+	productRepo := postgres.NewProductRepo(conn)
+
+	// Composition pipelines (empty; plugins add steps later).
+	pdp := composition.NewPipeline[composition.ProductContext]()
+	plp := composition.NewPipeline[composition.ListingContext]()
+
+	// Handlers.
+	productHandler := shophttp.NewProductHandler(productRepo, pdp, plp)
+
 	router := shophttp.NewRouter()
 
 	// Middleware: outermost first.
@@ -57,6 +77,8 @@ func runServe(cfg *config.Config, log logger.Logger) error {
 
 	// Routes.
 	router.HandleFunc("GET /healthz", shophttp.HealthHandler())
+	router.HandleFunc("GET /api/v1/products", productHandler.List())
+	router.HandleFunc("GET /api/v1/products/{id}", productHandler.Get())
 
 	srv := shophttp.NewServer(cfg.Server.Host, cfg.Server.Port, router.Handler(), log)
 	return srv.ListenAndServe()
