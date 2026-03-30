@@ -12,8 +12,9 @@ type VariantRepository interface {
 	// Returns a nil variant and no error when no variant matches the SKU.
 	FindBySKU(ctx context.Context, sku string) (*Variant, error)
 
-	// ListByProductID returns all variants for the given product.
-	ListByProductID(ctx context.Context, productID string) ([]Variant, error)
+	// ListByProductID returns variants for the given product.
+	// offset must be >= 0, limit must be > 0. The implementation may cap limit.
+	ListByProductID(ctx context.Context, productID string, offset, limit int) ([]Variant, error)
 
 	// Create persists a new variant.
 	Create(ctx context.Context, v *Variant) error

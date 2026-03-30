@@ -41,7 +41,7 @@ func (m *mockVariantProductRepo) Update(ctx context.Context, p *catalog.Product)
 
 type mockVariantRepo struct {
 	findByIDFn      func(ctx context.Context, id string) (*catalog.Variant, error)
-	listByProductFn func(ctx context.Context, productID string) ([]catalog.Variant, error)
+	listByProductFn func(ctx context.Context, productID string, offset, limit int) ([]catalog.Variant, error)
 	createFn        func(ctx context.Context, v *catalog.Variant) error
 	updateFn        func(ctx context.Context, v *catalog.Variant) error
 }
@@ -55,9 +55,9 @@ func (m *mockVariantRepo) FindByID(ctx context.Context, id string) (*catalog.Var
 func (m *mockVariantRepo) FindBySKU(ctx context.Context, sku string) (*catalog.Variant, error) {
 	return nil, nil
 }
-func (m *mockVariantRepo) ListByProductID(ctx context.Context, productID string) ([]catalog.Variant, error) {
+func (m *mockVariantRepo) ListByProductID(ctx context.Context, productID string, offset, limit int) ([]catalog.Variant, error) {
 	if m.listByProductFn != nil {
-		return m.listByProductFn(ctx, productID)
+		return m.listByProductFn(ctx, productID, offset, limit)
 	}
 	return nil, nil
 }
@@ -116,7 +116,7 @@ func variantBody(t *testing.T, v interface{}) *bytes.Reader {
 func TestVariantHandler_List_OK(t *testing.T) {
 	prodRepo := &mockVariantProductRepo{findByIDFn: productFinder()}
 	varRepo := &mockVariantRepo{
-		listByProductFn: func(_ context.Context, pid string) ([]catalog.Variant, error) {
+		listByProductFn: func(_ context.Context, pid string, offset, limit int) ([]catalog.Variant, error) {
 			return []catalog.Variant{
 				{ID: "v1", ProductID: pid, SKU: "SKU-1"},
 				{ID: "v2", ProductID: pid, SKU: "SKU-2"},
@@ -163,7 +163,7 @@ func TestVariantHandler_List_ProductNotFound(t *testing.T) {
 func TestVariantHandler_List_RepoError(t *testing.T) {
 	prodRepo := &mockVariantProductRepo{findByIDFn: productFinder()}
 	varRepo := &mockVariantRepo{
-		listByProductFn: func(_ context.Context, _ string) ([]catalog.Variant, error) {
+		listByProductFn: func(_ context.Context, _ string, _, _ int) ([]catalog.Variant, error) {
 			return nil, apperror.Internal("db error")
 		},
 	}

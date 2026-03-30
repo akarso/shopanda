@@ -146,7 +146,7 @@ func TestVariantRepo_ListByProductID(t *testing.T) {
 		}
 	}
 
-	variants, err := repo.ListByProductID(ctx, p.ID)
+	variants, err := repo.ListByProductID(ctx, p.ID, 0, 50)
 	if err != nil {
 		t.Fatalf("ListByProductID: %v", err)
 	}
@@ -166,7 +166,7 @@ func TestVariantRepo_ListByProductID_Empty(t *testing.T) {
 	repo := postgres.NewVariantRepo(db)
 	ctx := context.Background()
 
-	variants, err := repo.ListByProductID(ctx, id.New())
+	variants, err := repo.ListByProductID(ctx, id.New(), 0, 50)
 	if err != nil {
 		t.Fatalf("ListByProductID: %v", err)
 	}

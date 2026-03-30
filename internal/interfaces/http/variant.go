@@ -3,6 +3,7 @@ package http
 import (
 	"encoding/json"
 	"net/http"
+	"strconv"
 
 	"github.com/akarso/shopanda/internal/domain/catalog"
 	"github.com/akarso/shopanda/internal/platform/apperror"
@@ -39,6 +40,11 @@ func (h *VariantHandler) requireProduct(w http.ResponseWriter, r *http.Request) 
 	return p
 }
 
+const (
+	variantDefaultLimit = 50
+	variantMaxLimit     = 100
+)
+
 // List handles GET /api/v1/products/{id}/variants.
 func (h *VariantHandler) List() http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
@@ -47,7 +53,13 @@ func (h *VariantHandler) List() http.HandlerFunc {
 			return
 		}
 
-		variants, err := h.variants.ListByProductID(r.Context(), p.ID)
+		offset, limit, err := parseVariantPagination(r)
+		if err != nil {
+			JSONError(w, err)
+			return
+		}
+
+		variants, err := h.variants.ListByProductID(r.Context(), p.ID, offset, limit)
 		if err != nil {
 			JSONError(w, err)
 			return
@@ -55,8 +67,37 @@ func (h *VariantHandler) List() http.HandlerFunc {
 
 		JSON(w, http.StatusOK, map[string]interface{}{
 			"variants": variants,
+			"offset":   offset,
+			"limit":    limit,
 		})
 	}
+}
+
+// parseVariantPagination extracts offset and limit query parameters for variant listing.
+func parseVariantPagination(r *http.Request) (int, int, error) {
+	offset := 0
+	limit := variantDefaultLimit
+
+	if v := r.URL.Query().Get("offset"); v != "" {
+		n, err := strconv.Atoi(v)
+		if err != nil || n < 0 {
+			return 0, 0, apperror.Validation("offset must be a non-negative integer")
+		}
+		offset = n
+	}
+
+	if v := r.URL.Query().Get("limit"); v != "" {
+		n, err := strconv.Atoi(v)
+		if err != nil || n < 1 {
+			return 0, 0, apperror.Validation("limit must be a positive integer")
+		}
+		if n > variantMaxLimit {
+			n = variantMaxLimit
+		}
+		limit = n
+	}
+
+	return offset, limit, nil
 }
 
 // Get handles GET /api/v1/products/{id}/variants/{variantId}.

@@ -58,12 +58,24 @@ func (r *VariantRepo) FindBySKU(ctx context.Context, sku string) (*catalog.Varia
 	return v, nil
 }
 
-// ListByProductID returns all variants for the given product ordered by created_at asc.
-func (r *VariantRepo) ListByProductID(ctx context.Context, productID string) ([]catalog.Variant, error) {
-	const q = `SELECT id, product_id, sku, name, attributes, created_at, updated_at
-		FROM variants WHERE product_id = $1 ORDER BY created_at ASC`
+const maxVariantListLimit = 100
 
-	rows, err := r.db.QueryContext(ctx, q, productID)
+// ListByProductID returns variants for the given product ordered by created_at asc.
+func (r *VariantRepo) ListByProductID(ctx context.Context, productID string, offset, limit int) ([]catalog.Variant, error) {
+	if offset < 0 {
+		return nil, apperror.Validation("offset must be >= 0")
+	}
+	if limit <= 0 {
+		return nil, apperror.Validation("limit must be > 0")
+	}
+	if limit > maxVariantListLimit {
+		limit = maxVariantListLimit
+	}
+
+	const q = `SELECT id, product_id, sku, name, attributes, created_at, updated_at
+		FROM variants WHERE product_id = $1 ORDER BY created_at ASC LIMIT $2 OFFSET $3`
+
+	rows, err := r.db.QueryContext(ctx, q, productID, limit, offset)
 	if err != nil {
 		return nil, fmt.Errorf("variant_repo: list by product: %w", err)
 	}
