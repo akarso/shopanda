@@ -251,6 +251,8 @@ Goal: flexible attribute mapping and export. Basic import already exists (PR 017
 | 070 | Import pipeline upgrade      | Attribute mapping, validation rules, error reporting |
 | 071 | Export pipeline              | Entity → CSV, `app export:products` CLI        |
 
+> **Note:** PR-069 should also introduce `AttributeGroup` — products can be assigned one or more attribute groups, and each group defines which attributes apply. Until then, attributes are stored as flat JSONB with no schema enforcement.
+
 ---
 
 ## Phase 19 — Seeding & CLI

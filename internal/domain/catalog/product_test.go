@@ -9,8 +9,12 @@ import (
 
 func TestNewProduct(t *testing.T) {
 	before := time.Now().UTC()
-	p := catalog.NewProduct("prod-1", "T-Shirt", "t-shirt")
+	p, err := catalog.NewProduct("prod-1", "T-Shirt", "t-shirt")
 	after := time.Now().UTC()
+
+	if err != nil {
+		t.Fatalf("NewProduct() error = %v", err)
+	}
 
 	if p.ID != "prod-1" {
 		t.Errorf("ID = %q, want prod-1", p.ID)
@@ -47,7 +51,11 @@ func TestStatus_IsValid(t *testing.T) {
 		{catalog.Status(""), false},
 	}
 	for _, tc := range tests {
-		t.Run(string(tc.status), func(t *testing.T) {
+		name := string(tc.status)
+		if name == "" {
+			name = "(empty)"
+		}
+		t.Run(name, func(t *testing.T) {
 			if got := tc.status.IsValid(); got != tc.want {
 				t.Errorf("Status(%q).IsValid() = %v, want %v", tc.status, got, tc.want)
 			}
@@ -56,9 +64,33 @@ func TestStatus_IsValid(t *testing.T) {
 }
 
 func TestNewProduct_DefaultDescription(t *testing.T) {
-	p := catalog.NewProduct("id-1", "Shoes", "shoes")
+	p, err := catalog.NewProduct("id-1", "Shoes", "shoes")
+	if err != nil {
+		t.Fatalf("NewProduct() error = %v", err)
+	}
 	if p.Description != "" {
 		t.Errorf("Description = %q, want empty", p.Description)
+	}
+}
+
+func TestNewProduct_Validation(t *testing.T) {
+	tests := []struct {
+		name  string
+		id    string
+		pName string
+		slug  string
+	}{
+		{"empty id", "", "Shoes", "shoes"},
+		{"empty name", "id-1", "", "shoes"},
+		{"empty slug", "id-1", "Shoes", ""},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := catalog.NewProduct(tc.id, tc.pName, tc.slug)
+			if err == nil {
+				t.Error("expected error for empty field")
+			}
+		})
 	}
 }
 
