@@ -27,46 +27,48 @@ func JSON(w http.ResponseWriter, status int, data interface{}) {
 	if err != nil {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusInternalServerError)
-		w.Write([]byte(`{"data":null,"error":{"code":"internal","message":"response encoding failed"}}`))
+		_, _ = w.Write([]byte(`{"data":null,"error":{"code":"internal","message":"response encoding failed"}}`))
 		return
 	}
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
-	w.Write(body)
+	_, _ = w.Write(body)
 }
 
 // JSONError writes a JSON error response derived from err.
 // If err is an *apperror.Error, the code and message are taken from it.
 // Otherwise a generic 500 response is returned.
 func JSONError(w http.ResponseWriter, err error) {
+	code := string(apperror.CodeInternal)
+	msg := "internal server error"
+	status := http.StatusInternalServerError
+
 	var appErr *apperror.Error
 	if errors.As(err, &appErr) {
-		status := StatusFromCode(appErr.Code)
-		code := string(appErr.Code)
-		msg := appErr.Message
+		status = StatusFromCode(appErr.Code)
+		code = string(appErr.Code)
+		msg = appErr.Message
 		if status == http.StatusInternalServerError {
 			code = string(apperror.CodeInternal)
 			msg = "internal server error"
 		}
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(status)
-		json.NewEncoder(w).Encode(Response{
-			Error: &ErrorBody{
-				Code:    code,
-				Message: msg,
-			},
-		})
-		return
 	}
 
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusInternalServerError)
-	json.NewEncoder(w).Encode(Response{
+	body, marshalErr := json.Marshal(Response{
 		Error: &ErrorBody{
-			Code:    string(apperror.CodeInternal),
-			Message: "internal server error",
+			Code:    code,
+			Message: msg,
 		},
 	})
+	if marshalErr != nil {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusInternalServerError)
+		_, _ = w.Write([]byte(`{"data":null,"error":{"code":"internal","message":"internal server error"}}`))
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(status)
+	_, _ = w.Write(body)
 }
 
 // StatusFromCode maps an apperror.Code to an HTTP status code.
