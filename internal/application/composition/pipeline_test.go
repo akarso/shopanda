@@ -26,7 +26,7 @@ func (s addBlockStep) Apply(ctx *composition.ProductContext) error {
 
 type failingStep struct{}
 
-func (failingStep) Name() string                                  { return "failing" }
+func (failingStep) Name() string                              { return "failing" }
 func (failingStep) Apply(_ *composition.ProductContext) error { return errors.New("boom") }
 
 type listingBlockStep struct {
@@ -153,7 +153,7 @@ func TestListingPipeline_Execute(t *testing.T) {
 	p.AddStep(listingBlockStep{blockType: "grid"})
 	p.AddStep(addFilterStep{})
 
-	products := []catalog.Product{
+	products := []*catalog.Product{
 		{ID: "1", Name: "A"},
 		{ID: "2", Name: "B"},
 	}
@@ -191,7 +191,7 @@ func TestNewProductContext(t *testing.T) {
 }
 
 func TestNewListingContext(t *testing.T) {
-	products := []catalog.Product{{ID: "1"}}
+	products := []*catalog.Product{{ID: "1"}}
 	ctx := composition.NewListingContext(products)
 
 	if len(ctx.Products) != 1 {

@@ -17,7 +17,9 @@ type SortOption struct {
 
 // ListingContext holds the data built up during product listing composition (PLP).
 type ListingContext struct {
-	Products    []catalog.Product
+	// Products holds shared pointers into the caller's product data.
+	// Steps may read or mutate the pointed-to products directly.
+	Products    []*catalog.Product
 	Filters     []Filter
 	SortOptions []SortOption
 	Blocks      []Block
@@ -27,7 +29,7 @@ type ListingContext struct {
 }
 
 // NewListingContext creates a ListingContext for the given products.
-func NewListingContext(products []catalog.Product) *ListingContext {
+func NewListingContext(products []*catalog.Product) *ListingContext {
 	return &ListingContext{
 		Products:    products,
 		Filters:     make([]Filter, 0),
