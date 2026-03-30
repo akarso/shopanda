@@ -75,6 +75,12 @@ func (h *ProductAdminHandler) Update() http.HandlerFunc {
 			return
 		}
 
+		var req updateProductRequest
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			JSONError(w, apperror.Validation("invalid request body"))
+			return
+		}
+
 		product, err := h.repo.FindByID(r.Context(), pid)
 		if err != nil {
 			JSONError(w, err)
@@ -82,12 +88,6 @@ func (h *ProductAdminHandler) Update() http.HandlerFunc {
 		}
 		if product == nil {
 			JSONError(w, apperror.NotFound("product not found"))
-			return
-		}
-
-		var req updateProductRequest
-		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-			JSONError(w, apperror.Validation("invalid request body"))
 			return
 		}
 
