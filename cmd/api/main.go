@@ -60,6 +60,7 @@ func runServe(cfg *config.Config, log logger.Logger) error {
 
 	// Repositories.
 	productRepo := postgres.NewProductRepo(conn)
+	variantRepo := postgres.NewVariantRepo(conn)
 
 	// Composition pipelines (empty; plugins add steps later).
 	pdp := composition.NewPipeline[composition.ProductContext]()
@@ -68,6 +69,7 @@ func runServe(cfg *config.Config, log logger.Logger) error {
 	// Handlers.
 	productHandler := shophttp.NewProductHandler(productRepo, pdp, plp)
 	productAdmin := shophttp.NewProductAdminHandler(productRepo)
+	variantHandler := shophttp.NewVariantHandler(productRepo, variantRepo)
 
 	router := shophttp.NewRouter()
 
@@ -82,6 +84,10 @@ func runServe(cfg *config.Config, log logger.Logger) error {
 	router.HandleFunc("GET /api/v1/products/{id}", productHandler.Get())
 	router.HandleFunc("POST /api/v1/admin/products", productAdmin.Create())
 	router.HandleFunc("PUT /api/v1/admin/products/{id}", productAdmin.Update())
+	router.HandleFunc("GET /api/v1/products/{id}/variants", variantHandler.List())
+	router.HandleFunc("GET /api/v1/products/{id}/variants/{variantId}", variantHandler.Get())
+	router.HandleFunc("POST /api/v1/admin/products/{id}/variants", variantHandler.Create())
+	router.HandleFunc("PUT /api/v1/admin/products/{id}/variants/{variantId}", variantHandler.Update())
 
 	srv := shophttp.NewServer(cfg.Server.Host, cfg.Server.Port, router.Handler(), log)
 	return srv.ListenAndServe()
