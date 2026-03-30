@@ -12,6 +12,7 @@ import (
 	"github.com/akarso/shopanda/internal/infrastructure/postgres"
 	"github.com/akarso/shopanda/internal/platform/apperror"
 	"github.com/akarso/shopanda/internal/platform/id"
+	"github.com/akarso/shopanda/internal/platform/migrate"
 
 	_ "github.com/lib/pq"
 )
@@ -36,23 +37,11 @@ func testDB(t *testing.T) *sql.DB {
 	return db
 }
 
-// ensureProductsTable creates the products table for testing.
+// ensureProductsTable applies all migrations and cleans up product data after the test.
 func ensureProductsTable(t *testing.T, db *sql.DB) {
 	t.Helper()
-	_, err := db.Exec(`
-		CREATE TABLE IF NOT EXISTS products (
-			id          UUID PRIMARY KEY,
-			name        TEXT NOT NULL,
-			slug        TEXT UNIQUE NOT NULL,
-			description TEXT NOT NULL DEFAULT '',
-			status      TEXT NOT NULL DEFAULT 'draft',
-			attributes  JSONB NOT NULL DEFAULT '{}'::jsonb,
-			created_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
-			updated_at  TIMESTAMPTZ NOT NULL DEFAULT now()
-		)
-	`)
-	if err != nil {
-		t.Fatalf("ensure products table: %v", err)
+	if _, err := migrate.Run(db, "../../../migrations"); err != nil {
+		t.Fatalf("run migrations: %v", err)
 	}
 	t.Cleanup(func() {
 		db.Exec("DELETE FROM products")
