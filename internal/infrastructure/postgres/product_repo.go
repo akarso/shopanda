@@ -4,11 +4,13 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"time"
 
 	"github.com/akarso/shopanda/internal/domain/catalog"
 	"github.com/akarso/shopanda/internal/platform/apperror"
+	"github.com/lib/pq"
 )
 
 const maxListLimit = 100
@@ -33,7 +35,7 @@ func (r *ProductRepo) FindByID(ctx context.Context, id string) (*catalog.Product
 		FROM products WHERE id = $1`
 
 	p, err := r.scanProduct(r.db.QueryRowContext(ctx, q, id))
-	if err == sql.ErrNoRows {
+	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
 	}
 	if err != nil {
@@ -49,7 +51,7 @@ func (r *ProductRepo) FindBySlug(ctx context.Context, slug string) (*catalog.Pro
 		FROM products WHERE slug = $1`
 
 	p, err := r.scanProduct(r.db.QueryRowContext(ctx, q, slug))
-	if err == sql.ErrNoRows {
+	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
 	}
 	if err != nil {
@@ -108,6 +110,10 @@ func (r *ProductRepo) Create(ctx context.Context, p *catalog.Product) error {
 		attrs, p.CreatedAt, p.UpdatedAt,
 	)
 	if err != nil {
+		var pqErr *pq.Error
+		if errors.As(err, &pqErr) && pqErr.Code == "23505" {
+			return apperror.Conflict("product with this slug already exists")
+		}
 		return fmt.Errorf("product_repo: create: %w", err)
 	}
 	return nil
@@ -141,6 +147,7 @@ func (r *ProductRepo) Update(ctx context.Context, p *catalog.Product) error {
 	if rows == 0 {
 		return apperror.NotFound("product not found")
 	}
+	p.UpdatedAt = updatedAt
 	return nil
 }
 
