@@ -67,6 +67,7 @@ func runServe(cfg *config.Config, log logger.Logger) error {
 
 	// Handlers.
 	productHandler := shophttp.NewProductHandler(productRepo, pdp, plp)
+	productAdmin := shophttp.NewProductAdminHandler(productRepo)
 
 	router := shophttp.NewRouter()
 
@@ -79,6 +80,8 @@ func runServe(cfg *config.Config, log logger.Logger) error {
 	router.HandleFunc("GET /healthz", shophttp.HealthHandler())
 	router.HandleFunc("GET /api/v1/products", productHandler.List())
 	router.HandleFunc("GET /api/v1/products/{id}", productHandler.Get())
+	router.HandleFunc("POST /api/v1/admin/products", productAdmin.Create())
+	router.HandleFunc("PUT /api/v1/admin/products/{id}", productAdmin.Update())
 
 	srv := shophttp.NewServer(cfg.Server.Host, cfg.Server.Port, router.Handler(), log)
 	return srv.ListenAndServe()
