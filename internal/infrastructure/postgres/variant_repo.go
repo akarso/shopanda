@@ -19,11 +19,18 @@ var _ catalog.VariantRepository = (*VariantRepo)(nil)
 // VariantRepo implements catalog.VariantRepository using PostgreSQL.
 type VariantRepo struct {
 	db *sql.DB
+	tx *sql.Tx
 }
 
 // NewVariantRepo returns a new VariantRepo backed by db.
 func NewVariantRepo(db *sql.DB) *VariantRepo {
-	return &VariantRepo{db: db}
+	return &VariantRepo{db: db, tx: nil}
+}
+
+// WithTx returns a repo bound to the given transaction.
+func (r *VariantRepo) WithTx(tx interface{}) catalog.VariantRepository {
+	sqlTx, _ := tx.(*sql.Tx)
+	return &VariantRepo{db: r.db, tx: sqlTx}
 }
 
 // FindByID returns a variant by its ID.
@@ -32,7 +39,11 @@ func (r *VariantRepo) FindByID(ctx context.Context, id string) (*catalog.Variant
 	const q = `SELECT id, product_id, sku, name, attributes, created_at, updated_at
 		FROM variants WHERE id = $1`
 
-	v, err := r.scanVariant(r.db.QueryRowContext(ctx, q, id))
+	row := r.db.QueryRowContext(ctx, q, id)
+	if r.tx != nil {
+		row = r.tx.QueryRowContext(ctx, q, id)
+	}
+	v, err := r.scanVariant(row)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
 	}
@@ -48,7 +59,11 @@ func (r *VariantRepo) FindBySKU(ctx context.Context, sku string) (*catalog.Varia
 	const q = `SELECT id, product_id, sku, name, attributes, created_at, updated_at
 		FROM variants WHERE sku = $1`
 
-	v, err := r.scanVariant(r.db.QueryRowContext(ctx, q, sku))
+	row := r.db.QueryRowContext(ctx, q, sku)
+	if r.tx != nil {
+		row = r.tx.QueryRowContext(ctx, q, sku)
+	}
+	v, err := r.scanVariant(row)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
 	}
@@ -75,7 +90,13 @@ func (r *VariantRepo) ListByProductID(ctx context.Context, productID string, off
 	const q = `SELECT id, product_id, sku, name, attributes, created_at, updated_at
 		FROM variants WHERE product_id = $1 ORDER BY created_at ASC LIMIT $2 OFFSET $3`
 
-	rows, err := r.db.QueryContext(ctx, q, productID, limit, offset)
+	var rows *sql.Rows
+	var err error
+	if r.tx != nil {
+		rows, err = r.tx.QueryContext(ctx, q, productID, limit, offset)
+	} else {
+		rows, err = r.db.QueryContext(ctx, q, productID, limit, offset)
+	}
 	if err != nil {
 		return nil, fmt.Errorf("variant_repo: list by product: %w", err)
 	}
@@ -119,7 +140,15 @@ func (r *VariantRepo) Create(ctx context.Context, v *catalog.Variant) error {
 	const q = `INSERT INTO variants (id, product_id, sku, name, attributes, created_at, updated_at)
 		VALUES ($1, $2, $3, $4, $5, $6, $7)`
 
-	_, err = r.db.ExecContext(ctx, q,
+	var execer interface {
+		ExecContext(context.Context, string, ...interface{}) (sql.Result, error)
+	}
+	if r.tx != nil {
+		execer = r.tx
+	} else {
+		execer = r.db
+	}
+	_, err = execer.ExecContext(ctx, q,
 		v.ID, v.ProductID, v.SKU, v.Name,
 		attrs, v.CreatedAt, v.UpdatedAt,
 	)
@@ -149,7 +178,15 @@ func (r *VariantRepo) Update(ctx context.Context, v *catalog.Variant) error {
 		SET sku = $1, name = $2, attributes = $3, updated_at = $4
 		WHERE id = $5`
 
-	result, err := r.db.ExecContext(ctx, q,
+	var execer interface {
+		ExecContext(context.Context, string, ...interface{}) (sql.Result, error)
+	}
+	if r.tx != nil {
+		execer = r.tx
+	} else {
+		execer = r.db
+	}
+	result, err := execer.ExecContext(ctx, q,
 		v.SKU, v.Name, attrs, updatedAt, v.ID,
 	)
 	if err != nil {

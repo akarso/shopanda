@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 
@@ -156,7 +157,11 @@ func runImportProducts(cfg *config.Config, log logger.Logger) error {
 	})
 
 	for _, e := range result.Errors {
-		log.Error("import.row_error", nil, map[string]interface{}{"error": e})
+		log.Error("import.row_error", errors.New(e), map[string]interface{}{})
+	}
+
+	if len(result.Errors) > 0 {
+		return fmt.Errorf("import completed with %d row-level errors", len(result.Errors))
 	}
 
 	return nil

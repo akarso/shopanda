@@ -2,6 +2,7 @@ package importer
 
 import (
 	"context"
+	"database/sql"
 	"encoding/csv"
 	"fmt"
 	"io"
@@ -67,11 +68,19 @@ func (imp *ProductImporter) Import(ctx context.Context, r io.Reader) (*Result, e
 		}
 	}
 
-	result := &Result{}
-	// slug → product ID, to group variants under the same product.
-	slugToProductID := make(map[string]string)
-	lineNum := 1 // 1-indexed; header was line 1.
+	type parsedRow struct {
+		lineNum     int
+		name        string
+		slug        string
+		sku         string
+		desc        string
+		variantName string
+	}
 
+	// 1. Parse all rows, group by slug
+	groups := make(map[string][]parsedRow)
+	var allRows []parsedRow
+	lineNum := 1
 	for {
 		lineNum++
 		record, err := reader.Read()
@@ -79,70 +88,155 @@ func (imp *ProductImporter) Import(ctx context.Context, r io.Reader) (*Result, e
 			break
 		}
 		if err != nil {
-			result.Errors = append(result.Errors, fmt.Sprintf("line %d: %v", lineNum, err))
+			// Can't parse row, skip
+			allRows = append(allRows, parsedRow{lineNum: lineNum})
+			continue
+		}
+		row := parsedRow{
+			lineNum:     lineNum,
+			name:        colVal(record, colIndex, "name"),
+			slug:        colVal(record, colIndex, "slug"),
+			sku:         colVal(record, colIndex, "sku"),
+			desc:        colVal(record, colIndex, "description"),
+			variantName: colVal(record, colIndex, "variant_name"),
+		}
+		allRows = append(allRows, row)
+		groups[row.slug] = append(groups[row.slug], row)
+	}
+
+	result := &Result{}
+	// 2. Validate all rows (required fields, duplicates, etc)
+	for _, row := range allRows {
+		if row.name == "" || row.slug == "" || row.sku == "" {
+			result.Errors = append(result.Errors, fmt.Sprintf("line %d: name, slug, and sku are required", row.lineNum))
 			result.Skipped++
+		}
+	}
+
+	// 3. For each group, validate and write in a transaction
+	for slug, rows := range groups {
+		// Skip group if any row in group failed required fields
+		skip := false
+		for _, row := range rows {
+			if row.name == "" || row.slug == "" || row.sku == "" {
+				skip = true
+				break
+			}
+		}
+		if skip {
 			continue
 		}
 
-		name := colVal(record, colIndex, "name")
-		slug := colVal(record, colIndex, "slug")
-		sku := colVal(record, colIndex, "sku")
-
-		if name == "" || slug == "" || sku == "" {
-			result.Errors = append(result.Errors, fmt.Sprintf("line %d: name, slug, and sku are required", lineNum))
-			result.Skipped++
-			continue
-		}
-
-		// Ensure product exists.
-		productID, exists := slugToProductID[slug]
-		if !exists {
-			// Check DB for existing product with this slug.
-			existing, err := imp.products.FindBySlug(ctx, slug)
-			if err != nil {
-				result.Errors = append(result.Errors, fmt.Sprintf("line %d: find product: %v", lineNum, err))
+		// Check if product exists
+		existing, err := imp.products.FindBySlug(ctx, slug)
+		if err != nil {
+			for _, row := range rows {
+				result.Errors = append(result.Errors, fmt.Sprintf("line %d: find product: %v", row.lineNum, err))
 				result.Skipped++
+			}
+			continue
+		}
+
+		// Prepare product and variants
+		var product *catalog.Product
+		if existing != nil {
+			product = existing
+		} else {
+			p, err := catalog.NewProduct(id.New(), rows[0].name, slug)
+			if err != nil {
+				for _, row := range rows {
+					result.Errors = append(result.Errors, fmt.Sprintf("line %d: new product: %v", row.lineNum, err))
+					result.Skipped++
+				}
 				continue
 			}
-			if existing != nil {
-				productID = existing.ID
-				slugToProductID[slug] = productID
-			} else {
-				// Create product.
-				p, err := catalog.NewProduct(id.New(), name, slug)
-				if err != nil {
-					result.Errors = append(result.Errors, fmt.Sprintf("line %d: new product: %v", lineNum, err))
-					result.Skipped++
-					continue
-				}
-				p.Description = colVal(record, colIndex, "description")
+			p.Description = rows[0].desc
+			product = &p
+		}
 
-				if err := imp.products.Create(ctx, &p); err != nil {
-					result.Errors = append(result.Errors, fmt.Sprintf("line %d: create product: %v", lineNum, err))
+		// Prepare variants
+		var variants []catalog.Variant
+		for _, row := range rows {
+			v, err := catalog.NewVariant(id.New(), product.ID, row.sku)
+			if err != nil {
+				result.Errors = append(result.Errors, fmt.Sprintf("line %d: new variant: %v", row.lineNum, err))
+				result.Skipped++
+				skip = true
+				break
+			}
+			v.Name = row.variantName
+			variants = append(variants, v)
+		}
+		if skip {
+			continue
+		}
+
+		// 4. Write in transaction
+		// Only for new products (not for existing)
+		if existing == nil {
+			// Underlying repo must be able to start a transaction
+			txStarter, ok := imp.products.(interface{ DB() *sql.DB })
+			if !ok {
+				for _, row := range rows {
+					result.Errors = append(result.Errors, fmt.Sprintf("line %d: repo does not support transaction", row.lineNum))
+					result.Skipped++
+				}
+				continue
+			}
+			db := txStarter.DB()
+			tx, err := db.BeginTx(ctx, nil)
+			if err != nil {
+				for _, row := range rows {
+					result.Errors = append(result.Errors, fmt.Sprintf("line %d: begin tx: %v", row.lineNum, err))
+					result.Skipped++
+				}
+				continue
+			}
+			txProducts := imp.products.WithTx(tx)
+			txVariants := imp.variants.WithTx(tx)
+			// Write product
+			if err := txProducts.Create(ctx, product); err != nil {
+				tx.Rollback()
+				for _, row := range rows {
+					result.Errors = append(result.Errors, fmt.Sprintf("line %d: create product: %v", row.lineNum, err))
+					result.Skipped++
+				}
+				continue
+			}
+			// Write variants
+			ok = true
+			for i, v := range variants {
+				if err := txVariants.Create(ctx, &v); err != nil {
+					tx.Rollback()
+					result.Errors = append(result.Errors, fmt.Sprintf("line %d: create variant: %v", rows[i].lineNum, err))
+					result.Skipped++
+					ok = false
+					break
+				}
+			}
+			if !ok {
+				continue
+			}
+			if err := tx.Commit(); err != nil {
+				for _, row := range rows {
+					result.Errors = append(result.Errors, fmt.Sprintf("line %d: commit: %v", row.lineNum, err))
+					result.Skipped++
+				}
+				continue
+			}
+			result.Products++
+			result.Variants += len(variants)
+		} else {
+			// Existing product: just add variants (no transaction)
+			for i, v := range variants {
+				if err := imp.variants.Create(ctx, &v); err != nil {
+					result.Errors = append(result.Errors, fmt.Sprintf("line %d: create variant: %v", rows[i].lineNum, err))
 					result.Skipped++
 					continue
 				}
-				productID = p.ID
-				slugToProductID[slug] = productID
-				result.Products++
+				result.Variants++
 			}
 		}
-
-		// Create variant.
-		v, err := catalog.NewVariant(id.New(), productID, sku)
-		if err != nil {
-			result.Errors = append(result.Errors, fmt.Sprintf("line %d: new variant: %v", lineNum, err))
-			result.Skipped++
-			continue
-		}
-		v.Name = colVal(record, colIndex, "variant_name")
-
-		if err := imp.variants.Create(ctx, &v); err != nil {
-			result.Errors = append(result.Errors, fmt.Sprintf("line %d: create variant: %v", lineNum, err))
-			result.Skipped++
-			continue
-		}
-		result.Variants++
 	}
 
 	return result, nil

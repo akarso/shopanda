@@ -23,4 +23,8 @@ type ProductRepository interface {
 
 	// Update persists changes to an existing product.
 	Update(ctx context.Context, p *Product) error
+
+	// WithTx returns a repository bound to the given transaction.
+	// If tx is nil, returns a non-transactional repo.
+	WithTx(tx interface{}) ProductRepository
 }
