@@ -41,6 +41,7 @@ func (m *mockProductRepo) Create(ctx context.Context, p *catalog.Product) error 
 func (m *mockProductRepo) Update(ctx context.Context, p *catalog.Product) error {
 	return nil
 }
+func (m *mockProductRepo) WithTx(_ interface{}) catalog.ProductRepository { return m }
 
 // --- mock step ---
 
@@ -68,8 +69,8 @@ func (s addListingBlockStep) Apply(ctx *composition.ListingContext) error {
 
 type failStep struct{}
 
-func (failStep) Name() string                                   { return "fail" }
-func (failStep) Apply(ctx *composition.ProductContext) error     { return errors.New("boom") }
+func (failStep) Name() string                                { return "fail" }
+func (failStep) Apply(ctx *composition.ProductContext) error { return errors.New("boom") }
 
 // --- helpers ---
 

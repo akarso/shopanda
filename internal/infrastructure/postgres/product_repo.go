@@ -21,11 +21,18 @@ var _ catalog.ProductRepository = (*ProductRepo)(nil)
 // ProductRepo implements catalog.ProductRepository using PostgreSQL.
 type ProductRepo struct {
 	db *sql.DB
+	tx *sql.Tx
 }
 
 // NewProductRepo returns a new ProductRepo backed by db.
 func NewProductRepo(db *sql.DB) *ProductRepo {
-	return &ProductRepo{db: db}
+	return &ProductRepo{db: db, tx: nil}
+}
+
+// WithTx returns a repo bound to the given transaction.
+func (r *ProductRepo) WithTx(tx interface{}) catalog.ProductRepository {
+	sqlTx, _ := tx.(*sql.Tx)
+	return &ProductRepo{db: r.db, tx: sqlTx}
 }
 
 // FindByID returns a product by its ID.
@@ -34,7 +41,15 @@ func (r *ProductRepo) FindByID(ctx context.Context, id string) (*catalog.Product
 	const q = `SELECT id, name, slug, description, status, attributes, created_at, updated_at
 		FROM products WHERE id = $1`
 
-	p, err := r.scanProduct(r.db.QueryRowContext(ctx, q, id))
+	var querier interface {
+		QueryRowContext(context.Context, string, ...interface{}) *sql.Row
+	}
+	if r.tx != nil {
+		querier = r.tx
+	} else {
+		querier = r.db
+	}
+	p, err := r.scanProduct(querier.QueryRowContext(ctx, q, id))
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
 	}
@@ -50,7 +65,15 @@ func (r *ProductRepo) FindBySlug(ctx context.Context, slug string) (*catalog.Pro
 	const q = `SELECT id, name, slug, description, status, attributes, created_at, updated_at
 		FROM products WHERE slug = $1`
 
-	p, err := r.scanProduct(r.db.QueryRowContext(ctx, q, slug))
+	var querier interface {
+		QueryRowContext(context.Context, string, ...interface{}) *sql.Row
+	}
+	if r.tx != nil {
+		querier = r.tx
+	} else {
+		querier = r.db
+	}
+	p, err := r.scanProduct(querier.QueryRowContext(ctx, q, slug))
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
 	}
@@ -75,7 +98,13 @@ func (r *ProductRepo) List(ctx context.Context, offset, limit int) ([]catalog.Pr
 	const q = `SELECT id, name, slug, description, status, attributes, created_at, updated_at
 		FROM products ORDER BY created_at DESC LIMIT $1 OFFSET $2`
 
-	rows, err := r.db.QueryContext(ctx, q, limit, offset)
+	var rows *sql.Rows
+	var err error
+	if r.tx != nil {
+		rows, err = r.tx.QueryContext(ctx, q, limit, offset)
+	} else {
+		rows, err = r.db.QueryContext(ctx, q, limit, offset)
+	}
 	if err != nil {
 		return nil, fmt.Errorf("product_repo: list: %w", err)
 	}
@@ -105,7 +134,15 @@ func (r *ProductRepo) Create(ctx context.Context, p *catalog.Product) error {
 	const q = `INSERT INTO products (id, name, slug, description, status, attributes, created_at, updated_at)
 		VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`
 
-	_, err = r.db.ExecContext(ctx, q,
+	var execer interface {
+		ExecContext(context.Context, string, ...interface{}) (sql.Result, error)
+	}
+	if r.tx != nil {
+		execer = r.tx
+	} else {
+		execer = r.db
+	}
+	_, err = execer.ExecContext(ctx, q,
 		p.ID, p.Name, p.Slug, p.Description, string(p.Status),
 		attrs, p.CreatedAt, p.UpdatedAt,
 	)
@@ -132,7 +169,15 @@ func (r *ProductRepo) Update(ctx context.Context, p *catalog.Product) error {
 		SET name = $1, slug = $2, description = $3, status = $4, attributes = $5, updated_at = $6
 		WHERE id = $7`
 
-	result, err := r.db.ExecContext(ctx, q,
+	var execer interface {
+		ExecContext(context.Context, string, ...interface{}) (sql.Result, error)
+	}
+	if r.tx != nil {
+		execer = r.tx
+	} else {
+		execer = r.db
+	}
+	result, err := execer.ExecContext(ctx, q,
 		p.Name, p.Slug, p.Description, string(p.Status),
 		attrs, updatedAt, p.ID,
 	)

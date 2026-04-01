@@ -1,10 +1,13 @@
 package main
 
 import (
+	"context"
+	"errors"
 	"fmt"
 	"os"
 
 	"github.com/akarso/shopanda/internal/application/composition"
+	"github.com/akarso/shopanda/internal/application/importer"
 	"github.com/akarso/shopanda/internal/infrastructure/postgres"
 	"github.com/akarso/shopanda/internal/platform/config"
 	"github.com/akarso/shopanda/internal/platform/db"
@@ -40,6 +43,8 @@ func run() error {
 			return runMigrate(cfg, log)
 		case "serve":
 			return runServe(cfg, log)
+		case "import:products":
+			return runImportProducts(cfg, log)
 		default:
 			return fmt.Errorf("unknown command: %s", os.Args[1])
 		}
@@ -111,5 +116,53 @@ func runMigrate(cfg *config.Config, log logger.Logger) error {
 	log.Info("migrate.complete", map[string]interface{}{
 		"applied": applied,
 	})
+	return nil
+}
+
+func runImportProducts(cfg *config.Config, log logger.Logger) error {
+	if len(os.Args) < 3 {
+		return fmt.Errorf("usage: app import:products <file.csv>")
+	}
+	filePath := os.Args[2]
+
+	f, err := os.Open(filePath)
+	if err != nil {
+		return fmt.Errorf("open csv: %w", err)
+	}
+	defer f.Close()
+
+	dsn := config.DatabaseDSN(cfg)
+	conn, err := db.Open(dsn)
+	if err != nil {
+		return fmt.Errorf("database: %w", err)
+	}
+	defer conn.Close()
+
+	productRepo := postgres.NewProductRepo(conn)
+	variantRepo := postgres.NewVariantRepo(conn)
+	imp := importer.NewProductImporter(productRepo, variantRepo, conn)
+
+	log.Info("import.start", map[string]interface{}{"file": filePath})
+
+	result, err := imp.Import(context.Background(), f)
+	if err != nil {
+		return fmt.Errorf("import: %w", err)
+	}
+
+	log.Info("import.complete", map[string]interface{}{
+		"products": result.Products,
+		"variants": result.Variants,
+		"skipped":  result.Skipped,
+		"errors":   len(result.Errors),
+	})
+
+	for _, e := range result.Errors {
+		log.Error("import.row_error", errors.New(e), map[string]interface{}{})
+	}
+
+	if len(result.Errors) > 0 {
+		return fmt.Errorf("import completed with %d row-level errors", len(result.Errors))
+	}
+
 	return nil
 }

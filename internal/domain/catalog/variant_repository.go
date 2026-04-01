@@ -21,4 +21,8 @@ type VariantRepository interface {
 
 	// Update persists changes to an existing variant.
 	Update(ctx context.Context, v *Variant) error
+
+	// WithTx returns a repository bound to the given transaction.
+	// If tx is nil, returns a non-transactional repo.
+	WithTx(tx interface{}) VariantRepository
 }
