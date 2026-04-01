@@ -60,7 +60,7 @@ type mockEntry struct {
 }
 
 func TestBasePriceStep_Name(t *testing.T) {
-	step := pricing.NewBasePriceStep(context.Background(), &mockPriceRepo{})
+	step := pricing.NewBasePriceStep(&mockPriceRepo{})
 	if step.Name() != "base" {
 		t.Errorf("Name() = %q, want %q", step.Name(), "base")
 	}
@@ -71,14 +71,14 @@ func TestBasePriceStep_PopulatesPrices(t *testing.T) {
 		mockEntry{"v1", "EUR", 500},
 		mockEntry{"v2", "EUR", 300},
 	)
-	step := pricing.NewBasePriceStep(context.Background(), repo)
+	step := pricing.NewBasePriceStep(repo)
 
 	pctx, _ := domain.NewPricingContext("EUR")
 	item1, _ := domain.NewPricingItem("v1", 2, shared.MustNewMoney(0, "EUR"))
 	item2, _ := domain.NewPricingItem("v2", 1, shared.MustNewMoney(0, "EUR"))
 	pctx.Items = []domain.PricingItem{item1, item2}
 
-	if err := step.Apply(&pctx); err != nil {
+	if err := step.Apply(context.Background(), &pctx); err != nil {
 		t.Fatalf("apply: %v", err)
 	}
 	if pctx.Items[0].UnitPrice.Amount() != 500 {
@@ -97,13 +97,13 @@ func TestBasePriceStep_PopulatesPrices(t *testing.T) {
 
 func TestBasePriceStep_NoPriceFound(t *testing.T) {
 	repo := &mockPriceRepo{prices: make(map[string]map[string]*domain.Price)}
-	step := pricing.NewBasePriceStep(context.Background(), repo)
+	step := pricing.NewBasePriceStep(repo)
 
 	pctx, _ := domain.NewPricingContext("EUR")
 	item, _ := domain.NewPricingItem("v1", 1, shared.MustNewMoney(0, "EUR"))
 	pctx.Items = []domain.PricingItem{item}
 
-	err := step.Apply(&pctx)
+	err := step.Apply(context.Background(), &pctx)
 	if err == nil {
 		t.Fatal("expected error for missing price")
 	}
@@ -111,13 +111,13 @@ func TestBasePriceStep_NoPriceFound(t *testing.T) {
 
 func TestBasePriceStep_RepoError(t *testing.T) {
 	repo := &mockPriceRepo{err: errors.New("db down")}
-	step := pricing.NewBasePriceStep(context.Background(), repo)
+	step := pricing.NewBasePriceStep(repo)
 
 	pctx, _ := domain.NewPricingContext("EUR")
 	item, _ := domain.NewPricingItem("v1", 1, shared.MustNewMoney(0, "EUR"))
 	pctx.Items = []domain.PricingItem{item}
 
-	err := step.Apply(&pctx)
+	err := step.Apply(context.Background(), &pctx)
 	if err == nil {
 		t.Fatal("expected error from repo")
 	}
@@ -125,10 +125,10 @@ func TestBasePriceStep_RepoError(t *testing.T) {
 
 func TestBasePriceStep_EmptyItems(t *testing.T) {
 	repo := &mockPriceRepo{prices: make(map[string]map[string]*domain.Price)}
-	step := pricing.NewBasePriceStep(context.Background(), repo)
+	step := pricing.NewBasePriceStep(repo)
 
 	pctx, _ := domain.NewPricingContext("EUR")
-	if err := step.Apply(&pctx); err != nil {
+	if err := step.Apply(context.Background(), &pctx); err != nil {
 		t.Fatalf("apply: %v", err)
 	}
 }

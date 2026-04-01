@@ -2,7 +2,7 @@
 """Generate PR-020 files: pipeline executor, finalize step, base price step + tests."""
 import os
 
-BASE = "/Users/akarso/_sites/projects/shopanda"
+BASE = os.path.dirname(os.path.abspath(__file__))
 
 files = {}
 
@@ -10,7 +10,10 @@ files = {}
 files["internal/domain/pricing/pipeline.go"] = '''\
 package pricing
 
-import "fmt"
+import (
+\t"context"
+\t"fmt"
+)
 
 // Pipeline runs pricing steps sequentially against a PricingContext.
 type Pipeline struct {
@@ -23,9 +26,9 @@ func NewPipeline(steps ...PricingStep) Pipeline {
 }
 
 // Execute runs each step in order. An error from any step halts the pipeline.
-func (p Pipeline) Execute(ctx *PricingContext) error {
+func (p Pipeline) Execute(ctx context.Context, pctx *PricingContext) error {
 \tfor _, step := range p.steps {
-\t\tif err := step.Apply(ctx); err != nil {
+\t\tif err := step.Apply(ctx, pctx); err != nil {
 \t\t\treturn fmt.Errorf("pipeline: step %q: %w", step.Name(), err)
 \t\t}
 \t}
@@ -36,6 +39,12 @@ func (p Pipeline) Execute(ctx *PricingContext) error {
 # --- 2. Finalize step ---
 files["internal/domain/pricing/finalize_step.go"] = '''\
 package pricing
+
+import (
+\t"context"
+
+\t"github.com/akarso/shopanda/internal/domain/shared"
+)
 
 // FinalizeStep computes aggregate totals on a PricingContext.
 type FinalizeStep struct{}
@@ -49,18 +58,21 @@ func (s *FinalizeStep) Name() string { return "finalize" }
 
 // Apply sums item totals into Subtotal, aggregates adjustments by type,
 // and computes GrandTotal = Subtotal - DiscountsTotal + TaxTotal + FeesTotal.
-func (s *FinalizeStep) Apply(ctx *PricingContext) error {
-\tsubtotal := ctx.Subtotal
-\tfor _, item := range ctx.Items {
+// Accumulators are reset to zero so calling Apply twice is idempotent.
+func (s *FinalizeStep) Apply(_ context.Context, pctx *PricingContext) error {
+\tzero := shared.MustZero(pctx.Currency)
+
+\tsubtotal := zero
+\tfor _, item := range pctx.Items {
 \t\tsubtotal = subtotal.Add(item.Total)
 \t}
-\tctx.Subtotal = subtotal
+\tpctx.Subtotal = subtotal
 
-\tdiscounts := ctx.DiscountsTotal
-\ttaxes := ctx.TaxTotal
-\tfees := ctx.FeesTotal
+\tdiscounts := zero
+\ttaxes := zero
+\tfees := zero
 
-\tfor _, item := range ctx.Items {
+\tfor _, item := range pctx.Items {
 \t\tfor _, adj := range item.Adjustments {
 \t\t\tswitch adj.Type {
 \t\t\tcase AdjustmentDiscount:
@@ -73,7 +85,7 @@ func (s *FinalizeStep) Apply(ctx *PricingContext) error {
 \t\t}
 \t}
 
-\tfor _, adj := range ctx.Adjustments {
+\tfor _, adj := range pctx.Adjustments {
 \t\tswitch adj.Type {
 \t\tcase AdjustmentDiscount:
 \t\t\tdiscounts = discounts.Add(adj.Amount)
@@ -84,11 +96,11 @@ func (s *FinalizeStep) Apply(ctx *PricingContext) error {
 \t\t}
 \t}
 
-\tctx.DiscountsTotal = discounts
-\tctx.TaxTotal = taxes
-\tctx.FeesTotal = fees
+\tpctx.DiscountsTotal = discounts
+\tpctx.TaxTotal = taxes
+\tpctx.FeesTotal = fees
 
-\tctx.GrandTotal = subtotal.Sub(discounts).Add(taxes).Add(fees)
+\tpctx.GrandTotal = subtotal.Sub(discounts).Add(taxes).Add(fees)
 \treturn nil
 }
 '''
@@ -108,21 +120,20 @@ import (
 
 // BasePriceStep populates item prices from the price repository.
 type BasePriceStep struct {
-\tctx    context.Context
 \tprices domain.PriceRepository
 }
 
 // NewBasePriceStep returns a new BasePriceStep.
-func NewBasePriceStep(ctx context.Context, prices domain.PriceRepository) *BasePriceStep {
-\treturn &BasePriceStep{ctx: ctx, prices: prices}
+func NewBasePriceStep(prices domain.PriceRepository) *BasePriceStep {
+\treturn &BasePriceStep{prices: prices}
 }
 
 func (s *BasePriceStep) Name() string { return "base" }
 
 // Apply looks up the base price for each item and sets UnitPrice and Total.
-func (s *BasePriceStep) Apply(pctx *domain.PricingContext) error {
+func (s *BasePriceStep) Apply(ctx context.Context, pctx *domain.PricingContext) error {
 \tfor i, item := range pctx.Items {
-\t\tprice, err := s.prices.FindByVariantAndCurrency(s.ctx, item.VariantID, pctx.Currency)
+\t\tprice, err := s.prices.FindByVariantAndCurrency(ctx, item.VariantID, pctx.Currency)
 \t\tif err != nil {
 \t\t\treturn fmt.Errorf("base price: variant %s: %w", item.VariantID, err)
 \t\t}
@@ -145,6 +156,7 @@ files["internal/domain/pricing/pipeline_test.go"] = '''\
 package pricing_test
 
 import (
+\t"context"
 \t"errors"
 \t"testing"
 
@@ -156,16 +168,16 @@ type stubStep struct {
 \tfn   func(*pricing.PricingContext) error
 }
 
-func (s *stubStep) Name() string                            { return s.name }
-func (s *stubStep) Apply(ctx *pricing.PricingContext) error  { return s.fn(ctx) }
+func (s *stubStep) Name() string                                              { return s.name }
+func (s *stubStep) Apply(_ context.Context, ctx *pricing.PricingContext) error { return s.fn(ctx) }
 
 func TestPipelineExecute_NoSteps(t *testing.T) {
 \tp := pricing.NewPipeline()
-\tctx, err := pricing.NewPricingContext("EUR")
+\tpctx, err := pricing.NewPricingContext("EUR")
 \tif err != nil {
 \t\tt.Fatalf("new context: %v", err)
 \t}
-\tif err := p.Execute(&ctx); err != nil {
+\tif err := p.Execute(context.Background(), &pctx); err != nil {
 \t\tt.Fatalf("execute: %v", err)
 \t}
 }
@@ -177,8 +189,8 @@ func TestPipelineExecute_SingleStep(t *testing.T) {
 \t\treturn nil
 \t}}
 \tp := pricing.NewPipeline(step)
-\tctx, _ := pricing.NewPricingContext("EUR")
-\tif err := p.Execute(&ctx); err != nil {
+\tpctx, _ := pricing.NewPricingContext("EUR")
+\tif err := p.Execute(context.Background(), &pctx); err != nil {
 \t\tt.Fatalf("execute: %v", err)
 \t}
 \tif !called {
@@ -197,8 +209,8 @@ func TestPipelineExecute_StepOrder(t *testing.T) {
 \t\treturn nil
 \t}}
 \tp := pricing.NewPipeline(s1, s2)
-\tctx, _ := pricing.NewPricingContext("EUR")
-\tif err := p.Execute(&ctx); err != nil {
+\tpctx, _ := pricing.NewPricingContext("EUR")
+\tif err := p.Execute(context.Background(), &pctx); err != nil {
 \t\tt.Fatalf("execute: %v", err)
 \t}
 \tif len(order) != 2 || order[0] != "first" || order[1] != "second" {
@@ -216,8 +228,8 @@ func TestPipelineExecute_StopOnError(t *testing.T) {
 \t\treturn nil
 \t}}
 \tp := pricing.NewPipeline(s1, s2)
-\tctx, _ := pricing.NewPricingContext("EUR")
-\terr := p.Execute(&ctx)
+\tpctx, _ := pricing.NewPricingContext("EUR")
+\terr := p.Execute(context.Background(), &pctx)
 \tif err == nil {
 \t\tt.Fatal("expected error")
 \t}
@@ -231,8 +243,8 @@ func TestPipelineExecute_ErrorWrapsStepName(t *testing.T) {
 \t\treturn errors.New("whoops")
 \t}}
 \tp := pricing.NewPipeline(step)
-\tctx, _ := pricing.NewPricingContext("EUR")
-\terr := p.Execute(&ctx)
+\tpctx, _ := pricing.NewPricingContext("EUR")
+\terr := p.Execute(context.Background(), &pctx)
 \tif err == nil {
 \t\tt.Fatal("expected error")
 \t}
@@ -248,6 +260,7 @@ files["internal/domain/pricing/finalize_step_test.go"] = '''\
 package pricing_test
 
 import (
+\t"context"
 \t"testing"
 
 \t"github.com/akarso/shopanda/internal/domain/pricing"
@@ -262,86 +275,114 @@ func TestFinalizeStep_Name(t *testing.T) {
 }
 
 func TestFinalizeStep_SubtotalFromItems(t *testing.T) {
-\tctx, _ := pricing.NewPricingContext("EUR")
+\tpctx, _ := pricing.NewPricingContext("EUR")
 \titem1, _ := pricing.NewPricingItem("v1", 2, shared.MustNewMoney(500, "EUR"))
 \titem2, _ := pricing.NewPricingItem("v2", 1, shared.MustNewMoney(300, "EUR"))
-\tctx.Items = []pricing.PricingItem{item1, item2}
+\tpctx.Items = []pricing.PricingItem{item1, item2}
 
 \ts := pricing.NewFinalizeStep()
-\tif err := s.Apply(&ctx); err != nil {
+\tif err := s.Apply(context.Background(), &pctx); err != nil {
 \t\tt.Fatalf("apply: %v", err)
 \t}
-\tif ctx.Subtotal.Amount() != 1300 {
-\t\tt.Errorf("Subtotal = %d, want 1300", ctx.Subtotal.Amount())
+\tif pctx.Subtotal.Amount() != 1300 {
+\t\tt.Errorf("Subtotal = %d, want 1300", pctx.Subtotal.Amount())
 \t}
-\tif ctx.GrandTotal.Amount() != 1300 {
-\t\tt.Errorf("GrandTotal = %d, want 1300", ctx.GrandTotal.Amount())
+\tif pctx.GrandTotal.Amount() != 1300 {
+\t\tt.Errorf("GrandTotal = %d, want 1300", pctx.GrandTotal.Amount())
 \t}
 }
 
 func TestFinalizeStep_EmptyItems(t *testing.T) {
-\tctx, _ := pricing.NewPricingContext("EUR")
+\tpctx, _ := pricing.NewPricingContext("EUR")
 \ts := pricing.NewFinalizeStep()
-\tif err := s.Apply(&ctx); err != nil {
+\tif err := s.Apply(context.Background(), &pctx); err != nil {
 \t\tt.Fatalf("apply: %v", err)
 \t}
-\tif ctx.Subtotal.Amount() != 0 {
-\t\tt.Errorf("Subtotal = %d, want 0", ctx.Subtotal.Amount())
+\tif pctx.Subtotal.Amount() != 0 {
+\t\tt.Errorf("Subtotal = %d, want 0", pctx.Subtotal.Amount())
 \t}
-\tif ctx.GrandTotal.Amount() != 0 {
-\t\tt.Errorf("GrandTotal = %d, want 0", ctx.GrandTotal.Amount())
+\tif pctx.GrandTotal.Amount() != 0 {
+\t\tt.Errorf("GrandTotal = %d, want 0", pctx.GrandTotal.Amount())
 \t}
 }
 
 func TestFinalizeStep_WithContextAdjustments(t *testing.T) {
-\tctx, _ := pricing.NewPricingContext("EUR")
+\tpctx, _ := pricing.NewPricingContext("EUR")
 \titem, _ := pricing.NewPricingItem("v1", 1, shared.MustNewMoney(1000, "EUR"))
-\tctx.Items = []pricing.PricingItem{item}
+\tpctx.Items = []pricing.PricingItem{item}
 
 \tdiscount, _ := pricing.NewAdjustment(pricing.AdjustmentDiscount, "PROMO", shared.MustNewMoney(100, "EUR"))
 \ttax, _ := pricing.NewAdjustment(pricing.AdjustmentTax, "VAT", shared.MustNewMoney(180, "EUR"))
 \tfee, _ := pricing.NewAdjustment(pricing.AdjustmentFee, "SHIP", shared.MustNewMoney(50, "EUR"))
-\tctx.Adjustments = []pricing.Adjustment{discount, tax, fee}
+\tpctx.Adjustments = []pricing.Adjustment{discount, tax, fee}
 
 \ts := pricing.NewFinalizeStep()
-\tif err := s.Apply(&ctx); err != nil {
+\tif err := s.Apply(context.Background(), &pctx); err != nil {
 \t\tt.Fatalf("apply: %v", err)
 \t}
-\tif ctx.Subtotal.Amount() != 1000 {
-\t\tt.Errorf("Subtotal = %d, want 1000", ctx.Subtotal.Amount())
+\tif pctx.Subtotal.Amount() != 1000 {
+\t\tt.Errorf("Subtotal = %d, want 1000", pctx.Subtotal.Amount())
 \t}
-\tif ctx.DiscountsTotal.Amount() != 100 {
-\t\tt.Errorf("DiscountsTotal = %d, want 100", ctx.DiscountsTotal.Amount())
+\tif pctx.DiscountsTotal.Amount() != 100 {
+\t\tt.Errorf("DiscountsTotal = %d, want 100", pctx.DiscountsTotal.Amount())
 \t}
-\tif ctx.TaxTotal.Amount() != 180 {
-\t\tt.Errorf("TaxTotal = %d, want 180", ctx.TaxTotal.Amount())
+\tif pctx.TaxTotal.Amount() != 180 {
+\t\tt.Errorf("TaxTotal = %d, want 180", pctx.TaxTotal.Amount())
 \t}
-\tif ctx.FeesTotal.Amount() != 50 {
-\t\tt.Errorf("FeesTotal = %d, want 50", ctx.FeesTotal.Amount())
+\tif pctx.FeesTotal.Amount() != 50 {
+\t\tt.Errorf("FeesTotal = %d, want 50", pctx.FeesTotal.Amount())
 \t}
 \t// GrandTotal = 1000 - 100 + 180 + 50 = 1130
-\tif ctx.GrandTotal.Amount() != 1130 {
-\t\tt.Errorf("GrandTotal = %d, want 1130", ctx.GrandTotal.Amount())
+\tif pctx.GrandTotal.Amount() != 1130 {
+\t\tt.Errorf("GrandTotal = %d, want 1130", pctx.GrandTotal.Amount())
 \t}
 }
 
 func TestFinalizeStep_WithItemAdjustments(t *testing.T) {
-\tctx, _ := pricing.NewPricingContext("EUR")
+\tpctx, _ := pricing.NewPricingContext("EUR")
 \titem, _ := pricing.NewPricingItem("v1", 1, shared.MustNewMoney(1000, "EUR"))
 \tdiscount, _ := pricing.NewAdjustment(pricing.AdjustmentDiscount, "ITEM10", shared.MustNewMoney(100, "EUR"))
 \titem.Adjustments = []pricing.Adjustment{discount}
-\tctx.Items = []pricing.PricingItem{item}
+\tpctx.Items = []pricing.PricingItem{item}
 
 \ts := pricing.NewFinalizeStep()
-\tif err := s.Apply(&ctx); err != nil {
+\tif err := s.Apply(context.Background(), &pctx); err != nil {
 \t\tt.Fatalf("apply: %v", err)
 \t}
-\tif ctx.DiscountsTotal.Amount() != 100 {
-\t\tt.Errorf("DiscountsTotal = %d, want 100", ctx.DiscountsTotal.Amount())
+\tif pctx.DiscountsTotal.Amount() != 100 {
+\t\tt.Errorf("DiscountsTotal = %d, want 100", pctx.DiscountsTotal.Amount())
 \t}
 \t// GrandTotal = 1000 - 100 = 900
-\tif ctx.GrandTotal.Amount() != 900 {
-\t\tt.Errorf("GrandTotal = %d, want 900", ctx.GrandTotal.Amount())
+\tif pctx.GrandTotal.Amount() != 900 {
+\t\tt.Errorf("GrandTotal = %d, want 900", pctx.GrandTotal.Amount())
+\t}
+}
+
+func TestFinalizeStep_Idempotent(t *testing.T) {
+\tpctx, _ := pricing.NewPricingContext("EUR")
+\titem, _ := pricing.NewPricingItem("v1", 2, shared.MustNewMoney(500, "EUR"))
+\tdiscount, _ := pricing.NewAdjustment(pricing.AdjustmentDiscount, "PROMO", shared.MustNewMoney(50, "EUR"))
+\tpctx.Items = []pricing.PricingItem{item}
+\tpctx.Adjustments = []pricing.Adjustment{discount}
+
+\ts := pricing.NewFinalizeStep()
+
+\t// Apply twice -- totals must be identical.
+\tif err := s.Apply(context.Background(), &pctx); err != nil {
+\t\tt.Fatalf("first apply: %v", err)
+\t}
+\tif err := s.Apply(context.Background(), &pctx); err != nil {
+\t\tt.Fatalf("second apply: %v", err)
+\t}
+\tif pctx.Subtotal.Amount() != 1000 {
+\t\tt.Errorf("Subtotal = %d, want 1000", pctx.Subtotal.Amount())
+\t}
+\tif pctx.DiscountsTotal.Amount() != 50 {
+\t\tt.Errorf("DiscountsTotal = %d, want 50", pctx.DiscountsTotal.Amount())
+\t}
+\t// GrandTotal = 1000 - 50 = 950
+\tif pctx.GrandTotal.Amount() != 950 {
+\t\tt.Errorf("GrandTotal = %d, want 950", pctx.GrandTotal.Amount())
 \t}
 }
 '''
@@ -410,7 +451,7 @@ type mockEntry struct {
 }
 
 func TestBasePriceStep_Name(t *testing.T) {
-\tstep := pricing.NewBasePriceStep(context.Background(), &mockPriceRepo{})
+\tstep := pricing.NewBasePriceStep(&mockPriceRepo{})
 \tif step.Name() != "base" {
 \t\tt.Errorf("Name() = %q, want %q", step.Name(), "base")
 \t}
@@ -421,14 +462,14 @@ func TestBasePriceStep_PopulatesPrices(t *testing.T) {
 \t\tmockEntry{"v1", "EUR", 500},
 \t\tmockEntry{"v2", "EUR", 300},
 \t)
-\tstep := pricing.NewBasePriceStep(context.Background(), repo)
+\tstep := pricing.NewBasePriceStep(repo)
 
 \tpctx, _ := domain.NewPricingContext("EUR")
 \titem1, _ := domain.NewPricingItem("v1", 2, shared.MustNewMoney(0, "EUR"))
 \titem2, _ := domain.NewPricingItem("v2", 1, shared.MustNewMoney(0, "EUR"))
 \tpctx.Items = []domain.PricingItem{item1, item2}
 
-\tif err := step.Apply(&pctx); err != nil {
+\tif err := step.Apply(context.Background(), &pctx); err != nil {
 \t\tt.Fatalf("apply: %v", err)
 \t}
 \tif pctx.Items[0].UnitPrice.Amount() != 500 {
@@ -447,13 +488,13 @@ func TestBasePriceStep_PopulatesPrices(t *testing.T) {
 
 func TestBasePriceStep_NoPriceFound(t *testing.T) {
 \trepo := &mockPriceRepo{prices: make(map[string]map[string]*domain.Price)}
-\tstep := pricing.NewBasePriceStep(context.Background(), repo)
+\tstep := pricing.NewBasePriceStep(repo)
 
 \tpctx, _ := domain.NewPricingContext("EUR")
 \titem, _ := domain.NewPricingItem("v1", 1, shared.MustNewMoney(0, "EUR"))
 \tpctx.Items = []domain.PricingItem{item}
 
-\terr := step.Apply(&pctx)
+\terr := step.Apply(context.Background(), &pctx)
 \tif err == nil {
 \t\tt.Fatal("expected error for missing price")
 \t}
@@ -461,13 +502,13 @@ func TestBasePriceStep_NoPriceFound(t *testing.T) {
 
 func TestBasePriceStep_RepoError(t *testing.T) {
 \trepo := &mockPriceRepo{err: errors.New("db down")}
-\tstep := pricing.NewBasePriceStep(context.Background(), repo)
+\tstep := pricing.NewBasePriceStep(repo)
 
 \tpctx, _ := domain.NewPricingContext("EUR")
 \titem, _ := domain.NewPricingItem("v1", 1, shared.MustNewMoney(0, "EUR"))
 \tpctx.Items = []domain.PricingItem{item}
 
-\terr := step.Apply(&pctx)
+\terr := step.Apply(context.Background(), &pctx)
 \tif err == nil {
 \t\tt.Fatal("expected error from repo")
 \t}
@@ -475,10 +516,10 @@ func TestBasePriceStep_RepoError(t *testing.T) {
 
 func TestBasePriceStep_EmptyItems(t *testing.T) {
 \trepo := &mockPriceRepo{prices: make(map[string]map[string]*domain.Price)}
-\tstep := pricing.NewBasePriceStep(context.Background(), repo)
+\tstep := pricing.NewBasePriceStep(repo)
 
 \tpctx, _ := domain.NewPricingContext("EUR")
-\tif err := step.Apply(&pctx); err != nil {
+\tif err := step.Apply(context.Background(), &pctx); err != nil {
 \t\tt.Fatalf("apply: %v", err)
 \t}
 }

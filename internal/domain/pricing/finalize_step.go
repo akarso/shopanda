@@ -1,5 +1,11 @@
 package pricing
 
+import (
+	"context"
+
+	"github.com/akarso/shopanda/internal/domain/shared"
+)
+
 // FinalizeStep computes aggregate totals on a PricingContext.
 type FinalizeStep struct{}
 
@@ -12,18 +18,21 @@ func (s *FinalizeStep) Name() string { return "finalize" }
 
 // Apply sums item totals into Subtotal, aggregates adjustments by type,
 // and computes GrandTotal = Subtotal - DiscountsTotal + TaxTotal + FeesTotal.
-func (s *FinalizeStep) Apply(ctx *PricingContext) error {
-	subtotal := ctx.Subtotal
-	for _, item := range ctx.Items {
+// Accumulators are reset to zero so calling Apply twice is idempotent.
+func (s *FinalizeStep) Apply(_ context.Context, pctx *PricingContext) error {
+	zero := shared.MustZero(pctx.Currency)
+
+	subtotal := zero
+	for _, item := range pctx.Items {
 		subtotal = subtotal.Add(item.Total)
 	}
-	ctx.Subtotal = subtotal
+	pctx.Subtotal = subtotal
 
-	discounts := ctx.DiscountsTotal
-	taxes := ctx.TaxTotal
-	fees := ctx.FeesTotal
+	discounts := zero
+	taxes := zero
+	fees := zero
 
-	for _, item := range ctx.Items {
+	for _, item := range pctx.Items {
 		for _, adj := range item.Adjustments {
 			switch adj.Type {
 			case AdjustmentDiscount:
@@ -36,7 +45,7 @@ func (s *FinalizeStep) Apply(ctx *PricingContext) error {
 		}
 	}
 
-	for _, adj := range ctx.Adjustments {
+	for _, adj := range pctx.Adjustments {
 		switch adj.Type {
 		case AdjustmentDiscount:
 			discounts = discounts.Add(adj.Amount)
@@ -47,10 +56,10 @@ func (s *FinalizeStep) Apply(ctx *PricingContext) error {
 		}
 	}
 
-	ctx.DiscountsTotal = discounts
-	ctx.TaxTotal = taxes
-	ctx.FeesTotal = fees
+	pctx.DiscountsTotal = discounts
+	pctx.TaxTotal = taxes
+	pctx.FeesTotal = fees
 
-	ctx.GrandTotal = subtotal.Sub(discounts).Add(taxes).Add(fees)
+	pctx.GrandTotal = subtotal.Sub(discounts).Add(taxes).Add(fees)
 	return nil
 }

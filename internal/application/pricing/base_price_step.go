@@ -9,21 +9,20 @@ import (
 
 // BasePriceStep populates item prices from the price repository.
 type BasePriceStep struct {
-	ctx    context.Context
 	prices domain.PriceRepository
 }
 
 // NewBasePriceStep returns a new BasePriceStep.
-func NewBasePriceStep(ctx context.Context, prices domain.PriceRepository) *BasePriceStep {
-	return &BasePriceStep{ctx: ctx, prices: prices}
+func NewBasePriceStep(prices domain.PriceRepository) *BasePriceStep {
+	return &BasePriceStep{prices: prices}
 }
 
 func (s *BasePriceStep) Name() string { return "base" }
 
 // Apply looks up the base price for each item and sets UnitPrice and Total.
-func (s *BasePriceStep) Apply(pctx *domain.PricingContext) error {
+func (s *BasePriceStep) Apply(ctx context.Context, pctx *domain.PricingContext) error {
 	for i, item := range pctx.Items {
-		price, err := s.prices.FindByVariantAndCurrency(s.ctx, item.VariantID, pctx.Currency)
+		price, err := s.prices.FindByVariantAndCurrency(ctx, item.VariantID, pctx.Currency)
 		if err != nil {
 			return fmt.Errorf("base price: variant %s: %w", item.VariantID, err)
 		}

@@ -1,6 +1,9 @@
 package pricing
 
-import "fmt"
+import (
+	"context"
+	"fmt"
+)
 
 // Pipeline runs pricing steps sequentially against a PricingContext.
 type Pipeline struct {
@@ -13,9 +16,9 @@ func NewPipeline(steps ...PricingStep) Pipeline {
 }
 
 // Execute runs each step in order. An error from any step halts the pipeline.
-func (p Pipeline) Execute(ctx *PricingContext) error {
+func (p Pipeline) Execute(ctx context.Context, pctx *PricingContext) error {
 	for _, step := range p.steps {
-		if err := step.Apply(ctx); err != nil {
+		if err := step.Apply(ctx, pctx); err != nil {
 			return fmt.Errorf("pipeline: step %q: %w", step.Name(), err)
 		}
 	}

@@ -1,6 +1,7 @@
 package pricing_test
 
 import (
+	"context"
 	"errors"
 	"testing"
 
@@ -12,16 +13,16 @@ type stubStep struct {
 	fn   func(*pricing.PricingContext) error
 }
 
-func (s *stubStep) Name() string                            { return s.name }
-func (s *stubStep) Apply(ctx *pricing.PricingContext) error  { return s.fn(ctx) }
+func (s *stubStep) Name() string                                               { return s.name }
+func (s *stubStep) Apply(_ context.Context, ctx *pricing.PricingContext) error { return s.fn(ctx) }
 
 func TestPipelineExecute_NoSteps(t *testing.T) {
 	p := pricing.NewPipeline()
-	ctx, err := pricing.NewPricingContext("EUR")
+	pctx, err := pricing.NewPricingContext("EUR")
 	if err != nil {
 		t.Fatalf("new context: %v", err)
 	}
-	if err := p.Execute(&ctx); err != nil {
+	if err := p.Execute(context.Background(), &pctx); err != nil {
 		t.Fatalf("execute: %v", err)
 	}
 }
@@ -33,8 +34,8 @@ func TestPipelineExecute_SingleStep(t *testing.T) {
 		return nil
 	}}
 	p := pricing.NewPipeline(step)
-	ctx, _ := pricing.NewPricingContext("EUR")
-	if err := p.Execute(&ctx); err != nil {
+	pctx, _ := pricing.NewPricingContext("EUR")
+	if err := p.Execute(context.Background(), &pctx); err != nil {
 		t.Fatalf("execute: %v", err)
 	}
 	if !called {
@@ -53,8 +54,8 @@ func TestPipelineExecute_StepOrder(t *testing.T) {
 		return nil
 	}}
 	p := pricing.NewPipeline(s1, s2)
-	ctx, _ := pricing.NewPricingContext("EUR")
-	if err := p.Execute(&ctx); err != nil {
+	pctx, _ := pricing.NewPricingContext("EUR")
+	if err := p.Execute(context.Background(), &pctx); err != nil {
 		t.Fatalf("execute: %v", err)
 	}
 	if len(order) != 2 || order[0] != "first" || order[1] != "second" {
@@ -72,8 +73,8 @@ func TestPipelineExecute_StopOnError(t *testing.T) {
 		return nil
 	}}
 	p := pricing.NewPipeline(s1, s2)
-	ctx, _ := pricing.NewPricingContext("EUR")
-	err := p.Execute(&ctx)
+	pctx, _ := pricing.NewPricingContext("EUR")
+	err := p.Execute(context.Background(), &pctx)
 	if err == nil {
 		t.Fatal("expected error")
 	}
@@ -87,8 +88,8 @@ func TestPipelineExecute_ErrorWrapsStepName(t *testing.T) {
 		return errors.New("whoops")
 	}}
 	p := pricing.NewPipeline(step)
-	ctx, _ := pricing.NewPricingContext("EUR")
-	err := p.Execute(&ctx)
+	pctx, _ := pricing.NewPricingContext("EUR")
+	err := p.Execute(context.Background(), &pctx)
 	if err == nil {
 		t.Fatal("expected error")
 	}
