@@ -39,3 +39,27 @@ func TestNewPriceEmptyVariantID(t *testing.T) {
 		t.Fatal("expected error for empty variant id")
 	}
 }
+
+func TestNewPriceZeroAmount(t *testing.T) {
+	amount := shared.MustNewMoney(0, "EUR")
+	_, err := NewPrice(id.New(), "v1", amount)
+	if err == nil {
+		t.Fatal("expected error for zero amount")
+	}
+}
+
+func TestNewPriceZeroValueMoney(t *testing.T) {
+	var amount shared.Money // zero value — empty currency
+	_, err := NewPrice(id.New(), "v1", amount)
+	if err == nil {
+		t.Fatal("expected error for zero-value Money")
+	}
+}
+
+func TestNewPriceNegativeAmount(t *testing.T) {
+	amount := shared.MustNewMoney(-100, "EUR")
+	_, err := NewPrice(id.New(), "v1", amount)
+	if err == nil {
+		t.Fatal("expected error for negative amount")
+	}
+}

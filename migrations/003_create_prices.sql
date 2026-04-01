@@ -1,7 +1,7 @@
 CREATE TABLE prices (
     id          UUID PRIMARY KEY,
     variant_id  UUID NOT NULL REFERENCES variants(id) ON DELETE CASCADE,
-    currency    TEXT NOT NULL CHECK (length(currency) = 3),
+    currency    TEXT NOT NULL CHECK (length(currency) = 3 AND currency = upper(currency)),
     amount      BIGINT NOT NULL,
     created_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
     UNIQUE (variant_id, currency)

@@ -23,6 +23,12 @@ func NewPrice(id, variantID string, amount shared.Money) (Price, error) {
 	if variantID == "" {
 		return Price{}, errors.New("price variant_id must not be empty")
 	}
+	if amount.Currency() == "" {
+		return Price{}, errors.New("price amount must have a valid currency")
+	}
+	if !amount.IsPositive() {
+		return Price{}, errors.New("price amount must be positive")
+	}
 	return Price{
 		ID:        id,
 		VariantID: variantID,

@@ -89,7 +89,9 @@ func (r *PriceRepo) Upsert(ctx context.Context, p *pricing.Price) error {
 	const q = `INSERT INTO prices (id, variant_id, currency, amount, created_at)
 		VALUES ($1, $2, $3, $4, $5)
 		ON CONFLICT (variant_id, currency) DO UPDATE
-		SET amount = EXCLUDED.amount`
+		SET amount = EXCLUDED.amount,
+		    id = EXCLUDED.id,
+		    created_at = EXCLUDED.created_at`
 
 	_, err := r.db.ExecContext(ctx, q,
 		p.ID, p.VariantID, p.Amount.Currency(), p.Amount.Amount(), p.CreatedAt,

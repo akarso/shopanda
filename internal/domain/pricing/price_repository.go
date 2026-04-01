@@ -8,7 +8,9 @@ type PriceRepository interface {
 	// Returns a nil price and no error when no price exists.
 	FindByVariantAndCurrency(ctx context.Context, variantID, currency string) (*Price, error)
 
-	// ListByVariantID returns all prices for a variant (one per currency).
+	// ListByVariantID returns all prices for a variant (one per currency),
+	// ordered ascending by currency code. All implementations must preserve
+	// this ordering so callers can rely on the sort.
 	ListByVariantID(ctx context.Context, variantID string) ([]Price, error)
 
 	// Upsert creates or updates a price for a variant+currency pair.
