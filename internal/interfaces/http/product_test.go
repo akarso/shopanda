@@ -41,7 +41,7 @@ func (m *mockProductRepo) Create(ctx context.Context, p *catalog.Product) error 
 func (m *mockProductRepo) Update(ctx context.Context, p *catalog.Product) error {
 	return nil
 }
-func (m *mockProductRepo) WithTx(_ interface{}) catalog.ProductRepository { return m }
+func (m *mockProductRepo) WithTx(_ catalog.Tx) catalog.ProductRepository { return m }
 
 // --- mock step ---
 

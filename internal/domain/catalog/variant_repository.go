@@ -23,6 +23,5 @@ type VariantRepository interface {
 	Update(ctx context.Context, v *Variant) error
 
 	// WithTx returns a repository bound to the given transaction.
-	// If tx is nil, returns a non-transactional repo.
-	WithTx(tx interface{}) VariantRepository
+	WithTx(tx Tx) VariantRepository
 }

@@ -50,7 +50,7 @@ func (m *mockAdminProductRepo) Update(ctx context.Context, p *catalog.Product) e
 	}
 	return nil
 }
-func (m *mockAdminProductRepo) WithTx(_ interface{}) catalog.ProductRepository { return m }
+func (m *mockAdminProductRepo) WithTx(_ catalog.Tx) catalog.ProductRepository { return m }
 
 // --- helpers ---
 

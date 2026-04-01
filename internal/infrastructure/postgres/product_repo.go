@@ -30,8 +30,11 @@ func NewProductRepo(db *sql.DB) *ProductRepo {
 }
 
 // WithTx returns a repo bound to the given transaction.
-func (r *ProductRepo) WithTx(tx interface{}) catalog.ProductRepository {
-	sqlTx, _ := tx.(*sql.Tx)
+func (r *ProductRepo) WithTx(tx catalog.Tx) catalog.ProductRepository {
+	sqlTx, ok := tx.(*sql.Tx)
+	if !ok {
+		panic(fmt.Sprintf("product_repo: WithTx expects *sql.Tx, got %T", tx))
+	}
 	return &ProductRepo{db: r.db, tx: sqlTx}
 }
 

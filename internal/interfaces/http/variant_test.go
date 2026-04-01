@@ -38,7 +38,7 @@ func (m *mockVariantProductRepo) Create(ctx context.Context, p *catalog.Product)
 func (m *mockVariantProductRepo) Update(ctx context.Context, p *catalog.Product) error {
 	return nil
 }
-func (m *mockVariantProductRepo) WithTx(_ interface{}) catalog.ProductRepository { return m }
+func (m *mockVariantProductRepo) WithTx(_ catalog.Tx) catalog.ProductRepository { return m }
 
 type mockVariantRepo struct {
 	findByIDFn      func(ctx context.Context, id string) (*catalog.Variant, error)
@@ -74,7 +74,7 @@ func (m *mockVariantRepo) Update(ctx context.Context, v *catalog.Variant) error 
 	}
 	return nil
 }
-func (m *mockVariantRepo) WithTx(_ interface{}) catalog.VariantRepository { return m }
+func (m *mockVariantRepo) WithTx(_ catalog.Tx) catalog.VariantRepository { return m }
 
 // --- helpers ---
 
