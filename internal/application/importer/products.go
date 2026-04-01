@@ -201,11 +201,13 @@ func (imp *ProductImporter) Import(ctx context.Context, r io.Reader) (*Result, e
 			}
 			// Write variants
 			allOk := true
-			for i, v := range variants {
+			for _, v := range variants {
 				if err := txVariants.Create(ctx, &v); err != nil {
 					tx.Rollback()
-					result.Errors = append(result.Errors, fmt.Sprintf("line %d: create variant: %v", rows[i].lineNum, err))
-					result.Skipped++
+					for _, row := range rows {
+						result.Errors = append(result.Errors, fmt.Sprintf("line %d: create variant (rollback slug %q): %v", row.lineNum, slug, err))
+						result.Skipped++
+					}
 					allOk = false
 					break
 				}
@@ -240,8 +242,42 @@ func (imp *ProductImporter) Import(ctx context.Context, r io.Reader) (*Result, e
 				}
 				result.Variants++
 			}
+		} else if imp.txStarter != nil {
+			// Existing product + txStarter: add variants in a transaction
+			tx, err := imp.txStarter.BeginTx(ctx, nil)
+			if err != nil {
+				for _, row := range rows {
+					result.Errors = append(result.Errors, fmt.Sprintf("line %d: begin tx: %v", row.lineNum, err))
+					result.Skipped++
+				}
+				continue
+			}
+			txVariants := imp.variants.WithTx(tx)
+			allOk := true
+			for _, v := range variants {
+				if err := txVariants.Create(ctx, &v); err != nil {
+					tx.Rollback()
+					for _, row := range rows {
+						result.Errors = append(result.Errors, fmt.Sprintf("line %d: create variant (rollback slug %q): %v", row.lineNum, slug, err))
+						result.Skipped++
+					}
+					allOk = false
+					break
+				}
+			}
+			if !allOk {
+				continue
+			}
+			if err := tx.Commit(); err != nil {
+				for _, row := range rows {
+					result.Errors = append(result.Errors, fmt.Sprintf("line %d: commit: %v", row.lineNum, err))
+					result.Skipped++
+				}
+				continue
+			}
+			result.Variants += len(variants)
 		} else {
-			// Existing product: just add variants (no transaction)
+			// Existing product, no txStarter: direct writes
 			for i, v := range variants {
 				if err := imp.variants.Create(ctx, &v); err != nil {
 					result.Errors = append(result.Errors, fmt.Sprintf("line %d: create variant: %v", rows[i].lineNum, err))
