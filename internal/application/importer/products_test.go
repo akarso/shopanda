@@ -40,6 +40,7 @@ func (m *mockProductRepo) Create(ctx context.Context, p *catalog.Product) error 
 func (m *mockProductRepo) Update(_ context.Context, _ *catalog.Product) error {
 	return nil
 }
+func (m *mockProductRepo) WithTx(_ interface{}) catalog.ProductRepository { return m }
 
 type mockVariantRepo struct {
 	createFn func(ctx context.Context, v *catalog.Variant) error
@@ -65,6 +66,7 @@ func (m *mockVariantRepo) Create(ctx context.Context, v *catalog.Variant) error 
 func (m *mockVariantRepo) Update(_ context.Context, _ *catalog.Variant) error {
 	return nil
 }
+func (m *mockVariantRepo) WithTx(_ interface{}) catalog.VariantRepository { return m }
 
 // --- tests ---
 
@@ -76,7 +78,7 @@ Gadget,gadget,SKU-003,A cool gadget,Default
 `
 	prodRepo := &mockProductRepo{}
 	varRepo := &mockVariantRepo{}
-	imp := importer.NewProductImporter(prodRepo, varRepo)
+	imp := importer.NewProductImporter(prodRepo, varRepo, nil)
 
 	result, err := imp.Import(context.Background(), strings.NewReader(csv))
 	if err != nil {
@@ -144,7 +146,7 @@ Widget,widget,SKU-NEW
 		},
 	}
 	varRepo := &mockVariantRepo{}
-	imp := importer.NewProductImporter(prodRepo, varRepo)
+	imp := importer.NewProductImporter(prodRepo, varRepo, nil)
 
 	result, err := imp.Import(context.Background(), strings.NewReader(csv))
 	if err != nil {
@@ -169,7 +171,7 @@ func TestImport_MissingRequiredColumn(t *testing.T) {
 	csv := `name,slug
 Widget,widget
 `
-	imp := importer.NewProductImporter(&mockProductRepo{}, &mockVariantRepo{})
+	imp := importer.NewProductImporter(&mockProductRepo{}, &mockVariantRepo{}, nil)
 
 	_, err := imp.Import(context.Background(), strings.NewReader(csv))
 	if err == nil {
@@ -185,7 +187,7 @@ Widget,gadget,
 `
 	prodRepo := &mockProductRepo{}
 	varRepo := &mockVariantRepo{}
-	imp := importer.NewProductImporter(prodRepo, varRepo)
+	imp := importer.NewProductImporter(prodRepo, varRepo, nil)
 
 	result, err := imp.Import(context.Background(), strings.NewReader(csv))
 	if err != nil {
@@ -209,7 +211,7 @@ Widget,gadget,
 func TestImport_EmptyCSV(t *testing.T) {
 	csv := `name,slug,sku
 `
-	imp := importer.NewProductImporter(&mockProductRepo{}, &mockVariantRepo{})
+	imp := importer.NewProductImporter(&mockProductRepo{}, &mockVariantRepo{}, nil)
 
 	result, err := imp.Import(context.Background(), strings.NewReader(csv))
 	if err != nil {
@@ -227,7 +229,7 @@ SKU-1,widget,,Widget,Size S
 `
 	prodRepo := &mockProductRepo{}
 	varRepo := &mockVariantRepo{}
-	imp := importer.NewProductImporter(prodRepo, varRepo)
+	imp := importer.NewProductImporter(prodRepo, varRepo, nil)
 
 	result, err := imp.Import(context.Background(), strings.NewReader(csv))
 	if err != nil {
@@ -260,7 +262,7 @@ Widget,widget,SKU-DUP
 			return nil
 		},
 	}
-	imp := importer.NewProductImporter(prodRepo, varRepo)
+	imp := importer.NewProductImporter(prodRepo, varRepo, nil)
 
 	result, err := imp.Import(context.Background(), strings.NewReader(csv))
 	if err != nil {
@@ -275,7 +277,7 @@ Widget,widget,SKU-DUP
 }
 
 func TestImport_NoHeader(t *testing.T) {
-	imp := importer.NewProductImporter(&mockProductRepo{}, &mockVariantRepo{})
+	imp := importer.NewProductImporter(&mockProductRepo{}, &mockVariantRepo{}, nil)
 
 	_, err := imp.Import(context.Background(), strings.NewReader(""))
 	if err == nil {

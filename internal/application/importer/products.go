@@ -20,15 +20,22 @@ type Result struct {
 	Errors   []string
 }
 
+// TxStarter begins database transactions.
+type TxStarter interface {
+	BeginTx(ctx context.Context, opts *sql.TxOptions) (*sql.Tx, error)
+}
+
 // ProductImporter reads CSV data and persists products and variants.
 type ProductImporter struct {
-	products catalog.ProductRepository
-	variants catalog.VariantRepository
+	products  catalog.ProductRepository
+	variants  catalog.VariantRepository
+	txStarter TxStarter
 }
 
 // NewProductImporter creates a ProductImporter.
-func NewProductImporter(products catalog.ProductRepository, variants catalog.VariantRepository) *ProductImporter {
-	return &ProductImporter{products: products, variants: variants}
+// txStarter may be nil; if nil, writes are not wrapped in a transaction.
+func NewProductImporter(products catalog.ProductRepository, variants catalog.VariantRepository, txStarter TxStarter) *ProductImporter {
+	return &ProductImporter{products: products, variants: variants, txStarter: txStarter}
 }
 
 // requiredColumns lists the CSV headers that must be present.
@@ -171,20 +178,9 @@ func (imp *ProductImporter) Import(ctx context.Context, r io.Reader) (*Result, e
 			continue
 		}
 
-		// 4. Write in transaction
-		// Only for new products (not for existing)
-		if existing == nil {
-			// Underlying repo must be able to start a transaction
-			txStarter, ok := imp.products.(interface{ DB() *sql.DB })
-			if !ok {
-				for _, row := range rows {
-					result.Errors = append(result.Errors, fmt.Sprintf("line %d: repo does not support transaction", row.lineNum))
-					result.Skipped++
-				}
-				continue
-			}
-			db := txStarter.DB()
-			tx, err := db.BeginTx(ctx, nil)
+		// 4. Write in transaction (when txStarter available), else direct writes
+		if existing == nil && imp.txStarter != nil {
+			tx, err := imp.txStarter.BeginTx(ctx, nil)
 			if err != nil {
 				for _, row := range rows {
 					result.Errors = append(result.Errors, fmt.Sprintf("line %d: begin tx: %v", row.lineNum, err))
@@ -204,17 +200,17 @@ func (imp *ProductImporter) Import(ctx context.Context, r io.Reader) (*Result, e
 				continue
 			}
 			// Write variants
-			ok = true
+			allOk := true
 			for i, v := range variants {
 				if err := txVariants.Create(ctx, &v); err != nil {
 					tx.Rollback()
 					result.Errors = append(result.Errors, fmt.Sprintf("line %d: create variant: %v", rows[i].lineNum, err))
 					result.Skipped++
-					ok = false
+					allOk = false
 					break
 				}
 			}
-			if !ok {
+			if !allOk {
 				continue
 			}
 			if err := tx.Commit(); err != nil {
@@ -226,6 +222,24 @@ func (imp *ProductImporter) Import(ctx context.Context, r io.Reader) (*Result, e
 			}
 			result.Products++
 			result.Variants += len(variants)
+		} else if existing == nil {
+			// No txStarter: direct writes (tests / non-transactional mode)
+			if err := imp.products.Create(ctx, product); err != nil {
+				for _, row := range rows {
+					result.Errors = append(result.Errors, fmt.Sprintf("line %d: create product: %v", row.lineNum, err))
+					result.Skipped++
+				}
+				continue
+			}
+			result.Products++
+			for i, v := range variants {
+				if err := imp.variants.Create(ctx, &v); err != nil {
+					result.Errors = append(result.Errors, fmt.Sprintf("line %d: create variant: %v", rows[i].lineNum, err))
+					result.Skipped++
+					continue
+				}
+				result.Variants++
+			}
 		} else {
 			// Existing product: just add variants (no transaction)
 			for i, v := range variants {

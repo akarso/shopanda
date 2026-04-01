@@ -39,11 +39,15 @@ func (r *VariantRepo) FindByID(ctx context.Context, id string) (*catalog.Variant
 	const q = `SELECT id, product_id, sku, name, attributes, created_at, updated_at
 		FROM variants WHERE id = $1`
 
-	row := r.db.QueryRowContext(ctx, q, id)
-	if r.tx != nil {
-		row = r.tx.QueryRowContext(ctx, q, id)
+	var querier interface {
+		QueryRowContext(context.Context, string, ...interface{}) *sql.Row
 	}
-	v, err := r.scanVariant(row)
+	if r.tx != nil {
+		querier = r.tx
+	} else {
+		querier = r.db
+	}
+	v, err := r.scanVariant(querier.QueryRowContext(ctx, q, id))
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
 	}
@@ -59,11 +63,15 @@ func (r *VariantRepo) FindBySKU(ctx context.Context, sku string) (*catalog.Varia
 	const q = `SELECT id, product_id, sku, name, attributes, created_at, updated_at
 		FROM variants WHERE sku = $1`
 
-	row := r.db.QueryRowContext(ctx, q, sku)
-	if r.tx != nil {
-		row = r.tx.QueryRowContext(ctx, q, sku)
+	var querier interface {
+		QueryRowContext(context.Context, string, ...interface{}) *sql.Row
 	}
-	v, err := r.scanVariant(row)
+	if r.tx != nil {
+		querier = r.tx
+	} else {
+		querier = r.db
+	}
+	v, err := r.scanVariant(querier.QueryRowContext(ctx, q, sku))
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
 	}

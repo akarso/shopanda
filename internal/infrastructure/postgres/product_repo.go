@@ -41,11 +41,15 @@ func (r *ProductRepo) FindByID(ctx context.Context, id string) (*catalog.Product
 	const q = `SELECT id, name, slug, description, status, attributes, created_at, updated_at
 		FROM products WHERE id = $1`
 
-	row := r.db.QueryRowContext(ctx, q, id)
-	if r.tx != nil {
-		row = r.tx.QueryRowContext(ctx, q, id)
+	var querier interface {
+		QueryRowContext(context.Context, string, ...interface{}) *sql.Row
 	}
-	p, err := r.scanProduct(row)
+	if r.tx != nil {
+		querier = r.tx
+	} else {
+		querier = r.db
+	}
+	p, err := r.scanProduct(querier.QueryRowContext(ctx, q, id))
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
 	}
@@ -61,11 +65,15 @@ func (r *ProductRepo) FindBySlug(ctx context.Context, slug string) (*catalog.Pro
 	const q = `SELECT id, name, slug, description, status, attributes, created_at, updated_at
 		FROM products WHERE slug = $1`
 
-	row := r.db.QueryRowContext(ctx, q, slug)
-	if r.tx != nil {
-		row = r.tx.QueryRowContext(ctx, q, slug)
+	var querier interface {
+		QueryRowContext(context.Context, string, ...interface{}) *sql.Row
 	}
-	p, err := r.scanProduct(row)
+	if r.tx != nil {
+		querier = r.tx
+	} else {
+		querier = r.db
+	}
+	p, err := r.scanProduct(querier.QueryRowContext(ctx, q, slug))
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
 	}

@@ -140,7 +140,7 @@ func runImportProducts(cfg *config.Config, log logger.Logger) error {
 
 	productRepo := postgres.NewProductRepo(conn)
 	variantRepo := postgres.NewVariantRepo(conn)
-	imp := importer.NewProductImporter(productRepo, variantRepo)
+	imp := importer.NewProductImporter(productRepo, variantRepo, conn)
 
 	log.Info("import.start", map[string]interface{}{"file": filePath})
 
