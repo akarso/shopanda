@@ -2,6 +2,7 @@ package importer_test
 
 import (
 	"context"
+	"database/sql"
 	"fmt"
 	"strings"
 	"testing"
@@ -40,7 +41,7 @@ func (m *mockProductRepo) Create(ctx context.Context, p *catalog.Product) error 
 func (m *mockProductRepo) Update(_ context.Context, _ *catalog.Product) error {
 	return nil
 }
-func (m *mockProductRepo) WithTx(_ catalog.Tx) catalog.ProductRepository { return m }
+func (m *mockProductRepo) WithTx(_ *sql.Tx) catalog.ProductRepository { return m }
 
 type mockVariantRepo struct {
 	createFn func(ctx context.Context, v *catalog.Variant) error
@@ -66,7 +67,7 @@ func (m *mockVariantRepo) Create(ctx context.Context, v *catalog.Variant) error 
 func (m *mockVariantRepo) Update(_ context.Context, _ *catalog.Variant) error {
 	return nil
 }
-func (m *mockVariantRepo) WithTx(_ catalog.Tx) catalog.VariantRepository { return m }
+func (m *mockVariantRepo) WithTx(_ *sql.Tx) catalog.VariantRepository { return m }
 
 // --- tests ---
 

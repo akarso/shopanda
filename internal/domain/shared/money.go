@@ -1,7 +1,9 @@
 package shared
 
 import (
+	"errors"
 	"fmt"
+	"math"
 	"regexp"
 )
 
@@ -75,6 +77,15 @@ func (m Money) Sub(other Money) Money {
 // Mul returns the Money value multiplied by a quantity.
 func (m Money) Mul(qty int64) Money {
 	return Money{amount: m.amount * qty, currency: m.currency}
+}
+
+// MulChecked returns the Money value multiplied by a quantity.
+// Returns an error if the multiplication would overflow int64.
+func (m Money) MulChecked(qty int64) (Money, error) {
+	if qty != 0 && (m.amount > math.MaxInt64/qty || m.amount < math.MinInt64/qty) {
+		return Money{}, errors.New("money: multiplication overflow")
+	}
+	return Money{amount: m.amount * qty, currency: m.currency}, nil
 }
 
 // IsZero returns true if the amount is zero.

@@ -2,6 +2,7 @@ package http_test
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"net/http"
@@ -41,7 +42,7 @@ func (m *mockProductRepo) Create(ctx context.Context, p *catalog.Product) error 
 func (m *mockProductRepo) Update(ctx context.Context, p *catalog.Product) error {
 	return nil
 }
-func (m *mockProductRepo) WithTx(_ catalog.Tx) catalog.ProductRepository { return m }
+func (m *mockProductRepo) WithTx(_ *sql.Tx) catalog.ProductRepository { return m }
 
 // --- mock step ---
 

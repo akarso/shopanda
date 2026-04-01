@@ -3,6 +3,7 @@ package pricing
 import (
 	"errors"
 	"fmt"
+	"strings"
 
 	"github.com/akarso/shopanda/internal/domain/shared"
 )
@@ -40,7 +41,7 @@ func NewAdjustment(typ AdjustmentType, code string, amount shared.Money) (Adjust
 	if !typ.IsValid() {
 		return Adjustment{}, fmt.Errorf("adjustment: invalid type: %q", typ)
 	}
-	if code == "" {
+	if strings.TrimSpace(code) == "" {
 		return Adjustment{}, errors.New("adjustment code must not be empty")
 	}
 	return Adjustment{

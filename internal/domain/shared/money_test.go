@@ -173,3 +173,33 @@ func TestMoney_Sub_CurrencyMismatch(t *testing.T) {
 	}()
 	mustMoney(t, 100, "EUR").Sub(mustMoney(t, 100, "USD"))
 }
+
+func TestMoney_MulChecked(t *testing.T) {
+	m := mustMoney(t, 250, "EUR")
+	result, err := m.MulChecked(3)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result.Amount() != 750 {
+		t.Errorf("MulChecked: Amount() = %d, want 750", result.Amount())
+	}
+}
+
+func TestMoney_MulChecked_Overflow(t *testing.T) {
+	m := mustMoney(t, 9_000_000_000_000_000_000, "EUR")
+	_, err := m.MulChecked(2)
+	if err == nil {
+		t.Fatal("expected overflow error")
+	}
+}
+
+func TestMoney_MulChecked_ZeroQty(t *testing.T) {
+	m := mustMoney(t, 9_000_000_000_000_000_000, "EUR")
+	result, err := m.MulChecked(0)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result.Amount() != 0 {
+		t.Errorf("MulChecked(0): Amount() = %d, want 0", result.Amount())
+	}
+}

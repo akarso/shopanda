@@ -3,6 +3,7 @@ package http_test
 import (
 	"bytes"
 	"context"
+	"database/sql"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -50,7 +51,7 @@ func (m *mockAdminProductRepo) Update(ctx context.Context, p *catalog.Product) e
 	}
 	return nil
 }
-func (m *mockAdminProductRepo) WithTx(_ catalog.Tx) catalog.ProductRepository { return m }
+func (m *mockAdminProductRepo) WithTx(_ *sql.Tx) catalog.ProductRepository { return m }
 
 // --- helpers ---
 

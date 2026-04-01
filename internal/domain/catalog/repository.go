@@ -1,13 +1,9 @@
 package catalog
 
-import "context"
-
-// Tx represents a database transaction at the domain boundary.
-// Implementations such as *sql.Tx satisfy this interface.
-type Tx interface {
-	Commit() error
-	Rollback() error
-}
+import (
+	"context"
+	"database/sql"
+)
 
 // ProductRepository defines persistence operations for products.
 type ProductRepository interface {
@@ -32,5 +28,5 @@ type ProductRepository interface {
 	Update(ctx context.Context, p *Product) error
 
 	// WithTx returns a repository bound to the given transaction.
-	WithTx(tx Tx) ProductRepository
+	WithTx(tx *sql.Tx) ProductRepository
 }

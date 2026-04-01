@@ -62,10 +62,14 @@ func NewPricingItem(variantID string, qty int, unitPrice shared.Money) (PricingI
 	if qty <= 0 {
 		return PricingItem{}, errors.New("pricing item: quantity must be greater than zero")
 	}
+	total, err := unitPrice.MulChecked(int64(qty))
+	if err != nil {
+		return PricingItem{}, fmt.Errorf("pricing item: compute total: %w", err)
+	}
 	return PricingItem{
 		VariantID: variantID,
 		Quantity:  qty,
 		UnitPrice: unitPrice,
-		Total:     unitPrice.Mul(int64(qty)),
+		Total:     total,
 	}, nil
 }

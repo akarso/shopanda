@@ -28,12 +28,8 @@ func NewVariantRepo(db *sql.DB) *VariantRepo {
 }
 
 // WithTx returns a repo bound to the given transaction.
-func (r *VariantRepo) WithTx(tx catalog.Tx) catalog.VariantRepository {
-	sqlTx, ok := tx.(*sql.Tx)
-	if !ok {
-		panic(fmt.Sprintf("variant_repo: WithTx expects *sql.Tx, got %T", tx))
-	}
-	return &VariantRepo{db: r.db, tx: sqlTx}
+func (r *VariantRepo) WithTx(tx *sql.Tx) catalog.VariantRepository {
+	return &VariantRepo{db: r.db, tx: tx}
 }
 
 // FindByID returns a variant by its ID.

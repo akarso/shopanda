@@ -85,3 +85,11 @@ func TestNewPricingItemNegativeQuantity(t *testing.T) {
 		t.Fatal("expected error for negative quantity")
 	}
 }
+
+func TestNewPricingItemOverflow(t *testing.T) {
+	price := shared.MustNewMoney(9_000_000_000_000_000_000, "EUR")
+	_, err := NewPricingItem("v1", 3, price)
+	if err == nil {
+		t.Fatal("expected overflow error")
+	}
+}

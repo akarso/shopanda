@@ -201,11 +201,13 @@ func (imp *ProductImporter) Import(ctx context.Context, r io.Reader) (*Result, e
 			}
 			// Write variants
 			allOk := true
-			for i, v := range variants {
+			for _, v := range variants {
 				if err := txVariants.Create(ctx, &v); err != nil {
 					tx.Rollback()
-					result.Errors = append(result.Errors, fmt.Sprintf("line %d: create variant: %v", rows[i].lineNum, err))
-					result.Skipped++
+					for _, row := range rows {
+						result.Errors = append(result.Errors, fmt.Sprintf("line %d: create variant (rollback slug %q): %v", row.lineNum, slug, err))
+						result.Skipped++
+					}
 					allOk = false
 					break
 				}
@@ -252,11 +254,13 @@ func (imp *ProductImporter) Import(ctx context.Context, r io.Reader) (*Result, e
 			}
 			txVariants := imp.variants.WithTx(tx)
 			allOk := true
-			for i, v := range variants {
+			for _, v := range variants {
 				if err := txVariants.Create(ctx, &v); err != nil {
 					tx.Rollback()
-					result.Errors = append(result.Errors, fmt.Sprintf("line %d: create variant: %v", rows[i].lineNum, err))
-					result.Skipped++
+					for _, row := range rows {
+						result.Errors = append(result.Errors, fmt.Sprintf("line %d: create variant (rollback slug %q): %v", row.lineNum, slug, err))
+						result.Skipped++
+					}
 					allOk = false
 					break
 				}
