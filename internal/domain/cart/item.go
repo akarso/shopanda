@@ -24,6 +24,9 @@ func NewItem(variantID string, quantity int, unitPrice shared.Money) (Item, erro
 	if quantity <= 0 {
 		return Item{}, errors.New("cart item: quantity must be positive")
 	}
+	if unitPrice.IsNegative() {
+		return Item{}, errors.New("cart item: unit price must be non-negative")
+	}
 	now := time.Now().UTC()
 	return Item{
 		VariantID: variantID,

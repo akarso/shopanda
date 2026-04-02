@@ -53,7 +53,10 @@ func TestNewItem_NegativeQuantity(t *testing.T) {
 
 func TestItem_LineTotal(t *testing.T) {
 	price := shared.MustNewMoney(1500, "EUR")
-	item, _ := cart.NewItem("var-1", 3, price)
+	item, err := cart.NewItem("var-1", 3, price)
+	if err != nil {
+		t.Fatalf("NewItem: %v", err)
+	}
 	total, err := item.LineTotal()
 	if err != nil {
 		t.Fatalf("LineTotal: %v", err)
@@ -63,5 +66,25 @@ func TestItem_LineTotal(t *testing.T) {
 	}
 	if total.Currency() != "EUR" {
 		t.Errorf("Currency = %q, want %q", total.Currency(), "EUR")
+	}
+}
+
+func TestItem_LineTotal_Overflow(t *testing.T) {
+	price := shared.MustNewMoney(9223372036854775807, "EUR") // math.MaxInt64
+	item, err := cart.NewItem("var-1", 2, price)
+	if err != nil {
+		t.Fatalf("NewItem: %v", err)
+	}
+	_, err = item.LineTotal()
+	if err == nil {
+		t.Fatal("expected overflow error")
+	}
+}
+
+func TestNewItem_NegativePrice(t *testing.T) {
+	price := shared.MustNewMoney(-100, "EUR")
+	_, err := cart.NewItem("var-1", 1, price)
+	if err == nil {
+		t.Fatal("expected error for negative price")
 	}
 }

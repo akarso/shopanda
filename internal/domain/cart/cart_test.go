@@ -7,6 +7,13 @@ import (
 	"github.com/akarso/shopanda/internal/domain/shared"
 )
 
+func mustAddItem(t *testing.T, c *cart.Cart, variantID string, qty int, price shared.Money) {
+	t.Helper()
+	if err := c.AddItem(variantID, qty, price); err != nil {
+		t.Fatalf("AddItem(%q, %d): %v", variantID, qty, err)
+	}
+}
+
 func TestNewCart_Valid(t *testing.T) {
 	c, err := cart.NewCart("cart-1", "EUR")
 	if err != nil {
@@ -18,8 +25,8 @@ func TestNewCart_Valid(t *testing.T) {
 	if c.Currency != "EUR" {
 		t.Errorf("Currency = %q, want %q", c.Currency, "EUR")
 	}
-	if c.Status != cart.CartStatusActive {
-		t.Errorf("Status = %q, want %q", c.Status, cart.CartStatusActive)
+	if c.Status() != cart.CartStatusActive {
+		t.Errorf("Status = %q, want %q", c.Status(), cart.CartStatusActive)
 	}
 	if c.CustomerID != "" {
 		t.Errorf("CustomerID = %q, want empty", c.CustomerID)
@@ -122,7 +129,9 @@ func TestCart_AddItem_CurrencyMismatch(t *testing.T) {
 
 func TestCart_AddItem_NonActive(t *testing.T) {
 	c, _ := cart.NewCart("cart-1", "EUR")
-	c.Status = cart.CartStatusCheckedOut
+	if err := c.Checkout(); err != nil {
+		t.Fatalf("Checkout: %v", err)
+	}
 	price := shared.MustNewMoney(1000, "EUR")
 
 	if err := c.AddItem("var-1", 1, price); err == nil {
@@ -133,7 +142,7 @@ func TestCart_AddItem_NonActive(t *testing.T) {
 func TestCart_UpdateItemQuantity(t *testing.T) {
 	c, _ := cart.NewCart("cart-1", "EUR")
 	price := shared.MustNewMoney(1000, "EUR")
-	c.AddItem("var-1", 2, price)
+	mustAddItem(t, &c, "var-1", 2, price)
 
 	if err := c.UpdateItemQuantity("var-1", 5); err != nil {
 		t.Fatalf("UpdateItemQuantity: %v", err)
@@ -153,7 +162,7 @@ func TestCart_UpdateItemQuantity_NotFound(t *testing.T) {
 func TestCart_UpdateItemQuantity_ZeroQuantity(t *testing.T) {
 	c, _ := cart.NewCart("cart-1", "EUR")
 	price := shared.MustNewMoney(1000, "EUR")
-	c.AddItem("var-1", 2, price)
+	mustAddItem(t, &c, "var-1", 2, price)
 
 	if err := c.UpdateItemQuantity("var-1", 0); err == nil {
 		t.Fatal("expected error for zero quantity")
@@ -163,8 +172,10 @@ func TestCart_UpdateItemQuantity_ZeroQuantity(t *testing.T) {
 func TestCart_UpdateItemQuantity_NonActive(t *testing.T) {
 	c, _ := cart.NewCart("cart-1", "EUR")
 	price := shared.MustNewMoney(1000, "EUR")
-	c.AddItem("var-1", 2, price)
-	c.Status = cart.CartStatusAbandoned
+	mustAddItem(t, &c, "var-1", 2, price)
+	if err := c.Abandon(); err != nil {
+		t.Fatalf("Abandon: %v", err)
+	}
 
 	if err := c.UpdateItemQuantity("var-1", 3); err == nil {
 		t.Fatal("expected error for non-active cart")
@@ -174,8 +185,8 @@ func TestCart_UpdateItemQuantity_NonActive(t *testing.T) {
 func TestCart_RemoveItem(t *testing.T) {
 	c, _ := cart.NewCart("cart-1", "EUR")
 	price := shared.MustNewMoney(1000, "EUR")
-	c.AddItem("var-1", 2, price)
-	c.AddItem("var-2", 1, price)
+	mustAddItem(t, &c, "var-1", 2, price)
+	mustAddItem(t, &c, "var-2", 1, price)
 
 	if err := c.RemoveItem("var-1"); err != nil {
 		t.Fatalf("RemoveItem: %v", err)
@@ -195,8 +206,10 @@ func TestCart_RemoveItem_NotFound(t *testing.T) {
 func TestCart_RemoveItem_NonActive(t *testing.T) {
 	c, _ := cart.NewCart("cart-1", "EUR")
 	price := shared.MustNewMoney(1000, "EUR")
-	c.AddItem("var-1", 1, price)
-	c.Status = cart.CartStatusCheckedOut
+	mustAddItem(t, &c, "var-1", 1, price)
+	if err := c.Checkout(); err != nil {
+		t.Fatalf("Checkout: %v", err)
+	}
 
 	if err := c.RemoveItem("var-1"); err == nil {
 		t.Fatal("expected error for non-active cart")
@@ -218,5 +231,45 @@ func TestCartStatus_IsValid(t *testing.T) {
 		if got := tt.s.IsValid(); got != tt.want {
 			t.Errorf("CartStatus(%q).IsValid() = %v, want %v", tt.s, got, tt.want)
 		}
+	}
+}
+
+func TestCart_Checkout(t *testing.T) {
+	c, _ := cart.NewCart("cart-1", "EUR")
+	if err := c.Checkout(); err != nil {
+		t.Fatalf("Checkout: %v", err)
+	}
+	if c.Status() != cart.CartStatusCheckedOut {
+		t.Errorf("Status = %q, want %q", c.Status(), cart.CartStatusCheckedOut)
+	}
+}
+
+func TestCart_Checkout_NonActive(t *testing.T) {
+	c, _ := cart.NewCart("cart-1", "EUR")
+	if err := c.Abandon(); err != nil {
+		t.Fatalf("Abandon: %v", err)
+	}
+	if err := c.Checkout(); err == nil {
+		t.Fatal("expected error for non-active cart")
+	}
+}
+
+func TestCart_Abandon(t *testing.T) {
+	c, _ := cart.NewCart("cart-1", "EUR")
+	if err := c.Abandon(); err != nil {
+		t.Fatalf("Abandon: %v", err)
+	}
+	if c.Status() != cart.CartStatusAbandoned {
+		t.Errorf("Status = %q, want %q", c.Status(), cart.CartStatusAbandoned)
+	}
+}
+
+func TestCart_Abandon_NonActive(t *testing.T) {
+	c, _ := cart.NewCart("cart-1", "EUR")
+	if err := c.Checkout(); err != nil {
+		t.Fatalf("Checkout: %v", err)
+	}
+	if err := c.Abandon(); err == nil {
+		t.Fatal("expected error for non-active cart")
 	}
 }

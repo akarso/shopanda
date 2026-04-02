@@ -11,9 +11,9 @@ import (
 type CartStatus string
 
 const (
-	CartStatusActive    CartStatus = "active"
+	CartStatusActive     CartStatus = "active"
 	CartStatusCheckedOut CartStatus = "checked_out"
-	CartStatusAbandoned CartStatus = "abandoned"
+	CartStatusAbandoned  CartStatus = "abandoned"
 )
 
 // IsValid returns true if s is a recognised cart status.
@@ -29,7 +29,7 @@ func (s CartStatus) IsValid() bool {
 type Cart struct {
 	ID         string
 	CustomerID string // empty for anonymous/guest carts
-	Status     CartStatus
+	status     CartStatus
 	Currency   string
 	Items      []Item
 	CreatedAt  time.Time
@@ -47,7 +47,7 @@ func NewCart(id, currency string) (Cart, error) {
 	now := time.Now().UTC()
 	return Cart{
 		ID:        id,
-		Status:    CartStatusActive,
+		status:    CartStatusActive,
 		Currency:  currency,
 		Items:     nil,
 		CreatedAt: now,
@@ -65,13 +65,39 @@ func (c *Cart) SetCustomerID(customerID string) error {
 	return nil
 }
 
-// IsActive returns true if the cart is in active status.
-func (c Cart) IsActive() bool {
-	return c.Status == CartStatusActive
+// Status returns the current cart status.
+func (c Cart) Status() CartStatus {
+	return c.status
 }
 
-// AddItem adds an item or increments quantity if the variant already exists.
-// Returns the resulting item.
+// IsActive returns true if the cart is in active status.
+func (c Cart) IsActive() bool {
+	return c.status == CartStatusActive
+}
+
+// Checkout transitions the cart from active to checked_out.
+func (c *Cart) Checkout() error {
+	if c.status != CartStatusActive {
+		return errors.New("cart: only active carts can be checked out")
+	}
+	c.status = CartStatusCheckedOut
+	c.UpdatedAt = time.Now().UTC()
+	return nil
+}
+
+// Abandon transitions the cart from active to abandoned.
+func (c *Cart) Abandon() error {
+	if c.status != CartStatusActive {
+		return errors.New("cart: only active carts can be abandoned")
+	}
+	c.status = CartStatusAbandoned
+	c.UpdatedAt = time.Now().UTC()
+	return nil
+}
+
+// AddItem adds an item to the cart. If an item with the same VariantID already
+// exists, the quantities are summed and UnitPrice is overwritten with the
+// latest value provided.
 func (c *Cart) AddItem(variantID string, quantity int, unitPrice shared.Money) error {
 	if !c.IsActive() {
 		return errors.New("cart: cannot modify non-active cart")
@@ -131,8 +157,7 @@ func (c *Cart) RemoveItem(variantID string) error {
 	}
 	for i := range c.Items {
 		if c.Items[i].VariantID == variantID {
-			c.Items[i] = c.Items[len(c.Items)-1]
-			c.Items = c.Items[:len(c.Items)-1]
+			c.Items = append(c.Items[:i], c.Items[i+1:]...)
 			c.UpdatedAt = time.Now().UTC()
 			return nil
 		}
