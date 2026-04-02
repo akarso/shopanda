@@ -18,7 +18,7 @@ type Money struct {
 
 // NewMoney creates a Money value. Returns an error if the currency code is invalid.
 func NewMoney(amount int64, currency string) (Money, error) {
-	if !isValidCurrency(currency) {
+	if !IsValidCurrency(currency) {
 		return Money{}, fmt.Errorf("money: invalid currency code: %q", currency)
 	}
 	return Money{amount: amount, currency: currency}, nil
@@ -27,7 +27,7 @@ func NewMoney(amount int64, currency string) (Money, error) {
 // Zero returns a zero Money value for the given currency.
 // Returns an error if the currency code is invalid.
 func Zero(currency string) (Money, error) {
-	if !isValidCurrency(currency) {
+	if !IsValidCurrency(currency) {
 		return Money{}, fmt.Errorf("money: invalid currency code: %q", currency)
 	}
 	return Money{amount: 0, currency: currency}, nil
@@ -119,7 +119,7 @@ func (m Money) mustMatch(other Money) {
 	}
 }
 
-// isValidCurrency returns true if code is a 3-letter uppercase ASCII string.
-func isValidCurrency(code string) bool {
+// IsValidCurrency returns true if code is a 3-letter uppercase ASCII string.
+func IsValidCurrency(code string) bool {
 	return currencyRegex.MatchString(code)
 }
