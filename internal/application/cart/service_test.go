@@ -328,6 +328,9 @@ func TestService_RemoveItem_ItemNotFound(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error for non-existent item")
 	}
+	if !apperror.Is(err, apperror.CodeValidation) {
+		t.Errorf("expected validation error, got: %v", err)
+	}
 }
 
 func TestService_GetActiveCartByCustomer(t *testing.T) {

@@ -193,9 +193,14 @@ func (s *Service) recalculate(ctx context.Context, c *domainCart.Cart) error {
 		return fmt.Errorf("cart service: pricing pipeline: %w", err)
 	}
 
-	// Write back the computed unit prices.
-	for i, pi := range pctx.Items {
-		c.Items[i].UnitPrice = pi.UnitPrice
+	// Write back the computed unit prices, matching by VariantID.
+	for _, pi := range pctx.Items {
+		for j := range c.Items {
+			if c.Items[j].VariantID == pi.VariantID {
+				c.Items[j].UnitPrice = pi.UnitPrice
+				break
+			}
+		}
 	}
 
 	return nil
