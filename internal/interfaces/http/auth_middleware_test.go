@@ -14,11 +14,13 @@ import (
 
 // stubTokenParser implements auth.TokenParser for testing.
 type stubTokenParser struct {
-	identity identity.Identity
-	err      error
+	identity  identity.Identity
+	err       error
+	lastToken string
 }
 
-func (s *stubTokenParser) Parse(_ context.Context, _ string) (identity.Identity, error) {
+func (s *stubTokenParser) Parse(_ context.Context, token string) (identity.Identity, error) {
+	s.lastToken = token
 	return s.identity, s.err
 }
 
@@ -45,7 +47,10 @@ func TestAuthMiddleware_NoHeader(t *testing.T) {
 }
 
 func TestAuthMiddleware_ValidToken(t *testing.T) {
-	id, _ := identity.NewIdentity("user-1", identity.RoleCustomer)
+	id, err := identity.NewIdentity("user-1", identity.RoleCustomer)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
 	parser := &stubTokenParser{identity: id}
 	mw := shophttp.AuthMiddleware(parser)
 
@@ -66,6 +71,9 @@ func TestAuthMiddleware_ValidToken(t *testing.T) {
 	if gotID.UserID != "user-1" {
 		t.Errorf("UserID = %q, want %q", gotID.UserID, "user-1")
 	}
+	if parser.lastToken != "valid-token" {
+		t.Errorf("parser received token %q, want %q", parser.lastToken, "valid-token")
+	}
 }
 
 func TestAuthMiddleware_InvalidToken(t *testing.T) {
@@ -83,6 +91,9 @@ func TestAuthMiddleware_InvalidToken(t *testing.T) {
 
 	if rec.Code != http.StatusUnauthorized {
 		t.Fatalf("status = %d, want %d", rec.Code, http.StatusUnauthorized)
+	}
+	if parser.lastToken != "bad-token" {
+		t.Errorf("parser received token %q, want %q", parser.lastToken, "bad-token")
 	}
 }
 
@@ -105,7 +116,10 @@ func TestAuthMiddleware_MalformedHeader(t *testing.T) {
 }
 
 func TestRequireAuth_Authenticated(t *testing.T) {
-	id, _ := identity.NewIdentity("user-1", identity.RoleCustomer)
+	id, err := identity.NewIdentity("user-1", identity.RoleCustomer)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
 	mw := shophttp.RequireAuth()
 
 	called := false
@@ -147,7 +161,10 @@ func TestRequireAuth_Guest(t *testing.T) {
 }
 
 func TestRequireRole_Matching(t *testing.T) {
-	id, _ := identity.NewIdentity("user-1", identity.RoleAdmin)
+	id, err := identity.NewIdentity("user-1", identity.RoleAdmin)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
 	mw := shophttp.RequireRole(identity.RoleAdmin)
 
 	called := false
@@ -171,7 +188,10 @@ func TestRequireRole_Matching(t *testing.T) {
 }
 
 func TestRequireRole_Mismatch(t *testing.T) {
-	id, _ := identity.NewIdentity("user-1", identity.RoleCustomer)
+	id, err := identity.NewIdentity("user-1", identity.RoleCustomer)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
 	mw := shophttp.RequireRole(identity.RoleAdmin)
 
 	handler := mw(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

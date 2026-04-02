@@ -65,7 +65,10 @@ func TestGuest(t *testing.T) {
 }
 
 func TestIdentity_IsAuthenticated(t *testing.T) {
-	id, _ := identity.NewIdentity("user-1", identity.RoleCustomer)
+	id, err := identity.NewIdentity("user-1", identity.RoleCustomer)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
 	if !id.IsAuthenticated() {
 		t.Error("expected customer to be authenticated")
 	}
@@ -75,7 +78,10 @@ func TestIdentity_IsAuthenticated(t *testing.T) {
 }
 
 func TestIdentity_HasRole(t *testing.T) {
-	id, _ := identity.NewIdentity("user-1", identity.RoleAdmin)
+	id, err := identity.NewIdentity("user-1", identity.RoleAdmin)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
 	if !id.HasRole(identity.RoleAdmin) {
 		t.Error("expected admin to have admin role")
 	}

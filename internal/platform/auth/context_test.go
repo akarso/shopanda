@@ -9,7 +9,10 @@ import (
 )
 
 func TestWithIdentity_RoundTrip(t *testing.T) {
-	id, _ := identity.NewIdentity("user-1", identity.RoleCustomer)
+	id, err := identity.NewIdentity("user-1", identity.RoleCustomer)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
 	ctx := auth.WithIdentity(context.Background(), id)
 	got := auth.IdentityFrom(ctx)
 	if got.UserID != id.UserID || got.Role != id.Role {
