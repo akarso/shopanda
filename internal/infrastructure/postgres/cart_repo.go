@@ -39,7 +39,7 @@ func (r *CartRepo) FindByID(ctx context.Context, id string) (*cart.Cart, error) 
 	if err != nil {
 		return nil, fmt.Errorf("cart_repo: find by id: %w", err)
 	}
-	items, err := r.loadItems(ctx, c.ID, c.Currency)
+	items, err := r.loadItems(ctx, c.ID)
 	if err != nil {
 		return nil, err
 	}
@@ -63,7 +63,7 @@ func (r *CartRepo) FindActiveByCustomerID(ctx context.Context, customerID string
 	if err != nil {
 		return nil, fmt.Errorf("cart_repo: find active by customer: %w", err)
 	}
-	items, err := r.loadItems(ctx, c.ID, c.Currency)
+	items, err := r.loadItems(ctx, c.ID)
 	if err != nil {
 		return nil, err
 	}
@@ -148,7 +148,7 @@ func (r *CartRepo) Delete(ctx context.Context, id string) error {
 }
 
 // loadItems fetches all items for a cart, ordered by created_at.
-func (r *CartRepo) loadItems(ctx context.Context, cartID, cartCurrency string) ([]cart.Item, error) {
+func (r *CartRepo) loadItems(ctx context.Context, cartID string) ([]cart.Item, error) {
 	const q = `SELECT variant_id, quantity, unit_price, currency, created_at, updated_at
 		FROM cart_items WHERE cart_id = $1
 		ORDER BY created_at`
@@ -198,7 +198,9 @@ func (r *CartRepo) scanCart(row *sql.Row) (*cart.Cart, error) {
 	if customerID.Valid {
 		c.CustomerID = customerID.String
 	}
-	// Reconstruct the cart with proper status via SetStatus.
-	c.SetStatusFromDB(cart.CartStatus(status))
+	// Reconstruct the cart with proper status via SetStatusFromDB.
+	if err := c.SetStatusFromDB(cart.CartStatus(status)); err != nil {
+		return nil, fmt.Errorf("cart_repo: invalid status %q: %w", status, err)
+	}
 	return &c, nil
 }
