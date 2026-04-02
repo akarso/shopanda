@@ -3,11 +3,13 @@ package http
 import (
 	"encoding/json"
 	"net/http"
+	"time"
 
 	cartApp "github.com/akarso/shopanda/internal/application/cart"
 	"github.com/akarso/shopanda/internal/domain/cart"
 	"github.com/akarso/shopanda/internal/domain/shared"
 	"github.com/akarso/shopanda/internal/platform/apperror"
+	"github.com/akarso/shopanda/internal/platform/auth"
 )
 
 // CartHandler handles cart HTTP endpoints.
@@ -71,8 +73,8 @@ func toCartResponse(c *cart.Cart) cartResponse {
 		Status:     c.Status(),
 		Currency:   c.Currency,
 		Items:      items,
-		CreatedAt:  c.CreatedAt.Format("2006-01-02T15:04:05Z"),
-		UpdatedAt:  c.UpdatedAt.Format("2006-01-02T15:04:05Z"),
+		CreatedAt:  c.CreatedAt.UTC().Format(time.RFC3339),
+		UpdatedAt:  c.UpdatedAt.UTC().Format(time.RFC3339),
 	}
 }
 
@@ -91,7 +93,8 @@ func (h *CartHandler) Create() http.HandlerFunc {
 			return
 		}
 
-		c, err := h.svc.CreateCart(r.Context(), req.Currency)
+		userID := auth.IdentityFrom(r.Context()).UserID
+		c, err := h.svc.CreateCart(r.Context(), userID, req.Currency)
 		if err != nil {
 			JSONError(w, err)
 			return
@@ -147,7 +150,8 @@ func (h *CartHandler) AddItem() http.HandlerFunc {
 			return
 		}
 
-		c, err := h.svc.AddItem(r.Context(), cartID, req.VariantID, req.Quantity)
+		userID := auth.IdentityFrom(r.Context()).UserID
+		c, err := h.svc.AddItem(r.Context(), cartID, userID, req.VariantID, req.Quantity)
 		if err != nil {
 			JSONError(w, err)
 			return
@@ -183,7 +187,8 @@ func (h *CartHandler) UpdateItem() http.HandlerFunc {
 			return
 		}
 
-		c, err := h.svc.UpdateItemQuantity(r.Context(), cartID, variantID, req.Quantity)
+		userID := auth.IdentityFrom(r.Context()).UserID
+		c, err := h.svc.UpdateItemQuantity(r.Context(), cartID, userID, variantID, req.Quantity)
 		if err != nil {
 			JSONError(w, err)
 			return
@@ -209,7 +214,8 @@ func (h *CartHandler) RemoveItem() http.HandlerFunc {
 			return
 		}
 
-		c, err := h.svc.RemoveItem(r.Context(), cartID, variantID)
+		userID := auth.IdentityFrom(r.Context()).UserID
+		c, err := h.svc.RemoveItem(r.Context(), cartID, userID, variantID)
 		if err != nil {
 			JSONError(w, err)
 			return

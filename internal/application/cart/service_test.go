@@ -104,7 +104,7 @@ func TestService_CreateCart(t *testing.T) {
 	prices := newStubPriceRepo()
 	svc := cartApp.NewService(carts, prices, testPipeline(prices), testLogger())
 
-	c, err := svc.CreateCart(context.Background(), "EUR")
+	c, err := svc.CreateCart(context.Background(), "cust-1", "EUR")
 	if err != nil {
 		t.Fatalf("CreateCart: %v", err)
 	}
@@ -116,6 +116,9 @@ func TestService_CreateCart(t *testing.T) {
 	}
 	if c.Status() != domainCart.CartStatusActive {
 		t.Errorf("Status = %q, want active", c.Status())
+	}
+	if c.CustomerID != "cust-1" {
+		t.Errorf("CustomerID = %q, want cust-1", c.CustomerID)
 	}
 	// Verify persisted.
 	got, _ := carts.FindByID(context.Background(), c.ID)
@@ -129,7 +132,7 @@ func TestService_CreateCart_InvalidCurrency(t *testing.T) {
 	prices := newStubPriceRepo()
 	svc := cartApp.NewService(carts, prices, testPipeline(prices), testLogger())
 
-	_, err := svc.CreateCart(context.Background(), "bad")
+	_, err := svc.CreateCart(context.Background(), "cust-1", "bad")
 	if err == nil {
 		t.Fatal("expected error for invalid currency")
 	}
@@ -143,7 +146,7 @@ func TestService_GetCart(t *testing.T) {
 	prices := newStubPriceRepo()
 	svc := cartApp.NewService(carts, prices, testPipeline(prices), testLogger())
 
-	c, _ := svc.CreateCart(context.Background(), "EUR")
+	c, _ := svc.CreateCart(context.Background(), "cust-1", "EUR")
 	got, err := svc.GetCart(context.Background(), c.ID)
 	if err != nil {
 		t.Fatalf("GetCart: %v", err)
@@ -174,8 +177,8 @@ func TestService_AddItem(t *testing.T) {
 	svc := cartApp.NewService(carts, prices, testPipeline(prices), testLogger())
 	ctx := context.Background()
 
-	c, _ := svc.CreateCart(ctx, "EUR")
-	got, err := svc.AddItem(ctx, c.ID, "var-1", 2)
+	c, _ := svc.CreateCart(ctx, "cust-1", "EUR")
+	got, err := svc.AddItem(ctx, c.ID, "cust-1", "var-1", 2)
 	if err != nil {
 		t.Fatalf("AddItem: %v", err)
 	}
@@ -198,7 +201,7 @@ func TestService_AddItem_CartNotFound(t *testing.T) {
 	prices := newStubPriceRepo()
 	svc := cartApp.NewService(carts, prices, testPipeline(prices), testLogger())
 
-	_, err := svc.AddItem(context.Background(), "no-cart", "var-1", 1)
+	_, err := svc.AddItem(context.Background(), "no-cart", "cust-1", "var-1", 1)
 	if !apperror.Is(err, apperror.CodeNotFound) {
 		t.Errorf("expected not_found, got: %v", err)
 	}
@@ -210,8 +213,8 @@ func TestService_AddItem_NoPriceForVariant(t *testing.T) {
 	svc := cartApp.NewService(carts, prices, testPipeline(prices), testLogger())
 	ctx := context.Background()
 
-	c, _ := svc.CreateCart(ctx, "EUR")
-	_, err := svc.AddItem(ctx, c.ID, "var-no-price", 1)
+	c, _ := svc.CreateCart(ctx, "cust-1", "EUR")
+	_, err := svc.AddItem(ctx, c.ID, "cust-1", "var-no-price", 1)
 	if err == nil {
 		t.Fatal("expected error for missing price")
 	}
@@ -227,9 +230,9 @@ func TestService_AddItem_MergesQuantity(t *testing.T) {
 	svc := cartApp.NewService(carts, prices, testPipeline(prices), testLogger())
 	ctx := context.Background()
 
-	c, _ := svc.CreateCart(ctx, "EUR")
-	svc.AddItem(ctx, c.ID, "var-1", 2)
-	got, err := svc.AddItem(ctx, c.ID, "var-1", 3)
+	c, _ := svc.CreateCart(ctx, "cust-1", "EUR")
+	svc.AddItem(ctx, c.ID, "cust-1", "var-1", 2)
+	got, err := svc.AddItem(ctx, c.ID, "cust-1", "var-1", 3)
 	if err != nil {
 		t.Fatalf("AddItem merge: %v", err)
 	}
@@ -248,10 +251,10 @@ func TestService_UpdateItemQuantity(t *testing.T) {
 	svc := cartApp.NewService(carts, prices, testPipeline(prices), testLogger())
 	ctx := context.Background()
 
-	c, _ := svc.CreateCart(ctx, "EUR")
-	svc.AddItem(ctx, c.ID, "var-1", 2)
+	c, _ := svc.CreateCart(ctx, "cust-1", "EUR")
+	svc.AddItem(ctx, c.ID, "cust-1", "var-1", 2)
 
-	got, err := svc.UpdateItemQuantity(ctx, c.ID, "var-1", 5)
+	got, err := svc.UpdateItemQuantity(ctx, c.ID, "cust-1", "var-1", 5)
 	if err != nil {
 		t.Fatalf("UpdateItemQuantity: %v", err)
 	}
@@ -265,7 +268,7 @@ func TestService_UpdateItemQuantity_CartNotFound(t *testing.T) {
 	prices := newStubPriceRepo()
 	svc := cartApp.NewService(carts, prices, testPipeline(prices), testLogger())
 
-	_, err := svc.UpdateItemQuantity(context.Background(), "no-cart", "var-1", 1)
+	_, err := svc.UpdateItemQuantity(context.Background(), "no-cart", "cust-1", "var-1", 1)
 	if !apperror.Is(err, apperror.CodeNotFound) {
 		t.Errorf("expected not_found, got: %v", err)
 	}
@@ -277,8 +280,8 @@ func TestService_UpdateItemQuantity_ItemNotFound(t *testing.T) {
 	svc := cartApp.NewService(carts, prices, testPipeline(prices), testLogger())
 	ctx := context.Background()
 
-	c, _ := svc.CreateCart(ctx, "EUR")
-	_, err := svc.UpdateItemQuantity(ctx, c.ID, "var-1", 1)
+	c, _ := svc.CreateCart(ctx, "cust-1", "EUR")
+	_, err := svc.UpdateItemQuantity(ctx, c.ID, "cust-1", "var-1", 1)
 	if err == nil {
 		t.Fatal("expected error for non-existent item")
 	}
@@ -294,10 +297,10 @@ func TestService_RemoveItem(t *testing.T) {
 	svc := cartApp.NewService(carts, prices, testPipeline(prices), testLogger())
 	ctx := context.Background()
 
-	c, _ := svc.CreateCart(ctx, "EUR")
-	svc.AddItem(ctx, c.ID, "var-1", 1)
+	c, _ := svc.CreateCart(ctx, "cust-1", "EUR")
+	svc.AddItem(ctx, c.ID, "cust-1", "var-1", 1)
 
-	got, err := svc.RemoveItem(ctx, c.ID, "var-1")
+	got, err := svc.RemoveItem(ctx, c.ID, "cust-1", "var-1")
 	if err != nil {
 		t.Fatalf("RemoveItem: %v", err)
 	}
@@ -311,7 +314,7 @@ func TestService_RemoveItem_CartNotFound(t *testing.T) {
 	prices := newStubPriceRepo()
 	svc := cartApp.NewService(carts, prices, testPipeline(prices), testLogger())
 
-	_, err := svc.RemoveItem(context.Background(), "no-cart", "var-1")
+	_, err := svc.RemoveItem(context.Background(), "no-cart", "cust-1", "var-1")
 	if !apperror.Is(err, apperror.CodeNotFound) {
 		t.Errorf("expected not_found, got: %v", err)
 	}
@@ -323,8 +326,8 @@ func TestService_RemoveItem_ItemNotFound(t *testing.T) {
 	svc := cartApp.NewService(carts, prices, testPipeline(prices), testLogger())
 	ctx := context.Background()
 
-	c, _ := svc.CreateCart(ctx, "EUR")
-	_, err := svc.RemoveItem(ctx, c.ID, "var-x")
+	c, _ := svc.CreateCart(ctx, "cust-1", "EUR")
+	_, err := svc.RemoveItem(ctx, c.ID, "cust-1", "var-x")
 	if err == nil {
 		t.Fatal("expected error for non-existent item")
 	}
@@ -339,7 +342,7 @@ func TestService_GetActiveCartByCustomer(t *testing.T) {
 	svc := cartApp.NewService(carts, prices, testPipeline(prices), testLogger())
 	ctx := context.Background()
 
-	c, _ := svc.CreateCart(ctx, "EUR")
+	c, _ := svc.CreateCart(ctx, "cust-1", "EUR")
 	c.SetCustomerID("cust-1")
 	carts.Save(ctx, c)
 
@@ -371,9 +374,9 @@ func TestService_RecalculateUpdatesPrices(t *testing.T) {
 	svc := cartApp.NewService(carts, prices, testPipeline(prices), testLogger())
 	ctx := context.Background()
 
-	c, _ := svc.CreateCart(ctx, "EUR")
-	svc.AddItem(ctx, c.ID, "var-1", 1)
-	got, _ := svc.AddItem(ctx, c.ID, "var-2", 3)
+	c, _ := svc.CreateCart(ctx, "cust-1", "EUR")
+	svc.AddItem(ctx, c.ID, "cust-1", "var-1", 1)
+	got, _ := svc.AddItem(ctx, c.ID, "cust-1", "var-2", 3)
 
 	// Verify prices were set by the pipeline.
 	if got.Items[0].UnitPrice.Amount() != 1000 {
@@ -404,9 +407,10 @@ func TestService_AddItem_SaveError(t *testing.T) {
 
 	// Create the cart directly in the inner repo.
 	c, _ := domainCart.NewCart("cart-1", "EUR")
+	c.SetCustomerID("cust-1")
 	inner.carts["cart-1"] = &c
 
-	_, err := svc.AddItem(ctx, "cart-1", "var-1", 1)
+	_, err := svc.AddItem(ctx, "cart-1", "cust-1", "var-1", 1)
 	if err == nil {
 		t.Fatal("expected save error")
 	}

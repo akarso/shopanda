@@ -97,12 +97,13 @@ func cartTestPipeline(prices pricing.PriceRepository) pricing.Pipeline {
 }
 
 func newCartRouter(h *shophttp.CartHandler) *http.ServeMux {
+	requireAuth := shophttp.RequireAuth()
 	mux := http.NewServeMux()
-	mux.HandleFunc("POST /api/v1/carts", h.Create())
-	mux.HandleFunc("GET /api/v1/carts/{cartId}", h.Get())
-	mux.HandleFunc("POST /api/v1/carts/{cartId}/items", h.AddItem())
-	mux.HandleFunc("PUT /api/v1/carts/{cartId}/items/{variantId}", h.UpdateItem())
-	mux.HandleFunc("DELETE /api/v1/carts/{cartId}/items/{variantId}", h.RemoveItem())
+	mux.Handle("POST /api/v1/carts", requireAuth(h.Create()))
+	mux.Handle("GET /api/v1/carts/{cartId}", requireAuth(h.Get()))
+	mux.Handle("POST /api/v1/carts/{cartId}/items", requireAuth(h.AddItem()))
+	mux.Handle("PUT /api/v1/carts/{cartId}/items/{variantId}", requireAuth(h.UpdateItem()))
+	mux.Handle("DELETE /api/v1/carts/{cartId}/items/{variantId}", requireAuth(h.RemoveItem()))
 	return mux
 }
 
@@ -178,6 +179,7 @@ func TestCartHandler_Get_OK(t *testing.T) {
 
 	// Seed a cart.
 	c, _ := domainCart.NewCart("cart-1", "EUR")
+	c.SetCustomerID("cust-1")
 	carts.Save(context.Background(), &c)
 
 	rec := httptest.NewRecorder()
@@ -214,6 +216,7 @@ func TestCartHandler_AddItem_OK(t *testing.T) {
 	prices.set("var-1", "EUR", 1500)
 
 	c, _ := domainCart.NewCart("cart-1", "EUR")
+	c.SetCustomerID("cust-1")
 	carts.Save(context.Background(), &c)
 
 	rec := httptest.NewRecorder()
@@ -262,6 +265,7 @@ func TestCartHandler_AddItem_MissingVariantID(t *testing.T) {
 	carts, _, _, mux := cartSetup()
 
 	c, _ := domainCart.NewCart("cart-1", "EUR")
+	c.SetCustomerID("cust-1")
 	carts.Save(context.Background(), &c)
 
 	rec := httptest.NewRecorder()
@@ -279,6 +283,7 @@ func TestCartHandler_AddItem_InvalidQuantity(t *testing.T) {
 	carts, _, _, mux := cartSetup()
 
 	c, _ := domainCart.NewCart("cart-1", "EUR")
+	c.SetCustomerID("cust-1")
 	carts.Save(context.Background(), &c)
 
 	rec := httptest.NewRecorder()
@@ -297,6 +302,7 @@ func TestCartHandler_UpdateItem_OK(t *testing.T) {
 	prices.set("var-1", "EUR", 1000)
 
 	c, _ := domainCart.NewCart("cart-1", "EUR")
+	c.SetCustomerID("cust-1")
 	c.AddItem("var-1", 1, shared.MustNewMoney(1000, "EUR"))
 	carts.Save(context.Background(), &c)
 
@@ -337,6 +343,7 @@ func TestCartHandler_UpdateItem_InvalidQuantity(t *testing.T) {
 	carts, _, _, mux := cartSetup()
 
 	c, _ := domainCart.NewCart("cart-1", "EUR")
+	c.SetCustomerID("cust-1")
 	carts.Save(context.Background(), &c)
 
 	rec := httptest.NewRecorder()
@@ -355,6 +362,7 @@ func TestCartHandler_RemoveItem_OK(t *testing.T) {
 	prices.set("var-1", "EUR", 500)
 
 	c, _ := domainCart.NewCart("cart-1", "EUR")
+	c.SetCustomerID("cust-1")
 	c.AddItem("var-1", 1, shared.MustNewMoney(500, "EUR"))
 	carts.Save(context.Background(), &c)
 
@@ -392,6 +400,7 @@ func TestCartHandler_RemoveItem_ItemNotFound(t *testing.T) {
 	carts, _, _, mux := cartSetup()
 
 	c, _ := domainCart.NewCart("cart-1", "EUR")
+	c.SetCustomerID("cust-1")
 	carts.Save(context.Background(), &c)
 
 	rec := httptest.NewRecorder()
@@ -401,5 +410,37 @@ func TestCartHandler_RemoveItem_ItemNotFound(t *testing.T) {
 
 	if rec.Code != http.StatusUnprocessableEntity {
 		t.Fatalf("status = %d, want %d", rec.Code, http.StatusUnprocessableEntity)
+	}
+}
+
+func TestCartHandler_Unauthenticated(t *testing.T) {
+	_, _, _, mux := cartSetup()
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("POST", "/api/v1/carts", strings.NewReader(`{"currency":"EUR"}`))
+	// No auth context — guest identity.
+	mux.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("status = %d, want %d", rec.Code, http.StatusUnauthorized)
+	}
+}
+
+func TestCartHandler_AddItem_WrongCustomer(t *testing.T) {
+	carts, prices, _, mux := cartSetup()
+	prices.set("var-1", "EUR", 1000)
+
+	c, _ := domainCart.NewCart("cart-1", "EUR")
+	c.SetCustomerID("cust-1")
+	carts.Save(context.Background(), &c)
+
+	rec := httptest.NewRecorder()
+	body := `{"variant_id":"var-1","quantity":1}`
+	req := httptest.NewRequest("POST", "/api/v1/carts/cart-1/items", strings.NewReader(body))
+	req = testhelper.CustomerRequest(req, "cust-OTHER")
+	mux.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("status = %d, want %d; body: %s", rec.Code, http.StatusForbidden, rec.Body.String())
 	}
 }
