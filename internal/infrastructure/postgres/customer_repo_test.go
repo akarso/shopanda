@@ -199,3 +199,93 @@ func TestCustomerRepo_Update_NotFound(t *testing.T) {
 		t.Errorf("Code = %q, want not_found", appErr.Code)
 	}
 }
+
+func TestCustomerRepo_WithTx_CommitVisible(t *testing.T) {
+	db := testDB(t)
+	ensureMigrations(t, db)
+	t.Cleanup(func() { db.Exec("DELETE FROM customers") })
+
+	repo := postgres.NewCustomerRepo(db)
+	ctx := context.Background()
+
+	tx, err := db.BeginTx(ctx, nil)
+	if err != nil {
+		t.Fatalf("BeginTx: %v", err)
+	}
+	defer tx.Rollback()
+
+	txRepo := repo.WithTx(tx)
+
+	c := mustNewCustomer(t, "tx-commit@example.com")
+	if err := txRepo.Create(ctx, &c); err != nil {
+		t.Fatalf("txRepo.Create: %v", err)
+	}
+
+	// Visible within the transaction.
+	got, err := txRepo.FindByID(ctx, c.ID)
+	if err != nil {
+		t.Fatalf("txRepo.FindByID: %v", err)
+	}
+	if got == nil {
+		t.Fatal("expected customer visible within tx")
+	}
+
+	// Not visible outside the transaction before commit.
+	outside, err := repo.FindByID(ctx, c.ID)
+	if err != nil {
+		t.Fatalf("repo.FindByID before commit: %v", err)
+	}
+	if outside != nil {
+		t.Error("expected customer not visible outside tx before commit")
+	}
+
+	if err := tx.Commit(); err != nil {
+		t.Fatalf("Commit: %v", err)
+	}
+
+	// Visible after commit.
+	afterCommit, err := repo.FindByID(ctx, c.ID)
+	if err != nil {
+		t.Fatalf("repo.FindByID after commit: %v", err)
+	}
+	if afterCommit == nil {
+		t.Fatal("expected customer visible after commit")
+	}
+	if afterCommit.Email != "tx-commit@example.com" {
+		t.Errorf("Email = %q, want tx-commit@example.com", afterCommit.Email)
+	}
+}
+
+func TestCustomerRepo_WithTx_RollbackInvisible(t *testing.T) {
+	db := testDB(t)
+	ensureMigrations(t, db)
+	t.Cleanup(func() { db.Exec("DELETE FROM customers") })
+
+	repo := postgres.NewCustomerRepo(db)
+	ctx := context.Background()
+
+	tx, err := db.BeginTx(ctx, nil)
+	if err != nil {
+		t.Fatalf("BeginTx: %v", err)
+	}
+
+	txRepo := repo.WithTx(tx)
+
+	c := mustNewCustomer(t, "tx-rollback@example.com")
+	if err := txRepo.Create(ctx, &c); err != nil {
+		t.Fatalf("txRepo.Create: %v", err)
+	}
+
+	if err := tx.Rollback(); err != nil {
+		t.Fatalf("Rollback: %v", err)
+	}
+
+	// Not visible after rollback.
+	got, err := repo.FindByID(ctx, c.ID)
+	if err != nil {
+		t.Fatalf("repo.FindByID after rollback: %v", err)
+	}
+	if got != nil {
+		t.Error("expected customer not visible after rollback")
+	}
+}

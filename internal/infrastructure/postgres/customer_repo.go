@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"time"
 
 	"github.com/akarso/shopanda/internal/domain/customer"
 	"github.com/akarso/shopanda/internal/platform/apperror"
@@ -77,7 +78,10 @@ func (r *CustomerRepo) Create(ctx context.Context, c *customer.Customer) error {
 	if err != nil {
 		var pqErr *pq.Error
 		if errors.As(err, &pqErr) && pqErr.Code == "23505" {
-			return apperror.Conflict("customer with this email already exists")
+			if pqErr.Constraint == "customers_email_key" {
+				return apperror.Conflict("customer with this email already exists")
+			}
+			return apperror.Conflict("customer with this id already exists")
 		}
 		return fmt.Errorf("customer_repo: create: %w", err)
 	}
@@ -86,6 +90,8 @@ func (r *CustomerRepo) Create(ctx context.Context, c *customer.Customer) error {
 
 // Update persists changes to an existing customer.
 func (r *CustomerRepo) Update(ctx context.Context, c *customer.Customer) error {
+	updatedAt := time.Now().UTC()
+
 	const q = `UPDATE customers
 		SET email = $1, first_name = $2, last_name = $3,
 			password_hash = $4, status = $5, updated_at = $6
@@ -94,7 +100,7 @@ func (r *CustomerRepo) Update(ctx context.Context, c *customer.Customer) error {
 	result, err := r.exec(ctx, q,
 		c.Email, c.FirstName, c.LastName,
 		c.PasswordHash, string(c.Status),
-		c.UpdatedAt, c.ID,
+		updatedAt, c.ID,
 	)
 	if err != nil {
 		var pqErr *pq.Error
@@ -111,6 +117,7 @@ func (r *CustomerRepo) Update(ctx context.Context, c *customer.Customer) error {
 	if rows == 0 {
 		return apperror.NotFound("customer not found")
 	}
+	c.UpdatedAt = updatedAt
 	return nil
 }
 
