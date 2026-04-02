@@ -5,7 +5,6 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
-	"time"
 
 	"github.com/akarso/shopanda/internal/domain/customer"
 	"github.com/akarso/shopanda/internal/platform/apperror"
@@ -87,8 +86,6 @@ func (r *CustomerRepo) Create(ctx context.Context, c *customer.Customer) error {
 
 // Update persists changes to an existing customer.
 func (r *CustomerRepo) Update(ctx context.Context, c *customer.Customer) error {
-	updatedAt := time.Now().UTC()
-
 	const q = `UPDATE customers
 		SET email = $1, first_name = $2, last_name = $3,
 			password_hash = $4, status = $5, updated_at = $6
@@ -97,7 +94,7 @@ func (r *CustomerRepo) Update(ctx context.Context, c *customer.Customer) error {
 	result, err := r.exec(ctx, q,
 		c.Email, c.FirstName, c.LastName,
 		c.PasswordHash, string(c.Status),
-		updatedAt, c.ID,
+		c.UpdatedAt, c.ID,
 	)
 	if err != nil {
 		var pqErr *pq.Error
@@ -114,7 +111,6 @@ func (r *CustomerRepo) Update(ctx context.Context, c *customer.Customer) error {
 	if rows == 0 {
 		return apperror.NotFound("customer not found")
 	}
-	c.UpdatedAt = updatedAt
 	return nil
 }
 
@@ -147,6 +143,10 @@ func scanCustomer(s interface{ Scan(...interface{}) error }) (*customer.Customer
 		return nil, err
 	}
 
-	c.Status = customer.Status(status)
+	st := customer.Status(status)
+	if !st.IsValid() {
+		return nil, fmt.Errorf("customer_repo: invalid status from database: %q", status)
+	}
+	c.Status = st
 	return &c, nil
 }

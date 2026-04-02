@@ -2,6 +2,7 @@ package customer_test
 
 import (
 	"testing"
+	"time"
 
 	"github.com/akarso/shopanda/internal/domain/customer"
 )
@@ -109,5 +110,42 @@ func TestCustomer_SetPassword_Empty(t *testing.T) {
 	c, _ := customer.NewCustomer("cust-1", "alice@example.com")
 	if err := c.SetPassword(""); err == nil {
 		t.Fatal("expected error for empty password hash")
+	}
+}
+
+func TestCustomer_Disable_UpdatesTimestamp(t *testing.T) {
+	c, _ := customer.NewCustomer("cust-1", "alice@example.com")
+	before := c.UpdatedAt
+	time.Sleep(time.Millisecond)
+	if err := c.Disable(); err != nil {
+		t.Fatalf("Disable: %v", err)
+	}
+	if !c.UpdatedAt.After(before) {
+		t.Error("expected UpdatedAt to advance after Disable")
+	}
+}
+
+func TestCustomer_Enable_UpdatesTimestamp(t *testing.T) {
+	c, _ := customer.NewCustomer("cust-1", "alice@example.com")
+	_ = c.Disable()
+	before := c.UpdatedAt
+	time.Sleep(time.Millisecond)
+	if err := c.Enable(); err != nil {
+		t.Fatalf("Enable: %v", err)
+	}
+	if !c.UpdatedAt.After(before) {
+		t.Error("expected UpdatedAt to advance after Enable")
+	}
+}
+
+func TestCustomer_SetPassword_UpdatesTimestamp(t *testing.T) {
+	c, _ := customer.NewCustomer("cust-1", "alice@example.com")
+	before := c.UpdatedAt
+	time.Sleep(time.Millisecond)
+	if err := c.SetPassword("hashed-pw"); err != nil {
+		t.Fatalf("SetPassword: %v", err)
+	}
+	if !c.UpdatedAt.After(before) {
+		t.Error("expected UpdatedAt to advance after SetPassword")
 	}
 }

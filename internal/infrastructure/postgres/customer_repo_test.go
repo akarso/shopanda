@@ -2,6 +2,8 @@ package postgres_test
 
 import (
 	"context"
+	"database/sql"
+	"errors"
 	"testing"
 
 	"github.com/akarso/shopanda/internal/domain/customer"
@@ -9,6 +11,13 @@ import (
 	"github.com/akarso/shopanda/internal/platform/apperror"
 	"github.com/akarso/shopanda/internal/platform/id"
 )
+
+// ensureMigrations runs all migrations. Delegates to ensureProductsTable which
+// applies the full migration set.
+func ensureMigrations(t *testing.T, db *sql.DB) {
+	t.Helper()
+	ensureProductsTable(t, db)
+}
 
 func mustNewCustomer(t *testing.T, email string) customer.Customer {
 	t.Helper()
@@ -21,7 +30,7 @@ func mustNewCustomer(t *testing.T, email string) customer.Customer {
 
 func TestCustomerRepo_CreateAndFindByID(t *testing.T) {
 	db := testDB(t)
-	ensureProductsTable(t, db)
+	ensureMigrations(t, db)
 	t.Cleanup(func() { db.Exec("DELETE FROM customers") })
 
 	repo := postgres.NewCustomerRepo(db)
@@ -61,7 +70,7 @@ func TestCustomerRepo_CreateAndFindByID(t *testing.T) {
 
 func TestCustomerRepo_FindByID_NotFound(t *testing.T) {
 	db := testDB(t)
-	ensureProductsTable(t, db)
+	ensureMigrations(t, db)
 
 	repo := postgres.NewCustomerRepo(db)
 	got, err := repo.FindByID(context.Background(), id.New())
@@ -75,7 +84,7 @@ func TestCustomerRepo_FindByID_NotFound(t *testing.T) {
 
 func TestCustomerRepo_FindByEmail(t *testing.T) {
 	db := testDB(t)
-	ensureProductsTable(t, db)
+	ensureMigrations(t, db)
 	t.Cleanup(func() { db.Exec("DELETE FROM customers") })
 
 	repo := postgres.NewCustomerRepo(db)
@@ -100,7 +109,7 @@ func TestCustomerRepo_FindByEmail(t *testing.T) {
 
 func TestCustomerRepo_FindByEmail_NotFound(t *testing.T) {
 	db := testDB(t)
-	ensureProductsTable(t, db)
+	ensureMigrations(t, db)
 
 	repo := postgres.NewCustomerRepo(db)
 	got, err := repo.FindByEmail(context.Background(), "nobody@example.com")
@@ -114,7 +123,7 @@ func TestCustomerRepo_FindByEmail_NotFound(t *testing.T) {
 
 func TestCustomerRepo_Create_DuplicateEmail(t *testing.T) {
 	db := testDB(t)
-	ensureProductsTable(t, db)
+	ensureMigrations(t, db)
 	t.Cleanup(func() { db.Exec("DELETE FROM customers") })
 
 	repo := postgres.NewCustomerRepo(db)
@@ -130,8 +139,8 @@ func TestCustomerRepo_Create_DuplicateEmail(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error for duplicate email")
 	}
-	appErr, ok := err.(*apperror.Error)
-	if !ok {
+	var appErr *apperror.Error
+	if !errors.As(err, &appErr) {
 		t.Fatalf("expected *apperror.Error, got %T", err)
 	}
 	if appErr.Code != apperror.CodeConflict {
@@ -141,7 +150,7 @@ func TestCustomerRepo_Create_DuplicateEmail(t *testing.T) {
 
 func TestCustomerRepo_Update(t *testing.T) {
 	db := testDB(t)
-	ensureProductsTable(t, db)
+	ensureMigrations(t, db)
 	t.Cleanup(func() { db.Exec("DELETE FROM customers") })
 
 	repo := postgres.NewCustomerRepo(db)
@@ -172,7 +181,7 @@ func TestCustomerRepo_Update(t *testing.T) {
 
 func TestCustomerRepo_Update_NotFound(t *testing.T) {
 	db := testDB(t)
-	ensureProductsTable(t, db)
+	ensureMigrations(t, db)
 
 	repo := postgres.NewCustomerRepo(db)
 	ctx := context.Background()
@@ -182,8 +191,8 @@ func TestCustomerRepo_Update_NotFound(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error for non-existent customer")
 	}
-	appErr, ok := err.(*apperror.Error)
-	if !ok {
+	var appErr *apperror.Error
+	if !errors.As(err, &appErr) {
 		t.Fatalf("expected *apperror.Error, got %T", err)
 	}
 	if appErr.Code != apperror.CodeNotFound {
