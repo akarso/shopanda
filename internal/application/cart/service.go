@@ -35,18 +35,22 @@ func NewService(
 	}
 }
 
-// CreateCart creates a new active cart with the given currency.
-func (s *Service) CreateCart(ctx context.Context, currency string) (*domainCart.Cart, error) {
+// CreateCart creates a new active cart with the given currency, owned by customerID.
+func (s *Service) CreateCart(ctx context.Context, customerID, currency string) (*domainCart.Cart, error) {
 	c, err := domainCart.NewCart(id.New(), currency)
 	if err != nil {
 		return nil, apperror.Wrap(apperror.CodeValidation, "invalid cart parameters", err)
+	}
+	if err := c.SetCustomerID(customerID); err != nil {
+		return nil, apperror.Wrap(apperror.CodeValidation, "invalid customer id", err)
 	}
 	if err := s.carts.Save(ctx, &c); err != nil {
 		return nil, fmt.Errorf("cart service: create: %w", err)
 	}
 	s.log.Info("cart.created", map[string]interface{}{
-		"cart_id":  c.ID,
-		"currency": c.Currency,
+		"cart_id":     c.ID,
+		"customer_id": customerID,
+		"currency":    c.Currency,
 	})
 	return &c, nil
 }
@@ -76,13 +80,16 @@ func (s *Service) GetActiveCartByCustomer(ctx context.Context, customerID string
 }
 
 // AddItem adds an item to the cart and recalculates pricing.
-func (s *Service) AddItem(ctx context.Context, cartID, variantID string, quantity int) (*domainCart.Cart, error) {
+func (s *Service) AddItem(ctx context.Context, cartID, customerID, variantID string, quantity int) (*domainCart.Cart, error) {
 	c, err := s.carts.FindByID(ctx, cartID)
 	if err != nil {
 		return nil, fmt.Errorf("cart service: add item: find: %w", err)
 	}
 	if c == nil {
 		return nil, apperror.NotFound("cart not found")
+	}
+	if c.CustomerID != customerID {
+		return nil, apperror.Forbidden("cannot modify another customer's cart")
 	}
 
 	price, err := s.lookupPrice(ctx, variantID, c.Currency)
@@ -111,13 +118,16 @@ func (s *Service) AddItem(ctx context.Context, cartID, variantID string, quantit
 }
 
 // UpdateItemQuantity sets the quantity of an existing item and recalculates pricing.
-func (s *Service) UpdateItemQuantity(ctx context.Context, cartID, variantID string, quantity int) (*domainCart.Cart, error) {
+func (s *Service) UpdateItemQuantity(ctx context.Context, cartID, customerID, variantID string, quantity int) (*domainCart.Cart, error) {
 	c, err := s.carts.FindByID(ctx, cartID)
 	if err != nil {
 		return nil, fmt.Errorf("cart service: update item: find: %w", err)
 	}
 	if c == nil {
 		return nil, apperror.NotFound("cart not found")
+	}
+	if c.CustomerID != customerID {
+		return nil, apperror.Forbidden("cannot modify another customer's cart")
 	}
 
 	if err := c.UpdateItemQuantity(variantID, quantity); err != nil {
@@ -141,13 +151,16 @@ func (s *Service) UpdateItemQuantity(ctx context.Context, cartID, variantID stri
 }
 
 // RemoveItem removes an item from the cart and recalculates pricing.
-func (s *Service) RemoveItem(ctx context.Context, cartID, variantID string) (*domainCart.Cart, error) {
+func (s *Service) RemoveItem(ctx context.Context, cartID, customerID, variantID string) (*domainCart.Cart, error) {
 	c, err := s.carts.FindByID(ctx, cartID)
 	if err != nil {
 		return nil, fmt.Errorf("cart service: remove item: find: %w", err)
 	}
 	if c == nil {
 		return nil, apperror.NotFound("cart not found")
+	}
+	if c.CustomerID != customerID {
+		return nil, apperror.Forbidden("cannot modify another customer's cart")
 	}
 
 	if err := c.RemoveItem(variantID); err != nil {
