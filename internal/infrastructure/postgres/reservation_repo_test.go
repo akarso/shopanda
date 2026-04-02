@@ -261,3 +261,86 @@ func TestReservationRepo_Confirm_EmptyID(t *testing.T) {
 		t.Fatal("expected error for empty id")
 	}
 }
+
+func TestReservationRepo_Reserve_NonActiveStatus(t *testing.T) {
+	db := testDB(t)
+	ensureProductsTable(t, db)
+	t.Cleanup(func() {
+		db.Exec("DELETE FROM reservations")
+		db.Exec("DELETE FROM stock")
+	})
+
+	vid := seedVariant(t, db)
+	stockRepo := postgres.NewStockRepo(db)
+	seedStock(t, stockRepo, vid, 10)
+
+	repo := postgres.NewReservationRepo(db)
+	res, err := inventory.NewReservation(id.New(), vid, 2, time.Now().Add(15*time.Minute))
+	if err != nil {
+		t.Fatalf("NewReservation: %v", err)
+	}
+	// Force a non-active status.
+	res.Status = inventory.ReservationConfirmed
+
+	err = repo.Reserve(context.Background(), &res)
+	if err == nil {
+		t.Fatal("expected error for non-active status")
+	}
+}
+
+func TestReservationRepo_ReleaseExpiredBefore(t *testing.T) {
+	db := testDB(t)
+	ensureProductsTable(t, db)
+	t.Cleanup(func() {
+		db.Exec("DELETE FROM reservations")
+		db.Exec("DELETE FROM stock")
+	})
+
+	vid := seedVariant(t, db)
+	stockRepo := postgres.NewStockRepo(db)
+	seedStock(t, stockRepo, vid, 20)
+
+	repo := postgres.NewReservationRepo(db)
+
+	// Create one expired and one still-active reservation.
+	expired, _ := inventory.NewReservation(id.New(), vid, 3, time.Now().Add(-time.Minute))
+	active, _ := inventory.NewReservation(id.New(), vid, 2, time.Now().Add(15*time.Minute))
+	if err := repo.Reserve(context.Background(), &expired); err != nil {
+		t.Fatalf("Reserve expired: %v", err)
+	}
+	if err := repo.Reserve(context.Background(), &active); err != nil {
+		t.Fatalf("Reserve active: %v", err)
+	}
+
+	// Stock should be 20 - 3 - 2 = 15.
+	stock, _ := stockRepo.GetStock(context.Background(), vid)
+	if stock.Quantity != 15 {
+		t.Fatalf("stock before sweep: got %d, want 15", stock.Quantity)
+	}
+
+	n, err := repo.ReleaseExpiredBefore(context.Background(), time.Now())
+	if err != nil {
+		t.Fatalf("ReleaseExpiredBefore: %v", err)
+	}
+	if n != 1 {
+		t.Errorf("released count = %d, want 1", n)
+	}
+
+	// Stock should be restored for expired only: 15 + 3 = 18.
+	stock, _ = stockRepo.GetStock(context.Background(), vid)
+	if stock.Quantity != 18 {
+		t.Errorf("stock after sweep: got %d, want 18", stock.Quantity)
+	}
+
+	// Expired reservation should be released.
+	found, _ := repo.FindByID(context.Background(), expired.ID)
+	if found.Status != inventory.ReservationReleased {
+		t.Errorf("expired status = %q, want %q", found.Status, inventory.ReservationReleased)
+	}
+
+	// Active reservation should remain active.
+	found, _ = repo.FindByID(context.Background(), active.ID)
+	if found.Status != inventory.ReservationActive {
+		t.Errorf("active status = %q, want %q", found.Status, inventory.ReservationActive)
+	}
+}

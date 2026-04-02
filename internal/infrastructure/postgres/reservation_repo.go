@@ -29,6 +29,9 @@ func (r *ReservationRepo) Reserve(ctx context.Context, res *inventory.Reservatio
 	if res == nil {
 		return fmt.Errorf("reservation_repo: reserve: reservation must not be nil")
 	}
+	if res.Status != inventory.ReservationActive {
+		return fmt.Errorf("reservation_repo: reserve: status must be active, got %q", res.Status)
+	}
 
 	tx, err := r.db.BeginTx(ctx, nil)
 	if err != nil {
@@ -180,4 +183,55 @@ func (r *ReservationRepo) ListActiveByVariantID(ctx context.Context, variantID s
 		return nil, fmt.Errorf("reservation_repo: list rows: %w", err)
 	}
 	return reservations, nil
+}
+
+// ReleaseExpiredBefore atomically releases all active reservations that expired
+// before cutoff and restores their quantities to stock.
+func (r *ReservationRepo) ReleaseExpiredBefore(ctx context.Context, cutoff time.Time) (int, error) {
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return 0, fmt.Errorf("reservation_repo: begin tx: %w", err)
+	}
+	defer tx.Rollback()
+
+	// Mark expired active reservations as released and collect their variant/qty.
+	const upd = `UPDATE reservations SET status = 'released'
+		WHERE status = 'active' AND expires_at < $1
+		RETURNING variant_id, quantity`
+	rows, err := tx.QueryContext(ctx, upd, cutoff)
+	if err != nil {
+		return 0, fmt.Errorf("reservation_repo: release expired: %w", err)
+	}
+	defer rows.Close()
+
+	type restore struct {
+		variantID string
+		quantity  int
+	}
+	var restores []restore
+	for rows.Next() {
+		var r restore
+		if err := rows.Scan(&r.variantID, &r.quantity); err != nil {
+			return 0, fmt.Errorf("reservation_repo: scan expired: %w", err)
+		}
+		restores = append(restores, r)
+	}
+	if err := rows.Err(); err != nil {
+		return 0, fmt.Errorf("reservation_repo: rows expired: %w", err)
+	}
+
+	// Restore stock for each released reservation.
+	const incr = `UPDATE stock SET quantity = quantity + $1, updated_at = $2
+		WHERE variant_id = $3`
+	now := time.Now().UTC()
+	for _, rs := range restores {
+		if _, err := tx.ExecContext(ctx, incr, rs.quantity, now, rs.variantID); err != nil {
+			return 0, fmt.Errorf("reservation_repo: restore stock: %w", err)
+		}
+	}
+
+	if err := tx.Commit(); err != nil {
+		return 0, fmt.Errorf("reservation_repo: commit: %w", err)
+	}
+	return len(restores), nil
 }

@@ -73,6 +73,14 @@ func TestReservation_IsExpired(t *testing.T) {
 	}
 }
 
+func TestReservation_IsExpired_ExactBoundary(t *testing.T) {
+	exp := time.Now().Add(time.Minute)
+	r, _ := inventory.NewReservation("res-1", "var-1", 1, exp)
+	if !r.IsExpired(r.ExpiresAt) {
+		t.Error("expected reservation to be expired when now == ExpiresAt")
+	}
+}
+
 func TestReservation_NotExpired(t *testing.T) {
 	exp := time.Now().Add(15 * time.Minute)
 	r, _ := inventory.NewReservation("res-1", "var-1", 1, exp)

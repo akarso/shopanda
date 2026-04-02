@@ -9,8 +9,8 @@ import (
 type ReservationStatus string
 
 const (
-	ReservationActive   ReservationStatus = "active"
-	ReservationReleased ReservationStatus = "released"
+	ReservationActive    ReservationStatus = "active"
+	ReservationReleased  ReservationStatus = "released"
 	ReservationConfirmed ReservationStatus = "confirmed"
 )
 
@@ -57,7 +57,7 @@ func NewReservation(id, variantID string, quantity int, expiresAt time.Time) (Re
 	}, nil
 }
 
-// IsExpired returns true if the reservation has passed its expiry time.
+// IsExpired returns true if the reservation has reached or passed its expiry time.
 func (r Reservation) IsExpired(now time.Time) bool {
-	return now.After(r.ExpiresAt)
+	return !now.Before(r.ExpiresAt)
 }
