@@ -1,0 +1,204 @@
+package postgres
+
+import (
+	"context"
+	"database/sql"
+	"errors"
+	"fmt"
+	"time"
+
+	"github.com/akarso/shopanda/internal/domain/cart"
+	"github.com/akarso/shopanda/internal/domain/shared"
+)
+
+// Compile-time check that CartRepo implements cart.CartRepository.
+var _ cart.CartRepository = (*CartRepo)(nil)
+
+// CartRepo implements cart.CartRepository using PostgreSQL.
+type CartRepo struct {
+	db *sql.DB
+}
+
+// NewCartRepo returns a new CartRepo backed by db.
+func NewCartRepo(db *sql.DB) *CartRepo {
+	return &CartRepo{db: db}
+}
+
+// FindByID returns a cart with its items by ID.
+// Returns (nil, nil) when not found.
+func (r *CartRepo) FindByID(ctx context.Context, id string) (*cart.Cart, error) {
+	if id == "" {
+		return nil, fmt.Errorf("cart_repo: find: empty id")
+	}
+	const q = `SELECT id, customer_id, status, currency, created_at, updated_at
+		FROM carts WHERE id = $1`
+	c, err := r.scanCart(r.db.QueryRowContext(ctx, q, id))
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("cart_repo: find by id: %w", err)
+	}
+	items, err := r.loadItems(ctx, c.ID, c.Currency)
+	if err != nil {
+		return nil, err
+	}
+	c.Items = items
+	return c, nil
+}
+
+// FindActiveByCustomerID returns the active cart for a customer.
+// Returns (nil, nil) when not found.
+func (r *CartRepo) FindActiveByCustomerID(ctx context.Context, customerID string) (*cart.Cart, error) {
+	if customerID == "" {
+		return nil, fmt.Errorf("cart_repo: find active: empty customer id")
+	}
+	const q = `SELECT id, customer_id, status, currency, created_at, updated_at
+		FROM carts WHERE customer_id = $1 AND status = 'active'
+		LIMIT 1`
+	c, err := r.scanCart(r.db.QueryRowContext(ctx, q, customerID))
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("cart_repo: find active by customer: %w", err)
+	}
+	items, err := r.loadItems(ctx, c.ID, c.Currency)
+	if err != nil {
+		return nil, err
+	}
+	c.Items = items
+	return c, nil
+}
+
+// Save persists a cart and its items (upsert). Uses a transaction to ensure
+// the cart header and items are written atomically.
+func (r *CartRepo) Save(ctx context.Context, c *cart.Cart) error {
+	if c == nil {
+		return fmt.Errorf("cart_repo: save: cart must not be nil")
+	}
+
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("cart_repo: begin tx: %w", err)
+	}
+	defer tx.Rollback()
+
+	// Upsert cart header.
+	const upsertCart = `INSERT INTO carts (id, customer_id, status, currency, created_at, updated_at)
+		VALUES ($1, $2, $3, $4, $5, $6)
+		ON CONFLICT (id) DO UPDATE SET
+			customer_id = EXCLUDED.customer_id,
+			status = EXCLUDED.status,
+			currency = EXCLUDED.currency,
+			updated_at = EXCLUDED.updated_at`
+
+	var customerID interface{}
+	if c.CustomerID != "" {
+		customerID = c.CustomerID
+	}
+
+	_, err = tx.ExecContext(ctx, upsertCart,
+		c.ID, customerID, string(c.Status()), c.Currency,
+		c.CreatedAt, c.UpdatedAt,
+	)
+	if err != nil {
+		return fmt.Errorf("cart_repo: upsert cart: %w", err)
+	}
+
+	// Replace items: delete all, re-insert.
+	const deleteItems = `DELETE FROM cart_items WHERE cart_id = $1`
+	if _, err := tx.ExecContext(ctx, deleteItems, c.ID); err != nil {
+		return fmt.Errorf("cart_repo: delete items: %w", err)
+	}
+
+	if len(c.Items) > 0 {
+		const insertItem = `INSERT INTO cart_items (cart_id, variant_id, quantity, unit_price, currency, created_at, updated_at)
+			VALUES ($1, $2, $3, $4, $5, $6, $7)`
+		for i := range c.Items {
+			item := &c.Items[i]
+			_, err = tx.ExecContext(ctx, insertItem,
+				c.ID, item.VariantID, item.Quantity,
+				item.UnitPrice.Amount(), item.UnitPrice.Currency(),
+				item.CreatedAt, item.UpdatedAt,
+			)
+			if err != nil {
+				return fmt.Errorf("cart_repo: insert item %q: %w", item.VariantID, err)
+			}
+		}
+	}
+
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("cart_repo: commit: %w", err)
+	}
+	return nil
+}
+
+// Delete removes a cart and its items by ID (CASCADE handles items).
+func (r *CartRepo) Delete(ctx context.Context, id string) error {
+	if id == "" {
+		return fmt.Errorf("cart_repo: delete: empty id")
+	}
+	const q = `DELETE FROM carts WHERE id = $1`
+	_, err := r.db.ExecContext(ctx, q, id)
+	if err != nil {
+		return fmt.Errorf("cart_repo: delete: %w", err)
+	}
+	return nil
+}
+
+// loadItems fetches all items for a cart, ordered by created_at.
+func (r *CartRepo) loadItems(ctx context.Context, cartID, cartCurrency string) ([]cart.Item, error) {
+	const q = `SELECT variant_id, quantity, unit_price, currency, created_at, updated_at
+		FROM cart_items WHERE cart_id = $1
+		ORDER BY created_at`
+	rows, err := r.db.QueryContext(ctx, q, cartID)
+	if err != nil {
+		return nil, fmt.Errorf("cart_repo: load items: %w", err)
+	}
+	defer rows.Close()
+
+	var items []cart.Item
+	for rows.Next() {
+		var variantID string
+		var quantity int
+		var priceAmount int64
+		var priceCurrency string
+		var createdAt, updatedAt time.Time
+		if err := rows.Scan(&variantID, &quantity, &priceAmount, &priceCurrency, &createdAt, &updatedAt); err != nil {
+			return nil, fmt.Errorf("cart_repo: scan item: %w", err)
+		}
+		unitPrice, err := shared.NewMoney(priceAmount, priceCurrency)
+		if err != nil {
+			return nil, fmt.Errorf("cart_repo: item money: %w", err)
+		}
+		items = append(items, cart.Item{
+			VariantID: variantID,
+			Quantity:  quantity,
+			UnitPrice: unitPrice,
+			CreatedAt: createdAt,
+			UpdatedAt: updatedAt,
+		})
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("cart_repo: items rows: %w", err)
+	}
+	return items, nil
+}
+
+// scanCart reads a cart header from a row scanner.
+func (r *CartRepo) scanCart(row *sql.Row) (*cart.Cart, error) {
+	var c cart.Cart
+	var customerID sql.NullString
+	var status string
+	err := row.Scan(&c.ID, &customerID, &status, &c.Currency, &c.CreatedAt, &c.UpdatedAt)
+	if err != nil {
+		return nil, err
+	}
+	if customerID.Valid {
+		c.CustomerID = customerID.String
+	}
+	// Reconstruct the cart with proper status via SetStatus.
+	c.SetStatusFromDB(cart.CartStatus(status))
+	return &c, nil
+}

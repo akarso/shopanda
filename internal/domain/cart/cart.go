@@ -95,6 +95,16 @@ func (c *Cart) Abandon() error {
 	return nil
 }
 
+// SetStatusFromDB sets the cart status during reconstruction from a data store.
+// The provided status must be a valid CartStatus value.
+func (c *Cart) SetStatusFromDB(s CartStatus) error {
+	if !s.IsValid() {
+		return errors.New("cart: invalid status from database")
+	}
+	c.status = s
+	return nil
+}
+
 // AddItem adds an item to the cart. If an item with the same VariantID already
 // exists, the quantities are summed and UnitPrice is overwritten with the
 // latest value provided.
