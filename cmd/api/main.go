@@ -6,8 +6,11 @@ import (
 	"fmt"
 	"os"
 
+	cartApp "github.com/akarso/shopanda/internal/application/cart"
 	"github.com/akarso/shopanda/internal/application/composition"
 	"github.com/akarso/shopanda/internal/application/importer"
+	appPricing "github.com/akarso/shopanda/internal/application/pricing"
+	"github.com/akarso/shopanda/internal/domain/pricing"
 	"github.com/akarso/shopanda/internal/infrastructure/devauth"
 	"github.com/akarso/shopanda/internal/infrastructure/postgres"
 	"github.com/akarso/shopanda/internal/platform/config"
@@ -67,15 +70,27 @@ func runServe(cfg *config.Config, log logger.Logger) error {
 	// Repositories.
 	productRepo := postgres.NewProductRepo(conn)
 	variantRepo := postgres.NewVariantRepo(conn)
+	cartRepo := postgres.NewCartRepo(conn)
+	priceRepo := postgres.NewPriceRepo(conn)
 
 	// Composition pipelines (empty; plugins add steps later).
 	pdp := composition.NewPipeline[composition.ProductContext]()
 	plp := composition.NewPipeline[composition.ListingContext]()
 
+	// Pricing pipeline.
+	pricingPipeline := pricing.NewPipeline(
+		appPricing.NewBasePriceStep(priceRepo),
+		pricing.NewFinalizeStep(),
+	)
+
+	// Application services.
+	cartService := cartApp.NewService(cartRepo, priceRepo, pricingPipeline, log)
+
 	// Handlers.
 	productHandler := shophttp.NewProductHandler(productRepo, pdp, plp)
 	productAdmin := shophttp.NewProductAdminHandler(productRepo)
 	variantHandler := shophttp.NewVariantHandler(productRepo, variantRepo)
+	cartHandler := shophttp.NewCartHandler(cartService)
 
 	router := shophttp.NewRouter()
 
@@ -98,6 +113,14 @@ func runServe(cfg *config.Config, log logger.Logger) error {
 	router.HandleFunc("GET /api/v1/products/{id}/variants/{variantId}", variantHandler.Get())
 	router.HandleFunc("POST /api/v1/admin/products/{id}/variants", variantHandler.Create())
 	router.HandleFunc("PUT /api/v1/admin/products/{id}/variants/{variantId}", variantHandler.Update())
+
+	// Cart routes (behind RequireAuth).
+	requireAuth := shophttp.RequireAuth()
+	router.Handle("POST /api/v1/carts", requireAuth(cartHandler.Create()))
+	router.Handle("GET /api/v1/carts/{cartId}", requireAuth(cartHandler.Get()))
+	router.Handle("POST /api/v1/carts/{cartId}/items", requireAuth(cartHandler.AddItem()))
+	router.Handle("PUT /api/v1/carts/{cartId}/items/{variantId}", requireAuth(cartHandler.UpdateItem()))
+	router.Handle("DELETE /api/v1/carts/{cartId}/items/{variantId}", requireAuth(cartHandler.RemoveItem()))
 
 	srv := shophttp.NewServer(cfg.Server.Host, cfg.Server.Port, router.Handler(), log)
 	return srv.ListenAndServe()
