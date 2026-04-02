@@ -26,6 +26,9 @@ func NewStockRepo(db *sql.DB) *StockRepo {
 // GetStock returns the stock entry for a variant.
 // Returns a zero-quantity entry when no record exists.
 func (r *StockRepo) GetStock(ctx context.Context, variantID string) (inventory.StockEntry, error) {
+	if variantID == "" {
+		return inventory.StockEntry{}, fmt.Errorf("stock_repo: get stock: empty variantID")
+	}
 	const q = `SELECT variant_id, quantity, updated_at FROM stock WHERE variant_id = $1`
 
 	var s inventory.StockEntry

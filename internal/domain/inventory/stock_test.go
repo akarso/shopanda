@@ -72,6 +72,7 @@ func TestStockEntry_HasStock(t *testing.T) {
 		{0, true},
 		{5, true},
 		{6, false},
+		{-1, false},
 	}
 	for _, tt := range tests {
 		if got := s.HasStock(tt.needed); got != tt.want {

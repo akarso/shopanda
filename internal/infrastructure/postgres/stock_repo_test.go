@@ -109,3 +109,13 @@ func TestStockRepo_SetStock_Nil(t *testing.T) {
 		t.Fatal("expected error for nil entry")
 	}
 }
+
+func TestStockRepo_GetStock_EmptyVariantID(t *testing.T) {
+	db := testDB(t)
+	repo := postgres.NewStockRepo(db)
+
+	_, err := repo.GetStock(context.Background(), "")
+	if err == nil {
+		t.Fatal("expected error for empty variantID")
+	}
+}

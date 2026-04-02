@@ -33,6 +33,10 @@ func (s StockEntry) IsAvailable() bool {
 }
 
 // HasStock returns true if the stock has at least the requested quantity.
+// Negative needed values are considered invalid and return false.
 func (s StockEntry) HasStock(needed int) bool {
+	if needed < 0 {
+		return false
+	}
 	return s.Quantity >= needed
 }
