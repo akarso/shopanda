@@ -68,7 +68,47 @@ func TestEvent_WithVersion(t *testing.T) {
 	}
 }
 
+func TestEvent_WithMeta_ChainedImmutability(t *testing.T) {
+	evt1 := event.New("test.event", "test", nil).WithMeta("a", "1")
+	evt2 := evt1.WithMeta("b", "2")
+
+	if evt1.Meta["a"] != "1" {
+		t.Errorf("evt1 missing a, got %v", evt1.Meta)
+	}
+	if _, ok := evt1.Meta["b"]; ok {
+		t.Errorf("evt1 should not contain b, got %v", evt1.Meta)
+	}
+	if evt2.Meta["a"] != "1" {
+		t.Errorf("evt2 missing a, got %v", evt2.Meta)
+	}
+	if evt2.Meta["b"] != "2" {
+		t.Errorf("evt2 missing b, got %v", evt2.Meta)
+	}
+}
+
 // ── Bus tests ───────────────────────────────────────────────────────────
+
+func TestBus_On_NilHandler_Panics(t *testing.T) {
+	bus := event.NewBus(testLogger())
+	defer func() {
+		r := recover()
+		if r == nil {
+			t.Fatal("expected panic for nil handler")
+		}
+	}()
+	bus.On("test.event", nil)
+}
+
+func TestBus_OnAsync_NilHandler_Panics(t *testing.T) {
+	bus := event.NewBus(testLogger())
+	defer func() {
+		r := recover()
+		if r == nil {
+			t.Fatal("expected panic for nil handler")
+		}
+	}()
+	bus.OnAsync("test.event", nil)
+}
 
 func TestBus_SyncHandler(t *testing.T) {
 	bus := event.NewBus(testLogger())

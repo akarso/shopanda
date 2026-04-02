@@ -2,6 +2,7 @@ package event
 
 import (
 	"context"
+	"fmt"
 	"sync"
 
 	"github.com/akarso/shopanda/internal/platform/logger"
@@ -14,10 +15,10 @@ type Handler func(ctx context.Context, evt Event) error
 // Bus is an in-process event bus supporting synchronous and asynchronous
 // dispatch.
 type Bus struct {
-	mu       sync.RWMutex
-	sync     map[string][]Handler
-	async    map[string][]Handler
-	log      logger.Logger
+	mu    sync.RWMutex
+	sync  map[string][]Handler
+	async map[string][]Handler
+	log   logger.Logger
 }
 
 // NewBus creates a Bus.
@@ -34,6 +35,9 @@ func NewBus(log logger.Logger) *Bus {
 // the Publish call returns that error immediately and remaining sync
 // handlers are skipped.
 func (b *Bus) On(name string, h Handler) {
+	if h == nil {
+		panic(fmt.Sprintf("event.Bus.On(%q): handler must not be nil", name))
+	}
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	b.sync[name] = append(b.sync[name], h)
@@ -43,6 +47,9 @@ func (b *Bus) On(name string, h Handler) {
 // Async handlers run in separate goroutines after all sync handlers
 // have succeeded.
 func (b *Bus) OnAsync(name string, h Handler) {
+	if h == nil {
+		panic(fmt.Sprintf("event.Bus.OnAsync(%q): handler must not be nil", name))
+	}
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	b.async[name] = append(b.async[name], h)
@@ -50,10 +57,10 @@ func (b *Bus) OnAsync(name string, h Handler) {
 
 // Publish dispatches an event to all registered handlers.
 //
-// 1. Sync handlers execute sequentially in registration order.
-//    If any sync handler returns an error, Publish returns immediately
-//    and async handlers are NOT invoked.
-// 2. Async handlers each run in their own goroutine; errors are logged.
+//  1. Sync handlers execute sequentially in registration order.
+//     If any sync handler returns an error, Publish returns immediately
+//     and async handlers are NOT invoked.
+//  2. Async handlers each run in their own goroutine; errors are logged.
 func (b *Bus) Publish(ctx context.Context, evt Event) error {
 	b.mu.RLock()
 	syncH := b.sync[evt.Name]

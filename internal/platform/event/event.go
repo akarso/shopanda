@@ -32,10 +32,12 @@ func New(name, source string, data interface{}) Event {
 
 // WithMeta returns a copy of the event with the given metadata merged in.
 func (e Event) WithMeta(key, value string) Event {
-	if e.Meta == nil {
-		e.Meta = make(map[string]string)
+	newMeta := make(map[string]string, len(e.Meta)+1)
+	for k, v := range e.Meta {
+		newMeta[k] = v
 	}
-	e.Meta[key] = value
+	newMeta[key] = value
+	e.Meta = newMeta
 	return e
 }
 
