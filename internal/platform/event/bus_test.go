@@ -68,6 +68,17 @@ func TestEvent_WithVersion(t *testing.T) {
 	}
 }
 
+func TestEvent_WithVersion_NonPositive(t *testing.T) {
+	evt := event.New("test.event", "test", nil)
+
+	if got := evt.WithVersion(0); got.Version != 1 {
+		t.Errorf("WithVersion(0).Version = %d, want 1", got.Version)
+	}
+	if got := evt.WithVersion(-1); got.Version != 1 {
+		t.Errorf("WithVersion(-1).Version = %d, want 1", got.Version)
+	}
+}
+
 func TestEvent_WithMeta_ChainedImmutability(t *testing.T) {
 	evt1 := event.New("test.event", "test", nil).WithMeta("a", "1")
 	evt2 := evt1.WithMeta("b", "2")
@@ -87,6 +98,16 @@ func TestEvent_WithMeta_ChainedImmutability(t *testing.T) {
 }
 
 // ── Bus tests ───────────────────────────────────────────────────────────
+
+func TestNewBus_NilLogger_Panics(t *testing.T) {
+	defer func() {
+		r := recover()
+		if r == nil {
+			t.Fatal("expected panic for nil logger")
+		}
+	}()
+	event.NewBus(nil)
+}
 
 func TestBus_On_NilHandler_Panics(t *testing.T) {
 	bus := event.NewBus(testLogger())

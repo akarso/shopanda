@@ -23,6 +23,9 @@ type Bus struct {
 
 // NewBus creates a Bus.
 func NewBus(log logger.Logger) *Bus {
+	if log == nil {
+		panic("event.NewBus: logger must not be nil")
+	}
 	return &Bus{
 		sync:  make(map[string][]Handler),
 		async: make(map[string][]Handler),

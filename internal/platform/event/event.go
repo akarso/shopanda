@@ -42,7 +42,11 @@ func (e Event) WithMeta(key, value string) Event {
 }
 
 // WithVersion returns a copy of the event with the given version.
+// If v is not positive the original event is returned unmodified.
 func (e Event) WithVersion(v int) Event {
+	if v <= 0 {
+		return e
+	}
 	e.Version = v
 	return e
 }
