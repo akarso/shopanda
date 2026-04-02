@@ -359,3 +359,28 @@ func TestBus_EventDataAccess(t *testing.T) {
 		t.Errorf("ProductID = %q, want p-1", received.ProductID)
 	}
 }
+
+func TestBus_AsyncHandler_DetachedContext(t *testing.T) {
+	bus := event.NewBus(testLogger())
+	done := make(chan error, 1)
+
+	bus.OnAsync("test.detached", func(ctx context.Context, _ event.Event) error {
+		done <- ctx.Err()
+		return nil
+	})
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel() // cancel before publish
+
+	evt := event.New("test.detached", "test", nil)
+	bus.Publish(ctx, evt)
+
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Errorf("async handler ctx.Err() = %v, want nil (detached context)", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("async handler did not run within timeout")
+	}
+}

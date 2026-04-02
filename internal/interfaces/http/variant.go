@@ -7,6 +7,7 @@ import (
 
 	"github.com/akarso/shopanda/internal/domain/catalog"
 	"github.com/akarso/shopanda/internal/platform/apperror"
+	"github.com/akarso/shopanda/internal/platform/event"
 	"github.com/akarso/shopanda/internal/platform/id"
 )
 
@@ -14,11 +15,12 @@ import (
 type VariantHandler struct {
 	products catalog.ProductRepository
 	variants catalog.VariantRepository
+	bus      *event.Bus
 }
 
 // NewVariantHandler creates a VariantHandler.
-func NewVariantHandler(products catalog.ProductRepository, variants catalog.VariantRepository) *VariantHandler {
-	return &VariantHandler{products: products, variants: variants}
+func NewVariantHandler(products catalog.ProductRepository, variants catalog.VariantRepository, bus *event.Bus) *VariantHandler {
+	return &VariantHandler{products: products, variants: variants, bus: bus}
 }
 
 // requireProduct verifies the parent product exists and returns it.
@@ -166,6 +168,12 @@ func (h *VariantHandler) Create() http.HandlerFunc {
 			return
 		}
 
+		_ = h.bus.Publish(r.Context(), event.New(catalog.EventVariantCreated, "variant.handler", catalog.VariantCreatedData{
+			VariantID: v.ID,
+			ProductID: v.ProductID,
+			SKU:       v.SKU,
+		}))
+
 		JSON(w, http.StatusCreated, map[string]interface{}{
 			"variant": v,
 		})
@@ -227,6 +235,12 @@ func (h *VariantHandler) Update() http.HandlerFunc {
 			JSONError(w, err)
 			return
 		}
+
+		_ = h.bus.Publish(r.Context(), event.New(catalog.EventVariantUpdated, "variant.handler", catalog.VariantUpdatedData{
+			VariantID: v.ID,
+			ProductID: v.ProductID,
+			SKU:       v.SKU,
+		}))
 
 		JSON(w, http.StatusOK, map[string]interface{}{
 			"variant": v,
