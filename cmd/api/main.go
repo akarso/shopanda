@@ -5,17 +5,19 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"time"
 
+	authApp "github.com/akarso/shopanda/internal/application/auth"
 	cartApp "github.com/akarso/shopanda/internal/application/cart"
 	"github.com/akarso/shopanda/internal/application/composition"
 	"github.com/akarso/shopanda/internal/application/importer"
 	appPricing "github.com/akarso/shopanda/internal/application/pricing"
 	"github.com/akarso/shopanda/internal/domain/pricing"
-	"github.com/akarso/shopanda/internal/infrastructure/devauth"
 	"github.com/akarso/shopanda/internal/infrastructure/postgres"
 	"github.com/akarso/shopanda/internal/platform/config"
 	"github.com/akarso/shopanda/internal/platform/db"
 	"github.com/akarso/shopanda/internal/platform/event"
+	"github.com/akarso/shopanda/internal/platform/jwt"
 	"github.com/akarso/shopanda/internal/platform/logger"
 	"github.com/akarso/shopanda/internal/platform/migrate"
 
@@ -73,6 +75,7 @@ func runServe(cfg *config.Config, log logger.Logger) error {
 	variantRepo := postgres.NewVariantRepo(conn)
 	cartRepo := postgres.NewCartRepo(conn)
 	priceRepo := postgres.NewPriceRepo(conn)
+	customerRepo := postgres.NewCustomerRepo(conn)
 
 	// Composition pipelines (empty; plugins add steps later).
 	pdp := composition.NewPipeline[composition.ProductContext]()
@@ -90,16 +93,30 @@ func runServe(cfg *config.Config, log logger.Logger) error {
 	// Application services.
 	cartService := cartApp.NewService(cartRepo, priceRepo, pricingPipeline, log, bus)
 
+	// JWT.
+	jwtTTL, err := time.ParseDuration(cfg.Auth.JWTTTL)
+	if err != nil {
+		return fmt.Errorf("invalid auth.jwt_ttl: %w", err)
+	}
+	jwtIssuer, err := jwt.NewIssuer(cfg.Auth.JWTSecret, jwtTTL)
+	if err != nil {
+		return fmt.Errorf("jwt issuer: %w", err)
+	}
+	tokenParser := jwt.NewTokenParser(jwtIssuer)
+
+	authService := authApp.NewService(customerRepo, jwtIssuer, log)
+
 	// Handlers.
 	productHandler := shophttp.NewProductHandler(productRepo, pdp, plp)
 	productAdmin := shophttp.NewProductAdminHandler(productRepo, bus)
 	variantHandler := shophttp.NewVariantHandler(productRepo, variantRepo, bus)
 	cartHandler := shophttp.NewCartHandler(cartService)
+	authHandler := shophttp.NewAuthHandler(authService)
 
 	router := shophttp.NewRouter()
 
-	// Auth: dev token parser (replace with production provider later).
-	tokenParser := devauth.NewParser()
+	// Auth: JWT token parser.
+	// tokenParser created above from jwtIssuer.
 
 	// Middleware: outermost first.
 	router.Use(shophttp.RecoveryMiddleware(log))
@@ -109,6 +126,12 @@ func runServe(cfg *config.Config, log logger.Logger) error {
 
 	// Routes.
 	router.HandleFunc("GET /healthz", shophttp.HealthHandler())
+
+	// Auth routes (public).
+	router.HandleFunc("POST /api/v1/auth/register", authHandler.Register())
+	router.HandleFunc("POST /api/v1/auth/login", authHandler.Login())
+	router.HandleFunc("GET /api/v1/auth/me", authHandler.Me())
+
 	router.HandleFunc("GET /api/v1/products", productHandler.List())
 	router.HandleFunc("GET /api/v1/products/{id}", productHandler.Get())
 	router.HandleFunc("POST /api/v1/admin/products", productAdmin.Create())
