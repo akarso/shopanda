@@ -515,3 +515,75 @@ func TestService_RemoveItem_EmitsEvent(t *testing.T) {
 		t.Errorf("VariantID = %q, want var-1", data.VariantID)
 	}
 }
+
+// ── publish-error-ignored tests ─────────────────────────────────────────
+
+func TestService_AddItem_PublishError_Ignored(t *testing.T) {
+	carts := newStubCartRepo()
+	prices := newStubPriceRepo()
+	prices.set("var-1", "EUR", 1500)
+	bus := testBus()
+	bus.On(domainCart.EventItemAdded, func(_ context.Context, _ event.Event) error {
+		return errors.New("publish boom")
+	})
+	svc := cartApp.NewService(carts, prices, testPipeline(prices), testLogger(), bus)
+	ctx := context.Background()
+
+	c, _ := svc.CreateCart(ctx, "cust-1", "EUR")
+	got, err := svc.AddItem(ctx, c.ID, "cust-1", "var-1", 2)
+	if err != nil {
+		t.Fatalf("AddItem should succeed despite publish error: %v", err)
+	}
+	if len(got.Items) != 1 || got.Items[0].Quantity != 2 {
+		t.Errorf("cart state incorrect after publish error")
+	}
+	// Verify persisted.
+	persisted, _ := carts.FindByID(ctx, c.ID)
+	if persisted == nil || len(persisted.Items) != 1 {
+		t.Error("cart not persisted after publish error")
+	}
+}
+
+func TestService_UpdateItemQuantity_PublishError_Ignored(t *testing.T) {
+	carts := newStubCartRepo()
+	prices := newStubPriceRepo()
+	prices.set("var-1", "EUR", 1000)
+	bus := testBus()
+	bus.On(domainCart.EventItemUpdated, func(_ context.Context, _ event.Event) error {
+		return errors.New("publish boom")
+	})
+	svc := cartApp.NewService(carts, prices, testPipeline(prices), testLogger(), bus)
+	ctx := context.Background()
+
+	c, _ := svc.CreateCart(ctx, "cust-1", "EUR")
+	svc.AddItem(ctx, c.ID, "cust-1", "var-1", 1)
+	got, err := svc.UpdateItemQuantity(ctx, c.ID, "cust-1", "var-1", 5)
+	if err != nil {
+		t.Fatalf("UpdateItemQuantity should succeed despite publish error: %v", err)
+	}
+	if got.Items[0].Quantity != 5 {
+		t.Errorf("Quantity = %d, want 5", got.Items[0].Quantity)
+	}
+}
+
+func TestService_RemoveItem_PublishError_Ignored(t *testing.T) {
+	carts := newStubCartRepo()
+	prices := newStubPriceRepo()
+	prices.set("var-1", "EUR", 1000)
+	bus := testBus()
+	bus.On(domainCart.EventItemRemoved, func(_ context.Context, _ event.Event) error {
+		return errors.New("publish boom")
+	})
+	svc := cartApp.NewService(carts, prices, testPipeline(prices), testLogger(), bus)
+	ctx := context.Background()
+
+	c, _ := svc.CreateCart(ctx, "cust-1", "EUR")
+	svc.AddItem(ctx, c.ID, "cust-1", "var-1", 1)
+	got, err := svc.RemoveItem(ctx, c.ID, "cust-1", "var-1")
+	if err != nil {
+		t.Fatalf("RemoveItem should succeed despite publish error: %v", err)
+	}
+	if len(got.Items) != 0 {
+		t.Errorf("len(Items) = %d, want 0", len(got.Items))
+	}
+}

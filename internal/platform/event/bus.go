@@ -90,7 +90,7 @@ func (b *Bus) Publish(ctx context.Context, evt Event) error {
 	// Phase 2: asynchronous handlers (fire-and-forget).
 	for _, h := range asyncH {
 		go func(handler Handler) {
-			if err := handler(ctx, evt); err != nil {
+			if err := handler(context.Background(), evt); err != nil {
 				b.log.Error("event.async_handler.failed", err, map[string]interface{}{
 					"event_id":   evt.ID,
 					"event_name": evt.Name,

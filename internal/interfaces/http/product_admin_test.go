@@ -421,3 +421,77 @@ func TestProductAdminHandler_Update_RepoError(t *testing.T) {
 		t.Fatalf("status = %d, want %d", rec.Code, http.StatusInternalServerError)
 	}
 }
+
+// --- Event emission tests ---
+
+func TestProductAdminHandler_Create_EmitsEvent(t *testing.T) {
+	repo := &mockAdminProductRepo{
+		createFn: func(_ context.Context, _ *catalog.Product) error { return nil },
+	}
+	bus := testAdminBus()
+
+	var captured event.Event
+	bus.On(catalog.EventProductCreated, func(_ context.Context, evt event.Event) error {
+		captured = evt
+		return nil
+	})
+
+	h := shophttp.NewProductAdminHandler(repo, bus)
+	body := jsonBody(t, map[string]interface{}{"name": "Widget", "slug": "widget"})
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("POST", "/api/v1/admin/products", body)
+	newAdminRouter(h).ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("status = %d, want %d", rec.Code, http.StatusCreated)
+	}
+	if captured.Name != catalog.EventProductCreated {
+		t.Fatalf("event name = %q, want %q", captured.Name, catalog.EventProductCreated)
+	}
+	data, ok := captured.Data.(catalog.ProductCreatedData)
+	if !ok {
+		t.Fatalf("event data type = %T, want ProductCreatedData", captured.Data)
+	}
+	if data.Name != "Widget" {
+		t.Errorf("data.Name = %q, want Widget", data.Name)
+	}
+	if data.Slug != "widget" {
+		t.Errorf("data.Slug = %q, want widget", data.Slug)
+	}
+}
+
+func TestProductAdminHandler_Update_EmitsEvent(t *testing.T) {
+	repo := &mockAdminProductRepo{
+		findByIDFn: func(_ context.Context, id string) (*catalog.Product, error) {
+			return &catalog.Product{ID: id, Name: "Old", Slug: "old", Status: catalog.StatusDraft}, nil
+		},
+		updateFn: func(_ context.Context, _ *catalog.Product) error { return nil },
+	}
+	bus := testAdminBus()
+
+	var captured event.Event
+	bus.On(catalog.EventProductUpdated, func(_ context.Context, evt event.Event) error {
+		captured = evt
+		return nil
+	})
+
+	h := shophttp.NewProductAdminHandler(repo, bus)
+	body := jsonBody(t, map[string]interface{}{"name": "New Name"})
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("PUT", "/api/v1/admin/products/p1", body)
+	newAdminRouter(h).ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d", rec.Code, http.StatusOK)
+	}
+	if captured.Name != catalog.EventProductUpdated {
+		t.Fatalf("event name = %q, want %q", captured.Name, catalog.EventProductUpdated)
+	}
+	data, ok := captured.Data.(catalog.ProductUpdatedData)
+	if !ok {
+		t.Fatalf("event data type = %T, want ProductUpdatedData", captured.Data)
+	}
+	if data.Name != "New Name" {
+		t.Errorf("data.Name = %q, want 'New Name'", data.Name)
+	}
+}

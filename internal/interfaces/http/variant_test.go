@@ -590,3 +590,79 @@ func TestVariantHandler_Update_DuplicateSKU(t *testing.T) {
 		t.Fatalf("status = %d, want %d; body: %s", rec.Code, http.StatusConflict, rec.Body.String())
 	}
 }
+
+// --- Event emission tests ---
+
+func TestVariantHandler_Create_EmitsEvent(t *testing.T) {
+	prodRepo := &mockVariantProductRepo{findByIDFn: productFinder()}
+	varRepo := &mockVariantRepo{
+		createFn: func(_ context.Context, _ *catalog.Variant) error { return nil },
+	}
+	bus := testVariantBus()
+
+	var captured event.Event
+	bus.On(catalog.EventVariantCreated, func(_ context.Context, evt event.Event) error {
+		captured = evt
+		return nil
+	})
+
+	h := shophttp.NewVariantHandler(prodRepo, varRepo, bus)
+	body := variantBody(t, map[string]interface{}{"sku": "SKU-NEW", "name": "Size L"})
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("POST", "/api/v1/admin/products/prod-1/variants", body)
+	newVariantRouter(h).ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("status = %d, want %d", rec.Code, http.StatusCreated)
+	}
+	if captured.Name != catalog.EventVariantCreated {
+		t.Fatalf("event name = %q, want %q", captured.Name, catalog.EventVariantCreated)
+	}
+	data, ok := captured.Data.(catalog.VariantCreatedData)
+	if !ok {
+		t.Fatalf("event data type = %T, want VariantCreatedData", captured.Data)
+	}
+	if data.SKU != "SKU-NEW" {
+		t.Errorf("data.SKU = %q, want SKU-NEW", data.SKU)
+	}
+	if data.ProductID != "prod-1" {
+		t.Errorf("data.ProductID = %q, want prod-1", data.ProductID)
+	}
+}
+
+func TestVariantHandler_Update_EmitsEvent(t *testing.T) {
+	prodRepo := &mockVariantProductRepo{findByIDFn: productFinder()}
+	varRepo := &mockVariantRepo{
+		findByIDFn: func(_ context.Context, id string) (*catalog.Variant, error) {
+			return &catalog.Variant{ID: id, ProductID: "prod-1", SKU: "SKU-OLD", Name: "old"}, nil
+		},
+		updateFn: func(_ context.Context, _ *catalog.Variant) error { return nil },
+	}
+	bus := testVariantBus()
+
+	var captured event.Event
+	bus.On(catalog.EventVariantUpdated, func(_ context.Context, evt event.Event) error {
+		captured = evt
+		return nil
+	})
+
+	h := shophttp.NewVariantHandler(prodRepo, varRepo, bus)
+	body := variantBody(t, map[string]interface{}{"sku": "SKU-UPDATED"})
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("PUT", "/api/v1/admin/products/prod-1/variants/v1", body)
+	newVariantRouter(h).ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d", rec.Code, http.StatusOK)
+	}
+	if captured.Name != catalog.EventVariantUpdated {
+		t.Fatalf("event name = %q, want %q", captured.Name, catalog.EventVariantUpdated)
+	}
+	data, ok := captured.Data.(catalog.VariantUpdatedData)
+	if !ok {
+		t.Fatalf("event data type = %T, want VariantUpdatedData", captured.Data)
+	}
+	if data.SKU != "SKU-UPDATED" {
+		t.Errorf("data.SKU = %q, want SKU-UPDATED", data.SKU)
+	}
+}
