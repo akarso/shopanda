@@ -15,6 +15,7 @@ import (
 	"github.com/akarso/shopanda/internal/infrastructure/postgres"
 	"github.com/akarso/shopanda/internal/platform/config"
 	"github.com/akarso/shopanda/internal/platform/db"
+	"github.com/akarso/shopanda/internal/platform/event"
 	"github.com/akarso/shopanda/internal/platform/logger"
 	"github.com/akarso/shopanda/internal/platform/migrate"
 
@@ -83,13 +84,16 @@ func runServe(cfg *config.Config, log logger.Logger) error {
 		pricing.NewFinalizeStep(),
 	)
 
+	// Event bus.
+	bus := event.NewBus(log)
+
 	// Application services.
-	cartService := cartApp.NewService(cartRepo, priceRepo, pricingPipeline, log)
+	cartService := cartApp.NewService(cartRepo, priceRepo, pricingPipeline, log, bus)
 
 	// Handlers.
 	productHandler := shophttp.NewProductHandler(productRepo, pdp, plp)
-	productAdmin := shophttp.NewProductAdminHandler(productRepo)
-	variantHandler := shophttp.NewVariantHandler(productRepo, variantRepo)
+	productAdmin := shophttp.NewProductAdminHandler(productRepo, bus)
+	variantHandler := shophttp.NewVariantHandler(productRepo, variantRepo, bus)
 	cartHandler := shophttp.NewCartHandler(cartService)
 
 	router := shophttp.NewRouter()

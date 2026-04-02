@@ -5,12 +5,15 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"testing"
 
 	"github.com/akarso/shopanda/internal/domain/catalog"
 	"github.com/akarso/shopanda/internal/platform/apperror"
+	"github.com/akarso/shopanda/internal/platform/event"
+	"github.com/akarso/shopanda/internal/platform/logger"
 
 	shophttp "github.com/akarso/shopanda/internal/interfaces/http"
 )
@@ -62,6 +65,10 @@ func newAdminRouter(h *shophttp.ProductAdminHandler) *http.ServeMux {
 	return mux
 }
 
+func testAdminBus() *event.Bus {
+	return event.NewBus(logger.NewWithWriter(io.Discard, "error"))
+}
+
 func jsonBody(t *testing.T, v interface{}) *bytes.Reader {
 	t.Helper()
 	b, err := json.Marshal(v)
@@ -81,7 +88,7 @@ func TestProductAdminHandler_Create_OK(t *testing.T) {
 			return nil
 		},
 	}
-	h := shophttp.NewProductAdminHandler(repo)
+	h := shophttp.NewProductAdminHandler(repo, testAdminBus())
 
 	body := jsonBody(t, map[string]interface{}{
 		"name":        "Widget",
@@ -123,7 +130,7 @@ func TestProductAdminHandler_Create_WithAttributes(t *testing.T) {
 			return nil
 		},
 	}
-	h := shophttp.NewProductAdminHandler(repo)
+	h := shophttp.NewProductAdminHandler(repo, testAdminBus())
 
 	body := jsonBody(t, map[string]interface{}{
 		"name":       "Widget",
@@ -144,7 +151,7 @@ func TestProductAdminHandler_Create_WithAttributes(t *testing.T) {
 
 func TestProductAdminHandler_Create_MissingName(t *testing.T) {
 	repo := &mockAdminProductRepo{}
-	h := shophttp.NewProductAdminHandler(repo)
+	h := shophttp.NewProductAdminHandler(repo, testAdminBus())
 
 	body := jsonBody(t, map[string]interface{}{
 		"slug": "widget",
@@ -160,7 +167,7 @@ func TestProductAdminHandler_Create_MissingName(t *testing.T) {
 
 func TestProductAdminHandler_Create_MissingSlug(t *testing.T) {
 	repo := &mockAdminProductRepo{}
-	h := shophttp.NewProductAdminHandler(repo)
+	h := shophttp.NewProductAdminHandler(repo, testAdminBus())
 
 	body := jsonBody(t, map[string]interface{}{
 		"name": "Widget",
@@ -176,7 +183,7 @@ func TestProductAdminHandler_Create_MissingSlug(t *testing.T) {
 
 func TestProductAdminHandler_Create_InvalidBody(t *testing.T) {
 	repo := &mockAdminProductRepo{}
-	h := shophttp.NewProductAdminHandler(repo)
+	h := shophttp.NewProductAdminHandler(repo, testAdminBus())
 
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest("POST", "/api/v1/admin/products", bytes.NewReader([]byte("not json")))
@@ -193,7 +200,7 @@ func TestProductAdminHandler_Create_DuplicateSlug(t *testing.T) {
 			return apperror.Conflict("product with this slug already exists")
 		},
 	}
-	h := shophttp.NewProductAdminHandler(repo)
+	h := shophttp.NewProductAdminHandler(repo, testAdminBus())
 
 	body := jsonBody(t, map[string]interface{}{
 		"name": "Widget",
@@ -230,7 +237,7 @@ func TestProductAdminHandler_Update_OK(t *testing.T) {
 			return nil
 		},
 	}
-	h := shophttp.NewProductAdminHandler(repo)
+	h := shophttp.NewProductAdminHandler(repo, testAdminBus())
 
 	body := jsonBody(t, map[string]interface{}{
 		"name":        "Updated Widget",
@@ -264,7 +271,7 @@ func TestProductAdminHandler_Update_NotFound(t *testing.T) {
 			return nil, nil
 		},
 	}
-	h := shophttp.NewProductAdminHandler(repo)
+	h := shophttp.NewProductAdminHandler(repo, testAdminBus())
 
 	body := jsonBody(t, map[string]interface{}{"name": "X"})
 	rec := httptest.NewRecorder()
@@ -282,7 +289,7 @@ func TestProductAdminHandler_Update_InvalidStatus(t *testing.T) {
 			return &catalog.Product{ID: id, Name: "W", Slug: "w"}, nil
 		},
 	}
-	h := shophttp.NewProductAdminHandler(repo)
+	h := shophttp.NewProductAdminHandler(repo, testAdminBus())
 
 	body := jsonBody(t, map[string]interface{}{"status": "bogus"})
 	rec := httptest.NewRecorder()
@@ -300,7 +307,7 @@ func TestProductAdminHandler_Update_EmptyName(t *testing.T) {
 			return &catalog.Product{ID: id, Name: "W", Slug: "w"}, nil
 		},
 	}
-	h := shophttp.NewProductAdminHandler(repo)
+	h := shophttp.NewProductAdminHandler(repo, testAdminBus())
 
 	name := ""
 	body := jsonBody(t, map[string]interface{}{"name": name})
@@ -319,7 +326,7 @@ func TestProductAdminHandler_Update_EmptySlug(t *testing.T) {
 			return &catalog.Product{ID: id, Name: "W", Slug: "w"}, nil
 		},
 	}
-	h := shophttp.NewProductAdminHandler(repo)
+	h := shophttp.NewProductAdminHandler(repo, testAdminBus())
 
 	slug := ""
 	body := jsonBody(t, map[string]interface{}{"slug": slug})
@@ -338,7 +345,7 @@ func TestProductAdminHandler_Update_InvalidBody(t *testing.T) {
 			return &catalog.Product{ID: id, Name: "W", Slug: "w"}, nil
 		},
 	}
-	h := shophttp.NewProductAdminHandler(repo)
+	h := shophttp.NewProductAdminHandler(repo, testAdminBus())
 
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest("PUT", "/api/v1/admin/products/p1", bytes.NewReader([]byte("bad")))
@@ -369,7 +376,7 @@ func TestProductAdminHandler_Update_PartialUpdate(t *testing.T) {
 			return nil
 		},
 	}
-	h := shophttp.NewProductAdminHandler(repo)
+	h := shophttp.NewProductAdminHandler(repo, testAdminBus())
 
 	// Only update description — name, slug, status stay the same.
 	body := jsonBody(t, map[string]interface{}{"description": "new desc"})
@@ -403,7 +410,7 @@ func TestProductAdminHandler_Update_RepoError(t *testing.T) {
 			return apperror.Internal("db down")
 		},
 	}
-	h := shophttp.NewProductAdminHandler(repo)
+	h := shophttp.NewProductAdminHandler(repo, testAdminBus())
 
 	body := jsonBody(t, map[string]interface{}{"name": "X"})
 	rec := httptest.NewRecorder()

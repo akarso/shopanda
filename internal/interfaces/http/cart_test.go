@@ -16,6 +16,7 @@ import (
 	"github.com/akarso/shopanda/internal/domain/shared"
 	shophttp "github.com/akarso/shopanda/internal/interfaces/http"
 	"github.com/akarso/shopanda/internal/platform/auth/testhelper"
+	"github.com/akarso/shopanda/internal/platform/event"
 	"github.com/akarso/shopanda/internal/platform/logger"
 )
 
@@ -110,7 +111,8 @@ func newCartRouter(h *shophttp.CartHandler) *http.ServeMux {
 func cartSetup() (*stubCartRepo, *stubPriceRepo, *shophttp.CartHandler, *http.ServeMux) {
 	carts := newStubCartRepo()
 	prices := newStubPriceRepo()
-	svc := cartApp.NewService(carts, prices, cartTestPipeline(prices), cartTestLogger())
+	bus := event.NewBus(cartTestLogger())
+	svc := cartApp.NewService(carts, prices, cartTestPipeline(prices), cartTestLogger(), bus)
 	h := shophttp.NewCartHandler(svc)
 	return carts, prices, h, newCartRouter(h)
 }

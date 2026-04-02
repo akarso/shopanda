@@ -5,12 +5,15 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"testing"
 
 	"github.com/akarso/shopanda/internal/domain/catalog"
 	"github.com/akarso/shopanda/internal/platform/apperror"
+	"github.com/akarso/shopanda/internal/platform/event"
+	"github.com/akarso/shopanda/internal/platform/logger"
 
 	shophttp "github.com/akarso/shopanda/internal/interfaces/http"
 )
@@ -96,6 +99,10 @@ func productFinder() func(ctx context.Context, id string) (*catalog.Product, err
 	}
 }
 
+func testVariantBus() *event.Bus {
+	return event.NewBus(logger.NewWithWriter(io.Discard, "error"))
+}
+
 func newVariantRouter(h *shophttp.VariantHandler) *http.ServeMux {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /api/v1/products/{id}/variants", h.List())
@@ -126,7 +133,7 @@ func TestVariantHandler_List_OK(t *testing.T) {
 			}, nil
 		},
 	}
-	h := shophttp.NewVariantHandler(prodRepo, varRepo)
+	h := shophttp.NewVariantHandler(prodRepo, varRepo, testVariantBus())
 
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest("GET", "/api/v1/products/prod-1/variants", nil)
@@ -152,7 +159,7 @@ func TestVariantHandler_List_OK(t *testing.T) {
 func TestVariantHandler_List_ProductNotFound(t *testing.T) {
 	prodRepo := &mockVariantProductRepo{findByIDFn: productFinder()}
 	varRepo := &mockVariantRepo{}
-	h := shophttp.NewVariantHandler(prodRepo, varRepo)
+	h := shophttp.NewVariantHandler(prodRepo, varRepo, testVariantBus())
 
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest("GET", "/api/v1/products/missing/variants", nil)
@@ -170,7 +177,7 @@ func TestVariantHandler_List_RepoError(t *testing.T) {
 			return nil, apperror.Internal("db error")
 		},
 	}
-	h := shophttp.NewVariantHandler(prodRepo, varRepo)
+	h := shophttp.NewVariantHandler(prodRepo, varRepo, testVariantBus())
 
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest("GET", "/api/v1/products/prod-1/variants", nil)
@@ -190,7 +197,7 @@ func TestVariantHandler_Get_OK(t *testing.T) {
 			return &catalog.Variant{ID: id, ProductID: "prod-1", SKU: "SKU-1", Name: "Size M"}, nil
 		},
 	}
-	h := shophttp.NewVariantHandler(prodRepo, varRepo)
+	h := shophttp.NewVariantHandler(prodRepo, varRepo, testVariantBus())
 
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest("GET", "/api/v1/products/prod-1/variants/v1", nil)
@@ -216,7 +223,7 @@ func TestVariantHandler_Get_OK(t *testing.T) {
 func TestVariantHandler_Get_NotFound(t *testing.T) {
 	prodRepo := &mockVariantProductRepo{findByIDFn: productFinder()}
 	varRepo := &mockVariantRepo{}
-	h := shophttp.NewVariantHandler(prodRepo, varRepo)
+	h := shophttp.NewVariantHandler(prodRepo, varRepo, testVariantBus())
 
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest("GET", "/api/v1/products/prod-1/variants/missing", nil)
@@ -234,7 +241,7 @@ func TestVariantHandler_Get_WrongProduct(t *testing.T) {
 			return &catalog.Variant{ID: id, ProductID: "other-product", SKU: "SKU-X"}, nil
 		},
 	}
-	h := shophttp.NewVariantHandler(prodRepo, varRepo)
+	h := shophttp.NewVariantHandler(prodRepo, varRepo, testVariantBus())
 
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest("GET", "/api/v1/products/prod-1/variants/v1", nil)
@@ -248,7 +255,7 @@ func TestVariantHandler_Get_WrongProduct(t *testing.T) {
 func TestVariantHandler_Get_ProductNotFound(t *testing.T) {
 	prodRepo := &mockVariantProductRepo{findByIDFn: productFinder()}
 	varRepo := &mockVariantRepo{}
-	h := shophttp.NewVariantHandler(prodRepo, varRepo)
+	h := shophttp.NewVariantHandler(prodRepo, varRepo, testVariantBus())
 
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest("GET", "/api/v1/products/missing/variants/v1", nil)
@@ -270,7 +277,7 @@ func TestVariantHandler_Create_OK(t *testing.T) {
 			return nil
 		},
 	}
-	h := shophttp.NewVariantHandler(prodRepo, varRepo)
+	h := shophttp.NewVariantHandler(prodRepo, varRepo, testVariantBus())
 
 	body := variantBody(t, map[string]interface{}{
 		"sku":  "SKU-NEW",
@@ -309,7 +316,7 @@ func TestVariantHandler_Create_WithAttributes(t *testing.T) {
 			return nil
 		},
 	}
-	h := shophttp.NewVariantHandler(prodRepo, varRepo)
+	h := shophttp.NewVariantHandler(prodRepo, varRepo, testVariantBus())
 
 	body := variantBody(t, map[string]interface{}{
 		"sku":        "SKU-ATT",
@@ -330,7 +337,7 @@ func TestVariantHandler_Create_WithAttributes(t *testing.T) {
 func TestVariantHandler_Create_MissingSKU(t *testing.T) {
 	prodRepo := &mockVariantProductRepo{findByIDFn: productFinder()}
 	varRepo := &mockVariantRepo{}
-	h := shophttp.NewVariantHandler(prodRepo, varRepo)
+	h := shophttp.NewVariantHandler(prodRepo, varRepo, testVariantBus())
 
 	body := variantBody(t, map[string]interface{}{"name": "Size M"})
 	rec := httptest.NewRecorder()
@@ -345,7 +352,7 @@ func TestVariantHandler_Create_MissingSKU(t *testing.T) {
 func TestVariantHandler_Create_InvalidBody(t *testing.T) {
 	prodRepo := &mockVariantProductRepo{findByIDFn: productFinder()}
 	varRepo := &mockVariantRepo{}
-	h := shophttp.NewVariantHandler(prodRepo, varRepo)
+	h := shophttp.NewVariantHandler(prodRepo, varRepo, testVariantBus())
 
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest("POST", "/api/v1/admin/products/prod-1/variants", bytes.NewReader([]byte("bad")))
@@ -363,7 +370,7 @@ func TestVariantHandler_Create_DuplicateSKU(t *testing.T) {
 			return apperror.Conflict("variant with this sku already exists")
 		},
 	}
-	h := shophttp.NewVariantHandler(prodRepo, varRepo)
+	h := shophttp.NewVariantHandler(prodRepo, varRepo, testVariantBus())
 
 	body := variantBody(t, map[string]interface{}{"sku": "SKU-DUP"})
 	rec := httptest.NewRecorder()
@@ -378,7 +385,7 @@ func TestVariantHandler_Create_DuplicateSKU(t *testing.T) {
 func TestVariantHandler_Create_ProductNotFound(t *testing.T) {
 	prodRepo := &mockVariantProductRepo{findByIDFn: productFinder()}
 	varRepo := &mockVariantRepo{}
-	h := shophttp.NewVariantHandler(prodRepo, varRepo)
+	h := shophttp.NewVariantHandler(prodRepo, varRepo, testVariantBus())
 
 	body := variantBody(t, map[string]interface{}{"sku": "SKU-1"})
 	rec := httptest.NewRecorder()
@@ -407,7 +414,7 @@ func TestVariantHandler_Update_OK(t *testing.T) {
 			return nil
 		},
 	}
-	h := shophttp.NewVariantHandler(prodRepo, varRepo)
+	h := shophttp.NewVariantHandler(prodRepo, varRepo, testVariantBus())
 
 	body := variantBody(t, map[string]interface{}{
 		"sku":  "SKU-UPDATED",
@@ -434,7 +441,7 @@ func TestVariantHandler_Update_OK(t *testing.T) {
 func TestVariantHandler_Update_NotFound(t *testing.T) {
 	prodRepo := &mockVariantProductRepo{findByIDFn: productFinder()}
 	varRepo := &mockVariantRepo{}
-	h := shophttp.NewVariantHandler(prodRepo, varRepo)
+	h := shophttp.NewVariantHandler(prodRepo, varRepo, testVariantBus())
 
 	body := variantBody(t, map[string]interface{}{"sku": "X"})
 	rec := httptest.NewRecorder()
@@ -453,7 +460,7 @@ func TestVariantHandler_Update_WrongProduct(t *testing.T) {
 			return &catalog.Variant{ID: id, ProductID: "other-product", SKU: "SKU-X"}, nil
 		},
 	}
-	h := shophttp.NewVariantHandler(prodRepo, varRepo)
+	h := shophttp.NewVariantHandler(prodRepo, varRepo, testVariantBus())
 
 	body := variantBody(t, map[string]interface{}{"sku": "X"})
 	rec := httptest.NewRecorder()
@@ -472,7 +479,7 @@ func TestVariantHandler_Update_EmptySKU(t *testing.T) {
 			return &catalog.Variant{ID: id, ProductID: "prod-1", SKU: "SKU-1"}, nil
 		},
 	}
-	h := shophttp.NewVariantHandler(prodRepo, varRepo)
+	h := shophttp.NewVariantHandler(prodRepo, varRepo, testVariantBus())
 
 	sku := ""
 	body := variantBody(t, map[string]interface{}{"sku": sku})
@@ -492,7 +499,7 @@ func TestVariantHandler_Update_InvalidBody(t *testing.T) {
 			return &catalog.Variant{ID: id, ProductID: "prod-1", SKU: "SKU-1"}, nil
 		},
 	}
-	h := shophttp.NewVariantHandler(prodRepo, varRepo)
+	h := shophttp.NewVariantHandler(prodRepo, varRepo, testVariantBus())
 
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest("PUT", "/api/v1/admin/products/prod-1/variants/v1", bytes.NewReader([]byte("bad")))
@@ -518,7 +525,7 @@ func TestVariantHandler_Update_PartialUpdate(t *testing.T) {
 			return nil
 		},
 	}
-	h := shophttp.NewVariantHandler(prodRepo, varRepo)
+	h := shophttp.NewVariantHandler(prodRepo, varRepo, testVariantBus())
 
 	// Only update name — sku and attributes stay the same.
 	body := variantBody(t, map[string]interface{}{"name": "new name"})
@@ -550,7 +557,7 @@ func TestVariantHandler_Update_RepoError(t *testing.T) {
 			return apperror.Internal("db down")
 		},
 	}
-	h := shophttp.NewVariantHandler(prodRepo, varRepo)
+	h := shophttp.NewVariantHandler(prodRepo, varRepo, testVariantBus())
 
 	body := variantBody(t, map[string]interface{}{"name": "X"})
 	rec := httptest.NewRecorder()
@@ -572,7 +579,7 @@ func TestVariantHandler_Update_DuplicateSKU(t *testing.T) {
 			return apperror.Conflict("variant with this sku already exists")
 		},
 	}
-	h := shophttp.NewVariantHandler(prodRepo, varRepo)
+	h := shophttp.NewVariantHandler(prodRepo, varRepo, testVariantBus())
 
 	body := variantBody(t, map[string]interface{}{"sku": "SKU-DUP"})
 	rec := httptest.NewRecorder()

@@ -8,6 +8,7 @@ import (
 	"github.com/akarso/shopanda/internal/domain/pricing"
 	"github.com/akarso/shopanda/internal/domain/shared"
 	"github.com/akarso/shopanda/internal/platform/apperror"
+	"github.com/akarso/shopanda/internal/platform/event"
 	"github.com/akarso/shopanda/internal/platform/id"
 	"github.com/akarso/shopanda/internal/platform/logger"
 )
@@ -18,6 +19,7 @@ type Service struct {
 	prices   pricing.PriceRepository
 	pipeline pricing.Pipeline
 	log      logger.Logger
+	bus      *event.Bus
 }
 
 // NewService creates a cart application service.
@@ -26,12 +28,14 @@ func NewService(
 	prices pricing.PriceRepository,
 	pipeline pricing.Pipeline,
 	log logger.Logger,
+	bus *event.Bus,
 ) *Service {
 	return &Service{
 		carts:    carts,
 		prices:   prices,
 		pipeline: pipeline,
 		log:      log,
+		bus:      bus,
 	}
 }
 
@@ -114,6 +118,11 @@ func (s *Service) AddItem(ctx context.Context, cartID, customerID, variantID str
 		"variant_id": variantID,
 		"quantity":   quantity,
 	})
+	_ = s.bus.Publish(ctx, event.New(domainCart.EventItemAdded, "cart.service", domainCart.ItemAddedData{
+		CartID:    c.ID,
+		VariantID: variantID,
+		Quantity:  quantity,
+	}))
 	return c, nil
 }
 
@@ -147,6 +156,11 @@ func (s *Service) UpdateItemQuantity(ctx context.Context, cartID, customerID, va
 		"variant_id": variantID,
 		"quantity":   quantity,
 	})
+	_ = s.bus.Publish(ctx, event.New(domainCart.EventItemUpdated, "cart.service", domainCart.ItemUpdatedData{
+		CartID:    c.ID,
+		VariantID: variantID,
+		Quantity:  quantity,
+	}))
 	return c, nil
 }
 
@@ -179,6 +193,10 @@ func (s *Service) RemoveItem(ctx context.Context, cartID, customerID, variantID 
 		"cart_id":    c.ID,
 		"variant_id": variantID,
 	})
+	_ = s.bus.Publish(ctx, event.New(domainCart.EventItemRemoved, "cart.service", domainCart.ItemRemovedData{
+		CartID:    c.ID,
+		VariantID: variantID,
+	}))
 	return c, nil
 }
 

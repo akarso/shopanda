@@ -6,17 +6,19 @@ import (
 
 	"github.com/akarso/shopanda/internal/domain/catalog"
 	"github.com/akarso/shopanda/internal/platform/apperror"
+	"github.com/akarso/shopanda/internal/platform/event"
 	"github.com/akarso/shopanda/internal/platform/id"
 )
 
 // ProductAdminHandler serves product write endpoints.
 type ProductAdminHandler struct {
 	repo catalog.ProductRepository
+	bus  *event.Bus
 }
 
 // NewProductAdminHandler creates a ProductAdminHandler.
-func NewProductAdminHandler(repo catalog.ProductRepository) *ProductAdminHandler {
-	return &ProductAdminHandler{repo: repo}
+func NewProductAdminHandler(repo catalog.ProductRepository, bus *event.Bus) *ProductAdminHandler {
+	return &ProductAdminHandler{repo: repo, bus: bus}
 }
 
 // createProductRequest is the JSON body for creating a product.
@@ -59,6 +61,13 @@ func (h *ProductAdminHandler) Create() http.HandlerFunc {
 			JSONError(w, err)
 			return
 		}
+
+		_ = h.bus.Publish(r.Context(), event.New(catalog.EventProductCreated, "product.admin", catalog.ProductCreatedData{
+			ProductID: product.ID,
+			Name:      product.Name,
+			Slug:      product.Slug,
+			Status:    product.Status,
+		}))
 
 		JSON(w, http.StatusCreated, map[string]interface{}{
 			"product": product,
@@ -124,6 +133,13 @@ func (h *ProductAdminHandler) Update() http.HandlerFunc {
 			JSONError(w, err)
 			return
 		}
+
+		_ = h.bus.Publish(r.Context(), event.New(catalog.EventProductUpdated, "product.admin", catalog.ProductUpdatedData{
+			ProductID: product.ID,
+			Name:      product.Name,
+			Slug:      product.Slug,
+			Status:    product.Status,
+		}))
 
 		JSON(w, http.StatusOK, map[string]interface{}{
 			"product": product,
