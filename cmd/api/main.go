@@ -8,6 +8,7 @@ import (
 
 	"github.com/akarso/shopanda/internal/application/composition"
 	"github.com/akarso/shopanda/internal/application/importer"
+	"github.com/akarso/shopanda/internal/infrastructure/devauth"
 	"github.com/akarso/shopanda/internal/infrastructure/postgres"
 	"github.com/akarso/shopanda/internal/platform/config"
 	"github.com/akarso/shopanda/internal/platform/db"
@@ -78,10 +79,14 @@ func runServe(cfg *config.Config, log logger.Logger) error {
 
 	router := shophttp.NewRouter()
 
+	// Auth: dev token parser (replace with production provider later).
+	tokenParser := devauth.NewParser()
+
 	// Middleware: outermost first.
 	router.Use(shophttp.RecoveryMiddleware(log))
 	router.Use(shophttp.RequestIDMiddleware())
 	router.Use(shophttp.LoggingMiddleware(log))
+	router.Use(shophttp.AuthMiddleware(tokenParser))
 
 	// Routes.
 	router.HandleFunc("GET /healthz", shophttp.HealthHandler())
