@@ -12,18 +12,33 @@ import (
 // ReservationTTL is the default duration for inventory reservations.
 const ReservationTTL = 15 * time.Minute
 
+// reserveTimeout bounds the duration of Reserve/Release repository calls.
+const reserveTimeout = 30 * time.Second
+
 // ReserveInventoryStep creates inventory reservations for each cart item.
 type ReserveInventoryStep struct {
 	reservations inventory.ReservationRepository
 	ttl          time.Duration
 }
 
+// ReserveOption configures a ReserveInventoryStep.
+type ReserveOption func(*ReserveInventoryStep)
+
+// WithTTL sets a custom reservation TTL (default: ReservationTTL).
+func WithTTL(ttl time.Duration) ReserveOption {
+	return func(s *ReserveInventoryStep) { s.ttl = ttl }
+}
+
 // NewReserveInventoryStep creates a ReserveInventoryStep.
-func NewReserveInventoryStep(reservations inventory.ReservationRepository) *ReserveInventoryStep {
+func NewReserveInventoryStep(reservations inventory.ReservationRepository, opts ...ReserveOption) *ReserveInventoryStep {
 	if reservations == nil {
 		panic("checkout: reservations must not be nil")
 	}
-	return &ReserveInventoryStep{reservations: reservations, ttl: ReservationTTL}
+	s := &ReserveInventoryStep{reservations: reservations, ttl: ReservationTTL}
+	for _, o := range opts {
+		o(s)
+	}
+	return s
 }
 
 func (s *ReserveInventoryStep) Name() string { return "reserve_inventory" }
@@ -44,7 +59,8 @@ func (s *ReserveInventoryStep) Execute(cctx *Context) error {
 		return fmt.Errorf("reserve_inventory: cart not loaded")
 	}
 
-	ctx := context.Background()
+	ctx, cancel := context.WithTimeout(context.Background(), reserveTimeout)
+	defer cancel()
 	expiresAt := time.Now().UTC().Add(s.ttl)
 
 	reservationIDs := make([]string, 0, len(cctx.Cart.Items))
