@@ -9,6 +9,7 @@ import (
 
 	authApp "github.com/akarso/shopanda/internal/application/auth"
 	cartApp "github.com/akarso/shopanda/internal/application/cart"
+	checkoutApp "github.com/akarso/shopanda/internal/application/checkout"
 	"github.com/akarso/shopanda/internal/application/composition"
 	"github.com/akarso/shopanda/internal/application/importer"
 	appPricing "github.com/akarso/shopanda/internal/application/pricing"
@@ -107,6 +108,11 @@ func runServe(cfg *config.Config, log logger.Logger) error {
 
 	// Application services.
 	cartService := cartApp.NewService(cartRepo, priceRepo, pricingPipeline, log, bus)
+
+	// Checkout workflow (steps registered by plugins/later PRs).
+	checkoutWorkflow := checkoutApp.NewWorkflow(nil, bus, log)
+	checkoutService := checkoutApp.NewService(cartRepo, checkoutWorkflow, bus, log)
+	_ = checkoutService // endpoint wired in a later PR
 
 	// JWT.
 	jwtTTL, err := time.ParseDuration(cfg.Auth.JWTTTL)
