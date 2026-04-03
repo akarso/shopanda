@@ -12,6 +12,7 @@ import (
 	"github.com/akarso/shopanda/internal/application/composition"
 	"github.com/akarso/shopanda/internal/application/importer"
 	appPricing "github.com/akarso/shopanda/internal/application/pricing"
+	"github.com/akarso/shopanda/internal/domain/customer"
 	"github.com/akarso/shopanda/internal/domain/pricing"
 	"github.com/akarso/shopanda/internal/infrastructure/postgres"
 	"github.com/akarso/shopanda/internal/platform/config"
@@ -76,6 +77,7 @@ func runServe(cfg *config.Config, log logger.Logger) error {
 	cartRepo := postgres.NewCartRepo(conn)
 	priceRepo := postgres.NewPriceRepo(conn)
 	customerRepo := postgres.NewCustomerRepo(conn)
+	resetTokenRepo := postgres.NewResetTokenRepo(conn)
 
 	// Composition pipelines (empty; plugins add steps later).
 	pdp := composition.NewPipeline[composition.ProductContext]()
@@ -90,6 +92,19 @@ func runServe(cfg *config.Config, log logger.Logger) error {
 	// Event bus.
 	bus := event.NewBus(log)
 
+	// Dev handler: log password reset tokens (replace with email plugin in production).
+	if os.Getenv("SHOPANDA_DEV_MODE") != "" {
+		bus.On(customer.EventPasswordResetRequested, func(_ context.Context, evt event.Event) error {
+			if data, ok := evt.Data.(customer.PasswordResetRequestedData); ok {
+				log.Info("dev.password_reset.token", map[string]interface{}{
+					"customer_id": data.CustomerID,
+					"token":       data.Token,
+				})
+			}
+			return nil
+		})
+	}
+
 	// Application services.
 	cartService := cartApp.NewService(cartRepo, priceRepo, pricingPipeline, log, bus)
 
@@ -102,9 +117,9 @@ func runServe(cfg *config.Config, log logger.Logger) error {
 	if err != nil {
 		return fmt.Errorf("jwt issuer: %w", err)
 	}
-	tokenParser := jwt.NewTokenParser(jwtIssuer)
+	tokenParser := authApp.NewValidatingTokenParser(jwtIssuer, customerRepo, 30*time.Second)
 
-	authService := authApp.NewService(customerRepo, jwtIssuer, log)
+	authService := authApp.NewService(customerRepo, resetTokenRepo, jwtIssuer, bus, log, time.Hour)
 
 	// Handlers.
 	productHandler := shophttp.NewProductHandler(productRepo, pdp, plp)
@@ -114,9 +129,6 @@ func runServe(cfg *config.Config, log logger.Logger) error {
 	authHandler := shophttp.NewAuthHandler(authService)
 
 	router := shophttp.NewRouter()
-
-	// Auth: JWT token parser.
-	// tokenParser created above from jwtIssuer.
 
 	// Middleware: outermost first.
 	router.Use(shophttp.RecoveryMiddleware(log))
@@ -132,7 +144,10 @@ func runServe(cfg *config.Config, log logger.Logger) error {
 	// Auth routes.
 	router.HandleFunc("POST /api/v1/auth/register", authHandler.Register())
 	router.HandleFunc("POST /api/v1/auth/login", authHandler.Login())
+	router.Handle("POST /api/v1/auth/logout", requireAuth(authHandler.Logout()))
 	router.Handle("GET /api/v1/auth/me", requireAuth(authHandler.Me()))
+	router.HandleFunc("POST /api/v1/auth/password-reset/request", authHandler.RequestPasswordReset())
+	router.HandleFunc("POST /api/v1/auth/password-reset/confirm", authHandler.ConfirmPasswordReset())
 
 	router.HandleFunc("GET /api/v1/products", productHandler.List())
 	router.HandleFunc("GET /api/v1/products/{id}", productHandler.Get())

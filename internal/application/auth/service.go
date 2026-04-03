@@ -3,10 +3,12 @@ package auth
 import (
 	"context"
 	"fmt"
+	"time"
 
 	"github.com/akarso/shopanda/internal/domain/customer"
 	"github.com/akarso/shopanda/internal/domain/identity"
 	"github.com/akarso/shopanda/internal/platform/apperror"
+	"github.com/akarso/shopanda/internal/platform/event"
 	"github.com/akarso/shopanda/internal/platform/id"
 	"github.com/akarso/shopanda/internal/platform/jwt"
 	"github.com/akarso/shopanda/internal/platform/logger"
@@ -16,20 +18,47 @@ import (
 // Service orchestrates registration and login use cases.
 type Service struct {
 	customers customer.CustomerRepository
+	resets    customer.PasswordResetRepository
 	jwt       *jwt.Issuer
+	bus       *event.Bus
 	log       logger.Logger
+	resetTTL  time.Duration
 }
 
 // NewService creates an auth application service.
 func NewService(
 	customers customer.CustomerRepository,
+	resets customer.PasswordResetRepository,
 	jwtIssuer *jwt.Issuer,
+	bus *event.Bus,
 	log logger.Logger,
+	resetTTL time.Duration,
 ) *Service {
+	if customers == nil {
+		panic("auth: customers must not be nil")
+	}
+	if resets == nil {
+		panic("auth: resets must not be nil")
+	}
+	if jwtIssuer == nil {
+		panic("auth: jwtIssuer must not be nil")
+	}
+	if bus == nil {
+		panic("auth: bus must not be nil")
+	}
+	if log == nil {
+		panic("auth: log must not be nil")
+	}
+	if resetTTL <= 0 {
+		panic("auth: resetTTL must be > 0; non-positive TTL produces already-expired tokens")
+	}
 	return &Service{
 		customers: customers,
+		resets:    resets,
 		jwt:       jwtIssuer,
+		bus:       bus,
 		log:       log,
+		resetTTL:  resetTTL,
 	}
 }
 
@@ -45,6 +74,7 @@ type RegisterInput struct {
 type RegisterOutput struct {
 	CustomerID string
 	Token      string
+	ExpiresAt  time.Time
 }
 
 // Register creates a new customer account and returns a JWT.
@@ -87,16 +117,29 @@ func (s *Service) Register(ctx context.Context, in RegisterInput) (RegisterOutpu
 		return RegisterOutput{}, fmt.Errorf("auth service: create customer: %w", err)
 	}
 
-	token, err := s.jwt.Create(c.ID, string(identity.RoleCustomer))
+	token, expiresAt, err := s.jwt.Create(c.ID, string(identity.RoleCustomer), c.TokenGeneration)
 	if err != nil {
 		return RegisterOutput{}, fmt.Errorf("auth service: create token: %w", err)
+	}
+
+	if err := s.bus.Publish(ctx, event.New(customer.EventCustomerCreated, "auth.service", customer.CustomerCreatedData{
+		CustomerID: c.ID,
+	})); err != nil {
+		s.log.Warn("auth.event.publish_failed", map[string]interface{}{
+			"event": customer.EventCustomerCreated,
+			"error": err.Error(),
+		})
 	}
 
 	s.log.Info("auth.registered", map[string]interface{}{
 		"customer_id": c.ID,
 	})
 
-	return RegisterOutput{CustomerID: c.ID, Token: token}, nil
+	return RegisterOutput{
+		CustomerID: c.ID,
+		Token:      token,
+		ExpiresAt:  expiresAt,
+	}, nil
 }
 
 // LoginInput contains the fields for customer login.
@@ -109,6 +152,7 @@ type LoginInput struct {
 type LoginOutput struct {
 	CustomerID string
 	Token      string
+	ExpiresAt  time.Time
 }
 
 // Login authenticates a customer and returns a JWT.
@@ -136,7 +180,7 @@ func (s *Service) Login(ctx context.Context, in LoginInput) (LoginOutput, error)
 		return LoginOutput{}, apperror.Unauthorized("invalid email or password")
 	}
 
-	token, err := s.jwt.Create(c.ID, string(identity.RoleCustomer))
+	token, expiresAt, err := s.jwt.Create(c.ID, string(identity.RoleCustomer), c.TokenGeneration)
 	if err != nil {
 		return LoginOutput{}, fmt.Errorf("auth service: create token: %w", err)
 	}
@@ -145,7 +189,11 @@ func (s *Service) Login(ctx context.Context, in LoginInput) (LoginOutput, error)
 		"customer_id": c.ID,
 	})
 
-	return LoginOutput{CustomerID: c.ID, Token: token}, nil
+	return LoginOutput{
+		CustomerID: c.ID,
+		Token:      token,
+		ExpiresAt:  expiresAt,
+	}, nil
 }
 
 // Me returns the customer for the given authenticated customer ID.
@@ -158,4 +206,130 @@ func (s *Service) Me(ctx context.Context, customerID string) (*customer.Customer
 		return nil, apperror.NotFound("customer not found")
 	}
 	return c, nil
+}
+
+// Logout invalidates all tokens for the given customer by bumping
+// their token generation counter.
+func (s *Service) Logout(ctx context.Context, customerID string) error {
+	if err := s.customers.BumpTokenGeneration(ctx, customerID); err != nil {
+		return fmt.Errorf("auth service: logout: %w", err)
+	}
+
+	s.log.Info("auth.logout", map[string]interface{}{
+		"customer_id": customerID,
+	})
+	return nil
+}
+
+// RequestPasswordReset generates a reset token and emits an event
+// for downstream delivery (email plugin). Always returns success to
+// prevent email enumeration.
+func (s *Service) RequestPasswordReset(ctx context.Context, email string) error {
+	if email == "" {
+		return apperror.Validation("email is required")
+	}
+
+	c, err := s.customers.FindByEmail(ctx, email)
+	if err != nil {
+		return fmt.Errorf("auth service: request reset: %w", err)
+	}
+	if c == nil {
+		// Do not reveal whether the account exists.
+		return nil
+	}
+
+	rt, plaintext, err := customer.NewPasswordResetToken(id.New(), c.ID, s.resetTTL)
+	if err != nil {
+		return fmt.Errorf("auth service: request reset: %w", err)
+	}
+
+	if err := s.resets.Create(ctx, &rt); err != nil {
+		return fmt.Errorf("auth service: request reset: %w", err)
+	}
+
+	if err := s.bus.Publish(ctx, event.New(customer.EventPasswordResetRequested, "auth.service", customer.PasswordResetRequestedData{
+		CustomerID: c.ID,
+		Token:      plaintext,
+	})); err != nil {
+		s.log.Warn("auth.event.publish_failed", map[string]interface{}{
+			"event": customer.EventPasswordResetRequested,
+			"error": err.Error(),
+		})
+	}
+
+	s.log.Info("auth.password_reset.requested", map[string]interface{}{
+		"customer_id": c.ID,
+	})
+	return nil
+}
+
+// ConfirmPasswordResetInput contains the fields for password reset confirmation.
+type ConfirmPasswordResetInput struct {
+	Token       string
+	NewPassword string
+}
+
+// ConfirmPasswordReset validates the reset token and sets the new password.
+func (s *Service) ConfirmPasswordReset(ctx context.Context, in ConfirmPasswordResetInput) error {
+	if in.Token == "" {
+		return apperror.Validation("token is required")
+	}
+	if in.NewPassword == "" {
+		return apperror.Validation("new password is required")
+	}
+	if len(in.NewPassword) < 8 {
+		return apperror.Validation("password must be at least 8 characters")
+	}
+
+	hash := customer.HashToken(in.Token)
+	rt, err := s.resets.FindByTokenHash(ctx, hash)
+	if err != nil {
+		return fmt.Errorf("auth service: confirm reset: %w", err)
+	}
+	if rt == nil {
+		return apperror.Unauthorized("invalid or expired token")
+	}
+	if rt.IsExpired() || rt.IsUsed() {
+		return apperror.Unauthorized("invalid or expired token")
+	}
+
+	c, err := s.customers.FindByID(ctx, rt.CustomerID)
+	if err != nil {
+		return fmt.Errorf("auth service: confirm reset: %w", err)
+	}
+	if c == nil {
+		return apperror.Unauthorized("invalid or expired token")
+	}
+
+	pwHash, err := password.Hash(in.NewPassword)
+	if err != nil {
+		return fmt.Errorf("auth service: confirm reset: %w", err)
+	}
+	if err := c.SetPassword(pwHash); err != nil {
+		return fmt.Errorf("auth service: confirm reset: %w", err)
+	}
+
+	// Mark token used before updating customer — if customer update fails,
+	// the token is consumed but the password is unchanged (user can request a new token).
+	// This prevents the worse scenario of password changed but token still reusable.
+	if err := rt.MarkUsed(); err != nil {
+		return fmt.Errorf("auth service: confirm reset: %w", err)
+	}
+	if err := s.resets.MarkUsed(ctx, rt.ID); err != nil {
+		return fmt.Errorf("auth service: confirm reset: %w", err)
+	}
+
+	if err := s.customers.Update(ctx, c); err != nil {
+		return fmt.Errorf("auth service: confirm reset: %w", err)
+	}
+
+	// Atomic DB-level increment, consistent with Logout.
+	if err := s.customers.BumpTokenGeneration(ctx, c.ID); err != nil {
+		return fmt.Errorf("auth service: confirm reset: %w", err)
+	}
+
+	s.log.Info("auth.password_reset.confirmed", map[string]interface{}{
+		"customer_id": c.ID,
+	})
+	return nil
 }

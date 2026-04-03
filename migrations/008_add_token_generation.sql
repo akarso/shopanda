@@ -1,0 +1,1 @@
+ALTER TABLE customers ADD COLUMN token_generation BIGINT NOT NULL DEFAULT 0;

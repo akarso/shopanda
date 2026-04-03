@@ -34,7 +34,7 @@ func (r *CustomerRepo) WithTx(tx *sql.Tx) customer.CustomerRepository {
 // FindByID returns a customer by its ID.
 // Returns (nil, nil) when not found.
 func (r *CustomerRepo) FindByID(ctx context.Context, id string) (*customer.Customer, error) {
-	const q = `SELECT id, email, first_name, last_name, password_hash, status, created_at, updated_at
+	const q = `SELECT id, email, first_name, last_name, password_hash, token_generation, status, created_at, updated_at
 		FROM customers WHERE id = $1`
 
 	row := r.queryRow(ctx, q, id)
@@ -51,7 +51,7 @@ func (r *CustomerRepo) FindByID(ctx context.Context, id string) (*customer.Custo
 // FindByEmail returns a customer by email address.
 // Returns (nil, nil) when not found.
 func (r *CustomerRepo) FindByEmail(ctx context.Context, email string) (*customer.Customer, error) {
-	const q = `SELECT id, email, first_name, last_name, password_hash, status, created_at, updated_at
+	const q = `SELECT id, email, first_name, last_name, password_hash, token_generation, status, created_at, updated_at
 		FROM customers WHERE email = $1`
 
 	row := r.queryRow(ctx, q, email)
@@ -67,12 +67,12 @@ func (r *CustomerRepo) FindByEmail(ctx context.Context, email string) (*customer
 
 // Create persists a new customer.
 func (r *CustomerRepo) Create(ctx context.Context, c *customer.Customer) error {
-	const q = `INSERT INTO customers (id, email, first_name, last_name, password_hash, status, created_at, updated_at)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`
+	const q = `INSERT INTO customers (id, email, first_name, last_name, password_hash, token_generation, status, created_at, updated_at)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`
 
 	_, err := r.exec(ctx, q,
 		c.ID, c.Email, c.FirstName, c.LastName,
-		c.PasswordHash, string(c.Status),
+		c.PasswordHash, c.TokenGeneration, string(c.Status),
 		c.CreatedAt, c.UpdatedAt,
 	)
 	if err != nil {
@@ -94,12 +94,12 @@ func (r *CustomerRepo) Update(ctx context.Context, c *customer.Customer) error {
 
 	const q = `UPDATE customers
 		SET email = $1, first_name = $2, last_name = $3,
-			password_hash = $4, status = $5, updated_at = $6
-		WHERE id = $7`
+			password_hash = $4, token_generation = $5, status = $6, updated_at = $7
+		WHERE id = $8`
 
 	result, err := r.exec(ctx, q,
 		c.Email, c.FirstName, c.LastName,
-		c.PasswordHash, string(c.Status),
+		c.PasswordHash, c.TokenGeneration, string(c.Status),
 		updatedAt, c.ID,
 	)
 	if err != nil {
@@ -118,6 +118,25 @@ func (r *CustomerRepo) Update(ctx context.Context, c *customer.Customer) error {
 		return apperror.NotFound("customer not found")
 	}
 	c.UpdatedAt = updatedAt
+	return nil
+}
+
+// BumpTokenGeneration atomically increments the customer's token generation.
+func (r *CustomerRepo) BumpTokenGeneration(ctx context.Context, customerID string) error {
+	const q = `UPDATE customers SET token_generation = token_generation + 1, updated_at = $1 WHERE id = $2`
+
+	result, err := r.exec(ctx, q, time.Now().UTC(), customerID)
+	if err != nil {
+		return fmt.Errorf("customer_repo: bump token generation: %w", err)
+	}
+
+	rows, err := result.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("customer_repo: bump token generation rows affected: %w", err)
+	}
+	if rows == 0 {
+		return apperror.NotFound("customer not found")
+	}
 	return nil
 }
 
@@ -144,7 +163,7 @@ func scanCustomer(s interface{ Scan(...interface{}) error }) (*customer.Customer
 
 	err := s.Scan(
 		&c.ID, &c.Email, &c.FirstName, &c.LastName,
-		&c.PasswordHash, &status, &c.CreatedAt, &c.UpdatedAt,
+		&c.PasswordHash, &c.TokenGeneration, &status, &c.CreatedAt, &c.UpdatedAt,
 	)
 	if err != nil {
 		return nil, err

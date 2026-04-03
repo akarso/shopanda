@@ -14,7 +14,9 @@ import (
 	"github.com/akarso/shopanda/internal/domain/customer"
 	"github.com/akarso/shopanda/internal/domain/identity"
 	shophttp "github.com/akarso/shopanda/internal/interfaces/http"
+	"github.com/akarso/shopanda/internal/platform/apperror"
 	platformAuth "github.com/akarso/shopanda/internal/platform/auth"
+	"github.com/akarso/shopanda/internal/platform/event"
 	"github.com/akarso/shopanda/internal/platform/jwt"
 )
 
@@ -58,8 +60,47 @@ func (r *authMockCustomerRepo) Update(_ context.Context, c *customer.Customer) e
 	return nil
 }
 
+func (r *authMockCustomerRepo) BumpTokenGeneration(_ context.Context, customerID string) error {
+	c := r.customers[customerID]
+	if c == nil {
+		return apperror.NotFound("customer not found")
+	}
+	c.BumpTokenGeneration()
+	return nil
+}
+
 func (r *authMockCustomerRepo) WithTx(_ *sql.Tx) customer.CustomerRepository {
 	return r
+}
+
+// ── mock reset repo ──────────────────────────────────────────────────────
+
+type authMockResetRepo struct {
+	tokens map[string]*customer.PasswordResetToken
+}
+
+func newAuthMockResetRepo() *authMockResetRepo {
+	return &authMockResetRepo{tokens: make(map[string]*customer.PasswordResetToken)}
+}
+
+func (r *authMockResetRepo) Create(_ context.Context, t *customer.PasswordResetToken) error {
+	r.tokens[t.TokenHash] = t
+	return nil
+}
+
+func (r *authMockResetRepo) FindByTokenHash(_ context.Context, hash string) (*customer.PasswordResetToken, error) {
+	return r.tokens[hash], nil
+}
+
+func (r *authMockResetRepo) MarkUsed(_ context.Context, id string) error {
+	for _, t := range r.tokens {
+		if t.ID == id {
+			now := time.Now().UTC()
+			t.UsedAt = &now
+			return nil
+		}
+	}
+	return apperror.NotFound("reset token not found")
 }
 
 // ── setup ────────────────────────────────────────────────────────────────
@@ -67,9 +108,19 @@ func (r *authMockCustomerRepo) WithTx(_ *sql.Tx) customer.CustomerRepository {
 func authSetup() (*shophttp.AuthHandler, *jwt.Issuer) {
 	issuer, _ := jwt.NewIssuer("test-secret", time.Hour)
 	repo := newAuthMockRepo()
-	svc := appAuth.NewService(repo, issuer, authTestLogger{})
+	bus := event.NewBus(authTestLogger{})
+	svc := appAuth.NewService(repo, newAuthMockResetRepo(), issuer, bus, authTestLogger{}, time.Hour)
 	handle := shophttp.NewAuthHandler(svc)
 	return handle, issuer
+}
+
+func authSetupWithRepo() (*shophttp.AuthHandler, *jwt.Issuer, *authMockCustomerRepo) {
+	issuer, _ := jwt.NewIssuer("test-secret", time.Hour)
+	repo := newAuthMockRepo()
+	bus := event.NewBus(authTestLogger{})
+	svc := appAuth.NewService(repo, newAuthMockResetRepo(), issuer, bus, authTestLogger{}, time.Hour)
+	handle := shophttp.NewAuthHandler(svc)
+	return handle, issuer, repo
 }
 
 // ── envelope ─────────────────────────────────────────────────────────────
@@ -215,7 +266,7 @@ func TestAuthHandler_Me_Success(t *testing.T) {
 	}
 
 	// Build authenticated request using JWT.
-	token, err := issuer.Create(regData.CustomerID, "customer")
+	token, _, err := issuer.Create(regData.CustomerID, "customer", 0)
 	if err != nil {
 		t.Fatalf("Create token: %v", err)
 	}
@@ -262,5 +313,144 @@ func TestAuthHandler_Me_Unauthenticated(t *testing.T) {
 
 	if rec.Code != http.StatusUnauthorized {
 		t.Errorf("status = %d, want 401", rec.Code)
+	}
+}
+
+// ── Logout tests ─────────────────────────────────────────────────────────
+
+func TestAuthHandler_Logout_Success(t *testing.T) {
+	h, issuer, repo := authSetupWithRepo()
+
+	// Register a customer.
+	regBody := `{"email":"logout@example.com","password":"password123"}`
+	regReq := httptest.NewRequest("POST", "/auth/register", bytes.NewBufferString(regBody))
+	regRec := httptest.NewRecorder()
+	h.Register().ServeHTTP(regRec, regReq)
+
+	var regEnv authEnvelope
+	if err := json.Unmarshal(regRec.Body.Bytes(), &regEnv); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	var regData struct {
+		CustomerID string `json:"customer_id"`
+	}
+	if err := json.Unmarshal(regEnv.Data, &regData); err != nil {
+		t.Fatalf("unmarshal data: %v", err)
+	}
+
+	token, _, err := issuer.Create(regData.CustomerID, "customer", 0)
+	if err != nil {
+		t.Fatalf("Create token: %v", err)
+	}
+	id, err := identity.NewIdentity(regData.CustomerID, identity.RoleCustomer)
+	if err != nil {
+		t.Fatalf("NewIdentity: %v", err)
+	}
+
+	logoutReq := httptest.NewRequest("POST", "/auth/logout", nil)
+	logoutReq.Header.Set("Authorization", "Bearer "+token)
+	logoutReq = logoutReq.WithContext(platformAuth.WithIdentity(logoutReq.Context(), id))
+	logoutRec := httptest.NewRecorder()
+
+	h.Logout().ServeHTTP(logoutRec, logoutReq)
+
+	if logoutRec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", logoutRec.Code)
+	}
+
+	// Verify token generation was bumped.
+	c := repo.customers[regData.CustomerID]
+	if c == nil {
+		t.Fatal("customer not found in repo after logout")
+	}
+	if c.TokenGeneration != 1 {
+		t.Errorf("TokenGeneration = %d, want 1", c.TokenGeneration)
+	}
+
+	// Verify old token is rejected by ValidatingTokenParser.
+	parser := appAuth.NewValidatingTokenParser(issuer, repo, 0)
+	_, err = parser.Parse(context.Background(), token)
+	if err == nil {
+		t.Error("expected old token to be rejected after logout")
+	}
+}
+
+func TestAuthHandler_Logout_Unauthenticated(t *testing.T) {
+	h, _ := authSetup()
+	req := httptest.NewRequest("POST", "/auth/logout", nil)
+	rec := httptest.NewRecorder()
+
+	h.Logout().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusUnauthorized {
+		t.Errorf("status = %d, want 401", rec.Code)
+	}
+}
+
+// ── PasswordReset tests ──────────────────────────────────────────────────
+
+func TestAuthHandler_RequestPasswordReset_Success(t *testing.T) {
+	h, _ := authSetup()
+	body := `{"email":"reset@example.com"}`
+	req := httptest.NewRequest("POST", "/auth/password-reset/request", bytes.NewBufferString(body))
+	rec := httptest.NewRecorder()
+
+	h.RequestPasswordReset().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", rec.Code)
+	}
+}
+
+func TestAuthHandler_RequestPasswordReset_InvalidBody(t *testing.T) {
+	h, _ := authSetup()
+	req := httptest.NewRequest("POST", "/auth/password-reset/request", bytes.NewBufferString("not json"))
+	rec := httptest.NewRecorder()
+
+	h.RequestPasswordReset().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusUnprocessableEntity {
+		t.Errorf("status = %d, want 422", rec.Code)
+	}
+}
+
+func TestAuthHandler_ConfirmPasswordReset_InvalidBody(t *testing.T) {
+	h, _ := authSetup()
+	req := httptest.NewRequest("POST", "/auth/password-reset/confirm", bytes.NewBufferString("not json"))
+	rec := httptest.NewRecorder()
+
+	h.ConfirmPasswordReset().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusUnprocessableEntity {
+		t.Errorf("status = %d, want 422", rec.Code)
+	}
+}
+
+// ── Register: expires_at ─────────────────────────────────────────────────
+
+func TestAuthHandler_Register_ExpiresAt(t *testing.T) {
+	h, _ := authSetup()
+	body := `{"email":"expiry@example.com","password":"password123"}`
+	req := httptest.NewRequest("POST", "/auth/register", bytes.NewBufferString(body))
+	rec := httptest.NewRecorder()
+
+	h.Register().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("status = %d, want 201", rec.Code)
+	}
+
+	var env authEnvelope
+	if err := json.Unmarshal(rec.Body.Bytes(), &env); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	var data struct {
+		ExpiresAt string `json:"expires_at"`
+	}
+	if err := json.Unmarshal(env.Data, &data); err != nil {
+		t.Fatalf("unmarshal data: %v", err)
+	}
+	if data.ExpiresAt == "" {
+		t.Error("expected non-empty expires_at")
 	}
 }

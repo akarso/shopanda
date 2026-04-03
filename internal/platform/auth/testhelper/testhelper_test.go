@@ -15,8 +15,8 @@ func TestAuthenticatedRequest(t *testing.T) {
 
 	// Header set.
 	got := req.Header.Get("Authorization")
-	if got != "Bearer user-1:customer" {
-		t.Errorf("Authorization = %q, want %q", got, "Bearer user-1:customer")
+	if got != "Bearer test-token:user-1:customer" {
+		t.Errorf("Authorization = %q, want %q", got, "Bearer test-token:user-1:customer")
 	}
 
 	// Context injected.

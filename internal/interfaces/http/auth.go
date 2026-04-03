@@ -29,6 +29,7 @@ type registerRequest struct {
 type authTokenResponse struct {
 	CustomerID string `json:"customer_id"`
 	Token      string `json:"token"`
+	ExpiresAt  string `json:"expires_at"`
 }
 
 // Register returns a handler for POST /auth/register.
@@ -54,6 +55,7 @@ func (h *AuthHandler) Register() http.HandlerFunc {
 		JSON(w, http.StatusCreated, authTokenResponse{
 			CustomerID: out.CustomerID,
 			Token:      out.Token,
+			ExpiresAt:  out.ExpiresAt.Format("2006-01-02T15:04:05Z"),
 		})
 	}
 }
@@ -84,6 +86,7 @@ func (h *AuthHandler) Login() http.HandlerFunc {
 		JSON(w, http.StatusOK, authTokenResponse{
 			CustomerID: out.CustomerID,
 			Token:      out.Token,
+			ExpiresAt:  out.ExpiresAt.Format("2006-01-02T15:04:05Z"),
 		})
 	}
 }
@@ -118,5 +121,74 @@ func (h *AuthHandler) Me() http.HandlerFunc {
 			LastName:  c.LastName,
 			Status:    string(c.Status),
 		})
+	}
+}
+
+// Logout returns a handler for POST /auth/logout.
+func (h *AuthHandler) Logout() http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		id := platformAuth.IdentityFrom(r.Context())
+		if id.IsGuest() {
+			JSONError(w, apperror.Unauthorized("authentication required"))
+			return
+		}
+
+		if err := h.svc.Logout(r.Context(), id.UserID); err != nil {
+			JSONError(w, err)
+			return
+		}
+
+		JSON(w, http.StatusOK, map[string]string{"message": "logged out"})
+	}
+}
+
+type passwordResetRequestBody struct {
+	Email string `json:"email"`
+}
+
+// RequestPasswordReset returns a handler for POST /auth/password-reset/request.
+func (h *AuthHandler) RequestPasswordReset() http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		var req passwordResetRequestBody
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			JSONError(w, apperror.Validation("invalid request body"))
+			return
+		}
+
+		if err := h.svc.RequestPasswordReset(r.Context(), req.Email); err != nil {
+			JSONError(w, err)
+			return
+		}
+
+		JSON(w, http.StatusOK, map[string]string{
+			"message": "if the email exists, a reset link has been sent",
+		})
+	}
+}
+
+type passwordResetConfirmBody struct {
+	Token       string `json:"token"`
+	NewPassword string `json:"new_password"`
+}
+
+// ConfirmPasswordReset returns a handler for POST /auth/password-reset/confirm.
+func (h *AuthHandler) ConfirmPasswordReset() http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		var req passwordResetConfirmBody
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			JSONError(w, apperror.Validation("invalid request body"))
+			return
+		}
+
+		err := h.svc.ConfirmPasswordReset(r.Context(), appAuth.ConfirmPasswordResetInput{
+			Token:       req.Token,
+			NewPassword: req.NewPassword,
+		})
+		if err != nil {
+			JSONError(w, err)
+			return
+		}
+
+		JSON(w, http.StatusOK, map[string]string{"message": "password has been reset"})
 	}
 }

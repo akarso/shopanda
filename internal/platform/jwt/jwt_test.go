@@ -28,12 +28,15 @@ func TestCreate_And_Parse(t *testing.T) {
 		t.Fatalf("NewIssuer: %v", err)
 	}
 
-	token, err := issuer.Create("user-1", "customer")
+	token, expiresAt, err := issuer.Create("user-1", "customer", 0)
 	if err != nil {
 		t.Fatalf("Create: %v", err)
 	}
 	if token == "" {
 		t.Fatal("expected non-empty token")
+	}
+	if expiresAt.IsZero() {
+		t.Fatal("expected non-zero expiresAt")
 	}
 
 	claims, err := issuer.Parse(token)
@@ -45,6 +48,9 @@ func TestCreate_And_Parse(t *testing.T) {
 	}
 	if claims.Role != "customer" {
 		t.Errorf("Role = %q, want customer", claims.Role)
+	}
+	if claims.Exp != expiresAt.Unix() {
+		t.Errorf("Exp = %d, want %d (from expiresAt)", claims.Exp, expiresAt.Unix())
 	}
 	if claims.Exp <= claims.Iat {
 		t.Error("Exp should be after Iat")
@@ -61,7 +67,7 @@ func TestParse_InvalidSignature(t *testing.T) {
 		t.Fatalf("NewIssuer(b): %v", err)
 	}
 
-	token, err := issuer.Create("user-1", "customer")
+	token, _, err := issuer.Create("user-1", "customer", 0)
 	if err != nil {
 		t.Fatalf("Create: %v", err)
 	}
@@ -76,7 +82,7 @@ func TestParse_Expired(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewIssuer: %v", err)
 	}
-	token, err := issuer.Create("user-1", "customer")
+	token, _, err := issuer.Create("user-1", "customer", 0)
 	if err != nil {
 		t.Fatalf("Create: %v", err)
 	}
@@ -103,7 +109,7 @@ func TestCreate_EmptySubject(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewIssuer: %v", err)
 	}
-	_, err = issuer.Create("", "customer")
+	_, _, err = issuer.Create("", "customer", 0)
 	if err == nil {
 		t.Fatal("expected error for empty subject")
 	}
@@ -114,7 +120,7 @@ func TestParse_TamperedPayload(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewIssuer: %v", err)
 	}
-	token, err := issuer.Create("user-1", "customer")
+	token, _, err := issuer.Create("user-1", "customer", 0)
 	if err != nil {
 		t.Fatalf("Create: %v", err)
 	}
@@ -140,7 +146,7 @@ func TestParse_TamperedHeader(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewIssuer: %v", err)
 	}
-	token, err := issuer.Create("user-1", "customer")
+	token, _, err := issuer.Create("user-1", "customer", 0)
 	if err != nil {
 		t.Fatalf("Create: %v", err)
 	}
@@ -174,12 +180,42 @@ func TestCreate_DifferentTokensPerCall(t *testing.T) {
 		t.Fatalf("NewIssuer: %v", err)
 	}
 
-	t1, _ := issuer.Create("user-1", "customer")
+	t1, _, _ := issuer.Create("user-1", "customer", 0)
 	time.Sleep(time.Second)
-	t2, _ := issuer.Create("user-1", "customer")
+	t2, _, _ := issuer.Create("user-1", "customer", 0)
 
 	if t1 == t2 {
 		t.Error("expected different tokens for different iat")
+	}
+}
+
+func TestCreate_GenClaim(t *testing.T) {
+	issuer, err := jwt.NewIssuer("secret", time.Hour)
+	if err != nil {
+		t.Fatalf("NewIssuer: %v", err)
+	}
+
+	token, _, err := issuer.Create("user-1", "customer", 42)
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+
+	claims, err := issuer.Parse(token)
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	if claims.Gen != 42 {
+		t.Errorf("Gen = %d, want 42", claims.Gen)
+	}
+}
+
+func TestTTL(t *testing.T) {
+	issuer, err := jwt.NewIssuer("secret", 2*time.Hour)
+	if err != nil {
+		t.Fatalf("NewIssuer: %v", err)
+	}
+	if issuer.TTL() != 2*time.Hour {
+		t.Errorf("TTL = %v, want 2h", issuer.TTL())
 	}
 }
 
