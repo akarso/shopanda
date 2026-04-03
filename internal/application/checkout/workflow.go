@@ -75,6 +75,12 @@ func (w *Workflow) publishEvent(ctx context.Context, name, source string, data i
 // and emits lifecycle events for observability.
 func (w *Workflow) Execute(ctx context.Context, cctx *Context) error {
 	for _, step := range w.steps {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		default:
+		}
+
 		w.log.Info(EventStepStarted, map[string]interface{}{
 			"cart_id": cctx.CartID,
 			"step":    step.Name(),
