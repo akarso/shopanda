@@ -34,6 +34,21 @@ func NewService(
 	log logger.Logger,
 	resetTTL time.Duration,
 ) *Service {
+	if customers == nil {
+		panic("auth: customers must not be nil")
+	}
+	if resets == nil {
+		panic("auth: resets must not be nil")
+	}
+	if jwtIssuer == nil {
+		panic("auth: jwtIssuer must not be nil")
+	}
+	if bus == nil {
+		panic("auth: bus must not be nil")
+	}
+	if log == nil {
+		panic("auth: log must not be nil")
+	}
 	if resetTTL <= 0 {
 		panic("auth: resetTTL must be > 0; non-positive TTL produces already-expired tokens")
 	}
