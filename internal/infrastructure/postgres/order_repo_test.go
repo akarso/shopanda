@@ -133,6 +133,18 @@ func TestOrderRepo_FindByCustomerID(t *testing.T) {
 	if len(orders) != 2 {
 		t.Fatalf("len(orders) = %d, want 2", len(orders))
 	}
+	for i, o := range orders {
+		if o.CustomerID != custID {
+			t.Errorf("orders[%d].CustomerID = %q, want %q", i, o.CustomerID, custID)
+		}
+	}
+	// Newest first: o2 was saved after o1.
+	if orders[0].ID != o2.ID {
+		t.Errorf("orders[0].ID = %q, want %q (newest first)", orders[0].ID, o2.ID)
+	}
+	if orders[1].ID != o1.ID {
+		t.Errorf("orders[1].ID = %q, want %q", orders[1].ID, o1.ID)
+	}
 }
 
 func TestOrderRepo_FindByCustomerID_Empty(t *testing.T) {

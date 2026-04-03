@@ -71,7 +71,9 @@ func (r *OrderRepo) FindByID(ctx context.Context, id string) (*order.Order, erro
 	if err != nil {
 		return nil, err
 	}
-	o.SetItemsFromDB(items)
+	if err := o.SetItemsFromDB(items); err != nil {
+		return nil, fmt.Errorf("order_repo: set items: %w", err)
+	}
 	return o, nil
 }
 
@@ -111,7 +113,9 @@ func (r *OrderRepo) FindByCustomerID(ctx context.Context, customerID string) ([]
 		return nil, err
 	}
 	for i := range orders {
-		orders[i].SetItemsFromDB(itemMap[orders[i].ID])
+		if err := orders[i].SetItemsFromDB(itemMap[orders[i].ID]); err != nil {
+			return nil, fmt.Errorf("order_repo: set items: %w", err)
+		}
 	}
 	return orders, nil
 }

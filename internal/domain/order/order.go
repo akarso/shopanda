@@ -54,6 +54,13 @@ func NewOrder(id, customerID, currency string, items []Item) (Order, error) {
 	if len(items) == 0 {
 		return Order{}, errors.New("order: must contain at least one item")
 	}
+	seen := make(map[string]struct{}, len(items))
+	for i := range items {
+		if _, dup := seen[items[i].VariantID]; dup {
+			return Order{}, errors.New("order: duplicate variant id")
+		}
+		seen[items[i].VariantID] = struct{}{}
+	}
 	for i := range items {
 		if items[i].UnitPrice.Currency() != currency {
 			return Order{}, errors.New("order: item currency mismatch")
@@ -146,10 +153,19 @@ func (o *Order) SetStatusFromDB(s string) error {
 }
 
 // SetItemsFromDB sets the items when loading from persistence.
-func (o *Order) SetItemsFromDB(items []Item) {
+// Returns an error if the items total doesn't match the order header.
+func (o *Order) SetItemsFromDB(items []Item) error {
+	total, err := computeTotal(items, o.Currency)
+	if err != nil {
+		return err
+	}
+	if !total.Equal(o.TotalAmount) {
+		return errors.New("order: items total does not match order header")
+	}
 	cp := make([]Item, len(items))
 	copy(cp, items)
 	o.items = cp
+	return nil
 }
 
 // computeTotal sums item line totals with overflow checking.

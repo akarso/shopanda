@@ -1,6 +1,7 @@
 package order_test
 
 import (
+	"math"
 	"testing"
 
 	"github.com/akarso/shopanda/internal/domain/order"
@@ -79,5 +80,20 @@ func TestItem_LineTotal(t *testing.T) {
 	}
 	if lt.Amount() != 2000 {
 		t.Errorf("LineTotal = %d, want 2000", lt.Amount())
+	}
+}
+
+func TestItem_LineTotal_Overflow(t *testing.T) {
+	price, err := shared.NewMoney(math.MaxInt64, "EUR")
+	if err != nil {
+		t.Fatalf("NewMoney: %v", err)
+	}
+	item, err := order.NewItem("v-1", "SKU", "Shirt", 2, price)
+	if err != nil {
+		t.Fatalf("NewItem: %v", err)
+	}
+	_, err = item.LineTotal()
+	if err == nil {
+		t.Fatal("expected overflow error from LineTotal")
 	}
 }

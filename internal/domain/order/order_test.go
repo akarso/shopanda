@@ -81,6 +81,22 @@ func TestNewOrder_CurrencyMismatch(t *testing.T) {
 	}
 }
 
+func TestNewOrder_DuplicateVariantID(t *testing.T) {
+	p := shared.MustNewMoney(1000, "EUR")
+	i1, err := order.NewItem("v-1", "SKU-1", "Shirt", 1, p)
+	if err != nil {
+		t.Fatalf("NewItem i1: %v", err)
+	}
+	i2, err := order.NewItem("v-1", "SKU-2", "Hat", 2, p)
+	if err != nil {
+		t.Fatalf("NewItem i2: %v", err)
+	}
+	_, err = order.NewOrder(id.New(), "cust-1", "EUR", []order.Item{i1, i2})
+	if err == nil {
+		t.Fatal("expected error for duplicate variant id")
+	}
+}
+
 func TestNewOrder_MultipleItems(t *testing.T) {
 	p1 := shared.MustNewMoney(1000, "EUR")
 	p2 := shared.MustNewMoney(500, "EUR")
