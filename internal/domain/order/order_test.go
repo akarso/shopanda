@@ -285,7 +285,11 @@ func TestSetStatusFromDB_Invalid(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewOrder: %v", err)
 	}
+	before := o.Status()
 	if err := o.SetStatusFromDB("nope"); err == nil {
 		t.Fatal("expected error for invalid status")
+	}
+	if o.Status() != before {
+		t.Errorf("Status changed to %q after invalid SetStatusFromDB, want %q", o.Status(), before)
 	}
 }

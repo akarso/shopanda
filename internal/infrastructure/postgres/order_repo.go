@@ -147,9 +147,14 @@ func (r *OrderRepo) Save(ctx context.Context, o *order.Order) error {
 	if len(items) > 0 {
 		const insertItem = `INSERT INTO order_items (order_id, variant_id, sku, name, quantity, unit_price, currency, created_at)
 			VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`
+		stmt, err := tx.PrepareContext(ctx, insertItem)
+		if err != nil {
+			return fmt.Errorf("order_repo: prepare item insert: %w", err)
+		}
+		defer stmt.Close()
 		for i := range items {
 			item := &items[i]
-			_, err = tx.ExecContext(ctx, insertItem,
+			_, err = stmt.ExecContext(ctx,
 				o.ID, item.VariantID, item.SKU, item.Name, item.Quantity,
 				item.UnitPrice.Amount(), item.UnitPrice.Currency(),
 				item.CreatedAt,
@@ -224,6 +229,9 @@ func (r *OrderRepo) loadItemsBatch(ctx context.Context, orderIDs []string) (map[
 		if err != nil {
 			return nil, fmt.Errorf("order_repo: batch item money: %w", err)
 		}
+		// Construct Item directly (bypassing NewItem) because DB data was
+		// validated on write and we must preserve the stored CreatedAt.
+		// SetItemsFromDB validates the total on the caller side.
 		result[orderID] = append(result[orderID], order.Item{
 			VariantID: variantID,
 			SKU:       sku,
@@ -255,6 +263,7 @@ func (r *OrderRepo) scanItems(rows *sql.Rows) ([]order.Item, error) {
 		if err != nil {
 			return nil, fmt.Errorf("order_repo: item money: %w", err)
 		}
+		// Construct Item directly — see loadItemsBatch comment for rationale.
 		items = append(items, order.Item{
 			VariantID: variantID,
 			SKU:       sku,
