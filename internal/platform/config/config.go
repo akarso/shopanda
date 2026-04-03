@@ -14,6 +14,7 @@ type Config struct {
 	Server   ServerConfig   `yaml:"server"`
 	Database DatabaseConfig `yaml:"database"`
 	Log      LogConfig      `yaml:"log"`
+	Auth     AuthConfig     `yaml:"auth"`
 }
 
 type ServerConfig struct {
@@ -40,6 +41,11 @@ func (d DatabaseConfig) DSN() string {
 type LogConfig struct {
 	Level  string `yaml:"level"`
 	Format string `yaml:"format"`
+}
+
+type AuthConfig struct {
+	JWTSecret string `yaml:"jwt_secret"`
+	JWTTTL    string `yaml:"jwt_ttl"`
 }
 
 // values holds flattened dot-notation keys for generic access.
@@ -113,6 +119,10 @@ func defaults() Config {
 			Level:  "info",
 			Format: "json",
 		},
+		Auth: AuthConfig{
+			JWTSecret: "",
+			JWTTTL:    "24h",
+		},
 	}
 }
 
@@ -152,6 +162,12 @@ func applyEnv(cfg *Config) {
 	if v := os.Getenv("SHOPANDA_LOG_FORMAT"); v != "" {
 		cfg.Log.Format = v
 	}
+	if v := os.Getenv("SHOPANDA_AUTH_JWT_SECRET"); v != "" {
+		cfg.Auth.JWTSecret = v
+	}
+	if v := os.Getenv("SHOPANDA_AUTH_JWT_TTL"); v != "" {
+		cfg.Auth.JWTTTL = v
+	}
 }
 
 // flatten converts the Config struct into a dot-notation key-value map.
@@ -167,6 +183,7 @@ func flatten(cfg *Config) map[string]string {
 	m["database.sslmode"] = cfg.Database.SSLMode
 	m["log.level"] = cfg.Log.Level
 	m["log.format"] = cfg.Log.Format
+	m["auth.jwt_ttl"] = cfg.Auth.JWTTTL
 	return m
 }
 
@@ -205,5 +222,6 @@ func (c *Config) String() string {
 			c.Database.User, c.Database.Host, c.Database.Port,
 			c.Database.Name, c.Database.SSLMode, password),
 		fmt.Sprintf("log.level=%s log.format=%s", c.Log.Level, c.Log.Format),
+		fmt.Sprintf("auth.jwt_ttl=%s", c.Auth.JWTTTL),
 	}, " ")
 }
