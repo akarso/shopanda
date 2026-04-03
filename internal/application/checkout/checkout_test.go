@@ -5,7 +5,6 @@ import (
 	"context"
 	"errors"
 	"testing"
-	"time"
 
 	"github.com/akarso/shopanda/internal/application/checkout"
 	"github.com/akarso/shopanda/internal/domain/cart"
@@ -22,7 +21,7 @@ type mockStep struct {
 	fn   func(ctx *checkout.Context) error
 }
 
-func (s *mockStep) Name() string                       { return s.name }
+func (s *mockStep) Name() string                        { return s.name }
 func (s *mockStep) Execute(ctx *checkout.Context) error { return s.fn(ctx) }
 
 // --- Mock cart repository ---
@@ -465,6 +464,3 @@ func TestEventConstants(t *testing.T) {
 		}
 	}
 }
-
-// Ensure unused import is used.
-var _ = time.Now

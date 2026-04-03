@@ -96,11 +96,13 @@ func (w *Workflow) Execute(ctx context.Context, cctx *Context) error {
 				"cart_id": cctx.CartID,
 				"step":    step.Name(),
 			})
-			_ = w.publishEvent(ctx, EventCheckoutFailed, "checkout.workflow", CheckoutFailedData{
+			if pubErr := w.publishEvent(ctx, EventCheckoutFailed, "checkout.workflow", CheckoutFailedData{
 				CartID:   cctx.CartID,
 				StepName: step.Name(),
 				Error:    err.Error(),
-			})
+			}); pubErr != nil {
+				return fmt.Errorf("checkout: step %q failed: %w (publish: %v)", step.Name(), err, pubErr)
+			}
 			return fmt.Errorf("checkout: step %q failed: %w", step.Name(), err)
 		}
 
