@@ -99,8 +99,7 @@ func (s *Service) Register(ctx context.Context, in RegisterInput) (RegisterOutpu
 		return RegisterOutput{}, fmt.Errorf("auth service: create customer: %w", err)
 	}
 
-	expiresAt := time.Now().UTC().Add(s.jwt.TTL())
-	token, err := s.jwt.Create(c.ID, string(identity.RoleCustomer), c.TokenGeneration)
+	token, expiresAt, err := s.jwt.Create(c.ID, string(identity.RoleCustomer), c.TokenGeneration)
 	if err != nil {
 		return RegisterOutput{}, fmt.Errorf("auth service: create token: %w", err)
 	}
@@ -163,8 +162,7 @@ func (s *Service) Login(ctx context.Context, in LoginInput) (LoginOutput, error)
 		return LoginOutput{}, apperror.Unauthorized("invalid email or password")
 	}
 
-	expiresAt := time.Now().UTC().Add(s.jwt.TTL())
-	token, err := s.jwt.Create(c.ID, string(identity.RoleCustomer), c.TokenGeneration)
+	token, expiresAt, err := s.jwt.Create(c.ID, string(identity.RoleCustomer), c.TokenGeneration)
 	if err != nil {
 		return LoginOutput{}, fmt.Errorf("auth service: create token: %w", err)
 	}

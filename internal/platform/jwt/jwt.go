@@ -44,25 +44,27 @@ var header = mustB64JSON(map[string]string{"alg": "HS256", "typ": "JWT"})
 func (i *Issuer) TTL() time.Duration { return i.ttl }
 
 // Create issues a new token for the given subject, role and token generation.
-func (i *Issuer) Create(subject, role string, gen int64) (string, error) {
+// Returns the signed token string and the exact expiry time embedded in it.
+func (i *Issuer) Create(subject, role string, gen int64) (string, time.Time, error) {
 	if subject == "" {
-		return "", errors.New("jwt: subject must not be empty")
+		return "", time.Time{}, errors.New("jwt: subject must not be empty")
 	}
 	now := time.Now().UTC()
+	exp := now.Add(i.ttl)
 	claims := Claims{
 		Sub:  subject,
 		Role: role,
 		Gen:  gen,
 		Iat:  now.Unix(),
-		Exp:  now.Add(i.ttl).Unix(),
+		Exp:  exp.Unix(),
 	}
 	payload, err := b64JSON(claims)
 	if err != nil {
-		return "", fmt.Errorf("jwt: encode claims: %w", err)
+		return "", time.Time{}, fmt.Errorf("jwt: encode claims: %w", err)
 	}
 	unsigned := header + "." + payload
 	sig := i.sign(unsigned)
-	return unsigned + "." + sig, nil
+	return unsigned + "." + sig, exp, nil
 }
 
 // Parse validates a token and returns its claims.

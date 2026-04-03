@@ -20,7 +20,7 @@ func TestValidatingTokenParser_Parse(t *testing.T) {
 	c, _ := customer.NewCustomer("user-1", "alice@example.com")
 	_ = repo.Create(context.Background(), &c)
 
-	token, _ := issuer.Create("user-1", "customer", 0)
+	token, _, _ := issuer.Create("user-1", "customer", 0)
 	id, err := parser.Parse(context.Background(), token)
 	if err != nil {
 		t.Fatalf("Parse: %v", err)
@@ -49,7 +49,7 @@ func TestValidatingTokenParser_Parse_CustomerNotFound(t *testing.T) {
 	repo := newMockRepo()
 	parser := auth.NewValidatingTokenParser(issuer, repo, 0)
 
-	token, _ := issuer.Create("nonexistent", "customer", 0)
+	token, _, _ := issuer.Create("nonexistent", "customer", 0)
 	_, err := parser.Parse(context.Background(), token)
 	if err == nil {
 		t.Fatal("expected error for non-existent customer")
@@ -66,7 +66,7 @@ func TestValidatingTokenParser_Parse_GenerationMismatch(t *testing.T) {
 	_ = repo.Create(context.Background(), &c)
 
 	// Token with gen=0 (stale).
-	token, _ := issuer.Create("user-1", "customer", 0)
+	token, _, _ := issuer.Create("user-1", "customer", 0)
 	_, err := parser.Parse(context.Background(), token)
 	if err == nil {
 		t.Fatal("expected error for generation mismatch")

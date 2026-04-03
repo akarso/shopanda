@@ -265,7 +265,7 @@ func TestAuthHandler_Me_Success(t *testing.T) {
 	}
 
 	// Build authenticated request using JWT.
-	token, err := issuer.Create(regData.CustomerID, "customer", 0)
+	token, _, err := issuer.Create(regData.CustomerID, "customer", 0)
 	if err != nil {
 		t.Fatalf("Create token: %v", err)
 	}
@@ -337,7 +337,7 @@ func TestAuthHandler_Logout_Success(t *testing.T) {
 		t.Fatalf("unmarshal data: %v", err)
 	}
 
-	token, err := issuer.Create(regData.CustomerID, "customer", 0)
+	token, _, err := issuer.Create(regData.CustomerID, "customer", 0)
 	if err != nil {
 		t.Fatalf("Create token: %v", err)
 	}

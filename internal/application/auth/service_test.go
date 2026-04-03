@@ -96,9 +96,10 @@ func (r *mockResetRepo) MarkUsed(_ context.Context, id string) error {
 		if t.ID == id {
 			now := time.Now().UTC()
 			t.UsedAt = &now
+			return nil
 		}
 	}
-	return nil
+	return apperror.NotFound("reset token not found")
 }
 
 // ── helpers ──────────────────────────────────────────────────────────────
@@ -488,5 +489,64 @@ func TestConfirmPasswordReset_InvalidToken(t *testing.T) {
 	var appErr *apperror.Error
 	if !errors.As(err, &appErr) || appErr.Code != apperror.CodeUnauthorized {
 		t.Errorf("expected unauthorized error, got %v", err)
+	}
+}
+
+func TestConfirmPasswordReset_Success(t *testing.T) {
+	repo := newMockRepo()
+	resetRepo := newMockResetRepo()
+	issuer, _ := jwt.NewIssuer("test-secret", time.Hour)
+	bus := event.NewBus(testLogger{})
+	svc := auth.NewService(repo, resetRepo, issuer, bus, testLogger{}, time.Hour)
+
+	// Register a customer.
+	out, err := svc.Register(context.Background(), auth.RegisterInput{
+		Email: "reset@example.com", Password: "password123",
+	})
+	if err != nil {
+		t.Fatalf("Register: %v", err)
+	}
+
+	c := repo.customers[out.CustomerID]
+	oldHash := c.PasswordHash
+
+	// Seed a valid reset token directly into the mock repo.
+	plaintext := "test-reset-token"
+	hash := customer.HashToken(plaintext)
+	rt := &customer.PasswordResetToken{
+		ID:         "rt-1",
+		CustomerID: out.CustomerID,
+		TokenHash:  hash,
+		ExpiresAt:  time.Now().UTC().Add(time.Hour),
+		CreatedAt:  time.Now().UTC(),
+	}
+	resetRepo.tokens[hash] = rt
+
+	// Confirm the reset.
+	err = svc.ConfirmPasswordReset(context.Background(), auth.ConfirmPasswordResetInput{
+		Token:       plaintext,
+		NewPassword: "new-password-123",
+	})
+	if err != nil {
+		t.Fatalf("ConfirmPasswordReset: %v", err)
+	}
+
+	// Verify password was changed.
+	c = repo.customers[out.CustomerID]
+	if c.PasswordHash == oldHash {
+		t.Error("expected password hash to change")
+	}
+	if err := password.Compare(c.PasswordHash, "new-password-123"); err != nil {
+		t.Error("new password should verify")
+	}
+
+	// Verify token was marked used.
+	if rt.UsedAt == nil {
+		t.Error("expected reset token to be marked used")
+	}
+
+	// Verify token generation was bumped.
+	if c.TokenGeneration < 1 {
+		t.Errorf("TokenGeneration = %d, want >= 1", c.TokenGeneration)
 	}
 }
