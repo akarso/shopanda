@@ -78,6 +78,8 @@ func runServe(cfg *config.Config, log logger.Logger) error {
 	priceRepo := postgres.NewPriceRepo(conn)
 	customerRepo := postgres.NewCustomerRepo(conn)
 	resetTokenRepo := postgres.NewResetTokenRepo(conn)
+	orderRepo := postgres.NewOrderRepo(conn)
+	_ = orderRepo // wired for checkout (PR-035+)
 
 	// Composition pipelines (empty; plugins add steps later).
 	pdp := composition.NewPipeline[composition.ProductContext]()
