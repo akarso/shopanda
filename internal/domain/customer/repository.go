@@ -21,6 +21,9 @@ type CustomerRepository interface {
 	// Update persists changes to an existing customer.
 	Update(ctx context.Context, c *Customer) error
 
+	// BumpTokenGeneration atomically increments the customer's token generation.
+	BumpTokenGeneration(ctx context.Context, customerID string) error
+
 	// WithTx returns a repository bound to the given transaction.
 	WithTx(tx *sql.Tx) CustomerRepository
 }

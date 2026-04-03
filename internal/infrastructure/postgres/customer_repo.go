@@ -121,6 +121,25 @@ func (r *CustomerRepo) Update(ctx context.Context, c *customer.Customer) error {
 	return nil
 }
 
+// BumpTokenGeneration atomically increments the customer's token generation.
+func (r *CustomerRepo) BumpTokenGeneration(ctx context.Context, customerID string) error {
+	const q = `UPDATE customers SET token_generation = token_generation + 1, updated_at = $1 WHERE id = $2`
+
+	result, err := r.exec(ctx, q, time.Now().UTC(), customerID)
+	if err != nil {
+		return fmt.Errorf("customer_repo: bump token generation: %w", err)
+	}
+
+	rows, err := result.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("customer_repo: bump token generation rows affected: %w", err)
+	}
+	if rows == 0 {
+		return apperror.NotFound("customer not found")
+	}
+	return nil
+}
+
 // queryRow delegates to tx or db.
 func (r *CustomerRepo) queryRow(ctx context.Context, q string, args ...interface{}) *sql.Row {
 	if r.tx != nil {

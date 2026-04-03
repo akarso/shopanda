@@ -59,6 +59,15 @@ func (r *mockCustomerRepo) Update(_ context.Context, c *customer.Customer) error
 	return nil
 }
 
+func (r *mockCustomerRepo) BumpTokenGeneration(_ context.Context, customerID string) error {
+	c := r.customers[customerID]
+	if c == nil {
+		return nil
+	}
+	c.BumpTokenGeneration()
+	return nil
+}
+
 func (r *mockCustomerRepo) WithTx(_ *sql.Tx) customer.CustomerRepository {
 	return r
 }
@@ -97,7 +106,7 @@ func (r *mockResetRepo) MarkUsed(_ context.Context, id string) error {
 func newTestService(repo *mockCustomerRepo) *auth.Service {
 	issuer, _ := jwt.NewIssuer("test-secret", time.Hour)
 	bus := event.NewBus(testLogger{})
-	return auth.NewService(repo, newMockResetRepo(), issuer, bus, testLogger{})
+	return auth.NewService(repo, newMockResetRepo(), issuer, bus, testLogger{}, time.Hour)
 }
 
 // ── Register tests ───────────────────────────────────────────────────────

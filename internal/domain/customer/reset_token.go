@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
+	"fmt"
 	"time"
 )
 
@@ -76,7 +77,7 @@ func hashToken(plaintext string) string {
 func generateToken() (string, error) {
 	b := make([]byte, 32)
 	if _, err := rand.Read(b); err != nil {
-		return "", errors.New("reset token: failed to generate random bytes")
+		return "", fmt.Errorf("reset token: generate random bytes: %w", err)
 	}
 	return hex.EncodeToString(b), nil
 }

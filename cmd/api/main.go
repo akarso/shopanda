@@ -12,6 +12,7 @@ import (
 	"github.com/akarso/shopanda/internal/application/composition"
 	"github.com/akarso/shopanda/internal/application/importer"
 	appPricing "github.com/akarso/shopanda/internal/application/pricing"
+	"github.com/akarso/shopanda/internal/domain/customer"
 	"github.com/akarso/shopanda/internal/domain/pricing"
 	"github.com/akarso/shopanda/internal/infrastructure/postgres"
 	"github.com/akarso/shopanda/internal/platform/config"
@@ -91,6 +92,17 @@ func runServe(cfg *config.Config, log logger.Logger) error {
 	// Event bus.
 	bus := event.NewBus(log)
 
+	// Dev handler: log password reset tokens (replace with email plugin in production).
+	bus.On(customer.EventPasswordResetRequested, func(_ context.Context, evt event.Event) error {
+		if data, ok := evt.Data.(customer.PasswordResetRequestedData); ok {
+			log.Info("dev.password_reset.token", map[string]interface{}{
+				"customer_id": data.CustomerID,
+				"token":       data.Token,
+			})
+		}
+		return nil
+	})
+
 	// Application services.
 	cartService := cartApp.NewService(cartRepo, priceRepo, pricingPipeline, log, bus)
 
@@ -105,7 +117,7 @@ func runServe(cfg *config.Config, log logger.Logger) error {
 	}
 	tokenParser := authApp.NewValidatingTokenParser(jwtIssuer, customerRepo)
 
-	authService := authApp.NewService(customerRepo, resetTokenRepo, jwtIssuer, bus, log)
+	authService := authApp.NewService(customerRepo, resetTokenRepo, jwtIssuer, bus, log, time.Hour)
 
 	// Handlers.
 	productHandler := shophttp.NewProductHandler(productRepo, pdp, plp)

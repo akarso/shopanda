@@ -59,6 +59,15 @@ func (r *authMockCustomerRepo) Update(_ context.Context, c *customer.Customer) e
 	return nil
 }
 
+func (r *authMockCustomerRepo) BumpTokenGeneration(_ context.Context, customerID string) error {
+	c := r.customers[customerID]
+	if c == nil {
+		return nil
+	}
+	c.BumpTokenGeneration()
+	return nil
+}
+
 func (r *authMockCustomerRepo) WithTx(_ *sql.Tx) customer.CustomerRepository {
 	return r
 }
@@ -98,9 +107,18 @@ func authSetup() (*shophttp.AuthHandler, *jwt.Issuer) {
 	issuer, _ := jwt.NewIssuer("test-secret", time.Hour)
 	repo := newAuthMockRepo()
 	bus := event.NewBus(authTestLogger{})
-	svc := appAuth.NewService(repo, newAuthMockResetRepo(), issuer, bus, authTestLogger{})
+	svc := appAuth.NewService(repo, newAuthMockResetRepo(), issuer, bus, authTestLogger{}, time.Hour)
 	handle := shophttp.NewAuthHandler(svc)
 	return handle, issuer
+}
+
+func authSetupWithRepo() (*shophttp.AuthHandler, *jwt.Issuer, *authMockCustomerRepo) {
+	issuer, _ := jwt.NewIssuer("test-secret", time.Hour)
+	repo := newAuthMockRepo()
+	bus := event.NewBus(authTestLogger{})
+	svc := appAuth.NewService(repo, newAuthMockResetRepo(), issuer, bus, authTestLogger{}, time.Hour)
+	handle := shophttp.NewAuthHandler(svc)
+	return handle, issuer, repo
 }
 
 // ── envelope ─────────────────────────────────────────────────────────────

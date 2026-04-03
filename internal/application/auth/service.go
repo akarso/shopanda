@@ -32,6 +32,7 @@ func NewService(
 	jwtIssuer *jwt.Issuer,
 	bus *event.Bus,
 	log logger.Logger,
+	resetTTL time.Duration,
 ) *Service {
 	return &Service{
 		customers: customers,
@@ -39,7 +40,7 @@ func NewService(
 		jwt:       jwtIssuer,
 		bus:       bus,
 		log:       log,
-		resetTTL:  time.Hour,
+		resetTTL:  resetTTL,
 	}
 }
 
@@ -103,9 +104,14 @@ func (s *Service) Register(ctx context.Context, in RegisterInput) (RegisterOutpu
 		return RegisterOutput{}, fmt.Errorf("auth service: create token: %w", err)
 	}
 
-	_ = s.bus.Publish(ctx, event.New(customer.EventCustomerCreated, "auth.service", customer.CustomerCreatedData{
+	if err := s.bus.Publish(ctx, event.New(customer.EventCustomerCreated, "auth.service", customer.CustomerCreatedData{
 		CustomerID: c.ID,
-	}))
+	})); err != nil {
+		s.log.Warn("auth.event.publish_failed", map[string]interface{}{
+			"event": customer.EventCustomerCreated,
+			"error": err.Error(),
+		})
+	}
 
 	s.log.Info("auth.registered", map[string]interface{}{
 		"customer_id": c.ID,
@@ -187,22 +193,12 @@ func (s *Service) Me(ctx context.Context, customerID string) (*customer.Customer
 // Logout invalidates all tokens for the given customer by bumping
 // their token generation counter.
 func (s *Service) Logout(ctx context.Context, customerID string) error {
-	c, err := s.customers.FindByID(ctx, customerID)
-	if err != nil {
-		return fmt.Errorf("auth service: logout: %w", err)
-	}
-	if c == nil {
-		return apperror.NotFound("customer not found")
-	}
-
-	c.BumpTokenGeneration()
-
-	if err := s.customers.Update(ctx, c); err != nil {
+	if err := s.customers.BumpTokenGeneration(ctx, customerID); err != nil {
 		return fmt.Errorf("auth service: logout: %w", err)
 	}
 
 	s.log.Info("auth.logout", map[string]interface{}{
-		"customer_id": c.ID,
+		"customer_id": customerID,
 	})
 	return nil
 }
@@ -233,10 +229,15 @@ func (s *Service) RequestPasswordReset(ctx context.Context, email string) error 
 		return fmt.Errorf("auth service: request reset: %w", err)
 	}
 
-	_ = s.bus.Publish(ctx, event.New(customer.EventPasswordResetRequested, "auth.service", customer.PasswordResetRequestedData{
+	if err := s.bus.Publish(ctx, event.New(customer.EventPasswordResetRequested, "auth.service", customer.PasswordResetRequestedData{
 		CustomerID: c.ID,
 		Token:      plaintext,
-	}))
+	})); err != nil {
+		s.log.Warn("auth.event.publish_failed", map[string]interface{}{
+			"event": customer.EventPasswordResetRequested,
+			"error": err.Error(),
+		})
+	}
 
 	s.log.Info("auth.password_reset.requested", map[string]interface{}{
 		"customer_id": c.ID,
@@ -289,16 +290,20 @@ func (s *Service) ConfirmPasswordReset(ctx context.Context, in ConfirmPasswordRe
 	if err := c.SetPassword(pwHash); err != nil {
 		return fmt.Errorf("auth service: confirm reset: %w", err)
 	}
-	c.BumpTokenGeneration()
 
-	if err := s.customers.Update(ctx, c); err != nil {
-		return fmt.Errorf("auth service: confirm reset: %w", err)
-	}
-
+	// Mark token used before updating customer — if customer update fails,
+	// the token is consumed but the password is unchanged (user can request a new token).
+	// This prevents the worse scenario of password changed but token still reusable.
 	if err := rt.MarkUsed(); err != nil {
 		return fmt.Errorf("auth service: confirm reset: %w", err)
 	}
 	if err := s.resets.MarkUsed(ctx, rt.ID); err != nil {
+		return fmt.Errorf("auth service: confirm reset: %w", err)
+	}
+
+	c.BumpTokenGeneration()
+
+	if err := s.customers.Update(ctx, c); err != nil {
 		return fmt.Errorf("auth service: confirm reset: %w", err)
 	}
 

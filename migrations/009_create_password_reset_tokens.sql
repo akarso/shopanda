@@ -7,5 +7,5 @@ CREATE TABLE password_reset_tokens (
     created_at  TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
-CREATE INDEX idx_password_reset_tokens_hash ON password_reset_tokens(token_hash);
+CREATE UNIQUE INDEX idx_password_reset_tokens_hash ON password_reset_tokens(token_hash);
 CREATE INDEX idx_password_reset_tokens_customer ON password_reset_tokens(customer_id);

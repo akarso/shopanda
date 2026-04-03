@@ -69,11 +69,11 @@ func TestPasswordResetToken_MarkUsed(t *testing.T) {
 }
 
 func TestPasswordResetToken_IsExpired(t *testing.T) {
-	rt, _, err := customer.NewPasswordResetToken("rt-1", "cust-1", time.Millisecond)
+	rt, _, err := customer.NewPasswordResetToken("rt-1", "cust-1", 50*time.Millisecond)
 	if err != nil {
 		t.Fatalf("NewPasswordResetToken: %v", err)
 	}
-	time.Sleep(5 * time.Millisecond)
+	time.Sleep(100 * time.Millisecond)
 	if !rt.IsExpired() {
 		t.Error("expected token to be expired")
 	}

@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/akarso/shopanda/internal/domain/customer"
+	"github.com/akarso/shopanda/internal/platform/apperror"
 )
 
 // Compile-time check.
@@ -22,6 +23,11 @@ type ResetTokenRepo struct {
 // NewResetTokenRepo returns a new ResetTokenRepo backed by db.
 func NewResetTokenRepo(db *sql.DB) *ResetTokenRepo {
 	return &ResetTokenRepo{db: db}
+}
+
+// WithTx returns a repo bound to the given transaction.
+func (r *ResetTokenRepo) WithTx(tx *sql.Tx) *ResetTokenRepo {
+	return &ResetTokenRepo{db: r.db, tx: tx}
 }
 
 // Create persists a new password reset token.
@@ -61,9 +67,16 @@ func (r *ResetTokenRepo) FindByTokenHash(ctx context.Context, hash string) (*cus
 // MarkUsed sets the used_at timestamp on a reset token.
 func (r *ResetTokenRepo) MarkUsed(ctx context.Context, id string) error {
 	const q = `UPDATE password_reset_tokens SET used_at = $1 WHERE id = $2`
-	_, err := r.exec(ctx, q, time.Now().UTC(), id)
+	result, err := r.exec(ctx, q, time.Now().UTC(), id)
 	if err != nil {
 		return fmt.Errorf("reset_token_repo: mark used: %w", err)
+	}
+	rows, err := result.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("reset_token_repo: mark used rows affected: %w", err)
+	}
+	if rows == 0 {
+		return apperror.NotFound("reset token not found")
 	}
 	return nil
 }
