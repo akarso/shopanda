@@ -54,6 +54,10 @@ func (s *ReserveInventoryStep) Execute(cctx *Context) error {
 			return fmt.Errorf("reserve_inventory: create reservation: %w", err)
 		}
 		if err := s.reservations.Reserve(ctx, &res); err != nil {
+			// Best-effort rollback of prior successful reservations.
+			for _, rid := range reservationIDs {
+				_ = s.reservations.Release(ctx, rid)
+			}
 			return fmt.Errorf("reserve_inventory: variant %s: %w", item.VariantID, err)
 		}
 		reservationIDs = append(reservationIDs, res.ID)

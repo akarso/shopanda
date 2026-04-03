@@ -23,19 +23,30 @@ import (
 // ============================================================
 
 type mockReservationRepo struct {
-	reserved []inventory.Reservation
-	err      error
+	reserved   []inventory.Reservation
+	released   []string
+	err        error
+	failAfterN int // if > 0, succeed for N calls then fail
+	callCount  int
 }
 
 func (r *mockReservationRepo) Reserve(_ context.Context, res *inventory.Reservation) error {
-	if r.err != nil {
+	if r.failAfterN > 0 {
+		r.callCount++
+		if r.callCount > r.failAfterN {
+			return r.err
+		}
+	} else if r.err != nil {
 		return r.err
 	}
 	r.reserved = append(r.reserved, *res)
 	return nil
 }
 
-func (r *mockReservationRepo) Release(_ context.Context, _ string) error { return nil }
+func (r *mockReservationRepo) Release(_ context.Context, rid string) error {
+	r.released = append(r.released, rid)
+	return nil
+}
 func (r *mockReservationRepo) Confirm(_ context.Context, _ string) error { return nil }
 func (r *mockReservationRepo) FindByID(_ context.Context, _ string) (*inventory.Reservation, error) {
 	return nil, nil
@@ -217,6 +228,47 @@ func TestReserveInventoryStep_Idempotent(t *testing.T) {
 	}
 	if len(repo.reserved) != count1 {
 		t.Errorf("reserved count changed from %d to %d on second call", count1, len(repo.reserved))
+	}
+}
+
+func TestReserveInventoryStep_NilContext(t *testing.T) {
+	repo := &mockReservationRepo{}
+	step := checkout.NewReserveInventoryStep(repo)
+
+	err := step.Execute(nil)
+	if err == nil {
+		t.Fatal("expected error for nil context")
+	}
+	if len(repo.reserved) != 0 {
+		t.Errorf("reserved count = %d, want 0", len(repo.reserved))
+	}
+}
+
+func TestReserveInventoryStep_PartialFailureRollback(t *testing.T) {
+	repo := &mockReservationRepo{
+		err:        errors.New("insufficient stock"),
+		failAfterN: 1, // first Reserve succeeds, second fails
+	}
+	step := checkout.NewReserveInventoryStep(repo)
+
+	cctx := checkout.NewContext("cart-1", "cust-1", "EUR")
+	cctx.Cart = cartWithItems037(t, "cust-1", "v1", "v2")
+
+	err := step.Execute(cctx)
+	if err == nil {
+		t.Fatal("expected error from second Reserve")
+	}
+	if len(repo.reserved) != 1 {
+		t.Fatalf("reserved count = %d, want 1 (only first succeeded)", len(repo.reserved))
+	}
+	if len(repo.released) != 1 {
+		t.Fatalf("released count = %d, want 1 (rollback of first)", len(repo.released))
+	}
+	if _, ok := cctx.GetMeta("reserved"); ok {
+		t.Error("reserved meta should not be set on error")
+	}
+	if _, ok := cctx.GetMeta("reservations"); ok {
+		t.Error("reservations meta should not be set on error")
 	}
 }
 
@@ -422,6 +474,18 @@ func TestCreateOrderStep_VariantNotFound(t *testing.T) {
 	}
 	if _, ok := cctx.GetMeta("created_order_id"); ok {
 		t.Error("created_order_id should not be set on error")
+	}
+}
+
+func TestCreateOrderStep_NilContext(t *testing.T) {
+	step := checkout.NewCreateOrderStep(
+		&mockOrderRepo{},
+		&mockVariantRepo037{variants: variantMap037()},
+	)
+
+	err := step.Execute(nil)
+	if err == nil {
+		t.Fatal("expected error for nil context")
 	}
 }
 
