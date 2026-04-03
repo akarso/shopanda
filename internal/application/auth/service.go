@@ -34,6 +34,9 @@ func NewService(
 	log logger.Logger,
 	resetTTL time.Duration,
 ) *Service {
+	if resetTTL <= 0 {
+		panic("auth: resetTTL must be > 0; non-positive TTL produces already-expired tokens")
+	}
 	return &Service{
 		customers: customers,
 		resets:    resets,

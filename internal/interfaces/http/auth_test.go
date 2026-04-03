@@ -97,9 +97,10 @@ func (r *authMockResetRepo) MarkUsed(_ context.Context, id string) error {
 		if t.ID == id {
 			now := time.Now().UTC()
 			t.UsedAt = &now
+			return nil
 		}
 	}
-	return nil
+	return apperror.NotFound("reset token not found")
 }
 
 // ── setup ────────────────────────────────────────────────────────────────
