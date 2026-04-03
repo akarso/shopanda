@@ -109,8 +109,13 @@ func runServe(cfg *config.Config, log logger.Logger) error {
 	// Application services.
 	cartService := cartApp.NewService(cartRepo, priceRepo, pricingPipeline, log, bus)
 
-	// Checkout workflow (steps registered by plugins/later PRs).
-	checkoutWorkflow := checkoutApp.NewWorkflow(nil, bus, log)
+	// Checkout workflow.
+	validateCartStep := checkoutApp.NewValidateCartStep(variantRepo)
+	recalculatePricingStep := checkoutApp.NewRecalculatePricingStep(pricingPipeline)
+	checkoutWorkflow := checkoutApp.NewWorkflow([]checkoutApp.Step{
+		validateCartStep,
+		recalculatePricingStep,
+	}, bus, log)
 	checkoutService := checkoutApp.NewService(cartRepo, checkoutWorkflow, log)
 	_ = checkoutService // endpoint wired in a later PR
 
