@@ -69,7 +69,10 @@ func TestNewItem_NegativePrice(t *testing.T) {
 
 func TestItem_LineTotal(t *testing.T) {
 	price := shared.MustNewMoney(500, "EUR")
-	item, _ := order.NewItem("v-1", "SKU", "Shirt", 4, price)
+	item, err := order.NewItem("v-1", "SKU", "Shirt", 4, price)
+	if err != nil {
+		t.Fatalf("NewItem: %v", err)
+	}
 	lt, err := item.LineTotal()
 	if err != nil {
 		t.Fatalf("LineTotal: %v", err)

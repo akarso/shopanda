@@ -33,8 +33,8 @@ func TestNewOrder_Success(t *testing.T) {
 	if o.TotalAmount.Amount() != 2000 {
 		t.Errorf("TotalAmount = %d, want 2000", o.TotalAmount.Amount())
 	}
-	if len(o.Items) != 1 {
-		t.Errorf("Items = %d, want 1", len(o.Items))
+	if len(o.Items()) != 1 {
+		t.Errorf("Items = %d, want 1", len(o.Items()))
 	}
 }
 
@@ -71,8 +71,11 @@ func TestNewOrder_NoItems(t *testing.T) {
 
 func TestNewOrder_CurrencyMismatch(t *testing.T) {
 	price := shared.MustNewMoney(1000, "USD")
-	item, _ := order.NewItem("v-1", "SKU", "Shirt", 1, price)
-	_, err := order.NewOrder(id.New(), "cust-1", "EUR", []order.Item{item})
+	item, err := order.NewItem("v-1", "SKU", "Shirt", 1, price)
+	if err != nil {
+		t.Fatalf("NewItem: %v", err)
+	}
+	_, err = order.NewOrder(id.New(), "cust-1", "EUR", []order.Item{item})
 	if err == nil {
 		t.Fatal("expected error for currency mismatch")
 	}
@@ -81,8 +84,14 @@ func TestNewOrder_CurrencyMismatch(t *testing.T) {
 func TestNewOrder_MultipleItems(t *testing.T) {
 	p1 := shared.MustNewMoney(1000, "EUR")
 	p2 := shared.MustNewMoney(500, "EUR")
-	i1, _ := order.NewItem("v-1", "SKU-1", "Shirt", 2, p1)
-	i2, _ := order.NewItem("v-2", "SKU-2", "Hat", 3, p2)
+	i1, err := order.NewItem("v-1", "SKU-1", "Shirt", 2, p1)
+	if err != nil {
+		t.Fatalf("NewItem i1: %v", err)
+	}
+	i2, err := order.NewItem("v-2", "SKU-2", "Hat", 3, p2)
+	if err != nil {
+		t.Fatalf("NewItem i2: %v", err)
+	}
 	o, err := order.NewOrder(id.New(), "cust-1", "EUR", []order.Item{i1, i2})
 	if err != nil {
 		t.Fatalf("NewOrder: %v", err)
@@ -95,7 +104,10 @@ func TestNewOrder_MultipleItems(t *testing.T) {
 
 func TestOrder_Confirm(t *testing.T) {
 	item := validItem(t)
-	o, _ := order.NewOrder(id.New(), "cust-1", "EUR", []order.Item{item})
+	o, err := order.NewOrder(id.New(), "cust-1", "EUR", []order.Item{item})
+	if err != nil {
+		t.Fatalf("NewOrder: %v", err)
+	}
 	if err := o.Confirm(); err != nil {
 		t.Fatalf("Confirm: %v", err)
 	}
@@ -106,8 +118,13 @@ func TestOrder_Confirm(t *testing.T) {
 
 func TestOrder_Confirm_NotPending(t *testing.T) {
 	item := validItem(t)
-	o, _ := order.NewOrder(id.New(), "cust-1", "EUR", []order.Item{item})
-	_ = o.Confirm()
+	o, err := order.NewOrder(id.New(), "cust-1", "EUR", []order.Item{item})
+	if err != nil {
+		t.Fatalf("NewOrder: %v", err)
+	}
+	if err := o.Confirm(); err != nil {
+		t.Fatalf("Confirm: %v", err)
+	}
 	if err := o.Confirm(); err == nil {
 		t.Fatal("expected error confirming non-pending order")
 	}
@@ -115,8 +132,13 @@ func TestOrder_Confirm_NotPending(t *testing.T) {
 
 func TestOrder_MarkPaid(t *testing.T) {
 	item := validItem(t)
-	o, _ := order.NewOrder(id.New(), "cust-1", "EUR", []order.Item{item})
-	_ = o.Confirm()
+	o, err := order.NewOrder(id.New(), "cust-1", "EUR", []order.Item{item})
+	if err != nil {
+		t.Fatalf("NewOrder: %v", err)
+	}
+	if err := o.Confirm(); err != nil {
+		t.Fatalf("Confirm: %v", err)
+	}
 	if err := o.MarkPaid(); err != nil {
 		t.Fatalf("MarkPaid: %v", err)
 	}
@@ -127,7 +149,10 @@ func TestOrder_MarkPaid(t *testing.T) {
 
 func TestOrder_MarkPaid_NotConfirmed(t *testing.T) {
 	item := validItem(t)
-	o, _ := order.NewOrder(id.New(), "cust-1", "EUR", []order.Item{item})
+	o, err := order.NewOrder(id.New(), "cust-1", "EUR", []order.Item{item})
+	if err != nil {
+		t.Fatalf("NewOrder: %v", err)
+	}
 	if err := o.MarkPaid(); err == nil {
 		t.Fatal("expected error marking unconfirmed order as paid")
 	}
@@ -135,7 +160,10 @@ func TestOrder_MarkPaid_NotConfirmed(t *testing.T) {
 
 func TestOrder_Cancel_Pending(t *testing.T) {
 	item := validItem(t)
-	o, _ := order.NewOrder(id.New(), "cust-1", "EUR", []order.Item{item})
+	o, err := order.NewOrder(id.New(), "cust-1", "EUR", []order.Item{item})
+	if err != nil {
+		t.Fatalf("NewOrder: %v", err)
+	}
 	if err := o.Cancel(); err != nil {
 		t.Fatalf("Cancel: %v", err)
 	}
@@ -146,8 +174,13 @@ func TestOrder_Cancel_Pending(t *testing.T) {
 
 func TestOrder_Cancel_Confirmed(t *testing.T) {
 	item := validItem(t)
-	o, _ := order.NewOrder(id.New(), "cust-1", "EUR", []order.Item{item})
-	_ = o.Confirm()
+	o, err := order.NewOrder(id.New(), "cust-1", "EUR", []order.Item{item})
+	if err != nil {
+		t.Fatalf("NewOrder: %v", err)
+	}
+	if err := o.Confirm(); err != nil {
+		t.Fatalf("Confirm: %v", err)
+	}
 	if err := o.Cancel(); err != nil {
 		t.Fatalf("Cancel confirmed: %v", err)
 	}
@@ -158,9 +191,16 @@ func TestOrder_Cancel_Confirmed(t *testing.T) {
 
 func TestOrder_Cancel_Paid(t *testing.T) {
 	item := validItem(t)
-	o, _ := order.NewOrder(id.New(), "cust-1", "EUR", []order.Item{item})
-	_ = o.Confirm()
-	_ = o.MarkPaid()
+	o, err := order.NewOrder(id.New(), "cust-1", "EUR", []order.Item{item})
+	if err != nil {
+		t.Fatalf("NewOrder: %v", err)
+	}
+	if err := o.Confirm(); err != nil {
+		t.Fatalf("Confirm: %v", err)
+	}
+	if err := o.MarkPaid(); err != nil {
+		t.Fatalf("MarkPaid: %v", err)
+	}
 	if err := o.Cancel(); err == nil {
 		t.Fatal("expected error cancelling paid order")
 	}
@@ -168,7 +208,10 @@ func TestOrder_Cancel_Paid(t *testing.T) {
 
 func TestOrder_Fail(t *testing.T) {
 	item := validItem(t)
-	o, _ := order.NewOrder(id.New(), "cust-1", "EUR", []order.Item{item})
+	o, err := order.NewOrder(id.New(), "cust-1", "EUR", []order.Item{item})
+	if err != nil {
+		t.Fatalf("NewOrder: %v", err)
+	}
 	if err := o.Fail(); err != nil {
 		t.Fatalf("Fail: %v", err)
 	}
@@ -179,8 +222,13 @@ func TestOrder_Fail(t *testing.T) {
 
 func TestOrder_Fail_NotPending(t *testing.T) {
 	item := validItem(t)
-	o, _ := order.NewOrder(id.New(), "cust-1", "EUR", []order.Item{item})
-	_ = o.Confirm()
+	o, err := order.NewOrder(id.New(), "cust-1", "EUR", []order.Item{item})
+	if err != nil {
+		t.Fatalf("NewOrder: %v", err)
+	}
+	if err := o.Confirm(); err != nil {
+		t.Fatalf("Confirm: %v", err)
+	}
 	if err := o.Fail(); err == nil {
 		t.Fatal("expected error failing non-pending order")
 	}
@@ -203,7 +251,10 @@ func TestOrderStatus_IsValid(t *testing.T) {
 
 func TestSetStatusFromDB(t *testing.T) {
 	item := validItem(t)
-	o, _ := order.NewOrder(id.New(), "cust-1", "EUR", []order.Item{item})
+	o, err := order.NewOrder(id.New(), "cust-1", "EUR", []order.Item{item})
+	if err != nil {
+		t.Fatalf("NewOrder: %v", err)
+	}
 	if err := o.SetStatusFromDB("confirmed"); err != nil {
 		t.Fatalf("SetStatusFromDB: %v", err)
 	}
@@ -214,7 +265,10 @@ func TestSetStatusFromDB(t *testing.T) {
 
 func TestSetStatusFromDB_Invalid(t *testing.T) {
 	item := validItem(t)
-	o, _ := order.NewOrder(id.New(), "cust-1", "EUR", []order.Item{item})
+	o, err := order.NewOrder(id.New(), "cust-1", "EUR", []order.Item{item})
+	if err != nil {
+		t.Fatalf("NewOrder: %v", err)
+	}
 	if err := o.SetStatusFromDB("nope"); err == nil {
 		t.Fatal("expected error for invalid status")
 	}

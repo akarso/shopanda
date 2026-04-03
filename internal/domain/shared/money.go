@@ -68,6 +68,18 @@ func (m Money) Add(other Money) Money {
 	return Money{amount: m.amount + other.amount, currency: m.currency}
 }
 
+// AddChecked returns the sum of two Money values.
+// Returns an error if the addition would overflow int64.
+func (m Money) AddChecked(other Money) (Money, error) {
+	m.mustMatch(other)
+	sum := m.amount + other.amount
+	// Overflow: both positive but sum negative, or both negative but sum positive.
+	if (other.amount > 0 && sum < m.amount) || (other.amount < 0 && sum > m.amount) {
+		return Money{}, errors.New("money: addition overflow")
+	}
+	return Money{amount: sum, currency: m.currency}, nil
+}
+
 // Sub returns the difference of two Money values. Panics on currency mismatch.
 func (m Money) Sub(other Money) Money {
 	m.mustMatch(other)

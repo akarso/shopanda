@@ -34,7 +34,7 @@ type Order struct {
 	CustomerID  string
 	status      OrderStatus
 	Currency    string
-	Items       []Item
+	items       []Item
 	TotalAmount shared.Money
 	CreatedAt   time.Time
 	UpdatedAt   time.Time
@@ -65,17 +65,28 @@ func NewOrder(id, customerID, currency string, items []Item) (Order, error) {
 		return Order{}, err
 	}
 
+	// Defensive copy of items slice.
+	cp := make([]Item, len(items))
+	copy(cp, items)
+
 	now := time.Now().UTC()
 	return Order{
 		ID:          id,
 		CustomerID:  customerID,
 		status:      OrderStatusPending,
 		Currency:    currency,
-		Items:       items,
+		items:       cp,
 		TotalAmount: total,
 		CreatedAt:   now,
 		UpdatedAt:   now,
 	}, nil
+}
+
+// Items returns a defensive copy of the order's line items.
+func (o Order) Items() []Item {
+	cp := make([]Item, len(o.items))
+	copy(cp, o.items)
+	return cp
 }
 
 // Status returns the current order status.
@@ -134,7 +145,14 @@ func (o *Order) SetStatusFromDB(s string) error {
 	return nil
 }
 
-// computeTotal sums item line totals.
+// SetItemsFromDB sets the items when loading from persistence.
+func (o *Order) SetItemsFromDB(items []Item) {
+	cp := make([]Item, len(items))
+	copy(cp, items)
+	o.items = cp
+}
+
+// computeTotal sums item line totals with overflow checking.
 func computeTotal(items []Item, currency string) (shared.Money, error) {
 	total, err := shared.Zero(currency)
 	if err != nil {
@@ -145,7 +163,10 @@ func computeTotal(items []Item, currency string) (shared.Money, error) {
 		if err != nil {
 			return shared.Money{}, err
 		}
-		total = total.Add(lt)
+		total, err = total.AddChecked(lt)
+		if err != nil {
+			return shared.Money{}, err
+		}
 	}
 	return total, nil
 }

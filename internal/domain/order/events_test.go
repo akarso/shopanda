@@ -7,16 +7,19 @@ import (
 )
 
 func TestEventConstants(t *testing.T) {
-	events := []string{
-		order.EventOrderCreated,
-		order.EventOrderConfirmed,
-		order.EventOrderPaid,
-		order.EventOrderCancelled,
-		order.EventOrderFailed,
+	cases := []struct {
+		got  string
+		want string
+	}{
+		{order.EventOrderCreated, "order.created"},
+		{order.EventOrderConfirmed, "order.confirmed"},
+		{order.EventOrderPaid, "order.paid"},
+		{order.EventOrderCancelled, "order.cancelled"},
+		{order.EventOrderFailed, "order.failed"},
 	}
-	for _, e := range events {
-		if e == "" {
-			t.Error("event constant must not be empty")
+	for _, tc := range cases {
+		if tc.got != tc.want {
+			t.Errorf("event = %q, want %q", tc.got, tc.want)
 		}
 	}
 }

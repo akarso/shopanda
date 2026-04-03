@@ -24,14 +24,6 @@ func mustNewOrder(t *testing.T, customerID, currency string) order.Order {
 	return o
 }
 
-func ensureOrdersTable(t *testing.T, db interface{ Exec(string, ...interface{}) (interface{ RowsAffected() (int64, error) }, error) }) {
-	t.Helper()
-	t.Cleanup(func() {
-		db.Exec("DELETE FROM order_items")
-		db.Exec("DELETE FROM orders")
-	})
-}
-
 func TestOrderRepo_SaveAndFindByID(t *testing.T) {
 	db := testDB(t)
 	ensureProductsTable(t, db)
@@ -70,10 +62,11 @@ func TestOrderRepo_SaveAndFindByID(t *testing.T) {
 	if got.TotalAmount.Amount() != 2000 {
 		t.Errorf("TotalAmount = %d, want 2000", got.TotalAmount.Amount())
 	}
-	if len(got.Items) != 1 {
-		t.Fatalf("len(Items) = %d, want 1", len(got.Items))
+	gotItems := got.Items()
+	if len(gotItems) != 1 {
+		t.Fatalf("len(Items) = %d, want 1", len(gotItems))
 	}
-	item := got.Items[0]
+	item := gotItems[0]
 	if item.VariantID != "var-1" {
 		t.Errorf("VariantID = %q, want var-1", item.VariantID)
 	}
@@ -213,8 +206,14 @@ func TestOrderRepo_MultipleItems(t *testing.T) {
 
 	p1 := shared.MustNewMoney(1000, "EUR")
 	p2 := shared.MustNewMoney(500, "EUR")
-	i1, _ := order.NewItem("var-1", "SKU-1", "Shirt", 2, p1)
-	i2, _ := order.NewItem("var-2", "SKU-2", "Hat", 1, p2)
+	i1, err := order.NewItem("var-1", "SKU-1", "Shirt", 2, p1)
+	if err != nil {
+		t.Fatalf("NewItem i1: %v", err)
+	}
+	i2, err := order.NewItem("var-2", "SKU-2", "Hat", 1, p2)
+	if err != nil {
+		t.Fatalf("NewItem i2: %v", err)
+	}
 
 	o, err := order.NewOrder(id.New(), "cust-1", "EUR", []order.Item{i1, i2})
 	if err != nil {
@@ -228,8 +227,8 @@ func TestOrderRepo_MultipleItems(t *testing.T) {
 	if err != nil {
 		t.Fatalf("FindByID: %v", err)
 	}
-	if len(got.Items) != 2 {
-		t.Fatalf("len(Items) = %d, want 2", len(got.Items))
+	if len(got.Items()) != 2 {
+		t.Fatalf("len(Items) = %d, want 2", len(got.Items()))
 	}
 	// 1000*2 + 500*1 = 2500
 	if got.TotalAmount.Amount() != 2500 {
