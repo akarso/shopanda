@@ -203,3 +203,24 @@ func TestMoney_MulChecked_ZeroQty(t *testing.T) {
 		t.Errorf("MulChecked(0): Amount() = %d, want 0", result.Amount())
 	}
 }
+
+func TestMoney_AddChecked(t *testing.T) {
+	a := mustMoney(t, 100, "EUR")
+	b := mustMoney(t, 200, "EUR")
+	result, err := a.AddChecked(b)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result.Amount() != 300 {
+		t.Errorf("AddChecked: Amount() = %d, want 300", result.Amount())
+	}
+}
+
+func TestMoney_AddChecked_Overflow(t *testing.T) {
+	a := mustMoney(t, 9_000_000_000_000_000_000, "EUR")
+	b := mustMoney(t, 9_000_000_000_000_000_000, "EUR")
+	_, err := a.AddChecked(b)
+	if err == nil {
+		t.Fatal("expected overflow error")
+	}
+}
