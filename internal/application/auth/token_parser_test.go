@@ -14,7 +14,7 @@ import (
 func TestValidatingTokenParser_Parse(t *testing.T) {
 	issuer, _ := jwt.NewIssuer("test-secret", time.Hour)
 	repo := newMockRepo()
-	parser := auth.NewValidatingTokenParser(issuer, repo)
+	parser := auth.NewValidatingTokenParser(issuer, repo, 0)
 
 	// Create a customer in the repo.
 	c, _ := customer.NewCustomer("user-1", "alice@example.com")
@@ -36,7 +36,7 @@ func TestValidatingTokenParser_Parse(t *testing.T) {
 func TestValidatingTokenParser_Parse_InvalidToken(t *testing.T) {
 	issuer, _ := jwt.NewIssuer("test-secret", time.Hour)
 	repo := newMockRepo()
-	parser := auth.NewValidatingTokenParser(issuer, repo)
+	parser := auth.NewValidatingTokenParser(issuer, repo, 0)
 
 	_, err := parser.Parse(context.Background(), "garbage")
 	if err == nil {
@@ -47,7 +47,7 @@ func TestValidatingTokenParser_Parse_InvalidToken(t *testing.T) {
 func TestValidatingTokenParser_Parse_CustomerNotFound(t *testing.T) {
 	issuer, _ := jwt.NewIssuer("test-secret", time.Hour)
 	repo := newMockRepo()
-	parser := auth.NewValidatingTokenParser(issuer, repo)
+	parser := auth.NewValidatingTokenParser(issuer, repo, 0)
 
 	token, _ := issuer.Create("nonexistent", "customer", 0)
 	_, err := parser.Parse(context.Background(), token)
@@ -59,7 +59,7 @@ func TestValidatingTokenParser_Parse_CustomerNotFound(t *testing.T) {
 func TestValidatingTokenParser_Parse_GenerationMismatch(t *testing.T) {
 	issuer, _ := jwt.NewIssuer("test-secret", time.Hour)
 	repo := newMockRepo()
-	parser := auth.NewValidatingTokenParser(issuer, repo)
+	parser := auth.NewValidatingTokenParser(issuer, repo, 0)
 
 	c, _ := customer.NewCustomer("user-1", "alice@example.com")
 	c.BumpTokenGeneration() // gen = 1

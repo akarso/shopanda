@@ -14,6 +14,7 @@ import (
 	"github.com/akarso/shopanda/internal/domain/customer"
 	"github.com/akarso/shopanda/internal/domain/identity"
 	shophttp "github.com/akarso/shopanda/internal/interfaces/http"
+	"github.com/akarso/shopanda/internal/platform/apperror"
 	platformAuth "github.com/akarso/shopanda/internal/platform/auth"
 	"github.com/akarso/shopanda/internal/platform/event"
 	"github.com/akarso/shopanda/internal/platform/jwt"
@@ -62,7 +63,7 @@ func (r *authMockCustomerRepo) Update(_ context.Context, c *customer.Customer) e
 func (r *authMockCustomerRepo) BumpTokenGeneration(_ context.Context, customerID string) error {
 	c := r.customers[customerID]
 	if c == nil {
-		return nil
+		return apperror.NotFound("customer not found")
 	}
 	c.BumpTokenGeneration()
 	return nil
@@ -317,7 +318,7 @@ func TestAuthHandler_Me_Unauthenticated(t *testing.T) {
 // ── Logout tests ─────────────────────────────────────────────────────────
 
 func TestAuthHandler_Logout_Success(t *testing.T) {
-	h, issuer := authSetup()
+	h, issuer, repo := authSetupWithRepo()
 
 	// Register a customer.
 	regBody := `{"email":"logout@example.com","password":"password123"}`
@@ -354,6 +355,22 @@ func TestAuthHandler_Logout_Success(t *testing.T) {
 
 	if logoutRec.Code != http.StatusOK {
 		t.Fatalf("status = %d, want 200", logoutRec.Code)
+	}
+
+	// Verify token generation was bumped.
+	c := repo.customers[regData.CustomerID]
+	if c == nil {
+		t.Fatal("customer not found in repo after logout")
+	}
+	if c.TokenGeneration != 1 {
+		t.Errorf("TokenGeneration = %d, want 1", c.TokenGeneration)
+	}
+
+	// Verify old token is rejected by ValidatingTokenParser.
+	parser := appAuth.NewValidatingTokenParser(issuer, repo, 0)
+	_, err = parser.Parse(context.Background(), token)
+	if err == nil {
+		t.Error("expected old token to be rejected after logout")
 	}
 }
 

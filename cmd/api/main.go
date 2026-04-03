@@ -93,15 +93,17 @@ func runServe(cfg *config.Config, log logger.Logger) error {
 	bus := event.NewBus(log)
 
 	// Dev handler: log password reset tokens (replace with email plugin in production).
-	bus.On(customer.EventPasswordResetRequested, func(_ context.Context, evt event.Event) error {
-		if data, ok := evt.Data.(customer.PasswordResetRequestedData); ok {
-			log.Info("dev.password_reset.token", map[string]interface{}{
-				"customer_id": data.CustomerID,
-				"token":       data.Token,
-			})
-		}
-		return nil
-	})
+	if os.Getenv("SHOPANDA_DEV_MODE") != "" {
+		bus.On(customer.EventPasswordResetRequested, func(_ context.Context, evt event.Event) error {
+			if data, ok := evt.Data.(customer.PasswordResetRequestedData); ok {
+				log.Info("dev.password_reset.token", map[string]interface{}{
+					"customer_id": data.CustomerID,
+					"token":       data.Token,
+				})
+			}
+			return nil
+		})
+	}
 
 	// Application services.
 	cartService := cartApp.NewService(cartRepo, priceRepo, pricingPipeline, log, bus)
@@ -115,7 +117,7 @@ func runServe(cfg *config.Config, log logger.Logger) error {
 	if err != nil {
 		return fmt.Errorf("jwt issuer: %w", err)
 	}
-	tokenParser := authApp.NewValidatingTokenParser(jwtIssuer, customerRepo)
+	tokenParser := authApp.NewValidatingTokenParser(jwtIssuer, customerRepo, 30*time.Second)
 
 	authService := authApp.NewService(customerRepo, resetTokenRepo, jwtIssuer, bus, log, time.Hour)
 

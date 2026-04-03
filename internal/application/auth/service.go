@@ -99,6 +99,7 @@ func (s *Service) Register(ctx context.Context, in RegisterInput) (RegisterOutpu
 		return RegisterOutput{}, fmt.Errorf("auth service: create customer: %w", err)
 	}
 
+	expiresAt := time.Now().UTC().Add(s.jwt.TTL())
 	token, err := s.jwt.Create(c.ID, string(identity.RoleCustomer), c.TokenGeneration)
 	if err != nil {
 		return RegisterOutput{}, fmt.Errorf("auth service: create token: %w", err)
@@ -120,7 +121,7 @@ func (s *Service) Register(ctx context.Context, in RegisterInput) (RegisterOutpu
 	return RegisterOutput{
 		CustomerID: c.ID,
 		Token:      token,
-		ExpiresAt:  time.Now().UTC().Add(s.jwt.TTL()),
+		ExpiresAt:  expiresAt,
 	}, nil
 }
 
@@ -162,6 +163,7 @@ func (s *Service) Login(ctx context.Context, in LoginInput) (LoginOutput, error)
 		return LoginOutput{}, apperror.Unauthorized("invalid email or password")
 	}
 
+	expiresAt := time.Now().UTC().Add(s.jwt.TTL())
 	token, err := s.jwt.Create(c.ID, string(identity.RoleCustomer), c.TokenGeneration)
 	if err != nil {
 		return LoginOutput{}, fmt.Errorf("auth service: create token: %w", err)
@@ -174,7 +176,7 @@ func (s *Service) Login(ctx context.Context, in LoginInput) (LoginOutput, error)
 	return LoginOutput{
 		CustomerID: c.ID,
 		Token:      token,
-		ExpiresAt:  time.Now().UTC().Add(s.jwt.TTL()),
+		ExpiresAt:  expiresAt,
 	}, nil
 }
 
@@ -301,9 +303,12 @@ func (s *Service) ConfirmPasswordReset(ctx context.Context, in ConfirmPasswordRe
 		return fmt.Errorf("auth service: confirm reset: %w", err)
 	}
 
-	c.BumpTokenGeneration()
-
 	if err := s.customers.Update(ctx, c); err != nil {
+		return fmt.Errorf("auth service: confirm reset: %w", err)
+	}
+
+	// Atomic DB-level increment, consistent with Logout.
+	if err := s.customers.BumpTokenGeneration(ctx, c.ID); err != nil {
 		return fmt.Errorf("auth service: confirm reset: %w", err)
 	}
 

@@ -65,8 +65,10 @@ func (r *ResetTokenRepo) FindByTokenHash(ctx context.Context, hash string) (*cus
 }
 
 // MarkUsed sets the used_at timestamp on a reset token.
+// Only updates if the token has not already been used (used_at IS NULL),
+// preventing TOCTOU races between concurrent callers.
 func (r *ResetTokenRepo) MarkUsed(ctx context.Context, id string) error {
-	const q = `UPDATE password_reset_tokens SET used_at = $1 WHERE id = $2`
+	const q = `UPDATE password_reset_tokens SET used_at = $1 WHERE id = $2 AND used_at IS NULL`
 	result, err := r.exec(ctx, q, time.Now().UTC(), id)
 	if err != nil {
 		return fmt.Errorf("reset_token_repo: mark used: %w", err)

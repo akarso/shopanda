@@ -62,7 +62,7 @@ func (r *mockCustomerRepo) Update(_ context.Context, c *customer.Customer) error
 func (r *mockCustomerRepo) BumpTokenGeneration(_ context.Context, customerID string) error {
 	c := r.customers[customerID]
 	if c == nil {
-		return nil
+		return apperror.NotFound("customer not found")
 	}
 	c.BumpTokenGeneration()
 	return nil
