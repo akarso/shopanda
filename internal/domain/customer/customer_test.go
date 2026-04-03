@@ -149,3 +149,39 @@ func TestCustomer_SetPassword_UpdatesTimestamp(t *testing.T) {
 		t.Error("expected UpdatedAt to advance after SetPassword")
 	}
 }
+
+func TestNewCustomer_TokenGeneration_Zero(t *testing.T) {
+	c, err := customer.NewCustomer("cust-1", "alice@example.com")
+	if err != nil {
+		t.Fatalf("NewCustomer: %v", err)
+	}
+	if c.TokenGeneration != 0 {
+		t.Errorf("TokenGeneration = %d, want 0", c.TokenGeneration)
+	}
+}
+
+func TestCustomer_BumpTokenGeneration(t *testing.T) {
+	c, _ := customer.NewCustomer("cust-1", "alice@example.com")
+	before := c.UpdatedAt
+	time.Sleep(time.Millisecond)
+
+	c.BumpTokenGeneration()
+
+	if c.TokenGeneration != 1 {
+		t.Errorf("TokenGeneration = %d, want 1", c.TokenGeneration)
+	}
+	if !c.UpdatedAt.After(before) {
+		t.Error("expected UpdatedAt to advance after BumpTokenGeneration")
+	}
+}
+
+func TestCustomer_BumpTokenGeneration_Increments(t *testing.T) {
+	c, _ := customer.NewCustomer("cust-1", "alice@example.com")
+	c.BumpTokenGeneration()
+	c.BumpTokenGeneration()
+	c.BumpTokenGeneration()
+
+	if c.TokenGeneration != 3 {
+		t.Errorf("TokenGeneration = %d, want 3", c.TokenGeneration)
+	}
+}

@@ -24,14 +24,15 @@ func (s Status) IsValid() bool {
 
 // Customer represents a registered customer account.
 type Customer struct {
-	ID           string
-	Email        string
-	FirstName    string
-	LastName     string
-	PasswordHash string
-	Status       Status
-	CreatedAt    time.Time
-	UpdatedAt    time.Time
+	ID              string
+	Email           string
+	FirstName       string
+	LastName        string
+	PasswordHash    string
+	TokenGeneration int64
+	Status          Status
+	CreatedAt       time.Time
+	UpdatedAt       time.Time
 }
 
 // NewCustomer creates a Customer with the required fields.
@@ -45,11 +46,12 @@ func NewCustomer(id, email string) (Customer, error) {
 	}
 	now := time.Now().UTC()
 	return Customer{
-		ID:        id,
-		Email:     email,
-		Status:    StatusActive,
-		CreatedAt: now,
-		UpdatedAt: now,
+		ID:              id,
+		Email:           email,
+		TokenGeneration: 0,
+		Status:          StatusActive,
+		CreatedAt:       now,
+		UpdatedAt:       now,
 	}, nil
 }
 
@@ -71,6 +73,13 @@ func (c *Customer) Enable() error {
 	c.Status = StatusActive
 	c.UpdatedAt = time.Now().UTC()
 	return nil
+}
+
+// BumpTokenGeneration increments the token generation counter,
+// invalidating all previously issued tokens.
+func (c *Customer) BumpTokenGeneration() {
+	c.TokenGeneration++
+	c.UpdatedAt = time.Now().UTC()
 }
 
 // SetPassword sets the password hash on the customer.

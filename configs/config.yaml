@@ -18,3 +18,7 @@ database:
 log:
   level: "info"
   format: "json"
+
+auth:
+  jwt_secret: "dev-secret-do-not-use-in-production"
+  jwt_ttl: "24h"

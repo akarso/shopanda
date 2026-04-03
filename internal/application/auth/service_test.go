@@ -10,6 +10,7 @@ import (
 	"github.com/akarso/shopanda/internal/application/auth"
 	"github.com/akarso/shopanda/internal/domain/customer"
 	"github.com/akarso/shopanda/internal/platform/apperror"
+	"github.com/akarso/shopanda/internal/platform/event"
 	"github.com/akarso/shopanda/internal/platform/jwt"
 	"github.com/akarso/shopanda/internal/platform/password"
 )
@@ -62,11 +63,41 @@ func (r *mockCustomerRepo) WithTx(_ *sql.Tx) customer.CustomerRepository {
 	return r
 }
 
+// ── mock reset repo ──────────────────────────────────────────────────────
+
+type mockResetRepo struct {
+	tokens map[string]*customer.PasswordResetToken // keyed by token_hash
+}
+
+func newMockResetRepo() *mockResetRepo {
+	return &mockResetRepo{tokens: make(map[string]*customer.PasswordResetToken)}
+}
+
+func (r *mockResetRepo) Create(_ context.Context, t *customer.PasswordResetToken) error {
+	r.tokens[t.TokenHash] = t
+	return nil
+}
+
+func (r *mockResetRepo) FindByTokenHash(_ context.Context, hash string) (*customer.PasswordResetToken, error) {
+	return r.tokens[hash], nil
+}
+
+func (r *mockResetRepo) MarkUsed(_ context.Context, id string) error {
+	for _, t := range r.tokens {
+		if t.ID == id {
+			now := time.Now().UTC()
+			t.UsedAt = &now
+		}
+	}
+	return nil
+}
+
 // ── helpers ──────────────────────────────────────────────────────────────
 
 func newTestService(repo *mockCustomerRepo) *auth.Service {
 	issuer, _ := jwt.NewIssuer("test-secret", time.Hour)
-	return auth.NewService(repo, issuer, testLogger{})
+	bus := event.NewBus(testLogger{})
+	return auth.NewService(repo, newMockResetRepo(), issuer, bus, testLogger{})
 }
 
 // ── Register tests ───────────────────────────────────────────────────────
@@ -302,5 +333,151 @@ func TestRegister_PasswordIsHashed(t *testing.T) {
 	}
 	if err := password.Compare(c.PasswordHash, "password123"); err != nil {
 		t.Errorf("password hash verification failed: %v", err)
+	}
+}
+
+// ── Register: ExpiresAt ──────────────────────────────────────────────────
+
+func TestRegister_ExpiresAt(t *testing.T) {
+	repo := newMockRepo()
+	svc := newTestService(repo)
+
+	out, err := svc.Register(context.Background(), auth.RegisterInput{
+		Email: "exp@example.com", Password: "password123",
+	})
+	if err != nil {
+		t.Fatalf("Register: %v", err)
+	}
+	if out.ExpiresAt.IsZero() {
+		t.Error("expected non-zero ExpiresAt")
+	}
+	if !out.ExpiresAt.After(time.Now()) {
+		t.Error("ExpiresAt should be in the future")
+	}
+}
+
+// ── Login: ExpiresAt ─────────────────────────────────────────────────────
+
+func TestLogin_ExpiresAt(t *testing.T) {
+	repo := newMockRepo()
+	svc := newTestService(repo)
+
+	_, _ = svc.Register(context.Background(), auth.RegisterInput{
+		Email: "exp@example.com", Password: "password123",
+	})
+	out, err := svc.Login(context.Background(), auth.LoginInput{
+		Email: "exp@example.com", Password: "password123",
+	})
+	if err != nil {
+		t.Fatalf("Login: %v", err)
+	}
+	if out.ExpiresAt.IsZero() {
+		t.Error("expected non-zero ExpiresAt")
+	}
+}
+
+// ── Logout tests ─────────────────────────────────────────────────────────
+
+func TestLogout_Success(t *testing.T) {
+	repo := newMockRepo()
+	svc := newTestService(repo)
+
+	out, _ := svc.Register(context.Background(), auth.RegisterInput{
+		Email: "logout@example.com", Password: "password123",
+	})
+
+	err := svc.Logout(context.Background(), out.CustomerID)
+	if err != nil {
+		t.Fatalf("Logout: %v", err)
+	}
+
+	// TokenGeneration should be bumped.
+	c := repo.customers[out.CustomerID]
+	if c.TokenGeneration != 1 {
+		t.Errorf("TokenGeneration = %d, want 1", c.TokenGeneration)
+	}
+}
+
+func TestLogout_NotFound(t *testing.T) {
+	svc := newTestService(newMockRepo())
+	err := svc.Logout(context.Background(), "nonexistent")
+	if err == nil {
+		t.Fatal("expected error for non-existent customer")
+	}
+	var appErr *apperror.Error
+	if !errors.As(err, &appErr) || appErr.Code != apperror.CodeNotFound {
+		t.Errorf("expected not_found error, got %v", err)
+	}
+}
+
+// ── RequestPasswordReset tests ───────────────────────────────────────────
+
+func TestRequestPasswordReset_Success(t *testing.T) {
+	repo := newMockRepo()
+	svc := newTestService(repo)
+
+	_, _ = svc.Register(context.Background(), auth.RegisterInput{
+		Email: "reset@example.com", Password: "password123",
+	})
+
+	err := svc.RequestPasswordReset(context.Background(), "reset@example.com")
+	if err != nil {
+		t.Fatalf("RequestPasswordReset: %v", err)
+	}
+}
+
+func TestRequestPasswordReset_NonExistent_NoError(t *testing.T) {
+	svc := newTestService(newMockRepo())
+	err := svc.RequestPasswordReset(context.Background(), "nobody@example.com")
+	if err != nil {
+		t.Fatalf("expected no error for non-existent email, got %v", err)
+	}
+}
+
+func TestRequestPasswordReset_EmptyEmail(t *testing.T) {
+	svc := newTestService(newMockRepo())
+	err := svc.RequestPasswordReset(context.Background(), "")
+	if err == nil {
+		t.Fatal("expected error for empty email")
+	}
+	var appErr *apperror.Error
+	if !errors.As(err, &appErr) || appErr.Code != apperror.CodeValidation {
+		t.Errorf("expected validation error, got %v", err)
+	}
+}
+
+// ── ConfirmPasswordReset tests ───────────────────────────────────────────
+
+func TestConfirmPasswordReset_EmptyToken(t *testing.T) {
+	svc := newTestService(newMockRepo())
+	err := svc.ConfirmPasswordReset(context.Background(), auth.ConfirmPasswordResetInput{
+		Token: "", NewPassword: "newpassword123",
+	})
+	if err == nil {
+		t.Fatal("expected error for empty token")
+	}
+}
+
+func TestConfirmPasswordReset_ShortPassword(t *testing.T) {
+	svc := newTestService(newMockRepo())
+	err := svc.ConfirmPasswordReset(context.Background(), auth.ConfirmPasswordResetInput{
+		Token: "some-token", NewPassword: "short",
+	})
+	if err == nil {
+		t.Fatal("expected error for short password")
+	}
+}
+
+func TestConfirmPasswordReset_InvalidToken(t *testing.T) {
+	svc := newTestService(newMockRepo())
+	err := svc.ConfirmPasswordReset(context.Background(), auth.ConfirmPasswordResetInput{
+		Token: "invalid-token", NewPassword: "newpassword123",
+	})
+	if err == nil {
+		t.Fatal("expected error for invalid token")
+	}
+	var appErr *apperror.Error
+	if !errors.As(err, &appErr) || appErr.Code != apperror.CodeUnauthorized {
+		t.Errorf("expected unauthorized error, got %v", err)
 	}
 }

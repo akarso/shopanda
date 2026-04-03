@@ -32,6 +32,7 @@ func NewIssuer(secret string, ttl time.Duration) (*Issuer, error) {
 type Claims struct {
 	Sub  string `json:"sub"`
 	Role string `json:"role"`
+	Gen  int64  `json:"gen"`
 	Iat  int64  `json:"iat"`
 	Exp  int64  `json:"exp"`
 }
@@ -39,8 +40,11 @@ type Claims struct {
 // header is the fixed JOSE header.
 var header = mustB64JSON(map[string]string{"alg": "HS256", "typ": "JWT"})
 
-// Create issues a new token for the given subject and role.
-func (i *Issuer) Create(subject, role string) (string, error) {
+// TTL returns the token time-to-live duration.
+func (i *Issuer) TTL() time.Duration { return i.ttl }
+
+// Create issues a new token for the given subject, role and token generation.
+func (i *Issuer) Create(subject, role string, gen int64) (string, error) {
 	if subject == "" {
 		return "", errors.New("jwt: subject must not be empty")
 	}
@@ -48,6 +52,7 @@ func (i *Issuer) Create(subject, role string) (string, error) {
 	claims := Claims{
 		Sub:  subject,
 		Role: role,
+		Gen:  gen,
 		Iat:  now.Unix(),
 		Exp:  now.Add(i.ttl).Unix(),
 	}

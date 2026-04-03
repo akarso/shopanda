@@ -16,7 +16,7 @@ func TestTokenParser_Parse(t *testing.T) {
 	}
 	parser := jwt.NewTokenParser(issuer)
 
-	token, err := issuer.Create("user-1", "customer")
+	token, err := issuer.Create("user-1", "customer", 0)
 	if err != nil {
 		t.Fatalf("Create: %v", err)
 	}

@@ -76,6 +76,7 @@ func runServe(cfg *config.Config, log logger.Logger) error {
 	cartRepo := postgres.NewCartRepo(conn)
 	priceRepo := postgres.NewPriceRepo(conn)
 	customerRepo := postgres.NewCustomerRepo(conn)
+	resetTokenRepo := postgres.NewResetTokenRepo(conn)
 
 	// Composition pipelines (empty; plugins add steps later).
 	pdp := composition.NewPipeline[composition.ProductContext]()
@@ -102,9 +103,9 @@ func runServe(cfg *config.Config, log logger.Logger) error {
 	if err != nil {
 		return fmt.Errorf("jwt issuer: %w", err)
 	}
-	tokenParser := jwt.NewTokenParser(jwtIssuer)
+	tokenParser := authApp.NewValidatingTokenParser(jwtIssuer, customerRepo)
 
-	authService := authApp.NewService(customerRepo, jwtIssuer, log)
+	authService := authApp.NewService(customerRepo, resetTokenRepo, jwtIssuer, bus, log)
 
 	// Handlers.
 	productHandler := shophttp.NewProductHandler(productRepo, pdp, plp)
@@ -114,9 +115,6 @@ func runServe(cfg *config.Config, log logger.Logger) error {
 	authHandler := shophttp.NewAuthHandler(authService)
 
 	router := shophttp.NewRouter()
-
-	// Auth: JWT token parser.
-	// tokenParser created above from jwtIssuer.
 
 	// Middleware: outermost first.
 	router.Use(shophttp.RecoveryMiddleware(log))
@@ -132,7 +130,10 @@ func runServe(cfg *config.Config, log logger.Logger) error {
 	// Auth routes.
 	router.HandleFunc("POST /api/v1/auth/register", authHandler.Register())
 	router.HandleFunc("POST /api/v1/auth/login", authHandler.Login())
+	router.Handle("POST /api/v1/auth/logout", requireAuth(authHandler.Logout()))
 	router.Handle("GET /api/v1/auth/me", requireAuth(authHandler.Me()))
+	router.HandleFunc("POST /api/v1/auth/password-reset/request", authHandler.RequestPasswordReset())
+	router.HandleFunc("POST /api/v1/auth/password-reset/confirm", authHandler.ConfirmPasswordReset())
 
 	router.HandleFunc("GET /api/v1/products", productHandler.List())
 	router.HandleFunc("GET /api/v1/products/{id}", productHandler.Get())
