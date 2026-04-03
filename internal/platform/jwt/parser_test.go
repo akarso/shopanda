@@ -10,10 +10,16 @@ import (
 )
 
 func TestTokenParser_Parse(t *testing.T) {
-	issuer, _ := jwt.NewIssuer("test-secret", time.Hour)
+	issuer, err := jwt.NewIssuer("test-secret", time.Hour)
+	if err != nil {
+		t.Fatalf("NewIssuer: %v", err)
+	}
 	parser := jwt.NewTokenParser(issuer)
 
-	token, _ := issuer.Create("user-1", "customer")
+	token, err := issuer.Create("user-1", "customer")
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
 	id, err := parser.Parse(context.Background(), token)
 	if err != nil {
 		t.Fatalf("Parse: %v", err)
@@ -27,10 +33,13 @@ func TestTokenParser_Parse(t *testing.T) {
 }
 
 func TestTokenParser_Parse_InvalidToken(t *testing.T) {
-	issuer, _ := jwt.NewIssuer("test-secret", time.Hour)
+	issuer, err := jwt.NewIssuer("test-secret", time.Hour)
+	if err != nil {
+		t.Fatalf("NewIssuer: %v", err)
+	}
 	parser := jwt.NewTokenParser(issuer)
 
-	_, err := parser.Parse(context.Background(), "garbage")
+	_, err = parser.Parse(context.Background(), "garbage")
 	if err == nil {
 		t.Fatal("expected error for invalid token")
 	}

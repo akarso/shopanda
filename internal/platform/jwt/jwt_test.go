@@ -1,6 +1,7 @@
 package jwt_test
 
 import (
+	"strings"
 	"testing"
 	"time"
 
@@ -51,38 +52,144 @@ func TestCreate_And_Parse(t *testing.T) {
 }
 
 func TestParse_InvalidSignature(t *testing.T) {
-	issuer, _ := jwt.NewIssuer("secret-a", time.Hour)
-	other, _ := jwt.NewIssuer("secret-b", time.Hour)
+	issuer, err := jwt.NewIssuer("secret-a", time.Hour)
+	if err != nil {
+		t.Fatalf("NewIssuer(a): %v", err)
+	}
+	other, err := jwt.NewIssuer("secret-b", time.Hour)
+	if err != nil {
+		t.Fatalf("NewIssuer(b): %v", err)
+	}
 
-	token, _ := issuer.Create("user-1", "customer")
-	_, err := other.Parse(token)
+	token, err := issuer.Create("user-1", "customer")
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	_, err = other.Parse(token)
 	if err == nil {
 		t.Fatal("expected error for wrong secret")
 	}
 }
 
 func TestParse_Expired(t *testing.T) {
-	issuer, _ := jwt.NewIssuer("secret", time.Second)
-	token, _ := issuer.Create("user-1", "customer")
+	issuer, err := jwt.NewIssuer("secret", time.Second)
+	if err != nil {
+		t.Fatalf("NewIssuer: %v", err)
+	}
+	token, err := issuer.Create("user-1", "customer")
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
 	time.Sleep(2 * time.Second)
-	_, err := issuer.Parse(token)
+	_, err = issuer.Parse(token)
 	if err == nil {
 		t.Fatal("expected error for expired token")
 	}
 }
 
 func TestParse_Malformed(t *testing.T) {
-	issuer, _ := jwt.NewIssuer("secret", time.Hour)
-	_, err := issuer.Parse("not-a-jwt")
+	issuer, err := jwt.NewIssuer("secret", time.Hour)
+	if err != nil {
+		t.Fatalf("NewIssuer: %v", err)
+	}
+	_, err = issuer.Parse("not-a-jwt")
 	if err == nil {
 		t.Fatal("expected error for malformed token")
 	}
 }
 
 func TestCreate_EmptySubject(t *testing.T) {
-	issuer, _ := jwt.NewIssuer("secret", time.Hour)
-	_, err := issuer.Create("", "customer")
+	issuer, err := jwt.NewIssuer("secret", time.Hour)
+	if err != nil {
+		t.Fatalf("NewIssuer: %v", err)
+	}
+	_, err = issuer.Create("", "customer")
 	if err == nil {
 		t.Fatal("expected error for empty subject")
 	}
+}
+
+func TestParse_TamperedPayload(t *testing.T) {
+	issuer, err := jwt.NewIssuer("secret", time.Hour)
+	if err != nil {
+		t.Fatalf("NewIssuer: %v", err)
+	}
+	token, err := issuer.Create("user-1", "customer")
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+
+	// Swap a character in the payload section.
+	parts := splitToken(token)
+	runes := []rune(parts[1])
+	if runes[0] == 'A' {
+		runes[0] = 'B'
+	} else {
+		runes[0] = 'A'
+	}
+	tampered := parts[0] + "." + string(runes) + "." + parts[2]
+
+	_, err = issuer.Parse(tampered)
+	if err == nil {
+		t.Fatal("expected error for tampered payload")
+	}
+}
+
+func TestParse_TamperedHeader(t *testing.T) {
+	issuer, err := jwt.NewIssuer("secret", time.Hour)
+	if err != nil {
+		t.Fatalf("NewIssuer: %v", err)
+	}
+	token, err := issuer.Create("user-1", "customer")
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+
+	parts := splitToken(token)
+	tampered := "AAAA" + "." + parts[1] + "." + parts[2]
+
+	_, err = issuer.Parse(tampered)
+	if err == nil {
+		t.Fatal("expected error for tampered header")
+	}
+}
+
+func TestParse_EmptyParts(t *testing.T) {
+	issuer, err := jwt.NewIssuer("secret", time.Hour)
+	if err != nil {
+		t.Fatalf("NewIssuer: %v", err)
+	}
+
+	for _, tok := range []string{"", ".", "..", "a.b", "a.b.c.d"} {
+		_, err = issuer.Parse(tok)
+		if err == nil {
+			t.Errorf("expected error for token %q", tok)
+		}
+	}
+}
+
+func TestCreate_DifferentTokensPerCall(t *testing.T) {
+	issuer, err := jwt.NewIssuer("secret", time.Hour)
+	if err != nil {
+		t.Fatalf("NewIssuer: %v", err)
+	}
+
+	t1, _ := issuer.Create("user-1", "customer")
+	time.Sleep(time.Second)
+	t2, _ := issuer.Create("user-1", "customer")
+
+	if t1 == t2 {
+		t.Error("expected different tokens for different iat")
+	}
+}
+
+// splitToken splits a JWT into its three dot-separated parts.
+func splitToken(token string) [3]string {
+	var out [3]string
+	i := 0
+	for _, part := range strings.SplitN(token, ".", 3) {
+		out[i] = part
+		i++
+	}
+	return out
 }

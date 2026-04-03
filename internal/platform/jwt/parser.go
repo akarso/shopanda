@@ -2,6 +2,7 @@ package jwt
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
 	"github.com/akarso/shopanda/internal/domain/identity"
@@ -19,6 +20,9 @@ func NewTokenParser(issuer *Issuer) *TokenParser {
 
 // Parse extracts an Identity from a JWT bearer token.
 func (p *TokenParser) Parse(_ context.Context, token string) (identity.Identity, error) {
+	if p == nil || p.issuer == nil {
+		return identity.Identity{}, errors.New("jwt parser: issuer not configured")
+	}
 	claims, err := p.issuer.Parse(token)
 	if err != nil {
 		return identity.Identity{}, fmt.Errorf("jwt parser: %w", err)

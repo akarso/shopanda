@@ -97,7 +97,9 @@ func TestAuthHandler_Register_Success(t *testing.T) {
 	}
 
 	var env authEnvelope
-	json.Unmarshal(rec.Body.Bytes(), &env)
+	if err := json.Unmarshal(rec.Body.Bytes(), &env); err != nil {
+		t.Fatalf("unmarshal envelope: %v", err)
+	}
 	if env.Error != nil {
 		t.Fatalf("unexpected error: %+v", env.Error)
 	}
@@ -106,7 +108,9 @@ func TestAuthHandler_Register_Success(t *testing.T) {
 		CustomerID string `json:"customer_id"`
 		Token      string `json:"token"`
 	}
-	json.Unmarshal(env.Data, &data)
+	if err := json.Unmarshal(env.Data, &data); err != nil {
+		t.Fatalf("unmarshal data: %v", err)
+	}
 	if data.CustomerID == "" {
 		t.Error("expected non-empty customer_id")
 	}
@@ -162,7 +166,9 @@ func TestAuthHandler_Login_Success(t *testing.T) {
 	}
 
 	var env authEnvelope
-	json.Unmarshal(loginRec.Body.Bytes(), &env)
+	if err := json.Unmarshal(loginRec.Body.Bytes(), &env); err != nil {
+		t.Fatalf("unmarshal envelope: %v", err)
+	}
 	if env.Error != nil {
 		t.Fatalf("unexpected error: %+v", env.Error)
 	}
@@ -198,15 +204,25 @@ func TestAuthHandler_Me_Success(t *testing.T) {
 	h.Register().ServeHTTP(regRec, regReq)
 
 	var regEnv authEnvelope
-	json.Unmarshal(regRec.Body.Bytes(), &regEnv)
+	if err := json.Unmarshal(regRec.Body.Bytes(), &regEnv); err != nil {
+		t.Fatalf("unmarshal reg envelope: %v", err)
+	}
 	var regData struct {
 		CustomerID string `json:"customer_id"`
 	}
-	json.Unmarshal(regEnv.Data, &regData)
+	if err := json.Unmarshal(regEnv.Data, &regData); err != nil {
+		t.Fatalf("unmarshal reg data: %v", err)
+	}
 
 	// Build authenticated request using JWT.
-	token, _ := issuer.Create(regData.CustomerID, "customer")
-	id, _ := identity.NewIdentity(regData.CustomerID, identity.RoleCustomer)
+	token, err := issuer.Create(regData.CustomerID, "customer")
+	if err != nil {
+		t.Fatalf("Create token: %v", err)
+	}
+	id, err := identity.NewIdentity(regData.CustomerID, identity.RoleCustomer)
+	if err != nil {
+		t.Fatalf("NewIdentity: %v", err)
+	}
 	meReq := httptest.NewRequest("GET", "/auth/me", nil)
 	meReq.Header.Set("Authorization", "Bearer "+token)
 	meReq = meReq.WithContext(platformAuth.WithIdentity(meReq.Context(), id))
@@ -219,12 +235,16 @@ func TestAuthHandler_Me_Success(t *testing.T) {
 	}
 
 	var env authEnvelope
-	json.Unmarshal(meRec.Body.Bytes(), &env)
+	if err := json.Unmarshal(meRec.Body.Bytes(), &env); err != nil {
+		t.Fatalf("unmarshal envelope: %v", err)
+	}
 	var data struct {
 		Email     string `json:"email"`
 		FirstName string `json:"first_name"`
 	}
-	json.Unmarshal(env.Data, &data)
+	if err := json.Unmarshal(env.Data, &data); err != nil {
+		t.Fatalf("unmarshal data: %v", err)
+	}
 	if data.Email != "me@example.com" {
 		t.Errorf("email = %q, want me@example.com", data.Email)
 	}

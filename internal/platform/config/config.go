@@ -183,7 +183,6 @@ func flatten(cfg *Config) map[string]string {
 	m["database.sslmode"] = cfg.Database.SSLMode
 	m["log.level"] = cfg.Log.Level
 	m["log.format"] = cfg.Log.Format
-	m["auth.jwt_secret"] = cfg.Auth.JWTSecret
 	m["auth.jwt_ttl"] = cfg.Auth.JWTTTL
 	return m
 }

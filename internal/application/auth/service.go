@@ -94,7 +94,6 @@ func (s *Service) Register(ctx context.Context, in RegisterInput) (RegisterOutpu
 
 	s.log.Info("auth.registered", map[string]interface{}{
 		"customer_id": c.ID,
-		"email":       c.Email,
 	})
 
 	return RegisterOutput{CustomerID: c.ID, Token: token}, nil
@@ -130,7 +129,7 @@ func (s *Service) Login(ctx context.Context, in LoginInput) (LoginOutput, error)
 	}
 
 	if c.Status != customer.StatusActive {
-		return LoginOutput{}, apperror.Unauthorized("account is disabled")
+		return LoginOutput{}, apperror.Unauthorized("invalid email or password")
 	}
 
 	if err := password.Compare(c.PasswordHash, in.Password); err != nil {
@@ -144,7 +143,6 @@ func (s *Service) Login(ctx context.Context, in LoginInput) (LoginOutput, error)
 
 	s.log.Info("auth.login", map[string]interface{}{
 		"customer_id": c.ID,
-		"email":       c.Email,
 	})
 
 	return LoginOutput{CustomerID: c.ID, Token: token}, nil

@@ -23,15 +23,24 @@ func TestHash_And_Compare(t *testing.T) {
 }
 
 func TestCompare_WrongPassword(t *testing.T) {
-	hash, _ := password.Hash("correct")
+	hash, err := password.Hash("correct")
+	if err != nil {
+		t.Fatalf("Hash setup: %v", err)
+	}
 	if err := password.Compare(hash, "wrong"); err == nil {
 		t.Fatal("expected error for wrong password")
 	}
 }
 
 func TestHash_DifferentResults(t *testing.T) {
-	h1, _ := password.Hash("same")
-	h2, _ := password.Hash("same")
+	h1, err := password.Hash("same")
+	if err != nil {
+		t.Fatalf("Hash(1): %v", err)
+	}
+	h2, err := password.Hash("same")
+	if err != nil {
+		t.Fatalf("Hash(2): %v", err)
+	}
 	if h1 == h2 {
 		t.Error("expected different hashes for same input (bcrypt uses random salt)")
 	}

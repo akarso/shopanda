@@ -127,10 +127,12 @@ func runServe(cfg *config.Config, log logger.Logger) error {
 	// Routes.
 	router.HandleFunc("GET /healthz", shophttp.HealthHandler())
 
-	// Auth routes (public).
+	requireAuth := shophttp.RequireAuth()
+
+	// Auth routes.
 	router.HandleFunc("POST /api/v1/auth/register", authHandler.Register())
 	router.HandleFunc("POST /api/v1/auth/login", authHandler.Login())
-	router.HandleFunc("GET /api/v1/auth/me", authHandler.Me())
+	router.Handle("GET /api/v1/auth/me", requireAuth(authHandler.Me()))
 
 	router.HandleFunc("GET /api/v1/products", productHandler.List())
 	router.HandleFunc("GET /api/v1/products/{id}", productHandler.Get())
@@ -142,7 +144,6 @@ func runServe(cfg *config.Config, log logger.Logger) error {
 	router.HandleFunc("PUT /api/v1/admin/products/{id}/variants/{variantId}", variantHandler.Update())
 
 	// Cart routes (behind RequireAuth).
-	requireAuth := shophttp.RequireAuth()
 	router.Handle("POST /api/v1/carts", requireAuth(cartHandler.Create()))
 	router.Handle("GET /api/v1/carts/{cartId}", requireAuth(cartHandler.Get()))
 	router.Handle("POST /api/v1/carts/{cartId}/items", requireAuth(cartHandler.AddItem()))
