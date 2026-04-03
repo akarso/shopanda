@@ -139,6 +139,9 @@ func TestValidateCartStep_MissingVariant(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error for missing variant")
 	}
+	if _, ok := cctx.GetMeta("validated"); ok {
+		t.Error("validated meta should not be set on error")
+	}
 }
 
 func TestValidateCartStep_RepoError(t *testing.T) {
@@ -151,6 +154,9 @@ func TestValidateCartStep_RepoError(t *testing.T) {
 	err := step.Execute(cctx)
 	if err == nil {
 		t.Fatal("expected error from repo")
+	}
+	if _, ok := cctx.GetMeta("validated"); ok {
+		t.Error("validated meta should not be set on error")
 	}
 }
 
@@ -307,6 +313,12 @@ func TestRecalculatePricingStep_PipelineError(t *testing.T) {
 	err := step.Execute(cctx)
 	if err == nil {
 		t.Fatal("expected error from pipeline")
+	}
+	if _, ok := cctx.GetMeta("priced"); ok {
+		t.Error("priced meta should not be set on error")
+	}
+	if _, ok := cctx.GetMeta("pricing"); ok {
+		t.Error("pricing meta should not be set on error")
 	}
 }
 

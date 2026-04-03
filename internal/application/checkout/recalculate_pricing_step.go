@@ -23,8 +23,10 @@ func (s *RecalculatePricingStep) Name() string { return "recalculate_pricing" }
 // Execute builds a PricingContext from the cart, runs the pipeline,
 // and stores the result in cctx.Meta["pricing"].
 func (s *RecalculatePricingStep) Execute(cctx *Context) error {
-	if _, ok := cctx.GetMeta("priced"); ok {
-		return nil // idempotent: already priced
+	if v, ok := cctx.GetMeta("priced"); ok {
+		if b, isBool := v.(bool); isBool && b {
+			return nil // idempotent: already priced
+		}
 	}
 
 	if cctx.Cart == nil {

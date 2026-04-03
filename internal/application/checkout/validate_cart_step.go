@@ -25,8 +25,10 @@ func (s *ValidateCartStep) Name() string { return "validate_cart" }
 
 // Execute checks each cart item's variant exists in the catalog.
 func (s *ValidateCartStep) Execute(cctx *Context) error {
-	if _, ok := cctx.GetMeta("validated"); ok {
-		return nil // idempotent: already validated
+	if v, ok := cctx.GetMeta("validated"); ok {
+		if b, isBool := v.(bool); isBool && b {
+			return nil // idempotent: already validated
+		}
 	}
 
 	if cctx.Cart == nil {
