@@ -32,6 +32,9 @@ func (s *CreateOrderStep) Name() string { return "create_order" }
 // Execute creates an order with items sourced from the pricing snapshot.
 // Sets cctx.Order and stores order ID in Meta["created_order_id"].
 func (s *CreateOrderStep) Execute(cctx *Context) error {
+	if cctx == nil {
+		return fmt.Errorf("create_order: checkout context must not be nil")
+	}
 	if v, ok := cctx.GetMeta("created_order_id"); ok {
 		if _, isStr := v.(string); isStr && v.(string) != "" {
 			return nil // idempotent

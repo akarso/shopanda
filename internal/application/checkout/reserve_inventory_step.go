@@ -31,6 +31,9 @@ func (s *ReserveInventoryStep) Name() string { return "reserve_inventory" }
 // Execute reserves inventory for each cart item.
 // Stores reservation IDs in Meta["reservations"].
 func (s *ReserveInventoryStep) Execute(cctx *Context) error {
+	if cctx == nil {
+		return fmt.Errorf("reserve_inventory: checkout context must not be nil")
+	}
 	if v, ok := cctx.GetMeta("reserved"); ok {
 		if b, isBool := v.(bool); isBool && b {
 			return nil // idempotent

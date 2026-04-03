@@ -311,8 +311,14 @@ func TestCreateOrderStep_ItemPricesFromPricing(t *testing.T) {
 	cctx.Cart = cartWithItems037(t, "cust-1", "v1")
 
 	// Override pricing with a different unit price to prove snapshot is from pricing
-	pctx, _ := pricing.NewPricingContext("EUR")
-	pi, _ := pricing.NewPricingItem("v1", 2, shared.MustNewMoney(750, "EUR"))
+	pctx, err := pricing.NewPricingContext("EUR")
+	if err != nil {
+		t.Fatalf("NewPricingContext: %v", err)
+	}
+	pi, err := pricing.NewPricingItem("v1", 2, shared.MustNewMoney(750, "EUR"))
+	if err != nil {
+		t.Fatalf("NewPricingItem: %v", err)
+	}
 	pctx.Items = []pricing.PricingItem{pi}
 	cctx.SetMeta("pricing", &pctx)
 
@@ -446,4 +452,4 @@ func (r *mockVariantRepo037) ListByProductID(_ context.Context, _ string, _, _ i
 }
 func (r *mockVariantRepo037) Create(_ context.Context, _ *catalog.Variant) error { return nil }
 func (r *mockVariantRepo037) Update(_ context.Context, _ *catalog.Variant) error { return nil }
-func (r *mockVariantRepo037) WithTx(_ *sql.Tx) catalog.VariantRepository     { return r }
+func (r *mockVariantRepo037) WithTx(_ *sql.Tx) catalog.VariantRepository         { return r }
