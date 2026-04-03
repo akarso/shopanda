@@ -303,7 +303,7 @@ func TestService_StartCheckout_Success(t *testing.T) {
 		return nil
 	}}
 	wf := checkout.NewWorkflow([]checkout.Step{step}, bus, log)
-	svc := checkout.NewService(repo, wf, bus, log)
+	svc := checkout.NewService(repo, wf, log)
 
 	result, err := svc.StartCheckout(context.Background(), c.ID, "cust-1")
 	if err != nil {
@@ -330,7 +330,7 @@ func TestService_StartCheckout_EmptyCartID(t *testing.T) {
 	bus := testBus(t)
 	log := testLogger()
 	wf := checkout.NewWorkflow(nil, bus, log)
-	svc := checkout.NewService(&mockCartRepo{}, wf, bus, log)
+	svc := checkout.NewService(&mockCartRepo{}, wf, log)
 
 	_, err := svc.StartCheckout(context.Background(), "", "cust-1")
 	if err == nil {
@@ -342,7 +342,7 @@ func TestService_StartCheckout_EmptyCustomerID(t *testing.T) {
 	bus := testBus(t)
 	log := testLogger()
 	wf := checkout.NewWorkflow(nil, bus, log)
-	svc := checkout.NewService(&mockCartRepo{}, wf, bus, log)
+	svc := checkout.NewService(&mockCartRepo{}, wf, log)
 
 	_, err := svc.StartCheckout(context.Background(), "cart-1", "")
 	if err == nil {
@@ -355,7 +355,7 @@ func TestService_StartCheckout_CartNotFound(t *testing.T) {
 	log := testLogger()
 	wf := checkout.NewWorkflow(nil, bus, log)
 	repo := &mockCartRepo{cart: nil}
-	svc := checkout.NewService(repo, wf, bus, log)
+	svc := checkout.NewService(repo, wf, log)
 
 	_, err := svc.StartCheckout(context.Background(), "nonexistent", "cust-1")
 	if err == nil {
@@ -373,7 +373,7 @@ func TestService_StartCheckout_InactiveCart(t *testing.T) {
 		t.Fatalf("Checkout: %v", err)
 	}
 	repo := &mockCartRepo{cart: c}
-	svc := checkout.NewService(repo, wf, bus, log)
+	svc := checkout.NewService(repo, wf, log)
 
 	_, err := svc.StartCheckout(context.Background(), c.ID, "cust-1")
 	if err == nil {
@@ -388,7 +388,7 @@ func TestService_StartCheckout_WrongCustomer(t *testing.T) {
 
 	c := activeCart(t, "cust-1")
 	repo := &mockCartRepo{cart: c}
-	svc := checkout.NewService(repo, wf, bus, log)
+	svc := checkout.NewService(repo, wf, log)
 
 	_, err := svc.StartCheckout(context.Background(), c.ID, "cust-OTHER")
 	if err == nil {
@@ -409,7 +409,7 @@ func TestService_StartCheckout_EmptyCart(t *testing.T) {
 		t.Fatalf("SetCustomerID: %v", err)
 	}
 	repo := &mockCartRepo{cart: &c}
-	svc := checkout.NewService(repo, wf, bus, log)
+	svc := checkout.NewService(repo, wf, log)
 
 	_, err = svc.StartCheckout(context.Background(), c.ID, "cust-1")
 	if err == nil {
@@ -428,7 +428,7 @@ func TestService_StartCheckout_WorkflowError(t *testing.T) {
 		return errors.New("workflow failure")
 	}}
 	wf := checkout.NewWorkflow([]checkout.Step{step}, bus, log)
-	svc := checkout.NewService(repo, wf, bus, log)
+	svc := checkout.NewService(repo, wf, log)
 
 	result, err := svc.StartCheckout(context.Background(), c.ID, "cust-1")
 	if err == nil {

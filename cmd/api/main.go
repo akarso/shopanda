@@ -111,7 +111,7 @@ func runServe(cfg *config.Config, log logger.Logger) error {
 
 	// Checkout workflow (steps registered by plugins/later PRs).
 	checkoutWorkflow := checkoutApp.NewWorkflow(nil, bus, log)
-	checkoutService := checkoutApp.NewService(cartRepo, checkoutWorkflow, bus, log)
+	checkoutService := checkoutApp.NewService(cartRepo, checkoutWorkflow, log)
 	_ = checkoutService // endpoint wired in a later PR
 
 	// JWT.

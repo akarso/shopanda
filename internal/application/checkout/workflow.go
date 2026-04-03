@@ -10,8 +10,8 @@ import (
 
 // Event constants for checkout workflow observability.
 const (
-	EventStepStarted   = "checkout.step.started"
-	EventStepCompleted = "checkout.step.completed"
+	EventStepStarted       = "checkout.step.started"
+	EventStepCompleted     = "checkout.step.completed"
 	EventCheckoutFailed    = "checkout.failed"
 	EventCheckoutCompleted = "checkout.completed"
 )
@@ -60,6 +60,17 @@ func NewWorkflow(steps []Step, bus *event.Bus, log logger.Logger) *Workflow {
 	return &Workflow{steps: steps, bus: bus, log: log}
 }
 
+// publishEvent publishes an event and logs + returns any error from sync handlers.
+func (w *Workflow) publishEvent(ctx context.Context, name, source string, data interface{}) error {
+	if err := w.bus.Publish(ctx, event.New(name, source, data)); err != nil {
+		w.log.Error("checkout.publish.failed", err, map[string]interface{}{
+			"event": name,
+		})
+		return fmt.Errorf("checkout: publish %s: %w", name, err)
+	}
+	return nil
+}
+
 // Execute runs every step in sequence. It stops on the first error
 // and emits lifecycle events for observability.
 func (w *Workflow) Execute(ctx context.Context, cctx *Context) error {
@@ -68,10 +79,12 @@ func (w *Workflow) Execute(ctx context.Context, cctx *Context) error {
 			"cart_id": cctx.CartID,
 			"step":    step.Name(),
 		})
-		_ = w.bus.Publish(ctx, event.New(EventStepStarted, "checkout.workflow", StepStartedData{
+		if err := w.publishEvent(ctx, EventStepStarted, "checkout.workflow", StepStartedData{
 			CartID:   cctx.CartID,
 			StepName: step.Name(),
-		}))
+		}); err != nil {
+			return err
+		}
 
 		if err := step.Execute(cctx); err != nil {
 			cctx.Trace = append(cctx.Trace, TraceEntry{
@@ -83,11 +96,11 @@ func (w *Workflow) Execute(ctx context.Context, cctx *Context) error {
 				"cart_id": cctx.CartID,
 				"step":    step.Name(),
 			})
-			_ = w.bus.Publish(ctx, event.New(EventCheckoutFailed, "checkout.workflow", CheckoutFailedData{
+			_ = w.publishEvent(ctx, EventCheckoutFailed, "checkout.workflow", CheckoutFailedData{
 				CartID:   cctx.CartID,
 				StepName: step.Name(),
 				Error:    err.Error(),
-			}))
+			})
 			return fmt.Errorf("checkout: step %q failed: %w", step.Name(), err)
 		}
 
@@ -99,10 +112,12 @@ func (w *Workflow) Execute(ctx context.Context, cctx *Context) error {
 			"cart_id": cctx.CartID,
 			"step":    step.Name(),
 		})
-		_ = w.bus.Publish(ctx, event.New(EventStepCompleted, "checkout.workflow", StepCompletedData{
+		if err := w.publishEvent(ctx, EventStepCompleted, "checkout.workflow", StepCompletedData{
 			CartID:   cctx.CartID,
 			StepName: step.Name(),
-		}))
+		}); err != nil {
+			return err
+		}
 	}
 
 	w.log.Info(EventCheckoutCompleted, map[string]interface{}{
@@ -112,10 +127,12 @@ func (w *Workflow) Execute(ctx context.Context, cctx *Context) error {
 	if cctx.Order != nil {
 		orderID = cctx.Order.ID
 	}
-	_ = w.bus.Publish(ctx, event.New(EventCheckoutCompleted, "checkout.workflow", CheckoutCompletedData{
+	if err := w.publishEvent(ctx, EventCheckoutCompleted, "checkout.workflow", CheckoutCompletedData{
 		CartID:  cctx.CartID,
 		OrderID: orderID,
-	}))
+	}); err != nil {
+		return err
+	}
 
 	return nil
 }

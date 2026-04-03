@@ -6,7 +6,6 @@ import (
 
 	"github.com/akarso/shopanda/internal/domain/cart"
 	"github.com/akarso/shopanda/internal/platform/apperror"
-	"github.com/akarso/shopanda/internal/platform/event"
 	"github.com/akarso/shopanda/internal/platform/logger"
 )
 
@@ -14,7 +13,6 @@ import (
 type Service struct {
 	carts    cart.CartRepository
 	workflow *Workflow
-	bus      *event.Bus
 	log      logger.Logger
 }
 
@@ -22,7 +20,6 @@ type Service struct {
 func NewService(
 	carts cart.CartRepository,
 	workflow *Workflow,
-	bus *event.Bus,
 	log logger.Logger,
 ) *Service {
 	if carts == nil {
@@ -31,16 +28,12 @@ func NewService(
 	if workflow == nil {
 		panic("checkout: workflow must not be nil")
 	}
-	if bus == nil {
-		panic("checkout: bus must not be nil")
-	}
 	if log == nil {
 		panic("checkout: logger must not be nil")
 	}
 	return &Service{
 		carts:    carts,
 		workflow: workflow,
-		bus:      bus,
 		log:      log,
 	}
 }
