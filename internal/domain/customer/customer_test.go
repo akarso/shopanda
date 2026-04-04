@@ -185,3 +185,30 @@ func TestCustomer_BumpTokenGeneration_Increments(t *testing.T) {
 		t.Errorf("TokenGeneration = %d, want 3", c.TokenGeneration)
 	}
 }
+
+func TestRoleIsValid(t *testing.T) {
+	tests := []struct {
+		role customer.Role
+		want bool
+	}{
+		{customer.RoleCustomer, true},
+		{customer.RoleAdmin, true},
+		{"unknown", false},
+		{"", false},
+	}
+	for _, tt := range tests {
+		if got := tt.role.IsValid(); got != tt.want {
+			t.Errorf("Role(%q).IsValid() = %v, want %v", tt.role, got, tt.want)
+		}
+	}
+}
+
+func TestNewCustomer_DefaultsToCustomerRole(t *testing.T) {
+	c, err := customer.NewCustomer("cust-1", "alice@example.com")
+	if err != nil {
+		t.Fatalf("NewCustomer: %v", err)
+	}
+	if c.Role != customer.RoleCustomer {
+		t.Errorf("Role = %q, want %q", c.Role, customer.RoleCustomer)
+	}
+}

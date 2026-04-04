@@ -22,6 +22,23 @@ func (s Status) IsValid() bool {
 	return false
 }
 
+// Role represents the access level of a customer account.
+type Role string
+
+const (
+	RoleCustomer Role = "customer"
+	RoleAdmin    Role = "admin"
+)
+
+// IsValid returns true if r is a recognised customer role.
+func (r Role) IsValid() bool {
+	switch r {
+	case RoleCustomer, RoleAdmin:
+		return true
+	}
+	return false
+}
+
 // Customer represents a registered customer account.
 type Customer struct {
 	ID              string
@@ -30,6 +47,7 @@ type Customer struct {
 	LastName        string
 	PasswordHash    string
 	TokenGeneration int64
+	Role            Role
 	Status          Status
 	CreatedAt       time.Time
 	UpdatedAt       time.Time
@@ -49,6 +67,7 @@ func NewCustomer(id, email string) (Customer, error) {
 		ID:              id,
 		Email:           email,
 		TokenGeneration: 0,
+		Role:            RoleCustomer,
 		Status:          StatusActive,
 		CreatedAt:       now,
 		UpdatedAt:       now,
