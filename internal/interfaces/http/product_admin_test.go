@@ -502,6 +502,11 @@ func TestProductAdminHandler_Update_EmitsEvent(t *testing.T) {
 
 // ── admin route guard tests ────────────────────────────────────────────
 
+func createProductBody(t *testing.T) *bytes.Reader {
+	t.Helper()
+	return jsonBody(t, map[string]interface{}{"name": "Widget", "slug": "widget"})
+}
+
 func newGuardedAdminRouter(h *shophttp.ProductAdminHandler) *http.ServeMux {
 	requireAdmin := shophttp.RequireRole(identity.RoleAdmin)
 	mux := http.NewServeMux()
@@ -514,11 +519,8 @@ func TestAdminGuard_CustomerForbidden(t *testing.T) {
 	repo := &mockAdminProductRepo{}
 	h := shophttp.NewProductAdminHandler(repo, testAdminBus())
 
-	body := jsonBody(t, map[string]interface{}{
-		"name": "Widget", "slug": "widget",
-	})
 	rec := httptest.NewRecorder()
-	req := httptest.NewRequest("POST", "/api/v1/admin/products", body)
+	req := httptest.NewRequest("POST", "/api/v1/admin/products", createProductBody(t))
 	req = testhelper.CustomerRequest(req, "cust-1")
 	newGuardedAdminRouter(h).ServeHTTP(rec, req)
 
@@ -531,11 +533,8 @@ func TestAdminGuard_GuestUnauthorized(t *testing.T) {
 	repo := &mockAdminProductRepo{}
 	h := shophttp.NewProductAdminHandler(repo, testAdminBus())
 
-	body := jsonBody(t, map[string]interface{}{
-		"name": "Widget", "slug": "widget",
-	})
 	rec := httptest.NewRecorder()
-	req := httptest.NewRequest("POST", "/api/v1/admin/products", body)
+	req := httptest.NewRequest("POST", "/api/v1/admin/products", createProductBody(t))
 	newGuardedAdminRouter(h).ServeHTTP(rec, req)
 
 	if rec.Code != http.StatusUnauthorized {
@@ -553,11 +552,8 @@ func TestAdminGuard_AdminAllowed(t *testing.T) {
 	}
 	h := shophttp.NewProductAdminHandler(repo, testAdminBus())
 
-	body := jsonBody(t, map[string]interface{}{
-		"name": "Widget", "slug": "widget",
-	})
 	rec := httptest.NewRecorder()
-	req := httptest.NewRequest("POST", "/api/v1/admin/products", body)
+	req := httptest.NewRequest("POST", "/api/v1/admin/products", createProductBody(t))
 	req = testhelper.AdminRequest(req, "admin-1")
 	newGuardedAdminRouter(h).ServeHTTP(rec, req)
 
@@ -595,11 +591,8 @@ func TestAdminGuard_Integration_NoToken(t *testing.T) {
 	repo := &mockAdminProductRepo{}
 	h := shophttp.NewProductAdminHandler(repo, testAdminBus())
 
-	body := jsonBody(t, map[string]interface{}{
-		"name": "Widget", "slug": "widget",
-	})
 	rec := httptest.NewRecorder()
-	req := httptest.NewRequest("POST", "/api/v1/admin/products", body)
+	req := httptest.NewRequest("POST", "/api/v1/admin/products", createProductBody(t))
 	newIntegrationAdminRouter(h).ServeHTTP(rec, req)
 
 	if rec.Code != http.StatusUnauthorized {
@@ -611,11 +604,8 @@ func TestAdminGuard_Integration_CustomerToken(t *testing.T) {
 	repo := &mockAdminProductRepo{}
 	h := shophttp.NewProductAdminHandler(repo, testAdminBus())
 
-	body := jsonBody(t, map[string]interface{}{
-		"name": "Widget", "slug": "widget",
-	})
 	rec := httptest.NewRecorder()
-	req := httptest.NewRequest("POST", "/api/v1/admin/products", body)
+	req := httptest.NewRequest("POST", "/api/v1/admin/products", createProductBody(t))
 	req.Header.Set("Authorization", "Bearer test-token:cust-1:customer")
 	newIntegrationAdminRouter(h).ServeHTTP(rec, req)
 
@@ -634,11 +624,8 @@ func TestAdminGuard_Integration_AdminToken(t *testing.T) {
 	}
 	h := shophttp.NewProductAdminHandler(repo, testAdminBus())
 
-	body := jsonBody(t, map[string]interface{}{
-		"name": "Widget", "slug": "widget",
-	})
 	rec := httptest.NewRecorder()
-	req := httptest.NewRequest("POST", "/api/v1/admin/products", body)
+	req := httptest.NewRequest("POST", "/api/v1/admin/products", createProductBody(t))
 	req.Header.Set("Authorization", "Bearer test-token:admin-1:admin")
 	newIntegrationAdminRouter(h).ServeHTTP(rec, req)
 
