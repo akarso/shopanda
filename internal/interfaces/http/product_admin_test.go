@@ -575,7 +575,11 @@ func (p *stubAdminTokenParser) Parse(_ context.Context, token string) (identity.
 	if len(parts) != 3 || parts[0] != "test-token" {
 		return identity.Identity{}, errors.New("invalid test token")
 	}
-	return identity.NewIdentity(parts[1], identity.Role(parts[2]))
+	role := identity.Role(parts[2])
+	if !role.IsValid() {
+		return identity.Identity{}, errors.New("invalid role: " + parts[2])
+	}
+	return identity.NewIdentity(parts[1], role)
 }
 
 func newIntegrationAdminRouter(h *shophttp.ProductAdminHandler) http.Handler {
