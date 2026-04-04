@@ -59,8 +59,6 @@ func (s *ReserveInventoryStep) Execute(cctx *Context) error {
 		return fmt.Errorf("reserve_inventory: cart not loaded")
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), reserveTimeout)
-	defer cancel()
 	expiresAt := time.Now().UTC().Add(s.ttl)
 
 	reservationIDs := make([]string, 0, len(cctx.Cart.Items))
@@ -69,12 +67,17 @@ func (s *ReserveInventoryStep) Execute(cctx *Context) error {
 		if err != nil {
 			return fmt.Errorf("reserve_inventory: create reservation: %w", err)
 		}
-		if err := s.reservations.Reserve(ctx, &res); err != nil {
+		rctx, rcancel := context.WithTimeout(context.Background(), reserveTimeout)
+		rerr := s.reservations.Reserve(rctx, &res)
+		rcancel()
+		if rerr != nil {
 			// Best-effort rollback of prior successful reservations.
 			for _, rid := range reservationIDs {
-				_ = s.reservations.Release(ctx, rid)
+				rlctx, rlcancel := context.WithTimeout(context.Background(), reserveTimeout)
+				_ = s.reservations.Release(rlctx, rid)
+				rlcancel()
 			}
-			return fmt.Errorf("reserve_inventory: variant %s: %w", item.VariantID, err)
+			return fmt.Errorf("reserve_inventory: variant %s: %w", item.VariantID, rerr)
 		}
 		reservationIDs = append(reservationIDs, res.ID)
 	}
