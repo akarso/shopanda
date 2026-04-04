@@ -5,9 +5,11 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/akarso/shopanda/internal/domain/catalog"
@@ -558,6 +560,87 @@ func TestAdminGuard_AdminAllowed(t *testing.T) {
 	req := httptest.NewRequest("POST", "/api/v1/admin/products", body)
 	req = testhelper.AdminRequest(req, "admin-1")
 	newGuardedAdminRouter(h).ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("status = %d, want %d; body: %s", rec.Code, http.StatusCreated, rec.Body.String())
+	}
+	if created == nil {
+		t.Fatal("product should have been created")
+	}
+}
+
+// ── integration test: AuthMiddleware → RequireRole(admin) ──────────────
+
+// stubAdminTokenParser parses test tokens of the form "test-token:<userID>:<role>".
+type stubAdminTokenParser struct{}
+
+func (p *stubAdminTokenParser) Parse(_ context.Context, token string) (identity.Identity, error) {
+	parts := strings.SplitN(token, ":", 3)
+	if len(parts) != 3 || parts[0] != "test-token" {
+		return identity.Identity{}, errors.New("invalid test token")
+	}
+	return identity.NewIdentity(parts[1], identity.Role(parts[2]))
+}
+
+func newIntegrationAdminRouter(h *shophttp.ProductAdminHandler) http.Handler {
+	requireAdmin := shophttp.RequireRole(identity.RoleAdmin)
+	mux := http.NewServeMux()
+	mux.Handle("POST /api/v1/admin/products", requireAdmin(h.Create()))
+
+	authMW := shophttp.AuthMiddleware(&stubAdminTokenParser{})
+	return authMW(mux)
+}
+
+func TestAdminGuard_Integration_NoToken(t *testing.T) {
+	repo := &mockAdminProductRepo{}
+	h := shophttp.NewProductAdminHandler(repo, testAdminBus())
+
+	body := jsonBody(t, map[string]interface{}{
+		"name": "Widget", "slug": "widget",
+	})
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("POST", "/api/v1/admin/products", body)
+	newIntegrationAdminRouter(h).ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("status = %d, want %d; body: %s", rec.Code, http.StatusUnauthorized, rec.Body.String())
+	}
+}
+
+func TestAdminGuard_Integration_CustomerToken(t *testing.T) {
+	repo := &mockAdminProductRepo{}
+	h := shophttp.NewProductAdminHandler(repo, testAdminBus())
+
+	body := jsonBody(t, map[string]interface{}{
+		"name": "Widget", "slug": "widget",
+	})
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("POST", "/api/v1/admin/products", body)
+	req.Header.Set("Authorization", "Bearer test-token:cust-1:customer")
+	newIntegrationAdminRouter(h).ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("status = %d, want %d; body: %s", rec.Code, http.StatusForbidden, rec.Body.String())
+	}
+}
+
+func TestAdminGuard_Integration_AdminToken(t *testing.T) {
+	var created *catalog.Product
+	repo := &mockAdminProductRepo{
+		createFn: func(_ context.Context, p *catalog.Product) error {
+			created = p
+			return nil
+		},
+	}
+	h := shophttp.NewProductAdminHandler(repo, testAdminBus())
+
+	body := jsonBody(t, map[string]interface{}{
+		"name": "Widget", "slug": "widget",
+	})
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("POST", "/api/v1/admin/products", body)
+	req.Header.Set("Authorization", "Bearer test-token:admin-1:admin")
+	newIntegrationAdminRouter(h).ServeHTTP(rec, req)
 
 	if rec.Code != http.StatusCreated {
 		t.Fatalf("status = %d, want %d; body: %s", rec.Code, http.StatusCreated, rec.Body.String())

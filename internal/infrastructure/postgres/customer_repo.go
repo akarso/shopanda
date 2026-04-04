@@ -67,6 +67,9 @@ func (r *CustomerRepo) FindByEmail(ctx context.Context, email string) (*customer
 
 // Create persists a new customer.
 func (r *CustomerRepo) Create(ctx context.Context, c *customer.Customer) error {
+	if !c.Role.IsValid() {
+		return apperror.Validation("invalid customer role")
+	}
 	const q = `INSERT INTO customers (id, email, first_name, last_name, password_hash, token_generation, role, status, created_at, updated_at)
 		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`
 
@@ -90,6 +93,9 @@ func (r *CustomerRepo) Create(ctx context.Context, c *customer.Customer) error {
 
 // Update persists changes to an existing customer.
 func (r *CustomerRepo) Update(ctx context.Context, c *customer.Customer) error {
+	if !c.Role.IsValid() {
+		return apperror.Validation("invalid customer role")
+	}
 	updatedAt := time.Now().UTC()
 
 	const q = `UPDATE customers
