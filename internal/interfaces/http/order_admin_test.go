@@ -116,6 +116,38 @@ func TestOrderAdminHandler_List_CustomerForbidden(t *testing.T) {
 	}
 }
 
+func TestOrderAdminHandler_List_Pagination(t *testing.T) {
+	repo, mux := orderAdminSetup()
+	seedOrder(t, repo, "ord-1", "cust-1")
+	seedOrder(t, repo, "ord-2", "cust-2")
+	seedOrder(t, repo, "ord-3", "cust-3")
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("GET", "/api/v1/admin/orders?offset=1&limit=1", nil)
+	req = testhelper.AdminRequest(req, "admin-1")
+	mux.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d; body: %s", rec.Code, http.StatusOK, rec.Body.String())
+	}
+
+	var body map[string]interface{}
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	data, ok := body["data"].(map[string]interface{})
+	if !ok {
+		t.Fatalf("data is not an object: %v", body)
+	}
+	orders, ok := data["orders"].([]interface{})
+	if !ok {
+		t.Fatalf("orders is not an array: %v", data)
+	}
+	if len(orders) != 1 {
+		t.Fatalf("orders len = %d, want 1", len(orders))
+	}
+}
+
 func TestOrderAdminHandler_List_GuestUnauthorized(t *testing.T) {
 	_, mux := orderAdminSetup()
 
@@ -196,5 +228,18 @@ func TestOrderAdminHandler_Get_CustomerForbidden(t *testing.T) {
 
 	if rec.Code != http.StatusForbidden {
 		t.Fatalf("status = %d, want %d; body: %s", rec.Code, http.StatusForbidden, rec.Body.String())
+	}
+}
+
+func TestOrderAdminHandler_Get_GuestUnauthorized(t *testing.T) {
+	repo, mux := orderAdminSetup()
+	seedOrder(t, repo, "ord-1", "cust-1")
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("GET", "/api/v1/admin/orders/ord-1", nil)
+	mux.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("status = %d, want %d; body: %s", rec.Code, http.StatusUnauthorized, rec.Body.String())
 	}
 }

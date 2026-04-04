@@ -35,6 +35,9 @@ func (h *ProductAdminHandler) List() http.HandlerFunc {
 			JSONError(w, err)
 			return
 		}
+		if products == nil {
+			products = []catalog.Product{}
+		}
 
 		JSON(w, http.StatusOK, map[string]interface{}{
 			"products": products,

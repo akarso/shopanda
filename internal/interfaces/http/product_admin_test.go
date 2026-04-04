@@ -118,8 +118,14 @@ func TestProductAdminHandler_List_OK(t *testing.T) {
 	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
 		t.Fatalf("unmarshal: %v", err)
 	}
-	data := body["data"].(map[string]interface{})
-	products := data["products"].([]interface{})
+	data, ok := body["data"].(map[string]interface{})
+	if !ok {
+		t.Fatalf("data is not an object: %v", body)
+	}
+	products, ok := data["products"].([]interface{})
+	if !ok {
+		t.Fatalf("products is not an array: %v", data)
+	}
 	if len(products) != 2 {
 		t.Fatalf("products len = %d, want 2", len(products))
 	}
