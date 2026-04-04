@@ -24,6 +24,37 @@ func orderAdminSetup() (*stubOrderRepo, *http.ServeMux) {
 	return repo, mux
 }
 
+// parseAdminOrdersResp extracts the orders array from the response envelope.
+func parseAdminOrdersResp(t *testing.T, rec *httptest.ResponseRecorder) []map[string]interface{} {
+	t.Helper()
+	var envelope struct {
+		Data struct {
+			Orders []map[string]interface{} `json:"orders"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &envelope); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	return envelope.Data.Orders
+}
+
+// parseAdminOrderResp extracts a single order from the response envelope.
+func parseAdminOrderResp(t *testing.T, rec *httptest.ResponseRecorder) map[string]interface{} {
+	t.Helper()
+	var envelope struct {
+		Data struct {
+			Order map[string]interface{} `json:"order"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &envelope); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if envelope.Data.Order == nil {
+		t.Fatal("order is nil in response")
+	}
+	return envelope.Data.Order
+}
+
 // ── GET /api/v1/admin/orders ────────────────────────────────────────────
 
 func TestOrderAdminHandler_List_OK(t *testing.T) {
@@ -40,13 +71,7 @@ func TestOrderAdminHandler_List_OK(t *testing.T) {
 		t.Fatalf("status = %d, want %d; body: %s", rec.Code, http.StatusOK, rec.Body.String())
 	}
 
-	var body map[string]interface{}
-	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
-		t.Fatalf("unmarshal: %v", err)
-	}
-	data := body["data"].(map[string]interface{})
-	orders := data["orders"].([]interface{})
-
+	orders := parseAdminOrdersResp(t, rec)
 	if len(orders) != 2 {
 		t.Errorf("orders len = %d, want 2", len(orders))
 	}
@@ -64,13 +89,7 @@ func TestOrderAdminHandler_List_Empty(t *testing.T) {
 		t.Fatalf("status = %d, want %d; body: %s", rec.Code, http.StatusOK, rec.Body.String())
 	}
 
-	var body map[string]interface{}
-	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
-		t.Fatalf("unmarshal: %v", err)
-	}
-	data := body["data"].(map[string]interface{})
-	orders := data["orders"].([]interface{})
-
+	orders := parseAdminOrdersResp(t, rec)
 	if len(orders) != 0 {
 		t.Errorf("orders len = %d, want 0", len(orders))
 	}
@@ -91,13 +110,7 @@ func TestOrderAdminHandler_List_AllCustomers(t *testing.T) {
 		t.Fatalf("status = %d, want %d; body: %s", rec.Code, http.StatusOK, rec.Body.String())
 	}
 
-	var body map[string]interface{}
-	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
-		t.Fatalf("unmarshal: %v", err)
-	}
-	data := body["data"].(map[string]interface{})
-	orders := data["orders"].([]interface{})
-
+	orders := parseAdminOrdersResp(t, rec)
 	if len(orders) != 3 {
 		t.Errorf("orders len = %d, want 3", len(orders))
 	}
@@ -122,6 +135,7 @@ func TestOrderAdminHandler_List_Pagination(t *testing.T) {
 	seedOrder(t, repo, "ord-2", "cust-2")
 	seedOrder(t, repo, "ord-3", "cust-3")
 
+	// offset=1, limit=1 → exactly 1 result (proves limit is applied).
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest("GET", "/api/v1/admin/orders?offset=1&limit=1", nil)
 	req = testhelper.AdminRequest(req, "admin-1")
@@ -131,20 +145,24 @@ func TestOrderAdminHandler_List_Pagination(t *testing.T) {
 		t.Fatalf("status = %d, want %d; body: %s", rec.Code, http.StatusOK, rec.Body.String())
 	}
 
-	var body map[string]interface{}
-	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
-		t.Fatalf("unmarshal: %v", err)
-	}
-	data, ok := body["data"].(map[string]interface{})
-	if !ok {
-		t.Fatalf("data is not an object: %v", body)
-	}
-	orders, ok := data["orders"].([]interface{})
-	if !ok {
-		t.Fatalf("orders is not an array: %v", data)
-	}
+	orders := parseAdminOrdersResp(t, rec)
 	if len(orders) != 1 {
 		t.Fatalf("orders len = %d, want 1", len(orders))
+	}
+
+	// offset beyond total → empty list (proves offset is applied).
+	rec2 := httptest.NewRecorder()
+	req2 := httptest.NewRequest("GET", "/api/v1/admin/orders?offset=10&limit=5", nil)
+	req2 = testhelper.AdminRequest(req2, "admin-1")
+	mux.ServeHTTP(rec2, req2)
+
+	if rec2.Code != http.StatusOK {
+		t.Fatalf("out-of-range: status = %d, want %d; body: %s", rec2.Code, http.StatusOK, rec2.Body.String())
+	}
+
+	orders2 := parseAdminOrdersResp(t, rec2)
+	if len(orders2) != 0 {
+		t.Fatalf("out-of-range: orders len = %d, want 0", len(orders2))
 	}
 }
 
@@ -175,13 +193,7 @@ func TestOrderAdminHandler_Get_OK(t *testing.T) {
 		t.Fatalf("status = %d, want %d; body: %s", rec.Code, http.StatusOK, rec.Body.String())
 	}
 
-	var body map[string]interface{}
-	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
-		t.Fatalf("unmarshal: %v", err)
-	}
-	data := body["data"].(map[string]interface{})
-	o := data["order"].(map[string]interface{})
-
+	o := parseAdminOrderResp(t, rec)
 	if o["id"] != "ord-1" {
 		t.Errorf("id = %v, want ord-1", o["id"])
 	}
