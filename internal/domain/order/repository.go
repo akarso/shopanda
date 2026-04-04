@@ -11,6 +11,9 @@ type OrderRepository interface {
 	// FindByCustomerID returns all orders for a customer, newest first.
 	FindByCustomerID(ctx context.Context, customerID string) ([]Order, error)
 
+	// List returns a page of orders, newest first.
+	List(ctx context.Context, offset, limit int) ([]Order, error)
+
 	// Save persists an order and its items (insert-only; orders are immutable
 	// except for status transitions via UpdateStatus).
 	Save(ctx context.Context, order *Order) error

@@ -21,6 +21,30 @@ func NewProductAdminHandler(repo catalog.ProductRepository, bus *event.Bus) *Pro
 	return &ProductAdminHandler{repo: repo, bus: bus}
 }
 
+// List handles GET /api/v1/admin/products.
+func (h *ProductAdminHandler) List() http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		offset, limit, err := parsePagination(r)
+		if err != nil {
+			JSONError(w, err)
+			return
+		}
+
+		products, err := h.repo.List(r.Context(), offset, limit)
+		if err != nil {
+			JSONError(w, err)
+			return
+		}
+		if products == nil {
+			products = []catalog.Product{}
+		}
+
+		JSON(w, http.StatusOK, map[string]interface{}{
+			"products": products,
+		})
+	}
+}
+
 // createProductRequest is the JSON body for creating a product.
 type createProductRequest struct {
 	Name        string                 `json:"name"`
