@@ -123,7 +123,7 @@ func runServe(cfg *config.Config, log logger.Logger) error {
 		createOrderStep,
 	}, bus, log)
 	checkoutService := checkoutApp.NewService(cartRepo, checkoutWorkflow, log)
-	_ = checkoutService // endpoint wired in a later PR
+	checkoutHandler := shophttp.NewCheckoutHandler(checkoutService)
 
 	// JWT.
 	jwtTTL, err := time.ParseDuration(cfg.Auth.JWTTTL)
@@ -181,6 +181,9 @@ func runServe(cfg *config.Config, log logger.Logger) error {
 	router.Handle("POST /api/v1/carts/{cartId}/items", requireAuth(cartHandler.AddItem()))
 	router.Handle("PUT /api/v1/carts/{cartId}/items/{variantId}", requireAuth(cartHandler.UpdateItem()))
 	router.Handle("DELETE /api/v1/carts/{cartId}/items/{variantId}", requireAuth(cartHandler.RemoveItem()))
+
+	// Checkout route (behind RequireAuth).
+	router.Handle("POST /api/v1/checkout", requireAuth(checkoutHandler.StartCheckout()))
 
 	srv := shophttp.NewServer(cfg.Server.Host, cfg.Server.Port, router.Handler(), log)
 	return srv.ListenAndServe()
