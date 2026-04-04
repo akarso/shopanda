@@ -51,7 +51,7 @@ func (s *ReserveInventoryStep) Execute(cctx *Context) error {
 	}
 	if v, ok := cctx.GetMeta("reserved"); ok {
 		if b, isBool := v.(bool); isBool && b {
-			return nil // idempotent
+			return nil // idempotency
 		}
 	}
 
