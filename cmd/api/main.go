@@ -82,6 +82,7 @@ func runServe(cfg *config.Config, log logger.Logger) error {
 	resetTokenRepo := postgres.NewResetTokenRepo(conn)
 	reservationRepo := postgres.NewReservationRepo(conn)
 	orderRepo := postgres.NewOrderRepo(conn)
+	paymentRepo := postgres.NewPaymentRepo(conn)
 
 	// Composition pipelines (empty; plugins add steps later).
 	pdp := composition.NewPipeline[composition.ProductContext]()
@@ -147,6 +148,7 @@ func runServe(cfg *config.Config, log logger.Logger) error {
 	orderHandler := shophttp.NewOrderHandler(orderRepo)
 	orderAdmin := shophttp.NewOrderAdminHandler(orderRepo)
 	authHandler := shophttp.NewAuthHandler(authService)
+	paymentWebhook := shophttp.NewPaymentWebhookHandler(paymentRepo, bus)
 
 	router := shophttp.NewRouter()
 
@@ -197,6 +199,9 @@ func runServe(cfg *config.Config, log logger.Logger) error {
 	// Order routes (behind RequireAuth).
 	router.Handle("GET /api/v1/orders", requireAuth(orderHandler.List()))
 	router.Handle("GET /api/v1/orders/{orderId}", requireAuth(orderHandler.Get()))
+
+	// Payment webhook (public — called by external payment providers).
+	router.HandleFunc("POST /api/v1/payments/webhook/{provider}", paymentWebhook.Handle())
 
 	srv := shophttp.NewServer(cfg.Server.Host, cfg.Server.Port, router.Handler(), log)
 	return srv.ListenAndServe()
