@@ -44,15 +44,15 @@ func (m PaymentMethod) IsValid() bool {
 
 // Payment represents a payment attempt for an order.
 type Payment struct {
-	ID            string
-	OrderID       string
-	Method        PaymentMethod
-	status        PaymentStatus
-	Amount        shared.Money
-	Currency      string
-	ProviderRef   string // external reference from the payment provider
-	CreatedAt     time.Time
-	UpdatedAt     time.Time
+	ID          string
+	OrderID     string
+	Method      PaymentMethod
+	status      PaymentStatus
+	Amount      shared.Money
+	Currency    string // duplicates Amount.Currency() for direct DB column mapping
+	ProviderRef string // external reference from the payment provider
+	CreatedAt   time.Time
+	UpdatedAt   time.Time
 }
 
 // NewPayment creates a pending payment for the given order.

@@ -11,3 +11,5 @@ CREATE TABLE IF NOT EXISTS payments (
     updated_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
     CONSTRAINT payments_order_id_unique UNIQUE (order_id)
 );
+
+CREATE INDEX IF NOT EXISTS payments_status_idx ON payments (status);

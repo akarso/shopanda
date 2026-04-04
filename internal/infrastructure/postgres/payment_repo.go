@@ -44,7 +44,11 @@ func (r *PaymentRepo) hydratePayment(s paymentScanner) (*payment.Payment, error)
 	if err := p.SetStatusFromDB(status); err != nil {
 		return nil, err
 	}
-	p.Method = payment.PaymentMethod(method)
+	m := payment.PaymentMethod(method)
+	if !m.IsValid() {
+		return nil, fmt.Errorf("payment_repo: invalid method from db: %s", method)
+	}
+	p.Method = m
 	money, err := shared.NewMoney(amount, currency)
 	if err != nil {
 		return nil, fmt.Errorf("payment_repo: amount money: %w", err)

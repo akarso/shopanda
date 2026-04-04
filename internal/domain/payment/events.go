@@ -19,8 +19,9 @@ type PaymentCreatedData struct {
 
 // PaymentStatusChangedData is emitted on status transitions.
 type PaymentStatusChangedData struct {
-	PaymentID string `json:"payment_id"`
-	OrderID   string `json:"order_id"`
-	OldStatus string `json:"old_status"`
-	NewStatus string `json:"new_status"`
+	PaymentID   string `json:"payment_id"`
+	OrderID     string `json:"order_id"`
+	OldStatus   string `json:"old_status"`
+	NewStatus   string `json:"new_status"`
+	ProviderRef string `json:"provider_ref,omitempty"`
 }
