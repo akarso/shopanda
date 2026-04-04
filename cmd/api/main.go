@@ -143,6 +143,7 @@ func runServe(cfg *config.Config, log logger.Logger) error {
 	productAdmin := shophttp.NewProductAdminHandler(productRepo, bus)
 	variantHandler := shophttp.NewVariantHandler(productRepo, variantRepo, bus)
 	cartHandler := shophttp.NewCartHandler(cartService)
+	orderHandler := shophttp.NewOrderHandler(orderRepo)
 	authHandler := shophttp.NewAuthHandler(authService)
 
 	router := shophttp.NewRouter()
@@ -184,6 +185,10 @@ func runServe(cfg *config.Config, log logger.Logger) error {
 
 	// Checkout route (behind RequireAuth).
 	router.Handle("POST /api/v1/checkout", requireAuth(checkoutHandler.StartCheckout()))
+
+	// Order routes (behind RequireAuth).
+	router.Handle("GET /api/v1/orders", requireAuth(orderHandler.List()))
+	router.Handle("GET /api/v1/orders/{orderId}", requireAuth(orderHandler.Get()))
 
 	srv := shophttp.NewServer(cfg.Server.Host, cfg.Server.Port, router.Handler(), log)
 	return srv.ListenAndServe()
