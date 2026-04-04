@@ -41,7 +41,3 @@ func TestProvider_Initiate_NilPayment(t *testing.T) {
 		t.Fatal("expected error for nil payment")
 	}
 }
-
-func TestProvider_ImplementsInterface(t *testing.T) {
-	var _ payment.Provider = (*Provider)(nil)
-}

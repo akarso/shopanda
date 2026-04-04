@@ -26,7 +26,7 @@ func (p *Provider) Method() payment.PaymentMethod {
 }
 
 // Initiate approves the payment immediately and returns a reference.
-// It never returns an error or a declined result.
+// Returns an error only if py is nil.
 func (p *Provider) Initiate(_ context.Context, py *payment.Payment) (payment.ProviderResult, error) {
 	if py == nil {
 		return payment.ProviderResult{}, fmt.Errorf("manualpay: payment must not be nil")
