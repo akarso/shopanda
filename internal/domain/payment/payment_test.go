@@ -2,6 +2,7 @@ package payment
 
 import (
 	"testing"
+	"time"
 
 	"github.com/akarso/shopanda/internal/domain/shared"
 )
@@ -71,8 +72,8 @@ func TestNewPayment_OK(t *testing.T) {
 	if p.Amount.Amount() != 5000 {
 		t.Errorf("Amount = %d, want 5000", p.Amount.Amount())
 	}
-	if p.Currency != "EUR" {
-		t.Errorf("Currency = %q, want EUR", p.Currency)
+	if p.Currency() != "EUR" {
+		t.Errorf("Currency = %q, want EUR", p.Currency())
 	}
 	if p.CreatedAt.IsZero() {
 		t.Error("CreatedAt should not be zero")
@@ -180,8 +181,8 @@ func TestPayment_Refund_NotCompleted(t *testing.T) {
 func TestPayment_SetStatusFromDB_Valid(t *testing.T) {
 	p := &Payment{}
 	for _, s := range []string{"pending", "completed", "failed", "refunded"} {
-		if err := p.SetStatusFromDB(s); err != nil {
-			t.Errorf("SetStatusFromDB(%q): %v", s, err)
+		if err := p.setStatusFromDB(s); err != nil {
+			t.Errorf("setStatusFromDB(%q): %v", s, err)
 		}
 		if p.Status() != PaymentStatus(s) {
 			t.Errorf("Status() = %q, want %q", p.Status(), s)
@@ -191,7 +192,42 @@ func TestPayment_SetStatusFromDB_Valid(t *testing.T) {
 
 func TestPayment_SetStatusFromDB_Invalid(t *testing.T) {
 	p := &Payment{}
-	if err := p.SetStatusFromDB("bogus"); err == nil {
+	if err := p.setStatusFromDB("bogus"); err == nil {
 		t.Fatal("expected error for invalid status")
+	}
+}
+
+// ── NewPaymentFromDB ────────────────────────────────────────────────────
+
+func TestNewPaymentFromDB_OK(t *testing.T) {
+	now := time.Now().UTC()
+	p, err := NewPaymentFromDB("pay-1", "ord-1", MethodManual, "completed", validAmount(), "ref-42", now, now)
+	if err != nil {
+		t.Fatalf("NewPaymentFromDB: %v", err)
+	}
+	if p.Status() != StatusCompleted {
+		t.Errorf("Status = %q, want completed", p.Status())
+	}
+	if p.ProviderRef != "ref-42" {
+		t.Errorf("ProviderRef = %q, want ref-42", p.ProviderRef)
+	}
+	if p.Currency() != "EUR" {
+		t.Errorf("Currency = %q, want EUR", p.Currency())
+	}
+}
+
+func TestNewPaymentFromDB_InvalidStatus(t *testing.T) {
+	now := time.Now().UTC()
+	_, err := NewPaymentFromDB("pay-1", "ord-1", MethodManual, "bogus", validAmount(), "", now, now)
+	if err == nil {
+		t.Fatal("expected error for invalid status")
+	}
+}
+
+func TestNewPaymentFromDB_InvalidMethod(t *testing.T) {
+	now := time.Now().UTC()
+	_, err := NewPaymentFromDB("pay-1", "ord-1", "bogus", "pending", validAmount(), "", now, now)
+	if err == nil {
+		t.Fatal("expected error for invalid method")
 	}
 }

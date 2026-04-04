@@ -1,6 +1,9 @@
 package payment
 
-import "context"
+import (
+	"context"
+	"time"
+)
 
 // PaymentRepository defines persistence operations for payments.
 type PaymentRepository interface {
@@ -16,5 +19,7 @@ type PaymentRepository interface {
 	Create(ctx context.Context, p *Payment) error
 
 	// UpdateStatus updates the status, provider_ref, and updated_at of a payment.
-	UpdateStatus(ctx context.Context, p *Payment) error
+	// Uses optimistic locking: prevUpdatedAt must match the row's current
+	// updated_at or a conflict error is returned.
+	UpdateStatus(ctx context.Context, p *Payment, prevUpdatedAt time.Time) error
 }

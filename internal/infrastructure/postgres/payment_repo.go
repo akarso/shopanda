@@ -9,6 +9,7 @@ import (
 
 	"github.com/akarso/shopanda/internal/domain/payment"
 	"github.com/akarso/shopanda/internal/domain/shared"
+	"github.com/akarso/shopanda/internal/platform/apperror"
 )
 
 // Compile-time check that PaymentRepo implements payment.PaymentRepository.
@@ -24,20 +25,15 @@ func NewPaymentRepo(db *sql.DB) *PaymentRepo {
 	return &PaymentRepo{db: db}
 }
 
-// paymentScanner abstracts *sql.Row and *sql.Rows for shared hydration.
-type paymentScanner interface {
-	Scan(dest ...interface{}) error
-}
-
-// hydratePayment reads a payment row from any scanner.
-func (r *PaymentRepo) hydratePayment(s paymentScanner) (*payment.Payment, error) {
+// hydratePayment reads a payment row from a *sql.Row.
+func hydratePayment(row *sql.Row) (*payment.Payment, error) {
 	var id, orderID string
 	var status, method string
 	var amount int64
 	var currency string
 	var providerRef sql.NullString
 	var createdAt, updatedAt time.Time
-	err := s.Scan(&id, &orderID, &method, &status,
+	err := row.Scan(&id, &orderID, &method, &status,
 		&amount, &currency, &providerRef, &createdAt, &updatedAt)
 	if err != nil {
 		return nil, err
@@ -62,7 +58,7 @@ func (r *PaymentRepo) FindByID(ctx context.Context, id string) (*payment.Payment
 		return nil, fmt.Errorf("payment_repo: find: empty id")
 	}
 	q := `SELECT ` + paymentColumns + ` FROM payments WHERE id = $1`
-	p, err := r.hydratePayment(r.db.QueryRowContext(ctx, q, id))
+	p, err := hydratePayment(r.db.QueryRowContext(ctx, q, id))
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
 	}
@@ -79,7 +75,7 @@ func (r *PaymentRepo) FindByOrderID(ctx context.Context, orderID string) (*payme
 		return nil, fmt.Errorf("payment_repo: find by order: empty order id")
 	}
 	q := `SELECT ` + paymentColumns + ` FROM payments WHERE order_id = $1`
-	p, err := r.hydratePayment(r.db.QueryRowContext(ctx, q, orderID))
+	p, err := hydratePayment(r.db.QueryRowContext(ctx, q, orderID))
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
 	}
@@ -112,16 +108,17 @@ func (r *PaymentRepo) Create(ctx context.Context, p *payment.Payment) error {
 }
 
 // UpdateStatus updates the status, provider_ref, and updated_at of a payment.
-func (r *PaymentRepo) UpdateStatus(ctx context.Context, p *payment.Payment) error {
+// Uses optimistic locking via updated_at to detect concurrent modifications.
+func (r *PaymentRepo) UpdateStatus(ctx context.Context, p *payment.Payment, prevUpdatedAt time.Time) error {
 	if p == nil {
 		return fmt.Errorf("payment_repo: update status: payment must not be nil")
 	}
-	const q = `UPDATE payments SET status = $1, provider_ref = $2, updated_at = $3 WHERE id = $4`
+	const q = `UPDATE payments SET status = $1, provider_ref = $2, updated_at = $3 WHERE id = $4 AND updated_at = $5`
 	var ref sql.NullString
 	if p.ProviderRef != "" {
 		ref = sql.NullString{String: p.ProviderRef, Valid: true}
 	}
-	res, err := r.db.ExecContext(ctx, q, string(p.Status()), ref, p.UpdatedAt, p.ID)
+	res, err := r.db.ExecContext(ctx, q, string(p.Status()), ref, p.UpdatedAt, p.ID, prevUpdatedAt)
 	if err != nil {
 		return fmt.Errorf("payment_repo: update status: %w", err)
 	}
@@ -130,7 +127,7 @@ func (r *PaymentRepo) UpdateStatus(ctx context.Context, p *payment.Payment) erro
 		return fmt.Errorf("payment_repo: rows affected: %w", err)
 	}
 	if n == 0 {
-		return fmt.Errorf("payment_repo: update status: payment not found")
+		return apperror.Conflict("payment was modified concurrently")
 	}
 	return nil
 }
