@@ -14,6 +14,7 @@ import (
 	"github.com/akarso/shopanda/internal/application/importer"
 	appPricing "github.com/akarso/shopanda/internal/application/pricing"
 	"github.com/akarso/shopanda/internal/domain/customer"
+	"github.com/akarso/shopanda/internal/domain/identity"
 	"github.com/akarso/shopanda/internal/domain/pricing"
 	"github.com/akarso/shopanda/internal/infrastructure/postgres"
 	"github.com/akarso/shopanda/internal/platform/config"
@@ -158,6 +159,7 @@ func runServe(cfg *config.Config, log logger.Logger) error {
 	router.HandleFunc("GET /healthz", shophttp.HealthHandler())
 
 	requireAuth := shophttp.RequireAuth()
+	requireAdmin := shophttp.RequireRole(identity.RoleAdmin)
 
 	// Auth routes.
 	router.HandleFunc("POST /api/v1/auth/register", authHandler.Register())
@@ -169,12 +171,14 @@ func runServe(cfg *config.Config, log logger.Logger) error {
 
 	router.HandleFunc("GET /api/v1/products", productHandler.List())
 	router.HandleFunc("GET /api/v1/products/{id}", productHandler.Get())
-	router.HandleFunc("POST /api/v1/admin/products", productAdmin.Create())
-	router.HandleFunc("PUT /api/v1/admin/products/{id}", productAdmin.Update())
 	router.HandleFunc("GET /api/v1/products/{id}/variants", variantHandler.List())
 	router.HandleFunc("GET /api/v1/products/{id}/variants/{variantId}", variantHandler.Get())
-	router.HandleFunc("POST /api/v1/admin/products/{id}/variants", variantHandler.Create())
-	router.HandleFunc("PUT /api/v1/admin/products/{id}/variants/{variantId}", variantHandler.Update())
+
+	// Admin routes (behind RequireRole(admin)).
+	router.Handle("POST /api/v1/admin/products", requireAdmin(productAdmin.Create()))
+	router.Handle("PUT /api/v1/admin/products/{id}", requireAdmin(productAdmin.Update()))
+	router.Handle("POST /api/v1/admin/products/{id}/variants", requireAdmin(variantHandler.Create()))
+	router.Handle("PUT /api/v1/admin/products/{id}/variants/{variantId}", requireAdmin(variantHandler.Update()))
 
 	// Cart routes (behind RequireAuth).
 	router.Handle("POST /api/v1/carts", requireAuth(cartHandler.Create()))

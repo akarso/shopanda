@@ -6,7 +6,6 @@ import (
 	"time"
 
 	"github.com/akarso/shopanda/internal/domain/customer"
-	"github.com/akarso/shopanda/internal/domain/identity"
 	"github.com/akarso/shopanda/internal/platform/apperror"
 	"github.com/akarso/shopanda/internal/platform/event"
 	"github.com/akarso/shopanda/internal/platform/id"
@@ -117,7 +116,7 @@ func (s *Service) Register(ctx context.Context, in RegisterInput) (RegisterOutpu
 		return RegisterOutput{}, fmt.Errorf("auth service: create customer: %w", err)
 	}
 
-	token, expiresAt, err := s.jwt.Create(c.ID, string(identity.RoleCustomer), c.TokenGeneration)
+	token, expiresAt, err := s.jwt.Create(c.ID, string(c.Role), c.TokenGeneration)
 	if err != nil {
 		return RegisterOutput{}, fmt.Errorf("auth service: create token: %w", err)
 	}
@@ -180,7 +179,7 @@ func (s *Service) Login(ctx context.Context, in LoginInput) (LoginOutput, error)
 		return LoginOutput{}, apperror.Unauthorized("invalid email or password")
 	}
 
-	token, expiresAt, err := s.jwt.Create(c.ID, string(identity.RoleCustomer), c.TokenGeneration)
+	token, expiresAt, err := s.jwt.Create(c.ID, string(c.Role), c.TokenGeneration)
 	if err != nil {
 		return LoginOutput{}, fmt.Errorf("auth service: create token: %w", err)
 	}
