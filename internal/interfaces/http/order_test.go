@@ -62,7 +62,8 @@ func orderSetup() (*stubOrderRepo, *http.ServeMux) {
 	return repo, mux
 }
 
-func seedOrder(repo *stubOrderRepo, id, customerID string) *order.Order {
+func seedOrder(t *testing.T, repo *stubOrderRepo, id, customerID string) *order.Order {
+	t.Helper()
 	items := []order.Item{
 		{
 			VariantID: "var-1",
@@ -73,7 +74,10 @@ func seedOrder(repo *stubOrderRepo, id, customerID string) *order.Order {
 			CreatedAt: time.Now().UTC(),
 		},
 	}
-	o, _ := order.NewOrder(id, customerID, "EUR", items)
+	o, err := order.NewOrder(id, customerID, "EUR", items)
+	if err != nil {
+		t.Fatalf("seedOrder: %v", err)
+	}
 	repo.orders[id] = &o
 	return &o
 }
@@ -91,7 +95,7 @@ func parseOrderBody(t *testing.T, rec *httptest.ResponseRecorder) map[string]int
 
 func TestOrderHandler_Get_OK(t *testing.T) {
 	repo, mux := orderSetup()
-	seedOrder(repo, "ord-1", "cust-1")
+	seedOrder(t, repo, "ord-1", "cust-1")
 
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest("GET", "/api/v1/orders/ord-1", nil)
@@ -150,7 +154,7 @@ func TestOrderHandler_Get_NotFound(t *testing.T) {
 
 func TestOrderHandler_Get_WrongCustomer(t *testing.T) {
 	repo, mux := orderSetup()
-	seedOrder(repo, "ord-1", "cust-1")
+	seedOrder(t, repo, "ord-1", "cust-1")
 
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest("GET", "/api/v1/orders/ord-1", nil)
@@ -178,8 +182,8 @@ func TestOrderHandler_Get_Unauthenticated(t *testing.T) {
 
 func TestOrderHandler_List_OK(t *testing.T) {
 	repo, mux := orderSetup()
-	seedOrder(repo, "ord-1", "cust-1")
-	seedOrder(repo, "ord-2", "cust-1")
+	seedOrder(t, repo, "ord-1", "cust-1")
+	seedOrder(t, repo, "ord-2", "cust-1")
 
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest("GET", "/api/v1/orders", nil)
@@ -234,8 +238,8 @@ func TestOrderHandler_List_Unauthenticated(t *testing.T) {
 
 func TestOrderHandler_List_OnlyOwnOrders(t *testing.T) {
 	repo, mux := orderSetup()
-	seedOrder(repo, "ord-1", "cust-1")
-	seedOrder(repo, "ord-2", "cust-2")
+	seedOrder(t, repo, "ord-1", "cust-1")
+	seedOrder(t, repo, "ord-2", "cust-2")
 
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest("GET", "/api/v1/orders", nil)
