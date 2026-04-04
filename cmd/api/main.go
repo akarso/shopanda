@@ -79,6 +79,8 @@ func runServe(cfg *config.Config, log logger.Logger) error {
 	priceRepo := postgres.NewPriceRepo(conn)
 	customerRepo := postgres.NewCustomerRepo(conn)
 	resetTokenRepo := postgres.NewResetTokenRepo(conn)
+	reservationRepo := postgres.NewReservationRepo(conn)
+	orderRepo := postgres.NewOrderRepo(conn)
 
 	// Composition pipelines (empty; plugins add steps later).
 	pdp := composition.NewPipeline[composition.ProductContext]()
@@ -112,9 +114,13 @@ func runServe(cfg *config.Config, log logger.Logger) error {
 	// Checkout workflow.
 	validateCartStep := checkoutApp.NewValidateCartStep(variantRepo)
 	recalculatePricingStep := checkoutApp.NewRecalculatePricingStep(pricingPipeline)
+	reserveInventoryStep := checkoutApp.NewReserveInventoryStep(reservationRepo)
+	createOrderStep := checkoutApp.NewCreateOrderStep(orderRepo, variantRepo)
 	checkoutWorkflow := checkoutApp.NewWorkflow([]checkoutApp.Step{
 		validateCartStep,
 		recalculatePricingStep,
+		reserveInventoryStep,
+		createOrderStep,
 	}, bus, log)
 	checkoutService := checkoutApp.NewService(cartRepo, checkoutWorkflow, log)
 	_ = checkoutService // endpoint wired in a later PR
