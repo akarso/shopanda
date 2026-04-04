@@ -49,7 +49,6 @@ type Payment struct {
 	Method      PaymentMethod
 	status      PaymentStatus
 	Amount      shared.Money
-	Currency    string // duplicates Amount.Currency() for direct DB column mapping
 	ProviderRef string // external reference from the payment provider
 	CreatedAt   time.Time
 	UpdatedAt   time.Time
@@ -77,7 +76,6 @@ func NewPayment(id, orderID string, method PaymentMethod, amount shared.Money) (
 		Method:    method,
 		status:    StatusPending,
 		Amount:    amount,
-		Currency:  amount.Currency(),
 		CreatedAt: now,
 		UpdatedAt: now,
 	}, nil
@@ -86,6 +84,11 @@ func NewPayment(id, orderID string, method PaymentMethod, amount shared.Money) (
 // Status returns the current payment status.
 func (p Payment) Status() PaymentStatus {
 	return p.status
+}
+
+// Currency returns the ISO 4217 currency code derived from Amount.
+func (p Payment) Currency() string {
+	return p.Amount.Currency()
 }
 
 // Complete transitions a pending payment to completed.
@@ -119,12 +122,34 @@ func (p *Payment) Refund() error {
 	return nil
 }
 
-// SetStatusFromDB reconstructs the status from a database string.
-func (p *Payment) SetStatusFromDB(s string) error {
+// setStatusFromDB reconstructs the status from a database string.
+func (p *Payment) setStatusFromDB(s string) error {
 	status := PaymentStatus(s)
 	if !status.IsValid() {
 		return errors.New("payment: invalid status from db: " + s)
 	}
 	p.status = status
 	return nil
+}
+
+// NewPaymentFromDB reconstructs a Payment from persisted fields.
+// Used exclusively by repository implementations for hydration.
+func NewPaymentFromDB(id, orderID string, method PaymentMethod, status string, amount shared.Money, providerRef string, createdAt, updatedAt time.Time) (*Payment, error) {
+	s := PaymentStatus(status)
+	if !s.IsValid() {
+		return nil, errors.New("payment: invalid status from db: " + status)
+	}
+	if !method.IsValid() {
+		return nil, errors.New("payment: invalid method from db: " + string(method))
+	}
+	return &Payment{
+		ID:          id,
+		OrderID:     orderID,
+		Method:      method,
+		status:      s,
+		Amount:      amount,
+		ProviderRef: providerRef,
+		CreatedAt:   createdAt,
+		UpdatedAt:   updatedAt,
+	}, nil
 }

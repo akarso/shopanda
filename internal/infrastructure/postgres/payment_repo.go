@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"time"
 
 	"github.com/akarso/shopanda/internal/domain/payment"
 	"github.com/akarso/shopanda/internal/domain/shared"
@@ -30,35 +31,26 @@ type paymentScanner interface {
 
 // hydratePayment reads a payment row from any scanner.
 func (r *PaymentRepo) hydratePayment(s paymentScanner) (*payment.Payment, error) {
-	var p payment.Payment
-	var status string
-	var method string
+	var id, orderID string
+	var status, method string
 	var amount int64
 	var currency string
 	var providerRef sql.NullString
-	err := s.Scan(&p.ID, &p.OrderID, &method, &status,
-		&amount, &currency, &providerRef, &p.CreatedAt, &p.UpdatedAt)
+	var createdAt, updatedAt time.Time
+	err := s.Scan(&id, &orderID, &method, &status,
+		&amount, &currency, &providerRef, &createdAt, &updatedAt)
 	if err != nil {
 		return nil, err
 	}
-	if err := p.SetStatusFromDB(status); err != nil {
-		return nil, err
-	}
-	m := payment.PaymentMethod(method)
-	if !m.IsValid() {
-		return nil, fmt.Errorf("payment_repo: invalid method from db: %s", method)
-	}
-	p.Method = m
 	money, err := shared.NewMoney(amount, currency)
 	if err != nil {
 		return nil, fmt.Errorf("payment_repo: amount money: %w", err)
 	}
-	p.Amount = money
-	p.Currency = currency
+	var ref string
 	if providerRef.Valid {
-		p.ProviderRef = providerRef.String
+		ref = providerRef.String
 	}
-	return &p, nil
+	return payment.NewPaymentFromDB(id, orderID, payment.PaymentMethod(method), status, money, ref, createdAt, updatedAt)
 }
 
 const paymentColumns = `id, order_id, method, status, amount, currency, provider_ref, created_at, updated_at`
@@ -110,7 +102,7 @@ func (r *PaymentRepo) Create(ctx context.Context, p *payment.Payment) error {
 	}
 	_, err := r.db.ExecContext(ctx, q,
 		p.ID, p.OrderID, string(p.Method), string(p.Status()),
-		p.Amount.Amount(), p.Currency, ref,
+		p.Amount.Amount(), p.Amount.Currency(), ref,
 		p.CreatedAt, p.UpdatedAt,
 	)
 	if err != nil {
