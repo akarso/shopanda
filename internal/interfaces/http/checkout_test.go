@@ -126,6 +126,9 @@ func (r *stubCheckoutOrderRepo) FindByID(_ context.Context, _ string) (*order.Or
 func (r *stubCheckoutOrderRepo) FindByCustomerID(_ context.Context, _ string) ([]order.Order, error) {
 	return nil, nil
 }
+func (r *stubCheckoutOrderRepo) List(_ context.Context, _, _ int) ([]order.Order, error) {
+	return nil, nil
+}
 func (r *stubCheckoutOrderRepo) Save(_ context.Context, o *order.Order) error {
 	r.saved = o
 	return nil

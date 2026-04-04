@@ -26,6 +26,7 @@ import (
 
 type mockAdminProductRepo struct {
 	findByIDFn func(ctx context.Context, id string) (*catalog.Product, error)
+	listFn     func(ctx context.Context, offset, limit int) ([]catalog.Product, error)
 	createFn   func(ctx context.Context, p *catalog.Product) error
 	updateFn   func(ctx context.Context, p *catalog.Product) error
 }
@@ -42,6 +43,9 @@ func (m *mockAdminProductRepo) FindBySlug(ctx context.Context, slug string) (*ca
 }
 
 func (m *mockAdminProductRepo) List(ctx context.Context, offset, limit int) ([]catalog.Product, error) {
+	if m.listFn != nil {
+		return m.listFn(ctx, offset, limit)
+	}
 	return nil, nil
 }
 
@@ -64,6 +68,7 @@ func (m *mockAdminProductRepo) WithTx(_ *sql.Tx) catalog.ProductRepository { ret
 
 func newAdminRouter(h *shophttp.ProductAdminHandler) *http.ServeMux {
 	mux := http.NewServeMux()
+	mux.HandleFunc("GET /api/v1/admin/products", h.List())
 	mux.HandleFunc("POST /api/v1/admin/products", h.Create())
 	mux.HandleFunc("PUT /api/v1/admin/products/{id}", h.Update())
 	return mux
@@ -80,6 +85,84 @@ func jsonBody(t *testing.T, v interface{}) *bytes.Reader {
 		t.Fatalf("marshal: %v", err)
 	}
 	return bytes.NewReader(b)
+}
+
+// --- List tests ---
+
+func TestProductAdminHandler_List_OK(t *testing.T) {
+	repo := &mockAdminProductRepo{
+		listFn: func(_ context.Context, offset, limit int) ([]catalog.Product, error) {
+			if offset != 0 {
+				t.Errorf("offset = %d, want 0", offset)
+			}
+			if limit != 20 {
+				t.Errorf("limit = %d, want 20", limit)
+			}
+			return []catalog.Product{
+				{ID: "p1", Name: "Widget", Slug: "widget", Status: catalog.StatusActive},
+				{ID: "p2", Name: "Gadget", Slug: "gadget", Status: catalog.StatusDraft},
+			}, nil
+		},
+	}
+	h := shophttp.NewProductAdminHandler(repo, testAdminBus())
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("GET", "/api/v1/admin/products", nil)
+	newAdminRouter(h).ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d; body: %s", rec.Code, http.StatusOK, rec.Body.String())
+	}
+
+	var body map[string]interface{}
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	data := body["data"].(map[string]interface{})
+	products := data["products"].([]interface{})
+	if len(products) != 2 {
+		t.Fatalf("products len = %d, want 2", len(products))
+	}
+}
+
+func TestProductAdminHandler_List_Empty(t *testing.T) {
+	repo := &mockAdminProductRepo{
+		listFn: func(_ context.Context, _, _ int) ([]catalog.Product, error) {
+			return nil, nil
+		},
+	}
+	h := shophttp.NewProductAdminHandler(repo, testAdminBus())
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("GET", "/api/v1/admin/products", nil)
+	newAdminRouter(h).ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d; body: %s", rec.Code, http.StatusOK, rec.Body.String())
+	}
+}
+
+func TestProductAdminHandler_List_Pagination(t *testing.T) {
+	repo := &mockAdminProductRepo{
+		listFn: func(_ context.Context, offset, limit int) ([]catalog.Product, error) {
+			if offset != 10 {
+				t.Errorf("offset = %d, want 10", offset)
+			}
+			if limit != 5 {
+				t.Errorf("limit = %d, want 5", limit)
+			}
+			return nil, nil
+		},
+	}
+	h := shophttp.NewProductAdminHandler(repo, testAdminBus())
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("GET", "/api/v1/admin/products?offset=10&limit=5", nil)
+	newAdminRouter(h).ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d", rec.Code, http.StatusOK)
+	}
 }
 
 // --- Create tests ---

@@ -73,6 +73,9 @@ func (r *mockOrderRepo) FindByID(_ context.Context, _ string) (*order.Order, err
 func (r *mockOrderRepo) FindByCustomerID(_ context.Context, _ string) ([]order.Order, error) {
 	return nil, nil
 }
+func (r *mockOrderRepo) List(_ context.Context, _, _ int) ([]order.Order, error) {
+	return nil, nil
+}
 func (r *mockOrderRepo) Save(_ context.Context, o *order.Order) error {
 	if r.err != nil {
 		return r.err

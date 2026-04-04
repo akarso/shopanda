@@ -42,6 +42,21 @@ func (r *stubOrderRepo) FindByCustomerID(_ context.Context, customerID string) (
 	return out, nil
 }
 
+func (r *stubOrderRepo) List(_ context.Context, offset, limit int) ([]order.Order, error) {
+	var all []order.Order
+	for _, o := range r.orders {
+		all = append(all, *o)
+	}
+	if offset >= len(all) {
+		return nil, nil
+	}
+	end := offset + limit
+	if end > len(all) {
+		end = len(all)
+	}
+	return all[offset:end], nil
+}
+
 func (r *stubOrderRepo) Save(_ context.Context, o *order.Order) error {
 	r.orders[o.ID] = o
 	return nil

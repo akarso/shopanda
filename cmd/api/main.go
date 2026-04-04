@@ -145,6 +145,7 @@ func runServe(cfg *config.Config, log logger.Logger) error {
 	variantHandler := shophttp.NewVariantHandler(productRepo, variantRepo, bus)
 	cartHandler := shophttp.NewCartHandler(cartService)
 	orderHandler := shophttp.NewOrderHandler(orderRepo)
+	orderAdmin := shophttp.NewOrderAdminHandler(orderRepo)
 	authHandler := shophttp.NewAuthHandler(authService)
 
 	router := shophttp.NewRouter()
@@ -175,10 +176,13 @@ func runServe(cfg *config.Config, log logger.Logger) error {
 	router.HandleFunc("GET /api/v1/products/{id}/variants/{variantId}", variantHandler.Get())
 
 	// Admin routes (behind RequireRole(admin)).
+	router.Handle("GET /api/v1/admin/products", requireAdmin(productAdmin.List()))
 	router.Handle("POST /api/v1/admin/products", requireAdmin(productAdmin.Create()))
 	router.Handle("PUT /api/v1/admin/products/{id}", requireAdmin(productAdmin.Update()))
 	router.Handle("POST /api/v1/admin/products/{id}/variants", requireAdmin(variantHandler.Create()))
 	router.Handle("PUT /api/v1/admin/products/{id}/variants/{variantId}", requireAdmin(variantHandler.Update()))
+	router.Handle("GET /api/v1/admin/orders", requireAdmin(orderAdmin.List()))
+	router.Handle("GET /api/v1/admin/orders/{orderId}", requireAdmin(orderAdmin.Get()))
 
 	// Cart routes (behind RequireAuth).
 	router.Handle("POST /api/v1/carts", requireAuth(cartHandler.Create()))

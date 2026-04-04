@@ -120,6 +120,54 @@ func (r *OrderRepo) FindByCustomerID(ctx context.Context, customerID string) ([]
 	return orders, nil
 }
 
+// List returns a page of orders, newest first.
+func (r *OrderRepo) List(ctx context.Context, offset, limit int) ([]order.Order, error) {
+	if offset < 0 {
+		return nil, fmt.Errorf("order_repo: list: offset must be >= 0")
+	}
+	if limit <= 0 {
+		return nil, fmt.Errorf("order_repo: list: limit must be > 0")
+	}
+	if limit > 100 {
+		limit = 100
+	}
+	const q = `SELECT id, customer_id, status, currency, total_amount, total_currency, created_at, updated_at
+		FROM orders ORDER BY created_at DESC LIMIT $1 OFFSET $2`
+	rows, err := r.db.QueryContext(ctx, q, limit, offset)
+	if err != nil {
+		return nil, fmt.Errorf("order_repo: list: %w", err)
+	}
+	defer rows.Close()
+
+	var orders []order.Order
+	var ids []string
+	for rows.Next() {
+		o, err := r.hydrateOrder(rows)
+		if err != nil {
+			return nil, fmt.Errorf("order_repo: list scan: %w", err)
+		}
+		orders = append(orders, *o)
+		ids = append(ids, o.ID)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("order_repo: list rows: %w", err)
+	}
+	if len(orders) == 0 {
+		return orders, nil
+	}
+
+	itemMap, err := r.loadItemsBatch(ctx, ids)
+	if err != nil {
+		return nil, err
+	}
+	for i := range orders {
+		if err := orders[i].SetItemsFromDB(itemMap[orders[i].ID]); err != nil {
+			return nil, fmt.Errorf("order_repo: set items: %w", err)
+		}
+	}
+	return orders, nil
+}
+
 // Save persists an order and its items (insert-only).
 func (r *OrderRepo) Save(ctx context.Context, o *order.Order) error {
 	if o == nil {
