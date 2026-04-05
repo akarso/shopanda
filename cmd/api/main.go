@@ -18,6 +18,7 @@ import (
 	"github.com/akarso/shopanda/internal/domain/pricing"
 	"github.com/akarso/shopanda/internal/domain/shared"
 	"github.com/akarso/shopanda/internal/infrastructure/flatrate"
+	"github.com/akarso/shopanda/internal/infrastructure/manualpay"
 	"github.com/akarso/shopanda/internal/infrastructure/postgres"
 	"github.com/akarso/shopanda/internal/platform/config"
 	"github.com/akarso/shopanda/internal/platform/db"
@@ -85,8 +86,10 @@ func runServe(cfg *config.Config, log logger.Logger) error {
 	reservationRepo := postgres.NewReservationRepo(conn)
 	orderRepo := postgres.NewOrderRepo(conn)
 	paymentRepo := postgres.NewPaymentRepo(conn)
+	shippingRepo := postgres.NewShippingRepo(conn)
 
-	// Shipping providers.
+	// Providers.
+	manualPayProvider := manualpay.NewProvider()
 	flatRateProvider := flatrate.NewProvider(shared.MustNewMoney(500, "USD"))
 
 	// Composition pipelines (empty; plugins add steps later).
@@ -123,11 +126,15 @@ func runServe(cfg *config.Config, log logger.Logger) error {
 	recalculatePricingStep := checkoutApp.NewRecalculatePricingStep(pricingPipeline)
 	reserveInventoryStep := checkoutApp.NewReserveInventoryStep(reservationRepo)
 	createOrderStep := checkoutApp.NewCreateOrderStep(orderRepo, variantRepo)
+	selectShippingStep := checkoutApp.NewSelectShippingStep(flatRateProvider, shippingRepo)
+	initiatePaymentStep := checkoutApp.NewInitiatePaymentStep(manualPayProvider, paymentRepo)
 	checkoutWorkflow := checkoutApp.NewWorkflow([]checkoutApp.Step{
 		validateCartStep,
 		recalculatePricingStep,
 		reserveInventoryStep,
 		createOrderStep,
+		selectShippingStep,
+		initiatePaymentStep,
 	}, bus, log)
 	checkoutService := checkoutApp.NewService(cartRepo, checkoutWorkflow, log)
 	checkoutHandler := shophttp.NewCheckoutHandler(checkoutService)
