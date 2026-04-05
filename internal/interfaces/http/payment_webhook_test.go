@@ -21,9 +21,9 @@ import (
 // ── mock payment repo ───────────────────────────────────────────────────
 
 type mockPaymentRepo struct {
-	findByIDFn    func(ctx context.Context, id string) (*payment.Payment, error)
-	findByOrderFn func(ctx context.Context, orderID string) (*payment.Payment, error)
-	createFn      func(ctx context.Context, p *payment.Payment) error
+	findByIDFn     func(ctx context.Context, id string) (*payment.Payment, error)
+	findByOrderFn  func(ctx context.Context, orderID string) (*payment.Payment, error)
+	createFn       func(ctx context.Context, p *payment.Payment) error
 	updateStatusFn func(ctx context.Context, p *payment.Payment, prev time.Time) error
 }
 

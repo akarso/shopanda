@@ -399,6 +399,17 @@ Spec: [`docs/ROLES.md`](docs/ROLES.md)
 
 ---
 
+## Phase 30 — Security Hardening
+
+Goal: harden public-facing endpoints and provider integrations.
+
+| PR  | Title                        | Scope                                              |
+| --- | ---------------------------- | -------------------------------------------------- |
+| 097 | Webhook signature verification | Per-provider HMAC/signature check, secret config, raw-body buffering, reject unsigned requests |
+| 098 | Rate limiting                | Token-bucket middleware, per-IP + per-route config, 429 responses |
+
+---
+
 ## Milestone Summary
 
 | Milestone                 | After PR | What works                                  |
@@ -427,6 +438,7 @@ Spec: [`docs/ROLES.md`](docs/ROLES.md)
 | **EU-compliant**          | 092      | GDPR, cookie consent, price history         |
 | **CDN-optimized**         | 094      | Cache headers, CDN config, invalidation     |
 | **Admin RBAC**            | 096      | Role-based permissions for admin routes     |
+| **Security hardened**      | 098      | Webhook signatures, rate limiting           |
 
 ---
 
