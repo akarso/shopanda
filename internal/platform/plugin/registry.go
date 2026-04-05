@@ -10,11 +10,17 @@ import (
 type State string
 
 const (
-	StateLoaded      State = "loaded"
-	StateInitialized State = "initialized"
-	StateActive      State = "active"
-	StateFailed      State = "failed"
+	StateLoaded State = "loaded"
+	StateActive State = "active"
+	StateFailed State = "failed"
 )
+
+// InitSummary reports the outcome of InitAll.
+type InitSummary struct {
+	Registered  int
+	Initialized int
+	Failed      int
+}
 
 // Entry tracks a registered plugin and its lifecycle state.
 type Entry struct {
@@ -63,13 +69,13 @@ func (r *Registry) Register(p Plugin) {
 }
 
 // InitAll initializes all loaded plugins by calling Init(app).
-// Plugins that fail initialization are marked as failed and skipped.
-// Returns the count of successfully initialized plugins.
-func (r *Registry) InitAll(app *App) int {
+// Plugins that fail initialization (including panics) are marked as failed and skipped.
+// Returns an InitSummary describing the outcome.
+func (r *Registry) InitAll(app *App) InitSummary {
 	if app == nil {
 		panic("plugin: app must not be nil")
 	}
-	initialized := 0
+	summary := InitSummary{Registered: len(r.entries)}
 	for i := range r.entries {
 		e := &r.entries[i]
 		if e.State != StateLoaded {
@@ -79,21 +85,36 @@ func (r *Registry) InitAll(app *App) int {
 		r.log.Info("plugin.init.start", map[string]interface{}{
 			"plugin": name,
 		})
-		if err := e.Plugin.Init(app); err != nil {
+		if err := r.safeInit(e, app); err != nil {
 			e.State = StateFailed
 			e.Err = err
+			summary.Failed++
 			r.log.Error("plugin.init.failed", err, map[string]interface{}{
 				"plugin": name,
 			})
 			continue
 		}
 		e.State = StateActive
-		initialized++
+		summary.Initialized++
 		r.log.Info("plugin.init.complete", map[string]interface{}{
 			"plugin": name,
 		})
 	}
-	return initialized
+	return summary
+}
+
+// safeInit calls plugin.Init and recovers from panics.
+func (r *Registry) safeInit(e *Entry, app *App) (err error) {
+	defer func() {
+		if rv := recover(); rv != nil {
+			err = fmt.Errorf("plugin %q panicked: %v", e.Plugin.Name(), rv)
+			r.log.Error("plugin.init.panic", err, map[string]interface{}{
+				"plugin": e.Plugin.Name(),
+				"panic":  rv,
+			})
+		}
+	}()
+	return e.Plugin.Init(app)
 }
 
 // Entries returns a copy of all plugin entries.

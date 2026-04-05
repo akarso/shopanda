@@ -124,10 +124,15 @@ func runServe(cfg *config.Config, log logger.Logger) error {
 	registry := plugin.NewRegistry(log)
 	// Register plugins here:
 	// registry.Register(myplugin.New())
-	registry.InitAll(&plugin.App{
+	summary := registry.InitAll(&plugin.App{
 		Logger: log,
 		Bus:    bus,
 		Config: cfg,
+	})
+	log.Info("plugin.init.summary", map[string]interface{}{
+		"registered":  summary.Registered,
+		"initialized": summary.Initialized,
+		"failed":      summary.Failed,
 	})
 
 	// Application services.

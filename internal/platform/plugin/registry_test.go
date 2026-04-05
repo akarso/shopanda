@@ -16,6 +16,7 @@ import (
 type mockPlugin struct {
 	name    string
 	initErr error
+	doPanic bool
 	called  bool
 }
 
@@ -23,6 +24,9 @@ func (p *mockPlugin) Name() string { return p.name }
 
 func (p *mockPlugin) Init(_ *plugin.App) error {
 	p.called = true
+	if p.doPanic {
+		panic("plugin init exploded")
+	}
 	return p.initErr
 }
 
@@ -101,10 +105,16 @@ func TestRegistry_InitAll_Success(t *testing.T) {
 	reg.Register(p1)
 	reg.Register(p2)
 
-	n := reg.InitAll(testApp(log))
+	s := reg.InitAll(testApp(log))
 
-	if n != 2 {
-		t.Fatalf("InitAll() = %d, want 2", n)
+	if s.Initialized != 2 {
+		t.Fatalf("Initialized = %d, want 2", s.Initialized)
+	}
+	if s.Failed != 0 {
+		t.Fatalf("Failed = %d, want 0", s.Failed)
+	}
+	if s.Registered != 2 {
+		t.Fatalf("Registered = %d, want 2", s.Registered)
 	}
 	if !p1.called {
 		t.Error("p1.Init not called")
@@ -128,10 +138,13 @@ func TestRegistry_InitAll_FailureContinues(t *testing.T) {
 	reg.Register(failing)
 	reg.Register(ok)
 
-	n := reg.InitAll(testApp(log))
+	s := reg.InitAll(testApp(log))
 
-	if n != 1 {
-		t.Fatalf("InitAll() = %d, want 1", n)
+	if s.Initialized != 1 {
+		t.Fatalf("Initialized = %d, want 1", s.Initialized)
+	}
+	if s.Failed != 1 {
+		t.Fatalf("Failed = %d, want 1", s.Failed)
 	}
 
 	entries := reg.Entries()
@@ -169,9 +182,9 @@ func TestRegistry_InitAll_SkipsNonLoaded(t *testing.T) {
 	p.called = false
 
 	// Second init → skip (already active)
-	n := reg.InitAll(testApp(log))
-	if n != 0 {
-		t.Fatalf("second InitAll() = %d, want 0", n)
+	s := reg.InitAll(testApp(log))
+	if s.Initialized != 0 {
+		t.Fatalf("second Initialized = %d, want 0", s.Initialized)
 	}
 	if p.called {
 		t.Error("Init should not be called on already-active plugin")
@@ -182,9 +195,9 @@ func TestRegistry_InitAll_Empty(t *testing.T) {
 	log := testLogger()
 	reg := plugin.NewRegistry(log)
 
-	n := reg.InitAll(testApp(log))
-	if n != 0 {
-		t.Fatalf("InitAll() = %d, want 0", n)
+	s := reg.InitAll(testApp(log))
+	if s.Initialized != 0 {
+		t.Fatalf("Initialized = %d, want 0", s.Initialized)
 	}
 }
 
@@ -210,4 +223,37 @@ func TestNewRegistry_NilLoggerPanics(t *testing.T) {
 		}
 	}()
 	plugin.NewRegistry(nil)
+}
+
+func TestRegistry_InitAll_PanicRecovery(t *testing.T) {
+	log := testLogger()
+	reg := plugin.NewRegistry(log)
+
+	panicking := &mockPlugin{name: "panicker", doPanic: true}
+	normal := &mockPlugin{name: "normal"}
+	reg.Register(panicking)
+	reg.Register(normal)
+
+	s := reg.InitAll(testApp(log))
+
+	if s.Initialized != 1 {
+		t.Fatalf("Initialized = %d, want 1", s.Initialized)
+	}
+	if s.Failed != 1 {
+		t.Fatalf("Failed = %d, want 1", s.Failed)
+	}
+
+	entries := reg.Entries()
+	if entries[0].State != plugin.StateFailed {
+		t.Errorf("panicker state = %q, want failed", entries[0].State)
+	}
+	if entries[0].Err == nil {
+		t.Error("panicker Err should be non-nil")
+	}
+	if entries[1].State != plugin.StateActive {
+		t.Errorf("normal state = %q, want active", entries[1].State)
+	}
+	if !normal.called {
+		t.Error("normal.Init not called")
+	}
 }
