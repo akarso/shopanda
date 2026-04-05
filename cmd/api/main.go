@@ -16,6 +16,8 @@ import (
 	"github.com/akarso/shopanda/internal/domain/customer"
 	"github.com/akarso/shopanda/internal/domain/identity"
 	"github.com/akarso/shopanda/internal/domain/pricing"
+	"github.com/akarso/shopanda/internal/domain/shared"
+	"github.com/akarso/shopanda/internal/infrastructure/flatrate"
 	"github.com/akarso/shopanda/internal/infrastructure/postgres"
 	"github.com/akarso/shopanda/internal/platform/config"
 	"github.com/akarso/shopanda/internal/platform/db"
@@ -84,6 +86,9 @@ func runServe(cfg *config.Config, log logger.Logger) error {
 	orderRepo := postgres.NewOrderRepo(conn)
 	paymentRepo := postgres.NewPaymentRepo(conn)
 
+	// Shipping providers.
+	flatRateProvider := flatrate.NewProvider(shared.MustNewMoney(500, "USD"))
+
 	// Composition pipelines (empty; plugins add steps later).
 	pdp := composition.NewPipeline[composition.ProductContext]()
 	plp := composition.NewPipeline[composition.ListingContext]()
@@ -149,6 +154,7 @@ func runServe(cfg *config.Config, log logger.Logger) error {
 	orderAdmin := shophttp.NewOrderAdminHandler(orderRepo)
 	authHandler := shophttp.NewAuthHandler(authService)
 	paymentWebhook := shophttp.NewPaymentWebhookHandler(paymentRepo, bus)
+	shippingRates := shophttp.NewShippingRatesHandler(flatRateProvider)
 
 	router := shophttp.NewRouter()
 
@@ -199,6 +205,9 @@ func runServe(cfg *config.Config, log logger.Logger) error {
 	// Order routes (behind RequireAuth).
 	router.Handle("GET /api/v1/orders", requireAuth(orderHandler.List()))
 	router.Handle("GET /api/v1/orders/{orderId}", requireAuth(orderHandler.Get()))
+
+	// Shipping rates (behind RequireAuth — used during checkout).
+	router.Handle("GET /api/v1/shipping/rates", requireAuth(shippingRates.List()))
 
 	// Payment webhook (public — called by external payment providers).
 	router.HandleFunc("POST /api/v1/payments/webhook/{provider}", paymentWebhook.Handle())
