@@ -162,22 +162,9 @@ func TestPaymentWebhook_NotFound(t *testing.T) {
 	}
 }
 
-func TestPaymentWebhook_ProviderMismatch(t *testing.T) {
-	py := seedPendingPayment(t) // method = manual
-	repo := &mockPaymentRepo{
-		findByIDFn: func(_ context.Context, _ string) (*payment.Payment, error) {
-			return py, nil
-		},
-	}
-
-	// Need to register a second provider name for the mismatch test.
-	// Since only "manual" is currently valid, we rely on the handler rejecting
-	// unknown providers before hitting the mismatch path.
-	// Instead, we test with an invalid provider, which returns 422.
-	bus := event.NewBus(webhookTestLogger())
-	h := shophttp.NewPaymentWebhookHandler(repo, bus)
-	mux := http.NewServeMux()
-	mux.HandleFunc("POST /api/v1/payments/webhook/{provider}", h.Handle())
+func TestPaymentWebhook_UnknownProvider(t *testing.T) {
+	repo := &mockPaymentRepo{}
+	mux := webhookSetup(repo)
 
 	body := `{"payment_id":"pay-1","provider_ref":"ref","success":true}`
 	rec := httptest.NewRecorder()
