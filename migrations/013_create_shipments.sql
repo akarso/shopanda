@@ -1,7 +1,7 @@
 CREATE TABLE IF NOT EXISTS shipments (
     id            TEXT PRIMARY KEY,
     order_id      TEXT NOT NULL UNIQUE,
-    method        TEXT NOT NULL,
+    method        TEXT NOT NULL CHECK (method IN ('flat_rate')),
     status        TEXT NOT NULL DEFAULT 'pending'
                   CHECK (status IN ('pending', 'shipped', 'delivered', 'cancelled')),
     cost          BIGINT NOT NULL DEFAULT 0 CHECK (cost >= 0),
