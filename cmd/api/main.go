@@ -27,6 +27,8 @@ import (
 	"github.com/akarso/shopanda/internal/platform/logger"
 	"github.com/akarso/shopanda/internal/platform/migrate"
 
+	"github.com/akarso/shopanda/internal/platform/plugin"
+
 	shophttp "github.com/akarso/shopanda/internal/interfaces/http"
 )
 
@@ -117,6 +119,16 @@ func runServe(cfg *config.Config, log logger.Logger) error {
 			return nil
 		})
 	}
+
+	// Plugin registry.
+	registry := plugin.NewRegistry(log)
+	// Register plugins here:
+	// registry.Register(myplugin.New())
+	registry.InitAll(&plugin.App{
+		Logger: log,
+		Bus:    bus,
+		Config: cfg,
+	})
 
 	// Application services.
 	cartService := cartApp.NewService(cartRepo, priceRepo, pricingPipeline, log, bus)
