@@ -89,8 +89,13 @@ func (r *Registry) InitAll(app *App) InitSummary {
 			e.State = StateFailed
 			e.Err = err
 			summary.Failed++
+			cause := "error"
+			if _, ok := err.(*panicError); ok {
+				cause = "panic"
+			}
 			r.log.Error("plugin.init.failed", err, map[string]interface{}{
 				"plugin": name,
+				"cause":  cause,
 			})
 			continue
 		}
@@ -103,15 +108,20 @@ func (r *Registry) InitAll(app *App) InitSummary {
 	return summary
 }
 
+// panicError wraps a recovered panic value.
+type panicError struct {
+	value interface{}
+}
+
+func (e *panicError) Error() string {
+	return fmt.Sprintf("panic: %v", e.value)
+}
+
 // safeInit calls plugin.Init and recovers from panics.
 func (r *Registry) safeInit(e *Entry, app *App) (err error) {
 	defer func() {
 		if rv := recover(); rv != nil {
-			err = fmt.Errorf("plugin %q panicked: %v", e.Plugin.Name(), rv)
-			r.log.Error("plugin.init.panic", err, map[string]interface{}{
-				"plugin": e.Plugin.Name(),
-				"panic":  rv,
-			})
+			err = &panicError{value: rv}
 		}
 	}()
 	return e.Plugin.Init(app)
