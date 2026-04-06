@@ -43,10 +43,10 @@ func TestNewCategory(t *testing.T) {
 
 func TestNewCategory_Validation(t *testing.T) {
 	tests := []struct {
-		name string
-		id   string
+		name  string
+		id    string
 		cName string
-		slug string
+		slug  string
 	}{
 		{"empty id", "", "Name", "slug"},
 		{"empty name", "id-1", "", "slug"},

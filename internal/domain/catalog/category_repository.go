@@ -17,6 +17,9 @@ type CategoryRepository interface {
 	// Pass nil parentID to get root categories.
 	FindByParentID(ctx context.Context, parentID *string) ([]Category, error)
 
+	// FindAll returns all categories ordered by position asc, then name asc.
+	FindAll(ctx context.Context) ([]Category, error)
+
 	// Create persists a new category.
 	Create(ctx context.Context, c *Category) error
 

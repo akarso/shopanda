@@ -62,6 +62,9 @@ func (m *mockAdminProductRepo) Update(ctx context.Context, p *catalog.Product) e
 	}
 	return nil
 }
+func (m *mockAdminProductRepo) FindByCategoryID(_ context.Context, _ string, _, _ int) ([]catalog.Product, error) {
+	return nil, nil
+}
 func (m *mockAdminProductRepo) WithTx(_ *sql.Tx) catalog.ProductRepository { return m }
 
 // --- helpers ---

@@ -42,6 +42,9 @@ func (m *mockVariantProductRepo) Create(ctx context.Context, p *catalog.Product)
 func (m *mockVariantProductRepo) Update(ctx context.Context, p *catalog.Product) error {
 	return nil
 }
+func (m *mockVariantProductRepo) FindByCategoryID(_ context.Context, _ string, _, _ int) ([]catalog.Product, error) {
+	return nil, nil
+}
 func (m *mockVariantProductRepo) WithTx(_ *sql.Tx) catalog.ProductRepository { return m }
 
 type mockVariantRepo struct {
