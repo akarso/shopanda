@@ -57,8 +57,8 @@ func TestRegistry_Register(t *testing.T) {
 		t.Fatalf("Len() = %d, want 1", reg.Len())
 	}
 	entries := reg.Entries()
-	if entries[0].Plugin.Name() != "test-plugin" {
-		t.Errorf("Name() = %q, want test-plugin", entries[0].Plugin.Name())
+	if entries[0].Name != "test-plugin" {
+		t.Errorf("Name = %q, want test-plugin", entries[0].Name)
 	}
 	if entries[0].State != plugin.StateLoaded {
 		t.Errorf("State = %q, want loaded", entries[0].State)
@@ -124,7 +124,7 @@ func TestRegistry_InitAll_Success(t *testing.T) {
 	}
 	for _, e := range reg.Entries() {
 		if e.State != plugin.StateActive {
-			t.Errorf("plugin %q state = %q, want active", e.Plugin.Name(), e.State)
+			t.Errorf("plugin %q state = %q, want active", e.Name, e.State)
 		}
 	}
 }

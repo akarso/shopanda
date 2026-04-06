@@ -25,6 +25,7 @@ type InitSummary struct {
 // Entry tracks a registered plugin and its lifecycle state.
 type Entry struct {
 	Plugin Plugin
+	Name   string
 	State  State
 	Err    error // non-nil when State == StateFailed
 }
@@ -55,12 +56,13 @@ func (r *Registry) Register(p Plugin) {
 		panic("plugin: plugin name must not be empty")
 	}
 	for _, e := range r.entries {
-		if e.Plugin.Name() == name {
+		if e.Name == name {
 			panic(fmt.Sprintf("plugin: duplicate plugin name: %q", name))
 		}
 	}
 	r.entries = append(r.entries, Entry{
 		Plugin: p,
+		Name:   name,
 		State:  StateLoaded,
 	})
 	r.log.Info("plugin.registered", map[string]interface{}{
@@ -81,7 +83,7 @@ func (r *Registry) InitAll(app *App) InitSummary {
 		if e.State != StateLoaded {
 			continue
 		}
-		name := e.Plugin.Name()
+		name := e.Name
 		r.log.Info("plugin.init.start", map[string]interface{}{
 			"plugin": name,
 		})
