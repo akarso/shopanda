@@ -90,6 +90,8 @@ func runServe(cfg *config.Config, log logger.Logger) error {
 	paymentRepo := postgres.NewPaymentRepo(conn)
 	shippingRepo := postgres.NewShippingRepo(conn)
 	categoryRepo := postgres.NewCategoryRepo(conn)
+	collectionRepo := postgres.NewCollectionRepo(conn)
+	_ = collectionRepo // wired in collection HTTP handlers PR
 
 	// Providers.
 	manualPayProvider := manualpay.NewProvider()
