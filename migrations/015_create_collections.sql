@@ -11,7 +11,7 @@ CREATE TABLE IF NOT EXISTS collections (
 
 CREATE TABLE IF NOT EXISTS collection_products (
     collection_id TEXT NOT NULL REFERENCES collections(id) ON DELETE CASCADE,
-    product_id    TEXT NOT NULL REFERENCES products(id) ON DELETE CASCADE,
+    product_id    UUID NOT NULL REFERENCES products(id) ON DELETE CASCADE,
     PRIMARY KEY (collection_id, product_id)
 );
 

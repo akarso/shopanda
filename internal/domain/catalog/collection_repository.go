@@ -28,6 +28,6 @@ type CollectionRepository interface {
 	RemoveProduct(ctx context.Context, collectionID, productID string) error
 
 	// ListProductIDs returns the product IDs assigned to a manual collection,
-	// ordered by the assignment order.
+	// ordered by product_id asc.
 	ListProductIDs(ctx context.Context, collectionID string) ([]string, error)
 }

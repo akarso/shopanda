@@ -161,20 +161,43 @@ func (r *CollectionRepo) Update(ctx context.Context, c *catalog.Collection) erro
 	if err != nil {
 		return fmt.Errorf("collection_repo: update: marshal meta: %w", err)
 	}
+
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("collection_repo: update: begin tx: %w", err)
+	}
+	defer tx.Rollback()
+
+	// If switching to dynamic, refuse when manual assignments exist.
+	if c.Type == catalog.CollectionDynamic {
+		var count int
+		err := tx.QueryRowContext(ctx,
+			`SELECT COUNT(*) FROM collection_products WHERE collection_id = $1`, c.ID,
+		).Scan(&count)
+		if err != nil {
+			return fmt.Errorf("collection_repo: update: count assignments: %w", err)
+		}
+		if count > 0 {
+			return apperror.Validation("cannot change to dynamic: collection has manual product assignments")
+		}
+	}
+
 	newUpdatedAt := time.Now().UTC()
 	const q = `UPDATE collections SET name = $1, slug = $2, type = $3, rules = $4, meta = $5, updated_at = $6 WHERE id = $7`
-	res, err := r.db.ExecContext(ctx, q,
+	res, err := tx.ExecContext(ctx, q,
 		c.Name, c.Slug, string(c.Type), rulesJSON, metaJSON,
 		newUpdatedAt, c.ID,
 	)
 	if err != nil {
 		var pqErr *pq.Error
-		if errors.As(err, &pqErr) && pqErr.Code == "23505" {
-			switch pqErr.Constraint {
-			case "collections_slug_key":
-				return apperror.Conflict("collection with this slug already exists")
-			default:
-				return apperror.Conflict("collection unique constraint violation")
+		if errors.As(err, &pqErr) {
+			if pqErr.Code == "23505" {
+				switch pqErr.Constraint {
+				case "collections_slug_key":
+					return apperror.Conflict("collection with this slug already exists")
+				default:
+					return apperror.Conflict("collection unique constraint violation")
+				}
 			}
 		}
 		return fmt.Errorf("collection_repo: update: %w", err)
@@ -185,6 +208,9 @@ func (r *CollectionRepo) Update(ctx context.Context, c *catalog.Collection) erro
 	}
 	if rows == 0 {
 		return apperror.NotFound("collection not found")
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("collection_repo: update: commit: %w", err)
 	}
 	c.UpdatedAt = newUpdatedAt
 	return nil
@@ -198,14 +224,27 @@ func (r *CollectionRepo) AddProduct(ctx context.Context, collectionID, productID
 	if productID == "" {
 		return fmt.Errorf("collection_repo: add product: empty product id")
 	}
-	const q = `INSERT INTO collection_products (collection_id, product_id) VALUES ($1, $2)`
-	_, err := r.db.ExecContext(ctx, q, collectionID, productID)
+	const q = `INSERT INTO collection_products (collection_id, product_id)
+		SELECT $1, $2 FROM collections WHERE id = $1 AND type = 'manual'`
+	res, err := r.db.ExecContext(ctx, q, collectionID, productID)
 	if err != nil {
 		var pqErr *pq.Error
-		if errors.As(err, &pqErr) && pqErr.Code == "23505" {
-			return apperror.Conflict("product already in collection")
+		if errors.As(err, &pqErr) {
+			if pqErr.Code == "23505" {
+				return apperror.Conflict("product already in collection")
+			}
+			if pqErr.Code == "23503" {
+				return apperror.NotFound("product not found")
+			}
 		}
 		return fmt.Errorf("collection_repo: add product: %w", err)
+	}
+	rows, err := res.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("collection_repo: add product: rows affected: %w", err)
+	}
+	if rows == 0 {
+		return apperror.Validation("collection not found or not a manual collection")
 	}
 	return nil
 }
