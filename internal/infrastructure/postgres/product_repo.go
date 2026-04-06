@@ -248,7 +248,7 @@ func (r *ProductRepo) FindByCategoryID(ctx context.Context, categoryID string, o
 		FROM products p
 		INNER JOIN product_categories pc ON p.id = pc.product_id
 		WHERE pc.category_id = $1
-		ORDER BY p.created_at DESC
+		ORDER BY p.created_at DESC, p.id DESC
 		LIMIT $2 OFFSET $3`
 
 	var rows *sql.Rows

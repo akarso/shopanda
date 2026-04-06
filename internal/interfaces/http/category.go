@@ -35,7 +35,7 @@ type categoryNode struct {
 	Slug     string                 `json:"slug"`
 	Position int                    `json:"position"`
 	Meta     map[string]interface{} `json:"meta"`
-	Children []categoryNode         `json:"children"`
+	Children []*categoryNode        `json:"children"`
 }
 
 // Tree handles GET /api/v1/categories.
@@ -117,7 +117,7 @@ func (h *CategoryHandler) Products() http.HandlerFunc {
 }
 
 // buildTree assembles a flat slice of categories into a nested tree.
-func buildTree(all []catalog.Category) []categoryNode {
+func buildTree(all []catalog.Category) []*categoryNode {
 	nodes := make(map[string]*categoryNode, len(all))
 	var roots []string
 
@@ -130,7 +130,7 @@ func buildTree(all []catalog.Category) []categoryNode {
 			Slug:     c.Slug,
 			Position: c.Position,
 			Meta:     c.Meta,
-			Children: []categoryNode{},
+			Children: []*categoryNode{},
 		}
 		if c.ParentID == nil {
 			roots = append(roots, c.ID)
@@ -141,15 +141,15 @@ func buildTree(all []catalog.Category) []categoryNode {
 	for _, c := range all {
 		if c.ParentID != nil {
 			if parent, ok := nodes[*c.ParentID]; ok {
-				parent.Children = append(parent.Children, *nodes[c.ID])
+				parent.Children = append(parent.Children, nodes[c.ID])
 			}
 		}
 	}
 
 	// Collect root nodes.
-	tree := make([]categoryNode, 0, len(roots))
+	tree := make([]*categoryNode, 0, len(roots))
 	for _, id := range roots {
-		tree = append(tree, *nodes[id])
+		tree = append(tree, nodes[id])
 	}
 	return tree
 }

@@ -23,6 +23,9 @@ type ProductRepository interface {
 
 	// FindByCategoryID returns products belonging to the given category,
 	// ordered by created_at desc.
+	// offset must be >= 0; implementations must return an error for negative values.
+	// limit must be > 0; implementations must return an error for non-positive values.
+	// Implementations should cap limit to a reasonable maximum (e.g. 100).
 	FindByCategoryID(ctx context.Context, categoryID string, offset, limit int) ([]Product, error)
 
 	// Create persists a new product.
