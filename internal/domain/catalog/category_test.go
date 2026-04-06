@@ -51,6 +51,9 @@ func TestNewCategory_Validation(t *testing.T) {
 		{"empty id", "", "Name", "slug"},
 		{"empty name", "id-1", "", "slug"},
 		{"empty slug", "id-1", "Name", ""},
+		{"whitespace id", "  ", "Name", "slug"},
+		{"whitespace name", "id-1", "  ", "slug"},
+		{"whitespace slug", "id-1", "Name", "  "},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -63,7 +66,10 @@ func TestNewCategory_Validation(t *testing.T) {
 }
 
 func TestCategory_IsRoot(t *testing.T) {
-	c, _ := catalog.NewCategory("id-1", "Root", "root")
+	c, err := catalog.NewCategory("id-1", "Root", "root")
+	if err != nil {
+		t.Fatalf("NewCategory() error = %v", err)
+	}
 	if !c.IsRoot() {
 		t.Error("expected IsRoot() = true for nil ParentID")
 	}

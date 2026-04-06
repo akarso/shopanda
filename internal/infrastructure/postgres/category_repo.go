@@ -144,7 +144,14 @@ func (r *CategoryRepo) Create(ctx context.Context, c *catalog.Category) error {
 	if err != nil {
 		var pqErr *pq.Error
 		if errors.As(err, &pqErr) && pqErr.Code == "23505" {
-			return apperror.Conflict("category with this slug already exists")
+			switch pqErr.Constraint {
+			case "categories_slug_key":
+				return apperror.Conflict("category with this slug already exists")
+			case "categories_pkey":
+				return apperror.Conflict("category with this id already exists")
+			default:
+				return apperror.Conflict("category unique constraint violation")
+			}
 		}
 		return fmt.Errorf("category_repo: create: %w", err)
 	}
@@ -164,16 +171,21 @@ func (r *CategoryRepo) Update(ctx context.Context, c *catalog.Category) error {
 	if c.ParentID != nil {
 		parentID = sql.NullString{String: *c.ParentID, Valid: true}
 	}
-	c.UpdatedAt = time.Now().UTC()
+	newUpdatedAt := time.Now().UTC()
 	const q = `UPDATE categories SET parent_id = $1, name = $2, slug = $3, position = $4, meta = $5, updated_at = $6 WHERE id = $7`
 	res, err := r.db.ExecContext(ctx, q,
 		parentID, c.Name, c.Slug, c.Position, metaJSON,
-		c.UpdatedAt, c.ID,
+		newUpdatedAt, c.ID,
 	)
 	if err != nil {
 		var pqErr *pq.Error
 		if errors.As(err, &pqErr) && pqErr.Code == "23505" {
-			return apperror.Conflict("category with this slug already exists")
+			switch pqErr.Constraint {
+			case "categories_slug_key":
+				return apperror.Conflict("category with this slug already exists")
+			default:
+				return apperror.Conflict("category unique constraint violation")
+			}
 		}
 		return fmt.Errorf("category_repo: update: %w", err)
 	}
@@ -184,5 +196,6 @@ func (r *CategoryRepo) Update(ctx context.Context, c *catalog.Category) error {
 	if rows == 0 {
 		return apperror.NotFound("category not found")
 	}
+	c.UpdatedAt = newUpdatedAt
 	return nil
 }

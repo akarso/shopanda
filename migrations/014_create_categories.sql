@@ -9,8 +9,7 @@ CREATE TABLE IF NOT EXISTS categories (
     updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
-CREATE INDEX categories_parent_id_idx ON categories (parent_id);
-CREATE INDEX categories_slug_idx ON categories (slug);
+CREATE INDEX IF NOT EXISTS categories_parent_id_idx ON categories (parent_id);
 
 CREATE TABLE IF NOT EXISTS product_categories (
     product_id  TEXT NOT NULL REFERENCES products(id) ON DELETE CASCADE,
