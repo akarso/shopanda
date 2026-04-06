@@ -94,16 +94,6 @@ func runServe(cfg *config.Config, log logger.Logger) error {
 	manualPayProvider := manualpay.NewProvider()
 	flatRateProvider := flatrate.NewProvider(shared.MustNewMoney(500, "USD"))
 
-	// Composition pipelines (empty; plugins add steps later).
-	pdp := composition.NewPipeline[composition.ProductContext]()
-	plp := composition.NewPipeline[composition.ListingContext]()
-
-	// Pricing pipeline.
-	pricingPipeline := pricing.NewPipeline(
-		appPricing.NewBasePriceStep(priceRepo),
-		pricing.NewFinalizeStep(),
-	)
-
 	// Event bus.
 	bus := event.NewBus(log)
 
@@ -124,16 +114,35 @@ func runServe(cfg *config.Config, log logger.Logger) error {
 	registry := plugin.NewRegistry(log)
 	// Register plugins here:
 	// registry.Register(myplugin.New())
-	summary := registry.InitAll(&plugin.App{
+	pluginApp := &plugin.App{
 		Logger: log,
 		Bus:    bus,
 		Config: cfg,
-	})
+	}
+	summary := registry.InitAll(pluginApp)
 	log.Info("plugin.init.summary", map[string]interface{}{
 		"registered":  summary.Registered,
 		"initialized": summary.Initialized,
 		"failed":      summary.Failed,
 	})
+
+	// Composition pipelines (core + plugin steps).
+	pdp := composition.NewPipeline[composition.ProductContext]()
+	plp := composition.NewPipeline[composition.ListingContext]()
+	for _, s := range pluginApp.CompositionSteps("pdp") {
+		pdp.AddStep(s.(composition.Step[composition.ProductContext]))
+	}
+	for _, s := range pluginApp.CompositionSteps("plp") {
+		plp.AddStep(s.(composition.Step[composition.ListingContext]))
+	}
+
+	// Pricing pipeline (core + plugin steps + finalize).
+	pricingSteps := []pricing.PricingStep{appPricing.NewBasePriceStep(priceRepo)}
+	for _, s := range pluginApp.PricingSteps() {
+		pricingSteps = append(pricingSteps, s.(pricing.PricingStep))
+	}
+	pricingSteps = append(pricingSteps, pricing.NewFinalizeStep())
+	pricingPipeline := pricing.NewPipeline(pricingSteps...)
 
 	// Application services.
 	cartService := cartApp.NewService(cartRepo, priceRepo, pricingPipeline, log, bus)
@@ -145,14 +154,18 @@ func runServe(cfg *config.Config, log logger.Logger) error {
 	createOrderStep := checkoutApp.NewCreateOrderStep(orderRepo, variantRepo)
 	selectShippingStep := checkoutApp.NewSelectShippingStep(flatRateProvider, shippingRepo)
 	initiatePaymentStep := checkoutApp.NewInitiatePaymentStep(manualPayProvider, paymentRepo)
-	checkoutWorkflow := checkoutApp.NewWorkflow([]checkoutApp.Step{
+	checkoutSteps := []checkoutApp.Step{
 		validateCartStep,
 		recalculatePricingStep,
 		reserveInventoryStep,
 		createOrderStep,
 		selectShippingStep,
 		initiatePaymentStep,
-	}, bus, log)
+	}
+	for _, s := range pluginApp.CheckoutSteps() {
+		checkoutSteps = append(checkoutSteps, s.(checkoutApp.Step))
+	}
+	checkoutWorkflow := checkoutApp.NewWorkflow(checkoutSteps, bus, log)
 	checkoutService := checkoutApp.NewService(cartRepo, checkoutWorkflow, log)
 	checkoutHandler := shophttp.NewCheckoutHandler(checkoutService)
 
