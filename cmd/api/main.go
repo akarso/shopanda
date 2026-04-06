@@ -89,6 +89,7 @@ func runServe(cfg *config.Config, log logger.Logger) error {
 	orderRepo := postgres.NewOrderRepo(conn)
 	paymentRepo := postgres.NewPaymentRepo(conn)
 	shippingRepo := postgres.NewShippingRepo(conn)
+	categoryRepo := postgres.NewCategoryRepo(conn)
 
 	// Providers.
 	manualPayProvider := manualpay.NewProvider()
@@ -216,6 +217,7 @@ func runServe(cfg *config.Config, log logger.Logger) error {
 	authHandler := shophttp.NewAuthHandler(authService)
 	paymentWebhook := shophttp.NewPaymentWebhookHandler(paymentRepo, bus)
 	shippingRates := shophttp.NewShippingRatesHandler(flatRateProvider)
+	categoryHandler := shophttp.NewCategoryHandler(categoryRepo, productRepo)
 
 	router := shophttp.NewRouter()
 
@@ -243,6 +245,11 @@ func runServe(cfg *config.Config, log logger.Logger) error {
 	router.HandleFunc("GET /api/v1/products/{id}", productHandler.Get())
 	router.HandleFunc("GET /api/v1/products/{id}/variants", variantHandler.List())
 	router.HandleFunc("GET /api/v1/products/{id}/variants/{variantId}", variantHandler.Get())
+
+	// Category routes (public).
+	router.HandleFunc("GET /api/v1/categories", categoryHandler.Tree())
+	router.HandleFunc("GET /api/v1/categories/{id}", categoryHandler.Get())
+	router.HandleFunc("GET /api/v1/categories/{id}/products", categoryHandler.Products())
 
 	// Admin routes (behind RequireRole(admin)).
 	router.Handle("GET /api/v1/admin/products", requireAdmin(productAdmin.List()))

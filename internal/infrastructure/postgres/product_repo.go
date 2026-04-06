@@ -227,3 +227,52 @@ func (r *ProductRepo) scanProduct(s scanner) (*catalog.Product, error) {
 
 	return &p, nil
 }
+
+// FindByCategoryID returns products belonging to the given category,
+// ordered by created_at desc.
+func (r *ProductRepo) FindByCategoryID(ctx context.Context, categoryID string, offset, limit int) ([]catalog.Product, error) {
+	if categoryID == "" {
+		return nil, apperror.Validation("category id must not be empty")
+	}
+	if offset < 0 {
+		return nil, apperror.Validation("offset must be >= 0")
+	}
+	if limit <= 0 {
+		return nil, apperror.Validation("limit must be > 0")
+	}
+	if limit > maxListLimit {
+		limit = maxListLimit
+	}
+
+	const q = `SELECT p.id, p.name, p.slug, p.description, p.status, p.attributes, p.created_at, p.updated_at
+		FROM products p
+		INNER JOIN product_categories pc ON p.id = pc.product_id
+		WHERE pc.category_id = $1
+		ORDER BY p.created_at DESC, p.id DESC
+		LIMIT $2 OFFSET $3`
+
+	var rows *sql.Rows
+	var err error
+	if r.tx != nil {
+		rows, err = r.tx.QueryContext(ctx, q, categoryID, limit, offset)
+	} else {
+		rows, err = r.db.QueryContext(ctx, q, categoryID, limit, offset)
+	}
+	if err != nil {
+		return nil, fmt.Errorf("product_repo: find by category: %w", err)
+	}
+	defer rows.Close()
+
+	var products []catalog.Product
+	for rows.Next() {
+		p, err := r.scanProduct(rows)
+		if err != nil {
+			return nil, fmt.Errorf("product_repo: find by category scan: %w", err)
+		}
+		products = append(products, *p)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("product_repo: find by category rows: %w", err)
+	}
+	return products, nil
+}

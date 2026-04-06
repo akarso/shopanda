@@ -199,3 +199,26 @@ func (r *CategoryRepo) Update(ctx context.Context, c *catalog.Category) error {
 	c.UpdatedAt = newUpdatedAt
 	return nil
 }
+
+// FindAll returns all categories ordered by position asc, then name asc.
+func (r *CategoryRepo) FindAll(ctx context.Context) ([]catalog.Category, error) {
+	q := `SELECT ` + categoryColumns + ` FROM categories ORDER BY position ASC, name ASC`
+	rows, err := r.db.QueryContext(ctx, q)
+	if err != nil {
+		return nil, fmt.Errorf("category_repo: find all: %w", err)
+	}
+	defer rows.Close()
+
+	var categories []catalog.Category
+	for rows.Next() {
+		c, err := hydrateCategory(rows.Scan)
+		if err != nil {
+			return nil, fmt.Errorf("category_repo: find all: scan: %w", err)
+		}
+		categories = append(categories, *c)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("category_repo: find all: rows: %w", err)
+	}
+	return categories, nil
+}
