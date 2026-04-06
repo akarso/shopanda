@@ -130,16 +130,34 @@ func runServe(cfg *config.Config, log logger.Logger) error {
 	pdp := composition.NewPipeline[composition.ProductContext]()
 	plp := composition.NewPipeline[composition.ListingContext]()
 	for _, s := range pluginApp.CompositionSteps("pdp") {
-		pdp.AddStep(s.(composition.Step[composition.ProductContext]))
+		if v, ok := s.(composition.Step[composition.ProductContext]); ok {
+			pdp.AddStep(v)
+		} else {
+			log.Error("plugin.step.invalid_type", fmt.Errorf("expected composition.Step[ProductContext], got %T", s), map[string]interface{}{
+				"pipeline": "pdp",
+			})
+		}
 	}
 	for _, s := range pluginApp.CompositionSteps("plp") {
-		plp.AddStep(s.(composition.Step[composition.ListingContext]))
+		if v, ok := s.(composition.Step[composition.ListingContext]); ok {
+			plp.AddStep(v)
+		} else {
+			log.Error("plugin.step.invalid_type", fmt.Errorf("expected composition.Step[ListingContext], got %T", s), map[string]interface{}{
+				"pipeline": "plp",
+			})
+		}
 	}
 
 	// Pricing pipeline (core + plugin steps + finalize).
 	pricingSteps := []pricing.PricingStep{appPricing.NewBasePriceStep(priceRepo)}
 	for _, s := range pluginApp.PricingSteps() {
-		pricingSteps = append(pricingSteps, s.(pricing.PricingStep))
+		if v, ok := s.(pricing.PricingStep); ok {
+			pricingSteps = append(pricingSteps, v)
+		} else {
+			log.Error("plugin.step.invalid_type", fmt.Errorf("expected pricing.PricingStep, got %T", s), map[string]interface{}{
+				"pipeline": "pricing",
+			})
+		}
 	}
 	pricingSteps = append(pricingSteps, pricing.NewFinalizeStep())
 	pricingPipeline := pricing.NewPipeline(pricingSteps...)
@@ -163,7 +181,13 @@ func runServe(cfg *config.Config, log logger.Logger) error {
 		initiatePaymentStep,
 	}
 	for _, s := range pluginApp.CheckoutSteps() {
-		checkoutSteps = append(checkoutSteps, s.(checkoutApp.Step))
+		if v, ok := s.(checkoutApp.Step); ok {
+			checkoutSteps = append(checkoutSteps, v)
+		} else {
+			log.Error("plugin.step.invalid_type", fmt.Errorf("expected checkout.Step, got %T", s), map[string]interface{}{
+				"pipeline": "checkout",
+			})
+		}
 	}
 	checkoutWorkflow := checkoutApp.NewWorkflow(checkoutSteps, bus, log)
 	checkoutService := checkoutApp.NewService(cartRepo, checkoutWorkflow, log)

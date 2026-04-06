@@ -64,20 +64,24 @@ func (a *App) RegisterCompositionStep(pipeline string, step any) {
 	a.compositionSteps[pipeline] = append(a.compositionSteps[pipeline], step)
 }
 
-// PricingSteps returns the registered pricing steps.
+// PricingSteps returns a copy of the registered pricing steps.
 func (a *App) PricingSteps() []any {
-	return a.pricingSteps
+	return append([]any(nil), a.pricingSteps...)
 }
 
-// CheckoutSteps returns the registered checkout steps.
+// CheckoutSteps returns a copy of the registered checkout steps.
 func (a *App) CheckoutSteps() []any {
-	return a.checkoutSteps
+	return append([]any(nil), a.checkoutSteps...)
 }
 
-// CompositionSteps returns the registered composition steps for a pipeline.
+// CompositionSteps returns a copy of the registered composition steps for a pipeline.
 func (a *App) CompositionSteps(pipeline string) []any {
 	if a.compositionSteps == nil {
 		return nil
 	}
-	return a.compositionSteps[pipeline]
+	s := a.compositionSteps[pipeline]
+	if s == nil {
+		return nil
+	}
+	return append([]any(nil), s...)
 }
