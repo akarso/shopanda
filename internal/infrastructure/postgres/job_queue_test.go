@@ -3,6 +3,7 @@ package postgres_test
 import (
 	"context"
 	"testing"
+	"time"
 
 	"github.com/akarso/shopanda/internal/domain/jobs"
 	"github.com/akarso/shopanda/internal/infrastructure/postgres"
@@ -134,18 +135,31 @@ func TestJobQueue_Fail_Retry(t *testing.T) {
 
 	got, _ := q.Dequeue(ctx)
 
+	// Capture time before Fail so we can assert a bounded backoff window.
+	now := time.Now()
+
 	// Fail the job — should be re-queued since attempts(1) < maxRetries(3).
 	if err := q.Fail(ctx, got.ID, nil); err != nil {
 		t.Fatalf("Fail: %v", err)
 	}
 
-	// Check status is back to pending.
+	// Check status is back to pending with run_at in the expected backoff window.
+	// First retry uses retryDelay(0) = 5s base ±25% jitter → [3.75s, 6.25s].
 	var status string
-	if err := db.QueryRow("SELECT status FROM jobs WHERE id = $1", got.ID).Scan(&status); err != nil {
+	var runAt time.Time
+	if err := db.QueryRow("SELECT status, run_at FROM jobs WHERE id = $1", got.ID).Scan(&status, &runAt); err != nil {
 		t.Fatalf("query status: %v", err)
 	}
 	if status != "pending" {
 		t.Errorf("status = %q, want pending", status)
+	}
+	minDelay := 3750 * time.Millisecond // 5s × 0.75
+	maxDelay := 8 * time.Second         // 6.25s + buffer for DB/exec overhead
+	if !runAt.After(now.Add(minDelay)) {
+		t.Errorf("run_at %v should be after now+minDelay %v", runAt, now.Add(minDelay))
+	}
+	if !runAt.Before(now.Add(maxDelay)) {
+		t.Errorf("run_at %v should be before now+maxDelay %v", runAt, now.Add(maxDelay))
 	}
 }
 
