@@ -13,8 +13,8 @@ func TestRetryDelay_ExponentialGrowth(t *testing.T) {
 		if d <= 0 {
 			t.Fatalf("attempt %d: delay must be positive, got %v", attempt, d)
 		}
-		if attempt > 0 && d <= prev/2 {
-			t.Errorf("attempt %d: delay %v should be roughly double previous %v", attempt, d, prev)
+		if attempt > 0 && d <= prev {
+			t.Errorf("attempt %d: delay %v should be greater than previous %v", attempt, d, prev)
 		}
 		prev = d
 	}

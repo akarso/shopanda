@@ -163,7 +163,7 @@ func (q *JobQueue) Fail(ctx context.Context, id string, jobErr error) error {
 		return fmt.Errorf("job_queue: fail lookup: %w", err)
 	}
 
-	delay := retryDelay(attempts)
+	delay := retryDelay(attempts - 1)
 	const retryQ = `UPDATE jobs SET status = 'pending', run_at = NOW() + $2::interval, updated_at = NOW()
 		WHERE id = $1 AND status = 'processing' AND attempts < max_retries`
 	result, err = q.db.ExecContext(ctx, retryQ, id, fmt.Sprintf("%d milliseconds", delay.Milliseconds()))
