@@ -1,4 +1,8 @@
-package postgres
+#!/usr/bin/env python3
+"""Regenerate search_engine.go with DISTINCT+ORDER BY fix via subquery."""
+from pathlib import Path
+
+code = '''package postgres
 
 import (
 	"context"
@@ -30,9 +34,9 @@ func (e *SearchEngine) Name() string { return "postgres" }
 // The search_vector trigger on the products table handles normal INSERT/UPDATE,
 // so this method is primarily useful for explicit reindexing.
 func (e *SearchEngine) IndexProduct(ctx context.Context, p search.Product) error {
-	const q = `UPDATE products
+	const q = ''' + chr(96) + '''UPDATE products
 		SET search_vector = to_tsvector('english', $2 || ' ' || $3)
-		WHERE id = $1`
+		WHERE id = $1''' + chr(96) + '''
 	result, err := e.db.ExecContext(ctx, q, p.ID, p.Name, p.Description)
 	if err != nil {
 		return fmt.Errorf("search_engine: index product: %w", err)
@@ -49,7 +53,7 @@ func (e *SearchEngine) IndexProduct(ctx context.Context, p search.Product) error
 
 // RemoveProduct clears the search vector for a product, making it unsearchable.
 func (e *SearchEngine) RemoveProduct(ctx context.Context, productID string) error {
-	const q = `UPDATE products SET search_vector = NULL WHERE id = $1`
+	const q = ''' + chr(96) + '''UPDATE products SET search_vector = NULL WHERE id = $1''' + chr(96) + '''
 	_, err := e.db.ExecContext(ctx, q, productID)
 	if err != nil {
 		return fmt.Errorf("search_engine: remove product: %w", err)
@@ -259,3 +263,8 @@ func toInt64(v interface{}) (int64, bool) {
 		return 0, false
 	}
 }
+'''
+
+out = Path("internal/infrastructure/postgres/search_engine.go")
+out.write_text(code.lstrip("\n"))
+print(f"wrote {out} ({len(code)} bytes)")

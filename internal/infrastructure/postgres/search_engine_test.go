@@ -2,9 +2,8 @@ package postgres_test
 
 import (
 	"context"
-	"testing"
-
 	"fmt"
+	"testing"
 
 	"github.com/akarso/shopanda/internal/domain/catalog"
 	"github.com/akarso/shopanda/internal/domain/search"
@@ -107,6 +106,46 @@ func TestSearchEngine_RemoveProduct(t *testing.T) {
 	}
 	if result.Total != 0 {
 		t.Errorf("Total = %d, want 0 after RemoveProduct", result.Total)
+	}
+}
+
+func TestSearchEngine_RemoveProduct_TriggerRepopulates(t *testing.T) {
+	db := testDB(t)
+	ensureProductsTable(t, db)
+	engine := postgres.NewSearchEngine(db)
+	ctx := context.Background()
+	repo := postgres.NewProductRepo(db)
+
+	// Create and publish a product.
+	p := mustNewProduct(t, "Trigger Test Widget", "trigger-test-"+id.New()[:8])
+	p.Description = "unique trigger repopulation test"
+	p.Status = catalog.StatusActive
+	if err := repo.Create(ctx, &p); err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	if err := repo.Update(ctx, &p); err != nil {
+		t.Fatalf("Update: %v", err)
+	}
+
+	// Remove from search index (sets search_vector = NULL).
+	if err := engine.RemoveProduct(ctx, p.ID); err != nil {
+		t.Fatalf("RemoveProduct: %v", err)
+	}
+
+	// Update the product name via repo — the trigger fires on name/description changes
+	// and repopulates search_vector.
+	p.Name = "Trigger Restored Widget"
+	if err := repo.Update(ctx, &p); err != nil {
+		t.Fatalf("Update after remove: %v", err)
+	}
+
+	// The trigger should have repopulated search_vector, making it searchable again.
+	result, err := engine.Search(ctx, search.SearchQuery{Text: "trigger restored"})
+	if err != nil {
+		t.Fatalf("Search: %v", err)
+	}
+	if result.Total == 0 {
+		t.Error("expected product to be searchable again after trigger repopulation")
 	}
 }
 
