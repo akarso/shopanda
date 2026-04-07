@@ -290,6 +290,10 @@ classDiagram
     class PostgresSearchEngine {
         -db *sql.DB
     }
+    class SearchHandler {
+        -engine SearchEngine
+        +Search() HandlerFunc
+    }
 
     ProductRepository <|.. PostgresProductRepo : implements
     CartRepository <|.. PostgresCartRepo : implements
@@ -298,4 +302,5 @@ classDiagram
     CollectionRepository <|.. PostgresCollectionRepo : implements
     SearchEngine <|.. PostgresSearchEngine : implements
     PricingStep <|.. BasePriceStep : implements
+    SearchHandler --> SearchEngine : uses
 ```

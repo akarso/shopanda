@@ -25,4 +25,4 @@
 ## PRs Complete (with review status)
 - 001-053 all implemented and reviewed
 - Phase 13 (Catalog Organization: categories + collections) — complete
-- Phase 14 (Search) — PR-053 done, PR-054 done, PR-055 (endpoint) pending
+- Phase 14 (Search) — PR-053 done, PR-054 done, PR-055 done

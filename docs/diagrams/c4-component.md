@@ -23,6 +23,7 @@ C4Component
             Component(orderHandler, "OrderHandler", "HTTP", "List, Get orders")
             Component(orderAdmin, "OrderAdminHandler", "HTTP", "List, Get orders (admin)")
             Component(categoryHandler, "CategoryHandler", "HTTP", "Tree, Get, Products (public)")
+            Component(searchHandler, "SearchHandler", "HTTP", "Full-text product search (public)")
             Component(shippingHandler, "ShippingRatesHandler", "HTTP", "List shipping rates")
             Component(webhookHandler, "PaymentWebhookHandler", "HTTP", "Handle payment callbacks (public)")
         }
@@ -57,6 +58,7 @@ C4Component
     Rel(middleware, cartHandler, "Routes requests")
     Rel(middleware, checkoutHandler, "Routes requests")
     Rel(middleware, categoryHandler, "Routes requests")
+    Rel(middleware, searchHandler, "Routes requests")
     Rel(middleware, webhookHandler, "Routes requests")
 
     Rel(authHandler, authService, "Delegates auth logic")
@@ -75,6 +77,7 @@ C4Component
     Rel(checkoutWorkflow, postgresRepos, "Order, inventory, payment, shipping persistence")
     Rel(productHandler, postgresRepos, "Product queries")
     Rel(categoryHandler, postgresRepos, "Category + product queries")
+    Rel(searchHandler, postgresSearch, "Delegates search queries")
 
     Rel(postgresRepos, postgres, "SQL queries", "lib/pq")
     Rel(postgresSearch, postgres, "Full-text search queries", "lib/pq")
