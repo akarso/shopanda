@@ -40,6 +40,7 @@ C4Component
         Boundary(infrastructure, "Infrastructure Layer (Adapters)") {
             Component(postgresRepos, "PostgreSQL Repositories", "Go, lib/pq", "13 repo implementations: Product, Variant, Price, Cart, Order, Customer, Stock, Reservation, Payment, Shipping, Category, Collection, ResetToken")
             Component(postgresSearch, "PostgresSearchEngine", "Go, tsvector", "Full-text search via PostgreSQL tsvector, filters, facets")
+            Component(postgresJobQueue, "PostgresJobQueue", "Go, lib/pq", "Job queue with FOR UPDATE SKIP LOCKED dequeue, retry logic")
             Component(manualPay, "ManualPayProvider", "Go", "Offline payment processing")
             Component(flatRate, "FlatRateShipProvider", "Go", "Fixed-cost shipping calculation")
         }
@@ -47,6 +48,7 @@ C4Component
         Boundary(platform, "Platform Layer (Cross-Cutting)") {
             Component(eventBus, "EventBus", "Go", "Pub/sub for domain events (sync + async)")
             Component(pluginRegistry, "PluginRegistry", "Go", "Plugin lifecycle: register → init → collect steps")
+            Component(jobWorker, "JobWorker", "Go", "Polls queue, dispatches jobs to registered handlers")
             Component(jwtPkg, "JWT", "Go, crypto", "Token issuing and verification")
             Component(configPkg, "Config", "Go, yaml.v3", "YAML configuration loading")
             Component(loggerPkg, "Logger", "Go", "Structured logging (info, error, metadata)")
@@ -81,6 +83,8 @@ C4Component
 
     Rel(postgresRepos, postgres, "SQL queries", "lib/pq")
     Rel(postgresSearch, postgres, "Full-text search queries", "lib/pq")
+    Rel(postgresJobQueue, postgres, "Job queue queries", "lib/pq")
+    Rel(jobWorker, postgresJobQueue, "Polls and claims jobs")
     Rel(webhookHandler, paymentGateway, "Receives callbacks")
     Rel(pluginRegistry, pricingPipeline, "Provides pricing steps via pluginApp")
     Rel(pluginRegistry, checkoutWorkflow, "Provides checkout steps via pluginApp")

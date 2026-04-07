@@ -163,6 +163,28 @@ classDiagram
         +map Attributes
     }
 
+    class Job {
+        +string ID
+        +string Type
+        +map Payload
+        +Status Status
+        +int Attempts
+        +int MaxRetries
+        +time RunAt
+        +time CreatedAt
+        +time UpdatedAt
+    }
+
+    class Status {
+        <<enumeration>>
+        pending
+        processing
+        done
+        failed
+    }
+
+    Job --> Status : has
+
     Product "1" --> "*" Variant : has
     Variant "1" --> "1" Price : priced by
     Variant "1" --> "1" Stock : tracked by
@@ -264,6 +286,30 @@ classDiagram
         +Search(ctx, query) ~SearchResult, error~
     }
 
+    class Queue {
+        <<interface>>
+        +Enqueue(ctx, job) error
+        +Dequeue(ctx) ~*Job, error~
+        +Complete(ctx, jobID) error
+        +Fail(ctx, jobID) error
+    }
+
+    class Handler {
+        <<interface>>
+        +Type() string
+        +Handle(ctx, job) error
+    }
+
+    class Worker {
+        -queue Queue
+        -handlers map
+        -log Logger
+        -pollInterval Duration
+        +Register(h Handler)
+        +Start(ctx) error
+        +Stop()
+    }
+
     class PostgresProductRepo {
         -db *sql.DB
     }
@@ -290,6 +336,9 @@ classDiagram
     class PostgresSearchEngine {
         -db *sql.DB
     }
+    class JobQueue {
+        -db *sql.DB
+    }
     class SearchHandler {
         -engine SearchEngine
         +Search() HandlerFunc
@@ -301,6 +350,9 @@ classDiagram
     CategoryRepository <|.. PostgresCategoryRepo : implements
     CollectionRepository <|.. PostgresCollectionRepo : implements
     SearchEngine <|.. PostgresSearchEngine : implements
+    Queue <|.. JobQueue : implements
     PricingStep <|.. BasePriceStep : implements
     SearchHandler --> SearchEngine : uses
+    Worker --> Queue : polls
+    Worker --> Handler : dispatches to
 ```

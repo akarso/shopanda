@@ -15,6 +15,7 @@ import (
 	appPricing "github.com/akarso/shopanda/internal/application/pricing"
 	"github.com/akarso/shopanda/internal/domain/customer"
 	"github.com/akarso/shopanda/internal/domain/identity"
+	"github.com/akarso/shopanda/internal/domain/jobs"
 	"github.com/akarso/shopanda/internal/domain/pricing"
 	"github.com/akarso/shopanda/internal/domain/shared"
 	"github.com/akarso/shopanda/internal/infrastructure/flatrate"
@@ -95,6 +96,12 @@ func runServe(cfg *config.Config, log logger.Logger) error {
 
 	// Search engine.
 	searchEngine := postgres.NewSearchEngine(conn)
+
+	// Job queue + worker.
+	jobQueue := postgres.NewJobQueue(conn)
+	jobWorker := jobs.NewWorker(jobQueue, log, time.Second)
+	// Register job handlers here:
+	// jobWorker.Register(myhandler.New())
 
 	// Providers.
 	manualPayProvider := manualpay.NewProvider()
@@ -290,6 +297,12 @@ func runServe(cfg *config.Config, log logger.Logger) error {
 	router.HandleFunc("POST /api/v1/payments/webhook/{provider}", paymentWebhook.Handle())
 
 	srv := shophttp.NewServer(cfg.Server.Host, cfg.Server.Port, router.Handler(), log)
+
+	// Start job worker in background.
+	workerCtx, workerCancel := context.WithCancel(context.Background())
+	defer workerCancel()
+	go jobWorker.Start(workerCtx)
+
 	return srv.ListenAndServe()
 }
 
