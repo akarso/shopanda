@@ -287,11 +287,15 @@ classDiagram
     class BasePriceStep {
         -prices PriceRepository
     }
+    class PostgresSearchEngine {
+        -db *sql.DB
+    }
 
     ProductRepository <|.. PostgresProductRepo : implements
     CartRepository <|.. PostgresCartRepo : implements
     OrderRepository <|.. PostgresOrderRepo : implements
     CategoryRepository <|.. PostgresCategoryRepo : implements
     CollectionRepository <|.. PostgresCollectionRepo : implements
+    SearchEngine <|.. PostgresSearchEngine : implements
     PricingStep <|.. BasePriceStep : implements
 ```

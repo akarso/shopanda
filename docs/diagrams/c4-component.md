@@ -38,6 +38,7 @@ C4Component
 
         Boundary(infrastructure, "Infrastructure Layer (Adapters)") {
             Component(postgresRepos, "PostgreSQL Repositories", "Go, lib/pq", "13 repo implementations: Product, Variant, Price, Cart, Order, Customer, Stock, Reservation, Payment, Shipping, Category, Collection, ResetToken")
+            Component(postgresSearch, "PostgresSearchEngine", "Go, tsvector", "Full-text search via PostgreSQL tsvector, filters, facets")
             Component(manualPay, "ManualPayProvider", "Go", "Offline payment processing")
             Component(flatRate, "FlatRateShipProvider", "Go", "Fixed-cost shipping calculation")
         }
@@ -76,6 +77,7 @@ C4Component
     Rel(categoryHandler, postgresRepos, "Category + product queries")
 
     Rel(postgresRepos, postgres, "SQL queries", "lib/pq")
+    Rel(postgresSearch, postgres, "Full-text search queries", "lib/pq")
     Rel(webhookHandler, paymentGateway, "Receives callbacks")
     Rel(pluginRegistry, pricingPipeline, "Provides pricing steps via pluginApp")
     Rel(pluginRegistry, checkoutWorkflow, "Provides checkout steps via pluginApp")

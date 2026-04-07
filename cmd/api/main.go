@@ -93,6 +93,10 @@ func runServe(cfg *config.Config, log logger.Logger) error {
 	collectionRepo := postgres.NewCollectionRepo(conn)
 	_ = collectionRepo // wired in collection HTTP handlers PR
 
+	// Search engine.
+	searchEngine := postgres.NewSearchEngine(conn)
+	_ = searchEngine // wired in search HTTP handler PR
+
 	// Providers.
 	manualPayProvider := manualpay.NewProvider()
 	flatRateProvider := flatrate.NewProvider(shared.MustNewMoney(500, "USD"))
