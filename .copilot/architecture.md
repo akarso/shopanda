@@ -36,7 +36,7 @@ interfaces (HTTP) → application (use cases) → domain (entities, ports)
 - `importer` — ProductImporter (CSV)
 
 ## Infrastructure Packages (internal/infrastructure/)
-- `postgres` — 13 repo implementations (all support WithTx for transactions)
+- `postgres` — 13 repo implementations (all support WithTx for transactions) + SearchEngine (tsvector full-text search)
 - `manualpay` — Manual payment provider
 - `flatrate` — Flat-rate shipping provider (configurable cost)
 - `devauth` — Dev-mode JWT parser

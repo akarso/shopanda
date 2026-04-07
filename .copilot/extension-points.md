@@ -89,4 +89,4 @@
 14. HTTP server ListenAndServe
 
 ### Migration Numbering
-- Latest: 015 (collections). Next available: 016.
+- Latest: 016 (search_vector). Next available: 017.
