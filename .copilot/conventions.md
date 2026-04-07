@@ -53,7 +53,7 @@
 - ValidatingTokenParser checks gen against customer record on each request
 - issuer.Create(subject, role string, gen int64) → (token, error)
 - auth.NewService(customers, resets, jwtIssuer, bus, log, resetTTL)
-- Password reset: SHA-256 hashed tokens, 1hr TTL
+- Password reset: SHA-256 hashed tokens, 1 hour TTL
 
 ## Domain Entity Pattern
 - Constructors validate required fields, return (Entity, error)

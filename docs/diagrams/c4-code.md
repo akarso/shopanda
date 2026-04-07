@@ -261,7 +261,7 @@ classDiagram
         +Name() string
         +IndexProduct(ctx, product) error
         +RemoveProduct(ctx, productID) error
-        +Search(ctx, query) SearchResult
+        +Search(ctx, query) ~SearchResult, error~
     }
 
     class PostgresProductRepo {

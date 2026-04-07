@@ -6,7 +6,7 @@
 - Dependencies: lib/pq, yaml.v3, golang.org/x/crypto (bcrypt, JWT)
 
 ## Hexagonal Layers
-```
+```text
 interfaces (HTTP) → application (use cases) → domain (entities, ports)
                            ↓
                     infrastructure (adapters)

@@ -29,7 +29,7 @@
 - Built-in steps (in order):
   1. validate_cart — needs: VariantRepository
   2. recalculate_pricing — needs: pricing.Pipeline
-  3. reserve_inventory — needs: ReservationRepository (default 15min TTL)
+  3. reserve_inventory — needs: ReservationRepository (default 15 min TTL)
   4. create_order — needs: OrderRepository, VariantRepository
   5. select_shipping — needs: shipping.Provider, ShipmentRepository
   6. initiate_payment — needs: payment.Provider, PaymentRepository
