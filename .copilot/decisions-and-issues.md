@@ -18,6 +18,7 @@
 - Plugin registration uses `any` type for steps; main.go does type assertion when extracting
 
 ## Review Decisions (Rejected Findings)
+- PR-054 R2: "Migrate product_categories.product_id to UUID" — rejected. Pre-existing type mismatch from PR-050, out of scope. `::text` casts removed instead (PostgreSQL implicit cast works, consistent with product_repo.go).
 - PR-051 R2: "Extract queryAndScanProducts helper" — rejected. Only 2 callsites with distinct error context strings. Helper would lose debugging granularity.
 - PR-047: All 7 findings rejected (checkout steps implementation choices)
 

@@ -91,7 +91,7 @@ func (e *SearchEngine) Search(ctx context.Context, query search.SearchQuery) (se
 		if catStr, ok := cat.(string); ok && catStr != "" {
 			catArg := nextArg(catStr)
 			joins = append(joins, fmt.Sprintf(
-				"INNER JOIN product_categories pc ON pc.product_id = p.id::text AND pc.category_id = %s", catArg))
+				"INNER JOIN product_categories pc ON pc.product_id = p.id AND pc.category_id = %s", catArg))
 		}
 	}
 
@@ -164,12 +164,15 @@ func (e *SearchEngine) Search(ctx context.Context, query search.SearchQuery) (se
 
 	// Main query: inner subquery deduplicates and projects sort key,
 	// outer query applies ORDER BY, LIMIT, OFFSET.
+	filterArgs := make([]interface{}, len(args))
+	copy(filterArgs, args)
+
 	limitArg := nextArg(limit)
 	offsetArg := nextArg(query.Offset)
 
 	mainQ := fmt.Sprintf(
-		"SELECT id, name, slug, description, attributes FROM (SELECT DISTINCT ON (p.id) p.id, p.name, p.slug, p.description, p.attributes, %s AS sort_key FROM products p %s WHERE %s) sub ORDER BY %s LIMIT %s OFFSET %s",
-		sortExpr, joinClause, whereClause, orderBy, limitArg, offsetArg)
+		"SELECT id, name, slug, description, attributes FROM (SELECT DISTINCT ON (p.id) p.id, p.name, p.slug, p.description, p.attributes, %s AS sort_key FROM products p %s WHERE %s ORDER BY p.id, %s) sub ORDER BY %s LIMIT %s OFFSET %s",
+		sortExpr, joinClause, whereClause, sortExpr, orderBy, limitArg, offsetArg)
 
 	rows, err := e.db.QueryContext(ctx, mainQ, args...)
 	if err != nil {
@@ -199,7 +202,7 @@ func (e *SearchEngine) Search(ctx context.Context, query search.SearchQuery) (se
 	}
 
 	// Facets: category counts from the filtered result set.
-	facets, err := e.categoryFacets(ctx, joinClause, whereClause, args[:argN-2])
+	facets, err := e.categoryFacets(ctx, joinClause, whereClause, filterArgs)
 	if err != nil {
 		return search.SearchResult{}, err
 	}
@@ -214,7 +217,7 @@ func (e *SearchEngine) Search(ctx context.Context, query search.SearchQuery) (se
 // categoryFacets computes category counts for the filtered product set.
 func (e *SearchEngine) categoryFacets(ctx context.Context, joinClause, whereClause string, args []interface{}) (map[string][]search.FacetValue, error) {
 	q := fmt.Sprintf(
-		"SELECT c.name, COUNT(DISTINCT p.id) FROM products p %s INNER JOIN product_categories fpc ON fpc.product_id = p.id::text INNER JOIN categories c ON c.id = fpc.category_id WHERE %s GROUP BY c.name ORDER BY COUNT(DISTINCT p.id) DESC",
+		"SELECT c.name, COUNT(DISTINCT p.id) FROM products p %s INNER JOIN product_categories fpc ON fpc.product_id = p.id INNER JOIN categories c ON c.id = fpc.category_id WHERE %s GROUP BY c.name ORDER BY COUNT(DISTINCT p.id) DESC",
 		joinClause, whereClause)
 
 	rows, err := e.db.QueryContext(ctx, q, args...)
