@@ -77,8 +77,14 @@ C4Component
 
     Rel(postgresRepos, postgres, "SQL queries", "lib/pq")
     Rel(webhookHandler, paymentGateway, "Receives callbacks")
-    Rel(pluginRegistry, pricingPipeline, "Registers pricing steps")
-    Rel(pluginRegistry, checkoutWorkflow, "Registers checkout steps")
-    Rel(pluginRegistry, compositionPipeline, "Registers composition steps")
-    Rel(pluginRegistry, eventBus, "Registers event handlers")
+    Rel(pluginRegistry, pricingPipeline, "Provides pricing steps via pluginApp")
+    Rel(pluginRegistry, checkoutWorkflow, "Provides checkout steps via pluginApp")
+    Rel(pluginRegistry, compositionPipeline, "Provides composition steps via pluginApp")
+    Rel(pluginRegistry, eventBus, "Provides event handlers via pluginApp")
 ```
+
+> **Wiring note:** PluginRegistry calls `plugin.Init(pluginApp)` for each plugin.
+> Plugins register steps/handlers into `pluginApp` during init.
+> `main.go` then extracts those steps from `pluginApp` and wires them into
+> the pipelines, workflows, and event bus — hexagonal-style explicit wiring,
+> not direct injection by the registry.

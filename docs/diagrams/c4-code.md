@@ -174,16 +174,16 @@ classDiagram
         +FindByID(ctx, id) Cart
         +FindActiveByCustomerID(ctx, custID) Cart
         +Save(ctx, cart) error
-        +WithTx(tx) CartRepository
+        +Delete(ctx, id) error
     }
 
     class OrderRepository {
         <<interface>>
         +FindByID(ctx, id) Order
-        +FindByCustomerID(ctx, custID, offset, limit) []Order
-        +Create(ctx, order) error
-        +Update(ctx, order) error
-        +WithTx(tx) OrderRepository
+        +FindByCustomerID(ctx, customerID) []Order
+        +List(ctx, offset, limit) []Order
+        +Save(ctx, order) error
+        +UpdateStatus(ctx, order) error
     }
 
     class CategoryRepository {
@@ -210,13 +210,13 @@ classDiagram
     class PricingStep {
         <<interface>>
         +Name() string
-        +Execute(ctx, PricingContext) error
+        +Apply(ctx, *PricingContext) error
     }
 
-    class CheckoutStep {
+    class Step {
         <<interface>>
         +Name() string
-        +Execute(ctx, CheckoutContext) error
+        +Execute(ctx *Context) error
     }
 
     class Plugin {
