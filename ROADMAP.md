@@ -206,14 +206,15 @@ Goal: production-readiness features.
 | PR  | Title                        | Scope                                          |
 | --- | ---------------------------- | ---------------------------------------------- |
 | 056 | Jobs: queue interface + Postgres impl | `Job`, `Queue`, `Worker`, migration     |
-| 057 | Scheduler (cron)             | `Scheduler` interface, in-process impl, `app scheduler` CLI |
-| 058 | Email notifications          | `Notifier` interface, SMTP impl, templates     |
-| 059 | Wire email to order events   | `order.paid` → send confirmation email         |
-| 060 | Media: storage interface     | `Storage`, `Asset`, local filesystem impl      |
-| 061 | Media: upload endpoint       | `POST /media/upload`                           |
-| 062 | Caching layer                | `Cache` interface, Postgres UNLOGGED impl      |
-| 063 | Configuration: DB layer      | DB config table, export/import CLI             |
-| 064 | Cache cleanup scheduled job  | Register `cache.cleanup` cron → enqueue job    |
+| 057 | Jobs: exponential backoff    | Replace fixed retry delay with exponential backoff + jitter in `JobQueue.Fail` |
+| 058 | Scheduler (cron)             | `Scheduler` interface, in-process impl, `app scheduler` CLI |
+| 059 | Email notifications          | `Notifier` interface, SMTP impl, templates     |
+| 060 | Wire email to order events   | `order.paid` → send confirmation email         |
+| 061 | Media: storage interface     | `Storage`, `Asset`, local filesystem impl      |
+| 062 | Media: upload endpoint       | `POST /media/upload`                           |
+| 063 | Caching layer                | `Cache` interface, Postgres UNLOGGED impl      |
+| 064 | Configuration: DB layer      | DB config table, export/import CLI             |
+| 065 | Cache cleanup scheduled job  | Register `cache.cleanup` cron → enqueue job    |
 
 ---
 
@@ -223,8 +224,8 @@ Goal: upgrade minimal admin (PR 040–041) to schema-driven forms and grids.
 
 | PR  | Title                        | Scope                                          |
 | --- | ---------------------------- | ---------------------------------------------- |
-| 065 | Admin schema registry        | Form, Grid, Field types, registration API      |
-| 066 | Product admin schema         | Register product form + grid, migrate admin endpoints to schema-driven |
+| 066 | Admin schema registry        | Form, Grid, Field types, registration API      |
+| 067 | Product admin schema         | Register product form + grid, migrate admin endpoints to schema-driven |
 
 ---
 
@@ -234,8 +235,8 @@ Goal: optional SSR layer.
 
 | PR  | Title                        | Scope                                          |
 | --- | ---------------------------- | ---------------------------------------------- |
-| 067 | Theme engine (basic SSR)     | Template loading, `Render()`, layout           |
-| 068 | Product page template        | `product.html` consuming composition pipeline  |
+| 068 | Theme engine (basic SSR)     | Template loading, `Render()`, layout           |
+| 069 | Product page template        | `product.html` consuming composition pipeline  |
 
 Spec: [`docs/PAGES_RENDERING.md`](docs/PAGES_RENDERING.md), [`docs/LAYOUTS.md`](docs/LAYOUTS.md)
 
@@ -247,11 +248,11 @@ Goal: flexible attribute mapping and export. Basic import already exists (PR 017
 
 | PR  | Title                        | Scope                                          |
 | --- | ---------------------------- | ---------------------------------------------- |
-| 069 | Attribute model              | `Attribute` type, attribute registry           |
-| 070 | Import pipeline upgrade      | Attribute mapping, validation rules, error reporting |
-| 071 | Export pipeline              | Entity → CSV, `app export:products` CLI        |
+| 070 | Attribute model              | `Attribute` type, attribute registry           |
+| 071 | Import pipeline upgrade      | Attribute mapping, validation rules, error reporting |
+| 072 | Export pipeline              | Entity → CSV, `app export:products` CLI        |
 
-> **Note:** PR-069 should also introduce `AttributeGroup` — products can be assigned one or more attribute groups, and each group defines which attributes apply. Until then, attributes are stored as flat JSONB with no schema enforcement.
+> **Note:** PR-070 should also introduce `AttributeGroup` — products can be assigned one or more attribute groups, and each group defines which attributes apply. Until then, attributes are stored as flat JSONB with no schema enforcement.
 
 ---
 
@@ -261,9 +262,9 @@ Goal: drop-in usability.
 
 | PR  | Title                        | Scope                                          |
 | --- | ---------------------------- | ---------------------------------------------- |
-| 072 | Seed framework               | Seeder interface, `app seed` command           |
-| 073 | Core seed data               | Admin user, categories, sample products        |
-| 074 | CLI: full command set        | `serve`, `migrate`, `seed`, `worker`, `scheduler`, `search:reindex`, `config:export`, `import:*`, `export:*` |
+| 073 | Seed framework               | Seeder interface, `app seed` command           |
+| 074 | Core seed data               | Admin user, categories, sample products        |
+| 075 | CLI: full command set        | `serve`, `migrate`, `seed`, `worker`, `scheduler`, `search:reindex`, `config:export`, `import:*`, `export:*` |
 
 ---
 
@@ -273,8 +274,8 @@ Goal: country-based VAT calculation integrated into the pricing pipeline.
 
 | PR  | Title                        | Scope                                              |
 | --- | ---------------------------- | -------------------------------------------------- |
-| 075 | Tax domain + rate storage    | `TaxClass`, `TaxRate`, repo, migration             |
-| 076 | Tax pipeline step            | Tax calculation step in pricing pipeline, per-item + total, exclusive/inclusive modes |
+| 076 | Tax domain + rate storage    | `TaxClass`, `TaxRate`, repo, migration             |
+| 077 | Tax pipeline step            | Tax calculation step in pricing pipeline, per-item + total, exclusive/inclusive modes |
 
 Spec: [`docs/TAXES.md`](docs/TAXES.md)
 
@@ -286,9 +287,9 @@ Goal: reusable rule primitives powering catalog and cart discounts.
 
 | PR  | Title                        | Scope                                              |
 | --- | ---------------------------- | -------------------------------------------------- |
-| 077 | Rule primitives              | `Condition[T]`, `Rule[T]`, sequential executor     |
-| 078 | Promotion domain + storage   | Catalog rules, cart rules, coupon entity, repo, migration |
-| 079 | Promotion HTTP endpoints     | Apply catalog rules in pricing pipeline, `POST/DELETE /cart/{id}/coupon` |
+| 078 | Rule primitives              | `Condition[T]`, `Rule[T]`, sequential executor     |
+| 079 | Promotion domain + storage   | Catalog rules, cart rules, coupon entity, repo, migration |
+| 080 | Promotion HTTP endpoints     | Apply catalog rules in pricing pipeline, `POST/DELETE /cart/{id}/coupon` |
 
 Specs: [`docs/RULES.md`](docs/RULES.md), [`docs/PROMOTIONS.md`](docs/PROMOTIONS.md)
 
@@ -300,8 +301,8 @@ Goal: immutable invoice generation from orders with credit note support.
 
 | PR  | Title                        | Scope                                              |
 | --- | ---------------------------- | -------------------------------------------------- |
-| 080 | Invoice domain + storage     | Invoice entity, credit notes, DB sequence numbering, repo, migration |
-| 081 | Invoice generation + PDF     | Order → invoice snapshot, HTML → PDF, events (`invoice.created`) |
+| 081 | Invoice domain + storage     | Invoice entity, credit notes, DB sequence numbering, repo, migration |
+| 082 | Invoice generation + PDF     | Order → invoice snapshot, HTML → PDF, events (`invoice.created`) |
 
 Spec: [`docs/INVOICING.md`](docs/INVOICING.md)
 
@@ -313,9 +314,9 @@ Goal: SEO-friendly URLs and static content pages.
 
 | PR  | Title                        | Scope                                              |
 | --- | ---------------------------- | -------------------------------------------------- |
-| 082 | URL rewrite system           | `url_rewrites` table, migration, resolver middleware, catch-all route |
-| 083 | Wire entity slugs            | Product/category slugs registered in rewrite table on create/update |
-| 084 | CMS pages                    | Page domain, storage, `GET /pages/{slug}`, admin integration |
+| 083 | URL rewrite system           | `url_rewrites` table, migration, resolver middleware, catch-all route |
+| 084 | Wire entity slugs            | Product/category slugs registered in rewrite table on create/update |
+| 085 | CMS pages                    | Page domain, storage, `GET /pages/{slug}`, admin integration |
 
 Specs: [`docs/ROUTING.md`](docs/ROUTING.md), [`docs/CMS.md`](docs/CMS.md)
 
@@ -327,8 +328,8 @@ Goal: structured data and discoverability.
 
 | PR  | Title                        | Scope                                              |
 | --- | ---------------------------- | -------------------------------------------------- |
-| 085 | Meta + structured data       | Composition step for meta tags, JSON-LD for products (price, availability) |
-| 086 | Sitemap + robots             | `GET /sitemap.xml` generation, `GET /robots.txt`, canonical URLs |
+| 086 | Meta + structured data       | Composition step for meta tags, JSON-LD for products (price, availability) |
+| 087 | Sitemap + robots             | `GET /sitemap.xml` generation, `GET /robots.txt`, canonical URLs |
 
 Spec: [`docs/SEO.md`](docs/SEO.md)
 
@@ -340,8 +341,8 @@ Goal: multiple store contexts with scoped pricing and tax.
 
 | PR  | Title                        | Scope                                              |
 | --- | ---------------------------- | -------------------------------------------------- |
-| 087 | Store domain + resolution    | `Store` entity, repo, migration, domain-based resolution middleware |
-| 088 | Scoped pricing + tax         | Prices per store (`variant_id + store_id → price`), tax by `store.country` |
+| 088 | Store domain + resolution    | `Store` entity, repo, migration, domain-based resolution middleware |
+| 089 | Scoped pricing + tax         | Prices per store (`variant_id + store_id → price`), tax by `store.country` |
 
 Spec: [`docs/STORES_CURRENCIES.md`](docs/STORES_CURRENCIES.md)
 
@@ -353,8 +354,8 @@ Goal: unified translation system across backend and frontend.
 
 | PR  | Title                        | Scope                                              |
 | --- | ---------------------------- | -------------------------------------------------- |
-| 089 | Translation system           | System translations table, `t()` function, language resolution (param → header → default) |
-| 090 | Content translations         | Entity translation table (`entity_id + language + field → value`), API integration |
+| 090 | Translation system           | System translations table, `t()` function, language resolution (param → header → default) |
+| 091 | Content translations         | Entity translation table (`entity_id + language + field → value`), API integration |
 
 Spec: [`docs/I18N.md`](docs/I18N.md)
 
@@ -366,8 +367,8 @@ Goal: essential EU compliance features.
 
 | PR  | Title                        | Scope                                              |
 | --- | ---------------------------- | -------------------------------------------------- |
-| 091 | Cookie consent + GDPR        | Consent model, `GET /account/data`, `GET /account/export`, `DELETE /account` |
-| 092 | Price history                | Price tracking table, lowest-price-in-30-days display for discounted products |
+| 092 | Cookie consent + GDPR        | Consent model, `GET /account/data`, `GET /account/export`, `DELETE /account` |
+| 093 | Price history                | Price tracking table, lowest-price-in-30-days display for discounted products |
 
 Spec: [`docs/LEGAL.md`](docs/LEGAL.md)
 
@@ -379,8 +380,8 @@ Goal: caching strategy and CDN integration.
 
 | PR  | Title                        | Scope                                              |
 | --- | ---------------------------- | -------------------------------------------------- |
-| 093 | Cache headers + CDN config   | `Cache-Control` middleware (public vs no-store), `cdn.base_url` config |
-| 094 | Cache invalidation           | Product/price change → invalidation trigger, cache keys include store + language + currency |
+| 094 | Cache headers + CDN config   | `Cache-Control` middleware (public vs no-store), `cdn.base_url` config |
+| 095 | Cache invalidation           | Product/price change → invalidation trigger, cache keys include store + language + currency |
 
 Spec: [`docs/PERFORMANCE.md`](docs/PERFORMANCE.md)
 
@@ -392,8 +393,8 @@ Goal: permission-based access control for admin users.
 
 | PR  | Title                        | Scope                                              |
 | --- | ---------------------------- | -------------------------------------------------- |
-| 095 | Roles + permissions model    | Role entity (admin/manager/editor/support), permission strings, role-permission mapping, migration |
-| 096 | Permission middleware + UI   | `RequirePermission()` middleware, admin forms/grids respect permissions, plugin permission registration |
+| 096 | Roles + permissions model    | Role entity (admin/manager/editor/support), permission strings, role-permission mapping, migration |
+| 097 | Permission middleware + UI   | `RequirePermission()` middleware, admin forms/grids respect permissions, plugin permission registration |
 
 Spec: [`docs/ROLES.md`](docs/ROLES.md)
 

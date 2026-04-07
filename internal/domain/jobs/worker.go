@@ -20,6 +20,7 @@ type Worker struct {
 	poll     time.Duration
 	mu       sync.RWMutex
 	stop     chan struct{}
+	stopOnce sync.Once
 }
 
 // NewWorker creates a Worker that polls queue at the given interval.
@@ -49,9 +50,13 @@ func (w *Worker) Register(h Handler) {
 // Start begins polling the queue in a blocking loop.
 // It returns when the context is cancelled or Stop is called.
 func (w *Worker) Start(ctx context.Context) {
+	w.mu.RLock()
+	nHandlers := len(w.handlers)
+	w.mu.RUnlock()
+
 	w.log.Info("worker.started", map[string]interface{}{
 		"poll_interval": w.poll.String(),
-		"handlers":      len(w.handlers),
+		"handlers":      nHandlers,
 	})
 
 	ticker := time.NewTicker(w.poll)
@@ -71,9 +76,9 @@ func (w *Worker) Start(ctx context.Context) {
 	}
 }
 
-// Stop signals the worker to stop processing.
+// Stop signals the worker to stop processing. Safe to call multiple times.
 func (w *Worker) Stop() {
-	close(w.stop)
+	w.stopOnce.Do(func() { close(w.stop) })
 }
 
 func (w *Worker) processNext(ctx context.Context) {
@@ -95,7 +100,9 @@ func (w *Worker) processNext(ctx context.Context) {
 			"job_id":   job.ID,
 			"job_type": job.Type,
 		})
-		_ = w.queue.Fail(ctx, job.ID, nil)
+		if failErr := w.queue.Fail(ctx, job.ID, nil); failErr != nil {
+			w.log.Error("worker.fail.error", failErr, map[string]interface{}{"job_id": job.ID})
+		}
 		return
 	}
 
@@ -111,7 +118,9 @@ func (w *Worker) processNext(ctx context.Context) {
 			"job_type": job.Type,
 			"attempt":  job.Attempts,
 		})
-		_ = w.queue.Fail(ctx, job.ID, err)
+		if failErr := w.queue.Fail(ctx, job.ID, err); failErr != nil {
+			w.log.Error("worker.fail.error", failErr, map[string]interface{}{"job_id": job.ID})
+		}
 		return
 	}
 

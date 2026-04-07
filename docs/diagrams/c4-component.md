@@ -45,10 +45,13 @@ C4Component
             Component(flatRate, "FlatRateShipProvider", "Go", "Fixed-cost shipping calculation")
         }
 
+        Boundary(domain, "Domain Layer") {
+            Component(jobWorker, "JobWorker", "Go", "Domain-layer worker: polls Queue port, dispatches jobs to registered handlers")
+        }
+
         Boundary(platform, "Platform Layer (Cross-Cutting)") {
             Component(eventBus, "EventBus", "Go", "Pub/sub for domain events (sync + async)")
             Component(pluginRegistry, "PluginRegistry", "Go", "Plugin lifecycle: register → init → collect steps")
-            Component(jobWorker, "JobWorker", "Go", "Polls queue, dispatches jobs to registered handlers")
             Component(jwtPkg, "JWT", "Go, crypto", "Token issuing and verification")
             Component(configPkg, "Config", "Go, yaml.v3", "YAML configuration loading")
             Component(loggerPkg, "Logger", "Go", "Structured logging (info, error, metadata)")

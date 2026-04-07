@@ -291,7 +291,7 @@ classDiagram
         +Enqueue(ctx, job) error
         +Dequeue(ctx) ~*Job, error~
         +Complete(ctx, jobID) error
-        +Fail(ctx, jobID) error
+        +Fail(ctx, jobID, jobErr) error
     }
 
     class Handler {
@@ -306,7 +306,7 @@ classDiagram
         -log Logger
         -pollInterval Duration
         +Register(h Handler)
-        +Start(ctx) error
+        +Start(ctx)
         +Stop()
     }
 

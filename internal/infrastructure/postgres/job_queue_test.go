@@ -10,12 +10,6 @@ import (
 	"github.com/akarso/shopanda/internal/platform/migrate"
 )
 
-func ensureJobsTable(t *testing.T, db interface {
-	Exec(query string, args ...interface{}) (interface{ RowsAffected() (int64, error) }, error)
-}) {
-	// testDB + ensureProductsTable already handle migration; we reuse the same pattern.
-}
-
 func TestJobQueue_Enqueue(t *testing.T) {
 	db := testDB(t)
 	if _, err := migrate.Run(db, "../../../migrations"); err != nil {

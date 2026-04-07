@@ -300,10 +300,24 @@ func runServe(cfg *config.Config, log logger.Logger) error {
 
 	// Start job worker in background.
 	workerCtx, workerCancel := context.WithCancel(context.Background())
-	defer workerCancel()
-	go jobWorker.Start(workerCtx)
+	workerDone := make(chan struct{})
+	go func() {
+		jobWorker.Start(workerCtx)
+		close(workerDone)
+	}()
 
-	return srv.ListenAndServe()
+	// Block until server shuts down (handles SIGINT/SIGTERM internally).
+	err = srv.ListenAndServe()
+
+	// Gracefully stop the worker, giving in-flight jobs time to finish.
+	workerCancel()
+	select {
+	case <-workerDone:
+	case <-time.After(10 * time.Second):
+		log.Info("worker.shutdown.timeout", nil)
+	}
+
+	return err
 }
 
 func runMigrate(cfg *config.Config, log logger.Logger) error {
