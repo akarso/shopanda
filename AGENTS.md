@@ -200,6 +200,7 @@ Additional documents:
 ## Documentation
 
 * create /docs/prs/PR-00n.md with summary of changes after each implementation phase
+* update C4 diagrams in /docs/diagrams/ when a PR adds, removes, or changes components, containers, or external integrations
 
 ---
 
