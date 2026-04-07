@@ -47,6 +47,7 @@ C4Component
 
         Boundary(domain, "Domain Layer") {
             Component(jobWorker, "JobWorker", "Go", "Domain-layer worker: polls Queue port, dispatches jobs to registered handlers")
+            Component(cronScheduler, "CronScheduler", "Go", "In-process cron scheduler: fires registered tasks on schedule, enqueues jobs into Queue")
         }
 
         Boundary(platform, "Platform Layer (Cross-Cutting)") {
@@ -88,6 +89,7 @@ C4Component
     Rel(postgresSearch, postgres, "Full-text search queries", "lib/pq")
     Rel(postgresJobQueue, postgres, "Job queue queries", "lib/pq")
     Rel(jobWorker, postgresJobQueue, "Polls and claims jobs")
+    Rel(cronScheduler, postgresJobQueue, "Enqueues scheduled jobs")
     Rel(webhookHandler, paymentGateway, "Receives callbacks")
     Rel(pluginRegistry, pricingPipeline, "Provides pricing steps via pluginApp")
     Rel(pluginRegistry, checkoutWorkflow, "Provides checkout steps via pluginApp")

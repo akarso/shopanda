@@ -5,6 +5,8 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"os/signal"
+	"syscall"
 	"time"
 
 	authApp "github.com/akarso/shopanda/internal/application/auth"
@@ -18,6 +20,7 @@ import (
 	"github.com/akarso/shopanda/internal/domain/jobs"
 	"github.com/akarso/shopanda/internal/domain/pricing"
 	"github.com/akarso/shopanda/internal/domain/shared"
+	"github.com/akarso/shopanda/internal/infrastructure/cron"
 	"github.com/akarso/shopanda/internal/infrastructure/flatrate"
 	"github.com/akarso/shopanda/internal/infrastructure/manualpay"
 	"github.com/akarso/shopanda/internal/infrastructure/postgres"
@@ -61,6 +64,8 @@ func run() error {
 			return runServe(cfg, log)
 		case "import:products":
 			return runImportProducts(cfg, log)
+		case "scheduler":
+			return runScheduler(cfg, log)
 		default:
 			return fmt.Errorf("unknown command: %s", os.Args[1])
 		}
@@ -386,5 +391,40 @@ func runImportProducts(cfg *config.Config, log logger.Logger) error {
 		return fmt.Errorf("import completed with %d row-level errors", len(result.Errors))
 	}
 
+	return nil
+}
+
+func runScheduler(cfg *config.Config, log logger.Logger) error {
+	dsn := config.DatabaseDSN(cfg)
+	conn, err := db.Open(dsn)
+	if err != nil {
+		return fmt.Errorf("database: %w", err)
+	}
+	defer conn.Close()
+
+	jobQueue := postgres.NewJobQueue(conn)
+	sched := cron.New(log)
+
+	// Register scheduled jobs here:
+	// sched.Register("cache.cleanup", "*/5 * * * *", func() {
+	//     job, _ := jobs.NewJob(id.New(), "cache.cleanup", nil)
+	//     _ = jobQueue.Enqueue(context.Background(), job)
+	// })
+	_ = jobQueue // will be used when scheduled jobs are registered
+
+	// Block until interrupted (context cancelled via signal).
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	// Listen for shutdown signals (same as server).
+	go func() {
+		sigCh := make(chan os.Signal, 1)
+		signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
+		<-sigCh
+		log.Info("scheduler.shutdown.signal", nil)
+		cancel()
+	}()
+
+	sched.Start(ctx)
 	return nil
 }

@@ -310,6 +310,13 @@ classDiagram
         +Stop()
     }
 
+    class Scheduler {
+        <<interface>>
+        +Register(name, spec, fn)
+        +Start(ctx)
+        +Stop()
+    }
+
     class PostgresProductRepo {
         -db *sql.DB
     }
@@ -339,6 +346,10 @@ classDiagram
     class JobQueue {
         -db *sql.DB
     }
+    class CronScheduler {
+        -entries []entry
+        -log Logger
+    }
     class SearchHandler {
         -engine SearchEngine
         +Search() HandlerFunc
@@ -351,6 +362,7 @@ classDiagram
     CollectionRepository <|.. PostgresCollectionRepo : implements
     SearchEngine <|.. PostgresSearchEngine : implements
     Queue <|.. JobQueue : implements
+    Scheduler <|.. CronScheduler : implements
     PricingStep <|.. BasePriceStep : implements
     SearchHandler --> SearchEngine : uses
     Worker --> Queue : polls
