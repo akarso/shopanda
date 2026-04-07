@@ -31,7 +31,7 @@ func (e *SearchEngine) Name() string { return "postgres" }
 // so this method is primarily useful for explicit reindexing.
 func (e *SearchEngine) IndexProduct(ctx context.Context, p search.Product) error {
 	const q = `UPDATE products
-		SET search_vector = to_tsvector('english', $2 || ' ' || $3)
+		SET search_vector = to_tsvector('english', coalesce($2, '') || ' ' || coalesce($3, ''))
 		WHERE id = $1`
 	result, err := e.db.ExecContext(ctx, q, p.ID, p.Name, p.Description)
 	if err != nil {
