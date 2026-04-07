@@ -234,6 +234,19 @@ func TestSearchHandler_InvalidOffset(t *testing.T) {
 	}
 }
 
+func TestSearchHandler_NegativeOffset(t *testing.T) {
+	engine := &mockSearchEngine{}
+	h := shophttp.NewSearchHandler(engine)
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("GET", "/api/v1/search?offset=-1", nil)
+	newSearchRouter(h).ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("status = %d, want %d", rec.Code, http.StatusUnprocessableEntity)
+	}
+}
+
 func TestSearchHandler_EngineError(t *testing.T) {
 	engine := &mockSearchEngine{
 		searchFn: func(_ context.Context, _ search.SearchQuery) (search.SearchResult, error) {
