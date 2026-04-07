@@ -15,6 +15,7 @@ import (
 	appPricing "github.com/akarso/shopanda/internal/application/pricing"
 	"github.com/akarso/shopanda/internal/domain/customer"
 	"github.com/akarso/shopanda/internal/domain/identity"
+	"github.com/akarso/shopanda/internal/domain/jobs"
 	"github.com/akarso/shopanda/internal/domain/pricing"
 	"github.com/akarso/shopanda/internal/domain/shared"
 	"github.com/akarso/shopanda/internal/infrastructure/flatrate"
@@ -95,6 +96,12 @@ func runServe(cfg *config.Config, log logger.Logger) error {
 
 	// Search engine.
 	searchEngine := postgres.NewSearchEngine(conn)
+
+	// Job queue + worker.
+	jobQueue := postgres.NewJobQueue(conn)
+	jobWorker := jobs.NewWorker(jobQueue, log, time.Second)
+	// Register job handlers here:
+	// jobWorker.Register(myhandler.New())
 
 	// Providers.
 	manualPayProvider := manualpay.NewProvider()
@@ -290,7 +297,27 @@ func runServe(cfg *config.Config, log logger.Logger) error {
 	router.HandleFunc("POST /api/v1/payments/webhook/{provider}", paymentWebhook.Handle())
 
 	srv := shophttp.NewServer(cfg.Server.Host, cfg.Server.Port, router.Handler(), log)
-	return srv.ListenAndServe()
+
+	// Start job worker in background.
+	workerCtx, workerCancel := context.WithCancel(context.Background())
+	workerDone := make(chan struct{})
+	go func() {
+		jobWorker.Start(workerCtx)
+		close(workerDone)
+	}()
+
+	// Block until server shuts down (handles SIGINT/SIGTERM internally).
+	err = srv.ListenAndServe()
+
+	// Gracefully stop the worker, giving in-flight jobs time to finish.
+	workerCancel()
+	select {
+	case <-workerDone:
+	case <-time.After(10 * time.Second):
+		log.Info("worker.shutdown.timeout", nil)
+	}
+
+	return err
 }
 
 func runMigrate(cfg *config.Config, log logger.Logger) error {

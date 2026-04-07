@@ -5,6 +5,9 @@
 - collection_products.product_id was fixed to UUID in PR-052 review, but product_categories was not touched (out of scope)
 
 ## Architectural Decisions
+- Jobs queue (PR-056) uses `FOR UPDATE SKIP LOCKED` for concurrent-safe dequeue — no row-level blocking between workers
+- Jobs retry uses fixed 10-second delay (v0) — exponential backoff deferred
+- Worker lives in domain layer (`internal/domain/jobs/`) alongside Queue interface — it coordinates domain logic, not infrastructure
 - Search domain (PR-053) uses its own `search.Product` type instead of importing `catalog.Product` — hexagonal isolation, no cross-domain imports in domain layer
 - PostgresSearchEngine (PR-054) uses trigger-based indexing: trigger auto-updates search_vector on name/description changes, IndexProduct exists for explicit reindex
 - RemoveProduct sets search_vector to NULL rather than deleting the row — keeps search engine decoupled from product lifecycle
@@ -26,3 +29,4 @@
 - 001-053 all implemented and reviewed
 - Phase 13 (Catalog Organization: categories + collections) — complete
 - Phase 14 (Search) — PR-053 done, PR-054 done, PR-055 done
+- Phase 15 (Jobs) — PR-056 done
