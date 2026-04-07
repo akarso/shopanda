@@ -122,25 +122,32 @@ func (q *JobQueue) Complete(ctx context.Context, id string) error {
 func (q *JobQueue) Fail(ctx context.Context, id string, jobErr error) error {
 	// First, try to permanently fail jobs that have exhausted retries.
 	const failQ = `UPDATE jobs SET status = 'failed', updated_at = NOW()
-		WHERE id = $1 AND attempts >= max_retries`
+		WHERE id = $1 AND status = 'processing' AND attempts >= max_retries`
 	result, err := q.db.ExecContext(ctx, failQ, id)
 	if err != nil {
 		return fmt.Errorf("job_queue: fail permanent: %w", err)
 	}
-	rows, err := result.RowsAffected()
+	failRows, err := result.RowsAffected()
 	if err != nil {
 		return fmt.Errorf("job_queue: fail rows: %w", err)
 	}
-	if rows > 0 {
+	if failRows > 0 {
 		return nil
 	}
 
 	// Otherwise, re-queue with a delay.
 	const retryQ = `UPDATE jobs SET status = 'pending', run_at = NOW() + $2::interval, updated_at = NOW()
-		WHERE id = $1 AND attempts < max_retries`
-	_, err = q.db.ExecContext(ctx, retryQ, id, fmt.Sprintf("%d seconds", int(retryDelay.Seconds())))
+		WHERE id = $1 AND status = 'processing' AND attempts < max_retries`
+	result, err = q.db.ExecContext(ctx, retryQ, id, fmt.Sprintf("%d seconds", int(retryDelay.Seconds())))
 	if err != nil {
 		return fmt.Errorf("job_queue: fail retry: %w", err)
+	}
+	retryRows, err := result.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("job_queue: fail retry rows: %w", err)
+	}
+	if retryRows == 0 {
+		return fmt.Errorf("job_queue: job %s not found or not processing", id)
 	}
 	return nil
 }
