@@ -134,6 +134,35 @@ classDiagram
         +string Role
     }
 
+    class SearchQuery {
+        +string Text
+        +map Filters
+        +string Sort
+        +int Limit
+        +int Offset
+        +Validate() error
+        +EffectiveLimit() int
+    }
+
+    class SearchResult {
+        +[]SearchProduct Products
+        +int Total
+        +map~string, []FacetValue~ Facets
+    }
+
+    class FacetValue {
+        +string Value
+        +int Count
+    }
+
+    class SearchProduct {
+        +string ID
+        +string Name
+        +string Slug
+        +string Description
+        +map Attributes
+    }
+
     Product "1" --> "*" Variant : has
     Variant "1" --> "1" Price : priced by
     Variant "1" --> "1" Stock : tracked by
@@ -141,6 +170,8 @@ classDiagram
     Product "*" --> "*" Category : categorized in
     Product "*" --> "*" Collection : grouped in
     Category "0..1" --> "*" Category : parent of
+    SearchResult --> SearchProduct : contains
+    SearchResult --> FacetValue : contains
     Price --> Money : uses
     Cart "1" --> "*" CartItem : contains
     CartItem --> Variant : references
@@ -223,6 +254,14 @@ classDiagram
         <<interface>>
         +Name() string
         +Init(app) error
+    }
+
+    class SearchEngine {
+        <<interface>>
+        +Name() string
+        +IndexProduct(ctx, product) error
+        +RemoveProduct(ctx, productID) error
+        +Search(ctx, query) ~SearchResult, error~
     }
 
     class PostgresProductRepo {
