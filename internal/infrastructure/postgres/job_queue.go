@@ -5,6 +5,8 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"math"
+	"math/rand/v2"
 	"time"
 
 	"github.com/akarso/shopanda/internal/domain/jobs"
@@ -13,8 +15,12 @@ import (
 // Compile-time check that JobQueue implements jobs.Queue.
 var _ jobs.Queue = (*JobQueue)(nil)
 
-// retryDelay is the fixed delay before a failed job becomes eligible again.
-const retryDelay = 10 * time.Second
+// Backoff parameters for retry delay calculation.
+const (
+	backoffBase = 5 * time.Second // initial delay
+	backoffMax  = 5 * time.Minute // cap
+	jitterRatio = 0.25            // ±25% randomization
+)
 
 // JobQueue implements jobs.Queue using PostgreSQL with FOR UPDATE SKIP LOCKED.
 type JobQueue struct {
@@ -117,6 +123,17 @@ func (q *JobQueue) Complete(ctx context.Context, id string) error {
 	return nil
 }
 
+// retryDelay calculates the backoff duration for a given attempt number.
+// Uses exponential backoff (base * 2^attempt) capped at backoffMax, with ±25% jitter.
+func retryDelay(attempt int) time.Duration {
+	delay := float64(backoffBase) * math.Pow(2, float64(attempt))
+	if delay > float64(backoffMax) {
+		delay = float64(backoffMax)
+	}
+	jitter := delay * jitterRatio * (2*rand.Float64() - 1) // range: -jitterRatio..+jitterRatio
+	return time.Duration(delay + jitter)
+}
+
 // Fail re-queues a job for retry or marks it as permanently failed.
 // Uses atomic conditional UPDATEs to avoid read-then-write races.
 func (q *JobQueue) Fail(ctx context.Context, id string, jobErr error) error {
@@ -135,10 +152,21 @@ func (q *JobQueue) Fail(ctx context.Context, id string, jobErr error) error {
 		return nil
 	}
 
-	// Otherwise, re-queue with a delay.
+	// Otherwise, re-queue with exponential backoff delay.
+	// We read attempts to compute the delay in Go (with jitter), then update atomically.
+	var attempts int
+	const attemptsQ = `SELECT attempts FROM jobs WHERE id = $1 AND status = 'processing' AND attempts < max_retries`
+	if err := q.db.QueryRowContext(ctx, attemptsQ, id).Scan(&attempts); err != nil {
+		if err == sql.ErrNoRows {
+			return fmt.Errorf("job_queue: job %s not found or not processing", id)
+		}
+		return fmt.Errorf("job_queue: fail lookup: %w", err)
+	}
+
+	delay := retryDelay(attempts)
 	const retryQ = `UPDATE jobs SET status = 'pending', run_at = NOW() + $2::interval, updated_at = NOW()
 		WHERE id = $1 AND status = 'processing' AND attempts < max_retries`
-	result, err = q.db.ExecContext(ctx, retryQ, id, fmt.Sprintf("%d seconds", int(retryDelay.Seconds())))
+	result, err = q.db.ExecContext(ctx, retryQ, id, fmt.Sprintf("%d milliseconds", delay.Milliseconds()))
 	if err != nil {
 		return fmt.Errorf("job_queue: fail retry: %w", err)
 	}

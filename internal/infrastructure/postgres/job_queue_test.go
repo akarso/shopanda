@@ -3,6 +3,7 @@ package postgres_test
 import (
 	"context"
 	"testing"
+	"time"
 
 	"github.com/akarso/shopanda/internal/domain/jobs"
 	"github.com/akarso/shopanda/internal/infrastructure/postgres"
@@ -139,13 +140,17 @@ func TestJobQueue_Fail_Retry(t *testing.T) {
 		t.Fatalf("Fail: %v", err)
 	}
 
-	// Check status is back to pending.
+	// Check status is back to pending with a future run_at (exponential backoff).
 	var status string
-	if err := db.QueryRow("SELECT status FROM jobs WHERE id = $1", got.ID).Scan(&status); err != nil {
+	var runAt time.Time
+	if err := db.QueryRow("SELECT status, run_at FROM jobs WHERE id = $1", got.ID).Scan(&status, &runAt); err != nil {
 		t.Fatalf("query status: %v", err)
 	}
 	if status != "pending" {
 		t.Errorf("status = %q, want pending", status)
+	}
+	if !runAt.After(time.Now()) {
+		t.Error("run_at should be in the future after retry")
 	}
 }
 

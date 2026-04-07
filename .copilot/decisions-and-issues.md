@@ -6,7 +6,7 @@
 
 ## Architectural Decisions
 - Jobs queue (PR-056) uses `FOR UPDATE SKIP LOCKED` for concurrent-safe dequeue — no row-level blocking between workers
-- Jobs retry uses fixed 10-second delay (v0) — exponential backoff deferred
+- Jobs retry uses exponential backoff (PR-057): base=5s, 2^attempt growth, capped at 5min, ±25% jitter
 - Worker lives in domain layer (`internal/domain/jobs/`) alongside Queue interface — it coordinates domain logic, not infrastructure
 - Search domain (PR-053) uses its own `search.Product` type instead of importing `catalog.Product` — hexagonal isolation, no cross-domain imports in domain layer
 - PostgresSearchEngine (PR-054) uses trigger-based indexing: trigger auto-updates search_vector on name/description changes, IndexProduct exists for explicit reindex
@@ -29,4 +29,4 @@
 - 001-053 all implemented and reviewed
 - Phase 13 (Catalog Organization: categories + collections) — complete
 - Phase 14 (Search) — PR-053 done, PR-054 done, PR-055 done
-- Phase 15 (Jobs) — PR-056 done
+- Phase 15 (Jobs) — PR-056 done, PR-057 done
