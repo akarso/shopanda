@@ -43,11 +43,11 @@ C4Component
             Component(postgresJobQueue, "PostgresJobQueue", "Go, lib/pq", "Job queue with FOR UPDATE SKIP LOCKED dequeue, retry logic")
             Component(manualPay, "ManualPayProvider", "Go", "Offline payment processing")
             Component(flatRate, "FlatRateShipProvider", "Go", "Fixed-cost shipping calculation")
+            Component(cronScheduler, "CronScheduler", "Go", "In-process cron scheduler: implements Scheduler port, fires registered tasks on schedule, enqueues jobs into Queue")
         }
 
         Boundary(domain, "Domain Layer") {
             Component(jobWorker, "JobWorker", "Go", "Domain-layer worker: polls Queue port, dispatches jobs to registered handlers")
-            Component(cronScheduler, "CronScheduler", "Go", "In-process cron scheduler: fires registered tasks on schedule, enqueues jobs into Queue")
         }
 
         Boundary(platform, "Platform Layer (Cross-Cutting)") {

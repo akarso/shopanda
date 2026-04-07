@@ -29,6 +29,13 @@ func TestScheduler_Register_Panics(t *testing.T) {
 	assertPanics(t, "bad spec", func() {
 		s.Register("test", "bad", func() {})
 	})
+
+	// Duplicate name.
+	s2 := New(testLogger{})
+	s2.Register("dup", "* * * * *", func() {})
+	assertPanics(t, "duplicate name", func() {
+		s2.Register("dup", "* * * * *", func() {})
+	})
 }
 
 func TestScheduler_StopIdempotent(t *testing.T) {

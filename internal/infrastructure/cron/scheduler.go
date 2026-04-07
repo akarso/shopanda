@@ -52,6 +52,11 @@ func (s *Scheduler) Register(name string, spec string, fn func()) {
 	if fn == nil {
 		panic("cron: task function must not be nil")
 	}
+	for _, e := range s.entries {
+		if e.name == name {
+			panic("cron: duplicate task name: " + name)
+		}
+	}
 	expr, err := parse(spec)
 	if err != nil {
 		panic(fmt.Sprintf("cron: invalid spec %q for task %q: %v", spec, name, err))

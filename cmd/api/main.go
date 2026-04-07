@@ -19,6 +19,7 @@ import (
 	"github.com/akarso/shopanda/internal/domain/identity"
 	"github.com/akarso/shopanda/internal/domain/jobs"
 	"github.com/akarso/shopanda/internal/domain/pricing"
+	"github.com/akarso/shopanda/internal/domain/scheduler"
 	"github.com/akarso/shopanda/internal/domain/shared"
 	"github.com/akarso/shopanda/internal/infrastructure/cron"
 	"github.com/akarso/shopanda/internal/infrastructure/flatrate"
@@ -403,7 +404,7 @@ func runScheduler(cfg *config.Config, log logger.Logger) error {
 	defer conn.Close()
 
 	jobQueue := postgres.NewJobQueue(conn)
-	sched := cron.New(log)
+	var sched scheduler.Scheduler = cron.New(log)
 
 	// Register scheduled jobs here:
 	// sched.Register("cache.cleanup", "*/5 * * * *", func() {
@@ -425,6 +426,7 @@ func runScheduler(cfg *config.Config, log logger.Logger) error {
 		cancel()
 	}()
 
+	defer sched.Stop()
 	sched.Start(ctx)
 	return nil
 }
