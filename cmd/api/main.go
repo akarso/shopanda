@@ -95,7 +95,6 @@ func runServe(cfg *config.Config, log logger.Logger) error {
 
 	// Search engine.
 	searchEngine := postgres.NewSearchEngine(conn)
-	_ = searchEngine // wired in search HTTP handler PR
 
 	// Providers.
 	manualPayProvider := manualpay.NewProvider()
@@ -224,6 +223,7 @@ func runServe(cfg *config.Config, log logger.Logger) error {
 	paymentWebhook := shophttp.NewPaymentWebhookHandler(paymentRepo, bus)
 	shippingRates := shophttp.NewShippingRatesHandler(flatRateProvider)
 	categoryHandler := shophttp.NewCategoryHandler(categoryRepo, productRepo)
+	searchHandler := shophttp.NewSearchHandler(searchEngine)
 
 	router := shophttp.NewRouter()
 
@@ -256,6 +256,9 @@ func runServe(cfg *config.Config, log logger.Logger) error {
 	router.HandleFunc("GET /api/v1/categories", categoryHandler.Tree())
 	router.HandleFunc("GET /api/v1/categories/{id}", categoryHandler.Get())
 	router.HandleFunc("GET /api/v1/categories/{id}/products", categoryHandler.Products())
+
+	// Search route (public).
+	router.HandleFunc("GET /api/v1/search", searchHandler.Search())
 
 	// Admin routes (behind RequireRole(admin)).
 	router.Handle("GET /api/v1/admin/products", requireAdmin(productAdmin.List()))
