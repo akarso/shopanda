@@ -51,6 +51,12 @@ func (m *mockMailer) Send(_ context.Context, msg mail.Message) error {
 	return nil
 }
 
+type mockLogger struct{}
+
+func (mockLogger) Info(string, map[string]interface{})         {}
+func (mockLogger) Warn(string, map[string]interface{})         {}
+func (mockLogger) Error(string, error, map[string]interface{}) {}
+
 // --- tests ---
 
 func TestHandleOrderPaid(t *testing.T) {
@@ -77,7 +83,7 @@ func TestHandleOrderPaid(t *testing.T) {
 		},
 	}
 
-	svc := notification.New(tmpl, custRepo, ordRepo, q)
+	svc := notification.New(tmpl, custRepo, ordRepo, q, mockLogger{})
 	evt := event.New(order.EventOrderPaid, "core.order", order.OrderStatusChangedData{
 		OrderID:   "ord-1",
 		OldStatus: "pending",
@@ -122,7 +128,7 @@ func TestHandleOrderPaid_OrderNotFound(t *testing.T) {
 		},
 	}
 
-	svc := notification.New(tmpl, custRepo, ordRepo, q)
+	svc := notification.New(tmpl, custRepo, ordRepo, q, mockLogger{})
 	evt := event.New(order.EventOrderPaid, "core.order", order.OrderStatusChangedData{
 		OrderID: "missing",
 	})
@@ -133,6 +139,36 @@ func TestHandleOrderPaid_OrderNotFound(t *testing.T) {
 	}
 }
 
+func TestHandleOrderPaid_CustomerNotFound(t *testing.T) {
+	tmpl := mail.NewTemplates()
+	notification.RegisterTemplates(tmpl)
+
+	q := &mockQueue{}
+	custRepo := &mockCustomerRepo{
+		findByID: func(_ context.Context, _ string) (*customer.Customer, error) {
+			return nil, nil
+		},
+	}
+	ordRepo := &mockOrderRepo{
+		findByID: func(_ context.Context, id string) (*order.Order, error) {
+			if id == "ord-1" {
+				return &order.Order{ID: "ord-1", CustomerID: "cust-missing"}, nil
+			}
+			return nil, nil
+		},
+	}
+
+	svc := notification.New(tmpl, custRepo, ordRepo, q, mockLogger{})
+	evt := event.New(order.EventOrderPaid, "core.order", order.OrderStatusChangedData{
+		OrderID: "ord-1",
+	})
+
+	err := svc.HandleOrderPaid(context.Background(), evt)
+	if err == nil {
+		t.Fatal("expected error for missing customer")
+	}
+}
+
 func TestHandleOrderPaid_BadEventData(t *testing.T) {
 	tmpl := mail.NewTemplates()
 	notification.RegisterTemplates(tmpl)
@@ -140,7 +176,7 @@ func TestHandleOrderPaid_BadEventData(t *testing.T) {
 	custRepo := &mockCustomerRepo{}
 	ordRepo := &mockOrderRepo{}
 
-	svc := notification.New(tmpl, custRepo, ordRepo, q)
+	svc := notification.New(tmpl, custRepo, ordRepo, q, mockLogger{})
 	evt := event.New(order.EventOrderPaid, "core.order", "not-a-struct")
 
 	err := svc.HandleOrderPaid(context.Background(), evt)

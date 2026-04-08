@@ -14,7 +14,11 @@ type EmailSendHandler struct {
 }
 
 // NewEmailSendHandler creates a handler for email.send jobs.
+// Panics if mailer is nil.
 func NewEmailSendHandler(mailer mail.Mailer) *EmailSendHandler {
+	if mailer == nil {
+		panic("NewEmailSendHandler: nil mailer")
+	}
 	return &EmailSendHandler{mailer: mailer}
 }
 

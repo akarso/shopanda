@@ -10,6 +10,7 @@ import (
 	"github.com/akarso/shopanda/internal/domain/order"
 	"github.com/akarso/shopanda/internal/platform/event"
 	"github.com/akarso/shopanda/internal/platform/id"
+	"github.com/akarso/shopanda/internal/platform/logger"
 )
 
 // JobTypeEmailSend is the job type for email delivery.
@@ -21,15 +22,17 @@ type Service struct {
 	customers customer.CustomerRepository
 	orders    order.OrderRepository
 	queue     jobs.Queue
+	log       logger.Logger
 }
 
 // New creates a notification Service.
-func New(templates *mail.Templates, customers customer.CustomerRepository, orders order.OrderRepository, queue jobs.Queue) *Service {
+func New(templates *mail.Templates, customers customer.CustomerRepository, orders order.OrderRepository, queue jobs.Queue, log logger.Logger) *Service {
 	return &Service{
 		templates: templates,
 		customers: customers,
 		orders:    orders,
 		queue:     queue,
+		log:       log,
 	}
 }
 
@@ -52,18 +55,24 @@ func (s *Service) HandleOrderPaid(ctx context.Context, evt event.Event) error {
 
 	o, err := s.orders.FindByID(ctx, data.OrderID)
 	if err != nil {
+		s.log.Error("HandleOrderPaid.order_lookup_failed", err, map[string]interface{}{"order_id": data.OrderID})
 		return fmt.Errorf("notification: find order %s: %w", data.OrderID, err)
 	}
 	if o == nil {
-		return fmt.Errorf("notification: order %s not found", data.OrderID)
+		err := fmt.Errorf("notification: order %s not found", data.OrderID)
+		s.log.Error("HandleOrderPaid.order_not_found", err, map[string]interface{}{"order_id": data.OrderID})
+		return err
 	}
 
 	cust, err := s.customers.FindByID(ctx, o.CustomerID)
 	if err != nil {
+		s.log.Error("HandleOrderPaid.customer_lookup_failed", err, map[string]interface{}{"order_id": data.OrderID, "customer_id": o.CustomerID})
 		return fmt.Errorf("notification: find customer %s: %w", o.CustomerID, err)
 	}
 	if cust == nil {
-		return fmt.Errorf("notification: customer %s not found", o.CustomerID)
+		err := fmt.Errorf("notification: customer %s not found", o.CustomerID)
+		s.log.Error("HandleOrderPaid.customer_not_found", err, map[string]interface{}{"order_id": data.OrderID, "customer_id": o.CustomerID})
+		return err
 	}
 
 	msg, err := s.templates.Render("order.confirmed", cust.Email, map[string]string{
@@ -71,6 +80,7 @@ func (s *Service) HandleOrderPaid(ctx context.Context, evt event.Event) error {
 		"FirstName": cust.FirstName,
 	})
 	if err != nil {
+		s.log.Error("HandleOrderPaid.template_render_failed", err, map[string]interface{}{"order_id": data.OrderID, "customer_id": o.CustomerID})
 		return fmt.Errorf("notification: render template: %w", err)
 	}
 
@@ -82,8 +92,21 @@ func (s *Service) HandleOrderPaid(ctx context.Context, evt event.Event) error {
 
 	job, err := jobs.NewJob(id.New(), JobTypeEmailSend, payload)
 	if err != nil {
+		s.log.Error("HandleOrderPaid.job_create_failed", err, map[string]interface{}{"order_id": data.OrderID})
 		return fmt.Errorf("notification: create job: %w", err)
 	}
 
-	return s.queue.Enqueue(ctx, job)
+	if err := s.queue.Enqueue(ctx, job); err != nil {
+		s.log.Error("HandleOrderPaid.enqueue_failed", err, map[string]interface{}{"order_id": data.OrderID, "job_id": job.ID})
+		return err
+	}
+
+	s.log.Info("HandleOrderPaid.email_enqueued", map[string]interface{}{
+		"job_id":      job.ID,
+		"job_type":    JobTypeEmailSend,
+		"order_id":    data.OrderID,
+		"customer_id": o.CustomerID,
+	})
+
+	return nil
 }

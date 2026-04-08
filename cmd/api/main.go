@@ -121,7 +121,7 @@ func runServe(cfg *config.Config, log logger.Logger) error {
 		Password: cfg.Mail.SMTP.Password,
 		From:     cfg.Mail.SMTP.From,
 	})
-	notifSvc := notification.New(mailTemplates, customerRepo, orderRepo, jobQueue)
+	notifSvc := notification.New(mailTemplates, customerRepo, orderRepo, jobQueue, log)
 	jobWorker.Register(notification.NewEmailSendHandler(mailer))
 
 	// Providers.
