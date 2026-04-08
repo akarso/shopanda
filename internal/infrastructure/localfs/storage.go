@@ -64,6 +64,7 @@ func (s *Storage) Save(path string, file io.Reader) error {
 
 	if _, err := io.Copy(f, file); err != nil {
 		f.Close()
+		os.Remove(full)
 		return fmt.Errorf("localfs: write file: %w", err)
 	}
 
