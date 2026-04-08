@@ -14,6 +14,7 @@ import (
 	checkoutApp "github.com/akarso/shopanda/internal/application/checkout"
 	"github.com/akarso/shopanda/internal/application/composition"
 	"github.com/akarso/shopanda/internal/application/importer"
+	mediaApp "github.com/akarso/shopanda/internal/application/media"
 	"github.com/akarso/shopanda/internal/application/notification"
 	appPricing "github.com/akarso/shopanda/internal/application/pricing"
 	"github.com/akarso/shopanda/internal/domain/customer"
@@ -134,7 +135,9 @@ func runServe(cfg *config.Config, log logger.Logger) error {
 	default:
 		return fmt.Errorf("unsupported media.storage: %s", cfg.Media.Storage)
 	}
-	_ = mediaStorage // wired in media HTTP handler (PR-062)
+
+	// Asset repository.
+	assetRepo := postgres.NewAssetRepo(conn)
 
 	// Providers.
 	manualPayProvider := manualpay.NewProvider()
@@ -267,6 +270,8 @@ func runServe(cfg *config.Config, log logger.Logger) error {
 	shippingRates := shophttp.NewShippingRatesHandler(flatRateProvider)
 	categoryHandler := shophttp.NewCategoryHandler(categoryRepo, productRepo)
 	searchHandler := shophttp.NewSearchHandler(searchEngine)
+	mediaService := mediaApp.NewService(mediaStorage, assetRepo, bus, log)
+	mediaHandler := shophttp.NewMediaHandler(mediaService)
 
 	router := shophttp.NewRouter()
 
@@ -311,6 +316,7 @@ func runServe(cfg *config.Config, log logger.Logger) error {
 	router.Handle("PUT /api/v1/admin/products/{id}/variants/{variantId}", requireAdmin(variantHandler.Update()))
 	router.Handle("GET /api/v1/admin/orders", requireAdmin(orderAdmin.List()))
 	router.Handle("GET /api/v1/admin/orders/{orderId}", requireAdmin(orderAdmin.Get()))
+	router.Handle("POST /api/v1/admin/media/upload", requireAdmin(mediaHandler.Upload()))
 
 	// Cart routes (behind RequireAuth).
 	router.Handle("POST /api/v1/carts", requireAuth(cartHandler.Create()))
