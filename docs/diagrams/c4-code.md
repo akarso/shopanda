@@ -398,6 +398,16 @@ classDiagram
     class PostgresAssetRepo {
         -db *sql.DB
     }
+    class Cache {
+        <<interface>>
+        +Get(key, dest) ~bool, error~
+        +Set(key, value, ttl) error
+        +Delete(key) error
+    }
+    class PostgresCacheStore {
+        -db *sql.DB
+        +DeleteExpired() ~int64, error~
+    }
     class NotificationService {
         -templates Templates
         -customers CustomerRepository
@@ -426,6 +436,7 @@ classDiagram
     Mailer <|.. SMTPMailer : implements
     Storage <|.. LocalStorage : implements
     AssetRepository <|.. PostgresAssetRepo : implements
+    Cache <|.. PostgresCacheStore : implements
     Templates --> Message : produces
     PricingStep <|.. BasePriceStep : implements
     SearchHandler --> SearchEngine : uses

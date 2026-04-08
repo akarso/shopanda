@@ -17,6 +17,7 @@ type Config struct {
 	Auth     AuthConfig     `yaml:"auth"`
 	Mail     MailConfig     `yaml:"mail"`
 	Media    MediaConfig    `yaml:"media"`
+	Cache    CacheConfig    `yaml:"cache"`
 }
 
 type ServerConfig struct {
@@ -71,6 +72,10 @@ type MediaConfig struct {
 type LocalStorageConfig struct {
 	BasePath string `yaml:"base_path"`
 	BaseURL  string `yaml:"base_url"`
+}
+
+type CacheConfig struct {
+	Driver string `yaml:"driver"`
 }
 
 // values holds flattened dot-notation keys for generic access.
@@ -163,6 +168,9 @@ func defaults() Config {
 				BaseURL:  "/media",
 			},
 		},
+		Cache: CacheConfig{
+			Driver: "postgres",
+		},
 	}
 }
 
@@ -237,6 +245,9 @@ func applyEnv(cfg *Config) {
 	if v := os.Getenv("SHOPANDA_MEDIA_LOCAL_BASE_URL"); v != "" {
 		cfg.Media.Local.BaseURL = v
 	}
+	if v := os.Getenv("SHOPANDA_CACHE_DRIVER"); v != "" {
+		cfg.Cache.Driver = v
+	}
 }
 
 // flatten converts the Config struct into a dot-notation key-value map.
@@ -261,6 +272,7 @@ func flatten(cfg *Config) map[string]string {
 	m["media.storage"] = cfg.Media.Storage
 	m["media.local.base_path"] = cfg.Media.Local.BasePath
 	m["media.local.base_url"] = cfg.Media.Local.BaseURL
+	m["cache.driver"] = cfg.Cache.Driver
 	return m
 }
 
@@ -301,5 +313,6 @@ func (c *Config) String() string {
 		fmt.Sprintf("log.level=%s log.format=%s", c.Log.Level, c.Log.Format),
 		fmt.Sprintf("auth.jwt_ttl=%s", c.Auth.JWTTTL),
 		fmt.Sprintf("media.storage=%s media.local.base_path=%s media.local.base_url=%s", c.Media.Storage, c.Media.Local.BasePath, c.Media.Local.BaseURL),
+		fmt.Sprintf("cache.driver=%s", c.Cache.Driver),
 	}, " ")
 }

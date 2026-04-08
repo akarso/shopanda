@@ -17,6 +17,7 @@ import (
 	mediaApp "github.com/akarso/shopanda/internal/application/media"
 	"github.com/akarso/shopanda/internal/application/notification"
 	appPricing "github.com/akarso/shopanda/internal/application/pricing"
+	"github.com/akarso/shopanda/internal/domain/cache"
 	"github.com/akarso/shopanda/internal/domain/customer"
 	"github.com/akarso/shopanda/internal/domain/identity"
 	"github.com/akarso/shopanda/internal/domain/jobs"
@@ -138,6 +139,16 @@ func runServe(cfg *config.Config, log logger.Logger) error {
 
 	// Asset repository.
 	assetRepo := postgres.NewAssetRepo(conn)
+
+	// Cache.
+	var appCache cache.Cache
+	switch cfg.Cache.Driver {
+	case "postgres":
+		appCache = postgres.NewCacheStore(conn)
+	default:
+		return fmt.Errorf("unsupported cache.driver: %s", cfg.Cache.Driver)
+	}
+	_ = appCache // wired by consumers in upcoming PRs
 
 	// Providers.
 	manualPayProvider := manualpay.NewProvider()
