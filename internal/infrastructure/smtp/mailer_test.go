@@ -112,20 +112,25 @@ func TestMailer_Send(t *testing.T) {
 }
 
 func TestMailer_Send_RejectsCRLF(t *testing.T) {
-	m := smtpmail.New(smtpmail.Config{Host: "127.0.0.1", Port: 2525, From: "ok@example.com"})
-
 	tests := []struct {
-		name string
-		msg  mail.Message
+		name        string
+		from        string
+		msg         mail.Message
+		expectedErr string
 	}{
-		{"newline in To", mail.Message{To: "a@b.com\nBcc: evil@x.com", Subject: "ok", Body: "ok"}},
-		{"CR in Subject", mail.Message{To: "a@b.com", Subject: "ok\r\nBcc: evil@x.com", Body: "ok"}},
+		{"newline in To", "ok@example.com", mail.Message{To: "a@b.com\nBcc: evil@x.com", Subject: "ok", Body: "ok"}, "invalid To"},
+		{"CR in Subject", "ok@example.com", mail.Message{To: "a@b.com", Subject: "ok\r\nBcc: evil@x.com", Body: "ok"}, "invalid Subject"},
+		{"CRLF in From", "ok@example.com\r\nBcc:evil@x.com", mail.Message{To: "a@b.com", Subject: "ok", Body: "ok"}, "invalid From"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			m := smtpmail.New(smtpmail.Config{Host: "127.0.0.1", Port: 2525, From: tt.from})
 			err := m.Send(context.Background(), tt.msg)
 			if err == nil {
 				t.Fatal("expected error for CRLF injection")
+			}
+			if !strings.Contains(err.Error(), tt.expectedErr) {
+				t.Fatalf("error %q does not contain %q", err, tt.expectedErr)
 			}
 		})
 	}
