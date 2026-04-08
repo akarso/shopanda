@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
@@ -43,6 +44,8 @@ import (
 	"github.com/akarso/shopanda/internal/platform/plugin"
 
 	shophttp "github.com/akarso/shopanda/internal/interfaces/http"
+
+	"gopkg.in/yaml.v3"
 )
 
 func main() {
@@ -75,6 +78,10 @@ func run() error {
 			return runImportProducts(cfg, log)
 		case "scheduler":
 			return runScheduler(cfg, log)
+		case "config:export":
+			return runConfigExport(cfg, log)
+		case "config:import":
+			return runConfigImport(cfg, log)
 		default:
 			return fmt.Errorf("unknown command: %s", os.Args[1])
 		}
@@ -476,4 +483,109 @@ func runScheduler(cfg *config.Config, log logger.Logger) error {
 	defer sched.Stop()
 	sched.Start(ctx)
 	return nil
+}
+
+func runConfigExport(cfg *config.Config, log logger.Logger) error {
+	dsn := config.DatabaseDSN(cfg)
+	conn, err := db.Open(dsn)
+	if err != nil {
+		return fmt.Errorf("database: %w", err)
+	}
+	defer conn.Close()
+
+	repo := postgres.NewConfigRepo(conn)
+	entries, err := repo.All(context.Background())
+	if err != nil {
+		return fmt.Errorf("config export: %w", err)
+	}
+
+	// Build nested map from dot-notation keys.
+	root := make(map[string]interface{})
+	for _, e := range entries {
+		parts := strings.Split(e.Key, ".")
+		m := root
+		for i, p := range parts {
+			if i == len(parts)-1 {
+				m[p] = e.Value
+			} else {
+				child, ok := m[p]
+				if !ok {
+					child = make(map[string]interface{})
+					m[p] = child
+				}
+				m, ok = child.(map[string]interface{})
+				if !ok {
+					// Key conflict: a leaf collides with a branch. Overwrite.
+					next := make(map[string]interface{})
+					m[p] = next
+					m = next
+				}
+			}
+		}
+	}
+
+	out, err := yaml.Marshal(root)
+	if err != nil {
+		return fmt.Errorf("config export: marshal: %w", err)
+	}
+	fmt.Print(string(out))
+	return nil
+}
+
+func runConfigImport(cfg *config.Config, log logger.Logger) error {
+	if len(os.Args) < 3 {
+		return fmt.Errorf("usage: app config:import <file.yaml>")
+	}
+	filePath := os.Args[2]
+
+	data, err := os.ReadFile(filePath)
+	if err != nil {
+		return fmt.Errorf("config import: read %s: %w", filePath, err)
+	}
+
+	var raw map[string]interface{}
+	if err := yaml.Unmarshal(data, &raw); err != nil {
+		return fmt.Errorf("config import: parse %s: %w", filePath, err)
+	}
+
+	flat := make(map[string]interface{})
+	flattenYAML("", raw, flat)
+
+	dsn := config.DatabaseDSN(cfg)
+	conn, err := db.Open(dsn)
+	if err != nil {
+		return fmt.Errorf("database: %w", err)
+	}
+	defer conn.Close()
+
+	repo := postgres.NewConfigRepo(conn)
+	ctx := context.Background()
+	var count int
+	for k, v := range flat {
+		if err := repo.Set(ctx, k, v); err != nil {
+			return fmt.Errorf("config import: set %q: %w", k, err)
+		}
+		count++
+	}
+
+	log.Info("config.import.complete", map[string]interface{}{
+		"file":    filePath,
+		"entries": count,
+	})
+	return nil
+}
+
+// flattenYAML recursively converts a nested map into dot-notation key-value pairs.
+func flattenYAML(prefix string, m map[string]interface{}, out map[string]interface{}) {
+	for k, v := range m {
+		key := k
+		if prefix != "" {
+			key = prefix + "." + k
+		}
+		if child, ok := v.(map[string]interface{}); ok {
+			flattenYAML(key, child, out)
+		} else {
+			out[key] = v
+		}
+	}
 }

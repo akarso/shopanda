@@ -50,6 +50,7 @@ C4Component
             Component(smtpMailer, "SMTPMailer", "Go, net/smtp", "Sends email via SMTP: implements Mailer port")
             Component(localFSStorage, "LocalStorage", "Go, os", "Saves/deletes files on local disk: implements Storage port")
             Component(pgCacheStore, "PostgresCacheStore", "Go, UNLOGGED table", "Key-value cache with TTL: implements Cache port")
+            Component(pgConfigRepo, "PostgresConfigRepo", "Go, lib/pq", "DB-backed config storage: implements config.Repository port")
         }
 
         Boundary(domain, "Domain Layer") {
@@ -104,6 +105,7 @@ C4Component
     Rel(postgresSearch, postgres, "Full-text search queries", "lib/pq")
     Rel(postgresJobQueue, postgres, "Job queue queries", "lib/pq")
     Rel(pgCacheStore, postgres, "Key-value cache queries", "lib/pq")
+    Rel(pgConfigRepo, postgres, "Config key-value queries", "lib/pq")
     Rel(jobWorker, postgresJobQueue, "Polls and claims jobs")
     Rel(cronScheduler, postgresJobQueue, "Enqueues scheduled jobs")
     Rel(webhookHandler, paymentGateway, "Receives callbacks")
