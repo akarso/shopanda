@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"os"
 	"os/signal"
-	"strings"
 	"syscall"
 	"time"
 
@@ -499,29 +498,14 @@ func runConfigExport(cfg *config.Config, log logger.Logger) error {
 		return fmt.Errorf("config export: %w", err)
 	}
 
-	// Build nested map from dot-notation keys.
-	root := make(map[string]interface{})
+	// Build flat map keyed by full dot-notation keys.
+	// This avoids ambiguity between branch maps and map-valued leaves.
+	root := make(map[string]interface{}, len(entries))
 	for _, e := range entries {
-		parts := strings.Split(e.Key, ".")
-		m := root
-		for i, p := range parts {
-			if i == len(parts)-1 {
-				m[p] = e.Value
-			} else {
-				child, ok := m[p]
-				if !ok {
-					child = make(map[string]interface{})
-					m[p] = child
-				}
-				m, ok = child.(map[string]interface{})
-				if !ok {
-					// Key conflict: a leaf collides with a branch. Overwrite.
-					next := make(map[string]interface{})
-					m[p] = next
-					m = next
-				}
-			}
+		if _, dup := root[e.Key]; dup {
+			return fmt.Errorf("config export: duplicate key %q", e.Key)
 		}
+		root[e.Key] = e.Value
 	}
 
 	out, err := yaml.Marshal(root)
@@ -548,9 +532,6 @@ func runConfigImport(cfg *config.Config, log logger.Logger) error {
 		return fmt.Errorf("config import: parse %s: %w", filePath, err)
 	}
 
-	flat := make(map[string]interface{})
-	flattenYAML("", raw, flat)
-
 	dsn := config.DatabaseDSN(cfg)
 	conn, err := db.Open(dsn)
 	if err != nil {
@@ -558,14 +539,24 @@ func runConfigImport(cfg *config.Config, log logger.Logger) error {
 	}
 	defer conn.Close()
 
-	repo := postgres.NewConfigRepo(conn)
 	ctx := context.Background()
+	tx, err := conn.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("config import: begin tx: %w", err)
+	}
+	defer tx.Rollback() //nolint:errcheck // rollback after commit is a no-op
+
+	repo := postgres.NewConfigRepo(tx)
 	var count int
-	for k, v := range flat {
+	for k, v := range raw {
 		if err := repo.Set(ctx, k, v); err != nil {
 			return fmt.Errorf("config import: set %q: %w", k, err)
 		}
 		count++
+	}
+
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("config import: commit: %w", err)
 	}
 
 	log.Info("config.import.complete", map[string]interface{}{
@@ -573,19 +564,4 @@ func runConfigImport(cfg *config.Config, log logger.Logger) error {
 		"entries": count,
 	})
 	return nil
-}
-
-// flattenYAML recursively converts a nested map into dot-notation key-value pairs.
-func flattenYAML(prefix string, m map[string]interface{}, out map[string]interface{}) {
-	for k, v := range m {
-		key := k
-		if prefix != "" {
-			key = prefix + "." + k
-		}
-		if child, ok := v.(map[string]interface{}); ok {
-			flattenYAML(key, child, out)
-		} else {
-			out[key] = v
-		}
-	}
 }

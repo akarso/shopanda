@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 
 	domainCfg "github.com/akarso/shopanda/internal/domain/config"
@@ -12,13 +13,22 @@ import (
 // Compile-time check.
 var _ domainCfg.Repository = (*ConfigRepo)(nil)
 
+// configDB is the subset of *sql.DB / *sql.Tx used by ConfigRepo.
+type configDB interface {
+	ExecContext(ctx context.Context, query string, args ...interface{}) (sql.Result, error)
+	QueryRowContext(ctx context.Context, query string, args ...interface{}) *sql.Row
+	QueryContext(ctx context.Context, query string, args ...interface{}) (*sql.Rows, error)
+}
+
 // ConfigRepo implements config.Repository using PostgreSQL.
 type ConfigRepo struct {
-	db *sql.DB
+	db configDB
 }
 
 // NewConfigRepo returns a ConfigRepo backed by db.
-func NewConfigRepo(db *sql.DB) *ConfigRepo {
+// db may be a *sql.DB or *sql.Tx; pass a Tx to run operations inside an
+// existing transaction (e.g. bulk import).
+func NewConfigRepo(db configDB) *ConfigRepo {
 	return &ConfigRepo{db: db}
 }
 
@@ -42,8 +52,12 @@ func (r *ConfigRepo) Get(ctx context.Context, key string) (interface{}, error) {
 	return val, nil
 }
 
-// Set stores value under key (upsert).
+// Set stores value under key (upsert). Value must not be nil.
 func (r *ConfigRepo) Set(ctx context.Context, key string, value interface{}) error {
+	if value == nil {
+		return errors.New("config_repo: value must not be nil")
+	}
+
 	data, err := json.Marshal(value)
 	if err != nil {
 		return fmt.Errorf("config_repo: marshal %q: %w", key, err)

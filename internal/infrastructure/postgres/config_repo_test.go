@@ -142,6 +142,15 @@ func TestConfigRepo_AllEmpty(t *testing.T) {
 	}
 }
 
+func TestConfigRepo_SetNilValue(t *testing.T) {
+	repo := setupConfigRepo(t)
+	ctx := context.Background()
+
+	if err := repo.Set(ctx, "k", nil); err == nil {
+		t.Fatal("expected error for nil value")
+	}
+}
+
 func TestConfigRepo_ComplexValue(t *testing.T) {
 	repo := setupConfigRepo(t)
 	ctx := context.Background()
