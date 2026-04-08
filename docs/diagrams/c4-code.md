@@ -317,6 +317,23 @@ classDiagram
         +Stop()
     }
 
+    class Mailer {
+        <<interface>>
+        +Send(ctx, msg) error
+    }
+
+    class Message {
+        +string To
+        +string Subject
+        +string Body
+    }
+
+    class Templates {
+        -tmpls map
+        +Register(name, subject, body)
+        +Render(name, to, data) (Message, error)
+    }
+
     class PostgresProductRepo {
         -db *sql.DB
     }
@@ -350,6 +367,9 @@ classDiagram
         -entries []entry
         -log Logger
     }
+    class SMTPMailer {
+        -cfg Config
+    }
     class SearchHandler {
         -engine SearchEngine
         +Search() HandlerFunc
@@ -363,6 +383,8 @@ classDiagram
     SearchEngine <|.. PostgresSearchEngine : implements
     Queue <|.. JobQueue : implements
     Scheduler <|.. CronScheduler : implements
+    Mailer <|.. SMTPMailer : implements
+    Templates --> Message : produces
     PricingStep <|.. BasePriceStep : implements
     SearchHandler --> SearchEngine : uses
     Worker --> Queue : polls
