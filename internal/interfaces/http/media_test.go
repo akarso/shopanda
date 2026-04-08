@@ -45,6 +45,9 @@ func newTestMediaService() *mediaApp.Service {
 func TestMediaHandler_Upload(t *testing.T) {
 	handler := NewMediaHandler(newTestMediaService())
 
+	// Minimal JPEG header so http.DetectContentType returns image/jpeg.
+	jpegHeader := []byte{0xFF, 0xD8, 0xFF, 0xE0, 0x00, 0x10, 0x4A, 0x46, 0x49, 0x46, 0x00}
+
 	var body bytes.Buffer
 	writer := multipart.NewWriter(&body)
 	h := make(textproto.MIMEHeader)
@@ -54,7 +57,7 @@ func TestMediaHandler_Upload(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	part.Write([]byte("fake image data"))
+	part.Write(jpegHeader)
 	writer.Close()
 
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/admin/media/upload", &body)
@@ -78,5 +81,32 @@ func TestMediaHandler_Upload_MissingFile(t *testing.T) {
 
 	if rec.Code != http.StatusUnprocessableEntity {
 		t.Errorf("status = %d, want %d", rec.Code, http.StatusUnprocessableEntity)
+	}
+}
+
+func TestMediaHandler_Upload_TooLarge(t *testing.T) {
+	handler := NewMediaHandler(newTestMediaService())
+
+	var body bytes.Buffer
+	writer := multipart.NewWriter(&body)
+	h := make(textproto.MIMEHeader)
+	h.Set("Content-Disposition", `form-data; name="file"; filename="big.jpg"`)
+	h.Set("Content-Type", "image/jpeg")
+	part, err := writer.CreatePart(h)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Write just over 10MB to exceed MaxBytesReader limit.
+	part.Write(bytes.Repeat([]byte("x"), 10<<20+1))
+	writer.Close()
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/admin/media/upload", &body)
+	req.Header.Set("Content-Type", writer.FormDataContentType())
+	rec := httptest.NewRecorder()
+
+	handler.Upload().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusUnprocessableEntity {
+		t.Errorf("status = %d, want %d; body = %s", rec.Code, http.StatusUnprocessableEntity, rec.Body.String())
 	}
 }

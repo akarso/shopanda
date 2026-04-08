@@ -62,6 +62,9 @@ func (mockLogger) Error(_ string, _ error, _ map[string]interface{}) {}
 
 // --- tests ---
 
+// jpegHeader is a minimal JPEG file header (SOI + APP0 marker).
+var jpegHeader = []byte{0xFF, 0xD8, 0xFF, 0xE0, 0x00, 0x10, 0x4A, 0x46, 0x49, 0x46, 0x00}
+
 func TestUpload(t *testing.T) {
 	storage := &mockStorage{name: "test"}
 	repo := &mockAssetRepo{}
@@ -72,7 +75,7 @@ func TestUpload(t *testing.T) {
 		Filename: "test.jpg",
 		MimeType: "image/jpeg",
 		Size:     1024,
-		File:     bytes.NewReader([]byte("test image data")),
+		File:     bytes.NewReader(jpegHeader),
 	})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -107,7 +110,7 @@ func TestUpload_UnsupportedMimeType(t *testing.T) {
 		Filename: "test.exe",
 		MimeType: "application/octet-stream",
 		Size:     1024,
-		File:     bytes.NewReader([]byte("data")),
+		File:     bytes.NewReader([]byte("plain text content, not an image")),
 	})
 	if err == nil {
 		t.Fatal("expected error for unsupported mime type")
@@ -127,7 +130,7 @@ func TestUpload_StorageSaveFails(t *testing.T) {
 		Filename: "test.jpg",
 		MimeType: "image/jpeg",
 		Size:     1024,
-		File:     bytes.NewReader([]byte("data")),
+		File:     bytes.NewReader(jpegHeader),
 	})
 	if err == nil {
 		t.Fatal("expected error when storage fails")
@@ -147,7 +150,7 @@ func TestUpload_PersistFails(t *testing.T) {
 		Filename: "test.jpg",
 		MimeType: "image/jpeg",
 		Size:     1024,
-		File:     bytes.NewReader([]byte("data")),
+		File:     bytes.NewReader(jpegHeader),
 	})
 	if err == nil {
 		t.Fatal("expected error when persist fails")

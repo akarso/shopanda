@@ -1,9 +1,11 @@
 package media
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"io"
+	"net/http"
 
 	domainMedia "github.com/akarso/shopanda/internal/domain/media"
 	"github.com/akarso/shopanda/internal/platform/apperror"
@@ -64,27 +66,43 @@ type UploadResult struct {
 	URL   string
 }
 
+// sniffSize is the number of bytes read for MIME detection.
+const sniffSize = 512
+
 // Upload stores a file and creates an asset record.
 func (s *Service) Upload(ctx context.Context, input UploadInput) (*UploadResult, error) {
-	if !AllowedMimeTypes[input.MimeType] {
-		return nil, apperror.Validation(fmt.Sprintf("unsupported file type: %s", input.MimeType))
+	// Sniff actual MIME type from file content instead of trusting client header.
+	buf := make([]byte, sniffSize)
+	n, err := io.ReadAtLeast(input.File, buf, 1)
+	if err != nil {
+		return nil, apperror.Validation("unable to read file content")
 	}
+	detected := http.DetectContentType(buf[:n])
+	if !AllowedMimeTypes[detected] {
+		return nil, apperror.Validation(fmt.Sprintf("unsupported file type: %s", detected))
+	}
+	// Reassemble the stream so storage.Save receives the full content.
+	reader := io.MultiReader(bytes.NewReader(buf[:n]), input.File)
 
 	assetID := id.New()
 	path := "uploads/" + assetID + "/" + input.Filename
 
-	if err := s.storage.Save(path, input.File); err != nil {
+	if err := s.storage.Save(path, reader); err != nil {
 		return nil, fmt.Errorf("media: save file: %w", err)
 	}
 
-	asset, err := domainMedia.NewAsset(assetID, path, input.Filename, input.MimeType, input.Size)
+	asset, err := domainMedia.NewAsset(assetID, path, input.Filename, detected, input.Size)
 	if err != nil {
-		_ = s.storage.Delete(path)
+		if delErr := s.storage.Delete(path); delErr != nil {
+			s.log.Error("media: rollback delete failed", delErr, map[string]interface{}{"path": path})
+		}
 		return nil, fmt.Errorf("media: create asset: %w", err)
 	}
 
 	if err := s.assets.Save(ctx, &asset); err != nil {
-		_ = s.storage.Delete(path)
+		if delErr := s.storage.Delete(path); delErr != nil {
+			s.log.Error("media: rollback delete failed", delErr, map[string]interface{}{"path": path})
+		}
 		return nil, fmt.Errorf("media: persist asset: %w", err)
 	}
 
