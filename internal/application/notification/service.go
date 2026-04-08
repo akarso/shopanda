@@ -26,7 +26,23 @@ type Service struct {
 }
 
 // New creates a notification Service.
+// Panics if any dependency is nil.
 func New(templates *mail.Templates, customers customer.CustomerRepository, orders order.OrderRepository, queue jobs.Queue, log logger.Logger) *Service {
+	if templates == nil {
+		panic("notification.New: nil templates")
+	}
+	if customers == nil {
+		panic("notification.New: nil customers")
+	}
+	if orders == nil {
+		panic("notification.New: nil orders")
+	}
+	if queue == nil {
+		panic("notification.New: nil queue")
+	}
+	if log == nil {
+		panic("notification.New: nil log")
+	}
 	return &Service{
 		templates: templates,
 		customers: customers,
@@ -98,7 +114,7 @@ func (s *Service) HandleOrderPaid(ctx context.Context, evt event.Event) error {
 
 	if err := s.queue.Enqueue(ctx, job); err != nil {
 		s.log.Error("HandleOrderPaid.enqueue_failed", err, map[string]interface{}{"order_id": data.OrderID, "job_id": job.ID})
-		return err
+		return fmt.Errorf("notification: enqueue email job %s for order %s: %w", job.ID, data.OrderID, err)
 	}
 
 	s.log.Info("HandleOrderPaid.email_enqueued", map[string]interface{}{

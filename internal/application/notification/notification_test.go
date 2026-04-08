@@ -137,6 +137,9 @@ func TestHandleOrderPaid_OrderNotFound(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error for missing order")
 	}
+	if len(q.enqueued) != 0 {
+		t.Fatalf("expected 0 enqueued jobs, got %d", len(q.enqueued))
+	}
 }
 
 func TestHandleOrderPaid_CustomerNotFound(t *testing.T) {
@@ -167,6 +170,9 @@ func TestHandleOrderPaid_CustomerNotFound(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error for missing customer")
 	}
+	if len(q.enqueued) != 0 {
+		t.Fatalf("expected 0 enqueued jobs, got %d", len(q.enqueued))
+	}
 }
 
 func TestHandleOrderPaid_BadEventData(t *testing.T) {
@@ -182,6 +188,9 @@ func TestHandleOrderPaid_BadEventData(t *testing.T) {
 	err := svc.HandleOrderPaid(context.Background(), evt)
 	if err == nil {
 		t.Fatal("expected error for bad event data")
+	}
+	if len(q.enqueued) != 0 {
+		t.Fatalf("expected 0 enqueued jobs, got %d", len(q.enqueued))
 	}
 }
 
