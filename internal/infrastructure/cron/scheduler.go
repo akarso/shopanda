@@ -33,6 +33,7 @@ type Scheduler struct {
 	log      Logger
 	stop     chan struct{}
 	stopOnce sync.Once
+	wg       sync.WaitGroup
 }
 
 // New creates a Scheduler.
@@ -106,9 +107,11 @@ func (s *Scheduler) Start(ctx context.Context) {
 	}
 }
 
-// Stop signals the scheduler to shut down. Safe to call multiple times.
+// Stop signals the scheduler to shut down and waits for in-flight tasks.
+// Safe to call multiple times.
 func (s *Scheduler) Stop() {
 	s.stopOnce.Do(func() { close(s.stop) })
+	s.wg.Wait()
 }
 
 func (s *Scheduler) tick(t time.Time) {
@@ -117,7 +120,11 @@ func (s *Scheduler) tick(t time.Time) {
 			s.log.Info("scheduler.task.fire", map[string]interface{}{
 				"task": e.name,
 			})
-			s.run(e)
+			s.wg.Add(1)
+			go func(e entry) {
+				defer s.wg.Done()
+				s.run(e)
+			}(e)
 		}
 	}
 }
@@ -142,15 +149,24 @@ type cronExpr struct {
 	dayOfMonth set
 	month      set
 	dayOfWeek  set
+	domWild    bool // true when day-of-month was "*"
+	dowWild    bool // true when day-of-week was "*"
 }
 
-// matches returns true if the time t satisfies all five fields.
+// matches returns true if the time t satisfies the cron expression.
+// DOM and DOW follow Vixie cron semantics: when both are restricted (non-*),
+// the day matches if either DOM or DOW matches.
 func (c *cronExpr) matches(t time.Time) bool {
-	return c.minute.contains(t.Minute()) &&
-		c.hour.contains(t.Hour()) &&
-		c.dayOfMonth.contains(t.Day()) &&
-		c.month.contains(int(t.Month())) &&
-		c.dayOfWeek.contains(int(t.Weekday()))
+	if !c.minute.contains(t.Minute()) || !c.hour.contains(t.Hour()) || !c.month.contains(int(t.Month())) {
+		return false
+	}
+	domMatch := c.dayOfMonth.contains(t.Day())
+	dowMatch := c.dayOfWeek.contains(int(t.Weekday()))
+	if !c.domWild && !c.dowWild {
+		// Both restricted: OR (Vixie cron).
+		return domMatch || dowMatch
+	}
+	return domMatch && dowMatch
 }
 
 // set is a sorted slice of allowed values for a cron field.
@@ -200,6 +216,8 @@ func parse(spec string) (*cronExpr, error) {
 		dayOfMonth: dom,
 		month:      month,
 		dayOfWeek:  dow,
+		domWild:    fields[2] == "*",
+		dowWild:    fields[4] == "*",
 	}, nil
 }
 

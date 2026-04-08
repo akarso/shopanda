@@ -98,6 +98,7 @@ func TestScheduler_Tick(t *testing.T) {
 	// Simulate a tick at an arbitrary time.
 	now := time.Date(2026, 4, 7, 10, 30, 0, 0, time.UTC)
 	s.tick(now)
+	s.wg.Wait() // tasks run async
 
 	if got := count.Load(); got != 1 {
 		t.Errorf("expected 1 fire, got %d", got)
@@ -116,6 +117,7 @@ func TestScheduler_TaskPanicRecovery(t *testing.T) {
 
 	now := time.Date(2026, 4, 7, 10, 0, 0, 0, time.UTC)
 	s.tick(now)
+	s.wg.Wait() // tasks run async
 
 	if !afterPanic.Load() {
 		t.Error("task after panic should still have fired")

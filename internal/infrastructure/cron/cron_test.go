@@ -119,3 +119,27 @@ func TestCronExpr_Matches_RangeWithStep(t *testing.T) {
 		}
 	}
 }
+
+func TestCronExpr_Matches_DomDowOr(t *testing.T) {
+	// "30 8 1 * 0" — DOM=1 wild DOW, only DOM restricted → AND semantics.
+	domOnly, _ := parse("30 8 1 * 0")
+	// Jan 1 2026 = Thursday (weekday=4). DOM matches, DOW=0 is wild → AND → matches.
+	if !domOnly.matches(time.Date(2026, 1, 4, 8, 30, 0, 0, time.UTC)) {
+		t.Error("DOM-only: expected match on Sunday the 4th (DOW matches)")
+	}
+
+	// "30 8 1 1 0" — both DOM=1 and DOW=0(Sun) restricted → OR semantics.
+	both, _ := parse("30 8 1 1 0")
+	// Jan 1 2026 = Thursday. DOM=1 matches → true via OR even though DOW=4 != 0.
+	if !both.matches(time.Date(2026, 1, 1, 8, 30, 0, 0, time.UTC)) {
+		t.Error("both restricted: expected match on Jan 1 (DOM matches via OR)")
+	}
+	// Jan 4 2026 = Sunday. DOW=0 matches → true via OR even though DOM=4 != 1.
+	if !both.matches(time.Date(2026, 1, 4, 8, 30, 0, 0, time.UTC)) {
+		t.Error("both restricted: expected match on Sunday (DOW matches via OR)")
+	}
+	// Jan 2 2026 = Friday. Neither DOM=2 nor DOW=5 matches → false.
+	if both.matches(time.Date(2026, 1, 2, 8, 30, 0, 0, time.UTC)) {
+		t.Error("both restricted: expected no match on Jan 2 Friday")
+	}
+}
