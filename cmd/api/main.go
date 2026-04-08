@@ -14,10 +14,13 @@ import (
 	checkoutApp "github.com/akarso/shopanda/internal/application/checkout"
 	"github.com/akarso/shopanda/internal/application/composition"
 	"github.com/akarso/shopanda/internal/application/importer"
+	"github.com/akarso/shopanda/internal/application/notification"
 	appPricing "github.com/akarso/shopanda/internal/application/pricing"
 	"github.com/akarso/shopanda/internal/domain/customer"
 	"github.com/akarso/shopanda/internal/domain/identity"
 	"github.com/akarso/shopanda/internal/domain/jobs"
+	"github.com/akarso/shopanda/internal/domain/mail"
+	"github.com/akarso/shopanda/internal/domain/order"
 	"github.com/akarso/shopanda/internal/domain/pricing"
 	"github.com/akarso/shopanda/internal/domain/scheduler"
 	"github.com/akarso/shopanda/internal/domain/shared"
@@ -25,6 +28,7 @@ import (
 	"github.com/akarso/shopanda/internal/infrastructure/flatrate"
 	"github.com/akarso/shopanda/internal/infrastructure/manualpay"
 	"github.com/akarso/shopanda/internal/infrastructure/postgres"
+	smtpmail "github.com/akarso/shopanda/internal/infrastructure/smtp"
 	"github.com/akarso/shopanda/internal/platform/config"
 	"github.com/akarso/shopanda/internal/platform/db"
 	"github.com/akarso/shopanda/internal/platform/event"
@@ -106,8 +110,19 @@ func runServe(cfg *config.Config, log logger.Logger) error {
 	// Job queue + worker.
 	jobQueue := postgres.NewJobQueue(conn)
 	jobWorker := jobs.NewWorker(jobQueue, log, time.Second)
-	// Register job handlers here:
-	// jobWorker.Register(myhandler.New())
+
+	// Email notifications.
+	mailTemplates := mail.NewTemplates()
+	notification.RegisterTemplates(mailTemplates)
+	mailer := smtpmail.New(smtpmail.Config{
+		Host:     cfg.Mail.SMTP.Host,
+		Port:     cfg.Mail.SMTP.Port,
+		User:     cfg.Mail.SMTP.User,
+		Password: cfg.Mail.SMTP.Password,
+		From:     cfg.Mail.SMTP.From,
+	})
+	notifSvc := notification.New(mailTemplates, customerRepo, orderRepo, jobQueue)
+	jobWorker.Register(notification.NewEmailSendHandler(mailer))
 
 	// Providers.
 	manualPayProvider := manualpay.NewProvider()
@@ -128,6 +143,9 @@ func runServe(cfg *config.Config, log logger.Logger) error {
 			return nil
 		})
 	}
+
+	// Wire order.paid → email notification.
+	bus.OnAsync(order.EventOrderPaid, notifSvc.HandleOrderPaid)
 
 	// Plugin registry.
 	registry := plugin.NewRegistry(log)
