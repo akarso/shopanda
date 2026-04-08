@@ -103,6 +103,7 @@ C4Component
     Rel(postgresRepos, postgres, "SQL queries", "lib/pq")
     Rel(postgresSearch, postgres, "Full-text search queries", "lib/pq")
     Rel(postgresJobQueue, postgres, "Job queue queries", "lib/pq")
+    Rel(pgCacheStore, postgres, "Key-value cache queries", "lib/pq")
     Rel(jobWorker, postgresJobQueue, "Polls and claims jobs")
     Rel(cronScheduler, postgresJobQueue, "Enqueues scheduled jobs")
     Rel(webhookHandler, paymentGateway, "Receives callbacks")
