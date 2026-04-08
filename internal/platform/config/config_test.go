@@ -242,3 +242,51 @@ func writeYAML(t *testing.T, content string) string {
 	}
 	return path
 }
+
+func TestLoad_CacheDriverDefault(t *testing.T) {
+	path := writeYAML(t, "")
+
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load() error: %v", err)
+	}
+
+	if cfg.Cache.Driver != "postgres" {
+		t.Errorf("Cache.Driver = %q, want %q", cfg.Cache.Driver, "postgres")
+	}
+}
+
+func TestLoad_CacheDriverEnvOverlay(t *testing.T) {
+	path := writeYAML(t, "")
+
+	// Use a clearly fake value to exercise the env overlay without implying runtime support.
+	t.Setenv("SHOPANDA_CACHE_DRIVER", "test-driver")
+
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load() error: %v", err)
+	}
+
+	if cfg.Cache.Driver != "test-driver" {
+		t.Errorf("Cache.Driver = %q, want %q", cfg.Cache.Driver, "test-driver")
+	}
+
+	// Verify flattened key.
+	if v := Get("cache.driver"); v != "test-driver" {
+		t.Errorf("Get(\"cache.driver\") = %q, want %q", v, "test-driver")
+	}
+}
+
+func TestConfigString_ContainsCacheDriver(t *testing.T) {
+	path := writeYAML(t, "")
+
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load() error: %v", err)
+	}
+
+	s := cfg.String()
+	if !strings.Contains(s, "cache.driver=postgres") {
+		t.Errorf("String() = %q, should contain cache.driver=postgres", s)
+	}
+}

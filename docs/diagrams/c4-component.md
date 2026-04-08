@@ -49,6 +49,7 @@ C4Component
             Component(cronScheduler, "CronScheduler", "Go", "In-process cron scheduler: implements Scheduler port, fires registered tasks on schedule, enqueues jobs into Queue")
             Component(smtpMailer, "SMTPMailer", "Go, net/smtp", "Sends email via SMTP: implements Mailer port")
             Component(localFSStorage, "LocalStorage", "Go, os", "Saves/deletes files on local disk: implements Storage port")
+            Component(pgCacheStore, "PostgresCacheStore", "Go, UNLOGGED table", "Key-value cache with TTL: implements Cache port")
         }
 
         Boundary(domain, "Domain Layer") {
@@ -102,6 +103,7 @@ C4Component
     Rel(postgresRepos, postgres, "SQL queries", "lib/pq")
     Rel(postgresSearch, postgres, "Full-text search queries", "lib/pq")
     Rel(postgresJobQueue, postgres, "Job queue queries", "lib/pq")
+    Rel(pgCacheStore, postgres, "Key-value cache queries", "lib/pq")
     Rel(jobWorker, postgresJobQueue, "Polls and claims jobs")
     Rel(cronScheduler, postgresJobQueue, "Enqueues scheduled jobs")
     Rel(webhookHandler, paymentGateway, "Receives callbacks")

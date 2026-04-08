@@ -22,3 +22,6 @@ log:
 auth:
   # jwt_secret: Set via SHOPANDA_AUTH_JWT_SECRET (required; app refuses to start without it)
   jwt_ttl: "24h"
+
+cache:
+  driver: "postgres"
