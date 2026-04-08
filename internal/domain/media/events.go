@@ -8,8 +8,8 @@ const (
 
 // AssetEventData carries asset information in events.
 type AssetEventData struct {
-	AssetID  string
-	Path     string
-	Filename string
-	MimeType string
+	AssetID  string `json:"asset_id"`
+	Path     string `json:"path"`
+	Filename string `json:"filename"`
+	MimeType string `json:"mime_type"`
 }

@@ -5,6 +5,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/akarso/shopanda/internal/domain/media"
 )
@@ -48,7 +49,7 @@ func (s *Storage) Save(path string, file io.Reader) error {
 	if err != nil {
 		return fmt.Errorf("localfs: resolve base: %w", err)
 	}
-	if len(abs) < len(base) || abs[:len(base)] != base {
+	if abs != base && !strings.HasPrefix(abs, base+string(os.PathSeparator)) {
 		return fmt.Errorf("localfs: path escapes base directory")
 	}
 
@@ -60,10 +61,14 @@ func (s *Storage) Save(path string, file io.Reader) error {
 	if err != nil {
 		return fmt.Errorf("localfs: create file: %w", err)
 	}
-	defer f.Close()
 
 	if _, err := io.Copy(f, file); err != nil {
+		f.Close()
 		return fmt.Errorf("localfs: write file: %w", err)
+	}
+
+	if err := f.Close(); err != nil {
+		return fmt.Errorf("localfs: close file: %w", err)
 	}
 
 	return nil
@@ -81,7 +86,7 @@ func (s *Storage) Delete(path string) error {
 	if err != nil {
 		return fmt.Errorf("localfs: resolve base: %w", err)
 	}
-	if len(abs) < len(base) || abs[:len(base)] != base {
+	if abs != base && !strings.HasPrefix(abs, base+string(os.PathSeparator)) {
 		return fmt.Errorf("localfs: path escapes base directory")
 	}
 

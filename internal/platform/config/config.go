@@ -231,10 +231,10 @@ func applyEnv(cfg *Config) {
 	if v := os.Getenv("SHOPANDA_MEDIA_STORAGE"); v != "" {
 		cfg.Media.Storage = v
 	}
-	if v := os.Getenv("SHOPANDA_MEDIA_LOCAL_BASEPATH"); v != "" {
+	if v := os.Getenv("SHOPANDA_MEDIA_LOCAL_BASE_PATH"); v != "" {
 		cfg.Media.Local.BasePath = v
 	}
-	if v := os.Getenv("SHOPANDA_MEDIA_LOCAL_BASEURL"); v != "" {
+	if v := os.Getenv("SHOPANDA_MEDIA_LOCAL_BASE_URL"); v != "" {
 		cfg.Media.Local.BaseURL = v
 	}
 }
@@ -300,5 +300,6 @@ func (c *Config) String() string {
 			c.Database.Name, c.Database.SSLMode, password),
 		fmt.Sprintf("log.level=%s log.format=%s", c.Log.Level, c.Log.Format),
 		fmt.Sprintf("auth.jwt_ttl=%s", c.Auth.JWTTTL),
+		fmt.Sprintf("media.storage=%s media.local.base_url=%s", c.Media.Storage, c.Media.Local.BaseURL),
 	}, " ")
 }
