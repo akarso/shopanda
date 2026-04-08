@@ -16,6 +16,7 @@ type Config struct {
 	Log      LogConfig      `yaml:"log"`
 	Auth     AuthConfig     `yaml:"auth"`
 	Mail     MailConfig     `yaml:"mail"`
+	Media    MediaConfig    `yaml:"media"`
 }
 
 type ServerConfig struct {
@@ -60,6 +61,16 @@ type SMTPConfig struct {
 	User     string `yaml:"user"`
 	Password string `yaml:"password"`
 	From     string `yaml:"from"`
+}
+
+type MediaConfig struct {
+	Storage string             `yaml:"storage"`
+	Local   LocalStorageConfig `yaml:"local"`
+}
+
+type LocalStorageConfig struct {
+	BasePath string `yaml:"base_path"`
+	BaseURL  string `yaml:"base_url"`
 }
 
 // values holds flattened dot-notation keys for generic access.
@@ -145,6 +156,13 @@ func defaults() Config {
 				From: "noreply@localhost",
 			},
 		},
+		Media: MediaConfig{
+			Storage: "local",
+			Local: LocalStorageConfig{
+				BasePath: "./public/media",
+				BaseURL:  "/media",
+			},
+		},
 	}
 }
 
@@ -210,6 +228,15 @@ func applyEnv(cfg *Config) {
 	if v := os.Getenv("SHOPANDA_MAIL_SMTP_FROM"); v != "" {
 		cfg.Mail.SMTP.From = v
 	}
+	if v := os.Getenv("SHOPANDA_MEDIA_STORAGE"); v != "" {
+		cfg.Media.Storage = v
+	}
+	if v := os.Getenv("SHOPANDA_MEDIA_LOCAL_BASE_PATH"); v != "" {
+		cfg.Media.Local.BasePath = v
+	}
+	if v := os.Getenv("SHOPANDA_MEDIA_LOCAL_BASE_URL"); v != "" {
+		cfg.Media.Local.BaseURL = v
+	}
 }
 
 // flatten converts the Config struct into a dot-notation key-value map.
@@ -231,6 +258,9 @@ func flatten(cfg *Config) map[string]string {
 	m["mail.smtp.port"] = strconv.Itoa(cfg.Mail.SMTP.Port)
 	m["mail.smtp.user"] = cfg.Mail.SMTP.User
 	m["mail.smtp.from"] = cfg.Mail.SMTP.From
+	m["media.storage"] = cfg.Media.Storage
+	m["media.local.base_path"] = cfg.Media.Local.BasePath
+	m["media.local.base_url"] = cfg.Media.Local.BaseURL
 	return m
 }
 
@@ -270,5 +300,6 @@ func (c *Config) String() string {
 			c.Database.Name, c.Database.SSLMode, password),
 		fmt.Sprintf("log.level=%s log.format=%s", c.Log.Level, c.Log.Format),
 		fmt.Sprintf("auth.jwt_ttl=%s", c.Auth.JWTTTL),
+		fmt.Sprintf("media.storage=%s media.local.base_path=%s media.local.base_url=%s", c.Media.Storage, c.Media.Local.BasePath, c.Media.Local.BaseURL),
 	}, " ")
 }

@@ -370,6 +370,26 @@ classDiagram
     class SMTPMailer {
         -cfg Config
     }
+    class Asset {
+        +string ID
+        +string Path
+        +string Filename
+        +string MimeType
+        +int64 Size
+        +map Meta
+        +time CreatedAt
+    }
+    class Storage {
+        <<interface>>
+        +Name() string
+        +Save(path, file) error
+        +Delete(path) error
+        +URL(path) string
+    }
+    class LocalStorage {
+        -basePath string
+        -baseURL string
+    }
     class NotificationService {
         -templates Templates
         -customers CustomerRepository
@@ -396,6 +416,7 @@ classDiagram
     Queue <|.. JobQueue : implements
     Scheduler <|.. CronScheduler : implements
     Mailer <|.. SMTPMailer : implements
+    Storage <|.. LocalStorage : implements
     Templates --> Message : produces
     PricingStep <|.. BasePriceStep : implements
     SearchHandler --> SearchEngine : uses

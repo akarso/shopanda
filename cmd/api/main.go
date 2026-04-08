@@ -20,12 +20,14 @@ import (
 	"github.com/akarso/shopanda/internal/domain/identity"
 	"github.com/akarso/shopanda/internal/domain/jobs"
 	"github.com/akarso/shopanda/internal/domain/mail"
+	"github.com/akarso/shopanda/internal/domain/media"
 	"github.com/akarso/shopanda/internal/domain/order"
 	"github.com/akarso/shopanda/internal/domain/pricing"
 	"github.com/akarso/shopanda/internal/domain/scheduler"
 	"github.com/akarso/shopanda/internal/domain/shared"
 	"github.com/akarso/shopanda/internal/infrastructure/cron"
 	"github.com/akarso/shopanda/internal/infrastructure/flatrate"
+	"github.com/akarso/shopanda/internal/infrastructure/localfs"
 	"github.com/akarso/shopanda/internal/infrastructure/manualpay"
 	"github.com/akarso/shopanda/internal/infrastructure/postgres"
 	smtpmail "github.com/akarso/shopanda/internal/infrastructure/smtp"
@@ -123,6 +125,16 @@ func runServe(cfg *config.Config, log logger.Logger) error {
 	})
 	notifSvc := notification.New(mailTemplates, customerRepo, orderRepo, jobQueue, log)
 	jobWorker.Register(notification.NewEmailSendHandler(mailer))
+
+	// Media storage.
+	var mediaStorage media.Storage
+	switch cfg.Media.Storage {
+	case "local":
+		mediaStorage = localfs.New(cfg.Media.Local.BasePath, cfg.Media.Local.BaseURL)
+	default:
+		return fmt.Errorf("unsupported media.storage: %s", cfg.Media.Storage)
+	}
+	_ = mediaStorage // wired in media HTTP handler (PR-062)
 
 	// Providers.
 	manualPayProvider := manualpay.NewProvider()
