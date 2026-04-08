@@ -55,8 +55,6 @@ func NewService(
 // UploadInput holds the parameters for an upload.
 type UploadInput struct {
 	Filename string
-	MimeType string
-	Size     int64
 	File     io.Reader
 }
 
@@ -68,6 +66,18 @@ type UploadResult struct {
 
 // sniffSize is the number of bytes read for MIME detection.
 const sniffSize = 512
+
+// countingReader wraps an io.Reader and counts bytes read.
+type countingReader struct {
+	r io.Reader
+	n int64
+}
+
+func (c *countingReader) Read(p []byte) (int, error) {
+	n, err := c.r.Read(p)
+	c.n += int64(n)
+	return n, err
+}
 
 // Upload stores a file and creates an asset record.
 func (s *Service) Upload(ctx context.Context, input UploadInput) (*UploadResult, error) {
@@ -82,16 +92,16 @@ func (s *Service) Upload(ctx context.Context, input UploadInput) (*UploadResult,
 		return nil, apperror.Validation(fmt.Sprintf("unsupported file type: %s", detected))
 	}
 	// Reassemble the stream so storage.Save receives the full content.
-	reader := io.MultiReader(bytes.NewReader(buf[:n]), input.File)
+	cr := &countingReader{r: io.MultiReader(bytes.NewReader(buf[:n]), input.File)}
 
 	assetID := id.New()
 	path := "uploads/" + assetID + "/" + input.Filename
 
-	if err := s.storage.Save(path, reader); err != nil {
+	if err := s.storage.Save(path, cr); err != nil {
 		return nil, fmt.Errorf("media: save file: %w", err)
 	}
 
-	asset, err := domainMedia.NewAsset(assetID, path, input.Filename, detected, input.Size)
+	asset, err := domainMedia.NewAsset(assetID, path, input.Filename, detected, cr.n)
 	if err != nil {
 		if delErr := s.storage.Delete(path); delErr != nil {
 			s.log.Error("media: rollback delete failed", delErr, map[string]interface{}{"path": path})
@@ -113,12 +123,18 @@ func (s *Service) Upload(ctx context.Context, input UploadInput) (*UploadResult,
 		"size":     asset.Size,
 	})
 
-	_ = s.bus.Publish(ctx, event.New(domainMedia.EventAssetUploaded, "media.service", domainMedia.AssetEventData{
+	if pubErr := s.bus.Publish(ctx, event.New(domainMedia.EventAssetUploaded, "media.service", domainMedia.AssetEventData{
 		AssetID:  asset.ID,
 		Path:     asset.Path,
 		Filename: asset.Filename,
 		MimeType: asset.MimeType,
-	}))
+	})); pubErr != nil {
+		s.log.Warn("media: publish event failed", map[string]interface{}{
+			"event":    domainMedia.EventAssetUploaded,
+			"asset_id": asset.ID,
+			"error":    pubErr.Error(),
+		})
+	}
 
 	return &UploadResult{
 		Asset: asset,

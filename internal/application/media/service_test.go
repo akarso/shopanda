@@ -16,24 +16,27 @@ import (
 type mockStorage struct {
 	name    string
 	saveErr error
+	delErr  error
 	saved   map[string]bool
 	deleted []string
 }
 
 func (m *mockStorage) Name() string { return m.name }
-func (m *mockStorage) Save(path string, _ io.Reader) error {
+func (m *mockStorage) Save(path string, r io.Reader) error {
 	if m.saveErr != nil {
 		return m.saveErr
 	}
 	if m.saved == nil {
 		m.saved = make(map[string]bool)
 	}
+	// Drain the reader so countingReader records bytes.
+	io.Copy(io.Discard, r)
 	m.saved[path] = true
 	return nil
 }
 func (m *mockStorage) Delete(path string) error {
 	m.deleted = append(m.deleted, path)
-	return nil
+	return m.delErr
 }
 func (m *mockStorage) URL(path string) string { return "/media/" + path }
 
@@ -60,6 +63,17 @@ func (mockLogger) Info(_ string, _ map[string]interface{})           {}
 func (mockLogger) Warn(_ string, _ map[string]interface{})           {}
 func (mockLogger) Error(_ string, _ error, _ map[string]interface{}) {}
 
+type capturingLogger struct {
+	errors []string
+	warns  []string
+}
+
+func (c *capturingLogger) Info(_ string, _ map[string]interface{})   {}
+func (c *capturingLogger) Warn(evt string, _ map[string]interface{}) { c.warns = append(c.warns, evt) }
+func (c *capturingLogger) Error(evt string, _ error, _ map[string]interface{}) {
+	c.errors = append(c.errors, evt)
+}
+
 // --- tests ---
 
 // jpegHeader is a minimal JPEG file header (SOI + APP0 marker).
@@ -73,8 +87,6 @@ func TestUpload(t *testing.T) {
 
 	result, err := svc.Upload(context.Background(), UploadInput{
 		Filename: "test.jpg",
-		MimeType: "image/jpeg",
-		Size:     1024,
 		File:     bytes.NewReader(jpegHeader),
 	})
 	if err != nil {
@@ -86,8 +98,8 @@ func TestUpload(t *testing.T) {
 	if result.Asset.MimeType != "image/jpeg" {
 		t.Errorf("mime_type = %q, want %q", result.Asset.MimeType, "image/jpeg")
 	}
-	if result.Asset.Size != 1024 {
-		t.Errorf("size = %d, want 1024", result.Asset.Size)
+	if result.Asset.Size != int64(len(jpegHeader)) {
+		t.Errorf("size = %d, want %d", result.Asset.Size, len(jpegHeader))
 	}
 	if result.URL == "" {
 		t.Error("url is empty")
@@ -108,8 +120,6 @@ func TestUpload_UnsupportedMimeType(t *testing.T) {
 
 	_, err := svc.Upload(context.Background(), UploadInput{
 		Filename: "test.exe",
-		MimeType: "application/octet-stream",
-		Size:     1024,
 		File:     bytes.NewReader([]byte("plain text content, not an image")),
 	})
 	if err == nil {
@@ -128,8 +138,6 @@ func TestUpload_StorageSaveFails(t *testing.T) {
 
 	_, err := svc.Upload(context.Background(), UploadInput{
 		Filename: "test.jpg",
-		MimeType: "image/jpeg",
-		Size:     1024,
 		File:     bytes.NewReader(jpegHeader),
 	})
 	if err == nil {
@@ -148,8 +156,6 @@ func TestUpload_PersistFails(t *testing.T) {
 
 	_, err := svc.Upload(context.Background(), UploadInput{
 		Filename: "test.jpg",
-		MimeType: "image/jpeg",
-		Size:     1024,
 		File:     bytes.NewReader(jpegHeader),
 	})
 	if err == nil {
@@ -157,5 +163,27 @@ func TestUpload_PersistFails(t *testing.T) {
 	}
 	if len(storage.deleted) != 1 {
 		t.Errorf("should clean up stored file on persist failure, deleted = %d", len(storage.deleted))
+	}
+}
+
+func TestUpload_PersistFails_DeleteAlsoFails(t *testing.T) {
+	storage := &mockStorage{name: "test", delErr: errors.New("rm failed")}
+	repo := &mockAssetRepo{saveErr: errors.New("db error")}
+	log := &capturingLogger{}
+	bus := event.NewBus(log)
+	svc := NewService(storage, repo, bus, log)
+
+	_, err := svc.Upload(context.Background(), UploadInput{
+		Filename: "test.jpg",
+		File:     bytes.NewReader(jpegHeader),
+	})
+	if err == nil {
+		t.Fatal("expected error when persist fails")
+	}
+	if len(log.errors) != 1 {
+		t.Fatalf("expected 1 logged error, got %d", len(log.errors))
+	}
+	if log.errors[0] != "media: rollback delete failed" {
+		t.Errorf("logged error = %q, want %q", log.errors[0], "media: rollback delete failed")
 	}
 }

@@ -56,8 +56,6 @@ func (h *MediaHandler) Upload() http.HandlerFunc {
 
 		result, err := h.svc.Upload(r.Context(), mediaApp.UploadInput{
 			Filename: filename,
-			MimeType: header.Header.Get("Content-Type"),
-			Size:     header.Size,
 			File:     file,
 		})
 		if err != nil {

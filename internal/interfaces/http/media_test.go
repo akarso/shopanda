@@ -20,7 +20,7 @@ import (
 type hMockStorage struct{}
 
 func (hMockStorage) Name() string                     { return "test" }
-func (hMockStorage) Save(_ string, _ io.Reader) error { return nil }
+func (hMockStorage) Save(_ string, r io.Reader) error { io.Copy(io.Discard, r); return nil }
 func (hMockStorage) Delete(_ string) error            { return nil }
 func (hMockStorage) URL(path string) string           { return "/media/" + path }
 
