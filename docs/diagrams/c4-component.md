@@ -35,6 +35,7 @@ C4Component
             Component(pricingPipeline, "PricingPipeline", "Go", "Step-based price calculation: BasePriceStep → plugin steps → FinalizeStep")
             Component(compositionPipeline, "CompositionPipeline", "Go, Generics", "PDP and PLP response enrichment via plugin steps")
             Component(importerService, "ProductImporter", "Go", "Bulk CSV product import")
+            Component(notifService, "NotificationService", "Go", "Listens to order.paid, renders email template, enqueues email.send job")
         }
 
         Boundary(infrastructure, "Infrastructure Layer (Adapters)") {
@@ -78,6 +79,11 @@ C4Component
     Rel(checkoutWorkflow, manualPay, "Initiates payment")
     Rel(checkoutWorkflow, flatRate, "Selects shipping")
     Rel(checkoutWorkflow, eventBus, "Publishes checkout events")
+
+    Rel(eventBus, notifService, "order.paid event")
+    Rel(notifService, postgresRepos, "Looks up order + customer")
+    Rel(notifService, postgresJobQueue, "Enqueues email.send job")
+    Rel(jobWorker, smtpMailer, "EmailSendHandler sends via Mailer")
 
     Rel(authService, postgresRepos, "Customer + token queries")
     Rel(cartService, postgresRepos, "Cart persistence")

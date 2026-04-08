@@ -370,6 +370,18 @@ classDiagram
     class SMTPMailer {
         -cfg Config
     }
+    class NotificationService {
+        -templates Templates
+        -customers CustomerRepository
+        -orders OrderRepository
+        -queue Queue
+        +HandleOrderPaid(ctx, evt) error
+    }
+    class EmailSendHandler {
+        -mailer Mailer
+        +Type() string
+        +Handle(ctx, job) error
+    }
     class SearchHandler {
         -engine SearchEngine
         +Search() HandlerFunc
@@ -389,4 +401,8 @@ classDiagram
     SearchHandler --> SearchEngine : uses
     Worker --> Queue : polls
     Worker --> Handler : dispatches to
+    Handler <|.. EmailSendHandler : implements
+    EmailSendHandler --> Mailer : sends via
+    NotificationService --> Templates : renders
+    NotificationService --> Queue : enqueues email.send
 ```
