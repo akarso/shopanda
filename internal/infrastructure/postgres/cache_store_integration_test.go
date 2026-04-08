@@ -1,6 +1,7 @@
 package postgres_test
 
 import (
+	"database/sql"
 	"encoding/json"
 	"testing"
 	"time"
@@ -9,14 +10,19 @@ import (
 	"github.com/akarso/shopanda/internal/platform/migrate"
 )
 
-func TestCacheStoreDB_SetAndGet(t *testing.T) {
+// setupCacheStore opens a test DB, runs migrations, and registers cache cleanup.
+func setupCacheStore(t *testing.T) (*sql.DB, *postgres.CacheStore) {
+	t.Helper()
 	db := testDB(t)
 	if _, err := migrate.Run(db, "../../../migrations"); err != nil {
 		t.Fatalf("migrate: %v", err)
 	}
 	t.Cleanup(func() { db.Exec("DELETE FROM cache") })
+	return db, postgres.NewCacheStore(db)
+}
 
-	store := postgres.NewCacheStore(db)
+func TestCacheStoreDB_SetAndGet(t *testing.T) {
+	db, store := setupCacheStore(t)
 
 	type payload struct {
 		Name  string `json:"name"`
@@ -47,13 +53,7 @@ func TestCacheStoreDB_SetAndGet(t *testing.T) {
 }
 
 func TestCacheStoreDB_Miss(t *testing.T) {
-	db := testDB(t)
-	if _, err := migrate.Run(db, "../../../migrations"); err != nil {
-		t.Fatalf("migrate: %v", err)
-	}
-	t.Cleanup(func() { db.Exec("DELETE FROM cache") })
-
-	store := postgres.NewCacheStore(db)
+	_, store := setupCacheStore(t)
 
 	var dest string
 	ok, err := store.Get("nonexistent", &dest)
@@ -66,13 +66,7 @@ func TestCacheStoreDB_Miss(t *testing.T) {
 }
 
 func TestCacheStoreDB_Upsert(t *testing.T) {
-	db := testDB(t)
-	if _, err := migrate.Run(db, "../../../migrations"); err != nil {
-		t.Fatalf("migrate: %v", err)
-	}
-	t.Cleanup(func() { db.Exec("DELETE FROM cache") })
-
-	store := postgres.NewCacheStore(db)
+	db, store := setupCacheStore(t)
 
 	if err := store.Set("k1", "first", 0); err != nil {
 		t.Fatalf("Set first: %v", err)
@@ -95,18 +89,16 @@ func TestCacheStoreDB_Upsert(t *testing.T) {
 
 	// Verify only one row exists.
 	var count int
-	db.QueryRow("SELECT count(*) FROM cache WHERE key = $1", "k1").Scan(&count)
+	if err := db.QueryRow("SELECT count(*) FROM cache WHERE key = $1", "k1").Scan(&count); err != nil {
+		t.Fatalf("count query: %v", err)
+	}
 	if count != 1 {
 		t.Errorf("rows = %d, want 1 (upsert should not duplicate)", count)
 	}
 }
 
 func TestCacheStoreDB_ExpiredEntryMiss(t *testing.T) {
-	db := testDB(t)
-	if _, err := migrate.Run(db, "../../../migrations"); err != nil {
-		t.Fatalf("migrate: %v", err)
-	}
-	t.Cleanup(func() { db.Exec("DELETE FROM cache") })
+	db, _ := setupCacheStore(t)
 
 	// Insert an already-expired row directly.
 	past := time.Now().Add(-time.Minute)
@@ -119,7 +111,6 @@ func TestCacheStoreDB_ExpiredEntryMiss(t *testing.T) {
 	}
 
 	store := postgres.NewCacheStore(db)
-
 	var got string
 	ok, err := store.Get("expired_key", &got)
 	if err != nil {
@@ -131,13 +122,7 @@ func TestCacheStoreDB_ExpiredEntryMiss(t *testing.T) {
 }
 
 func TestCacheStoreDB_Delete(t *testing.T) {
-	db := testDB(t)
-	if _, err := migrate.Run(db, "../../../migrations"); err != nil {
-		t.Fatalf("migrate: %v", err)
-	}
-	t.Cleanup(func() { db.Exec("DELETE FROM cache") })
-
-	store := postgres.NewCacheStore(db)
+	db, store := setupCacheStore(t)
 
 	if err := store.Set("k1", "value", 0); err != nil {
 		t.Fatalf("Set: %v", err)
@@ -148,20 +133,16 @@ func TestCacheStoreDB_Delete(t *testing.T) {
 
 	// Verify row removed from DB.
 	var count int
-	db.QueryRow("SELECT count(*) FROM cache WHERE key = $1", "k1").Scan(&count)
+	if err := db.QueryRow("SELECT count(*) FROM cache WHERE key = $1", "k1").Scan(&count); err != nil {
+		t.Fatalf("count query: %v", err)
+	}
 	if count != 0 {
 		t.Errorf("rows = %d, want 0 after delete", count)
 	}
 }
 
 func TestCacheStoreDB_DeleteMissing(t *testing.T) {
-	db := testDB(t)
-	if _, err := migrate.Run(db, "../../../migrations"); err != nil {
-		t.Fatalf("migrate: %v", err)
-	}
-	t.Cleanup(func() { db.Exec("DELETE FROM cache") })
-
-	store := postgres.NewCacheStore(db)
+	_, store := setupCacheStore(t)
 
 	if err := store.Delete("nonexistent"); err != nil {
 		t.Fatalf("Delete missing key should not error: %v", err)
@@ -169,20 +150,23 @@ func TestCacheStoreDB_DeleteMissing(t *testing.T) {
 }
 
 func TestCacheStoreDB_DeleteExpired(t *testing.T) {
-	db := testDB(t)
-	if _, err := migrate.Run(db, "../../../migrations"); err != nil {
-		t.Fatalf("migrate: %v", err)
-	}
-	t.Cleanup(func() { db.Exec("DELETE FROM cache") })
-
-	store := postgres.NewCacheStore(db)
+	db, store := setupCacheStore(t)
 
 	// One expired, one alive, one no-TTL.
 	past := time.Now().Add(-time.Minute)
-	data, _ := json.Marshal("x")
-	db.Exec(`INSERT INTO cache (key, value, expires_at) VALUES ($1, $2, $3)`, "expired", data, past)
-	store.Set("alive", "val", time.Hour)
-	store.Set("forever", "val", 0)
+	data, err := json.Marshal("x")
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	if _, err := db.Exec(`INSERT INTO cache (key, value, expires_at) VALUES ($1, $2, $3)`, "expired", data, past); err != nil {
+		t.Fatalf("insert expired: %v", err)
+	}
+	if err := store.Set("alive", "val", time.Hour); err != nil {
+		t.Fatalf("Set alive: %v", err)
+	}
+	if err := store.Set("forever", "val", 0); err != nil {
+		t.Fatalf("Set forever: %v", err)
+	}
 
 	n, err := store.DeleteExpired()
 	if err != nil {
@@ -194,7 +178,9 @@ func TestCacheStoreDB_DeleteExpired(t *testing.T) {
 
 	// Verify correct rows remain.
 	var count int
-	db.QueryRow("SELECT count(*) FROM cache").Scan(&count)
+	if err := db.QueryRow("SELECT count(*) FROM cache").Scan(&count); err != nil {
+		t.Fatalf("count query: %v", err)
+	}
 	if count != 2 {
 		t.Errorf("remaining rows = %d, want 2", count)
 	}

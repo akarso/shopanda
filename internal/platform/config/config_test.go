@@ -259,20 +259,21 @@ func TestLoad_CacheDriverDefault(t *testing.T) {
 func TestLoad_CacheDriverEnvOverlay(t *testing.T) {
 	path := writeYAML(t, "")
 
-	t.Setenv("SHOPANDA_CACHE_DRIVER", "redis")
+	// Use a clearly fake value to exercise the env overlay without implying runtime support.
+	t.Setenv("SHOPANDA_CACHE_DRIVER", "test-driver")
 
 	cfg, err := Load(path)
 	if err != nil {
 		t.Fatalf("Load() error: %v", err)
 	}
 
-	if cfg.Cache.Driver != "redis" {
-		t.Errorf("Cache.Driver = %q, want %q", cfg.Cache.Driver, "redis")
+	if cfg.Cache.Driver != "test-driver" {
+		t.Errorf("Cache.Driver = %q, want %q", cfg.Cache.Driver, "test-driver")
 	}
 
 	// Verify flattened key.
-	if v := Get("cache.driver"); v != "redis" {
-		t.Errorf("Get(\"cache.driver\") = %q, want %q", v, "redis")
+	if v := Get("cache.driver"); v != "test-driver" {
+		t.Errorf("Get(\"cache.driver\") = %q, want %q", v, "test-driver")
 	}
 }
 
