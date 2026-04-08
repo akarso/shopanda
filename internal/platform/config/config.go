@@ -15,6 +15,7 @@ type Config struct {
 	Database DatabaseConfig `yaml:"database"`
 	Log      LogConfig      `yaml:"log"`
 	Auth     AuthConfig     `yaml:"auth"`
+	Mail     MailConfig     `yaml:"mail"`
 }
 
 type ServerConfig struct {
@@ -46,6 +47,19 @@ type LogConfig struct {
 type AuthConfig struct {
 	JWTSecret string `yaml:"jwt_secret"`
 	JWTTTL    string `yaml:"jwt_ttl"`
+}
+
+type MailConfig struct {
+	Driver string     `yaml:"driver"`
+	SMTP   SMTPConfig `yaml:"smtp"`
+}
+
+type SMTPConfig struct {
+	Host     string `yaml:"host"`
+	Port     int    `yaml:"port"`
+	User     string `yaml:"user"`
+	Password string `yaml:"password"`
+	From     string `yaml:"from"`
 }
 
 // values holds flattened dot-notation keys for generic access.
@@ -123,6 +137,14 @@ func defaults() Config {
 			JWTSecret: "",
 			JWTTTL:    "24h",
 		},
+		Mail: MailConfig{
+			Driver: "smtp",
+			SMTP: SMTPConfig{
+				Host: "localhost",
+				Port: 587,
+				From: "noreply@localhost",
+			},
+		},
 	}
 }
 
@@ -168,6 +190,26 @@ func applyEnv(cfg *Config) {
 	if v := os.Getenv("SHOPANDA_AUTH_JWT_TTL"); v != "" {
 		cfg.Auth.JWTTTL = v
 	}
+	if v := os.Getenv("SHOPANDA_MAIL_DRIVER"); v != "" {
+		cfg.Mail.Driver = v
+	}
+	if v := os.Getenv("SHOPANDA_MAIL_SMTP_HOST"); v != "" {
+		cfg.Mail.SMTP.Host = v
+	}
+	if v := os.Getenv("SHOPANDA_MAIL_SMTP_PORT"); v != "" {
+		if p, err := strconv.Atoi(v); err == nil {
+			cfg.Mail.SMTP.Port = p
+		}
+	}
+	if v := os.Getenv("SHOPANDA_MAIL_SMTP_USER"); v != "" {
+		cfg.Mail.SMTP.User = v
+	}
+	if v := os.Getenv("SHOPANDA_MAIL_SMTP_PASSWORD"); v != "" {
+		cfg.Mail.SMTP.Password = v
+	}
+	if v := os.Getenv("SHOPANDA_MAIL_SMTP_FROM"); v != "" {
+		cfg.Mail.SMTP.From = v
+	}
 }
 
 // flatten converts the Config struct into a dot-notation key-value map.
@@ -184,6 +226,11 @@ func flatten(cfg *Config) map[string]string {
 	m["log.level"] = cfg.Log.Level
 	m["log.format"] = cfg.Log.Format
 	m["auth.jwt_ttl"] = cfg.Auth.JWTTTL
+	m["mail.driver"] = cfg.Mail.Driver
+	m["mail.smtp.host"] = cfg.Mail.SMTP.Host
+	m["mail.smtp.port"] = strconv.Itoa(cfg.Mail.SMTP.Port)
+	m["mail.smtp.user"] = cfg.Mail.SMTP.User
+	m["mail.smtp.from"] = cfg.Mail.SMTP.From
 	return m
 }
 
