@@ -390,6 +390,14 @@ classDiagram
         -basePath string
         -baseURL string
     }
+    class AssetRepository {
+        <<interface>>
+        +Save(ctx, asset) error
+        +FindByID(ctx, id) Asset
+    }
+    class PostgresAssetRepo {
+        -db *sql.DB
+    }
     class NotificationService {
         -templates Templates
         -customers CustomerRepository
@@ -417,6 +425,7 @@ classDiagram
     Scheduler <|.. CronScheduler : implements
     Mailer <|.. SMTPMailer : implements
     Storage <|.. LocalStorage : implements
+    AssetRepository <|.. PostgresAssetRepo : implements
     Templates --> Message : produces
     PricingStep <|.. BasePriceStep : implements
     SearchHandler --> SearchEngine : uses

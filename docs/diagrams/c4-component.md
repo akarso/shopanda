@@ -24,6 +24,7 @@ C4Component
             Component(orderAdmin, "OrderAdminHandler", "HTTP", "List, Get orders (admin)")
             Component(categoryHandler, "CategoryHandler", "HTTP", "Tree, Get, Products (public)")
             Component(searchHandler, "SearchHandler", "HTTP", "Full-text product search (public)")
+            Component(mediaHandler, "MediaHandler", "HTTP", "Upload media files (admin)")
             Component(shippingHandler, "ShippingRatesHandler", "HTTP", "List shipping rates")
             Component(webhookHandler, "PaymentWebhookHandler", "HTTP", "Handle payment callbacks (public)")
         }
@@ -36,6 +37,7 @@ C4Component
             Component(compositionPipeline, "CompositionPipeline", "Go, Generics", "PDP and PLP response enrichment via plugin steps")
             Component(importerService, "ProductImporter", "Go", "Bulk CSV product import")
             Component(notifService, "NotificationService", "Go", "Listens to order.paid, renders email template, enqueues email.send job")
+            Component(mediaService, "MediaService", "Go", "Upload files: validate type, save to storage, persist asset record")
         }
 
         Boundary(infrastructure, "Infrastructure Layer (Adapters)") {
@@ -68,6 +70,7 @@ C4Component
     Rel(middleware, checkoutHandler, "Routes requests")
     Rel(middleware, categoryHandler, "Routes requests")
     Rel(middleware, searchHandler, "Routes requests")
+    Rel(middleware, mediaHandler, "Routes requests")
     Rel(middleware, webhookHandler, "Routes requests")
 
     Rel(authHandler, authService, "Delegates auth logic")
@@ -92,6 +95,9 @@ C4Component
     Rel(productHandler, postgresRepos, "Product queries")
     Rel(categoryHandler, postgresRepos, "Category + product queries")
     Rel(searchHandler, postgresSearch, "Delegates search queries")
+    Rel(mediaHandler, mediaService, "Delegates upload logic")
+    Rel(mediaService, localFSStorage, "Saves files")
+    Rel(mediaService, postgresRepos, "Persists asset records")
 
     Rel(postgresRepos, postgres, "SQL queries", "lib/pq")
     Rel(postgresSearch, postgres, "Full-text search queries", "lib/pq")
