@@ -300,6 +300,6 @@ func (c *Config) String() string {
 			c.Database.Name, c.Database.SSLMode, password),
 		fmt.Sprintf("log.level=%s log.format=%s", c.Log.Level, c.Log.Format),
 		fmt.Sprintf("auth.jwt_ttl=%s", c.Auth.JWTTTL),
-		fmt.Sprintf("media.storage=%s media.local.base_url=%s", c.Media.Storage, c.Media.Local.BaseURL),
+		fmt.Sprintf("media.storage=%s media.local.base_path=%s media.local.base_url=%s", c.Media.Storage, c.Media.Local.BasePath, c.Media.Local.BaseURL),
 	}, " ")
 }

@@ -96,7 +96,12 @@ func (s *Storage) Delete(path string) error {
 	return nil
 }
 
-// URL returns baseURL/path.
+// URL returns baseURL/path. Returns empty string if path escapes the storage root.
 func (s *Storage) URL(path string) string {
-	return s.baseURL + "/" + filepath.ToSlash(filepath.Clean(path))
+	cleaned := filepath.Clean(path)
+	rel, err := filepath.Rel(".", cleaned)
+	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(os.PathSeparator)) {
+		return ""
+	}
+	return s.baseURL + "/" + filepath.ToSlash(rel)
 }
