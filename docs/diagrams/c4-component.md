@@ -46,6 +46,7 @@ C4Component
             Component(flatRate, "FlatRateShipProvider", "Go", "Fixed-cost shipping calculation")
             Component(cronScheduler, "CronScheduler", "Go", "In-process cron scheduler: implements Scheduler port, fires registered tasks on schedule, enqueues jobs into Queue")
             Component(smtpMailer, "SMTPMailer", "Go, net/smtp", "Sends email via SMTP: implements Mailer port")
+            Component(localFSStorage, "LocalStorage", "Go, os", "Saves/deletes files on local disk: implements Storage port")
         }
 
         Boundary(domain, "Domain Layer") {
