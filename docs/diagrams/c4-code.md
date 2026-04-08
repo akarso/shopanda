@@ -331,7 +331,7 @@ classDiagram
     class Templates {
         -tmpls map
         +Register(name, subject, body)
-        +Render(name, to, data) Message
+        +Render(name, to, data) (Message, error)
     }
 
     class PostgresProductRepo {
