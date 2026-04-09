@@ -1,6 +1,7 @@
 package http
 
 import (
+	"bytes"
 	"errors"
 	"net/http"
 
@@ -56,10 +57,12 @@ func (h *StorefrontHandler) Product() http.HandlerFunc {
 			return
 		}
 
-		w.Header().Set("Content-Type", "text/html; charset=utf-8")
-		if err := h.engine.Render(w, "product", ctx); err != nil {
+		var buf bytes.Buffer
+		if err := h.engine.Render(&buf, "product", ctx); err != nil {
 			http.Error(w, "Internal Server Error", http.StatusInternalServerError)
 			return
 		}
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		w.Write(buf.Bytes())
 	}
 }
