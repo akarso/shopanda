@@ -236,3 +236,51 @@ func TestGrid_ReturnedValueIsImmutable(t *testing.T) {
 		t.Errorf("nested Meta leaked: got %q, want %q", nested["key"], "value")
 	}
 }
+
+func TestForm_MetaSliceIsImmutable(t *testing.T) {
+	r := admin.NewRegistry()
+	r.RegisterForm("f", admin.Form{
+		Fields: []admin.Field{{
+			Name: "original",
+			Meta: map[string]interface{}{"tags": []interface{}{"value"}},
+		}},
+	})
+
+	f, _ := r.Form("f")
+	sl := f.Fields[0].Meta["tags"].([]interface{})
+	sl[0] = "changed"
+	f.Fields[0].Meta["tags"] = append(sl, "extra")
+
+	f2, _ := r.Form("f")
+	tags := f2.Fields[0].Meta["tags"].([]interface{})
+	if len(tags) != 1 {
+		t.Fatalf("tags len = %d, want 1", len(tags))
+	}
+	if tags[0] != "value" {
+		t.Errorf("tags[0] = %v, want %q", tags[0], "value")
+	}
+}
+
+func TestGrid_MetaSliceIsImmutable(t *testing.T) {
+	r := admin.NewRegistry()
+	r.RegisterGrid("g", admin.Grid{
+		Columns: []admin.Column{{
+			Name: "original",
+			Meta: map[string]interface{}{"tags": []interface{}{"value"}},
+		}},
+	})
+
+	g, _ := r.Grid("g")
+	sl := g.Columns[0].Meta["tags"].([]interface{})
+	sl[0] = "changed"
+	g.Columns[0].Meta["tags"] = append(sl, "extra")
+
+	g2, _ := r.Grid("g")
+	tags := g2.Columns[0].Meta["tags"].([]interface{})
+	if len(tags) != 1 {
+		t.Fatalf("tags len = %d, want 1", len(tags))
+	}
+	if tags[0] != "value" {
+		t.Errorf("tags[0] = %v, want %q", tags[0], "value")
+	}
+}
