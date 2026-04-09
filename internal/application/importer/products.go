@@ -6,6 +6,7 @@ import (
 	"encoding/csv"
 	"fmt"
 	"io"
+	"strconv"
 	"strings"
 
 	"github.com/akarso/shopanda/internal/domain/catalog"
@@ -30,6 +31,8 @@ type ProductImporter struct {
 	products  catalog.ProductRepository
 	variants  catalog.VariantRepository
 	txStarter TxStarter
+	registry  *catalog.AttributeRegistry
+	groupCode string
 }
 
 // NewProductImporter creates a ProductImporter.
@@ -38,18 +41,37 @@ func NewProductImporter(products catalog.ProductRepository, variants catalog.Var
 	return &ProductImporter{products: products, variants: variants, txStarter: txStarter}
 }
 
+// WithAttributeValidation sets an attribute registry and group code for
+// validating attribute values during import. Returns the importer for chaining.
+func (imp *ProductImporter) WithAttributeValidation(registry *catalog.AttributeRegistry, groupCode string) *ProductImporter {
+	imp.registry = registry
+	imp.groupCode = groupCode
+	return imp
+}
+
 // requiredColumns lists the CSV headers that must be present.
 var requiredColumns = []string{"name", "slug", "sku"}
+
+// knownColumns are CSV headers handled by the core import logic.
+// Any other header is treated as an attribute column.
+var knownColumns = map[string]struct{}{
+	"name": {}, "slug": {}, "sku": {}, "description": {}, "variant_name": {},
+}
 
 // Import reads CSV rows from r and persists them as products and variants.
 //
 // Expected CSV columns (order does not matter, header row required):
 //
-//	name        — product name (required)
-//	slug        — product slug (required, used to group variants)
-//	description — product description (optional)
-//	sku         — variant SKU (required)
+//	name         — product name (required)
+//	slug         — product slug (required, used to group variants)
+//	description  — product description (optional)
+//	sku          — variant SKU (required)
 //	variant_name — variant display name (optional)
+//
+// Any additional columns are treated as attribute values and stored in
+// variant.Attributes. When an AttributeRegistry is configured via
+// WithAttributeValidation, values are parsed according to their declared
+// type and validated against the specified group.
 //
 // Rows sharing the same slug are treated as variants of the same product.
 // The first occurrence of a slug defines the product; subsequent rows add variants.
@@ -75,6 +97,14 @@ func (imp *ProductImporter) Import(ctx context.Context, r io.Reader) (*Result, e
 		}
 	}
 
+	// Identify attribute columns (any header not in the known set).
+	var attrColumns []string
+	for col := range colIndex {
+		if _, ok := knownColumns[col]; !ok {
+			attrColumns = append(attrColumns, col)
+		}
+	}
+
 	type parsedRow struct {
 		lineNum     int
 		name        string
@@ -82,6 +112,7 @@ func (imp *ProductImporter) Import(ctx context.Context, r io.Reader) (*Result, e
 		sku         string
 		desc        string
 		variantName string
+		rawAttrs    map[string]string
 	}
 
 	// 1. Parse all rows, group by slug
@@ -106,6 +137,17 @@ func (imp *ProductImporter) Import(ctx context.Context, r io.Reader) (*Result, e
 			sku:         colVal(record, colIndex, "sku"),
 			desc:        colVal(record, colIndex, "description"),
 			variantName: colVal(record, colIndex, "variant_name"),
+		}
+		if len(attrColumns) > 0 {
+			raw := make(map[string]string, len(attrColumns))
+			for _, col := range attrColumns {
+				if v := colVal(record, colIndex, col); v != "" {
+					raw[col] = v
+				}
+			}
+			if len(raw) > 0 {
+				row.rawAttrs = raw
+			}
 		}
 		allRows = append(allRows, row)
 		groups[row.slug] = append(groups[row.slug], row)
@@ -162,7 +204,11 @@ func (imp *ProductImporter) Import(ctx context.Context, r io.Reader) (*Result, e
 		}
 
 		// Prepare variants
-		var variants []catalog.Variant
+		type preparedVariant struct {
+			variant catalog.Variant
+			lineNum int
+		}
+		var pvs []preparedVariant
 		for _, row := range rows {
 			v, err := catalog.NewVariant(id.New(), product.ID, row.sku)
 			if err != nil {
@@ -172,18 +218,35 @@ func (imp *ProductImporter) Import(ctx context.Context, r io.Reader) (*Result, e
 				break
 			}
 			v.Name = row.variantName
-			variants = append(variants, v)
+			attrs, attrErrs := imp.parseAndValidateAttrs(row.rawAttrs, row.lineNum)
+			if len(attrErrs) > 0 {
+				for _, e := range attrErrs {
+					result.Errors = append(result.Errors, e)
+				}
+				result.Skipped++
+				continue
+			}
+			if len(attrs) > 0 {
+				v.Attributes = attrs
+			}
+			pvs = append(pvs, preparedVariant{variant: v, lineNum: row.lineNum})
 		}
-		if skip {
+		if skip || len(pvs) == 0 {
 			continue
+		}
+
+		// Build variant slice for persistence.
+		variants := make([]catalog.Variant, len(pvs))
+		for i, pv := range pvs {
+			variants[i] = pv.variant
 		}
 
 		// 4. Write in transaction (when txStarter available), else direct writes
 		if existing == nil && imp.txStarter != nil {
 			tx, err := imp.txStarter.BeginTx(ctx, nil)
 			if err != nil {
-				for _, row := range rows {
-					result.Errors = append(result.Errors, fmt.Sprintf("line %d: begin tx: %v", row.lineNum, err))
+				for _, pv := range pvs {
+					result.Errors = append(result.Errors, fmt.Sprintf("line %d: begin tx: %v", pv.lineNum, err))
 					result.Skipped++
 				}
 				continue
@@ -193,8 +256,8 @@ func (imp *ProductImporter) Import(ctx context.Context, r io.Reader) (*Result, e
 			// Write product
 			if err := txProducts.Create(ctx, product); err != nil {
 				tx.Rollback()
-				for _, row := range rows {
-					result.Errors = append(result.Errors, fmt.Sprintf("line %d: create product: %v", row.lineNum, err))
+				for _, pv := range pvs {
+					result.Errors = append(result.Errors, fmt.Sprintf("line %d: create product: %v", pv.lineNum, err))
 					result.Skipped++
 				}
 				continue
@@ -204,8 +267,8 @@ func (imp *ProductImporter) Import(ctx context.Context, r io.Reader) (*Result, e
 			for _, v := range variants {
 				if err := txVariants.Create(ctx, &v); err != nil {
 					tx.Rollback()
-					for _, row := range rows {
-						result.Errors = append(result.Errors, fmt.Sprintf("line %d: create variant (rollback slug %q): %v", row.lineNum, slug, err))
+					for _, pv := range pvs {
+						result.Errors = append(result.Errors, fmt.Sprintf("line %d: create variant (rollback slug %q): %v", pv.lineNum, slug, err))
 						result.Skipped++
 					}
 					allOk = false
@@ -216,8 +279,8 @@ func (imp *ProductImporter) Import(ctx context.Context, r io.Reader) (*Result, e
 				continue
 			}
 			if err := tx.Commit(); err != nil {
-				for _, row := range rows {
-					result.Errors = append(result.Errors, fmt.Sprintf("line %d: commit: %v", row.lineNum, err))
+				for _, pv := range pvs {
+					result.Errors = append(result.Errors, fmt.Sprintf("line %d: commit: %v", pv.lineNum, err))
 					result.Skipped++
 				}
 				continue
@@ -227,8 +290,8 @@ func (imp *ProductImporter) Import(ctx context.Context, r io.Reader) (*Result, e
 		} else if existing == nil {
 			// No txStarter: direct writes (tests / non-transactional mode)
 			if err := imp.products.Create(ctx, product); err != nil {
-				for _, row := range rows {
-					result.Errors = append(result.Errors, fmt.Sprintf("line %d: create product: %v", row.lineNum, err))
+				for _, pv := range pvs {
+					result.Errors = append(result.Errors, fmt.Sprintf("line %d: create product: %v", pv.lineNum, err))
 					result.Skipped++
 				}
 				continue
@@ -236,7 +299,7 @@ func (imp *ProductImporter) Import(ctx context.Context, r io.Reader) (*Result, e
 			result.Products++
 			for i, v := range variants {
 				if err := imp.variants.Create(ctx, &v); err != nil {
-					result.Errors = append(result.Errors, fmt.Sprintf("line %d: create variant: %v", rows[i].lineNum, err))
+					result.Errors = append(result.Errors, fmt.Sprintf("line %d: create variant: %v", pvs[i].lineNum, err))
 					result.Skipped++
 					continue
 				}
@@ -246,8 +309,8 @@ func (imp *ProductImporter) Import(ctx context.Context, r io.Reader) (*Result, e
 			// Existing product + txStarter: add variants in a transaction
 			tx, err := imp.txStarter.BeginTx(ctx, nil)
 			if err != nil {
-				for _, row := range rows {
-					result.Errors = append(result.Errors, fmt.Sprintf("line %d: begin tx: %v", row.lineNum, err))
+				for _, pv := range pvs {
+					result.Errors = append(result.Errors, fmt.Sprintf("line %d: begin tx: %v", pv.lineNum, err))
 					result.Skipped++
 				}
 				continue
@@ -257,8 +320,8 @@ func (imp *ProductImporter) Import(ctx context.Context, r io.Reader) (*Result, e
 			for _, v := range variants {
 				if err := txVariants.Create(ctx, &v); err != nil {
 					tx.Rollback()
-					for _, row := range rows {
-						result.Errors = append(result.Errors, fmt.Sprintf("line %d: create variant (rollback slug %q): %v", row.lineNum, slug, err))
+					for _, pv := range pvs {
+						result.Errors = append(result.Errors, fmt.Sprintf("line %d: create variant (rollback slug %q): %v", pv.lineNum, slug, err))
 						result.Skipped++
 					}
 					allOk = false
@@ -269,8 +332,8 @@ func (imp *ProductImporter) Import(ctx context.Context, r io.Reader) (*Result, e
 				continue
 			}
 			if err := tx.Commit(); err != nil {
-				for _, row := range rows {
-					result.Errors = append(result.Errors, fmt.Sprintf("line %d: commit: %v", row.lineNum, err))
+				for _, pv := range pvs {
+					result.Errors = append(result.Errors, fmt.Sprintf("line %d: commit: %v", pv.lineNum, err))
 					result.Skipped++
 				}
 				continue
@@ -280,7 +343,7 @@ func (imp *ProductImporter) Import(ctx context.Context, r io.Reader) (*Result, e
 			// Existing product, no txStarter: direct writes
 			for i, v := range variants {
 				if err := imp.variants.Create(ctx, &v); err != nil {
-					result.Errors = append(result.Errors, fmt.Sprintf("line %d: create variant: %v", rows[i].lineNum, err))
+					result.Errors = append(result.Errors, fmt.Sprintf("line %d: create variant: %v", pvs[i].lineNum, err))
 					result.Skipped++
 					continue
 				}
@@ -299,4 +362,69 @@ func colVal(record []string, colIndex map[string]int, col string) string {
 		return ""
 	}
 	return strings.TrimSpace(record[idx])
+}
+
+// parseAndValidateAttrs converts raw CSV attribute values to typed values using
+// the registry (when available) and validates them against the group (when set).
+func (imp *ProductImporter) parseAndValidateAttrs(raw map[string]string, lineNum int) (map[string]interface{}, []string) {
+	if len(raw) == 0 && (imp.registry == nil || imp.groupCode == "") {
+		return nil, nil
+	}
+	parsed := make(map[string]interface{}, len(raw))
+	var errs []string
+	for code, val := range raw {
+		if imp.registry != nil {
+			if attr, ok := imp.registry.Attribute(code); ok {
+				v, err := parseAttributeValue(val, attr)
+				if err != nil {
+					errs = append(errs, fmt.Sprintf("line %d: %v", lineNum, err))
+					continue
+				}
+				if err := attr.Validate(v); err != nil {
+					errs = append(errs, fmt.Sprintf("line %d: %v", lineNum, err))
+					continue
+				}
+				parsed[code] = v
+				continue
+			}
+		}
+		parsed[code] = val
+	}
+	if len(errs) > 0 {
+		return nil, errs
+	}
+	if imp.registry != nil && imp.groupCode != "" {
+		for _, e := range imp.registry.ValidateAttributes(imp.groupCode, parsed) {
+			errs = append(errs, fmt.Sprintf("line %d: %v", lineNum, e))
+		}
+	}
+	if len(errs) > 0 {
+		return nil, errs
+	}
+	return parsed, nil
+}
+
+// parseAttributeValue converts a raw CSV string to a typed value per the
+// attribute definition.
+func parseAttributeValue(raw string, attr catalog.Attribute) (interface{}, error) {
+	switch attr.Type {
+	case catalog.AttributeTypeText, catalog.AttributeTypeSelect:
+		return raw, nil
+	case catalog.AttributeTypeNumber:
+		v, err := strconv.ParseFloat(raw, 64)
+		if err != nil {
+			return nil, fmt.Errorf("attribute %q: %q is not a valid number", attr.Code, raw)
+		}
+		return v, nil
+	case catalog.AttributeTypeBoolean:
+		switch strings.ToLower(raw) {
+		case "true", "1", "yes":
+			return true, nil
+		case "false", "0", "no":
+			return false, nil
+		default:
+			return nil, fmt.Errorf("attribute %q: %q is not a valid boolean", attr.Code, raw)
+		}
+	}
+	return raw, nil
 }
