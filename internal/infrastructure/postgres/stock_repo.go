@@ -67,3 +67,37 @@ func (r *StockRepo) SetStock(ctx context.Context, entry *inventory.StockEntry) e
 	}
 	return nil
 }
+
+// ListStock returns a page of stock entries ordered by variant_id.
+func (r *StockRepo) ListStock(ctx context.Context, offset, limit int) ([]inventory.StockEntry, error) {
+	if offset < 0 {
+		return nil, fmt.Errorf("stock_repo: list stock: negative offset")
+	}
+	if limit <= 0 {
+		return nil, fmt.Errorf("stock_repo: list stock: non-positive limit")
+	}
+	if limit > 100 {
+		limit = 100
+	}
+
+	const q = `SELECT variant_id, quantity, updated_at FROM stock ORDER BY variant_id LIMIT $1 OFFSET $2`
+
+	rows, err := r.db.QueryContext(ctx, q, limit, offset)
+	if err != nil {
+		return nil, fmt.Errorf("stock_repo: list stock: %w", err)
+	}
+	defer rows.Close()
+
+	var entries []inventory.StockEntry
+	for rows.Next() {
+		var s inventory.StockEntry
+		if err := rows.Scan(&s.VariantID, &s.Quantity, &s.UpdatedAt); err != nil {
+			return nil, fmt.Errorf("stock_repo: list stock: scan: %w", err)
+		}
+		entries = append(entries, s)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("stock_repo: list stock: rows: %w", err)
+	}
+	return entries, nil
+}

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"syscall"
 	"time"
 
@@ -83,6 +84,10 @@ func run() error {
 			return runImportProducts(cfg, log)
 		case "export:products":
 			return runExportProducts(cfg, log)
+		case "import:stock":
+			return runImportStock(cfg, log)
+		case "export:stock":
+			return runExportStock(cfg, log)
 		case "scheduler":
 			return runScheduler(cfg, log)
 		case "config:export":
@@ -509,6 +514,97 @@ func runExportProducts(cfg *config.Config, log logger.Logger) error {
 	log.Info("export.complete", map[string]interface{}{
 		"products": result.Products,
 		"variants": result.Variants,
+	})
+
+	return nil
+}
+
+func runImportStock(cfg *config.Config, log logger.Logger) error {
+	if len(os.Args) < 3 {
+		return fmt.Errorf("usage: app import:stock <file.csv>")
+	}
+	filePath := os.Args[2]
+
+	f, err := os.Open(filePath)
+	if err != nil {
+		return fmt.Errorf("open csv: %w", err)
+	}
+	defer f.Close()
+
+	dsn := config.DatabaseDSN(cfg)
+	conn, err := db.Open(dsn)
+	if err != nil {
+		return fmt.Errorf("database: %w", err)
+	}
+	defer conn.Close()
+
+	variantRepo := postgres.NewVariantRepo(conn)
+	stockRepo := postgres.NewStockRepo(conn)
+	imp := importer.NewStockImporter(variantRepo, stockRepo)
+
+	log.Info("import.stock.start", map[string]interface{}{"file": filePath})
+
+	result, err := imp.Import(context.Background(), f)
+	if err != nil {
+		return fmt.Errorf("import stock: %w", err)
+	}
+
+	log.Info("import.stock.complete", map[string]interface{}{
+		"updated": result.Updated,
+		"skipped": result.Skipped,
+		"errors":  len(result.Errors),
+	})
+
+	for _, e := range result.Errors {
+		log.Error("import.stock.row_error", errors.New(e), map[string]interface{}{})
+	}
+
+	if len(result.Errors) > 0 {
+		return fmt.Errorf("import completed with %d row-level errors", len(result.Errors))
+	}
+
+	return nil
+}
+
+func runExportStock(cfg *config.Config, log logger.Logger) error {
+	if len(os.Args) < 3 {
+		return fmt.Errorf("usage: app export:stock <file.csv>")
+	}
+	filePath := os.Args[2]
+
+	dsn := config.DatabaseDSN(cfg)
+	conn, err := db.Open(dsn)
+	if err != nil {
+		return fmt.Errorf("database: %w", err)
+	}
+	defer conn.Close()
+
+	stockRepo := postgres.NewStockRepo(conn)
+	variantRepo := postgres.NewVariantRepo(conn)
+	exp := exporter.NewStockExporter(stockRepo, variantRepo)
+
+	tmpFile, err := os.CreateTemp(filepath.Dir(filePath), "stock-export-*.csv")
+	if err != nil {
+		return fmt.Errorf("create temp file: %w", err)
+	}
+	tmpPath := tmpFile.Name()
+
+	log.Info("export.stock.start", map[string]interface{}{"file": filePath})
+
+	result, err := exp.Export(context.Background(), tmpFile)
+	tmpFile.Close()
+	if err != nil {
+		os.Remove(tmpPath)
+		return fmt.Errorf("export stock: %w", err)
+	}
+
+	if err := os.Rename(tmpPath, filePath); err != nil {
+		os.Remove(tmpPath)
+		return fmt.Errorf("rename temp file: %w", err)
+	}
+
+	log.Info("export.stock.complete", map[string]interface{}{
+		"entries": result.Entries,
 	})
 
 	return nil
