@@ -77,6 +77,7 @@ C4Component
     Rel(middleware, categoryHandler, "Routes requests")
     Rel(middleware, searchHandler, "Routes requests")
     Rel(middleware, mediaHandler, "Routes requests")
+    Rel(middleware, schemaHandler, "Routes requests")
     Rel(middleware, webhookHandler, "Routes requests")
 
     Rel(authHandler, authService, "Delegates auth logic")
