@@ -485,6 +485,12 @@ classDiagram
         +GetForm() HandlerFunc
         +GetGrid() HandlerFunc
     }
+    class StorefrontHandler {
+        -engine *ThemeEngine
+        -repo ProductRepository
+        -pdp *Pipeline~ProductContext~
+        +Product() HandlerFunc
+    }
     class ThemeEngine {
         <<theme.Engine>>
         -theme Theme
@@ -516,6 +522,8 @@ classDiagram
     PricingStep <|.. BasePriceStep : implements
     SearchHandler --> SearchEngine : uses
     SchemaHandler --> AdminRegistry : reads schemas
+    StorefrontHandler --> ThemeEngine : renders pages
+    StorefrontHandler --> ProductRepository : looks up by slug
     ThemeEngine --> Theme : holds metadata
     Worker --> Queue : polls
     Worker --> Handler : dispatches to

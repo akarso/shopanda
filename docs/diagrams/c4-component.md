@@ -28,6 +28,7 @@ C4Component
             Component(schemaHandler, "SchemaHandler", "HTTP", "Expose admin form and grid schemas (admin)")
             Component(shippingHandler, "ShippingRatesHandler", "HTTP", "List shipping rates")
             Component(webhookHandler, "PaymentWebhookHandler", "HTTP", "Handle payment callbacks (public)")
+            Component(storefrontHandler, "StorefrontHandler", "HTTP", "SSR product page: slug lookup → PDP pipeline → theme render (optional, gated by frontend.enabled)")
         }
 
         Boundary(application, "Application Layer (Use Cases)") {
@@ -80,11 +81,15 @@ C4Component
     Rel(middleware, mediaHandler, "Routes requests")
     Rel(middleware, schemaHandler, "Routes requests")
     Rel(middleware, webhookHandler, "Routes requests")
+    Rel(middleware, storefrontHandler, "Routes requests (when frontend.enabled)")
 
     Rel(authHandler, authService, "Delegates auth logic")
     Rel(cartHandler, cartService, "Delegates cart logic")
     Rel(checkoutHandler, checkoutWorkflow, "Delegates checkout flow")
     Rel(productHandler, compositionPipeline, "Enriches product responses")
+    Rel(storefrontHandler, compositionPipeline, "Runs PDP pipeline")
+    Rel(storefrontHandler, postgresRepos, "Product lookup by slug")
+    Rel(storefrontHandler, themeEngine, "Renders product page template")
 
     Rel(cartService, pricingPipeline, "Prices cart items")
     Rel(checkoutWorkflow, pricingPipeline, "Recalculates pricing")

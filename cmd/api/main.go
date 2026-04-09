@@ -30,6 +30,7 @@ import (
 	"github.com/akarso/shopanda/internal/domain/pricing"
 	"github.com/akarso/shopanda/internal/domain/scheduler"
 	"github.com/akarso/shopanda/internal/domain/shared"
+	"github.com/akarso/shopanda/internal/domain/theme"
 	"github.com/akarso/shopanda/internal/infrastructure/cron"
 	"github.com/akarso/shopanda/internal/infrastructure/flatrate"
 	"github.com/akarso/shopanda/internal/infrastructure/localfs"
@@ -368,6 +369,16 @@ func runServe(cfg *config.Config, log logger.Logger) error {
 
 	// Payment webhook (public — called by external payment providers).
 	router.HandleFunc("POST /api/v1/payments/webhook/{provider}", paymentWebhook.Handle())
+
+	// Storefront SSR routes (optional, gated by frontend.enabled).
+	if cfg.Frontend.Enabled {
+		themeEngine, thErr := theme.Load(cfg.Frontend.ThemePath)
+		if thErr != nil {
+			return fmt.Errorf("theme load: %w", thErr)
+		}
+		storefront := shophttp.NewStorefrontHandler(themeEngine, productRepo, pdp)
+		router.HandleFunc("GET /products/{slug}", storefront.Product())
+	}
 
 	srv := shophttp.NewServer(cfg.Server.Host, cfg.Server.Port, router.Handler(), log)
 
