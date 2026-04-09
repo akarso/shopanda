@@ -183,6 +183,36 @@ classDiagram
         failed
     }
 
+    class Attribute {
+        +string Code
+        +string Label
+        +AttributeType Type
+        +bool Required
+        +[]string Options
+        +Validate(value) error
+    }
+
+    class AttributeType {
+        <<enumeration>>
+        text
+        number
+        boolean
+        select
+    }
+
+    class AttributeGroup {
+        +string Code
+        +string Label
+        +[]string Attributes
+        +HasAttribute(code) bool
+        +AddAttribute(code)
+        +RemoveAttribute(code)
+    }
+
+    Attribute --> AttributeType : typed as
+    AttributeGroup "*" --> "*" Attribute : contains
+    Product "*" ..> "*" AttributeGroup : assigned to (planned)
+
     Job --> Status : has
 
     Product "1" --> "*" Variant : has
@@ -436,6 +466,22 @@ classDiagram
         +Type() string
         +Handle(ctx, job) error
     }
+    class AttributeRegistry {
+        -attrs map~string, Attribute~
+        -groups map~string, AttributeGroup~
+        +RegisterAttribute(attr)
+        +Attribute(code) ~Attribute, bool~
+        +Attributes() []Attribute
+        +RegisterGroup(group) error
+        +Group(code) ~AttributeGroup, bool~
+        +Groups() []AttributeGroup
+        +GroupAttributes(groupCode) ~[]Attribute, error~
+        +ValidateAttributes(groupCode, values) []error
+    }
+
+    AttributeRegistry --> Attribute : manages
+    AttributeRegistry --> AttributeGroup : manages
+
     class AdminRegistry {
         -forms map~string, *Form~
         -grids map~string, *Grid~
