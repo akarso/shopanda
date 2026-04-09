@@ -219,17 +219,9 @@ func scanCustomer(s interface{ Scan(...interface{}) error }) (*customer.Customer
 		return nil, err
 	}
 
-	rl := customer.Role(role)
-	if !rl.IsValid() {
-		return nil, fmt.Errorf("customer_repo: invalid role from database: %q", role)
+	if err := decodeCustomerEnums(&c, role, status); err != nil {
+		return nil, err
 	}
-	c.Role = rl
-
-	st := customer.Status(status)
-	if !st.IsValid() {
-		return nil, fmt.Errorf("customer_repo: invalid status from database: %q", status)
-	}
-	c.Status = st
 	return &c, nil
 }
 
@@ -247,16 +239,24 @@ func scanCustomerList(s interface{ Scan(...interface{}) error }) (*customer.Cust
 		return nil, err
 	}
 
+	if err := decodeCustomerEnums(&c, role, status); err != nil {
+		return nil, err
+	}
+	return &c, nil
+}
+
+// decodeCustomerEnums validates and sets Role and Status on c.
+func decodeCustomerEnums(c *customer.Customer, role, status string) error {
 	rl := customer.Role(role)
 	if !rl.IsValid() {
-		return nil, fmt.Errorf("customer_repo: invalid role from database: %q", role)
+		return fmt.Errorf("customer_repo: invalid role from database: %q", role)
 	}
 	c.Role = rl
 
 	st := customer.Status(status)
 	if !st.IsValid() {
-		return nil, fmt.Errorf("customer_repo: invalid status from database: %q", status)
+		return fmt.Errorf("customer_repo: invalid status from database: %q", status)
 	}
 	c.Status = st
-	return &c, nil
+	return nil
 }
