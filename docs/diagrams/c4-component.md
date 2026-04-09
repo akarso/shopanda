@@ -59,6 +59,7 @@ C4Component
         Boundary(domain, "Domain Layer") {
             Component(jobWorker, "JobWorker", "Go", "Domain-layer worker: polls Queue port, dispatches jobs to registered handlers")
             Component(adminRegistry, "AdminSchemaRegistry", "Go", "In-memory registry of Form and Grid schemas; plugins append fields, columns, actions")
+            Component(themeEngine, "ThemeEngine", "Go, html/template", "Loads theme templates with layout support; renders pages via Render(name, data)")
         }
 
         Boundary(platform, "Platform Layer (Cross-Cutting)") {
