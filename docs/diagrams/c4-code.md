@@ -436,6 +436,46 @@ classDiagram
         +Type() string
         +Handle(ctx, job) error
     }
+    class AdminRegistry {
+        -forms map~string, *Form~
+        -grids map~string, *Grid~
+        +RegisterForm(name, form)
+        +RegisterFormField(formName, field) error
+        +RegisterGrid(name, grid)
+        +RegisterGridColumn(gridName, column) error
+        +RegisterAction(gridName, action) error
+        +Form(name) ~Form, bool~
+        +Grid(name) ~Grid, bool~
+    }
+    class Form {
+        +string Name
+        +[]Field Fields
+    }
+    class Field {
+        +string Name
+        +string Type
+        +string Label
+        +bool Required
+        +interface{} Default
+        +[]Option Options
+        +map Meta
+    }
+    class Grid {
+        +string Name
+        +[]Column Columns
+        +[]Action Actions
+    }
+    class Column {
+        +string Name
+        +string Label
+        +func Value
+        +map Meta
+    }
+    class Action {
+        +string Name
+        +string Label
+        +func Execute
+    }
     class SearchHandler {
         -engine SearchEngine
         +Search() HandlerFunc
@@ -462,6 +502,11 @@ classDiagram
     Handler <|.. EmailSendHandler : implements
     Handler <|.. CacheCleanupHandler : implements
     CacheCleanupHandler --> PostgresCacheStore : calls DeleteExpired
+    AdminRegistry --> Form : manages
+    AdminRegistry --> Grid : manages
+    Form --> Field : contains
+    Grid --> Column : contains
+    Grid --> Action : contains
     EmailSendHandler --> Mailer : sends via
     NotificationService --> Templates : renders
     NotificationService --> Queue : enqueues email.send
