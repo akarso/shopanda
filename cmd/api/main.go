@@ -150,18 +150,16 @@ func runServe(cfg *config.Config, log logger.Logger) error {
 
 	// Cache.
 	var appCache cache.Cache
-	var cacheStore *postgres.CacheStore
 	switch cfg.Cache.Driver {
 	case "postgres":
-		cacheStore = postgres.NewCacheStore(conn)
-		appCache = cacheStore
+		appCache = postgres.NewCacheStore(conn)
 	default:
 		return fmt.Errorf("unsupported cache.driver: %s", cfg.Cache.Driver)
 	}
 	_ = appCache // wired by consumers in upcoming PRs
 
 	// Cache cleanup job handler.
-	jobWorker.Register(cacheApp.NewCleanupHandler(cacheStore, log))
+	jobWorker.Register(cacheApp.NewCleanupHandler(appCache.(cacheApp.ExpiredDeleter), log))
 
 	// Providers.
 	manualPayProvider := manualpay.NewProvider()
@@ -472,7 +470,9 @@ func runScheduler(cfg *config.Config, log logger.Logger) error {
 			log.Error("cache.cleanup.schedule", err, nil)
 			return
 		}
-		if err := jobQueue.Enqueue(context.Background(), job); err != nil {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		if err := jobQueue.Enqueue(ctx, job); err != nil {
 			log.Error("cache.cleanup.enqueue", err, nil)
 		}
 	})

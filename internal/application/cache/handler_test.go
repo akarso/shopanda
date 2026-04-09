@@ -21,18 +21,18 @@ func (s *stubDeleter) DeleteExpired() (int64, error) {
 
 type stubLogger struct {
 	infos  []string
-	errors []string
+	fields map[string]interface{}
 }
 
-func (l *stubLogger) Info(msg string, _ map[string]interface{}) { l.infos = append(l.infos, msg) }
-func (l *stubLogger) Error(msg string, _ error, _ map[string]interface{}) {
-	l.errors = append(l.errors, msg)
+func (l *stubLogger) Info(msg string, f map[string]interface{}) {
+	l.infos = append(l.infos, msg)
+	l.fields = f
 }
 
 func TestCleanupHandler_Type(t *testing.T) {
 	h := appCache.NewCleanupHandler(&stubDeleter{}, &stubLogger{})
-	if h.Type() != "cache.cleanup" {
-		t.Errorf("Type() = %q, want %q", h.Type(), "cache.cleanup")
+	if h.Type() != appCache.JobType {
+		t.Errorf("Type() = %q, want %q", h.Type(), appCache.JobType)
 	}
 }
 
@@ -51,6 +51,11 @@ func TestCleanupHandler_Handle_Success(t *testing.T) {
 	}
 	if len(log.infos) != 1 || log.infos[0] != "cache.cleanup.complete" {
 		t.Errorf("infos = %v, want [cache.cleanup.complete]", log.infos)
+	}
+	if got, ok := log.fields["deleted"]; !ok {
+		t.Error("expected deleted field in log")
+	} else if got != int64(42) {
+		t.Errorf("log.fields[deleted] = %v, want 42", got)
 	}
 }
 
