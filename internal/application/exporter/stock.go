@@ -6,10 +6,24 @@ import (
 	"fmt"
 	"io"
 	"strconv"
+	"strings"
 
 	"github.com/akarso/shopanda/internal/domain/catalog"
 	"github.com/akarso/shopanda/internal/domain/inventory"
 )
+
+// sanitizeCSVCell escapes values that could be interpreted as spreadsheet
+// formulas by prepending a single quote when the cell starts with a
+// dangerous character.
+func sanitizeCSVCell(s string) string {
+	if len(s) == 0 {
+		return s
+	}
+	if strings.ContainsRune("=+-@\t", rune(s[0])) {
+		return "'" + s
+	}
+	return s
+}
 
 // StockResult holds the summary of a stock export run.
 type StockResult struct {
@@ -55,7 +69,7 @@ func (exp *StockExporter) Export(ctx context.Context, w io.Writer) (*StockResult
 			if variant == nil {
 				continue // orphan stock entry, skip
 			}
-			if err := writer.Write([]string{variant.SKU, strconv.Itoa(e.Quantity)}); err != nil {
+			if err := writer.Write([]string{sanitizeCSVCell(variant.SKU), strconv.Itoa(e.Quantity)}); err != nil {
 				return nil, fmt.Errorf("stock export: write row: %w", err)
 			}
 			result.Entries++
