@@ -167,3 +167,56 @@ func TestRegisterForm_Replaces(t *testing.T) {
 		t.Errorf("expected replaced form, got Fields = %v", f.Fields)
 	}
 }
+
+func TestRegisterGrid_Replaces(t *testing.T) {
+	r := admin.NewRegistry()
+	r.RegisterGrid("product.grid", admin.Grid{
+		Columns: []admin.Column{{Name: "old"}},
+	})
+	r.RegisterGrid("product.grid", admin.Grid{
+		Columns: []admin.Column{{Name: "new"}},
+	})
+
+	g, _ := r.Grid("product.grid")
+	if len(g.Columns) != 1 || g.Columns[0].Name != "new" {
+		t.Errorf("expected replaced grid, got Columns[0].Name = %q", g.Columns[0].Name)
+	}
+}
+
+func TestForm_ReturnedValueIsImmutable(t *testing.T) {
+	r := admin.NewRegistry()
+	r.RegisterForm("f", admin.Form{
+		Fields: []admin.Field{{Name: "original"}},
+	})
+
+	f, _ := r.Form("f")
+	f.Fields[0].Name = "mutated"
+	f.Fields = append(f.Fields, admin.Field{Name: "extra"})
+
+	f2, _ := r.Form("f")
+	if len(f2.Fields) != 1 {
+		t.Fatalf("Fields len = %d, want 1", len(f2.Fields))
+	}
+	if f2.Fields[0].Name != "original" {
+		t.Errorf("Fields[0].Name = %q, want %q", f2.Fields[0].Name, "original")
+	}
+}
+
+func TestGrid_ReturnedValueIsImmutable(t *testing.T) {
+	r := admin.NewRegistry()
+	r.RegisterGrid("g", admin.Grid{
+		Columns: []admin.Column{{Name: "original"}},
+	})
+
+	g, _ := r.Grid("g")
+	g.Columns[0].Name = "mutated"
+	g.Columns = append(g.Columns, admin.Column{Name: "extra"})
+
+	g2, _ := r.Grid("g")
+	if len(g2.Columns) != 1 {
+		t.Fatalf("Columns len = %d, want 1", len(g2.Columns))
+	}
+	if g2.Columns[0].Name != "original" {
+		t.Errorf("Columns[0].Name = %q, want %q", g2.Columns[0].Name, "original")
+	}
+}
