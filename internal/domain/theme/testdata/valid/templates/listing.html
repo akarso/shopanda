@@ -1,0 +1,3 @@
+{{ define "title" }}Listing{{ end }}
+{{ define "content" }}<ul>{{ range .Items }}<li>{{ . }}</li>{{ end }}</ul>{{ end }}
+{{ template "layout.html" . }}

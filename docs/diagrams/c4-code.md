@@ -485,6 +485,19 @@ classDiagram
         +GetForm() HandlerFunc
         +GetGrid() HandlerFunc
     }
+    class ThemeEngine {
+        <<theme.Engine>>
+        -theme Theme
+        -pages map~string, *Template~
+        +Theme() Theme
+        +Render(w, name, data) error
+        +HasTemplate(name) bool
+    }
+    note for ThemeEngine "theme.Load(dir string) (*Engine, error)\nPackage-level constructor"
+    class Theme {
+        +string Name
+        +string Version
+    }
 
     ProductRepository <|.. PostgresProductRepo : implements
     CartRepository <|.. PostgresCartRepo : implements
@@ -503,6 +516,7 @@ classDiagram
     PricingStep <|.. BasePriceStep : implements
     SearchHandler --> SearchEngine : uses
     SchemaHandler --> AdminRegistry : reads schemas
+    ThemeEngine --> Theme : holds metadata
     Worker --> Queue : polls
     Worker --> Handler : dispatches to
     Handler <|.. EmailSendHandler : implements
