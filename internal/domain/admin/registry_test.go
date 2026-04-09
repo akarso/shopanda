@@ -178,8 +178,11 @@ func TestRegisterGrid_Replaces(t *testing.T) {
 	})
 
 	g, _ := r.Grid("product.grid")
-	if len(g.Columns) != 1 || g.Columns[0].Name != "new" {
-		t.Errorf("expected replaced grid, got Columns[0].Name = %q", g.Columns[0].Name)
+	if len(g.Columns) != 1 {
+		t.Fatalf("Columns len = %d, want 1", len(g.Columns))
+	}
+	if g.Columns[0].Name != "new" {
+		t.Errorf("Columns[0].Name = %q, want %q", g.Columns[0].Name, "new")
 	}
 }
 
@@ -282,5 +285,46 @@ func TestGrid_MetaSliceIsImmutable(t *testing.T) {
 	}
 	if tags[0] != "value" {
 		t.Errorf("tags[0] = %v, want %q", tags[0], "value")
+	}
+}
+
+func TestForm_OptionsIsImmutable(t *testing.T) {
+	r := admin.NewRegistry()
+	r.RegisterForm("f", admin.Form{
+		Fields: []admin.Field{{
+			Name:    "colour",
+			Options: []admin.Option{{Label: "Red", Value: "red"}},
+		}},
+	})
+
+	f, _ := r.Form("f")
+	f.Fields[0].Options[0].Label = "mutated"
+	f.Fields[0].Options = append(f.Fields[0].Options, admin.Option{Label: "Blue", Value: "blue"})
+
+	f2, _ := r.Form("f")
+	if len(f2.Fields[0].Options) != 1 {
+		t.Fatalf("Options len = %d, want 1", len(f2.Fields[0].Options))
+	}
+	if f2.Fields[0].Options[0].Label != "Red" {
+		t.Errorf("Options[0].Label = %q, want %q", f2.Fields[0].Options[0].Label, "Red")
+	}
+}
+
+func TestGrid_ActionsIsImmutable(t *testing.T) {
+	r := admin.NewRegistry()
+	r.RegisterGrid("g", admin.Grid{
+		Actions: []admin.Action{{Name: "delete", Label: "Delete"}},
+	})
+
+	g, _ := r.Grid("g")
+	g.Actions[0].Label = "mutated"
+	g.Actions = append(g.Actions, admin.Action{Name: "archive", Label: "Archive"})
+
+	g2, _ := r.Grid("g")
+	if len(g2.Actions) != 1 {
+		t.Fatalf("Actions len = %d, want 1", len(g2.Actions))
+	}
+	if g2.Actions[0].Label != "Delete" {
+		t.Errorf("Actions[0].Label = %q, want %q", g2.Actions[0].Label, "Delete")
 	}
 }
