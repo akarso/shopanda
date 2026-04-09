@@ -15,6 +15,7 @@ import (
 	cartApp "github.com/akarso/shopanda/internal/application/cart"
 	checkoutApp "github.com/akarso/shopanda/internal/application/checkout"
 	"github.com/akarso/shopanda/internal/application/composition"
+	"github.com/akarso/shopanda/internal/application/exporter"
 	"github.com/akarso/shopanda/internal/application/importer"
 	mediaApp "github.com/akarso/shopanda/internal/application/media"
 	"github.com/akarso/shopanda/internal/application/notification"
@@ -80,6 +81,8 @@ func run() error {
 			return runServe(cfg, log)
 		case "import:products":
 			return runImportProducts(cfg, log)
+		case "export:products":
+			return runExportProducts(cfg, log)
 		case "scheduler":
 			return runScheduler(cfg, log)
 		case "config:export":
@@ -469,6 +472,44 @@ func runImportProducts(cfg *config.Config, log logger.Logger) error {
 	if len(result.Errors) > 0 {
 		return fmt.Errorf("import completed with %d row-level errors", len(result.Errors))
 	}
+
+	return nil
+}
+
+func runExportProducts(cfg *config.Config, log logger.Logger) error {
+	if len(os.Args) < 3 {
+		return fmt.Errorf("usage: app export:products <file.csv>")
+	}
+	filePath := os.Args[2]
+
+	dsn := config.DatabaseDSN(cfg)
+	conn, err := db.Open(dsn)
+	if err != nil {
+		return fmt.Errorf("database: %w", err)
+	}
+	defer conn.Close()
+
+	productRepo := postgres.NewProductRepo(conn)
+	variantRepo := postgres.NewVariantRepo(conn)
+	exp := exporter.NewProductExporter(productRepo, variantRepo)
+
+	f, err := os.Create(filePath)
+	if err != nil {
+		return fmt.Errorf("create csv: %w", err)
+	}
+	defer f.Close()
+
+	log.Info("export.start", map[string]interface{}{"file": filePath})
+
+	result, err := exp.Export(context.Background(), f)
+	if err != nil {
+		return fmt.Errorf("export: %w", err)
+	}
+
+	log.Info("export.complete", map[string]interface{}{
+		"products": result.Products,
+		"variants": result.Variants,
+	})
 
 	return nil
 }
