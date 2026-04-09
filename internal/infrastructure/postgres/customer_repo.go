@@ -127,6 +127,41 @@ func (r *CustomerRepo) Update(ctx context.Context, c *customer.Customer) error {
 	return nil
 }
 
+// ListCustomers returns a paginated slice of customers ordered by email.
+func (r *CustomerRepo) ListCustomers(ctx context.Context, offset, limit int) ([]customer.Customer, error) {
+	if offset < 0 {
+		return nil, fmt.Errorf("customer_repo: list customers: negative offset")
+	}
+	if limit <= 0 {
+		return nil, fmt.Errorf("customer_repo: list customers: non-positive limit")
+	}
+	if limit > 100 {
+		limit = 100
+	}
+
+	const q = `SELECT id, email, first_name, last_name, token_generation, role, status, created_at, updated_at
+		FROM customers ORDER BY email LIMIT $1 OFFSET $2`
+
+	rows, err := r.query(ctx, q, limit, offset)
+	if err != nil {
+		return nil, fmt.Errorf("customer_repo: list customers: %w", err)
+	}
+	defer rows.Close()
+
+	var customers []customer.Customer
+	for rows.Next() {
+		c, err := scanCustomerList(rows)
+		if err != nil {
+			return nil, fmt.Errorf("customer_repo: list customers: scan: %w", err)
+		}
+		customers = append(customers, *c)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("customer_repo: list customers: rows: %w", err)
+	}
+	return customers, nil
+}
+
 // BumpTokenGeneration atomically increments the customer's token generation.
 func (r *CustomerRepo) BumpTokenGeneration(ctx context.Context, customerID string) error {
 	const q = `UPDATE customers SET token_generation = token_generation + 1, updated_at = $1 WHERE id = $2`
@@ -154,6 +189,14 @@ func (r *CustomerRepo) queryRow(ctx context.Context, q string, args ...interface
 	return r.db.QueryRowContext(ctx, q, args...)
 }
 
+// query delegates to tx or db.
+func (r *CustomerRepo) query(ctx context.Context, q string, args ...interface{}) (*sql.Rows, error) {
+	if r.tx != nil {
+		return r.tx.QueryContext(ctx, q, args...)
+	}
+	return r.db.QueryContext(ctx, q, args...)
+}
+
 // exec delegates to tx or db.
 func (r *CustomerRepo) exec(ctx context.Context, q string, args ...interface{}) (sql.Result, error) {
 	if r.tx != nil {
@@ -176,16 +219,44 @@ func scanCustomer(s interface{ Scan(...interface{}) error }) (*customer.Customer
 		return nil, err
 	}
 
+	if err := decodeCustomerEnums(&c, role, status); err != nil {
+		return nil, err
+	}
+	return &c, nil
+}
+
+// scanCustomerList scans a row without password_hash (used by ListCustomers).
+func scanCustomerList(s interface{ Scan(...interface{}) error }) (*customer.Customer, error) {
+	var c customer.Customer
+	var role string
+	var status string
+
+	err := s.Scan(
+		&c.ID, &c.Email, &c.FirstName, &c.LastName,
+		&c.TokenGeneration, &role, &status, &c.CreatedAt, &c.UpdatedAt,
+	)
+	if err != nil {
+		return nil, err
+	}
+
+	if err := decodeCustomerEnums(&c, role, status); err != nil {
+		return nil, err
+	}
+	return &c, nil
+}
+
+// decodeCustomerEnums validates and sets Role and Status on c.
+func decodeCustomerEnums(c *customer.Customer, role, status string) error {
 	rl := customer.Role(role)
 	if !rl.IsValid() {
-		return nil, fmt.Errorf("customer_repo: invalid role from database: %q", role)
+		return fmt.Errorf("customer_repo: invalid role from database: %q", role)
 	}
 	c.Role = rl
 
 	st := customer.Status(status)
 	if !st.IsValid() {
-		return nil, fmt.Errorf("customer_repo: invalid status from database: %q", status)
+		return fmt.Errorf("customer_repo: invalid status from database: %q", status)
 	}
 	c.Status = st
-	return &c, nil
+	return nil
 }

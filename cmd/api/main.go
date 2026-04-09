@@ -88,6 +88,10 @@ func run() error {
 			return runImportStock(cfg, log)
 		case "export:stock":
 			return runExportStock(cfg, log)
+		case "import:customers":
+			return runImportCustomers(cfg, log)
+		case "export:customers":
+			return runExportCustomers(cfg, log)
 		case "scheduler":
 			return runScheduler(cfg, log)
 		case "config:export":
@@ -604,6 +608,101 @@ func runExportStock(cfg *config.Config, log logger.Logger) error {
 	}
 
 	log.Info("export.stock.complete", map[string]interface{}{
+		"entries": result.Entries,
+	})
+
+	return nil
+}
+
+func runImportCustomers(cfg *config.Config, log logger.Logger) error {
+	if len(os.Args) < 3 {
+		return fmt.Errorf("usage: app import:customers <file.csv>")
+	}
+	filePath := os.Args[2]
+
+	f, err := os.Open(filePath)
+	if err != nil {
+		return fmt.Errorf("open csv: %w", err)
+	}
+	defer f.Close()
+
+	dsn := config.DatabaseDSN(cfg)
+	conn, err := db.Open(dsn)
+	if err != nil {
+		return fmt.Errorf("database: %w", err)
+	}
+	defer conn.Close()
+
+	customerRepo := postgres.NewCustomerRepo(conn)
+	imp := importer.NewCustomerImporter(customerRepo)
+
+	log.Info("import.customers.start", map[string]interface{}{"file": filePath})
+
+	result, err := imp.Import(context.Background(), f)
+	if err != nil {
+		return fmt.Errorf("import customers: %w", err)
+	}
+
+	log.Info("import.customers.complete", map[string]interface{}{
+		"created": result.Created,
+		"skipped": result.Skipped,
+		"errors":  len(result.Errors),
+	})
+
+	for _, e := range result.Errors {
+		log.Error("import.customers.row_error", errors.New(e), map[string]interface{}{})
+	}
+
+	if len(result.Errors) > 0 {
+		return fmt.Errorf("import completed with %d row-level errors", len(result.Errors))
+	}
+
+	return nil
+}
+
+func runExportCustomers(cfg *config.Config, log logger.Logger) error {
+	if len(os.Args) < 3 {
+		return fmt.Errorf("usage: app export:customers <file.csv>")
+	}
+	filePath := os.Args[2]
+
+	dsn := config.DatabaseDSN(cfg)
+	conn, err := db.Open(dsn)
+	if err != nil {
+		return fmt.Errorf("database: %w", err)
+	}
+	defer conn.Close()
+
+	customerRepo := postgres.NewCustomerRepo(conn)
+	exp := exporter.NewCustomerExporter(customerRepo)
+
+	tmpFile, err := os.CreateTemp(filepath.Dir(filePath), "customer-export-*.csv")
+	if err != nil {
+		return fmt.Errorf("create temp file: %w", err)
+	}
+	tmpPath := tmpFile.Name()
+
+	log.Info("export.customers.start", map[string]interface{}{"file": filePath})
+
+	result, err := exp.Export(context.Background(), tmpFile)
+	if closeErr := tmpFile.Close(); closeErr != nil {
+		os.Remove(tmpPath)
+		if err != nil {
+			return fmt.Errorf("export customers: %w", err)
+		}
+		return fmt.Errorf("close temp file: %w", closeErr)
+	}
+	if err != nil {
+		os.Remove(tmpPath)
+		return fmt.Errorf("export customers: %w", err)
+	}
+
+	if err := os.Rename(tmpPath, filePath); err != nil {
+		os.Remove(tmpPath)
+		return fmt.Errorf("rename temp file: %w", err)
+	}
+
+	log.Info("export.customers.complete", map[string]interface{}{
 		"entries": result.Entries,
 	})
 
