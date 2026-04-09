@@ -186,11 +186,15 @@ func TestRegisterGrid_Replaces(t *testing.T) {
 func TestForm_ReturnedValueIsImmutable(t *testing.T) {
 	r := admin.NewRegistry()
 	r.RegisterForm("f", admin.Form{
-		Fields: []admin.Field{{Name: "original"}},
+		Fields: []admin.Field{{
+			Name: "original",
+			Meta: map[string]interface{}{"nested": map[string]interface{}{"key": "value"}},
+		}},
 	})
 
 	f, _ := r.Form("f")
 	f.Fields[0].Name = "mutated"
+	f.Fields[0].Meta["nested"].(map[string]interface{})["key"] = "changed"
 	f.Fields = append(f.Fields, admin.Field{Name: "extra"})
 
 	f2, _ := r.Form("f")
@@ -200,16 +204,24 @@ func TestForm_ReturnedValueIsImmutable(t *testing.T) {
 	if f2.Fields[0].Name != "original" {
 		t.Errorf("Fields[0].Name = %q, want %q", f2.Fields[0].Name, "original")
 	}
+	nested := f2.Fields[0].Meta["nested"].(map[string]interface{})
+	if nested["key"] != "value" {
+		t.Errorf("nested Meta leaked: got %q, want %q", nested["key"], "value")
+	}
 }
 
 func TestGrid_ReturnedValueIsImmutable(t *testing.T) {
 	r := admin.NewRegistry()
 	r.RegisterGrid("g", admin.Grid{
-		Columns: []admin.Column{{Name: "original"}},
+		Columns: []admin.Column{{
+			Name: "original",
+			Meta: map[string]interface{}{"nested": map[string]interface{}{"key": "value"}},
+		}},
 	})
 
 	g, _ := r.Grid("g")
 	g.Columns[0].Name = "mutated"
+	g.Columns[0].Meta["nested"].(map[string]interface{})["key"] = "changed"
 	g.Columns = append(g.Columns, admin.Column{Name: "extra"})
 
 	g2, _ := r.Grid("g")
@@ -218,5 +230,9 @@ func TestGrid_ReturnedValueIsImmutable(t *testing.T) {
 	}
 	if g2.Columns[0].Name != "original" {
 		t.Errorf("Columns[0].Name = %q, want %q", g2.Columns[0].Name, "original")
+	}
+	nested := g2.Columns[0].Meta["nested"].(map[string]interface{})
+	if nested["key"] != "value" {
+		t.Errorf("nested Meta leaked: got %q, want %q", nested["key"], "value")
 	}
 }

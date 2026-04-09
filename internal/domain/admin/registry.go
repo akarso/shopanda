@@ -109,30 +109,48 @@ func (r *Registry) Grid(name string) (Grid, bool) {
 
 // --- deep-copy helpers ---
 
+func cloneMetaValue(val interface{}) interface{} {
+	switch v := val.(type) {
+	case map[string]interface{}:
+		m := make(map[string]interface{}, len(v))
+		for k, mv := range v {
+			m[k] = cloneMetaValue(mv)
+		}
+		return m
+	case []interface{}:
+		s := make([]interface{}, len(v))
+		for i, sv := range v {
+			s[i] = cloneMetaValue(sv)
+		}
+		return s
+	default:
+		return val
+	}
+}
+
+func cloneMeta(src map[string]interface{}) map[string]interface{} {
+	if src == nil {
+		return nil
+	}
+	m := make(map[string]interface{}, len(src))
+	for k, v := range src {
+		m[k] = cloneMetaValue(v)
+	}
+	return m
+}
+
 func cloneField(f Field) Field {
 	if f.Options != nil {
 		opts := make([]Option, len(f.Options))
 		copy(opts, f.Options)
 		f.Options = opts
 	}
-	if f.Meta != nil {
-		m := make(map[string]interface{}, len(f.Meta))
-		for k, v := range f.Meta {
-			m[k] = v
-		}
-		f.Meta = m
-	}
+	f.Meta = cloneMeta(f.Meta)
 	return f
 }
 
 func cloneColumn(c Column) Column {
-	if c.Meta != nil {
-		m := make(map[string]interface{}, len(c.Meta))
-		for k, v := range c.Meta {
-			m[k] = v
-		}
-		c.Meta = m
-	}
+	c.Meta = cloneMeta(c.Meta)
 	return c
 }
 
