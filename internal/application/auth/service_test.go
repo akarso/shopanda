@@ -59,6 +59,10 @@ func (r *mockCustomerRepo) Update(_ context.Context, c *customer.Customer) error
 	return nil
 }
 
+func (r *mockCustomerRepo) ListCustomers(_ context.Context, _, _ int) ([]customer.Customer, error) {
+	return nil, nil
+}
+
 func (r *mockCustomerRepo) BumpTokenGeneration(_ context.Context, customerID string) error {
 	c := r.customers[customerID]
 	if c == nil {

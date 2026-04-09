@@ -416,6 +416,16 @@ Goal: harden public-facing endpoints and provider integrations.
 
 ---
 
+## Phase 31 — API Documentation
+
+Goal: machine-readable API spec with interactive docs.
+
+| PR  | Title                        | Scope                                              |
+| --- | ---------------------------- | -------------------------------------------------- |
+| 105 | OpenAPI spec + docs endpoint | Hand-written `openapi.yaml` covering all public + admin endpoints, `GET /docs` serves Swagger UI |
+
+---
+
 ## Milestone Summary
 
 | Milestone                 | After PR | What works                                  |
@@ -445,6 +455,7 @@ Goal: harden public-facing endpoints and provider integrations.
 | **CDN-optimized**         | 100      | Cache headers, CDN config, invalidation     |
 | **Admin RBAC**            | 102      | Role-based permissions for admin routes     |
 | **Security hardened**     | 104      | Webhook signatures, rate limiting           |
+| **API documented**        | 105      | OpenAPI spec, Swagger UI                    |
 
 ---
 

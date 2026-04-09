@@ -21,6 +21,9 @@ type CustomerRepository interface {
 	// Update persists changes to an existing customer.
 	Update(ctx context.Context, c *Customer) error
 
+	// ListCustomers returns a paginated slice of customers ordered by email.
+	ListCustomers(ctx context.Context, offset, limit int) ([]Customer, error)
+
 	// BumpTokenGeneration atomically increments the customer's token generation.
 	BumpTokenGeneration(ctx context.Context, customerID string) error
 

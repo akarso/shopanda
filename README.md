@@ -118,9 +118,13 @@ Shopanda uses a minimal default stack:
 
 - **Language:** Go
 - **Database:** PostgreSQL
-- **Queue:** PostgreSQL-backed by default
-- **Search:** PostgreSQL full-text by default
+- **Queue:** PostgreSQL-backed job queue with worker and retry logic
+- **Search:** PostgreSQL full-text search (tsvector)
 - **Storage:** Local filesystem by default
+- **Email:** SMTP mailer with async job-based delivery
+- **Cron:** In-process scheduler for recurring tasks
+- **Themes:** Server-side rendered templates with layout support
+- **Data exchange:** CSV import/export for products and stock
 
 Optional infrastructure such as Redis, Meilisearch, S3, or CDN support can be added through plugins.
 
@@ -141,32 +145,71 @@ The long-term goal is to build a commerce engine that is:
 git clone <repo>
 cd shopanda
 ./app migrate
-./app seed
 ./app serve
 ```
 
-See the full [Runbook](RUNBOOK.md) for deployment, scaling, and operations.
+### CLI commands
+
+| Command | Description |
+|---|---|
+| `migrate` | Run database schema migrations |
+| `serve` | Start the HTTP server (default) |
+| `import:products <file.csv>` | Bulk import products from CSV |
+| `export:products <file.csv>` | Export products and variants to CSV |
+| `import:stock <file.csv>` | Import stock quantities from CSV |
+| `export:stock <file.csv>` | Export stock quantities to CSV |
+| `config:import <file.yaml>` | Import configuration from YAML |
+| `config:export <file.yaml>` | Export configuration to YAML |
+| `scheduler` | Run background job scheduler |
+
+See the full [CLI Commands](docs/CLI_COMMANDS.md) doc for details.
 
 ## Documentation
 
 All specs live in [`docs/`](docs/):
 
+### Architecture & Design
+
 - [Foundation](docs/FOUNDATION.md) — vision and principles
 - [Domain Model](docs/DOMAIN_MODEL.md) — schema and entities
 - [Project Structure](docs/PROJECT_STRUCTURE.md) — code organization
 - [Web API](docs/WEB_API.md) — REST endpoints
-- [Plugin Guide](docs/PLUGINS.md) — authoring plugins
+- [Event System](docs/EVENT_SYSTEM.md) — pub/sub events
+- [Plugin Guide](docs/PLUGIN_LIFECYCLE.md) — plugin lifecycle
 - [Backend Guide](docs/BACKEND.md) — implementation patterns
 - [Frontend Guide](docs/FRONTEND.md) — rendering strategy
+
+### Commerce Domains
+
+- [Pricing Pipeline](docs/PRICING_PIIPELINE.md) — deterministic pricing
+- [Checkout Workflow](docs/CHECKOUT_WORKFLOW.md) — ordered checkout flow
+- [Order & Cart](docs/ORDER_CART_DOMAIN.md) — cart and order domain
+- [Composition Pipeline](docs/COMPOSITION_PIPELINE.md) — PDP/PLP response enrichment
+- [Inventory](docs/STOCK.md) — stock management
 - [Taxes](docs/TAXES.md) — VAT calculation
 - [Promotions](docs/PROMOTIONS.md) — discounts and coupons
 - [Rules](docs/RULES.md) — condition primitives
 - [Invoicing](docs/INVOICING.md) — invoice generation
+
+### Infrastructure & Operations
+
+- [Admin Schemas](docs/ADMIN_SCHEMA.md) — schema-driven forms and grids
+- [Theme System](docs/THEME_SYSTEM.md) — SSR theme engine
+- [Data Exchange](docs/DATA_EXCHANGE.md) — CSV import/export
+- [CLI Commands](docs/CLI_COMMANDS.md) — available commands
+- [Search](docs/SEARCH_SYSTEM.md) — full-text search
+- [Mailer](docs/MAILER.md) — email delivery
+- [Media](docs/MEDIA_ASSETS.md) — file storage
+- [Jobs & Queue](docs/JOBS_QUEUE_SYSTEM.md) — async job processing
+- [Cron](docs/CRON.md) — scheduled tasks
+- [Caching](docs/CACHING.md) — key-value cache
+- [Configuration](docs/CONFIGURATION_SYSTEM.md) — runtime config
 - [Routing](docs/ROUTING.md) — URL rewrites
 - [CMS](docs/CMS.md) — content pages
+
+### Cross-Cutting
+
 - [SEO](docs/SEO.md) — structured data and discoverability
-- [Inventory](docs/STOCK.md) — stock management
-- [Mailer](docs/MAILER.md) — email delivery
 - [Multi-Store](docs/STORES_CURRENCIES.md) — stores and currencies
 - [Localization](docs/I18N.md) — translations
 - [Legal](docs/LEGAL.md) — GDPR and compliance
