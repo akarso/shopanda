@@ -207,7 +207,14 @@ func TestForm_ReturnedValueIsImmutable(t *testing.T) {
 	if f2.Fields[0].Name != "original" {
 		t.Errorf("Fields[0].Name = %q, want %q", f2.Fields[0].Name, "original")
 	}
-	nested := f2.Fields[0].Meta["nested"].(map[string]interface{})
+	v, ok := f2.Fields[0].Meta["nested"]
+	if !ok {
+		t.Fatal("expected Meta[nested] to exist")
+	}
+	nested, ok := v.(map[string]interface{})
+	if !ok {
+		t.Fatalf("Meta[nested] type = %T, want map[string]interface{}", v)
+	}
 	if nested["key"] != "value" {
 		t.Errorf("nested Meta leaked: got %q, want %q", nested["key"], "value")
 	}
@@ -234,7 +241,14 @@ func TestGrid_ReturnedValueIsImmutable(t *testing.T) {
 	if g2.Columns[0].Name != "original" {
 		t.Errorf("Columns[0].Name = %q, want %q", g2.Columns[0].Name, "original")
 	}
-	nested := g2.Columns[0].Meta["nested"].(map[string]interface{})
+	v, ok := g2.Columns[0].Meta["nested"]
+	if !ok {
+		t.Fatal("expected Meta[nested] to exist")
+	}
+	nested, ok := v.(map[string]interface{})
+	if !ok {
+		t.Fatalf("Meta[nested] type = %T, want map[string]interface{}", v)
+	}
 	if nested["key"] != "value" {
 		t.Errorf("nested Meta leaked: got %q, want %q", nested["key"], "value")
 	}
@@ -255,7 +269,14 @@ func TestForm_MetaSliceIsImmutable(t *testing.T) {
 	f.Fields[0].Meta["tags"] = append(sl, "extra")
 
 	f2, _ := r.Form("f")
-	tags := f2.Fields[0].Meta["tags"].([]interface{})
+	v, ok := f2.Fields[0].Meta["tags"]
+	if !ok {
+		t.Fatal("expected Meta[tags] to exist")
+	}
+	tags, ok := v.([]interface{})
+	if !ok {
+		t.Fatalf("Meta[tags] type = %T, want []interface{}", v)
+	}
 	if len(tags) != 1 {
 		t.Fatalf("tags len = %d, want 1", len(tags))
 	}
@@ -279,7 +300,14 @@ func TestGrid_MetaSliceIsImmutable(t *testing.T) {
 	g.Columns[0].Meta["tags"] = append(sl, "extra")
 
 	g2, _ := r.Grid("g")
-	tags := g2.Columns[0].Meta["tags"].([]interface{})
+	v, ok := g2.Columns[0].Meta["tags"]
+	if !ok {
+		t.Fatal("expected Meta[tags] to exist")
+	}
+	tags, ok := v.([]interface{})
+	if !ok {
+		t.Fatalf("Meta[tags] type = %T, want []interface{}", v)
+	}
 	if len(tags) != 1 {
 		t.Fatalf("tags len = %d, want 1", len(tags))
 	}
