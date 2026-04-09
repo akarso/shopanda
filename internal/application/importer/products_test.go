@@ -382,12 +382,12 @@ Widget,widget,SKU-001,notanumber
 
 func TestImport_AttributeBooleanValues(t *testing.T) {
 	csv := `name,slug,sku,active
-W1,w1,S1,true
-W2,w2,S2,false
-W3,w3,S3,1
-W4,w4,S4,0
-W5,w5,S5,yes
-W6,w6,S6,no
+Widget,widget,S1,true
+Widget,widget,S2,false
+Widget,widget,S3,1
+Widget,widget,S4,0
+Widget,widget,S5,yes
+Widget,widget,S6,no
 `
 	reg := catalog.NewAttributeRegistry()
 	attr, _ := catalog.NewAttribute("active", "Active", catalog.AttributeTypeBoolean)
@@ -408,15 +408,20 @@ W6,w6,S6,no
 	if result.Variants != 6 {
 		t.Fatalf("Variants = %d, want 6", result.Variants)
 	}
-	expected := []bool{true, false, true, false, true, false}
-	for i, v := range varRepo.variants {
-		got, ok := v.Attributes["active"].(bool)
+	expected := map[string]bool{"S1": true, "S2": false, "S3": true, "S4": false, "S5": true, "S6": false}
+	for _, v := range varRepo.variants {
+		want, ok := expected[v.SKU]
 		if !ok {
-			t.Errorf("variant[%d] active is %T, want bool", i, v.Attributes["active"])
+			t.Errorf("unexpected SKU %q", v.SKU)
 			continue
 		}
-		if got != expected[i] {
-			t.Errorf("variant[%d] active = %v, want %v", i, got, expected[i])
+		got, ok := v.Attributes["active"].(bool)
+		if !ok {
+			t.Errorf("variant %s active is %T, want bool", v.SKU, v.Attributes["active"])
+			continue
+		}
+		if got != want {
+			t.Errorf("variant %s active = %v, want %v", v.SKU, got, want)
 		}
 	}
 }
@@ -625,5 +630,67 @@ Widget,widget,SKU-001,freeform
 	attrs := varRepo.variants[0].Attributes
 	if attrs["custom_field"] != "freeform" {
 		t.Errorf("custom_field = %v, want freeform (string fallback)", attrs["custom_field"])
+	}
+}
+
+func TestImport_AttributeErrorSkipsRowNotGroup(t *testing.T) {
+	csv := `name,slug,sku,weight
+Widget,widget,SKU-001,notanumber
+Widget,widget,SKU-002,3.5
+`
+	reg := catalog.NewAttributeRegistry()
+	attr, _ := catalog.NewAttribute("weight", "Weight", catalog.AttributeTypeNumber)
+	reg.RegisterAttribute(attr)
+
+	prodRepo := &mockProductRepo{}
+	varRepo := &mockVariantRepo{}
+	imp := importer.NewProductImporter(prodRepo, varRepo, nil)
+	imp.WithAttributeValidation(reg, "")
+
+	result, err := imp.Import(context.Background(), strings.NewReader(csv))
+	if err != nil {
+		t.Fatalf("Import: %v", err)
+	}
+	if result.Skipped != 1 {
+		t.Errorf("Skipped = %d, want 1 (only the bad row)", result.Skipped)
+	}
+	if result.Variants != 1 {
+		t.Errorf("Variants = %d, want 1 (the valid sibling)", result.Variants)
+	}
+	if len(result.Errors) != 1 {
+		t.Fatalf("len(Errors) = %d, want 1", len(result.Errors))
+	}
+}
+
+func TestImport_SelectValidatedWithoutGroup(t *testing.T) {
+	csv := `name,slug,sku,size
+Widget,widget,SKU-001,XL
+`
+	reg := catalog.NewAttributeRegistry()
+	attr, _ := catalog.NewAttribute("size", "Size", catalog.AttributeTypeSelect)
+	attr.Options = []string{"S", "M", "L"}
+	reg.RegisterAttribute(attr)
+
+	imp := importer.NewProductImporter(&mockProductRepo{}, &mockVariantRepo{}, nil)
+	imp.WithAttributeValidation(reg, "")
+
+	result, err := imp.Import(context.Background(), strings.NewReader(csv))
+	if err != nil {
+		t.Fatalf("Import: %v", err)
+	}
+	if result.Skipped != 1 {
+		t.Errorf("Skipped = %d, want 1", result.Skipped)
+	}
+	if len(result.Errors) == 0 {
+		t.Fatal("expected errors for invalid select option without group")
+	}
+	found := false
+	for _, e := range result.Errors {
+		if strings.Contains(e, "size") && strings.Contains(e, "not in allowed options") {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("errors = %v, want one mentioning 'size' and 'not in allowed options'", result.Errors)
 	}
 }

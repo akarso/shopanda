@@ -220,8 +220,7 @@ func (imp *ProductImporter) Import(ctx context.Context, r io.Reader) (*Result, e
 					result.Errors = append(result.Errors, e)
 				}
 				result.Skipped++
-				skip = true
-				break
+				continue
 			}
 			if len(attrs) > 0 {
 				v.Attributes = attrs
@@ -368,6 +367,10 @@ func (imp *ProductImporter) parseAndValidateAttrs(raw map[string]string, lineNum
 			if attr, ok := imp.registry.Attribute(code); ok {
 				v, err := parseAttributeValue(val, attr)
 				if err != nil {
+					errs = append(errs, fmt.Sprintf("line %d: %v", lineNum, err))
+					continue
+				}
+				if err := attr.Validate(v); err != nil {
 					errs = append(errs, fmt.Sprintf("line %d: %v", lineNum, err))
 					continue
 				}
