@@ -38,6 +38,7 @@ C4Component
             Component(importerService, "ProductImporter", "Go", "Bulk CSV product import")
             Component(notifService, "NotificationService", "Go", "Listens to order.paid, renders email template, enqueues email.send job")
             Component(mediaService, "MediaService", "Go", "Upload files: validate type, save to storage, persist asset record")
+            Component(cacheCleanupHandler, "CacheCleanupHandler", "Go", "Handles cache.cleanup jobs: removes expired cache entries")
         }
 
         Boundary(infrastructure, "Infrastructure Layer (Adapters)") {
@@ -90,6 +91,8 @@ C4Component
     Rel(notifService, postgresRepos, "Looks up order + customer")
     Rel(notifService, postgresJobQueue, "Enqueues email.send job")
     Rel(jobWorker, smtpMailer, "EmailSendHandler sends via Mailer")
+    Rel(jobWorker, cacheCleanupHandler, "Dispatches cache.cleanup jobs")
+    Rel(cacheCleanupHandler, pgCacheStore, "Calls DeleteExpired")
 
     Rel(authService, postgresRepos, "Customer + token queries")
     Rel(cartService, postgresRepos, "Cart persistence")

@@ -10,6 +10,7 @@ import (
 	"time"
 
 	authApp "github.com/akarso/shopanda/internal/application/auth"
+	cacheApp "github.com/akarso/shopanda/internal/application/cache"
 	cartApp "github.com/akarso/shopanda/internal/application/cart"
 	checkoutApp "github.com/akarso/shopanda/internal/application/checkout"
 	"github.com/akarso/shopanda/internal/application/composition"
@@ -36,6 +37,7 @@ import (
 	"github.com/akarso/shopanda/internal/platform/config"
 	"github.com/akarso/shopanda/internal/platform/db"
 	"github.com/akarso/shopanda/internal/platform/event"
+	"github.com/akarso/shopanda/internal/platform/id"
 	"github.com/akarso/shopanda/internal/platform/jwt"
 	"github.com/akarso/shopanda/internal/platform/logger"
 	"github.com/akarso/shopanda/internal/platform/migrate"
@@ -155,6 +157,9 @@ func runServe(cfg *config.Config, log logger.Logger) error {
 		return fmt.Errorf("unsupported cache.driver: %s", cfg.Cache.Driver)
 	}
 	_ = appCache // wired by consumers in upcoming PRs
+
+	// Cache cleanup job handler.
+	jobWorker.Register(cacheApp.NewCleanupHandler(appCache.(cacheApp.ExpiredDeleter), log))
 
 	// Providers.
 	manualPayProvider := manualpay.NewProvider()
@@ -459,12 +464,18 @@ func runScheduler(cfg *config.Config, log logger.Logger) error {
 	jobQueue := postgres.NewJobQueue(conn)
 	var sched scheduler.Scheduler = cron.New(log)
 
-	// Register scheduled jobs here:
-	// sched.Register("cache.cleanup", "*/5 * * * *", func() {
-	//     job, _ := jobs.NewJob(id.New(), "cache.cleanup", nil)
-	//     _ = jobQueue.Enqueue(context.Background(), job)
-	// })
-	_ = jobQueue // will be used when scheduled jobs are registered
+	sched.Register("cache.cleanup", "*/5 * * * *", func() {
+		job, err := jobs.NewJob(id.New(), cacheApp.JobType, nil)
+		if err != nil {
+			log.Error("cache.cleanup.schedule", err, nil)
+			return
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		if err := jobQueue.Enqueue(ctx, job); err != nil {
+			log.Error("cache.cleanup.enqueue", err, nil)
+		}
+	})
 
 	// Block until interrupted (context cancelled via signal).
 	ctx, cancel := context.WithCancel(context.Background())

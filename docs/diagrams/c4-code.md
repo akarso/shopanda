@@ -430,6 +430,12 @@ classDiagram
         +Type() string
         +Handle(ctx, job) error
     }
+    class CacheCleanupHandler {
+        -deleter ExpiredDeleter
+        -log Logger
+        +Type() string
+        +Handle(ctx, job) error
+    }
     class SearchHandler {
         -engine SearchEngine
         +Search() HandlerFunc
@@ -454,6 +460,8 @@ classDiagram
     Worker --> Queue : polls
     Worker --> Handler : dispatches to
     Handler <|.. EmailSendHandler : implements
+    Handler <|.. CacheCleanupHandler : implements
+    CacheCleanupHandler --> PostgresCacheStore : calls DeleteExpired
     EmailSendHandler --> Mailer : sends via
     NotificationService --> Templates : renders
     NotificationService --> Queue : enqueues email.send
