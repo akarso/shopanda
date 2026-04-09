@@ -11,7 +11,7 @@ const JobType = "cache.cleanup"
 
 // ExpiredDeleter removes cache entries whose TTL has elapsed.
 type ExpiredDeleter interface {
-	DeleteExpired() (int64, error)
+	DeleteExpired(ctx context.Context) (int64, error)
 }
 
 // Logger is the logging interface used by CleanupHandler.
@@ -40,8 +40,8 @@ func NewCleanupHandler(deleter ExpiredDeleter, log Logger) *CleanupHandler {
 func (h *CleanupHandler) Type() string { return JobType }
 
 // Handle removes expired cache entries and logs the result.
-func (h *CleanupHandler) Handle(_ context.Context, _ jobs.Job) error {
-	deleted, err := h.deleter.DeleteExpired()
+func (h *CleanupHandler) Handle(ctx context.Context, _ jobs.Job) error {
+	deleted, err := h.deleter.DeleteExpired(ctx)
 	if err != nil {
 		return err
 	}

@@ -1,6 +1,7 @@
 package postgres_test
 
 import (
+	"context"
 	"database/sql"
 	"encoding/json"
 	"testing"
@@ -168,7 +169,7 @@ func TestCacheStoreDB_DeleteExpired(t *testing.T) {
 		t.Fatalf("Set forever: %v", err)
 	}
 
-	n, err := store.DeleteExpired()
+	n, err := store.DeleteExpired(context.Background())
 	if err != nil {
 		t.Fatalf("DeleteExpired: %v", err)
 	}

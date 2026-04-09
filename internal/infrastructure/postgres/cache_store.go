@@ -1,6 +1,7 @@
 package postgres
 
 import (
+	"context"
 	"database/sql"
 	"encoding/json"
 	"fmt"
@@ -90,8 +91,8 @@ func (s *CacheStore) Delete(key string) error {
 
 // DeleteExpired removes all entries whose TTL has elapsed.
 // Called by the cache cleanup scheduled job.
-func (s *CacheStore) DeleteExpired() (int64, error) {
-	res, err := s.db.Exec(`DELETE FROM cache WHERE expires_at < now()`)
+func (s *CacheStore) DeleteExpired(ctx context.Context) (int64, error) {
+	res, err := s.db.ExecContext(ctx, `DELETE FROM cache WHERE expires_at < now()`)
 	if err != nil {
 		return 0, fmt.Errorf("cache_store: delete expired: %w", err)
 	}

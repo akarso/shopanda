@@ -14,7 +14,7 @@ type stubDeleter struct {
 	called  bool
 }
 
-func (s *stubDeleter) DeleteExpired() (int64, error) {
+func (s *stubDeleter) DeleteExpired(_ context.Context) (int64, error) {
 	s.called = true
 	return s.deleted, s.err
 }
@@ -41,7 +41,7 @@ func TestCleanupHandler_Handle_Success(t *testing.T) {
 	log := &stubLogger{}
 	h := appCache.NewCleanupHandler(d, log)
 
-	job := jobs.Job{ID: "j1", Type: "cache.cleanup"}
+	job := jobs.Job{ID: "j1", Type: appCache.JobType}
 	err := h.Handle(context.Background(), job)
 	if err != nil {
 		t.Fatalf("Handle: %v", err)
@@ -64,13 +64,16 @@ func TestCleanupHandler_Handle_Error(t *testing.T) {
 	log := &stubLogger{}
 	h := appCache.NewCleanupHandler(d, log)
 
-	job := jobs.Job{ID: "j2", Type: "cache.cleanup"}
+	job := jobs.Job{ID: "j2", Type: appCache.JobType}
 	err := h.Handle(context.Background(), job)
 	if err == nil {
 		t.Fatal("expected error")
 	}
 	if err != context.DeadlineExceeded {
 		t.Errorf("err = %v, want DeadlineExceeded", err)
+	}
+	if len(log.infos) != 0 {
+		t.Errorf("expected no info logs on error, got %v", log.infos)
 	}
 }
 
