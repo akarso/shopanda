@@ -428,3 +428,76 @@ func TestAttributeRegistry_ReplaceAttribute(t *testing.T) {
 		t.Errorf("label = %q, want %q", got.Label, "Colour")
 	}
 }
+
+func TestAttribute_Validate_UnsupportedType(t *testing.T) {
+	a := catalog.Attribute{Code: "bad", Label: "Bad", Type: "unknown"}
+	if err := a.Validate("anything"); err == nil {
+		t.Error("expected error for unsupported type")
+	}
+}
+
+func TestAttribute_Validate_SelectEmptyOptions(t *testing.T) {
+	a, _ := catalog.NewAttribute("color", "Color", catalog.AttributeTypeSelect)
+	// Options left empty → should error
+	if err := a.Validate("red"); err == nil {
+		t.Error("expected error for select with no options defined")
+	}
+}
+
+func TestAttributeRegistry_ValidateAttributes_UndeclaredKey(t *testing.T) {
+	reg := catalog.NewAttributeRegistry()
+	a, _ := catalog.NewAttribute("color", "Color", catalog.AttributeTypeText)
+	reg.RegisterAttribute(a)
+
+	g, _ := catalog.NewAttributeGroup("basic", "Basic")
+	g.AddAttribute("color")
+	_ = reg.RegisterGroup(g)
+
+	errs := reg.ValidateAttributes("basic", map[string]interface{}{
+		"color":   "red",
+		"unknown": "val",
+	})
+	if len(errs) != 1 {
+		t.Fatalf("expected 1 error for undeclared key, got %d: %v", len(errs), errs)
+	}
+}
+
+func TestAttributeRegistry_DeepCopyAttribute(t *testing.T) {
+	reg := catalog.NewAttributeRegistry()
+	a, _ := catalog.NewAttribute("color", "Color", catalog.AttributeTypeSelect)
+	a.Options = []string{"red", "blue"}
+	reg.RegisterAttribute(a)
+
+	got, _ := reg.Attribute("color")
+	got.Options = append(got.Options, "mutated")
+
+	original, _ := reg.Attribute("color")
+	if len(original.Options) != 2 {
+		t.Errorf("deep copy broken: options has %d items, want 2", len(original.Options))
+	}
+}
+
+func TestAttributeRegistry_CloneZeroLengthSlice(t *testing.T) {
+	reg := catalog.NewAttributeRegistry()
+	a, _ := catalog.NewAttribute("name", "Name", catalog.AttributeTypeText)
+	// Options is nil by default from constructor
+	reg.RegisterAttribute(a)
+
+	got, _ := reg.Attribute("name")
+	if got.Options != nil {
+		t.Error("expected nil Options for text attribute")
+	}
+
+	// Now test with zero-length-but-non-nil
+	a2, _ := catalog.NewAttribute("tag", "Tag", catalog.AttributeTypeText)
+	a2.Options = []string{}
+	reg.RegisterAttribute(a2)
+
+	got2, _ := reg.Attribute("tag")
+	if got2.Options == nil {
+		t.Error("expected non-nil zero-length Options to be preserved")
+	}
+	if len(got2.Options) != 0 {
+		t.Errorf("expected empty options, got %d", len(got2.Options))
+	}
+}

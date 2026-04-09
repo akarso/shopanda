@@ -211,7 +211,7 @@ classDiagram
 
     Attribute --> AttributeType : typed as
     AttributeGroup "*" --> "*" Attribute : contains
-    Product "*" --> "*" AttributeGroup : assigned to
+    Product "*" ..> "*" AttributeGroup : assigned to (planned)
 
     Job --> Status : has
 

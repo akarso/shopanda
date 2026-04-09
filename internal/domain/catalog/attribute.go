@@ -51,6 +51,10 @@ func NewAttribute(code, label string, attrType AttributeType) (Attribute, error)
 
 // Validate checks whether value is acceptable for this attribute.
 func (a Attribute) Validate(value interface{}) error {
+	if !a.Type.IsValid() {
+		return errors.New("attribute " + a.Code + " has unsupported type " + string(a.Type))
+	}
+
 	if value == nil {
 		if a.Required {
 			return errors.New("attribute " + a.Code + " is required")
@@ -75,21 +79,22 @@ func (a Attribute) Validate(value interface{}) error {
 			return errors.New("attribute " + a.Code + " must be a boolean")
 		}
 	case AttributeTypeSelect:
+		if len(a.Options) == 0 {
+			return errors.New("attribute " + a.Code + " has no options defined")
+		}
 		s, ok := value.(string)
 		if !ok {
 			return errors.New("attribute " + a.Code + " must be a string")
 		}
-		if len(a.Options) > 0 {
-			found := false
-			for _, opt := range a.Options {
-				if opt == s {
-					found = true
-					break
-				}
+		found := false
+		for _, opt := range a.Options {
+			if opt == s {
+				found = true
+				break
 			}
-			if !found {
-				return errors.New("attribute " + a.Code + " value not in allowed options")
-			}
+		}
+		if !found {
+			return errors.New("attribute " + a.Code + " value not in allowed options")
 		}
 	}
 	return nil

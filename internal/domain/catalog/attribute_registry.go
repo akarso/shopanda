@@ -121,7 +121,22 @@ func (r *AttributeRegistry) ValidateAttributes(groupCode string, values map[stri
 	if !ok {
 		return []error{fmt.Errorf("attribute group %q not registered", groupCode)}
 	}
+	// Build allowed set from group attributes.
+	allowed := make(map[string]struct{}, len(g.Attributes))
+	for _, code := range g.Attributes {
+		allowed[code] = struct{}{}
+	}
+
 	var errs []error
+
+	// Reject undeclared keys.
+	for key := range values {
+		if _, ok := allowed[key]; !ok {
+			errs = append(errs, fmt.Errorf("attribute %q not declared in group %q", key, groupCode))
+		}
+	}
+
+	// Validate declared attributes.
 	for _, code := range g.Attributes {
 		a, ok := r.attrs[code]
 		if !ok {
@@ -138,7 +153,7 @@ func (r *AttributeRegistry) ValidateAttributes(groupCode string, values map[stri
 
 func cloneAttribute(a Attribute) Attribute {
 	cp := a
-	if len(a.Options) > 0 {
+	if a.Options != nil {
 		cp.Options = make([]string, len(a.Options))
 		copy(cp.Options, a.Options)
 	}
@@ -147,7 +162,7 @@ func cloneAttribute(a Attribute) Attribute {
 
 func cloneGroup(g AttributeGroup) AttributeGroup {
 	cp := g
-	if len(g.Attributes) > 0 {
+	if g.Attributes != nil {
 		cp.Attributes = make([]string, len(g.Attributes))
 		copy(cp.Attributes, g.Attributes)
 	}
