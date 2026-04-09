@@ -480,6 +480,11 @@ classDiagram
         -engine SearchEngine
         +Search() HandlerFunc
     }
+    class SchemaHandler {
+        -registry *AdminRegistry
+        +GetForm() HandlerFunc
+        +GetGrid() HandlerFunc
+    }
 
     ProductRepository <|.. PostgresProductRepo : implements
     CartRepository <|.. PostgresCartRepo : implements
@@ -497,6 +502,7 @@ classDiagram
     Templates --> Message : produces
     PricingStep <|.. BasePriceStep : implements
     SearchHandler --> SearchEngine : uses
+    SchemaHandler --> AdminRegistry : reads schemas
     Worker --> Queue : polls
     Worker --> Handler : dispatches to
     Handler <|.. EmailSendHandler : implements

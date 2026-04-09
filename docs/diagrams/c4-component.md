@@ -25,6 +25,7 @@ C4Component
             Component(categoryHandler, "CategoryHandler", "HTTP", "Tree, Get, Products (public)")
             Component(searchHandler, "SearchHandler", "HTTP", "Full-text product search (public)")
             Component(mediaHandler, "MediaHandler", "HTTP", "Upload media files (admin)")
+            Component(schemaHandler, "SchemaHandler", "HTTP", "Expose admin form and grid schemas (admin)")
             Component(shippingHandler, "ShippingRatesHandler", "HTTP", "List shipping rates")
             Component(webhookHandler, "PaymentWebhookHandler", "HTTP", "Handle payment callbacks (public)")
         }
@@ -39,6 +40,7 @@ C4Component
             Component(notifService, "NotificationService", "Go", "Listens to order.paid, renders email template, enqueues email.send job")
             Component(mediaService, "MediaService", "Go", "Upload files: validate type, save to storage, persist asset record")
             Component(cacheCleanupHandler, "CacheCleanupHandler", "Go", "Handles cache.cleanup jobs: removes expired cache entries")
+            Component(productSchemaRegistration, "ProductSchemaRegistration", "Go", "Registers product form and grid schemas with admin registry")
         }
 
         Boundary(infrastructure, "Infrastructure Layer (Adapters)") {
@@ -75,6 +77,7 @@ C4Component
     Rel(middleware, categoryHandler, "Routes requests")
     Rel(middleware, searchHandler, "Routes requests")
     Rel(middleware, mediaHandler, "Routes requests")
+    Rel(middleware, schemaHandler, "Routes requests")
     Rel(middleware, webhookHandler, "Routes requests")
 
     Rel(authHandler, authService, "Delegates auth logic")
@@ -100,9 +103,11 @@ C4Component
     Rel(checkoutWorkflow, postgresRepos, "Order, inventory, payment, shipping persistence")
     Rel(productHandler, postgresRepos, "Product queries")
     Rel(pluginRegistry, adminRegistry, "Plugins register schemas")
+    Rel(productSchemaRegistration, adminRegistry, "Registers product form + grid")
     Rel(categoryHandler, postgresRepos, "Category + product queries")
     Rel(searchHandler, postgresSearch, "Delegates search queries")
     Rel(mediaHandler, mediaService, "Delegates upload logic")
+    Rel(schemaHandler, adminRegistry, "Reads form and grid schemas")
     Rel(mediaService, localFSStorage, "Saves files")
     Rel(mediaService, postgresRepos, "Persists asset records")
 

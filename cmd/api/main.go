@@ -9,6 +9,7 @@ import (
 	"syscall"
 	"time"
 
+	adminApp "github.com/akarso/shopanda/internal/application/admin"
 	authApp "github.com/akarso/shopanda/internal/application/auth"
 	cacheApp "github.com/akarso/shopanda/internal/application/cache"
 	cartApp "github.com/akarso/shopanda/internal/application/cart"
@@ -18,6 +19,7 @@ import (
 	mediaApp "github.com/akarso/shopanda/internal/application/media"
 	"github.com/akarso/shopanda/internal/application/notification"
 	appPricing "github.com/akarso/shopanda/internal/application/pricing"
+	"github.com/akarso/shopanda/internal/domain/admin"
 	"github.com/akarso/shopanda/internal/domain/cache"
 	"github.com/akarso/shopanda/internal/domain/customer"
 	"github.com/akarso/shopanda/internal/domain/identity"
@@ -280,6 +282,10 @@ func runServe(cfg *config.Config, log logger.Logger) error {
 
 	authService := authApp.NewService(customerRepo, resetTokenRepo, jwtIssuer, bus, log, time.Hour)
 
+	// Admin schema registry.
+	adminRegistry := admin.NewRegistry()
+	adminApp.RegisterProductSchemas(adminRegistry)
+
 	// Handlers.
 	productHandler := shophttp.NewProductHandler(productRepo, pdp, plp)
 	productAdmin := shophttp.NewProductAdminHandler(productRepo, bus)
@@ -294,6 +300,7 @@ func runServe(cfg *config.Config, log logger.Logger) error {
 	searchHandler := shophttp.NewSearchHandler(searchEngine)
 	mediaService := mediaApp.NewService(mediaStorage, assetRepo, bus, log)
 	mediaHandler := shophttp.NewMediaHandler(mediaService)
+	schemaHandler := shophttp.NewSchemaHandler(adminRegistry)
 
 	router := shophttp.NewRouter()
 
@@ -339,6 +346,8 @@ func runServe(cfg *config.Config, log logger.Logger) error {
 	router.Handle("GET /api/v1/admin/orders", requireAdmin(orderAdmin.List()))
 	router.Handle("GET /api/v1/admin/orders/{orderId}", requireAdmin(orderAdmin.Get()))
 	router.Handle("POST /api/v1/admin/media/upload", requireAdmin(mediaHandler.Upload()))
+	router.Handle("GET /api/v1/admin/forms/{name}", requireAdmin(schemaHandler.GetForm()))
+	router.Handle("GET /api/v1/admin/grids/{name}", requireAdmin(schemaHandler.GetGrid()))
 
 	// Cart routes (behind RequireAuth).
 	router.Handle("POST /api/v1/carts", requireAuth(cartHandler.Create()))
