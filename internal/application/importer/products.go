@@ -204,7 +204,11 @@ func (imp *ProductImporter) Import(ctx context.Context, r io.Reader) (*Result, e
 		}
 
 		// Prepare variants
-		var variants []catalog.Variant
+		type preparedVariant struct {
+			variant catalog.Variant
+			lineNum int
+		}
+		var pvs []preparedVariant
 		for _, row := range rows {
 			v, err := catalog.NewVariant(id.New(), product.ID, row.sku)
 			if err != nil {
@@ -225,18 +229,24 @@ func (imp *ProductImporter) Import(ctx context.Context, r io.Reader) (*Result, e
 			if len(attrs) > 0 {
 				v.Attributes = attrs
 			}
-			variants = append(variants, v)
+			pvs = append(pvs, preparedVariant{variant: v, lineNum: row.lineNum})
 		}
-		if skip {
+		if skip || len(pvs) == 0 {
 			continue
+		}
+
+		// Build variant slice for persistence.
+		variants := make([]catalog.Variant, len(pvs))
+		for i, pv := range pvs {
+			variants[i] = pv.variant
 		}
 
 		// 4. Write in transaction (when txStarter available), else direct writes
 		if existing == nil && imp.txStarter != nil {
 			tx, err := imp.txStarter.BeginTx(ctx, nil)
 			if err != nil {
-				for _, row := range rows {
-					result.Errors = append(result.Errors, fmt.Sprintf("line %d: begin tx: %v", row.lineNum, err))
+				for _, pv := range pvs {
+					result.Errors = append(result.Errors, fmt.Sprintf("line %d: begin tx: %v", pv.lineNum, err))
 					result.Skipped++
 				}
 				continue
@@ -246,8 +256,8 @@ func (imp *ProductImporter) Import(ctx context.Context, r io.Reader) (*Result, e
 			// Write product
 			if err := txProducts.Create(ctx, product); err != nil {
 				tx.Rollback()
-				for _, row := range rows {
-					result.Errors = append(result.Errors, fmt.Sprintf("line %d: create product: %v", row.lineNum, err))
+				for _, pv := range pvs {
+					result.Errors = append(result.Errors, fmt.Sprintf("line %d: create product: %v", pv.lineNum, err))
 					result.Skipped++
 				}
 				continue
@@ -257,8 +267,8 @@ func (imp *ProductImporter) Import(ctx context.Context, r io.Reader) (*Result, e
 			for _, v := range variants {
 				if err := txVariants.Create(ctx, &v); err != nil {
 					tx.Rollback()
-					for _, row := range rows {
-						result.Errors = append(result.Errors, fmt.Sprintf("line %d: create variant (rollback slug %q): %v", row.lineNum, slug, err))
+					for _, pv := range pvs {
+						result.Errors = append(result.Errors, fmt.Sprintf("line %d: create variant (rollback slug %q): %v", pv.lineNum, slug, err))
 						result.Skipped++
 					}
 					allOk = false
@@ -269,8 +279,8 @@ func (imp *ProductImporter) Import(ctx context.Context, r io.Reader) (*Result, e
 				continue
 			}
 			if err := tx.Commit(); err != nil {
-				for _, row := range rows {
-					result.Errors = append(result.Errors, fmt.Sprintf("line %d: commit: %v", row.lineNum, err))
+				for _, pv := range pvs {
+					result.Errors = append(result.Errors, fmt.Sprintf("line %d: commit: %v", pv.lineNum, err))
 					result.Skipped++
 				}
 				continue
@@ -280,8 +290,8 @@ func (imp *ProductImporter) Import(ctx context.Context, r io.Reader) (*Result, e
 		} else if existing == nil {
 			// No txStarter: direct writes (tests / non-transactional mode)
 			if err := imp.products.Create(ctx, product); err != nil {
-				for _, row := range rows {
-					result.Errors = append(result.Errors, fmt.Sprintf("line %d: create product: %v", row.lineNum, err))
+				for _, pv := range pvs {
+					result.Errors = append(result.Errors, fmt.Sprintf("line %d: create product: %v", pv.lineNum, err))
 					result.Skipped++
 				}
 				continue
@@ -289,7 +299,7 @@ func (imp *ProductImporter) Import(ctx context.Context, r io.Reader) (*Result, e
 			result.Products++
 			for i, v := range variants {
 				if err := imp.variants.Create(ctx, &v); err != nil {
-					result.Errors = append(result.Errors, fmt.Sprintf("line %d: create variant: %v", rows[i].lineNum, err))
+					result.Errors = append(result.Errors, fmt.Sprintf("line %d: create variant: %v", pvs[i].lineNum, err))
 					result.Skipped++
 					continue
 				}
@@ -299,8 +309,8 @@ func (imp *ProductImporter) Import(ctx context.Context, r io.Reader) (*Result, e
 			// Existing product + txStarter: add variants in a transaction
 			tx, err := imp.txStarter.BeginTx(ctx, nil)
 			if err != nil {
-				for _, row := range rows {
-					result.Errors = append(result.Errors, fmt.Sprintf("line %d: begin tx: %v", row.lineNum, err))
+				for _, pv := range pvs {
+					result.Errors = append(result.Errors, fmt.Sprintf("line %d: begin tx: %v", pv.lineNum, err))
 					result.Skipped++
 				}
 				continue
@@ -310,8 +320,8 @@ func (imp *ProductImporter) Import(ctx context.Context, r io.Reader) (*Result, e
 			for _, v := range variants {
 				if err := txVariants.Create(ctx, &v); err != nil {
 					tx.Rollback()
-					for _, row := range rows {
-						result.Errors = append(result.Errors, fmt.Sprintf("line %d: create variant (rollback slug %q): %v", row.lineNum, slug, err))
+					for _, pv := range pvs {
+						result.Errors = append(result.Errors, fmt.Sprintf("line %d: create variant (rollback slug %q): %v", pv.lineNum, slug, err))
 						result.Skipped++
 					}
 					allOk = false
@@ -322,8 +332,8 @@ func (imp *ProductImporter) Import(ctx context.Context, r io.Reader) (*Result, e
 				continue
 			}
 			if err := tx.Commit(); err != nil {
-				for _, row := range rows {
-					result.Errors = append(result.Errors, fmt.Sprintf("line %d: commit: %v", row.lineNum, err))
+				for _, pv := range pvs {
+					result.Errors = append(result.Errors, fmt.Sprintf("line %d: commit: %v", pv.lineNum, err))
 					result.Skipped++
 				}
 				continue
@@ -333,7 +343,7 @@ func (imp *ProductImporter) Import(ctx context.Context, r io.Reader) (*Result, e
 			// Existing product, no txStarter: direct writes
 			for i, v := range variants {
 				if err := imp.variants.Create(ctx, &v); err != nil {
-					result.Errors = append(result.Errors, fmt.Sprintf("line %d: create variant: %v", rows[i].lineNum, err))
+					result.Errors = append(result.Errors, fmt.Sprintf("line %d: create variant: %v", pvs[i].lineNum, err))
 					result.Skipped++
 					continue
 				}

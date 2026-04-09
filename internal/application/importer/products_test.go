@@ -694,3 +694,35 @@ Widget,widget,SKU-001,XL
 		t.Errorf("errors = %v, want one mentioning 'size' and 'not in allowed options'", result.Errors)
 	}
 }
+
+func TestImport_AllRowsFailNoProductCreated(t *testing.T) {
+	csv := `name,slug,sku,weight
+Widget,widget,SKU-001,bad1
+Widget,widget,SKU-002,bad2
+`
+	reg := catalog.NewAttributeRegistry()
+	wAttr, _ := catalog.NewAttribute("weight", "Weight", catalog.AttributeTypeNumber)
+	reg.RegisterAttribute(wAttr)
+
+	prodRepo := &mockProductRepo{}
+	varRepo := &mockVariantRepo{}
+	imp := importer.NewProductImporter(prodRepo, varRepo, nil)
+	imp.WithAttributeValidation(reg, "")
+
+	result, err := imp.Import(context.Background(), strings.NewReader(csv))
+	if err != nil {
+		t.Fatalf("Import: %v", err)
+	}
+	if result.Products != 0 {
+		t.Errorf("Products = %d, want 0 (all rows failed)", result.Products)
+	}
+	if result.Variants != 0 {
+		t.Errorf("Variants = %d, want 0", result.Variants)
+	}
+	if result.Skipped != 2 {
+		t.Errorf("Skipped = %d, want 2", result.Skipped)
+	}
+	if len(prodRepo.products) != 0 {
+		t.Errorf("products created = %d, want 0", len(prodRepo.products))
+	}
+}
