@@ -1,0 +1,11 @@
+{{ define "title" }}{{ .Product.Name }}{{ end }}
+{{ define "content" }}
+<article>
+    <h1>{{ .Product.Name }}</h1>
+    {{ if .Product.Description }}<p>{{ .Product.Description }}</p>{{ end }}
+    <dl>
+        <dt>Status</dt><dd>{{ .Product.Status }}</dd>
+    </dl>
+</article>
+{{ end }}
+{{ template "layout.html" . }}

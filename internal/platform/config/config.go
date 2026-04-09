@@ -18,6 +18,7 @@ type Config struct {
 	Mail     MailConfig     `yaml:"mail"`
 	Media    MediaConfig    `yaml:"media"`
 	Cache    CacheConfig    `yaml:"cache"`
+	Frontend FrontendConfig `yaml:"frontend"`
 }
 
 type ServerConfig struct {
@@ -76,6 +77,12 @@ type LocalStorageConfig struct {
 
 type CacheConfig struct {
 	Driver string `yaml:"driver"`
+}
+
+type FrontendConfig struct {
+	Enabled   bool   `yaml:"enabled"`
+	Mode      string `yaml:"mode"`
+	ThemePath string `yaml:"theme_path"`
 }
 
 // values holds flattened dot-notation keys for generic access.
@@ -171,6 +178,11 @@ func defaults() Config {
 		Cache: CacheConfig{
 			Driver: "postgres",
 		},
+		Frontend: FrontendConfig{
+			Enabled:   false,
+			Mode:      "ssr",
+			ThemePath: "themes/default",
+		},
 	}
 }
 
@@ -248,6 +260,15 @@ func applyEnv(cfg *Config) {
 	if v := os.Getenv("SHOPANDA_CACHE_DRIVER"); v != "" {
 		cfg.Cache.Driver = v
 	}
+	if v := os.Getenv("SHOPANDA_FRONTEND_ENABLED"); v != "" {
+		cfg.Frontend.Enabled = v == "true" || v == "1"
+	}
+	if v := os.Getenv("SHOPANDA_FRONTEND_MODE"); v != "" {
+		cfg.Frontend.Mode = v
+	}
+	if v := os.Getenv("SHOPANDA_FRONTEND_THEME_PATH"); v != "" {
+		cfg.Frontend.ThemePath = v
+	}
 }
 
 // flatten converts the Config struct into a dot-notation key-value map.
@@ -273,6 +294,9 @@ func flatten(cfg *Config) map[string]string {
 	m["media.local.base_path"] = cfg.Media.Local.BasePath
 	m["media.local.base_url"] = cfg.Media.Local.BaseURL
 	m["cache.driver"] = cfg.Cache.Driver
+	m["frontend.enabled"] = strconv.FormatBool(cfg.Frontend.Enabled)
+	m["frontend.mode"] = cfg.Frontend.Mode
+	m["frontend.theme_path"] = cfg.Frontend.ThemePath
 	return m
 }
 
@@ -314,5 +338,6 @@ func (c *Config) String() string {
 		fmt.Sprintf("auth.jwt_ttl=%s", c.Auth.JWTTTL),
 		fmt.Sprintf("media.storage=%s media.local.base_path=%s media.local.base_url=%s", c.Media.Storage, c.Media.Local.BasePath, c.Media.Local.BaseURL),
 		fmt.Sprintf("cache.driver=%s", c.Cache.Driver),
+		fmt.Sprintf("frontend.enabled=%t frontend.mode=%s frontend.theme_path=%s", c.Frontend.Enabled, c.Frontend.Mode, c.Frontend.ThemePath),
 	}, " ")
 }
