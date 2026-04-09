@@ -63,6 +63,7 @@
 - PR-029-030 (events) → used by checkout, auth, cart; any future event listeners
 - PR-021-022 (auth) → RequireAuth/RequireRole middleware used by all protected routes
 - PR-053 (search interface) → will be implemented by PR-054 (postgres search), consumed by PR-055 (search endpoint)
+- PR-056 (jobs queue) → Queue interface + Postgres impl + Worker; future PRs register handlers for async work
 
 ### Interface Contracts That Affect Multiple Files
 - Adding a method to any Repository interface requires updating ALL mock implementations in test files
@@ -86,7 +87,8 @@
 11. JWT setup (issuer + validating parser)
 12. HTTP Handlers (10+)
 13. Router + middleware chain + routes (33 routes)
+13.5. Job Queue + Worker (started as goroutine before ListenAndServe)
 14. HTTP server ListenAndServe
 
 ### Migration Numbering
-- Latest: 016 (search_vector). Next available: 017.
+- Latest: 017 (jobs). Next available: 018.

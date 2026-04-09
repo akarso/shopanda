@@ -31,12 +31,13 @@ func NewStockExporter(stock inventory.StockRepository, variants catalog.VariantR
 //
 // CSV columns: sku, quantity.
 func (exp *StockExporter) Export(ctx context.Context, w io.Writer) (*StockResult, error) {
-	type row struct {
-		sku      string
-		quantity int
+	writer := csv.NewWriter(w)
+
+	if err := writer.Write([]string{"sku", "quantity"}); err != nil {
+		return nil, fmt.Errorf("stock export: write header: %w", err)
 	}
 
-	var rows []row
+	result := &StockResult{}
 	offset := 0
 	for {
 		entries, err := exp.stock.ListStock(ctx, offset, pageSize)
@@ -54,26 +55,19 @@ func (exp *StockExporter) Export(ctx context.Context, w io.Writer) (*StockResult
 			if variant == nil {
 				continue // orphan stock entry, skip
 			}
-			rows = append(rows, row{sku: variant.SKU, quantity: e.Quantity})
+			if err := writer.Write([]string{variant.SKU, strconv.Itoa(e.Quantity)}); err != nil {
+				return nil, fmt.Errorf("stock export: write row: %w", err)
+			}
+			result.Entries++
+		}
+		writer.Flush()
+		if err := writer.Error(); err != nil {
+			return nil, fmt.Errorf("stock export: flush csv: %w", err)
 		}
 		if len(entries) < pageSize {
 			break
 		}
 		offset += len(entries)
-	}
-
-	writer := csv.NewWriter(w)
-
-	if err := writer.Write([]string{"sku", "quantity"}); err != nil {
-		return nil, fmt.Errorf("stock export: write header: %w", err)
-	}
-
-	result := &StockResult{}
-	for _, r := range rows {
-		if err := writer.Write([]string{r.sku, strconv.Itoa(r.quantity)}); err != nil {
-			return nil, fmt.Errorf("stock export: write row: %w", err)
-		}
-		result.Entries++
 	}
 
 	writer.Flush()

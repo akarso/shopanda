@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"syscall"
 	"time"
 
@@ -582,17 +583,24 @@ func runExportStock(cfg *config.Config, log logger.Logger) error {
 	variantRepo := postgres.NewVariantRepo(conn)
 	exp := exporter.NewStockExporter(stockRepo, variantRepo)
 
-	f, err := os.Create(filePath)
+	tmpFile, err := os.CreateTemp(filepath.Dir(filePath), "stock-export-*.csv")
 	if err != nil {
-		return fmt.Errorf("create csv: %w", err)
+		return fmt.Errorf("create temp file: %w", err)
 	}
-	defer f.Close()
+	tmpPath := tmpFile.Name()
 
 	log.Info("export.stock.start", map[string]interface{}{"file": filePath})
 
-	result, err := exp.Export(context.Background(), f)
+	result, err := exp.Export(context.Background(), tmpFile)
+	tmpFile.Close()
 	if err != nil {
+		os.Remove(tmpPath)
 		return fmt.Errorf("export stock: %w", err)
+	}
+
+	if err := os.Rename(tmpPath, filePath); err != nil {
+		os.Remove(tmpPath)
+		return fmt.Errorf("rename temp file: %w", err)
 	}
 
 	log.Info("export.stock.complete", map[string]interface{}{

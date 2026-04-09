@@ -1,5 +1,10 @@
 # Shopanda Code Conventions
 
+## Tool Workarounds
+- `create_file` tool CORRUPTS Go files → always use Python gen scripts (_gen_*.py) with pathlib.Path.write_text()
+- Use chr(96) for backticks in Python f-strings when generating Go code
+- Terminal `rm` command BLOCKED by policy → user must delete gen files manually
+
 ## HTTP Handler Pattern
 - Struct holding dependencies, constructor with nil panic guards
 - Endpoint methods return http.HandlerFunc
