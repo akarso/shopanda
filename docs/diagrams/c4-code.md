@@ -486,13 +486,14 @@ classDiagram
         +GetGrid() HandlerFunc
     }
     class ThemeEngine {
+        <<theme.Engine>>
         -theme Theme
         -pages map~string, *Template~
-        +Load(dir) ~*Engine, error~
         +Theme() Theme
         +Render(w, name, data) error
         +HasTemplate(name) bool
     }
+    note for ThemeEngine "theme.Load(dir string) (*Engine, error)\nPackage-level constructor"
     class Theme {
         +string Name
         +string Version
