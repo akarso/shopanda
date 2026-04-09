@@ -164,3 +164,35 @@ func TestCustomerExport_NoPasswordInOutput(t *testing.T) {
 		t.Error("CSV header contains password column")
 	}
 }
+
+func TestCustomerExport_FormulaInjectionSanitized(t *testing.T) {
+	repo := &mockCustomerRepoForExport{
+		customers: []customer.Customer{
+			{ID: "c1", Email: "=cmd@example.com", FirstName: "+Alice", LastName: "-Smith", Role: customer.RoleCustomer, Status: customer.StatusActive},
+			{ID: "c2", Email: "@evil.com", FirstName: "Bob", LastName: "Jones", Role: customer.RoleAdmin, Status: customer.StatusActive},
+		},
+	}
+
+	exp := exporter.NewCustomerExporter(repo)
+	var buf bytes.Buffer
+	_, err := exp.Export(context.Background(), &buf)
+	if err != nil {
+		t.Fatalf("Export: %v", err)
+	}
+
+	records := parseCSV(t, &buf)
+	// row 1: email starts with '=', first_name with '+', last_name with '-'
+	if !strings.HasPrefix(records[1][0], "'") {
+		t.Errorf("email %q not sanitized (expected leading ')", records[1][0])
+	}
+	if !strings.HasPrefix(records[1][1], "'") {
+		t.Errorf("first_name %q not sanitized (expected leading ')", records[1][1])
+	}
+	if !strings.HasPrefix(records[1][2], "'") {
+		t.Errorf("last_name %q not sanitized (expected leading ')", records[1][2])
+	}
+	// row 2: email starts with '@'
+	if !strings.HasPrefix(records[2][0], "'") {
+		t.Errorf("email %q not sanitized (expected leading ')", records[2][0])
+	}
+}

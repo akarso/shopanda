@@ -124,7 +124,7 @@ Shopanda uses a minimal default stack:
 - **Email:** SMTP mailer with async job-based delivery
 - **Cron:** In-process scheduler for recurring tasks
 - **Themes:** Server-side rendered templates with layout support
-- **Data exchange:** CSV import/export for products and stock
+- **Data exchange:** CSV import/export for products, stock, and customers
 
 Optional infrastructure such as Redis, Meilisearch, S3, or CDN support can be added through plugins.
 
@@ -158,6 +158,8 @@ cd shopanda
 | `export:products <file.csv>` | Export products and variants to CSV |
 | `import:stock <file.csv>` | Import stock quantities from CSV |
 | `export:stock <file.csv>` | Export stock quantities to CSV |
+| `import:customers <file.csv>` | Import customers from CSV |
+| `export:customers <file.csv>` | Export customers to CSV |
 | `config:import <file.yaml>` | Import configuration from YAML |
 | `config:export <file.yaml>` | Export configuration to YAML |
 | `scheduler` | Run background job scheduler |
@@ -181,7 +183,7 @@ All specs live in [`docs/`](docs/):
 
 ### Commerce Domains
 
-- [Pricing Pipeline](docs/PRICING_PIIPELINE.md) — deterministic pricing
+- [Pricing Pipeline](docs/PRICING_PIPELINE.md) — deterministic pricing
 - [Checkout Workflow](docs/CHECKOUT_WORKFLOW.md) — ordered checkout flow
 - [Order & Cart](docs/ORDER_CART_DOMAIN.md) — cart and order domain
 - [Composition Pipeline](docs/COMPOSITION_PIPELINE.md) — PDP/PLP response enrichment

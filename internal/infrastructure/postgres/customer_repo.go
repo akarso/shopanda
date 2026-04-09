@@ -139,7 +139,7 @@ func (r *CustomerRepo) ListCustomers(ctx context.Context, offset, limit int) ([]
 		limit = 100
 	}
 
-	const q = `SELECT id, email, first_name, last_name, password_hash, token_generation, role, status, created_at, updated_at
+	const q = `SELECT id, email, first_name, last_name, token_generation, role, status, created_at, updated_at
 		FROM customers ORDER BY email LIMIT $1 OFFSET $2`
 
 	rows, err := r.query(ctx, q, limit, offset)
@@ -150,7 +150,7 @@ func (r *CustomerRepo) ListCustomers(ctx context.Context, offset, limit int) ([]
 
 	var customers []customer.Customer
 	for rows.Next() {
-		c, err := scanCustomer(rows)
+		c, err := scanCustomerList(rows)
 		if err != nil {
 			return nil, fmt.Errorf("customer_repo: list customers: scan: %w", err)
 		}
@@ -214,6 +214,34 @@ func scanCustomer(s interface{ Scan(...interface{}) error }) (*customer.Customer
 	err := s.Scan(
 		&c.ID, &c.Email, &c.FirstName, &c.LastName,
 		&c.PasswordHash, &c.TokenGeneration, &role, &status, &c.CreatedAt, &c.UpdatedAt,
+	)
+	if err != nil {
+		return nil, err
+	}
+
+	rl := customer.Role(role)
+	if !rl.IsValid() {
+		return nil, fmt.Errorf("customer_repo: invalid role from database: %q", role)
+	}
+	c.Role = rl
+
+	st := customer.Status(status)
+	if !st.IsValid() {
+		return nil, fmt.Errorf("customer_repo: invalid status from database: %q", status)
+	}
+	c.Status = st
+	return &c, nil
+}
+
+// scanCustomerList scans a row without password_hash (used by ListCustomers).
+func scanCustomerList(s interface{ Scan(...interface{}) error }) (*customer.Customer, error) {
+	var c customer.Customer
+	var role string
+	var status string
+
+	err := s.Scan(
+		&c.ID, &c.Email, &c.FirstName, &c.LastName,
+		&c.TokenGeneration, &role, &status, &c.CreatedAt, &c.UpdatedAt,
 	)
 	if err != nil {
 		return nil, err

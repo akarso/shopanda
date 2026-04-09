@@ -685,7 +685,13 @@ func runExportCustomers(cfg *config.Config, log logger.Logger) error {
 	log.Info("export.customers.start", map[string]interface{}{"file": filePath})
 
 	result, err := exp.Export(context.Background(), tmpFile)
-	tmpFile.Close()
+	if closeErr := tmpFile.Close(); closeErr != nil {
+		os.Remove(tmpPath)
+		if err != nil {
+			return fmt.Errorf("export customers: %w", err)
+		}
+		return fmt.Errorf("close temp file: %w", closeErr)
+	}
 	if err != nil {
 		os.Remove(tmpPath)
 		return fmt.Errorf("export customers: %w", err)
