@@ -14,7 +14,11 @@ func setupConfigRepo(t *testing.T) *postgres.ConfigRepo {
 	if _, err := migrate.Run(db, "../../../migrations"); err != nil {
 		t.Fatalf("migrate: %v", err)
 	}
-	t.Cleanup(func() { db.Exec("DELETE FROM config") })
+	t.Cleanup(func() {
+		if _, err := db.Exec("DELETE FROM config"); err != nil {
+			t.Errorf("cleanup DELETE FROM config: %v", err)
+		}
+	})
 	return postgres.NewConfigRepo(db)
 }
 
