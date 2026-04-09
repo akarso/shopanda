@@ -43,6 +43,8 @@ import (
 	"github.com/akarso/shopanda/internal/platform/plugin"
 
 	shophttp "github.com/akarso/shopanda/internal/interfaces/http"
+
+	"gopkg.in/yaml.v3"
 )
 
 func main() {
@@ -75,6 +77,10 @@ func run() error {
 			return runImportProducts(cfg, log)
 		case "scheduler":
 			return runScheduler(cfg, log)
+		case "config:export":
+			return runConfigExport(cfg, log)
+		case "config:import":
+			return runConfigImport(cfg, log)
 		default:
 			return fmt.Errorf("unknown command: %s", os.Args[1])
 		}
@@ -475,5 +481,87 @@ func runScheduler(cfg *config.Config, log logger.Logger) error {
 
 	defer sched.Stop()
 	sched.Start(ctx)
+	return nil
+}
+
+func runConfigExport(cfg *config.Config, log logger.Logger) error {
+	dsn := config.DatabaseDSN(cfg)
+	conn, err := db.Open(dsn)
+	if err != nil {
+		return fmt.Errorf("database: %w", err)
+	}
+	defer conn.Close()
+
+	repo := postgres.NewConfigRepo(conn)
+	entries, err := repo.All(context.Background())
+	if err != nil {
+		return fmt.Errorf("config export: %w", err)
+	}
+
+	// Build flat map keyed by full dot-notation keys.
+	// This avoids ambiguity between branch maps and map-valued leaves.
+	root := make(map[string]interface{}, len(entries))
+	for _, e := range entries {
+		if _, dup := root[e.Key]; dup {
+			return fmt.Errorf("config export: duplicate key %q", e.Key)
+		}
+		root[e.Key] = e.Value
+	}
+
+	out, err := yaml.Marshal(root)
+	if err != nil {
+		return fmt.Errorf("config export: marshal: %w", err)
+	}
+	fmt.Print(string(out))
+	return nil
+}
+
+func runConfigImport(cfg *config.Config, log logger.Logger) error {
+	if len(os.Args) < 3 {
+		return fmt.Errorf("usage: app config:import <file.yaml>")
+	}
+	filePath := os.Args[2]
+
+	data, err := os.ReadFile(filePath)
+	if err != nil {
+		return fmt.Errorf("config import: read %s: %w", filePath, err)
+	}
+
+	var raw map[string]interface{}
+	if err := yaml.Unmarshal(data, &raw); err != nil {
+		return fmt.Errorf("config import: parse %s: %w", filePath, err)
+	}
+
+	dsn := config.DatabaseDSN(cfg)
+	conn, err := db.Open(dsn)
+	if err != nil {
+		return fmt.Errorf("database: %w", err)
+	}
+	defer conn.Close()
+
+	ctx := context.Background()
+	tx, err := conn.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("config import: begin tx: %w", err)
+	}
+	defer tx.Rollback() //nolint:errcheck // rollback after commit is a no-op
+
+	repo := postgres.NewConfigRepo(tx)
+	var count int
+	for k, v := range raw {
+		if err := repo.Set(ctx, k, v); err != nil {
+			return fmt.Errorf("config import: set %q: %w", k, err)
+		}
+		count++
+	}
+
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("config import: commit: %w", err)
+	}
+
+	log.Info("config.import.complete", map[string]interface{}{
+		"file":    filePath,
+		"entries": count,
+	})
 	return nil
 }

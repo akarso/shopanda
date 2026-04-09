@@ -408,6 +408,16 @@ classDiagram
         -db *sql.DB
         +DeleteExpired() ~int64, error~
     }
+    class ConfigRepository {
+        <<interface>>
+        +Get(ctx, key) ~interface{}, error~
+        +Set(ctx, key, value) error
+        +Delete(ctx, key) error
+        +All(ctx) ~[]Entry, error~
+    }
+    class PostgresConfigRepo {
+        -db *sql.DB
+    }
     class NotificationService {
         -templates Templates
         -customers CustomerRepository
@@ -437,6 +447,7 @@ classDiagram
     Storage <|.. LocalStorage : implements
     AssetRepository <|.. PostgresAssetRepo : implements
     Cache <|.. PostgresCacheStore : implements
+    ConfigRepository <|.. PostgresConfigRepo : implements
     Templates --> Message : produces
     PricingStep <|.. BasePriceStep : implements
     SearchHandler --> SearchEngine : uses
