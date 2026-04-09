@@ -56,6 +56,7 @@ C4Component
 
         Boundary(domain, "Domain Layer") {
             Component(jobWorker, "JobWorker", "Go", "Domain-layer worker: polls Queue port, dispatches jobs to registered handlers")
+            Component(adminRegistry, "AdminSchemaRegistry", "Go", "In-memory registry of Form and Grid schemas; plugins append fields, columns, actions")
         }
 
         Boundary(platform, "Platform Layer (Cross-Cutting)") {
@@ -98,6 +99,7 @@ C4Component
     Rel(cartService, postgresRepos, "Cart persistence")
     Rel(checkoutWorkflow, postgresRepos, "Order, inventory, payment, shipping persistence")
     Rel(productHandler, postgresRepos, "Product queries")
+    Rel(pluginRegistry, adminRegistry, "Plugins register schemas")
     Rel(categoryHandler, postgresRepos, "Category + product queries")
     Rel(searchHandler, postgresSearch, "Delegates search queries")
     Rel(mediaHandler, mediaService, "Delegates upload logic")
