@@ -57,11 +57,19 @@ func (m *mockVariantRepo) FindByID(_ context.Context, _ string) (*catalog.Varian
 func (m *mockVariantRepo) FindBySKU(_ context.Context, _ string) (*catalog.Variant, error) {
 	return nil, nil
 }
-func (m *mockVariantRepo) ListByProductID(_ context.Context, productID string, _, _ int) ([]catalog.Variant, error) {
+func (m *mockVariantRepo) ListByProductID(_ context.Context, productID string, offset, limit int) ([]catalog.Variant, error) {
 	if m.listErr != nil {
 		return nil, m.listErr
 	}
-	return m.variants[productID], nil
+	all := m.variants[productID]
+	if offset >= len(all) {
+		return nil, nil
+	}
+	end := offset + limit
+	if end > len(all) {
+		end = len(all)
+	}
+	return all[offset:end], nil
 }
 func (m *mockVariantRepo) Create(_ context.Context, _ *catalog.Variant) error { return nil }
 func (m *mockVariantRepo) Update(_ context.Context, _ *catalog.Variant) error { return nil }
@@ -338,5 +346,51 @@ func TestExport_RoundTrip(t *testing.T) {
 	}
 	if row[colIdx["color"]] != "Blue" {
 		t.Errorf("color = %q, want Blue", row[colIdx["color"]])
+	}
+}
+
+func TestExport_VariantPagination(t *testing.T) {
+	// Create 150 variants for a single product to exceed pageSize (100).
+	variants := make([]catalog.Variant, 150)
+	for i := range variants {
+		variants[i] = catalog.Variant{
+			ID:        fmt.Sprintf("v%d", i+1),
+			ProductID: "p1",
+			SKU:       fmt.Sprintf("SKU-%03d", i+1),
+			Name:      fmt.Sprintf("Variant %d", i+1),
+		}
+	}
+	prodRepo := &mockProductRepo{
+		products: []catalog.Product{
+			{ID: "p1", Name: "Widget", Slug: "widget"},
+		},
+	}
+	varRepo := &mockVariantRepo{
+		variants: map[string][]catalog.Variant{"p1": variants},
+	}
+
+	exp := exporter.NewProductExporter(prodRepo, varRepo)
+	var buf bytes.Buffer
+	result, err := exp.Export(context.Background(), &buf)
+	if err != nil {
+		t.Fatalf("Export: %v", err)
+	}
+	if result.Products != 1 {
+		t.Errorf("Products = %d, want 1", result.Products)
+	}
+	if result.Variants != 150 {
+		t.Errorf("Variants = %d, want 150", result.Variants)
+	}
+	records := parseCSV(t, &buf)
+	// 1 header + 150 data rows
+	if len(records) != 151 {
+		t.Fatalf("rows = %d, want 151", len(records))
+	}
+	// Verify first and last SKU to confirm all pages were traversed.
+	if records[1][2] != "SKU-001" {
+		t.Errorf("first SKU = %q, want SKU-001", records[1][2])
+	}
+	if records[150][2] != "SKU-150" {
+		t.Errorf("last SKU = %q, want SKU-150", records[150][2])
 	}
 }

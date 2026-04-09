@@ -54,15 +54,22 @@ func (exp *ProductExporter) Export(ctx context.Context, w io.Writer) (*Result, e
 			break
 		}
 		for _, p := range products {
-			variants, err := exp.variants.ListByProductID(ctx, p.ID, 0, pageSize)
-			if err != nil {
-				return nil, fmt.Errorf("export: list variants for product %q: %w", p.Slug, err)
-			}
-			for _, v := range variants {
-				rows = append(rows, row{product: p, variant: v})
-				for k := range v.Attributes {
-					attrKeys[k] = struct{}{}
+			vOffset := 0
+			for {
+				variants, err := exp.variants.ListByProductID(ctx, p.ID, vOffset, pageSize)
+				if err != nil {
+					return nil, fmt.Errorf("export: list variants for product %q: %w", p.Slug, err)
 				}
+				for _, v := range variants {
+					rows = append(rows, row{product: p, variant: v})
+					for k := range v.Attributes {
+						attrKeys[k] = struct{}{}
+					}
+				}
+				if len(variants) < pageSize {
+					break
+				}
+				vOffset += len(variants)
 			}
 		}
 		if len(products) < pageSize {
@@ -80,7 +87,6 @@ func (exp *ProductExporter) Export(ctx context.Context, w io.Writer) (*Result, e
 
 	// 3. Write CSV.
 	writer := csv.NewWriter(w)
-	defer writer.Flush()
 
 	header := []string{"name", "slug", "sku", "description", "variant_name"}
 	header = append(header, sortedAttrs...)
@@ -109,6 +115,11 @@ func (exp *ProductExporter) Export(ctx context.Context, w io.Writer) (*Result, e
 			result.Products++
 		}
 		result.Variants++
+	}
+
+	writer.Flush()
+	if err := writer.Error(); err != nil {
+		return nil, fmt.Errorf("export: flush csv: %w", err)
 	}
 
 	return result, nil
