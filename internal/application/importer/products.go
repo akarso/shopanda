@@ -6,6 +6,7 @@ import (
 	"encoding/csv"
 	"fmt"
 	"io"
+	"strconv"
 	"strings"
 
 	"github.com/akarso/shopanda/internal/domain/catalog"
@@ -30,6 +31,8 @@ type ProductImporter struct {
 	products  catalog.ProductRepository
 	variants  catalog.VariantRepository
 	txStarter TxStarter
+	registry  *catalog.AttributeRegistry
+	groupCode string
 }
 
 // NewProductImporter creates a ProductImporter.
@@ -38,18 +41,37 @@ func NewProductImporter(products catalog.ProductRepository, variants catalog.Var
 	return &ProductImporter{products: products, variants: variants, txStarter: txStarter}
 }
 
+// WithAttributeValidation sets an attribute registry and group code for
+// validating attribute values during import. Returns the importer for chaining.
+func (imp *ProductImporter) WithAttributeValidation(registry *catalog.AttributeRegistry, groupCode string) *ProductImporter {
+	imp.registry = registry
+	imp.groupCode = groupCode
+	return imp
+}
+
 // requiredColumns lists the CSV headers that must be present.
 var requiredColumns = []string{"name", "slug", "sku"}
+
+// knownColumns are CSV headers handled by the core import logic.
+// Any other header is treated as an attribute column.
+var knownColumns = map[string]struct{}{
+	"name": {}, "slug": {}, "sku": {}, "description": {}, "variant_name": {},
+}
 
 // Import reads CSV rows from r and persists them as products and variants.
 //
 // Expected CSV columns (order does not matter, header row required):
 //
-//	name        — product name (required)
-//	slug        — product slug (required, used to group variants)
-//	description — product description (optional)
-//	sku         — variant SKU (required)
+//	name         — product name (required)
+//	slug         — product slug (required, used to group variants)
+//	description  — product description (optional)
+//	sku          — variant SKU (required)
 //	variant_name — variant display name (optional)
+//
+// Any additional columns are treated as attribute values and stored in
+// variant.Attributes. When an AttributeRegistry is configured via
+// WithAttributeValidation, values are parsed according to their declared
+// type and validated against the specified group.
 //
 // Rows sharing the same slug are treated as variants of the same product.
 // The first occurrence of a slug defines the product; subsequent rows add variants.
@@ -75,6 +97,14 @@ func (imp *ProductImporter) Import(ctx context.Context, r io.Reader) (*Result, e
 		}
 	}
 
+	// Identify attribute columns (any header not in the known set).
+	var attrColumns []string
+	for col := range colIndex {
+		if _, ok := knownColumns[col]; !ok {
+			attrColumns = append(attrColumns, col)
+		}
+	}
+
 	type parsedRow struct {
 		lineNum     int
 		name        string
@@ -82,6 +112,7 @@ func (imp *ProductImporter) Import(ctx context.Context, r io.Reader) (*Result, e
 		sku         string
 		desc        string
 		variantName string
+		rawAttrs    map[string]string
 	}
 
 	// 1. Parse all rows, group by slug
@@ -106,6 +137,17 @@ func (imp *ProductImporter) Import(ctx context.Context, r io.Reader) (*Result, e
 			sku:         colVal(record, colIndex, "sku"),
 			desc:        colVal(record, colIndex, "description"),
 			variantName: colVal(record, colIndex, "variant_name"),
+		}
+		if len(attrColumns) > 0 {
+			raw := make(map[string]string, len(attrColumns))
+			for _, col := range attrColumns {
+				if v := colVal(record, colIndex, col); v != "" {
+					raw[col] = v
+				}
+			}
+			if len(raw) > 0 {
+				row.rawAttrs = raw
+			}
 		}
 		allRows = append(allRows, row)
 		groups[row.slug] = append(groups[row.slug], row)
@@ -172,6 +214,18 @@ func (imp *ProductImporter) Import(ctx context.Context, r io.Reader) (*Result, e
 				break
 			}
 			v.Name = row.variantName
+			attrs, attrErrs := imp.parseAndValidateAttrs(row.rawAttrs, row.lineNum)
+			if len(attrErrs) > 0 {
+				for _, e := range attrErrs {
+					result.Errors = append(result.Errors, e)
+				}
+				result.Skipped++
+				skip = true
+				break
+			}
+			if len(attrs) > 0 {
+				v.Attributes = attrs
+			}
 			variants = append(variants, v)
 		}
 		if skip {
@@ -299,4 +353,65 @@ func colVal(record []string, colIndex map[string]int, col string) string {
 		return ""
 	}
 	return strings.TrimSpace(record[idx])
+}
+
+// parseAndValidateAttrs converts raw CSV attribute values to typed values using
+// the registry (when available) and validates them against the group (when set).
+func (imp *ProductImporter) parseAndValidateAttrs(raw map[string]string, lineNum int) (map[string]interface{}, []string) {
+	if len(raw) == 0 && (imp.registry == nil || imp.groupCode == "") {
+		return nil, nil
+	}
+	parsed := make(map[string]interface{}, len(raw))
+	var errs []string
+	for code, val := range raw {
+		if imp.registry != nil {
+			if attr, ok := imp.registry.Attribute(code); ok {
+				v, err := parseAttributeValue(val, attr)
+				if err != nil {
+					errs = append(errs, fmt.Sprintf("line %d: %v", lineNum, err))
+					continue
+				}
+				parsed[code] = v
+				continue
+			}
+		}
+		parsed[code] = val
+	}
+	if len(errs) > 0 {
+		return nil, errs
+	}
+	if imp.registry != nil && imp.groupCode != "" {
+		for _, e := range imp.registry.ValidateAttributes(imp.groupCode, parsed) {
+			errs = append(errs, fmt.Sprintf("line %d: %v", lineNum, e))
+		}
+	}
+	if len(errs) > 0 {
+		return nil, errs
+	}
+	return parsed, nil
+}
+
+// parseAttributeValue converts a raw CSV string to a typed value per the
+// attribute definition.
+func parseAttributeValue(raw string, attr catalog.Attribute) (interface{}, error) {
+	switch attr.Type {
+	case catalog.AttributeTypeText, catalog.AttributeTypeSelect:
+		return raw, nil
+	case catalog.AttributeTypeNumber:
+		v, err := strconv.ParseFloat(raw, 64)
+		if err != nil {
+			return nil, fmt.Errorf("attribute %q: %q is not a valid number", attr.Code, raw)
+		}
+		return v, nil
+	case catalog.AttributeTypeBoolean:
+		switch strings.ToLower(raw) {
+		case "true", "1", "yes":
+			return true, nil
+		case "false", "0", "no":
+			return false, nil
+		default:
+			return nil, fmt.Errorf("attribute %q: %q is not a valid boolean", attr.Code, raw)
+		}
+	}
+	return raw, nil
 }

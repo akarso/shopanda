@@ -288,3 +288,342 @@ func TestImport_NoHeader(t *testing.T) {
 		t.Fatal("expected error for empty input")
 	}
 }
+
+// --- attribute import tests ---
+
+func TestImport_AttributeColumnsNoRegistry(t *testing.T) {
+	csv := `name,slug,sku,color,weight
+Widget,widget,SKU-001,Red,1.5
+`
+	prodRepo := &mockProductRepo{}
+	varRepo := &mockVariantRepo{}
+	imp := importer.NewProductImporter(prodRepo, varRepo, nil)
+
+	result, err := imp.Import(context.Background(), strings.NewReader(csv))
+	if err != nil {
+		t.Fatalf("Import: %v", err)
+	}
+	if result.Variants != 1 {
+		t.Fatalf("Variants = %d, want 1", result.Variants)
+	}
+	attrs := varRepo.variants[0].Attributes
+	if attrs == nil {
+		t.Fatal("variant.Attributes is nil, want populated")
+	}
+	if attrs["color"] != "Red" {
+		t.Errorf("color = %v, want Red", attrs["color"])
+	}
+	if attrs["weight"] != "1.5" {
+		t.Errorf("weight = %v, want 1.5 (string, no registry)", attrs["weight"])
+	}
+}
+
+func TestImport_AttributeTypeParsing(t *testing.T) {
+	csv := `name,slug,sku,color,weight,featured
+Widget,widget,SKU-001,Red,2.5,yes
+`
+	reg := catalog.NewAttributeRegistry()
+	colorAttr, _ := catalog.NewAttribute("color", "Color", catalog.AttributeTypeText)
+	weightAttr, _ := catalog.NewAttribute("weight", "Weight", catalog.AttributeTypeNumber)
+	featuredAttr, _ := catalog.NewAttribute("featured", "Featured", catalog.AttributeTypeBoolean)
+	reg.RegisterAttribute(colorAttr)
+	reg.RegisterAttribute(weightAttr)
+	reg.RegisterAttribute(featuredAttr)
+
+	prodRepo := &mockProductRepo{}
+	varRepo := &mockVariantRepo{}
+	imp := importer.NewProductImporter(prodRepo, varRepo, nil)
+	imp.WithAttributeValidation(reg, "")
+
+	result, err := imp.Import(context.Background(), strings.NewReader(csv))
+	if err != nil {
+		t.Fatalf("Import: %v", err)
+	}
+	if len(result.Errors) != 0 {
+		t.Fatalf("Errors = %v, want none", result.Errors)
+	}
+	attrs := varRepo.variants[0].Attributes
+	if attrs["color"] != "Red" {
+		t.Errorf("color = %v, want Red", attrs["color"])
+	}
+	if v, ok := attrs["weight"].(float64); !ok || v != 2.5 {
+		t.Errorf("weight = %v (%T), want 2.5 (float64)", attrs["weight"], attrs["weight"])
+	}
+	if v, ok := attrs["featured"].(bool); !ok || !v {
+		t.Errorf("featured = %v (%T), want true (bool)", attrs["featured"], attrs["featured"])
+	}
+}
+
+func TestImport_AttributeNumberParseError(t *testing.T) {
+	csv := `name,slug,sku,weight
+Widget,widget,SKU-001,notanumber
+`
+	reg := catalog.NewAttributeRegistry()
+	weightAttr, _ := catalog.NewAttribute("weight", "Weight", catalog.AttributeTypeNumber)
+	reg.RegisterAttribute(weightAttr)
+
+	imp := importer.NewProductImporter(&mockProductRepo{}, &mockVariantRepo{}, nil)
+	imp.WithAttributeValidation(reg, "")
+
+	result, err := imp.Import(context.Background(), strings.NewReader(csv))
+	if err != nil {
+		t.Fatalf("Import: %v", err)
+	}
+	if result.Skipped != 1 {
+		t.Errorf("Skipped = %d, want 1", result.Skipped)
+	}
+	if len(result.Errors) != 1 {
+		t.Fatalf("len(Errors) = %d, want 1", len(result.Errors))
+	}
+	if !strings.Contains(result.Errors[0], "not a valid number") {
+		t.Errorf("error = %q, want containing 'not a valid number'", result.Errors[0])
+	}
+}
+
+func TestImport_AttributeBooleanValues(t *testing.T) {
+	csv := `name,slug,sku,active
+W1,w1,S1,true
+W2,w2,S2,false
+W3,w3,S3,1
+W4,w4,S4,0
+W5,w5,S5,yes
+W6,w6,S6,no
+`
+	reg := catalog.NewAttributeRegistry()
+	attr, _ := catalog.NewAttribute("active", "Active", catalog.AttributeTypeBoolean)
+	reg.RegisterAttribute(attr)
+
+	prodRepo := &mockProductRepo{}
+	varRepo := &mockVariantRepo{}
+	imp := importer.NewProductImporter(prodRepo, varRepo, nil)
+	imp.WithAttributeValidation(reg, "")
+
+	result, err := imp.Import(context.Background(), strings.NewReader(csv))
+	if err != nil {
+		t.Fatalf("Import: %v", err)
+	}
+	if len(result.Errors) != 0 {
+		t.Fatalf("Errors = %v, want none", result.Errors)
+	}
+	if result.Variants != 6 {
+		t.Fatalf("Variants = %d, want 6", result.Variants)
+	}
+	expected := []bool{true, false, true, false, true, false}
+	for i, v := range varRepo.variants {
+		got, ok := v.Attributes["active"].(bool)
+		if !ok {
+			t.Errorf("variant[%d] active is %T, want bool", i, v.Attributes["active"])
+			continue
+		}
+		if got != expected[i] {
+			t.Errorf("variant[%d] active = %v, want %v", i, got, expected[i])
+		}
+	}
+}
+
+func TestImport_AttributeBooleanParseError(t *testing.T) {
+	csv := `name,slug,sku,active
+Widget,widget,SKU-001,maybe
+`
+	reg := catalog.NewAttributeRegistry()
+	attr, _ := catalog.NewAttribute("active", "Active", catalog.AttributeTypeBoolean)
+	reg.RegisterAttribute(attr)
+
+	imp := importer.NewProductImporter(&mockProductRepo{}, &mockVariantRepo{}, nil)
+	imp.WithAttributeValidation(reg, "")
+
+	result, err := imp.Import(context.Background(), strings.NewReader(csv))
+	if err != nil {
+		t.Fatalf("Import: %v", err)
+	}
+	if result.Skipped != 1 {
+		t.Errorf("Skipped = %d, want 1", result.Skipped)
+	}
+	if len(result.Errors) != 1 {
+		t.Fatalf("len(Errors) = %d, want 1", len(result.Errors))
+	}
+	if !strings.Contains(result.Errors[0], "not a valid boolean") {
+		t.Errorf("error = %q, want containing 'not a valid boolean'", result.Errors[0])
+	}
+}
+
+func TestImport_AttributeGroupValidation(t *testing.T) {
+	csv := `name,slug,sku,color,size
+Widget,widget,SKU-001,Red,Large
+`
+	reg := catalog.NewAttributeRegistry()
+	colorAttr, _ := catalog.NewAttribute("color", "Color", catalog.AttributeTypeText)
+	sizeAttr, _ := catalog.NewAttribute("size", "Size", catalog.AttributeTypeText)
+	reg.RegisterAttribute(colorAttr)
+	reg.RegisterAttribute(sizeAttr)
+	_ = reg.RegisterGroup(catalog.AttributeGroup{Code: "apparel", Label: "Apparel", Attributes: []string{"color", "size"}})
+
+	prodRepo := &mockProductRepo{}
+	varRepo := &mockVariantRepo{}
+	imp := importer.NewProductImporter(prodRepo, varRepo, nil)
+	imp.WithAttributeValidation(reg, "apparel")
+
+	result, err := imp.Import(context.Background(), strings.NewReader(csv))
+	if err != nil {
+		t.Fatalf("Import: %v", err)
+	}
+	if len(result.Errors) != 0 {
+		t.Fatalf("Errors = %v, want none", result.Errors)
+	}
+	if result.Variants != 1 {
+		t.Fatalf("Variants = %d, want 1", result.Variants)
+	}
+	attrs := varRepo.variants[0].Attributes
+	if attrs["color"] != "Red" || attrs["size"] != "Large" {
+		t.Errorf("attrs = %v, want color=Red size=Large", attrs)
+	}
+}
+
+func TestImport_AttributeUndeclaredKeyInGroup(t *testing.T) {
+	csv := `name,slug,sku,color,extra
+Widget,widget,SKU-001,Red,Surprise
+`
+	reg := catalog.NewAttributeRegistry()
+	colorAttr, _ := catalog.NewAttribute("color", "Color", catalog.AttributeTypeText)
+	reg.RegisterAttribute(colorAttr)
+	_ = reg.RegisterGroup(catalog.AttributeGroup{Code: "simple", Label: "Simple", Attributes: []string{"color"}})
+
+	imp := importer.NewProductImporter(&mockProductRepo{}, &mockVariantRepo{}, nil)
+	imp.WithAttributeValidation(reg, "simple")
+
+	result, err := imp.Import(context.Background(), strings.NewReader(csv))
+	if err != nil {
+		t.Fatalf("Import: %v", err)
+	}
+	if result.Skipped != 1 {
+		t.Errorf("Skipped = %d, want 1", result.Skipped)
+	}
+	if len(result.Errors) == 0 {
+		t.Fatal("expected errors for undeclared attribute 'extra'")
+	}
+	found := false
+	for _, e := range result.Errors {
+		if strings.Contains(e, "extra") && strings.Contains(e, "not declared") {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("errors = %v, want one mentioning 'extra' and 'not declared'", result.Errors)
+	}
+}
+
+func TestImport_AttributeRequiredMissing(t *testing.T) {
+	csv := `name,slug,sku,color
+Widget,widget,SKU-001,
+`
+	reg := catalog.NewAttributeRegistry()
+	colorAttr, _ := catalog.NewAttribute("color", "Color", catalog.AttributeTypeText)
+	colorAttr.Required = true
+	reg.RegisterAttribute(colorAttr)
+	_ = reg.RegisterGroup(catalog.AttributeGroup{Code: "colors", Label: "Colors", Attributes: []string{"color"}})
+
+	imp := importer.NewProductImporter(&mockProductRepo{}, &mockVariantRepo{}, nil)
+	imp.WithAttributeValidation(reg, "colors")
+
+	result, err := imp.Import(context.Background(), strings.NewReader(csv))
+	if err != nil {
+		t.Fatalf("Import: %v", err)
+	}
+	if result.Skipped != 1 {
+		t.Errorf("Skipped = %d, want 1", result.Skipped)
+	}
+	if len(result.Errors) == 0 {
+		t.Fatal("expected errors for missing required attribute 'color'")
+	}
+	found := false
+	for _, e := range result.Errors {
+		if strings.Contains(e, "color") && strings.Contains(e, "required") {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("errors = %v, want one mentioning 'color' and 'required'", result.Errors)
+	}
+}
+
+func TestImport_AttributeSelectValidation(t *testing.T) {
+	csv := `name,slug,sku,size
+Widget,widget,SKU-001,XL
+`
+	reg := catalog.NewAttributeRegistry()
+	sizeAttr, _ := catalog.NewAttribute("size", "Size", catalog.AttributeTypeSelect)
+	sizeAttr.Options = []string{"S", "M", "L"}
+	reg.RegisterAttribute(sizeAttr)
+	_ = reg.RegisterGroup(catalog.AttributeGroup{Code: "sizing", Label: "Sizing", Attributes: []string{"size"}})
+
+	imp := importer.NewProductImporter(&mockProductRepo{}, &mockVariantRepo{}, nil)
+	imp.WithAttributeValidation(reg, "sizing")
+
+	result, err := imp.Import(context.Background(), strings.NewReader(csv))
+	if err != nil {
+		t.Fatalf("Import: %v", err)
+	}
+	if result.Skipped != 1 {
+		t.Errorf("Skipped = %d, want 1", result.Skipped)
+	}
+	if len(result.Errors) == 0 {
+		t.Fatal("expected errors for invalid select option 'XL'")
+	}
+	found := false
+	for _, e := range result.Errors {
+		if strings.Contains(e, "size") && strings.Contains(e, "not in allowed options") {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("errors = %v, want one mentioning 'size' and 'not in allowed options'", result.Errors)
+	}
+}
+
+func TestImport_AttributeEmptyValuesOmitted(t *testing.T) {
+	csv := `name,slug,sku,color,weight
+Widget,widget,SKU-001,Red,
+`
+	prodRepo := &mockProductRepo{}
+	varRepo := &mockVariantRepo{}
+	imp := importer.NewProductImporter(prodRepo, varRepo, nil)
+
+	result, err := imp.Import(context.Background(), strings.NewReader(csv))
+	if err != nil {
+		t.Fatalf("Import: %v", err)
+	}
+	if len(result.Errors) != 0 {
+		t.Fatalf("Errors = %v, want none", result.Errors)
+	}
+	attrs := varRepo.variants[0].Attributes
+	if attrs["color"] != "Red" {
+		t.Errorf("color = %v, want Red", attrs["color"])
+	}
+	if _, ok := attrs["weight"]; ok {
+		t.Errorf("weight should be omitted for empty value, got %v", attrs["weight"])
+	}
+}
+
+func TestImport_AttributeUnknownAttrNoGroupFallsBackToString(t *testing.T) {
+	csv := `name,slug,sku,custom_field
+Widget,widget,SKU-001,freeform
+`
+	reg := catalog.NewAttributeRegistry()
+
+	prodRepo := &mockProductRepo{}
+	varRepo := &mockVariantRepo{}
+	imp := importer.NewProductImporter(prodRepo, varRepo, nil)
+	imp.WithAttributeValidation(reg, "")
+
+	result, err := imp.Import(context.Background(), strings.NewReader(csv))
+	if err != nil {
+		t.Fatalf("Import: %v", err)
+	}
+	if len(result.Errors) != 0 {
+		t.Fatalf("Errors = %v, want none", result.Errors)
+	}
+	attrs := varRepo.variants[0].Attributes
+	if attrs["custom_field"] != "freeform" {
+		t.Errorf("custom_field = %v, want freeform (string fallback)", attrs["custom_field"])
+	}
+}
