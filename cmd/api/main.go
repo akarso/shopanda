@@ -1255,9 +1255,7 @@ func runWorker(cfg *config.Config, log logger.Logger) error {
 	}
 	jobWorker.Register(cacheApp.NewCleanupHandler(appCache.(cacheApp.ExpiredDeleter), log))
 
-	log.Info("worker.start", map[string]interface{}{
-		"handlers": 2,
-	})
+	log.Info("worker.start", nil)
 
 	// Block until interrupted.
 	ctx, cancel := context.WithCancel(context.Background())
@@ -1290,13 +1288,35 @@ func runSearchReindex(cfg *config.Config, log logger.Logger) error {
 		"engine": searchEngine.Name(),
 	})
 
-	ctx := context.Background()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	go func() {
+		sigCh := make(chan os.Signal, 1)
+		signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
+		<-sigCh
+		cancel()
+	}()
+
 	const batchSize = 100
 	var offset, indexed int
 
 	for {
+		if err := ctx.Err(); err != nil {
+			log.Info("search.reindex.interrupted", map[string]interface{}{
+				"indexed": indexed,
+			})
+			return nil
+		}
+
 		products, err := productRepo.List(ctx, offset, batchSize)
 		if err != nil {
+			if ctx.Err() != nil {
+				log.Info("search.reindex.interrupted", map[string]interface{}{
+					"indexed": indexed,
+				})
+				return nil
+			}
 			return fmt.Errorf("search reindex: list products (offset=%d): %w", offset, err)
 		}
 		if len(products) == 0 {
@@ -1312,6 +1332,12 @@ func runSearchReindex(cfg *config.Config, log logger.Logger) error {
 				Attributes:  p.Attributes,
 			}
 			if err := searchEngine.IndexProduct(ctx, sp); err != nil {
+				if ctx.Err() != nil {
+					log.Info("search.reindex.interrupted", map[string]interface{}{
+						"indexed": indexed,
+					})
+					return nil
+				}
 				return fmt.Errorf("search reindex: index product %s: %w", p.ID, err)
 			}
 			indexed++
