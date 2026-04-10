@@ -23,11 +23,6 @@ type AdminSeeder struct{}
 func (s *AdminSeeder) Name() string { return "admin-user" }
 
 func (s *AdminSeeder) Seed(ctx context.Context, deps Deps) error {
-	adminPwd := os.Getenv(adminPasswordEnvKey)
-	if adminPwd == "" {
-		return fmt.Errorf("seed: %s environment variable is required", adminPasswordEnvKey)
-	}
-
 	repo := postgres.NewCustomerRepo(deps.DB)
 
 	existing, err := repo.FindByEmail(ctx, adminEmail)
@@ -39,6 +34,11 @@ func (s *AdminSeeder) Seed(ctx context.Context, deps Deps) error {
 			"email": adminEmail,
 		})
 		return nil
+	}
+
+	adminPwd := os.Getenv(adminPasswordEnvKey)
+	if adminPwd == "" {
+		return fmt.Errorf("seed: %s environment variable is required", adminPasswordEnvKey)
 	}
 
 	c, err := customer.NewCustomer(id.New(), adminEmail)
