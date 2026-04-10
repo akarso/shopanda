@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"fmt"
 	"os"
@@ -157,22 +158,16 @@ func runServe(cfg *config.Config, log logger.Logger) error {
 	// Search engine.
 	searchEngine := postgres.NewSearchEngine(conn)
 
-	// Job queue + worker.
-	jobQueue := postgres.NewJobQueue(conn)
-	jobWorker := jobs.NewWorker(jobQueue, log, time.Second)
+	// Job queue, worker, mailer, cache — shared setup.
+	jobWorker, jobQueue, appCache, err := setupWorker(conn, cfg, log)
+	if err != nil {
+		return err
+	}
 
-	// Email notifications.
+	// Email notifications (needs jobQueue from setupWorker).
 	mailTemplates := mail.NewTemplates()
 	notification.RegisterTemplates(mailTemplates)
-	mailer := smtpmail.New(smtpmail.Config{
-		Host:     cfg.Mail.SMTP.Host,
-		Port:     cfg.Mail.SMTP.Port,
-		User:     cfg.Mail.SMTP.User,
-		Password: cfg.Mail.SMTP.Password,
-		From:     cfg.Mail.SMTP.From,
-	})
 	notifSvc := notification.New(mailTemplates, customerRepo, orderRepo, jobQueue, log)
-	jobWorker.Register(notification.NewEmailSendHandler(mailer))
 
 	// Media storage.
 	var mediaStorage media.Storage
@@ -187,17 +182,7 @@ func runServe(cfg *config.Config, log logger.Logger) error {
 	assetRepo := postgres.NewAssetRepo(conn)
 
 	// Cache.
-	var appCache cache.Cache
-	switch cfg.Cache.Driver {
-	case "postgres":
-		appCache = postgres.NewCacheStore(conn)
-	default:
-		return fmt.Errorf("unsupported cache.driver: %s", cfg.Cache.Driver)
-	}
 	_ = appCache // wired by consumers in upcoming PRs
-
-	// Cache cleanup job handler.
-	jobWorker.Register(cacheApp.NewCleanupHandler(appCache.(cacheApp.ExpiredDeleter), log))
 
 	// Providers.
 	manualPayProvider := manualpay.NewProvider()
@@ -1223,19 +1208,13 @@ Commands:
   help                 Show this help message`)
 }
 
-func runWorker(cfg *config.Config, log logger.Logger) error {
-	dsn := config.DatabaseDSN(cfg)
-	conn, err := db.Open(dsn)
-	if err != nil {
-		return fmt.Errorf("database: %w", err)
-	}
-	defer conn.Close()
-
-	// Job queue + worker.
+// setupWorker creates a job queue, worker, mail handler, and cache cleanup
+// handler. It returns the configured worker, the job queue (needed by
+// notification services), and the cache instance.
+func setupWorker(conn *sql.DB, cfg *config.Config, log logger.Logger) (*jobs.Worker, jobs.Queue, cache.Cache, error) {
 	jobQueue := postgres.NewJobQueue(conn)
 	jobWorker := jobs.NewWorker(jobQueue, log, time.Second)
 
-	// Email notifications.
 	mailer := smtpmail.New(smtpmail.Config{
 		Host:     cfg.Mail.SMTP.Host,
 		Port:     cfg.Mail.SMTP.Port,
@@ -1245,15 +1224,30 @@ func runWorker(cfg *config.Config, log logger.Logger) error {
 	})
 	jobWorker.Register(notification.NewEmailSendHandler(mailer))
 
-	// Cache cleanup handler.
 	var appCache cache.Cache
 	switch cfg.Cache.Driver {
 	case "postgres":
 		appCache = postgres.NewCacheStore(conn)
 	default:
-		return fmt.Errorf("unsupported cache.driver: %s", cfg.Cache.Driver)
+		return nil, nil, nil, fmt.Errorf("unsupported cache.driver: %s", cfg.Cache.Driver)
 	}
 	jobWorker.Register(cacheApp.NewCleanupHandler(appCache.(cacheApp.ExpiredDeleter), log))
+
+	return jobWorker, jobQueue, appCache, nil
+}
+
+func runWorker(cfg *config.Config, log logger.Logger) error {
+	dsn := config.DatabaseDSN(cfg)
+	conn, err := db.Open(dsn)
+	if err != nil {
+		return fmt.Errorf("database: %w", err)
+	}
+	defer conn.Close()
+
+	jobWorker, _, _, err := setupWorker(conn, cfg, log)
+	if err != nil {
+		return err
+	}
 
 	log.Info("worker.start", nil)
 
@@ -1281,7 +1275,6 @@ func runSearchReindex(cfg *config.Config, log logger.Logger) error {
 	}
 	defer conn.Close()
 
-	productRepo := postgres.NewProductRepo(conn)
 	searchEngine := postgres.NewSearchEngine(conn)
 
 	log.Info("search.reindex.start", map[string]interface{}{
@@ -1298,6 +1291,19 @@ func runSearchReindex(cfg *config.Config, log logger.Logger) error {
 		cancel()
 	}()
 
+	// Use a repeatable-read transaction so offset-based pagination sees a
+	// stable snapshot even if products are inserted/deleted concurrently.
+	tx, err := conn.BeginTx(ctx, &sql.TxOptions{
+		Isolation: sql.LevelRepeatableRead,
+		ReadOnly:  true,
+	})
+	if err != nil {
+		return fmt.Errorf("search reindex: begin tx: %w", err)
+	}
+	defer tx.Rollback() //nolint:errcheck // rollback after commit is a no-op
+
+	productRepo := postgres.NewProductRepo(conn).WithTx(tx)
+
 	const batchSize = 100
 	var offset, indexed int
 
@@ -1306,7 +1312,7 @@ func runSearchReindex(cfg *config.Config, log logger.Logger) error {
 			log.Info("search.reindex.interrupted", map[string]interface{}{
 				"indexed": indexed,
 			})
-			return nil
+			return ctx.Err()
 		}
 
 		products, err := productRepo.List(ctx, offset, batchSize)
@@ -1315,7 +1321,7 @@ func runSearchReindex(cfg *config.Config, log logger.Logger) error {
 				log.Info("search.reindex.interrupted", map[string]interface{}{
 					"indexed": indexed,
 				})
-				return nil
+				return ctx.Err()
 			}
 			return fmt.Errorf("search reindex: list products (offset=%d): %w", offset, err)
 		}
@@ -1336,7 +1342,7 @@ func runSearchReindex(cfg *config.Config, log logger.Logger) error {
 					log.Info("search.reindex.interrupted", map[string]interface{}{
 						"indexed": indexed,
 					})
-					return nil
+					return ctx.Err()
 				}
 				return fmt.Errorf("search reindex: index product %s: %w", p.ID, err)
 			}
