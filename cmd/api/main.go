@@ -1166,9 +1166,9 @@ func runSeed(cfg *config.Config, log logger.Logger) error {
 	log.Info("seed.start", nil)
 
 	reg := seed.NewRegistry()
-
-	// Seeders are registered by PR-079 (core seed data).
-	// Plugins can register additional seeders here.
+	reg.Register(&seed.ConfigSeeder{})
+	reg.Register(&seed.AdminSeeder{})
+	reg.Register(&seed.CatalogSeeder{})
 
 	deps := seed.Deps{
 		DB:     conn,
