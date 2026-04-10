@@ -164,6 +164,8 @@ cd shopanda
 | `export:attributes <file.csv>` | Export attribute & group definitions to CSV |
 | `import:categories <file.csv>` | Import category tree from CSV |
 | `export:categories <file.csv>` | Export category tree to CSV |
+| `import:prices <file.csv>` | Import prices from CSV |
+| `export:prices <file.csv>` | Export prices to CSV |
 | `config:import <file.yaml>` | Import configuration from YAML |
 | `config:export <file.yaml>` | Export configuration to YAML |
 | `scheduler` | Run background job scheduler |

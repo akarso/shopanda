@@ -100,6 +100,10 @@ func run() error {
 			return runImportCategories(cfg, log)
 		case "export:categories":
 			return runExportCategories(cfg, log)
+		case "import:prices":
+			return runImportPrices(cfg, log)
+		case "export:prices":
+			return runExportPrices(cfg, log)
 		case "scheduler":
 			return runScheduler(cfg, log)
 		case "config:export":
@@ -1047,6 +1051,103 @@ func runExportCategories(cfg *config.Config, log logger.Logger) error {
 			"count": result.Orphans,
 		})
 	}
+
+	return nil
+}
+
+func runImportPrices(cfg *config.Config, log logger.Logger) error {
+	if len(os.Args) < 3 {
+		return fmt.Errorf("usage: app import:prices <file.csv>")
+	}
+	filePath := os.Args[2]
+
+	f, err := os.Open(filePath)
+	if err != nil {
+		return fmt.Errorf("open csv: %w", err)
+	}
+	defer f.Close()
+
+	dsn := config.DatabaseDSN(cfg)
+	conn, err := db.Open(dsn)
+	if err != nil {
+		return fmt.Errorf("database: %w", err)
+	}
+	defer conn.Close()
+
+	variantRepo := postgres.NewVariantRepo(conn)
+	priceRepo := postgres.NewPriceRepo(conn)
+	imp := importer.NewPriceImporter(variantRepo, priceRepo)
+
+	log.Info("import.prices.start", map[string]interface{}{"file": filePath})
+
+	result, err := imp.Import(context.Background(), f)
+	if err != nil {
+		return fmt.Errorf("import prices: %w", err)
+	}
+
+	for _, e := range result.Errors {
+		log.Warn("import.prices.row_error", map[string]interface{}{"error": e})
+	}
+
+	if len(result.Errors) > 0 {
+		return fmt.Errorf("import completed with %d errors", len(result.Errors))
+	}
+
+	log.Info("import.prices.complete", map[string]interface{}{
+		"created": result.Created,
+		"updated": result.Updated,
+		"skipped": result.Skipped,
+	})
+
+	return nil
+}
+
+func runExportPrices(cfg *config.Config, log logger.Logger) error {
+	if len(os.Args) < 3 {
+		return fmt.Errorf("usage: app export:prices <file.csv>")
+	}
+	filePath := os.Args[2]
+
+	dsn := config.DatabaseDSN(cfg)
+	conn, err := db.Open(dsn)
+	if err != nil {
+		return fmt.Errorf("database: %w", err)
+	}
+	defer conn.Close()
+
+	variantRepo := postgres.NewVariantRepo(conn)
+	priceRepo := postgres.NewPriceRepo(conn)
+	exp := exporter.NewPriceExporter(priceRepo, variantRepo)
+
+	tmpFile, err := os.CreateTemp(filepath.Dir(filePath), "price-export-*.csv")
+	if err != nil {
+		return fmt.Errorf("create temp file: %w", err)
+	}
+	tmpPath := tmpFile.Name()
+
+	log.Info("export.prices.start", map[string]interface{}{"file": filePath})
+
+	result, err := exp.Export(context.Background(), tmpFile)
+	if closeErr := tmpFile.Close(); closeErr != nil {
+		os.Remove(tmpPath)
+		if err != nil {
+			return fmt.Errorf("export prices: %w", err)
+		}
+		return fmt.Errorf("close temp file: %w", closeErr)
+	}
+	if err != nil {
+		os.Remove(tmpPath)
+		return fmt.Errorf("export prices: %w", err)
+	}
+
+	if err := os.Rename(tmpPath, filePath); err != nil {
+		os.Remove(tmpPath)
+		return fmt.Errorf("rename temp file: %w", err)
+	}
+
+	log.Info("export.prices.complete", map[string]interface{}{
+		"entries": result.Entries,
+	})
 
 	return nil
 }

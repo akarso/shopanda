@@ -32,6 +32,10 @@ func (m *mockPriceRepo) ListByVariantID(_ context.Context, _ string) ([]domain.P
 	return nil, nil
 }
 
+func (m *mockPriceRepo) List(_ context.Context, _, _ int) ([]domain.Price, error) {
+	return nil, nil
+}
+
 func (m *mockPriceRepo) Upsert(_ context.Context, _ *domain.Price) error {
 	return nil
 }

@@ -159,6 +159,10 @@ func (r *stubCheckoutPriceRepo) ListByVariantID(_ context.Context, _ string) ([]
 	return nil, nil
 }
 
+func (r *stubCheckoutPriceRepo) List(_ context.Context, _, _ int) ([]pricing.Price, error) {
+	return nil, nil
+}
+
 func (r *stubCheckoutPriceRepo) Upsert(_ context.Context, _ *pricing.Price) error { return nil }
 
 // ── helpers ─────────────────────────────────────────────────────────────

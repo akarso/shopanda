@@ -69,6 +69,9 @@ func (r *mockPriceRepo036) FindByVariantAndCurrency(_ context.Context, variantID
 func (r *mockPriceRepo036) ListByVariantID(_ context.Context, _ string) ([]pricing.Price, error) {
 	return nil, nil
 }
+func (r *mockPriceRepo036) List(_ context.Context, _, _ int) ([]pricing.Price, error) {
+	return nil, nil
+}
 func (r *mockPriceRepo036) Upsert(_ context.Context, _ *pricing.Price) error { return nil }
 
 // ============================================================
