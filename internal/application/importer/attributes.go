@@ -217,23 +217,25 @@ func (imp *AttributeImporter) Import(ctx context.Context, r io.Reader) (*Attribu
 	for _, a := range attrSlice {
 		registry.RegisterAttribute(a)
 	}
+	validGroups := make([]catalog.AttributeGroup, 0, len(groupSlice))
 	for _, g := range groupSlice {
 		if err := registry.RegisterGroup(g); err != nil {
 			result.Errors = append(result.Errors, fmt.Sprintf("group %q: %v", g.Code, err))
 			result.Skipped++
 			continue
 		}
+		validGroups = append(validGroups, g)
 	}
 
 	// Persist to config store.
 	if err := imp.config.Set(ctx, "catalog.attributes", attrSlice); err != nil {
 		return nil, fmt.Errorf("attribute import: persist attributes: %w", err)
 	}
-	if err := imp.config.Set(ctx, "catalog.attribute_groups", groupSlice); err != nil {
+	if err := imp.config.Set(ctx, "catalog.attribute_groups", validGroups); err != nil {
 		return nil, fmt.Errorf("attribute import: persist groups: %w", err)
 	}
 
 	result.Attributes = len(attrSlice)
-	result.Groups = len(groupSlice)
+	result.Groups = len(validGroups)
 	return result, nil
 }
