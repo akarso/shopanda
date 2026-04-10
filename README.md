@@ -160,6 +160,8 @@ cd shopanda
 | `export:stock <file.csv>` | Export stock quantities to CSV |
 | `import:customers <file.csv>` | Import customers from CSV |
 | `export:customers <file.csv>` | Export customers to CSV |
+| `import:attributes <file.csv>` | Import attribute & group definitions from CSV |
+| `export:attributes <file.csv>` | Export attribute & group definitions to CSV |
 | `config:import <file.yaml>` | Import configuration from YAML |
 | `config:export <file.yaml>` | Export configuration to YAML |
 | `scheduler` | Run background job scheduler |
