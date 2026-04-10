@@ -185,6 +185,11 @@ func (imp *AttributeImporter) Import(ctx context.Context, r io.Reader) (*Attribu
 					}
 					gi = &groupInfo{label: gl}
 					groups[gc] = gi
+				} else if hasGroupLabel && groupLabelIdx < len(record) {
+					v := strings.TrimSpace(record[groupLabelIdx])
+					if v != "" {
+						gi.label = v
+					}
 				}
 				// Add attribute to group if not already present.
 				found := false

@@ -873,10 +873,6 @@ func runImportAttributes(cfg *config.Config, log logger.Logger) error {
 		return fmt.Errorf("import attributes: %w", err)
 	}
 
-	if err := tx.Commit(); err != nil {
-		return fmt.Errorf("import attributes: commit: %w", err)
-	}
-
 	for _, e := range result.Errors {
 		log.Warn("import.attributes.row_error", map[string]interface{}{"error": e})
 	}
@@ -889,6 +885,10 @@ func runImportAttributes(cfg *config.Config, log logger.Logger) error {
 
 	if len(result.Errors) > 0 {
 		return fmt.Errorf("import completed with %d errors", len(result.Errors))
+	}
+
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("import attributes: commit: %w", err)
 	}
 	return nil
 }
