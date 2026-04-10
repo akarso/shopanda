@@ -96,6 +96,10 @@ func run() error {
 			return runImportAttributes(cfg, log)
 		case "export:attributes":
 			return runExportAttributes(cfg, log)
+		case "import:categories":
+			return runImportCategories(cfg, log)
+		case "export:categories":
+			return runExportCategories(cfg, log)
 		case "scheduler":
 			return runScheduler(cfg, log)
 		case "config:export":
@@ -938,6 +942,111 @@ func runExportAttributes(cfg *config.Config, log logger.Logger) error {
 	log.Info("export.attributes.complete", map[string]interface{}{
 		"entries": result.Entries,
 	})
+
+	return nil
+}
+
+func runImportCategories(cfg *config.Config, log logger.Logger) error {
+	if len(os.Args) < 3 {
+		return fmt.Errorf("usage: app import:categories <file.csv>")
+	}
+	filePath := os.Args[2]
+
+	f, err := os.Open(filePath)
+	if err != nil {
+		return fmt.Errorf("open %s: %w", filePath, err)
+	}
+	defer f.Close()
+
+	dsn := config.DatabaseDSN(cfg)
+	conn, err := db.Open(dsn)
+	if err != nil {
+		return fmt.Errorf("database: %w", err)
+	}
+	defer conn.Close()
+
+	categoryRepo := postgres.NewCategoryRepo(conn)
+	imp := importer.NewCategoryImporter(categoryRepo)
+
+	log.Info("import.categories.start", map[string]interface{}{"file": filePath})
+
+	result, err := imp.Import(context.Background(), f)
+	if err != nil {
+		return fmt.Errorf("import categories: %w", err)
+	}
+
+	for _, w := range result.Warnings {
+		log.Warn("import.categories.row_warning", map[string]interface{}{"warning": w})
+	}
+
+	for _, e := range result.Errors {
+		log.Warn("import.categories.row_error", map[string]interface{}{"error": e})
+	}
+
+	if len(result.Errors) > 0 {
+		return fmt.Errorf("import completed with %d errors", len(result.Errors))
+	}
+
+	log.Info("import.categories.complete", map[string]interface{}{
+		"created": result.Created,
+		"updated": result.Updated,
+		"skipped": result.Skipped,
+	})
+
+	return nil
+}
+
+func runExportCategories(cfg *config.Config, log logger.Logger) error {
+	if len(os.Args) < 3 {
+		return fmt.Errorf("usage: app export:categories <file.csv>")
+	}
+	filePath := os.Args[2]
+
+	dsn := config.DatabaseDSN(cfg)
+	conn, err := db.Open(dsn)
+	if err != nil {
+		return fmt.Errorf("database: %w", err)
+	}
+	defer conn.Close()
+
+	categoryRepo := postgres.NewCategoryRepo(conn)
+	exp := exporter.NewCategoryExporter(categoryRepo)
+
+	tmpFile, err := os.CreateTemp(filepath.Dir(filePath), "category-export-*.csv")
+	if err != nil {
+		return fmt.Errorf("create temp file: %w", err)
+	}
+	tmpPath := tmpFile.Name()
+
+	log.Info("export.categories.start", map[string]interface{}{"file": filePath})
+
+	result, err := exp.Export(context.Background(), tmpFile)
+	if closeErr := tmpFile.Close(); closeErr != nil {
+		os.Remove(tmpPath)
+		if err != nil {
+			return fmt.Errorf("export categories: %w", err)
+		}
+		return fmt.Errorf("close temp file: %w", closeErr)
+	}
+	if err != nil {
+		os.Remove(tmpPath)
+		return fmt.Errorf("export categories: %w", err)
+	}
+
+	if err := os.Rename(tmpPath, filePath); err != nil {
+		os.Remove(tmpPath)
+		return fmt.Errorf("rename temp file: %w", err)
+	}
+
+	log.Info("export.categories.complete", map[string]interface{}{
+		"entries": result.Entries,
+	})
+
+	if result.Orphans > 0 {
+		log.Warn("export.categories.orphans", map[string]interface{}{
+			"count": result.Orphans,
+		})
+	}
 
 	return nil
 }
