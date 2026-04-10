@@ -50,7 +50,7 @@ func (imp *PriceImporter) Import(ctx context.Context, r io.Reader) (*PriceResult
 
 	colIdx := make(map[string]int, len(header))
 	for i, h := range header {
-		colIdx[strings.TrimSpace(strings.ToLower(h))] = i
+		colIdx[strings.TrimSpace(strings.ToLower(strings.TrimPrefix(h, "\uFEFF")))] = i
 	}
 
 	skuIdx, hasSKU := colIdx["sku"]

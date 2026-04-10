@@ -104,6 +104,16 @@ func (r *PriceRepo) Upsert(ctx context.Context, p *pricing.Price) error {
 
 // List returns a page of prices ordered by variant_id then currency.
 func (r *PriceRepo) List(ctx context.Context, offset, limit int) ([]pricing.Price, error) {
+	if offset < 0 {
+		return nil, fmt.Errorf("price_repo: list: negative offset")
+	}
+	if limit <= 0 {
+		return nil, fmt.Errorf("price_repo: list: non-positive limit")
+	}
+	if limit > 100 {
+		limit = 100
+	}
+
 	const q = `SELECT id, variant_id, currency, amount, created_at
 		FROM prices ORDER BY variant_id, currency
 		LIMIT $1 OFFSET $2`

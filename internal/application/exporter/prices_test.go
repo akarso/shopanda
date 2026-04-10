@@ -195,3 +195,52 @@ func TestPriceExport_FormulaInjection(t *testing.T) {
 		t.Errorf("line 1 = %q, want sanitized SKU starting with '", lines[1])
 	}
 }
+
+func TestPriceExport_VariantCaching(t *testing.T) {
+	// Same variant appears in multiple prices — FindByID must be called only once per unique variant.
+	priceRepo := &mockPriceRepoForExport{
+		prices: []pricing.Price{
+			makePrice("p1", "v1", 1999, "EUR"),
+			makePrice("p2", "v1", 2199, "USD"),
+			makePrice("p3", "v1", 2499, "GBP"),
+		},
+	}
+	varRepo := &countingVariantRepo{
+		variants: map[string]*catalog.Variant{
+			"v1": {ID: "v1", SKU: "SKU-001"},
+		},
+	}
+
+	exp := exporter.NewPriceExporter(priceRepo, varRepo)
+	var buf bytes.Buffer
+	result, err := exp.Export(context.Background(), &buf)
+	if err != nil {
+		t.Fatalf("Export() error = %v", err)
+	}
+	if result.Entries != 3 {
+		t.Errorf("Entries = %d, want 3", result.Entries)
+	}
+	if varRepo.findByIDCalls != 1 {
+		t.Errorf("FindByID calls = %d, want 1 (should be cached)", varRepo.findByIDCalls)
+	}
+}
+
+// countingVariantRepo wraps variant lookups and counts FindByID calls.
+type countingVariantRepo struct {
+	variants      map[string]*catalog.Variant
+	findByIDCalls int
+}
+
+func (m *countingVariantRepo) FindByID(_ context.Context, id string) (*catalog.Variant, error) {
+	m.findByIDCalls++
+	return m.variants[id], nil
+}
+func (m *countingVariantRepo) FindBySKU(_ context.Context, _ string) (*catalog.Variant, error) {
+	return nil, nil
+}
+func (m *countingVariantRepo) ListByProductID(_ context.Context, _ string, _, _ int) ([]catalog.Variant, error) {
+	return nil, nil
+}
+func (m *countingVariantRepo) Create(_ context.Context, _ *catalog.Variant) error { return nil }
+func (m *countingVariantRepo) Update(_ context.Context, _ *catalog.Variant) error { return nil }
+func (m *countingVariantRepo) WithTx(_ *sql.Tx) catalog.VariantRepository         { return m }

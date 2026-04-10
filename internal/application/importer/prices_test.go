@@ -291,3 +291,23 @@ func TestPriceImport_CurrencyNormalization(t *testing.T) {
 		t.Fatal("v1:EUR not found after lowercase currency input")
 	}
 }
+
+func TestPriceImport_BOMHeader(t *testing.T) {
+	variants := priceVariants()
+	prices := newMockPriceRepoForImport()
+	imp := importer.NewPriceImporter(variants, prices)
+
+	// UTF-8 BOM (\xEF\xBB\xBF) before first column header, as exported by
+	// Excel and some spreadsheet applications.
+	input := "\xEF\xBB\xBFsku,currency,amount\nSKU-001,EUR,1999\n"
+	result, err := imp.Import(context.Background(), strings.NewReader(input))
+	if err != nil {
+		t.Fatalf("Import() error = %v", err)
+	}
+	if result.Created != 1 {
+		t.Errorf("Created = %d, want 1", result.Created)
+	}
+	if result.Skipped != 0 {
+		t.Errorf("Skipped = %d, want 0", result.Skipped)
+	}
+}

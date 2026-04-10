@@ -38,6 +38,7 @@ func (exp *PriceExporter) Export(ctx context.Context, w io.Writer) (*PriceResult
 	}
 
 	result := &PriceResult{}
+	variantCache := make(map[string]*catalog.Variant)
 	offset := 0
 	for {
 		prices, err := exp.prices.List(ctx, offset, pageSize)
@@ -48,9 +49,13 @@ func (exp *PriceExporter) Export(ctx context.Context, w io.Writer) (*PriceResult
 			break
 		}
 		for _, p := range prices {
-			variant, err := exp.variants.FindByID(ctx, p.VariantID)
-			if err != nil {
-				return nil, fmt.Errorf("price export: find variant %q: %w", p.VariantID, err)
+			variant, cached := variantCache[p.VariantID]
+			if !cached {
+				variant, err = exp.variants.FindByID(ctx, p.VariantID)
+				if err != nil {
+					return nil, fmt.Errorf("price export: find variant %q: %w", p.VariantID, err)
+				}
+				variantCache[p.VariantID] = variant
 			}
 			if variant == nil {
 				continue // orphan price entry, skip
