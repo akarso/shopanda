@@ -160,7 +160,7 @@ func TestAttrExport_ConfigError(t *testing.T) {
 func TestAttrExport_FormulaInjection(t *testing.T) {
 	repo := newMockConfigRepoForAttrExport()
 	repo.store["catalog.attributes"] = []catalog.Attribute{
-		{Code: "=cmd", Label: "+Inject", Type: catalog.AttributeTypeText},
+		{Code: "=cmd", Label: "+Inject", Type: catalog.AttributeTypeSelect, Options: []string{"=evil"}},
 	}
 
 	exp := exporter.NewAttributeExporter(repo)
@@ -179,5 +179,8 @@ func TestAttrExport_FormulaInjection(t *testing.T) {
 	}
 	if !strings.HasPrefix(records[1][1], "'") {
 		t.Errorf("label = %q, expected formula injection prefix", records[1][1])
+	}
+	if !strings.HasPrefix(records[1][4], "'") {
+		t.Errorf("options = %q, expected formula injection prefix", records[1][4])
 	}
 }

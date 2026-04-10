@@ -70,6 +70,8 @@ func (exp *AttributeExporter) Export(ctx context.Context, w io.Writer) (*Attribu
 		}
 		optStr := strings.Join(a.Options, ",")
 
+		safeOpt := sanitizeCSVCell(optStr)
+
 		refs := attrGroups[a.Code]
 		if len(refs) == 0 {
 			row := []string{
@@ -77,7 +79,7 @@ func (exp *AttributeExporter) Export(ctx context.Context, w io.Writer) (*Attribu
 				sanitizeCSVCell(a.Label),
 				string(a.Type),
 				reqStr,
-				optStr,
+				safeOpt,
 				"",
 				"",
 			}
@@ -92,7 +94,7 @@ func (exp *AttributeExporter) Export(ctx context.Context, w io.Writer) (*Attribu
 					sanitizeCSVCell(a.Label),
 					string(a.Type),
 					reqStr,
-					optStr,
+					safeOpt,
 					sanitizeCSVCell(ref.code),
 					sanitizeCSVCell(ref.label),
 				}

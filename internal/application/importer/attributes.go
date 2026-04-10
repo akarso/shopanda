@@ -93,6 +93,19 @@ func (imp *AttributeImporter) Import(ctx context.Context, r io.Reader) (*Attribu
 			continue
 		}
 
+		minIdx := codeIdx
+		if labelIdx > minIdx {
+			minIdx = labelIdx
+		}
+		if typeIdx > minIdx {
+			minIdx = typeIdx
+		}
+		if len(record) <= minIdx {
+			result.Errors = append(result.Errors, fmt.Sprintf("line %d: missing columns", lineNum))
+			result.Skipped++
+			continue
+		}
+
 		code := strings.TrimSpace(record[codeIdx])
 		if code == "" {
 			result.Errors = append(result.Errors, fmt.Sprintf("line %d: empty code", lineNum))
@@ -141,6 +154,20 @@ func (imp *AttributeImporter) Import(ctx context.Context, r io.Reader) (*Attribu
 			}
 		}
 
+		// If this code was seen before, remove it from any previous group memberships.
+		if _, dup := attrs[code]; dup {
+			for gc, gi := range groups {
+				for i, a := range gi.attrs {
+					if a == code {
+						gi.attrs = append(gi.attrs[:i], gi.attrs[i+1:]...)
+						if len(gi.attrs) == 0 {
+							delete(groups, gc)
+						}
+						break
+					}
+				}
+			}
+		}
 		attrs[code] = attr
 
 		// Collect group membership.

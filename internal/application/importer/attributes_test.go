@@ -214,3 +214,41 @@ func TestAttrImport_PersistError(t *testing.T) {
 		t.Fatal("expected error on persist failure")
 	}
 }
+
+func TestAttrImport_ShortRow(t *testing.T) {
+	repo := newMockConfigRepoForAttrImport()
+	imp := importer.NewAttributeImporter(repo)
+
+	csv := "code,label,type\ncolor\n"
+	result, err := imp.Import(context.Background(), strings.NewReader(csv))
+	if err != nil {
+		t.Fatalf("Import: %v", err)
+	}
+	if result.Skipped != 1 {
+		t.Errorf("Skipped = %d, want 1", result.Skipped)
+	}
+	if result.Attributes != 0 {
+		t.Errorf("Attributes = %d, want 0", result.Attributes)
+	}
+}
+
+func TestAttrImport_DuplicateCodeClearsOldGroup(t *testing.T) {
+	repo := newMockConfigRepoForAttrImport()
+	imp := importer.NewAttributeImporter(repo)
+
+	// First row puts color in group "old", second row puts color in group "new".
+	csv := "code,label,type,group,group_label\n" +
+		"color,Color,select,old,Old Group\n" +
+		"color,Colour,select,new,New Group\n"
+	result, err := imp.Import(context.Background(), strings.NewReader(csv))
+	if err != nil {
+		t.Fatalf("Import: %v", err)
+	}
+	if result.Attributes != 1 {
+		t.Errorf("Attributes = %d, want 1", result.Attributes)
+	}
+	// Old group should be gone (was left empty), new group should exist.
+	if result.Groups != 1 {
+		t.Errorf("Groups = %d, want 1", result.Groups)
+	}
+}

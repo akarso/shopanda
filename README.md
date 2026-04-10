@@ -124,7 +124,7 @@ Shopanda uses a minimal default stack:
 - **Email:** SMTP mailer with async job-based delivery
 - **Cron:** In-process scheduler for recurring tasks
 - **Themes:** Server-side rendered templates with layout support
-- **Data exchange:** CSV import/export for products, stock, and customers
+- **Data exchange:** CSV import/export for products, stock, customers, and attribute/group definitions
 
 Optional infrastructure such as Redis, Meilisearch, S3, or CDN support can be added through plugins.
 

@@ -856,14 +856,25 @@ func runImportAttributes(cfg *config.Config, log logger.Logger) error {
 	}
 	defer conn.Close()
 
-	configRepo := postgres.NewConfigRepo(conn)
+	ctx := context.Background()
+	tx, err := conn.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("import attributes: begin tx: %w", err)
+	}
+	defer tx.Rollback() //nolint:errcheck // rollback after commit is a no-op
+
+	configRepo := postgres.NewConfigRepo(tx)
 	imp := importer.NewAttributeImporter(configRepo)
 
 	log.Info("import.attributes.start", map[string]interface{}{"file": filePath})
 
-	result, err := imp.Import(context.Background(), f)
+	result, err := imp.Import(ctx, f)
 	if err != nil {
 		return fmt.Errorf("import attributes: %w", err)
+	}
+
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("import attributes: commit: %w", err)
 	}
 
 	for _, e := range result.Errors {
