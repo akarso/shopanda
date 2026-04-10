@@ -13,6 +13,10 @@ type PriceRepository interface {
 	// this ordering so callers can rely on the sort.
 	ListByVariantID(ctx context.Context, variantID string) ([]Price, error)
 
+	// List returns a page of prices ordered by variant_id then currency.
+	// offset must be >= 0, limit must be > 0.
+	List(ctx context.Context, offset, limit int) ([]Price, error)
+
 	// Upsert creates or updates a price for a variant+currency pair.
 	Upsert(ctx context.Context, p *Price) error
 }

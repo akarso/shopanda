@@ -101,3 +101,36 @@ func (r *PriceRepo) Upsert(ctx context.Context, p *pricing.Price) error {
 	}
 	return nil
 }
+
+// List returns a page of prices ordered by variant_id then currency.
+func (r *PriceRepo) List(ctx context.Context, offset, limit int) ([]pricing.Price, error) {
+	const q = `SELECT id, variant_id, currency, amount, created_at
+		FROM prices ORDER BY variant_id, currency
+		LIMIT $1 OFFSET $2`
+
+	rows, err := r.db.QueryContext(ctx, q, limit, offset)
+	if err != nil {
+		return nil, fmt.Errorf("price_repo: list: %w", err)
+	}
+	defer rows.Close()
+
+	var prices []pricing.Price
+	for rows.Next() {
+		var p pricing.Price
+		var amount int64
+		var cur string
+		if err := rows.Scan(&p.ID, &p.VariantID, &cur, &amount, &p.CreatedAt); err != nil {
+			return nil, fmt.Errorf("price_repo: list scan: %w", err)
+		}
+		m, err := shared.NewMoney(amount, cur)
+		if err != nil {
+			return nil, fmt.Errorf("price_repo: list reconstruct money: %w", err)
+		}
+		p.Amount = m
+		prices = append(prices, p)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("price_repo: list rows: %w", err)
+	}
+	return prices, nil
+}
