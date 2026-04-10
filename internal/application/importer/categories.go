@@ -135,39 +135,45 @@ func (imp *CategoryImporter) Import(ctx context.Context, r io.Reader) (*Category
 	result.Skipped += len(parseErrors)
 	result.Warnings = append(result.Warnings, parseWarnings...)
 
-	// Validate required fields and collect valid rows.
-	var validRows []catRow
-	for _, row := range rows {
-		if row.name == "" || row.slug == "" {
-			result.Errors = append(result.Errors, fmt.Sprintf("line %d: name and slug are required", row.lineNum))
-			result.Skipped++
-			continue
-		}
-		validRows = append(validRows, row)
-	}
+	// Track slugs that failed so dependents are rejected.
+	failedSlugs := make(map[string]struct{})
 
-	// Deduplicate: last row wins for the same slug.
+	// Deduplicate first: last row wins for the same slug.
 	bySlug := make(map[string]catRow)
 	var order []string
-	for _, row := range validRows {
+	for _, row := range rows {
 		if _, exists := bySlug[row.slug]; !exists {
 			order = append(order, row.slug)
 		}
 		bySlug[row.slug] = row
 	}
 
+	// Validate required fields on the final (deduplicated) rows.
+	validBySlug := make(map[string]catRow)
+	var validOrder []string
+	for _, slug := range order {
+		row := bySlug[slug]
+		if row.name == "" || row.slug == "" {
+			result.Errors = append(result.Errors, fmt.Sprintf("line %d: name and slug are required", row.lineNum))
+			result.Skipped++
+			failedSlugs[slug] = struct{}{}
+			continue
+		}
+		validBySlug[slug] = row
+		validOrder = append(validOrder, slug)
+	}
+
 	// Topological sort: parents before children.
-	sorted, err := catTopoSort(order, bySlug)
+	sorted, err := catTopoSort(validOrder, validBySlug)
 	if err != nil {
 		return nil, fmt.Errorf("category import: %w", err)
 	}
 
 	// Resolve parent slugs and upsert.
 	slugToID := make(map[string]string)
-	failedSlugs := make(map[string]struct{})
 
 	for _, slug := range sorted {
-		row := bySlug[slug]
+		row := validBySlug[slug]
 
 		// Resolve parent.
 		var parentID *string

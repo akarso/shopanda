@@ -438,4 +438,55 @@ func TestCategoryImport_FieldCountMismatch(t *testing.T) {
 	}
 }
 
+func TestCategoryImport_DuplicateSlugLastInvalid(t *testing.T) {
+	// First row valid, second row (same slug) invalid → slug should be skipped,
+	// not resolved from the earlier valid row.
+	repo := newMockCategoryRepo()
+	imp := importer.NewCategoryImporter(repo)
+
+	input := "name,slug,parent_slug,position\nElectronics,electronics,,0\n,electronics,,0\n"
+	result, err := imp.Import(context.Background(), strings.NewReader(input))
+	if err != nil {
+		t.Fatalf("Import() error = %v", err)
+	}
+	if result.Created != 0 {
+		t.Errorf("Created = %d, want 0 (last row is invalid)", result.Created)
+	}
+	if result.Skipped != 1 {
+		t.Errorf("Skipped = %d, want 1", result.Skipped)
+	}
+	if _, ok := repo.categories["electronics"]; ok {
+		t.Error("electronics should not have been created")
+	}
+}
+
+func TestCategoryImport_DuplicateSlugLastInvalidCascade(t *testing.T) {
+	// Parent slug duplicated: first row valid, second invalid → child should
+	// also fail because the parent's final row is invalid.
+	repo := newMockCategoryRepo()
+	imp := importer.NewCategoryImporter(repo)
+
+	input := "name,slug,parent_slug,position\nElectronics,electronics,,0\n,electronics,,0\nPhones,phones,electronics,0\n"
+	result, err := imp.Import(context.Background(), strings.NewReader(input))
+	if err != nil {
+		t.Fatalf("Import() error = %v", err)
+	}
+	if result.Created != 0 {
+		t.Errorf("Created = %d, want 0", result.Created)
+	}
+	// Parent skipped (invalid) + child skipped (parent failed).
+	if result.Skipped != 2 {
+		t.Errorf("Skipped = %d, want 2", result.Skipped)
+	}
+	foundCascade := false
+	for _, e := range result.Errors {
+		if strings.Contains(e, "failed earlier") {
+			foundCascade = true
+		}
+	}
+	if !foundCascade {
+		t.Errorf("expected cascade error mentioning 'failed earlier', got %v", result.Errors)
+	}
+}
+
 var errTest = fmt.Errorf("test error")
