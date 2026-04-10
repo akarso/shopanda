@@ -124,7 +124,7 @@ Shopanda uses a minimal default stack:
 - **Email:** SMTP mailer with async job-based delivery
 - **Cron:** In-process scheduler for recurring tasks
 - **Themes:** Server-side rendered templates with layout support
-- **Data exchange:** CSV import/export for products, stock, and customers
+- **Data exchange:** CSV import/export for products, stock, customers, and attribute/group definitions
 
 Optional infrastructure such as Redis, Meilisearch, S3, or CDN support can be added through plugins.
 
@@ -160,6 +160,8 @@ cd shopanda
 | `export:stock <file.csv>` | Export stock quantities to CSV |
 | `import:customers <file.csv>` | Import customers from CSV |
 | `export:customers <file.csv>` | Export customers to CSV |
+| `import:attributes <file.csv>` | Import attribute & group definitions from CSV |
+| `export:attributes <file.csv>` | Export attribute & group definitions to CSV |
 | `config:import <file.yaml>` | Import configuration from YAML |
 | `config:export <file.yaml>` | Export configuration to YAML |
 | `scheduler` | Run background job scheduler |

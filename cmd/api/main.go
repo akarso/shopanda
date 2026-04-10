@@ -92,6 +92,10 @@ func run() error {
 			return runImportCustomers(cfg, log)
 		case "export:customers":
 			return runExportCustomers(cfg, log)
+		case "import:attributes":
+			return runImportAttributes(cfg, log)
+		case "export:attributes":
+			return runExportAttributes(cfg, log)
 		case "scheduler":
 			return runScheduler(cfg, log)
 		case "config:export":
@@ -830,5 +834,110 @@ func runConfigImport(cfg *config.Config, log logger.Logger) error {
 		"file":    filePath,
 		"entries": count,
 	})
+	return nil
+}
+
+func runImportAttributes(cfg *config.Config, log logger.Logger) error {
+	if len(os.Args) < 3 {
+		return fmt.Errorf("usage: app import:attributes <file.csv>")
+	}
+	filePath := os.Args[2]
+
+	f, err := os.Open(filePath)
+	if err != nil {
+		return fmt.Errorf("open %s: %w", filePath, err)
+	}
+	defer f.Close()
+
+	dsn := config.DatabaseDSN(cfg)
+	conn, err := db.Open(dsn)
+	if err != nil {
+		return fmt.Errorf("database: %w", err)
+	}
+	defer conn.Close()
+
+	ctx := context.Background()
+	tx, err := conn.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("import attributes: begin tx: %w", err)
+	}
+	defer tx.Rollback() //nolint:errcheck // rollback after commit is a no-op
+
+	configRepo := postgres.NewConfigRepo(tx)
+	imp := importer.NewAttributeImporter(configRepo)
+
+	log.Info("import.attributes.start", map[string]interface{}{"file": filePath})
+
+	result, err := imp.Import(ctx, f)
+	if err != nil {
+		return fmt.Errorf("import attributes: %w", err)
+	}
+
+	for _, e := range result.Errors {
+		log.Warn("import.attributes.row_error", map[string]interface{}{"error": e})
+	}
+
+	if len(result.Errors) > 0 {
+		return fmt.Errorf("import completed with %d errors", len(result.Errors))
+	}
+
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("import attributes: commit: %w", err)
+	}
+
+	log.Info("import.attributes.complete", map[string]interface{}{
+		"attributes": result.Attributes,
+		"groups":     result.Groups,
+		"skipped":    result.Skipped,
+	})
+	return nil
+}
+
+func runExportAttributes(cfg *config.Config, log logger.Logger) error {
+	if len(os.Args) < 3 {
+		return fmt.Errorf("usage: app export:attributes <file.csv>")
+	}
+	filePath := os.Args[2]
+
+	dsn := config.DatabaseDSN(cfg)
+	conn, err := db.Open(dsn)
+	if err != nil {
+		return fmt.Errorf("database: %w", err)
+	}
+	defer conn.Close()
+
+	configRepo := postgres.NewConfigRepo(conn)
+	exp := exporter.NewAttributeExporter(configRepo)
+
+	tmpFile, err := os.CreateTemp(filepath.Dir(filePath), "attribute-export-*.csv")
+	if err != nil {
+		return fmt.Errorf("create temp file: %w", err)
+	}
+	tmpPath := tmpFile.Name()
+
+	log.Info("export.attributes.start", map[string]interface{}{"file": filePath})
+
+	result, err := exp.Export(context.Background(), tmpFile)
+	if closeErr := tmpFile.Close(); closeErr != nil {
+		os.Remove(tmpPath)
+		if err != nil {
+			return fmt.Errorf("export attributes: %w", err)
+		}
+		return fmt.Errorf("close temp file: %w", closeErr)
+	}
+	if err != nil {
+		os.Remove(tmpPath)
+		return fmt.Errorf("export attributes: %w", err)
+	}
+
+	if err := os.Rename(tmpPath, filePath); err != nil {
+		os.Remove(tmpPath)
+		return fmt.Errorf("rename temp file: %w", err)
+	}
+
+	log.Info("export.attributes.complete", map[string]interface{}{
+		"entries": result.Entries,
+	})
+
 	return nil
 }
