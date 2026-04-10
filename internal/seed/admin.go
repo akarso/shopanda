@@ -2,6 +2,7 @@ package seed
 
 import (
 	"context"
+	"fmt"
 	"os"
 
 	"github.com/akarso/shopanda/internal/domain/customer"
@@ -12,9 +13,8 @@ import (
 )
 
 const (
-	adminEmail           = "admin@example.com"
-	adminPasswordEnvKey  = "SHOPANDA_SEED_ADMIN_PASSWORD"
-	adminPasswordDefault = "admin123"
+	adminEmail          = "admin@example.com"
+	adminPasswordEnvKey = "SHOPANDA_SEED_ADMIN_PASSWORD"
 )
 
 // AdminSeeder creates the default admin user account.
@@ -23,6 +23,11 @@ type AdminSeeder struct{}
 func (s *AdminSeeder) Name() string { return "admin-user" }
 
 func (s *AdminSeeder) Seed(ctx context.Context, deps Deps) error {
+	adminPwd := os.Getenv(adminPasswordEnvKey)
+	if adminPwd == "" {
+		return fmt.Errorf("seed: %s environment variable is required", adminPasswordEnvKey)
+	}
+
 	repo := postgres.NewCustomerRepo(deps.DB)
 
 	existing, err := repo.FindByEmail(ctx, adminEmail)
@@ -34,14 +39,6 @@ func (s *AdminSeeder) Seed(ctx context.Context, deps Deps) error {
 			"email": adminEmail,
 		})
 		return nil
-	}
-
-	adminPwd := os.Getenv(adminPasswordEnvKey)
-	if adminPwd == "" {
-		adminPwd = adminPasswordDefault
-		deps.Logger.Warn("seed.admin.insecure_password", map[string]interface{}{
-			"hint": "set " + adminPasswordEnvKey + " for a secure password",
-		})
 	}
 
 	c, err := customer.NewCustomer(id.New(), adminEmail)

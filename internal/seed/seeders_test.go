@@ -1,6 +1,8 @@
 package seed
 
 import (
+	"context"
+	"strings"
 	"testing"
 )
 
@@ -10,6 +12,12 @@ var (
 	_ Seeder = (*ConfigSeeder)(nil)
 	_ Seeder = (*CatalogSeeder)(nil)
 )
+
+type noopLogger struct{}
+
+func (noopLogger) Info(_ string, _ map[string]interface{})           {}
+func (noopLogger) Warn(_ string, _ map[string]interface{})           {}
+func (noopLogger) Error(_ string, _ error, _ map[string]interface{}) {}
 
 func TestAdminSeeder_Name(t *testing.T) {
 	s := &AdminSeeder{}
@@ -48,6 +56,19 @@ func TestSeedersRegistration(t *testing.T) {
 		if got := reg.seeders[i].Name(); got != want {
 			t.Errorf("seeder[%d].Name() = %q, want %q", i, got, want)
 		}
+	}
+}
+
+func TestAdminSeeder_RequiresPasswordEnv(t *testing.T) {
+	t.Setenv(adminPasswordEnvKey, "")
+
+	s := &AdminSeeder{}
+	err := s.Seed(context.Background(), Deps{Logger: &noopLogger{}})
+	if err == nil {
+		t.Fatal("expected error when SHOPANDA_SEED_ADMIN_PASSWORD is unset")
+	}
+	if !strings.Contains(err.Error(), adminPasswordEnvKey) {
+		t.Errorf("error should mention %s, got: %v", adminPasswordEnvKey, err)
 	}
 }
 

@@ -9,6 +9,7 @@ import (
 	"github.com/akarso/shopanda/internal/domain/pricing"
 	"github.com/akarso/shopanda/internal/domain/shared"
 	"github.com/akarso/shopanda/internal/infrastructure/postgres"
+	"github.com/akarso/shopanda/internal/platform/apperror"
 	"github.com/akarso/shopanda/internal/platform/id"
 )
 
@@ -102,6 +103,12 @@ func (s *CatalogSeeder) seedCategories(ctx context.Context, deps Deps, repo *pos
 			return err
 		}
 		if err := repo.Create(ctx, &c); err != nil {
+			if apperror.Is(err, apperror.CodeConflict) {
+				deps.Logger.Info("seed.category.skip", map[string]interface{}{
+					"slug": sc.Slug,
+				})
+				continue
+			}
 			return err
 		}
 		deps.Logger.Info("seed.category.created", map[string]interface{}{
@@ -140,12 +147,27 @@ func (s *CatalogSeeder) seedProducts(
 			p.Status = catalog.StatusActive
 
 			if err := prodRepo.Create(ctx, &p); err != nil {
-				return err
+				if apperror.Is(err, apperror.CodeConflict) {
+					ret, err2 := prodRepo.FindBySlug(ctx, sp.Slug)
+					if err2 != nil {
+						return err2
+					}
+					if ret == nil {
+						return err
+					}
+					productID = ret.ID
+					deps.Logger.Info("seed.product.skip", map[string]interface{}{
+						"slug": sp.Slug,
+					})
+				} else {
+					return err
+				}
+			} else {
+				productID = p.ID
+				deps.Logger.Info("seed.product.created", map[string]interface{}{
+					"slug": sp.Slug,
+				})
 			}
-			productID = p.ID
-			deps.Logger.Info("seed.product.created", map[string]interface{}{
-				"slug": sp.Slug,
-			})
 		}
 
 		for _, sv := range sp.Variants {
@@ -191,17 +213,13 @@ func (s *CatalogSeeder) ensureVariant(
 	}
 	if existing != nil {
 		if existing.ProductID != productID {
-			deps.Logger.Warn("seed.variant.sku_conflict", map[string]interface{}{
-				"sku":                 sv.SKU,
-				"expected_product_id": productID,
-				"actual_product_id":   existing.ProductID,
-			})
-		} else {
-			deps.Logger.Info("seed.variant.skip", map[string]interface{}{
-				"sku": sv.SKU,
-			})
-			return existing.ID, nil
+			return "", fmt.Errorf("seed: variant SKU %q belongs to product %q, expected %q",
+				sv.SKU, existing.ProductID, productID)
 		}
+		deps.Logger.Info("seed.variant.skip", map[string]interface{}{
+			"sku": sv.SKU,
+		})
+		return existing.ID, nil
 	}
 
 	v, err := catalog.NewVariant(id.New(), productID, sv.SKU)
@@ -211,6 +229,23 @@ func (s *CatalogSeeder) ensureVariant(
 	v.Name = sv.Name
 
 	if err := repo.Create(ctx, &v); err != nil {
+		if apperror.Is(err, apperror.CodeConflict) {
+			ret, err2 := repo.FindBySKU(ctx, sv.SKU)
+			if err2 != nil {
+				return "", err2
+			}
+			if ret == nil {
+				return "", err
+			}
+			if ret.ProductID != productID {
+				return "", fmt.Errorf("seed: variant SKU %q belongs to product %q, expected %q",
+					sv.SKU, ret.ProductID, productID)
+			}
+			deps.Logger.Info("seed.variant.skip", map[string]interface{}{
+				"sku": sv.SKU,
+			})
+			return ret.ID, nil
+		}
 		return "", err
 	}
 	deps.Logger.Info("seed.variant.created", map[string]interface{}{
