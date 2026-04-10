@@ -79,6 +79,9 @@ type SeederFunc struct {
 
 // NewSeederFunc creates a SeederFunc with the given name and function.
 func NewSeederFunc(name string, fn func(ctx context.Context, deps Deps) error) *SeederFunc {
+	if fn == nil {
+		panic("seed: NewSeederFunc: fn must not be nil")
+	}
 	return &SeederFunc{name: name, fn: fn}
 }
 

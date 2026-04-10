@@ -166,3 +166,13 @@ func TestRegistry_DepsPassed(t *testing.T) {
 		t.Error("expected nil DB in test")
 	}
 }
+
+func TestSeederFunc_NilFnPanics(t *testing.T) {
+	defer func() {
+		r := recover()
+		if r == nil {
+			t.Fatal("expected panic on nil fn")
+		}
+	}()
+	seed.NewSeederFunc("bad", nil)
+}
