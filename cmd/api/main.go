@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"fmt"
 	"os"
@@ -31,6 +32,7 @@ import (
 	"github.com/akarso/shopanda/internal/domain/order"
 	"github.com/akarso/shopanda/internal/domain/pricing"
 	"github.com/akarso/shopanda/internal/domain/scheduler"
+	"github.com/akarso/shopanda/internal/domain/search"
 	"github.com/akarso/shopanda/internal/domain/shared"
 	"github.com/akarso/shopanda/internal/domain/theme"
 	"github.com/akarso/shopanda/internal/infrastructure/cron"
@@ -77,10 +79,25 @@ func run() error {
 	// Subcommand dispatch.
 	if len(os.Args) > 1 {
 		switch os.Args[1] {
+		case "help":
+			printHelp()
+			return nil
 		case "migrate":
 			return runMigrate(cfg, log)
 		case "serve":
 			return runServe(cfg, log)
+		case "worker":
+			return runWorker(cfg, log)
+		case "scheduler":
+			return runScheduler(cfg, log)
+		case "seed":
+			return runSeed(cfg, log)
+		case "search:reindex":
+			return runSearchReindex(cfg, log)
+		case "config:export":
+			return runConfigExport(cfg, log)
+		case "config:import":
+			return runConfigImport(cfg, log)
 		case "import:products":
 			return runImportProducts(cfg, log)
 		case "export:products":
@@ -105,16 +122,8 @@ func run() error {
 			return runImportPrices(cfg, log)
 		case "export:prices":
 			return runExportPrices(cfg, log)
-		case "seed":
-			return runSeed(cfg, log)
-		case "scheduler":
-			return runScheduler(cfg, log)
-		case "config:export":
-			return runConfigExport(cfg, log)
-		case "config:import":
-			return runConfigImport(cfg, log)
 		default:
-			return fmt.Errorf("unknown command: %s", os.Args[1])
+			return fmt.Errorf("unknown command: %s (run 'help' for usage)", os.Args[1])
 		}
 	}
 
@@ -149,22 +158,16 @@ func runServe(cfg *config.Config, log logger.Logger) error {
 	// Search engine.
 	searchEngine := postgres.NewSearchEngine(conn)
 
-	// Job queue + worker.
-	jobQueue := postgres.NewJobQueue(conn)
-	jobWorker := jobs.NewWorker(jobQueue, log, time.Second)
+	// Job queue, worker, mailer, cache — shared setup.
+	jobWorker, jobQueue, appCache, err := setupWorker(conn, cfg, log)
+	if err != nil {
+		return err
+	}
 
-	// Email notifications.
+	// Email notifications (needs jobQueue from setupWorker).
 	mailTemplates := mail.NewTemplates()
 	notification.RegisterTemplates(mailTemplates)
-	mailer := smtpmail.New(smtpmail.Config{
-		Host:     cfg.Mail.SMTP.Host,
-		Port:     cfg.Mail.SMTP.Port,
-		User:     cfg.Mail.SMTP.User,
-		Password: cfg.Mail.SMTP.Password,
-		From:     cfg.Mail.SMTP.From,
-	})
 	notifSvc := notification.New(mailTemplates, customerRepo, orderRepo, jobQueue, log)
-	jobWorker.Register(notification.NewEmailSendHandler(mailer))
 
 	// Media storage.
 	var mediaStorage media.Storage
@@ -179,17 +182,7 @@ func runServe(cfg *config.Config, log logger.Logger) error {
 	assetRepo := postgres.NewAssetRepo(conn)
 
 	// Cache.
-	var appCache cache.Cache
-	switch cfg.Cache.Driver {
-	case "postgres":
-		appCache = postgres.NewCacheStore(conn)
-	default:
-		return fmt.Errorf("unsupported cache.driver: %s", cfg.Cache.Driver)
-	}
 	_ = appCache // wired by consumers in upcoming PRs
-
-	// Cache cleanup job handler.
-	jobWorker.Register(cacheApp.NewCleanupHandler(appCache.(cacheApp.ExpiredDeleter), log))
 
 	// Providers.
 	manualPayProvider := manualpay.NewProvider()
@@ -1183,6 +1176,188 @@ func runSeed(cfg *config.Config, log logger.Logger) error {
 	log.Info("seed.complete", map[string]interface{}{
 		"executed": result.Executed,
 		"skipped":  result.Skipped,
+	})
+
+	return nil
+}
+
+func printHelp() {
+	fmt.Println(`Usage: app <command> [arguments]
+
+Commands:
+  serve                Start the HTTP server (default)
+  worker               Start the background job worker
+  scheduler            Start the cron scheduler
+  migrate              Run database migrations
+  seed                 Seed the database with initial data
+  search:reindex       Re-index all products in the search engine
+  config:export        Export configuration to stdout (YAML)
+  config:import <file> Import configuration from a YAML file
+  import:products <f>  Import products from a CSV file
+  export:products <f>  Export products to a CSV file
+  import:stock <f>     Import stock from a CSV file
+  export:stock <f>     Export stock to a CSV file
+  import:customers <f> Import customers from a CSV file
+  export:customers <f> Export customers to a CSV file
+  import:attributes <f> Import attributes from a CSV file
+  export:attributes <f> Export attributes to a CSV file
+  import:categories <f> Import categories from a CSV file
+  export:categories <f> Export categories to a CSV file
+  import:prices <f>    Import prices from a CSV file
+  export:prices <f>    Export prices to a CSV file
+  help                 Show this help message`)
+}
+
+// setupWorker creates a job queue, worker, mail handler, and cache cleanup
+// handler. It returns the configured worker, the job queue (needed by
+// notification services), and the cache instance.
+func setupWorker(conn *sql.DB, cfg *config.Config, log logger.Logger) (*jobs.Worker, jobs.Queue, cache.Cache, error) {
+	jobQueue := postgres.NewJobQueue(conn)
+	jobWorker := jobs.NewWorker(jobQueue, log, time.Second)
+
+	mailer := smtpmail.New(smtpmail.Config{
+		Host:     cfg.Mail.SMTP.Host,
+		Port:     cfg.Mail.SMTP.Port,
+		User:     cfg.Mail.SMTP.User,
+		Password: cfg.Mail.SMTP.Password,
+		From:     cfg.Mail.SMTP.From,
+	})
+	jobWorker.Register(notification.NewEmailSendHandler(mailer))
+
+	var appCache cache.Cache
+	switch cfg.Cache.Driver {
+	case "postgres":
+		appCache = postgres.NewCacheStore(conn)
+	default:
+		return nil, nil, nil, fmt.Errorf("unsupported cache.driver: %s", cfg.Cache.Driver)
+	}
+	ed, ok := appCache.(cacheApp.ExpiredDeleter)
+	if !ok {
+		return nil, nil, nil, fmt.Errorf("cache driver %q does not support expired entry cleanup", cfg.Cache.Driver)
+	}
+	jobWorker.Register(cacheApp.NewCleanupHandler(ed, log))
+
+	return jobWorker, jobQueue, appCache, nil
+}
+
+func runWorker(cfg *config.Config, log logger.Logger) error {
+	dsn := config.DatabaseDSN(cfg)
+	conn, err := db.Open(dsn)
+	if err != nil {
+		return fmt.Errorf("database: %w", err)
+	}
+	defer conn.Close()
+
+	jobWorker, _, _, err := setupWorker(conn, cfg, log)
+	if err != nil {
+		return err
+	}
+
+	log.Info("worker.start", nil)
+
+	// Block until interrupted.
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	go func() {
+		sigCh := make(chan os.Signal, 1)
+		signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
+		<-sigCh
+		log.Info("worker.shutdown.signal", nil)
+		cancel()
+	}()
+
+	jobWorker.Start(ctx)
+	return nil
+}
+
+func runSearchReindex(cfg *config.Config, log logger.Logger) error {
+	dsn := config.DatabaseDSN(cfg)
+	conn, err := db.Open(dsn)
+	if err != nil {
+		return fmt.Errorf("database: %w", err)
+	}
+	defer conn.Close()
+
+	searchEngine := postgres.NewSearchEngine(conn)
+
+	log.Info("search.reindex.start", map[string]interface{}{
+		"engine": searchEngine.Name(),
+	})
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	go func() {
+		sigCh := make(chan os.Signal, 1)
+		signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
+		<-sigCh
+		cancel()
+	}()
+
+	// Use a repeatable-read transaction so offset-based pagination sees a
+	// stable snapshot even if products are inserted/deleted concurrently.
+	tx, err := conn.BeginTx(ctx, &sql.TxOptions{
+		Isolation: sql.LevelRepeatableRead,
+		ReadOnly:  true,
+	})
+	if err != nil {
+		return fmt.Errorf("search reindex: begin tx: %w", err)
+	}
+	defer tx.Rollback() //nolint:errcheck // rollback after commit is a no-op
+
+	productRepo := postgres.NewProductRepo(conn).WithTx(tx)
+
+	const batchSize = 100
+	var offset, indexed int
+
+	for {
+		if err := ctx.Err(); err != nil {
+			log.Info("search.reindex.interrupted", map[string]interface{}{
+				"indexed": indexed,
+			})
+			return ctx.Err()
+		}
+
+		products, err := productRepo.List(ctx, offset, batchSize)
+		if err != nil {
+			if ctx.Err() != nil {
+				log.Info("search.reindex.interrupted", map[string]interface{}{
+					"indexed": indexed,
+				})
+				return ctx.Err()
+			}
+			return fmt.Errorf("search reindex: list products (offset=%d): %w", offset, err)
+		}
+		if len(products) == 0 {
+			break
+		}
+
+		for _, p := range products {
+			sp := search.Product{
+				ID:          p.ID,
+				Name:        p.Name,
+				Slug:        p.Slug,
+				Description: p.Description,
+				Attributes:  p.Attributes,
+			}
+			if err := searchEngine.IndexProduct(ctx, sp); err != nil {
+				if ctx.Err() != nil {
+					log.Info("search.reindex.interrupted", map[string]interface{}{
+						"indexed": indexed,
+					})
+					return ctx.Err()
+				}
+				return fmt.Errorf("search reindex: index product %s: %w", p.ID, err)
+			}
+			indexed++
+		}
+
+		offset += len(products)
+	}
+
+	log.Info("search.reindex.complete", map[string]interface{}{
+		"indexed": indexed,
 	})
 
 	return nil
