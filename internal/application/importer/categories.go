@@ -3,6 +3,7 @@ package importer
 import (
 	"context"
 	"encoding/csv"
+	"errors"
 	"fmt"
 	"io"
 	"strconv"
@@ -76,6 +77,7 @@ func (imp *CategoryImporter) Import(ctx context.Context, r io.Reader) (*Category
 	lineNum := 1 // header is line 1
 
 	var parseErrors []string
+	var parseWarnings []string
 
 	for {
 		lineNum++
@@ -83,9 +85,12 @@ func (imp *CategoryImporter) Import(ctx context.Context, r io.Reader) (*Category
 		if err == io.EOF {
 			break
 		}
-		if err != nil {
+		if err != nil && !errors.Is(err, csv.ErrFieldCount) {
 			parseErrors = append(parseErrors, fmt.Sprintf("line %d: %v", lineNum, err))
 			continue
+		}
+		if errors.Is(err, csv.ErrFieldCount) {
+			parseWarnings = append(parseWarnings, fmt.Sprintf("line %d: %v", lineNum, err))
 		}
 
 		name := ""
@@ -127,6 +132,7 @@ func (imp *CategoryImporter) Import(ctx context.Context, r io.Reader) (*Category
 	result := &CategoryResult{}
 	result.Errors = append(result.Errors, parseErrors...)
 	result.Skipped += len(parseErrors)
+	result.Errors = append(result.Errors, parseWarnings...)
 
 	// Validate required fields and collect valid rows.
 	var validRows []catRow
@@ -157,6 +163,7 @@ func (imp *CategoryImporter) Import(ctx context.Context, r io.Reader) (*Category
 
 	// Resolve parent slugs and upsert.
 	slugToID := make(map[string]string)
+	failedSlugs := make(map[string]struct{})
 
 	for _, slug := range sorted {
 		row := bySlug[slug]
@@ -164,6 +171,12 @@ func (imp *CategoryImporter) Import(ctx context.Context, r io.Reader) (*Category
 		// Resolve parent.
 		var parentID *string
 		if row.parentSlug != "" {
+			if _, failed := failedSlugs[row.parentSlug]; failed {
+				result.Errors = append(result.Errors, fmt.Sprintf("line %d: parent slug %q failed earlier", row.lineNum, row.parentSlug))
+				result.Skipped++
+				failedSlugs[slug] = struct{}{}
+				continue
+			}
 			if pid, ok := slugToID[row.parentSlug]; ok {
 				parentID = &pid
 			} else {
@@ -171,11 +184,13 @@ func (imp *CategoryImporter) Import(ctx context.Context, r io.Reader) (*Category
 				if fErr != nil {
 					result.Errors = append(result.Errors, fmt.Sprintf("line %d: find parent %q: %v", row.lineNum, row.parentSlug, fErr))
 					result.Skipped++
+					failedSlugs[slug] = struct{}{}
 					continue
 				}
 				if parent == nil {
 					result.Errors = append(result.Errors, fmt.Sprintf("line %d: parent slug %q not found", row.lineNum, row.parentSlug))
 					result.Skipped++
+					failedSlugs[slug] = struct{}{}
 					continue
 				}
 				pid := parent.ID
@@ -189,6 +204,7 @@ func (imp *CategoryImporter) Import(ctx context.Context, r io.Reader) (*Category
 		if fErr != nil {
 			result.Errors = append(result.Errors, fmt.Sprintf("line %d: find category: %v", row.lineNum, fErr))
 			result.Skipped++
+			failedSlugs[slug] = struct{}{}
 			continue
 		}
 
@@ -198,10 +214,12 @@ func (imp *CategoryImporter) Import(ctx context.Context, r io.Reader) (*Category
 				if cycle, cErr := imp.isDescendant(ctx, *parentID, existing.ID); cErr != nil {
 					result.Errors = append(result.Errors, fmt.Sprintf("line %d: cycle check: %v", row.lineNum, cErr))
 					result.Skipped++
+					failedSlugs[slug] = struct{}{}
 					continue
 				} else if cycle {
 					result.Errors = append(result.Errors, fmt.Sprintf("line %d: would create cycle by reparenting %q under its descendant %q", row.lineNum, slug, row.parentSlug))
 					result.Skipped++
+					failedSlugs[slug] = struct{}{}
 					continue
 				}
 			}
@@ -211,6 +229,7 @@ func (imp *CategoryImporter) Import(ctx context.Context, r io.Reader) (*Category
 			if uErr := imp.categories.Update(ctx, existing); uErr != nil {
 				result.Errors = append(result.Errors, fmt.Sprintf("line %d: update category: %v", row.lineNum, uErr))
 				result.Skipped++
+				failedSlugs[slug] = struct{}{}
 				continue
 			}
 			slugToID[slug] = existing.ID
@@ -220,6 +239,7 @@ func (imp *CategoryImporter) Import(ctx context.Context, r io.Reader) (*Category
 			if cErr != nil {
 				result.Errors = append(result.Errors, fmt.Sprintf("line %d: new category: %v", row.lineNum, cErr))
 				result.Skipped++
+				failedSlugs[slug] = struct{}{}
 				continue
 			}
 			cat.ParentID = parentID
@@ -227,6 +247,7 @@ func (imp *CategoryImporter) Import(ctx context.Context, r io.Reader) (*Category
 			if crErr := imp.categories.Create(ctx, &cat); crErr != nil {
 				result.Errors = append(result.Errors, fmt.Sprintf("line %d: create category: %v", row.lineNum, crErr))
 				result.Skipped++
+				failedSlugs[slug] = struct{}{}
 				continue
 			}
 			slugToID[slug] = cat.ID

@@ -373,4 +373,63 @@ func TestCategoryImport_ReparentCycle(t *testing.T) {
 	}
 }
 
+func TestCategoryImport_FailedParentCascade(t *testing.T) {
+	// Parent create fails → child should be skipped with "failed earlier" error.
+	repo := newMockCategoryRepo()
+	repo.createErr = fmt.Errorf("db down")
+	imp := importer.NewCategoryImporter(repo)
+
+	input := "name,slug,parent_slug,position\nParent,parent,,0\nChild,child,parent,0\n"
+	result, err := imp.Import(context.Background(), strings.NewReader(input))
+	if err != nil {
+		t.Fatalf("Import() error = %v", err)
+	}
+	if result.Skipped != 2 {
+		t.Errorf("Skipped = %d, want 2 (parent + child)", result.Skipped)
+	}
+	if result.Created != 0 {
+		t.Errorf("Created = %d, want 0", result.Created)
+	}
+	// Child error should mention "failed earlier".
+	foundCascade := false
+	for _, e := range result.Errors {
+		if strings.Contains(e, "failed earlier") {
+			foundCascade = true
+		}
+	}
+	if !foundCascade {
+		t.Errorf("expected cascade error mentioning 'failed earlier', got %v", result.Errors)
+	}
+}
+
+func TestCategoryImport_FieldCountMismatch(t *testing.T) {
+	// Row with fewer fields than header should still be processed (trailing
+	// optional columns get defaults). csv.ErrFieldCount should be non-fatal.
+	repo := newMockCategoryRepo()
+	imp := importer.NewCategoryImporter(repo)
+
+	// Header has 4 columns; data row has only 2 (missing parent_slug and position).
+	input := "name,slug,parent_slug,position\nElectronics,electronics\n"
+	result, err := imp.Import(context.Background(), strings.NewReader(input))
+	if err != nil {
+		t.Fatalf("Import() error = %v", err)
+	}
+	if result.Created != 1 {
+		t.Errorf("Created = %d, want 1", result.Created)
+	}
+	if result.Skipped != 0 {
+		t.Errorf("Skipped = %d, want 0", result.Skipped)
+	}
+	cat := repo.categories["electronics"]
+	if cat == nil {
+		t.Fatal("electronics category not found")
+	}
+	if cat.ParentID != nil {
+		t.Errorf("ParentID = %v, want nil (missing column defaults to empty)", cat.ParentID)
+	}
+	if cat.Position != 0 {
+		t.Errorf("Position = %d, want 0 (missing column defaults to 0)", cat.Position)
+	}
+}
+
 var errTest = fmt.Errorf("test error")
