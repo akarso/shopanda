@@ -154,20 +154,6 @@ func (imp *AttributeImporter) Import(ctx context.Context, r io.Reader) (*Attribu
 			}
 		}
 
-		// If this code was seen before, remove it from any previous group memberships.
-		if _, dup := attrs[code]; dup {
-			for gc, gi := range groups {
-				for i, a := range gi.attrs {
-					if a == code {
-						gi.attrs = append(gi.attrs[:i], gi.attrs[i+1:]...)
-						if len(gi.attrs) == 0 {
-							delete(groups, gc)
-						}
-						break
-					}
-				}
-			}
-		}
 		attrs[code] = attr
 
 		// Collect group membership.

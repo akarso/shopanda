@@ -232,23 +232,24 @@ func TestAttrImport_ShortRow(t *testing.T) {
 	}
 }
 
-func TestAttrImport_DuplicateCodeClearsOldGroup(t *testing.T) {
+func TestAttrImport_DuplicateCodeMultiGroup(t *testing.T) {
 	repo := newMockConfigRepoForAttrImport()
 	imp := importer.NewAttributeImporter(repo)
 
-	// First row puts color in group "old", second row puts color in group "new".
+	// First row puts color in group "a", second row updates attr and adds to group "b".
 	csv := "code,label,type,group,group_label\n" +
-		"color,Color,select,old,Old Group\n" +
-		"color,Colour,select,new,New Group\n"
+		"color,Color,select,a,Group A\n" +
+		"color,Colour,select,b,Group B\n"
 	result, err := imp.Import(context.Background(), strings.NewReader(csv))
 	if err != nil {
 		t.Fatalf("Import: %v", err)
 	}
+	// Later row wins for the attribute definition.
 	if result.Attributes != 1 {
 		t.Errorf("Attributes = %d, want 1", result.Attributes)
 	}
-	// Old group should be gone (was left empty), new group should exist.
-	if result.Groups != 1 {
-		t.Errorf("Groups = %d, want 1", result.Groups)
+	// Both groups should exist — multi-group membership is preserved.
+	if result.Groups != 2 {
+		t.Errorf("Groups = %d, want 2", result.Groups)
 	}
 }
