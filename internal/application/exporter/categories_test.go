@@ -99,12 +99,12 @@ func TestCategoryExport_TreeOrder(t *testing.T) {
 	rootID := "cat-1"
 	childID := "cat-2"
 
-	// Provide categories in flat order (child of child first to test reordering).
+	// Provide categories in shuffled order to exercise reordering.
 	repo := &mockCategoryRepo{
 		categories: []catalog.Category{
-			{ID: "cat-1", Name: "Root", Slug: "root", Position: 0, Meta: map[string]interface{}{}, CreatedAt: now, UpdatedAt: now},
-			{ID: "cat-2", ParentID: &rootID, Name: "Child", Slug: "child", Position: 0, Meta: map[string]interface{}{}, CreatedAt: now, UpdatedAt: now},
 			{ID: "cat-3", ParentID: &childID, Name: "Grandchild", Slug: "grandchild", Position: 0, Meta: map[string]interface{}{}, CreatedAt: now, UpdatedAt: now},
+			{ID: "cat-2", ParentID: &rootID, Name: "Child", Slug: "child", Position: 0, Meta: map[string]interface{}{}, CreatedAt: now, UpdatedAt: now},
+			{ID: "cat-1", Name: "Root", Slug: "root", Position: 0, Meta: map[string]interface{}{}, CreatedAt: now, UpdatedAt: now},
 		},
 	}
 
@@ -162,5 +162,38 @@ func TestCategoryExport_FormulaInjection(t *testing.T) {
 	}
 	if records[1][1] != "'+evil" {
 		t.Errorf("slug = %q, want '+evil (sanitized)", records[1][1])
+	}
+}
+
+func TestCategoryExport_Orphans(t *testing.T) {
+	now := time.Now().UTC()
+	missingParent := "nonexistent"
+	repo := &mockCategoryRepo{
+		categories: []catalog.Category{
+			{ID: "cat-1", Name: "Root", Slug: "root", Position: 0, Meta: map[string]interface{}{}, CreatedAt: now, UpdatedAt: now},
+			{ID: "cat-2", ParentID: &missingParent, Name: "Orphan", Slug: "orphan", Position: 0, Meta: map[string]interface{}{}, CreatedAt: now, UpdatedAt: now},
+		},
+	}
+
+	exp := exporter.NewCategoryExporter(repo)
+	var buf bytes.Buffer
+	result, err := exp.Export(context.Background(), &buf)
+	if err != nil {
+		t.Fatalf("Export() error = %v", err)
+	}
+	if result.Entries != 2 {
+		t.Errorf("Entries = %d, want 2", result.Entries)
+	}
+	if result.Orphans != 1 {
+		t.Errorf("Orphans = %d, want 1", result.Orphans)
+	}
+
+	records := parseCSV(t, &buf)
+	// Root first, orphan appended at end.
+	if records[1][1] != "root" {
+		t.Errorf("row 1 slug = %q, want root", records[1][1])
+	}
+	if records[2][1] != "orphan" {
+		t.Errorf("row 2 slug = %q, want orphan", records[2][1])
 	}
 }

@@ -1038,5 +1038,11 @@ func runExportCategories(cfg *config.Config, log logger.Logger) error {
 		"entries": result.Entries,
 	})
 
+	if result.Orphans > 0 {
+		log.Warn("export.categories.orphans", map[string]interface{}{
+			"count": result.Orphans,
+		})
+	}
+
 	return nil
 }

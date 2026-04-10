@@ -293,4 +293,28 @@ func TestCategoryImport_ExternalParent(t *testing.T) {
 	}
 }
 
+func TestCategoryImport_CSVParseError(t *testing.T) {
+	// Malformed row: wrong number of fields with quote error.
+	input := "name,slug\nElectronics,electronics\n\"broken\n"
+	repo := newMockCategoryRepo()
+	imp := importer.NewCategoryImporter(repo)
+
+	result, err := imp.Import(context.Background(), strings.NewReader(input))
+	if err != nil {
+		t.Fatalf("Import() error = %v", err)
+	}
+	if result.Created != 1 {
+		t.Errorf("Created = %d, want 1", result.Created)
+	}
+	if result.Skipped != 1 {
+		t.Errorf("Skipped = %d, want 1", result.Skipped)
+	}
+	if len(result.Errors) != 1 {
+		t.Fatalf("Errors count = %d, want 1", len(result.Errors))
+	}
+	if !strings.Contains(result.Errors[0], "line 3") {
+		t.Errorf("error = %q, want mention of line 3", result.Errors[0])
+	}
+}
+
 var errTest = fmt.Errorf("test error")

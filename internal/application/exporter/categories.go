@@ -13,6 +13,7 @@ import (
 // CategoryResult holds the summary of a category export run.
 type CategoryResult struct {
 	Entries int
+	Orphans int
 }
 
 // CategoryExporter writes categories to CSV.
@@ -42,7 +43,7 @@ func (exp *CategoryExporter) Export(ctx context.Context, w io.Writer) (*Category
 	}
 
 	// Build tree order (parents before children).
-	sorted := catTreeOrder(all)
+	sorted, orphans := catTreeOrder(all)
 
 	writer := csv.NewWriter(w)
 
@@ -77,13 +78,17 @@ func (exp *CategoryExporter) Export(ctx context.Context, w io.Writer) (*Category
 		return nil, fmt.Errorf("category export: flush csv: %w", err)
 	}
 
+	result.Orphans = orphans
+
 	return result, nil
 }
 
 // catTreeOrder returns categories sorted so parents come before children.
 // Within the same parent, categories keep their original ordering
 // (position asc, name asc as returned by FindAll).
-func catTreeOrder(all []catalog.Category) []catalog.Category {
+// The second return value is the number of orphan categories whose ParentID
+// references a non-existent parent; these are appended at the end.
+func catTreeOrder(all []catalog.Category) ([]catalog.Category, int) {
 	children := make(map[string][]int) // parentID → indices
 	var rootIndices []int
 
@@ -96,14 +101,25 @@ func catTreeOrder(all []catalog.Category) []catalog.Category {
 	}
 
 	result := make([]catalog.Category, 0, len(all))
+	visited := make([]bool, len(all))
 	var walk func(indices []int)
 	walk = func(indices []int) {
 		for _, i := range indices {
 			result = append(result, all[i])
+			visited[i] = true
 			walk(children[all[i].ID])
 		}
 	}
 	walk(rootIndices)
 
-	return result
+	// Append orphans (categories whose parent_id references a non-existent ID).
+	orphans := 0
+	for i, v := range visited {
+		if !v {
+			result = append(result, all[i])
+			orphans++
+		}
+	}
+
+	return result, orphans
 }

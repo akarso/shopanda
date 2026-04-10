@@ -75,6 +75,8 @@ func (imp *CategoryImporter) Import(ctx context.Context, r io.Reader) (*Category
 	var rows []catRow
 	lineNum := 1 // header is line 1
 
+	var parseErrors []string
+
 	for {
 		lineNum++
 		record, err := reader.Read()
@@ -82,7 +84,7 @@ func (imp *CategoryImporter) Import(ctx context.Context, r io.Reader) (*Category
 			break
 		}
 		if err != nil {
-			rows = append(rows, catRow{lineNum: lineNum})
+			parseErrors = append(parseErrors, fmt.Sprintf("line %d: %v", lineNum, err))
 			continue
 		}
 
@@ -120,6 +122,8 @@ func (imp *CategoryImporter) Import(ctx context.Context, r io.Reader) (*Category
 	}
 
 	result := &CategoryResult{}
+	result.Errors = append(result.Errors, parseErrors...)
+	result.Skipped += len(parseErrors)
 
 	// Validate required fields and collect valid rows.
 	var validRows []catRow
