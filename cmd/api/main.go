@@ -1231,7 +1231,11 @@ func setupWorker(conn *sql.DB, cfg *config.Config, log logger.Logger) (*jobs.Wor
 	default:
 		return nil, nil, nil, fmt.Errorf("unsupported cache.driver: %s", cfg.Cache.Driver)
 	}
-	jobWorker.Register(cacheApp.NewCleanupHandler(appCache.(cacheApp.ExpiredDeleter), log))
+	ed, ok := appCache.(cacheApp.ExpiredDeleter)
+	if !ok {
+		return nil, nil, nil, fmt.Errorf("cache driver %q does not support expired entry cleanup", cfg.Cache.Driver)
+	}
+	jobWorker.Register(cacheApp.NewCleanupHandler(ed, log))
 
 	return jobWorker, jobQueue, appCache, nil
 }
