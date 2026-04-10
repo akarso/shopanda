@@ -55,13 +55,16 @@ func TestDefaultCategories(t *testing.T) {
 	if len(defaultCategories) != 2 {
 		t.Fatalf("expected 2 default categories, got %d", len(defaultCategories))
 	}
-	slugs := map[string]bool{"electronics": true, "clothing": true}
+	seen := make(map[string]int)
 	for _, c := range defaultCategories {
-		if !slugs[c.Slug] {
-			t.Errorf("unexpected category slug %q", c.Slug)
-		}
+		seen[c.Slug]++
 		if c.Name == "" {
 			t.Errorf("category with slug %q has empty name", c.Slug)
+		}
+	}
+	for _, slug := range []string{"electronics", "clothing"} {
+		if n := seen[slug]; n != 1 {
+			t.Errorf("expected slug %q exactly once, got %d", slug, n)
 		}
 	}
 }
