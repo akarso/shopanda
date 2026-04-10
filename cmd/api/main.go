@@ -48,6 +48,7 @@ import (
 	"github.com/akarso/shopanda/internal/platform/migrate"
 
 	"github.com/akarso/shopanda/internal/platform/plugin"
+	"github.com/akarso/shopanda/internal/seed"
 
 	shophttp "github.com/akarso/shopanda/internal/interfaces/http"
 
@@ -104,6 +105,8 @@ func run() error {
 			return runImportPrices(cfg, log)
 		case "export:prices":
 			return runExportPrices(cfg, log)
+		case "seed":
+			return runSeed(cfg, log)
 		case "scheduler":
 			return runScheduler(cfg, log)
 		case "config:export":
@@ -1147,6 +1150,39 @@ func runExportPrices(cfg *config.Config, log logger.Logger) error {
 
 	log.Info("export.prices.complete", map[string]interface{}{
 		"entries": result.Entries,
+	})
+
+	return nil
+}
+
+func runSeed(cfg *config.Config, log logger.Logger) error {
+	dsn := config.DatabaseDSN(cfg)
+	conn, err := db.Open(dsn)
+	if err != nil {
+		return fmt.Errorf("database: %w", err)
+	}
+	defer conn.Close()
+
+	log.Info("seed.start", nil)
+
+	reg := seed.NewRegistry()
+
+	// Seeders are registered by PR-079 (core seed data).
+	// Plugins can register additional seeders here.
+
+	deps := seed.Deps{
+		DB:     conn,
+		Logger: log,
+	}
+
+	result, err := reg.Run(context.Background(), deps)
+	if err != nil {
+		return fmt.Errorf("seed: %w", err)
+	}
+
+	log.Info("seed.complete", map[string]interface{}{
+		"executed": result.Executed,
+		"skipped":  result.Skipped,
 	})
 
 	return nil

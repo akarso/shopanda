@@ -81,6 +81,7 @@ C4Component
             Component(jwtPkg, "JWT", "Go, crypto", "Token issuing and verification")
             Component(configPkg, "Config", "Go, yaml.v3", "YAML configuration loading")
             Component(loggerPkg, "Logger", "Go", "Structured logging (info, error, metadata)")
+            Component(seedRegistry, "SeedRegistry", "Go", "Ordered seeder framework: register, run sequentially, idempotent")
         }
     }
 
@@ -133,6 +134,7 @@ C4Component
     Rel(catExporter, postgresRepos, "Reads categories")
     Rel(priceImporter, postgresRepos, "Looks up variants by SKU, upserts prices")
     Rel(priceExporter, postgresRepos, "Lists prices, resolves variant SKUs")
+    Rel(seedRegistry, postgresRepos, "Seeders access repos via Deps.DB")
     Rel(productSchemaRegistration, adminRegistry, "Registers product form + grid")
     Rel(categoryHandler, postgresRepos, "Category + product queries")
     Rel(searchHandler, postgresSearch, "Delegates search queries")
