@@ -975,6 +975,10 @@ func runImportCategories(cfg *config.Config, log logger.Logger) error {
 		return fmt.Errorf("import categories: %w", err)
 	}
 
+	for _, w := range result.Warnings {
+		log.Warn("import.categories.row_warning", map[string]interface{}{"warning": w})
+	}
+
 	for _, e := range result.Errors {
 		log.Warn("import.categories.row_error", map[string]interface{}{"error": e})
 	}

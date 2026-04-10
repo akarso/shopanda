@@ -15,10 +15,11 @@ import (
 
 // CategoryResult holds the summary of a category import run.
 type CategoryResult struct {
-	Created int
-	Updated int
-	Skipped int
-	Errors  []string
+	Created  int
+	Updated  int
+	Skipped  int
+	Errors   []string
+	Warnings []string
 }
 
 // CategoryImporter imports categories from CSV.
@@ -132,7 +133,7 @@ func (imp *CategoryImporter) Import(ctx context.Context, r io.Reader) (*Category
 	result := &CategoryResult{}
 	result.Errors = append(result.Errors, parseErrors...)
 	result.Skipped += len(parseErrors)
-	result.Errors = append(result.Errors, parseWarnings...)
+	result.Warnings = append(result.Warnings, parseWarnings...)
 
 	// Validate required fields and collect valid rows.
 	var validRows []catRow

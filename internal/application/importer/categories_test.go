@@ -420,6 +420,12 @@ func TestCategoryImport_FieldCountMismatch(t *testing.T) {
 	if result.Skipped != 0 {
 		t.Errorf("Skipped = %d, want 0", result.Skipped)
 	}
+	if len(result.Errors) != 0 {
+		t.Errorf("Errors = %v, want none (field count mismatch is a warning)", result.Errors)
+	}
+	if len(result.Warnings) != 1 {
+		t.Errorf("Warnings count = %d, want 1", len(result.Warnings))
+	}
 	cat := repo.categories["electronics"]
 	if cat == nil {
 		t.Fatal("electronics category not found")
