@@ -61,6 +61,7 @@ func (imp *PriceImporter) Import(ctx context.Context, r io.Reader) (*PriceResult
 	}
 
 	result := &PriceResult{}
+	skuCache := make(map[string]*catalog.Variant)
 	lineNum := 1 // header is line 1
 
 	for {
@@ -102,9 +103,13 @@ func (imp *PriceImporter) Import(ctx context.Context, r io.Reader) (*PriceResult
 			continue
 		}
 
-		variant, err := imp.variants.FindBySKU(ctx, sku)
-		if err != nil {
-			return nil, fmt.Errorf("price import: find variant by sku %q: %w", sku, err)
+		variant, cached := skuCache[sku]
+		if !cached {
+			variant, err = imp.variants.FindBySKU(ctx, sku)
+			if err != nil {
+				return nil, fmt.Errorf("price import: find variant by sku %q: %w", sku, err)
+			}
+			skuCache[sku] = variant
 		}
 		if variant == nil {
 			result.Errors = append(result.Errors, fmt.Sprintf("line %d: unknown sku %q", lineNum, sku))

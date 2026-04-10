@@ -311,3 +311,50 @@ func TestPriceImport_BOMHeader(t *testing.T) {
 		t.Errorf("Skipped = %d, want 0", result.Skipped)
 	}
 }
+
+func TestPriceImport_SKUCaching(t *testing.T) {
+	// Same SKU with two currencies — FindBySKU should be called only once.
+	variants := &countingVariantRepoForPrice{
+		variants: map[string]*catalog.Variant{
+			"SKU-001": {ID: "v1", SKU: "SKU-001"},
+		},
+	}
+	prices := newMockPriceRepoForImport()
+	imp := importer.NewPriceImporter(variants, prices)
+
+	input := "sku,currency,amount\nSKU-001,EUR,1999\nSKU-001,USD,2199\nSKU-001,GBP,2499\n"
+	result, err := imp.Import(context.Background(), strings.NewReader(input))
+	if err != nil {
+		t.Fatalf("Import() error = %v", err)
+	}
+	if result.Created != 3 {
+		t.Errorf("Created = %d, want 3", result.Created)
+	}
+	if variants.findBySKUCalls != 1 {
+		t.Errorf("FindBySKU calls = %d, want 1 (should be cached)", variants.findBySKUCalls)
+	}
+}
+
+type countingVariantRepoForPrice struct {
+	variants       map[string]*catalog.Variant
+	findBySKUCalls int
+}
+
+func (m *countingVariantRepoForPrice) FindByID(_ context.Context, id string) (*catalog.Variant, error) {
+	for _, v := range m.variants {
+		if v.ID == id {
+			return v, nil
+		}
+	}
+	return nil, nil
+}
+func (m *countingVariantRepoForPrice) FindBySKU(_ context.Context, sku string) (*catalog.Variant, error) {
+	m.findBySKUCalls++
+	return m.variants[sku], nil
+}
+func (m *countingVariantRepoForPrice) ListByProductID(_ context.Context, _ string, _, _ int) ([]catalog.Variant, error) {
+	return nil, nil
+}
+func (m *countingVariantRepoForPrice) Create(_ context.Context, _ *catalog.Variant) error { return nil }
+func (m *countingVariantRepoForPrice) Update(_ context.Context, _ *catalog.Variant) error { return nil }
+func (m *countingVariantRepoForPrice) WithTx(_ *sql.Tx) catalog.VariantRepository         { return m }
