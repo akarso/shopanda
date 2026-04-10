@@ -1,0 +1,208 @@
+package seed
+
+import (
+	"context"
+
+	"github.com/akarso/shopanda/internal/domain/catalog"
+	"github.com/akarso/shopanda/internal/domain/inventory"
+	"github.com/akarso/shopanda/internal/domain/pricing"
+	"github.com/akarso/shopanda/internal/domain/shared"
+	"github.com/akarso/shopanda/internal/infrastructure/postgres"
+	"github.com/akarso/shopanda/internal/platform/id"
+)
+
+type seedCategory struct {
+	Name string
+	Slug string
+}
+
+type seedVariant struct {
+	SKU      string
+	Name     string
+	Amount   int64
+	Currency string
+	Stock    int
+}
+
+type seedProduct struct {
+	Name     string
+	Slug     string
+	Desc     string
+	Variants []seedVariant
+}
+
+var defaultCategories = []seedCategory{
+	{Name: "Electronics", Slug: "electronics"},
+	{Name: "Clothing", Slug: "clothing"},
+}
+
+var defaultProducts = []seedProduct{
+	{
+		Name: "Wireless Mouse",
+		Slug: "wireless-mouse",
+		Desc: "Ergonomic wireless mouse with USB receiver.",
+		Variants: []seedVariant{
+			{SKU: "MOUSE-BLK", Name: "Black", Amount: 2999, Currency: "EUR", Stock: 50},
+		},
+	},
+	{
+		Name: "USB-C Cable",
+		Slug: "usb-c-cable",
+		Desc: "Durable braided USB-C to USB-C cable, 1 meter.",
+		Variants: []seedVariant{
+			{SKU: "USBC-1M", Name: "1M", Amount: 999, Currency: "EUR", Stock: 200},
+		},
+	},
+	{
+		Name: "Cotton T-Shirt",
+		Slug: "cotton-tshirt",
+		Desc: "Plain cotton t-shirt, available in multiple sizes.",
+		Variants: []seedVariant{
+			{SKU: "TSHIRT-M", Name: "Medium", Amount: 1999, Currency: "EUR", Stock: 100},
+			{SKU: "TSHIRT-L", Name: "Large", Amount: 1999, Currency: "EUR", Stock: 100},
+		},
+	},
+}
+
+// CatalogSeeder creates the default categories, products, variants, prices,
+// and stock entries.
+type CatalogSeeder struct{}
+
+func (s *CatalogSeeder) Name() string { return "catalog" }
+
+func (s *CatalogSeeder) Seed(ctx context.Context, deps Deps) error {
+	catRepo := postgres.NewCategoryRepo(deps.DB)
+	prodRepo := postgres.NewProductRepo(deps.DB)
+	variantRepo := postgres.NewVariantRepo(deps.DB)
+	priceRepo := postgres.NewPriceRepo(deps.DB)
+	stockRepo := postgres.NewStockRepo(deps.DB)
+
+	if err := s.seedCategories(ctx, deps, catRepo); err != nil {
+		return err
+	}
+	return s.seedProducts(ctx, deps, prodRepo, variantRepo, priceRepo, stockRepo)
+}
+
+func (s *CatalogSeeder) seedCategories(ctx context.Context, deps Deps, repo *postgres.CategoryRepo) error {
+	for _, sc := range defaultCategories {
+		existing, err := repo.FindBySlug(ctx, sc.Slug)
+		if err != nil {
+			return err
+		}
+		if existing != nil {
+			deps.Logger.Info("seed.category.skip", map[string]interface{}{
+				"slug": sc.Slug,
+			})
+			continue
+		}
+
+		c, err := catalog.NewCategory(id.New(), sc.Name, sc.Slug)
+		if err != nil {
+			return err
+		}
+		if err := repo.Create(ctx, &c); err != nil {
+			return err
+		}
+		deps.Logger.Info("seed.category.created", map[string]interface{}{
+			"slug": sc.Slug,
+		})
+	}
+	return nil
+}
+
+func (s *CatalogSeeder) seedProducts(
+	ctx context.Context,
+	deps Deps,
+	prodRepo *postgres.ProductRepo,
+	variantRepo *postgres.VariantRepo,
+	priceRepo *postgres.PriceRepo,
+	stockRepo *postgres.StockRepo,
+) error {
+	for _, sp := range defaultProducts {
+		var productID string
+
+		existing, err := prodRepo.FindBySlug(ctx, sp.Slug)
+		if err != nil {
+			return err
+		}
+		if existing != nil {
+			productID = existing.ID
+			deps.Logger.Info("seed.product.skip", map[string]interface{}{
+				"slug": sp.Slug,
+			})
+		} else {
+			p, err := catalog.NewProduct(id.New(), sp.Name, sp.Slug)
+			if err != nil {
+				return err
+			}
+			p.Description = sp.Desc
+			p.Status = catalog.StatusActive
+
+			if err := prodRepo.Create(ctx, &p); err != nil {
+				return err
+			}
+			productID = p.ID
+			deps.Logger.Info("seed.product.created", map[string]interface{}{
+				"slug": sp.Slug,
+			})
+		}
+
+		for _, sv := range sp.Variants {
+			variantID, err := s.ensureVariant(ctx, deps, variantRepo, productID, sv)
+			if err != nil {
+				return err
+			}
+
+			money := shared.MustNewMoney(sv.Amount, sv.Currency)
+			price, err := pricing.NewPrice(id.New(), variantID, money)
+			if err != nil {
+				return err
+			}
+			if err := priceRepo.Upsert(ctx, &price); err != nil {
+				return err
+			}
+
+			stock, err := inventory.NewStockEntry(variantID, sv.Stock)
+			if err != nil {
+				return err
+			}
+			if err := stockRepo.SetStock(ctx, &stock); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+func (s *CatalogSeeder) ensureVariant(
+	ctx context.Context,
+	deps Deps,
+	repo *postgres.VariantRepo,
+	productID string,
+	sv seedVariant,
+) (string, error) {
+	existing, err := repo.FindBySKU(ctx, sv.SKU)
+	if err != nil {
+		return "", err
+	}
+	if existing != nil {
+		deps.Logger.Info("seed.variant.skip", map[string]interface{}{
+			"sku": sv.SKU,
+		})
+		return existing.ID, nil
+	}
+
+	v, err := catalog.NewVariant(id.New(), productID, sv.SKU)
+	if err != nil {
+		return "", err
+	}
+	v.Name = sv.Name
+
+	if err := repo.Create(ctx, &v); err != nil {
+		return "", err
+	}
+	deps.Logger.Info("seed.variant.created", map[string]interface{}{
+		"sku": sv.SKU,
+	})
+	return v.ID, nil
+}

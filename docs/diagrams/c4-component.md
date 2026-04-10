@@ -82,6 +82,9 @@ C4Component
             Component(configPkg, "Config", "Go, yaml.v3", "YAML configuration loading")
             Component(loggerPkg, "Logger", "Go", "Structured logging (info, error, metadata)")
             Component(seedRegistry, "SeedRegistry", "Go", "Ordered seeder framework: register, run sequentially, idempotent")
+            Component(adminSeeder, "AdminSeeder", "Go", "Seeds default admin user (admin@example.com)")
+            Component(configSeeder, "ConfigSeeder", "Go", "Seeds store config (default currency EUR)")
+            Component(catalogSeeder, "CatalogSeeder", "Go", "Seeds categories, products, variants, prices, stock")
         }
     }
 
@@ -135,6 +138,9 @@ C4Component
     Rel(priceImporter, postgresRepos, "Looks up variants by SKU, upserts prices")
     Rel(priceExporter, postgresRepos, "Lists prices, resolves variant SKUs")
     Rel(seedRegistry, postgresRepos, "Seeders access repos via Deps.DB")
+    Rel(adminSeeder, seedRegistry, "Registered as seeder")
+    Rel(configSeeder, seedRegistry, "Registered as seeder")
+    Rel(catalogSeeder, seedRegistry, "Registered as seeder")
     Rel(productSchemaRegistration, adminRegistry, "Registers product form + grid")
     Rel(categoryHandler, postgresRepos, "Category + product queries")
     Rel(searchHandler, postgresSearch, "Delegates search queries")
