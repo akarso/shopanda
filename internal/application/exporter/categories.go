@@ -92,6 +92,12 @@ func catTreeOrder(all []catalog.Category) ([]catalog.Category, int) {
 	children := make(map[string][]int) // parentID → indices
 	var rootIndices []int
 
+	// Build ID set for orphan detection.
+	idSet := make(map[string]struct{}, len(all))
+	for _, c := range all {
+		idSet[c.ID] = struct{}{}
+	}
+
 	for i, c := range all {
 		if c.ParentID == nil {
 			rootIndices = append(rootIndices, i)
@@ -100,19 +106,33 @@ func catTreeOrder(all []catalog.Category) ([]catalog.Category, int) {
 		}
 	}
 
+	// Detect orphan roots: nodes whose ParentID is not in the ID set.
+	var orphanRoots []int
+	for i, c := range all {
+		if c.ParentID != nil {
+			if _, exists := idSet[*c.ParentID]; !exists {
+				orphanRoots = append(orphanRoots, i)
+			}
+		}
+	}
+
 	result := make([]catalog.Category, 0, len(all))
 	visited := make([]bool, len(all))
 	var walk func(indices []int)
 	walk = func(indices []int) {
 		for _, i := range indices {
+			if visited[i] {
+				continue
+			}
 			result = append(result, all[i])
 			visited[i] = true
 			walk(children[all[i].ID])
 		}
 	}
 	walk(rootIndices)
+	walk(orphanRoots)
 
-	// Append orphans (categories whose parent_id references a non-existent ID).
+	// Append any remaining unvisited nodes (should not happen, but safety net).
 	orphans := 0
 	for i, v := range visited {
 		if !v {
@@ -120,6 +140,7 @@ func catTreeOrder(all []catalog.Category) ([]catalog.Category, int) {
 			orphans++
 		}
 	}
+	orphans += len(orphanRoots)
 
 	return result, orphans
 }

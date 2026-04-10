@@ -317,4 +317,60 @@ func TestCategoryImport_CSVParseError(t *testing.T) {
 	}
 }
 
+func TestCategoryImport_InvalidPosition(t *testing.T) {
+	input := "name,slug,position\nElectronics,electronics,abc\n"
+	repo := newMockCategoryRepo()
+	imp := importer.NewCategoryImporter(repo)
+
+	result, err := imp.Import(context.Background(), strings.NewReader(input))
+	if err != nil {
+		t.Fatalf("Import() error = %v", err)
+	}
+	if result.Created != 0 {
+		t.Errorf("Created = %d, want 0", result.Created)
+	}
+	if result.Skipped != 1 {
+		t.Errorf("Skipped = %d, want 1", result.Skipped)
+	}
+	if len(result.Errors) != 1 {
+		t.Fatalf("Errors count = %d, want 1", len(result.Errors))
+	}
+	if !strings.Contains(result.Errors[0], "invalid position") {
+		t.Errorf("error = %q, want mention of invalid position", result.Errors[0])
+	}
+}
+
+func TestCategoryImport_ReparentCycle(t *testing.T) {
+	// Set up existing tree: root → child.
+	now := time.Now().UTC()
+	rootID := "root-1"
+	root := catalog.NewCategoryFromDB("root-1", nil, "Root", "root", 0, nil, now, now)
+	child := catalog.NewCategoryFromDB("child-1", &rootID, "Child", "child", 0, nil, now, now)
+
+	repo := newMockCategoryRepo()
+	repo.categories["root"] = root
+	repo.categories["child"] = child
+
+	// Try to reparent root under child → cycle.
+	input := "name,slug,parent_slug\nRoot,root,child\n"
+	imp := importer.NewCategoryImporter(repo)
+
+	result, err := imp.Import(context.Background(), strings.NewReader(input))
+	if err != nil {
+		t.Fatalf("Import() error = %v", err)
+	}
+	if result.Updated != 0 {
+		t.Errorf("Updated = %d, want 0 (cycle should be rejected)", result.Updated)
+	}
+	if result.Skipped != 1 {
+		t.Errorf("Skipped = %d, want 1", result.Skipped)
+	}
+	if len(result.Errors) != 1 {
+		t.Fatalf("Errors count = %d, want 1", len(result.Errors))
+	}
+	if !strings.Contains(result.Errors[0], "cycle") {
+		t.Errorf("error = %q, want mention of cycle", result.Errors[0])
+	}
+}
+
 var errTest = fmt.Errorf("test error")

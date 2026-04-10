@@ -197,3 +197,39 @@ func TestCategoryExport_Orphans(t *testing.T) {
 		t.Errorf("row 2 slug = %q, want orphan", records[2][1])
 	}
 }
+
+func TestCategoryExport_OrphanSubtree(t *testing.T) {
+	now := time.Now().UTC()
+	missingParent := "nonexistent"
+	orphanID := "cat-2"
+	// child-of-orphan provided before orphan to test reordering.
+	repo := &mockCategoryRepo{
+		categories: []catalog.Category{
+			{ID: "cat-1", Name: "Root", Slug: "root", Position: 0, Meta: map[string]interface{}{}, CreatedAt: now, UpdatedAt: now},
+			{ID: "cat-3", ParentID: &orphanID, Name: "Child of Orphan", Slug: "child-of-orphan", Position: 0, Meta: map[string]interface{}{}, CreatedAt: now, UpdatedAt: now},
+			{ID: "cat-2", ParentID: &missingParent, Name: "Orphan", Slug: "orphan", Position: 0, Meta: map[string]interface{}{}, CreatedAt: now, UpdatedAt: now},
+		},
+	}
+
+	exp := exporter.NewCategoryExporter(repo)
+	var buf bytes.Buffer
+	result, err := exp.Export(context.Background(), &buf)
+	if err != nil {
+		t.Fatalf("Export() error = %v", err)
+	}
+	if result.Entries != 3 {
+		t.Errorf("Entries = %d, want 3", result.Entries)
+	}
+
+	records := parseCSV(t, &buf)
+	// Root first, then orphan parent, then orphan child.
+	if records[1][1] != "root" {
+		t.Errorf("row 1 slug = %q, want root", records[1][1])
+	}
+	if records[2][1] != "orphan" {
+		t.Errorf("row 2 slug = %q, want orphan (orphan parent before child)", records[2][1])
+	}
+	if records[3][1] != "child-of-orphan" {
+		t.Errorf("row 3 slug = %q, want child-of-orphan", records[3][1])
+	}
+}

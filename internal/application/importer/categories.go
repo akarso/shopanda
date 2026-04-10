@@ -106,9 +106,12 @@ func (imp *CategoryImporter) Import(ctx context.Context, r io.Reader) (*Category
 		if hasPosition && positionIdx < len(record) {
 			posStr := strings.TrimSpace(record[positionIdx])
 			if posStr != "" {
-				if p, pErr := strconv.Atoi(posStr); pErr == nil {
-					position = p
+				p, pErr := strconv.Atoi(posStr)
+				if pErr != nil {
+					parseErrors = append(parseErrors, fmt.Sprintf("line %d: invalid position %q", lineNum, posStr))
+					continue
 				}
+				position = p
 			}
 		}
 
@@ -190,6 +193,18 @@ func (imp *CategoryImporter) Import(ctx context.Context, r io.Reader) (*Category
 		}
 
 		if existing != nil {
+			// Detect cycle: ensure the new parent is not a descendant of this category.
+			if parentID != nil {
+				if cycle, cErr := imp.isDescendant(ctx, *parentID, existing.ID); cErr != nil {
+					result.Errors = append(result.Errors, fmt.Sprintf("line %d: cycle check: %v", row.lineNum, cErr))
+					result.Skipped++
+					continue
+				} else if cycle {
+					result.Errors = append(result.Errors, fmt.Sprintf("line %d: would create cycle by reparenting %q under its descendant %q", row.lineNum, slug, row.parentSlug))
+					result.Skipped++
+					continue
+				}
+			}
 			existing.Name = row.name
 			existing.ParentID = parentID
 			existing.Position = row.position
@@ -270,4 +285,30 @@ func catTopoSort(order []string, bySlug map[string]catRow) ([]string, error) {
 	}
 
 	return sorted, nil
+}
+
+// isDescendant walks the parent chain starting from startID and returns true
+// if it encounters targetID, indicating that targetID is an ancestor of startID
+// (or they are the same). This prevents creating cycles when reparenting.
+func (imp *CategoryImporter) isDescendant(ctx context.Context, startID, targetID string) (bool, error) {
+	seen := make(map[string]struct{})
+	cur := startID
+	for {
+		if cur == targetID {
+			return true, nil
+		}
+		if _, ok := seen[cur]; ok {
+			return false, nil // existing cycle in DB, stop
+		}
+		seen[cur] = struct{}{}
+
+		cat, err := imp.categories.FindByID(ctx, cur)
+		if err != nil {
+			return false, err
+		}
+		if cat == nil || cat.ParentID == nil {
+			return false, nil
+		}
+		cur = *cat.ParentID
+	}
 }
