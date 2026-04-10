@@ -56,7 +56,7 @@ C4Component
         }
 
         Boundary(infrastructure, "Infrastructure Layer (Adapters)") {
-            Component(postgresRepos, "PostgreSQL Repositories", "Go, lib/pq", "13 repo implementations: Product, Variant, Price, Cart, Order, Customer, Stock, Reservation, Payment, Shipping, Category, Collection, ResetToken")
+            Component(postgresRepos, "PostgreSQL Repositories", "Go, lib/pq", "14 repo implementations: Product, Variant, Price, Cart, Order, Customer, Stock, Reservation, Payment, Shipping, Category, Collection, ResetToken, TaxRate")
             Component(postgresSearch, "PostgresSearchEngine", "Go, tsvector", "Full-text search via PostgreSQL tsvector, filters, facets")
             Component(postgresJobQueue, "PostgresJobQueue", "Go, lib/pq", "Job queue with FOR UPDATE SKIP LOCKED dequeue, retry logic")
             Component(manualPay, "ManualPayProvider", "Go", "Offline payment processing")
@@ -73,6 +73,7 @@ C4Component
             Component(adminRegistry, "AdminSchemaRegistry", "Go", "In-memory registry of Form and Grid schemas; plugins append fields, columns, actions")
             Component(attributeRegistry, "AttributeRegistry", "Go", "In-memory registry of Attribute and AttributeGroup; typed validation of product attribute values")
             Component(themeEngine, "ThemeEngine", "Go, html/template", "Loads theme templates with layout support; renders pages via Render(name, data)")
+            Component(taxDomain, "TaxDomain", "Go", "TaxClass, TaxRate, TaxMode, Calculate — country-based VAT rate lookup and tax amount computation")
         }
 
         Boundary(platform, "Platform Layer (Cross-Cutting)") {
@@ -148,6 +149,7 @@ C4Component
     Rel(schemaHandler, adminRegistry, "Reads form and grid schemas")
     Rel(mediaService, localFSStorage, "Saves files")
     Rel(mediaService, postgresRepos, "Persists asset records")
+    Rel(taxDomain, postgresRepos, "Tax rate queries")
 
     Rel(postgresRepos, postgres, "SQL queries", "lib/pq")
     Rel(postgresSearch, postgres, "Full-text search queries", "lib/pq")
