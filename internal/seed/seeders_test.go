@@ -67,8 +67,8 @@ func TestDefaultCategories(t *testing.T) {
 }
 
 func TestDefaultProducts(t *testing.T) {
-	if len(defaultProducts) < 2 || len(defaultProducts) > 5 {
-		t.Fatalf("expected 2-5 default products, got %d", len(defaultProducts))
+	if len(defaultProducts) != 3 {
+		t.Fatalf("expected 3 default products, got %d", len(defaultProducts))
 	}
 
 	skus := make(map[string]bool)

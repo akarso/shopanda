@@ -2,6 +2,7 @@ package seed
 
 import (
 	"context"
+	"fmt"
 
 	"github.com/akarso/shopanda/internal/domain/catalog"
 	"github.com/akarso/shopanda/internal/domain/inventory"
@@ -153,7 +154,10 @@ func (s *CatalogSeeder) seedProducts(
 				return err
 			}
 
-			money := shared.MustNewMoney(sv.Amount, sv.Currency)
+			money, err := shared.NewMoney(sv.Amount, sv.Currency)
+			if err != nil {
+				return fmt.Errorf("seed: invalid money for variant %q: %w", sv.SKU, err)
+			}
 			price, err := pricing.NewPrice(id.New(), variantID, money)
 			if err != nil {
 				return err
@@ -186,10 +190,18 @@ func (s *CatalogSeeder) ensureVariant(
 		return "", err
 	}
 	if existing != nil {
-		deps.Logger.Info("seed.variant.skip", map[string]interface{}{
-			"sku": sv.SKU,
-		})
-		return existing.ID, nil
+		if existing.ProductID != productID {
+			deps.Logger.Warn("seed.variant.sku_conflict", map[string]interface{}{
+				"sku":                 sv.SKU,
+				"expected_product_id": productID,
+				"actual_product_id":   existing.ProductID,
+			})
+		} else {
+			deps.Logger.Info("seed.variant.skip", map[string]interface{}{
+				"sku": sv.SKU,
+			})
+			return existing.ID, nil
+		}
 	}
 
 	v, err := catalog.NewVariant(id.New(), productID, sv.SKU)
