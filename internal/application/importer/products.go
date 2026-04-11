@@ -268,7 +268,9 @@ func (imp *ProductImporter) Import(ctx context.Context, r io.Reader) (*Result, e
 			txProducts, ok1 := imp.products.(txProductRepo)
 			txVariants, ok2 := imp.variants.(txVariantRepo)
 			if !ok1 || !ok2 {
-				tx.Rollback()
+				if rbErr := tx.Rollback(); rbErr != nil {
+					return result, fmt.Errorf("import: repos do not support WithTx (products=%t, variants=%t); rollback: %w", ok1, ok2, rbErr)
+				}
 				return result, fmt.Errorf("import: txStarter provided but repos do not support WithTx (products=%t, variants=%t)", ok1, ok2)
 			}
 			prodRepo := txProducts.WithTx(tx)
@@ -337,7 +339,9 @@ func (imp *ProductImporter) Import(ctx context.Context, r io.Reader) (*Result, e
 			}
 			txVB, ok := imp.variants.(txVariantRepo)
 			if !ok {
-				tx.Rollback()
+				if rbErr := tx.Rollback(); rbErr != nil {
+					return result, fmt.Errorf("import: variant repo does not support WithTx; rollback: %w", rbErr)
+				}
 				return result, fmt.Errorf("import: txStarter provided but variant repo does not support WithTx")
 			}
 			varRepo := txVB.WithTx(tx)
