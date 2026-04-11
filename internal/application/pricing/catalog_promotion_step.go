@@ -93,7 +93,6 @@ func (s *CatalogPromotionStep) Apply(ctx context.Context, pctx *domain.PricingCo
 			}
 			adj.Description = p.Name
 			item.Adjustments = append(item.Adjustments, adj)
-			item.Total = item.Total.Sub(discount)
 		}
 	}
 	return nil
@@ -120,7 +119,12 @@ func decodeCatalogCondition(data []byte) (catalogCondition, error) {
 		return catalogCondition{}, fmt.Errorf("decode: %w", err)
 	}
 	switch cfg.Type {
-	case "always", "min_quantity":
+	case "always":
+		return catalogCondition{typ: cfg.Type}, nil
+	case "min_quantity":
+		if cfg.Value <= 0 {
+			return catalogCondition{}, fmt.Errorf("min_quantity value must be positive, got %d", cfg.Value)
+		}
 		return catalogCondition{typ: cfg.Type, value: cfg.Value}, nil
 	default:
 		return catalogCondition{}, fmt.Errorf("unknown condition type: %q", cfg.Type)

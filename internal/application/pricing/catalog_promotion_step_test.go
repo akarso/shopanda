@@ -159,9 +159,9 @@ func TestCatalogPromotionStep_PercentageDiscount(t *testing.T) {
 	if adj.Code != "promo.p1" {
 		t.Errorf("expected code promo.p1, got %s", adj.Code)
 	}
-	// Item total should be reduced.
-	if pctx.Items[0].Total.Amount() != 1800 {
-		t.Errorf("expected item total 1800, got %d", pctx.Items[0].Total.Amount())
+	// Item total is unchanged — discount only recorded as adjustment.
+	if pctx.Items[0].Total.Amount() != 2000 {
+		t.Errorf("expected item total 2000, got %d", pctx.Items[0].Total.Amount())
 	}
 }
 
@@ -182,8 +182,8 @@ func TestCatalogPromotionStep_FixedDiscount(t *testing.T) {
 	if adj.Amount.Amount() != 600 {
 		t.Errorf("expected discount 600, got %d", adj.Amount.Amount())
 	}
-	if pctx.Items[0].Total.Amount() != 2400 {
-		t.Errorf("expected item total 2400, got %d", pctx.Items[0].Total.Amount())
+	if pctx.Items[0].Total.Amount() != 3000 {
+		t.Errorf("expected item total 3000, got %d", pctx.Items[0].Total.Amount())
 	}
 }
 
@@ -204,8 +204,8 @@ func TestCatalogPromotionStep_FixedDiscount_CappedAtTotal(t *testing.T) {
 	if adj.Amount.Amount() != 1000 {
 		t.Errorf("expected capped discount 1000, got %d", adj.Amount.Amount())
 	}
-	if pctx.Items[0].Total.Amount() != 0 {
-		t.Errorf("expected item total 0, got %d", pctx.Items[0].Total.Amount())
+	if pctx.Items[0].Total.Amount() != 1000 {
+		t.Errorf("expected item total 1000, got %d", pctx.Items[0].Total.Amount())
 	}
 }
 
@@ -376,8 +376,9 @@ func TestCatalogPromotionStep_MultiplePromotions(t *testing.T) {
 	}}
 	step := appPricing.NewCatalogPromotionStep(promos, &stubCouponRepo{})
 	pctx := makePricingCtx("USD", makeItem("v1", 1, 1000, "USD"))
-	// promo A: 10% of 1000 = 100 → total becomes 900
-	// promo B: $1 * 1 = 100 → total becomes 800
+	// promo A: 10% of 1000 = 100
+	// promo B: $1 * 1 = 100
+	// Total unchanged at 1000; adjustments sum to 200.
 
 	if err := step.Apply(context.Background(), pctx); err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -385,8 +386,8 @@ func TestCatalogPromotionStep_MultiplePromotions(t *testing.T) {
 	if len(pctx.Items[0].Adjustments) != 2 {
 		t.Fatalf("expected 2 adjustments, got %d", len(pctx.Items[0].Adjustments))
 	}
-	if pctx.Items[0].Total.Amount() != 800 {
-		t.Errorf("expected final total 800, got %d", pctx.Items[0].Total.Amount())
+	if pctx.Items[0].Total.Amount() != 1000 {
+		t.Errorf("expected total 1000, got %d", pctx.Items[0].Total.Amount())
 	}
 }
 
@@ -441,19 +442,19 @@ func TestCatalogPromotionStep_FullPipeline(t *testing.T) {
 	pipeline := domain.NewPipeline(step, finalize)
 
 	pctx := makePricingCtx("USD", makeItem("v1", 2, 1000, "USD"))
-	// Base total: 2000, discount: 200, item total after step: 1800
-	// Finalize: Subtotal=1800, DiscountsTotal=200, GrandTotal=1800-200=1600
+	// Base total: 2000, discount: 200
+	// Finalize: Subtotal=2000, DiscountsTotal=200, GrandTotal=2000-200=1800
 
 	if err := pipeline.Execute(context.Background(), pctx); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if pctx.Subtotal.Amount() != 1800 {
-		t.Errorf("expected subtotal 1800, got %d", pctx.Subtotal.Amount())
+	if pctx.Subtotal.Amount() != 2000 {
+		t.Errorf("expected subtotal 2000, got %d", pctx.Subtotal.Amount())
 	}
 	if pctx.DiscountsTotal.Amount() != 200 {
 		t.Errorf("expected discounts 200, got %d", pctx.DiscountsTotal.Amount())
 	}
-	if pctx.GrandTotal.Amount() != 1600 {
-		t.Errorf("expected grand total 1600, got %d", pctx.GrandTotal.Amount())
+	if pctx.GrandTotal.Amount() != 1800 {
+		t.Errorf("expected grand total 1800, got %d", pctx.GrandTotal.Amount())
 	}
 }

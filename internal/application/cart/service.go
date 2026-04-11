@@ -295,6 +295,9 @@ func (s *Service) ApplyCoupon(ctx context.Context, cartID, customerID, code stri
 	if promo == nil || !promo.IsEligible(timeNow()) {
 		return nil, apperror.Validation("promotion is not active")
 	}
+	if promo.Type != promotion.TypeCatalog || !promo.CouponBound {
+		return nil, apperror.Validation("promotion not applicable for coupon")
+	}
 
 	if err := c.ApplyCoupon(code); err != nil {
 		return nil, apperror.Wrap(apperror.CodeValidation, "cannot apply coupon", err)
@@ -332,6 +335,8 @@ func (s *Service) RemoveCoupon(ctx context.Context, cartID, customerID string) (
 		return nil, apperror.Forbidden("cannot modify another customer's cart")
 	}
 
+	previousCode := c.CouponCode
+
 	if err := c.RemoveCoupon(); err != nil {
 		return nil, apperror.Wrap(apperror.CodeValidation, "cannot remove coupon", err)
 	}
@@ -348,7 +353,8 @@ func (s *Service) RemoveCoupon(ctx context.Context, cartID, customerID string) (
 		"cart_id": c.ID,
 	})
 	_ = s.bus.Publish(ctx, event.New(domainCart.EventCouponRemoved, "cart.service", domainCart.CouponRemovedData{
-		CartID: c.ID,
+		CartID:     c.ID,
+		CouponCode: previousCode,
 	}))
 	return c, nil
 }

@@ -198,6 +198,9 @@ func (c *Cart) ApplyCoupon(code string) error {
 	if code == "" {
 		return errors.New("cart: coupon code must not be empty")
 	}
+	if code == c.CouponCode {
+		return nil
+	}
 	c.CouponCode = code
 	c.UpdatedAt = time.Now().UTC()
 	return nil
@@ -207,6 +210,9 @@ func (c *Cart) ApplyCoupon(code string) error {
 func (c *Cart) RemoveCoupon() error {
 	if !c.IsActive() {
 		return errors.New("cart: cannot modify non-active cart")
+	}
+	if c.CouponCode == "" {
+		return nil
 	}
 	c.CouponCode = ""
 	c.UpdatedAt = time.Now().UTC()

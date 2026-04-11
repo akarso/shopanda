@@ -36,5 +36,6 @@ type CouponAppliedData struct {
 
 // CouponRemovedData is the event payload when a coupon is removed.
 type CouponRemovedData struct {
-	CartID string `json:"cart_id"`
+	CartID     string `json:"cart_id"`
+	CouponCode string `json:"coupon_code"`
 }
