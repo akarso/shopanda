@@ -191,6 +191,11 @@ func runServe(cfg *config.Config, log logger.Logger) error {
 	}
 	_ = collectionRepo // wired in collection HTTP handlers PR
 
+	taxRateRepo, err := postgres.NewTaxRateRepo(conn)
+	if err != nil {
+		return err
+	}
+
 	// Search engine.
 	searchEngine, err := postgres.NewSearchEngine(conn)
 	if err != nil {
@@ -288,7 +293,10 @@ func runServe(cfg *config.Config, log logger.Logger) error {
 	}
 
 	// Pricing pipeline (core + plugin steps + finalize).
-	pricingSteps := []pricing.PricingStep{appPricing.NewBasePriceStep(priceRepo)}
+	pricingSteps := []pricing.PricingStep{
+		appPricing.NewBasePriceStep(priceRepo),
+		appPricing.NewTaxStep(taxRateRepo, "standard"),
+	}
 	for _, s := range pluginApp.PricingSteps() {
 		if v, ok := s.(pricing.PricingStep); ok {
 			pricingSteps = append(pricingSteps, v)
