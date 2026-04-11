@@ -9,6 +9,7 @@ import (
 
 	"github.com/akarso/shopanda/internal/domain/cart"
 	"github.com/akarso/shopanda/internal/domain/shared"
+	"github.com/akarso/shopanda/internal/platform/apperror"
 )
 
 // Compile-time check that CartRepo implements cart.CartRepository.
@@ -33,7 +34,7 @@ func (r *CartRepo) FindByID(ctx context.Context, id string) (*cart.Cart, error) 
 	if id == "" {
 		return nil, fmt.Errorf("cart_repo: find: empty id")
 	}
-	const q = `SELECT id, customer_id, status, currency, coupon_code, created_at, updated_at
+	const q = `SELECT id, customer_id, status, currency, coupon_code, version, created_at, updated_at
 		FROM carts WHERE id = $1`
 	c, err := r.scanCart(r.db.QueryRowContext(ctx, q, id))
 	if errors.Is(err, sql.ErrNoRows) {
@@ -56,7 +57,7 @@ func (r *CartRepo) FindActiveByCustomerID(ctx context.Context, customerID string
 	if customerID == "" {
 		return nil, fmt.Errorf("cart_repo: find active: empty customer id")
 	}
-	const q = `SELECT id, customer_id, status, currency, coupon_code, created_at, updated_at
+	const q = `SELECT id, customer_id, status, currency, coupon_code, version, created_at, updated_at
 		FROM carts WHERE customer_id = $1 AND status = 'active'
 		LIMIT 1`
 	c, err := r.scanCart(r.db.QueryRowContext(ctx, q, customerID))
@@ -76,6 +77,8 @@ func (r *CartRepo) FindActiveByCustomerID(ctx context.Context, customerID string
 
 // Save persists a cart and its items (upsert). Uses a transaction to ensure
 // the cart header and items are written atomically.
+// Optimistic locking: on update the version must match the value loaded by
+// FindByID. If another writer incremented it first, Save returns a conflict error.
 func (r *CartRepo) Save(ctx context.Context, c *cart.Cart) error {
 	if c == nil {
 		return fmt.Errorf("cart_repo: save: cart must not be nil")
@@ -87,15 +90,19 @@ func (r *CartRepo) Save(ctx context.Context, c *cart.Cart) error {
 	}
 	defer tx.Rollback()
 
-	// Upsert cart header.
-	const upsertCart = `INSERT INTO carts (id, customer_id, status, currency, coupon_code, created_at, updated_at)
-		VALUES ($1, $2, $3, $4, $5, $6, $7)
+	// Upsert cart header with optimistic lock.
+	// INSERT: new cart, version starts at 1.
+	// UPDATE: only succeeds when version matches; bumps version atomically.
+	const upsertCart = `INSERT INTO carts (id, customer_id, status, currency, coupon_code, version, created_at, updated_at)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
 		ON CONFLICT (id) DO UPDATE SET
 			customer_id = EXCLUDED.customer_id,
 			status = EXCLUDED.status,
 			currency = EXCLUDED.currency,
 			coupon_code = EXCLUDED.coupon_code,
-			updated_at = EXCLUDED.updated_at`
+			version = carts.version + 1,
+			updated_at = EXCLUDED.updated_at
+		WHERE carts.version = EXCLUDED.version`
 
 	var customerID interface{}
 	if c.CustomerID != "" {
@@ -106,12 +113,19 @@ func (r *CartRepo) Save(ctx context.Context, c *cart.Cart) error {
 		couponCode = c.CouponCode
 	}
 
-	_, err = tx.ExecContext(ctx, upsertCart,
+	res, err := tx.ExecContext(ctx, upsertCart,
 		c.ID, customerID, string(c.Status()), c.Currency, couponCode,
-		c.CreatedAt, c.UpdatedAt,
+		c.Version, c.CreatedAt, c.UpdatedAt,
 	)
 	if err != nil {
 		return fmt.Errorf("cart_repo: upsert cart: %w", err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("cart_repo: rows affected: %w", err)
+	}
+	if n == 0 {
+		return apperror.Conflict("cart was modified concurrently")
 	}
 
 	// Replace items: delete all, re-insert.
@@ -200,7 +214,7 @@ func (r *CartRepo) scanCart(row *sql.Row) (*cart.Cart, error) {
 	var customerID sql.NullString
 	var couponCode sql.NullString
 	var status string
-	err := row.Scan(&c.ID, &customerID, &status, &c.Currency, &couponCode, &c.CreatedAt, &c.UpdatedAt)
+	err := row.Scan(&c.ID, &customerID, &status, &c.Currency, &couponCode, &c.Version, &c.CreatedAt, &c.UpdatedAt)
 	if err != nil {
 		return nil, err
 	}
