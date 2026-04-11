@@ -4,6 +4,8 @@ import (
 	"errors"
 	"fmt"
 	"regexp"
+
+	"github.com/akarso/shopanda/internal/platform/id"
 )
 
 // TaxMode determines how tax is applied to a price.
@@ -38,9 +40,12 @@ type TaxRate struct {
 }
 
 // NewTaxRate creates a TaxRate with the required fields.
-func NewTaxRate(id, country, class string, rate int) (TaxRate, error) {
-	if id == "" {
+func NewTaxRate(rateID, country, class string, rate int) (TaxRate, error) {
+	if rateID == "" {
 		return TaxRate{}, errors.New("tax rate id must not be empty")
+	}
+	if !id.IsValid(rateID) {
+		return TaxRate{}, errors.New("tax rate id must be a valid UUID")
 	}
 	if !countryRegex.MatchString(country) {
 		return TaxRate{}, fmt.Errorf("tax rate: invalid country code: %q", country)
@@ -52,7 +57,7 @@ func NewTaxRate(id, country, class string, rate int) (TaxRate, error) {
 		return TaxRate{}, errors.New("tax rate must not be negative")
 	}
 	return TaxRate{
-		ID:      id,
+		ID:      rateID,
 		Country: country,
 		Class:   class,
 		Rate:    rate,

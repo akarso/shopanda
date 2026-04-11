@@ -1,6 +1,7 @@
 package tax_test
 
 import (
+	"math"
 	"testing"
 
 	"github.com/akarso/shopanda/internal/domain/shared"
@@ -76,5 +77,23 @@ func TestCalculate_InclusiveReduced(t *testing.T) {
 	}
 	if got.Amount() != 700 {
 		t.Fatalf("got amount %d, want 700", got.Amount())
+	}
+}
+
+func TestCalculate_ExclusiveOverflow(t *testing.T) {
+	price := shared.MustNewMoney(math.MaxInt64, "EUR")
+	rate := tax.TaxRate{ID: "r1", Country: "DE", Class: "standard", Rate: 1900}
+	_, err := tax.Calculate(price, rate, tax.ModeExclusive)
+	if err == nil {
+		t.Fatal("expected overflow error")
+	}
+}
+
+func TestCalculate_InclusiveOverflow(t *testing.T) {
+	price := shared.MustNewMoney(math.MaxInt64, "EUR")
+	rate := tax.TaxRate{ID: "r1", Country: "DE", Class: "standard", Rate: 1900}
+	_, err := tax.Calculate(price, rate, tax.ModeInclusive)
+	if err == nil {
+		t.Fatal("expected overflow error")
 	}
 }

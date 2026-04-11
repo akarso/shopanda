@@ -1,9 +1,6 @@
 package tax
 
-import (
-	"context"
-	"database/sql"
-)
+import "context"
 
 // RateRepository defines persistence operations for tax rates.
 type RateRepository interface {
@@ -19,7 +16,4 @@ type RateRepository interface {
 
 	// Delete removes a tax rate by ID.
 	Delete(ctx context.Context, id string) error
-
-	// WithTx returns a repository bound to the given transaction.
-	WithTx(tx *sql.Tx) RateRepository
 }

@@ -24,7 +24,7 @@ func NewTaxRateRepo(db *sql.DB) *TaxRateRepo {
 }
 
 // WithTx returns a repo bound to the given transaction.
-func (r *TaxRateRepo) WithTx(tx *sql.Tx) tax.RateRepository {
+func (r *TaxRateRepo) WithTx(tx *sql.Tx) *TaxRateRepo {
 	return &TaxRateRepo{db: r.db, tx: tx}
 }
 
@@ -101,8 +101,7 @@ func (r *TaxRateRepo) Upsert(ctx context.Context, tr *tax.TaxRate) error {
 	const q = `INSERT INTO tax_rates (id, country, class, rate)
 		VALUES ($1, $2, $3, $4)
 		ON CONFLICT (country, class) DO UPDATE
-		SET rate = EXCLUDED.rate,
-		    id   = EXCLUDED.id`
+		SET rate = EXCLUDED.rate`
 
 	_, err := r.exec(ctx, q, tr.ID, tr.Country, tr.Class, tr.Rate)
 	if err != nil {
