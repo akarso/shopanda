@@ -18,7 +18,10 @@ func TestJobQueue_Enqueue(t *testing.T) {
 	}
 	t.Cleanup(func() { db.Exec("DELETE FROM jobs") })
 
-	q := postgres.NewJobQueue(db)
+	q, err := postgres.NewJobQueue(db)
+	if err != nil {
+		t.Fatalf("NewJobQueue: %v", err)
+	}
 	ctx := context.Background()
 
 	job, err := jobs.NewJob(id.New(), "send_email", map[string]interface{}{"to": "a@b.com"})
@@ -38,7 +41,10 @@ func TestJobQueue_Dequeue(t *testing.T) {
 	}
 	t.Cleanup(func() { db.Exec("DELETE FROM jobs") })
 
-	q := postgres.NewJobQueue(db)
+	q, err := postgres.NewJobQueue(db)
+	if err != nil {
+		t.Fatalf("NewJobQueue: %v", err)
+	}
 	ctx := context.Background()
 
 	// Enqueue a job.
@@ -76,7 +82,10 @@ func TestJobQueue_Dequeue_Empty(t *testing.T) {
 	}
 	t.Cleanup(func() { db.Exec("DELETE FROM jobs") })
 
-	q := postgres.NewJobQueue(db)
+	q, err := postgres.NewJobQueue(db)
+	if err != nil {
+		t.Fatalf("NewJobQueue: %v", err)
+	}
 	ctx := context.Background()
 
 	got, err := q.Dequeue(ctx)
@@ -95,7 +104,10 @@ func TestJobQueue_Complete(t *testing.T) {
 	}
 	t.Cleanup(func() { db.Exec("DELETE FROM jobs") })
 
-	q := postgres.NewJobQueue(db)
+	q, err := postgres.NewJobQueue(db)
+	if err != nil {
+		t.Fatalf("NewJobQueue: %v", err)
+	}
 	ctx := context.Background()
 
 	job, _ := jobs.NewJob(id.New(), "test", nil)
@@ -127,7 +139,10 @@ func TestJobQueue_Fail_Retry(t *testing.T) {
 	}
 	t.Cleanup(func() { db.Exec("DELETE FROM jobs") })
 
-	q := postgres.NewJobQueue(db)
+	q, err := postgres.NewJobQueue(db)
+	if err != nil {
+		t.Fatalf("NewJobQueue: %v", err)
+	}
 	ctx := context.Background()
 
 	job, _ := jobs.NewJob(id.New(), "test", nil)
@@ -170,7 +185,10 @@ func TestJobQueue_Fail_Permanent(t *testing.T) {
 	}
 	t.Cleanup(func() { db.Exec("DELETE FROM jobs") })
 
-	q := postgres.NewJobQueue(db)
+	q, err := postgres.NewJobQueue(db)
+	if err != nil {
+		t.Fatalf("NewJobQueue: %v", err)
+	}
 	ctx := context.Background()
 
 	// Create a job with max_retries=1 so first dequeue (attempt 1) exhausts retries.
@@ -200,10 +218,13 @@ func TestJobQueue_Complete_NotFound(t *testing.T) {
 	}
 	t.Cleanup(func() { db.Exec("DELETE FROM jobs") })
 
-	q := postgres.NewJobQueue(db)
+	q, err := postgres.NewJobQueue(db)
+	if err != nil {
+		t.Fatalf("NewJobQueue: %v", err)
+	}
 	ctx := context.Background()
 
-	err := q.Complete(ctx, id.New())
+	err = q.Complete(ctx, id.New())
 	if err == nil {
 		t.Fatal("expected error for non-existent job")
 	}

@@ -281,7 +281,7 @@ Goal: country-based VAT calculation integrated into the pricing pipeline.
 | --- | ---------------------------- | -------------------------------------------------- |
 | 081 | Tax domain + rate storage    | `TaxClass`, `TaxRate`, repo, migration             |
 | 082 | Tax pipeline step            | Tax calculation step in pricing pipeline, per-item + total, exclusive/inclusive modes |
-| 083 | Remove `WithTx` from domain  | Drop `WithTx(*sql.Tx)` from `CustomerRepository`, `ProductRepository`, `VariantRepository` domain interfaces; keep tx binding on infra types only |
+| 083 | Clean infrastructure ports   | Drop `WithTx(*sql.Tx)` from domain interfaces (`CustomerRepository`, `ProductRepository`, `VariantRepository`); add nil-guard + `error` return to all `New*Repo` constructors; update wiring in `cmd/api/main.go` |
 
 Spec: [`docs/TAXES.md`](docs/TAXES.md)
 

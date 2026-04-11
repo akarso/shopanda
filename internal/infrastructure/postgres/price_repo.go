@@ -19,8 +19,11 @@ type PriceRepo struct {
 }
 
 // NewPriceRepo returns a new PriceRepo backed by db.
-func NewPriceRepo(db *sql.DB) *PriceRepo {
-	return &PriceRepo{db: db}
+func NewPriceRepo(db *sql.DB) (*PriceRepo, error) {
+	if db == nil {
+		return nil, fmt.Errorf("NewPriceRepo: nil *sql.DB")
+	}
+	return &PriceRepo{db: db}, nil
 }
 
 // FindByVariantAndCurrency returns the price for a variant in the given currency.

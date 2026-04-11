@@ -1,9 +1,6 @@
 package customer
 
-import (
-	"context"
-	"database/sql"
-)
+import "context"
 
 // CustomerRepository defines persistence operations for customers.
 type CustomerRepository interface {
@@ -26,7 +23,4 @@ type CustomerRepository interface {
 
 	// BumpTokenGeneration atomically increments the customer's token generation.
 	BumpTokenGeneration(ctx context.Context, customerID string) error
-
-	// WithTx returns a repository bound to the given transaction.
-	WithTx(tx *sql.Tx) CustomerRepository
 }

@@ -19,8 +19,11 @@ type AssetRepo struct {
 }
 
 // NewAssetRepo returns a new AssetRepo backed by db.
-func NewAssetRepo(db *sql.DB) *AssetRepo {
-	return &AssetRepo{db: db}
+func NewAssetRepo(db *sql.DB) (*AssetRepo, error) {
+	if db == nil {
+		return nil, fmt.Errorf("NewAssetRepo: nil *sql.DB")
+	}
+	return &AssetRepo{db: db}, nil
 }
 
 // Save persists a new asset.

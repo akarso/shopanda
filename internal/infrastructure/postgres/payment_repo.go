@@ -22,8 +22,11 @@ type PaymentRepo struct {
 }
 
 // NewPaymentRepo returns a new PaymentRepo backed by db.
-func NewPaymentRepo(db *sql.DB) *PaymentRepo {
-	return &PaymentRepo{db: db}
+func NewPaymentRepo(db *sql.DB) (*PaymentRepo, error) {
+	if db == nil {
+		return nil, fmt.Errorf("NewPaymentRepo: nil *sql.DB")
+	}
+	return &PaymentRepo{db: db}, nil
 }
 
 // hydratePayment reads a payment row from a *sql.Row.

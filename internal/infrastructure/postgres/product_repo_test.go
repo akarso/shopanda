@@ -60,7 +60,10 @@ func mustNewProduct(t *testing.T, name, slug string) catalog.Product {
 func TestProductRepo_CreateAndFindByID(t *testing.T) {
 	db := testDB(t)
 	ensureProductsTable(t, db)
-	repo := postgres.NewProductRepo(db)
+	repo, err := postgres.NewProductRepo(db)
+	if err != nil {
+		t.Fatalf("NewProductRepo: %v", err)
+	}
 	ctx := context.Background()
 
 	p := mustNewProduct(t, "Widget", "widget")
@@ -92,7 +95,10 @@ func TestProductRepo_CreateAndFindByID(t *testing.T) {
 func TestProductRepo_FindByID_NotFound(t *testing.T) {
 	db := testDB(t)
 	ensureProductsTable(t, db)
-	repo := postgres.NewProductRepo(db)
+	repo, err := postgres.NewProductRepo(db)
+	if err != nil {
+		t.Fatalf("NewProductRepo: %v", err)
+	}
 	ctx := context.Background()
 
 	got, err := repo.FindByID(ctx, id.New())
@@ -107,7 +113,10 @@ func TestProductRepo_FindByID_NotFound(t *testing.T) {
 func TestProductRepo_FindBySlug(t *testing.T) {
 	db := testDB(t)
 	ensureProductsTable(t, db)
-	repo := postgres.NewProductRepo(db)
+	repo, err := postgres.NewProductRepo(db)
+	if err != nil {
+		t.Fatalf("NewProductRepo: %v", err)
+	}
 	ctx := context.Background()
 
 	p := mustNewProduct(t, "Gizmo", "gizmo")
@@ -130,7 +139,10 @@ func TestProductRepo_FindBySlug(t *testing.T) {
 func TestProductRepo_FindBySlug_NotFound(t *testing.T) {
 	db := testDB(t)
 	ensureProductsTable(t, db)
-	repo := postgres.NewProductRepo(db)
+	repo, err := postgres.NewProductRepo(db)
+	if err != nil {
+		t.Fatalf("NewProductRepo: %v", err)
+	}
 	ctx := context.Background()
 
 	got, err := repo.FindBySlug(ctx, "no-such-slug")
@@ -145,7 +157,10 @@ func TestProductRepo_FindBySlug_NotFound(t *testing.T) {
 func TestProductRepo_List(t *testing.T) {
 	db := testDB(t)
 	ensureProductsTable(t, db)
-	repo := postgres.NewProductRepo(db)
+	repo, err := postgres.NewProductRepo(db)
+	if err != nil {
+		t.Fatalf("NewProductRepo: %v", err)
+	}
 	ctx := context.Background()
 
 	for i := 0; i < 3; i++ {
@@ -179,10 +194,13 @@ func TestProductRepo_List(t *testing.T) {
 func TestProductRepo_List_ValidationErrors(t *testing.T) {
 	db := testDB(t)
 	ensureProductsTable(t, db)
-	repo := postgres.NewProductRepo(db)
+	repo, err := postgres.NewProductRepo(db)
+	if err != nil {
+		t.Fatalf("NewProductRepo: %v", err)
+	}
 	ctx := context.Background()
 
-	_, err := repo.List(ctx, -1, 10)
+	_, err = repo.List(ctx, -1, 10)
 	if !apperror.Is(err, apperror.CodeValidation) {
 		t.Errorf("negative offset: got %v, want validation error", err)
 	}
@@ -201,7 +219,10 @@ func TestProductRepo_List_ValidationErrors(t *testing.T) {
 func TestProductRepo_Update(t *testing.T) {
 	db := testDB(t)
 	ensureProductsTable(t, db)
-	repo := postgres.NewProductRepo(db)
+	repo, err := postgres.NewProductRepo(db)
+	if err != nil {
+		t.Fatalf("NewProductRepo: %v", err)
+	}
 	ctx := context.Background()
 
 	p := mustNewProduct(t, "Old Name", "old-name")
@@ -230,11 +251,14 @@ func TestProductRepo_Update(t *testing.T) {
 func TestProductRepo_Update_NotFound(t *testing.T) {
 	db := testDB(t)
 	ensureProductsTable(t, db)
-	repo := postgres.NewProductRepo(db)
+	repo, err := postgres.NewProductRepo(db)
+	if err != nil {
+		t.Fatalf("NewProductRepo: %v", err)
+	}
 	ctx := context.Background()
 
 	p := mustNewProduct(t, "Ghost", "ghost")
-	err := repo.Update(ctx, &p)
+	err = repo.Update(ctx, &p)
 	if !apperror.Is(err, apperror.CodeNotFound) {
 		t.Errorf("got %v, want not_found error", err)
 	}
@@ -243,7 +267,10 @@ func TestProductRepo_Update_NotFound(t *testing.T) {
 func TestProductRepo_Create_DuplicateSlug(t *testing.T) {
 	db := testDB(t)
 	ensureProductsTable(t, db)
-	repo := postgres.NewProductRepo(db)
+	repo, err := postgres.NewProductRepo(db)
+	if err != nil {
+		t.Fatalf("NewProductRepo: %v", err)
+	}
 	ctx := context.Background()
 
 	p1 := mustNewProduct(t, "First", "same-slug")
@@ -252,7 +279,7 @@ func TestProductRepo_Create_DuplicateSlug(t *testing.T) {
 	}
 
 	p2 := mustNewProduct(t, "Second", "same-slug")
-	err := repo.Create(ctx, &p2)
+	err = repo.Create(ctx, &p2)
 	if err == nil {
 		t.Fatal("expected error for duplicate slug")
 	}
@@ -261,7 +288,10 @@ func TestProductRepo_Create_DuplicateSlug(t *testing.T) {
 func TestProductRepo_Attributes(t *testing.T) {
 	db := testDB(t)
 	ensureProductsTable(t, db)
-	repo := postgres.NewProductRepo(db)
+	repo, err := postgres.NewProductRepo(db)
+	if err != nil {
+		t.Fatalf("NewProductRepo: %v", err)
+	}
 	ctx := context.Background()
 
 	p := mustNewProduct(t, "Fancy", "fancy")

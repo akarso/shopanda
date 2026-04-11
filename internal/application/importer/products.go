@@ -26,6 +26,20 @@ type TxStarter interface {
 	BeginTx(ctx context.Context, opts *sql.TxOptions) (*sql.Tx, error)
 }
 
+// txProductRepo is an optional capability: a ProductRepository that supports
+// transaction binding. Satisfied by *postgres.ProductRepo.
+type txProductRepo interface {
+	catalog.ProductRepository
+	WithTx(tx *sql.Tx) catalog.ProductRepository
+}
+
+// txVariantRepo is an optional capability: a VariantRepository that supports
+// transaction binding. Satisfied by *postgres.VariantRepo.
+type txVariantRepo interface {
+	catalog.VariantRepository
+	WithTx(tx *sql.Tx) catalog.VariantRepository
+}
+
 // ProductImporter reads CSV data and persists products and variants.
 type ProductImporter struct {
 	products  catalog.ProductRepository
@@ -251,10 +265,18 @@ func (imp *ProductImporter) Import(ctx context.Context, r io.Reader) (*Result, e
 				}
 				continue
 			}
-			txProducts := imp.products.WithTx(tx)
-			txVariants := imp.variants.WithTx(tx)
+			txProducts, _ := imp.products.(txProductRepo)
+			txVariants, _ := imp.variants.(txVariantRepo)
+			prodRepo := catalog.ProductRepository(imp.products)
+			varRepo := catalog.VariantRepository(imp.variants)
+			if txProducts != nil {
+				prodRepo = txProducts.WithTx(tx)
+			}
+			if txVariants != nil {
+				varRepo = txVariants.WithTx(tx)
+			}
 			// Write product
-			if err := txProducts.Create(ctx, product); err != nil {
+			if err := prodRepo.Create(ctx, product); err != nil {
 				tx.Rollback()
 				for _, pv := range pvs {
 					result.Errors = append(result.Errors, fmt.Sprintf("line %d: create product: %v", pv.lineNum, err))
@@ -265,7 +287,7 @@ func (imp *ProductImporter) Import(ctx context.Context, r io.Reader) (*Result, e
 			// Write variants
 			allOk := true
 			for _, v := range variants {
-				if err := txVariants.Create(ctx, &v); err != nil {
+				if err := varRepo.Create(ctx, &v); err != nil {
 					tx.Rollback()
 					for _, pv := range pvs {
 						result.Errors = append(result.Errors, fmt.Sprintf("line %d: create variant (rollback slug %q): %v", pv.lineNum, slug, err))
@@ -315,10 +337,14 @@ func (imp *ProductImporter) Import(ctx context.Context, r io.Reader) (*Result, e
 				}
 				continue
 			}
-			txVariants := imp.variants.WithTx(tx)
+			txVB, _ := imp.variants.(txVariantRepo)
+			varRepo := catalog.VariantRepository(imp.variants)
+			if txVB != nil {
+				varRepo = txVB.WithTx(tx)
+			}
 			allOk := true
 			for _, v := range variants {
-				if err := txVariants.Create(ctx, &v); err != nil {
+				if err := varRepo.Create(ctx, &v); err != nil {
 					tx.Rollback()
 					for _, pv := range pvs {
 						result.Errors = append(result.Errors, fmt.Sprintf("line %d: create variant (rollback slug %q): %v", pv.lineNum, slug, err))

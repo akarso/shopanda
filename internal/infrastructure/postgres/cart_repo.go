@@ -20,8 +20,11 @@ type CartRepo struct {
 }
 
 // NewCartRepo returns a new CartRepo backed by db.
-func NewCartRepo(db *sql.DB) *CartRepo {
-	return &CartRepo{db: db}
+func NewCartRepo(db *sql.DB) (*CartRepo, error) {
+	if db == nil {
+		return nil, fmt.Errorf("NewCartRepo: nil *sql.DB")
+	}
+	return &CartRepo{db: db}, nil
 }
 
 // FindByID returns a cart with its items by ID.

@@ -22,8 +22,11 @@ type ShippingRepo struct {
 }
 
 // NewShippingRepo returns a new ShippingRepo backed by db.
-func NewShippingRepo(db *sql.DB) *ShippingRepo {
-	return &ShippingRepo{db: db}
+func NewShippingRepo(db *sql.DB) (*ShippingRepo, error) {
+	if db == nil {
+		return nil, fmt.Errorf("NewShippingRepo: nil *sql.DB")
+	}
+	return &ShippingRepo{db: db}, nil
 }
 
 // hydrateShipment reads a shipment row from a *sql.Row.

@@ -35,7 +35,10 @@ func mustNewVariant(t *testing.T, productID, sku string) catalog.Variant {
 
 func createTestProduct(t *testing.T, db *sql.DB) catalog.Product {
 	t.Helper()
-	repo := postgres.NewProductRepo(db)
+	repo, err := postgres.NewProductRepo(db)
+	if err != nil {
+		t.Fatalf("NewProductRepo: %v", err)
+	}
 	p := mustNewProduct(t, "Test Product", "test-product-"+id.New()[:8])
 	if err := repo.Create(context.Background(), &p); err != nil {
 		t.Fatalf("create test product: %v", err)
@@ -46,7 +49,10 @@ func createTestProduct(t *testing.T, db *sql.DB) catalog.Product {
 func TestVariantRepo_CreateAndFindByID(t *testing.T) {
 	db := testDB(t)
 	ensureVariantsTable(t, db)
-	repo := postgres.NewVariantRepo(db)
+	repo, err := postgres.NewVariantRepo(db)
+	if err != nil {
+		t.Fatalf("NewVariantRepo: %v", err)
+	}
 	ctx := context.Background()
 
 	p := createTestProduct(t, db)
@@ -81,7 +87,10 @@ func TestVariantRepo_CreateAndFindByID(t *testing.T) {
 func TestVariantRepo_FindByID_NotFound(t *testing.T) {
 	db := testDB(t)
 	ensureVariantsTable(t, db)
-	repo := postgres.NewVariantRepo(db)
+	repo, err := postgres.NewVariantRepo(db)
+	if err != nil {
+		t.Fatalf("NewVariantRepo: %v", err)
+	}
 	ctx := context.Background()
 
 	got, err := repo.FindByID(ctx, id.New())
@@ -96,7 +105,10 @@ func TestVariantRepo_FindByID_NotFound(t *testing.T) {
 func TestVariantRepo_FindBySKU(t *testing.T) {
 	db := testDB(t)
 	ensureVariantsTable(t, db)
-	repo := postgres.NewVariantRepo(db)
+	repo, err := postgres.NewVariantRepo(db)
+	if err != nil {
+		t.Fatalf("NewVariantRepo: %v", err)
+	}
 	ctx := context.Background()
 
 	p := createTestProduct(t, db)
@@ -120,7 +132,10 @@ func TestVariantRepo_FindBySKU(t *testing.T) {
 func TestVariantRepo_FindBySKU_NotFound(t *testing.T) {
 	db := testDB(t)
 	ensureVariantsTable(t, db)
-	repo := postgres.NewVariantRepo(db)
+	repo, err := postgres.NewVariantRepo(db)
+	if err != nil {
+		t.Fatalf("NewVariantRepo: %v", err)
+	}
 	ctx := context.Background()
 
 	got, err := repo.FindBySKU(ctx, "NO-SUCH-SKU")
@@ -135,7 +150,10 @@ func TestVariantRepo_FindBySKU_NotFound(t *testing.T) {
 func TestVariantRepo_ListByProductID(t *testing.T) {
 	db := testDB(t)
 	ensureVariantsTable(t, db)
-	repo := postgres.NewVariantRepo(db)
+	repo, err := postgres.NewVariantRepo(db)
+	if err != nil {
+		t.Fatalf("NewVariantRepo: %v", err)
+	}
 	ctx := context.Background()
 
 	p := createTestProduct(t, db)
@@ -163,7 +181,10 @@ func TestVariantRepo_ListByProductID(t *testing.T) {
 func TestVariantRepo_ListByProductID_Empty(t *testing.T) {
 	db := testDB(t)
 	ensureVariantsTable(t, db)
-	repo := postgres.NewVariantRepo(db)
+	repo, err := postgres.NewVariantRepo(db)
+	if err != nil {
+		t.Fatalf("NewVariantRepo: %v", err)
+	}
 	ctx := context.Background()
 
 	variants, err := repo.ListByProductID(ctx, id.New(), 0, 50)
@@ -178,7 +199,10 @@ func TestVariantRepo_ListByProductID_Empty(t *testing.T) {
 func TestVariantRepo_Update(t *testing.T) {
 	db := testDB(t)
 	ensureVariantsTable(t, db)
-	repo := postgres.NewVariantRepo(db)
+	repo, err := postgres.NewVariantRepo(db)
+	if err != nil {
+		t.Fatalf("NewVariantRepo: %v", err)
+	}
 	ctx := context.Background()
 
 	p := createTestProduct(t, db)
@@ -212,11 +236,14 @@ func TestVariantRepo_Update(t *testing.T) {
 func TestVariantRepo_Update_NotFound(t *testing.T) {
 	db := testDB(t)
 	ensureVariantsTable(t, db)
-	repo := postgres.NewVariantRepo(db)
+	repo, err := postgres.NewVariantRepo(db)
+	if err != nil {
+		t.Fatalf("NewVariantRepo: %v", err)
+	}
 	ctx := context.Background()
 
 	v := mustNewVariant(t, id.New(), "GHOST-SKU")
-	err := repo.Update(ctx, &v)
+	err = repo.Update(ctx, &v)
 	if !apperror.Is(err, apperror.CodeNotFound) {
 		t.Errorf("expected not_found, got %v", err)
 	}
@@ -225,7 +252,10 @@ func TestVariantRepo_Update_NotFound(t *testing.T) {
 func TestVariantRepo_Create_DuplicateSKU(t *testing.T) {
 	db := testDB(t)
 	ensureVariantsTable(t, db)
-	repo := postgres.NewVariantRepo(db)
+	repo, err := postgres.NewVariantRepo(db)
+	if err != nil {
+		t.Fatalf("NewVariantRepo: %v", err)
+	}
 	ctx := context.Background()
 
 	p := createTestProduct(t, db)
@@ -235,7 +265,7 @@ func TestVariantRepo_Create_DuplicateSKU(t *testing.T) {
 	}
 
 	v2 := mustNewVariant(t, p.ID, "DUP-SKU")
-	err := repo.Create(ctx, &v2)
+	err = repo.Create(ctx, &v2)
 	if !apperror.Is(err, apperror.CodeConflict) {
 		t.Errorf("expected conflict, got %v", err)
 	}
@@ -244,7 +274,10 @@ func TestVariantRepo_Create_DuplicateSKU(t *testing.T) {
 func TestVariantRepo_Attributes(t *testing.T) {
 	db := testDB(t)
 	ensureVariantsTable(t, db)
-	repo := postgres.NewVariantRepo(db)
+	repo, err := postgres.NewVariantRepo(db)
+	if err != nil {
+		t.Fatalf("NewVariantRepo: %v", err)
+	}
 	ctx := context.Background()
 
 	p := createTestProduct(t, db)

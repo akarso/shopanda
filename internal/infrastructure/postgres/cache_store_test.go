@@ -193,7 +193,10 @@ func TestCacheStore_CompileTime(t *testing.T) {
 	var _ cache.Cache = (*stubCache)(nil)
 
 	// Verify NewCacheStore returns a usable type.
-	store := NewCacheStore(&sql.DB{})
+	store, err := NewCacheStore(&sql.DB{})
+	if err != nil {
+		t.Fatalf("NewCacheStore: %v", err)
+	}
 	if store == nil {
 		t.Fatal("NewCacheStore returned nil")
 	}

@@ -19,8 +19,11 @@ type CacheStore struct {
 }
 
 // NewCacheStore returns a CacheStore backed by db.
-func NewCacheStore(db *sql.DB) *CacheStore {
-	return &CacheStore{db: db}
+func NewCacheStore(db *sql.DB) (*CacheStore, error) {
+	if db == nil {
+		return nil, fmt.Errorf("NewCacheStore: nil *sql.DB")
+	}
+	return &CacheStore{db: db}, nil
 }
 
 // Get retrieves the cached value for key and unmarshals it into dest.

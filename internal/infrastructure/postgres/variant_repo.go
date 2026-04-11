@@ -23,8 +23,11 @@ type VariantRepo struct {
 }
 
 // NewVariantRepo returns a new VariantRepo backed by db.
-func NewVariantRepo(db *sql.DB) *VariantRepo {
-	return &VariantRepo{db: db, tx: nil}
+func NewVariantRepo(db *sql.DB) (*VariantRepo, error) {
+	if db == nil {
+		return nil, fmt.Errorf("NewVariantRepo: nil *sql.DB")
+	}
+	return &VariantRepo{db: db, tx: nil}, nil
 }
 
 // WithTx returns a repo bound to the given transaction.

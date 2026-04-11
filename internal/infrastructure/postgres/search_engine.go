@@ -19,8 +19,11 @@ type SearchEngine struct {
 }
 
 // NewSearchEngine returns a new SearchEngine backed by db.
-func NewSearchEngine(db *sql.DB) *SearchEngine {
-	return &SearchEngine{db: db}
+func NewSearchEngine(db *sql.DB) (*SearchEngine, error) {
+	if db == nil {
+		return nil, fmt.Errorf("NewSearchEngine: nil *sql.DB")
+	}
+	return &SearchEngine{db: db}, nil
 }
 
 // Name returns "postgres".

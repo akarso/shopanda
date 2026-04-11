@@ -21,8 +21,11 @@ type OrderRepo struct {
 }
 
 // NewOrderRepo returns a new OrderRepo backed by db.
-func NewOrderRepo(db *sql.DB) *OrderRepo {
-	return &OrderRepo{db: db}
+func NewOrderRepo(db *sql.DB) (*OrderRepo, error) {
+	if db == nil {
+		return nil, fmt.Errorf("NewOrderRepo: nil *sql.DB")
+	}
+	return &OrderRepo{db: db}, nil
 }
 
 // orderScanner abstracts *sql.Row and *sql.Rows for shared hydration logic.

@@ -22,8 +22,11 @@ type CustomerRepo struct {
 }
 
 // NewCustomerRepo returns a new CustomerRepo backed by db.
-func NewCustomerRepo(db *sql.DB) *CustomerRepo {
-	return &CustomerRepo{db: db, tx: nil}
+func NewCustomerRepo(db *sql.DB) (*CustomerRepo, error) {
+	if db == nil {
+		return nil, fmt.Errorf("NewCustomerRepo: nil *sql.DB")
+	}
+	return &CustomerRepo{db: db, tx: nil}, nil
 }
 
 // WithTx returns a repo bound to the given transaction.

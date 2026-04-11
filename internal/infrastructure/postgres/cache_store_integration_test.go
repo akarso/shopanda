@@ -19,7 +19,11 @@ func setupCacheStore(t *testing.T) (*sql.DB, *postgres.CacheStore) {
 		t.Fatalf("migrate: %v", err)
 	}
 	t.Cleanup(func() { db.Exec("DELETE FROM cache") })
-	return db, postgres.NewCacheStore(db)
+	store, err := postgres.NewCacheStore(db)
+	if err != nil {
+		t.Fatalf("NewCacheStore: %v", err)
+	}
+	return db, store
 }
 
 func TestCacheStoreDB_SetAndGet(t *testing.T) {
@@ -111,7 +115,10 @@ func TestCacheStoreDB_ExpiredEntryMiss(t *testing.T) {
 		t.Fatalf("insert expired row: %v", err)
 	}
 
-	store := postgres.NewCacheStore(db)
+	store, err := postgres.NewCacheStore(db)
+	if err != nil {
+		t.Fatalf("NewCacheStore: %v", err)
+	}
 	var got string
 	ok, err := store.Get("expired_key", &got)
 	if err != nil {

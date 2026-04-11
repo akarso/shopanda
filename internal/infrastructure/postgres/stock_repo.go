@@ -19,8 +19,11 @@ type StockRepo struct {
 }
 
 // NewStockRepo returns a new StockRepo backed by db.
-func NewStockRepo(db *sql.DB) *StockRepo {
-	return &StockRepo{db: db}
+func NewStockRepo(db *sql.DB) (*StockRepo, error) {
+	if db == nil {
+		return nil, fmt.Errorf("NewStockRepo: nil *sql.DB")
+	}
+	return &StockRepo{db: db}, nil
 }
 
 // GetStock returns the stock entry for a variant.

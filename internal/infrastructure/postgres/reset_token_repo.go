@@ -21,8 +21,11 @@ type ResetTokenRepo struct {
 }
 
 // NewResetTokenRepo returns a new ResetTokenRepo backed by db.
-func NewResetTokenRepo(db *sql.DB) *ResetTokenRepo {
-	return &ResetTokenRepo{db: db}
+func NewResetTokenRepo(db *sql.DB) (*ResetTokenRepo, error) {
+	if db == nil {
+		return nil, fmt.Errorf("NewResetTokenRepo: nil *sql.DB")
+	}
+	return &ResetTokenRepo{db: db}, nil
 }
 
 // WithTx returns a repo bound to the given transaction.

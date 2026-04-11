@@ -1,9 +1,6 @@
 package catalog
 
-import (
-	"context"
-	"database/sql"
-)
+import "context"
 
 // ProductRepository defines persistence operations for products.
 type ProductRepository interface {
@@ -33,7 +30,4 @@ type ProductRepository interface {
 
 	// Update persists changes to an existing product.
 	Update(ctx context.Context, p *Product) error
-
-	// WithTx returns a repository bound to the given transaction.
-	WithTx(tx *sql.Tx) ProductRepository
 }

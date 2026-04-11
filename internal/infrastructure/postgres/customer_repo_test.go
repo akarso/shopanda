@@ -33,7 +33,10 @@ func TestCustomerRepo_CreateAndFindByID(t *testing.T) {
 	ensureMigrations(t, db)
 	t.Cleanup(func() { db.Exec("DELETE FROM customers") })
 
-	repo := postgres.NewCustomerRepo(db)
+	repo, err := postgres.NewCustomerRepo(db)
+	if err != nil {
+		t.Fatalf("NewCustomerRepo: %v", err)
+	}
 	ctx := context.Background()
 
 	c := mustNewCustomer(t, "alice@example.com")
@@ -72,7 +75,10 @@ func TestCustomerRepo_FindByID_NotFound(t *testing.T) {
 	db := testDB(t)
 	ensureMigrations(t, db)
 
-	repo := postgres.NewCustomerRepo(db)
+	repo, err := postgres.NewCustomerRepo(db)
+	if err != nil {
+		t.Fatalf("NewCustomerRepo: %v", err)
+	}
 	got, err := repo.FindByID(context.Background(), id.New())
 	if err != nil {
 		t.Fatalf("FindByID: %v", err)
@@ -87,7 +93,10 @@ func TestCustomerRepo_FindByEmail(t *testing.T) {
 	ensureMigrations(t, db)
 	t.Cleanup(func() { db.Exec("DELETE FROM customers") })
 
-	repo := postgres.NewCustomerRepo(db)
+	repo, err := postgres.NewCustomerRepo(db)
+	if err != nil {
+		t.Fatalf("NewCustomerRepo: %v", err)
+	}
 	ctx := context.Background()
 
 	c := mustNewCustomer(t, "bob@example.com")
@@ -111,7 +120,10 @@ func TestCustomerRepo_FindByEmail_NotFound(t *testing.T) {
 	db := testDB(t)
 	ensureMigrations(t, db)
 
-	repo := postgres.NewCustomerRepo(db)
+	repo, err := postgres.NewCustomerRepo(db)
+	if err != nil {
+		t.Fatalf("NewCustomerRepo: %v", err)
+	}
 	got, err := repo.FindByEmail(context.Background(), "nobody@example.com")
 	if err != nil {
 		t.Fatalf("FindByEmail: %v", err)
@@ -126,7 +138,10 @@ func TestCustomerRepo_Create_DuplicateEmail(t *testing.T) {
 	ensureMigrations(t, db)
 	t.Cleanup(func() { db.Exec("DELETE FROM customers") })
 
-	repo := postgres.NewCustomerRepo(db)
+	repo, err := postgres.NewCustomerRepo(db)
+	if err != nil {
+		t.Fatalf("NewCustomerRepo: %v", err)
+	}
 	ctx := context.Background()
 
 	c1 := mustNewCustomer(t, "dup@example.com")
@@ -135,7 +150,7 @@ func TestCustomerRepo_Create_DuplicateEmail(t *testing.T) {
 	}
 
 	c2 := mustNewCustomer(t, "dup@example.com")
-	err := repo.Create(ctx, &c2)
+	err = repo.Create(ctx, &c2)
 	if err == nil {
 		t.Fatal("expected error for duplicate email")
 	}
@@ -153,7 +168,10 @@ func TestCustomerRepo_Update(t *testing.T) {
 	ensureMigrations(t, db)
 	t.Cleanup(func() { db.Exec("DELETE FROM customers") })
 
-	repo := postgres.NewCustomerRepo(db)
+	repo, err := postgres.NewCustomerRepo(db)
+	if err != nil {
+		t.Fatalf("NewCustomerRepo: %v", err)
+	}
 	ctx := context.Background()
 
 	c := mustNewCustomer(t, "update@example.com")
@@ -183,11 +201,14 @@ func TestCustomerRepo_Update_NotFound(t *testing.T) {
 	db := testDB(t)
 	ensureMigrations(t, db)
 
-	repo := postgres.NewCustomerRepo(db)
+	repo, err := postgres.NewCustomerRepo(db)
+	if err != nil {
+		t.Fatalf("NewCustomerRepo: %v", err)
+	}
 	ctx := context.Background()
 
 	c := mustNewCustomer(t, "ghost@example.com")
-	err := repo.Update(ctx, &c)
+	err = repo.Update(ctx, &c)
 	if err == nil {
 		t.Fatal("expected error for non-existent customer")
 	}
@@ -205,7 +226,10 @@ func TestCustomerRepo_WithTx_CommitVisible(t *testing.T) {
 	ensureMigrations(t, db)
 	t.Cleanup(func() { db.Exec("DELETE FROM customers") })
 
-	repo := postgres.NewCustomerRepo(db)
+	repo, err := postgres.NewCustomerRepo(db)
+	if err != nil {
+		t.Fatalf("NewCustomerRepo: %v", err)
+	}
 	ctx := context.Background()
 
 	tx, err := db.BeginTx(ctx, nil)
@@ -261,7 +285,10 @@ func TestCustomerRepo_WithTx_RollbackInvisible(t *testing.T) {
 	ensureMigrations(t, db)
 	t.Cleanup(func() { db.Exec("DELETE FROM customers") })
 
-	repo := postgres.NewCustomerRepo(db)
+	repo, err := postgres.NewCustomerRepo(db)
+	if err != nil {
+		t.Fatalf("NewCustomerRepo: %v", err)
+	}
 	ctx := context.Background()
 
 	tx, err := db.BeginTx(ctx, nil)

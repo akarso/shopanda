@@ -1,9 +1,6 @@
 package catalog
 
-import (
-	"context"
-	"database/sql"
-)
+import "context"
 
 // VariantRepository defines persistence operations for variants.
 type VariantRepository interface {
@@ -24,7 +21,4 @@ type VariantRepository interface {
 
 	// Update persists changes to an existing variant.
 	Update(ctx context.Context, v *Variant) error
-
-	// WithTx returns a repository bound to the given transaction.
-	WithTx(tx *sql.Tx) VariantRepository
 }

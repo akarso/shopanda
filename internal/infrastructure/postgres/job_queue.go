@@ -28,8 +28,11 @@ type JobQueue struct {
 }
 
 // NewJobQueue returns a new JobQueue backed by db.
-func NewJobQueue(db *sql.DB) *JobQueue {
-	return &JobQueue{db: db}
+func NewJobQueue(db *sql.DB) (*JobQueue, error) {
+	if db == nil {
+		return nil, fmt.Errorf("NewJobQueue: nil *sql.DB")
+	}
+	return &JobQueue{db: db}, nil
 }
 
 // Enqueue inserts a new job into the queue.

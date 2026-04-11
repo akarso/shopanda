@@ -31,10 +31,16 @@ func TestReservationRepo_Reserve(t *testing.T) {
 	})
 
 	vid := seedVariant(t, db)
-	stockRepo := postgres.NewStockRepo(db)
+	stockRepo, err := postgres.NewStockRepo(db)
+	if err != nil {
+		t.Fatalf("NewStockRepo: %v", err)
+	}
 	seedStock(t, stockRepo, vid, 10)
 
-	repo := postgres.NewReservationRepo(db)
+	repo, err := postgres.NewReservationRepo(db)
+	if err != nil {
+		t.Fatalf("NewReservationRepo: %v", err)
+	}
 	res, err := inventory.NewReservation(id.New(), vid, 3, time.Now().Add(15*time.Minute))
 	if err != nil {
 		t.Fatalf("NewReservation: %v", err)
@@ -75,13 +81,19 @@ func TestReservationRepo_Reserve_InsufficientStock(t *testing.T) {
 	})
 
 	vid := seedVariant(t, db)
-	stockRepo := postgres.NewStockRepo(db)
+	stockRepo, err := postgres.NewStockRepo(db)
+	if err != nil {
+		t.Fatalf("NewStockRepo: %v", err)
+	}
 	seedStock(t, stockRepo, vid, 2)
 
-	repo := postgres.NewReservationRepo(db)
+	repo, err := postgres.NewReservationRepo(db)
+	if err != nil {
+		t.Fatalf("NewReservationRepo: %v", err)
+	}
 	res, _ := inventory.NewReservation(id.New(), vid, 5, time.Now().Add(15*time.Minute))
 
-	err := repo.Reserve(context.Background(), &res)
+	err = repo.Reserve(context.Background(), &res)
 	if err == nil {
 		t.Fatal("expected error for insufficient stock")
 	}
@@ -105,10 +117,16 @@ func TestReservationRepo_Release(t *testing.T) {
 	})
 
 	vid := seedVariant(t, db)
-	stockRepo := postgres.NewStockRepo(db)
+	stockRepo, err := postgres.NewStockRepo(db)
+	if err != nil {
+		t.Fatalf("NewStockRepo: %v", err)
+	}
 	seedStock(t, stockRepo, vid, 10)
 
-	repo := postgres.NewReservationRepo(db)
+	repo, err := postgres.NewReservationRepo(db)
+	if err != nil {
+		t.Fatalf("NewReservationRepo: %v", err)
+	}
 	res, _ := inventory.NewReservation(id.New(), vid, 4, time.Now().Add(15*time.Minute))
 	if err := repo.Reserve(context.Background(), &res); err != nil {
 		t.Fatalf("Reserve: %v", err)
@@ -133,9 +151,12 @@ func TestReservationRepo_Release(t *testing.T) {
 
 func TestReservationRepo_Release_NotFound(t *testing.T) {
 	db := testDB(t)
-	repo := postgres.NewReservationRepo(db)
+	repo, err := postgres.NewReservationRepo(db)
+	if err != nil {
+		t.Fatalf("NewReservationRepo: %v", err)
+	}
 
-	err := repo.Release(context.Background(), "nonexistent")
+	err = repo.Release(context.Background(), "nonexistent")
 	if err == nil {
 		t.Fatal("expected error for nonexistent reservation")
 	}
@@ -153,10 +174,16 @@ func TestReservationRepo_Confirm(t *testing.T) {
 	})
 
 	vid := seedVariant(t, db)
-	stockRepo := postgres.NewStockRepo(db)
+	stockRepo, err := postgres.NewStockRepo(db)
+	if err != nil {
+		t.Fatalf("NewStockRepo: %v", err)
+	}
 	seedStock(t, stockRepo, vid, 10)
 
-	repo := postgres.NewReservationRepo(db)
+	repo, err := postgres.NewReservationRepo(db)
+	if err != nil {
+		t.Fatalf("NewReservationRepo: %v", err)
+	}
 	res, _ := inventory.NewReservation(id.New(), vid, 3, time.Now().Add(15*time.Minute))
 	if err := repo.Reserve(context.Background(), &res); err != nil {
 		t.Fatalf("Reserve: %v", err)
@@ -181,9 +208,12 @@ func TestReservationRepo_Confirm(t *testing.T) {
 
 func TestReservationRepo_Confirm_NotFound(t *testing.T) {
 	db := testDB(t)
-	repo := postgres.NewReservationRepo(db)
+	repo, err := postgres.NewReservationRepo(db)
+	if err != nil {
+		t.Fatalf("NewReservationRepo: %v", err)
+	}
 
-	err := repo.Confirm(context.Background(), "nonexistent")
+	err = repo.Confirm(context.Background(), "nonexistent")
 	if err == nil {
 		t.Fatal("expected error for nonexistent reservation")
 	}
@@ -201,10 +231,16 @@ func TestReservationRepo_ListActiveByVariantID(t *testing.T) {
 	})
 
 	vid := seedVariant(t, db)
-	stockRepo := postgres.NewStockRepo(db)
+	stockRepo, err := postgres.NewStockRepo(db)
+	if err != nil {
+		t.Fatalf("NewStockRepo: %v", err)
+	}
 	seedStock(t, stockRepo, vid, 20)
 
-	repo := postgres.NewReservationRepo(db)
+	repo, err := postgres.NewReservationRepo(db)
+	if err != nil {
+		t.Fatalf("NewReservationRepo: %v", err)
+	}
 
 	r1, _ := inventory.NewReservation(id.New(), vid, 2, time.Now().Add(15*time.Minute))
 	r2, _ := inventory.NewReservation(id.New(), vid, 3, time.Now().Add(15*time.Minute))
@@ -234,9 +270,12 @@ func TestReservationRepo_ListActiveByVariantID(t *testing.T) {
 
 func TestReservationRepo_Reserve_Nil(t *testing.T) {
 	db := testDB(t)
-	repo := postgres.NewReservationRepo(db)
+	repo, err := postgres.NewReservationRepo(db)
+	if err != nil {
+		t.Fatalf("NewReservationRepo: %v", err)
+	}
 
-	err := repo.Reserve(context.Background(), nil)
+	err = repo.Reserve(context.Background(), nil)
 	if err == nil {
 		t.Fatal("expected error for nil reservation")
 	}
@@ -244,9 +283,12 @@ func TestReservationRepo_Reserve_Nil(t *testing.T) {
 
 func TestReservationRepo_Release_EmptyID(t *testing.T) {
 	db := testDB(t)
-	repo := postgres.NewReservationRepo(db)
+	repo, err := postgres.NewReservationRepo(db)
+	if err != nil {
+		t.Fatalf("NewReservationRepo: %v", err)
+	}
 
-	err := repo.Release(context.Background(), "")
+	err = repo.Release(context.Background(), "")
 	if err == nil {
 		t.Fatal("expected error for empty id")
 	}
@@ -254,9 +296,12 @@ func TestReservationRepo_Release_EmptyID(t *testing.T) {
 
 func TestReservationRepo_Confirm_EmptyID(t *testing.T) {
 	db := testDB(t)
-	repo := postgres.NewReservationRepo(db)
+	repo, err := postgres.NewReservationRepo(db)
+	if err != nil {
+		t.Fatalf("NewReservationRepo: %v", err)
+	}
 
-	err := repo.Confirm(context.Background(), "")
+	err = repo.Confirm(context.Background(), "")
 	if err == nil {
 		t.Fatal("expected error for empty id")
 	}
@@ -271,10 +316,16 @@ func TestReservationRepo_Reserve_NonActiveStatus(t *testing.T) {
 	})
 
 	vid := seedVariant(t, db)
-	stockRepo := postgres.NewStockRepo(db)
+	stockRepo, err := postgres.NewStockRepo(db)
+	if err != nil {
+		t.Fatalf("NewStockRepo: %v", err)
+	}
 	seedStock(t, stockRepo, vid, 10)
 
-	repo := postgres.NewReservationRepo(db)
+	repo, err := postgres.NewReservationRepo(db)
+	if err != nil {
+		t.Fatalf("NewReservationRepo: %v", err)
+	}
 	res, err := inventory.NewReservation(id.New(), vid, 2, time.Now().Add(15*time.Minute))
 	if err != nil {
 		t.Fatalf("NewReservation: %v", err)
@@ -297,10 +348,16 @@ func TestReservationRepo_ReleaseExpiredBefore(t *testing.T) {
 	})
 
 	vid := seedVariant(t, db)
-	stockRepo := postgres.NewStockRepo(db)
+	stockRepo, err := postgres.NewStockRepo(db)
+	if err != nil {
+		t.Fatalf("NewStockRepo: %v", err)
+	}
 	seedStock(t, stockRepo, vid, 20)
 
-	repo := postgres.NewReservationRepo(db)
+	repo, err := postgres.NewReservationRepo(db)
+	if err != nil {
+		t.Fatalf("NewReservationRepo: %v", err)
+	}
 
 	// Create one expired and one still-active reservation.
 	expired, _ := inventory.NewReservation(id.New(), vid, 3, time.Now().Add(-time.Minute))

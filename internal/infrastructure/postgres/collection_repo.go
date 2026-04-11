@@ -22,8 +22,11 @@ type CollectionRepo struct {
 }
 
 // NewCollectionRepo returns a new CollectionRepo backed by db.
-func NewCollectionRepo(db *sql.DB) *CollectionRepo {
-	return &CollectionRepo{db: db}
+func NewCollectionRepo(db *sql.DB) (*CollectionRepo, error) {
+	if db == nil {
+		return nil, fmt.Errorf("NewCollectionRepo: nil *sql.DB")
+	}
+	return &CollectionRepo{db: db}, nil
 }
 
 const collectionColumns = `id, name, slug, type, rules, meta, created_at, updated_at`
