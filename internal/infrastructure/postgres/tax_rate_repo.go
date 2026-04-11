@@ -101,9 +101,10 @@ func (r *TaxRateRepo) Upsert(ctx context.Context, tr *tax.TaxRate) error {
 	const q = `INSERT INTO tax_rates (id, country, class, rate)
 		VALUES ($1, $2, $3, $4)
 		ON CONFLICT (country, class) DO UPDATE
-		SET rate = EXCLUDED.rate`
+		SET rate = EXCLUDED.rate
+		RETURNING id`
 
-	_, err := r.exec(ctx, q, tr.ID, tr.Country, tr.Class, tr.Rate)
+	err := r.queryRow(ctx, q, tr.ID, tr.Country, tr.Class, tr.Rate).Scan(&tr.ID)
 	if err != nil {
 		return fmt.Errorf("tax_rate_repo: upsert: %w", err)
 	}

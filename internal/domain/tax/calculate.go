@@ -21,12 +21,22 @@ func Calculate(price shared.Money, rate TaxRate, mode TaxMode) (shared.Money, er
 	var taxAmount int64
 	switch mode {
 	case ModeExclusive:
-		if rate.Rate != 0 && amount > 0 && amount > math.MaxInt64/int64(rate.Rate) {
-			return shared.Money{}, fmt.Errorf("tax: exclusive calculation overflow")
+		if rate.Rate != 0 {
+			abs := amount
+			if abs < 0 {
+				abs = -abs
+			}
+			if abs > math.MaxInt64/int64(rate.Rate) {
+				return shared.Money{}, fmt.Errorf("tax: exclusive calculation overflow")
+			}
 		}
 		taxAmount = amount * int64(rate.Rate) / 10000
 	case ModeInclusive:
-		if amount > 0 && amount > math.MaxInt64/10000 {
+		abs := amount
+		if abs < 0 {
+			abs = -abs
+		}
+		if abs > math.MaxInt64/10000 {
 			return shared.Money{}, fmt.Errorf("tax: inclusive calculation overflow")
 		}
 		// price = net + tax => net = price * 10000 / (10000 + rate)
