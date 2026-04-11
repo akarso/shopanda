@@ -102,7 +102,8 @@ func (r *CartRepo) Save(ctx context.Context, c *cart.Cart) error {
 			coupon_code = EXCLUDED.coupon_code,
 			version = carts.version + 1,
 			updated_at = EXCLUDED.updated_at
-		WHERE carts.version = EXCLUDED.version`
+		WHERE carts.version = EXCLUDED.version
+		RETURNING version`
 
 	var customerID interface{}
 	if c.CustomerID != "" {
@@ -113,19 +114,16 @@ func (r *CartRepo) Save(ctx context.Context, c *cart.Cart) error {
 		couponCode = c.CouponCode
 	}
 
-	res, err := tx.ExecContext(ctx, upsertCart,
+	var newVersion int
+	err = tx.QueryRowContext(ctx, upsertCart,
 		c.ID, customerID, string(c.Status()), c.Currency, couponCode,
 		c.Version, c.CreatedAt, c.UpdatedAt,
-	)
+	).Scan(&newVersion)
+	if errors.Is(err, sql.ErrNoRows) {
+		return apperror.Conflict("cart was modified concurrently")
+	}
 	if err != nil {
 		return fmt.Errorf("cart_repo: upsert cart: %w", err)
-	}
-	n, err := res.RowsAffected()
-	if err != nil {
-		return fmt.Errorf("cart_repo: rows affected: %w", err)
-	}
-	if n == 0 {
-		return apperror.Conflict("cart was modified concurrently")
 	}
 
 	// Replace items: delete all, re-insert.
@@ -153,6 +151,7 @@ func (r *CartRepo) Save(ctx context.Context, c *cart.Cart) error {
 	if err := tx.Commit(); err != nil {
 		return fmt.Errorf("cart_repo: commit: %w", err)
 	}
+	c.Version = newVersion
 	return nil
 }
 
