@@ -116,7 +116,7 @@ func cartSetup() (*stubCartRepo, *stubPriceRepo, *shophttp.CartHandler, *http.Se
 	carts := newStubCartRepo()
 	prices := newStubPriceRepo()
 	bus := event.NewBus(cartTestLogger())
-	svc := cartApp.NewService(carts, prices, cartTestPipeline(prices), cartTestLogger(), bus)
+	svc := cartApp.NewService(carts, prices, nil, nil, cartTestPipeline(prices), cartTestLogger(), bus)
 	h := shophttp.NewCartHandler(svc)
 	return carts, prices, h, newCartRouter(h)
 }

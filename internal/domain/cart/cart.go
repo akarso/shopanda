@@ -31,6 +31,7 @@ type Cart struct {
 	CustomerID string // empty for anonymous/guest carts
 	status     CartStatus
 	Currency   string
+	CouponCode string // applied coupon code, empty = none
 	Items      []Item
 	CreatedAt  time.Time
 	UpdatedAt  time.Time
@@ -187,4 +188,27 @@ func (c Cart) TotalQuantity() int {
 		total += item.Quantity
 	}
 	return total
+}
+
+// ApplyCoupon sets the coupon code on an active cart.
+func (c *Cart) ApplyCoupon(code string) error {
+	if !c.IsActive() {
+		return errors.New("cart: cannot modify non-active cart")
+	}
+	if code == "" {
+		return errors.New("cart: coupon code must not be empty")
+	}
+	c.CouponCode = code
+	c.UpdatedAt = time.Now().UTC()
+	return nil
+}
+
+// RemoveCoupon clears the coupon code from an active cart.
+func (c *Cart) RemoveCoupon() error {
+	if !c.IsActive() {
+		return errors.New("cart: cannot modify non-active cart")
+	}
+	c.CouponCode = ""
+	c.UpdatedAt = time.Now().UTC()
+	return nil
 }

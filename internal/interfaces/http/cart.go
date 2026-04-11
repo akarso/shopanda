@@ -37,11 +37,16 @@ type updateItemRequest struct {
 	Quantity int `json:"quantity"`
 }
 
+type applyCouponRequest struct {
+	Code string `json:"code"`
+}
+
 type cartResponse struct {
 	ID         string             `json:"id"`
 	CustomerID string             `json:"customer_id,omitempty"`
 	Status     cart.CartStatus    `json:"status"`
 	Currency   string             `json:"currency"`
+	CouponCode string             `json:"coupon_code,omitempty"`
 	Items      []cartItemResponse `json:"items"`
 	CreatedAt  string             `json:"created_at"`
 	UpdatedAt  string             `json:"updated_at"`
@@ -72,6 +77,7 @@ func toCartResponse(c *cart.Cart) cartResponse {
 		CustomerID: c.CustomerID,
 		Status:     c.Status(),
 		Currency:   c.Currency,
+		CouponCode: c.CouponCode,
 		Items:      items,
 		CreatedAt:  c.CreatedAt.UTC().Format(time.RFC3339),
 		UpdatedAt:  c.UpdatedAt.UTC().Format(time.RFC3339),
@@ -216,6 +222,60 @@ func (h *CartHandler) RemoveItem() http.HandlerFunc {
 
 		userID := auth.IdentityFrom(r.Context()).UserID
 		c, err := h.svc.RemoveItem(r.Context(), cartID, userID, variantID)
+		if err != nil {
+			JSONError(w, err)
+			return
+		}
+
+		JSON(w, http.StatusOK, map[string]interface{}{
+			"cart": toCartResponse(c),
+		})
+	}
+}
+
+// ApplyCoupon handles POST /api/v1/carts/{cartId}/coupon.
+func (h *CartHandler) ApplyCoupon() http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		cartID := r.PathValue("cartId")
+		if cartID == "" {
+			JSONError(w, apperror.Validation("cart id is required"))
+			return
+		}
+
+		var req applyCouponRequest
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			JSONError(w, apperror.Validation("invalid request body"))
+			return
+		}
+		if req.Code == "" {
+			JSONError(w, apperror.Validation("code is required"))
+			return
+		}
+
+		userID := auth.IdentityFrom(r.Context()).UserID
+		c, err := h.svc.ApplyCoupon(r.Context(), cartID, userID, req.Code)
+		if err != nil {
+			JSONError(w, err)
+			return
+		}
+
+		JSON(w, http.StatusOK, map[string]interface{}{
+			"cart": toCartResponse(c),
+		})
+	}
+}
+
+// RemoveCoupon handles DELETE /api/v1/carts/{cartId}/coupon.
+func (h *CartHandler) RemoveCoupon() http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		cartID := r.PathValue("cartId")
+		if cartID == "" {
+			JSONError(w, apperror.Validation("cart id is required"))
+			return
+		}
+
+		userID := auth.IdentityFrom(r.Context()).UserID
+		c, err := h.svc.RemoveCoupon(r.Context(), cartID, userID)
 		if err != nil {
 			JSONError(w, err)
 			return
