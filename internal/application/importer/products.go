@@ -265,16 +265,18 @@ func (imp *ProductImporter) Import(ctx context.Context, r io.Reader) (*Result, e
 				}
 				continue
 			}
-			txProducts, _ := imp.products.(txProductRepo)
-			txVariants, _ := imp.variants.(txVariantRepo)
-			prodRepo := catalog.ProductRepository(imp.products)
-			varRepo := catalog.VariantRepository(imp.variants)
-			if txProducts != nil {
-				prodRepo = txProducts.WithTx(tx)
+			txProducts, ok1 := imp.products.(txProductRepo)
+			txVariants, ok2 := imp.variants.(txVariantRepo)
+			if !ok1 || !ok2 {
+				tx.Rollback()
+				for _, pv := range pvs {
+					result.Errors = append(result.Errors, fmt.Sprintf("line %d: repos do not support WithTx", pv.lineNum))
+					result.Skipped++
+				}
+				continue
 			}
-			if txVariants != nil {
-				varRepo = txVariants.WithTx(tx)
-			}
+			prodRepo := txProducts.WithTx(tx)
+			varRepo := txVariants.WithTx(tx)
 			// Write product
 			if err := prodRepo.Create(ctx, product); err != nil {
 				tx.Rollback()
@@ -337,11 +339,16 @@ func (imp *ProductImporter) Import(ctx context.Context, r io.Reader) (*Result, e
 				}
 				continue
 			}
-			txVB, _ := imp.variants.(txVariantRepo)
-			varRepo := catalog.VariantRepository(imp.variants)
-			if txVB != nil {
-				varRepo = txVB.WithTx(tx)
+			txVB, ok := imp.variants.(txVariantRepo)
+			if !ok {
+				tx.Rollback()
+				for _, pv := range pvs {
+					result.Errors = append(result.Errors, fmt.Sprintf("line %d: variant repo does not support WithTx", pv.lineNum))
+					result.Skipped++
+				}
+				continue
 			}
+			varRepo := txVB.WithTx(tx)
 			allOk := true
 			for _, v := range variants {
 				if err := varRepo.Create(ctx, &v); err != nil {
