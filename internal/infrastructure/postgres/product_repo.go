@@ -25,8 +25,11 @@ type ProductRepo struct {
 }
 
 // NewProductRepo returns a new ProductRepo backed by db.
-func NewProductRepo(db *sql.DB) *ProductRepo {
-	return &ProductRepo{db: db, tx: nil}
+func NewProductRepo(db *sql.DB) (*ProductRepo, error) {
+	if db == nil {
+		return nil, fmt.Errorf("NewProductRepo: nil *sql.DB")
+	}
+	return &ProductRepo{db: db, tx: nil}, nil
 }
 
 // WithTx returns a repo bound to the given transaction.

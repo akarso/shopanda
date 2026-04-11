@@ -73,11 +73,26 @@ type CatalogSeeder struct{}
 func (s *CatalogSeeder) Name() string { return "catalog" }
 
 func (s *CatalogSeeder) Seed(ctx context.Context, deps Deps) error {
-	catRepo := postgres.NewCategoryRepo(deps.DB)
-	prodRepo := postgres.NewProductRepo(deps.DB)
-	variantRepo := postgres.NewVariantRepo(deps.DB)
-	priceRepo := postgres.NewPriceRepo(deps.DB)
-	stockRepo := postgres.NewStockRepo(deps.DB)
+	catRepo, err := postgres.NewCategoryRepo(deps.DB)
+	if err != nil {
+		return err
+	}
+	prodRepo, err := postgres.NewProductRepo(deps.DB)
+	if err != nil {
+		return err
+	}
+	variantRepo, err := postgres.NewVariantRepo(deps.DB)
+	if err != nil {
+		return err
+	}
+	priceRepo, err := postgres.NewPriceRepo(deps.DB)
+	if err != nil {
+		return err
+	}
+	stockRepo, err := postgres.NewStockRepo(deps.DB)
+	if err != nil {
+		return err
+	}
 
 	if err := s.seedCategories(ctx, deps, catRepo); err != nil {
 		return err

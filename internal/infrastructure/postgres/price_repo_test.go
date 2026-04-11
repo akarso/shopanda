@@ -35,18 +35,27 @@ func TestPriceRepo_UpsertAndFind(t *testing.T) {
 	ctx := context.Background()
 
 	// Create a product + variant to reference
-	prodRepo := postgres.NewProductRepo(db)
+	prodRepo, err := postgres.NewProductRepo(db)
+	if err != nil {
+		t.Fatalf("NewProductRepo: %v", err)
+	}
 	prod := mustNewProduct(t, "Test Product", "test-price-"+id.New()[:8])
 	if err := prodRepo.Create(ctx, &prod); err != nil {
 		t.Fatalf("create product: %v", err)
 	}
-	variantRepo := postgres.NewVariantRepo(db)
+	variantRepo, err := postgres.NewVariantRepo(db)
+	if err != nil {
+		t.Fatalf("NewVariantRepo: %v", err)
+	}
 	v := mustNewVariant(t, prod.ID, "SKU-PRICE-"+id.New()[:8])
 	if err := variantRepo.Create(ctx, &v); err != nil {
 		t.Fatalf("create variant: %v", err)
 	}
 
-	repo := postgres.NewPriceRepo(db)
+	repo, err := postgres.NewPriceRepo(db)
+	if err != nil {
+		t.Fatalf("NewPriceRepo: %v", err)
+	}
 
 	// Upsert a price
 	price := mustNewPrice(t, v.ID, 1299, "EUR")
@@ -75,7 +84,10 @@ func TestPriceRepo_FindNotFound(t *testing.T) {
 	ensureProductsTable(t, db)
 
 	ctx := context.Background()
-	repo := postgres.NewPriceRepo(db)
+	repo, err := postgres.NewPriceRepo(db)
+	if err != nil {
+		t.Fatalf("NewPriceRepo: %v", err)
+	}
 
 	found, err := repo.FindByVariantAndCurrency(ctx, id.New(), "EUR")
 	if err != nil {
@@ -93,18 +105,27 @@ func TestPriceRepo_UpsertUpdatesAmount(t *testing.T) {
 
 	ctx := context.Background()
 
-	prodRepo := postgres.NewProductRepo(db)
+	prodRepo, err := postgres.NewProductRepo(db)
+	if err != nil {
+		t.Fatalf("NewProductRepo: %v", err)
+	}
 	prod := mustNewProduct(t, "Test Product", "test-upsert-"+id.New()[:8])
 	if err := prodRepo.Create(ctx, &prod); err != nil {
 		t.Fatalf("create product: %v", err)
 	}
-	variantRepo := postgres.NewVariantRepo(db)
+	variantRepo, err := postgres.NewVariantRepo(db)
+	if err != nil {
+		t.Fatalf("NewVariantRepo: %v", err)
+	}
 	v := mustNewVariant(t, prod.ID, "SKU-UPSERT-"+id.New()[:8])
 	if err := variantRepo.Create(ctx, &v); err != nil {
 		t.Fatalf("create variant: %v", err)
 	}
 
-	repo := postgres.NewPriceRepo(db)
+	repo, err := postgres.NewPriceRepo(db)
+	if err != nil {
+		t.Fatalf("NewPriceRepo: %v", err)
+	}
 
 	// Insert initial price
 	price := mustNewPrice(t, v.ID, 1000, "EUR")
@@ -134,18 +155,27 @@ func TestPriceRepo_ListByVariantID(t *testing.T) {
 
 	ctx := context.Background()
 
-	prodRepo := postgres.NewProductRepo(db)
+	prodRepo, err := postgres.NewProductRepo(db)
+	if err != nil {
+		t.Fatalf("NewProductRepo: %v", err)
+	}
 	prod := mustNewProduct(t, "Test Product", "test-list-"+id.New()[:8])
 	if err := prodRepo.Create(ctx, &prod); err != nil {
 		t.Fatalf("create product: %v", err)
 	}
-	variantRepo := postgres.NewVariantRepo(db)
+	variantRepo, err := postgres.NewVariantRepo(db)
+	if err != nil {
+		t.Fatalf("NewVariantRepo: %v", err)
+	}
 	v := mustNewVariant(t, prod.ID, "SKU-LIST-"+id.New()[:8])
 	if err := variantRepo.Create(ctx, &v); err != nil {
 		t.Fatalf("create variant: %v", err)
 	}
 
-	repo := postgres.NewPriceRepo(db)
+	repo, err := postgres.NewPriceRepo(db)
+	if err != nil {
+		t.Fatalf("NewPriceRepo: %v", err)
+	}
 
 	p1 := mustNewPrice(t, v.ID, 1299, "EUR")
 	p2 := mustNewPrice(t, v.ID, 1499, "USD")
@@ -176,7 +206,10 @@ func TestPriceRepo_UpsertNil(t *testing.T) {
 	db := testDB(t)
 	ensureProductsTable(t, db)
 
-	repo := postgres.NewPriceRepo(db)
+	repo, err := postgres.NewPriceRepo(db)
+	if err != nil {
+		t.Fatalf("NewPriceRepo: %v", err)
+	}
 	ctx := context.Background()
 
 	if err := repo.Upsert(ctx, nil); err == nil {

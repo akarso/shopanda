@@ -14,12 +14,18 @@ import (
 func seedVariant(t *testing.T, db *sql.DB) string {
 	t.Helper()
 	ctx := context.Background()
-	prodRepo := postgres.NewProductRepo(db)
+	prodRepo, err := postgres.NewProductRepo(db)
+	if err != nil {
+		t.Fatalf("NewProductRepo: %v", err)
+	}
 	prod := mustNewProduct(t, "Stock Product", "stock-"+id.New()[:8])
 	if err := prodRepo.Create(ctx, &prod); err != nil {
 		t.Fatalf("seed product: %v", err)
 	}
-	variantRepo := postgres.NewVariantRepo(db)
+	variantRepo, err := postgres.NewVariantRepo(db)
+	if err != nil {
+		t.Fatalf("NewVariantRepo: %v", err)
+	}
 	v := mustNewVariant(t, prod.ID, "SKU-STOCK-"+id.New()[:8])
 	if err := variantRepo.Create(ctx, &v); err != nil {
 		t.Fatalf("seed variant: %v", err)
@@ -32,7 +38,10 @@ func TestStockRepo_GetStock_NoRecord(t *testing.T) {
 	ensureProductsTable(t, db)
 	t.Cleanup(func() { db.Exec("DELETE FROM stock") })
 
-	repo := postgres.NewStockRepo(db)
+	repo, err := postgres.NewStockRepo(db)
+	if err != nil {
+		t.Fatalf("NewStockRepo: %v", err)
+	}
 	vid := seedVariant(t, db)
 
 	s, err := repo.GetStock(context.Background(), vid)
@@ -52,7 +61,10 @@ func TestStockRepo_SetStock_Create(t *testing.T) {
 	ensureProductsTable(t, db)
 	t.Cleanup(func() { db.Exec("DELETE FROM stock") })
 
-	repo := postgres.NewStockRepo(db)
+	repo, err := postgres.NewStockRepo(db)
+	if err != nil {
+		t.Fatalf("NewStockRepo: %v", err)
+	}
 	vid := seedVariant(t, db)
 
 	entry, err := inventory.NewStockEntry(vid, 25)
@@ -78,7 +90,10 @@ func TestStockRepo_SetStock_Update(t *testing.T) {
 	ensureProductsTable(t, db)
 	t.Cleanup(func() { db.Exec("DELETE FROM stock") })
 
-	repo := postgres.NewStockRepo(db)
+	repo, err := postgres.NewStockRepo(db)
+	if err != nil {
+		t.Fatalf("NewStockRepo: %v", err)
+	}
 	vid := seedVariant(t, db)
 
 	entry1, _ := inventory.NewStockEntry(vid, 10)
@@ -102,9 +117,12 @@ func TestStockRepo_SetStock_Update(t *testing.T) {
 
 func TestStockRepo_SetStock_Nil(t *testing.T) {
 	db := testDB(t)
-	repo := postgres.NewStockRepo(db)
+	repo, err := postgres.NewStockRepo(db)
+	if err != nil {
+		t.Fatalf("NewStockRepo: %v", err)
+	}
 
-	err := repo.SetStock(context.Background(), nil)
+	err = repo.SetStock(context.Background(), nil)
 	if err == nil {
 		t.Fatal("expected error for nil entry")
 	}
@@ -112,9 +130,12 @@ func TestStockRepo_SetStock_Nil(t *testing.T) {
 
 func TestStockRepo_GetStock_EmptyVariantID(t *testing.T) {
 	db := testDB(t)
-	repo := postgres.NewStockRepo(db)
+	repo, err := postgres.NewStockRepo(db)
+	if err != nil {
+		t.Fatalf("NewStockRepo: %v", err)
+	}
 
-	_, err := repo.GetStock(context.Background(), "")
+	_, err = repo.GetStock(context.Background(), "")
 	if err == nil {
 		t.Fatal("expected error for empty variantID")
 	}

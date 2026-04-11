@@ -13,7 +13,10 @@ import (
 
 func TestSearchEngine_Name(t *testing.T) {
 	db := testDB(t)
-	engine := postgres.NewSearchEngine(db)
+	engine, err := postgres.NewSearchEngine(db)
+	if err != nil {
+		t.Fatalf("NewSearchEngine: %v", err)
+	}
 	if got := engine.Name(); got != "postgres" {
 		t.Errorf("Name() = %q, want %q", got, "postgres")
 	}
@@ -22,12 +25,18 @@ func TestSearchEngine_Name(t *testing.T) {
 func TestSearchEngine_IndexProduct(t *testing.T) {
 	db := testDB(t)
 	ensureProductsTable(t, db)
-	engine := postgres.NewSearchEngine(db)
+	engine, err := postgres.NewSearchEngine(db)
+	if err != nil {
+		t.Fatalf("NewSearchEngine: %v", err)
+	}
 	ctx := context.Background()
 
 	// Create a product first.
 	p := mustNewProduct(t, "Indexable Shoe", "indexable-shoe-"+id.New()[:8])
-	repo := postgres.NewProductRepo(db)
+	repo, err := postgres.NewProductRepo(db)
+	if err != nil {
+		t.Fatalf("NewProductRepo: %v", err)
+	}
 	if err := repo.Create(ctx, &p); err != nil {
 		t.Fatalf("Create: %v", err)
 	}
@@ -44,7 +53,7 @@ func TestSearchEngine_IndexProduct(t *testing.T) {
 		Description: "comfortable running shoe",
 	}
 
-	err := engine.IndexProduct(ctx, sp)
+	err = engine.IndexProduct(ctx, sp)
 	if err != nil {
 		t.Fatalf("IndexProduct: %v", err)
 	}
@@ -62,10 +71,13 @@ func TestSearchEngine_IndexProduct(t *testing.T) {
 func TestSearchEngine_IndexProduct_NotFound(t *testing.T) {
 	db := testDB(t)
 	ensureProductsTable(t, db)
-	engine := postgres.NewSearchEngine(db)
+	engine, err := postgres.NewSearchEngine(db)
+	if err != nil {
+		t.Fatalf("NewSearchEngine: %v", err)
+	}
 
 	sp := search.Product{ID: id.New(), Name: "Ghost", Description: "none"}
-	err := engine.IndexProduct(context.Background(), sp)
+	err = engine.IndexProduct(context.Background(), sp)
 	if err == nil {
 		t.Fatal("expected error for non-existent product")
 	}
@@ -74,12 +86,18 @@ func TestSearchEngine_IndexProduct_NotFound(t *testing.T) {
 func TestSearchEngine_RemoveProduct(t *testing.T) {
 	db := testDB(t)
 	ensureProductsTable(t, db)
-	engine := postgres.NewSearchEngine(db)
+	engine, err := postgres.NewSearchEngine(db)
+	if err != nil {
+		t.Fatalf("NewSearchEngine: %v", err)
+	}
 	ctx := context.Background()
 
 	// Create and publish a product.
 	p := mustNewProduct(t, "Removable Widget", "removable-widget-"+id.New()[:8])
-	repo := postgres.NewProductRepo(db)
+	repo, err := postgres.NewProductRepo(db)
+	if err != nil {
+		t.Fatalf("NewProductRepo: %v", err)
+	}
 	if err := repo.Create(ctx, &p); err != nil {
 		t.Fatalf("Create: %v", err)
 	}
@@ -112,9 +130,15 @@ func TestSearchEngine_RemoveProduct(t *testing.T) {
 func TestSearchEngine_RemoveProduct_TriggerRepopulates(t *testing.T) {
 	db := testDB(t)
 	ensureProductsTable(t, db)
-	engine := postgres.NewSearchEngine(db)
+	engine, err := postgres.NewSearchEngine(db)
+	if err != nil {
+		t.Fatalf("NewSearchEngine: %v", err)
+	}
 	ctx := context.Background()
-	repo := postgres.NewProductRepo(db)
+	repo, err := postgres.NewProductRepo(db)
+	if err != nil {
+		t.Fatalf("NewProductRepo: %v", err)
+	}
 
 	// Create and publish a product.
 	p := mustNewProduct(t, "Trigger Test Widget", "trigger-test-"+id.New()[:8])
@@ -152,9 +176,15 @@ func TestSearchEngine_RemoveProduct_TriggerRepopulates(t *testing.T) {
 func TestSearchEngine_Search_TextMatch(t *testing.T) {
 	db := testDB(t)
 	ensureProductsTable(t, db)
-	engine := postgres.NewSearchEngine(db)
+	engine, err := postgres.NewSearchEngine(db)
+	if err != nil {
+		t.Fatalf("NewSearchEngine: %v", err)
+	}
 	ctx := context.Background()
-	repo := postgres.NewProductRepo(db)
+	repo, err := postgres.NewProductRepo(db)
+	if err != nil {
+		t.Fatalf("NewProductRepo: %v", err)
+	}
 
 	// Create two published products.
 	p1 := mustNewProduct(t, "Leather Boots", "leather-boots-"+id.New()[:8])
@@ -196,9 +226,15 @@ func TestSearchEngine_Search_TextMatch(t *testing.T) {
 func TestSearchEngine_Search_EmptyText(t *testing.T) {
 	db := testDB(t)
 	ensureProductsTable(t, db)
-	engine := postgres.NewSearchEngine(db)
+	engine, err := postgres.NewSearchEngine(db)
+	if err != nil {
+		t.Fatalf("NewSearchEngine: %v", err)
+	}
 	ctx := context.Background()
-	repo := postgres.NewProductRepo(db)
+	repo, err := postgres.NewProductRepo(db)
+	if err != nil {
+		t.Fatalf("NewProductRepo: %v", err)
+	}
 
 	p := mustNewProduct(t, "Visible Product", "visible-"+id.New()[:8])
 	p.Status = catalog.StatusActive
@@ -222,9 +258,15 @@ func TestSearchEngine_Search_EmptyText(t *testing.T) {
 func TestSearchEngine_Search_Pagination(t *testing.T) {
 	db := testDB(t)
 	ensureProductsTable(t, db)
-	engine := postgres.NewSearchEngine(db)
+	engine, err := postgres.NewSearchEngine(db)
+	if err != nil {
+		t.Fatalf("NewSearchEngine: %v", err)
+	}
 	ctx := context.Background()
-	repo := postgres.NewProductRepo(db)
+	repo, err := postgres.NewProductRepo(db)
+	if err != nil {
+		t.Fatalf("NewProductRepo: %v", err)
+	}
 
 	suffix := id.New()[:6]
 	for i := 0; i < 3; i++ {
@@ -264,9 +306,15 @@ func TestSearchEngine_Search_Pagination(t *testing.T) {
 func TestSearchEngine_Search_SortByName(t *testing.T) {
 	db := testDB(t)
 	ensureProductsTable(t, db)
-	engine := postgres.NewSearchEngine(db)
+	engine, err := postgres.NewSearchEngine(db)
+	if err != nil {
+		t.Fatalf("NewSearchEngine: %v", err)
+	}
 	ctx := context.Background()
-	repo := postgres.NewProductRepo(db)
+	repo, err := postgres.NewProductRepo(db)
+	if err != nil {
+		t.Fatalf("NewProductRepo: %v", err)
+	}
 
 	suffix := id.New()[:6]
 	names := []string{"Alpha Sortable " + suffix, "Charlie Sortable " + suffix, "Bravo Sortable " + suffix}
@@ -296,9 +344,12 @@ func TestSearchEngine_Search_SortByName(t *testing.T) {
 
 func TestSearchEngine_Search_ValidationError(t *testing.T) {
 	db := testDB(t)
-	engine := postgres.NewSearchEngine(db)
+	engine, err := postgres.NewSearchEngine(db)
+	if err != nil {
+		t.Fatalf("NewSearchEngine: %v", err)
+	}
 
-	_, err := engine.Search(context.Background(), search.SearchQuery{Offset: -1})
+	_, err = engine.Search(context.Background(), search.SearchQuery{Offset: -1})
 	if err == nil {
 		t.Fatal("expected validation error for negative offset")
 	}

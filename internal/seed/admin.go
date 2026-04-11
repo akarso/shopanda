@@ -23,7 +23,10 @@ type AdminSeeder struct{}
 func (s *AdminSeeder) Name() string { return "admin-user" }
 
 func (s *AdminSeeder) Seed(ctx context.Context, deps Deps) error {
-	repo := postgres.NewCustomerRepo(deps.DB)
+	repo, err := postgres.NewCustomerRepo(deps.DB)
+	if err != nil {
+		return err
+	}
 
 	existing, err := repo.FindByEmail(ctx, adminEmail)
 	if err != nil {

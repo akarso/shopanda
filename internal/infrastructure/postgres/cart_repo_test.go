@@ -27,7 +27,10 @@ func TestCartRepo_SaveAndFindByID(t *testing.T) {
 		db.Exec("DELETE FROM carts")
 	})
 
-	repo := postgres.NewCartRepo(db)
+	repo, err := postgres.NewCartRepo(db)
+	if err != nil {
+		t.Fatalf("NewCartRepo: %v", err)
+	}
 	ctx := context.Background()
 
 	c := mustNewCart(t, "EUR")
@@ -74,7 +77,10 @@ func TestCartRepo_FindByID_NotFound(t *testing.T) {
 	db := testDB(t)
 	ensureProductsTable(t, db)
 
-	repo := postgres.NewCartRepo(db)
+	repo, err := postgres.NewCartRepo(db)
+	if err != nil {
+		t.Fatalf("NewCartRepo: %v", err)
+	}
 	got, err := repo.FindByID(context.Background(), id.New())
 	if err != nil {
 		t.Fatalf("FindByID: %v", err)
@@ -92,7 +98,10 @@ func TestCartRepo_FindActiveByCustomerID(t *testing.T) {
 		db.Exec("DELETE FROM carts")
 	})
 
-	repo := postgres.NewCartRepo(db)
+	repo, err := postgres.NewCartRepo(db)
+	if err != nil {
+		t.Fatalf("NewCartRepo: %v", err)
+	}
 	ctx := context.Background()
 
 	c := mustNewCart(t, "USD")
@@ -123,7 +132,10 @@ func TestCartRepo_FindActiveByCustomerID_NotFound(t *testing.T) {
 	db := testDB(t)
 	ensureProductsTable(t, db)
 
-	repo := postgres.NewCartRepo(db)
+	repo, err := postgres.NewCartRepo(db)
+	if err != nil {
+		t.Fatalf("NewCartRepo: %v", err)
+	}
 	got, err := repo.FindActiveByCustomerID(context.Background(), "no-customer")
 	if err != nil {
 		t.Fatalf("FindActiveByCustomerID: %v", err)
@@ -141,7 +153,10 @@ func TestCartRepo_Save_UpdateItems(t *testing.T) {
 		db.Exec("DELETE FROM carts")
 	})
 
-	repo := postgres.NewCartRepo(db)
+	repo, err := postgres.NewCartRepo(db)
+	if err != nil {
+		t.Fatalf("NewCartRepo: %v", err)
+	}
 	ctx := context.Background()
 
 	c := mustNewCart(t, "EUR")
@@ -179,7 +194,10 @@ func TestCartRepo_Save_EmptyCart(t *testing.T) {
 		db.Exec("DELETE FROM carts")
 	})
 
-	repo := postgres.NewCartRepo(db)
+	repo, err := postgres.NewCartRepo(db)
+	if err != nil {
+		t.Fatalf("NewCartRepo: %v", err)
+	}
 	ctx := context.Background()
 
 	c := mustNewCart(t, "EUR")
@@ -207,7 +225,10 @@ func TestCartRepo_Delete(t *testing.T) {
 		db.Exec("DELETE FROM carts")
 	})
 
-	repo := postgres.NewCartRepo(db)
+	repo, err := postgres.NewCartRepo(db)
+	if err != nil {
+		t.Fatalf("NewCartRepo: %v", err)
+	}
 	ctx := context.Background()
 
 	c := mustNewCart(t, "EUR")
@@ -234,9 +255,12 @@ func TestCartRepo_Delete(t *testing.T) {
 
 func TestCartRepo_Save_Nil(t *testing.T) {
 	db := testDB(t)
-	repo := postgres.NewCartRepo(db)
+	repo, err := postgres.NewCartRepo(db)
+	if err != nil {
+		t.Fatalf("NewCartRepo: %v", err)
+	}
 
-	err := repo.Save(context.Background(), nil)
+	err = repo.Save(context.Background(), nil)
 	if err == nil {
 		t.Fatal("expected error for nil cart")
 	}
@@ -244,9 +268,12 @@ func TestCartRepo_Save_Nil(t *testing.T) {
 
 func TestCartRepo_FindByID_EmptyID(t *testing.T) {
 	db := testDB(t)
-	repo := postgres.NewCartRepo(db)
+	repo, err := postgres.NewCartRepo(db)
+	if err != nil {
+		t.Fatalf("NewCartRepo: %v", err)
+	}
 
-	_, err := repo.FindByID(context.Background(), "")
+	_, err = repo.FindByID(context.Background(), "")
 	if err == nil {
 		t.Fatal("expected error for empty id")
 	}
@@ -254,9 +281,12 @@ func TestCartRepo_FindByID_EmptyID(t *testing.T) {
 
 func TestCartRepo_Delete_EmptyID(t *testing.T) {
 	db := testDB(t)
-	repo := postgres.NewCartRepo(db)
+	repo, err := postgres.NewCartRepo(db)
+	if err != nil {
+		t.Fatalf("NewCartRepo: %v", err)
+	}
 
-	err := repo.Delete(context.Background(), "")
+	err = repo.Delete(context.Background(), "")
 	if err == nil {
 		t.Fatal("expected error for empty id")
 	}
@@ -270,7 +300,10 @@ func TestCartRepo_Save_WithStatus(t *testing.T) {
 		db.Exec("DELETE FROM carts")
 	})
 
-	repo := postgres.NewCartRepo(db)
+	repo, err := postgres.NewCartRepo(db)
+	if err != nil {
+		t.Fatalf("NewCartRepo: %v", err)
+	}
 	ctx := context.Background()
 
 	c := mustNewCart(t, "EUR")

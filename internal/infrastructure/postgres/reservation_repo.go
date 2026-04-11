@@ -20,8 +20,11 @@ type ReservationRepo struct {
 }
 
 // NewReservationRepo returns a new ReservationRepo backed by db.
-func NewReservationRepo(db *sql.DB) *ReservationRepo {
-	return &ReservationRepo{db: db}
+func NewReservationRepo(db *sql.DB) (*ReservationRepo, error) {
+	if db == nil {
+		return nil, fmt.Errorf("NewReservationRepo: nil *sql.DB")
+	}
+	return &ReservationRepo{db: db}, nil
 }
 
 // Reserve atomically decrements stock and creates a reservation within a transaction.

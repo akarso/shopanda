@@ -22,8 +22,11 @@ type CategoryRepo struct {
 }
 
 // NewCategoryRepo returns a new CategoryRepo backed by db.
-func NewCategoryRepo(db *sql.DB) *CategoryRepo {
-	return &CategoryRepo{db: db}
+func NewCategoryRepo(db *sql.DB) (*CategoryRepo, error) {
+	if db == nil {
+		return nil, fmt.Errorf("NewCategoryRepo: nil *sql.DB")
+	}
+	return &CategoryRepo{db: db}, nil
 }
 
 const categoryColumns = `id, parent_id, name, slug, position, meta, created_at, updated_at`

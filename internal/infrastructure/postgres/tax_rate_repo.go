@@ -19,8 +19,11 @@ type TaxRateRepo struct {
 }
 
 // NewTaxRateRepo returns a new TaxRateRepo backed by db.
-func NewTaxRateRepo(db *sql.DB) *TaxRateRepo {
-	return &TaxRateRepo{db: db}
+func NewTaxRateRepo(db *sql.DB) (*TaxRateRepo, error) {
+	if db == nil {
+		return nil, fmt.Errorf("NewTaxRateRepo: nil *sql.DB")
+	}
+	return &TaxRateRepo{db: db}, nil
 }
 
 // WithTx returns a repo bound to the given transaction.

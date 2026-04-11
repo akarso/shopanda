@@ -141,22 +141,61 @@ func runServe(cfg *config.Config, log logger.Logger) error {
 	defer conn.Close()
 
 	// Repositories.
-	productRepo := postgres.NewProductRepo(conn)
-	variantRepo := postgres.NewVariantRepo(conn)
-	cartRepo := postgres.NewCartRepo(conn)
-	priceRepo := postgres.NewPriceRepo(conn)
-	customerRepo := postgres.NewCustomerRepo(conn)
-	resetTokenRepo := postgres.NewResetTokenRepo(conn)
-	reservationRepo := postgres.NewReservationRepo(conn)
-	orderRepo := postgres.NewOrderRepo(conn)
-	paymentRepo := postgres.NewPaymentRepo(conn)
-	shippingRepo := postgres.NewShippingRepo(conn)
-	categoryRepo := postgres.NewCategoryRepo(conn)
-	collectionRepo := postgres.NewCollectionRepo(conn)
+	productRepo, err := postgres.NewProductRepo(conn)
+	if err != nil {
+		return err
+	}
+	variantRepo, err := postgres.NewVariantRepo(conn)
+	if err != nil {
+		return err
+	}
+	cartRepo, err := postgres.NewCartRepo(conn)
+	if err != nil {
+		return err
+	}
+	priceRepo, err := postgres.NewPriceRepo(conn)
+	if err != nil {
+		return err
+	}
+	customerRepo, err := postgres.NewCustomerRepo(conn)
+	if err != nil {
+		return err
+	}
+	resetTokenRepo, err := postgres.NewResetTokenRepo(conn)
+	if err != nil {
+		return err
+	}
+	reservationRepo, err := postgres.NewReservationRepo(conn)
+	if err != nil {
+		return err
+	}
+	orderRepo, err := postgres.NewOrderRepo(conn)
+	if err != nil {
+		return err
+	}
+	paymentRepo, err := postgres.NewPaymentRepo(conn)
+	if err != nil {
+		return err
+	}
+	shippingRepo, err := postgres.NewShippingRepo(conn)
+	if err != nil {
+		return err
+	}
+	categoryRepo, err := postgres.NewCategoryRepo(conn)
+	if err != nil {
+		return err
+	}
+	collectionRepo, err := postgres.NewCollectionRepo(conn)
+	if err != nil {
+		return err
+	}
 	_ = collectionRepo // wired in collection HTTP handlers PR
 
 	// Search engine.
-	searchEngine := postgres.NewSearchEngine(conn)
+	searchEngine, err := postgres.NewSearchEngine(conn)
+	if err != nil {
+		return err
+	}
 
 	// Job queue, worker, mailer, cache — shared setup.
 	jobWorker, jobQueue, appCache, err := setupWorker(conn, cfg, log)
@@ -179,7 +218,10 @@ func runServe(cfg *config.Config, log logger.Logger) error {
 	}
 
 	// Asset repository.
-	assetRepo := postgres.NewAssetRepo(conn)
+	assetRepo, err := postgres.NewAssetRepo(conn)
+	if err != nil {
+		return err
+	}
 
 	// Cache.
 	_ = appCache // wired by consumers in upcoming PRs
@@ -464,8 +506,14 @@ func runImportProducts(cfg *config.Config, log logger.Logger) error {
 	}
 	defer conn.Close()
 
-	productRepo := postgres.NewProductRepo(conn)
-	variantRepo := postgres.NewVariantRepo(conn)
+	productRepo, err := postgres.NewProductRepo(conn)
+	if err != nil {
+		return fmt.Errorf("product repo: %w", err)
+	}
+	variantRepo, err := postgres.NewVariantRepo(conn)
+	if err != nil {
+		return fmt.Errorf("variant repo: %w", err)
+	}
 	imp := importer.NewProductImporter(productRepo, variantRepo, conn)
 
 	log.Info("import.start", map[string]interface{}{"file": filePath})
@@ -506,8 +554,14 @@ func runExportProducts(cfg *config.Config, log logger.Logger) error {
 	}
 	defer conn.Close()
 
-	productRepo := postgres.NewProductRepo(conn)
-	variantRepo := postgres.NewVariantRepo(conn)
+	productRepo, err := postgres.NewProductRepo(conn)
+	if err != nil {
+		return fmt.Errorf("product repo: %w", err)
+	}
+	variantRepo, err := postgres.NewVariantRepo(conn)
+	if err != nil {
+		return fmt.Errorf("variant repo: %w", err)
+	}
 	exp := exporter.NewProductExporter(productRepo, variantRepo)
 
 	f, err := os.Create(filePath)
@@ -550,8 +604,14 @@ func runImportStock(cfg *config.Config, log logger.Logger) error {
 	}
 	defer conn.Close()
 
-	variantRepo := postgres.NewVariantRepo(conn)
-	stockRepo := postgres.NewStockRepo(conn)
+	variantRepo, err := postgres.NewVariantRepo(conn)
+	if err != nil {
+		return fmt.Errorf("variant repo: %w", err)
+	}
+	stockRepo, err := postgres.NewStockRepo(conn)
+	if err != nil {
+		return fmt.Errorf("stock repo: %w", err)
+	}
 	imp := importer.NewStockImporter(variantRepo, stockRepo)
 
 	log.Info("import.stock.start", map[string]interface{}{"file": filePath})
@@ -591,8 +651,14 @@ func runExportStock(cfg *config.Config, log logger.Logger) error {
 	}
 	defer conn.Close()
 
-	stockRepo := postgres.NewStockRepo(conn)
-	variantRepo := postgres.NewVariantRepo(conn)
+	stockRepo, err := postgres.NewStockRepo(conn)
+	if err != nil {
+		return fmt.Errorf("stock repo: %w", err)
+	}
+	variantRepo, err := postgres.NewVariantRepo(conn)
+	if err != nil {
+		return fmt.Errorf("variant repo: %w", err)
+	}
 	exp := exporter.NewStockExporter(stockRepo, variantRepo)
 
 	tmpFile, err := os.CreateTemp(filepath.Dir(filePath), "stock-export-*.csv")
@@ -641,7 +707,10 @@ func runImportCustomers(cfg *config.Config, log logger.Logger) error {
 	}
 	defer conn.Close()
 
-	customerRepo := postgres.NewCustomerRepo(conn)
+	customerRepo, err := postgres.NewCustomerRepo(conn)
+	if err != nil {
+		return fmt.Errorf("customer repo: %w", err)
+	}
 	imp := importer.NewCustomerImporter(customerRepo)
 
 	log.Info("import.customers.start", map[string]interface{}{"file": filePath})
@@ -681,7 +750,10 @@ func runExportCustomers(cfg *config.Config, log logger.Logger) error {
 	}
 	defer conn.Close()
 
-	customerRepo := postgres.NewCustomerRepo(conn)
+	customerRepo, err := postgres.NewCustomerRepo(conn)
+	if err != nil {
+		return fmt.Errorf("customer repo: %w", err)
+	}
 	exp := exporter.NewCustomerExporter(customerRepo)
 
 	tmpFile, err := os.CreateTemp(filepath.Dir(filePath), "customer-export-*.csv")
@@ -725,7 +797,10 @@ func runScheduler(cfg *config.Config, log logger.Logger) error {
 	}
 	defer conn.Close()
 
-	jobQueue := postgres.NewJobQueue(conn)
+	jobQueue, err := postgres.NewJobQueue(conn)
+	if err != nil {
+		return fmt.Errorf("job queue: %w", err)
+	}
 	var sched scheduler.Scheduler = cron.New(log)
 
 	sched.Register("cache.cleanup", "*/5 * * * *", func() {
@@ -965,7 +1040,10 @@ func runImportCategories(cfg *config.Config, log logger.Logger) error {
 	}
 	defer conn.Close()
 
-	categoryRepo := postgres.NewCategoryRepo(conn)
+	categoryRepo, err := postgres.NewCategoryRepo(conn)
+	if err != nil {
+		return fmt.Errorf("category repo: %w", err)
+	}
 	imp := importer.NewCategoryImporter(categoryRepo)
 
 	log.Info("import.categories.start", map[string]interface{}{"file": filePath})
@@ -1009,7 +1087,10 @@ func runExportCategories(cfg *config.Config, log logger.Logger) error {
 	}
 	defer conn.Close()
 
-	categoryRepo := postgres.NewCategoryRepo(conn)
+	categoryRepo, err := postgres.NewCategoryRepo(conn)
+	if err != nil {
+		return fmt.Errorf("category repo: %w", err)
+	}
 	exp := exporter.NewCategoryExporter(categoryRepo)
 
 	tmpFile, err := os.CreateTemp(filepath.Dir(filePath), "category-export-*.csv")
@@ -1070,8 +1151,14 @@ func runImportPrices(cfg *config.Config, log logger.Logger) error {
 	}
 	defer conn.Close()
 
-	variantRepo := postgres.NewVariantRepo(conn)
-	priceRepo := postgres.NewPriceRepo(conn)
+	variantRepo, err := postgres.NewVariantRepo(conn)
+	if err != nil {
+		return fmt.Errorf("variant repo: %w", err)
+	}
+	priceRepo, err := postgres.NewPriceRepo(conn)
+	if err != nil {
+		return fmt.Errorf("price repo: %w", err)
+	}
 	imp := importer.NewPriceImporter(variantRepo, priceRepo)
 
 	log.Info("import.prices.start", map[string]interface{}{"file": filePath})
@@ -1111,8 +1198,14 @@ func runExportPrices(cfg *config.Config, log logger.Logger) error {
 	}
 	defer conn.Close()
 
-	variantRepo := postgres.NewVariantRepo(conn)
-	priceRepo := postgres.NewPriceRepo(conn)
+	variantRepo, err := postgres.NewVariantRepo(conn)
+	if err != nil {
+		return fmt.Errorf("variant repo: %w", err)
+	}
+	priceRepo, err := postgres.NewPriceRepo(conn)
+	if err != nil {
+		return fmt.Errorf("price repo: %w", err)
+	}
 	exp := exporter.NewPriceExporter(priceRepo, variantRepo)
 
 	tmpFile, err := os.CreateTemp(filepath.Dir(filePath), "price-export-*.csv")
@@ -1212,7 +1305,10 @@ Commands:
 // handler. It returns the configured worker, the job queue (needed by
 // notification services), and the cache instance.
 func setupWorker(conn *sql.DB, cfg *config.Config, log logger.Logger) (*jobs.Worker, jobs.Queue, cache.Cache, error) {
-	jobQueue := postgres.NewJobQueue(conn)
+	jobQueue, err := postgres.NewJobQueue(conn)
+	if err != nil {
+		return nil, nil, nil, fmt.Errorf("job queue: %w", err)
+	}
 	jobWorker := jobs.NewWorker(jobQueue, log, time.Second)
 
 	mailer := smtpmail.New(smtpmail.Config{
@@ -1227,7 +1323,11 @@ func setupWorker(conn *sql.DB, cfg *config.Config, log logger.Logger) (*jobs.Wor
 	var appCache cache.Cache
 	switch cfg.Cache.Driver {
 	case "postgres":
-		appCache = postgres.NewCacheStore(conn)
+		cs, csErr := postgres.NewCacheStore(conn)
+		if csErr != nil {
+			return nil, nil, nil, fmt.Errorf("cache store: %w", csErr)
+		}
+		appCache = cs
 	default:
 		return nil, nil, nil, fmt.Errorf("unsupported cache.driver: %s", cfg.Cache.Driver)
 	}
@@ -1279,7 +1379,10 @@ func runSearchReindex(cfg *config.Config, log logger.Logger) error {
 	}
 	defer conn.Close()
 
-	searchEngine := postgres.NewSearchEngine(conn)
+	searchEngine, err := postgres.NewSearchEngine(conn)
+	if err != nil {
+		return fmt.Errorf("search engine: %w", err)
+	}
 
 	log.Info("search.reindex.start", map[string]interface{}{
 		"engine": searchEngine.Name(),
@@ -1306,7 +1409,11 @@ func runSearchReindex(cfg *config.Config, log logger.Logger) error {
 	}
 	defer tx.Rollback() //nolint:errcheck // rollback after commit is a no-op
 
-	productRepo := postgres.NewProductRepo(conn).WithTx(tx)
+	tmpProductRepo, err := postgres.NewProductRepo(conn)
+	if err != nil {
+		return fmt.Errorf("product repo: %w", err)
+	}
+	productRepo := tmpProductRepo.WithTx(tx)
 
 	const batchSize = 100
 	var offset, indexed int

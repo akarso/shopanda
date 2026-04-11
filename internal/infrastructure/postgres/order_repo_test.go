@@ -32,7 +32,10 @@ func TestOrderRepo_SaveAndFindByID(t *testing.T) {
 		db.Exec("DELETE FROM orders")
 	})
 
-	repo := postgres.NewOrderRepo(db)
+	repo, err := postgres.NewOrderRepo(db)
+	if err != nil {
+		t.Fatalf("NewOrderRepo: %v", err)
+	}
 	ctx := context.Background()
 
 	o := mustNewOrder(t, "cust-1", "EUR")
@@ -88,7 +91,10 @@ func TestOrderRepo_FindByID_NotFound(t *testing.T) {
 	db := testDB(t)
 	ensureProductsTable(t, db)
 
-	repo := postgres.NewOrderRepo(db)
+	repo, err := postgres.NewOrderRepo(db)
+	if err != nil {
+		t.Fatalf("NewOrderRepo: %v", err)
+	}
 	got, err := repo.FindByID(context.Background(), id.New())
 	if err != nil {
 		t.Fatalf("FindByID: %v", err)
@@ -106,7 +112,10 @@ func TestOrderRepo_FindByCustomerID(t *testing.T) {
 		db.Exec("DELETE FROM orders")
 	})
 
-	repo := postgres.NewOrderRepo(db)
+	repo, err := postgres.NewOrderRepo(db)
+	if err != nil {
+		t.Fatalf("NewOrderRepo: %v", err)
+	}
 	ctx := context.Background()
 
 	custID := "cust-" + id.New()[:8]
@@ -151,7 +160,10 @@ func TestOrderRepo_FindByCustomerID_Empty(t *testing.T) {
 	db := testDB(t)
 	ensureProductsTable(t, db)
 
-	repo := postgres.NewOrderRepo(db)
+	repo, err := postgres.NewOrderRepo(db)
+	if err != nil {
+		t.Fatalf("NewOrderRepo: %v", err)
+	}
 	orders, err := repo.FindByCustomerID(context.Background(), "nonexistent")
 	if err != nil {
 		t.Fatalf("FindByCustomerID: %v", err)
@@ -169,7 +181,10 @@ func TestOrderRepo_UpdateStatus(t *testing.T) {
 		db.Exec("DELETE FROM orders")
 	})
 
-	repo := postgres.NewOrderRepo(db)
+	repo, err := postgres.NewOrderRepo(db)
+	if err != nil {
+		t.Fatalf("NewOrderRepo: %v", err)
+	}
 	ctx := context.Background()
 
 	o := mustNewOrder(t, "cust-1", "EUR")
@@ -197,7 +212,10 @@ func TestOrderRepo_UpdateStatus_NotFound(t *testing.T) {
 	db := testDB(t)
 	ensureProductsTable(t, db)
 
-	repo := postgres.NewOrderRepo(db)
+	repo, err := postgres.NewOrderRepo(db)
+	if err != nil {
+		t.Fatalf("NewOrderRepo: %v", err)
+	}
 	o := mustNewOrder(t, "cust-1", "EUR")
 	// Never saved — should fail.
 	if err := repo.UpdateStatus(context.Background(), &o); err == nil {
@@ -213,7 +231,10 @@ func TestOrderRepo_MultipleItems(t *testing.T) {
 		db.Exec("DELETE FROM orders")
 	})
 
-	repo := postgres.NewOrderRepo(db)
+	repo, err := postgres.NewOrderRepo(db)
+	if err != nil {
+		t.Fatalf("NewOrderRepo: %v", err)
+	}
 	ctx := context.Background()
 
 	p1 := shared.MustNewMoney(1000, "EUR")
