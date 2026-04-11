@@ -200,13 +200,11 @@ func runServe(cfg *config.Config, log logger.Logger) error {
 	if err != nil {
 		return err
 	}
-	_ = promotionRepo // wired in promotion HTTP handlers PR
 
 	couponRepo, err := postgres.NewCouponRepo(conn)
 	if err != nil {
 		return err
 	}
-	_ = couponRepo // wired in promotion HTTP handlers PR
 
 	// Search engine.
 	searchEngine, err := postgres.NewSearchEngine(conn)
@@ -307,6 +305,7 @@ func runServe(cfg *config.Config, log logger.Logger) error {
 	// Pricing pipeline (core + plugin steps + finalize).
 	pricingSteps := []pricing.PricingStep{
 		appPricing.NewBasePriceStep(priceRepo),
+		appPricing.NewCatalogPromotionStep(promotionRepo, couponRepo),
 		appPricing.NewTaxStep(taxRateRepo, "standard"),
 	}
 	for _, s := range pluginApp.PricingSteps() {
@@ -322,7 +321,7 @@ func runServe(cfg *config.Config, log logger.Logger) error {
 	pricingPipeline := pricing.NewPipeline(pricingSteps...)
 
 	// Application services.
-	cartService := cartApp.NewService(cartRepo, priceRepo, pricingPipeline, log, bus)
+	cartService := cartApp.NewService(cartRepo, priceRepo, promotionRepo, couponRepo, pricingPipeline, log, bus)
 
 	// Checkout workflow.
 	validateCartStep := checkoutApp.NewValidateCartStep(variantRepo)
@@ -438,6 +437,8 @@ func runServe(cfg *config.Config, log logger.Logger) error {
 	router.Handle("POST /api/v1/carts/{cartId}/items", requireAuth(cartHandler.AddItem()))
 	router.Handle("PUT /api/v1/carts/{cartId}/items/{variantId}", requireAuth(cartHandler.UpdateItem()))
 	router.Handle("DELETE /api/v1/carts/{cartId}/items/{variantId}", requireAuth(cartHandler.RemoveItem()))
+	router.Handle("POST /api/v1/carts/{cartId}/coupon", requireAuth(cartHandler.ApplyCoupon()))
+	router.Handle("DELETE /api/v1/carts/{cartId}/coupon", requireAuth(cartHandler.RemoveCoupon()))
 
 	// Checkout route (behind RequireAuth).
 	router.Handle("POST /api/v1/checkout", requireAuth(checkoutHandler.StartCheckout()))

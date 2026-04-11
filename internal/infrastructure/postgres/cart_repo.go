@@ -33,7 +33,7 @@ func (r *CartRepo) FindByID(ctx context.Context, id string) (*cart.Cart, error) 
 	if id == "" {
 		return nil, fmt.Errorf("cart_repo: find: empty id")
 	}
-	const q = `SELECT id, customer_id, status, currency, created_at, updated_at
+	const q = `SELECT id, customer_id, status, currency, coupon_code, created_at, updated_at
 		FROM carts WHERE id = $1`
 	c, err := r.scanCart(r.db.QueryRowContext(ctx, q, id))
 	if errors.Is(err, sql.ErrNoRows) {
@@ -56,7 +56,7 @@ func (r *CartRepo) FindActiveByCustomerID(ctx context.Context, customerID string
 	if customerID == "" {
 		return nil, fmt.Errorf("cart_repo: find active: empty customer id")
 	}
-	const q = `SELECT id, customer_id, status, currency, created_at, updated_at
+	const q = `SELECT id, customer_id, status, currency, coupon_code, created_at, updated_at
 		FROM carts WHERE customer_id = $1 AND status = 'active'
 		LIMIT 1`
 	c, err := r.scanCart(r.db.QueryRowContext(ctx, q, customerID))
@@ -88,21 +88,26 @@ func (r *CartRepo) Save(ctx context.Context, c *cart.Cart) error {
 	defer tx.Rollback()
 
 	// Upsert cart header.
-	const upsertCart = `INSERT INTO carts (id, customer_id, status, currency, created_at, updated_at)
-		VALUES ($1, $2, $3, $4, $5, $6)
+	const upsertCart = `INSERT INTO carts (id, customer_id, status, currency, coupon_code, created_at, updated_at)
+		VALUES ($1, $2, $3, $4, $5, $6, $7)
 		ON CONFLICT (id) DO UPDATE SET
 			customer_id = EXCLUDED.customer_id,
 			status = EXCLUDED.status,
 			currency = EXCLUDED.currency,
+			coupon_code = EXCLUDED.coupon_code,
 			updated_at = EXCLUDED.updated_at`
 
 	var customerID interface{}
 	if c.CustomerID != "" {
 		customerID = c.CustomerID
 	}
+	var couponCode interface{}
+	if c.CouponCode != "" {
+		couponCode = c.CouponCode
+	}
 
 	_, err = tx.ExecContext(ctx, upsertCart,
-		c.ID, customerID, string(c.Status()), c.Currency,
+		c.ID, customerID, string(c.Status()), c.Currency, couponCode,
 		c.CreatedAt, c.UpdatedAt,
 	)
 	if err != nil {
@@ -193,13 +198,17 @@ func (r *CartRepo) loadItems(ctx context.Context, cartID string) ([]cart.Item, e
 func (r *CartRepo) scanCart(row *sql.Row) (*cart.Cart, error) {
 	var c cart.Cart
 	var customerID sql.NullString
+	var couponCode sql.NullString
 	var status string
-	err := row.Scan(&c.ID, &customerID, &status, &c.Currency, &c.CreatedAt, &c.UpdatedAt)
+	err := row.Scan(&c.ID, &customerID, &status, &c.Currency, &couponCode, &c.CreatedAt, &c.UpdatedAt)
 	if err != nil {
 		return nil, err
 	}
 	if customerID.Valid {
 		c.CustomerID = customerID.String
+	}
+	if couponCode.Valid {
+		c.CouponCode = couponCode.String
 	}
 	// Reconstruct the cart with proper status via SetStatusFromDB.
 	if err := c.SetStatusFromDB(cart.CartStatus(status)); err != nil {

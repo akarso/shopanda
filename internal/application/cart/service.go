@@ -3,9 +3,11 @@ package cart
 import (
 	"context"
 	"fmt"
+	"time"
 
 	domainCart "github.com/akarso/shopanda/internal/domain/cart"
 	"github.com/akarso/shopanda/internal/domain/pricing"
+	"github.com/akarso/shopanda/internal/domain/promotion"
 	"github.com/akarso/shopanda/internal/domain/shared"
 	"github.com/akarso/shopanda/internal/platform/apperror"
 	"github.com/akarso/shopanda/internal/platform/event"
@@ -15,27 +17,33 @@ import (
 
 // Service orchestrates cart use cases.
 type Service struct {
-	carts    domainCart.CartRepository
-	prices   pricing.PriceRepository
-	pipeline pricing.Pipeline
-	log      logger.Logger
-	bus      *event.Bus
+	carts      domainCart.CartRepository
+	prices     pricing.PriceRepository
+	promotions promotion.PromotionRepository
+	coupons    promotion.CouponRepository
+	pipeline   pricing.Pipeline
+	log        logger.Logger
+	bus        *event.Bus
 }
 
 // NewService creates a cart application service.
 func NewService(
 	carts domainCart.CartRepository,
 	prices pricing.PriceRepository,
+	promotions promotion.PromotionRepository,
+	coupons promotion.CouponRepository,
 	pipeline pricing.Pipeline,
 	log logger.Logger,
 	bus *event.Bus,
 ) *Service {
 	return &Service{
-		carts:    carts,
-		prices:   prices,
-		pipeline: pipeline,
-		log:      log,
-		bus:      bus,
+		carts:      carts,
+		prices:     prices,
+		promotions: promotions,
+		coupons:    coupons,
+		pipeline:   pipeline,
+		log:        log,
+		bus:        bus,
 	}
 }
 
@@ -220,6 +228,10 @@ func (s *Service) recalculate(ctx context.Context, c *domainCart.Cart) error {
 		pctx.Items = append(pctx.Items, pi)
 	}
 
+	if c.CouponCode != "" {
+		pctx.Meta["coupon_code"] = c.CouponCode
+	}
+
 	if err := s.pipeline.Execute(ctx, &pctx); err != nil {
 		return fmt.Errorf("cart service: pricing pipeline: %w", err)
 	}
@@ -250,3 +262,102 @@ func (s *Service) lookupPrice(ctx context.Context, variantID, currency string) (
 	}
 	return p.Amount, nil
 }
+
+// ApplyCoupon validates a coupon code, associates it with the cart, and
+// recalculates pricing so promotion discounts take effect.
+func (s *Service) ApplyCoupon(ctx context.Context, cartID, customerID, code string) (*domainCart.Cart, error) {
+	c, err := s.carts.FindByID(ctx, cartID)
+	if err != nil {
+		return nil, fmt.Errorf("cart service: apply coupon: find: %w", err)
+	}
+	if c == nil {
+		return nil, apperror.NotFound("cart not found")
+	}
+	if c.CustomerID != customerID {
+		return nil, apperror.Forbidden("cannot modify another customer's cart")
+	}
+
+	coupon, err := s.coupons.FindByCode(ctx, code)
+	if err != nil {
+		return nil, fmt.Errorf("cart service: apply coupon: lookup: %w", err)
+	}
+	if coupon == nil {
+		return nil, apperror.Validation("coupon not found")
+	}
+	if !coupon.CanRedeem() {
+		return nil, apperror.Validation("coupon is not redeemable")
+	}
+
+	promo, err := s.promotions.FindByID(ctx, coupon.PromotionID)
+	if err != nil {
+		return nil, fmt.Errorf("cart service: apply coupon: find promotion: %w", err)
+	}
+	if promo == nil || !promo.IsEligible(timeNow()) {
+		return nil, apperror.Validation("promotion is not active")
+	}
+	if promo.Type != promotion.TypeCatalog || !promo.CouponBound {
+		return nil, apperror.Validation("promotion not applicable for coupon")
+	}
+
+	if err := c.ApplyCoupon(code); err != nil {
+		return nil, apperror.Wrap(apperror.CodeValidation, "cannot apply coupon", err)
+	}
+
+	if err := s.recalculate(ctx, c); err != nil {
+		return nil, err
+	}
+
+	if err := s.carts.Save(ctx, c); err != nil {
+		return nil, fmt.Errorf("cart service: apply coupon: save: %w", err)
+	}
+
+	s.log.Info("cart.coupon.applied", map[string]interface{}{
+		"cart_id":     c.ID,
+		"coupon_code": code,
+	})
+	_ = s.bus.Publish(ctx, event.New(domainCart.EventCouponApplied, "cart.service", domainCart.CouponAppliedData{
+		CartID:     c.ID,
+		CouponCode: code,
+	}))
+	return c, nil
+}
+
+// RemoveCoupon removes the applied coupon from the cart and recalculates pricing.
+func (s *Service) RemoveCoupon(ctx context.Context, cartID, customerID string) (*domainCart.Cart, error) {
+	c, err := s.carts.FindByID(ctx, cartID)
+	if err != nil {
+		return nil, fmt.Errorf("cart service: remove coupon: find: %w", err)
+	}
+	if c == nil {
+		return nil, apperror.NotFound("cart not found")
+	}
+	if c.CustomerID != customerID {
+		return nil, apperror.Forbidden("cannot modify another customer's cart")
+	}
+
+	previousCode := c.CouponCode
+
+	if err := c.RemoveCoupon(); err != nil {
+		return nil, apperror.Wrap(apperror.CodeValidation, "cannot remove coupon", err)
+	}
+
+	if err := s.recalculate(ctx, c); err != nil {
+		return nil, err
+	}
+
+	if err := s.carts.Save(ctx, c); err != nil {
+		return nil, fmt.Errorf("cart service: remove coupon: save: %w", err)
+	}
+
+	s.log.Info("cart.coupon.removed", map[string]interface{}{
+		"cart_id": c.ID,
+	})
+	_ = s.bus.Publish(ctx, event.New(domainCart.EventCouponRemoved, "cart.service", domainCart.CouponRemovedData{
+		CartID:     c.ID,
+		CouponCode: previousCode,
+	}))
+	return c, nil
+}
+
+// timeNow is a package-level function for testing seams.
+var timeNow = func() time.Time { return time.Now() }

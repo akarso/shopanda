@@ -301,6 +301,39 @@ Specs: [`docs/RULES.md`](docs/RULES.md), [`docs/PROMOTIONS.md`](docs/PROMOTIONS.
 
 ---
 
+## Phase 21b — Cart Optimistic Locking
+
+Goal: prevent lost-update races on concurrent cart mutations.
+
+**Background.** All five cart mutation methods (`AddItem`, `UpdateItemQuantity`,
+`RemoveItem`, `ApplyCoupon`, `RemoveCoupon`) follow an unprotected
+load → modify → save pattern. Two concurrent requests on the same cart can
+silently overwrite each other's changes because the `Save` upsert has no
+version guard. `payment_repo` and `shipping_repo` already use
+`WHERE updated_at = $old` + `RowsAffected` checks — cart, order, and stock
+repos do not.
+
+| PR   | Title                        | Scope |
+| ---- | ---------------------------- | ----- |
+| 086b | Cart optimistic locking      | Add `version INT NOT NULL DEFAULT 1` column to `carts` (migration). Update cart repo `Save` upsert to `SET … version = version + 1 WHERE id = $1 AND version = $old`. Check `RowsAffected() == 0` → return `apperror.Conflict("cart was modified concurrently")`. Cart service callers already return errors — no handler changes needed. Add concurrency unit test (two goroutines racing on the same cart). |
+
+**Implementation notes:**
+
+* Pattern to follow: [`internal/infrastructure/postgres/payment_repo.go`](internal/infrastructure/postgres/payment_repo.go)
+  and [`internal/infrastructure/postgres/shipping_repo.go`](internal/infrastructure/postgres/shipping_repo.go)
+  — both check `result.RowsAffected() == 0` and return `apperror.Conflict()`.
+* The cart domain struct needs a `Version int` field, loaded from DB on `FindByID`,
+  incremented in the repo `Save` method (not in domain — repo handles it atomically
+  via SQL `version = version + 1`).
+* `Cart.Items` are stored in a separate `cart_items` table — item mutations already
+  go through the same `Save` call, so the version bump covers them.
+* HTTP layer: `apperror.Conflict` already maps to `409 Conflict` via the standard
+  error middleware — clients can retry.
+* Future: `order_repo` and `stock_repo` should get the same treatment, but those
+  are separate PRs.
+
+---
+
 ## Phase 22 — Invoicing
 
 Goal: immutable invoice generation from orders with credit note support.
@@ -449,6 +482,7 @@ Goal: machine-readable API spec with interactive docs.
 | **Tax-aware pricing**     | 082      | VAT calculation in pricing pipeline         |
 | **Clean domain ports**    | 083      | Remove `sql.Tx` coupling from domain interfaces |
 | **Discounts & coupons**   | 086      | Catalog rules, cart rules, coupon support   |
+| **Cart concurrency safe** | 086b     | Optimistic locking on cart mutations        |
 | **Invoicing**             | 088      | Invoice + credit note generation, PDF       |
 | **SEO-ready storefront**  | 093      | URL rewrites, CMS pages, sitemap, JSON-LD   |
 | **Multi-store**           | 095      | Store resolution, scoped pricing + tax      |
