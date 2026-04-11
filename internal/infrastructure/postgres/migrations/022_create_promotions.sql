@@ -6,6 +6,7 @@ CREATE TABLE promotions (
     active       BOOLEAN NOT NULL DEFAULT true,
     start_at     TIMESTAMPTZ,
     end_at       TIMESTAMPTZ,
+    CHECK (start_at IS NULL OR end_at IS NULL OR start_at <= end_at),
     conditions   JSONB   NOT NULL DEFAULT '[]',
     actions      JSONB   NOT NULL DEFAULT '[]',
     coupon_bound BOOLEAN NOT NULL DEFAULT false,
@@ -27,4 +28,3 @@ CREATE TABLE coupons (
 );
 
 CREATE INDEX idx_coupons_promotion_id ON coupons (promotion_id);
-CREATE UNIQUE INDEX idx_coupons_code ON coupons (code);
