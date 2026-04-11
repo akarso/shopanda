@@ -196,6 +196,18 @@ func runServe(cfg *config.Config, log logger.Logger) error {
 		return err
 	}
 
+	promotionRepo, err := postgres.NewPromotionRepo(conn)
+	if err != nil {
+		return err
+	}
+	_ = promotionRepo // wired in promotion HTTP handlers PR
+
+	couponRepo, err := postgres.NewCouponRepo(conn)
+	if err != nil {
+		return err
+	}
+	_ = couponRepo // wired in promotion HTTP handlers PR
+
 	// Search engine.
 	searchEngine, err := postgres.NewSearchEngine(conn)
 	if err != nil {
