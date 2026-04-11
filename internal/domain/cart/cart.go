@@ -32,6 +32,7 @@ type Cart struct {
 	status     CartStatus
 	Currency   string
 	CouponCode string // applied coupon code, empty = none
+	Version    int    // optimistic lock counter, managed by repository
 	Items      []Item
 	CreatedAt  time.Time
 	UpdatedAt  time.Time
@@ -50,6 +51,7 @@ func NewCart(id, currency string) (Cart, error) {
 		ID:        id,
 		status:    CartStatusActive,
 		Currency:  currency,
+		Version:   1,
 		Items:     nil,
 		CreatedAt: now,
 		UpdatedAt: now,
