@@ -281,6 +281,7 @@ Goal: country-based VAT calculation integrated into the pricing pipeline.
 | --- | ---------------------------- | -------------------------------------------------- |
 | 081 | Tax domain + rate storage    | `TaxClass`, `TaxRate`, repo, migration             |
 | 082 | Tax pipeline step            | Tax calculation step in pricing pipeline, per-item + total, exclusive/inclusive modes |
+| 083 | Remove `WithTx` from domain  | Drop `WithTx(*sql.Tx)` from `CustomerRepository`, `ProductRepository`, `VariantRepository` domain interfaces; keep tx binding on infra types only |
 
 Spec: [`docs/TAXES.md`](docs/TAXES.md)
 
@@ -292,9 +293,9 @@ Goal: reusable rule primitives powering catalog and cart discounts.
 
 | PR  | Title                        | Scope                                              |
 | --- | ---------------------------- | -------------------------------------------------- |
-| 083 | Rule primitives              | `Condition[T]`, `Rule[T]`, sequential executor     |
-| 084 | Promotion domain + storage   | Catalog rules, cart rules, coupon entity, repo, migration |
-| 085 | Promotion HTTP endpoints     | Apply catalog rules in pricing pipeline, `POST/DELETE /cart/{id}/coupon` |
+| 084 | Rule primitives              | `Condition[T]`, `Rule[T]`, sequential executor     |
+| 085 | Promotion domain + storage   | Catalog rules, cart rules, coupon entity, repo, migration |
+| 086 | Promotion HTTP endpoints     | Apply catalog rules in pricing pipeline, `POST/DELETE /cart/{id}/coupon` |
 
 Specs: [`docs/RULES.md`](docs/RULES.md), [`docs/PROMOTIONS.md`](docs/PROMOTIONS.md)
 
@@ -306,8 +307,8 @@ Goal: immutable invoice generation from orders with credit note support.
 
 | PR  | Title                        | Scope                                              |
 | --- | ---------------------------- | -------------------------------------------------- |
-| 086 | Invoice domain + storage     | Invoice entity, credit notes, DB sequence numbering, repo, migration |
-| 087 | Invoice generation + PDF     | Order → invoice snapshot, HTML → PDF, events (`invoice.created`) |
+| 087 | Invoice domain + storage     | Invoice entity, credit notes, DB sequence numbering, repo, migration |
+| 088 | Invoice generation + PDF     | Order → invoice snapshot, HTML → PDF, events (`invoice.created`) |
 
 Spec: [`docs/INVOICING.md`](docs/INVOICING.md)
 
@@ -319,9 +320,9 @@ Goal: SEO-friendly URLs and static content pages.
 
 | PR  | Title                        | Scope                                              |
 | --- | ---------------------------- | -------------------------------------------------- |
-| 088 | URL rewrite system           | `url_rewrites` table, migration, resolver middleware, catch-all route |
-| 089 | Wire entity slugs            | Product/category slugs registered in rewrite table on create/update |
-| 090 | CMS pages                    | Page domain, storage, `GET /pages/{slug}`, admin integration |
+| 089 | URL rewrite system           | `url_rewrites` table, migration, resolver middleware, catch-all route |
+| 090 | Wire entity slugs            | Product/category slugs registered in rewrite table on create/update |
+| 091 | CMS pages                    | Page domain, storage, `GET /pages/{slug}`, admin integration |
 
 Specs: [`docs/ROUTING.md`](docs/ROUTING.md), [`docs/CMS.md`](docs/CMS.md)
 
@@ -333,8 +334,8 @@ Goal: structured data and discoverability.
 
 | PR  | Title                        | Scope                                              |
 | --- | ---------------------------- | -------------------------------------------------- |
-| 091 | Meta + structured data       | Composition step for meta tags, JSON-LD for products (price, availability) |
-| 092 | Sitemap + robots             | `GET /sitemap.xml` generation, `GET /robots.txt`, canonical URLs |
+| 092 | Meta + structured data       | Composition step for meta tags, JSON-LD for products (price, availability) |
+| 093 | Sitemap + robots             | `GET /sitemap.xml` generation, `GET /robots.txt`, canonical URLs |
 
 Spec: [`docs/SEO.md`](docs/SEO.md)
 
@@ -346,8 +347,8 @@ Goal: multiple store contexts with scoped pricing and tax.
 
 | PR  | Title                        | Scope                                              |
 | --- | ---------------------------- | -------------------------------------------------- |
-| 093 | Store domain + resolution    | `Store` entity, repo, migration, domain-based resolution middleware |
-| 094 | Scoped pricing + tax         | Prices per store (`variant_id + store_id → price`), tax by `store.country` |
+| 094 | Store domain + resolution    | `Store` entity, repo, migration, domain-based resolution middleware |
+| 095 | Scoped pricing + tax         | Prices per store (`variant_id + store_id → price`), tax by `store.country` |
 
 Spec: [`docs/STORES_CURRENCIES.md`](docs/STORES_CURRENCIES.md)
 
@@ -359,8 +360,8 @@ Goal: unified translation system across backend and frontend.
 
 | PR  | Title                        | Scope                                              |
 | --- | ---------------------------- | -------------------------------------------------- |
-| 095 | Translation system           | System translations table, `t()` function, language resolution (param → header → default) |
-| 096 | Content translations         | Entity translation table (`entity_id + language + field → value`), API integration |
+| 096 | Translation system           | System translations table, `t()` function, language resolution (param → header → default) |
+| 097 | Content translations         | Entity translation table (`entity_id + language + field → value`), API integration |
 
 Spec: [`docs/I18N.md`](docs/I18N.md)
 
@@ -372,8 +373,8 @@ Goal: essential EU compliance features.
 
 | PR  | Title                        | Scope                                              |
 | --- | ---------------------------- | -------------------------------------------------- |
-| 097 | Cookie consent + GDPR        | Consent model, `GET /account/data`, `GET /account/export`, `DELETE /account` |
-| 098 | Price history                | Price tracking table, lowest-price-in-30-days display for discounted products |
+| 098 | Cookie consent + GDPR        | Consent model, `GET /account/data`, `GET /account/export`, `DELETE /account` |
+| 099 | Price history                | Price tracking table, lowest-price-in-30-days display for discounted products |
 
 Spec: [`docs/LEGAL.md`](docs/LEGAL.md)
 
@@ -385,8 +386,8 @@ Goal: caching strategy and CDN integration.
 
 | PR  | Title                        | Scope                                              |
 | --- | ---------------------------- | -------------------------------------------------- |
-| 099 | Cache headers + CDN config   | `Cache-Control` middleware (public vs no-store), `cdn.base_url` config |
-| 100 | Cache invalidation           | Product/price change → invalidation trigger, cache keys include store + language + currency |
+| 100 | Cache headers + CDN config   | `Cache-Control` middleware (public vs no-store), `cdn.base_url` config |
+| 101 | Cache invalidation           | Product/price change → invalidation trigger, cache keys include store + language + currency |
 
 Spec: [`docs/PERFORMANCE.md`](docs/PERFORMANCE.md)
 
@@ -398,8 +399,8 @@ Goal: permission-based access control for admin users.
 
 | PR  | Title                        | Scope                                              |
 | --- | ---------------------------- | -------------------------------------------------- |
-| 101 | Roles + permissions model    | Role entity (admin/manager/editor/support), permission strings, role-permission mapping, migration |
-| 102 | Permission middleware + UI   | `RequirePermission()` middleware, admin forms/grids respect permissions, plugin permission registration |
+| 102 | Roles + permissions model    | Role entity (admin/manager/editor/support), permission strings, role-permission mapping, migration |
+| 103 | Permission middleware + UI   | `RequirePermission()` middleware, admin forms/grids respect permissions, plugin permission registration |
 
 Spec: [`docs/ROLES.md`](docs/ROLES.md)
 
@@ -411,8 +412,8 @@ Goal: harden public-facing endpoints and provider integrations.
 
 | PR  | Title                        | Scope                                              |
 | --- | ---------------------------- | -------------------------------------------------- |
-| 103 | Webhook signature verification | Per-provider HMAC/signature check, secret config, raw-body buffering, reject unsigned requests |
-| 104 | Rate limiting                | Token-bucket middleware, per-IP + per-route config, 429 responses |
+| 104 | Webhook signature verification | Per-provider HMAC/signature check, secret config, raw-body buffering, reject unsigned requests |
+| 105 | Rate limiting                | Token-bucket middleware, per-IP + per-route config, 429 responses |
 
 ---
 
@@ -422,7 +423,7 @@ Goal: machine-readable API spec with interactive docs.
 
 | PR  | Title                        | Scope                                              |
 | --- | ---------------------------- | -------------------------------------------------- |
-| 105 | OpenAPI spec + docs endpoint | Hand-written `openapi.yaml` covering all public + admin endpoints, `GET /docs` serves Swagger UI |
+| 106 | OpenAPI spec + docs endpoint | Hand-written `openapi.yaml` covering all public + admin endpoints, `GET /docs` serves Swagger UI |
 
 ---
 
@@ -446,16 +447,17 @@ Goal: machine-readable API spec with interactive docs.
 | **Data exchange**         | 077      | Full import/export: products, stock, customers, attributes, categories, prices |
 | **Drop-in usable**        | 080      | `migrate → seed → serve` = working store    |
 | **Tax-aware pricing**     | 082      | VAT calculation in pricing pipeline         |
-| **Discounts & coupons**   | 085      | Catalog rules, cart rules, coupon support   |
-| **Invoicing**             | 087      | Invoice + credit note generation, PDF       |
-| **SEO-ready storefront**  | 092      | URL rewrites, CMS pages, sitemap, JSON-LD   |
-| **Multi-store**           | 094      | Store resolution, scoped pricing + tax      |
-| **Localized**             | 096      | System + content translations               |
-| **EU-compliant**          | 098      | GDPR, cookie consent, price history         |
-| **CDN-optimized**         | 100      | Cache headers, CDN config, invalidation     |
-| **Admin RBAC**            | 102      | Role-based permissions for admin routes     |
-| **Security hardened**     | 104      | Webhook signatures, rate limiting           |
-| **API documented**        | 105      | OpenAPI spec, Swagger UI                    |
+| **Clean domain ports**    | 083      | Remove `sql.Tx` coupling from domain interfaces |
+| **Discounts & coupons**   | 086      | Catalog rules, cart rules, coupon support   |
+| **Invoicing**             | 088      | Invoice + credit note generation, PDF       |
+| **SEO-ready storefront**  | 093      | URL rewrites, CMS pages, sitemap, JSON-LD   |
+| **Multi-store**           | 095      | Store resolution, scoped pricing + tax      |
+| **Localized**             | 097      | System + content translations               |
+| **EU-compliant**          | 099      | GDPR, cookie consent, price history         |
+| **CDN-optimized**         | 101      | Cache headers, CDN config, invalidation     |
+| **Admin RBAC**            | 103      | Role-based permissions for admin routes     |
+| **Security hardened**     | 105      | Webhook signatures, rate limiting           |
+| **API documented**        | 106      | OpenAPI spec, Swagger UI                    |
 
 ---
 
