@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"time"
 
 	"github.com/akarso/shopanda/internal/domain/invoice"
 	"github.com/akarso/shopanda/internal/domain/shared"
@@ -33,36 +34,35 @@ type invoiceScanner interface {
 
 // hydrateInvoice reads an invoice header from any scanner.
 func hydrateInvoice(s invoiceScanner) (*invoice.Invoice, error) {
-	var inv invoice.Invoice
-	var status string
-	var subtotalAmount, taxAmount, totalAmount int64
+	var id, orderID, customerID, status, currency string
+	var invoiceNumber, subtotalAmount, taxAmount, totalAmount int64
+	var createdAt time.Time
 	err := s.Scan(
-		&inv.ID, &inv.InvoiceNumber, &inv.OrderID, &inv.CustomerID,
-		&status, &inv.Currency,
+		&id, &invoiceNumber, &orderID, &customerID,
+		&status, &currency,
 		&subtotalAmount, &taxAmount, &totalAmount,
-		&inv.CreatedAt,
+		&createdAt,
 	)
 	if err != nil {
 		return nil, err
 	}
-	if err := inv.SetStatusFromDB(status); err != nil {
-		return nil, err
-	}
-	sub, err := shared.NewMoney(subtotalAmount, inv.Currency)
+	sub, err := shared.NewMoney(subtotalAmount, currency)
 	if err != nil {
 		return nil, fmt.Errorf("invoice_repo: subtotal money: %w", err)
 	}
-	tax, err := shared.NewMoney(taxAmount, inv.Currency)
+	tax, err := shared.NewMoney(taxAmount, currency)
 	if err != nil {
 		return nil, fmt.Errorf("invoice_repo: tax money: %w", err)
 	}
-	tot, err := shared.NewMoney(totalAmount, inv.Currency)
+	tot, err := shared.NewMoney(totalAmount, currency)
 	if err != nil {
 		return nil, fmt.Errorf("invoice_repo: total money: %w", err)
 	}
-	inv.SubtotalAmount = sub
-	inv.TaxAmount = tax
-	inv.TotalAmount = tot
+	inv := invoice.NewInvoiceFromDB(id, invoiceNumber, orderID, customerID, currency,
+		sub, tax, tot, createdAt)
+	if err := inv.SetStatusFromDB(status); err != nil {
+		return nil, err
+	}
 	return &inv, nil
 }
 
@@ -83,7 +83,7 @@ func (r *InvoiceRepo) FindByID(ctx context.Context, id string) (*invoice.Invoice
 	if err != nil {
 		return nil, fmt.Errorf("invoice_repo: find by id: %w", err)
 	}
-	items, err := r.loadItems(ctx, inv.ID)
+	items, err := r.loadItems(ctx, inv.ID())
 	if err != nil {
 		return nil, err
 	}
@@ -107,7 +107,7 @@ func (r *InvoiceRepo) FindByOrderID(ctx context.Context, orderID string) (*invoi
 	if err != nil {
 		return nil, fmt.Errorf("invoice_repo: find by order id: %w", err)
 	}
-	items, err := r.loadItems(ctx, inv.ID)
+	items, err := r.loadItems(ctx, inv.ID())
 	if err != nil {
 		return nil, err
 	}
@@ -137,10 +137,10 @@ func (r *InvoiceRepo) Save(ctx context.Context, inv *invoice.Invoice) error {
 		RETURNING invoice_number`
 	var invoiceNumber int64
 	err = tx.QueryRowContext(ctx, insertInvoice,
-		inv.ID, inv.OrderID, inv.CustomerID,
-		string(inv.Status()), inv.Currency,
-		inv.SubtotalAmount.Amount(), inv.TaxAmount.Amount(), inv.TotalAmount.Amount(),
-		inv.CreatedAt,
+		inv.ID(), inv.OrderID(), inv.CustomerID(),
+		string(inv.Status()), inv.Currency(),
+		inv.SubtotalAmount().Amount(), inv.TaxAmount().Amount(), inv.TotalAmount().Amount(),
+		inv.CreatedAt(),
 	).Scan(&invoiceNumber)
 	if err != nil {
 		return fmt.Errorf("invoice_repo: insert invoice: %w", err)
@@ -159,7 +159,7 @@ func (r *InvoiceRepo) Save(ctx context.Context, inv *invoice.Invoice) error {
 		for i := range items {
 			it := &items[i]
 			_, err = stmt.ExecContext(ctx,
-				inv.ID, it.VariantID, it.SKU, it.Name, it.Quantity,
+				inv.ID(), it.VariantID, it.SKU, it.Name, it.Quantity,
 				it.UnitPrice.Amount(), it.UnitPrice.Currency(),
 			)
 			if err != nil {
@@ -171,7 +171,7 @@ func (r *InvoiceRepo) Save(ctx context.Context, inv *invoice.Invoice) error {
 	if err := tx.Commit(); err != nil {
 		return fmt.Errorf("invoice_repo: commit: %w", err)
 	}
-	inv.InvoiceNumber = invoiceNumber
+	inv.SetInvoiceNumberFromDB(invoiceNumber)
 	return nil
 }
 

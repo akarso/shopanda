@@ -34,28 +34,28 @@ func TestNewInvoice_Success(t *testing.T) {
 	if inv.Status() != invoice.InvoiceStatusIssued {
 		t.Errorf("Status = %q, want issued", inv.Status())
 	}
-	if inv.OrderID != "ord-1" {
-		t.Errorf("OrderID = %q, want ord-1", inv.OrderID)
+	if inv.OrderID() != "ord-1" {
+		t.Errorf("OrderID = %q, want ord-1", inv.OrderID())
 	}
-	if inv.CustomerID != "cust-1" {
-		t.Errorf("CustomerID = %q, want cust-1", inv.CustomerID)
+	if inv.CustomerID() != "cust-1" {
+		t.Errorf("CustomerID = %q, want cust-1", inv.CustomerID())
 	}
 	// subtotal = 1000 * 2 = 2000
-	if inv.SubtotalAmount.Amount() != 2000 {
-		t.Errorf("SubtotalAmount = %d, want 2000", inv.SubtotalAmount.Amount())
+	if inv.SubtotalAmount().Amount() != 2000 {
+		t.Errorf("SubtotalAmount = %d, want 2000", inv.SubtotalAmount().Amount())
 	}
-	if inv.TaxAmount.Amount() != 380 {
-		t.Errorf("TaxAmount = %d, want 380", inv.TaxAmount.Amount())
+	if inv.TaxAmount().Amount() != 380 {
+		t.Errorf("TaxAmount = %d, want 380", inv.TaxAmount().Amount())
 	}
 	// total = 2000 + 380 = 2380
-	if inv.TotalAmount.Amount() != 2380 {
-		t.Errorf("TotalAmount = %d, want 2380", inv.TotalAmount.Amount())
+	if inv.TotalAmount().Amount() != 2380 {
+		t.Errorf("TotalAmount = %d, want 2380", inv.TotalAmount().Amount())
 	}
 	if len(inv.Items()) != 1 {
 		t.Errorf("Items = %d, want 1", len(inv.Items()))
 	}
-	if inv.InvoiceNumber != 0 {
-		t.Errorf("InvoiceNumber = %d, want 0 (assigned on save)", inv.InvoiceNumber)
+	if inv.InvoiceNumber() != 0 {
+		t.Errorf("InvoiceNumber = %d, want 0 (assigned on save)", inv.InvoiceNumber())
 	}
 }
 
@@ -145,12 +145,12 @@ func TestNewInvoice_MultipleItems(t *testing.T) {
 		t.Fatalf("NewInvoice: %v", err)
 	}
 	// subtotal = 1000*2 + 500*3 = 3500
-	if inv.SubtotalAmount.Amount() != 3500 {
-		t.Errorf("SubtotalAmount = %d, want 3500", inv.SubtotalAmount.Amount())
+	if inv.SubtotalAmount().Amount() != 3500 {
+		t.Errorf("SubtotalAmount = %d, want 3500", inv.SubtotalAmount().Amount())
 	}
 	// total = 3500 + 700 = 4200
-	if inv.TotalAmount.Amount() != 4200 {
-		t.Errorf("TotalAmount = %d, want 4200", inv.TotalAmount.Amount())
+	if inv.TotalAmount().Amount() != 4200 {
+		t.Errorf("TotalAmount = %d, want 4200", inv.TotalAmount().Amount())
 	}
 }
 

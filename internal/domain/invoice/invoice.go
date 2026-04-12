@@ -26,17 +26,17 @@ func (s InvoiceStatus) IsValid() bool {
 
 // Invoice is an immutable financial document that snapshots an order.
 type Invoice struct {
-	ID             string
-	InvoiceNumber  int64 // assigned by DB sequence on save
-	OrderID        string
-	CustomerID     string
+	id             string
+	invoiceNumber  int64 // assigned by DB sequence on save
+	orderID        string
+	customerID     string
 	status         InvoiceStatus
-	Currency       string
+	currency       string
 	items          []Item
-	SubtotalAmount shared.Money
-	TaxAmount      shared.Money
-	TotalAmount    shared.Money
-	CreatedAt      time.Time
+	subtotalAmount shared.Money
+	taxAmount      shared.Money
+	totalAmount    shared.Money
+	createdAt      time.Time
 }
 
 // NewInvoice creates an issued invoice with validation.
@@ -64,8 +64,8 @@ func NewInvoice(id, orderID, customerID, currency string, items []Item, taxAmoun
 		return Invoice{}, errors.New("invoice: tax amount must be non-negative")
 	}
 	for i := range items {
-		if items[i].UnitPrice.Currency() != currency {
-			return Invoice{}, errors.New("invoice: item currency mismatch")
+		if err := items[i].Validate(currency); err != nil {
+			return Invoice{}, fmt.Errorf("invoice: invalid item: %w", err)
 		}
 	}
 
@@ -83,16 +83,16 @@ func NewInvoice(id, orderID, customerID, currency string, items []Item, taxAmoun
 	copy(cp, items)
 
 	return Invoice{
-		ID:             id,
-		OrderID:        orderID,
-		CustomerID:     customerID,
+		id:             id,
+		orderID:        orderID,
+		customerID:     customerID,
 		status:         InvoiceStatusIssued,
-		Currency:       currency,
+		currency:       currency,
 		items:          cp,
-		SubtotalAmount: subtotal,
-		TaxAmount:      taxAmount,
-		TotalAmount:    total,
-		CreatedAt:      time.Now().UTC(),
+		subtotalAmount: subtotal,
+		taxAmount:      taxAmount,
+		totalAmount:    total,
+		createdAt:      time.Now().UTC(),
 	}, nil
 }
 
@@ -103,9 +103,58 @@ func (inv Invoice) Items() []Item {
 	return cp
 }
 
+// ID returns the invoice identifier.
+func (inv Invoice) ID() string { return inv.id }
+
+// InvoiceNumber returns the sequential number assigned by the DB.
+func (inv Invoice) InvoiceNumber() int64 { return inv.invoiceNumber }
+
+// OrderID returns the associated order identifier.
+func (inv Invoice) OrderID() string { return inv.orderID }
+
+// CustomerID returns the associated customer identifier.
+func (inv Invoice) CustomerID() string { return inv.customerID }
+
 // Status returns the current invoice status.
 func (inv Invoice) Status() InvoiceStatus {
 	return inv.status
+}
+
+// Currency returns the invoice currency code.
+func (inv Invoice) Currency() string { return inv.currency }
+
+// SubtotalAmount returns the invoice subtotal (sum of line totals).
+func (inv Invoice) SubtotalAmount() shared.Money { return inv.subtotalAmount }
+
+// TaxAmount returns the invoice tax amount.
+func (inv Invoice) TaxAmount() shared.Money { return inv.taxAmount }
+
+// TotalAmount returns the invoice grand total (subtotal + tax).
+func (inv Invoice) TotalAmount() shared.Money { return inv.totalAmount }
+
+// CreatedAt returns the invoice creation timestamp.
+func (inv Invoice) CreatedAt() time.Time { return inv.createdAt }
+
+// NewInvoiceFromDB reconstructs an Invoice from persisted data.
+// Status must be set separately via SetStatusFromDB, and items via SetItemsFromDB.
+func NewInvoiceFromDB(id string, invoiceNumber int64, orderID, customerID, currency string,
+	subtotalAmount, taxAmount, totalAmount shared.Money, createdAt time.Time) Invoice {
+	return Invoice{
+		id:             id,
+		invoiceNumber:  invoiceNumber,
+		orderID:        orderID,
+		customerID:     customerID,
+		currency:       currency,
+		subtotalAmount: subtotalAmount,
+		taxAmount:      taxAmount,
+		totalAmount:    totalAmount,
+		createdAt:      createdAt,
+	}
+}
+
+// SetInvoiceNumberFromDB assigns the DB-generated invoice number after save.
+func (inv *Invoice) SetInvoiceNumberFromDB(n int64) {
+	inv.invoiceNumber = n
 }
 
 // SetStatusFromDB restores the status when loading from persistence.
@@ -119,24 +168,29 @@ func (inv *Invoice) SetStatusFromDB(s string) error {
 }
 
 // SetItemsFromDB sets the items when loading from persistence.
-// Returns an error if items are empty, if the items subtotal doesn't match, or
-// if the header amounts (subtotal + tax = total) are inconsistent.
+// Returns an error if items are empty, if any item is malformed, if the items
+// subtotal doesn't match, or if the header amounts are inconsistent.
 func (inv *Invoice) SetItemsFromDB(items []Item) error {
 	if len(items) == 0 {
 		return errors.New("invoice: items must not be empty")
 	}
-	subtotal, err := computeSubtotal(items, inv.Currency)
+	for i := range items {
+		if err := items[i].Validate(inv.currency); err != nil {
+			return fmt.Errorf("invoice: invalid item: %w", err)
+		}
+	}
+	subtotal, err := computeSubtotal(items, inv.currency)
 	if err != nil {
 		return err
 	}
-	if !subtotal.Equal(inv.SubtotalAmount) {
+	if !subtotal.Equal(inv.subtotalAmount) {
 		return errors.New("invoice: items subtotal does not match invoice header")
 	}
-	expectedTotal, err := subtotal.AddChecked(inv.TaxAmount)
+	expectedTotal, err := subtotal.AddChecked(inv.taxAmount)
 	if err != nil {
 		return errors.New("invoice: header total overflow during validation")
 	}
-	if !expectedTotal.Equal(inv.TotalAmount) {
+	if !expectedTotal.Equal(inv.totalAmount) {
 		return errors.New("invoice: subtotal + tax does not equal total")
 	}
 	cp := make([]Item, len(items))
