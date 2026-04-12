@@ -52,6 +52,7 @@ func (h *StorefrontHandler) Product() http.HandlerFunc {
 		}
 
 		ctx := composition.NewProductContext(product)
+		ctx.Ctx = r.Context()
 		if err := h.pdp.Execute(ctx); err != nil {
 			http.Error(w, "Internal Server Error", http.StatusInternalServerError)
 			return

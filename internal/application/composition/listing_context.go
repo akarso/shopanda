@@ -1,6 +1,10 @@
 package composition
 
-import "github.com/akarso/shopanda/internal/domain/catalog"
+import (
+	"context"
+
+	"github.com/akarso/shopanda/internal/domain/catalog"
+)
 
 // Filter represents a facet option available in a product listing.
 type Filter struct {
@@ -17,6 +21,7 @@ type SortOption struct {
 
 // ListingContext holds the data built up during product listing composition (PLP).
 type ListingContext struct {
+	Ctx context.Context
 	// Products holds shared pointers into the caller's product data.
 	// Steps may read or mutate the pointed-to products directly.
 	Products    []*catalog.Product
@@ -31,6 +36,7 @@ type ListingContext struct {
 // NewListingContext creates a ListingContext for the given products.
 func NewListingContext(products []*catalog.Product) *ListingContext {
 	return &ListingContext{
+		Ctx:         context.Background(),
 		Products:    products,
 		Filters:     make([]Filter, 0),
 		SortOptions: make([]SortOption, 0),
