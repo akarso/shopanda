@@ -170,6 +170,10 @@ func runServe(cfg *config.Config, log logger.Logger) error {
 	if err != nil {
 		return err
 	}
+	stockRepo, err := postgres.NewStockRepo(conn)
+	if err != nil {
+		return err
+	}
 	orderRepo, err := postgres.NewOrderRepo(conn)
 	if err != nil {
 		return err
@@ -297,9 +301,12 @@ func runServe(cfg *config.Config, log logger.Logger) error {
 		"failed":      summary.Failed,
 	})
 
-	// Composition pipelines (core + plugin steps).
+	// Composition pipelines (core SEO steps + plugin steps).
 	pdp := composition.NewPipeline[composition.ProductContext]()
+	pdp.AddStep(composition.ProductMetaStep{})
+	pdp.AddStep(composition.NewJSONLDProductStep(variantRepo, priceRepo, stockRepo))
 	plp := composition.NewPipeline[composition.ListingContext]()
+	plp.AddStep(composition.ListingMetaStep{})
 	for _, s := range pluginApp.CompositionSteps("pdp") {
 		if v, ok := s.(composition.Step[composition.ProductContext]); ok {
 			pdp.AddStep(v)

@@ -11,9 +11,9 @@ import (
 
 // ProductHandler serves product read endpoints.
 type ProductHandler struct {
-	repo     catalog.ProductRepository
-	pdp      *composition.Pipeline[composition.ProductContext]
-	plp      *composition.Pipeline[composition.ListingContext]
+	repo catalog.ProductRepository
+	pdp  *composition.Pipeline[composition.ProductContext]
+	plp  *composition.Pipeline[composition.ListingContext]
 }
 
 // NewProductHandler creates a ProductHandler with the given dependencies.
@@ -46,6 +46,7 @@ func (h *ProductHandler) List() http.HandlerFunc {
 		}
 
 		ctx := composition.NewListingContext(ptrs)
+		ctx.Ctx = r.Context()
 		if err := h.plp.Execute(ctx); err != nil {
 			JSONError(w, apperror.Wrap(apperror.CodeInternal, "composition failed", err))
 			return
@@ -75,6 +76,7 @@ func (h *ProductHandler) Get() http.HandlerFunc {
 		}
 
 		ctx := composition.NewProductContext(product)
+		ctx.Ctx = r.Context()
 		if err := h.pdp.Execute(ctx); err != nil {
 			JSONError(w, apperror.Wrap(apperror.CodeInternal, "composition failed", err))
 			return
