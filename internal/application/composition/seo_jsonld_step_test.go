@@ -14,9 +14,12 @@ import (
 
 // --- mocks ---
 
+type ctxKey struct{}
+
 type mockVariantRepo struct {
-	variants []catalog.Variant
-	err      error
+	variants    []catalog.Variant
+	err         error
+	capturedCtx context.Context
 }
 
 func (m *mockVariantRepo) FindByID(_ context.Context, _ string) (*catalog.Variant, error) {
@@ -25,18 +28,21 @@ func (m *mockVariantRepo) FindByID(_ context.Context, _ string) (*catalog.Varian
 func (m *mockVariantRepo) FindBySKU(_ context.Context, _ string) (*catalog.Variant, error) {
 	return nil, nil
 }
-func (m *mockVariantRepo) ListByProductID(_ context.Context, _ string, _, _ int) ([]catalog.Variant, error) {
+func (m *mockVariantRepo) ListByProductID(ctx context.Context, _ string, _, _ int) ([]catalog.Variant, error) {
+	m.capturedCtx = ctx
 	return m.variants, m.err
 }
 func (m *mockVariantRepo) Create(_ context.Context, _ *catalog.Variant) error { return nil }
 func (m *mockVariantRepo) Update(_ context.Context, _ *catalog.Variant) error { return nil }
 
 type mockPriceRepo struct {
-	price *pricing.Price
-	err   error
+	price       *pricing.Price
+	err         error
+	capturedCtx context.Context
 }
 
-func (m *mockPriceRepo) FindByVariantAndCurrency(_ context.Context, _, _ string) (*pricing.Price, error) {
+func (m *mockPriceRepo) FindByVariantAndCurrency(ctx context.Context, _, _ string) (*pricing.Price, error) {
+	m.capturedCtx = ctx
 	return m.price, m.err
 }
 func (m *mockPriceRepo) ListByVariantID(_ context.Context, _ string) ([]pricing.Price, error) {
@@ -48,11 +54,13 @@ func (m *mockPriceRepo) List(_ context.Context, _, _ int) ([]pricing.Price, erro
 func (m *mockPriceRepo) Upsert(_ context.Context, _ *pricing.Price) error { return nil }
 
 type mockStockRepo struct {
-	entry inventory.StockEntry
-	err   error
+	entry       inventory.StockEntry
+	err         error
+	capturedCtx context.Context
 }
 
-func (m *mockStockRepo) GetStock(_ context.Context, _ string) (inventory.StockEntry, error) {
+func (m *mockStockRepo) GetStock(ctx context.Context, _ string) (inventory.StockEntry, error) {
+	m.capturedCtx = ctx
 	return m.entry, m.err
 }
 func (m *mockStockRepo) SetStock(_ context.Context, _ *inventory.StockEntry) error { return nil }
@@ -218,5 +226,61 @@ func TestJSONLDProductStep_DefaultCurrency(t *testing.T) {
 	}
 	if _, ok := offers["availability"]; ok {
 		t.Error("expected no availability when stock lookup fails")
+	}
+}
+
+func TestJSONLDProductStep_NilCtx(t *testing.T) {
+	s := composition.NewJSONLDProductStep(&mockVariantRepo{}, &mockPriceRepo{}, &mockStockRepo{})
+	if err := s.Apply(nil); err != nil {
+		t.Fatalf("Apply(nil): %v", err)
+	}
+}
+
+func TestJSONLDProductStep_ForwardsContext(t *testing.T) {
+	prod := catalog.Product{ID: "p1", Name: "Widget", Slug: "widget"}
+	v, _ := catalog.NewVariant("v1", "p1", "SKU-1")
+	amount := shared.MustNewMoney(500, "EUR")
+	price := pricing.Price{ID: "pr1", VariantID: "v1", Amount: amount}
+	stock, _ := inventory.NewStockEntry("v1", 1)
+
+	vr := &mockVariantRepo{variants: []catalog.Variant{v}}
+	pr := &mockPriceRepo{price: &price}
+	sr := &mockStockRepo{entry: stock}
+
+	s := composition.NewJSONLDProductStep(vr, pr, sr)
+	customCtx := context.WithValue(context.Background(), ctxKey{}, "test-value")
+	ctx := composition.NewProductContext(&prod)
+	ctx.Ctx = customCtx
+
+	if err := s.Apply(ctx); err != nil {
+		t.Fatalf("Apply: %v", err)
+	}
+	if vr.capturedCtx != customCtx {
+		t.Error("variant repo did not receive forwarded context")
+	}
+	if pr.capturedCtx != customCtx {
+		t.Error("price repo did not receive forwarded context")
+	}
+	if sr.capturedCtx != customCtx {
+		t.Error("stock repo did not receive forwarded context")
+	}
+}
+
+func TestJSONLDProductStep_NoOffer_WhenAllLookupsFail(t *testing.T) {
+	prod := catalog.Product{ID: "p1", Name: "Widget", Slug: "widget"}
+	v, _ := catalog.NewVariant("v1", "p1", "SKU-1")
+
+	s := composition.NewJSONLDProductStep(
+		&mockVariantRepo{variants: []catalog.Variant{v}},
+		&mockPriceRepo{err: errors.New("no price")},
+		&mockStockRepo{err: errors.New("no stock")},
+	)
+	ctx := composition.NewProductContext(&prod)
+	if err := s.Apply(ctx); err != nil {
+		t.Fatalf("Apply: %v", err)
+	}
+	ld := ctx.Blocks[0].Data["jsonld"].(map[string]interface{})
+	if ld["offers"] != nil {
+		t.Error("expected no offers when both price and stock lookups fail")
 	}
 }

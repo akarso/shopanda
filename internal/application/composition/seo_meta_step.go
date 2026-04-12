@@ -1,6 +1,9 @@
 package composition
 
-import "fmt"
+import (
+	"fmt"
+	"unicode/utf8"
+)
 
 // ProductMetaStep populates meta title and description from the product.
 type ProductMetaStep struct{}
@@ -13,8 +16,9 @@ func (ProductMetaStep) Apply(ctx *ProductContext) error {
 	}
 	ctx.Meta["title"] = ctx.Product.Name
 	desc := ctx.Product.Description
-	if len(desc) > 160 {
-		desc = desc[:160]
+	if utf8.RuneCountInString(desc) > 160 {
+		runes := []rune(desc)
+		desc = string(runes[:160])
 	}
 	ctx.Meta["description"] = desc
 	return nil

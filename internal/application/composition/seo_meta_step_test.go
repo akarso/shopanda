@@ -1,7 +1,9 @@
 package composition_test
 
 import (
+	"strings"
 	"testing"
+	"unicode/utf8"
 
 	"github.com/akarso/shopanda/internal/application/composition"
 	"github.com/akarso/shopanda/internal/domain/catalog"
@@ -88,5 +90,26 @@ func TestListingMetaStep_Apply_Empty(t *testing.T) {
 	}
 	if ctx.Meta["description"] != "Browse 0 products" {
 		t.Errorf("description = %v, want Browse 0 products", ctx.Meta["description"])
+	}
+}
+
+func TestProductMetaStep_Apply_TruncatesUTF8(t *testing.T) {
+	// 200 multibyte runes (each '€' is 3 bytes in UTF-8).
+	long := strings.Repeat("€", 200)
+	prod := catalog.Product{ID: "1", Name: "P", Description: long}
+	ctx := composition.NewProductContext(&prod)
+
+	if err := (composition.ProductMetaStep{}).Apply(ctx); err != nil {
+		t.Fatalf("Apply: %v", err)
+	}
+	desc, ok := ctx.Meta["description"].(string)
+	if !ok {
+		t.Fatal("description not a string")
+	}
+	if !utf8.ValidString(desc) {
+		t.Error("description is not valid UTF-8 after truncation")
+	}
+	if utf8.RuneCountInString(desc) != 160 {
+		t.Errorf("rune count = %d, want 160", utf8.RuneCountInString(desc))
 	}
 }

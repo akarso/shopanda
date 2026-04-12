@@ -31,7 +31,7 @@ func NewJSONLDProductStep(
 func (s *JSONLDProductStep) Name() string { return "seo_jsonld" }
 
 func (s *JSONLDProductStep) Apply(ctx *ProductContext) error {
-	if ctx.Product == nil {
+	if ctx == nil || ctx.Product == nil {
 		return nil
 	}
 
@@ -69,6 +69,7 @@ func (s *JSONLDProductStep) buildOffer(ctx *ProductContext) map[string]interface
 	offer := map[string]interface{}{
 		"@type": "Offer",
 	}
+	hasAttrs := false
 
 	currency := ctx.Currency
 	if currency == "" {
@@ -80,6 +81,7 @@ func (s *JSONLDProductStep) buildOffer(ctx *ProductContext) map[string]interface
 		// Schema.org expects a decimal string (e.g. "29.99").
 		offer["price"] = fmt.Sprintf("%.2f", float64(price.Amount.Amount())/100.0)
 		offer["priceCurrency"] = price.Amount.Currency()
+		hasAttrs = true
 	}
 
 	stock, err := s.stock.GetStock(ctx.Ctx, variants[0].ID)
@@ -89,7 +91,11 @@ func (s *JSONLDProductStep) buildOffer(ctx *ProductContext) map[string]interface
 		} else {
 			offer["availability"] = "https://schema.org/OutOfStock"
 		}
+		hasAttrs = true
 	}
 
+	if !hasAttrs {
+		return nil
+	}
 	return offer
 }
