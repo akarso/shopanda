@@ -7,6 +7,7 @@ import (
 
 	"github.com/akarso/shopanda/internal/application/rewrite"
 	"github.com/akarso/shopanda/internal/domain/catalog"
+	"github.com/akarso/shopanda/internal/domain/cms"
 	"github.com/akarso/shopanda/internal/domain/routing"
 	"github.com/akarso/shopanda/internal/platform/event"
 )
@@ -187,6 +188,66 @@ func TestHandleProductCreated_RepoError(t *testing.T) {
 	}
 }
 
+func TestHandlePageCreated(t *testing.T) {
+	repo := &fakeRewriteRepo{}
+	sub := rewrite.NewSubscriber(repo, &fakeLog{})
+
+	evt := event.New(cms.EventPageCreated, "test", cms.PageCreatedData{
+		PageID: "page-1",
+		Slug:   "about-us",
+		Title:  "About Us",
+	})
+
+	err := sub.HandlePageCreated(context.Background(), evt)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if len(repo.saved) != 1 {
+		t.Fatalf("saved = %d, want 1", len(repo.saved))
+	}
+	rw := repo.saved[0]
+	if rw.Path() != "/about-us" {
+		t.Errorf("path = %q, want %q", rw.Path(), "/about-us")
+	}
+	if rw.Type() != "page" {
+		t.Errorf("type = %q, want %q", rw.Type(), "page")
+	}
+	if rw.EntityID() != "page-1" {
+		t.Errorf("entity_id = %q, want %q", rw.EntityID(), "page-1")
+	}
+}
+
+func TestHandlePageUpdated(t *testing.T) {
+	repo := &fakeRewriteRepo{}
+	sub := rewrite.NewSubscriber(repo, &fakeLog{})
+
+	evt := event.New(cms.EventPageUpdated, "test", cms.PageUpdatedData{
+		PageID: "page-2",
+		Slug:   "contact",
+		Title:  "Contact",
+	})
+
+	err := sub.HandlePageUpdated(context.Background(), evt)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if len(repo.saved) != 1 {
+		t.Fatalf("saved = %d, want 1", len(repo.saved))
+	}
+	rw := repo.saved[0]
+	if rw.Path() != "/contact" {
+		t.Errorf("path = %q, want %q", rw.Path(), "/contact")
+	}
+	if rw.Type() != "page" {
+		t.Errorf("type = %q, want %q", rw.Type(), "page")
+	}
+	if rw.EntityID() != "page-2" {
+		t.Errorf("entity_id = %q, want %q", rw.EntityID(), "page-2")
+	}
+}
+
 func TestRegister(t *testing.T) {
 	repo := &fakeRewriteRepo{}
 	sub := rewrite.NewSubscriber(repo, &fakeLog{})
@@ -204,5 +265,11 @@ func TestRegister(t *testing.T) {
 	}
 	if bus.Handlers(catalog.EventCategoryUpdated) != 1 {
 		t.Error("expected 1 handler for category.updated")
+	}
+	if bus.Handlers(cms.EventPageCreated) != 1 {
+		t.Error("expected 1 handler for cms.page.created")
+	}
+	if bus.Handlers(cms.EventPageUpdated) != 1 {
+		t.Error("expected 1 handler for cms.page.updated")
 	}
 }

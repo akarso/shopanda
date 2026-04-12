@@ -245,6 +245,12 @@ func runServe(cfg *config.Config, log logger.Logger) error {
 		return err
 	}
 
+	// Page repository.
+	pageRepo, err := postgres.NewPageRepo(conn)
+	if err != nil {
+		return err
+	}
+
 	// Cache.
 	_ = appCache // wired by consumers in upcoming PRs
 
@@ -378,6 +384,7 @@ func runServe(cfg *config.Config, log logger.Logger) error {
 	// Admin schema registry.
 	adminRegistry := admin.NewRegistry()
 	adminApp.RegisterProductSchemas(adminRegistry)
+	adminApp.RegisterPageSchemas(adminRegistry)
 
 	// Handlers.
 	productHandler := shophttp.NewProductHandler(productRepo, pdp, plp)
@@ -394,6 +401,8 @@ func runServe(cfg *config.Config, log logger.Logger) error {
 	mediaService := mediaApp.NewService(mediaStorage, assetRepo, bus, log)
 	mediaHandler := shophttp.NewMediaHandler(mediaService)
 	schemaHandler := shophttp.NewSchemaHandler(adminRegistry)
+	pageHandler := shophttp.NewPageHandler(pageRepo)
+	pageAdmin := shophttp.NewPageAdminHandler(pageRepo, bus)
 
 	router := shophttp.NewRouter()
 
@@ -430,6 +439,9 @@ func runServe(cfg *config.Config, log logger.Logger) error {
 	// Search route (public).
 	router.HandleFunc("GET /api/v1/search", searchHandler.Search())
 
+	// Page routes (public).
+	router.HandleFunc("GET /api/v1/pages/{slug}", pageHandler.Get())
+
 	// Admin routes (behind RequireRole(admin)).
 	router.Handle("GET /api/v1/admin/products", requireAdmin(productAdmin.List()))
 	router.Handle("POST /api/v1/admin/products", requireAdmin(productAdmin.Create()))
@@ -441,6 +453,10 @@ func runServe(cfg *config.Config, log logger.Logger) error {
 	router.Handle("POST /api/v1/admin/media/upload", requireAdmin(mediaHandler.Upload()))
 	router.Handle("GET /api/v1/admin/forms/{name}", requireAdmin(schemaHandler.GetForm()))
 	router.Handle("GET /api/v1/admin/grids/{name}", requireAdmin(schemaHandler.GetGrid()))
+	router.Handle("GET /api/v1/admin/pages", requireAdmin(pageAdmin.List()))
+	router.Handle("POST /api/v1/admin/pages", requireAdmin(pageAdmin.Create()))
+	router.Handle("PUT /api/v1/admin/pages/{id}", requireAdmin(pageAdmin.Update()))
+	router.Handle("DELETE /api/v1/admin/pages/{id}", requireAdmin(pageAdmin.Delete()))
 
 	// Cart routes (behind RequireAuth).
 	router.Handle("POST /api/v1/carts", requireAuth(cartHandler.Create()))
