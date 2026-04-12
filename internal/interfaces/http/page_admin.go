@@ -179,10 +179,15 @@ func (h *PageAdminHandler) Update() http.HandlerFunc {
 			return
 		}
 
+		var publishedOldSlug string
+		if oldSlug != page.Slug() {
+			publishedOldSlug = oldSlug
+		}
+
 		_ = h.bus.Publish(r.Context(), event.New(cms.EventPageUpdated, "page.admin", cms.PageUpdatedData{
 			PageID:  page.ID(),
 			Slug:    page.Slug(),
-			OldSlug: oldSlug,
+			OldSlug: publishedOldSlug,
 			Title:   page.Title(),
 			Active:  page.IsActive(),
 		}))

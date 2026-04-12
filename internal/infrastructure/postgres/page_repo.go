@@ -120,7 +120,10 @@ func (r *PageRepo) List(ctx context.Context, offset, limit int) ([]*cms.Page, er
 		}
 		pages = append(pages, p)
 	}
-	return pages, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("page_repo: list: %w", err)
+	}
+	return pages, nil
 }
 
 // Create inserts a new page.
