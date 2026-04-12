@@ -28,22 +28,35 @@ func NewCartRepo(db *sql.DB) (*CartRepo, error) {
 	return &CartRepo{db: db}, nil
 }
 
+// querier abstracts *sql.DB and *sql.Tx for read methods.
+type querier interface {
+	QueryRowContext(ctx context.Context, query string, args ...interface{}) *sql.Row
+	QueryContext(ctx context.Context, query string, args ...interface{}) (*sql.Rows, error)
+}
+
 // FindByID returns a cart with its items by ID.
 // Returns (nil, nil) when not found.
+// Uses a REPEATABLE READ read-only transaction for a consistent snapshot.
 func (r *CartRepo) FindByID(ctx context.Context, id string) (*cart.Cart, error) {
 	if id == "" {
 		return nil, fmt.Errorf("cart_repo: find: empty id")
 	}
+	tx, err := r.db.BeginTx(ctx, &sql.TxOptions{Isolation: sql.LevelRepeatableRead, ReadOnly: true})
+	if err != nil {
+		return nil, fmt.Errorf("cart_repo: find by id: begin tx: %w", err)
+	}
+	defer tx.Rollback()
+
 	const q = `SELECT id, customer_id, status, currency, coupon_code, version, created_at, updated_at
 		FROM carts WHERE id = $1`
-	c, err := r.scanCart(r.db.QueryRowContext(ctx, q, id))
+	c, err := scanCart(tx.QueryRowContext(ctx, q, id))
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
 	}
 	if err != nil {
 		return nil, fmt.Errorf("cart_repo: find by id: %w", err)
 	}
-	items, err := r.loadItems(ctx, c.ID)
+	items, err := loadItems(ctx, tx, c.ID)
 	if err != nil {
 		return nil, err
 	}
@@ -53,21 +66,28 @@ func (r *CartRepo) FindByID(ctx context.Context, id string) (*cart.Cart, error) 
 
 // FindActiveByCustomerID returns the active cart for a customer.
 // Returns (nil, nil) when not found.
+// Uses a REPEATABLE READ read-only transaction for a consistent snapshot.
 func (r *CartRepo) FindActiveByCustomerID(ctx context.Context, customerID string) (*cart.Cart, error) {
 	if customerID == "" {
 		return nil, fmt.Errorf("cart_repo: find active: empty customer id")
 	}
+	tx, err := r.db.BeginTx(ctx, &sql.TxOptions{Isolation: sql.LevelRepeatableRead, ReadOnly: true})
+	if err != nil {
+		return nil, fmt.Errorf("cart_repo: find active: begin tx: %w", err)
+	}
+	defer tx.Rollback()
+
 	const q = `SELECT id, customer_id, status, currency, coupon_code, version, created_at, updated_at
 		FROM carts WHERE customer_id = $1 AND status = 'active'
 		LIMIT 1`
-	c, err := r.scanCart(r.db.QueryRowContext(ctx, q, customerID))
+	c, err := scanCart(tx.QueryRowContext(ctx, q, customerID))
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
 	}
 	if err != nil {
 		return nil, fmt.Errorf("cart_repo: find active by customer: %w", err)
 	}
-	items, err := r.loadItems(ctx, c.ID)
+	items, err := loadItems(ctx, tx, c.ID)
 	if err != nil {
 		return nil, err
 	}
@@ -169,11 +189,11 @@ func (r *CartRepo) Delete(ctx context.Context, id string) error {
 }
 
 // loadItems fetches all items for a cart, ordered by created_at.
-func (r *CartRepo) loadItems(ctx context.Context, cartID string) ([]cart.Item, error) {
-	const q = `SELECT variant_id, quantity, unit_price, currency, created_at, updated_at
+func loadItems(ctx context.Context, q querier, cartID string) ([]cart.Item, error) {
+	const query = `SELECT variant_id, quantity, unit_price, currency, created_at, updated_at
 		FROM cart_items WHERE cart_id = $1
 		ORDER BY created_at`
-	rows, err := r.db.QueryContext(ctx, q, cartID)
+	rows, err := q.QueryContext(ctx, query, cartID)
 	if err != nil {
 		return nil, fmt.Errorf("cart_repo: load items: %w", err)
 	}
@@ -208,7 +228,7 @@ func (r *CartRepo) loadItems(ctx context.Context, cartID string) ([]cart.Item, e
 }
 
 // scanCart reads a cart header from a row scanner.
-func (r *CartRepo) scanCart(row *sql.Row) (*cart.Cart, error) {
+func scanCart(row *sql.Row) (*cart.Cart, error) {
 	var c cart.Cart
 	var customerID sql.NullString
 	var couponCode sql.NullString
