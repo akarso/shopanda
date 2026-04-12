@@ -4,7 +4,7 @@ CREATE SEQUENCE credit_note_number_seq;
 CREATE TABLE invoices (
     id              UUID PRIMARY KEY,
     invoice_number  BIGINT NOT NULL UNIQUE DEFAULT nextval('invoice_number_seq'),
-    order_id        UUID NOT NULL REFERENCES orders(id),
+    order_id        UUID NOT NULL REFERENCES orders(id) UNIQUE,
     customer_id     TEXT NOT NULL,
     status          TEXT NOT NULL DEFAULT 'issued'
                     CHECK (status IN ('issued')),
@@ -12,10 +12,10 @@ CREATE TABLE invoices (
     subtotal_amount BIGINT NOT NULL CHECK (subtotal_amount >= 0),
     tax_amount      BIGINT NOT NULL CHECK (tax_amount >= 0),
     total_amount    BIGINT NOT NULL CHECK (total_amount >= 0),
-    created_at      TIMESTAMPTZ NOT NULL DEFAULT now()
+    created_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
+    UNIQUE (id, order_id)
 );
 
-CREATE INDEX idx_invoices_order ON invoices (order_id);
 CREATE INDEX idx_invoices_customer ON invoices (customer_id);
 
 CREATE TABLE invoice_items (
@@ -32,15 +32,16 @@ CREATE TABLE invoice_items (
 CREATE TABLE credit_notes (
     id                 UUID PRIMARY KEY,
     credit_note_number BIGINT NOT NULL UNIQUE DEFAULT nextval('credit_note_number_seq'),
-    invoice_id         UUID NOT NULL REFERENCES invoices(id),
-    order_id           UUID NOT NULL REFERENCES orders(id),
+    invoice_id         UUID NOT NULL,
+    order_id           UUID NOT NULL,
     customer_id        TEXT NOT NULL,
     reason             TEXT NOT NULL,
     currency           TEXT NOT NULL CHECK (length(currency) = 3),
     subtotal_amount    BIGINT NOT NULL CHECK (subtotal_amount >= 0),
     tax_amount         BIGINT NOT NULL CHECK (tax_amount >= 0),
     total_amount       BIGINT NOT NULL CHECK (total_amount >= 0),
-    created_at         TIMESTAMPTZ NOT NULL DEFAULT now()
+    created_at         TIMESTAMPTZ NOT NULL DEFAULT now(),
+    FOREIGN KEY (invoice_id, order_id) REFERENCES invoices(id, order_id)
 );
 
 CREATE INDEX idx_credit_notes_invoice ON credit_notes (invoice_id);

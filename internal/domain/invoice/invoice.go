@@ -2,6 +2,7 @@ package invoice
 
 import (
 	"errors"
+	"fmt"
 	"time"
 
 	"github.com/akarso/shopanda/internal/domain/shared"
@@ -140,6 +141,10 @@ func computeSubtotal(items []Item, currency string) (shared.Money, error) {
 		return shared.Money{}, err
 	}
 	for i := range items {
+		if items[i].UnitPrice.Currency() != currency {
+			return shared.Money{}, fmt.Errorf("invoice: item %q currency %s does not match %s",
+				items[i].VariantID, items[i].UnitPrice.Currency(), currency)
+		}
 		lt, err := items[i].LineTotal()
 		if err != nil {
 			return shared.Money{}, err

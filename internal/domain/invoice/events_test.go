@@ -1,4 +1,3 @@
-package invoice
 package invoice_test
 
 import (

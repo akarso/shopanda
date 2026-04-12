@@ -103,14 +103,12 @@ func (r *CreditNoteRepo) FindByInvoiceID(ctx context.Context, invoiceID string) 
 	defer rows.Close()
 
 	var notes []invoice.CreditNote
-	var ids []string
 	for rows.Next() {
 		cn, err := hydrateCreditNote(rows)
 		if err != nil {
 			return nil, fmt.Errorf("credit_note_repo: scan: %w", err)
 		}
 		notes = append(notes, *cn)
-		ids = append(ids, cn.ID)
 	}
 	if err := rows.Err(); err != nil {
 		return nil, fmt.Errorf("credit_note_repo: rows: %w", err)
