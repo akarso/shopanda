@@ -22,6 +22,7 @@ import (
 	mediaApp "github.com/akarso/shopanda/internal/application/media"
 	"github.com/akarso/shopanda/internal/application/notification"
 	appPricing "github.com/akarso/shopanda/internal/application/pricing"
+	"github.com/akarso/shopanda/internal/application/rewrite"
 	"github.com/akarso/shopanda/internal/domain/admin"
 	"github.com/akarso/shopanda/internal/domain/cache"
 	"github.com/akarso/shopanda/internal/domain/customer"
@@ -238,6 +239,12 @@ func runServe(cfg *config.Config, log logger.Logger) error {
 		return err
 	}
 
+	// Rewrite repository.
+	rewriteRepo, err := postgres.NewRewriteRepo(conn)
+	if err != nil {
+		return err
+	}
+
 	// Cache.
 	_ = appCache // wired by consumers in upcoming PRs
 
@@ -263,6 +270,10 @@ func runServe(cfg *config.Config, log logger.Logger) error {
 
 	// Wire order.paid → email notification.
 	bus.OnAsync(order.EventOrderPaid, notifSvc.HandleOrderPaid)
+
+	// Wire catalog events → URL rewrites.
+	rewriteSub := rewrite.NewSubscriber(rewriteRepo, log)
+	rewriteSub.Register(bus)
 
 	// Plugin registry.
 	registry := plugin.NewRegistry(log)
