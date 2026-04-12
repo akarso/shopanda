@@ -58,11 +58,28 @@ func (r *PageRepo) FindByID(ctx context.Context, id string) (*cms.Page, error) {
 	return p, nil
 }
 
-// FindBySlug returns an active page by its slug.
+// FindBySlug returns a page by its slug regardless of active status.
 // Returns (nil, nil) when not found.
 func (r *PageRepo) FindBySlug(ctx context.Context, slug string) (*cms.Page, error) {
 	if slug == "" {
 		return nil, fmt.Errorf("page_repo: find by slug: empty slug")
+	}
+	q := `SELECT ` + pageColumns + ` FROM pages WHERE slug = $1`
+	p, err := hydratePage(r.db.QueryRowContext(ctx, q, slug).Scan)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("page_repo: find by slug: %w", err)
+	}
+	return p, nil
+}
+
+// FindActiveBySlug returns an active page by its slug.
+// Returns (nil, nil) when not found or inactive.
+func (r *PageRepo) FindActiveBySlug(ctx context.Context, slug string) (*cms.Page, error) {
+	if slug == "" {
+		return nil, fmt.Errorf("page_repo: find active by slug: empty slug")
 	}
 	q := `SELECT ` + pageColumns + ` FROM pages WHERE slug = $1 AND is_active = true`
 	p, err := hydratePage(r.db.QueryRowContext(ctx, q, slug).Scan)
@@ -70,7 +87,7 @@ func (r *PageRepo) FindBySlug(ctx context.Context, slug string) (*cms.Page, erro
 		return nil, nil
 	}
 	if err != nil {
-		return nil, fmt.Errorf("page_repo: find by slug: %w", err)
+		return nil, fmt.Errorf("page_repo: find active by slug: %w", err)
 	}
 	return p, nil
 }
@@ -123,13 +140,20 @@ func (r *PageRepo) Update(ctx context.Context, p *cms.Page) error {
 	}
 	q := `UPDATE pages SET slug = $2, title = $3, content = $4, is_active = $5, updated_at = $6
 	      WHERE id = $1`
-	_, err := r.db.ExecContext(ctx, q, p.ID(), p.Slug(), p.Title(), p.Content(), p.IsActive(), p.UpdatedAt())
+	result, err := r.db.ExecContext(ctx, q, p.ID(), p.Slug(), p.Title(), p.Content(), p.IsActive(), p.UpdatedAt())
 	if err != nil {
 		var pqErr *pq.Error
 		if errors.As(err, &pqErr) && pqErr.Code == "23505" {
 			return apperror.Conflict("page with this slug already exists")
 		}
 		return fmt.Errorf("page_repo: update: %w", err)
+	}
+	rows, err := result.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("page_repo: update: rows affected: %w", err)
+	}
+	if rows == 0 {
+		return apperror.NotFound("page not found")
 	}
 	return nil
 }
@@ -140,9 +164,16 @@ func (r *PageRepo) Delete(ctx context.Context, id string) error {
 		return fmt.Errorf("page_repo: delete: empty id")
 	}
 	q := `DELETE FROM pages WHERE id = $1`
-	_, err := r.db.ExecContext(ctx, q, id)
+	result, err := r.db.ExecContext(ctx, q, id)
 	if err != nil {
 		return fmt.Errorf("page_repo: delete: %w", err)
+	}
+	rows, err := result.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("page_repo: delete: rows affected: %w", err)
+	}
+	if rows == 0 {
+		return apperror.NotFound("page not found")
 	}
 	return nil
 }

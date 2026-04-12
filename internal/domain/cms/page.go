@@ -2,6 +2,7 @@ package cms
 
 import (
 	"fmt"
+	"strings"
 	"time"
 )
 
@@ -23,6 +24,9 @@ func NewPage(id, slug, title, content string) (*Page, error) {
 	}
 	if slug == "" {
 		return nil, fmt.Errorf("page: empty slug")
+	}
+	if strings.Contains(slug, "/") {
+		return nil, fmt.Errorf("page: invalid slug: contains '/'")
 	}
 	if title == "" {
 		return nil, fmt.Errorf("page: empty title")
@@ -64,6 +68,9 @@ func (p *Page) UpdatedAt() time.Time { return p.updatedAt }
 func (p *Page) SetSlug(slug string) error {
 	if slug == "" {
 		return fmt.Errorf("page: empty slug")
+	}
+	if strings.Contains(slug, "/") {
+		return fmt.Errorf("page: invalid slug: contains '/'")
 	}
 	p.slug = slug
 	p.updatedAt = time.Now().UTC()

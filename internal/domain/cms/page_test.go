@@ -52,6 +52,13 @@ func TestNewPage_EmptyTitle(t *testing.T) {
 	}
 }
 
+func TestNewPage_SlugWithSlash(t *testing.T) {
+	_, err := cms.NewPage("id", "about/us", "Title", "")
+	if err == nil {
+		t.Fatal("expected error for slug containing '/'")
+	}
+}
+
 func TestPage_SetSlug(t *testing.T) {
 	p, _ := cms.NewPage("id", "old", "Title", "")
 	if err := p.SetSlug("new"); err != nil {
@@ -66,6 +73,13 @@ func TestPage_SetSlug_Empty(t *testing.T) {
 	p, _ := cms.NewPage("id", "slug", "Title", "")
 	if err := p.SetSlug(""); err == nil {
 		t.Fatal("expected error for empty slug")
+	}
+}
+
+func TestPage_SetSlug_WithSlash(t *testing.T) {
+	p, _ := cms.NewPage("id", "slug", "Title", "")
+	if err := p.SetSlug("about/us"); err == nil {
+		t.Fatal("expected error for slug containing '/'")
 	}
 }
 

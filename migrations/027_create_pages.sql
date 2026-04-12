@@ -9,5 +9,4 @@ CREATE TABLE IF NOT EXISTS pages (
     updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
-CREATE INDEX idx_pages_slug ON pages (slug);
 CREATE INDEX idx_pages_active ON pages (is_active);

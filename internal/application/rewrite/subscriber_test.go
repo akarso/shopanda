@@ -15,12 +15,14 @@ import (
 // --- fakes ---
 
 type fakeRewriteRepo struct {
-	saved []*routing.URLRewrite
-	err   error
+	saved    []*routing.URLRewrite
+	deleted  []string
+	existing *routing.URLRewrite
+	err      error
 }
 
 func (f *fakeRewriteRepo) FindByPath(_ context.Context, _ string) (*routing.URLRewrite, error) {
-	return nil, nil
+	return f.existing, nil
 }
 
 func (f *fakeRewriteRepo) Save(_ context.Context, rw *routing.URLRewrite) error {
@@ -31,7 +33,10 @@ func (f *fakeRewriteRepo) Save(_ context.Context, rw *routing.URLRewrite) error 
 	return nil
 }
 
-func (f *fakeRewriteRepo) Delete(_ context.Context, _ string) error { return nil }
+func (f *fakeRewriteRepo) Delete(_ context.Context, path string) error {
+	f.deleted = append(f.deleted, path)
+	return nil
+}
 
 type fakeLog struct{}
 
@@ -226,6 +231,7 @@ func TestHandlePageUpdated(t *testing.T) {
 		PageID: "page-2",
 		Slug:   "contact",
 		Title:  "Contact",
+		Active: true,
 	})
 
 	err := sub.HandlePageUpdated(context.Background(), evt)
@@ -245,6 +251,95 @@ func TestHandlePageUpdated(t *testing.T) {
 	}
 	if rw.EntityID() != "page-2" {
 		t.Errorf("entity_id = %q, want %q", rw.EntityID(), "page-2")
+	}
+}
+
+func TestHandlePageUpdated_Deactivated(t *testing.T) {
+	repo := &fakeRewriteRepo{}
+	sub := rewrite.NewSubscriber(repo, &fakeLog{})
+
+	evt := event.New(cms.EventPageUpdated, "test", cms.PageUpdatedData{
+		PageID: "page-2",
+		Slug:   "contact",
+		Title:  "Contact",
+		Active: false,
+	})
+
+	err := sub.HandlePageUpdated(context.Background(), evt)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(repo.saved) != 0 {
+		t.Errorf("saved = %d, want 0 (deactivated page should remove rewrite)", len(repo.saved))
+	}
+	if len(repo.deleted) != 1 {
+		t.Fatalf("deleted = %d, want 1", len(repo.deleted))
+	}
+	if repo.deleted[0] != "/contact" {
+		t.Errorf("deleted path = %q, want %q", repo.deleted[0], "/contact")
+	}
+}
+
+func TestHandlePageDeleted(t *testing.T) {
+	repo := &fakeRewriteRepo{}
+	sub := rewrite.NewSubscriber(repo, &fakeLog{})
+
+	evt := event.New(cms.EventPageDeleted, "test", cms.PageDeletedData{
+		PageID: "page-3",
+		Slug:   "old-page",
+	})
+
+	err := sub.HandlePageDeleted(context.Background(), evt)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(repo.deleted) != 1 {
+		t.Fatalf("deleted = %d, want 1", len(repo.deleted))
+	}
+	if repo.deleted[0] != "/old-page" {
+		t.Errorf("deleted path = %q, want %q", repo.deleted[0], "/old-page")
+	}
+}
+
+func TestSaveRewrite_CollisionRejected(t *testing.T) {
+	existing := routing.NewURLRewriteFromDB("/about-us", "product", "prod-99")
+	repo := &fakeRewriteRepo{existing: existing}
+	sub := rewrite.NewSubscriber(repo, &fakeLog{})
+
+	evt := event.New(cms.EventPageCreated, "test", cms.PageCreatedData{
+		PageID: "page-1",
+		Slug:   "about-us",
+		Title:  "About Us",
+		Active: true,
+	})
+
+	err := sub.HandlePageCreated(context.Background(), evt)
+	if err == nil {
+		t.Fatal("expected collision error")
+	}
+	if len(repo.saved) != 0 {
+		t.Errorf("saved = %d, want 0 (collision should prevent save)", len(repo.saved))
+	}
+}
+
+func TestSaveRewrite_SameOwnerAllowed(t *testing.T) {
+	existing := routing.NewURLRewriteFromDB("/about-us", "page", "page-1")
+	repo := &fakeRewriteRepo{existing: existing}
+	sub := rewrite.NewSubscriber(repo, &fakeLog{})
+
+	evt := event.New(cms.EventPageUpdated, "test", cms.PageUpdatedData{
+		PageID: "page-1",
+		Slug:   "about-us",
+		Title:  "About Us Updated",
+		Active: true,
+	})
+
+	err := sub.HandlePageUpdated(context.Background(), evt)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(repo.saved) != 1 {
+		t.Fatalf("saved = %d, want 1", len(repo.saved))
 	}
 }
 
@@ -271,5 +366,8 @@ func TestRegister(t *testing.T) {
 	}
 	if bus.Handlers(cms.EventPageUpdated) != 1 {
 		t.Error("expected 1 handler for cms.page.updated")
+	}
+	if bus.Handlers(cms.EventPageDeleted) != 1 {
+		t.Error("expected 1 handler for cms.page.deleted")
 	}
 }

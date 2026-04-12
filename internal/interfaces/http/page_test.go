@@ -23,12 +23,13 @@ var fixedTime = time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC)
 // --- mock page repository ---
 
 type mockPageRepo struct {
-	findByIDFn   func(ctx context.Context, id string) (*cms.Page, error)
-	findBySlugFn func(ctx context.Context, slug string) (*cms.Page, error)
-	listFn       func(ctx context.Context, offset, limit int) ([]*cms.Page, error)
-	createFn     func(ctx context.Context, p *cms.Page) error
-	updateFn     func(ctx context.Context, p *cms.Page) error
-	deleteFn     func(ctx context.Context, id string) error
+	findByIDFn         func(ctx context.Context, id string) (*cms.Page, error)
+	findBySlugFn       func(ctx context.Context, slug string) (*cms.Page, error)
+	findActiveBySlugFn func(ctx context.Context, slug string) (*cms.Page, error)
+	listFn             func(ctx context.Context, offset, limit int) ([]*cms.Page, error)
+	createFn           func(ctx context.Context, p *cms.Page) error
+	updateFn           func(ctx context.Context, p *cms.Page) error
+	deleteFn           func(ctx context.Context, id string) error
 }
 
 func (m *mockPageRepo) FindByID(ctx context.Context, id string) (*cms.Page, error) {
@@ -41,6 +42,13 @@ func (m *mockPageRepo) FindByID(ctx context.Context, id string) (*cms.Page, erro
 func (m *mockPageRepo) FindBySlug(ctx context.Context, slug string) (*cms.Page, error) {
 	if m.findBySlugFn != nil {
 		return m.findBySlugFn(ctx, slug)
+	}
+	return nil, nil
+}
+
+func (m *mockPageRepo) FindActiveBySlug(ctx context.Context, slug string) (*cms.Page, error) {
+	if m.findActiveBySlugFn != nil {
+		return m.findActiveBySlugFn(ctx, slug)
 	}
 	return nil, nil
 }
@@ -121,7 +129,7 @@ func testPage() *cms.Page {
 
 func TestPageHandler_Get_OK(t *testing.T) {
 	repo := &mockPageRepo{
-		findBySlugFn: func(_ context.Context, slug string) (*cms.Page, error) {
+		findActiveBySlugFn: func(_ context.Context, slug string) (*cms.Page, error) {
 			if slug != "about" {
 				t.Errorf("slug = %q, want %q", slug, "about")
 			}
@@ -151,7 +159,7 @@ func TestPageHandler_Get_OK(t *testing.T) {
 
 func TestPageHandler_Get_NotFound(t *testing.T) {
 	repo := &mockPageRepo{
-		findBySlugFn: func(_ context.Context, _ string) (*cms.Page, error) {
+		findActiveBySlugFn: func(_ context.Context, _ string) (*cms.Page, error) {
 			return nil, nil
 		},
 	}
@@ -168,7 +176,7 @@ func TestPageHandler_Get_NotFound(t *testing.T) {
 
 func TestPageHandler_Get_RepoError(t *testing.T) {
 	repo := &mockPageRepo{
-		findBySlugFn: func(_ context.Context, _ string) (*cms.Page, error) {
+		findActiveBySlugFn: func(_ context.Context, _ string) (*cms.Page, error) {
 			return nil, apperror.Internal("db error")
 		},
 	}
@@ -343,6 +351,12 @@ func TestPageAdminHandler_Update_NotFound(t *testing.T) {
 func TestPageAdminHandler_Delete_OK(t *testing.T) {
 	var deletedID string
 	repo := &mockPageRepo{
+		findByIDFn: func(_ context.Context, id string) (*cms.Page, error) {
+			if id == "page-1" {
+				return testPage(), nil
+			}
+			return nil, nil
+		},
 		deleteFn: func(_ context.Context, id string) error {
 			deletedID = id
 			return nil
@@ -364,8 +378,8 @@ func TestPageAdminHandler_Delete_OK(t *testing.T) {
 
 func TestPageAdminHandler_Delete_RepoError(t *testing.T) {
 	repo := &mockPageRepo{
-		deleteFn: func(_ context.Context, _ string) error {
-			return apperror.NotFound("page not found")
+		findByIDFn: func(_ context.Context, _ string) (*cms.Page, error) {
+			return nil, nil
 		},
 	}
 	h := shophttp.NewPageAdminHandler(repo, pageBus())

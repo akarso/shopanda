@@ -3,6 +3,7 @@ package http
 import (
 	"encoding/json"
 	"net/http"
+	"time"
 
 	"github.com/akarso/shopanda/internal/domain/cms"
 	"github.com/akarso/shopanda/internal/platform/apperror"
@@ -22,9 +23,10 @@ func NewPageAdminHandler(pages cms.PageRepository, bus *event.Bus) *PageAdminHan
 }
 
 type createPageRequest struct {
-	Slug    string `json:"slug"`
-	Title   string `json:"title"`
-	Content string `json:"content"`
+	Slug     string `json:"slug"`
+	Title    string `json:"title"`
+	Content  string `json:"content"`
+	IsActive *bool  `json:"is_active"`
 }
 
 type updatePageRequest struct {
@@ -52,8 +54,8 @@ func toAdminPageResponse(p *cms.Page) adminPageResponse {
 		Title:     p.Title(),
 		Content:   p.Content(),
 		IsActive:  p.IsActive(),
-		CreatedAt: p.CreatedAt().Format("2006-01-02T15:04:05Z"),
-		UpdatedAt: p.UpdatedAt().Format("2006-01-02T15:04:05Z"),
+		CreatedAt: p.CreatedAt().UTC().Format(time.RFC3339),
+		UpdatedAt: p.UpdatedAt().UTC().Format(time.RFC3339),
 	}
 }
 
@@ -98,6 +100,10 @@ func (h *PageAdminHandler) Create() http.HandlerFunc {
 			return
 		}
 
+		if req.IsActive != nil {
+			page.SetActive(*req.IsActive)
+		}
+
 		if err := h.pages.Create(r.Context(), page); err != nil {
 			JSONError(w, err)
 			return
@@ -107,6 +113,7 @@ func (h *PageAdminHandler) Create() http.HandlerFunc {
 			PageID: page.ID(),
 			Slug:   page.Slug(),
 			Title:  page.Title(),
+			Active: page.IsActive(),
 		}))
 
 		JSON(w, http.StatusCreated, map[string]interface{}{
@@ -168,6 +175,7 @@ func (h *PageAdminHandler) Update() http.HandlerFunc {
 			PageID: page.ID(),
 			Slug:   page.Slug(),
 			Title:  page.Title(),
+			Active: page.IsActive(),
 		}))
 
 		JSON(w, http.StatusOK, map[string]interface{}{
@@ -185,10 +193,25 @@ func (h *PageAdminHandler) Delete() http.HandlerFunc {
 			return
 		}
 
+		page, err := h.pages.FindByID(r.Context(), pid)
+		if err != nil {
+			JSONError(w, err)
+			return
+		}
+		if page == nil {
+			JSONError(w, apperror.NotFound("page not found"))
+			return
+		}
+
 		if err := h.pages.Delete(r.Context(), pid); err != nil {
 			JSONError(w, err)
 			return
 		}
+
+		_ = h.bus.Publish(r.Context(), event.New(cms.EventPageDeleted, "page.admin", cms.PageDeletedData{
+			PageID: page.ID(),
+			Slug:   page.Slug(),
+		}))
 
 		JSON(w, http.StatusOK, map[string]interface{}{
 			"deleted": true,

@@ -37,7 +37,7 @@ func (h *PageHandler) Get() http.HandlerFunc {
 			return
 		}
 
-		p, err := h.pages.FindBySlug(r.Context(), slug)
+		p, err := h.pages.FindActiveBySlug(r.Context(), slug)
 		if err != nil {
 			JSONError(w, err)
 			return

@@ -38,6 +38,7 @@ func (s *Subscriber) Register(bus *event.Bus) {
 	bus.On(catalog.EventCategoryUpdated, s.HandleCategoryUpdated)
 	bus.On(cms.EventPageCreated, s.HandlePageCreated)
 	bus.On(cms.EventPageUpdated, s.HandlePageUpdated)
+	bus.On(cms.EventPageDeleted, s.HandlePageDeleted)
 }
 
 // HandleProductCreated saves a URL rewrite for a newly created product.
@@ -91,10 +92,30 @@ func (s *Subscriber) HandlePageUpdated(ctx context.Context, evt event.Event) err
 	if !ok {
 		return fmt.Errorf("rewrite: unexpected event data type %T", evt.Data)
 	}
+	if !data.Active {
+		return s.removeRewrite(ctx, "/"+data.Slug)
+	}
 	return s.saveRewrite(ctx, "/"+data.Slug, "page", data.PageID)
 }
 
+// HandlePageDeleted removes the URL rewrite for a deleted page.
+func (s *Subscriber) HandlePageDeleted(ctx context.Context, evt event.Event) error {
+	data, ok := evt.Data.(cms.PageDeletedData)
+	if !ok {
+		return fmt.Errorf("rewrite: unexpected event data type %T", evt.Data)
+	}
+	return s.removeRewrite(ctx, "/"+data.Slug)
+}
+
 func (s *Subscriber) saveRewrite(ctx context.Context, path, typ, entityID string) error {
+	existing, err := s.rewrites.FindByPath(ctx, path)
+	if err != nil {
+		return fmt.Errorf("rewrite: lookup: %w", err)
+	}
+	if existing != nil && (existing.Type() != typ || existing.EntityID() != entityID) {
+		return fmt.Errorf("rewrite: path %q already claimed by %s/%s", path, existing.Type(), existing.EntityID())
+	}
+
 	rw, err := routing.NewURLRewrite(path, typ, entityID)
 	if err != nil {
 		return fmt.Errorf("rewrite: create: %w", err)
@@ -111,6 +132,19 @@ func (s *Subscriber) saveRewrite(ctx context.Context, path, typ, entityID string
 		"path":      path,
 		"type":      typ,
 		"entity_id": entityID,
+	})
+	return nil
+}
+
+func (s *Subscriber) removeRewrite(ctx context.Context, path string) error {
+	if err := s.rewrites.Delete(ctx, path); err != nil {
+		s.log.Error("rewrite_delete_failed", err, map[string]interface{}{
+			"path": path,
+		})
+		return fmt.Errorf("rewrite: delete: %w", err)
+	}
+	s.log.Info("rewrite_deleted", map[string]interface{}{
+		"path": path,
 	})
 	return nil
 }
