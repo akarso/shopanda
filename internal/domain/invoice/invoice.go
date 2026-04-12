@@ -119,14 +119,25 @@ func (inv *Invoice) SetStatusFromDB(s string) error {
 }
 
 // SetItemsFromDB sets the items when loading from persistence.
-// Returns an error if the items subtotal doesn't match the invoice header.
+// Returns an error if items are empty, if the items subtotal doesn't match, or
+// if the header amounts (subtotal + tax = total) are inconsistent.
 func (inv *Invoice) SetItemsFromDB(items []Item) error {
+	if len(items) == 0 {
+		return errors.New("invoice: items must not be empty")
+	}
 	subtotal, err := computeSubtotal(items, inv.Currency)
 	if err != nil {
 		return err
 	}
 	if !subtotal.Equal(inv.SubtotalAmount) {
 		return errors.New("invoice: items subtotal does not match invoice header")
+	}
+	expectedTotal, err := subtotal.AddChecked(inv.TaxAmount)
+	if err != nil {
+		return errors.New("invoice: header total overflow during validation")
+	}
+	if !expectedTotal.Equal(inv.TotalAmount) {
+		return errors.New("invoice: subtotal + tax does not equal total")
 	}
 	cp := make([]Item, len(items))
 	copy(cp, items)
