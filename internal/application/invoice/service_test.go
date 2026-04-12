@@ -2,6 +2,7 @@ package invoice_test
 
 import (
 	"context"
+	"fmt"
 	"io"
 	"testing"
 
@@ -148,11 +149,12 @@ func TestGenerateFromOrder_Success(t *testing.T) {
 	if !renderer.called {
 		t.Error("expected renderer to be called")
 	}
-	if len(storage.saved) != 1 {
-		t.Errorf("stored files = %d, want 1", len(storage.saved))
+	expectedPath := fmt.Sprintf("invoices/%s/invoice-%d.pdf", result.Invoice.ID(), result.Invoice.InvoiceNumber())
+	if result.PDFPath != expectedPath {
+		t.Errorf("PDFPath = %q, want %q", result.PDFPath, expectedPath)
 	}
-	if result.PDFPath == "" {
-		t.Error("expected non-empty PDFPath")
+	if _, ok := storage.saved[expectedPath]; !ok {
+		t.Errorf("storage missing key %q, got keys: %v", expectedPath, storageKeys(storage))
 	}
 }
 
@@ -235,4 +237,12 @@ func mustInvoiceItem(t *testing.T) domainInvoice.Item {
 		t.Fatalf("NewItem: %v", err)
 	}
 	return item
+}
+
+func storageKeys(s *fakeStorage) []string {
+	keys := make([]string, 0, len(s.saved))
+	for k := range s.saved {
+		keys = append(keys, k)
+	}
+	return keys
 }
