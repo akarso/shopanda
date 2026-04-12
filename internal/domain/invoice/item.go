@@ -15,22 +15,30 @@ type Item struct {
 	UnitPrice shared.Money
 }
 
-// NewItem creates an Item with validation.
-func NewItem(variantID, sku, name string, quantity int, unitPrice shared.Money) (Item, error) {
+// validateItemFields checks the basic field constraints shared by NewItem and Validate.
+func validateItemFields(variantID, sku, name string, quantity int, unitPrice shared.Money) error {
 	if variantID == "" {
-		return Item{}, errors.New("invoice item: variant id must not be empty")
+		return errors.New("invoice item: variant id must not be empty")
 	}
 	if sku == "" {
-		return Item{}, errors.New("invoice item: sku must not be empty")
+		return errors.New("invoice item: sku must not be empty")
 	}
 	if name == "" {
-		return Item{}, errors.New("invoice item: name must not be empty")
+		return errors.New("invoice item: name must not be empty")
 	}
 	if quantity <= 0 {
-		return Item{}, errors.New("invoice item: quantity must be positive")
+		return errors.New("invoice item: quantity must be positive")
 	}
 	if unitPrice.IsNegative() {
-		return Item{}, errors.New("invoice item: unit price must be non-negative")
+		return errors.New("invoice item: unit price must be non-negative")
+	}
+	return nil
+}
+
+// NewItem creates an Item with validation.
+func NewItem(variantID, sku, name string, quantity int, unitPrice shared.Money) (Item, error) {
+	if err := validateItemFields(variantID, sku, name, quantity, unitPrice); err != nil {
+		return Item{}, err
 	}
 	return Item{
 		VariantID: variantID,
@@ -46,20 +54,8 @@ func NewItem(variantID, sku, name string, quantity int, unitPrice shared.Money) 
 // plus currency matching, and is intended for validating items hydrated from
 // persistence where NewItem was not called.
 func (it Item) Validate(currency string) error {
-	if it.VariantID == "" {
-		return errors.New("invoice item: variant id must not be empty")
-	}
-	if it.SKU == "" {
-		return errors.New("invoice item: sku must not be empty")
-	}
-	if it.Name == "" {
-		return errors.New("invoice item: name must not be empty")
-	}
-	if it.Quantity <= 0 {
-		return errors.New("invoice item: quantity must be positive")
-	}
-	if it.UnitPrice.IsNegative() {
-		return errors.New("invoice item: unit price must be non-negative")
+	if err := validateItemFields(it.VariantID, it.SKU, it.Name, it.Quantity, it.UnitPrice); err != nil {
+		return err
 	}
 	if it.UnitPrice.Currency() != currency {
 		return errors.New("invoice item: currency mismatch")

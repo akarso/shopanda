@@ -186,9 +186,22 @@ func (inv *Invoice) SetItemsFromDB(items []Item) error {
 	if !subtotal.Equal(inv.subtotalAmount) {
 		return errors.New("invoice: items subtotal does not match invoice header")
 	}
-	expectedTotal, err := subtotal.AddChecked(inv.taxAmount)
-	if err != nil {
-		return errors.New("invoice: header total overflow during validation")
+	var expectedTotal shared.Money
+	addErr := func() (retErr error) {
+		defer func() {
+			if r := recover(); r != nil {
+				retErr = fmt.Errorf("invoice: SetItemsFromDB: subtotal.AddChecked panicked: %v", r)
+			}
+		}()
+		var err error
+		expectedTotal, err = subtotal.AddChecked(inv.taxAmount)
+		if err != nil {
+			return errors.New("invoice: header total overflow during validation")
+		}
+		return nil
+	}()
+	if addErr != nil {
+		return addErr
 	}
 	if !expectedTotal.Equal(inv.totalAmount) {
 		return errors.New("invoice: subtotal + tax does not equal total")
