@@ -301,12 +301,17 @@ func runServe(cfg *config.Config, log logger.Logger) error {
 		"failed":      summary.Failed,
 	})
 
+	// Base URL for SEO (sitemap, canonical, robots).
+	baseURL := fmt.Sprintf("http://%s:%d", cfg.Server.Host, cfg.Server.Port)
+
 	// Composition pipelines (core SEO steps + plugin steps).
 	pdp := composition.NewPipeline[composition.ProductContext]()
 	pdp.AddStep(composition.ProductMetaStep{})
 	pdp.AddStep(composition.NewJSONLDProductStep(variantRepo, priceRepo, stockRepo))
+	pdp.AddStep(composition.NewCanonicalURLStep(baseURL))
 	plp := composition.NewPipeline[composition.ListingContext]()
 	plp.AddStep(composition.ListingMetaStep{})
+	plp.AddStep(composition.NewListingCanonicalURLStep(baseURL))
 	for _, s := range pluginApp.CompositionSteps("pdp") {
 		if v, ok := s.(composition.Step[composition.ProductContext]); ok {
 			pdp.AddStep(v)
@@ -410,6 +415,8 @@ func runServe(cfg *config.Config, log logger.Logger) error {
 	schemaHandler := shophttp.NewSchemaHandler(adminRegistry)
 	pageHandler := shophttp.NewPageHandler(pageRepo)
 	pageAdmin := shophttp.NewPageAdminHandler(pageRepo, bus)
+	sitemapHandler := shophttp.NewSitemapHandler(baseURL, productRepo, categoryRepo, pageRepo)
+	robotsHandler := shophttp.NewRobotsHandler(baseURL)
 
 	router := shophttp.NewRouter()
 
@@ -421,6 +428,8 @@ func runServe(cfg *config.Config, log logger.Logger) error {
 
 	// Routes.
 	router.HandleFunc("GET /healthz", shophttp.HealthHandler())
+	router.HandleFunc("GET /sitemap.xml", sitemapHandler.Serve())
+	router.HandleFunc("GET /robots.txt", robotsHandler.Serve())
 
 	requireAuth := shophttp.RequireAuth()
 	requireAdmin := shophttp.RequireRole(identity.RoleAdmin)
