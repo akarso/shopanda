@@ -302,7 +302,10 @@ func runServe(cfg *config.Config, log logger.Logger) error {
 	})
 
 	// Base URL for SEO (sitemap, canonical, robots).
-	baseURL := fmt.Sprintf("http://%s:%d", cfg.Server.Host, cfg.Server.Port)
+	baseURL := cfg.Server.PublicBaseURL
+	if baseURL == "" {
+		baseURL = fmt.Sprintf("http://%s:%d", cfg.Server.Host, cfg.Server.Port)
+	}
 
 	// Composition pipelines (core SEO steps + plugin steps).
 	pdp := composition.NewPipeline[composition.ProductContext]()

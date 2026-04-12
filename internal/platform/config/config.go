@@ -22,8 +22,9 @@ type Config struct {
 }
 
 type ServerConfig struct {
-	Host string `yaml:"host"`
-	Port int    `yaml:"port"`
+	Host          string `yaml:"host"`
+	Port          int    `yaml:"port"`
+	PublicBaseURL string `yaml:"public_base_url"`
 }
 
 type DatabaseConfig struct {
@@ -196,6 +197,9 @@ func applyEnv(cfg *Config) {
 			cfg.Server.Port = p
 		}
 	}
+	if v := os.Getenv("SHOPANDA_SERVER_PUBLIC_BASE_URL"); v != "" {
+		cfg.Server.PublicBaseURL = v
+	}
 	if v := os.Getenv("SHOPANDA_DATABASE_HOST"); v != "" {
 		cfg.Database.Host = v
 	}
@@ -276,6 +280,7 @@ func flatten(cfg *Config) map[string]string {
 	m := make(map[string]string)
 	m["server.host"] = cfg.Server.Host
 	m["server.port"] = strconv.Itoa(cfg.Server.Port)
+	m["server.public_base_url"] = cfg.Server.PublicBaseURL
 	m["database.host"] = cfg.Database.Host
 	m["database.port"] = strconv.Itoa(cfg.Database.Port)
 	m["database.user"] = cfg.Database.User

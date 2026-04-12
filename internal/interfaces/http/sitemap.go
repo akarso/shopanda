@@ -95,7 +95,7 @@ func (h *SitemapHandler) Serve() http.HandlerFunc {
 				return
 			}
 			for _, p := range pages {
-				if !p.IsActive() {
+				if p == nil || !p.IsActive() {
 					continue
 				}
 				urls = append(urls, sitemapURL{
