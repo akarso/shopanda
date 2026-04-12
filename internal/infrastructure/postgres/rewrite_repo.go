@@ -7,6 +7,7 @@ import (
 	"fmt"
 
 	"github.com/akarso/shopanda/internal/domain/routing"
+	"github.com/akarso/shopanda/internal/platform/apperror"
 	"github.com/lib/pq"
 )
 
@@ -56,14 +57,14 @@ func (r *RewriteRepo) Save(ctx context.Context, rw *routing.URLRewrite) error {
 	if rw == nil {
 		return fmt.Errorf("rewrite_repo: save: nil rewrite")
 	}
-	q := `INSERT INTO url_rewrites (path, type, entity_id)
-	      VALUES ($1, $2, $3)
-	      ON CONFLICT (path) DO UPDATE SET type = $2, entity_id = $3`
+	q := `INSERT INTO url_rewrites (path, type, entity_id, created_at, updated_at)
+	      VALUES ($1, $2, $3, now(), now())
+	      ON CONFLICT (path) DO UPDATE SET type = $2, entity_id = $3, updated_at = now()`
 	_, err := r.db.ExecContext(ctx, q, rw.Path(), rw.Type(), rw.EntityID())
 	if err != nil {
 		var pqErr *pq.Error
-		if errors.As(err, &pqErr) {
-			return fmt.Errorf("rewrite_repo: save: %s", pqErr.Message)
+		if errors.As(err, &pqErr) && pqErr.Code == "23505" {
+			return apperror.Conflict("url rewrite for this path already exists")
 		}
 		return fmt.Errorf("rewrite_repo: save: %w", err)
 	}
