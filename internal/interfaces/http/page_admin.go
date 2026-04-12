@@ -19,6 +19,12 @@ type PageAdminHandler struct {
 
 // NewPageAdminHandler creates a PageAdminHandler.
 func NewPageAdminHandler(pages cms.PageRepository, bus *event.Bus) *PageAdminHandler {
+	if pages == nil {
+		panic("PageAdminHandler: pages repository must not be nil")
+	}
+	if bus == nil {
+		panic("PageAdminHandler: event bus must not be nil")
+	}
 	return &PageAdminHandler{pages: pages, bus: bus}
 }
 
@@ -147,6 +153,8 @@ func (h *PageAdminHandler) Update() http.HandlerFunc {
 			return
 		}
 
+		oldSlug := page.Slug()
+
 		if req.Slug != nil {
 			if err := page.SetSlug(*req.Slug); err != nil {
 				JSONError(w, apperror.Validation(err.Error()))
@@ -172,10 +180,11 @@ func (h *PageAdminHandler) Update() http.HandlerFunc {
 		}
 
 		_ = h.bus.Publish(r.Context(), event.New(cms.EventPageUpdated, "page.admin", cms.PageUpdatedData{
-			PageID: page.ID(),
-			Slug:   page.Slug(),
-			Title:  page.Title(),
-			Active: page.IsActive(),
+			PageID:  page.ID(),
+			Slug:    page.Slug(),
+			OldSlug: oldSlug,
+			Title:   page.Title(),
+			Active:  page.IsActive(),
 		}))
 
 		JSON(w, http.StatusOK, map[string]interface{}{

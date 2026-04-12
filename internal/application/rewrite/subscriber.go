@@ -95,6 +95,11 @@ func (s *Subscriber) HandlePageUpdated(ctx context.Context, evt event.Event) err
 	if !data.Active {
 		return s.removeRewrite(ctx, "/"+data.Slug)
 	}
+	if data.OldSlug != "" && data.OldSlug != data.Slug {
+		if err := s.removeRewrite(ctx, "/"+data.OldSlug); err != nil {
+			return err
+		}
+	}
 	return s.saveRewrite(ctx, "/"+data.Slug, "page", data.PageID)
 }
 

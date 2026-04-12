@@ -92,8 +92,19 @@ func (r *PageRepo) FindActiveBySlug(ctx context.Context, slug string) (*cms.Page
 	return p, nil
 }
 
+const maxPageListLimit = 100
+
 // List returns pages ordered by created_at desc with pagination.
 func (r *PageRepo) List(ctx context.Context, offset, limit int) ([]*cms.Page, error) {
+	if offset < 0 {
+		return nil, apperror.Validation("offset must be >= 0")
+	}
+	if limit <= 0 {
+		return nil, apperror.Validation("limit must be > 0")
+	}
+	if limit > maxPageListLimit {
+		limit = maxPageListLimit
+	}
 	q := `SELECT ` + pageColumns + ` FROM pages ORDER BY created_at DESC LIMIT $1 OFFSET $2`
 	rows, err := r.db.QueryContext(ctx, q, limit, offset)
 	if err != nil {

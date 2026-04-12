@@ -376,7 +376,7 @@ func TestPageAdminHandler_Delete_OK(t *testing.T) {
 	}
 }
 
-func TestPageAdminHandler_Delete_RepoError(t *testing.T) {
+func TestPageAdminHandler_Delete_NotFound(t *testing.T) {
 	repo := &mockPageRepo{
 		findByIDFn: func(_ context.Context, _ string) (*cms.Page, error) {
 			return nil, nil

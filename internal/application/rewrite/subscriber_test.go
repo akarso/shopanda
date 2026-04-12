@@ -254,6 +254,36 @@ func TestHandlePageUpdated(t *testing.T) {
 	}
 }
 
+func TestHandlePageUpdated_SlugChanged(t *testing.T) {
+	repo := &fakeRewriteRepo{}
+	sub := rewrite.NewSubscriber(repo, &fakeLog{})
+
+	evt := event.New(cms.EventPageUpdated, "test", cms.PageUpdatedData{
+		PageID:  "page-2",
+		Slug:    "contact-us",
+		OldSlug: "contact",
+		Title:   "Contact Us",
+		Active:  true,
+	})
+
+	err := sub.HandlePageUpdated(context.Background(), evt)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(repo.deleted) != 1 {
+		t.Fatalf("deleted = %d, want 1", len(repo.deleted))
+	}
+	if repo.deleted[0] != "/contact" {
+		t.Errorf("deleted path = %q, want %q", repo.deleted[0], "/contact")
+	}
+	if len(repo.saved) != 1 {
+		t.Fatalf("saved = %d, want 1", len(repo.saved))
+	}
+	if repo.saved[0].Path() != "/contact-us" {
+		t.Errorf("saved path = %q, want %q", repo.saved[0].Path(), "/contact-us")
+	}
+}
+
 func TestHandlePageUpdated_Deactivated(t *testing.T) {
 	repo := &fakeRewriteRepo{}
 	sub := rewrite.NewSubscriber(repo, &fakeLog{})

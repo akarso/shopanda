@@ -17,10 +17,11 @@ type PageCreatedData struct {
 
 // PageUpdatedData is the payload for cms.page.updated.
 type PageUpdatedData struct {
-	PageID string `json:"page_id"`
-	Slug   string `json:"slug"`
-	Title  string `json:"title"`
-	Active bool   `json:"active"`
+	PageID  string `json:"page_id"`
+	Slug    string `json:"slug"`
+	OldSlug string `json:"old_slug,omitempty"`
+	Title   string `json:"title"`
+	Active  bool   `json:"active"`
 }
 
 // PageDeletedData is the payload for cms.page.deleted.
