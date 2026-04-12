@@ -157,6 +157,9 @@ func TestHandleCategoryUpdated(t *testing.T) {
 	if rw.Type() != "category" {
 		t.Errorf("type = %q, want %q", rw.Type(), "category")
 	}
+	if rw.EntityID() != "cat-2" {
+		t.Errorf("entity_id = %q, want %q", rw.EntityID(), "cat-2")
+	}
 }
 
 func TestHandleProductCreated_WrongDataType(t *testing.T) {
