@@ -5,7 +5,9 @@ import (
 	"net/http/httptest"
 	"testing"
 
+	"github.com/akarso/shopanda/internal/domain/identity"
 	shophttp "github.com/akarso/shopanda/internal/interfaces/http"
+	"github.com/akarso/shopanda/internal/platform/auth"
 )
 
 func TestCacheControlMiddleware_CacheableGET(t *testing.T) {
@@ -109,5 +111,46 @@ func TestCacheControlMiddleware_StorefrontCacheable(t *testing.T) {
 	got := rr.Header().Get("Cache-Control")
 	if got != "public, max-age=300" {
 		t.Errorf("Storefront Cache-Control = %q, want %q", got, "public, max-age=300")
+	}
+}
+
+func TestCacheControlMiddleware_GETWithAuthorizationNoStore(t *testing.T) {
+	mw := shophttp.CacheControlMiddleware(nil)
+	handler := mw(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+
+	rr := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/products", nil)
+	// Simulate authenticated request: AuthMiddleware sets identity in context.
+	ctx := auth.WithIdentity(req.Context(), identity.Identity{UserID: "u1", Role: identity.RoleCustomer})
+	req = req.WithContext(ctx)
+
+	handler.ServeHTTP(rr, req)
+
+	got := rr.Header().Get("Cache-Control")
+	if got != "no-store" {
+		t.Errorf("authenticated GET Cache-Control = %q, want %q", got, "no-store")
+	}
+}
+
+func TestCacheControlMiddleware_PrefixBoundaryNoMatch(t *testing.T) {
+	noCachePrefixes := []string{"/api/v1/carts"}
+	mw := shophttp.CacheControlMiddleware(noCachePrefixes)
+	handler := mw(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+
+	rr := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/carts-foo", nil)
+	// Guest context (default when no AuthMiddleware has run).
+	ctx := auth.WithIdentity(req.Context(), identity.Guest())
+	req = req.WithContext(ctx)
+
+	handler.ServeHTTP(rr, req)
+
+	got := rr.Header().Get("Cache-Control")
+	if got != "public, max-age=300" {
+		t.Errorf("GET /api/v1/carts-foo Cache-Control = %q, want %q", got, "public, max-age=300")
 	}
 }

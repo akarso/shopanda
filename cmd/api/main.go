@@ -466,13 +466,14 @@ func runServe(cfg *config.Config, log logger.Logger) error {
 	router.Use(shophttp.StoreMiddleware(storeRepo, log))
 	router.Use(shophttp.LanguageMiddleware())
 	router.Use(shophttp.CacheControlMiddleware([]string{
+		"/healthz",
 		"/api/v1/carts",
 		"/api/v1/checkout",
 		"/api/v1/orders",
 		"/api/v1/account",
 		"/api/v1/auth",
 		"/api/v1/shipping",
-		"/api/v1/admin/",
+		"/api/v1/admin",
 	}))
 
 	// Routes.
