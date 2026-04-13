@@ -3,7 +3,6 @@ package http_test
 import (
 	"context"
 	"encoding/json"
-	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -12,9 +11,8 @@ import (
 	"github.com/akarso/shopanda/internal/domain/customer"
 	"github.com/akarso/shopanda/internal/domain/legal"
 	shophttp "github.com/akarso/shopanda/internal/interfaces/http"
+	"github.com/akarso/shopanda/internal/platform/apperror"
 	"github.com/akarso/shopanda/internal/platform/auth/testhelper"
-	"github.com/akarso/shopanda/internal/platform/event"
-	"github.com/akarso/shopanda/internal/platform/logger"
 )
 
 // ── stubs ───────────────────────────────────────────────────────────────
@@ -55,7 +53,7 @@ func (r *stubCustomerRepo) ListCustomers(_ context.Context, _, _ int) ([]custome
 func (r *stubCustomerRepo) BumpTokenGeneration(_ context.Context, _ string) error { return nil }
 func (r *stubCustomerRepo) Delete(_ context.Context, id string) error {
 	if _, ok := r.customers[id]; !ok {
-		return nil // simplified; real impl returns NotFound
+		return apperror.NotFound("customer not found")
 	}
 	delete(r.customers, id)
 	r.deleted[id] = true
@@ -88,17 +86,30 @@ func (r *stubConsentRepo) DeleteByCustomerID(_ context.Context, id string) error
 
 // ── helpers ─────────────────────────────────────────────────────────────
 
-func accountBus() *event.Bus {
-	return event.NewBus(logger.NewWithWriter(io.Discard, "error"))
+type stubAccountDeleter struct {
+	customers *stubCustomerRepo
+	consents  *stubConsentRepo
+	called    bool
 }
 
-func accountSetup() (*stubCustomerRepo, *stubOrderRepo, *stubConsentRepo, *http.ServeMux) {
+func (d *stubAccountDeleter) DeleteAccount(_ context.Context, customerID string) error {
+	d.called = true
+	delete(d.consents.consents, customerID)
+	if _, ok := d.customers.customers[customerID]; !ok {
+		return apperror.NotFound("customer not found")
+	}
+	delete(d.customers.customers, customerID)
+	d.customers.deleted[customerID] = true
+	return nil
+}
+
+func accountSetup() (*stubCustomerRepo, *stubOrderRepo, *stubConsentRepo, *stubAccountDeleter, *http.ServeMux) {
 	cr := newStubCustomerRepo()
 	or := newStubOrderRepo()
 	lr := newStubConsentRepo()
-	bus := accountBus()
+	deleter := &stubAccountDeleter{customers: cr, consents: lr}
 
-	h := shophttp.NewAccountHandler(cr, or, lr, bus)
+	h := shophttp.NewAccountHandler(cr, or, lr, deleter)
 
 	requireAuth := shophttp.RequireAuth()
 	mux := http.NewServeMux()
@@ -107,7 +118,7 @@ func accountSetup() (*stubCustomerRepo, *stubOrderRepo, *stubConsentRepo, *http.
 	mux.Handle("GET /api/v1/account/data", requireAuth(h.GetData()))
 	mux.Handle("GET /api/v1/account/export", requireAuth(h.Export()))
 	mux.Handle("DELETE /api/v1/account", requireAuth(h.Delete()))
-	return cr, or, lr, mux
+	return cr, or, lr, deleter, mux
 }
 
 func seedCustomer(t *testing.T, repo *stubCustomerRepo, id string) {
@@ -133,7 +144,7 @@ func parseJSON(t *testing.T, rec *httptest.ResponseRecorder) map[string]interfac
 // ── GET /api/v1/account/consent ─────────────────────────────────────────
 
 func TestAccountHandler_GetConsent_Default(t *testing.T) {
-	_, _, _, mux := accountSetup()
+	_, _, _, _, mux := accountSetup()
 
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest("GET", "/api/v1/account/consent", nil)
@@ -160,7 +171,7 @@ func TestAccountHandler_GetConsent_Default(t *testing.T) {
 }
 
 func TestAccountHandler_GetConsent_Existing(t *testing.T) {
-	_, _, lr, mux := accountSetup()
+	_, _, lr, _, mux := accountSetup()
 
 	c, _ := legal.NewConsent("cust-1")
 	c.Update(true, false)
@@ -188,7 +199,7 @@ func TestAccountHandler_GetConsent_Existing(t *testing.T) {
 }
 
 func TestAccountHandler_GetConsent_Unauthenticated(t *testing.T) {
-	_, _, _, mux := accountSetup()
+	_, _, _, _, mux := accountSetup()
 
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest("GET", "/api/v1/account/consent", nil)
@@ -202,7 +213,7 @@ func TestAccountHandler_GetConsent_Unauthenticated(t *testing.T) {
 // ── PUT /api/v1/account/consent ─────────────────────────────────────────
 
 func TestAccountHandler_UpdateConsent_OK(t *testing.T) {
-	_, _, lr, mux := accountSetup()
+	_, _, lr, _, mux := accountSetup()
 
 	rec := httptest.NewRecorder()
 	body := `{"analytics":true,"marketing":true}`
@@ -235,7 +246,7 @@ func TestAccountHandler_UpdateConsent_OK(t *testing.T) {
 }
 
 func TestAccountHandler_UpdateConsent_InvalidBody(t *testing.T) {
-	_, _, _, mux := accountSetup()
+	_, _, _, _, mux := accountSetup()
 
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest("PUT", "/api/v1/account/consent", strings.NewReader("not json"))
@@ -250,7 +261,7 @@ func TestAccountHandler_UpdateConsent_InvalidBody(t *testing.T) {
 // ── GET /api/v1/account/data ────────────────────────────────────────────
 
 func TestAccountHandler_GetData_OK(t *testing.T) {
-	cr, or, lr, mux := accountSetup()
+	cr, or, lr, _, mux := accountSetup()
 	seedCustomer(t, cr, "cust-1")
 	seedOrder(t, or, "ord-1", "cust-1")
 
@@ -285,7 +296,7 @@ func TestAccountHandler_GetData_OK(t *testing.T) {
 }
 
 func TestAccountHandler_GetData_NotFound(t *testing.T) {
-	_, _, _, mux := accountSetup()
+	_, _, _, _, mux := accountSetup()
 
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest("GET", "/api/v1/account/data", nil)
@@ -300,7 +311,7 @@ func TestAccountHandler_GetData_NotFound(t *testing.T) {
 // ── GET /api/v1/account/export ──────────────────────────────────────────
 
 func TestAccountHandler_Export_ContentDisposition(t *testing.T) {
-	cr, _, _, mux := accountSetup()
+	cr, _, _, _, mux := accountSetup()
 	seedCustomer(t, cr, "cust-1")
 
 	rec := httptest.NewRecorder()
@@ -324,7 +335,7 @@ func TestAccountHandler_Export_ContentDisposition(t *testing.T) {
 // ── DELETE /api/v1/account ──────────────────────────────────────────────
 
 func TestAccountHandler_Delete_OK(t *testing.T) {
-	cr, _, lr, mux := accountSetup()
+	cr, _, lr, deleter, mux := accountSetup()
 	seedCustomer(t, cr, "cust-1")
 	c, _ := legal.NewConsent("cust-1")
 	lr.consents["cust-1"] = &c
@@ -350,10 +361,15 @@ func TestAccountHandler_Delete_OK(t *testing.T) {
 	if _, ok := lr.consents["cust-1"]; ok {
 		t.Error("consent should have been deleted")
 	}
+
+	// Deleter invoked.
+	if !deleter.called {
+		t.Error("deleter should have been called")
+	}
 }
 
 func TestAccountHandler_Delete_Unauthenticated(t *testing.T) {
-	_, _, _, mux := accountSetup()
+	_, _, _, _, mux := accountSetup()
 
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest("DELETE", "/api/v1/account", nil)
@@ -361,5 +377,18 @@ func TestAccountHandler_Delete_Unauthenticated(t *testing.T) {
 
 	if rec.Code != http.StatusUnauthorized {
 		t.Fatalf("status = %d, want %d", rec.Code, http.StatusUnauthorized)
+	}
+}
+
+func TestAccountHandler_Delete_NotFound(t *testing.T) {
+	_, _, _, _, mux := accountSetup()
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("DELETE", "/api/v1/account", nil)
+	req = testhelper.CustomerRequest(req, "cust-nonexistent")
+	mux.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("status = %d, want %d; body: %s", rec.Code, http.StatusNotFound, rec.Body.String())
 	}
 }

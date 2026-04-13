@@ -11,6 +11,7 @@ import (
 	"syscall"
 	"time"
 
+	accountApp "github.com/akarso/shopanda/internal/application/account"
 	adminApp "github.com/akarso/shopanda/internal/application/admin"
 	authApp "github.com/akarso/shopanda/internal/application/auth"
 	cacheApp "github.com/akarso/shopanda/internal/application/cache"
@@ -445,7 +446,8 @@ func runServe(cfg *config.Config, log logger.Logger) error {
 	pageHandler := shophttp.NewPageHandler(pageRepo, contentTranslator)
 	pageAdmin := shophttp.NewPageAdminHandler(pageRepo, bus)
 	storeAdmin := shophttp.NewStoreAdminHandler(storeRepo, bus)
-	accountHandler := shophttp.NewAccountHandler(customerRepo, orderRepo, consentRepo, bus)
+	accountService := accountApp.NewService(customerRepo, consentRepo, bus, log)
+	accountHandler := shophttp.NewAccountHandler(customerRepo, orderRepo, consentRepo, accountService)
 	sitemapHandler := shophttp.NewSitemapHandler(baseURL, productRepo, categoryRepo, pageRepo)
 	robotsHandler := shophttp.NewRobotsHandler(baseURL)
 

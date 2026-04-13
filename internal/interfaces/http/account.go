@@ -1,6 +1,7 @@
 package http
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"time"
@@ -10,15 +11,19 @@ import (
 	"github.com/akarso/shopanda/internal/domain/order"
 	"github.com/akarso/shopanda/internal/platform/apperror"
 	"github.com/akarso/shopanda/internal/platform/auth"
-	"github.com/akarso/shopanda/internal/platform/event"
 )
+
+// AccountDeleter abstracts the account deletion use case.
+type AccountDeleter interface {
+	DeleteAccount(ctx context.Context, customerID string) error
+}
 
 // AccountHandler serves customer account endpoints (consent + GDPR).
 type AccountHandler struct {
 	customers customer.CustomerRepository
 	orders    order.OrderRepository
 	consents  legal.ConsentRepository
-	bus       *event.Bus
+	deleter   AccountDeleter
 }
 
 // NewAccountHandler creates an AccountHandler.
@@ -26,7 +31,7 @@ func NewAccountHandler(
 	customers customer.CustomerRepository,
 	orders order.OrderRepository,
 	consents legal.ConsentRepository,
-	bus *event.Bus,
+	deleter AccountDeleter,
 ) *AccountHandler {
 	if customers == nil {
 		panic("AccountHandler: customers repository must not be nil")
@@ -37,14 +42,14 @@ func NewAccountHandler(
 	if consents == nil {
 		panic("AccountHandler: consents repository must not be nil")
 	}
-	if bus == nil {
-		panic("AccountHandler: event bus must not be nil")
+	if deleter == nil {
+		panic("AccountHandler: deleter must not be nil")
 	}
 	return &AccountHandler{
 		customers: customers,
 		orders:    orders,
 		consents:  consents,
-		bus:       bus,
+		deleter:   deleter,
 	}
 }
 
@@ -196,6 +201,12 @@ func (h *AccountHandler) GetData() http.HandlerFunc {
 				Marketing: consent.Marketing,
 				UpdatedAt: consent.UpdatedAt.UTC().Format(time.RFC3339),
 			}
+		} else {
+			resp.Consent = &consentResponse{
+				Necessary: true,
+				Analytics: false,
+				Marketing: false,
+			}
 		}
 
 		JSON(w, http.StatusOK, map[string]interface{}{
@@ -212,28 +223,15 @@ func (h *AccountHandler) Export() http.HandlerFunc {
 	}
 }
 
-// Delete handles DELETE /api/v1/account — deletes the account and emits event.
+// Delete handles DELETE /api/v1/account — deletes the account via application service.
 func (h *AccountHandler) Delete() http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		customerID := auth.IdentityFrom(r.Context()).UserID
 
-		// Delete consent first (soft dependency).
-		if err := h.consents.DeleteByCustomerID(r.Context(), customerID); err != nil {
+		if err := h.deleter.DeleteAccount(r.Context(), customerID); err != nil {
 			JSONError(w, err)
 			return
 		}
-
-		// Delete customer.
-		if err := h.customers.Delete(r.Context(), customerID); err != nil {
-			JSONError(w, err)
-			return
-		}
-
-		// Emit event for cascading cleanup (orders, carts, etc.).
-		evt := event.New(customer.EventCustomerDeleted, "account_handler", customer.CustomerDeletedData{
-			CustomerID: customerID,
-		})
-		_ = h.bus.Publish(r.Context(), evt)
 
 		JSON(w, http.StatusOK, map[string]interface{}{
 			"message": "account deleted",

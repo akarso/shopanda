@@ -33,7 +33,10 @@ func TestNewConsent_EmptyCustomerID(t *testing.T) {
 }
 
 func TestConsent_Update(t *testing.T) {
-	c, _ := legal.NewConsent("cust-1")
+	c, err := legal.NewConsent("cust-1")
+	if err != nil {
+		t.Fatalf("NewConsent() error = %v", err)
+	}
 	c.Update(true, true)
 
 	if !c.Necessary {
@@ -48,7 +51,10 @@ func TestConsent_Update(t *testing.T) {
 }
 
 func TestConsent_Update_NecessaryAlwaysTrue(t *testing.T) {
-	c, _ := legal.NewConsent("cust-1")
+	c, err := legal.NewConsent("cust-1")
+	if err != nil {
+		t.Fatalf("NewConsent() error = %v", err)
+	}
 	c.Update(false, false)
 
 	if !c.Necessary {
