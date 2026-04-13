@@ -446,7 +446,7 @@ func runServe(cfg *config.Config, log logger.Logger) error {
 	pageHandler := shophttp.NewPageHandler(pageRepo, contentTranslator)
 	pageAdmin := shophttp.NewPageAdminHandler(pageRepo, bus)
 	storeAdmin := shophttp.NewStoreAdminHandler(storeRepo, bus)
-	accountService := accountApp.NewService(customerRepo, consentRepo, bus, log)
+	accountService := accountApp.NewService(customerRepo, consentRepo, bus, log, conn)
 	accountHandler := shophttp.NewAccountHandler(customerRepo, orderRepo, consentRepo, accountService)
 	sitemapHandler := shophttp.NewSitemapHandler(baseURL, productRepo, categoryRepo, pageRepo)
 	robotsHandler := shophttp.NewRobotsHandler(baseURL)
