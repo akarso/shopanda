@@ -11,8 +11,13 @@ import (
 	"github.com/akarso/shopanda/internal/domain/shared"
 )
 
+type priceKey struct {
+	Currency string
+	StoreID  string
+}
+
 type mockPriceRepo struct {
-	prices map[string]map[string]*domain.Price // key: variantID → "currency:storeID"
+	prices map[string]map[priceKey]*domain.Price // variantID → {currency,storeID}
 	err    error
 }
 
@@ -21,7 +26,7 @@ func (m *mockPriceRepo) FindByVariantCurrencyAndStore(_ context.Context, variant
 		return nil, m.err
 	}
 	if byVariant, ok := m.prices[variantID]; ok {
-		if p, ok := byVariant[currency+":"+storeID]; ok {
+		if p, ok := byVariant[priceKey{currency, storeID}]; ok {
 			return p, nil
 		}
 	}
@@ -41,13 +46,13 @@ func (m *mockPriceRepo) Upsert(_ context.Context, _ *domain.Price) error {
 }
 
 func makeMockRepo(entries ...mockEntry) *mockPriceRepo {
-	repo := &mockPriceRepo{prices: make(map[string]map[string]*domain.Price)}
+	repo := &mockPriceRepo{prices: make(map[string]map[priceKey]*domain.Price)}
 	for _, e := range entries {
 		if _, ok := repo.prices[e.variantID]; !ok {
-			repo.prices[e.variantID] = make(map[string]*domain.Price)
+			repo.prices[e.variantID] = make(map[priceKey]*domain.Price)
 		}
 		m := shared.MustNewMoney(e.amount, e.currency)
-		repo.prices[e.variantID][e.currency+":"+e.storeID] = &domain.Price{
+		repo.prices[e.variantID][priceKey{e.currency, e.storeID}] = &domain.Price{
 			ID:        "price-" + e.variantID + "-" + e.currency,
 			VariantID: e.variantID,
 			StoreID:   e.storeID,
@@ -102,7 +107,7 @@ func TestBasePriceStep_PopulatesPrices(t *testing.T) {
 }
 
 func TestBasePriceStep_NoPriceFound(t *testing.T) {
-	repo := &mockPriceRepo{prices: make(map[string]map[string]*domain.Price)}
+	repo := &mockPriceRepo{prices: make(map[string]map[priceKey]*domain.Price)}
 	step := pricing.NewBasePriceStep(repo)
 
 	pctx, _ := domain.NewPricingContext("EUR")
@@ -130,7 +135,7 @@ func TestBasePriceStep_RepoError(t *testing.T) {
 }
 
 func TestBasePriceStep_EmptyItems(t *testing.T) {
-	repo := &mockPriceRepo{prices: make(map[string]map[string]*domain.Price)}
+	repo := &mockPriceRepo{prices: make(map[string]map[priceKey]*domain.Price)}
 	step := pricing.NewBasePriceStep(repo)
 
 	pctx, _ := domain.NewPricingContext("EUR")
@@ -179,7 +184,7 @@ func TestBasePriceStep_FallsBackToGlobalPrice(t *testing.T) {
 }
 
 func TestBasePriceStep_ErrorsWhenNoPrice(t *testing.T) {
-	repo := &mockPriceRepo{prices: make(map[string]map[string]*domain.Price)}
+	repo := &mockPriceRepo{prices: make(map[string]map[priceKey]*domain.Price)}
 	step := pricing.NewBasePriceStep(repo)
 
 	pctx, _ := domain.NewPricingContext("EUR")

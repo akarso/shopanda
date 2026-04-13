@@ -56,7 +56,10 @@ func (s *TaxStep) Apply(ctx context.Context, pctx *domain.PricingContext) error 
 		return fmt.Errorf("tax step: invalid tax_mode: %q", modeStr)
 	}
 
-	storeID, _ := pctx.Meta["store_id"].(string) // empty = global/default
+	storeID, err := optionalMetaString(pctx.Meta, "store_id")
+	if err != nil {
+		return fmt.Errorf("tax step: %w", err)
+	}
 
 	// Optional per-variant tax class overrides.
 	classes, _ := pctx.Meta["tax_classes"].(map[string]string)
@@ -113,6 +116,21 @@ func metaString(meta map[string]interface{}, key string) (string, error) {
 	v, ok := meta[key]
 	if !ok {
 		return "", fmt.Errorf("missing required meta key %q", key)
+	}
+	s, ok := v.(string)
+	if !ok {
+		return "", fmt.Errorf("meta key %q must be a string, got %T", key, v)
+	}
+	return s, nil
+}
+
+// optionalMetaString extracts an optional string from the meta map.
+// Returns "" when the key is absent. Returns an error when the key is
+// present but the value is not a string.
+func optionalMetaString(meta map[string]interface{}, key string) (string, error) {
+	v, ok := meta[key]
+	if !ok {
+		return "", nil
 	}
 	s, ok := v.(string)
 	if !ok {

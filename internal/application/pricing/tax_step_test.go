@@ -346,3 +346,55 @@ func TestTaxStep_Inclusive_Quantity(t *testing.T) {
 		t.Errorf("net total = %d, want 2000", pctx.Items[0].Total.Amount())
 	}
 }
+
+func TestTaxStep_StoreOverride(t *testing.T) {
+	repo := &mockRateRepo{rates: map[string]*tax.TaxRate{
+		"DE:standard:":       {ID: "r1", Country: "DE", Class: "standard", Rate: 1900},
+		"DE:standard:store1": {ID: "r2", Country: "DE", Class: "standard", Rate: 700},
+	}}
+	step := appPricing.NewTaxStep(repo, "standard")
+
+	item, _ := pricing.NewPricingItem("v1", 1, shared.MustNewMoney(10000, "EUR"))
+	pctx := taxPricingContext(t, "EUR", "DE", "exclusive", item)
+	pctx.Meta["store_id"] = "store1"
+
+	if err := step.Apply(context.Background(), &pctx); err != nil {
+		t.Fatalf("Apply: %v", err)
+	}
+
+	if len(pctx.Items[0].Adjustments) != 1 {
+		t.Fatalf("adjustments = %d, want 1", len(pctx.Items[0].Adjustments))
+	}
+	adj := pctx.Items[0].Adjustments[0]
+	// Store-specific rate 7%: 10000 * 700 / 10000 = 700
+	if adj.Amount.Amount() != 700 {
+		t.Errorf("tax amount = %d, want 700 (store-specific)", adj.Amount.Amount())
+	}
+	if adj.Code != "tax.DE.standard" {
+		t.Errorf("code = %q, want %q", adj.Code, "tax.DE.standard")
+	}
+}
+
+func TestTaxStep_StoreFallback(t *testing.T) {
+	repo := &mockRateRepo{rates: map[string]*tax.TaxRate{
+		"DE:standard:": {ID: "r1", Country: "DE", Class: "standard", Rate: 1900},
+	}}
+	step := appPricing.NewTaxStep(repo, "standard")
+
+	item, _ := pricing.NewPricingItem("v1", 1, shared.MustNewMoney(10000, "EUR"))
+	pctx := taxPricingContext(t, "EUR", "DE", "exclusive", item)
+	pctx.Meta["store_id"] = "store2"
+
+	if err := step.Apply(context.Background(), &pctx); err != nil {
+		t.Fatalf("Apply: %v", err)
+	}
+
+	if len(pctx.Items[0].Adjustments) != 1 {
+		t.Fatalf("adjustments = %d, want 1", len(pctx.Items[0].Adjustments))
+	}
+	adj := pctx.Items[0].Adjustments[0]
+	// Falls back to global 19%: 10000 * 1900 / 10000 = 1900
+	if adj.Amount.Amount() != 1900 {
+		t.Errorf("tax amount = %d, want 1900 (global fallback)", adj.Amount.Amount())
+	}
+}
