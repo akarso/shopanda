@@ -29,6 +29,8 @@ func (l *stubLogger) Info(msg string, f map[string]interface{}) {
 	l.fields = f
 }
 
+func (l *stubLogger) Error(_ string, _ error, _ map[string]interface{}) {}
+
 func TestCleanupHandler_Type(t *testing.T) {
 	h := appCache.NewCleanupHandler(&stubDeleter{}, &stubLogger{})
 	if h.Type() != appCache.JobType {

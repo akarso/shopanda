@@ -12,6 +12,7 @@ import (
 	"github.com/akarso/shopanda/internal/domain/catalog"
 	"github.com/akarso/shopanda/internal/domain/pricing"
 	"github.com/akarso/shopanda/internal/domain/shared"
+	"github.com/akarso/shopanda/internal/platform/event"
 )
 
 // --- price test mocks ---
@@ -421,3 +422,50 @@ func TestPriceImport_RecordHistoryError(t *testing.T) {
 		t.Errorf("error = %q, want mention of 'history db down'", err)
 	}
 }
+
+func TestPriceImport_PublishesEvent(t *testing.T) {
+	variants := &mockVariantRepoForPrice{
+		variants: map[string]*catalog.Variant{
+			"SKU-001": {ID: "v1", ProductID: "p1", SKU: "SKU-001"},
+		},
+	}
+	prices := newMockPriceRepoForImport()
+	log := &noopLogger{}
+	bus := event.NewBus(log)
+
+	var received []pricing.PriceUpsertedData
+	bus.On(pricing.EventPriceUpserted, func(_ context.Context, evt event.Event) error {
+		d := evt.Data.(pricing.PriceUpsertedData)
+		received = append(received, d)
+		return nil
+	})
+
+	imp := importer.NewPriceImporter(variants, prices, nil, nil, bus)
+
+	input := "sku,currency,amount\nSKU-001,EUR,1999\n"
+	result, err := imp.Import(context.Background(), strings.NewReader(input))
+	if err != nil {
+		t.Fatalf("Import() error = %v", err)
+	}
+	if result.Created != 1 {
+		t.Fatalf("Created = %d, want 1", result.Created)
+	}
+	if len(received) != 1 {
+		t.Fatalf("events received = %d, want 1", len(received))
+	}
+	if received[0].ProductID != "p1" {
+		t.Errorf("event ProductID = %q, want p1", received[0].ProductID)
+	}
+	if received[0].Currency != "EUR" {
+		t.Errorf("event Currency = %q, want EUR", received[0].Currency)
+	}
+	if received[0].Amount != 1999 {
+		t.Errorf("event Amount = %d, want 1999", received[0].Amount)
+	}
+}
+
+type noopLogger struct{}
+
+func (l *noopLogger) Info(_ string, _ map[string]interface{})           {}
+func (l *noopLogger) Warn(_ string, _ map[string]interface{})           {}
+func (l *noopLogger) Error(_ string, _ error, _ map[string]interface{}) {}

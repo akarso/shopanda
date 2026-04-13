@@ -3,6 +3,7 @@ package cache
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	"github.com/akarso/shopanda/internal/domain/cache"
 	"github.com/akarso/shopanda/internal/domain/catalog"
@@ -32,14 +33,22 @@ func NewInvalidationSubscriber(c cache.Cache, log Logger) *InvalidationSubscribe
 
 // Register wires event handlers on the given bus.
 func (s *InvalidationSubscriber) Register(bus *event.Bus) {
+	if bus == nil {
+		panic("InvalidationSubscriber.Register: bus is nil")
+	}
 	bus.OnAsync(catalog.EventProductUpdated, s.HandleProductUpdated)
 	bus.OnAsync(pricing.EventPriceUpserted, s.HandlePriceUpserted)
 }
 
 // ProductKeyPrefix returns the cache key prefix for a product.
 // All cache entries for a product (across stores, languages, currencies)
-// share this prefix.
+// share this prefix. The productID must not contain SQL LIKE
+// metacharacters (% or _); such IDs are rejected with a panic because
+// they would cause incorrect prefix matching in DeleteByPrefix.
 func ProductKeyPrefix(productID string) string {
+	if strings.ContainsAny(productID, "%_") {
+		panic(fmt.Sprintf("ProductKeyPrefix: productID %q contains LIKE metacharacter", productID))
+	}
 	return "product:" + productID + ":"
 }
 
@@ -65,9 +74,8 @@ func (s *InvalidationSubscriber) HandlePriceUpserted(ctx context.Context, evt ev
 func (s *InvalidationSubscriber) invalidateProduct(ctx context.Context, productID string) error {
 	prefix := ProductKeyPrefix(productID)
 	if err := s.cache.DeleteByPrefix(ctx, prefix); err != nil {
-		s.log.Info("cache.invalidation.error", map[string]interface{}{
+		s.log.Error("cache.invalidation.error", err, map[string]interface{}{
 			"product_id": productID,
-			"error":      err.Error(),
 		})
 		return fmt.Errorf("cache.invalidation: delete prefix %q: %w", prefix, err)
 	}

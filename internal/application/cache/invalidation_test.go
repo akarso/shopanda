@@ -131,6 +131,31 @@ func TestInvalidation_WrongEventData(t *testing.T) {
 	}
 }
 
+func TestInvalidation_WrongEventData_Price(t *testing.T) {
+	mc := newMockCache()
+	log := &mockLogger{}
+	sub := cacheApp.NewInvalidationSubscriber(mc, log)
+
+	evt := event.New(pricing.EventPriceUpserted, "test", "wrong-type")
+	err := sub.HandlePriceUpserted(context.Background(), evt)
+	if err == nil {
+		t.Fatal("expected error for wrong event data type")
+	}
+}
+
+func TestProductKeyPrefix_RejectsMetacharacters(t *testing.T) {
+	for _, id := range []string{"a%b", "a_b"} {
+		func() {
+			defer func() {
+				if r := recover(); r == nil {
+					t.Errorf("ProductKeyPrefix(%q) should panic", id)
+				}
+			}()
+			cacheApp.ProductKeyPrefix(id)
+		}()
+	}
+}
+
 func TestInvalidation_DeleteByPrefixError(t *testing.T) {
 	mc := newMockCache()
 	mc.deleteByPfxErr = context.DeadlineExceeded
