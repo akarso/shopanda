@@ -12,6 +12,7 @@ import (
 	"github.com/akarso/shopanda/internal/domain/catalog"
 	"github.com/akarso/shopanda/internal/domain/pricing"
 	"github.com/akarso/shopanda/internal/domain/shared"
+	"github.com/akarso/shopanda/internal/platform/event"
 	"github.com/akarso/shopanda/internal/platform/id"
 )
 
@@ -43,14 +44,16 @@ type PriceImporter struct {
 	prices    pricing.PriceRepository
 	history   pricing.PriceHistoryRepository
 	txStarter TxStarter
+	bus       *event.Bus
 }
 
 // NewPriceImporter creates a PriceImporter.
 // history may be nil; if nil, price snapshots are not recorded.
 // txStarter may be nil; if nil and history is non-nil, writes are not wrapped
 // in a transaction.
-func NewPriceImporter(variants catalog.VariantRepository, prices pricing.PriceRepository, history pricing.PriceHistoryRepository, txStarter TxStarter) *PriceImporter {
-	return &PriceImporter{variants: variants, prices: prices, history: history, txStarter: txStarter}
+// bus may be nil; if nil, no events are published.
+func NewPriceImporter(variants catalog.VariantRepository, prices pricing.PriceRepository, history pricing.PriceHistoryRepository, txStarter TxStarter, bus *event.Bus) *PriceImporter {
+	return &PriceImporter{variants: variants, prices: prices, history: history, txStarter: txStarter, bus: bus}
 }
 
 // Import reads CSV rows from r and upserts prices.
@@ -171,6 +174,17 @@ func (imp *PriceImporter) Import(ctx context.Context, r io.Reader) (*PriceResult
 
 		if err := imp.upsertWithHistory(ctx, &p); err != nil {
 			return nil, fmt.Errorf("price import: sku %q currency %s: %w", sku, currency, err)
+		}
+
+		if imp.bus != nil {
+			_ = imp.bus.Publish(ctx, event.New(pricing.EventPriceUpserted, "price.importer", pricing.PriceUpsertedData{
+				PriceID:   p.ID,
+				VariantID: p.VariantID,
+				ProductID: variant.ProductID,
+				StoreID:   p.StoreID,
+				Currency:  p.Amount.Currency(),
+				Amount:    p.Amount.Amount(),
+			}))
 		}
 
 		if isUpdate {

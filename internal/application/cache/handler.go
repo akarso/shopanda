@@ -14,9 +14,10 @@ type ExpiredDeleter interface {
 	DeleteExpired(ctx context.Context) (int64, error)
 }
 
-// Logger is the logging interface used by CleanupHandler.
+// Logger is the logging interface used by cache application services.
 type Logger interface {
 	Info(msg string, fields map[string]interface{})
+	Error(msg string, err error, fields map[string]interface{})
 }
 
 // CleanupHandler processes cache.cleanup jobs by removing expired entries.

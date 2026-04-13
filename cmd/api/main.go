@@ -288,9 +288,6 @@ func runServe(cfg *config.Config, log logger.Logger) error {
 		return err
 	}
 
-	// Cache.
-	_ = appCache // wired by consumers in upcoming PRs
-
 	// Providers.
 	manualPayProvider := manualpay.NewProvider()
 	flatRateProvider := flatrate.NewProvider(shared.MustNewMoney(500, "USD"))
@@ -317,6 +314,10 @@ func runServe(cfg *config.Config, log logger.Logger) error {
 	// Wire catalog events → URL rewrites.
 	rewriteSub := rewrite.NewSubscriber(rewriteRepo, log)
 	rewriteSub.Register(bus)
+
+	// Wire product/price changes → cache invalidation.
+	cacheInvalidation := cacheApp.NewInvalidationSubscriber(appCache, log)
+	cacheInvalidation.Register(bus)
 
 	// Plugin registry.
 	registry := plugin.NewRegistry(log)
@@ -1287,7 +1288,7 @@ func runImportPrices(cfg *config.Config, log logger.Logger) error {
 	if err != nil {
 		return fmt.Errorf("price history repo: %w", err)
 	}
-	imp := importer.NewPriceImporter(variantRepo, priceRepo, priceHistoryRepo, conn)
+	imp := importer.NewPriceImporter(variantRepo, priceRepo, priceHistoryRepo, conn, nil)
 
 	log.Info("import.prices.start", map[string]interface{}{"file": filePath})
 

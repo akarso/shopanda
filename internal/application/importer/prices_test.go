@@ -12,6 +12,7 @@ import (
 	"github.com/akarso/shopanda/internal/domain/catalog"
 	"github.com/akarso/shopanda/internal/domain/pricing"
 	"github.com/akarso/shopanda/internal/domain/shared"
+	"github.com/akarso/shopanda/internal/platform/event"
 )
 
 // --- price test mocks ---
@@ -86,7 +87,7 @@ func priceVariants() *mockVariantRepoForPrice {
 func TestPriceImport_Basic(t *testing.T) {
 	variants := priceVariants()
 	prices := newMockPriceRepoForImport()
-	imp := importer.NewPriceImporter(variants, prices, nil, nil)
+	imp := importer.NewPriceImporter(variants, prices, nil, nil, nil)
 
 	input := "sku,currency,amount\nSKU-001,EUR,1999\nSKU-001,USD,2199\nSKU-002,EUR,999\n"
 	result, err := imp.Import(context.Background(), strings.NewReader(input))
@@ -116,7 +117,7 @@ func TestPriceImport_Basic(t *testing.T) {
 func TestPriceImport_MissingColumns(t *testing.T) {
 	variants := priceVariants()
 	prices := newMockPriceRepoForImport()
-	imp := importer.NewPriceImporter(variants, prices, nil, nil)
+	imp := importer.NewPriceImporter(variants, prices, nil, nil, nil)
 
 	input := "sku,amount\nSKU-001,1999\n"
 	_, err := imp.Import(context.Background(), strings.NewReader(input))
@@ -128,7 +129,7 @@ func TestPriceImport_MissingColumns(t *testing.T) {
 func TestPriceImport_EmptySKU(t *testing.T) {
 	variants := priceVariants()
 	prices := newMockPriceRepoForImport()
-	imp := importer.NewPriceImporter(variants, prices, nil, nil)
+	imp := importer.NewPriceImporter(variants, prices, nil, nil, nil)
 
 	input := "sku,currency,amount\n,EUR,1999\n"
 	result, err := imp.Import(context.Background(), strings.NewReader(input))
@@ -149,7 +150,7 @@ func TestPriceImport_EmptySKU(t *testing.T) {
 func TestPriceImport_InvalidCurrency(t *testing.T) {
 	variants := priceVariants()
 	prices := newMockPriceRepoForImport()
-	imp := importer.NewPriceImporter(variants, prices, nil, nil)
+	imp := importer.NewPriceImporter(variants, prices, nil, nil, nil)
 
 	input := "sku,currency,amount\nSKU-001,euro,1999\n"
 	result, err := imp.Import(context.Background(), strings.NewReader(input))
@@ -167,7 +168,7 @@ func TestPriceImport_InvalidCurrency(t *testing.T) {
 func TestPriceImport_InvalidAmount(t *testing.T) {
 	variants := priceVariants()
 	prices := newMockPriceRepoForImport()
-	imp := importer.NewPriceImporter(variants, prices, nil, nil)
+	imp := importer.NewPriceImporter(variants, prices, nil, nil, nil)
 
 	input := "sku,currency,amount\nSKU-001,EUR,abc\n"
 	result, err := imp.Import(context.Background(), strings.NewReader(input))
@@ -185,7 +186,7 @@ func TestPriceImport_InvalidAmount(t *testing.T) {
 func TestPriceImport_NegativeAmount(t *testing.T) {
 	variants := priceVariants()
 	prices := newMockPriceRepoForImport()
-	imp := importer.NewPriceImporter(variants, prices, nil, nil)
+	imp := importer.NewPriceImporter(variants, prices, nil, nil, nil)
 
 	input := "sku,currency,amount\nSKU-001,EUR,-100\n"
 	result, err := imp.Import(context.Background(), strings.NewReader(input))
@@ -203,7 +204,7 @@ func TestPriceImport_NegativeAmount(t *testing.T) {
 func TestPriceImport_ZeroAmount(t *testing.T) {
 	variants := priceVariants()
 	prices := newMockPriceRepoForImport()
-	imp := importer.NewPriceImporter(variants, prices, nil, nil)
+	imp := importer.NewPriceImporter(variants, prices, nil, nil, nil)
 
 	input := "sku,currency,amount\nSKU-001,EUR,0\n"
 	result, err := imp.Import(context.Background(), strings.NewReader(input))
@@ -218,7 +219,7 @@ func TestPriceImport_ZeroAmount(t *testing.T) {
 func TestPriceImport_UnknownSKU(t *testing.T) {
 	variants := priceVariants()
 	prices := newMockPriceRepoForImport()
-	imp := importer.NewPriceImporter(variants, prices, nil, nil)
+	imp := importer.NewPriceImporter(variants, prices, nil, nil, nil)
 
 	input := "sku,currency,amount\nNONEXIST,EUR,1999\n"
 	result, err := imp.Import(context.Background(), strings.NewReader(input))
@@ -240,7 +241,7 @@ func TestPriceImport_Update(t *testing.T) {
 	existing, _ := pricing.NewPrice("existing-id", "v1", "", shared.MustNewMoney(1000, "EUR"))
 	prices.prices["v1:EUR:"] = &existing
 
-	imp := importer.NewPriceImporter(variants, prices, nil, nil)
+	imp := importer.NewPriceImporter(variants, prices, nil, nil, nil)
 
 	input := "sku,currency,amount\nSKU-001,EUR,2500\n"
 	result, err := imp.Import(context.Background(), strings.NewReader(input))
@@ -264,7 +265,7 @@ func TestPriceImport_UpsertError(t *testing.T) {
 	variants := priceVariants()
 	prices := newMockPriceRepoForImport()
 	prices.upsertErr = fmt.Errorf("db down")
-	imp := importer.NewPriceImporter(variants, prices, nil, nil)
+	imp := importer.NewPriceImporter(variants, prices, nil, nil, nil)
 
 	input := "sku,currency,amount\nSKU-001,EUR,1999\n"
 	_, err := imp.Import(context.Background(), strings.NewReader(input))
@@ -276,7 +277,7 @@ func TestPriceImport_UpsertError(t *testing.T) {
 func TestPriceImport_CurrencyNormalization(t *testing.T) {
 	variants := priceVariants()
 	prices := newMockPriceRepoForImport()
-	imp := importer.NewPriceImporter(variants, prices, nil, nil)
+	imp := importer.NewPriceImporter(variants, prices, nil, nil, nil)
 
 	// lowercase currency should be uppercased.
 	input := "sku,currency,amount\nSKU-001,eur,1999\n"
@@ -296,7 +297,7 @@ func TestPriceImport_CurrencyNormalization(t *testing.T) {
 func TestPriceImport_BOMHeader(t *testing.T) {
 	variants := priceVariants()
 	prices := newMockPriceRepoForImport()
-	imp := importer.NewPriceImporter(variants, prices, nil, nil)
+	imp := importer.NewPriceImporter(variants, prices, nil, nil, nil)
 
 	// UTF-8 BOM (\xEF\xBB\xBF) before first column header, as exported by
 	// Excel and some spreadsheet applications.
@@ -321,7 +322,7 @@ func TestPriceImport_SKUCaching(t *testing.T) {
 		},
 	}
 	prices := newMockPriceRepoForImport()
-	imp := importer.NewPriceImporter(variants, prices, nil, nil)
+	imp := importer.NewPriceImporter(variants, prices, nil, nil, nil)
 
 	input := "sku,currency,amount\nSKU-001,EUR,1999\nSKU-001,USD,2199\nSKU-001,GBP,2499\n"
 	result, err := imp.Import(context.Background(), strings.NewReader(input))
@@ -385,7 +386,7 @@ func TestPriceImport_RecordsHistory(t *testing.T) {
 	variants := priceVariants()
 	prices := newMockPriceRepoForImport()
 	history := &mockPriceHistoryRepoForImport{}
-	imp := importer.NewPriceImporter(variants, prices, history, nil)
+	imp := importer.NewPriceImporter(variants, prices, history, nil, nil)
 
 	input := "sku,currency,amount\nSKU-001,EUR,1999\nSKU-002,EUR,999\n"
 	result, err := imp.Import(context.Background(), strings.NewReader(input))
@@ -410,7 +411,7 @@ func TestPriceImport_RecordHistoryError(t *testing.T) {
 	variants := priceVariants()
 	prices := newMockPriceRepoForImport()
 	history := &mockPriceHistoryRepoForImport{err: fmt.Errorf("history db down")}
-	imp := importer.NewPriceImporter(variants, prices, history, nil)
+	imp := importer.NewPriceImporter(variants, prices, history, nil, nil)
 
 	input := "sku,currency,amount\nSKU-001,EUR,1999\n"
 	_, err := imp.Import(context.Background(), strings.NewReader(input))
@@ -421,3 +422,50 @@ func TestPriceImport_RecordHistoryError(t *testing.T) {
 		t.Errorf("error = %q, want mention of 'history db down'", err)
 	}
 }
+
+func TestPriceImport_PublishesEvent(t *testing.T) {
+	variants := &mockVariantRepoForPrice{
+		variants: map[string]*catalog.Variant{
+			"SKU-001": {ID: "v1", ProductID: "p1", SKU: "SKU-001"},
+		},
+	}
+	prices := newMockPriceRepoForImport()
+	log := &noopLogger{}
+	bus := event.NewBus(log)
+
+	var received []pricing.PriceUpsertedData
+	bus.On(pricing.EventPriceUpserted, func(_ context.Context, evt event.Event) error {
+		d := evt.Data.(pricing.PriceUpsertedData)
+		received = append(received, d)
+		return nil
+	})
+
+	imp := importer.NewPriceImporter(variants, prices, nil, nil, bus)
+
+	input := "sku,currency,amount\nSKU-001,EUR,1999\n"
+	result, err := imp.Import(context.Background(), strings.NewReader(input))
+	if err != nil {
+		t.Fatalf("Import() error = %v", err)
+	}
+	if result.Created != 1 {
+		t.Fatalf("Created = %d, want 1", result.Created)
+	}
+	if len(received) != 1 {
+		t.Fatalf("events received = %d, want 1", len(received))
+	}
+	if received[0].ProductID != "p1" {
+		t.Errorf("event ProductID = %q, want p1", received[0].ProductID)
+	}
+	if received[0].Currency != "EUR" {
+		t.Errorf("event Currency = %q, want EUR", received[0].Currency)
+	}
+	if received[0].Amount != 1999 {
+		t.Errorf("event Amount = %d, want 1999", received[0].Amount)
+	}
+}
+
+type noopLogger struct{}
+
+func (l *noopLogger) Info(_ string, _ map[string]interface{})           {}
+func (l *noopLogger) Warn(_ string, _ map[string]interface{})           {}
+func (l *noopLogger) Error(_ string, _ error, _ map[string]interface{}) {}

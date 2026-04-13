@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/akarso/shopanda/internal/domain/cache"
@@ -90,6 +91,27 @@ func (s *CacheStore) Delete(key string) error {
 		return fmt.Errorf("cache_store: delete %q: %w", key, err)
 	}
 	return nil
+}
+
+// DeleteByPrefix removes all entries whose key starts with prefix.
+// LIKE metacharacters (%, _, \) in prefix are escaped so only true
+// prefix matches are deleted.
+func (s *CacheStore) DeleteByPrefix(ctx context.Context, prefix string) error {
+	escaped := escapeLike(prefix)
+	_, err := s.db.ExecContext(ctx,
+		`DELETE FROM cache WHERE key LIKE $1 ESCAPE '\'`,
+		escaped+"%",
+	)
+	if err != nil {
+		return fmt.Errorf("cache_store: delete by prefix %q: %w", prefix, err)
+	}
+	return nil
+}
+
+// escapeLike escapes LIKE metacharacters so they match literally.
+func escapeLike(s string) string {
+	r := strings.NewReplacer(`\`, `\\`, `%`, `\%`, `_`, `\_`)
+	return r.Replace(s)
 }
 
 // DeleteExpired removes all entries whose TTL has elapsed.

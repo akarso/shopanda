@@ -1,8 +1,10 @@
 package postgres
 
 import (
+	"context"
 	"database/sql"
 	"encoding/json"
+	"strings"
 	"testing"
 	"time"
 
@@ -54,6 +56,15 @@ func (s *stubCache) Set(key string, value any, ttl time.Duration) error {
 
 func (s *stubCache) Delete(key string) error {
 	delete(s.entries, key)
+	return nil
+}
+
+func (s *stubCache) DeleteByPrefix(_ context.Context, prefix string) error {
+	for k := range s.entries {
+		if strings.HasPrefix(k, prefix) {
+			delete(s.entries, k)
+		}
+	}
 	return nil
 }
 
@@ -199,5 +210,37 @@ func TestCacheStore_CompileTime(t *testing.T) {
 	}
 	if store == nil {
 		t.Fatal("NewCacheStore returned nil")
+	}
+}
+
+func TestStubCache_DeleteByPrefix(t *testing.T) {
+	c := newStubCache()
+
+	for _, key := range []string{
+		"product:123:en:EUR",
+		"product:123:de:EUR",
+		"product:456:en:EUR",
+		"other:key",
+	} {
+		if err := c.Set(key, "v", 0); err != nil {
+			t.Fatalf("Set(%q): %v", key, err)
+		}
+	}
+
+	if err := c.DeleteByPrefix(context.Background(), "product:123:"); err != nil {
+		t.Fatalf("DeleteByPrefix: %v", err)
+	}
+
+	// product:123:* should be deleted.
+	for _, key := range []string{"product:123:en:EUR", "product:123:de:EUR"} {
+		if _, ok := c.entries[key]; ok {
+			t.Errorf("%q should be deleted", key)
+		}
+	}
+	// Others should remain.
+	for _, key := range []string{"product:456:en:EUR", "other:key"} {
+		if _, ok := c.entries[key]; !ok {
+			t.Errorf("%q should remain", key)
+		}
 	}
 }
