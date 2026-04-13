@@ -70,6 +70,10 @@ func (r *TranslationRepo) Upsert(ctx context.Context, t *translation.Translation
 	if t == nil {
 		return fmt.Errorf("translation_repo: upsert: translation must not be nil")
 	}
+	// Validate fields using the same rules as the domain constructor.
+	if _, err := translation.NewTranslation(t.Key, t.Language, t.Value); err != nil {
+		return fmt.Errorf("translation_repo: upsert: %w", err)
+	}
 	const q = `INSERT INTO translations (key, language, value)
 		VALUES ($1, $2, $3)
 		ON CONFLICT (key, language) DO UPDATE
@@ -94,7 +98,7 @@ func (r *TranslationRepo) Delete(ctx context.Context, key, language string) erro
 		return fmt.Errorf("translation_repo: delete rows affected: %w", err)
 	}
 	if n == 0 {
-		return fmt.Errorf("translation_repo: delete: translation %s/%s not found", key, language)
+		return translation.ErrNotFound
 	}
 	return nil
 }

@@ -4,6 +4,8 @@ import (
 	"errors"
 	"strings"
 	"time"
+
+	"golang.org/x/text/language"
 )
 
 // Store represents a storefront context with its own currency and locale.
@@ -45,18 +47,19 @@ func NormalizeCountry(v string) (string, error) {
 	return v, nil
 }
 
-// NormalizeLanguage trims whitespace, lowercases, and validates a BCP 47
-// language tag (e.g. "en", "de", "pt-BR"). Only the 2- or 5-character forms
-// are accepted.
+// NormalizeLanguage trims whitespace and validates a BCP 47 language tag
+// using golang.org/x/text/language. Returns the canonicalized tag string
+// (e.g. "en", "pt-BR").
 func NormalizeLanguage(v string) (string, error) {
-	v = strings.ToLower(strings.TrimSpace(v))
+	v = strings.TrimSpace(v)
 	if v == "" {
 		return "", errors.New("store language must not be empty")
 	}
-	if len(v) != 2 && len(v) != 5 {
-		return "", errors.New("store language must be a 2-letter code or 5-character BCP 47 tag (e.g. en, pt-BR)")
+	tag, err := language.Parse(v)
+	if err != nil {
+		return "", errors.New("store language must be a valid BCP 47 tag (e.g. en, pt-BR)")
 	}
-	return v, nil
+	return tag.String(), nil
 }
 
 // NewStore creates a Store with required fields.

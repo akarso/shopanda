@@ -28,8 +28,8 @@ func TestNewTranslation_NormalizesLanguage(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewTranslation() error = %v", err)
 	}
-	if tr.Language != "pt-br" {
-		t.Errorf("Language = %q, want pt-br (lowercased)", tr.Language)
+	if tr.Language != "pt-BR" {
+		t.Errorf("Language = %q, want pt-BR (canonical BCP 47)", tr.Language)
 	}
 }
 
@@ -43,7 +43,8 @@ func TestNewTranslation_Validation(t *testing.T) {
 		{"empty key", "", "en", "value"},
 		{"whitespace key", "  ", "en", "value"},
 		{"empty language", "key", "", "value"},
-		{"invalid language length", "key", "eng", "value"},
+		{"invalid BCP 47 tag", "key", "!!!", "value"},
+		{"malformed BCP 47 tag", "key", "1x", "value"},
 		{"empty value", "key", "en", ""},
 		{"whitespace value", "key", "en", "  "},
 	}

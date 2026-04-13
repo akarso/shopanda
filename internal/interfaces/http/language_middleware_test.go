@@ -49,8 +49,8 @@ func TestLanguageMiddleware_AcceptLanguageBCP47(t *testing.T) {
 	req := httptest.NewRequest("GET", "/products", nil)
 	req.Header.Set("Accept-Language", "pt-BR")
 	got := resolve(req)
-	if got != "pt-br" {
-		t.Errorf("language = %q, want pt-br", got)
+	if got != "pt-BR" {
+		t.Errorf("language = %q, want pt-BR", got)
 	}
 }
 
@@ -94,5 +94,25 @@ func TestLanguageMiddleware_QueryParamOverridesHeader(t *testing.T) {
 	got := resolve(req)
 	if got != "es" {
 		t.Errorf("language = %q, want es (query param wins)", got)
+	}
+}
+
+func TestLanguageMiddleware_InvalidQueryParamFallsThrough(t *testing.T) {
+	resolve := langFromHandler(shophttp.LanguageMiddleware())
+	req := httptest.NewRequest("GET", "/products?lang=abcde", nil)
+	req.Header.Set("Accept-Language", "de")
+	got := resolve(req)
+	if got != "de" {
+		t.Errorf("language = %q, want de (invalid query param should fall through)", got)
+	}
+}
+
+func TestLanguageMiddleware_AcceptLanguageQOrdering(t *testing.T) {
+	resolve := langFromHandler(shophttp.LanguageMiddleware())
+	req := httptest.NewRequest("GET", "/products", nil)
+	req.Header.Set("Accept-Language", "en;q=0.1, fr;q=1.0")
+	got := resolve(req)
+	if got != "fr" {
+		t.Errorf("language = %q, want fr (highest q-value wins)", got)
 	}
 }

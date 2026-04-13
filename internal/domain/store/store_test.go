@@ -77,7 +77,7 @@ func TestNewStore_Validation(t *testing.T) {
 		{"empty country", "id", "code", "Name", "EUR", "", "en", ""},
 		{"invalid country length", "id", "code", "Name", "EUR", "DEU", "en", ""},
 		{"empty language", "id", "code", "Name", "EUR", "DE", "", ""},
-		{"invalid language length", "id", "code", "Name", "EUR", "DE", "eng", ""},
+		{"invalid BCP 47 tag", "id", "code", "Name", "EUR", "DE", "!!!", ""},
 		{"whitespace id", "  ", "code", "Name", "EUR", "DE", "en", ""},
 		{"whitespace code", "id", "  ", "Name", "EUR", "DE", "en", ""},
 		{"whitespace name", "id", "code", "  ", "EUR", "DE", "en", ""},

@@ -3,6 +3,8 @@ package translation
 import (
 	"errors"
 	"strings"
+
+	langtag "golang.org/x/text/language"
 )
 
 // Translation holds a single system translation entry.
@@ -18,13 +20,15 @@ func NewTranslation(key, language, value string) (Translation, error) {
 	if key == "" {
 		return Translation{}, errors.New("translation key must not be empty")
 	}
-	language = strings.ToLower(strings.TrimSpace(language))
+	language = strings.TrimSpace(language)
 	if language == "" {
 		return Translation{}, errors.New("translation language must not be empty")
 	}
-	if len(language) != 2 && len(language) != 5 {
-		return Translation{}, errors.New("translation language must be a 2-letter code or 5-character BCP 47 tag")
+	tag, err := langtag.Parse(language)
+	if err != nil {
+		return Translation{}, errors.New("translation language must be a valid BCP 47 tag (e.g. en, pt-BR)")
 	}
+	language = tag.String()
 	value = strings.TrimSpace(value)
 	if value == "" {
 		return Translation{}, errors.New("translation value must not be empty")

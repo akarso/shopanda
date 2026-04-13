@@ -1,6 +1,12 @@
 package translation
 
-import "context"
+import (
+	"context"
+	"errors"
+)
+
+// ErrNotFound is returned when a translation does not exist.
+var ErrNotFound = errors.New("translation not found")
 
 // TranslationRepository defines persistence operations for system translations.
 type TranslationRepository interface {
@@ -15,5 +21,6 @@ type TranslationRepository interface {
 	Upsert(ctx context.Context, t *Translation) error
 
 	// Delete removes a translation by key and language.
+	// Returns ErrNotFound if no translation exists for the given key and language.
 	Delete(ctx context.Context, key, language string) error
 }
