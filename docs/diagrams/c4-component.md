@@ -11,7 +11,7 @@ C4Component
 
     Container_Boundary(api, "API Server") {
 
-        Component(middleware, "Middleware Chain", "Go net/http", "Recovery → RequestID → Logging → Auth. Wraps all routes.")
+        Component(middleware, "Middleware Chain", "Go net/http", "Recovery → RequestID → Logging → Auth → Store. Wraps all routes.")
 
         Boundary(interfaces, "Interfaces Layer (HTTP Handlers)") {
             Component(authHandler, "AuthHandler", "HTTP", "Register, Login, Logout, Me, PasswordReset")
@@ -29,6 +29,7 @@ C4Component
             Component(shippingHandler, "ShippingRatesHandler", "HTTP", "List shipping rates")
             Component(webhookHandler, "PaymentWebhookHandler", "HTTP", "Handle payment callbacks (public)")
             Component(storefrontHandler, "StorefrontHandler", "HTTP", "SSR product page: slug lookup → PDP pipeline → theme render (optional, gated by frontend.enabled)")
+            Component(storeAdmin, "StoreAdminHandler", "HTTP", "List, Create, Update stores (admin)")
         }
 
         Boundary(application, "Application Layer (Use Cases)") {
@@ -56,7 +57,7 @@ C4Component
         }
 
         Boundary(infrastructure, "Infrastructure Layer (Adapters)") {
-            Component(postgresRepos, "PostgreSQL Repositories", "Go, lib/pq", "14 repo implementations: Product, Variant, Price, Cart, Order, Customer, Stock, Reservation, Payment, Shipping, Category, Collection, ResetToken, TaxRate")
+            Component(postgresRepos, "PostgreSQL Repositories", "Go, lib/pq", "15 repo implementations: Product, Variant, Price, Cart, Order, Customer, Stock, Reservation, Payment, Shipping, Category, Collection, ResetToken, TaxRate, Store")
             Component(postgresSearch, "PostgresSearchEngine", "Go, tsvector", "Full-text search via PostgreSQL tsvector, filters, facets")
             Component(postgresJobQueue, "PostgresJobQueue", "Go, lib/pq", "Job queue with FOR UPDATE SKIP LOCKED dequeue, retry logic")
             Component(manualPay, "ManualPayProvider", "Go", "Offline payment processing")
@@ -99,6 +100,8 @@ C4Component
     Rel(middleware, schemaHandler, "Routes requests")
     Rel(middleware, webhookHandler, "Routes requests")
     Rel(middleware, storefrontHandler, "Routes requests (when frontend.enabled)")
+    Rel(middleware, storeAdmin, "Routes requests")
+    Rel(middleware, postgresRepos, "Store resolution (StoreMiddleware)")
 
     Rel(authHandler, authService, "Delegates auth logic")
     Rel(cartHandler, cartService, "Delegates cart logic")
@@ -150,6 +153,8 @@ C4Component
     Rel(mediaService, localFSStorage, "Saves files")
     Rel(mediaService, postgresRepos, "Persists asset records")
     Rel(taxDomain, postgresRepos, "Tax rate queries")
+    Rel(storeAdmin, postgresRepos, "Store CRUD")
+    Rel(storeAdmin, eventBus, "Publishes store.created, store.updated")
 
     Rel(postgresRepos, postgres, "SQL queries", "lib/pq")
     Rel(postgresSearch, postgres, "Full-text search queries", "lib/pq")
