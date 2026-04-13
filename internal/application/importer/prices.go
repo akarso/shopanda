@@ -2,6 +2,7 @@ package importer
 
 import (
 	"context"
+	"database/sql"
 	"encoding/csv"
 	"fmt"
 	"io"
@@ -22,15 +23,34 @@ type PriceResult struct {
 	Errors  []string
 }
 
+// txPriceRepo is an optional capability: a PriceRepository that supports
+// transaction binding. Satisfied by *postgres.PriceRepo.
+type txPriceRepo interface {
+	pricing.PriceRepository
+	WithTx(tx *sql.Tx) pricing.PriceRepository
+}
+
+// txHistoryRepo is an optional capability: a PriceHistoryRepository that
+// supports transaction binding. Satisfied by *postgres.PriceHistoryRepo.
+type txHistoryRepo interface {
+	pricing.PriceHistoryRepository
+	WithTx(tx *sql.Tx) pricing.PriceHistoryRepository
+}
+
 // PriceImporter imports prices from CSV.
 type PriceImporter struct {
-	variants catalog.VariantRepository
-	prices   pricing.PriceRepository
+	variants  catalog.VariantRepository
+	prices    pricing.PriceRepository
+	history   pricing.PriceHistoryRepository
+	txStarter TxStarter
 }
 
 // NewPriceImporter creates a PriceImporter.
-func NewPriceImporter(variants catalog.VariantRepository, prices pricing.PriceRepository) *PriceImporter {
-	return &PriceImporter{variants: variants, prices: prices}
+// history may be nil; if nil, price snapshots are not recorded.
+// txStarter may be nil; if nil and history is non-nil, writes are not wrapped
+// in a transaction.
+func NewPriceImporter(variants catalog.VariantRepository, prices pricing.PriceRepository, history pricing.PriceHistoryRepository, txStarter TxStarter) *PriceImporter {
+	return &PriceImporter{variants: variants, prices: prices, history: history, txStarter: txStarter}
 }
 
 // Import reads CSV rows from r and upserts prices.
@@ -149,8 +169,8 @@ func (imp *PriceImporter) Import(ctx context.Context, r io.Reader) (*PriceResult
 			continue
 		}
 
-		if err := imp.prices.Upsert(ctx, &p); err != nil {
-			return nil, fmt.Errorf("price import: upsert price for sku %q currency %s: %w", sku, currency, err)
+		if err := imp.upsertWithHistory(ctx, &p); err != nil {
+			return nil, fmt.Errorf("price import: sku %q currency %s: %w", sku, currency, err)
 		}
 
 		if isUpdate {
@@ -161,4 +181,58 @@ func (imp *PriceImporter) Import(ctx context.Context, r io.Reader) (*PriceResult
 	}
 
 	return result, nil
+}
+
+// upsertWithHistory writes the price and records a history snapshot atomically
+// when a TxStarter and tx-capable repos are available. Falls back to sequential
+// writes otherwise.
+func (imp *PriceImporter) upsertWithHistory(ctx context.Context, p *pricing.Price) error {
+	if imp.history == nil {
+		return imp.prices.Upsert(ctx, p)
+	}
+
+	snap, err := pricing.NewPriceSnapshot(id.New(), p.VariantID, p.StoreID, p.Amount)
+	if err != nil {
+		return fmt.Errorf("snapshot: %w", err)
+	}
+
+	if imp.txStarter != nil {
+		txP, ok1 := imp.prices.(txPriceRepo)
+		txH, ok2 := imp.history.(txHistoryRepo)
+		if ok1 && ok2 {
+			return imp.upsertInTx(ctx, txP, txH, p, &snap)
+		}
+	}
+
+	// Fallback: sequential writes.
+	if err := imp.prices.Upsert(ctx, p); err != nil {
+		return fmt.Errorf("upsert: %w", err)
+	}
+	if err := imp.history.Record(ctx, &snap); err != nil {
+		return fmt.Errorf("record history: %w", err)
+	}
+	return nil
+}
+
+func (imp *PriceImporter) upsertInTx(ctx context.Context, txP txPriceRepo, txH txHistoryRepo, p *pricing.Price, snap *pricing.PriceSnapshot) error {
+	tx, err := imp.txStarter.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("begin tx: %w", err)
+	}
+
+	priceRepo := txP.WithTx(tx)
+	historyRepo := txH.WithTx(tx)
+
+	if err := priceRepo.Upsert(ctx, p); err != nil {
+		tx.Rollback()
+		return fmt.Errorf("upsert: %w", err)
+	}
+	if err := historyRepo.Record(ctx, snap); err != nil {
+		tx.Rollback()
+		return fmt.Errorf("record history: %w", err)
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("commit: %w", err)
+	}
+	return nil
 }

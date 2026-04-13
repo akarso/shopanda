@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/akarso/shopanda/internal/application/importer"
 	"github.com/akarso/shopanda/internal/domain/catalog"
@@ -85,7 +86,7 @@ func priceVariants() *mockVariantRepoForPrice {
 func TestPriceImport_Basic(t *testing.T) {
 	variants := priceVariants()
 	prices := newMockPriceRepoForImport()
-	imp := importer.NewPriceImporter(variants, prices)
+	imp := importer.NewPriceImporter(variants, prices, nil, nil)
 
 	input := "sku,currency,amount\nSKU-001,EUR,1999\nSKU-001,USD,2199\nSKU-002,EUR,999\n"
 	result, err := imp.Import(context.Background(), strings.NewReader(input))
@@ -115,7 +116,7 @@ func TestPriceImport_Basic(t *testing.T) {
 func TestPriceImport_MissingColumns(t *testing.T) {
 	variants := priceVariants()
 	prices := newMockPriceRepoForImport()
-	imp := importer.NewPriceImporter(variants, prices)
+	imp := importer.NewPriceImporter(variants, prices, nil, nil)
 
 	input := "sku,amount\nSKU-001,1999\n"
 	_, err := imp.Import(context.Background(), strings.NewReader(input))
@@ -127,7 +128,7 @@ func TestPriceImport_MissingColumns(t *testing.T) {
 func TestPriceImport_EmptySKU(t *testing.T) {
 	variants := priceVariants()
 	prices := newMockPriceRepoForImport()
-	imp := importer.NewPriceImporter(variants, prices)
+	imp := importer.NewPriceImporter(variants, prices, nil, nil)
 
 	input := "sku,currency,amount\n,EUR,1999\n"
 	result, err := imp.Import(context.Background(), strings.NewReader(input))
@@ -148,7 +149,7 @@ func TestPriceImport_EmptySKU(t *testing.T) {
 func TestPriceImport_InvalidCurrency(t *testing.T) {
 	variants := priceVariants()
 	prices := newMockPriceRepoForImport()
-	imp := importer.NewPriceImporter(variants, prices)
+	imp := importer.NewPriceImporter(variants, prices, nil, nil)
 
 	input := "sku,currency,amount\nSKU-001,euro,1999\n"
 	result, err := imp.Import(context.Background(), strings.NewReader(input))
@@ -166,7 +167,7 @@ func TestPriceImport_InvalidCurrency(t *testing.T) {
 func TestPriceImport_InvalidAmount(t *testing.T) {
 	variants := priceVariants()
 	prices := newMockPriceRepoForImport()
-	imp := importer.NewPriceImporter(variants, prices)
+	imp := importer.NewPriceImporter(variants, prices, nil, nil)
 
 	input := "sku,currency,amount\nSKU-001,EUR,abc\n"
 	result, err := imp.Import(context.Background(), strings.NewReader(input))
@@ -184,7 +185,7 @@ func TestPriceImport_InvalidAmount(t *testing.T) {
 func TestPriceImport_NegativeAmount(t *testing.T) {
 	variants := priceVariants()
 	prices := newMockPriceRepoForImport()
-	imp := importer.NewPriceImporter(variants, prices)
+	imp := importer.NewPriceImporter(variants, prices, nil, nil)
 
 	input := "sku,currency,amount\nSKU-001,EUR,-100\n"
 	result, err := imp.Import(context.Background(), strings.NewReader(input))
@@ -202,7 +203,7 @@ func TestPriceImport_NegativeAmount(t *testing.T) {
 func TestPriceImport_ZeroAmount(t *testing.T) {
 	variants := priceVariants()
 	prices := newMockPriceRepoForImport()
-	imp := importer.NewPriceImporter(variants, prices)
+	imp := importer.NewPriceImporter(variants, prices, nil, nil)
 
 	input := "sku,currency,amount\nSKU-001,EUR,0\n"
 	result, err := imp.Import(context.Background(), strings.NewReader(input))
@@ -217,7 +218,7 @@ func TestPriceImport_ZeroAmount(t *testing.T) {
 func TestPriceImport_UnknownSKU(t *testing.T) {
 	variants := priceVariants()
 	prices := newMockPriceRepoForImport()
-	imp := importer.NewPriceImporter(variants, prices)
+	imp := importer.NewPriceImporter(variants, prices, nil, nil)
 
 	input := "sku,currency,amount\nNONEXIST,EUR,1999\n"
 	result, err := imp.Import(context.Background(), strings.NewReader(input))
@@ -239,7 +240,7 @@ func TestPriceImport_Update(t *testing.T) {
 	existing, _ := pricing.NewPrice("existing-id", "v1", "", shared.MustNewMoney(1000, "EUR"))
 	prices.prices["v1:EUR:"] = &existing
 
-	imp := importer.NewPriceImporter(variants, prices)
+	imp := importer.NewPriceImporter(variants, prices, nil, nil)
 
 	input := "sku,currency,amount\nSKU-001,EUR,2500\n"
 	result, err := imp.Import(context.Background(), strings.NewReader(input))
@@ -263,7 +264,7 @@ func TestPriceImport_UpsertError(t *testing.T) {
 	variants := priceVariants()
 	prices := newMockPriceRepoForImport()
 	prices.upsertErr = fmt.Errorf("db down")
-	imp := importer.NewPriceImporter(variants, prices)
+	imp := importer.NewPriceImporter(variants, prices, nil, nil)
 
 	input := "sku,currency,amount\nSKU-001,EUR,1999\n"
 	_, err := imp.Import(context.Background(), strings.NewReader(input))
@@ -275,7 +276,7 @@ func TestPriceImport_UpsertError(t *testing.T) {
 func TestPriceImport_CurrencyNormalization(t *testing.T) {
 	variants := priceVariants()
 	prices := newMockPriceRepoForImport()
-	imp := importer.NewPriceImporter(variants, prices)
+	imp := importer.NewPriceImporter(variants, prices, nil, nil)
 
 	// lowercase currency should be uppercased.
 	input := "sku,currency,amount\nSKU-001,eur,1999\n"
@@ -295,7 +296,7 @@ func TestPriceImport_CurrencyNormalization(t *testing.T) {
 func TestPriceImport_BOMHeader(t *testing.T) {
 	variants := priceVariants()
 	prices := newMockPriceRepoForImport()
-	imp := importer.NewPriceImporter(variants, prices)
+	imp := importer.NewPriceImporter(variants, prices, nil, nil)
 
 	// UTF-8 BOM (\xEF\xBB\xBF) before first column header, as exported by
 	// Excel and some spreadsheet applications.
@@ -320,7 +321,7 @@ func TestPriceImport_SKUCaching(t *testing.T) {
 		},
 	}
 	prices := newMockPriceRepoForImport()
-	imp := importer.NewPriceImporter(variants, prices)
+	imp := importer.NewPriceImporter(variants, prices, nil, nil)
 
 	input := "sku,currency,amount\nSKU-001,EUR,1999\nSKU-001,USD,2199\nSKU-001,GBP,2499\n"
 	result, err := imp.Import(context.Background(), strings.NewReader(input))
@@ -358,3 +359,65 @@ func (m *countingVariantRepoForPrice) ListByProductID(_ context.Context, _ strin
 func (m *countingVariantRepoForPrice) Create(_ context.Context, _ *catalog.Variant) error { return nil }
 func (m *countingVariantRepoForPrice) Update(_ context.Context, _ *catalog.Variant) error { return nil }
 func (m *countingVariantRepoForPrice) WithTx(_ *sql.Tx) catalog.VariantRepository         { return m }
+
+// --- history mock ---
+
+type mockPriceHistoryRepoForImport struct {
+	recorded []*pricing.PriceSnapshot
+	err      error
+}
+
+func (m *mockPriceHistoryRepoForImport) Record(_ context.Context, s *pricing.PriceSnapshot) error {
+	if m.err != nil {
+		return m.err
+	}
+	m.recorded = append(m.recorded, s)
+	return nil
+}
+
+func (m *mockPriceHistoryRepoForImport) LowestSince(_ context.Context, _, _, _ string, _ time.Time) (*pricing.PriceSnapshot, error) {
+	return nil, nil
+}
+
+// --- history tests ---
+
+func TestPriceImport_RecordsHistory(t *testing.T) {
+	variants := priceVariants()
+	prices := newMockPriceRepoForImport()
+	history := &mockPriceHistoryRepoForImport{}
+	imp := importer.NewPriceImporter(variants, prices, history, nil)
+
+	input := "sku,currency,amount\nSKU-001,EUR,1999\nSKU-002,EUR,999\n"
+	result, err := imp.Import(context.Background(), strings.NewReader(input))
+	if err != nil {
+		t.Fatalf("Import() error = %v", err)
+	}
+	if result.Created != 2 {
+		t.Errorf("Created = %d, want 2", result.Created)
+	}
+	if len(history.recorded) != 2 {
+		t.Fatalf("recorded snapshots = %d, want 2", len(history.recorded))
+	}
+	if history.recorded[0].VariantID != "v1" {
+		t.Errorf("snapshot[0].VariantID = %q, want v1", history.recorded[0].VariantID)
+	}
+	if history.recorded[1].VariantID != "v2" {
+		t.Errorf("snapshot[1].VariantID = %q, want v2", history.recorded[1].VariantID)
+	}
+}
+
+func TestPriceImport_RecordHistoryError(t *testing.T) {
+	variants := priceVariants()
+	prices := newMockPriceRepoForImport()
+	history := &mockPriceHistoryRepoForImport{err: fmt.Errorf("history db down")}
+	imp := importer.NewPriceImporter(variants, prices, history, nil)
+
+	input := "sku,currency,amount\nSKU-001,EUR,1999\n"
+	_, err := imp.Import(context.Background(), strings.NewReader(input))
+	if err == nil {
+		t.Fatal("expected error when Record fails")
+	}
+	if !strings.Contains(err.Error(), "history db down") {
+		t.Errorf("error = %q, want mention of 'history db down'", err)
+	}
+}

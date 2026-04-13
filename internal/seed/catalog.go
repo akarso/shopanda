@@ -89,6 +89,10 @@ func (s *CatalogSeeder) Seed(ctx context.Context, deps Deps) error {
 	if err != nil {
 		return err
 	}
+	priceHistoryRepo, err := postgres.NewPriceHistoryRepo(deps.DB)
+	if err != nil {
+		return err
+	}
 	stockRepo, err := postgres.NewStockRepo(deps.DB)
 	if err != nil {
 		return err
@@ -97,7 +101,7 @@ func (s *CatalogSeeder) Seed(ctx context.Context, deps Deps) error {
 	if err := s.seedCategories(ctx, deps, catRepo); err != nil {
 		return err
 	}
-	return s.seedProducts(ctx, deps, prodRepo, variantRepo, priceRepo, stockRepo)
+	return s.seedProducts(ctx, deps, prodRepo, variantRepo, priceRepo, priceHistoryRepo, stockRepo)
 }
 
 func (s *CatalogSeeder) seedCategories(ctx context.Context, deps Deps, repo *postgres.CategoryRepo) error {
@@ -139,6 +143,7 @@ func (s *CatalogSeeder) seedProducts(
 	prodRepo *postgres.ProductRepo,
 	variantRepo *postgres.VariantRepo,
 	priceRepo *postgres.PriceRepo,
+	priceHistoryRepo *postgres.PriceHistoryRepo,
 	stockRepo *postgres.StockRepo,
 ) error {
 	for _, sp := range defaultProducts {
@@ -199,8 +204,25 @@ func (s *CatalogSeeder) seedProducts(
 			if err != nil {
 				return err
 			}
-			if err := priceRepo.Upsert(ctx, &price); err != nil {
+			snap, err := pricing.NewPriceSnapshot(id.New(), variantID, "", money)
+			if err != nil {
 				return err
+			}
+
+			tx, err := deps.DB.BeginTx(ctx, nil)
+			if err != nil {
+				return fmt.Errorf("seed: begin tx: %w", err)
+			}
+			if err := priceRepo.WithTx(tx).Upsert(ctx, &price); err != nil {
+				tx.Rollback()
+				return err
+			}
+			if err := priceHistoryRepo.WithTx(tx).Record(ctx, &snap); err != nil {
+				tx.Rollback()
+				return err
+			}
+			if err := tx.Commit(); err != nil {
+				return fmt.Errorf("seed: commit price+history: %w", err)
 			}
 
 			stock, err := inventory.NewStockEntry(variantID, sv.Stock)

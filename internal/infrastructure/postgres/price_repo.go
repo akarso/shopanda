@@ -16,6 +16,7 @@ var _ pricing.PriceRepository = (*PriceRepo)(nil)
 // PriceRepo implements pricing.PriceRepository using PostgreSQL.
 type PriceRepo struct {
 	db *sql.DB
+	tx *sql.Tx
 }
 
 // NewPriceRepo returns a new PriceRepo backed by db.
@@ -24,6 +25,11 @@ func NewPriceRepo(db *sql.DB) (*PriceRepo, error) {
 		return nil, fmt.Errorf("NewPriceRepo: nil *sql.DB")
 	}
 	return &PriceRepo{db: db}, nil
+}
+
+// WithTx returns a repo bound to the given transaction.
+func (r *PriceRepo) WithTx(tx *sql.Tx) pricing.PriceRepository {
+	return &PriceRepo{db: r.db, tx: tx}
 }
 
 // FindByVariantCurrencyAndStore returns the price for a variant in the given
@@ -36,7 +42,7 @@ func (r *PriceRepo) FindByVariantCurrencyAndStore(ctx context.Context, variantID
 	var p pricing.Price
 	var amount int64
 	var cur string
-	err := r.db.QueryRowContext(ctx, q, variantID, currency, storeID).Scan(
+	err := r.queryRow(ctx, q, variantID, currency, storeID).Scan(
 		&p.ID, &p.VariantID, &p.StoreID, &cur, &amount, &p.CreatedAt,
 	)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -58,7 +64,7 @@ func (r *PriceRepo) ListByVariantID(ctx context.Context, variantID string) ([]pr
 	const q = `SELECT id, variant_id, store_id, currency, amount, created_at
 		FROM prices WHERE variant_id = $1 ORDER BY currency, store_id`
 
-	rows, err := r.db.QueryContext(ctx, q, variantID)
+	rows, err := r.query(ctx, q, variantID)
 	if err != nil {
 		return nil, fmt.Errorf("price_repo: list by variant: %w", err)
 	}
@@ -97,7 +103,7 @@ func (r *PriceRepo) Upsert(ctx context.Context, p *pricing.Price) error {
 		    id = EXCLUDED.id,
 		    created_at = EXCLUDED.created_at`
 
-	_, err := r.db.ExecContext(ctx, q,
+	_, err := r.exec(ctx, q,
 		p.ID, p.VariantID, p.StoreID, p.Amount.Currency(), p.Amount.Amount(), p.CreatedAt,
 	)
 	if err != nil {
@@ -122,7 +128,7 @@ func (r *PriceRepo) List(ctx context.Context, offset, limit int) ([]pricing.Pric
 		FROM prices ORDER BY variant_id, currency, store_id
 		LIMIT $1 OFFSET $2`
 
-	rows, err := r.db.QueryContext(ctx, q, limit, offset)
+	rows, err := r.query(ctx, q, limit, offset)
 	if err != nil {
 		return nil, fmt.Errorf("price_repo: list: %w", err)
 	}
@@ -147,4 +153,28 @@ func (r *PriceRepo) List(ctx context.Context, offset, limit int) ([]pricing.Pric
 		return nil, fmt.Errorf("price_repo: list rows: %w", err)
 	}
 	return prices, nil
+}
+
+// queryRow delegates to tx or db.
+func (r *PriceRepo) queryRow(ctx context.Context, q string, args ...interface{}) *sql.Row {
+	if r.tx != nil {
+		return r.tx.QueryRowContext(ctx, q, args...)
+	}
+	return r.db.QueryRowContext(ctx, q, args...)
+}
+
+// query delegates to tx or db.
+func (r *PriceRepo) query(ctx context.Context, q string, args ...interface{}) (*sql.Rows, error) {
+	if r.tx != nil {
+		return r.tx.QueryContext(ctx, q, args...)
+	}
+	return r.db.QueryContext(ctx, q, args...)
+}
+
+// exec delegates to tx or db.
+func (r *PriceRepo) exec(ctx context.Context, q string, args ...interface{}) (sql.Result, error) {
+	if r.tx != nil {
+		return r.tx.ExecContext(ctx, q, args...)
+	}
+	return r.db.ExecContext(ctx, q, args...)
 }
