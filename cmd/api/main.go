@@ -255,6 +255,12 @@ func runServe(cfg *config.Config, log logger.Logger) error {
 		return err
 	}
 
+	// Store repository.
+	storeRepo, err := postgres.NewStoreRepo(conn)
+	if err != nil {
+		return err
+	}
+
 	// Cache.
 	_ = appCache // wired by consumers in upcoming PRs
 
@@ -416,6 +422,7 @@ func runServe(cfg *config.Config, log logger.Logger) error {
 	schemaHandler := shophttp.NewSchemaHandler(adminRegistry)
 	pageHandler := shophttp.NewPageHandler(pageRepo)
 	pageAdmin := shophttp.NewPageAdminHandler(pageRepo, bus)
+	storeAdmin := shophttp.NewStoreAdminHandler(storeRepo, bus)
 	sitemapHandler := shophttp.NewSitemapHandler(baseURL, productRepo, categoryRepo, pageRepo)
 	robotsHandler := shophttp.NewRobotsHandler(baseURL)
 
@@ -426,6 +433,7 @@ func runServe(cfg *config.Config, log logger.Logger) error {
 	router.Use(shophttp.RequestIDMiddleware())
 	router.Use(shophttp.LoggingMiddleware(log))
 	router.Use(shophttp.AuthMiddleware(tokenParser))
+	router.Use(shophttp.StoreMiddleware(storeRepo, log))
 
 	// Routes.
 	router.HandleFunc("GET /healthz", shophttp.HealthHandler())
@@ -474,6 +482,9 @@ func runServe(cfg *config.Config, log logger.Logger) error {
 	router.Handle("POST /api/v1/admin/pages", requireAdmin(pageAdmin.Create()))
 	router.Handle("PUT /api/v1/admin/pages/{id}", requireAdmin(pageAdmin.Update()))
 	router.Handle("DELETE /api/v1/admin/pages/{id}", requireAdmin(pageAdmin.Delete()))
+	router.Handle("GET /api/v1/admin/stores", requireAdmin(storeAdmin.List()))
+	router.Handle("POST /api/v1/admin/stores", requireAdmin(storeAdmin.Create()))
+	router.Handle("PUT /api/v1/admin/stores/{id}", requireAdmin(storeAdmin.Update()))
 
 	// Cart routes (behind RequireAuth).
 	router.Handle("POST /api/v1/carts", requireAuth(cartHandler.Create()))

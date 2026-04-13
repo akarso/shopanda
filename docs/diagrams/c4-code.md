@@ -134,6 +134,18 @@ classDiagram
         +string Role
     }
 
+    class Store {
+        +string ID
+        +string Code
+        +string Name
+        +string Currency
+        +string Country
+        +string Domain
+        +bool IsDefault
+        +time CreatedAt
+        +time UpdatedAt
+    }
+
     class SearchQuery {
         +string Text
         +map Filters
@@ -522,6 +534,32 @@ classDiagram
         +string Label
         +func Execute
     }
+    class StoreRepository {
+        <<interface>>
+        +FindByID(ctx, id) Store
+        +FindByCode(ctx, code) Store
+        +FindByDomain(ctx, domain) Store
+        +FindDefault(ctx) Store
+        +FindAll(ctx) []Store
+        +Create(ctx, store) error
+        +Update(ctx, store) error
+    }
+    class PostgresStoreRepo {
+        -db *sql.DB
+    }
+    class StoreAdminHandler {
+        -repo StoreRepository
+        -bus *EventBus
+        +List() HandlerFunc
+        +Create() HandlerFunc
+        +Update() HandlerFunc
+    }
+    class StoreMiddleware {
+        <<middleware>>
+        -repo StoreRepository
+        +ServeHTTP(w, r)
+    }
+
     class SearchHandler {
         -engine SearchEngine
         +Search() HandlerFunc
@@ -563,6 +601,10 @@ classDiagram
     Storage <|.. LocalStorage : implements
     AssetRepository <|.. PostgresAssetRepo : implements
     Cache <|.. PostgresCacheStore : implements
+    StoreRepository <|.. PostgresStoreRepo : implements
+    StoreAdminHandler --> StoreRepository : uses
+    StoreMiddleware --> StoreRepository : resolves store by domain
+    StoreMiddleware --> StoreAdminHandler : passes resolved store context
     ConfigRepository <|.. PostgresConfigRepo : implements
     Templates --> Message : produces
     PricingStep <|.. BasePriceStep : implements
