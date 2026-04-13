@@ -3,6 +3,7 @@ package http
 import (
 	"encoding/json"
 	"net/http"
+	"strings"
 
 	"github.com/akarso/shopanda/internal/domain/store"
 	"github.com/akarso/shopanda/internal/platform/apperror"
@@ -116,18 +117,20 @@ func (h *StoreAdminHandler) Update() http.HandlerFunc {
 		}
 
 		if req.Code != nil {
-			if *req.Code == "" {
+			c := strings.TrimSpace(*req.Code)
+			if c == "" {
 				JSONError(w, apperror.Validation("code must not be empty"))
 				return
 			}
-			s.Code = *req.Code
+			s.Code = c
 		}
 		if req.Name != nil {
-			if *req.Name == "" {
+			n := strings.TrimSpace(*req.Name)
+			if n == "" {
 				JSONError(w, apperror.Validation("name must not be empty"))
 				return
 			}
-			s.Name = *req.Name
+			s.Name = n
 		}
 		if req.Currency != nil {
 			cur, curErr := store.NormalizeCurrency(*req.Currency)

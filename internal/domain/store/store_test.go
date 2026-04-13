@@ -77,6 +77,7 @@ func TestNewStore_Validation(t *testing.T) {
 		{"invalid country length", "id", "code", "Name", "EUR", "DEU", ""},
 		{"whitespace id", "  ", "code", "Name", "EUR", "DE", ""},
 		{"whitespace code", "id", "  ", "Name", "EUR", "DE", ""},
+		{"whitespace name", "id", "code", "  ", "EUR", "DE", ""},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
