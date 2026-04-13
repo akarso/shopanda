@@ -391,3 +391,69 @@ server:
 		t.Errorf("Get(server.public_base_url) = %q, want %q", v, "https://shop.example.com")
 	}
 }
+
+func TestLoad_PublicBaseURL_RejectsUnsupportedScheme(t *testing.T) {
+	yaml := `
+server:
+  public_base_url: "ftp://shop.example.com"
+`
+	path := writeYAML(t, yaml)
+
+	_, err := Load(path)
+	if err == nil {
+		t.Fatal("Load() expected error for unsupported scheme")
+	}
+	if !strings.Contains(err.Error(), "unsupported scheme") {
+		t.Errorf("error = %q, want mention of unsupported scheme", err)
+	}
+}
+
+func TestLoad_PublicBaseURL_RejectsQuery(t *testing.T) {
+	yaml := `
+server:
+  public_base_url: "https://shop.example.com?foo=bar"
+`
+	path := writeYAML(t, yaml)
+
+	_, err := Load(path)
+	if err == nil {
+		t.Fatal("Load() expected error for query in URL")
+	}
+	if !strings.Contains(err.Error(), "query or fragment") {
+		t.Errorf("error = %q, want mention of query or fragment", err)
+	}
+}
+
+func TestLoad_PublicBaseURL_RejectsFragment(t *testing.T) {
+	yaml := `
+server:
+  public_base_url: "https://shop.example.com#section"
+`
+	path := writeYAML(t, yaml)
+
+	_, err := Load(path)
+	if err == nil {
+		t.Fatal("Load() expected error for fragment in URL")
+	}
+	if !strings.Contains(err.Error(), "query or fragment") {
+		t.Errorf("error = %q, want mention of query or fragment", err)
+	}
+}
+
+func TestLoad_PublicBaseURL_PreservesPath(t *testing.T) {
+	yaml := `
+server:
+  public_base_url: "https://example.com/shop/"
+`
+	path := writeYAML(t, yaml)
+
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load() error: %v", err)
+	}
+
+	want := "https://example.com/shop"
+	if cfg.Server.PublicBaseURL != want {
+		t.Errorf("PublicBaseURL = %q, want %q", cfg.Server.PublicBaseURL, want)
+	}
+}

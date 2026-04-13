@@ -216,8 +216,14 @@ func normalizePublicBaseURL(cfg *Config) error {
 	if u.Host == "" {
 		return fmt.Errorf("server.public_base_url: missing host in %q", raw)
 	}
+	if u.Scheme != "http" && u.Scheme != "https" {
+		return fmt.Errorf("server.public_base_url: unsupported scheme %q", u.Scheme)
+	}
+	if u.RawQuery != "" || u.Fragment != "" {
+		return fmt.Errorf("server.public_base_url: must not contain query or fragment")
+	}
 
-	cfg.Server.PublicBaseURL = strings.TrimRight(u.String(), "/")
+	cfg.Server.PublicBaseURL = u.Scheme + "://" + u.Host + strings.TrimRight(u.Path, "/")
 	return nil
 }
 
