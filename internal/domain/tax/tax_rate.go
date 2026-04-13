@@ -30,17 +30,20 @@ func (m TaxMode) IsValid() bool {
 // countryRegex matches ISO 3166-1 alpha-2 country codes (2 uppercase letters).
 var countryRegex = regexp.MustCompile(`^[A-Z]{2}$`)
 
-// TaxRate defines the tax percentage for a country + tax class combination.
+// TaxRate defines the tax percentage for a country + tax class combination,
+// optionally scoped to a store. An empty StoreID means the global/default rate.
 // Rate is stored as basis points (e.g. 2100 = 21.00%).
 type TaxRate struct {
 	ID      string
 	Country string
 	Class   string
+	StoreID string
 	Rate    int
 }
 
 // NewTaxRate creates a TaxRate with the required fields.
-func NewTaxRate(rateID, country, class string, rate int) (TaxRate, error) {
+// storeID may be empty to represent the global/default rate.
+func NewTaxRate(rateID, country, class, storeID string, rate int) (TaxRate, error) {
 	if rateID == "" {
 		return TaxRate{}, errors.New("tax rate id must not be empty")
 	}
@@ -60,6 +63,7 @@ func NewTaxRate(rateID, country, class string, rate int) (TaxRate, error) {
 		ID:      rateID,
 		Country: country,
 		Class:   class,
+		StoreID: storeID,
 		Rate:    rate,
 	}, nil
 }

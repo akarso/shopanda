@@ -36,13 +36,19 @@ func (m *mockVariantRepo) Create(_ context.Context, _ *catalog.Variant) error { 
 func (m *mockVariantRepo) Update(_ context.Context, _ *catalog.Variant) error { return nil }
 
 type mockPriceRepo struct {
-	price       *pricing.Price
-	err         error
-	capturedCtx context.Context
+	price            *pricing.Price
+	err              error
+	capturedCtx      context.Context
+	capturedVariant  string
+	capturedCurrency string
+	capturedStore    string
 }
 
-func (m *mockPriceRepo) FindByVariantAndCurrency(ctx context.Context, _, _ string) (*pricing.Price, error) {
+func (m *mockPriceRepo) FindByVariantCurrencyAndStore(ctx context.Context, variantID, currency, storeID string) (*pricing.Price, error) {
 	m.capturedCtx = ctx
+	m.capturedVariant = variantID
+	m.capturedCurrency = currency
+	m.capturedStore = storeID
 	return m.price, m.err
 }
 func (m *mockPriceRepo) ListByVariantID(_ context.Context, _ string) ([]pricing.Price, error) {

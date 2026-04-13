@@ -29,11 +29,11 @@ func NewPriceExporter(prices pricing.PriceRepository, variants catalog.VariantRe
 
 // Export writes all prices to w in CSV format.
 //
-// CSV columns: sku, currency, amount.
+// CSV columns: sku, currency, amount, store_id.
 func (exp *PriceExporter) Export(ctx context.Context, w io.Writer) (*PriceResult, error) {
 	writer := csv.NewWriter(w)
 
-	if err := writer.Write([]string{"sku", "currency", "amount"}); err != nil {
+	if err := writer.Write([]string{"sku", "currency", "amount", "store_id"}); err != nil {
 		return nil, fmt.Errorf("price export: write header: %w", err)
 	}
 
@@ -64,6 +64,7 @@ func (exp *PriceExporter) Export(ctx context.Context, w io.Writer) (*PriceResult
 				sanitizeCSVCell(variant.SKU),
 				p.Amount.Currency(),
 				strconv.FormatInt(p.Amount.Amount(), 10),
+				sanitizeCSVCell(p.StoreID),
 			}
 			if err := writer.Write(row); err != nil {
 				return nil, fmt.Errorf("price export: write row: %w", err)

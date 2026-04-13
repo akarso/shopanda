@@ -16,8 +16,9 @@ import (
 //	"tax_country" (string): ISO 3166-1 alpha-2 country code
 //	"tax_mode"    (string): "exclusive" or "inclusive"
 //
-// Optional Meta key:
+// Optional Meta keys:
 //
+//	"store_id"    (string): store scope for rate lookup (empty = global)
 //	"tax_classes" (map[string]string): variant ID → tax class override
 //
 // When no rate is found for a variant's class+country pair, the item is
@@ -55,6 +56,11 @@ func (s *TaxStep) Apply(ctx context.Context, pctx *domain.PricingContext) error 
 		return fmt.Errorf("tax step: invalid tax_mode: %q", modeStr)
 	}
 
+	storeID, err := optionalMetaString(pctx.Meta, "store_id")
+	if err != nil {
+		return fmt.Errorf("tax step: %w", err)
+	}
+
 	// Optional per-variant tax class overrides.
 	classes, _ := pctx.Meta["tax_classes"].(map[string]string)
 
@@ -68,9 +74,16 @@ func (s *TaxStep) Apply(ctx context.Context, pctx *domain.PricingContext) error 
 			}
 		}
 
-		rate, err := s.rates.FindByCountryAndClass(ctx, country, class)
+		rate, err := s.rates.FindByCountryClassAndStore(ctx, country, class, storeID)
 		if err != nil {
 			return fmt.Errorf("tax step: variant %s: %w", item.VariantID, err)
+		}
+		// Fall back to global rate when store-scoped rate not found.
+		if rate == nil && storeID != "" {
+			rate, err = s.rates.FindByCountryClassAndStore(ctx, country, class, "")
+			if err != nil {
+				return fmt.Errorf("tax step: variant %s (fallback): %w", item.VariantID, err)
+			}
 		}
 		if rate == nil || rate.Rate == 0 {
 			continue // zero-rated
@@ -103,6 +116,21 @@ func metaString(meta map[string]interface{}, key string) (string, error) {
 	v, ok := meta[key]
 	if !ok {
 		return "", fmt.Errorf("missing required meta key %q", key)
+	}
+	s, ok := v.(string)
+	if !ok {
+		return "", fmt.Errorf("meta key %q must be a string, got %T", key, v)
+	}
+	return s, nil
+}
+
+// optionalMetaString extracts an optional string from the meta map.
+// Returns "" when the key is absent. Returns an error when the key is
+// present but the value is not a string.
+func optionalMetaString(meta map[string]interface{}, key string) (string, error) {
+	v, ok := meta[key]
+	if !ok {
+		return "", nil
 	}
 	s, ok := v.(string)
 	if !ok {

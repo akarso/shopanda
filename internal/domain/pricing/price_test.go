@@ -9,7 +9,7 @@ import (
 
 func TestNewPrice(t *testing.T) {
 	amount := shared.MustNewMoney(1299, "EUR")
-	p, err := NewPrice(id.New(), "variant-1", amount)
+	p, err := NewPrice(id.New(), "variant-1", "", amount)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -26,7 +26,7 @@ func TestNewPrice(t *testing.T) {
 
 func TestNewPriceEmptyID(t *testing.T) {
 	amount := shared.MustNewMoney(100, "EUR")
-	_, err := NewPrice("", "v1", amount)
+	_, err := NewPrice("", "v1", "", amount)
 	if err == nil {
 		t.Fatal("expected error for empty id")
 	}
@@ -34,7 +34,7 @@ func TestNewPriceEmptyID(t *testing.T) {
 
 func TestNewPriceEmptyVariantID(t *testing.T) {
 	amount := shared.MustNewMoney(100, "EUR")
-	_, err := NewPrice(id.New(), "", amount)
+	_, err := NewPrice(id.New(), "", "", amount)
 	if err == nil {
 		t.Fatal("expected error for empty variant id")
 	}
@@ -42,7 +42,7 @@ func TestNewPriceEmptyVariantID(t *testing.T) {
 
 func TestNewPriceZeroAmount(t *testing.T) {
 	amount := shared.MustNewMoney(0, "EUR")
-	_, err := NewPrice(id.New(), "v1", amount)
+	_, err := NewPrice(id.New(), "v1", "", amount)
 	if err == nil {
 		t.Fatal("expected error for zero amount")
 	}
@@ -50,7 +50,7 @@ func TestNewPriceZeroAmount(t *testing.T) {
 
 func TestNewPriceZeroValueMoney(t *testing.T) {
 	var amount shared.Money // zero value — empty currency
-	_, err := NewPrice(id.New(), "v1", amount)
+	_, err := NewPrice(id.New(), "v1", "", amount)
 	if err == nil {
 		t.Fatal("expected error for zero-value Money")
 	}
@@ -58,7 +58,7 @@ func TestNewPriceZeroValueMoney(t *testing.T) {
 
 func TestNewPriceNegativeAmount(t *testing.T) {
 	amount := shared.MustNewMoney(-100, "EUR")
-	_, err := NewPrice(id.New(), "v1", amount)
+	_, err := NewPrice(id.New(), "v1", "", amount)
 	if err == nil {
 		t.Fatal("expected error for negative amount")
 	}

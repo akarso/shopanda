@@ -26,23 +26,24 @@ func NewPriceRepo(db *sql.DB) (*PriceRepo, error) {
 	return &PriceRepo{db: db}, nil
 }
 
-// FindByVariantAndCurrency returns the price for a variant in the given currency.
+// FindByVariantCurrencyAndStore returns the price for a variant in the given
+// currency and store. An empty storeID means the global/default price.
 // Returns (nil, nil) when no price exists.
-func (r *PriceRepo) FindByVariantAndCurrency(ctx context.Context, variantID, currency string) (*pricing.Price, error) {
-	const q = `SELECT id, variant_id, currency, amount, created_at
-		FROM prices WHERE variant_id = $1 AND currency = $2`
+func (r *PriceRepo) FindByVariantCurrencyAndStore(ctx context.Context, variantID, currency, storeID string) (*pricing.Price, error) {
+	const q = `SELECT id, variant_id, store_id, currency, amount, created_at
+		FROM prices WHERE variant_id = $1 AND currency = $2 AND store_id = $3`
 
 	var p pricing.Price
 	var amount int64
 	var cur string
-	err := r.db.QueryRowContext(ctx, q, variantID, currency).Scan(
-		&p.ID, &p.VariantID, &cur, &amount, &p.CreatedAt,
+	err := r.db.QueryRowContext(ctx, q, variantID, currency, storeID).Scan(
+		&p.ID, &p.VariantID, &p.StoreID, &cur, &amount, &p.CreatedAt,
 	)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
 	}
 	if err != nil {
-		return nil, fmt.Errorf("price_repo: find by variant and currency: %w", err)
+		return nil, fmt.Errorf("price_repo: find by variant currency and store: %w", err)
 	}
 	m, err := shared.NewMoney(amount, cur)
 	if err != nil {
@@ -54,8 +55,8 @@ func (r *PriceRepo) FindByVariantAndCurrency(ctx context.Context, variantID, cur
 
 // ListByVariantID returns all prices for a variant.
 func (r *PriceRepo) ListByVariantID(ctx context.Context, variantID string) ([]pricing.Price, error) {
-	const q = `SELECT id, variant_id, currency, amount, created_at
-		FROM prices WHERE variant_id = $1 ORDER BY currency`
+	const q = `SELECT id, variant_id, store_id, currency, amount, created_at
+		FROM prices WHERE variant_id = $1 ORDER BY currency, store_id`
 
 	rows, err := r.db.QueryContext(ctx, q, variantID)
 	if err != nil {
@@ -68,7 +69,7 @@ func (r *PriceRepo) ListByVariantID(ctx context.Context, variantID string) ([]pr
 		var p pricing.Price
 		var amount int64
 		var cur string
-		if err := rows.Scan(&p.ID, &p.VariantID, &cur, &amount, &p.CreatedAt); err != nil {
+		if err := rows.Scan(&p.ID, &p.VariantID, &p.StoreID, &cur, &amount, &p.CreatedAt); err != nil {
 			return nil, fmt.Errorf("price_repo: list scan: %w", err)
 		}
 		m, err := shared.NewMoney(amount, cur)
@@ -84,20 +85,20 @@ func (r *PriceRepo) ListByVariantID(ctx context.Context, variantID string) ([]pr
 	return prices, nil
 }
 
-// Upsert creates or updates a price for a variant+currency pair.
+// Upsert creates or updates a price for a variant+currency+store tuple.
 func (r *PriceRepo) Upsert(ctx context.Context, p *pricing.Price) error {
 	if p == nil {
 		return fmt.Errorf("price_repo: upsert: price must not be nil")
 	}
-	const q = `INSERT INTO prices (id, variant_id, currency, amount, created_at)
-		VALUES ($1, $2, $3, $4, $5)
-		ON CONFLICT (variant_id, currency) DO UPDATE
+	const q = `INSERT INTO prices (id, variant_id, store_id, currency, amount, created_at)
+		VALUES ($1, $2, $3, $4, $5, $6)
+		ON CONFLICT (variant_id, currency, store_id) DO UPDATE
 		SET amount = EXCLUDED.amount,
 		    id = EXCLUDED.id,
 		    created_at = EXCLUDED.created_at`
 
 	_, err := r.db.ExecContext(ctx, q,
-		p.ID, p.VariantID, p.Amount.Currency(), p.Amount.Amount(), p.CreatedAt,
+		p.ID, p.VariantID, p.StoreID, p.Amount.Currency(), p.Amount.Amount(), p.CreatedAt,
 	)
 	if err != nil {
 		return fmt.Errorf("price_repo: upsert: %w", err)
@@ -117,8 +118,8 @@ func (r *PriceRepo) List(ctx context.Context, offset, limit int) ([]pricing.Pric
 		limit = 100
 	}
 
-	const q = `SELECT id, variant_id, currency, amount, created_at
-		FROM prices ORDER BY variant_id, currency
+	const q = `SELECT id, variant_id, store_id, currency, amount, created_at
+		FROM prices ORDER BY variant_id, currency, store_id
 		LIMIT $1 OFFSET $2`
 
 	rows, err := r.db.QueryContext(ctx, q, limit, offset)
@@ -132,7 +133,7 @@ func (r *PriceRepo) List(ctx context.Context, offset, limit int) ([]pricing.Pric
 		var p pricing.Price
 		var amount int64
 		var cur string
-		if err := rows.Scan(&p.ID, &p.VariantID, &cur, &amount, &p.CreatedAt); err != nil {
+		if err := rows.Scan(&p.ID, &p.VariantID, &p.StoreID, &cur, &amount, &p.CreatedAt); err != nil {
 			return nil, fmt.Errorf("price_repo: list scan: %w", err)
 		}
 		m, err := shared.NewMoney(amount, cur)

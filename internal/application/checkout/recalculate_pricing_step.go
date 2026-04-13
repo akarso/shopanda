@@ -48,8 +48,8 @@ func (s *RecalculatePricingStep) Execute(cctx *Context) error {
 	}
 	pctx.Items = items
 
-	// Forward tax configuration from checkout context to pricing context.
-	for _, key := range []string{"tax_country", "tax_mode", "tax_classes"} {
+	// Forward tax configuration and store scope from checkout context to pricing context.
+	for _, key := range []string{"tax_country", "tax_mode", "tax_classes", "store_id"} {
 		if v, ok := cctx.GetMeta(key); ok {
 			pctx.Meta[key] = v
 		}

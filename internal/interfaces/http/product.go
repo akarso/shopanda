@@ -6,6 +6,7 @@ import (
 
 	"github.com/akarso/shopanda/internal/application/composition"
 	"github.com/akarso/shopanda/internal/domain/catalog"
+	"github.com/akarso/shopanda/internal/domain/store"
 	"github.com/akarso/shopanda/internal/platform/apperror"
 )
 
@@ -77,6 +78,15 @@ func (h *ProductHandler) Get() http.HandlerFunc {
 
 		ctx := composition.NewProductContext(product)
 		ctx.Ctx = r.Context()
+		if s := store.FromContext(r.Context()); s != nil {
+			ctx.StoreID = s.ID
+			if ctx.Currency == "" {
+				ctx.Currency = s.Currency
+			}
+			if ctx.Country == "" {
+				ctx.Country = s.Country
+			}
+		}
 		if err := h.pdp.Execute(ctx); err != nil {
 			JSONError(w, apperror.Wrap(apperror.CodeInternal, "composition failed", err))
 			return

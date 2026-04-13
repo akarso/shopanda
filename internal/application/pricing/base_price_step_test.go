@@ -11,17 +11,22 @@ import (
 	"github.com/akarso/shopanda/internal/domain/shared"
 )
 
+type priceKey struct {
+	Currency string
+	StoreID  string
+}
+
 type mockPriceRepo struct {
-	prices map[string]map[string]*domain.Price
+	prices map[string]map[priceKey]*domain.Price // variantID → {currency,storeID}
 	err    error
 }
 
-func (m *mockPriceRepo) FindByVariantAndCurrency(_ context.Context, variantID, currency string) (*domain.Price, error) {
+func (m *mockPriceRepo) FindByVariantCurrencyAndStore(_ context.Context, variantID, currency, storeID string) (*domain.Price, error) {
 	if m.err != nil {
 		return nil, m.err
 	}
 	if byVariant, ok := m.prices[variantID]; ok {
-		if p, ok := byVariant[currency]; ok {
+		if p, ok := byVariant[priceKey{currency, storeID}]; ok {
 			return p, nil
 		}
 	}
@@ -41,15 +46,16 @@ func (m *mockPriceRepo) Upsert(_ context.Context, _ *domain.Price) error {
 }
 
 func makeMockRepo(entries ...mockEntry) *mockPriceRepo {
-	repo := &mockPriceRepo{prices: make(map[string]map[string]*domain.Price)}
+	repo := &mockPriceRepo{prices: make(map[string]map[priceKey]*domain.Price)}
 	for _, e := range entries {
 		if _, ok := repo.prices[e.variantID]; !ok {
-			repo.prices[e.variantID] = make(map[string]*domain.Price)
+			repo.prices[e.variantID] = make(map[priceKey]*domain.Price)
 		}
 		m := shared.MustNewMoney(e.amount, e.currency)
-		repo.prices[e.variantID][e.currency] = &domain.Price{
+		repo.prices[e.variantID][priceKey{e.currency, e.storeID}] = &domain.Price{
 			ID:        "price-" + e.variantID + "-" + e.currency,
 			VariantID: e.variantID,
+			StoreID:   e.storeID,
 			Amount:    m,
 			CreatedAt: time.Now().UTC(),
 		}
@@ -61,6 +67,7 @@ type mockEntry struct {
 	variantID string
 	currency  string
 	amount    int64
+	storeID   string
 }
 
 func TestBasePriceStep_Name(t *testing.T) {
@@ -72,8 +79,8 @@ func TestBasePriceStep_Name(t *testing.T) {
 
 func TestBasePriceStep_PopulatesPrices(t *testing.T) {
 	repo := makeMockRepo(
-		mockEntry{"v1", "EUR", 500},
-		mockEntry{"v2", "EUR", 300},
+		mockEntry{"v1", "EUR", 500, ""},
+		mockEntry{"v2", "EUR", 300, ""},
 	)
 	step := pricing.NewBasePriceStep(repo)
 
@@ -100,7 +107,7 @@ func TestBasePriceStep_PopulatesPrices(t *testing.T) {
 }
 
 func TestBasePriceStep_NoPriceFound(t *testing.T) {
-	repo := &mockPriceRepo{prices: make(map[string]map[string]*domain.Price)}
+	repo := &mockPriceRepo{prices: make(map[string]map[priceKey]*domain.Price)}
 	step := pricing.NewBasePriceStep(repo)
 
 	pctx, _ := domain.NewPricingContext("EUR")
@@ -128,11 +135,65 @@ func TestBasePriceStep_RepoError(t *testing.T) {
 }
 
 func TestBasePriceStep_EmptyItems(t *testing.T) {
-	repo := &mockPriceRepo{prices: make(map[string]map[string]*domain.Price)}
+	repo := &mockPriceRepo{prices: make(map[string]map[priceKey]*domain.Price)}
 	step := pricing.NewBasePriceStep(repo)
 
 	pctx, _ := domain.NewPricingContext("EUR")
 	if err := step.Apply(context.Background(), &pctx); err != nil {
 		t.Fatalf("apply: %v", err)
+	}
+}
+
+func TestBasePriceStep_ReturnsStoreScopedPrice(t *testing.T) {
+	repo := makeMockRepo(
+		mockEntry{"v1", "EUR", 500, ""},
+		mockEntry{"v1", "EUR", 399, "store-1"},
+	)
+	step := pricing.NewBasePriceStep(repo)
+
+	pctx, _ := domain.NewPricingContext("EUR")
+	item, _ := domain.NewPricingItem("v1", 1, shared.MustNewMoney(0, "EUR"))
+	pctx.Items = []domain.PricingItem{item}
+	pctx.Meta["store_id"] = "store-1"
+
+	if err := step.Apply(context.Background(), &pctx); err != nil {
+		t.Fatalf("apply: %v", err)
+	}
+	if pctx.Items[0].UnitPrice.Amount() != 399 {
+		t.Errorf("UnitPrice = %d, want 399 (store-scoped)", pctx.Items[0].UnitPrice.Amount())
+	}
+}
+
+func TestBasePriceStep_FallsBackToGlobalPrice(t *testing.T) {
+	repo := makeMockRepo(
+		mockEntry{"v1", "EUR", 500, ""},
+	)
+	step := pricing.NewBasePriceStep(repo)
+
+	pctx, _ := domain.NewPricingContext("EUR")
+	item, _ := domain.NewPricingItem("v1", 1, shared.MustNewMoney(0, "EUR"))
+	pctx.Items = []domain.PricingItem{item}
+	pctx.Meta["store_id"] = "store-1"
+
+	if err := step.Apply(context.Background(), &pctx); err != nil {
+		t.Fatalf("apply: %v", err)
+	}
+	if pctx.Items[0].UnitPrice.Amount() != 500 {
+		t.Errorf("UnitPrice = %d, want 500 (global fallback)", pctx.Items[0].UnitPrice.Amount())
+	}
+}
+
+func TestBasePriceStep_ErrorsWhenNoPrice(t *testing.T) {
+	repo := &mockPriceRepo{prices: make(map[string]map[priceKey]*domain.Price)}
+	step := pricing.NewBasePriceStep(repo)
+
+	pctx, _ := domain.NewPricingContext("EUR")
+	item, _ := domain.NewPricingItem("v1", 1, shared.MustNewMoney(0, "EUR"))
+	pctx.Items = []domain.PricingItem{item}
+	pctx.Meta["store_id"] = "store-1"
+
+	err := step.Apply(context.Background(), &pctx)
+	if err == nil {
+		t.Fatal("expected error when no price exists for store or global")
 	}
 }

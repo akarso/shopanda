@@ -195,7 +195,7 @@ func (s *CatalogSeeder) seedProducts(
 			if err != nil {
 				return fmt.Errorf("seed: invalid money for variant %q: %w", sv.SKU, err)
 			}
-			price, err := pricing.NewPrice(id.New(), variantID, money)
+			price, err := pricing.NewPrice(id.New(), variantID, "", money)
 			if err != nil {
 				return err
 			}

@@ -13,15 +13,15 @@ import (
 
 // mockRateRepo is a test double for tax.RateRepository.
 type mockRateRepo struct {
-	rates map[string]*tax.TaxRate // key: "country:class"
+	rates map[string]*tax.TaxRate // key: "country:class:storeID"
 	err   error
 }
 
-func (m *mockRateRepo) FindByCountryAndClass(_ context.Context, country, class string) (*tax.TaxRate, error) {
+func (m *mockRateRepo) FindByCountryClassAndStore(_ context.Context, country, class, storeID string) (*tax.TaxRate, error) {
 	if m.err != nil {
 		return nil, m.err
 	}
-	return m.rates[country+":"+class], nil
+	return m.rates[country+":"+class+":"+storeID], nil
 }
 func (m *mockRateRepo) ListByCountry(_ context.Context, _ string) ([]tax.TaxRate, error) {
 	return nil, nil
@@ -50,7 +50,7 @@ func TestTaxStep_Name(t *testing.T) {
 
 func TestTaxStep_Exclusive(t *testing.T) {
 	repo := &mockRateRepo{rates: map[string]*tax.TaxRate{
-		"DE:standard": {ID: "r1", Country: "DE", Class: "standard", Rate: 1900},
+		"DE:standard:": {ID: "r1", Country: "DE", Class: "standard", Rate: 1900},
 	}}
 	step := appPricing.NewTaxStep(repo, "standard")
 
@@ -87,7 +87,7 @@ func TestTaxStep_Exclusive(t *testing.T) {
 
 func TestTaxStep_Inclusive(t *testing.T) {
 	repo := &mockRateRepo{rates: map[string]*tax.TaxRate{
-		"DE:standard": {ID: "r1", Country: "DE", Class: "standard", Rate: 1900},
+		"DE:standard:": {ID: "r1", Country: "DE", Class: "standard", Rate: 1900},
 	}}
 	step := appPricing.NewTaxStep(repo, "standard")
 
@@ -115,7 +115,7 @@ func TestTaxStep_Inclusive(t *testing.T) {
 
 func TestTaxStep_MultipleItems(t *testing.T) {
 	repo := &mockRateRepo{rates: map[string]*tax.TaxRate{
-		"DE:standard": {ID: "r1", Country: "DE", Class: "standard", Rate: 1900},
+		"DE:standard:": {ID: "r1", Country: "DE", Class: "standard", Rate: 1900},
 	}}
 	step := appPricing.NewTaxStep(repo, "standard")
 
@@ -139,7 +139,7 @@ func TestTaxStep_MultipleItems(t *testing.T) {
 
 func TestTaxStep_ZeroRate(t *testing.T) {
 	repo := &mockRateRepo{rates: map[string]*tax.TaxRate{
-		"DE:zero": {ID: "r1", Country: "DE", Class: "zero", Rate: 0},
+		"DE:zero:": {ID: "r1", Country: "DE", Class: "zero", Rate: 0},
 	}}
 	step := appPricing.NewTaxStep(repo, "zero")
 
@@ -173,8 +173,8 @@ func TestTaxStep_NoRate(t *testing.T) {
 
 func TestTaxStep_PerVariantClassOverride(t *testing.T) {
 	repo := &mockRateRepo{rates: map[string]*tax.TaxRate{
-		"DE:standard": {ID: "r1", Country: "DE", Class: "standard", Rate: 1900},
-		"DE:reduced":  {ID: "r2", Country: "DE", Class: "reduced", Rate: 700},
+		"DE:standard:": {ID: "r1", Country: "DE", Class: "standard", Rate: 1900},
+		"DE:reduced:":  {ID: "r2", Country: "DE", Class: "reduced", Rate: 700},
 	}}
 	step := appPricing.NewTaxStep(repo, "standard")
 
@@ -256,7 +256,7 @@ func TestTaxStep_RepoError(t *testing.T) {
 
 func TestTaxStep_FullPipeline_Exclusive(t *testing.T) {
 	repo := &mockRateRepo{rates: map[string]*tax.TaxRate{
-		"DE:standard": {ID: "r1", Country: "DE", Class: "standard", Rate: 2100},
+		"DE:standard:": {ID: "r1", Country: "DE", Class: "standard", Rate: 2100},
 	}}
 
 	// Build full pipeline: base prices are already set, so we skip BasePriceStep
@@ -291,7 +291,7 @@ func TestTaxStep_FullPipeline_Exclusive(t *testing.T) {
 
 func TestTaxStep_FullPipeline_Inclusive(t *testing.T) {
 	repo := &mockRateRepo{rates: map[string]*tax.TaxRate{
-		"DE:standard": {ID: "r1", Country: "DE", Class: "standard", Rate: 2100},
+		"DE:standard:": {ID: "r1", Country: "DE", Class: "standard", Rate: 2100},
 	}}
 
 	taxStep := appPricing.NewTaxStep(repo, "standard")
@@ -325,7 +325,7 @@ func TestTaxStep_FullPipeline_Inclusive(t *testing.T) {
 
 func TestTaxStep_Inclusive_Quantity(t *testing.T) {
 	repo := &mockRateRepo{rates: map[string]*tax.TaxRate{
-		"DE:standard": {ID: "r1", Country: "DE", Class: "standard", Rate: 1900},
+		"DE:standard:": {ID: "r1", Country: "DE", Class: "standard", Rate: 1900},
 	}}
 	step := appPricing.NewTaxStep(repo, "standard")
 
@@ -344,5 +344,57 @@ func TestTaxStep_Inclusive_Quantity(t *testing.T) {
 	}
 	if pctx.Items[0].Total.Amount() != 2000 {
 		t.Errorf("net total = %d, want 2000", pctx.Items[0].Total.Amount())
+	}
+}
+
+func TestTaxStep_StoreOverride(t *testing.T) {
+	repo := &mockRateRepo{rates: map[string]*tax.TaxRate{
+		"DE:standard:":       {ID: "r1", Country: "DE", Class: "standard", Rate: 1900},
+		"DE:standard:store1": {ID: "r2", Country: "DE", Class: "standard", Rate: 700},
+	}}
+	step := appPricing.NewTaxStep(repo, "standard")
+
+	item, _ := pricing.NewPricingItem("v1", 1, shared.MustNewMoney(10000, "EUR"))
+	pctx := taxPricingContext(t, "EUR", "DE", "exclusive", item)
+	pctx.Meta["store_id"] = "store1"
+
+	if err := step.Apply(context.Background(), &pctx); err != nil {
+		t.Fatalf("Apply: %v", err)
+	}
+
+	if len(pctx.Items[0].Adjustments) != 1 {
+		t.Fatalf("adjustments = %d, want 1", len(pctx.Items[0].Adjustments))
+	}
+	adj := pctx.Items[0].Adjustments[0]
+	// Store-specific rate 7%: 10000 * 700 / 10000 = 700
+	if adj.Amount.Amount() != 700 {
+		t.Errorf("tax amount = %d, want 700 (store-specific)", adj.Amount.Amount())
+	}
+	if adj.Code != "tax.DE.standard" {
+		t.Errorf("code = %q, want %q", adj.Code, "tax.DE.standard")
+	}
+}
+
+func TestTaxStep_StoreFallback(t *testing.T) {
+	repo := &mockRateRepo{rates: map[string]*tax.TaxRate{
+		"DE:standard:": {ID: "r1", Country: "DE", Class: "standard", Rate: 1900},
+	}}
+	step := appPricing.NewTaxStep(repo, "standard")
+
+	item, _ := pricing.NewPricingItem("v1", 1, shared.MustNewMoney(10000, "EUR"))
+	pctx := taxPricingContext(t, "EUR", "DE", "exclusive", item)
+	pctx.Meta["store_id"] = "store2"
+
+	if err := step.Apply(context.Background(), &pctx); err != nil {
+		t.Fatalf("Apply: %v", err)
+	}
+
+	if len(pctx.Items[0].Adjustments) != 1 {
+		t.Fatalf("adjustments = %d, want 1", len(pctx.Items[0].Adjustments))
+	}
+	adj := pctx.Items[0].Adjustments[0]
+	// Falls back to global 19%: 10000 * 1900 / 10000 = 1900
+	if adj.Amount.Amount() != 1900 {
+		t.Errorf("tax amount = %d, want 1900 (global fallback)", adj.Amount.Amount())
 	}
 }

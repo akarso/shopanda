@@ -19,8 +19,13 @@ func ensurePricesTable(t *testing.T, db interface {
 
 func mustNewPrice(t *testing.T, variantID string, amount int64, currency string) pricing.Price {
 	t.Helper()
+	return mustNewPriceWithStore(t, variantID, "", amount, currency)
+}
+
+func mustNewPriceWithStore(t *testing.T, variantID, storeID string, amount int64, currency string) pricing.Price {
+	t.Helper()
 	m := shared.MustNewMoney(amount, currency)
-	p, err := pricing.NewPrice(id.New(), variantID, m)
+	p, err := pricing.NewPrice(id.New(), variantID, storeID, m)
 	if err != nil {
 		t.Fatalf("NewPrice: %v", err)
 	}
@@ -64,7 +69,7 @@ func TestPriceRepo_UpsertAndFind(t *testing.T) {
 	}
 
 	// Find it
-	found, err := repo.FindByVariantAndCurrency(ctx, v.ID, "EUR")
+	found, err := repo.FindByVariantCurrencyAndStore(ctx, v.ID, "EUR", "")
 	if err != nil {
 		t.Fatalf("find: %v", err)
 	}
@@ -89,7 +94,7 @@ func TestPriceRepo_FindNotFound(t *testing.T) {
 		t.Fatalf("NewPriceRepo: %v", err)
 	}
 
-	found, err := repo.FindByVariantAndCurrency(ctx, id.New(), "EUR")
+	found, err := repo.FindByVariantCurrencyAndStore(ctx, id.New(), "EUR", "")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -139,7 +144,7 @@ func TestPriceRepo_UpsertUpdatesAmount(t *testing.T) {
 		t.Fatalf("upsert update: %v", err)
 	}
 
-	found, err := repo.FindByVariantAndCurrency(ctx, v.ID, "EUR")
+	found, err := repo.FindByVariantCurrencyAndStore(ctx, v.ID, "EUR", "")
 	if err != nil {
 		t.Fatalf("find: %v", err)
 	}
@@ -214,5 +219,122 @@ func TestPriceRepo_UpsertNil(t *testing.T) {
 
 	if err := repo.Upsert(ctx, nil); err == nil {
 		t.Fatal("expected error for nil price")
+	}
+}
+
+func TestPriceRepo_StoreScopedUpsertAndFind(t *testing.T) {
+	db := testDB(t)
+	ensureProductsTable(t, db)
+	t.Cleanup(func() { db.Exec("DELETE FROM prices") })
+
+	ctx := context.Background()
+
+	prodRepo, err := postgres.NewProductRepo(db)
+	if err != nil {
+		t.Fatalf("NewProductRepo: %v", err)
+	}
+	prod := mustNewProduct(t, "Test Product", "test-store-price-"+id.New()[:8])
+	if err := prodRepo.Create(ctx, &prod); err != nil {
+		t.Fatalf("create product: %v", err)
+	}
+	variantRepo, err := postgres.NewVariantRepo(db)
+	if err != nil {
+		t.Fatalf("NewVariantRepo: %v", err)
+	}
+	v := mustNewVariant(t, prod.ID, "SKU-STOREPRICE-"+id.New()[:8])
+	if err := variantRepo.Create(ctx, &v); err != nil {
+		t.Fatalf("create variant: %v", err)
+	}
+
+	repo, err := postgres.NewPriceRepo(db)
+	if err != nil {
+		t.Fatalf("NewPriceRepo: %v", err)
+	}
+
+	// Upsert a store-scoped price.
+	price := mustNewPriceWithStore(t, v.ID, "store-de", 899, "EUR")
+	if err := repo.Upsert(ctx, &price); err != nil {
+		t.Fatalf("upsert: %v", err)
+	}
+
+	// Find it by store.
+	found, err := repo.FindByVariantCurrencyAndStore(ctx, v.ID, "EUR", "store-de")
+	if err != nil {
+		t.Fatalf("find: %v", err)
+	}
+	if found == nil {
+		t.Fatal("expected store-scoped price, got nil")
+	}
+	if found.Amount.Amount() != 899 {
+		t.Errorf("amount = %d, want 899", found.Amount.Amount())
+	}
+	if found.StoreID != "store-de" {
+		t.Errorf("storeID = %q, want store-de", found.StoreID)
+	}
+
+	// Global lookup should NOT return the store-scoped price.
+	global, err := repo.FindByVariantCurrencyAndStore(ctx, v.ID, "EUR", "")
+	if err != nil {
+		t.Fatalf("find global: %v", err)
+	}
+	if global != nil {
+		t.Error("expected nil for global lookup, got a price")
+	}
+}
+
+func TestPriceRepo_StoreScopedCoexistence(t *testing.T) {
+	db := testDB(t)
+	ensureProductsTable(t, db)
+	t.Cleanup(func() { db.Exec("DELETE FROM prices") })
+
+	ctx := context.Background()
+
+	prodRepo, err := postgres.NewProductRepo(db)
+	if err != nil {
+		t.Fatalf("NewProductRepo: %v", err)
+	}
+	prod := mustNewProduct(t, "Test Product", "test-coexist-"+id.New()[:8])
+	if err := prodRepo.Create(ctx, &prod); err != nil {
+		t.Fatalf("create product: %v", err)
+	}
+	variantRepo, err := postgres.NewVariantRepo(db)
+	if err != nil {
+		t.Fatalf("NewVariantRepo: %v", err)
+	}
+	v := mustNewVariant(t, prod.ID, "SKU-COEXIST-"+id.New()[:8])
+	if err := variantRepo.Create(ctx, &v); err != nil {
+		t.Fatalf("create variant: %v", err)
+	}
+
+	repo, err := postgres.NewPriceRepo(db)
+	if err != nil {
+		t.Fatalf("NewPriceRepo: %v", err)
+	}
+
+	// Global price.
+	global := mustNewPrice(t, v.ID, 1000, "EUR")
+	if err := repo.Upsert(ctx, &global); err != nil {
+		t.Fatalf("upsert global: %v", err)
+	}
+	// Store-scoped price (same variant + currency, different store).
+	scoped := mustNewPriceWithStore(t, v.ID, "store-us", 799, "EUR")
+	if err := repo.Upsert(ctx, &scoped); err != nil {
+		t.Fatalf("upsert scoped: %v", err)
+	}
+
+	// Both coexist.
+	foundGlobal, err := repo.FindByVariantCurrencyAndStore(ctx, v.ID, "EUR", "")
+	if err != nil {
+		t.Fatalf("find global: %v", err)
+	}
+	if foundGlobal == nil || foundGlobal.Amount.Amount() != 1000 {
+		t.Errorf("global amount = %v, want 1000", foundGlobal)
+	}
+	foundScoped, err := repo.FindByVariantCurrencyAndStore(ctx, v.ID, "EUR", "store-us")
+	if err != nil {
+		t.Fatalf("find scoped: %v", err)
+	}
+	if foundScoped == nil || foundScoped.Amount.Amount() != 799 {
+		t.Errorf("scoped amount = %v, want 799", foundScoped)
 	}
 }
