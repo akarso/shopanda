@@ -72,7 +72,7 @@ func (m *mockContentTranslationRepo) FindByEntityAndLanguage(ctx context.Context
 	if m.findByEntityFn != nil {
 		return m.findByEntityFn(ctx, entityID, language)
 	}
-	return nil, nil
+	return []translation.ContentTranslation{}, nil
 }
 func (m *mockContentTranslationRepo) FindFieldValue(_ context.Context, _, _, _ string) (*translation.ContentTranslation, error) {
 	return nil, nil
@@ -93,10 +93,10 @@ func TestContentTranslator_TranslateFields_Found(t *testing.T) {
 					{EntityID: "prod-1", Language: "de", Field: "description", Value: "Eine Beschreibung"},
 				}, nil
 			}
-			return nil, nil
+			return []translation.ContentTranslation{}, nil
 		},
 	}
-	ct := translation.NewContentTranslator(repo)
+	ct := translation.NewContentTranslator(repo, nil)
 	ctx := translation.WithLanguage(context.Background(), "de")
 
 	fields := ct.TranslateFields(ctx, "prod-1")
@@ -113,7 +113,7 @@ func TestContentTranslator_TranslateFields_Found(t *testing.T) {
 
 func TestContentTranslator_TranslateFields_NotFound(t *testing.T) {
 	repo := &mockContentTranslationRepo{}
-	ct := translation.NewContentTranslator(repo)
+	ct := translation.NewContentTranslator(repo, nil)
 	ctx := translation.WithLanguage(context.Background(), "de")
 
 	fields := ct.TranslateFields(ctx, "missing")
@@ -130,10 +130,10 @@ func TestContentTranslator_TranslateFields_DefaultLanguage(t *testing.T) {
 					{EntityID: "page-1", Language: "en", Field: "title", Value: "Welcome"},
 				}, nil
 			}
-			return nil, nil
+			return []translation.ContentTranslation{}, nil
 		},
 	}
-	ct := translation.NewContentTranslator(repo)
+	ct := translation.NewContentTranslator(repo, nil)
 	// No language in context → defaults to "en".
 	fields := ct.TranslateFields(context.Background(), "page-1")
 	if fields == nil {

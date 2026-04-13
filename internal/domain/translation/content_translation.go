@@ -30,7 +30,7 @@ func NewContentTranslation(entityID, language, field, value string) (ContentTran
 		return ContentTranslation{}, errors.New("content translation language must be a valid BCP 47 tag (e.g. en, pt-BR)")
 	}
 	language = tag.String()
-	field = strings.TrimSpace(field)
+	field = strings.ToLower(strings.TrimSpace(field))
 	if field == "" {
 		return ContentTranslation{}, errors.New("content translation field must not be empty")
 	}

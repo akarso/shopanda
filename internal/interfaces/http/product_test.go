@@ -351,9 +351,9 @@ func TestProductHandler_Get_WithContentTranslation(t *testing.T) {
 					{EntityID: entityID, Language: lang, Field: "description", Value: "Ein schönes Ding"},
 				}, nil
 			}
-			return nil, nil
+			return []translation.ContentTranslation{}, nil
 		},
-	})
+	}, nil)
 	pdp := composition.NewPipeline[composition.ProductContext]()
 	plp := composition.NewPipeline[composition.ListingContext]()
 	h := shophttp.NewProductHandler(repo, pdp, plp, ct)

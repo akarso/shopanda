@@ -109,7 +109,7 @@ func (m *mockContentTranslationRepo) FindByEntityAndLanguage(ctx context.Context
 	if m.findByEntityAndLanguageFn != nil {
 		return m.findByEntityAndLanguageFn(ctx, entityID, language)
 	}
-	return nil, nil
+	return []translation.ContentTranslation{}, nil
 }
 
 func (m *mockContentTranslationRepo) FindFieldValue(context.Context, string, string, string) (*translation.ContentTranslation, error) {
@@ -231,9 +231,9 @@ func TestPageHandler_Get_WithContentTranslation(t *testing.T) {
 					{EntityID: entityID, Language: lang, Field: "content", Value: "<p>Hallo</p>"},
 				}, nil
 			}
-			return nil, nil
+			return []translation.ContentTranslation{}, nil
 		},
-	})
+	}, nil)
 	h := shophttp.NewPageHandler(repo, ct)
 
 	rec := httptest.NewRecorder()

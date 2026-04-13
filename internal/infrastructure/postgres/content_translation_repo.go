@@ -81,7 +81,8 @@ func (r *ContentTranslationRepo) Upsert(ctx context.Context, ct *translation.Con
 	if ct == nil {
 		return fmt.Errorf("content_translation_repo: upsert: content translation must not be nil")
 	}
-	if _, err := translation.NewContentTranslation(ct.EntityID, ct.Language, ct.Field, ct.Value); err != nil {
+	normalized, err := translation.NewContentTranslation(ct.EntityID, ct.Language, ct.Field, ct.Value)
+	if err != nil {
 		return fmt.Errorf("content_translation_repo: upsert: %w", err)
 	}
 	const q = `INSERT INTO content_translations (entity_id, language, field, value)
@@ -89,7 +90,7 @@ func (r *ContentTranslationRepo) Upsert(ctx context.Context, ct *translation.Con
 		ON CONFLICT (entity_id, language, field) DO UPDATE
 		SET value = EXCLUDED.value`
 
-	_, err := r.db.ExecContext(ctx, q, ct.EntityID, ct.Language, ct.Field, ct.Value)
+	_, err = r.db.ExecContext(ctx, q, normalized.EntityID, normalized.Language, normalized.Field, normalized.Value)
 	if err != nil {
 		return fmt.Errorf("content_translation_repo: upsert: %w", err)
 	}

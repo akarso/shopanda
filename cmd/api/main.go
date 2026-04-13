@@ -274,7 +274,7 @@ func runServe(cfg *config.Config, log logger.Logger) error {
 	if err != nil {
 		return err
 	}
-	contentTranslator := translation.NewContentTranslator(contentTranslationRepo)
+	contentTranslator := translation.NewContentTranslator(contentTranslationRepo, log)
 
 	// Cache.
 	_ = appCache // wired by consumers in upcoming PRs
