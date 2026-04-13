@@ -20,6 +20,7 @@ type Config struct {
 	Media    MediaConfig    `yaml:"media"`
 	Cache    CacheConfig    `yaml:"cache"`
 	Frontend FrontendConfig `yaml:"frontend"`
+	CDN      CDNConfig      `yaml:"cdn"`
 }
 
 type ServerConfig struct {
@@ -85,6 +86,10 @@ type FrontendConfig struct {
 	Enabled   bool   `yaml:"enabled"`
 	Mode      string `yaml:"mode"`
 	ThemePath string `yaml:"theme_path"`
+}
+
+type CDNConfig struct {
+	BaseURL string `yaml:"base_url"`
 }
 
 // values holds flattened dot-notation keys for generic access.
@@ -317,6 +322,9 @@ func applyEnv(cfg *Config) {
 	if v := os.Getenv("SHOPANDA_FRONTEND_THEME_PATH"); v != "" {
 		cfg.Frontend.ThemePath = v
 	}
+	if v := os.Getenv("SHOPANDA_CDN_BASE_URL"); v != "" {
+		cfg.CDN.BaseURL = v
+	}
 }
 
 // flatten converts the Config struct into a dot-notation key-value map.
@@ -346,6 +354,7 @@ func flatten(cfg *Config) map[string]string {
 	m["frontend.enabled"] = strconv.FormatBool(cfg.Frontend.Enabled)
 	m["frontend.mode"] = cfg.Frontend.Mode
 	m["frontend.theme_path"] = cfg.Frontend.ThemePath
+	m["cdn.base_url"] = cfg.CDN.BaseURL
 	return m
 }
 
