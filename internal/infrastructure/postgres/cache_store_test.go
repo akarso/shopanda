@@ -1,8 +1,10 @@
 package postgres
 
 import (
+	"context"
 	"database/sql"
 	"encoding/json"
+	"strings"
 	"testing"
 	"time"
 
@@ -54,6 +56,15 @@ func (s *stubCache) Set(key string, value any, ttl time.Duration) error {
 
 func (s *stubCache) Delete(key string) error {
 	delete(s.entries, key)
+	return nil
+}
+
+func (s *stubCache) DeleteByPrefix(_ context.Context, prefix string) error {
+	for k := range s.entries {
+		if strings.HasPrefix(k, prefix) {
+			delete(s.entries, k)
+		}
+	}
 	return nil
 }
 

@@ -92,6 +92,15 @@ func (s *CacheStore) Delete(key string) error {
 	return nil
 }
 
+// DeleteByPrefix removes all entries whose key starts with prefix.
+func (s *CacheStore) DeleteByPrefix(ctx context.Context, prefix string) error {
+	_, err := s.db.ExecContext(ctx, `DELETE FROM cache WHERE key LIKE $1`, prefix+"%")
+	if err != nil {
+		return fmt.Errorf("cache_store: delete by prefix %q: %w", prefix, err)
+	}
+	return nil
+}
+
 // DeleteExpired removes all entries whose TTL has elapsed.
 // Called by the cache cleanup scheduled job.
 func (s *CacheStore) DeleteExpired(ctx context.Context) (int64, error) {

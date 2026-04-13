@@ -1,6 +1,9 @@
 package cache
 
-import "time"
+import (
+	"context"
+	"time"
+)
 
 // Cache abstracts key-value caching operations.
 // The default implementation uses a PostgreSQL UNLOGGED table;
@@ -16,4 +19,8 @@ type Cache interface {
 
 	// Delete removes the entry for key. A missing key is not an error.
 	Delete(key string) error
+
+	// DeleteByPrefix removes all entries whose key starts with prefix.
+	// Used for cache invalidation when a product or price changes.
+	DeleteByPrefix(ctx context.Context, prefix string) error
 }
