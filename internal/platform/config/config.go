@@ -2,6 +2,7 @@ package config
 
 import (
 	"fmt"
+	"net/url"
 	"os"
 	"strconv"
 	"strings"
@@ -22,8 +23,9 @@ type Config struct {
 }
 
 type ServerConfig struct {
-	Host string `yaml:"host"`
-	Port int    `yaml:"port"`
+	Host          string `yaml:"host"`
+	Port          int    `yaml:"port"`
+	PublicBaseURL string `yaml:"public_base_url"`
 }
 
 type DatabaseConfig struct {
@@ -104,6 +106,11 @@ func Load(path string) (*Config, error) {
 	}
 
 	applyEnv(&cfg)
+
+	if err := normalizePublicBaseURL(&cfg); err != nil {
+		return nil, fmt.Errorf("config: %w", err)
+	}
+
 	values = flatten(&cfg)
 
 	return &cfg, nil
@@ -186,6 +193,44 @@ func defaults() Config {
 	}
 }
 
+// normalizePublicBaseURL validates and normalizes the PublicBaseURL field.
+// If empty, it falls back to http://host:port from the server config.
+// If set, it defaults the scheme to https when missing, strips trailing slashes,
+// and returns an error if the value is not a valid URL.
+func normalizePublicBaseURL(cfg *Config) error {
+	raw := cfg.Server.PublicBaseURL
+	if raw == "" {
+		host := cfg.Server.Host
+		if host == "" || host == "0.0.0.0" || host == "::" {
+			return fmt.Errorf("server.public_base_url: must be set explicitly when server.host is a wildcard bind address (%q)", host)
+		}
+		cfg.Server.PublicBaseURL = fmt.Sprintf("http://%s:%d", host, cfg.Server.Port)
+		return nil
+	}
+
+	// Default scheme to https if missing.
+	if !strings.Contains(raw, "://") {
+		raw = "https://" + raw
+	}
+
+	u, err := url.Parse(raw)
+	if err != nil {
+		return fmt.Errorf("server.public_base_url: invalid URL %q: %w", raw, err)
+	}
+	if u.Host == "" {
+		return fmt.Errorf("server.public_base_url: missing host in %q", raw)
+	}
+	if u.Scheme != "http" && u.Scheme != "https" {
+		return fmt.Errorf("server.public_base_url: unsupported scheme %q", u.Scheme)
+	}
+	if u.RawQuery != "" || u.Fragment != "" {
+		return fmt.Errorf("server.public_base_url: must not contain query or fragment")
+	}
+
+	cfg.Server.PublicBaseURL = u.Scheme + "://" + u.Host + strings.TrimRight(u.Path, "/")
+	return nil
+}
+
 // applyEnv overlays environment variables with SHOPANDA_ prefix.
 func applyEnv(cfg *Config) {
 	if v := os.Getenv("SHOPANDA_SERVER_HOST"); v != "" {
@@ -195,6 +240,9 @@ func applyEnv(cfg *Config) {
 		if p, err := strconv.Atoi(v); err == nil {
 			cfg.Server.Port = p
 		}
+	}
+	if v := os.Getenv("SHOPANDA_SERVER_PUBLIC_BASE_URL"); v != "" {
+		cfg.Server.PublicBaseURL = v
 	}
 	if v := os.Getenv("SHOPANDA_DATABASE_HOST"); v != "" {
 		cfg.Database.Host = v
@@ -276,6 +324,7 @@ func flatten(cfg *Config) map[string]string {
 	m := make(map[string]string)
 	m["server.host"] = cfg.Server.Host
 	m["server.port"] = strconv.Itoa(cfg.Server.Port)
+	m["server.public_base_url"] = cfg.Server.PublicBaseURL
 	m["database.host"] = cfg.Database.Host
 	m["database.port"] = strconv.Itoa(cfg.Database.Port)
 	m["database.user"] = cfg.Database.User

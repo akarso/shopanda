@@ -7,7 +7,15 @@ import (
 	"testing"
 )
 
+// withTestBaseURL sets a valid PublicBaseURL via env so tests that don't
+// exercise PublicBaseURL logic are not affected by wildcard-host rejection.
+func withTestBaseURL(t *testing.T) {
+	t.Helper()
+	t.Setenv("SHOPANDA_SERVER_PUBLIC_BASE_URL", "http://test.localhost:8080")
+}
+
 func TestLoad_Defaults(t *testing.T) {
+	withTestBaseURL(t)
 	path := writeYAML(t, "")
 
 	cfg, err := Load(path)
@@ -30,6 +38,7 @@ func TestLoad_Defaults(t *testing.T) {
 }
 
 func TestLoad_YAMLOverridesDefaults(t *testing.T) {
+	withTestBaseURL(t)
 	yaml := `
 server:
   port: 9090
@@ -56,6 +65,7 @@ log:
 }
 
 func TestLoad_EnvOverridesYAML(t *testing.T) {
+	withTestBaseURL(t)
 	yaml := `
 server:
   port: 9090
@@ -114,6 +124,7 @@ log:
 }
 
 func TestGetOrDefault(t *testing.T) {
+	withTestBaseURL(t)
 	yaml := `
 server:
   port: 3000
@@ -134,6 +145,7 @@ server:
 }
 
 func TestGetInt(t *testing.T) {
+	withTestBaseURL(t)
 	yaml := `
 server:
   port: 5000
@@ -154,6 +166,7 @@ server:
 }
 
 func TestDatabaseDSN(t *testing.T) {
+	withTestBaseURL(t)
 	yaml := `
 database:
   host: localhost
@@ -177,6 +190,7 @@ database:
 }
 
 func TestDatabaseDSN_EnvOverride(t *testing.T) {
+	withTestBaseURL(t)
 	path := writeYAML(t, "")
 
 	cfg, err := Load(path)
@@ -209,6 +223,7 @@ func TestLoad_InvalidYAML(t *testing.T) {
 }
 
 func TestConfigString_RedactsPassword(t *testing.T) {
+	withTestBaseURL(t)
 	yaml := `
 database:
   password: supersecret
@@ -244,6 +259,7 @@ func writeYAML(t *testing.T, content string) string {
 }
 
 func TestLoad_CacheDriverDefault(t *testing.T) {
+	withTestBaseURL(t)
 	path := writeYAML(t, "")
 
 	cfg, err := Load(path)
@@ -257,6 +273,7 @@ func TestLoad_CacheDriverDefault(t *testing.T) {
 }
 
 func TestLoad_CacheDriverEnvOverlay(t *testing.T) {
+	withTestBaseURL(t)
 	path := writeYAML(t, "")
 
 	// Use a clearly fake value to exercise the env overlay without implying runtime support.
@@ -278,6 +295,7 @@ func TestLoad_CacheDriverEnvOverlay(t *testing.T) {
 }
 
 func TestConfigString_ContainsCacheDriver(t *testing.T) {
+	withTestBaseURL(t)
 	path := writeYAML(t, "")
 
 	cfg, err := Load(path)
@@ -288,5 +306,189 @@ func TestConfigString_ContainsCacheDriver(t *testing.T) {
 	s := cfg.String()
 	if !strings.Contains(s, "cache.driver=postgres") {
 		t.Errorf("String() = %q, should contain cache.driver=postgres", s)
+	}
+}
+
+func TestLoad_PublicBaseURL_RejectsWildcardHost(t *testing.T) {
+	path := writeYAML(t, "")
+
+	_, err := Load(path)
+	if err == nil {
+		t.Fatal("Load() expected error for wildcard bind host without public_base_url")
+	}
+	if !strings.Contains(err.Error(), "wildcard bind address") {
+		t.Errorf("error = %q, want mention of wildcard bind address", err)
+	}
+}
+
+func TestLoad_PublicBaseURL_FallsBackFromNonWildcardHost(t *testing.T) {
+	yaml := `
+server:
+  host: "127.0.0.1"
+  port: 3000
+`
+	path := writeYAML(t, yaml)
+
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load() error: %v", err)
+	}
+
+	want := "http://127.0.0.1:3000"
+	if cfg.Server.PublicBaseURL != want {
+		t.Errorf("PublicBaseURL = %q, want %q", cfg.Server.PublicBaseURL, want)
+	}
+}
+
+func TestLoad_PublicBaseURL_DefaultsSchemeToHTTPS(t *testing.T) {
+	yaml := `
+server:
+  public_base_url: "shop.example.com"
+`
+	path := writeYAML(t, yaml)
+
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load() error: %v", err)
+	}
+
+	want := "https://shop.example.com"
+	if cfg.Server.PublicBaseURL != want {
+		t.Errorf("PublicBaseURL = %q, want %q", cfg.Server.PublicBaseURL, want)
+	}
+}
+
+func TestLoad_PublicBaseURL_StripsTrailingSlash(t *testing.T) {
+	yaml := `
+server:
+  public_base_url: "https://shop.example.com/"
+`
+	path := writeYAML(t, yaml)
+
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load() error: %v", err)
+	}
+
+	want := "https://shop.example.com"
+	if cfg.Server.PublicBaseURL != want {
+		t.Errorf("PublicBaseURL = %q, want %q", cfg.Server.PublicBaseURL, want)
+	}
+}
+
+func TestLoad_PublicBaseURL_PreservesExplicitScheme(t *testing.T) {
+	yaml := `
+server:
+  public_base_url: "http://localhost:3000"
+`
+	path := writeYAML(t, yaml)
+
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load() error: %v", err)
+	}
+
+	want := "http://localhost:3000"
+	if cfg.Server.PublicBaseURL != want {
+		t.Errorf("PublicBaseURL = %q, want %q", cfg.Server.PublicBaseURL, want)
+	}
+}
+
+func TestLoad_PublicBaseURL_EnvOverride(t *testing.T) {
+	path := writeYAML(t, "")
+
+	t.Setenv("SHOPANDA_SERVER_PUBLIC_BASE_URL", "shop.example.com/")
+
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load() error: %v", err)
+	}
+
+	want := "https://shop.example.com"
+	if cfg.Server.PublicBaseURL != want {
+		t.Errorf("PublicBaseURL = %q, want %q", cfg.Server.PublicBaseURL, want)
+	}
+}
+
+func TestLoad_PublicBaseURL_FlattenedKey(t *testing.T) {
+	yaml := `
+server:
+  public_base_url: "https://shop.example.com"
+`
+	path := writeYAML(t, yaml)
+
+	_, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load() error: %v", err)
+	}
+
+	if v := Get("server.public_base_url"); v != "https://shop.example.com" {
+		t.Errorf("Get(server.public_base_url) = %q, want %q", v, "https://shop.example.com")
+	}
+}
+
+func TestLoad_PublicBaseURL_RejectsUnsupportedScheme(t *testing.T) {
+	yaml := `
+server:
+  public_base_url: "ftp://shop.example.com"
+`
+	path := writeYAML(t, yaml)
+
+	_, err := Load(path)
+	if err == nil {
+		t.Fatal("Load() expected error for unsupported scheme")
+	}
+	if !strings.Contains(err.Error(), "unsupported scheme") {
+		t.Errorf("error = %q, want mention of unsupported scheme", err)
+	}
+}
+
+func TestLoad_PublicBaseURL_RejectsQuery(t *testing.T) {
+	yaml := `
+server:
+  public_base_url: "https://shop.example.com?foo=bar"
+`
+	path := writeYAML(t, yaml)
+
+	_, err := Load(path)
+	if err == nil {
+		t.Fatal("Load() expected error for query in URL")
+	}
+	if !strings.Contains(err.Error(), "query or fragment") {
+		t.Errorf("error = %q, want mention of query or fragment", err)
+	}
+}
+
+func TestLoad_PublicBaseURL_RejectsFragment(t *testing.T) {
+	yaml := `
+server:
+  public_base_url: "https://shop.example.com#section"
+`
+	path := writeYAML(t, yaml)
+
+	_, err := Load(path)
+	if err == nil {
+		t.Fatal("Load() expected error for fragment in URL")
+	}
+	if !strings.Contains(err.Error(), "query or fragment") {
+		t.Errorf("error = %q, want mention of query or fragment", err)
+	}
+}
+
+func TestLoad_PublicBaseURL_PreservesPath(t *testing.T) {
+	yaml := `
+server:
+  public_base_url: "https://example.com/shop/"
+`
+	path := writeYAML(t, yaml)
+
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load() error: %v", err)
+	}
+
+	want := "https://example.com/shop"
+	if cfg.Server.PublicBaseURL != want {
+		t.Errorf("PublicBaseURL = %q, want %q", cfg.Server.PublicBaseURL, want)
 	}
 }
