@@ -161,6 +161,10 @@ func runServe(cfg *config.Config, log logger.Logger) error {
 	if err != nil {
 		return err
 	}
+	priceHistoryRepo, err := postgres.NewPriceHistoryRepo(conn)
+	if err != nil {
+		return err
+	}
 	customerRepo, err := postgres.NewCustomerRepo(conn)
 	if err != nil {
 		return err
@@ -339,6 +343,7 @@ func runServe(cfg *config.Config, log logger.Logger) error {
 	pdp.AddStep(composition.ProductMetaStep{})
 	pdp.AddStep(composition.NewJSONLDProductStep(variantRepo, priceRepo, stockRepo))
 	pdp.AddStep(composition.NewCanonicalURLStep(baseURL))
+	pdp.AddStep(composition.NewPriceIndicationStep(variantRepo, priceRepo, priceHistoryRepo))
 	plp := composition.NewPipeline[composition.ListingContext]()
 	plp.AddStep(composition.ListingMetaStep{})
 	plp.AddStep(composition.NewListingCanonicalURLStep(baseURL))
@@ -1268,7 +1273,11 @@ func runImportPrices(cfg *config.Config, log logger.Logger) error {
 	if err != nil {
 		return fmt.Errorf("price repo: %w", err)
 	}
-	imp := importer.NewPriceImporter(variantRepo, priceRepo)
+	priceHistoryRepo, err := postgres.NewPriceHistoryRepo(conn)
+	if err != nil {
+		return fmt.Errorf("price history repo: %w", err)
+	}
+	imp := importer.NewPriceImporter(variantRepo, priceRepo, priceHistoryRepo)
 
 	log.Info("import.prices.start", map[string]interface{}{"file": filePath})
 

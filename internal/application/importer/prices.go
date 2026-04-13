@@ -26,11 +26,13 @@ type PriceResult struct {
 type PriceImporter struct {
 	variants catalog.VariantRepository
 	prices   pricing.PriceRepository
+	history  pricing.PriceHistoryRepository
 }
 
 // NewPriceImporter creates a PriceImporter.
-func NewPriceImporter(variants catalog.VariantRepository, prices pricing.PriceRepository) *PriceImporter {
-	return &PriceImporter{variants: variants, prices: prices}
+// history may be nil; if nil, price snapshots are not recorded.
+func NewPriceImporter(variants catalog.VariantRepository, prices pricing.PriceRepository, history pricing.PriceHistoryRepository) *PriceImporter {
+	return &PriceImporter{variants: variants, prices: prices, history: history}
 }
 
 // Import reads CSV rows from r and upserts prices.
@@ -151,6 +153,16 @@ func (imp *PriceImporter) Import(ctx context.Context, r io.Reader) (*PriceResult
 
 		if err := imp.prices.Upsert(ctx, &p); err != nil {
 			return nil, fmt.Errorf("price import: upsert price for sku %q currency %s: %w", sku, currency, err)
+		}
+
+		if imp.history != nil {
+			snap, err := pricing.NewPriceSnapshot(id.New(), p.VariantID, p.StoreID, p.Amount)
+			if err != nil {
+				return nil, fmt.Errorf("price import: snapshot for sku %q: %w", sku, err)
+			}
+			if err := imp.history.Record(ctx, &snap); err != nil {
+				return nil, fmt.Errorf("price import: record history for sku %q: %w", sku, err)
+			}
 		}
 
 		if isUpdate {
