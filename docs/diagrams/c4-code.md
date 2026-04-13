@@ -31,6 +31,7 @@ classDiagram
     class Price {
         +string ID
         +string VariantID
+        +string StoreID
         +Money Amount
     }
 

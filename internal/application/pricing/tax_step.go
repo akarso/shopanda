@@ -55,6 +55,8 @@ func (s *TaxStep) Apply(ctx context.Context, pctx *domain.PricingContext) error 
 		return fmt.Errorf("tax step: invalid tax_mode: %q", modeStr)
 	}
 
+	storeID, _ := pctx.Meta["store_id"].(string) // empty = global/default
+
 	// Optional per-variant tax class overrides.
 	classes, _ := pctx.Meta["tax_classes"].(map[string]string)
 
@@ -68,9 +70,16 @@ func (s *TaxStep) Apply(ctx context.Context, pctx *domain.PricingContext) error 
 			}
 		}
 
-		rate, err := s.rates.FindByCountryAndClass(ctx, country, class)
+		rate, err := s.rates.FindByCountryClassAndStore(ctx, country, class, storeID)
 		if err != nil {
 			return fmt.Errorf("tax step: variant %s: %w", item.VariantID, err)
+		}
+		// Fall back to global rate when store-scoped rate not found.
+		if rate == nil && storeID != "" {
+			rate, err = s.rates.FindByCountryClassAndStore(ctx, country, class, "")
+			if err != nil {
+				return fmt.Errorf("tax step: variant %s (fallback): %w", item.VariantID, err)
+			}
 		}
 		if rate == nil || rate.Rate == 0 {
 			continue // zero-rated

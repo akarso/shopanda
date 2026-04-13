@@ -16,7 +16,7 @@ type mockPriceRepo struct {
 	err    error
 }
 
-func (m *mockPriceRepo) FindByVariantAndCurrency(_ context.Context, variantID, currency string) (*domain.Price, error) {
+func (m *mockPriceRepo) FindByVariantCurrencyAndStore(_ context.Context, variantID, currency, _ string) (*domain.Price, error) {
 	if m.err != nil {
 		return nil, m.err
 	}

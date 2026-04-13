@@ -52,28 +52,29 @@ func (r *TaxRateRepo) exec(ctx context.Context, q string, args ...interface{}) (
 	return r.db.ExecContext(ctx, q, args...)
 }
 
-// FindByCountryAndClass returns the rate for a country+class pair.
+// FindByCountryClassAndStore returns the rate for a country+class+store tuple.
+// An empty storeID means the global/default rate.
 // Returns (nil, nil) when no rate exists.
-func (r *TaxRateRepo) FindByCountryAndClass(ctx context.Context, country, class string) (*tax.TaxRate, error) {
-	const q = `SELECT id, country, class, rate
-		FROM tax_rates WHERE country = $1 AND class = $2`
+func (r *TaxRateRepo) FindByCountryClassAndStore(ctx context.Context, country, class, storeID string) (*tax.TaxRate, error) {
+	const q = `SELECT id, country, class, store_id, rate
+		FROM tax_rates WHERE country = $1 AND class = $2 AND store_id = $3`
 
 	var tr tax.TaxRate
-	err := r.queryRow(ctx, q, country, class).Scan(
-		&tr.ID, &tr.Country, &tr.Class, &tr.Rate,
+	err := r.queryRow(ctx, q, country, class, storeID).Scan(
+		&tr.ID, &tr.Country, &tr.Class, &tr.StoreID, &tr.Rate,
 	)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
 	}
 	if err != nil {
-		return nil, fmt.Errorf("tax_rate_repo: find by country and class: %w", err)
+		return nil, fmt.Errorf("tax_rate_repo: find by country class and store: %w", err)
 	}
 	return &tr, nil
 }
 
 // ListByCountry returns all rates for a country, ordered by class.
 func (r *TaxRateRepo) ListByCountry(ctx context.Context, country string) ([]tax.TaxRate, error) {
-	const q = `SELECT id, country, class, rate
+	const q = `SELECT id, country, class, store_id, rate
 		FROM tax_rates WHERE country = $1 ORDER BY class`
 
 	rows, err := r.query(ctx, q, country)
@@ -85,7 +86,7 @@ func (r *TaxRateRepo) ListByCountry(ctx context.Context, country string) ([]tax.
 	var rates []tax.TaxRate
 	for rows.Next() {
 		var tr tax.TaxRate
-		if err := rows.Scan(&tr.ID, &tr.Country, &tr.Class, &tr.Rate); err != nil {
+		if err := rows.Scan(&tr.ID, &tr.Country, &tr.Class, &tr.StoreID, &tr.Rate); err != nil {
 			return nil, fmt.Errorf("tax_rate_repo: list scan: %w", err)
 		}
 		rates = append(rates, tr)
@@ -96,18 +97,18 @@ func (r *TaxRateRepo) ListByCountry(ctx context.Context, country string) ([]tax.
 	return rates, nil
 }
 
-// Upsert creates or updates a rate for a country+class pair.
+// Upsert creates or updates a rate for a country+class+store tuple.
 func (r *TaxRateRepo) Upsert(ctx context.Context, tr *tax.TaxRate) error {
 	if tr == nil {
 		return fmt.Errorf("tax_rate_repo: upsert: rate must not be nil")
 	}
-	const q = `INSERT INTO tax_rates (id, country, class, rate)
-		VALUES ($1, $2, $3, $4)
-		ON CONFLICT (country, class) DO UPDATE
+	const q = `INSERT INTO tax_rates (id, country, class, store_id, rate)
+		VALUES ($1, $2, $3, $4, $5)
+		ON CONFLICT (country, class, store_id) DO UPDATE
 		SET rate = EXCLUDED.rate
 		RETURNING id`
 
-	err := r.queryRow(ctx, q, tr.ID, tr.Country, tr.Class, tr.Rate).Scan(&tr.ID)
+	err := r.queryRow(ctx, q, tr.ID, tr.Country, tr.Class, tr.StoreID, tr.Rate).Scan(&tr.ID)
 	if err != nil {
 		return fmt.Errorf("tax_rate_repo: upsert: %w", err)
 	}

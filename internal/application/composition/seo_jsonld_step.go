@@ -76,7 +76,7 @@ func (s *JSONLDProductStep) buildOffer(ctx *ProductContext) map[string]interface
 		currency = "EUR"
 	}
 
-	price, err := s.prices.FindByVariantAndCurrency(ctx.Ctx, variants[0].ID, currency)
+	price, err := s.prices.FindByVariantCurrencyAndStore(ctx.Ctx, variants[0].ID, currency, ctx.StoreID)
 	if err == nil && price != nil {
 		// Schema.org expects a decimal string (e.g. "29.99").
 		offer["price"] = fmt.Sprintf("%.2f", float64(price.Amount.Amount())/100.0)

@@ -36,9 +36,10 @@ func NewPriceImporter(variants catalog.VariantRepository, prices pricing.PriceRe
 // Import reads CSV rows from r and upserts prices.
 //
 // Required columns: sku, currency, amount.
+// Optional column: store_id (defaults to "" for global/default price).
 // Each row looks up the variant by SKU, then creates or updates the price
-// for that variant+currency pair. Amount is in the smallest currency unit
-// (e.g. cents).
+// for that variant+currency+store tuple. Amount is in the smallest currency
+// unit (e.g. cents).
 func (imp *PriceImporter) Import(ctx context.Context, r io.Reader) (*PriceResult, error) {
 	reader := csv.NewReader(r)
 	reader.TrimLeadingSpace = true
@@ -56,6 +57,7 @@ func (imp *PriceImporter) Import(ctx context.Context, r io.Reader) (*PriceResult
 	skuIdx, hasSKU := colIdx["sku"]
 	currencyIdx, hasCurrency := colIdx["currency"]
 	amountIdx, hasAmount := colIdx["amount"]
+	storeIDIdx, hasStoreID := colIdx["store_id"]
 	if !hasSKU || !hasCurrency || !hasAmount {
 		return nil, fmt.Errorf("price import: CSV must have 'sku', 'currency', and 'amount' columns")
 	}
@@ -124,9 +126,14 @@ func (imp *PriceImporter) Import(ctx context.Context, r io.Reader) (*PriceResult
 			continue
 		}
 
-		existing, err := imp.prices.FindByVariantAndCurrency(ctx, variant.ID, currency)
+		storeID := ""
+		if hasStoreID {
+			storeID = strings.TrimSpace(record[storeIDIdx])
+		}
+
+		existing, err := imp.prices.FindByVariantCurrencyAndStore(ctx, variant.ID, currency, storeID)
 		if err != nil {
-			return nil, fmt.Errorf("price import: find price for sku %q currency %s: %w", sku, currency, err)
+			return nil, fmt.Errorf("price import: find price for sku %q currency %s store %q: %w", sku, currency, storeID, err)
 		}
 
 		isUpdate := existing != nil
@@ -135,7 +142,7 @@ func (imp *PriceImporter) Import(ctx context.Context, r io.Reader) (*PriceResult
 			priceID = existing.ID
 		}
 
-		p, err := pricing.NewPrice(priceID, variant.ID, money)
+		p, err := pricing.NewPrice(priceID, variant.ID, storeID, money)
 		if err != nil {
 			result.Errors = append(result.Errors, fmt.Sprintf("line %d: %v", lineNum, err))
 			result.Skipped++

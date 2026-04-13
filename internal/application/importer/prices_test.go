@@ -47,7 +47,7 @@ func newMockPriceRepoForImport() *mockPriceRepoForImport {
 	return &mockPriceRepoForImport{prices: make(map[string]*pricing.Price)}
 }
 
-func (m *mockPriceRepoForImport) FindByVariantAndCurrency(_ context.Context, variantID, currency string) (*pricing.Price, error) {
+func (m *mockPriceRepoForImport) FindByVariantCurrencyAndStore(_ context.Context, variantID, currency, _ string) (*pricing.Price, error) {
 	if m.findErr != nil {
 		return nil, m.findErr
 	}
@@ -236,7 +236,7 @@ func TestPriceImport_Update(t *testing.T) {
 	variants := priceVariants()
 	prices := newMockPriceRepoForImport()
 	// Seed existing price.
-	existing, _ := pricing.NewPrice("existing-id", "v1", shared.MustNewMoney(1000, "EUR"))
+	existing, _ := pricing.NewPrice("existing-id", "v1", "", shared.MustNewMoney(1000, "EUR"))
 	prices.prices["v1:EUR"] = &existing
 
 	imp := importer.NewPriceImporter(variants, prices)

@@ -21,7 +21,7 @@ type mockPriceRepoForExport struct {
 	listErr error
 }
 
-func (m *mockPriceRepoForExport) FindByVariantAndCurrency(_ context.Context, _, _ string) (*pricing.Price, error) {
+func (m *mockPriceRepoForExport) FindByVariantCurrencyAndStore(_ context.Context, _, _, _ string) (*pricing.Price, error) {
 	return nil, nil
 }
 
@@ -70,7 +70,7 @@ func (m *mockVariantRepoForPriceExport) WithTx(_ *sql.Tx) catalog.VariantReposit
 
 func makePrice(id, variantID string, amount int64, currency string) pricing.Price {
 	money := shared.MustNewMoney(amount, currency)
-	p, _ := pricing.NewPrice(id, variantID, money)
+	p, _ := pricing.NewPrice(id, variantID, "", money)
 	return p
 }
 
@@ -105,11 +105,11 @@ func TestPriceExport_Basic(t *testing.T) {
 	if len(lines) != 4 {
 		t.Fatalf("line count = %d, want 4 (header + 3 data)", len(lines))
 	}
-	if lines[0] != "sku,currency,amount" {
-		t.Errorf("header = %q, want sku,currency,amount", lines[0])
+	if lines[0] != "sku,currency,amount,store_id" {
+		t.Errorf("header = %q, want sku,currency,amount,store_id", lines[0])
 	}
-	if lines[1] != "SKU-001,EUR,1999" {
-		t.Errorf("line 1 = %q, want SKU-001,EUR,1999", lines[1])
+	if lines[1] != "SKU-001,EUR,1999," {
+		t.Errorf("line 1 = %q, want SKU-001,EUR,1999,", lines[1])
 	}
 }
 
@@ -126,7 +126,7 @@ func TestPriceExport_Empty(t *testing.T) {
 	if result.Entries != 0 {
 		t.Errorf("Entries = %d, want 0", result.Entries)
 	}
-	if strings.TrimSpace(buf.String()) != "sku,currency,amount" {
+	if strings.TrimSpace(buf.String()) != "sku,currency,amount,store_id" {
 		t.Errorf("output = %q, want header only", buf.String())
 	}
 }

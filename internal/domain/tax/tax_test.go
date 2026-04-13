@@ -27,7 +27,7 @@ func TestNewTaxClass(t *testing.T) {
 
 func TestNewTaxRate(t *testing.T) {
 	t.Run("valid", func(t *testing.T) {
-		r, err := tax.NewTaxRate("f47ac10b-58cc-4372-a567-0e02b2c3d479", "DE", "standard", 1900)
+		r, err := tax.NewTaxRate("f47ac10b-58cc-4372-a567-0e02b2c3d479", "DE", "standard", "", 1900)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -43,42 +43,42 @@ func TestNewTaxRate(t *testing.T) {
 	})
 
 	t.Run("empty id", func(t *testing.T) {
-		_, err := tax.NewTaxRate("", "DE", "standard", 1900)
+		_, err := tax.NewTaxRate("", "DE", "standard", "", 1900)
 		if err == nil {
 			t.Fatal("expected error for empty id")
 		}
 	})
 
 	t.Run("invalid uuid", func(t *testing.T) {
-		_, err := tax.NewTaxRate("not-a-uuid", "DE", "standard", 1900)
+		_, err := tax.NewTaxRate("not-a-uuid", "DE", "standard", "", 1900)
 		if err == nil {
 			t.Fatal("expected error for invalid uuid")
 		}
 	})
 
 	t.Run("invalid country", func(t *testing.T) {
-		_, err := tax.NewTaxRate("f47ac10b-58cc-4372-a567-0e02b2c3d479", "germany", "standard", 1900)
+		_, err := tax.NewTaxRate("f47ac10b-58cc-4372-a567-0e02b2c3d479", "germany", "standard", "", 1900)
 		if err == nil {
 			t.Fatal("expected error for invalid country code")
 		}
 	})
 
 	t.Run("empty class", func(t *testing.T) {
-		_, err := tax.NewTaxRate("f47ac10b-58cc-4372-a567-0e02b2c3d479", "DE", "", 1900)
+		_, err := tax.NewTaxRate("f47ac10b-58cc-4372-a567-0e02b2c3d479", "DE", "", "", 1900)
 		if err == nil {
 			t.Fatal("expected error for empty class")
 		}
 	})
 
 	t.Run("negative rate", func(t *testing.T) {
-		_, err := tax.NewTaxRate("f47ac10b-58cc-4372-a567-0e02b2c3d479", "DE", "standard", -100)
+		_, err := tax.NewTaxRate("f47ac10b-58cc-4372-a567-0e02b2c3d479", "DE", "standard", "", -100)
 		if err == nil {
 			t.Fatal("expected error for negative rate")
 		}
 	})
 
 	t.Run("zero rate allowed", func(t *testing.T) {
-		r, err := tax.NewTaxRate("f47ac10b-58cc-4372-a567-0e02b2c3d479", "DE", "zero", 0)
+		r, err := tax.NewTaxRate("f47ac10b-58cc-4372-a567-0e02b2c3d479", "DE", "zero", "", 0)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}

@@ -9,6 +9,7 @@ import (
 	"github.com/akarso/shopanda/internal/domain/pricing"
 	"github.com/akarso/shopanda/internal/domain/promotion"
 	"github.com/akarso/shopanda/internal/domain/shared"
+	"github.com/akarso/shopanda/internal/domain/store"
 	"github.com/akarso/shopanda/internal/platform/apperror"
 	"github.com/akarso/shopanda/internal/platform/event"
 	"github.com/akarso/shopanda/internal/platform/id"
@@ -232,6 +233,11 @@ func (s *Service) recalculate(ctx context.Context, c *domainCart.Cart) error {
 		pctx.Meta["coupon_code"] = c.CouponCode
 	}
 
+	// Propagate store_id so pricing steps can scope lookups.
+	if s := store.FromContext(ctx); s != nil {
+		pctx.Meta["store_id"] = s.ID
+	}
+
 	if err := s.pipeline.Execute(ctx, &pctx); err != nil {
 		return fmt.Errorf("cart service: pricing pipeline: %w", err)
 	}
@@ -249,11 +255,23 @@ func (s *Service) recalculate(ctx context.Context, c *domainCart.Cart) error {
 	return nil
 }
 
-// lookupPrice fetches the base price for a variant in the cart's currency.
+// lookupPrice fetches the base price for a variant in the cart's currency,
+// scoped to the current store when available.
 func (s *Service) lookupPrice(ctx context.Context, variantID, currency string) (shared.Money, error) {
-	p, err := s.prices.FindByVariantAndCurrency(ctx, variantID, currency)
+	var storeID string
+	if st := store.FromContext(ctx); st != nil {
+		storeID = st.ID
+	}
+	p, err := s.prices.FindByVariantCurrencyAndStore(ctx, variantID, currency, storeID)
 	if err != nil {
 		return shared.Money{}, fmt.Errorf("cart service: lookup price: %w", err)
+	}
+	// Fall back to global price when store-scoped price not found.
+	if p == nil && storeID != "" {
+		p, err = s.prices.FindByVariantCurrencyAndStore(ctx, variantID, currency, "")
+		if err != nil {
+			return shared.Money{}, fmt.Errorf("cart service: lookup price (fallback): %w", err)
+		}
 	}
 	if p == nil {
 		return shared.Money{}, apperror.Validation(

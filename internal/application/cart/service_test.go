@@ -69,11 +69,11 @@ func newStubPriceRepo() *stubPriceRepo {
 
 func (r *stubPriceRepo) set(variantID, currency string, amount int64) {
 	key := variantID + ":" + currency
-	p, _ := pricing.NewPrice("price-"+key, variantID, shared.MustNewMoney(amount, currency))
+	p, _ := pricing.NewPrice("price-"+key, variantID, "", shared.MustNewMoney(amount, currency))
 	r.prices[key] = &p
 }
 
-func (r *stubPriceRepo) FindByVariantAndCurrency(_ context.Context, variantID, currency string) (*pricing.Price, error) {
+func (r *stubPriceRepo) FindByVariantCurrencyAndStore(_ context.Context, variantID, currency, _ string) (*pricing.Price, error) {
 	return r.prices[variantID+":"+currency], nil
 }
 

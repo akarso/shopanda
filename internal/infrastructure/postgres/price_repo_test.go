@@ -20,7 +20,7 @@ func ensurePricesTable(t *testing.T, db interface {
 func mustNewPrice(t *testing.T, variantID string, amount int64, currency string) pricing.Price {
 	t.Helper()
 	m := shared.MustNewMoney(amount, currency)
-	p, err := pricing.NewPrice(id.New(), variantID, m)
+	p, err := pricing.NewPrice(id.New(), variantID, "", m)
 	if err != nil {
 		t.Fatalf("NewPrice: %v", err)
 	}
@@ -64,7 +64,7 @@ func TestPriceRepo_UpsertAndFind(t *testing.T) {
 	}
 
 	// Find it
-	found, err := repo.FindByVariantAndCurrency(ctx, v.ID, "EUR")
+	found, err := repo.FindByVariantCurrencyAndStore(ctx, v.ID, "EUR", "")
 	if err != nil {
 		t.Fatalf("find: %v", err)
 	}
@@ -89,7 +89,7 @@ func TestPriceRepo_FindNotFound(t *testing.T) {
 		t.Fatalf("NewPriceRepo: %v", err)
 	}
 
-	found, err := repo.FindByVariantAndCurrency(ctx, id.New(), "EUR")
+	found, err := repo.FindByVariantCurrencyAndStore(ctx, id.New(), "EUR", "")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -139,7 +139,7 @@ func TestPriceRepo_UpsertUpdatesAmount(t *testing.T) {
 		t.Fatalf("upsert update: %v", err)
 	}
 
-	found, err := repo.FindByVariantAndCurrency(ctx, v.ID, "EUR")
+	found, err := repo.FindByVariantCurrencyAndStore(ctx, v.ID, "EUR", "")
 	if err != nil {
 		t.Fatalf("find: %v", err)
 	}

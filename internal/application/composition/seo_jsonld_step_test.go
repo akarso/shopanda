@@ -41,7 +41,7 @@ type mockPriceRepo struct {
 	capturedCtx context.Context
 }
 
-func (m *mockPriceRepo) FindByVariantAndCurrency(ctx context.Context, _, _ string) (*pricing.Price, error) {
+func (m *mockPriceRepo) FindByVariantCurrencyAndStore(ctx context.Context, _, _, _ string) (*pricing.Price, error) {
 	m.capturedCtx = ctx
 	return m.price, m.err
 }

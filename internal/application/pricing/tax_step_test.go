@@ -17,7 +17,7 @@ type mockRateRepo struct {
 	err   error
 }
 
-func (m *mockRateRepo) FindByCountryAndClass(_ context.Context, country, class string) (*tax.TaxRate, error) {
+func (m *mockRateRepo) FindByCountryClassAndStore(_ context.Context, country, class, _ string) (*tax.TaxRate, error) {
 	if m.err != nil {
 		return nil, m.err
 	}

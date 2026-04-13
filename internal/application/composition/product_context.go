@@ -12,6 +12,7 @@ type ProductContext struct {
 	Product  *catalog.Product
 	Currency string
 	Country  string
+	StoreID  string
 	Blocks   []Block
 	Meta     map[string]interface{}
 }
