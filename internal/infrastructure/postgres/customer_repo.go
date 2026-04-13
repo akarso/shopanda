@@ -184,6 +184,25 @@ func (r *CustomerRepo) BumpTokenGeneration(ctx context.Context, customerID strin
 	return nil
 }
 
+// Delete removes a customer by ID.
+func (r *CustomerRepo) Delete(ctx context.Context, id string) error {
+	const q = `DELETE FROM customers WHERE id = $1`
+
+	result, err := r.exec(ctx, q, id)
+	if err != nil {
+		return fmt.Errorf("customer_repo: delete: %w", err)
+	}
+
+	rows, err := result.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("customer_repo: delete rows affected: %w", err)
+	}
+	if rows == 0 {
+		return apperror.NotFound("customer not found")
+	}
+	return nil
+}
+
 // queryRow delegates to tx or db.
 func (r *CustomerRepo) queryRow(ctx context.Context, q string, args ...interface{}) *sql.Row {
 	if r.tx != nil {

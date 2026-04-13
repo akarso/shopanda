@@ -77,6 +77,11 @@ func (r *authMockCustomerRepo) WithTx(_ *sql.Tx) customer.CustomerRepository {
 	return r
 }
 
+func (r *authMockCustomerRepo) Delete(_ context.Context, id string) error {
+	delete(r.customers, id)
+	return nil
+}
+
 // ── mock reset repo ──────────────────────────────────────────────────────
 
 type authMockResetRepo struct {

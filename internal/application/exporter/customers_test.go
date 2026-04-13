@@ -47,6 +47,7 @@ func (m *mockCustomerRepoForExport) ListCustomers(_ context.Context, offset, lim
 func (m *mockCustomerRepoForExport) BumpTokenGeneration(_ context.Context, _ string) error {
 	return nil
 }
+func (m *mockCustomerRepoForExport) Delete(_ context.Context, _ string) error     { return nil }
 func (m *mockCustomerRepoForExport) WithTx(_ *sql.Tx) customer.CustomerRepository { return m }
 
 // --- tests ---
