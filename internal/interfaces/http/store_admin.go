@@ -149,7 +149,7 @@ func (h *StoreAdminHandler) Update() http.HandlerFunc {
 			s.Country = cty
 		}
 		if req.Domain != nil {
-			s.Domain = *req.Domain
+			s.Domain = strings.TrimSpace(*req.Domain)
 		}
 		if req.IsDefault != nil {
 			s.IsDefault = *req.IsDefault
