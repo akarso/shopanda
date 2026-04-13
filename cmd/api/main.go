@@ -11,6 +11,7 @@ import (
 	"syscall"
 	"time"
 
+	accountApp "github.com/akarso/shopanda/internal/application/account"
 	adminApp "github.com/akarso/shopanda/internal/application/admin"
 	authApp "github.com/akarso/shopanda/internal/application/auth"
 	cacheApp "github.com/akarso/shopanda/internal/application/cache"
@@ -38,6 +39,7 @@ import (
 	"github.com/akarso/shopanda/internal/domain/theme"
 	"github.com/akarso/shopanda/internal/domain/translation"
 	"github.com/akarso/shopanda/internal/infrastructure/cron"
+
 	"github.com/akarso/shopanda/internal/infrastructure/flatrate"
 	"github.com/akarso/shopanda/internal/infrastructure/localfs"
 	"github.com/akarso/shopanda/internal/infrastructure/manualpay"
@@ -276,6 +278,12 @@ func runServe(cfg *config.Config, log logger.Logger) error {
 	}
 	contentTranslator := translation.NewContentTranslator(contentTranslationRepo, log)
 
+	// Consent repository.
+	consentRepo, err := postgres.NewConsentRepo(conn)
+	if err != nil {
+		return err
+	}
+
 	// Cache.
 	_ = appCache // wired by consumers in upcoming PRs
 
@@ -438,6 +446,8 @@ func runServe(cfg *config.Config, log logger.Logger) error {
 	pageHandler := shophttp.NewPageHandler(pageRepo, contentTranslator)
 	pageAdmin := shophttp.NewPageAdminHandler(pageRepo, bus)
 	storeAdmin := shophttp.NewStoreAdminHandler(storeRepo, bus)
+	accountService := accountApp.NewService(customerRepo, consentRepo, bus, log, conn)
+	accountHandler := shophttp.NewAccountHandler(customerRepo, orderRepo, consentRepo, accountService)
 	sitemapHandler := shophttp.NewSitemapHandler(baseURL, productRepo, categoryRepo, pageRepo)
 	robotsHandler := shophttp.NewRobotsHandler(baseURL)
 
@@ -517,6 +527,13 @@ func runServe(cfg *config.Config, log logger.Logger) error {
 	// Order routes (behind RequireAuth).
 	router.Handle("GET /api/v1/orders", requireAuth(orderHandler.List()))
 	router.Handle("GET /api/v1/orders/{orderId}", requireAuth(orderHandler.Get()))
+
+	// Account routes (behind RequireAuth).
+	router.Handle("GET /api/v1/account/consent", requireAuth(accountHandler.GetConsent()))
+	router.Handle("PUT /api/v1/account/consent", requireAuth(accountHandler.UpdateConsent()))
+	router.Handle("GET /api/v1/account/data", requireAuth(accountHandler.GetData()))
+	router.Handle("GET /api/v1/account/export", requireAuth(accountHandler.Export()))
+	router.Handle("DELETE /api/v1/account", requireAuth(accountHandler.Delete()))
 
 	// Shipping rates (behind RequireAuth — used during checkout).
 	router.Handle("GET /api/v1/shipping/rates", requireAuth(shippingRates.List()))

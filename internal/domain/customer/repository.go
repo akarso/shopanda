@@ -23,4 +23,8 @@ type CustomerRepository interface {
 
 	// BumpTokenGeneration atomically increments the customer's token generation.
 	BumpTokenGeneration(ctx context.Context, customerID string) error
+
+	// Delete removes a customer by ID.
+	// Returns apperror.NotFound when the customer does not exist.
+	Delete(ctx context.Context, id string) error
 }
