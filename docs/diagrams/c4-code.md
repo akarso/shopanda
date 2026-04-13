@@ -554,6 +554,11 @@ classDiagram
         +Create() HandlerFunc
         +Update() HandlerFunc
     }
+    class StoreMiddleware {
+        <<middleware>>
+        -repo StoreRepository
+        +ServeHTTP(w, r)
+    }
 
     class SearchHandler {
         -engine SearchEngine
@@ -598,6 +603,8 @@ classDiagram
     Cache <|.. PostgresCacheStore : implements
     StoreRepository <|.. PostgresStoreRepo : implements
     StoreAdminHandler --> StoreRepository : uses
+    StoreMiddleware --> StoreRepository : resolves store by domain
+    StoreMiddleware --> StoreAdminHandler : passes resolved store context
     ConfigRepository <|.. PostgresConfigRepo : implements
     Templates --> Message : produces
     PricingStep <|.. BasePriceStep : implements

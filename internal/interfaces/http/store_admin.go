@@ -130,18 +130,20 @@ func (h *StoreAdminHandler) Update() http.HandlerFunc {
 			s.Name = *req.Name
 		}
 		if req.Currency != nil {
-			if len(*req.Currency) != 3 {
-				JSONError(w, apperror.Validation("currency must be a 3-letter ISO code"))
+			cur, curErr := store.NormalizeCurrency(*req.Currency)
+			if curErr != nil {
+				JSONError(w, apperror.Validation(curErr.Error()))
 				return
 			}
-			s.Currency = *req.Currency
+			s.Currency = cur
 		}
 		if req.Country != nil {
-			if len(*req.Country) != 2 {
-				JSONError(w, apperror.Validation("country must be a 2-letter ISO code"))
+			cty, ctyErr := store.NormalizeCountry(*req.Country)
+			if ctyErr != nil {
+				JSONError(w, apperror.Validation(ctyErr.Error()))
 				return
 			}
-			s.Country = *req.Country
+			s.Country = cty
 		}
 		if req.Domain != nil {
 			s.Domain = *req.Domain

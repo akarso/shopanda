@@ -122,3 +122,59 @@ func TestStoreContext_Missing(t *testing.T) {
 		t.Errorf("FromContext() = %v, want nil", got)
 	}
 }
+
+func TestNormalizeCurrency(t *testing.T) {
+	tests := []struct {
+		name    string
+		input   string
+		want    string
+		wantErr bool
+	}{
+		{"valid uppercase", "EUR", "EUR", false},
+		{"valid lowercase", "usd", "USD", false},
+		{"trims whitespace", " eur ", "EUR", false},
+		{"empty", "", "", true},
+		{"whitespace only", "  ", "", true},
+		{"too short", "EU", "", true},
+		{"too long", "EURO", "", true},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := store.NormalizeCurrency(tc.input)
+			if (err != nil) != tc.wantErr {
+				t.Fatalf("NormalizeCurrency(%q) error = %v, wantErr %v", tc.input, err, tc.wantErr)
+			}
+			if got != tc.want {
+				t.Errorf("NormalizeCurrency(%q) = %q, want %q", tc.input, got, tc.want)
+			}
+		})
+	}
+}
+
+func TestNormalizeCountry(t *testing.T) {
+	tests := []struct {
+		name    string
+		input   string
+		want    string
+		wantErr bool
+	}{
+		{"valid uppercase", "DE", "DE", false},
+		{"valid lowercase", "us", "US", false},
+		{"trims whitespace", " de ", "DE", false},
+		{"empty", "", "", true},
+		{"whitespace only", "  ", "", true},
+		{"too short", "D", "", true},
+		{"too long", "DEU", "", true},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := store.NormalizeCountry(tc.input)
+			if (err != nil) != tc.wantErr {
+				t.Fatalf("NormalizeCountry(%q) error = %v, wantErr %v", tc.input, err, tc.wantErr)
+			}
+			if got != tc.want {
+				t.Errorf("NormalizeCountry(%q) = %q, want %q", tc.input, got, tc.want)
+			}
+		})
+	}
+}

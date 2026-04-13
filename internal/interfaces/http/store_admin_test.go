@@ -219,3 +219,43 @@ func TestStoreAdmin_Update_NotFound(t *testing.T) {
 		t.Fatalf("status = %d, want %d", rec.Code, http.StatusNotFound)
 	}
 }
+
+func TestStoreAdmin_Update_NormalizesCurrencyAndCountry(t *testing.T) {
+	now := time.Now()
+	existing := store.NewStoreFromDB("s-1", "de", "Germany", "EUR", "DE", "", false, now, now)
+
+	var updated *store.Store
+	repo := &mockStoreAdminRepo{
+		findByIDFn: func(_ context.Context, id string) (*store.Store, error) {
+			if id == "s-1" {
+				return existing, nil
+			}
+			return nil, nil
+		},
+		updateFn: func(_ context.Context, s *store.Store) error {
+			updated = s
+			return nil
+		},
+	}
+	h := shophttp.NewStoreAdminHandler(repo, storeAdminBus())
+	mux := newStoreAdminRouter(h)
+
+	body := `{"currency":"usd","country":"us"}`
+	req := httptest.NewRequest("PUT", "/api/v1/admin/stores/s-1", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d\nbody: %s", rec.Code, http.StatusOK, rec.Body.String())
+	}
+	if updated == nil {
+		t.Fatal("repo.Update was not called")
+	}
+	if updated.Currency != "USD" {
+		t.Errorf("Currency = %q, want USD (uppercased)", updated.Currency)
+	}
+	if updated.Country != "US" {
+		t.Errorf("Country = %q, want US (uppercased)", updated.Country)
+	}
+}
