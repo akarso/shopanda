@@ -97,8 +97,8 @@ func parseAcceptLanguage(header string) string {
 			qPart := strings.TrimSpace(entry[idx+1:])
 			if strings.HasPrefix(qPart, "q=") {
 				parsed, err := strconv.ParseFloat(qPart[2:], 64)
-				if err != nil {
-					continue // malformed q-value, skip entry
+				if err != nil || parsed <= 0 || parsed > 1 {
+					continue // malformed or out-of-range q-value, skip entry
 				}
 				q = parsed
 			}
