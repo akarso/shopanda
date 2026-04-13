@@ -47,11 +47,11 @@ func newMockPriceRepoForImport() *mockPriceRepoForImport {
 	return &mockPriceRepoForImport{prices: make(map[string]*pricing.Price)}
 }
 
-func (m *mockPriceRepoForImport) FindByVariantCurrencyAndStore(_ context.Context, variantID, currency, _ string) (*pricing.Price, error) {
+func (m *mockPriceRepoForImport) FindByVariantCurrencyAndStore(_ context.Context, variantID, currency, storeID string) (*pricing.Price, error) {
 	if m.findErr != nil {
 		return nil, m.findErr
 	}
-	return m.prices[variantID+":"+currency], nil
+	return m.prices[variantID+":"+currency+":"+storeID], nil
 }
 
 func (m *mockPriceRepoForImport) ListByVariantID(_ context.Context, _ string) ([]pricing.Price, error) {
@@ -66,7 +66,7 @@ func (m *mockPriceRepoForImport) Upsert(_ context.Context, p *pricing.Price) err
 	if m.upsertErr != nil {
 		return m.upsertErr
 	}
-	key := p.VariantID + ":" + p.Amount.Currency()
+	key := p.VariantID + ":" + p.Amount.Currency() + ":" + p.StoreID
 	m.prices[key] = p
 	return nil
 }
@@ -100,9 +100,9 @@ func TestPriceImport_Basic(t *testing.T) {
 	}
 
 	// Verify prices stored.
-	p := prices.prices["v1:EUR"]
+	p := prices.prices["v1:EUR:"]
 	if p == nil {
-		t.Fatal("v1:EUR not found")
+		t.Fatal("v1:EUR: not found")
 	}
 	if p.Amount.Amount() != 1999 {
 		t.Errorf("v1:EUR amount = %d, want 1999", p.Amount.Amount())
@@ -237,7 +237,7 @@ func TestPriceImport_Update(t *testing.T) {
 	prices := newMockPriceRepoForImport()
 	// Seed existing price.
 	existing, _ := pricing.NewPrice("existing-id", "v1", "", shared.MustNewMoney(1000, "EUR"))
-	prices.prices["v1:EUR"] = &existing
+	prices.prices["v1:EUR:"] = &existing
 
 	imp := importer.NewPriceImporter(variants, prices)
 
@@ -253,7 +253,7 @@ func TestPriceImport_Update(t *testing.T) {
 		t.Errorf("Created = %d, want 0", result.Created)
 	}
 
-	p := prices.prices["v1:EUR"]
+	p := prices.prices["v1:EUR:"]
 	if p.Amount.Amount() != 2500 {
 		t.Errorf("amount = %d, want 2500", p.Amount.Amount())
 	}
@@ -286,9 +286,9 @@ func TestPriceImport_CurrencyNormalization(t *testing.T) {
 	if result.Created != 1 {
 		t.Errorf("Created = %d, want 1", result.Created)
 	}
-	p := prices.prices["v1:EUR"]
+	p := prices.prices["v1:EUR:"]
 	if p == nil {
-		t.Fatal("v1:EUR not found after lowercase currency input")
+		t.Fatal("v1:EUR: not found after lowercase currency input")
 	}
 }
 

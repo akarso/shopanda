@@ -74,6 +74,12 @@ func makePrice(id, variantID string, amount int64, currency string) pricing.Pric
 	return p
 }
 
+func makePriceWithStore(id, variantID string, amount int64, currency, storeID string) pricing.Price {
+	money := shared.MustNewMoney(amount, currency)
+	p, _ := pricing.NewPrice(id, variantID, storeID, money)
+	return p
+}
+
 // --- tests ---
 
 func TestPriceExport_Basic(t *testing.T) {
@@ -82,6 +88,7 @@ func TestPriceExport_Basic(t *testing.T) {
 			makePrice("p1", "v1", 1999, "EUR"),
 			makePrice("p2", "v1", 2199, "USD"),
 			makePrice("p3", "v2", 999, "EUR"),
+			makePriceWithStore("p4", "v2", 1099, "EUR", "store-de"),
 		},
 	}
 	varRepo := &mockVariantRepoForPriceExport{
@@ -97,19 +104,22 @@ func TestPriceExport_Basic(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Export() error = %v", err)
 	}
-	if result.Entries != 3 {
-		t.Errorf("Entries = %d, want 3", result.Entries)
+	if result.Entries != 4 {
+		t.Errorf("Entries = %d, want 4", result.Entries)
 	}
 
 	lines := strings.Split(strings.TrimSpace(buf.String()), "\n")
-	if len(lines) != 4 {
-		t.Fatalf("line count = %d, want 4 (header + 3 data)", len(lines))
+	if len(lines) != 5 {
+		t.Fatalf("line count = %d, want 5 (header + 4 data)", len(lines))
 	}
 	if lines[0] != "sku,currency,amount,store_id" {
 		t.Errorf("header = %q, want sku,currency,amount,store_id", lines[0])
 	}
 	if lines[1] != "SKU-001,EUR,1999," {
 		t.Errorf("line 1 = %q, want SKU-001,EUR,1999,", lines[1])
+	}
+	if lines[4] != "SKU-002,EUR,1099,store-de" {
+		t.Errorf("line 4 = %q, want SKU-002,EUR,1099,store-de", lines[4])
 	}
 }
 

@@ -61,7 +61,7 @@ func (r *stubCartRepo) Delete(_ context.Context, id string) error {
 }
 
 type stubPriceRepo struct {
-	prices map[string]*pricing.Price
+	prices map[string]*pricing.Price // key: "variantID:currency:storeID"
 }
 
 func newStubPriceRepo() *stubPriceRepo {
@@ -69,13 +69,17 @@ func newStubPriceRepo() *stubPriceRepo {
 }
 
 func (r *stubPriceRepo) set(variantID, currency string, amount int64) {
-	key := variantID + ":" + currency
-	p, _ := pricing.NewPrice("price-"+key, variantID, "", shared.MustNewMoney(amount, currency))
+	r.setWithStore(variantID, currency, "", amount)
+}
+
+func (r *stubPriceRepo) setWithStore(variantID, currency, storeID string, amount int64) {
+	key := variantID + ":" + currency + ":" + storeID
+	p, _ := pricing.NewPrice("price-"+key, variantID, storeID, shared.MustNewMoney(amount, currency))
 	r.prices[key] = &p
 }
 
-func (r *stubPriceRepo) FindByVariantCurrencyAndStore(_ context.Context, variantID, currency, _ string) (*pricing.Price, error) {
-	return r.prices[variantID+":"+currency], nil
+func (r *stubPriceRepo) FindByVariantCurrencyAndStore(_ context.Context, variantID, currency, storeID string) (*pricing.Price, error) {
+	return r.prices[variantID+":"+currency+":"+storeID], nil
 }
 
 func (r *stubPriceRepo) ListByVariantID(_ context.Context, _ string) ([]pricing.Price, error) {

@@ -16,8 +16,9 @@ import (
 //	"tax_country" (string): ISO 3166-1 alpha-2 country code
 //	"tax_mode"    (string): "exclusive" or "inclusive"
 //
-// Optional Meta key:
+// Optional Meta keys:
 //
+//	"store_id"    (string): store scope for rate lookup (empty = global)
 //	"tax_classes" (map[string]string): variant ID → tax class override
 //
 // When no rate is found for a variant's class+country pair, the item is

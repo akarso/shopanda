@@ -72,10 +72,10 @@ func (r *TaxRateRepo) FindByCountryClassAndStore(ctx context.Context, country, c
 	return &tr, nil
 }
 
-// ListByCountry returns all rates for a country, ordered by class.
+// ListByCountry returns all rates for a country, ordered by class then store_id.
 func (r *TaxRateRepo) ListByCountry(ctx context.Context, country string) ([]tax.TaxRate, error) {
 	const q = `SELECT id, country, class, store_id, rate
-		FROM tax_rates WHERE country = $1 ORDER BY class`
+		FROM tax_rates WHERE country = $1 ORDER BY class, store_id`
 
 	rows, err := r.query(ctx, q, country)
 	if err != nil {

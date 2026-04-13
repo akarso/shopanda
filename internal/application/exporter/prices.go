@@ -64,7 +64,7 @@ func (exp *PriceExporter) Export(ctx context.Context, w io.Writer) (*PriceResult
 				sanitizeCSVCell(variant.SKU),
 				p.Amount.Currency(),
 				strconv.FormatInt(p.Amount.Amount(), 10),
-				p.StoreID,
+				sanitizeCSVCell(p.StoreID),
 			}
 			if err := writer.Write(row); err != nil {
 				return nil, fmt.Errorf("price export: write row: %w", err)

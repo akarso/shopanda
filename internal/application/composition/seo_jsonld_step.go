@@ -77,6 +77,10 @@ func (s *JSONLDProductStep) buildOffer(ctx *ProductContext) map[string]interface
 	}
 
 	price, err := s.prices.FindByVariantCurrencyAndStore(ctx.Ctx, variants[0].ID, currency, ctx.StoreID)
+	if err == nil && price == nil && ctx.StoreID != "" {
+		// Fall back to global price when store-scoped price not found.
+		price, err = s.prices.FindByVariantCurrencyAndStore(ctx.Ctx, variants[0].ID, currency, "")
+	}
 	if err == nil && price != nil {
 		// Schema.org expects a decimal string (e.g. "29.99").
 		offer["price"] = fmt.Sprintf("%.2f", float64(price.Amount.Amount())/100.0)
