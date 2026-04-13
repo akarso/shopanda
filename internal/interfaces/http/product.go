@@ -1,12 +1,14 @@
 package http
 
 import (
+	"context"
 	"net/http"
 	"strconv"
 
 	"github.com/akarso/shopanda/internal/application/composition"
 	"github.com/akarso/shopanda/internal/domain/catalog"
 	"github.com/akarso/shopanda/internal/domain/store"
+	"github.com/akarso/shopanda/internal/domain/translation"
 	"github.com/akarso/shopanda/internal/platform/apperror"
 )
 
@@ -15,6 +17,7 @@ type ProductHandler struct {
 	repo catalog.ProductRepository
 	pdp  *composition.Pipeline[composition.ProductContext]
 	plp  *composition.Pipeline[composition.ListingContext]
+	ct   *translation.ContentTranslator
 }
 
 // NewProductHandler creates a ProductHandler with the given dependencies.
@@ -22,8 +25,9 @@ func NewProductHandler(
 	repo catalog.ProductRepository,
 	pdp *composition.Pipeline[composition.ProductContext],
 	plp *composition.Pipeline[composition.ListingContext],
+	ct *translation.ContentTranslator,
 ) *ProductHandler {
-	return &ProductHandler{repo: repo, pdp: pdp, plp: plp}
+	return &ProductHandler{repo: repo, pdp: pdp, plp: plp, ct: ct}
 }
 
 // List handles GET /api/v1/products.
@@ -51,6 +55,10 @@ func (h *ProductHandler) List() http.HandlerFunc {
 		if err := h.plp.Execute(ctx); err != nil {
 			JSONError(w, apperror.Wrap(apperror.CodeInternal, "composition failed", err))
 			return
+		}
+
+		for _, p := range ctx.Products {
+			h.overlayProductTranslation(r.Context(), p)
 		}
 
 		JSON(w, http.StatusOK, listingResponse(ctx))
@@ -91,6 +99,8 @@ func (h *ProductHandler) Get() http.HandlerFunc {
 			JSONError(w, apperror.Wrap(apperror.CodeInternal, "composition failed", err))
 			return
 		}
+
+		h.overlayProductTranslation(r.Context(), ctx.Product)
 
 		JSON(w, http.StatusOK, productResponse(ctx))
 	}
@@ -144,5 +154,23 @@ func listingResponse(ctx *composition.ListingContext) map[string]interface{} {
 		"blocks":   ctx.Blocks,
 		"filters":  ctx.Filters,
 		"meta":     ctx.Meta,
+	}
+}
+
+// overlayProductTranslation overwrites translatable product fields when a
+// content translation exists for the request language.
+func (h *ProductHandler) overlayProductTranslation(ctx context.Context, p *catalog.Product) {
+	if h.ct == nil || p == nil {
+		return
+	}
+	fields := h.ct.TranslateFields(ctx, p.ID)
+	if fields == nil {
+		return
+	}
+	if v, ok := fields["name"]; ok {
+		p.Name = v
+	}
+	if v, ok := fields["description"]; ok {
+		p.Description = v
 	}
 }

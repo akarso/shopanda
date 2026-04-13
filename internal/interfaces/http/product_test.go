@@ -11,6 +11,7 @@ import (
 
 	"github.com/akarso/shopanda/internal/application/composition"
 	"github.com/akarso/shopanda/internal/domain/catalog"
+	"github.com/akarso/shopanda/internal/domain/translation"
 	"github.com/akarso/shopanda/internal/platform/apperror"
 
 	shophttp "github.com/akarso/shopanda/internal/interfaces/http"
@@ -107,7 +108,7 @@ func TestProductHandler_List_OK(t *testing.T) {
 	}
 	plp := composition.NewPipeline[composition.ListingContext]()
 	pdp := composition.NewPipeline[composition.ProductContext]()
-	h := shophttp.NewProductHandler(repo, pdp, plp)
+	h := shophttp.NewProductHandler(repo, pdp, plp, nil)
 
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest("GET", "/api/v1/products?offset=0&limit=10", nil)
@@ -135,7 +136,7 @@ func TestProductHandler_List_DefaultPagination(t *testing.T) {
 	}
 	plp := composition.NewPipeline[composition.ListingContext]()
 	pdp := composition.NewPipeline[composition.ProductContext]()
-	h := shophttp.NewProductHandler(repo, pdp, plp)
+	h := shophttp.NewProductHandler(repo, pdp, plp, nil)
 
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest("GET", "/api/v1/products", nil)
@@ -156,7 +157,7 @@ func TestProductHandler_List_InvalidOffset(t *testing.T) {
 	repo := &mockProductRepo{}
 	plp := composition.NewPipeline[composition.ListingContext]()
 	pdp := composition.NewPipeline[composition.ProductContext]()
-	h := shophttp.NewProductHandler(repo, pdp, plp)
+	h := shophttp.NewProductHandler(repo, pdp, plp, nil)
 
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest("GET", "/api/v1/products?offset=-1", nil)
@@ -171,7 +172,7 @@ func TestProductHandler_List_InvalidLimit(t *testing.T) {
 	repo := &mockProductRepo{}
 	plp := composition.NewPipeline[composition.ListingContext]()
 	pdp := composition.NewPipeline[composition.ProductContext]()
-	h := shophttp.NewProductHandler(repo, pdp, plp)
+	h := shophttp.NewProductHandler(repo, pdp, plp, nil)
 
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest("GET", "/api/v1/products?limit=0", nil)
@@ -191,7 +192,7 @@ func TestProductHandler_List_WithPipeline(t *testing.T) {
 	plp := composition.NewPipeline[composition.ListingContext]()
 	plp.AddStep(addListingBlockStep{name: "grid", typ: "product_grid"})
 	pdp := composition.NewPipeline[composition.ProductContext]()
-	h := shophttp.NewProductHandler(repo, pdp, plp)
+	h := shophttp.NewProductHandler(repo, pdp, plp, nil)
 
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest("GET", "/api/v1/products", nil)
@@ -216,7 +217,7 @@ func TestProductHandler_List_RepoError(t *testing.T) {
 	}
 	plp := composition.NewPipeline[composition.ListingContext]()
 	pdp := composition.NewPipeline[composition.ProductContext]()
-	h := shophttp.NewProductHandler(repo, pdp, plp)
+	h := shophttp.NewProductHandler(repo, pdp, plp, nil)
 
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest("GET", "/api/v1/products", nil)
@@ -235,7 +236,7 @@ func TestProductHandler_Get_OK(t *testing.T) {
 	}
 	pdp := composition.NewPipeline[composition.ProductContext]()
 	plp := composition.NewPipeline[composition.ListingContext]()
-	h := shophttp.NewProductHandler(repo, pdp, plp)
+	h := shophttp.NewProductHandler(repo, pdp, plp, nil)
 
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest("GET", "/api/v1/products/p1", nil)
@@ -260,7 +261,7 @@ func TestProductHandler_Get_NotFound(t *testing.T) {
 	}
 	pdp := composition.NewPipeline[composition.ProductContext]()
 	plp := composition.NewPipeline[composition.ListingContext]()
-	h := shophttp.NewProductHandler(repo, pdp, plp)
+	h := shophttp.NewProductHandler(repo, pdp, plp, nil)
 
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest("GET", "/api/v1/products/missing", nil)
@@ -279,7 +280,7 @@ func TestProductHandler_Get_RepoError(t *testing.T) {
 	}
 	pdp := composition.NewPipeline[composition.ProductContext]()
 	plp := composition.NewPipeline[composition.ListingContext]()
-	h := shophttp.NewProductHandler(repo, pdp, plp)
+	h := shophttp.NewProductHandler(repo, pdp, plp, nil)
 
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest("GET", "/api/v1/products/p1", nil)
@@ -299,7 +300,7 @@ func TestProductHandler_Get_WithPipeline(t *testing.T) {
 	pdp := composition.NewPipeline[composition.ProductContext]()
 	pdp.AddStep(addBlockStep{name: "hero", typ: "hero_banner"})
 	plp := composition.NewPipeline[composition.ListingContext]()
-	h := shophttp.NewProductHandler(repo, pdp, plp)
+	h := shophttp.NewProductHandler(repo, pdp, plp, nil)
 
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest("GET", "/api/v1/products/p1", nil)
@@ -325,7 +326,7 @@ func TestProductHandler_Get_PipelineError(t *testing.T) {
 	pdp := composition.NewPipeline[composition.ProductContext]()
 	pdp.AddStep(failStep{})
 	plp := composition.NewPipeline[composition.ListingContext]()
-	h := shophttp.NewProductHandler(repo, pdp, plp)
+	h := shophttp.NewProductHandler(repo, pdp, plp, nil)
 
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest("GET", "/api/v1/products/p1", nil)
@@ -333,5 +334,45 @@ func TestProductHandler_Get_PipelineError(t *testing.T) {
 
 	if rec.Code != http.StatusInternalServerError {
 		t.Fatalf("status = %d, want %d", rec.Code, http.StatusInternalServerError)
+	}
+}
+
+func TestProductHandler_Get_WithContentTranslation(t *testing.T) {
+	repo := &mockProductRepo{
+		findByIDFn: func(_ context.Context, id string) (*catalog.Product, error) {
+			return &catalog.Product{ID: id, Name: "Widget", Slug: "widget", Description: "A nice widget"}, nil
+		},
+	}
+	ct := translation.NewContentTranslator(&mockContentTranslationRepo{
+		findByEntityAndLanguageFn: func(_ context.Context, entityID, lang string) ([]translation.ContentTranslation, error) {
+			if entityID == "p1" && lang == "de" {
+				return []translation.ContentTranslation{
+					{EntityID: entityID, Language: lang, Field: "name", Value: "Ding"},
+					{EntityID: entityID, Language: lang, Field: "description", Value: "Ein schönes Ding"},
+				}, nil
+			}
+			return []translation.ContentTranslation{}, nil
+		},
+	}, nil)
+	pdp := composition.NewPipeline[composition.ProductContext]()
+	plp := composition.NewPipeline[composition.ListingContext]()
+	h := shophttp.NewProductHandler(repo, pdp, plp, ct)
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("GET", "/api/v1/products/p1", nil)
+	req = req.WithContext(translation.WithLanguage(req.Context(), "de"))
+	newRouter(h).ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d; body: %s", rec.Code, http.StatusOK, rec.Body.String())
+	}
+	body := parseBody(t, rec)
+	data := body["data"].(map[string]interface{})
+	product := data["product"].(map[string]interface{})
+	if product["Name"] != "Ding" {
+		t.Errorf("Name = %v, want Ding", product["Name"])
+	}
+	if product["Description"] != "Ein schönes Ding" {
+		t.Errorf("Description = %v, want Ein schönes Ding", product["Description"])
 	}
 }
