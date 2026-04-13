@@ -10,3 +10,5 @@ require (
 	github.com/go-pdf/fpdf v0.9.0
 	golang.org/x/crypto v0.49.0
 )
+
+require golang.org/x/text v0.36.0 // indirect

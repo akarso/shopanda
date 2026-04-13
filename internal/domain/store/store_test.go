@@ -10,7 +10,7 @@ import (
 
 func TestNewStore(t *testing.T) {
 	before := time.Now().UTC()
-	s, err := store.NewStore("s-1", "default", "Default Store", "EUR", "DE", "shop.example.com")
+	s, err := store.NewStore("s-1", "default", "Default Store", "EUR", "DE", "de", "shop.example.com")
 	after := time.Now().UTC()
 
 	if err != nil {
@@ -46,7 +46,7 @@ func TestNewStore(t *testing.T) {
 }
 
 func TestNewStore_NormalizesCase(t *testing.T) {
-	s, err := store.NewStore("s-1", "us", "US Store", "usd", "us", "")
+	s, err := store.NewStore("s-1", "us", "US Store", "usd", "us", "en", "")
 	if err != nil {
 		t.Fatalf("NewStore() error = %v", err)
 	}
@@ -66,22 +66,25 @@ func TestNewStore_Validation(t *testing.T) {
 		sName    string
 		currency string
 		country  string
+		language string
 		domain   string
 	}{
-		{"empty id", "", "code", "Name", "EUR", "DE", ""},
-		{"empty code", "id", "", "Name", "EUR", "DE", ""},
-		{"empty name", "id", "code", "", "EUR", "DE", ""},
-		{"empty currency", "id", "code", "Name", "", "DE", ""},
-		{"invalid currency length", "id", "code", "Name", "EU", "DE", ""},
-		{"empty country", "id", "code", "Name", "EUR", "", ""},
-		{"invalid country length", "id", "code", "Name", "EUR", "DEU", ""},
-		{"whitespace id", "  ", "code", "Name", "EUR", "DE", ""},
-		{"whitespace code", "id", "  ", "Name", "EUR", "DE", ""},
-		{"whitespace name", "id", "code", "  ", "EUR", "DE", ""},
+		{"empty id", "", "code", "Name", "EUR", "DE", "en", ""},
+		{"empty code", "id", "", "Name", "EUR", "DE", "en", ""},
+		{"empty name", "id", "code", "", "EUR", "DE", "en", ""},
+		{"empty currency", "id", "code", "Name", "", "DE", "en", ""},
+		{"invalid currency length", "id", "code", "Name", "EU", "DE", "en", ""},
+		{"empty country", "id", "code", "Name", "EUR", "", "en", ""},
+		{"invalid country length", "id", "code", "Name", "EUR", "DEU", "en", ""},
+		{"empty language", "id", "code", "Name", "EUR", "DE", "", ""},
+		{"invalid BCP 47 tag", "id", "code", "Name", "EUR", "DE", "!!!", ""},
+		{"whitespace id", "  ", "code", "Name", "EUR", "DE", "en", ""},
+		{"whitespace code", "id", "  ", "Name", "EUR", "DE", "en", ""},
+		{"whitespace name", "id", "code", "  ", "EUR", "DE", "en", ""},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			_, err := store.NewStore(tc.id, tc.code, tc.sName, tc.currency, tc.country, tc.domain)
+			_, err := store.NewStore(tc.id, tc.code, tc.sName, tc.currency, tc.country, tc.language, tc.domain)
 			if err == nil {
 				t.Error("NewStore() expected error")
 			}
@@ -91,7 +94,7 @@ func TestNewStore_Validation(t *testing.T) {
 
 func TestNewStoreFromDB(t *testing.T) {
 	now := time.Now().UTC()
-	s := store.NewStoreFromDB("s-1", "default", "Default", "EUR", "DE", "shop.com", true, now, now)
+	s := store.NewStoreFromDB("s-1", "default", "Default", "EUR", "DE", "de", "shop.com", true, now, now)
 
 	if s == nil {
 		t.Fatal("NewStoreFromDB() returned nil")
@@ -105,7 +108,7 @@ func TestNewStoreFromDB(t *testing.T) {
 }
 
 func TestStoreContext(t *testing.T) {
-	s := store.NewStoreFromDB("s-1", "default", "Default", "EUR", "DE", "", true, time.Now(), time.Now())
+	s := store.NewStoreFromDB("s-1", "default", "Default", "EUR", "DE", "en", "", true, time.Now(), time.Now())
 
 	ctx := store.WithStore(context.Background(), s)
 	got := store.FromContext(ctx)
