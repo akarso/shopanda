@@ -1,6 +1,10 @@
 package rbac
 
-import "github.com/akarso/shopanda/internal/domain/identity"
+import (
+	"sort"
+
+	"github.com/akarso/shopanda/internal/domain/identity"
+)
 
 // rolePermissions maps each admin-level role to its granted permissions.
 // The mapping is static; dynamic roles are not supported (see ROLES.md §7).
@@ -46,6 +50,7 @@ func HasPermission(role identity.Role, perm Permission) bool {
 }
 
 // PermissionsForRole returns all permissions granted to a role.
+// The result is sorted lexicographically for deterministic output.
 // Returns nil for unrecognised roles.
 func PermissionsForRole(role identity.Role) []Permission {
 	perms, ok := rolePermissions[role]
@@ -56,6 +61,7 @@ func PermissionsForRole(role identity.Role) []Permission {
 	for p := range perms {
 		out = append(out, p)
 	}
+	sort.Slice(out, func(i, j int) bool { return out[i] < out[j] })
 	return out
 }
 

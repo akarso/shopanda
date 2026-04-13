@@ -51,7 +51,7 @@ func (i Identity) IsGuest() bool {
 }
 
 // IsAuthenticated returns true if the identity has a known authenticated
-// role (customer or admin) and a non-empty UserID.
+// role (customer, admin, manager, editor, or support) and a non-empty UserID.
 func (i Identity) IsAuthenticated() bool {
 	if i.UserID == "" {
 		return false
