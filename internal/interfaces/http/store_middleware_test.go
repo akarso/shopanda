@@ -68,7 +68,7 @@ func storeTestLogger() logger.Logger {
 
 func TestStoreMiddleware_ResolvesByDomain(t *testing.T) {
 	now := time.Now()
-	de := store.NewStoreFromDB("s-de", "de", "Germany", "EUR", "DE", "shop.de", false, now, now)
+	de := store.NewStoreFromDB("s-de", "de", "Germany", "EUR", "DE", "de", "shop.de", false, now, now)
 
 	repo := &stubStoreRepo{byDomain: map[string]*store.Store{"shop.de": de}}
 	mw := shophttp.StoreMiddleware(repo, storeTestLogger())
@@ -96,7 +96,7 @@ func TestStoreMiddleware_ResolvesByDomain(t *testing.T) {
 
 func TestStoreMiddleware_FallsBackToDefault(t *testing.T) {
 	now := time.Now()
-	def := store.NewStoreFromDB("s-def", "default", "Default", "USD", "US", "", true, now, now)
+	def := store.NewStoreFromDB("s-def", "default", "Default", "USD", "US", "en", "", true, now, now)
 
 	repo := &stubStoreRepo{
 		byDomain: map[string]*store.Store{},
@@ -149,7 +149,7 @@ func TestStoreMiddleware_NoStore(t *testing.T) {
 
 func TestStoreMiddleware_StripsPort(t *testing.T) {
 	now := time.Now()
-	s := store.NewStoreFromDB("s-1", "local", "Local", "EUR", "DE", "localhost", false, now, now)
+	s := store.NewStoreFromDB("s-1", "local", "Local", "EUR", "DE", "de", "localhost", false, now, now)
 
 	repo := &stubStoreRepo{byDomain: map[string]*store.Store{"localhost": s}}
 	mw := shophttp.StoreMiddleware(repo, storeTestLogger())
@@ -174,7 +174,7 @@ func TestStoreMiddleware_StripsPort(t *testing.T) {
 
 func TestStoreMiddleware_DomainLookupError_FallsBackToDefault(t *testing.T) {
 	now := time.Now()
-	def := store.NewStoreFromDB("s-def", "default", "Default", "USD", "US", "", true, now, now)
+	def := store.NewStoreFromDB("s-def", "default", "Default", "USD", "US", "en", "", true, now, now)
 
 	// Use a stub where FindByDomain errors but FindDefault succeeds.
 	domainErrRepo := &domainErrorRepo{def: def}

@@ -261,6 +261,13 @@ func runServe(cfg *config.Config, log logger.Logger) error {
 		return err
 	}
 
+	// Translation repository.
+	translationRepo, err := postgres.NewTranslationRepo(conn)
+	if err != nil {
+		return err
+	}
+	_ = translationRepo // wired in translation admin PR
+
 	// Cache.
 	_ = appCache // wired by consumers in upcoming PRs
 
@@ -434,6 +441,7 @@ func runServe(cfg *config.Config, log logger.Logger) error {
 	router.Use(shophttp.LoggingMiddleware(log))
 	router.Use(shophttp.AuthMiddleware(tokenParser))
 	router.Use(shophttp.StoreMiddleware(storeRepo, log))
+	router.Use(shophttp.LanguageMiddleware())
 
 	// Routes.
 	router.HandleFunc("GET /healthz", shophttp.HealthHandler())

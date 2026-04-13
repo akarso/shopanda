@@ -28,19 +28,19 @@ func NewStoreRepo(db *sql.DB) (*StoreRepo, error) {
 	return &StoreRepo{db: db}, nil
 }
 
-const storeColumns = `id, code, name, currency, country, domain, is_default, created_at, updated_at`
+const storeColumns = `id, code, name, currency, country, language, domain, is_default, created_at, updated_at`
 
 func hydrateStore(scan func(dest ...interface{}) error) (*store.Store, error) {
-	var id, code, name, currency, country, domain string
+	var id, code, name, currency, country, language, domain string
 	var isDefault bool
 	var createdAt, updatedAt time.Time
 
-	err := scan(&id, &code, &name, &currency, &country, &domain, &isDefault, &createdAt, &updatedAt)
+	err := scan(&id, &code, &name, &currency, &country, &language, &domain, &isDefault, &createdAt, &updatedAt)
 	if err != nil {
 		return nil, err
 	}
 
-	return store.NewStoreFromDB(id, code, name, currency, country, domain, isDefault, createdAt, updatedAt), nil
+	return store.NewStoreFromDB(id, code, name, currency, country, language, domain, isDefault, createdAt, updatedAt), nil
 }
 
 // FindByID returns a store by its ID.
@@ -132,10 +132,10 @@ func (r *StoreRepo) Create(ctx context.Context, s *store.Store) error {
 	if s == nil {
 		return fmt.Errorf("store_repo: create: store must not be nil")
 	}
-	const q = `INSERT INTO stores (id, code, name, currency, country, domain, is_default, created_at, updated_at)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`
+	const q = `INSERT INTO stores (id, code, name, currency, country, language, domain, is_default, created_at, updated_at)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`
 	_, err := r.db.ExecContext(ctx, q,
-		s.ID, s.Code, s.Name, s.Currency, s.Country, s.Domain, s.IsDefault,
+		s.ID, s.Code, s.Name, s.Currency, s.Country, s.Language, s.Domain, s.IsDefault,
 		s.CreatedAt, s.UpdatedAt,
 	)
 	if err != nil {
@@ -165,9 +165,9 @@ func (r *StoreRepo) Update(ctx context.Context, s *store.Store) error {
 		return fmt.Errorf("store_repo: update: store must not be nil")
 	}
 	newUpdatedAt := time.Now().UTC()
-	const q = `UPDATE stores SET code = $1, name = $2, currency = $3, country = $4, domain = $5, is_default = $6, updated_at = $7 WHERE id = $8`
+	const q = `UPDATE stores SET code = $1, name = $2, currency = $3, country = $4, language = $5, domain = $6, is_default = $7, updated_at = $8 WHERE id = $9`
 	res, err := r.db.ExecContext(ctx, q,
-		s.Code, s.Name, s.Currency, s.Country, s.Domain, s.IsDefault,
+		s.Code, s.Name, s.Currency, s.Country, s.Language, s.Domain, s.IsDefault,
 		newUpdatedAt, s.ID,
 	)
 	if err != nil {

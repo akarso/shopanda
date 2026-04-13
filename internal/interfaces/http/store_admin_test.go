@@ -73,7 +73,7 @@ func TestStoreAdmin_List_OK(t *testing.T) {
 	repo := &mockStoreAdminRepo{
 		findAllFn: func(_ context.Context) ([]store.Store, error) {
 			return []store.Store{
-				*store.NewStoreFromDB("s-1", "de", "Germany", "EUR", "DE", "shop.de", true, now, now),
+				*store.NewStoreFromDB("s-1", "de", "Germany", "EUR", "DE", "de", "shop.de", true, now, now),
 			}, nil
 		},
 	}
@@ -133,7 +133,7 @@ func TestStoreAdmin_Create_OK(t *testing.T) {
 	h := shophttp.NewStoreAdminHandler(repo, storeAdminBus())
 	mux := newStoreAdminRouter(h)
 
-	body := `{"code":"de","name":"Germany","currency":"EUR","country":"DE","domain":"shop.de"}`
+	body := `{"code":"de","name":"Germany","currency":"EUR","country":"DE","language":"de","domain":"shop.de"}`
 	req := httptest.NewRequest("POST", "/api/v1/admin/stores", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	rec := httptest.NewRecorder()
@@ -169,7 +169,7 @@ func TestStoreAdmin_Create_ValidationError(t *testing.T) {
 
 func TestStoreAdmin_Update_OK(t *testing.T) {
 	now := time.Now()
-	existing := store.NewStoreFromDB("s-1", "de", "Germany", "EUR", "DE", "shop.de", false, now, now)
+	existing := store.NewStoreFromDB("s-1", "de", "Germany", "EUR", "DE", "de", "shop.de", false, now, now)
 
 	var updated *store.Store
 	repo := &mockStoreAdminRepo{
@@ -222,7 +222,7 @@ func TestStoreAdmin_Update_NotFound(t *testing.T) {
 
 func TestStoreAdmin_Update_NormalizesCurrencyAndCountry(t *testing.T) {
 	now := time.Now()
-	existing := store.NewStoreFromDB("s-1", "de", "Germany", "EUR", "DE", "", false, now, now)
+	existing := store.NewStoreFromDB("s-1", "de", "Germany", "EUR", "DE", "de", "", false, now, now)
 
 	var updated *store.Store
 	repo := &mockStoreAdminRepo{

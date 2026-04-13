@@ -27,6 +27,7 @@ type createStoreRequest struct {
 	Name      string `json:"name"`
 	Currency  string `json:"currency"`
 	Country   string `json:"country"`
+	Language  string `json:"language"`
 	Domain    string `json:"domain"`
 	IsDefault *bool  `json:"is_default"`
 }
@@ -36,6 +37,7 @@ type updateStoreRequest struct {
 	Name      *string `json:"name"`
 	Currency  *string `json:"currency"`
 	Country   *string `json:"country"`
+	Language  *string `json:"language"`
 	Domain    *string `json:"domain"`
 	IsDefault *bool   `json:"is_default"`
 }
@@ -66,7 +68,7 @@ func (h *StoreAdminHandler) Create() http.HandlerFunc {
 			return
 		}
 
-		s, err := store.NewStore(id.New(), req.Code, req.Name, req.Currency, req.Country, req.Domain)
+		s, err := store.NewStore(id.New(), req.Code, req.Name, req.Currency, req.Country, req.Language, req.Domain)
 		if err != nil {
 			JSONError(w, apperror.Validation(err.Error()))
 			return
@@ -147,6 +149,14 @@ func (h *StoreAdminHandler) Update() http.HandlerFunc {
 				return
 			}
 			s.Country = cty
+		}
+		if req.Language != nil {
+			lng, lngErr := store.NormalizeLanguage(*req.Language)
+			if lngErr != nil {
+				JSONError(w, apperror.Validation(lngErr.Error()))
+				return
+			}
+			s.Language = lng
 		}
 		if req.Domain != nil {
 			s.Domain = strings.TrimSpace(*req.Domain)
