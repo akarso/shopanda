@@ -2,6 +2,7 @@ package config
 
 import (
 	"fmt"
+	"net/url"
 	"os"
 	"strconv"
 	"strings"
@@ -105,6 +106,11 @@ func Load(path string) (*Config, error) {
 	}
 
 	applyEnv(&cfg)
+
+	if err := normalizePublicBaseURL(&cfg); err != nil {
+		return nil, fmt.Errorf("config: %w", err)
+	}
+
 	values = flatten(&cfg)
 
 	return &cfg, nil
@@ -185,6 +191,34 @@ func defaults() Config {
 			ThemePath: "themes/default",
 		},
 	}
+}
+
+// normalizePublicBaseURL validates and normalizes the PublicBaseURL field.
+// If empty, it falls back to http://host:port from the server config.
+// If set, it defaults the scheme to https when missing, strips trailing slashes,
+// and returns an error if the value is not a valid URL.
+func normalizePublicBaseURL(cfg *Config) error {
+	raw := cfg.Server.PublicBaseURL
+	if raw == "" {
+		cfg.Server.PublicBaseURL = fmt.Sprintf("http://%s:%d", cfg.Server.Host, cfg.Server.Port)
+		return nil
+	}
+
+	// Default scheme to https if missing.
+	if !strings.Contains(raw, "://") {
+		raw = "https://" + raw
+	}
+
+	u, err := url.Parse(raw)
+	if err != nil {
+		return fmt.Errorf("server.public_base_url: invalid URL %q: %w", raw, err)
+	}
+	if u.Host == "" {
+		return fmt.Errorf("server.public_base_url: missing host in %q", raw)
+	}
+
+	cfg.Server.PublicBaseURL = strings.TrimRight(u.String(), "/")
+	return nil
 }
 
 // applyEnv overlays environment variables with SHOPANDA_ prefix.

@@ -290,3 +290,104 @@ func TestConfigString_ContainsCacheDriver(t *testing.T) {
 		t.Errorf("String() = %q, should contain cache.driver=postgres", s)
 	}
 }
+
+func TestLoad_PublicBaseURL_DefaultsFallback(t *testing.T) {
+	path := writeYAML(t, "")
+
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load() error: %v", err)
+	}
+
+	want := "http://0.0.0.0:8080"
+	if cfg.Server.PublicBaseURL != want {
+		t.Errorf("PublicBaseURL = %q, want %q", cfg.Server.PublicBaseURL, want)
+	}
+}
+
+func TestLoad_PublicBaseURL_DefaultsSchemeToHTTPS(t *testing.T) {
+	yaml := `
+server:
+  public_base_url: "shop.example.com"
+`
+	path := writeYAML(t, yaml)
+
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load() error: %v", err)
+	}
+
+	want := "https://shop.example.com"
+	if cfg.Server.PublicBaseURL != want {
+		t.Errorf("PublicBaseURL = %q, want %q", cfg.Server.PublicBaseURL, want)
+	}
+}
+
+func TestLoad_PublicBaseURL_StripsTrailingSlash(t *testing.T) {
+	yaml := `
+server:
+  public_base_url: "https://shop.example.com/"
+`
+	path := writeYAML(t, yaml)
+
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load() error: %v", err)
+	}
+
+	want := "https://shop.example.com"
+	if cfg.Server.PublicBaseURL != want {
+		t.Errorf("PublicBaseURL = %q, want %q", cfg.Server.PublicBaseURL, want)
+	}
+}
+
+func TestLoad_PublicBaseURL_PreservesExplicitScheme(t *testing.T) {
+	yaml := `
+server:
+  public_base_url: "http://localhost:3000"
+`
+	path := writeYAML(t, yaml)
+
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load() error: %v", err)
+	}
+
+	want := "http://localhost:3000"
+	if cfg.Server.PublicBaseURL != want {
+		t.Errorf("PublicBaseURL = %q, want %q", cfg.Server.PublicBaseURL, want)
+	}
+}
+
+func TestLoad_PublicBaseURL_EnvOverride(t *testing.T) {
+	path := writeYAML(t, "")
+
+	t.Setenv("SHOPANDA_SERVER_PUBLIC_BASE_URL", "shop.example.com/")
+
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load() error: %v", err)
+	}
+
+	want := "https://shop.example.com"
+	if cfg.Server.PublicBaseURL != want {
+		t.Errorf("PublicBaseURL = %q, want %q", cfg.Server.PublicBaseURL, want)
+	}
+}
+
+func TestLoad_PublicBaseURL_FlattenedKey(t *testing.T) {
+	yaml := `
+server:
+  public_base_url: "https://shop.example.com"
+`
+	path := writeYAML(t, yaml)
+
+	_, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load() error: %v", err)
+	}
+
+	if v := Get("server.public_base_url"); v != "https://shop.example.com" {
+		t.Errorf("Get(server.public_base_url) = %q, want %q", v, "https://shop.example.com")
+	}
+}
