@@ -200,7 +200,11 @@ func defaults() Config {
 func normalizePublicBaseURL(cfg *Config) error {
 	raw := cfg.Server.PublicBaseURL
 	if raw == "" {
-		cfg.Server.PublicBaseURL = fmt.Sprintf("http://%s:%d", cfg.Server.Host, cfg.Server.Port)
+		host := cfg.Server.Host
+		if host == "" || host == "0.0.0.0" || host == "::" {
+			return fmt.Errorf("server.public_base_url: must be set explicitly when server.host is a wildcard bind address (%q)", host)
+		}
+		cfg.Server.PublicBaseURL = fmt.Sprintf("http://%s:%d", host, cfg.Server.Port)
 		return nil
 	}
 
