@@ -36,6 +36,7 @@ import (
 	"github.com/akarso/shopanda/internal/domain/search"
 	"github.com/akarso/shopanda/internal/domain/shared"
 	"github.com/akarso/shopanda/internal/domain/theme"
+	"github.com/akarso/shopanda/internal/domain/translation"
 	"github.com/akarso/shopanda/internal/infrastructure/cron"
 	"github.com/akarso/shopanda/internal/infrastructure/flatrate"
 	"github.com/akarso/shopanda/internal/infrastructure/localfs"
@@ -268,6 +269,13 @@ func runServe(cfg *config.Config, log logger.Logger) error {
 	}
 	_ = translationRepo // wired in translation admin PR
 
+	// Content translation repository + translator.
+	contentTranslationRepo, err := postgres.NewContentTranslationRepo(conn)
+	if err != nil {
+		return err
+	}
+	contentTranslator := translation.NewContentTranslator(contentTranslationRepo)
+
 	// Cache.
 	_ = appCache // wired by consumers in upcoming PRs
 
@@ -413,7 +421,7 @@ func runServe(cfg *config.Config, log logger.Logger) error {
 	adminApp.RegisterPageSchemas(adminRegistry)
 
 	// Handlers.
-	productHandler := shophttp.NewProductHandler(productRepo, pdp, plp)
+	productHandler := shophttp.NewProductHandler(productRepo, pdp, plp, contentTranslator)
 	productAdmin := shophttp.NewProductAdminHandler(productRepo, bus)
 	variantHandler := shophttp.NewVariantHandler(productRepo, variantRepo, bus)
 	cartHandler := shophttp.NewCartHandler(cartService)
@@ -427,7 +435,7 @@ func runServe(cfg *config.Config, log logger.Logger) error {
 	mediaService := mediaApp.NewService(mediaStorage, assetRepo, bus, log)
 	mediaHandler := shophttp.NewMediaHandler(mediaService)
 	schemaHandler := shophttp.NewSchemaHandler(adminRegistry)
-	pageHandler := shophttp.NewPageHandler(pageRepo)
+	pageHandler := shophttp.NewPageHandler(pageRepo, contentTranslator)
 	pageAdmin := shophttp.NewPageAdminHandler(pageRepo, bus)
 	storeAdmin := shophttp.NewStoreAdminHandler(storeRepo, bus)
 	sitemapHandler := shophttp.NewSitemapHandler(baseURL, productRepo, categoryRepo, pageRepo)

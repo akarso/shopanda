@@ -4,20 +4,22 @@ import (
 	"net/http"
 
 	"github.com/akarso/shopanda/internal/domain/cms"
+	"github.com/akarso/shopanda/internal/domain/translation"
 	"github.com/akarso/shopanda/internal/platform/apperror"
 )
 
 // PageHandler serves public page read endpoints.
 type PageHandler struct {
 	pages cms.PageRepository
+	ct    *translation.ContentTranslator
 }
 
 // NewPageHandler creates a PageHandler.
-func NewPageHandler(pages cms.PageRepository) *PageHandler {
+func NewPageHandler(pages cms.PageRepository, ct *translation.ContentTranslator) *PageHandler {
 	if pages == nil {
 		panic("PageHandler: pages repository must not be nil")
 	}
-	return &PageHandler{pages: pages}
+	return &PageHandler{pages: pages, ct: ct}
 }
 
 // pageResponse is the JSON shape for a public page.
@@ -47,13 +49,25 @@ func (h *PageHandler) Get() http.HandlerFunc {
 			return
 		}
 
+		resp := pageResponse{
+			ID:      p.ID(),
+			Slug:    p.Slug(),
+			Title:   p.Title(),
+			Content: p.Content(),
+		}
+		if h.ct != nil {
+			if fields := h.ct.TranslateFields(r.Context(), p.ID()); fields != nil {
+				if v, ok := fields["title"]; ok {
+					resp.Title = v
+				}
+				if v, ok := fields["content"]; ok {
+					resp.Content = v
+				}
+			}
+		}
+
 		JSON(w, http.StatusOK, map[string]interface{}{
-			"page": pageResponse{
-				ID:      p.ID(),
-				Slug:    p.Slug(),
-				Title:   p.Title(),
-				Content: p.Content(),
-			},
+			"page": resp,
 		})
 	}
 }

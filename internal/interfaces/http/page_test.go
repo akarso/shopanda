@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/akarso/shopanda/internal/domain/cms"
+	"github.com/akarso/shopanda/internal/domain/translation"
 	"github.com/akarso/shopanda/internal/platform/apperror"
 	"github.com/akarso/shopanda/internal/platform/event"
 	"github.com/akarso/shopanda/internal/platform/logger"
@@ -98,6 +99,31 @@ func newPageAdminRouter(h *shophttp.PageAdminHandler) *http.ServeMux {
 	return mux
 }
 
+// --- mock content translation repository ---
+
+type mockContentTranslationRepo struct {
+	findByEntityAndLanguageFn func(ctx context.Context, entityID, language string) ([]translation.ContentTranslation, error)
+}
+
+func (m *mockContentTranslationRepo) FindByEntityAndLanguage(ctx context.Context, entityID, language string) ([]translation.ContentTranslation, error) {
+	if m.findByEntityAndLanguageFn != nil {
+		return m.findByEntityAndLanguageFn(ctx, entityID, language)
+	}
+	return nil, nil
+}
+
+func (m *mockContentTranslationRepo) FindFieldValue(context.Context, string, string, string) (*translation.ContentTranslation, error) {
+	return nil, nil
+}
+
+func (m *mockContentTranslationRepo) Upsert(context.Context, *translation.ContentTranslation) error {
+	return nil
+}
+
+func (m *mockContentTranslationRepo) DeleteByEntity(context.Context, string) error {
+	return nil
+}
+
 func pageBus() *event.Bus {
 	return event.NewBus(logger.NewWithWriter(io.Discard, "error"))
 }
@@ -136,7 +162,7 @@ func TestPageHandler_Get_OK(t *testing.T) {
 			return testPage(), nil
 		},
 	}
-	h := shophttp.NewPageHandler(repo)
+	h := shophttp.NewPageHandler(repo, nil)
 
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest("GET", "/api/v1/pages/about", nil)
@@ -163,7 +189,7 @@ func TestPageHandler_Get_NotFound(t *testing.T) {
 			return nil, nil
 		},
 	}
-	h := shophttp.NewPageHandler(repo)
+	h := shophttp.NewPageHandler(repo, nil)
 
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest("GET", "/api/v1/pages/missing", nil)
@@ -180,7 +206,7 @@ func TestPageHandler_Get_RepoError(t *testing.T) {
 			return nil, apperror.Internal("db error")
 		},
 	}
-	h := shophttp.NewPageHandler(repo)
+	h := shophttp.NewPageHandler(repo, nil)
 
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest("GET", "/api/v1/pages/about", nil)
@@ -188,6 +214,44 @@ func TestPageHandler_Get_RepoError(t *testing.T) {
 
 	if rec.Code != http.StatusInternalServerError {
 		t.Fatalf("status = %d, want %d", rec.Code, http.StatusInternalServerError)
+	}
+}
+
+func TestPageHandler_Get_WithContentTranslation(t *testing.T) {
+	repo := &mockPageRepo{
+		findActiveBySlugFn: func(_ context.Context, _ string) (*cms.Page, error) {
+			return testPage(), nil
+		},
+	}
+	ct := translation.NewContentTranslator(&mockContentTranslationRepo{
+		findByEntityAndLanguageFn: func(_ context.Context, entityID, lang string) ([]translation.ContentTranslation, error) {
+			if entityID == "page-1" && lang == "de" {
+				return []translation.ContentTranslation{
+					{EntityID: entityID, Language: lang, Field: "title", Value: "Über uns"},
+					{EntityID: entityID, Language: lang, Field: "content", Value: "<p>Hallo</p>"},
+				}, nil
+			}
+			return nil, nil
+		},
+	})
+	h := shophttp.NewPageHandler(repo, ct)
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("GET", "/api/v1/pages/about", nil)
+	req = req.WithContext(translation.WithLanguage(req.Context(), "de"))
+	newPageRouter(h).ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d; body: %s", rec.Code, http.StatusOK, rec.Body.String())
+	}
+	body := parsePageBody(t, rec)
+	data := body["data"].(map[string]interface{})
+	page := data["page"].(map[string]interface{})
+	if page["title"] != "Über uns" {
+		t.Errorf("title = %v, want Über uns", page["title"])
+	}
+	if page["content"] != "<p>Hallo</p>" {
+		t.Errorf("content = %v, want <p>Hallo</p>", page["content"])
 	}
 }
 
