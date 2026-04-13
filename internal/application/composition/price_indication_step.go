@@ -41,7 +41,10 @@ func (s *PriceIndicationStep) Apply(ctx *ProductContext) error {
 	}
 
 	variants, err := s.variants.ListByProductID(ctx.Ctx, ctx.Product.ID, 0, 1)
-	if err != nil || len(variants) == 0 {
+	if err != nil {
+		return fmt.Errorf("price indication: list variants: %w", err)
+	}
+	if len(variants) == 0 {
 		return nil
 	}
 	variantID := variants[0].ID
@@ -51,14 +54,20 @@ func (s *PriceIndicationStep) Apply(ctx *ProductContext) error {
 		currency = "EUR"
 	}
 
-	currentPrice := s.lookupCurrentPrice(ctx, variantID, currency)
+	currentPrice, err := s.lookupCurrentPrice(ctx, variantID, currency)
+	if err != nil {
+		return fmt.Errorf("price indication: current price: %w", err)
+	}
 	if currentPrice == nil {
 		return nil
 	}
 
 	since := time.Now().UTC().AddDate(0, 0, -30)
 	lowest, err := s.history.LowestSince(ctx.Ctx, variantID, currency, ctx.StoreID, since)
-	if err != nil || lowest == nil {
+	if err != nil {
+		return fmt.Errorf("price indication: lowest since: %w", err)
+	}
+	if lowest == nil {
 		return nil
 	}
 
@@ -80,13 +89,16 @@ func (s *PriceIndicationStep) Apply(ctx *ProductContext) error {
 	return nil
 }
 
-func (s *PriceIndicationStep) lookupCurrentPrice(ctx *ProductContext, variantID, currency string) *pricing.Price {
+func (s *PriceIndicationStep) lookupCurrentPrice(ctx *ProductContext, variantID, currency string) (*pricing.Price, error) {
 	price, err := s.prices.FindByVariantCurrencyAndStore(ctx.Ctx, variantID, currency, ctx.StoreID)
 	if err != nil {
-		return nil
+		return nil, fmt.Errorf("find price: %w", err)
 	}
 	if price == nil && ctx.StoreID != "" {
-		price, _ = s.prices.FindByVariantCurrencyAndStore(ctx.Ctx, variantID, currency, "")
+		price, err = s.prices.FindByVariantCurrencyAndStore(ctx.Ctx, variantID, currency, "")
+		if err != nil {
+			return nil, fmt.Errorf("find price (fallback): %w", err)
+		}
 	}
-	return price
+	return price, nil
 }

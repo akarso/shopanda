@@ -17,6 +17,7 @@ var _ pricing.PriceHistoryRepository = (*PriceHistoryRepo)(nil)
 // PriceHistoryRepo implements pricing.PriceHistoryRepository using PostgreSQL.
 type PriceHistoryRepo struct {
 	db *sql.DB
+	tx *sql.Tx
 }
 
 // NewPriceHistoryRepo returns a new PriceHistoryRepo backed by db.
@@ -27,6 +28,11 @@ func NewPriceHistoryRepo(db *sql.DB) (*PriceHistoryRepo, error) {
 	return &PriceHistoryRepo{db: db}, nil
 }
 
+// WithTx returns a repo bound to the given transaction.
+func (r *PriceHistoryRepo) WithTx(tx *sql.Tx) pricing.PriceHistoryRepository {
+	return &PriceHistoryRepo{db: r.db, tx: tx}
+}
+
 // Record inserts a new price snapshot.
 func (r *PriceHistoryRepo) Record(ctx context.Context, s *pricing.PriceSnapshot) error {
 	if s == nil {
@@ -35,7 +41,7 @@ func (r *PriceHistoryRepo) Record(ctx context.Context, s *pricing.PriceSnapshot)
 	const q = `INSERT INTO price_history (id, variant_id, store_id, currency, amount, recorded_at)
 		VALUES ($1, $2, $3, $4, $5, $6)`
 
-	_, err := r.db.ExecContext(ctx, q,
+	_, err := r.exec(ctx, q,
 		s.ID, s.VariantID, s.StoreID, s.Amount.Currency(), s.Amount.Amount(), s.RecordedAt,
 	)
 	if err != nil {
@@ -57,7 +63,7 @@ func (r *PriceHistoryRepo) LowestSince(ctx context.Context, variantID, currency,
 	var s pricing.PriceSnapshot
 	var amount int64
 	var cur string
-	err := r.db.QueryRowContext(ctx, q, variantID, currency, storeID, since).Scan(
+	err := r.queryRow(ctx, q, variantID, currency, storeID, since).Scan(
 		&s.ID, &s.VariantID, &s.StoreID, &cur, &amount, &s.RecordedAt,
 	)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -72,4 +78,20 @@ func (r *PriceHistoryRepo) LowestSince(ctx context.Context, variantID, currency,
 	}
 	s.Amount = m
 	return &s, nil
+}
+
+// queryRow delegates to tx or db.
+func (r *PriceHistoryRepo) queryRow(ctx context.Context, q string, args ...interface{}) *sql.Row {
+	if r.tx != nil {
+		return r.tx.QueryRowContext(ctx, q, args...)
+	}
+	return r.db.QueryRowContext(ctx, q, args...)
+}
+
+// exec delegates to tx or db.
+func (r *PriceHistoryRepo) exec(ctx context.Context, q string, args ...interface{}) (sql.Result, error) {
+	if r.tx != nil {
+		return r.tx.ExecContext(ctx, q, args...)
+	}
+	return r.db.ExecContext(ctx, q, args...)
 }

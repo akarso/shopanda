@@ -6,9 +6,9 @@ CREATE TABLE price_history (
     variant_id  UUID NOT NULL REFERENCES variants(id) ON DELETE CASCADE,
     store_id    TEXT NOT NULL DEFAULT '',
     currency    TEXT NOT NULL CHECK (length(currency) = 3 AND currency = upper(currency)),
-    amount      BIGINT NOT NULL,
+    amount      BIGINT NOT NULL CHECK (amount > 0),
     recorded_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
 CREATE INDEX idx_price_history_lookup
-    ON price_history (variant_id, currency, store_id, recorded_at DESC);
+    ON price_history (variant_id, currency, store_id, amount ASC, recorded_at ASC);

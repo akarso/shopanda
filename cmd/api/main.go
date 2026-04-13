@@ -1277,7 +1277,7 @@ func runImportPrices(cfg *config.Config, log logger.Logger) error {
 	if err != nil {
 		return fmt.Errorf("price history repo: %w", err)
 	}
-	imp := importer.NewPriceImporter(variantRepo, priceRepo, priceHistoryRepo)
+	imp := importer.NewPriceImporter(variantRepo, priceRepo, priceHistoryRepo, conn)
 
 	log.Info("import.prices.start", map[string]interface{}{"file": filePath})
 

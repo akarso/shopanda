@@ -204,16 +204,25 @@ func (s *CatalogSeeder) seedProducts(
 			if err != nil {
 				return err
 			}
-			if err := priceRepo.Upsert(ctx, &price); err != nil {
-				return err
-			}
-
 			snap, err := pricing.NewPriceSnapshot(id.New(), variantID, "", money)
 			if err != nil {
 				return err
 			}
-			if err := priceHistoryRepo.Record(ctx, &snap); err != nil {
+
+			tx, err := deps.DB.BeginTx(ctx, nil)
+			if err != nil {
+				return fmt.Errorf("seed: begin tx: %w", err)
+			}
+			if err := priceRepo.WithTx(tx).Upsert(ctx, &price); err != nil {
+				tx.Rollback()
 				return err
+			}
+			if err := priceHistoryRepo.WithTx(tx).Record(ctx, &snap); err != nil {
+				tx.Rollback()
+				return err
+			}
+			if err := tx.Commit(); err != nil {
+				return fmt.Errorf("seed: commit price+history: %w", err)
 			}
 
 			stock, err := inventory.NewStockEntry(variantID, sv.Stock)

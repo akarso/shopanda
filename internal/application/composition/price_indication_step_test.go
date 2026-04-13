@@ -121,6 +121,9 @@ func TestPriceIndicationStep_LowerHistorical(t *testing.T) {
 	if blk.Data["currency"] != "EUR" {
 		t.Errorf("currency = %v, want EUR", blk.Data["currency"])
 	}
+	if blk.Data["recorded_at"] == nil || blk.Data["recorded_at"] == "" {
+		t.Error("recorded_at should be non-empty")
+	}
 }
 
 func TestPriceIndicationStep_SamePrice(t *testing.T) {
