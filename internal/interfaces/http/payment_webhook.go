@@ -56,13 +56,17 @@ func (h *PaymentWebhookHandler) Handle() http.HandlerFunc {
 		}
 
 		// Buffer the raw body for signature verification.
-		raw, err := io.ReadAll(io.LimitReader(r.Body, maxWebhookBodySize+1))
+		// MaxBytesReader discards the remainder of oversized requests,
+		// freeing the connection for keep-alive reuse.
+		r.Body = http.MaxBytesReader(w, r.Body, maxWebhookBodySize)
+		raw, err := io.ReadAll(r.Body)
 		if err != nil {
+			var maxErr *http.MaxBytesError
+			if errors.As(err, &maxErr) {
+				JSONError(w, apperror.Validation("request body too large"))
+				return
+			}
 			JSONError(w, apperror.Validation("failed to read request body"))
-			return
-		}
-		if int64(len(raw)) > maxWebhookBodySize {
-			JSONError(w, apperror.Validation("request body too large"))
 			return
 		}
 

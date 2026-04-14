@@ -12,9 +12,9 @@ import (
 var _ payment.WebhookVerifier = (*HMACVerifier)(nil)
 
 // HMACVerifier verifies webhook signatures using HMAC-SHA256 with
-// per-provider secrets. Providers without a configured secret are
-// rejected with ErrSignatureMissing (defence-in-depth: no secret means
-// the provider is either unconfigured or signatures are not enforced yet).
+// per-provider secrets. Providers without a configured secret have
+// verification skipped (returns nil), preserving backward compatibility
+// for providers like "manual" that do not use signatures.
 type HMACVerifier struct {
 	secrets map[string]string // provider → secret
 }
