@@ -14,6 +14,7 @@ const (
 	CodeValidation   Code = "validation"
 	CodeUnauthorized Code = "unauthorized"
 	CodeForbidden    Code = "forbidden"
+	CodeRateLimited  Code = "rate_limited"
 	CodeInternal     Code = "internal"
 )
 
@@ -68,6 +69,11 @@ func Unauthorized(message string) *Error {
 // Forbidden creates a forbidden error.
 func Forbidden(message string) *Error {
 	return New(CodeForbidden, message)
+}
+
+// RateLimited creates a rate_limited error.
+func RateLimited(message string) *Error {
+	return New(CodeRateLimited, message)
 }
 
 // Internal creates an internal error.

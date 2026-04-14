@@ -481,6 +481,7 @@ func runServe(cfg *config.Config, log logger.Logger) error {
 	// Middleware: outermost first.
 	router.Use(shophttp.RecoveryMiddleware(log))
 	router.Use(shophttp.RequestIDMiddleware())
+	router.Use(shophttp.RateLimitMiddleware(cfg.RateLimit, log))
 	router.Use(shophttp.LoggingMiddleware(log))
 	router.Use(shophttp.AuthMiddleware(tokenParser))
 	router.Use(shophttp.StoreMiddleware(storeRepo, log))

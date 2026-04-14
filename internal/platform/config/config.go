@@ -12,16 +12,17 @@ import (
 
 // Config holds all application configuration.
 type Config struct {
-	Server   ServerConfig   `yaml:"server"`
-	Database DatabaseConfig `yaml:"database"`
-	Log      LogConfig      `yaml:"log"`
-	Auth     AuthConfig     `yaml:"auth"`
-	Mail     MailConfig     `yaml:"mail"`
-	Media    MediaConfig    `yaml:"media"`
-	Cache    CacheConfig    `yaml:"cache"`
-	Frontend FrontendConfig `yaml:"frontend"`
-	CDN      CDNConfig      `yaml:"cdn"`
-	Webhooks WebhooksConfig `yaml:"webhooks"`
+	Server    ServerConfig    `yaml:"server"`
+	Database  DatabaseConfig  `yaml:"database"`
+	Log       LogConfig       `yaml:"log"`
+	Auth      AuthConfig      `yaml:"auth"`
+	Mail      MailConfig      `yaml:"mail"`
+	Media     MediaConfig     `yaml:"media"`
+	Cache     CacheConfig     `yaml:"cache"`
+	Frontend  FrontendConfig  `yaml:"frontend"`
+	CDN       CDNConfig       `yaml:"cdn"`
+	Webhooks  WebhooksConfig  `yaml:"webhooks"`
+	RateLimit RateLimitConfig `yaml:"rate_limit"`
 }
 
 // WebhooksConfig holds per-provider webhook secrets.
@@ -32,6 +33,27 @@ type WebhooksConfig struct {
 // Secret returns the webhook secret for the given provider, or empty string.
 func (w WebhooksConfig) Secret(provider string) string {
 	return w.Secrets[provider]
+}
+
+// RateLimitConfig holds rate limiting settings.
+type RateLimitConfig struct {
+	Enabled        bool                 `yaml:"enabled"`
+	Default        RateLimitRule        `yaml:"default"`
+	PerRoute       []RouteRateLimitRule `yaml:"per_route"`
+	TrustedProxies []string             `yaml:"trusted_proxies"`
+}
+
+// RateLimitRule defines a token-bucket rate: Rate tokens per second, Burst max.
+type RateLimitRule struct {
+	Rate  float64 `yaml:"rate"`
+	Burst int     `yaml:"burst"`
+}
+
+// RouteRateLimitRule applies a rate limit rule to a specific path prefix.
+type RouteRateLimitRule struct {
+	PathPrefix string  `yaml:"path_prefix"`
+	Rate       float64 `yaml:"rate"`
+	Burst      int     `yaml:"burst"`
 }
 
 type ServerConfig struct {
@@ -355,6 +377,19 @@ func applyEnv(cfg *Config) {
 		}
 		cfg.Webhooks.Secrets[provider] = kv[1]
 	}
+	if v := os.Getenv("SHOPANDA_RATE_LIMIT_ENABLED"); v != "" {
+		cfg.RateLimit.Enabled = v == "true" || v == "1"
+	}
+	if v := os.Getenv("SHOPANDA_RATE_LIMIT_DEFAULT_RATE"); v != "" {
+		if f, err := strconv.ParseFloat(v, 64); err == nil && f > 0 {
+			cfg.RateLimit.Default.Rate = f
+		}
+	}
+	if v := os.Getenv("SHOPANDA_RATE_LIMIT_DEFAULT_BURST"); v != "" {
+		if b, err := strconv.Atoi(v); err == nil && b > 0 {
+			cfg.RateLimit.Default.Burst = b
+		}
+	}
 }
 
 // flatten converts the Config struct into a dot-notation key-value map.
@@ -388,6 +423,9 @@ func flatten(cfg *Config) map[string]string {
 	for k, v := range cfg.Webhooks.Secrets {
 		m["webhooks.secrets."+k] = v
 	}
+	m["rate_limit.enabled"] = strconv.FormatBool(cfg.RateLimit.Enabled)
+	m["rate_limit.default.rate"] = strconv.FormatFloat(cfg.RateLimit.Default.Rate, 'f', -1, 64)
+	m["rate_limit.default.burst"] = strconv.Itoa(cfg.RateLimit.Default.Burst)
 	return m
 }
 

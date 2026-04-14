@@ -560,6 +560,20 @@ classDiagram
         -repo StoreRepository
         +ServeHTTP(w, r)
     }
+    class RateLimitMiddleware {
+        <<middleware>>
+        -defaultLimiter *Limiter
+        -routeLimiters []routeLimiter
+        +ServeHTTP(w, r)
+    }
+    class Limiter {
+        -mu sync.Mutex
+        -buckets map~string, *bucket~
+        -rate float64
+        -burst int
+        +NewLimiter(rate, burst) *Limiter
+        +Allow(key) bool
+    }
 
     class SearchHandler {
         -engine SearchEngine
@@ -606,6 +620,7 @@ classDiagram
     StoreAdminHandler --> StoreRepository : uses
     StoreMiddleware --> StoreRepository : resolves store by domain
     StoreMiddleware --> StoreAdminHandler : passes resolved store context
+    RateLimitMiddleware --> Limiter : checks per-IP token buckets
     ConfigRepository <|.. PostgresConfigRepo : implements
     Templates --> Message : produces
     PricingStep <|.. BasePriceStep : implements
