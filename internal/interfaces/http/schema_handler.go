@@ -4,7 +4,9 @@ import (
 	"net/http"
 
 	"github.com/akarso/shopanda/internal/domain/admin"
+	"github.com/akarso/shopanda/internal/domain/rbac"
 	"github.com/akarso/shopanda/internal/platform/apperror"
+	"github.com/akarso/shopanda/internal/platform/auth"
 )
 
 // SchemaHandler serves admin schema endpoints.
@@ -71,6 +73,18 @@ func (h *SchemaHandler) GetForm() http.HandlerFunc {
 			return
 		}
 
+		if perm, hasPerm := h.registry.FormPermission(name); hasPerm {
+			id := auth.IdentityFrom(r.Context())
+			if id.IsGuest() {
+				JSONError(w, apperror.Unauthorized("authentication required"))
+				return
+			}
+			if !rbac.HasPermission(id.Role, perm) {
+				JSONError(w, apperror.Forbidden("insufficient permissions"))
+				return
+			}
+		}
+
 		JSON(w, http.StatusOK, map[string]interface{}{
 			"form": toFormDTO(form),
 		})
@@ -90,6 +104,18 @@ func (h *SchemaHandler) GetGrid() http.HandlerFunc {
 		if !ok {
 			JSONError(w, apperror.NotFound("grid not found"))
 			return
+		}
+
+		if perm, hasPerm := h.registry.GridPermission(name); hasPerm {
+			id := auth.IdentityFrom(r.Context())
+			if id.IsGuest() {
+				JSONError(w, apperror.Unauthorized("authentication required"))
+				return
+			}
+			if !rbac.HasPermission(id.Role, perm) {
+				JSONError(w, apperror.Forbidden("insufficient permissions"))
+				return
+			}
 		}
 
 		JSON(w, http.StatusOK, map[string]interface{}{

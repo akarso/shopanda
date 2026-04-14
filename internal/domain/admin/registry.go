@@ -3,20 +3,26 @@ package admin
 import (
 	"fmt"
 	"sync"
+
+	"github.com/akarso/shopanda/internal/domain/rbac"
 )
 
 // Registry holds all registered admin form and grid schemas.
 type Registry struct {
-	mu    sync.RWMutex
-	forms map[string]*Form
-	grids map[string]*Grid
+	mu              sync.RWMutex
+	forms           map[string]*Form
+	grids           map[string]*Grid
+	formPermissions map[string]rbac.Permission
+	gridPermissions map[string]rbac.Permission
 }
 
 // NewRegistry creates an empty schema registry.
 func NewRegistry() *Registry {
 	return &Registry{
-		forms: make(map[string]*Form),
-		grids: make(map[string]*Grid),
+		forms:           make(map[string]*Form),
+		grids:           make(map[string]*Grid),
+		formPermissions: make(map[string]rbac.Permission),
+		gridPermissions: make(map[string]rbac.Permission),
 	}
 }
 
@@ -105,6 +111,54 @@ func (r *Registry) Grid(name string) (Grid, bool) {
 	cp := cloneGrid(*g)
 	r.mu.RUnlock()
 	return cp, true
+}
+
+// SetFormPermission associates a permission with a registered form.
+// Returns an error if the form has not been registered or if perm is empty.
+func (r *Registry) SetFormPermission(formName string, perm rbac.Permission) error {
+	if perm == "" {
+		return fmt.Errorf("admin: empty permission not allowed for form %q", formName)
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if _, ok := r.forms[formName]; !ok {
+		return fmt.Errorf("admin: form %q not registered", formName)
+	}
+	r.formPermissions[formName] = perm
+	return nil
+}
+
+// FormPermission returns the permission required for a form and true,
+// or an empty Permission and false if none is set.
+func (r *Registry) FormPermission(formName string) (rbac.Permission, bool) {
+	r.mu.RLock()
+	p, ok := r.formPermissions[formName]
+	r.mu.RUnlock()
+	return p, ok
+}
+
+// SetGridPermission associates a permission with a registered grid.
+// Returns an error if the grid has not been registered or if perm is empty.
+func (r *Registry) SetGridPermission(gridName string, perm rbac.Permission) error {
+	if perm == "" {
+		return fmt.Errorf("admin: empty permission not allowed for grid %q", gridName)
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if _, ok := r.grids[gridName]; !ok {
+		return fmt.Errorf("admin: grid %q not registered", gridName)
+	}
+	r.gridPermissions[gridName] = perm
+	return nil
+}
+
+// GridPermission returns the permission required for a grid and true,
+// or an empty Permission and false if none is set.
+func (r *Registry) GridPermission(gridName string) (rbac.Permission, bool) {
+	r.mu.RLock()
+	p, ok := r.gridPermissions[gridName]
+	r.mu.RUnlock()
+	return p, ok
 }
 
 // --- deep-copy helpers ---

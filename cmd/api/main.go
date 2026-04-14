@@ -27,12 +27,12 @@ import (
 	"github.com/akarso/shopanda/internal/domain/admin"
 	"github.com/akarso/shopanda/internal/domain/cache"
 	"github.com/akarso/shopanda/internal/domain/customer"
-	"github.com/akarso/shopanda/internal/domain/identity"
 	"github.com/akarso/shopanda/internal/domain/jobs"
 	"github.com/akarso/shopanda/internal/domain/mail"
 	"github.com/akarso/shopanda/internal/domain/media"
 	"github.com/akarso/shopanda/internal/domain/order"
 	"github.com/akarso/shopanda/internal/domain/pricing"
+	"github.com/akarso/shopanda/internal/domain/rbac"
 	"github.com/akarso/shopanda/internal/domain/scheduler"
 	"github.com/akarso/shopanda/internal/domain/search"
 	"github.com/akarso/shopanda/internal/domain/shared"
@@ -434,6 +434,23 @@ func runServe(cfg *config.Config, log logger.Logger) error {
 	adminApp.RegisterProductSchemas(adminRegistry)
 	adminApp.RegisterPageSchemas(adminRegistry)
 
+	// Associate permissions with schemas so the schema handler can
+	// filter access per role. Fail closed if any wiring is broken.
+	for _, sp := range []struct {
+		kind string
+		name string
+		err  error
+	}{
+		{"form", "product.form", adminRegistry.SetFormPermission("product.form", rbac.ProductsWrite)},
+		{"grid", "product.grid", adminRegistry.SetGridPermission("product.grid", rbac.ProductsRead)},
+		{"form", "page.form", adminRegistry.SetFormPermission("page.form", rbac.SettingsWrite)},
+		{"grid", "page.grid", adminRegistry.SetGridPermission("page.grid", rbac.SettingsRead)},
+	} {
+		if sp.err != nil {
+			return fmt.Errorf("admin schema permission wiring failed for %s %q: %w", sp.kind, sp.name, sp.err)
+		}
+	}
+
 	// Handlers.
 	productHandler := shophttp.NewProductHandler(productRepo, pdp, plp, contentTranslator)
 	productAdmin := shophttp.NewProductAdminHandler(productRepo, bus)
@@ -483,7 +500,14 @@ func runServe(cfg *config.Config, log logger.Logger) error {
 	router.HandleFunc("GET /robots.txt", robotsHandler.Serve())
 
 	requireAuth := shophttp.RequireAuth()
-	requireAdmin := shophttp.RequireRole(identity.RoleAdmin)
+
+	// Permission-based middleware for admin routes.
+	requireProductsRead := shophttp.RequirePermission(rbac.ProductsRead)
+	requireProductsWrite := shophttp.RequirePermission(rbac.ProductsWrite)
+	requireOrdersRead := shophttp.RequirePermission(rbac.OrdersRead)
+	requireMediaWrite := shophttp.RequirePermission(rbac.MediaWrite)
+	requireSettingsRead := shophttp.RequirePermission(rbac.SettingsRead)
+	requireSettingsWrite := shophttp.RequirePermission(rbac.SettingsWrite)
 
 	// Auth routes.
 	router.HandleFunc("POST /api/v1/auth/register", authHandler.Register())
@@ -509,24 +533,24 @@ func runServe(cfg *config.Config, log logger.Logger) error {
 	// Page routes (public).
 	router.HandleFunc("GET /api/v1/pages/{slug}", pageHandler.Get())
 
-	// Admin routes (behind RequireRole(admin)).
-	router.Handle("GET /api/v1/admin/products", requireAdmin(productAdmin.List()))
-	router.Handle("POST /api/v1/admin/products", requireAdmin(productAdmin.Create()))
-	router.Handle("PUT /api/v1/admin/products/{id}", requireAdmin(productAdmin.Update()))
-	router.Handle("POST /api/v1/admin/products/{id}/variants", requireAdmin(variantHandler.Create()))
-	router.Handle("PUT /api/v1/admin/products/{id}/variants/{variantId}", requireAdmin(variantHandler.Update()))
-	router.Handle("GET /api/v1/admin/orders", requireAdmin(orderAdmin.List()))
-	router.Handle("GET /api/v1/admin/orders/{orderId}", requireAdmin(orderAdmin.Get()))
-	router.Handle("POST /api/v1/admin/media/upload", requireAdmin(mediaHandler.Upload()))
-	router.Handle("GET /api/v1/admin/forms/{name}", requireAdmin(schemaHandler.GetForm()))
-	router.Handle("GET /api/v1/admin/grids/{name}", requireAdmin(schemaHandler.GetGrid()))
-	router.Handle("GET /api/v1/admin/pages", requireAdmin(pageAdmin.List()))
-	router.Handle("POST /api/v1/admin/pages", requireAdmin(pageAdmin.Create()))
-	router.Handle("PUT /api/v1/admin/pages/{id}", requireAdmin(pageAdmin.Update()))
-	router.Handle("DELETE /api/v1/admin/pages/{id}", requireAdmin(pageAdmin.Delete()))
-	router.Handle("GET /api/v1/admin/stores", requireAdmin(storeAdmin.List()))
-	router.Handle("POST /api/v1/admin/stores", requireAdmin(storeAdmin.Create()))
-	router.Handle("PUT /api/v1/admin/stores/{id}", requireAdmin(storeAdmin.Update()))
+	// Admin routes (behind RequirePermission).
+	router.Handle("GET /api/v1/admin/products", requireProductsRead(productAdmin.List()))
+	router.Handle("POST /api/v1/admin/products", requireProductsWrite(productAdmin.Create()))
+	router.Handle("PUT /api/v1/admin/products/{id}", requireProductsWrite(productAdmin.Update()))
+	router.Handle("POST /api/v1/admin/products/{id}/variants", requireProductsWrite(variantHandler.Create()))
+	router.Handle("PUT /api/v1/admin/products/{id}/variants/{variantId}", requireProductsWrite(variantHandler.Update()))
+	router.Handle("GET /api/v1/admin/orders", requireOrdersRead(orderAdmin.List()))
+	router.Handle("GET /api/v1/admin/orders/{orderId}", requireOrdersRead(orderAdmin.Get()))
+	router.Handle("POST /api/v1/admin/media/upload", requireMediaWrite(mediaHandler.Upload()))
+	router.Handle("GET /api/v1/admin/forms/{name}", requireAuth(schemaHandler.GetForm()))
+	router.Handle("GET /api/v1/admin/grids/{name}", requireAuth(schemaHandler.GetGrid()))
+	router.Handle("GET /api/v1/admin/pages", requireSettingsRead(pageAdmin.List()))
+	router.Handle("POST /api/v1/admin/pages", requireSettingsWrite(pageAdmin.Create()))
+	router.Handle("PUT /api/v1/admin/pages/{id}", requireSettingsWrite(pageAdmin.Update()))
+	router.Handle("DELETE /api/v1/admin/pages/{id}", requireSettingsWrite(pageAdmin.Delete()))
+	router.Handle("GET /api/v1/admin/stores", requireSettingsRead(storeAdmin.List()))
+	router.Handle("POST /api/v1/admin/stores", requireSettingsWrite(storeAdmin.Create()))
+	router.Handle("PUT /api/v1/admin/stores/{id}", requireSettingsWrite(storeAdmin.Update()))
 
 	// Cart routes (behind RequireAuth).
 	router.Handle("POST /api/v1/carts", requireAuth(cartHandler.Create()))

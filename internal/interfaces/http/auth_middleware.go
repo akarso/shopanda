@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	"github.com/akarso/shopanda/internal/domain/identity"
+	"github.com/akarso/shopanda/internal/domain/rbac"
 	"github.com/akarso/shopanda/internal/platform/apperror"
 	"github.com/akarso/shopanda/internal/platform/auth"
 )
@@ -65,6 +66,26 @@ func RequireRole(role identity.Role) Middleware {
 				return
 			}
 			if !id.HasRole(role) {
+				JSONError(w, apperror.Forbidden("insufficient permissions"))
+				return
+			}
+			next.ServeHTTP(w, r)
+		})
+	}
+}
+
+// RequirePermission rejects requests where the caller's role does not
+// grant the specified permission.
+// Returns 401 for guests and 403 for authenticated users lacking the permission.
+func RequirePermission(perm rbac.Permission) Middleware {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			id := auth.IdentityFrom(r.Context())
+			if id.IsGuest() {
+				JSONError(w, apperror.Unauthorized("authentication required"))
+				return
+			}
+			if !rbac.HasPermission(id.Role, perm) {
 				JSONError(w, apperror.Forbidden("insufficient permissions"))
 				return
 			}

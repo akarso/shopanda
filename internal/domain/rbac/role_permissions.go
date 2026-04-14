@@ -40,13 +40,15 @@ var rolePermissions = map[identity.Role]map[Permission]struct{}{
 }
 
 // HasPermission reports whether the given role grants the specified permission.
+// Checks both core (static) and plugin-registered permissions.
 func HasPermission(role identity.Role, perm Permission) bool {
 	perms, ok := rolePermissions[role]
-	if !ok {
-		return false
+	if ok {
+		if _, granted := perms[perm]; granted {
+			return true
+		}
 	}
-	_, granted := perms[perm]
-	return granted
+	return hasPluginPermission(role, perm)
 }
 
 // PermissionsForRole returns all permissions granted to a role.
