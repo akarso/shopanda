@@ -114,8 +114,11 @@ func (r *Registry) Grid(name string) (Grid, bool) {
 }
 
 // SetFormPermission associates a permission with a registered form.
-// Returns an error if the form has not been registered.
+// Returns an error if the form has not been registered or if perm is empty.
 func (r *Registry) SetFormPermission(formName string, perm rbac.Permission) error {
+	if perm == "" {
+		return fmt.Errorf("admin: empty permission not allowed for form %q", formName)
+	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	if _, ok := r.forms[formName]; !ok {
@@ -135,8 +138,11 @@ func (r *Registry) FormPermission(formName string) (rbac.Permission, bool) {
 }
 
 // SetGridPermission associates a permission with a registered grid.
-// Returns an error if the grid has not been registered.
+// Returns an error if the grid has not been registered or if perm is empty.
 func (r *Registry) SetGridPermission(gridName string, perm rbac.Permission) error {
+	if perm == "" {
+		return fmt.Errorf("admin: empty permission not allowed for grid %q", gridName)
+	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	if _, ok := r.grids[gridName]; !ok {

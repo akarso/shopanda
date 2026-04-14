@@ -435,11 +435,21 @@ func runServe(cfg *config.Config, log logger.Logger) error {
 	adminApp.RegisterPageSchemas(adminRegistry)
 
 	// Associate permissions with schemas so the schema handler can
-	// filter access per role.
-	_ = adminRegistry.SetFormPermission("product.form", rbac.ProductsWrite)
-	_ = adminRegistry.SetGridPermission("product.grid", rbac.ProductsRead)
-	_ = adminRegistry.SetFormPermission("page.form", rbac.SettingsWrite)
-	_ = adminRegistry.SetGridPermission("page.grid", rbac.SettingsRead)
+	// filter access per role. Fail closed if any wiring is broken.
+	for _, sp := range []struct {
+		kind string
+		name string
+		err  error
+	}{
+		{"form", "product.form", adminRegistry.SetFormPermission("product.form", rbac.ProductsWrite)},
+		{"grid", "product.grid", adminRegistry.SetGridPermission("product.grid", rbac.ProductsRead)},
+		{"form", "page.form", adminRegistry.SetFormPermission("page.form", rbac.SettingsWrite)},
+		{"grid", "page.grid", adminRegistry.SetGridPermission("page.grid", rbac.SettingsRead)},
+	} {
+		if sp.err != nil {
+			return fmt.Errorf("admin schema permission wiring failed for %s %q: %w", sp.kind, sp.name, sp.err)
+		}
+	}
 
 	// Handlers.
 	productHandler := shophttp.NewProductHandler(productRepo, pdp, plp, contentTranslator)

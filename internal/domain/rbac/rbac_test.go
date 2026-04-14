@@ -173,3 +173,23 @@ func TestRegisterPluginPermission_RejectsEmpty(t *testing.T) {
 		t.Fatal("expected error for empty permission")
 	}
 }
+
+func TestRegisterPluginPermission_RejectsDuplicate(t *testing.T) {
+	t.Cleanup(rbac.ResetPluginPermissions)
+
+	perm := rbac.Permission("reports.read")
+	if err := rbac.RegisterPluginPermission(perm, identity.RoleAdmin); err != nil {
+		t.Fatalf("first registration failed: %v", err)
+	}
+	err := rbac.RegisterPluginPermission(perm, identity.RoleManager)
+	if err == nil {
+		t.Fatal("expected error for duplicate plugin permission")
+	}
+	// Original grant should be unchanged — admin still has it.
+	if !rbac.HasPermission(identity.RoleAdmin, perm) {
+		t.Error("original grant should be preserved")
+	}
+	if rbac.HasPermission(identity.RoleManager, perm) {
+		t.Error("duplicate registration should not have taken effect")
+	}
+}

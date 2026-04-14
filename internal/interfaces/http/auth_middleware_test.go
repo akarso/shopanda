@@ -264,7 +264,9 @@ func TestRequirePermission_Denied(t *testing.T) {
 	}
 	mw := shophttp.RequirePermission(rbac.SettingsWrite)
 
+	called := false
 	handler := mw(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		called = true
 		w.WriteHeader(http.StatusOK)
 	}))
 
@@ -277,12 +279,17 @@ func TestRequirePermission_Denied(t *testing.T) {
 	if rec.Code != http.StatusForbidden {
 		t.Fatalf("status = %d, want %d", rec.Code, http.StatusForbidden)
 	}
+	if called {
+		t.Error("expected handler not to be called")
+	}
 }
 
 func TestRequirePermission_Guest(t *testing.T) {
 	mw := shophttp.RequirePermission(rbac.ProductsRead)
 
+	called := false
 	handler := mw(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		called = true
 		w.WriteHeader(http.StatusOK)
 	}))
 
@@ -294,5 +301,8 @@ func TestRequirePermission_Guest(t *testing.T) {
 
 	if rec.Code != http.StatusUnauthorized {
 		t.Fatalf("status = %d, want %d", rec.Code, http.StatusUnauthorized)
+	}
+	if called {
+		t.Error("expected handler not to be called")
 	}
 }

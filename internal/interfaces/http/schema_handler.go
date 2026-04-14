@@ -75,6 +75,10 @@ func (h *SchemaHandler) GetForm() http.HandlerFunc {
 
 		if perm, hasPerm := h.registry.FormPermission(name); hasPerm {
 			id := auth.IdentityFrom(r.Context())
+			if id.IsGuest() {
+				JSONError(w, apperror.Unauthorized("authentication required"))
+				return
+			}
 			if !rbac.HasPermission(id.Role, perm) {
 				JSONError(w, apperror.Forbidden("insufficient permissions"))
 				return
@@ -104,6 +108,10 @@ func (h *SchemaHandler) GetGrid() http.HandlerFunc {
 
 		if perm, hasPerm := h.registry.GridPermission(name); hasPerm {
 			id := auth.IdentityFrom(r.Context())
+			if id.IsGuest() {
+				JSONError(w, apperror.Unauthorized("authentication required"))
+				return
+			}
 			if !rbac.HasPermission(id.Role, perm) {
 				JSONError(w, apperror.Forbidden("insufficient permissions"))
 				return

@@ -31,6 +31,9 @@ func RegisterPluginPermission(perm Permission, roles ...identity.Role) error {
 	}
 	pluginMu.Lock()
 	defer pluginMu.Unlock()
+	if _, exists := pluginPerms[perm]; exists {
+		return fmt.Errorf("rbac: plugin permission %q is already registered", perm)
+	}
 	m := make(map[identity.Role]struct{}, len(roles))
 	for _, r := range roles {
 		m[r] = struct{}{}

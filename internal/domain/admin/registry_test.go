@@ -419,3 +419,21 @@ func TestSetGridPermission_UnknownGrid(t *testing.T) {
 		t.Fatal("expected error for unknown grid")
 	}
 }
+
+func TestSetFormPermission_EmptyPerm(t *testing.T) {
+	r := admin.NewRegistry()
+	r.RegisterForm("product.form", admin.Form{})
+	err := r.SetFormPermission("product.form", "")
+	if err == nil {
+		t.Fatal("expected error for empty permission")
+	}
+}
+
+func TestSetGridPermission_EmptyPerm(t *testing.T) {
+	r := admin.NewRegistry()
+	r.RegisterGrid("product.grid", admin.Grid{})
+	err := r.SetGridPermission("product.grid", "")
+	if err == nil {
+		t.Fatal("expected error for empty permission")
+	}
+}

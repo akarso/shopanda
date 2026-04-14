@@ -10,6 +10,7 @@ import (
 	"github.com/akarso/shopanda/internal/domain/identity"
 	"github.com/akarso/shopanda/internal/domain/rbac"
 	shophttp "github.com/akarso/shopanda/internal/interfaces/http"
+	"github.com/akarso/shopanda/internal/platform/auth"
 	"github.com/akarso/shopanda/internal/platform/auth/testhelper"
 )
 
@@ -262,5 +263,55 @@ func TestSchemaHandler_GetGrid_PermissionDenied(t *testing.T) {
 
 	if rec.Code != http.StatusForbidden {
 		t.Fatalf("status = %d, want %d; body: %s", rec.Code, http.StatusForbidden, rec.Body.String())
+	}
+}
+
+// schemaPermNoAuthSetup mounts the handler WITHOUT RequireAuth middleware
+// so that the handler's own guest-detection is exercised.
+func schemaPermNoAuthSetup() *http.ServeMux {
+	reg := admin.NewRegistry()
+	reg.RegisterForm("product.form", admin.Form{
+		Fields: []admin.Field{
+			{Name: "name", Type: "text", Label: "Product Name"},
+		},
+	})
+	reg.RegisterGrid("product.grid", admin.Grid{
+		Columns: []admin.Column{{Name: "id", Label: "ID"}},
+	})
+	_ = reg.SetFormPermission("product.form", rbac.ProductsWrite)
+	_ = reg.SetGridPermission("product.grid", rbac.ProductsRead)
+
+	handler := shophttp.NewSchemaHandler(reg)
+	mux := http.NewServeMux()
+	mux.Handle("GET /api/v1/admin/forms/{name}", handler.GetForm())
+	mux.Handle("GET /api/v1/admin/grids/{name}", handler.GetGrid())
+	return mux
+}
+
+func TestSchemaHandler_GetForm_GuestReturns401(t *testing.T) {
+	mux := schemaPermNoAuthSetup()
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("GET", "/api/v1/admin/forms/product.form", nil)
+	ctx := auth.WithIdentity(req.Context(), identity.Guest())
+	req = req.WithContext(ctx)
+	mux.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("status = %d, want %d; body: %s", rec.Code, http.StatusUnauthorized, rec.Body.String())
+	}
+}
+
+func TestSchemaHandler_GetGrid_GuestReturns401(t *testing.T) {
+	mux := schemaPermNoAuthSetup()
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("GET", "/api/v1/admin/grids/product.grid", nil)
+	ctx := auth.WithIdentity(req.Context(), identity.Guest())
+	req = req.WithContext(ctx)
+	mux.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("status = %d, want %d; body: %s", rec.Code, http.StatusUnauthorized, rec.Body.String())
 	}
 }
