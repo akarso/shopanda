@@ -11,7 +11,7 @@ C4Component
 
     Container_Boundary(api, "API Server") {
 
-        Component(middleware, "Middleware Chain", "Go net/http", "Recovery → RequestID → Logging → Auth → Store. Wraps all routes.")
+        Component(middleware, "Middleware Chain", "Go net/http", "Recovery → RequestID → RateLimit → Logging → Auth → Store → Language → CacheControl. Wraps all routes.")
 
         Boundary(interfaces, "Interfaces Layer (HTTP Handlers)") {
             Component(authHandler, "AuthHandler", "HTTP", "Register, Login, Logout, Me, PasswordReset")

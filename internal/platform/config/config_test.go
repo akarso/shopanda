@@ -578,3 +578,98 @@ server:
 		t.Errorf("PublicBaseURL = %q, want %q", cfg.Server.PublicBaseURL, want)
 	}
 }
+
+func TestRateLimitConfig_FromYAML(t *testing.T) {
+	withTestBaseURL(t)
+	yaml := `
+rate_limit:
+  enabled: true
+  default:
+    rate: 50
+    burst: 100
+  per_route:
+    - path_prefix: "/api/v1/auth"
+      rate: 5
+      burst: 10
+`
+	path := writeYAML(t, yaml)
+
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load() error: %v", err)
+	}
+
+	if !cfg.RateLimit.Enabled {
+		t.Error("RateLimit.Enabled = false, want true")
+	}
+	if cfg.RateLimit.Default.Rate != 50 {
+		t.Errorf("Default.Rate = %v, want 50", cfg.RateLimit.Default.Rate)
+	}
+	if cfg.RateLimit.Default.Burst != 100 {
+		t.Errorf("Default.Burst = %d, want 100", cfg.RateLimit.Default.Burst)
+	}
+	if len(cfg.RateLimit.PerRoute) != 1 {
+		t.Fatalf("PerRoute len = %d, want 1", len(cfg.RateLimit.PerRoute))
+	}
+	pr := cfg.RateLimit.PerRoute[0]
+	if pr.PathPrefix != "/api/v1/auth" {
+		t.Errorf("PerRoute[0].PathPrefix = %q, want %q", pr.PathPrefix, "/api/v1/auth")
+	}
+	if pr.Rate != 5 {
+		t.Errorf("PerRoute[0].Rate = %v, want 5", pr.Rate)
+	}
+	if pr.Burst != 10 {
+		t.Errorf("PerRoute[0].Burst = %d, want 10", pr.Burst)
+	}
+}
+
+func TestRateLimitConfig_EnvOverlay(t *testing.T) {
+	withTestBaseURL(t)
+	path := writeYAML(t, "")
+
+	t.Setenv("SHOPANDA_RATE_LIMIT_ENABLED", "true")
+	t.Setenv("SHOPANDA_RATE_LIMIT_DEFAULT_RATE", "25")
+	t.Setenv("SHOPANDA_RATE_LIMIT_DEFAULT_BURST", "50")
+
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load() error: %v", err)
+	}
+
+	if !cfg.RateLimit.Enabled {
+		t.Error("RateLimit.Enabled = false, want true from env")
+	}
+	if cfg.RateLimit.Default.Rate != 25 {
+		t.Errorf("Default.Rate = %v, want 25 from env", cfg.RateLimit.Default.Rate)
+	}
+	if cfg.RateLimit.Default.Burst != 50 {
+		t.Errorf("Default.Burst = %d, want 50 from env", cfg.RateLimit.Default.Burst)
+	}
+}
+
+func TestRateLimitConfig_FlattenEntries(t *testing.T) {
+	withTestBaseURL(t)
+	yaml := `
+rate_limit:
+  enabled: true
+  default:
+    rate: 10
+    burst: 20
+`
+	path := writeYAML(t, yaml)
+
+	_, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load() error: %v", err)
+	}
+
+	if got := Get("rate_limit.enabled"); got != "true" {
+		t.Errorf("Get(rate_limit.enabled) = %q, want %q", got, "true")
+	}
+	if got := Get("rate_limit.default.rate"); got != "10" {
+		t.Errorf("Get(rate_limit.default.rate) = %q, want %q", got, "10")
+	}
+	if got := Get("rate_limit.default.burst"); got != "20" {
+		t.Errorf("Get(rate_limit.default.burst) = %q, want %q", got, "20")
+	}
+}

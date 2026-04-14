@@ -84,6 +84,8 @@ func StatusFromCode(code apperror.Code) int {
 		return http.StatusUnauthorized
 	case apperror.CodeForbidden:
 		return http.StatusForbidden
+	case apperror.CodeRateLimited:
+		return http.StatusTooManyRequests
 	default:
 		return http.StatusInternalServerError
 	}
