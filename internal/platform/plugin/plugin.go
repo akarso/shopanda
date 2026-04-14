@@ -1,6 +1,8 @@
 package plugin
 
 import (
+	"github.com/akarso/shopanda/internal/domain/identity"
+	"github.com/akarso/shopanda/internal/domain/rbac"
 	"github.com/akarso/shopanda/internal/platform/config"
 	"github.com/akarso/shopanda/internal/platform/event"
 	"github.com/akarso/shopanda/internal/platform/logger"
@@ -84,4 +86,10 @@ func (a *App) CompositionSteps(pipeline string) []any {
 		return nil
 	}
 	return append([]any(nil), s...)
+}
+
+// RegisterPermission registers a plugin-defined permission and the roles
+// that are granted it. The permission must not conflict with core permissions.
+func (a *App) RegisterPermission(perm rbac.Permission, roles ...identity.Role) error {
+	return rbac.RegisterPluginPermission(perm, roles...)
 }

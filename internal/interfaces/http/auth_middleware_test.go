@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/akarso/shopanda/internal/domain/identity"
+	"github.com/akarso/shopanda/internal/domain/rbac"
 	shophttp "github.com/akarso/shopanda/internal/interfaces/http"
 	"github.com/akarso/shopanda/internal/platform/auth"
 )
@@ -211,6 +212,75 @@ func TestRequireRole_Mismatch(t *testing.T) {
 
 func TestRequireRole_Guest(t *testing.T) {
 	mw := shophttp.RequireRole(identity.RoleAdmin)
+
+	handler := mw(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+
+	req := httptest.NewRequest("GET", "/", nil)
+	ctx := auth.WithIdentity(req.Context(), identity.Guest())
+	req = req.WithContext(ctx)
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("status = %d, want %d", rec.Code, http.StatusUnauthorized)
+	}
+}
+
+func TestRequirePermission_Granted(t *testing.T) {
+	// Manager has products.read permission.
+	id, err := identity.NewIdentity("user-1", identity.RoleManager)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	mw := shophttp.RequirePermission(rbac.ProductsRead)
+
+	called := false
+	handler := mw(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		called = true
+		w.WriteHeader(http.StatusOK)
+	}))
+
+	req := httptest.NewRequest("GET", "/", nil)
+	ctx := auth.WithIdentity(req.Context(), id)
+	req = req.WithContext(ctx)
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d", rec.Code, http.StatusOK)
+	}
+	if !called {
+		t.Error("expected handler to be called")
+	}
+}
+
+func TestRequirePermission_Denied(t *testing.T) {
+	// Support does NOT have settings.write permission.
+	id, err := identity.NewIdentity("user-1", identity.RoleSupport)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	mw := shophttp.RequirePermission(rbac.SettingsWrite)
+
+	handler := mw(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+
+	req := httptest.NewRequest("GET", "/", nil)
+	ctx := auth.WithIdentity(req.Context(), id)
+	req = req.WithContext(ctx)
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("status = %d, want %d", rec.Code, http.StatusForbidden)
+	}
+}
+
+func TestRequirePermission_Guest(t *testing.T) {
+	mw := shophttp.RequirePermission(rbac.ProductsRead)
 
 	handler := mw(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)

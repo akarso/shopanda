@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	"github.com/akarso/shopanda/internal/domain/admin"
+	"github.com/akarso/shopanda/internal/domain/rbac"
 )
 
 func TestRegisterForm_and_Retrieve(t *testing.T) {
@@ -354,5 +355,67 @@ func TestGrid_ActionsIsImmutable(t *testing.T) {
 	}
 	if g2.Actions[0].Label != "Delete" {
 		t.Errorf("Actions[0].Label = %q, want %q", g2.Actions[0].Label, "Delete")
+	}
+}
+
+func TestSetFormPermission(t *testing.T) {
+	r := admin.NewRegistry()
+	r.RegisterForm("product.form", admin.Form{})
+
+	err := r.SetFormPermission("product.form", rbac.ProductsWrite)
+	if err != nil {
+		t.Fatalf("SetFormPermission: %v", err)
+	}
+
+	p, ok := r.FormPermission("product.form")
+	if !ok {
+		t.Fatal("expected permission to be found")
+	}
+	if p != rbac.ProductsWrite {
+		t.Errorf("permission = %q, want %q", p, rbac.ProductsWrite)
+	}
+}
+
+func TestSetFormPermission_UnknownForm(t *testing.T) {
+	r := admin.NewRegistry()
+	err := r.SetFormPermission("missing", rbac.ProductsRead)
+	if err == nil {
+		t.Fatal("expected error for unknown form")
+	}
+}
+
+func TestFormPermission_NotSet(t *testing.T) {
+	r := admin.NewRegistry()
+	r.RegisterForm("product.form", admin.Form{})
+
+	_, ok := r.FormPermission("product.form")
+	if ok {
+		t.Error("expected ok=false when no permission set")
+	}
+}
+
+func TestSetGridPermission(t *testing.T) {
+	r := admin.NewRegistry()
+	r.RegisterGrid("product.grid", admin.Grid{})
+
+	err := r.SetGridPermission("product.grid", rbac.ProductsRead)
+	if err != nil {
+		t.Fatalf("SetGridPermission: %v", err)
+	}
+
+	p, ok := r.GridPermission("product.grid")
+	if !ok {
+		t.Fatal("expected permission to be found")
+	}
+	if p != rbac.ProductsRead {
+		t.Errorf("permission = %q, want %q", p, rbac.ProductsRead)
+	}
+}
+
+func TestSetGridPermission_UnknownGrid(t *testing.T) {
+	r := admin.NewRegistry()
+	err := r.SetGridPermission("missing", rbac.ProductsRead)
+	if err == nil {
+		t.Fatal("expected error for unknown grid")
 	}
 }

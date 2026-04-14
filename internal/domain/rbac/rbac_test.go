@@ -135,3 +135,41 @@ func TestPermissionsForRole_Unknown(t *testing.T) {
 		t.Errorf("unknown role should return nil, got %v", perms)
 	}
 }
+
+func TestRegisterPluginPermission(t *testing.T) {
+	t.Cleanup(rbac.ResetPluginPermissions)
+
+	perm := rbac.Permission("analytics.read")
+	err := rbac.RegisterPluginPermission(perm, identity.RoleAdmin, identity.RoleManager)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if !rbac.HasPermission(identity.RoleAdmin, perm) {
+		t.Error("admin should have plugin permission")
+	}
+	if !rbac.HasPermission(identity.RoleManager, perm) {
+		t.Error("manager should have plugin permission")
+	}
+	if rbac.HasPermission(identity.RoleEditor, perm) {
+		t.Error("editor should not have plugin permission")
+	}
+}
+
+func TestRegisterPluginPermission_RejectsCoreOverride(t *testing.T) {
+	t.Cleanup(rbac.ResetPluginPermissions)
+
+	err := rbac.RegisterPluginPermission(rbac.ProductsRead, identity.RoleSupport)
+	if err == nil {
+		t.Fatal("expected error when overriding core permission")
+	}
+}
+
+func TestRegisterPluginPermission_RejectsEmpty(t *testing.T) {
+	t.Cleanup(rbac.ResetPluginPermissions)
+
+	err := rbac.RegisterPluginPermission("", identity.RoleAdmin)
+	if err == nil {
+		t.Fatal("expected error for empty permission")
+	}
+}

@@ -8,6 +8,7 @@ import (
 
 	"github.com/akarso/shopanda/internal/domain/admin"
 	"github.com/akarso/shopanda/internal/domain/identity"
+	"github.com/akarso/shopanda/internal/domain/rbac"
 	shophttp "github.com/akarso/shopanda/internal/interfaces/http"
 	"github.com/akarso/shopanda/internal/platform/auth/testhelper"
 )
@@ -181,5 +182,85 @@ func TestSchemaHandler_GetGrid_RequiresAdmin(t *testing.T) {
 
 	if rec.Code != http.StatusUnauthorized {
 		t.Fatalf("status = %d, want %d; body: %s", rec.Code, http.StatusUnauthorized, rec.Body.String())
+	}
+}
+
+// schemaPermSetup creates a registry with permission-gated schemas.
+func schemaPermSetup() (*admin.Registry, *http.ServeMux) {
+	reg := admin.NewRegistry()
+	reg.RegisterForm("product.form", admin.Form{
+		Fields: []admin.Field{
+			{Name: "name", Type: "text", Label: "Product Name", Required: true},
+		},
+	})
+	reg.RegisterGrid("product.grid", admin.Grid{
+		Columns: []admin.Column{
+			{Name: "id", Label: "ID"},
+		},
+	})
+	_ = reg.SetFormPermission("product.form", rbac.ProductsWrite)
+	_ = reg.SetGridPermission("product.grid", rbac.ProductsRead)
+
+	handler := shophttp.NewSchemaHandler(reg)
+	requireAuth := shophttp.RequireAuth()
+	mux := http.NewServeMux()
+	mux.Handle("GET /api/v1/admin/forms/{name}", requireAuth(handler.GetForm()))
+	mux.Handle("GET /api/v1/admin/grids/{name}", requireAuth(handler.GetGrid()))
+	return reg, mux
+}
+
+func TestSchemaHandler_GetForm_PermissionGranted(t *testing.T) {
+	_, mux := schemaPermSetup()
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("GET", "/api/v1/admin/forms/product.form", nil)
+	// Editor has products.write.
+	req = testhelper.AuthenticatedRequest(req, "editor-1", identity.RoleEditor)
+	mux.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d; body: %s", rec.Code, http.StatusOK, rec.Body.String())
+	}
+}
+
+func TestSchemaHandler_GetForm_PermissionDenied(t *testing.T) {
+	_, mux := schemaPermSetup()
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("GET", "/api/v1/admin/forms/product.form", nil)
+	// Support does NOT have products.write.
+	req = testhelper.AuthenticatedRequest(req, "support-1", identity.RoleSupport)
+	mux.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("status = %d, want %d; body: %s", rec.Code, http.StatusForbidden, rec.Body.String())
+	}
+}
+
+func TestSchemaHandler_GetGrid_PermissionGranted(t *testing.T) {
+	_, mux := schemaPermSetup()
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("GET", "/api/v1/admin/grids/product.grid", nil)
+	// Support has products.read.
+	req = testhelper.AuthenticatedRequest(req, "support-1", identity.RoleSupport)
+	mux.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d; body: %s", rec.Code, http.StatusOK, rec.Body.String())
+	}
+}
+
+func TestSchemaHandler_GetGrid_PermissionDenied(t *testing.T) {
+	_, mux := schemaPermSetup()
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("GET", "/api/v1/admin/grids/product.grid", nil)
+	// Customer has no admin permissions.
+	req = testhelper.AuthenticatedRequest(req, "cust-1", identity.RoleCustomer)
+	mux.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("status = %d, want %d; body: %s", rec.Code, http.StatusForbidden, rec.Body.String())
 	}
 }
