@@ -28,12 +28,15 @@ type Role string
 const (
 	RoleCustomer Role = "customer"
 	RoleAdmin    Role = "admin"
+	RoleManager  Role = "manager"
+	RoleEditor   Role = "editor"
+	RoleSupport  Role = "support"
 )
 
 // IsValid returns true if r is a recognised customer role.
 func (r Role) IsValid() bool {
 	switch r {
-	case RoleCustomer, RoleAdmin:
+	case RoleCustomer, RoleAdmin, RoleManager, RoleEditor, RoleSupport:
 		return true
 	}
 	return false

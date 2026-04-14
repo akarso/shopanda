@@ -9,12 +9,15 @@ const (
 	RoleGuest    Role = "guest"
 	RoleCustomer Role = "customer"
 	RoleAdmin    Role = "admin"
+	RoleManager  Role = "manager"
+	RoleEditor   Role = "editor"
+	RoleSupport  Role = "support"
 )
 
 // IsValid returns true if r is a recognised role.
 func (r Role) IsValid() bool {
 	switch r {
-	case RoleGuest, RoleCustomer, RoleAdmin:
+	case RoleGuest, RoleCustomer, RoleAdmin, RoleManager, RoleEditor, RoleSupport:
 		return true
 	}
 	return false
@@ -48,12 +51,16 @@ func (i Identity) IsGuest() bool {
 }
 
 // IsAuthenticated returns true if the identity has a known authenticated
-// role (customer or admin) and a non-empty UserID.
+// role (customer, admin, manager, editor, or support) and a non-empty UserID.
 func (i Identity) IsAuthenticated() bool {
 	if i.UserID == "" {
 		return false
 	}
-	return i.Role == RoleCustomer || i.Role == RoleAdmin
+	switch i.Role {
+	case RoleCustomer, RoleAdmin, RoleManager, RoleEditor, RoleSupport:
+		return true
+	}
+	return false
 }
 
 // HasRole returns true if the identity has the given role.
