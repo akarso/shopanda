@@ -258,6 +258,92 @@ func writeYAML(t *testing.T, content string) string {
 	return path
 }
 
+func TestWebhooksConfig_SecretFromYAML(t *testing.T) {
+	withTestBaseURL(t)
+	yaml := `
+webhooks:
+  secrets:
+    stripe: "whsec_abc123"
+    paypal: "pp_secret_xyz"
+`
+	path := writeYAML(t, yaml)
+
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load() error: %v", err)
+	}
+
+	if got := cfg.Webhooks.Secret("stripe"); got != "whsec_abc123" {
+		t.Errorf("Secret(stripe) = %q, want %q", got, "whsec_abc123")
+	}
+	if got := cfg.Webhooks.Secret("paypal"); got != "pp_secret_xyz" {
+		t.Errorf("Secret(paypal) = %q, want %q", got, "pp_secret_xyz")
+	}
+	if got := cfg.Webhooks.Secret("unknown"); got != "" {
+		t.Errorf("Secret(unknown) = %q, want empty", got)
+	}
+}
+
+func TestWebhooksConfig_SecretFromEnv(t *testing.T) {
+	withTestBaseURL(t)
+	path := writeYAML(t, "")
+
+	t.Setenv("SHOPANDA_WEBHOOKS_SECRET_STRIPE", "env_stripe_secret")
+	t.Setenv("SHOPANDA_WEBHOOKS_SECRET_MANUAL", "env_manual_secret")
+
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load() error: %v", err)
+	}
+
+	if got := cfg.Webhooks.Secret("stripe"); got != "env_stripe_secret" {
+		t.Errorf("Secret(stripe) = %q, want %q", got, "env_stripe_secret")
+	}
+	if got := cfg.Webhooks.Secret("manual"); got != "env_manual_secret" {
+		t.Errorf("Secret(manual) = %q, want %q", got, "env_manual_secret")
+	}
+}
+
+func TestWebhooksConfig_EnvOverridesYAML(t *testing.T) {
+	withTestBaseURL(t)
+	yaml := `
+webhooks:
+  secrets:
+    stripe: "yaml_secret"
+`
+	path := writeYAML(t, yaml)
+
+	t.Setenv("SHOPANDA_WEBHOOKS_SECRET_STRIPE", "env_override")
+
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load() error: %v", err)
+	}
+
+	if got := cfg.Webhooks.Secret("stripe"); got != "env_override" {
+		t.Errorf("Secret(stripe) = %q, want %q", got, "env_override")
+	}
+}
+
+func TestWebhooksConfig_FlattenIncludesSecrets(t *testing.T) {
+	withTestBaseURL(t)
+	yaml := `
+webhooks:
+  secrets:
+    stripe: "whsec_flat"
+`
+	path := writeYAML(t, yaml)
+
+	_, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load() error: %v", err)
+	}
+
+	if got := Get("webhooks.secrets.stripe"); got != "whsec_flat" {
+		t.Errorf("Get(webhooks.secrets.stripe) = %q, want %q", got, "whsec_flat")
+	}
+}
+
 func TestLoad_CacheDriverDefault(t *testing.T) {
 	withTestBaseURL(t)
 	path := writeYAML(t, "")

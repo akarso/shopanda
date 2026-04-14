@@ -2,6 +2,8 @@ package http
 
 import (
 	"encoding/json"
+	"errors"
+	"io"
 	"net/http"
 
 	"github.com/akarso/shopanda/internal/domain/payment"
@@ -9,21 +11,27 @@ import (
 	"github.com/akarso/shopanda/internal/platform/event"
 )
 
+const maxWebhookBodySize = 1 << 20 // 1 MB
+
 // PaymentWebhookHandler handles incoming payment provider webhooks.
 type PaymentWebhookHandler struct {
-	repo payment.PaymentRepository
-	bus  *event.Bus
+	repo     payment.PaymentRepository
+	bus      *event.Bus
+	verifier payment.WebhookVerifier
 }
 
 // NewPaymentWebhookHandler creates a PaymentWebhookHandler.
-func NewPaymentWebhookHandler(repo payment.PaymentRepository, bus *event.Bus) *PaymentWebhookHandler {
+func NewPaymentWebhookHandler(repo payment.PaymentRepository, bus *event.Bus, verifier payment.WebhookVerifier) *PaymentWebhookHandler {
 	if repo == nil {
 		panic("http: payment repository must not be nil")
 	}
 	if bus == nil {
 		panic("http: event bus must not be nil")
 	}
-	return &PaymentWebhookHandler{repo: repo, bus: bus}
+	if verifier == nil {
+		panic("http: webhook verifier must not be nil")
+	}
+	return &PaymentWebhookHandler{repo: repo, bus: bus, verifier: verifier}
 }
 
 type webhookRequest struct {
@@ -47,8 +55,34 @@ func (h *PaymentWebhookHandler) Handle() http.HandlerFunc {
 			return
 		}
 
+		// Buffer the raw body for signature verification.
+		// MaxBytesReader discards the remainder of oversized requests,
+		// freeing the connection for keep-alive reuse.
+		r.Body = http.MaxBytesReader(w, r.Body, maxWebhookBodySize)
+		raw, err := io.ReadAll(r.Body)
+		if err != nil {
+			var maxErr *http.MaxBytesError
+			if errors.As(err, &maxErr) {
+				JSONError(w, apperror.Validation("request body too large"))
+				return
+			}
+			JSONError(w, apperror.Validation("failed to read request body"))
+			return
+		}
+
+		// Verify webhook signature.
+		sig := r.Header.Get("X-Webhook-Signature")
+		if verifyErr := h.verifier.Verify(provider, sig, raw); verifyErr != nil {
+			if errors.Is(verifyErr, payment.ErrSignatureMissing) {
+				JSONError(w, apperror.Unauthorized("webhook signature missing"))
+				return
+			}
+			JSONError(w, apperror.Unauthorized("webhook signature invalid"))
+			return
+		}
+
 		var req webhookRequest
-		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		if err := json.Unmarshal(raw, &req); err != nil {
 			JSONError(w, apperror.Validation("invalid request body"))
 			return
 		}

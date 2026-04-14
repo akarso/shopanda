@@ -45,6 +45,7 @@ import (
 	"github.com/akarso/shopanda/internal/infrastructure/manualpay"
 	"github.com/akarso/shopanda/internal/infrastructure/postgres"
 	smtpmail "github.com/akarso/shopanda/internal/infrastructure/smtp"
+	"github.com/akarso/shopanda/internal/infrastructure/webhook"
 	"github.com/akarso/shopanda/internal/platform/config"
 	"github.com/akarso/shopanda/internal/platform/db"
 	"github.com/akarso/shopanda/internal/platform/event"
@@ -459,7 +460,8 @@ func runServe(cfg *config.Config, log logger.Logger) error {
 	orderHandler := shophttp.NewOrderHandler(orderRepo)
 	orderAdmin := shophttp.NewOrderAdminHandler(orderRepo)
 	authHandler := shophttp.NewAuthHandler(authService)
-	paymentWebhook := shophttp.NewPaymentWebhookHandler(paymentRepo, bus)
+	webhookVerifier := webhook.NewHMACVerifier(cfg.Webhooks.Secrets)
+	paymentWebhook := shophttp.NewPaymentWebhookHandler(paymentRepo, bus, webhookVerifier)
 	shippingRates := shophttp.NewShippingRatesHandler(flatRateProvider)
 	categoryHandler := shophttp.NewCategoryHandler(categoryRepo, productRepo)
 	searchHandler := shophttp.NewSearchHandler(searchEngine)
