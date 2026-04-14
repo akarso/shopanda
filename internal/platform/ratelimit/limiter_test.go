@@ -70,3 +70,29 @@ func TestAllow_TokensCappedAtBurst(t *testing.T) {
 		t.Error("request 4 should be rejected (capped at burst=2)")
 	}
 }
+
+func TestAllow_MaxBucketsCap(t *testing.T) {
+	lim := NewLimiterWithMax(10, 1, 3) // only 3 keys allowed
+	defer lim.Close()
+	for _, key := range []string{"a", "b", "c"} {
+		if !lim.Allow(key) {
+			t.Fatalf("key %s should be allowed", key)
+		}
+	}
+	// Fourth distinct key should be rejected (at cap).
+	if lim.Allow("d") {
+		t.Error("key d should be rejected (maxBuckets reached)")
+	}
+	// Existing key should still work.
+	// Key "a" was already seen (burst=1 exhausted), wait to refill isn't
+	// practical here, but the bucket lookup branch itself doesn't check cap.
+}
+
+func TestClose_StopsEviction(t *testing.T) {
+	lim := NewLimiter(10, 5)
+	lim.Close()
+	// After close, Allow should still work (just no eviction).
+	if !lim.Allow("k") {
+		t.Error("Allow should still work after Close")
+	}
+}

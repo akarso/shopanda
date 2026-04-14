@@ -673,3 +673,31 @@ rate_limit:
 		t.Errorf("Get(rate_limit.default.burst) = %q, want %q", got, "20")
 	}
 }
+
+func TestRateLimitConfig_EnvOverlay_IgnoresNonPositive(t *testing.T) {
+	withTestBaseURL(t)
+	yaml := `
+rate_limit:
+  enabled: true
+  default:
+    rate: 50
+    burst: 100
+`
+	path := writeYAML(t, yaml)
+
+	// Non-positive values should be ignored.
+	t.Setenv("SHOPANDA_RATE_LIMIT_DEFAULT_RATE", "0")
+	t.Setenv("SHOPANDA_RATE_LIMIT_DEFAULT_BURST", "-5")
+
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load() error: %v", err)
+	}
+
+	if cfg.RateLimit.Default.Rate != 50 {
+		t.Errorf("Default.Rate = %v, want 50 (non-positive env should be ignored)", cfg.RateLimit.Default.Rate)
+	}
+	if cfg.RateLimit.Default.Burst != 100 {
+		t.Errorf("Default.Burst = %d, want 100 (non-positive env should be ignored)", cfg.RateLimit.Default.Burst)
+	}
+}

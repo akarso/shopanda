@@ -37,9 +37,10 @@ func (w WebhooksConfig) Secret(provider string) string {
 
 // RateLimitConfig holds rate limiting settings.
 type RateLimitConfig struct {
-	Enabled  bool                 `yaml:"enabled"`
-	Default  RateLimitRule        `yaml:"default"`
-	PerRoute []RouteRateLimitRule `yaml:"per_route"`
+	Enabled        bool                 `yaml:"enabled"`
+	Default        RateLimitRule        `yaml:"default"`
+	PerRoute       []RouteRateLimitRule `yaml:"per_route"`
+	TrustedProxies []string             `yaml:"trusted_proxies"`
 }
 
 // RateLimitRule defines a token-bucket rate: Rate tokens per second, Burst max.
@@ -380,12 +381,12 @@ func applyEnv(cfg *Config) {
 		cfg.RateLimit.Enabled = v == "true" || v == "1"
 	}
 	if v := os.Getenv("SHOPANDA_RATE_LIMIT_DEFAULT_RATE"); v != "" {
-		if f, err := strconv.ParseFloat(v, 64); err == nil {
+		if f, err := strconv.ParseFloat(v, 64); err == nil && f > 0 {
 			cfg.RateLimit.Default.Rate = f
 		}
 	}
 	if v := os.Getenv("SHOPANDA_RATE_LIMIT_DEFAULT_BURST"); v != "" {
-		if b, err := strconv.Atoi(v); err == nil {
+		if b, err := strconv.Atoi(v); err == nil && b > 0 {
 			cfg.RateLimit.Default.Burst = b
 		}
 	}
