@@ -21,6 +21,17 @@ type Config struct {
 	Cache    CacheConfig    `yaml:"cache"`
 	Frontend FrontendConfig `yaml:"frontend"`
 	CDN      CDNConfig      `yaml:"cdn"`
+	Webhooks WebhooksConfig `yaml:"webhooks"`
+}
+
+// WebhooksConfig holds per-provider webhook secrets.
+type WebhooksConfig struct {
+	Secrets map[string]string `yaml:"secrets"`
+}
+
+// Secret returns the webhook secret for the given provider, or empty string.
+func (w WebhooksConfig) Secret(provider string) string {
+	return w.Secrets[provider]
 }
 
 type ServerConfig struct {
@@ -325,6 +336,25 @@ func applyEnv(cfg *Config) {
 	if v := os.Getenv("SHOPANDA_CDN_BASE_URL"); v != "" {
 		cfg.CDN.BaseURL = v
 	}
+	// Webhook secrets: SHOPANDA_WEBHOOKS_SECRET_<PROVIDER>=<secret>
+	const whPrefix = "SHOPANDA_WEBHOOKS_SECRET_"
+	for _, e := range os.Environ() {
+		if !strings.HasPrefix(e, whPrefix) {
+			continue
+		}
+		kv := strings.SplitN(e, "=", 2)
+		if len(kv) != 2 || kv[1] == "" {
+			continue
+		}
+		provider := strings.ToLower(strings.TrimPrefix(kv[0], whPrefix))
+		if provider == "" {
+			continue
+		}
+		if cfg.Webhooks.Secrets == nil {
+			cfg.Webhooks.Secrets = make(map[string]string)
+		}
+		cfg.Webhooks.Secrets[provider] = kv[1]
+	}
 }
 
 // flatten converts the Config struct into a dot-notation key-value map.
@@ -355,6 +385,9 @@ func flatten(cfg *Config) map[string]string {
 	m["frontend.mode"] = cfg.Frontend.Mode
 	m["frontend.theme_path"] = cfg.Frontend.ThemePath
 	m["cdn.base_url"] = cfg.CDN.BaseURL
+	for k, v := range cfg.Webhooks.Secrets {
+		m["webhooks.secrets."+k] = v
+	}
 	return m
 }
 
