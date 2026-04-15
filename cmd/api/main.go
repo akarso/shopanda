@@ -476,6 +476,12 @@ func runServe(cfg *config.Config, log logger.Logger) error {
 	sitemapHandler := shophttp.NewSitemapHandler(baseURL, productRepo, categoryRepo, pageRepo)
 	robotsHandler := shophttp.NewRobotsHandler(baseURL)
 
+	specBytes, err := os.ReadFile(filepath.Join(filepath.Dir(config.FindConfigFile()), "openapi.yaml"))
+	if err != nil {
+		specBytes, _ = os.ReadFile("openapi.yaml")
+	}
+	docsHandler := shophttp.NewDocsHandler(specBytes)
+
 	router := shophttp.NewRouter()
 
 	// Middleware: outermost first.
@@ -501,6 +507,8 @@ func runServe(cfg *config.Config, log logger.Logger) error {
 	router.HandleFunc("GET /healthz", shophttp.HealthHandler())
 	router.HandleFunc("GET /sitemap.xml", sitemapHandler.Serve())
 	router.HandleFunc("GET /robots.txt", robotsHandler.Serve())
+	router.HandleFunc("GET /docs", docsHandler.UI())
+	router.HandleFunc("GET /docs/openapi.yaml", docsHandler.Spec())
 
 	requireAuth := shophttp.RequireAuth()
 
