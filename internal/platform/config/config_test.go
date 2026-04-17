@@ -100,7 +100,7 @@ log:
 `
 	path := writeYAML(t, yaml)
 
-	_, err := Load(path)
+	_, err := loadIsolated(t, path)
 	if err != nil {
 		t.Fatalf("Load() error: %v", err)
 	}
@@ -131,7 +131,7 @@ server:
 `
 	path := writeYAML(t, yaml)
 
-	_, err := Load(path)
+	_, err := loadIsolated(t, path)
 	if err != nil {
 		t.Fatalf("Load() error: %v", err)
 	}
@@ -152,7 +152,7 @@ server:
 `
 	path := writeYAML(t, yaml)
 
-	_, err := Load(path)
+	_, err := loadIsolated(t, path)
 	if err != nil {
 		t.Fatalf("Load() error: %v", err)
 	}
@@ -207,7 +207,8 @@ func TestDatabaseDSN_EnvOverride(t *testing.T) {
 }
 
 func TestLoad_FileNotFound(t *testing.T) {
-	_, err := Load("/nonexistent/config.yaml")
+	dir := t.TempDir()
+	_, err := loadIsolated(t, filepath.Join(dir, "config.yaml"))
 	if err == nil {
 		t.Error("Load() expected error for missing file")
 	}
@@ -216,7 +217,7 @@ func TestLoad_FileNotFound(t *testing.T) {
 func TestLoad_InvalidYAML(t *testing.T) {
 	path := writeYAML(t, "{{invalid yaml")
 
-	_, err := Load(path)
+	_, err := loadIsolated(t, path)
 	if err == nil {
 		t.Error("Load() expected error for invalid YAML")
 	}
@@ -259,23 +260,23 @@ func writeYAML(t *testing.T, content string) string {
 }
 
 // loadCfg is a test helper that calls Load and unwraps the Config from the result.
-// It changes the working directory to the config file's directory so the CWD
-// .env fallback does not pick up stray files from the developer's checkout.
+// It uses t.Chdir so the CWD .env fallback cannot pick up stray files.
 func loadCfg(t *testing.T, path string) (*Config, error) {
 	t.Helper()
-	orig, err := os.Getwd()
-	if err != nil {
-		return nil, err
-	}
-	if err := os.Chdir(filepath.Dir(path)); err != nil {
-		return nil, err
-	}
-	t.Cleanup(func() { os.Chdir(orig) })
+	t.Chdir(filepath.Dir(path))
 	res, err := Load(path)
 	if err != nil {
 		return nil, err
 	}
 	return res.Config, nil
+}
+
+// loadIsolated calls Load in an isolated CWD so the .env fallback cannot
+// reach the developer's checkout. Use this instead of bare Load(path) calls.
+func loadIsolated(t *testing.T, path string) (*LoadResult, error) {
+	t.Helper()
+	t.Chdir(filepath.Dir(path))
+	return Load(path)
 }
 
 func TestWebhooksConfig_SecretFromYAML(t *testing.T) {
@@ -354,7 +355,7 @@ webhooks:
 `
 	path := writeYAML(t, yaml)
 
-	_, err := Load(path)
+	_, err := loadIsolated(t, path)
 	if err != nil {
 		t.Fatalf("Load() error: %v", err)
 	}
@@ -418,7 +419,7 @@ func TestConfigString_ContainsCacheDriver(t *testing.T) {
 func TestLoad_PublicBaseURL_RejectsWildcardHost(t *testing.T) {
 	path := writeYAML(t, "")
 
-	_, err := Load(path)
+	_, err := loadIsolated(t, path)
 	if err == nil {
 		t.Fatal("Load() expected error for wildcard bind host without public_base_url")
 	}
@@ -523,7 +524,7 @@ server:
 `
 	path := writeYAML(t, yaml)
 
-	_, err := Load(path)
+	_, err := loadIsolated(t, path)
 	if err != nil {
 		t.Fatalf("Load() error: %v", err)
 	}
@@ -540,7 +541,7 @@ server:
 `
 	path := writeYAML(t, yaml)
 
-	_, err := Load(path)
+	_, err := loadIsolated(t, path)
 	if err == nil {
 		t.Fatal("Load() expected error for unsupported scheme")
 	}
@@ -556,7 +557,7 @@ server:
 `
 	path := writeYAML(t, yaml)
 
-	_, err := Load(path)
+	_, err := loadIsolated(t, path)
 	if err == nil {
 		t.Fatal("Load() expected error for query in URL")
 	}
@@ -572,7 +573,7 @@ server:
 `
 	path := writeYAML(t, yaml)
 
-	_, err := Load(path)
+	_, err := loadIsolated(t, path)
 	if err == nil {
 		t.Fatal("Load() expected error for fragment in URL")
 	}
@@ -678,7 +679,7 @@ rate_limit:
 `
 	path := writeYAML(t, yaml)
 
-	_, err := Load(path)
+	_, err := loadIsolated(t, path)
 	if err != nil {
 		t.Fatalf("Load() error: %v", err)
 	}
@@ -854,9 +855,7 @@ func TestLoad_DotEnvUsedTrue(t *testing.T) {
 	os.Unsetenv("SHOPANDA_LOG_LEVEL")
 
 	// Isolate CWD so the fallback doesn't pick up stray .env files.
-	orig, _ := os.Getwd()
-	os.Chdir(dir)
-	t.Cleanup(func() { os.Chdir(orig) })
+	t.Chdir(dir)
 
 	result, err := Load(cfgPath)
 	if err != nil {
@@ -876,9 +875,7 @@ func TestLoad_DotEnvUsedFalse(t *testing.T) {
 	path := writeYAML(t, "")
 
 	// Isolate CWD so the fallback doesn't find a stray .env.
-	orig, _ := os.Getwd()
-	os.Chdir(filepath.Dir(path))
-	t.Cleanup(func() { os.Chdir(orig) })
+	t.Chdir(filepath.Dir(path))
 
 	result, err := Load(path)
 	if err != nil {
