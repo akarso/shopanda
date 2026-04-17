@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"strings"
 	"syscall"
 	"time"
 
@@ -650,8 +651,20 @@ func runSetup(cfg *config.Config, log logger.Logger) error {
 			verbose = true
 		case "--non-interactive":
 			// Accepted for forward compatibility; currently the default.
+		case "--help", "-h":
+			fmt.Println(`Usage: shopanda setup [flags]
+
+Flags:
+  --skip-seed          Skip the seeding step
+  --verbose            Print structured log entries during setup
+  --non-interactive    Use env vars only, no prompts (default)
+  --help, -h           Show this help`)
+			return nil
 		default:
-			return fmt.Errorf("setup: unknown flag %q", arg)
+			if strings.HasPrefix(arg, "--") {
+				return fmt.Errorf("setup: unknown flag %q (boolean flags do not accept =value syntax)", arg)
+			}
+			return fmt.Errorf("setup: unexpected argument %q", arg)
 		}
 	}
 
@@ -663,6 +676,13 @@ func runSetup(cfg *config.Config, log logger.Logger) error {
 	}
 	defer conn.Close()
 	fmt.Println("✓ Database connected")
+	if verbose {
+		log.Info("setup.db.connected", map[string]interface{}{
+			"host":     cfg.Database.Host,
+			"port":     cfg.Database.Port,
+			"database": cfg.Database.Name,
+		})
+	}
 
 	// Step 2: Migrations.
 	applied, err := migrate.Run(conn, "migrations")
@@ -683,9 +703,7 @@ func runSetup(cfg *config.Config, log logger.Logger) error {
 		fmt.Println("– Seeding skipped (--skip-seed)")
 	} else {
 		reg := seed.NewRegistry()
-		reg.Register(&seed.ConfigSeeder{})
-		reg.Register(&seed.AdminSeeder{})
-		reg.Register(&seed.CatalogSeeder{})
+		registerDefaultSeeders(reg)
 
 		deps := seed.Deps{DB: conn, Logger: log}
 		result, seedErr := reg.Run(context.Background(), deps)
@@ -1505,9 +1523,7 @@ func runSeed(cfg *config.Config, log logger.Logger) error {
 	log.Info("seed.start", nil)
 
 	reg := seed.NewRegistry()
-	reg.Register(&seed.ConfigSeeder{})
-	reg.Register(&seed.AdminSeeder{})
-	reg.Register(&seed.CatalogSeeder{})
+	registerDefaultSeeders(reg)
 
 	deps := seed.Deps{
 		DB:     conn,
@@ -1525,6 +1541,12 @@ func runSeed(cfg *config.Config, log logger.Logger) error {
 	})
 
 	return nil
+}
+
+func registerDefaultSeeders(reg *seed.Registry) {
+	reg.Register(&seed.ConfigSeeder{})
+	reg.Register(&seed.AdminSeeder{})
+	reg.Register(&seed.CatalogSeeder{})
 }
 
 func printHelp() {
