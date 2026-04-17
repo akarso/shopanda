@@ -1,14 +1,22 @@
 package config
 
 import (
+	"bufio"
 	"fmt"
 	"net/url"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 
 	"gopkg.in/yaml.v3"
 )
+
+// LoadResult contains the loaded Config and metadata about the load process.
+type LoadResult struct {
+	Config     *Config
+	DotEnvUsed bool // true if a .env file was loaded
+}
 
 // Config holds all application configuration.
 type Config struct {
@@ -129,9 +137,20 @@ type CDNConfig struct {
 var values map[string]string
 
 // Load reads a YAML config file and overlays environment variables.
-// Env vars use the prefix SHOPANDA_ and replace dots/nesting with underscores.
-// Example: server.port -> SHOPANDA_SERVER_PORT
-func Load(path string) (*Config, error) {
+// It first loads a .env file (if present beside the config file) as a
+// development convenience. Variables already set in the OS environment
+// take precedence over .env values.
+//
+// Precedence (highest → lowest):
+//  1. OS environment variables (shell export, or any service manager)
+//  2. .env file values (development fallback)
+//  3. YAML config file values
+//  4. Built-in defaults
+func Load(path string) (*LoadResult, error) {
+	// Load .env from the same directory as the config file, if it exists.
+	dotEnvPath := filepath.Join(filepath.Dir(path), ".env")
+	dotEnvUsed := loadDotEnv(dotEnvPath)
+
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return nil, fmt.Errorf("config: read %s: %w", path, err)
@@ -151,7 +170,7 @@ func Load(path string) (*Config, error) {
 
 	values = flatten(&cfg)
 
-	return &cfg, nil
+	return &LoadResult{Config: &cfg, DotEnvUsed: dotEnvUsed}, nil
 }
 
 // Get returns a config value by dot-notation key, or empty string if not found.
@@ -469,4 +488,67 @@ func (c *Config) String() string {
 		fmt.Sprintf("cache.driver=%s", c.Cache.Driver),
 		fmt.Sprintf("frontend.enabled=%t frontend.mode=%s frontend.theme_path=%s", c.Frontend.Enabled, c.Frontend.Mode, c.Frontend.ThemePath),
 	}, " ")
+}
+
+// loadDotEnv reads a .env file and sets variables that are NOT already present
+// in the OS environment. This ensures service-level config (systemd, Docker)
+// always takes precedence. Returns true if the file was found and loaded.
+func loadDotEnv(path string) bool {
+	f, err := os.Open(path)
+	if err != nil {
+		return false
+	}
+	defer f.Close()
+
+	scanner := bufio.NewScanner(f)
+	for scanner.Scan() {
+		line := strings.TrimSpace(scanner.Text())
+
+		// Skip blank lines and comments.
+		if line == "" || line[0] == '#' {
+			continue
+		}
+
+		key, val, ok := parseDotEnvLine(line)
+		if !ok {
+			continue
+		}
+
+		// Only set if not already in the OS environment.
+		if _, exists := os.LookupEnv(key); !exists {
+			os.Setenv(key, val)
+		}
+	}
+
+	return true
+}
+
+// parseDotEnvLine splits "KEY=VALUE" handling optional quoting.
+// Returns key, value, ok.
+func parseDotEnvLine(line string) (string, string, bool) {
+	idx := strings.IndexByte(line, '=')
+	if idx <= 0 {
+		return "", "", false
+	}
+
+	key := strings.TrimSpace(line[:idx])
+	val := strings.TrimSpace(line[idx+1:])
+
+	// Strip optional "export " prefix.
+	key = strings.TrimPrefix(key, "export ")
+	key = strings.TrimSpace(key)
+
+	if key == "" {
+		return "", "", false
+	}
+
+	// Strip matching quotes from value.
+	if len(val) >= 2 {
+		if (val[0] == '"' && val[len(val)-1] == '"') ||
+			(val[0] == '\'' && val[len(val)-1] == '\'') {
+			val = val[1 : len(val)-1]
+		}
+	}
+
+	return key, val, true
 }

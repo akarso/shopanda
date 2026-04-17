@@ -18,7 +18,7 @@ func TestLoad_Defaults(t *testing.T) {
 	withTestBaseURL(t)
 	path := writeYAML(t, "")
 
-	cfg, err := Load(path)
+	cfg, err := loadCfg(t, path)
 	if err != nil {
 		t.Fatalf("Load() error: %v", err)
 	}
@@ -47,7 +47,7 @@ log:
 `
 	path := writeYAML(t, yaml)
 
-	cfg, err := Load(path)
+	cfg, err := loadCfg(t, path)
 	if err != nil {
 		t.Fatalf("Load() error: %v", err)
 	}
@@ -77,7 +77,7 @@ database:
 	t.Setenv("SHOPANDA_SERVER_PORT", "7070")
 	t.Setenv("SHOPANDA_DATABASE_HOST", "envhost")
 
-	cfg, err := Load(path)
+	cfg, err := loadCfg(t, path)
 	if err != nil {
 		t.Fatalf("Load() error: %v", err)
 	}
@@ -178,7 +178,7 @@ database:
 `
 	path := writeYAML(t, yaml)
 
-	cfg, err := Load(path)
+	cfg, err := loadCfg(t, path)
 	if err != nil {
 		t.Fatalf("Load() error: %v", err)
 	}
@@ -193,7 +193,7 @@ func TestDatabaseDSN_EnvOverride(t *testing.T) {
 	withTestBaseURL(t)
 	path := writeYAML(t, "")
 
-	cfg, err := Load(path)
+	cfg, err := loadCfg(t, path)
 	if err != nil {
 		t.Fatalf("Load() error: %v", err)
 	}
@@ -230,7 +230,7 @@ database:
 `
 	path := writeYAML(t, yaml)
 
-	cfg, err := Load(path)
+	cfg, err := loadCfg(t, path)
 	if err != nil {
 		t.Fatalf("Load() error: %v", err)
 	}
@@ -258,6 +258,16 @@ func writeYAML(t *testing.T, content string) string {
 	return path
 }
 
+// loadCfg is a test helper that calls Load and unwraps the Config from the result.
+func loadCfg(t *testing.T, path string) (*Config, error) {
+	t.Helper()
+	res, err := Load(path)
+	if err != nil {
+		return nil, err
+	}
+	return res.Config, nil
+}
+
 func TestWebhooksConfig_SecretFromYAML(t *testing.T) {
 	withTestBaseURL(t)
 	yaml := `
@@ -268,7 +278,7 @@ webhooks:
 `
 	path := writeYAML(t, yaml)
 
-	cfg, err := Load(path)
+	cfg, err := loadCfg(t, path)
 	if err != nil {
 		t.Fatalf("Load() error: %v", err)
 	}
@@ -291,7 +301,7 @@ func TestWebhooksConfig_SecretFromEnv(t *testing.T) {
 	t.Setenv("SHOPANDA_WEBHOOKS_SECRET_STRIPE", "env_stripe_secret")
 	t.Setenv("SHOPANDA_WEBHOOKS_SECRET_MANUAL", "env_manual_secret")
 
-	cfg, err := Load(path)
+	cfg, err := loadCfg(t, path)
 	if err != nil {
 		t.Fatalf("Load() error: %v", err)
 	}
@@ -315,7 +325,7 @@ webhooks:
 
 	t.Setenv("SHOPANDA_WEBHOOKS_SECRET_STRIPE", "env_override")
 
-	cfg, err := Load(path)
+	cfg, err := loadCfg(t, path)
 	if err != nil {
 		t.Fatalf("Load() error: %v", err)
 	}
@@ -348,7 +358,7 @@ func TestLoad_CacheDriverDefault(t *testing.T) {
 	withTestBaseURL(t)
 	path := writeYAML(t, "")
 
-	cfg, err := Load(path)
+	cfg, err := loadCfg(t, path)
 	if err != nil {
 		t.Fatalf("Load() error: %v", err)
 	}
@@ -365,7 +375,7 @@ func TestLoad_CacheDriverEnvOverlay(t *testing.T) {
 	// Use a clearly fake value to exercise the env overlay without implying runtime support.
 	t.Setenv("SHOPANDA_CACHE_DRIVER", "test-driver")
 
-	cfg, err := Load(path)
+	cfg, err := loadCfg(t, path)
 	if err != nil {
 		t.Fatalf("Load() error: %v", err)
 	}
@@ -384,7 +394,7 @@ func TestConfigString_ContainsCacheDriver(t *testing.T) {
 	withTestBaseURL(t)
 	path := writeYAML(t, "")
 
-	cfg, err := Load(path)
+	cfg, err := loadCfg(t, path)
 	if err != nil {
 		t.Fatalf("Load() error: %v", err)
 	}
@@ -415,7 +425,7 @@ server:
 `
 	path := writeYAML(t, yaml)
 
-	cfg, err := Load(path)
+	cfg, err := loadCfg(t, path)
 	if err != nil {
 		t.Fatalf("Load() error: %v", err)
 	}
@@ -433,7 +443,7 @@ server:
 `
 	path := writeYAML(t, yaml)
 
-	cfg, err := Load(path)
+	cfg, err := loadCfg(t, path)
 	if err != nil {
 		t.Fatalf("Load() error: %v", err)
 	}
@@ -451,7 +461,7 @@ server:
 `
 	path := writeYAML(t, yaml)
 
-	cfg, err := Load(path)
+	cfg, err := loadCfg(t, path)
 	if err != nil {
 		t.Fatalf("Load() error: %v", err)
 	}
@@ -469,7 +479,7 @@ server:
 `
 	path := writeYAML(t, yaml)
 
-	cfg, err := Load(path)
+	cfg, err := loadCfg(t, path)
 	if err != nil {
 		t.Fatalf("Load() error: %v", err)
 	}
@@ -485,7 +495,7 @@ func TestLoad_PublicBaseURL_EnvOverride(t *testing.T) {
 
 	t.Setenv("SHOPANDA_SERVER_PUBLIC_BASE_URL", "shop.example.com/")
 
-	cfg, err := Load(path)
+	cfg, err := loadCfg(t, path)
 	if err != nil {
 		t.Fatalf("Load() error: %v", err)
 	}
@@ -568,7 +578,7 @@ server:
 `
 	path := writeYAML(t, yaml)
 
-	cfg, err := Load(path)
+	cfg, err := loadCfg(t, path)
 	if err != nil {
 		t.Fatalf("Load() error: %v", err)
 	}
@@ -594,7 +604,7 @@ rate_limit:
 `
 	path := writeYAML(t, yaml)
 
-	cfg, err := Load(path)
+	cfg, err := loadCfg(t, path)
 	if err != nil {
 		t.Fatalf("Load() error: %v", err)
 	}
@@ -631,7 +641,7 @@ func TestRateLimitConfig_EnvOverlay(t *testing.T) {
 	t.Setenv("SHOPANDA_RATE_LIMIT_DEFAULT_RATE", "25")
 	t.Setenv("SHOPANDA_RATE_LIMIT_DEFAULT_BURST", "50")
 
-	cfg, err := Load(path)
+	cfg, err := loadCfg(t, path)
 	if err != nil {
 		t.Fatalf("Load() error: %v", err)
 	}
@@ -689,7 +699,7 @@ rate_limit:
 	t.Setenv("SHOPANDA_RATE_LIMIT_DEFAULT_RATE", "0")
 	t.Setenv("SHOPANDA_RATE_LIMIT_DEFAULT_BURST", "-5")
 
-	cfg, err := Load(path)
+	cfg, err := loadCfg(t, path)
 	if err != nil {
 		t.Fatalf("Load() error: %v", err)
 	}
@@ -699,5 +709,137 @@ rate_limit:
 	}
 	if cfg.RateLimit.Default.Burst != 100 {
 		t.Errorf("Default.Burst = %d, want 100 (non-positive env should be ignored)", cfg.RateLimit.Default.Burst)
+	}
+}
+
+// --- dotenv tests ---
+
+func TestLoadDotEnv_SetsUnsetVars(t *testing.T) {
+	dir := t.TempDir()
+	dotenv := filepath.Join(dir, ".env")
+	os.WriteFile(dotenv, []byte("SHOPANDA_TEST_DOTENV_A=hello\nSHOPANDA_TEST_DOTENV_B=world\n"), 0644)
+
+	os.Unsetenv("SHOPANDA_TEST_DOTENV_A")
+	os.Unsetenv("SHOPANDA_TEST_DOTENV_B")
+	defer os.Unsetenv("SHOPANDA_TEST_DOTENV_A")
+	defer os.Unsetenv("SHOPANDA_TEST_DOTENV_B")
+
+	loaded := loadDotEnv(dotenv)
+	if !loaded {
+		t.Fatal("loadDotEnv returned false, want true")
+	}
+	if got := os.Getenv("SHOPANDA_TEST_DOTENV_A"); got != "hello" {
+		t.Errorf("SHOPANDA_TEST_DOTENV_A = %q, want %q", got, "hello")
+	}
+	if got := os.Getenv("SHOPANDA_TEST_DOTENV_B"); got != "world" {
+		t.Errorf("SHOPANDA_TEST_DOTENV_B = %q, want %q", got, "world")
+	}
+}
+
+func TestLoadDotEnv_OSEnvTakesPrecedence(t *testing.T) {
+	dir := t.TempDir()
+	dotenv := filepath.Join(dir, ".env")
+	os.WriteFile(dotenv, []byte("SHOPANDA_TEST_DOTENV_PRIO=from_file\n"), 0644)
+
+	t.Setenv("SHOPANDA_TEST_DOTENV_PRIO", "from_os")
+
+	loadDotEnv(dotenv)
+
+	if got := os.Getenv("SHOPANDA_TEST_DOTENV_PRIO"); got != "from_os" {
+		t.Errorf("got %q, want %q — OS env should win over .env file", got, "from_os")
+	}
+}
+
+func TestLoadDotEnv_MissingFileReturnsFalse(t *testing.T) {
+	if loadDotEnv("/nonexistent/.env") {
+		t.Error("loadDotEnv should return false for missing file")
+	}
+}
+
+func TestLoadDotEnv_SkipsCommentsAndBlanks(t *testing.T) {
+	dir := t.TempDir()
+	dotenv := filepath.Join(dir, ".env")
+	content := "# comment\n\n  \nSHOPANDA_TEST_DOTENV_C=value\n# another comment\n"
+	os.WriteFile(dotenv, []byte(content), 0644)
+
+	os.Unsetenv("SHOPANDA_TEST_DOTENV_C")
+	defer os.Unsetenv("SHOPANDA_TEST_DOTENV_C")
+
+	loadDotEnv(dotenv)
+	if got := os.Getenv("SHOPANDA_TEST_DOTENV_C"); got != "value" {
+		t.Errorf("got %q, want %q", got, "value")
+	}
+}
+
+func TestParseDotEnvLine(t *testing.T) {
+	tests := []struct {
+		line    string
+		wantKey string
+		wantVal string
+		wantOK  bool
+	}{
+		{`KEY=value`, "KEY", "value", true},
+		{`KEY="quoted value"`, "KEY", "quoted value", true},
+		{`KEY='single quoted'`, "KEY", "single quoted", true},
+		{`export KEY=exported`, "KEY", "exported", true},
+		{`KEY=`, "KEY", "", true},
+		{`KEY=val=ue`, "KEY", "val=ue", true},
+		{`# comment`, "", "", false},
+		{`no_equals`, "", "", false},
+		{`=no_key`, "", "", false},
+	}
+
+	for _, tt := range tests {
+		key, val, ok := parseDotEnvLine(tt.line)
+		if ok != tt.wantOK {
+			t.Errorf("parseDotEnvLine(%q) ok = %v, want %v", tt.line, ok, tt.wantOK)
+			continue
+		}
+		if !ok {
+			continue
+		}
+		if key != tt.wantKey {
+			t.Errorf("parseDotEnvLine(%q) key = %q, want %q", tt.line, key, tt.wantKey)
+		}
+		if val != tt.wantVal {
+			t.Errorf("parseDotEnvLine(%q) val = %q, want %q", tt.line, val, tt.wantVal)
+		}
+	}
+}
+
+func TestLoad_DotEnvUsedTrue(t *testing.T) {
+	withTestBaseURL(t)
+	dir := t.TempDir()
+
+	cfgPath := filepath.Join(dir, "config.yaml")
+	os.WriteFile(cfgPath, []byte("# empty\n"), 0644)
+
+	dotenv := filepath.Join(dir, ".env")
+	os.WriteFile(dotenv, []byte("SHOPANDA_LOG_LEVEL=debug\n"), 0644)
+
+	result, err := Load(cfgPath)
+	if err != nil {
+		t.Fatalf("Load() error: %v", err)
+	}
+
+	if !result.DotEnvUsed {
+		t.Error("DotEnvUsed = false, want true when .env exists")
+	}
+	if result.Config.Log.Level != "debug" {
+		t.Errorf("Log.Level = %q, want %q from .env", result.Config.Log.Level, "debug")
+	}
+}
+
+func TestLoad_DotEnvUsedFalse(t *testing.T) {
+	withTestBaseURL(t)
+	path := writeYAML(t, "")
+
+	result, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load() error: %v", err)
+	}
+
+	if result.DotEnvUsed {
+		t.Error("DotEnvUsed = true, want false when no .env exists")
 	}
 }
