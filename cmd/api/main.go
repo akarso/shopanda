@@ -28,6 +28,7 @@ import (
 	"github.com/akarso/shopanda/internal/domain/admin"
 	"github.com/akarso/shopanda/internal/domain/cache"
 	"github.com/akarso/shopanda/internal/domain/customer"
+	"github.com/akarso/shopanda/internal/domain/invoice"
 	"github.com/akarso/shopanda/internal/domain/jobs"
 	"github.com/akarso/shopanda/internal/domain/mail"
 	"github.com/akarso/shopanda/internal/domain/media"
@@ -43,6 +44,7 @@ import (
 	"github.com/akarso/shopanda/internal/infrastructure/cron"
 
 	"github.com/akarso/shopanda/internal/infrastructure/flatrate"
+	"github.com/akarso/shopanda/internal/infrastructure/invoicepdf"
 	"github.com/akarso/shopanda/internal/infrastructure/localfs"
 	"github.com/akarso/shopanda/internal/infrastructure/manualpay"
 	"github.com/akarso/shopanda/internal/infrastructure/postgres"
@@ -248,9 +250,17 @@ func runServe(cfg *config.Config, log logger.Logger) error {
 	// Email notifications (needs jobQueue from setupWorker).
 	mailTemplates := mail.NewTemplates()
 	notification.RegisterTemplates(mailTemplates)
+
+	invoiceRepo, err := postgres.NewInvoiceRepo(conn)
+	if err != nil {
+		return err
+	}
+
 	notifSvc := notification.New(mailTemplates, customerRepo, orderRepo, jobQueue, log,
 		notification.WithStoreURL(cfg.Server.PublicBaseURL),
 		notification.WithResetBaseURL(cfg.Server.PublicBaseURL+"/auth/reset-password"),
+		notification.WithInvoices(invoiceRepo),
+		notification.WithPDFRenderer(invoicepdf.NewRenderer()),
 	)
 
 	// Media storage.
@@ -334,6 +344,9 @@ func runServe(cfg *config.Config, log logger.Logger) error {
 
 	// Wire shipment.shipped → email notification.
 	bus.OnAsync(shipping.EventShipmentShipped, notifSvc.HandleShipmentShipped)
+
+	// Wire invoice.created → email notification with PDF attachment.
+	bus.OnAsync(invoice.EventInvoiceCreated, notifSvc.HandleInvoiceCreated)
 
 	// Wire catalog events → URL rewrites.
 	rewriteSub := rewrite.NewSubscriber(rewriteRepo, log)

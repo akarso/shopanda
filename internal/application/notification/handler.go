@@ -2,6 +2,7 @@ package notification
 
 import (
 	"context"
+	"encoding/base64"
 	"fmt"
 
 	"github.com/akarso/shopanda/internal/domain/jobs"
@@ -39,6 +40,27 @@ func (h *EmailSendHandler) Handle(ctx context.Context, job jobs.Job) error {
 		To:      to,
 		Subject: subject,
 		Body:    body,
+	}
+
+	if attsRaw, ok := job.Payload["attachments"].([]interface{}); ok {
+		for _, raw := range attsRaw {
+			att, _ := raw.(map[string]interface{})
+			if att == nil {
+				continue
+			}
+			filename, _ := att["filename"].(string)
+			contentType, _ := att["content_type"].(string)
+			dataStr, _ := att["data"].(string)
+			data, err := base64.StdEncoding.DecodeString(dataStr)
+			if err != nil {
+				return fmt.Errorf("email.send: decode attachment %q: %w", filename, err)
+			}
+			msg.Attachments = append(msg.Attachments, mail.Attachment{
+				Filename:    filename,
+				ContentType: contentType,
+				Data:        data,
+			})
+		}
 	}
 
 	return h.mailer.Send(ctx, msg)

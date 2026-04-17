@@ -2,7 +2,9 @@ package smtp
 
 import (
 	"context"
+	"encoding/base64"
 	"fmt"
+	"mime"
 	"net"
 	"net/smtp"
 	"strings"
@@ -87,9 +89,36 @@ func (m *Mailer) Send(ctx context.Context, msg mail.Message) error {
 	fmt.Fprintf(&buf, "To: %s\r\n", msg.To)
 	fmt.Fprintf(&buf, "Subject: %s\r\n", msg.Subject)
 	buf.WriteString("MIME-Version: 1.0\r\n")
-	buf.WriteString("Content-Type: text/html; charset=UTF-8\r\n")
-	buf.WriteString("\r\n")
-	buf.WriteString(msg.Body)
+
+	if len(msg.Attachments) == 0 {
+		buf.WriteString("Content-Type: text/html; charset=UTF-8\r\n")
+		buf.WriteString("\r\n")
+		buf.WriteString(msg.Body)
+	} else {
+		boundary := "==shopanda_boundary=="
+		fmt.Fprintf(&buf, "Content-Type: multipart/mixed; boundary=%q\r\n", boundary)
+		buf.WriteString("\r\n")
+
+		// HTML body part.
+		fmt.Fprintf(&buf, "--%s\r\n", boundary)
+		buf.WriteString("Content-Type: text/html; charset=UTF-8\r\n")
+		buf.WriteString("\r\n")
+		buf.WriteString(msg.Body)
+		buf.WriteString("\r\n")
+
+		// Attachment parts.
+		for _, att := range msg.Attachments {
+			fmt.Fprintf(&buf, "--%s\r\n", boundary)
+			fmt.Fprintf(&buf, "Content-Type: %s\r\n", att.ContentType)
+			fmt.Fprintf(&buf, "Content-Disposition: attachment; filename=%s\r\n",
+				mime.QEncoding.Encode("utf-8", att.Filename))
+			buf.WriteString("Content-Transfer-Encoding: base64\r\n")
+			buf.WriteString("\r\n")
+			buf.WriteString(base64.StdEncoding.EncodeToString(att.Data))
+			buf.WriteString("\r\n")
+		}
+		fmt.Fprintf(&buf, "--%s--\r\n", boundary)
+	}
 
 	if _, err := wc.Write([]byte(buf.String())); err != nil {
 		wc.Close()
