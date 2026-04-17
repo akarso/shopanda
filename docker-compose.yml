@@ -18,6 +18,14 @@ services:
     build: .
     ports:
       - "${SHOPANDA_SERVER_PORT:-8080}:8080"
+    environment:
+      # Service-to-service defaults — override .env / config defaults that
+      # assume localhost, which is unreachable from inside the container.
+      SHOPANDA_DATABASE_HOST: postgres
+      # Mailpit (dev profile). If mailpit is not running, mail simply fails
+      # on connection refused — harmless for local development.
+      SHOPANDA_MAIL_SMTP_HOST: mailpit
+      SHOPANDA_MAIL_SMTP_PORT: 1025
     env_file:
       - path: .env
         required: false
@@ -40,6 +48,7 @@ services:
       test: ["CMD-SHELL", "pg_isready -U ${SHOPANDA_DATABASE_USER:-shopanda}"]
       interval: 5s
       timeout: 3s
+      start_period: 10s
       retries: 5
     restart: unless-stopped
 
@@ -49,8 +58,8 @@ services:
   mailpit:
     image: axllent/mailpit:v1.22@sha256:f7f7c31de4de59540ad6515a0ca057a77525bca2069b6e747d873ca66c10fe08
     ports:
-      - "8025:8025"   # Web UI
-      - "1025:1025"   # SMTP
+      - "127.0.0.1:8025:8025"   # Web UI
+      - "127.0.0.1:1025:1025"   # SMTP
     profiles: ["dev"]
     restart: unless-stopped
 
@@ -60,10 +69,12 @@ services:
   meilisearch:
     image: getmeili/meilisearch:v1.13@sha256:bed3fb650e62da53145777204891159242f6ea4ce69e215b36223af4aa64a0ae
     environment:
+      # No MEILI_MASTER_KEY — intentionally unprotected for local dev only.
+      # For internet-exposed deployments, set MEILI_MASTER_KEY to a strong secret.
       MEILI_ENV: "development"
       MEILI_NO_ANALYTICS: "true"
     ports:
-      - "7700:7700"
+      - "127.0.0.1:7700:7700"
     volumes:
       - meilidata:/meili_data
     profiles: ["search"]
