@@ -1,6 +1,12 @@
 package mail
 
-import "context"
+import (
+	"context"
+	"errors"
+)
+
+// ErrTemplateNotFound is returned when a template cannot be resolved.
+var ErrTemplateNotFound = errors.New("mail: template not found")
 
 // Message represents an email to be sent.
 type Message struct {
