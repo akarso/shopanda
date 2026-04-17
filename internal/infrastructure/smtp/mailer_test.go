@@ -3,6 +3,7 @@ package smtp_test
 import (
 	"bufio"
 	"context"
+	"encoding/base64"
 	"fmt"
 	"net"
 	"strings"
@@ -18,7 +19,7 @@ var _ mail.Mailer = (*smtpmail.Mailer)(nil)
 
 func TestMailer_Send(t *testing.T) {
 	// Start a minimal SMTP stub server.
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	ln, err := (&net.ListenConfig{}).Listen(context.Background(), "tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatalf("listen: %v", err)
 	}
@@ -137,7 +138,7 @@ func TestMailer_Send_RejectsCRLF(t *testing.T) {
 }
 
 func TestMailer_SendWithAttachment(t *testing.T) {
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	ln, err := (&net.ListenConfig{}).Listen(context.Background(), "tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatalf("listen: %v", err)
 	}
@@ -235,5 +236,12 @@ func TestMailer_SendWithAttachment(t *testing.T) {
 	}
 	if !strings.Contains(body, "application/pdf") {
 		t.Errorf("expected application/pdf content type, got:\n%s", body)
+	}
+	if !strings.Contains(body, "Content-Transfer-Encoding: base64") {
+		t.Errorf("expected base64 transfer encoding header, got:\n%s", body)
+	}
+	expectedB64 := base64.StdEncoding.EncodeToString([]byte("%PDF-test-data"))
+	if !strings.Contains(body, expectedB64) {
+		t.Errorf("expected base64-encoded attachment payload %q in body, got:\n%s", expectedB64, body)
 	}
 }

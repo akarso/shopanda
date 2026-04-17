@@ -42,26 +42,61 @@ func (h *EmailSendHandler) Handle(ctx context.Context, job jobs.Job) error {
 		Body:    body,
 	}
 
-	if attsRaw, ok := job.Payload["attachments"].([]interface{}); ok {
-		for _, raw := range attsRaw {
-			att, _ := raw.(map[string]interface{})
-			if att == nil {
-				continue
-			}
-			filename, _ := att["filename"].(string)
-			contentType, _ := att["content_type"].(string)
-			dataStr, _ := att["data"].(string)
-			data, err := base64.StdEncoding.DecodeString(dataStr)
-			if err != nil {
-				return fmt.Errorf("email.send: decode attachment %q: %w", filename, err)
-			}
-			msg.Attachments = append(msg.Attachments, mail.Attachment{
-				Filename:    filename,
-				ContentType: contentType,
-				Data:        data,
-			})
-		}
+	if err := parseAttachments(job.Payload, &msg); err != nil {
+		return err
 	}
 
 	return h.mailer.Send(ctx, msg)
+}
+
+// parseAttachments extracts and validates attachments from a job payload.
+func parseAttachments(payload map[string]interface{}, msg *mail.Message) error {
+	raw, ok := payload["attachments"]
+	if !ok {
+		return nil
+	}
+
+	var entries []map[string]interface{}
+	switch v := raw.(type) {
+	case []interface{}:
+		for i, elem := range v {
+			m, ok := elem.(map[string]interface{})
+			if !ok {
+				return fmt.Errorf("email.send: attachment[%d] is not a map", i)
+			}
+			entries = append(entries, m)
+		}
+	case []map[string]interface{}:
+		entries = v
+	default:
+		return fmt.Errorf("email.send: attachments has unexpected type %T", raw)
+	}
+
+	for i, att := range entries {
+		filename, _ := att["filename"].(string)
+		contentType, _ := att["content_type"].(string)
+		dataStr, _ := att["data"].(string)
+
+		if filename == "" {
+			return fmt.Errorf("email.send: attachment[%d] missing filename", i)
+		}
+		if contentType == "" {
+			return fmt.Errorf("email.send: attachment[%d] %q missing content_type", i, filename)
+		}
+		if dataStr == "" {
+			return fmt.Errorf("email.send: attachment[%d] %q missing data", i, filename)
+		}
+
+		data, err := base64.StdEncoding.DecodeString(dataStr)
+		if err != nil {
+			return fmt.Errorf("email.send: attachment[%d] %q decode failed: %w", i, filename, err)
+		}
+
+		msg.Attachments = append(msg.Attachments, mail.Attachment{
+			Filename:    filename,
+			ContentType: contentType,
+			Data:        data,
+		})
+	}
+	return nil
 }

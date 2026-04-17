@@ -3,6 +3,7 @@ package notification_test
 import (
 	"context"
 	"encoding/base64"
+	"strings"
 	"testing"
 
 	"github.com/akarso/shopanda/internal/application/notification"
@@ -603,12 +604,79 @@ func TestHandleInvoiceCreated_CustomerNotFound(t *testing.T) {
 	svc := newInvoiceTestService(t, tmpl, custRepo, &mockOrderRepo{}, q, invRepo, renderer)
 	evt := event.New(domainInvoice.EventInvoiceCreated, "invoice.service", domainInvoice.InvoiceCreatedData{
 		InvoiceID:  "inv-1",
-		CustomerID: "missing",
+		OrderID:    "ord-1",
+		CustomerID: "cust-1",
 	})
 
 	err := svc.HandleInvoiceCreated(context.Background(), evt)
 	if err == nil {
 		t.Fatal("expected error for missing customer")
+	}
+}
+
+func TestHandleInvoiceCreated_CustomerMismatch(t *testing.T) {
+	tmpl := mail.NewTemplates()
+	notification.RegisterTemplates(tmpl)
+	q := &mockQueue{}
+
+	taxAmount, _ := shared.NewMoney(0, "EUR")
+	unitPrice, _ := shared.NewMoney(1000, "EUR")
+	item, _ := domainInvoice.NewItem("v-1", "S-1", "X", 1, unitPrice)
+	inv, _ := domainInvoice.NewInvoice("inv-1", "ord-1", "cust-1", "EUR", []domainInvoice.Item{item}, taxAmount)
+
+	invRepo := &mockInvoiceRepo{
+		findByID: func(_ context.Context, _ string) (*domainInvoice.Invoice, error) {
+			return &inv, nil
+		},
+	}
+	renderer := &mockPDFRenderer{}
+
+	svc := newInvoiceTestService(t, tmpl, &mockCustomerRepo{}, &mockOrderRepo{}, q, invRepo, renderer)
+	evt := event.New(domainInvoice.EventInvoiceCreated, "invoice.service", domainInvoice.InvoiceCreatedData{
+		InvoiceID:  "inv-1",
+		OrderID:    "ord-1",
+		CustomerID: "cust-WRONG",
+	})
+
+	err := svc.HandleInvoiceCreated(context.Background(), evt)
+	if err == nil {
+		t.Fatal("expected error for customer mismatch")
+	}
+	if !strings.Contains(err.Error(), "customer") {
+		t.Errorf("error should mention customer mismatch: %v", err)
+	}
+}
+
+func TestHandleInvoiceCreated_OrderMismatch(t *testing.T) {
+	tmpl := mail.NewTemplates()
+	notification.RegisterTemplates(tmpl)
+	q := &mockQueue{}
+
+	taxAmount, _ := shared.NewMoney(0, "EUR")
+	unitPrice, _ := shared.NewMoney(1000, "EUR")
+	item, _ := domainInvoice.NewItem("v-1", "S-1", "X", 1, unitPrice)
+	inv, _ := domainInvoice.NewInvoice("inv-1", "ord-1", "cust-1", "EUR", []domainInvoice.Item{item}, taxAmount)
+
+	invRepo := &mockInvoiceRepo{
+		findByID: func(_ context.Context, _ string) (*domainInvoice.Invoice, error) {
+			return &inv, nil
+		},
+	}
+	renderer := &mockPDFRenderer{}
+
+	svc := newInvoiceTestService(t, tmpl, &mockCustomerRepo{}, &mockOrderRepo{}, q, invRepo, renderer)
+	evt := event.New(domainInvoice.EventInvoiceCreated, "invoice.service", domainInvoice.InvoiceCreatedData{
+		InvoiceID:  "inv-1",
+		OrderID:    "ord-WRONG",
+		CustomerID: "cust-1",
+	})
+
+	err := svc.HandleInvoiceCreated(context.Background(), evt)
+	if err == nil {
+		t.Fatal("expected error for order mismatch")
+	}
+	if !strings.Contains(err.Error(), "order") {
+		t.Errorf("error should mention order mismatch: %v", err)
 	}
 }
 
@@ -692,5 +760,35 @@ func TestEmailSendHandler_HandleWithAttachment(t *testing.T) {
 	}
 	if string(att.Data) != "%PDF-test" {
 		t.Errorf("Data = %q", string(att.Data))
+	}
+}
+
+func TestEmailSendHandler_HandleWithMalformedAttachment(t *testing.T) {
+	m := &mockMailer{}
+	h := notification.NewEmailSendHandler(m)
+
+	j := jobs.Job{
+		ID:   "j4",
+		Type: notification.JobTypeEmailSend,
+		Payload: map[string]interface{}{
+			"to":      "bob@example.com",
+			"subject": "Invoice",
+			"body":    "<p>Attached</p>",
+			"attachments": []interface{}{
+				map[string]interface{}{
+					"filename":     "",
+					"content_type": "application/pdf",
+					"data":         "dGVzdA==",
+				},
+			},
+		},
+	}
+
+	err := h.Handle(context.Background(), j)
+	if err == nil {
+		t.Fatal("expected error for missing filename")
+	}
+	if !strings.Contains(err.Error(), "missing filename") {
+		t.Errorf("error = %q, want 'missing filename'", err)
 	}
 }

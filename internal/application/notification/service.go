@@ -313,6 +313,25 @@ func (s *Service) HandleInvoiceCreated(ctx context.Context, evt event.Event) err
 		return err
 	}
 
+	if inv.CustomerID() != data.CustomerID {
+		err := fmt.Errorf("notification: invoice %s customer %s does not match event customer %s", data.InvoiceID, inv.CustomerID(), data.CustomerID)
+		s.log.Error("HandleInvoiceCreated.customer_mismatch", err, map[string]interface{}{
+			"invoice_id":       data.InvoiceID,
+			"invoice_customer": inv.CustomerID(),
+			"event_customer":   data.CustomerID,
+		})
+		return err
+	}
+	if inv.OrderID() != data.OrderID {
+		err := fmt.Errorf("notification: invoice %s order %s does not match event order %s", data.InvoiceID, inv.OrderID(), data.OrderID)
+		s.log.Error("HandleInvoiceCreated.order_mismatch", err, map[string]interface{}{
+			"invoice_id":    data.InvoiceID,
+			"invoice_order": inv.OrderID(),
+			"event_order":   data.OrderID,
+		})
+		return err
+	}
+
 	cust, err := s.customers.FindByID(ctx, data.CustomerID)
 	if err != nil {
 		s.log.Error("HandleInvoiceCreated.customer_lookup_failed", err, map[string]interface{}{"invoice_id": data.InvoiceID, "customer_id": data.CustomerID})
