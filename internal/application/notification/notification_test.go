@@ -9,6 +9,7 @@ import (
 	"github.com/akarso/shopanda/internal/domain/jobs"
 	"github.com/akarso/shopanda/internal/domain/mail"
 	"github.com/akarso/shopanda/internal/domain/order"
+	"github.com/akarso/shopanda/internal/domain/shipping"
 	"github.com/akarso/shopanda/internal/platform/event"
 )
 
@@ -57,7 +58,13 @@ func (mockLogger) Info(string, map[string]interface{})         {}
 func (mockLogger) Warn(string, map[string]interface{})         {}
 func (mockLogger) Error(string, error, map[string]interface{}) {}
 
-// --- tests ---
+// newTestService creates a Service with test dependencies.
+func newTestService(t *testing.T, tmpl *mail.Templates, custRepo *mockCustomerRepo, ordRepo *mockOrderRepo, q *mockQueue) *notification.Service {
+	t.Helper()
+	return notification.New(tmpl, custRepo, ordRepo, q, mockLogger{})
+}
+
+// --- HandleOrderPaid tests ---
 
 func TestHandleOrderPaid(t *testing.T) {
 	tmpl := mail.NewTemplates()
@@ -83,7 +90,7 @@ func TestHandleOrderPaid(t *testing.T) {
 		},
 	}
 
-	svc := notification.New(tmpl, custRepo, ordRepo, q, mockLogger{})
+	svc := newTestService(t, tmpl, custRepo, ordRepo, q)
 	evt := event.New(order.EventOrderPaid, "core.order", order.OrderStatusChangedData{
 		OrderID:   "ord-1",
 		OldStatus: "pending",
@@ -128,7 +135,7 @@ func TestHandleOrderPaid_OrderNotFound(t *testing.T) {
 		},
 	}
 
-	svc := notification.New(tmpl, custRepo, ordRepo, q, mockLogger{})
+	svc := newTestService(t, tmpl, custRepo, ordRepo, q)
 	evt := event.New(order.EventOrderPaid, "core.order", order.OrderStatusChangedData{
 		OrderID: "missing",
 	})
@@ -161,7 +168,7 @@ func TestHandleOrderPaid_CustomerNotFound(t *testing.T) {
 		},
 	}
 
-	svc := notification.New(tmpl, custRepo, ordRepo, q, mockLogger{})
+	svc := newTestService(t, tmpl, custRepo, ordRepo, q)
 	evt := event.New(order.EventOrderPaid, "core.order", order.OrderStatusChangedData{
 		OrderID: "ord-1",
 	})
@@ -182,7 +189,7 @@ func TestHandleOrderPaid_BadEventData(t *testing.T) {
 	custRepo := &mockCustomerRepo{}
 	ordRepo := &mockOrderRepo{}
 
-	svc := notification.New(tmpl, custRepo, ordRepo, q, mockLogger{})
+	svc := newTestService(t, tmpl, custRepo, ordRepo, q)
 	evt := event.New(order.EventOrderPaid, "core.order", "not-a-struct")
 
 	err := svc.HandleOrderPaid(context.Background(), evt)
@@ -193,6 +200,182 @@ func TestHandleOrderPaid_BadEventData(t *testing.T) {
 		t.Fatalf("expected 0 enqueued jobs, got %d", len(q.enqueued))
 	}
 }
+
+// --- HandlePasswordReset tests ---
+
+func TestHandlePasswordReset(t *testing.T) {
+	tmpl := mail.NewTemplates()
+	notification.RegisterTemplates(tmpl)
+
+	q := &mockQueue{}
+	custRepo := &mockCustomerRepo{
+		findByID: func(_ context.Context, id string) (*customer.Customer, error) {
+			if id == "cust-1" {
+				c, _ := customer.NewCustomer("cust-1", "alice@example.com")
+				c.FirstName = "Alice"
+				return &c, nil
+			}
+			return nil, nil
+		},
+	}
+	ordRepo := &mockOrderRepo{}
+
+	svc := notification.New(tmpl, custRepo, ordRepo, q, mockLogger{},
+		notification.WithResetBaseURL("https://shop.test/reset"),
+	)
+
+	evt := event.New(customer.EventPasswordResetRequested, "auth.service", customer.PasswordResetRequestedData{
+		CustomerID: "cust-1",
+		Token:      "abc123",
+	})
+
+	if err := svc.HandlePasswordReset(context.Background(), evt); err != nil {
+		t.Fatalf("HandlePasswordReset: %v", err)
+	}
+
+	if len(q.enqueued) != 1 {
+		t.Fatalf("expected 1 enqueued job, got %d", len(q.enqueued))
+	}
+	job := q.enqueued[0]
+	if to, _ := job.Payload["to"].(string); to != "alice@example.com" {
+		t.Errorf("payload.to = %q, want alice@example.com", to)
+	}
+	if subj, _ := job.Payload["subject"].(string); subj != "Reset your password" {
+		t.Errorf("payload.subject = %q, want 'Reset your password'", subj)
+	}
+	if body, _ := job.Payload["body"].(string); body == "" {
+		t.Error("payload.body is empty")
+	}
+}
+
+func TestHandlePasswordReset_CustomerNotFound(t *testing.T) {
+	tmpl := mail.NewTemplates()
+	notification.RegisterTemplates(tmpl)
+	q := &mockQueue{}
+	custRepo := &mockCustomerRepo{
+		findByID: func(_ context.Context, _ string) (*customer.Customer, error) {
+			return nil, nil
+		},
+	}
+	ordRepo := &mockOrderRepo{}
+
+	svc := newTestService(t, tmpl, custRepo, ordRepo, q)
+	evt := event.New(customer.EventPasswordResetRequested, "auth.service", customer.PasswordResetRequestedData{
+		CustomerID: "missing",
+		Token:      "tok",
+	})
+
+	err := svc.HandlePasswordReset(context.Background(), evt)
+	if err == nil {
+		t.Fatal("expected error for missing customer")
+	}
+	if len(q.enqueued) != 0 {
+		t.Fatalf("expected 0 enqueued jobs, got %d", len(q.enqueued))
+	}
+}
+
+func TestHandlePasswordReset_BadEventData(t *testing.T) {
+	tmpl := mail.NewTemplates()
+	notification.RegisterTemplates(tmpl)
+	q := &mockQueue{}
+	svc := newTestService(t, tmpl, &mockCustomerRepo{}, &mockOrderRepo{}, q)
+
+	evt := event.New(customer.EventPasswordResetRequested, "auth.service", "not-a-struct")
+	err := svc.HandlePasswordReset(context.Background(), evt)
+	if err == nil {
+		t.Fatal("expected error for bad event data")
+	}
+}
+
+// --- HandleShipmentShipped tests ---
+
+func TestHandleShipmentShipped(t *testing.T) {
+	tmpl := mail.NewTemplates()
+	notification.RegisterTemplates(tmpl)
+
+	q := &mockQueue{}
+	custRepo := &mockCustomerRepo{
+		findByID: func(_ context.Context, id string) (*customer.Customer, error) {
+			if id == "cust-1" {
+				c, _ := customer.NewCustomer("cust-1", "alice@example.com")
+				c.FirstName = "Alice"
+				return &c, nil
+			}
+			return nil, nil
+		},
+	}
+	ordRepo := &mockOrderRepo{
+		findByID: func(_ context.Context, id string) (*order.Order, error) {
+			if id == "ord-1" {
+				return &order.Order{ID: "ord-1", CustomerID: "cust-1"}, nil
+			}
+			return nil, nil
+		},
+	}
+
+	svc := newTestService(t, tmpl, custRepo, ordRepo, q)
+	evt := event.New(shipping.EventShipmentShipped, "core.shipping", shipping.ShipmentStatusChangedData{
+		ShipmentID:     "ship-1",
+		OrderID:        "ord-1",
+		OldStatus:      shipping.StatusPending,
+		NewStatus:      shipping.StatusShipped,
+		TrackingNumber: "TRACK-123",
+		ProviderRef:    "FedEx",
+	})
+
+	if err := svc.HandleShipmentShipped(context.Background(), evt); err != nil {
+		t.Fatalf("HandleShipmentShipped: %v", err)
+	}
+
+	if len(q.enqueued) != 1 {
+		t.Fatalf("expected 1 enqueued job, got %d", len(q.enqueued))
+	}
+	job := q.enqueued[0]
+	if to, _ := job.Payload["to"].(string); to != "alice@example.com" {
+		t.Errorf("payload.to = %q, want alice@example.com", to)
+	}
+	if subj, _ := job.Payload["subject"].(string); subj == "" {
+		t.Error("payload.subject is empty")
+	}
+}
+
+func TestHandleShipmentShipped_OrderNotFound(t *testing.T) {
+	tmpl := mail.NewTemplates()
+	notification.RegisterTemplates(tmpl)
+	q := &mockQueue{}
+	custRepo := &mockCustomerRepo{}
+	ordRepo := &mockOrderRepo{
+		findByID: func(_ context.Context, _ string) (*order.Order, error) {
+			return nil, nil
+		},
+	}
+
+	svc := newTestService(t, tmpl, custRepo, ordRepo, q)
+	evt := event.New(shipping.EventShipmentShipped, "core.shipping", shipping.ShipmentStatusChangedData{
+		ShipmentID: "ship-1",
+		OrderID:    "missing",
+	})
+
+	err := svc.HandleShipmentShipped(context.Background(), evt)
+	if err == nil {
+		t.Fatal("expected error for missing order")
+	}
+}
+
+func TestHandleShipmentShipped_BadEventData(t *testing.T) {
+	tmpl := mail.NewTemplates()
+	notification.RegisterTemplates(tmpl)
+	q := &mockQueue{}
+	svc := newTestService(t, tmpl, &mockCustomerRepo{}, &mockOrderRepo{}, q)
+
+	evt := event.New(shipping.EventShipmentShipped, "core.shipping", "bad-data")
+	err := svc.HandleShipmentShipped(context.Background(), evt)
+	if err == nil {
+		t.Fatal("expected error for bad event data")
+	}
+}
+
+// --- EmailSendHandler tests ---
 
 func TestEmailSendHandler_Handle(t *testing.T) {
 	m := &mockMailer{}

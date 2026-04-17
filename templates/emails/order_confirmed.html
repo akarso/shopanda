@@ -1,0 +1,41 @@
+<!-- Subject: Order {{.Data.OrderID}} — Confirmation -->
+{{if .Data.FirstName}}<h1>Thank you, {{.Data.FirstName}}!</h1>{{else}}<h1>Thank you for your order!</h1>{{end}}
+<p>Your order <strong>{{.Data.OrderID}}</strong> has been paid and confirmed.</p>
+
+{{if .Data.Items}}
+<table width="100%" cellpadding="8" cellspacing="0" style="border-collapse: collapse; margin: 24px 0;">
+  <thead>
+    <tr style="background: #f8f8f8; border-bottom: 2px solid #eaeaea;">
+      <th align="left" style="padding: 8px;">Product</th>
+      <th align="center" style="padding: 8px;">Qty</th>
+      <th align="right" style="padding: 8px;">Price</th>
+    </tr>
+  </thead>
+  <tbody>
+    {{range .Data.Items}}
+    <tr style="border-bottom: 1px solid #eaeaea;">
+      <td style="padding: 8px;">{{.Name}}</td>
+      <td align="center" style="padding: 8px;">{{.Qty}}</td>
+      <td align="right" style="padding: 8px;">{{.Price}}</td>
+    </tr>
+    {{end}}
+  </tbody>
+  <tfoot>
+    <tr style="border-top: 2px solid #eaeaea;">
+      <td colspan="2" align="right" style="padding: 8px;"><strong>Total</strong></td>
+      <td align="right" style="padding: 8px;"><strong>{{.Data.Total}}</strong></td>
+    </tr>
+  </tfoot>
+</table>
+{{end}}
+
+<p>We'll notify you when your order ships.</p>
+
+{{if .StoreURL}}
+<p style="margin: 24px 0;">
+  <a href="{{.StoreURL}}/account/orders/{{.Data.OrderID}}"
+     style="display: inline-block; padding: 12px 24px; background: #333333; color: #ffffff; text-decoration: none; border-radius: 4px;">
+    View Order
+  </a>
+</p>
+{{end}}

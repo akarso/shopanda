@@ -1,0 +1,28 @@
+<!-- Subject: Order {{.Data.OrderID}} — Shipped -->
+<h1>Your order is on its way!</h1>
+<p>Hi{{if .Data.FirstName}} {{.Data.FirstName}}{{end}},</p>
+<p>Great news — your order <strong>{{.Data.OrderID}}</strong> has been shipped.</p>
+
+{{if .Data.TrackingNumber}}
+<table width="100%" cellpadding="8" cellspacing="0" style="border-collapse: collapse; margin: 24px 0; background: #f8f8f8; border-radius: 4px;">
+  <tr>
+    <td style="padding: 8px;"><strong>Tracking Number</strong></td>
+    <td style="padding: 8px;">{{.Data.TrackingNumber}}</td>
+  </tr>
+  {{if .Data.Carrier}}
+  <tr>
+    <td style="padding: 8px;"><strong>Carrier</strong></td>
+    <td style="padding: 8px;">{{.Data.Carrier}}</td>
+  </tr>
+  {{end}}
+</table>
+{{end}}
+
+{{if .StoreURL}}
+<p style="margin: 24px 0;">
+  <a href="{{.StoreURL}}/account/orders/{{.Data.OrderID}}"
+     style="display: inline-block; padding: 12px 24px; background: #333333; color: #ffffff; text-decoration: none; border-radius: 4px;">
+    View Order
+  </a>
+</p>
+{{end}}
