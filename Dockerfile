@@ -1,5 +1,6 @@
 # ---- Build stage ----
-FROM golang:1.25-alpine AS builder
+# Pinned 2026-04-17; refresh periodically.
+FROM golang:1.25-alpine@sha256:5caaf1cca9dc351e13deafbc3879fd4754801acba8653fa9540cea125d01a71f AS builder
 
 WORKDIR /src
 
@@ -12,7 +13,8 @@ COPY . .
 RUN CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags="-s -w" -o /shopanda ./cmd/api
 
 # ---- Runtime stage ----
-FROM alpine:3.21
+# Pinned 2026-04-17; refresh periodically.
+FROM alpine:3.21@sha256:48b0309ca019d89d40f670aa1bc06e426dc0931948452e8491e3d65087abc07d
 
 # wget is needed for the HEALTHCHECK; ca-certificates for any HTTPS calls.
 RUN apk add --no-cache ca-certificates wget \

@@ -19,7 +19,6 @@ pull_request_template.md
 .env
 .env.example
 docker-compose*.yml
-Dockerfile
 
 # Build output / test artifacts
 bin/
