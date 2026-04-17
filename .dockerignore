@@ -1,0 +1,33 @@
+# Version control
+.git
+.gitignore
+
+# CI / editor / OS artifacts
+.github
+.copilot
+.vscode
+.idea
+.DS_Store
+
+# Documentation (not needed at runtime)
+docs/
+*.md
+!README.md
+pull_request_template.md
+
+# Dev-only files
+.env
+.env.example
+docker-compose*.yml
+
+# Build output / test artifacts
+bin/
+*.test
+*.out
+coverage.*
+*.coverprofile
+profile.cov
+
+# Temp / scratch
+src/
+scripts/
