@@ -80,6 +80,7 @@ func run() error {
 
 	if result.DotEnvUsed {
 		log.Warn("app.config.dotenv", map[string]interface{}{
+			"path": result.DotEnvPath,
 			"message": ".env file loaded — this is a development convenience; " +
 				"in production, prefer configs/config.yaml or export variables in your shell " +
 				"before starting the binary",

@@ -259,8 +259,18 @@ func writeYAML(t *testing.T, content string) string {
 }
 
 // loadCfg is a test helper that calls Load and unwraps the Config from the result.
+// It changes the working directory to the config file's directory so the CWD
+// .env fallback does not pick up stray files from the developer's checkout.
 func loadCfg(t *testing.T, path string) (*Config, error) {
 	t.Helper()
+	orig, err := os.Getwd()
+	if err != nil {
+		return nil, err
+	}
+	if err := os.Chdir(filepath.Dir(path)); err != nil {
+		return nil, err
+	}
+	t.Cleanup(func() { os.Chdir(orig) })
 	res, err := Load(path)
 	if err != nil {
 		return nil, err
@@ -717,14 +727,20 @@ rate_limit:
 func TestLoadDotEnv_SetsUnsetVars(t *testing.T) {
 	dir := t.TempDir()
 	dotenv := filepath.Join(dir, ".env")
-	os.WriteFile(dotenv, []byte("SHOPANDA_TEST_DOTENV_A=hello\nSHOPANDA_TEST_DOTENV_B=world\n"), 0644)
+	if err := os.WriteFile(dotenv, []byte("SHOPANDA_TEST_DOTENV_A=hello\nSHOPANDA_TEST_DOTENV_B=world\n"), 0644); err != nil {
+		t.Fatalf("write .env: %v", err)
+	}
 
+	// Register for cleanup via t.Setenv, then unset so loadDotEnv can populate.
+	t.Setenv("SHOPANDA_TEST_DOTENV_A", "")
 	os.Unsetenv("SHOPANDA_TEST_DOTENV_A")
+	t.Setenv("SHOPANDA_TEST_DOTENV_B", "")
 	os.Unsetenv("SHOPANDA_TEST_DOTENV_B")
-	defer os.Unsetenv("SHOPANDA_TEST_DOTENV_A")
-	defer os.Unsetenv("SHOPANDA_TEST_DOTENV_B")
 
-	loaded := loadDotEnv(dotenv)
+	loaded, err := loadDotEnv(dotenv)
+	if err != nil {
+		t.Fatalf("loadDotEnv error: %v", err)
+	}
 	if !loaded {
 		t.Fatal("loadDotEnv returned false, want true")
 	}
@@ -739,11 +755,15 @@ func TestLoadDotEnv_SetsUnsetVars(t *testing.T) {
 func TestLoadDotEnv_OSEnvTakesPrecedence(t *testing.T) {
 	dir := t.TempDir()
 	dotenv := filepath.Join(dir, ".env")
-	os.WriteFile(dotenv, []byte("SHOPANDA_TEST_DOTENV_PRIO=from_file\n"), 0644)
+	if err := os.WriteFile(dotenv, []byte("SHOPANDA_TEST_DOTENV_PRIO=from_file\n"), 0644); err != nil {
+		t.Fatalf("write .env: %v", err)
+	}
 
 	t.Setenv("SHOPANDA_TEST_DOTENV_PRIO", "from_os")
 
-	loadDotEnv(dotenv)
+	if _, err := loadDotEnv(dotenv); err != nil {
+		t.Fatalf("loadDotEnv error: %v", err)
+	}
 
 	if got := os.Getenv("SHOPANDA_TEST_DOTENV_PRIO"); got != "from_os" {
 		t.Errorf("got %q, want %q — OS env should win over .env file", got, "from_os")
@@ -751,7 +771,11 @@ func TestLoadDotEnv_OSEnvTakesPrecedence(t *testing.T) {
 }
 
 func TestLoadDotEnv_MissingFileReturnsFalse(t *testing.T) {
-	if loadDotEnv("/nonexistent/.env") {
+	loaded, err := loadDotEnv(filepath.Join(t.TempDir(), ".env"))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if loaded {
 		t.Error("loadDotEnv should return false for missing file")
 	}
 }
@@ -760,12 +784,16 @@ func TestLoadDotEnv_SkipsCommentsAndBlanks(t *testing.T) {
 	dir := t.TempDir()
 	dotenv := filepath.Join(dir, ".env")
 	content := "# comment\n\n  \nSHOPANDA_TEST_DOTENV_C=value\n# another comment\n"
-	os.WriteFile(dotenv, []byte(content), 0644)
+	if err := os.WriteFile(dotenv, []byte(content), 0644); err != nil {
+		t.Fatalf("write .env: %v", err)
+	}
 
+	t.Setenv("SHOPANDA_TEST_DOTENV_C", "")
 	os.Unsetenv("SHOPANDA_TEST_DOTENV_C")
-	defer os.Unsetenv("SHOPANDA_TEST_DOTENV_C")
 
-	loadDotEnv(dotenv)
+	if _, err := loadDotEnv(dotenv); err != nil {
+		t.Fatalf("loadDotEnv error: %v", err)
+	}
 	if got := os.Getenv("SHOPANDA_TEST_DOTENV_C"); got != "value" {
 		t.Errorf("got %q, want %q", got, "value")
 	}
@@ -812,10 +840,23 @@ func TestLoad_DotEnvUsedTrue(t *testing.T) {
 	dir := t.TempDir()
 
 	cfgPath := filepath.Join(dir, "config.yaml")
-	os.WriteFile(cfgPath, []byte("# empty\n"), 0644)
+	if err := os.WriteFile(cfgPath, []byte("# empty\n"), 0644); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
 
 	dotenv := filepath.Join(dir, ".env")
-	os.WriteFile(dotenv, []byte("SHOPANDA_LOG_LEVEL=debug\n"), 0644)
+	if err := os.WriteFile(dotenv, []byte("SHOPANDA_LOG_LEVEL=debug\n"), 0644); err != nil {
+		t.Fatalf("write .env: %v", err)
+	}
+
+	// Scope the side-effect: loadDotEnv os.Setenv's SHOPANDA_LOG_LEVEL.
+	t.Setenv("SHOPANDA_LOG_LEVEL", "")
+	os.Unsetenv("SHOPANDA_LOG_LEVEL")
+
+	// Isolate CWD so the fallback doesn't pick up stray .env files.
+	orig, _ := os.Getwd()
+	os.Chdir(dir)
+	t.Cleanup(func() { os.Chdir(orig) })
 
 	result, err := Load(cfgPath)
 	if err != nil {
@@ -833,6 +874,11 @@ func TestLoad_DotEnvUsedTrue(t *testing.T) {
 func TestLoad_DotEnvUsedFalse(t *testing.T) {
 	withTestBaseURL(t)
 	path := writeYAML(t, "")
+
+	// Isolate CWD so the fallback doesn't find a stray .env.
+	orig, _ := os.Getwd()
+	os.Chdir(filepath.Dir(path))
+	t.Cleanup(func() { os.Chdir(orig) })
 
 	result, err := Load(path)
 	if err != nil {

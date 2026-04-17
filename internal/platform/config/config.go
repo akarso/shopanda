@@ -2,7 +2,9 @@ package config
 
 import (
 	"bufio"
+	"errors"
 	"fmt"
+	"io/fs"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -15,7 +17,8 @@ import (
 // LoadResult contains the loaded Config and metadata about the load process.
 type LoadResult struct {
 	Config     *Config
-	DotEnvUsed bool // true if a .env file was loaded
+	DotEnvUsed bool   // true if a .env file was loaded
+	DotEnvPath string // path to the .env file that was loaded (empty if none)
 }
 
 // Config holds all application configuration.
@@ -137,9 +140,9 @@ type CDNConfig struct {
 var values map[string]string
 
 // Load reads a YAML config file and overlays environment variables.
-// It first loads a .env file (if present beside the config file) as a
-// development convenience. Variables already set in the OS environment
-// take precedence over .env values.
+// It looks for a .env file beside the config file first, then falls back to
+// the working directory. Variables already set in the OS environment take
+// precedence over .env values.
 //
 // Precedence (highest → lowest):
 //  1. OS environment variables (shell export, or any service manager)
@@ -147,9 +150,31 @@ var values map[string]string
 //  3. YAML config file values
 //  4. Built-in defaults
 func Load(path string) (*LoadResult, error) {
-	// Load .env from the same directory as the config file, if it exists.
-	dotEnvPath := filepath.Join(filepath.Dir(path), ".env")
-	dotEnvUsed := loadDotEnv(dotEnvPath)
+	var dotEnvUsed bool
+	var dotEnvPath string
+
+	// Try .env beside the config file first.
+	configDirEnv := filepath.Join(filepath.Dir(path), ".env")
+	used, err := loadDotEnv(configDirEnv)
+	if err != nil {
+		return nil, fmt.Errorf("config: %w", err)
+	}
+	if used {
+		dotEnvUsed = true
+		dotEnvPath = configDirEnv
+	}
+
+	// Fallback: try .env in the working directory when config is in a subdirectory.
+	if !dotEnvUsed && configDirEnv != ".env" {
+		used, err = loadDotEnv(".env")
+		if err != nil {
+			return nil, fmt.Errorf("config: %w", err)
+		}
+		if used {
+			dotEnvUsed = true
+			dotEnvPath = ".env"
+		}
+	}
 
 	data, err := os.ReadFile(path)
 	if err != nil {
@@ -170,7 +195,7 @@ func Load(path string) (*LoadResult, error) {
 
 	values = flatten(&cfg)
 
-	return &LoadResult{Config: &cfg, DotEnvUsed: dotEnvUsed}, nil
+	return &LoadResult{Config: &cfg, DotEnvUsed: dotEnvUsed, DotEnvPath: dotEnvPath}, nil
 }
 
 // Get returns a config value by dot-notation key, or empty string if not found.
@@ -491,12 +516,18 @@ func (c *Config) String() string {
 }
 
 // loadDotEnv reads a .env file and sets variables that are NOT already present
-// in the OS environment. This ensures service-level config (systemd, Docker)
-// always takes precedence. Returns true if the file was found and loaded.
-func loadDotEnv(path string) bool {
+// in the OS environment. This ensures that explicitly set environment variables
+// always take precedence over .env values.
+//
+// Returns (true, nil) if the file was found and loaded, (false, nil) if the
+// file does not exist, or (false, err) for any other I/O failure.
+func loadDotEnv(path string) (bool, error) {
 	f, err := os.Open(path)
 	if err != nil {
-		return false
+		if errors.Is(err, fs.ErrNotExist) {
+			return false, nil
+		}
+		return false, fmt.Errorf("open %s: %w", path, err)
 	}
 	defer f.Close()
 
@@ -516,15 +547,28 @@ func loadDotEnv(path string) bool {
 
 		// Only set if not already in the OS environment.
 		if _, exists := os.LookupEnv(key); !exists {
-			os.Setenv(key, val)
+			if err := os.Setenv(key, val); err != nil {
+				return false, fmt.Errorf("setenv %s: %w", key, err)
+			}
 		}
 	}
 
-	return true
+	if err := scanner.Err(); err != nil {
+		return false, fmt.Errorf("read %s: %w", path, err)
+	}
+
+	return true, nil
 }
 
-// parseDotEnvLine splits "KEY=VALUE" handling optional quoting.
-// Returns key, value, ok.
+// parseDotEnvLine parses a single "KEY=VALUE" line from a .env file.
+// Supports bare values, double- or single-quoted values, the "export" prefix,
+// and empty values (KEY=). This is intentionally NOT a full dotenv parser:
+//   - Inline comments are NOT stripped (KEY=value # comment keeps "value # comment")
+//   - Escape sequences inside quotes are NOT processed (literal \n stays as \n)
+//   - Only the outermost matching quote pair is stripped
+//
+// Returns key, value, ok. Returns ok=false for comments, blank lines, or
+// malformed input (missing '=' or empty key).
 func parseDotEnvLine(line string) (string, string, bool) {
 	idx := strings.IndexByte(line, '=')
 	if idx <= 0 {
