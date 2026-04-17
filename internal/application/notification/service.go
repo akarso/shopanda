@@ -2,10 +2,12 @@ package notification
 
 import (
 	"context"
+	"encoding/base64"
 	"fmt"
 	"net/url"
 
 	"github.com/akarso/shopanda/internal/domain/customer"
+	"github.com/akarso/shopanda/internal/domain/invoice"
 	"github.com/akarso/shopanda/internal/domain/jobs"
 	"github.com/akarso/shopanda/internal/domain/mail"
 	"github.com/akarso/shopanda/internal/domain/order"
@@ -21,13 +23,15 @@ const JobTypeEmailSend = "email.send"
 // Service wires order/shipping/customer events to email notifications
 // via the job queue.
 type Service struct {
-	templates *mail.Templates
-	customers customer.CustomerRepository
-	orders    order.OrderRepository
-	queue     jobs.Queue
-	log       logger.Logger
-	resetURL  string // base URL for password reset links
-	storeURL  string // public store URL
+	templates   *mail.Templates
+	customers   customer.CustomerRepository
+	orders      order.OrderRepository
+	queue       jobs.Queue
+	log         logger.Logger
+	resetURL    string                    // base URL for password reset links
+	storeURL    string                    // public store URL
+	invoices    invoice.InvoiceRepository // optional — for invoice emails
+	pdfRenderer invoice.PDFRenderer       // optional — for invoice PDF attachments
 }
 
 // Option configures optional Service fields.
@@ -38,6 +42,16 @@ func WithResetBaseURL(u string) Option { return func(s *Service) { s.resetURL = 
 
 // WithStoreURL sets the public store URL used in template links.
 func WithStoreURL(u string) Option { return func(s *Service) { s.storeURL = u } }
+
+// WithInvoices sets the invoice repository for invoice email lookups.
+func WithInvoices(repo invoice.InvoiceRepository) Option {
+	return func(s *Service) { s.invoices = repo }
+}
+
+// WithPDFRenderer sets the PDF renderer for invoice attachments.
+func WithPDFRenderer(r invoice.PDFRenderer) Option {
+	return func(s *Service) { s.pdfRenderer = r }
+}
 
 // New creates a notification Service.
 // Panics if any required dependency is nil.
@@ -97,6 +111,14 @@ func RegisterTemplates(t *mail.Templates) {
 		"<h1>Your order is on its way!</h1>"+
 			"<p>Your order <strong>{{.Data.OrderID}}</strong> has been shipped.</p>"+
 			"{{if .Data.TrackingNumber}}<p>Tracking: {{.Data.TrackingNumber}}</p>{{end}}")
+
+	t.Register("invoice_created",
+		"Invoice #{{.Data.InvoiceNumber}} for Order {{.Data.OrderID}}",
+		"<h1>Your Invoice</h1>"+
+			"<p>Hi {{.Data.FirstName}},</p>"+
+			"<p>Invoice <strong>#{{.Data.InvoiceNumber}}</strong> for order "+
+			"<strong>{{.Data.OrderID}}</strong> is attached as a PDF.</p>"+
+			"<p>Total: <strong>{{.Data.Total}}</strong></p>")
 }
 
 // HandleOrderPaid is an event handler for order.paid.
@@ -265,12 +287,125 @@ func (s *Service) HandleShipmentShipped(ctx context.Context, evt event.Event) er
 	})
 }
 
+// HandleInvoiceCreated is an event handler for invoice.created.
+// It renders the invoice email template, attaches the PDF, and enqueues a job.
+func (s *Service) HandleInvoiceCreated(ctx context.Context, evt event.Event) error {
+	data, ok := evt.Data.(invoice.InvoiceCreatedData)
+	if !ok {
+		return fmt.Errorf("notification: unexpected event data type %T", evt.Data)
+	}
+
+	if s.invoices == nil || s.pdfRenderer == nil {
+		s.log.Warn("HandleInvoiceCreated.skipped_no_invoice_deps", map[string]interface{}{
+			"invoice_id": data.InvoiceID,
+		})
+		return nil
+	}
+
+	inv, err := s.invoices.FindByID(ctx, data.InvoiceID)
+	if err != nil {
+		s.log.Error("HandleInvoiceCreated.invoice_lookup_failed", err, map[string]interface{}{"invoice_id": data.InvoiceID})
+		return fmt.Errorf("notification: find invoice %s: %w", data.InvoiceID, err)
+	}
+	if inv == nil {
+		err := fmt.Errorf("notification: invoice %s not found", data.InvoiceID)
+		s.log.Error("HandleInvoiceCreated.invoice_not_found", err, map[string]interface{}{"invoice_id": data.InvoiceID})
+		return err
+	}
+
+	if inv.CustomerID() != data.CustomerID {
+		err := fmt.Errorf("notification: invoice %s customer %s does not match event customer %s", data.InvoiceID, inv.CustomerID(), data.CustomerID)
+		s.log.Error("HandleInvoiceCreated.customer_mismatch", err, map[string]interface{}{
+			"invoice_id":       data.InvoiceID,
+			"invoice_customer": inv.CustomerID(),
+			"event_customer":   data.CustomerID,
+		})
+		return err
+	}
+	if inv.OrderID() != data.OrderID {
+		err := fmt.Errorf("notification: invoice %s order %s does not match event order %s", data.InvoiceID, inv.OrderID(), data.OrderID)
+		s.log.Error("HandleInvoiceCreated.order_mismatch", err, map[string]interface{}{
+			"invoice_id":    data.InvoiceID,
+			"invoice_order": inv.OrderID(),
+			"event_order":   data.OrderID,
+		})
+		return err
+	}
+
+	cust, err := s.customers.FindByID(ctx, data.CustomerID)
+	if err != nil {
+		s.log.Error("HandleInvoiceCreated.customer_lookup_failed", err, map[string]interface{}{"invoice_id": data.InvoiceID, "customer_id": data.CustomerID})
+		return fmt.Errorf("notification: find customer %s: %w", data.CustomerID, err)
+	}
+	if cust == nil {
+		err := fmt.Errorf("notification: customer %s not found", data.CustomerID)
+		s.log.Error("HandleInvoiceCreated.customer_not_found", err, map[string]interface{}{"invoice_id": data.InvoiceID, "customer_id": data.CustomerID})
+		return err
+	}
+
+	pdfBytes, err := s.pdfRenderer.Render(*inv)
+	if err != nil {
+		s.log.Error("HandleInvoiceCreated.pdf_render_failed", err, map[string]interface{}{"invoice_id": data.InvoiceID})
+		return fmt.Errorf("notification: render invoice PDF: %w", err)
+	}
+
+	items := inv.Items()
+	tmplItems := make([]map[string]interface{}, len(items))
+	for i, it := range items {
+		tmplItems[i] = map[string]interface{}{
+			"Name":  it.Name,
+			"Qty":   it.Quantity,
+			"Price": it.UnitPrice.String(),
+		}
+	}
+
+	ed := mail.EmailData{
+		StoreURL: s.storeURL,
+		Data: map[string]interface{}{
+			"OrderID":       data.OrderID,
+			"InvoiceNumber": data.InvoiceNumber,
+			"FirstName":     cust.FirstName,
+			"Items":         tmplItems,
+			"Total":         inv.TotalAmount().String(),
+		},
+	}
+
+	msg, err := s.templates.Render("invoice_created", cust.Email, ed)
+	if err != nil {
+		s.log.Error("HandleInvoiceCreated.template_render_failed", err, map[string]interface{}{"invoice_id": data.InvoiceID})
+		return fmt.Errorf("notification: render template: %w", err)
+	}
+
+	msg.Attachments = []mail.Attachment{{
+		Filename:    fmt.Sprintf("invoice-%d.pdf", data.InvoiceNumber),
+		ContentType: "application/pdf",
+		Data:        pdfBytes,
+	}}
+
+	return s.enqueueEmail(ctx, msg, "HandleInvoiceCreated", map[string]interface{}{
+		"invoice_id":  data.InvoiceID,
+		"order_id":    data.OrderID,
+		"customer_id": data.CustomerID,
+	})
+}
+
 // enqueueEmail creates and enqueues an email.send job.
 func (s *Service) enqueueEmail(ctx context.Context, msg mail.Message, handler string, logFields map[string]interface{}) error {
 	payload := map[string]interface{}{
 		"to":      msg.To,
 		"subject": msg.Subject,
 		"body":    msg.Body,
+	}
+	if len(msg.Attachments) > 0 {
+		atts := make([]map[string]interface{}, len(msg.Attachments))
+		for i, a := range msg.Attachments {
+			atts[i] = map[string]interface{}{
+				"filename":     a.Filename,
+				"content_type": a.ContentType,
+				"data":         base64.StdEncoding.EncodeToString(a.Data),
+			}
+		}
+		payload["attachments"] = atts
 	}
 
 	job, err := jobs.NewJob(id.New(), JobTypeEmailSend, payload)

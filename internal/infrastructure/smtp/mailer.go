@@ -2,7 +2,9 @@ package smtp
 
 import (
 	"context"
+	"encoding/base64"
 	"fmt"
+	"mime"
 	"net"
 	"net/smtp"
 	"strings"
@@ -87,9 +89,42 @@ func (m *Mailer) Send(ctx context.Context, msg mail.Message) error {
 	fmt.Fprintf(&buf, "To: %s\r\n", msg.To)
 	fmt.Fprintf(&buf, "Subject: %s\r\n", msg.Subject)
 	buf.WriteString("MIME-Version: 1.0\r\n")
-	buf.WriteString("Content-Type: text/html; charset=UTF-8\r\n")
-	buf.WriteString("\r\n")
-	buf.WriteString(msg.Body)
+
+	if len(msg.Attachments) == 0 {
+		buf.WriteString("Content-Type: text/html; charset=UTF-8\r\n")
+		buf.WriteString("\r\n")
+		buf.WriteString(msg.Body)
+	} else {
+		boundary := "==shopanda_boundary=="
+		fmt.Fprintf(&buf, "Content-Type: multipart/mixed; boundary=%q\r\n", boundary)
+		buf.WriteString("\r\n")
+
+		// HTML body part.
+		fmt.Fprintf(&buf, "--%s\r\n", boundary)
+		buf.WriteString("Content-Type: text/html; charset=UTF-8\r\n")
+		buf.WriteString("\r\n")
+		buf.WriteString(msg.Body)
+		buf.WriteString("\r\n")
+
+		// Attachment parts.
+		for _, att := range msg.Attachments {
+			if err := rejectCRLF(att.ContentType); err != nil {
+				return fmt.Errorf("smtp: invalid attachment Content-Type: %w", err)
+			}
+			if err := rejectCRLF(att.Filename); err != nil {
+				return fmt.Errorf("smtp: invalid attachment Filename: %w", err)
+			}
+			fmt.Fprintf(&buf, "--%s\r\n", boundary)
+			fmt.Fprintf(&buf, "Content-Type: %s\r\n", att.ContentType)
+			disposition := mime.FormatMediaType("attachment", map[string]string{"filename": att.Filename})
+			fmt.Fprintf(&buf, "Content-Disposition: %s\r\n", disposition)
+			buf.WriteString("Content-Transfer-Encoding: base64\r\n")
+			buf.WriteString("\r\n")
+			writeBase64Wrapped(&buf, att.Data)
+			buf.WriteString("\r\n")
+		}
+		fmt.Fprintf(&buf, "--%s--\r\n", boundary)
+	}
 
 	if _, err := wc.Write([]byte(buf.String())); err != nil {
 		wc.Close()
@@ -100,6 +135,20 @@ func (m *Mailer) Send(ctx context.Context, msg mail.Message) error {
 	}
 
 	return client.Quit()
+}
+
+// writeBase64Wrapped writes data as base64 with lines wrapped at 76
+// characters per RFC 2045, using CRLF line breaks.
+func writeBase64Wrapped(buf *strings.Builder, data []byte) {
+	encoded := base64.StdEncoding.EncodeToString(data)
+	for len(encoded) > 76 {
+		buf.WriteString(encoded[:76])
+		buf.WriteString("\r\n")
+		encoded = encoded[76:]
+	}
+	if len(encoded) > 0 {
+		buf.WriteString(encoded)
+	}
 }
 
 // rejectCRLF returns an error if s contains CR or LF characters,
