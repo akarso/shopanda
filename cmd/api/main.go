@@ -37,6 +37,7 @@ import (
 	"github.com/akarso/shopanda/internal/domain/scheduler"
 	"github.com/akarso/shopanda/internal/domain/search"
 	"github.com/akarso/shopanda/internal/domain/shared"
+	"github.com/akarso/shopanda/internal/domain/shipping"
 	"github.com/akarso/shopanda/internal/domain/theme"
 	"github.com/akarso/shopanda/internal/domain/translation"
 	"github.com/akarso/shopanda/internal/infrastructure/cron"
@@ -247,7 +248,10 @@ func runServe(cfg *config.Config, log logger.Logger) error {
 	// Email notifications (needs jobQueue from setupWorker).
 	mailTemplates := mail.NewTemplates()
 	notification.RegisterTemplates(mailTemplates)
-	notifSvc := notification.New(mailTemplates, customerRepo, orderRepo, jobQueue, log)
+	notifSvc := notification.New(mailTemplates, customerRepo, orderRepo, shippingRepo, jobQueue, log,
+		notification.WithStoreURL(cfg.Server.PublicBaseURL),
+		notification.WithResetBaseURL(cfg.Server.PublicBaseURL+"/auth/reset-password"),
+	)
 
 	// Media storage.
 	var mediaStorage media.Storage
@@ -309,7 +313,7 @@ func runServe(cfg *config.Config, log logger.Logger) error {
 	// Event bus.
 	bus := event.NewBus(log)
 
-	// Dev handler: log password reset tokens (replace with email plugin in production).
+	// Dev handler: log password reset tokens alongside email delivery.
 	if os.Getenv("SHOPANDA_DEV_MODE") != "" {
 		bus.On(customer.EventPasswordResetRequested, func(_ context.Context, evt event.Event) error {
 			if data, ok := evt.Data.(customer.PasswordResetRequestedData); ok {
@@ -324,6 +328,12 @@ func runServe(cfg *config.Config, log logger.Logger) error {
 
 	// Wire order.paid → email notification.
 	bus.OnAsync(order.EventOrderPaid, notifSvc.HandleOrderPaid)
+
+	// Wire password reset → email notification.
+	bus.OnAsync(customer.EventPasswordResetRequested, notifSvc.HandlePasswordReset)
+
+	// Wire shipment.shipped → email notification.
+	bus.OnAsync(shipping.EventShipmentShipped, notifSvc.HandleShipmentShipped)
 
 	// Wire catalog events → URL rewrites.
 	rewriteSub := rewrite.NewSubscriber(rewriteRepo, log)
