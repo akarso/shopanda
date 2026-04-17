@@ -70,12 +70,22 @@ func main() {
 }
 
 func run() error {
-	cfg, err := config.Load(config.FindConfigFile())
+	result, err := config.Load(config.FindConfigFile())
 	if err != nil {
 		return fmt.Errorf("load config: %w", err)
 	}
+	cfg := result.Config
 
 	log := logger.New(cfg.Log.Level)
+
+	if result.DotEnvUsed {
+		log.Warn("app.config.dotenv", map[string]interface{}{
+			"path": result.DotEnvPath,
+			"message": ".env file loaded — this is a development convenience; " +
+				"in production, prefer configs/config.yaml or export variables in your shell " +
+				"before starting the binary",
+		})
+	}
 
 	log.Info("app.config.loaded", map[string]interface{}{
 		"config": cfg.String(),
