@@ -128,7 +128,7 @@ func TestLoadDir(t *testing.T) {
 	registry := mail.NewTemplates()
 	loader := NewFileLoader(dir)
 
-	if err := LoadDir(registry, loader, dir); err != nil {
+	if err := LoadDir(registry, loader); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
@@ -159,7 +159,7 @@ func TestLoadDir_SkipsNonHTML(t *testing.T) {
 	registry := mail.NewTemplates()
 	loader := NewFileLoader(dir)
 
-	if err := LoadDir(registry, loader, dir); err != nil {
+	if err := LoadDir(registry, loader); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
@@ -225,7 +225,7 @@ func TestSetup(t *testing.T) {
 	dir := t.TempDir()
 	writeTemplate(t, dir, "_layout.html", "<html>{{.Body}}</html>")
 
-	loader, lr, err := Setup(dir)
+	loader, lr, absDir, err := Setup(dir)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -235,12 +235,40 @@ func TestSetup(t *testing.T) {
 	if lr == nil {
 		t.Error("layout renderer should not be nil")
 	}
+	if absDir == "" {
+		t.Error("absDir should not be empty")
+	}
 }
 
 func TestSetup_MissingDir(t *testing.T) {
-	_, _, err := Setup(filepath.Join(t.TempDir(), "does-not-exist"))
+	_, _, _, err := Setup(filepath.Join(t.TempDir(), "does-not-exist"))
 	if err == nil {
 		t.Fatal("expected error for missing directory")
+	}
+}
+
+func TestLoadDir_OverwritesPreviousRegistration(t *testing.T) {
+	dir := t.TempDir()
+	writeTemplate(t, dir, "override_me.html",
+		"<!-- Subject: File Subject -->\n<p>File Body</p>")
+
+	registry := mail.NewTemplates()
+	registry.Register("override_me", "Hardcoded Subject", "<p>Hardcoded Body</p>")
+
+	loader := NewFileLoader(dir)
+	if err := LoadDir(registry, loader); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	msg, err := registry.Render("override_me", "x@x.com", nil)
+	if err != nil {
+		t.Fatalf("render: %v", err)
+	}
+	if msg.Subject != "File Subject" {
+		t.Errorf("subject = %q, want %q (file should override hardcoded)", msg.Subject, "File Subject")
+	}
+	if msg.Body != "<p>File Body</p>" {
+		t.Errorf("body = %q, want %q (file should override hardcoded)", msg.Body, "<p>File Body</p>")
 	}
 }
 

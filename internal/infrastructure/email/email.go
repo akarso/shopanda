@@ -9,10 +9,12 @@ import (
 	"github.com/akarso/shopanda/internal/domain/mail"
 )
 
-// LoadDir reads all .html templates from dir (excluding _layout.html) using the
-// given loader and registers them in the Templates registry.
+// LoadDir reads all .html templates from the loader's directory
+// (excluding _layout.html and other _-prefixed partials) and registers
+// them in the Templates registry.
 // Existing templates with the same name are overwritten.
-func LoadDir(t *mail.Templates, loader mail.TemplateLoader, dir string) error {
+func LoadDir(t *mail.Templates, loader *FileLoader) error {
+	dir := loader.Dir()
 	entries, err := os.ReadDir(dir)
 	if err != nil {
 		return fmt.Errorf("email: read dir %s: %w", dir, err)
@@ -61,25 +63,26 @@ func RenderEmail(t *mail.Templates, lr *LayoutRenderer, name, to string, data ma
 
 // Setup initialises both a FileLoader and LayoutRenderer from the given
 // templates directory. Returns the loader, the layout renderer, and the
-// directory path so callers can use LoadDir afterwards.
-func Setup(dir string) (*FileLoader, *LayoutRenderer, error) {
+// resolved absolute directory path so callers can pass a consistent path
+// to LoadDir.
+func Setup(dir string) (*FileLoader, *LayoutRenderer, string, error) {
 	info, err := os.Stat(dir)
 	if err != nil {
-		return nil, nil, fmt.Errorf("email: templates dir: %w", err)
+		return nil, nil, "", fmt.Errorf("email: templates dir: %w", err)
 	}
 	if !info.IsDir() {
-		return nil, nil, fmt.Errorf("email: %s is not a directory", dir)
+		return nil, nil, "", fmt.Errorf("email: %s is not a directory", dir)
 	}
 
 	abs, err := filepath.Abs(dir)
 	if err != nil {
-		return nil, nil, fmt.Errorf("email: abs path: %w", err)
+		return nil, nil, "", fmt.Errorf("email: abs path: %w", err)
 	}
 
 	loader := NewFileLoader(abs)
 	lr, err := NewLayoutRenderer(abs)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, "", err
 	}
-	return loader, lr, nil
+	return loader, lr, abs, nil
 }

@@ -22,6 +22,11 @@ func NewFileLoader(dir string) *FileLoader {
 	return &FileLoader{dir: dir}
 }
 
+// Dir returns the directory this loader reads templates from.
+func (f *FileLoader) Dir() string {
+	return f.dir
+}
+
 // Load reads {dir}/{name}.html and extracts the subject line and body.
 // Returns mail.ErrTemplateNotFound when the file does not exist.
 func (f *FileLoader) Load(name string) (subject, body string, err error) {
@@ -58,7 +63,7 @@ func parseTemplate(content string) (subject, body string) {
 
 	if strings.HasPrefix(first, prefix) && strings.HasSuffix(first, suffix) {
 		subject = strings.TrimSpace(first[len(prefix) : len(first)-len(suffix)])
-		body = strings.TrimLeft(rest, "\n")
+		body = strings.TrimLeft(rest, "\r\n")
 		return subject, body
 	}
 
