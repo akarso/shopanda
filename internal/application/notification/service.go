@@ -3,6 +3,7 @@ package notification
 import (
 	"context"
 	"fmt"
+	"net/url"
 
 	"github.com/akarso/shopanda/internal/domain/customer"
 	"github.com/akarso/shopanda/internal/domain/jobs"
@@ -23,7 +24,6 @@ type Service struct {
 	templates *mail.Templates
 	customers customer.CustomerRepository
 	orders    order.OrderRepository
-	shipments shipping.ShipmentRepository
 	queue     jobs.Queue
 	log       logger.Logger
 	resetURL  string // base URL for password reset links
@@ -45,7 +45,6 @@ func New(
 	templates *mail.Templates,
 	customers customer.CustomerRepository,
 	orders order.OrderRepository,
-	shipments shipping.ShipmentRepository,
 	queue jobs.Queue,
 	log logger.Logger,
 	opts ...Option,
@@ -59,9 +58,6 @@ func New(
 	if orders == nil {
 		panic("notification.New: nil orders")
 	}
-	if shipments == nil {
-		panic("notification.New: nil shipments")
-	}
 	if queue == nil {
 		panic("notification.New: nil queue")
 	}
@@ -72,7 +68,6 @@ func New(
 		templates: templates,
 		customers: customers,
 		orders:    orders,
-		shipments: shipments,
 		queue:     queue,
 		log:       log,
 	}
@@ -185,12 +180,20 @@ func (s *Service) HandlePasswordReset(ctx context.Context, evt event.Event) erro
 		return err
 	}
 
-	resetURL := s.resetURL + "?token=" + data.Token
+	resetURL, err := url.Parse(s.resetURL)
+	if err != nil {
+		s.log.Error("HandlePasswordReset.invalid_reset_url", err, map[string]interface{}{"customer_id": data.CustomerID})
+		return fmt.Errorf("notification: parse reset URL: %w", err)
+	}
+	q := resetURL.Query()
+	q.Set("token", data.Token)
+	resetURL.RawQuery = q.Encode()
+
 	ed := mail.EmailData{
 		StoreURL: s.storeURL,
 		Data: map[string]interface{}{
 			"FirstName": cust.FirstName,
-			"ResetURL":  resetURL,
+			"ResetURL":  resetURL.String(),
 			"ExpiresIn": "1 hour",
 		},
 	}

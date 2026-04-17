@@ -248,7 +248,7 @@ func runServe(cfg *config.Config, log logger.Logger) error {
 	// Email notifications (needs jobQueue from setupWorker).
 	mailTemplates := mail.NewTemplates()
 	notification.RegisterTemplates(mailTemplates)
-	notifSvc := notification.New(mailTemplates, customerRepo, orderRepo, shippingRepo, jobQueue, log,
+	notifSvc := notification.New(mailTemplates, customerRepo, orderRepo, jobQueue, log,
 		notification.WithStoreURL(cfg.Server.PublicBaseURL),
 		notification.WithResetBaseURL(cfg.Server.PublicBaseURL+"/auth/reset-password"),
 	)

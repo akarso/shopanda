@@ -1,5 +1,5 @@
 <!-- Subject: Order {{.Data.OrderID}} — Confirmation -->
-<h1>Thank you, {{.Data.FirstName}}!</h1>
+{{if .Data.FirstName}}<h1>Thank you, {{.Data.FirstName}}!</h1>{{else}}<h1>Thank you for your order!</h1>{{end}}
 <p>Your order <strong>{{.Data.OrderID}}</strong> has been paid and confirmed.</p>
 
 {{if .Data.Items}}

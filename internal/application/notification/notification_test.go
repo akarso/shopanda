@@ -33,10 +33,6 @@ func (m *mockOrderRepo) FindByID(ctx context.Context, id string) (*order.Order, 
 	return m.findByID(ctx, id)
 }
 
-type mockShipmentRepo struct {
-	shipping.ShipmentRepository
-}
-
 type mockQueue struct {
 	jobs.Queue
 	enqueued []jobs.Job
@@ -65,7 +61,7 @@ func (mockLogger) Error(string, error, map[string]interface{}) {}
 // newTestService creates a Service with test dependencies.
 func newTestService(t *testing.T, tmpl *mail.Templates, custRepo *mockCustomerRepo, ordRepo *mockOrderRepo, q *mockQueue) *notification.Service {
 	t.Helper()
-	return notification.New(tmpl, custRepo, ordRepo, &mockShipmentRepo{}, q, mockLogger{})
+	return notification.New(tmpl, custRepo, ordRepo, q, mockLogger{})
 }
 
 // --- HandleOrderPaid tests ---
@@ -224,7 +220,7 @@ func TestHandlePasswordReset(t *testing.T) {
 	}
 	ordRepo := &mockOrderRepo{}
 
-	svc := notification.New(tmpl, custRepo, ordRepo, &mockShipmentRepo{}, q, mockLogger{},
+	svc := notification.New(tmpl, custRepo, ordRepo, q, mockLogger{},
 		notification.WithResetBaseURL("https://shop.test/reset"),
 	)
 
