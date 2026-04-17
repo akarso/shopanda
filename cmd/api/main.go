@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"strings"
 	"syscall"
 	"time"
 
@@ -97,6 +98,8 @@ func run() error {
 		case "help":
 			printHelp()
 			return nil
+		case "setup":
+			return runSetup(cfg, log)
 		case "migrate":
 			return runMigrate(cfg, log)
 		case "serve":
@@ -634,6 +637,100 @@ func runServe(cfg *config.Config, log logger.Logger) error {
 	}
 
 	return err
+}
+
+func runSetup(cfg *config.Config, log logger.Logger) error {
+	skipSeed := false
+	verbose := false
+
+	for _, arg := range os.Args[2:] {
+		switch arg {
+		case "--skip-seed":
+			skipSeed = true
+		case "--verbose":
+			verbose = true
+		case "--non-interactive":
+			// Accepted for forward compatibility; currently the default.
+		case "--help", "-h":
+			fmt.Println(`Usage: shopanda setup [flags]
+
+Flags:
+  --skip-seed          Skip the seeding step
+  --verbose            Print structured log entries during setup
+  --non-interactive    Use env vars only, no prompts (default)
+  --help, -h           Show this help`)
+			return nil
+		default:
+			if strings.HasPrefix(arg, "--") {
+				return fmt.Errorf("setup: unknown flag %q (boolean flags do not accept =value syntax)", arg)
+			}
+			return fmt.Errorf("setup: unexpected argument %q", arg)
+		}
+	}
+
+	// Step 1: Database connectivity.
+	dsn := config.DatabaseDSN(cfg)
+	conn, err := db.Open(dsn)
+	if err != nil {
+		return fmt.Errorf("setup: database: %w", err)
+	}
+	defer conn.Close()
+	fmt.Println("✓ Database connected")
+	if verbose {
+		log.Info("setup.db.connected", map[string]interface{}{
+			"host":     cfg.Database.Host,
+			"port":     cfg.Database.Port,
+			"database": cfg.Database.Name,
+		})
+	}
+
+	// Step 2: Migrations.
+	applied, err := migrate.Run(conn, "migrations")
+	if err != nil {
+		return fmt.Errorf("setup: migrate: %w", err)
+	}
+	if applied > 0 {
+		fmt.Printf("✓ %d migrations applied\n", applied)
+	} else {
+		fmt.Println("✓ Migrations up to date")
+	}
+	if verbose {
+		log.Info("setup.migrate", map[string]interface{}{"applied": applied})
+	}
+
+	// Step 3: Seeders.
+	if skipSeed {
+		fmt.Println("– Seeding skipped (--skip-seed)")
+	} else {
+		reg := seed.NewRegistry()
+		registerDefaultSeeders(reg)
+
+		deps := seed.Deps{DB: conn, Logger: log}
+		result, seedErr := reg.Run(context.Background(), deps)
+		if seedErr != nil {
+			return fmt.Errorf("setup: seed: %w", seedErr)
+		}
+		fmt.Printf("✓ Seed complete (executed: %d, skipped: %d)\n",
+			result.Executed, result.Skipped)
+		if verbose {
+			log.Info("setup.seed", map[string]interface{}{
+				"executed": result.Executed,
+				"skipped":  result.Skipped,
+			})
+		}
+	}
+
+	// Summary.
+	baseURL := cfg.Server.PublicBaseURL
+	if baseURL == "" {
+		baseURL = fmt.Sprintf("http://localhost:%d", cfg.Server.Port)
+	}
+	fmt.Println()
+	fmt.Printf("Store is ready at %s\n", baseURL)
+	fmt.Printf("Admin API: %s/api/v1/admin\n", baseURL)
+	fmt.Printf("API Docs:  %s/docs\n", baseURL)
+
+	return nil
 }
 
 func runMigrate(cfg *config.Config, log logger.Logger) error {
@@ -1426,9 +1523,7 @@ func runSeed(cfg *config.Config, log logger.Logger) error {
 	log.Info("seed.start", nil)
 
 	reg := seed.NewRegistry()
-	reg.Register(&seed.ConfigSeeder{})
-	reg.Register(&seed.AdminSeeder{})
-	reg.Register(&seed.CatalogSeeder{})
+	registerDefaultSeeders(reg)
 
 	deps := seed.Deps{
 		DB:     conn,
@@ -1448,11 +1543,18 @@ func runSeed(cfg *config.Config, log logger.Logger) error {
 	return nil
 }
 
+func registerDefaultSeeders(reg *seed.Registry) {
+	reg.Register(&seed.ConfigSeeder{})
+	reg.Register(&seed.AdminSeeder{})
+	reg.Register(&seed.CatalogSeeder{})
+}
+
 func printHelp() {
 	fmt.Println(`Usage: app <command> [arguments]
 
 Commands:
   serve                Start the HTTP server (default)
+  setup                Run first-time setup (migrate + seed + verify)
   worker               Start the background job worker
   scheduler            Start the cron scheduler
   migrate              Run database migrations
