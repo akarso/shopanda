@@ -1,0 +1,128 @@
+# =============================================================================
+# Shopanda — Configuration Reference
+# =============================================================================
+# This is a fully annotated example. Copy to configs/config.yaml and adjust.
+#
+# Every value here shows the default. Remove or comment out lines you don't
+# need to change — the defaults are applied automatically.
+#
+# All values can be overridden by environment variables with the SHOPANDA_
+# prefix. See .env.example for the full list.
+# =============================================================================
+
+# --- Server -------------------------------------------------------------------
+server:
+  # Bind address. Use 0.0.0.0 for all interfaces.
+  host: "0.0.0.0"
+
+  # HTTP port.
+  port: 8080
+
+  # Public URL clients use to reach the server.
+  # Required when host is a wildcard (0.0.0.0 / ::).
+  # Defaults scheme to https if no scheme is given. No trailing slash.
+  # Env: SHOPANDA_SERVER_PUBLIC_BASE_URL
+  # public_base_url: "https://shop.example.com"
+
+# --- Database (PostgreSQL) ----------------------------------------------------
+database:
+  host: "localhost"
+  port: 5432
+  user: "shopanda"
+  password: "shopanda"
+  name: "shopanda"
+  # SSL mode: disable, require, verify-ca, verify-full
+  sslmode: "disable"
+
+  # Alternative: set DATABASE_URL env var for a full DSN (takes precedence).
+  # DATABASE_URL=postgres://user:pass@host:5432/shopanda?sslmode=disable
+
+# --- Logging ------------------------------------------------------------------
+log:
+  # Levels: debug, info, warn, error
+  level: "info"
+  # Formats: json (structured), text (human-readable)
+  format: "json"
+
+# --- Authentication -----------------------------------------------------------
+auth:
+  # REQUIRED — app refuses to start without a JWT secret.
+  # Set via env: SHOPANDA_AUTH_JWT_SECRET
+  # Generate: openssl rand -hex 32
+  # jwt_secret: ""
+
+  # Token lifetime (Go duration format).
+  jwt_ttl: "24h"
+
+# --- Mail (SMTP) --------------------------------------------------------------
+mail:
+  # Driver: smtp (default). Plugins may add others.
+  driver: "smtp"
+
+  smtp:
+    host: "localhost"
+    port: 587
+    # Leave user/password empty for unauthenticated SMTP (e.g., local Mailpit).
+    user: ""
+    password: ""
+    from: "noreply@localhost"
+
+# --- Media Storage ------------------------------------------------------------
+media:
+  # Driver: local (default). Future: s3.
+  storage: "local"
+
+  local:
+    # Filesystem path where uploads are stored.
+    base_path: "./public/media"
+    # URL path for serving media files.
+    base_url: "/media"
+
+# --- Cache --------------------------------------------------------------------
+cache:
+  # Driver: postgres (default, uses UNLOGGED table).
+  driver: "postgres"
+
+# --- Frontend (optional SSR storefront) ---------------------------------------
+frontend:
+  # Set to true to enable the built-in server-rendered storefront.
+  enabled: false
+  # Rendering mode: ssr (default).
+  mode: "ssr"
+  # Filesystem path to the active theme directory.
+  theme_path: "themes/default"
+
+# --- CDN (optional) -----------------------------------------------------------
+cdn:
+  # When set, asset URLs use this as base instead of local paths.
+  # base_url: "https://cdn.example.com"
+
+# --- Webhooks -----------------------------------------------------------------
+webhooks:
+  # Per-provider secrets for signature verification.
+  secrets:
+    # stripe: "whsec_..."
+    # paypal: "..."
+
+# --- Rate Limiting ------------------------------------------------------------
+rate_limit:
+  enabled: false
+
+  # Default rate for all routes (tokens per second + burst).
+  default:
+    rate: 10.0
+    burst: 20
+
+  # Per-route overrides. Longest prefix match wins.
+  # per_route:
+  #   - path_prefix: "/api/v1/auth"
+  #     rate: 5.0
+  #     burst: 10
+  #   - path_prefix: "/api/v1/search"
+  #     rate: 20.0
+  #     burst: 40
+
+  # Trusted proxy IPs/CIDRs (X-Forwarded-For extraction).
+  # trusted_proxies:
+  #   - "10.0.0.0/8"
+  #   - "172.16.0.0/12"

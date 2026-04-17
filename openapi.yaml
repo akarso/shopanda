@@ -1,0 +1,1927 @@
+openapi: "3.0.3"
+info:
+  title: Shopanda API
+  description: >
+    RESTful API for the Shopanda e-commerce platform.
+    All JSON responses use a standard envelope: `{"data": ..., "error": ...}`.
+    Monetary amounts are integers in the smallest currency unit (e.g. cents).
+    Timestamps use RFC 3339 / UTC.
+  version: "1.0.0"
+  license:
+    name: MIT
+
+servers:
+  - url: /
+    description: Current host
+
+tags:
+  - name: Health
+    description: Liveness probe
+  - name: Auth
+    description: Registration, login, password reset
+  - name: Products
+    description: Public product catalog
+  - name: Variants
+    description: Product variants (public read, admin write)
+  - name: Categories
+    description: Category tree and products by category
+  - name: Search
+    description: Full-text product search
+  - name: Pages
+    description: Public CMS pages
+  - name: Cart
+    description: Shopping cart management
+  - name: Checkout
+    description: Cart-to-order workflow
+  - name: Orders
+    description: Customer order history
+  - name: Account
+    description: GDPR consent, data access, account deletion
+  - name: Shipping
+    description: Shipping rate quotes
+  - name: Payments
+    description: Payment provider webhooks
+  - name: "Admin: Products"
+    description: Product CRUD (admin)
+  - name: "Admin: Orders"
+    description: Order management (admin)
+  - name: "Admin: Media"
+    description: Media uploads (admin)
+  - name: "Admin: Pages"
+    description: CMS page management (admin)
+  - name: "Admin: Stores"
+    description: Store management (admin)
+  - name: "Admin: Schemas"
+    description: Form and grid schema registry (admin)
+  - name: SEO
+    description: Sitemap and robots.txt
+
+paths:
+  # ── Health ──────────────────────────────────────────────
+  /healthz:
+    get:
+      operationId: healthCheck
+      tags: [Health]
+      summary: Health check
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    example: ok
+
+  # ── Auth ────────────────────────────────────────────────
+  /api/v1/auth/register:
+    post:
+      operationId: register
+      tags: [Auth]
+      summary: Register a new customer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RegisterRequest"
+      responses:
+        "201":
+          description: Created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Envelope"
+              example:
+                data:
+                  customer_id: "c1"
+                  token: "eyJ..."
+                  expires_at: "2026-04-15T00:00:00Z"
+                error: null
+        "422":
+          $ref: "#/components/responses/Validation"
+
+  /api/v1/auth/login:
+    post:
+      operationId: login
+      tags: [Auth]
+      summary: Log in
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/LoginRequest"
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Envelope"
+              example:
+                data:
+                  customer_id: "c1"
+                  token: "eyJ..."
+                  expires_at: "2026-04-15T00:00:00Z"
+                error: null
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /api/v1/auth/logout:
+    post:
+      operationId: logout
+      tags: [Auth]
+      summary: Log out
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Envelope"
+              example:
+                data:
+                  message: logged out
+                error: null
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /api/v1/auth/me:
+    get:
+      operationId: me
+      tags: [Auth]
+      summary: Current user profile
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Envelope"
+              example:
+                data:
+                  id: "c1"
+                  email: "user@example.com"
+                  first_name: Jane
+                  last_name: Doe
+                  status: active
+                error: null
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /api/v1/auth/password-reset/request:
+    post:
+      operationId: requestPasswordReset
+      tags: [Auth]
+      summary: Request a password reset email
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email]
+              properties:
+                email:
+                  type: string
+                  format: email
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Envelope"
+              example:
+                data:
+                  message: "if the email exists, a reset link has been sent"
+                error: null
+
+  /api/v1/auth/password-reset/confirm:
+    post:
+      operationId: confirmPasswordReset
+      tags: [Auth]
+      summary: Confirm password reset with token
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [token, new_password]
+              properties:
+                token:
+                  type: string
+                new_password:
+                  type: string
+                  format: password
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Envelope"
+              example:
+                data:
+                  message: "password has been reset"
+                error: null
+
+  # ── Products (public) ──────────────────────────────────
+  /api/v1/products:
+    get:
+      operationId: listProducts
+      tags: [Products]
+      summary: List products (paginated, via composition pipeline)
+      parameters:
+        - $ref: "#/components/parameters/Offset"
+        - $ref: "#/components/parameters/Limit"
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Envelope"
+              example:
+                data:
+                  products:
+                    - id: "p1"
+                      name: Widget
+                      slug: widget
+                      description: A fine widget
+                      status: active
+                      attributes: {}
+                      created_at: "2026-01-01T00:00:00Z"
+                      updated_at: "2026-01-01T00:00:00Z"
+                  blocks: []
+                  filters: {}
+                  meta: {}
+                error: null
+
+  /api/v1/products/{id}:
+    get:
+      operationId: getProduct
+      tags: [Products]
+      summary: Get product detail (PDP composition pipeline)
+      parameters:
+        - $ref: "#/components/parameters/ProductId"
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Envelope"
+              example:
+                data:
+                  product:
+                    id: "p1"
+                    name: Widget
+                    slug: widget
+                    description: A fine widget
+                    status: active
+                    attributes: {}
+                    created_at: "2026-01-01T00:00:00Z"
+                    updated_at: "2026-01-01T00:00:00Z"
+                  blocks: []
+                  meta: {}
+                error: null
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  # ── Variants ───────────────────────────────────────────
+  /api/v1/products/{id}/variants:
+    get:
+      operationId: listVariants
+      tags: [Variants]
+      summary: List variants for a product
+      parameters:
+        - $ref: "#/components/parameters/ProductId"
+        - $ref: "#/components/parameters/Offset"
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            default: 50
+            maximum: 100
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Envelope"
+              example:
+                data:
+                  variants:
+                    - id: "v1"
+                      product_id: "p1"
+                      sku: WDG-RED
+                      name: Red Widget
+                      attributes: {}
+                  offset: 0
+                  limit: 50
+                error: null
+
+  /api/v1/products/{id}/variants/{variantId}:
+    get:
+      operationId: getVariant
+      tags: [Variants]
+      summary: Get a single variant
+      parameters:
+        - $ref: "#/components/parameters/ProductId"
+        - $ref: "#/components/parameters/VariantId"
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Envelope"
+              example:
+                data:
+                  variant:
+                    id: "v1"
+                    product_id: "p1"
+                    sku: WDG-RED
+                    name: Red Widget
+                    attributes: {}
+                error: null
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  # ── Categories ─────────────────────────────────────────
+  /api/v1/categories:
+    get:
+      operationId: categoryTree
+      tags: [Categories]
+      summary: Get the full category tree
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Envelope"
+              example:
+                data:
+                  categories:
+                    - id: "cat1"
+                      name: Electronics
+                      slug: electronics
+                      position: 1
+                      meta: {}
+                      children: []
+                error: null
+
+  /api/v1/categories/{id}:
+    get:
+      operationId: getCategory
+      tags: [Categories]
+      summary: Get a single category
+      parameters:
+        - $ref: "#/components/parameters/CategoryId"
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Envelope"
+              example:
+                data:
+                  category:
+                    id: "cat1"
+                    name: Electronics
+                    slug: electronics
+                    position: 1
+                    meta: {}
+                    created_at: "2026-01-01T00:00:00Z"
+                    updated_at: "2026-01-01T00:00:00Z"
+                error: null
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /api/v1/categories/{id}/products:
+    get:
+      operationId: categoryProducts
+      tags: [Categories]
+      summary: List products in a category
+      parameters:
+        - $ref: "#/components/parameters/CategoryId"
+        - $ref: "#/components/parameters/Offset"
+        - $ref: "#/components/parameters/Limit"
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Envelope"
+              example:
+                data:
+                  products:
+                    - id: "p1"
+                      name: Widget
+                      slug: widget
+                error: null
+
+  # ── Search ─────────────────────────────────────────────
+  /api/v1/search:
+    get:
+      operationId: searchProducts
+      tags: [Search]
+      summary: Full-text product search
+      parameters:
+        - name: q
+          in: query
+          required: true
+          schema:
+            type: string
+        - name: sort
+          in: query
+          schema:
+            type: string
+        - name: category
+          in: query
+          schema:
+            type: string
+        - $ref: "#/components/parameters/Offset"
+        - $ref: "#/components/parameters/Limit"
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Envelope"
+              example:
+                data:
+                  products:
+                    - id: "p1"
+                      name: Widget
+                      slug: widget
+                      description: A fine widget
+                      attributes: {}
+                  total: 1
+                  facets: {}
+                error: null
+
+  # ── Pages (public) ─────────────────────────────────────
+  /api/v1/pages/{slug}:
+    get:
+      operationId: getPage
+      tags: [Pages]
+      summary: Get a CMS page by slug
+      parameters:
+        - name: slug
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Envelope"
+              example:
+                data:
+                  page:
+                    id: "pg1"
+                    slug: about
+                    title: About Us
+                    content: "<p>Welcome</p>"
+                error: null
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  # ── Cart ───────────────────────────────────────────────
+  /api/v1/carts:
+    post:
+      operationId: createCart
+      tags: [Cart]
+      summary: Create a new cart
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [currency]
+              properties:
+                currency:
+                  type: string
+                  description: ISO 4217 currency code
+                  example: USD
+      responses:
+        "201":
+          description: Created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CartEnvelope"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "422":
+          $ref: "#/components/responses/Validation"
+
+  /api/v1/carts/{cartId}:
+    get:
+      operationId: getCart
+      tags: [Cart]
+      summary: Get a cart
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/CartId"
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CartEnvelope"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /api/v1/carts/{cartId}/items:
+    post:
+      operationId: addCartItem
+      tags: [Cart]
+      summary: Add an item to the cart
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/CartId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [variant_id, quantity]
+              properties:
+                variant_id:
+                  type: string
+                quantity:
+                  type: integer
+                  minimum: 1
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CartEnvelope"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "422":
+          $ref: "#/components/responses/Validation"
+
+  /api/v1/carts/{cartId}/items/{variantId}:
+    put:
+      operationId: updateCartItem
+      tags: [Cart]
+      summary: Update item quantity
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/CartId"
+        - $ref: "#/components/parameters/VariantId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [quantity]
+              properties:
+                quantity:
+                  type: integer
+                  minimum: 1
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CartEnvelope"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+    delete:
+      operationId: removeCartItem
+      tags: [Cart]
+      summary: Remove an item from the cart
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/CartId"
+        - $ref: "#/components/parameters/VariantId"
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CartEnvelope"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /api/v1/carts/{cartId}/coupon:
+    post:
+      operationId: applyCoupon
+      tags: [Cart]
+      summary: Apply a coupon code
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/CartId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [code]
+              properties:
+                code:
+                  type: string
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CartEnvelope"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "422":
+          $ref: "#/components/responses/Validation"
+    delete:
+      operationId: removeCoupon
+      tags: [Cart]
+      summary: Remove the applied coupon
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/CartId"
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CartEnvelope"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  # ── Checkout ───────────────────────────────────────────
+  /api/v1/checkout:
+    post:
+      operationId: startCheckout
+      tags: [Checkout]
+      summary: Run checkout workflow (cart to order)
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [cart_id]
+              properties:
+                cart_id:
+                  type: string
+      responses:
+        "201":
+          description: Order created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Envelope"
+              example:
+                data:
+                  order:
+                    id: "o1"
+                    customer_id: "c1"
+                    status: pending
+                    currency: USD
+                    items:
+                      - variant_id: "v1"
+                        sku: WDG-RED
+                        name: Red Widget
+                        quantity: 2
+                        unit_price: 999
+                        currency: USD
+                    total_amount: 1998
+                    created_at: "2026-01-01T00:00:00Z"
+                error: null
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "422":
+          $ref: "#/components/responses/Validation"
+
+  # ── Orders (customer) ─────────────────────────────────
+  /api/v1/orders:
+    get:
+      operationId: listOrders
+      tags: [Orders]
+      summary: List the authenticated customer's orders
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Envelope"
+              example:
+                data:
+                  orders:
+                    - id: "o1"
+                      customer_id: "c1"
+                      status: paid
+                      currency: USD
+                      items: []
+                      total_amount: 1998
+                      created_at: "2026-01-01T00:00:00Z"
+                      updated_at: "2026-01-02T00:00:00Z"
+                error: null
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /api/v1/orders/{orderId}:
+    get:
+      operationId: getOrder
+      tags: [Orders]
+      summary: Get one of the customer's orders
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/OrderId"
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Envelope"
+              example:
+                data:
+                  order:
+                    id: "o1"
+                    customer_id: "c1"
+                    status: paid
+                    currency: USD
+                    items:
+                      - variant_id: "v1"
+                        sku: WDG-RED
+                        name: Red Widget
+                        quantity: 2
+                        unit_price: 999
+                        currency: USD
+                    total_amount: 1998
+                    created_at: "2026-01-01T00:00:00Z"
+                    updated_at: "2026-01-02T00:00:00Z"
+                error: null
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  # ── Account / GDPR ────────────────────────────────────
+  /api/v1/account/consent:
+    get:
+      operationId: getConsent
+      tags: [Account]
+      summary: Get cookie / consent preferences
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Envelope"
+              example:
+                data:
+                  consent:
+                    necessary: true
+                    analytics: false
+                    marketing: false
+                    updated_at: "2026-01-01T00:00:00Z"
+                error: null
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+    put:
+      operationId: updateConsent
+      tags: [Account]
+      summary: Update consent preferences
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [analytics, marketing]
+              properties:
+                analytics:
+                  type: boolean
+                marketing:
+                  type: boolean
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Envelope"
+              example:
+                data:
+                  consent:
+                    necessary: true
+                    analytics: true
+                    marketing: false
+                    updated_at: "2026-04-14T00:00:00Z"
+                error: null
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /api/v1/account/data:
+    get:
+      operationId: getAccountData
+      tags: [Account]
+      summary: GDPR data access
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Envelope"
+              example:
+                data:
+                  account:
+                    customer:
+                      id: "c1"
+                      email: "user@example.com"
+                      first_name: Jane
+                      last_name: Doe
+                      created_at: "2026-01-01T00:00:00Z"
+                    orders: []
+                    consent:
+                      necessary: true
+                      analytics: false
+                      marketing: false
+                      updated_at: "2026-01-01T00:00:00Z"
+                error: null
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /api/v1/account/export:
+    get:
+      operationId: exportAccountData
+      tags: [Account]
+      summary: GDPR data export (downloadable JSON)
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: OK
+          headers:
+            Content-Disposition:
+              schema:
+                type: string
+                example: 'attachment; filename="account-data.json"'
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Envelope"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /api/v1/account:
+    delete:
+      operationId: deleteAccount
+      tags: [Account]
+      summary: Delete account (GDPR right to be forgotten)
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Envelope"
+              example:
+                data:
+                  message: account deleted
+                error: null
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  # ── Shipping ───────────────────────────────────────────
+  /api/v1/shipping/rates:
+    get:
+      operationId: listShippingRates
+      tags: [Shipping]
+      summary: Get shipping rate quotes
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: order_id
+          in: query
+          required: true
+          schema:
+            type: string
+        - name: currency
+          in: query
+          required: true
+          schema:
+            type: string
+        - name: item_count
+          in: query
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Envelope"
+              example:
+                data:
+                  rates:
+                    - method: flat_rate
+                      provider_ref: "flat"
+                      cost: 500
+                      currency: USD
+                      label: Standard Shipping
+                error: null
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  # ── Payment Webhook ────────────────────────────────────
+  /api/v1/payments/webhook/{provider}:
+    post:
+      operationId: paymentWebhook
+      tags: [Payments]
+      summary: Payment provider callback
+      description: >
+        Called by external payment providers. Requires HMAC signature
+        in the X-Webhook-Signature header. Body limited to 1 MB.
+      parameters:
+        - name: provider
+          in: path
+          required: true
+          schema:
+            type: string
+          example: stripe
+        - name: X-Webhook-Signature
+          in: header
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [payment_id, provider_ref, success]
+              properties:
+                payment_id:
+                  type: string
+                provider_ref:
+                  type: string
+                success:
+                  type: boolean
+      responses:
+        "200":
+          description: Accepted
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Envelope"
+              example:
+                data:
+                  status: accepted
+                error: null
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  # ── Admin: Products ────────────────────────────────────
+  /api/v1/admin/products:
+    get:
+      operationId: adminListProducts
+      tags: ["Admin: Products"]
+      summary: List products (admin)
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/Offset"
+        - $ref: "#/components/parameters/Limit"
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Envelope"
+              example:
+                data:
+                  products:
+                    - id: "p1"
+                      name: Widget
+                      slug: widget
+                      description: A fine widget
+                      status: active
+                      attributes: {}
+                      created_at: "2026-01-01T00:00:00Z"
+                      updated_at: "2026-01-01T00:00:00Z"
+                error: null
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+    post:
+      operationId: adminCreateProduct
+      tags: ["Admin: Products"]
+      summary: Create a product
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateProductRequest"
+      responses:
+        "201":
+          description: Created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Envelope"
+              example:
+                data:
+                  product:
+                    id: "p1"
+                    name: Widget
+                    slug: widget
+                    description: A fine widget
+                    status: draft
+                    attributes: {}
+                    created_at: "2026-01-01T00:00:00Z"
+                    updated_at: "2026-01-01T00:00:00Z"
+                error: null
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "422":
+          $ref: "#/components/responses/Validation"
+
+  /api/v1/admin/products/{id}:
+    put:
+      operationId: adminUpdateProduct
+      tags: ["Admin: Products"]
+      summary: Update a product
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/ProductId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateProductRequest"
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Envelope"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  # ── Admin: Variants ────────────────────────────────────
+  /api/v1/admin/products/{id}/variants:
+    post:
+      operationId: adminCreateVariant
+      tags: [Variants]
+      summary: Create a variant (admin)
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/ProductId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateVariantRequest"
+      responses:
+        "201":
+          description: Created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Envelope"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "422":
+          $ref: "#/components/responses/Validation"
+
+  /api/v1/admin/products/{id}/variants/{variantId}:
+    put:
+      operationId: adminUpdateVariant
+      tags: [Variants]
+      summary: Update a variant (admin)
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/ProductId"
+        - $ref: "#/components/parameters/VariantId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateVariantRequest"
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Envelope"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  # ── Admin: Orders ──────────────────────────────────────
+  /api/v1/admin/orders:
+    get:
+      operationId: adminListOrders
+      tags: ["Admin: Orders"]
+      summary: List all orders (admin)
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/Offset"
+        - $ref: "#/components/parameters/Limit"
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Envelope"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  /api/v1/admin/orders/{orderId}:
+    get:
+      operationId: adminGetOrder
+      tags: ["Admin: Orders"]
+      summary: Get any order (admin)
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/OrderId"
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Envelope"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  # ── Admin: Media ───────────────────────────────────────
+  /api/v1/admin/media/upload:
+    post:
+      operationId: adminUploadMedia
+      tags: ["Admin: Media"]
+      summary: Upload a media file (10 MB max)
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [file]
+              properties:
+                file:
+                  type: string
+                  format: binary
+      responses:
+        "201":
+          description: Created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Envelope"
+              example:
+                data:
+                  id: "m1"
+                  path: "uploads/m1.jpg"
+                  filename: "photo.jpg"
+                  mime_type: "image/jpeg"
+                  size: 102400
+                  url: "/uploads/m1.jpg"
+                  created_at: "2026-01-01T00:00:00Z"
+                error: null
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  # ── Admin: Schemas ─────────────────────────────────────
+  /api/v1/admin/forms/{name}:
+    get:
+      operationId: adminGetForm
+      tags: ["Admin: Schemas"]
+      summary: Get an admin form schema
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: name
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Envelope"
+              example:
+                data:
+                  form:
+                    name: product
+                    fields:
+                      - name: name
+                        type: text
+                        label: Name
+                        required: true
+                error: null
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /api/v1/admin/grids/{name}:
+    get:
+      operationId: adminGetGrid
+      tags: ["Admin: Schemas"]
+      summary: Get an admin grid schema
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: name
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Envelope"
+              example:
+                data:
+                  grid:
+                    name: products
+                    columns:
+                      - name: name
+                        label: Name
+                    actions:
+                      - name: edit
+                        label: Edit
+                error: null
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  # ── Admin: Pages ───────────────────────────────────────
+  /api/v1/admin/pages:
+    get:
+      operationId: adminListPages
+      tags: ["Admin: Pages"]
+      summary: List CMS pages (admin)
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/Offset"
+        - $ref: "#/components/parameters/Limit"
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Envelope"
+              example:
+                data:
+                  pages:
+                    - id: "pg1"
+                      slug: about
+                      title: About Us
+                      content: "<p>Welcome</p>"
+                      is_active: true
+                      created_at: "2026-01-01T00:00:00Z"
+                      updated_at: "2026-01-01T00:00:00Z"
+                error: null
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+    post:
+      operationId: adminCreatePage
+      tags: ["Admin: Pages"]
+      summary: Create a CMS page
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreatePageRequest"
+      responses:
+        "201":
+          description: Created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Envelope"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "422":
+          $ref: "#/components/responses/Validation"
+
+  /api/v1/admin/pages/{id}:
+    put:
+      operationId: adminUpdatePage
+      tags: ["Admin: Pages"]
+      summary: Update a CMS page
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/GenericId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdatePageRequest"
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Envelope"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+    delete:
+      operationId: adminDeletePage
+      tags: ["Admin: Pages"]
+      summary: Delete a CMS page
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/GenericId"
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Envelope"
+              example:
+                data:
+                  deleted: true
+                error: null
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  # ── Admin: Stores ──────────────────────────────────────
+  /api/v1/admin/stores:
+    get:
+      operationId: adminListStores
+      tags: ["Admin: Stores"]
+      summary: List stores
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Envelope"
+              example:
+                data:
+                  stores:
+                    - id: "s1"
+                      code: default
+                      name: Default Store
+                      currency: USD
+                      country: US
+                      language: en
+                      domain: "shop.example.com"
+                      is_default: true
+                      created_at: "2026-01-01T00:00:00Z"
+                      updated_at: "2026-01-01T00:00:00Z"
+                error: null
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+    post:
+      operationId: adminCreateStore
+      tags: ["Admin: Stores"]
+      summary: Create a store
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateStoreRequest"
+      responses:
+        "201":
+          description: Created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Envelope"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "422":
+          $ref: "#/components/responses/Validation"
+
+  /api/v1/admin/stores/{id}:
+    put:
+      operationId: adminUpdateStore
+      tags: ["Admin: Stores"]
+      summary: Update a store
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/GenericId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateStoreRequest"
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Envelope"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  # ── SEO ────────────────────────────────────────────────
+  /sitemap.xml:
+    get:
+      operationId: sitemap
+      tags: [SEO]
+      summary: XML sitemap
+      responses:
+        "200":
+          description: OK
+          content:
+            application/xml:
+              schema:
+                type: string
+
+  /robots.txt:
+    get:
+      operationId: robots
+      tags: [SEO]
+      summary: Robots.txt
+      responses:
+        "200":
+          description: OK
+          content:
+            text/plain:
+              schema:
+                type: string
+
+# ══════════════════════════════════════════════════════════
+# Components
+# ══════════════════════════════════════════════════════════
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+
+  parameters:
+    Offset:
+      name: offset
+      in: query
+      schema:
+        type: integer
+        default: 0
+    Limit:
+      name: limit
+      in: query
+      schema:
+        type: integer
+        default: 20
+        maximum: 100
+    ProductId:
+      name: id
+      in: path
+      required: true
+      schema:
+        type: string
+    VariantId:
+      name: variantId
+      in: path
+      required: true
+      schema:
+        type: string
+    CartId:
+      name: cartId
+      in: path
+      required: true
+      schema:
+        type: string
+    OrderId:
+      name: orderId
+      in: path
+      required: true
+      schema:
+        type: string
+    CategoryId:
+      name: id
+      in: path
+      required: true
+      schema:
+        type: string
+    GenericId:
+      name: id
+      in: path
+      required: true
+      schema:
+        type: string
+
+  schemas:
+    Envelope:
+      type: object
+      properties:
+        data:
+          description: Response payload (null on error)
+        error:
+          $ref: "#/components/schemas/ErrorBody"
+
+    ErrorBody:
+      type: object
+      nullable: true
+      properties:
+        code:
+          type: string
+          enum:
+            - not_found
+            - conflict
+            - validation
+            - unauthorized
+            - forbidden
+            - rate_limited
+            - internal
+        message:
+          type: string
+
+    RegisterRequest:
+      type: object
+      required: [email, password, first_name, last_name]
+      properties:
+        email:
+          type: string
+          format: email
+        password:
+          type: string
+          format: password
+        first_name:
+          type: string
+        last_name:
+          type: string
+
+    LoginRequest:
+      type: object
+      required: [email, password]
+      properties:
+        email:
+          type: string
+          format: email
+        password:
+          type: string
+          format: password
+
+    CreateProductRequest:
+      type: object
+      required: [name, slug, description]
+      properties:
+        name:
+          type: string
+        slug:
+          type: string
+        description:
+          type: string
+        attributes:
+          type: object
+          additionalProperties: true
+
+    UpdateProductRequest:
+      type: object
+      properties:
+        name:
+          type: string
+        slug:
+          type: string
+        description:
+          type: string
+        status:
+          type: string
+          enum: [active, draft, archived]
+        attributes:
+          type: object
+          additionalProperties: true
+
+    CreateVariantRequest:
+      type: object
+      required: [sku, name]
+      properties:
+        sku:
+          type: string
+        name:
+          type: string
+        attributes:
+          type: object
+          additionalProperties: true
+
+    UpdateVariantRequest:
+      type: object
+      properties:
+        sku:
+          type: string
+        name:
+          type: string
+        attributes:
+          type: object
+          additionalProperties: true
+
+    CreatePageRequest:
+      type: object
+      required: [slug, title, content]
+      properties:
+        slug:
+          type: string
+        title:
+          type: string
+        content:
+          type: string
+        is_active:
+          type: boolean
+
+    UpdatePageRequest:
+      type: object
+      properties:
+        slug:
+          type: string
+        title:
+          type: string
+        content:
+          type: string
+        is_active:
+          type: boolean
+
+    CreateStoreRequest:
+      type: object
+      required: [code, name, currency, country, language, domain]
+      properties:
+        code:
+          type: string
+        name:
+          type: string
+        currency:
+          type: string
+        country:
+          type: string
+        language:
+          type: string
+        domain:
+          type: string
+        is_default:
+          type: boolean
+
+    UpdateStoreRequest:
+      type: object
+      properties:
+        code:
+          type: string
+        name:
+          type: string
+        currency:
+          type: string
+        country:
+          type: string
+        language:
+          type: string
+        domain:
+          type: string
+        is_default:
+          type: boolean
+
+    CartEnvelope:
+      type: object
+      properties:
+        data:
+          type: object
+          properties:
+            cart:
+              $ref: "#/components/schemas/Cart"
+        error:
+          $ref: "#/components/schemas/ErrorBody"
+
+    Cart:
+      type: object
+      properties:
+        id:
+          type: string
+        customer_id:
+          type: string
+        status:
+          type: string
+          enum: [active, checked_out, abandoned]
+        currency:
+          type: string
+        coupon_code:
+          type: string
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/CartItem"
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+
+    CartItem:
+      type: object
+      properties:
+        variant_id:
+          type: string
+        quantity:
+          type: integer
+        unit_price:
+          type: integer
+          format: int64
+          description: Price in smallest currency unit (e.g. cents)
+        currency:
+          type: string
+        line_total:
+          type: integer
+          format: int64
+          description: quantity * unit_price
+
+  responses:
+    Unauthorized:
+      description: Authentication required
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Envelope"
+          example:
+            data: null
+            error:
+              code: unauthorized
+              message: authentication required
+    Forbidden:
+      description: Insufficient permissions
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Envelope"
+          example:
+            data: null
+            error:
+              code: forbidden
+              message: insufficient permissions
+    NotFound:
+      description: Resource not found
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Envelope"
+          example:
+            data: null
+            error:
+              code: not_found
+              message: not found
+    Validation:
+      description: Validation error
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Envelope"
+          example:
+            data: null
+            error:
+              code: validation
+              message: invalid input
+    RateLimited:
+      description: Rate limit exceeded
+      headers:
+        Retry-After:
+          schema:
+            type: integer
+            example: 1
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Envelope"
+          example:
+            data: null
+            error:
+              code: rate_limited
+              message: rate limit exceeded
