@@ -21,7 +21,12 @@ services:
     environment:
       # Service-to-service defaults — override .env / config defaults that
       # assume localhost, which is unreachable from inside the container.
+      # Keep these in sync with the postgres service defaults below.
       SHOPANDA_DATABASE_HOST: postgres
+      SHOPANDA_DATABASE_PORT: 5432
+      SHOPANDA_DATABASE_USER: "${SHOPANDA_DATABASE_USER:-shopanda}"
+      SHOPANDA_DATABASE_PASSWORD: "${SHOPANDA_DATABASE_PASSWORD:-changeme}"
+      SHOPANDA_DATABASE_NAME: "${SHOPANDA_DATABASE_NAME:-shopanda}"
       # Mailpit (dev profile). If mailpit is not running, mail simply fails
       # on connection refused — harmless for local development.
       SHOPANDA_MAIL_SMTP_HOST: mailpit
@@ -45,7 +50,7 @@ services:
     volumes:
       - pgdata:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${SHOPANDA_DATABASE_USER:-shopanda}"]
+      test: ["CMD-SHELL", "pg_isready -U ${SHOPANDA_DATABASE_USER:-shopanda} -d ${SHOPANDA_DATABASE_NAME:-shopanda}"]
       interval: 5s
       timeout: 3s
       start_period: 10s
