@@ -34,6 +34,7 @@ type Config struct {
 	CDN       CDNConfig       `yaml:"cdn"`
 	Webhooks  WebhooksConfig  `yaml:"webhooks"`
 	RateLimit RateLimitConfig `yaml:"rate_limit"`
+	Payment   PaymentConfig   `yaml:"payment"`
 }
 
 // WebhooksConfig holds per-provider webhook secrets.
@@ -134,6 +135,17 @@ type FrontendConfig struct {
 
 type CDNConfig struct {
 	BaseURL string `yaml:"base_url"`
+}
+
+// PaymentConfig holds payment provider settings.
+type PaymentConfig struct {
+	Stripe StripeConfig `yaml:"stripe"`
+}
+
+// StripeConfig holds Stripe-specific settings.
+type StripeConfig struct {
+	Enabled   bool   `yaml:"enabled"`
+	SecretKey string `yaml:"secret_key"`
 }
 
 // values holds flattened dot-notation keys for generic access.
@@ -402,6 +414,12 @@ func applyEnv(cfg *Config) {
 	if v := os.Getenv("SHOPANDA_CDN_BASE_URL"); v != "" {
 		cfg.CDN.BaseURL = v
 	}
+	if v := os.Getenv("SHOPANDA_PAYMENT_STRIPE_ENABLED"); v != "" {
+		cfg.Payment.Stripe.Enabled = v == "true" || v == "1"
+	}
+	if v := os.Getenv("SHOPANDA_PAYMENT_STRIPE_SECRET_KEY"); v != "" {
+		cfg.Payment.Stripe.SecretKey = v
+	}
 	// Webhook secrets: SHOPANDA_WEBHOOKS_SECRET_<PROVIDER>=<secret>
 	const whPrefix = "SHOPANDA_WEBHOOKS_SECRET_"
 	for _, e := range os.Environ() {
@@ -464,6 +482,7 @@ func flatten(cfg *Config) map[string]string {
 	m["frontend.mode"] = cfg.Frontend.Mode
 	m["frontend.theme_path"] = cfg.Frontend.ThemePath
 	m["cdn.base_url"] = cfg.CDN.BaseURL
+	m["payment.stripe.enabled"] = strconv.FormatBool(cfg.Payment.Stripe.Enabled)
 	for k, v := range cfg.Webhooks.Secrets {
 		m["webhooks.secrets."+k] = v
 	}

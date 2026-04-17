@@ -473,3 +473,56 @@ func TestInitiatePaymentStep_Idempotent(t *testing.T) {
 		t.Error("repo Create called on second execution")
 	}
 }
+
+func TestInitiatePaymentStep_Pending(t *testing.T) {
+	provider := &mockPaymentProvider047{
+		method: payment.MethodStripe,
+		result: payment.ProviderResult{
+			ProviderRef:  "pi_test_abc123",
+			Pending:      true,
+			ClientSecret: "pi_test_abc123_secret_xyz",
+		},
+	}
+	repo := &mockPaymentRepo047{}
+	step := checkout.NewInitiatePaymentStep(provider, repo)
+
+	cctx := checkout.NewContext("cart-1", "cust-1", "EUR")
+	cctx.Order = orderForCheckout047(t)
+
+	if err := step.Execute(cctx); err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+
+	if repo.created == nil {
+		t.Fatal("expected payment to be saved")
+	}
+	if repo.created.Method != payment.MethodStripe {
+		t.Errorf("Method = %q, want stripe", repo.created.Method)
+	}
+	if !repo.updateCalled {
+		t.Error("expected UpdateStatus to be called")
+	}
+
+	raw, ok := cctx.GetMeta("payment")
+	if !ok {
+		t.Fatal("expected payment in meta")
+	}
+	py := raw.(*payment.Payment)
+	if py.Status() != payment.StatusPending {
+		t.Errorf("payment status = %v, want pending", py.Status())
+	}
+	if py.ProviderRef != "pi_test_abc123" {
+		t.Errorf("ProviderRef = %q, want pi_test_abc123", py.ProviderRef)
+	}
+
+	if v, ok := cctx.GetMeta("payment_initiated"); !ok || v != true {
+		t.Error("expected payment_initiated=true in meta")
+	}
+	cs, ok := cctx.GetMeta("client_secret")
+	if !ok {
+		t.Fatal("expected client_secret in meta")
+	}
+	if cs != "pi_test_abc123_secret_xyz" {
+		t.Errorf("client_secret = %q, want pi_test_abc123_secret_xyz", cs)
+	}
+}

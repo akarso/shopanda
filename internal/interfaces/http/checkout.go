@@ -85,18 +85,25 @@ func (h *CheckoutHandler) StartCheckout() http.HandlerFunc {
 			})
 		}
 
-		resp := checkoutOrderResponse{
-			ID:          cctx.Order.ID,
-			CustomerID:  cctx.Order.CustomerID,
-			Status:      cctx.Order.Status(),
-			Currency:    cctx.Order.Currency,
-			Items:       items,
-			TotalAmount: cctx.Order.TotalAmount.Amount(),
-			CreatedAt:   cctx.Order.CreatedAt.UTC().Format(time.RFC3339),
+		resp := map[string]interface{}{
+			"order": checkoutOrderResponse{
+				ID:          cctx.Order.ID,
+				CustomerID:  cctx.Order.CustomerID,
+				Status:      cctx.Order.Status(),
+				Currency:    cctx.Order.Currency,
+				Items:       items,
+				TotalAmount: cctx.Order.TotalAmount.Amount(),
+				CreatedAt:   cctx.Order.CreatedAt.UTC().Format(time.RFC3339),
+			},
 		}
 
-		JSON(w, http.StatusCreated, map[string]interface{}{
-			"order": resp,
-		})
+		// Include payment metadata for async providers (e.g. Stripe).
+		if cs, ok := cctx.GetMeta("client_secret"); ok {
+			resp["payment"] = map[string]interface{}{
+				"client_secret": cs,
+			}
+		}
+
+		JSON(w, http.StatusCreated, resp)
 	}
 }

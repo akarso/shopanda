@@ -31,12 +31,13 @@ type PaymentMethod string
 
 const (
 	MethodManual PaymentMethod = "manual"
+	MethodStripe PaymentMethod = "stripe"
 )
 
 // IsValid returns true if m is a known payment method.
 func (m PaymentMethod) IsValid() bool {
 	switch m {
-	case MethodManual:
+	case MethodManual, MethodStripe:
 		return true
 	}
 	return false

@@ -33,6 +33,7 @@ import (
 	"github.com/akarso/shopanda/internal/domain/mail"
 	"github.com/akarso/shopanda/internal/domain/media"
 	"github.com/akarso/shopanda/internal/domain/order"
+	"github.com/akarso/shopanda/internal/domain/payment"
 	"github.com/akarso/shopanda/internal/domain/pricing"
 	"github.com/akarso/shopanda/internal/domain/rbac"
 	"github.com/akarso/shopanda/internal/domain/scheduler"
@@ -49,6 +50,7 @@ import (
 	"github.com/akarso/shopanda/internal/infrastructure/manualpay"
 	"github.com/akarso/shopanda/internal/infrastructure/postgres"
 	smtpmail "github.com/akarso/shopanda/internal/infrastructure/smtp"
+	"github.com/akarso/shopanda/internal/infrastructure/stripepay"
 	"github.com/akarso/shopanda/internal/infrastructure/webhook"
 	"github.com/akarso/shopanda/internal/platform/config"
 	"github.com/akarso/shopanda/internal/platform/db"
@@ -320,6 +322,13 @@ func runServe(cfg *config.Config, log logger.Logger) error {
 	manualPayProvider := manualpay.NewProvider()
 	flatRateProvider := flatrate.NewProvider(shared.MustNewMoney(500, "USD"))
 
+	// Payment provider: use Stripe when configured, otherwise manual.
+	var payProvider payment.Provider = manualPayProvider
+	if cfg.Payment.Stripe.Enabled && cfg.Payment.Stripe.SecretKey != "" {
+		payProvider = stripepay.NewProvider(cfg.Payment.Stripe.SecretKey)
+		log.Info("payment.provider.stripe", nil)
+	}
+
 	// Event bus.
 	bus := event.NewBus(log)
 
@@ -431,7 +440,7 @@ func runServe(cfg *config.Config, log logger.Logger) error {
 	reserveInventoryStep := checkoutApp.NewReserveInventoryStep(reservationRepo)
 	createOrderStep := checkoutApp.NewCreateOrderStep(orderRepo, variantRepo)
 	selectShippingStep := checkoutApp.NewSelectShippingStep(flatRateProvider, shippingRepo)
-	initiatePaymentStep := checkoutApp.NewInitiatePaymentStep(manualPayProvider, paymentRepo)
+	initiatePaymentStep := checkoutApp.NewInitiatePaymentStep(payProvider, paymentRepo)
 	checkoutSteps := []checkoutApp.Step{
 		validateCartStep,
 		recalculatePricingStep,
