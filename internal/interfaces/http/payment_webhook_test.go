@@ -173,7 +173,7 @@ func TestPaymentWebhook_UnknownProvider(t *testing.T) {
 
 	body := `{"payment_id":"pay-1","provider_ref":"ref","success":true}`
 	rec := httptest.NewRecorder()
-	req := httptest.NewRequest("POST", "/api/v1/payments/webhook/stripe", strings.NewReader(body))
+	req := httptest.NewRequest("POST", "/api/v1/payments/webhook/unknown-provider", strings.NewReader(body))
 	mux.ServeHTTP(rec, req)
 
 	if rec.Code != http.StatusUnprocessableEntity {

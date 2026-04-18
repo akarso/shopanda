@@ -3,6 +3,7 @@ package checkout
 import (
 	"context"
 	"fmt"
+	"time"
 
 	"github.com/akarso/shopanda/internal/domain/payment"
 	"github.com/akarso/shopanda/internal/platform/id"
@@ -58,6 +59,24 @@ func (s *InitiatePaymentStep) Execute(cctx *Context) error {
 	result, err := s.provider.Initiate(context.Background(), &py)
 	if err != nil {
 		return fmt.Errorf("initiate_payment: provider error: %w", err)
+	}
+
+	if result.Pending {
+		// Async provider (e.g. Stripe): payment stays pending until webhook.
+		if result.ProviderRef == "" {
+			return fmt.Errorf("initiate_payment: pending result has no provider reference")
+		}
+		py.ProviderRef = result.ProviderRef
+		py.UpdatedAt = time.Now().UTC()
+		if err := s.payments.UpdateStatus(context.Background(), &py, prevUpdatedAt); err != nil {
+			return fmt.Errorf("initiate_payment: update status: %w", err)
+		}
+		cctx.SetMeta("payment", &py)
+		cctx.SetMeta("payment_initiated", true)
+		if result.ClientSecret != "" {
+			cctx.SetMeta("client_secret", result.ClientSecret)
+		}
+		return nil
 	}
 
 	if result.Success {
