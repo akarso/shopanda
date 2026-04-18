@@ -338,3 +338,155 @@ func TestStripeWebhook_InvalidJSON(t *testing.T) {
 		t.Fatalf("status = %d, want %d; body: %s", rec.Code, http.StatusUnprocessableEntity, rec.Body.String())
 	}
 }
+
+// ── charge.refunded tests ───────────────────────────────────────────────
+
+func chargeRefundedEvent(chargeID, piID, paymentID string) []byte {
+	evt := map[string]interface{}{
+		"id":   "evt_refund_001",
+		"type": "charge.refunded",
+		"data": map[string]interface{}{
+			"object": map[string]interface{}{
+				"id":             chargeID,
+				"payment_intent": piID,
+				"metadata": map[string]string{
+					"payment_id": paymentID,
+				},
+			},
+		},
+	}
+	b, _ := json.Marshal(evt)
+	return b
+}
+
+func seedCompletedStripePayment(t *testing.T) *payment.Payment {
+	t.Helper()
+	amt := shared.MustNewMoney(5000, "EUR")
+	p, err := payment.NewPayment("pay-stripe-ref-1", "ord-1", payment.MethodStripe, amt)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := p.Complete("pi_completed_123"); err != nil {
+		t.Fatal(err)
+	}
+	return &p
+}
+
+func TestStripeWebhook_ChargeRefunded(t *testing.T) {
+	py := seedCompletedStripePayment(t)
+	repo := &mockPaymentRepo{
+		findByIDFn: func(_ context.Context, id string) (*payment.Payment, error) {
+			if id == "pay-stripe-ref-1" {
+				return py, nil
+			}
+			return nil, nil
+		},
+	}
+	mux := stripeWebhookSetup(repo)
+
+	body := chargeRefundedEvent("ch_123", "pi_completed_123", "pay-stripe-ref-1")
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("POST", "/api/v1/payments/webhook/stripe", strings.NewReader(string(body)))
+	req.Header.Set("Stripe-Signature", stripeSignatureHeader(testStripeWebhookSecret, body))
+	mux.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d; body: %s", rec.Code, http.StatusOK, rec.Body.String())
+	}
+	resp := parseWebhookBody(t, rec)
+	data := resp["data"].(map[string]interface{})
+	if data["status"] != "accepted" {
+		t.Errorf("status = %v, want accepted", data["status"])
+	}
+	if py.Status() != payment.StatusRefunded {
+		t.Errorf("payment status = %v, want refunded", py.Status())
+	}
+}
+
+func TestStripeWebhook_ChargeRefunded_AlreadyRefunded(t *testing.T) {
+	py := seedCompletedStripePayment(t)
+	_ = py.Refund() // already refunded
+
+	repo := &mockPaymentRepo{
+		findByIDFn: func(_ context.Context, _ string) (*payment.Payment, error) {
+			return py, nil
+		},
+	}
+	mux := stripeWebhookSetup(repo)
+
+	body := chargeRefundedEvent("ch_123", "pi_completed_123", "pay-stripe-ref-1")
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("POST", "/api/v1/payments/webhook/stripe", strings.NewReader(string(body)))
+	req.Header.Set("Stripe-Signature", stripeSignatureHeader(testStripeWebhookSecret, body))
+	mux.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d; body: %s", rec.Code, http.StatusOK, rec.Body.String())
+	}
+	resp := parseWebhookBody(t, rec)
+	data := resp["data"].(map[string]interface{})
+	if data["status"] != "already_processed" {
+		t.Errorf("status = %v, want already_processed", data["status"])
+	}
+}
+
+func TestStripeWebhook_ChargeRefunded_MissingMetadata(t *testing.T) {
+	mux := stripeWebhookSetup(&mockPaymentRepo{})
+
+	evt := map[string]interface{}{
+		"id":   "evt_refund_no_meta",
+		"type": "charge.refunded",
+		"data": map[string]interface{}{
+			"object": map[string]interface{}{
+				"id":             "ch_123",
+				"payment_intent": "pi_123",
+				"metadata":       map[string]string{},
+			},
+		},
+	}
+	body, _ := json.Marshal(evt)
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("POST", "/api/v1/payments/webhook/stripe", strings.NewReader(string(body)))
+	req.Header.Set("Stripe-Signature", stripeSignatureHeader(testStripeWebhookSecret, body))
+	mux.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("status = %d, want %d; body: %s", rec.Code, http.StatusUnprocessableEntity, rec.Body.String())
+	}
+}
+
+func TestStripeWebhook_ChargeRefunded_ProviderMismatch(t *testing.T) {
+	amt := shared.MustNewMoney(1000, "EUR")
+	py, _ := payment.NewPayment("pay-manual-ref", "ord-1", payment.MethodManual, amt)
+	repo := &mockPaymentRepo{
+		findByIDFn: func(_ context.Context, _ string) (*payment.Payment, error) {
+			return &py, nil
+		},
+	}
+	mux := stripeWebhookSetup(repo)
+
+	body := chargeRefundedEvent("ch_123", "pi_123", "pay-manual-ref")
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("POST", "/api/v1/payments/webhook/stripe", strings.NewReader(string(body)))
+	req.Header.Set("Stripe-Signature", stripeSignatureHeader(testStripeWebhookSecret, body))
+	mux.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("status = %d, want %d; body: %s", rec.Code, http.StatusUnprocessableEntity, rec.Body.String())
+	}
+}
+
+func TestStripeWebhook_ChargeRefunded_PaymentNotFound(t *testing.T) {
+	repo := &mockPaymentRepo{} // FindByID returns nil, nil
+	mux := stripeWebhookSetup(repo)
+
+	body := chargeRefundedEvent("ch_123", "pi_123", "pay-unknown")
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("POST", "/api/v1/payments/webhook/stripe", strings.NewReader(string(body)))
+	req.Header.Set("Stripe-Signature", stripeSignatureHeader(testStripeWebhookSecret, body))
+	mux.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("status = %d, want %d; body: %s", rec.Code, http.StatusNotFound, rec.Body.String())
+	}
+}

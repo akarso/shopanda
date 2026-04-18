@@ -140,3 +140,66 @@ func (p *Provider) Initiate(ctx context.Context, py *payment.Payment) (payment.P
 		ClientSecret: pi.ClientSecret,
 	}, nil
 }
+
+// refundResponse is the subset of Stripe's Refund object we need.
+type refundResponse struct {
+	ID     string `json:"id"`
+	Status string `json:"status"`
+}
+
+// Refund creates a Stripe refund against a PaymentIntent.
+func (p *Provider) Refund(ctx context.Context, providerRef string, amount int64, currency string) (payment.RefundResult, error) {
+	if providerRef == "" {
+		return payment.RefundResult{}, fmt.Errorf("stripepay: provider ref must not be empty")
+	}
+
+	form := url.Values{}
+	form.Set("payment_intent", providerRef)
+	form.Set("amount", strconv.FormatInt(amount, 10))
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost,
+		p.baseURL+"/v1/refunds", strings.NewReader(form.Encode()))
+	if err != nil {
+		return payment.RefundResult{}, fmt.Errorf("stripepay: build refund request: %w", err)
+	}
+	req.Header.Set("Authorization", "Bearer "+p.secretKey)
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.Header.Set("Idempotency-Key", fmt.Sprintf("refund:%s:%d", providerRef, amount))
+
+	resp, err := p.client.Do(req)
+	if err != nil {
+		return payment.RefundResult{}, fmt.Errorf("stripepay: refund request failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	body, err := io.ReadAll(io.LimitReader(resp.Body, maxResponseSize))
+	if err != nil {
+		return payment.RefundResult{}, fmt.Errorf("stripepay: read refund response: %w", err)
+	}
+
+	if resp.StatusCode != http.StatusOK {
+		var se stripeErrorResponse
+		_ = json.Unmarshal(body, &se)
+		if se.Error.Message != "" {
+			return payment.RefundResult{}, fmt.Errorf("stripepay: refund API error %d: %s", resp.StatusCode, se.Error.Message)
+		}
+		return payment.RefundResult{}, fmt.Errorf("stripepay: refund API error %d", resp.StatusCode)
+	}
+
+	if len(body) == maxResponseSize {
+		return payment.RefundResult{}, fmt.Errorf("stripepay: refund response exceeded %d bytes", maxResponseSize)
+	}
+
+	var ref refundResponse
+	if err := json.Unmarshal(body, &ref); err != nil {
+		return payment.RefundResult{}, fmt.Errorf("stripepay: parse refund response: %w", err)
+	}
+
+	if ref.ID == "" {
+		return payment.RefundResult{}, fmt.Errorf("stripepay: missing id in refund response")
+	}
+
+	return payment.RefundResult{
+		ProviderRef: ref.ID,
+	}, nil
+}

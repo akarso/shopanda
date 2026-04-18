@@ -49,8 +49,9 @@ type stripeEvent struct {
 	Type string `json:"type"`
 	Data struct {
 		Object struct {
-			ID       string            `json:"id"`
-			Metadata map[string]string `json:"metadata"`
+			ID            string            `json:"id"`
+			PaymentIntent string            `json:"payment_intent"` // on Charge objects
+			Metadata      map[string]string `json:"metadata"`
 		} `json:"object"`
 	} `json:"data"`
 }
@@ -98,6 +99,8 @@ func (h *StripeWebhookHandler) Handle() http.HandlerFunc {
 		switch evt.Type {
 		case "payment_intent.succeeded", "payment_intent.payment_failed":
 			h.handlePaymentIntent(w, r, evt)
+		case "charge.refunded":
+			h.handleChargeRefunded(w, r, evt)
 		default:
 			// Acknowledge unhandled event types so Stripe doesn't retry.
 			JSON(w, http.StatusOK, map[string]interface{}{
@@ -165,6 +168,62 @@ func (h *StripeWebhookHandler) handlePaymentIntent(w http.ResponseWriter, r *htt
 		evtName = payment.EventPaymentFailed
 	}
 	_ = h.bus.Publish(r.Context(), event.New(evtName, "payment.stripe_webhook", payment.PaymentStatusChangedData{
+		PaymentID:   p.ID,
+		OrderID:     p.OrderID,
+		OldStatus:   oldStatus,
+		NewStatus:   p.Status(),
+		ProviderRef: p.ProviderRef,
+	}))
+
+	JSON(w, http.StatusOK, map[string]interface{}{
+		"status": "accepted",
+	})
+}
+
+func (h *StripeWebhookHandler) handleChargeRefunded(w http.ResponseWriter, r *http.Request, evt stripeEvent) {
+	paymentID := evt.Data.Object.Metadata["payment_id"]
+	if paymentID == "" {
+		JSONError(w, apperror.Validation("missing payment_id in charge metadata"))
+		return
+	}
+
+	p, err := h.repo.FindByID(r.Context(), paymentID)
+	if err != nil {
+		JSONError(w, err)
+		return
+	}
+	if p == nil {
+		JSONError(w, apperror.NotFound("payment not found"))
+		return
+	}
+
+	if p.Method != payment.MethodStripe {
+		JSONError(w, apperror.Validation("provider mismatch"))
+		return
+	}
+
+	// Idempotency: already refunded.
+	if p.Status() == payment.StatusRefunded {
+		JSON(w, http.StatusOK, map[string]interface{}{
+			"status": "already_processed",
+		})
+		return
+	}
+
+	prevUpdatedAt := p.UpdatedAt
+	oldStatus := p.Status()
+
+	if err := p.Refund(); err != nil {
+		JSONError(w, apperror.Validation(err.Error()))
+		return
+	}
+
+	if err := h.repo.UpdateStatus(r.Context(), p, prevUpdatedAt); err != nil {
+		JSONError(w, err)
+		return
+	}
+
+	_ = h.bus.Publish(r.Context(), event.New(payment.EventPaymentRefunded, "payment.stripe_webhook", payment.PaymentStatusChangedData{
 		PaymentID:   p.ID,
 		OrderID:     p.OrderID,
 		OldStatus:   oldStatus,

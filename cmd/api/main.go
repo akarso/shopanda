@@ -546,6 +546,14 @@ func runServe(cfg *config.Config, log logger.Logger) error {
 			"message": "Stripe enabled but SHOPANDA_PAYMENT_STRIPE_WEBHOOK_SECRET not set; Stripe webhooks will not be handled",
 		})
 	}
+
+	// Refund handler: only available when the payment provider supports refunds.
+	var refundHandler *shophttp.RefundHandler
+	if refunder, ok := payProvider.(payment.Refunder); ok {
+		refundHandler = shophttp.NewRefundHandler(paymentRepo, refunder, bus)
+		log.Info("payment.refund_handler_enabled", nil)
+	}
+
 	shippingRates := shophttp.NewShippingRatesHandler(flatRateProvider)
 	categoryHandler := shophttp.NewCategoryHandler(categoryRepo, productRepo)
 	searchHandler := shophttp.NewSearchHandler(searchEngine)
@@ -600,6 +608,7 @@ func runServe(cfg *config.Config, log logger.Logger) error {
 	requireProductsRead := shophttp.RequirePermission(rbac.ProductsRead)
 	requireProductsWrite := shophttp.RequirePermission(rbac.ProductsWrite)
 	requireOrdersRead := shophttp.RequirePermission(rbac.OrdersRead)
+	requireOrdersWrite := shophttp.RequirePermission(rbac.OrdersWrite)
 	requireMediaWrite := shophttp.RequirePermission(rbac.MediaWrite)
 	requireSettingsRead := shophttp.RequirePermission(rbac.SettingsRead)
 	requireSettingsWrite := shophttp.RequirePermission(rbac.SettingsWrite)
@@ -636,6 +645,9 @@ func runServe(cfg *config.Config, log logger.Logger) error {
 	router.Handle("PUT /api/v1/admin/products/{id}/variants/{variantId}", requireProductsWrite(variantHandler.Update()))
 	router.Handle("GET /api/v1/admin/orders", requireOrdersRead(orderAdmin.List()))
 	router.Handle("GET /api/v1/admin/orders/{orderId}", requireOrdersRead(orderAdmin.Get()))
+	if refundHandler != nil {
+		router.Handle("POST /api/v1/admin/orders/{orderId}/refund", requireOrdersWrite(refundHandler.Refund()))
+	}
 	router.Handle("POST /api/v1/admin/media/upload", requireMediaWrite(mediaHandler.Upload()))
 	router.Handle("GET /api/v1/admin/forms/{name}", requireAuth(schemaHandler.GetForm()))
 	router.Handle("GET /api/v1/admin/grids/{name}", requireAuth(schemaHandler.GetGrid()))
