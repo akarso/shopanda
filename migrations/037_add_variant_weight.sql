@@ -1,0 +1,1 @@
+ALTER TABLE variants ADD COLUMN weight NUMERIC NOT NULL DEFAULT 0 CHECK (weight >= 0);

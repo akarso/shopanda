@@ -136,6 +136,7 @@ func (h *VariantHandler) Get() http.HandlerFunc {
 type createVariantRequest struct {
 	SKU        string                 `json:"sku"`
 	Name       string                 `json:"name"`
+	Weight     *float64               `json:"weight"`
 	Attributes map[string]interface{} `json:"attributes"`
 }
 
@@ -159,6 +160,13 @@ func (h *VariantHandler) Create() http.HandlerFunc {
 			return
 		}
 		v.Name = req.Name
+		if req.Weight != nil {
+			if *req.Weight < 0 {
+				JSONError(w, apperror.Validation("weight must not be negative"))
+				return
+			}
+			v.Weight = *req.Weight
+		}
 		if req.Attributes != nil {
 			v.Attributes = req.Attributes
 		}
@@ -184,6 +192,7 @@ func (h *VariantHandler) Create() http.HandlerFunc {
 type updateVariantRequest struct {
 	SKU        *string                `json:"sku"`
 	Name       *string                `json:"name"`
+	Weight     *float64               `json:"weight"`
 	Attributes map[string]interface{} `json:"attributes"`
 }
 
@@ -226,6 +235,13 @@ func (h *VariantHandler) Update() http.HandlerFunc {
 		}
 		if req.Name != nil {
 			v.Name = *req.Name
+		}
+		if req.Weight != nil {
+			if *req.Weight < 0 {
+				JSONError(w, apperror.Validation("weight must not be negative"))
+				return
+			}
+			v.Weight = *req.Weight
 		}
 		if req.Attributes != nil {
 			v.Attributes = req.Attributes

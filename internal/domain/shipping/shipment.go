@@ -30,13 +30,14 @@ func (s ShippingStatus) IsValid() bool {
 type ShippingMethod string
 
 const (
-	MethodFlatRate ShippingMethod = "flat_rate"
+	MethodFlatRate    ShippingMethod = "flat_rate"
+	MethodWeightBased ShippingMethod = "weight_based"
 )
 
 // IsValid returns true if m is a known shipping method.
 func (m ShippingMethod) IsValid() bool {
 	switch m {
-	case MethodFlatRate:
+	case MethodFlatRate, MethodWeightBased:
 		return true
 	}
 	return false
