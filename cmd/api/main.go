@@ -525,14 +525,27 @@ func runServe(cfg *config.Config, log logger.Logger) error {
 	orderAdmin := shophttp.NewOrderAdminHandler(orderRepo)
 	authHandler := shophttp.NewAuthHandler(authService)
 	webhookVerifier := webhook.NewHMACVerifier(cfg.Webhooks.Secrets)
-	// NOTE: The current PaymentWebhookHandler uses HMAC-SHA256 envelope
-	// verification and a plain {payment_id, provider_ref, success} payload.
-	// Stripe requires a dedicated webhook adapter that verifies
-	// Stripe-Signature headers and parses Stripe event types
-	// (payment_intent.succeeded / payment_intent.payment_failed).
-	// That adapter is implemented in PR-208. Until then, Stripe-initiated
-	// payments remain in StatusPending after checkout.
 	paymentWebhook := shophttp.NewPaymentWebhookHandler(paymentRepo, bus, webhookVerifier)
+
+	// Stripe-specific webhook handler: verifies Stripe-Signature and parses
+	// Stripe event types (payment_intent.succeeded / payment_failed).
+	// The webhook secret is sourced exclusively from the
+	// SHOPANDA_PAYMENT_STRIPE_WEBHOOK_SECRET environment variable.
+	var stripeWebhook *shophttp.StripeWebhookHandler
+	webhookSecret := os.Getenv("SHOPANDA_PAYMENT_STRIPE_WEBHOOK_SECRET")
+	if webhookSecret == "" && cfg.Payment.Stripe.WebhookSecret != "" {
+		log.Warn("payment.stripe.webhook_secret_ignored", map[string]interface{}{
+			"message": "Stripe webhook_secret in YAML is ignored; set SHOPANDA_PAYMENT_STRIPE_WEBHOOK_SECRET env var",
+		})
+	}
+	if cfg.Payment.Stripe.Enabled && webhookSecret != "" {
+		stripeWebhook = shophttp.NewStripeWebhookHandler(paymentRepo, bus, webhookSecret)
+		log.Info("payment.stripe.webhook_handler_enabled", nil)
+	} else if cfg.Payment.Stripe.Enabled {
+		log.Warn("payment.stripe.no_webhook_secret", map[string]interface{}{
+			"message": "Stripe enabled but SHOPANDA_PAYMENT_STRIPE_WEBHOOK_SECRET not set; Stripe webhooks will not be handled",
+		})
+	}
 	shippingRates := shophttp.NewShippingRatesHandler(flatRateProvider)
 	categoryHandler := shophttp.NewCategoryHandler(categoryRepo, productRepo)
 	searchHandler := shophttp.NewSearchHandler(searchEngine)
@@ -661,6 +674,10 @@ func runServe(cfg *config.Config, log logger.Logger) error {
 	router.Handle("GET /api/v1/shipping/rates", requireAuth(shippingRates.List()))
 
 	// Payment webhook (public — called by external payment providers).
+	// Stripe-specific route first (exact match takes priority over {provider}).
+	if stripeWebhook != nil {
+		router.HandleFunc("POST /api/v1/payments/webhook/stripe", stripeWebhook.Handle())
+	}
 	router.HandleFunc("POST /api/v1/payments/webhook/{provider}", paymentWebhook.Handle())
 
 	// Storefront SSR routes (optional, gated by frontend.enabled).
