@@ -25,4 +25,7 @@ const (
 
 	SettingsRead  Permission = "settings.read"
 	SettingsWrite Permission = "settings.write"
+
+	ShippingRead  Permission = "shipping.read"
+	ShippingWrite Permission = "shipping.write"
 )
