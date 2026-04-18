@@ -222,3 +222,154 @@ func TestProvider_Initiate_MissingFields(t *testing.T) {
 		t.Fatal("expected error for missing client_secret")
 	}
 }
+
+// ── Refund tests ────────────────────────────────────────────────────────
+
+func TestProvider_Refund_Success(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/v1/refunds" {
+			t.Errorf("path = %s, want /v1/refunds", r.URL.Path)
+		}
+		if r.Method != http.MethodPost {
+			t.Errorf("method = %s, want POST", r.Method)
+		}
+		if err := r.ParseForm(); err != nil {
+			t.Fatalf("ParseForm: %v", err)
+		}
+		if got := r.FormValue("payment_intent"); got != "pi_abc123" {
+			t.Errorf("payment_intent = %q, want pi_abc123", got)
+		}
+		if got := r.FormValue("amount"); got != "1500" {
+			t.Errorf("amount = %q, want 1500", got)
+		}
+		if got := r.Header.Get("Idempotency-Key"); got != "refund:pi_abc123:1500" {
+			t.Errorf("Idempotency-Key = %q, want refund:pi_abc123:1500", got)
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{
+			"id":     "re_test_001",
+			"status": "succeeded",
+		})
+	}))
+	defer srv.Close()
+
+	p, err := stripepay.NewProvider("sk_test_123", stripepay.WithBaseURL(srv.URL))
+	if err != nil {
+		t.Fatalf("NewProvider: %v", err)
+	}
+
+	result, err := p.Refund(context.Background(), "pi_abc123", 1500, "usd")
+	if err != nil {
+		t.Fatalf("Refund: %v", err)
+	}
+	if result.ProviderRef != "re_test_001" {
+		t.Errorf("ProviderRef = %q, want re_test_001", result.ProviderRef)
+	}
+}
+
+func TestProvider_Refund_EmptyProviderRef(t *testing.T) {
+	p, err := stripepay.NewProvider("sk_test_123")
+	if err != nil {
+		t.Fatalf("NewProvider: %v", err)
+	}
+	_, err = p.Refund(context.Background(), "", 1500, "usd")
+	if err == nil {
+		t.Fatal("expected error for empty provider ref")
+	}
+}
+
+func TestProvider_Refund_NonPositiveAmount(t *testing.T) {
+	p, err := stripepay.NewProvider("sk_test_123")
+	if err != nil {
+		t.Fatalf("NewProvider: %v", err)
+	}
+	_, err = p.Refund(context.Background(), "pi_abc123", 0, "usd")
+	if err == nil {
+		t.Fatal("expected error for zero amount")
+	}
+	_, err = p.Refund(context.Background(), "pi_abc123", -100, "usd")
+	if err == nil {
+		t.Fatal("expected error for negative amount")
+	}
+}
+
+func TestProvider_Refund_APIError(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{
+			"error": map[string]interface{}{
+				"type":    "invalid_request_error",
+				"message": "charge already refunded",
+			},
+		})
+	}))
+	defer srv.Close()
+
+	p, err := stripepay.NewProvider("sk_test_123", stripepay.WithBaseURL(srv.URL))
+	if err != nil {
+		t.Fatalf("NewProvider: %v", err)
+	}
+
+	_, err = p.Refund(context.Background(), "pi_abc123", 1500, "usd")
+	if err == nil {
+		t.Fatal("expected error for API error")
+	}
+}
+
+func TestProvider_Refund_MissingID(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{
+			"status": "succeeded",
+		})
+	}))
+	defer srv.Close()
+
+	p, err := stripepay.NewProvider("sk_test_123", stripepay.WithBaseURL(srv.URL))
+	if err != nil {
+		t.Fatalf("NewProvider: %v", err)
+	}
+
+	_, err = p.Refund(context.Background(), "pi_abc123", 1500, "usd")
+	if err == nil {
+		t.Fatal("expected error for missing id in refund response")
+	}
+}
+
+func TestProvider_Refund_NetworkError(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
+	srv.Close()
+
+	p, err := stripepay.NewProvider("sk_test_123", stripepay.WithBaseURL(srv.URL))
+	if err != nil {
+		t.Fatalf("NewProvider: %v", err)
+	}
+
+	_, err = p.Refund(context.Background(), "pi_abc123", 1500, "usd")
+	if err == nil {
+		t.Fatal("expected error for network failure")
+	}
+}
+
+func TestProvider_Refund_PendingStatus(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{
+			"id":     "re_pending_001",
+			"status": "pending",
+		})
+	}))
+	defer srv.Close()
+
+	p, err := stripepay.NewProvider("sk_test_123", stripepay.WithBaseURL(srv.URL))
+	if err != nil {
+		t.Fatalf("NewProvider: %v", err)
+	}
+
+	_, err = p.Refund(context.Background(), "pi_abc123", 1500, "usd")
+	if err == nil {
+		t.Fatal("expected error for pending refund status")
+	}
+}
