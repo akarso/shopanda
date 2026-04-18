@@ -152,6 +152,9 @@ func (p *Provider) Refund(ctx context.Context, providerRef string, amount int64,
 	if providerRef == "" {
 		return payment.RefundResult{}, fmt.Errorf("stripepay: provider ref must not be empty")
 	}
+	if amount <= 0 {
+		return payment.RefundResult{}, fmt.Errorf("stripepay: refund amount must be > 0")
+	}
 
 	form := url.Values{}
 	form.Set("payment_intent", providerRef)
@@ -199,7 +202,12 @@ func (p *Provider) Refund(ctx context.Context, providerRef string, amount int64,
 		return payment.RefundResult{}, fmt.Errorf("stripepay: missing id in refund response")
 	}
 
-	return payment.RefundResult{
-		ProviderRef: ref.ID,
-	}, nil
+	switch ref.Status {
+	case "succeeded":
+		return payment.RefundResult{ProviderRef: ref.ID}, nil
+	case "pending", "requires_action":
+		return payment.RefundResult{}, fmt.Errorf("stripepay: refund %s is %s; reconcile via charge.refunded webhook", ref.ID, ref.Status)
+	default:
+		return payment.RefundResult{}, fmt.Errorf("stripepay: refund %s has unexpected status %q", ref.ID, ref.Status)
+	}
 }

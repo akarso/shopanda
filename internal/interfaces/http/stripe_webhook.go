@@ -49,9 +49,11 @@ type stripeEvent struct {
 	Type string `json:"type"`
 	Data struct {
 		Object struct {
-			ID            string            `json:"id"`
-			PaymentIntent string            `json:"payment_intent"` // on Charge objects
-			Metadata      map[string]string `json:"metadata"`
+			ID             string            `json:"id"`
+			PaymentIntent  string            `json:"payment_intent"`  // on Charge objects
+			Amount         int64             `json:"amount"`          // original charge amount
+			AmountRefunded int64             `json:"amount_refunded"` // total refunded so far
+			Metadata       map[string]string `json:"metadata"`
 		} `json:"object"`
 	} `json:"data"`
 }
@@ -202,10 +204,26 @@ func (h *StripeWebhookHandler) handleChargeRefunded(w http.ResponseWriter, r *ht
 		return
 	}
 
+	// Verify the charge's PaymentIntent matches our stored ProviderRef.
+	if evt.Data.Object.PaymentIntent == "" || evt.Data.Object.PaymentIntent != p.ProviderRef {
+		JSONError(w, apperror.Validation("payment_intent mismatch"))
+		return
+	}
+
 	// Idempotency: already refunded.
 	if p.Status() == payment.StatusRefunded {
 		JSON(w, http.StatusOK, map[string]interface{}{
 			"status": "already_processed",
+		})
+		return
+	}
+
+	// Only transition to refunded on full refund. Partial refunds are
+	// acknowledged but do not change payment status (the domain model does
+	// not yet support a partially_refunded state).
+	if evt.Data.Object.Amount > 0 && evt.Data.Object.AmountRefunded < evt.Data.Object.Amount {
+		JSON(w, http.StatusOK, map[string]interface{}{
+			"status": "partial_refund_acknowledged",
 		})
 		return
 	}

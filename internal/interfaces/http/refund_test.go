@@ -65,7 +65,7 @@ func TestRefund_Success(t *testing.T) {
 	refunder := &mockRefunder{}
 	mux := refundSetup(repo, refunder)
 
-	body := `{"amount": 2000, "reason": "customer request"}`
+	body := `{"amount": 5000}`
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest("POST", "/api/v1/admin/orders/ord-1/refund", strings.NewReader(body))
 	mux.ServeHTTP(rec, req)
@@ -124,6 +124,24 @@ func TestRefund_PaymentNotFound(t *testing.T) {
 	}
 }
 
+func TestRefund_PartialRefundRejected(t *testing.T) {
+	py := seedCompletedPayment(t) // amount = 5000
+	repo := &mockPaymentRepo{
+		findByOrderFn: func(_ context.Context, _ string) (*payment.Payment, error) {
+			return py, nil
+		},
+	}
+	mux := refundSetup(repo, &mockRefunder{})
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("POST", "/api/v1/admin/orders/ord-1/refund", strings.NewReader(`{"amount": 2000}`))
+	mux.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("status = %d, want %d; body: %s", rec.Code, http.StatusUnprocessableEntity, rec.Body.String())
+	}
+}
+
 func TestRefund_AmountExceedsPayment(t *testing.T) {
 	py := seedCompletedPayment(t) // amount = 5000
 	repo := &mockPaymentRepo{
@@ -177,7 +195,7 @@ func TestRefund_RefunderError(t *testing.T) {
 	mux := refundSetup(repo, refunder)
 
 	rec := httptest.NewRecorder()
-	req := httptest.NewRequest("POST", "/api/v1/admin/orders/ord-1/refund", strings.NewReader(`{"amount": 1000}`))
+	req := httptest.NewRequest("POST", "/api/v1/admin/orders/ord-1/refund", strings.NewReader(`{"amount": 5000}`))
 	mux.ServeHTTP(rec, req)
 
 	if rec.Code != http.StatusInternalServerError {
@@ -186,7 +204,7 @@ func TestRefund_RefunderError(t *testing.T) {
 }
 
 func TestRefund_NotCompleted(t *testing.T) {
-	// Payment is still pending — Refund() transition should fail.
+	// Payment is already refunded — status check catches it before provider call.
 	amt := shared.MustNewMoney(5000, "EUR")
 	py, _ := payment.NewPayment("pay-1", "ord-1", payment.MethodStripe, amt)
 	_ = py.Complete("pi_123")
@@ -199,10 +217,9 @@ func TestRefund_NotCompleted(t *testing.T) {
 	mux := refundSetup(repo, &mockRefunder{})
 
 	rec := httptest.NewRecorder()
-	req := httptest.NewRequest("POST", "/api/v1/admin/orders/ord-1/refund", strings.NewReader(`{"amount": 1000}`))
+	req := httptest.NewRequest("POST", "/api/v1/admin/orders/ord-1/refund", strings.NewReader(`{"amount": 5000}`))
 	mux.ServeHTTP(rec, req)
 
-	// The Refund() transition will fail because status is already refunded.
 	if rec.Code != http.StatusUnprocessableEntity {
 		t.Fatalf("status = %d, want %d; body: %s", rec.Code, http.StatusUnprocessableEntity, rec.Body.String())
 	}

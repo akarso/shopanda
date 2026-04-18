@@ -279,6 +279,21 @@ func TestProvider_Refund_EmptyProviderRef(t *testing.T) {
 	}
 }
 
+func TestProvider_Refund_NonPositiveAmount(t *testing.T) {
+	p, err := stripepay.NewProvider("sk_test_123")
+	if err != nil {
+		t.Fatalf("NewProvider: %v", err)
+	}
+	_, err = p.Refund(context.Background(), "pi_abc123", 0, "usd")
+	if err == nil {
+		t.Fatal("expected error for zero amount")
+	}
+	_, err = p.Refund(context.Background(), "pi_abc123", -100, "usd")
+	if err == nil {
+		t.Fatal("expected error for negative amount")
+	}
+}
+
 func TestProvider_Refund_APIError(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
@@ -335,5 +350,26 @@ func TestProvider_Refund_NetworkError(t *testing.T) {
 	_, err = p.Refund(context.Background(), "pi_abc123", 1500, "usd")
 	if err == nil {
 		t.Fatal("expected error for network failure")
+	}
+}
+
+func TestProvider_Refund_PendingStatus(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{
+			"id":     "re_pending_001",
+			"status": "pending",
+		})
+	}))
+	defer srv.Close()
+
+	p, err := stripepay.NewProvider("sk_test_123", stripepay.WithBaseURL(srv.URL))
+	if err != nil {
+		t.Fatalf("NewProvider: %v", err)
+	}
+
+	_, err = p.Refund(context.Background(), "pi_abc123", 1500, "usd")
+	if err == nil {
+		t.Fatal("expected error for pending refund status")
 	}
 }

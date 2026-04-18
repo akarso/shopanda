@@ -341,14 +341,16 @@ func TestStripeWebhook_InvalidJSON(t *testing.T) {
 
 // ── charge.refunded tests ───────────────────────────────────────────────
 
-func chargeRefundedEvent(chargeID, piID, paymentID string) []byte {
+func chargeRefundedEvent(chargeID, piID, paymentID string, amount, amountRefunded int64) []byte {
 	evt := map[string]interface{}{
 		"id":   "evt_refund_001",
 		"type": "charge.refunded",
 		"data": map[string]interface{}{
 			"object": map[string]interface{}{
-				"id":             chargeID,
-				"payment_intent": piID,
+				"id":              chargeID,
+				"payment_intent":  piID,
+				"amount":          amount,
+				"amount_refunded": amountRefunded,
 				"metadata": map[string]string{
 					"payment_id": paymentID,
 				},
@@ -384,7 +386,7 @@ func TestStripeWebhook_ChargeRefunded(t *testing.T) {
 	}
 	mux := stripeWebhookSetup(repo)
 
-	body := chargeRefundedEvent("ch_123", "pi_completed_123", "pay-stripe-ref-1")
+	body := chargeRefundedEvent("ch_123", "pi_completed_123", "pay-stripe-ref-1", 5000, 5000)
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest("POST", "/api/v1/payments/webhook/stripe", strings.NewReader(string(body)))
 	req.Header.Set("Stripe-Signature", stripeSignatureHeader(testStripeWebhookSecret, body))
@@ -414,7 +416,7 @@ func TestStripeWebhook_ChargeRefunded_AlreadyRefunded(t *testing.T) {
 	}
 	mux := stripeWebhookSetup(repo)
 
-	body := chargeRefundedEvent("ch_123", "pi_completed_123", "pay-stripe-ref-1")
+	body := chargeRefundedEvent("ch_123", "pi_completed_123", "pay-stripe-ref-1", 5000, 5000)
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest("POST", "/api/v1/payments/webhook/stripe", strings.NewReader(string(body)))
 	req.Header.Set("Stripe-Signature", stripeSignatureHeader(testStripeWebhookSecret, body))
@@ -465,7 +467,7 @@ func TestStripeWebhook_ChargeRefunded_ProviderMismatch(t *testing.T) {
 	}
 	mux := stripeWebhookSetup(repo)
 
-	body := chargeRefundedEvent("ch_123", "pi_123", "pay-manual-ref")
+	body := chargeRefundedEvent("ch_123", "pi_123", "pay-manual-ref", 1000, 1000)
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest("POST", "/api/v1/payments/webhook/stripe", strings.NewReader(string(body)))
 	req.Header.Set("Stripe-Signature", stripeSignatureHeader(testStripeWebhookSecret, body))
@@ -480,7 +482,7 @@ func TestStripeWebhook_ChargeRefunded_PaymentNotFound(t *testing.T) {
 	repo := &mockPaymentRepo{} // FindByID returns nil, nil
 	mux := stripeWebhookSetup(repo)
 
-	body := chargeRefundedEvent("ch_123", "pi_123", "pay-unknown")
+	body := chargeRefundedEvent("ch_123", "pi_123", "pay-unknown", 5000, 5000)
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest("POST", "/api/v1/payments/webhook/stripe", strings.NewReader(string(body)))
 	req.Header.Set("Stripe-Signature", stripeSignatureHeader(testStripeWebhookSecret, body))

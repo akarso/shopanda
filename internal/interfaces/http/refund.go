@@ -31,8 +31,7 @@ func NewRefundHandler(payments payment.PaymentRepository, refunder payment.Refun
 }
 
 type refundRequest struct {
-	Amount int64  `json:"amount"`
-	Reason string `json:"reason"`
+	Amount int64 `json:"amount"`
 }
 
 // Refund handles POST /api/v1/admin/orders/{orderId}/refund.
@@ -70,8 +69,13 @@ func (h *RefundHandler) Refund() http.HandlerFunc {
 			return
 		}
 
-		if req.Amount > p.Amount.Amount() {
-			JSONError(w, apperror.Validation("refund amount exceeds payment amount"))
+		if req.Amount != p.Amount.Amount() {
+			JSONError(w, apperror.Validation("only full refunds are supported; amount must equal payment amount"))
+			return
+		}
+
+		if p.Status() != payment.StatusCompleted {
+			JSONError(w, apperror.Validation("payment is not in a refundable state"))
 			return
 		}
 
