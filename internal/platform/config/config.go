@@ -144,8 +144,9 @@ type PaymentConfig struct {
 
 // StripeConfig holds Stripe-specific settings.
 type StripeConfig struct {
-	Enabled   bool   `yaml:"enabled"`
-	SecretKey string `yaml:"secret_key"`
+	Enabled       bool   `yaml:"enabled"`
+	SecretKey     string `yaml:"secret_key"`
+	WebhookSecret string `yaml:"webhook_secret"`
 }
 
 // values holds flattened dot-notation keys for generic access.
@@ -419,6 +420,9 @@ func applyEnv(cfg *Config) {
 	}
 	if v := os.Getenv("SHOPANDA_PAYMENT_STRIPE_SECRET_KEY"); v != "" {
 		cfg.Payment.Stripe.SecretKey = v
+	}
+	if v := os.Getenv("SHOPANDA_PAYMENT_STRIPE_WEBHOOK_SECRET"); v != "" {
+		cfg.Payment.Stripe.WebhookSecret = v
 	}
 	// Webhook secrets: SHOPANDA_WEBHOOKS_SECRET_<PROVIDER>=<secret>
 	const whPrefix = "SHOPANDA_WEBHOOKS_SECRET_"
