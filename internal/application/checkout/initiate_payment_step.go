@@ -63,6 +63,9 @@ func (s *InitiatePaymentStep) Execute(cctx *Context) error {
 
 	if result.Pending {
 		// Async provider (e.g. Stripe): payment stays pending until webhook.
+		if result.ProviderRef == "" {
+			return fmt.Errorf("initiate_payment: pending result has no provider reference")
+		}
 		py.ProviderRef = result.ProviderRef
 		py.UpdatedAt = time.Now().UTC()
 		if err := s.payments.UpdateStatus(context.Background(), &py, prevUpdatedAt); err != nil {

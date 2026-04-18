@@ -9,11 +9,15 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/akarso/shopanda/internal/domain/payment"
 )
 
 const defaultBaseURL = "https://api.stripe.com"
+
+// maxResponseSize is the maximum bytes read from a Stripe API response (1 MiB).
+const maxResponseSize = 1 << 20
 
 // Compile-time check that Provider implements payment.Provider.
 var _ payment.Provider = (*Provider)(nil)
@@ -36,19 +40,20 @@ func WithBaseURL(u string) Option {
 }
 
 // NewProvider creates a Stripe payment provider.
-func NewProvider(secretKey string, opts ...Option) *Provider {
+// Returns an error if secretKey is empty.
+func NewProvider(secretKey string, opts ...Option) (*Provider, error) {
 	if secretKey == "" {
-		panic("stripepay: secret key must not be empty")
+		return nil, fmt.Errorf("stripepay: secret key must not be empty")
 	}
 	p := &Provider{
 		secretKey: secretKey,
 		baseURL:   defaultBaseURL,
-		client:    &http.Client{},
+		client:    &http.Client{Timeout: 30 * time.Second},
 	}
 	for _, opt := range opts {
 		opt(p)
 	}
-	return p
+	return p, nil
 }
 
 // Method returns payment.MethodStripe.
@@ -94,6 +99,7 @@ func (p *Provider) Initiate(ctx context.Context, py *payment.Payment) (payment.P
 	}
 	req.Header.Set("Authorization", "Bearer "+p.secretKey)
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.Header.Set("Idempotency-Key", py.ID)
 
 	resp, err := p.client.Do(req)
 	if err != nil {
@@ -101,7 +107,7 @@ func (p *Provider) Initiate(ctx context.Context, py *payment.Payment) (payment.P
 	}
 	defer resp.Body.Close()
 
-	body, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	body, err := io.ReadAll(io.LimitReader(resp.Body, maxResponseSize))
 	if err != nil {
 		return payment.ProviderResult{}, fmt.Errorf("stripepay: read response: %w", err)
 	}
@@ -115,9 +121,17 @@ func (p *Provider) Initiate(ctx context.Context, py *payment.Payment) (payment.P
 		return payment.ProviderResult{}, fmt.Errorf("stripepay: API error %d", resp.StatusCode)
 	}
 
+	if len(body) == maxResponseSize {
+		return payment.ProviderResult{}, fmt.Errorf("stripepay: response exceeded %d bytes", maxResponseSize)
+	}
+
 	var pi paymentIntentResponse
 	if err := json.Unmarshal(body, &pi); err != nil {
 		return payment.ProviderResult{}, fmt.Errorf("stripepay: parse response: %w", err)
+	}
+
+	if pi.ID == "" || pi.ClientSecret == "" {
+		return payment.ProviderResult{}, fmt.Errorf("stripepay: missing id or client_secret in response")
 	}
 
 	return payment.ProviderResult{

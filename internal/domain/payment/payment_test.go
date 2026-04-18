@@ -40,6 +40,7 @@ func TestPaymentMethod_IsValid(t *testing.T) {
 		want   bool
 	}{
 		{MethodManual, true},
+		{MethodStripe, true},
 		{"unknown", false},
 		{"", false},
 	}

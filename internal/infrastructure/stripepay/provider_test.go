@@ -22,7 +22,10 @@ func testPayment(t *testing.T) *payment.Payment {
 }
 
 func TestProvider_Method(t *testing.T) {
-	p := stripepay.NewProvider("sk_test_123")
+	p, err := stripepay.NewProvider("sk_test_123")
+	if err != nil {
+		t.Fatalf("NewProvider: %v", err)
+	}
 	if p.Method() != payment.MethodStripe {
 		t.Errorf("Method() = %q, want stripe", p.Method())
 	}
@@ -42,6 +45,9 @@ func TestProvider_Initiate_Success(t *testing.T) {
 		if ct := r.Header.Get("Content-Type"); ct != "application/x-www-form-urlencoded" {
 			t.Errorf("Content-Type = %q, want application/x-www-form-urlencoded", ct)
 		}
+		if ik := r.Header.Get("Idempotency-Key"); ik != "pay-1" {
+			t.Errorf("Idempotency-Key = %q, want pay-1", ik)
+		}
 
 		if err := r.ParseForm(); err != nil {
 			t.Fatalf("ParseForm: %v", err)
@@ -60,7 +66,7 @@ func TestProvider_Initiate_Success(t *testing.T) {
 		}
 
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(map[string]interface{}{
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{
 			"id":            "pi_test_abc123",
 			"client_secret": "pi_test_abc123_secret_xyz",
 			"status":        "requires_payment_method",
@@ -68,7 +74,10 @@ func TestProvider_Initiate_Success(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	p := stripepay.NewProvider("sk_test_123", stripepay.WithBaseURL(srv.URL))
+	p, err := stripepay.NewProvider("sk_test_123", stripepay.WithBaseURL(srv.URL))
+	if err != nil {
+		t.Fatalf("NewProvider: %v", err)
+	}
 	py := testPayment(t)
 
 	result, err := p.Initiate(context.Background(), py)
@@ -93,7 +102,7 @@ func TestProvider_Initiate_Success(t *testing.T) {
 func TestProvider_Initiate_APIError(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusBadRequest)
-		json.NewEncoder(w).Encode(map[string]interface{}{
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{
 			"error": map[string]interface{}{
 				"type":    "invalid_request_error",
 				"message": "Amount must be at least 50 cents",
@@ -102,10 +111,13 @@ func TestProvider_Initiate_APIError(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	p := stripepay.NewProvider("sk_test_123", stripepay.WithBaseURL(srv.URL))
+	p, err := stripepay.NewProvider("sk_test_123", stripepay.WithBaseURL(srv.URL))
+	if err != nil {
+		t.Fatalf("NewProvider: %v", err)
+	}
 	py := testPayment(t)
 
-	_, err := p.Initiate(context.Background(), py)
+	_, err = p.Initiate(context.Background(), py)
 	if err == nil {
 		t.Fatal("expected error from API")
 	}
@@ -117,14 +129,17 @@ func TestProvider_Initiate_APIError(t *testing.T) {
 func TestProvider_Initiate_APIErrorNoMessage(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusInternalServerError)
-		w.Write([]byte("internal"))
+		_, _ = w.Write([]byte("internal"))
 	}))
 	defer srv.Close()
 
-	p := stripepay.NewProvider("sk_test_123", stripepay.WithBaseURL(srv.URL))
+	p, err := stripepay.NewProvider("sk_test_123", stripepay.WithBaseURL(srv.URL))
+	if err != nil {
+		t.Fatalf("NewProvider: %v", err)
+	}
 	py := testPayment(t)
 
-	_, err := p.Initiate(context.Background(), py)
+	_, err = p.Initiate(context.Background(), py)
 	if err == nil {
 		t.Fatal("expected error from API")
 	}
@@ -134,18 +149,27 @@ func TestProvider_Initiate_APIErrorNoMessage(t *testing.T) {
 }
 
 func TestProvider_Initiate_NilPayment(t *testing.T) {
-	p := stripepay.NewProvider("sk_test_123")
-	_, err := p.Initiate(context.Background(), nil)
+	p, err := stripepay.NewProvider("sk_test_123")
+	if err != nil {
+		t.Fatalf("NewProvider: %v", err)
+	}
+	_, err = p.Initiate(context.Background(), nil)
 	if err == nil {
 		t.Fatal("expected error for nil payment")
 	}
 }
 
 func TestProvider_Initiate_NetworkError(t *testing.T) {
-	p := stripepay.NewProvider("sk_test_123", stripepay.WithBaseURL("http://127.0.0.1:0"))
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
+	srv.Close() // close immediately to guarantee connection refused
+
+	p, err := stripepay.NewProvider("sk_test_123", stripepay.WithBaseURL(srv.URL))
+	if err != nil {
+		t.Fatalf("NewProvider: %v", err)
+	}
 	py := testPayment(t)
 
-	_, err := p.Initiate(context.Background(), py)
+	_, err = p.Initiate(context.Background(), py)
 	if err == nil {
 		t.Fatal("expected error for unreachable server")
 	}
@@ -154,15 +178,47 @@ func TestProvider_Initiate_NetworkError(t *testing.T) {
 func TestProvider_Initiate_InvalidJSON(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		w.Write([]byte("{invalid"))
+		_, _ = w.Write([]byte("{invalid"))
 	}))
 	defer srv.Close()
 
-	p := stripepay.NewProvider("sk_test_123", stripepay.WithBaseURL(srv.URL))
+	p, err := stripepay.NewProvider("sk_test_123", stripepay.WithBaseURL(srv.URL))
+	if err != nil {
+		t.Fatalf("NewProvider: %v", err)
+	}
 	py := testPayment(t)
 
-	_, err := p.Initiate(context.Background(), py)
+	_, err = p.Initiate(context.Background(), py)
 	if err == nil {
 		t.Fatal("expected error for invalid JSON")
+	}
+}
+
+func TestNewProvider_EmptyKey(t *testing.T) {
+	_, err := stripepay.NewProvider("")
+	if err == nil {
+		t.Fatal("expected error for empty secret key")
+	}
+}
+
+func TestProvider_Initiate_MissingFields(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{
+			"id":     "pi_test_abc123",
+			"status": "requires_payment_method",
+			// client_secret intentionally missing
+		})
+	}))
+	defer srv.Close()
+
+	p, err := stripepay.NewProvider("sk_test_123", stripepay.WithBaseURL(srv.URL))
+	if err != nil {
+		t.Fatalf("NewProvider: %v", err)
+	}
+
+	_, err = p.Initiate(context.Background(), testPayment(t))
+	if err == nil {
+		t.Fatal("expected error for missing client_secret")
 	}
 }

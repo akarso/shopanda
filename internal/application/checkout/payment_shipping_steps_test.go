@@ -526,3 +526,49 @@ func TestInitiatePaymentStep_Pending(t *testing.T) {
 		t.Errorf("client_secret = %q, want pi_test_abc123_secret_xyz", cs)
 	}
 }
+
+func TestInitiatePaymentStep_Pending_NoClientSecret(t *testing.T) {
+	provider := &mockPaymentProvider047{
+		method: payment.MethodStripe,
+		result: payment.ProviderResult{
+			ProviderRef: "pi_test_no_secret",
+			Pending:     true,
+		},
+	}
+	repo := &mockPaymentRepo047{}
+	step := checkout.NewInitiatePaymentStep(provider, repo)
+
+	cctx := checkout.NewContext("cart-1", "cust-1", "EUR")
+	cctx.Order = orderForCheckout047(t)
+
+	if err := step.Execute(cctx); err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+
+	if _, ok := cctx.GetMeta("client_secret"); ok {
+		t.Error("expected no client_secret in meta when ClientSecret is empty")
+	}
+	if v, ok := cctx.GetMeta("payment_initiated"); !ok || v != true {
+		t.Error("expected payment_initiated=true in meta")
+	}
+}
+
+func TestInitiatePaymentStep_Pending_EmptyProviderRef(t *testing.T) {
+	provider := &mockPaymentProvider047{
+		method: payment.MethodStripe,
+		result: payment.ProviderResult{
+			Pending:      true,
+			ClientSecret: "pi_secret",
+		},
+	}
+	repo := &mockPaymentRepo047{}
+	step := checkout.NewInitiatePaymentStep(provider, repo)
+
+	cctx := checkout.NewContext("cart-1", "cust-1", "EUR")
+	cctx.Order = orderForCheckout047(t)
+
+	err := step.Execute(cctx)
+	if err == nil {
+		t.Fatal("expected error for pending result with empty ProviderRef")
+	}
+}

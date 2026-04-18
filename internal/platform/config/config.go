@@ -415,7 +415,7 @@ func applyEnv(cfg *Config) {
 		cfg.CDN.BaseURL = v
 	}
 	if v := os.Getenv("SHOPANDA_PAYMENT_STRIPE_ENABLED"); v != "" {
-		cfg.Payment.Stripe.Enabled = v == "true" || v == "1"
+		cfg.Payment.Stripe.Enabled, _ = strconv.ParseBool(v)
 	}
 	if v := os.Getenv("SHOPANDA_PAYMENT_STRIPE_SECRET_KEY"); v != "" {
 		cfg.Payment.Stripe.SecretKey = v
