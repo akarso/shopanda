@@ -124,8 +124,8 @@ func TestHasPermission_Unknown(t *testing.T) {
 
 func TestPermissionsForRole_Admin(t *testing.T) {
 	perms := rbac.PermissionsForRole(identity.RoleAdmin)
-	if len(perms) != 13 {
-		t.Errorf("admin permissions count = %d, want 13", len(perms))
+	if len(perms) != 15 {
+		t.Errorf("admin permissions count = %d, want 15", len(perms))
 	}
 }
 

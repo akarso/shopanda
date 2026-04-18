@@ -212,6 +212,10 @@ func runServe(cfg *config.Config, log logger.Logger) error {
 	if err != nil {
 		return err
 	}
+	zoneRepo, err := postgres.NewZoneRepo(conn)
+	if err != nil {
+		return err
+	}
 	categoryRepo, err := postgres.NewCategoryRepo(conn)
 	if err != nil {
 		return err
@@ -563,6 +567,7 @@ func runServe(cfg *config.Config, log logger.Logger) error {
 	pageHandler := shophttp.NewPageHandler(pageRepo, contentTranslator)
 	pageAdmin := shophttp.NewPageAdminHandler(pageRepo, bus)
 	storeAdmin := shophttp.NewStoreAdminHandler(storeRepo, bus)
+	shippingZoneAdmin := shophttp.NewShippingZoneAdminHandler(zoneRepo)
 	accountService := accountApp.NewService(customerRepo, consentRepo, bus, log, conn)
 	accountHandler := shophttp.NewAccountHandler(customerRepo, orderRepo, consentRepo, accountService)
 	sitemapHandler := shophttp.NewSitemapHandler(baseURL, productRepo, categoryRepo, pageRepo)
@@ -612,6 +617,8 @@ func runServe(cfg *config.Config, log logger.Logger) error {
 	requireMediaWrite := shophttp.RequirePermission(rbac.MediaWrite)
 	requireSettingsRead := shophttp.RequirePermission(rbac.SettingsRead)
 	requireSettingsWrite := shophttp.RequirePermission(rbac.SettingsWrite)
+	requireShippingRead := shophttp.RequirePermission(rbac.ShippingRead)
+	requireShippingWrite := shophttp.RequirePermission(rbac.ShippingWrite)
 
 	// Auth routes.
 	router.HandleFunc("POST /api/v1/auth/register", authHandler.Register())
@@ -658,6 +665,16 @@ func runServe(cfg *config.Config, log logger.Logger) error {
 	router.Handle("GET /api/v1/admin/stores", requireSettingsRead(storeAdmin.List()))
 	router.Handle("POST /api/v1/admin/stores", requireSettingsWrite(storeAdmin.Create()))
 	router.Handle("PUT /api/v1/admin/stores/{id}", requireSettingsWrite(storeAdmin.Update()))
+
+	// Shipping zone admin routes.
+	router.Handle("GET /api/v1/admin/shipping/zones", requireShippingRead(shippingZoneAdmin.ListZones()))
+	router.Handle("POST /api/v1/admin/shipping/zones", requireShippingWrite(shippingZoneAdmin.CreateZone()))
+	router.Handle("PUT /api/v1/admin/shipping/zones/{id}", requireShippingWrite(shippingZoneAdmin.UpdateZone()))
+	router.Handle("DELETE /api/v1/admin/shipping/zones/{id}", requireShippingWrite(shippingZoneAdmin.DeleteZone()))
+	router.Handle("GET /api/v1/admin/shipping/zones/{id}/rates", requireShippingRead(shippingZoneAdmin.ListRates()))
+	router.Handle("POST /api/v1/admin/shipping/zones/{id}/rates", requireShippingWrite(shippingZoneAdmin.CreateRate()))
+	router.Handle("PUT /api/v1/admin/shipping/zones/{zoneId}/rates/{rateId}", requireShippingWrite(shippingZoneAdmin.UpdateRate()))
+	router.Handle("DELETE /api/v1/admin/shipping/zones/{zoneId}/rates/{rateId}", requireShippingWrite(shippingZoneAdmin.DeleteRate()))
 
 	// Cart routes (behind RequireAuth).
 	router.Handle("POST /api/v1/carts", requireAuth(cartHandler.Create()))

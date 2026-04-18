@@ -17,6 +17,7 @@ var rolePermissions = map[identity.Role]map[Permission]struct{}{
 		InvoicesRead,
 		MediaRead, MediaWrite,
 		SettingsRead, SettingsWrite,
+		ShippingRead, ShippingWrite,
 	),
 	identity.RoleManager: toSet(
 		ProductsRead, ProductsWrite,
@@ -25,6 +26,7 @@ var rolePermissions = map[identity.Role]map[Permission]struct{}{
 		CustomersRead,
 		InvoicesRead,
 		MediaRead, MediaWrite,
+		ShippingRead, ShippingWrite,
 	),
 	identity.RoleEditor: toSet(
 		ProductsRead, ProductsWrite,
