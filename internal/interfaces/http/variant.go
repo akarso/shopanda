@@ -2,6 +2,7 @@ package http
 
 import (
 	"encoding/json"
+	"math"
 	"net/http"
 	"strconv"
 
@@ -161,8 +162,8 @@ func (h *VariantHandler) Create() http.HandlerFunc {
 		}
 		v.Name = req.Name
 		if req.Weight != nil {
-			if *req.Weight < 0 {
-				JSONError(w, apperror.Validation("weight must not be negative"))
+			if math.IsNaN(*req.Weight) || math.IsInf(*req.Weight, 0) || *req.Weight < 0 {
+				JSONError(w, apperror.Validation("weight must be a finite non-negative number"))
 				return
 			}
 			v.Weight = *req.Weight
@@ -237,8 +238,8 @@ func (h *VariantHandler) Update() http.HandlerFunc {
 			v.Name = *req.Name
 		}
 		if req.Weight != nil {
-			if *req.Weight < 0 {
-				JSONError(w, apperror.Validation("weight must not be negative"))
+			if math.IsNaN(*req.Weight) || math.IsInf(*req.Weight, 0) || *req.Weight < 0 {
+				JSONError(w, apperror.Validation("weight must be a finite non-negative number"))
 				return
 			}
 			v.Weight = *req.Weight

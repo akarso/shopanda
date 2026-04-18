@@ -62,6 +62,15 @@ func mustTier(t *testing.T, id, zoneID string, min, max float64, amount int64) s
 	return rt
 }
 
+func mustCalc(t *testing.T, repo shipping.ZoneRepository) *shipping.ZoneRateCalculator {
+	t.Helper()
+	calc, err := shipping.NewZoneRateCalculator(repo)
+	if err != nil {
+		t.Fatalf("NewZoneRateCalculator: %v", err)
+	}
+	return calc
+}
+
 // --- CalculateRate tests ---
 
 func TestZoneRateCalculator_HappyPath(t *testing.T) {
@@ -78,7 +87,7 @@ func TestZoneRateCalculator_HappyPath(t *testing.T) {
 			}, nil
 		},
 	}
-	calc := shipping.NewZoneRateCalculator(repo)
+	calc := mustCalc(t, repo)
 
 	rate, err := calc.CalculateRate(context.Background(), shipping.RateRequest{
 		Country:  "DE",
@@ -112,7 +121,7 @@ func TestZoneRateCalculator_HigherWeightTier(t *testing.T) {
 			}, nil
 		},
 	}
-	calc := shipping.NewZoneRateCalculator(repo)
+	calc := mustCalc(t, repo)
 
 	rate, err := calc.CalculateRate(context.Background(), shipping.RateRequest{
 		Country:  "DE",
@@ -142,7 +151,7 @@ func TestZoneRateCalculator_UnlimitedMaxWeight(t *testing.T) {
 			}, nil
 		},
 	}
-	calc := shipping.NewZoneRateCalculator(repo)
+	calc := mustCalc(t, repo)
 
 	rate, err := calc.CalculateRate(context.Background(), shipping.RateRequest{
 		Country:  "FR",
@@ -178,7 +187,7 @@ func TestZoneRateCalculator_MultiZonePriority(t *testing.T) {
 			}, nil
 		},
 	}
-	calc := shipping.NewZoneRateCalculator(repo)
+	calc := mustCalc(t, repo)
 
 	rate, err := calc.CalculateRate(context.Background(), shipping.RateRequest{
 		Country:  "DE",
@@ -208,7 +217,7 @@ func TestZoneRateCalculator_InactiveZoneSkipped(t *testing.T) {
 			}, nil
 		},
 	}
-	calc := shipping.NewZoneRateCalculator(repo)
+	calc := mustCalc(t, repo)
 
 	rate, err := calc.CalculateRate(context.Background(), shipping.RateRequest{
 		Country:  "DE",
@@ -232,7 +241,7 @@ func TestZoneRateCalculator_NoZone(t *testing.T) {
 			}, nil
 		},
 	}
-	calc := shipping.NewZoneRateCalculator(repo)
+	calc := mustCalc(t, repo)
 
 	_, err := calc.CalculateRate(context.Background(), shipping.RateRequest{
 		Country:  "US",
@@ -257,7 +266,7 @@ func TestZoneRateCalculator_NoMatchingTier(t *testing.T) {
 			}, nil
 		},
 	}
-	calc := shipping.NewZoneRateCalculator(repo)
+	calc := mustCalc(t, repo)
 
 	_, err := calc.CalculateRate(context.Background(), shipping.RateRequest{
 		Country:  "DE",
@@ -282,7 +291,7 @@ func TestZoneRateCalculator_EmptyItems(t *testing.T) {
 			}, nil
 		},
 	}
-	calc := shipping.NewZoneRateCalculator(repo)
+	calc := mustCalc(t, repo)
 
 	rate, err := calc.CalculateRate(context.Background(), shipping.RateRequest{
 		Country:  "DE",
@@ -310,7 +319,7 @@ func TestZoneRateCalculator_CurrencyMismatch(t *testing.T) {
 			}, nil
 		},
 	}
-	calc := shipping.NewZoneRateCalculator(repo)
+	calc := mustCalc(t, repo)
 
 	_, err := calc.CalculateRate(context.Background(), shipping.RateRequest{
 		Country:  "DE",
@@ -323,7 +332,7 @@ func TestZoneRateCalculator_CurrencyMismatch(t *testing.T) {
 }
 
 func TestZoneRateCalculator_MissingCountry(t *testing.T) {
-	calc := shipping.NewZoneRateCalculator(&mockZoneRepo{})
+	calc := mustCalc(t, &mockZoneRepo{})
 	_, err := calc.CalculateRate(context.Background(), shipping.RateRequest{
 		Currency: "EUR",
 	})
@@ -333,7 +342,7 @@ func TestZoneRateCalculator_MissingCountry(t *testing.T) {
 }
 
 func TestZoneRateCalculator_MissingCurrency(t *testing.T) {
-	calc := shipping.NewZoneRateCalculator(&mockZoneRepo{})
+	calc := mustCalc(t, &mockZoneRepo{})
 	_, err := calc.CalculateRate(context.Background(), shipping.RateRequest{
 		Country: "DE",
 	})
@@ -356,7 +365,7 @@ func TestZoneRateCalculator_MostSpecificTier(t *testing.T) {
 			}, nil
 		},
 	}
-	calc := shipping.NewZoneRateCalculator(repo)
+	calc := mustCalc(t, repo)
 
 	rate, err := calc.CalculateRate(context.Background(), shipping.RateRequest{
 		Country:  "DE",
@@ -369,5 +378,40 @@ func TestZoneRateCalculator_MostSpecificTier(t *testing.T) {
 	// Both tiers match (t1: min=0, t2: min=5), but t2 is more specific (higher min)
 	if rate.Cost.Amount() != 800 {
 		t.Errorf("cost = %d, want 800 (most specific tier)", rate.Cost.Amount())
+	}
+}
+
+func TestNewZoneRateCalculator_NilRepo(t *testing.T) {
+	_, err := shipping.NewZoneRateCalculator(nil)
+	if err == nil {
+		t.Fatal("expected error for nil repository")
+	}
+}
+
+func TestZoneRateCalculator_MixedCaseCountryAndCurrency(t *testing.T) {
+	repo := &mockZoneRepo{
+		listZonesFn: func(_ context.Context) ([]shipping.Zone, error) {
+			return []shipping.Zone{
+				mustZone(t, "z1", "Domestic", []string{"DE"}, 10, true),
+			}, nil
+		},
+		listRateTiersFn: func(_ context.Context, _ string) ([]shipping.RateTier, error) {
+			return []shipping.RateTier{
+				mustTier(t, "t1", "z1", 0, 0, 500),
+			}, nil
+		},
+	}
+	calc := mustCalc(t, repo)
+
+	rate, err := calc.CalculateRate(context.Background(), shipping.RateRequest{
+		Country:  "de",  // lowercase
+		Currency: "eur", // lowercase
+		Items:    []shipping.RateRequestItem{{Weight: 1.0, Quantity: 1}},
+	})
+	if err != nil {
+		t.Fatalf("CalculateRate with mixed case: %v", err)
+	}
+	if rate.Cost.Amount() != 500 {
+		t.Errorf("cost = %d, want 500", rate.Cost.Amount())
 	}
 }

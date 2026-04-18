@@ -4,8 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
-
-	"github.com/akarso/shopanda/internal/domain/shared"
+	"strings"
 )
 
 // RateRequestItem describes a single line item for rate calculation.
@@ -27,11 +26,11 @@ type ZoneRateCalculator struct {
 }
 
 // NewZoneRateCalculator creates a calculator backed by the given repository.
-func NewZoneRateCalculator(zones ZoneRepository) *ZoneRateCalculator {
+func NewZoneRateCalculator(zones ZoneRepository) (*ZoneRateCalculator, error) {
 	if zones == nil {
-		panic("shipping: zone repository must not be nil")
+		return nil, errors.New("shipping: zone repository must not be nil")
 	}
-	return &ZoneRateCalculator{zones: zones}
+	return &ZoneRateCalculator{zones: zones}, nil
 }
 
 // CalculateRate resolves the zone for the given country, sums item weights,
@@ -44,14 +43,17 @@ func (c *ZoneRateCalculator) CalculateRate(ctx context.Context, req RateRequest)
 		return ShippingRate{}, errors.New("shipping: currency is required")
 	}
 
+	country := strings.ToUpper(req.Country)
+	currency := strings.ToUpper(req.Currency)
+
 	zones, err := c.zones.ListZones(ctx)
 	if err != nil {
 		return ShippingRate{}, fmt.Errorf("shipping: list zones: %w", err)
 	}
 
-	zone := resolveZone(zones, req.Country)
+	zone := resolveZone(zones, country)
 	if zone == nil {
-		return ShippingRate{}, errors.New("shipping: no zone available for country " + req.Country)
+		return ShippingRate{}, fmt.Errorf("shipping: no zone available for country %s", country)
 	}
 
 	totalWeight := sumWeights(req.Items)
@@ -63,11 +65,11 @@ func (c *ZoneRateCalculator) CalculateRate(ctx context.Context, req RateRequest)
 
 	tier := matchTier(tiers, totalWeight)
 	if tier == nil {
-		return ShippingRate{}, errors.New("shipping: no rate tier for weight " + fmt.Sprintf("%.2f", totalWeight))
+		return ShippingRate{}, fmt.Errorf("shipping: no rate tier for weight %.2f", totalWeight)
 	}
 
-	if tier.Price.Currency() != req.Currency {
-		return ShippingRate{}, fmt.Errorf("shipping: rate currency %s does not match requested %s", tier.Price.Currency(), req.Currency)
+	if !strings.EqualFold(tier.Price.Currency(), currency) {
+		return ShippingRate{}, fmt.Errorf("shipping: rate currency %s does not match requested %s", tier.Price.Currency(), currency)
 	}
 
 	return ShippingRate{
@@ -131,17 +133,4 @@ func sumWeights(items []RateRequestItem) float64 {
 		total += item.Weight * float64(item.Quantity)
 	}
 	return total
-}
-
-// ZeroRate returns a zero-cost shipping rate for the given currency.
-func ZeroRate(currency string, label string) (ShippingRate, error) {
-	cost, err := shared.NewMoney(0, currency)
-	if err != nil {
-		return ShippingRate{}, err
-	}
-	return ShippingRate{
-		ProviderRef: "free",
-		Cost:        cost,
-		Label:       label,
-	}, nil
 }
