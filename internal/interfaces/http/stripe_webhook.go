@@ -129,25 +129,28 @@ func (h *StripeWebhookHandler) handlePaymentIntent(w http.ResponseWriter, r *htt
 		return
 	}
 
+	// Idempotency: if the payment is no longer pending, it was already
+	// processed by a previous delivery of this (or a related) event.
+	if p.Status() != payment.StatusPending {
+		JSON(w, http.StatusOK, map[string]interface{}{
+			"status": "already_processed",
+		})
+		return
+	}
+
 	prevUpdatedAt := p.UpdatedAt
 	oldStatus := p.Status()
 
 	success := evt.Type == "payment_intent.succeeded"
 
 	if success {
-		if completeErr := p.Complete(evt.Data.Object.ID); completeErr != nil {
-			// Payment already completed/failed — idempotent: return 200.
-			JSON(w, http.StatusOK, map[string]interface{}{
-				"status": "already_processed",
-			})
+		if err := p.Complete(evt.Data.Object.ID); err != nil {
+			JSONError(w, apperror.Internal("failed to complete payment: "+err.Error()))
 			return
 		}
 	} else {
-		if failErr := p.Fail(); failErr != nil {
-			// Payment already completed/failed — idempotent: return 200.
-			JSON(w, http.StatusOK, map[string]interface{}{
-				"status": "already_processed",
-			})
+		if err := p.Fail(); err != nil {
+			JSONError(w, apperror.Internal("failed to fail payment: "+err.Error()))
 			return
 		}
 	}

@@ -529,11 +529,17 @@ func runServe(cfg *config.Config, log logger.Logger) error {
 
 	// Stripe-specific webhook handler: verifies Stripe-Signature and parses
 	// Stripe event types (payment_intent.succeeded / payment_failed).
-	// Requires SHOPANDA_PAYMENT_STRIPE_WEBHOOK_SECRET env var.
+	// The webhook secret is sourced exclusively from the
+	// SHOPANDA_PAYMENT_STRIPE_WEBHOOK_SECRET environment variable.
 	var stripeWebhook *shophttp.StripeWebhookHandler
-	stripeWebhookSecret := os.Getenv("SHOPANDA_PAYMENT_STRIPE_WEBHOOK_SECRET")
-	if cfg.Payment.Stripe.Enabled && stripeWebhookSecret != "" {
-		stripeWebhook = shophttp.NewStripeWebhookHandler(paymentRepo, bus, stripeWebhookSecret)
+	webhookSecret := os.Getenv("SHOPANDA_PAYMENT_STRIPE_WEBHOOK_SECRET")
+	if webhookSecret == "" && cfg.Payment.Stripe.WebhookSecret != "" {
+		log.Warn("payment.stripe.webhook_secret_ignored", map[string]interface{}{
+			"message": "Stripe webhook_secret in YAML is ignored; set SHOPANDA_PAYMENT_STRIPE_WEBHOOK_SECRET env var",
+		})
+	}
+	if cfg.Payment.Stripe.Enabled && webhookSecret != "" {
+		stripeWebhook = shophttp.NewStripeWebhookHandler(paymentRepo, bus, webhookSecret)
 		log.Info("payment.stripe.webhook_handler_enabled", nil)
 	} else if cfg.Payment.Stripe.Enabled {
 		log.Warn("payment.stripe.no_webhook_secret", map[string]interface{}{
