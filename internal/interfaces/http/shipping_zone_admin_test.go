@@ -17,15 +17,16 @@ import (
 // ── mock zone repository ────────────────────────────────────────────────
 
 type mockZoneRepo struct {
-	listZonesFn      func(ctx context.Context) ([]shipping.Zone, error)
-	findZoneByIDFn   func(ctx context.Context, id string) (*shipping.Zone, error)
-	createZoneFn     func(ctx context.Context, z *shipping.Zone) error
-	updateZoneFn     func(ctx context.Context, z *shipping.Zone) error
-	deleteZoneFn     func(ctx context.Context, id string) error
-	listRateTiersFn  func(ctx context.Context, zoneID string) ([]shipping.RateTier, error)
-	createRateTierFn func(ctx context.Context, rt *shipping.RateTier) error
-	updateRateTierFn func(ctx context.Context, rt *shipping.RateTier) error
-	deleteRateTierFn func(ctx context.Context, id string) error
+	listZonesFn        func(ctx context.Context) ([]shipping.Zone, error)
+	findZoneByIDFn     func(ctx context.Context, id string) (*shipping.Zone, error)
+	createZoneFn       func(ctx context.Context, z *shipping.Zone) error
+	updateZoneFn       func(ctx context.Context, z *shipping.Zone) error
+	deleteZoneFn       func(ctx context.Context, id string) error
+	listRateTiersFn    func(ctx context.Context, zoneID string) ([]shipping.RateTier, error)
+	findRateTierByIDFn func(ctx context.Context, id string) (*shipping.RateTier, error)
+	creatRateTierFn    func(ctx context.Context, rt *shipping.RateTier) error
+	updateRateTierFn   func(ctx context.Context, rt *shipping.RateTier) error
+	deleteRateTierFn   func(ctx context.Context, id string) error
 }
 
 func (m *mockZoneRepo) ListZones(ctx context.Context) ([]shipping.Zone, error) {
@@ -70,9 +71,16 @@ func (m *mockZoneRepo) ListRateTiers(ctx context.Context, zoneID string) ([]ship
 	return nil, nil
 }
 
+func (m *mockZoneRepo) FindRateTierByID(ctx context.Context, id string) (*shipping.RateTier, error) {
+	if m.findRateTierByIDFn != nil {
+		return m.findRateTierByIDFn(ctx, id)
+	}
+	return nil, nil
+}
+
 func (m *mockZoneRepo) CreateRateTier(ctx context.Context, rt *shipping.RateTier) error {
-	if m.createRateTierFn != nil {
-		return m.createRateTierFn(ctx, rt)
+	if m.creatRateTierFn != nil {
+		return m.creatRateTierFn(ctx, rt)
 	}
 	return nil
 }
@@ -532,8 +540,11 @@ func TestShippingZoneAdmin_CreateRate_InvalidBody(t *testing.T) {
 func TestShippingZoneAdmin_UpdateRate_OK(t *testing.T) {
 	rt := seedRateTier()
 	repo := &mockZoneRepo{
-		listRateTiersFn: func(_ context.Context, _ string) ([]shipping.RateTier, error) {
-			return []shipping.RateTier{rt}, nil
+		findRateTierByIDFn: func(_ context.Context, id string) (*shipping.RateTier, error) {
+			if id == "rt-1" {
+				return &rt, nil
+			}
+			return nil, nil
 		},
 	}
 	mux := zoneAdminSetup(repo)
@@ -556,11 +567,7 @@ func TestShippingZoneAdmin_UpdateRate_OK(t *testing.T) {
 }
 
 func TestShippingZoneAdmin_UpdateRate_NotFound(t *testing.T) {
-	repo := &mockZoneRepo{
-		listRateTiersFn: func(_ context.Context, _ string) ([]shipping.RateTier, error) {
-			return nil, nil
-		},
-	}
+	repo := &mockZoneRepo{} // FindRateTierByID returns nil
 	mux := zoneAdminSetup(repo)
 
 	body := `{"price":100}`
@@ -573,10 +580,41 @@ func TestShippingZoneAdmin_UpdateRate_NotFound(t *testing.T) {
 	}
 }
 
+func TestShippingZoneAdmin_UpdateRate_InvalidInvariants(t *testing.T) {
+	rt := seedRateTier()
+	repo := &mockZoneRepo{
+		findRateTierByIDFn: func(_ context.Context, id string) (*shipping.RateTier, error) {
+			if id == "rt-1" {
+				return &rt, nil
+			}
+			return nil, nil
+		},
+	}
+	mux := zoneAdminSetup(repo)
+
+	// min_weight > max_weight should fail domain validation.
+	body := `{"min_weight":10,"max_weight":5}`
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("PUT", "/api/v1/admin/shipping/zones/zone-1/rates/rt-1", strings.NewReader(body))
+	mux.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("status = %d, want %d; body: %s", rec.Code, http.StatusUnprocessableEntity, rec.Body.String())
+	}
+}
+
 // ── DeleteRate ──────────────────────────────────────────────────────────
 
 func TestShippingZoneAdmin_DeleteRate_OK(t *testing.T) {
-	repo := &mockZoneRepo{}
+	rt := seedRateTier()
+	repo := &mockZoneRepo{
+		findRateTierByIDFn: func(_ context.Context, id string) (*shipping.RateTier, error) {
+			if id == "rt-1" {
+				return &rt, nil
+			}
+			return nil, nil
+		},
+	}
 	mux := zoneAdminSetup(repo)
 
 	rec := httptest.NewRecorder()
@@ -585,5 +623,27 @@ func TestShippingZoneAdmin_DeleteRate_OK(t *testing.T) {
 
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d, want %d; body: %s", rec.Code, http.StatusOK, rec.Body.String())
+	}
+}
+
+func TestShippingZoneAdmin_DeleteRate_RejectsMismatchedZone(t *testing.T) {
+	rt := seedRateTier() // ZoneID = "zone-1"
+	repo := &mockZoneRepo{
+		findRateTierByIDFn: func(_ context.Context, id string) (*shipping.RateTier, error) {
+			if id == "rt-1" {
+				return &rt, nil
+			}
+			return nil, nil
+		},
+	}
+	mux := zoneAdminSetup(repo)
+
+	// Request zone "other-zone" but tier belongs to "zone-1".
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("DELETE", "/api/v1/admin/shipping/zones/other-zone/rates/rt-1", nil)
+	mux.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("status = %d, want %d; body: %s", rec.Code, http.StatusNotFound, rec.Body.String())
 	}
 }

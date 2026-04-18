@@ -92,6 +92,9 @@ func TestNewRateTier_OK(t *testing.T) {
 	if rt.Price.Amount() != 500 {
 		t.Errorf("Price = %d, want 500", rt.Price.Amount())
 	}
+	if rt.Price.Currency() != "EUR" {
+		t.Errorf("Currency = %q, want EUR", rt.Price.Currency())
+	}
 }
 
 func TestNewRateTier_UnlimitedMaxWeight(t *testing.T) {

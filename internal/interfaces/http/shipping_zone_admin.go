@@ -337,55 +337,59 @@ func (h *ShippingZoneAdminHandler) UpdateRate() http.HandlerFunc {
 			return
 		}
 
-		// Fetch existing tiers for this zone to find the one we're updating.
-		tiers, err := h.zones.ListRateTiers(r.Context(), zoneID)
+		// Fetch existing tier by ID and verify zone scoping.
+		tier, err := h.zones.FindRateTierByID(r.Context(), rateID)
 		if err != nil {
 			JSONError(w, err)
 			return
-		}
-
-		var tier *shipping.RateTier
-		for i := range tiers {
-			if tiers[i].ID == rateID {
-				tier = &tiers[i]
-				break
-			}
 		}
 		if tier == nil {
 			JSONError(w, apperror.NotFound("rate tier not found"))
 			return
 		}
+		if tier.ZoneID != zoneID {
+			JSONError(w, apperror.NotFound("rate tier not found in this zone"))
+			return
+		}
 
+		// Overlay requested values onto existing tier defaults.
+		newMinWeight := tier.MinWeight
+		newMaxWeight := tier.MaxWeight
 		if req.MinWeight != nil {
-			tier.MinWeight = *req.MinWeight
+			newMinWeight = *req.MinWeight
 		}
 		if req.MaxWeight != nil {
-			tier.MaxWeight = *req.MaxWeight
-		}
-		if req.Price != nil || req.Currency != nil {
-			amount := tier.Price.Amount()
-			currency := tier.Price.Currency()
-			if req.Price != nil {
-				amount = *req.Price
-			}
-			if req.Currency != nil {
-				currency = *req.Currency
-			}
-			price, err := shared.NewMoney(amount, currency)
-			if err != nil {
-				JSONError(w, apperror.Validation(err.Error()))
-				return
-			}
-			tier.Price = price
+			newMaxWeight = *req.MaxWeight
 		}
 
-		if err := h.zones.UpdateRateTier(r.Context(), tier); err != nil {
+		amount := tier.Price.Amount()
+		currency := tier.Price.Currency()
+		if req.Price != nil {
+			amount = *req.Price
+		}
+		if req.Currency != nil {
+			currency = *req.Currency
+		}
+		price, err := shared.NewMoney(amount, currency)
+		if err != nil {
+			JSONError(w, apperror.Validation(err.Error()))
+			return
+		}
+
+		// Re-validate through domain constructor to enforce invariants.
+		updated, err := shipping.NewRateTier(tier.ID, tier.ZoneID, newMinWeight, newMaxWeight, price)
+		if err != nil {
+			JSONError(w, apperror.Validation(err.Error()))
+			return
+		}
+
+		if err := h.zones.UpdateRateTier(r.Context(), &updated); err != nil {
 			JSONError(w, err)
 			return
 		}
 
 		JSON(w, http.StatusOK, map[string]interface{}{
-			"rate": toAdminRateTierResponse(tier),
+			"rate": toAdminRateTierResponse(&updated),
 		})
 	}
 }
@@ -393,9 +397,24 @@ func (h *ShippingZoneAdminHandler) UpdateRate() http.HandlerFunc {
 // DeleteRate handles DELETE /api/v1/admin/shipping/zones/{zoneId}/rates/{rateId}.
 func (h *ShippingZoneAdminHandler) DeleteRate() http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		zoneID := r.PathValue("zoneId")
 		rateID := r.PathValue("rateId")
-		if rateID == "" {
-			JSONError(w, apperror.Validation("rate id is required"))
+		if zoneID == "" || rateID == "" {
+			JSONError(w, apperror.Validation("zone id and rate id are required"))
+			return
+		}
+
+		tier, err := h.zones.FindRateTierByID(r.Context(), rateID)
+		if err != nil {
+			JSONError(w, err)
+			return
+		}
+		if tier == nil {
+			JSONError(w, apperror.NotFound("rate tier not found"))
+			return
+		}
+		if tier.ZoneID != zoneID {
+			JSONError(w, apperror.NotFound("rate tier not found in this zone"))
 			return
 		}
 

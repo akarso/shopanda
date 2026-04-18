@@ -2,6 +2,7 @@ package shipping
 
 import (
 	"errors"
+	"strings"
 	"time"
 
 	"github.com/akarso/shopanda/internal/domain/shared"
@@ -29,17 +30,19 @@ func NewZone(id, name string, countries []string, priority int) (Zone, error) {
 	if len(countries) == 0 {
 		return Zone{}, errors.New("shipping: zone must have at least one country")
 	}
+	normalized := make([]string, 0, len(countries))
 	for _, c := range countries {
 		if len(c) != 2 {
 			return Zone{}, errors.New("shipping: country code must be 2 characters: " + c)
 		}
+		normalized = append(normalized, strings.ToUpper(c))
 	}
 
 	now := time.Now().UTC()
 	return Zone{
 		ID:        id,
 		Name:      name,
-		Countries: countries,
+		Countries: normalized,
 		Priority:  priority,
 		Active:    true,
 		CreatedAt: now,

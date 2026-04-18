@@ -17,6 +17,7 @@ func TestHasPermission_Admin(t *testing.T) {
 		rbac.InvoicesRead,
 		rbac.MediaRead, rbac.MediaWrite,
 		rbac.SettingsRead, rbac.SettingsWrite,
+		rbac.ShippingRead, rbac.ShippingWrite,
 	} {
 		if !rbac.HasPermission(identity.RoleAdmin, perm) {
 			t.Errorf("admin should have %q", perm)
@@ -33,6 +34,7 @@ func TestHasPermission_Manager(t *testing.T) {
 		rbac.CustomersRead,
 		rbac.InvoicesRead,
 		rbac.MediaRead, rbac.MediaWrite,
+		rbac.ShippingRead, rbac.ShippingWrite,
 	}
 	denied := []rbac.Permission{
 		rbac.CustomersWrite,

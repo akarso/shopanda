@@ -216,6 +216,32 @@ func (r *ZoneRepo) UpdateRateTier(ctx context.Context, rt *shipping.RateTier) er
 	return nil
 }
 
+// FindRateTierByID returns a rate tier by its ID. Returns (nil, nil) when not found.
+func (r *ZoneRepo) FindRateTierByID(ctx context.Context, id string) (*shipping.RateTier, error) {
+	if id == "" {
+		return nil, fmt.Errorf("zone_repo: find rate: empty id")
+	}
+	const q = `SELECT id, zone_id, min_weight, max_weight, price, currency
+		FROM shipping_rate_tiers WHERE id = $1`
+	var rt shipping.RateTier
+	var price int64
+	var currency string
+	err := r.db.QueryRowContext(ctx, q, id).Scan(&rt.ID, &rt.ZoneID, &rt.MinWeight, &rt.MaxWeight,
+		&price, &currency)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("zone_repo: find rate by id: %w", err)
+	}
+	m, err := shared.NewMoney(price, currency)
+	if err != nil {
+		return nil, fmt.Errorf("zone_repo: rate tier money: %w", err)
+	}
+	rt.Price = m
+	return &rt, nil
+}
+
 // DeleteRateTier removes a rate tier by ID.
 func (r *ZoneRepo) DeleteRateTier(ctx context.Context, id string) error {
 	if id == "" {

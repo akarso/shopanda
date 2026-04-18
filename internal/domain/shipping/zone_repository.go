@@ -28,6 +28,9 @@ type ZoneRepository interface {
 	// UpdateRateTier updates a rate tier's fields.
 	UpdateRateTier(ctx context.Context, rt *RateTier) error
 
+	// FindRateTierByID returns a rate tier by its ID. Returns (nil, nil) when not found.
+	FindRateTierByID(ctx context.Context, id string) (*RateTier, error)
+
 	// DeleteRateTier removes a rate tier by ID.
 	DeleteRateTier(ctx context.Context, id string) error
 }
