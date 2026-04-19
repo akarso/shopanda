@@ -84,6 +84,12 @@ media:
     medium: { width: 400, height: 400, fit: "contain" }
     large:  { width: 800, height: 800, fit: "contain" }
 
+  # WebP conversion: generate .webp variants alongside original-format thumbnails.
+  # Applies to JPEG and PNG uploads only.
+  webp:
+    enabled: true
+    quality: 80
+
 # --- Cache --------------------------------------------------------------------
 cache:
   # Driver: postgres (default, uses UNLOGGED table).

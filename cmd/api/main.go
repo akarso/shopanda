@@ -582,6 +582,9 @@ func runServe(cfg *config.Config, log logger.Logger) error {
 		}
 		mediaService.SetImageProcessor(imaging.New(), presets)
 	}
+	if cfg.Media.WebP.Enabled {
+		mediaService.SetWebPConfig(true, cfg.Media.WebP.Quality)
+	}
 	mediaHandler := shophttp.NewMediaHandler(mediaService)
 	schemaHandler := shophttp.NewSchemaHandler(adminRegistry)
 	pageHandler := shophttp.NewPageHandler(pageRepo, contentTranslator)

@@ -117,6 +117,13 @@ type MediaConfig struct {
 	Storage    string                     `yaml:"storage"`
 	Local      LocalStorageConfig         `yaml:"local"`
 	Thumbnails map[string]ThumbnailConfig `yaml:"thumbnails"`
+	WebP       WebPConfig                 `yaml:"webp"`
+}
+
+// WebPConfig controls automatic WebP conversion of thumbnails.
+type WebPConfig struct {
+	Enabled bool `yaml:"enabled"`
+	Quality int  `yaml:"quality"`
 }
 
 // ThumbnailConfig defines a named thumbnail preset.
@@ -289,6 +296,7 @@ func defaults() Config {
 				"medium": {Width: 400, Height: 400, Fit: "contain"},
 				"large":  {Width: 800, Height: 800, Fit: "contain"},
 			},
+			WebP: WebPConfig{Enabled: true, Quality: 80},
 		},
 		Cache: CacheConfig{
 			Driver: "postgres",
@@ -500,6 +508,8 @@ func flatten(cfg *Config) map[string]string {
 		m[prefix+".height"] = strconv.Itoa(tc.Height)
 		m[prefix+".fit"] = tc.Fit
 	}
+	m["media.webp.enabled"] = strconv.FormatBool(cfg.Media.WebP.Enabled)
+	m["media.webp.quality"] = strconv.Itoa(cfg.Media.WebP.Quality)
 	m["cache.driver"] = cfg.Cache.Driver
 	m["frontend.enabled"] = strconv.FormatBool(cfg.Frontend.Enabled)
 	m["frontend.mode"] = cfg.Frontend.Mode

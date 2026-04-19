@@ -192,7 +192,9 @@ func TestUpload_PersistFails_DeleteAlsoFails(t *testing.T) {
 
 type mockProcessor struct {
 	resizeErr error
+	formatErr error
 	called    int
+	formatted int
 }
 
 func (m *mockProcessor) Resize(input io.Reader, opts domainMedia.ResizeOpts) (io.Reader, error) {
@@ -203,6 +205,15 @@ func (m *mockProcessor) Resize(input io.Reader, opts domainMedia.ResizeOpts) (io
 	// Drain input and return a tiny placeholder.
 	io.Copy(io.Discard, input)
 	return bytes.NewReader([]byte("thumb")), nil
+}
+
+func (m *mockProcessor) Format(input io.Reader, mime string, quality int) (io.Reader, error) {
+	m.formatted++
+	if m.formatErr != nil {
+		return nil, m.formatErr
+	}
+	io.Copy(io.Discard, input)
+	return bytes.NewReader([]byte("webp")), nil
 }
 
 // --- thumbnail tests ---
@@ -301,5 +312,106 @@ func TestUpload_NoProcessor(t *testing.T) {
 	// Only original saved.
 	if len(storage.saved) != 1 {
 		t.Errorf("saved files = %d, want 1", len(storage.saved))
+	}
+}
+
+func TestUpload_WithWebP(t *testing.T) {
+	storage := &mockStorage{name: "test"}
+	repo := &mockAssetRepo{}
+	proc := &mockProcessor{}
+	bus := event.NewBus(mockLogger{})
+	svc := NewService(storage, repo, bus, mockLogger{})
+	svc.SetImageProcessor(proc, []domainMedia.ThumbnailPreset{
+		{Name: "small", Width: 150, Height: 150, Fit: "cover"},
+	})
+	svc.SetWebPConfig(true, 80)
+
+	result, err := svc.Upload(context.Background(), UploadInput{
+		Filename: "photo.jpg",
+		File:     bytes.NewReader(jpegHeader),
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	// 1 original + 1 thumbnail + 1 WebP = 3 saved.
+	if len(storage.saved) != 3 {
+		t.Errorf("saved files = %d, want 3", len(storage.saved))
+	}
+	if proc.formatted != 1 {
+		t.Errorf("format called %d times, want 1", proc.formatted)
+	}
+	if result.Thumbnails["small"] == "" {
+		t.Error("missing thumbnail URL for 'small'")
+	}
+	if result.Thumbnails["small_webp"] == "" {
+		t.Error("missing thumbnail URL for 'small_webp'")
+	}
+	if len(result.Thumbnails) != 2 {
+		t.Errorf("thumbnail URLs = %d, want 2", len(result.Thumbnails))
+	}
+}
+
+func TestUpload_WebPConversionFails(t *testing.T) {
+	storage := &mockStorage{name: "test"}
+	repo := &mockAssetRepo{}
+	proc := &mockProcessor{formatErr: errors.New("webp encode failed")}
+	log := &capturingLogger{}
+	bus := event.NewBus(log)
+	svc := NewService(storage, repo, bus, log)
+	svc.SetImageProcessor(proc, []domainMedia.ThumbnailPreset{
+		{Name: "small", Width: 150, Height: 150, Fit: "cover"},
+	})
+	svc.SetWebPConfig(true, 80)
+
+	result, err := svc.Upload(context.Background(), UploadInput{
+		Filename: "photo.jpg",
+		File:     bytes.NewReader(jpegHeader),
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	// Upload succeeds; original + JPEG thumbnail saved, WebP skipped.
+	if len(storage.saved) != 2 {
+		t.Errorf("saved files = %d, want 2", len(storage.saved))
+	}
+	// Only JPEG thumbnail, no WebP.
+	if len(result.Thumbnails) != 1 {
+		t.Errorf("thumbnail URLs = %d, want 1", len(result.Thumbnails))
+	}
+	if result.Thumbnails["small"] == "" {
+		t.Error("missing thumbnail URL for 'small'")
+	}
+	if len(log.warns) == 0 {
+		t.Error("expected warning log for failed WebP conversion")
+	}
+}
+
+func TestUpload_WebPDisabled(t *testing.T) {
+	storage := &mockStorage{name: "test"}
+	repo := &mockAssetRepo{}
+	proc := &mockProcessor{}
+	bus := event.NewBus(mockLogger{})
+	svc := NewService(storage, repo, bus, mockLogger{})
+	svc.SetImageProcessor(proc, []domainMedia.ThumbnailPreset{
+		{Name: "small", Width: 150, Height: 150, Fit: "cover"},
+	})
+	// WebP not enabled — no SetWebPConfig call.
+
+	result, err := svc.Upload(context.Background(), UploadInput{
+		Filename: "photo.jpg",
+		File:     bytes.NewReader(jpegHeader),
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	// 1 original + 1 thumbnail, no WebP.
+	if len(storage.saved) != 2 {
+		t.Errorf("saved files = %d, want 2", len(storage.saved))
+	}
+	if proc.formatted != 0 {
+		t.Errorf("format called %d times, want 0", proc.formatted)
+	}
+	if len(result.Thumbnails) != 1 {
+		t.Errorf("thumbnail URLs = %d, want 1", len(result.Thumbnails))
 	}
 }

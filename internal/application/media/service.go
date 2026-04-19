@@ -26,12 +26,14 @@ var AllowedMimeTypes = map[string]bool{
 
 // Service orchestrates media use cases.
 type Service struct {
-	storage   domainMedia.Storage
-	assets    domainMedia.AssetRepository
-	bus       *event.Bus
-	log       logger.Logger
-	processor domainMedia.ImageProcessor
-	presets   []domainMedia.ThumbnailPreset
+	storage     domainMedia.Storage
+	assets      domainMedia.AssetRepository
+	bus         *event.Bus
+	log         logger.Logger
+	processor   domainMedia.ImageProcessor
+	presets     []domainMedia.ThumbnailPreset
+	webpEnabled bool
+	webpQuality int
 }
 
 // NewService creates a media application service.
@@ -61,6 +63,12 @@ func NewService(
 func (s *Service) SetImageProcessor(p domainMedia.ImageProcessor, presets []domainMedia.ThumbnailPreset) {
 	s.processor = p
 	s.presets = presets
+}
+
+// SetWebPConfig enables or disables automatic WebP variant generation.
+func (s *Service) SetWebPConfig(enabled bool, quality int) {
+	s.webpEnabled = enabled
+	s.webpQuality = quality
 }
 
 // UploadInput holds the parameters for an upload.
@@ -131,6 +139,7 @@ func (s *Service) Upload(ctx context.Context, input UploadInput) (*UploadResult,
 	// Generate thumbnails when a processor is configured.
 	thumbPaths := make(map[string]string)
 	if s.processor != nil && len(s.presets) > 0 {
+		webpConvert := s.webpEnabled && (detected == "image/jpeg" || detected == "image/png")
 		for _, preset := range s.presets {
 			thumbPath := dir + "/" + preset.Name + "/" + safeFilename
 			resized, resizeErr := s.processor.Resize(bytes.NewReader(fileBytes), domainMedia.ResizeOpts{
@@ -146,7 +155,19 @@ func (s *Service) Upload(ctx context.Context, input UploadInput) (*UploadResult,
 				})
 				continue
 			}
-			if saveErr := s.storage.Save(thumbPath, resized); saveErr != nil {
+
+			// Buffer resized bytes for potential WebP conversion.
+			var resizedBuf bytes.Buffer
+			if _, copyErr := io.Copy(&resizedBuf, resized); copyErr != nil {
+				s.log.Warn("media: thumbnail buffer failed", map[string]interface{}{
+					"preset": preset.Name,
+					"error":  copyErr.Error(),
+				})
+				continue
+			}
+			resizedBytes := resizedBuf.Bytes()
+
+			if saveErr := s.storage.Save(thumbPath, bytes.NewReader(resizedBytes)); saveErr != nil {
 				s.log.Warn("media: thumbnail save failed", map[string]interface{}{
 					"preset": preset.Name,
 					"error":  saveErr.Error(),
@@ -154,6 +175,25 @@ func (s *Service) Upload(ctx context.Context, input UploadInput) (*UploadResult,
 				continue
 			}
 			thumbPaths[preset.Name] = thumbPath
+
+			// Generate WebP variant alongside the original-format thumbnail.
+			if webpConvert {
+				webpPath := dir + "/" + preset.Name + "/" + webpFilename(safeFilename)
+				webpData, fmtErr := s.processor.Format(bytes.NewReader(resizedBytes), "image/webp", s.webpQuality)
+				if fmtErr != nil {
+					s.log.Warn("media: webp conversion failed", map[string]interface{}{
+						"preset": preset.Name,
+						"error":  fmtErr.Error(),
+					})
+				} else if saveErr := s.storage.Save(webpPath, webpData); saveErr != nil {
+					s.log.Warn("media: webp save failed", map[string]interface{}{
+						"preset": preset.Name,
+						"error":  saveErr.Error(),
+					})
+				} else {
+					thumbPaths[preset.Name+"_webp"] = webpPath
+				}
+			}
 		}
 	}
 
@@ -214,4 +254,13 @@ func (s *Service) Upload(ctx context.Context, input UploadInput) (*UploadResult,
 		URL:        s.storage.URL(asset.Path),
 		Thumbnails: thumbURLs,
 	}, nil
+}
+
+// webpFilename replaces the file extension with .webp.
+func webpFilename(filename string) string {
+	ext := filepath.Ext(filename)
+	if ext == "" {
+		return filename + ".webp"
+	}
+	return filename[:len(filename)-len(ext)] + ".webp"
 }

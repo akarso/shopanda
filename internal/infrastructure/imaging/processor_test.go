@@ -129,7 +129,7 @@ func TestResize_UnsupportedFormat(t *testing.T) {
 		Width:    50,
 		Height:   50,
 		Fit:      "cover",
-		MimeType: "image/webp",
+		MimeType: "image/bmp",
 	})
 	if err == nil {
 		t.Fatal("expected error for unsupported format")
@@ -167,5 +167,68 @@ func TestResize_DefaultQuality(t *testing.T) {
 	}
 	if format != "jpeg" {
 		t.Errorf("format = %q, want jpeg", format)
+	}
+}
+
+func TestResize_WebP(t *testing.T) {
+	p := New()
+	result, err := p.Resize(makeJPEG(400, 300), domainMedia.ResizeOpts{
+		Width:    100,
+		Height:   100,
+		Fit:      "cover",
+		MimeType: "image/webp",
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	buf := new(bytes.Buffer)
+	if _, err := io.Copy(buf, result); err != nil {
+		t.Fatalf("read result: %v", err)
+	}
+	// WebP files start with "RIFF" magic.
+	if buf.Len() < 4 || string(buf.Bytes()[:4]) != "RIFF" {
+		t.Error("output is not WebP (missing RIFF header)")
+	}
+}
+
+func TestFormat_JPEGToWebP(t *testing.T) {
+	p := New()
+	result, err := p.Format(makeJPEG(200, 200), "image/webp", 75)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	buf := new(bytes.Buffer)
+	io.Copy(buf, result)
+	if buf.Len() < 4 || string(buf.Bytes()[:4]) != "RIFF" {
+		t.Error("output is not WebP")
+	}
+}
+
+func TestFormat_PNGToWebP(t *testing.T) {
+	p := New()
+	result, err := p.Format(makePNG(100, 100), "image/webp", 80)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	buf := new(bytes.Buffer)
+	io.Copy(buf, result)
+	if buf.Len() < 4 || string(buf.Bytes()[:4]) != "RIFF" {
+		t.Error("output is not WebP")
+	}
+}
+
+func TestFormat_UnsupportedOutput(t *testing.T) {
+	p := New()
+	_, err := p.Format(makeJPEG(100, 100), "image/bmp", 80)
+	if err == nil {
+		t.Fatal("expected error for unsupported output format")
+	}
+}
+
+func TestFormat_InvalidInput(t *testing.T) {
+	p := New()
+	_, err := p.Format(bytes.NewReader([]byte("not an image")), "image/webp", 80)
+	if err == nil {
+		t.Fatal("expected error for invalid input")
 	}
 }
