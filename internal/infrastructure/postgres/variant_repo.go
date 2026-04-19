@@ -38,7 +38,7 @@ func (r *VariantRepo) WithTx(tx *sql.Tx) catalog.VariantRepository {
 // FindByID returns a variant by its ID.
 // Returns (nil, nil) when the variant does not exist.
 func (r *VariantRepo) FindByID(ctx context.Context, id string) (*catalog.Variant, error) {
-	const q = `SELECT id, product_id, sku, name, attributes, created_at, updated_at
+	const q = `SELECT id, product_id, sku, name, weight, attributes, created_at, updated_at
 		FROM variants WHERE id = $1`
 
 	var querier interface {
@@ -62,7 +62,7 @@ func (r *VariantRepo) FindByID(ctx context.Context, id string) (*catalog.Variant
 // FindBySKU returns a variant by its SKU.
 // Returns (nil, nil) when no variant matches the SKU.
 func (r *VariantRepo) FindBySKU(ctx context.Context, sku string) (*catalog.Variant, error) {
-	const q = `SELECT id, product_id, sku, name, attributes, created_at, updated_at
+	const q = `SELECT id, product_id, sku, name, weight, attributes, created_at, updated_at
 		FROM variants WHERE sku = $1`
 
 	var querier interface {
@@ -97,7 +97,7 @@ func (r *VariantRepo) ListByProductID(ctx context.Context, productID string, off
 		limit = maxVariantListLimit
 	}
 
-	const q = `SELECT id, product_id, sku, name, attributes, created_at, updated_at
+	const q = `SELECT id, product_id, sku, name, weight, attributes, created_at, updated_at
 		FROM variants WHERE product_id = $1 ORDER BY created_at ASC LIMIT $2 OFFSET $3`
 
 	var rows *sql.Rows
@@ -147,8 +147,8 @@ func (r *VariantRepo) Create(ctx context.Context, v *catalog.Variant) error {
 		return fmt.Errorf("variant_repo: marshal attributes: %w", err)
 	}
 
-	const q = `INSERT INTO variants (id, product_id, sku, name, attributes, created_at, updated_at)
-		VALUES ($1, $2, $3, $4, $5, $6, $7)`
+	const q = `INSERT INTO variants (id, product_id, sku, name, weight, attributes, created_at, updated_at)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`
 
 	var execer interface {
 		ExecContext(context.Context, string, ...interface{}) (sql.Result, error)
@@ -159,7 +159,7 @@ func (r *VariantRepo) Create(ctx context.Context, v *catalog.Variant) error {
 		execer = r.db
 	}
 	_, err = execer.ExecContext(ctx, q,
-		v.ID, v.ProductID, v.SKU, v.Name,
+		v.ID, v.ProductID, v.SKU, v.Name, v.Weight,
 		attrs, v.CreatedAt, v.UpdatedAt,
 	)
 	if err != nil {
@@ -185,8 +185,8 @@ func (r *VariantRepo) Update(ctx context.Context, v *catalog.Variant) error {
 	updatedAt := time.Now().UTC()
 
 	const q = `UPDATE variants
-		SET sku = $1, name = $2, attributes = $3, updated_at = $4
-		WHERE id = $5`
+		SET sku = $1, name = $2, weight = $3, attributes = $4, updated_at = $5
+		WHERE id = $6`
 
 	var execer interface {
 		ExecContext(context.Context, string, ...interface{}) (sql.Result, error)
@@ -197,7 +197,7 @@ func (r *VariantRepo) Update(ctx context.Context, v *catalog.Variant) error {
 		execer = r.db
 	}
 	result, err := execer.ExecContext(ctx, q,
-		v.SKU, v.Name, attrs, updatedAt, v.ID,
+		v.SKU, v.Name, v.Weight, attrs, updatedAt, v.ID,
 	)
 	if err != nil {
 		if ce := skuConflict(err); ce != nil {
@@ -223,7 +223,7 @@ func (r *VariantRepo) scanVariant(s scanner) (*catalog.Variant, error) {
 	var attrsJSON []byte
 
 	err := s.Scan(
-		&v.ID, &v.ProductID, &v.SKU, &v.Name,
+		&v.ID, &v.ProductID, &v.SKU, &v.Name, &v.Weight,
 		&attrsJSON, &v.CreatedAt, &v.UpdatedAt,
 	)
 	if err != nil {

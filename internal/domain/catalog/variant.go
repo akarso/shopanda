@@ -11,6 +11,7 @@ type Variant struct {
 	ProductID  string
 	SKU        string
 	Name       string
+	Weight     float64 // kg, 0 = unset
 	Attributes map[string]interface{}
 	CreatedAt  time.Time
 	UpdatedAt  time.Time
