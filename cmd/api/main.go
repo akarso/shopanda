@@ -51,6 +51,7 @@ import (
 	"github.com/akarso/shopanda/internal/infrastructure/localfs"
 	"github.com/akarso/shopanda/internal/infrastructure/manualpay"
 	"github.com/akarso/shopanda/internal/infrastructure/postgres"
+	"github.com/akarso/shopanda/internal/infrastructure/s3store"
 	smtpmail "github.com/akarso/shopanda/internal/infrastructure/smtp"
 	"github.com/akarso/shopanda/internal/infrastructure/stripepay"
 	"github.com/akarso/shopanda/internal/infrastructure/webhook"
@@ -276,6 +277,20 @@ func runServe(cfg *config.Config, log logger.Logger) error {
 	switch cfg.Media.Storage {
 	case "local":
 		mediaStorage = localfs.New(cfg.Media.Local.BasePath, cfg.Media.Local.BaseURL)
+	case "s3":
+		s3s, s3Err := s3store.New(s3store.Config{
+			Endpoint:  cfg.Media.S3.Endpoint,
+			Bucket:    cfg.Media.S3.Bucket,
+			Region:    cfg.Media.S3.Region,
+			AccessKey: cfg.Media.S3.AccessKey,
+			SecretKey: cfg.Media.S3.SecretKey,
+			BaseURL:   cfg.Media.S3.BaseURL,
+			PublicACL: cfg.Media.S3.PublicACL,
+		})
+		if s3Err != nil {
+			return fmt.Errorf("media: init s3 storage: %w", s3Err)
+		}
+		mediaStorage = s3s
 	default:
 		return fmt.Errorf("unsupported media.storage: %s", cfg.Media.Storage)
 	}

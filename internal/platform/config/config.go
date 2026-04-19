@@ -116,6 +116,7 @@ type SMTPConfig struct {
 type MediaConfig struct {
 	Storage    string                     `yaml:"storage"`
 	Local      LocalStorageConfig         `yaml:"local"`
+	S3         S3StorageConfig            `yaml:"s3"`
 	Thumbnails map[string]ThumbnailConfig `yaml:"thumbnails"`
 	WebP       WebPConfig                 `yaml:"webp"`
 }
@@ -136,6 +137,17 @@ type ThumbnailConfig struct {
 type LocalStorageConfig struct {
 	BasePath string `yaml:"base_path"`
 	BaseURL  string `yaml:"base_url"`
+}
+
+// S3StorageConfig holds settings for S3-compatible storage backends.
+type S3StorageConfig struct {
+	Endpoint  string `yaml:"endpoint"`
+	Bucket    string `yaml:"bucket"`
+	Region    string `yaml:"region"`
+	AccessKey string `yaml:"access_key"`
+	SecretKey string `yaml:"secret_key"`
+	BaseURL   string `yaml:"base_url"`
+	PublicACL bool   `yaml:"public_acl"`
 }
 
 type CacheConfig struct {
@@ -421,6 +433,27 @@ func applyEnv(cfg *Config) {
 	if v := os.Getenv("SHOPANDA_MEDIA_LOCAL_BASE_URL"); v != "" {
 		cfg.Media.Local.BaseURL = v
 	}
+	if v := os.Getenv("SHOPANDA_MEDIA_S3_ENDPOINT"); v != "" {
+		cfg.Media.S3.Endpoint = v
+	}
+	if v := os.Getenv("SHOPANDA_MEDIA_S3_BUCKET"); v != "" {
+		cfg.Media.S3.Bucket = v
+	}
+	if v := os.Getenv("SHOPANDA_MEDIA_S3_REGION"); v != "" {
+		cfg.Media.S3.Region = v
+	}
+	if v := os.Getenv("SHOPANDA_MEDIA_S3_ACCESS_KEY"); v != "" {
+		cfg.Media.S3.AccessKey = v
+	}
+	if v := os.Getenv("SHOPANDA_MEDIA_S3_SECRET_KEY"); v != "" {
+		cfg.Media.S3.SecretKey = v
+	}
+	if v := os.Getenv("SHOPANDA_MEDIA_S3_BASE_URL"); v != "" {
+		cfg.Media.S3.BaseURL = v
+	}
+	if v := os.Getenv("SHOPANDA_MEDIA_S3_PUBLIC_ACL"); v != "" {
+		cfg.Media.S3.PublicACL = v == "true" || v == "1"
+	}
 	if v := os.Getenv("SHOPANDA_CACHE_DRIVER"); v != "" {
 		cfg.Cache.Driver = v
 	}
@@ -508,6 +541,11 @@ func flatten(cfg *Config) map[string]string {
 		m[prefix+".height"] = strconv.Itoa(tc.Height)
 		m[prefix+".fit"] = tc.Fit
 	}
+	m["media.s3.endpoint"] = cfg.Media.S3.Endpoint
+	m["media.s3.bucket"] = cfg.Media.S3.Bucket
+	m["media.s3.region"] = cfg.Media.S3.Region
+	m["media.s3.base_url"] = cfg.Media.S3.BaseURL
+	m["media.s3.public_acl"] = strconv.FormatBool(cfg.Media.S3.PublicACL)
 	m["media.webp.enabled"] = strconv.FormatBool(cfg.Media.WebP.Enabled)
 	m["media.webp.quality"] = strconv.Itoa(cfg.Media.WebP.Quality)
 	m["cache.driver"] = cfg.Cache.Driver
@@ -561,7 +599,7 @@ func (c *Config) String() string {
 			c.Database.Name, c.Database.SSLMode, password),
 		fmt.Sprintf("log.level=%s log.format=%s", c.Log.Level, c.Log.Format),
 		fmt.Sprintf("auth.jwt_ttl=%s", c.Auth.JWTTTL),
-		fmt.Sprintf("media.storage=%s media.local.base_path=%s media.local.base_url=%s", c.Media.Storage, c.Media.Local.BasePath, c.Media.Local.BaseURL),
+		fmt.Sprintf("media.storage=%s media.local.base_path=%s media.local.base_url=%s media.s3.bucket=%s media.s3.region=%s", c.Media.Storage, c.Media.Local.BasePath, c.Media.Local.BaseURL, c.Media.S3.Bucket, c.Media.S3.Region),
 		fmt.Sprintf("cache.driver=%s", c.Cache.Driver),
 		fmt.Sprintf("frontend.enabled=%t frontend.mode=%s frontend.theme_path=%s", c.Frontend.Enabled, c.Frontend.Mode, c.Frontend.ThemePath),
 	}, " ")
