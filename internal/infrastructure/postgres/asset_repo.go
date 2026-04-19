@@ -32,12 +32,16 @@ func (r *AssetRepo) Save(ctx context.Context, a *media.Asset) error {
 	if err != nil {
 		return fmt.Errorf("asset_repo: marshal meta: %w", err)
 	}
+	thumbJSON, err := json.Marshal(a.Thumbnails)
+	if err != nil {
+		return fmt.Errorf("asset_repo: marshal thumbnails: %w", err)
+	}
 
-	const q = `INSERT INTO assets (id, path, filename, mime_type, size, meta, created_at)
-		VALUES ($1, $2, $3, $4, $5, $6, $7)`
+	const q = `INSERT INTO assets (id, path, filename, mime_type, size, meta, thumbnails, created_at)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`
 
 	_, err = r.db.ExecContext(ctx, q,
-		a.ID, a.Path, a.Filename, a.MimeType, a.Size, metaJSON, a.CreatedAt,
+		a.ID, a.Path, a.Filename, a.MimeType, a.Size, metaJSON, thumbJSON, a.CreatedAt,
 	)
 	if err != nil {
 		return fmt.Errorf("asset_repo: save: %w", err)
@@ -48,13 +52,13 @@ func (r *AssetRepo) Save(ctx context.Context, a *media.Asset) error {
 // FindByID returns an asset by its ID.
 // Returns (nil, nil) when the asset does not exist.
 func (r *AssetRepo) FindByID(ctx context.Context, id string) (*media.Asset, error) {
-	const q = `SELECT id, path, filename, mime_type, size, meta, created_at
+	const q = `SELECT id, path, filename, mime_type, size, meta, thumbnails, created_at
 		FROM assets WHERE id = $1`
 
 	var a media.Asset
-	var metaJSON []byte
+	var metaJSON, thumbJSON []byte
 	err := r.db.QueryRowContext(ctx, q, id).Scan(
-		&a.ID, &a.Path, &a.Filename, &a.MimeType, &a.Size, &metaJSON, &a.CreatedAt,
+		&a.ID, &a.Path, &a.Filename, &a.MimeType, &a.Size, &metaJSON, &thumbJSON, &a.CreatedAt,
 	)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
@@ -64,6 +68,12 @@ func (r *AssetRepo) FindByID(ctx context.Context, id string) (*media.Asset, erro
 	}
 	if err := json.Unmarshal(metaJSON, &a.Meta); err != nil {
 		return nil, fmt.Errorf("asset_repo: unmarshal meta: %w", err)
+	}
+	a.Thumbnails = make(map[string]string)
+	if len(thumbJSON) > 0 {
+		if err := json.Unmarshal(thumbJSON, &a.Thumbnails); err != nil {
+			return nil, fmt.Errorf("asset_repo: unmarshal thumbnails: %w", err)
+		}
 	}
 	return &a, nil
 }

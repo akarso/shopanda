@@ -22,13 +22,14 @@ func NewMediaHandler(svc *mediaApp.Service) *MediaHandler {
 }
 
 type assetResponse struct {
-	ID        string `json:"id"`
-	Path      string `json:"path"`
-	Filename  string `json:"filename"`
-	MimeType  string `json:"mime_type"`
-	Size      int64  `json:"size"`
-	URL       string `json:"url"`
-	CreatedAt string `json:"created_at"`
+	ID         string            `json:"id"`
+	Path       string            `json:"path"`
+	Filename   string            `json:"filename"`
+	MimeType   string            `json:"mime_type"`
+	Size       int64             `json:"size"`
+	URL        string            `json:"url"`
+	Thumbnails map[string]string `json:"thumbnails,omitempty"`
+	CreatedAt  string            `json:"created_at"`
 }
 
 // Upload returns a handler for POST /api/v1/admin/media/upload.
@@ -64,13 +65,14 @@ func (h *MediaHandler) Upload() http.HandlerFunc {
 		}
 
 		JSON(w, http.StatusCreated, assetResponse{
-			ID:        result.Asset.ID,
-			Path:      result.Asset.Path,
-			Filename:  result.Asset.Filename,
-			MimeType:  result.Asset.MimeType,
-			Size:      result.Asset.Size,
-			URL:       result.URL,
-			CreatedAt: result.Asset.CreatedAt.Format("2006-01-02T15:04:05Z"),
+			ID:         result.Asset.ID,
+			Path:       result.Asset.Path,
+			Filename:   result.Asset.Filename,
+			MimeType:   result.Asset.MimeType,
+			Size:       result.Asset.Size,
+			URL:        result.URL,
+			Thumbnails: result.Thumbnails,
+			CreatedAt:  result.Asset.CreatedAt.Format("2006-01-02T15:04:05Z"),
 		})
 	}
 }

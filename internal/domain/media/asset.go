@@ -7,13 +7,14 @@ import (
 
 // Asset represents a stored file.
 type Asset struct {
-	ID        string
-	Path      string
-	Filename  string
-	MimeType  string
-	Size      int64
-	Meta      map[string]interface{}
-	CreatedAt time.Time
+	ID         string
+	Path       string
+	Filename   string
+	MimeType   string
+	Size       int64
+	Meta       map[string]interface{}
+	Thumbnails map[string]string // preset name → storage path
+	CreatedAt  time.Time
 }
 
 // NewAsset creates a validated Asset.
@@ -34,12 +35,13 @@ func NewAsset(id, path, filename, mimeType string, size int64) (Asset, error) {
 		return Asset{}, errors.New("asset size must be positive")
 	}
 	return Asset{
-		ID:        id,
-		Path:      path,
-		Filename:  filename,
-		MimeType:  mimeType,
-		Size:      size,
-		Meta:      make(map[string]interface{}),
-		CreatedAt: time.Now().UTC(),
+		ID:         id,
+		Path:       path,
+		Filename:   filename,
+		MimeType:   mimeType,
+		Size:       size,
+		Meta:       make(map[string]interface{}),
+		Thumbnails: make(map[string]string),
+		CreatedAt:  time.Now().UTC(),
 	}, nil
 }

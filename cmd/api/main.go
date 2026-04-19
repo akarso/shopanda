@@ -45,6 +45,7 @@ import (
 	"github.com/akarso/shopanda/internal/infrastructure/cron"
 
 	"github.com/akarso/shopanda/internal/infrastructure/flatrate"
+	"github.com/akarso/shopanda/internal/infrastructure/imaging"
 	"github.com/akarso/shopanda/internal/infrastructure/invoicepdf"
 	"github.com/akarso/shopanda/internal/infrastructure/localfs"
 	"github.com/akarso/shopanda/internal/infrastructure/manualpay"
@@ -562,6 +563,18 @@ func runServe(cfg *config.Config, log logger.Logger) error {
 	categoryHandler := shophttp.NewCategoryHandler(categoryRepo, productRepo)
 	searchHandler := shophttp.NewSearchHandler(searchEngine)
 	mediaService := mediaApp.NewService(mediaStorage, assetRepo, bus, log)
+	if thumbCfg := cfg.Media.Thumbnails; len(thumbCfg) > 0 {
+		var presets []media.ThumbnailPreset
+		for name, tc := range thumbCfg {
+			presets = append(presets, media.ThumbnailPreset{
+				Name:   name,
+				Width:  tc.Width,
+				Height: tc.Height,
+				Fit:    tc.Fit,
+			})
+		}
+		mediaService.SetImageProcessor(imaging.New(), presets)
+	}
 	mediaHandler := shophttp.NewMediaHandler(mediaService)
 	schemaHandler := shophttp.NewSchemaHandler(adminRegistry)
 	pageHandler := shophttp.NewPageHandler(pageRepo, contentTranslator)

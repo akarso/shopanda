@@ -114,8 +114,16 @@ type SMTPConfig struct {
 }
 
 type MediaConfig struct {
-	Storage string             `yaml:"storage"`
-	Local   LocalStorageConfig `yaml:"local"`
+	Storage    string                     `yaml:"storage"`
+	Local      LocalStorageConfig         `yaml:"local"`
+	Thumbnails map[string]ThumbnailConfig `yaml:"thumbnails"`
+}
+
+// ThumbnailConfig defines a named thumbnail preset.
+type ThumbnailConfig struct {
+	Width  int    `yaml:"width"`
+	Height int    `yaml:"height"`
+	Fit    string `yaml:"fit"`
 }
 
 type LocalStorageConfig struct {
@@ -275,6 +283,11 @@ func defaults() Config {
 			Local: LocalStorageConfig{
 				BasePath: "./public/media",
 				BaseURL:  "/media",
+			},
+			Thumbnails: map[string]ThumbnailConfig{
+				"small":  {Width: 150, Height: 150, Fit: "cover"},
+				"medium": {Width: 400, Height: 400, Fit: "contain"},
+				"large":  {Width: 800, Height: 800, Fit: "contain"},
 			},
 		},
 		Cache: CacheConfig{
