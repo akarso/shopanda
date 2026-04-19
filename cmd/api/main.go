@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"sort"
 	"strings"
 	"syscall"
 	"time"
@@ -564,8 +565,14 @@ func runServe(cfg *config.Config, log logger.Logger) error {
 	searchHandler := shophttp.NewSearchHandler(searchEngine)
 	mediaService := mediaApp.NewService(mediaStorage, assetRepo, bus, log)
 	if thumbCfg := cfg.Media.Thumbnails; len(thumbCfg) > 0 {
-		var presets []media.ThumbnailPreset
-		for name, tc := range thumbCfg {
+		names := make([]string, 0, len(thumbCfg))
+		for name := range thumbCfg {
+			names = append(names, name)
+		}
+		sort.Strings(names)
+		presets := make([]media.ThumbnailPreset, 0, len(names))
+		for _, name := range names {
+			tc := thumbCfg[name]
 			presets = append(presets, media.ThumbnailPreset{
 				Name:   name,
 				Width:  tc.Width,

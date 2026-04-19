@@ -38,8 +38,10 @@ func (p *Processor) Resize(input io.Reader, opts domainMedia.ResizeOpts) (io.Rea
 		resized = imaging.Fill(img, opts.Width, opts.Height, imaging.Center, imaging.Lanczos)
 	case "contain":
 		resized = imaging.Fit(img, opts.Width, opts.Height, imaging.Lanczos)
-	default: // "fill" or unspecified → stretch
+	case "fill", "":
 		resized = imaging.Resize(img, opts.Width, opts.Height, imaging.Lanczos)
+	default:
+		return nil, fmt.Errorf("imaging: unsupported fit mode: %q", opts.Fit)
 	}
 
 	quality := opts.Quality

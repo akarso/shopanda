@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"path/filepath"
+	"strings"
 
 	domainMedia "github.com/akarso/shopanda/internal/domain/media"
 	"github.com/akarso/shopanda/internal/platform/apperror"
@@ -112,9 +114,15 @@ func (s *Service) Upload(ctx context.Context, input UploadInput) (*UploadResult,
 	fileBytes := fileBuf.Bytes()
 	fileSize := int64(len(fileBytes))
 
+	// Sanitize filename: strip directory components, reject traversal attempts.
+	safeFilename := filepath.Base(input.Filename)
+	if safeFilename == "." || safeFilename == ".." || strings.ContainsAny(safeFilename, "/\\") {
+		return nil, apperror.Validation("invalid filename")
+	}
+
 	assetID := id.New()
 	dir := "uploads/" + assetID
-	path := dir + "/" + input.Filename
+	path := dir + "/" + safeFilename
 
 	if err := s.storage.Save(path, bytes.NewReader(fileBytes)); err != nil {
 		return nil, fmt.Errorf("media: save file: %w", err)
@@ -124,7 +132,7 @@ func (s *Service) Upload(ctx context.Context, input UploadInput) (*UploadResult,
 	thumbPaths := make(map[string]string)
 	if s.processor != nil && len(s.presets) > 0 {
 		for _, preset := range s.presets {
-			thumbPath := dir + "/" + preset.Name + "/" + input.Filename
+			thumbPath := dir + "/" + preset.Name + "/" + safeFilename
 			resized, resizeErr := s.processor.Resize(bytes.NewReader(fileBytes), domainMedia.ResizeOpts{
 				Width:    preset.Width,
 				Height:   preset.Height,
@@ -149,10 +157,15 @@ func (s *Service) Upload(ctx context.Context, input UploadInput) (*UploadResult,
 		}
 	}
 
-	asset, err := domainMedia.NewAsset(assetID, path, input.Filename, detected, fileSize)
+	asset, err := domainMedia.NewAsset(assetID, path, safeFilename, detected, fileSize)
 	if err != nil {
 		if delErr := s.storage.Delete(path); delErr != nil {
 			s.log.Error("media: rollback delete failed", delErr, map[string]interface{}{"path": path})
+		}
+		for tName, tPath := range thumbPaths {
+			if delErr := s.storage.Delete(tPath); delErr != nil {
+				s.log.Error("media: rollback thumbnail delete failed", delErr, map[string]interface{}{"preset": tName, "path": tPath})
+			}
 		}
 		return nil, fmt.Errorf("media: create asset: %w", err)
 	}
@@ -161,6 +174,11 @@ func (s *Service) Upload(ctx context.Context, input UploadInput) (*UploadResult,
 	if err := s.assets.Save(ctx, &asset); err != nil {
 		if delErr := s.storage.Delete(path); delErr != nil {
 			s.log.Error("media: rollback delete failed", delErr, map[string]interface{}{"path": path})
+		}
+		for tName, tPath := range thumbPaths {
+			if delErr := s.storage.Delete(tPath); delErr != nil {
+				s.log.Error("media: rollback thumbnail delete failed", delErr, map[string]interface{}{"preset": tName, "path": tPath})
+			}
 		}
 		return nil, fmt.Errorf("media: persist asset: %w", err)
 	}

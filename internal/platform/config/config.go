@@ -494,6 +494,12 @@ func flatten(cfg *Config) map[string]string {
 	m["media.storage"] = cfg.Media.Storage
 	m["media.local.base_path"] = cfg.Media.Local.BasePath
 	m["media.local.base_url"] = cfg.Media.Local.BaseURL
+	for name, tc := range cfg.Media.Thumbnails {
+		prefix := "media.thumbnails." + name
+		m[prefix+".width"] = strconv.Itoa(tc.Width)
+		m[prefix+".height"] = strconv.Itoa(tc.Height)
+		m[prefix+".fit"] = tc.Fit
+	}
 	m["cache.driver"] = cfg.Cache.Driver
 	m["frontend.enabled"] = strconv.FormatBool(cfg.Frontend.Enabled)
 	m["frontend.mode"] = cfg.Frontend.Mode
