@@ -774,3 +774,67 @@ func TestShippingZoneAdmin_UpdateZone_ClearThreshold(t *testing.T) {
 		t.Errorf("free_shipping_threshold = %v, want 0", zone["free_shipping_threshold"])
 	}
 }
+
+func TestShippingZoneAdmin_UpdateZone_SetThresholdDefaultCurrency(t *testing.T) {
+	z := seedZone()
+	repo := &mockZoneRepo{
+		findZoneByIDFn: func(_ context.Context, id string) (*shipping.Zone, error) {
+			if id == "zone-1" {
+				return z, nil
+			}
+			return nil, nil
+		},
+	}
+	mux := zoneAdminSetup(repo)
+
+	body2 := `{"free_shipping_threshold":5000}`
+	rec2 := httptest.NewRecorder()
+	req2 := httptest.NewRequest("PUT", "/api/v1/admin/shipping/zones/zone-1", strings.NewReader(body2))
+	mux.ServeHTTP(rec2, req2)
+
+	if rec2.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d; body: %s", rec2.Code, http.StatusOK, rec2.Body.String())
+	}
+
+	resp := zoneParseJSON(t, rec2)
+	data := resp["data"].(map[string]interface{})
+	zone2 := data["zone"].(map[string]interface{})
+	if zone2["free_shipping_currency"] != "EUR" {
+		t.Errorf("free_shipping_currency = %v, want EUR (default)", zone2["free_shipping_currency"])
+	}
+}
+
+func TestShippingZoneAdmin_CreateZone_NegativeThreshold(t *testing.T) {
+	mux := zoneAdminSetup(&mockZoneRepo{})
+
+	body3 := `{"name":"EU","countries":["DE"],"priority":5,"free_shipping_threshold":-100}`
+	rec3 := httptest.NewRecorder()
+	req3 := httptest.NewRequest("POST", "/api/v1/admin/shipping/zones", strings.NewReader(body3))
+	mux.ServeHTTP(rec3, req3)
+
+	if rec3.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("status = %d, want %d; body: %s", rec3.Code, http.StatusUnprocessableEntity, rec3.Body.String())
+	}
+}
+
+func TestShippingZoneAdmin_UpdateZone_NegativeThreshold(t *testing.T) {
+	z := seedZone()
+	repo := &mockZoneRepo{
+		findZoneByIDFn: func(_ context.Context, id string) (*shipping.Zone, error) {
+			if id == "zone-1" {
+				return z, nil
+			}
+			return nil, nil
+		},
+	}
+	mux := zoneAdminSetup(repo)
+
+	body4 := `{"free_shipping_threshold":-100}`
+	rec4 := httptest.NewRecorder()
+	req4 := httptest.NewRequest("PUT", "/api/v1/admin/shipping/zones/zone-1", strings.NewReader(body4))
+	mux.ServeHTTP(rec4, req4)
+
+	if rec4.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("status = %d, want %d; body: %s", rec4.Code, http.StatusUnprocessableEntity, rec4.Body.String())
+	}
+}

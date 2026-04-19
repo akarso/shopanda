@@ -24,6 +24,15 @@ func NewShippingZoneAdminHandler(zones shipping.ZoneRepository) *ShippingZoneAdm
 	return &ShippingZoneAdminHandler{zones: zones}
 }
 
+// buildFreeShippingMoney creates a Money from threshold amount and currency,
+// defaulting currency to "EUR" when empty.
+func buildFreeShippingMoney(amount int64, currency string) (shared.Money, error) {
+	if currency == "" {
+		currency = "EUR"
+	}
+	return shared.NewMoney(amount, currency)
+}
+
 // --- Zone request / response types ---
 
 type createZoneRequest struct {
@@ -142,14 +151,14 @@ func (h *ShippingZoneAdminHandler) CreateZone() http.HandlerFunc {
 			return
 		}
 
-		if req.FreeShippingThreshold != nil && *req.FreeShippingThreshold > 0 {
-			cur := req.FreeShippingCurrency
-			if cur == "" {
-				cur = "EUR"
-			}
-			m, err := shared.NewMoney(*req.FreeShippingThreshold, cur)
+		if req.FreeShippingThreshold != nil && *req.FreeShippingThreshold != 0 {
+			m, err := buildFreeShippingMoney(*req.FreeShippingThreshold, req.FreeShippingCurrency)
 			if err != nil {
 				JSONError(w, apperror.Validation(err.Error()))
+				return
+			}
+			if m.Amount() < 0 {
+				JSONError(w, apperror.Validation("free_shipping_threshold must be >= 0"))
 				return
 			}
 			zone.FreeShippingThreshold = m
@@ -226,18 +235,19 @@ func (h *ShippingZoneAdminHandler) UpdateZone() http.HandlerFunc {
 				if req.FreeShippingCurrency != nil {
 					cur = *req.FreeShippingCurrency
 				}
-				if cur == "" {
-					cur = "EUR"
-				}
-				m, err := shared.NewMoney(*req.FreeShippingThreshold, cur)
+				m, err := buildFreeShippingMoney(*req.FreeShippingThreshold, cur)
 				if err != nil {
 					JSONError(w, apperror.Validation(err.Error()))
+					return
+				}
+				if m.Amount() < 0 {
+					JSONError(w, apperror.Validation("free_shipping_threshold must be >= 0"))
 					return
 				}
 				zone.FreeShippingThreshold = m
 			}
 		} else if req.FreeShippingCurrency != nil && zone.FreeShippingThreshold.Amount() > 0 {
-			m, err := shared.NewMoney(zone.FreeShippingThreshold.Amount(), *req.FreeShippingCurrency)
+			m, err := buildFreeShippingMoney(zone.FreeShippingThreshold.Amount(), *req.FreeShippingCurrency)
 			if err != nil {
 				JSONError(w, apperror.Validation(err.Error()))
 				return

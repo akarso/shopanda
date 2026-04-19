@@ -104,6 +104,9 @@ func qualifiesForFreeShipping(zone *Zone, subtotal shared.Money, currency string
 	if !strings.EqualFold(zone.FreeShippingThreshold.Currency(), currency) {
 		return false
 	}
+	if !strings.EqualFold(subtotal.Currency(), currency) {
+		return false
+	}
 	return subtotal.Amount() >= zone.FreeShippingThreshold.Amount()
 }
 
