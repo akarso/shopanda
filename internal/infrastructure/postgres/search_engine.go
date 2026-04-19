@@ -60,6 +60,43 @@ func (e *SearchEngine) RemoveProduct(ctx context.Context, productID string) erro
 	return nil
 }
 
+// Suggest returns autocomplete suggestions using prefix matching on product names.
+func (e *SearchEngine) Suggest(ctx context.Context, prefix string, limit int) ([]search.Suggestion, error) {
+	if prefix == "" {
+		return nil, nil
+	}
+	if limit <= 0 {
+		limit = search.DefaultSuggestLimit
+	}
+	if limit > search.MaxSuggestLimit {
+		limit = search.MaxSuggestLimit
+	}
+
+	const q = `SELECT name, slug FROM products WHERE name ILIKE $1 AND status = 'active' ORDER BY name LIMIT $2`
+	rows, err := e.db.QueryContext(ctx, q, prefix+"%", limit)
+	if err != nil {
+		return nil, fmt.Errorf("search_engine: suggest: %w", err)
+	}
+	defer rows.Close()
+
+	var suggestions []search.Suggestion
+	for rows.Next() {
+		var name, slug string
+		if err := rows.Scan(&name, &slug); err != nil {
+			return nil, fmt.Errorf("search_engine: suggest scan: %w", err)
+		}
+		suggestions = append(suggestions, search.Suggestion{
+			Text: name,
+			Type: "product",
+			URL:  "/products/" + slug,
+		})
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("search_engine: suggest rows: %w", err)
+	}
+	return suggestions, nil
+}
+
 // Search executes a full-text search query with optional filters, sorting, and facets.
 func (e *SearchEngine) Search(ctx context.Context, query search.SearchQuery) (search.SearchResult, error) {
 	if err := query.Validate(); err != nil {

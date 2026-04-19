@@ -744,8 +744,9 @@ func runServe(cfg *config.Config, log logger.Logger) error {
 	router.HandleFunc("GET /api/v1/categories/{id}", categoryHandler.Get())
 	router.HandleFunc("GET /api/v1/categories/{id}/products", categoryHandler.Products())
 
-	// Search route (public).
+	// Search routes (public).
 	router.HandleFunc("GET /api/v1/search", searchHandler.Search())
+	router.HandleFunc("GET /api/v1/search/suggest", searchHandler.Suggest())
 
 	// Page routes (public).
 	router.HandleFunc("GET /api/v1/pages/{slug}", pageHandler.Get())

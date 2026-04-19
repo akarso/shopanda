@@ -17,7 +17,8 @@ import (
 // --- mock search engine ---
 
 type mockSearchEngine struct {
-	searchFn func(ctx context.Context, query search.SearchQuery) (search.SearchResult, error)
+	searchFn  func(ctx context.Context, query search.SearchQuery) (search.SearchResult, error)
+	suggestFn func(ctx context.Context, prefix string, limit int) ([]search.Suggestion, error)
 }
 
 func (m *mockSearchEngine) Name() string { return "mock" }
@@ -30,11 +31,19 @@ func (m *mockSearchEngine) Search(ctx context.Context, query search.SearchQuery)
 	return m.searchFn(ctx, query)
 }
 
+func (m *mockSearchEngine) Suggest(ctx context.Context, prefix string, limit int) ([]search.Suggestion, error) {
+	if m.suggestFn != nil {
+		return m.suggestFn(ctx, prefix, limit)
+	}
+	return nil, nil
+}
+
 // --- helpers ---
 
 func newSearchRouter(h *shophttp.SearchHandler) *http.ServeMux {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /api/v1/search", h.Search())
+	mux.HandleFunc("GET /api/v1/search/suggest", h.Suggest())
 	return mux
 }
 
@@ -278,5 +287,110 @@ func TestSearchHandler_ValidationError(t *testing.T) {
 
 	if rec.Code != http.StatusUnprocessableEntity {
 		t.Fatalf("status = %d, want %d", rec.Code, http.StatusUnprocessableEntity)
+	}
+}
+
+// --- Suggest handler tests ---
+
+func TestSuggestHandler_OK(t *testing.T) {
+	engine := &mockSearchEngine{
+		suggestFn: func(_ context.Context, prefix string, limit int) ([]search.Suggestion, error) {
+			if prefix != "sne" {
+				t.Errorf("prefix = %q, want sne", prefix)
+			}
+			if limit != 5 {
+				t.Errorf("limit = %d, want 5", limit)
+			}
+			return []search.Suggestion{
+				{Text: "Sneakers", Type: "product", URL: "/products/sneakers"},
+			}, nil
+		},
+	}
+	h := shophttp.NewSearchHandler(engine)
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("GET", "/api/v1/search/suggest?q=sne&limit=5", nil)
+	newSearchRouter(h).ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d", rec.Code, http.StatusOK)
+	}
+	body := parseSearchBody(t, rec)
+	data := body["data"].(map[string]interface{})
+	suggestions := data["suggestions"].([]interface{})
+	if len(suggestions) != 1 {
+		t.Fatalf("suggestions len = %d, want 1", len(suggestions))
+	}
+	s := suggestions[0].(map[string]interface{})
+	if s["text"] != "Sneakers" {
+		t.Errorf("text = %v, want Sneakers", s["text"])
+	}
+	if s["type"] != "product" {
+		t.Errorf("type = %v, want product", s["type"])
+	}
+	if s["url"] != "/products/sneakers" {
+		t.Errorf("url = %v, want /products/sneakers", s["url"])
+	}
+}
+
+func TestSuggestHandler_EmptyQuery(t *testing.T) {
+	engine := &mockSearchEngine{}
+	h := shophttp.NewSearchHandler(engine)
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("GET", "/api/v1/search/suggest", nil)
+	newSearchRouter(h).ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d", rec.Code, http.StatusOK)
+	}
+	body := parseSearchBody(t, rec)
+	data := body["data"].(map[string]interface{})
+	suggestions := data["suggestions"].([]interface{})
+	if len(suggestions) != 0 {
+		t.Errorf("suggestions len = %d, want 0", len(suggestions))
+	}
+}
+
+func TestSuggestHandler_InvalidLimit(t *testing.T) {
+	engine := &mockSearchEngine{}
+	h := shophttp.NewSearchHandler(engine)
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("GET", "/api/v1/search/suggest?q=test&limit=abc", nil)
+	newSearchRouter(h).ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("status = %d, want %d", rec.Code, http.StatusUnprocessableEntity)
+	}
+}
+
+func TestSuggestHandler_ZeroLimit(t *testing.T) {
+	engine := &mockSearchEngine{}
+	h := shophttp.NewSearchHandler(engine)
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("GET", "/api/v1/search/suggest?q=test&limit=0", nil)
+	newSearchRouter(h).ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("status = %d, want %d", rec.Code, http.StatusUnprocessableEntity)
+	}
+}
+
+func TestSuggestHandler_EngineError(t *testing.T) {
+	engine := &mockSearchEngine{
+		suggestFn: func(_ context.Context, _ string, _ int) ([]search.Suggestion, error) {
+			return nil, errors.New("db down")
+		},
+	}
+	h := shophttp.NewSearchHandler(engine)
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("GET", "/api/v1/search/suggest?q=test", nil)
+	newSearchRouter(h).ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("status = %d, want %d", rec.Code, http.StatusInternalServerError)
 	}
 }

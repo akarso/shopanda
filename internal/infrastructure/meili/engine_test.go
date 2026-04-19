@@ -319,3 +319,79 @@ func TestDefaultSettings(t *testing.T) {
 		t.Errorf("DisplayedAttributes = %v, want [*]", s.DisplayedAttributes)
 	}
 }
+
+func TestSuggest(t *testing.T) {
+	hit, _ := json.Marshal(document{ID: "p-1", Name: "Sneakers", Slug: "sneakers"})
+	mock := &mockAPI{
+		searchResp: searchResponse{
+			Hits:               []json.RawMessage{hit},
+			EstimatedTotalHits: 1,
+		},
+	}
+	e := newWithAPI(mock, "products")
+
+	suggestions, err := e.Suggest(context.Background(), "sne", 5)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(suggestions) != 1 {
+		t.Fatalf("got %d suggestions, want 1", len(suggestions))
+	}
+	if suggestions[0].Text != "Sneakers" {
+		t.Errorf("Text = %q, want Sneakers", suggestions[0].Text)
+	}
+	if suggestions[0].Type != "product" {
+		t.Errorf("Type = %q, want product", suggestions[0].Type)
+	}
+	if suggestions[0].URL != "/products/sneakers" {
+		t.Errorf("URL = %q, want /products/sneakers", suggestions[0].URL)
+	}
+	// Verify search request had correct limit.
+	if mock.searchReq.Limit != 5 {
+		t.Errorf("searchReq.Limit = %d, want 5", mock.searchReq.Limit)
+	}
+}
+
+func TestSuggest_EmptyPrefix(t *testing.T) {
+	mock := &mockAPI{}
+	e := newWithAPI(mock, "products")
+
+	suggestions, err := e.Suggest(context.Background(), "", 5)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if suggestions != nil {
+		t.Errorf("expected nil for empty prefix, got %v", suggestions)
+	}
+}
+
+func TestSuggest_GracefulDegradation(t *testing.T) {
+	mock := &mockAPI{searchErr: errors.New("connection refused")}
+	e := newWithAPI(mock, "products")
+
+	suggestions, err := e.Suggest(context.Background(), "sne", 5)
+	if err != nil {
+		t.Fatalf("expected nil error on degradation, got %v", err)
+	}
+	if suggestions != nil {
+		t.Errorf("expected nil suggestions on degradation, got %v", suggestions)
+	}
+}
+
+func TestClampSuggestLimit(t *testing.T) {
+	tests := []struct {
+		input, want int
+	}{
+		{0, 5},   // default
+		{-1, 5},  // default
+		{3, 3},   // passthrough
+		{10, 10}, // max
+		{15, 10}, // clamped
+	}
+	for _, tt := range tests {
+		got := clampSuggestLimit(tt.input)
+		if got != tt.want {
+			t.Errorf("clampSuggestLimit(%d) = %d, want %d", tt.input, got, tt.want)
+		}
+	}
+}
