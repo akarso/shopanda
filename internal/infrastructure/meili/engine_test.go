@@ -24,22 +24,27 @@ type mockAPI struct {
 
 	settingsReq indexSettings
 	settingsErr error
+
+	// taskUID is returned by write methods; taskStatus is returned by getTask.
+	taskUID    int64
+	taskStatus string
+	taskErr    error
 }
 
-func (m *mockAPI) addDocuments(_ context.Context, docs []document) error {
+func (m *mockAPI) addDocuments(_ context.Context, docs []document) (int64, error) {
 	if m.addErr != nil {
-		return m.addErr
+		return 0, m.addErr
 	}
 	m.addDocs = append(m.addDocs, docs)
-	return nil
+	return m.taskUID, nil
 }
 
-func (m *mockAPI) deleteDocument(_ context.Context, id string) error {
+func (m *mockAPI) deleteDocument(_ context.Context, id string) (int64, error) {
 	if m.deleteErr != nil {
-		return m.deleteErr
+		return 0, m.deleteErr
 	}
 	m.deleteIDs = append(m.deleteIDs, id)
-	return nil
+	return m.taskUID, nil
 }
 
 func (m *mockAPI) search(_ context.Context, req searchRequest) (searchResponse, error) {
@@ -50,9 +55,20 @@ func (m *mockAPI) search(_ context.Context, req searchRequest) (searchResponse, 
 	return m.searchResp, nil
 }
 
-func (m *mockAPI) updateSettings(_ context.Context, s indexSettings) error {
+func (m *mockAPI) updateSettings(_ context.Context, s indexSettings) (int64, error) {
 	m.settingsReq = s
-	return m.settingsErr
+	return m.taskUID, m.settingsErr
+}
+
+func (m *mockAPI) getTask(_ context.Context, _ int64) (taskInfo, error) {
+	if m.taskErr != nil {
+		return taskInfo{}, m.taskErr
+	}
+	status := m.taskStatus
+	if status == "" {
+		status = "succeeded"
+	}
+	return taskInfo{TaskUID: m.taskUID, Status: status}, nil
 }
 
 // --- tests ---
@@ -245,14 +261,46 @@ func TestProductToDoc(t *testing.T) {
 		Name:        "Hat",
 		Slug:        "hat",
 		Description: "A nice hat",
+		CategoryID:  "cat-5",
+		Price:       1999,
+		InStock:     true,
 		Attributes:  map[string]interface{}{"color": "red"},
 	}
 	doc := productToDoc(p)
 	if doc.ID != "p-99" || doc.Name != "Hat" || doc.Slug != "hat" {
 		t.Errorf("doc = %+v", doc)
 	}
+	if doc.CategoryID != "cat-5" {
+		t.Errorf("CategoryID = %q, want cat-5", doc.CategoryID)
+	}
+	if doc.Price != 1999 {
+		t.Errorf("Price = %d, want 1999", doc.Price)
+	}
+	if !doc.InStock {
+		t.Error("InStock = false, want true")
+	}
 	if doc.Attributes["color"] != "red" {
 		t.Errorf("Attributes = %+v, want color=red", doc.Attributes)
+	}
+}
+
+func TestWaitForTask_Failed(t *testing.T) {
+	mock := &mockAPI{taskStatus: "failed"}
+	e := newWithAPI(mock, "products")
+	err := e.waitForTask(context.Background(), 42)
+	if err == nil {
+		t.Fatal("expected error for failed task")
+	}
+	if !strings.Contains(err.Error(), "failed") {
+		t.Errorf("error = %q, want 'failed'", err.Error())
+	}
+}
+
+func TestWaitForTask_Succeeded(t *testing.T) {
+	mock := &mockAPI{taskStatus: "succeeded"}
+	e := newWithAPI(mock, "products")
+	if err := e.waitForTask(context.Background(), 1); err != nil {
+		t.Fatalf("unexpected error: %v", err)
 	}
 }
 

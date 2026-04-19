@@ -259,12 +259,14 @@ func runServe(cfg *config.Config, log logger.Logger) error {
 			return fmt.Errorf("search: init meilisearch: %w", meErr)
 		}
 		searchEngine = me
-	default: // "postgres"
+	case "postgres", "":
 		pgSearch, pgSearchErr := postgres.NewSearchEngine(conn)
 		if pgSearchErr != nil {
 			return pgSearchErr
 		}
 		searchEngine = pgSearch
+	default:
+		return fmt.Errorf("unsupported search.engine: %q", cfg.Search.Engine)
 	}
 
 	// Job queue, worker, mailer, cache — shared setup.
@@ -428,10 +430,20 @@ func runServe(cfg *config.Config, log logger.Logger) error {
 		if !ok {
 			return nil
 		}
+		p, err := productRepo.FindByID(ctx, data.ProductID)
+		if err != nil {
+			return fmt.Errorf("search sync: load product %s: %w", data.ProductID, err)
+		}
+		if p == nil {
+			return nil
+		}
 		return searchEngine.IndexProduct(ctx, search.Product{
-			ID:   data.ProductID,
-			Name: data.Name,
-			Slug: data.Slug,
+			ID:          p.ID,
+			Name:        p.Name,
+			Slug:        p.Slug,
+			Description: p.Description,
+			CreatedAt:   p.CreatedAt,
+			Attributes:  p.Attributes,
 		})
 	})
 	bus.OnAsync(catalog.EventProductUpdated, func(ctx context.Context, evt event.Event) error {
@@ -439,10 +451,20 @@ func runServe(cfg *config.Config, log logger.Logger) error {
 		if !ok {
 			return nil
 		}
+		p, err := productRepo.FindByID(ctx, data.ProductID)
+		if err != nil {
+			return fmt.Errorf("search sync: load product %s: %w", data.ProductID, err)
+		}
+		if p == nil {
+			return nil
+		}
 		return searchEngine.IndexProduct(ctx, search.Product{
-			ID:   data.ProductID,
-			Name: data.Name,
-			Slug: data.Slug,
+			ID:          p.ID,
+			Name:        p.Name,
+			Slug:        p.Slug,
+			Description: p.Description,
+			CreatedAt:   p.CreatedAt,
+			Attributes:  p.Attributes,
 		})
 	})
 
@@ -1855,12 +1877,14 @@ func runSearchReindex(cfg *config.Config, log logger.Logger) error {
 			return fmt.Errorf("search engine: %w", meErr)
 		}
 		searchEngine = me
-	default:
+	case "postgres", "":
 		pgSearch, pgErr := postgres.NewSearchEngine(conn)
 		if pgErr != nil {
 			return fmt.Errorf("search engine: %w", pgErr)
 		}
 		searchEngine = pgSearch
+	default:
+		return fmt.Errorf("unsupported search.engine: %q", cfg.Search.Engine)
 	}
 
 	log.Info("search.reindex.start", map[string]interface{}{
@@ -1925,6 +1949,7 @@ func runSearchReindex(cfg *config.Config, log logger.Logger) error {
 				Name:        p.Name,
 				Slug:        p.Slug,
 				Description: p.Description,
+				CreatedAt:   p.CreatedAt,
 				Attributes:  p.Attributes,
 			}
 			if err := searchEngine.IndexProduct(ctx, sp); err != nil {

@@ -18,6 +18,9 @@ var _ search.SearchEngine = (*Engine)(nil)
 // httpTimeout is used for all Meilisearch HTTP calls.
 const httpTimeout = 10 * time.Second
 
+// taskPollInterval is the delay between task status checks.
+const taskPollInterval = 100 * time.Millisecond
+
 // Config holds the settings needed to connect to a Meilisearch instance.
 type Config struct {
 	Host   string // e.g. "http://localhost:7700"
@@ -25,13 +28,20 @@ type Config struct {
 	Index  string // index UID, e.g. "products"
 }
 
+// taskInfo represents a Meilisearch async task response.
+type taskInfo struct {
+	TaskUID int64  `json:"taskUid"`
+	Status  string `json:"status"`
+}
+
 // meiliAPI is the subset of Meilisearch HTTP operations we use.
 // Extracting this interface makes unit-testing possible without a real server.
 type meiliAPI interface {
-	addDocuments(ctx context.Context, docs []document) error
-	deleteDocument(ctx context.Context, id string) error
+	addDocuments(ctx context.Context, docs []document) (int64, error)
+	deleteDocument(ctx context.Context, id string) (int64, error)
 	search(ctx context.Context, req searchRequest) (searchResponse, error)
-	updateSettings(ctx context.Context, settings indexSettings) error
+	updateSettings(ctx context.Context, settings indexSettings) (int64, error)
+	getTask(ctx context.Context, taskUID int64) (taskInfo, error)
 }
 
 // Engine implements search.SearchEngine backed by Meilisearch.
@@ -61,7 +71,11 @@ func New(cfg Config) (*Engine, error) {
 
 	ctx, cancel := context.WithTimeout(context.Background(), httpTimeout)
 	defer cancel()
-	if err := client.updateSettings(ctx, defaultSettings()); err != nil {
+	taskUID, err := client.updateSettings(ctx, defaultSettings())
+	if err != nil {
+		return nil, fmt.Errorf("meili: configure index %q: %w", cfg.Index, err)
+	}
+	if err := e.waitForTask(ctx, taskUID); err != nil {
 		return nil, fmt.Errorf("meili: configure index %q: %w", cfg.Index, err)
 	}
 
@@ -76,10 +90,31 @@ func newWithAPI(api meiliAPI, index string) *Engine {
 // Name returns "meilisearch".
 func (e *Engine) Name() string { return "meilisearch" }
 
+// waitForTask polls a Meilisearch task until it reaches a terminal state.
+func (e *Engine) waitForTask(ctx context.Context, taskUID int64) error {
+	for {
+		info, err := e.api.getTask(ctx, taskUID)
+		if err != nil {
+			return fmt.Errorf("meili: get task %d: %w", taskUID, err)
+		}
+		switch info.Status {
+		case "succeeded":
+			return nil
+		case "failed":
+			return fmt.Errorf("meili: task %d failed", taskUID)
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(taskPollInterval):
+		}
+	}
+}
+
 // IndexProduct adds or updates a product in the Meilisearch index.
 func (e *Engine) IndexProduct(ctx context.Context, p search.Product) error {
 	doc := productToDoc(p)
-	if err := e.api.addDocuments(ctx, []document{doc}); err != nil {
+	if _, err := e.api.addDocuments(ctx, []document{doc}); err != nil {
 		return fmt.Errorf("meili: index product %s: %w", p.ID, err)
 	}
 	return nil
@@ -87,7 +122,7 @@ func (e *Engine) IndexProduct(ctx context.Context, p search.Product) error {
 
 // RemoveProduct removes a product from the Meilisearch index.
 func (e *Engine) RemoveProduct(ctx context.Context, productID string) error {
-	if err := e.api.deleteDocument(ctx, productID); err != nil {
+	if _, err := e.api.deleteDocument(ctx, productID); err != nil {
 		return fmt.Errorf("meili: remove product %s: %w", productID, err)
 	}
 	return nil
@@ -115,6 +150,10 @@ type document struct {
 	Name        string                 `json:"name"`
 	Description string                 `json:"description"`
 	Slug        string                 `json:"slug"`
+	CategoryID  string                 `json:"category_id,omitempty"`
+	Price       int64                  `json:"price"`
+	InStock     bool                   `json:"in_stock"`
+	CreatedAt   int64                  `json:"created_at"`
 	Attributes  map[string]interface{} `json:"attributes,omitempty"`
 }
 
@@ -124,6 +163,10 @@ func productToDoc(p search.Product) document {
 		Name:        p.Name,
 		Description: p.Description,
 		Slug:        p.Slug,
+		CategoryID:  p.CategoryID,
+		Price:       p.Price,
+		InStock:     p.InStock,
+		CreatedAt:   p.CreatedAt.Unix(),
 		Attributes:  p.Attributes,
 	}
 }
@@ -191,6 +234,10 @@ func mapSearchResponse(resp searchResponse) search.SearchResult {
 				Name:        doc.Name,
 				Slug:        doc.Slug,
 				Description: doc.Description,
+				CategoryID:  doc.CategoryID,
+				Price:       doc.Price,
+				InStock:     doc.InStock,
+				CreatedAt:   time.Unix(doc.CreatedAt, 0).UTC(),
 				Attributes:  doc.Attributes,
 			})
 		}
@@ -239,26 +286,34 @@ type httpClient struct {
 	http   *http.Client
 }
 
-func (c *httpClient) addDocuments(ctx context.Context, docs []document) error {
+func (c *httpClient) addDocuments(ctx context.Context, docs []document) (int64, error) {
 	body, err := json.Marshal(docs)
 	if err != nil {
-		return err
+		return 0, err
 	}
 	url := fmt.Sprintf("%s/indexes/%s/documents", c.base, c.index)
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, strings.NewReader(string(body)))
 	if err != nil {
-		return err
+		return 0, err
 	}
-	return c.doRequest(req, nil)
+	var task taskInfo
+	if err := c.doRequest(req, &task); err != nil {
+		return 0, err
+	}
+	return task.TaskUID, nil
 }
 
-func (c *httpClient) deleteDocument(ctx context.Context, id string) error {
+func (c *httpClient) deleteDocument(ctx context.Context, id string) (int64, error) {
 	url := fmt.Sprintf("%s/indexes/%s/documents/%s", c.base, c.index, id)
 	req, err := http.NewRequestWithContext(ctx, http.MethodDelete, url, nil)
 	if err != nil {
-		return err
+		return 0, err
 	}
-	return c.doRequest(req, nil)
+	var task taskInfo
+	if err := c.doRequest(req, &task); err != nil {
+		return 0, err
+	}
+	return task.TaskUID, nil
 }
 
 func (c *httpClient) search(ctx context.Context, sr searchRequest) (searchResponse, error) {
@@ -278,17 +333,34 @@ func (c *httpClient) search(ctx context.Context, sr searchRequest) (searchRespon
 	return resp, nil
 }
 
-func (c *httpClient) updateSettings(ctx context.Context, settings indexSettings) error {
+func (c *httpClient) updateSettings(ctx context.Context, settings indexSettings) (int64, error) {
 	body, err := json.Marshal(settings)
 	if err != nil {
-		return err
+		return 0, err
 	}
 	url := fmt.Sprintf("%s/indexes/%s/settings", c.base, c.index)
 	req, err := http.NewRequestWithContext(ctx, http.MethodPatch, url, strings.NewReader(string(body)))
 	if err != nil {
-		return err
+		return 0, err
 	}
-	return c.doRequest(req, nil)
+	var task taskInfo
+	if err := c.doRequest(req, &task); err != nil {
+		return 0, err
+	}
+	return task.TaskUID, nil
+}
+
+func (c *httpClient) getTask(ctx context.Context, taskUID int64) (taskInfo, error) {
+	url := fmt.Sprintf("%s/tasks/%d", c.base, taskUID)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return taskInfo{}, err
+	}
+	var info taskInfo
+	if err := c.doRequest(req, &info); err != nil {
+		return taskInfo{}, err
+	}
+	return info, nil
 }
 
 func (c *httpClient) doRequest(req *http.Request, dest interface{}) error {

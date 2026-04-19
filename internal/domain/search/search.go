@@ -3,6 +3,7 @@ package search
 import (
 	"context"
 	"errors"
+	"time"
 )
 
 // maxSearchLimit is the upper bound for results per query.
@@ -56,6 +57,10 @@ type Product struct {
 	Name        string
 	Slug        string
 	Description string
+	CategoryID  string
+	Price       int64 // cents
+	InStock     bool
+	CreatedAt   time.Time
 	Attributes  map[string]interface{}
 }
 
