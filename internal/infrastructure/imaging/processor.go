@@ -47,6 +47,8 @@ func (p *Processor) Resize(input io.Reader, opts domainMedia.ResizeOpts) (io.Rea
 	quality := opts.Quality
 	if quality <= 0 {
 		quality = 80
+	} else if quality > 100 {
+		quality = 100
 	}
 
 	var buf bytes.Buffer
@@ -66,6 +68,8 @@ func (p *Processor) Format(input io.Reader, mime string, quality int) (io.Reader
 
 	if quality <= 0 {
 		quality = 80
+	} else if quality > 100 {
+		quality = 100
 	}
 
 	var buf bytes.Buffer

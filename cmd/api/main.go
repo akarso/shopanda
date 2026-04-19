@@ -583,7 +583,12 @@ func runServe(cfg *config.Config, log logger.Logger) error {
 		mediaService.SetImageProcessor(imaging.New(), presets)
 	}
 	if cfg.Media.WebP.Enabled {
-		mediaService.SetWebPConfig(true, cfg.Media.WebP.Quality)
+		mediaService.SetWebPConfig(cfg.Media.WebP.Enabled, cfg.Media.WebP.Quality)
+		if len(cfg.Media.Thumbnails) == 0 {
+			log.Warn("media.webp.no_thumbnails", map[string]interface{}{
+				"hint": "webp is enabled but no thumbnail presets are configured; webp variants will not be generated",
+			})
+		}
 	}
 	mediaHandler := shophttp.NewMediaHandler(mediaService)
 	schemaHandler := shophttp.NewSchemaHandler(adminRegistry)

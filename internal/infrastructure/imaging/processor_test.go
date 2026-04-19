@@ -198,7 +198,9 @@ func TestFormat_JPEGToWebP(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	buf := new(bytes.Buffer)
-	io.Copy(buf, result)
+	if _, err := io.Copy(buf, result); err != nil {
+		t.Fatalf("read result: %v", err)
+	}
 	if buf.Len() < 4 || string(buf.Bytes()[:4]) != "RIFF" {
 		t.Error("output is not WebP")
 	}
@@ -211,7 +213,9 @@ func TestFormat_PNGToWebP(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	buf := new(bytes.Buffer)
-	io.Copy(buf, result)
+	if _, err := io.Copy(buf, result); err != nil {
+		t.Fatalf("read result: %v", err)
+	}
 	if buf.Len() < 4 || string(buf.Bytes()[:4]) != "RIFF" {
 		t.Error("output is not WebP")
 	}

@@ -68,6 +68,11 @@ func (s *Service) SetImageProcessor(p domainMedia.ImageProcessor, presets []doma
 // SetWebPConfig enables or disables automatic WebP variant generation.
 func (s *Service) SetWebPConfig(enabled bool, quality int) {
 	s.webpEnabled = enabled
+	if quality <= 0 {
+		quality = 80
+	} else if quality > 100 {
+		quality = 100
+	}
 	s.webpQuality = quality
 }
 
@@ -156,7 +161,7 @@ func (s *Service) Upload(ctx context.Context, input UploadInput) (*UploadResult,
 				continue
 			}
 
-			// Buffer resized bytes for potential WebP conversion.
+			// Buffer resized bytes so the reader can be consumed by storage.Save.
 			var resizedBuf bytes.Buffer
 			if _, copyErr := io.Copy(&resizedBuf, resized); copyErr != nil {
 				s.log.Warn("media: thumbnail buffer failed", map[string]interface{}{
@@ -178,12 +183,23 @@ func (s *Service) Upload(ctx context.Context, input UploadInput) (*UploadResult,
 
 			// Generate WebP variant alongside the original-format thumbnail.
 			if webpConvert {
-				webpPath := dir + "/" + preset.Name + "/" + webpFilename(safeFilename)
-				webpData, fmtErr := s.processor.Format(bytes.NewReader(resizedBytes), "image/webp", s.webpQuality)
-				if fmtErr != nil {
+				webpName := webpFilename(safeFilename)
+				if webpName == safeFilename {
+					// Skip — source already has .webp extension; paths would collide.
+					continue
+				}
+				webpPath := dir + "/" + preset.Name + "/" + webpName
+				webpData, webpErr := s.processor.Resize(bytes.NewReader(fileBytes), domainMedia.ResizeOpts{
+					Width:    preset.Width,
+					Height:   preset.Height,
+					Fit:      preset.Fit,
+					Quality:  s.webpQuality,
+					MimeType: "image/webp",
+				})
+				if webpErr != nil {
 					s.log.Warn("media: webp conversion failed", map[string]interface{}{
 						"preset": preset.Name,
-						"error":  fmtErr.Error(),
+						"error":  webpErr.Error(),
 					})
 				} else if saveErr := s.storage.Save(webpPath, webpData); saveErr != nil {
 					s.log.Warn("media: webp save failed", map[string]interface{}{

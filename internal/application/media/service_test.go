@@ -191,14 +191,20 @@ func TestUpload_PersistFails_DeleteAlsoFails(t *testing.T) {
 // --- mock processor ---
 
 type mockProcessor struct {
-	resizeErr error
-	formatErr error
-	called    int
-	formatted int
+	resizeErr   error
+	webpErr     error // returned only when MimeType == "image/webp"
+	formatErr   error
+	called      int
+	formatted   int
+	resizeMimes []string
 }
 
 func (m *mockProcessor) Resize(input io.Reader, opts domainMedia.ResizeOpts) (io.Reader, error) {
 	m.called++
+	m.resizeMimes = append(m.resizeMimes, opts.MimeType)
+	if opts.MimeType == "image/webp" && m.webpErr != nil {
+		return nil, m.webpErr
+	}
 	if m.resizeErr != nil {
 		return nil, m.resizeErr
 	}
@@ -337,8 +343,16 @@ func TestUpload_WithWebP(t *testing.T) {
 	if len(storage.saved) != 3 {
 		t.Errorf("saved files = %d, want 3", len(storage.saved))
 	}
-	if proc.formatted != 1 {
-		t.Errorf("format called %d times, want 1", proc.formatted)
+	// Resize called twice: once for JPEG thumbnail, once for WebP variant.
+	if proc.called != 2 {
+		t.Errorf("resize called %d times, want 2", proc.called)
+	}
+	if proc.formatted != 0 {
+		t.Errorf("format called %d times, want 0", proc.formatted)
+	}
+	// Verify the second Resize targeted WebP.
+	if len(proc.resizeMimes) != 2 || proc.resizeMimes[1] != "image/webp" {
+		t.Errorf("resize mimes = %v, want [..., image/webp]", proc.resizeMimes)
 	}
 	if result.Thumbnails["small"] == "" {
 		t.Error("missing thumbnail URL for 'small'")
@@ -354,7 +368,7 @@ func TestUpload_WithWebP(t *testing.T) {
 func TestUpload_WebPConversionFails(t *testing.T) {
 	storage := &mockStorage{name: "test"}
 	repo := &mockAssetRepo{}
-	proc := &mockProcessor{formatErr: errors.New("webp encode failed")}
+	proc := &mockProcessor{webpErr: errors.New("webp encode failed")}
 	log := &capturingLogger{}
 	bus := event.NewBus(log)
 	svc := NewService(storage, repo, bus, log)
@@ -407,6 +421,9 @@ func TestUpload_WebPDisabled(t *testing.T) {
 	// 1 original + 1 thumbnail, no WebP.
 	if len(storage.saved) != 2 {
 		t.Errorf("saved files = %d, want 2", len(storage.saved))
+	}
+	if proc.called != 1 {
+		t.Errorf("resize called %d times, want 1", proc.called)
 	}
 	if proc.formatted != 0 {
 		t.Errorf("format called %d times, want 0", proc.formatted)

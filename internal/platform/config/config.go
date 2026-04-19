@@ -296,7 +296,7 @@ func defaults() Config {
 				"medium": {Width: 400, Height: 400, Fit: "contain"},
 				"large":  {Width: 800, Height: 800, Fit: "contain"},
 			},
-			WebP: WebPConfig{Enabled: true, Quality: 80},
+			WebP: WebPConfig{Enabled: false, Quality: 80},
 		},
 		Cache: CacheConfig{
 			Driver: "postgres",
