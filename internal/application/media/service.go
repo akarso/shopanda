@@ -26,12 +26,14 @@ var AllowedMimeTypes = map[string]bool{
 
 // Service orchestrates media use cases.
 type Service struct {
-	storage   domainMedia.Storage
-	assets    domainMedia.AssetRepository
-	bus       *event.Bus
-	log       logger.Logger
-	processor domainMedia.ImageProcessor
-	presets   []domainMedia.ThumbnailPreset
+	storage     domainMedia.Storage
+	assets      domainMedia.AssetRepository
+	bus         *event.Bus
+	log         logger.Logger
+	processor   domainMedia.ImageProcessor
+	presets     []domainMedia.ThumbnailPreset
+	webpEnabled bool
+	webpQuality int
 }
 
 // NewService creates a media application service.
@@ -61,6 +63,17 @@ func NewService(
 func (s *Service) SetImageProcessor(p domainMedia.ImageProcessor, presets []domainMedia.ThumbnailPreset) {
 	s.processor = p
 	s.presets = presets
+}
+
+// SetWebPConfig enables or disables automatic WebP variant generation.
+func (s *Service) SetWebPConfig(enabled bool, quality int) {
+	s.webpEnabled = enabled
+	if quality <= 0 {
+		quality = 80
+	} else if quality > 100 {
+		quality = 100
+	}
+	s.webpQuality = quality
 }
 
 // UploadInput holds the parameters for an upload.
@@ -131,6 +144,7 @@ func (s *Service) Upload(ctx context.Context, input UploadInput) (*UploadResult,
 	// Generate thumbnails when a processor is configured.
 	thumbPaths := make(map[string]string)
 	if s.processor != nil && len(s.presets) > 0 {
+		webpConvert := s.webpEnabled && (detected == "image/jpeg" || detected == "image/png")
 		for _, preset := range s.presets {
 			thumbPath := dir + "/" + preset.Name + "/" + safeFilename
 			resized, resizeErr := s.processor.Resize(bytes.NewReader(fileBytes), domainMedia.ResizeOpts{
@@ -146,7 +160,19 @@ func (s *Service) Upload(ctx context.Context, input UploadInput) (*UploadResult,
 				})
 				continue
 			}
-			if saveErr := s.storage.Save(thumbPath, resized); saveErr != nil {
+
+			// Buffer resized bytes so the reader can be consumed by storage.Save.
+			var resizedBuf bytes.Buffer
+			if _, copyErr := io.Copy(&resizedBuf, resized); copyErr != nil {
+				s.log.Warn("media: thumbnail buffer failed", map[string]interface{}{
+					"preset": preset.Name,
+					"error":  copyErr.Error(),
+				})
+				continue
+			}
+			resizedBytes := resizedBuf.Bytes()
+
+			if saveErr := s.storage.Save(thumbPath, bytes.NewReader(resizedBytes)); saveErr != nil {
 				s.log.Warn("media: thumbnail save failed", map[string]interface{}{
 					"preset": preset.Name,
 					"error":  saveErr.Error(),
@@ -154,6 +180,36 @@ func (s *Service) Upload(ctx context.Context, input UploadInput) (*UploadResult,
 				continue
 			}
 			thumbPaths[preset.Name] = thumbPath
+
+			// Generate WebP variant alongside the original-format thumbnail.
+			if webpConvert {
+				webpName := webpFilename(safeFilename)
+				if webpName == safeFilename {
+					// Skip — source already has .webp extension; paths would collide.
+					continue
+				}
+				webpPath := dir + "/" + preset.Name + "/" + webpName
+				webpData, webpErr := s.processor.Resize(bytes.NewReader(fileBytes), domainMedia.ResizeOpts{
+					Width:    preset.Width,
+					Height:   preset.Height,
+					Fit:      preset.Fit,
+					Quality:  s.webpQuality,
+					MimeType: "image/webp",
+				})
+				if webpErr != nil {
+					s.log.Warn("media: webp conversion failed", map[string]interface{}{
+						"preset": preset.Name,
+						"error":  webpErr.Error(),
+					})
+				} else if saveErr := s.storage.Save(webpPath, webpData); saveErr != nil {
+					s.log.Warn("media: webp save failed", map[string]interface{}{
+						"preset": preset.Name,
+						"error":  saveErr.Error(),
+					})
+				} else {
+					thumbPaths[preset.Name+"_webp"] = webpPath
+				}
+			}
 		}
 	}
 
@@ -214,4 +270,13 @@ func (s *Service) Upload(ctx context.Context, input UploadInput) (*UploadResult,
 		URL:        s.storage.URL(asset.Path),
 		Thumbnails: thumbURLs,
 	}, nil
+}
+
+// webpFilename replaces the file extension with .webp.
+func webpFilename(filename string) string {
+	ext := filepath.Ext(filename)
+	if ext == "" {
+		return filename + ".webp"
+	}
+	return filename[:len(filename)-len(ext)] + ".webp"
 }

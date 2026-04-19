@@ -6,6 +6,7 @@ import (
 	"image"
 	"io"
 
+	"github.com/chai2010/webp"
 	"github.com/disintegration/imaging"
 
 	domainMedia "github.com/akarso/shopanda/internal/domain/media"
@@ -27,8 +28,7 @@ func (p *Processor) Resize(input io.Reader, opts domainMedia.ResizeOpts) (io.Rea
 		return nil, fmt.Errorf("imaging: decode: %w", err)
 	}
 
-	format, ok := mimeToFormat(opts.MimeType)
-	if !ok {
+	if !supportedMime(opts.MimeType) {
 		return nil, fmt.Errorf("imaging: unsupported format: %s", opts.MimeType)
 	}
 
@@ -47,29 +47,59 @@ func (p *Processor) Resize(input io.Reader, opts domainMedia.ResizeOpts) (io.Rea
 	quality := opts.Quality
 	if quality <= 0 {
 		quality = 80
+	} else if quality > 100 {
+		quality = 100
 	}
 
 	var buf bytes.Buffer
-	var encOpts []imaging.EncodeOption
-	if format == imaging.JPEG {
-		encOpts = append(encOpts, imaging.JPEGQuality(quality))
-	}
-	if err := imaging.Encode(&buf, resized, format, encOpts...); err != nil {
-		return nil, fmt.Errorf("imaging: encode: %w", err)
+	if err := encodeImage(&buf, resized, opts.MimeType, quality); err != nil {
+		return nil, err
 	}
 
 	return &buf, nil
 }
 
-func mimeToFormat(mime string) (imaging.Format, bool) {
+// Format decodes the image from input and re-encodes it in the target MIME type.
+func (p *Processor) Format(input io.Reader, mime string, quality int) (io.Reader, error) {
+	img, err := imaging.Decode(input, imaging.AutoOrientation(true))
+	if err != nil {
+		return nil, fmt.Errorf("imaging: decode for format: %w", err)
+	}
+
+	if quality <= 0 {
+		quality = 80
+	} else if quality > 100 {
+		quality = 100
+	}
+
+	var buf bytes.Buffer
+	if err := encodeImage(&buf, img, mime, quality); err != nil {
+		return nil, err
+	}
+	return &buf, nil
+}
+
+// encodeImage writes img to w in the format specified by mime.
+func encodeImage(w *bytes.Buffer, img image.Image, mime string, quality int) error {
 	switch mime {
 	case "image/jpeg":
-		return imaging.JPEG, true
+		return imaging.Encode(w, img, imaging.JPEG, imaging.JPEGQuality(quality))
 	case "image/png":
-		return imaging.PNG, true
+		return imaging.Encode(w, img, imaging.PNG)
 	case "image/gif":
-		return imaging.GIF, true
+		return imaging.Encode(w, img, imaging.GIF)
+	case "image/webp":
+		return webp.Encode(w, img, &webp.Options{Quality: float32(quality)})
 	default:
-		return 0, false
+		return fmt.Errorf("imaging: unsupported format: %s", mime)
+	}
+}
+
+func supportedMime(mime string) bool {
+	switch mime {
+	case "image/jpeg", "image/png", "image/gif", "image/webp":
+		return true
+	default:
+		return false
 	}
 }

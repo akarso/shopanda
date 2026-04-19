@@ -19,9 +19,13 @@ type ThumbnailPreset struct {
 	Fit    string // "cover", "contain", "fill"
 }
 
-// ImageProcessor resizes images.
+// ImageProcessor resizes and converts images.
 type ImageProcessor interface {
 	// Resize decodes the image from input, resizes it according to opts,
 	// and returns the re-encoded result.
 	Resize(input io.Reader, opts ResizeOpts) (io.Reader, error)
+
+	// Format decodes the image from input and re-encodes it in the given
+	// MIME type (e.g. "image/webp") at the specified quality (1-100, 0 = default).
+	Format(input io.Reader, mime string, quality int) (io.Reader, error)
 }
