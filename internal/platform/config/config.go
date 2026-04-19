@@ -35,6 +35,7 @@ type Config struct {
 	Webhooks  WebhooksConfig  `yaml:"webhooks"`
 	RateLimit RateLimitConfig `yaml:"rate_limit"`
 	Payment   PaymentConfig   `yaml:"payment"`
+	Search    SearchConfig    `yaml:"search"`
 }
 
 // WebhooksConfig holds per-provider webhook secrets.
@@ -148,6 +149,19 @@ type S3StorageConfig struct {
 	SecretKey string `yaml:"secret_key"`
 	BaseURL   string `yaml:"base_url"`
 	PublicACL bool   `yaml:"public_acl"`
+}
+
+// SearchConfig holds product search settings.
+type SearchConfig struct {
+	Engine      string            `yaml:"engine"`
+	Meilisearch MeilisearchConfig `yaml:"meilisearch"`
+}
+
+// MeilisearchConfig holds Meilisearch connection settings.
+type MeilisearchConfig struct {
+	Host   string `yaml:"host"`
+	APIKey string `yaml:"api_key"`
+	Index  string `yaml:"index"`
 }
 
 type CacheConfig struct {
@@ -310,6 +324,13 @@ func defaults() Config {
 			},
 			WebP: WebPConfig{Enabled: false, Quality: 80},
 		},
+		Search: SearchConfig{
+			Engine: "postgres",
+			Meilisearch: MeilisearchConfig{
+				Host:  "http://localhost:7700",
+				Index: "products",
+			},
+		},
 		Cache: CacheConfig{
 			Driver: "postgres",
 		},
@@ -454,6 +475,18 @@ func applyEnv(cfg *Config) {
 	if v := os.Getenv("SHOPANDA_MEDIA_S3_PUBLIC_ACL"); v != "" {
 		cfg.Media.S3.PublicACL = v == "true" || v == "1"
 	}
+	if v := os.Getenv("SHOPANDA_SEARCH_ENGINE"); v != "" {
+		cfg.Search.Engine = v
+	}
+	if v := os.Getenv("SHOPANDA_SEARCH_MEILI_HOST"); v != "" {
+		cfg.Search.Meilisearch.Host = v
+	}
+	if v := os.Getenv("SHOPANDA_SEARCH_MEILI_KEY"); v != "" {
+		cfg.Search.Meilisearch.APIKey = v
+	}
+	if v := os.Getenv("SHOPANDA_SEARCH_MEILI_INDEX"); v != "" {
+		cfg.Search.Meilisearch.Index = v
+	}
 	if v := os.Getenv("SHOPANDA_CACHE_DRIVER"); v != "" {
 		cfg.Cache.Driver = v
 	}
@@ -548,6 +581,9 @@ func flatten(cfg *Config) map[string]string {
 	m["media.s3.public_acl"] = strconv.FormatBool(cfg.Media.S3.PublicACL)
 	m["media.webp.enabled"] = strconv.FormatBool(cfg.Media.WebP.Enabled)
 	m["media.webp.quality"] = strconv.Itoa(cfg.Media.WebP.Quality)
+	m["search.engine"] = cfg.Search.Engine
+	m["search.meilisearch.host"] = cfg.Search.Meilisearch.Host
+	m["search.meilisearch.index"] = cfg.Search.Meilisearch.Index
 	m["cache.driver"] = cfg.Cache.Driver
 	m["frontend.enabled"] = strconv.FormatBool(cfg.Frontend.Enabled)
 	m["frontend.mode"] = cfg.Frontend.Mode
@@ -600,6 +636,7 @@ func (c *Config) String() string {
 		fmt.Sprintf("log.level=%s log.format=%s", c.Log.Level, c.Log.Format),
 		fmt.Sprintf("auth.jwt_ttl=%s", c.Auth.JWTTTL),
 		fmt.Sprintf("media.storage=%s media.local.base_path=%s media.local.base_url=%s media.s3.bucket=%s media.s3.region=%s", c.Media.Storage, c.Media.Local.BasePath, c.Media.Local.BaseURL, c.Media.S3.Bucket, c.Media.S3.Region),
+		fmt.Sprintf("search.engine=%s", c.Search.Engine),
 		fmt.Sprintf("cache.driver=%s", c.Cache.Driver),
 		fmt.Sprintf("frontend.enabled=%t frontend.mode=%s frontend.theme_path=%s", c.Frontend.Enabled, c.Frontend.Mode, c.Frontend.ThemePath),
 	}, " ")

@@ -28,6 +28,7 @@ import (
 	"github.com/akarso/shopanda/internal/application/rewrite"
 	"github.com/akarso/shopanda/internal/domain/admin"
 	"github.com/akarso/shopanda/internal/domain/cache"
+	"github.com/akarso/shopanda/internal/domain/catalog"
 	"github.com/akarso/shopanda/internal/domain/customer"
 	"github.com/akarso/shopanda/internal/domain/invoice"
 	"github.com/akarso/shopanda/internal/domain/jobs"
@@ -50,6 +51,7 @@ import (
 	"github.com/akarso/shopanda/internal/infrastructure/invoicepdf"
 	"github.com/akarso/shopanda/internal/infrastructure/localfs"
 	"github.com/akarso/shopanda/internal/infrastructure/manualpay"
+	"github.com/akarso/shopanda/internal/infrastructure/meili"
 	"github.com/akarso/shopanda/internal/infrastructure/postgres"
 	"github.com/akarso/shopanda/internal/infrastructure/s3store"
 	smtpmail "github.com/akarso/shopanda/internal/infrastructure/smtp"
@@ -245,9 +247,26 @@ func runServe(cfg *config.Config, log logger.Logger) error {
 	}
 
 	// Search engine.
-	searchEngine, err := postgres.NewSearchEngine(conn)
-	if err != nil {
-		return err
+	var searchEngine search.SearchEngine
+	switch cfg.Search.Engine {
+	case "meilisearch":
+		me, meErr := meili.New(meili.Config{
+			Host:   cfg.Search.Meilisearch.Host,
+			APIKey: cfg.Search.Meilisearch.APIKey,
+			Index:  cfg.Search.Meilisearch.Index,
+		})
+		if meErr != nil {
+			return fmt.Errorf("search: init meilisearch: %w", meErr)
+		}
+		searchEngine = me
+	case "postgres", "":
+		pgSearch, pgSearchErr := postgres.NewSearchEngine(conn)
+		if pgSearchErr != nil {
+			return pgSearchErr
+		}
+		searchEngine = pgSearch
+	default:
+		return fmt.Errorf("unsupported search.engine: %q", cfg.Search.Engine)
 	}
 
 	// Job queue, worker, mailer, cache — shared setup.
@@ -404,6 +423,50 @@ func runServe(cfg *config.Config, log logger.Logger) error {
 	// Wire product/price changes → cache invalidation.
 	cacheInvalidation := cacheApp.NewInvalidationSubscriber(appCache, log)
 	cacheInvalidation.Register(bus)
+
+	// Wire catalog events → search index sync.
+	bus.OnAsync(catalog.EventProductCreated, func(ctx context.Context, evt event.Event) error {
+		data, ok := evt.Data.(catalog.ProductCreatedData)
+		if !ok {
+			return nil
+		}
+		p, err := productRepo.FindByID(ctx, data.ProductID)
+		if err != nil {
+			return fmt.Errorf("search sync: load product %s: %w", data.ProductID, err)
+		}
+		if p == nil {
+			return nil
+		}
+		return searchEngine.IndexProduct(ctx, search.Product{
+			ID:          p.ID,
+			Name:        p.Name,
+			Slug:        p.Slug,
+			Description: p.Description,
+			CreatedAt:   p.CreatedAt,
+			Attributes:  p.Attributes,
+		})
+	})
+	bus.OnAsync(catalog.EventProductUpdated, func(ctx context.Context, evt event.Event) error {
+		data, ok := evt.Data.(catalog.ProductUpdatedData)
+		if !ok {
+			return nil
+		}
+		p, err := productRepo.FindByID(ctx, data.ProductID)
+		if err != nil {
+			return fmt.Errorf("search sync: load product %s: %w", data.ProductID, err)
+		}
+		if p == nil {
+			return nil
+		}
+		return searchEngine.IndexProduct(ctx, search.Product{
+			ID:          p.ID,
+			Name:        p.Name,
+			Slug:        p.Slug,
+			Description: p.Description,
+			CreatedAt:   p.CreatedAt,
+			Attributes:  p.Attributes,
+		})
+	})
 
 	// Plugin registry.
 	registry := plugin.NewRegistry(log)
@@ -1802,9 +1865,26 @@ func runSearchReindex(cfg *config.Config, log logger.Logger) error {
 	}
 	defer conn.Close()
 
-	searchEngine, err := postgres.NewSearchEngine(conn)
-	if err != nil {
-		return fmt.Errorf("search engine: %w", err)
+	var searchEngine search.SearchEngine
+	switch cfg.Search.Engine {
+	case "meilisearch":
+		me, meErr := meili.New(meili.Config{
+			Host:   cfg.Search.Meilisearch.Host,
+			APIKey: cfg.Search.Meilisearch.APIKey,
+			Index:  cfg.Search.Meilisearch.Index,
+		})
+		if meErr != nil {
+			return fmt.Errorf("search engine: %w", meErr)
+		}
+		searchEngine = me
+	case "postgres", "":
+		pgSearch, pgErr := postgres.NewSearchEngine(conn)
+		if pgErr != nil {
+			return fmt.Errorf("search engine: %w", pgErr)
+		}
+		searchEngine = pgSearch
+	default:
+		return fmt.Errorf("unsupported search.engine: %q", cfg.Search.Engine)
 	}
 
 	log.Info("search.reindex.start", map[string]interface{}{
@@ -1869,6 +1949,7 @@ func runSearchReindex(cfg *config.Config, log logger.Logger) error {
 				Name:        p.Name,
 				Slug:        p.Slug,
 				Description: p.Description,
+				CreatedAt:   p.CreatedAt,
 				Attributes:  p.Attributes,
 			}
 			if err := searchEngine.IndexProduct(ctx, sp); err != nil {

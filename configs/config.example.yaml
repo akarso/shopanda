@@ -110,6 +110,18 @@ media:
     enabled: false
     quality: 80
 
+# --- Search -------------------------------------------------------------------
+search:
+  # Engine: "postgres" (default, uses built-in full-text search) or "meilisearch".
+  engine: "postgres"
+
+  # Meilisearch settings (used when engine: "meilisearch").
+  meilisearch:
+    host: "http://localhost:7700"    # Meilisearch server URL
+    # API key: set via SHOPANDA_SEARCH_MEILI_KEY environment variable (recommended).
+    api_key: ""
+    index: "products"                # Meilisearch index UID
+
 # --- Cache --------------------------------------------------------------------
 cache:
   # Driver: postgres (default, uses UNLOGGED table).
