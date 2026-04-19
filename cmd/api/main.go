@@ -285,6 +285,7 @@ func runServe(cfg *config.Config, log logger.Logger) error {
 			AccessKey: cfg.Media.S3.AccessKey,
 			SecretKey: cfg.Media.S3.SecretKey,
 			BaseURL:   cfg.Media.S3.BaseURL,
+			PublicACL: cfg.Media.S3.PublicACL,
 		})
 		if s3Err != nil {
 			return fmt.Errorf("media: init s3 storage: %w", s3Err)

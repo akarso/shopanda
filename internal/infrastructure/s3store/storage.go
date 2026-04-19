@@ -29,6 +29,7 @@ type Config struct {
 	AccessKey string
 	SecretKey string
 	BaseURL   string // Optional CDN / public URL prefix (e.g. "https://cdn.example.com")
+	PublicACL bool   // Set ACL=public-read on PutObject (only for legacy ACL buckets)
 }
 
 // s3API is the subset of the S3 client we actually use—makes unit-testing easy.
@@ -39,9 +40,10 @@ type s3API interface {
 
 // Storage implements media.Storage for S3-compatible backends.
 type Storage struct {
-	client  s3API
-	bucket  string
-	baseURL string
+	client    s3API
+	bucket    string
+	baseURL   string
+	publicACL bool
 }
 
 // New creates an S3 Storage using the given config.
@@ -56,8 +58,12 @@ func New(cfg Config) (*Storage, error) {
 	opts := []func(*s3.Options){
 		func(o *s3.Options) {
 			o.Region = cfg.Region
-			o.Credentials = credentials.NewStaticCredentialsProvider(cfg.AccessKey, cfg.SecretKey, "")
 		},
+	}
+	if cfg.AccessKey != "" && cfg.SecretKey != "" {
+		opts = append(opts, func(o *s3.Options) {
+			o.Credentials = credentials.NewStaticCredentialsProvider(cfg.AccessKey, cfg.SecretKey, "")
+		})
 	}
 	if cfg.Endpoint != "" {
 		opts = append(opts, func(o *s3.Options) {
@@ -78,12 +84,12 @@ func New(cfg Config) (*Storage, error) {
 		baseURL = ep + "/" + cfg.Bucket
 	}
 
-	return &Storage{client: client, bucket: cfg.Bucket, baseURL: baseURL}, nil
+	return &Storage{client: client, bucket: cfg.Bucket, baseURL: baseURL, publicACL: cfg.PublicACL}, nil
 }
 
 // newWithClient is a test-only constructor that accepts a custom s3API.
 func newWithClient(client s3API, bucket, baseURL string) *Storage {
-	return &Storage{client: client, bucket: bucket, baseURL: baseURL}
+	return &Storage{client: client, bucket: bucket, baseURL: strings.TrimRight(baseURL, "/")}
 }
 
 // Name returns "s3".
@@ -91,60 +97,76 @@ func (s *Storage) Name() string { return "s3" }
 
 // Save uploads file to the S3 bucket at the given path.
 func (s *Storage) Save(path string, file io.Reader) error {
+	key, err := validateKey(path)
+	if err != nil {
+		return fmt.Errorf("s3store: invalid key %q: %w", path, err)
+	}
+
 	ctx, cancel := context.WithTimeout(context.Background(), maxTimeout)
 	defer cancel()
 
-	clean := cleanPath(path)
-	contentType := mimeFromPath(clean)
+	contentType := mimeFromPath(key)
 
-	_, err := s.client.PutObject(ctx, &s3.PutObjectInput{
+	input := &s3.PutObjectInput{
 		Bucket:       aws.String(s.bucket),
-		Key:          aws.String(clean),
+		Key:          aws.String(key),
 		Body:         file,
 		ContentType:  aws.String(contentType),
 		CacheControl: aws.String("public, max-age=31536000"),
-		ACL:          s3types.ObjectCannedACLPublicRead,
-	})
-	if err != nil {
-		return fmt.Errorf("s3store: put %q: %w", clean, err)
+	}
+	if s.publicACL {
+		input.ACL = s3types.ObjectCannedACLPublicRead
+	}
+
+	if _, err := s.client.PutObject(ctx, input); err != nil {
+		return fmt.Errorf("s3store: put %q: %w", key, err)
 	}
 	return nil
 }
 
 // Delete removes the object at the given path from the bucket.
 func (s *Storage) Delete(path string) error {
+	key, err := validateKey(path)
+	if err != nil {
+		return fmt.Errorf("s3store: invalid key %q: %w", path, err)
+	}
+
 	ctx, cancel := context.WithTimeout(context.Background(), maxTimeout)
 	defer cancel()
 
-	clean := cleanPath(path)
-	_, err := s.client.DeleteObject(ctx, &s3.DeleteObjectInput{
+	if _, err := s.client.DeleteObject(ctx, &s3.DeleteObjectInput{
 		Bucket: aws.String(s.bucket),
-		Key:    aws.String(clean),
-	})
-	if err != nil {
-		return fmt.Errorf("s3store: delete %q: %w", clean, err)
+		Key:    aws.String(key),
+	}); err != nil {
+		return fmt.Errorf("s3store: delete %q: %w", key, err)
 	}
 	return nil
 }
 
 // URL returns the public URL for the given storage-relative path.
+// The path is expected to be a validated key (as returned by Save).
 func (s *Storage) URL(path string) string {
-	return s.baseURL + "/" + cleanPath(path)
+	return s.baseURL + "/" + strings.TrimLeft(path, "/")
 }
 
-// cleanPath normalises a storage-relative path: strips leading slash, collapses ".." segments.
-func cleanPath(p string) string {
+// validateKey checks that a storage key is safe and returns the normalised key.
+// It rejects paths containing "..", ".", empty segments, or that resolve to an
+// empty string.
+func validateKey(p string) (string, error) {
 	p = strings.TrimLeft(p, "/")
-	// Remove any ".." segments to prevent path traversal in keys.
-	parts := strings.Split(p, "/")
-	clean := make([]string, 0, len(parts))
-	for _, seg := range parts {
-		if seg == ".." || seg == "." || seg == "" {
-			continue
-		}
-		clean = append(clean, seg)
+	if p == "" {
+		return "", fmt.Errorf("empty key")
 	}
-	return strings.Join(clean, "/")
+	parts := strings.Split(p, "/")
+	for _, seg := range parts {
+		if seg == "" {
+			return "", fmt.Errorf("empty segment")
+		}
+		if seg == "." || seg == ".." {
+			return "", fmt.Errorf("traversal segment %q", seg)
+		}
+	}
+	return p, nil
 }
 
 // mimeFromPath returns a Content-Type guess based on file extension.

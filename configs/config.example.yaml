@@ -84,9 +84,17 @@ media:
     endpoint: ""                                    # e.g. "https://s3.amazonaws.com" or MinIO URL
     bucket: ""                                      # e.g. "shopanda-media"
     region: ""                                      # e.g. "eu-west-1"
-    access_key: ${SHOPANDA_MEDIA_S3_ACCESS_KEY}
-    secret_key: ${SHOPANDA_MEDIA_S3_SECRET_KEY}
+    # Credentials: set via environment variables (recommended) or fill in below.
+    #   SHOPANDA_MEDIA_S3_ACCESS_KEY
+    #   SHOPANDA_MEDIA_S3_SECRET_KEY
+    # When both are empty the AWS SDK default credential chain is used
+    # (instance role, shared credentials file, etc.).
+    access_key: ""
+    secret_key: ""
     base_url: ""                                    # optional CDN URL, e.g. "https://cdn.example.com"
+    # Set to true only if your bucket uses the legacy ACL model.
+    # Leave false (default) for buckets with "Bucket owner enforced" (ACLs disabled).
+    public_acl: false
 
   # Thumbnail presets generated on upload (requires image processor).
   thumbnails:

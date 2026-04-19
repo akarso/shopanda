@@ -147,6 +147,7 @@ type S3StorageConfig struct {
 	AccessKey string `yaml:"access_key"`
 	SecretKey string `yaml:"secret_key"`
 	BaseURL   string `yaml:"base_url"`
+	PublicACL bool   `yaml:"public_acl"`
 }
 
 type CacheConfig struct {
@@ -450,6 +451,9 @@ func applyEnv(cfg *Config) {
 	if v := os.Getenv("SHOPANDA_MEDIA_S3_BASE_URL"); v != "" {
 		cfg.Media.S3.BaseURL = v
 	}
+	if v := os.Getenv("SHOPANDA_MEDIA_S3_PUBLIC_ACL"); v != "" {
+		cfg.Media.S3.PublicACL = v == "true" || v == "1"
+	}
 	if v := os.Getenv("SHOPANDA_CACHE_DRIVER"); v != "" {
 		cfg.Cache.Driver = v
 	}
@@ -541,6 +545,7 @@ func flatten(cfg *Config) map[string]string {
 	m["media.s3.bucket"] = cfg.Media.S3.Bucket
 	m["media.s3.region"] = cfg.Media.S3.Region
 	m["media.s3.base_url"] = cfg.Media.S3.BaseURL
+	m["media.s3.public_acl"] = strconv.FormatBool(cfg.Media.S3.PublicACL)
 	m["media.webp.enabled"] = strconv.FormatBool(cfg.Media.WebP.Enabled)
 	m["media.webp.quality"] = strconv.Itoa(cfg.Media.WebP.Quality)
 	m["cache.driver"] = cfg.Cache.Driver

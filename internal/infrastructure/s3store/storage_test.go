@@ -24,6 +24,7 @@ type mockS3 struct {
 	putKeys   []string
 	putCT     []string // Content-Type per call
 	putCC     []string // Cache-Control per call
+	putACL    []string // ACL per call (empty string when omitted)
 	deleted   []string
 }
 
@@ -46,6 +47,7 @@ func (m *mockS3) PutObject(_ context.Context, in *s3.PutObjectInput, _ ...func(*
 		cc = *in.CacheControl
 	}
 	m.putCC = append(m.putCC, cc)
+	m.putACL = append(m.putACL, string(in.ACL))
 	// Drain body.
 	if in.Body != nil {
 		io.Copy(io.Discard, in.Body)
@@ -144,30 +146,81 @@ func TestURL(t *testing.T) {
 func TestURL_TrailingSlashStripped(t *testing.T) {
 	st := newWithClient(&mockS3{}, "bucket", "https://cdn.example.com/")
 
-	// baseURL trailing slash is stripped by New(); test the manual constructor path.
-	st.baseURL = "https://cdn.example.com"
 	url := st.URL("test.png")
 	if url != "https://cdn.example.com/test.png" {
 		t.Errorf("URL = %q, want https://cdn.example.com/test.png", url)
 	}
 }
 
-func TestCleanPath_Traversal(t *testing.T) {
-	cases := []struct {
-		input string
-		want  string
-	}{
-		{"../../etc/passwd", "etc/passwd"},
-		{"/uploads/../secret", "uploads/secret"},
-		{"normal/path/file.jpg", "normal/path/file.jpg"},
-		{"/leading/slash.png", "leading/slash.png"},
-		{"double//slash.gif", "double/slash.gif"},
-	}
-	for _, tc := range cases {
-		got := cleanPath(tc.input)
-		if got != tc.want {
-			t.Errorf("cleanPath(%q) = %q, want %q", tc.input, got, tc.want)
+func TestValidateKey(t *testing.T) {
+	t.Run("valid keys", func(t *testing.T) {
+		cases := []struct {
+			input string
+			want  string
+		}{
+			{"normal/path/file.jpg", "normal/path/file.jpg"},
+			{"/leading/slash.png", "leading/slash.png"},
+			{"file.jpg", "file.jpg"},
 		}
+		for _, tc := range cases {
+			got, err := validateKey(tc.input)
+			if err != nil {
+				t.Errorf("validateKey(%q) unexpected error: %v", tc.input, err)
+				continue
+			}
+			if got != tc.want {
+				t.Errorf("validateKey(%q) = %q, want %q", tc.input, got, tc.want)
+			}
+		}
+	})
+
+	t.Run("rejected keys", func(t *testing.T) {
+		cases := []string{
+			"../../etc/passwd",
+			"/uploads/../secret",
+			"./relative",
+			"double//slash.gif",
+			"",
+			"trailing/",
+		}
+		for _, input := range cases {
+			_, err := validateKey(input)
+			if err == nil {
+				t.Errorf("validateKey(%q) expected error, got nil", input)
+			}
+		}
+	})
+}
+
+func TestSave_InvalidKey(t *testing.T) {
+	mock := &mockS3{}
+	st := newWithClient(mock, "bucket", "https://cdn.example.com")
+
+	err := st.Save("../../etc/passwd", strings.NewReader("data"))
+	if err == nil {
+		t.Fatal("expected error for traversal key")
+	}
+	if !strings.Contains(err.Error(), "invalid key") {
+		t.Errorf("error = %q, want mention of 'invalid key'", err.Error())
+	}
+	if len(mock.putKeys) != 0 {
+		t.Errorf("S3 client should not have been called, got putKeys=%v", mock.putKeys)
+	}
+}
+
+func TestDelete_InvalidKey(t *testing.T) {
+	mock := &mockS3{}
+	st := newWithClient(mock, "bucket", "https://cdn.example.com")
+
+	err := st.Delete("../secret.txt")
+	if err == nil {
+		t.Fatal("expected error for traversal key")
+	}
+	if !strings.Contains(err.Error(), "invalid key") {
+		t.Errorf("error = %q, want mention of 'invalid key'", err.Error())
+	}
+	if len(mock.deleted) != 0 {
+		t.Errorf("S3 client should not have been called, got deleted=%v", mock.deleted)
 	}
 }
 
@@ -277,5 +330,30 @@ func TestNew_ExplicitBaseURL(t *testing.T) {
 	url := st.URL("uploads/photo.jpg")
 	if url != "https://cdn.shop.com/uploads/photo.jpg" {
 		t.Errorf("URL = %q, want https://cdn.shop.com/uploads/photo.jpg", url)
+	}
+}
+
+func TestSave_NoACLByDefault(t *testing.T) {
+	mock := &mockS3{}
+	st := newWithClient(mock, "bucket", "https://cdn.example.com")
+
+	if err := st.Save("photo.jpg", strings.NewReader("data")); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if mock.putACL[0] != "" {
+		t.Errorf("ACL = %q, want empty (omitted)", mock.putACL[0])
+	}
+}
+
+func TestSave_PublicACL(t *testing.T) {
+	mock := &mockS3{}
+	st := newWithClient(mock, "bucket", "https://cdn.example.com")
+	st.publicACL = true
+
+	if err := st.Save("photo.jpg", strings.NewReader("data")); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if mock.putACL[0] != "public-read" {
+		t.Errorf("ACL = %q, want public-read", mock.putACL[0])
 	}
 }
