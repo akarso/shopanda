@@ -10,13 +10,14 @@ import (
 
 // Zone represents a geographic shipping zone with associated rate tiers.
 type Zone struct {
-	ID        string
-	Name      string
-	Countries []string // ISO 3166-1 alpha-2 codes
-	Priority  int      // higher priority wins on overlap
-	Active    bool
-	CreatedAt time.Time
-	UpdatedAt time.Time
+	ID                    string
+	Name                  string
+	Countries             []string // ISO 3166-1 alpha-2 codes
+	Priority              int      // higher priority wins on overlap
+	Active                bool
+	FreeShippingThreshold shared.Money // 0 amount = disabled
+	CreatedAt             time.Time
+	UpdatedAt             time.Time
 }
 
 // NewZone creates a new active shipping zone.

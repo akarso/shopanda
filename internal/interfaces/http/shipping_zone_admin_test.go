@@ -647,3 +647,130 @@ func TestShippingZoneAdmin_DeleteRate_RejectsMismatchedZone(t *testing.T) {
 		t.Fatalf("status = %d, want %d; body: %s", rec.Code, http.StatusNotFound, rec.Body.String())
 	}
 }
+
+// ── Free Shipping Threshold ─────────────────────────────────────────────
+
+func TestShippingZoneAdmin_CreateZone_WithThreshold(t *testing.T) {
+	repo := &mockZoneRepo{}
+	mux := zoneAdminSetup(repo)
+
+	body := `{"name":"EU","countries":["DE"],"priority":5,"free_shipping_threshold":5000,"free_shipping_currency":"EUR"}`
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("POST", "/api/v1/admin/shipping/zones", strings.NewReader(body))
+	mux.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("status = %d, want %d; body: %s", rec.Code, http.StatusCreated, rec.Body.String())
+	}
+
+	resp := zoneParseJSON(t, rec)
+	data := resp["data"].(map[string]interface{})
+	zone := data["zone"].(map[string]interface{})
+	if int64(zone["free_shipping_threshold"].(float64)) != 5000 {
+		t.Errorf("free_shipping_threshold = %v, want 5000", zone["free_shipping_threshold"])
+	}
+	if zone["free_shipping_currency"] != "EUR" {
+		t.Errorf("free_shipping_currency = %v, want EUR", zone["free_shipping_currency"])
+	}
+}
+
+func TestShippingZoneAdmin_CreateZone_ThresholdDefaultCurrency(t *testing.T) {
+	repo := &mockZoneRepo{}
+	mux := zoneAdminSetup(repo)
+
+	body := `{"name":"EU","countries":["DE"],"priority":5,"free_shipping_threshold":3000}`
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("POST", "/api/v1/admin/shipping/zones", strings.NewReader(body))
+	mux.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("status = %d, want %d; body: %s", rec.Code, http.StatusCreated, rec.Body.String())
+	}
+
+	resp := zoneParseJSON(t, rec)
+	data := resp["data"].(map[string]interface{})
+	zone := data["zone"].(map[string]interface{})
+	if zone["free_shipping_currency"] != "EUR" {
+		t.Errorf("free_shipping_currency = %v, want EUR (default)", zone["free_shipping_currency"])
+	}
+}
+
+func TestShippingZoneAdmin_CreateZone_NoThreshold(t *testing.T) {
+	repo := &mockZoneRepo{}
+	mux := zoneAdminSetup(repo)
+
+	body := `{"name":"EU","countries":["DE"],"priority":5}`
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("POST", "/api/v1/admin/shipping/zones", strings.NewReader(body))
+	mux.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("status = %d, want %d; body: %s", rec.Code, http.StatusCreated, rec.Body.String())
+	}
+
+	resp := zoneParseJSON(t, rec)
+	data := resp["data"].(map[string]interface{})
+	zone := data["zone"].(map[string]interface{})
+	if int64(zone["free_shipping_threshold"].(float64)) != 0 {
+		t.Errorf("free_shipping_threshold = %v, want 0", zone["free_shipping_threshold"])
+	}
+}
+
+func TestShippingZoneAdmin_UpdateZone_SetThreshold(t *testing.T) {
+	z := seedZone()
+	repo := &mockZoneRepo{
+		findZoneByIDFn: func(_ context.Context, id string) (*shipping.Zone, error) {
+			if id == "zone-1" {
+				return z, nil
+			}
+			return nil, nil
+		},
+	}
+	mux := zoneAdminSetup(repo)
+
+	body := `{"free_shipping_threshold":5000,"free_shipping_currency":"EUR"}`
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("PUT", "/api/v1/admin/shipping/zones/zone-1", strings.NewReader(body))
+	mux.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d; body: %s", rec.Code, http.StatusOK, rec.Body.String())
+	}
+
+	resp := zoneParseJSON(t, rec)
+	data := resp["data"].(map[string]interface{})
+	zone := data["zone"].(map[string]interface{})
+	if int64(zone["free_shipping_threshold"].(float64)) != 5000 {
+		t.Errorf("free_shipping_threshold = %v, want 5000", zone["free_shipping_threshold"])
+	}
+}
+
+func TestShippingZoneAdmin_UpdateZone_ClearThreshold(t *testing.T) {
+	z := seedZone()
+	z.FreeShippingThreshold = shared.MustNewMoney(5000, "EUR")
+	repo := &mockZoneRepo{
+		findZoneByIDFn: func(_ context.Context, id string) (*shipping.Zone, error) {
+			if id == "zone-1" {
+				return z, nil
+			}
+			return nil, nil
+		},
+	}
+	mux := zoneAdminSetup(repo)
+
+	body := `{"free_shipping_threshold":0}`
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("PUT", "/api/v1/admin/shipping/zones/zone-1", strings.NewReader(body))
+	mux.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d; body: %s", rec.Code, http.StatusOK, rec.Body.String())
+	}
+
+	resp := zoneParseJSON(t, rec)
+	data := resp["data"].(map[string]interface{})
+	zone := data["zone"].(map[string]interface{})
+	if int64(zone["free_shipping_threshold"].(float64)) != 0 {
+		t.Errorf("free_shipping_threshold = %v, want 0", zone["free_shipping_threshold"])
+	}
+}

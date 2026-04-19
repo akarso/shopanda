@@ -5,6 +5,8 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+
+	"github.com/akarso/shopanda/internal/domain/shared"
 )
 
 // RateRequestItem describes a single line item for rate calculation.
@@ -18,6 +20,7 @@ type RateRequest struct {
 	Country  string            // ISO 3166-1 alpha-2
 	Currency string            // ISO 4217
 	Items    []RateRequestItem // cart line items
+	Subtotal shared.Money      // cart subtotal for free shipping check
 }
 
 // ZoneRateCalculator resolves shipping zones and matches weight-based tiers.
@@ -34,13 +37,15 @@ func NewZoneRateCalculator(zones ZoneRepository) (*ZoneRateCalculator, error) {
 }
 
 // CalculateRate resolves the zone for the given country, sums item weights,
-// finds the matching rate tier, and returns a ShippingRate.
-func (c *ZoneRateCalculator) CalculateRate(ctx context.Context, req RateRequest) (ShippingRate, error) {
+// finds the matching rate tier, and returns shipping rates.
+// When the zone has a free shipping threshold and the subtotal meets it,
+// a free shipping rate is included alongside the paid rate.
+func (c *ZoneRateCalculator) CalculateRate(ctx context.Context, req RateRequest) ([]ShippingRate, error) {
 	if req.Country == "" {
-		return ShippingRate{}, errors.New("shipping: country is required")
+		return nil, errors.New("shipping: country is required")
 	}
 	if req.Currency == "" {
-		return ShippingRate{}, errors.New("shipping: currency is required")
+		return nil, errors.New("shipping: currency is required")
 	}
 
 	country := strings.ToUpper(req.Country)
@@ -48,35 +53,58 @@ func (c *ZoneRateCalculator) CalculateRate(ctx context.Context, req RateRequest)
 
 	zones, err := c.zones.ListZones(ctx)
 	if err != nil {
-		return ShippingRate{}, fmt.Errorf("shipping: list zones: %w", err)
+		return nil, fmt.Errorf("shipping: list zones: %w", err)
 	}
 
 	zone := resolveZone(zones, country)
 	if zone == nil {
-		return ShippingRate{}, fmt.Errorf("shipping: no zone available for country %s", country)
+		return nil, fmt.Errorf("shipping: no zone available for country %s", country)
 	}
 
 	totalWeight := sumWeights(req.Items)
 
 	tiers, err := c.zones.ListRateTiers(ctx, zone.ID)
 	if err != nil {
-		return ShippingRate{}, fmt.Errorf("shipping: list rate tiers: %w", err)
+		return nil, fmt.Errorf("shipping: list rate tiers: %w", err)
 	}
 
 	tier := matchTier(tiers, totalWeight)
 	if tier == nil {
-		return ShippingRate{}, fmt.Errorf("shipping: no rate tier for weight %.2f", totalWeight)
+		return nil, fmt.Errorf("shipping: no rate tier for weight %.2f", totalWeight)
 	}
 
 	if !strings.EqualFold(tier.Price.Currency(), currency) {
-		return ShippingRate{}, fmt.Errorf("shipping: rate currency %s does not match requested %s", tier.Price.Currency(), currency)
+		return nil, fmt.Errorf("shipping: rate currency %s does not match requested %s", tier.Price.Currency(), currency)
 	}
 
-	return ShippingRate{
+	rates := []ShippingRate{{
 		ProviderRef: "zone:" + zone.ID + ":tier:" + tier.ID,
 		Cost:        tier.Price,
 		Label:       zone.Name + " Shipping",
-	}, nil
+	}}
+
+	if qualifiesForFreeShipping(zone, req.Subtotal, currency) {
+		freeRate := ShippingRate{
+			ProviderRef: "zone:" + zone.ID + ":free",
+			Cost:        shared.MustZero(currency),
+			Label:       fmt.Sprintf("Free shipping (orders over %d %s)", zone.FreeShippingThreshold.Amount(), zone.FreeShippingThreshold.Currency()),
+		}
+		rates = append(rates, freeRate)
+	}
+
+	return rates, nil
+}
+
+// qualifiesForFreeShipping returns true when the zone has a positive threshold
+// and the subtotal meets or exceeds it in the same currency.
+func qualifiesForFreeShipping(zone *Zone, subtotal shared.Money, currency string) bool {
+	if zone.FreeShippingThreshold.Amount() <= 0 {
+		return false
+	}
+	if !strings.EqualFold(zone.FreeShippingThreshold.Currency(), currency) {
+		return false
+	}
+	return subtotal.Amount() >= zone.FreeShippingThreshold.Amount()
 }
 
 // resolveZone finds the highest-priority active zone whose countries include

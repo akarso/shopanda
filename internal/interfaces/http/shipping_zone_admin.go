@@ -27,37 +27,45 @@ func NewShippingZoneAdminHandler(zones shipping.ZoneRepository) *ShippingZoneAdm
 // --- Zone request / response types ---
 
 type createZoneRequest struct {
-	Name      string   `json:"name"`
-	Countries []string `json:"countries"`
-	Priority  int      `json:"priority"`
+	Name                  string   `json:"name"`
+	Countries             []string `json:"countries"`
+	Priority              int      `json:"priority"`
+	FreeShippingThreshold *int64   `json:"free_shipping_threshold"`
+	FreeShippingCurrency  string   `json:"free_shipping_currency"`
 }
 
 type updateZoneRequest struct {
-	Name      *string  `json:"name"`
-	Countries []string `json:"countries"`
-	Priority  *int     `json:"priority"`
-	Active    *bool    `json:"active"`
+	Name                  *string  `json:"name"`
+	Countries             []string `json:"countries"`
+	Priority              *int     `json:"priority"`
+	Active                *bool    `json:"active"`
+	FreeShippingThreshold *int64   `json:"free_shipping_threshold"`
+	FreeShippingCurrency  *string  `json:"free_shipping_currency"`
 }
 
 type adminZoneResponse struct {
-	ID        string   `json:"id"`
-	Name      string   `json:"name"`
-	Countries []string `json:"countries"`
-	Priority  int      `json:"priority"`
-	Active    bool     `json:"active"`
-	CreatedAt string   `json:"created_at"`
-	UpdatedAt string   `json:"updated_at"`
+	ID                    string   `json:"id"`
+	Name                  string   `json:"name"`
+	Countries             []string `json:"countries"`
+	Priority              int      `json:"priority"`
+	Active                bool     `json:"active"`
+	FreeShippingThreshold int64    `json:"free_shipping_threshold"`
+	FreeShippingCurrency  string   `json:"free_shipping_currency"`
+	CreatedAt             string   `json:"created_at"`
+	UpdatedAt             string   `json:"updated_at"`
 }
 
 func toAdminZoneResponse(z *shipping.Zone) adminZoneResponse {
 	return adminZoneResponse{
-		ID:        z.ID,
-		Name:      z.Name,
-		Countries: z.Countries,
-		Priority:  z.Priority,
-		Active:    z.Active,
-		CreatedAt: z.CreatedAt.UTC().Format(time.RFC3339),
-		UpdatedAt: z.UpdatedAt.UTC().Format(time.RFC3339),
+		ID:                    z.ID,
+		Name:                  z.Name,
+		Countries:             z.Countries,
+		Priority:              z.Priority,
+		Active:                z.Active,
+		FreeShippingThreshold: z.FreeShippingThreshold.Amount(),
+		FreeShippingCurrency:  z.FreeShippingThreshold.Currency(),
+		CreatedAt:             z.CreatedAt.UTC().Format(time.RFC3339),
+		UpdatedAt:             z.UpdatedAt.UTC().Format(time.RFC3339),
 	}
 }
 
@@ -134,6 +142,19 @@ func (h *ShippingZoneAdminHandler) CreateZone() http.HandlerFunc {
 			return
 		}
 
+		if req.FreeShippingThreshold != nil && *req.FreeShippingThreshold > 0 {
+			cur := req.FreeShippingCurrency
+			if cur == "" {
+				cur = "EUR"
+			}
+			m, err := shared.NewMoney(*req.FreeShippingThreshold, cur)
+			if err != nil {
+				JSONError(w, apperror.Validation(err.Error()))
+				return
+			}
+			zone.FreeShippingThreshold = m
+		}
+
 		if err := h.zones.CreateZone(r.Context(), &zone); err != nil {
 			JSONError(w, err)
 			return
@@ -195,6 +216,33 @@ func (h *ShippingZoneAdminHandler) UpdateZone() http.HandlerFunc {
 		}
 		if req.Active != nil {
 			zone.Active = *req.Active
+		}
+
+		if req.FreeShippingThreshold != nil {
+			if *req.FreeShippingThreshold == 0 {
+				zone.FreeShippingThreshold = shared.Money{}
+			} else {
+				cur := zone.FreeShippingThreshold.Currency()
+				if req.FreeShippingCurrency != nil {
+					cur = *req.FreeShippingCurrency
+				}
+				if cur == "" {
+					cur = "EUR"
+				}
+				m, err := shared.NewMoney(*req.FreeShippingThreshold, cur)
+				if err != nil {
+					JSONError(w, apperror.Validation(err.Error()))
+					return
+				}
+				zone.FreeShippingThreshold = m
+			}
+		} else if req.FreeShippingCurrency != nil && zone.FreeShippingThreshold.Amount() > 0 {
+			m, err := shared.NewMoney(zone.FreeShippingThreshold.Amount(), *req.FreeShippingCurrency)
+			if err != nil {
+				JSONError(w, apperror.Validation(err.Error()))
+				return
+			}
+			zone.FreeShippingThreshold = m
 		}
 
 		zone.UpdatedAt = time.Now().UTC()

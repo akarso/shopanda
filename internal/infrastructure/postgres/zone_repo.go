@@ -32,7 +32,7 @@ func NewZoneRepo(db *sql.DB) (*ZoneRepo, error) {
 
 // ListZones returns all shipping zones ordered by priority descending.
 func (r *ZoneRepo) ListZones(ctx context.Context) ([]shipping.Zone, error) {
-	const q = `SELECT id, name, countries, priority, active, created_at, updated_at
+	const q = `SELECT id, name, countries, priority, active, free_shipping_threshold, free_shipping_currency, created_at, updated_at
 		FROM shipping_zones ORDER BY priority DESC, name ASC`
 	rows, err := r.db.QueryContext(ctx, q)
 	if err != nil {
@@ -43,9 +43,18 @@ func (r *ZoneRepo) ListZones(ctx context.Context) ([]shipping.Zone, error) {
 	var zones []shipping.Zone
 	for rows.Next() {
 		var z shipping.Zone
+		var thresholdAmount int64
+		var thresholdCurrency string
 		if err := rows.Scan(&z.ID, &z.Name, pq.Array(&z.Countries),
-			&z.Priority, &z.Active, &z.CreatedAt, &z.UpdatedAt); err != nil {
+			&z.Priority, &z.Active, &thresholdAmount, &thresholdCurrency, &z.CreatedAt, &z.UpdatedAt); err != nil {
 			return nil, fmt.Errorf("zone_repo: list scan: %w", err)
+		}
+		if thresholdAmount > 0 && thresholdCurrency != "" {
+			m, err := shared.NewMoney(thresholdAmount, thresholdCurrency)
+			if err != nil {
+				return nil, fmt.Errorf("zone_repo: threshold money: %w", err)
+			}
+			z.FreeShippingThreshold = m
 		}
 		zones = append(zones, z)
 	}
@@ -60,16 +69,25 @@ func (r *ZoneRepo) FindZoneByID(ctx context.Context, id string) (*shipping.Zone,
 	if id == "" {
 		return nil, fmt.Errorf("zone_repo: find: empty id")
 	}
-	const q = `SELECT id, name, countries, priority, active, created_at, updated_at
+	const q = `SELECT id, name, countries, priority, active, free_shipping_threshold, free_shipping_currency, created_at, updated_at
 		FROM shipping_zones WHERE id = $1`
 	var z shipping.Zone
+	var thresholdAmount int64
+	var thresholdCurrency string
 	err := r.db.QueryRowContext(ctx, q, id).Scan(&z.ID, &z.Name,
-		pq.Array(&z.Countries), &z.Priority, &z.Active, &z.CreatedAt, &z.UpdatedAt)
+		pq.Array(&z.Countries), &z.Priority, &z.Active, &thresholdAmount, &thresholdCurrency, &z.CreatedAt, &z.UpdatedAt)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
 	}
 	if err != nil {
 		return nil, fmt.Errorf("zone_repo: find by id: %w", err)
+	}
+	if thresholdAmount > 0 && thresholdCurrency != "" {
+		m, err := shared.NewMoney(thresholdAmount, thresholdCurrency)
+		if err != nil {
+			return nil, fmt.Errorf("zone_repo: threshold money: %w", err)
+		}
+		z.FreeShippingThreshold = m
 	}
 	return &z, nil
 }
@@ -79,10 +97,11 @@ func (r *ZoneRepo) CreateZone(ctx context.Context, z *shipping.Zone) error {
 	if z == nil {
 		return fmt.Errorf("zone_repo: create: zone must not be nil")
 	}
-	const q = `INSERT INTO shipping_zones (id, name, countries, priority, active, created_at, updated_at)
-		VALUES ($1, $2, $3, $4, $5, $6, $7)`
+	const q = `INSERT INTO shipping_zones (id, name, countries, priority, active, free_shipping_threshold, free_shipping_currency, created_at, updated_at)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`
 	_, err := r.db.ExecContext(ctx, q, z.ID, z.Name, pq.Array(z.Countries),
-		z.Priority, z.Active, z.CreatedAt, z.UpdatedAt)
+		z.Priority, z.Active, z.FreeShippingThreshold.Amount(), z.FreeShippingThreshold.Currency(),
+		z.CreatedAt, z.UpdatedAt)
 	if err != nil {
 		var pqErr *pq.Error
 		if errors.As(err, &pqErr) && pqErr.Code == "23505" {
@@ -98,10 +117,12 @@ func (r *ZoneRepo) UpdateZone(ctx context.Context, z *shipping.Zone) error {
 	if z == nil {
 		return fmt.Errorf("zone_repo: update: zone must not be nil")
 	}
-	const q = `UPDATE shipping_zones SET name = $1, countries = $2, priority = $3, active = $4, updated_at = $5
-		WHERE id = $6`
+	const q = `UPDATE shipping_zones SET name = $1, countries = $2, priority = $3, active = $4,
+		free_shipping_threshold = $5, free_shipping_currency = $6, updated_at = $7
+		WHERE id = $8`
 	result, err := r.db.ExecContext(ctx, q, z.Name, pq.Array(z.Countries),
-		z.Priority, z.Active, z.UpdatedAt, z.ID)
+		z.Priority, z.Active, z.FreeShippingThreshold.Amount(), z.FreeShippingThreshold.Currency(),
+		z.UpdatedAt, z.ID)
 	if err != nil {
 		return fmt.Errorf("zone_repo: update: %w", err)
 	}

@@ -89,7 +89,7 @@ func TestZoneRateCalculator_HappyPath(t *testing.T) {
 	}
 	calc := mustCalc(t, repo)
 
-	rate, err := calc.CalculateRate(context.Background(), shipping.RateRequest{
+	rates, err := calc.CalculateRate(context.Background(), shipping.RateRequest{
 		Country:  "DE",
 		Currency: "EUR",
 		Items: []shipping.RateRequestItem{
@@ -99,11 +99,14 @@ func TestZoneRateCalculator_HappyPath(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CalculateRate: %v", err)
 	}
-	if rate.Cost.Amount() != 500 {
-		t.Errorf("cost = %d, want 500", rate.Cost.Amount())
+	if len(rates) != 1 {
+		t.Fatalf("rates count = %d, want 1", len(rates))
 	}
-	if rate.Label != "Domestic Shipping" {
-		t.Errorf("label = %q, want 'Domestic Shipping'", rate.Label)
+	if rates[0].Cost.Amount() != 500 {
+		t.Errorf("cost = %d, want 500", rates[0].Cost.Amount())
+	}
+	if rates[0].Label != "Domestic Shipping" {
+		t.Errorf("label = %q, want 'Domestic Shipping'", rates[0].Label)
 	}
 }
 
@@ -123,7 +126,7 @@ func TestZoneRateCalculator_HigherWeightTier(t *testing.T) {
 	}
 	calc := mustCalc(t, repo)
 
-	rate, err := calc.CalculateRate(context.Background(), shipping.RateRequest{
+	rates, err := calc.CalculateRate(context.Background(), shipping.RateRequest{
 		Country:  "DE",
 		Currency: "EUR",
 		Items: []shipping.RateRequestItem{
@@ -133,8 +136,11 @@ func TestZoneRateCalculator_HigherWeightTier(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CalculateRate: %v", err)
 	}
-	if rate.Cost.Amount() != 800 {
-		t.Errorf("cost = %d, want 800", rate.Cost.Amount())
+	if len(rates) != 1 {
+		t.Fatalf("rates count = %d, want 1", len(rates))
+	}
+	if rates[0].Cost.Amount() != 800 {
+		t.Errorf("cost = %d, want 800", rates[0].Cost.Amount())
 	}
 }
 
@@ -153,7 +159,7 @@ func TestZoneRateCalculator_UnlimitedMaxWeight(t *testing.T) {
 	}
 	calc := mustCalc(t, repo)
 
-	rate, err := calc.CalculateRate(context.Background(), shipping.RateRequest{
+	rates, err := calc.CalculateRate(context.Background(), shipping.RateRequest{
 		Country:  "FR",
 		Currency: "EUR",
 		Items: []shipping.RateRequestItem{
@@ -163,8 +169,11 @@ func TestZoneRateCalculator_UnlimitedMaxWeight(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CalculateRate: %v", err)
 	}
-	if rate.Cost.Amount() != 1200 {
-		t.Errorf("cost = %d, want 1200", rate.Cost.Amount())
+	if len(rates) != 1 {
+		t.Fatalf("rates count = %d, want 1", len(rates))
+	}
+	if rates[0].Cost.Amount() != 1200 {
+		t.Errorf("cost = %d, want 1200", rates[0].Cost.Amount())
 	}
 }
 
@@ -189,7 +198,7 @@ func TestZoneRateCalculator_MultiZonePriority(t *testing.T) {
 	}
 	calc := mustCalc(t, repo)
 
-	rate, err := calc.CalculateRate(context.Background(), shipping.RateRequest{
+	rates, err := calc.CalculateRate(context.Background(), shipping.RateRequest{
 		Country:  "DE",
 		Currency: "EUR",
 		Items:    []shipping.RateRequestItem{{Weight: 1.0, Quantity: 1}},
@@ -198,8 +207,8 @@ func TestZoneRateCalculator_MultiZonePriority(t *testing.T) {
 		t.Fatalf("CalculateRate: %v", err)
 	}
 	// Domestic zone wins (priority 10 > 5)
-	if rate.Cost.Amount() != 300 {
-		t.Errorf("cost = %d, want 300 (domestic zone)", rate.Cost.Amount())
+	if rates[0].Cost.Amount() != 300 {
+		t.Errorf("cost = %d, want 300 (domestic zone)", rates[0].Cost.Amount())
 	}
 }
 
@@ -219,7 +228,7 @@ func TestZoneRateCalculator_InactiveZoneSkipped(t *testing.T) {
 	}
 	calc := mustCalc(t, repo)
 
-	rate, err := calc.CalculateRate(context.Background(), shipping.RateRequest{
+	rates, err := calc.CalculateRate(context.Background(), shipping.RateRequest{
 		Country:  "DE",
 		Currency: "EUR",
 		Items:    []shipping.RateRequestItem{{Weight: 1.0, Quantity: 1}},
@@ -228,8 +237,8 @@ func TestZoneRateCalculator_InactiveZoneSkipped(t *testing.T) {
 		t.Fatalf("CalculateRate: %v", err)
 	}
 	// Active zone picked despite lower priority; inactive skipped
-	if rate.Label != "Active Shipping" {
-		t.Errorf("label = %q, want 'Active Shipping'", rate.Label)
+	if rates[0].Label != "Active Shipping" {
+		t.Errorf("label = %q, want 'Active Shipping'", rates[0].Label)
 	}
 }
 
@@ -293,7 +302,7 @@ func TestZoneRateCalculator_EmptyItems(t *testing.T) {
 	}
 	calc := mustCalc(t, repo)
 
-	rate, err := calc.CalculateRate(context.Background(), shipping.RateRequest{
+	rates, err := calc.CalculateRate(context.Background(), shipping.RateRequest{
 		Country:  "DE",
 		Currency: "EUR",
 		Items:    nil, // empty cart → weight 0
@@ -301,8 +310,8 @@ func TestZoneRateCalculator_EmptyItems(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CalculateRate: %v", err)
 	}
-	if rate.Cost.Amount() != 500 {
-		t.Errorf("cost = %d, want 500", rate.Cost.Amount())
+	if rates[0].Cost.Amount() != 500 {
+		t.Errorf("cost = %d, want 500", rates[0].Cost.Amount())
 	}
 }
 
@@ -367,7 +376,7 @@ func TestZoneRateCalculator_MostSpecificTier(t *testing.T) {
 	}
 	calc := mustCalc(t, repo)
 
-	rate, err := calc.CalculateRate(context.Background(), shipping.RateRequest{
+	rates, err := calc.CalculateRate(context.Background(), shipping.RateRequest{
 		Country:  "DE",
 		Currency: "EUR",
 		Items:    []shipping.RateRequestItem{{Weight: 7.0, Quantity: 1}}, // 7 kg
@@ -376,8 +385,8 @@ func TestZoneRateCalculator_MostSpecificTier(t *testing.T) {
 		t.Fatalf("CalculateRate: %v", err)
 	}
 	// Both tiers match (t1: min=0, t2: min=5), but t2 is more specific (higher min)
-	if rate.Cost.Amount() != 800 {
-		t.Errorf("cost = %d, want 800 (most specific tier)", rate.Cost.Amount())
+	if rates[0].Cost.Amount() != 800 {
+		t.Errorf("cost = %d, want 800 (most specific tier)", rates[0].Cost.Amount())
 	}
 }
 
@@ -403,7 +412,7 @@ func TestZoneRateCalculator_MixedCaseCountryAndCurrency(t *testing.T) {
 	}
 	calc := mustCalc(t, repo)
 
-	rate, err := calc.CalculateRate(context.Background(), shipping.RateRequest{
+	rates, err := calc.CalculateRate(context.Background(), shipping.RateRequest{
 		Country:  "de",  // lowercase
 		Currency: "eur", // lowercase
 		Items:    []shipping.RateRequestItem{{Weight: 1.0, Quantity: 1}},
@@ -411,7 +420,202 @@ func TestZoneRateCalculator_MixedCaseCountryAndCurrency(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CalculateRate with mixed case: %v", err)
 	}
-	if rate.Cost.Amount() != 500 {
-		t.Errorf("cost = %d, want 500", rate.Cost.Amount())
+	if rates[0].Cost.Amount() != 500 {
+		t.Errorf("cost = %d, want 500", rates[0].Cost.Amount())
+	}
+}
+
+// --- Free shipping threshold tests ---
+
+func mustZoneWithThreshold(t *testing.T, id, name string, countries []string, priority int, active bool, thresholdAmount int64, thresholdCurrency string) shipping.Zone {
+	t.Helper()
+	z := mustZone(t, id, name, countries, priority, active)
+	z.FreeShippingThreshold = shared.MustNewMoney(thresholdAmount, thresholdCurrency)
+	return z
+}
+
+func TestZoneRateCalculator_FreeShipping_ThresholdMet(t *testing.T) {
+	repo := &mockZoneRepo{
+		listZonesFn: func(_ context.Context) ([]shipping.Zone, error) {
+			return []shipping.Zone{
+				mustZoneWithThreshold(t, "z1", "EU", []string{"DE"}, 10, true, 5000, "EUR"),
+			}, nil
+		},
+		listRateTiersFn: func(_ context.Context, _ string) ([]shipping.RateTier, error) {
+			return []shipping.RateTier{
+				mustTier(t, "t1", "z1", 0, 0, 500),
+			}, nil
+		},
+	}
+	calc := mustCalc(t, repo)
+
+	rates, err := calc.CalculateRate(context.Background(), shipping.RateRequest{
+		Country:  "DE",
+		Currency: "EUR",
+		Items:    []shipping.RateRequestItem{{Weight: 1.0, Quantity: 1}},
+		Subtotal: shared.MustNewMoney(6000, "EUR"), // 60 EUR >= 50 EUR threshold
+	})
+	if err != nil {
+		t.Fatalf("CalculateRate: %v", err)
+	}
+	if len(rates) != 2 {
+		t.Fatalf("rates count = %d, want 2", len(rates))
+	}
+	if rates[0].Cost.Amount() != 500 {
+		t.Errorf("paid rate cost = %d, want 500", rates[0].Cost.Amount())
+	}
+	if rates[1].Cost.Amount() != 0 {
+		t.Errorf("free rate cost = %d, want 0", rates[1].Cost.Amount())
+	}
+	if rates[1].ProviderRef != "zone:z1:free" {
+		t.Errorf("free rate provider_ref = %q, want zone:z1:free", rates[1].ProviderRef)
+	}
+}
+
+func TestZoneRateCalculator_FreeShipping_ExactThreshold(t *testing.T) {
+	repo := &mockZoneRepo{
+		listZonesFn: func(_ context.Context) ([]shipping.Zone, error) {
+			return []shipping.Zone{
+				mustZoneWithThreshold(t, "z1", "EU", []string{"DE"}, 10, true, 5000, "EUR"),
+			}, nil
+		},
+		listRateTiersFn: func(_ context.Context, _ string) ([]shipping.RateTier, error) {
+			return []shipping.RateTier{
+				mustTier(t, "t1", "z1", 0, 0, 500),
+			}, nil
+		},
+	}
+	calc := mustCalc(t, repo)
+
+	rates, err := calc.CalculateRate(context.Background(), shipping.RateRequest{
+		Country:  "DE",
+		Currency: "EUR",
+		Items:    []shipping.RateRequestItem{{Weight: 1.0, Quantity: 1}},
+		Subtotal: shared.MustNewMoney(5000, "EUR"), // exactly at threshold
+	})
+	if err != nil {
+		t.Fatalf("CalculateRate: %v", err)
+	}
+	if len(rates) != 2 {
+		t.Fatalf("rates count = %d, want 2 (exact threshold qualifies)", len(rates))
+	}
+}
+
+func TestZoneRateCalculator_FreeShipping_BelowThreshold(t *testing.T) {
+	repo := &mockZoneRepo{
+		listZonesFn: func(_ context.Context) ([]shipping.Zone, error) {
+			return []shipping.Zone{
+				mustZoneWithThreshold(t, "z1", "EU", []string{"DE"}, 10, true, 5000, "EUR"),
+			}, nil
+		},
+		listRateTiersFn: func(_ context.Context, _ string) ([]shipping.RateTier, error) {
+			return []shipping.RateTier{
+				mustTier(t, "t1", "z1", 0, 0, 500),
+			}, nil
+		},
+	}
+	calc := mustCalc(t, repo)
+
+	rates, err := calc.CalculateRate(context.Background(), shipping.RateRequest{
+		Country:  "DE",
+		Currency: "EUR",
+		Items:    []shipping.RateRequestItem{{Weight: 1.0, Quantity: 1}},
+		Subtotal: shared.MustNewMoney(4999, "EUR"), // just below threshold
+	})
+	if err != nil {
+		t.Fatalf("CalculateRate: %v", err)
+	}
+	if len(rates) != 1 {
+		t.Fatalf("rates count = %d, want 1 (below threshold)", len(rates))
+	}
+}
+
+func TestZoneRateCalculator_FreeShipping_Disabled(t *testing.T) {
+	repo := &mockZoneRepo{
+		listZonesFn: func(_ context.Context) ([]shipping.Zone, error) {
+			return []shipping.Zone{
+				mustZone(t, "z1", "EU", []string{"DE"}, 10, true),
+			}, nil
+		},
+		listRateTiersFn: func(_ context.Context, _ string) ([]shipping.RateTier, error) {
+			return []shipping.RateTier{
+				mustTier(t, "t1", "z1", 0, 0, 500),
+			}, nil
+		},
+	}
+	calc := mustCalc(t, repo)
+
+	rates, err := calc.CalculateRate(context.Background(), shipping.RateRequest{
+		Country:  "DE",
+		Currency: "EUR",
+		Items:    []shipping.RateRequestItem{{Weight: 1.0, Quantity: 1}},
+		Subtotal: shared.MustNewMoney(99999, "EUR"),
+	})
+	if err != nil {
+		t.Fatalf("CalculateRate: %v", err)
+	}
+	if len(rates) != 1 {
+		t.Fatalf("rates count = %d, want 1 (threshold disabled)", len(rates))
+	}
+}
+
+func TestZoneRateCalculator_FreeShipping_CurrencyMismatch(t *testing.T) {
+	repo := &mockZoneRepo{
+		listZonesFn: func(_ context.Context) ([]shipping.Zone, error) {
+			z := mustZoneWithThreshold(t, "z1", "EU", []string{"DE"}, 10, true, 5000, "EUR")
+			return []shipping.Zone{z}, nil
+		},
+		listRateTiersFn: func(_ context.Context, _ string) ([]shipping.RateTier, error) {
+			price := shared.MustNewMoney(500, "USD")
+			rt, _ := shipping.NewRateTier("t1", "z1", 0, 0, price)
+			return []shipping.RateTier{rt}, nil
+		},
+	}
+	calc := mustCalc(t, repo)
+
+	rates, err := calc.CalculateRate(context.Background(), shipping.RateRequest{
+		Country:  "DE",
+		Currency: "USD",
+		Items:    []shipping.RateRequestItem{{Weight: 1.0, Quantity: 1}},
+		Subtotal: shared.MustNewMoney(10000, "USD"),
+	})
+	if err != nil {
+		t.Fatalf("CalculateRate: %v", err)
+	}
+	if len(rates) != 1 {
+		t.Fatalf("rates count = %d, want 1 (threshold currency mismatch)", len(rates))
+	}
+}
+
+func TestZoneRateCalculator_FreeShipping_LabelFormat(t *testing.T) {
+	repo := &mockZoneRepo{
+		listZonesFn: func(_ context.Context) ([]shipping.Zone, error) {
+			return []shipping.Zone{
+				mustZoneWithThreshold(t, "z1", "EU", []string{"DE"}, 10, true, 5000, "EUR"),
+			}, nil
+		},
+		listRateTiersFn: func(_ context.Context, _ string) ([]shipping.RateTier, error) {
+			return []shipping.RateTier{
+				mustTier(t, "t1", "z1", 0, 0, 500),
+			}, nil
+		},
+	}
+	calc := mustCalc(t, repo)
+
+	rates, err := calc.CalculateRate(context.Background(), shipping.RateRequest{
+		Country:  "DE",
+		Currency: "EUR",
+		Items:    []shipping.RateRequestItem{{Weight: 1.0, Quantity: 1}},
+		Subtotal: shared.MustNewMoney(5000, "EUR"),
+	})
+	if err != nil {
+		t.Fatalf("CalculateRate: %v", err)
+	}
+	if len(rates) < 2 {
+		t.Fatalf("rates count = %d, want >= 2", len(rates))
+	}
+	want := "Free shipping (orders over 5000 EUR)"
+	if rates[1].Label != want {
+		t.Errorf("label = %q, want %q", rates[1].Label, want)
 	}
 }
