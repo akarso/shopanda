@@ -1,0 +1,1 @@
+ALTER TABLE assets ADD COLUMN thumbnails JSONB NOT NULL DEFAULT '{}';

@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"sort"
 	"strings"
 	"syscall"
 	"time"
@@ -45,6 +46,7 @@ import (
 	"github.com/akarso/shopanda/internal/infrastructure/cron"
 
 	"github.com/akarso/shopanda/internal/infrastructure/flatrate"
+	"github.com/akarso/shopanda/internal/infrastructure/imaging"
 	"github.com/akarso/shopanda/internal/infrastructure/invoicepdf"
 	"github.com/akarso/shopanda/internal/infrastructure/localfs"
 	"github.com/akarso/shopanda/internal/infrastructure/manualpay"
@@ -562,6 +564,24 @@ func runServe(cfg *config.Config, log logger.Logger) error {
 	categoryHandler := shophttp.NewCategoryHandler(categoryRepo, productRepo)
 	searchHandler := shophttp.NewSearchHandler(searchEngine)
 	mediaService := mediaApp.NewService(mediaStorage, assetRepo, bus, log)
+	if thumbCfg := cfg.Media.Thumbnails; len(thumbCfg) > 0 {
+		names := make([]string, 0, len(thumbCfg))
+		for name := range thumbCfg {
+			names = append(names, name)
+		}
+		sort.Strings(names)
+		presets := make([]media.ThumbnailPreset, 0, len(names))
+		for _, name := range names {
+			tc := thumbCfg[name]
+			presets = append(presets, media.ThumbnailPreset{
+				Name:   name,
+				Width:  tc.Width,
+				Height: tc.Height,
+				Fit:    tc.Fit,
+			})
+		}
+		mediaService.SetImageProcessor(imaging.New(), presets)
+	}
 	mediaHandler := shophttp.NewMediaHandler(mediaService)
 	schemaHandler := shophttp.NewSchemaHandler(adminRegistry)
 	pageHandler := shophttp.NewPageHandler(pageRepo, contentTranslator)

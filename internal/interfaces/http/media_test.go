@@ -3,6 +3,7 @@ package http
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"io"
 	"mime/multipart"
 	"net/http"
@@ -108,5 +109,68 @@ func TestMediaHandler_Upload_TooLarge(t *testing.T) {
 
 	if rec.Code != http.StatusUnprocessableEntity {
 		t.Errorf("status = %d, want %d; body = %s", rec.Code, http.StatusUnprocessableEntity, rec.Body.String())
+	}
+}
+
+// --- mock processor for handler tests ---
+
+type hMockProcessor struct{}
+
+func (hMockProcessor) Resize(_ io.Reader, _ domainMedia.ResizeOpts) (io.Reader, error) {
+	return bytes.NewReader([]byte("thumb")), nil
+}
+
+func newTestMediaServiceWithThumbnails() *mediaApp.Service {
+	bus := event.NewBus(hMockLogger{})
+	svc := mediaApp.NewService(hMockStorage{}, hMockAssetRepo{}, bus, hMockLogger{})
+	svc.SetImageProcessor(hMockProcessor{}, []domainMedia.ThumbnailPreset{
+		{Name: "small", Width: 150, Height: 150, Fit: "cover"},
+		{Name: "medium", Width: 400, Height: 400, Fit: "contain"},
+	})
+	return svc
+}
+
+func TestMediaHandler_Upload_WithThumbnails(t *testing.T) {
+	handler := NewMediaHandler(newTestMediaServiceWithThumbnails())
+
+	jpegHeader := []byte{0xFF, 0xD8, 0xFF, 0xE0, 0x00, 0x10, 0x4A, 0x46, 0x49, 0x46, 0x00}
+
+	var body bytes.Buffer
+	writer := multipart.NewWriter(&body)
+	h := make(textproto.MIMEHeader)
+	h.Set("Content-Disposition", `form-data; name="file"; filename="photo.jpg"`)
+	h.Set("Content-Type", "image/jpeg")
+	part, err := writer.CreatePart(h)
+	if err != nil {
+		t.Fatal(err)
+	}
+	part.Write(jpegHeader)
+	writer.Close()
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/admin/media/upload", &body)
+	req.Header.Set("Content-Type", writer.FormDataContentType())
+	rec := httptest.NewRecorder()
+
+	handler.Upload().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("status = %d, want %d; body = %s", rec.Code, http.StatusCreated, rec.Body.String())
+	}
+
+	var envelope struct {
+		Data assetResponse `json:"data"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &envelope); err != nil {
+		t.Fatalf("unmarshal response: %v", err)
+	}
+	resp := envelope.Data
+	if len(resp.Thumbnails) != 2 {
+		t.Fatalf("thumbnails = %d, want 2", len(resp.Thumbnails))
+	}
+	if resp.Thumbnails["small"] == "" {
+		t.Error("missing thumbnail URL for 'small'")
+	}
+	if resp.Thumbnails["medium"] == "" {
+		t.Error("missing thumbnail URL for 'medium'")
 	}
 }

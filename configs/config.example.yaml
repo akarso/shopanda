@@ -78,6 +78,12 @@ media:
     # URL path for serving media files.
     base_url: "/media"
 
+  # Thumbnail presets generated on upload (requires image processor).
+  thumbnails:
+    small:  { width: 150, height: 150, fit: "cover" }
+    medium: { width: 400, height: 400, fit: "contain" }
+    large:  { width: 800, height: 800, fit: "contain" }
+
 # --- Cache --------------------------------------------------------------------
 cache:
   # Driver: postgres (default, uses UNLOGGED table).

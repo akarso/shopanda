@@ -187,3 +187,119 @@ func TestUpload_PersistFails_DeleteAlsoFails(t *testing.T) {
 		t.Errorf("logged error = %q, want %q", log.errors[0], "media: rollback delete failed")
 	}
 }
+
+// --- mock processor ---
+
+type mockProcessor struct {
+	resizeErr error
+	called    int
+}
+
+func (m *mockProcessor) Resize(input io.Reader, opts domainMedia.ResizeOpts) (io.Reader, error) {
+	m.called++
+	if m.resizeErr != nil {
+		return nil, m.resizeErr
+	}
+	// Drain input and return a tiny placeholder.
+	io.Copy(io.Discard, input)
+	return bytes.NewReader([]byte("thumb")), nil
+}
+
+// --- thumbnail tests ---
+
+func TestUpload_WithThumbnails(t *testing.T) {
+	storage := &mockStorage{name: "test"}
+	repo := &mockAssetRepo{}
+	proc := &mockProcessor{}
+	bus := event.NewBus(mockLogger{})
+	svc := NewService(storage, repo, bus, mockLogger{})
+	svc.SetImageProcessor(proc, []domainMedia.ThumbnailPreset{
+		{Name: "small", Width: 150, Height: 150, Fit: "cover"},
+		{Name: "large", Width: 800, Height: 800, Fit: "contain"},
+	})
+
+	result, err := svc.Upload(context.Background(), UploadInput{
+		Filename: "photo.jpg",
+		File:     bytes.NewReader(jpegHeader),
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if proc.called != 2 {
+		t.Errorf("processor called %d times, want 2", proc.called)
+	}
+	// 1 original + 2 thumbnails = 3 saved files.
+	if len(storage.saved) != 3 {
+		t.Errorf("saved files = %d, want 3", len(storage.saved))
+	}
+	if len(result.Thumbnails) != 2 {
+		t.Errorf("thumbnail URLs = %d, want 2", len(result.Thumbnails))
+	}
+	if result.Thumbnails["small"] == "" {
+		t.Error("missing thumbnail URL for 'small'")
+	}
+	if result.Thumbnails["large"] == "" {
+		t.Error("missing thumbnail URL for 'large'")
+	}
+	// Asset should contain thumbnail paths (not URLs).
+	if len(result.Asset.Thumbnails) != 2 {
+		t.Errorf("asset thumbnails = %d, want 2", len(result.Asset.Thumbnails))
+	}
+}
+
+func TestUpload_ThumbnailResizeFails(t *testing.T) {
+	storage := &mockStorage{name: "test"}
+	repo := &mockAssetRepo{}
+	proc := &mockProcessor{resizeErr: errors.New("decode error")}
+	log := &capturingLogger{}
+	bus := event.NewBus(log)
+	svc := NewService(storage, repo, bus, log)
+	svc.SetImageProcessor(proc, []domainMedia.ThumbnailPreset{
+		{Name: "small", Width: 150, Height: 150, Fit: "cover"},
+	})
+
+	result, err := svc.Upload(context.Background(), UploadInput{
+		Filename: "photo.jpg",
+		File:     bytes.NewReader(jpegHeader),
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	// Upload succeeds even if thumbnails fail.
+	if result.Asset.ID == "" {
+		t.Error("asset ID is empty")
+	}
+	// Only 1 saved file (original); thumbnail was not saved.
+	if len(storage.saved) != 1 {
+		t.Errorf("saved files = %d, want 1", len(storage.saved))
+	}
+	if len(result.Thumbnails) != 0 {
+		t.Errorf("thumbnail URLs = %d, want 0", len(result.Thumbnails))
+	}
+	if len(log.warns) == 0 {
+		t.Error("expected warning log for failed thumbnail")
+	}
+}
+
+func TestUpload_NoProcessor(t *testing.T) {
+	storage := &mockStorage{name: "test"}
+	repo := &mockAssetRepo{}
+	bus := event.NewBus(mockLogger{})
+	svc := NewService(storage, repo, bus, mockLogger{})
+	// No SetImageProcessor call.
+
+	result, err := svc.Upload(context.Background(), UploadInput{
+		Filename: "photo.jpg",
+		File:     bytes.NewReader(jpegHeader),
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(result.Thumbnails) != 0 {
+		t.Errorf("thumbnail URLs = %d, want 0 (no processor)", len(result.Thumbnails))
+	}
+	// Only original saved.
+	if len(storage.saved) != 1 {
+		t.Errorf("saved files = %d, want 1", len(storage.saved))
+	}
+}
