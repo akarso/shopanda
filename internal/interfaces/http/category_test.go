@@ -194,8 +194,8 @@ func TestCategoryHandler_Tree_RepoError(t *testing.T) {
 	}
 	defer resp.Body.Close()
 
-	if resp.StatusCode == http.StatusOK {
-		t.Fatal("expected error status, got 200")
+	if resp.StatusCode != http.StatusInternalServerError {
+		t.Fatalf("status = %d, want 500", resp.StatusCode)
 	}
 }
 
@@ -267,6 +267,9 @@ func TestCategoryHandler_Products_OK(t *testing.T) {
 	}
 	prods := &mockCatProductRepo{
 		findByCategoryIDFn: func(_ context.Context, catID string, offset, limit int) ([]catalog.Product, error) {
+			if catID != "cat-1" {
+				t.Fatalf("expected catID %q, got %q", "cat-1", catID)
+			}
 			return []catalog.Product{
 				{ID: "p-1", Name: "Go Book", Slug: "go-book"},
 			}, nil
@@ -336,5 +339,17 @@ func TestCategoryHandler_Tree_Empty(t *testing.T) {
 
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("status = %d, want 200", resp.StatusCode)
+	}
+
+	var envelope struct {
+		Data struct {
+			Categories []json.RawMessage `json:"categories"`
+		} `json:"data"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&envelope); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if len(envelope.Data.Categories) != 0 {
+		t.Fatalf("categories count = %d, want 0", len(envelope.Data.Categories))
 	}
 }

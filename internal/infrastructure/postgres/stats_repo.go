@@ -36,10 +36,10 @@ func (r *StatsRepo) GetDashboardStats(ctx context.Context, lowStockThreshold, re
 
 	var stats admin.DashboardStats
 
-	// 1. Orders today + revenue today.
+	// 1. Orders today + revenue today (only revenue-bearing statuses).
 	todayStart := time.Now().UTC().Truncate(24 * time.Hour)
 	const orderQ = `SELECT COALESCE(COUNT(*), 0), COALESCE(SUM(total_amount), 0), COALESCE(MIN(total_currency), '')
-		FROM orders WHERE created_at >= $1`
+		FROM orders WHERE created_at >= $1 AND status IN ('confirmed', 'paid')`
 	if err := r.db.QueryRowContext(ctx, orderQ, todayStart).Scan(
 		&stats.OrdersToday, &stats.RevenueToday, &stats.Currency,
 	); err != nil {
