@@ -100,3 +100,45 @@
 .admin-layout[data-auth="false"] .admin-content {
     max-width: 100%;
 }
+
+/* Dashboard stat cards */
+.stats-cards {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+    gap: 1rem;
+    margin-bottom: 1.5rem;
+}
+
+.stat-card {
+    text-align: center;
+    margin: 0;
+    padding: 1rem;
+}
+
+.stat-card header {
+    font-size: 0.85rem;
+    opacity: 0.7;
+    margin-bottom: 0.3rem;
+}
+
+.stat-card p {
+    font-size: 1.5rem;
+    font-weight: 700;
+    margin: 0;
+}
+
+/* Order status badges */
+.badge {
+    display: inline-block;
+    padding: 0.15em 0.5em;
+    border-radius: 4px;
+    font-size: 0.8rem;
+    font-weight: 600;
+    text-transform: capitalize;
+}
+
+.badge-pending   { background: #fef3cd; color: #856404; }
+.badge-confirmed { background: #d1ecf1; color: #0c5460; }
+.badge-paid      { background: #d4edda; color: #155724; }
+.badge-cancelled { background: #f8d7da; color: #721c24; }
+.badge-failed    { background: #f5c6cb; color: #721c24; }

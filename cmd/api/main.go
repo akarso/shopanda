@@ -209,6 +209,10 @@ func runServe(cfg *config.Config, log logger.Logger) error {
 	if err != nil {
 		return err
 	}
+	statsRepo, err := postgres.NewStatsRepo(conn)
+	if err != nil {
+		return err
+	}
 	paymentRepo, err := postgres.NewPaymentRepo(conn)
 	if err != nil {
 		return err
@@ -607,6 +611,7 @@ func runServe(cfg *config.Config, log logger.Logger) error {
 	cartHandler := shophttp.NewCartHandler(cartService)
 	orderHandler := shophttp.NewOrderHandler(orderRepo)
 	orderAdmin := shophttp.NewOrderAdminHandler(orderRepo)
+	statsAdmin := shophttp.NewStatsAdminHandler(statsRepo)
 	authHandler := shophttp.NewAuthHandler(authService)
 	webhookVerifier := webhook.NewHMACVerifier(cfg.Webhooks.Secrets)
 	paymentWebhook := shophttp.NewPaymentWebhookHandler(paymentRepo, bus, webhookVerifier)
@@ -757,6 +762,7 @@ func runServe(cfg *config.Config, log logger.Logger) error {
 	router.Handle("PUT /api/v1/admin/products/{id}", requireProductsWrite(productAdmin.Update()))
 	router.Handle("POST /api/v1/admin/products/{id}/variants", requireProductsWrite(variantHandler.Create()))
 	router.Handle("PUT /api/v1/admin/products/{id}/variants/{variantId}", requireProductsWrite(variantHandler.Update()))
+	router.Handle("GET /api/v1/admin/stats/overview", requireOrdersRead(statsAdmin.Overview()))
 	router.Handle("GET /api/v1/admin/orders", requireOrdersRead(orderAdmin.List()))
 	router.Handle("GET /api/v1/admin/orders/{orderId}", requireOrdersRead(orderAdmin.Get()))
 	if refundHandler != nil {
