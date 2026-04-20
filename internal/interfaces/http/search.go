@@ -3,6 +3,7 @@ package http
 import (
 	"net/http"
 	"strconv"
+	"strings"
 
 	"github.com/akarso/shopanda/internal/domain/search"
 	"github.com/akarso/shopanda/internal/platform/apperror"
@@ -69,7 +70,7 @@ func (h *SearchHandler) Suggest() http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		q := r.URL.Query()
 
-		prefix := q.Get("q")
+		prefix := strings.TrimSpace(q.Get("q"))
 		if prefix == "" {
 			JSON(w, http.StatusOK, map[string]interface{}{"suggestions": []interface{}{}})
 			return
@@ -78,9 +79,15 @@ func (h *SearchHandler) Suggest() http.HandlerFunc {
 		limit := search.DefaultSuggestLimit
 		if v := q.Get("limit"); v != "" {
 			n, err := strconv.Atoi(v)
-			if err != nil || n < 1 {
+			if err != nil {
 				JSONError(w, apperror.Validation("limit must be a positive integer"))
 				return
+			}
+			if n < 1 {
+				n = 1
+			}
+			if n > search.MaxSuggestLimit {
+				n = search.MaxSuggestLimit
 			}
 			limit = n
 		}

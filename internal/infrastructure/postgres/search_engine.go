@@ -72,8 +72,9 @@ func (e *SearchEngine) Suggest(ctx context.Context, prefix string, limit int) ([
 		limit = search.MaxSuggestLimit
 	}
 
-	const q = `SELECT name, slug FROM products WHERE name ILIKE $1 AND status = 'active' ORDER BY name LIMIT $2`
-	rows, err := e.db.QueryContext(ctx, q, prefix+"%", limit)
+	const q = `SELECT name, slug FROM products WHERE name ILIKE $1 ESCAPE '\' AND status = 'active' ORDER BY name LIMIT $2`
+	escaped := escapeLike(prefix)
+	rows, err := e.db.QueryContext(ctx, q, escaped+"%", limit)
 	if err != nil {
 		return nil, fmt.Errorf("search_engine: suggest: %w", err)
 	}
