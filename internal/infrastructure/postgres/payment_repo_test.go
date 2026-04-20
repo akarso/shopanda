@@ -71,11 +71,16 @@ func TestPaymentRepo_FindByOrderID(t *testing.T) {
 	ensureProductsTable(t, db)
 	t.Cleanup(func() { db.Exec("DELETE FROM payments") })
 
-	repo, _ := postgres.NewPaymentRepo(db)
+	repo, err := postgres.NewPaymentRepo(db)
+	if err != nil {
+		t.Fatalf("NewPaymentRepo: %v", err)
+	}
 	ctx := context.Background()
 
 	p := mustNewPayment(t, "order-pay-2")
-	_ = repo.Create(ctx, &p)
+	if err := repo.Create(ctx, &p); err != nil {
+		t.Fatalf("Create: %v", err)
+	}
 
 	got, err := repo.FindByOrderID(ctx, "order-pay-2")
 	if err != nil {
@@ -93,7 +98,10 @@ func TestPaymentRepo_FindByID_NotFound(t *testing.T) {
 	db := testDB(t)
 	ensureProductsTable(t, db)
 
-	repo, _ := postgres.NewPaymentRepo(db)
+	repo, err := postgres.NewPaymentRepo(db)
+	if err != nil {
+		t.Fatalf("NewPaymentRepo: %v", err)
+	}
 	ctx := context.Background()
 
 	got, err := repo.FindByID(ctx, "nonexistent")
@@ -109,8 +117,11 @@ func TestPaymentRepo_FindByID_EmptyID(t *testing.T) {
 	db := testDB(t)
 	ensureProductsTable(t, db)
 
-	repo, _ := postgres.NewPaymentRepo(db)
-	_, err := repo.FindByID(context.Background(), "")
+	repo, err := postgres.NewPaymentRepo(db)
+	if err != nil {
+		t.Fatalf("NewPaymentRepo: %v", err)
+	}
+	_, err = repo.FindByID(context.Background(), "")
 	if err == nil {
 		t.Fatal("expected error for empty id")
 	}
@@ -121,15 +132,20 @@ func TestPaymentRepo_CreateDuplicate(t *testing.T) {
 	ensureProductsTable(t, db)
 	t.Cleanup(func() { db.Exec("DELETE FROM payments") })
 
-	repo, _ := postgres.NewPaymentRepo(db)
+	repo, err := postgres.NewPaymentRepo(db)
+	if err != nil {
+		t.Fatalf("NewPaymentRepo: %v", err)
+	}
 	ctx := context.Background()
 
 	p := mustNewPayment(t, "order-pay-dup")
-	_ = repo.Create(ctx, &p)
+	if err := repo.Create(ctx, &p); err != nil {
+		t.Fatalf("Create: %v", err)
+	}
 
 	// Second payment for same order → conflict.
 	p2 := mustNewPayment(t, "order-pay-dup")
-	err := repo.Create(ctx, &p2)
+	err = repo.Create(ctx, &p2)
 	if !apperror.Is(err, apperror.CodeConflict) {
 		t.Fatalf("expected conflict error, got %v", err)
 	}
@@ -140,11 +156,16 @@ func TestPaymentRepo_UpdateStatus(t *testing.T) {
 	ensureProductsTable(t, db)
 	t.Cleanup(func() { db.Exec("DELETE FROM payments") })
 
-	repo, _ := postgres.NewPaymentRepo(db)
+	repo, err := postgres.NewPaymentRepo(db)
+	if err != nil {
+		t.Fatalf("NewPaymentRepo: %v", err)
+	}
 	ctx := context.Background()
 
 	p := mustNewPayment(t, "order-pay-upd")
-	_ = repo.Create(ctx, &p)
+	if err := repo.Create(ctx, &p); err != nil {
+		t.Fatalf("Create: %v", err)
+	}
 
 	prevUpdatedAt := p.UpdatedAt
 	if err := p.Complete("ref-123"); err != nil {
@@ -155,7 +176,10 @@ func TestPaymentRepo_UpdateStatus(t *testing.T) {
 		t.Fatalf("UpdateStatus: %v", err)
 	}
 
-	got, _ := repo.FindByID(ctx, p.ID)
+	got, err := repo.FindByID(ctx, p.ID)
+	if err != nil {
+		t.Fatalf("FindByID after update: %v", err)
+	}
 	if got.Status() != payment.StatusCompleted {
 		t.Fatalf("Status = %q, want %q", got.Status(), payment.StatusCompleted)
 	}
@@ -169,11 +193,16 @@ func TestPaymentRepo_UpdateStatus_OptimisticLock(t *testing.T) {
 	ensureProductsTable(t, db)
 	t.Cleanup(func() { db.Exec("DELETE FROM payments") })
 
-	repo, _ := postgres.NewPaymentRepo(db)
+	repo, err := postgres.NewPaymentRepo(db)
+	if err != nil {
+		t.Fatalf("NewPaymentRepo: %v", err)
+	}
 	ctx := context.Background()
 
 	p := mustNewPayment(t, "order-pay-lock")
-	_ = repo.Create(ctx, &p)
+	if err := repo.Create(ctx, &p); err != nil {
+		t.Fatalf("Create: %v", err)
+	}
 
 	// Use a stale timestamp → should get conflict.
 	stale := p.UpdatedAt.Add(-time.Second)
@@ -181,7 +210,7 @@ func TestPaymentRepo_UpdateStatus_OptimisticLock(t *testing.T) {
 		t.Fatalf("Complete: %v", err)
 	}
 
-	err := repo.UpdateStatus(ctx, &p, stale)
+	err = repo.UpdateStatus(ctx, &p, stale)
 	if !apperror.Is(err, apperror.CodeConflict) {
 		t.Fatalf("expected conflict error for stale timestamp, got %v", err)
 	}

@@ -32,17 +32,23 @@ type e2eCartRepo struct {
 	carts map[string]*domainCart.Cart
 }
 
+func (r *e2eCartRepo) cloneCart(c *domainCart.Cart) *domainCart.Cart {
+	clone := *c
+	clone.Items = make([]domainCart.Item, len(c.Items))
+	copy(clone.Items, c.Items)
+	return &clone
+}
 func (r *e2eCartRepo) FindByID(_ context.Context, id string) (*domainCart.Cart, error) {
 	c, ok := r.carts[id]
 	if !ok {
 		return nil, nil
 	}
-	return c, nil
+	return r.cloneCart(c), nil
 }
 func (r *e2eCartRepo) FindActiveByCustomerID(_ context.Context, cid string) (*domainCart.Cart, error) {
 	for _, c := range r.carts {
 		if c.CustomerID == cid && c.IsActive() {
-			return c, nil
+			return r.cloneCart(c), nil
 		}
 	}
 	return nil, nil

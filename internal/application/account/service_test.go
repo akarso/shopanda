@@ -79,6 +79,13 @@ func TestDeleteAccount_OK(t *testing.T) {
 	bus := event.NewBus(log)
 	var published bool
 	bus.On(customer.EventCustomerDeleted, func(_ context.Context, e event.Event) error {
+		data, ok := e.Data.(customer.CustomerDeletedData)
+		if !ok {
+			t.Fatalf("event data type = %T, want CustomerDeletedData", e.Data)
+		}
+		if data.CustomerID != "cust-42" {
+			t.Fatalf("event CustomerID = %q, want cust-42", data.CustomerID)
+		}
 		published = true
 		return nil
 	})

@@ -71,11 +71,16 @@ func TestShippingRepo_FindByOrderID(t *testing.T) {
 	ensureProductsTable(t, db)
 	t.Cleanup(func() { db.Exec("DELETE FROM shipments") })
 
-	repo, _ := postgres.NewShippingRepo(db)
+	repo, err := postgres.NewShippingRepo(db)
+	if err != nil {
+		t.Fatalf("NewShippingRepo: %v", err)
+	}
 	ctx := context.Background()
 
 	s := mustNewShipment(t, "order-ship-2")
-	_ = repo.Create(ctx, &s)
+	if err := repo.Create(ctx, &s); err != nil {
+		t.Fatalf("Create: %v", err)
+	}
 
 	got, err := repo.FindByOrderID(ctx, "order-ship-2")
 	if err != nil {
@@ -93,7 +98,10 @@ func TestShippingRepo_FindByID_NotFound(t *testing.T) {
 	db := testDB(t)
 	ensureProductsTable(t, db)
 
-	repo, _ := postgres.NewShippingRepo(db)
+	repo, err := postgres.NewShippingRepo(db)
+	if err != nil {
+		t.Fatalf("NewShippingRepo: %v", err)
+	}
 	got, err := repo.FindByID(context.Background(), "nonexistent")
 	if err != nil {
 		t.Fatalf("FindByID: %v", err)
@@ -107,8 +115,11 @@ func TestShippingRepo_FindByID_EmptyID(t *testing.T) {
 	db := testDB(t)
 	ensureProductsTable(t, db)
 
-	repo, _ := postgres.NewShippingRepo(db)
-	_, err := repo.FindByID(context.Background(), "")
+	repo, err := postgres.NewShippingRepo(db)
+	if err != nil {
+		t.Fatalf("NewShippingRepo: %v", err)
+	}
+	_, err = repo.FindByID(context.Background(), "")
 	if err == nil {
 		t.Fatal("expected error for empty id")
 	}
@@ -119,14 +130,19 @@ func TestShippingRepo_CreateDuplicate(t *testing.T) {
 	ensureProductsTable(t, db)
 	t.Cleanup(func() { db.Exec("DELETE FROM shipments") })
 
-	repo, _ := postgres.NewShippingRepo(db)
+	repo, err := postgres.NewShippingRepo(db)
+	if err != nil {
+		t.Fatalf("NewShippingRepo: %v", err)
+	}
 	ctx := context.Background()
 
 	s := mustNewShipment(t, "order-ship-dup")
-	_ = repo.Create(ctx, &s)
+	if err := repo.Create(ctx, &s); err != nil {
+		t.Fatalf("Create: %v", err)
+	}
 
 	s2 := mustNewShipment(t, "order-ship-dup")
-	err := repo.Create(ctx, &s2)
+	err = repo.Create(ctx, &s2)
 	if !apperror.Is(err, apperror.CodeConflict) {
 		t.Fatalf("expected conflict error, got %v", err)
 	}
@@ -137,11 +153,16 @@ func TestShippingRepo_UpdateStatus(t *testing.T) {
 	ensureProductsTable(t, db)
 	t.Cleanup(func() { db.Exec("DELETE FROM shipments") })
 
-	repo, _ := postgres.NewShippingRepo(db)
+	repo, err := postgres.NewShippingRepo(db)
+	if err != nil {
+		t.Fatalf("NewShippingRepo: %v", err)
+	}
 	ctx := context.Background()
 
 	s := mustNewShipment(t, "order-ship-upd")
-	_ = repo.Create(ctx, &s)
+	if err := repo.Create(ctx, &s); err != nil {
+		t.Fatalf("Create: %v", err)
+	}
 
 	prevUpdatedAt := s.UpdatedAt
 	if err := s.Ship("TRACK-001", "provider-ref-1"); err != nil {
@@ -152,7 +173,10 @@ func TestShippingRepo_UpdateStatus(t *testing.T) {
 		t.Fatalf("UpdateStatus: %v", err)
 	}
 
-	got, _ := repo.FindByID(ctx, s.ID)
+	got, err := repo.FindByID(ctx, s.ID)
+	if err != nil {
+		t.Fatalf("FindByID after update: %v", err)
+	}
 	if got.Status() != shipping.StatusShipped {
 		t.Fatalf("Status = %q, want %q", got.Status(), shipping.StatusShipped)
 	}
@@ -169,18 +193,23 @@ func TestShippingRepo_UpdateStatus_OptimisticLock(t *testing.T) {
 	ensureProductsTable(t, db)
 	t.Cleanup(func() { db.Exec("DELETE FROM shipments") })
 
-	repo, _ := postgres.NewShippingRepo(db)
+	repo, err := postgres.NewShippingRepo(db)
+	if err != nil {
+		t.Fatalf("NewShippingRepo: %v", err)
+	}
 	ctx := context.Background()
 
 	s := mustNewShipment(t, "order-ship-lock")
-	_ = repo.Create(ctx, &s)
+	if err := repo.Create(ctx, &s); err != nil {
+		t.Fatalf("Create: %v", err)
+	}
 
 	stale := s.UpdatedAt.Add(-time.Second)
 	if err := s.Ship("TRACK-X", "ref-x"); err != nil {
 		t.Fatalf("Ship: %v", err)
 	}
 
-	err := repo.UpdateStatus(ctx, &s, stale)
+	err = repo.UpdateStatus(ctx, &s, stale)
 	if !apperror.Is(err, apperror.CodeConflict) {
 		t.Fatalf("expected conflict error for stale timestamp, got %v", err)
 	}

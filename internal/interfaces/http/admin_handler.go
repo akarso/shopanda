@@ -13,6 +13,7 @@ var adminFS embed.FS
 // AdminHandler serves the embedded admin SPA files at /admin.
 type AdminHandler struct {
 	fileServer http.Handler
+	distFS     fs.FS
 	index      []byte
 }
 
@@ -30,6 +31,7 @@ func NewAdminHandler() (*AdminHandler, error) {
 
 	return &AdminHandler{
 		fileServer: http.FileServer(http.FS(sub)),
+		distFS:     sub,
 		index:      index,
 	}, nil
 }
@@ -48,8 +50,7 @@ func (h *AdminHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// Check whether the path maps to an actual embedded file.
 	if urlPath != "/" {
 		clean := path.Clean(urlPath[1:]) // remove leading slash
-		sub, _ := fs.Sub(adminFS, "admin/dist")
-		if f, err := sub.(fs.ReadFileFS).ReadFile(clean); err == nil && f != nil {
+		if f, err := fs.ReadFile(h.distFS, clean); err == nil && f != nil {
 			// Serve the static file.
 			r2 := r.Clone(r.Context())
 			r2.URL.Path = urlPath
