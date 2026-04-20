@@ -84,7 +84,8 @@ func (h *SearchHandler) Suggest() http.HandlerFunc {
 				return
 			}
 			if n < 1 {
-				n = 1
+				JSONError(w, apperror.Validation("limit must be a positive integer"))
+				return
 			}
 			if n > search.MaxSuggestLimit {
 				n = search.MaxSuggestLimit

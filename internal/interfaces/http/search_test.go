@@ -366,22 +366,15 @@ func TestSuggestHandler_InvalidLimit(t *testing.T) {
 }
 
 func TestSuggestHandler_ZeroLimit(t *testing.T) {
-	engine := &mockSearchEngine{
-		suggestFn: func(_ context.Context, _ string, limit int) ([]search.Suggestion, error) {
-			if limit != 1 {
-				t.Errorf("limit = %d, want 1 (clamped)", limit)
-			}
-			return nil, nil
-		},
-	}
+	engine := &mockSearchEngine{}
 	h := shophttp.NewSearchHandler(engine)
 
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest("GET", "/api/v1/search/suggest?q=test&limit=0", nil)
 	newSearchRouter(h).ServeHTTP(rec, req)
 
-	if rec.Code != http.StatusOK {
-		t.Fatalf("status = %d, want %d", rec.Code, http.StatusOK)
+	if rec.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("status = %d, want %d", rec.Code, http.StatusUnprocessableEntity)
 	}
 }
 
