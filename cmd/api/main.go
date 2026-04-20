@@ -816,6 +816,14 @@ func runServe(cfg *config.Config, log logger.Logger) error {
 	}
 	router.HandleFunc("POST /api/v1/payments/webhook/{provider}", paymentWebhook.Handle())
 
+	// Admin SPA — embedded static files served at /admin.
+	adminHandler, adminErr := shophttp.NewAdminHandler()
+	if adminErr != nil {
+		return fmt.Errorf("admin handler: %w", adminErr)
+	}
+	router.Handle("GET /admin", adminHandler)
+	router.Handle("GET /admin/{path...}", adminHandler)
+
 	// Storefront SSR routes (optional, gated by frontend.enabled).
 	if cfg.Frontend.Enabled {
 		themeEngine, thErr := theme.Load(cfg.Frontend.ThemePath)
