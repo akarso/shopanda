@@ -48,7 +48,7 @@ Integration tests for 6 previously untested postgres repositories across Tier 1 
 
 ## Build & Test
 
-```
+```text
 go build ./...  → clean
 go test ./...   → 70 packages, 0 failures
 ```

@@ -29,7 +29,8 @@ func TestCategoryRepo_NilDB(t *testing.T) {
 func TestCategoryRepo_CreateAndFindByID(t *testing.T) {
 	db := testDB(t)
 	ensureProductsTable(t, db)
-	t.Cleanup(func() { db.Exec("DELETE FROM categories") })
+	mustExec(t, db, "DELETE FROM categories")
+	t.Cleanup(func() { mustExec(t, db, "DELETE FROM categories") })
 
 	repo, err := postgres.NewCategoryRepo(db)
 	if err != nil {
@@ -60,7 +61,8 @@ func TestCategoryRepo_CreateAndFindByID(t *testing.T) {
 func TestCategoryRepo_FindBySlug(t *testing.T) {
 	db := testDB(t)
 	ensureProductsTable(t, db)
-	t.Cleanup(func() { db.Exec("DELETE FROM categories") })
+	mustExec(t, db, "DELETE FROM categories")
+	t.Cleanup(func() { mustExec(t, db, "DELETE FROM categories") })
 
 	repo, err := postgres.NewCategoryRepo(db)
 	if err != nil {
@@ -136,8 +138,8 @@ func TestCategoryRepo_FindBySlug_EmptySlug(t *testing.T) {
 func TestCategoryRepo_FindByParentID_Roots(t *testing.T) {
 	db := testDB(t)
 	ensureProductsTable(t, db)
-	db.Exec("DELETE FROM categories")
-	t.Cleanup(func() { db.Exec("DELETE FROM categories") })
+	mustExec(t, db, "DELETE FROM categories")
+	t.Cleanup(func() { mustExec(t, db, "DELETE FROM categories") })
 
 	repo, err := postgres.NewCategoryRepo(db)
 	if err != nil {
@@ -165,8 +167,8 @@ func TestCategoryRepo_FindByParentID_Roots(t *testing.T) {
 func TestCategoryRepo_FindByParentID_Children(t *testing.T) {
 	db := testDB(t)
 	ensureProductsTable(t, db)
-	db.Exec("DELETE FROM categories")
-	t.Cleanup(func() { db.Exec("DELETE FROM categories") })
+	mustExec(t, db, "DELETE FROM categories")
+	t.Cleanup(func() { mustExec(t, db, "DELETE FROM categories") })
 
 	repo, err := postgres.NewCategoryRepo(db)
 	if err != nil {
@@ -200,7 +202,8 @@ func TestCategoryRepo_FindByParentID_Children(t *testing.T) {
 func TestCategoryRepo_Update(t *testing.T) {
 	db := testDB(t)
 	ensureProductsTable(t, db)
-	t.Cleanup(func() { db.Exec("DELETE FROM categories") })
+	mustExec(t, db, "DELETE FROM categories")
+	t.Cleanup(func() { mustExec(t, db, "DELETE FROM categories") })
 
 	repo, err := postgres.NewCategoryRepo(db)
 	if err != nil {
@@ -250,7 +253,8 @@ func TestCategoryRepo_Update_NotFound(t *testing.T) {
 func TestCategoryRepo_Create_DuplicateSlug(t *testing.T) {
 	db := testDB(t)
 	ensureProductsTable(t, db)
-	t.Cleanup(func() { db.Exec("DELETE FROM categories") })
+	mustExec(t, db, "DELETE FROM categories")
+	t.Cleanup(func() { mustExec(t, db, "DELETE FROM categories") })
 
 	repo, err := postgres.NewCategoryRepo(db)
 	if err != nil {
@@ -276,8 +280,8 @@ func TestCategoryRepo_Create_DuplicateSlug(t *testing.T) {
 func TestCategoryRepo_FindAll(t *testing.T) {
 	db := testDB(t)
 	ensureProductsTable(t, db)
-	db.Exec("DELETE FROM categories")
-	t.Cleanup(func() { db.Exec("DELETE FROM categories") })
+	mustExec(t, db, "DELETE FROM categories")
+	t.Cleanup(func() { mustExec(t, db, "DELETE FROM categories") })
 
 	repo, err := postgres.NewCategoryRepo(db)
 	if err != nil {

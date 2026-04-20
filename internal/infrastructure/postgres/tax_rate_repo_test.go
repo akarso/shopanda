@@ -2,12 +2,24 @@ package postgres_test
 
 import (
 	"context"
+	"database/sql"
 	"testing"
 
 	"github.com/akarso/shopanda/internal/domain/tax"
 	"github.com/akarso/shopanda/internal/infrastructure/postgres"
 	"github.com/akarso/shopanda/internal/platform/id"
+	"github.com/akarso/shopanda/internal/platform/migrate"
 )
+
+func ensureTaxRatesTable(t *testing.T, db *sql.DB) {
+	t.Helper()
+	if _, err := migrate.Run(db, "../../../migrations"); err != nil {
+		t.Fatalf("run migrations: %v", err)
+	}
+	t.Cleanup(func() {
+		db.Exec("DELETE FROM tax_rates")
+	})
+}
 
 func mustNewTaxRate(t *testing.T, country, class string, rate int) tax.TaxRate {
 	t.Helper()
@@ -27,9 +39,9 @@ func TestTaxRateRepo_NilDB(t *testing.T) {
 
 func TestTaxRateRepo_UpsertAndFind(t *testing.T) {
 	db := testDB(t)
-	ensureProductsTable(t, db)
-	db.Exec("DELETE FROM tax_rates")
-	t.Cleanup(func() { db.Exec("DELETE FROM tax_rates") })
+	ensureTaxRatesTable(t, db)
+	mustExec(t, db, "DELETE FROM tax_rates")
+	t.Cleanup(func() { mustExec(t, db, "DELETE FROM tax_rates") })
 
 	repo, err := postgres.NewTaxRateRepo(db)
 	if err != nil {
@@ -59,9 +71,9 @@ func TestTaxRateRepo_UpsertAndFind(t *testing.T) {
 
 func TestTaxRateRepo_Upsert_Update(t *testing.T) {
 	db := testDB(t)
-	ensureProductsTable(t, db)
-	db.Exec("DELETE FROM tax_rates")
-	t.Cleanup(func() { db.Exec("DELETE FROM tax_rates") })
+	ensureTaxRatesTable(t, db)
+	mustExec(t, db, "DELETE FROM tax_rates")
+	t.Cleanup(func() { mustExec(t, db, "DELETE FROM tax_rates") })
 
 	repo, err := postgres.NewTaxRateRepo(db)
 	if err != nil {
@@ -97,9 +109,9 @@ func TestTaxRateRepo_Upsert_Update(t *testing.T) {
 
 func TestTaxRateRepo_ListByCountry(t *testing.T) {
 	db := testDB(t)
-	ensureProductsTable(t, db)
-	db.Exec("DELETE FROM tax_rates")
-	t.Cleanup(func() { db.Exec("DELETE FROM tax_rates") })
+	ensureTaxRatesTable(t, db)
+	mustExec(t, db, "DELETE FROM tax_rates")
+	t.Cleanup(func() { mustExec(t, db, "DELETE FROM tax_rates") })
 
 	repo, err := postgres.NewTaxRateRepo(db)
 	if err != nil {
@@ -127,9 +139,9 @@ func TestTaxRateRepo_ListByCountry(t *testing.T) {
 
 func TestTaxRateRepo_Delete(t *testing.T) {
 	db := testDB(t)
-	ensureProductsTable(t, db)
-	db.Exec("DELETE FROM tax_rates")
-	t.Cleanup(func() { db.Exec("DELETE FROM tax_rates") })
+	ensureTaxRatesTable(t, db)
+	mustExec(t, db, "DELETE FROM tax_rates")
+	t.Cleanup(func() { mustExec(t, db, "DELETE FROM tax_rates") })
 
 	repo, err := postgres.NewTaxRateRepo(db)
 	if err != nil {
@@ -157,7 +169,7 @@ func TestTaxRateRepo_Delete(t *testing.T) {
 
 func TestTaxRateRepo_Delete_NotFound(t *testing.T) {
 	db := testDB(t)
-	ensureProductsTable(t, db)
+	ensureTaxRatesTable(t, db)
 
 	repo, err := postgres.NewTaxRateRepo(db)
 	if err != nil {
@@ -172,7 +184,7 @@ func TestTaxRateRepo_Delete_NotFound(t *testing.T) {
 
 func TestTaxRateRepo_FindByCountryClassAndStore_NotFound(t *testing.T) {
 	db := testDB(t)
-	ensureProductsTable(t, db)
+	ensureTaxRatesTable(t, db)
 
 	repo, err := postgres.NewTaxRateRepo(db)
 	if err != nil {
@@ -190,7 +202,7 @@ func TestTaxRateRepo_FindByCountryClassAndStore_NotFound(t *testing.T) {
 
 func TestTaxRateRepo_Upsert_Nil(t *testing.T) {
 	db := testDB(t)
-	ensureProductsTable(t, db)
+	ensureTaxRatesTable(t, db)
 
 	repo, err := postgres.NewTaxRateRepo(db)
 	if err != nil {

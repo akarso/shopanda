@@ -31,8 +31,8 @@ func TestPriceHistoryRepo_NilDB(t *testing.T) {
 func TestPriceHistoryRepo_RecordAndLowestSince(t *testing.T) {
 	db := testDB(t)
 	ensureProductsTable(t, db)
-	db.Exec("DELETE FROM price_history")
-	t.Cleanup(func() { db.Exec("DELETE FROM price_history") })
+	mustExec(t, db, "DELETE FROM price_history")
+	t.Cleanup(func() { mustExec(t, db, "DELETE FROM price_history") })
 
 	repo, err := postgres.NewPriceHistoryRepo(db)
 	if err != nil {
@@ -61,8 +61,8 @@ func TestPriceHistoryRepo_RecordAndLowestSince(t *testing.T) {
 func TestPriceHistoryRepo_LowestSince_ReturnsMin(t *testing.T) {
 	db := testDB(t)
 	ensureProductsTable(t, db)
-	db.Exec("DELETE FROM price_history")
-	t.Cleanup(func() { db.Exec("DELETE FROM price_history") })
+	mustExec(t, db, "DELETE FROM price_history")
+	t.Cleanup(func() { mustExec(t, db, "DELETE FROM price_history") })
 
 	repo, err := postgres.NewPriceHistoryRepo(db)
 	if err != nil {
@@ -93,8 +93,8 @@ func TestPriceHistoryRepo_LowestSince_ReturnsMin(t *testing.T) {
 func TestPriceHistoryRepo_LowestSince_NotFound(t *testing.T) {
 	db := testDB(t)
 	ensureProductsTable(t, db)
-	db.Exec("DELETE FROM price_history")
-	t.Cleanup(func() { db.Exec("DELETE FROM price_history") })
+	mustExec(t, db, "DELETE FROM price_history")
+	t.Cleanup(func() { mustExec(t, db, "DELETE FROM price_history") })
 
 	repo, err := postgres.NewPriceHistoryRepo(db)
 	if err != nil {

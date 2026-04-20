@@ -11,13 +11,13 @@ import (
 	"github.com/akarso/shopanda/internal/platform/id"
 )
 
-func mustNewResetToken(t *testing.T, customerID string) (customer.PasswordResetToken, string) {
+func mustNewResetToken(t *testing.T, customerID string) customer.PasswordResetToken {
 	t.Helper()
-	tok, plain, err := customer.NewPasswordResetToken(id.New(), customerID, time.Hour)
+	tok, _, err := customer.NewPasswordResetToken(id.New(), customerID, time.Hour)
 	if err != nil {
 		t.Fatalf("NewPasswordResetToken: %v", err)
 	}
-	return tok, plain
+	return tok
 }
 
 func TestResetTokenRepo_NilDB(t *testing.T) {
@@ -30,8 +30,8 @@ func TestResetTokenRepo_NilDB(t *testing.T) {
 func TestResetTokenRepo_CreateAndFindByHash(t *testing.T) {
 	db := testDB(t)
 	ensureProductsTable(t, db)
-	db.Exec("DELETE FROM password_reset_tokens")
-	t.Cleanup(func() { db.Exec("DELETE FROM password_reset_tokens") })
+	mustExec(t, db, "DELETE FROM password_reset_tokens")
+	t.Cleanup(func() { mustExec(t, db, "DELETE FROM password_reset_tokens") })
 
 	repo, err := postgres.NewResetTokenRepo(db)
 	if err != nil {
@@ -39,7 +39,7 @@ func TestResetTokenRepo_CreateAndFindByHash(t *testing.T) {
 	}
 	ctx := context.Background()
 
-	tok, _ := mustNewResetToken(t, id.New())
+	tok := mustNewResetToken(t, id.New())
 	if err := repo.Create(ctx, &tok); err != nil {
 		t.Fatalf("Create: %v", err)
 	}
@@ -83,8 +83,8 @@ func TestResetTokenRepo_FindByTokenHash_NotFound(t *testing.T) {
 func TestResetTokenRepo_MarkUsed(t *testing.T) {
 	db := testDB(t)
 	ensureProductsTable(t, db)
-	db.Exec("DELETE FROM password_reset_tokens")
-	t.Cleanup(func() { db.Exec("DELETE FROM password_reset_tokens") })
+	mustExec(t, db, "DELETE FROM password_reset_tokens")
+	t.Cleanup(func() { mustExec(t, db, "DELETE FROM password_reset_tokens") })
 
 	repo, err := postgres.NewResetTokenRepo(db)
 	if err != nil {
@@ -92,7 +92,7 @@ func TestResetTokenRepo_MarkUsed(t *testing.T) {
 	}
 	ctx := context.Background()
 
-	tok, _ := mustNewResetToken(t, id.New())
+	tok := mustNewResetToken(t, id.New())
 	if err := repo.Create(ctx, &tok); err != nil {
 		t.Fatalf("Create: %v", err)
 	}
@@ -116,8 +116,8 @@ func TestResetTokenRepo_MarkUsed(t *testing.T) {
 func TestResetTokenRepo_MarkUsed_AlreadyUsed(t *testing.T) {
 	db := testDB(t)
 	ensureProductsTable(t, db)
-	db.Exec("DELETE FROM password_reset_tokens")
-	t.Cleanup(func() { db.Exec("DELETE FROM password_reset_tokens") })
+	mustExec(t, db, "DELETE FROM password_reset_tokens")
+	t.Cleanup(func() { mustExec(t, db, "DELETE FROM password_reset_tokens") })
 
 	repo, err := postgres.NewResetTokenRepo(db)
 	if err != nil {
@@ -125,7 +125,7 @@ func TestResetTokenRepo_MarkUsed_AlreadyUsed(t *testing.T) {
 	}
 	ctx := context.Background()
 
-	tok, _ := mustNewResetToken(t, id.New())
+	tok := mustNewResetToken(t, id.New())
 	if err := repo.Create(ctx, &tok); err != nil {
 		t.Fatalf("Create: %v", err)
 	}

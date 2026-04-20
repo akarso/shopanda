@@ -48,6 +48,13 @@ func ensureProductsTable(t *testing.T, db *sql.DB) {
 	})
 }
 
+func mustExec(t *testing.T, db *sql.DB, q string, args ...any) {
+	t.Helper()
+	if _, err := db.Exec(q, args...); err != nil {
+		t.Fatalf("mustExec: %s: %v", q, err)
+	}
+}
+
 func mustNewProduct(t *testing.T, name, slug string) catalog.Product {
 	t.Helper()
 	p, err := catalog.NewProduct(id.New(), name, slug)

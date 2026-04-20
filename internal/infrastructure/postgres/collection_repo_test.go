@@ -29,11 +29,11 @@ func TestCollectionRepo_NilDB(t *testing.T) {
 func TestCollectionRepo_CreateAndFindByID(t *testing.T) {
 	db := testDB(t)
 	ensureProductsTable(t, db)
-	db.Exec("DELETE FROM collection_products")
-	db.Exec("DELETE FROM collections")
+	mustExec(t, db, "DELETE FROM collection_products")
+	mustExec(t, db, "DELETE FROM collections")
 	t.Cleanup(func() {
-		db.Exec("DELETE FROM collection_products")
-		db.Exec("DELETE FROM collections")
+		mustExec(t, db, "DELETE FROM collection_products")
+		mustExec(t, db, "DELETE FROM collections")
 	})
 
 	repo, err := postgres.NewCollectionRepo(db)
@@ -68,11 +68,11 @@ func TestCollectionRepo_CreateAndFindByID(t *testing.T) {
 func TestCollectionRepo_FindBySlug(t *testing.T) {
 	db := testDB(t)
 	ensureProductsTable(t, db)
-	db.Exec("DELETE FROM collection_products")
-	db.Exec("DELETE FROM collections")
+	mustExec(t, db, "DELETE FROM collection_products")
+	mustExec(t, db, "DELETE FROM collections")
 	t.Cleanup(func() {
-		db.Exec("DELETE FROM collection_products")
-		db.Exec("DELETE FROM collections")
+		mustExec(t, db, "DELETE FROM collection_products")
+		mustExec(t, db, "DELETE FROM collections")
 	})
 
 	repo, err := postgres.NewCollectionRepo(db)
@@ -101,11 +101,11 @@ func TestCollectionRepo_FindBySlug(t *testing.T) {
 func TestCollectionRepo_List(t *testing.T) {
 	db := testDB(t)
 	ensureProductsTable(t, db)
-	db.Exec("DELETE FROM collection_products")
-	db.Exec("DELETE FROM collections")
+	mustExec(t, db, "DELETE FROM collection_products")
+	mustExec(t, db, "DELETE FROM collections")
 	t.Cleanup(func() {
-		db.Exec("DELETE FROM collection_products")
-		db.Exec("DELETE FROM collections")
+		mustExec(t, db, "DELETE FROM collection_products")
+		mustExec(t, db, "DELETE FROM collections")
 	})
 
 	repo, err := postgres.NewCollectionRepo(db)
@@ -138,11 +138,11 @@ func TestCollectionRepo_List(t *testing.T) {
 func TestCollectionRepo_Update(t *testing.T) {
 	db := testDB(t)
 	ensureProductsTable(t, db)
-	db.Exec("DELETE FROM collection_products")
-	db.Exec("DELETE FROM collections")
+	mustExec(t, db, "DELETE FROM collection_products")
+	mustExec(t, db, "DELETE FROM collections")
 	t.Cleanup(func() {
-		db.Exec("DELETE FROM collection_products")
-		db.Exec("DELETE FROM collections")
+		mustExec(t, db, "DELETE FROM collection_products")
+		mustExec(t, db, "DELETE FROM collections")
 	})
 
 	repo, err := postgres.NewCollectionRepo(db)
@@ -192,11 +192,11 @@ func TestCollectionRepo_Update_NotFound(t *testing.T) {
 func TestCollectionRepo_Create_DuplicateSlug(t *testing.T) {
 	db := testDB(t)
 	ensureProductsTable(t, db)
-	db.Exec("DELETE FROM collection_products")
-	db.Exec("DELETE FROM collections")
+	mustExec(t, db, "DELETE FROM collection_products")
+	mustExec(t, db, "DELETE FROM collections")
 	t.Cleanup(func() {
-		db.Exec("DELETE FROM collection_products")
-		db.Exec("DELETE FROM collections")
+		mustExec(t, db, "DELETE FROM collection_products")
+		mustExec(t, db, "DELETE FROM collections")
 	})
 
 	repo, err := postgres.NewCollectionRepo(db)
@@ -223,11 +223,11 @@ func TestCollectionRepo_Create_DuplicateSlug(t *testing.T) {
 func TestCollectionRepo_AddProduct(t *testing.T) {
 	db := testDB(t)
 	ensureProductsTable(t, db)
-	db.Exec("DELETE FROM collection_products")
-	db.Exec("DELETE FROM collections")
+	mustExec(t, db, "DELETE FROM collection_products")
+	mustExec(t, db, "DELETE FROM collections")
 	t.Cleanup(func() {
-		db.Exec("DELETE FROM collection_products")
-		db.Exec("DELETE FROM collections")
+		mustExec(t, db, "DELETE FROM collection_products")
+		mustExec(t, db, "DELETE FROM collections")
 	})
 
 	repo, err := postgres.NewCollectionRepo(db)
@@ -243,11 +243,11 @@ func TestCollectionRepo_AddProduct(t *testing.T) {
 
 	// Seed a product row for the FK.
 	prodID := id.New()
-	_, err = db.Exec(`INSERT INTO products (id, name, slug) VALUES ($1, $2, $3)`, prodID, "Test Product", "test-product-"+prodID[:8])
+	_, err = db.Exec(`INSERT INTO products (id, name, slug) VALUES ($1, $2, $3)`, prodID, "Test Product", "test-product-"+prodID)
 	if err != nil {
 		t.Fatalf("seed product: %v", err)
 	}
-	t.Cleanup(func() { db.Exec("DELETE FROM products WHERE id = $1", prodID) })
+	t.Cleanup(func() { mustExec(t, db, "DELETE FROM products WHERE id = $1", prodID) })
 
 	if err := repo.AddProduct(ctx, c.ID, prodID); err != nil {
 		t.Fatalf("AddProduct: %v", err)
@@ -265,11 +265,11 @@ func TestCollectionRepo_AddProduct(t *testing.T) {
 func TestCollectionRepo_AddProduct_Duplicate(t *testing.T) {
 	db := testDB(t)
 	ensureProductsTable(t, db)
-	db.Exec("DELETE FROM collection_products")
-	db.Exec("DELETE FROM collections")
+	mustExec(t, db, "DELETE FROM collection_products")
+	mustExec(t, db, "DELETE FROM collections")
 	t.Cleanup(func() {
-		db.Exec("DELETE FROM collection_products")
-		db.Exec("DELETE FROM collections")
+		mustExec(t, db, "DELETE FROM collection_products")
+		mustExec(t, db, "DELETE FROM collections")
 	})
 
 	repo, err := postgres.NewCollectionRepo(db)
@@ -284,11 +284,11 @@ func TestCollectionRepo_AddProduct_Duplicate(t *testing.T) {
 	}
 
 	prodID := id.New()
-	_, err = db.Exec(`INSERT INTO products (id, name, slug) VALUES ($1, $2, $3)`, prodID, "Dup Prod", "dup-prod-"+prodID[:8])
+	_, err = db.Exec(`INSERT INTO products (id, name, slug) VALUES ($1, $2, $3)`, prodID, "Dup Prod", "dup-prod-"+prodID)
 	if err != nil {
 		t.Fatalf("seed product: %v", err)
 	}
-	t.Cleanup(func() { db.Exec("DELETE FROM products WHERE id = $1", prodID) })
+	t.Cleanup(func() { mustExec(t, db, "DELETE FROM products WHERE id = $1", prodID) })
 
 	if err := repo.AddProduct(ctx, c.ID, prodID); err != nil {
 		t.Fatalf("first AddProduct: %v", err)
@@ -306,11 +306,11 @@ func TestCollectionRepo_AddProduct_Duplicate(t *testing.T) {
 func TestCollectionRepo_RemoveProduct(t *testing.T) {
 	db := testDB(t)
 	ensureProductsTable(t, db)
-	db.Exec("DELETE FROM collection_products")
-	db.Exec("DELETE FROM collections")
+	mustExec(t, db, "DELETE FROM collection_products")
+	mustExec(t, db, "DELETE FROM collections")
 	t.Cleanup(func() {
-		db.Exec("DELETE FROM collection_products")
-		db.Exec("DELETE FROM collections")
+		mustExec(t, db, "DELETE FROM collection_products")
+		mustExec(t, db, "DELETE FROM collections")
 	})
 
 	repo, err := postgres.NewCollectionRepo(db)
@@ -325,11 +325,11 @@ func TestCollectionRepo_RemoveProduct(t *testing.T) {
 	}
 
 	prodID := id.New()
-	_, err = db.Exec(`INSERT INTO products (id, name, slug) VALUES ($1, $2, $3)`, prodID, "Rem Prod", "rem-prod-"+prodID[:8])
+	_, err = db.Exec(`INSERT INTO products (id, name, slug) VALUES ($1, $2, $3)`, prodID, "Rem Prod", "rem-prod-"+prodID)
 	if err != nil {
 		t.Fatalf("seed product: %v", err)
 	}
-	t.Cleanup(func() { db.Exec("DELETE FROM products WHERE id = $1", prodID) })
+	t.Cleanup(func() { mustExec(t, db, "DELETE FROM products WHERE id = $1", prodID) })
 
 	if err := repo.AddProduct(ctx, c.ID, prodID); err != nil {
 		t.Fatalf("AddProduct: %v", err)
@@ -351,11 +351,11 @@ func TestCollectionRepo_RemoveProduct(t *testing.T) {
 func TestCollectionRepo_RemoveProduct_NotFound(t *testing.T) {
 	db := testDB(t)
 	ensureProductsTable(t, db)
-	db.Exec("DELETE FROM collection_products")
-	db.Exec("DELETE FROM collections")
+	mustExec(t, db, "DELETE FROM collection_products")
+	mustExec(t, db, "DELETE FROM collections")
 	t.Cleanup(func() {
-		db.Exec("DELETE FROM collection_products")
-		db.Exec("DELETE FROM collections")
+		mustExec(t, db, "DELETE FROM collection_products")
+		mustExec(t, db, "DELETE FROM collections")
 	})
 
 	repo, err := postgres.NewCollectionRepo(db)

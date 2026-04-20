@@ -29,8 +29,8 @@ func TestStoreRepo_NilDB(t *testing.T) {
 func TestStoreRepo_CreateAndFindByID(t *testing.T) {
 	db := testDB(t)
 	ensureProductsTable(t, db)
-	db.Exec("DELETE FROM stores")
-	t.Cleanup(func() { db.Exec("DELETE FROM stores") })
+	mustExec(t, db, "DELETE FROM stores")
+	t.Cleanup(func() { mustExec(t, db, "DELETE FROM stores") })
 
 	repo, err := postgres.NewStoreRepo(db)
 	if err != nil {
@@ -64,8 +64,8 @@ func TestStoreRepo_CreateAndFindByID(t *testing.T) {
 func TestStoreRepo_FindByCode(t *testing.T) {
 	db := testDB(t)
 	ensureProductsTable(t, db)
-	db.Exec("DELETE FROM stores")
-	t.Cleanup(func() { db.Exec("DELETE FROM stores") })
+	mustExec(t, db, "DELETE FROM stores")
+	t.Cleanup(func() { mustExec(t, db, "DELETE FROM stores") })
 
 	repo, err := postgres.NewStoreRepo(db)
 	if err != nil {
@@ -93,8 +93,8 @@ func TestStoreRepo_FindByCode(t *testing.T) {
 func TestStoreRepo_FindByDomain(t *testing.T) {
 	db := testDB(t)
 	ensureProductsTable(t, db)
-	db.Exec("DELETE FROM stores")
-	t.Cleanup(func() { db.Exec("DELETE FROM stores") })
+	mustExec(t, db, "DELETE FROM stores")
+	t.Cleanup(func() { mustExec(t, db, "DELETE FROM stores") })
 
 	repo, err := postgres.NewStoreRepo(db)
 	if err != nil {
@@ -122,14 +122,20 @@ func TestStoreRepo_FindByDomain(t *testing.T) {
 func TestStoreRepo_FindDefault(t *testing.T) {
 	db := testDB(t)
 	ensureProductsTable(t, db)
-	db.Exec("DELETE FROM stores")
-	t.Cleanup(func() { db.Exec("DELETE FROM stores") })
+	mustExec(t, db, "DELETE FROM stores")
+	t.Cleanup(func() { mustExec(t, db, "DELETE FROM stores") })
 
 	repo, err := postgres.NewStoreRepo(db)
 	if err != nil {
 		t.Fatalf("NewStoreRepo: %v", err)
 	}
 	ctx := context.Background()
+
+	// Create a non-default store first to ensure FindDefault filters.
+	other := mustNewStore(t, "other-store", "Other Store")
+	if err := repo.Create(ctx, &other); err != nil {
+		t.Fatalf("Create other: %v", err)
+	}
 
 	s := mustNewStore(t, "default-store", "Default Store")
 	s.IsDefault = true
@@ -155,8 +161,8 @@ func TestStoreRepo_FindDefault(t *testing.T) {
 func TestStoreRepo_FindAll(t *testing.T) {
 	db := testDB(t)
 	ensureProductsTable(t, db)
-	db.Exec("DELETE FROM stores")
-	t.Cleanup(func() { db.Exec("DELETE FROM stores") })
+	mustExec(t, db, "DELETE FROM stores")
+	t.Cleanup(func() { mustExec(t, db, "DELETE FROM stores") })
 
 	repo, err := postgres.NewStoreRepo(db)
 	if err != nil {
@@ -184,8 +190,8 @@ func TestStoreRepo_FindAll(t *testing.T) {
 func TestStoreRepo_Update(t *testing.T) {
 	db := testDB(t)
 	ensureProductsTable(t, db)
-	db.Exec("DELETE FROM stores")
-	t.Cleanup(func() { db.Exec("DELETE FROM stores") })
+	mustExec(t, db, "DELETE FROM stores")
+	t.Cleanup(func() { mustExec(t, db, "DELETE FROM stores") })
 
 	repo, err := postgres.NewStoreRepo(db)
 	if err != nil {
@@ -238,8 +244,8 @@ func TestStoreRepo_Update_NotFound(t *testing.T) {
 func TestStoreRepo_Create_DuplicateCode(t *testing.T) {
 	db := testDB(t)
 	ensureProductsTable(t, db)
-	db.Exec("DELETE FROM stores")
-	t.Cleanup(func() { db.Exec("DELETE FROM stores") })
+	mustExec(t, db, "DELETE FROM stores")
+	t.Cleanup(func() { mustExec(t, db, "DELETE FROM stores") })
 
 	repo, err := postgres.NewStoreRepo(db)
 	if err != nil {
