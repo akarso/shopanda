@@ -55,3 +55,4 @@ go test ./internal/infrastructure/postgres/ -run "TestInvoiceRepo|TestCreditNote
 go test ./...
 # 70 packages, 0 failures
 ```
+ 
