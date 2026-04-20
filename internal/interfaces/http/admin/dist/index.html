@@ -1,0 +1,41 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="light">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="robots" content="noindex, nofollow">
+    <title>Admin — Shopanda</title>
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@picocss/pico@2/css/pico.min.css">
+    <link rel="stylesheet" href="/admin/admin.css">
+</head>
+<body>
+    <div id="admin-layout" class="admin-layout" data-auth="false">
+        <header class="admin-header">
+            <a href="/admin/dashboard" data-link class="logo">Shopanda Admin</a>
+            <div class="user-info">
+                <span id="admin-user-name"></span>
+                <a href="#" id="admin-logout">Logout</a>
+            </div>
+        </header>
+        <div class="admin-body">
+            <aside class="admin-sidebar">
+                <nav>
+                    <ul>
+                        <li><a href="/admin/dashboard" data-link>Dashboard</a></li>
+                        <li><a href="/admin/products" data-link>Products</a></li>
+                        <li><a href="/admin/orders" data-link>Orders</a></li>
+                        <li><a href="/admin/media" data-link>Media</a></li>
+                        <li><a href="/admin/settings" data-link>Settings</a></li>
+                    </ul>
+                </nav>
+            </aside>
+            <main id="admin-content" class="admin-content">
+                <noscript>
+                    <p>JavaScript is required for the admin panel.</p>
+                </noscript>
+            </main>
+        </div>
+    </div>
+    <script src="/admin/admin.js"></script>
+</body>
+</html>

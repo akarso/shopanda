@@ -1,0 +1,102 @@
+/* Admin-specific overrides on top of Pico CSS */
+
+:root {
+    --admin-sidebar-width: 220px;
+    --admin-header-height: 56px;
+}
+
+/* Layout */
+.admin-layout {
+    display: flex;
+    min-height: 100vh;
+    flex-direction: column;
+}
+
+.admin-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    height: var(--admin-header-height);
+    padding: 0 1rem;
+    background: var(--pico-primary-background);
+    color: var(--pico-primary-inverse);
+}
+
+.admin-header a {
+    color: var(--pico-primary-inverse);
+    text-decoration: none;
+}
+
+.admin-header .logo {
+    font-weight: 700;
+    font-size: 1.1rem;
+}
+
+.admin-header .user-info {
+    display: flex;
+    align-items: center;
+    gap: 1rem;
+}
+
+.admin-body {
+    display: flex;
+    flex: 1;
+}
+
+/* Sidebar */
+.admin-sidebar {
+    width: var(--admin-sidebar-width);
+    padding: 1rem 0;
+    background: var(--pico-card-background-color);
+    border-right: 1px solid var(--pico-muted-border-color);
+}
+
+.admin-sidebar nav ul {
+    list-style: none;
+    padding: 0;
+    margin: 0;
+}
+
+.admin-sidebar nav ul li a {
+    display: block;
+    padding: 0.6rem 1.2rem;
+    text-decoration: none;
+    color: var(--pico-color);
+    border-left: 3px solid transparent;
+}
+
+.admin-sidebar nav ul li a:hover {
+    background: var(--pico-secondary-background);
+}
+
+.admin-sidebar nav ul li a[aria-current="page"] {
+    border-left-color: var(--pico-primary);
+    font-weight: 600;
+}
+
+/* Content */
+.admin-content {
+    flex: 1;
+    padding: 1.5rem;
+    overflow-y: auto;
+}
+
+/* Login */
+.login-container {
+    max-width: 380px;
+    margin: 4rem auto;
+}
+
+.login-container h1 {
+    text-align: center;
+}
+
+/* Hide shell when not authenticated */
+.admin-layout[data-auth="false"] .admin-header .user-info,
+.admin-layout[data-auth="false"] .admin-sidebar {
+    display: none;
+}
+
+.admin-layout[data-auth="false"] .admin-content {
+    max-width: 100%;
+}
