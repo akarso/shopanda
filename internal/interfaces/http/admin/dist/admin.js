@@ -152,7 +152,66 @@
     }
 
     function renderDashboard(container) {
-        container.innerHTML = "<h2>Dashboard</h2><p>Overview will be available in a future update.</p>";
+        container.innerHTML =
+            '<h2>Dashboard</h2>' +
+            '<div class="stats-cards">' +
+            '  <article class="stat-card" id="stat-orders"><header>Orders Today</header><p>—</p></article>' +
+            '  <article class="stat-card" id="stat-revenue"><header>Revenue Today</header><p>—</p></article>' +
+            '  <article class="stat-card" id="stat-products"><header>Total Products</header><p>—</p></article>' +
+            '  <article class="stat-card" id="stat-lowstock"><header>Low Stock</header><p>—</p></article>' +
+            '</div>' +
+            '<h3>Recent Orders</h3>' +
+            '<table id="recent-orders"><thead><tr>' +
+            '<th>ID</th><th>Customer</th><th>Total</th><th>Status</th><th>Date</th>' +
+            '</tr></thead><tbody><tr><td colspan="5">Loading…</td></tr></tbody></table>';
+
+        api("/admin/stats/overview").then(function (body) {
+            if (!body || !body.data) return;
+            var d = body.data;
+
+            setStat("stat-orders", d.orders_today);
+            setStat("stat-revenue", formatMoney(d.revenue_today.amount, d.revenue_today.currency));
+            setStat("stat-products", d.total_products);
+            setStat("stat-lowstock", d.low_stock_count);
+
+            var tbody = document.querySelector("#recent-orders tbody");
+            if (!d.recent_orders || d.recent_orders.length === 0) {
+                tbody.innerHTML = '<tr><td colspan="5">No orders yet.</td></tr>';
+                return;
+            }
+            var rows = "";
+            for (var i = 0; i < d.recent_orders.length; i++) {
+                var o = d.recent_orders[i];
+                rows +=
+                    "<tr>" +
+                    "<td>" + esc(o.id.substring(0, 8)) + "</td>" +
+                    "<td>" + esc(o.customer_id.substring(0, 8)) + "</td>" +
+                    "<td>" + formatMoney(o.total_amount, o.currency) + "</td>" +
+                    "<td><span class=\"badge badge-" + esc(o.status) + "\">" + esc(o.status) + "</span></td>" +
+                    "<td>" + esc(o.created_at.substring(0, 10)) + "</td>" +
+                    "</tr>";
+            }
+            tbody.innerHTML = rows;
+        }).catch(function () {
+            container.innerHTML = '<h2>Dashboard</h2><p role="alert">Failed to load dashboard data.</p>';
+        });
+    }
+
+    function setStat(id, value) {
+        var el = document.getElementById(id);
+        if (el) el.querySelector("p").textContent = value;
+    }
+
+    function formatMoney(amount, currency) {
+        var val = (amount / 100).toFixed(2);
+        return currency ? currency + " " + val : val;
+    }
+
+    function esc(str) {
+        if (!str) return "";
+        var d = document.createElement("div");
+        d.appendChild(document.createTextNode(str));
+        return d.innerHTML;
     }
 
     function renderPlaceholder(name) {
