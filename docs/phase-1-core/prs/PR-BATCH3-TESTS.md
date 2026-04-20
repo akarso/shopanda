@@ -8,11 +8,11 @@ Integration tests for the last 6 untested postgres repositories: page, rewrite, 
 
 | File | Tests | Covers |
 |------|-------|--------|
-| `page_repo_test.go` | 14 | CRUD, slug conflict, pagination, active filter, not-found, nil/empty guards |
+| `page_repo_test.go` | 15 | CRUD, slug conflict, pagination, active filter, not-found, nil/empty guards |
 | `rewrite_repo_test.go` | 7 | Save, upsert overwrite, find, delete, empty path, not-found, nil guard |
 | `consent_repo_test.go` | 5 | Upsert insert/update, find, delete, not-found |
 | `translation_repo_test.go` | 7 | Upsert insert/update, find, list by language, delete, `translation.ErrNotFound`, not-found |
-| `content_translation_repo_test.go` | 8 | Upsert insert/update, find field value, find by entity+language (multiple + empty slice), delete, not-found |
+| `content_translation_repo_test.go` | 7 | Upsert insert/update, find field value, find by entity+language (multiple + empty slice), delete, not-found |
 | `asset_repo_test.go` | 4 | Save, find, JSONB meta+thumbnails roundtrip, not-found |
 
 **Total: 45 new integration tests**
@@ -25,7 +25,7 @@ Integration tests for the last 6 untested postgres repositories: page, rewrite, 
 - `t.Cleanup(...)` for teardown
 - Domain constructors for valid test data; pointer helpers returning `*T`
 - `errors.Is(err, translation.ErrNotFound)` for sentinel error check
-- `apperror.Is(err, apperror.CodeConflict/NotFound)` for apperror checks
+- `apperror.Is(err, apperror.CodeConflict)` / `apperror.Is(err, apperror.CodeNotFound)` for apperror checks
 
 ## Test Results
 

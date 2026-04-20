@@ -151,7 +151,7 @@ func TestRewriteRepo_FindByPath_NotFound(t *testing.T) {
 		t.Fatalf("NewRewriteRepo: %v", err)
 	}
 
-	got, err := repo.FindByPath(context.Background(), "/nonexistent")
+	got, err := repo.FindByPath(context.Background(), "/no-such-path-"+id.New())
 	if err != nil {
 		t.Fatalf("FindByPath: %v", err)
 	}

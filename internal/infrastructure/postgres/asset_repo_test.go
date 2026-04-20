@@ -52,6 +52,9 @@ func TestAssetRepo_SaveAndFindByID(t *testing.T) {
 	if got.ID != a.ID {
 		t.Errorf("ID: got %q, want %q", got.ID, a.ID)
 	}
+	if got.Path != a.Path {
+		t.Errorf("Path: got %q, want %q", got.Path, a.Path)
+	}
 	if got.Filename != "logo.png" {
 		t.Errorf("Filename: got %q, want %q", got.Filename, "logo.png")
 	}

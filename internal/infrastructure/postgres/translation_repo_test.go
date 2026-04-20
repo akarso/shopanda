@@ -7,6 +7,7 @@ import (
 
 	"github.com/akarso/shopanda/internal/domain/translation"
 	"github.com/akarso/shopanda/internal/infrastructure/postgres"
+	"github.com/akarso/shopanda/internal/platform/id"
 )
 
 func mustNewTranslation(t *testing.T, key, language, value string) *translation.Translation {
@@ -165,7 +166,7 @@ func TestTranslationRepo_Delete_NotFound(t *testing.T) {
 		t.Fatalf("NewTranslationRepo: %v", err)
 	}
 
-	err = repo.Delete(context.Background(), "nonexistent", "en")
+	err = repo.Delete(context.Background(), "nonexistent-"+id.New(), "en")
 	if err == nil {
 		t.Fatal("expected error deleting non-existent translation")
 	}
@@ -183,7 +184,7 @@ func TestTranslationRepo_FindByKeyAndLanguage_NotFound(t *testing.T) {
 		t.Fatalf("NewTranslationRepo: %v", err)
 	}
 
-	got, err := repo.FindByKeyAndLanguage(context.Background(), "missing", "en")
+	got, err := repo.FindByKeyAndLanguage(context.Background(), "missing-"+id.New(), "en")
 	if err != nil {
 		t.Fatalf("FindByKeyAndLanguage: %v", err)
 	}
