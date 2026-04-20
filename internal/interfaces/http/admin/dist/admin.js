@@ -47,11 +47,365 @@
     var routes = {
         "/admin": { title: "Login", render: renderLogin, auth: false },
         "/admin/dashboard": { title: "Dashboard", render: renderDashboard, auth: true },
-        "/admin/products": { title: "Products", render: renderPlaceholder("Products"), auth: true },
+        "/admin/products": { title: "Products", render: renderProductsGrid, auth: true },
         "/admin/orders": { title: "Orders", render: renderPlaceholder("Orders"), auth: true },
         "/admin/media": { title: "Media", render: renderPlaceholder("Media"), auth: true },
         "/admin/settings": { title: "Settings", render: renderPlaceholder("Settings"), auth: true }
     };
+
+    function resolveRoute(path) {
+        if (routes[path]) {
+            return routes[path];
+        }
+        if (path === "/admin/products/new") {
+            return { title: "New Product", render: renderProductCreate, auth: true };
+        }
+        var productMatch = path.match(/^\/admin\/products\/([^/]+)$/);
+        if (productMatch) {
+            var productID = decodeURIComponent(productMatch[1]);
+            return {
+                title: "Edit Product",
+                auth: true,
+                render: function (container) { renderProductEdit(container, productID); }
+            };
+        }
+        return routes["/admin/dashboard"];
+    }
+    // --- Product Grid ---
+    function renderProductsGrid(container) {
+        container.innerHTML = '<h2>Products</h2><div id="products-grid"></div>';
+        var gridBox = document.getElementById("products-grid");
+        Promise.all([
+            api("/admin/grids/product.grid"),
+            api("/admin/products?page=1&per_page=20&sort=created_at&order=desc")
+        ]).then(function (results) {
+            var grid = results[0] && results[0].data && results[0].data.grid;
+            var productsRaw = results[1] && results[1].data && results[1].data.products;
+            var products = normalizeProducts(productsRaw);
+            if (!grid || !Array.isArray(products)) {
+                gridBox.innerHTML = '<p role="alert">Failed to load grid or data.</p>';
+                return;
+            }
+            var html = '<div style="margin-bottom:1rem"><button id="new-product-btn">New Product</button></div>';
+            html += '<table class="admin-table"><thead><tr>';
+            for (var i = 0; i < grid.columns.length; i++) {
+                html += '<th>' + esc(grid.columns[i].label || grid.columns[i].name) + '</th>';
+            }
+            html += '<th></th></tr></thead><tbody>';
+            if (products.length === 0) {
+                html += '<tr><td colspan="' + (grid.columns.length+1) + '">No products.</td></tr>';
+            } else {
+                for (var j = 0; j < products.length; j++) {
+                    var p = products[j];
+                    html += '<tr>';
+                    for (var k = 0; k < grid.columns.length; k++) {
+                        var col = grid.columns[k];
+                        var val = p[col.name];
+                        if ((col.name === "created_at" || col.name === "updated_at") && val) {
+                            val = String(val).substring(0, 10);
+                        }
+                        html += '<td>' + esc(val == null ? '' : val) + '</td>';
+                    }
+                    html += '<td><a href="/admin/products/' + esc(p.id) + '" data-link>Edit</a></td>';
+                    html += '</tr>';
+                }
+            }
+            html += '</tbody></table>';
+            gridBox.innerHTML = html;
+            var newBtn = document.getElementById("new-product-btn");
+            if (newBtn) newBtn.addEventListener("click", function() { navigateTo("/admin/products/new"); });
+        }).catch(function () {
+            gridBox.innerHTML = '<p role="alert">Failed to load products.</p>';
+        });
+    }
+
+    function renderProductCreate(container) {
+        renderProductForm(container, null);
+    }
+
+    function renderProductEdit(container, productID) {
+        renderProductForm(container, productID);
+    }
+
+    function renderProductForm(container, productID) {
+        var title = productID ? "Edit Product" : "New Product";
+        container.innerHTML =
+            '<h2>' + title + '</h2>' +
+            '<p><a href="/admin/products" data-link>Back to products</a></p>' +
+            '<div id="product-form-msg"></div>' +
+            '<form id="product-form"></form>' +
+            '<section id="variant-panel" style="display:none; margin-top:2rem;">' +
+            '<h3>Variants</h3>' +
+            '<div id="variant-msg"></div>' +
+            '<div id="variant-list"></div>' +
+            '<form id="variant-create-form" class="variant-inline" style="margin-top:1rem;">' +
+            '<label>SKU<input name="sku" required></label>' +
+            '<label>Name<input name="name"></label>' +
+            '<label>Weight<input name="weight" type="number" step="0.01" min="0"></label>' +
+            '<button type="submit">Add Variant</button>' +
+            '</form>' +
+            '</section>';
+
+        var msg = document.getElementById("product-form-msg");
+        var form = document.getElementById("product-form");
+
+        var requests = [api("/admin/forms/product.form")];
+        if (productID) {
+            requests.push(api("/products/" + encodeURIComponent(productID)));
+        }
+
+        Promise.all(requests).then(function (results) {
+            var schema = results[0] && results[0].data && results[0].data.form;
+            var product = null;
+            if (productID) {
+                product = normalizeProduct(results[1] && results[1].data && results[1].data.product);
+            }
+            if (!schema || !schema.fields) {
+                msg.innerHTML = '<p role="alert">Failed to load form schema.</p>';
+                return;
+            }
+
+            var html = "";
+            for (var i = 0; i < schema.fields.length; i++) {
+                html += renderSchemaField(schema.fields[i], product);
+            }
+            html += '<button type="submit">' + (productID ? 'Save Product' : 'Create Product') + '</button>';
+            form.innerHTML = html;
+
+            form.addEventListener("submit", function (e) {
+                e.preventDefault();
+                var payload = collectProductPayload(schema.fields, form);
+                var method = productID ? "PUT" : "POST";
+                var url = productID ? "/admin/products/" + encodeURIComponent(productID) : "/admin/products";
+                api(url, { method: method, body: JSON.stringify(payload) }).then(function (body) {
+                    if (body && body.error) {
+                        msg.innerHTML = '<p role="alert">' + esc(body.error.message || "Save failed") + '</p>';
+                        return;
+                    }
+                    msg.innerHTML = '<p>Saved.</p>';
+                    if (!productID && body && body.data && body.data.product && body.data.product.id) {
+                        navigateTo("/admin/products/" + body.data.product.id);
+                    }
+                }).catch(function () {
+                    msg.innerHTML = '<p role="alert">Save failed.</p>';
+                });
+            });
+
+            if (productID) {
+                setupVariantPanel(productID);
+            }
+        }).catch(function () {
+            msg.innerHTML = '<p role="alert">Failed to load product form.</p>';
+        });
+    }
+
+    function renderSchemaField(field, product) {
+        var name = field.name;
+        var label = esc(field.label || name);
+        var value = field.default;
+        if (product && product[name] != null) {
+            value = product[name];
+        }
+        if (value == null) {
+            value = "";
+        }
+
+        if (field.type === "textarea") {
+            return '<label>' + label + '<textarea name="' + esc(name) + '" ' + (field.required ? 'required' : '') + '>' + esc(String(value)) + '</textarea></label>';
+        }
+        if (field.type === "number") {
+            return '<label>' + label + '<input type="number" name="' + esc(name) + '" value="' + esc(String(value)) + '" ' + (field.required ? 'required' : '') + '></label>';
+        }
+        if (field.type === "checkbox") {
+            var checked = value ? 'checked' : '';
+            return '<label><input type="checkbox" name="' + esc(name) + '" ' + checked + '> ' + label + '</label>';
+        }
+        if (field.type === "select") {
+            var opts = '<label>' + label + '<select name="' + esc(name) + '">';
+            var selected = String(value);
+            var options = field.options || [];
+            for (var i = 0; i < options.length; i++) {
+                var o = options[i];
+                var isSel = String(o.value) === selected ? ' selected' : '';
+                opts += '<option value="' + esc(o.value) + '"' + isSel + '>' + esc(o.label) + '</option>';
+            }
+            opts += '</select></label>';
+            return opts;
+        }
+        return '<label>' + label + '<input type="text" name="' + esc(name) + '" value="' + esc(String(value)) + '" ' + (field.required ? 'required' : '') + '></label>';
+    }
+
+    function collectProductPayload(fields, form) {
+        var payload = { attributes: {} };
+        for (var i = 0; i < fields.length; i++) {
+            var f = fields[i];
+            var el = form.elements[f.name];
+            if (!el) {
+                continue;
+            }
+            var v;
+            if (f.type === "checkbox") {
+                v = !!el.checked;
+            } else {
+                v = el.value;
+            }
+
+            if (f.name === "name" || f.name === "slug" || f.name === "description" || f.name === "status") {
+                payload[f.name] = v;
+            } else {
+                payload.attributes[f.name] = v;
+            }
+        }
+        if (Object.keys(payload.attributes).length === 0) {
+            delete payload.attributes;
+        }
+        return payload;
+    }
+
+    function setupVariantPanel(productID) {
+        var panel = document.getElementById("variant-panel");
+        panel.style.display = "block";
+
+        function loadVariants() {
+            var list = document.getElementById("variant-list");
+            api("/products/" + encodeURIComponent(productID) + "/variants").then(function (body) {
+                var variants = normalizeVariants(body && body.data && body.data.variants ? body.data.variants : []);
+                renderVariants(list, productID, variants, loadVariants);
+            }).catch(function () {
+                list.innerHTML = '<p role="alert">Failed to load variants.</p>';
+            });
+        }
+
+        var createForm = document.getElementById("variant-create-form");
+        var msg = document.getElementById("variant-msg");
+        createForm.addEventListener("submit", function (e) {
+            e.preventDefault();
+            var payload = {
+                sku: createForm.elements.sku.value,
+                name: createForm.elements.name.value
+            };
+            var w = createForm.elements.weight.value;
+            if (w !== "") {
+                payload.weight = Number(w);
+            }
+            api("/admin/products/" + encodeURIComponent(productID) + "/variants", {
+                method: "POST",
+                body: JSON.stringify(payload)
+            }).then(function (body) {
+                if (body && body.error) {
+                    msg.innerHTML = '<p role="alert">' + esc(body.error.message || "Create variant failed") + '</p>';
+                    return;
+                }
+                msg.innerHTML = '<p>Variant added.</p>';
+                createForm.reset();
+                loadVariants();
+            }).catch(function () {
+                msg.innerHTML = '<p role="alert">Create variant failed.</p>';
+            });
+        });
+
+        loadVariants();
+    }
+
+    function renderVariants(container, productID, variants, reload) {
+        if (!variants || variants.length === 0) {
+            container.innerHTML = '<p>No variants yet.</p>';
+            return;
+        }
+        var html = '<table><thead><tr><th>SKU</th><th>Name</th><th>Weight</th><th></th></tr></thead><tbody>';
+        for (var i = 0; i < variants.length; i++) {
+            var v = variants[i];
+            html += '<tr data-variant-id="' + esc(v.id) + '">';
+            html += '<td><input data-field="sku" value="' + esc(v.sku || '') + '"></td>';
+            html += '<td><input data-field="name" value="' + esc(v.name || '') + '"></td>';
+            html += '<td><input data-field="weight" type="number" step="0.01" min="0" value="' + esc(v.weight == null ? '' : String(v.weight)) + '"></td>';
+            html += '<td><button type="button" class="variant-save-btn">Save</button></td>';
+            html += '</tr>';
+        }
+        html += '</tbody></table>';
+        container.innerHTML = html;
+
+        var buttons = container.querySelectorAll(".variant-save-btn");
+        for (var j = 0; j < buttons.length; j++) {
+            buttons[j].addEventListener("click", function (e) {
+                var row = e.target.closest("tr");
+                var variantID = row.getAttribute("data-variant-id");
+                var sku = row.querySelector('[data-field="sku"]').value;
+                var name = row.querySelector('[data-field="name"]').value;
+                var weightRaw = row.querySelector('[data-field="weight"]').value;
+                var payload = { sku: sku, name: name };
+                if (weightRaw !== "") {
+                    payload.weight = Number(weightRaw);
+                }
+                api("/admin/products/" + encodeURIComponent(productID) + "/variants/" + encodeURIComponent(variantID), {
+                    method: "PUT",
+                    body: JSON.stringify(payload)
+                }).then(function (body) {
+                    if (body && body.error) {
+                        return;
+                    }
+                    reload();
+                });
+            });
+        }
+    }
+
+    function normalizeProducts(products) {
+        if (!Array.isArray(products)) {
+            return [];
+        }
+        var out = [];
+        for (var i = 0; i < products.length; i++) {
+            out.push(normalizeProduct(products[i]));
+        }
+        return out;
+    }
+
+    function normalizeProduct(raw) {
+        if (!raw) {
+            return null;
+        }
+        return {
+            id: pick(raw, "id", "ID"),
+            name: pick(raw, "name", "Name"),
+            slug: pick(raw, "slug", "Slug"),
+            description: pick(raw, "description", "Description"),
+            status: pick(raw, "status", "Status"),
+            attributes: pick(raw, "attributes", "Attributes") || {},
+            created_at: pick(raw, "created_at", "CreatedAt"),
+            updated_at: pick(raw, "updated_at", "UpdatedAt")
+        };
+    }
+
+    function normalizeVariants(variants) {
+        if (!Array.isArray(variants)) {
+            return [];
+        }
+        var out = [];
+        for (var i = 0; i < variants.length; i++) {
+            var v = variants[i] || {};
+            out.push({
+                id: pick(v, "id", "ID"),
+                sku: pick(v, "sku", "SKU"),
+                name: pick(v, "name", "Name"),
+                weight: pick(v, "weight", "Weight")
+            });
+        }
+        return out;
+    }
+
+    function pick(obj, a, b) {
+        if (!obj) {
+            return undefined;
+        }
+        if (obj[a] != null) {
+            return obj[a];
+        }
+        if (obj[b] != null) {
+            return obj[b];
+        }
+        return undefined;
+    }
 
     function navigateTo(path) {
         history.pushState(null, "", path);
@@ -60,11 +414,8 @@
 
     function handleRoute() {
         var path = location.pathname;
-        var route = routes[path];
-        if (!route) {
-            route = routes["/admin/dashboard"];
-            if (!route) return;
-        }
+        var route = resolveRoute(path);
+        if (!route) return;
 
         if (route.auth && !isAuthenticated()) {
             navigateTo("/admin");
@@ -92,7 +443,9 @@
         var links = document.querySelectorAll(".admin-sidebar nav a");
         for (var i = 0; i < links.length; i++) {
             var href = links[i].getAttribute("href");
-            if (href === currentPath) {
+            if (href === "/admin/products" && currentPath.indexOf("/admin/products") === 0) {
+                links[i].setAttribute("aria-current", "page");
+            } else if (href === currentPath) {
                 links[i].setAttribute("aria-current", "page");
             } else {
                 links[i].removeAttribute("aria-current");
