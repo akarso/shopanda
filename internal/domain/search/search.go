@@ -71,6 +71,19 @@ type SearchResult struct {
 	Facets   map[string][]FacetValue
 }
 
+// Suggestion is a single autocomplete result.
+type Suggestion struct {
+	Text string // display text (product name)
+	Type string // e.g. "product"
+	URL  string // e.g. "/products/sneakers-white"
+}
+
+// MaxSuggestLimit is the upper bound for autocomplete results.
+const MaxSuggestLimit = 10
+
+// DefaultSuggestLimit is applied when limit is zero.
+const DefaultSuggestLimit = 5
+
 // SearchEngine is the port for product search backends.
 // Implementations range from Postgres full-text search to external engines
 // like Meilisearch.
@@ -86,4 +99,8 @@ type SearchEngine interface {
 
 	// Search executes the given query and returns matching products.
 	Search(ctx context.Context, query SearchQuery) (SearchResult, error)
+
+	// Suggest returns autocomplete suggestions for a prefix string.
+	// limit is clamped to [1, MaxSuggestLimit]; zero uses DefaultSuggestLimit.
+	Suggest(ctx context.Context, prefix string, limit int) ([]Suggestion, error)
 }

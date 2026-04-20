@@ -3,6 +3,7 @@ package http
 import (
 	"net/http"
 	"strconv"
+	"strings"
 
 	"github.com/akarso/shopanda/internal/domain/search"
 	"github.com/akarso/shopanda/internal/platform/apperror"
@@ -61,6 +62,52 @@ func (h *SearchHandler) Search() http.HandlerFunc {
 		}
 
 		JSON(w, http.StatusOK, searchResponse(result))
+	}
+}
+
+// Suggest handles GET /api/v1/search/suggest.
+func (h *SearchHandler) Suggest() http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		q := r.URL.Query()
+
+		prefix := strings.TrimSpace(q.Get("q"))
+		if prefix == "" {
+			JSON(w, http.StatusOK, map[string]interface{}{"suggestions": []interface{}{}})
+			return
+		}
+
+		limit := search.DefaultSuggestLimit
+		if v := q.Get("limit"); v != "" {
+			n, err := strconv.Atoi(v)
+			if err != nil {
+				JSONError(w, apperror.Validation("limit must be a positive integer"))
+				return
+			}
+			if n < 1 {
+				JSONError(w, apperror.Validation("limit must be a positive integer"))
+				return
+			}
+			if n > search.MaxSuggestLimit {
+				n = search.MaxSuggestLimit
+			}
+			limit = n
+		}
+
+		suggestions, err := h.engine.Suggest(r.Context(), prefix, limit)
+		if err != nil {
+			JSONError(w, err)
+			return
+		}
+
+		items := make([]map[string]interface{}, len(suggestions))
+		for i, s := range suggestions {
+			items[i] = map[string]interface{}{
+				"text": s.Text,
+				"type": s.Type,
+				"url":  s.URL,
+			}
+		}
+		JSON(w, http.StatusOK, map[string]interface{}{"suggestions": items})
 	}
 }
 

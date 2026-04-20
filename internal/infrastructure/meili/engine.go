@@ -143,6 +143,48 @@ func (e *Engine) Search(ctx context.Context, query search.SearchQuery) (search.S
 	return mapSearchResponse(resp), nil
 }
 
+// Suggest returns autocomplete suggestions via Meilisearch prefix search.
+// If Meilisearch is unreachable, an empty list is returned (graceful degradation).
+func (e *Engine) Suggest(ctx context.Context, prefix string, limit int) ([]search.Suggestion, error) {
+	if prefix == "" {
+		return nil, nil
+	}
+	limit = clampSuggestLimit(limit)
+
+	req := searchRequest{
+		Q:     prefix,
+		Limit: limit,
+	}
+	resp, err := e.api.search(ctx, req)
+	if err != nil {
+		// Graceful degradation: return empty list on failure.
+		return nil, nil
+	}
+
+	suggestions := make([]search.Suggestion, 0, len(resp.Hits))
+	for _, raw := range resp.Hits {
+		var doc document
+		if json.Unmarshal(raw, &doc) == nil {
+			suggestions = append(suggestions, search.Suggestion{
+				Text: doc.Name,
+				Type: "product",
+				URL:  "/products/" + doc.Slug,
+			})
+		}
+	}
+	return suggestions, nil
+}
+
+func clampSuggestLimit(n int) int {
+	if n <= 0 {
+		return search.DefaultSuggestLimit
+	}
+	if n > search.MaxSuggestLimit {
+		return search.MaxSuggestLimit
+	}
+	return n
+}
+
 // --- document mapping ---
 
 type document struct {
