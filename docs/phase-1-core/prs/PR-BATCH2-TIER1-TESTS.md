@@ -10,23 +10,23 @@ Adds integration tests for 5 Tier 1 (checkout-critical) postgres repos identifie
 
 | File | Purpose |
 |------|---------|
-| `internal/infrastructure/postgres/invoice_repo_test.go` | 7 tests for `InvoiceRepo`: nil DB, save+find-by-ID (with items), find-by-order-ID, not-found, empty-ID×2, save-nil, multiple items |
+| `internal/infrastructure/postgres/invoice_repo_test.go` | 8 tests for `InvoiceRepo`: nil DB, save+find-by-ID (with items), find-by-order-ID, not-found, empty-ID×2, save-nil, multiple items |
 | `internal/infrastructure/postgres/credit_note_repo_test.go` | 7 tests for `CreditNoteRepo`: nil DB, save+find-by-ID (with items), find-by-invoice-ID (multi), not-found, empty-ID×2, save-nil |
-| `internal/infrastructure/postgres/coupon_repo_test.go` | 8 tests for `CouponRepo`: nil DB, save+find-by-ID, find-by-code, find-by-code not-found, list-by-promotion, upsert, delete, delete not-found, save-nil |
-| `internal/infrastructure/postgres/promotion_repo_test.go` | 8 tests for `PromotionRepo`: nil DB, save+find-by-ID, not-found, list-active (type filter + priority ordering), inactive-excluded, upsert, delete, delete not-found, save-nil |
-| `internal/infrastructure/postgres/zone_repo_test.go` | 14 tests for `ZoneRepo`: nil DB, create+find-by-ID, not-found, empty-ID, list-zones, update, update not-found, delete, delete not-found, duplicate conflict, create-rate-tier+find, list-rate-tiers, update-rate-tier, delete-rate-tier, delete-rate-tier not-found, invalid-zone FK, create-nil |
+| `internal/infrastructure/postgres/coupon_repo_test.go` | 9 tests for `CouponRepo`: nil DB, save+find-by-ID, find-by-code, find-by-code not-found, list-by-promotion, upsert, delete, delete not-found, save-nil |
+| `internal/infrastructure/postgres/promotion_repo_test.go` | 9 tests for `PromotionRepo`: nil DB, save+find-by-ID, not-found, list-active (type filter + priority ordering), inactive-excluded, upsert, delete, delete not-found, save-nil |
+| `internal/infrastructure/postgres/zone_repo_test.go` | 17 tests for `ZoneRepo`: nil DB, create+find-by-ID, not-found, empty-ID, list-zones, update, update not-found, delete, delete not-found, duplicate conflict, create-rate-tier+find, list-rate-tiers, update-rate-tier, delete-rate-tier, delete-rate-tier not-found, invalid-zone FK, create-nil |
 
 ## Test Inventory
 
 | File | Tests | Type | Notes |
 |------|-------|------|-------|
-| `invoice_repo_test.go` | 7 | Integration | 1 pass (NilDB), 6 skip without `SHOPANDA_TEST_DSN` |
+| `invoice_repo_test.go` | 8 | Integration | 1 pass (NilDB), 7 skip without `SHOPANDA_TEST_DSN` |
 | `credit_note_repo_test.go` | 7 | Integration | 1 pass (NilDB), 6 skip without `SHOPANDA_TEST_DSN` |
-| `coupon_repo_test.go` | 8 | Integration | 1 pass (NilDB), 7 skip without `SHOPANDA_TEST_DSN` |
-| `promotion_repo_test.go` | 8 | Integration | 1 pass (NilDB), 7 skip without `SHOPANDA_TEST_DSN` |
-| `zone_repo_test.go` | 14 | Integration | 1 pass (NilDB), 13 skip without `SHOPANDA_TEST_DSN` |
+| `coupon_repo_test.go` | 9 | Integration | 1 pass (NilDB), 8 skip without `SHOPANDA_TEST_DSN` |
+| `promotion_repo_test.go` | 9 | Integration | 1 pass (NilDB), 8 skip without `SHOPANDA_TEST_DSN` |
+| `zone_repo_test.go` | 17 | Integration | 1 pass (NilDB), 16 skip without `SHOPANDA_TEST_DSN` |
 
-**Total: 44 new tests, 70 packages pass, 0 failures.**
+**Total: 50 new tests, 70 packages pass, 0 failures.**
 
 ## Design Decisions
 
@@ -50,7 +50,7 @@ Adds integration tests for 5 Tier 1 (checkout-critical) postgres repos identifie
 
 ```bash
 go test ./internal/infrastructure/postgres/ -run "TestInvoiceRepo|TestCreditNoteRepo|TestCouponRepo|TestPromotionRepo|TestZoneRepo" -v
-# 5 pass (NilDB), 39 skip (no DSN)
+# 5 pass (NilDB), 45 skip (no DSN)
 
 go test ./...
 # 70 packages, 0 failures

@@ -81,6 +81,7 @@ func TestPromotionRepo_FindByID_NotFound(t *testing.T) {
 func TestPromotionRepo_ListActive(t *testing.T) {
 	db := testDB(t)
 	ensureProductsTable(t, db)
+	db.Exec("DELETE FROM promotions")
 	t.Cleanup(func() { db.Exec("DELETE FROM promotions") })
 
 	repo, err := postgres.NewPromotionRepo(db)
@@ -131,6 +132,7 @@ func TestPromotionRepo_ListActive(t *testing.T) {
 func TestPromotionRepo_ListActive_InactiveExcluded(t *testing.T) {
 	db := testDB(t)
 	ensureProductsTable(t, db)
+	db.Exec("DELETE FROM promotions")
 	t.Cleanup(func() { db.Exec("DELETE FROM promotions") })
 
 	repo, err := postgres.NewPromotionRepo(db)
