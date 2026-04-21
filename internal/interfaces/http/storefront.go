@@ -59,6 +59,7 @@ type StorefrontProductCard struct {
 	Slug         string
 	Description  string
 	ImageURL     string
+	HasPrice     bool
 	PriceText    string
 	Availability string
 }
@@ -247,12 +248,17 @@ func (h *StorefrontHandler) renderListing(searchMode bool) http.HandlerFunc {
 
 		result := search.SearchResult{Products: []search.Product{}, Facets: map[string][]search.FacetValue{}}
 		if !searchMode || params.Query != "" {
-			result, err = h.search.Search(r.Context(), search.SearchQuery{
+			query := search.SearchQuery{
 				Text:   params.Query,
 				Sort:   storefrontSearchSort(params.Sort),
 				Limit:  params.PerPage,
 				Offset: (params.Page - 1) * params.PerPage,
-			})
+			}
+			if s := store.FromContext(r.Context()); s != nil {
+				query.StoreID = s.ID
+				query.Currency = s.Currency
+			}
+			result, err = h.search.Search(r.Context(), query)
 			if err != nil {
 				http.Error(w, "Internal Server Error", http.StatusInternalServerError)
 				return
@@ -435,26 +441,31 @@ func searchProductsToCatalog(products []search.Product) []*catalog.Product {
 }
 
 func storefrontCards(products []*catalog.Product, indexed []search.Product, currency string) []StorefrontProductCard {
-	indexedBySlug := make(map[string]search.Product, len(indexed))
+	indexedByID := make(map[string]search.Product, len(indexed))
 	for i := range indexed {
-		indexedBySlug[indexed[i].Slug] = indexed[i]
+		indexedByID[indexed[i].ID] = indexed[i]
 	}
 	out := make([]StorefrontProductCard, 0, len(products))
 	for _, product := range products {
 		if product == nil {
 			continue
 		}
-		indexedProduct := indexedBySlug[product.Slug]
-		priceText := formatStorefrontMoney(indexedProduct.Price, currency)
-		availability := "Out of stock"
-		if indexedProduct.InStock {
-			availability = "In stock"
+		indexedProduct, hasIndexedProduct := indexedByID[product.ID]
+		priceText := ""
+		availability := ""
+		if hasIndexedProduct {
+			priceText = formatStorefrontMoney(indexedProduct.Price, currency)
+			availability = "Out of stock"
+			if indexedProduct.InStock {
+				availability = "In stock"
+			}
 		}
 		out = append(out, StorefrontProductCard{
 			Name:         product.Name,
 			Slug:         product.Slug,
 			Description:  product.Description,
 			ImageURL:     imageURLFromAttrs(product.Attributes),
+			HasPrice:     hasIndexedProduct,
 			PriceText:    priceText,
 			Availability: availability,
 		})

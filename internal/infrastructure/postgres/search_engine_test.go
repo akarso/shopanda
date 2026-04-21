@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"testing"
+	"time"
 
 	"github.com/akarso/shopanda/internal/domain/catalog"
 	"github.com/akarso/shopanda/internal/domain/inventory"
@@ -362,9 +363,18 @@ func TestSearchEngine_Search_PopulatesPriceAvailabilityAndCreatedAt(t *testing.T
 	db := testDB(t)
 	ensureProductsTable(t, db)
 	t.Cleanup(func() {
-		db.Exec("DELETE FROM stock")
-		db.Exec("DELETE FROM prices")
-		db.Exec("DELETE FROM variants")
+		for _, stmt := range []string{
+			"DELETE FROM reservations",
+			"DELETE FROM stock",
+			"DELETE FROM prices",
+			"DELETE FROM product_categories",
+			"DELETE FROM variants",
+			"DELETE FROM products",
+		} {
+			if _, err := db.Exec(stmt); err != nil {
+				t.Fatalf("cleanup failed for %q: %v", stmt, err)
+			}
+		}
 	})
 
 	engine, err := postgres.NewSearchEngine(db)
@@ -388,6 +398,10 @@ func TestSearchEngine_Search_PopulatesPriceAvailabilityAndCreatedAt(t *testing.T
 	stockRepo, err := postgres.NewStockRepo(db)
 	if err != nil {
 		t.Fatalf("NewStockRepo: %v", err)
+	}
+	reservationRepo, err := postgres.NewReservationRepo(db)
+	if err != nil {
+		t.Fatalf("NewReservationRepo: %v", err)
 	}
 
 	p := mustNewProduct(t, "Projected Search Product", "projected-search-"+id.New()[:8])
@@ -450,5 +464,35 @@ func TestSearchEngine_Search_PopulatesPriceAvailabilityAndCreatedAt(t *testing.T
 	}
 	if got.CreatedAt.UTC().Unix() != p.CreatedAt.UTC().Unix() {
 		t.Errorf("CreatedAt = %v, want %v", got.CreatedAt.UTC(), p.CreatedAt.UTC())
+	}
+
+	storeScoped, err := engine.Search(ctx, search.SearchQuery{Text: "projection coverage", StoreID: "store-1", Currency: "EUR"})
+	if err != nil {
+		t.Fatalf("Search store scoped: %v", err)
+	}
+	if len(storeScoped.Products) != 1 {
+		t.Fatalf("len(StoreScoped.Products) = %d, want 1", len(storeScoped.Products))
+	}
+	if storeScoped.Products[0].Price != 999 {
+		t.Errorf("store scoped Price = %d, want 999", storeScoped.Products[0].Price)
+	}
+
+	reservation, err := inventory.NewReservation(id.New(), v.ID, 7, time.Now().UTC().Add(15*time.Minute))
+	if err != nil {
+		t.Fatalf("NewReservation: %v", err)
+	}
+	if err := reservationRepo.Reserve(ctx, &reservation); err != nil {
+		t.Fatalf("Reserve: %v", err)
+	}
+
+	reservedOut, err := engine.Search(ctx, search.SearchQuery{Text: "projection coverage", StoreID: "store-1", Currency: "EUR"})
+	if err != nil {
+		t.Fatalf("Search reserved out: %v", err)
+	}
+	if len(reservedOut.Products) != 1 {
+		t.Fatalf("len(ReservedOut.Products) = %d, want 1", len(reservedOut.Products))
+	}
+	if reservedOut.Products[0].InStock {
+		t.Error("InStock = true after reservations consume all stock, want false")
 	}
 }

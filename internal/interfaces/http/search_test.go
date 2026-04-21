@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/akarso/shopanda/internal/domain/search"
+	"github.com/akarso/shopanda/internal/domain/store"
 	"github.com/akarso/shopanda/internal/platform/apperror"
 
 	shophttp "github.com/akarso/shopanda/internal/interfaces/http"
@@ -201,6 +202,32 @@ func TestSearchHandler_WithCategoryFilter(t *testing.T) {
 	}
 	if cat != "footwear" {
 		t.Errorf("category = %v, want footwear", cat)
+	}
+}
+
+func TestSearchHandler_UsesStoreContext(t *testing.T) {
+	var capturedQuery search.SearchQuery
+	engine := &mockSearchEngine{
+		searchFn: func(_ context.Context, q search.SearchQuery) (search.SearchResult, error) {
+			capturedQuery = q
+			return search.SearchResult{Products: []search.Product{}, Facets: map[string][]search.FacetValue{}}, nil
+		},
+	}
+	h := shophttp.NewSearchHandler(engine)
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("GET", "/api/v1/search?q=test", nil)
+	ctx := store.WithStore(req.Context(), &store.Store{ID: "store-1", Currency: "EUR"})
+	newSearchRouter(h).ServeHTTP(rec, req.WithContext(ctx))
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d", rec.Code, http.StatusOK)
+	}
+	if capturedQuery.StoreID != "store-1" {
+		t.Errorf("StoreID = %q, want %q", capturedQuery.StoreID, "store-1")
+	}
+	if capturedQuery.Currency != "EUR" {
+		t.Errorf("Currency = %q, want %q", capturedQuery.Currency, "EUR")
 	}
 }
 
