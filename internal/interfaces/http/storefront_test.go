@@ -23,6 +23,7 @@ import (
 // --- mock repo for storefront tests ---
 
 type mockStorefrontRepo struct {
+	findByIDFn   func(ctx context.Context, id string) (*catalog.Product, error)
 	findBySlugFn func(ctx context.Context, slug string) (*catalog.Product, error)
 }
 
@@ -38,7 +39,10 @@ func (m *mockStorefrontRepo) FindBySlug(ctx context.Context, slug string) (*cata
 	return nil, nil
 }
 
-func (m *mockStorefrontRepo) FindByID(_ context.Context, _ string) (*catalog.Product, error) {
+func (m *mockStorefrontRepo) FindByID(ctx context.Context, id string) (*catalog.Product, error) {
+	if m.findByIDFn != nil {
+		return m.findByIDFn(ctx, id)
+	}
 	return nil, nil
 }
 func (m *mockStorefrontRepo) List(_ context.Context, _, _ int) ([]catalog.Product, error) {
@@ -94,7 +98,7 @@ func createTestTheme(t *testing.T) *theme.Engine {
 		t.Fatal(err)
 	}
 
-	layout := `<!DOCTYPE html><html><head><title>{{ template "title" . }}</title></head><body><nav>{{ range .Layout.Nav }}<a href="{{ .URL }}">{{ .Label }}</a>{{ end }}</nav><form action="{{ .Layout.SearchAction }}"></form><span>{{ .Layout.CartLabel }}</span>{{ template "content" . }}</body></html>`
+	layout := `<!DOCTYPE html><html><head><title>{{ template "title" . }}</title></head><body><nav>{{ range .Layout.Nav }}<a href="{{ .URL }}">{{ .Label }}</a>{{ end }}</nav><form action="{{ .Layout.SearchAction }}"></form><a href="{{ .Layout.CartURL }}">{{ if .Layout.EnableCart }}<span hx-get="/fragments/cart-count" hx-trigger="cart-updated from:body" hx-swap="innerHTML">{{ .Layout.CartLabel }}</span>{{ else }}{{ .Layout.CartLabel }}{{ end }}</a>{{ if .Layout.EnableCart }}<div id="mini-cart" hx-get="/fragments/mini-cart" hx-trigger="load, cart-updated from:body"></div>{{ end }}{{ template "content" . }}</body></html>`
 	if err := os.WriteFile(filepath.Join(tplDir, "layout.html"), []byte(layout), 0644); err != nil {
 		t.Fatal(err)
 	}
@@ -104,7 +108,7 @@ func createTestTheme(t *testing.T) *theme.Engine {
 		t.Fatal(err)
 	}
 
-	product := `{{ define "title" }}{{ .Product.Name }}{{ end }}{{ define "content" }}<h1>{{ .Product.Name }}</h1><p>{{ .Product.Description }}</p>{{ end }}{{ template "layout.html" . }}`
+	product := `{{ define "title" }}{{ .Product.Name }}{{ end }}{{ define "content" }}<h1>{{ .Product.Name }}</h1><p>{{ .Product.Description }}</p>{{ if .CartForm }}<form action="{{ .CartForm.Action }}" method="post"><input type="hidden" name="variant_id" value="{{ .CartForm.VariantID }}"><input type="hidden" name="quantity" value="{{ .CartForm.Quantity }}"><input type="hidden" name="redirect_to" value="{{ .CartForm.RedirectTo }}"><button type="submit">Add to cart</button></form>{{ end }}{{ end }}{{ template "layout.html" . }}`
 	if err := os.WriteFile(filepath.Join(tplDir, "product.html"), []byte(product), 0644); err != nil {
 		t.Fatal(err)
 	}
@@ -116,6 +120,11 @@ func createTestTheme(t *testing.T) *theme.Engine {
 
 	category := `{{ define "title" }}{{ .Category.Name }}{{ end }}{{ define "content" }}<h1>{{ .Category.Name }}</h1><p>{{ .Category.Description }}</p><nav>{{ range .Breadcrumbs }}<a href="{{ .URL }}">{{ .Label }}</a>{{ end }}</nav><section>{{ range .Subcategories }}<a href="{{ .URL }}">{{ .Name }}</a>{{ end }}</section><div>{{ range .Products }}<article>{{ .Name }}</article>{{ else }}<p>{{ .EmptyMessage }}</p>{{ end }}</div>{{ end }}{{ template "layout.html" . }}`
 	if err := os.WriteFile(filepath.Join(tplDir, "category.html"), []byte(category), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	cart := `{{ define "title" }}Cart{{ end }}{{ define "content" }}<section id="cart-page"><h1>Shopping Cart</h1>{{ range .Items }}<article><h2>{{ .ProductName }}</h2><span>{{ .UnitPriceText }}</span><form action="/cart/update" method="post"><input type="hidden" name="variant_id" value="{{ .VariantID }}"><input type="number" name="quantity" value="{{ .Quantity }}"></form><form action="/cart/remove" method="post"><input type="hidden" name="variant_id" value="{{ .VariantID }}"><button type="submit">Remove</button></form><strong>{{ .LineTotalText }}</strong></article>{{ else }}<p>{{ .EmptyMessage }}</p>{{ end }}<div>{{ .Summary.SubtotalText }}</div></section>{{ end }}{{ template "layout.html" . }}`
+	if err := os.WriteFile(filepath.Join(tplDir, "cart.html"), []byte(cart), 0644); err != nil {
 		t.Fatal(err)
 	}
 
@@ -159,10 +168,19 @@ func createTestThemeWithoutHome(t *testing.T) *theme.Engine {
 func newStorefrontRouter(h *shophttp.StorefrontHandler) *http.ServeMux {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /{$}", h.Home())
+	mux.HandleFunc("GET /cart", h.Cart())
 	mux.HandleFunc("GET /categories", h.Categories())
 	mux.HandleFunc("GET /categories/{slug}", h.Category())
+	mux.HandleFunc("GET /fragments/cart-count", h.CartCountFragment())
+	mux.HandleFunc("GET /fragments/mini-cart", h.MiniCartFragment())
 	mux.HandleFunc("GET /products", h.Products())
 	mux.HandleFunc("GET /products/{slug}", h.Product())
+	mux.HandleFunc("POST /cart/add", h.AddToCart())
+	mux.HandleFunc("POST /cart/update", h.UpdateCart())
+	mux.HandleFunc("POST /cart/remove", h.RemoveCartItem())
+	mux.HandleFunc("POST /fragments/cart/add", h.AddToCart())
+	mux.HandleFunc("POST /fragments/cart/update", h.UpdateCart())
+	mux.HandleFunc("POST /fragments/cart/remove", h.RemoveCartItem())
 	mux.HandleFunc("GET /search", h.Search())
 	return mux
 }

@@ -40,7 +40,17 @@
         </dl>
         <div class="product-detail-card__actions">
             <a class="button-link" href="/">Back to home</a>
-            <span class="muted-note">Cart and checkout interactions land in later PRs.</span>
+            {{ if .CartForm }}
+            <form class="product-detail-card__cart" action="{{ .CartForm.Action }}" method="post" hx-post="{{ .CartForm.Action }}" hx-target="#product-cart-status" hx-swap="innerHTML" hx-on::before-request="document.getElementById('product-cart-status').textContent = ''" hx-on::before-swap="if (event.detail.xhr.status >= 200 && event.detail.xhr.status < 300) { event.detail.shouldSwap = false; } else { event.detail.shouldSwap = true; event.detail.target = document.getElementById('product-cart-status'); }" hx-on::after-request="if (event.detail.xhr.status >= 200 && event.detail.xhr.status < 300) { document.getElementById('product-cart-status').textContent = 'Added to cart.'; htmx.trigger(document.body, 'cart-updated'); }">
+                <input type="hidden" name="variant_id" value="{{ .CartForm.VariantID }}">
+                <input type="hidden" name="quantity" value="{{ .CartForm.Quantity }}">
+                <input type="hidden" name="redirect_to" value="{{ .CartForm.RedirectTo }}">
+                <button type="submit">Add to cart</button>
+                <span id="product-cart-status" class="muted-note product-detail-card__cart-status" role="status" aria-live="polite"></span>
+            </form>
+            {{ else }}
+            <span class="muted-note">This product is not purchasable yet.</span>
+            {{ end }}
         </div>
     </div>
 </section>

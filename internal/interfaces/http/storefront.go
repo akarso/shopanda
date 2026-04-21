@@ -13,6 +13,7 @@ import (
 	"sync"
 	"time"
 
+	cartApp "github.com/akarso/shopanda/internal/application/cart"
 	"github.com/akarso/shopanda/internal/application/composition"
 	"github.com/akarso/shopanda/internal/domain/catalog"
 	"github.com/akarso/shopanda/internal/domain/search"
@@ -24,14 +25,16 @@ import (
 
 // StorefrontHandler renders SSR pages using the theme engine.
 type StorefrontHandler struct {
-	engine *theme.Engine
-	repo   catalog.ProductRepository
-	cats   catalog.CategoryRepository
-	pdp    *composition.Pipeline[composition.ProductContext]
-	plp    *composition.Pipeline[composition.ListingContext]
-	search search.SearchEngine
-	log    logger.Logger
-	catNav storefrontCategoryCache
+	engine   *theme.Engine
+	repo     catalog.ProductRepository
+	cats     catalog.CategoryRepository
+	pdp      *composition.Pipeline[composition.ProductContext]
+	plp      *composition.Pipeline[composition.ListingContext]
+	search   search.SearchEngine
+	variants catalog.VariantRepository
+	carts    *cartApp.Service
+	log      logger.Logger
+	catNav   storefrontCategoryCache
 }
 
 type storefrontCategoryCache struct {
@@ -70,6 +73,7 @@ type StorefrontLayoutData struct {
 	SearchQuery  string
 	CartURL      string
 	CartLabel    string
+	EnableCart   bool
 	CurrentYear  int
 	Nav          []StorefrontNavLink
 	Categories   []StorefrontCategoryNavItem
@@ -82,8 +86,9 @@ type StorefrontHomePageData struct {
 
 type StorefrontProductPageData struct {
 	*composition.ProductContext
-	Layout StorefrontLayoutData
-	Theme  theme.Theme
+	Layout   StorefrontLayoutData
+	Theme    theme.Theme
+	CartForm *StorefrontCartFormData
 }
 
 type StorefrontProductCard struct {
@@ -199,6 +204,14 @@ func NewStorefrontHandler(
 	}
 }
 
+// WithCart enables storefront cart rendering and mutations using the provided
+// variant repository and cart application service.
+func (h *StorefrontHandler) WithCart(variants catalog.VariantRepository, carts *cartApp.Service) *StorefrontHandler {
+	h.variants = variants
+	h.carts = carts
+	return h
+}
+
 // Home handles GET / and renders the storefront landing page.
 func (h *StorefrontHandler) Home() http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
@@ -279,6 +292,7 @@ func (h *StorefrontHandler) Product() http.HandlerFunc {
 			ProductContext: ctx,
 			Layout:         h.layoutDataBestEffort(r),
 			Theme:          h.engine.Theme(),
+			CartForm:       h.resolveCartForm(r, product.ID),
 		}
 		h.renderPage(w, "product", page)
 	}
@@ -486,7 +500,8 @@ func (h *StorefrontHandler) buildLayoutData(r *http.Request, categories []catalo
 		SearchAction: searchAction,
 		SearchQuery:  strings.TrimSpace(r.URL.Query().Get("q")),
 		CartURL:      cartURL,
-		CartLabel:    cartLabel,
+		CartLabel:    h.cartLabelBestEffort(r, cartLabel),
+		EnableCart:   h.carts != nil,
 		CurrentYear:  time.Now().UTC().Year(),
 		Nav:          nav,
 		Categories:   storefrontCategoryTree(categories),
