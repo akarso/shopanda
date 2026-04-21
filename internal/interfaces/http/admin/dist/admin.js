@@ -972,11 +972,12 @@
 
     function renderEmailSettingsForm(container, settings) {
         var form = document.getElementById('settings-email-form');
+        var passwordValue = valueOf(settings, 'mail.smtp.password', '');
         form.innerHTML = '' +
             '<label>SMTP Host<input name="host" value="' + esc(valueOf(settings, 'mail.smtp.host', '')) + '"></label>' +
             '<label>SMTP Port<input name="port" type="number" min="1" value="' + esc(String(valueOf(settings, 'mail.smtp.port', 0) || '')) + '"></label>' +
             '<label>SMTP User<input name="user" value="' + esc(valueOf(settings, 'mail.smtp.user', '')) + '"></label>' +
-            '<label>SMTP Password<input name="password" type="password" value="' + esc(valueOf(settings, 'mail.smtp.password', '')) + '"></label>' +
+            '<label>SMTP Password<input name="password" type="password" value="' + esc(passwordValue) + '"></label>' +
             '<label>From Address<input name="from" value="' + esc(valueOf(settings, 'mail.smtp.from', '')) + '"></label>' +
             '<label>Test Recipient<input name="test_to" type="email" placeholder="merchant@example.com"></label>' +
             '<div class="settings-actions">' +
@@ -986,26 +987,32 @@
 
         form.addEventListener('submit', function (e) {
             e.preventDefault();
-            saveSettingsEntries('settings-email-msg', {
+            var entries = {
                 'mail.smtp.host': form.elements.host.value,
                 'mail.smtp.port': Number(form.elements.port.value || 0),
                 'mail.smtp.user': form.elements.user.value,
-                'mail.smtp.password': form.elements.password.value,
                 'mail.smtp.from': form.elements.from.value
-            });
+            };
+            if (form.elements.password.value !== '***') {
+                entries['mail.smtp.password'] = form.elements.password.value;
+            }
+            saveSettingsEntries('settings-email-msg', entries);
         });
 
         document.getElementById('settings-test-email').addEventListener('click', function () {
+            var payload = {
+                to: form.elements.test_to.value,
+                host: form.elements.host.value,
+                port: Number(form.elements.port.value || 0),
+                user: form.elements.user.value,
+                from: form.elements.from.value
+            };
+            if (form.elements.password.value !== '***') {
+                payload.password = form.elements.password.value;
+            }
             api('/admin/config/test-email', {
                 method: 'POST',
-                body: JSON.stringify({
-                    to: form.elements.test_to.value,
-                    host: form.elements.host.value,
-                    port: Number(form.elements.port.value || 0),
-                    user: form.elements.user.value,
-                    password: form.elements.password.value,
-                    from: form.elements.from.value
-                })
+                body: JSON.stringify(payload)
             }).then(function (body) {
                 if (body && body.error) {
                     setSettingsMessage('settings-email-msg', body.error.message || 'Failed to send test email.', true);

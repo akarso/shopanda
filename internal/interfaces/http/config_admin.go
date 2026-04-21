@@ -32,6 +32,8 @@ type ConfigAdminHandler struct {
 	testEmailFunc SMTPTestFunc
 }
 
+const redactedSecretValue = "***"
+
 var configGroupKeys = map[string][]string{
 	"store": {
 		"store.address",
@@ -64,6 +66,10 @@ var configGroupKeys = map[string][]string{
 	},
 }
 
+var secretConfigKeys = map[string]struct{}{
+	"mail.smtp.password": {},
+}
+
 // NewConfigAdminHandler creates a ConfigAdminHandler.
 func NewConfigAdminHandler(repo domainCfg.Repository, cfg *appconfig.Config, testEmailFunc SMTPTestFunc) *ConfigAdminHandler {
 	if repo == nil {
@@ -83,12 +89,12 @@ type updateConfigRequest struct {
 }
 
 type testEmailRequest struct {
-	To       string `json:"to"`
-	Host     string `json:"host"`
-	Port     *int   `json:"port"`
-	User     string `json:"user"`
-	Password string `json:"password"`
-	From     string `json:"from"`
+	To       string  `json:"to"`
+	Host     string  `json:"host"`
+	Port     *int    `json:"port"`
+	User     *string `json:"user"`
+	Password *string `json:"password"`
+	From     string  `json:"from"`
 }
 
 // Get handles GET /api/v1/admin/config.
@@ -116,7 +122,7 @@ func (h *ConfigAdminHandler) Get() http.HandlerFunc {
 
 		JSON(w, http.StatusOK, map[string]interface{}{
 			"group":   group,
-			"entries": values,
+			"entries": h.redactEntries(values),
 		})
 	}
 }
@@ -134,23 +140,19 @@ func (h *ConfigAdminHandler) Update() http.HandlerFunc {
 			return
 		}
 
-		for key, value := range req.Entries {
-			if !isAllowedConfigKey(key) {
-				JSONError(w, apperror.Validation("invalid config key: "+key))
-				return
-			}
-			if value == nil {
-				JSONError(w, apperror.Validation("config value must not be null: "+key))
-				return
-			}
-			if err := h.repo.Set(r.Context(), key, value); err != nil {
-				JSONError(w, err)
-				return
-			}
+		entries, err := h.normalizeUpdateEntries(r.Context(), req.Entries)
+		if err != nil {
+			JSONError(w, err)
+			return
+		}
+
+		if err := h.repo.SetMany(r.Context(), entries); err != nil {
+			JSONError(w, err)
+			return
 		}
 
 		JSON(w, http.StatusOK, map[string]interface{}{
-			"entries": req.Entries,
+			"entries": h.redactEntries(req.Entries),
 		})
 	}
 }
@@ -170,7 +172,7 @@ func (h *ConfigAdminHandler) TestEmail() http.HandlerFunc {
 
 		settings, err := h.resolveSMTPSettings(r.Context(), req)
 		if err != nil {
-			JSONError(w, apperror.Validation(err.Error()))
+			JSONError(w, err)
 			return
 		}
 
@@ -234,12 +236,36 @@ func (h *ConfigAdminHandler) defaultValue(key string) interface{} {
 }
 
 func (h *ConfigAdminHandler) resolveSMTPSettings(ctx context.Context, req testEmailRequest) (SMTPTestConfig, error) {
-	host := firstNonEmpty(req.Host, h.lookupConfigString(ctx, "mail.smtp.host"), h.cfg.Mail.SMTP.Host)
-	user := firstNonEmpty(req.User, h.lookupConfigString(ctx, "mail.smtp.user"), h.cfg.Mail.SMTP.User)
-	password := firstNonEmpty(req.Password, h.lookupConfigString(ctx, "mail.smtp.password"), h.cfg.Mail.SMTP.Password)
-	from := firstNonEmpty(req.From, h.lookupConfigString(ctx, "mail.smtp.from"), h.cfg.Mail.SMTP.From)
+	storedHost, err := h.lookupConfigString(ctx, "mail.smtp.host")
+	if err != nil {
+		return SMTPTestConfig{}, err
+	}
+	storedUser, err := h.lookupConfigString(ctx, "mail.smtp.user")
+	if err != nil {
+		return SMTPTestConfig{}, err
+	}
+	storedPassword, err := h.lookupConfigString(ctx, "mail.smtp.password")
+	if err != nil {
+		return SMTPTestConfig{}, err
+	}
+	storedFrom, err := h.lookupConfigString(ctx, "mail.smtp.from")
+	if err != nil {
+		return SMTPTestConfig{}, err
+	}
+	host := firstNonEmpty(req.Host, storedHost, h.cfg.Mail.SMTP.Host)
+	from := firstNonEmpty(req.From, storedFrom, h.cfg.Mail.SMTP.From)
+	user := firstNonEmpty(storedUser, h.cfg.Mail.SMTP.User)
+	if req.User != nil {
+		user = strings.TrimSpace(*req.User)
+	}
+	password := firstNonEmpty(storedPassword, h.cfg.Mail.SMTP.Password)
+	if req.Password != nil {
+		password = *req.Password
+	}
 	port := h.cfg.Mail.SMTP.Port
-	if storedPort, ok := h.lookupConfigInt(ctx, "mail.smtp.port"); ok {
+	if storedPort, ok, err := h.lookupConfigInt(ctx, "mail.smtp.port"); err != nil {
+		return SMTPTestConfig{}, err
+	} else if ok {
 		port = storedPort
 	}
 	if req.Port != nil {
@@ -247,13 +273,13 @@ func (h *ConfigAdminHandler) resolveSMTPSettings(ctx context.Context, req testEm
 	}
 
 	if strings.TrimSpace(host) == "" {
-		return SMTPTestConfig{}, fmt.Errorf("mail.smtp.host is required")
+		return SMTPTestConfig{}, apperror.Validation("mail.smtp.host is required")
 	}
 	if port <= 0 {
-		return SMTPTestConfig{}, fmt.Errorf("mail.smtp.port must be positive")
+		return SMTPTestConfig{}, apperror.Validation("mail.smtp.port must be positive")
 	}
 	if strings.TrimSpace(from) == "" {
-		return SMTPTestConfig{}, fmt.Errorf("mail.smtp.from is required")
+		return SMTPTestConfig{}, apperror.Validation("mail.smtp.from is required")
 	}
 
 	return SMTPTestConfig{
@@ -265,34 +291,90 @@ func (h *ConfigAdminHandler) resolveSMTPSettings(ctx context.Context, req testEm
 	}, nil
 }
 
-func (h *ConfigAdminHandler) lookupConfigString(ctx context.Context, key string) string {
+func (h *ConfigAdminHandler) normalizeUpdateEntries(ctx context.Context, entries map[string]interface{}) (map[string]interface{}, error) {
+	normalized := make(map[string]interface{}, len(entries))
+	for key, value := range entries {
+		if !isAllowedConfigKey(key) {
+			return nil, apperror.Validation("invalid config key: " + key)
+		}
+		if value == nil {
+			return nil, apperror.Validation("config value must not be null: " + key)
+		}
+		if isSecretConfigKey(key) {
+			secretValue, ok := value.(string)
+			if !ok {
+				return nil, apperror.Validation("config value must be string: " + key)
+			}
+			if secretValue == redactedSecretValue || strings.TrimSpace(secretValue) == "" {
+				continue
+			}
+		}
+		normalized[key] = value
+	}
+	return normalized, nil
+}
+
+func (h *ConfigAdminHandler) redactEntries(entries map[string]interface{}) map[string]interface{} {
+	redacted := make(map[string]interface{}, len(entries))
+	for key, value := range entries {
+		if isSecretConfigKey(key) {
+			redacted[key] = redactSecretValue(value)
+			continue
+		}
+		redacted[key] = value
+	}
+	return redacted
+}
+
+func (h *ConfigAdminHandler) lookupConfigString(ctx context.Context, key string) (string, error) {
 	val, err := h.repo.Get(ctx, key)
-	if err != nil || val == nil {
-		return ""
+	if err != nil {
+		return "", err
+	}
+	if val == nil {
+		return "", nil
 	}
 	switch typed := val.(type) {
 	case string:
-		return typed
+		return typed, nil
 	case fmt.Stringer:
-		return typed.String()
+		return typed.String(), nil
 	default:
-		return fmt.Sprintf("%v", typed)
+		return fmt.Sprintf("%v", typed), nil
 	}
 }
 
-func (h *ConfigAdminHandler) lookupConfigInt(ctx context.Context, key string) (int, bool) {
+func (h *ConfigAdminHandler) lookupConfigInt(ctx context.Context, key string) (int, bool, error) {
 	val, err := h.repo.Get(ctx, key)
-	if err != nil || val == nil {
-		return 0, false
+	if err != nil {
+		return 0, false, err
+	}
+	if val == nil {
+		return 0, false, nil
 	}
 	switch typed := val.(type) {
 	case float64:
-		return int(typed), true
+		return int(typed), true, nil
 	case int:
-		return typed, true
+		return typed, true, nil
 	default:
-		return 0, false
+		return 0, false, nil
 	}
+}
+
+func isSecretConfigKey(key string) bool {
+	_, ok := secretConfigKeys[key]
+	return ok
+}
+
+func redactSecretValue(value interface{}) interface{} {
+	if value == nil {
+		return ""
+	}
+	if str, ok := value.(string); ok && strings.TrimSpace(str) == "" {
+		return ""
+	}
+	return redactedSecretValue
 }
 
 func keysForGroup(group string) ([]string, error) {

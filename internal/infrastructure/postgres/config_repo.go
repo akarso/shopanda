@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"sort"
 
 	domainCfg "github.com/akarso/shopanda/internal/domain/config"
 )
@@ -18,6 +19,10 @@ type configDB interface {
 	ExecContext(ctx context.Context, query string, args ...interface{}) (sql.Result, error)
 	QueryRowContext(ctx context.Context, query string, args ...interface{}) *sql.Row
 	QueryContext(ctx context.Context, query string, args ...interface{}) (*sql.Rows, error)
+}
+
+type txBeginner interface {
+	BeginTx(ctx context.Context, opts *sql.TxOptions) (*sql.Tx, error)
 }
 
 // ConfigRepo implements config.Repository using PostgreSQL.
@@ -72,6 +77,47 @@ func (r *ConfigRepo) Set(ctx context.Context, key string, value interface{}) err
 	)
 	if err != nil {
 		return fmt.Errorf("config_repo: set %q: %w", key, err)
+	}
+	return nil
+}
+
+// SetMany stores multiple config entries atomically.
+func (r *ConfigRepo) SetMany(ctx context.Context, entries map[string]interface{}) error {
+	if len(entries) == 0 {
+		return nil
+	}
+
+	keys := make([]string, 0, len(entries))
+	for key, value := range entries {
+		if value == nil {
+			return fmt.Errorf("config_repo: value must not be nil for %q", key)
+		}
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+
+	if beginner, ok := r.db.(txBeginner); ok {
+		tx, err := beginner.BeginTx(ctx, nil)
+		if err != nil {
+			return fmt.Errorf("config_repo: begin tx: %w", err)
+		}
+		txRepo := NewConfigRepo(tx)
+		for _, key := range keys {
+			if err := txRepo.Set(ctx, key, entries[key]); err != nil {
+				_ = tx.Rollback()
+				return err
+			}
+		}
+		if err := tx.Commit(); err != nil {
+			return fmt.Errorf("config_repo: commit tx: %w", err)
+		}
+		return nil
+	}
+
+	for _, key := range keys {
+		if err := r.Set(ctx, key, entries[key]); err != nil {
+			return err
+		}
 	}
 	return nil
 }

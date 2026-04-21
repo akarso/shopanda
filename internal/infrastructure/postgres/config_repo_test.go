@@ -180,3 +180,52 @@ func TestConfigRepo_ComplexValue(t *testing.T) {
 		t.Errorf("enabled = %v", m["enabled"])
 	}
 }
+
+func TestConfigRepo_SetMany(t *testing.T) {
+	repo := setupConfigRepo(t)
+	ctx := context.Background()
+
+	err := repo.SetMany(ctx, map[string]interface{}{
+		"mail.smtp.host": "smtp.example.com",
+		"mail.smtp.port": 2525,
+	})
+	if err != nil {
+		t.Fatalf("SetMany: %v", err)
+	}
+
+	host, err := repo.Get(ctx, "mail.smtp.host")
+	if err != nil {
+		t.Fatalf("Get host: %v", err)
+	}
+	if host != "smtp.example.com" {
+		t.Fatalf("host = %v, want smtp.example.com", host)
+	}
+	port, err := repo.Get(ctx, "mail.smtp.port")
+	if err != nil {
+		t.Fatalf("Get port: %v", err)
+	}
+	if port != float64(2525) {
+		t.Fatalf("port = %v, want 2525", port)
+	}
+}
+
+func TestConfigRepo_SetMany_RollbackOnError(t *testing.T) {
+	repo := setupConfigRepo(t)
+	ctx := context.Background()
+
+	err := repo.SetMany(ctx, map[string]interface{}{
+		"a.key": "persist-me-not",
+		"b.key": func() {},
+	})
+	if err == nil {
+		t.Fatal("expected SetMany error")
+	}
+
+	val, getErr := repo.Get(ctx, "a.key")
+	if getErr != nil {
+		t.Fatalf("Get: %v", getErr)
+	}
+	if val != nil {
+		t.Fatalf("value = %v, want nil after rollback", val)
+	}
+}

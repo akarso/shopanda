@@ -17,6 +17,9 @@ type Repository interface {
 	// Set stores value under key (upsert).
 	Set(ctx context.Context, key string, value interface{}) error
 
+	// SetMany stores multiple values atomically when supported by the implementation.
+	SetMany(ctx context.Context, entries map[string]interface{}) error
+
 	// Delete removes the entry for key. A missing key is not an error.
 	Delete(ctx context.Context, key string) error
 
