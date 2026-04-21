@@ -31,6 +31,10 @@ func (hMockAssetRepo) Save(_ context.Context, _ *domainMedia.Asset) error { retu
 func (hMockAssetRepo) FindByID(_ context.Context, _ string) (*domainMedia.Asset, error) {
 	return nil, nil
 }
+func (hMockAssetRepo) List(_ context.Context, _ int, _ int) ([]domainMedia.Asset, error) {
+	return nil, nil
+}
+func (hMockAssetRepo) Delete(_ context.Context, _ string) error { return nil }
 
 type hMockLogger struct{}
 
@@ -228,5 +232,67 @@ func TestMediaHandler_Upload_WithWebP(t *testing.T) {
 	}
 	if resp.Thumbnails["small_webp"] == "" {
 		t.Error("missing WebP thumbnail URL for 'small_webp'")
+	}
+}
+
+type hListAssetRepo struct {
+	assets  []domainMedia.Asset
+	deleted []string
+}
+
+func (r *hListAssetRepo) Save(_ context.Context, _ *domainMedia.Asset) error { return nil }
+func (r *hListAssetRepo) FindByID(_ context.Context, id string) (*domainMedia.Asset, error) {
+	for i := range r.assets {
+		if r.assets[i].ID == id {
+			return &r.assets[i], nil
+		}
+	}
+	return nil, nil
+}
+func (r *hListAssetRepo) List(_ context.Context, _ int, _ int) ([]domainMedia.Asset, error) {
+	return r.assets, nil
+}
+func (r *hListAssetRepo) Delete(_ context.Context, id string) error {
+	r.deleted = append(r.deleted, id)
+	return nil
+}
+
+func TestMediaHandler_List(t *testing.T) {
+	bus := event.NewBus(hMockLogger{})
+	asset, err := domainMedia.NewAsset("asset-1", "uploads/asset-1/photo.jpg", "photo.jpg", "image/jpeg", 12)
+	if err != nil {
+		t.Fatal(err)
+	}
+	repo := &hListAssetRepo{assets: []domainMedia.Asset{asset}}
+	handler := NewMediaHandler(mediaApp.NewService(hMockStorage{}, repo, bus, hMockLogger{}))
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/admin/media", nil)
+	handler.List().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d; body = %s", rec.Code, http.StatusOK, rec.Body.String())
+	}
+}
+
+func TestMediaHandler_Delete(t *testing.T) {
+	bus := event.NewBus(hMockLogger{})
+	asset, err := domainMedia.NewAsset("asset-1", "uploads/asset-1/photo.jpg", "photo.jpg", "image/jpeg", 12)
+	if err != nil {
+		t.Fatal(err)
+	}
+	repo := &hListAssetRepo{assets: []domainMedia.Asset{asset}}
+	handler := NewMediaHandler(mediaApp.NewService(hMockStorage{}, repo, bus, hMockLogger{}))
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodDelete, "/api/v1/admin/media/asset-1", nil)
+	req.SetPathValue("assetId", "asset-1")
+	handler.Delete().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d; body = %s", rec.Code, http.StatusOK, rec.Body.String())
+	}
+	if len(repo.deleted) != 1 || repo.deleted[0] != "asset-1" {
+		t.Fatalf("deleted = %#v", repo.deleted)
 	}
 }

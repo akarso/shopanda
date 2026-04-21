@@ -89,6 +89,13 @@ type UploadResult struct {
 	Thumbnails map[string]string // preset name → public URL
 }
 
+// AssetView represents an asset plus resolved public URLs.
+type AssetView struct {
+	Asset      domainMedia.Asset
+	URL        string
+	Thumbnails map[string]string
+}
+
 // sniffSize is the number of bytes read for MIME detection.
 const sniffSize = 512
 
@@ -270,6 +277,81 @@ func (s *Service) Upload(ctx context.Context, input UploadInput) (*UploadResult,
 		URL:        s.storage.URL(asset.Path),
 		Thumbnails: thumbURLs,
 	}, nil
+}
+
+// List returns a page of assets with resolved public URLs.
+func (s *Service) List(ctx context.Context, offset, limit int) ([]AssetView, error) {
+	assets, err := s.assets.List(ctx, offset, limit)
+	if err != nil {
+		return nil, err
+	}
+	views := make([]AssetView, 0, len(assets))
+	for i := range assets {
+		views = append(views, s.assetView(assets[i]))
+	}
+	return views, nil
+}
+
+// Delete removes an asset and its stored files.
+func (s *Service) Delete(ctx context.Context, assetID string) error {
+	asset, err := s.assets.FindByID(ctx, assetID)
+	if err != nil {
+		return err
+	}
+	if asset == nil {
+		return apperror.NotFound("asset not found")
+	}
+
+	if err := s.storage.Delete(asset.Path); err != nil {
+		return fmt.Errorf("media: delete file: %w", err)
+	}
+	for name, path := range asset.Thumbnails {
+		if err := s.storage.Delete(path); err != nil {
+			s.log.Warn("media: thumbnail delete failed", map[string]interface{}{
+				"asset_id": asset.ID,
+				"preset":   name,
+				"path":     path,
+				"error":    err.Error(),
+			})
+		}
+	}
+
+	if err := s.assets.Delete(ctx, asset.ID); err != nil {
+		return err
+	}
+
+	s.log.Info("media.asset.deleted", map[string]interface{}{
+		"asset_id": asset.ID,
+		"path":     asset.Path,
+		"filename": asset.Filename,
+	})
+
+	if pubErr := s.bus.Publish(ctx, event.New(domainMedia.EventAssetDeleted, "media.service", domainMedia.AssetEventData{
+		AssetID:  asset.ID,
+		Path:     asset.Path,
+		Filename: asset.Filename,
+		MimeType: asset.MimeType,
+	})); pubErr != nil {
+		s.log.Warn("media: publish event failed", map[string]interface{}{
+			"event":    domainMedia.EventAssetDeleted,
+			"asset_id": asset.ID,
+			"error":    pubErr.Error(),
+		})
+	}
+
+	return nil
+}
+
+func (s *Service) assetView(asset domainMedia.Asset) AssetView {
+	thumbURLs := make(map[string]string, len(asset.Thumbnails))
+	for name, path := range asset.Thumbnails {
+		thumbURLs[name] = s.storage.URL(path)
+	}
+	return AssetView{
+		Asset:      asset,
+		URL:        s.storage.URL(asset.Path),
+		Thumbnails: thumbURLs,
+	}
 }
 
 // webpFilename replaces the file extension with .webp.

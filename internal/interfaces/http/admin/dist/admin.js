@@ -23,14 +23,19 @@
         return !!getToken();
     }
 
-    function api(url, options) {
-        options = options || {};
-        var headers = options.headers || {};
-        headers["Content-Type"] = "application/json";
+    function buildHeaders(headers) {
+        var out = headers || {};
         var token = getToken();
         if (token) {
-            headers["Authorization"] = "Bearer " + token;
+            out.Authorization = "Bearer " + token;
         }
+        return out;
+    }
+
+    function api(url, options) {
+        options = options || {};
+        var headers = buildHeaders(options.headers || {});
+        headers["Content-Type"] = "application/json";
         options.headers = headers;
         return fetch(API_BASE + url, options).then(function (res) {
             if (res.status === 401) {
@@ -42,6 +47,48 @@
         });
     }
 
+    function uploadAsset(file, onProgress) {
+        return new Promise(function (resolve, reject) {
+            var xhr = new XMLHttpRequest();
+            xhr.open("POST", API_BASE + "/admin/media", true);
+            var token = getToken();
+            if (token) {
+                xhr.setRequestHeader("Authorization", "Bearer " + token);
+            }
+            xhr.upload.addEventListener("progress", function (e) {
+                if (onProgress && e.lengthComputable) {
+                    onProgress(Math.round((e.loaded / e.total) * 100));
+                }
+            });
+            xhr.onload = function () {
+                var body = {};
+                try {
+                    body = xhr.responseText ? JSON.parse(xhr.responseText) : {};
+                } catch (err) {
+                    reject(err);
+                    return;
+                }
+                if (xhr.status === 401) {
+                    clearToken();
+                    navigateTo("/admin");
+                    reject(new Error("unauthorized"));
+                    return;
+                }
+                if (xhr.status < 200 || xhr.status >= 300) {
+                    reject(body);
+                    return;
+                }
+                resolve(body);
+            };
+            xhr.onerror = function () {
+                reject(new Error("upload failed"));
+            };
+            var formData = new FormData();
+            formData.append("file", file);
+            xhr.send(formData);
+        });
+    }
+
     // --- Routing ---
 
     var routes = {
@@ -49,7 +96,7 @@
         "/admin/dashboard": { title: "Dashboard", render: renderDashboard, auth: true },
         "/admin/products": { title: "Products", render: renderProductsGrid, auth: true },
         "/admin/orders": { title: "Orders", render: renderOrdersGrid, auth: true },
-        "/admin/media": { title: "Media", render: renderPlaceholder("Media"), auth: true },
+        "/admin/media": { title: "Media", render: renderMediaLibrary, auth: true },
         "/admin/settings": { title: "Settings", render: renderPlaceholder("Settings"), auth: true }
     };
 
@@ -178,8 +225,11 @@
             for (var i = 0; i < schema.fields.length; i++) {
                 html += renderSchemaField(schema.fields[i], product);
             }
+            html += renderProductMediaField(product);
             html += '<button type="submit">' + (productID ? 'Save Product' : 'Create Product') + '</button>';
             form.innerHTML = html;
+
+            setupProductMediaPicker(form, product);
 
             form.addEventListener("submit", function (e) {
                 e.preventDefault();
@@ -265,10 +315,75 @@
                 payload.attributes[f.name] = v;
             }
         }
+        if (form.elements.image_asset_id && (form.getAttribute("data-media-dirty") === "true" || form.elements.image_asset_id.value || form.elements.image_url.value)) {
+            payload.attributes.image_asset_id = form.elements.image_asset_id.value;
+            payload.attributes.image_url = form.elements.image_url.value;
+        }
         if (Object.keys(payload.attributes).length === 0) {
             delete payload.attributes;
         }
         return payload;
+    }
+
+    function renderProductMediaField(product) {
+        var attrs = product && product.attributes ? product.attributes : {};
+        var assetID = attrs.image_asset_id || "";
+        var imageURL = attrs.image_url || "";
+        return '' +
+            '<section class="product-media-field">' +
+            '<h3>Featured Image</h3>' +
+            '<input type="hidden" name="image_asset_id" value="' + esc(assetID) + '">' +
+            '<input type="hidden" name="image_url" value="' + esc(imageURL) + '">' +
+            '<div id="product-image-preview" class="product-image-preview">' + renderProductMediaPreview(assetID, imageURL) + '</div>' +
+            '<div class="media-field-actions">' +
+            '<button type="button" id="choose-product-image">Choose From Library</button>' +
+            '<button type="button" id="clear-product-image" class="secondary">Clear</button>' +
+            '</div>' +
+            '</section>';
+    }
+
+    function renderProductMediaPreview(assetID, imageURL) {
+        if (!assetID && !imageURL) {
+            return '<p>No image selected.</p>';
+        }
+        var html = '';
+        if (imageURL) {
+            html += '<img src="' + esc(imageURL) + '" alt="Selected product image">';
+        }
+        html += '<p>Asset ID: ' + esc(assetID || 'n/a') + '</p>';
+        return html;
+    }
+
+    function setupProductMediaPicker(form, product) {
+        var chooseBtn = document.getElementById("choose-product-image");
+        var clearBtn = document.getElementById("clear-product-image");
+        var assetInput = form.elements.image_asset_id;
+        var urlInput = form.elements.image_url;
+        var preview = document.getElementById("product-image-preview");
+
+        if (product && product.attributes && (product.attributes.image_asset_id || product.attributes.image_url)) {
+            form.setAttribute("data-media-dirty", "true");
+        }
+
+        function updatePreview() {
+            preview.innerHTML = renderProductMediaPreview(assetInput.value, urlInput.value);
+        }
+
+        chooseBtn.addEventListener("click", function () {
+            openMediaPicker(function (asset) {
+                assetInput.value = asset.id || "";
+                urlInput.value = asset.url || "";
+                form.setAttribute("data-media-dirty", "true");
+                updatePreview();
+            });
+        });
+
+        clearBtn.addEventListener("click", function () {
+            assetInput.value = "";
+            urlInput.value = "";
+            form.setAttribute("data-media-dirty", "true");
+            updatePreview();
+        });
     }
 
     function setupVariantPanel(productID) {
@@ -452,6 +567,27 @@
         return out;
     }
 
+    function normalizeAssets(assets) {
+        if (!Array.isArray(assets)) {
+            return [];
+        }
+        var out = [];
+        for (var i = 0; i < assets.length; i++) {
+            var a = assets[i] || {};
+            out.push({
+                id: pick(a, "id", "ID"),
+                path: pick(a, "path", "Path"),
+                filename: pick(a, "filename", "Filename"),
+                mime_type: pick(a, "mime_type", "MimeType"),
+                size: pick(a, "size", "Size"),
+                url: pick(a, "url", "URL"),
+                thumbnails: pick(a, "thumbnails", "Thumbnails") || {},
+                created_at: pick(a, "created_at", "CreatedAt")
+            });
+        }
+        return out;
+    }
+
     function pick(obj, a, b) {
         if (!obj) {
             return undefined;
@@ -504,6 +640,8 @@
             if (href === "/admin/products" && currentPath.indexOf("/admin/products") === 0) {
                 links[i].setAttribute("aria-current", "page");
             } else if (href === "/admin/orders" && currentPath.indexOf("/admin/orders") === 0) {
+                links[i].setAttribute("aria-current", "page");
+            } else if (href === "/admin/media" && currentPath.indexOf("/admin/media") === 0) {
                 links[i].setAttribute("aria-current", "page");
             } else if (href === currentPath) {
                 links[i].setAttribute("aria-current", "page");
@@ -672,6 +810,282 @@
         }).catch(function () {
             grid.innerHTML = '<p role="alert">Failed to load orders.</p>';
         });
+    }
+
+    function renderMediaLibrary(container) {
+        container.innerHTML =
+            '<div class="media-toolbar">' +
+            '<h2>Media Library</h2>' +
+            '<input type="file" id="media-upload-input" accept="image/*" multiple>' +
+            '</div>' +
+            '<div id="media-msg"></div>' +
+            '<div id="media-dropzone" class="media-dropzone">Drop images here or use the file picker.</div>' +
+            '<progress id="media-upload-progress" value="0" max="100" style="display:none"></progress>' +
+            '<div id="media-grid" class="media-grid"></div>';
+
+        setupMediaManager({
+            messageID: "media-msg",
+            gridID: "media-grid",
+            fileInputID: "media-upload-input",
+            dropzoneID: "media-dropzone",
+            progressID: "media-upload-progress"
+        });
+    }
+
+    function setupMediaManager(options) {
+        var msg = document.getElementById(options.messageID);
+        var grid = document.getElementById(options.gridID);
+        var fileInput = document.getElementById(options.fileInputID);
+        var dropzone = document.getElementById(options.dropzoneID);
+        var progress = document.getElementById(options.progressID);
+
+        function showMessage(text, isError) {
+            msg.innerHTML = text ? '<p' + (isError ? ' role="alert"' : '') + '>' + esc(text) + '</p>' : '';
+        }
+
+        function loadAssets() {
+            api("/admin/media?offset=0&limit=100").then(function (body) {
+                var assets = normalizeAssets(body && body.data && body.data.assets ? body.data.assets : []);
+                renderMediaAssets(grid, assets, options.onSelect, loadAssets, showMessage);
+            }).catch(function () {
+                grid.innerHTML = '<p role="alert">Failed to load media library.</p>';
+            });
+        }
+
+        function handleFiles(files) {
+            if (!files || files.length === 0) {
+                return;
+            }
+            var queue = Array.prototype.slice.call(files);
+            progress.style.display = "block";
+            progress.value = 0;
+
+            function next(index) {
+                if (index >= queue.length) {
+                    progress.style.display = "none";
+                    progress.value = 0;
+                    fileInput.value = "";
+                    loadAssets();
+                    showMessage(queue.length + ' file(s) uploaded.', false);
+                    return;
+                }
+                uploadAsset(queue[index], function (percent) {
+                    progress.value = percent;
+                }).then(function () {
+                    next(index + 1);
+                }).catch(function (err) {
+                    progress.style.display = "none";
+                    showMessage(extractErrorMessage(err, 'Upload failed.'), true);
+                });
+            }
+
+            next(0);
+        }
+
+        fileInput.addEventListener("change", function () {
+            handleFiles(fileInput.files);
+        });
+
+        dropzone.addEventListener("dragover", function (e) {
+            e.preventDefault();
+            dropzone.classList.add("is-dragover");
+        });
+        dropzone.addEventListener("dragleave", function () {
+            dropzone.classList.remove("is-dragover");
+        });
+        dropzone.addEventListener("drop", function (e) {
+            e.preventDefault();
+            dropzone.classList.remove("is-dragover");
+            handleFiles(e.dataTransfer.files);
+        });
+
+        loadAssets();
+    }
+
+    function renderMediaAssets(container, assets, onSelect, reload, showMessage) {
+        if (!assets || assets.length === 0) {
+            container.innerHTML = '<p>No media uploaded yet.</p>';
+            return;
+        }
+
+        var html = '';
+        for (var i = 0; i < assets.length; i++) {
+            var asset = assets[i];
+            var previewURL = asset.thumbnails.small || asset.thumbnails.medium || asset.url;
+            html += '' +
+                '<article class="media-card" data-asset-id="' + esc(asset.id) + '">' +
+                '<div class="media-card-preview">' +
+                (previewURL ? '<img src="' + esc(previewURL) + '" alt="' + esc(asset.filename || 'asset') + '">' : '<div class="media-card-fallback">No preview</div>') +
+                '</div>' +
+                '<div class="media-card-body">' +
+                '<strong>' + esc(asset.filename || asset.id) + '</strong>' +
+                '<small>' + esc(formatBytes(asset.size)) + '</small>' +
+                '<div class="media-card-actions">' +
+                '<button type="button" class="secondary media-preview-btn">Preview</button>' +
+                '<button type="button" class="secondary media-copy-btn">Copy URL</button>' +
+                (onSelect ? '<button type="button" class="media-select-btn">Select</button>' : '') +
+                '<button type="button" class="contrast media-delete-btn">Delete</button>' +
+                '</div>' +
+                '</div>' +
+                '</article>';
+        }
+        container.innerHTML = html;
+
+        var cards = container.querySelectorAll(".media-card");
+        for (var j = 0; j < cards.length; j++) {
+            (function (card) {
+                var assetID = card.getAttribute("data-asset-id");
+                var asset = findAssetByID(assets, assetID);
+                card.querySelector(".media-preview-btn").addEventListener("click", function () {
+                    openAssetPreview(asset, onSelect);
+                });
+                card.querySelector(".media-copy-btn").addEventListener("click", function () {
+                    copyText(asset.url);
+                    showMessage('Copied URL for ' + (asset.filename || asset.id) + '.', false);
+                });
+                if (onSelect) {
+                    card.querySelector(".media-select-btn").addEventListener("click", function () {
+                        onSelect(asset);
+                    });
+                }
+                card.querySelector(".media-delete-btn").addEventListener("click", function () {
+                    if (!window.confirm('Delete ' + (asset.filename || asset.id) + '?')) {
+                        return;
+                    }
+                    api('/admin/media/' + encodeURIComponent(asset.id), { method: 'DELETE' }).then(function (body) {
+                        if (body && body.error) {
+                            showMessage(body.error.message || 'Delete failed.', true);
+                            return;
+                        }
+                        showMessage('Deleted ' + (asset.filename || asset.id) + '.', false);
+                        reload();
+                    }).catch(function (err) {
+                        showMessage(extractErrorMessage(err, 'Delete failed.'), true);
+                    });
+                });
+            })(cards[j]);
+        }
+    }
+
+    function openMediaPicker(onSelect) {
+        var overlay = document.createElement("div");
+        overlay.className = "media-modal-overlay";
+        overlay.innerHTML = '' +
+            '<div class="media-modal">' +
+            '<header><h3>Select Image</h3><button type="button" id="close-media-modal" class="secondary">Close</button></header>' +
+            '<div id="media-picker-msg"></div>' +
+            '<div id="media-picker-grid" class="media-grid"></div>' +
+            '</div>';
+        document.body.appendChild(overlay);
+
+        function close() {
+            document.body.removeChild(overlay);
+        }
+
+        document.getElementById("close-media-modal").addEventListener("click", close);
+        overlay.addEventListener("click", function (e) {
+            if (e.target === overlay) {
+                close();
+            }
+        });
+
+        var msg = document.getElementById("media-picker-msg");
+        var grid = document.getElementById("media-picker-grid");
+        api("/admin/media?offset=0&limit=100").then(function (body) {
+            var assets = normalizeAssets(body && body.data && body.data.assets ? body.data.assets : []);
+            renderMediaAssets(grid, assets, function (asset) {
+                onSelect(asset);
+                close();
+            }, function () {
+                api("/admin/media?offset=0&limit=100").then(function (refreshBody) {
+                    renderMediaAssets(grid, normalizeAssets(refreshBody && refreshBody.data && refreshBody.data.assets ? refreshBody.data.assets : []), function (asset) {
+                        onSelect(asset);
+                        close();
+                    }, function () {}, function (text, isError) {
+                        msg.innerHTML = text ? '<p' + (isError ? ' role="alert"' : '') + '>' + esc(text) + '</p>' : '';
+                    });
+                });
+            }, function (text, isError) {
+                msg.innerHTML = text ? '<p' + (isError ? ' role="alert"' : '') + '>' + esc(text) + '</p>' : '';
+            });
+        }).catch(function () {
+            grid.innerHTML = '<p role="alert">Failed to load media library.</p>';
+        });
+    }
+
+    function openAssetPreview(asset, onSelect) {
+        var overlay = document.createElement("div");
+        overlay.className = "media-modal-overlay";
+        var previewURL = asset.thumbnails.medium || asset.thumbnails.small || asset.url;
+        overlay.innerHTML = '' +
+            '<div class="media-modal media-preview-modal">' +
+            '<header><h3>' + esc(asset.filename || asset.id) + '</h3><button type="button" id="close-asset-preview" class="secondary">Close</button></header>' +
+            '<div class="media-preview-body">' +
+            (previewURL ? '<img src="' + esc(previewURL) + '" alt="' + esc(asset.filename || asset.id) + '">' : '<p>No preview available.</p>') +
+            '<p><strong>URL:</strong> ' + esc(asset.url || '') + '</p>' +
+            '<div class="media-card-actions">' +
+            '<button type="button" id="copy-asset-url" class="secondary">Copy URL</button>' +
+            (onSelect ? '<button type="button" id="select-preview-asset">Select</button>' : '') +
+            '</div>' +
+            '</div>' +
+            '</div>';
+        document.body.appendChild(overlay);
+
+        function close() {
+            document.body.removeChild(overlay);
+        }
+
+        document.getElementById("close-asset-preview").addEventListener("click", close);
+        document.getElementById("copy-asset-url").addEventListener("click", function () {
+            copyText(asset.url);
+        });
+        if (onSelect) {
+            document.getElementById("select-preview-asset").addEventListener("click", function () {
+                onSelect(asset);
+                close();
+            });
+        }
+        overlay.addEventListener("click", function (e) {
+            if (e.target === overlay) {
+                close();
+            }
+        });
+    }
+
+    function findAssetByID(assets, assetID) {
+        for (var i = 0; i < assets.length; i++) {
+            if (assets[i].id === assetID) {
+                return assets[i];
+            }
+        }
+        return null;
+    }
+
+    function copyText(text) {
+        if (navigator.clipboard && navigator.clipboard.writeText) {
+            navigator.clipboard.writeText(text || "");
+        }
+    }
+
+    function formatBytes(size) {
+        var value = Number(size || 0);
+        if (value < 1024) {
+            return value + ' B';
+        }
+        if (value < 1024 * 1024) {
+            return (value / 1024).toFixed(1) + ' KB';
+        }
+        return (value / (1024 * 1024)).toFixed(1) + ' MB';
+    }
+
+    function extractErrorMessage(err, fallback) {
+        if (err && err.error && err.error.message) {
+            return err.error.message;
+        }
+        if (err && err.message) {
+            return err.message;
+        }
+        return fallback;
     }
 
     function renderOrderDetail(container, orderID) {

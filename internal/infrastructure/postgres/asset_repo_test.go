@@ -131,3 +131,61 @@ func TestAssetRepo_Save_WithMeta(t *testing.T) {
 		t.Errorf("Thumbnails[medium]: got %q, want %q", got.Thumbnails["medium"], "/uploads/banner_md.jpg")
 	}
 }
+
+func TestAssetRepo_List(t *testing.T) {
+	db := testDB(t)
+	ensureProductsTable(t, db)
+	mustExec(t, db, "DELETE FROM assets")
+	t.Cleanup(func() { mustExec(t, db, "DELETE FROM assets") })
+
+	repo, err := postgres.NewAssetRepo(db)
+	if err != nil {
+		t.Fatalf("NewAssetRepo: %v", err)
+	}
+	ctx := context.Background()
+
+	a1 := mustNewAsset(t, "logo-1.png")
+	a2 := mustNewAsset(t, "logo-2.png")
+	if err := repo.Save(ctx, a1); err != nil {
+		t.Fatalf("Save a1: %v", err)
+	}
+	if err := repo.Save(ctx, a2); err != nil {
+		t.Fatalf("Save a2: %v", err)
+	}
+
+	items, err := repo.List(ctx, 0, 20)
+	if err != nil {
+		t.Fatalf("List: %v", err)
+	}
+	if len(items) != 2 {
+		t.Fatalf("len = %d, want 2", len(items))
+	}
+}
+
+func TestAssetRepo_Delete(t *testing.T) {
+	db := testDB(t)
+	ensureProductsTable(t, db)
+	mustExec(t, db, "DELETE FROM assets")
+	t.Cleanup(func() { mustExec(t, db, "DELETE FROM assets") })
+
+	repo, err := postgres.NewAssetRepo(db)
+	if err != nil {
+		t.Fatalf("NewAssetRepo: %v", err)
+	}
+	ctx := context.Background()
+
+	a := mustNewAsset(t, "delete.png")
+	if err := repo.Save(ctx, a); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+	if err := repo.Delete(ctx, a.ID); err != nil {
+		t.Fatalf("Delete: %v", err)
+	}
+	got, err := repo.FindByID(ctx, a.ID)
+	if err != nil {
+		t.Fatalf("FindByID: %v", err)
+	}
+	if got != nil {
+		t.Fatal("expected nil after delete")
+	}
+}
