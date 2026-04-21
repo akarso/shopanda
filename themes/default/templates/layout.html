@@ -36,6 +36,25 @@
                 {{ end }}
             </ul>
         </nav>
+
+        {{ if .Layout.Categories }}
+        <nav class="site-category-nav" aria-label="Categories">
+            <ul>
+                {{ range .Layout.Categories }}
+                <li>
+                    <a href="{{ .URL }}">{{ .Label }}</a>
+                    {{ if .Children }}
+                    <ul>
+                        {{ range .Children }}
+                        <li><a href="{{ .URL }}">{{ .Label }}</a></li>
+                        {{ end }}
+                    </ul>
+                    {{ end }}
+                </li>
+                {{ end }}
+            </ul>
+        </nav>
+        {{ end }}
     </header>
 
     <main id="content" class="site-shell site-main">

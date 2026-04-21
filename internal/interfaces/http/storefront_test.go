@@ -3,6 +3,7 @@ package http_test
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -25,6 +26,11 @@ type mockStorefrontRepo struct {
 	findBySlugFn func(ctx context.Context, slug string) (*catalog.Product, error)
 }
 
+type mockStorefrontCategoryRepo struct {
+	findBySlugFn func(ctx context.Context, slug string) (*catalog.Category, error)
+	findAllFn    func(ctx context.Context) ([]catalog.Category, error)
+}
+
 func (m *mockStorefrontRepo) FindBySlug(ctx context.Context, slug string) (*catalog.Product, error) {
 	if m.findBySlugFn != nil {
 		return m.findBySlugFn(ctx, slug)
@@ -44,6 +50,32 @@ func (m *mockStorefrontRepo) FindByCategoryID(_ context.Context, _ string, _, _ 
 	return nil, nil
 }
 func (m *mockStorefrontRepo) WithTx(_ *sql.Tx) catalog.ProductRepository { return m }
+
+func (m *mockStorefrontCategoryRepo) FindByID(_ context.Context, _ string) (*catalog.Category, error) {
+	return nil, nil
+}
+
+func (m *mockStorefrontCategoryRepo) FindBySlug(ctx context.Context, slug string) (*catalog.Category, error) {
+	if m.findBySlugFn != nil {
+		return m.findBySlugFn(ctx, slug)
+	}
+	return nil, nil
+}
+
+func (m *mockStorefrontCategoryRepo) FindByParentID(_ context.Context, _ *string) ([]catalog.Category, error) {
+	return nil, nil
+}
+
+func (m *mockStorefrontCategoryRepo) FindAll(ctx context.Context) ([]catalog.Category, error) {
+	if m.findAllFn != nil {
+		return m.findAllFn(ctx)
+	}
+	return []catalog.Category{}, nil
+}
+
+func (m *mockStorefrontCategoryRepo) Create(_ context.Context, _ *catalog.Category) error { return nil }
+
+func (m *mockStorefrontCategoryRepo) Update(_ context.Context, _ *catalog.Category) error { return nil }
 
 // --- test theme helpers ---
 
@@ -79,6 +111,11 @@ func createTestTheme(t *testing.T) *theme.Engine {
 
 	listing := `{{ define "title" }}{{ .Title }}{{ end }}{{ define "content" }}<h1>{{ .Title }}</h1><p>{{ .ResultSummary }}</p><div class="view-{{ .View }}">{{ range .Products }}<article><a href="/products/{{ .Slug }}">{{ .Name }}</a><span>{{ .PriceText }}</span><small>{{ .Availability }}</small></article>{{ else }}<p>{{ .EmptyMessage }}</p>{{ end }}</div><nav>{{ range .SortOptions }}{{ if .Selected }}<strong>{{ .Label }}</strong>{{ else }}<a href="{{ .URL }}">{{ .Label }}</a>{{ end }}{{ end }}</nav><div>{{ range .Pagination.Links }}{{ if .Current }}<strong>{{ .Label }}</strong>{{ else }}<a href="{{ .URL }}">{{ .Label }}</a>{{ end }}{{ end }}</div>{{ end }}{{ template "layout.html" . }}`
 	if err := os.WriteFile(filepath.Join(tplDir, "product_list.html"), []byte(listing), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	category := `{{ define "title" }}{{ .Category.Name }}{{ end }}{{ define "content" }}<h1>{{ .Category.Name }}</h1><p>{{ .Category.Description }}</p><nav>{{ range .Breadcrumbs }}<a href="{{ .URL }}">{{ .Label }}</a>{{ end }}</nav><section>{{ range .Subcategories }}<a href="{{ .URL }}">{{ .Name }}</a>{{ end }}</section><div>{{ range .Products }}<article>{{ .Name }}</article>{{ else }}<p>{{ .EmptyMessage }}</p>{{ end }}</div>{{ end }}{{ template "layout.html" . }}`
+	if err := os.WriteFile(filepath.Join(tplDir, "category.html"), []byte(category), 0644); err != nil {
 		t.Fatal(err)
 	}
 
@@ -122,6 +159,8 @@ func createTestThemeWithoutHome(t *testing.T) *theme.Engine {
 func newStorefrontRouter(h *shophttp.StorefrontHandler) *http.ServeMux {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /{$}", h.Home())
+	mux.HandleFunc("GET /categories", h.Categories())
+	mux.HandleFunc("GET /categories/{slug}", h.Category())
 	mux.HandleFunc("GET /products", h.Products())
 	mux.HandleFunc("GET /products/{slug}", h.Product())
 	mux.HandleFunc("GET /search", h.Search())
@@ -131,6 +170,12 @@ func newStorefrontRouter(h *shophttp.StorefrontHandler) *http.ServeMux {
 func newStorefrontSearchMock() *mockSearchEngine {
 	return &mockSearchEngine{searchFn: func(_ context.Context, _ search.SearchQuery) (search.SearchResult, error) {
 		return search.SearchResult{Products: []search.Product{}, Facets: map[string][]search.FacetValue{}}, nil
+	}}
+}
+
+func newStorefrontCategoryMock() *mockStorefrontCategoryRepo {
+	return &mockStorefrontCategoryRepo{findAllFn: func(_ context.Context) ([]catalog.Category, error) {
+		return []catalog.Category{}, nil
 	}}
 }
 
@@ -150,7 +195,7 @@ func TestStorefrontHandler_Product_OK(t *testing.T) {
 	engine := createTestTheme(t)
 	pdp := composition.NewPipeline[composition.ProductContext]()
 	plp := composition.NewPipeline[composition.ListingContext]()
-	h := shophttp.NewStorefrontHandler(engine, repo, pdp, plp, newStorefrontSearchMock())
+	h := shophttp.NewStorefrontHandler(engine, repo, newStorefrontCategoryMock(), pdp, plp, newStorefrontSearchMock())
 
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest("GET", "/products/widget", nil)
@@ -179,7 +224,7 @@ func TestStorefrontHandler_Home_OK(t *testing.T) {
 	engine := createTestTheme(t)
 	pdp := composition.NewPipeline[composition.ProductContext]()
 	plp := composition.NewPipeline[composition.ListingContext]()
-	h := shophttp.NewStorefrontHandler(engine, repo, pdp, plp, newStorefrontSearchMock())
+	h := shophttp.NewStorefrontHandler(engine, repo, newStorefrontCategoryMock(), pdp, plp, newStorefrontSearchMock())
 
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest("GET", "/", nil)
@@ -201,7 +246,7 @@ func TestStorefrontHandler_Home_MissingTemplate(t *testing.T) {
 	engine := createTestThemeWithoutHome(t)
 	pdp := composition.NewPipeline[composition.ProductContext]()
 	plp := composition.NewPipeline[composition.ListingContext]()
-	h := shophttp.NewStorefrontHandler(engine, repo, pdp, plp, newStorefrontSearchMock())
+	h := shophttp.NewStorefrontHandler(engine, repo, newStorefrontCategoryMock(), pdp, plp, newStorefrontSearchMock())
 
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest("GET", "/", nil)
@@ -217,7 +262,7 @@ func TestStorefrontRouter_Home_DoesNotCatchUnknownPath(t *testing.T) {
 	engine := createTestTheme(t)
 	pdp := composition.NewPipeline[composition.ProductContext]()
 	plp := composition.NewPipeline[composition.ListingContext]()
-	h := shophttp.NewStorefrontHandler(engine, repo, pdp, plp, newStorefrontSearchMock())
+	h := shophttp.NewStorefrontHandler(engine, repo, newStorefrontCategoryMock(), pdp, plp, newStorefrontSearchMock())
 
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest("GET", "/missing", nil)
@@ -225,6 +270,146 @@ func TestStorefrontRouter_Home_DoesNotCatchUnknownPath(t *testing.T) {
 
 	if rec.Code != http.StatusNotFound {
 		t.Fatalf("status = %d, want %d; body: %s", rec.Code, http.StatusNotFound, rec.Body.String())
+	}
+}
+
+func TestStorefrontHandler_Category_OK(t *testing.T) {
+	repo := &mockStorefrontRepo{}
+	parentID := "cat-root"
+	engine := createTestTheme(t)
+	pdp := composition.NewPipeline[composition.ProductContext]()
+	plp := composition.NewPipeline[composition.ListingContext]()
+	categoryRepo := &mockStorefrontCategoryRepo{findAllFn: func(_ context.Context) ([]catalog.Category, error) {
+		return []catalog.Category{
+			{ID: "cat-root", Name: "Electronics", Slug: "electronics", Meta: map[string]interface{}{"description": "Devices and gadgets"}},
+			{ID: "cat-child", ParentID: &parentID, Name: "Headphones", Slug: "headphones", Meta: map[string]interface{}{"description": "Over-ear and in-ear"}},
+			{ID: "cat-grandchild", ParentID: stringPtr("cat-child"), Name: "Wireless", Slug: "wireless"},
+		}, nil
+	}}
+	searchEngine := &mockSearchEngine{searchFn: func(_ context.Context, query search.SearchQuery) (search.SearchResult, error) {
+		if query.Filters["category"] != "cat-child" {
+			t.Fatalf("category filter = %v, want cat-child", query.Filters["category"])
+		}
+		return search.SearchResult{Products: []search.Product{{ID: "p-1", Name: "Studio Headset", Slug: "studio-headset"}}, Total: 1, Facets: map[string][]search.FacetValue{}}, nil
+	}}
+	h := shophttp.NewStorefrontHandler(engine, repo, categoryRepo, pdp, plp, searchEngine)
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("GET", "/categories/headphones", nil)
+	newStorefrontRouter(h).ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d; body: %s", rec.Code, http.StatusOK, rec.Body.String())
+	}
+	body := rec.Body.String()
+	if !strings.Contains(body, "Headphones") {
+		t.Fatalf("body missing category title: %s", body)
+	}
+	if !strings.Contains(body, "Electronics") {
+		t.Fatalf("body missing breadcrumb/root category context: %s", body)
+	}
+	if !strings.Contains(body, "Wireless") {
+		t.Fatalf("body missing subcategory link: %s", body)
+	}
+	if !strings.Contains(body, "Studio Headset") {
+		t.Fatalf("body missing category product: %s", body)
+	}
+}
+
+func TestStorefrontHandler_Categories_OK(t *testing.T) {
+	repo := &mockStorefrontRepo{}
+	engine := createTestTheme(t)
+	pdp := composition.NewPipeline[composition.ProductContext]()
+	plp := composition.NewPipeline[composition.ListingContext]()
+	categoryRepo := &mockStorefrontCategoryRepo{findAllFn: func(_ context.Context) ([]catalog.Category, error) {
+		return []catalog.Category{{ID: "cat-1", Name: "Electronics", Slug: "electronics"}, {ID: "cat-2", Name: "Clothing", Slug: "clothing"}}, nil
+	}}
+	searchEngine := &mockSearchEngine{searchFn: func(_ context.Context, query search.SearchQuery) (search.SearchResult, error) {
+		if len(query.Filters) != 0 {
+			t.Fatalf("expected no category filter, got %v", query.Filters)
+		}
+		return search.SearchResult{Products: []search.Product{}, Facets: map[string][]search.FacetValue{}}, nil
+	}}
+	h := shophttp.NewStorefrontHandler(engine, repo, categoryRepo, pdp, plp, searchEngine)
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("GET", "/categories", nil)
+	newStorefrontRouter(h).ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d; body: %s", rec.Code, http.StatusOK, rec.Body.String())
+	}
+	body := rec.Body.String()
+	if !strings.Contains(body, "Categories") {
+		t.Fatalf("body missing categories title: %s", body)
+	}
+	if !strings.Contains(body, "Electronics") || !strings.Contains(body, "Clothing") {
+		t.Fatalf("body missing root category links: %s", body)
+	}
+}
+
+func stringPtr(v string) *string {
+	return &v
+}
+
+func TestStorefrontHandler_Category_NotFound(t *testing.T) {
+	repo := &mockStorefrontRepo{}
+	engine := createTestTheme(t)
+	pdp := composition.NewPipeline[composition.ProductContext]()
+	plp := composition.NewPipeline[composition.ListingContext]()
+	h := shophttp.NewStorefrontHandler(engine, repo, newStorefrontCategoryMock(), pdp, plp, newStorefrontSearchMock())
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("GET", "/categories/missing", nil)
+	newStorefrontRouter(h).ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("status = %d, want %d; body: %s", rec.Code, http.StatusNotFound, rec.Body.String())
+	}
+}
+
+func TestStorefrontHandler_Home_CategoryRepoError_Degrades(t *testing.T) {
+	repo := &mockStorefrontRepo{}
+	engine := createTestTheme(t)
+	pdp := composition.NewPipeline[composition.ProductContext]()
+	plp := composition.NewPipeline[composition.ListingContext]()
+	categoryRepo := &mockStorefrontCategoryRepo{findAllFn: func(_ context.Context) ([]catalog.Category, error) {
+		return nil, errors.New("db down")
+	}}
+	h := shophttp.NewStorefrontHandler(engine, repo, categoryRepo, pdp, plp, newStorefrontSearchMock())
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("GET", "/", nil)
+	newStorefrontRouter(h).ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d; body: %s", rec.Code, http.StatusOK, rec.Body.String())
+	}
+}
+
+func TestStorefrontHandler_LayoutCategoryCache(t *testing.T) {
+	repo := &mockStorefrontRepo{}
+	engine := createTestTheme(t)
+	pdp := composition.NewPipeline[composition.ProductContext]()
+	plp := composition.NewPipeline[composition.ListingContext]()
+	findAllCalls := 0
+	categoryRepo := &mockStorefrontCategoryRepo{findAllFn: func(_ context.Context) ([]catalog.Category, error) {
+		findAllCalls++
+		return []catalog.Category{{ID: "cat-1", Name: "Electronics", Slug: "electronics"}}, nil
+	}}
+	h := shophttp.NewStorefrontHandler(engine, repo, categoryRepo, pdp, plp, newStorefrontSearchMock())
+
+	for _, path := range []string{"/", "/products"} {
+		rec := httptest.NewRecorder()
+		req := httptest.NewRequest("GET", path, nil)
+		newStorefrontRouter(h).ServeHTTP(rec, req)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("path %s status = %d, want %d; body: %s", path, rec.Code, http.StatusOK, rec.Body.String())
+		}
+	}
+
+	if findAllCalls != 1 {
+		t.Fatalf("FindAll calls = %d, want 1", findAllCalls)
 	}
 }
 
@@ -253,7 +438,7 @@ func TestStorefrontHandler_Products_OK(t *testing.T) {
 			Facets:   map[string][]search.FacetValue{"category": []search.FacetValue{{Value: "Shoes", Count: 1}}},
 		}, nil
 	}}
-	h := shophttp.NewStorefrontHandler(engine, repo, pdp, plp, searchEngine)
+	h := shophttp.NewStorefrontHandler(engine, repo, newStorefrontCategoryMock(), pdp, plp, searchEngine)
 
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest("GET", "/products", nil)
@@ -298,7 +483,7 @@ func TestStorefrontHandler_Search_OK(t *testing.T) {
 			Facets:   map[string][]search.FacetValue{},
 		}, nil
 	}}
-	h := shophttp.NewStorefrontHandler(engine, repo, pdp, plp, searchEngine)
+	h := shophttp.NewStorefrontHandler(engine, repo, newStorefrontCategoryMock(), pdp, plp, searchEngine)
 
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest("GET", "/search?q=boots&sort=name_asc&page=2&per_page=24&view=list", nil)
@@ -327,7 +512,7 @@ func TestStorefrontHandler_Products_InvalidPagination(t *testing.T) {
 	engine := createTestTheme(t)
 	pdp := composition.NewPipeline[composition.ProductContext]()
 	plp := composition.NewPipeline[composition.ListingContext]()
-	h := shophttp.NewStorefrontHandler(engine, repo, pdp, plp, newStorefrontSearchMock())
+	h := shophttp.NewStorefrontHandler(engine, repo, newStorefrontCategoryMock(), pdp, plp, newStorefrontSearchMock())
 
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest("GET", "/products?page=0", nil)
@@ -347,7 +532,7 @@ func TestStorefrontHandler_Product_NotFound(t *testing.T) {
 	engine := createTestTheme(t)
 	pdp := composition.NewPipeline[composition.ProductContext]()
 	plp := composition.NewPipeline[composition.ListingContext]()
-	h := shophttp.NewStorefrontHandler(engine, repo, pdp, plp, newStorefrontSearchMock())
+	h := shophttp.NewStorefrontHandler(engine, repo, newStorefrontCategoryMock(), pdp, plp, newStorefrontSearchMock())
 
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest("GET", "/products/nonexistent", nil)
@@ -367,7 +552,7 @@ func TestStorefrontHandler_Product_NotFoundError(t *testing.T) {
 	engine := createTestTheme(t)
 	pdp := composition.NewPipeline[composition.ProductContext]()
 	plp := composition.NewPipeline[composition.ListingContext]()
-	h := shophttp.NewStorefrontHandler(engine, repo, pdp, plp, newStorefrontSearchMock())
+	h := shophttp.NewStorefrontHandler(engine, repo, newStorefrontCategoryMock(), pdp, plp, newStorefrontSearchMock())
 
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest("GET", "/products/gone", nil)
@@ -387,7 +572,7 @@ func TestStorefrontHandler_Product_RepoError(t *testing.T) {
 	engine := createTestTheme(t)
 	pdp := composition.NewPipeline[composition.ProductContext]()
 	plp := composition.NewPipeline[composition.ListingContext]()
-	h := shophttp.NewStorefrontHandler(engine, repo, pdp, plp, newStorefrontSearchMock())
+	h := shophttp.NewStorefrontHandler(engine, repo, newStorefrontCategoryMock(), pdp, plp, newStorefrontSearchMock())
 
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest("GET", "/products/widget", nil)
@@ -408,7 +593,7 @@ func TestStorefrontHandler_Product_WithPipeline(t *testing.T) {
 	pdp := composition.NewPipeline[composition.ProductContext]()
 	pdp.AddStep(addBlockStep{name: "hero", typ: "hero_banner"})
 	plp := composition.NewPipeline[composition.ListingContext]()
-	h := shophttp.NewStorefrontHandler(engine, repo, pdp, plp, newStorefrontSearchMock())
+	h := shophttp.NewStorefrontHandler(engine, repo, newStorefrontCategoryMock(), pdp, plp, newStorefrontSearchMock())
 
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest("GET", "/products/widget", nil)

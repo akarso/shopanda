@@ -2,6 +2,7 @@ package http
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"fmt"
 	"math"
@@ -9,6 +10,7 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/akarso/shopanda/internal/application/composition"
@@ -17,20 +19,49 @@ import (
 	"github.com/akarso/shopanda/internal/domain/store"
 	"github.com/akarso/shopanda/internal/domain/theme"
 	"github.com/akarso/shopanda/internal/platform/apperror"
+	"github.com/akarso/shopanda/internal/platform/logger"
 )
 
 // StorefrontHandler renders SSR pages using the theme engine.
 type StorefrontHandler struct {
 	engine *theme.Engine
 	repo   catalog.ProductRepository
+	cats   catalog.CategoryRepository
 	pdp    *composition.Pipeline[composition.ProductContext]
 	plp    *composition.Pipeline[composition.ListingContext]
 	search search.SearchEngine
+	log    logger.Logger
+	catNav storefrontCategoryCache
+}
+
+type storefrontCategoryCache struct {
+	mu        sync.RWMutex
+	data      []catalog.Category
+	expiresAt time.Time
+	ttl       time.Duration
 }
 
 type StorefrontNavLink struct {
 	Label string
 	URL   string
+}
+
+type StorefrontCategoryNavItem struct {
+	Label    string
+	URL      string
+	Children []StorefrontCategoryNavItem
+}
+
+type StorefrontBreadcrumb struct {
+	Label   string
+	URL     string
+	Current bool
+}
+
+type StorefrontCategorySummary struct {
+	Name        string
+	URL         string
+	Description string
 }
 
 type StorefrontLayoutData struct {
@@ -41,6 +72,7 @@ type StorefrontLayoutData struct {
 	CartLabel    string
 	CurrentYear  int
 	Nav          []StorefrontNavLink
+	Categories   []StorefrontCategoryNavItem
 }
 
 type StorefrontHomePageData struct {
@@ -118,6 +150,13 @@ type StorefrontListingPageData struct {
 	Meta          map[string]interface{}
 }
 
+type StorefrontCategoryPageData struct {
+	StorefrontListingPageData
+	Category      StorefrontCategorySummary
+	Breadcrumbs   []StorefrontBreadcrumb
+	Subcategories []StorefrontCategorySummary
+}
+
 type storefrontListingParams struct {
 	Page    int
 	PerPage int
@@ -137,15 +176,27 @@ var storefrontSortOptions = []struct {
 	{Value: "name_desc", Label: "Name Z-A", SearchSort: "-name"},
 }
 
+const storefrontCategoryCacheTTL = 45 * time.Second
+
 // NewStorefrontHandler creates a StorefrontHandler.
 func NewStorefrontHandler(
 	engine *theme.Engine,
 	repo catalog.ProductRepository,
+	categories catalog.CategoryRepository,
 	pdp *composition.Pipeline[composition.ProductContext],
 	plp *composition.Pipeline[composition.ListingContext],
 	searchEngine search.SearchEngine,
 ) *StorefrontHandler {
-	return &StorefrontHandler{engine: engine, repo: repo, pdp: pdp, plp: plp, search: searchEngine}
+	return &StorefrontHandler{
+		engine: engine,
+		repo:   repo,
+		cats:   categories,
+		pdp:    pdp,
+		plp:    plp,
+		search: searchEngine,
+		log:    logger.New("warn"),
+		catNav: storefrontCategoryCache{ttl: storefrontCategoryCacheTTL},
+	}
 }
 
 // Home handles GET / and renders the storefront landing page.
@@ -157,11 +208,21 @@ func (h *StorefrontHandler) Home() http.HandlerFunc {
 		}
 
 		page := StorefrontHomePageData{
-			Layout: h.layoutData(r),
+			Layout: h.layoutDataBestEffort(r),
 			Theme:  h.engine.Theme(),
 		}
 		h.renderPage(w, "home", page)
 	}
+}
+
+// Categories handles GET /categories and renders the root category landing page.
+func (h *StorefrontHandler) Categories() http.HandlerFunc {
+	return h.renderCategory(true)
+}
+
+// Category handles GET /categories/{slug} and renders a category page.
+func (h *StorefrontHandler) Category() http.HandlerFunc {
+	return h.renderCategory(false)
 }
 
 // Products handles GET /products and renders the storefront listing page.
@@ -216,7 +277,7 @@ func (h *StorefrontHandler) Product() http.HandlerFunc {
 
 		page := StorefrontProductPageData{
 			ProductContext: ctx,
-			Layout:         h.layoutData(r),
+			Layout:         h.layoutDataBestEffort(r),
 			Theme:          h.engine.Theme(),
 		}
 		h.renderPage(w, "product", page)
@@ -280,11 +341,113 @@ func (h *StorefrontHandler) renderListing(searchMode bool) http.HandlerFunc {
 			return
 		}
 
-		h.renderPage(w, "product_list", h.buildListingPageData(r, ctx, result, params, searchMode))
+		h.renderPage(w, "product_list", h.buildListingPageData(r, h.layoutDataBestEffort(r), ctx, result, params, searchMode))
 	}
 }
 
-func (h *StorefrontHandler) layoutData(r *http.Request) StorefrontLayoutData {
+func (h *StorefrontHandler) renderCategory(root bool) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if !h.engine.HasTemplate("category") {
+			http.Error(w, "Not Found", http.StatusNotFound)
+			return
+		}
+
+		params, err := parseStorefrontListingParams(r)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+
+		allCategories, err := h.cachedCategories(r.Context())
+		if err != nil {
+			http.Error(w, "Internal Server Error", http.StatusInternalServerError)
+			return
+		}
+
+		var category *catalog.Category
+		if !root {
+			slug := r.PathValue("slug")
+			if slug == "" {
+				http.Error(w, "Not Found", http.StatusNotFound)
+				return
+			}
+			category = storefrontCategoryBySlug(allCategories, slug)
+			if category == nil {
+				http.Error(w, "Not Found", http.StatusNotFound)
+				return
+			}
+		}
+
+		query := search.SearchQuery{
+			Sort:    storefrontSearchSort(params.Sort),
+			Limit:   params.PerPage,
+			Offset:  (params.Page - 1) * params.PerPage,
+			Filters: map[string]interface{}{},
+		}
+		if category != nil {
+			query.Filters["category"] = category.ID
+		}
+		if s := store.FromContext(r.Context()); s != nil {
+			query.StoreID = s.ID
+			query.Currency = s.Currency
+		}
+
+		result, err := h.search.Search(r.Context(), query)
+		if err != nil {
+			http.Error(w, "Internal Server Error", http.StatusInternalServerError)
+			return
+		}
+
+		ctx := composition.NewListingContext(searchProductsToCatalog(result.Products))
+		ctx.Ctx = r.Context()
+		if s := store.FromContext(r.Context()); s != nil {
+			if ctx.Currency == "" {
+				ctx.Currency = s.Currency
+			}
+			if ctx.Country == "" {
+				ctx.Country = s.Country
+			}
+		}
+		if err := h.plp.Execute(ctx); err != nil {
+			http.Error(w, "Internal Server Error", http.StatusInternalServerError)
+			return
+		}
+
+		layout, err := h.layoutData(r, allCategories)
+		if err != nil {
+			http.Error(w, "Internal Server Error", http.StatusInternalServerError)
+			return
+		}
+
+		page := h.buildCategoryPageData(r, layout, ctx, result, params, category, allCategories)
+		h.renderPage(w, "category", page)
+	}
+}
+
+func (h *StorefrontHandler) layoutData(r *http.Request, categories []catalog.Category) (StorefrontLayoutData, error) {
+	if categories == nil {
+		allCategories, err := h.cachedCategories(r.Context())
+		if err != nil {
+			return StorefrontLayoutData{}, err
+		}
+		categories = allCategories
+	}
+	return h.buildLayoutData(r, categories), nil
+}
+
+func (h *StorefrontHandler) layoutDataBestEffort(r *http.Request) StorefrontLayoutData {
+	layout, err := h.layoutData(r, nil)
+	if err == nil {
+		return layout
+	}
+	h.log.Warn("storefront.categories.load_failed", map[string]interface{}{
+		"path":  r.URL.Path,
+		"error": err.Error(),
+	})
+	return h.buildLayoutData(r, nil)
+}
+
+func (h *StorefrontHandler) buildLayoutData(r *http.Request, categories []catalog.Category) StorefrontLayoutData {
 	themeCfg := h.engine.Theme().Storefront
 	siteName := h.engine.Theme().Name
 	if s := store.FromContext(r.Context()); s != nil && s.Name != "" {
@@ -326,10 +489,33 @@ func (h *StorefrontHandler) layoutData(r *http.Request) StorefrontLayoutData {
 		CartLabel:    cartLabel,
 		CurrentYear:  time.Now().UTC().Year(),
 		Nav:          nav,
+		Categories:   storefrontCategoryTree(categories),
 	}
 }
 
-func (h *StorefrontHandler) buildListingPageData(r *http.Request, ctx *composition.ListingContext, result search.SearchResult, params storefrontListingParams, searchMode bool) StorefrontListingPageData {
+func (h *StorefrontHandler) cachedCategories(ctx context.Context) ([]catalog.Category, error) {
+	now := time.Now().UTC()
+	h.catNav.mu.RLock()
+	if h.catNav.ttl > 0 && now.Before(h.catNav.expiresAt) {
+		cached := append([]catalog.Category(nil), h.catNav.data...)
+		h.catNav.mu.RUnlock()
+		return cached, nil
+	}
+	h.catNav.mu.RUnlock()
+
+	categories, err := h.cats.FindAll(ctx)
+	if err != nil {
+		return nil, err
+	}
+	cloned := append([]catalog.Category(nil), categories...)
+	h.catNav.mu.Lock()
+	h.catNav.data = cloned
+	h.catNav.expiresAt = now.Add(h.catNav.ttl)
+	h.catNav.mu.Unlock()
+	return append([]catalog.Category(nil), cloned...), nil
+}
+
+func (h *StorefrontHandler) buildListingPageData(r *http.Request, layout StorefrontLayoutData, ctx *composition.ListingContext, result search.SearchResult, params storefrontListingParams, searchMode bool) StorefrontListingPageData {
 	title := "All Products"
 	eyebrow := "Catalog"
 	resultSummary := fmt.Sprintf("Showing %d product(s)", result.Total)
@@ -348,7 +534,7 @@ func (h *StorefrontHandler) buildListingPageData(r *http.Request, ctx *compositi
 	}
 
 	return StorefrontListingPageData{
-		Layout:        h.layoutData(r),
+		Layout:        layout,
 		Theme:         h.engine.Theme(),
 		Title:         title,
 		Eyebrow:       eyebrow,
@@ -365,6 +551,33 @@ func (h *StorefrontHandler) buildListingPageData(r *http.Request, ctx *compositi
 		Blocks:        ctx.Blocks,
 		Meta:          ctx.Meta,
 	}
+}
+
+func (h *StorefrontHandler) buildCategoryPageData(r *http.Request, layout StorefrontLayoutData, ctx *composition.ListingContext, result search.SearchResult, params storefrontListingParams, category *catalog.Category, allCategories []catalog.Category) StorefrontCategoryPageData {
+	listing := h.buildListingPageData(r, layout, ctx, result, params, false)
+	page := StorefrontCategoryPageData{
+		StorefrontListingPageData: listing,
+		Category: StorefrontCategorySummary{
+			Name: "Categories",
+			URL:  "/categories",
+		},
+		Breadcrumbs:   []StorefrontBreadcrumb{{Label: "Home", URL: "/"}, {Label: "Categories", URL: "/categories", Current: true}},
+		Subcategories: storefrontSubcategories(allCategories, nil),
+	}
+	page.Title = "Categories"
+	page.Eyebrow = "Browse categories"
+	page.ResultSummary = fmt.Sprintf("Showing %d product(s) across all categories", result.Total)
+	page.EmptyMessage = "No products are available yet."
+	if category != nil {
+		page.Category = storefrontCategorySummary(*category)
+		page.Breadcrumbs = storefrontBreadcrumbs(allCategories, category)
+		page.Subcategories = storefrontSubcategories(allCategories, category)
+		page.Title = category.Name
+		page.Eyebrow = "Category"
+		page.ResultSummary = fmt.Sprintf("Showing %d product(s) in %s", result.Total, category.Name)
+		page.EmptyMessage = fmt.Sprintf("No products are available in %s yet.", category.Name)
+	}
+	return page
 }
 
 func parseStorefrontListingParams(r *http.Request) (storefrontListingParams, error) {
@@ -581,4 +794,134 @@ func storefrontURL(r *http.Request, params storefrontListingParams, overrides ma
 		return r.URL.Path
 	}
 	return r.URL.Path + "?" + encoded
+}
+
+func storefrontCategoryTree(all []catalog.Category) []StorefrontCategoryNavItem {
+	type navNode struct {
+		id       string
+		item     StorefrontCategoryNavItem
+		children []*navNode
+	}
+	nodes := make(map[string]*navNode, len(all))
+	roots := make([]string, 0)
+	for _, category := range all {
+		nodes[category.ID] = &navNode{id: category.ID, item: StorefrontCategoryNavItem{Label: category.Name, URL: "/categories/" + category.Slug}}
+		if category.ParentID == nil {
+			roots = append(roots, category.ID)
+		}
+	}
+	for _, category := range all {
+		if category.ParentID == nil {
+			continue
+		}
+		parent, ok := nodes[*category.ParentID]
+		if !ok {
+			continue
+		}
+		parent.children = append(parent.children, nodes[category.ID])
+	}
+	var materialize func(node *navNode, visited map[string]struct{}) StorefrontCategoryNavItem
+	materialize = func(node *navNode, visited map[string]struct{}) StorefrontCategoryNavItem {
+		item := node.item
+		if _, seen := visited[node.id]; seen {
+			return item
+		}
+		visited[node.id] = struct{}{}
+		for _, child := range node.children {
+			childVisited := make(map[string]struct{}, len(visited))
+			for key := range visited {
+				childVisited[key] = struct{}{}
+			}
+			item.Children = append(item.Children, materialize(child, childVisited))
+		}
+		return item
+	}
+	tree := make([]StorefrontCategoryNavItem, 0, len(roots))
+	for _, rootID := range roots {
+		if node, ok := nodes[rootID]; ok {
+			tree = append(tree, materialize(node, map[string]struct{}{}))
+		}
+	}
+	return tree
+}
+
+func storefrontCategoryBySlug(all []catalog.Category, slug string) *catalog.Category {
+	for i := range all {
+		if all[i].Slug == slug {
+			return &all[i]
+		}
+	}
+	return nil
+}
+
+func storefrontBreadcrumbs(all []catalog.Category, category *catalog.Category) []StorefrontBreadcrumb {
+	byID := make(map[string]catalog.Category, len(all))
+	for _, item := range all {
+		byID[item.ID] = item
+	}
+	trail := make([]StorefrontBreadcrumb, 0, len(all)+1)
+	trail = append(trail, StorefrontBreadcrumb{Label: "Home", URL: "/"})
+	chain := make([]catalog.Category, 0)
+	current := category
+	visited := make(map[string]struct{}, len(all))
+	for current != nil {
+		if _, seen := visited[current.ID]; seen {
+			break
+		}
+		visited[current.ID] = struct{}{}
+		chain = append([]catalog.Category{*current}, chain...)
+		if current.ParentID == nil {
+			break
+		}
+		if _, seen := visited[*current.ParentID]; seen {
+			break
+		}
+		parent, ok := byID[*current.ParentID]
+		if !ok {
+			break
+		}
+		current = &parent
+	}
+	for _, item := range chain {
+		trail = append(trail, StorefrontBreadcrumb{Label: item.Name, URL: "/categories/" + item.Slug})
+	}
+	if len(trail) > 0 {
+		trail[len(trail)-1].Current = true
+	}
+	return trail
+}
+
+func storefrontSubcategories(all []catalog.Category, parent *catalog.Category) []StorefrontCategorySummary {
+	out := make([]StorefrontCategorySummary, 0)
+	for _, category := range all {
+		if parent == nil {
+			if category.ParentID != nil {
+				continue
+			}
+		} else {
+			if category.ParentID == nil || *category.ParentID != parent.ID {
+				continue
+			}
+		}
+		out = append(out, storefrontCategorySummary(category))
+	}
+	return out
+}
+
+func storefrontCategorySummary(category catalog.Category) StorefrontCategorySummary {
+	return StorefrontCategorySummary{
+		Name:        category.Name,
+		URL:         "/categories/" + category.Slug,
+		Description: storefrontCategoryDescription(category.Meta),
+	}
+}
+
+func storefrontCategoryDescription(meta map[string]interface{}) string {
+	if meta == nil {
+		return ""
+	}
+	if raw, ok := meta["description"].(string); ok {
+		return strings.TrimSpace(raw)
+	}
+	return ""
 }
