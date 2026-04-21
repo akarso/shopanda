@@ -1,0 +1,68 @@
+{{ define "title" }}Checkout: Shipping{{ end }}
+
+{{ define "content" }}
+<section class="checkout-shell">
+    <div class="page-intro">
+        <span class="eyebrow">Checkout</span>
+        <h1>Shipping</h1>
+        <p>Select the shipping method that applies to this order.</p>
+    </div>
+
+    <ol class="checkout-progress" aria-label="Checkout progress">
+        {{ range .Progress }}
+        <li class="checkout-progress__step{{ if .Current }} checkout-progress__step--current{{ end }}{{ if .Complete }} checkout-progress__step--complete{{ end }}">
+            <span>{{ .Label }}</span>
+        </li>
+        {{ end }}
+    </ol>
+
+    <div class="checkout-grid">
+        <section class="checkout-panel">
+            <form class="checkout-form" action="/checkout/payment" method="post">
+                <input type="hidden" name="first_name" value="{{ .Address.FirstName }}">
+                <input type="hidden" name="last_name" value="{{ .Address.LastName }}">
+                <input type="hidden" name="street" value="{{ .Address.Street }}">
+                <input type="hidden" name="city" value="{{ .Address.City }}">
+                <input type="hidden" name="postcode" value="{{ .Address.Postcode }}">
+                <input type="hidden" name="country" value="{{ .Address.Country }}">
+                {{ if .ErrorMessage }}
+                <p class="checkout-form__error" role="alert">{{ .ErrorMessage }}</p>
+                {{ end }}
+                <fieldset class="checkout-fieldset">
+                    <legend>Available rates</legend>
+                    {{ range .Rates }}
+                    <label class="checkout-rate{{ if .Selected }} checkout-rate--selected{{ end }}">
+                        <input type="radio" name="shipping_method" value="{{ .Method }}" {{ if .Selected }}checked{{ end }}>
+                        <span>
+                            <strong>{{ .Label }}</strong>
+                            <small>{{ .Method }}</small>
+                        </span>
+                        <strong>{{ .CostText }}</strong>
+                    </label>
+                    {{ end }}
+                </fieldset>
+                <div class="checkout-actions">
+                    <a class="chip" href="/checkout/address">Edit address</a>
+                    <button type="submit">Continue to Payment</button>
+                </div>
+            </form>
+        </section>
+
+        <aside class="checkout-summary-panel">
+            <span class="eyebrow">Shipping To</span>
+            <div class="checkout-summary-panel__address">
+                <strong>{{ .Address.FirstName }} {{ .Address.LastName }}</strong>
+                <span>{{ .Address.Street }}</span>
+                <span>{{ .Address.Postcode }} {{ .Address.City }}</span>
+                <span>{{ .Address.Country }}</span>
+            </div>
+            <div class="checkout-summary-panel__totals">
+                <span>Subtotal</span>
+                <strong>{{ .Summary.SubtotalText }}</strong>
+            </div>
+        </aside>
+    </div>
+</section>
+{{ end }}
+
+{{ template "layout.html" . }}

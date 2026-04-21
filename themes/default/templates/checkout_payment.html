@@ -1,0 +1,86 @@
+{{ define "title" }}Checkout: Payment{{ end }}
+
+{{ define "content" }}
+<section class="checkout-shell">
+    <div class="page-intro">
+        <span class="eyebrow">Checkout</span>
+        <h1>Payment</h1>
+        <p>Review the selected shipping method and place the order.</p>
+    </div>
+
+    <ol class="checkout-progress" aria-label="Checkout progress">
+        {{ range .Progress }}
+        <li class="checkout-progress__step{{ if .Current }} checkout-progress__step--current{{ end }}{{ if .Complete }} checkout-progress__step--complete{{ end }}">
+            <span>{{ .Label }}</span>
+        </li>
+        {{ end }}
+    </ol>
+
+    <div class="checkout-grid">
+        <section class="checkout-panel">
+            <form class="checkout-form" action="/checkout/confirm" method="post">
+                <input type="hidden" name="first_name" value="{{ .Address.FirstName }}">
+                <input type="hidden" name="last_name" value="{{ .Address.LastName }}">
+                <input type="hidden" name="street" value="{{ .Address.Street }}">
+                <input type="hidden" name="city" value="{{ .Address.City }}">
+                <input type="hidden" name="postcode" value="{{ .Address.Postcode }}">
+                <input type="hidden" name="country" value="{{ .Address.Country }}">
+                <input type="hidden" name="shipping_method" value="{{ if .SelectedRate }}{{ .SelectedRate.Method }}{{ end }}">
+                <input type="hidden" name="payment_method" value="{{ .Payment.Method }}">
+                {{ if .ErrorMessage }}
+                <p class="checkout-form__error" role="alert">{{ .ErrorMessage }}</p>
+                {{ end }}
+                <div class="checkout-payment-card">
+                    <div>
+                        <span class="eyebrow">Payment Method</span>
+                        <h2>{{ .Payment.Label }}</h2>
+                    </div>
+                    {{ if .Payment.IsStripe }}
+                    <div class="payment-card-preview" aria-label="Stripe card placeholder">
+                        <label>
+                            <span>Card Number</span>
+                            <input value="4242 4242 4242 4242" disabled>
+                        </label>
+                        <div class="payment-card-preview__row">
+                            <label>
+                                <span>Expiry</span>
+                                <input value="12 / 34" disabled>
+                            </label>
+                            <label>
+                                <span>CVC</span>
+                                <input value="123" disabled>
+                            </label>
+                        </div>
+                    </div>
+                    {{ end }}
+                    <ul class="checkout-payment-card__notes">
+                        {{ range .Payment.Instructions }}
+                        <li>{{ . }}</li>
+                        {{ end }}
+                    </ul>
+                </div>
+                <div class="checkout-actions">
+                    <a class="chip" href="/checkout/address">Start over</a>
+                    <button type="submit">Place Order</button>
+                </div>
+            </form>
+        </section>
+
+        <aside class="checkout-summary-panel">
+            <span class="eyebrow">Review</span>
+            <div class="checkout-summary-panel__totals">
+                <span>Subtotal</span>
+                <strong>{{ .Summary.SubtotalText }}</strong>
+            </div>
+            {{ if .SelectedRate }}
+            <div class="checkout-summary-panel__totals">
+                <span>{{ .SelectedRate.Label }}</span>
+                <strong>{{ .SelectedRate.CostText }}</strong>
+            </div>
+            {{ end }}
+        </aside>
+    </div>
+</section>
+{{ end }}
+
+{{ template "layout.html" . }}
