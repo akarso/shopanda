@@ -32,6 +32,43 @@ type assetResponse struct {
 	CreatedAt  string            `json:"created_at"`
 }
 
+func toAssetResponse(view mediaApp.AssetView) assetResponse {
+	return assetResponse{
+		ID:         view.Asset.ID,
+		Path:       view.Asset.Path,
+		Filename:   view.Asset.Filename,
+		MimeType:   view.Asset.MimeType,
+		Size:       view.Asset.Size,
+		URL:        view.URL,
+		Thumbnails: view.Thumbnails,
+		CreatedAt:  view.Asset.CreatedAt.Format("2006-01-02T15:04:05Z"),
+	}
+}
+
+// List returns a handler for GET /api/v1/admin/media.
+func (h *MediaHandler) List() http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		offset, limit, err := parsePagination(r)
+		if err != nil {
+			JSONError(w, err)
+			return
+		}
+
+		assets, err := h.svc.List(r.Context(), offset, limit)
+		if err != nil {
+			JSONError(w, err)
+			return
+		}
+
+		out := make([]assetResponse, 0, len(assets))
+		for i := range assets {
+			out = append(out, toAssetResponse(assets[i]))
+		}
+
+		JSON(w, http.StatusOK, map[string]interface{}{"assets": out})
+	}
+}
+
 // Upload returns a handler for POST /api/v1/admin/media/upload.
 func (h *MediaHandler) Upload() http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
@@ -64,15 +101,26 @@ func (h *MediaHandler) Upload() http.HandlerFunc {
 			return
 		}
 
-		JSON(w, http.StatusCreated, assetResponse{
-			ID:         result.Asset.ID,
-			Path:       result.Asset.Path,
-			Filename:   result.Asset.Filename,
-			MimeType:   result.Asset.MimeType,
-			Size:       result.Asset.Size,
+		JSON(w, http.StatusCreated, toAssetResponse(mediaApp.AssetView{
+			Asset:      result.Asset,
 			URL:        result.URL,
 			Thumbnails: result.Thumbnails,
-			CreatedAt:  result.Asset.CreatedAt.Format("2006-01-02T15:04:05Z"),
-		})
+		}))
+	}
+}
+
+// Delete returns a handler for DELETE /api/v1/admin/media/{assetId}.
+func (h *MediaHandler) Delete() http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		assetID := r.PathValue("assetId")
+		if assetID == "" {
+			JSONError(w, apperror.Validation("asset id is required"))
+			return
+		}
+		if err := h.svc.Delete(r.Context(), assetID); err != nil {
+			JSONError(w, err)
+			return
+		}
+		JSON(w, http.StatusOK, map[string]interface{}{"deleted": true, "asset_id": assetID})
 	}
 }

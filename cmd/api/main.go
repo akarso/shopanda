@@ -725,6 +725,7 @@ func runServe(cfg *config.Config, log logger.Logger) error {
 	requireProductsWrite := shophttp.RequirePermission(rbac.ProductsWrite)
 	requireOrdersRead := shophttp.RequirePermission(rbac.OrdersRead)
 	requireOrdersWrite := shophttp.RequirePermission(rbac.OrdersWrite)
+	requireMediaRead := shophttp.RequirePermission(rbac.MediaRead)
 	requireMediaWrite := shophttp.RequirePermission(rbac.MediaWrite)
 	requireSettingsRead := shophttp.RequirePermission(rbac.SettingsRead)
 	requireSettingsWrite := shophttp.RequirePermission(rbac.SettingsWrite)
@@ -769,7 +770,10 @@ func runServe(cfg *config.Config, log logger.Logger) error {
 	if refundHandler != nil {
 		router.Handle("POST /api/v1/admin/orders/{orderId}/refund", requireOrdersWrite(refundHandler.Refund()))
 	}
+	router.Handle("GET /api/v1/admin/media", requireMediaRead(mediaHandler.List()))
+	router.Handle("POST /api/v1/admin/media", requireMediaWrite(mediaHandler.Upload()))
 	router.Handle("POST /api/v1/admin/media/upload", requireMediaWrite(mediaHandler.Upload()))
+	router.Handle("DELETE /api/v1/admin/media/{assetId}", requireMediaWrite(mediaHandler.Delete()))
 	router.Handle("GET /api/v1/admin/forms/{name}", requireAuth(schemaHandler.GetForm()))
 	router.Handle("GET /api/v1/admin/grids/{name}", requireAuth(schemaHandler.GetGrid()))
 	router.Handle("GET /api/v1/admin/pages", requireSettingsRead(pageAdmin.List()))

@@ -41,8 +41,12 @@ func (m *mockStorage) Delete(path string) error {
 func (m *mockStorage) URL(path string) string { return "/media/" + path }
 
 type mockAssetRepo struct {
-	saveErr error
-	saved   []*domainMedia.Asset
+	saveErr   error
+	saved     []*domainMedia.Asset
+	assets    []domainMedia.Asset
+	findByID  map[string]*domainMedia.Asset
+	deleteErr error
+	deleted   []string
 }
 
 func (m *mockAssetRepo) Save(_ context.Context, a *domainMedia.Asset) error {
@@ -53,8 +57,23 @@ func (m *mockAssetRepo) Save(_ context.Context, a *domainMedia.Asset) error {
 	return nil
 }
 
-func (m *mockAssetRepo) FindByID(_ context.Context, _ string) (*domainMedia.Asset, error) {
-	return nil, nil
+func (m *mockAssetRepo) FindByID(_ context.Context, id string) (*domainMedia.Asset, error) {
+	if m.findByID == nil {
+		return nil, nil
+	}
+	return m.findByID[id], nil
+}
+
+func (m *mockAssetRepo) List(_ context.Context, _ int, _ int) ([]domainMedia.Asset, error) {
+	return m.assets, nil
+}
+
+func (m *mockAssetRepo) Delete(_ context.Context, id string) error {
+	if m.deleteErr != nil {
+		return m.deleteErr
+	}
+	m.deleted = append(m.deleted, id)
+	return nil
 }
 
 type mockLogger struct{}
@@ -185,6 +204,54 @@ func TestUpload_PersistFails_DeleteAlsoFails(t *testing.T) {
 	}
 	if log.errors[0] != "media: rollback delete failed" {
 		t.Errorf("logged error = %q, want %q", log.errors[0], "media: rollback delete failed")
+	}
+}
+
+func TestList(t *testing.T) {
+	storage := &mockStorage{name: "test"}
+	asset, err := domainMedia.NewAsset("asset-1", "uploads/asset-1/photo.jpg", "photo.jpg", "image/jpeg", 12)
+	if err != nil {
+		t.Fatalf("NewAsset: %v", err)
+	}
+	asset.Thumbnails["small"] = "uploads/asset-1/small/photo.jpg"
+	repo := &mockAssetRepo{assets: []domainMedia.Asset{asset}}
+	bus := event.NewBus(mockLogger{})
+	svc := NewService(storage, repo, bus, mockLogger{})
+
+	views, err := svc.List(context.Background(), 0, 20)
+	if err != nil {
+		t.Fatalf("List: %v", err)
+	}
+	if len(views) != 1 {
+		t.Fatalf("len = %d, want 1", len(views))
+	}
+	if views[0].URL != "/media/uploads/asset-1/photo.jpg" {
+		t.Fatalf("url = %q", views[0].URL)
+	}
+	if views[0].Thumbnails["small"] != "/media/uploads/asset-1/small/photo.jpg" {
+		t.Fatalf("thumb url = %q", views[0].Thumbnails["small"])
+	}
+}
+
+func TestDelete(t *testing.T) {
+	storage := &mockStorage{name: "test"}
+	asset, err := domainMedia.NewAsset("asset-1", "uploads/asset-1/photo.jpg", "photo.jpg", "image/jpeg", 12)
+	if err != nil {
+		t.Fatalf("NewAsset: %v", err)
+	}
+	asset.Thumbnails["small"] = "uploads/asset-1/small/photo.jpg"
+	repo := &mockAssetRepo{findByID: map[string]*domainMedia.Asset{"asset-1": &asset}}
+	bus := event.NewBus(mockLogger{})
+	svc := NewService(storage, repo, bus, mockLogger{})
+
+	if err := svc.Delete(context.Background(), "asset-1"); err != nil {
+		t.Fatalf("Delete: %v", err)
+	}
+	if len(repo.deleted) != 1 || repo.deleted[0] != "asset-1" {
+		t.Fatalf("deleted ids = %#v", repo.deleted)
+	}
+	if len(storage.deleted) != 2 {
+		t.Fatalf("deleted paths = %d, want 2", len(storage.deleted))
 	}
 }
 

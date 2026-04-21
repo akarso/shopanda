@@ -3,6 +3,7 @@ package postgres_test
 import (
 	"context"
 	"testing"
+	"time"
 
 	"github.com/akarso/shopanda/internal/domain/media"
 	"github.com/akarso/shopanda/internal/infrastructure/postgres"
@@ -129,5 +130,87 @@ func TestAssetRepo_Save_WithMeta(t *testing.T) {
 	}
 	if got.Thumbnails["medium"] != "/uploads/banner_md.jpg" {
 		t.Errorf("Thumbnails[medium]: got %q, want %q", got.Thumbnails["medium"], "/uploads/banner_md.jpg")
+	}
+}
+
+func TestAssetRepo_List(t *testing.T) {
+	db := testDB(t)
+	ensureProductsTable(t, db)
+	mustExec(t, db, "DELETE FROM assets")
+	t.Cleanup(func() { mustExec(t, db, "DELETE FROM assets") })
+
+	repo, err := postgres.NewAssetRepo(db)
+	if err != nil {
+		t.Fatalf("NewAssetRepo: %v", err)
+	}
+	ctx := context.Background()
+
+	a1 := mustNewAsset(t, "logo-1.png")
+	a2 := mustNewAsset(t, "logo-2.png")
+	now := time.Now().UTC()
+	a1.CreatedAt = now.Add(-time.Hour)
+	a2.CreatedAt = now
+	if err := repo.Save(ctx, a1); err != nil {
+		t.Fatalf("Save a1: %v", err)
+	}
+	if err := repo.Save(ctx, a2); err != nil {
+		t.Fatalf("Save a2: %v", err)
+	}
+
+	items, err := repo.List(ctx, 0, 20)
+	if err != nil {
+		t.Fatalf("List: %v", err)
+	}
+	if len(items) != 2 {
+		t.Fatalf("len = %d, want 2", len(items))
+	}
+	if items[0].ID != a2.ID {
+		t.Fatalf("items[0].ID = %q, want %q", items[0].ID, a2.ID)
+	}
+	if items[1].ID != a1.ID {
+		t.Fatalf("items[1].ID = %q, want %q", items[1].ID, a1.ID)
+	}
+}
+
+func TestAssetRepo_Delete(t *testing.T) {
+	db := testDB(t)
+	ensureProductsTable(t, db)
+	mustExec(t, db, "DELETE FROM assets")
+	t.Cleanup(func() { mustExec(t, db, "DELETE FROM assets") })
+
+	repo, err := postgres.NewAssetRepo(db)
+	if err != nil {
+		t.Fatalf("NewAssetRepo: %v", err)
+	}
+	ctx := context.Background()
+
+	a := mustNewAsset(t, "delete.png")
+	if err := repo.Save(ctx, a); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+	if err := repo.Delete(ctx, a.ID); err != nil {
+		t.Fatalf("Delete: %v", err)
+	}
+	got, err := repo.FindByID(ctx, a.ID)
+	if err != nil {
+		t.Fatalf("FindByID: %v", err)
+	}
+	if got != nil {
+		t.Fatal("expected nil after delete")
+	}
+}
+
+func TestAssetRepo_Delete_EmptyID(t *testing.T) {
+	db := testDB(t)
+	ensureProductsTable(t, db)
+
+	repo, err := postgres.NewAssetRepo(db)
+	if err != nil {
+		t.Fatalf("NewAssetRepo: %v", err)
+	}
+
+	err = repo.Delete(context.Background(), "")
+	if err == nil {
+		t.Fatal("expected error for empty id")
 	}
 }
