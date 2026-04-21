@@ -1,0 +1,97 @@
+{{ define "title" }}{{ .Category.Name }}{{ end }}
+
+{{ define "content" }}
+<section class="page-intro listing-intro">
+    <div>
+        <span class="eyebrow">{{ .Eyebrow }}</span>
+        <h1>{{ .Category.Name }}</h1>
+        {{ if .Category.Description }}<p>{{ .Category.Description }}</p>{{ end }}
+        <p>{{ .ResultSummary }}</p>
+    </div>
+    <div class="listing-toolbar">
+        <div class="listing-toolbar__group" aria-label="View mode">
+            <a class="chip{{ if eq .View "grid" }} chip--active{{ end }}" href="{{ .GridURL }}"{{ if eq .View "grid" }} aria-current="true"{{ end }}>Grid</a>
+            <a class="chip{{ if eq .View "list" }} chip--active{{ end }}" href="{{ .ListURL }}"{{ if eq .View "list" }} aria-current="true"{{ end }}>List</a>
+        </div>
+        <div class="listing-toolbar__group" aria-label="Sort products">
+            {{ range .SortOptions }}
+            <a class="chip{{ if .Selected }} chip--active{{ end }}" href="{{ .URL }}"{{ if .Selected }} aria-current="true"{{ end }}>{{ .Label }}</a>
+            {{ end }}
+        </div>
+    </div>
+</section>
+
+{{ if .Breadcrumbs }}
+<nav class="breadcrumbs" aria-label="Breadcrumbs">
+    {{ range .Breadcrumbs }}
+    <a href="{{ .URL }}">{{ .Label }}</a>
+    {{ end }}
+</nav>
+{{ end }}
+
+{{ if .Subcategories }}
+<section class="page-intro category-subnav">
+    <span class="eyebrow">Sub-categories</span>
+    <div class="listing-toolbar__group">
+        {{ range .Subcategories }}
+        <a class="chip" href="{{ .URL }}">{{ .Name }}</a>
+        {{ end }}
+    </div>
+</section>
+{{ end }}
+
+{{ if .Products }}
+<section class="product-listing product-listing--{{ .View }}" aria-label="Products in category">
+    {{ range .Products }}
+    <article class="product-card">
+        <a class="product-card__media" href="/products/{{ .Slug }}">
+            {{ if .ImageURL }}
+            <img src="{{ .ImageURL }}" alt="{{ .Name }}">
+            {{ else }}
+            <span>{{ .Name }}</span>
+            {{ end }}
+        </a>
+        <div class="product-card__body">
+            <span class="eyebrow">Product</span>
+            <h2><a href="/products/{{ .Slug }}">{{ .Name }}</a></h2>
+            {{ if .Description }}<p>{{ .Description }}</p>{{ end }}
+            <div class="product-card__meta">
+                {{ if .PriceText }}
+                <strong>{{ .PriceText }}</strong>
+                {{ else }}
+                <a class="muted-note" href="/products/{{ .Slug }}">Check price</a>
+                {{ end }}
+                {{ if .Availability }}
+                <span class="muted-note">{{ .Availability }}</span>
+                {{ end }}
+            </div>
+            <a class="button-link" href="/products/{{ .Slug }}">View product</a>
+        </div>
+    </article>
+    {{ end }}
+</section>
+{{ else }}
+<section class="page-intro listing-empty">
+    <span class="eyebrow">Nothing to show</span>
+    <h2>{{ .EmptyMessage }}</h2>
+    <p>Try a sibling category or browse the full catalog.</p>
+    <a class="button-link" href="/products">Browse all products</a>
+</section>
+{{ end }}
+
+{{ if .Pagination.TotalPages }}
+<nav class="pagination" aria-label="Pagination">
+    {{ if .Pagination.HasPrev }}
+    <a class="chip" href="{{ .Pagination.PrevURL }}">Previous</a>
+    {{ end }}
+    {{ range .Pagination.Links }}
+    <a class="chip{{ if .Current }} chip--active{{ end }}" href="{{ .URL }}"{{ if .Current }} aria-current="page"{{ end }}>{{ .Label }}</a>
+    {{ end }}
+    {{ if .Pagination.HasNext }}
+    <a class="chip" href="{{ .Pagination.NextURL }}">Next</a>
+    {{ end }}
+</nav>
+{{ end }}
+{{ end }}
+
+{{ template "layout.html" . }}
