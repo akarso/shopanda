@@ -221,6 +221,7 @@ func runServe(cfg *config.Config, log logger.Logger) error {
 	if err != nil {
 		return err
 	}
+	configRepo := postgres.NewConfigRepo(conn)
 	zoneRepo, err := postgres.NewZoneRepo(conn)
 	if err != nil {
 		return err
@@ -674,6 +675,20 @@ func runServe(cfg *config.Config, log logger.Logger) error {
 		}
 	}
 	mediaHandler := shophttp.NewMediaHandler(mediaService)
+	configAdmin := shophttp.NewConfigAdminHandler(configRepo, cfg, func(ctx context.Context, smtpCfg shophttp.SMTPTestConfig, to string) error {
+		mailer := smtpmail.New(smtpmail.Config{
+			Host:     smtpCfg.Host,
+			Port:     smtpCfg.Port,
+			User:     smtpCfg.User,
+			Password: smtpCfg.Password,
+			From:     smtpCfg.From,
+		})
+		return mailer.Send(ctx, mail.Message{
+			To:      to,
+			Subject: "Shopanda SMTP test",
+			Body:    "<p>This is a test email from Shopanda admin settings.</p>",
+		})
+	})
 	schemaHandler := shophttp.NewSchemaHandler(adminRegistry)
 	pageHandler := shophttp.NewPageHandler(pageRepo, contentTranslator)
 	pageAdmin := shophttp.NewPageAdminHandler(pageRepo, bus)
@@ -774,6 +789,9 @@ func runServe(cfg *config.Config, log logger.Logger) error {
 	router.Handle("POST /api/v1/admin/media", requireMediaWrite(mediaHandler.Upload()))
 	router.Handle("POST /api/v1/admin/media/upload", requireMediaWrite(mediaHandler.Upload()))
 	router.Handle("DELETE /api/v1/admin/media/{assetId}", requireMediaWrite(mediaHandler.Delete()))
+	router.Handle("GET /api/v1/admin/config", requireSettingsRead(configAdmin.Get()))
+	router.Handle("PUT /api/v1/admin/config", requireSettingsWrite(configAdmin.Update()))
+	router.Handle("POST /api/v1/admin/config/test-email", requireSettingsWrite(configAdmin.TestEmail()))
 	router.Handle("GET /api/v1/admin/forms/{name}", requireAuth(schemaHandler.GetForm()))
 	router.Handle("GET /api/v1/admin/grids/{name}", requireAuth(schemaHandler.GetGrid()))
 	router.Handle("GET /api/v1/admin/pages", requireSettingsRead(pageAdmin.List()))

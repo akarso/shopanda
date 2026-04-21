@@ -97,7 +97,7 @@
         "/admin/products": { title: "Products", render: renderProductsGrid, auth: true },
         "/admin/orders": { title: "Orders", render: renderOrdersGrid, auth: true },
         "/admin/media": { title: "Media", render: renderMediaLibrary, auth: true },
-        "/admin/settings": { title: "Settings", render: renderPlaceholder("Settings"), auth: true }
+        "/admin/settings": { title: "Settings", render: renderSettingsPage, auth: true }
     };
 
     function resolveRoute(path) {
@@ -532,6 +532,36 @@
         return out;
     }
 
+    function normalizeStores(stores) {
+        if (!Array.isArray(stores)) {
+            return [];
+        }
+        var out = [];
+        for (var i = 0; i < stores.length; i++) {
+            var store = normalizeStore(stores[i]);
+            if (store) {
+                out.push(store);
+            }
+        }
+        return out;
+    }
+
+    function normalizeStore(raw) {
+        if (!raw) {
+            return null;
+        }
+        return {
+            id: pick(raw, "id", "ID"),
+            code: pick(raw, "code", "Code"),
+            name: pick(raw, "name", "Name"),
+            currency: pick(raw, "currency", "Currency"),
+            country: pick(raw, "country", "Country"),
+            language: pick(raw, "language", "Language"),
+            domain: pick(raw, "domain", "Domain"),
+            is_default: !!pick(raw, "is_default", "IsDefault")
+        };
+    }
+
     function normalizeOrder(raw) {
         if (!raw) {
             return null;
@@ -830,6 +860,264 @@
             dropzoneID: "media-dropzone",
             progressID: "media-upload-progress"
         });
+    }
+
+    function renderSettingsPage(container) {
+        container.innerHTML =
+            '<h2>Settings</h2>' +
+            '<div id="settings-global-msg"></div>' +
+            '<div class="settings-grid">' +
+            '<section><h3>Store Info</h3><div id="settings-store-msg"></div><form id="settings-store-form"></form></section>' +
+            '<section><h3>Email</h3><div id="settings-email-msg"></div><form id="settings-email-form"></form></section>' +
+            '<section><h3>Media</h3><div id="settings-media-msg"></div><form id="settings-media-form"></form></section>' +
+            '<section><h3>Currency</h3><div id="settings-currency-msg"></div><form id="settings-currency-form"></form></section>' +
+            '<section><h3>Tax</h3><div id="settings-tax-msg"></div><form id="settings-tax-form"></form></section>' +
+            '</div>';
+
+        Promise.all([
+            api('/admin/stores'),
+            api('/admin/config?group=store'),
+            api('/admin/config?group=email'),
+            api('/admin/config?group=media'),
+            api('/admin/config?group=currency'),
+            api('/admin/config?group=tax')
+        ]).then(function (results) {
+            var stores = normalizeStores(results[0] && results[0].data && results[0].data.stores ? results[0].data.stores : []);
+            var storeSettings = results[1] && results[1].data && results[1].data.entries ? results[1].data.entries : {};
+            var emailSettings = results[2] && results[2].data && results[2].data.entries ? results[2].data.entries : {};
+            var mediaSettings = results[3] && results[3].data && results[3].data.entries ? results[3].data.entries : {};
+            var currencySettings = results[4] && results[4].data && results[4].data.entries ? results[4].data.entries : {};
+            var taxSettings = results[5] && results[5].data && results[5].data.entries ? results[5].data.entries : {};
+
+            renderStoreSettingsForm(container, choosePrimaryStore(stores), storeSettings);
+            renderEmailSettingsForm(container, emailSettings);
+            renderMediaSettingsForm(container, mediaSettings);
+            renderCurrencySettingsForm(container, currencySettings);
+            renderTaxSettingsForm(container, taxSettings);
+        }).catch(function () {
+            container.innerHTML = '<h2>Settings</h2><p role="alert">Failed to load settings.</p>';
+        });
+    }
+
+    function choosePrimaryStore(stores) {
+        if (!stores || stores.length === 0) {
+            return null;
+        }
+        for (var i = 0; i < stores.length; i++) {
+            if (stores[i].is_default) {
+                return stores[i];
+            }
+        }
+        return stores[0];
+    }
+
+    function renderStoreSettingsForm(container, store, storeSettings) {
+        var form = document.getElementById('settings-store-form');
+        form.innerHTML = '' +
+            '<label>Code<input name="code" value="' + esc(store ? store.code : '') + '" required></label>' +
+            '<label>Name<input name="name" value="' + esc(store ? store.name : '') + '" required></label>' +
+            '<label>Domain / URL<input name="domain" value="' + esc(store ? store.domain : '') + '"></label>' +
+            '<label>Country<input name="country" value="' + esc(store ? store.country : '') + '" required></label>' +
+            '<label>Language<input name="language" value="' + esc(store ? store.language : '') + '" required></label>' +
+            '<label>Currency<input name="currency" value="' + esc(store ? store.currency : '') + '" required></label>' +
+            '<label>Address<textarea name="store_address">' + esc(valueOf(storeSettings, 'store.address', '')) + '</textarea></label>' +
+            '<label>Logo URL<input name="store_logo" value="' + esc(valueOf(storeSettings, 'store.logo', '')) + '"></label>' +
+            '<label><input type="checkbox" name="is_default" ' + (store && store.is_default ? 'checked' : '') + '> Default store</label>' +
+            '<button type="submit">Save Store Info</button>';
+
+        form.addEventListener('submit', function (e) {
+            e.preventDefault();
+            var payload = {
+                code: form.elements.code.value,
+                name: form.elements.name.value,
+                domain: form.elements.domain.value,
+                country: form.elements.country.value,
+                language: form.elements.language.value,
+                currency: form.elements.currency.value,
+                is_default: !!form.elements.is_default.checked
+            };
+            var configPayload = {
+                entries: {
+                    'store.address': form.elements.store_address.value,
+                    'store.logo': form.elements.store_logo.value
+                }
+            };
+            var storeReq;
+            if (store && store.id) {
+                storeReq = api('/admin/stores/' + encodeURIComponent(store.id), {
+                    method: 'PUT',
+                    body: JSON.stringify(payload)
+                });
+            } else {
+                storeReq = api('/admin/stores', {
+                    method: 'POST',
+                    body: JSON.stringify(payload)
+                });
+            }
+            Promise.all([
+                storeReq,
+                api('/admin/config', { method: 'PUT', body: JSON.stringify(configPayload) })
+            ]).then(function (responses) {
+                if ((responses[0] && responses[0].error) || (responses[1] && responses[1].error)) {
+                    setSettingsMessage('settings-store-msg', extractErrorMessage(responses[0] || responses[1], 'Failed to save store settings.'), true);
+                    return;
+                }
+                setSettingsMessage('settings-store-msg', 'Store settings saved.', false);
+                renderSettingsPage(container);
+            }).catch(function (err) {
+                setSettingsMessage('settings-store-msg', extractErrorMessage(err, 'Failed to save store settings.'), true);
+            });
+        });
+    }
+
+    function renderEmailSettingsForm(container, settings) {
+        var form = document.getElementById('settings-email-form');
+        form.innerHTML = '' +
+            '<label>SMTP Host<input name="host" value="' + esc(valueOf(settings, 'mail.smtp.host', '')) + '"></label>' +
+            '<label>SMTP Port<input name="port" type="number" min="1" value="' + esc(String(valueOf(settings, 'mail.smtp.port', 0) || '')) + '"></label>' +
+            '<label>SMTP User<input name="user" value="' + esc(valueOf(settings, 'mail.smtp.user', '')) + '"></label>' +
+            '<label>SMTP Password<input name="password" type="password" value="' + esc(valueOf(settings, 'mail.smtp.password', '')) + '"></label>' +
+            '<label>From Address<input name="from" value="' + esc(valueOf(settings, 'mail.smtp.from', '')) + '"></label>' +
+            '<label>Test Recipient<input name="test_to" type="email" placeholder="merchant@example.com"></label>' +
+            '<div class="settings-actions">' +
+            '<button type="submit">Save Email Settings</button>' +
+            '<button type="button" id="settings-test-email" class="secondary">Send Test Email</button>' +
+            '</div>';
+
+        form.addEventListener('submit', function (e) {
+            e.preventDefault();
+            saveSettingsEntries('settings-email-msg', {
+                'mail.smtp.host': form.elements.host.value,
+                'mail.smtp.port': Number(form.elements.port.value || 0),
+                'mail.smtp.user': form.elements.user.value,
+                'mail.smtp.password': form.elements.password.value,
+                'mail.smtp.from': form.elements.from.value
+            });
+        });
+
+        document.getElementById('settings-test-email').addEventListener('click', function () {
+            api('/admin/config/test-email', {
+                method: 'POST',
+                body: JSON.stringify({
+                    to: form.elements.test_to.value,
+                    host: form.elements.host.value,
+                    port: Number(form.elements.port.value || 0),
+                    user: form.elements.user.value,
+                    password: form.elements.password.value,
+                    from: form.elements.from.value
+                })
+            }).then(function (body) {
+                if (body && body.error) {
+                    setSettingsMessage('settings-email-msg', body.error.message || 'Failed to send test email.', true);
+                    return;
+                }
+                setSettingsMessage('settings-email-msg', 'Test email sent.', false);
+            }).catch(function (err) {
+                setSettingsMessage('settings-email-msg', extractErrorMessage(err, 'Failed to send test email.'), true);
+            });
+        });
+    }
+
+    function renderMediaSettingsForm(container, settings) {
+        var form = document.getElementById('settings-media-form');
+        form.innerHTML = '' +
+            '<label>Storage<select name="storage">' +
+            renderSelectOptions(['local', 's3'], valueOf(settings, 'media.storage', 'local')) +
+            '</select></label>' +
+            '<label>Local Base Path<input name="local_base_path" value="' + esc(valueOf(settings, 'media.local.base_path', '')) + '"></label>' +
+            '<label>Local Base URL<input name="local_base_url" value="' + esc(valueOf(settings, 'media.local.base_url', '')) + '"></label>' +
+            '<label>S3 Endpoint<input name="s3_endpoint" value="' + esc(valueOf(settings, 'media.s3.endpoint', '')) + '"></label>' +
+            '<label>S3 Bucket<input name="s3_bucket" value="' + esc(valueOf(settings, 'media.s3.bucket', '')) + '"></label>' +
+            '<label>S3 Region<input name="s3_region" value="' + esc(valueOf(settings, 'media.s3.region', '')) + '"></label>' +
+            '<label>S3 Base URL<input name="s3_base_url" value="' + esc(valueOf(settings, 'media.s3.base_url', '')) + '"></label>' +
+            '<label><input type="checkbox" name="s3_public_acl" ' + (truthy(valueOf(settings, 'media.s3.public_acl', false)) ? 'checked' : '') + '> S3 Public ACL</label>' +
+            '<button type="submit">Save Media Settings</button>';
+
+        form.addEventListener('submit', function (e) {
+            e.preventDefault();
+            saveSettingsEntries('settings-media-msg', {
+                'media.storage': form.elements.storage.value,
+                'media.local.base_path': form.elements.local_base_path.value,
+                'media.local.base_url': form.elements.local_base_url.value,
+                'media.s3.endpoint': form.elements.s3_endpoint.value,
+                'media.s3.bucket': form.elements.s3_bucket.value,
+                'media.s3.region': form.elements.s3_region.value,
+                'media.s3.base_url': form.elements.s3_base_url.value,
+                'media.s3.public_acl': !!form.elements.s3_public_acl.checked
+            });
+        });
+    }
+
+    function renderCurrencySettingsForm(container, settings) {
+        var form = document.getElementById('settings-currency-form');
+        form.innerHTML = '' +
+            '<label>Default Currency<input name="default_currency" value="' + esc(valueOf(settings, 'default_currency', 'EUR')) + '"></label>' +
+            '<label>Display Format<input name="display_format" value="' + esc(valueOf(settings, 'currency.display_format', '{currency} {amount}')) + '"></label>' +
+            '<button type="submit">Save Currency Settings</button>';
+        form.addEventListener('submit', function (e) {
+            e.preventDefault();
+            saveSettingsEntries('settings-currency-msg', {
+                'default_currency': form.elements.default_currency.value,
+                'currency.display_format': form.elements.display_format.value
+            });
+        });
+    }
+
+    function renderTaxSettingsForm(container, settings) {
+        var form = document.getElementById('settings-tax-form');
+        form.innerHTML = '' +
+            '<label>Default Tax Class<input name="default_class" value="' + esc(valueOf(settings, 'tax.default_class', 'standard')) + '"></label>' +
+            '<label><input type="checkbox" name="tax_included" ' + (truthy(valueOf(settings, 'tax.included', false)) ? 'checked' : '') + '> Prices Include Tax</label>' +
+            '<button type="submit">Save Tax Settings</button>';
+        form.addEventListener('submit', function (e) {
+            e.preventDefault();
+            saveSettingsEntries('settings-tax-msg', {
+                'tax.default_class': form.elements.default_class.value,
+                'tax.included': !!form.elements.tax_included.checked
+            });
+        });
+    }
+
+    function saveSettingsEntries(messageID, entries) {
+        api('/admin/config', {
+            method: 'PUT',
+            body: JSON.stringify({ entries: entries })
+        }).then(function (body) {
+            if (body && body.error) {
+                setSettingsMessage(messageID, body.error.message || 'Failed to save settings.', true);
+                return;
+            }
+            setSettingsMessage(messageID, 'Settings saved.', false);
+        }).catch(function (err) {
+            setSettingsMessage(messageID, extractErrorMessage(err, 'Failed to save settings.'), true);
+        });
+    }
+
+    function setSettingsMessage(id, message, isError) {
+        var el = document.getElementById(id);
+        if (!el) {
+            return;
+        }
+        el.innerHTML = '<p' + (isError ? ' role="alert"' : '') + '>' + esc(message) + '</p>';
+    }
+
+    function renderSelectOptions(values, selected) {
+        var html = '';
+        for (var i = 0; i < values.length; i++) {
+            html += '<option value="' + esc(values[i]) + '"' + (String(values[i]) === String(selected) ? ' selected' : '') + '>' + esc(values[i]) + '</option>';
+        }
+        return html;
+    }
+
+    function valueOf(obj, key, fallback) {
+        if (obj && obj[key] != null) {
+            return obj[key];
+        }
+        return fallback;
+    }
+
+    function truthy(value) {
+        return value === true || value === 'true' || value === 1 || value === '1';
     }
 
     function setupMediaManager(options) {
