@@ -2,6 +2,7 @@ package http
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"fmt"
 	"math"
@@ -9,6 +10,7 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/akarso/shopanda/internal/application/composition"
@@ -17,6 +19,7 @@ import (
 	"github.com/akarso/shopanda/internal/domain/store"
 	"github.com/akarso/shopanda/internal/domain/theme"
 	"github.com/akarso/shopanda/internal/platform/apperror"
+	"github.com/akarso/shopanda/internal/platform/logger"
 )
 
 // StorefrontHandler renders SSR pages using the theme engine.
@@ -27,6 +30,15 @@ type StorefrontHandler struct {
 	pdp    *composition.Pipeline[composition.ProductContext]
 	plp    *composition.Pipeline[composition.ListingContext]
 	search search.SearchEngine
+	log    logger.Logger
+	catNav storefrontCategoryCache
+}
+
+type storefrontCategoryCache struct {
+	mu        sync.RWMutex
+	data      []catalog.Category
+	expiresAt time.Time
+	ttl       time.Duration
 }
 
 type StorefrontNavLink struct {
@@ -41,8 +53,9 @@ type StorefrontCategoryNavItem struct {
 }
 
 type StorefrontBreadcrumb struct {
-	Label string
-	URL   string
+	Label   string
+	URL     string
+	Current bool
 }
 
 type StorefrontCategorySummary struct {
@@ -163,6 +176,8 @@ var storefrontSortOptions = []struct {
 	{Value: "name_desc", Label: "Name Z-A", SearchSort: "-name"},
 }
 
+const storefrontCategoryCacheTTL = 45 * time.Second
+
 // NewStorefrontHandler creates a StorefrontHandler.
 func NewStorefrontHandler(
 	engine *theme.Engine,
@@ -172,7 +187,16 @@ func NewStorefrontHandler(
 	plp *composition.Pipeline[composition.ListingContext],
 	searchEngine search.SearchEngine,
 ) *StorefrontHandler {
-	return &StorefrontHandler{engine: engine, repo: repo, cats: categories, pdp: pdp, plp: plp, search: searchEngine}
+	return &StorefrontHandler{
+		engine: engine,
+		repo:   repo,
+		cats:   categories,
+		pdp:    pdp,
+		plp:    plp,
+		search: searchEngine,
+		log:    logger.New("warn"),
+		catNav: storefrontCategoryCache{ttl: storefrontCategoryCacheTTL},
+	}
 }
 
 // Home handles GET / and renders the storefront landing page.
@@ -182,14 +206,9 @@ func (h *StorefrontHandler) Home() http.HandlerFunc {
 			http.Error(w, "Not Found", http.StatusNotFound)
 			return
 		}
-		layout, err := h.layoutData(r, nil)
-		if err != nil {
-			http.Error(w, "Internal Server Error", http.StatusInternalServerError)
-			return
-		}
 
 		page := StorefrontHomePageData{
-			Layout: layout,
+			Layout: h.layoutDataBestEffort(r),
 			Theme:  h.engine.Theme(),
 		}
 		h.renderPage(w, "home", page)
@@ -258,13 +277,8 @@ func (h *StorefrontHandler) Product() http.HandlerFunc {
 
 		page := StorefrontProductPageData{
 			ProductContext: ctx,
-			Layout:         StorefrontLayoutData{},
+			Layout:         h.layoutDataBestEffort(r),
 			Theme:          h.engine.Theme(),
-		}
-		page.Layout, err = h.layoutData(r, nil)
-		if err != nil {
-			http.Error(w, "Internal Server Error", http.StatusInternalServerError)
-			return
 		}
 		h.renderPage(w, "product", page)
 	}
@@ -326,13 +340,8 @@ func (h *StorefrontHandler) renderListing(searchMode bool) http.HandlerFunc {
 			http.Error(w, "Internal Server Error", http.StatusInternalServerError)
 			return
 		}
-		layout, err := h.layoutData(r, nil)
-		if err != nil {
-			http.Error(w, "Internal Server Error", http.StatusInternalServerError)
-			return
-		}
 
-		h.renderPage(w, "product_list", h.buildListingPageData(r, layout, ctx, result, params, searchMode))
+		h.renderPage(w, "product_list", h.buildListingPageData(r, h.layoutDataBestEffort(r), ctx, result, params, searchMode))
 	}
 }
 
@@ -349,7 +358,7 @@ func (h *StorefrontHandler) renderCategory(root bool) http.HandlerFunc {
 			return
 		}
 
-		allCategories, err := h.cats.FindAll(r.Context())
+		allCategories, err := h.cachedCategories(r.Context())
 		if err != nil {
 			http.Error(w, "Internal Server Error", http.StatusInternalServerError)
 			return
@@ -417,12 +426,28 @@ func (h *StorefrontHandler) renderCategory(root bool) http.HandlerFunc {
 
 func (h *StorefrontHandler) layoutData(r *http.Request, categories []catalog.Category) (StorefrontLayoutData, error) {
 	if categories == nil {
-		allCategories, err := h.cats.FindAll(r.Context())
+		allCategories, err := h.cachedCategories(r.Context())
 		if err != nil {
 			return StorefrontLayoutData{}, err
 		}
 		categories = allCategories
 	}
+	return h.buildLayoutData(r, categories), nil
+}
+
+func (h *StorefrontHandler) layoutDataBestEffort(r *http.Request) StorefrontLayoutData {
+	layout, err := h.layoutData(r, nil)
+	if err == nil {
+		return layout
+	}
+	h.log.Warn("storefront.categories.load_failed", map[string]interface{}{
+		"path":  r.URL.Path,
+		"error": err.Error(),
+	})
+	return h.buildLayoutData(r, nil)
+}
+
+func (h *StorefrontHandler) buildLayoutData(r *http.Request, categories []catalog.Category) StorefrontLayoutData {
 	themeCfg := h.engine.Theme().Storefront
 	siteName := h.engine.Theme().Name
 	if s := store.FromContext(r.Context()); s != nil && s.Name != "" {
@@ -465,7 +490,29 @@ func (h *StorefrontHandler) layoutData(r *http.Request, categories []catalog.Cat
 		CurrentYear:  time.Now().UTC().Year(),
 		Nav:          nav,
 		Categories:   storefrontCategoryTree(categories),
-	}, nil
+	}
+}
+
+func (h *StorefrontHandler) cachedCategories(ctx context.Context) ([]catalog.Category, error) {
+	now := time.Now().UTC()
+	h.catNav.mu.RLock()
+	if h.catNav.ttl > 0 && now.Before(h.catNav.expiresAt) {
+		cached := append([]catalog.Category(nil), h.catNav.data...)
+		h.catNav.mu.RUnlock()
+		return cached, nil
+	}
+	h.catNav.mu.RUnlock()
+
+	categories, err := h.cats.FindAll(ctx)
+	if err != nil {
+		return nil, err
+	}
+	cloned := append([]catalog.Category(nil), categories...)
+	h.catNav.mu.Lock()
+	h.catNav.data = cloned
+	h.catNav.expiresAt = now.Add(h.catNav.ttl)
+	h.catNav.mu.Unlock()
+	return append([]catalog.Category(nil), cloned...), nil
 }
 
 func (h *StorefrontHandler) buildListingPageData(r *http.Request, layout StorefrontLayoutData, ctx *composition.ListingContext, result search.SearchResult, params storefrontListingParams, searchMode bool) StorefrontListingPageData {
@@ -514,7 +561,7 @@ func (h *StorefrontHandler) buildCategoryPageData(r *http.Request, layout Storef
 			Name: "Categories",
 			URL:  "/categories",
 		},
-		Breadcrumbs:   []StorefrontBreadcrumb{{Label: "Home", URL: "/"}, {Label: "Categories", URL: "/categories"}},
+		Breadcrumbs:   []StorefrontBreadcrumb{{Label: "Home", URL: "/"}, {Label: "Categories", URL: "/categories", Current: true}},
 		Subcategories: storefrontSubcategories(allCategories, nil),
 	}
 	page.Title = "Categories"
@@ -750,13 +797,15 @@ func storefrontURL(r *http.Request, params storefrontListingParams, overrides ma
 }
 
 func storefrontCategoryTree(all []catalog.Category) []StorefrontCategoryNavItem {
-	nodes := make(map[string]*StorefrontCategoryNavItem, len(all))
+	type navNode struct {
+		id       string
+		item     StorefrontCategoryNavItem
+		children []*navNode
+	}
+	nodes := make(map[string]*navNode, len(all))
 	roots := make([]string, 0)
 	for _, category := range all {
-		nodes[category.ID] = &StorefrontCategoryNavItem{
-			Label: category.Name,
-			URL:   "/categories/" + category.Slug,
-		}
+		nodes[category.ID] = &navNode{id: category.ID, item: StorefrontCategoryNavItem{Label: category.Name, URL: "/categories/" + category.Slug}}
 		if category.ParentID == nil {
 			roots = append(roots, category.ID)
 		}
@@ -769,12 +818,28 @@ func storefrontCategoryTree(all []catalog.Category) []StorefrontCategoryNavItem 
 		if !ok {
 			continue
 		}
-		parent.Children = append(parent.Children, *nodes[category.ID])
+		parent.children = append(parent.children, nodes[category.ID])
+	}
+	var materialize func(node *navNode, visited map[string]struct{}) StorefrontCategoryNavItem
+	materialize = func(node *navNode, visited map[string]struct{}) StorefrontCategoryNavItem {
+		item := node.item
+		if _, seen := visited[node.id]; seen {
+			return item
+		}
+		visited[node.id] = struct{}{}
+		for _, child := range node.children {
+			childVisited := make(map[string]struct{}, len(visited))
+			for key := range visited {
+				childVisited[key] = struct{}{}
+			}
+			item.Children = append(item.Children, materialize(child, childVisited))
+		}
+		return item
 	}
 	tree := make([]StorefrontCategoryNavItem, 0, len(roots))
 	for _, rootID := range roots {
 		if node, ok := nodes[rootID]; ok {
-			tree = append(tree, *node)
+			tree = append(tree, materialize(node, map[string]struct{}{}))
 		}
 	}
 	return tree
@@ -798,9 +863,17 @@ func storefrontBreadcrumbs(all []catalog.Category, category *catalog.Category) [
 	trail = append(trail, StorefrontBreadcrumb{Label: "Home", URL: "/"})
 	chain := make([]catalog.Category, 0)
 	current := category
+	visited := make(map[string]struct{}, len(all))
 	for current != nil {
+		if _, seen := visited[current.ID]; seen {
+			break
+		}
+		visited[current.ID] = struct{}{}
 		chain = append([]catalog.Category{*current}, chain...)
 		if current.ParentID == nil {
+			break
+		}
+		if _, seen := visited[*current.ParentID]; seen {
 			break
 		}
 		parent, ok := byID[*current.ParentID]
@@ -811,6 +884,9 @@ func storefrontBreadcrumbs(all []catalog.Category, category *catalog.Category) [
 	}
 	for _, item := range chain {
 		trail = append(trail, StorefrontBreadcrumb{Label: item.Name, URL: "/categories/" + item.Slug})
+	}
+	if len(trail) > 0 {
+		trail[len(trail)-1].Current = true
 	}
 	return trail
 }

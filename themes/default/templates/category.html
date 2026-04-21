@@ -24,7 +24,11 @@
 {{ if .Breadcrumbs }}
 <nav class="breadcrumbs" aria-label="Breadcrumbs">
     {{ range .Breadcrumbs }}
+    {{ if .Current }}
+    <span aria-current="page">{{ .Label }}</span>
+    {{ else }}
     <a href="{{ .URL }}">{{ .Label }}</a>
+    {{ end }}
     {{ end }}
 </nav>
 {{ end }}

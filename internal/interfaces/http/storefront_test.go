@@ -3,6 +3,7 @@ package http_test
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -364,6 +365,51 @@ func TestStorefrontHandler_Category_NotFound(t *testing.T) {
 
 	if rec.Code != http.StatusNotFound {
 		t.Fatalf("status = %d, want %d; body: %s", rec.Code, http.StatusNotFound, rec.Body.String())
+	}
+}
+
+func TestStorefrontHandler_Home_CategoryRepoError_Degrades(t *testing.T) {
+	repo := &mockStorefrontRepo{}
+	engine := createTestTheme(t)
+	pdp := composition.NewPipeline[composition.ProductContext]()
+	plp := composition.NewPipeline[composition.ListingContext]()
+	categoryRepo := &mockStorefrontCategoryRepo{findAllFn: func(_ context.Context) ([]catalog.Category, error) {
+		return nil, errors.New("db down")
+	}}
+	h := shophttp.NewStorefrontHandler(engine, repo, categoryRepo, pdp, plp, newStorefrontSearchMock())
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("GET", "/", nil)
+	newStorefrontRouter(h).ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d; body: %s", rec.Code, http.StatusOK, rec.Body.String())
+	}
+}
+
+func TestStorefrontHandler_LayoutCategoryCache(t *testing.T) {
+	repo := &mockStorefrontRepo{}
+	engine := createTestTheme(t)
+	pdp := composition.NewPipeline[composition.ProductContext]()
+	plp := composition.NewPipeline[composition.ListingContext]()
+	findAllCalls := 0
+	categoryRepo := &mockStorefrontCategoryRepo{findAllFn: func(_ context.Context) ([]catalog.Category, error) {
+		findAllCalls++
+		return []catalog.Category{{ID: "cat-1", Name: "Electronics", Slug: "electronics"}}, nil
+	}}
+	h := shophttp.NewStorefrontHandler(engine, repo, categoryRepo, pdp, plp, newStorefrontSearchMock())
+
+	for _, path := range []string{"/", "/products"} {
+		rec := httptest.NewRecorder()
+		req := httptest.NewRequest("GET", path, nil)
+		newStorefrontRouter(h).ServeHTTP(rec, req)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("path %s status = %d, want %d; body: %s", path, rec.Code, http.StatusOK, rec.Body.String())
+		}
+	}
+
+	if findAllCalls != 1 {
+		t.Fatalf("FindAll calls = %d, want 1", findAllCalls)
 	}
 }
 
