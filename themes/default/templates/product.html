@@ -40,7 +40,16 @@
         </dl>
         <div class="product-detail-card__actions">
             <a class="button-link" href="/">Back to home</a>
-            <span class="muted-note">Cart and checkout interactions land in later PRs.</span>
+            {{ if .CartForm }}
+            <form class="product-detail-card__cart" action="{{ .CartForm.Action }}" method="post" hx-post="{{ .CartForm.Action }}" hx-swap="none" hx-on::after-request="htmx.trigger(document.body, 'cart-updated')">
+                <input type="hidden" name="variant_id" value="{{ .CartForm.VariantID }}">
+                <input type="hidden" name="quantity" value="{{ .CartForm.Quantity }}">
+                <input type="hidden" name="redirect_to" value="{{ .CartForm.RedirectTo }}">
+                <button type="submit">Add to cart</button>
+            </form>
+            {{ else }}
+            <span class="muted-note">This product is not purchasable yet.</span>
+            {{ end }}
         </div>
     </div>
 </section>

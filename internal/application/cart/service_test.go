@@ -141,6 +141,30 @@ func TestService_CreateCart(t *testing.T) {
 	}
 }
 
+func TestService_CreateCart_Guest(t *testing.T) {
+	carts := newStubCartRepo()
+	prices := newStubPriceRepo()
+	svc := cartApp.NewService(carts, prices, nil, nil, testPipeline(prices), testLogger(), testBus())
+
+	c, err := svc.CreateCart(context.Background(), "", "EUR")
+	if err != nil {
+		t.Fatalf("CreateCart guest: %v", err)
+	}
+	if c.CustomerID != "" {
+		t.Errorf("CustomerID = %q, want empty", c.CustomerID)
+	}
+	if c.Status() != domainCart.CartStatusActive {
+		t.Errorf("Status = %q, want active", c.Status())
+	}
+	persisted, _ := carts.FindByID(context.Background(), c.ID)
+	if persisted == nil {
+		t.Fatal("guest cart not persisted")
+	}
+	if persisted.CustomerID != "" {
+		t.Errorf("persisted CustomerID = %q, want empty", persisted.CustomerID)
+	}
+}
+
 func TestService_CreateCart_InvalidCurrency(t *testing.T) {
 	carts := newStubCartRepo()
 	prices := newStubPriceRepo()

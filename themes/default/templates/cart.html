@@ -1,0 +1,65 @@
+{{ define "title" }}Shopping Cart{{ end }}
+
+{{ define "content" }}
+<section id="cart-page" class="cart-page">
+    <div class="page-intro">
+        <span class="eyebrow">Basket</span>
+        <h1>Shopping Cart</h1>
+        <p>{{ .Summary.TotalQuantity }} item(s) ready for checkout.</p>
+    </div>
+
+    {{ if .Items }}
+    <section class="cart-table" aria-label="Cart items">
+        {{ range .Items }}
+        <article class="cart-row">
+            <div class="cart-row__details">
+                <h2>{{ if .ProductSlug }}<a href="/products/{{ .ProductSlug }}">{{ .ProductName }}</a>{{ else }}{{ .ProductName }}{{ end }}</h2>
+                <p>{{ if .VariantName }}{{ .VariantName }} · {{ end }}{{ .VariantSKU }}</p>
+            </div>
+            <div class="cart-row__price">{{ .UnitPriceText }}</div>
+            <form class="cart-row__qty" action="/cart/update" method="post" hx-post="/cart/update" hx-target="#cart-page" hx-select="#cart-page" hx-swap="outerHTML" hx-on::after-request="htmx.trigger(document.body, 'cart-updated')">
+                <input type="hidden" name="variant_id" value="{{ .VariantID }}">
+                <label class="sr-only" for="qty-{{ .VariantID }}">Quantity for {{ .ProductName }}</label>
+                <input id="qty-{{ .VariantID }}" name="quantity" type="number" min="1" value="{{ .Quantity }}">
+                <button type="submit">Update</button>
+            </form>
+            <div class="cart-row__total">{{ .LineTotalText }}</div>
+            <form class="cart-row__remove" action="/cart/remove" method="post" hx-post="/cart/remove" hx-target="#cart-page" hx-select="#cart-page" hx-swap="outerHTML" hx-on::after-request="htmx.trigger(document.body, 'cart-updated')">
+                <input type="hidden" name="variant_id" value="{{ .VariantID }}">
+                <button type="submit">Remove</button>
+            </form>
+        </article>
+        {{ end }}
+    </section>
+
+    <aside class="cart-summary">
+        <span class="eyebrow">Summary</span>
+        <div>
+            <span>Distinct items</span>
+            <strong>{{ .Summary.ItemCount }}</strong>
+        </div>
+        <div>
+            <span>Total quantity</span>
+            <strong>{{ .Summary.TotalQuantity }}</strong>
+        </div>
+        <div>
+            <span>Subtotal</span>
+            <strong>{{ .Summary.SubtotalText }}</strong>
+        </div>
+        <div class="cart-summary__actions">
+            <a class="chip" href="/products">Continue shopping</a>
+            <a class="button-link" href="/checkout/address">Checkout</a>
+        </div>
+    </aside>
+    {{ else }}
+    <section class="page-intro listing-empty">
+        <span class="eyebrow">Nothing to show</span>
+        <h2>{{ .EmptyMessage }}</h2>
+        <p>Add a product to start your order.</p>
+        <a class="button-link" href="/products">Browse all products</a>
+    </section>
+    {{ end }}
+</section>
+{{ end }}
+
+{{ template "layout.html" . }}

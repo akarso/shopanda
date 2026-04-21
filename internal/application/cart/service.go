@@ -54,8 +54,10 @@ func (s *Service) CreateCart(ctx context.Context, customerID, currency string) (
 	if err != nil {
 		return nil, apperror.Wrap(apperror.CodeValidation, "invalid cart parameters", err)
 	}
-	if err := c.SetCustomerID(customerID); err != nil {
-		return nil, apperror.Wrap(apperror.CodeValidation, "invalid customer id", err)
+	if customerID != "" {
+		if err := c.SetCustomerID(customerID); err != nil {
+			return nil, apperror.Wrap(apperror.CodeValidation, "invalid customer id", err)
+		}
 	}
 	if err := s.carts.Save(ctx, &c); err != nil {
 		return nil, fmt.Errorf("cart service: create: %w", err)
