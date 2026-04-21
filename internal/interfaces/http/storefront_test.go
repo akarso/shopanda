@@ -66,6 +66,11 @@ func createTestTheme(t *testing.T) *theme.Engine {
 		t.Fatal(err)
 	}
 
+	home := `{{ define "title" }}{{ .Layout.SiteName }}{{ end }}{{ define "content" }}<h1>Welcome to {{ .Layout.SiteName }}</h1>{{ end }}{{ template "layout.html" . }}`
+	if err := os.WriteFile(filepath.Join(tplDir, "home.html"), []byte(home), 0644); err != nil {
+		t.Fatal(err)
+	}
+
 	product := `{{ define "title" }}{{ .Product.Name }}{{ end }}{{ define "content" }}<h1>{{ .Product.Name }}</h1><p>{{ .Product.Description }}</p>{{ end }}{{ template "layout.html" . }}`
 	if err := os.WriteFile(filepath.Join(tplDir, "product.html"), []byte(product), 0644); err != nil {
 		t.Fatal(err)
@@ -80,6 +85,7 @@ func createTestTheme(t *testing.T) *theme.Engine {
 
 func newStorefrontRouter(h *shophttp.StorefrontHandler) *http.ServeMux {
 	mux := http.NewServeMux()
+	mux.HandleFunc("GET /", h.Home())
 	mux.HandleFunc("GET /products/{slug}", h.Product())
 	return mux
 }
@@ -120,6 +126,24 @@ func TestStorefrontHandler_Product_OK(t *testing.T) {
 	}
 	if !strings.Contains(body, "A fine widget") {
 		t.Errorf("body missing description; got: %s", body)
+	}
+}
+
+func TestStorefrontHandler_Home_OK(t *testing.T) {
+	repo := &mockStorefrontRepo{}
+	engine := createTestTheme(t)
+	pdp := composition.NewPipeline[composition.ProductContext]()
+	h := shophttp.NewStorefrontHandler(engine, repo, pdp)
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("GET", "/", nil)
+	newStorefrontRouter(h).ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d; body: %s", rec.Code, http.StatusOK, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "Welcome to test") {
+		t.Fatalf("body missing home welcome text: %s", rec.Body.String())
 	}
 }
 

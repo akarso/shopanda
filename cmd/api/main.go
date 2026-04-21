@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"net/http"
 	"os"
 	"os/signal"
 	"path/filepath"
@@ -860,6 +861,9 @@ func runServe(cfg *config.Config, log logger.Logger) error {
 			return fmt.Errorf("theme load: %w", thErr)
 		}
 		storefront := shophttp.NewStorefrontHandler(themeEngine, productRepo, pdp)
+		staticDir := filepath.Join(cfg.Frontend.ThemePath, "static")
+		router.Handle("GET /static/{path...}", http.StripPrefix("/static/", http.FileServer(http.Dir(staticDir))))
+		router.HandleFunc("GET /", storefront.Home())
 		router.HandleFunc("GET /products/{slug}", storefront.Product())
 	}
 

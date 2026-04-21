@@ -3,9 +3,60 @@
 <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>{{ template "title" . }}</title>
+    <title>{{ template "title" . }} · {{ .Layout.SiteName }}</title>
+    <link rel="stylesheet" href="/static/css/style.css">
+    <link rel="stylesheet" href="/static/css/custom.css">
 </head>
 <body>
-    {{ template "content" . }}
+    <a class="skip-link" href="#content">Skip to content</a>
+
+    <header class="site-shell site-header">
+        <div class="site-header__bar">
+            <a class="site-brand" href="/">
+                <span class="site-brand__mark">S</span>
+                <span>
+                    <strong>{{ .Layout.SiteName }}</strong>
+                    <small>Merchant-ready storefront</small>
+                </span>
+            </a>
+
+            <form class="site-search" action="{{ .Layout.SearchAction }}" method="get" role="search">
+                <label class="sr-only" for="storefront-search">Search products</label>
+                <input id="storefront-search" name="q" type="search" placeholder="Search catalog">
+                <button type="submit">Search</button>
+            </form>
+
+            <a class="cart-pill" href="{{ .Layout.CartURL }}">{{ .Layout.CartLabel }}</a>
+        </div>
+
+        <nav class="site-nav" aria-label="Primary">
+            <ul>
+                {{ range .Layout.Nav }}
+                <li><a href="{{ .URL }}">{{ .Label }}</a></li>
+                {{ end }}
+            </ul>
+        </nav>
+    </header>
+
+    <main id="content" class="site-shell site-main">
+        {{ template "content" . }}
+    </main>
+
+    <footer class="site-shell site-footer">
+        <div>
+            <strong>{{ .Layout.SiteName }}</strong>
+            <p>SSR-first commerce storefront with a bundled base theme.</p>
+        </div>
+        <div>
+            <a href="/">Home</a>
+            <a href="/categories">Categories</a>
+            <a href="/account/login">Account</a>
+        </div>
+        <div>
+            <span>Legal</span>
+            <span>Privacy</span>
+            <span>© {{ .Layout.CurrentYear }}</span>
+        </div>
+    </footer>
 </body>
 </html>

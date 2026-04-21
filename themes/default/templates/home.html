@@ -1,0 +1,37 @@
+{{ define "title" }}Home{{ end }}
+{{ define "content" }}
+<section class="hero-panel">
+    <div>
+        <p class="eyebrow">Base storefront theme</p>
+        <h1>{{ .Layout.SiteName }}</h1>
+        <p>This landing page proves the SSR storefront shell, bundled CSS, and theme asset pipeline are wired and ready for the catalog pages that follow.</p>
+    </div>
+    <div class="hero-panel__card">
+        <h2>What shipped in PR-224</h2>
+        <ul>
+            <li>Shared header, navigation, and footer layout</li>
+            <li>Bundled theme CSS served from <code>/static/</code></li>
+            <li>Product pages rendered inside the default storefront shell</li>
+        </ul>
+    </div>
+</section>
+
+<section class="feature-grid" aria-label="Storefront foundations">
+    <article>
+        <p class="eyebrow">Theme</p>
+        <h2>Default storefront shell</h2>
+        <p>The default theme now ships with a complete layout template and a simple home page.</p>
+    </article>
+    <article>
+        <p class="eyebrow">Assets</p>
+        <h2>Bundled CSS pipeline</h2>
+        <p>Theme assets are served from the configured theme path with no build step or CDN dependency.</p>
+    </article>
+    <article>
+        <p class="eyebrow">Next</p>
+        <h2>Ready for listing pages</h2>
+        <p>The layout already includes navigation, search, and cart affordances so the next catalog pages can plug in without reworking the shell.</p>
+    </article>
+</section>
+{{ end }}
+{{ template "layout.html" . }}
