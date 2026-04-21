@@ -765,6 +765,7 @@ func runServe(cfg *config.Config, log logger.Logger) error {
 	router.Handle("GET /api/v1/admin/stats/overview", requireOrdersRead(statsAdmin.Overview()))
 	router.Handle("GET /api/v1/admin/orders", requireOrdersRead(orderAdmin.List()))
 	router.Handle("GET /api/v1/admin/orders/{orderId}", requireOrdersRead(orderAdmin.Get()))
+	router.Handle("PUT /api/v1/admin/orders/{orderId}", requireOrdersWrite(orderAdmin.Update()))
 	if refundHandler != nil {
 		router.Handle("POST /api/v1/admin/orders/{orderId}/refund", requireOrdersWrite(refundHandler.Refund()))
 	}

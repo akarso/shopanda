@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/akarso/shopanda/internal/domain/identity"
@@ -21,6 +22,7 @@ func orderAdminSetup() (*stubOrderRepo, *http.ServeMux) {
 	mux := http.NewServeMux()
 	mux.Handle("GET /api/v1/admin/orders", requireAdmin(handler.List()))
 	mux.Handle("GET /api/v1/admin/orders/{orderId}", requireAdmin(handler.Get()))
+	mux.Handle("PUT /api/v1/admin/orders/{orderId}", requireAdmin(handler.Update()))
 	return repo, mux
 }
 
@@ -253,5 +255,63 @@ func TestOrderAdminHandler_Get_GuestUnauthorized(t *testing.T) {
 
 	if rec.Code != http.StatusUnauthorized {
 		t.Fatalf("status = %d, want %d; body: %s", rec.Code, http.StatusUnauthorized, rec.Body.String())
+	}
+}
+
+// ── PUT /api/v1/admin/orders/{orderId} ──────────────────────────────────
+
+func TestOrderAdminHandler_Update_OK(t *testing.T) {
+	repo, mux := orderAdminSetup()
+	seedOrder(t, repo, "ord-1", "cust-1")
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("PUT", "/api/v1/admin/orders/ord-1", strings.NewReader(`{"status":"confirmed"}`))
+	req.Header.Set("Content-Type", "application/json")
+	req = testhelper.AdminRequest(req, "admin-1")
+	mux.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d; body: %s", rec.Code, http.StatusOK, rec.Body.String())
+	}
+
+	o := parseAdminOrderResp(t, rec)
+	if o["status"] != "confirmed" {
+		t.Fatalf("status = %v, want confirmed", o["status"])
+	}
+}
+
+func TestOrderAdminHandler_Update_InvalidTransition(t *testing.T) {
+	repo, mux := orderAdminSetup()
+	o := seedOrder(t, repo, "ord-1", "cust-1")
+	if err := o.Confirm(); err != nil {
+		t.Fatalf("confirm: %v", err)
+	}
+	if err := o.MarkPaid(); err != nil {
+		t.Fatalf("mark paid: %v", err)
+	}
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("PUT", "/api/v1/admin/orders/ord-1", strings.NewReader(`{"status":"confirmed"}`))
+	req.Header.Set("Content-Type", "application/json")
+	req = testhelper.AdminRequest(req, "admin-1")
+	mux.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("status = %d, want %d; body: %s", rec.Code, http.StatusUnprocessableEntity, rec.Body.String())
+	}
+}
+
+func TestOrderAdminHandler_Update_CustomerForbidden(t *testing.T) {
+	repo, mux := orderAdminSetup()
+	seedOrder(t, repo, "ord-1", "cust-1")
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("PUT", "/api/v1/admin/orders/ord-1", strings.NewReader(`{"status":"confirmed"}`))
+	req.Header.Set("Content-Type", "application/json")
+	req = testhelper.CustomerRequest(req, "cust-1")
+	mux.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("status = %d, want %d; body: %s", rec.Code, http.StatusForbidden, rec.Body.String())
 	}
 }

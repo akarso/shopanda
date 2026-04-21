@@ -48,7 +48,7 @@
         "/admin": { title: "Login", render: renderLogin, auth: false },
         "/admin/dashboard": { title: "Dashboard", render: renderDashboard, auth: true },
         "/admin/products": { title: "Products", render: renderProductsGrid, auth: true },
-        "/admin/orders": { title: "Orders", render: renderPlaceholder("Orders"), auth: true },
+        "/admin/orders": { title: "Orders", render: renderOrdersGrid, auth: true },
         "/admin/media": { title: "Media", render: renderPlaceholder("Media"), auth: true },
         "/admin/settings": { title: "Settings", render: renderPlaceholder("Settings"), auth: true }
     };
@@ -67,6 +67,15 @@
                 title: "Edit Product",
                 auth: true,
                 render: function (container) { renderProductEdit(container, productID); }
+            };
+        }
+        var orderMatch = path.match(/^\/admin\/orders\/([^/]+)$/);
+        if (orderMatch) {
+            var orderID = decodeURIComponent(orderMatch[1]);
+            return {
+                title: "Order Detail",
+                auth: true,
+                render: function (container) { renderOrderDetail(container, orderID); }
             };
         }
         return routes["/admin/dashboard"];
@@ -394,6 +403,55 @@
         return out;
     }
 
+    function normalizeOrders(orders) {
+        if (!Array.isArray(orders)) {
+            return [];
+        }
+        var out = [];
+        for (var i = 0; i < orders.length; i++) {
+            var order = normalizeOrder(orders[i]);
+            if (order) {
+                out.push(order);
+            }
+        }
+        return out;
+    }
+
+    function normalizeOrder(raw) {
+        if (!raw) {
+            return null;
+        }
+        return {
+            id: pick(raw, "id", "ID"),
+            customer_id: pick(raw, "customer_id", "CustomerID"),
+            status: pick(raw, "status", "Status"),
+            currency: pick(raw, "currency", "Currency"),
+            total_amount: pick(raw, "total_amount", "TotalAmount"),
+            created_at: pick(raw, "created_at", "CreatedAt"),
+            updated_at: pick(raw, "updated_at", "UpdatedAt"),
+            items: normalizeOrderItems(pick(raw, "items", "Items"))
+        };
+    }
+
+    function normalizeOrderItems(items) {
+        if (!Array.isArray(items)) {
+            return [];
+        }
+        var out = [];
+        for (var i = 0; i < items.length; i++) {
+            var it = items[i] || {};
+            out.push({
+                variant_id: pick(it, "variant_id", "VariantID"),
+                sku: pick(it, "sku", "SKU"),
+                name: pick(it, "name", "Name"),
+                quantity: pick(it, "quantity", "Quantity"),
+                unit_price: pick(it, "unit_price", "UnitPrice"),
+                currency: pick(it, "currency", "Currency")
+            });
+        }
+        return out;
+    }
+
     function pick(obj, a, b) {
         if (!obj) {
             return undefined;
@@ -444,6 +502,8 @@
         for (var i = 0; i < links.length; i++) {
             var href = links[i].getAttribute("href");
             if (href === "/admin/products" && currentPath.indexOf("/admin/products") === 0) {
+                links[i].setAttribute("aria-current", "page");
+            } else if (href === "/admin/orders" && currentPath.indexOf("/admin/orders") === 0) {
                 links[i].setAttribute("aria-current", "page");
             } else if (href === currentPath) {
                 links[i].setAttribute("aria-current", "page");
@@ -548,6 +608,185 @@
         }).catch(function () {
             container.innerHTML = '<h2>Dashboard</h2><p role="alert">Failed to load dashboard data.</p>';
         });
+    }
+
+    function renderOrdersGrid(container) {
+        container.innerHTML =
+            '<h2>Orders</h2>' +
+            '<label>Status Filter<select id="orders-status-filter">' +
+            '<option value="">All</option>' +
+            '<option value="pending">pending</option>' +
+            '<option value="confirmed">confirmed</option>' +
+            '<option value="paid">paid</option>' +
+            '<option value="cancelled">cancelled</option>' +
+            '<option value="failed">failed</option>' +
+            '</select></label>' +
+            '<div id="orders-grid"></div>';
+
+        var grid = document.getElementById("orders-grid");
+        var filter = document.getElementById("orders-status-filter");
+        var allOrders = [];
+
+        function renderRows() {
+            var selected = filter.value;
+            var orders = allOrders;
+            if (selected) {
+                var filtered = [];
+                for (var i = 0; i < allOrders.length; i++) {
+                    if (allOrders[i].status === selected) {
+                        filtered.push(allOrders[i]);
+                    }
+                }
+                orders = filtered;
+            }
+
+            var html = '<table><thead><tr>' +
+                '<th>ID</th><th>Customer</th><th>Total</th><th>Status</th><th>Payment</th><th>Date</th><th></th>' +
+                '</tr></thead><tbody>';
+
+            if (orders.length === 0) {
+                html += '<tr><td colspan="7">No orders found.</td></tr>';
+            } else {
+                for (var j = 0; j < orders.length; j++) {
+                    var o = orders[j];
+                    html += '<tr>' +
+                        '<td>' + esc(o.id) + '</td>' +
+                        '<td>' + esc(o.customer_id || '') + '</td>' +
+                        '<td>' + formatMoney(Number(o.total_amount || 0), o.currency) + '</td>' +
+                        '<td><span class="badge badge-' + esc(o.status) + '">' + esc(o.status) + '</span></td>' +
+                        '<td>' + esc(derivePaymentStatus(o.status)) + '</td>' +
+                        '<td>' + esc(o.created_at ? String(o.created_at).substring(0, 10) : '') + '</td>' +
+                        '<td><a href="/admin/orders/' + esc(o.id) + '" data-link>View</a></td>' +
+                        '</tr>';
+                }
+            }
+            html += '</tbody></table>';
+            grid.innerHTML = html;
+        }
+
+        filter.addEventListener("change", renderRows);
+
+        api("/admin/orders?offset=0&limit=50").then(function (body) {
+            allOrders = normalizeOrders(body && body.data && body.data.orders ? body.data.orders : []);
+            renderRows();
+        }).catch(function () {
+            grid.innerHTML = '<p role="alert">Failed to load orders.</p>';
+        });
+    }
+
+    function renderOrderDetail(container, orderID) {
+        container.innerHTML =
+            '<h2>Order Detail</h2>' +
+            '<p><a href="/admin/orders" data-link>Back to orders</a></p>' +
+            '<div id="order-detail-msg"></div>' +
+            '<div id="order-detail-body">Loading…</div>';
+
+        var msg = document.getElementById("order-detail-msg");
+        var bodyBox = document.getElementById("order-detail-body");
+
+        function load() {
+            api("/admin/orders/" + encodeURIComponent(orderID)).then(function (res) {
+                var order = normalizeOrder(res && res.data && res.data.order);
+                if (!order) {
+                    bodyBox.innerHTML = '<p role="alert">Order not found.</p>';
+                    return;
+                }
+
+                var next = getNextOrderStatuses(order.status);
+                var statusForm = '<p>No further status transitions available.</p>';
+                if (next.length > 0) {
+                    statusForm = '<form id="order-status-form">' +
+                        '<label>Change Status<select name="status">';
+                    for (var i = 0; i < next.length; i++) {
+                        statusForm += '<option value="' + esc(next[i]) + '">' + esc(next[i]) + '</option>';
+                    }
+                    statusForm += '</select></label> <button type="submit">Update</button></form>';
+                }
+
+                var items = order.items || [];
+                var itemsHtml = '<table><thead><tr><th>Product</th><th>SKU</th><th>Qty</th><th>Price</th><th>Line Total</th></tr></thead><tbody>';
+                if (items.length === 0) {
+                    itemsHtml += '<tr><td colspan="5">No items.</td></tr>';
+                } else {
+                    for (var j = 0; j < items.length; j++) {
+                        var it = items[j];
+                        var qty = Number(it.quantity || 0);
+                        var unit = Number(it.unit_price || 0);
+                        itemsHtml += '<tr>' +
+                            '<td>' + esc(it.name || '') + '</td>' +
+                            '<td>' + esc(it.sku || '') + '</td>' +
+                            '<td>' + esc(String(qty)) + '</td>' +
+                            '<td>' + formatMoney(unit, it.currency || order.currency) + '</td>' +
+                            '<td>' + formatMoney(unit * qty, it.currency || order.currency) + '</td>' +
+                            '</tr>';
+                    }
+                }
+                itemsHtml += '</tbody></table>';
+
+                bodyBox.innerHTML =
+                    '<article>' +
+                    '<p><strong>Order ID:</strong> ' + esc(order.id) + '</p>' +
+                    '<p><strong>Status:</strong> <span class="badge badge-' + esc(order.status) + '">' + esc(order.status) + '</span></p>' +
+                    statusForm +
+                    '<p><strong>Customer:</strong> ' + esc(order.customer_id || '') + '</p>' +
+                    '<p><strong>Date:</strong> ' + esc(order.created_at || '') + '</p>' +
+                    '<h3>Items</h3>' + itemsHtml +
+                    '<p><strong>Total:</strong> ' + formatMoney(Number(order.total_amount || 0), order.currency) + '</p>' +
+                    '<h3>Shipping</h3>' +
+                    '<p>Shipping details are not available in the current order payload.</p>' +
+                    '<h3>Payment</h3>' +
+                    '<p>Status: ' + esc(derivePaymentStatus(order.status)) + '</p>' +
+                    '</article>';
+
+                var form = document.getElementById("order-status-form");
+                if (form) {
+                    form.addEventListener("submit", function (e) {
+                        e.preventDefault();
+                        var nextStatus = form.elements.status.value;
+                        api("/admin/orders/" + encodeURIComponent(order.id), {
+                            method: "PUT",
+                            body: JSON.stringify({ status: nextStatus })
+                        }).then(function (updateResp) {
+                            if (updateResp && updateResp.error) {
+                                msg.innerHTML = '<p role="alert">' + esc(updateResp.error.message || "Failed to update status") + '</p>';
+                                return;
+                            }
+                            msg.innerHTML = '<p>Status updated.</p>';
+                            load();
+                        }).catch(function () {
+                            msg.innerHTML = '<p role="alert">Failed to update status.</p>';
+                        });
+                    });
+                }
+            }).catch(function () {
+                bodyBox.innerHTML = '<p role="alert">Failed to load order.</p>';
+            });
+        }
+
+        load();
+    }
+
+    function getNextOrderStatuses(current) {
+        if (current === "pending") {
+            return ["confirmed", "failed", "cancelled"];
+        }
+        if (current === "confirmed") {
+            return ["paid", "cancelled"];
+        }
+        return [];
+    }
+
+    function derivePaymentStatus(orderStatus) {
+        if (orderStatus === "paid") {
+            return "paid";
+        }
+        if (orderStatus === "failed") {
+            return "failed";
+        }
+        if (orderStatus === "cancelled") {
+            return "cancelled";
+        }
+        return "pending";
     }
 
     function setStat(id, value) {
