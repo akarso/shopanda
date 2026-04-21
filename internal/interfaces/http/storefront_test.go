@@ -51,7 +51,7 @@ func createTestTheme(t *testing.T) *theme.Engine {
 	dir := t.TempDir()
 
 	// theme.yaml
-	if err := os.WriteFile(filepath.Join(dir, "theme.yaml"), []byte("name: test\nversion: \"0.1.0\"\n"), 0644); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, "theme.yaml"), []byte("name: test\nversion: \"0.1.0\"\nstorefront:\n  search_action: /catalog\n  cart_url: /basket\n  cart_label: Basket (2)\n  nav:\n    - label: Start\n      url: /\n    - label: Browse\n      url: /categories\n"), 0644); err != nil {
 		t.Fatal(err)
 	}
 
@@ -61,8 +61,13 @@ func createTestTheme(t *testing.T) *theme.Engine {
 		t.Fatal(err)
 	}
 
-	layout := `<!DOCTYPE html><html><head><title>{{ template "title" . }}</title></head><body>{{ template "content" . }}</body></html>`
+	layout := `<!DOCTYPE html><html><head><title>{{ template "title" . }}</title></head><body><nav>{{ range .Layout.Nav }}<a href="{{ .URL }}">{{ .Label }}</a>{{ end }}</nav><form action="{{ .Layout.SearchAction }}"></form><span>{{ .Layout.CartLabel }}</span>{{ template "content" . }}</body></html>`
 	if err := os.WriteFile(filepath.Join(tplDir, "layout.html"), []byte(layout), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	home := `{{ define "title" }}{{ .Layout.SiteName }}{{ end }}{{ define "content" }}<h1>Welcome to {{ .Layout.SiteName }}</h1>{{ end }}{{ template "layout.html" . }}`
+	if err := os.WriteFile(filepath.Join(tplDir, "home.html"), []byte(home), 0644); err != nil {
 		t.Fatal(err)
 	}
 
@@ -78,8 +83,39 @@ func createTestTheme(t *testing.T) *theme.Engine {
 	return engine
 }
 
+func createTestThemeWithoutHome(t *testing.T) *theme.Engine {
+	t.Helper()
+	dir := t.TempDir()
+
+	if err := os.WriteFile(filepath.Join(dir, "theme.yaml"), []byte("name: test\nversion: \"0.1.0\"\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	tplDir := filepath.Join(dir, "templates")
+	if err := os.MkdirAll(tplDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	layout := `<!DOCTYPE html><html><head><title>{{ template "title" . }}</title></head><body>{{ template "content" . }}</body></html>`
+	if err := os.WriteFile(filepath.Join(tplDir, "layout.html"), []byte(layout), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	product := `{{ define "title" }}{{ .Product.Name }}{{ end }}{{ define "content" }}<h1>{{ .Product.Name }}</h1>{{ end }}{{ template "layout.html" . }}`
+	if err := os.WriteFile(filepath.Join(tplDir, "product.html"), []byte(product), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	engine, err := theme.Load(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return engine
+}
+
 func newStorefrontRouter(h *shophttp.StorefrontHandler) *http.ServeMux {
 	mux := http.NewServeMux()
+	mux.HandleFunc("GET /{$}", h.Home())
 	mux.HandleFunc("GET /products/{slug}", h.Product())
 	return mux
 }
@@ -120,6 +156,57 @@ func TestStorefrontHandler_Product_OK(t *testing.T) {
 	}
 	if !strings.Contains(body, "A fine widget") {
 		t.Errorf("body missing description; got: %s", body)
+	}
+}
+
+func TestStorefrontHandler_Home_OK(t *testing.T) {
+	repo := &mockStorefrontRepo{}
+	engine := createTestTheme(t)
+	pdp := composition.NewPipeline[composition.ProductContext]()
+	h := shophttp.NewStorefrontHandler(engine, repo, pdp)
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("GET", "/", nil)
+	newStorefrontRouter(h).ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d; body: %s", rec.Code, http.StatusOK, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "Welcome to test") {
+		t.Fatalf("body missing home welcome text: %s", rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "Basket (2)") {
+		t.Fatalf("body missing configured cart label: %s", rec.Body.String())
+	}
+}
+
+func TestStorefrontHandler_Home_MissingTemplate(t *testing.T) {
+	repo := &mockStorefrontRepo{}
+	engine := createTestThemeWithoutHome(t)
+	pdp := composition.NewPipeline[composition.ProductContext]()
+	h := shophttp.NewStorefrontHandler(engine, repo, pdp)
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("GET", "/", nil)
+	newStorefrontRouter(h).ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("status = %d, want %d; body: %s", rec.Code, http.StatusNotFound, rec.Body.String())
+	}
+}
+
+func TestStorefrontRouter_Home_DoesNotCatchUnknownPath(t *testing.T) {
+	repo := &mockStorefrontRepo{}
+	engine := createTestTheme(t)
+	pdp := composition.NewPipeline[composition.ProductContext]()
+	h := shophttp.NewStorefrontHandler(engine, repo, pdp)
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("GET", "/missing", nil)
+	newStorefrontRouter(h).ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("status = %d, want %d; body: %s", rec.Code, http.StatusNotFound, rec.Body.String())
 	}
 }
 

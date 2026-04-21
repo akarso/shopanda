@@ -1,11 +1,48 @@
 {{ define "title" }}{{ .Product.Name }}{{ end }}
 {{ define "content" }}
-<article>
+<section class="page-intro">
+    <p class="eyebrow">Product detail</p>
     <h1>{{ .Product.Name }}</h1>
-    {{ if .Product.Description }}<p>{{ .Product.Description }}</p>{{ end }}
-    <dl>
-        <dt>Status</dt><dd>{{ .Product.Status }}</dd>
-    </dl>
-</article>
+    <p>Server-rendered product pages now inherit the shared storefront shell and bundled theme CSS.</p>
+</section>
+
+<section class="product-detail-card">
+    <div class="product-detail-card__media" aria-hidden="true">
+        <span>{{ .Product.Name }}</span>
+    </div>
+    <div class="product-detail-card__body">
+        <div class="product-detail-card__meta">
+            <span class="status-pill">{{ .Product.Status }}</span>
+            <span>Slug: /products/{{ .Product.Slug }}</span>
+        </div>
+        {{ if .Product.Description }}
+        <p>{{ .Product.Description }}</p>
+        {{ else }}
+        <p>No merchandising description has been added yet.</p>
+        {{ end }}
+        <dl class="detail-grid">
+            <div>
+                <dt>Store</dt>
+                <dd>{{ .Layout.SiteName }}</dd>
+            </div>
+            <div>
+                <dt>Currency</dt>
+                <dd>{{ if .Currency }}{{ .Currency }}{{ else }}Not resolved{{ end }}</dd>
+            </div>
+            <div>
+                <dt>Country</dt>
+                <dd>{{ if .Country }}{{ .Country }}{{ else }}Not resolved{{ end }}</dd>
+            </div>
+            <div>
+                <dt>Composition blocks</dt>
+                <dd>{{ len .Blocks }}</dd>
+            </div>
+        </dl>
+        <div class="product-detail-card__actions">
+            <a class="button-link" href="/">Back to home</a>
+            <span class="muted-note">Cart and checkout interactions land in later PRs.</span>
+        </div>
+    </div>
+</section>
 {{ end }}
 {{ template "layout.html" . }}
