@@ -527,6 +527,11 @@ input {
     flex-wrap: wrap;
 }
 
+.product-detail-card__cart-status {
+    flex: 1 1 100%;
+    min-height: 1.5rem;
+}
+
 .product-detail-card__cart button,
 .cart-row__qty button,
 .cart-row__remove button {

@@ -17,14 +17,14 @@
                 <p>{{ if .VariantName }}{{ .VariantName }} · {{ end }}{{ .VariantSKU }}</p>
             </div>
             <div class="cart-row__price">{{ .UnitPriceText }}</div>
-            <form class="cart-row__qty" action="/cart/update" method="post" hx-post="/cart/update" hx-target="#cart-page" hx-select="#cart-page" hx-swap="outerHTML" hx-on::after-request="htmx.trigger(document.body, 'cart-updated')">
+            <form class="cart-row__qty" action="/cart/update" method="post" hx-post="/cart/update" hx-target="#cart-page" hx-select="#cart-page" hx-swap="outerHTML">
                 <input type="hidden" name="variant_id" value="{{ .VariantID }}">
                 <label class="sr-only" for="qty-{{ .VariantID }}">Quantity for {{ .ProductName }}</label>
                 <input id="qty-{{ .VariantID }}" name="quantity" type="number" min="1" value="{{ .Quantity }}">
                 <button type="submit">Update</button>
             </form>
             <div class="cart-row__total">{{ .LineTotalText }}</div>
-            <form class="cart-row__remove" action="/cart/remove" method="post" hx-post="/cart/remove" hx-target="#cart-page" hx-select="#cart-page" hx-swap="outerHTML" hx-on::after-request="htmx.trigger(document.body, 'cart-updated')">
+            <form class="cart-row__remove" action="/cart/remove" method="post" hx-post="/cart/remove" hx-target="#cart-page" hx-select="#cart-page" hx-swap="outerHTML">
                 <input type="hidden" name="variant_id" value="{{ .VariantID }}">
                 <button type="submit">Remove</button>
             </form>

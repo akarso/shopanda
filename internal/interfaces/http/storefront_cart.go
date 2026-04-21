@@ -5,17 +5,15 @@ import (
 	"fmt"
 	"html/template"
 	"net/http"
+	"net/url"
 	"strconv"
 	"strings"
 
-	cartApp "github.com/akarso/shopanda/internal/application/cart"
 	"github.com/akarso/shopanda/internal/domain/cart"
-	"github.com/akarso/shopanda/internal/domain/catalog"
 	"github.com/akarso/shopanda/internal/domain/shared"
 	"github.com/akarso/shopanda/internal/domain/store"
 	"github.com/akarso/shopanda/internal/platform/apperror"
 	platformAuth "github.com/akarso/shopanda/internal/platform/auth"
-	"github.com/akarso/shopanda/internal/platform/logger"
 )
 
 const (
@@ -171,7 +169,7 @@ func (h *StorefrontHandler) AddToCart() http.HandlerFunc {
 			http.Error(w, err.Error(), status)
 			return
 		}
-		h.writeCartMutationResponse(w, r, strings.TrimSpace(r.FormValue("redirect_to")), false)
+		h.writeCartMutationResponse(w, r, strings.TrimSpace(r.FormValue("redirect_to")), false, false)
 	}
 }
 
@@ -207,7 +205,7 @@ func (h *StorefrontHandler) UpdateCart() http.HandlerFunc {
 			http.Error(w, err.Error(), status)
 			return
 		}
-		h.writeCartMutationResponse(w, r, "/cart", true)
+		h.writeCartMutationResponse(w, r, "/cart", true, true)
 	}
 }
 
@@ -242,12 +240,14 @@ func (h *StorefrontHandler) RemoveCartItem() http.HandlerFunc {
 			http.Error(w, err.Error(), status)
 			return
 		}
-		h.writeCartMutationResponse(w, r, "/cart", true)
+		h.writeCartMutationResponse(w, r, "/cart", true, true)
 	}
 }
 
-func (h *StorefrontHandler) writeCartMutationResponse(w http.ResponseWriter, r *http.Request, fallbackRedirect string, renderCartPage bool) {
-	w.Header().Set("HX-Trigger", "cart-updated")
+func (h *StorefrontHandler) writeCartMutationResponse(w http.ResponseWriter, r *http.Request, fallbackRedirect string, renderCartPage bool, emitCartUpdated bool) {
+	if emitCartUpdated {
+		w.Header().Set("HX-Trigger", "cart-updated")
+	}
 	if storefrontIsHTMX(r) && renderCartPage {
 		page, err := h.buildCartPageResponse(r)
 		if err != nil {
@@ -265,9 +265,7 @@ func (h *StorefrontHandler) writeCartMutationResponse(w http.ResponseWriter, r *
 	if redirectTo == "" {
 		redirectTo = fallbackRedirect
 	}
-	if redirectTo == "" {
-		redirectTo = "/cart"
-	}
+	redirectTo = storefrontSafeRedirectPath(redirectTo, fallbackRedirect)
 	http.Redirect(w, r, redirectTo, http.StatusSeeOther)
 }
 
@@ -442,7 +440,7 @@ func (h *StorefrontHandler) ensureCartForRequest(w http.ResponseWriter, r *http.
 		return nil, err
 	}
 	if storefrontCustomerID(r) == "" {
-		storefrontSetCartCookie(w, created.ID)
+		storefrontSetCartCookie(w, r, created.ID)
 	}
 	return created, nil
 }
@@ -462,13 +460,14 @@ func storefrontCustomerID(r *http.Request) string {
 	return identity.UserID
 }
 
-func storefrontSetCartCookie(w http.ResponseWriter, cartID string) {
+func storefrontSetCartCookie(w http.ResponseWriter, r *http.Request, cartID string) {
 	http.SetCookie(w, &http.Cookie{
 		Name:     storefrontCartCookieName,
 		Value:    cartID,
 		Path:     "/",
 		MaxAge:   storefrontCartCookieMaxAge,
 		HttpOnly: true,
+		Secure:   r != nil && r.TLS != nil,
 		SameSite: http.SameSiteLaxMode,
 	})
 }
@@ -477,6 +476,25 @@ func storefrontIsHTMX(r *http.Request) bool {
 	return strings.EqualFold(strings.TrimSpace(r.Header.Get("HX-Request")), "true")
 }
 
-var _ logger.Logger
-var _ cartApp.Service
-var _ catalog.VariantRepository
+func storefrontSafeRedirectPath(raw, fallback string) string {
+	raw = strings.TrimSpace(raw)
+	fallback = strings.TrimSpace(fallback)
+	if storefrontIsSafeLocalRedirect(raw) {
+		return raw
+	}
+	if storefrontIsSafeLocalRedirect(fallback) {
+		return fallback
+	}
+	return "/cart"
+}
+
+func storefrontIsSafeLocalRedirect(raw string) bool {
+	if raw == "" || !strings.HasPrefix(raw, "/") || strings.HasPrefix(raw, "//") {
+		return false
+	}
+	u, err := url.Parse(raw)
+	if err != nil {
+		return false
+	}
+	return u.Scheme == "" && u.Host == ""
+}

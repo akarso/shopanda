@@ -2,6 +2,7 @@ package http_test
 
 import (
 	"context"
+	"crypto/tls"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -184,6 +185,9 @@ func TestStorefrontHandler_CartAdd_SetsCookie_AndCountFragment(t *testing.T) {
 	if cartCookie == nil {
 		t.Fatal("expected storefront cart cookie to be set")
 	}
+	if cartCookie.Secure {
+		t.Fatal("guest cart cookie should not be secure on plain HTTP requests")
+	}
 	countRec := httptest.NewRecorder()
 	countReq := httptest.NewRequest("GET", "/fragments/cart-count", nil)
 	countReq.AddCookie(cartCookie)
@@ -191,6 +195,58 @@ func TestStorefrontHandler_CartAdd_SetsCookie_AndCountFragment(t *testing.T) {
 
 	if got := strings.TrimSpace(countRec.Body.String()); got != "Cart (2)" {
 		t.Fatalf("cart count = %q, want %q", got, "Cart (2)")
+	}
+}
+
+func TestStorefrontHandler_CartAdd_InvalidRedirect_FallsBackToCart(t *testing.T) {
+	engine := createTestTheme(t)
+	pdp := composition.NewPipeline[composition.ProductContext]()
+	plp := composition.NewPipeline[composition.ListingContext]()
+	cartSvc, _, prices := newStorefrontCartService()
+	prices.set("var-1", "EUR", 1500)
+	h := shophttp.NewStorefrontHandler(engine, &mockStorefrontRepo{}, newStorefrontCategoryMock(), pdp, plp, newStorefrontSearchMock()).WithCart(nil, cartSvc)
+
+	form := url.Values{"variant_id": {"var-1"}, "quantity": {"1"}, "redirect_to": {"https://evil.example/phish"}}
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("POST", "/cart/add", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	newStorefrontRouter(h).ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusSeeOther {
+		t.Fatalf("status = %d, want %d; body: %s", rec.Code, http.StatusSeeOther, rec.Body.String())
+	}
+	if location := rec.Header().Get("Location"); location != "/cart" {
+		t.Fatalf("Location = %q, want %q", location, "/cart")
+	}
+}
+
+func TestStorefrontHandler_CartAdd_SetsSecureCookie_OnHTTPS(t *testing.T) {
+	engine := createTestTheme(t)
+	pdp := composition.NewPipeline[composition.ProductContext]()
+	plp := composition.NewPipeline[composition.ListingContext]()
+	cartSvc, _, prices := newStorefrontCartService()
+	prices.set("var-1", "EUR", 1500)
+	h := shophttp.NewStorefrontHandler(engine, &mockStorefrontRepo{}, newStorefrontCategoryMock(), pdp, plp, newStorefrontSearchMock()).WithCart(nil, cartSvc)
+
+	form := url.Values{"variant_id": {"var-1"}, "quantity": {"1"}, "redirect_to": {"/products/widget"}}
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("POST", "https://example.test/cart/add", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.TLS = &tls.ConnectionState{}
+	newStorefrontRouter(h).ServeHTTP(rec, req)
+
+	var cartCookie *http.Cookie
+	for _, cookie := range rec.Result().Cookies() {
+		if cookie.Name == "shopanda_storefront_cart" {
+			cartCookie = cookie
+			break
+		}
+	}
+	if cartCookie == nil {
+		t.Fatal("expected storefront cart cookie to be set")
+	}
+	if !cartCookie.Secure {
+		t.Fatal("guest cart cookie should be secure on HTTPS requests")
 	}
 }
 

@@ -6,7 +6,7 @@
     <title>{{ template "title" . }} · {{ .Layout.SiteName }}</title>
     <link rel="stylesheet" href="/static/css/style.css">
     <link rel="stylesheet" href="/static/css/custom.css">
-    {{ if .Layout.EnableCart }}<script src="https://unpkg.com/htmx.org@1.9.12" defer></script>{{ end }}
+    {{ if .Layout.EnableCart }}<script src="/static/js/htmx.min.js" defer></script>{{ end }}
 </head>
 <body>
     <a class="skip-link" href="#content">Skip to content</a>
