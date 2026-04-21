@@ -130,20 +130,45 @@ func (h *StorefrontHandler) renderPage(w http.ResponseWriter, name string, data 
 }
 
 func (h *StorefrontHandler) layoutData(r *http.Request) StorefrontLayoutData {
+	themeCfg := h.engine.Theme().Storefront
 	siteName := h.engine.Theme().Name
 	if s := store.FromContext(r.Context()); s != nil && s.Name != "" {
 		siteName = s.Name
 	}
-	return StorefrontLayoutData{
-		SiteName:     siteName,
-		SearchAction: "/products",
-		CartURL:      "/cart",
-		CartLabel:    "Cart (0)",
-		CurrentYear:  time.Now().UTC().Year(),
-		Nav: []StorefrontNavLink{
+	searchAction := themeCfg.SearchAction
+	if searchAction == "" {
+		searchAction = "/products"
+	}
+	cartURL := themeCfg.CartURL
+	if cartURL == "" {
+		cartURL = "/cart"
+	}
+	cartLabel := themeCfg.CartLabel
+	if cartLabel == "" {
+		cartLabel = "Cart (0)"
+	}
+	nav := make([]StorefrontNavLink, 0, len(themeCfg.Nav))
+	if len(themeCfg.Nav) > 0 {
+		for _, item := range themeCfg.Nav {
+			if item.Label == "" || item.URL == "" {
+				continue
+			}
+			nav = append(nav, StorefrontNavLink{Label: item.Label, URL: item.URL})
+		}
+	}
+	if len(nav) == 0 {
+		nav = []StorefrontNavLink{
 			{Label: "Home", URL: "/"},
 			{Label: "Categories", URL: "/categories"},
 			{Label: "Account", URL: "/account/login"},
-		},
+		}
+	}
+	return StorefrontLayoutData{
+		SiteName:     siteName,
+		SearchAction: searchAction,
+		CartURL:      cartURL,
+		CartLabel:    cartLabel,
+		CurrentYear:  time.Now().UTC().Year(),
+		Nav:          nav,
 	}
 }

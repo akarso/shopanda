@@ -862,8 +862,12 @@ func runServe(cfg *config.Config, log logger.Logger) error {
 		}
 		storefront := shophttp.NewStorefrontHandler(themeEngine, productRepo, pdp)
 		staticDir := filepath.Join(cfg.Frontend.ThemePath, "static")
-		router.Handle("GET /static/{path...}", http.StripPrefix("/static/", http.FileServer(http.Dir(staticDir))))
-		router.HandleFunc("GET /", storefront.Home())
+		staticHandler := http.StripPrefix("/static/", http.FileServer(http.Dir(staticDir)))
+		router.Handle("GET /static/{path...}", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Cache-Control", "public, max-age=31536000")
+			staticHandler.ServeHTTP(w, r)
+		}))
+		router.HandleFunc("GET /{$}", storefront.Home())
 		router.HandleFunc("GET /products/{slug}", storefront.Product())
 	}
 

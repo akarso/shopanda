@@ -1,2 +1,13 @@
 name: default
 version: "0.1.0"
+storefront:
+	search_action: /products
+	cart_url: /cart
+	cart_label: Cart (0)
+	nav:
+		- label: Home
+			url: /
+		- label: Categories
+			url: /categories
+		- label: Account
+			url: /account/login
