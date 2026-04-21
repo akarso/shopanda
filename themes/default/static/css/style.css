@@ -81,7 +81,13 @@ input {
 .site-footer,
 .hero-panel,
 .feature-grid,
-.product-detail-card {
+.product-detail-card,
+.listing-toolbar,
+.listing-filters,
+.product-listing,
+.product-card,
+.product-card__meta,
+.pagination {
     display: grid;
     gap: 1rem;
 }
@@ -197,7 +203,9 @@ input {
 .page-intro,
 .hero-panel,
 .feature-grid article,
-.product-detail-card {
+.product-detail-card,
+.listing-filters,
+.product-card {
     background: var(--panel);
     border: 1px solid var(--border);
     border-radius: var(--radius-lg);
@@ -209,7 +217,9 @@ input {
 .feature-grid article,
 .product-detail-card__body,
 .hero-panel__card,
-.product-detail-card__media {
+.product-detail-card__media,
+.listing-filters,
+.product-card__body {
     padding: 1.5rem;
 }
 
@@ -237,6 +247,139 @@ input {
     grid-template-columns: repeat(3, minmax(0, 1fr));
     gap: 1rem;
     margin-top: 1rem;
+}
+
+.listing-intro {
+    display: grid;
+    gap: 1.25rem;
+}
+
+.listing-toolbar {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    align-items: start;
+}
+
+.listing-toolbar__group,
+.facet-list {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.75rem;
+}
+
+.chip,
+.facet-pill {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.4rem;
+    padding: 0.65rem 0.95rem;
+    border-radius: var(--radius-sm);
+    border: 1px solid var(--border);
+    background: rgba(255, 250, 242, 0.78);
+    color: inherit;
+    text-decoration: none;
+}
+
+.chip--active {
+    background: linear-gradient(135deg, var(--accent), var(--accent-deep));
+    border-color: transparent;
+    color: #fff;
+}
+
+.listing-filters {
+    margin-top: 1rem;
+}
+
+.product-listing {
+    margin-top: 1rem;
+}
+
+.product-listing--grid {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.product-listing--list {
+    grid-template-columns: 1fr;
+}
+
+.product-listing--list .product-card {
+    display: flex;
+    flex-direction: row;
+    align-items: stretch;
+    gap: 1rem;
+    overflow: visible;
+    width: 100%;
+}
+
+.product-listing--list .product-card__media {
+    flex: 0 0 240px;
+    min-height: 100%;
+}
+
+.product-listing--list .product-card__media img {
+    height: 100%;
+    min-height: 220px;
+}
+
+.product-listing--list .product-card__body {
+    flex: 1 1 auto;
+}
+
+.product-card {
+    overflow: hidden;
+}
+
+.product-card__media {
+    display: grid;
+    place-items: center;
+    min-height: 220px;
+    padding: 1.5rem;
+    background:
+        radial-gradient(circle at top left, rgba(241, 210, 188, 0.9), transparent 42%),
+        linear-gradient(145deg, #d7b39e, #f4e6db);
+    color: var(--accent-deep);
+    text-decoration: none;
+    font-family: "Iowan Old Style", "Palatino Linotype", serif;
+    font-size: 1.5rem;
+    text-align: center;
+}
+
+.product-card__media img {
+    width: 100%;
+    height: 220px;
+    object-fit: cover;
+    border-radius: var(--radius-md);
+}
+
+.product-card__body {
+    display: grid;
+    gap: 1rem;
+}
+
+.product-card__body h2 {
+    margin: 0;
+}
+
+.product-card__body h2 a {
+    text-decoration: none;
+}
+
+.product-card__body p {
+    margin: 0;
+    color: var(--muted);
+}
+
+.product-card__meta {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    align-items: center;
+}
+
+.listing-empty,
+.pagination {
+    margin-top: 1rem;
+}
+
+.pagination {
+    grid-template-columns: repeat(auto-fit, minmax(110px, max-content));
 }
 
 .product-detail-card {
@@ -318,12 +461,23 @@ code {
     .hero-panel,
     .product-detail-card,
     .site-footer,
-    .feature-grid {
+    .feature-grid,
+    .listing-toolbar,
+    .product-listing--grid,
+    .product-card__meta {
         grid-template-columns: 1fr;
     }
 
     .site-search {
         order: 3;
+    }
+
+    .product-listing--list .product-card {
+        flex-direction: column;
+    }
+
+    .product-listing--list .product-card__media {
+        flex-basis: auto;
     }
 }
 
@@ -333,7 +487,8 @@ code {
     }
 
     .site-search,
-    .product-detail-card__actions {
+    .product-detail-card__actions,
+    .listing-toolbar__group {
         flex-direction: column;
         align-items: stretch;
     }

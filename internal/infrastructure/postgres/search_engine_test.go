@@ -4,9 +4,13 @@ import (
 	"context"
 	"fmt"
 	"testing"
+	"time"
 
 	"github.com/akarso/shopanda/internal/domain/catalog"
+	"github.com/akarso/shopanda/internal/domain/inventory"
+	"github.com/akarso/shopanda/internal/domain/pricing"
 	"github.com/akarso/shopanda/internal/domain/search"
+	"github.com/akarso/shopanda/internal/domain/shared"
 	"github.com/akarso/shopanda/internal/infrastructure/postgres"
 	"github.com/akarso/shopanda/internal/platform/id"
 )
@@ -352,5 +356,143 @@ func TestSearchEngine_Search_ValidationError(t *testing.T) {
 	_, err = engine.Search(context.Background(), search.SearchQuery{Offset: -1})
 	if err == nil {
 		t.Fatal("expected validation error for negative offset")
+	}
+}
+
+func TestSearchEngine_Search_PopulatesPriceAvailabilityAndCreatedAt(t *testing.T) {
+	db := testDB(t)
+	ensureProductsTable(t, db)
+	t.Cleanup(func() {
+		for _, stmt := range []string{
+			"DELETE FROM reservations",
+			"DELETE FROM stock",
+			"DELETE FROM prices",
+			"DELETE FROM product_categories",
+			"DELETE FROM variants",
+			"DELETE FROM products",
+		} {
+			if _, err := db.Exec(stmt); err != nil {
+				t.Fatalf("cleanup failed for %q: %v", stmt, err)
+			}
+		}
+	})
+
+	engine, err := postgres.NewSearchEngine(db)
+	if err != nil {
+		t.Fatalf("NewSearchEngine: %v", err)
+	}
+	ctx := context.Background()
+
+	productRepo, err := postgres.NewProductRepo(db)
+	if err != nil {
+		t.Fatalf("NewProductRepo: %v", err)
+	}
+	variantRepo, err := postgres.NewVariantRepo(db)
+	if err != nil {
+		t.Fatalf("NewVariantRepo: %v", err)
+	}
+	priceRepo, err := postgres.NewPriceRepo(db)
+	if err != nil {
+		t.Fatalf("NewPriceRepo: %v", err)
+	}
+	stockRepo, err := postgres.NewStockRepo(db)
+	if err != nil {
+		t.Fatalf("NewStockRepo: %v", err)
+	}
+	reservationRepo, err := postgres.NewReservationRepo(db)
+	if err != nil {
+		t.Fatalf("NewReservationRepo: %v", err)
+	}
+
+	p := mustNewProduct(t, "Projected Search Product", "projected-search-"+id.New()[:8])
+	p.Description = "search projection coverage"
+	p.Status = catalog.StatusActive
+	if err := productRepo.Create(ctx, &p); err != nil {
+		t.Fatalf("Create product: %v", err)
+	}
+	if err := productRepo.Update(ctx, &p); err != nil {
+		t.Fatalf("Update product: %v", err)
+	}
+
+	v := mustNewVariant(t, p.ID, "SKU-SEARCH-"+id.New()[:8])
+	if err := variantRepo.Create(ctx, &v); err != nil {
+		t.Fatalf("Create variant: %v", err)
+	}
+
+	globalPrice, err := pricing.NewPrice(id.New(), v.ID, "", shared.MustNewMoney(1299, "EUR"))
+	if err != nil {
+		t.Fatalf("NewPrice global: %v", err)
+	}
+	if err := priceRepo.Upsert(ctx, &globalPrice); err != nil {
+		t.Fatalf("Upsert global price: %v", err)
+	}
+	storePrice, err := pricing.NewPrice(id.New(), v.ID, "store-1", shared.MustNewMoney(999, "EUR"))
+	if err != nil {
+		t.Fatalf("NewPrice store: %v", err)
+	}
+	if err := priceRepo.Upsert(ctx, &storePrice); err != nil {
+		t.Fatalf("Upsert store price: %v", err)
+	}
+
+	stockEntry, err := inventory.NewStockEntry(v.ID, 7)
+	if err != nil {
+		t.Fatalf("NewStockEntry: %v", err)
+	}
+	if err := stockRepo.SetStock(ctx, &stockEntry); err != nil {
+		t.Fatalf("SetStock: %v", err)
+	}
+
+	result, err := engine.Search(ctx, search.SearchQuery{Text: "projection coverage"})
+	if err != nil {
+		t.Fatalf("Search: %v", err)
+	}
+	if result.Total != 1 {
+		t.Fatalf("Total = %d, want 1", result.Total)
+	}
+	if len(result.Products) != 1 {
+		t.Fatalf("len(Products) = %d, want 1", len(result.Products))
+	}
+	got := result.Products[0]
+	if got.Price != 1299 {
+		t.Errorf("Price = %d, want 1299", got.Price)
+	}
+	if !got.InStock {
+		t.Error("InStock = false, want true")
+	}
+	if got.CreatedAt.IsZero() {
+		t.Error("CreatedAt is zero")
+	}
+	if got.CreatedAt.UTC().Unix() != p.CreatedAt.UTC().Unix() {
+		t.Errorf("CreatedAt = %v, want %v", got.CreatedAt.UTC(), p.CreatedAt.UTC())
+	}
+
+	storeScoped, err := engine.Search(ctx, search.SearchQuery{Text: "projection coverage", StoreID: "store-1", Currency: "EUR"})
+	if err != nil {
+		t.Fatalf("Search store scoped: %v", err)
+	}
+	if len(storeScoped.Products) != 1 {
+		t.Fatalf("len(StoreScoped.Products) = %d, want 1", len(storeScoped.Products))
+	}
+	if storeScoped.Products[0].Price != 999 {
+		t.Errorf("store scoped Price = %d, want 999", storeScoped.Products[0].Price)
+	}
+
+	reservation, err := inventory.NewReservation(id.New(), v.ID, 7, time.Now().UTC().Add(15*time.Minute))
+	if err != nil {
+		t.Fatalf("NewReservation: %v", err)
+	}
+	if err := reservationRepo.Reserve(ctx, &reservation); err != nil {
+		t.Fatalf("Reserve: %v", err)
+	}
+
+	reservedOut, err := engine.Search(ctx, search.SearchQuery{Text: "projection coverage", StoreID: "store-1", Currency: "EUR"})
+	if err != nil {
+		t.Fatalf("Search reserved out: %v", err)
+	}
+	if len(reservedOut.Products) != 1 {
+		t.Fatalf("len(ReservedOut.Products) = %d, want 1", len(reservedOut.Products))
+	}
+	if reservedOut.Products[0].InStock {
+		t.Error("InStock = true after reservations consume all stock, want false")
 	}
 }

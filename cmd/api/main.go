@@ -860,7 +860,7 @@ func runServe(cfg *config.Config, log logger.Logger) error {
 		if thErr != nil {
 			return fmt.Errorf("theme load: %w", thErr)
 		}
-		storefront := shophttp.NewStorefrontHandler(themeEngine, productRepo, pdp)
+		storefront := shophttp.NewStorefrontHandler(themeEngine, productRepo, pdp, plp, searchEngine)
 		staticDir := filepath.Join(cfg.Frontend.ThemePath, "static")
 		staticHandler := http.StripPrefix("/static/", http.FileServer(http.Dir(staticDir)))
 		router.Handle("GET /static/{path...}", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -868,7 +868,9 @@ func runServe(cfg *config.Config, log logger.Logger) error {
 			staticHandler.ServeHTTP(w, r)
 		}))
 		router.HandleFunc("GET /{$}", storefront.Home())
+		router.HandleFunc("GET /products", storefront.Products())
 		router.HandleFunc("GET /products/{slug}", storefront.Product())
+		router.HandleFunc("GET /search", storefront.Search())
 	}
 
 	srv := shophttp.NewServer(cfg.Server.Host, cfg.Server.Port, router.Handler(), log)

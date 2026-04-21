@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/akarso/shopanda/internal/domain/search"
+	"github.com/akarso/shopanda/internal/domain/store"
 	"github.com/akarso/shopanda/internal/platform/apperror"
 )
 
@@ -31,6 +32,10 @@ func (h *SearchHandler) Search() http.HandlerFunc {
 			Text:    q.Get("q"),
 			Sort:    q.Get("sort"),
 			Filters: map[string]interface{}{},
+		}
+		if s := store.FromContext(r.Context()); s != nil {
+			query.StoreID = s.ID
+			query.Currency = s.Currency
 		}
 
 		if v := q.Get("limit"); v != "" {

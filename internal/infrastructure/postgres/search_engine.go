@@ -207,12 +207,68 @@ func (e *SearchEngine) Search(ctx context.Context, query search.SearchQuery) (se
 	// outer query applies ORDER BY, LIMIT, OFFSET.
 	filterArgs := make([]interface{}, len(args))
 	copy(filterArgs, args)
+	priceFilter := []string{"v.product_id = sub.id"}
+	priceOrder := "CASE WHEN pr.store_id = '' THEN 0 ELSE 1 END"
+	if query.Currency != "" {
+		priceFilter = append(priceFilter, fmt.Sprintf("pr.currency = %s", nextArg(query.Currency)))
+	}
+	if query.StoreID != "" {
+		storeIDArg := nextArg(query.StoreID)
+		priceOrder = fmt.Sprintf("CASE WHEN pr.store_id = %s THEN 0 WHEN pr.store_id = '' THEN 1 ELSE 2 END", storeIDArg)
+	}
 
 	limitArg := nextArg(limit)
 	offsetArg := nextArg(query.Offset)
 
 	mainQ := fmt.Sprintf(
-		"SELECT id, name, slug, description, attributes FROM (SELECT DISTINCT ON (p.id) p.id, p.name, p.slug, p.description, p.attributes, %s AS sort_key FROM products p %s WHERE %s ORDER BY p.id, %s) sub ORDER BY %s LIMIT %s OFFSET %s",
+		`SELECT
+			sub.id,
+			sub.name,
+			sub.slug,
+			sub.description,
+			sub.created_at,
+			sub.attributes,
+			COALESCE(
+				(
+					SELECT pr.amount
+					FROM variants v
+					INNER JOIN prices pr ON pr.variant_id = v.id
+					WHERE %s
+					ORDER BY %s, pr.amount ASC, pr.created_at ASC
+					LIMIT 1
+				),
+				0
+			) AS price,
+			EXISTS(
+				SELECT 1
+				FROM variants v
+				LEFT JOIN stock s ON s.variant_id = v.id
+				LEFT JOIN LATERAL (
+					SELECT COALESCE(SUM(r.quantity), 0) AS reserved_qty
+					FROM reservations r
+					WHERE r.variant_id = v.id
+					  AND r.status = 'active'
+					  AND r.expires_at > now()
+				) reserved ON TRUE
+				WHERE v.product_id = sub.id
+				  AND COALESCE(s.quantity, 0) - COALESCE(reserved.reserved_qty, 0) > 0
+			) AS in_stock
+		FROM (
+			SELECT DISTINCT ON (p.id)
+				p.id,
+				p.name,
+				p.slug,
+				p.description,
+				p.created_at,
+				p.attributes,
+				%s AS sort_key
+			FROM products p %s
+			WHERE %s
+			ORDER BY p.id, %s
+		) sub
+		ORDER BY %s
+		LIMIT %s OFFSET %s`,
+		strings.Join(priceFilter, " AND "), priceOrder,
 		sortExpr, joinClause, whereClause, sortExpr, orderBy, limitArg, offsetArg)
 
 	rows, err := e.db.QueryContext(ctx, mainQ, args...)
@@ -225,7 +281,7 @@ func (e *SearchEngine) Search(ctx context.Context, query search.SearchQuery) (se
 	for rows.Next() {
 		var p search.Product
 		var attrsJSON []byte
-		if err := rows.Scan(&p.ID, &p.Name, &p.Slug, &p.Description, &attrsJSON); err != nil {
+		if err := rows.Scan(&p.ID, &p.Name, &p.Slug, &p.Description, &p.CreatedAt, &attrsJSON, &p.Price, &p.InStock); err != nil {
 			return search.SearchResult{}, fmt.Errorf("search_engine: scan: %w", err)
 		}
 		if len(attrsJSON) > 0 {

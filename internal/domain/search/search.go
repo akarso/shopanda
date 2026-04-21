@@ -14,11 +14,13 @@ const defaultSearchLimit = 20
 
 // SearchQuery describes a product search request.
 type SearchQuery struct {
-	Text    string
-	Filters map[string]interface{}
-	Sort    string
-	Limit   int
-	Offset  int
+	Text     string
+	Filters  map[string]interface{}
+	Sort     string
+	StoreID  string
+	Currency string
+	Limit    int
+	Offset   int
 }
 
 // Validate checks that the query is well-formed.

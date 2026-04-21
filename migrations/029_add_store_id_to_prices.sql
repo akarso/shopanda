@@ -1,5 +1,8 @@
 -- Add store scoping to prices: each price is now per variant+currency+store.
 -- Empty store_id ('') represents the global/default price.
+-- NOTE: storefront search projects store-aware prices from this table; if that
+-- path becomes hot, consider a supporting index for the projection order such
+-- as one including store_id, amount, and created_at.
 
 ALTER TABLE prices ADD COLUMN store_id TEXT NOT NULL DEFAULT '';
 

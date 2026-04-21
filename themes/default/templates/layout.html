@@ -22,7 +22,7 @@
 
             <form class="site-search" action="{{ .Layout.SearchAction }}" method="get" role="search">
                 <label class="sr-only" for="storefront-search">Search products</label>
-                <input id="storefront-search" name="q" type="search" placeholder="Search catalog">
+                <input id="storefront-search" name="q" type="search" placeholder="Search catalog" value="{{ .Layout.SearchQuery }}">
                 <button type="submit">Search</button>
             </form>
 
