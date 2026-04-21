@@ -6,7 +6,10 @@ import (
 	"testing"
 
 	"github.com/akarso/shopanda/internal/domain/catalog"
+	"github.com/akarso/shopanda/internal/domain/inventory"
+	"github.com/akarso/shopanda/internal/domain/pricing"
 	"github.com/akarso/shopanda/internal/domain/search"
+	"github.com/akarso/shopanda/internal/domain/shared"
 	"github.com/akarso/shopanda/internal/infrastructure/postgres"
 	"github.com/akarso/shopanda/internal/platform/id"
 )
@@ -352,5 +355,100 @@ func TestSearchEngine_Search_ValidationError(t *testing.T) {
 	_, err = engine.Search(context.Background(), search.SearchQuery{Offset: -1})
 	if err == nil {
 		t.Fatal("expected validation error for negative offset")
+	}
+}
+
+func TestSearchEngine_Search_PopulatesPriceAvailabilityAndCreatedAt(t *testing.T) {
+	db := testDB(t)
+	ensureProductsTable(t, db)
+	t.Cleanup(func() {
+		db.Exec("DELETE FROM stock")
+		db.Exec("DELETE FROM prices")
+		db.Exec("DELETE FROM variants")
+	})
+
+	engine, err := postgres.NewSearchEngine(db)
+	if err != nil {
+		t.Fatalf("NewSearchEngine: %v", err)
+	}
+	ctx := context.Background()
+
+	productRepo, err := postgres.NewProductRepo(db)
+	if err != nil {
+		t.Fatalf("NewProductRepo: %v", err)
+	}
+	variantRepo, err := postgres.NewVariantRepo(db)
+	if err != nil {
+		t.Fatalf("NewVariantRepo: %v", err)
+	}
+	priceRepo, err := postgres.NewPriceRepo(db)
+	if err != nil {
+		t.Fatalf("NewPriceRepo: %v", err)
+	}
+	stockRepo, err := postgres.NewStockRepo(db)
+	if err != nil {
+		t.Fatalf("NewStockRepo: %v", err)
+	}
+
+	p := mustNewProduct(t, "Projected Search Product", "projected-search-"+id.New()[:8])
+	p.Description = "search projection coverage"
+	p.Status = catalog.StatusActive
+	if err := productRepo.Create(ctx, &p); err != nil {
+		t.Fatalf("Create product: %v", err)
+	}
+	if err := productRepo.Update(ctx, &p); err != nil {
+		t.Fatalf("Update product: %v", err)
+	}
+
+	v := mustNewVariant(t, p.ID, "SKU-SEARCH-"+id.New()[:8])
+	if err := variantRepo.Create(ctx, &v); err != nil {
+		t.Fatalf("Create variant: %v", err)
+	}
+
+	globalPrice, err := pricing.NewPrice(id.New(), v.ID, "", shared.MustNewMoney(1299, "EUR"))
+	if err != nil {
+		t.Fatalf("NewPrice global: %v", err)
+	}
+	if err := priceRepo.Upsert(ctx, &globalPrice); err != nil {
+		t.Fatalf("Upsert global price: %v", err)
+	}
+	storePrice, err := pricing.NewPrice(id.New(), v.ID, "store-1", shared.MustNewMoney(999, "EUR"))
+	if err != nil {
+		t.Fatalf("NewPrice store: %v", err)
+	}
+	if err := priceRepo.Upsert(ctx, &storePrice); err != nil {
+		t.Fatalf("Upsert store price: %v", err)
+	}
+
+	stockEntry, err := inventory.NewStockEntry(v.ID, 7)
+	if err != nil {
+		t.Fatalf("NewStockEntry: %v", err)
+	}
+	if err := stockRepo.SetStock(ctx, &stockEntry); err != nil {
+		t.Fatalf("SetStock: %v", err)
+	}
+
+	result, err := engine.Search(ctx, search.SearchQuery{Text: "projection coverage"})
+	if err != nil {
+		t.Fatalf("Search: %v", err)
+	}
+	if result.Total != 1 {
+		t.Fatalf("Total = %d, want 1", result.Total)
+	}
+	if len(result.Products) != 1 {
+		t.Fatalf("len(Products) = %d, want 1", len(result.Products))
+	}
+	got := result.Products[0]
+	if got.Price != 1299 {
+		t.Errorf("Price = %d, want 1299", got.Price)
+	}
+	if !got.InStock {
+		t.Error("InStock = false, want true")
+	}
+	if got.CreatedAt.IsZero() {
+		t.Error("CreatedAt is zero")
+	}
+	if got.CreatedAt.UTC().Unix() != p.CreatedAt.UTC().Unix() {
+		t.Errorf("CreatedAt = %v, want %v", got.CreatedAt.UTC(), p.CreatedAt.UTC())
 	}
 }
