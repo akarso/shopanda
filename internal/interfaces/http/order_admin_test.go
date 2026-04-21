@@ -301,6 +301,36 @@ func TestOrderAdminHandler_Update_InvalidTransition(t *testing.T) {
 	}
 }
 
+func TestOrderAdminHandler_Update_InvalidStatus(t *testing.T) {
+	repo, mux := orderAdminSetup()
+	seedOrder(t, repo, "ord-1", "cust-1")
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("PUT", "/api/v1/admin/orders/ord-1", strings.NewReader(`{"status":"bogus"}`))
+	req.Header.Set("Content-Type", "application/json")
+	req = testhelper.AdminRequest(req, "admin-1")
+	mux.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("status = %d, want %d; body: %s", rec.Code, http.StatusUnprocessableEntity, rec.Body.String())
+	}
+}
+
+func TestOrderAdminHandler_Update_PendingNotAllowed(t *testing.T) {
+	repo, mux := orderAdminSetup()
+	seedOrder(t, repo, "ord-1", "cust-1")
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("PUT", "/api/v1/admin/orders/ord-1", strings.NewReader(`{"status":"pending"}`))
+	req.Header.Set("Content-Type", "application/json")
+	req = testhelper.AdminRequest(req, "admin-1")
+	mux.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("status = %d, want %d; body: %s", rec.Code, http.StatusUnprocessableEntity, rec.Body.String())
+	}
+}
+
 func TestOrderAdminHandler_Update_CustomerForbidden(t *testing.T) {
 	repo, mux := orderAdminSetup()
 	seedOrder(t, repo, "ord-1", "cust-1")

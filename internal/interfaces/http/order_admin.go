@@ -77,6 +77,8 @@ type updateOrderRequest struct {
 	Status string `json:"status"`
 }
 
+const maxUpdateOrderBodyBytes int64 = 1 << 20
+
 // Update handles PUT /api/v1/admin/orders/{orderId}.
 func (h *OrderAdminHandler) Update() http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
@@ -87,14 +89,26 @@ func (h *OrderAdminHandler) Update() http.HandlerFunc {
 		}
 
 		var req updateOrderRequest
-		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		dec := json.NewDecoder(http.MaxBytesReader(w, r.Body, maxUpdateOrderBodyBytes))
+		dec.DisallowUnknownFields()
+		if err := dec.Decode(&req); err != nil {
+			var maxErr *http.MaxBytesError
+			if errors.As(err, &maxErr) {
+				JSONError(w, apperror.Validation("request body too large"))
+				return
+			}
 			JSONError(w, apperror.Validation("invalid request body"))
 			return
 		}
 
 		next := order.OrderStatus(req.Status)
-		if !next.IsValid() {
-			JSONError(w, apperror.Validation("invalid status"))
+		switch next {
+		case order.OrderStatusConfirmed, order.OrderStatusPaid, order.OrderStatusCancelled, order.OrderStatusFailed:
+		case order.OrderStatusPending:
+			JSONError(w, apperror.Validation("transition to pending not allowed"))
+			return
+		default:
+			JSONError(w, apperror.Validation("invalid target status"))
 			return
 		}
 
