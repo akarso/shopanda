@@ -3,6 +3,7 @@ package postgres_test
 import (
 	"context"
 	"testing"
+	"time"
 
 	"github.com/akarso/shopanda/internal/domain/media"
 	"github.com/akarso/shopanda/internal/infrastructure/postgres"
@@ -146,6 +147,9 @@ func TestAssetRepo_List(t *testing.T) {
 
 	a1 := mustNewAsset(t, "logo-1.png")
 	a2 := mustNewAsset(t, "logo-2.png")
+	now := time.Now().UTC()
+	a1.CreatedAt = now.Add(-time.Hour)
+	a2.CreatedAt = now
 	if err := repo.Save(ctx, a1); err != nil {
 		t.Fatalf("Save a1: %v", err)
 	}
@@ -159,6 +163,12 @@ func TestAssetRepo_List(t *testing.T) {
 	}
 	if len(items) != 2 {
 		t.Fatalf("len = %d, want 2", len(items))
+	}
+	if items[0].ID != a2.ID {
+		t.Fatalf("items[0].ID = %q, want %q", items[0].ID, a2.ID)
+	}
+	if items[1].ID != a1.ID {
+		t.Fatalf("items[1].ID = %q, want %q", items[1].ID, a1.ID)
 	}
 }
 
@@ -187,5 +197,20 @@ func TestAssetRepo_Delete(t *testing.T) {
 	}
 	if got != nil {
 		t.Fatal("expected nil after delete")
+	}
+}
+
+func TestAssetRepo_Delete_EmptyID(t *testing.T) {
+	db := testDB(t)
+	ensureProductsTable(t, db)
+
+	repo, err := postgres.NewAssetRepo(db)
+	if err != nil {
+		t.Fatalf("NewAssetRepo: %v", err)
+	}
+
+	err = repo.Delete(context.Background(), "")
+	if err == nil {
+		t.Fatal("expected error for empty id")
 	}
 }

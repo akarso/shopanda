@@ -104,6 +104,9 @@ func (r *AssetRepo) List(ctx context.Context, offset, limit int) ([]media.Asset,
 
 // Delete removes an asset record by ID.
 func (r *AssetRepo) Delete(ctx context.Context, id string) error {
+	if id == "" {
+		return fmt.Errorf("asset_repo: delete: empty id")
+	}
 	const q = `DELETE FROM assets WHERE id = $1`
 	res, err := r.db.ExecContext(ctx, q, id)
 	if err != nil {
