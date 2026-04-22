@@ -1,9 +1,11 @@
 package http
 
 import (
+	"errors"
 	"testing"
 
 	"github.com/akarso/shopanda/internal/domain/catalog"
+	"github.com/akarso/shopanda/internal/platform/apperror"
 )
 
 func TestStorefrontCategoryTree_PreservesDescendants(t *testing.T) {
@@ -50,5 +52,19 @@ func TestStorefrontBreadcrumbs_StopsOnCycle(t *testing.T) {
 	}
 	if !trail[len(trail)-1].Current {
 		t.Fatal("last breadcrumb should be current")
+	}
+}
+
+func TestStorefrontCheckoutErrorMessage_SanitizesServerErrors(t *testing.T) {
+	err := errors.New("db credentials leaked")
+	if got := storefrontCheckoutErrorMessage(err); got != "Sorry, something went wrong. Please try again later." {
+		t.Fatalf("storefrontCheckoutErrorMessage() = %q", got)
+	}
+}
+
+func TestStorefrontCheckoutErrorMessage_PreservesClientErrors(t *testing.T) {
+	err := apperror.Validation("Select a shipping method to continue.")
+	if got := storefrontCheckoutErrorMessage(err); got != err.Error() {
+		t.Fatalf("storefrontCheckoutErrorMessage() = %q, want %q", got, err.Error())
 	}
 }

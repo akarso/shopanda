@@ -29,6 +29,7 @@
             </div>
             {{ else }}
             <form class="checkout-form" action="/checkout/shipping" method="post">
+                <input type="hidden" name="csrf_token" value="{{ .CSRFToken }}">
                 {{ if .ErrorMessage }}
                 <p class="checkout-form__error" role="alert">{{ .ErrorMessage }}</p>
                 {{ end }}

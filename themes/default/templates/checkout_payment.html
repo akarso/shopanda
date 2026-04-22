@@ -19,6 +19,7 @@
     <div class="checkout-grid">
         <section class="checkout-panel">
             <form class="checkout-form" action="/checkout/confirm" method="post">
+                <input type="hidden" name="csrf_token" value="{{ .CSRFToken }}">
                 <input type="hidden" name="first_name" value="{{ .Address.FirstName }}">
                 <input type="hidden" name="last_name" value="{{ .Address.LastName }}">
                 <input type="hidden" name="street" value="{{ .Address.Street }}">
@@ -35,8 +36,9 @@
                         <span class="eyebrow">Payment Method</span>
                         <h2>{{ .Payment.Label }}</h2>
                     </div>
-                    {{ if .Payment.IsStripe }}
+                    {{ if and .Payment.IsStripe .Payment.Instructions }}
                     <div class="payment-card-preview" aria-label="Stripe card placeholder">
+                        <p class="muted-note payment-card-preview__caption">Placeholder only. Card entry happens on Stripe after order creation.</p>
                         <label>
                             <span>Card Number</span>
                             <input value="4242 4242 4242 4242" disabled>

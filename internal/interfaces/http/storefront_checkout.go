@@ -70,6 +70,7 @@ type StorefrontCheckoutPageData struct {
 	SelectedRate   *StorefrontCheckoutRate
 	Payment        StorefrontCheckoutPayment
 	Confirmation   *StorefrontCheckoutConfirmation
+	CSRFToken      string
 	ErrorMessage   string
 	RequiresAuth   bool
 	StripePending  bool
@@ -239,7 +240,18 @@ func (h *StorefrontHandler) CheckoutConfirm() http.HandlerFunc {
 			http.Error(w, "Not Found", http.StatusNotFound)
 			return
 		}
-		cctx, err := h.checkout.StartCheckout(r.Context(), currentCart.ID, storefrontCustomerID(r))
+		cctx, err := h.checkout.StartCheckout(r.Context(), currentCart.ID, storefrontCustomerID(r), checkoutApp.Input{
+			Address: checkoutApp.Address{
+				FirstName: page.Address.FirstName,
+				LastName:  page.Address.LastName,
+				Street:    page.Address.Street,
+				City:      page.Address.City,
+				Postcode:  page.Address.Postcode,
+				Country:   page.Address.Country,
+			},
+			ShippingMethod: selectedRate.Method,
+			PaymentMethod:  paymentMethod,
+		})
 		if err != nil {
 			page.ErrorMessage = storefrontCheckoutErrorMessage(err)
 			page.PrimaryAction = "/checkout/confirm"
@@ -300,6 +312,7 @@ func (h *StorefrontHandler) buildCheckoutPageData(r *http.Request, currentCart *
 		Items:          cartPage.Items,
 		Summary:        cartPage.Summary,
 		Countries:      storefrontCheckoutCountryOptions(""),
+		CSRFToken:      storefrontCSRFToken(r),
 		PrimaryAction:  "/checkout/shipping",
 		SecondaryURL:   "/cart",
 		SecondaryLabel: "Back to cart",
@@ -323,7 +336,7 @@ func (h *StorefrontHandler) checkoutRates(r *http.Request, currentCart *cart.Car
 	}
 	rates := make([]StorefrontCheckoutRate, 0, len(h.shipping))
 	for _, provider := range h.shipping {
-		rate, err := provider.CalculateRate(r.Context(), currentCart.ID, currentCart.Currency, len(currentCart.Items))
+		rate, err := provider.CalculateRate(r.Context(), currentCart.ID, currentCart.Currency, currentCart.TotalQuantity())
 		if err != nil {
 			continue
 		}
@@ -461,6 +474,9 @@ func storefrontCheckoutDisplayTotal(cctx *checkoutApp.Context, shippingCostText 
 func storefrontCheckoutErrorMessage(err error) string {
 	if err == nil {
 		return ""
+	}
+	if storefrontCheckoutErrorStatus(err) >= http.StatusInternalServerError {
+		return "Sorry, something went wrong. Please try again later."
 	}
 	return err.Error()
 }

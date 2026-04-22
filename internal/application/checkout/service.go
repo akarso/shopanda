@@ -39,12 +39,29 @@ func NewService(
 }
 
 // StartCheckout loads the cart, validates it, and runs the checkout workflow.
-func (s *Service) StartCheckout(ctx context.Context, cartID, customerID string) (*Context, error) {
+func (s *Service) StartCheckout(ctx context.Context, cartID, customerID string, input Input) (*Context, error) {
 	if cartID == "" {
 		return nil, apperror.Validation("cart id must not be empty")
 	}
 	if customerID == "" {
 		return nil, apperror.Validation("customer id must not be empty")
+	}
+	input.Address = input.Address.Normalize()
+	if !input.Address.IsZero() {
+		switch {
+		case input.Address.FirstName == "":
+			return nil, apperror.Validation("first name is required")
+		case input.Address.LastName == "":
+			return nil, apperror.Validation("last name is required")
+		case input.Address.Street == "":
+			return nil, apperror.Validation("street is required")
+		case input.Address.City == "":
+			return nil, apperror.Validation("city is required")
+		case input.Address.Postcode == "":
+			return nil, apperror.Validation("postcode is required")
+		case input.Address.Country == "":
+			return nil, apperror.Validation("country is required")
+		}
 	}
 
 	c, err := s.carts.FindByID(ctx, cartID)
@@ -66,6 +83,10 @@ func (s *Service) StartCheckout(ctx context.Context, cartID, customerID string) 
 
 	cctx := NewContext(cartID, customerID, c.Currency)
 	cctx.Cart = c
+	cctx.Input = input
+	cctx.SetMeta("checkout_address", input.Address)
+	cctx.SetMeta("checkout_shipping_method", input.ShippingMethod)
+	cctx.SetMeta("checkout_payment_method", input.PaymentMethod)
 
 	s.log.Info("checkout.started", map[string]interface{}{
 		"cart_id":     cartID,

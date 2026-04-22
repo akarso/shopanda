@@ -3,9 +3,9 @@
 {{ define "content" }}
 <section class="checkout-shell">
     <div class="page-intro checkout-confirmation">
+        {{ if .Confirmation }}
         <span class="eyebrow">Checkout</span>
         <h1>Order Placed</h1>
-        {{ if .Confirmation }}
         <p>Order #{{ .Confirmation.OrderID }}</p>
         <p>{{ .Confirmation.TotalText }}</p>
         <p>{{ .Confirmation.Notice }}</p>
@@ -16,6 +16,10 @@
             <a class="button-link" href="{{ .Confirmation.ViewOrderURL }}">View Order</a>
             <a class="chip" href="{{ .Confirmation.ContinueURL }}">Continue Shopping</a>
         </div>
+        {{ else }}
+        <span class="eyebrow">Checkout</span>
+        <h1>Confirmation unavailable</h1>
+        <p>We could not load the order confirmation details for this page.</p>
         {{ end }}
     </div>
 </section>

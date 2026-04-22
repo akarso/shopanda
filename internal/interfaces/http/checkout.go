@@ -67,7 +67,7 @@ func (h *CheckoutHandler) StartCheckout() http.HandlerFunc {
 
 		customerID := auth.IdentityFrom(r.Context()).UserID
 
-		cctx, err := h.svc.StartCheckout(r.Context(), req.CartID, customerID)
+		cctx, err := h.svc.StartCheckout(r.Context(), req.CartID, customerID, checkoutApp.Input{})
 		if err != nil {
 			JSONError(w, err)
 			return

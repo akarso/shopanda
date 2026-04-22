@@ -19,6 +19,7 @@
     <div class="checkout-grid">
         <section class="checkout-panel">
             <form class="checkout-form" action="/checkout/payment" method="post">
+                <input type="hidden" name="csrf_token" value="{{ .CSRFToken }}">
                 <input type="hidden" name="first_name" value="{{ .Address.FirstName }}">
                 <input type="hidden" name="last_name" value="{{ .Address.LastName }}">
                 <input type="hidden" name="street" value="{{ .Address.Street }}">
@@ -32,7 +33,7 @@
                     <legend>Available rates</legend>
                     {{ range .Rates }}
                     <label class="checkout-rate{{ if .Selected }} checkout-rate--selected{{ end }}">
-                        <input type="radio" name="shipping_method" value="{{ .Method }}" {{ if .Selected }}checked{{ end }}>
+                        <input type="radio" name="shipping_method" value="{{ .Method }}" {{ if .Selected }}checked{{ end }} required>
                         <span>
                             <strong>{{ .Label }}</strong>
                             <small>{{ .Method }}</small>
