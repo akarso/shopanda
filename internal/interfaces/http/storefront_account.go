@@ -194,7 +194,14 @@ func (h *StorefrontHandler) Logout() http.HandlerFunc {
 			return
 		}
 		if customerID := storefrontCustomerID(r); customerID != "" {
-			_ = h.auth.Logout(r.Context(), customerID)
+			if err := h.auth.Logout(r.Context(), customerID); err != nil {
+				h.log.Error("storefront.account.logout_failed", err, map[string]interface{}{
+					"customer_id": customerID,
+					"path":        r.URL.Path,
+				})
+				http.Error(w, "Internal Server Error", http.StatusInternalServerError)
+				return
+			}
 		}
 		storefrontClearSessionCookie(w, r)
 		http.Redirect(w, r, "/account/login?logged_out=1", http.StatusSeeOther)
@@ -461,7 +468,10 @@ func storefrontAccountOrderRow(o *order.Order) StorefrontAccountOrderRow {
 }
 
 func storefrontAccountOrderStatus(status order.OrderStatus) string {
-	return strings.ToUpper(string(status[:1])) + string(status[1:])
+	if status == "" {
+		return ""
+	}
+	return strings.ToUpper(string(status[0])) + string(status[1:])
 }
 
 func storefrontAccountErrorMessage(err error) string {

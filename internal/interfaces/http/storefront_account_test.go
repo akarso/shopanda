@@ -2,6 +2,7 @@ package http_test
 
 import (
 	"context"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -27,6 +28,7 @@ import (
 type storefrontAccountCustomerRepoStub struct {
 	customers map[string]*customer.Customer
 	byEmail   map[string]*customer.Customer
+	bumpErr   error
 }
 
 func newStorefrontAccountCustomerRepoStub() *storefrontAccountCustomerRepoStub {
@@ -63,6 +65,9 @@ func (r *storefrontAccountCustomerRepoStub) ListCustomers(_ context.Context, _, 
 }
 
 func (r *storefrontAccountCustomerRepoStub) BumpTokenGeneration(_ context.Context, customerID string) error {
+	if r.bumpErr != nil {
+		return r.bumpErr
+	}
 	if c := r.customers[customerID]; c != nil {
 		c.BumpTokenGeneration()
 	}
@@ -309,5 +314,44 @@ func TestStorefrontHandler_AccountDelete_RequiresConfirmation(t *testing.T) {
 	}
 	if deleter.deleted != "" {
 		t.Fatalf("deleted = %q, want empty", deleter.deleted)
+	}
+}
+
+func TestStorefrontHandler_AccountLogout_LogoutFailureDoesNotClearCookie(t *testing.T) {
+	engine := createTestTheme(t)
+	pdp := composition.NewPipeline[composition.ProductContext]()
+	plp := composition.NewPipeline[composition.ListingContext]()
+	authSvc, repo := newStorefrontAuthService(t)
+	out, err := authSvc.Register(context.Background(), appAuth.RegisterInput{Email: "ada@example.com", Password: "password123", FirstName: "Ada", LastName: "Lovelace"})
+	if err != nil {
+		t.Fatalf("Register: %v", err)
+	}
+	repo.bumpErr = errors.New("invalidate failed")
+	h := shophttp.NewStorefrontHandler(engine, &mockStorefrontRepo{}, newStorefrontCategoryMock(), pdp, plp, newStorefrontSearchMock()).WithAccount(authSvc, newStorefrontAccountOrderRepoStub(), &storefrontAccountDeleterStub{})
+	router := newStorefrontRouter(h)
+	id, err := identity.NewIdentity(out.CustomerID, identity.RoleCustomer)
+	if err != nil {
+		t.Fatalf("NewIdentity: %v", err)
+	}
+	csrfCookie := storefrontAccountCSRFCookie(t, router, "/account/profile")
+
+	form := url.Values{"csrf_token": {csrfCookie.Value}}
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("POST", "/account/logout", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.AddCookie(csrfCookie)
+	req = req.WithContext(auth.WithIdentity(req.Context(), id))
+	router.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("status = %d, want %d; body: %s", rec.Code, http.StatusInternalServerError, rec.Body.String())
+	}
+	if location := rec.Header().Get("Location"); location != "" {
+		t.Fatalf("location = %q, want empty", location)
+	}
+	for _, cookie := range rec.Result().Cookies() {
+		if cookie.Name == "shopanda_storefront_session" && cookie.MaxAge < 0 {
+			t.Fatalf("unexpected cleared storefront session cookie on logout failure")
+		}
 	}
 }

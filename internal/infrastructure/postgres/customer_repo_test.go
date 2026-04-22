@@ -254,6 +254,25 @@ func TestCustomerRepo_ChangePasswordAndBumpTokenGeneration(t *testing.T) {
 	}
 }
 
+func TestCustomerRepo_ChangePasswordAndBumpTokenGeneration_NotFound(t *testing.T) {
+	db := testDB(t)
+	ensureMigrations(t, db)
+
+	repo, err := postgres.NewCustomerRepo(db)
+	if err != nil {
+		t.Fatalf("NewCustomerRepo: %v", err)
+	}
+	ctx := context.Background()
+
+	err = repo.ChangePasswordAndBumpTokenGeneration(ctx, id.New(), "irrelevant")
+	if err == nil {
+		t.Fatal("expected error for non-existent customer")
+	}
+	if !apperror.Is(err, apperror.CodeNotFound) {
+		t.Fatalf("expected not_found error, got %v", err)
+	}
+}
+
 func TestCustomerRepo_WithTx_CommitVisible(t *testing.T) {
 	db := testDB(t)
 	ensureMigrations(t, db)
