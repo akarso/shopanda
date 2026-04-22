@@ -104,11 +104,12 @@ type Plugin interface {
 
 Plugins can:
 
-- Register providers.
-- Extend pipelines.
-- Listen to events.
-- Customize admin behavior.
+- Extend pricing, checkout, and composition pipelines.
+- Listen to sync and async events.
+- Register permissions.
 - Add optional integrations and advanced capabilities.
+
+Infrastructure adapters such as payment, shipping, storage, and search are currently wired explicitly in application code rather than discovered dynamically through the plugin registry.
 
 The core is designed to stay stable while plugins handle variation.
 
@@ -142,18 +143,30 @@ The long-term goal is to build a commerce engine that is:
 ## Quick start
 
 ```bash
-git clone <repo>
+git clone https://github.com/akarso/shopanda.git
 cd shopanda
-./app migrate
+cp .env.example .env
+go build -o app ./cmd/api
+./app setup
 ./app serve
 ```
+
+For a complete operator-focused setup, including Docker, health checks, and environment variables, see [docs/guides/DEPLOYMENT.md](docs/guides/DEPLOYMENT.md).
 
 ### CLI commands
 
 | Command | Description |
 |---|---|
+| `help` | Show built-in command help |
+| `setup` | Run first-time setup (connectivity check, migrations, seed) |
 | `migrate` | Run database schema migrations |
 | `serve` | Start the HTTP server (default) |
+| `worker` | Start the background job worker |
+| `scheduler` | Start the cron scheduler |
+| `seed` | Run seed data framework |
+| `search:reindex` | Re-index all products in the search engine |
+| `config:export` | Export configuration to stdout as YAML |
+| `config:import <file.yaml>` | Import configuration from YAML |
 | `import:products <file.csv>` | Bulk import products from CSV |
 | `export:products <file.csv>` | Export products and variants to CSV |
 | `import:stock <file.csv>` | Import stock quantities from CSV |
@@ -166,16 +179,12 @@ cd shopanda
 | `export:categories <file.csv>` | Export category tree to CSV |
 | `import:prices <file.csv>` | Import prices from CSV |
 | `export:prices <file.csv>` | Export prices to CSV |
-| `seed` | Run seed data framework |
-| `config:import <file.yaml>` | Import configuration from YAML |
-| `config:export <file.yaml>` | Export configuration to YAML |
-| `scheduler` | Run background job scheduler |
 
-See the full [CLI Commands](docs/CLI_COMMANDS.md) doc for details.
+Run `./app help` for the live command list from the current binary.
 
 ## Documentation
 
-All specs live in [`docs/`](docs/):
+Current guides live in [`docs/guides/`](docs/guides/):
 
 ### Guides
 
@@ -183,52 +192,20 @@ All specs live in [`docs/`](docs/):
 - [Deployment Guide](docs/guides/DEPLOYMENT.md) — Docker, bare metal, cloud deployment, TLS, backups, and monitoring
 - [Developer Guide](docs/guides/DEVELOPER.md) — plugin contracts, extension points, events, pipelines, and API integration
 
-### Architecture & Design
+### Planning & Reference
 
-- [Foundation](docs/FOUNDATION.md) — vision and principles
-- [Domain Model](docs/DOMAIN_MODEL.md) — schema and entities
-- [Project Structure](docs/PROJECT_STRUCTURE.md) — code organization
-- [Web API](docs/WEB_API.md) — REST endpoints
-- [Event System](docs/EVENT_SYSTEM.md) — pub/sub events
-- [Plugin Guide](docs/PLUGIN_LIFECYCLE.md) — plugin lifecycle
-- [Backend Guide](docs/BACKEND.md) — implementation patterns
-- [Frontend Guide](docs/FRONTEND.md) — rendering strategy
+- [Phase 1 Roadmap](docs/phase-1-core/ROADMAP.md) — core platform milestones and archived planning context
+- [Phase 2 Roadmap](docs/phase-2-merchant-ready/ROADMAP.md) — merchant-ready milestones and implementation history
+- [C4 Context Diagram](docs/diagrams/c4-context.md) — system context
+- [C4 Container Diagram](docs/diagrams/c4-container.md) — runtime containers
+- [C4 Component Diagram](docs/diagrams/c4-component.md) — major component boundaries
+- [C4 Code Diagram](docs/diagrams/c4-code.md) — code-level structure
 
-### Commerce Domains
+Historical phase specs and implementation notes remain under:
 
-- [Pricing Pipeline](docs/PRICING_PIPELINE.md) — deterministic pricing
-- [Checkout Workflow](docs/CHECKOUT_WORKFLOW.md) — ordered checkout flow
-- [Order & Cart](docs/ORDER_CART_DOMAIN.md) — cart and order domain
-- [Composition Pipeline](docs/COMPOSITION_PIPELINE.md) — PDP/PLP response enrichment
-- [Inventory](docs/STOCK.md) — stock management
-- [Taxes](docs/TAXES.md) — VAT calculation
-- [Promotions](docs/PROMOTIONS.md) — discounts and coupons
-- [Rules](docs/RULES.md) — condition primitives
-- [Invoicing](docs/INVOICING.md) — invoice generation
-
-### Infrastructure & Operations
-
-- [Admin Schemas](docs/ADMIN_SCHEMA.md) — schema-driven forms and grids
-- [Theme System](docs/THEME_SYSTEM.md) — SSR theme engine
-- [Data Exchange](docs/DATA_EXCHANGE.md) — CSV import/export
-- [CLI Commands](docs/CLI_COMMANDS.md) — available commands
-- [Search](docs/SEARCH_SYSTEM.md) — full-text search
-- [Mailer](docs/MAILER.md) — email delivery
-- [Media](docs/MEDIA_ASSETS.md) — file storage
-- [Jobs & Queue](docs/JOBS_QUEUE_SYSTEM.md) — async job processing
-- [Cron](docs/CRON.md) — scheduled tasks
-- [Caching](docs/CACHING.md) — key-value cache
-- [Configuration](docs/CONFIGURATION_SYSTEM.md) — runtime config
-- [Routing](docs/ROUTING.md) — URL rewrites
-- [CMS](docs/CMS.md) — content pages
-
-### Cross-Cutting
-
-- [SEO](docs/SEO.md) — structured data and discoverability
-- [Multi-Store](docs/STORES_CURRENCIES.md) — stores and currencies
-- [Localization](docs/I18N.md) — translations
-- [Legal](docs/LEGAL.md) — GDPR and compliance
-- [Performance](docs/PERFORMANCE.md) — CDN and caching
+- [`docs/phase-1-core/specs/`](docs/phase-1-core/specs/) for core design specs
+- [`docs/phase-2-merchant-ready/specs/`](docs/phase-2-merchant-ready/specs/) for merchant-ready specs
+- [`docs/phase-1-core/prs/`](docs/phase-1-core/prs/) and [`docs/phase-2-merchant-ready/prs/`](docs/phase-2-merchant-ready/prs/) for implementation notes
 
 ## License
 
