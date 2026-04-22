@@ -48,6 +48,9 @@ func (m *mockCustomerRepoForImport) ListCustomers(_ context.Context, _, _ int) (
 func (m *mockCustomerRepoForImport) BumpTokenGeneration(_ context.Context, _ string) error {
 	return nil
 }
+func (m *mockCustomerRepoForImport) ChangePasswordAndBumpTokenGeneration(_ context.Context, _ string, _ string) error {
+	return nil
+}
 func (m *mockCustomerRepoForImport) Delete(_ context.Context, _ string) error     { return nil }
 func (m *mockCustomerRepoForImport) WithTx(_ *sql.Tx) customer.CustomerRepository { return m }
 

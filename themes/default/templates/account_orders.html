@@ -1,0 +1,36 @@
+{{ define "title" }}Order History{{ end }}
+
+{{ define "content" }}
+<section class="account-shell">
+    <div class="page-intro">
+        <span class="eyebrow">Account</span>
+        <h1>Order history</h1>
+        <p>Review previous orders and open the detail view for each purchase.</p>
+    </div>
+
+    <section class="account-panel">
+        {{ if .Orders }}
+        <div class="account-orders-table" role="table" aria-label="Order history">
+            <div class="account-orders-table__head" role="row">
+                <span role="columnheader">Order</span>
+                <span role="columnheader">Date</span>
+                <span role="columnheader">Total</span>
+                <span role="columnheader">Status</span>
+            </div>
+            {{ range .Orders }}
+            <a class="account-orders-table__row" role="row" href="{{ .URL }}">
+                <strong role="cell">{{ .ID }}</strong>
+                <span role="cell">{{ .DateText }}</span>
+                <span role="cell">{{ .TotalText }}</span>
+                <span class="status-pill" role="cell">{{ .Status }}</span>
+            </a>
+            {{ end }}
+        </div>
+        {{ else }}
+        <p class="muted-note">{{ .EmptyMessage }}</p>
+        {{ end }}
+    </section>
+</section>
+{{ end }}
+
+{{ template "layout.html" . }}

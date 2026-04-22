@@ -221,6 +221,58 @@ func TestCustomerRepo_Update_NotFound(t *testing.T) {
 	}
 }
 
+func TestCustomerRepo_ChangePasswordAndBumpTokenGeneration(t *testing.T) {
+	db := testDB(t)
+	ensureMigrations(t, db)
+	t.Cleanup(func() { db.Exec("DELETE FROM customers") })
+
+	repo, err := postgres.NewCustomerRepo(db)
+	if err != nil {
+		t.Fatalf("NewCustomerRepo: %v", err)
+	}
+	ctx := context.Background()
+
+	c := mustNewCustomer(t, "password@example.com")
+	c.PasswordHash = "old-hash"
+	if err := repo.Create(ctx, &c); err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+
+	if err := repo.ChangePasswordAndBumpTokenGeneration(ctx, c.ID, "new-hash"); err != nil {
+		t.Fatalf("ChangePasswordAndBumpTokenGeneration: %v", err)
+	}
+
+	got, err := repo.FindByID(ctx, c.ID)
+	if err != nil {
+		t.Fatalf("FindByID: %v", err)
+	}
+	if got.PasswordHash != "new-hash" {
+		t.Fatalf("PasswordHash = %q, want %q", got.PasswordHash, "new-hash")
+	}
+	if got.TokenGeneration != 1 {
+		t.Fatalf("TokenGeneration = %d, want %d", got.TokenGeneration, 1)
+	}
+}
+
+func TestCustomerRepo_ChangePasswordAndBumpTokenGeneration_NotFound(t *testing.T) {
+	db := testDB(t)
+	ensureMigrations(t, db)
+
+	repo, err := postgres.NewCustomerRepo(db)
+	if err != nil {
+		t.Fatalf("NewCustomerRepo: %v", err)
+	}
+	ctx := context.Background()
+
+	err = repo.ChangePasswordAndBumpTokenGeneration(ctx, id.New(), "irrelevant")
+	if err == nil {
+		t.Fatal("expected error for non-existent customer")
+	}
+	if !apperror.Is(err, apperror.CodeNotFound) {
+		t.Fatalf("expected not_found error, got %v", err)
+	}
+}
+
 func TestCustomerRepo_WithTx_CommitVisible(t *testing.T) {
 	db := testDB(t)
 	ensureMigrations(t, db)

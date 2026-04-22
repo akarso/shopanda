@@ -184,6 +184,28 @@ func (r *CustomerRepo) BumpTokenGeneration(ctx context.Context, customerID strin
 	return nil
 }
 
+// ChangePasswordAndBumpTokenGeneration atomically updates the password hash and
+// invalidates previously issued tokens.
+func (r *CustomerRepo) ChangePasswordAndBumpTokenGeneration(ctx context.Context, customerID, passwordHash string) error {
+	const q = `UPDATE customers
+		SET password_hash = $1, token_generation = token_generation + 1, updated_at = $2
+		WHERE id = $3`
+
+	result, err := r.exec(ctx, q, passwordHash, time.Now().UTC(), customerID)
+	if err != nil {
+		return fmt.Errorf("customer_repo: change password and bump token generation: %w", err)
+	}
+
+	rows, err := result.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("customer_repo: change password and bump token generation rows affected: %w", err)
+	}
+	if rows == 0 {
+		return apperror.NotFound("customer not found")
+	}
+	return nil
+}
+
 // Delete removes a customer by ID.
 func (r *CustomerRepo) Delete(ctx context.Context, id string) error {
 	const q = `DELETE FROM customers WHERE id = $1`

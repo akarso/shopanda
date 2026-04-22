@@ -611,6 +611,91 @@ input {
     margin-top: 1rem;
 }
 
+.account-shell {
+    display: grid;
+    gap: 1rem;
+    margin-top: 1rem;
+}
+
+.account-grid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 1rem;
+}
+
+.account-panel {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-lg);
+    box-shadow: var(--shadow);
+    padding: 1.25rem;
+    display: grid;
+    gap: 1rem;
+}
+
+.account-notice {
+    margin: 0;
+    padding: 0.9rem 1rem;
+    border-radius: var(--radius-md);
+    background: rgba(60, 120, 72, 0.12);
+    border: 1px solid rgba(60, 120, 72, 0.2);
+    color: #234b2d;
+}
+
+.account-profile-meta {
+    display: grid;
+    gap: 0.35rem;
+    padding: 1rem;
+    border-radius: var(--radius-md);
+    background: rgba(255, 250, 242, 0.72);
+    border: 1px solid var(--border);
+}
+
+.account-orders-table {
+    display: grid;
+    gap: 0.75rem;
+}
+
+.account-orders-table__head,
+.account-orders-table__row {
+    display: grid;
+    grid-template-columns: minmax(0, 1.2fr) repeat(3, minmax(120px, 1fr));
+    gap: 0.75rem;
+    align-items: center;
+    padding: 1rem;
+    border-radius: var(--radius-md);
+    border: 1px solid var(--border);
+    background: rgba(255, 250, 242, 0.72);
+}
+
+.account-orders-table__head {
+    font-weight: 700;
+    color: var(--muted);
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    font-size: 0.8rem;
+}
+
+.account-orders-table__row {
+    text-decoration: none;
+}
+
+.account-delete-form button,
+.account-logout-form button {
+    border: 0;
+    border-radius: var(--radius-sm);
+    padding: 0.85rem 1.25rem;
+    color: #fff;
+}
+
+.account-delete-form button {
+    background: #912f2f;
+}
+
+.account-logout-form button {
+    background: linear-gradient(135deg, var(--accent), var(--accent-deep));
+}
+
 .checkout-progress {
     margin: 0;
     padding: 0;
@@ -881,6 +966,9 @@ code {
     .listing-toolbar,
     .product-listing--grid,
     .product-card__meta,
+    .account-grid,
+    .account-orders-table__head,
+    .account-orders-table__row,
     .checkout-grid,
     .checkout-progress,
     .checkout-form__grid,

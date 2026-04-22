@@ -18,6 +18,18 @@ func AuthMiddleware(parser auth.TokenParser) Middleware {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			header := r.Header.Get("Authorization")
 			if header == "" {
+				if token := storefrontSessionToken(r); token != "" {
+					id, err := parser.Parse(r.Context(), token)
+					if err == nil {
+						ctx := auth.WithIdentity(r.Context(), id)
+						next.ServeHTTP(w, r.WithContext(ctx))
+						return
+					}
+				}
+				if existing := auth.IdentityFrom(r.Context()); !existing.IsGuest() {
+					next.ServeHTTP(w, r)
+					return
+				}
 				ctx := auth.WithIdentity(r.Context(), identity.Guest())
 				next.ServeHTTP(w, r.WithContext(ctx))
 				return

@@ -148,6 +148,31 @@ func createTestTheme(t *testing.T) *theme.Engine {
 		t.Fatal(err)
 	}
 
+	accountLogin := `{{ define "title" }}Account Login{{ end }}{{ define "content" }}<section><h1>Sign in</h1>{{ if .SuccessMessage }}<p>{{ .SuccessMessage }}</p>{{ end }}{{ if .ErrorMessage }}<p>{{ .ErrorMessage }}</p>{{ end }}<form action="/account/login" method="post"><input type="hidden" name="csrf_token" value="{{ .CSRFToken }}"><input type="hidden" name="redirect_to" value="{{ .RedirectTo }}"><input name="email" value="{{ .Email }}"><input name="password" type="password"><button type="submit">Login</button></form><a href="/account/register">Register</a></section>{{ end }}{{ template "layout.html" . }}`
+	if err := os.WriteFile(filepath.Join(tplDir, "account_login.html"), []byte(accountLogin), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	accountRegister := `{{ define "title" }}Account Register{{ end }}{{ define "content" }}<section><h1>Create account</h1>{{ if .SuccessMessage }}<p>{{ .SuccessMessage }}</p>{{ end }}{{ if .ErrorMessage }}<p>{{ .ErrorMessage }}</p>{{ end }}<form action="/account/register" method="post"><input type="hidden" name="csrf_token" value="{{ .CSRFToken }}"><input type="hidden" name="redirect_to" value="{{ .RedirectTo }}"><input name="first_name" value="{{ .FirstName }}"><input name="last_name" value="{{ .LastName }}"><input name="email" value="{{ .Email }}"><input name="password" type="password"><button type="submit">Create Account</button></form></section>{{ end }}{{ template "layout.html" . }}`
+	if err := os.WriteFile(filepath.Join(tplDir, "account_register.html"), []byte(accountRegister), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	accountOrders := `{{ define "title" }}Account Orders{{ end }}{{ define "content" }}<section><h1>Your Orders</h1>{{ range .Orders }}<article><a href="{{ .URL }}">{{ .ID }}</a><span>{{ .DateText }}</span><strong>{{ .TotalText }}</strong><em>{{ .Status }}</em></article>{{ else }}<p>{{ .EmptyMessage }}</p>{{ end }}</section>{{ end }}{{ template "layout.html" . }}`
+	if err := os.WriteFile(filepath.Join(tplDir, "account_orders.html"), []byte(accountOrders), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	accountOrderDetail := `{{ define "title" }}Account Order{{ end }}{{ define "content" }}<section><h1>Order {{ .OrderID }}</h1><p>{{ .Status }}</p><p>{{ .TotalText }}</p>{{ range .Items }}<article><strong>{{ .Name }}</strong><span>{{ .Quantity }}</span><span>{{ .LineTotalText }}</span></article>{{ end }}<a href="{{ .BackURL }}">Back</a></section>{{ end }}{{ template "layout.html" . }}`
+	if err := os.WriteFile(filepath.Join(tplDir, "account_order_detail.html"), []byte(accountOrderDetail), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	accountProfile := `{{ define "title" }}Account Profile{{ end }}{{ define "content" }}<section><h1>Profile</h1>{{ if .SuccessMessage }}<p>{{ .SuccessMessage }}</p>{{ end }}{{ if .ProfileErrorMessage }}<p>{{ .ProfileErrorMessage }}</p>{{ end }}{{ if .PasswordErrorMessage }}<p>{{ .PasswordErrorMessage }}</p>{{ end }}<p>{{ .Email }}</p><form action="/account/profile" method="post"><input type="hidden" name="csrf_token" value="{{ .CSRFToken }}"><input name="first_name" value="{{ .FirstName }}"><input name="last_name" value="{{ .LastName }}"><button type="submit">Save</button></form><form action="/account/profile/password" method="post"><input type="hidden" name="csrf_token" value="{{ .CSRFToken }}"><input name="current_password" type="password"><input name="new_password" type="password"><button type="submit">Change Password</button></form><form action="/account/profile/delete" method="post"><input type="hidden" name="csrf_token" value="{{ .CSRFToken }}"><button type="submit">Delete Account</button></form></section>{{ end }}{{ template "layout.html" . }}`
+	if err := os.WriteFile(filepath.Join(tplDir, "account_profile.html"), []byte(accountProfile), 0644); err != nil {
+		t.Fatal(err)
+	}
+
 	engine, err := theme.Load(dir)
 	if err != nil {
 		t.Fatal(err)
@@ -189,6 +214,17 @@ func newStorefrontRouter(h *shophttp.StorefrontHandler) http.Handler {
 	router := shophttp.NewRouter()
 	router.Use(shophttp.CSRFMiddleware())
 	router.HandleFunc("GET /{$}", h.Home())
+	router.HandleFunc("GET /account/login", h.Login())
+	router.HandleFunc("POST /account/login", h.Login())
+	router.HandleFunc("GET /account/register", h.Register())
+	router.HandleFunc("POST /account/register", h.Register())
+	router.HandleFunc("POST /account/logout", h.Logout())
+	router.HandleFunc("GET /account/orders", h.AccountOrders())
+	router.HandleFunc("GET /account/orders/{orderId}", h.AccountOrderDetail())
+	router.HandleFunc("GET /account/profile", h.AccountProfile())
+	router.HandleFunc("POST /account/profile", h.AccountProfile())
+	router.HandleFunc("POST /account/profile/password", h.AccountPassword())
+	router.HandleFunc("POST /account/profile/delete", h.AccountDelete())
 	router.HandleFunc("GET /cart", h.Cart())
 	router.HandleFunc("GET /checkout/address", h.CheckoutAddress())
 	router.HandleFunc("GET /checkout/shipping", h.CheckoutShipping())

@@ -3,6 +3,7 @@ package auth
 import (
 	"context"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/akarso/shopanda/internal/domain/customer"
@@ -59,6 +60,91 @@ func NewService(
 		log:       log,
 		resetTTL:  resetTTL,
 	}
+}
+
+// UpdateProfileInput contains editable customer profile fields.
+type UpdateProfileInput struct {
+	CustomerID string
+	FirstName  string
+	LastName   string
+}
+
+// UpdateProfile updates the customer's profile fields.
+func (s *Service) UpdateProfile(ctx context.Context, in UpdateProfileInput) (*customer.Customer, error) {
+	if strings.TrimSpace(in.CustomerID) == "" {
+		return nil, apperror.Validation("customer id is required")
+	}
+
+	c, err := s.customers.FindByID(ctx, in.CustomerID)
+	if err != nil {
+		return nil, fmt.Errorf("auth service: update profile: %w", err)
+	}
+	if c == nil {
+		return nil, apperror.NotFound("customer not found")
+	}
+
+	c.FirstName = strings.TrimSpace(in.FirstName)
+	c.LastName = strings.TrimSpace(in.LastName)
+	c.UpdatedAt = time.Now().UTC()
+
+	if err := s.customers.Update(ctx, c); err != nil {
+		return nil, fmt.Errorf("auth service: update profile: %w", err)
+	}
+
+	s.log.Info("auth.profile.updated", map[string]interface{}{
+		"customer_id": c.ID,
+	})
+
+	return c, nil
+}
+
+// ChangePasswordInput contains the fields required to change a password.
+type ChangePasswordInput struct {
+	CustomerID      string
+	CurrentPassword string
+	NewPassword     string
+}
+
+// ChangePassword validates the current password, sets the new password, and
+// invalidates previously issued tokens.
+func (s *Service) ChangePassword(ctx context.Context, in ChangePasswordInput) error {
+	if strings.TrimSpace(in.CustomerID) == "" {
+		return apperror.Validation("customer id is required")
+	}
+	if in.CurrentPassword == "" {
+		return apperror.Validation("current password is required")
+	}
+	if in.NewPassword == "" {
+		return apperror.Validation("new password is required")
+	}
+	if len(in.NewPassword) < 8 {
+		return apperror.Validation("password must be at least 8 characters")
+	}
+
+	c, err := s.customers.FindByID(ctx, in.CustomerID)
+	if err != nil {
+		return fmt.Errorf("auth service: change password: %w", err)
+	}
+	if c == nil {
+		return apperror.NotFound("customer not found")
+	}
+	if err := password.Compare(c.PasswordHash, in.CurrentPassword); err != nil {
+		return apperror.Unauthorized("current password is incorrect")
+	}
+
+	hash, err := password.Hash(in.NewPassword)
+	if err != nil {
+		return fmt.Errorf("auth service: change password: %w", err)
+	}
+	if err := s.customers.ChangePasswordAndBumpTokenGeneration(ctx, c.ID, hash); err != nil {
+		return fmt.Errorf("auth service: change password: %w", err)
+	}
+
+	s.log.Info("auth.password.changed", map[string]interface{}{
+		"customer_id": c.ID,
+	})
+
+	return nil
 }
 
 // RegisterInput contains the fields for customer registration.

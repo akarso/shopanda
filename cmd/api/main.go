@@ -863,7 +863,8 @@ func runServe(cfg *config.Config, log logger.Logger) error {
 		}
 		storefront := shophttp.NewStorefrontHandler(themeEngine, productRepo, categoryRepo, pdp, plp, searchEngine).
 			WithCart(variantRepo, cartService).
-			WithCheckout([]shipping.Provider{flatRateProvider}, payProvider, checkoutService)
+			WithCheckout([]shipping.Provider{flatRateProvider}, payProvider, checkoutService).
+			WithAccount(authService, orderRepo, accountService)
 		staticDir := filepath.Join(cfg.Frontend.ThemePath, "static")
 		staticHandler := http.StripPrefix("/static/", http.FileServer(http.Dir(staticDir)))
 		router.Handle("GET /static/{path...}", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -871,6 +872,17 @@ func runServe(cfg *config.Config, log logger.Logger) error {
 			staticHandler.ServeHTTP(w, r)
 		}))
 		router.HandleFunc("GET /cart", storefront.Cart())
+		router.HandleFunc("GET /account/login", storefront.Login())
+		router.HandleFunc("POST /account/login", storefront.Login())
+		router.HandleFunc("GET /account/register", storefront.Register())
+		router.HandleFunc("POST /account/register", storefront.Register())
+		router.HandleFunc("POST /account/logout", storefront.Logout())
+		router.HandleFunc("GET /account/orders", storefront.AccountOrders())
+		router.HandleFunc("GET /account/orders/{orderId}", storefront.AccountOrderDetail())
+		router.HandleFunc("GET /account/profile", storefront.AccountProfile())
+		router.HandleFunc("POST /account/profile", storefront.AccountProfile())
+		router.HandleFunc("POST /account/profile/password", storefront.AccountPassword())
+		router.HandleFunc("POST /account/profile/delete", storefront.AccountDelete())
 		router.HandleFunc("GET /checkout/address", storefront.CheckoutAddress())
 		router.HandleFunc("GET /checkout/shipping", storefront.CheckoutShipping())
 		router.HandleFunc("POST /checkout/shipping", storefront.CheckoutShipping())

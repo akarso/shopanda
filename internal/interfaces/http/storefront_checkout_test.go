@@ -137,7 +137,7 @@ func storefrontCheckoutCSRFCookie(t *testing.T, handler http.Handler, customerID
 	handler.ServeHTTP(rec, req)
 
 	for _, cookie := range rec.Result().Cookies() {
-		if cookie.Name == "shopanda_checkout_csrf" {
+		if cookie.Name == "shopanda_csrf" {
 			return cookie
 		}
 	}
@@ -232,7 +232,7 @@ func TestStorefrontHandler_CheckoutFlow_Manual_OK(t *testing.T) {
 	}
 	var csrfCookie *http.Cookie
 	for _, cookie := range addressRec.Result().Cookies() {
-		if cookie.Name == "shopanda_checkout_csrf" {
+		if cookie.Name == "shopanda_csrf" {
 			csrfCookie = cookie
 			break
 		}
@@ -360,7 +360,7 @@ func TestStorefrontHandler_CheckoutConfirm_SanitizesServerErrors(t *testing.T) {
 	rec := httptest.NewRecorder()
 	req := storefrontCustomerRequest(httptest.NewRequest("POST", "/checkout/confirm", strings.NewReader(confirmForm.Encode())), "cust-1")
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	req.AddCookie(&http.Cookie{Name: "shopanda_checkout_csrf", Value: confirmForm.Get("csrf_token")})
+	req.AddCookie(&http.Cookie{Name: "shopanda_csrf", Value: confirmForm.Get("csrf_token")})
 	router.ServeHTTP(rec, req)
 
 	if rec.Code != http.StatusInternalServerError {

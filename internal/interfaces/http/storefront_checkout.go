@@ -312,7 +312,7 @@ func (h *StorefrontHandler) buildCheckoutPageData(r *http.Request, currentCart *
 		Items:          cartPage.Items,
 		Summary:        cartPage.Summary,
 		Countries:      storefrontCheckoutCountryOptions(""),
-		CSRFToken:      storefrontCSRFToken(r),
+		CSRFToken:      shopandaCSRFToken(r),
 		PrimaryAction:  "/checkout/shipping",
 		SecondaryURL:   "/cart",
 		SecondaryLabel: "Back to cart",

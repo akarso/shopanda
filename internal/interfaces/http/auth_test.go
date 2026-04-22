@@ -73,6 +73,16 @@ func (r *authMockCustomerRepo) BumpTokenGeneration(_ context.Context, customerID
 	return nil
 }
 
+func (r *authMockCustomerRepo) ChangePasswordAndBumpTokenGeneration(_ context.Context, customerID, passwordHash string) error {
+	c := r.customers[customerID]
+	if c == nil {
+		return apperror.NotFound("customer not found")
+	}
+	c.PasswordHash = passwordHash
+	c.BumpTokenGeneration()
+	return nil
+}
+
 func (r *authMockCustomerRepo) WithTx(_ *sql.Tx) customer.CustomerRepository {
 	return r
 }

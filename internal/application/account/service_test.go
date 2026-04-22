@@ -31,6 +31,9 @@ func (m *mockCustomerRepo) ListCustomers(context.Context, int, int) ([]customer.
 	return nil, nil
 }
 func (m *mockCustomerRepo) BumpTokenGeneration(context.Context, string) error { return nil }
+func (m *mockCustomerRepo) ChangePasswordAndBumpTokenGeneration(context.Context, string, string) error {
+	return nil
+}
 func (m *mockCustomerRepo) Delete(ctx context.Context, id string) error {
 	if m.deleteFn != nil {
 		return m.deleteFn(ctx, id)

@@ -10,27 +10,27 @@ import (
 	"strings"
 )
 
-const storefrontCSRFCookieName = "shopanda_checkout_csrf"
+const shopandaCSRFCookieName = "shopanda_csrf"
 
-type storefrontCSRFContextKey struct{}
+type shopandaCSRFContextKey struct{}
 
 func CSRFMiddleware(trustedProxies ...string) Middleware {
 	trustedNets := parseTrustedProxies(trustedProxies)
 
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			if !strings.HasPrefix(r.URL.Path, "/checkout/") {
+			if !shopandaRequiresCSRFPath(r.URL.Path) {
 				next.ServeHTTP(w, r)
 				return
 			}
 
-			token, err := storefrontEnsureCSRFToken(w, r, trustedNets)
+			token, err := shopandaEnsureCSRFToken(w, r, trustedNets)
 			if err != nil {
 				http.Error(w, "internal server error", http.StatusInternalServerError)
 				return
 			}
 
-			if storefrontRequiresCSRFValidation(r.Method) {
+			if shopandaRequiresCSRFValidation(r.Method) {
 				if err := r.ParseForm(); err != nil {
 					http.Error(w, "forbidden", http.StatusForbidden)
 					return
@@ -42,40 +42,40 @@ func CSRFMiddleware(trustedProxies ...string) Middleware {
 				}
 			}
 
-			ctx := context.WithValue(r.Context(), storefrontCSRFContextKey{}, token)
+			ctx := context.WithValue(r.Context(), shopandaCSRFContextKey{}, token)
 			next.ServeHTTP(w, r.WithContext(ctx))
 		})
 	}
 }
 
-func storefrontCSRFToken(r *http.Request) string {
+func shopandaCSRFToken(r *http.Request) string {
 	if r == nil {
 		return ""
 	}
-	if token, ok := r.Context().Value(storefrontCSRFContextKey{}).(string); ok {
+	if token, ok := r.Context().Value(shopandaCSRFContextKey{}).(string); ok {
 		return token
 	}
-	cookie, err := r.Cookie(storefrontCSRFCookieName)
+	cookie, err := r.Cookie(shopandaCSRFCookieName)
 	if err != nil {
 		return ""
 	}
 	return cookie.Value
 }
 
-func storefrontEnsureCSRFToken(w http.ResponseWriter, r *http.Request, trusted []*net.IPNet) (string, error) {
-	if cookie, err := r.Cookie(storefrontCSRFCookieName); err == nil && cookie.Value != "" {
+func shopandaEnsureCSRFToken(w http.ResponseWriter, r *http.Request, trusted []*net.IPNet) (string, error) {
+	if cookie, err := r.Cookie(shopandaCSRFCookieName); err == nil && cookie.Value != "" {
 		return cookie.Value, nil
 	}
 
-	token, err := storefrontGenerateCSRFToken()
+	token, err := shopandaGenerateCSRFToken()
 	if err != nil {
 		return "", err
 	}
 
 	http.SetCookie(w, &http.Cookie{
-		Name:     storefrontCSRFCookieName,
+		Name:     shopandaCSRFCookieName,
 		Value:    token,
-		Path:     "/checkout/",
+		Path:     "/",
 		HttpOnly: true,
 		Secure:   isRequestSecure(r, trusted),
 		SameSite: http.SameSiteStrictMode,
@@ -84,7 +84,7 @@ func storefrontEnsureCSRFToken(w http.ResponseWriter, r *http.Request, trusted [
 	return token, nil
 }
 
-func storefrontGenerateCSRFToken() (string, error) {
+func shopandaGenerateCSRFToken() (string, error) {
 	buf := make([]byte, 32)
 	if _, err := rand.Read(buf); err != nil {
 		return "", err
@@ -92,13 +92,17 @@ func storefrontGenerateCSRFToken() (string, error) {
 	return hex.EncodeToString(buf), nil
 }
 
-func storefrontRequiresCSRFValidation(method string) bool {
+func shopandaRequiresCSRFValidation(method string) bool {
 	switch method {
 	case http.MethodGet, http.MethodHead, http.MethodOptions:
 		return false
 	default:
 		return true
 	}
+}
+
+func shopandaRequiresCSRFPath(path string) bool {
+	return strings.HasPrefix(path, "/checkout/") || strings.HasPrefix(path, "/account/")
 }
 
 func isRequestSecure(r *http.Request, trusted []*net.IPNet) bool {
