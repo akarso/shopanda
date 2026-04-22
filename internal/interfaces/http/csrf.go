@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"crypto/subtle"
 	"encoding/hex"
+	"net"
 	"net/http"
 	"strings"
 )
@@ -13,7 +14,9 @@ const storefrontCSRFCookieName = "shopanda_checkout_csrf"
 
 type storefrontCSRFContextKey struct{}
 
-func CSRFMiddleware() Middleware {
+func CSRFMiddleware(trustedProxies ...string) Middleware {
+	trustedNets := parseTrustedProxies(trustedProxies)
+
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			if !strings.HasPrefix(r.URL.Path, "/checkout/") {
@@ -21,7 +24,7 @@ func CSRFMiddleware() Middleware {
 				return
 			}
 
-			token, err := storefrontEnsureCSRFToken(w, r)
+			token, err := storefrontEnsureCSRFToken(w, r, trustedNets)
 			if err != nil {
 				http.Error(w, "internal server error", http.StatusInternalServerError)
 				return
@@ -59,7 +62,7 @@ func storefrontCSRFToken(r *http.Request) string {
 	return cookie.Value
 }
 
-func storefrontEnsureCSRFToken(w http.ResponseWriter, r *http.Request) (string, error) {
+func storefrontEnsureCSRFToken(w http.ResponseWriter, r *http.Request, trusted []*net.IPNet) (string, error) {
 	if cookie, err := r.Cookie(storefrontCSRFCookieName); err == nil && cookie.Value != "" {
 		return cookie.Value, nil
 	}
@@ -74,7 +77,7 @@ func storefrontEnsureCSRFToken(w http.ResponseWriter, r *http.Request) (string, 
 		Value:    token,
 		Path:     "/checkout/",
 		HttpOnly: true,
-		Secure:   r.TLS != nil,
+		Secure:   isRequestSecure(r, trusted),
 		SameSite: http.SameSiteStrictMode,
 	})
 
@@ -96,4 +99,21 @@ func storefrontRequiresCSRFValidation(method string) bool {
 	default:
 		return true
 	}
+}
+
+func isRequestSecure(r *http.Request, trusted []*net.IPNet) bool {
+	if r == nil {
+		return false
+	}
+	if r.TLS != nil {
+		return true
+	}
+	if len(trusted) == 0 || !isTrustedProxy(peerIP(r), trusted) {
+		return false
+	}
+	forwardedProto := strings.TrimSpace(r.Header.Get("X-Forwarded-Proto"))
+	if i := strings.IndexByte(forwardedProto, ','); i >= 0 {
+		forwardedProto = strings.TrimSpace(forwardedProto[:i])
+	}
+	return strings.EqualFold(forwardedProto, "https")
 }

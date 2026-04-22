@@ -47,21 +47,22 @@ func (s *Service) StartCheckout(ctx context.Context, cartID, customerID string, 
 		return nil, apperror.Validation("customer id must not be empty")
 	}
 	input.Address = input.Address.Normalize()
-	if !input.Address.IsZero() {
-		switch {
-		case input.Address.FirstName == "":
-			return nil, apperror.Validation("first name is required")
-		case input.Address.LastName == "":
-			return nil, apperror.Validation("last name is required")
-		case input.Address.Street == "":
-			return nil, apperror.Validation("street is required")
-		case input.Address.City == "":
-			return nil, apperror.Validation("city is required")
-		case input.Address.Postcode == "":
-			return nil, apperror.Validation("postcode is required")
-		case input.Address.Country == "":
-			return nil, apperror.Validation("country is required")
-		}
+	if input.Address.IsZero() {
+		return nil, apperror.Validation("address is required")
+	}
+	switch {
+	case input.Address.FirstName == "":
+		return nil, apperror.Validation("first name is required")
+	case input.Address.LastName == "":
+		return nil, apperror.Validation("last name is required")
+	case input.Address.Street == "":
+		return nil, apperror.Validation("street is required")
+	case input.Address.City == "":
+		return nil, apperror.Validation("city is required")
+	case input.Address.Postcode == "":
+		return nil, apperror.Validation("postcode is required")
+	case input.Address.Country == "":
+		return nil, apperror.Validation("country is required")
 	}
 
 	c, err := s.carts.FindByID(ctx, cartID)

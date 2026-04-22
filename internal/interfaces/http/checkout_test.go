@@ -232,13 +232,17 @@ func parseCheckoutBody(t *testing.T, rec *httptest.ResponseRecorder) map[string]
 	return body
 }
 
+func checkoutAddressJSON() string {
+	return `{"first_name":"Ada","last_name":"Lovelace","street":"1 Logic Lane","city":"Berlin","postcode":"10115","country":"DE"}`
+}
+
 // ── tests ───────────────────────────────────────────────────────────────
 
 func TestCheckoutHandler_StartCheckout_OK(t *testing.T) {
 	carts, variants, prices, mux := checkoutSetup()
 	cartID := seedCheckoutCart(carts, variants, prices)
 
-	body := `{"cart_id":"` + cartID + `"}`
+	body := `{"cart_id":"` + cartID + `","address":` + checkoutAddressJSON() + `}`
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest("POST", "/api/v1/checkout", strings.NewReader(body))
 	req = testhelper.CustomerRequest(req, "cust-1")
@@ -309,6 +313,20 @@ func TestCheckoutHandler_StartCheckout_MissingCartID(t *testing.T) {
 	}
 }
 
+func TestCheckoutHandler_StartCheckout_MissingAddress(t *testing.T) {
+	carts, variants, prices, mux := checkoutSetup()
+	cartID := seedCheckoutCart(carts, variants, prices)
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("POST", "/api/v1/checkout", strings.NewReader(`{"cart_id":"`+cartID+`"}`))
+	req = testhelper.CustomerRequest(req, "cust-1")
+	mux.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("status = %d, want %d; body: %s", rec.Code, http.StatusUnprocessableEntity, rec.Body.String())
+	}
+}
+
 func TestCheckoutHandler_StartCheckout_InvalidBody(t *testing.T) {
 	_, _, _, mux := checkoutSetup()
 
@@ -326,7 +344,7 @@ func TestCheckoutHandler_StartCheckout_CartNotFound(t *testing.T) {
 	_, _, _, mux := checkoutSetup()
 
 	rec := httptest.NewRecorder()
-	req := httptest.NewRequest("POST", "/api/v1/checkout", strings.NewReader(`{"cart_id":"no-such"}`))
+	req := httptest.NewRequest("POST", "/api/v1/checkout", strings.NewReader(`{"cart_id":"no-such","address":`+checkoutAddressJSON()+`}`))
 	req = testhelper.CustomerRequest(req, "cust-1")
 	mux.ServeHTTP(rec, req)
 
@@ -339,7 +357,7 @@ func TestCheckoutHandler_StartCheckout_WrongCustomer(t *testing.T) {
 	carts, variants, prices, mux := checkoutSetup()
 	cartID := seedCheckoutCart(carts, variants, prices)
 
-	body := `{"cart_id":"` + cartID + `"}`
+	body := `{"cart_id":"` + cartID + `","address":` + checkoutAddressJSON() + `}`
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest("POST", "/api/v1/checkout", strings.NewReader(body))
 	req = testhelper.CustomerRequest(req, "other-customer")
@@ -359,7 +377,7 @@ func TestCheckoutHandler_StartCheckout_EmptyCart(t *testing.T) {
 	carts.Save(context.Background(), &c)
 
 	rec := httptest.NewRecorder()
-	req := httptest.NewRequest("POST", "/api/v1/checkout", strings.NewReader(`{"cart_id":"empty-cart"}`))
+	req := httptest.NewRequest("POST", "/api/v1/checkout", strings.NewReader(`{"cart_id":"empty-cart","address":`+checkoutAddressJSON()+`}`))
 	req = testhelper.CustomerRequest(req, "cust-1")
 	mux.ServeHTTP(rec, req)
 
@@ -372,7 +390,7 @@ func TestCheckoutHandler_StartCheckout_Unauthenticated(t *testing.T) {
 	_, _, _, mux := checkoutSetup()
 
 	rec := httptest.NewRecorder()
-	req := httptest.NewRequest("POST", "/api/v1/checkout", strings.NewReader(`{"cart_id":"cart-1"}`))
+	req := httptest.NewRequest("POST", "/api/v1/checkout", strings.NewReader(`{"cart_id":"cart-1","address":`+checkoutAddressJSON()+`}`))
 	// No auth set — guest identity.
 	mux.ServeHTTP(rec, req)
 

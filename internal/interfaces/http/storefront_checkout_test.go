@@ -192,7 +192,7 @@ func TestStorefrontHandler_CheckoutAddress_GuestShowsSignInMessage(t *testing.T)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d, want %d; body: %s", rec.Code, http.StatusOK, rec.Body.String())
 	}
-	if !strings.Contains(rec.Body.String(), "Sign in to continue checkout.") {
+	if !strings.Contains(rec.Body.String(), "Sign in to continue checkout") {
 		t.Fatalf("body missing sign-in message: %s", rec.Body.String())
 	}
 }
