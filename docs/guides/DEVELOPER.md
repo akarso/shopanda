@@ -6,6 +6,19 @@ It documents the extension points that exist in the current codebase, including 
 
 For deployment and operational setup, see [Deployment Guide](DEPLOYMENT.md). For merchant-facing operations, see [Merchant Guide](MERCHANT.md).
 
+## Table of Contents
+
+- [Architecture Overview](#architecture-overview)
+- [Create a Plugin](#create-a-plugin)
+- [Add a Payment Provider](#add-a-payment-provider)
+- [Add a Shipping Provider](#add-a-shipping-provider)
+- [Add a Storage Backend](#add-a-storage-backend)
+- [Add Custom Pipeline Steps](#add-custom-pipeline-steps)
+- [Add Custom Event Listeners](#add-custom-event-listeners)
+- [Add Custom CLI Commands](#add-custom-cli-commands)
+- [Use the API Reference](#use-the-api-reference)
+- [Practical Advice](#practical-advice)
+
 ## Architecture Overview
 
 Shopanda follows a hexagonal structure.
