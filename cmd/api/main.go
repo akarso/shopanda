@@ -714,6 +714,7 @@ func runServe(cfg *config.Config, log logger.Logger) error {
 	router.Use(shophttp.RateLimitMiddleware(cfg.RateLimit, log))
 	router.Use(shophttp.LoggingMiddleware(log))
 	router.Use(shophttp.AuthMiddleware(tokenParser))
+	router.Use(shophttp.CSRFMiddleware(cfg.RateLimit.TrustedProxies...))
 	router.Use(shophttp.StoreMiddleware(storeRepo, log))
 	router.Use(shophttp.LanguageMiddleware())
 	router.Use(shophttp.CacheControlMiddleware([]string{
@@ -860,7 +861,9 @@ func runServe(cfg *config.Config, log logger.Logger) error {
 		if thErr != nil {
 			return fmt.Errorf("theme load: %w", thErr)
 		}
-		storefront := shophttp.NewStorefrontHandler(themeEngine, productRepo, categoryRepo, pdp, plp, searchEngine).WithCart(variantRepo, cartService)
+		storefront := shophttp.NewStorefrontHandler(themeEngine, productRepo, categoryRepo, pdp, plp, searchEngine).
+			WithCart(variantRepo, cartService).
+			WithCheckout([]shipping.Provider{flatRateProvider}, payProvider, checkoutService)
 		staticDir := filepath.Join(cfg.Frontend.ThemePath, "static")
 		staticHandler := http.StripPrefix("/static/", http.FileServer(http.Dir(staticDir)))
 		router.Handle("GET /static/{path...}", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -868,6 +871,13 @@ func runServe(cfg *config.Config, log logger.Logger) error {
 			staticHandler.ServeHTTP(w, r)
 		}))
 		router.HandleFunc("GET /cart", storefront.Cart())
+		router.HandleFunc("GET /checkout/address", storefront.CheckoutAddress())
+		router.HandleFunc("GET /checkout/shipping", storefront.CheckoutShipping())
+		router.HandleFunc("POST /checkout/shipping", storefront.CheckoutShipping())
+		router.HandleFunc("GET /checkout/payment", storefront.CheckoutPayment())
+		router.HandleFunc("POST /checkout/payment", storefront.CheckoutPayment())
+		router.HandleFunc("GET /checkout/confirm", storefront.CheckoutConfirm())
+		router.HandleFunc("POST /checkout/confirm", storefront.CheckoutConfirm())
 		router.HandleFunc("GET /fragments/cart-count", storefront.CartCountFragment())
 		router.HandleFunc("GET /fragments/mini-cart", storefront.MiniCartFragment())
 		router.HandleFunc("GET /{$}", storefront.Home())

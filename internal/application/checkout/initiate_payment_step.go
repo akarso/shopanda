@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/akarso/shopanda/internal/domain/payment"
+	"github.com/akarso/shopanda/internal/platform/apperror"
 	"github.com/akarso/shopanda/internal/platform/id"
 )
 
@@ -43,6 +44,9 @@ func (s *InitiatePaymentStep) Execute(cctx *Context) error {
 
 	if cctx.Order == nil {
 		return fmt.Errorf("initiate_payment: order not created yet")
+	}
+	if cctx.Input.PaymentMethod != "" && string(s.provider.Method()) != cctx.Input.PaymentMethod {
+		return apperror.Validation("selected payment method is unavailable")
 	}
 
 	py, err := payment.NewPayment(id.New(), cctx.Order.ID, s.provider.Method(), cctx.Order.TotalAmount)

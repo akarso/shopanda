@@ -33,6 +33,12 @@ func (m *mockConfigRepoForAttrExport) Set(_ context.Context, key string, value i
 	m.store[key] = value
 	return nil
 }
+func (m *mockConfigRepoForAttrExport) SetMany(_ context.Context, entries map[string]interface{}) error {
+	for key, value := range entries {
+		m.store[key] = value
+	}
+	return nil
+}
 func (m *mockConfigRepoForAttrExport) Delete(_ context.Context, key string) error {
 	delete(m.store, key)
 	return nil

@@ -1,9 +1,40 @@
 package checkout
 
 import (
+	"strings"
+
 	"github.com/akarso/shopanda/internal/domain/cart"
 	"github.com/akarso/shopanda/internal/domain/order"
 )
+
+type Address struct {
+	FirstName string
+	LastName  string
+	Street    string
+	City      string
+	Postcode  string
+	Country   string
+}
+
+func (a Address) IsZero() bool {
+	return a.FirstName == "" && a.LastName == "" && a.Street == "" && a.City == "" && a.Postcode == "" && a.Country == ""
+}
+
+func (a Address) Normalize() Address {
+	a.FirstName = strings.TrimSpace(a.FirstName)
+	a.LastName = strings.TrimSpace(a.LastName)
+	a.Street = strings.TrimSpace(a.Street)
+	a.City = strings.TrimSpace(a.City)
+	a.Postcode = strings.TrimSpace(a.Postcode)
+	a.Country = strings.TrimSpace(a.Country)
+	return a
+}
+
+type Input struct {
+	Address        Address
+	ShippingMethod string
+	PaymentMethod  string
+}
 
 // Context carries data through the checkout workflow.
 // Each step may read and mutate this context.
@@ -12,6 +43,7 @@ type Context struct {
 	Cart       *cart.Cart
 	CustomerID string
 	Currency   string
+	Input      Input
 	Order      *order.Order
 	Meta       map[string]interface{}
 	Trace      []TraceEntry

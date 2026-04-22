@@ -19,14 +19,16 @@ import (
 // ============================================================
 
 type mockShippingProvider047 struct {
-	method shipping.ShippingMethod
-	rate   shipping.ShippingRate
-	err    error
+	method    shipping.ShippingMethod
+	rate      shipping.ShippingRate
+	err       error
+	itemCount int
 }
 
 func (p *mockShippingProvider047) Method() shipping.ShippingMethod { return p.method }
 
-func (p *mockShippingProvider047) CalculateRate(_ context.Context, _ string, _ string, _ int) (shipping.ShippingRate, error) {
+func (p *mockShippingProvider047) CalculateRate(_ context.Context, _ string, _ string, itemCount int) (shipping.ShippingRate, error) {
+	p.itemCount = itemCount
 	return p.rate, p.err
 }
 
@@ -220,6 +222,43 @@ func TestSelectShippingStep_SaveError(t *testing.T) {
 	}
 }
 
+func TestSelectShippingStep_UsesTotalQuantity(t *testing.T) {
+	provider := &mockShippingProvider047{
+		method: shipping.MethodFlatRate,
+		rate:   shipping.ShippingRate{Cost: shared.MustNewMoney(500, "EUR")},
+	}
+	step := checkout.NewSelectShippingStep(provider, &mockShipmentRepo047{})
+
+	cctx := checkout.NewContext("cart-1", "cust-1", "EUR")
+	cctx.Cart = cartWithItems037(t, "cust-1", "v1", "v2")
+	cctx.Order = orderForCheckout047(t)
+
+	if err := step.Execute(cctx); err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	if provider.itemCount != 4 {
+		t.Fatalf("itemCount = %d, want %d", provider.itemCount, 4)
+	}
+}
+
+func TestSelectShippingStep_RejectsUnavailableSelectedMethod(t *testing.T) {
+	provider := &mockShippingProvider047{
+		method: shipping.MethodFlatRate,
+		rate:   shipping.ShippingRate{Cost: shared.MustNewMoney(500, "EUR")},
+	}
+	step := checkout.NewSelectShippingStep(provider, &mockShipmentRepo047{})
+
+	cctx := checkout.NewContext("cart-1", "cust-1", "EUR")
+	cctx.Cart = cartWithItems037(t, "cust-1", "v1")
+	cctx.Order = orderForCheckout047(t)
+	cctx.Input = checkout.Input{ShippingMethod: "pickup"}
+
+	err := step.Execute(cctx)
+	if err == nil {
+		t.Fatal("expected error for unavailable shipping method")
+	}
+}
+
 func TestSelectShippingStep_NoOrder(t *testing.T) {
 	provider := &mockShippingProvider047{method: shipping.MethodFlatRate}
 	step := checkout.NewSelectShippingStep(provider, &mockShipmentRepo047{})
@@ -328,6 +367,27 @@ func TestInitiatePaymentStep_Success(t *testing.T) {
 	}
 	if v, ok := cctx.GetMeta("payment_initiated"); !ok || v != true {
 		t.Error("expected payment_initiated=true in meta")
+	}
+}
+
+func TestInitiatePaymentStep_RejectsUnavailableSelectedMethod(t *testing.T) {
+	provider := &mockPaymentProvider047{
+		method: payment.MethodManual,
+		result: payment.ProviderResult{ProviderRef: "manual:pay-1", Success: true},
+	}
+	repo := &mockPaymentRepo047{}
+	step := checkout.NewInitiatePaymentStep(provider, repo)
+
+	cctx := checkout.NewContext("cart-1", "cust-1", "EUR")
+	cctx.Order = orderForCheckout047(t)
+	cctx.Input = checkout.Input{PaymentMethod: string(payment.MethodStripe)}
+
+	err := step.Execute(cctx)
+	if err == nil {
+		t.Fatal("expected error for unavailable payment method")
+	}
+	if repo.created != nil {
+		t.Fatal("payment should not be created when selected method is unavailable")
 	}
 }
 

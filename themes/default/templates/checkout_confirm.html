@@ -1,0 +1,28 @@
+{{ define "title" }}Checkout: Confirm{{ end }}
+
+{{ define "content" }}
+<section class="checkout-shell">
+    <div class="page-intro checkout-confirmation">
+        {{ if .Confirmation }}
+        <span class="eyebrow">Checkout</span>
+        <h1>Order Placed</h1>
+        <p>Order #{{ .Confirmation.OrderID }}</p>
+        <p>{{ .Confirmation.TotalText }}</p>
+        <p>{{ .Confirmation.Notice }}</p>
+        {{ if .StripePending }}
+        <p class="muted-note">Stripe confirmation happens after the payment intent is created by the checkout workflow.</p>
+        {{ end }}
+        <div class="checkout-actions checkout-actions--centered">
+            <a class="button-link" href="{{ .Confirmation.ViewOrderURL }}">View Order</a>
+            <a class="chip" href="{{ .Confirmation.ContinueURL }}">Continue Shopping</a>
+        </div>
+        {{ else }}
+        <span class="eyebrow">Checkout</span>
+        <h1>Confirmation unavailable</h1>
+        <p>We could not load the order confirmation details for this page.</p>
+        {{ end }}
+    </div>
+</section>
+{{ end }}
+
+{{ template "layout.html" . }}

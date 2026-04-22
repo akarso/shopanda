@@ -1,0 +1,101 @@
+{{ define "title" }}Checkout: Address{{ end }}
+
+{{ define "content" }}
+<section class="checkout-shell">
+    <div class="page-intro">
+        <span class="eyebrow">Checkout</span>
+        <h1>Address</h1>
+        <p>Confirm who this order is for before shipping and payment are selected.</p>
+    </div>
+
+    <ol class="checkout-progress" aria-label="Checkout progress">
+        {{ range .Progress }}
+        <li class="checkout-progress__step{{ if .Current }} checkout-progress__step--current{{ end }}{{ if .Complete }} checkout-progress__step--complete{{ end }}">
+            <span>{{ .Label }}</span>
+        </li>
+        {{ end }}
+    </ol>
+
+    <div class="checkout-grid">
+        <section class="checkout-panel">
+            {{ if .RequiresAuth }}
+            <div class="checkout-auth-note">
+                <h2>Sign in to continue checkout</h2>
+                <p>The current order pipeline still creates customer-owned orders, so checkout is only available to signed-in customers.</p>
+                <div class="checkout-actions">
+                    <a class="button-link" href="/account/login">Sign in</a>
+                    <a class="chip" href="/cart">Back to cart</a>
+                </div>
+            </div>
+            {{ else }}
+            <form class="checkout-form" action="/checkout/shipping" method="post">
+                <input type="hidden" name="csrf_token" value="{{ .CSRFToken }}">
+                {{ if .ErrorMessage }}
+                <p class="checkout-form__error" role="alert">{{ .ErrorMessage }}</p>
+                {{ end }}
+                <div class="checkout-form__grid">
+                    <label>
+                        <span>First Name</span>
+                        <input name="first_name" value="{{ .Address.FirstName }}" autocomplete="given-name" required>
+                    </label>
+                    <label>
+                        <span>Last Name</span>
+                        <input name="last_name" value="{{ .Address.LastName }}" autocomplete="family-name" required>
+                    </label>
+                    <label class="checkout-form__full">
+                        <span>Street</span>
+                        <input name="street" value="{{ .Address.Street }}" autocomplete="street-address" required>
+                    </label>
+                    <label>
+                        <span>City</span>
+                        <input name="city" value="{{ .Address.City }}" autocomplete="address-level2" required>
+                    </label>
+                    <label>
+                        <span>Postcode</span>
+                        <input name="postcode" value="{{ .Address.Postcode }}" autocomplete="postal-code" required>
+                    </label>
+                    <label class="checkout-form__full">
+                        <span>Country</span>
+                        <select name="country" autocomplete="country-name" required>
+                            <option value="">Select a country</option>
+                            {{ range .Countries }}
+                            <option value="{{ .Value }}" {{ if .Selected }}selected{{ end }}>{{ .Label }}</option>
+                            {{ end }}
+                        </select>
+                    </label>
+                </div>
+                <div class="checkout-actions">
+                    <a class="chip" href="/cart">Back to cart</a>
+                    <button type="submit">Continue to Shipping</button>
+                </div>
+            </form>
+            {{ end }}
+        </section>
+
+        <aside class="checkout-summary-panel">
+            <span class="eyebrow">Order Summary</span>
+            <ul class="checkout-summary-panel__items">
+                {{ range .Items }}
+                <li>
+                    <div>
+                        <strong>{{ .ProductName }}</strong>
+                        <span>{{ if .VariantName }}{{ .VariantName }} · {{ end }}Qty {{ .Quantity }}</span>
+                    </div>
+                    <strong>{{ .LineTotalText }}</strong>
+                </li>
+                {{ end }}
+            </ul>
+            <div class="checkout-summary-panel__totals">
+                <span>Items</span>
+                <strong>{{ .Summary.TotalQuantity }}</strong>
+            </div>
+            <div class="checkout-summary-panel__totals">
+                <span>Subtotal</span>
+                <strong>{{ .Summary.SubtotalText }}</strong>
+            </div>
+        </aside>
+    </div>
+</section>
+{{ end }}
+
+{{ template "layout.html" . }}

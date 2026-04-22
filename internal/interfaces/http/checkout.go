@@ -27,7 +27,17 @@ func NewCheckoutHandler(svc *checkoutApp.Service) *CheckoutHandler {
 // ── request / response types ────────────────────────────────────────────
 
 type checkoutRequest struct {
-	CartID string `json:"cart_id"`
+	CartID  string                 `json:"cart_id"`
+	Address checkoutAddressRequest `json:"address"`
+}
+
+type checkoutAddressRequest struct {
+	FirstName string `json:"first_name"`
+	LastName  string `json:"last_name"`
+	Street    string `json:"street"`
+	City      string `json:"city"`
+	Postcode  string `json:"postcode"`
+	Country   string `json:"country"`
 }
 
 type checkoutOrderResponse struct {
@@ -67,7 +77,16 @@ func (h *CheckoutHandler) StartCheckout() http.HandlerFunc {
 
 		customerID := auth.IdentityFrom(r.Context()).UserID
 
-		cctx, err := h.svc.StartCheckout(r.Context(), req.CartID, customerID)
+		cctx, err := h.svc.StartCheckout(r.Context(), req.CartID, customerID, checkoutApp.Input{
+			Address: checkoutApp.Address{
+				FirstName: req.Address.FirstName,
+				LastName:  req.Address.LastName,
+				Street:    req.Address.Street,
+				City:      req.Address.City,
+				Postcode:  req.Address.Postcode,
+				Country:   req.Address.Country,
+			},
+		})
 		if err != nil {
 			JSONError(w, err)
 			return

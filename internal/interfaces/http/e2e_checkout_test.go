@@ -214,7 +214,7 @@ func TestE2E_CartToCheckout(t *testing.T) {
 
 	// Step 3: Checkout.
 	rec = httptest.NewRecorder()
-	checkoutBody := `{"cart_id":"` + cartID + `"}`
+	checkoutBody := `{"cart_id":"` + cartID + `","address":{"first_name":"Ada","last_name":"Lovelace","street":"1 Logic Lane","city":"Berlin","postcode":"10115","country":"DE"}}`
 	req = httptest.NewRequest("POST", "/api/v1/checkout", strings.NewReader(checkoutBody))
 	req = testhelper.CustomerRequest(req, "cust-e2e")
 	mux.ServeHTTP(rec, req)

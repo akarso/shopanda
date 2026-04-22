@@ -5,6 +5,7 @@ import (
 	"fmt"
 
 	"github.com/akarso/shopanda/internal/domain/shipping"
+	"github.com/akarso/shopanda/internal/platform/apperror"
 	"github.com/akarso/shopanda/internal/platform/id"
 )
 
@@ -46,12 +47,15 @@ func (s *SelectShippingStep) Execute(cctx *Context) error {
 	if cctx.Cart == nil {
 		return fmt.Errorf("select_shipping: cart not loaded")
 	}
+	if cctx.Input.ShippingMethod != "" && string(s.provider.Method()) != cctx.Input.ShippingMethod {
+		return apperror.Validation("selected shipping method is unavailable")
+	}
 
 	rate, err := s.provider.CalculateRate(
 		context.Background(),
 		cctx.Order.ID,
 		cctx.Currency,
-		len(cctx.Cart.Items),
+		cctx.Cart.TotalQuantity(),
 	)
 	if err != nil {
 		return fmt.Errorf("select_shipping: calculate rate: %w", err)

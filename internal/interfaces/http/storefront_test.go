@@ -128,6 +128,26 @@ func createTestTheme(t *testing.T) *theme.Engine {
 		t.Fatal(err)
 	}
 
+	checkoutAddress := `{{ define "title" }}Checkout: Address{{ end }}{{ define "content" }}<section><h1>Checkout</h1>{{ if .RequiresAuth }}<p>Sign in to continue checkout.</p>{{ else }}<form action="/checkout/shipping" method="post"><input type="hidden" name="csrf_token" value="{{ .CSRFToken }}"><input name="first_name" value="{{ .Address.FirstName }}"><input name="last_name" value="{{ .Address.LastName }}"><input name="street" value="{{ .Address.Street }}"><input name="city" value="{{ .Address.City }}"><input name="postcode" value="{{ .Address.Postcode }}"><select name="country">{{ range .Countries }}<option value="{{ .Value }}" {{ if .Selected }}selected{{ end }}>{{ .Label }}</option>{{ end }}</select><button type="submit">Continue to Shipping</button></form>{{ end }}{{ if .ErrorMessage }}<p>{{ .ErrorMessage }}</p>{{ end }}</section>{{ end }}{{ template "layout.html" . }}`
+	if err := os.WriteFile(filepath.Join(tplDir, "checkout_address.html"), []byte(checkoutAddress), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	checkoutShipping := `{{ define "title" }}Checkout: Shipping{{ end }}{{ define "content" }}<section><h1>Shipping</h1>{{ if .ErrorMessage }}<p>{{ .ErrorMessage }}</p>{{ end }}<form action="/checkout/payment" method="post"><input type="hidden" name="csrf_token" value="{{ .CSRFToken }}"><input type="hidden" name="first_name" value="{{ .Address.FirstName }}"><input type="hidden" name="last_name" value="{{ .Address.LastName }}"><input type="hidden" name="street" value="{{ .Address.Street }}"><input type="hidden" name="city" value="{{ .Address.City }}"><input type="hidden" name="postcode" value="{{ .Address.Postcode }}"><input type="hidden" name="country" value="{{ .Address.Country }}">{{ range .Rates }}<label><input type="radio" name="shipping_method" value="{{ .Method }}" {{ if .Selected }}checked{{ end }}>{{ .Label }} — {{ .CostText }}</label>{{ end }}<button type="submit">Continue to Payment</button></form></section>{{ end }}{{ template "layout.html" . }}`
+	if err := os.WriteFile(filepath.Join(tplDir, "checkout_shipping.html"), []byte(checkoutShipping), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	checkoutPayment := `{{ define "title" }}Checkout: Payment{{ end }}{{ define "content" }}<section><h1>Payment</h1>{{ if .ErrorMessage }}<p>{{ .ErrorMessage }}</p>{{ end }}<form action="/checkout/confirm" method="post"><input type="hidden" name="csrf_token" value="{{ .CSRFToken }}"><input type="hidden" name="first_name" value="{{ .Address.FirstName }}"><input type="hidden" name="last_name" value="{{ .Address.LastName }}"><input type="hidden" name="street" value="{{ .Address.Street }}"><input type="hidden" name="city" value="{{ .Address.City }}"><input type="hidden" name="postcode" value="{{ .Address.Postcode }}"><input type="hidden" name="country" value="{{ .Address.Country }}"><input type="hidden" name="shipping_method" value="{{ if .SelectedRate }}{{ .SelectedRate.Method }}{{ end }}"><input type="hidden" name="payment_method" value="{{ .Payment.Method }}"><p>{{ .Payment.Label }}</p><button type="submit">Place Order</button></form></section>{{ end }}{{ template "layout.html" . }}`
+	if err := os.WriteFile(filepath.Join(tplDir, "checkout_payment.html"), []byte(checkoutPayment), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	checkoutConfirm := `{{ define "title" }}Checkout: Confirm{{ end }}{{ define "content" }}<section><h1>Order Placed</h1>{{ if .Confirmation }}<p>Order #{{ .Confirmation.OrderID }}</p><p>{{ .Confirmation.TotalText }}</p><p>{{ .Confirmation.Notice }}</p>{{ end }}</section>{{ end }}{{ template "layout.html" . }}`
+	if err := os.WriteFile(filepath.Join(tplDir, "checkout_confirm.html"), []byte(checkoutConfirm), 0644); err != nil {
+		t.Fatal(err)
+	}
+
 	engine, err := theme.Load(dir)
 	if err != nil {
 		t.Fatal(err)
@@ -165,24 +185,32 @@ func createTestThemeWithoutHome(t *testing.T) *theme.Engine {
 	return engine
 }
 
-func newStorefrontRouter(h *shophttp.StorefrontHandler) *http.ServeMux {
-	mux := http.NewServeMux()
-	mux.HandleFunc("GET /{$}", h.Home())
-	mux.HandleFunc("GET /cart", h.Cart())
-	mux.HandleFunc("GET /categories", h.Categories())
-	mux.HandleFunc("GET /categories/{slug}", h.Category())
-	mux.HandleFunc("GET /fragments/cart-count", h.CartCountFragment())
-	mux.HandleFunc("GET /fragments/mini-cart", h.MiniCartFragment())
-	mux.HandleFunc("GET /products", h.Products())
-	mux.HandleFunc("GET /products/{slug}", h.Product())
-	mux.HandleFunc("POST /cart/add", h.AddToCart())
-	mux.HandleFunc("POST /cart/update", h.UpdateCart())
-	mux.HandleFunc("POST /cart/remove", h.RemoveCartItem())
-	mux.HandleFunc("POST /fragments/cart/add", h.AddToCart())
-	mux.HandleFunc("POST /fragments/cart/update", h.UpdateCart())
-	mux.HandleFunc("POST /fragments/cart/remove", h.RemoveCartItem())
-	mux.HandleFunc("GET /search", h.Search())
-	return mux
+func newStorefrontRouter(h *shophttp.StorefrontHandler) http.Handler {
+	router := shophttp.NewRouter()
+	router.Use(shophttp.CSRFMiddleware())
+	router.HandleFunc("GET /{$}", h.Home())
+	router.HandleFunc("GET /cart", h.Cart())
+	router.HandleFunc("GET /checkout/address", h.CheckoutAddress())
+	router.HandleFunc("GET /checkout/shipping", h.CheckoutShipping())
+	router.HandleFunc("POST /checkout/shipping", h.CheckoutShipping())
+	router.HandleFunc("GET /checkout/payment", h.CheckoutPayment())
+	router.HandleFunc("POST /checkout/payment", h.CheckoutPayment())
+	router.HandleFunc("GET /checkout/confirm", h.CheckoutConfirm())
+	router.HandleFunc("POST /checkout/confirm", h.CheckoutConfirm())
+	router.HandleFunc("GET /categories", h.Categories())
+	router.HandleFunc("GET /categories/{slug}", h.Category())
+	router.HandleFunc("GET /fragments/cart-count", h.CartCountFragment())
+	router.HandleFunc("GET /fragments/mini-cart", h.MiniCartFragment())
+	router.HandleFunc("GET /products", h.Products())
+	router.HandleFunc("GET /products/{slug}", h.Product())
+	router.HandleFunc("POST /cart/add", h.AddToCart())
+	router.HandleFunc("POST /cart/update", h.UpdateCart())
+	router.HandleFunc("POST /cart/remove", h.RemoveCartItem())
+	router.HandleFunc("POST /fragments/cart/add", h.AddToCart())
+	router.HandleFunc("POST /fragments/cart/update", h.UpdateCart())
+	router.HandleFunc("POST /fragments/cart/remove", h.RemoveCartItem())
+	router.HandleFunc("GET /search", h.Search())
+	return router.Handler()
 }
 
 func newStorefrontSearchMock() *mockSearchEngine {

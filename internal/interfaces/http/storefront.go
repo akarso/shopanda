@@ -14,9 +14,12 @@ import (
 	"time"
 
 	cartApp "github.com/akarso/shopanda/internal/application/cart"
+	checkoutApp "github.com/akarso/shopanda/internal/application/checkout"
 	"github.com/akarso/shopanda/internal/application/composition"
 	"github.com/akarso/shopanda/internal/domain/catalog"
+	"github.com/akarso/shopanda/internal/domain/payment"
 	"github.com/akarso/shopanda/internal/domain/search"
+	"github.com/akarso/shopanda/internal/domain/shipping"
 	"github.com/akarso/shopanda/internal/domain/store"
 	"github.com/akarso/shopanda/internal/domain/theme"
 	"github.com/akarso/shopanda/internal/platform/apperror"
@@ -33,6 +36,9 @@ type StorefrontHandler struct {
 	search   search.SearchEngine
 	variants catalog.VariantRepository
 	carts    *cartApp.Service
+	checkout *checkoutApp.Service
+	shipping []shipping.Provider
+	payment  payment.Provider
 	log      logger.Logger
 	catNav   storefrontCategoryCache
 }
@@ -212,6 +218,15 @@ func (h *StorefrontHandler) WithCart(variants catalog.VariantRepository, carts *
 	return h
 }
 
+// WithCheckout enables storefront checkout rendering and order placement using
+// the provided shipping providers, payment provider, and checkout service.
+func (h *StorefrontHandler) WithCheckout(shippingProviders []shipping.Provider, paymentProvider payment.Provider, checkout *checkoutApp.Service) *StorefrontHandler {
+	h.shipping = append([]shipping.Provider(nil), shippingProviders...)
+	h.payment = paymentProvider
+	h.checkout = checkout
+	return h
+}
+
 // Home handles GET / and renders the storefront landing page.
 func (h *StorefrontHandler) Home() http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
@@ -299,12 +314,17 @@ func (h *StorefrontHandler) Product() http.HandlerFunc {
 }
 
 func (h *StorefrontHandler) renderPage(w http.ResponseWriter, name string, data interface{}) {
+	h.renderPageStatus(w, name, data, http.StatusOK)
+}
+
+func (h *StorefrontHandler) renderPageStatus(w http.ResponseWriter, name string, data interface{}, status int) {
 	var buf bytes.Buffer
 	if err := h.engine.Render(&buf, name, data); err != nil {
 		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
 		return
 	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.WriteHeader(status)
 	_, _ = w.Write(buf.Bytes())
 }
 
