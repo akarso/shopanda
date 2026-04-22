@@ -181,6 +181,7 @@ All specs live in [`docs/`](docs/):
 
 - [Merchant Guide](docs/guides/MERCHANT.md) — day-to-day store operations, admin UI, orders, and catalog workflows
 - [Deployment Guide](docs/guides/DEPLOYMENT.md) — Docker, bare metal, cloud deployment, TLS, backups, and monitoring
+- [Developer Guide](docs/guides/DEVELOPER.md) — plugin contracts, extension points, events, pipelines, and API integration
 
 ### Architecture & Design
 
