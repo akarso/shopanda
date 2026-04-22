@@ -130,7 +130,7 @@ Environment variables override YAML values.
 | `SHOPANDA_DATABASE_HOST` | Yes unless `DATABASE_URL` is set | `localhost` | PostgreSQL host |
 | `SHOPANDA_DATABASE_PORT` | No | `5432` | PostgreSQL port |
 | `SHOPANDA_DATABASE_USER` | Yes unless `DATABASE_URL` is set | `shopanda` | PostgreSQL user |
-| `SHOPANDA_DATABASE_PASSWORD` | Yes unless `DATABASE_URL` is set | `changeme` | PostgreSQL password |
+| `SHOPANDA_DATABASE_PASSWORD` | Yes unless `DATABASE_URL` is set | empty | PostgreSQL password |
 | `SHOPANDA_DATABASE_NAME` | Yes unless `DATABASE_URL` is set | `shopanda` | PostgreSQL database name |
 | `SHOPANDA_DATABASE_SSLMODE` | No | `disable` | PostgreSQL SSL mode |
 
@@ -157,7 +157,7 @@ Environment variables override YAML values.
 | `SHOPANDA_MAIL_SMTP_PORT` | No | `587` | SMTP port |
 | `SHOPANDA_MAIL_SMTP_USER` | No | empty | SMTP username |
 | `SHOPANDA_MAIL_SMTP_PASSWORD` | No | empty | SMTP password |
-| `SHOPANDA_MAIL_SMTP_FROM` | No | `noreply@example.com` | Sender address |
+| `SHOPANDA_MAIL_SMTP_FROM` | No | `noreply@localhost` | Sender address |
 
 ### Media Storage
 
