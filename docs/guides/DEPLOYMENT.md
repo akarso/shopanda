@@ -4,9 +4,11 @@ This guide is for operators who deploy, host, and maintain Shopanda.
 
 For day-to-day store use after the application is running, see [Merchant Guide](MERCHANT.md).
 
-## Quick Start With Docker
+Start with the simplest path first: one host, one PostgreSQL database, and the Shopanda binary. Docker is covered later as an optional packaging and deployment approach.
 
-Use this path when you want the fastest working local or small-server deployment.
+## Quick Start Without Docker
+
+Use this path when you want the simplest working deployment with the least tooling overhead.
 
 ### 1. Clone the repository
 
@@ -25,7 +27,7 @@ At minimum, set:
 
 - `SHOPANDA_AUTH_JWT_SECRET`
 - `SHOPANDA_SERVER_PUBLIC_BASE_URL`
-- `SHOPANDA_DATABASE_PASSWORD`
+- database settings via either `DATABASE_URL` or the `SHOPANDA_DATABASE_*` variables
 
 Generate a JWT secret with:
 
@@ -33,54 +35,26 @@ Generate a JWT secret with:
 openssl rand -hex 32
 ```
 
-If you want the seeded admin account in Docker, add this to `.env` before starting the stack:
+If you want the seeded admin account on first setup, add this before running `setup`:
 
 ```bash
 SHOPANDA_SEED_ADMIN_PASSWORD=change-me-now
 ```
 
-### 3. Start the stack
+If you prefer YAML over environment-only configuration, use `configs/config.yaml` or start from `configs/config.example.yaml`.
+
+### 3. Build the binary
 
 ```bash
-docker compose up -d
+go build -o shopanda ./cmd/api
 ```
 
-This starts:
-
-- `app`
-- `postgres`
-
-Optional profiles:
-
-```bash
-docker compose --profile dev up -d
-docker compose --profile search up -d
-docker compose --profile dev --profile search up -d
-```
-
-Those add:
-
-- `mailpit` for local SMTP testing
-- `meilisearch` for search-engine-backed deployments
+If you already have a compiled binary, skip this step.
 
 ### 4. Run first-time setup
 
-If the stack is already running:
-
 ```bash
-docker compose exec app shopanda setup
-```
-
-If you prefer a one-off setup container:
-
-```bash
-docker compose run --rm app setup
-```
-
-If you did not place the admin seed password in `.env`, pass it explicitly for the one-off setup run:
-
-```bash
-docker compose run --rm -e SHOPANDA_SEED_ADMIN_PASSWORD=change-me-now app setup
+./shopanda setup
 ```
 
 The setup command:
@@ -90,7 +64,34 @@ The setup command:
 - runs default seeders unless `--skip-seed` is used
 - prints store, admin API, and docs URLs
 
-### 5. Verify the deployment
+If you prefer explicit commands instead of `setup`:
+
+```bash
+./shopanda migrate
+./shopanda seed
+```
+
+### 5. Start the application
+
+Start the HTTP server:
+
+```bash
+./shopanda serve
+```
+
+Run a worker if you depend on async jobs such as email delivery:
+
+```bash
+./shopanda worker
+```
+
+Run the scheduler if you depend on recurring jobs:
+
+```bash
+./shopanda scheduler
+```
+
+### 6. Verify the deployment
 
 ```bash
 curl http://localhost:8080/healthz
@@ -104,6 +105,10 @@ Live endpoints in the current application:
 - API docs UI: `/docs`
 - OpenAPI spec: `/docs/openapi.yaml`
 - admin SPA: `/admin`
+
+### 7. Docker is optional
+
+If you prefer containers after the simple host-based path, skip ahead to [Deploy With Docker](#deploy-with-docker).
 
 ## Environment Variables
 
