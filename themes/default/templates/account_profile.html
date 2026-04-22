@@ -37,6 +37,7 @@
 
         <section class="account-panel">
             {{ if .PasswordErrorMessage }}<p class="checkout-form__error" role="alert">{{ .PasswordErrorMessage }}</p>{{ end }}
+            {{ if .DeleteErrorMessage }}<p class="checkout-form__error" role="alert">{{ .DeleteErrorMessage }}</p>{{ end }}
             <h2>Change password</h2>
             <form class="checkout-form" action="/account/profile/password" method="post">
                 <input type="hidden" name="csrf_token" value="{{ .CSRFToken }}">
@@ -54,6 +55,10 @@
             </form>
             <form class="account-delete-form" action="/account/profile/delete" method="post">
                 <input type="hidden" name="csrf_token" value="{{ .CSRFToken }}">
+                <label>
+                    <span>Type DELETE to confirm</span>
+                    <input name="confirm_delete" autocomplete="off" spellcheck="false" required>
+                </label>
                 <button type="submit">Delete Account</button>
             </form>
             <form class="account-logout-form" action="/account/logout" method="post">

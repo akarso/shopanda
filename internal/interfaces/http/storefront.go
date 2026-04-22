@@ -513,20 +513,24 @@ func (h *StorefrontHandler) buildLayoutData(r *http.Request, categories []catalo
 	if cartLabel == "" {
 		cartLabel = "Cart (0)"
 	}
+	accountURL := "/account/login"
+	if storefrontCustomerID(r) != "" {
+		accountURL = "/account/orders"
+	}
 	nav := make([]StorefrontNavLink, 0, len(themeCfg.Nav))
 	if len(themeCfg.Nav) > 0 {
 		for _, item := range themeCfg.Nav {
 			if item.Label == "" || item.URL == "" {
 				continue
 			}
-			nav = append(nav, StorefrontNavLink{Label: item.Label, URL: item.URL})
+			url := item.URL
+			if item.URL == "/account" || item.URL == "/account/" {
+				url = accountURL
+			}
+			nav = append(nav, StorefrontNavLink{Label: item.Label, URL: url})
 		}
 	}
 	if len(nav) == 0 {
-		accountURL := "/account/login"
-		if storefrontCustomerID(r) != "" {
-			accountURL = "/account/orders"
-		}
 		nav = []StorefrontNavLink{
 			{Label: "Home", URL: "/"},
 			{Label: "Categories", URL: "/categories"},

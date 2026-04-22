@@ -107,6 +107,37 @@ func TestAuthMiddleware_UsesStorefrontSessionCookie(t *testing.T) {
 	}
 }
 
+func TestAuthMiddleware_BearerTakesPrecedence(t *testing.T) {
+	id, err := identity.NewIdentity("user-3", identity.RoleCustomer)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	parser := &stubTokenParser{identity: id}
+	mw := shophttp.AuthMiddleware(parser)
+
+	var gotID identity.Identity
+	handler := mw(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotID = auth.IdentityFrom(r.Context())
+		w.WriteHeader(http.StatusOK)
+	}))
+
+	req := httptest.NewRequest("GET", "/account/orders", nil)
+	req.Header.Set("Authorization", "Bearer header-token")
+	req.AddCookie(&http.Cookie{Name: "shopanda_storefront_session", Value: "cookie-token"})
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d", rec.Code, http.StatusOK)
+	}
+	if gotID.UserID != "user-3" {
+		t.Fatalf("UserID = %q, want %q", gotID.UserID, "user-3")
+	}
+	if parser.lastToken != "header-token" {
+		t.Fatalf("parser received token %q, want %q", parser.lastToken, "header-token")
+	}
+}
+
 func TestAuthMiddleware_InvalidToken(t *testing.T) {
 	parser := &stubTokenParser{err: errors.New("bad token")}
 	mw := shophttp.AuthMiddleware(parser)

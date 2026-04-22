@@ -136,13 +136,7 @@ func (s *Service) ChangePassword(ctx context.Context, in ChangePasswordInput) er
 	if err != nil {
 		return fmt.Errorf("auth service: change password: %w", err)
 	}
-	if err := c.SetPassword(hash); err != nil {
-		return fmt.Errorf("auth service: change password: %w", err)
-	}
-	if err := s.customers.Update(ctx, c); err != nil {
-		return fmt.Errorf("auth service: change password: %w", err)
-	}
-	if err := s.customers.BumpTokenGeneration(ctx, c.ID); err != nil {
+	if err := s.customers.ChangePasswordAndBumpTokenGeneration(ctx, c.ID, hash); err != nil {
 		return fmt.Errorf("auth service: change password: %w", err)
 	}
 

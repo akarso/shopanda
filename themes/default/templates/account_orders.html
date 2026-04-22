@@ -12,17 +12,17 @@
         {{ if .Orders }}
         <div class="account-orders-table" role="table" aria-label="Order history">
             <div class="account-orders-table__head" role="row">
-                <span>Order</span>
-                <span>Date</span>
-                <span>Total</span>
-                <span>Status</span>
+                <span role="columnheader">Order</span>
+                <span role="columnheader">Date</span>
+                <span role="columnheader">Total</span>
+                <span role="columnheader">Status</span>
             </div>
             {{ range .Orders }}
             <a class="account-orders-table__row" role="row" href="{{ .URL }}">
-                <strong>{{ .ID }}</strong>
-                <span>{{ .DateText }}</span>
-                <span>{{ .TotalText }}</span>
-                <span class="status-pill">{{ .Status }}</span>
+                <strong role="cell">{{ .ID }}</strong>
+                <span role="cell">{{ .DateText }}</span>
+                <span role="cell">{{ .TotalText }}</span>
+                <span class="status-pill" role="cell">{{ .Status }}</span>
             </a>
             {{ end }}
         </div>

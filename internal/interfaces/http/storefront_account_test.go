@@ -69,6 +69,14 @@ func (r *storefrontAccountCustomerRepoStub) BumpTokenGeneration(_ context.Contex
 	return nil
 }
 
+func (r *storefrontAccountCustomerRepoStub) ChangePasswordAndBumpTokenGeneration(_ context.Context, customerID, passwordHash string) error {
+	if c := r.customers[customerID]; c != nil {
+		c.PasswordHash = passwordHash
+		c.BumpTokenGeneration()
+	}
+	return nil
+}
+
 func (r *storefrontAccountCustomerRepoStub) Delete(_ context.Context, id string) error {
 	if c := r.customers[id]; c != nil {
 		delete(r.byEmail, c.Email)
@@ -136,7 +144,7 @@ func storefrontAccountCSRFCookie(t *testing.T, handler http.Handler, path string
 	req := httptest.NewRequest("GET", path, nil)
 	handler.ServeHTTP(rec, req)
 	for _, cookie := range rec.Result().Cookies() {
-		if cookie.Name == "shopanda_checkout_csrf" {
+		if cookie.Name == "shopanda_csrf" {
 			return cookie
 		}
 	}
@@ -265,5 +273,41 @@ func TestStorefrontHandler_AccountProfile_Update(t *testing.T) {
 	}
 	if repo.customers[out.CustomerID].FirstName != "Grace" || repo.customers[out.CustomerID].LastName != "Hopper" {
 		t.Fatalf("profile = %q %q, want Grace Hopper", repo.customers[out.CustomerID].FirstName, repo.customers[out.CustomerID].LastName)
+	}
+}
+
+func TestStorefrontHandler_AccountDelete_RequiresConfirmation(t *testing.T) {
+	engine := createTestTheme(t)
+	pdp := composition.NewPipeline[composition.ProductContext]()
+	plp := composition.NewPipeline[composition.ListingContext]()
+	authSvc, _ := newStorefrontAuthService(t)
+	out, err := authSvc.Register(context.Background(), appAuth.RegisterInput{Email: "ada@example.com", Password: "password123", FirstName: "Ada", LastName: "Lovelace"})
+	if err != nil {
+		t.Fatalf("Register: %v", err)
+	}
+	deleter := &storefrontAccountDeleterStub{}
+	h := shophttp.NewStorefrontHandler(engine, &mockStorefrontRepo{}, newStorefrontCategoryMock(), pdp, plp, newStorefrontSearchMock()).WithAccount(authSvc, newStorefrontAccountOrderRepoStub(), deleter)
+	router := newStorefrontRouter(h)
+	id, err := identity.NewIdentity(out.CustomerID, identity.RoleCustomer)
+	if err != nil {
+		t.Fatalf("NewIdentity: %v", err)
+	}
+	csrfCookie := storefrontAccountCSRFCookie(t, router, "/account/profile")
+
+	form := url.Values{
+		"csrf_token": {csrfCookie.Value},
+	}
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("POST", "/account/profile/delete", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.AddCookie(csrfCookie)
+	req = req.WithContext(auth.WithIdentity(req.Context(), id))
+	router.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("status = %d, want %d; body: %s", rec.Code, http.StatusUnprocessableEntity, rec.Body.String())
+	}
+	if deleter.deleted != "" {
+		t.Fatalf("deleted = %q, want empty", deleter.deleted)
 	}
 }

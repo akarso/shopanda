@@ -83,6 +83,7 @@ type StorefrontAccountProfilePageData struct {
 	LastName             string
 	ProfileErrorMessage  string
 	PasswordErrorMessage string
+	DeleteErrorMessage   string
 	SuccessMessage       string
 	OrdersURL            string
 }
@@ -101,9 +102,8 @@ func (h *StorefrontHandler) Login() http.HandlerFunc {
 		page := StorefrontAccountLoginPageData{
 			Layout:     h.layoutDataBestEffort(r),
 			Theme:      h.engine.Theme(),
-			CSRFToken:  storefrontCSRFToken(r),
-			RedirectTo: storefrontSafeRedirectPath(r.FormValue("redirect_to"), "/account/orders"),
-			Email:      strings.TrimSpace(r.FormValue("email")),
+			CSRFToken:  shopandaCSRFToken(r),
+			RedirectTo: "/account/orders",
 		}
 		if r.Method == http.MethodGet {
 			page.RedirectTo = storefrontSafeRedirectPath(r.URL.Query().Get("redirect_to"), "/account/orders")
@@ -122,8 +122,9 @@ func (h *StorefrontHandler) Login() http.HandlerFunc {
 			return
 		}
 		page.RedirectTo = storefrontSafeRedirectPath(r.FormValue("redirect_to"), "/account/orders")
+		page.Email = strings.TrimSpace(r.FormValue("email"))
 		out, err := h.auth.Login(r.Context(), appAuth.LoginInput{
-			Email:    strings.TrimSpace(r.FormValue("email")),
+			Email:    page.Email,
 			Password: r.FormValue("password"),
 		})
 		if err != nil {
@@ -150,11 +151,8 @@ func (h *StorefrontHandler) Register() http.HandlerFunc {
 		page := StorefrontAccountRegisterPageData{
 			Layout:     h.layoutDataBestEffort(r),
 			Theme:      h.engine.Theme(),
-			CSRFToken:  storefrontCSRFToken(r),
-			RedirectTo: storefrontSafeRedirectPath(r.FormValue("redirect_to"), "/account/orders"),
-			FirstName:  strings.TrimSpace(r.FormValue("first_name")),
-			LastName:   strings.TrimSpace(r.FormValue("last_name")),
-			Email:      strings.TrimSpace(r.FormValue("email")),
+			CSRFToken:  shopandaCSRFToken(r),
+			RedirectTo: "/account/orders",
 		}
 		if r.Method == http.MethodGet {
 			page.RedirectTo = storefrontSafeRedirectPath(r.URL.Query().Get("redirect_to"), "/account/orders")
@@ -170,6 +168,9 @@ func (h *StorefrontHandler) Register() http.HandlerFunc {
 			return
 		}
 		page.RedirectTo = storefrontSafeRedirectPath(r.FormValue("redirect_to"), "/account/orders")
+		page.FirstName = strings.TrimSpace(r.FormValue("first_name"))
+		page.LastName = strings.TrimSpace(r.FormValue("last_name"))
+		page.Email = strings.TrimSpace(r.FormValue("email"))
 		out, err := h.auth.Register(r.Context(), appAuth.RegisterInput{
 			Email:     page.Email,
 			Password:  r.FormValue("password"),
@@ -303,17 +304,15 @@ func (h *StorefrontHandler) AccountProfile() http.HandlerFunc {
 			http.Error(w, "invalid form body", http.StatusBadRequest)
 			return
 		}
-		updated, err := h.auth.UpdateProfile(r.Context(), appAuth.UpdateProfileInput{
+		if _, err := h.auth.UpdateProfile(r.Context(), appAuth.UpdateProfileInput{
 			CustomerID: customerID,
 			FirstName:  r.FormValue("first_name"),
 			LastName:   r.FormValue("last_name"),
-		})
-		if err != nil {
+		}); err != nil {
 			page.ProfileErrorMessage = storefrontAccountErrorMessage(err)
 			h.renderPageStatus(w, "account_profile", page, storefrontAccountErrorStatus(err))
 			return
 		}
-		page = storefrontAccountProfilePage(h, r, updated)
 		http.Redirect(w, r, "/account/profile?updated=1", http.StatusSeeOther)
 	}
 }
@@ -355,12 +354,27 @@ func (h *StorefrontHandler) AccountPassword() http.HandlerFunc {
 
 func (h *StorefrontHandler) AccountDelete() http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		if h.account == nil {
+		if h.account == nil || h.auth == nil || !h.engine.HasTemplate("account_profile") {
 			http.Error(w, "Not Found", http.StatusNotFound)
 			return
 		}
 		customerID, ok := h.requireStorefrontAccount(w, r)
 		if !ok {
+			return
+		}
+		if err := r.ParseForm(); err != nil {
+			http.Error(w, "invalid form body", http.StatusBadRequest)
+			return
+		}
+		profile, err := h.auth.Me(r.Context(), customerID)
+		if err != nil {
+			http.Error(w, "Internal Server Error", http.StatusInternalServerError)
+			return
+		}
+		page := storefrontAccountProfilePage(h, r, profile)
+		if !strings.EqualFold(strings.TrimSpace(r.FormValue("confirm_delete")), "delete") {
+			page.DeleteErrorMessage = "Type DELETE to confirm account removal."
+			h.renderPageStatus(w, "account_profile", page, http.StatusUnprocessableEntity)
 			return
 		}
 		if err := h.account.DeleteAccount(r.Context(), customerID); err != nil {
@@ -428,7 +442,7 @@ func storefrontAccountProfilePage(h *StorefrontHandler, r *http.Request, profile
 	return StorefrontAccountProfilePageData{
 		Layout:    h.layoutDataBestEffort(r),
 		Theme:     h.engine.Theme(),
-		CSRFToken: storefrontCSRFToken(r),
+		CSRFToken: shopandaCSRFToken(r),
 		Email:     profile.Email,
 		FirstName: profile.FirstName,
 		LastName:  profile.LastName,

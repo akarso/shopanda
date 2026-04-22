@@ -51,6 +51,13 @@ func (r *stubCustomerRepo) ListCustomers(_ context.Context, _, _ int) ([]custome
 	return nil, nil
 }
 func (r *stubCustomerRepo) BumpTokenGeneration(_ context.Context, _ string) error { return nil }
+func (r *stubCustomerRepo) ChangePasswordAndBumpTokenGeneration(_ context.Context, id, passwordHash string) error {
+	if c, ok := r.customers[id]; ok {
+		c.PasswordHash = passwordHash
+		c.BumpTokenGeneration()
+	}
+	return nil
+}
 func (r *stubCustomerRepo) Delete(_ context.Context, id string) error {
 	if _, ok := r.customers[id]; !ok {
 		return apperror.NotFound("customer not found")

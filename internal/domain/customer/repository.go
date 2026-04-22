@@ -24,6 +24,10 @@ type CustomerRepository interface {
 	// BumpTokenGeneration atomically increments the customer's token generation.
 	BumpTokenGeneration(ctx context.Context, customerID string) error
 
+	// ChangePasswordAndBumpTokenGeneration atomically updates the password hash
+	// and invalidates previously issued tokens by incrementing token generation.
+	ChangePasswordAndBumpTokenGeneration(ctx context.Context, customerID, passwordHash string) error
+
 	// Delete removes a customer by ID.
 	// Returns apperror.NotFound when the customer does not exist.
 	Delete(ctx context.Context, id string) error

@@ -25,7 +25,7 @@
                 </label>
             </div>
             <div class="checkout-actions">
-                <a class="chip" href="/account/register">Create an account</a>
+                <a class="chip" href="/account/register{{ if .RedirectTo }}?redirect_to={{ .RedirectTo | urlquery }}{{ end }}">Create an account</a>
                 <button type="submit">Login</button>
             </div>
         </form>
