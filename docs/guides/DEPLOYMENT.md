@@ -1,0 +1,586 @@
+# Deployment Guide
+
+This guide is for operators who deploy, host, and maintain Shopanda.
+
+For day-to-day store use after the application is running, see [Merchant Guide](MERCHANT.md).
+
+## Quick Start With Docker
+
+Use this path when you want the fastest working local or small-server deployment.
+
+### 1. Clone the repository
+
+```bash
+git clone https://github.com/akarso/shopanda.git
+cd shopanda
+```
+
+### 2. Create configuration
+
+```bash
+cp .env.example .env
+```
+
+At minimum, set:
+
+- `SHOPANDA_AUTH_JWT_SECRET`
+- `SHOPANDA_SERVER_PUBLIC_BASE_URL`
+- `SHOPANDA_DATABASE_PASSWORD`
+
+Generate a JWT secret with:
+
+```bash
+openssl rand -hex 32
+```
+
+If you want the seeded admin account in Docker, add this to `.env` before starting the stack:
+
+```bash
+SHOPANDA_SEED_ADMIN_PASSWORD=change-me-now
+```
+
+### 3. Start the stack
+
+```bash
+docker compose up -d
+```
+
+This starts:
+
+- `app`
+- `postgres`
+
+Optional profiles:
+
+```bash
+docker compose --profile dev up -d
+docker compose --profile search up -d
+docker compose --profile dev --profile search up -d
+```
+
+Those add:
+
+- `mailpit` for local SMTP testing
+- `meilisearch` for search-engine-backed deployments
+
+### 4. Run first-time setup
+
+If the stack is already running:
+
+```bash
+docker compose exec app shopanda setup
+```
+
+If you prefer a one-off setup container:
+
+```bash
+docker compose run --rm app setup
+```
+
+If you did not place the admin seed password in `.env`, pass it explicitly for the one-off setup run:
+
+```bash
+docker compose run --rm -e SHOPANDA_SEED_ADMIN_PASSWORD=change-me-now app setup
+```
+
+The setup command:
+
+- checks database connectivity
+- runs migrations
+- runs default seeders unless `--skip-seed` is used
+- prints store, admin API, and docs URLs
+
+### 5. Verify the deployment
+
+```bash
+curl http://localhost:8080/healthz
+open http://localhost:8080/docs
+open http://localhost:8080/admin
+```
+
+Live endpoints in the current application:
+
+- health: `/healthz`
+- API docs UI: `/docs`
+- OpenAPI spec: `/docs/openapi.yaml`
+- admin SPA: `/admin`
+
+## Environment Variables
+
+Shopanda supports both environment variables and YAML config. For production, use either:
+
+- environment variables from your process manager, container platform, or shell
+- a checked-in or mounted `configs/config.yaml`
+
+Environment variables override YAML values.
+
+### Server
+
+| Variable | Required | Default | Purpose |
+| --- | --- | --- | --- |
+| `SHOPANDA_SERVER_HOST` | No | `0.0.0.0` | Bind address |
+| `SHOPANDA_SERVER_PORT` | No | `8080` | HTTP port |
+| `SHOPANDA_SERVER_PUBLIC_BASE_URL` | Yes for real deployments | none | Public base URL used in generated links and external-facing flows |
+
+### Database
+
+| Variable | Required | Default | Purpose |
+| --- | --- | --- | --- |
+| `DATABASE_URL` | Optional alternative | none | Full PostgreSQL DSN; overrides individual DB fields |
+| `SHOPANDA_DATABASE_HOST` | Yes unless `DATABASE_URL` is set | `localhost` | PostgreSQL host |
+| `SHOPANDA_DATABASE_PORT` | No | `5432` | PostgreSQL port |
+| `SHOPANDA_DATABASE_USER` | Yes unless `DATABASE_URL` is set | `shopanda` | PostgreSQL user |
+| `SHOPANDA_DATABASE_PASSWORD` | Yes unless `DATABASE_URL` is set | `changeme` | PostgreSQL password |
+| `SHOPANDA_DATABASE_NAME` | Yes unless `DATABASE_URL` is set | `shopanda` | PostgreSQL database name |
+| `SHOPANDA_DATABASE_SSLMODE` | No | `disable` | PostgreSQL SSL mode |
+
+### Logging
+
+| Variable | Required | Default | Purpose |
+| --- | --- | --- | --- |
+| `SHOPANDA_LOG_LEVEL` | No | `info` | Log level: `debug`, `info`, `warn`, `error` |
+| `SHOPANDA_LOG_FORMAT` | No | `json` | Log format: `json` or `text` |
+
+### Authentication
+
+| Variable | Required | Default | Purpose |
+| --- | --- | --- | --- |
+| `SHOPANDA_AUTH_JWT_SECRET` | Yes | none | JWT signing secret; application refuses to start without it |
+| `SHOPANDA_AUTH_JWT_TTL` | No | `24h` | Token lifetime |
+
+### Mail
+
+| Variable | Required | Default | Purpose |
+| --- | --- | --- | --- |
+| `SHOPANDA_MAIL_DRIVER` | No | `smtp` | Mail backend |
+| `SHOPANDA_MAIL_SMTP_HOST` | No | `localhost` | SMTP host |
+| `SHOPANDA_MAIL_SMTP_PORT` | No | `587` | SMTP port |
+| `SHOPANDA_MAIL_SMTP_USER` | No | empty | SMTP username |
+| `SHOPANDA_MAIL_SMTP_PASSWORD` | No | empty | SMTP password |
+| `SHOPANDA_MAIL_SMTP_FROM` | No | `noreply@example.com` | Sender address |
+
+### Media Storage
+
+| Variable | Required | Default | Purpose |
+| --- | --- | --- | --- |
+| `SHOPANDA_MEDIA_STORAGE` | No | `local` | Media storage driver |
+| `SHOPANDA_MEDIA_LOCAL_BASE_PATH` | No | `./public/media` | Local upload path |
+| `SHOPANDA_MEDIA_LOCAL_BASE_URL` | No | `/media` | Public media base URL |
+
+### Cache
+
+| Variable | Required | Default | Purpose |
+| --- | --- | --- | --- |
+| `SHOPANDA_CACHE_DRIVER` | No | `postgres` | Cache backend |
+
+### Frontend
+
+| Variable | Required | Default | Purpose |
+| --- | --- | --- | --- |
+| `SHOPANDA_FRONTEND_ENABLED` | No | `false` | Enable the built-in SSR storefront |
+| `SHOPANDA_FRONTEND_MODE` | No | `ssr` | Frontend rendering mode |
+| `SHOPANDA_FRONTEND_THEME_PATH` | No | `themes/default` | Active storefront theme path |
+
+### CDN
+
+| Variable | Required | Default | Purpose |
+| --- | --- | --- | --- |
+| `SHOPANDA_CDN_BASE_URL` | No | empty | Optional CDN base URL for asset delivery |
+
+### Webhooks
+
+| Variable | Required | Default | Purpose |
+| --- | --- | --- | --- |
+| `SHOPANDA_WEBHOOKS_SECRET_STRIPE` | No | empty | Stripe webhook secret |
+| `SHOPANDA_WEBHOOKS_SECRET_PAYPAL` | No | empty | Example provider-specific webhook secret |
+
+### Rate Limiting
+
+| Variable | Required | Default | Purpose |
+| --- | --- | --- | --- |
+| `SHOPANDA_RATE_LIMIT_ENABLED` | No | `false` | Enable request rate limiting |
+| `SHOPANDA_RATE_LIMIT_DEFAULT_RATE` | No | `10` | Default tokens per second |
+| `SHOPANDA_RATE_LIMIT_DEFAULT_BURST` | No | `20` | Default burst size |
+
+### Seeding
+
+| Variable | Required | Default | Purpose |
+| --- | --- | --- | --- |
+| `SHOPANDA_SEED_ADMIN_PASSWORD` | Required for `setup` or `seed` when the admin account does not yet exist | none | Password for seeded admin user `admin@example.com` |
+
+### Development and Testing
+
+| Variable | Required | Default | Purpose |
+| --- | --- | --- | --- |
+| `SHOPANDA_DEV_MODE` | No | empty | Enables development-only behavior |
+| `SHOPANDA_TEST_DSN` | No | empty | PostgreSQL DSN used by integration tests |
+
+### Security notes
+
+- never reuse the sample database password in real environments
+- treat `SHOPANDA_AUTH_JWT_SECRET` like a production credential; rotate it if leaked
+- prefer shell- or platform-injected secrets over committing secrets into YAML
+- if you expose Meilisearch to the internet, set a real master key instead of the local-dev default
+
+## Deploy With Docker
+
+### Build the image
+
+```bash
+docker build -t shopanda .
+```
+
+The current Dockerfile:
+
+- uses a multi-stage build
+- produces a static binary at `/usr/local/bin/shopanda`
+- runs as non-root user `appuser`
+- exposes port `8080`
+- includes migrations, theme files, config, and OpenAPI assets
+- performs health checks against `/healthz`
+
+### Run a single container
+
+```bash
+docker run --rm \
+  -p 8080:8080 \
+  --env-file .env \
+  shopanda
+```
+
+Run one-off tasks with the same image:
+
+```bash
+docker run --rm --env-file .env shopanda migrate
+docker run --rm --env-file .env shopanda seed
+docker run --rm --env-file .env shopanda setup
+```
+
+### Use Docker Compose for a fuller deployment
+
+Current repository behavior:
+
+- `docker-compose.yml` starts `app` and `postgres` by default
+- `mailpit` is available behind the `dev` profile
+- `meilisearch` is available behind the `search` profile
+- Postgres data persists in the `pgdata` named volume
+
+### Persist uploaded media
+
+If you use local media storage in containers, add a volume for `/app/public/media`. The default compose file does not yet mount that path.
+
+Recommended override:
+
+```yaml
+services:
+  app:
+    volumes:
+      - media:/app/public/media
+
+volumes:
+  media:
+```
+
+Without this, uploaded files disappear when the application container is replaced.
+
+### Run worker and scheduler containers
+
+For production, run background processes separately from the web server even though they use the same image.
+
+Example compose override:
+
+```yaml
+services:
+  app:
+    command: serve
+
+  worker:
+    image: shopanda
+    command: worker
+    env_file:
+      - .env
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  scheduler:
+    image: shopanda
+    command: scheduler
+    env_file:
+      - .env
+    depends_on:
+      postgres:
+        condition: service_healthy
+```
+
+## Deploy To Cloud Platforms
+
+These examples are intentionally minimal and use the current runtime contract: one image, commands for `serve`, `worker`, and `scheduler`, plus PostgreSQL.
+
+### Railway
+
+Use Railway when you want the least amount of infrastructure work.
+
+Recommended layout:
+
+- web service running `shopanda serve`
+- worker service running `shopanda worker`
+- scheduler service running `shopanda scheduler`
+- Railway PostgreSQL plugin or managed external Postgres
+
+Set at least:
+
+- `SHOPANDA_AUTH_JWT_SECRET`
+- `SHOPANDA_SERVER_PUBLIC_BASE_URL`
+- database connection settings or `DATABASE_URL`
+- `SHOPANDA_SEED_ADMIN_PASSWORD` for first setup
+
+After deploy, run:
+
+```bash
+shopanda setup
+```
+
+in a one-off Railway shell or job.
+
+### Fly.io
+
+Use separate process groups for web, worker, and scheduler.
+
+Example `fly.toml` shape:
+
+```toml
+app = "shopanda"
+primary_region = "ams"
+
+[build]
+  dockerfile = "Dockerfile"
+
+[env]
+  SHOPANDA_SERVER_PORT = "8080"
+
+[http_service]
+  internal_port = 8080
+  force_https = true
+  auto_stop_machines = false
+  auto_start_machines = true
+
+[[vm]]
+  memory = "512mb"
+  cpu_kind = "shared"
+  cpus = 1
+```
+
+If you split worker and scheduler into separate Fly apps or process groups, keep the same environment and image, and change only the command.
+
+### DigitalOcean App Platform
+
+Use one web component and optional worker components from the same repository.
+
+Suggested process layout:
+
+- web component: `serve`
+- worker component: `worker`
+- scheduler component: `scheduler`
+
+Back it with managed PostgreSQL and inject the same core secrets used elsewhere.
+
+## Deploy On Bare Metal
+
+Use bare metal or a VPS when you want full control and already have a reverse proxy and PostgreSQL available.
+
+### Build the binary
+
+```bash
+go build -o shopanda ./cmd/api
+```
+
+### First-time setup
+
+```bash
+./shopanda setup
+```
+
+If you prefer explicit steps:
+
+```bash
+./shopanda migrate
+./shopanda seed
+```
+
+### Run the processes
+
+```bash
+./shopanda serve
+./shopanda worker
+./shopanda scheduler
+```
+
+### Example systemd units
+
+Web service:
+
+```ini
+[Unit]
+Description=Shopanda Web
+After=network.target postgresql.service
+
+[Service]
+WorkingDirectory=/opt/shopanda
+ExecStart=/opt/shopanda/shopanda serve
+Restart=always
+EnvironmentFile=/etc/shopanda/shopanda.env
+User=shopanda
+Group=shopanda
+
+[Install]
+WantedBy=multi-user.target
+```
+
+Worker service:
+
+```ini
+[Unit]
+Description=Shopanda Worker
+After=network.target postgresql.service
+
+[Service]
+WorkingDirectory=/opt/shopanda
+ExecStart=/opt/shopanda/shopanda worker
+Restart=always
+EnvironmentFile=/etc/shopanda/shopanda.env
+User=shopanda
+Group=shopanda
+
+[Install]
+WantedBy=multi-user.target
+```
+
+Scheduler service:
+
+```ini
+[Unit]
+Description=Shopanda Scheduler
+After=network.target postgresql.service
+
+[Service]
+WorkingDirectory=/opt/shopanda
+ExecStart=/opt/shopanda/shopanda scheduler
+Restart=always
+EnvironmentFile=/etc/shopanda/shopanda.env
+User=shopanda
+Group=shopanda
+
+[Install]
+WantedBy=multi-user.target
+```
+
+## Configure TLS And HTTPS
+
+### Caddy
+
+Use Caddy when you want the simplest automatic TLS setup.
+
+```caddyfile
+shop.example.com {
+    reverse_proxy 127.0.0.1:8080
+}
+```
+
+### Nginx
+
+Use Nginx when you already standardize on it for the rest of your infrastructure.
+
+```nginx
+server {
+    listen 80;
+    server_name shop.example.com;
+
+    location / {
+        proxy_pass http://127.0.0.1:8080;
+        proxy_set_header Host $host;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+}
+```
+
+Pair Nginx with Let's Encrypt or your normal certificate automation.
+
+## Operate PostgreSQL Safely
+
+### Set up the database
+
+Requirements:
+
+- PostgreSQL
+- a dedicated application database
+- a dedicated application user
+- network access from the Shopanda processes to PostgreSQL
+
+Use either individual DB environment variables or `DATABASE_URL`.
+
+### Consider connection pooling
+
+For larger deployments, place PgBouncer between Shopanda and PostgreSQL, especially when running multiple web and worker instances.
+
+### Back up the database
+
+Simple logical backup:
+
+```bash
+pg_dump "$DATABASE_URL" > shopanda-$(date +%F).sql
+```
+
+Restore example:
+
+```bash
+psql "$DATABASE_URL" < shopanda-2026-04-22.sql
+```
+
+### Back up media files
+
+If you use local media storage, back up the media path as well:
+
+```bash
+tar -czf shopanda-media-$(date +%F).tar.gz ./public/media
+```
+
+If you use S3-compatible storage, rely on bucket-level lifecycle and backup policies instead.
+
+## Monitor The Deployment
+
+### Health checks
+
+Use:
+
+```bash
+curl -f http://127.0.0.1:8080/healthz
+```
+
+The Docker image already uses `/healthz` for its built-in container health check.
+
+### Logs
+
+Structured JSON logs are the default:
+
+- set `SHOPANDA_LOG_FORMAT=json` for machine-readable logs
+- set `SHOPANDA_LOG_LEVEL` appropriately for the environment
+
+This makes Shopanda suitable for log aggregation systems such as Loki, Datadog, ELK, or platform-native logging.
+
+### Operator checks after deploy
+
+After every deploy, verify:
+
+1. `/healthz` returns success.
+2. `/docs` opens.
+3. `/admin` loads.
+4. a worker is running if you depend on async email or jobs.
+5. a scheduler is running if you depend on recurring tasks.
+
+## Related Guides
+
+- [Merchant Guide](MERCHANT.md)
+- [README](../../README.md)
+- [Configuration Reference](../../configs/config.example.yaml)
