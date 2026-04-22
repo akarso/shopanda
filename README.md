@@ -177,6 +177,10 @@ See the full [CLI Commands](docs/CLI_COMMANDS.md) doc for details.
 
 All specs live in [`docs/`](docs/):
 
+### Guides
+
+- [Merchant Guide](docs/guides/MERCHANT.md) — day-to-day store operations, admin UI, orders, and catalog workflows
+
 ### Architecture & Design
 
 - [Foundation](docs/FOUNDATION.md) — vision and principles
