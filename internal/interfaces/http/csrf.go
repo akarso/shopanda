@@ -19,7 +19,7 @@ func CSRFMiddleware(trustedProxies ...string) Middleware {
 
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			if !strings.HasPrefix(r.URL.Path, "/checkout/") {
+			if !storefrontRequiresCSRFPath(r.URL.Path) {
 				next.ServeHTTP(w, r)
 				return
 			}
@@ -75,7 +75,7 @@ func storefrontEnsureCSRFToken(w http.ResponseWriter, r *http.Request, trusted [
 	http.SetCookie(w, &http.Cookie{
 		Name:     storefrontCSRFCookieName,
 		Value:    token,
-		Path:     "/checkout/",
+		Path:     "/",
 		HttpOnly: true,
 		Secure:   isRequestSecure(r, trusted),
 		SameSite: http.SameSiteStrictMode,
@@ -99,6 +99,10 @@ func storefrontRequiresCSRFValidation(method string) bool {
 	default:
 		return true
 	}
+}
+
+func storefrontRequiresCSRFPath(path string) bool {
+	return strings.HasPrefix(path, "/checkout/") || strings.HasPrefix(path, "/account/")
 }
 
 func isRequestSecure(r *http.Request, trusted []*net.IPNet) bool {

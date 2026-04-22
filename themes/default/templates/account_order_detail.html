@@ -1,0 +1,34 @@
+{{ define "title" }}Order Detail{{ end }}
+
+{{ define "content" }}
+<section class="account-shell">
+    <div class="page-intro">
+        <span class="eyebrow">Account</span>
+        <h1>Order {{ .OrderID }}</h1>
+        <p>Placed on {{ .DateText }}. Current status: {{ .Status }}.</p>
+    </div>
+
+    <section class="account-panel">
+        <div class="checkout-summary-panel__totals">
+            <span>Total</span>
+            <strong>{{ .TotalText }}</strong>
+        </div>
+        <ul class="checkout-summary-panel__items">
+            {{ range .Items }}
+            <li>
+                <div>
+                    <strong>{{ .Name }}</strong>
+                    <span>{{ .SKU }} · Qty {{ .Quantity }}</span>
+                </div>
+                <strong>{{ .LineTotalText }}</strong>
+            </li>
+            {{ end }}
+        </ul>
+        <div class="checkout-actions">
+            <a class="chip" href="{{ .BackURL }}">Back to orders</a>
+        </div>
+    </section>
+</section>
+{{ end }}
+
+{{ template "layout.html" . }}

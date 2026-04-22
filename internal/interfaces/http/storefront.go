@@ -13,10 +13,12 @@ import (
 	"sync"
 	"time"
 
+	appAuth "github.com/akarso/shopanda/internal/application/auth"
 	cartApp "github.com/akarso/shopanda/internal/application/cart"
 	checkoutApp "github.com/akarso/shopanda/internal/application/checkout"
 	"github.com/akarso/shopanda/internal/application/composition"
 	"github.com/akarso/shopanda/internal/domain/catalog"
+	"github.com/akarso/shopanda/internal/domain/order"
 	"github.com/akarso/shopanda/internal/domain/payment"
 	"github.com/akarso/shopanda/internal/domain/search"
 	"github.com/akarso/shopanda/internal/domain/shipping"
@@ -36,7 +38,10 @@ type StorefrontHandler struct {
 	search   search.SearchEngine
 	variants catalog.VariantRepository
 	carts    *cartApp.Service
+	auth     *appAuth.Service
 	checkout *checkoutApp.Service
+	orders   order.OrderRepository
+	account  AccountDeleter
 	shipping []shipping.Provider
 	payment  payment.Provider
 	log      logger.Logger
@@ -224,6 +229,15 @@ func (h *StorefrontHandler) WithCheckout(shippingProviders []shipping.Provider, 
 	h.shipping = append([]shipping.Provider(nil), shippingProviders...)
 	h.payment = paymentProvider
 	h.checkout = checkout
+	return h
+}
+
+// WithAccount enables storefront account pages using the auth service,
+// order repository, and account deletion service.
+func (h *StorefrontHandler) WithAccount(authService *appAuth.Service, orders order.OrderRepository, account AccountDeleter) *StorefrontHandler {
+	h.auth = authService
+	h.orders = orders
+	h.account = account
 	return h
 }
 
@@ -509,10 +523,14 @@ func (h *StorefrontHandler) buildLayoutData(r *http.Request, categories []catalo
 		}
 	}
 	if len(nav) == 0 {
+		accountURL := "/account/login"
+		if storefrontCustomerID(r) != "" {
+			accountURL = "/account/orders"
+		}
 		nav = []StorefrontNavLink{
 			{Label: "Home", URL: "/"},
 			{Label: "Categories", URL: "/categories"},
-			{Label: "Account", URL: "/account/login"},
+			{Label: "Account", URL: accountURL},
 		}
 	}
 	return StorefrontLayoutData{

@@ -267,6 +267,93 @@ func TestLogin_NonExistent(t *testing.T) {
 	}
 }
 
+func TestUpdateProfile_Success(t *testing.T) {
+	repo := newMockRepo()
+	svc := newTestService(repo)
+
+	out, err := svc.Register(context.Background(), auth.RegisterInput{
+		Email:     "alice@example.com",
+		Password:  "password123",
+		FirstName: "Alice",
+		LastName:  "Smith",
+	})
+	if err != nil {
+		t.Fatalf("Register: %v", err)
+	}
+
+	c, err := svc.UpdateProfile(context.Background(), auth.UpdateProfileInput{
+		CustomerID: out.CustomerID,
+		FirstName:  "Ada",
+		LastName:   "Lovelace",
+	})
+	if err != nil {
+		t.Fatalf("UpdateProfile: %v", err)
+	}
+	if c.FirstName != "Ada" || c.LastName != "Lovelace" {
+		t.Fatalf("profile = %q %q, want Ada Lovelace", c.FirstName, c.LastName)
+	}
+}
+
+func TestChangePassword_Success(t *testing.T) {
+	repo := newMockRepo()
+	svc := newTestService(repo)
+
+	out, err := svc.Register(context.Background(), auth.RegisterInput{
+		Email:    "bob@example.com",
+		Password: "password123",
+	})
+	if err != nil {
+		t.Fatalf("Register: %v", err)
+	}
+
+	before := repo.customers[out.CustomerID].TokenGeneration
+	if err := svc.ChangePassword(context.Background(), auth.ChangePasswordInput{
+		CustomerID:      out.CustomerID,
+		CurrentPassword: "password123",
+		NewPassword:     "newpassword123",
+	}); err != nil {
+		t.Fatalf("ChangePassword: %v", err)
+	}
+	if repo.customers[out.CustomerID].TokenGeneration != before+1 {
+		t.Fatalf("token generation = %d, want %d", repo.customers[out.CustomerID].TokenGeneration, before+1)
+	}
+	if err := password.Compare(repo.customers[out.CustomerID].PasswordHash, "newpassword123"); err != nil {
+		t.Fatalf("new password not persisted: %v", err)
+	}
+	if _, err := svc.Login(context.Background(), auth.LoginInput{Email: "bob@example.com", Password: "password123"}); err == nil {
+		t.Fatal("expected old password to be rejected")
+	}
+	if _, err := svc.Login(context.Background(), auth.LoginInput{Email: "bob@example.com", Password: "newpassword123"}); err != nil {
+		t.Fatalf("expected new password to succeed: %v", err)
+	}
+}
+
+func TestChangePassword_WrongCurrentPassword(t *testing.T) {
+	repo := newMockRepo()
+	svc := newTestService(repo)
+
+	out, err := svc.Register(context.Background(), auth.RegisterInput{
+		Email:    "carol@example.com",
+		Password: "password123",
+	})
+	if err != nil {
+		t.Fatalf("Register: %v", err)
+	}
+
+	err = svc.ChangePassword(context.Background(), auth.ChangePasswordInput{
+		CustomerID:      out.CustomerID,
+		CurrentPassword: "wrong-password",
+		NewPassword:     "newpassword123",
+	})
+	if err == nil {
+		t.Fatal("expected error for wrong current password")
+	}
+	var appErr *apperror.Error
+	if !errors.As(err, &appErr) || appErr.Code != apperror.CodeUnauthorized {
+		t.Fatalf("expected unauthorized error, got %v", err)
+	}
+}
+
 func TestLogin_DisabledAccount(t *testing.T) {
 	repo := newMockRepo()
 	svc := newTestService(repo)
