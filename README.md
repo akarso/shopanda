@@ -145,11 +145,14 @@ The long-term goal is to build a commerce engine that is:
 ```bash
 git clone https://github.com/akarso/shopanda.git
 cd shopanda
-cp .env.example .env
+./install.sh
+# or: cp .env.example .env
 go build -o app ./cmd/api
 ./app setup
 ./app serve
 ```
+
+`./install.sh` is an interactive helper that writes a complete `.env` file. If you prefer to edit configuration manually, skip it and copy `.env.example` yourself.
 
 For a complete operator-focused setup, including Docker, health checks, and environment variables, see [docs/guides/DEPLOYMENT.md](docs/guides/DEPLOYMENT.md).
 

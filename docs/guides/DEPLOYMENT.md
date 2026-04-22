@@ -19,6 +19,14 @@ cd shopanda
 
 ### 2. Create configuration
 
+If you want an interactive setup flow that writes `.env` for you, run:
+
+```bash
+./install.sh
+```
+
+If you prefer manual configuration, copy the example file instead:
+
 ```bash
 cp .env.example .env
 ```
