@@ -13,7 +13,8 @@ const (
 	defaultTaxRateBasisPts = 2300
 )
 
-// TaxSeeder creates a baseline standard tax rate so pricing works on first boot.
+// TaxSeeder creates a baseline standard tax rate so pricing works on first boot
+// without overwriting existing operator-configured rates.
 type TaxSeeder struct{}
 
 func (s *TaxSeeder) Name() string { return "default-tax" }
@@ -29,30 +30,39 @@ func (s *TaxSeeder) Seed(ctx context.Context, deps Deps) error {
 	}
 
 	country := defaultStoreCountry
-	if st, err := storeRepo.FindDefault(ctx); err != nil {
-		return err
-	} else if st != nil && st.Country != "" {
-		country = st.Country
-	}
-
-	existing, err := rateRepo.FindByCountryClassAndStore(ctx, country, defaultTaxClass, "")
+	st, err := storeRepo.FindDefault(ctx)
 	if err != nil {
 		return err
 	}
-	if existing != nil {
-		deps.Logger.Info("seed.tax.skip", map[string]interface{}{
+	if st != nil && st.Country != "" {
+		country = st.Country
+	} else {
+		ctxFields := map[string]interface{}{
 			"country": country,
-			"class":   defaultTaxClass,
-		})
-		return nil
+			reason":  "default store not found",
+		}
+		if st != nil {
+			ctxFields["reason"] = "default store has empty country"
+			ctxFields["store_id"] = st.ID
+			ctxFields["code"] = st.Code
+		}
+		deps.Logger.Warn("seed.tax.fallback", ctxFields)
 	}
 
 	rate, err := tax.NewTaxRate(id.New(), country, defaultTaxClass, "", defaultTaxRateBasisPts)
 	if err != nil {
 		return err
 	}
-	if err := rateRepo.Upsert(ctx, &rate); err != nil {
+	created, err := rateRepo.CreateIfNotExists(ctx, &rate)
+	if err != nil {
 		return err
+	}
+	if !created {
+		deps.Logger.Info("seed.tax.skip", map[string]interface{}{
+			"country": country,
+			"class":   defaultTaxClass,
+		})
+		return nil
 	}
 
 	deps.Logger.Info("seed.tax.created", map[string]interface{}{

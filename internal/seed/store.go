@@ -50,11 +50,10 @@ func (s *StoreSeeder) Seed(ctx context.Context, deps Deps) error {
 		return nil
 	}
 
-	st, err := store.NewStore(id.New(), defaultStoreCode, defaultStoreName, defaultCurrency, defaultStoreCountry, defaultStoreLanguage, "")
+	st, err := store.NewDefaultStore(id.New(), defaultStoreCode, defaultStoreName, defaultCurrency, defaultStoreCountry, defaultStoreLanguage, "")
 	if err != nil {
 		return err
 	}
-	st.IsDefault = true
 
 	if err := repo.Create(ctx, &st); err != nil {
 		return err

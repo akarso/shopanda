@@ -115,6 +115,27 @@ func (r *TaxRateRepo) Upsert(ctx context.Context, tr *tax.TaxRate) error {
 	return nil
 }
 
+// CreateIfNotExists inserts a rate for a country+class+store tuple and leaves
+// existing rows untouched. It returns true when a row was inserted.
+func (r *TaxRateRepo) CreateIfNotExists(ctx context.Context, tr *tax.TaxRate) (bool, error) {
+	if tr == nil {
+		return false, fmt.Errorf("tax_rate_repo: create if not exists: rate must not be nil")
+	}
+	const q = `INSERT INTO tax_rates (id, country, class, store_id, rate)
+		VALUES ($1, $2, $3, $4, $5)
+		ON CONFLICT (country, class, store_id) DO NOTHING
+		RETURNING id`
+
+	err := r.queryRow(ctx, q, tr.ID, tr.Country, tr.Class, tr.StoreID, tr.Rate).Scan(&tr.ID)
+	if errors.Is(err, sql.ErrNoRows) {
+		return false, nil
+	}
+	if err != nil {
+		return false, fmt.Errorf("tax_rate_repo: create if not exists: %w", err)
+	}
+	return true, nil
+}
+
 // Delete removes a tax rate by ID.
 func (r *TaxRateRepo) Delete(ctx context.Context, id string) error {
 	const q = `DELETE FROM tax_rates WHERE id = $1`

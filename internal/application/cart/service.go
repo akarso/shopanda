@@ -245,8 +245,10 @@ func (s *Service) recalculate(ctx context.Context, c *domainCart.Cart) error {
 				pctx.Meta["tax_country"] = st.Country
 			}
 		}
-		if _, ok := pctx.Meta["tax_mode"]; !ok {
-			pctx.Meta["tax_mode"] = string(tax.ModeExclusive)
+		if _, ok := pctx.Meta["tax_country"]; ok {
+			if _, ok := pctx.Meta["tax_mode"]; !ok {
+				pctx.Meta["tax_mode"] = string(tax.ModeExclusive)
+			}
 		}
 	}
 

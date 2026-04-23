@@ -58,6 +58,16 @@ func TestNewStore_NormalizesCase(t *testing.T) {
 	}
 }
 
+func TestNewDefaultStore(t *testing.T) {
+	s, err := store.NewDefaultStore("s-1", "default", "Default Store", "PLN", "PL", "pl", "")
+	if err != nil {
+		t.Fatalf("NewDefaultStore() error = %v", err)
+	}
+	if !s.IsDefault {
+		t.Fatal("IsDefault should be true for a default store")
+	}
+}
+
 func TestNewStore_Validation(t *testing.T) {
 	tests := []struct {
 		name     string

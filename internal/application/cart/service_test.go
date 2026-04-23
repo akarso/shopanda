@@ -3,6 +3,7 @@ package cart_test
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"testing"
 
@@ -116,6 +117,17 @@ func testPipeline(prices pricing.PriceRepository) pricing.Pipeline {
 type stubTaxRateRepo struct {
 	rates map[string]*tax.TaxRate
 	err   error
+}
+
+type probeStep struct {
+	name string
+	fn   func(context.Context, *pricing.PricingContext) error
+}
+
+func (s probeStep) Name() string { return s.name }
+
+func (s probeStep) Apply(ctx context.Context, pctx *pricing.PricingContext) error {
+	return s.fn(ctx, pctx)
 }
 
 func (r *stubTaxRateRepo) FindByCountryClassAndStore(_ context.Context, country, class, storeID string) (*tax.TaxRate, error) {
@@ -453,9 +465,43 @@ func TestService_AddItem_UsesStoreTaxDefaults(t *testing.T) {
 	taxRates := &stubTaxRateRepo{rates: map[string]*tax.TaxRate{
 		"DE:standard:": {ID: "rate-1", Country: "DE", Class: "standard", Rate: 1900},
 	}}
+	sawTaxDefaults := false
+	sawTaxAdjustment := false
 	pipeline := pricing.NewPipeline(
 		appPricing.NewBasePriceStep(prices),
+		probeStep{name: "assert-tax-defaults", fn: func(_ context.Context, pctx *pricing.PricingContext) error {
+			country, _ := pctx.Meta["tax_country"].(string)
+			if country != "DE" {
+				return fmt.Errorf("tax_country = %q, want DE", country)
+			}
+			mode, _ := pctx.Meta["tax_mode"].(string)
+			if mode != string(tax.ModeExclusive) {
+				return fmt.Errorf("tax_mode = %q, want %q", mode, tax.ModeExclusive)
+			}
+			sawTaxDefaults = true
+			return nil
+		}},
 		appPricing.NewTaxStep(taxRates, "standard"),
+		probeStep{name: "assert-tax-applied", fn: func(_ context.Context, pctx *pricing.PricingContext) error {
+			if len(pctx.Items) != 1 {
+				return fmt.Errorf("items = %d, want 1", len(pctx.Items))
+			}
+			if len(pctx.Items[0].Adjustments) != 1 {
+				return fmt.Errorf("tax adjustments = %d, want 1", len(pctx.Items[0].Adjustments))
+			}
+			adj := pctx.Items[0].Adjustments[0]
+			if adj.Type != pricing.AdjustmentTax {
+				return fmt.Errorf("adjustment type = %q, want %q", adj.Type, pricing.AdjustmentTax)
+			}
+			if adj.Code != "tax.DE.standard" {
+				return fmt.Errorf("adjustment code = %q, want tax.DE.standard", adj.Code)
+			}
+			if adj.Amount.Amount() != 190 {
+				return fmt.Errorf("adjustment amount = %d, want 190", adj.Amount.Amount())
+			}
+			sawTaxAdjustment = true
+			return nil
+		}},
 		pricing.NewFinalizeStep(),
 	)
 	svc := cartApp.NewService(carts, prices, nil, nil, pipeline, testLogger(), testBus())
@@ -475,6 +521,12 @@ func TestService_AddItem_UsesStoreTaxDefaults(t *testing.T) {
 	}
 	if got.Items[0].UnitPrice.Amount() != 1000 {
 		t.Fatalf("UnitPrice = %d, want 1000", got.Items[0].UnitPrice.Amount())
+	}
+	if !sawTaxDefaults {
+		t.Fatal("expected pricing pipeline to receive store tax defaults")
+	}
+	if !sawTaxAdjustment {
+		t.Fatal("expected tax step to add a tax adjustment")
 	}
 }
 
