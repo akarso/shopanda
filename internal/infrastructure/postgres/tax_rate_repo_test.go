@@ -107,6 +107,52 @@ func TestTaxRateRepo_Upsert_Update(t *testing.T) {
 	}
 }
 
+func TestTaxRateRepo_CreateIfNotExists(t *testing.T) {
+	db := testDB(t)
+	ensureTaxRatesTable(t, db)
+	mustExec(t, db, "DELETE FROM tax_rates")
+	t.Cleanup(func() { mustExec(t, db, "DELETE FROM tax_rates") })
+
+	repo, err := postgres.NewTaxRateRepo(db)
+	if err != nil {
+		t.Fatalf("NewTaxRateRepo: %v", err)
+	}
+	ctx := context.Background()
+
+	tr := mustNewTaxRate(t, "PL", "standard", 2300)
+	created, err := repo.CreateIfNotExists(ctx, &tr)
+	if err != nil {
+		t.Fatalf("CreateIfNotExists: %v", err)
+	}
+	if !created {
+		t.Fatal("CreateIfNotExists() = false, want true on first insert")
+	}
+	originalID := tr.ID
+
+	conflict := mustNewTaxRate(t, "PL", "standard", 800)
+	created, err = repo.CreateIfNotExists(ctx, &conflict)
+	if err != nil {
+		t.Fatalf("CreateIfNotExists conflict: %v", err)
+	}
+	if created {
+		t.Fatal("CreateIfNotExists() = true, want false on existing tuple")
+	}
+
+	got, err := repo.FindByCountryClassAndStore(ctx, "PL", "standard", "")
+	if err != nil {
+		t.Fatalf("Find: %v", err)
+	}
+	if got == nil {
+		t.Fatal("Find returned nil")
+	}
+	if got.ID != originalID {
+		t.Errorf("ID after create-if-not-exists conflict: got %q, want %q", got.ID, originalID)
+	}
+	if got.Rate != 2300 {
+		t.Errorf("Rate after create-if-not-exists conflict: got %d, want 2300", got.Rate)
+	}
+}
+
 func TestTaxRateRepo_ListByCountry(t *testing.T) {
 	db := testDB(t)
 	ensureTaxRatesTable(t, db)
@@ -210,6 +256,20 @@ func TestTaxRateRepo_Upsert_Nil(t *testing.T) {
 	}
 
 	if err := repo.Upsert(context.Background(), nil); err == nil {
+		t.Fatal("expected error for nil rate")
+	}
+}
+
+func TestTaxRateRepo_CreateIfNotExists_Nil(t *testing.T) {
+	db := testDB(t)
+	ensureTaxRatesTable(t, db)
+
+	repo, err := postgres.NewTaxRateRepo(db)
+	if err != nil {
+		t.Fatalf("NewTaxRateRepo: %v", err)
+	}
+
+	if _, err := repo.CreateIfNotExists(context.Background(), nil); err == nil {
 		t.Fatal("expected error for nil rate")
 	}
 }

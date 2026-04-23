@@ -11,7 +11,7 @@ If you are responsible for installing or hosting the application itself, handle 
 1. Open `/admin` in your browser.
 2. Sign in with the seeded admin account:
    - email: `admin@example.com`
-   - password: the value you set in `SHOPANDA_SEED_ADMIN_PASSWORD` before running `app setup` or `app seed`
+   - password: the value you set in `SHOPANDA_SEED_ADMIN_PASSWORD` before running `app setup` or `app seed`, if you chose to seed the default admin user
 3. After login, Shopanda opens the dashboard.
 
 If login fails, confirm that:

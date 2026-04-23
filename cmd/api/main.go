@@ -1836,6 +1836,8 @@ func runSeed(cfg *config.Config, log logger.Logger) error {
 
 func registerDefaultSeeders(reg *seed.Registry) {
 	reg.Register(&seed.ConfigSeeder{})
+	reg.Register(&seed.StoreSeeder{})
+	reg.Register(&seed.TaxSeeder{})
 	reg.Register(&seed.AdminSeeder{})
 	reg.Register(&seed.CatalogSeeder{})
 }
