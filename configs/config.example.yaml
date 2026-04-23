@@ -6,6 +6,9 @@
 # Every value here shows the default. Remove or comment out lines you don't
 # need to change — the defaults are applied automatically.
 #
+# Keep secrets out of this file. Use environment variables or another protected
+# secret store for passwords, JWT keys, API keys, and webhook secrets.
+#
 # All values can be overridden by environment variables with the SHOPANDA_
 # prefix. See .env.example for the full list.
 # =============================================================================
@@ -29,7 +32,8 @@ database:
   host: "localhost"
   port: 5432
   user: "shopanda"
-  password: "shopanda"
+  # Password: set via SHOPANDA_DATABASE_PASSWORD or DATABASE_URL.
+  # password: ""
   name: "shopanda"
   # SSL mode: disable, require, verify-ca, verify-full
   sslmode: "disable"
@@ -62,9 +66,10 @@ mail:
   smtp:
     host: "localhost"
     port: 587
-    # Leave user/password empty for unauthenticated SMTP (e.g., local Mailpit).
+    # Leave user empty for unauthenticated SMTP (e.g., local Mailpit).
     user: ""
-    password: ""
+    # Password: set via SHOPANDA_MAIL_SMTP_PASSWORD.
+    # password: ""
     from: "noreply@localhost"
 
 # --- Media Storage ------------------------------------------------------------
@@ -84,13 +89,13 @@ media:
     endpoint: ""                                    # e.g. "https://s3.amazonaws.com" or MinIO URL
     bucket: ""                                      # e.g. "shopanda-media"
     region: ""                                      # e.g. "eu-west-1"
-    # Credentials: set via environment variables (recommended) or fill in below.
+    # Credentials: set via environment variables.
     #   SHOPANDA_MEDIA_S3_ACCESS_KEY
     #   SHOPANDA_MEDIA_S3_SECRET_KEY
     # When both are empty the AWS SDK default credential chain is used
     # (instance role, shared credentials file, etc.).
-    access_key: ""
-    secret_key: ""
+    # access_key: ""
+    # secret_key: ""
     base_url: ""                                    # optional CDN URL, e.g. "https://cdn.example.com"
     # Set to true only if your bucket uses the legacy ACL model.
     # Leave false (default) for buckets with "Bucket owner enforced" (ACLs disabled).
@@ -119,7 +124,7 @@ search:
   meilisearch:
     host: "http://localhost:7700"    # Meilisearch server URL
     # API key: set via SHOPANDA_SEARCH_MEILI_KEY environment variable (recommended).
-    api_key: ""
+    # api_key: ""
     index: "products"                # Meilisearch index UID
 
 # --- Cache --------------------------------------------------------------------
@@ -144,6 +149,7 @@ cdn:
 # --- Webhooks -----------------------------------------------------------------
 webhooks:
   # Per-provider secrets for signature verification.
+  # Set these via SHOPANDA_WEBHOOKS_SECRET_* environment variables.
   secrets:
     # stripe: "whsec_..."
     # paypal: "..."

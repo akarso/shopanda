@@ -53,7 +53,7 @@ If you want the seeded admin account on first setup, add this before running `se
 SHOPANDA_SEED_ADMIN_PASSWORD=change-me-now
 ```
 
-If you prefer YAML over environment-only configuration, use `configs/config.yaml` or start from `configs/config.example.yaml`.
+If you prefer YAML over environment-only configuration, use `configs/config.yaml` or start from `configs/config.example.yaml`, but keep secrets in environment variables or another protected secret store rather than in YAML.
 
 ### 3. Build the binary
 
@@ -427,6 +427,20 @@ go build -o shopanda ./cmd/api
 sudo install -o root -g shopanda -m 0755 ./shopanda /opt/shopanda/shopanda
 ```
 
+Do not install only the binary. The current runtime still expects some files relative to its working directory:
+
+- `migrations/` for `setup` and `migrate`
+- `openapi.yaml` for `/docs/openapi.yaml`
+- `themes/` if `SHOPANDA_FRONTEND_ENABLED=true`
+
+Install those runtime assets into `/opt/shopanda` too:
+
+```bash
+sudo cp -R ./migrations /opt/shopanda/migrations
+sudo cp ./openapi.yaml /opt/shopanda/openapi.yaml
+sudo cp -R ./themes /opt/shopanda/themes
+```
+
 ### Create the config and environment files
 
 The binary expects a real config file in its working directory. Start from the example file:
@@ -445,6 +459,8 @@ sudo chmod 0640 /etc/shopanda/shopanda.env
 sudoedit /etc/shopanda/shopanda.env
 ```
 
+Keep the file in plain `KEY=value` form with no spaces around `=`. If a value contains shell-sensitive characters, quote it, for example `SHOPANDA_DATABASE_PASSWORD='s%v2M+aa'`.
+
 Security note: `/opt/shopanda/configs/config.yaml` is installed with mode `0644`, so it is world-readable and must not contain secrets. Keep credentials, API keys, webhook secrets, SMTP passwords, and other sensitive values only in `/etc/shopanda/shopanda.env` or another `0640`-protected secret store. Preserve the ownership and permissions shown here: `config.yaml` at `0644`, and `shopanda.env` at `0640` owned by `root:shopanda`.
 
 If you already ran `./install.sh`, you can copy the generated repo-root `.env` into `/etc/shopanda/shopanda.env` as the starting point instead of `.env.example`. After copying it, delete the production `.env` from the repository checkout so secrets are not left beside the codebase or one mistaken commit away from exposure. The service setup below reads `/etc/shopanda/shopanda.env`, not the repo-root `.env`.
@@ -454,14 +470,14 @@ The `shopanda` service account must be able to read `/etc/shopanda/shopanda.env`
 ### First-time setup
 
 ```bash
-sudo -u shopanda sh -c 'cd /opt/shopanda && . /etc/shopanda/shopanda.env && exec ./shopanda setup'
+sudo -u shopanda sh -c 'cd /opt/shopanda && set -a && . /etc/shopanda/shopanda.env && set +a && exec ./shopanda setup'
 ```
 
 If you prefer explicit steps:
 
 ```bash
-sudo -u shopanda sh -c 'cd /opt/shopanda && . /etc/shopanda/shopanda.env && exec ./shopanda migrate'
-sudo -u shopanda sh -c 'cd /opt/shopanda && . /etc/shopanda/shopanda.env && exec ./shopanda seed'
+sudo -u shopanda sh -c 'cd /opt/shopanda && set -a && . /etc/shopanda/shopanda.env && set +a && exec ./shopanda migrate'
+sudo -u shopanda sh -c 'cd /opt/shopanda && set -a && . /etc/shopanda/shopanda.env && set +a && exec ./shopanda seed'
 ```
 
 ### Quick manual background run
@@ -469,9 +485,9 @@ sudo -u shopanda sh -c 'cd /opt/shopanda && . /etc/shopanda/shopanda.env && exec
 Use this only for quick testing or temporary bring-up. For long-lived production processes, prefer the service manager examples below.
 
 ```bash
-sudo -u shopanda sh -c 'cd /opt/shopanda && . /etc/shopanda/shopanda.env && nohup ./shopanda serve >>/var/log/shopanda/web.log 2>&1 &'
-sudo -u shopanda sh -c 'cd /opt/shopanda && . /etc/shopanda/shopanda.env && nohup ./shopanda worker >>/var/log/shopanda/worker.log 2>&1 &'
-sudo -u shopanda sh -c 'cd /opt/shopanda && . /etc/shopanda/shopanda.env && nohup ./shopanda scheduler >>/var/log/shopanda/scheduler.log 2>&1 &'
+sudo -u shopanda sh -c 'cd /opt/shopanda && set -a && . /etc/shopanda/shopanda.env && set +a && nohup ./shopanda serve >>/var/log/shopanda/web.log 2>&1 &'
+sudo -u shopanda sh -c 'cd /opt/shopanda && set -a && . /etc/shopanda/shopanda.env && set +a && nohup ./shopanda worker >>/var/log/shopanda/worker.log 2>&1 &'
+sudo -u shopanda sh -c 'cd /opt/shopanda && set -a && . /etc/shopanda/shopanda.env && set +a && nohup ./shopanda scheduler >>/var/log/shopanda/scheduler.log 2>&1 &'
 ```
 
 These commands return your terminal immediately and write logs to `/var/log/shopanda/`.
@@ -595,7 +611,7 @@ rcvar="${name}_enable"
 pidfile="/var/run/${name}.pid"
 procname="/usr/sbin/daemon"
 command="/usr/sbin/daemon"
-command_args="-f -P ${pidfile} -u ${shopanda_web_user} /bin/sh -c 'cd /opt/shopanda && . /usr/local/etc/shopanda.env && exec /opt/shopanda/shopanda serve'"
+command_args="-f -P ${pidfile} -u ${shopanda_web_user} /bin/sh -c 'cd /opt/shopanda && set -a && . /usr/local/etc/shopanda.env && set +a && exec /opt/shopanda/shopanda serve'"
 
 load_rc_config "$name"
 run_rc_command "$1"
