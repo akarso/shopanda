@@ -2,6 +2,7 @@ package postgres_test
 
 import (
 	"context"
+	"database/sql"
 	"testing"
 	"time"
 
@@ -22,6 +23,13 @@ func mustNewPayment(t *testing.T, orderID string) payment.Payment {
 	return p
 }
 
+func mustInsertOrder(t *testing.T, db *sql.DB) string {
+	t.Helper()
+	orderID := id.New()
+	mustExec(t, db, `INSERT INTO orders (id, customer_id, currency, total_currency) VALUES ($1, $2, $3, $4)`, orderID, "customer-1", "EUR", "EUR")
+	return orderID
+}
+
 func TestPaymentRepo_NilDB(t *testing.T) {
 	_, err := postgres.NewPaymentRepo(nil)
 	if err == nil {
@@ -32,7 +40,10 @@ func TestPaymentRepo_NilDB(t *testing.T) {
 func TestPaymentRepo_CreateAndFindByID(t *testing.T) {
 	db := testDB(t)
 	ensureProductsTable(t, db)
-	t.Cleanup(func() { db.Exec("DELETE FROM payments") })
+	t.Cleanup(func() {
+		db.Exec("DELETE FROM payments")
+		db.Exec("DELETE FROM orders")
+	})
 
 	repo, err := postgres.NewPaymentRepo(db)
 	if err != nil {
@@ -40,7 +51,7 @@ func TestPaymentRepo_CreateAndFindByID(t *testing.T) {
 	}
 	ctx := context.Background()
 
-	p := mustNewPayment(t, "order-pay-1")
+	p := mustNewPayment(t, mustInsertOrder(t, db))
 	if err := repo.Create(ctx, &p); err != nil {
 		t.Fatalf("Create: %v", err)
 	}
@@ -69,7 +80,10 @@ func TestPaymentRepo_CreateAndFindByID(t *testing.T) {
 func TestPaymentRepo_FindByOrderID(t *testing.T) {
 	db := testDB(t)
 	ensureProductsTable(t, db)
-	t.Cleanup(func() { db.Exec("DELETE FROM payments") })
+	t.Cleanup(func() {
+		db.Exec("DELETE FROM payments")
+		db.Exec("DELETE FROM orders")
+	})
 
 	repo, err := postgres.NewPaymentRepo(db)
 	if err != nil {
@@ -77,12 +91,13 @@ func TestPaymentRepo_FindByOrderID(t *testing.T) {
 	}
 	ctx := context.Background()
 
-	p := mustNewPayment(t, "order-pay-2")
+	orderID := mustInsertOrder(t, db)
+	p := mustNewPayment(t, orderID)
 	if err := repo.Create(ctx, &p); err != nil {
 		t.Fatalf("Create: %v", err)
 	}
 
-	got, err := repo.FindByOrderID(ctx, "order-pay-2")
+	got, err := repo.FindByOrderID(ctx, orderID)
 	if err != nil {
 		t.Fatalf("FindByOrderID: %v", err)
 	}
@@ -130,7 +145,10 @@ func TestPaymentRepo_FindByID_EmptyID(t *testing.T) {
 func TestPaymentRepo_CreateDuplicate(t *testing.T) {
 	db := testDB(t)
 	ensureProductsTable(t, db)
-	t.Cleanup(func() { db.Exec("DELETE FROM payments") })
+	t.Cleanup(func() {
+		db.Exec("DELETE FROM payments")
+		db.Exec("DELETE FROM orders")
+	})
 
 	repo, err := postgres.NewPaymentRepo(db)
 	if err != nil {
@@ -138,13 +156,14 @@ func TestPaymentRepo_CreateDuplicate(t *testing.T) {
 	}
 	ctx := context.Background()
 
-	p := mustNewPayment(t, "order-pay-dup")
+	orderID := mustInsertOrder(t, db)
+	p := mustNewPayment(t, orderID)
 	if err := repo.Create(ctx, &p); err != nil {
 		t.Fatalf("Create: %v", err)
 	}
 
 	// Second payment for same order → conflict.
-	p2 := mustNewPayment(t, "order-pay-dup")
+	p2 := mustNewPayment(t, orderID)
 	err = repo.Create(ctx, &p2)
 	if !apperror.Is(err, apperror.CodeConflict) {
 		t.Fatalf("expected conflict error, got %v", err)
@@ -154,7 +173,10 @@ func TestPaymentRepo_CreateDuplicate(t *testing.T) {
 func TestPaymentRepo_UpdateStatus(t *testing.T) {
 	db := testDB(t)
 	ensureProductsTable(t, db)
-	t.Cleanup(func() { db.Exec("DELETE FROM payments") })
+	t.Cleanup(func() {
+		db.Exec("DELETE FROM payments")
+		db.Exec("DELETE FROM orders")
+	})
 
 	repo, err := postgres.NewPaymentRepo(db)
 	if err != nil {
@@ -162,7 +184,7 @@ func TestPaymentRepo_UpdateStatus(t *testing.T) {
 	}
 	ctx := context.Background()
 
-	p := mustNewPayment(t, "order-pay-upd")
+	p := mustNewPayment(t, mustInsertOrder(t, db))
 	if err := repo.Create(ctx, &p); err != nil {
 		t.Fatalf("Create: %v", err)
 	}
