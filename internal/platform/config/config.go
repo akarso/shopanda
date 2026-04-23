@@ -112,9 +112,9 @@ func normalizeDatabaseURL(raw string) string {
 		return ""
 	}
 
-	parsed, err := url.Parse(raw)
+	_, err := url.Parse(raw)
 	if err == nil {
-		return parsed.String()
+		return raw
 	}
 
 	repaired, repairErr := repairDatabaseURLUserinfo(raw)

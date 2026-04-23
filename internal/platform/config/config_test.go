@@ -213,6 +213,30 @@ database:
 	}
 }
 
+func TestDatabaseDSN_IPv6Host(t *testing.T) {
+	withTestBaseURL(t)
+	yaml := `
+database:
+  host: "::1"
+  port: 5432
+  user: shopanda
+  password: secret
+  name: shopanda
+  sslmode: disable
+`
+	path := writeYAML(t, yaml)
+
+	cfg, err := loadCfg(t, path)
+	if err != nil {
+		t.Fatalf("Load() error: %v", err)
+	}
+
+	want := "postgres://shopanda:secret@[::1]:5432/shopanda?sslmode=disable"
+	if got := cfg.Database.DSN(); got != want {
+		t.Errorf("DSN() = %q, want %q", got, want)
+	}
+}
+
 func TestDatabaseDSN_EnvOverride(t *testing.T) {
 	withTestBaseURL(t)
 	path := writeYAML(t, "")
@@ -242,6 +266,23 @@ func TestDatabaseDSN_EnvOverride_RepairsInvalidUserinfo(t *testing.T) {
 	t.Setenv("DATABASE_URL", "postgres://shopanda:s%v2M+aa@127.0.0.1:5432/shopanda?sslmode=disable")
 
 	want := "postgres://shopanda:s%25v2M+aa@127.0.0.1:5432/shopanda?sslmode=disable"
+	if got := DatabaseDSN(cfg); got != want {
+		t.Errorf("DatabaseDSN() = %q, want %q", got, want)
+	}
+}
+
+func TestDatabaseDSN_EnvOverride_RepairFailureFallsBackToRaw(t *testing.T) {
+	withTestBaseURL(t)
+	path := writeYAML(t, "")
+
+	cfg, err := loadCfg(t, path)
+	if err != nil {
+		t.Fatalf("Load() error: %v", err)
+	}
+
+	t.Setenv("DATABASE_URL", "notaurl")
+
+	want := "notaurl"
 	if got := DatabaseDSN(cfg); got != want {
 		t.Errorf("DatabaseDSN() = %q, want %q", got, want)
 	}
