@@ -1,6 +1,6 @@
 CREATE TABLE IF NOT EXISTS payments (
     id          TEXT PRIMARY KEY,
-    order_id    TEXT NOT NULL REFERENCES orders(id),
+    order_id    UUID NOT NULL REFERENCES orders(id),
     method      TEXT NOT NULL CHECK (method IN ('manual')),
     status      TEXT NOT NULL DEFAULT 'pending'
                     CHECK (status IN ('pending', 'completed', 'failed', 'refunded')),
