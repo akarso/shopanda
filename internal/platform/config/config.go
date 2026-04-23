@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"net"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -85,10 +86,123 @@ type DatabaseConfig struct {
 }
 
 func (d DatabaseConfig) DSN() string {
-	return fmt.Sprintf(
-		"postgres://%s:%s@%s:%d/%s?sslmode=%s",
-		d.User, d.Password, d.Host, d.Port, d.Name, d.SSLMode,
-	)
+	query := url.Values{}
+	if d.SSLMode != "" {
+		query.Set("sslmode", d.SSLMode)
+	}
+
+	u := &url.URL{
+		Scheme:   "postgres",
+		Host:     net.JoinHostPort(d.Host, strconv.Itoa(d.Port)),
+		Path:     "/" + d.Name,
+		RawQuery: query.Encode(),
+	}
+	if d.User != "" {
+		if d.Password != "" {
+			u.User = url.UserPassword(d.User, d.Password)
+		} else {
+			u.User = url.User(d.User)
+		}
+	}
+	return u.String()
+}
+
+func normalizeDatabaseURL(raw string) string {
+	if raw == "" {
+		return ""
+	}
+
+	_, err := url.Parse(raw)
+	if err == nil {
+		return raw
+	}
+
+	repaired, repairErr := repairDatabaseURLUserinfo(raw)
+	if repairErr != nil {
+		return raw
+	}
+	return repaired
+}
+
+func repairDatabaseURLUserinfo(raw string) (string, error) {
+	scheme, remainder, ok := strings.Cut(raw, "://")
+	if !ok {
+		return "", fmt.Errorf("missing scheme")
+	}
+
+	authority := remainder
+	suffix := ""
+	if idx := strings.IndexAny(remainder, "/?#"); idx >= 0 {
+		authority = remainder[:idx]
+		suffix = remainder[idx:]
+	}
+
+	at := strings.LastIndex(authority, "@")
+	if at < 0 {
+		return "", fmt.Errorf("missing userinfo")
+	}
+
+	userinfo := authority[:at]
+	host := authority[at+1:]
+	if host == "" {
+		return "", fmt.Errorf("missing host")
+	}
+
+	user := userinfo
+	password := ""
+	if colon := strings.Index(userinfo, ":"); colon >= 0 {
+		user = userinfo[:colon]
+		password = userinfo[colon+1:]
+	}
+
+	repaired := scheme + "://" + escapeDatabaseURLUserinfo(user)
+	if password != "" || strings.Contains(userinfo, ":") {
+		repaired += ":" + escapeDatabaseURLUserinfo(password)
+	}
+	repaired += "@" + host + suffix
+
+	parsed, err := url.Parse(repaired)
+	if err != nil {
+		return "", err
+	}
+	return parsed.String(), nil
+}
+
+func escapeDatabaseURLUserinfo(value string) string {
+	if value == "" {
+		return ""
+	}
+
+	var builder strings.Builder
+	for i := 0; i < len(value); i++ {
+		b := value[i]
+		if isUnreservedUserinfoByte(b) {
+			builder.WriteByte(b)
+			continue
+		}
+		if b == '%' && i+2 < len(value) && isHexByte(value[i+1]) && isHexByte(value[i+2]) {
+			builder.WriteByte('%')
+			builder.WriteByte(value[i+1])
+			builder.WriteByte(value[i+2])
+			i += 2
+			continue
+		}
+		builder.WriteString(fmt.Sprintf("%%%02X", b))
+	}
+	return builder.String()
+}
+
+func isUnreservedUserinfoByte(b byte) bool {
+	return (b >= 'a' && b <= 'z') ||
+		(b >= 'A' && b <= 'Z') ||
+		(b >= '0' && b <= '9') ||
+		b == '-' || b == '.' || b == '_' || b == '~'
+}
+
+func isHexByte(b byte) bool {
+	return (b >= '0' && b <= '9') ||
+		(b >= 'a' && b <= 'f') ||
+		(b >= 'A' && b <= 'F')
 }
 
 type LogConfig struct {
@@ -603,7 +717,7 @@ func flatten(cfg *Config) map[string]string {
 // If DATABASE_URL env var is set, it takes precedence.
 func DatabaseDSN(cfg *Config) string {
 	if v := os.Getenv("DATABASE_URL"); v != "" {
-		return v
+		return normalizeDatabaseURL(v)
 	}
 	return cfg.Database.DSN()
 }
