@@ -445,6 +445,8 @@ sudo chmod 0640 /etc/shopanda/shopanda.env
 sudoedit /etc/shopanda/shopanda.env
 ```
 
+Security note: `/opt/shopanda/configs/config.yaml` is installed with mode `0644`, so it is world-readable and must not contain secrets. Keep credentials, API keys, webhook secrets, SMTP passwords, and other sensitive values only in `/etc/shopanda/shopanda.env` or another `0640`-protected secret store. Preserve the ownership and permissions shown here: `config.yaml` at `0644`, and `shopanda.env` at `0640` owned by `root:shopanda`.
+
 If you already ran `./install.sh`, you can copy the generated repo-root `.env` into `/etc/shopanda/shopanda.env` as the starting point instead of `.env.example`. After copying it, delete the production `.env` from the repository checkout so secrets are not left beside the codebase or one mistaken commit away from exposure. The service setup below reads `/etc/shopanda/shopanda.env`, not the repo-root `.env`.
 
 The `shopanda` service account must be able to read `/etc/shopanda/shopanda.env` and write to `/opt/shopanda/public/media` when local media storage is enabled.
@@ -563,6 +565,8 @@ sudo systemctl restart shopanda-scheduler.service
 ### Short FreeBSD rc.d example
 
 If you run Shopanda on FreeBSD, use the same `/opt/shopanda` layout but keep the service env file under `/usr/local/etc/shopanda.env`.
+
+FreeBSD commonly stores third-party service scripts and related local configuration under `/usr/local/etc`, which is why the `shopanda_web` example uses `/usr/local/etc/rc.d/shopanda_web` and `/usr/local/etc/shopanda.env` even though the deploy root remains `/opt/shopanda`. On Linux, the matching examples use `/etc/shopanda/shopanda.env` with the same `/opt/shopanda` application layout.
 
 Set the service flags in `/etc/rc.conf`:
 
