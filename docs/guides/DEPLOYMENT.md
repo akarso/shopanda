@@ -6,6 +6,10 @@ For day-to-day store use after the application is running, see [Merchant Guide](
 
 Start with the simplest path first: one host, one PostgreSQL database, and the Shopanda binary. Docker is covered later as an optional packaging and deployment approach.
 
+## Run As A Service
+
+If you plan to run the Go binary under a service manager, see [Deploy On Bare Metal](#deploy-on-bare-metal) and [Example systemd units](#example-systemd-units). That section covers running `shopanda serve`, `shopanda worker`, and `shopanda scheduler` as long-lived host services.
+
 ## Quick Start Without Docker
 
 Use this path when you want the simplest working deployment with the least tooling overhead.
@@ -402,34 +406,81 @@ Back it with managed PostgreSQL and inject the same core secrets used elsewhere.
 
 Use bare metal or a VPS when you want full control and already have a reverse proxy and PostgreSQL available.
 
-### Build the binary
+Use a dedicated unprivileged service account for the running processes. Root should install files and manage services, but `shopanda serve`, `shopanda worker`, and `shopanda scheduler` should run as a non-root user such as `shopanda`.
+
+### Create the service user and directories
+
+Example Linux layout:
+
+```bash
+sudo groupadd --system shopanda
+sudo useradd --system --gid shopanda --home-dir /opt/shopanda --create-home --shell /usr/sbin/nologin shopanda
+sudo install -d -o shopanda -g shopanda -m 0755 /opt/shopanda /opt/shopanda/configs /opt/shopanda/public /opt/shopanda/public/media
+sudo install -d -o root -g shopanda -m 0750 /etc/shopanda
+sudo install -d -o shopanda -g shopanda -m 0750 /var/log/shopanda
+```
+
+### Build and install the binary
 
 ```bash
 go build -o shopanda ./cmd/api
+sudo install -o root -g shopanda -m 0755 ./shopanda /opt/shopanda/shopanda
 ```
+
+### Create the config and environment files
+
+The binary expects a real config file in its working directory. Start from the example file:
+
+```bash
+sudo install -o root -g shopanda -m 0644 ./configs/config.example.yaml /opt/shopanda/configs/config.yaml
+sudoedit /opt/shopanda/configs/config.yaml
+```
+
+For environment variables used by the services, keep them outside the repository in `/etc/shopanda/shopanda.env`:
+
+```bash
+sudo cp ./.env.example /etc/shopanda/shopanda.env
+sudo chown root:shopanda /etc/shopanda/shopanda.env
+sudo chmod 0640 /etc/shopanda/shopanda.env
+sudoedit /etc/shopanda/shopanda.env
+```
+
+If you already ran `./install.sh`, you can copy the generated repo-root `.env` into `/etc/shopanda/shopanda.env` as the starting point instead of `.env.example`. After copying it, delete the production `.env` from the repository checkout so secrets are not left beside the codebase or one mistaken commit away from exposure. The service setup below reads `/etc/shopanda/shopanda.env`, not the repo-root `.env`.
+
+The `shopanda` service account must be able to read `/etc/shopanda/shopanda.env` and write to `/opt/shopanda/public/media` when local media storage is enabled.
 
 ### First-time setup
 
 ```bash
-./shopanda setup
+sudo -u shopanda sh -c 'cd /opt/shopanda && . /etc/shopanda/shopanda.env && exec ./shopanda setup'
 ```
 
 If you prefer explicit steps:
 
 ```bash
-./shopanda migrate
-./shopanda seed
+sudo -u shopanda sh -c 'cd /opt/shopanda && . /etc/shopanda/shopanda.env && exec ./shopanda migrate'
+sudo -u shopanda sh -c 'cd /opt/shopanda && . /etc/shopanda/shopanda.env && exec ./shopanda seed'
 ```
 
-### Run the processes
+### Quick manual background run
+
+Use this only for quick testing or temporary bring-up. For long-lived production processes, prefer the service manager examples below.
 
 ```bash
-./shopanda serve
-./shopanda worker
-./shopanda scheduler
+sudo -u shopanda sh -c 'cd /opt/shopanda && . /etc/shopanda/shopanda.env && nohup ./shopanda serve >>/var/log/shopanda/web.log 2>&1 &'
+sudo -u shopanda sh -c 'cd /opt/shopanda && . /etc/shopanda/shopanda.env && nohup ./shopanda worker >>/var/log/shopanda/worker.log 2>&1 &'
+sudo -u shopanda sh -c 'cd /opt/shopanda && . /etc/shopanda/shopanda.env && nohup ./shopanda scheduler >>/var/log/shopanda/scheduler.log 2>&1 &'
 ```
 
+These commands return your terminal immediately and write logs to `/var/log/shopanda/`.
+
 ### Example systemd units
+
+Save these as:
+
+- `/etc/systemd/system/shopanda-web.service`
+- `/etc/systemd/system/shopanda-worker.service`
+- `/etc/systemd/system/shopanda-scheduler.service`
 
 Web service:
 
@@ -487,6 +538,75 @@ Group=shopanda
 [Install]
 WantedBy=multi-user.target
 ```
+
+### Enable, start, and debug the services
+
+```bash
+sudo systemctl daemon-reload
+sudo systemctl enable --now shopanda-web.service shopanda-worker.service shopanda-scheduler.service
+sudo systemctl status shopanda-web.service
+sudo systemctl status shopanda-worker.service
+sudo systemctl status shopanda-scheduler.service
+sudo journalctl -u shopanda-web.service -f
+sudo journalctl -u shopanda-worker.service -f
+sudo journalctl -u shopanda-scheduler.service -f
+```
+
+When you change `/etc/shopanda/shopanda.env` or the unit files, restart the affected services:
+
+```bash
+sudo systemctl restart shopanda-web.service
+sudo systemctl restart shopanda-worker.service
+sudo systemctl restart shopanda-scheduler.service
+```
+
+### Short FreeBSD rc.d example
+
+If you run Shopanda on FreeBSD, use the same `/opt/shopanda` layout but keep the service env file under `/usr/local/etc/shopanda.env`.
+
+Set the service flags in `/etc/rc.conf`:
+
+```sh
+shopanda_web_enable="YES"
+shopanda_web_user="shopanda"
+```
+
+Save this as `/usr/local/etc/rc.d/shopanda_web`:
+
+```sh
+#!/bin/sh
+
+# PROVIDE: shopanda_web
+# REQUIRE: LOGIN postgresql
+# KEYWORD: shutdown
+
+. /etc/rc.subr
+
+name="shopanda_web"
+rcvar="${name}_enable"
+
+: ${shopanda_web_enable:="NO"}
+: ${shopanda_web_user:="shopanda"}
+
+pidfile="/var/run/${name}.pid"
+procname="/usr/sbin/daemon"
+command="/usr/sbin/daemon"
+command_args="-f -P ${pidfile} -u ${shopanda_web_user} /bin/sh -c 'cd /opt/shopanda && . /usr/local/etc/shopanda.env && exec /opt/shopanda/shopanda serve'"
+
+load_rc_config "$name"
+run_rc_command "$1"
+```
+
+Then enable and start it:
+
+```sh
+sudo service shopanda_web enable
+sudo service shopanda_web start
+sudo service shopanda_web status
+sudo tail -f /var/log/messages
+```
+
+For `worker` and `scheduler`, duplicate the script as `shopanda_worker` and `shopanda_scheduler` and change only the service name and final Shopanda command.
 
 ## Configure TLS And HTTPS
 
