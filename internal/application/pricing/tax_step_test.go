@@ -216,6 +216,21 @@ func TestTaxStep_MissingCountryMeta(t *testing.T) {
 	}
 }
 
+func TestTaxStep_NoTaxMeta_NoOp(t *testing.T) {
+	step := appPricing.NewTaxStep(&mockRateRepo{}, "standard")
+
+	item, _ := pricing.NewPricingItem("v1", 1, shared.MustNewMoney(100, "EUR"))
+	pctx, _ := pricing.NewPricingContext("EUR")
+	pctx.Items = []pricing.PricingItem{item}
+
+	if err := step.Apply(context.Background(), &pctx); err != nil {
+		t.Fatalf("Apply: %v", err)
+	}
+	if len(pctx.Items[0].Adjustments) != 0 {
+		t.Fatalf("adjustments = %d, want 0", len(pctx.Items[0].Adjustments))
+	}
+}
+
 func TestTaxStep_MissingModeMeta(t *testing.T) {
 	step := appPricing.NewTaxStep(&mockRateRepo{}, "standard")
 
