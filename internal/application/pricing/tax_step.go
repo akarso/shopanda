@@ -11,7 +11,7 @@ import (
 // TaxStep applies per-item tax based on the customer's country and the
 // variant's tax class. Tax rates are looked up from the repository.
 //
-// Required Meta keys on PricingContext:
+// Required Meta keys on PricingContext when tax calculation is enabled:
 //
 //	"tax_country" (string): ISO 3166-1 alpha-2 country code
 //	"tax_mode"    (string): "exclusive" or "inclusive"
@@ -20,6 +20,11 @@ import (
 //
 //	"store_id"    (string): store scope for rate lookup (empty = global)
 //	"tax_classes" (map[string]string): variant ID → tax class override
+//
+// When both tax meta keys are absent, the step is a no-op so storefront carts
+// can still price items before tax context is known. When one key is present
+// without the other, Apply returns an error because the caller provided an
+// incomplete tax configuration.
 //
 // When no rate is found for a variant's class+country pair, the item is
 // treated as zero-rated (no adjustment added).
@@ -43,6 +48,12 @@ func (s *TaxStep) Name() string { return "tax" }
 
 // Apply calculates tax for every item in the pricing context.
 func (s *TaxStep) Apply(ctx context.Context, pctx *domain.PricingContext) error {
+	_, hasCountry := pctx.Meta["tax_country"]
+	_, hasMode := pctx.Meta["tax_mode"]
+	if !hasCountry && !hasMode {
+		return nil
+	}
+
 	country, err := metaString(pctx.Meta, "tax_country")
 	if err != nil {
 		return fmt.Errorf("tax step: %w", err)

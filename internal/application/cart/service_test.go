@@ -530,6 +530,37 @@ func TestService_AddItem_UsesStoreTaxDefaults(t *testing.T) {
 	}
 }
 
+func TestService_AddItem_WithoutStoreTaxContext_SkipsTaxStep(t *testing.T) {
+	carts := newStubCartRepo()
+	prices := newStubPriceRepo()
+	prices.set("var-1", "EUR", 1000)
+	taxRates := &stubTaxRateRepo{rates: map[string]*tax.TaxRate{
+		"DE:standard:": {ID: "rate-1", Country: "DE", Class: "standard", Rate: 1900},
+	}}
+	pipeline := pricing.NewPipeline(
+		appPricing.NewBasePriceStep(prices),
+		appPricing.NewTaxStep(taxRates, "standard"),
+		pricing.NewFinalizeStep(),
+	)
+	svc := cartApp.NewService(carts, prices, nil, nil, pipeline, testLogger(), testBus())
+
+	c, err := svc.CreateCart(context.Background(), "cust-1", "EUR")
+	if err != nil {
+		t.Fatalf("CreateCart: %v", err)
+	}
+
+	got, err := svc.AddItem(context.Background(), c.ID, "cust-1", "var-1", 1)
+	if err != nil {
+		t.Fatalf("AddItem: %v", err)
+	}
+	if len(got.Items) != 1 {
+		t.Fatalf("items = %d, want 1", len(got.Items))
+	}
+	if got.Items[0].UnitPrice.Amount() != 1000 {
+		t.Fatalf("UnitPrice = %d, want 1000", got.Items[0].UnitPrice.Amount())
+	}
+}
+
 // errorCartRepo wraps a stubCartRepo and injects a Save error.
 type errorCartRepo struct {
 	*stubCartRepo
