@@ -213,7 +213,10 @@ func TestPaymentRepo_UpdateStatus(t *testing.T) {
 func TestPaymentRepo_UpdateStatus_OptimisticLock(t *testing.T) {
 	db := testDB(t)
 	ensureProductsTable(t, db)
-	t.Cleanup(func() { db.Exec("DELETE FROM payments") })
+	t.Cleanup(func() {
+		db.Exec("DELETE FROM payments")
+		db.Exec("DELETE FROM orders")
+	})
 
 	repo, err := postgres.NewPaymentRepo(db)
 	if err != nil {
@@ -221,7 +224,7 @@ func TestPaymentRepo_UpdateStatus_OptimisticLock(t *testing.T) {
 	}
 	ctx := context.Background()
 
-	p := mustNewPayment(t, "order-pay-lock")
+	p := mustNewPayment(t, mustInsertOrder(t, db))
 	if err := repo.Create(ctx, &p); err != nil {
 		t.Fatalf("Create: %v", err)
 	}
