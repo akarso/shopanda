@@ -14,6 +14,7 @@ import (
 	"github.com/akarso/shopanda/internal/domain/store"
 	"github.com/akarso/shopanda/internal/platform/apperror"
 	platformAuth "github.com/akarso/shopanda/internal/platform/auth"
+	"github.com/akarso/shopanda/internal/platform/requestctx"
 )
 
 const (
@@ -98,6 +99,7 @@ func (h *StorefrontHandler) Cart() http.HandlerFunc {
 		}
 		page, err := h.buildCartPageResponse(r)
 		if err != nil {
+			h.logStorefrontCartError("storefront.cart.page.build_failed", err, r, nil)
 			http.Error(w, "Internal Server Error", http.StatusInternalServerError)
 			return
 		}
@@ -157,6 +159,10 @@ func (h *StorefrontHandler) AddToCart() http.HandlerFunc {
 		}
 		currentCart, err := h.ensureCartForRequest(w, r)
 		if err != nil {
+			h.logStorefrontCartError("storefront.cart.add.ensure_failed", err, r, map[string]interface{}{
+				"variant_id": variantID,
+				"quantity":   quantity,
+			})
 			http.Error(w, "Internal Server Error", http.StatusInternalServerError)
 			return
 		}
@@ -165,6 +171,14 @@ func (h *StorefrontHandler) AddToCart() http.HandlerFunc {
 			status := http.StatusInternalServerError
 			if apperror.Is(err, apperror.CodeValidation) {
 				status = http.StatusUnprocessableEntity
+			}
+			if status == http.StatusInternalServerError {
+				h.logStorefrontCartError("storefront.cart.add.failed", err, r, map[string]interface{}{
+					"cart_id":     currentCart.ID,
+					"customer_id": customerID,
+					"variant_id":  variantID,
+					"quantity":    quantity,
+				})
 			}
 			http.Error(w, err.Error(), status)
 			return
@@ -181,6 +195,7 @@ func (h *StorefrontHandler) UpdateCart() http.HandlerFunc {
 		}
 		currentCart, err := h.currentCart(r)
 		if err != nil {
+			h.logStorefrontCartError("storefront.cart.update.load_failed", err, r, nil)
 			http.Error(w, "Internal Server Error", http.StatusInternalServerError)
 			return
 		}
@@ -202,6 +217,14 @@ func (h *StorefrontHandler) UpdateCart() http.HandlerFunc {
 			if apperror.Is(err, apperror.CodeNotFound) {
 				status = http.StatusNotFound
 			}
+			if status == http.StatusInternalServerError {
+				h.logStorefrontCartError("storefront.cart.update.failed", err, r, map[string]interface{}{
+					"cart_id":     currentCart.ID,
+					"customer_id": storefrontCustomerID(r),
+					"variant_id":  variantID,
+					"quantity":    quantity,
+				})
+			}
 			http.Error(w, err.Error(), status)
 			return
 		}
@@ -217,6 +240,7 @@ func (h *StorefrontHandler) RemoveCartItem() http.HandlerFunc {
 		}
 		currentCart, err := h.currentCart(r)
 		if err != nil {
+			h.logStorefrontCartError("storefront.cart.remove.load_failed", err, r, nil)
 			http.Error(w, "Internal Server Error", http.StatusInternalServerError)
 			return
 		}
@@ -237,6 +261,13 @@ func (h *StorefrontHandler) RemoveCartItem() http.HandlerFunc {
 			if apperror.Is(err, apperror.CodeNotFound) {
 				status = http.StatusNotFound
 			}
+			if status == http.StatusInternalServerError {
+				h.logStorefrontCartError("storefront.cart.remove.failed", err, r, map[string]interface{}{
+					"cart_id":     currentCart.ID,
+					"customer_id": storefrontCustomerID(r),
+					"variant_id":  variantID,
+				})
+			}
 			http.Error(w, err.Error(), status)
 			return
 		}
@@ -251,6 +282,7 @@ func (h *StorefrontHandler) writeCartMutationResponse(w http.ResponseWriter, r *
 	if storefrontIsHTMX(r) && renderCartPage {
 		page, err := h.buildCartPageResponse(r)
 		if err != nil {
+			h.logStorefrontCartError("storefront.cart.mutation_response.build_failed", err, r, nil)
 			http.Error(w, "Internal Server Error", http.StatusInternalServerError)
 			return
 		}
@@ -486,6 +518,18 @@ func storefrontSafeRedirectPath(raw, fallback string) string {
 		return fallback
 	}
 	return "/cart"
+}
+
+func (h *StorefrontHandler) logStorefrontCartError(event string, err error, r *http.Request, ctx map[string]interface{}) {
+	if ctx == nil {
+		ctx = map[string]interface{}{}
+	}
+	ctx["method"] = r.Method
+	ctx["path"] = r.URL.Path
+	if requestID := requestctx.RequestID(r.Context()); requestID != "" {
+		ctx["request_id"] = requestID
+	}
+	h.log.Error(event, err, ctx)
 }
 
 func storefrontIsSafeLocalRedirect(raw string) bool {

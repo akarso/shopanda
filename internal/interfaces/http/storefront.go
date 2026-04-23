@@ -223,6 +223,14 @@ func (h *StorefrontHandler) WithCart(variants catalog.VariantRepository, carts *
 	return h
 }
 
+// WithLog overrides the storefront logger. Useful for tests and custom wiring.
+func (h *StorefrontHandler) WithLog(log logger.Logger) *StorefrontHandler {
+	if log != nil {
+		h.log = log
+	}
+	return h
+}
+
 // WithCheckout enables storefront checkout rendering and order placement using
 // the provided shipping providers, payment provider, and checkout service.
 func (h *StorefrontHandler) WithCheckout(shippingProviders []shipping.Provider, paymentProvider payment.Provider, checkout *checkoutApp.Service) *StorefrontHandler {
