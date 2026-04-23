@@ -53,7 +53,7 @@ If you want the seeded admin account on first setup, add this before running `se
 SHOPANDA_SEED_ADMIN_PASSWORD=change-me-now
 ```
 
-If you prefer YAML over environment-only configuration, use `configs/config.yaml` or start from `configs/config.example.yaml`.
+If you prefer YAML over environment-only configuration, use `configs/config.yaml` or start from `configs/config.example.yaml`, but keep secrets in environment variables or another protected secret store rather than in YAML.
 
 ### 3. Build the binary
 
@@ -408,32 +408,40 @@ Use bare metal or a VPS when you want full control and already have a reverse pr
 
 Use a dedicated unprivileged service account for the running processes. Root should install files and manage services, but `shopanda serve`, `shopanda worker`, and `shopanda scheduler` should run as a non-root user such as `shopanda`.
 
-### Create the service user and directories
+For the examples below, assume your deploy or checkout directory is `/srv/shopanda`. Replace that path with your actual working directory. The simplest setup is to keep the binary, migrations, themes, and `configs/config.yaml` in that working directory and keep only secrets outside it.
+
+### Create the service user and secrets directory
 
 Example Linux layout:
 
 ```bash
 sudo groupadd --system shopanda
-sudo useradd --system --gid shopanda --home-dir /opt/shopanda --create-home --shell /usr/sbin/nologin shopanda
-sudo install -d -o shopanda -g shopanda -m 0755 /opt/shopanda /opt/shopanda/configs /opt/shopanda/public /opt/shopanda/public/media
+sudo useradd --system --gid shopanda --home-dir /srv/shopanda --shell /usr/sbin/nologin shopanda
 sudo install -d -o root -g shopanda -m 0750 /etc/shopanda
-sudo install -d -o shopanda -g shopanda -m 0750 /var/log/shopanda
+sudo chown -R shopanda:shopanda /srv/shopanda
 ```
 
-### Build and install the binary
+### Build the binary in place
 
 ```bash
+cd /srv/shopanda
 go build -o shopanda ./cmd/api
-sudo install -o root -g shopanda -m 0755 ./shopanda /opt/shopanda/shopanda
 ```
+
+Do not separate the binary from its working directory unless you deliberately want a packaged layout. The current runtime expects files relative to where it starts, including:
+
+- `migrations/` for `setup` and `migrate`
+- `openapi.yaml` for `/docs/openapi.yaml`
+- `themes/` if `SHOPANDA_FRONTEND_ENABLED=true`
 
 ### Create the config and environment files
 
-The binary expects a real config file in its working directory. Start from the example file:
+Keep non-secret config in the working directory:
 
 ```bash
-sudo install -o root -g shopanda -m 0644 ./configs/config.example.yaml /opt/shopanda/configs/config.yaml
-sudoedit /opt/shopanda/configs/config.yaml
+cd /srv/shopanda
+cp ./configs/config.example.yaml ./configs/config.yaml
+sudoedit /srv/shopanda/configs/config.yaml
 ```
 
 For environment variables used by the services, keep them outside the repository in `/etc/shopanda/shopanda.env`:
@@ -445,23 +453,27 @@ sudo chmod 0640 /etc/shopanda/shopanda.env
 sudoedit /etc/shopanda/shopanda.env
 ```
 
-Security note: `/opt/shopanda/configs/config.yaml` is installed with mode `0644`, so it is world-readable and must not contain secrets. Keep credentials, API keys, webhook secrets, SMTP passwords, and other sensitive values only in `/etc/shopanda/shopanda.env` or another `0640`-protected secret store. Preserve the ownership and permissions shown here: `config.yaml` at `0644`, and `shopanda.env` at `0640` owned by `root:shopanda`.
+Keep the file in plain `KEY=value` form with no spaces around `=`. If a value contains shell-sensitive characters, quote it, for example `SHOPANDA_DATABASE_PASSWORD='s%v2M+aa'`.
+
+Security note: keep `configs/config.yaml` for non-secret configuration only. Put credentials, API keys, webhook secrets, SMTP passwords, JWT secrets, and other sensitive values only in `/etc/shopanda/shopanda.env` or another `0640`-protected secret store. Preserve the ownership and permission shown here for `shopanda.env`: `0640` owned by `root:shopanda`.
 
 If you already ran `./install.sh`, you can copy the generated repo-root `.env` into `/etc/shopanda/shopanda.env` as the starting point instead of `.env.example`. After copying it, delete the production `.env` from the repository checkout so secrets are not left beside the codebase or one mistaken commit away from exposure. The service setup below reads `/etc/shopanda/shopanda.env`, not the repo-root `.env`.
 
-The `shopanda` service account must be able to read `/etc/shopanda/shopanda.env` and write to `/opt/shopanda/public/media` when local media storage is enabled.
+Use the same `/etc/shopanda/shopanda.env` for `serve`, `worker`, and `scheduler` unless you intentionally need per-process overrides. Separate env files are usually unnecessary.
+
+The `shopanda` service account must be able to read `/etc/shopanda/shopanda.env` and write to `/srv/shopanda/public/media` when local media storage is enabled.
 
 ### First-time setup
 
 ```bash
-sudo -u shopanda sh -c 'cd /opt/shopanda && . /etc/shopanda/shopanda.env && exec ./shopanda setup'
+sudo -u shopanda sh -c 'cd /srv/shopanda && set -a && . /etc/shopanda/shopanda.env && set +a && exec ./shopanda setup'
 ```
 
 If you prefer explicit steps:
 
 ```bash
-sudo -u shopanda sh -c 'cd /opt/shopanda && . /etc/shopanda/shopanda.env && exec ./shopanda migrate'
-sudo -u shopanda sh -c 'cd /opt/shopanda && . /etc/shopanda/shopanda.env && exec ./shopanda seed'
+sudo -u shopanda sh -c 'cd /srv/shopanda && set -a && . /etc/shopanda/shopanda.env && set +a && exec ./shopanda migrate'
+sudo -u shopanda sh -c 'cd /srv/shopanda && set -a && . /etc/shopanda/shopanda.env && set +a && exec ./shopanda seed'
 ```
 
 ### Quick manual background run
@@ -469,12 +481,12 @@ sudo -u shopanda sh -c 'cd /opt/shopanda && . /etc/shopanda/shopanda.env && exec
 Use this only for quick testing or temporary bring-up. For long-lived production processes, prefer the service manager examples below.
 
 ```bash
-sudo -u shopanda sh -c 'cd /opt/shopanda && . /etc/shopanda/shopanda.env && nohup ./shopanda serve >>/var/log/shopanda/web.log 2>&1 &'
-sudo -u shopanda sh -c 'cd /opt/shopanda && . /etc/shopanda/shopanda.env && nohup ./shopanda worker >>/var/log/shopanda/worker.log 2>&1 &'
-sudo -u shopanda sh -c 'cd /opt/shopanda && . /etc/shopanda/shopanda.env && nohup ./shopanda scheduler >>/var/log/shopanda/scheduler.log 2>&1 &'
+sudo -u shopanda sh -c 'cd /srv/shopanda && set -a && . /etc/shopanda/shopanda.env && set +a && nohup ./shopanda serve >>/tmp/shopanda-web.log 2>&1 &'
+sudo -u shopanda sh -c 'cd /srv/shopanda && set -a && . /etc/shopanda/shopanda.env && set +a && nohup ./shopanda worker >>/tmp/shopanda-worker.log 2>&1 &'
+sudo -u shopanda sh -c 'cd /srv/shopanda && set -a && . /etc/shopanda/shopanda.env && set +a && nohup ./shopanda scheduler >>/tmp/shopanda-scheduler.log 2>&1 &'
 ```
 
-These commands return your terminal immediately and write logs to `/var/log/shopanda/`.
+These commands return your terminal immediately and write logs to `/tmp/`. For long-lived services, prefer `systemd` so logs go to the journal.
 
 ### Example systemd units
 
@@ -492,8 +504,8 @@ Description=Shopanda Web
 After=network.target postgresql.service
 
 [Service]
-WorkingDirectory=/opt/shopanda
-ExecStart=/opt/shopanda/shopanda serve
+WorkingDirectory=/srv/shopanda
+ExecStart=/srv/shopanda/shopanda serve
 Restart=always
 EnvironmentFile=/etc/shopanda/shopanda.env
 User=shopanda
@@ -511,8 +523,8 @@ Description=Shopanda Worker
 After=network.target postgresql.service
 
 [Service]
-WorkingDirectory=/opt/shopanda
-ExecStart=/opt/shopanda/shopanda worker
+WorkingDirectory=/srv/shopanda
+ExecStart=/srv/shopanda/shopanda worker
 Restart=always
 EnvironmentFile=/etc/shopanda/shopanda.env
 User=shopanda
@@ -530,8 +542,8 @@ Description=Shopanda Scheduler
 After=network.target postgresql.service
 
 [Service]
-WorkingDirectory=/opt/shopanda
-ExecStart=/opt/shopanda/shopanda scheduler
+WorkingDirectory=/srv/shopanda
+ExecStart=/srv/shopanda/shopanda scheduler
 Restart=always
 EnvironmentFile=/etc/shopanda/shopanda.env
 User=shopanda
@@ -564,9 +576,9 @@ sudo systemctl restart shopanda-scheduler.service
 
 ### Short FreeBSD rc.d example
 
-If you run Shopanda on FreeBSD, use the same `/opt/shopanda` layout but keep the service env file under `/usr/local/etc/shopanda.env`.
+If you run Shopanda on FreeBSD, use the same working-directory approach but keep the service env file under `/usr/local/etc/shopanda.env`.
 
-FreeBSD commonly stores third-party service scripts and related local configuration under `/usr/local/etc`, which is why the `shopanda_web` example uses `/usr/local/etc/rc.d/shopanda_web` and `/usr/local/etc/shopanda.env` even though the deploy root remains `/opt/shopanda`. On Linux, the matching examples use `/etc/shopanda/shopanda.env` with the same `/opt/shopanda` application layout.
+FreeBSD commonly stores third-party service scripts and related local configuration under `/usr/local/etc`, which is why the `shopanda_web` example uses `/usr/local/etc/rc.d/shopanda_web` and `/usr/local/etc/shopanda.env` even though the working directory remains `/srv/shopanda`. On Linux, the matching examples use `/etc/shopanda/shopanda.env` with the same working-directory layout.
 
 Set the service flags in `/etc/rc.conf`:
 
@@ -595,7 +607,7 @@ rcvar="${name}_enable"
 pidfile="/var/run/${name}.pid"
 procname="/usr/sbin/daemon"
 command="/usr/sbin/daemon"
-command_args="-f -P ${pidfile} -u ${shopanda_web_user} /bin/sh -c 'cd /opt/shopanda && . /usr/local/etc/shopanda.env && exec /opt/shopanda/shopanda serve'"
+command_args="-f -P ${pidfile} -u ${shopanda_web_user} /bin/sh -c 'cd /srv/shopanda && set -a && . /usr/local/etc/shopanda.env && set +a && exec /srv/shopanda/shopanda serve'"
 
 load_rc_config "$name"
 run_rc_command "$1"
