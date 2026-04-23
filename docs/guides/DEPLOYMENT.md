@@ -223,7 +223,7 @@ Environment variables override YAML values.
 
 | Variable | Required | Default | Purpose |
 | --- | --- | --- | --- |
-| `SHOPANDA_SEED_ADMIN_PASSWORD` | Required for `setup` or `seed` when the admin account does not yet exist | none | Password for seeded admin user `admin@example.com` |
+| `SHOPANDA_SEED_ADMIN_PASSWORD` | Optional | none | When set and `admin@example.com` does not yet exist, `setup` or `seed` creates the seeded admin user with this password. When unset, admin creation is skipped. |
 
 ### Development and Testing
 
@@ -350,7 +350,7 @@ Set at least:
 - `SHOPANDA_AUTH_JWT_SECRET`
 - `SHOPANDA_SERVER_PUBLIC_BASE_URL`
 - database connection settings or `DATABASE_URL`
-- `SHOPANDA_SEED_ADMIN_PASSWORD` for first setup
+- optional `SHOPANDA_SEED_ADMIN_PASSWORD` if you want `setup` to create the seeded admin user on first boot
 
 After deploy, run:
 

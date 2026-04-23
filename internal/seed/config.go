@@ -6,7 +6,7 @@ import (
 	"github.com/akarso/shopanda/internal/infrastructure/postgres"
 )
 
-const defaultCurrency = "EUR"
+const defaultCurrency = "PLN"
 
 // ConfigSeeder sets the default store configuration values.
 type ConfigSeeder struct{}

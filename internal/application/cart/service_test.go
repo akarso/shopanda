@@ -11,6 +11,8 @@ import (
 	domainCart "github.com/akarso/shopanda/internal/domain/cart"
 	"github.com/akarso/shopanda/internal/domain/pricing"
 	"github.com/akarso/shopanda/internal/domain/shared"
+	"github.com/akarso/shopanda/internal/domain/store"
+	"github.com/akarso/shopanda/internal/domain/tax"
 	"github.com/akarso/shopanda/internal/platform/apperror"
 	"github.com/akarso/shopanda/internal/platform/event"
 	"github.com/akarso/shopanda/internal/platform/logger"
@@ -110,6 +112,25 @@ func testPipeline(prices pricing.PriceRepository) pricing.Pipeline {
 		pricing.NewFinalizeStep(),
 	)
 }
+
+type stubTaxRateRepo struct {
+	rates map[string]*tax.TaxRate
+	err   error
+}
+
+func (r *stubTaxRateRepo) FindByCountryClassAndStore(_ context.Context, country, class, storeID string) (*tax.TaxRate, error) {
+	if r.err != nil {
+		return nil, r.err
+	}
+	return r.rates[country+":"+class+":"+storeID], nil
+}
+
+func (r *stubTaxRateRepo) ListByCountry(_ context.Context, _ string) ([]tax.TaxRate, error) {
+	return nil, nil
+}
+
+func (r *stubTaxRateRepo) Upsert(_ context.Context, _ *tax.TaxRate) error { return nil }
+func (r *stubTaxRateRepo) Delete(_ context.Context, _ string) error       { return nil }
 
 // ── tests ───────────────────────────────────────────────────────────────
 
@@ -422,6 +443,38 @@ func TestService_RecalculateUpdatesPrices(t *testing.T) {
 	}
 	if got.Items[1].UnitPrice.Amount() != 2500 {
 		t.Errorf("Items[1].UnitPrice = %d, want 2500", got.Items[1].UnitPrice.Amount())
+	}
+}
+
+func TestService_AddItem_UsesStoreTaxDefaults(t *testing.T) {
+	carts := newStubCartRepo()
+	prices := newStubPriceRepo()
+	prices.set("var-1", "EUR", 1000)
+	taxRates := &stubTaxRateRepo{rates: map[string]*tax.TaxRate{
+		"DE:standard:": {ID: "rate-1", Country: "DE", Class: "standard", Rate: 1900},
+	}}
+	pipeline := pricing.NewPipeline(
+		appPricing.NewBasePriceStep(prices),
+		appPricing.NewTaxStep(taxRates, "standard"),
+		pricing.NewFinalizeStep(),
+	)
+	svc := cartApp.NewService(carts, prices, nil, nil, pipeline, testLogger(), testBus())
+	ctx := store.WithStore(context.Background(), &store.Store{ID: "store-1", Country: "DE"})
+
+	c, err := svc.CreateCart(ctx, "cust-1", "EUR")
+	if err != nil {
+		t.Fatalf("CreateCart: %v", err)
+	}
+
+	got, err := svc.AddItem(ctx, c.ID, "cust-1", "var-1", 1)
+	if err != nil {
+		t.Fatalf("AddItem: %v", err)
+	}
+	if len(got.Items) != 1 {
+		t.Fatalf("items = %d, want 1", len(got.Items))
+	}
+	if got.Items[0].UnitPrice.Amount() != 1000 {
+		t.Fatalf("UnitPrice = %d, want 1000", got.Items[0].UnitPrice.Amount())
 	}
 }
 

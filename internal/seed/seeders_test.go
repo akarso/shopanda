@@ -9,6 +9,8 @@ var (
 	_ Seeder = (*AdminSeeder)(nil)
 	_ Seeder = (*ConfigSeeder)(nil)
 	_ Seeder = (*CatalogSeeder)(nil)
+	_ Seeder = (*StoreSeeder)(nil)
+	_ Seeder = (*TaxSeeder)(nil)
 )
 
 func TestAdminSeeder_Name(t *testing.T) {
@@ -32,18 +34,34 @@ func TestCatalogSeeder_Name(t *testing.T) {
 	}
 }
 
+func TestStoreSeeder_Name(t *testing.T) {
+	s := &StoreSeeder{}
+	if got := s.Name(); got != "default-store" {
+		t.Fatalf("StoreSeeder.Name() = %q, want %q", got, "default-store")
+	}
+}
+
+func TestTaxSeeder_Name(t *testing.T) {
+	s := &TaxSeeder{}
+	if got := s.Name(); got != "default-tax" {
+		t.Fatalf("TaxSeeder.Name() = %q, want %q", got, "default-tax")
+	}
+}
+
 func TestSeedersRegistration(t *testing.T) {
 	reg := NewRegistry()
 	reg.Register(&ConfigSeeder{})
+	reg.Register(&StoreSeeder{})
+	reg.Register(&TaxSeeder{})
 	reg.Register(&AdminSeeder{})
 	reg.Register(&CatalogSeeder{})
 
-	// Verify no duplicate-name panic occurred and all three are registered.
+	// Verify no duplicate-name panic occurred and all seeders are registered.
 	// Run with a nil DB to confirm the registry accepted them.
-	if len(reg.seeders) != 3 {
-		t.Fatalf("expected 3 registered seeders, got %d", len(reg.seeders))
+	if len(reg.seeders) != 5 {
+		t.Fatalf("expected 5 registered seeders, got %d", len(reg.seeders))
 	}
-	names := []string{"store-config", "admin-user", "catalog"}
+	names := []string{"store-config", "default-store", "default-tax", "admin-user", "catalog"}
 	for i, want := range names {
 		if got := reg.seeders[i].Name(); got != want {
 			t.Errorf("seeder[%d].Name() = %q, want %q", i, got, want)

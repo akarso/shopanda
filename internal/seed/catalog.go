@@ -44,7 +44,7 @@ var defaultProducts = []seedProduct{
 		Slug: "wireless-mouse",
 		Desc: "Ergonomic wireless mouse with USB receiver.",
 		Variants: []seedVariant{
-			{SKU: "MOUSE-BLK", Name: "Black", Amount: 2999, Currency: "EUR", Stock: 50},
+			{SKU: "MOUSE-BLK", Name: "Black", Amount: 2999, Currency: defaultCurrency, Stock: 50},
 		},
 	},
 	{
@@ -52,7 +52,7 @@ var defaultProducts = []seedProduct{
 		Slug: "usb-c-cable",
 		Desc: "Durable braided USB-C to USB-C cable, 1 meter.",
 		Variants: []seedVariant{
-			{SKU: "USBC-1M", Name: "1M", Amount: 999, Currency: "EUR", Stock: 200},
+			{SKU: "USBC-1M", Name: "1M", Amount: 999, Currency: defaultCurrency, Stock: 200},
 		},
 	},
 	{
@@ -60,8 +60,8 @@ var defaultProducts = []seedProduct{
 		Slug: "cotton-tshirt",
 		Desc: "Plain cotton t-shirt, available in multiple sizes.",
 		Variants: []seedVariant{
-			{SKU: "TSHIRT-M", Name: "Medium", Amount: 1999, Currency: "EUR", Stock: 100},
-			{SKU: "TSHIRT-L", Name: "Large", Amount: 1999, Currency: "EUR", Stock: 100},
+			{SKU: "TSHIRT-M", Name: "Medium", Amount: 1999, Currency: defaultCurrency, Stock: 100},
+			{SKU: "TSHIRT-L", Name: "Large", Amount: 1999, Currency: defaultCurrency, Stock: 100},
 		},
 	},
 }

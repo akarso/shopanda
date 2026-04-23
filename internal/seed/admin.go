@@ -2,7 +2,6 @@ package seed
 
 import (
 	"context"
-	"fmt"
 	"os"
 
 	"github.com/akarso/shopanda/internal/domain/customer"
@@ -41,7 +40,11 @@ func (s *AdminSeeder) Seed(ctx context.Context, deps Deps) error {
 
 	adminPwd := os.Getenv(adminPasswordEnvKey)
 	if adminPwd == "" {
-		return fmt.Errorf("seed: %s environment variable is required", adminPasswordEnvKey)
+		deps.Logger.Info("seed.admin.skip", map[string]interface{}{
+			"email":  adminEmail,
+			"reason": "admin seed password not set",
+		})
+		return nil
 	}
 
 	c, err := customer.NewCustomer(id.New(), adminEmail)

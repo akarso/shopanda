@@ -10,6 +10,7 @@ import (
 	"github.com/akarso/shopanda/internal/domain/promotion"
 	"github.com/akarso/shopanda/internal/domain/shared"
 	"github.com/akarso/shopanda/internal/domain/store"
+	"github.com/akarso/shopanda/internal/domain/tax"
 	"github.com/akarso/shopanda/internal/platform/apperror"
 	"github.com/akarso/shopanda/internal/platform/event"
 	"github.com/akarso/shopanda/internal/platform/id"
@@ -235,9 +236,18 @@ func (s *Service) recalculate(ctx context.Context, c *domainCart.Cart) error {
 		pctx.Meta["coupon_code"] = c.CouponCode
 	}
 
-	// Propagate store_id so pricing steps can scope lookups.
-	if s := store.FromContext(ctx); s != nil {
-		pctx.Meta["store_id"] = s.ID
+	// Propagate store scope and storefront tax defaults when the request has
+	// not provided explicit tax metadata yet.
+	if st := store.FromContext(ctx); st != nil {
+		pctx.Meta["store_id"] = st.ID
+		if st.Country != "" {
+			if _, ok := pctx.Meta["tax_country"]; !ok {
+				pctx.Meta["tax_country"] = st.Country
+			}
+		}
+		if _, ok := pctx.Meta["tax_mode"]; !ok {
+			pctx.Meta["tax_mode"] = string(tax.ModeExclusive)
+		}
 	}
 
 	if err := s.pipeline.Execute(ctx, &pctx); err != nil {
