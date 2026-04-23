@@ -39,7 +39,7 @@ func (s *TaxSeeder) Seed(ctx context.Context, deps Deps) error {
 	} else {
 		ctxFields := map[string]interface{}{
 			"country": country,
-			reason":  "default store not found",
+			"reason":  "default store not found",
 		}
 		if st != nil {
 			ctxFields["reason"] = "default store has empty country"
