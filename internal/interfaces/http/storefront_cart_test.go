@@ -1,6 +1,7 @@
 package http_test
 
 import (
+	"bytes"
 	"context"
 	"crypto/tls"
 	"io"
@@ -217,6 +218,40 @@ func TestStorefrontHandler_CartAdd_InvalidRedirect_FallsBackToCart(t *testing.T)
 	}
 	if location := rec.Header().Get("Location"); location != "/cart" {
 		t.Fatalf("Location = %q, want %q", location, "/cart")
+	}
+}
+
+func TestStorefrontHandler_CartAdd_LogsInternalError(t *testing.T) {
+	engine := createTestTheme(t)
+	pdp := composition.NewPipeline[composition.ProductContext]()
+	plp := composition.NewPipeline[composition.ListingContext]()
+	var logs bytes.Buffer
+	h := shophttp.NewStorefrontHandler(engine, &mockStorefrontRepo{}, newStorefrontCategoryMock(), pdp, plp, newStorefrontSearchMock()).
+		WithLog(logger.NewWithWriter(&logs, "error"))
+
+	form := url.Values{"variant_id": {"var-1"}, "quantity": {"1"}}
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("POST", "/cart/add", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.Header.Set("X-Request-ID", "req-123")
+	handler := shophttp.RequestIDMiddleware()(newStorefrontRouter(h))
+	handler.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("status = %d, want %d; body: %s", rec.Code, http.StatusInternalServerError, rec.Body.String())
+	}
+	output := logs.String()
+	if !strings.Contains(output, `"event":"storefront.cart.add.ensure_failed"`) {
+		t.Fatalf("expected structured cart error event, got %s", output)
+	}
+	if !strings.Contains(output, `"request_id":"req-123"`) {
+		t.Fatalf("expected request_id in structured cart error log, got %s", output)
+	}
+	if !strings.Contains(output, `"variant_id":"var-1"`) {
+		t.Fatalf("expected variant_id in structured cart error log, got %s", output)
+	}
+	if !strings.Contains(output, `"message":"storefront cart service is not configured"`) {
+		t.Fatalf("expected underlying error in structured cart error log, got %s", output)
 	}
 }
 
