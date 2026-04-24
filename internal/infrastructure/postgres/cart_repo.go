@@ -47,7 +47,7 @@ func (r *CartRepo) FindByID(ctx context.Context, id string) (*cart.Cart, error) 
 	}
 	defer tx.Rollback()
 
-	const q = `SELECT id, customer_id, status, currency, coupon_code, version, created_at, updated_at
+	const q = `SELECT id, customer_id, status, currency, coupon_code, merged_guest_id, version, created_at, updated_at
 		FROM carts WHERE id = $1`
 	c, err := scanCart(tx.QueryRowContext(ctx, q, id))
 	if errors.Is(err, sql.ErrNoRows) {
@@ -77,7 +77,7 @@ func (r *CartRepo) FindActiveByCustomerID(ctx context.Context, customerID string
 	}
 	defer tx.Rollback()
 
-	const q = `SELECT id, customer_id, status, currency, coupon_code, version, created_at, updated_at
+	const q = `SELECT id, customer_id, status, currency, coupon_code, merged_guest_id, version, created_at, updated_at
 		FROM carts WHERE customer_id = $1 AND status = 'active'
 		LIMIT 1`
 	c, err := scanCart(tx.QueryRowContext(ctx, q, customerID))
@@ -113,13 +113,14 @@ func (r *CartRepo) Save(ctx context.Context, c *cart.Cart) error {
 	// Upsert cart header with optimistic lock.
 	// INSERT: new cart, version starts at 1.
 	// UPDATE: only succeeds when version matches; bumps version atomically.
-	const upsertCart = `INSERT INTO carts (id, customer_id, status, currency, coupon_code, version, created_at, updated_at)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+	const upsertCart = `INSERT INTO carts (id, customer_id, status, currency, coupon_code, merged_guest_id, version, created_at, updated_at)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
 		ON CONFLICT (id) DO UPDATE SET
 			customer_id = EXCLUDED.customer_id,
 			status = EXCLUDED.status,
 			currency = EXCLUDED.currency,
 			coupon_code = EXCLUDED.coupon_code,
+			merged_guest_id = EXCLUDED.merged_guest_id,
 			version = carts.version + 1,
 			updated_at = EXCLUDED.updated_at
 		WHERE carts.version = EXCLUDED.version
@@ -133,10 +134,14 @@ func (r *CartRepo) Save(ctx context.Context, c *cart.Cart) error {
 	if c.CouponCode != "" {
 		couponCode = c.CouponCode
 	}
+	var mergedGuestID interface{}
+	if c.MergedGuestID != "" {
+		mergedGuestID = c.MergedGuestID
+	}
 
 	var newVersion int
 	err = tx.QueryRowContext(ctx, upsertCart,
-		c.ID, customerID, string(c.Status()), c.Currency, couponCode,
+		c.ID, customerID, string(c.Status()), c.Currency, couponCode, mergedGuestID,
 		c.Version, c.CreatedAt, c.UpdatedAt,
 	).Scan(&newVersion)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -232,8 +237,9 @@ func scanCart(row *sql.Row) (*cart.Cart, error) {
 	var c cart.Cart
 	var customerID sql.NullString
 	var couponCode sql.NullString
+	var mergedGuestID sql.NullString
 	var status string
-	err := row.Scan(&c.ID, &customerID, &status, &c.Currency, &couponCode, &c.Version, &c.CreatedAt, &c.UpdatedAt)
+	err := row.Scan(&c.ID, &customerID, &status, &c.Currency, &couponCode, &mergedGuestID, &c.Version, &c.CreatedAt, &c.UpdatedAt)
 	if err != nil {
 		return nil, err
 	}
@@ -242,6 +248,9 @@ func scanCart(row *sql.Row) (*cart.Cart, error) {
 	}
 	if couponCode.Valid {
 		c.CouponCode = couponCode.String
+	}
+	if mergedGuestID.Valid {
+		c.MergedGuestID = mergedGuestID.String
 	}
 	// Reconstruct the cart with proper status via SetStatusFromDB.
 	if err := c.SetStatusFromDB(cart.CartStatus(status)); err != nil {

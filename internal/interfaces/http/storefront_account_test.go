@@ -200,6 +200,144 @@ func TestStorefrontHandler_AccountLogin_SetsSessionCookie(t *testing.T) {
 	}
 }
 
+func TestStorefrontHandler_AccountLogin_ClaimsGuestCart(t *testing.T) {
+	engine := createTestTheme(t)
+	pdp := composition.NewPipeline[composition.ProductContext]()
+	plp := composition.NewPipeline[composition.ListingContext]()
+	authSvc, _ := newStorefrontAuthService(t)
+	out, err := authSvc.Register(context.Background(), appAuth.RegisterInput{Email: "ada@example.com", Password: "password123", FirstName: "Ada", LastName: "Lovelace"})
+	if err != nil {
+		t.Fatalf("Register: %v", err)
+	}
+	cartSvc, _, prices := newStorefrontCartService()
+	prices.set("var-1", "EUR", 1500)
+	guestCart, err := cartSvc.CreateCart(context.Background(), "", "EUR")
+	if err != nil {
+		t.Fatalf("CreateCart guest: %v", err)
+	}
+	if _, err := cartSvc.AddItem(context.Background(), guestCart.ID, "", "var-1", 2); err != nil {
+		t.Fatalf("AddItem guest: %v", err)
+	}
+	h := shophttp.NewStorefrontHandler(engine, &mockStorefrontRepo{}, newStorefrontCategoryMock(), pdp, plp, newStorefrontSearchMock()).
+		WithCart(nil, cartSvc).
+		WithAccount(authSvc, newStorefrontAccountOrderRepoStub(), &storefrontAccountDeleterStub{})
+	router := newStorefrontRouter(h)
+	csrfCookie := storefrontAccountCSRFCookie(t, router, "/account/login")
+
+	form := url.Values{
+		"csrf_token":  {csrfCookie.Value},
+		"redirect_to": {"/account/orders"},
+		"email":       {"ada@example.com"},
+		"password":    {"password123"},
+	}
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("POST", "/account/login", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.AddCookie(csrfCookie)
+	req.AddCookie(&http.Cookie{Name: "shopanda_storefront_cart", Value: guestCart.ID})
+	router.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusSeeOther {
+		t.Fatalf("status = %d, want %d; body: %s", rec.Code, http.StatusSeeOther, rec.Body.String())
+	}
+	activeCart, err := cartSvc.GetActiveCartByCustomer(context.Background(), out.CustomerID)
+	if err != nil {
+		t.Fatalf("GetActiveCartByCustomer: %v", err)
+	}
+	if activeCart.ID != guestCart.ID {
+		t.Fatalf("active cart id = %q, want %q", activeCart.ID, guestCart.ID)
+	}
+	if activeCart.TotalQuantity() != 2 {
+		t.Fatalf("total quantity = %d, want 2", activeCart.TotalQuantity())
+	}
+	cleared := false
+	for _, cookie := range rec.Result().Cookies() {
+		if cookie.Name == "shopanda_storefront_cart" && cookie.MaxAge < 0 && cookie.Expires.Unix() == 0 {
+			cleared = true
+		}
+	}
+	if !cleared {
+		t.Fatal("expected storefront cart cookie to be cleared after login cart claim")
+	}
+	id, err := identity.NewIdentity(out.CustomerID, identity.RoleCustomer)
+	if err != nil {
+		t.Fatalf("NewIdentity: %v", err)
+	}
+	cartRec := httptest.NewRecorder()
+	cartReq := httptest.NewRequest("GET", "/cart", nil)
+	cartReq = cartReq.WithContext(auth.WithIdentity(cartReq.Context(), id))
+	router.ServeHTTP(cartRec, cartReq)
+	if cartRec.Code != http.StatusOK {
+		t.Fatalf("cart status = %d, want %d; body: %s", cartRec.Code, http.StatusOK, cartRec.Body.String())
+	}
+	if strings.Contains(cartRec.Body.String(), "Your cart is empty.") {
+		t.Fatalf("expected claimed cart to render items, got body: %s", cartRec.Body.String())
+	}
+}
+
+func TestStorefrontHandler_AccountRegister_ClaimsGuestCart(t *testing.T) {
+	engine := createTestTheme(t)
+	pdp := composition.NewPipeline[composition.ProductContext]()
+	plp := composition.NewPipeline[composition.ListingContext]()
+	authSvc, repo := newStorefrontAuthService(t)
+	cartSvc, _, prices := newStorefrontCartService()
+	prices.set("var-1", "EUR", 1500)
+	guestCart, err := cartSvc.CreateCart(context.Background(), "", "EUR")
+	if err != nil {
+		t.Fatalf("CreateCart guest: %v", err)
+	}
+	if _, err := cartSvc.AddItem(context.Background(), guestCart.ID, "", "var-1", 1); err != nil {
+		t.Fatalf("AddItem guest: %v", err)
+	}
+	h := shophttp.NewStorefrontHandler(engine, &mockStorefrontRepo{}, newStorefrontCategoryMock(), pdp, plp, newStorefrontSearchMock()).
+		WithCart(nil, cartSvc).
+		WithAccount(authSvc, newStorefrontAccountOrderRepoStub(), &storefrontAccountDeleterStub{})
+	router := newStorefrontRouter(h)
+	csrfCookie := storefrontAccountCSRFCookie(t, router, "/account/register")
+
+	form := url.Values{
+		"csrf_token":  {csrfCookie.Value},
+		"redirect_to": {"/account/orders"},
+		"first_name":  {"Ada"},
+		"last_name":   {"Lovelace"},
+		"email":       {"ada@example.com"},
+		"password":    {"password123"},
+	}
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("POST", "/account/register", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.AddCookie(csrfCookie)
+	req.AddCookie(&http.Cookie{Name: "shopanda_storefront_cart", Value: guestCart.ID})
+	router.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusSeeOther {
+		t.Fatalf("status = %d, want %d; body: %s", rec.Code, http.StatusSeeOther, rec.Body.String())
+	}
+	createdCustomer := repo.byEmail["ada@example.com"]
+	if createdCustomer == nil {
+		t.Fatal("expected registered customer to be persisted")
+	}
+	activeCart, err := cartSvc.GetActiveCartByCustomer(context.Background(), createdCustomer.ID)
+	if err != nil {
+		t.Fatalf("GetActiveCartByCustomer: %v", err)
+	}
+	if activeCart.ID != guestCart.ID {
+		t.Fatalf("active cart id = %q, want %q", activeCart.ID, guestCart.ID)
+	}
+	if activeCart.TotalQuantity() != 1 {
+		t.Fatalf("total quantity = %d, want 1", activeCart.TotalQuantity())
+	}
+	cleared := false
+	for _, cookie := range rec.Result().Cookies() {
+		if cookie.Name == "shopanda_storefront_cart" && cookie.MaxAge < 0 && cookie.Expires.Unix() == 0 {
+			cleared = true
+		}
+	}
+	if !cleared {
+		t.Fatal("expected storefront cart cookie to be cleared after register cart claim")
+	}
+}
+
 func TestStorefrontHandler_AccountOrders_RendersCustomerOrders(t *testing.T) {
 	engine := createTestTheme(t)
 	pdp := composition.NewPipeline[composition.ProductContext]()

@@ -1,0 +1,1 @@
+ALTER TABLE carts ADD COLUMN merged_guest_id UUID;

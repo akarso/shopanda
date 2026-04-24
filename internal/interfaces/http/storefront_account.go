@@ -1,6 +1,7 @@
 package http
 
 import (
+	"errors"
 	"net/http"
 	"net/url"
 	"strings"
@@ -132,6 +133,9 @@ func (h *StorefrontHandler) Login() http.HandlerFunc {
 			h.renderPageStatus(w, "account_login", page, storefrontAccountErrorStatus(err))
 			return
 		}
+		if err := h.syncStorefrontGuestCart(w, r, out.CustomerID); err != nil {
+			h.logStorefrontAccountCartSyncFailure("storefront.account.login.cart_sync_failed", err, r)
+		}
 		storefrontSetSessionCookie(w, r, out.Token, out.ExpiresAt)
 		http.Redirect(w, r, page.RedirectTo, http.StatusSeeOther)
 	}
@@ -182,9 +186,40 @@ func (h *StorefrontHandler) Register() http.HandlerFunc {
 			h.renderPageStatus(w, "account_register", page, storefrontAccountErrorStatus(err))
 			return
 		}
+		if err := h.syncStorefrontGuestCart(w, r, out.CustomerID); err != nil {
+			h.logStorefrontAccountCartSyncFailure("storefront.account.register.cart_sync_failed", err, r)
+		}
 		storefrontSetSessionCookie(w, r, out.Token, out.ExpiresAt)
 		http.Redirect(w, r, page.RedirectTo, http.StatusSeeOther)
 	}
+}
+
+func (h *StorefrontHandler) syncStorefrontGuestCart(w http.ResponseWriter, r *http.Request, customerID string) error {
+	if h.carts == nil {
+		return nil
+	}
+	cookie, err := r.Cookie(storefrontCartCookieName)
+	if errors.Is(err, http.ErrNoCookie) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	if _, err := h.carts.ClaimGuestCart(r.Context(), strings.TrimSpace(cookie.Value), customerID); err != nil {
+		return err
+	}
+	// Clear stale or foreign cart cookies even when ClaimGuestCart becomes a no-op.
+	storefrontClearCartCookie(w, r)
+	return nil
+}
+
+func (h *StorefrontHandler) logStorefrontAccountCartSyncFailure(event string, err error, r *http.Request) {
+	h.log.Error(event, err, map[string]interface{}{
+		"path": r.URL.Path,
+	})
+	h.log.Info(event+".count", map[string]interface{}{
+		"value": 1,
+	})
 }
 
 func (h *StorefrontHandler) Logout() http.HandlerFunc {
