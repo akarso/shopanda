@@ -123,18 +123,11 @@ func (s *Service) ClaimGuestCart(ctx context.Context, guestCartID, customerID st
 	if err != nil {
 		return nil, fmt.Errorf("cart service: claim guest cart: find customer cart: %w", err)
 	}
+	if customerCart != nil && customerCart.MergedGuestID == guestCart.ID {
+		return customerCart, nil
+	}
 	if customerCart == nil {
-		if err := guestCart.SetCustomerID(customerID); err != nil {
-			return nil, apperror.Wrap(apperror.CodeValidation, "cannot assign guest cart", err)
-		}
-		if err := s.carts.Save(ctx, guestCart); err != nil {
-			return nil, fmt.Errorf("cart service: claim guest cart: save claimed cart: %w", err)
-		}
-		s.log.Info("cart.guest.claimed", map[string]interface{}{
-			"cart_id":     guestCart.ID,
-			"customer_id": customerID,
-		})
-		return guestCart, nil
+		return s.assignGuestCart(ctx, guestCart, customerID)
 	}
 
 	if customerCart.Currency != guestCart.Currency {
@@ -142,17 +135,7 @@ func (s *Service) ClaimGuestCart(ctx context.Context, guestCartID, customerID st
 			if err := s.carts.Delete(ctx, customerCart.ID); err != nil {
 				return nil, fmt.Errorf("cart service: claim guest cart: delete empty customer cart: %w", err)
 			}
-			if err := guestCart.SetCustomerID(customerID); err != nil {
-				return nil, apperror.Wrap(apperror.CodeValidation, "cannot assign guest cart", err)
-			}
-			if err := s.carts.Save(ctx, guestCart); err != nil {
-				return nil, fmt.Errorf("cart service: claim guest cart: save claimed cart: %w", err)
-			}
-			s.log.Info("cart.guest.claimed", map[string]interface{}{
-				"cart_id":     guestCart.ID,
-				"customer_id": customerID,
-			})
-			return guestCart, nil
+			return s.assignGuestCart(ctx, guestCart, customerID)
 		}
 		if guestCart.ItemCount() == 0 {
 			if err := s.carts.Delete(ctx, guestCart.ID); err != nil {
@@ -163,16 +146,36 @@ func (s *Service) ClaimGuestCart(ctx context.Context, guestCartID, customerID st
 		return nil, apperror.Validation("cannot merge carts with different currencies")
 	}
 
+	return s.mergeIntoCustomerCart(ctx, guestCart, customerCart)
+}
+
+func (s *Service) assignGuestCart(ctx context.Context, guestCart *domainCart.Cart, customerID string) (*domainCart.Cart, error) {
+	if err := guestCart.SetCustomerID(customerID); err != nil {
+		return nil, apperror.Wrap(apperror.CodeValidation, "cannot assign guest cart", err)
+	}
+	if err := s.recalculate(ctx, guestCart); err != nil {
+		return nil, err
+	}
+	if err := s.carts.Save(ctx, guestCart); err != nil {
+		return nil, fmt.Errorf("cart service: claim guest cart: save claimed cart: %w", err)
+	}
+	s.log.Info("cart.guest.claimed", map[string]interface{}{
+		"cart_id":     guestCart.ID,
+		"customer_id": customerID,
+	})
+	return guestCart, nil
+}
+
+func (s *Service) mergeIntoCustomerCart(ctx context.Context, guestCart, customerCart *domainCart.Cart) (*domainCart.Cart, error) {
 	for _, item := range guestCart.Items {
 		if err := customerCart.AddItem(item.VariantID, item.Quantity, item.UnitPrice); err != nil {
 			return nil, apperror.Wrap(apperror.CodeValidation, "cannot merge guest cart item", err)
 		}
 	}
-	if customerCart.CouponCode == "" && guestCart.CouponCode != "" {
-		if err := customerCart.ApplyCoupon(guestCart.CouponCode); err != nil {
-			return nil, apperror.Wrap(apperror.CodeValidation, "cannot merge guest cart coupon", err)
-		}
+	if err := s.applyEligibleGuestCoupon(ctx, customerCart, guestCart.CouponCode); err != nil {
+		return nil, err
 	}
+	customerCart.MergedGuestID = guestCart.ID
 	if err := s.recalculate(ctx, customerCart); err != nil {
 		return nil, err
 	}
@@ -186,9 +189,33 @@ func (s *Service) ClaimGuestCart(ctx context.Context, guestCartID, customerID st
 	s.log.Info("cart.guest.merged", map[string]interface{}{
 		"guest_cart_id":    guestCart.ID,
 		"customer_cart_id": customerCart.ID,
-		"customer_id":      customerID,
+		"customer_id":      customerCart.CustomerID,
 	})
 	return customerCart, nil
+}
+
+func (s *Service) applyEligibleGuestCoupon(ctx context.Context, customerCart *domainCart.Cart, code string) error {
+	if customerCart.CouponCode != "" || code == "" || s.coupons == nil || s.promotions == nil {
+		return nil
+	}
+	coupon, err := s.coupons.FindByCode(ctx, code)
+	if err != nil {
+		return fmt.Errorf("cart service: claim guest cart: lookup coupon: %w", err)
+	}
+	if coupon == nil || !coupon.CanRedeem() {
+		return nil
+	}
+	promo, err := s.promotions.FindByID(ctx, coupon.PromotionID)
+	if err != nil {
+		return fmt.Errorf("cart service: claim guest cart: lookup promotion: %w", err)
+	}
+	if promo == nil || !promo.IsEligible(timeNow()) || promo.Type != promotion.TypeCatalog || !promo.CouponBound {
+		return nil
+	}
+	if err := customerCart.ApplyCoupon(code); err != nil {
+		return apperror.Wrap(apperror.CodeValidation, "cannot merge guest cart coupon", err)
+	}
+	return nil
 }
 
 // AddItem adds an item to the cart and recalculates pricing.

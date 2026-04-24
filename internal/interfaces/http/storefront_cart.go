@@ -8,6 +8,7 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/akarso/shopanda/internal/domain/cart"
 	"github.com/akarso/shopanda/internal/domain/shared"
@@ -510,6 +511,7 @@ func storefrontClearCartCookie(w http.ResponseWriter, r *http.Request) {
 		Value:    "",
 		Path:     "/",
 		MaxAge:   -1,
+		Expires:  time.Unix(0, 0),
 		HttpOnly: true,
 		Secure:   r != nil && r.TLS != nil,
 		SameSite: http.SameSiteLaxMode,

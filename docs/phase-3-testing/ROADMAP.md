@@ -27,9 +27,9 @@ Allow an anonymous shopper to move from cart to completed order without being fo
 
 Track 1 only fixes cart ownership continuity. Track 2 changes checkout and order semantics:
 
-* checkout currently requires a non-empty `customerID`
-* order creation currently requires a non-empty `customerID`
-* storefront checkout currently marks authentication as required before confirmation
+* checkout requires a non-empty `customerID`
+* order creation requires a non-empty `customerID`
+* storefront checkout marks authentication as required before confirmation
 
 That is a broader domain refactor than the guest-cart handoff and should stay isolated from it.
 

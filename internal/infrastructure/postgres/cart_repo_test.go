@@ -73,6 +73,39 @@ func TestCartRepo_SaveAndFindByID(t *testing.T) {
 	}
 }
 
+func TestCartRepo_SaveAndFindByID_PersistsMergedGuestID(t *testing.T) {
+	db := testDB(t)
+	ensureProductsTable(t, db)
+	t.Cleanup(func() {
+		db.Exec("DELETE FROM cart_items")
+		db.Exec("DELETE FROM carts")
+	})
+
+	repo, err := postgres.NewCartRepo(db)
+	if err != nil {
+		t.Fatalf("NewCartRepo: %v", err)
+	}
+	ctx := context.Background()
+
+	c := mustNewCart(t, "EUR")
+	c.MergedGuestID = id.New()
+
+	if err := repo.Save(ctx, &c); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+
+	got, err := repo.FindByID(ctx, c.ID)
+	if err != nil {
+		t.Fatalf("FindByID: %v", err)
+	}
+	if got == nil {
+		t.Fatal("FindByID returned nil")
+	}
+	if got.MergedGuestID != c.MergedGuestID {
+		t.Errorf("MergedGuestID = %q, want %q", got.MergedGuestID, c.MergedGuestID)
+	}
+}
+
 func TestCartRepo_FindByID_NotFound(t *testing.T) {
 	db := testDB(t)
 	ensureProductsTable(t, db)

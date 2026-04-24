@@ -252,7 +252,7 @@ func TestStorefrontHandler_AccountLogin_ClaimsGuestCart(t *testing.T) {
 	}
 	cleared := false
 	for _, cookie := range rec.Result().Cookies() {
-		if cookie.Name == "shopanda_storefront_cart" && cookie.MaxAge < 0 {
+		if cookie.Name == "shopanda_storefront_cart" && cookie.MaxAge < 0 && cookie.Expires.Unix() == 0 {
 			cleared = true
 		}
 	}
@@ -326,6 +326,15 @@ func TestStorefrontHandler_AccountRegister_ClaimsGuestCart(t *testing.T) {
 	}
 	if activeCart.TotalQuantity() != 1 {
 		t.Fatalf("total quantity = %d, want 1", activeCart.TotalQuantity())
+	}
+	cleared := false
+	for _, cookie := range rec.Result().Cookies() {
+		if cookie.Name == "shopanda_storefront_cart" && cookie.MaxAge < 0 && cookie.Expires.Unix() == 0 {
+			cleared = true
+		}
+	}
+	if !cleared {
+		t.Fatal("expected storefront cart cookie to be cleared after register cart claim")
 	}
 }
 

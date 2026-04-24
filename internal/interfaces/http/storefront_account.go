@@ -1,6 +1,7 @@
 package http
 
 import (
+	"errors"
 	"net/http"
 	"net/url"
 	"strings"
@@ -133,12 +134,7 @@ func (h *StorefrontHandler) Login() http.HandlerFunc {
 			return
 		}
 		if err := h.syncStorefrontGuestCart(w, r, out.CustomerID); err != nil {
-			h.log.Error("storefront.account.login.cart_sync_failed", err, map[string]interface{}{
-				"path": r.URL.Path,
-			})
-			page.ErrorMessage = "Could not sync your cart right now. Please try again."
-			h.renderPageStatus(w, "account_login", page, http.StatusInternalServerError)
-			return
+			h.logStorefrontAccountCartSyncFailure("storefront.account.login.cart_sync_failed", err, r)
 		}
 		storefrontSetSessionCookie(w, r, out.Token, out.ExpiresAt)
 		http.Redirect(w, r, page.RedirectTo, http.StatusSeeOther)
@@ -191,12 +187,7 @@ func (h *StorefrontHandler) Register() http.HandlerFunc {
 			return
 		}
 		if err := h.syncStorefrontGuestCart(w, r, out.CustomerID); err != nil {
-			h.log.Error("storefront.account.register.cart_sync_failed", err, map[string]interface{}{
-				"path": r.URL.Path,
-			})
-			page.ErrorMessage = "Could not sync your cart right now. Please try again."
-			h.renderPageStatus(w, "account_register", page, http.StatusInternalServerError)
-			return
+			h.logStorefrontAccountCartSyncFailure("storefront.account.register.cart_sync_failed", err, r)
 		}
 		storefrontSetSessionCookie(w, r, out.Token, out.ExpiresAt)
 		http.Redirect(w, r, page.RedirectTo, http.StatusSeeOther)
@@ -208,7 +199,7 @@ func (h *StorefrontHandler) syncStorefrontGuestCart(w http.ResponseWriter, r *ht
 		return nil
 	}
 	cookie, err := r.Cookie(storefrontCartCookieName)
-	if err == http.ErrNoCookie {
+	if errors.Is(err, http.ErrNoCookie) {
 		return nil
 	}
 	if err != nil {
@@ -217,8 +208,18 @@ func (h *StorefrontHandler) syncStorefrontGuestCart(w http.ResponseWriter, r *ht
 	if _, err := h.carts.ClaimGuestCart(r.Context(), strings.TrimSpace(cookie.Value), customerID); err != nil {
 		return err
 	}
+	// Clear stale or foreign cart cookies even when ClaimGuestCart becomes a no-op.
 	storefrontClearCartCookie(w, r)
 	return nil
+}
+
+func (h *StorefrontHandler) logStorefrontAccountCartSyncFailure(event string, err error, r *http.Request) {
+	h.log.Error(event, err, map[string]interface{}{
+		"path": r.URL.Path,
+	})
+	h.log.Info(event+".count", map[string]interface{}{
+		"value": 1,
+	})
 }
 
 func (h *StorefrontHandler) Logout() http.HandlerFunc {
