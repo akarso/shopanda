@@ -132,6 +132,14 @@ func (h *StorefrontHandler) Login() http.HandlerFunc {
 			h.renderPageStatus(w, "account_login", page, storefrontAccountErrorStatus(err))
 			return
 		}
+		if err := h.syncStorefrontGuestCart(w, r, out.CustomerID); err != nil {
+			h.log.Error("storefront.account.login.cart_sync_failed", err, map[string]interface{}{
+				"path": r.URL.Path,
+			})
+			page.ErrorMessage = "Could not sync your cart right now. Please try again."
+			h.renderPageStatus(w, "account_login", page, http.StatusInternalServerError)
+			return
+		}
 		storefrontSetSessionCookie(w, r, out.Token, out.ExpiresAt)
 		http.Redirect(w, r, page.RedirectTo, http.StatusSeeOther)
 	}
@@ -182,9 +190,35 @@ func (h *StorefrontHandler) Register() http.HandlerFunc {
 			h.renderPageStatus(w, "account_register", page, storefrontAccountErrorStatus(err))
 			return
 		}
+		if err := h.syncStorefrontGuestCart(w, r, out.CustomerID); err != nil {
+			h.log.Error("storefront.account.register.cart_sync_failed", err, map[string]interface{}{
+				"path": r.URL.Path,
+			})
+			page.ErrorMessage = "Could not sync your cart right now. Please try again."
+			h.renderPageStatus(w, "account_register", page, http.StatusInternalServerError)
+			return
+		}
 		storefrontSetSessionCookie(w, r, out.Token, out.ExpiresAt)
 		http.Redirect(w, r, page.RedirectTo, http.StatusSeeOther)
 	}
+}
+
+func (h *StorefrontHandler) syncStorefrontGuestCart(w http.ResponseWriter, r *http.Request, customerID string) error {
+	if h.carts == nil {
+		return nil
+	}
+	cookie, err := r.Cookie(storefrontCartCookieName)
+	if err == http.ErrNoCookie {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	if _, err := h.carts.ClaimGuestCart(r.Context(), strings.TrimSpace(cookie.Value), customerID); err != nil {
+		return err
+	}
+	storefrontClearCartCookie(w, r)
+	return nil
 }
 
 func (h *StorefrontHandler) Logout() http.HandlerFunc {

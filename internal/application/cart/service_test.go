@@ -426,6 +426,105 @@ func TestService_GetActiveCartByCustomer(t *testing.T) {
 	}
 }
 
+func TestService_ClaimGuestCart_AssignsGuestCartToCustomer(t *testing.T) {
+	carts := newStubCartRepo()
+	prices := newStubPriceRepo()
+	prices.set("var-1", "EUR", 1500)
+	svc := cartApp.NewService(carts, prices, nil, nil, testPipeline(prices), testLogger(), testBus())
+	ctx := context.Background()
+
+	guestCart, err := svc.CreateCart(ctx, "", "EUR")
+	if err != nil {
+		t.Fatalf("CreateCart guest: %v", err)
+	}
+	if _, err := svc.AddItem(ctx, guestCart.ID, "", "var-1", 2); err != nil {
+		t.Fatalf("AddItem guest: %v", err)
+	}
+
+	claimed, err := svc.ClaimGuestCart(ctx, guestCart.ID, "cust-1")
+	if err != nil {
+		t.Fatalf("ClaimGuestCart: %v", err)
+	}
+	if claimed == nil {
+		t.Fatal("ClaimGuestCart() returned nil")
+	}
+	if claimed.ID != guestCart.ID {
+		t.Fatalf("claimed cart id = %q, want %q", claimed.ID, guestCart.ID)
+	}
+	if claimed.CustomerID != "cust-1" {
+		t.Fatalf("claimed customer id = %q, want cust-1", claimed.CustomerID)
+	}
+	got, err := svc.GetActiveCartByCustomer(ctx, "cust-1")
+	if err != nil {
+		t.Fatalf("GetActiveCartByCustomer: %v", err)
+	}
+	if got.ID != guestCart.ID {
+		t.Fatalf("active cart id = %q, want %q", got.ID, guestCart.ID)
+	}
+	if got.TotalQuantity() != 2 {
+		t.Fatalf("total quantity = %d, want 2", got.TotalQuantity())
+	}
+}
+
+func TestService_ClaimGuestCart_MergesIntoExistingCustomerCart(t *testing.T) {
+	carts := newStubCartRepo()
+	prices := newStubPriceRepo()
+	prices.set("var-1", "EUR", 1500)
+	prices.set("var-2", "EUR", 2500)
+	svc := cartApp.NewService(carts, prices, nil, nil, testPipeline(prices), testLogger(), testBus())
+	ctx := context.Background()
+
+	customerCart, err := svc.CreateCart(ctx, "cust-1", "EUR")
+	if err != nil {
+		t.Fatalf("CreateCart customer: %v", err)
+	}
+	if _, err := svc.AddItem(ctx, customerCart.ID, "cust-1", "var-1", 1); err != nil {
+		t.Fatalf("AddItem customer: %v", err)
+	}
+
+	guestCart, err := svc.CreateCart(ctx, "", "EUR")
+	if err != nil {
+		t.Fatalf("CreateCart guest: %v", err)
+	}
+	if _, err := svc.AddItem(ctx, guestCart.ID, "", "var-1", 2); err != nil {
+		t.Fatalf("AddItem guest var-1: %v", err)
+	}
+	if _, err := svc.AddItem(ctx, guestCart.ID, "", "var-2", 1); err != nil {
+		t.Fatalf("AddItem guest var-2: %v", err)
+	}
+
+	merged, err := svc.ClaimGuestCart(ctx, guestCart.ID, "cust-1")
+	if err != nil {
+		t.Fatalf("ClaimGuestCart: %v", err)
+	}
+	if merged == nil {
+		t.Fatal("ClaimGuestCart() returned nil")
+	}
+	if merged.ID != customerCart.ID {
+		t.Fatalf("merged cart id = %q, want %q", merged.ID, customerCart.ID)
+	}
+	if len(merged.Items) != 2 {
+		t.Fatalf("len(items) = %d, want 2", len(merged.Items))
+	}
+	quantities := map[string]int{}
+	for _, item := range merged.Items {
+		quantities[item.VariantID] = item.Quantity
+	}
+	if quantities["var-1"] != 3 {
+		t.Fatalf("var-1 quantity = %d, want 3", quantities["var-1"])
+	}
+	if quantities["var-2"] != 1 {
+		t.Fatalf("var-2 quantity = %d, want 1", quantities["var-2"])
+	}
+	deletedGuest, err := svc.GetCart(ctx, guestCart.ID)
+	if !apperror.Is(err, apperror.CodeNotFound) {
+		t.Fatalf("GetCart(guest) error = %v, want not_found", err)
+	}
+	if deletedGuest != nil {
+		t.Fatal("expected guest cart to be deleted after merge")
+	}
+}
+
 func TestService_GetActiveCartByCustomer_NotFound(t *testing.T) {
 	carts := newStubCartRepo()
 	prices := newStubPriceRepo()

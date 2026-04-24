@@ -95,6 +95,102 @@ func (s *Service) GetActiveCartByCustomer(ctx context.Context, customerID string
 	return c, nil
 }
 
+// ClaimGuestCart assigns a guest cart to a customer or merges it into the
+// customer's active cart when one already exists.
+func (s *Service) ClaimGuestCart(ctx context.Context, guestCartID, customerID string) (*domainCart.Cart, error) {
+	if guestCartID == "" {
+		return nil, nil
+	}
+	if customerID == "" {
+		return nil, apperror.Validation("customer id must not be empty")
+	}
+
+	guestCart, err := s.carts.FindByID(ctx, guestCartID)
+	if err != nil {
+		return nil, fmt.Errorf("cart service: claim guest cart: find guest: %w", err)
+	}
+	if guestCart == nil {
+		return nil, nil
+	}
+	if guestCart.CustomerID != "" {
+		if guestCart.CustomerID == customerID {
+			return guestCart, nil
+		}
+		return nil, nil
+	}
+
+	customerCart, err := s.carts.FindActiveByCustomerID(ctx, customerID)
+	if err != nil {
+		return nil, fmt.Errorf("cart service: claim guest cart: find customer cart: %w", err)
+	}
+	if customerCart == nil {
+		if err := guestCart.SetCustomerID(customerID); err != nil {
+			return nil, apperror.Wrap(apperror.CodeValidation, "cannot assign guest cart", err)
+		}
+		if err := s.carts.Save(ctx, guestCart); err != nil {
+			return nil, fmt.Errorf("cart service: claim guest cart: save claimed cart: %w", err)
+		}
+		s.log.Info("cart.guest.claimed", map[string]interface{}{
+			"cart_id":     guestCart.ID,
+			"customer_id": customerID,
+		})
+		return guestCart, nil
+	}
+
+	if customerCart.Currency != guestCart.Currency {
+		if customerCart.ItemCount() == 0 {
+			if err := s.carts.Delete(ctx, customerCart.ID); err != nil {
+				return nil, fmt.Errorf("cart service: claim guest cart: delete empty customer cart: %w", err)
+			}
+			if err := guestCart.SetCustomerID(customerID); err != nil {
+				return nil, apperror.Wrap(apperror.CodeValidation, "cannot assign guest cart", err)
+			}
+			if err := s.carts.Save(ctx, guestCart); err != nil {
+				return nil, fmt.Errorf("cart service: claim guest cart: save claimed cart: %w", err)
+			}
+			s.log.Info("cart.guest.claimed", map[string]interface{}{
+				"cart_id":     guestCart.ID,
+				"customer_id": customerID,
+			})
+			return guestCart, nil
+		}
+		if guestCart.ItemCount() == 0 {
+			if err := s.carts.Delete(ctx, guestCart.ID); err != nil {
+				return nil, fmt.Errorf("cart service: claim guest cart: delete empty guest cart: %w", err)
+			}
+			return customerCart, nil
+		}
+		return nil, apperror.Validation("cannot merge carts with different currencies")
+	}
+
+	for _, item := range guestCart.Items {
+		if err := customerCart.AddItem(item.VariantID, item.Quantity, item.UnitPrice); err != nil {
+			return nil, apperror.Wrap(apperror.CodeValidation, "cannot merge guest cart item", err)
+		}
+	}
+	if customerCart.CouponCode == "" && guestCart.CouponCode != "" {
+		if err := customerCart.ApplyCoupon(guestCart.CouponCode); err != nil {
+			return nil, apperror.Wrap(apperror.CodeValidation, "cannot merge guest cart coupon", err)
+		}
+	}
+	if err := s.recalculate(ctx, customerCart); err != nil {
+		return nil, err
+	}
+	if err := s.carts.Save(ctx, customerCart); err != nil {
+		return nil, fmt.Errorf("cart service: claim guest cart: save merged cart: %w", err)
+	}
+	if err := s.carts.Delete(ctx, guestCart.ID); err != nil {
+		return nil, fmt.Errorf("cart service: claim guest cart: delete guest cart: %w", err)
+	}
+
+	s.log.Info("cart.guest.merged", map[string]interface{}{
+		"guest_cart_id":    guestCart.ID,
+		"customer_cart_id": customerCart.ID,
+		"customer_id":      customerID,
+	})
+	return customerCart, nil
+}
+
 // AddItem adds an item to the cart and recalculates pricing.
 func (s *Service) AddItem(ctx context.Context, cartID, customerID, variantID string, quantity int) (*domainCart.Cart, error) {
 	c, err := s.carts.FindByID(ctx, cartID)

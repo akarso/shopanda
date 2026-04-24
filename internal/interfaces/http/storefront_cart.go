@@ -504,6 +504,18 @@ func storefrontSetCartCookie(w http.ResponseWriter, r *http.Request, cartID stri
 	})
 }
 
+func storefrontClearCartCookie(w http.ResponseWriter, r *http.Request) {
+	http.SetCookie(w, &http.Cookie{
+		Name:     storefrontCartCookieName,
+		Value:    "",
+		Path:     "/",
+		MaxAge:   -1,
+		HttpOnly: true,
+		Secure:   r != nil && r.TLS != nil,
+		SameSite: http.SameSiteLaxMode,
+	})
+}
+
 func storefrontIsHTMX(r *http.Request) bool {
 	return strings.EqualFold(strings.TrimSpace(r.Header.Get("HX-Request")), "true")
 }
