@@ -83,6 +83,9 @@ func TestStorefrontHandler_Home_ShowsAccountControls_WhenAuthenticated(t *testin
 	if !strings.Contains(body, "/account/orders") {
 		t.Fatalf("expected orders link in body: %s", body)
 	}
+	if !strings.Contains(body, "/account/security") {
+		t.Fatalf("expected security link in body: %s", body)
+	}
 	if !strings.Contains(body, "/account/logout") {
 		t.Fatalf("expected logout control in body: %s", body)
 	}
@@ -482,6 +485,75 @@ func TestStorefrontHandler_AccountProfile_Update(t *testing.T) {
 	}
 }
 
+func TestStorefrontHandler_AccountProfile_DoesNotRenderSecurityForms(t *testing.T) {
+	engine := createTestTheme(t)
+	pdp := composition.NewPipeline[composition.ProductContext]()
+	plp := composition.NewPipeline[composition.ListingContext]()
+	authSvc, _ := newStorefrontAuthService(t)
+	out, err := authSvc.Register(context.Background(), appAuth.RegisterInput{Email: "ada@example.com", Password: "password123", FirstName: "Ada", LastName: "Lovelace"})
+	if err != nil {
+		t.Fatalf("Register: %v", err)
+	}
+	h := shophttp.NewStorefrontHandler(engine, &mockStorefrontRepo{}, newStorefrontCategoryMock(), pdp, plp, newStorefrontSearchMock()).WithAccount(authSvc, newStorefrontAccountOrderRepoStub(), &storefrontAccountDeleterStub{})
+	router := newStorefrontRouter(h)
+	id, err := identity.NewIdentity(out.CustomerID, identity.RoleCustomer)
+	if err != nil {
+		t.Fatalf("NewIdentity: %v", err)
+	}
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("GET", "/account/profile", nil)
+	req = req.WithContext(auth.WithIdentity(req.Context(), id))
+	router.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d; body: %s", rec.Code, http.StatusOK, rec.Body.String())
+	}
+	body := rec.Body.String()
+	if !strings.Contains(body, "/account/security") {
+		t.Fatalf("expected security navigation link in body: %s", body)
+	}
+	if strings.Contains(body, "/account/security/password") || strings.Contains(body, "/account/security/delete") {
+		t.Fatalf("expected profile page to omit security forms, got body: %s", body)
+	}
+}
+
+func TestStorefrontHandler_AccountSecurity_RendersSensitiveActions(t *testing.T) {
+	engine := createTestTheme(t)
+	pdp := composition.NewPipeline[composition.ProductContext]()
+	plp := composition.NewPipeline[composition.ListingContext]()
+	authSvc, _ := newStorefrontAuthService(t)
+	out, err := authSvc.Register(context.Background(), appAuth.RegisterInput{Email: "ada@example.com", Password: "password123", FirstName: "Ada", LastName: "Lovelace"})
+	if err != nil {
+		t.Fatalf("Register: %v", err)
+	}
+	h := shophttp.NewStorefrontHandler(engine, &mockStorefrontRepo{}, newStorefrontCategoryMock(), pdp, plp, newStorefrontSearchMock()).WithAccount(authSvc, newStorefrontAccountOrderRepoStub(), &storefrontAccountDeleterStub{})
+	router := newStorefrontRouter(h)
+	id, err := identity.NewIdentity(out.CustomerID, identity.RoleCustomer)
+	if err != nil {
+		t.Fatalf("NewIdentity: %v", err)
+	}
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("GET", "/account/security", nil)
+	req = req.WithContext(auth.WithIdentity(req.Context(), id))
+	router.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d; body: %s", rec.Code, http.StatusOK, rec.Body.String())
+	}
+	body := rec.Body.String()
+	if !strings.Contains(body, "/account/security/password") {
+		t.Fatalf("expected password form action in body: %s", body)
+	}
+	if !strings.Contains(body, "/account/security/delete") {
+		t.Fatalf("expected delete form action in body: %s", body)
+	}
+	if !strings.Contains(body, "/account/logout") {
+		t.Fatalf("expected logout form action in body: %s", body)
+	}
+}
+
 func TestStorefrontHandler_AccountDelete_RequiresConfirmation(t *testing.T) {
 	engine := createTestTheme(t)
 	pdp := composition.NewPipeline[composition.ProductContext]()
@@ -498,13 +570,13 @@ func TestStorefrontHandler_AccountDelete_RequiresConfirmation(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewIdentity: %v", err)
 	}
-	csrfCookie := storefrontAccountCSRFCookie(t, router, "/account/profile")
+	csrfCookie := storefrontAccountCSRFCookie(t, router, "/account/security")
 
 	form := url.Values{
 		"csrf_token": {csrfCookie.Value},
 	}
 	rec := httptest.NewRecorder()
-	req := httptest.NewRequest("POST", "/account/profile/delete", strings.NewReader(form.Encode()))
+	req := httptest.NewRequest("POST", "/account/security/delete", strings.NewReader(form.Encode()))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	req.AddCookie(csrfCookie)
 	req = req.WithContext(auth.WithIdentity(req.Context(), id))
@@ -534,7 +606,7 @@ func TestStorefrontHandler_AccountLogout_LogoutFailureDoesNotClearCookie(t *test
 	if err != nil {
 		t.Fatalf("NewIdentity: %v", err)
 	}
-	csrfCookie := storefrontAccountCSRFCookie(t, router, "/account/profile")
+	csrfCookie := storefrontAccountCSRFCookie(t, router, "/account/security")
 
 	form := url.Values{"csrf_token": {csrfCookie.Value}}
 	rec := httptest.NewRecorder()

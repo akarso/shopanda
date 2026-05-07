@@ -8,6 +8,12 @@
         <p>Placed on {{ .DateText }}. Current status: {{ .Status }}.</p>
     </div>
 
+    <nav class="checkout-actions" aria-label="Account sections">
+        <a class="chip {{ if eq .AccountNav.Current "orders" }}chip--active{{ end }}" href="{{ .AccountNav.OrdersURL }}">Orders</a>
+        <a class="chip {{ if eq .AccountNav.Current "profile" }}chip--active{{ end }}" href="{{ .AccountNav.ProfileURL }}">Profile</a>
+        <a class="chip {{ if eq .AccountNav.Current "security" }}chip--active{{ end }}" href="{{ .AccountNav.SecurityURL }}">Security</a>
+    </nav>
+
     <section class="account-panel">
         <div class="checkout-summary-panel__totals">
             <span>Total</span>

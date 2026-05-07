@@ -52,6 +52,7 @@ type StorefrontAccountOrderRow struct {
 type StorefrontAccountOrdersPageData struct {
 	Layout       StorefrontLayoutData
 	Theme        theme.Theme
+	AccountNav   StorefrontAccountNavData
 	Orders       []StorefrontAccountOrderRow
 	EmptyMessage string
 }
@@ -65,28 +66,44 @@ type StorefrontAccountOrderItem struct {
 }
 
 type StorefrontAccountOrderDetailPageData struct {
-	Layout    StorefrontLayoutData
-	Theme     theme.Theme
-	OrderID   string
-	DateText  string
-	Status    string
-	TotalText string
-	Items     []StorefrontAccountOrderItem
-	BackURL   string
+	Layout     StorefrontLayoutData
+	Theme      theme.Theme
+	AccountNav StorefrontAccountNavData
+	OrderID    string
+	DateText   string
+	Status     string
+	TotalText  string
+	Items      []StorefrontAccountOrderItem
+	BackURL    string
+}
+
+type StorefrontAccountNavData struct {
+	OrdersURL   string
+	ProfileURL  string
+	SecurityURL string
+	Current     string
 }
 
 type StorefrontAccountProfilePageData struct {
+	Layout              StorefrontLayoutData
+	Theme               theme.Theme
+	AccountNav          StorefrontAccountNavData
+	CSRFToken           string
+	Email               string
+	FirstName           string
+	LastName            string
+	ProfileErrorMessage string
+	SuccessMessage      string
+}
+
+type StorefrontAccountSecurityPageData struct {
 	Layout               StorefrontLayoutData
 	Theme                theme.Theme
+	AccountNav           StorefrontAccountNavData
 	CSRFToken            string
 	Email                string
-	FirstName            string
-	LastName             string
-	ProfileErrorMessage  string
 	PasswordErrorMessage string
 	DeleteErrorMessage   string
-	SuccessMessage       string
-	OrdersURL            string
 }
 
 func (h *StorefrontHandler) Login() http.HandlerFunc {
@@ -265,6 +282,7 @@ func (h *StorefrontHandler) AccountOrders() http.HandlerFunc {
 		h.renderPage(w, "account_orders", StorefrontAccountOrdersPageData{
 			Layout:       h.layoutDataBestEffort(r),
 			Theme:        h.engine.Theme(),
+			AccountNav:   storefrontAccountNav("orders"),
 			Orders:       rows,
 			EmptyMessage: "You have not placed any orders yet.",
 		})
@@ -307,14 +325,15 @@ func (h *StorefrontHandler) AccountOrderDetail() http.HandlerFunc {
 			})
 		}
 		h.renderPage(w, "account_order_detail", StorefrontAccountOrderDetailPageData{
-			Layout:    h.layoutDataBestEffort(r),
-			Theme:     h.engine.Theme(),
-			OrderID:   o.ID,
-			DateText:  o.CreatedAt.UTC().Format("2006-01-02"),
-			Status:    storefrontAccountOrderStatus(o.Status()),
-			TotalText: formatStorefrontMoney(o.TotalAmount.Amount(), o.TotalAmount.Currency()),
-			Items:     items,
-			BackURL:   "/account/orders",
+			Layout:     h.layoutDataBestEffort(r),
+			Theme:      h.engine.Theme(),
+			AccountNav: storefrontAccountNav("orders"),
+			OrderID:    o.ID,
+			DateText:   o.CreatedAt.UTC().Format("2006-01-02"),
+			Status:     storefrontAccountOrderStatus(o.Status()),
+			TotalText:  formatStorefrontMoney(o.TotalAmount.Amount(), o.TotalAmount.Currency()),
+			Items:      items,
+			BackURL:    "/account/orders",
 		})
 	}
 }
@@ -359,9 +378,28 @@ func (h *StorefrontHandler) AccountProfile() http.HandlerFunc {
 	}
 }
 
+func (h *StorefrontHandler) AccountSecurity() http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if h.auth == nil || !h.engine.HasTemplate("account_security") {
+			http.Error(w, "Not Found", http.StatusNotFound)
+			return
+		}
+		customerID, ok := h.requireStorefrontAccount(w, r)
+		if !ok {
+			return
+		}
+		profile, err := h.auth.Me(r.Context(), customerID)
+		if err != nil {
+			http.Error(w, "Internal Server Error", http.StatusInternalServerError)
+			return
+		}
+		h.renderPage(w, "account_security", storefrontAccountSecurityPage(h, r, profile))
+	}
+}
+
 func (h *StorefrontHandler) AccountPassword() http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		if h.auth == nil || !h.engine.HasTemplate("account_profile") {
+		if h.auth == nil || !h.engine.HasTemplate("account_security") {
 			http.Error(w, "Not Found", http.StatusNotFound)
 			return
 		}
@@ -378,7 +416,7 @@ func (h *StorefrontHandler) AccountPassword() http.HandlerFunc {
 			http.Error(w, "Internal Server Error", http.StatusInternalServerError)
 			return
 		}
-		page := storefrontAccountProfilePage(h, r, profile)
+		page := storefrontAccountSecurityPage(h, r, profile)
 		err = h.auth.ChangePassword(r.Context(), appAuth.ChangePasswordInput{
 			CustomerID:      customerID,
 			CurrentPassword: r.FormValue("current_password"),
@@ -386,7 +424,7 @@ func (h *StorefrontHandler) AccountPassword() http.HandlerFunc {
 		})
 		if err != nil {
 			page.PasswordErrorMessage = storefrontAccountErrorMessage(err)
-			h.renderPageStatus(w, "account_profile", page, storefrontAccountErrorStatus(err))
+			h.renderPageStatus(w, "account_security", page, storefrontAccountErrorStatus(err))
 			return
 		}
 		storefrontClearSessionCookie(w, r)
@@ -396,7 +434,7 @@ func (h *StorefrontHandler) AccountPassword() http.HandlerFunc {
 
 func (h *StorefrontHandler) AccountDelete() http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		if h.account == nil || h.auth == nil || !h.engine.HasTemplate("account_profile") {
+		if h.account == nil || h.auth == nil || !h.engine.HasTemplate("account_security") {
 			http.Error(w, "Not Found", http.StatusNotFound)
 			return
 		}
@@ -413,10 +451,10 @@ func (h *StorefrontHandler) AccountDelete() http.HandlerFunc {
 			http.Error(w, "Internal Server Error", http.StatusInternalServerError)
 			return
 		}
-		page := storefrontAccountProfilePage(h, r, profile)
+		page := storefrontAccountSecurityPage(h, r, profile)
 		if !strings.EqualFold(strings.TrimSpace(r.FormValue("confirm_delete")), "delete") {
 			page.DeleteErrorMessage = "Type DELETE to confirm account removal."
-			h.renderPageStatus(w, "account_profile", page, http.StatusUnprocessableEntity)
+			h.renderPageStatus(w, "account_security", page, http.StatusUnprocessableEntity)
 			return
 		}
 		if err := h.account.DeleteAccount(r.Context(), customerID); err != nil {
@@ -480,15 +518,34 @@ func (h *StorefrontHandler) requireStorefrontAccount(w http.ResponseWriter, r *h
 	return storefrontCustomerID(r), true
 }
 
+func storefrontAccountNav(current string) StorefrontAccountNavData {
+	return StorefrontAccountNavData{
+		OrdersURL:   "/account/orders",
+		ProfileURL:  "/account/profile",
+		SecurityURL: "/account/security",
+		Current:     strings.TrimSpace(current),
+	}
+}
+
 func storefrontAccountProfilePage(h *StorefrontHandler, r *http.Request, profile *customer.Customer) StorefrontAccountProfilePageData {
 	return StorefrontAccountProfilePageData{
-		Layout:    h.layoutDataBestEffort(r),
-		Theme:     h.engine.Theme(),
-		CSRFToken: shopandaCSRFToken(r),
-		Email:     profile.Email,
-		FirstName: profile.FirstName,
-		LastName:  profile.LastName,
-		OrdersURL: "/account/orders",
+		Layout:     h.layoutDataBestEffort(r),
+		Theme:      h.engine.Theme(),
+		AccountNav: storefrontAccountNav("profile"),
+		CSRFToken:  shopandaCSRFToken(r),
+		Email:      profile.Email,
+		FirstName:  profile.FirstName,
+		LastName:   profile.LastName,
+	}
+}
+
+func storefrontAccountSecurityPage(h *StorefrontHandler, r *http.Request, profile *customer.Customer) StorefrontAccountSecurityPageData {
+	return StorefrontAccountSecurityPageData{
+		Layout:     h.layoutDataBestEffort(r),
+		Theme:      h.engine.Theme(),
+		AccountNav: storefrontAccountNav("security"),
+		CSRFToken:  shopandaCSRFToken(r),
+		Email:      profile.Email,
 	}
 }
 
