@@ -69,8 +69,21 @@ func TestAdminHandler_StaticJS(t *testing.T) {
 		t.Fatalf("expected 200, got %d", rec.Code)
 	}
 	body := rec.Body.String()
+	normalizedBody := strings.NewReplacer(`\"`, `"`, `\\'`, `'`).Replace(body)
 	if !strings.Contains(body, "TOKEN_KEY") {
 		t.Fatalf("expected TOKEN_KEY in JS")
+	}
+	if !strings.Contains(normalizedBody, "default credentials") {
+		t.Fatalf("expected login credential guidance in JS")
+	}
+	if !strings.Contains(normalizedBody, "{currency}") || !strings.Contains(normalizedBody, "{amount}") {
+		t.Fatalf("expected currency display format hint in JS")
+	}
+	if strings.Contains(normalizedBody, "admin@example.com") {
+		t.Fatalf("expected no hardcoded seeded admin email in JS")
+	}
+	if !strings.Contains(normalizedBody, `autocomplete="off"`) && !strings.Contains(normalizedBody, "autocomplete='off'") && !strings.Contains(normalizedBody, "autocomplete=off") {
+		t.Fatalf("expected admin login form to disable autofill in JS")
 	}
 }
 
