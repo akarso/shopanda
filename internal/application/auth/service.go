@@ -147,6 +147,32 @@ func (s *Service) ChangePassword(ctx context.Context, in ChangePasswordInput) er
 	return nil
 }
 
+// VerifyPassword checks whether the provided password matches the current
+// stored password for the customer.
+func (s *Service) VerifyPassword(ctx context.Context, customerID, passwordText string) error {
+	if strings.TrimSpace(customerID) == "" {
+		return apperror.Validation("customer id is required")
+	}
+	if passwordText == "" {
+		return apperror.Validation("password is required")
+	}
+
+	c, err := s.customers.FindByID(ctx, customerID)
+	if err != nil {
+		return fmt.Errorf("auth service: verify password: %w", err)
+	}
+	if c == nil {
+		return apperror.NotFound("customer not found")
+	}
+	if c.Status != customer.StatusActive {
+		return apperror.Unauthorized("invalid email or password")
+	}
+	if err := password.Compare(c.PasswordHash, passwordText); err != nil {
+		return apperror.Unauthorized("password is incorrect")
+	}
+	return nil
+}
+
 // RegisterInput contains the fields for customer registration.
 type RegisterInput struct {
 	Email     string

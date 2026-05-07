@@ -633,6 +633,10 @@ input {
     gap: 1rem;
 }
 
+.account-panel--narrow {
+    max-width: 34rem;
+}
+
 .account-notice {
     margin: 0;
     padding: 0.9rem 1rem;

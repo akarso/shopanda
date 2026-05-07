@@ -2,7 +2,10 @@ package http
 
 import (
 	"errors"
+	"net/http/httptest"
+	"strings"
 	"testing"
+	"time"
 
 	"github.com/akarso/shopanda/internal/domain/catalog"
 	"github.com/akarso/shopanda/internal/platform/apperror"
@@ -66,5 +69,49 @@ func TestStorefrontCheckoutErrorMessage_PreservesClientErrors(t *testing.T) {
 	err := apperror.Validation("Select a shipping method to continue.")
 	if got := storefrontCheckoutErrorMessage(err); got != err.Error() {
 		t.Fatalf("storefrontCheckoutErrorMessage() = %q, want %q", got, err.Error())
+	}
+}
+
+func TestStorefrontAccountSecurityVerifier_IsVerifiedRejectsMissingContext(t *testing.T) {
+	verifier := newStorefrontAccountSecurityVerifier("test-secret", time.Minute)
+	request := httptest.NewRequest("GET", "/account/security", nil)
+
+	if verifier.isVerified(nil, "cust-1") {
+		t.Fatal("expected nil request to fail verification")
+	}
+	if verifier.isVerified(request, "   ") {
+		t.Fatal("expected blank customer id to fail verification")
+	}
+}
+
+func TestStorefrontHandler_WithAccountSecurity_PanicsOnInvalidConfig(t *testing.T) {
+	tests := []struct {
+		name   string
+		secret string
+		ttl    time.Duration
+		want   string
+	}{
+		{name: "empty secret", secret: " ", ttl: time.Minute, want: "secret must not be empty"},
+		{name: "non-positive ttl", secret: "test-secret", ttl: 0, want: "ttl must be positive"},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			defer func() {
+				r := recover()
+				if r == nil {
+					t.Fatal("expected panic, got nil")
+				}
+				msg, ok := r.(string)
+				if !ok {
+					t.Fatalf("panic = %#v, want string", r)
+				}
+				if !strings.Contains(msg, tc.want) {
+					t.Fatalf("panic = %q, want substring %q", msg, tc.want)
+				}
+			}()
+
+			NewStorefrontHandler(nil, nil, nil, nil, nil, nil).WithAccountSecurity(tc.secret, tc.ttl)
+		})
 	}
 }

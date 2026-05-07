@@ -43,6 +43,7 @@ type StorefrontHandler struct {
 	checkout *checkoutApp.Service
 	orders   order.OrderRepository
 	account  AccountDeleter
+	security *storefrontAccountSecurityVerifier
 	shipping []shipping.Provider
 	payment  payment.Provider
 	log      logger.Logger
@@ -257,6 +258,22 @@ func (h *StorefrontHandler) WithAccount(authService *appAuth.Service, orders ord
 	h.auth = authService
 	h.orders = orders
 	h.account = account
+	return h
+}
+
+// WithAccountSecurity enables a short-lived step-up verification checkpoint
+// for sensitive storefront account routes.
+func (h *StorefrontHandler) WithAccountSecurity(secret string, ttl time.Duration) *StorefrontHandler {
+	secret = strings.TrimSpace(secret)
+	switch {
+	case secret == "" && ttl <= 0:
+		panic("storefront account security misconfigured: secret must not be empty and ttl must be positive")
+	case secret == "":
+		panic("storefront account security misconfigured: secret must not be empty")
+	case ttl <= 0:
+		panic("storefront account security misconfigured: ttl must be positive")
+	}
+	h.security = newStorefrontAccountSecurityVerifier(secret, ttl)
 	return h
 }
 
