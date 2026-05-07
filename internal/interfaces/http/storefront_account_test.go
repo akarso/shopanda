@@ -223,6 +223,36 @@ func storefrontAccountCSRFCookie(t *testing.T, handler http.Handler, path string
 	return nil
 }
 
+func storefrontAccountSecurityVerifiedCookie(t *testing.T, handler http.Handler, id identity.Identity, redirectTo string) (*http.Cookie, *http.Cookie) {
+	t.Helper()
+	csrfCookie := storefrontAccountCSRFCookie(t, handler, "/account/security/verify")
+	form := url.Values{
+		"csrf_token":  {csrfCookie.Value},
+		"redirect_to": {redirectTo},
+		"password":    {"password123"},
+	}
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("POST", "/account/security/verify", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.AddCookie(csrfCookie)
+	req = req.WithContext(auth.WithIdentity(req.Context(), id))
+	handler.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusSeeOther {
+		t.Fatalf("verify status = %d, want %d; body: %s", rec.Code, http.StatusSeeOther, rec.Body.String())
+	}
+	if rec.Header().Get("Location") != redirectTo {
+		t.Fatalf("verify location = %q, want %q", rec.Header().Get("Location"), redirectTo)
+	}
+	for _, cookie := range rec.Result().Cookies() {
+		if cookie.Name == "shopanda_storefront_security_verify" {
+			return csrfCookie, cookie
+		}
+	}
+	t.Fatal("expected storefront security verification cookie")
+	return nil, nil
+}
+
 func TestStorefrontHandler_AccountLogin_SetsSessionCookie(t *testing.T) {
 	engine := createTestTheme(t)
 	pdp := composition.NewPipeline[composition.ProductContext]()
@@ -518,6 +548,57 @@ func TestStorefrontHandler_AccountProfile_DoesNotRenderSecurityForms(t *testing.
 	}
 }
 
+func TestStorefrontHandler_AccountSecurity_RedirectsToVerification_WhenStepUpRequired(t *testing.T) {
+	engine := createTestTheme(t)
+	pdp := composition.NewPipeline[composition.ProductContext]()
+	plp := composition.NewPipeline[composition.ListingContext]()
+	authSvc, _ := newStorefrontAuthService(t)
+	out, err := authSvc.Register(context.Background(), appAuth.RegisterInput{Email: "ada@example.com", Password: "password123", FirstName: "Ada", LastName: "Lovelace"})
+	if err != nil {
+		t.Fatalf("Register: %v", err)
+	}
+	h := shophttp.NewStorefrontHandler(engine, &mockStorefrontRepo{}, newStorefrontCategoryMock(), pdp, plp, newStorefrontSearchMock()).WithAccount(authSvc, newStorefrontAccountOrderRepoStub(), &storefrontAccountDeleterStub{}).WithAccountSecurity("test-secret", time.Minute)
+	router := newStorefrontRouter(h)
+	id, err := identity.NewIdentity(out.CustomerID, identity.RoleCustomer)
+	if err != nil {
+		t.Fatalf("NewIdentity: %v", err)
+	}
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("GET", "/account/security", nil)
+	req = req.WithContext(auth.WithIdentity(req.Context(), id))
+	router.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusSeeOther {
+		t.Fatalf("status = %d, want %d; body: %s", rec.Code, http.StatusSeeOther, rec.Body.String())
+	}
+	if rec.Header().Get("Location") != "/account/security/verify?redirect_to=%2Faccount%2Fsecurity" {
+		t.Fatalf("location = %q, want %q", rec.Header().Get("Location"), "/account/security/verify?redirect_to=%2Faccount%2Fsecurity")
+	}
+}
+
+func TestStorefrontHandler_AccountSecurityVerify_SetsVerificationCookie(t *testing.T) {
+	engine := createTestTheme(t)
+	pdp := composition.NewPipeline[composition.ProductContext]()
+	plp := composition.NewPipeline[composition.ListingContext]()
+	authSvc, _ := newStorefrontAuthService(t)
+	out, err := authSvc.Register(context.Background(), appAuth.RegisterInput{Email: "ada@example.com", Password: "password123", FirstName: "Ada", LastName: "Lovelace"})
+	if err != nil {
+		t.Fatalf("Register: %v", err)
+	}
+	h := shophttp.NewStorefrontHandler(engine, &mockStorefrontRepo{}, newStorefrontCategoryMock(), pdp, plp, newStorefrontSearchMock()).WithAccount(authSvc, newStorefrontAccountOrderRepoStub(), &storefrontAccountDeleterStub{}).WithAccountSecurity("test-secret", time.Minute)
+	router := newStorefrontRouter(h)
+	id, err := identity.NewIdentity(out.CustomerID, identity.RoleCustomer)
+	if err != nil {
+		t.Fatalf("NewIdentity: %v", err)
+	}
+
+	_, verifiedCookie := storefrontAccountSecurityVerifiedCookie(t, router, id, "/account/security")
+	if verifiedCookie.Value == "" || verifiedCookie.MaxAge <= 0 {
+		t.Fatalf("expected verification cookie to be set, got %+v", verifiedCookie)
+	}
+}
+
 func TestStorefrontHandler_AccountSecurity_RendersSensitiveActions(t *testing.T) {
 	engine := createTestTheme(t)
 	pdp := composition.NewPipeline[composition.ProductContext]()
@@ -527,15 +608,18 @@ func TestStorefrontHandler_AccountSecurity_RendersSensitiveActions(t *testing.T)
 	if err != nil {
 		t.Fatalf("Register: %v", err)
 	}
-	h := shophttp.NewStorefrontHandler(engine, &mockStorefrontRepo{}, newStorefrontCategoryMock(), pdp, plp, newStorefrontSearchMock()).WithAccount(authSvc, newStorefrontAccountOrderRepoStub(), &storefrontAccountDeleterStub{})
+	h := shophttp.NewStorefrontHandler(engine, &mockStorefrontRepo{}, newStorefrontCategoryMock(), pdp, plp, newStorefrontSearchMock()).WithAccount(authSvc, newStorefrontAccountOrderRepoStub(), &storefrontAccountDeleterStub{}).WithAccountSecurity("test-secret", time.Minute)
 	router := newStorefrontRouter(h)
 	id, err := identity.NewIdentity(out.CustomerID, identity.RoleCustomer)
 	if err != nil {
 		t.Fatalf("NewIdentity: %v", err)
 	}
+	csrfCookie, verifiedCookie := storefrontAccountSecurityVerifiedCookie(t, router, id, "/account/security")
 
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest("GET", "/account/security", nil)
+	req.AddCookie(csrfCookie)
+	req.AddCookie(verifiedCookie)
 	req = req.WithContext(auth.WithIdentity(req.Context(), id))
 	router.ServeHTTP(rec, req)
 
@@ -554,6 +638,43 @@ func TestStorefrontHandler_AccountSecurity_RendersSensitiveActions(t *testing.T)
 	}
 }
 
+func TestStorefrontHandler_AccountPassword_RedirectsToVerification_WhenUnverified(t *testing.T) {
+	engine := createTestTheme(t)
+	pdp := composition.NewPipeline[composition.ProductContext]()
+	plp := composition.NewPipeline[composition.ListingContext]()
+	authSvc, _ := newStorefrontAuthService(t)
+	out, err := authSvc.Register(context.Background(), appAuth.RegisterInput{Email: "ada@example.com", Password: "password123", FirstName: "Ada", LastName: "Lovelace"})
+	if err != nil {
+		t.Fatalf("Register: %v", err)
+	}
+	h := shophttp.NewStorefrontHandler(engine, &mockStorefrontRepo{}, newStorefrontCategoryMock(), pdp, plp, newStorefrontSearchMock()).WithAccount(authSvc, newStorefrontAccountOrderRepoStub(), &storefrontAccountDeleterStub{}).WithAccountSecurity("test-secret", time.Minute)
+	router := newStorefrontRouter(h)
+	id, err := identity.NewIdentity(out.CustomerID, identity.RoleCustomer)
+	if err != nil {
+		t.Fatalf("NewIdentity: %v", err)
+	}
+	csrfCookie := storefrontAccountCSRFCookie(t, router, "/account/security/verify")
+
+	form := url.Values{
+		"csrf_token":       {csrfCookie.Value},
+		"current_password": {"password123"},
+		"new_password":     {"newpassword123"},
+	}
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("POST", "/account/security/password", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.AddCookie(csrfCookie)
+	req = req.WithContext(auth.WithIdentity(req.Context(), id))
+	router.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusSeeOther {
+		t.Fatalf("status = %d, want %d; body: %s", rec.Code, http.StatusSeeOther, rec.Body.String())
+	}
+	if rec.Header().Get("Location") != "/account/security/verify?redirect_to=%2Faccount%2Fsecurity" {
+		t.Fatalf("location = %q, want %q", rec.Header().Get("Location"), "/account/security/verify?redirect_to=%2Faccount%2Fsecurity")
+	}
+}
+
 func TestStorefrontHandler_AccountDelete_RequiresConfirmation(t *testing.T) {
 	engine := createTestTheme(t)
 	pdp := composition.NewPipeline[composition.ProductContext]()
@@ -564,13 +685,13 @@ func TestStorefrontHandler_AccountDelete_RequiresConfirmation(t *testing.T) {
 		t.Fatalf("Register: %v", err)
 	}
 	deleter := &storefrontAccountDeleterStub{}
-	h := shophttp.NewStorefrontHandler(engine, &mockStorefrontRepo{}, newStorefrontCategoryMock(), pdp, plp, newStorefrontSearchMock()).WithAccount(authSvc, newStorefrontAccountOrderRepoStub(), deleter)
+	h := shophttp.NewStorefrontHandler(engine, &mockStorefrontRepo{}, newStorefrontCategoryMock(), pdp, plp, newStorefrontSearchMock()).WithAccount(authSvc, newStorefrontAccountOrderRepoStub(), deleter).WithAccountSecurity("test-secret", time.Minute)
 	router := newStorefrontRouter(h)
 	id, err := identity.NewIdentity(out.CustomerID, identity.RoleCustomer)
 	if err != nil {
 		t.Fatalf("NewIdentity: %v", err)
 	}
-	csrfCookie := storefrontAccountCSRFCookie(t, router, "/account/security")
+	csrfCookie, verifiedCookie := storefrontAccountSecurityVerifiedCookie(t, router, id, "/account/security")
 
 	form := url.Values{
 		"csrf_token": {csrfCookie.Value},
@@ -579,6 +700,7 @@ func TestStorefrontHandler_AccountDelete_RequiresConfirmation(t *testing.T) {
 	req := httptest.NewRequest("POST", "/account/security/delete", strings.NewReader(form.Encode()))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	req.AddCookie(csrfCookie)
+	req.AddCookie(verifiedCookie)
 	req = req.WithContext(auth.WithIdentity(req.Context(), id))
 	router.ServeHTTP(rec, req)
 

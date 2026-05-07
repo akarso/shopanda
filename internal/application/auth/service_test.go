@@ -411,6 +411,43 @@ func TestChangePassword_WrongCurrentPassword(t *testing.T) {
 	}
 }
 
+func TestVerifyPassword_Success(t *testing.T) {
+	repo := newMockRepo()
+	svc := newTestService(repo)
+
+	out, err := svc.Register(context.Background(), auth.RegisterInput{
+		Email:    "verify@example.com",
+		Password: "password123",
+	})
+	if err != nil {
+		t.Fatalf("Register: %v", err)
+	}
+	if err := svc.VerifyPassword(context.Background(), out.CustomerID, "password123"); err != nil {
+		t.Fatalf("VerifyPassword: %v", err)
+	}
+}
+
+func TestVerifyPassword_WrongPassword(t *testing.T) {
+	repo := newMockRepo()
+	svc := newTestService(repo)
+
+	out, err := svc.Register(context.Background(), auth.RegisterInput{
+		Email:    "verify-wrong@example.com",
+		Password: "password123",
+	})
+	if err != nil {
+		t.Fatalf("Register: %v", err)
+	}
+	err = svc.VerifyPassword(context.Background(), out.CustomerID, "wrong-password")
+	if err == nil {
+		t.Fatal("expected error for wrong password")
+	}
+	var appErr *apperror.Error
+	if !errors.As(err, &appErr) || appErr.Code != apperror.CodeUnauthorized {
+		t.Fatalf("expected unauthorized error, got %v", err)
+	}
+}
+
 func TestLogin_DisabledAccount(t *testing.T) {
 	repo := newMockRepo()
 	svc := newTestService(repo)

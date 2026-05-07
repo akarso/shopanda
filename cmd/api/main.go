@@ -866,7 +866,8 @@ func runServe(cfg *config.Config, log logger.Logger) error {
 		storefront := shophttp.NewStorefrontHandler(themeEngine, productRepo, categoryRepo, pdp, plp, searchEngine).
 			WithCart(variantRepo, cartService).
 			WithCheckout([]shipping.Provider{flatRateProvider}, payProvider, checkoutService).
-			WithAccount(authService, orderRepo, accountService)
+			WithAccount(authService, orderRepo, accountService).
+			WithAccountSecurity(cfg.Auth.JWTSecret, 10*time.Minute)
 		staticDir := filepath.Join(cfg.Frontend.ThemePath, "static")
 		staticHandler := http.StripPrefix("/static/", http.FileServer(http.Dir(staticDir)))
 		router.Handle("GET /static/{path...}", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -884,6 +885,8 @@ func runServe(cfg *config.Config, log logger.Logger) error {
 		router.HandleFunc("GET /account/profile", storefront.AccountProfile())
 		router.HandleFunc("POST /account/profile", storefront.AccountProfile())
 		router.HandleFunc("GET /account/security", storefront.AccountSecurity())
+		router.HandleFunc("GET /account/security/verify", storefront.AccountSecurityVerify())
+		router.HandleFunc("POST /account/security/verify", storefront.AccountSecurityVerify())
 		router.HandleFunc("POST /account/security/password", storefront.AccountPassword())
 		router.HandleFunc("POST /account/security/delete", storefront.AccountDelete())
 		router.HandleFunc("POST /account/profile/password", storefront.AccountPassword())

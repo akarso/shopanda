@@ -178,6 +178,11 @@ func createTestTheme(t *testing.T) *theme.Engine {
 		t.Fatal(err)
 	}
 
+	accountSecurityVerify := `{{ define "title" }}Verify Security Access{{ end }}{{ define "content" }}<section><h1>Verify Security Access</h1>{{ if .ErrorMessage }}<p>{{ .ErrorMessage }}</p>{{ end }}<p>{{ .Email }}</p><form action="/account/security/verify" method="post"><input type="hidden" name="csrf_token" value="{{ .CSRFToken }}"><input type="hidden" name="redirect_to" value="{{ .RedirectTo }}"><input name="password" type="password"><button type="submit">Continue</button></form></section>{{ end }}{{ template "layout.html" . }}`
+	if err := os.WriteFile(filepath.Join(tplDir, "account_security_verify.html"), []byte(accountSecurityVerify), 0644); err != nil {
+		t.Fatal(err)
+	}
+
 	engine, err := theme.Load(dir)
 	if err != nil {
 		t.Fatal(err)
@@ -229,6 +234,8 @@ func newStorefrontRouter(h *shophttp.StorefrontHandler) http.Handler {
 	router.HandleFunc("GET /account/profile", h.AccountProfile())
 	router.HandleFunc("POST /account/profile", h.AccountProfile())
 	router.HandleFunc("GET /account/security", h.AccountSecurity())
+	router.HandleFunc("GET /account/security/verify", h.AccountSecurityVerify())
+	router.HandleFunc("POST /account/security/verify", h.AccountSecurityVerify())
 	router.HandleFunc("POST /account/security/password", h.AccountPassword())
 	router.HandleFunc("POST /account/security/delete", h.AccountDelete())
 	router.HandleFunc("POST /account/profile/password", h.AccountPassword())

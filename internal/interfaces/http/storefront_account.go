@@ -255,6 +255,7 @@ func (h *StorefrontHandler) Logout() http.HandlerFunc {
 				return
 			}
 		}
+		storefrontClearSecurityVerifyCookie(w, r)
 		storefrontClearSessionCookie(w, r)
 		http.Redirect(w, r, "/account/login?logged_out=1", http.StatusSeeOther)
 	}
@@ -348,6 +349,9 @@ func (h *StorefrontHandler) AccountProfile() http.HandlerFunc {
 		if !ok {
 			return
 		}
+		if !h.requireStorefrontSecurityVerification(w, r, customerID, "/account/security") {
+			return
+		}
 		profile, err := h.auth.Me(r.Context(), customerID)
 		if err != nil {
 			http.Error(w, "Internal Server Error", http.StatusInternalServerError)
@@ -388,6 +392,9 @@ func (h *StorefrontHandler) AccountSecurity() http.HandlerFunc {
 		if !ok {
 			return
 		}
+		if !h.requireStorefrontSecurityVerification(w, r, customerID, "/account/security") {
+			return
+		}
 		profile, err := h.auth.Me(r.Context(), customerID)
 		if err != nil {
 			http.Error(w, "Internal Server Error", http.StatusInternalServerError)
@@ -411,6 +418,9 @@ func (h *StorefrontHandler) AccountPassword() http.HandlerFunc {
 		if !ok {
 			return
 		}
+		if !h.requireStorefrontSecurityVerification(w, r, customerID, "/account/security") {
+			return
+		}
 		profile, err := h.auth.Me(r.Context(), customerID)
 		if err != nil {
 			http.Error(w, "Internal Server Error", http.StatusInternalServerError)
@@ -427,6 +437,7 @@ func (h *StorefrontHandler) AccountPassword() http.HandlerFunc {
 			h.renderPageStatus(w, "account_security", page, storefrontAccountErrorStatus(err))
 			return
 		}
+		storefrontClearSecurityVerifyCookie(w, r)
 		storefrontClearSessionCookie(w, r)
 		http.Redirect(w, r, "/account/login?password_changed=1", http.StatusSeeOther)
 	}
@@ -446,6 +457,9 @@ func (h *StorefrontHandler) AccountDelete() http.HandlerFunc {
 			http.Error(w, "invalid form body", http.StatusBadRequest)
 			return
 		}
+		if !h.requireStorefrontSecurityVerification(w, r, customerID, "/account/security") {
+			return
+		}
 		profile, err := h.auth.Me(r.Context(), customerID)
 		if err != nil {
 			http.Error(w, "Internal Server Error", http.StatusInternalServerError)
@@ -461,6 +475,7 @@ func (h *StorefrontHandler) AccountDelete() http.HandlerFunc {
 			http.Error(w, "Internal Server Error", http.StatusInternalServerError)
 			return
 		}
+		storefrontClearSecurityVerifyCookie(w, r)
 		storefrontClearSessionCookie(w, r)
 		http.Redirect(w, r, "/account/register?account_deleted=1", http.StatusSeeOther)
 	}
