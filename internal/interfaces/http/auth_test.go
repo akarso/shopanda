@@ -339,6 +339,125 @@ func TestAuthHandler_Me_Unauthenticated(t *testing.T) {
 	}
 }
 
+func TestAuthHandler_UpdateProfile_Success(t *testing.T) {
+	h, _, repo := authSetupWithRepo()
+
+	regBody := `{"email":"admin@example.com","password":"password123","first_name":"Admin","last_name":"User"}`
+	regReq := httptest.NewRequest("POST", "/auth/register", bytes.NewBufferString(regBody))
+	regRec := httptest.NewRecorder()
+	h.Register().ServeHTTP(regRec, regReq)
+
+	var regEnv authEnvelope
+	if err := json.Unmarshal(regRec.Body.Bytes(), &regEnv); err != nil {
+		t.Fatalf("unmarshal reg envelope: %v", err)
+	}
+	var regData struct {
+		CustomerID string `json:"customer_id"`
+	}
+	if err := json.Unmarshal(regEnv.Data, &regData); err != nil {
+		t.Fatalf("unmarshal reg data: %v", err)
+	}
+	repo.customers[regData.CustomerID].Role = customer.RoleAdmin
+
+	req := httptest.NewRequest("PUT", "/auth/me/profile", bytes.NewBufferString(`{"first_name":"Ada","last_name":"Lovelace"}`))
+	id, err := identity.NewIdentity(regData.CustomerID, identity.RoleAdmin)
+	if err != nil {
+		t.Fatalf("NewIdentity: %v", err)
+	}
+	req = req.WithContext(platformAuth.WithIdentity(req.Context(), id))
+	rec := httptest.NewRecorder()
+
+	h.UpdateProfile().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body: %s", rec.Code, rec.Body.String())
+	}
+	if repo.customers[regData.CustomerID].FirstName != "Ada" {
+		t.Fatalf("first_name = %q, want Ada", repo.customers[regData.CustomerID].FirstName)
+	}
+	if repo.customers[regData.CustomerID].LastName != "Lovelace" {
+		t.Fatalf("last_name = %q, want Lovelace", repo.customers[regData.CustomerID].LastName)
+	}
+}
+
+func TestAuthHandler_ChangePassword_Success(t *testing.T) {
+	h, _, repo := authSetupWithRepo()
+
+	regBody := `{"email":"admin@example.com","password":"password123"}`
+	regReq := httptest.NewRequest("POST", "/auth/register", bytes.NewBufferString(regBody))
+	regRec := httptest.NewRecorder()
+	h.Register().ServeHTTP(regRec, regReq)
+
+	var regEnv authEnvelope
+	if err := json.Unmarshal(regRec.Body.Bytes(), &regEnv); err != nil {
+		t.Fatalf("unmarshal reg envelope: %v", err)
+	}
+	var regData struct {
+		CustomerID string `json:"customer_id"`
+	}
+	if err := json.Unmarshal(regEnv.Data, &regData); err != nil {
+		t.Fatalf("unmarshal reg data: %v", err)
+	}
+	repo.customers[regData.CustomerID].Role = customer.RoleAdmin
+	before := repo.customers[regData.CustomerID].TokenGeneration
+
+	req := httptest.NewRequest("POST", "/auth/me/password", bytes.NewBufferString(`{"current_password":"password123","new_password":"newpassword123"}`))
+	id, err := identity.NewIdentity(regData.CustomerID, identity.RoleAdmin)
+	if err != nil {
+		t.Fatalf("NewIdentity: %v", err)
+	}
+	req = req.WithContext(platformAuth.WithIdentity(req.Context(), id))
+	rec := httptest.NewRecorder()
+
+	h.ChangePassword().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body: %s", rec.Code, rec.Body.String())
+	}
+	if repo.customers[regData.CustomerID].TokenGeneration != before+1 {
+		t.Fatalf("token generation = %d, want %d", repo.customers[regData.CustomerID].TokenGeneration, before+1)
+	}
+}
+
+func TestAuthHandler_ChangePassword_WrongCurrentPassword(t *testing.T) {
+	h, _, repo := authSetupWithRepo()
+
+	regBody := `{"email":"admin@example.com","password":"password123"}`
+	regReq := httptest.NewRequest("POST", "/auth/register", bytes.NewBufferString(regBody))
+	regRec := httptest.NewRecorder()
+	h.Register().ServeHTTP(regRec, regReq)
+
+	var regEnv authEnvelope
+	if err := json.Unmarshal(regRec.Body.Bytes(), &regEnv); err != nil {
+		t.Fatalf("unmarshal reg envelope: %v", err)
+	}
+	var regData struct {
+		CustomerID string `json:"customer_id"`
+	}
+	if err := json.Unmarshal(regEnv.Data, &regData); err != nil {
+		t.Fatalf("unmarshal reg data: %v", err)
+	}
+	repo.customers[regData.CustomerID].Role = customer.RoleAdmin
+	before := repo.customers[regData.CustomerID].TokenGeneration
+
+	req := httptest.NewRequest("POST", "/auth/me/password", bytes.NewBufferString(`{"current_password":"wrong-password","new_password":"newpassword123"}`))
+	id, err := identity.NewIdentity(regData.CustomerID, identity.RoleAdmin)
+	if err != nil {
+		t.Fatalf("NewIdentity: %v", err)
+	}
+	req = req.WithContext(platformAuth.WithIdentity(req.Context(), id))
+	rec := httptest.NewRecorder()
+
+	h.ChangePassword().ServeHTTP(rec, req)
+
+	if rec.Code == http.StatusOK {
+		t.Fatalf("status = %d, want non-200; body: %s", rec.Code, rec.Body.String())
+	}
+	if repo.customers[regData.CustomerID].TokenGeneration != before {
+		t.Fatalf("token generation = %d, want %d", repo.customers[regData.CustomerID].TokenGeneration, before)
+	}
+}
+
 // ── Logout tests ─────────────────────────────────────────────────────────
 
 func TestAuthHandler_Logout_Success(t *testing.T) {

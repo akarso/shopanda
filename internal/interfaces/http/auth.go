@@ -99,6 +99,16 @@ type meResponse struct {
 	Status    string `json:"status"`
 }
 
+type updateProfileRequest struct {
+	FirstName string `json:"first_name"`
+	LastName  string `json:"last_name"`
+}
+
+type changePasswordRequest struct {
+	CurrentPassword string `json:"current_password"`
+	NewPassword     string `json:"new_password"`
+}
+
 // Me returns a handler for GET /auth/me.
 func (h *AuthHandler) Me() http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
@@ -121,6 +131,69 @@ func (h *AuthHandler) Me() http.HandlerFunc {
 			LastName:  c.LastName,
 			Status:    string(c.Status),
 		})
+	}
+}
+
+// UpdateProfile returns a handler for PUT /auth/me/profile.
+func (h *AuthHandler) UpdateProfile() http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		id := platformAuth.IdentityFrom(r.Context())
+		if id.IsGuest() {
+			JSONError(w, apperror.Unauthorized("authentication required"))
+			return
+		}
+
+		var req updateProfileRequest
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			JSONError(w, apperror.Validation("invalid request body"))
+			return
+		}
+
+		cust, err := h.svc.UpdateProfile(r.Context(), appAuth.UpdateProfileInput{
+			CustomerID: id.UserID,
+			FirstName:  req.FirstName,
+			LastName:   req.LastName,
+		})
+		if err != nil {
+			JSONError(w, err)
+			return
+		}
+
+		JSON(w, http.StatusOK, meResponse{
+			ID:        cust.ID,
+			Email:     cust.Email,
+			FirstName: cust.FirstName,
+			LastName:  cust.LastName,
+			Status:    string(cust.Status),
+		})
+	}
+}
+
+// ChangePassword returns a handler for POST /auth/me/password.
+func (h *AuthHandler) ChangePassword() http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		id := platformAuth.IdentityFrom(r.Context())
+		if id.IsGuest() {
+			JSONError(w, apperror.Unauthorized("authentication required"))
+			return
+		}
+
+		var req changePasswordRequest
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			JSONError(w, apperror.Validation("invalid request body"))
+			return
+		}
+
+		if err := h.svc.ChangePassword(r.Context(), appAuth.ChangePasswordInput{
+			CustomerID:      id.UserID,
+			CurrentPassword: req.CurrentPassword,
+			NewPassword:     req.NewPassword,
+		}); err != nil {
+			JSONError(w, err)
+			return
+		}
+
+		JSON(w, http.StatusOK, map[string]string{"message": "password changed"})
 	}
 }
 
