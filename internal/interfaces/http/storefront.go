@@ -85,6 +85,15 @@ type StorefrontLayoutData struct {
 	CartURL      string
 	CartLabel    string
 	EnableCart   bool
+	CSRFToken    string
+	AccountURL   string
+	AccountLabel string
+	AccountName  string
+	AccountLoginURL   string
+	AccountOrdersURL  string
+	AccountProfileURL string
+	AccountLogoutURL  string
+	AccountSignedIn   bool
 	CurrentYear  int
 	Nav          []StorefrontNavLink
 	Categories   []StorefrontCategoryNavItem
@@ -521,9 +530,17 @@ func (h *StorefrontHandler) buildLayoutData(r *http.Request, categories []catalo
 	if cartLabel == "" {
 		cartLabel = "Cart (0)"
 	}
-	accountURL := "/account/login"
-	if storefrontCustomerID(r) != "" {
-		accountURL = "/account/orders"
+	accountLoginURL := "/account/login"
+	accountOrdersURL := "/account/orders"
+	accountProfileURL := "/account/profile"
+	accountLogoutURL := "/account/logout"
+	accountSignedIn := storefrontCustomerID(r) != ""
+	accountURL := accountLoginURL
+	accountLabel := "Account"
+	accountName := "Sign in"
+	if accountSignedIn {
+		accountURL = accountProfileURL
+		accountName = h.storefrontAccountDisplayName(r)
 	}
 	nav := make([]StorefrontNavLink, 0, len(themeCfg.Nav))
 	if len(themeCfg.Nav) > 0 {
@@ -552,10 +569,41 @@ func (h *StorefrontHandler) buildLayoutData(r *http.Request, categories []catalo
 		CartURL:      cartURL,
 		CartLabel:    h.cartLabelBestEffort(r, cartLabel),
 		EnableCart:   h.carts != nil,
+		CSRFToken:    shopandaCSRFToken(r),
+		AccountURL:   accountURL,
+		AccountLabel: accountLabel,
+		AccountName:  accountName,
+		AccountLoginURL:   accountLoginURL,
+		AccountOrdersURL:  accountOrdersURL,
+		AccountProfileURL: accountProfileURL,
+		AccountLogoutURL:  accountLogoutURL,
+		AccountSignedIn:   accountSignedIn,
 		CurrentYear:  time.Now().UTC().Year(),
 		Nav:          nav,
 		Categories:   storefrontCategoryTree(categories),
 	}
+}
+
+func (h *StorefrontHandler) storefrontAccountDisplayName(r *http.Request) string {
+	if r == nil || h.auth == nil {
+		return "Signed in"
+	}
+	customerID := storefrontCustomerID(r)
+	if customerID == "" {
+		return "Sign in"
+	}
+	profile, err := h.auth.Me(r.Context(), customerID)
+	if err != nil || profile == nil {
+		return "Signed in"
+	}
+	fullName := strings.TrimSpace(strings.TrimSpace(profile.FirstName) + " " + strings.TrimSpace(profile.LastName))
+	if fullName != "" {
+		return fullName
+	}
+	if strings.TrimSpace(profile.Email) != "" {
+		return strings.TrimSpace(profile.Email)
+	}
+	return "Signed in"
 }
 
 func (h *StorefrontHandler) cachedCategories(ctx context.Context) ([]catalog.Category, error) {

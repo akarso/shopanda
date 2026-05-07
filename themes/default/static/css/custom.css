@@ -1,1 +1,80 @@
-/* Theme override hook for storefront-specific refinements added in later PRs. */
+.site-utility {
+	display: grid;
+	gap: 0.75rem;
+	justify-items: end;
+}
+
+.account-widget {
+	display: grid;
+	gap: 0.5rem;
+	justify-items: end;
+}
+
+.account-pill {
+	border: 1px solid var(--border);
+	border-radius: var(--radius-sm);
+	background: var(--panel-strong);
+	color: var(--text);
+	padding: 0.75rem 1rem;
+	text-decoration: none;
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	white-space: nowrap;
+}
+
+.account-widget__panel {
+	width: min(320px, 100%);
+	background: var(--panel);
+	border: 1px solid var(--border);
+	border-radius: var(--radius-md);
+	box-shadow: var(--shadow);
+	padding: 0.85rem 1rem;
+	display: grid;
+	gap: 0.6rem;
+}
+
+.account-widget__actions {
+	display: flex;
+	align-items: center;
+	justify-content: flex-end;
+	gap: 0.75rem;
+	flex-wrap: wrap;
+}
+
+.account-widget__actions a,
+.account-widget__actions button {
+	color: var(--accent-deep);
+	background: transparent;
+	border: 0;
+	padding: 0;
+	text-decoration: none;
+	cursor: pointer;
+	font: inherit;
+}
+
+.account-widget__actions form {
+	margin: 0;
+}
+
+@media (max-width: 820px) {
+	.site-utility,
+	.account-widget,
+	.cart-widget {
+		justify-items: stretch;
+	}
+
+	.account-pill,
+	.cart-pill {
+		width: 100%;
+	}
+
+	.account-widget__panel,
+	.mini-cart-shell {
+		width: 100%;
+	}
+
+	.account-widget__actions {
+		justify-content: flex-start;
+	}
+}
