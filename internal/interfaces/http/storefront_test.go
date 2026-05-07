@@ -98,7 +98,7 @@ func createTestTheme(t *testing.T) *theme.Engine {
 		t.Fatal(err)
 	}
 
-	layout := `<!DOCTYPE html><html><head><title>{{ template "title" . }}</title></head><body><nav>{{ range .Layout.Nav }}<a href="{{ .URL }}">{{ .Label }}</a>{{ end }}</nav><form action="{{ .Layout.SearchAction }}"></form><div class="account-widget"><a href="{{ .Layout.AccountURL }}">{{ .Layout.AccountLabel }}</a>{{ if .Layout.AccountSignedIn }}<strong>{{ .Layout.AccountName }}</strong><a href="{{ .Layout.AccountProfileURL }}">Profile</a><a href="{{ .Layout.AccountOrdersURL }}">Orders</a><form action="{{ .Layout.AccountLogoutURL }}" method="post"><input type="hidden" name="csrf_token" value="{{ .Layout.CSRFToken }}"><button type="submit">Log out</button></form>{{ else }}<span>Sign in to view orders and profile.</span>{{ end }}</div><a href="{{ .Layout.CartURL }}">{{ if .Layout.EnableCart }}<span hx-get="/fragments/cart-count" hx-trigger="cart-updated from:body" hx-swap="innerHTML">{{ .Layout.CartLabel }}</span>{{ else }}{{ .Layout.CartLabel }}{{ end }}</a>{{ if .Layout.EnableCart }}<div id="mini-cart" hx-get="/fragments/mini-cart" hx-trigger="load, cart-updated from:body"></div>{{ end }}{{ template "content" . }}</body></html>`
+	layout := `<!DOCTYPE html><html><head><title>{{ template "title" . }}</title></head><body><nav>{{ range .Layout.Nav }}<a href="{{ .URL }}">{{ .Label }}</a>{{ end }}</nav><form action="{{ .Layout.SearchAction }}"></form><div class="account-widget"><a href="{{ .Layout.AccountURL }}">{{ .Layout.AccountLabel }}</a>{{ if .Layout.AccountSignedIn }}<strong>{{ .Layout.AccountName }}</strong><a href="{{ .Layout.AccountProfileURL }}">Profile</a><a href="{{ .Layout.AccountOrdersURL }}">Orders</a><a href="{{ .Layout.AccountSecurityURL }}">Security</a><form action="{{ .Layout.AccountLogoutURL }}" method="post"><input type="hidden" name="csrf_token" value="{{ .Layout.CSRFToken }}"><button type="submit">Log out</button></form>{{ else }}<span>Sign in to view orders and profile.</span>{{ end }}</div><a href="{{ .Layout.CartURL }}">{{ if .Layout.EnableCart }}<span hx-get="/fragments/cart-count" hx-trigger="cart-updated from:body" hx-swap="innerHTML">{{ .Layout.CartLabel }}</span>{{ else }}{{ .Layout.CartLabel }}{{ end }}</a>{{ if .Layout.EnableCart }}<div id="mini-cart" hx-get="/fragments/mini-cart" hx-trigger="load, cart-updated from:body"></div>{{ end }}{{ template "content" . }}</body></html>`
 	if err := os.WriteFile(filepath.Join(tplDir, "layout.html"), []byte(layout), 0644); err != nil {
 		t.Fatal(err)
 	}
@@ -158,18 +158,23 @@ func createTestTheme(t *testing.T) *theme.Engine {
 		t.Fatal(err)
 	}
 
-	accountOrders := `{{ define "title" }}Account Orders{{ end }}{{ define "content" }}<section><h1>Your Orders</h1>{{ range .Orders }}<article><a href="{{ .URL }}">{{ .ID }}</a><span>{{ .DateText }}</span><strong>{{ .TotalText }}</strong><em>{{ .Status }}</em></article>{{ else }}<p>{{ .EmptyMessage }}</p>{{ end }}</section>{{ end }}{{ template "layout.html" . }}`
+	accountOrders := `{{ define "title" }}Account Orders{{ end }}{{ define "content" }}<section><nav><a href="{{ .AccountNav.OrdersURL }}">Orders</a><a href="{{ .AccountNav.ProfileURL }}">Profile</a><a href="{{ .AccountNav.SecurityURL }}">Security</a></nav><h1>Your Orders</h1>{{ range .Orders }}<article><a href="{{ .URL }}">{{ .ID }}</a><span>{{ .DateText }}</span><strong>{{ .TotalText }}</strong><em>{{ .Status }}</em></article>{{ else }}<p>{{ .EmptyMessage }}</p>{{ end }}</section>{{ end }}{{ template "layout.html" . }}`
 	if err := os.WriteFile(filepath.Join(tplDir, "account_orders.html"), []byte(accountOrders), 0644); err != nil {
 		t.Fatal(err)
 	}
 
-	accountOrderDetail := `{{ define "title" }}Account Order{{ end }}{{ define "content" }}<section><h1>Order {{ .OrderID }}</h1><p>{{ .Status }}</p><p>{{ .TotalText }}</p>{{ range .Items }}<article><strong>{{ .Name }}</strong><span>{{ .Quantity }}</span><span>{{ .LineTotalText }}</span></article>{{ end }}<a href="{{ .BackURL }}">Back</a></section>{{ end }}{{ template "layout.html" . }}`
+	accountOrderDetail := `{{ define "title" }}Account Order{{ end }}{{ define "content" }}<section><nav><a href="{{ .AccountNav.OrdersURL }}">Orders</a><a href="{{ .AccountNav.ProfileURL }}">Profile</a><a href="{{ .AccountNav.SecurityURL }}">Security</a></nav><h1>Order {{ .OrderID }}</h1><p>{{ .Status }}</p><p>{{ .TotalText }}</p>{{ range .Items }}<article><strong>{{ .Name }}</strong><span>{{ .Quantity }}</span><span>{{ .LineTotalText }}</span></article>{{ end }}<a href="{{ .BackURL }}">Back</a></section>{{ end }}{{ template "layout.html" . }}`
 	if err := os.WriteFile(filepath.Join(tplDir, "account_order_detail.html"), []byte(accountOrderDetail), 0644); err != nil {
 		t.Fatal(err)
 	}
 
-	accountProfile := `{{ define "title" }}Account Profile{{ end }}{{ define "content" }}<section><h1>Profile</h1>{{ if .SuccessMessage }}<p>{{ .SuccessMessage }}</p>{{ end }}{{ if .ProfileErrorMessage }}<p>{{ .ProfileErrorMessage }}</p>{{ end }}{{ if .PasswordErrorMessage }}<p>{{ .PasswordErrorMessage }}</p>{{ end }}<p>{{ .Email }}</p><form action="/account/profile" method="post"><input type="hidden" name="csrf_token" value="{{ .CSRFToken }}"><input name="first_name" value="{{ .FirstName }}"><input name="last_name" value="{{ .LastName }}"><button type="submit">Save</button></form><form action="/account/profile/password" method="post"><input type="hidden" name="csrf_token" value="{{ .CSRFToken }}"><input name="current_password" type="password"><input name="new_password" type="password"><button type="submit">Change Password</button></form><form action="/account/profile/delete" method="post"><input type="hidden" name="csrf_token" value="{{ .CSRFToken }}"><button type="submit">Delete Account</button></form></section>{{ end }}{{ template "layout.html" . }}`
+	accountProfile := `{{ define "title" }}Account Profile{{ end }}{{ define "content" }}<section><nav><a href="{{ .AccountNav.OrdersURL }}">Orders</a><a href="{{ .AccountNav.ProfileURL }}">Profile</a><a href="{{ .AccountNav.SecurityURL }}">Security</a></nav><h1>Profile</h1>{{ if .SuccessMessage }}<p>{{ .SuccessMessage }}</p>{{ end }}{{ if .ProfileErrorMessage }}<p>{{ .ProfileErrorMessage }}</p>{{ end }}<p>{{ .Email }}</p><form action="/account/profile" method="post"><input type="hidden" name="csrf_token" value="{{ .CSRFToken }}"><input name="first_name" value="{{ .FirstName }}"><input name="last_name" value="{{ .LastName }}"><button type="submit">Save</button></form><a href="{{ .AccountNav.SecurityURL }}">Manage security</a></section>{{ end }}{{ template "layout.html" . }}`
 	if err := os.WriteFile(filepath.Join(tplDir, "account_profile.html"), []byte(accountProfile), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	accountSecurity := `{{ define "title" }}Account Security{{ end }}{{ define "content" }}<section><nav><a href="{{ .AccountNav.OrdersURL }}">Orders</a><a href="{{ .AccountNav.ProfileURL }}">Profile</a><a href="{{ .AccountNav.SecurityURL }}">Security</a></nav><h1>Security</h1>{{ if .PasswordErrorMessage }}<p>{{ .PasswordErrorMessage }}</p>{{ end }}{{ if .DeleteErrorMessage }}<p>{{ .DeleteErrorMessage }}</p>{{ end }}<p>{{ .Email }}</p><form action="/account/security/password" method="post"><input type="hidden" name="csrf_token" value="{{ .CSRFToken }}"><input name="current_password" type="password"><input name="new_password" type="password"><button type="submit">Change Password</button></form><form action="/account/security/delete" method="post"><input type="hidden" name="csrf_token" value="{{ .CSRFToken }}"><input name="confirm_delete"><button type="submit">Delete Account</button></form><form action="/account/logout" method="post"><input type="hidden" name="csrf_token" value="{{ .CSRFToken }}"><button type="submit">Log Out</button></form></section>{{ end }}{{ template "layout.html" . }}`
+	if err := os.WriteFile(filepath.Join(tplDir, "account_security.html"), []byte(accountSecurity), 0644); err != nil {
 		t.Fatal(err)
 	}
 
@@ -223,6 +228,9 @@ func newStorefrontRouter(h *shophttp.StorefrontHandler) http.Handler {
 	router.HandleFunc("GET /account/orders/{orderId}", h.AccountOrderDetail())
 	router.HandleFunc("GET /account/profile", h.AccountProfile())
 	router.HandleFunc("POST /account/profile", h.AccountProfile())
+	router.HandleFunc("GET /account/security", h.AccountSecurity())
+	router.HandleFunc("POST /account/security/password", h.AccountPassword())
+	router.HandleFunc("POST /account/security/delete", h.AccountDelete())
 	router.HandleFunc("POST /account/profile/password", h.AccountPassword())
 	router.HandleFunc("POST /account/profile/delete", h.AccountDelete())
 	router.HandleFunc("GET /cart", h.Cart())

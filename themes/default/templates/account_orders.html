@@ -8,6 +8,12 @@
         <p>Review previous orders and open the detail view for each purchase.</p>
     </div>
 
+    <nav class="checkout-actions" aria-label="Account sections">
+        <a class="chip {{ if eq .AccountNav.Current "orders" }}chip--active{{ end }}" href="{{ .AccountNav.OrdersURL }}">Orders</a>
+        <a class="chip {{ if eq .AccountNav.Current "profile" }}chip--active{{ end }}" href="{{ .AccountNav.ProfileURL }}">Profile</a>
+        <a class="chip {{ if eq .AccountNav.Current "security" }}chip--active{{ end }}" href="{{ .AccountNav.SecurityURL }}">Security</a>
+    </nav>
+
     <section class="account-panel">
         {{ if .Orders }}
         <div class="account-orders-table" role="table" aria-label="Order history">

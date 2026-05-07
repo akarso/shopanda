@@ -80,24 +80,25 @@ type StorefrontCategorySummary struct {
 }
 
 type StorefrontLayoutData struct {
-	SiteName          string
-	SearchAction      string
-	SearchQuery       string
-	CartURL           string
-	CartLabel         string
-	EnableCart        bool
-	CSRFToken         string
-	AccountURL        string
-	AccountLabel      string
-	AccountName       string
-	AccountLoginURL   string
-	AccountOrdersURL  string
-	AccountProfileURL string
-	AccountLogoutURL  string
-	AccountSignedIn   bool
-	CurrentYear       int
-	Nav               []StorefrontNavLink
-	Categories        []StorefrontCategoryNavItem
+	SiteName           string
+	SearchAction       string
+	SearchQuery        string
+	CartURL            string
+	CartLabel          string
+	EnableCart         bool
+	CSRFToken          string
+	AccountURL         string
+	AccountLabel       string
+	AccountName        string
+	AccountLoginURL    string
+	AccountOrdersURL   string
+	AccountProfileURL  string
+	AccountSecurityURL string
+	AccountLogoutURL   string
+	AccountSignedIn    bool
+	CurrentYear        int
+	Nav                []StorefrontNavLink
+	Categories         []StorefrontCategoryNavItem
 }
 
 type StorefrontHomePageData struct {
@@ -536,6 +537,7 @@ func (h *StorefrontHandler) buildLayoutData(r *http.Request, categories []catalo
 	accountLoginURL := "/account/login"
 	accountOrdersURL := "/account/orders"
 	accountProfileURL := "/account/profile"
+	accountSecurityURL := "/account/security"
 	accountLogoutURL := "/account/logout"
 	accountSignedIn := customerID != ""
 	accountURL := accountLoginURL
@@ -566,24 +568,25 @@ func (h *StorefrontHandler) buildLayoutData(r *http.Request, categories []catalo
 		}
 	}
 	return StorefrontLayoutData{
-		SiteName:          siteName,
-		SearchAction:      searchAction,
-		SearchQuery:       strings.TrimSpace(r.URL.Query().Get("q")),
-		CartURL:           cartURL,
-		CartLabel:         h.cartLabelBestEffort(r, cartLabel),
-		EnableCart:        h.carts != nil,
-		CSRFToken:         shopandaCSRFToken(r),
-		AccountURL:        accountURL,
-		AccountLabel:      accountLabel,
-		AccountName:       accountName,
-		AccountLoginURL:   accountLoginURL,
-		AccountOrdersURL:  accountOrdersURL,
-		AccountProfileURL: accountProfileURL,
-		AccountLogoutURL:  accountLogoutURL,
-		AccountSignedIn:   accountSignedIn,
-		CurrentYear:       time.Now().UTC().Year(),
-		Nav:               nav,
-		Categories:        storefrontCategoryTree(categories),
+		SiteName:           siteName,
+		SearchAction:       searchAction,
+		SearchQuery:        strings.TrimSpace(r.URL.Query().Get("q")),
+		CartURL:            cartURL,
+		CartLabel:          h.cartLabelBestEffort(r, cartLabel),
+		EnableCart:         h.carts != nil,
+		CSRFToken:          shopandaCSRFToken(r),
+		AccountURL:         accountURL,
+		AccountLabel:       accountLabel,
+		AccountName:        accountName,
+		AccountLoginURL:    accountLoginURL,
+		AccountOrdersURL:   accountOrdersURL,
+		AccountProfileURL:  accountProfileURL,
+		AccountSecurityURL: accountSecurityURL,
+		AccountLogoutURL:   accountLogoutURL,
+		AccountSignedIn:    accountSignedIn,
+		CurrentYear:        time.Now().UTC().Year(),
+		Nav:                nav,
+		Categories:         storefrontCategoryTree(categories),
 	}
 }
 

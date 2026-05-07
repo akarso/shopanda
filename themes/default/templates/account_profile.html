@@ -5,68 +5,40 @@
     <div class="page-intro">
         <span class="eyebrow">Account</span>
         <h1>Profile</h1>
-        <p>Update your customer details, change your password, or delete your account.</p>
+        <p>Update the low-risk details other shoppers and support flows use to identify your account.</p>
     </div>
 
-    <div class="account-grid">
-        <section class="account-panel">
-            {{ if .SuccessMessage }}<p class="account-notice">{{ .SuccessMessage }}</p>{{ end }}
-            {{ if .ProfileErrorMessage }}<p class="checkout-form__error" role="alert">{{ .ProfileErrorMessage }}</p>{{ end }}
-            <div class="account-profile-meta">
-                <span class="eyebrow">Email</span>
-                <strong>{{ .Email }}</strong>
+    <nav class="checkout-actions" aria-label="Account sections">
+        <a class="chip {{ if eq .AccountNav.Current "orders" }}chip--active{{ end }}" href="{{ .AccountNav.OrdersURL }}">Orders</a>
+        <a class="chip {{ if eq .AccountNav.Current "profile" }}chip--active{{ end }}" href="{{ .AccountNav.ProfileURL }}">Profile</a>
+        <a class="chip {{ if eq .AccountNav.Current "security" }}chip--active{{ end }}" href="{{ .AccountNav.SecurityURL }}">Security</a>
+    </nav>
+
+    <section class="account-panel">
+        {{ if .SuccessMessage }}<p class="account-notice">{{ .SuccessMessage }}</p>{{ end }}
+        {{ if .ProfileErrorMessage }}<p class="checkout-form__error" role="alert">{{ .ProfileErrorMessage }}</p>{{ end }}
+        <div class="account-profile-meta">
+            <span class="eyebrow">Email</span>
+            <strong>{{ .Email }}</strong>
+        </div>
+        <form class="checkout-form" action="/account/profile" method="post">
+            <input type="hidden" name="csrf_token" value="{{ .CSRFToken }}">
+            <div class="checkout-form__grid">
+                <label>
+                    <span>First name</span>
+                    <input name="first_name" value="{{ .FirstName }}" autocomplete="given-name">
+                </label>
+                <label>
+                    <span>Last name</span>
+                    <input name="last_name" value="{{ .LastName }}" autocomplete="family-name">
+                </label>
             </div>
-            <form class="checkout-form" action="/account/profile" method="post">
-                <input type="hidden" name="csrf_token" value="{{ .CSRFToken }}">
-                <div class="checkout-form__grid">
-                    <label>
-                        <span>First name</span>
-                        <input name="first_name" value="{{ .FirstName }}" autocomplete="given-name">
-                    </label>
-                    <label>
-                        <span>Last name</span>
-                        <input name="last_name" value="{{ .LastName }}" autocomplete="family-name">
-                    </label>
-                </div>
-                <div class="checkout-actions">
-                    <a class="chip" href="{{ .OrdersURL }}">View orders</a>
-                    <button type="submit">Save</button>
-                </div>
-            </form>
-        </section>
-
-        <section class="account-panel">
-            {{ if .PasswordErrorMessage }}<p class="checkout-form__error" role="alert">{{ .PasswordErrorMessage }}</p>{{ end }}
-            {{ if .DeleteErrorMessage }}<p class="checkout-form__error" role="alert">{{ .DeleteErrorMessage }}</p>{{ end }}
-            <h2>Change password</h2>
-            <form class="checkout-form" action="/account/profile/password" method="post">
-                <input type="hidden" name="csrf_token" value="{{ .CSRFToken }}">
-                <label>
-                    <span>Current password</span>
-                    <input name="current_password" type="password" autocomplete="current-password" required>
-                </label>
-                <label>
-                    <span>New password</span>
-                    <input name="new_password" type="password" autocomplete="new-password" required>
-                </label>
-                <div class="checkout-actions">
-                    <button type="submit">Change Password</button>
-                </div>
-            </form>
-            <form class="account-delete-form" action="/account/profile/delete" method="post">
-                <input type="hidden" name="csrf_token" value="{{ .CSRFToken }}">
-                <label>
-                    <span>Type DELETE to confirm</span>
-                    <input name="confirm_delete" autocomplete="off" spellcheck="false" required>
-                </label>
-                <button type="submit">Delete Account</button>
-            </form>
-            <form class="account-logout-form" action="/account/logout" method="post">
-                <input type="hidden" name="csrf_token" value="{{ .CSRFToken }}">
-                <button type="submit">Log Out</button>
-            </form>
-        </section>
-    </div>
+            <div class="checkout-actions">
+                <a class="chip" href="{{ .AccountNav.SecurityURL }}">Manage password and sign-in</a>
+                <button type="submit">Save</button>
+            </div>
+        </form>
+    </section>
 </section>
 {{ end }}
 
