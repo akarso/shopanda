@@ -72,6 +72,18 @@ func TestAdminHandler_StaticJS(t *testing.T) {
 	if !strings.Contains(body, "TOKEN_KEY") {
 		t.Fatalf("expected TOKEN_KEY in JS")
 	}
+	if !strings.Contains(body, "This form does not show default credentials.") {
+		t.Fatalf("expected login credential guidance in JS")
+	}
+	if !strings.Contains(body, "Use {currency} and {amount} placeholders") {
+		t.Fatalf("expected currency display format hint in JS")
+	}
+	if strings.Contains(body, "admin@example.com") {
+		t.Fatalf("expected no hardcoded seeded admin email in JS")
+	}
+	if !strings.Contains(body, "autocomplete=\"off\"") {
+		t.Fatalf("expected admin login form to disable autofill in JS")
+	}
 }
 
 func TestAdminHandler_SPAFallback(t *testing.T) {

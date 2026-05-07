@@ -695,9 +695,10 @@
         var html =
             '<div class="login-container">' +
             "<h1>Admin Login</h1>" +
-            '<form id="login-form">' +
-            "<label>Email<input type=\"email\" name=\"email\" required autocomplete=\"username\"></label>" +
-            "<label>Password<input type=\"password\" name=\"password\" required autocomplete=\"current-password\"></label>" +
+            '<p class="login-note">Use an admin account created during setup or seeding. This form does not show default credentials.</p>' +
+            '<form id="login-form" autocomplete="off">' +
+            "<label>Email<input type=\"email\" name=\"email\" required autocomplete=\"off\" autocapitalize=\"off\" spellcheck=\"false\"></label>" +
+            "<label>Password<input type=\"password\" name=\"password\" required autocomplete=\"off\"></label>" +
             '<div id="login-error" role="alert"></div>' +
             "<button type=\"submit\">Sign In</button>" +
             "</form>" +
@@ -1060,6 +1061,7 @@
         form.innerHTML = '' +
             '<label>Default Currency<input name="default_currency" value="' + esc(valueOf(settings, 'default_currency', 'EUR')) + '"></label>' +
             '<label>Display Format<input name="display_format" value="' + esc(valueOf(settings, 'currency.display_format', '{currency} {amount}')) + '"></label>' +
+            '<small class="admin-form-hint">Use {currency} and {amount} placeholders, for example "{currency} {amount}" or "{amount} {currency}".</small>' +
             '<button type="submit">Save Currency Settings</button>';
         form.addEventListener('submit', function (e) {
             e.preventDefault();
