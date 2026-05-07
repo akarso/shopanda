@@ -97,8 +97,11 @@
         "/admin/products": { title: "Products", render: renderProductsGrid, auth: true },
         "/admin/orders": { title: "Orders", render: renderOrdersGrid, auth: true },
         "/admin/media": { title: "Media", render: renderMediaLibrary, auth: true },
+        "/admin/account": { title: "Account", render: renderAdminAccount, auth: true },
         "/admin/settings": { title: "Settings", render: renderSettingsPage, auth: true }
     };
+
+    var currentUser = null;
 
     function resolveRoute(path) {
         if (routes[path]) {
@@ -673,6 +676,8 @@
                 links[i].setAttribute("aria-current", "page");
             } else if (href === "/admin/media" && currentPath.indexOf("/admin/media") === 0) {
                 links[i].setAttribute("aria-current", "page");
+            } else if (href === "/admin/account" && currentPath.indexOf("/admin/account") === 0) {
+                links[i].setAttribute("aria-current", "page");
             } else if (href === currentPath) {
                 links[i].setAttribute("aria-current", "page");
             } else {
@@ -685,8 +690,31 @@
         var el = document.getElementById("admin-user-name");
         if (!el) return;
         if (isAuthenticated()) {
-            el.textContent = "Admin";
+	        if (currentUser) {
+	            el.textContent = currentUser.first_name || currentUser.email || "Account";
+	        } else {
+	            el.textContent = "Account";
+	        }
+	    } else {
+	        el.textContent = "";
         }
+    }
+
+    function loadCurrentUser() {
+        if (!isAuthenticated()) {
+            currentUser = null;
+            updateUserInfo();
+            return Promise.resolve(null);
+        }
+        return api("/auth/me").then(function (body) {
+            currentUser = body && body.data ? body.data : null;
+            updateUserInfo();
+            return currentUser;
+        }).catch(function () {
+            currentUser = null;
+            updateUserInfo();
+            return null;
+        });
     }
 
     // --- Pages ---
@@ -776,6 +804,84 @@
             tbody.innerHTML = rows;
         }).catch(function () {
             container.innerHTML = '<h2>Dashboard</h2><p role="alert">Failed to load dashboard data.</p>';
+        });
+    }
+
+    function renderAdminAccount(container) {
+        container.innerHTML = '' +
+            '<h2>Account</h2>' +
+            '<p>Update your admin name and password for the current signed-in account.</p>' +
+            '<div id="admin-account-profile-msg"></div>' +
+            '<form id="admin-account-profile-form">' +
+            '<label>Email<input name="email" type="email" disabled></label>' +
+            '<label>First Name<input name="first_name"></label>' +
+            '<label>Last Name<input name="last_name"></label>' +
+            '<button type="submit">Save Account Details</button>' +
+            '</form>' +
+            '<hr>' +
+            '<div id="admin-account-password-msg"></div>' +
+            '<form id="admin-account-password-form">' +
+            '<label>Current Password<input name="current_password" type="password" autocomplete="current-password" required></label>' +
+            '<label>New Password<input name="new_password" type="password" autocomplete="new-password" minlength="8" required></label>' +
+            '<button type="submit">Change Password</button>' +
+            '</form>';
+
+        var profileForm = document.getElementById("admin-account-profile-form");
+        var passwordForm = document.getElementById("admin-account-password-form");
+        var profileMsg = document.getElementById("admin-account-profile-msg");
+        var passwordMsg = document.getElementById("admin-account-password-msg");
+
+        loadCurrentUser().then(function (user) {
+            if (!user) {
+                profileMsg.innerHTML = '<p role="alert">Failed to load account details.</p>';
+                return;
+            }
+            profileForm.elements.email.value = user.email || "";
+            profileForm.elements.first_name.value = user.first_name || "";
+            profileForm.elements.last_name.value = user.last_name || "";
+        });
+
+        profileForm.addEventListener("submit", function (e) {
+            e.preventDefault();
+            profileMsg.innerHTML = "";
+            api("/auth/me/profile", {
+                method: "PUT",
+                body: JSON.stringify({
+                    first_name: profileForm.elements.first_name.value,
+                    last_name: profileForm.elements.last_name.value
+                })
+            }).then(function (body) {
+                if (body && body.error) {
+                    profileMsg.innerHTML = '<p role="alert">' + esc(body.error.message || 'Failed to update account details.') + '</p>';
+                    return;
+                }
+                currentUser = body && body.data ? body.data : currentUser;
+                updateUserInfo();
+                profileMsg.innerHTML = '<p>Account details saved.</p>';
+            }).catch(function (err) {
+                profileMsg.innerHTML = '<p role="alert">' + esc(extractErrorMessage(err, 'Failed to update account details.')) + '</p>';
+            });
+        });
+
+        passwordForm.addEventListener("submit", function (e) {
+            e.preventDefault();
+            passwordMsg.innerHTML = "";
+            api("/auth/me/password", {
+                method: "POST",
+                body: JSON.stringify({
+                    current_password: passwordForm.elements.current_password.value,
+                    new_password: passwordForm.elements.new_password.value
+                })
+            }).then(function (body) {
+                if (body && body.error) {
+                    passwordMsg.innerHTML = '<p role="alert">' + esc(body.error.message || 'Failed to change password.') + '</p>';
+                    return;
+                }
+                passwordForm.reset();
+                passwordMsg.innerHTML = '<p>Password changed.</p>';
+            }).catch(function (err) {
+                passwordMsg.innerHTML = '<p role="alert">' + esc(extractErrorMessage(err, 'Failed to change password.')) + '</p>';
+            });
         });
     }
 
@@ -1559,7 +1665,7 @@
         }
 
         window.addEventListener("popstate", handleRoute);
-        handleRoute();
+        loadCurrentUser().then(handleRoute);
     }
 
     if (document.readyState === "loading") {

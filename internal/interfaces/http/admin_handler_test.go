@@ -36,6 +36,9 @@ func TestAdminHandler_IndexHTML(t *testing.T) {
 	if !strings.Contains(body, "admin-layout") {
 		t.Fatalf("expected admin-layout in body")
 	}
+	if !strings.Contains(body, "/admin/account") {
+		t.Fatalf("expected admin account navigation in index html")
+	}
 }
 
 func TestAdminHandler_StaticCSS(t *testing.T) {
@@ -84,6 +87,12 @@ func TestAdminHandler_StaticJS(t *testing.T) {
 	}
 	if !strings.Contains(normalizedBody, `autocomplete="off"`) && !strings.Contains(normalizedBody, "autocomplete='off'") && !strings.Contains(normalizedBody, "autocomplete=off") {
 		t.Fatalf("expected admin login form to disable autofill in JS")
+	}
+	if !strings.Contains(normalizedBody, "/admin/account") {
+		t.Fatalf("expected admin account route in JS")
+	}
+	if !strings.Contains(normalizedBody, "/auth/me/profile") || !strings.Contains(normalizedBody, "/auth/me/password") {
+		t.Fatalf("expected admin account API wiring in JS")
 	}
 }
 

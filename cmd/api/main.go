@@ -754,6 +754,8 @@ func runServe(cfg *config.Config, log logger.Logger) error {
 	router.HandleFunc("POST /api/v1/auth/login", authHandler.Login())
 	router.Handle("POST /api/v1/auth/logout", requireAuth(authHandler.Logout()))
 	router.Handle("GET /api/v1/auth/me", requireAuth(authHandler.Me()))
+	router.Handle("PUT /api/v1/auth/me/profile", requireAuth(authHandler.UpdateProfile()))
+	router.Handle("POST /api/v1/auth/me/password", requireAuth(authHandler.ChangePassword()))
 	router.HandleFunc("POST /api/v1/auth/password-reset/request", authHandler.RequestPasswordReset())
 	router.HandleFunc("POST /api/v1/auth/password-reset/confirm", authHandler.ConfirmPasswordReset())
 
