@@ -30,11 +30,12 @@ func NewIssuer(secret string, ttl time.Duration) (*Issuer, error) {
 
 // Claims represents the JWT payload.
 type Claims struct {
-	Sub  string `json:"sub"`
-	Role string `json:"role"`
-	Gen  int64  `json:"gen"`
-	Iat  int64  `json:"iat"`
-	Exp  int64  `json:"exp"`
+	Sub         string `json:"sub"`
+	Role        string `json:"role"`
+	DisplayName string `json:"display_name,omitempty"`
+	Gen         int64  `json:"gen"`
+	Iat         int64  `json:"iat"`
+	Exp         int64  `json:"exp"`
 }
 
 // header is the fixed JOSE header.
@@ -46,17 +47,24 @@ func (i *Issuer) TTL() time.Duration { return i.ttl }
 // Create issues a new token for the given subject, role and token generation.
 // Returns the signed token string and the exact expiry time embedded in it.
 func (i *Issuer) Create(subject, role string, gen int64) (string, time.Time, error) {
+	return i.CreateWithDisplayName(subject, role, gen, "")
+}
+
+// CreateWithDisplayName issues a new token for the given subject, role, token
+// generation, and optional display name.
+func (i *Issuer) CreateWithDisplayName(subject, role string, gen int64, displayName string) (string, time.Time, error) {
 	if subject == "" {
 		return "", time.Time{}, errors.New("jwt: subject must not be empty")
 	}
 	now := time.Now().UTC()
 	exp := now.Add(i.ttl)
 	claims := Claims{
-		Sub:  subject,
-		Role: role,
-		Gen:  gen,
-		Iat:  now.Unix(),
-		Exp:  exp.Unix(),
+		Sub:         subject,
+		Role:        role,
+		DisplayName: strings.TrimSpace(displayName),
+		Gen:         gen,
+		Iat:         now.Unix(),
+		Exp:         exp.Unix(),
 	}
 	payload, err := b64JSON(claims)
 	if err != nil {

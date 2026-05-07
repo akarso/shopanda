@@ -25,8 +25,9 @@ func (r Role) IsValid() bool {
 
 // Identity represents an authenticated (or anonymous) user.
 type Identity struct {
-	UserID string
-	Role   Role
+	UserID      string
+	Role        Role
+	DisplayName string
 }
 
 // NewIdentity creates an Identity with the given user ID and role.
@@ -38,6 +39,12 @@ func NewIdentity(userID string, role Role) (Identity, error) {
 		return Identity{}, errors.New("identity: invalid role")
 	}
 	return Identity{UserID: userID, Role: role}, nil
+}
+
+// WithDisplayName returns a copy of the identity with a presentation label.
+func (i Identity) WithDisplayName(displayName string) Identity {
+	i.DisplayName = displayName
+	return i
 }
 
 // Guest returns a guest identity (no user ID).

@@ -185,6 +185,29 @@ func TestRegister_EmptyEmail(t *testing.T) {
 	}
 }
 
+func TestRegister_TokenIncludesDisplayName(t *testing.T) {
+	repo := newMockRepo()
+	svc := newTestService(repo)
+	issuer, _ := jwt.NewIssuer("test-secret", time.Hour)
+
+	out, err := svc.Register(context.Background(), auth.RegisterInput{
+		Email:     "alice@example.com",
+		Password:  "password123",
+		FirstName: "Alice",
+		LastName:  "Smith",
+	})
+	if err != nil {
+		t.Fatalf("Register: %v", err)
+	}
+	claims, err := issuer.Parse(out.Token)
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	if claims.DisplayName != "Alice Smith" {
+		t.Fatalf("DisplayName = %q, want %q", claims.DisplayName, "Alice Smith")
+	}
+}
+
 func TestRegister_ShortPassword(t *testing.T) {
 	svc := newTestService(newMockRepo())
 	_, err := svc.Register(context.Background(), auth.RegisterInput{
@@ -239,6 +262,30 @@ func TestLogin_Success(t *testing.T) {
 	}
 	if out.CustomerID == "" {
 		t.Error("expected non-empty customer ID")
+	}
+}
+
+func TestLogin_TokenIncludesDisplayNameFallbackEmail(t *testing.T) {
+	repo := newMockRepo()
+	svc := newTestService(repo)
+	issuer, _ := jwt.NewIssuer("test-secret", time.Hour)
+
+	_, _ = svc.Register(context.Background(), auth.RegisterInput{
+		Email: "bob@example.com", Password: "password123",
+	})
+
+	out, err := svc.Login(context.Background(), auth.LoginInput{
+		Email: "bob@example.com", Password: "password123",
+	})
+	if err != nil {
+		t.Fatalf("Login: %v", err)
+	}
+	claims, err := issuer.Parse(out.Token)
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	if claims.DisplayName != "bob@example.com" {
+		t.Fatalf("DisplayName = %q, want %q", claims.DisplayName, "bob@example.com")
 	}
 }
 

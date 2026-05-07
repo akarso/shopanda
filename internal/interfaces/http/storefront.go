@@ -25,6 +25,7 @@ import (
 	"github.com/akarso/shopanda/internal/domain/store"
 	"github.com/akarso/shopanda/internal/domain/theme"
 	"github.com/akarso/shopanda/internal/platform/apperror"
+	platformAuth "github.com/akarso/shopanda/internal/platform/auth"
 	"github.com/akarso/shopanda/internal/platform/logger"
 )
 
@@ -79,15 +80,24 @@ type StorefrontCategorySummary struct {
 }
 
 type StorefrontLayoutData struct {
-	SiteName     string
-	SearchAction string
-	SearchQuery  string
-	CartURL      string
-	CartLabel    string
-	EnableCart   bool
-	CurrentYear  int
-	Nav          []StorefrontNavLink
-	Categories   []StorefrontCategoryNavItem
+	SiteName          string
+	SearchAction      string
+	SearchQuery       string
+	CartURL           string
+	CartLabel         string
+	EnableCart        bool
+	CSRFToken         string
+	AccountURL        string
+	AccountLabel      string
+	AccountName       string
+	AccountLoginURL   string
+	AccountOrdersURL  string
+	AccountProfileURL string
+	AccountLogoutURL  string
+	AccountSignedIn   bool
+	CurrentYear       int
+	Nav               []StorefrontNavLink
+	Categories        []StorefrontCategoryNavItem
 }
 
 type StorefrontHomePageData struct {
@@ -521,9 +531,19 @@ func (h *StorefrontHandler) buildLayoutData(r *http.Request, categories []catalo
 	if cartLabel == "" {
 		cartLabel = "Cart (0)"
 	}
-	accountURL := "/account/login"
-	if storefrontCustomerID(r) != "" {
-		accountURL = "/account/orders"
+	customerID := storefrontCustomerID(r)
+	identity := platformAuth.IdentityFrom(r.Context())
+	accountLoginURL := "/account/login"
+	accountOrdersURL := "/account/orders"
+	accountProfileURL := "/account/profile"
+	accountLogoutURL := "/account/logout"
+	accountSignedIn := customerID != ""
+	accountURL := accountLoginURL
+	accountLabel := "Account"
+	accountName := "Sign in"
+	if accountSignedIn {
+		accountURL = accountProfileURL
+		accountName = h.storefrontAccountDisplayName(customerID, identity.DisplayName)
 	}
 	nav := make([]StorefrontNavLink, 0, len(themeCfg.Nav))
 	if len(themeCfg.Nav) > 0 {
@@ -546,16 +566,35 @@ func (h *StorefrontHandler) buildLayoutData(r *http.Request, categories []catalo
 		}
 	}
 	return StorefrontLayoutData{
-		SiteName:     siteName,
-		SearchAction: searchAction,
-		SearchQuery:  strings.TrimSpace(r.URL.Query().Get("q")),
-		CartURL:      cartURL,
-		CartLabel:    h.cartLabelBestEffort(r, cartLabel),
-		EnableCart:   h.carts != nil,
-		CurrentYear:  time.Now().UTC().Year(),
-		Nav:          nav,
-		Categories:   storefrontCategoryTree(categories),
+		SiteName:          siteName,
+		SearchAction:      searchAction,
+		SearchQuery:       strings.TrimSpace(r.URL.Query().Get("q")),
+		CartURL:           cartURL,
+		CartLabel:         h.cartLabelBestEffort(r, cartLabel),
+		EnableCart:        h.carts != nil,
+		CSRFToken:         shopandaCSRFToken(r),
+		AccountURL:        accountURL,
+		AccountLabel:      accountLabel,
+		AccountName:       accountName,
+		AccountLoginURL:   accountLoginURL,
+		AccountOrdersURL:  accountOrdersURL,
+		AccountProfileURL: accountProfileURL,
+		AccountLogoutURL:  accountLogoutURL,
+		AccountSignedIn:   accountSignedIn,
+		CurrentYear:       time.Now().UTC().Year(),
+		Nav:               nav,
+		Categories:        storefrontCategoryTree(categories),
 	}
+}
+
+func (h *StorefrontHandler) storefrontAccountDisplayName(customerID, displayName string) string {
+	if customerID == "" {
+		return "Sign in"
+	}
+	if strings.TrimSpace(displayName) != "" {
+		return strings.TrimSpace(displayName)
+	}
+	return "Signed in"
 }
 
 func (h *StorefrontHandler) cachedCategories(ctx context.Context) ([]catalog.Category, error) {

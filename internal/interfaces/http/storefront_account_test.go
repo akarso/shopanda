@@ -25,6 +25,69 @@ import (
 	shophttp "github.com/akarso/shopanda/internal/interfaces/http"
 )
 
+func TestStorefrontHandler_Home_ShowsAccountLoginEntry_WhenAnonymous(t *testing.T) {
+	engine := createTestTheme(t)
+	pdp := composition.NewPipeline[composition.ProductContext]()
+	plp := composition.NewPipeline[composition.ListingContext]()
+	h := shophttp.NewStorefrontHandler(engine, &mockStorefrontRepo{}, newStorefrontCategoryMock(), pdp, plp, newStorefrontSearchMock())
+	router := newStorefrontRouter(h)
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("GET", "/", nil)
+	router.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d; body: %s", rec.Code, http.StatusOK, rec.Body.String())
+	}
+	body := rec.Body.String()
+	if !strings.Contains(body, "/account/login") {
+		t.Fatalf("expected anonymous account login entry in body: %s", body)
+	}
+	if strings.Contains(body, "/account/logout") {
+		t.Fatalf("did not expect logout control in anonymous body: %s", body)
+	}
+}
+
+func TestStorefrontHandler_Home_ShowsAccountControls_WhenAuthenticated(t *testing.T) {
+	engine := createTestTheme(t)
+	pdp := composition.NewPipeline[composition.ProductContext]()
+	plp := composition.NewPipeline[composition.ListingContext]()
+	authSvc, _ := newStorefrontAuthService(t)
+	out, err := authSvc.Register(context.Background(), appAuth.RegisterInput{Email: "ada@example.com", Password: "password123", FirstName: "Ada", LastName: "Lovelace"})
+	if err != nil {
+		t.Fatalf("Register: %v", err)
+	}
+	h := shophttp.NewStorefrontHandler(engine, &mockStorefrontRepo{}, newStorefrontCategoryMock(), pdp, plp, newStorefrontSearchMock()).WithAccount(authSvc, newStorefrontAccountOrderRepoStub(), &storefrontAccountDeleterStub{})
+	router := newStorefrontRouter(h)
+
+	id, err := identity.NewIdentity(out.CustomerID, identity.RoleCustomer)
+	if err != nil {
+		t.Fatalf("NewIdentity: %v", err)
+	}
+	id = id.WithDisplayName("Ada Lovelace")
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("GET", "/", nil)
+	req = req.WithContext(auth.WithIdentity(req.Context(), id))
+	router.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d; body: %s", rec.Code, http.StatusOK, rec.Body.String())
+	}
+	body := rec.Body.String()
+	if !strings.Contains(body, "Ada Lovelace") {
+		t.Fatalf("expected signed-in account name in body: %s", body)
+	}
+	if !strings.Contains(body, "/account/profile") {
+		t.Fatalf("expected profile link in body: %s", body)
+	}
+	if !strings.Contains(body, "/account/orders") {
+		t.Fatalf("expected orders link in body: %s", body)
+	}
+	if !strings.Contains(body, "/account/logout") {
+		t.Fatalf("expected logout control in body: %s", body)
+	}
+}
+
 type storefrontAccountCustomerRepoStub struct {
 	customers map[string]*customer.Customer
 	byEmail   map[string]*customer.Customer

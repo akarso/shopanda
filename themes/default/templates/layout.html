@@ -27,19 +27,40 @@
                 <button type="submit">Search</button>
             </form>
 
-            <div class="cart-widget">
-                <a class="cart-pill" href="{{ .Layout.CartURL }}">
-                    {{ if .Layout.EnableCart }}
-                    <span hx-get="/fragments/cart-count" hx-trigger="cart-updated from:body" hx-swap="innerHTML">{{ .Layout.CartLabel }}</span>
+            <div class="site-utility">
+                <div class="account-widget">
+                    <a class="account-pill" href="{{ .Layout.AccountURL }}">{{ .Layout.AccountLabel }}</a>
+                    {{ if .Layout.AccountSignedIn }}
+                    <div class="account-widget__panel">
+                        <strong>{{ .Layout.AccountName }}</strong>
+                        <div class="account-widget__actions">
+                            <a href="{{ .Layout.AccountProfileURL }}">Profile</a>
+                            <a href="{{ .Layout.AccountOrdersURL }}">Orders</a>
+                            <form action="{{ .Layout.AccountLogoutURL }}" method="post">
+                                <input type="hidden" name="csrf_token" value="{{ .Layout.CSRFToken }}">
+                                <button type="submit">Log out</button>
+                            </form>
+                        </div>
+                    </div>
                     {{ else }}
-                    {{ .Layout.CartLabel }}
+                    <p class="muted-note">Sign in to view orders and profile.</p>
                     {{ end }}
-                </a>
-                {{ if .Layout.EnableCart }}
-                <div id="mini-cart" class="mini-cart-shell" hx-get="/fragments/mini-cart" hx-trigger="load, cart-updated from:body" hx-swap="innerHTML">
-                    <p class="muted-note">Loading cart…</p>
                 </div>
-                {{ end }}
+
+                <div class="cart-widget">
+                    <a class="cart-pill" href="{{ .Layout.CartURL }}">
+                        {{ if .Layout.EnableCart }}
+                        <span hx-get="/fragments/cart-count" hx-trigger="cart-updated from:body" hx-swap="innerHTML">{{ .Layout.CartLabel }}</span>
+                        {{ else }}
+                        {{ .Layout.CartLabel }}
+                        {{ end }}
+                    </a>
+                    {{ if .Layout.EnableCart }}
+                    <div id="mini-cart" class="mini-cart-shell" hx-get="/fragments/mini-cart" hx-trigger="load, cart-updated from:body" hx-swap="innerHTML">
+                        <p class="muted-note">Loading cart…</p>
+                    </div>
+                    {{ end }}
+                </div>
             </div>
         </div>
 
@@ -83,7 +104,7 @@
         <div>
             <a href="/">Home</a>
             <a href="/categories">Categories</a>
-            <a href="/account/login">Account</a>
+            <a href="{{ .Layout.AccountURL }}">Account</a>
         </div>
         <div>
             <span>Legal</span>

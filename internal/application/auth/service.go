@@ -202,7 +202,7 @@ func (s *Service) Register(ctx context.Context, in RegisterInput) (RegisterOutpu
 		return RegisterOutput{}, fmt.Errorf("auth service: create customer: %w", err)
 	}
 
-	token, expiresAt, err := s.jwt.Create(c.ID, string(c.Role), c.TokenGeneration)
+	token, expiresAt, err := s.jwt.CreateWithDisplayName(c.ID, string(c.Role), c.TokenGeneration, customerDisplayName(&c))
 	if err != nil {
 		return RegisterOutput{}, fmt.Errorf("auth service: create token: %w", err)
 	}
@@ -265,7 +265,7 @@ func (s *Service) Login(ctx context.Context, in LoginInput) (LoginOutput, error)
 		return LoginOutput{}, apperror.Unauthorized("invalid email or password")
 	}
 
-	token, expiresAt, err := s.jwt.Create(c.ID, string(c.Role), c.TokenGeneration)
+	token, expiresAt, err := s.jwt.CreateWithDisplayName(c.ID, string(c.Role), c.TokenGeneration, customerDisplayName(c))
 	if err != nil {
 		return LoginOutput{}, fmt.Errorf("auth service: create token: %w", err)
 	}
@@ -279,6 +279,17 @@ func (s *Service) Login(ctx context.Context, in LoginInput) (LoginOutput, error)
 		Token:      token,
 		ExpiresAt:  expiresAt,
 	}, nil
+}
+
+func customerDisplayName(c *customer.Customer) string {
+	if c == nil {
+		return ""
+	}
+	fullName := strings.TrimSpace(strings.TrimSpace(c.FirstName) + " " + strings.TrimSpace(c.LastName))
+	if fullName != "" {
+		return fullName
+	}
+	return strings.TrimSpace(c.Email)
 }
 
 // Me returns the customer for the given authenticated customer ID.
