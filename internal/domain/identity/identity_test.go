@@ -2,6 +2,7 @@ package identity_test
 
 import (
 	"testing"
+	"time"
 
 	"github.com/akarso/shopanda/internal/domain/identity"
 )
@@ -87,5 +88,17 @@ func TestIdentity_HasRole(t *testing.T) {
 	}
 	if id.HasRole(identity.RoleCustomer) {
 		t.Error("expected admin to not have customer role")
+	}
+}
+
+func TestIdentity_WithAuthenticatedAt(t *testing.T) {
+	authenticatedAt := time.Unix(1700000000, 0).UTC()
+	id, err := identity.NewIdentity("user-1", identity.RoleCustomer)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	id = id.WithAuthenticatedAt(authenticatedAt)
+	if !id.AuthenticatedAt.Equal(authenticatedAt) {
+		t.Fatalf("AuthenticatedAt = %v, want %v", id.AuthenticatedAt, authenticatedAt)
 	}
 }

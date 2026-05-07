@@ -49,6 +49,9 @@ func TestValidatingTokenParser_Parse_DisplayName(t *testing.T) {
 	if id.DisplayName != "Alice Example" {
 		t.Fatalf("DisplayName = %q, want %q", id.DisplayName, "Alice Example")
 	}
+	if id.AuthenticatedAt.IsZero() {
+		t.Fatal("expected AuthenticatedAt to be populated")
+	}
 }
 
 func TestValidatingTokenParser_Parse_InvalidToken(t *testing.T) {

@@ -1,6 +1,9 @@
 package identity
 
-import "errors"
+import (
+	"errors"
+	"time"
+)
 
 // Role represents a user role.
 type Role string
@@ -25,9 +28,10 @@ func (r Role) IsValid() bool {
 
 // Identity represents an authenticated (or anonymous) user.
 type Identity struct {
-	UserID      string
-	Role        Role
-	DisplayName string
+	UserID          string
+	Role            Role
+	DisplayName     string
+	AuthenticatedAt time.Time
 }
 
 // NewIdentity creates an Identity with the given user ID and role.
@@ -44,6 +48,12 @@ func NewIdentity(userID string, role Role) (Identity, error) {
 // WithDisplayName returns a copy of the identity with a presentation label.
 func (i Identity) WithDisplayName(displayName string) Identity {
 	i.DisplayName = displayName
+	return i
+}
+
+// WithAuthenticatedAt returns a copy of the identity with the session issue time.
+func (i Identity) WithAuthenticatedAt(authenticatedAt time.Time) Identity {
+	i.AuthenticatedAt = authenticatedAt.UTC()
 	return i
 }
 
