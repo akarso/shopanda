@@ -33,6 +33,24 @@ func TestValidatingTokenParser_Parse(t *testing.T) {
 	}
 }
 
+func TestValidatingTokenParser_Parse_DisplayName(t *testing.T) {
+	issuer, _ := jwt.NewIssuer("test-secret", time.Hour)
+	repo := newMockRepo()
+	parser := auth.NewValidatingTokenParser(issuer, repo, 0)
+
+	c, _ := customer.NewCustomer("user-1", "alice@example.com")
+	_ = repo.Create(context.Background(), &c)
+
+	token, _, _ := issuer.CreateWithDisplayName("user-1", "customer", 0, "Alice Example")
+	id, err := parser.Parse(context.Background(), token)
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	if id.DisplayName != "Alice Example" {
+		t.Fatalf("DisplayName = %q, want %q", id.DisplayName, "Alice Example")
+	}
+}
+
 func TestValidatingTokenParser_Parse_InvalidToken(t *testing.T) {
 	issuer, _ := jwt.NewIssuer("test-secret", time.Hour)
 	repo := newMockRepo()

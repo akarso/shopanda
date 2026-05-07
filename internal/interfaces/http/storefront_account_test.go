@@ -64,6 +64,7 @@ func TestStorefrontHandler_Home_ShowsAccountControls_WhenAuthenticated(t *testin
 	if err != nil {
 		t.Fatalf("NewIdentity: %v", err)
 	}
+	id = id.WithDisplayName("Ada Lovelace")
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest("GET", "/", nil)
 	req = req.WithContext(auth.WithIdentity(req.Context(), id))
