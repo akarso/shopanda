@@ -448,6 +448,34 @@ func TestVerifyPassword_WrongPassword(t *testing.T) {
 	}
 }
 
+func TestVerifyPassword_DisabledAccount(t *testing.T) {
+	repo := newMockRepo()
+	svc := newTestService(repo)
+
+	out, err := svc.Register(context.Background(), auth.RegisterInput{
+		Email:    "verify-disabled@example.com",
+		Password: "password123",
+	})
+	if err != nil {
+		t.Fatalf("Register: %v", err)
+	}
+	if err := repo.customers[out.CustomerID].Disable(); err != nil {
+		t.Fatalf("Disable: %v", err)
+	}
+
+	err = svc.VerifyPassword(context.Background(), out.CustomerID, "password123")
+	if err == nil {
+		t.Fatal("expected error for disabled account")
+	}
+	var appErr *apperror.Error
+	if !errors.As(err, &appErr) || appErr.Code != apperror.CodeUnauthorized {
+		t.Fatalf("expected unauthorized error, got %v", err)
+	}
+	if appErr.Message != "invalid email or password" {
+		t.Fatalf("message = %q, want %q", appErr.Message, "invalid email or password")
+	}
+}
+
 func TestLogin_DisabledAccount(t *testing.T) {
 	repo := newMockRepo()
 	svc := newTestService(repo)

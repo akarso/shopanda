@@ -349,9 +349,6 @@ func (h *StorefrontHandler) AccountProfile() http.HandlerFunc {
 		if !ok {
 			return
 		}
-		if !h.requireStorefrontSecurityVerification(w, r, customerID, "/account/security") {
-			return
-		}
 		profile, err := h.auth.Me(r.Context(), customerID)
 		if err != nil {
 			http.Error(w, "Internal Server Error", http.StatusInternalServerError)

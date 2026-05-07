@@ -548,6 +548,35 @@ func TestStorefrontHandler_AccountProfile_DoesNotRenderSecurityForms(t *testing.
 	}
 }
 
+func TestStorefrontHandler_AccountProfile_RemainsAvailableWhenStepUpEnabled(t *testing.T) {
+	engine := createTestTheme(t)
+	pdp := composition.NewPipeline[composition.ProductContext]()
+	plp := composition.NewPipeline[composition.ListingContext]()
+	authSvc, _ := newStorefrontAuthService(t)
+	out, err := authSvc.Register(context.Background(), appAuth.RegisterInput{Email: "ada@example.com", Password: "password123", FirstName: "Ada", LastName: "Lovelace"})
+	if err != nil {
+		t.Fatalf("Register: %v", err)
+	}
+	h := shophttp.NewStorefrontHandler(engine, &mockStorefrontRepo{}, newStorefrontCategoryMock(), pdp, plp, newStorefrontSearchMock()).WithAccount(authSvc, newStorefrontAccountOrderRepoStub(), &storefrontAccountDeleterStub{}).WithAccountSecurity("test-secret", time.Minute)
+	router := newStorefrontRouter(h)
+	id, err := identity.NewIdentity(out.CustomerID, identity.RoleCustomer)
+	if err != nil {
+		t.Fatalf("NewIdentity: %v", err)
+	}
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("GET", "/account/profile", nil)
+	req = req.WithContext(auth.WithIdentity(req.Context(), id))
+	router.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d; body: %s", rec.Code, http.StatusOK, rec.Body.String())
+	}
+	if location := rec.Header().Get("Location"); location != "" {
+		t.Fatalf("location = %q, want empty", location)
+	}
+}
+
 func TestStorefrontHandler_AccountSecurity_RedirectsToVerification_WhenStepUpRequired(t *testing.T) {
 	engine := createTestTheme(t)
 	pdp := composition.NewPipeline[composition.ProductContext]()

@@ -164,6 +164,9 @@ func (s *Service) VerifyPassword(ctx context.Context, customerID, passwordText s
 	if c == nil {
 		return apperror.NotFound("customer not found")
 	}
+	if c.Status != customer.StatusActive {
+		return apperror.Unauthorized("invalid email or password")
+	}
 	if err := password.Compare(c.PasswordHash, passwordText); err != nil {
 		return apperror.Unauthorized("password is incorrect")
 	}

@@ -59,8 +59,11 @@ func (v *storefrontAccountSecurityVerifier) cookieValue(customerID string, verif
 }
 
 func (v *storefrontAccountSecurityVerifier) isVerified(r *http.Request, customerID string) bool {
-	if v == nil || r == nil || strings.TrimSpace(customerID) == "" {
+	if v == nil {
 		return true
+	}
+	if r == nil || strings.TrimSpace(customerID) == "" {
+		return false
 	}
 	cookie, err := r.Cookie(storefrontSecurityVerifyCookieName)
 	if err != nil {
