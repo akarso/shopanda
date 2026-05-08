@@ -1,11 +1,15 @@
 package http
 
 import (
+	"crypto/aes"
+	"crypto/cipher"
 	"crypto/hmac"
+	"crypto/rand"
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -57,6 +61,15 @@ type storefrontSecurityEmailTokenClaims struct {
 	CustomerID string `json:"customer_id"`
 	RedirectTo string `json:"redirect_to"`
 	ExpiresAt  int64  `json:"expires_at"`
+}
+
+type storefrontCheckoutResumeTokenClaims struct {
+	CustomerID     string                    `json:"customer_id"`
+	Step           string                    `json:"step"`
+	Address        StorefrontCheckoutAddress `json:"address"`
+	ShippingMethod string                    `json:"shipping_method,omitempty"`
+	PaymentMethod  string                    `json:"payment_method,omitempty"`
+	ExpiresAt      int64                     `json:"expires_at"`
 }
 
 func newStorefrontAccountSecurityVerifier(secret string, ttl time.Duration) *storefrontAccountSecurityVerifier {
@@ -154,6 +167,13 @@ func (v *storefrontAccountSecurityVerifier) signEmailToken(payload string) strin
 	return base64.RawURLEncoding.EncodeToString(mac.Sum(nil))
 }
 
+func (v *storefrontAccountSecurityVerifier) checkoutResumeAESKey() []byte {
+	h := sha256.New()
+	h.Write([]byte("checkout-resume-aes256gcm:"))
+	h.Write(v.secret)
+	return h.Sum(nil)
+}
+
 func (v *storefrontAccountSecurityVerifier) emailToken(purpose, customerID, redirectTo, defaultRedirectTo string, now time.Time) (string, error) {
 	claims := storefrontSecurityEmailTokenClaims{
 		Purpose:    strings.TrimSpace(purpose),
@@ -175,6 +195,34 @@ func (v *storefrontAccountSecurityVerifier) securityEmailToken(customerID, redir
 
 func (v *storefrontAccountSecurityVerifier) emailVerificationToken(customerID, redirectTo string, now time.Time) (string, error) {
 	return v.emailToken(storefrontEmailTokenPurposeAccountEmail, customerID, redirectTo, storefrontEmailVerificationDefaultRedirect, now)
+}
+
+func (v *storefrontAccountSecurityVerifier) checkoutResumeToken(customerID string, state storefrontCheckoutResumeState, now time.Time) (string, error) {
+	claims := storefrontCheckoutResumeTokenClaims{
+		CustomerID:     strings.TrimSpace(customerID),
+		Step:           storefrontCheckoutResumeStep(state.Step),
+		Address:        state.Address,
+		ShippingMethod: strings.TrimSpace(state.ShippingMethod),
+		PaymentMethod:  strings.TrimSpace(state.PaymentMethod),
+		ExpiresAt:      now.UTC().Add(v.emailTokenTTL).Unix(),
+	}
+	raw, err := json.Marshal(claims)
+	if err != nil {
+		return "", fmt.Errorf("storefront checkout resume token: marshal claims: %w", err)
+	}
+	block, err := aes.NewCipher(v.checkoutResumeAESKey())
+	if err != nil {
+		return "", fmt.Errorf("storefront checkout resume token: cipher: %w", err)
+	}
+	gcm, err := cipher.NewGCM(block)
+	if err != nil {
+		return "", fmt.Errorf("storefront checkout resume token: gcm: %w", err)
+	}
+	nonce := make([]byte, gcm.NonceSize())
+	if _, err := io.ReadFull(rand.Reader, nonce); err != nil {
+		return "", fmt.Errorf("storefront checkout resume token: nonce: %w", err)
+	}
+	return base64.RawURLEncoding.EncodeToString(gcm.Seal(nonce, nonce, raw, nil)), nil
 }
 
 func (v *storefrontAccountSecurityVerifier) verifyEmailToken(token, purpose string) (string, string, bool) {
@@ -215,6 +263,48 @@ func (v *storefrontAccountSecurityVerifier) verifySecurityEmailToken(token, cust
 		return "", false
 	}
 	return storefrontSafeRedirectPath(redirectTo, "/account/security"), true
+}
+
+func (v *storefrontAccountSecurityVerifier) verifyCheckoutResumeToken(token, customerID string) (storefrontCheckoutResumeState, bool) {
+	if v == nil || strings.TrimSpace(token) == "" || strings.TrimSpace(customerID) == "" {
+		return storefrontCheckoutResumeState{}, false
+	}
+	data, err := base64.RawURLEncoding.DecodeString(strings.TrimSpace(token))
+	if err != nil {
+		return storefrontCheckoutResumeState{}, false
+	}
+	block, err := aes.NewCipher(v.checkoutResumeAESKey())
+	if err != nil {
+		return storefrontCheckoutResumeState{}, false
+	}
+	gcm, err := cipher.NewGCM(block)
+	if err != nil {
+		return storefrontCheckoutResumeState{}, false
+	}
+	nonceSize := gcm.NonceSize()
+	if len(data) < nonceSize {
+		return storefrontCheckoutResumeState{}, false
+	}
+	raw, err := gcm.Open(nil, data[:nonceSize], data[nonceSize:], nil)
+	if err != nil {
+		return storefrontCheckoutResumeState{}, false
+	}
+	var claims storefrontCheckoutResumeTokenClaims
+	if err := json.Unmarshal(raw, &claims); err != nil {
+		return storefrontCheckoutResumeState{}, false
+	}
+	if strings.TrimSpace(claims.CustomerID) != strings.TrimSpace(customerID) {
+		return storefrontCheckoutResumeState{}, false
+	}
+	if time.Unix(claims.ExpiresAt, 0).UTC().Before(time.Now().UTC()) {
+		return storefrontCheckoutResumeState{}, false
+	}
+	return storefrontCheckoutResumeState{
+		Step:           storefrontCheckoutResumeStep(claims.Step),
+		Address:        claims.Address,
+		ShippingMethod: strings.TrimSpace(claims.ShippingMethod),
+		PaymentMethod:  strings.TrimSpace(claims.PaymentMethod),
+	}, true
 }
 
 func storefrontAbsoluteURL(storeBaseURL, path string, query url.Values) (string, error) {

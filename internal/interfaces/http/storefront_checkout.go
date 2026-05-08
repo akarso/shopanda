@@ -3,7 +3,9 @@ package http
 import (
 	"fmt"
 	"net/http"
+	"net/url"
 	"strings"
+	"time"
 
 	checkoutApp "github.com/akarso/shopanda/internal/application/checkout"
 	"github.com/akarso/shopanda/internal/domain/cart"
@@ -79,6 +81,15 @@ type StorefrontCheckoutPageData struct {
 	SecondaryLabel string
 }
 
+type storefrontCheckoutResumeState struct {
+	Step           string
+	Address        StorefrontCheckoutAddress
+	ShippingMethod string
+	PaymentMethod  string
+}
+
+const storefrontCheckoutResumeQueryParam = "checkout_resume"
+
 var storefrontCheckoutCountries = []StorefrontCheckoutOption{
 	{Value: "DE", Label: "Germany"},
 	{Value: "FR", Label: "France"},
@@ -107,7 +118,12 @@ func (h *StorefrontHandler) CheckoutAddress() http.HandlerFunc {
 		customerID := storefrontCustomerID(r)
 		page.RequiresAuth = customerID == ""
 		if customerID != "" && h.checkoutVerifiedEmailGateEnabled() {
-			if !h.requireStorefrontVerifiedEmail(w, r, customerID, "/checkout/address") {
+			if !h.requireStorefrontVerifiedEmail(w, r, customerID, h.checkoutVerificationRedirectTarget(r, customerID)) {
+				return
+			}
+		}
+		if customerID != "" {
+			if h.renderCheckoutResume(w, r, currentCart, customerID, page) {
 				return
 			}
 		}
@@ -295,7 +311,7 @@ func (h *StorefrontHandler) checkoutAddressPageFromPost(w http.ResponseWriter, r
 	customerID := storefrontCustomerID(r)
 	page.RequiresAuth = customerID == ""
 	if customerID != "" && h.checkoutVerifiedEmailGateEnabled() {
-		if !h.requireStorefrontVerifiedEmail(w, r, customerID, "/checkout/address") {
+		if !h.requireStorefrontVerifiedEmail(w, r, customerID, h.checkoutVerificationRedirectTarget(r, customerID)) {
 			return nil, StorefrontCheckoutPageData{}, false
 		}
 	}
@@ -314,6 +330,111 @@ func (h *StorefrontHandler) checkoutAddressPageFromPost(w http.ResponseWriter, r
 
 func (h *StorefrontHandler) checkoutVerifiedEmailGateEnabled() bool {
 	return h.auth != nil && h.security != nil && strings.TrimSpace(h.security.storeBaseURL) != ""
+}
+
+func storefrontCheckoutResumeStep(step string) string {
+	switch strings.TrimSpace(step) {
+	case "shipping":
+		return "shipping"
+	case "payment":
+		return "payment"
+	default:
+		return "address"
+	}
+}
+
+func storefrontCheckoutResumeStateFromRequest(r *http.Request) (storefrontCheckoutResumeState, bool) {
+	if r == nil {
+		return storefrontCheckoutResumeState{}, false
+	}
+	state := storefrontCheckoutResumeState{
+		Address:        storefrontCheckoutAddressFromRequest(r),
+		ShippingMethod: strings.TrimSpace(r.FormValue("shipping_method")),
+		PaymentMethod:  strings.TrimSpace(r.FormValue("payment_method")),
+	}
+	switch r.URL.Path {
+	case "/checkout/shipping":
+		state.Step = "shipping"
+	case "/checkout/payment", "/checkout/confirm":
+		state.Step = "payment"
+	default:
+		return storefrontCheckoutResumeState{}, false
+	}
+	return state, true
+}
+
+func (h *StorefrontHandler) checkoutVerificationRedirectTarget(r *http.Request, customerID string) string {
+	if strings.TrimSpace(customerID) == "" || h.security == nil {
+		return "/checkout/address"
+	}
+	state, ok := storefrontCheckoutResumeStateFromRequest(r)
+	if !ok {
+		return "/checkout/address"
+	}
+	token, err := h.security.checkoutResumeToken(customerID, state, time.Now().UTC())
+	if err != nil {
+		h.log.Error("storefront.checkout.resume_token_failed", err, map[string]interface{}{
+			"customer_id": customerID,
+			"path":        r.URL.Path,
+		})
+		return "/checkout/address"
+	}
+	query := url.Values{}
+	query.Set(storefrontCheckoutResumeQueryParam, token)
+	return "/checkout/address?" + query.Encode()
+}
+
+func (h *StorefrontHandler) renderCheckoutResume(w http.ResponseWriter, r *http.Request, currentCart *cart.Cart, customerID string, page StorefrontCheckoutPageData) bool {
+	if h.security == nil || strings.TrimSpace(customerID) == "" {
+		return false
+	}
+	token := strings.TrimSpace(r.URL.Query().Get(storefrontCheckoutResumeQueryParam))
+	if token == "" {
+		return false
+	}
+	state, ok := h.security.verifyCheckoutResumeToken(token, customerID)
+	if !ok {
+		return false
+	}
+	page.Address = state.Address
+	page.Countries = storefrontCheckoutCountryOptions(page.Address.Country)
+	if err := page.Address.Validate(); err != nil {
+		return false
+	}
+	rates, err := h.checkoutRates(r, currentCart)
+	if err != nil {
+		return false
+	}
+	switch storefrontCheckoutResumeStep(state.Step) {
+	case "shipping":
+		page.Progress = storefrontCheckoutProgress("shipping")
+		page.Rates = rates
+		page.SelectedRate = storefrontFindCheckoutRate(rates, state.ShippingMethod)
+		page.PrimaryAction = "/checkout/payment"
+		page.SecondaryURL = "/checkout/address"
+		page.SecondaryLabel = "Edit address"
+		h.renderPage(w, "checkout_shipping", page)
+		return true
+	case "payment":
+		selectedRate := storefrontFindCheckoutRate(rates, state.ShippingMethod)
+		if selectedRate == nil {
+			return false
+		}
+		page.Progress = storefrontCheckoutProgress("payment")
+		page.Rates = rates
+		page.SelectedRate = selectedRate
+		page.Payment = storefrontCheckoutPaymentView(h.payment)
+		if strings.TrimSpace(state.PaymentMethod) != "" && page.Payment.Method != strings.TrimSpace(state.PaymentMethod) {
+			return false
+		}
+		page.PrimaryAction = "/checkout/confirm"
+		page.SecondaryURL = "/checkout/address"
+		page.SecondaryLabel = "Start over"
+		h.renderPage(w, "checkout_payment", page)
+		return true
+	default:
+		return false
+	}
 }
 
 func (h *StorefrontHandler) buildCheckoutPageData(r *http.Request, currentCart *cart.Cart, step string) (StorefrontCheckoutPageData, error) {
