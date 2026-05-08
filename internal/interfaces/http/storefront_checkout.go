@@ -236,11 +236,17 @@ func (h *StorefrontHandler) CheckoutConfirm() http.HandlerFunc {
 			h.renderPageStatus(w, "checkout_address", page, http.StatusUnauthorized)
 			return
 		}
+		customerID := storefrontCustomerID(r)
+		if customerID != "" {
+			if !h.requireStorefrontVerifiedEmail(w, r, customerID, "/checkout/address") {
+				return
+			}
+		}
 		if h.checkout == nil {
 			http.Error(w, "Not Found", http.StatusNotFound)
 			return
 		}
-		cctx, err := h.checkout.StartCheckout(r.Context(), currentCart.ID, storefrontCustomerID(r), checkoutApp.Input{
+		cctx, err := h.checkout.StartCheckout(r.Context(), currentCart.ID, customerID, checkoutApp.Input{
 			Address: checkoutApp.Address{
 				FirstName: page.Address.FirstName,
 				LastName:  page.Address.LastName,
