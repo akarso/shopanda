@@ -1,11 +1,15 @@
 package http
 
 import (
+	"crypto/aes"
+	"crypto/cipher"
 	"crypto/hmac"
+	"crypto/rand"
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -163,11 +167,11 @@ func (v *storefrontAccountSecurityVerifier) signEmailToken(payload string) strin
 	return base64.RawURLEncoding.EncodeToString(mac.Sum(nil))
 }
 
-func (v *storefrontAccountSecurityVerifier) signCheckoutResumeToken(payload string) string {
-	mac := hmac.New(sha256.New, v.secret)
-	_, _ = mac.Write([]byte("storefront-checkout-resume|"))
-	_, _ = mac.Write([]byte(payload))
-	return base64.RawURLEncoding.EncodeToString(mac.Sum(nil))
+func (v *storefrontAccountSecurityVerifier) checkoutResumeAESKey() []byte {
+	h := sha256.New()
+	h.Write([]byte("checkout-resume-aes256gcm:"))
+	h.Write(v.secret)
+	return h.Sum(nil)
 }
 
 func (v *storefrontAccountSecurityVerifier) emailToken(purpose, customerID, redirectTo, defaultRedirectTo string, now time.Time) (string, error) {
@@ -206,8 +210,19 @@ func (v *storefrontAccountSecurityVerifier) checkoutResumeToken(customerID strin
 	if err != nil {
 		return "", fmt.Errorf("storefront checkout resume token: marshal claims: %w", err)
 	}
-	payload := base64.RawURLEncoding.EncodeToString(raw)
-	return payload + "." + v.signCheckoutResumeToken(payload), nil
+	block, err := aes.NewCipher(v.checkoutResumeAESKey())
+	if err != nil {
+		return "", fmt.Errorf("storefront checkout resume token: cipher: %w", err)
+	}
+	gcm, err := cipher.NewGCM(block)
+	if err != nil {
+		return "", fmt.Errorf("storefront checkout resume token: gcm: %w", err)
+	}
+	nonce := make([]byte, gcm.NonceSize())
+	if _, err := io.ReadFull(rand.Reader, nonce); err != nil {
+		return "", fmt.Errorf("storefront checkout resume token: nonce: %w", err)
+	}
+	return base64.RawURLEncoding.EncodeToString(gcm.Seal(nonce, nonce, raw, nil)), nil
 }
 
 func (v *storefrontAccountSecurityVerifier) verifyEmailToken(token, purpose string) (string, string, bool) {
@@ -254,15 +269,23 @@ func (v *storefrontAccountSecurityVerifier) verifyCheckoutResumeToken(token, cus
 	if v == nil || strings.TrimSpace(token) == "" || strings.TrimSpace(customerID) == "" {
 		return storefrontCheckoutResumeState{}, false
 	}
-	parts := strings.SplitN(strings.TrimSpace(token), ".", 2)
-	if len(parts) != 2 {
+	data, err := base64.RawURLEncoding.DecodeString(strings.TrimSpace(token))
+	if err != nil {
 		return storefrontCheckoutResumeState{}, false
 	}
-	expectedSig := v.signCheckoutResumeToken(parts[0])
-	if !hmac.Equal([]byte(parts[1]), []byte(expectedSig)) {
+	block, err := aes.NewCipher(v.checkoutResumeAESKey())
+	if err != nil {
 		return storefrontCheckoutResumeState{}, false
 	}
-	raw, err := base64.RawURLEncoding.DecodeString(parts[0])
+	gcm, err := cipher.NewGCM(block)
+	if err != nil {
+		return storefrontCheckoutResumeState{}, false
+	}
+	nonceSize := gcm.NonceSize()
+	if len(data) < nonceSize {
+		return storefrontCheckoutResumeState{}, false
+	}
+	raw, err := gcm.Open(nil, data[:nonceSize], data[nonceSize:], nil)
 	if err != nil {
 		return storefrontCheckoutResumeState{}, false
 	}
