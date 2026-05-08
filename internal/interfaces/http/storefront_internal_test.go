@@ -115,3 +115,23 @@ func TestStorefrontHandler_WithAccountSecurity_PanicsOnInvalidConfig(t *testing.
 		})
 	}
 }
+
+func TestStorefrontHandler_WithAccountSecurityEmailLinks_PanicsOnInvalidBaseURL(t *testing.T) {
+	defer func() {
+		r := recover()
+		if r == nil {
+			t.Fatal("expected panic, got nil")
+		}
+		msg, ok := r.(string)
+		if !ok {
+			t.Fatalf("panic = %#v, want string", r)
+		}
+		if !strings.Contains(msg, "absolute store base URL") {
+			t.Fatalf("panic = %q, want absolute store base URL", msg)
+		}
+	}()
+
+	NewStorefrontHandler(nil, nil, nil, nil, nil, nil).
+		WithAccountSecurity("test-secret", time.Minute).
+		WithAccountSecurityEmailLinks("/relative", 0)
+}

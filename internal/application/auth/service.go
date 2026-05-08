@@ -165,11 +165,49 @@ func (s *Service) VerifyPassword(ctx context.Context, customerID, passwordText s
 		return apperror.NotFound("customer not found")
 	}
 	if c.Status != customer.StatusActive {
-		return apperror.Unauthorized("invalid email or password")
+		return apperror.Unauthorized("account is not active")
 	}
 	if err := password.Compare(c.PasswordHash, passwordText); err != nil {
 		return apperror.Unauthorized("password is incorrect")
 	}
+	return nil
+}
+
+// RequestSecurityVerificationLink emits an email-delivery event with a
+// signed storefront verification URL for sensitive account actions.
+func (s *Service) RequestSecurityVerificationLink(ctx context.Context, customerID, verifyURL string) error {
+	if strings.TrimSpace(customerID) == "" {
+		return apperror.Validation("customer id is required")
+	}
+	if strings.TrimSpace(verifyURL) == "" {
+		return apperror.Validation("verify url is required")
+	}
+
+	c, err := s.customers.FindByID(ctx, customerID)
+	if err != nil {
+		return fmt.Errorf("auth service: request security verification link: %w", err)
+	}
+	if c == nil {
+		return apperror.NotFound("customer not found")
+	}
+	if c.Status != customer.StatusActive {
+		return apperror.Unauthorized("invalid email or password")
+	}
+
+	if err := s.bus.Publish(ctx, event.New(customer.EventSecurityVerificationRequested, "auth.service", customer.SecurityVerificationRequestedData{
+		CustomerID: c.ID,
+		VerifyURL:  strings.TrimSpace(verifyURL),
+	})); err != nil {
+		s.log.Warn("auth.event.publish_failed", map[string]interface{}{
+			"event": customer.EventSecurityVerificationRequested,
+			"error": err.Error(),
+		})
+		return fmt.Errorf("auth service: request security verification link: %w", err)
+	}
+
+	s.log.Info("auth.security_verification.requested", map[string]interface{}{
+		"customer_id": c.ID,
+	})
 	return nil
 }
 

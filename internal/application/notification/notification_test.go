@@ -314,6 +314,83 @@ func TestHandlePasswordReset_BadEventData(t *testing.T) {
 	}
 }
 
+func TestHandleSecurityVerification(t *testing.T) {
+	tmpl := mail.NewTemplates()
+	notification.RegisterTemplates(tmpl)
+
+	q := &mockQueue{}
+	custRepo := &mockCustomerRepo{
+		findByID: func(_ context.Context, id string) (*customer.Customer, error) {
+			if id == "cust-1" {
+				c, _ := customer.NewCustomer("cust-1", "alice@example.com")
+				c.FirstName = "Alice"
+				return &c, nil
+			}
+			return nil, nil
+		},
+	}
+	ordRepo := &mockOrderRepo{}
+
+	svc := newTestService(t, tmpl, custRepo, ordRepo, q)
+	evt := event.New(customer.EventSecurityVerificationRequested, "auth.service", customer.SecurityVerificationRequestedData{
+		CustomerID: "cust-1",
+		VerifyURL:  "https://shop.test/account/security/verify?email_token=abc",
+	})
+
+	if err := svc.HandleSecurityVerification(context.Background(), evt); err != nil {
+		t.Fatalf("HandleSecurityVerification: %v", err)
+	}
+	if len(q.enqueued) != 1 {
+		t.Fatalf("expected 1 enqueued job, got %d", len(q.enqueued))
+	}
+	job := q.enqueued[0]
+	if to, _ := job.Payload["to"].(string); to != "alice@example.com" {
+		t.Errorf("payload.to = %q, want alice@example.com", to)
+	}
+	if subj, _ := job.Payload["subject"].(string); subj != "Verify your security access" {
+		t.Errorf("payload.subject = %q, want 'Verify your security access'", subj)
+	}
+	body, _ := job.Payload["body"].(string)
+	if !strings.Contains(body, "https://shop.test/account/security/verify?email_token=abc") {
+		t.Fatalf("expected verify URL in body, got %q", body)
+	}
+}
+
+func TestHandleSecurityVerification_CustomerNotFound(t *testing.T) {
+	tmpl := mail.NewTemplates()
+	notification.RegisterTemplates(tmpl)
+	q := &mockQueue{}
+	custRepo := &mockCustomerRepo{
+		findByID: func(_ context.Context, _ string) (*customer.Customer, error) {
+			return nil, nil
+		},
+	}
+	svc := newTestService(t, tmpl, custRepo, &mockOrderRepo{}, q)
+
+	err := svc.HandleSecurityVerification(context.Background(), event.New(customer.EventSecurityVerificationRequested, "auth.service", customer.SecurityVerificationRequestedData{
+		CustomerID: "missing",
+		VerifyURL:  "https://shop.test/account/security/verify?email_token=abc",
+	}))
+	if err == nil {
+		t.Fatal("expected error for missing customer")
+	}
+	if len(q.enqueued) != 0 {
+		t.Fatalf("expected 0 enqueued jobs, got %d", len(q.enqueued))
+	}
+}
+
+func TestHandleSecurityVerification_BadEventData(t *testing.T) {
+	tmpl := mail.NewTemplates()
+	notification.RegisterTemplates(tmpl)
+	q := &mockQueue{}
+	svc := newTestService(t, tmpl, &mockCustomerRepo{}, &mockOrderRepo{}, q)
+
+	err := svc.HandleSecurityVerification(context.Background(), event.New(customer.EventSecurityVerificationRequested, "auth.service", "not-a-struct"))
+	if err == nil {
+		t.Fatal("expected error for bad event data")
+	}
+}
+
 // --- HandleShipmentShipped tests ---
 
 func TestHandleShipmentShipped(t *testing.T) {

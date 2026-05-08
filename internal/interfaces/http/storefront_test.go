@@ -178,7 +178,7 @@ func createTestTheme(t *testing.T) *theme.Engine {
 		t.Fatal(err)
 	}
 
-	accountSecurityVerify := `{{ define "title" }}Verify Security Access{{ end }}{{ define "content" }}<section><h1>Verify Security Access</h1>{{ if .ErrorMessage }}<p>{{ .ErrorMessage }}</p>{{ end }}<p>{{ .Email }}</p><form action="/account/security/verify" method="post"><input type="hidden" name="csrf_token" value="{{ .CSRFToken }}"><input type="hidden" name="redirect_to" value="{{ .RedirectTo }}"><input name="password" type="password"><button type="submit">Continue</button></form></section>{{ end }}{{ template "layout.html" . }}`
+	accountSecurityVerify := `{{ define "title" }}Verify Security Access{{ end }}{{ define "content" }}<section><h1>Verify Security Access</h1>{{ if .SuccessMessage }}<p>{{ .SuccessMessage }}</p>{{ end }}{{ if .ErrorMessage }}<p>{{ .ErrorMessage }}</p>{{ end }}<p>{{ .Email }}</p><form action="/account/security/verify" method="post"><input type="hidden" name="csrf_token" value="{{ .CSRFToken }}"><input type="hidden" name="redirect_to" value="{{ .RedirectTo }}"><input name="password" type="password"><button type="submit">Continue</button></form><form action="/account/security/verify" method="post"><input type="hidden" name="csrf_token" value="{{ .CSRFToken }}"><input type="hidden" name="redirect_to" value="{{ .RedirectTo }}"><input type="hidden" name="action" value="email_link"><button type="submit">Email secure link</button></form></section>{{ end }}{{ template "layout.html" . }}`
 	if err := os.WriteFile(filepath.Join(tplDir, "account_security_verify.html"), []byte(accountSecurityVerify), 0644); err != nil {
 		t.Fatal(err)
 	}
