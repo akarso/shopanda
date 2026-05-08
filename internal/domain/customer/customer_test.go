@@ -175,6 +175,44 @@ func TestCustomer_BumpTokenGeneration(t *testing.T) {
 	}
 }
 
+func TestCustomer_MarkEmailVerified(t *testing.T) {
+	c, _ := customer.NewCustomer("cust-1", "alice@example.com")
+	before := c.UpdatedAt
+	time.Sleep(time.Millisecond)
+
+	c.MarkEmailVerified()
+
+	if c.EmailVerifiedAt == nil {
+		t.Fatal("expected EmailVerifiedAt to be set")
+	}
+	if c.EmailVerifiedAt.IsZero() {
+		t.Fatal("expected EmailVerifiedAt to be non-zero")
+	}
+	if !c.UpdatedAt.After(before) {
+		t.Error("expected UpdatedAt to advance after MarkEmailVerified")
+	}
+}
+
+func TestCustomer_MarkEmailVerified_Idempotent(t *testing.T) {
+	c, _ := customer.NewCustomer("cust-1", "alice@example.com")
+	c.MarkEmailVerified()
+	verifiedAt := c.EmailVerifiedAt
+	updatedAt := c.UpdatedAt
+	time.Sleep(time.Millisecond)
+
+	c.MarkEmailVerified()
+
+	if c.EmailVerifiedAt == nil || verifiedAt == nil {
+		t.Fatal("expected EmailVerifiedAt to remain set")
+	}
+	if !c.EmailVerifiedAt.Equal(*verifiedAt) {
+		t.Fatalf("EmailVerifiedAt changed from %v to %v", *verifiedAt, *c.EmailVerifiedAt)
+	}
+	if !c.UpdatedAt.Equal(updatedAt) {
+		t.Fatalf("UpdatedAt changed from %v to %v", updatedAt, c.UpdatedAt)
+	}
+}
+
 func TestCustomer_BumpTokenGeneration_Increments(t *testing.T) {
 	c, _ := customer.NewCustomer("cust-1", "alice@example.com")
 	c.BumpTokenGeneration()

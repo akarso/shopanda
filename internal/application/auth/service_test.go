@@ -761,6 +761,90 @@ func TestRequestSecurityVerificationLink_DisabledAccount(t *testing.T) {
 	}
 }
 
+func TestRequestEmailVerificationLink_Success(t *testing.T) {
+	repo := newMockRepo()
+	issuer, _ := jwt.NewIssuer("test-secret", time.Hour)
+	bus := event.NewBus(testLogger{})
+	var published customer.EmailVerificationRequestedData
+	bus.On(customer.EventEmailVerificationRequested, func(_ context.Context, evt event.Event) error {
+		data, ok := evt.Data.(customer.EmailVerificationRequestedData)
+		if !ok {
+			t.Fatalf("event data type = %T", evt.Data)
+		}
+		published = data
+		return nil
+	})
+	svc := auth.NewService(repo, newMockResetRepo(), issuer, bus, testLogger{}, time.Hour)
+
+	out, err := svc.Register(context.Background(), auth.RegisterInput{
+		Email:    "verify-email@example.com",
+		Password: "password123",
+	})
+	if err != nil {
+		t.Fatalf("Register: %v", err)
+	}
+
+	err = svc.RequestEmailVerificationLink(context.Background(), out.CustomerID, "https://shop.test/account/verify-email?email_token=abc")
+	if err != nil {
+		t.Fatalf("RequestEmailVerificationLink: %v", err)
+	}
+	if published.CustomerID != out.CustomerID {
+		t.Fatalf("published.CustomerID = %q, want %q", published.CustomerID, out.CustomerID)
+	}
+	if published.VerifyURL != "https://shop.test/account/verify-email?email_token=abc" {
+		t.Fatalf("published.VerifyURL = %q", published.VerifyURL)
+	}
+}
+
+func TestRequestEmailVerificationLink_AlreadyVerified_NoEvent(t *testing.T) {
+	repo := newMockRepo()
+	issuer, _ := jwt.NewIssuer("test-secret", time.Hour)
+	bus := event.NewBus(testLogger{})
+	published := false
+	bus.On(customer.EventEmailVerificationRequested, func(_ context.Context, evt event.Event) error {
+		published = true
+		return nil
+	})
+	svc := auth.NewService(repo, newMockResetRepo(), issuer, bus, testLogger{}, time.Hour)
+
+	out, err := svc.Register(context.Background(), auth.RegisterInput{
+		Email:    "already-verified@example.com",
+		Password: "password123",
+	})
+	if err != nil {
+		t.Fatalf("Register: %v", err)
+	}
+	repo.customers[out.CustomerID].MarkEmailVerified()
+
+	err = svc.RequestEmailVerificationLink(context.Background(), out.CustomerID, "https://shop.test/account/verify-email?email_token=abc")
+	if err != nil {
+		t.Fatalf("RequestEmailVerificationLink: %v", err)
+	}
+	if published {
+		t.Fatal("expected already verified customer to skip publishing")
+	}
+}
+
+func TestMarkEmailVerified_Success(t *testing.T) {
+	repo := newMockRepo()
+	svc := newTestService(repo)
+	out, err := svc.Register(context.Background(), auth.RegisterInput{
+		Email:    "mark-verified@example.com",
+		Password: "password123",
+	})
+	if err != nil {
+		t.Fatalf("Register: %v", err)
+	}
+
+	err = svc.MarkEmailVerified(context.Background(), out.CustomerID)
+	if err != nil {
+		t.Fatalf("MarkEmailVerified: %v", err)
+	}
+	if repo.customers[out.CustomerID].EmailVerifiedAt == nil {
+		t.Fatal("expected EmailVerifiedAt to be set")
+	}
+}
+
 // ── ConfirmPasswordReset tests ───────────────────────────────────────────
 
 func TestConfirmPasswordReset_EmptyToken(t *testing.T) {

@@ -442,6 +442,173 @@ func TestStorefrontHandler_AccountRegister_ClaimsGuestCart(t *testing.T) {
 	}
 }
 
+func TestStorefrontHandler_AccountRegister_SendsEmailVerificationLink(t *testing.T) {
+	engine := createTestTheme(t)
+	pdp := composition.NewPipeline[composition.ProductContext]()
+	plp := composition.NewPipeline[composition.ListingContext]()
+	bus := event.NewBus(logger.New("error"))
+	authSvc, _ := newStorefrontAuthServiceWithBus(t, bus)
+	var verifyURL string
+	bus.On(customer.EventEmailVerificationRequested, func(_ context.Context, evt event.Event) error {
+		data, ok := evt.Data.(customer.EmailVerificationRequestedData)
+		if !ok {
+			t.Fatalf("event data type = %T", evt.Data)
+		}
+		verifyURL = data.VerifyURL
+		return nil
+	})
+	h := shophttp.NewStorefrontHandler(engine, &mockStorefrontRepo{}, newStorefrontCategoryMock(), pdp, plp, newStorefrontSearchMock()).
+		WithAccount(authSvc, newStorefrontAccountOrderRepoStub(), &storefrontAccountDeleterStub{}).
+		WithAccountSecurity("test-secret", 10*time.Minute).
+		WithAccountSecurityEmailLinks("https://shop.test", 45*time.Minute)
+	router := newStorefrontRouter(h)
+	csrfCookie := storefrontAccountCSRFCookie(t, router, "/account/register")
+
+	form := url.Values{
+		"csrf_token":  {csrfCookie.Value},
+		"redirect_to": {"/account/orders"},
+		"first_name":  {"Ada"},
+		"last_name":   {"Lovelace"},
+		"email":       {"ada@example.com"},
+		"password":    {"password123"},
+	}
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("POST", "/account/register", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.AddCookie(csrfCookie)
+	router.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusSeeOther {
+		t.Fatalf("status = %d, want %d; body: %s", rec.Code, http.StatusSeeOther, rec.Body.String())
+	}
+	if rec.Header().Get("Location") != "/account/verify-email?redirect_to=%2Faccount%2Forders&sent=1" {
+		t.Fatalf("location = %q", rec.Header().Get("Location"))
+	}
+	if verifyURL == "" {
+		t.Fatal("expected email verification event to publish a verify URL")
+	}
+	parsed, err := url.Parse(verifyURL)
+	if err != nil {
+		t.Fatalf("Parse verify URL: %v", err)
+	}
+	if parsed.Path != "/account/verify-email" {
+		t.Fatalf("verify path = %q, want %q", parsed.Path, "/account/verify-email")
+	}
+	if parsed.Query().Get("email_token") == "" {
+		t.Fatal("expected email_token query parameter")
+	}
+}
+
+func TestStorefrontHandler_AccountVerifyEmail_MarksCustomerVerified(t *testing.T) {
+	engine := createTestTheme(t)
+	pdp := composition.NewPipeline[composition.ProductContext]()
+	plp := composition.NewPipeline[composition.ListingContext]()
+	bus := event.NewBus(logger.New("error"))
+	authSvc, repo := newStorefrontAuthServiceWithBus(t, bus)
+	var verifyURL string
+	bus.On(customer.EventEmailVerificationRequested, func(_ context.Context, evt event.Event) error {
+		data, ok := evt.Data.(customer.EmailVerificationRequestedData)
+		if !ok {
+			t.Fatalf("event data type = %T", evt.Data)
+		}
+		verifyURL = data.VerifyURL
+		return nil
+	})
+	h := shophttp.NewStorefrontHandler(engine, &mockStorefrontRepo{}, newStorefrontCategoryMock(), pdp, plp, newStorefrontSearchMock()).
+		WithAccount(authSvc, newStorefrontAccountOrderRepoStub(), &storefrontAccountDeleterStub{}).
+		WithAccountSecurity("test-secret", 10*time.Minute).
+		WithAccountSecurityEmailLinks("https://shop.test", 45*time.Minute)
+	router := newStorefrontRouter(h)
+	csrfCookie := storefrontAccountCSRFCookie(t, router, "/account/register")
+
+	form := url.Values{
+		"csrf_token":  {csrfCookie.Value},
+		"redirect_to": {"/account/orders"},
+		"first_name":  {"Ada"},
+		"last_name":   {"Lovelace"},
+		"email":       {"ada@example.com"},
+		"password":    {"password123"},
+	}
+	registerRec := httptest.NewRecorder()
+	registerReq := httptest.NewRequest("POST", "/account/register", strings.NewReader(form.Encode()))
+	registerReq.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	registerReq.AddCookie(csrfCookie)
+	router.ServeHTTP(registerRec, registerReq)
+
+	if verifyURL == "" {
+		t.Fatal("expected email verification event to publish a verify URL")
+	}
+	verifyRec := httptest.NewRecorder()
+	verifyReq := httptest.NewRequest("GET", verifyURL, nil)
+	router.ServeHTTP(verifyRec, verifyReq)
+
+	if verifyRec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d; body: %s", verifyRec.Code, http.StatusOK, verifyRec.Body.String())
+	}
+	registered := repo.byEmail["ada@example.com"]
+	if registered == nil || registered.EmailVerifiedAt == nil {
+		t.Fatal("expected registered customer email to be marked verified")
+	}
+	if !strings.Contains(verifyRec.Body.String(), "Your email address is verified.") {
+		t.Fatalf("expected verification success in body: %s", verifyRec.Body.String())
+	}
+}
+
+func TestStorefrontHandler_AccountVerifyEmail_DeletedCustomer_ShowsInvalidLink(t *testing.T) {
+	engine := createTestTheme(t)
+	pdp := composition.NewPipeline[composition.ProductContext]()
+	plp := composition.NewPipeline[composition.ListingContext]()
+	bus := event.NewBus(logger.New("error"))
+	authSvc, repo := newStorefrontAuthServiceWithBus(t, bus)
+	var verifyURL string
+	bus.On(customer.EventEmailVerificationRequested, func(_ context.Context, evt event.Event) error {
+		data, ok := evt.Data.(customer.EmailVerificationRequestedData)
+		if !ok {
+			t.Fatalf("event data type = %T", evt.Data)
+		}
+		verifyURL = data.VerifyURL
+		return nil
+	})
+	h := shophttp.NewStorefrontHandler(engine, &mockStorefrontRepo{}, newStorefrontCategoryMock(), pdp, plp, newStorefrontSearchMock()).
+		WithAccount(authSvc, newStorefrontAccountOrderRepoStub(), &storefrontAccountDeleterStub{}).
+		WithAccountSecurity("test-secret", 10*time.Minute).
+		WithAccountSecurityEmailLinks("https://shop.test", 45*time.Minute)
+	router := newStorefrontRouter(h)
+	csrfCookie := storefrontAccountCSRFCookie(t, router, "/account/register")
+
+	form := url.Values{
+		"csrf_token":  {csrfCookie.Value},
+		"redirect_to": {"/account/orders"},
+		"first_name":  {"Ada"},
+		"last_name":   {"Lovelace"},
+		"email":       {"ada@example.com"},
+		"password":    {"password123"},
+	}
+	registerRec := httptest.NewRecorder()
+	registerReq := httptest.NewRequest("POST", "/account/register", strings.NewReader(form.Encode()))
+	registerReq.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	registerReq.AddCookie(csrfCookie)
+	router.ServeHTTP(registerRec, registerReq)
+
+	registered := repo.byEmail["ada@example.com"]
+	if registered == nil {
+		t.Fatal("expected registered customer to exist")
+	}
+	delete(repo.customers, registered.ID)
+	delete(repo.byEmail, registered.Email)
+
+	verifyRec := httptest.NewRecorder()
+	verifyReq := httptest.NewRequest("GET", verifyURL, nil)
+	router.ServeHTTP(verifyRec, verifyReq)
+
+	if verifyRec.Code != http.StatusUnauthorized {
+		t.Fatalf("status = %d, want %d; body: %s", verifyRec.Code, http.StatusUnauthorized, verifyRec.Body.String())
+	}
+	if !strings.Contains(verifyRec.Body.String(), "This email verification link is invalid or has expired.") {
+		t.Fatalf("expected invalid link message in body: %s", verifyRec.Body.String())
+	}
+}
+
 func TestStorefrontHandler_AccountOrders_RendersCustomerOrders(t *testing.T) {
 	engine := createTestTheme(t)
 	pdp := composition.NewPipeline[composition.ProductContext]()

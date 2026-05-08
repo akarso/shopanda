@@ -3,6 +3,8 @@ package notification_test
 import (
 	"context"
 	"encoding/base64"
+	"net/url"
+	"regexp"
 	"strings"
 	"testing"
 
@@ -272,6 +274,137 @@ func TestHandlePasswordReset(t *testing.T) {
 	}
 	if body, _ := job.Payload["body"].(string); body == "" {
 		t.Error("payload.body is empty")
+	}
+}
+
+func TestHandleEmailVerification(t *testing.T) {
+	tmpl := mail.NewTemplates()
+	notification.RegisterTemplates(tmpl)
+
+	q := &mockQueue{}
+	custRepo := &mockCustomerRepo{
+		findByID: func(_ context.Context, id string) (*customer.Customer, error) {
+			if id == "cust-1" {
+				c, _ := customer.NewCustomer("cust-1", "alice@example.com")
+				c.FirstName = "Alice"
+				return &c, nil
+			}
+			return nil, nil
+		},
+	}
+	ordRepo := &mockOrderRepo{}
+
+	svc := newTestService(t, tmpl, custRepo, ordRepo, q)
+	evt := event.New(customer.EventEmailVerificationRequested, "auth.service", customer.EmailVerificationRequestedData{
+		CustomerID: "cust-1",
+		VerifyURL:  "https://shop.test/account/verify-email?email_token=abc",
+	})
+
+	if err := svc.HandleEmailVerification(context.Background(), evt); err != nil {
+		t.Fatalf("HandleEmailVerification: %v", err)
+	}
+	if len(q.enqueued) != 1 {
+		t.Fatalf("expected 1 enqueued job, got %d", len(q.enqueued))
+	}
+	job := q.enqueued[0]
+	if to, _ := job.Payload["to"].(string); to != "alice@example.com" {
+		t.Fatalf("payload.to = %q, want alice@example.com", to)
+	}
+	body, _ := job.Payload["body"].(string)
+	match := regexp.MustCompile(`href="([^"]+)"`).FindStringSubmatch(body)
+	if len(match) != 2 {
+		t.Fatalf("payload.body = %q, want linked verification URL", body)
+	}
+	verifyURL, err := url.Parse(match[1])
+	if err != nil {
+		t.Fatalf("Parse verify URL: %v", err)
+	}
+	if verifyURL.Scheme != "https" && verifyURL.Scheme != "http" {
+		t.Fatalf("verify URL scheme = %q, want http/https", verifyURL.Scheme)
+	}
+	if verifyURL.Host == "" {
+		t.Fatalf("verify URL host is empty: %q", verifyURL.String())
+	}
+	if verifyURL.Path != "/account/verify-email" {
+		t.Fatalf("verify URL path = %q, want /account/verify-email", verifyURL.Path)
+	}
+	if verifyURL.Query().Get("email_token") == "" {
+		t.Fatalf("verify URL missing email_token: %q", verifyURL.String())
+	}
+}
+
+func TestHandleEmailVerification_InvalidVerifyURL(t *testing.T) {
+	tmpl := mail.NewTemplates()
+	notification.RegisterTemplates(tmpl)
+
+	q := &mockQueue{}
+	custRepo := &mockCustomerRepo{
+		findByID: func(_ context.Context, id string) (*customer.Customer, error) {
+			if id == "cust-1" {
+				c, _ := customer.NewCustomer("cust-1", "alice@example.com")
+				c.FirstName = "Alice"
+				return &c, nil
+			}
+			return nil, nil
+		},
+	}
+	ordRepo := &mockOrderRepo{}
+
+	svc := newTestService(t, tmpl, custRepo, ordRepo, q)
+	evt := event.New(customer.EventEmailVerificationRequested, "auth.service", customer.EmailVerificationRequestedData{
+		CustomerID: "cust-1",
+		VerifyURL:  "   ",
+	})
+
+	err := svc.HandleEmailVerification(context.Background(), evt)
+	if err == nil {
+		t.Fatal("expected error for invalid verify URL")
+	}
+	if len(q.enqueued) != 0 {
+		t.Fatalf("expected 0 enqueued jobs, got %d", len(q.enqueued))
+	}
+}
+
+func TestHandleEmailVerification_CustomerNotFound(t *testing.T) {
+	tmpl := mail.NewTemplates()
+	notification.RegisterTemplates(tmpl)
+
+	q := &mockQueue{}
+	custRepo := &mockCustomerRepo{
+		findByID: func(_ context.Context, _ string) (*customer.Customer, error) {
+			return nil, nil
+		},
+	}
+	ordRepo := &mockOrderRepo{}
+
+	svc := newTestService(t, tmpl, custRepo, ordRepo, q)
+	evt := event.New(customer.EventEmailVerificationRequested, "auth.service", customer.EmailVerificationRequestedData{
+		CustomerID: "missing",
+		VerifyURL:  "https://shop.test/account/verify-email?email_token=abc",
+	})
+
+	err := svc.HandleEmailVerification(context.Background(), evt)
+	if err == nil {
+		t.Fatal("expected error for missing customer")
+	}
+	if len(q.enqueued) != 0 {
+		t.Fatalf("expected 0 enqueued jobs, got %d", len(q.enqueued))
+	}
+}
+
+func TestHandleEmailVerification_BadEventData(t *testing.T) {
+	tmpl := mail.NewTemplates()
+	notification.RegisterTemplates(tmpl)
+	q := &mockQueue{}
+	svc := newTestService(t, tmpl, &mockCustomerRepo{}, &mockOrderRepo{}, q)
+	evt := event.New(customer.EventEmailVerificationRequested, "auth.service", "not-a-struct")
+
+	err := svc.HandleEmailVerification(context.Background(), evt)
+	if err == nil {
+		t.Fatal("expected error for bad event data")
+	}
+	if len(q.enqueued) != 0 {
+		t.Fatalf("expected 0 enqueued jobs, got %d", len(q.enqueued))
 	}
 }
 

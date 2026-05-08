@@ -135,3 +135,22 @@ func TestStorefrontHandler_WithAccountSecurityEmailLinks_PanicsOnInvalidBaseURL(
 		WithAccountSecurity("test-secret", time.Minute).
 		WithAccountSecurityEmailLinks("/relative", 0)
 }
+
+func TestStorefrontAccountSecurityVerifier_VerifyEmailToken_AcceptsLegacyPurposeLessTokens(t *testing.T) {
+	verifier := newStorefrontAccountSecurityVerifier("test-secret", time.Minute)
+	token, err := verifier.emailToken("", "cust-1", "/account/orders", storefrontEmailVerificationDefaultRedirect, time.Now().UTC())
+	if err != nil {
+		t.Fatalf("emailToken: %v", err)
+	}
+
+	customerID, redirectTo, ok := verifier.verifyEmailToken(token, storefrontEmailTokenPurposeAccountEmail)
+	if !ok {
+		t.Fatal("expected legacy purpose-less token to verify")
+	}
+	if customerID != "cust-1" {
+		t.Fatalf("customerID = %q, want %q", customerID, "cust-1")
+	}
+	if redirectTo != "/account/orders" {
+		t.Fatalf("redirectTo = %q, want %q", redirectTo, "/account/orders")
+	}
+}

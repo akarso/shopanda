@@ -5,6 +5,7 @@ import (
 	"encoding/base64"
 	"fmt"
 	"net/url"
+	"strings"
 
 	"github.com/akarso/shopanda/internal/domain/customer"
 	"github.com/akarso/shopanda/internal/domain/invoice"
@@ -105,6 +106,13 @@ func RegisterTemplates(t *mail.Templates) {
 			"<p>Hi {{.Data.FirstName}},</p>"+
 			"<p><a href=\"{{.Data.ResetURL}}\">Reset Password</a></p>"+
 			"<p>This link expires in {{.Data.ExpiresIn}}.</p>")
+
+	t.Register("email_verification",
+		"Verify your email address",
+		"<h1>Verify Your Email</h1>"+
+			"<p>Hi {{.Data.FirstName}},</p>"+
+			"<p><a href=\"{{.Data.VerifyURL}}\">Verify your account email address</a></p>"+
+			"<p>This link is time-limited.</p>")
 
 	t.Register("security_verification",
 		"Verify your security access",
@@ -234,6 +242,49 @@ func (s *Service) HandlePasswordReset(ctx context.Context, evt event.Event) erro
 	}
 
 	return s.enqueueEmail(ctx, msg, "HandlePasswordReset", map[string]interface{}{
+		"customer_id": data.CustomerID,
+	})
+}
+
+// HandleEmailVerification is an event handler for
+// customer.email_verification.requested.
+func (s *Service) HandleEmailVerification(ctx context.Context, evt event.Event) error {
+	data, ok := evt.Data.(customer.EmailVerificationRequestedData)
+	if !ok {
+		return fmt.Errorf("notification: unexpected event data type %T", evt.Data)
+	}
+
+	cust, err := s.customers.FindByID(ctx, data.CustomerID)
+	if err != nil {
+		s.log.Error("HandleEmailVerification.customer_lookup_failed", err, map[string]interface{}{"customer_id": data.CustomerID})
+		return fmt.Errorf("notification: find customer %s: %w", data.CustomerID, err)
+	}
+	if cust == nil {
+		err := fmt.Errorf("notification: customer %s not found", data.CustomerID)
+		s.log.Error("HandleEmailVerification.customer_not_found", err, map[string]interface{}{"customer_id": data.CustomerID})
+		return err
+	}
+	verifyURL := strings.TrimSpace(data.VerifyURL)
+	parsedVerifyURL, err := url.Parse(verifyURL)
+	if verifyURL == "" || err != nil || !parsedVerifyURL.IsAbs() || strings.TrimSpace(parsedVerifyURL.Host) == "" {
+		return fmt.Errorf("notification: invalid verify url for customer %s", data.CustomerID)
+	}
+
+	ed := mail.EmailData{
+		StoreURL: s.storeURL,
+		Data: map[string]interface{}{
+			"FirstName": cust.FirstName,
+			"VerifyURL": verifyURL,
+		},
+	}
+
+	msg, err := s.templates.Render("email_verification", cust.Email, ed)
+	if err != nil {
+		s.log.Error("HandleEmailVerification.template_render_failed", err, map[string]interface{}{"customer_id": data.CustomerID})
+		return fmt.Errorf("notification: render template: %w", err)
+	}
+
+	return s.enqueueEmail(ctx, msg, "HandleEmailVerification", map[string]interface{}{
 		"customer_id": data.CustomerID,
 	})
 }

@@ -50,6 +50,7 @@ type Customer struct {
 	LastName        string
 	PasswordHash    string
 	TokenGeneration int64
+	EmailVerifiedAt *time.Time
 	Role            Role
 	Status          Status
 	CreatedAt       time.Time
@@ -112,4 +113,14 @@ func (c *Customer) SetPassword(hash string) error {
 	c.PasswordHash = hash
 	c.UpdatedAt = time.Now().UTC()
 	return nil
+}
+
+// MarkEmailVerified records the first successful email verification.
+func (c *Customer) MarkEmailVerified() {
+	if c.EmailVerifiedAt != nil {
+		return
+	}
+	now := time.Now().UTC()
+	c.EmailVerifiedAt = &now
+	c.UpdatedAt = now
 }

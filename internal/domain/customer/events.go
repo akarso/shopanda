@@ -4,6 +4,7 @@ package customer
 const (
 	EventCustomerCreated               = "customer.created"
 	EventCustomerDeleted               = "customer.deleted"
+	EventEmailVerificationRequested    = "customer.email_verification.requested"
 	EventPasswordResetRequested        = "customer.password_reset.requested"
 	EventSecurityVerificationRequested = "customer.security_verification.requested"
 )
@@ -22,6 +23,13 @@ type CustomerDeletedData struct {
 type PasswordResetRequestedData struct {
 	CustomerID string `json:"customer_id"`
 	Token      string `json:"token"`
+}
+
+// EmailVerificationRequestedData is the payload for
+// customer.email_verification.requested.
+type EmailVerificationRequestedData struct {
+	CustomerID string `json:"customer_id"`
+	VerifyURL  string `json:"verify_url"`
 }
 
 // SecurityVerificationRequestedData is the payload for

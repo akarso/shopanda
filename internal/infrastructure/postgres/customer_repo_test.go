@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"testing"
+	"time"
 
 	"github.com/akarso/shopanda/internal/domain/customer"
 	"github.com/akarso/shopanda/internal/infrastructure/postgres"
@@ -194,6 +195,39 @@ func TestCustomerRepo_Update(t *testing.T) {
 	}
 	if got.LastName != "Name" {
 		t.Errorf("LastName = %q, want Name", got.LastName)
+	}
+}
+
+func TestCustomerRepo_Update_PersistsEmailVerifiedAt(t *testing.T) {
+	db := testDB(t)
+	ensureMigrations(t, db)
+	t.Cleanup(func() { db.Exec("DELETE FROM customers") })
+
+	repo, err := postgres.NewCustomerRepo(db)
+	if err != nil {
+		t.Fatalf("NewCustomerRepo: %v", err)
+	}
+	ctx := context.Background()
+
+	c := mustNewCustomer(t, "verified@example.com")
+	if err := repo.Create(ctx, &c); err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	verifiedAt := time.Now().UTC().Round(time.Microsecond)
+	c.EmailVerifiedAt = &verifiedAt
+	if err := repo.Update(ctx, &c); err != nil {
+		t.Fatalf("Update: %v", err)
+	}
+
+	got, err := repo.FindByID(ctx, c.ID)
+	if err != nil {
+		t.Fatalf("FindByID: %v", err)
+	}
+	if got.EmailVerifiedAt == nil {
+		t.Fatal("expected EmailVerifiedAt to be persisted")
+	}
+	if !got.EmailVerifiedAt.Equal(verifiedAt) {
+		t.Fatalf("EmailVerifiedAt = %v, want %v", *got.EmailVerifiedAt, verifiedAt)
 	}
 }
 
