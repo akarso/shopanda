@@ -46,11 +46,14 @@ func TestNewOrder_EmptyID(t *testing.T) {
 	}
 }
 
-func TestNewOrder_EmptyCustomerID(t *testing.T) {
+func TestNewOrder_EmptyCustomerID_AllowsGuestOrder(t *testing.T) {
 	item := validItem(t)
-	_, err := order.NewOrder(id.New(), "", "EUR", []order.Item{item})
-	if err == nil {
-		t.Fatal("expected error for empty customer id")
+	o, err := order.NewOrder(id.New(), "", "EUR", []order.Item{item})
+	if err != nil {
+		t.Fatalf("NewOrder: %v", err)
+	}
+	if o.CustomerID != "" {
+		t.Fatalf("CustomerID = %q, want empty guest customer id", o.CustomerID)
 	}
 }
 

@@ -116,7 +116,6 @@ func (h *StorefrontHandler) CheckoutAddress() http.HandlerFunc {
 			return
 		}
 		customerID := storefrontCustomerID(r)
-		page.RequiresAuth = customerID == ""
 		if customerID != "" && h.checkoutVerifiedEmailGateEnabled() {
 			if !h.requireStorefrontVerifiedEmail(w, r, customerID, h.checkoutVerificationRedirectTarget(r, customerID)) {
 				return
@@ -250,14 +249,6 @@ func (h *StorefrontHandler) CheckoutConfirm() http.HandlerFunc {
 			h.renderPageStatus(w, "checkout_payment", page, http.StatusUnprocessableEntity)
 			return
 		}
-		if page.RequiresAuth {
-			page.Progress = storefrontCheckoutProgress("address")
-			page.PrimaryAction = "/checkout/shipping"
-			page.SecondaryURL = "/cart"
-			page.SecondaryLabel = "Back to cart"
-			h.renderPageStatus(w, "checkout_address", page, http.StatusUnauthorized)
-			return
-		}
 		if h.checkout == nil {
 			http.Error(w, "Not Found", http.StatusNotFound)
 			return
@@ -309,7 +300,6 @@ func (h *StorefrontHandler) checkoutAddressPageFromPost(w http.ResponseWriter, r
 		return nil, StorefrontCheckoutPageData{}, false
 	}
 	customerID := storefrontCustomerID(r)
-	page.RequiresAuth = customerID == ""
 	if customerID != "" && h.checkoutVerifiedEmailGateEnabled() {
 		if !h.requireStorefrontVerifiedEmail(w, r, customerID, h.checkoutVerificationRedirectTarget(r, customerID)) {
 			return nil, StorefrontCheckoutPageData{}, false

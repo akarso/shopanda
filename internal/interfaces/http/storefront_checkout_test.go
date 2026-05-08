@@ -197,7 +197,7 @@ func newStorefrontCheckoutService(carts *storefrontCartRepoStub, prices *storefr
 	return checkoutApp.NewService(carts, workflow, log), shippingProvider, paymentProvider, orders
 }
 
-func TestStorefrontHandler_CheckoutAddress_GuestShowsSignInMessage(t *testing.T) {
+func TestStorefrontHandler_CheckoutAddress_GuestCanAccessAddressForm(t *testing.T) {
 	engine := createTestTheme(t)
 	pdp := composition.NewPipeline[composition.ProductContext]()
 	plp := composition.NewPipeline[composition.ListingContext]()
@@ -224,8 +224,126 @@ func TestStorefrontHandler_CheckoutAddress_GuestShowsSignInMessage(t *testing.T)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d, want %d; body: %s", rec.Code, http.StatusOK, rec.Body.String())
 	}
-	if !strings.Contains(rec.Body.String(), "Sign in to continue checkout") {
-		t.Fatalf("body missing sign-in message: %s", rec.Body.String())
+	if !strings.Contains(rec.Body.String(), "Continue to Shipping") {
+		t.Fatalf("body missing continue action for guest checkout: %s", rec.Body.String())
+	}
+}
+
+func TestStorefrontHandler_CheckoutFlow_Manual_GuestOK(t *testing.T) {
+	products := &mockStorefrontRepo{findByIDFn: func(_ context.Context, id string) (*catalog.Product, error) {
+		return &catalog.Product{ID: id, Name: "Widget", Slug: "widget"}, nil
+	}}
+	variants := &mockStorefrontVariantRepo{findByIDFn: func(_ context.Context, id string) (*catalog.Variant, error) {
+		return &catalog.Variant{ID: id, ProductID: "prod-1", SKU: "WID-1", Name: "Default"}, nil
+	}}
+	engine := createTestTheme(t)
+	pdp := composition.NewPipeline[composition.ProductContext]()
+	plp := composition.NewPipeline[composition.ListingContext]()
+	cartSvc, carts, prices := newStorefrontCartService()
+	prices.set("var-1", "EUR", 1500)
+	checkoutSvc, shippingProvider, paymentProvider, orders := newStorefrontCheckoutService(carts, prices, variants)
+	h := shophttp.NewStorefrontHandler(engine, products, newStorefrontCategoryMock(), pdp, plp, newStorefrontSearchMock()).WithCart(variants, cartSvc).WithCheckout([]shipping.Provider{shippingProvider}, paymentProvider, checkoutSvc)
+	router := newStorefrontRouter(h)
+
+	currentCart, err := cartSvc.CreateCart(context.Background(), "", "EUR")
+	if err != nil {
+		t.Fatalf("CreateCart: %v", err)
+	}
+	if _, err := cartSvc.AddItem(context.Background(), currentCart.ID, "", "var-1", 2); err != nil {
+		t.Fatalf("AddItem: %v", err)
+	}
+
+	addressRec := httptest.NewRecorder()
+	addressReq := httptest.NewRequest("GET", "/checkout/address", nil)
+	addressReq.AddCookie(&http.Cookie{Name: "shopanda_storefront_cart", Value: currentCart.ID})
+	router.ServeHTTP(addressRec, addressReq)
+	if addressRec.Code != http.StatusOK {
+		t.Fatalf("address status = %d, want %d; body: %s", addressRec.Code, http.StatusOK, addressRec.Body.String())
+	}
+	if !strings.Contains(addressRec.Body.String(), "Continue to Shipping") {
+		t.Fatalf("address page missing continue action: %s", addressRec.Body.String())
+	}
+	var csrfCookie *http.Cookie
+	for _, cookie := range addressRec.Result().Cookies() {
+		if cookie.Name == "shopanda_csrf" {
+			csrfCookie = cookie
+			break
+		}
+	}
+	if csrfCookie == nil {
+		t.Fatal("expected checkout CSRF cookie")
+	}
+
+	addressForm := url.Values{
+		"csrf_token": {csrfCookie.Value},
+		"first_name": {"Ada"},
+		"last_name":  {"Lovelace"},
+		"street":     {"1 Logic Lane"},
+		"city":       {"Berlin"},
+		"postcode":   {"10115"},
+		"country":    {"DE"},
+	}
+	shippingRec := httptest.NewRecorder()
+	shippingReq := httptest.NewRequest("POST", "/checkout/shipping", strings.NewReader(addressForm.Encode()))
+	shippingReq.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	shippingReq.AddCookie(csrfCookie)
+	shippingReq.AddCookie(&http.Cookie{Name: "shopanda_storefront_cart", Value: currentCart.ID})
+	router.ServeHTTP(shippingRec, shippingReq)
+	if shippingRec.Code != http.StatusOK {
+		t.Fatalf("shipping status = %d, want %d; body: %s", shippingRec.Code, http.StatusOK, shippingRec.Body.String())
+	}
+	if !strings.Contains(shippingRec.Body.String(), "Flat Rate Shipping") {
+		t.Fatalf("shipping page missing flat rate option: %s", shippingRec.Body.String())
+	}
+
+	paymentForm := url.Values{
+		"csrf_token":      {csrfCookie.Value},
+		"first_name":      {"Ada"},
+		"last_name":       {"Lovelace"},
+		"street":          {"1 Logic Lane"},
+		"city":            {"Berlin"},
+		"postcode":        {"10115"},
+		"country":         {"DE"},
+		"shipping_method": {"flat_rate"},
+	}
+	paymentRec := httptest.NewRecorder()
+	paymentReq := httptest.NewRequest("POST", "/checkout/payment", strings.NewReader(paymentForm.Encode()))
+	paymentReq.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	paymentReq.AddCookie(csrfCookie)
+	paymentReq.AddCookie(&http.Cookie{Name: "shopanda_storefront_cart", Value: currentCart.ID})
+	router.ServeHTTP(paymentRec, paymentReq)
+	if paymentRec.Code != http.StatusOK {
+		t.Fatalf("payment status = %d, want %d; body: %s", paymentRec.Code, http.StatusOK, paymentRec.Body.String())
+	}
+	if !strings.Contains(paymentRec.Body.String(), "Manual payment") {
+		t.Fatalf("payment page missing manual payment label: %s", paymentRec.Body.String())
+	}
+
+	confirmForm := url.Values{
+		"csrf_token":      {csrfCookie.Value},
+		"first_name":      {"Ada"},
+		"last_name":       {"Lovelace"},
+		"street":          {"1 Logic Lane"},
+		"city":            {"Berlin"},
+		"postcode":        {"10115"},
+		"country":         {"DE"},
+		"shipping_method": {"flat_rate"},
+		"payment_method":  {"manual"},
+	}
+	confirmRec := httptest.NewRecorder()
+	confirmReq := httptest.NewRequest("POST", "/checkout/confirm", strings.NewReader(confirmForm.Encode()))
+	confirmReq.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	confirmReq.AddCookie(csrfCookie)
+	confirmReq.AddCookie(&http.Cookie{Name: "shopanda_storefront_cart", Value: currentCart.ID})
+	router.ServeHTTP(confirmRec, confirmReq)
+	if confirmRec.Code != http.StatusOK {
+		t.Fatalf("confirm status = %d, want %d; body: %s", confirmRec.Code, http.StatusOK, confirmRec.Body.String())
+	}
+	if orders.saved == nil {
+		t.Fatal("expected checkout to save an order")
+	}
+	if orders.saved.CustomerID != "" {
+		t.Fatalf("saved order customer id = %q, want empty guest id", orders.saved.CustomerID)
 	}
 }
 
