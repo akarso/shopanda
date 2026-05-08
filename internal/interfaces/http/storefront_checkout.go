@@ -106,7 +106,7 @@ func (h *StorefrontHandler) CheckoutAddress() http.HandlerFunc {
 		}
 		customerID := storefrontCustomerID(r)
 		page.RequiresAuth = customerID == ""
-		if customerID != "" {
+		if customerID != "" && h.checkoutVerifiedEmailGateEnabled() {
 			if !h.requireStorefrontVerifiedEmail(w, r, customerID, "/checkout/address") {
 				return
 			}
@@ -294,7 +294,7 @@ func (h *StorefrontHandler) checkoutAddressPageFromPost(w http.ResponseWriter, r
 	}
 	customerID := storefrontCustomerID(r)
 	page.RequiresAuth = customerID == ""
-	if customerID != "" {
+	if customerID != "" && h.checkoutVerifiedEmailGateEnabled() {
 		if !h.requireStorefrontVerifiedEmail(w, r, customerID, "/checkout/address") {
 			return nil, StorefrontCheckoutPageData{}, false
 		}
@@ -310,6 +310,10 @@ func (h *StorefrontHandler) checkoutAddressPageFromPost(w http.ResponseWriter, r
 		return nil, StorefrontCheckoutPageData{}, false
 	}
 	return currentCart, page, true
+}
+
+func (h *StorefrontHandler) checkoutVerifiedEmailGateEnabled() bool {
+	return h.auth != nil && h.security != nil && strings.TrimSpace(h.security.storeBaseURL) != ""
 }
 
 func (h *StorefrontHandler) buildCheckoutPageData(r *http.Request, currentCart *cart.Cart, step string) (StorefrontCheckoutPageData, error) {
