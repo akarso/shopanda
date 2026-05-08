@@ -2,6 +2,8 @@ package http_test
 
 import (
 	"context"
+	"encoding/base64"
+	"encoding/json"
 	"errors"
 	"io"
 	"net/http"
@@ -145,6 +147,34 @@ func storefrontCheckoutCSRFCookie(t *testing.T, handler http.Handler, customerID
 	}
 	t.Fatalf("missing checkout CSRF cookie; body: %s", rec.Body.String())
 	return nil
+}
+
+func storefrontLatestCheckoutEmailRedirect(t *testing.T, published []customer.EmailVerificationRequestedData) string {
+	t.Helper()
+	if len(published) == 0 {
+		t.Fatal("expected email verification event to be published")
+	}
+	verifyURL, err := url.Parse(published[len(published)-1].VerifyURL)
+	if err != nil {
+		t.Fatalf("Parse verify URL: %v", err)
+	}
+	token := strings.TrimSpace(verifyURL.Query().Get("email_token"))
+	if token == "" {
+		t.Fatal("expected email_token in verification URL")
+	}
+	parts := strings.SplitN(token, ".", 2)
+	if len(parts) != 2 {
+		t.Fatalf("email token = %q, want payload.signature", token)
+	}
+	rawClaims, err := base64.RawURLEncoding.DecodeString(parts[0])
+	if err != nil {
+		t.Fatalf("Decode token payload: %v", err)
+	}
+	var claims storefrontAccountEmailTokenClaims
+	if err := json.Unmarshal(rawClaims, &claims); err != nil {
+		t.Fatalf("Unmarshal token claims: %v", err)
+	}
+	return claims.RedirectTo
 }
 
 func newStorefrontCheckoutService(carts *storefrontCartRepoStub, prices *storefrontPriceRepoStub, variants catalog.VariantRepository) (*checkoutApp.Service, shipping.Provider, payment.Provider, *storefrontCheckoutOrderRepoStub) {
@@ -474,13 +504,127 @@ func TestStorefrontHandler_CheckoutConfirm_RedirectsToEmailVerification_WhenEmai
 	if rec.Code != http.StatusSeeOther {
 		t.Fatalf("status = %d, want %d; body: %s", rec.Code, http.StatusSeeOther, rec.Body.String())
 	}
-	if rec.Header().Get("Location") != "/account/verify-email?redirect_to=%2Fcheckout%2Faddress&sent=1" {
-		t.Fatalf("location = %q, want %q", rec.Header().Get("Location"), "/account/verify-email?redirect_to=%2Fcheckout%2Faddress&sent=1")
+	location, err := url.Parse(rec.Header().Get("Location"))
+	if err != nil {
+		t.Fatalf("Parse location: %v", err)
+	}
+	if location.Path != "/account/verify-email" {
+		t.Fatalf("location path = %q, want %q", location.Path, "/account/verify-email")
+	}
+	if location.Query().Get("sent") != "1" {
+		t.Fatalf("location sent = %q, want %q", location.Query().Get("sent"), "1")
+	}
+	redirectTo := location.Query().Get("redirect_to")
+	if !strings.HasPrefix(redirectTo, "/checkout/address?checkout_resume=") {
+		t.Fatalf("location redirect_to = %q, want checkout resume redirect", redirectTo)
 	}
 	if orders.saved != nil {
 		t.Fatalf("expected checkout to stop before order save, got order %q", orders.saved.ID)
 	}
-	assertStorefrontEmailVerificationEvent(t, published, "/checkout/address")
+	if redirect := storefrontLatestCheckoutEmailRedirect(t, published); !strings.HasPrefix(redirect, "/checkout/address?checkout_resume=") {
+		t.Fatalf("email token redirect_to = %q, want checkout resume redirect", redirect)
+	}
+}
+
+func TestStorefrontHandler_CheckoutConfirm_ResumesPaymentAfterEmailVerification(t *testing.T) {
+	products := &mockStorefrontRepo{findByIDFn: func(_ context.Context, id string) (*catalog.Product, error) {
+		return &catalog.Product{ID: id, Name: "Widget", Slug: "widget"}, nil
+	}}
+	variants := &mockStorefrontVariantRepo{findByIDFn: func(_ context.Context, id string) (*catalog.Variant, error) {
+		return &catalog.Variant{ID: id, ProductID: "prod-1", SKU: "WID-1", Name: "Default"}, nil
+	}}
+	engine := createTestTheme(t)
+	pdp := composition.NewPipeline[composition.ProductContext]()
+	plp := composition.NewPipeline[composition.ListingContext]()
+	cartSvc, carts, prices := newStorefrontCartService()
+	prices.set("var-1", "EUR", 1500)
+	checkoutSvc, shippingProvider, paymentProvider, orders := newStorefrontCheckoutService(carts, prices, variants)
+	bus := event.NewBus(logger.New("error"))
+	var published []customer.EmailVerificationRequestedData
+	bus.On(customer.EventEmailVerificationRequested, func(_ context.Context, evt event.Event) error {
+		data, ok := evt.Data.(customer.EmailVerificationRequestedData)
+		if !ok {
+			t.Fatalf("event data type = %T", evt.Data)
+		}
+		published = append(published, data)
+		return nil
+	})
+	authSvc, _ := newStorefrontAuthServiceWithBus(t, bus)
+	out, err := authSvc.Register(context.Background(), appAuth.RegisterInput{Email: "ada@example.com", Password: "password123", FirstName: "Ada", LastName: "Lovelace"})
+	if err != nil {
+		t.Fatalf("Register: %v", err)
+	}
+	h := shophttp.NewStorefrontHandler(engine, products, newStorefrontCategoryMock(), pdp, plp, newStorefrontSearchMock()).WithCart(variants, cartSvc).WithCheckout([]shipping.Provider{shippingProvider}, paymentProvider, checkoutSvc).WithAccount(authSvc, newStorefrontAccountOrderRepoStub(), &storefrontAccountDeleterStub{}).WithAccountSecurity("test-secret", time.Minute).WithAccountSecurityEmailLinks("https://shop.test", 45*time.Minute)
+	router := newStorefrontRouter(h)
+
+	currentCart, err := cartSvc.CreateCart(context.Background(), out.CustomerID, "EUR")
+	if err != nil {
+		t.Fatalf("CreateCart: %v", err)
+	}
+	if _, err := cartSvc.AddItem(context.Background(), currentCart.ID, out.CustomerID, "var-1", 1); err != nil {
+		t.Fatalf("AddItem: %v", err)
+	}
+
+	confirmForm := url.Values{
+		"csrf_token":      {storefrontCheckoutCSRFCookie(t, router, out.CustomerID).Value},
+		"first_name":      {"Ada"},
+		"last_name":       {"Lovelace"},
+		"street":          {"1 Logic Lane"},
+		"city":            {"Berlin"},
+		"postcode":        {"10115"},
+		"country":         {"DE"},
+		"shipping_method": {"flat_rate"},
+		"payment_method":  {"manual"},
+	}
+	published = nil
+	confirmRec := httptest.NewRecorder()
+	confirmReq := storefrontCustomerRequest(httptest.NewRequest("POST", "/checkout/confirm", strings.NewReader(confirmForm.Encode())), out.CustomerID)
+	confirmReq.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	confirmReq.AddCookie(&http.Cookie{Name: "shopanda_csrf", Value: confirmForm.Get("csrf_token")})
+	router.ServeHTTP(confirmRec, confirmReq)
+
+	if confirmRec.Code != http.StatusSeeOther {
+		t.Fatalf("confirm status = %d, want %d; body: %s", confirmRec.Code, http.StatusSeeOther, confirmRec.Body.String())
+	}
+	resumeRedirect := storefrontLatestCheckoutEmailRedirect(t, published)
+	verifyURL, err := url.Parse(published[len(published)-1].VerifyURL)
+	if err != nil {
+		t.Fatalf("Parse verify URL: %v", err)
+	}
+	verifyRec := httptest.NewRecorder()
+	verifyReq := httptest.NewRequest("GET", verifyURL.RequestURI(), nil)
+	router.ServeHTTP(verifyRec, verifyReq)
+
+	if verifyRec.Code != http.StatusOK {
+		t.Fatalf("verify status = %d, want %d; body: %s", verifyRec.Code, http.StatusOK, verifyRec.Body.String())
+	}
+	if !strings.Contains(verifyRec.Body.String(), resumeRedirect) {
+		t.Fatalf("verify body missing continue redirect %q: %s", resumeRedirect, verifyRec.Body.String())
+	}
+
+	resumeRec := httptest.NewRecorder()
+	resumeReq := storefrontCustomerRequest(httptest.NewRequest("GET", resumeRedirect, nil), out.CustomerID)
+	router.ServeHTTP(resumeRec, resumeReq)
+
+	if resumeRec.Code != http.StatusOK {
+		t.Fatalf("resume status = %d, want %d; body: %s", resumeRec.Code, http.StatusOK, resumeRec.Body.String())
+	}
+	if orders.saved != nil {
+		t.Fatalf("expected checkout resume to stop before saving order, got %q", orders.saved.ID)
+	}
+	body := resumeRec.Body.String()
+	if !strings.Contains(body, "Manual payment") {
+		t.Fatalf("resume body missing payment label: %s", body)
+	}
+	if !strings.Contains(body, "Place Order") {
+		t.Fatalf("resume body missing place order action: %s", body)
+	}
+	if !strings.Contains(body, `name="first_name" value="Ada"`) {
+		t.Fatalf("resume body missing preserved first name: %s", body)
+	}
+	if !strings.Contains(body, `name="shipping_method" value="flat_rate"`) {
+		t.Fatalf("resume body missing preserved shipping method: %s", body)
+	}
 }
 
 func TestStorefrontHandler_CheckoutConfirm_SanitizesServerErrors(t *testing.T) {
