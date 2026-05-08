@@ -282,7 +282,7 @@ func (v *storefrontAccountSecurityVerifier) verifyCheckoutResumeToken(token, cus
 		ShippingMethod: strings.TrimSpace(claims.ShippingMethod),
 		PaymentMethod:  strings.TrimSpace(claims.PaymentMethod),
 	}, true
-	}
+}
 
 func storefrontAbsoluteURL(storeBaseURL, path string, query url.Values) (string, error) {
 	baseURL, err := normalizeStorefrontBaseURL(storeBaseURL)
