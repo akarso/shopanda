@@ -199,6 +199,58 @@ func TestStorefrontHandler_CheckoutAddress_GuestShowsSignInMessage(t *testing.T)
 	}
 }
 
+func TestStorefrontHandler_CheckoutAddress_RedirectsToEmailVerification_WhenEmailUnverified(t *testing.T) {
+	products := &mockStorefrontRepo{findByIDFn: func(_ context.Context, id string) (*catalog.Product, error) {
+		return &catalog.Product{ID: id, Name: "Widget", Slug: "widget"}, nil
+	}}
+	variants := &mockStorefrontVariantRepo{findByIDFn: func(_ context.Context, id string) (*catalog.Variant, error) {
+		return &catalog.Variant{ID: id, ProductID: "prod-1", SKU: "WID-1", Name: "Default"}, nil
+	}}
+	engine := createTestTheme(t)
+	pdp := composition.NewPipeline[composition.ProductContext]()
+	plp := composition.NewPipeline[composition.ListingContext]()
+	cartSvc, carts, prices := newStorefrontCartService()
+	prices.set("var-1", "EUR", 1500)
+	checkoutSvc, shippingProvider, paymentProvider, _ := newStorefrontCheckoutService(carts, prices, variants)
+	bus := event.NewBus(logger.New("error"))
+	var published []customer.EmailVerificationRequestedData
+	bus.On(customer.EventEmailVerificationRequested, func(_ context.Context, evt event.Event) error {
+		data, ok := evt.Data.(customer.EmailVerificationRequestedData)
+		if !ok {
+			t.Fatalf("event data type = %T", evt.Data)
+		}
+		published = append(published, data)
+		return nil
+	})
+	authSvc, _ := newStorefrontAuthServiceWithBus(t, bus)
+	out, err := authSvc.Register(context.Background(), appAuth.RegisterInput{Email: "ada@example.com", Password: "password123", FirstName: "Ada", LastName: "Lovelace"})
+	if err != nil {
+		t.Fatalf("Register: %v", err)
+	}
+	h := shophttp.NewStorefrontHandler(engine, products, newStorefrontCategoryMock(), pdp, plp, newStorefrontSearchMock()).WithCart(variants, cartSvc).WithCheckout([]shipping.Provider{shippingProvider}, paymentProvider, checkoutSvc).WithAccount(authSvc, newStorefrontAccountOrderRepoStub(), &storefrontAccountDeleterStub{}).WithAccountSecurity("test-secret", time.Minute).WithAccountSecurityEmailLinks("https://shop.test", 45*time.Minute)
+	router := newStorefrontRouter(h)
+
+	currentCart, err := cartSvc.CreateCart(context.Background(), out.CustomerID, "EUR")
+	if err != nil {
+		t.Fatalf("CreateCart: %v", err)
+	}
+	if _, err := cartSvc.AddItem(context.Background(), currentCart.ID, out.CustomerID, "var-1", 1); err != nil {
+		t.Fatalf("AddItem: %v", err)
+	}
+
+	rec := httptest.NewRecorder()
+	req := storefrontCustomerRequest(httptest.NewRequest("GET", "/checkout/address", nil), out.CustomerID)
+	router.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusSeeOther {
+		t.Fatalf("status = %d, want %d; body: %s", rec.Code, http.StatusSeeOther, rec.Body.String())
+	}
+	if rec.Header().Get("Location") != "/account/verify-email?redirect_to=%2Fcheckout%2Faddress&sent=1" {
+		t.Fatalf("location = %q, want %q", rec.Header().Get("Location"), "/account/verify-email?redirect_to=%2Fcheckout%2Faddress&sent=1")
+	}
+	assertStorefrontEmailVerificationEvent(t, published, "/checkout/address")
+}
+
 func TestStorefrontHandler_CheckoutFlow_Manual_OK(t *testing.T) {
 	products := &mockStorefrontRepo{findByIDFn: func(_ context.Context, id string) (*catalog.Product, error) {
 		return &catalog.Product{ID: id, Name: "Widget", Slug: "widget"}, nil

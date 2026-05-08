@@ -104,7 +104,13 @@ func (h *StorefrontHandler) CheckoutAddress() http.HandlerFunc {
 			http.Error(w, "Internal Server Error", http.StatusInternalServerError)
 			return
 		}
-		page.RequiresAuth = storefrontCustomerID(r) == ""
+		customerID := storefrontCustomerID(r)
+		page.RequiresAuth = customerID == ""
+		if customerID != "" {
+			if !h.requireStorefrontVerifiedEmail(w, r, customerID, "/checkout/address") {
+				return
+			}
+		}
 		page.PrimaryAction = "/checkout/shipping"
 		page.SecondaryURL = "/cart"
 		page.SecondaryLabel = "Back to cart"
@@ -236,16 +242,11 @@ func (h *StorefrontHandler) CheckoutConfirm() http.HandlerFunc {
 			h.renderPageStatus(w, "checkout_address", page, http.StatusUnauthorized)
 			return
 		}
-		customerID := storefrontCustomerID(r)
-		if customerID != "" {
-			if !h.requireStorefrontVerifiedEmail(w, r, customerID, "/checkout/address") {
-				return
-			}
-		}
 		if h.checkout == nil {
 			http.Error(w, "Not Found", http.StatusNotFound)
 			return
 		}
+		customerID := storefrontCustomerID(r)
 		cctx, err := h.checkout.StartCheckout(r.Context(), currentCart.ID, customerID, checkoutApp.Input{
 			Address: checkoutApp.Address{
 				FirstName: page.Address.FirstName,
@@ -291,7 +292,13 @@ func (h *StorefrontHandler) checkoutAddressPageFromPost(w http.ResponseWriter, r
 		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
 		return nil, StorefrontCheckoutPageData{}, false
 	}
-	page.RequiresAuth = storefrontCustomerID(r) == ""
+	customerID := storefrontCustomerID(r)
+	page.RequiresAuth = customerID == ""
+	if customerID != "" {
+		if !h.requireStorefrontVerifiedEmail(w, r, customerID, "/checkout/address") {
+			return nil, StorefrontCheckoutPageData{}, false
+		}
+	}
 	page.Address = storefrontCheckoutAddressFromRequest(r)
 	page.Countries = storefrontCheckoutCountryOptions(page.Address.Country)
 	if err := page.Address.Validate(); err != nil {
