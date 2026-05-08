@@ -154,3 +154,93 @@ func TestStorefrontAccountSecurityVerifier_VerifyEmailToken_AcceptsLegacyPurpose
 		t.Fatalf("redirectTo = %q, want %q", redirectTo, "/account/orders")
 	}
 }
+
+func TestStorefrontAccountSecurityVerifier_VerifyCheckoutResumeToken_RejectsTamperedCiphertext(t *testing.T) {
+	verifier := newStorefrontAccountSecurityVerifier("test-secret", time.Minute)
+	state := storefrontCheckoutResumeState{
+		Step:           "payment",
+		ShippingMethod: "flat_rate",
+		PaymentMethod:  "manual",
+		Address: StorefrontCheckoutAddress{
+			FirstName: "Ada", LastName: "Lovelace",
+			Street: "1 Logic Lane", City: "Berlin", Postcode: "10115", Country: "DE",
+		},
+	}
+	token, err := verifier.checkoutResumeToken("cust-1", state, time.Now().UTC())
+	if err != nil {
+		t.Fatalf("checkoutResumeToken: %v", err)
+	}
+	// flip the last byte of the base64 ciphertext to invalidate the GCM tag
+	raw := []byte(token)
+	raw[len(raw)-1] ^= 0xFF
+	tampered := string(raw)
+
+	if _, ok := verifier.verifyCheckoutResumeToken(tampered, "cust-1"); ok {
+		t.Fatal("expected tampered token to be rejected")
+	}
+}
+
+func TestStorefrontAccountSecurityVerifier_VerifyCheckoutResumeToken_RejectsExpiredToken(t *testing.T) {
+	verifier := newStorefrontAccountSecurityVerifier("test-secret", time.Minute)
+	state := storefrontCheckoutResumeState{Step: "payment", ShippingMethod: "flat_rate", PaymentMethod: "manual"}
+	// issue a token whose ExpiresAt lands in the past: use a base time older than the emailTokenTTL
+	past := time.Now().UTC().Add(-(verifier.emailTokenTTL + time.Minute))
+	token, err := verifier.checkoutResumeToken("cust-1", state, past)
+	if err != nil {
+		t.Fatalf("checkoutResumeToken: %v", err)
+	}
+
+	if _, ok := verifier.verifyCheckoutResumeToken(token, "cust-1"); ok {
+		t.Fatal("expected expired token to be rejected")
+	}
+}
+
+func TestStorefrontAccountSecurityVerifier_VerifyCheckoutResumeToken_RejectsMismatchedCustomer(t *testing.T) {
+	verifier := newStorefrontAccountSecurityVerifier("test-secret", time.Minute)
+	state := storefrontCheckoutResumeState{Step: "payment", ShippingMethod: "flat_rate", PaymentMethod: "manual"}
+	token, err := verifier.checkoutResumeToken("cust-1", state, time.Now().UTC())
+	if err != nil {
+		t.Fatalf("checkoutResumeToken: %v", err)
+	}
+
+	if _, ok := verifier.verifyCheckoutResumeToken(token, "cust-2"); ok {
+		t.Fatal("expected token issued for cust-1 to be rejected when verified as cust-2")
+	}
+}
+
+func TestStorefrontAccountSecurityVerifier_VerifyCheckoutResumeToken_AcceptsValidToken(t *testing.T) {
+	verifier := newStorefrontAccountSecurityVerifier("test-secret", time.Minute)
+	want := storefrontCheckoutResumeState{
+		Step:           "payment",
+		ShippingMethod: "flat_rate",
+		PaymentMethod:  "manual",
+		Address: StorefrontCheckoutAddress{
+			FirstName: "Ada", LastName: "Lovelace",
+			Street: "1 Logic Lane", City: "Berlin", Postcode: "10115", Country: "DE",
+		},
+	}
+	token, err := verifier.checkoutResumeToken("cust-1", want, time.Now().UTC())
+	if err != nil {
+		t.Fatalf("checkoutResumeToken: %v", err)
+	}
+
+	got, ok := verifier.verifyCheckoutResumeToken(token, "cust-1")
+	if !ok {
+		t.Fatal("expected valid token to verify")
+	}
+	if got.Step != want.Step {
+		t.Errorf("Step = %q, want %q", got.Step, want.Step)
+	}
+	if got.ShippingMethod != want.ShippingMethod {
+		t.Errorf("ShippingMethod = %q, want %q", got.ShippingMethod, want.ShippingMethod)
+	}
+	if got.PaymentMethod != want.PaymentMethod {
+		t.Errorf("PaymentMethod = %q, want %q", got.PaymentMethod, want.PaymentMethod)
+	}
+	if got.Address.FirstName != want.Address.FirstName {
+		t.Errorf("Address.FirstName = %q, want %q", got.Address.FirstName, want.Address.FirstName)
+	}
+	if got.Address.Country != want.Address.Country {
+		t.Errorf("Address.Country = %q, want %q", got.Address.Country, want.Address.Country)
+	}
+}
