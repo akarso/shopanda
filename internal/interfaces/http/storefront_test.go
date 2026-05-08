@@ -158,6 +158,11 @@ func createTestTheme(t *testing.T) *theme.Engine {
 		t.Fatal(err)
 	}
 
+	accountVerifyEmail := `{{ define "title" }}Verify Email{{ end }}{{ define "content" }}<section><h1>Verify Email</h1>{{ if .SuccessMessage }}<p>{{ .SuccessMessage }}</p>{{ end }}{{ if .ErrorMessage }}<p>{{ .ErrorMessage }}</p>{{ end }}<a href="{{ .ContinueURL }}">Continue</a></section>{{ end }}{{ template "layout.html" . }}`
+	if err := os.WriteFile(filepath.Join(tplDir, "account_verify_email.html"), []byte(accountVerifyEmail), 0644); err != nil {
+		t.Fatal(err)
+	}
+
 	accountOrders := `{{ define "title" }}Account Orders{{ end }}{{ define "content" }}<section><nav><a href="{{ .AccountNav.OrdersURL }}">Orders</a><a href="{{ .AccountNav.ProfileURL }}">Profile</a><a href="{{ .AccountNav.SecurityURL }}">Security</a></nav><h1>Your Orders</h1>{{ range .Orders }}<article><a href="{{ .URL }}">{{ .ID }}</a><span>{{ .DateText }}</span><strong>{{ .TotalText }}</strong><em>{{ .Status }}</em></article>{{ else }}<p>{{ .EmptyMessage }}</p>{{ end }}</section>{{ end }}{{ template "layout.html" . }}`
 	if err := os.WriteFile(filepath.Join(tplDir, "account_orders.html"), []byte(accountOrders), 0644); err != nil {
 		t.Fatal(err)
@@ -228,6 +233,7 @@ func newStorefrontRouter(h *shophttp.StorefrontHandler) http.Handler {
 	router.HandleFunc("POST /account/login", h.Login())
 	router.HandleFunc("GET /account/register", h.Register())
 	router.HandleFunc("POST /account/register", h.Register())
+	router.HandleFunc("GET /account/verify-email", h.AccountVerifyEmail())
 	router.HandleFunc("POST /account/logout", h.Logout())
 	router.HandleFunc("GET /account/orders", h.AccountOrders())
 	router.HandleFunc("GET /account/orders/{orderId}", h.AccountOrderDetail())

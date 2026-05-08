@@ -191,7 +191,7 @@ func (s *Service) RequestSecurityVerificationLink(ctx context.Context, customerI
 		return apperror.NotFound("customer not found")
 	}
 	if c.Status != customer.StatusActive {
-		return apperror.Unauthorized("invalid email or password")
+		return apperror.Unauthorized("account is not active")
 	}
 
 	if err := s.bus.Publish(ctx, event.New(customer.EventSecurityVerificationRequested, "auth.service", customer.SecurityVerificationRequestedData{
@@ -206,6 +206,47 @@ func (s *Service) RequestSecurityVerificationLink(ctx context.Context, customerI
 	}
 
 	s.log.Info("auth.security_verification.requested", map[string]interface{}{
+		"customer_id": c.ID,
+	})
+	return nil
+}
+
+// RequestEmailVerificationLink emits an email-delivery event with a signed
+// storefront verification URL for account email verification.
+func (s *Service) RequestEmailVerificationLink(ctx context.Context, customerID, verifyURL string) error {
+	if strings.TrimSpace(customerID) == "" {
+		return apperror.Validation("customer id is required")
+	}
+	if strings.TrimSpace(verifyURL) == "" {
+		return apperror.Validation("verify url is required")
+	}
+
+	c, err := s.customers.FindByID(ctx, customerID)
+	if err != nil {
+		return fmt.Errorf("auth service: request email verification link: %w", err)
+	}
+	if c == nil {
+		return apperror.NotFound("customer not found")
+	}
+	if c.Status != customer.StatusActive {
+		return apperror.Unauthorized("account is not active")
+	}
+	if c.EmailVerifiedAt != nil {
+		return nil
+	}
+
+	if err := s.bus.Publish(ctx, event.New(customer.EventEmailVerificationRequested, "auth.service", customer.EmailVerificationRequestedData{
+		CustomerID: c.ID,
+		VerifyURL:  strings.TrimSpace(verifyURL),
+	})); err != nil {
+		s.log.Warn("auth.event.publish_failed", map[string]interface{}{
+			"event": customer.EventEmailVerificationRequested,
+			"error": err.Error(),
+		})
+		return fmt.Errorf("auth service: request email verification link: %w", err)
+	}
+
+	s.log.Info("auth.email_verification.requested", map[string]interface{}{
 		"customer_id": c.ID,
 	})
 	return nil
@@ -354,6 +395,34 @@ func customerDisplayName(c *customer.Customer) string {
 		return fullName
 	}
 	return strings.TrimSpace(c.Email)
+}
+
+// MarkEmailVerified records a successful email verification for the customer.
+func (s *Service) MarkEmailVerified(ctx context.Context, customerID string) error {
+	if strings.TrimSpace(customerID) == "" {
+		return apperror.Validation("customer id is required")
+	}
+
+	c, err := s.customers.FindByID(ctx, customerID)
+	if err != nil {
+		return fmt.Errorf("auth service: mark email verified: %w", err)
+	}
+	if c == nil {
+		return apperror.NotFound("customer not found")
+	}
+	if c.EmailVerifiedAt != nil {
+		return nil
+	}
+
+	c.MarkEmailVerified()
+	if err := s.customers.Update(ctx, c); err != nil {
+		return fmt.Errorf("auth service: mark email verified: %w", err)
+	}
+
+	s.log.Info("auth.email_verified", map[string]interface{}{
+		"customer_id": c.ID,
+	})
+	return nil
 }
 
 // Me returns the customer for the given authenticated customer ID.

@@ -275,6 +275,87 @@ func TestHandlePasswordReset(t *testing.T) {
 	}
 }
 
+func TestHandleEmailVerification(t *testing.T) {
+	tmpl := mail.NewTemplates()
+	notification.RegisterTemplates(tmpl)
+
+	q := &mockQueue{}
+	custRepo := &mockCustomerRepo{
+		findByID: func(_ context.Context, id string) (*customer.Customer, error) {
+			if id == "cust-1" {
+				c, _ := customer.NewCustomer("cust-1", "alice@example.com")
+				c.FirstName = "Alice"
+				return &c, nil
+			}
+			return nil, nil
+		},
+	}
+	ordRepo := &mockOrderRepo{}
+
+	svc := newTestService(t, tmpl, custRepo, ordRepo, q)
+	evt := event.New(customer.EventEmailVerificationRequested, "auth.service", customer.EmailVerificationRequestedData{
+		CustomerID: "cust-1",
+		VerifyURL:  "https://shop.test/account/verify-email?email_token=abc",
+	})
+
+	if err := svc.HandleEmailVerification(context.Background(), evt); err != nil {
+		t.Fatalf("HandleEmailVerification: %v", err)
+	}
+	if len(q.enqueued) != 1 {
+		t.Fatalf("expected 1 enqueued job, got %d", len(q.enqueued))
+	}
+	job := q.enqueued[0]
+	if to, _ := job.Payload["to"].(string); to != "alice@example.com" {
+		t.Fatalf("payload.to = %q, want alice@example.com", to)
+	}
+	if body, _ := job.Payload["body"].(string); !strings.Contains(body, "account/verify-email") {
+		t.Fatalf("payload.body = %q, want verification link", body)
+	}
+}
+
+func TestHandleEmailVerification_CustomerNotFound(t *testing.T) {
+	tmpl := mail.NewTemplates()
+	notification.RegisterTemplates(tmpl)
+
+	q := &mockQueue{}
+	custRepo := &mockCustomerRepo{
+		findByID: func(_ context.Context, _ string) (*customer.Customer, error) {
+			return nil, nil
+		},
+	}
+	ordRepo := &mockOrderRepo{}
+
+	svc := newTestService(t, tmpl, custRepo, ordRepo, q)
+	evt := event.New(customer.EventEmailVerificationRequested, "auth.service", customer.EmailVerificationRequestedData{
+		CustomerID: "missing",
+		VerifyURL:  "https://shop.test/account/verify-email?email_token=abc",
+	})
+
+	err := svc.HandleEmailVerification(context.Background(), evt)
+	if err == nil {
+		t.Fatal("expected error for missing customer")
+	}
+	if len(q.enqueued) != 0 {
+		t.Fatalf("expected 0 enqueued jobs, got %d", len(q.enqueued))
+	}
+}
+
+func TestHandleEmailVerification_BadEventData(t *testing.T) {
+	tmpl := mail.NewTemplates()
+	notification.RegisterTemplates(tmpl)
+	q := &mockQueue{}
+	svc := newTestService(t, tmpl, &mockCustomerRepo{}, &mockOrderRepo{}, q)
+	evt := event.New(customer.EventEmailVerificationRequested, "auth.service", "not-a-struct")
+
+	err := svc.HandleEmailVerification(context.Background(), evt)
+	if err == nil {
+		t.Fatal("expected error for bad event data")
+	}
+	if len(q.enqueued) != 0 {
+		t.Fatalf("expected 0 enqueued jobs, got %d", len(q.enqueued))
+	}
+}
+
 func TestHandlePasswordReset_CustomerNotFound(t *testing.T) {
 	tmpl := mail.NewTemplates()
 	notification.RegisterTemplates(tmpl)

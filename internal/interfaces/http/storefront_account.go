@@ -41,6 +41,14 @@ type StorefrontAccountRegisterPageData struct {
 	SuccessMessage string
 }
 
+type StorefrontAccountEmailVerificationPageData struct {
+	Layout         StorefrontLayoutData
+	Theme          theme.Theme
+	ContinueURL    string
+	SuccessMessage string
+	ErrorMessage   string
+}
+
 type StorefrontAccountOrderRow struct {
 	ID        string
 	DateText  string
@@ -207,8 +215,46 @@ func (h *StorefrontHandler) Register() http.HandlerFunc {
 			h.logStorefrontAccountCartSyncFailure("storefront.account.register.cart_sync_failed", err, r)
 		}
 		storefrontSetSessionCookie(w, r, out.Token, out.ExpiresAt)
-		http.Redirect(w, r, page.RedirectTo, http.StatusSeeOther)
+		target := page.RedirectTo
+		if redirectToVerification := h.sendStorefrontRegistrationVerification(r, out.CustomerID, page.RedirectTo); redirectToVerification != "" {
+			target = redirectToVerification
+		}
+		http.Redirect(w, r, target, http.StatusSeeOther)
 	}
+}
+
+func (h *StorefrontHandler) sendStorefrontRegistrationVerification(r *http.Request, customerID, redirectTo string) string {
+	if h.auth == nil || h.security == nil || strings.TrimSpace(h.security.storeBaseURL) == "" {
+		return ""
+	}
+	now := time.Now().UTC()
+	token, err := h.security.emailVerificationToken(customerID, redirectTo, now)
+	if err != nil {
+		h.log.Error("storefront.account.register.email_verification_token_failed", err, map[string]interface{}{
+			"customer_id": customerID,
+			"path":        r.URL.Path,
+		})
+		return ""
+	}
+	verifyURL, err := storefrontAbsoluteURL(h.security.storeBaseURL, "/account/verify-email", url.Values{"email_token": {token}})
+	if err != nil {
+		h.log.Error("storefront.account.register.email_verification_url_failed", err, map[string]interface{}{
+			"customer_id": customerID,
+			"path":        r.URL.Path,
+		})
+		return ""
+	}
+	if err := h.auth.RequestEmailVerificationLink(r.Context(), customerID, verifyURL); err != nil {
+		h.log.Error("storefront.account.register.email_verification_request_failed", err, map[string]interface{}{
+			"customer_id": customerID,
+			"path":        r.URL.Path,
+		})
+		return ""
+	}
+	query := url.Values{}
+	query.Set("sent", "1")
+	query.Set("redirect_to", storefrontSafeRedirectPath(redirectTo, "/account/orders"))
+	return "/account/verify-email?" + query.Encode()
 }
 
 func (h *StorefrontHandler) syncStorefrontGuestCart(w http.ResponseWriter, r *http.Request, customerID string) error {

@@ -415,6 +415,7 @@ func runServe(cfg *config.Config, log logger.Logger) error {
 
 	// Wire password reset → email notification.
 	bus.OnAsync(customer.EventPasswordResetRequested, notifSvc.HandlePasswordReset)
+	bus.OnAsync(customer.EventEmailVerificationRequested, notifSvc.HandleEmailVerification)
 
 	// Wire storefront security verification → email notification.
 	bus.OnAsync(customer.EventSecurityVerificationRequested, notifSvc.HandleSecurityVerification)
@@ -883,6 +884,7 @@ func runServe(cfg *config.Config, log logger.Logger) error {
 		router.HandleFunc("POST /account/login", storefront.Login())
 		router.HandleFunc("GET /account/register", storefront.Register())
 		router.HandleFunc("POST /account/register", storefront.Register())
+		router.HandleFunc("GET /account/verify-email", storefront.AccountVerifyEmail())
 		router.HandleFunc("POST /account/logout", storefront.Logout())
 		router.HandleFunc("GET /account/orders", storefront.AccountOrders())
 		router.HandleFunc("GET /account/orders/{orderId}", storefront.AccountOrderDetail())

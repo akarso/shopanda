@@ -25,6 +25,12 @@ const defaultStorefrontSecurityEmailTokenTTL = 30 * time.Minute
 const defaultStorefrontSecurityEmailLinkCooldown = time.Minute
 const defaultStorefrontSecurityFreshSessionTTL = 5 * time.Minute
 
+const (
+	storefrontEmailTokenPurposeSecurity        = "security_verification"
+	storefrontEmailTokenPurposeAccountEmail    = "account_email_verification"
+	storefrontEmailVerificationDefaultRedirect = "/account/orders"
+)
+
 type storefrontAccountSecurityVerifier struct {
 	secret            []byte
 	storeBaseURL      string
@@ -47,6 +53,7 @@ type StorefrontAccountSecurityVerifyPageData struct {
 }
 
 type storefrontSecurityEmailTokenClaims struct {
+	Purpose    string `json:"purpose"`
 	CustomerID string `json:"customer_id"`
 	RedirectTo string `json:"redirect_to"`
 	ExpiresAt  int64  `json:"expires_at"`
@@ -147,10 +154,11 @@ func (v *storefrontAccountSecurityVerifier) signEmailToken(payload string) strin
 	return base64.RawURLEncoding.EncodeToString(mac.Sum(nil))
 }
 
-func (v *storefrontAccountSecurityVerifier) emailToken(customerID, redirectTo string, now time.Time) (string, error) {
+func (v *storefrontAccountSecurityVerifier) emailToken(purpose, customerID, redirectTo, defaultRedirectTo string, now time.Time) (string, error) {
 	claims := storefrontSecurityEmailTokenClaims{
+		Purpose:    strings.TrimSpace(purpose),
 		CustomerID: strings.TrimSpace(customerID),
-		RedirectTo: storefrontSafeRedirectPath(redirectTo, "/account/security"),
+		RedirectTo: storefrontSafeRedirectPath(redirectTo, defaultRedirectTo),
 		ExpiresAt:  now.UTC().Add(v.emailTokenTTL).Unix(),
 	}
 	raw, err := json.Marshal(claims)
@@ -161,35 +169,51 @@ func (v *storefrontAccountSecurityVerifier) emailToken(customerID, redirectTo st
 	return payload + "." + v.signEmailToken(payload), nil
 }
 
-func (v *storefrontAccountSecurityVerifier) verifyEmailToken(token, customerID string) (string, bool) {
-	if v == nil || strings.TrimSpace(token) == "" || strings.TrimSpace(customerID) == "" {
-		return "", false
+func (v *storefrontAccountSecurityVerifier) securityEmailToken(customerID, redirectTo string, now time.Time) (string, error) {
+	return v.emailToken(storefrontEmailTokenPurposeSecurity, customerID, redirectTo, "/account/security", now)
+}
+
+func (v *storefrontAccountSecurityVerifier) emailVerificationToken(customerID, redirectTo string, now time.Time) (string, error) {
+	return v.emailToken(storefrontEmailTokenPurposeAccountEmail, customerID, redirectTo, storefrontEmailVerificationDefaultRedirect, now)
+}
+
+func (v *storefrontAccountSecurityVerifier) verifyEmailToken(token, purpose string) (string, string, bool) {
+	if v == nil || strings.TrimSpace(token) == "" || strings.TrimSpace(purpose) == "" {
+		return "", "", false
 	}
 	parts := strings.SplitN(strings.TrimSpace(token), ".", 2)
 	if len(parts) != 2 {
-		return "", false
+		return "", "", false
 	}
 	expectedSig := v.signEmailToken(parts[0])
 	if !hmac.Equal([]byte(parts[1]), []byte(expectedSig)) {
-		return "", false
+		return "", "", false
 	}
 	raw, err := base64.RawURLEncoding.DecodeString(parts[0])
 	if err != nil {
-		return "", false
+		return "", "", false
 	}
 	var claims storefrontSecurityEmailTokenClaims
 	if err := json.Unmarshal(raw, &claims); err != nil {
-		return "", false
+		return "", "", false
 	}
 	now := time.Now().UTC()
-	if strings.TrimSpace(claims.CustomerID) != strings.TrimSpace(customerID) {
-		return "", false
+	if strings.TrimSpace(claims.Purpose) != strings.TrimSpace(purpose) {
+		return "", "", false
 	}
 	expiresAt := time.Unix(claims.ExpiresAt, 0).UTC()
 	if expiresAt.Before(now) {
+		return "", "", false
+	}
+	return strings.TrimSpace(claims.CustomerID), strings.TrimSpace(claims.RedirectTo), true
+}
+
+func (v *storefrontAccountSecurityVerifier) verifySecurityEmailToken(token, customerID string) (string, bool) {
+	parsedCustomerID, redirectTo, ok := v.verifyEmailToken(token, storefrontEmailTokenPurposeSecurity)
+	if !ok || strings.TrimSpace(parsedCustomerID) != strings.TrimSpace(customerID) {
 		return "", false
 	}
-	return storefrontSafeRedirectPath(claims.RedirectTo, "/account/security"), true
+	return storefrontSafeRedirectPath(redirectTo, "/account/security"), true
 }
 
 func storefrontAbsoluteURL(storeBaseURL, path string, query url.Values) (string, error) {
@@ -269,6 +293,47 @@ func storefrontClearSecurityVerifyCookie(w http.ResponseWriter, r *http.Request)
 	})
 }
 
+func (h *StorefrontHandler) AccountVerifyEmail() http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if h.auth == nil || h.security == nil || !h.engine.HasTemplate("account_verify_email") {
+			http.Error(w, "Not Found", http.StatusNotFound)
+			return
+		}
+		page := StorefrontAccountEmailVerificationPageData{
+			Layout:      h.layoutDataBestEffort(r),
+			Theme:       h.engine.Theme(),
+			ContinueURL: storefrontSafeRedirectPath(r.URL.Query().Get("redirect_to"), storefrontEmailVerificationDefaultRedirect),
+		}
+		if token := strings.TrimSpace(r.URL.Query().Get("email_token")); token != "" {
+			customerID, redirectTo, ok := h.security.verifyEmailToken(token, storefrontEmailTokenPurposeAccountEmail)
+			if !ok {
+				page.ContinueURL = "/account/login"
+				page.ErrorMessage = "This email verification link is invalid or has expired."
+				h.renderPageStatus(w, "account_verify_email", page, http.StatusUnauthorized)
+				return
+			}
+			if err := h.auth.MarkEmailVerified(r.Context(), customerID); err != nil {
+				h.log.Error("storefront.account.email_verification_failed", err, map[string]interface{}{
+					"customer_id": customerID,
+					"path":        r.URL.Path,
+				})
+				http.Error(w, "Internal Server Error", http.StatusInternalServerError)
+				return
+			}
+			page.ContinueURL = storefrontSafeRedirectPath(redirectTo, storefrontEmailVerificationDefaultRedirect)
+			page.SuccessMessage = "Your email address is verified."
+			h.renderPage(w, "account_verify_email", page)
+			return
+		}
+		if r.URL.Query().Get("sent") == "1" {
+			page.SuccessMessage = "Check your email for a verification link to confirm this address."
+			h.renderPage(w, "account_verify_email", page)
+			return
+		}
+		http.NotFound(w, r)
+	}
+}
+
 func (h *StorefrontHandler) requireStorefrontSecurityVerification(w http.ResponseWriter, r *http.Request, customerID, redirectTo string) bool {
 	if h.security == nil {
 		return true
@@ -307,7 +372,7 @@ func (h *StorefrontHandler) AccountSecurityVerify() http.HandlerFunc {
 			Email:      profile.Email,
 		}
 		if token := strings.TrimSpace(r.URL.Query().Get("email_token")); token != "" {
-			redirectTo, ok := h.security.verifyEmailToken(token, customerID)
+			redirectTo, ok := h.security.verifySecurityEmailToken(token, customerID)
 			if !ok {
 				page.ErrorMessage = "This verification link is invalid or has expired."
 				h.renderPageStatus(w, "account_security_verify", page, http.StatusUnauthorized)
@@ -350,7 +415,7 @@ func (h *StorefrontHandler) AccountSecurityVerify() http.HandlerFunc {
 				h.renderPageStatus(w, "account_security_verify", page, storefrontAccountErrorStatus(err))
 				return
 			}
-			token, err := h.security.emailToken(customerID, page.RedirectTo, now)
+			token, err := h.security.securityEmailToken(customerID, page.RedirectTo, now)
 			if err != nil {
 				http.Error(w, "Internal Server Error", http.StatusInternalServerError)
 				return
