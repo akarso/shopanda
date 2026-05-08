@@ -277,6 +277,23 @@ func (h *StorefrontHandler) WithAccountSecurity(secret string, ttl time.Duration
 	return h
 }
 
+// WithAccountSecurityEmailLinks configures trusted absolute-link generation for
+// storefront security email verification links.
+func (h *StorefrontHandler) WithAccountSecurityEmailLinks(storeBaseURL string, emailTokenTTL time.Duration) *StorefrontHandler {
+	if h.security == nil {
+		panic("storefront account security email links require WithAccountSecurity to be configured first")
+	}
+	baseURL, err := normalizeStorefrontBaseURL(storeBaseURL)
+	if err != nil {
+		panic(err.Error())
+	}
+	h.security.storeBaseURL = baseURL
+	if emailTokenTTL > 0 {
+		h.security.emailTokenTTL = emailTokenTTL
+	}
+	return h
+}
+
 // Home handles GET / and renders the storefront landing page.
 func (h *StorefrontHandler) Home() http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {

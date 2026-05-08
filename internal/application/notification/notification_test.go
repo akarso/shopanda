@@ -356,6 +356,41 @@ func TestHandleSecurityVerification(t *testing.T) {
 	}
 }
 
+func TestHandleSecurityVerification_CustomerNotFound(t *testing.T) {
+	tmpl := mail.NewTemplates()
+	notification.RegisterTemplates(tmpl)
+	q := &mockQueue{}
+	custRepo := &mockCustomerRepo{
+		findByID: func(_ context.Context, _ string) (*customer.Customer, error) {
+			return nil, nil
+		},
+	}
+	svc := newTestService(t, tmpl, custRepo, &mockOrderRepo{}, q)
+
+	err := svc.HandleSecurityVerification(context.Background(), event.New(customer.EventSecurityVerificationRequested, "auth.service", customer.SecurityVerificationRequestedData{
+		CustomerID: "missing",
+		VerifyURL:  "https://shop.test/account/security/verify?email_token=abc",
+	}))
+	if err == nil {
+		t.Fatal("expected error for missing customer")
+	}
+	if len(q.enqueued) != 0 {
+		t.Fatalf("expected 0 enqueued jobs, got %d", len(q.enqueued))
+	}
+}
+
+func TestHandleSecurityVerification_BadEventData(t *testing.T) {
+	tmpl := mail.NewTemplates()
+	notification.RegisterTemplates(tmpl)
+	q := &mockQueue{}
+	svc := newTestService(t, tmpl, &mockCustomerRepo{}, &mockOrderRepo{}, q)
+
+	err := svc.HandleSecurityVerification(context.Background(), event.New(customer.EventSecurityVerificationRequested, "auth.service", "not-a-struct"))
+	if err == nil {
+		t.Fatal("expected error for bad event data")
+	}
+}
+
 // --- HandleShipmentShipped tests ---
 
 func TestHandleShipmentShipped(t *testing.T) {

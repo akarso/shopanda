@@ -713,6 +713,54 @@ func TestRequestSecurityVerificationLink_Success(t *testing.T) {
 	}
 }
 
+func TestRequestSecurityVerificationLink_EmptyCustomerID(t *testing.T) {
+	svc := newTestService(newMockRepo())
+	err := svc.RequestSecurityVerificationLink(context.Background(), "", "https://shop.test/account/security/verify?email_token=abc")
+	if err == nil {
+		t.Fatal("expected error for empty customer id")
+	}
+	var appErr *apperror.Error
+	if !errors.As(err, &appErr) || appErr.Code != apperror.CodeValidation {
+		t.Fatalf("expected validation error, got %v", err)
+	}
+}
+
+func TestRequestSecurityVerificationLink_CustomerNotFound(t *testing.T) {
+	svc := newTestService(newMockRepo())
+	err := svc.RequestSecurityVerificationLink(context.Background(), "missing", "https://shop.test/account/security/verify?email_token=abc")
+	if err == nil {
+		t.Fatal("expected error for missing customer")
+	}
+	var appErr *apperror.Error
+	if !errors.As(err, &appErr) || appErr.Code != apperror.CodeNotFound {
+		t.Fatalf("expected not_found error, got %v", err)
+	}
+}
+
+func TestRequestSecurityVerificationLink_DisabledAccount(t *testing.T) {
+	repo := newMockRepo()
+	svc := newTestService(repo)
+	out, err := svc.Register(context.Background(), auth.RegisterInput{
+		Email:    "disabled-verify@example.com",
+		Password: "password123",
+	})
+	if err != nil {
+		t.Fatalf("Register: %v", err)
+	}
+	if err := repo.customers[out.CustomerID].Disable(); err != nil {
+		t.Fatalf("Disable: %v", err)
+	}
+
+	err = svc.RequestSecurityVerificationLink(context.Background(), out.CustomerID, "https://shop.test/account/security/verify?email_token=abc")
+	if err == nil {
+		t.Fatal("expected error for disabled account")
+	}
+	var appErr *apperror.Error
+	if !errors.As(err, &appErr) || appErr.Code != apperror.CodeUnauthorized {
+		t.Fatalf("expected unauthorized error, got %v", err)
+	}
+}
+
 // ── ConfirmPasswordReset tests ───────────────────────────────────────────
 
 func TestConfirmPasswordReset_EmptyToken(t *testing.T) {

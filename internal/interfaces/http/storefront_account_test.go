@@ -710,7 +710,7 @@ func TestStorefrontHandler_AccountSecurityVerify_EmailLinkRequest_RedirectsAndPu
 	if err != nil {
 		t.Fatalf("Register: %v", err)
 	}
-	h := shophttp.NewStorefrontHandler(engine, &mockStorefrontRepo{}, newStorefrontCategoryMock(), pdp, plp, newStorefrontSearchMock()).WithAccount(authSvc, newStorefrontAccountOrderRepoStub(), &storefrontAccountDeleterStub{}).WithAccountSecurity("test-secret", time.Minute)
+	h := shophttp.NewStorefrontHandler(engine, &mockStorefrontRepo{}, newStorefrontCategoryMock(), pdp, plp, newStorefrontSearchMock()).WithAccount(authSvc, newStorefrontAccountOrderRepoStub(), &storefrontAccountDeleterStub{}).WithAccountSecurity("test-secret", time.Minute).WithAccountSecurityEmailLinks("https://shop.test", 45*time.Minute)
 	router := newStorefrontRouter(h)
 	id, err := identity.NewIdentity(out.CustomerID, identity.RoleCustomer)
 	if err != nil {
@@ -725,6 +725,7 @@ func TestStorefrontHandler_AccountSecurityVerify_EmailLinkRequest_RedirectsAndPu
 	}
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest("POST", "/account/security/verify", strings.NewReader(form.Encode()))
+	req.Host = "evil.example"
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	req.AddCookie(csrfCookie)
 	req = req.WithContext(auth.WithIdentity(req.Context(), id))
@@ -733,7 +734,7 @@ func TestStorefrontHandler_AccountSecurityVerify_EmailLinkRequest_RedirectsAndPu
 	if rec.Code != http.StatusSeeOther {
 		t.Fatalf("status = %d, want %d; body: %s", rec.Code, http.StatusSeeOther, rec.Body.String())
 	}
-	if rec.Header().Get("Location") != "/account/security/verify?redirect_to=%2Faccount%2Fsecurity&email_sent=1" {
+	if rec.Header().Get("Location") != "/account/security/verify?email_sent=1&redirect_to=%2Faccount%2Fsecurity" {
 		t.Fatalf("location = %q", rec.Header().Get("Location"))
 	}
 	if verifyURL == "" {
@@ -745,6 +746,9 @@ func TestStorefrontHandler_AccountSecurityVerify_EmailLinkRequest_RedirectsAndPu
 	}
 	if parsed.Path != "/account/security/verify" {
 		t.Fatalf("verify path = %q, want %q", parsed.Path, "/account/security/verify")
+	}
+	if parsed.Scheme != "https" || parsed.Host != "shop.test" {
+		t.Fatalf("verify URL host = %s://%s, want https://shop.test", parsed.Scheme, parsed.Host)
 	}
 	if strings.TrimSpace(parsed.Query().Get("email_token")) == "" {
 		t.Fatal("expected email_token in verification URL")
@@ -768,7 +772,7 @@ func TestStorefrontHandler_AccountSecurityVerify_EmailLink_SetsVerificationCooki
 	if err != nil {
 		t.Fatalf("Register: %v", err)
 	}
-	h := shophttp.NewStorefrontHandler(engine, &mockStorefrontRepo{}, newStorefrontCategoryMock(), pdp, plp, newStorefrontSearchMock()).WithAccount(authSvc, newStorefrontAccountOrderRepoStub(), &storefrontAccountDeleterStub{}).WithAccountSecurity("test-secret", time.Minute)
+	h := shophttp.NewStorefrontHandler(engine, &mockStorefrontRepo{}, newStorefrontCategoryMock(), pdp, plp, newStorefrontSearchMock()).WithAccount(authSvc, newStorefrontAccountOrderRepoStub(), &storefrontAccountDeleterStub{}).WithAccountSecurity("test-secret", time.Minute).WithAccountSecurityEmailLinks("https://shop.test", 45*time.Minute)
 	router := newStorefrontRouter(h)
 	id, err := identity.NewIdentity(out.CustomerID, identity.RoleCustomer)
 	if err != nil {

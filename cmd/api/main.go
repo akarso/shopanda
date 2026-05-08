@@ -870,7 +870,8 @@ func runServe(cfg *config.Config, log logger.Logger) error {
 			WithCart(variantRepo, cartService).
 			WithCheckout([]shipping.Provider{flatRateProvider}, payProvider, checkoutService).
 			WithAccount(authService, orderRepo, accountService).
-			WithAccountSecurity(cfg.Auth.JWTSecret, 10*time.Minute)
+			WithAccountSecurity(cfg.Auth.JWTSecret, 10*time.Minute).
+			WithAccountSecurityEmailLinks(cfg.Server.PublicBaseURL, 45*time.Minute)
 		staticDir := filepath.Join(cfg.Frontend.ThemePath, "static")
 		staticHandler := http.StripPrefix("/static/", http.FileServer(http.Dir(staticDir)))
 		router.Handle("GET /static/{path...}", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
