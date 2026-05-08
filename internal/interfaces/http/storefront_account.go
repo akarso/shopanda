@@ -257,6 +257,27 @@ func (h *StorefrontHandler) sendStorefrontRegistrationVerification(r *http.Reque
 	return "/account/verify-email?" + query.Encode()
 }
 
+func (h *StorefrontHandler) requireStorefrontVerifiedEmail(w http.ResponseWriter, r *http.Request, customerID, redirectTo string) bool {
+	if h.auth == nil || h.security == nil || strings.TrimSpace(h.security.storeBaseURL) == "" {
+		return true
+	}
+	profile, err := h.auth.Me(r.Context(), customerID)
+	if err != nil {
+		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
+		return false
+	}
+	if profile.EmailVerifiedAt != nil {
+		return true
+	}
+	redirectTarget := storefrontSafeRedirectPath(redirectTo, storefrontEmailVerificationDefaultRedirect)
+	if verificationRedirect := h.sendStorefrontRegistrationVerification(r, customerID, redirectTarget); verificationRedirect != "" {
+		http.Redirect(w, r, verificationRedirect, http.StatusSeeOther)
+		return false
+	}
+	http.Redirect(w, r, "/account/verify-email?redirect_to="+url.QueryEscape(redirectTarget), http.StatusSeeOther)
+	return false
+}
+
 func (h *StorefrontHandler) syncStorefrontGuestCart(w http.ResponseWriter, r *http.Request, customerID string) error {
 	if h.carts == nil {
 		return nil
@@ -435,6 +456,9 @@ func (h *StorefrontHandler) AccountSecurity() http.HandlerFunc {
 		if !ok {
 			return
 		}
+		if !h.requireStorefrontVerifiedEmail(w, r, customerID, "/account/security") {
+			return
+		}
 		if !h.requireStorefrontSecurityVerification(w, r, customerID, "/account/security") {
 			return
 		}
@@ -459,6 +483,9 @@ func (h *StorefrontHandler) AccountPassword() http.HandlerFunc {
 		}
 		customerID, ok := h.requireStorefrontAccount(w, r)
 		if !ok {
+			return
+		}
+		if !h.requireStorefrontVerifiedEmail(w, r, customerID, "/account/security") {
 			return
 		}
 		if !h.requireStorefrontSecurityVerification(w, r, customerID, "/account/security") {
@@ -498,6 +525,9 @@ func (h *StorefrontHandler) AccountDelete() http.HandlerFunc {
 		}
 		if err := r.ParseForm(); err != nil {
 			http.Error(w, "invalid form body", http.StatusBadRequest)
+			return
+		}
+		if !h.requireStorefrontVerifiedEmail(w, r, customerID, "/account/security") {
 			return
 		}
 		if !h.requireStorefrontSecurityVerification(w, r, customerID, "/account/security") {

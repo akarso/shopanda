@@ -217,6 +217,15 @@ func newStorefrontAuthServiceWithBus(t *testing.T, bus *event.Bus) (*appAuth.Ser
 	return appAuth.NewService(repo, &storefrontAccountResetRepoStub{}, issuer, bus, log, time.Hour), repo
 }
 
+func storefrontMarkCustomerEmailVerified(t *testing.T, repo *storefrontAccountCustomerRepoStub, customerID string) {
+	t.Helper()
+	c := repo.customers[customerID]
+	if c == nil {
+		t.Fatalf("customer %q not found", customerID)
+	}
+	c.MarkEmailVerified()
+}
+
 func storefrontAccountCSRFCookie(t *testing.T, handler http.Handler, path string) *http.Cookie {
 	t.Helper()
 	rec := httptest.NewRecorder()
@@ -756,11 +765,12 @@ func TestStorefrontHandler_AccountSecurity_RedirectsToVerification_WhenStepUpReq
 	engine := createTestTheme(t)
 	pdp := composition.NewPipeline[composition.ProductContext]()
 	plp := composition.NewPipeline[composition.ListingContext]()
-	authSvc, _ := newStorefrontAuthService(t)
+	authSvc, repo := newStorefrontAuthService(t)
 	out, err := authSvc.Register(context.Background(), appAuth.RegisterInput{Email: "ada@example.com", Password: "password123", FirstName: "Ada", LastName: "Lovelace"})
 	if err != nil {
 		t.Fatalf("Register: %v", err)
 	}
+	storefrontMarkCustomerEmailVerified(t, repo, out.CustomerID)
 	h := shophttp.NewStorefrontHandler(engine, &mockStorefrontRepo{}, newStorefrontCategoryMock(), pdp, plp, newStorefrontSearchMock()).WithAccount(authSvc, newStorefrontAccountOrderRepoStub(), &storefrontAccountDeleterStub{}).WithAccountSecurity("test-secret", time.Minute)
 	router := newStorefrontRouter(h)
 	id, err := identity.NewIdentity(out.CustomerID, identity.RoleCustomer)
@@ -781,15 +791,46 @@ func TestStorefrontHandler_AccountSecurity_RedirectsToVerification_WhenStepUpReq
 	}
 }
 
-func TestStorefrontHandler_AccountSecurity_AllowsFreshSessionWithoutVerificationCookie(t *testing.T) {
+func TestStorefrontHandler_AccountSecurity_RedirectsToEmailVerification_WhenEmailUnverified(t *testing.T) {
 	engine := createTestTheme(t)
 	pdp := composition.NewPipeline[composition.ProductContext]()
 	plp := composition.NewPipeline[composition.ListingContext]()
-	authSvc, _ := newStorefrontAuthService(t)
+	bus := event.NewBus(logger.New("error"))
+	authSvc, _ := newStorefrontAuthServiceWithBus(t, bus)
 	out, err := authSvc.Register(context.Background(), appAuth.RegisterInput{Email: "ada@example.com", Password: "password123", FirstName: "Ada", LastName: "Lovelace"})
 	if err != nil {
 		t.Fatalf("Register: %v", err)
 	}
+	h := shophttp.NewStorefrontHandler(engine, &mockStorefrontRepo{}, newStorefrontCategoryMock(), pdp, plp, newStorefrontSearchMock()).WithAccount(authSvc, newStorefrontAccountOrderRepoStub(), &storefrontAccountDeleterStub{}).WithAccountSecurity("test-secret", time.Minute).WithAccountSecurityEmailLinks("https://shop.test", 45*time.Minute)
+	router := newStorefrontRouter(h)
+	id, err := identity.NewIdentity(out.CustomerID, identity.RoleCustomer)
+	if err != nil {
+		t.Fatalf("NewIdentity: %v", err)
+	}
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("GET", "/account/security", nil)
+	req = req.WithContext(auth.WithIdentity(req.Context(), id))
+	router.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusSeeOther {
+		t.Fatalf("status = %d, want %d; body: %s", rec.Code, http.StatusSeeOther, rec.Body.String())
+	}
+	if rec.Header().Get("Location") != "/account/verify-email?redirect_to=%2Faccount%2Fsecurity&sent=1" {
+		t.Fatalf("location = %q", rec.Header().Get("Location"))
+	}
+}
+
+func TestStorefrontHandler_AccountSecurity_AllowsFreshSessionWithoutVerificationCookie(t *testing.T) {
+	engine := createTestTheme(t)
+	pdp := composition.NewPipeline[composition.ProductContext]()
+	plp := composition.NewPipeline[composition.ListingContext]()
+	authSvc, repo := newStorefrontAuthService(t)
+	out, err := authSvc.Register(context.Background(), appAuth.RegisterInput{Email: "ada@example.com", Password: "password123", FirstName: "Ada", LastName: "Lovelace"})
+	if err != nil {
+		t.Fatalf("Register: %v", err)
+	}
+	storefrontMarkCustomerEmailVerified(t, repo, out.CustomerID)
 	h := shophttp.NewStorefrontHandler(engine, &mockStorefrontRepo{}, newStorefrontCategoryMock(), pdp, plp, newStorefrontSearchMock()).WithAccount(authSvc, newStorefrontAccountOrderRepoStub(), &storefrontAccountDeleterStub{}).WithAccountSecurity("test-secret", time.Minute)
 	router := newStorefrontRouter(h)
 	id, err := identity.NewIdentity(out.CustomerID, identity.RoleCustomer)
@@ -812,11 +853,12 @@ func TestStorefrontHandler_AccountSecurity_RedirectsWhenSessionIsStale(t *testin
 	engine := createTestTheme(t)
 	pdp := composition.NewPipeline[composition.ProductContext]()
 	plp := composition.NewPipeline[composition.ListingContext]()
-	authSvc, _ := newStorefrontAuthService(t)
+	authSvc, repo := newStorefrontAuthService(t)
 	out, err := authSvc.Register(context.Background(), appAuth.RegisterInput{Email: "ada@example.com", Password: "password123", FirstName: "Ada", LastName: "Lovelace"})
 	if err != nil {
 		t.Fatalf("Register: %v", err)
 	}
+	storefrontMarkCustomerEmailVerified(t, repo, out.CustomerID)
 	h := shophttp.NewStorefrontHandler(engine, &mockStorefrontRepo{}, newStorefrontCategoryMock(), pdp, plp, newStorefrontSearchMock()).WithAccount(authSvc, newStorefrontAccountOrderRepoStub(), &storefrontAccountDeleterStub{}).WithAccountSecurity("test-secret", time.Minute)
 	router := newStorefrontRouter(h)
 	id, err := identity.NewIdentity(out.CustomerID, identity.RoleCustomer)
@@ -842,11 +884,12 @@ func TestStorefrontHandler_AccountSecurityVerify_SetsVerificationCookie(t *testi
 	engine := createTestTheme(t)
 	pdp := composition.NewPipeline[composition.ProductContext]()
 	plp := composition.NewPipeline[composition.ListingContext]()
-	authSvc, _ := newStorefrontAuthService(t)
+	authSvc, repo := newStorefrontAuthService(t)
 	out, err := authSvc.Register(context.Background(), appAuth.RegisterInput{Email: "ada@example.com", Password: "password123", FirstName: "Ada", LastName: "Lovelace"})
 	if err != nil {
 		t.Fatalf("Register: %v", err)
 	}
+	storefrontMarkCustomerEmailVerified(t, repo, out.CustomerID)
 	h := shophttp.NewStorefrontHandler(engine, &mockStorefrontRepo{}, newStorefrontCategoryMock(), pdp, plp, newStorefrontSearchMock()).WithAccount(authSvc, newStorefrontAccountOrderRepoStub(), &storefrontAccountDeleterStub{}).WithAccountSecurity("test-secret", time.Minute)
 	router := newStorefrontRouter(h)
 	id, err := identity.NewIdentity(out.CustomerID, identity.RoleCustomer)
@@ -857,6 +900,36 @@ func TestStorefrontHandler_AccountSecurityVerify_SetsVerificationCookie(t *testi
 	_, verifiedCookie := storefrontAccountSecurityVerifiedCookie(t, router, id, "/account/security")
 	if verifiedCookie.Value == "" || verifiedCookie.MaxAge <= 0 {
 		t.Fatalf("expected verification cookie to be set, got %+v", verifiedCookie)
+	}
+}
+
+func TestStorefrontHandler_AccountSecurityVerify_RedirectsToEmailVerification_WhenEmailUnverified(t *testing.T) {
+	engine := createTestTheme(t)
+	pdp := composition.NewPipeline[composition.ProductContext]()
+	plp := composition.NewPipeline[composition.ListingContext]()
+	bus := event.NewBus(logger.New("error"))
+	authSvc, _ := newStorefrontAuthServiceWithBus(t, bus)
+	out, err := authSvc.Register(context.Background(), appAuth.RegisterInput{Email: "ada@example.com", Password: "password123", FirstName: "Ada", LastName: "Lovelace"})
+	if err != nil {
+		t.Fatalf("Register: %v", err)
+	}
+	h := shophttp.NewStorefrontHandler(engine, &mockStorefrontRepo{}, newStorefrontCategoryMock(), pdp, plp, newStorefrontSearchMock()).WithAccount(authSvc, newStorefrontAccountOrderRepoStub(), &storefrontAccountDeleterStub{}).WithAccountSecurity("test-secret", time.Minute).WithAccountSecurityEmailLinks("https://shop.test", 45*time.Minute)
+	router := newStorefrontRouter(h)
+	id, err := identity.NewIdentity(out.CustomerID, identity.RoleCustomer)
+	if err != nil {
+		t.Fatalf("NewIdentity: %v", err)
+	}
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("GET", "/account/security/verify?redirect_to=%2Faccount%2Fsecurity", nil)
+	req = req.WithContext(auth.WithIdentity(req.Context(), id))
+	router.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusSeeOther {
+		t.Fatalf("status = %d, want %d; body: %s", rec.Code, http.StatusSeeOther, rec.Body.String())
+	}
+	if rec.Header().Get("Location") != "/account/verify-email?redirect_to=%2Faccount%2Fsecurity&sent=1" {
+		t.Fatalf("location = %q", rec.Header().Get("Location"))
 	}
 }
 
@@ -872,11 +945,12 @@ func TestStorefrontHandler_AccountSecurityVerify_EmailLinkRequest_RedirectsAndPu
 		verifyURL = data.VerifyURL
 		return nil
 	})
-	authSvc, _ := newStorefrontAuthServiceWithBus(t, bus)
+	authSvc, repo := newStorefrontAuthServiceWithBus(t, bus)
 	out, err := authSvc.Register(context.Background(), appAuth.RegisterInput{Email: "ada@example.com", Password: "password123", FirstName: "Ada", LastName: "Lovelace"})
 	if err != nil {
 		t.Fatalf("Register: %v", err)
 	}
+	storefrontMarkCustomerEmailVerified(t, repo, out.CustomerID)
 	h := shophttp.NewStorefrontHandler(engine, &mockStorefrontRepo{}, newStorefrontCategoryMock(), pdp, plp, newStorefrontSearchMock()).WithAccount(authSvc, newStorefrontAccountOrderRepoStub(), &storefrontAccountDeleterStub{}).WithAccountSecurity("test-secret", time.Minute).WithAccountSecurityEmailLinks("https://shop.test", 45*time.Minute)
 	router := newStorefrontRouter(h)
 	id, err := identity.NewIdentity(out.CustomerID, identity.RoleCustomer)
@@ -934,11 +1008,12 @@ func TestStorefrontHandler_AccountSecurityVerify_EmailLink_SetsVerificationCooki
 		verifyURL = data.VerifyURL
 		return nil
 	})
-	authSvc, _ := newStorefrontAuthServiceWithBus(t, bus)
+	authSvc, repo := newStorefrontAuthServiceWithBus(t, bus)
 	out, err := authSvc.Register(context.Background(), appAuth.RegisterInput{Email: "ada@example.com", Password: "password123", FirstName: "Ada", LastName: "Lovelace"})
 	if err != nil {
 		t.Fatalf("Register: %v", err)
 	}
+	storefrontMarkCustomerEmailVerified(t, repo, out.CustomerID)
 	h := shophttp.NewStorefrontHandler(engine, &mockStorefrontRepo{}, newStorefrontCategoryMock(), pdp, plp, newStorefrontSearchMock()).WithAccount(authSvc, newStorefrontAccountOrderRepoStub(), &storefrontAccountDeleterStub{}).WithAccountSecurity("test-secret", time.Minute).WithAccountSecurityEmailLinks("https://shop.test", 45*time.Minute)
 	router := newStorefrontRouter(h)
 	id, err := identity.NewIdentity(out.CustomerID, identity.RoleCustomer)
@@ -999,11 +1074,12 @@ func TestStorefrontHandler_AccountSecurityVerify_EmailLinkRequest_ThrottlesRepea
 		publishCount++
 		return nil
 	})
-	authSvc, _ := newStorefrontAuthServiceWithBus(t, bus)
+	authSvc, repo := newStorefrontAuthServiceWithBus(t, bus)
 	out, err := authSvc.Register(context.Background(), appAuth.RegisterInput{Email: "ada@example.com", Password: "password123", FirstName: "Ada", LastName: "Lovelace"})
 	if err != nil {
 		t.Fatalf("Register: %v", err)
 	}
+	storefrontMarkCustomerEmailVerified(t, repo, out.CustomerID)
 	h := shophttp.NewStorefrontHandler(engine, &mockStorefrontRepo{}, newStorefrontCategoryMock(), pdp, plp, newStorefrontSearchMock()).WithAccount(authSvc, newStorefrontAccountOrderRepoStub(), &storefrontAccountDeleterStub{}).WithAccountSecurity("test-secret", time.Minute).WithAccountSecurityEmailLinks("https://shop.test", 45*time.Minute)
 	router := newStorefrontRouter(h)
 	id, err := identity.NewIdentity(out.CustomerID, identity.RoleCustomer)
@@ -1051,11 +1127,12 @@ func TestStorefrontHandler_AccountSecurity_RendersSensitiveActions(t *testing.T)
 	engine := createTestTheme(t)
 	pdp := composition.NewPipeline[composition.ProductContext]()
 	plp := composition.NewPipeline[composition.ListingContext]()
-	authSvc, _ := newStorefrontAuthService(t)
+	authSvc, repo := newStorefrontAuthService(t)
 	out, err := authSvc.Register(context.Background(), appAuth.RegisterInput{Email: "ada@example.com", Password: "password123", FirstName: "Ada", LastName: "Lovelace"})
 	if err != nil {
 		t.Fatalf("Register: %v", err)
 	}
+	storefrontMarkCustomerEmailVerified(t, repo, out.CustomerID)
 	h := shophttp.NewStorefrontHandler(engine, &mockStorefrontRepo{}, newStorefrontCategoryMock(), pdp, plp, newStorefrontSearchMock()).WithAccount(authSvc, newStorefrontAccountOrderRepoStub(), &storefrontAccountDeleterStub{}).WithAccountSecurity("test-secret", time.Minute)
 	router := newStorefrontRouter(h)
 	id, err := identity.NewIdentity(out.CustomerID, identity.RoleCustomer)
@@ -1127,11 +1204,12 @@ func TestStorefrontHandler_AccountDelete_RequiresConfirmation(t *testing.T) {
 	engine := createTestTheme(t)
 	pdp := composition.NewPipeline[composition.ProductContext]()
 	plp := composition.NewPipeline[composition.ListingContext]()
-	authSvc, _ := newStorefrontAuthService(t)
+	authSvc, repo := newStorefrontAuthService(t)
 	out, err := authSvc.Register(context.Background(), appAuth.RegisterInput{Email: "ada@example.com", Password: "password123", FirstName: "Ada", LastName: "Lovelace"})
 	if err != nil {
 		t.Fatalf("Register: %v", err)
 	}
+	storefrontMarkCustomerEmailVerified(t, repo, out.CustomerID)
 	deleter := &storefrontAccountDeleterStub{}
 	h := shophttp.NewStorefrontHandler(engine, &mockStorefrontRepo{}, newStorefrontCategoryMock(), pdp, plp, newStorefrontSearchMock()).WithAccount(authSvc, newStorefrontAccountOrderRepoStub(), deleter).WithAccountSecurity("test-secret", time.Minute)
 	router := newStorefrontRouter(h)
