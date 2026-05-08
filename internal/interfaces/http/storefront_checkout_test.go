@@ -627,6 +627,64 @@ func TestStorefrontHandler_CheckoutConfirm_ResumesPaymentAfterEmailVerification(
 	}
 }
 
+func TestStorefrontHandler_CheckoutAddress_FallsBackToAddressFormOnInvalidResumeToken(t *testing.T) {
+	products := &mockStorefrontRepo{findByIDFn: func(_ context.Context, id string) (*catalog.Product, error) {
+		return &catalog.Product{ID: id, Name: "Widget", Slug: "widget"}, nil
+	}}
+	variants := &mockStorefrontVariantRepo{findByIDFn: func(_ context.Context, id string) (*catalog.Variant, error) {
+		return &catalog.Variant{ID: id, ProductID: "prod-1", SKU: "WID-1", Name: "Default"}, nil
+	}}
+	engine := createTestTheme(t)
+	pdp := composition.NewPipeline[composition.ProductContext]()
+	plp := composition.NewPipeline[composition.ListingContext]()
+	cartSvc, carts, prices := newStorefrontCartService()
+	prices.set("var-1", "EUR", 1500)
+	checkoutSvc, shippingProvider, paymentProvider, orders := newStorefrontCheckoutService(carts, prices, variants)
+	authSvc, repo := newStorefrontAuthService(t)
+	out, err := authSvc.Register(context.Background(), appAuth.RegisterInput{Email: "ada@example.com", Password: "password123", FirstName: "Ada", LastName: "Lovelace"})
+	if err != nil {
+		t.Fatalf("Register: %v", err)
+	}
+	storefrontMarkCustomerEmailVerified(t, repo, out.CustomerID)
+	h := shophttp.NewStorefrontHandler(engine, products, newStorefrontCategoryMock(), pdp, plp, newStorefrontSearchMock()).WithCart(variants, cartSvc).WithCheckout([]shipping.Provider{shippingProvider}, paymentProvider, checkoutSvc).WithAccount(authSvc, newStorefrontAccountOrderRepoStub(), &storefrontAccountDeleterStub{}).WithAccountSecurity("test-secret", time.Minute).WithAccountSecurityEmailLinks("https://shop.test", 45*time.Minute)
+	router := newStorefrontRouter(h)
+
+	currentCart, err := cartSvc.CreateCart(context.Background(), out.CustomerID, "EUR")
+	if err != nil {
+		t.Fatalf("CreateCart: %v", err)
+	}
+	if _, err := cartSvc.AddItem(context.Background(), currentCart.ID, out.CustomerID, "var-1", 1); err != nil {
+		t.Fatalf("AddItem: %v", err)
+	}
+
+	for _, tc := range []struct {
+		name  string
+		token string
+	}{
+		{name: "garbage", token: "notavalidtoken"},
+		{name: "tampered base64", token: "AAAA" + strings.Repeat("X", 60)},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			rec := httptest.NewRecorder()
+			req := storefrontCustomerRequest(
+				httptest.NewRequest("GET", "/checkout/address?checkout_resume="+url.QueryEscape(tc.token), nil),
+				out.CustomerID,
+			)
+			router.ServeHTTP(rec, req)
+
+			if rec.Code != http.StatusOK {
+				t.Fatalf("status = %d, want %d; body: %s", rec.Code, http.StatusOK, rec.Body.String())
+			}
+			if !strings.Contains(rec.Body.String(), "Continue to Shipping") {
+				t.Fatalf("expected checkout address form fallback, got body: %s", rec.Body.String())
+			}
+			if orders.saved != nil {
+				t.Fatal("expected no order to be saved on bad resume token")
+			}
+		})
+	}
+}
+
 func TestStorefrontHandler_CheckoutConfirm_SanitizesServerErrors(t *testing.T) {
 	products := &mockStorefrontRepo{findByIDFn: func(_ context.Context, id string) (*catalog.Product, error) {
 		return &catalog.Product{ID: id, Name: "Widget", Slug: "widget"}, nil
