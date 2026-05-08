@@ -579,7 +579,7 @@ func storefrontAccountOrderStatus(status order.OrderStatus) string {
 }
 
 func storefrontAccountErrorMessage(err error) string {
-	if apperror.Is(err, apperror.CodeValidation) || apperror.Is(err, apperror.CodeUnauthorized) || apperror.Is(err, apperror.CodeConflict) || apperror.Is(err, apperror.CodeForbidden) || apperror.Is(err, apperror.CodeNotFound) {
+	if apperror.Is(err, apperror.CodeValidation) || apperror.Is(err, apperror.CodeUnauthorized) || apperror.Is(err, apperror.CodeConflict) || apperror.Is(err, apperror.CodeForbidden) || apperror.Is(err, apperror.CodeNotFound) || apperror.Is(err, apperror.CodeRateLimited) {
 		return err.Error()
 	}
 	return "Sorry, something went wrong. Please try again later."
@@ -587,6 +587,8 @@ func storefrontAccountErrorMessage(err error) string {
 
 func storefrontAccountErrorStatus(err error) int {
 	switch {
+	case apperror.Is(err, apperror.CodeRateLimited):
+		return http.StatusTooManyRequests
 	case apperror.Is(err, apperror.CodeUnauthorized):
 		return http.StatusUnauthorized
 	case apperror.Is(err, apperror.CodeForbidden):

@@ -10,9 +10,11 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/akarso/shopanda/internal/domain/theme"
+	"github.com/akarso/shopanda/internal/platform/apperror"
 	"github.com/akarso/shopanda/internal/platform/auth"
 )
 
@@ -20,14 +22,18 @@ const storefrontSecurityVerifyCookieName = "shopanda_storefront_security_verify"
 
 const defaultStorefrontAccountSecurityTTL = 10 * time.Minute
 const defaultStorefrontSecurityEmailTokenTTL = 30 * time.Minute
+const defaultStorefrontSecurityEmailLinkCooldown = time.Minute
 const defaultStorefrontSecurityFreshSessionTTL = 5 * time.Minute
 
 type storefrontAccountSecurityVerifier struct {
-	secret          []byte
-	storeBaseURL    string
-	ttl             time.Duration
-	emailTokenTTL   time.Duration
-	freshSessionTTL time.Duration
+	secret            []byte
+	storeBaseURL      string
+	ttl               time.Duration
+	emailTokenTTL     time.Duration
+	emailLinkCooldown time.Duration
+	freshSessionTTL   time.Duration
+	emailLinkMu       sync.Mutex
+	lastEmailLinks    map[string]time.Time
 }
 
 type StorefrontAccountSecurityVerifyPageData struct {
@@ -55,12 +61,39 @@ func newStorefrontAccountSecurityVerifier(secret string, ttl time.Duration) *sto
 		ttl = defaultStorefrontAccountSecurityTTL
 	}
 	return &storefrontAccountSecurityVerifier{
-		secret:          []byte("storefront-security:" + secret),
-		storeBaseURL:    "",
-		ttl:             ttl,
-		emailTokenTTL:   defaultStorefrontSecurityEmailTokenTTL,
-		freshSessionTTL: defaultStorefrontSecurityFreshSessionTTL,
+		secret:            []byte("storefront-security:" + secret),
+		storeBaseURL:      "",
+		ttl:               ttl,
+		emailTokenTTL:     defaultStorefrontSecurityEmailTokenTTL,
+		emailLinkCooldown: defaultStorefrontSecurityEmailLinkCooldown,
+		freshSessionTTL:   defaultStorefrontSecurityFreshSessionTTL,
+		lastEmailLinks:    make(map[string]time.Time),
 	}
+}
+
+func (v *storefrontAccountSecurityVerifier) canSendEmailLink(customerID string, now time.Time) error {
+	if v == nil || v.emailLinkCooldown <= 0 || strings.TrimSpace(customerID) == "" {
+		return nil
+	}
+	v.emailLinkMu.Lock()
+	defer v.emailLinkMu.Unlock()
+	lastSentAt, ok := v.lastEmailLinks[strings.TrimSpace(customerID)]
+	if !ok {
+		return nil
+	}
+	if now.UTC().Sub(lastSentAt.UTC()) < v.emailLinkCooldown {
+		return apperror.RateLimited("Please wait before requesting another verification email.")
+	}
+	return nil
+}
+
+func (v *storefrontAccountSecurityVerifier) markEmailLinkSent(customerID string, sentAt time.Time) {
+	if v == nil || v.emailLinkCooldown <= 0 || strings.TrimSpace(customerID) == "" {
+		return
+	}
+	v.emailLinkMu.Lock()
+	v.lastEmailLinks[strings.TrimSpace(customerID)] = sentAt.UTC()
+	v.emailLinkMu.Unlock()
 }
 
 func normalizeStorefrontBaseURL(raw string) (string, error) {
@@ -311,7 +344,13 @@ func (h *StorefrontHandler) AccountSecurityVerify() http.HandlerFunc {
 		}
 		page.RedirectTo = storefrontSafeRedirectPath(r.FormValue("redirect_to"), "/account/security")
 		if r.FormValue("action") == "email_link" {
-			token, err := h.security.emailToken(customerID, page.RedirectTo, time.Now().UTC())
+			now := time.Now().UTC()
+			if err := h.security.canSendEmailLink(customerID, now); err != nil {
+				page.ErrorMessage = storefrontAccountErrorMessage(err)
+				h.renderPageStatus(w, "account_security_verify", page, storefrontAccountErrorStatus(err))
+				return
+			}
+			token, err := h.security.emailToken(customerID, page.RedirectTo, now)
 			if err != nil {
 				http.Error(w, "Internal Server Error", http.StatusInternalServerError)
 				return
@@ -326,6 +365,7 @@ func (h *StorefrontHandler) AccountSecurityVerify() http.HandlerFunc {
 				h.renderPageStatus(w, "account_security_verify", page, storefrontAccountErrorStatus(err))
 				return
 			}
+			h.security.markEmailLinkSent(customerID, now)
 			query := url.Values{}
 			query.Set("redirect_to", page.RedirectTo)
 			query.Set("email_sent", "1")

@@ -821,6 +821,65 @@ func TestStorefrontHandler_AccountSecurityVerify_EmailLink_SetsVerificationCooki
 	}
 }
 
+func TestStorefrontHandler_AccountSecurityVerify_EmailLinkRequest_ThrottlesRepeatedSends(t *testing.T) {
+	engine := createTestTheme(t)
+	pdp := composition.NewPipeline[composition.ProductContext]()
+	plp := composition.NewPipeline[composition.ListingContext]()
+	log := logger.NewWithWriter(io.Discard, "error")
+	bus := event.NewBus(log)
+	publishCount := 0
+	bus.On(customer.EventSecurityVerificationRequested, func(_ context.Context, evt event.Event) error {
+		publishCount++
+		return nil
+	})
+	authSvc, _ := newStorefrontAuthServiceWithBus(t, bus)
+	out, err := authSvc.Register(context.Background(), appAuth.RegisterInput{Email: "ada@example.com", Password: "password123", FirstName: "Ada", LastName: "Lovelace"})
+	if err != nil {
+		t.Fatalf("Register: %v", err)
+	}
+	h := shophttp.NewStorefrontHandler(engine, &mockStorefrontRepo{}, newStorefrontCategoryMock(), pdp, plp, newStorefrontSearchMock()).WithAccount(authSvc, newStorefrontAccountOrderRepoStub(), &storefrontAccountDeleterStub{}).WithAccountSecurity("test-secret", time.Minute).WithAccountSecurityEmailLinks("https://shop.test", 45*time.Minute)
+	router := newStorefrontRouter(h)
+	id, err := identity.NewIdentity(out.CustomerID, identity.RoleCustomer)
+	if err != nil {
+		t.Fatalf("NewIdentity: %v", err)
+	}
+	csrfCookie := storefrontAccountCSRFCookie(t, router, "/account/security/verify")
+	form := url.Values{
+		"csrf_token":  {csrfCookie.Value},
+		"redirect_to": {"/account/security"},
+		"action":      {"email_link"},
+	}
+
+	firstRec := httptest.NewRecorder()
+	firstReq := httptest.NewRequest("POST", "/account/security/verify", strings.NewReader(form.Encode()))
+	firstReq.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	firstReq.AddCookie(csrfCookie)
+	firstReq = firstReq.WithContext(auth.WithIdentity(firstReq.Context(), id))
+	router.ServeHTTP(firstRec, firstReq)
+
+	if firstRec.Code != http.StatusSeeOther {
+		t.Fatalf("first status = %d, want %d; body: %s", firstRec.Code, http.StatusSeeOther, firstRec.Body.String())
+	}
+
+	secondRec := httptest.NewRecorder()
+	secondReq := httptest.NewRequest("POST", "/account/security/verify", strings.NewReader(form.Encode()))
+	secondReq.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	secondReq.AddCookie(csrfCookie)
+	secondReq = secondReq.WithContext(auth.WithIdentity(secondReq.Context(), id))
+	router.ServeHTTP(secondRec, secondReq)
+
+	if secondRec.Code != http.StatusTooManyRequests {
+		t.Fatalf("second status = %d, want %d; body: %s", secondRec.Code, http.StatusTooManyRequests, secondRec.Body.String())
+	}
+	body := secondRec.Body.String()
+	if !strings.Contains(body, "Please wait before requesting another verification email.") {
+		t.Fatalf("expected throttle message in body: %s", body)
+	}
+	if publishCount != 1 {
+		t.Fatalf("publishCount = %d, want 1", publishCount)
+	}
+}
+
 func TestStorefrontHandler_AccountSecurity_RendersSensitiveActions(t *testing.T) {
 	engine := createTestTheme(t)
 	pdp := composition.NewPipeline[composition.ProductContext]()
