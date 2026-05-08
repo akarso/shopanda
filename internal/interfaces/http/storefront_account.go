@@ -259,7 +259,15 @@ func (h *StorefrontHandler) sendStorefrontRegistrationVerification(r *http.Reque
 
 func (h *StorefrontHandler) requireStorefrontVerifiedEmail(w http.ResponseWriter, r *http.Request, customerID, redirectTo string) bool {
 	if h.auth == nil || h.security == nil || strings.TrimSpace(h.security.storeBaseURL) == "" {
-		return true
+		h.log.Warn("storefront.account.email_verification_unavailable", map[string]interface{}{
+			"customer_id":               customerID,
+			"path":                      r.URL.Path,
+			"has_auth":                  h.auth != nil,
+			"has_security":              h.security != nil,
+			"store_base_url_configured": h.security != nil && strings.TrimSpace(h.security.storeBaseURL) != "",
+		})
+		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
+		return false
 	}
 	profile, err := h.auth.Me(r.Context(), customerID)
 	if err != nil {
@@ -274,7 +282,10 @@ func (h *StorefrontHandler) requireStorefrontVerifiedEmail(w http.ResponseWriter
 		http.Redirect(w, r, verificationRedirect, http.StatusSeeOther)
 		return false
 	}
-	http.Redirect(w, r, "/account/verify-email?redirect_to="+url.QueryEscape(redirectTarget), http.StatusSeeOther)
+	query := url.Values{}
+	query.Set("sent", "1")
+	query.Set("redirect_to", redirectTarget)
+	http.Redirect(w, r, "/account/verify-email?"+query.Encode(), http.StatusSeeOther)
 	return false
 }
 
