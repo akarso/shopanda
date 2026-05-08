@@ -42,6 +42,11 @@ func TestValidatingTokenParser_Parse_DisplayName(t *testing.T) {
 	_ = repo.Create(context.Background(), &c)
 
 	token, _, _ := issuer.CreateWithDisplayName("user-1", "customer", 0, "Alice Example")
+	claims, err := issuer.Parse(token)
+	if err != nil {
+		t.Fatalf("Parse token claims: %v", err)
+	}
+	expectedAuthenticatedAt := time.Unix(claims.Iat, 0).UTC()
 	id, err := parser.Parse(context.Background(), token)
 	if err != nil {
 		t.Fatalf("Parse: %v", err)
@@ -49,8 +54,8 @@ func TestValidatingTokenParser_Parse_DisplayName(t *testing.T) {
 	if id.DisplayName != "Alice Example" {
 		t.Fatalf("DisplayName = %q, want %q", id.DisplayName, "Alice Example")
 	}
-	if id.AuthenticatedAt.IsZero() {
-		t.Fatal("expected AuthenticatedAt to be populated")
+	if !id.AuthenticatedAt.Equal(expectedAuthenticatedAt) {
+		t.Fatalf("AuthenticatedAt = %v, want %v", id.AuthenticatedAt, expectedAuthenticatedAt)
 	}
 }
 

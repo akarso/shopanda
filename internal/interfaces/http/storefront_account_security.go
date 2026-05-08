@@ -61,10 +61,11 @@ func (v *storefrontAccountSecurityVerifier) hasFreshSession(r *http.Request, cus
 		return false
 	}
 	authenticatedAt := id.AuthenticatedAt.UTC()
-	if authenticatedAt.After(time.Now().UTC()) {
+	now := time.Now().UTC()
+	if authenticatedAt.After(now) {
 		return false
 	}
-	return time.Since(authenticatedAt) <= v.freshSessionTTL
+	return now.Sub(authenticatedAt) <= v.freshSessionTTL
 }
 
 func (v *storefrontAccountSecurityVerifier) sign(customerID string, verifiedAt int64) string {
