@@ -5,6 +5,7 @@ import (
 	"encoding/base64"
 	"fmt"
 	"net/url"
+	"strings"
 
 	"github.com/akarso/shopanda/internal/domain/customer"
 	"github.com/akarso/shopanda/internal/domain/invoice"
@@ -263,12 +264,17 @@ func (s *Service) HandleEmailVerification(ctx context.Context, evt event.Event) 
 		s.log.Error("HandleEmailVerification.customer_not_found", err, map[string]interface{}{"customer_id": data.CustomerID})
 		return err
 	}
+	verifyURL := strings.TrimSpace(data.VerifyURL)
+	parsedVerifyURL, err := url.Parse(verifyURL)
+	if verifyURL == "" || err != nil || !parsedVerifyURL.IsAbs() || strings.TrimSpace(parsedVerifyURL.Host) == "" {
+		return fmt.Errorf("notification: invalid verify url for customer %s", data.CustomerID)
+	}
 
 	ed := mail.EmailData{
 		StoreURL: s.storeURL,
 		Data: map[string]interface{}{
 			"FirstName": cust.FirstName,
-			"VerifyURL": data.VerifyURL,
+			"VerifyURL": verifyURL,
 		},
 	}
 

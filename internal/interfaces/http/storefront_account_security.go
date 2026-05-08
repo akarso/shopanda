@@ -198,7 +198,8 @@ func (v *storefrontAccountSecurityVerifier) verifyEmailToken(token, purpose stri
 		return "", "", false
 	}
 	now := time.Now().UTC()
-	if strings.TrimSpace(claims.Purpose) != strings.TrimSpace(purpose) {
+	claimPurpose := strings.TrimSpace(claims.Purpose)
+	if claimPurpose != "" && claimPurpose != strings.TrimSpace(purpose) {
 		return "", "", false
 	}
 	expiresAt := time.Unix(claims.ExpiresAt, 0).UTC()
@@ -313,6 +314,12 @@ func (h *StorefrontHandler) AccountVerifyEmail() http.HandlerFunc {
 				return
 			}
 			if err := h.auth.MarkEmailVerified(r.Context(), customerID); err != nil {
+				if apperror.Is(err, apperror.CodeNotFound) {
+					page.ContinueURL = "/account/login"
+					page.ErrorMessage = "This email verification link is invalid or has expired."
+					h.renderPageStatus(w, "account_verify_email", page, http.StatusUnauthorized)
+					return
+				}
 				h.log.Error("storefront.account.email_verification_failed", err, map[string]interface{}{
 					"customer_id": customerID,
 					"path":        r.URL.Path,

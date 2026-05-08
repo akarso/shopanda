@@ -3,6 +3,8 @@ package notification_test
 import (
 	"context"
 	"encoding/base64"
+	"net/url"
+	"regexp"
 	"strings"
 	"testing"
 
@@ -308,8 +310,58 @@ func TestHandleEmailVerification(t *testing.T) {
 	if to, _ := job.Payload["to"].(string); to != "alice@example.com" {
 		t.Fatalf("payload.to = %q, want alice@example.com", to)
 	}
-	if body, _ := job.Payload["body"].(string); !strings.Contains(body, "account/verify-email") {
-		t.Fatalf("payload.body = %q, want verification link", body)
+	body, _ := job.Payload["body"].(string)
+	match := regexp.MustCompile(`href="([^"]+)"`).FindStringSubmatch(body)
+	if len(match) != 2 {
+		t.Fatalf("payload.body = %q, want linked verification URL", body)
+	}
+	verifyURL, err := url.Parse(match[1])
+	if err != nil {
+		t.Fatalf("Parse verify URL: %v", err)
+	}
+	if verifyURL.Scheme != "https" && verifyURL.Scheme != "http" {
+		t.Fatalf("verify URL scheme = %q, want http/https", verifyURL.Scheme)
+	}
+	if verifyURL.Host == "" {
+		t.Fatalf("verify URL host is empty: %q", verifyURL.String())
+	}
+	if verifyURL.Path != "/account/verify-email" {
+		t.Fatalf("verify URL path = %q, want /account/verify-email", verifyURL.Path)
+	}
+	if verifyURL.Query().Get("email_token") == "" {
+		t.Fatalf("verify URL missing email_token: %q", verifyURL.String())
+	}
+}
+
+func TestHandleEmailVerification_InvalidVerifyURL(t *testing.T) {
+	tmpl := mail.NewTemplates()
+	notification.RegisterTemplates(tmpl)
+
+	q := &mockQueue{}
+	custRepo := &mockCustomerRepo{
+		findByID: func(_ context.Context, id string) (*customer.Customer, error) {
+			if id == "cust-1" {
+				c, _ := customer.NewCustomer("cust-1", "alice@example.com")
+				c.FirstName = "Alice"
+				return &c, nil
+			}
+			return nil, nil
+		},
+	}
+	ordRepo := &mockOrderRepo{}
+
+	svc := newTestService(t, tmpl, custRepo, ordRepo, q)
+	evt := event.New(customer.EventEmailVerificationRequested, "auth.service", customer.EmailVerificationRequestedData{
+		CustomerID: "cust-1",
+		VerifyURL:  "   ",
+	})
+
+	err := svc.HandleEmailVerification(context.Background(), evt)
+	if err == nil {
+		t.Fatal("expected error for invalid verify URL")
+	}
+	if len(q.enqueued) != 0 {
+		t.Fatalf("expected 0 enqueued jobs, got %d", len(q.enqueued))
 	}
 }
 
