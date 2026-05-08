@@ -43,9 +43,6 @@ func (s *Service) StartCheckout(ctx context.Context, cartID, customerID string, 
 	if cartID == "" {
 		return nil, apperror.Validation("cart id must not be empty")
 	}
-	if customerID == "" {
-		return nil, apperror.Validation("customer id must not be empty")
-	}
 	input.Address = input.Address.Normalize()
 	if input.Address.IsZero() {
 		return nil, apperror.Validation("address is required")

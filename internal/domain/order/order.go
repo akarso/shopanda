@@ -45,9 +45,6 @@ func NewOrder(id, customerID, currency string, items []Item) (Order, error) {
 	if id == "" {
 		return Order{}, errors.New("order: id must not be empty")
 	}
-	if customerID == "" {
-		return Order{}, errors.New("order: customer id must not be empty")
-	}
 	if !shared.IsValidCurrency(currency) {
 		return Order{}, errors.New("order: invalid currency code")
 	}

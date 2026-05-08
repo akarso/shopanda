@@ -13,7 +13,7 @@
 | Track | Status | Goal | Notes |
 | --- | --- | --- | --- |
 | 1 | done in PR-306 | Guest cart continuity across login/register | Anonymous cart is claimed or merged into the authenticated customer's active cart, and the guest cart cookie is cleared so storefront surfaces stay in sync |
-| 2 | planned | Guest checkout without account creation | Let anonymous customers complete checkout without a customer account while preserving a later path to account creation or order claiming |
+| 2 | in progress (PR-318) | Guest checkout without account creation | Let anonymous customers complete checkout without a customer account while preserving a later path to account creation or order claiming |
 | 3 | planned | Admin bootstrap, permissions, and usability hardening | Remove insecure first-boot admin defaults, restore admin product data access, and close missing admin UX gaps |
 | 4 | planned | Customer account UX and account-security hardening | Make account state visible in the storefront, add complete account management flows, and introduce stronger authentication for sensitive account changes |
 

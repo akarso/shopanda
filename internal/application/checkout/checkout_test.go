@@ -67,6 +67,19 @@ func activeCart(t *testing.T, customerID string) *cart.Cart {
 	return &c
 }
 
+func activeGuestCart(t *testing.T) *cart.Cart {
+	t.Helper()
+	c, err := cart.NewCart(id.New(), "EUR")
+	if err != nil {
+		t.Fatalf("NewCart: %v", err)
+	}
+	price := shared.MustNewMoney(1000, "EUR")
+	if err := c.AddItem("var-1", 2, price); err != nil {
+		t.Fatalf("AddItem: %v", err)
+	}
+	return &c
+}
+
 func validCheckoutInput() checkout.Input {
 	return checkout.Input{
 		Address: checkout.Address{
@@ -384,15 +397,45 @@ func TestService_StartCheckout_EmptyCartID(t *testing.T) {
 	}
 }
 
-func TestService_StartCheckout_EmptyCustomerID(t *testing.T) {
+func TestService_StartCheckout_EmptyCustomerIDForbiddenForCustomerCart(t *testing.T) {
 	bus := testBus(t)
 	log := testLogger()
 	wf := checkout.NewWorkflow(nil, bus, log)
-	svc := checkout.NewService(&mockCartRepo{}, wf, log)
 
-	_, err := svc.StartCheckout(context.Background(), "cart-1", "", checkout.Input{})
+	c := activeCart(t, "cust-1")
+	repo := &mockCartRepo{cart: c}
+	svc := checkout.NewService(repo, wf, log)
+
+	_, err := svc.StartCheckout(context.Background(), c.ID, "", validCheckoutInput())
 	if err == nil {
-		t.Fatal("expected error for empty customer id")
+		t.Fatal("expected forbidden error for mismatched customer cart")
+	}
+}
+
+func TestService_StartCheckout_GuestCartSuccess(t *testing.T) {
+	bus := testBus(t)
+	log := testLogger()
+
+	c := activeGuestCart(t)
+	repo := &mockCartRepo{cart: c}
+
+	var executed bool
+	step := &mockStep{name: "test_step", fn: func(_ *checkout.Context) error {
+		executed = true
+		return nil
+	}}
+	wf := checkout.NewWorkflow([]checkout.Step{step}, bus, log)
+	svc := checkout.NewService(repo, wf, log)
+
+	result, err := svc.StartCheckout(context.Background(), c.ID, "", validCheckoutInput())
+	if err != nil {
+		t.Fatalf("StartCheckout: %v", err)
+	}
+	if !executed {
+		t.Error("workflow step was not executed")
+	}
+	if result.CustomerID != "" {
+		t.Errorf("CustomerID = %q, want empty guest id", result.CustomerID)
 	}
 }
 
