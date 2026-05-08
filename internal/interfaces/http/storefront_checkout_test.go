@@ -675,6 +675,9 @@ func TestStorefrontHandler_CheckoutAddress_FallsBackToAddressFormOnInvalidResume
 			if rec.Code != http.StatusOK {
 				t.Fatalf("status = %d, want %d; body: %s", rec.Code, http.StatusOK, rec.Body.String())
 			}
+			if !strings.Contains(rec.Body.String(), "Continue to Shipping") {
+				t.Fatalf("expected checkout address form fallback, got body: %s", rec.Body.String())
+			}
 			if orders.saved != nil {
 				t.Fatal("expected no order to be saved on bad resume token")
 			}

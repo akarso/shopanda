@@ -1,6 +1,7 @@
 package http
 
 import (
+	"encoding/base64"
 	"errors"
 	"net/http/httptest"
 	"strings"
@@ -170,10 +171,18 @@ func TestStorefrontAccountSecurityVerifier_VerifyCheckoutResumeToken_RejectsTamp
 	if err != nil {
 		t.Fatalf("checkoutResumeToken: %v", err)
 	}
-	// flip the last byte of the base64 ciphertext to invalidate the GCM tag
-	raw := []byte(token)
+	stdToken := strings.NewReplacer("-", "+", "_", "/").Replace(token)
+	if rem := len(stdToken) % 4; rem != 0 {
+		stdToken += strings.Repeat("=", 4-rem)
+	}
+	raw, err := base64.StdEncoding.DecodeString(stdToken)
+	if err != nil {
+		t.Fatalf("DecodeString token: %v", err)
+	}
+	// flip a byte in decoded ciphertext so base64 stays valid but GCM auth fails
 	raw[len(raw)-1] ^= 0xFF
-	tampered := string(raw)
+	tamperedStd := base64.StdEncoding.EncodeToString(raw)
+	tampered := strings.TrimRight(strings.NewReplacer("+", "-", "/", "_").Replace(tamperedStd), "=")
 
 	if _, ok := verifier.verifyCheckoutResumeToken(tampered, "cust-1"); ok {
 		t.Fatal("expected tampered token to be rejected")
