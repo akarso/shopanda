@@ -72,7 +72,8 @@ func (p *ValidatingTokenParser) Parse(ctx context.Context, token string) (identi
 	if err != nil {
 		return identity.Identity{}, fmt.Errorf("validating parser: %w", err)
 	}
-	return id.WithDisplayName(claims.DisplayName), nil
+	authenticatedAt := time.Unix(claims.Iat, 0).UTC()
+	return id.WithDisplayName(claims.DisplayName).WithAuthenticatedAt(authenticatedAt), nil
 }
 
 // getCached returns the cached generation for a customer, if present and not expired.

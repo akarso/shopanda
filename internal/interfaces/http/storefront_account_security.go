@@ -11,15 +11,18 @@ import (
 	"time"
 
 	"github.com/akarso/shopanda/internal/domain/theme"
+	"github.com/akarso/shopanda/internal/platform/auth"
 )
 
 const storefrontSecurityVerifyCookieName = "shopanda_storefront_security_verify"
 
 const defaultStorefrontAccountSecurityTTL = 10 * time.Minute
+const defaultStorefrontSecurityFreshSessionTTL = 5 * time.Minute
 
 type storefrontAccountSecurityVerifier struct {
-	secret []byte
-	ttl    time.Duration
+	secret          []byte
+	ttl             time.Duration
+	freshSessionTTL time.Duration
 }
 
 type StorefrontAccountSecurityVerifyPageData struct {
@@ -40,9 +43,29 @@ func newStorefrontAccountSecurityVerifier(secret string, ttl time.Duration) *sto
 		ttl = defaultStorefrontAccountSecurityTTL
 	}
 	return &storefrontAccountSecurityVerifier{
-		secret: []byte("storefront-security:" + secret),
-		ttl:    ttl,
+		secret:          []byte("storefront-security:" + secret),
+		ttl:             ttl,
+		freshSessionTTL: defaultStorefrontSecurityFreshSessionTTL,
 	}
+}
+
+func (v *storefrontAccountSecurityVerifier) hasFreshSession(r *http.Request, customerID string) bool {
+	if v == nil || v.freshSessionTTL <= 0 || r == nil || strings.TrimSpace(customerID) == "" {
+		return false
+	}
+	id := auth.IdentityFrom(r.Context())
+	if strings.TrimSpace(id.UserID) != customerID {
+		return false
+	}
+	if id.AuthenticatedAt.IsZero() {
+		return false
+	}
+	authenticatedAt := id.AuthenticatedAt.UTC()
+	now := time.Now().UTC()
+	if authenticatedAt.After(now) {
+		return false
+	}
+	return now.Sub(authenticatedAt) <= v.freshSessionTTL
 }
 
 func (v *storefrontAccountSecurityVerifier) sign(customerID string, verifiedAt int64) string {
@@ -120,6 +143,9 @@ func storefrontClearSecurityVerifyCookie(w http.ResponseWriter, r *http.Request)
 
 func (h *StorefrontHandler) requireStorefrontSecurityVerification(w http.ResponseWriter, r *http.Request, customerID, redirectTo string) bool {
 	if h.security == nil {
+		return true
+	}
+	if h.security.hasFreshSession(r, customerID) {
 		return true
 	}
 	if h.security.isVerified(r, customerID) {
