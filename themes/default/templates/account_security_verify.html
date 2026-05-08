@@ -5,10 +5,11 @@
     <div class="page-intro">
         <span class="eyebrow">Account</span>
         <h1>Verify security access</h1>
-        <p>Re-enter your password before opening password, logout, or account deletion controls.</p>
+        <p>Re-enter your password or request a secure email link before opening password, logout, or account deletion controls.</p>
     </div>
 
     <section class="account-panel account-panel--narrow">
+        {{ if .SuccessMessage }}<p class="checkout-form__success" role="status">{{ .SuccessMessage }}</p>{{ end }}
         {{ if .ErrorMessage }}<p class="checkout-form__error" role="alert">{{ .ErrorMessage }}</p>{{ end }}
         <div class="account-profile-meta">
             <span class="eyebrow">Signed in as</span>
@@ -24,6 +25,15 @@
             <div class="checkout-actions">
                 <a class="chip" href="/account/profile">Back to profile</a>
                 <button type="submit">Continue</button>
+            </div>
+        </form>
+        <form class="checkout-form checkout-form--secondary" action="/account/security/verify" method="post">
+            <input type="hidden" name="csrf_token" value="{{ .CSRFToken }}">
+            <input type="hidden" name="redirect_to" value="{{ .RedirectTo }}">
+            <input type="hidden" name="action" value="email_link">
+            <p>Prefer not to type your password again? Send a secure verification link to your account email.</p>
+            <div class="checkout-actions">
+                <button type="submit">Email Secure Link</button>
             </div>
         </form>
     </section>

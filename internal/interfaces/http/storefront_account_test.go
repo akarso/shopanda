@@ -200,13 +200,21 @@ func (d *storefrontAccountDeleterStub) DeleteAccount(_ context.Context, customer
 
 func newStorefrontAuthService(t *testing.T) (*appAuth.Service, *storefrontAccountCustomerRepoStub) {
 	t.Helper()
+	return newStorefrontAuthServiceWithBus(t, nil)
+}
+
+func newStorefrontAuthServiceWithBus(t *testing.T, bus *event.Bus) (*appAuth.Service, *storefrontAccountCustomerRepoStub) {
+	t.Helper()
 	repo := newStorefrontAccountCustomerRepoStub()
 	issuer, err := jwt.NewIssuer("test-secret", time.Hour)
 	if err != nil {
 		t.Fatalf("NewIssuer: %v", err)
 	}
 	log := logger.NewWithWriter(io.Discard, "error")
-	return appAuth.NewService(repo, &storefrontAccountResetRepoStub{}, issuer, event.NewBus(log), log, time.Hour), repo
+	if bus == nil {
+		bus = event.NewBus(log)
+	}
+	return appAuth.NewService(repo, &storefrontAccountResetRepoStub{}, issuer, bus, log, time.Hour), repo
 }
 
 func storefrontAccountCSRFCookie(t *testing.T, handler http.Handler, path string) *http.Cookie {
@@ -682,6 +690,130 @@ func TestStorefrontHandler_AccountSecurityVerify_SetsVerificationCookie(t *testi
 	_, verifiedCookie := storefrontAccountSecurityVerifiedCookie(t, router, id, "/account/security")
 	if verifiedCookie.Value == "" || verifiedCookie.MaxAge <= 0 {
 		t.Fatalf("expected verification cookie to be set, got %+v", verifiedCookie)
+	}
+}
+
+func TestStorefrontHandler_AccountSecurityVerify_EmailLinkRequest_RedirectsAndPublishesURL(t *testing.T) {
+	engine := createTestTheme(t)
+	pdp := composition.NewPipeline[composition.ProductContext]()
+	plp := composition.NewPipeline[composition.ListingContext]()
+	log := logger.NewWithWriter(io.Discard, "error")
+	bus := event.NewBus(log)
+	var verifyURL string
+	bus.On(customer.EventSecurityVerificationRequested, func(_ context.Context, evt event.Event) error {
+		data := evt.Data.(customer.SecurityVerificationRequestedData)
+		verifyURL = data.VerifyURL
+		return nil
+	})
+	authSvc, _ := newStorefrontAuthServiceWithBus(t, bus)
+	out, err := authSvc.Register(context.Background(), appAuth.RegisterInput{Email: "ada@example.com", Password: "password123", FirstName: "Ada", LastName: "Lovelace"})
+	if err != nil {
+		t.Fatalf("Register: %v", err)
+	}
+	h := shophttp.NewStorefrontHandler(engine, &mockStorefrontRepo{}, newStorefrontCategoryMock(), pdp, plp, newStorefrontSearchMock()).WithAccount(authSvc, newStorefrontAccountOrderRepoStub(), &storefrontAccountDeleterStub{}).WithAccountSecurity("test-secret", time.Minute)
+	router := newStorefrontRouter(h)
+	id, err := identity.NewIdentity(out.CustomerID, identity.RoleCustomer)
+	if err != nil {
+		t.Fatalf("NewIdentity: %v", err)
+	}
+	csrfCookie := storefrontAccountCSRFCookie(t, router, "/account/security/verify")
+
+	form := url.Values{
+		"csrf_token":  {csrfCookie.Value},
+		"redirect_to": {"/account/security"},
+		"action":      {"email_link"},
+	}
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("POST", "/account/security/verify", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.AddCookie(csrfCookie)
+	req = req.WithContext(auth.WithIdentity(req.Context(), id))
+	router.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusSeeOther {
+		t.Fatalf("status = %d, want %d; body: %s", rec.Code, http.StatusSeeOther, rec.Body.String())
+	}
+	if rec.Header().Get("Location") != "/account/security/verify?redirect_to=%2Faccount%2Fsecurity&email_sent=1" {
+		t.Fatalf("location = %q", rec.Header().Get("Location"))
+	}
+	if verifyURL == "" {
+		t.Fatal("expected verification URL to be published")
+	}
+	parsed, err := url.Parse(verifyURL)
+	if err != nil {
+		t.Fatalf("Parse verifyURL: %v", err)
+	}
+	if parsed.Path != "/account/security/verify" {
+		t.Fatalf("verify path = %q, want %q", parsed.Path, "/account/security/verify")
+	}
+	if strings.TrimSpace(parsed.Query().Get("email_token")) == "" {
+		t.Fatal("expected email_token in verification URL")
+	}
+}
+
+func TestStorefrontHandler_AccountSecurityVerify_EmailLink_SetsVerificationCookie(t *testing.T) {
+	engine := createTestTheme(t)
+	pdp := composition.NewPipeline[composition.ProductContext]()
+	plp := composition.NewPipeline[composition.ListingContext]()
+	log := logger.NewWithWriter(io.Discard, "error")
+	bus := event.NewBus(log)
+	var verifyURL string
+	bus.On(customer.EventSecurityVerificationRequested, func(_ context.Context, evt event.Event) error {
+		data := evt.Data.(customer.SecurityVerificationRequestedData)
+		verifyURL = data.VerifyURL
+		return nil
+	})
+	authSvc, _ := newStorefrontAuthServiceWithBus(t, bus)
+	out, err := authSvc.Register(context.Background(), appAuth.RegisterInput{Email: "ada@example.com", Password: "password123", FirstName: "Ada", LastName: "Lovelace"})
+	if err != nil {
+		t.Fatalf("Register: %v", err)
+	}
+	h := shophttp.NewStorefrontHandler(engine, &mockStorefrontRepo{}, newStorefrontCategoryMock(), pdp, plp, newStorefrontSearchMock()).WithAccount(authSvc, newStorefrontAccountOrderRepoStub(), &storefrontAccountDeleterStub{}).WithAccountSecurity("test-secret", time.Minute)
+	router := newStorefrontRouter(h)
+	id, err := identity.NewIdentity(out.CustomerID, identity.RoleCustomer)
+	if err != nil {
+		t.Fatalf("NewIdentity: %v", err)
+	}
+	csrfCookie := storefrontAccountCSRFCookie(t, router, "/account/security/verify")
+	requestForm := url.Values{
+		"csrf_token":  {csrfCookie.Value},
+		"redirect_to": {"/account/security"},
+		"action":      {"email_link"},
+	}
+	requestRec := httptest.NewRecorder()
+	requestReq := httptest.NewRequest("POST", "/account/security/verify", strings.NewReader(requestForm.Encode()))
+	requestReq.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	requestReq.AddCookie(csrfCookie)
+	requestReq = requestReq.WithContext(auth.WithIdentity(requestReq.Context(), id))
+	router.ServeHTTP(requestRec, requestReq)
+
+	if verifyURL == "" {
+		t.Fatal("expected verification URL to be published")
+	}
+	parsed, err := url.Parse(verifyURL)
+	if err != nil {
+		t.Fatalf("Parse verifyURL: %v", err)
+	}
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("GET", parsed.RequestURI(), nil)
+	req = req.WithContext(auth.WithIdentity(req.Context(), id))
+	router.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusSeeOther {
+		t.Fatalf("status = %d, want %d; body: %s", rec.Code, http.StatusSeeOther, rec.Body.String())
+	}
+	if rec.Header().Get("Location") != "/account/security" {
+		t.Fatalf("location = %q, want %q", rec.Header().Get("Location"), "/account/security")
+	}
+	var verifiedCookie *http.Cookie
+	for _, cookie := range rec.Result().Cookies() {
+		if cookie.Name == "shopanda_storefront_security_verify" {
+			verifiedCookie = cookie
+			break
+		}
+	}
+	if verifiedCookie == nil || verifiedCookie.Value == "" {
+		t.Fatal("expected storefront security verification cookie from email link")
 	}
 }
 

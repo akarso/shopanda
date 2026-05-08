@@ -4,6 +4,8 @@ import (
 	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/base64"
+	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -26,12 +28,19 @@ type storefrontAccountSecurityVerifier struct {
 }
 
 type StorefrontAccountSecurityVerifyPageData struct {
-	Layout       StorefrontLayoutData
-	Theme        theme.Theme
-	CSRFToken    string
-	RedirectTo   string
-	Email        string
-	ErrorMessage string
+	Layout         StorefrontLayoutData
+	Theme          theme.Theme
+	CSRFToken      string
+	RedirectTo     string
+	Email          string
+	SuccessMessage string
+	ErrorMessage   string
+}
+
+type storefrontSecurityEmailTokenClaims struct {
+	CustomerID string `json:"customer_id"`
+	RedirectTo string `json:"redirect_to"`
+	ExpiresAt  int64  `json:"expires_at"`
 }
 
 func newStorefrontAccountSecurityVerifier(secret string, ttl time.Duration) *storefrontAccountSecurityVerifier {
@@ -74,6 +83,73 @@ func (v *storefrontAccountSecurityVerifier) sign(customerID string, verifiedAt i
 	_, _ = mac.Write([]byte("|"))
 	_, _ = mac.Write([]byte(strconv.FormatInt(verifiedAt, 10)))
 	return base64.RawURLEncoding.EncodeToString(mac.Sum(nil))
+}
+
+func (v *storefrontAccountSecurityVerifier) signEmailToken(payload string) string {
+	mac := hmac.New(sha256.New, v.secret)
+	_, _ = mac.Write([]byte("storefront-security-email|"))
+	_, _ = mac.Write([]byte(payload))
+	return base64.RawURLEncoding.EncodeToString(mac.Sum(nil))
+}
+
+func (v *storefrontAccountSecurityVerifier) emailToken(customerID, redirectTo string, now time.Time) (string, error) {
+	claims := storefrontSecurityEmailTokenClaims{
+		CustomerID: strings.TrimSpace(customerID),
+		RedirectTo: storefrontSafeRedirectPath(redirectTo, "/account/security"),
+		ExpiresAt:  now.UTC().Add(v.ttl).Unix(),
+	}
+	raw, err := json.Marshal(claims)
+	if err != nil {
+		return "", fmt.Errorf("storefront security email token: marshal claims: %w", err)
+	}
+	payload := base64.RawURLEncoding.EncodeToString(raw)
+	return payload + "." + v.signEmailToken(payload), nil
+}
+
+func (v *storefrontAccountSecurityVerifier) verifyEmailToken(token, customerID string) (string, bool) {
+	if v == nil || strings.TrimSpace(token) == "" || strings.TrimSpace(customerID) == "" {
+		return "", false
+	}
+	parts := strings.SplitN(strings.TrimSpace(token), ".", 2)
+	if len(parts) != 2 {
+		return "", false
+	}
+	expectedSig := v.signEmailToken(parts[0])
+	if !hmac.Equal([]byte(parts[1]), []byte(expectedSig)) {
+		return "", false
+	}
+	raw, err := base64.RawURLEncoding.DecodeString(parts[0])
+	if err != nil {
+		return "", false
+	}
+	var claims storefrontSecurityEmailTokenClaims
+	if err := json.Unmarshal(raw, &claims); err != nil {
+		return "", false
+	}
+	now := time.Now().UTC()
+	if strings.TrimSpace(claims.CustomerID) != strings.TrimSpace(customerID) {
+		return "", false
+	}
+	expiresAt := time.Unix(claims.ExpiresAt, 0).UTC()
+	if expiresAt.Before(now) {
+		return "", false
+	}
+	return storefrontSafeRedirectPath(claims.RedirectTo, "/account/security"), true
+}
+
+func storefrontAbsoluteURL(r *http.Request, path string, query url.Values) (string, error) {
+	if r == nil {
+		return "", fmt.Errorf("storefront absolute url: request is required")
+	}
+	host := strings.TrimSpace(r.Host)
+	if host == "" {
+		return "", fmt.Errorf("storefront absolute url: request host is required")
+	}
+	scheme := "http"
+	if isRequestSecure(r, nil) {
+		scheme = "https"
+	}
+	return (&url.URL{Scheme: scheme, Host: host, Path: path, RawQuery: query.Encode()}).String(), nil
 }
 
 func (v *storefrontAccountSecurityVerifier) cookieValue(customerID string, verifiedAt time.Time) string {
@@ -178,6 +254,24 @@ func (h *StorefrontHandler) AccountSecurityVerify() http.HandlerFunc {
 			RedirectTo: storefrontSafeRedirectPath(r.URL.Query().Get("redirect_to"), "/account/security"),
 			Email:      profile.Email,
 		}
+		if token := strings.TrimSpace(r.URL.Query().Get("email_token")); token != "" {
+			redirectTo, ok := h.security.verifyEmailToken(token, customerID)
+			if !ok {
+				page.ErrorMessage = "This verification link is invalid or has expired."
+				h.renderPageStatus(w, "account_security_verify", page, http.StatusUnauthorized)
+				return
+			}
+			storefrontSetSecurityVerifyCookie(w, r, h.security, customerID)
+			http.Redirect(w, r, redirectTo, http.StatusSeeOther)
+			return
+		}
+		if r.URL.Query().Get("email_sent") == "1" {
+			page.SuccessMessage = "We sent a secure verification link to your email."
+		}
+		if h.security.hasFreshSession(r, customerID) {
+			http.Redirect(w, r, page.RedirectTo, http.StatusSeeOther)
+			return
+		}
 		if h.security.isVerified(r, customerID) {
 			http.Redirect(w, r, page.RedirectTo, http.StatusSeeOther)
 			return
@@ -191,6 +285,25 @@ func (h *StorefrontHandler) AccountSecurityVerify() http.HandlerFunc {
 			return
 		}
 		page.RedirectTo = storefrontSafeRedirectPath(r.FormValue("redirect_to"), "/account/security")
+		if r.FormValue("action") == "email_link" {
+			token, err := h.security.emailToken(customerID, page.RedirectTo, time.Now().UTC())
+			if err != nil {
+				http.Error(w, "Internal Server Error", http.StatusInternalServerError)
+				return
+			}
+			verifyURL, err := storefrontAbsoluteURL(r, "/account/security/verify", url.Values{"email_token": {token}})
+			if err != nil {
+				http.Error(w, "Internal Server Error", http.StatusInternalServerError)
+				return
+			}
+			if err := h.auth.RequestSecurityVerificationLink(r.Context(), customerID, verifyURL); err != nil {
+				page.ErrorMessage = storefrontAccountErrorMessage(err)
+				h.renderPageStatus(w, "account_security_verify", page, storefrontAccountErrorStatus(err))
+				return
+			}
+			http.Redirect(w, r, "/account/security/verify?redirect_to="+url.QueryEscape(page.RedirectTo)+"&email_sent=1", http.StatusSeeOther)
+			return
+		}
 		if err := h.auth.VerifyPassword(r.Context(), customerID, r.FormValue("password")); err != nil {
 			page.ErrorMessage = storefrontAccountErrorMessage(err)
 			h.renderPageStatus(w, "account_security_verify", page, storefrontAccountErrorStatus(err))

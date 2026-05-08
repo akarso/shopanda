@@ -678,6 +678,41 @@ func TestRequestPasswordReset_EmptyEmail(t *testing.T) {
 	}
 }
 
+func TestRequestSecurityVerificationLink_Success(t *testing.T) {
+	repo := newMockRepo()
+	issuer, _ := jwt.NewIssuer("test-secret", time.Hour)
+	bus := event.NewBus(testLogger{})
+	var published customer.SecurityVerificationRequestedData
+	bus.On(customer.EventSecurityVerificationRequested, func(_ context.Context, evt event.Event) error {
+		data, ok := evt.Data.(customer.SecurityVerificationRequestedData)
+		if !ok {
+			t.Fatalf("event data type = %T", evt.Data)
+		}
+		published = data
+		return nil
+	})
+	svc := auth.NewService(repo, newMockResetRepo(), issuer, bus, testLogger{}, time.Hour)
+
+	out, err := svc.Register(context.Background(), auth.RegisterInput{
+		Email:    "verify@example.com",
+		Password: "password123",
+	})
+	if err != nil {
+		t.Fatalf("Register: %v", err)
+	}
+
+	err = svc.RequestSecurityVerificationLink(context.Background(), out.CustomerID, "https://shop.test/account/security/verify?email_token=abc")
+	if err != nil {
+		t.Fatalf("RequestSecurityVerificationLink: %v", err)
+	}
+	if published.CustomerID != out.CustomerID {
+		t.Fatalf("published.CustomerID = %q, want %q", published.CustomerID, out.CustomerID)
+	}
+	if published.VerifyURL != "https://shop.test/account/security/verify?email_token=abc" {
+		t.Fatalf("published.VerifyURL = %q", published.VerifyURL)
+	}
+}
+
 // ── ConfirmPasswordReset tests ───────────────────────────────────────────
 
 func TestConfirmPasswordReset_EmptyToken(t *testing.T) {

@@ -416,6 +416,9 @@ func runServe(cfg *config.Config, log logger.Logger) error {
 	// Wire password reset → email notification.
 	bus.OnAsync(customer.EventPasswordResetRequested, notifSvc.HandlePasswordReset)
 
+	// Wire storefront security verification → email notification.
+	bus.OnAsync(customer.EventSecurityVerificationRequested, notifSvc.HandleSecurityVerification)
+
 	// Wire shipment.shipped → email notification.
 	bus.OnAsync(shipping.EventShipmentShipped, notifSvc.HandleShipmentShipped)
 
