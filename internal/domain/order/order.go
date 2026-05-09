@@ -183,6 +183,21 @@ func (o *Order) SetItemsFromDB(items []Item) error {
 	return nil
 }
 
+// LinkToCustomer associates a guest order with a customer after registration.
+// Used in account-linking workflow to convert guest orders to authenticated.
+func (o *Order) LinkToCustomer(customerID string) error {
+	customerID = strings.TrimSpace(customerID)
+	if customerID == "" {
+		return errors.New("order: customer id must not be empty")
+	}
+	if o.CustomerID != "" {
+		return errors.New("order: already linked to a customer")
+	}
+	o.CustomerID = customerID
+	o.UpdatedAt = time.Now().UTC()
+	return nil
+}
+
 // computeTotal sums item line totals with overflow checking.
 func computeTotal(items []Item, currency string) (shared.Money, error) {
 	total, err := shared.Zero(currency)

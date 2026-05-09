@@ -450,6 +450,24 @@ func (s *Service) Logout(ctx context.Context, customerID string) error {
 	return nil
 }
 
+// DeleteCustomer removes a customer account by ID.
+func (s *Service) DeleteCustomer(ctx context.Context, customerID string) error {
+	if strings.TrimSpace(customerID) == "" {
+		return apperror.Validation("customer id is required")
+	}
+	if err := s.customers.Delete(ctx, customerID); err != nil {
+		s.log.Warn("auth.customer.delete_failed", map[string]interface{}{
+			"customer_id": customerID,
+			"error":       err.Error(),
+		})
+		return fmt.Errorf("auth service: delete customer: %w", err)
+	}
+	s.log.Info("auth.customer.deleted", map[string]interface{}{
+		"customer_id": customerID,
+	})
+	return nil
+}
+
 // RequestPasswordReset generates a reset token and emits an event
 // for downstream delivery (email plugin). Always returns success to
 // prevent email enumeration.

@@ -26,6 +26,9 @@ func (f *fakeOrderRepo) FindByID(_ context.Context, id string) (*order.Order, er
 func (f *fakeOrderRepo) FindByCustomerID(context.Context, string) ([]order.Order, error) {
 	return nil, nil
 }
+func (f *fakeOrderRepo) FindByContactEmail(context.Context, string) ([]order.Order, error) {
+	return nil, nil
+}
 func (f *fakeOrderRepo) List(context.Context, int, int) ([]order.Order, error) {
 	return nil, nil
 }

@@ -1,10 +1,12 @@
 package http
 
 import (
+	"errors"
 	"net/http"
 	"strings"
 	"time"
 
+	orderApp "github.com/akarso/shopanda/internal/application/order"
 	"github.com/akarso/shopanda/internal/platform/apperror"
 )
 
@@ -15,6 +17,35 @@ type storefrontOrderSearchRequest struct {
 // OrderClaimEmailer sends guest-order claim links.
 type OrderClaimEmailer interface {
 	SendClaimEmail(contactEmail, claimToken string) error
+}
+
+// OrderLinker handles guest account registration and order linking.
+type OrderLinker interface {
+	RegisterAndLink(r *http.Request, orderID, email, password, firstName, lastName string) (string, string, error)
+}
+
+// storefrontOrderLinkerAdapter wraps LinkOrderService to implement OrderLinker.
+type storefrontOrderLinkerAdapter struct {
+	linkService *orderApp.LinkOrderService
+}
+
+// NewStorefrontOrderLinkerAdapter creates an adapter that wraps LinkOrderService as OrderLinker.
+func NewStorefrontOrderLinkerAdapter(linkService *orderApp.LinkOrderService) OrderLinker {
+	return &storefrontOrderLinkerAdapter{linkService: linkService}
+}
+
+func (a *storefrontOrderLinkerAdapter) RegisterAndLink(r *http.Request, orderID, email, password, firstName, lastName string) (string, string, error) {
+	out, err := a.linkService.RegisterAndLink(r.Context(), orderApp.RegisterAndLinkInput{
+		OrderID:   orderID,
+		Email:     email,
+		Password:  password,
+		FirstName: firstName,
+		LastName:  lastName,
+	})
+	if err != nil {
+		return "", "", err
+	}
+	return out.CustomerID, out.Token, nil
 }
 
 type storefrontOrderRef struct {
@@ -32,6 +63,22 @@ type storefrontOrderClaimRequest struct {
 type storefrontOrderClaimResponse struct {
 	OrderID string `json:"order_id"`
 	Message string `json:"message"`
+}
+
+type storefrontOrderClaimLinkRequest struct {
+	OrderID    string
+	ClaimToken string
+	Email      string
+	Password   string
+	FirstName  string
+	LastName   string
+}
+
+type storefrontOrderClaimLinkResponse struct {
+	CustomerID string `json:"customer_id"`
+	Email      string `json:"email"`
+	Token      string `json:"token"`
+	Message    string `json:"message"`
 }
 
 // ClaimOrderSearch handles POST /api/v1/orders/claim-search.
@@ -131,6 +178,87 @@ func (h *StorefrontHandler) ClaimOrder() http.HandlerFunc {
 		resp := storefrontOrderClaimResponse{
 			OrderID: order.ID,
 			Message: "Order claimed successfully. You can now register or sign in with this email to view your order.",
+		}
+
+		JSON(w, http.StatusOK, resp)
+	}
+}
+
+// ClaimLink handles POST /api/v1/orders/claim-link.
+// Guests can register a new account and link their claimed order in one operation.
+func (h *StorefrontHandler) ClaimLink() http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if h.orderLinker == nil || h.security == nil || h.orderClaim == nil {
+			JSONError(w, apperror.NotFound("order linking endpoint not available"))
+			return
+		}
+
+		if r.Method != http.MethodPost {
+			JSONError(w, apperror.Validation("POST method required"))
+			return
+		}
+
+		if err := r.ParseForm(); err != nil {
+			JSONError(w, apperror.Validation("invalid form payload"))
+			return
+		}
+
+		// Parse request
+		orderID := strings.TrimSpace(r.FormValue("order_id"))
+		claimToken := strings.TrimSpace(r.FormValue("claim_token"))
+		email := strings.ToLower(strings.TrimSpace(r.FormValue("email")))
+		password := r.FormValue("password")
+		firstName := strings.TrimSpace(r.FormValue("first_name"))
+		lastName := strings.TrimSpace(r.FormValue("last_name"))
+
+		if orderID == "" {
+			JSONError(w, apperror.Validation("order_id is required"))
+			return
+		}
+		if claimToken == "" {
+			JSONError(w, apperror.Validation("claim_token is required"))
+			return
+		}
+		if email == "" {
+			JSONError(w, apperror.Validation("email is required"))
+			return
+		}
+		if password == "" {
+			JSONError(w, apperror.Validation("password is required"))
+			return
+		}
+
+		contactEmail, ok := h.security.verifyOrderClaimToken(claimToken)
+		if !ok {
+			JSONError(w, apperror.Forbidden("invalid or expired claim token"))
+			return
+		}
+		if !strings.EqualFold(contactEmail, email) {
+			JSONError(w, apperror.Forbidden("order ownership verification failed"))
+			return
+		}
+		if _, err := h.orderClaim.VerifyOrderBelongsToEmail(r.Context(), orderID, contactEmail); err != nil {
+			JSONError(w, apperror.Forbidden("order ownership verification failed"))
+			return
+		}
+
+		// Register and link
+		customerID, token, err := h.orderLinker.RegisterAndLink(r, orderID, email, password, firstName, lastName)
+		if err != nil {
+			var appErr *apperror.Error
+			if errors.As(err, &appErr) {
+				JSONError(w, appErr)
+				return
+			}
+			JSONError(w, apperror.Internal("failed to register and link order"))
+			return
+		}
+
+		resp := storefrontOrderClaimLinkResponse{
+			CustomerID: customerID,
+			Email:      email,
+			Token:      token,
+			Message:    "Account created successfully. Your order has been linked to your account.",
 		}
 
 		JSON(w, http.StatusOK, resp)
