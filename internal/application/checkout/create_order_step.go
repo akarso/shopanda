@@ -87,6 +87,7 @@ func (s *CreateOrderStep) Execute(cctx *Context) error {
 	if err != nil {
 		return fmt.Errorf("create_order: %w", err)
 	}
+	o.ContactEmail = cctx.Input.ContactEmail
 
 	if err := s.orders.Save(ctx, &o); err != nil {
 		return fmt.Errorf("create_order: save: %w", err)

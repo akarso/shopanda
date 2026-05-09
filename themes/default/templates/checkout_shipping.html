@@ -20,6 +20,7 @@
         <section class="checkout-panel">
             <form class="checkout-form" action="/checkout/payment" method="post">
                 <input type="hidden" name="csrf_token" value="{{ .CSRFToken }}">
+                <input type="hidden" name="contact_email" value="{{ .ContactEmail }}">
                 <input type="hidden" name="first_name" value="{{ .Address.FirstName }}">
                 <input type="hidden" name="last_name" value="{{ .Address.LastName }}">
                 <input type="hidden" name="street" value="{{ .Address.Street }}">

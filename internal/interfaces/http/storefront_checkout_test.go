@@ -229,6 +229,67 @@ func TestStorefrontHandler_CheckoutAddress_GuestCanAccessAddressForm(t *testing.
 	}
 }
 
+func TestStorefrontHandler_CheckoutShipping_GuestRequiresContactEmail(t *testing.T) {
+	engine := createTestTheme(t)
+	pdp := composition.NewPipeline[composition.ProductContext]()
+	plp := composition.NewPipeline[composition.ListingContext]()
+	cartSvc, carts, prices := newStorefrontCartService()
+	prices.set("var-1", "EUR", 1500)
+	currentCart, err := cartSvc.CreateCart(context.Background(), "", "EUR")
+	if err != nil {
+		t.Fatalf("CreateCart: %v", err)
+	}
+	if _, err := cartSvc.AddItem(context.Background(), currentCart.ID, "", "var-1", 1); err != nil {
+		t.Fatalf("AddItem: %v", err)
+	}
+	variants := &mockStorefrontVariantRepo{findByIDFn: func(_ context.Context, id string) (*catalog.Variant, error) {
+		return &catalog.Variant{ID: id, ProductID: "prod-1", SKU: "SKU-1", Name: "Widget Default"}, nil
+	}}
+	checkoutSvc, shippingProvider, paymentProvider, _ := newStorefrontCheckoutService(carts, prices, variants)
+	h := shophttp.NewStorefrontHandler(engine, &mockStorefrontRepo{}, newStorefrontCategoryMock(), pdp, plp, newStorefrontSearchMock()).WithCart(variants, cartSvc).WithCheckout([]shipping.Provider{shippingProvider}, paymentProvider, checkoutSvc)
+	router := newStorefrontRouter(h)
+
+	addressRec := httptest.NewRecorder()
+	addressReq := httptest.NewRequest("GET", "/checkout/address", nil)
+	addressReq.AddCookie(&http.Cookie{Name: "shopanda_storefront_cart", Value: currentCart.ID})
+	router.ServeHTTP(addressRec, addressReq)
+	if addressRec.Code != http.StatusOK {
+		t.Fatalf("address status = %d, want %d; body: %s", addressRec.Code, http.StatusOK, addressRec.Body.String())
+	}
+	var csrf *http.Cookie
+	for _, cookie := range addressRec.Result().Cookies() {
+		if cookie.Name == "shopanda_csrf" {
+			csrf = cookie
+			break
+		}
+	}
+	if csrf == nil {
+		t.Fatal("expected checkout CSRF cookie")
+	}
+	form := url.Values{
+		"csrf_token": {csrf.Value},
+		"first_name": {"Ada"},
+		"last_name":  {"Lovelace"},
+		"street":     {"1 Logic Lane"},
+		"city":       {"Berlin"},
+		"postcode":   {"10115"},
+		"country":    {"DE"},
+	}
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("POST", "/checkout/shipping", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.AddCookie(csrf)
+	req.AddCookie(&http.Cookie{Name: "shopanda_storefront_cart", Value: currentCart.ID})
+	router.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("status = %d, want %d; body: %s", rec.Code, http.StatusUnprocessableEntity, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "Contact email is required.") {
+		t.Fatalf("expected missing contact email message: %s", rec.Body.String())
+	}
+}
+
 func TestStorefrontHandler_CheckoutFlow_Manual_GuestOK(t *testing.T) {
 	products := &mockStorefrontRepo{findByIDFn: func(_ context.Context, id string) (*catalog.Product, error) {
 		return &catalog.Product{ID: id, Name: "Widget", Slug: "widget"}, nil
@@ -275,13 +336,14 @@ func TestStorefrontHandler_CheckoutFlow_Manual_GuestOK(t *testing.T) {
 	}
 
 	addressForm := url.Values{
-		"csrf_token": {csrfCookie.Value},
-		"first_name": {"Ada"},
-		"last_name":  {"Lovelace"},
-		"street":     {"1 Logic Lane"},
-		"city":       {"Berlin"},
-		"postcode":   {"10115"},
-		"country":    {"DE"},
+		"csrf_token":    {csrfCookie.Value},
+		"contact_email": {"guest@example.com"},
+		"first_name":    {"Ada"},
+		"last_name":     {"Lovelace"},
+		"street":        {"1 Logic Lane"},
+		"city":          {"Berlin"},
+		"postcode":      {"10115"},
+		"country":       {"DE"},
 	}
 	shippingRec := httptest.NewRecorder()
 	shippingReq := httptest.NewRequest("POST", "/checkout/shipping", strings.NewReader(addressForm.Encode()))
@@ -298,6 +360,7 @@ func TestStorefrontHandler_CheckoutFlow_Manual_GuestOK(t *testing.T) {
 
 	paymentForm := url.Values{
 		"csrf_token":      {csrfCookie.Value},
+		"contact_email":   {"guest@example.com"},
 		"first_name":      {"Ada"},
 		"last_name":       {"Lovelace"},
 		"street":          {"1 Logic Lane"},
@@ -321,6 +384,7 @@ func TestStorefrontHandler_CheckoutFlow_Manual_GuestOK(t *testing.T) {
 
 	confirmForm := url.Values{
 		"csrf_token":      {csrfCookie.Value},
+		"contact_email":   {"guest@example.com"},
 		"first_name":      {"Ada"},
 		"last_name":       {"Lovelace"},
 		"street":          {"1 Logic Lane"},
@@ -344,6 +408,9 @@ func TestStorefrontHandler_CheckoutFlow_Manual_GuestOK(t *testing.T) {
 	}
 	if orders.saved.CustomerID != "" {
 		t.Fatalf("saved order customer id = %q, want empty guest id", orders.saved.CustomerID)
+	}
+	if orders.saved.ContactEmail != "guest@example.com" {
+		t.Fatalf("saved guest contact email = %q, want %q", orders.saved.ContactEmail, "guest@example.com")
 	}
 }
 

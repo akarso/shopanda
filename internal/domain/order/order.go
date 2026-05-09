@@ -30,14 +30,15 @@ func (s OrderStatus) IsValid() bool {
 
 // Order represents a finalised purchase snapshot.
 type Order struct {
-	ID          string
-	CustomerID  string
-	status      OrderStatus
-	Currency    string
-	items       []Item
-	TotalAmount shared.Money
-	CreatedAt   time.Time
-	UpdatedAt   time.Time
+	ID           string
+	CustomerID   string
+	ContactEmail string
+	status       OrderStatus
+	Currency     string
+	items        []Item
+	TotalAmount  shared.Money
+	CreatedAt    time.Time
+	UpdatedAt    time.Time
 }
 
 // NewOrder creates an Order in pending status with validation.

@@ -90,6 +90,7 @@ func validCheckoutInput() checkout.Input {
 			Postcode:  "10115",
 			Country:   "DE",
 		},
+		ContactEmail: "ada@example.com",
 	}
 }
 
@@ -363,6 +364,7 @@ func TestService_StartCheckout_PersistsInput(t *testing.T) {
 	input := validCheckoutInput()
 	input = checkout.Input{
 		Address:        input.Address,
+		ContactEmail:   "ada@example.com",
 		ShippingMethod: "flat_rate",
 		PaymentMethod:  "manual",
 	}
@@ -382,6 +384,9 @@ func TestService_StartCheckout_PersistsInput(t *testing.T) {
 	}
 	if raw, ok := result.GetMeta("checkout_payment_method"); !ok || raw != input.PaymentMethod {
 		t.Fatalf("checkout_payment_method meta = %#v, want %q", raw, input.PaymentMethod)
+	}
+	if raw, ok := result.GetMeta("checkout_contact_email"); !ok || raw != input.ContactEmail {
+		t.Fatalf("checkout_contact_email meta = %#v, want %q", raw, input.ContactEmail)
 	}
 }
 
@@ -436,6 +441,26 @@ func TestService_StartCheckout_GuestCartSuccess(t *testing.T) {
 	}
 	if result.CustomerID != "" {
 		t.Errorf("CustomerID = %q, want empty guest id", result.CustomerID)
+	}
+	if result.Input.ContactEmail == "" {
+		t.Fatal("guest checkout should persist contact email")
+	}
+}
+
+func TestService_StartCheckout_GuestCartMissingContactEmail(t *testing.T) {
+	bus := testBus(t)
+	log := testLogger()
+	wf := checkout.NewWorkflow(nil, bus, log)
+
+	c := activeGuestCart(t)
+	repo := &mockCartRepo{cart: c}
+	svc := checkout.NewService(repo, wf, log)
+
+	input := validCheckoutInput()
+	input.ContactEmail = ""
+	_, err := svc.StartCheckout(context.Background(), c.ID, "", input)
+	if err == nil {
+		t.Fatal("expected error for missing guest contact email")
 	}
 }
 

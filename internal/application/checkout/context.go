@@ -32,6 +32,7 @@ func (a Address) Normalize() Address {
 
 type Input struct {
 	Address        Address
+	ContactEmail   string
 	ShippingMethod string
 	PaymentMethod  string
 }

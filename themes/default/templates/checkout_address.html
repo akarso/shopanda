@@ -34,6 +34,10 @@
                 <p class="checkout-form__error" role="alert">{{ .ErrorMessage }}</p>
                 {{ end }}
                 <div class="checkout-form__grid">
+                    <label class="checkout-form__full">
+                        <span>Contact Email</span>
+                        <input name="contact_email" type="email" value="{{ .ContactEmail }}" autocomplete="email" required>
+                    </label>
                     <label>
                         <span>First Name</span>
                         <input name="first_name" value="{{ .Address.FirstName }}" autocomplete="given-name" required>
