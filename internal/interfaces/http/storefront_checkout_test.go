@@ -74,6 +74,9 @@ func (r *storefrontCheckoutOrderRepoStub) FindByID(_ context.Context, _ string) 
 func (r *storefrontCheckoutOrderRepoStub) FindByCustomerID(_ context.Context, _ string) ([]order.Order, error) {
 	return nil, nil
 }
+func (r *storefrontCheckoutOrderRepoStub) FindByContactEmail(_ context.Context, _ string) ([]order.Order, error) {
+	return nil, nil
+}
 func (r *storefrontCheckoutOrderRepoStub) List(_ context.Context, _, _ int) ([]order.Order, error) {
 	return nil, nil
 }

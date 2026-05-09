@@ -72,6 +72,11 @@ type storefrontCheckoutResumeTokenClaims struct {
 	ExpiresAt      int64                     `json:"expires_at"`
 }
 
+type storefrontOrderClaimTokenClaims struct {
+	ContactEmail string `json:"contact_email"`
+	ExpiresAt    int64  `json:"expires_at"`
+}
+
 func newStorefrontAccountSecurityVerifier(secret string, ttl time.Duration) *storefrontAccountSecurityVerifier {
 	secret = strings.TrimSpace(secret)
 	if secret == "" {
@@ -170,6 +175,13 @@ func (v *storefrontAccountSecurityVerifier) signEmailToken(payload string) strin
 func (v *storefrontAccountSecurityVerifier) checkoutResumeAESKey() []byte {
 	h := sha256.New()
 	h.Write([]byte("checkout-resume-aes256gcm:"))
+	h.Write(v.secret)
+	return h.Sum(nil)
+}
+
+func (v *storefrontAccountSecurityVerifier) orderClaimAESKey() []byte {
+	h := sha256.New()
+	h.Write([]byte("order-claim-aes256gcm:"))
 	h.Write(v.secret)
 	return h.Sum(nil)
 }
@@ -305,6 +317,67 @@ func (v *storefrontAccountSecurityVerifier) verifyCheckoutResumeToken(token, cus
 		ShippingMethod: strings.TrimSpace(claims.ShippingMethod),
 		PaymentMethod:  strings.TrimSpace(claims.PaymentMethod),
 	}, true
+}
+
+func (v *storefrontAccountSecurityVerifier) orderClaimToken(contactEmail string, now time.Time) (string, error) {
+	if strings.TrimSpace(contactEmail) == "" {
+		return "", fmt.Errorf("storefront order claim token: empty contact email")
+	}
+	claims := storefrontOrderClaimTokenClaims{
+		ContactEmail: strings.ToLower(strings.TrimSpace(contactEmail)),
+		ExpiresAt:    now.UTC().Add(v.emailTokenTTL).Unix(),
+	}
+	raw, err := json.Marshal(claims)
+	if err != nil {
+		return "", fmt.Errorf("storefront order claim token: marshal claims: %w", err)
+	}
+	block, err := aes.NewCipher(v.orderClaimAESKey())
+	if err != nil {
+		return "", fmt.Errorf("storefront order claim token: cipher: %w", err)
+	}
+	gcm, err := cipher.NewGCM(block)
+	if err != nil {
+		return "", fmt.Errorf("storefront order claim token: gcm: %w", err)
+	}
+	nonce := make([]byte, gcm.NonceSize())
+	if _, err := io.ReadFull(rand.Reader, nonce); err != nil {
+		return "", fmt.Errorf("storefront order claim token: nonce: %w", err)
+	}
+	return base64.RawURLEncoding.EncodeToString(gcm.Seal(nonce, nonce, raw, nil)), nil
+}
+
+func (v *storefrontAccountSecurityVerifier) verifyOrderClaimToken(token string) (string, bool) {
+	if v == nil || strings.TrimSpace(token) == "" {
+		return "", false
+	}
+	data, err := base64.RawURLEncoding.DecodeString(strings.TrimSpace(token))
+	if err != nil {
+		return "", false
+	}
+	block, err := aes.NewCipher(v.orderClaimAESKey())
+	if err != nil {
+		return "", false
+	}
+	gcm, err := cipher.NewGCM(block)
+	if err != nil {
+		return "", false
+	}
+	nonceSize := gcm.NonceSize()
+	if len(data) < nonceSize {
+		return "", false
+	}
+	raw, err := gcm.Open(nil, data[:nonceSize], data[nonceSize:], nil)
+	if err != nil {
+		return "", false
+	}
+	var claims storefrontOrderClaimTokenClaims
+	if err := json.Unmarshal(raw, &claims); err != nil {
+		return "", false
+	}
+	if time.Unix(claims.ExpiresAt, 0).UTC().Before(time.Now().UTC()) {
+		return "", false
+	}
+	return strings.ToLower(strings.TrimSpace(claims.ContactEmail)), true
 }
 
 func storefrontAbsoluteURL(storeBaseURL, path string, query url.Values) (string, error) {

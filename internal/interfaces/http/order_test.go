@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -36,6 +37,17 @@ func (r *stubOrderRepo) FindByCustomerID(_ context.Context, customerID string) (
 	var out []order.Order
 	for _, o := range r.orders {
 		if o.CustomerID == customerID {
+			out = append(out, *o)
+		}
+	}
+	return out, nil
+}
+
+func (r *stubOrderRepo) FindByContactEmail(_ context.Context, contactEmail string) ([]order.Order, error) {
+	var out []order.Order
+	contactEmailNorm := strings.ToLower(strings.TrimSpace(contactEmail))
+	for _, o := range r.orders {
+		if strings.ToLower(strings.TrimSpace(o.ContactEmail)) == contactEmailNorm {
 			out = append(out, *o)
 		}
 	}

@@ -185,6 +185,10 @@ func (r *storefrontAccountOrderRepoStub) FindByCustomerID(_ context.Context, cus
 	return r.byCustomer[customerID], nil
 }
 
+func (r *storefrontAccountOrderRepoStub) FindByContactEmail(_ context.Context, _ string) ([]order.Order, error) {
+	return nil, nil
+}
+
 func (r *storefrontAccountOrderRepoStub) List(_ context.Context, _, _ int) ([]order.Order, error) {
 	return nil, nil
 }

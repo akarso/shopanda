@@ -11,6 +11,10 @@ type OrderRepository interface {
 	// FindByCustomerID returns all orders for a customer, newest first.
 	FindByCustomerID(ctx context.Context, customerID string) ([]Order, error)
 
+	// FindByContactEmail returns all orders with a matching contact email, newest first.
+	// Used for guest order discovery and claiming. Returns empty slice if none found.
+	FindByContactEmail(ctx context.Context, contactEmail string) ([]Order, error)
+
 	// List returns a page of orders, newest first.
 	List(ctx context.Context, offset, limit int) ([]Order, error)
 
