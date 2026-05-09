@@ -3,6 +3,7 @@ package http
 import (
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/akarso/shopanda/internal/platform/apperror"
 )
@@ -11,10 +12,9 @@ type storefrontOrderSearchRequest struct {
 	ContactEmail string
 }
 
-type storefrontOrderSearchResponse struct {
-	ContactEmail string               `json:"contact_email"`
-	ClaimToken   string               `json:"claim_token"`
-	Orders       []storefrontOrderRef `json:"orders"`
+// OrderClaimEmailer sends guest-order claim links.
+type OrderClaimEmailer interface {
+	SendClaimEmail(contactEmail, claimToken string) error
 }
 
 type storefrontOrderRef struct {
@@ -38,13 +38,18 @@ type storefrontOrderClaimResponse struct {
 // Guests can search for their orders by contact email without authentication.
 func (h *StorefrontHandler) ClaimOrderSearch() http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		if h.orderClaim == nil || h.security == nil {
+		if h.orderClaim == nil || h.security == nil || h.emailer == nil {
 			JSONError(w, apperror.NotFound("order claim endpoint not available"))
 			return
 		}
 
 		if r.Method != http.MethodPost {
 			JSONError(w, apperror.Validation("POST method required"))
+			return
+		}
+
+		if err := r.ParseForm(); err != nil {
+			JSONError(w, apperror.Validation("invalid form payload"))
 			return
 		}
 
@@ -55,9 +60,15 @@ func (h *StorefrontHandler) ClaimOrderSearch() http.HandlerFunc {
 			return
 		}
 
-		// Generate claim token for this email (would be sent via email service)
-		// TODO: claimToken, err := h.security.orderClaimToken(contactEmail, time.Now().UTC())
-		// TODO: h.emailer.SendClaimEmail(contactEmail, claimToken)
+		claimToken, err := h.security.orderClaimToken(contactEmail, time.Now().UTC())
+		if err != nil {
+			JSONError(w, apperror.Internal("failed to generate claim token"))
+			return
+		}
+		if err := h.emailer.SendClaimEmail(contactEmail, claimToken); err != nil {
+			JSONError(w, apperror.Internal("failed to send claim email"))
+			return
+		}
 
 		// Return generic success (no orders/token disclosed)
 		JSON(w, http.StatusOK, map[string]interface{}{
@@ -77,6 +88,11 @@ func (h *StorefrontHandler) ClaimOrder() http.HandlerFunc {
 
 		if r.Method != http.MethodPost {
 			JSONError(w, apperror.Validation("POST method required"))
+			return
+		}
+
+		if err := r.ParseForm(); err != nil {
+			JSONError(w, apperror.Validation("invalid form payload"))
 			return
 		}
 

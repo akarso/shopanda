@@ -49,13 +49,13 @@ func (s *ClaimService) VerifyOrderBelongsToEmail(ctx context.Context, orderID, c
 		return nil, fmt.Errorf("order claim service: find order: %w", err)
 	}
 	if o == nil {
-		return nil, fmt.Errorf("order claim service: order not found")
+		return nil, fmt.Errorf("order claim service: order ownership verification failed")
 	}
 
 	contactEmailNorm := strings.ToLower(strings.TrimSpace(contactEmail))
 	orderEmailNorm := strings.ToLower(strings.TrimSpace(o.ContactEmail))
 	if orderEmailNorm != contactEmailNorm {
-		return nil, fmt.Errorf("order claim service: order does not match contact email")
+		return nil, fmt.Errorf("order claim service: order ownership verification failed")
 	}
 
 	return o, nil

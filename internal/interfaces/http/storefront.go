@@ -44,6 +44,7 @@ type StorefrontHandler struct {
 	checkout   *checkoutApp.Service
 	orders     order.OrderRepository
 	orderClaim *orderApp.ClaimService
+	emailer    OrderClaimEmailer
 	account    AccountDeleter
 	security   *storefrontAccountSecurityVerifier
 	shipping   []shipping.Provider
@@ -266,6 +267,12 @@ func (h *StorefrontHandler) WithAccount(authService *appAuth.Service, orders ord
 // WithOrderClaim enables guest order claim operations using the claim service.
 func (h *StorefrontHandler) WithOrderClaim(claimService *orderApp.ClaimService) *StorefrontHandler {
 	h.orderClaim = claimService
+	return h
+}
+
+// WithOrderClaimEmailer enables claim-link email delivery for guest order claim flows.
+func (h *StorefrontHandler) WithOrderClaimEmailer(emailer OrderClaimEmailer) *StorefrontHandler {
+	h.emailer = emailer
 	return h
 }
 

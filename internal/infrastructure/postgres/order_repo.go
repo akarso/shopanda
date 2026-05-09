@@ -129,12 +129,13 @@ func (r *OrderRepo) FindByCustomerID(ctx context.Context, customerID string) ([]
 // FindByContactEmail returns all orders with a matching contact email, newest first.
 // Used for guest order discovery. Returns empty slice if none found.
 func (r *OrderRepo) FindByContactEmail(ctx context.Context, contactEmail string) ([]order.Order, error) {
-	if strings.TrimSpace(contactEmail) == "" {
+	trimmed := strings.TrimSpace(contactEmail)
+	if trimmed == "" {
 		return nil, fmt.Errorf("order_repo: find by contact email: empty email")
 	}
-	contactEmail = strings.ToLower(strings.TrimSpace(contactEmail))
+	contactEmail = strings.ToLower(trimmed)
 	const q = `SELECT id, customer_id, contact_email, status, currency, total_amount, total_currency, created_at, updated_at
-		FROM orders WHERE LOWER(contact_email) = $1 AND customer_id IS NULL
+		FROM orders WHERE LOWER(contact_email) = $1 AND customer_id = ''
 		ORDER BY created_at DESC`
 	rows, err := r.db.QueryContext(ctx, q, contactEmail)
 	if err != nil {
