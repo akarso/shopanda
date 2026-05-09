@@ -880,6 +880,8 @@ func runServe(cfg *config.Config, log logger.Logger) error {
 			}),
 			storeBaseURL: cfg.Server.PublicBaseURL,
 		}
+		linkService := orderApp.NewLinkOrderService(orderRepo, authService, jwtIssuer)
+		linkLinker := shophttp.NewStorefrontOrderLinkerAdapter(linkService)
 
 		storefront := shophttp.NewStorefrontHandler(themeEngine, productRepo, categoryRepo, pdp, plp, searchEngine).
 			WithCart(variantRepo, cartService).
@@ -887,6 +889,7 @@ func runServe(cfg *config.Config, log logger.Logger) error {
 			WithAccount(authService, orderRepo, accountService).
 			WithOrderClaim(claimService).
 			WithOrderClaimEmailer(claimEmailer).
+			WithOrderLinker(linkLinker).
 			WithAccountSecurity(cfg.Auth.JWTSecret, 10*time.Minute).
 			WithAccountSecurityEmailLinks(cfg.Server.PublicBaseURL, 45*time.Minute)
 		staticDir := filepath.Join(cfg.Frontend.ThemePath, "static")
@@ -934,6 +937,11 @@ func runServe(cfg *config.Config, log logger.Logger) error {
 		router.HandleFunc("GET /products", storefront.Products())
 		router.HandleFunc("GET /products/{slug}", storefront.Product())
 		router.HandleFunc("GET /search", storefront.Search())
+
+		// Guest order claim routes (public, no auth required).
+		router.HandleFunc("POST /api/v1/orders/claim-search", storefront.ClaimOrderSearch())
+		router.HandleFunc("POST /api/v1/orders/claim", storefront.ClaimOrder())
+		router.HandleFunc("POST /api/v1/orders/claim-register", storefront.ClaimLink())
 	}
 
 	srv := shophttp.NewServer(cfg.Server.Host, cfg.Server.Port, router.Handler(), log)

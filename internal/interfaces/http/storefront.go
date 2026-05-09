@@ -32,25 +32,26 @@ import (
 
 // StorefrontHandler renders SSR pages using the theme engine.
 type StorefrontHandler struct {
-	engine     *theme.Engine
-	repo       catalog.ProductRepository
-	cats       catalog.CategoryRepository
-	pdp        *composition.Pipeline[composition.ProductContext]
-	plp        *composition.Pipeline[composition.ListingContext]
-	search     search.SearchEngine
-	variants   catalog.VariantRepository
-	carts      *cartApp.Service
-	auth       *appAuth.Service
-	checkout   *checkoutApp.Service
-	orders     order.OrderRepository
-	orderClaim *orderApp.ClaimService
-	emailer    OrderClaimEmailer
-	account    AccountDeleter
-	security   *storefrontAccountSecurityVerifier
-	shipping   []shipping.Provider
-	payment    payment.Provider
-	log        logger.Logger
-	catNav     storefrontCategoryCache
+	engine      *theme.Engine
+	repo        catalog.ProductRepository
+	cats        catalog.CategoryRepository
+	pdp         *composition.Pipeline[composition.ProductContext]
+	plp         *composition.Pipeline[composition.ListingContext]
+	search      search.SearchEngine
+	variants    catalog.VariantRepository
+	carts       *cartApp.Service
+	auth        *appAuth.Service
+	checkout    *checkoutApp.Service
+	orders      order.OrderRepository
+	orderClaim  *orderApp.ClaimService
+	emailer     OrderClaimEmailer
+	orderLinker OrderLinker
+	account     AccountDeleter
+	security    *storefrontAccountSecurityVerifier
+	shipping    []shipping.Provider
+	payment     payment.Provider
+	log         logger.Logger
+	catNav      storefrontCategoryCache
 }
 
 type storefrontCategoryCache struct {
@@ -273,6 +274,12 @@ func (h *StorefrontHandler) WithOrderClaim(claimService *orderApp.ClaimService) 
 // WithOrderClaimEmailer enables claim-link email delivery for guest order claim flows.
 func (h *StorefrontHandler) WithOrderClaimEmailer(emailer OrderClaimEmailer) *StorefrontHandler {
 	h.emailer = emailer
+	return h
+}
+
+// WithOrderLinker enables guest account registration and order linking operations.
+func (h *StorefrontHandler) WithOrderLinker(linker OrderLinker) *StorefrontHandler {
+	h.orderLinker = linker
 	return h
 }
 
