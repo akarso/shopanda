@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"net/url"
 	"os"
 	"os/signal"
 	"path/filepath"
@@ -25,6 +26,7 @@ import (
 	"github.com/akarso/shopanda/internal/application/importer"
 	mediaApp "github.com/akarso/shopanda/internal/application/media"
 	"github.com/akarso/shopanda/internal/application/notification"
+	orderApp "github.com/akarso/shopanda/internal/application/order"
 	appPricing "github.com/akarso/shopanda/internal/application/pricing"
 	"github.com/akarso/shopanda/internal/application/rewrite"
 	"github.com/akarso/shopanda/internal/domain/admin"
@@ -867,10 +869,24 @@ func runServe(cfg *config.Config, log logger.Logger) error {
 		if thErr != nil {
 			return fmt.Errorf("theme load: %w", thErr)
 		}
+		claimService := orderApp.NewClaimService(orderRepo)
+		claimEmailer := storefrontOrderClaimEmailer{
+			mailer: smtpmail.New(smtpmail.Config{
+				Host:     cfg.Mail.SMTP.Host,
+				Port:     cfg.Mail.SMTP.Port,
+				User:     cfg.Mail.SMTP.User,
+				Password: cfg.Mail.SMTP.Password,
+				From:     cfg.Mail.SMTP.From,
+			}),
+			storeBaseURL: cfg.Server.PublicBaseURL,
+		}
+
 		storefront := shophttp.NewStorefrontHandler(themeEngine, productRepo, categoryRepo, pdp, plp, searchEngine).
 			WithCart(variantRepo, cartService).
 			WithCheckout([]shipping.Provider{flatRateProvider}, payProvider, checkoutService).
 			WithAccount(authService, orderRepo, accountService).
+			WithOrderClaim(claimService).
+			WithOrderClaimEmailer(claimEmailer).
 			WithAccountSecurity(cfg.Auth.JWTSecret, 10*time.Minute).
 			WithAccountSecurityEmailLinks(cfg.Server.PublicBaseURL, 45*time.Minute)
 		staticDir := filepath.Join(cfg.Frontend.ThemePath, "static")
@@ -1882,6 +1898,32 @@ Commands:
   import:prices <f>    Import prices from a CSV file
   export:prices <f>    Export prices to a CSV file
   help                 Show this help message`)
+}
+
+type storefrontOrderClaimEmailer struct {
+	mailer       mail.Mailer
+	storeBaseURL string
+}
+
+func (e storefrontOrderClaimEmailer) SendClaimEmail(contactEmail, claimToken string) error {
+	if e.mailer == nil {
+		return fmt.Errorf("storefront order claim emailer: mailer not configured")
+	}
+	baseURL, err := url.Parse(strings.TrimSpace(e.storeBaseURL))
+	if err != nil || baseURL.Scheme == "" || baseURL.Host == "" {
+		return fmt.Errorf("storefront order claim emailer: invalid store base URL")
+	}
+	baseURL.Path = "/account/orders/claim"
+	q := baseURL.Query()
+	q.Set("claim_token", claimToken)
+	baseURL.RawQuery = q.Encode()
+
+	body := "Use the link below to claim your guest order and view it in your account:\n\n" + baseURL.String()
+	return e.mailer.Send(context.Background(), mail.Message{
+		To:      contactEmail,
+		Subject: "Claim your guest order",
+		Body:    body,
+	})
 }
 
 // setupWorker creates a job queue, worker, mail handler, and cache cleanup

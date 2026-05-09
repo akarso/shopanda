@@ -126,6 +126,52 @@ func (r *OrderRepo) FindByCustomerID(ctx context.Context, customerID string) ([]
 	return orders, nil
 }
 
+// FindByContactEmail returns all orders with a matching contact email, newest first.
+// Used for guest order discovery. Returns empty slice if none found.
+func (r *OrderRepo) FindByContactEmail(ctx context.Context, contactEmail string) ([]order.Order, error) {
+	trimmed := strings.TrimSpace(contactEmail)
+	if trimmed == "" {
+		return nil, fmt.Errorf("order_repo: find by contact email: empty email")
+	}
+	contactEmail = strings.ToLower(trimmed)
+	const q = `SELECT id, customer_id, contact_email, status, currency, total_amount, total_currency, created_at, updated_at
+		FROM orders WHERE LOWER(contact_email) = $1 AND customer_id = ''
+		ORDER BY created_at DESC`
+	rows, err := r.db.QueryContext(ctx, q, contactEmail)
+	if err != nil {
+		return nil, fmt.Errorf("order_repo: find by contact email: %w", err)
+	}
+	defer rows.Close()
+
+	var orders []order.Order
+	var ids []string
+	for rows.Next() {
+		o, err := r.hydrateOrder(rows)
+		if err != nil {
+			return nil, fmt.Errorf("order_repo: scan order: %w", err)
+		}
+		orders = append(orders, *o)
+		ids = append(ids, o.ID)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("order_repo: rows: %w", err)
+	}
+	if len(orders) == 0 {
+		return orders, nil
+	}
+
+	itemMap, err := r.loadItemsBatch(ctx, ids)
+	if err != nil {
+		return nil, err
+	}
+	for i := range orders {
+		if err := orders[i].SetItemsFromDB(itemMap[orders[i].ID]); err != nil {
+			return nil, fmt.Errorf("order_repo: set items: %w", err)
+		}
+	}
+	return orders, nil
+}
+
 // List returns a page of orders, newest first.
 func (r *OrderRepo) List(ctx context.Context, offset, limit int) ([]order.Order, error) {
 	if offset < 0 {

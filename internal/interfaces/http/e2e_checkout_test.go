@@ -118,6 +118,9 @@ func (r *e2eOrderRepo) FindByID(context.Context, string) (*order.Order, error) {
 func (r *e2eOrderRepo) FindByCustomerID(context.Context, string) ([]order.Order, error) {
 	return nil, nil
 }
+func (r *e2eOrderRepo) FindByContactEmail(context.Context, string) ([]order.Order, error) {
+	return nil, nil
+}
 func (r *e2eOrderRepo) List(context.Context, int, int) ([]order.Order, error) { return nil, nil }
 func (r *e2eOrderRepo) Save(_ context.Context, o *order.Order) error {
 	r.saved = o

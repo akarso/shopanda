@@ -24,6 +24,34 @@ func mustNewOrder(t *testing.T, customerID, currency string) order.Order {
 	return o
 }
 
+func mustNewGuestOrder(t *testing.T, contactEmail, currency string) order.Order {
+	t.Helper()
+	price := shared.MustNewMoney(1000, currency)
+	item, err := order.NewItem("var-1", "SKU-001", "Test Product", 2, price)
+	if err != nil {
+		t.Fatalf("NewItem: %v", err)
+	}
+	o, err := order.NewOrder(id.New(), "", contactEmail, currency, []order.Item{item})
+	if err != nil {
+		t.Fatalf("NewOrder: %v", err)
+	}
+	return o
+}
+
+func mustNewAuthenticatedOrderWithEmail(t *testing.T, customerID, contactEmail, currency string) order.Order {
+	t.Helper()
+	price := shared.MustNewMoney(1000, currency)
+	item, err := order.NewItem("var-1", "SKU-001", "Test Product", 2, price)
+	if err != nil {
+		t.Fatalf("NewItem: %v", err)
+	}
+	o, err := order.NewOrder(id.New(), customerID, contactEmail, currency, []order.Item{item})
+	if err != nil {
+		t.Fatalf("NewOrder: %v", err)
+	}
+	return o
+}
+
 func TestOrderRepo_SaveAndFindByID(t *testing.T) {
 	db := testDB(t)
 	ensureProductsTable(t, db)
@@ -170,6 +198,115 @@ func TestOrderRepo_FindByCustomerID_Empty(t *testing.T) {
 	}
 	if len(orders) != 0 {
 		t.Errorf("len(orders) = %d, want 0", len(orders))
+	}
+}
+
+func TestOrderRepo_FindByContactEmail(t *testing.T) {
+	db := testDB(t)
+	ensureProductsTable(t, db)
+	t.Cleanup(func() {
+		db.Exec("DELETE FROM order_items")
+		db.Exec("DELETE FROM orders")
+	})
+
+	repo, err := postgres.NewOrderRepo(db)
+	if err != nil {
+		t.Fatalf("NewOrderRepo: %v", err)
+	}
+	ctx := context.Background()
+
+	contactEmail := "guest@example.com"
+
+	// Create guest orders with the same contact email
+	o1 := mustNewGuestOrder(t, contactEmail, "EUR")
+	if err := repo.Save(ctx, &o1); err != nil {
+		t.Fatalf("Save o1: %v", err)
+	}
+	o2 := mustNewGuestOrder(t, contactEmail, "EUR")
+	if err := repo.Save(ctx, &o2); err != nil {
+		t.Fatalf("Save o2: %v", err)
+	}
+
+	// Different email — should not appear
+	o3 := mustNewGuestOrder(t, "other@example.com", "EUR")
+	if err := repo.Save(ctx, &o3); err != nil {
+		t.Fatalf("Save o3: %v", err)
+	}
+
+	// Authenticated order with contact email — should not appear (guest-only lookup)
+	o4 := mustNewAuthenticatedOrderWithEmail(t, "cust-1", contactEmail, "EUR")
+	if err := repo.Save(ctx, &o4); err != nil {
+		t.Fatalf("Save o4: %v", err)
+	}
+
+	orders, err := repo.FindByContactEmail(ctx, contactEmail)
+	if err != nil {
+		t.Fatalf("FindByContactEmail: %v", err)
+	}
+	if len(orders) != 2 {
+		t.Fatalf("len(orders) = %d, want 2 (2 guest orders only, authenticated excluded)", len(orders))
+	}
+	for i, o := range orders {
+		if o.ContactEmail != contactEmail {
+			t.Errorf("orders[%d].ContactEmail = %q, want %q", i, o.ContactEmail, contactEmail)
+		}
+		if o.CustomerID != "" {
+			t.Errorf("orders[%d].CustomerID = %q, want empty (guest-only)", i, o.CustomerID)
+		}
+	}
+	// Newest first: o2 was saved after o1
+	if orders[0].ID != o2.ID {
+		t.Errorf("orders[0].ID = %q, want %q (newest first)", orders[0].ID, o2.ID)
+	}
+	if orders[1].ID != o1.ID {
+		t.Errorf("orders[1].ID = %q, want %q", orders[1].ID, o1.ID)
+	}
+}
+
+func TestOrderRepo_FindByContactEmail_Empty(t *testing.T) {
+	db := testDB(t)
+	ensureProductsTable(t, db)
+
+	repo, err := postgres.NewOrderRepo(db)
+	if err != nil {
+		t.Fatalf("NewOrderRepo: %v", err)
+	}
+	orders, err := repo.FindByContactEmail(context.Background(), "nonexistent@example.com")
+	if err != nil {
+		t.Fatalf("FindByContactEmail: %v", err)
+	}
+	if len(orders) != 0 {
+		t.Errorf("len(orders) = %d, want 0", len(orders))
+	}
+}
+
+func TestOrderRepo_FindByContactEmail_CaseInsensitive(t *testing.T) {
+	db := testDB(t)
+	ensureProductsTable(t, db)
+	t.Cleanup(func() {
+		db.Exec("DELETE FROM order_items")
+		db.Exec("DELETE FROM orders")
+	})
+
+	repo, err := postgres.NewOrderRepo(db)
+	if err != nil {
+		t.Fatalf("NewOrderRepo: %v", err)
+	}
+	ctx := context.Background()
+
+	// Save with lowercase
+	o := mustNewGuestOrder(t, "guest@example.com", "EUR")
+	if err := repo.Save(ctx, &o); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+
+	// Query with uppercase
+	orders, err := repo.FindByContactEmail(ctx, "GUEST@EXAMPLE.COM")
+	if err != nil {
+		t.Fatalf("FindByContactEmail: %v", err)
+	}
+	if len(orders) != 1 {
+		t.Errorf("len(orders) = %d, want 1 (case-insensitive match)", len(orders))
 	}
 }
 

@@ -17,6 +17,7 @@ import (
 	cartApp "github.com/akarso/shopanda/internal/application/cart"
 	checkoutApp "github.com/akarso/shopanda/internal/application/checkout"
 	"github.com/akarso/shopanda/internal/application/composition"
+	orderApp "github.com/akarso/shopanda/internal/application/order"
 	"github.com/akarso/shopanda/internal/domain/catalog"
 	"github.com/akarso/shopanda/internal/domain/order"
 	"github.com/akarso/shopanda/internal/domain/payment"
@@ -31,23 +32,25 @@ import (
 
 // StorefrontHandler renders SSR pages using the theme engine.
 type StorefrontHandler struct {
-	engine   *theme.Engine
-	repo     catalog.ProductRepository
-	cats     catalog.CategoryRepository
-	pdp      *composition.Pipeline[composition.ProductContext]
-	plp      *composition.Pipeline[composition.ListingContext]
-	search   search.SearchEngine
-	variants catalog.VariantRepository
-	carts    *cartApp.Service
-	auth     *appAuth.Service
-	checkout *checkoutApp.Service
-	orders   order.OrderRepository
-	account  AccountDeleter
-	security *storefrontAccountSecurityVerifier
-	shipping []shipping.Provider
-	payment  payment.Provider
-	log      logger.Logger
-	catNav   storefrontCategoryCache
+	engine     *theme.Engine
+	repo       catalog.ProductRepository
+	cats       catalog.CategoryRepository
+	pdp        *composition.Pipeline[composition.ProductContext]
+	plp        *composition.Pipeline[composition.ListingContext]
+	search     search.SearchEngine
+	variants   catalog.VariantRepository
+	carts      *cartApp.Service
+	auth       *appAuth.Service
+	checkout   *checkoutApp.Service
+	orders     order.OrderRepository
+	orderClaim *orderApp.ClaimService
+	emailer    OrderClaimEmailer
+	account    AccountDeleter
+	security   *storefrontAccountSecurityVerifier
+	shipping   []shipping.Provider
+	payment    payment.Provider
+	log        logger.Logger
+	catNav     storefrontCategoryCache
 }
 
 type storefrontCategoryCache struct {
@@ -258,6 +261,18 @@ func (h *StorefrontHandler) WithAccount(authService *appAuth.Service, orders ord
 	h.auth = authService
 	h.orders = orders
 	h.account = account
+	return h
+}
+
+// WithOrderClaim enables guest order claim operations using the claim service.
+func (h *StorefrontHandler) WithOrderClaim(claimService *orderApp.ClaimService) *StorefrontHandler {
+	h.orderClaim = claimService
+	return h
+}
+
+// WithOrderClaimEmailer enables claim-link email delivery for guest order claim flows.
+func (h *StorefrontHandler) WithOrderClaimEmailer(emailer OrderClaimEmailer) *StorefrontHandler {
+	h.emailer = emailer
 	return h
 }
 
