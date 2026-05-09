@@ -13,6 +13,7 @@ import (
 // OrderAuther abstracts auth service operations needed for order linking.
 type OrderAuther interface {
 	Register(ctx context.Context, in auth.RegisterInput) (auth.RegisterOutput, error)
+	DeleteCustomer(ctx context.Context, customerID string) error
 }
 
 // LinkOrderService handles account linking for claimed orders.
@@ -101,11 +102,17 @@ func (s *LinkOrderService) RegisterAndLink(ctx context.Context, in RegisterAndLi
 
 	// Link order to customer
 	if err := o.LinkToCustomer(regOut.CustomerID); err != nil {
+		if cleanupErr := s.auth.DeleteCustomer(ctx, regOut.CustomerID); cleanupErr != nil {
+			return RegisterAndLinkOutput{}, fmt.Errorf("link order service: link order: %w (cleanup customer: %v)", err, cleanupErr)
+		}
 		return RegisterAndLinkOutput{}, fmt.Errorf("link order service: link order: %w", err)
 	}
 
 	// Persist the updated order
 	if err := s.orders.UpdateStatus(ctx, o); err != nil {
+		if cleanupErr := s.auth.DeleteCustomer(ctx, regOut.CustomerID); cleanupErr != nil {
+			return RegisterAndLinkOutput{}, fmt.Errorf("link order service: update order: %w (cleanup customer: %v)", err, cleanupErr)
+		}
 		return RegisterAndLinkOutput{}, fmt.Errorf("link order service: update order: %w", err)
 	}
 

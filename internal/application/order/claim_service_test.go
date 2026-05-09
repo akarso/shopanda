@@ -12,7 +12,8 @@ import (
 )
 
 type mockOrderRepository struct {
-	orders map[string]*domainOrder.Order
+	orders          map[string]*domainOrder.Order
+	updateStatusErr error
 }
 
 func newMockOrderRepository() *mockOrderRepository {
@@ -60,7 +61,7 @@ func (r *mockOrderRepository) Save(ctx context.Context, o *domainOrder.Order) er
 }
 
 func (r *mockOrderRepository) UpdateStatus(ctx context.Context, o *domainOrder.Order) error {
-	return nil
+	return r.updateStatusErr
 }
 
 func mustNewTestGuestOrder(t *testing.T, contactEmail string) domainOrder.Order {

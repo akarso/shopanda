@@ -2,6 +2,7 @@ package order_test
 
 import (
 	"context"
+	"errors"
 	"testing"
 	"time"
 
@@ -17,6 +18,8 @@ import (
 type mockOrderAuther struct {
 	registerOutput auth.RegisterOutput
 	registerError  error
+	deleteError    error
+	deletedIDs     []string
 }
 
 func (m *mockOrderAuther) Register(ctx context.Context, in auth.RegisterInput) (auth.RegisterOutput, error) {
@@ -24,6 +27,14 @@ func (m *mockOrderAuther) Register(ctx context.Context, in auth.RegisterInput) (
 		return auth.RegisterOutput{}, m.registerError
 	}
 	return m.registerOutput, nil
+}
+
+func (m *mockOrderAuther) DeleteCustomer(ctx context.Context, customerID string) error {
+	m.deletedIDs = append(m.deletedIDs, customerID)
+	if m.deleteError != nil {
+		return m.deleteError
+	}
+	return nil
 }
 
 func TestLinkOrderService_RegisterAndLink_Success(t *testing.T) {
@@ -154,6 +165,52 @@ func TestLinkOrderService_RegisterAndLink_AlreadyLinked(t *testing.T) {
 	_, err = svc.RegisterAndLink(context.Background(), in)
 	if err == nil {
 		t.Fatalf("expected error for already-linked order, got nil")
+	}
+	if len(mockAuth.deletedIDs) != 1 {
+		t.Fatalf("DeleteCustomer call count = %d, want 1", len(mockAuth.deletedIDs))
+	}
+	if mockAuth.deletedIDs[0] != "cust-new" {
+		t.Fatalf("DeleteCustomer called with %q, want %q", mockAuth.deletedIDs[0], "cust-new")
+	}
+}
+
+func TestLinkOrderService_RegisterAndLink_UpdateStatusFails_CleansUpCustomer(t *testing.T) {
+	repo := newMockOrderRepository()
+	repo.updateStatusErr = errors.New("db write failed")
+	mockAuth := &mockOrderAuther{
+		registerOutput: auth.RegisterOutput{
+			CustomerID: "cust-new",
+			Token:      "jwt-token",
+		},
+	}
+	jwtIssuer, err := jwt.NewIssuer("test-secret", time.Hour)
+	if err != nil {
+		t.Fatalf("NewIssuer: %v", err)
+	}
+
+	svc := order.NewLinkOrderService(repo, mockAuth, jwtIssuer)
+
+	contactEmail := "guest@example.com"
+	o := mustNewTestGuestOrder(t, contactEmail)
+	if err := repo.Save(context.Background(), &o); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+
+	_, err = svc.RegisterAndLink(context.Background(), order.RegisterAndLinkInput{
+		OrderID:   o.ID,
+		Email:     contactEmail,
+		Password:  "SecurePass123",
+		FirstName: "Jane",
+		LastName:  "Doe",
+	})
+	if err == nil {
+		t.Fatalf("expected update failure, got nil")
+	}
+	if len(mockAuth.deletedIDs) != 1 {
+		t.Fatalf("DeleteCustomer call count = %d, want 1", len(mockAuth.deletedIDs))
+	}
+	if mockAuth.deletedIDs[0] != "cust-new" {
+		t.Fatalf("DeleteCustomer called with %q, want %q", mockAuth.deletedIDs[0], "cust-new")
 	}
 }
 
