@@ -10,10 +10,11 @@ const (
 
 // OrderCreatedData is the event payload when an order is created.
 type OrderCreatedData struct {
-	OrderID    string `json:"order_id"`
-	CustomerID string `json:"customer_id"`
-	Currency   string `json:"currency"`
-	ItemCount  int    `json:"item_count"`
+	OrderID      string `json:"order_id"`
+	CustomerID   string `json:"customer_id"`
+	ContactEmail string `json:"contact_email,omitempty"`
+	Currency     string `json:"currency"`
+	ItemCount    int    `json:"item_count"`
 }
 
 // OrderStatusChangedData is the event payload for status transitions.

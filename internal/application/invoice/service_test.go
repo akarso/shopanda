@@ -88,7 +88,7 @@ func paidOrder(t *testing.T) *order.Order {
 	if err != nil {
 		t.Fatalf("NewItem: %v", err)
 	}
-	ord, err := order.NewOrder("ord-1", "cust-1", "EUR", []order.Item{item})
+	ord, err := order.NewOrder("ord-1", "cust-1", "", "EUR", []order.Item{item})
 	if err != nil {
 		t.Fatalf("NewOrder: %v", err)
 	}
@@ -191,7 +191,7 @@ func TestGenerateFromOrder_OrderNotFound(t *testing.T) {
 func TestGenerateFromOrder_OrderNotPaid(t *testing.T) {
 	price := shared.MustNewMoney(1000, "EUR")
 	item, _ := order.NewItem("v-1", "SKU", "Shirt", 1, price)
-	ord, _ := order.NewOrder("ord-1", "cust-1", "EUR", []order.Item{item})
+	ord, _ := order.NewOrder("ord-1", "cust-1", "", "EUR", []order.Item{item})
 	orders := &fakeOrderRepo{orders: map[string]*order.Order{"ord-1": &ord}}
 	svc := newService(orders, &fakeInvoiceRepo{}, &fakeRenderer{}, &fakeStorage{})
 

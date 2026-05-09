@@ -83,7 +83,7 @@ func (s *CreateOrderStep) Execute(cctx *Context) error {
 		items = append(items, oi)
 	}
 
-	o, err := order.NewOrder(id.New(), cctx.CustomerID, cctx.Currency, items)
+	o, err := order.NewOrder(id.New(), cctx.CustomerID, cctx.Input.ContactEmail, cctx.Currency, items)
 	if err != nil {
 		return fmt.Errorf("create_order: %w", err)
 	}

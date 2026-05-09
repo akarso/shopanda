@@ -3,6 +3,8 @@ package checkout
 import (
 	"context"
 	"fmt"
+	"net/mail"
+	"strings"
 
 	"github.com/akarso/shopanda/internal/domain/cart"
 	"github.com/akarso/shopanda/internal/platform/apperror"
@@ -43,6 +45,7 @@ func (s *Service) StartCheckout(ctx context.Context, cartID, customerID string, 
 	if cartID == "" {
 		return nil, apperror.Validation("cart id must not be empty")
 	}
+	input.ContactEmail = strings.ToLower(strings.TrimSpace(input.ContactEmail))
 	input.Address = input.Address.Normalize()
 	if input.Address.IsZero() {
 		return nil, apperror.Validation("address is required")
@@ -75,6 +78,18 @@ func (s *Service) StartCheckout(ctx context.Context, cartID, customerID string, 
 	if c.CustomerID != customerID {
 		return nil, apperror.Forbidden("cart does not belong to this customer")
 	}
+	if customerID == "" {
+		if input.ContactEmail == "" {
+			return nil, apperror.Validation("contact email is required for guest checkout")
+		}
+		if _, err := mail.ParseAddress(input.ContactEmail); err != nil {
+			return nil, apperror.Validation("contact email is invalid")
+		}
+	} else if input.ContactEmail != "" {
+		if _, err := mail.ParseAddress(input.ContactEmail); err != nil {
+			return nil, apperror.Validation("contact email is invalid")
+		}
+	}
 	if c.ItemCount() == 0 {
 		return nil, apperror.Validation("cart is empty")
 	}
@@ -83,6 +98,7 @@ func (s *Service) StartCheckout(ctx context.Context, cartID, customerID string, 
 	cctx.Cart = c
 	cctx.Input = input
 	cctx.SetMeta("checkout_address", input.Address)
+	cctx.SetMeta("checkout_contact_email", input.ContactEmail)
 	cctx.SetMeta("checkout_shipping_method", input.ShippingMethod)
 	cctx.SetMeta("checkout_payment_method", input.PaymentMethod)
 

@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/akarso/shopanda/internal/domain/order"
@@ -37,13 +38,15 @@ type orderScanner interface {
 func (r *OrderRepo) hydrateOrder(s orderScanner) (*order.Order, error) {
 	var o order.Order
 	var status string
+	var contactEmail sql.NullString
 	var totalAmount int64
 	var totalCurrency string
-	err := s.Scan(&o.ID, &o.CustomerID, &status, &o.Currency,
+	err := s.Scan(&o.ID, &o.CustomerID, &contactEmail, &status, &o.Currency,
 		&totalAmount, &totalCurrency, &o.CreatedAt, &o.UpdatedAt)
 	if err != nil {
 		return nil, err
 	}
+	o.ContactEmail = strings.TrimSpace(contactEmail.String)
 	if err := o.SetStatusFromDB(status); err != nil {
 		return nil, err
 	}
@@ -61,7 +64,7 @@ func (r *OrderRepo) FindByID(ctx context.Context, id string) (*order.Order, erro
 	if id == "" {
 		return nil, fmt.Errorf("order_repo: find: empty id")
 	}
-	const q = `SELECT id, customer_id, status, currency, total_amount, total_currency, created_at, updated_at
+	const q = `SELECT id, customer_id, contact_email, status, currency, total_amount, total_currency, created_at, updated_at
 		FROM orders WHERE id = $1`
 	o, err := r.hydrateOrder(r.db.QueryRowContext(ctx, q, id))
 	if errors.Is(err, sql.ErrNoRows) {
@@ -85,7 +88,7 @@ func (r *OrderRepo) FindByCustomerID(ctx context.Context, customerID string) ([]
 	if customerID == "" {
 		return nil, fmt.Errorf("order_repo: find by customer: empty customer id")
 	}
-	const q = `SELECT id, customer_id, status, currency, total_amount, total_currency, created_at, updated_at
+	const q = `SELECT id, customer_id, contact_email, status, currency, total_amount, total_currency, created_at, updated_at
 		FROM orders WHERE customer_id = $1
 		ORDER BY created_at DESC`
 	rows, err := r.db.QueryContext(ctx, q, customerID)
@@ -134,7 +137,7 @@ func (r *OrderRepo) List(ctx context.Context, offset, limit int) ([]order.Order,
 	if limit > 100 {
 		limit = 100
 	}
-	const q = `SELECT id, customer_id, status, currency, total_amount, total_currency, created_at, updated_at
+	const q = `SELECT id, customer_id, contact_email, status, currency, total_amount, total_currency, created_at, updated_at
 		FROM orders ORDER BY created_at DESC LIMIT $1 OFFSET $2`
 	rows, err := r.db.QueryContext(ctx, q, limit, offset)
 	if err != nil {
@@ -183,10 +186,10 @@ func (r *OrderRepo) Save(ctx context.Context, o *order.Order) error {
 	}
 	defer tx.Rollback()
 
-	const insertOrder = `INSERT INTO orders (id, customer_id, status, currency, total_amount, total_currency, created_at, updated_at)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`
+	const insertOrder = `INSERT INTO orders (id, customer_id, contact_email, status, currency, total_amount, total_currency, created_at, updated_at)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`
 	_, err = tx.ExecContext(ctx, insertOrder,
-		o.ID, o.CustomerID, string(o.Status()), o.Currency,
+		o.ID, o.CustomerID, strings.TrimSpace(o.ContactEmail), string(o.Status()), o.Currency,
 		o.TotalAmount.Amount(), o.TotalAmount.Currency(),
 		o.CreatedAt, o.UpdatedAt,
 	)

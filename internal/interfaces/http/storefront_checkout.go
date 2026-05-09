@@ -3,6 +3,7 @@ package http
 import (
 	"fmt"
 	"net/http"
+	"net/mail"
 	"net/url"
 	"strings"
 	"time"
@@ -67,6 +68,7 @@ type StorefrontCheckoutPageData struct {
 	Items          []StorefrontCartItem
 	Summary        StorefrontCartSummary
 	Address        StorefrontCheckoutAddress
+	ContactEmail   string
 	Countries      []StorefrontCheckoutOption
 	Rates          []StorefrontCheckoutRate
 	SelectedRate   *StorefrontCheckoutRate
@@ -263,6 +265,7 @@ func (h *StorefrontHandler) CheckoutConfirm() http.HandlerFunc {
 				Postcode:  page.Address.Postcode,
 				Country:   page.Address.Country,
 			},
+			ContactEmail:   page.ContactEmail,
 			ShippingMethod: selectedRate.Method,
 			PaymentMethod:  paymentMethod,
 		})
@@ -306,6 +309,7 @@ func (h *StorefrontHandler) checkoutAddressPageFromPost(w http.ResponseWriter, r
 		}
 	}
 	page.Address = storefrontCheckoutAddressFromRequest(r)
+	page.ContactEmail = storefrontCheckoutContactEmailFromRequest(r)
 	page.Countries = storefrontCheckoutCountryOptions(page.Address.Country)
 	if err := page.Address.Validate(); err != nil {
 		page.ErrorMessage = err.Error()
@@ -314,6 +318,16 @@ func (h *StorefrontHandler) checkoutAddressPageFromPost(w http.ResponseWriter, r
 		page.SecondaryLabel = "Back to cart"
 		h.renderPageStatus(w, "checkout_address", page, http.StatusUnprocessableEntity)
 		return nil, StorefrontCheckoutPageData{}, false
+	}
+	if strings.TrimSpace(customerID) == "" {
+		if err := storefrontCheckoutContactEmailValidate(page.ContactEmail); err != nil {
+			page.ErrorMessage = err.Error()
+			page.PrimaryAction = "/checkout/shipping"
+			page.SecondaryURL = "/cart"
+			page.SecondaryLabel = "Back to cart"
+			h.renderPageStatus(w, "checkout_address", page, http.StatusUnprocessableEntity)
+			return nil, StorefrontCheckoutPageData{}, false
+		}
 	}
 	return currentCart, page, true
 }
@@ -492,6 +506,20 @@ func storefrontCheckoutAddressFromRequest(r *http.Request) StorefrontCheckoutAdd
 		Postcode:  strings.TrimSpace(r.FormValue("postcode")),
 		Country:   strings.TrimSpace(r.FormValue("country")),
 	}
+}
+
+func storefrontCheckoutContactEmailFromRequest(r *http.Request) string {
+	return strings.ToLower(strings.TrimSpace(r.FormValue("contact_email")))
+}
+
+func storefrontCheckoutContactEmailValidate(email string) error {
+	if email == "" {
+		return fmt.Errorf("Contact email is required.")
+	}
+	if _, err := mail.ParseAddress(email); err != nil {
+		return fmt.Errorf("Contact email is invalid.")
+	}
+	return nil
 }
 
 func (a StorefrontCheckoutAddress) Validate() error {

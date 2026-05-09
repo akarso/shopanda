@@ -17,7 +17,7 @@ func mustNewOrder(t *testing.T, customerID, currency string) order.Order {
 	if err != nil {
 		t.Fatalf("NewItem: %v", err)
 	}
-	o, err := order.NewOrder(id.New(), customerID, currency, []order.Item{item})
+	o, err := order.NewOrder(id.New(), customerID, "", currency, []order.Item{item})
 	if err != nil {
 		t.Fatalf("NewOrder: %v", err)
 	}
@@ -248,7 +248,7 @@ func TestOrderRepo_MultipleItems(t *testing.T) {
 		t.Fatalf("NewItem i2: %v", err)
 	}
 
-	o, err := order.NewOrder(id.New(), "cust-1", "EUR", []order.Item{i1, i2})
+	o, err := order.NewOrder(id.New(), "cust-1", "", "EUR", []order.Item{i1, i2})
 	if err != nil {
 		t.Fatalf("NewOrder: %v", err)
 	}
