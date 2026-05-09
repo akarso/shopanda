@@ -15,17 +15,20 @@ import (
 type OrderAdminHandler struct {
 	orders    order.OrderRepository
 	auditor   *admin.Auditor
-	validator *admin.OrderValidator
+	validator admin.OrderValidator
 }
 
 // NewOrderAdminHandler creates an OrderAdminHandler.
-func NewOrderAdminHandler(orders order.OrderRepository) *OrderAdminHandler {
+func NewOrderAdminHandler(orders order.OrderRepository, log logger.Logger) *OrderAdminHandler {
 	if orders == nil {
 		panic("http: order repository must not be nil")
 	}
+	if log == nil {
+		panic("http: logger must not be nil")
+	}
 	return &OrderAdminHandler{
 		orders:    orders,
-		auditor:   admin.NewAuditor(logger.New("info")),
+		auditor:   admin.NewAuditor(log),
 		validator: admin.NewOrderValidator(),
 	}
 }
@@ -45,6 +48,14 @@ func NewOrderAdminHandlerWithAuditor(orders order.OrderRepository, auditor *admi
 	}
 }
 
+func (h *OrderAdminHandler) getAdminID(r *http.Request) string {
+	ac, err := admin.FromContext(r.Context())
+	if err != nil || ac == nil || ac.AdminID == "" {
+		return "system"
+	}
+	return ac.AdminID
+}
+
 // List handles GET /api/v1/admin/orders with Track 3 audit logging.
 func (h *OrderAdminHandler) List() http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
@@ -61,10 +72,7 @@ func (h *OrderAdminHandler) List() http.HandlerFunc {
 		}
 
 		// Extract admin context for auditing (populated by auth middleware).
-		adminID := "system"
-		if ac, ok := r.Context().Value(admin.AdminContextKey{}).(*admin.AdminContext); ok && ac != nil {
-			adminID = ac.AdminID
-		}
+		adminID := h.getAdminID(r)
 
 		orders, err := h.orders.List(r.Context(), offset, limit)
 		if err != nil {
@@ -103,10 +111,7 @@ func (h *OrderAdminHandler) Get() http.HandlerFunc {
 		}
 
 		// Extract admin context for auditing.
-		adminID := "system"
-		if ac, ok := r.Context().Value(admin.AdminContextKey{}).(*admin.AdminContext); ok && ac != nil {
-			adminID = ac.AdminID
-		}
+		adminID := h.getAdminID(r)
 
 		o, err := h.orders.FindByID(r.Context(), orderID)
 		if err != nil {
@@ -152,10 +157,7 @@ func (h *OrderAdminHandler) Update() http.HandlerFunc {
 		}
 
 		// Extract admin context for auditing.
-		adminID := "system"
-		if ac, ok := r.Context().Value(admin.AdminContextKey{}).(*admin.AdminContext); ok && ac != nil {
-			adminID = ac.AdminID
-		}
+		adminID := h.getAdminID(r)
 
 		var req updateOrderRequest
 		dec := json.NewDecoder(http.MaxBytesReader(w, r.Body, maxUpdateOrderBodyBytes))

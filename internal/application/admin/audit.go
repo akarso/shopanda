@@ -50,31 +50,37 @@ func NewAuditor(log logger.Logger) *Auditor {
 
 // LogAction records an admin action to the audit log.
 func (a *Auditor) LogAction(ctx context.Context, entry AuditEntry) {
-	if entry.AdminID == "" {
-		entry.AdminID = "unknown"
+	adminID := entry.AdminID
+	if adminID == "" {
+		adminID = "unknown"
 	}
-	if entry.Result == "" {
-		entry.Result = "unknown"
+	result := entry.Result
+	if result == "" {
+		result = "unknown"
 	}
 
 	// Always include the action context and results in logs.
 	// In the future, this can be extended to write to a dedicated audit table.
 	logFields := map[string]interface{}{
-		"admin_id":      entry.AdminID,
+		"admin_id":      adminID,
 		"action":        entry.Action,
 		"resource_type": entry.ResourceType,
 		"resource_id":   entry.ResourceID,
-		"result":        entry.Result,
+		"result":        result,
 	}
 	if entry.Error != "" {
 		logFields["error"] = entry.Error
 	}
+	details := make(map[string]interface{}, len(entry.Details))
 	for k, v := range entry.Details {
+		details[k] = v
+	}
+	for k, v := range details {
 		logFields["detail_"+k] = v
 	}
 
 	// Log sensitive operations as warnings for immediate alertability.
-	if entry.Result == "error" {
+	if result == "error" {
 		a.log.Warn("admin.action.failed", logFields)
 	} else {
 		a.log.Info("admin.action", logFields)

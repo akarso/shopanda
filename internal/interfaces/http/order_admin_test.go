@@ -10,13 +10,14 @@ import (
 	"github.com/akarso/shopanda/internal/domain/identity"
 	shophttp "github.com/akarso/shopanda/internal/interfaces/http"
 	"github.com/akarso/shopanda/internal/platform/auth/testhelper"
+	"github.com/akarso/shopanda/internal/platform/logger"
 )
 
 // ── helpers ─────────────────────────────────────────────────────────────
 
 func orderAdminSetup() (*stubOrderRepo, *http.ServeMux) {
 	repo := newStubOrderRepo()
-	handler := shophttp.NewOrderAdminHandler(repo)
+	handler := shophttp.NewOrderAdminHandler(repo, logger.New("error"))
 
 	requireAdmin := shophttp.RequireRole(identity.RoleAdmin)
 	mux := http.NewServeMux()

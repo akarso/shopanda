@@ -11,12 +11,12 @@ import (
 type OrderValidator struct{}
 
 // NewOrderValidator creates an OrderValidator.
-func NewOrderValidator() *OrderValidator {
-	return &OrderValidator{}
+func NewOrderValidator() OrderValidator {
+	return OrderValidator{}
 }
 
 // ValidateOrderID validates that an order ID is not empty and meets basic constraints.
-func (v *OrderValidator) ValidateOrderID(id string) error {
+func (v OrderValidator) ValidateOrderID(id string) error {
 	if id == "" {
 		return apperror.Validation("order id is required")
 	}
@@ -29,7 +29,7 @@ func (v *OrderValidator) ValidateOrderID(id string) error {
 
 // ValidatePagination ensures pagination parameters are sane and safe.
 // This prevents resource exhaustion and SQL injection via limit/offset manipulation.
-func (v *OrderValidator) ValidatePagination(offset, limit int) error {
+func (v OrderValidator) ValidatePagination(offset, limit int) error {
 	const (
 		maxLimit  = 1000 // Max 1000 items per page
 		minLimit  = 1
@@ -64,7 +64,7 @@ type AdminContext struct {
 type AdminContextKey struct{}
 
 // FromContext extracts the AdminContext from a request context.
-func (ac *AdminContext) FromContext(ctx context.Context) (*AdminContext, error) {
+func FromContext(ctx context.Context) (*AdminContext, error) {
 	v := ctx.Value(AdminContextKey{})
 	if v == nil {
 		return nil, errors.New("admin context not found in request")
