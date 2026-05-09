@@ -20,7 +20,7 @@ func validItem(t *testing.T) order.Item {
 
 func TestNewOrder_Success(t *testing.T) {
 	item := validItem(t)
-	o, err := order.NewOrder(id.New(), "cust-1", "EUR", []order.Item{item})
+	o, err := order.NewOrder(id.New(), "cust-1", "", "EUR", []order.Item{item})
 	if err != nil {
 		t.Fatalf("NewOrder: %v", err)
 	}
@@ -40,33 +40,44 @@ func TestNewOrder_Success(t *testing.T) {
 
 func TestNewOrder_EmptyID(t *testing.T) {
 	item := validItem(t)
-	_, err := order.NewOrder("", "cust-1", "EUR", []order.Item{item})
+	_, err := order.NewOrder("", "cust-1", "", "EUR", []order.Item{item})
 	if err == nil {
 		t.Fatal("expected error for empty id")
 	}
 }
 
-func TestNewOrder_EmptyCustomerID_AllowsGuestOrder(t *testing.T) {
+func TestNewOrder_EmptyCustomerID_RequiresContactEmail(t *testing.T) {
 	item := validItem(t)
-	o, err := order.NewOrder(id.New(), "", "EUR", []order.Item{item})
+	_, err := order.NewOrder(id.New(), "", "", "EUR", []order.Item{item})
+	if err == nil {
+		t.Fatal("expected error for guest order without contact email")
+	}
+}
+
+func TestNewOrder_GuestWithContactEmail(t *testing.T) {
+	item := validItem(t)
+	o, err := order.NewOrder(id.New(), "", "guest@example.com", "EUR", []order.Item{item})
 	if err != nil {
 		t.Fatalf("NewOrder: %v", err)
 	}
 	if o.CustomerID != "" {
 		t.Fatalf("CustomerID = %q, want empty guest customer id", o.CustomerID)
 	}
+	if o.ContactEmail != "guest@example.com" {
+		t.Fatalf("ContactEmail = %q, want %q", o.ContactEmail, "guest@example.com")
+	}
 }
 
 func TestNewOrder_InvalidCurrency(t *testing.T) {
 	item := validItem(t)
-	_, err := order.NewOrder(id.New(), "cust-1", "xx", []order.Item{item})
+	_, err := order.NewOrder(id.New(), "cust-1", "", "xx", []order.Item{item})
 	if err == nil {
 		t.Fatal("expected error for invalid currency")
 	}
 }
 
 func TestNewOrder_NoItems(t *testing.T) {
-	_, err := order.NewOrder(id.New(), "cust-1", "EUR", nil)
+	_, err := order.NewOrder(id.New(), "cust-1", "", "EUR", nil)
 	if err == nil {
 		t.Fatal("expected error for no items")
 	}
@@ -78,7 +89,7 @@ func TestNewOrder_CurrencyMismatch(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewItem: %v", err)
 	}
-	_, err = order.NewOrder(id.New(), "cust-1", "EUR", []order.Item{item})
+	_, err = order.NewOrder(id.New(), "cust-1", "", "EUR", []order.Item{item})
 	if err == nil {
 		t.Fatal("expected error for currency mismatch")
 	}
@@ -94,7 +105,7 @@ func TestNewOrder_DuplicateVariantID(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewItem i2: %v", err)
 	}
-	_, err = order.NewOrder(id.New(), "cust-1", "EUR", []order.Item{i1, i2})
+	_, err = order.NewOrder(id.New(), "cust-1", "", "EUR", []order.Item{i1, i2})
 	if err == nil {
 		t.Fatal("expected error for duplicate variant id")
 	}
@@ -111,7 +122,7 @@ func TestNewOrder_MultipleItems(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewItem i2: %v", err)
 	}
-	o, err := order.NewOrder(id.New(), "cust-1", "EUR", []order.Item{i1, i2})
+	o, err := order.NewOrder(id.New(), "cust-1", "", "EUR", []order.Item{i1, i2})
 	if err != nil {
 		t.Fatalf("NewOrder: %v", err)
 	}
@@ -123,7 +134,7 @@ func TestNewOrder_MultipleItems(t *testing.T) {
 
 func TestOrder_Confirm(t *testing.T) {
 	item := validItem(t)
-	o, err := order.NewOrder(id.New(), "cust-1", "EUR", []order.Item{item})
+	o, err := order.NewOrder(id.New(), "cust-1", "", "EUR", []order.Item{item})
 	if err != nil {
 		t.Fatalf("NewOrder: %v", err)
 	}
@@ -137,7 +148,7 @@ func TestOrder_Confirm(t *testing.T) {
 
 func TestOrder_Confirm_NotPending(t *testing.T) {
 	item := validItem(t)
-	o, err := order.NewOrder(id.New(), "cust-1", "EUR", []order.Item{item})
+	o, err := order.NewOrder(id.New(), "cust-1", "", "EUR", []order.Item{item})
 	if err != nil {
 		t.Fatalf("NewOrder: %v", err)
 	}
@@ -151,7 +162,7 @@ func TestOrder_Confirm_NotPending(t *testing.T) {
 
 func TestOrder_MarkPaid(t *testing.T) {
 	item := validItem(t)
-	o, err := order.NewOrder(id.New(), "cust-1", "EUR", []order.Item{item})
+	o, err := order.NewOrder(id.New(), "cust-1", "", "EUR", []order.Item{item})
 	if err != nil {
 		t.Fatalf("NewOrder: %v", err)
 	}
@@ -168,7 +179,7 @@ func TestOrder_MarkPaid(t *testing.T) {
 
 func TestOrder_MarkPaid_NotConfirmed(t *testing.T) {
 	item := validItem(t)
-	o, err := order.NewOrder(id.New(), "cust-1", "EUR", []order.Item{item})
+	o, err := order.NewOrder(id.New(), "cust-1", "", "EUR", []order.Item{item})
 	if err != nil {
 		t.Fatalf("NewOrder: %v", err)
 	}
@@ -179,7 +190,7 @@ func TestOrder_MarkPaid_NotConfirmed(t *testing.T) {
 
 func TestOrder_Cancel_Pending(t *testing.T) {
 	item := validItem(t)
-	o, err := order.NewOrder(id.New(), "cust-1", "EUR", []order.Item{item})
+	o, err := order.NewOrder(id.New(), "cust-1", "", "EUR", []order.Item{item})
 	if err != nil {
 		t.Fatalf("NewOrder: %v", err)
 	}
@@ -193,7 +204,7 @@ func TestOrder_Cancel_Pending(t *testing.T) {
 
 func TestOrder_Cancel_Confirmed(t *testing.T) {
 	item := validItem(t)
-	o, err := order.NewOrder(id.New(), "cust-1", "EUR", []order.Item{item})
+	o, err := order.NewOrder(id.New(), "cust-1", "", "EUR", []order.Item{item})
 	if err != nil {
 		t.Fatalf("NewOrder: %v", err)
 	}
@@ -210,7 +221,7 @@ func TestOrder_Cancel_Confirmed(t *testing.T) {
 
 func TestOrder_Cancel_Paid(t *testing.T) {
 	item := validItem(t)
-	o, err := order.NewOrder(id.New(), "cust-1", "EUR", []order.Item{item})
+	o, err := order.NewOrder(id.New(), "cust-1", "", "EUR", []order.Item{item})
 	if err != nil {
 		t.Fatalf("NewOrder: %v", err)
 	}
@@ -227,7 +238,7 @@ func TestOrder_Cancel_Paid(t *testing.T) {
 
 func TestOrder_Fail(t *testing.T) {
 	item := validItem(t)
-	o, err := order.NewOrder(id.New(), "cust-1", "EUR", []order.Item{item})
+	o, err := order.NewOrder(id.New(), "cust-1", "", "EUR", []order.Item{item})
 	if err != nil {
 		t.Fatalf("NewOrder: %v", err)
 	}
@@ -241,7 +252,7 @@ func TestOrder_Fail(t *testing.T) {
 
 func TestOrder_Fail_NotPending(t *testing.T) {
 	item := validItem(t)
-	o, err := order.NewOrder(id.New(), "cust-1", "EUR", []order.Item{item})
+	o, err := order.NewOrder(id.New(), "cust-1", "", "EUR", []order.Item{item})
 	if err != nil {
 		t.Fatalf("NewOrder: %v", err)
 	}
@@ -270,7 +281,7 @@ func TestOrderStatus_IsValid(t *testing.T) {
 
 func TestSetStatusFromDB(t *testing.T) {
 	item := validItem(t)
-	o, err := order.NewOrder(id.New(), "cust-1", "EUR", []order.Item{item})
+	o, err := order.NewOrder(id.New(), "cust-1", "", "EUR", []order.Item{item})
 	if err != nil {
 		t.Fatalf("NewOrder: %v", err)
 	}
@@ -284,7 +295,7 @@ func TestSetStatusFromDB(t *testing.T) {
 
 func TestSetStatusFromDB_Invalid(t *testing.T) {
 	item := validItem(t)
-	o, err := order.NewOrder(id.New(), "cust-1", "EUR", []order.Item{item})
+	o, err := order.NewOrder(id.New(), "cust-1", "", "EUR", []order.Item{item})
 	if err != nil {
 		t.Fatalf("NewOrder: %v", err)
 	}

@@ -678,7 +678,7 @@ func TestStorefrontHandler_AccountOrders_RendersCustomerOrders(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewItem: %v", err)
 	}
-	o, err := order.NewOrder("ord-1", out.CustomerID, "EUR", []order.Item{item})
+	o, err := order.NewOrder("ord-1", out.CustomerID, "", "EUR", []order.Item{item})
 	if err != nil {
 		t.Fatalf("NewOrder: %v", err)
 	}

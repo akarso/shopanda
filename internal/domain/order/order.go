@@ -2,6 +2,8 @@ package order
 
 import (
 	"errors"
+	"net/mail"
+	"strings"
 	"time"
 
 	"github.com/akarso/shopanda/internal/domain/shared"
@@ -42,9 +44,23 @@ type Order struct {
 }
 
 // NewOrder creates an Order in pending status with validation.
-func NewOrder(id, customerID, currency string, items []Item) (Order, error) {
+func NewOrder(id, customerID, contactEmail, currency string, items []Item) (Order, error) {
 	if id == "" {
 		return Order{}, errors.New("order: id must not be empty")
+	}
+	customerID = strings.TrimSpace(customerID)
+	contactEmail = strings.ToLower(strings.TrimSpace(contactEmail))
+	if customerID == "" {
+		if contactEmail == "" {
+			return Order{}, errors.New("order: contact email must not be empty for guest orders")
+		}
+		if _, err := mail.ParseAddress(contactEmail); err != nil {
+			return Order{}, errors.New("order: invalid contact email")
+		}
+	} else if contactEmail != "" {
+		if _, err := mail.ParseAddress(contactEmail); err != nil {
+			return Order{}, errors.New("order: invalid contact email")
+		}
 	}
 	if !shared.IsValidCurrency(currency) {
 		return Order{}, errors.New("order: invalid currency code")
@@ -76,14 +92,15 @@ func NewOrder(id, customerID, currency string, items []Item) (Order, error) {
 
 	now := time.Now().UTC()
 	return Order{
-		ID:          id,
-		CustomerID:  customerID,
-		status:      OrderStatusPending,
-		Currency:    currency,
-		items:       cp,
-		TotalAmount: total,
-		CreatedAt:   now,
-		UpdatedAt:   now,
+		ID:           id,
+		CustomerID:   customerID,
+		ContactEmail: contactEmail,
+		status:       OrderStatusPending,
+		Currency:     currency,
+		items:        cp,
+		TotalAmount:  total,
+		CreatedAt:    now,
+		UpdatedAt:    now,
 	}, nil
 }
 

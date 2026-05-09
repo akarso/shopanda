@@ -113,7 +113,7 @@ func orderForCheckout047(t *testing.T) *order.Order {
 	if err != nil {
 		t.Fatalf("NewItem: %v", err)
 	}
-	o, err := order.NewOrder(id.New(), "cust-1", "EUR", []order.Item{item})
+	o, err := order.NewOrder(id.New(), "cust-1", "", "EUR", []order.Item{item})
 	if err != nil {
 		t.Fatalf("NewOrder: %v", err)
 	}

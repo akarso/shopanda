@@ -89,7 +89,7 @@ func seedOrder(t *testing.T, repo *stubOrderRepo, id, customerID string) *order.
 			CreatedAt: time.Now().UTC(),
 		},
 	}
-	o, err := order.NewOrder(id, customerID, "EUR", items)
+	o, err := order.NewOrder(id, customerID, "", "EUR", items)
 	if err != nil {
 		t.Fatalf("seedOrder: %v", err)
 	}
