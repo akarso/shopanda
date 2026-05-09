@@ -456,8 +456,15 @@ func (s *Service) DeleteCustomer(ctx context.Context, customerID string) error {
 		return apperror.Validation("customer id is required")
 	}
 	if err := s.customers.Delete(ctx, customerID); err != nil {
+		s.log.Warn("auth.customer.delete_failed", map[string]interface{}{
+			"customer_id": customerID,
+			"error":       err.Error(),
+		})
 		return fmt.Errorf("auth service: delete customer: %w", err)
 	}
+	s.log.Info("auth.customer.deleted", map[string]interface{}{
+		"customer_id": customerID,
+	})
 	return nil
 }
 

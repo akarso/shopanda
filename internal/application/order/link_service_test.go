@@ -123,6 +123,12 @@ func TestLinkOrderService_RegisterAndLink_OrderNotFound(t *testing.T) {
 	if err == nil {
 		t.Fatalf("expected error, got nil")
 	}
+	if len(mockAuth.deletedIDs) != 1 {
+		t.Fatalf("DeleteCustomer call count = %d, want 1", len(mockAuth.deletedIDs))
+	}
+	if mockAuth.deletedIDs[0] != "cust-new" {
+		t.Fatalf("DeleteCustomer called with %q, want %q", mockAuth.deletedIDs[0], "cust-new")
+	}
 }
 
 func TestLinkOrderService_RegisterAndLink_AlreadyLinked(t *testing.T) {

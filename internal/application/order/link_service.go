@@ -90,19 +90,26 @@ func (s *LinkOrderService) RegisterAndLink(ctx context.Context, in RegisterAndLi
 	if err != nil {
 		return RegisterAndLinkOutput{}, fmt.Errorf("link order service: register: %w", err)
 	}
+	createdCustomerID := regOut.CustomerID
 
 	// Fetch the order
 	o, err := s.orders.FindByID(ctx, in.OrderID)
 	if err != nil {
+		if cleanupErr := s.auth.DeleteCustomer(ctx, createdCustomerID); cleanupErr != nil {
+			return RegisterAndLinkOutput{}, fmt.Errorf("link order service: find order: %w (cleanup customer: %v)", err, cleanupErr)
+		}
 		return RegisterAndLinkOutput{}, fmt.Errorf("link order service: find order: %w", err)
 	}
 	if o == nil {
+		if cleanupErr := s.auth.DeleteCustomer(ctx, createdCustomerID); cleanupErr != nil {
+			return RegisterAndLinkOutput{}, fmt.Errorf("link order service: order not found (cleanup customer: %v)", cleanupErr)
+		}
 		return RegisterAndLinkOutput{}, fmt.Errorf("link order service: order not found")
 	}
 
 	// Link order to customer
 	if err := o.LinkToCustomer(regOut.CustomerID); err != nil {
-		if cleanupErr := s.auth.DeleteCustomer(ctx, regOut.CustomerID); cleanupErr != nil {
+		if cleanupErr := s.auth.DeleteCustomer(ctx, createdCustomerID); cleanupErr != nil {
 			return RegisterAndLinkOutput{}, fmt.Errorf("link order service: link order: %w (cleanup customer: %v)", err, cleanupErr)
 		}
 		return RegisterAndLinkOutput{}, fmt.Errorf("link order service: link order: %w", err)
@@ -110,7 +117,7 @@ func (s *LinkOrderService) RegisterAndLink(ctx context.Context, in RegisterAndLi
 
 	// Persist the updated order
 	if err := s.orders.UpdateStatus(ctx, o); err != nil {
-		if cleanupErr := s.auth.DeleteCustomer(ctx, regOut.CustomerID); cleanupErr != nil {
+		if cleanupErr := s.auth.DeleteCustomer(ctx, createdCustomerID); cleanupErr != nil {
 			return RegisterAndLinkOutput{}, fmt.Errorf("link order service: update order: %w (cleanup customer: %v)", err, cleanupErr)
 		}
 		return RegisterAndLinkOutput{}, fmt.Errorf("link order service: update order: %w", err)
