@@ -134,7 +134,7 @@ func (r *OrderRepo) FindByContactEmail(ctx context.Context, contactEmail string)
 	}
 	contactEmail = strings.ToLower(strings.TrimSpace(contactEmail))
 	const q = `SELECT id, customer_id, contact_email, status, currency, total_amount, total_currency, created_at, updated_at
-		FROM orders WHERE contact_email = $1
+		FROM orders WHERE LOWER(contact_email) = $1 AND customer_id IS NULL
 		ORDER BY created_at DESC`
 	rows, err := r.db.QueryContext(ctx, q, contactEmail)
 	if err != nil {

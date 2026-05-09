@@ -233,7 +233,7 @@ func TestOrderRepo_FindByContactEmail(t *testing.T) {
 		t.Fatalf("Save o3: %v", err)
 	}
 
-	// Authenticated order with contact email — should not appear
+	// Authenticated order with contact email — should not appear (guest-only lookup)
 	o4 := mustNewAuthenticatedOrderWithEmail(t, "cust-1", contactEmail, "EUR")
 	if err := repo.Save(ctx, &o4); err != nil {
 		t.Fatalf("Save o4: %v", err)
@@ -243,12 +243,15 @@ func TestOrderRepo_FindByContactEmail(t *testing.T) {
 	if err != nil {
 		t.Fatalf("FindByContactEmail: %v", err)
 	}
-	if len(orders) != 3 {
-		t.Fatalf("len(orders) = %d, want 3 (2 guest + 1 authenticated with same email)", len(orders))
+	if len(orders) != 2 {
+		t.Fatalf("len(orders) = %d, want 2 (2 guest orders only, authenticated excluded)", len(orders))
 	}
 	for i, o := range orders {
 		if o.ContactEmail != contactEmail {
 			t.Errorf("orders[%d].ContactEmail = %q, want %q", i, o.ContactEmail, contactEmail)
+		}
+		if o.CustomerID != "" {
+			t.Errorf("orders[%d].CustomerID = %q, want empty (guest-only)", i, o.CustomerID)
 		}
 	}
 	// Newest first: o2 was saved after o1

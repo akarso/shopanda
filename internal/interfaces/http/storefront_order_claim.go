@@ -3,7 +3,6 @@ package http
 import (
 	"net/http"
 	"strings"
-	"time"
 
 	"github.com/akarso/shopanda/internal/platform/apperror"
 )
@@ -56,38 +55,14 @@ func (h *StorefrontHandler) ClaimOrderSearch() http.HandlerFunc {
 			return
 		}
 
-		// Search for guest orders by contact email
-		orders, err := h.orderClaim.SearchGuestOrders(r.Context(), contactEmail)
-		if err != nil {
-			JSONError(w, err)
-			return
-		}
+		// Generate claim token for this email (would be sent via email service)
+		// TODO: claimToken, err := h.security.orderClaimToken(contactEmail, time.Now().UTC())
+		// TODO: h.emailer.SendClaimEmail(contactEmail, claimToken)
 
-		// Generate claim token for this email
-		claimToken, err := h.security.orderClaimToken(contactEmail, time.Now().UTC())
-		if err != nil {
-			JSONError(w, apperror.Internal("failed to generate claim token"))
-			return
-		}
-
-		// Build response
-		orderRefs := make([]storefrontOrderRef, 0, len(orders))
-		for i := range orders {
-			orderRefs = append(orderRefs, storefrontOrderRef{
-				ID:        orders[i].ID,
-				Status:    string(orders[i].Status()),
-				TotalText: formatStorefrontMoney(orders[i].TotalAmount.Amount(), orders[i].TotalAmount.Currency()),
-				CreatedAt: orders[i].CreatedAt.Format("2006-01-02"),
-			})
-		}
-
-		resp := storefrontOrderSearchResponse{
-			ContactEmail: contactEmail,
-			ClaimToken:   claimToken,
-			Orders:       orderRefs,
-		}
-
-		JSON(w, http.StatusOK, resp)
+		// Return generic success (no orders/token disclosed)
+		JSON(w, http.StatusOK, map[string]interface{}{
+			"message": "If an account exists for this email, a claim link has been sent.",
+		})
 	}
 }
 

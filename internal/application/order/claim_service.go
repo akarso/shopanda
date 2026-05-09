@@ -1,5 +1,4 @@
 package order
-package order
 
 import (
 	"context"
