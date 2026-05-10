@@ -108,7 +108,10 @@ func RequirePermission(perm rbac.Permission) Middleware {
 }
 
 // AdminContextMiddleware injects admin context derived from authenticated
-// identity and role permissions. Guest requests pass through unchanged.
+// identity and role permissions. It applies to all authenticated callers
+// (admin, manager, editor, support, customer), not just admins. Guest requests
+// pass through unchanged. The context contains the caller's ID and resolved
+// permissions for that role.
 func AdminContextMiddleware() Middleware {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
