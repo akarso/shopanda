@@ -618,7 +618,7 @@ func runServe(cfg *config.Config, log logger.Logger) error {
 	variantHandler := shophttp.NewVariantHandler(productRepo, variantRepo, bus)
 	cartHandler := shophttp.NewCartHandler(cartService)
 	orderHandler := shophttp.NewOrderHandler(orderRepo)
-	orderAdmin := shophttp.NewOrderAdminHandler(orderRepo)
+	orderAdmin := shophttp.NewOrderAdminHandler(orderRepo, log)
 	statsAdmin := shophttp.NewStatsAdminHandler(statsRepo)
 	authHandler := shophttp.NewAuthHandler(authService)
 	webhookVerifier := webhook.NewHMACVerifier(cfg.Webhooks.Secrets)
