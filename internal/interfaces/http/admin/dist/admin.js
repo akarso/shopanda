@@ -94,11 +94,42 @@
     var routes = {
         "/admin": { title: "Login", render: renderLogin, auth: false },
         "/admin/dashboard": { title: "Dashboard", render: renderDashboard, auth: true },
-        "/admin/products": { title: "Products", render: renderProductsGrid, auth: true },
+        // Sales
         "/admin/orders": { title: "Orders", render: renderOrdersGrid, auth: true },
+        "/admin/sales/returns": { title: "Returns", render: renderPlaceholder("Returns"), auth: true },
+        "/admin/sales/transactions": { title: "Transactions", render: renderPlaceholder("Transactions"), auth: true },
+        // Catalog
+        "/admin/products": { title: "Products", render: renderProductsGrid, auth: true },
+        "/admin/catalog/categories": { title: "Categories", render: renderPlaceholder("Categories"), auth: true },
+        "/admin/catalog/attributes": { title: "Attributes", render: renderPlaceholder("Attributes"), auth: true },
+        // Customers
+        "/admin/customers": { title: "Customers", render: renderPlaceholder("Customers"), auth: true },
+        "/admin/customers/groups": { title: "Groups", render: renderPlaceholder("Groups"), auth: true },
+        // Marketing
+        "/admin/marketing/promotions": { title: "Promotions", render: renderPlaceholder("Promotions"), auth: true },
+        "/admin/marketing/coupons": { title: "Coupons", render: renderPlaceholder("Coupons"), auth: true },
+        // Content
+        "/admin/content/pages": { title: "Pages", render: renderPlaceholder("Pages"), auth: true },
+        "/admin/content/navigation": { title: "Navigation", render: renderPlaceholder("Navigation"), auth: true },
+        "/admin/content/blocks": { title: "Blocks", render: renderPlaceholder("Blocks"), auth: true },
         "/admin/media": { title: "Media", render: renderMediaLibrary, auth: true },
-        "/admin/account": { title: "Account", render: renderAdminAccount, auth: true },
-        "/admin/settings": { title: "Settings", render: renderSettingsPage, auth: true }
+        // Operations
+        "/admin/operations/inventory": { title: "Inventory", render: renderPlaceholder("Inventory"), auth: true },
+        "/admin/operations/shipping": { title: "Shipping", render: renderPlaceholder("Shipping"), auth: true },
+        "/admin/operations/payments": { title: "Payments", render: renderPlaceholder("Payments"), auth: true },
+        // Settings
+        "/admin/settings": { title: "Settings", render: renderSettingsPage, auth: true },
+        "/admin/settings/localization": { title: "Localization", render: renderPlaceholder("Localization"), auth: true },
+        "/admin/settings/users": { title: "Users & Roles", render: renderPlaceholder("Users & Roles"), auth: true },
+        // Store Management
+        "/admin/store": { title: "Stores", render: renderPlaceholder("Stores"), auth: true },
+        "/admin/store/domains": { title: "Domains", render: renderPlaceholder("Domains"), auth: true },
+        "/admin/store/languages": { title: "Languages", render: renderPlaceholder("Languages"), auth: true },
+        "/admin/store/currencies": { title: "Currencies", render: renderPlaceholder("Currencies"), auth: true },
+        // Integrations
+        "/admin/integrations": { title: "Integrations", render: renderPlaceholder("Integrations"), auth: true },
+        // Account (accessible from header user-info link)
+        "/admin/account": { title: "Account", render: renderAdminAccount, auth: true }
     };
 
     var currentUser = null;
@@ -674,15 +705,10 @@
         var links = document.querySelectorAll(".admin-sidebar nav a");
         for (var i = 0; i < links.length; i++) {
             var href = links[i].getAttribute("href");
-            if (href === "/admin/products" && currentPath.indexOf("/admin/products") === 0) {
-                links[i].setAttribute("aria-current", "page");
-            } else if (href === "/admin/orders" && currentPath.indexOf("/admin/orders") === 0) {
-                links[i].setAttribute("aria-current", "page");
-            } else if (href === "/admin/media" && currentPath.indexOf("/admin/media") === 0) {
-                links[i].setAttribute("aria-current", "page");
-            } else if (href === "/admin/account" && currentPath.indexOf("/admin/account") === 0) {
-                links[i].setAttribute("aria-current", "page");
-            } else if (href === currentPath) {
+            var active = href !== "/admin" &&
+                currentPath.indexOf(href) === 0 &&
+                (currentPath.length === href.length || currentPath.charAt(href.length) === "/");
+            if (active) {
                 links[i].setAttribute("aria-current", "page");
             } else {
                 links[i].removeAttribute("aria-current");
