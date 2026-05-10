@@ -36,8 +36,11 @@ func TestAdminHandler_IndexHTML(t *testing.T) {
 	if !strings.Contains(body, "admin-layout") {
 		t.Fatalf("expected admin-layout in body")
 	}
-	if !strings.Contains(body, "/admin/account") {
-		t.Fatalf("expected admin account navigation in index html")
+	if !strings.Contains(body, "Sales") || !strings.Contains(body, "Catalog") {
+		t.Fatalf("expected grouped domain navigation labels in index html")
+	}
+	if !strings.Contains(body, "/admin/store") || !strings.Contains(body, "/admin/integrations") {
+		t.Fatalf("expected store management and integrations links in index html")
 	}
 }
 
@@ -58,6 +61,9 @@ func TestAdminHandler_StaticCSS(t *testing.T) {
 	body := rec.Body.String()
 	if !strings.Contains(body, "admin-sidebar") {
 		t.Fatalf("expected admin-sidebar in CSS")
+	}
+	if !strings.Contains(body, "nav-group") {
+		t.Fatalf("expected grouped nav styles in CSS")
 	}
 }
 
