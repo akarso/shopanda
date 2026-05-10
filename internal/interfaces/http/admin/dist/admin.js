@@ -3,7 +3,15 @@
     "use strict";
 
     var TOKEN_KEY = "shopanda_admin_token";
+    var ADMIN_SCOPE_KEY = "shopanda_admin_scope";
     var API_BASE = "/api/v1";
+    var ADMIN_STORE_HEADER = "X-Admin-Store-ID";
+    var ADMIN_LANGUAGE_HEADER = "X-Admin-Language";
+    var ADMIN_CURRENCY_HEADER = "X-Admin-Currency";
+
+    var currentUser = null;
+    var adminScopeStores = [];
+    var adminScope = loadAdminScope();
 
     // --- Auth helpers ---
 
@@ -29,6 +37,15 @@
         if (token) {
             out.Authorization = "Bearer " + token;
         }
+        if (adminScope.store_id) {
+            out[ADMIN_STORE_HEADER] = adminScope.store_id;
+        }
+        if (adminScope.language) {
+            out[ADMIN_LANGUAGE_HEADER] = adminScope.language;
+        }
+        if (adminScope.currency) {
+            out[ADMIN_CURRENCY_HEADER] = adminScope.currency;
+        }
         return out;
     }
 
@@ -51,9 +68,18 @@
         return new Promise(function (resolve, reject) {
             var xhr = new XMLHttpRequest();
             xhr.open("POST", API_BASE + "/admin/media", true);
-            var token = getToken();
-            if (token) {
-                xhr.setRequestHeader("Authorization", "Bearer " + token);
+            var headers = buildHeaders({});
+            if (headers.Authorization) {
+                xhr.setRequestHeader("Authorization", headers.Authorization);
+            }
+            if (headers[ADMIN_STORE_HEADER]) {
+                xhr.setRequestHeader(ADMIN_STORE_HEADER, headers[ADMIN_STORE_HEADER]);
+            }
+            if (headers[ADMIN_LANGUAGE_HEADER]) {
+                xhr.setRequestHeader(ADMIN_LANGUAGE_HEADER, headers[ADMIN_LANGUAGE_HEADER]);
+            }
+            if (headers[ADMIN_CURRENCY_HEADER]) {
+                xhr.setRequestHeader(ADMIN_CURRENCY_HEADER, headers[ADMIN_CURRENCY_HEADER]);
             }
             xhr.upload.addEventListener("progress", function (e) {
                 if (onProgress && e.lengthComputable) {
@@ -131,8 +157,6 @@
         // Account (accessible from header user-info link)
         "/admin/account": { title: "Account", render: renderAdminAccount, auth: true }
     };
-
-    var currentUser = null;
 
     function resolveRoute(path) {
         if (routes[path]) {
@@ -669,6 +693,187 @@
         return undefined;
     }
 
+    function emptyAdminScope() {
+        return { store_id: "", language: "", currency: "" };
+    }
+
+    function loadAdminScope() {
+        try {
+            var raw = localStorage.getItem(ADMIN_SCOPE_KEY);
+            if (!raw) {
+                return emptyAdminScope();
+            }
+            var parsed = JSON.parse(raw);
+            return {
+                store_id: parsed && typeof parsed.store_id === "string" ? parsed.store_id : "",
+                language: parsed && typeof parsed.language === "string" ? parsed.language : "",
+                currency: parsed && typeof parsed.currency === "string" ? parsed.currency : ""
+            };
+        } catch (err) {
+            return emptyAdminScope();
+        }
+    }
+
+    function saveAdminScope() {
+        localStorage.setItem(ADMIN_SCOPE_KEY, JSON.stringify(adminScope));
+    }
+
+    function uniqueValues(stores, key) {
+        var seen = {};
+        var out = [];
+        for (var i = 0; i < stores.length; i++) {
+            var value = stores[i] && stores[i][key] ? String(stores[i][key]) : "";
+            if (!value || seen[value]) {
+                continue;
+            }
+            seen[value] = true;
+            out.push(value);
+        }
+        return out;
+    }
+
+    function findStoreByID(stores, storeID) {
+        for (var i = 0; i < stores.length; i++) {
+            if (stores[i] && stores[i].id === storeID) {
+                return stores[i];
+            }
+        }
+        return null;
+    }
+
+    function ensureValidAdminScope(stores) {
+        if (!stores || stores.length === 0) {
+            adminScope = emptyAdminScope();
+            saveAdminScope();
+            return;
+        }
+
+        var selectedStore = findStoreByID(stores, adminScope.store_id);
+        if (!selectedStore) {
+            selectedStore = choosePrimaryStore(stores);
+            adminScope.store_id = selectedStore && selectedStore.id ? selectedStore.id : "";
+        }
+
+        if (!adminScope.language) {
+            adminScope.language = selectedStore && selectedStore.language ? selectedStore.language : "";
+        }
+        if (!adminScope.currency) {
+            adminScope.currency = selectedStore && selectedStore.currency ? selectedStore.currency : "";
+        }
+
+        if (selectedStore && selectedStore.language) {
+            adminScope.language = selectedStore.language;
+        }
+        if (selectedStore && selectedStore.currency) {
+            adminScope.currency = selectedStore.currency;
+        }
+
+        saveAdminScope();
+    }
+
+    function renderContextSelect(select, options, selectedValue, fallbackLabel) {
+        if (!select) {
+            return;
+        }
+        var html = "";
+        if (options.length === 0) {
+            html = '<option value="">' + esc(fallbackLabel) + '</option>';
+        } else {
+            for (var i = 0; i < options.length; i++) {
+                var option = options[i];
+                var selected = option.value === selectedValue ? ' selected' : '';
+                html += '<option value="' + esc(option.value) + '"' + selected + '>' + esc(option.label) + '</option>';
+            }
+        }
+        select.innerHTML = html;
+        select.disabled = options.length === 0;
+    }
+
+    function renderContextSwitcher() {
+        var storeSelect = document.getElementById("admin-context-store");
+        var languageSelect = document.getElementById("admin-context-language");
+        var currencySelect = document.getElementById("admin-context-currency");
+        if (!storeSelect || !languageSelect || !currencySelect) {
+            return;
+        }
+
+        var storeOptions = [];
+        for (var i = 0; i < adminScopeStores.length; i++) {
+            var store = adminScopeStores[i];
+            storeOptions.push({
+                value: store.id,
+                label: (store.name || store.code || store.id) + (store.code ? " (" + store.code + ")" : "")
+            });
+        }
+        renderContextSelect(storeSelect, storeOptions, adminScope.store_id, "No stores");
+
+        var languages = uniqueValues(adminScopeStores, "language");
+        var languageOptions = [];
+        for (var j = 0; j < languages.length; j++) {
+            languageOptions.push({ value: languages[j], label: languages[j] });
+        }
+        renderContextSelect(languageSelect, languageOptions, adminScope.language, "No languages");
+
+        var currencies = uniqueValues(adminScopeStores, "currency");
+        var currencyOptions = [];
+        for (var k = 0; k < currencies.length; k++) {
+            currencyOptions.push({ value: currencies[k], label: currencies[k] });
+        }
+        renderContextSelect(currencySelect, currencyOptions, adminScope.currency, "No currencies");
+    }
+
+    function loadContextSwitcherData() {
+        if (!isAuthenticated()) {
+            adminScopeStores = [];
+            renderContextSwitcher();
+            return Promise.resolve();
+        }
+
+        return api("/admin/stores").then(function (body) {
+            adminScopeStores = normalizeStores(body && body.data && body.data.stores ? body.data.stores : []);
+            ensureValidAdminScope(adminScopeStores);
+            renderContextSwitcher();
+        }).catch(function () {
+            adminScopeStores = [];
+            renderContextSwitcher();
+        });
+    }
+
+    function bindContextSwitcher() {
+        var storeSelect = document.getElementById("admin-context-store");
+        var languageSelect = document.getElementById("admin-context-language");
+        var currencySelect = document.getElementById("admin-context-currency");
+        if (!storeSelect || !languageSelect || !currencySelect) {
+            return;
+        }
+
+        storeSelect.addEventListener("change", function () {
+            adminScope.store_id = storeSelect.value;
+            var store = findStoreByID(adminScopeStores, adminScope.store_id);
+            if (store && store.language) {
+                adminScope.language = store.language;
+            }
+            if (store && store.currency) {
+                adminScope.currency = store.currency;
+            }
+            saveAdminScope();
+            renderContextSwitcher();
+            handleRoute();
+        });
+
+        languageSelect.addEventListener("change", function () {
+            adminScope.language = languageSelect.value;
+            saveAdminScope();
+            handleRoute();
+        });
+
+        currencySelect.addEventListener("change", function () {
+            adminScope.currency = currencySelect.value;
+            saveAdminScope();
+            handleRoute();
+        });
+    }
+
     function navigateTo(path) {
         history.pushState(null, "", path);
         handleRoute();
@@ -793,7 +998,9 @@
                             errBox.textContent = "This account has no admin permissions.";
                             return;
                         }
-                        navigateTo("/admin/dashboard");
+                        loadContextSwitcherData().then(function () {
+                            navigateTo("/admin/dashboard");
+                        });
                     }).catch(function () {
                         clearToken();
                         errBox.textContent = "Failed to verify admin permissions";
@@ -1679,6 +1886,8 @@
         e.preventDefault();
         var token = getToken();
         clearToken();
+        adminScopeStores = [];
+        renderContextSwitcher();
         if (token) {
             fetch(API_BASE + "/auth/logout", {
                 method: "POST",
@@ -1694,6 +1903,8 @@
     // --- Init ---
 
     function init() {
+        bindContextSwitcher();
+
         // Intercept sidebar link clicks for client-side navigation.
         document.addEventListener("click", function (e) {
             var link = e.target.closest("a[data-link]");
@@ -1709,7 +1920,9 @@
         }
 
         window.addEventListener("popstate", handleRoute);
-        loadCurrentUser().then(handleRoute);
+        loadCurrentUser().then(function () {
+            return loadContextSwitcherData();
+        }).then(handleRoute);
     }
 
     if (document.readyState === "loading") {

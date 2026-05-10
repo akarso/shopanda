@@ -57,7 +57,9 @@ type AdminContext struct {
 	AdminID     string   // The authenticated admin user ID
 	AdminEmail  string   // The admin's email for audit purposes
 	Permissions []string // The admin's permissions
-	StoreID     string   // (Future) The store scope for this request
+	StoreID     string   // The store scope for this request
+	Language    string   // The language scope for this request
+	Currency    string   // The currency scope for this request
 }
 
 // AdminContextKey is the context key for AdminContext.

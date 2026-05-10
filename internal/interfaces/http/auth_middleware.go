@@ -11,6 +11,13 @@ import (
 	"github.com/akarso/shopanda/internal/platform/auth"
 )
 
+const (
+	adminStoreIDHeader  = "X-Admin-Store-ID"
+	adminLanguageHeader = "X-Admin-Language"
+	adminCurrencyHeader = "X-Admin-Currency"
+	maxAdminScopeLength = 64
+)
+
 // AuthMiddleware parses the Authorization header and injects an Identity
 // into the request context. If no token is present, a guest identity is
 // injected. If the token is invalid, a 401 response is returned.
@@ -130,9 +137,23 @@ func AdminContextMiddleware() Middleware {
 			ctx := (&admin.AdminContext{
 				AdminID:     id.UserID,
 				Permissions: permStrings,
+				StoreID:     sanitizeAdminScopeValue(r.Header.Get(adminStoreIDHeader)),
+				Language:    sanitizeAdminScopeValue(r.Header.Get(adminLanguageHeader)),
+				Currency:    sanitizeAdminScopeValue(r.Header.Get(adminCurrencyHeader)),
 			}).WithContext(r.Context())
 
 			next.ServeHTTP(w, r.WithContext(ctx))
 		})
 	}
+}
+
+func sanitizeAdminScopeValue(raw string) string {
+	value := strings.TrimSpace(raw)
+	if value == "" {
+		return ""
+	}
+	if len(value) > maxAdminScopeLength {
+		return value[:maxAdminScopeLength]
+	}
+	return value
 }

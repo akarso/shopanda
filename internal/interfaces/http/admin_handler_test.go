@@ -36,6 +36,9 @@ func TestAdminHandler_IndexHTML(t *testing.T) {
 	if !strings.Contains(body, "admin-layout") {
 		t.Fatalf("expected admin-layout in body")
 	}
+	if !strings.Contains(body, "admin-context-store") || !strings.Contains(body, "admin-context-language") || !strings.Contains(body, "admin-context-currency") {
+		t.Fatalf("expected global context switcher controls in index html")
+	}
 	if !strings.Contains(body, "Sales") || !strings.Contains(body, "Catalog") {
 		t.Fatalf("expected grouped domain navigation labels in index html")
 	}
@@ -61,6 +64,9 @@ func TestAdminHandler_StaticCSS(t *testing.T) {
 	body := rec.Body.String()
 	if !strings.Contains(body, "admin-sidebar") {
 		t.Fatalf("expected admin-sidebar in CSS")
+	}
+	if !strings.Contains(body, "admin-context-switcher") {
+		t.Fatalf("expected context switcher styles in CSS")
 	}
 	if !strings.Contains(body, "nav-group") {
 		t.Fatalf("expected grouped nav styles in CSS")
@@ -105,6 +111,9 @@ func TestAdminHandler_StaticJS(t *testing.T) {
 	}
 	if !strings.Contains(normalizedBody, "Your account does not have products access.") {
 		t.Fatalf("expected products permission error message in JS")
+	}
+	if !strings.Contains(normalizedBody, "X-Admin-Store-ID") || !strings.Contains(normalizedBody, "X-Admin-Language") || !strings.Contains(normalizedBody, "X-Admin-Currency") {
+		t.Fatalf("expected admin scope headers in JS")
 	}
 }
 
