@@ -138,6 +138,10 @@
             api("/admin/grids/product.grid"),
             api("/admin/products?page=1&per_page=20&sort=created_at&order=desc")
         ]).then(function (results) {
+            if (results[1] && results[1].error && results[1].error.code === "forbidden") {
+                gridBox.innerHTML = '<p role="alert">Your account does not have products access.</p>';
+                return;
+            }
             var grid = results[0] && results[0].data && results[0].data.grid;
             var productsRaw = results[1] && results[1].data && results[1].data.products;
             var products = normalizeProducts(productsRaw);
@@ -717,6 +721,10 @@
         });
     }
 
+    function hasAdminPanelAccess(role) {
+        return role === "admin" || role === "manager" || role === "editor" || role === "support";
+    }
+
     // --- Pages ---
 
     function renderLogin(container) {
@@ -753,7 +761,17 @@
                         return;
                     }
                     setToken(result.body.data.token);
-                    navigateTo("/admin/dashboard");
+                    loadCurrentUser().then(function (user) {
+                        if (!user || !hasAdminPanelAccess(user.role)) {
+                            clearToken();
+                            errBox.textContent = "This account has no admin permissions.";
+                            return;
+                        }
+                        navigateTo("/admin/dashboard");
+                    }).catch(function () {
+                        clearToken();
+                        errBox.textContent = "Failed to verify admin permissions";
+                    });
                 })
                 .catch(function () {
                     errBox.textContent = "Network error";

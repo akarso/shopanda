@@ -315,6 +315,7 @@ func TestAuthHandler_Me_Success(t *testing.T) {
 	var data struct {
 		Email     string `json:"email"`
 		FirstName string `json:"first_name"`
+		Role      string `json:"role"`
 	}
 	if err := json.Unmarshal(env.Data, &data); err != nil {
 		t.Fatalf("unmarshal data: %v", err)
@@ -324,6 +325,9 @@ func TestAuthHandler_Me_Success(t *testing.T) {
 	}
 	if data.FirstName != "Me" {
 		t.Errorf("first_name = %q, want Me", data.FirstName)
+	}
+	if data.Role != "customer" {
+		t.Errorf("role = %q, want customer", data.Role)
 	}
 }
 
@@ -377,6 +381,20 @@ func TestAuthHandler_UpdateProfile_Success(t *testing.T) {
 	}
 	if repo.customers[regData.CustomerID].LastName != "Lovelace" {
 		t.Fatalf("last_name = %q, want Lovelace", repo.customers[regData.CustomerID].LastName)
+	}
+
+	var updEnv authEnvelope
+	if err := json.Unmarshal(rec.Body.Bytes(), &updEnv); err != nil {
+		t.Fatalf("unmarshal update envelope: %v", err)
+	}
+	var updData struct {
+		Role string `json:"role"`
+	}
+	if err := json.Unmarshal(updEnv.Data, &updData); err != nil {
+		t.Fatalf("unmarshal update data: %v", err)
+	}
+	if updData.Role != string(customer.RoleAdmin) {
+		t.Errorf("role = %q, want %q", updData.Role, string(customer.RoleAdmin))
 	}
 }
 
