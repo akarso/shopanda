@@ -4,6 +4,7 @@ import (
 	"net/http"
 	"strings"
 
+	"github.com/akarso/shopanda/internal/application/admin"
 	"github.com/akarso/shopanda/internal/domain/identity"
 	"github.com/akarso/shopanda/internal/domain/rbac"
 	"github.com/akarso/shopanda/internal/platform/apperror"
@@ -102,6 +103,36 @@ func RequirePermission(perm rbac.Permission) Middleware {
 				return
 			}
 			next.ServeHTTP(w, r)
+		})
+	}
+}
+
+// AdminContextMiddleware injects admin context derived from authenticated
+// identity and role permissions. It applies to all authenticated callers
+// (admin, manager, editor, support, customer), not just admins. Guest requests
+// pass through unchanged. The context contains the caller's ID and resolved
+// permissions for that role.
+func AdminContextMiddleware() Middleware {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			id := auth.IdentityFrom(r.Context())
+			if id.IsGuest() {
+				next.ServeHTTP(w, r)
+				return
+			}
+
+			perms := rbac.PermissionsForRole(id.Role)
+			permStrings := make([]string, 0, len(perms))
+			for i := range perms {
+				permStrings = append(permStrings, string(perms[i]))
+			}
+
+			ctx := (&admin.AdminContext{
+				AdminID:     id.UserID,
+				Permissions: permStrings,
+			}).WithContext(r.Context())
+
+			next.ServeHTTP(w, r.WithContext(ctx))
 		})
 	}
 }

@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
+	"github.com/akarso/shopanda/internal/application/admin"
 	"github.com/akarso/shopanda/internal/domain/identity"
 	"github.com/akarso/shopanda/internal/domain/rbac"
 	shophttp "github.com/akarso/shopanda/internal/interfaces/http"
@@ -365,5 +366,155 @@ func TestRequirePermission_Guest(t *testing.T) {
 	}
 	if called {
 		t.Error("expected handler not to be called")
+	}
+}
+
+func TestAdminContextMiddleware_Authenticated(t *testing.T) {
+	id, err := identity.NewIdentity("admin-1", identity.RoleAdmin)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	mw := shophttp.AdminContextMiddleware()
+
+	called := false
+	handler := mw(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		called = true
+		ac, ctxErr := admin.FromContext(r.Context())
+		if ctxErr != nil {
+			t.Fatalf("FromContext error: %v", ctxErr)
+		}
+		if ac.AdminID != "admin-1" {
+			t.Fatalf("AdminID = %q, want %q", ac.AdminID, "admin-1")
+		}
+		if len(ac.Permissions) == 0 {
+			t.Fatal("Permissions should not be empty for admin role")
+		}
+		w.WriteHeader(http.StatusOK)
+	}))
+
+	req := httptest.NewRequest("GET", "/", nil)
+	req = req.WithContext(auth.WithIdentity(req.Context(), id))
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d", rec.Code, http.StatusOK)
+	}
+	if !called {
+		t.Error("expected handler to be called")
+	}
+}
+
+func TestAdminContextMiddleware_GuestNoContext(t *testing.T) {
+	mw := shophttp.AdminContextMiddleware()
+
+	handler := mw(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if _, err := admin.FromContext(r.Context()); err == nil {
+			t.Fatal("expected no admin context for guest")
+		}
+		w.WriteHeader(http.StatusOK)
+	}))
+
+	req := httptest.NewRequest("GET", "/", nil)
+	req = req.WithContext(auth.WithIdentity(req.Context(), identity.Guest()))
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d", rec.Code, http.StatusOK)
+	}
+}
+
+func TestAdminContextMiddleware_RoleCustomer(t *testing.T) {
+	id, err := identity.NewIdentity("customer-1", identity.RoleCustomer)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	mw := shophttp.AdminContextMiddleware()
+
+	handler := mw(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		ac, ctxErr := admin.FromContext(r.Context())
+		if ctxErr != nil {
+			t.Fatalf("FromContext error: %v", ctxErr)
+		}
+		if ac.AdminID != "customer-1" {
+			t.Fatalf("AdminID = %q, want %q", ac.AdminID, "customer-1")
+		}
+		// Customer role has no admin permissions by design
+		if len(ac.Permissions) != 0 {
+			t.Fatalf("Permissions should be empty for customer role, got %d", len(ac.Permissions))
+		}
+		w.WriteHeader(http.StatusOK)
+	}))
+
+	req := httptest.NewRequest("GET", "/", nil)
+	req = req.WithContext(auth.WithIdentity(req.Context(), id))
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d", rec.Code, http.StatusOK)
+	}
+}
+
+func TestAdminContextMiddleware_RoleManager(t *testing.T) {
+	id, err := identity.NewIdentity("manager-1", identity.RoleManager)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	mw := shophttp.AdminContextMiddleware()
+
+	handler := mw(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		ac, ctxErr := admin.FromContext(r.Context())
+		if ctxErr != nil {
+			t.Fatalf("FromContext error: %v", ctxErr)
+		}
+		if ac.AdminID != "manager-1" {
+			t.Fatalf("AdminID = %q, want %q", ac.AdminID, "manager-1")
+		}
+		if len(ac.Permissions) == 0 {
+			t.Fatal("Permissions should not be empty for manager role")
+		}
+		w.WriteHeader(http.StatusOK)
+	}))
+
+	req := httptest.NewRequest("GET", "/", nil)
+	req = req.WithContext(auth.WithIdentity(req.Context(), id))
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d", rec.Code, http.StatusOK)
+	}
+}
+
+func TestAdminContextMiddleware_RoleSupport(t *testing.T) {
+	id, err := identity.NewIdentity("support-1", identity.RoleSupport)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	mw := shophttp.AdminContextMiddleware()
+
+	handler := mw(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		ac, ctxErr := admin.FromContext(r.Context())
+		if ctxErr != nil {
+			t.Fatalf("FromContext error: %v", ctxErr)
+		}
+		if ac.AdminID != "support-1" {
+			t.Fatalf("AdminID = %q, want %q", ac.AdminID, "support-1")
+		}
+		if len(ac.Permissions) == 0 {
+			t.Fatal("Permissions should not be empty for support role")
+		}
+		w.WriteHeader(http.StatusOK)
+	}))
+
+	req := httptest.NewRequest("GET", "/", nil)
+	req = req.WithContext(auth.WithIdentity(req.Context(), id))
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d", rec.Code, http.StatusOK)
 	}
 }
