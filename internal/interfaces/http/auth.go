@@ -96,6 +96,7 @@ type meResponse struct {
 	Email     string `json:"email"`
 	FirstName string `json:"first_name"`
 	LastName  string `json:"last_name"`
+	Role      string `json:"role"`
 	Status    string `json:"status"`
 }
 
@@ -129,6 +130,7 @@ func (h *AuthHandler) Me() http.HandlerFunc {
 			Email:     c.Email,
 			FirstName: c.FirstName,
 			LastName:  c.LastName,
+			Role:      string(c.Role),
 			Status:    string(c.Status),
 		})
 	}
@@ -164,6 +166,7 @@ func (h *AuthHandler) UpdateProfile() http.HandlerFunc {
 			Email:     cust.Email,
 			FirstName: cust.FirstName,
 			LastName:  cust.LastName,
+			Role:      string(cust.Role),
 			Status:    string(cust.Status),
 		})
 	}

@@ -315,6 +315,7 @@ func TestAuthHandler_Me_Success(t *testing.T) {
 	var data struct {
 		Email     string `json:"email"`
 		FirstName string `json:"first_name"`
+		Role      string `json:"role"`
 	}
 	if err := json.Unmarshal(env.Data, &data); err != nil {
 		t.Fatalf("unmarshal data: %v", err)
@@ -324,6 +325,9 @@ func TestAuthHandler_Me_Success(t *testing.T) {
 	}
 	if data.FirstName != "Me" {
 		t.Errorf("first_name = %q, want Me", data.FirstName)
+	}
+	if data.Role != "customer" {
+		t.Errorf("role = %q, want customer", data.Role)
 	}
 }
 

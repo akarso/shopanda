@@ -94,6 +94,12 @@ func TestAdminHandler_StaticJS(t *testing.T) {
 	if !strings.Contains(normalizedBody, "/auth/me/profile") || !strings.Contains(normalizedBody, "/auth/me/password") {
 		t.Fatalf("expected admin account API wiring in JS")
 	}
+	if !strings.Contains(normalizedBody, "This account has no admin permissions.") {
+		t.Fatalf("expected admin role guard message in JS")
+	}
+	if !strings.Contains(normalizedBody, "Your account does not have products access.") {
+		t.Fatalf("expected products permission error message in JS")
+	}
 }
 
 func TestAdminHandler_SPAFallback(t *testing.T) {
