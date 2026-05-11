@@ -199,14 +199,19 @@ func (h *ConfigAdminHandler) resolveScopedValue(ctx context.Context, key, storeI
 }
 
 func resolveStoreScopeID(r *http.Request) string {
-	if explicit := strings.TrimSpace(r.URL.Query().Get("store_id")); explicit != "" {
-		return explicit
-	}
+	explicit := strings.TrimSpace(r.URL.Query().Get("store_id"))
 	ac, err := admin.FromContext(r.Context())
-	if err != nil || ac == nil {
-		return ""
+	if err == nil && ac != nil {
+		contextStoreID := strings.TrimSpace(ac.StoreID)
+		if contextStoreID != "" {
+			// Keep tenant boundary deterministic: context scope wins if query conflicts.
+			if explicit != "" && explicit != contextStoreID {
+				return contextStoreID
+			}
+			return contextStoreID
+		}
 	}
-	return strings.TrimSpace(ac.StoreID)
+	return explicit
 }
 
 func scopedConfigKey(storeID, key string) string {

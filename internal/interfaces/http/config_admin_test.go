@@ -367,3 +367,60 @@ func TestConfigAdmin_ScopedUpdateAndRead_BackwardFallback(t *testing.T) {
 		t.Fatalf("global currency.display_format = %v, want {currency} {amount}", globalEnv.Data.Entries["currency.display_format"])
 	}
 }
+
+func TestConfigAdmin_ScopedUpdateAndRead_ContextScopeOverridesConflictingQuery(t *testing.T) {
+	repo := newMockConfigRepo()
+	h := testConfigAdminHandler(repo, func(context.Context, shophttp.SMTPTestConfig, string) error { return nil })
+
+	globalRec := httptest.NewRecorder()
+	globalReq := httptest.NewRequest(http.MethodPut, "/api/v1/admin/config", strings.NewReader(`{"entries":{"currency.display_format":"{currency} {amount}"}}`))
+	globalReq.Header.Set("Content-Type", "application/json")
+	h.Update().ServeHTTP(globalRec, globalReq)
+	if globalRec.Code != http.StatusOK {
+		t.Fatalf("global update status = %d, want %d; body: %s", globalRec.Code, http.StatusOK, globalRec.Body.String())
+	}
+
+	euRec := httptest.NewRecorder()
+	euReq := httptest.NewRequest(http.MethodPut, "/api/v1/admin/config", strings.NewReader(`{"entries":{"currency.display_format":"{amount} EUR"}}`))
+	euReq.Header.Set("Content-Type", "application/json")
+	euReq = withAdminStoreScope(euReq, "store-eu")
+	h.Update().ServeHTTP(euRec, euReq)
+	if euRec.Code != http.StatusOK {
+		t.Fatalf("eu scoped update status = %d, want %d; body: %s", euRec.Code, http.StatusOK, euRec.Body.String())
+	}
+
+	usRec := httptest.NewRecorder()
+	usReq := httptest.NewRequest(http.MethodPut, "/api/v1/admin/config", strings.NewReader(`{"entries":{"currency.display_format":"USD {amount}"}}`))
+	usReq.Header.Set("Content-Type", "application/json")
+	usReq = withAdminStoreScope(usReq, "store-us")
+	h.Update().ServeHTTP(usRec, usReq)
+	if usRec.Code != http.StatusOK {
+		t.Fatalf("us scoped update status = %d, want %d; body: %s", usRec.Code, http.StatusOK, usRec.Body.String())
+	}
+
+	conflictGetRec := httptest.NewRecorder()
+	conflictGetReq := httptest.NewRequest(http.MethodGet, "/api/v1/admin/config?group=currency&store_id=store-eu", nil)
+	conflictGetReq = withAdminStoreScope(conflictGetReq, "store-us")
+	h.Get().ServeHTTP(conflictGetRec, conflictGetReq)
+	if conflictGetRec.Code != http.StatusOK {
+		t.Fatalf("conflict scoped get status = %d, want %d; body: %s", conflictGetRec.Code, http.StatusOK, conflictGetRec.Body.String())
+	}
+
+	var conflictEnv struct {
+		Data struct {
+			Entries map[string]interface{} `json:"entries"`
+			Scope   struct {
+				StoreID string `json:"store_id"`
+			} `json:"scope"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(conflictGetRec.Body.Bytes(), &conflictEnv); err != nil {
+		t.Fatalf("unmarshal conflict scoped get: %v", err)
+	}
+	if conflictEnv.Data.Scope.StoreID != "store-us" {
+		t.Fatalf("resolved store scope = %q, want %q", conflictEnv.Data.Scope.StoreID, "store-us")
+	}
+	if conflictEnv.Data.Entries["currency.display_format"] != "USD {amount}" {
+		t.Fatalf("currency.display_format = %v, want USD {amount}", conflictEnv.Data.Entries["currency.display_format"])
+	}
+}
