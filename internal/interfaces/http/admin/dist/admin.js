@@ -1243,12 +1243,12 @@
             var emailPayload = settingsPayloadFromResult(results[2]);
             var mediaPayload = settingsPayloadFromResult(results[3]);
 
-            var activeStoreID = resolveSettingsScopeStoreID([storePayload, emailPayload, mediaPayload]);
-            renderSettingsScopeBanner(stores, activeStoreID);
+            var activeScope = resolveSettingsScope([storePayload, emailPayload, mediaPayload]);
+            renderSettingsScopeBanner(stores, activeScope);
 
-            renderStoreSettingsForm(container, choosePrimaryStore(stores), storePayload.entries, storePayload.fieldScopes, activeStoreID);
-            renderEmailSettingsForm(container, emailPayload.entries, emailPayload.fieldScopes, activeStoreID);
-            renderMediaSettingsForm(container, mediaPayload.entries, mediaPayload.fieldScopes, activeStoreID);
+            renderStoreSettingsForm(container, choosePrimaryStore(stores), storePayload.entries, storePayload.fieldScopes, activeScope.storeID);
+            renderEmailSettingsForm(container, emailPayload.entries, emailPayload.fieldScopes, activeScope.storeID);
+            renderMediaSettingsForm(container, mediaPayload.entries, mediaPayload.fieldScopes, activeScope.storeID);
         }).catch(function () {
             container.innerHTML = '<h2>Settings</h2><p role="alert">Failed to load settings.</p>';
         });
@@ -1268,10 +1268,10 @@
         ]).then(function (results) {
             var stores = normalizeStores(results[0] && results[0].data && results[0].data.stores ? results[0].data.stores : []);
             var taxPayload = settingsPayloadFromResult(results[1]);
-            var activeStoreID = resolveSettingsScopeStoreID([taxPayload]);
+            var activeScope = resolveSettingsScope([taxPayload]);
 
-            renderSettingsScopeBanner(stores, activeStoreID, 'shipping-scope-banner');
-            renderTaxSettingsForm(container, taxPayload.entries, taxPayload.fieldScopes, activeStoreID);
+            renderSettingsScopeBanner(stores, activeScope, 'shipping-scope-banner');
+            renderTaxSettingsForm(container, taxPayload.entries, taxPayload.fieldScopes, activeScope.storeID);
         }).catch(function () {
             container.innerHTML = '<h2>Shipping</h2><p role="alert">Failed to load shipping settings.</p>';
         });
@@ -1291,10 +1291,10 @@
         ]).then(function (results) {
             var stores = normalizeStores(results[0] && results[0].data && results[0].data.stores ? results[0].data.stores : []);
             var currencyPayload = settingsPayloadFromResult(results[1]);
-            var activeStoreID = resolveSettingsScopeStoreID([currencyPayload]);
+            var activeScope = resolveSettingsScope([currencyPayload]);
 
-            renderSettingsScopeBanner(stores, activeStoreID, 'payments-scope-banner');
-            renderCurrencySettingsForm(container, currencyPayload.entries, currencyPayload.fieldScopes, activeStoreID);
+            renderSettingsScopeBanner(stores, activeScope, 'payments-scope-banner');
+            renderCurrencySettingsForm(container, currencyPayload.entries, currencyPayload.fieldScopes, activeScope.storeID);
         }).catch(function () {
             container.innerHTML = '<h2>Payments</h2><p role="alert">Failed to load payment settings.</p>';
         });
@@ -1306,25 +1306,53 @@
         return {
             entries: data.entries || {},
             fieldScopes: data.field_scopes || {},
-            storeID: scope.store_id || ''
+            storeID: scope.store_id || '',
+            language: scope.language || '',
+            currency: scope.currency || ''
         };
     }
 
-    function resolveSettingsScopeStoreID(payloads) {
+    function resolveSettingsScope(payloads) {
+        var out = {
+            storeID: '',
+            language: '',
+            currency: ''
+        };
         for (var i = 0; i < payloads.length; i++) {
-            if (payloads[i] && payloads[i].storeID) {
-                return payloads[i].storeID;
+            if (!payloads[i]) {
+                continue;
+            }
+            if (!out.storeID && payloads[i].storeID) {
+                out.storeID = payloads[i].storeID;
+            }
+            if (!out.language && payloads[i].language) {
+                out.language = payloads[i].language;
+            }
+            if (!out.currency && payloads[i].currency) {
+                out.currency = payloads[i].currency;
             }
         }
-        return adminScope.store_id || '';
+        if (!out.storeID) {
+            out.storeID = adminScope.store_id || '';
+        }
+        if (!out.language) {
+            out.language = adminScope.language || '';
+        }
+        if (!out.currency) {
+            out.currency = adminScope.currency || '';
+        }
+        return out;
     }
 
-    function renderSettingsScopeBanner(stores, storeID, bannerID) {
+    function renderSettingsScopeBanner(stores, scope, bannerID) {
         var targetID = bannerID || 'settings-scope-banner';
         var banner = document.getElementById(targetID);
         if (!banner) {
             return;
         }
+        var storeID = scope && scope.storeID ? scope.storeID : '';
+        var language = scope && scope.language ? scope.language : '';
+        var currency = scope && scope.currency ? scope.currency : '';
         var storeName = '';
         for (var i = 0; i < stores.length; i++) {
             if (stores[i] && stores[i].id === storeID) {
@@ -1332,11 +1360,18 @@
                 break;
             }
         }
+        var contextMeta = '';
+        if (language) {
+            contextMeta += ' Language: <strong>' + esc(language) + '</strong>.';
+        }
+        if (currency) {
+            contextMeta += ' Currency: <strong>' + esc(currency) + '</strong>.';
+        }
         if (storeID) {
-            banner.innerHTML = '<p><strong>Current settings scope:</strong> Store override for <strong>' + esc(storeName || storeID) + '</strong>. Change store in the header switcher to edit another store override.</p>';
+            banner.innerHTML = '<p><strong>Current settings scope:</strong> Store override for <strong>' + esc(storeName || storeID) + '</strong>.' + contextMeta + ' Change store in the header switcher to edit another store override.</p>';
             return;
         }
-        banner.innerHTML = '<p><strong>Current settings scope:</strong> Global defaults. Select a store in the header switcher to edit store-specific overrides.</p>';
+        banner.innerHTML = '<p><strong>Current settings scope:</strong> Global defaults.' + contextMeta + ' Select a store in the header switcher to edit store-specific overrides.</p>';
     }
 
     function fieldScopeType(fieldScopes, key) {
