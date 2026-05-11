@@ -222,6 +222,10 @@ func (h *ConfigAdminHandler) auditConfigSuccess(r *http.Request, action admin.Au
 func (h *ConfigAdminHandler) auditConfigError(r *http.Request, action admin.AuditAction, resourceType, resourceID string, details map[string]interface{}, err error) {
 	adminID, scopeDetails := adminAuditInfoFromRequest(r)
 	merged := mergeAuditDetails(details, scopeDetails)
+	errMsg := ""
+	if err != nil {
+		errMsg = err.Error()
+	}
 	h.auditor.LogAction(r.Context(), admin.AuditEntry{
 		AdminID:      adminID,
 		Action:       action,
@@ -229,7 +233,7 @@ func (h *ConfigAdminHandler) auditConfigError(r *http.Request, action admin.Audi
 		ResourceID:   resourceID,
 		Details:      merged,
 		Result:       "error",
-		Error:        err.Error(),
+		Error:        errMsg,
 	})
 }
 

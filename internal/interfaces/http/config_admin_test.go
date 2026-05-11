@@ -504,3 +504,57 @@ func TestConfigAdmin_Update_ScopeIncludesLanguageAndCurrency(t *testing.T) {
 		t.Fatalf("scope.currency = %q, want %q", envelope.Data.Scope.Currency, "EUR")
 	}
 }
+
+func TestConfigAdmin_Update_UsesQueryStoreScopeWhenContextStoreIsEmpty(t *testing.T) {
+	repo := newMockConfigRepo()
+	h := testConfigAdminHandler(repo, func(context.Context, shophttp.SMTPTestConfig, string) error { return nil })
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPut, "/api/v1/admin/config?store_id=store-eu", strings.NewReader(`{"entries":{"currency.display_format":"{amount} EUR"}}`))
+	req.Header.Set("Content-Type", "application/json")
+	req = withAdminScope(req, "", "en", "EUR")
+	h.Update().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d; body: %s", rec.Code, http.StatusOK, rec.Body.String())
+	}
+	if repo.entries["store::store-eu::currency.display_format"] != "{amount} EUR" {
+		t.Fatalf("scoped entry = %v, want %v", repo.entries["store::store-eu::currency.display_format"], "{amount} EUR")
+	}
+
+	var envelope struct {
+		Data struct {
+			Scope struct {
+				StoreID  string `json:"store_id"`
+				Language string `json:"language"`
+				Currency string `json:"currency"`
+			} `json:"scope"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &envelope); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if envelope.Data.Scope.StoreID != "store-eu" {
+		t.Fatalf("scope.store_id = %q, want %q", envelope.Data.Scope.StoreID, "store-eu")
+	}
+	if envelope.Data.Scope.Language != "en" {
+		t.Fatalf("scope.language = %q, want %q", envelope.Data.Scope.Language, "en")
+	}
+	if envelope.Data.Scope.Currency != "EUR" {
+		t.Fatalf("scope.currency = %q, want %q", envelope.Data.Scope.Currency, "EUR")
+	}
+}
+
+func TestConfigAdmin_Update_InvalidBody_DoesNotPanicAndReturnsValidation(t *testing.T) {
+	repo := newMockConfigRepo()
+	h := testConfigAdminHandler(repo, func(context.Context, shophttp.SMTPTestConfig, string) error { return nil })
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPut, "/api/v1/admin/config", strings.NewReader("{"))
+	req.Header.Set("Content-Type", "application/json")
+	h.Update().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("status = %d, want %d; body: %s", rec.Code, http.StatusUnprocessableEntity, rec.Body.String())
+	}
+}
