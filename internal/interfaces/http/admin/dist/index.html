@@ -12,6 +12,17 @@
     <div id="admin-layout" class="admin-layout" data-auth="false">
         <header class="admin-header">
             <a href="/admin/dashboard" data-link class="logo">Shopanda Admin</a>
+            <div class="admin-context-switcher" aria-label="Admin scope context">
+                <label>Store
+                    <select id="admin-context-store"></select>
+                </label>
+                <label>Language
+                    <select id="admin-context-language"></select>
+                </label>
+                <label>Currency
+                    <select id="admin-context-currency"></select>
+                </label>
+            </div>
             <div class="user-info">
                 <a href="/admin/account" data-link id="admin-user-name"></a>
                 <a href="#" id="admin-logout">Logout</a>

@@ -16,6 +16,7 @@
     display: flex;
     align-items: center;
     justify-content: space-between;
+    gap: 1rem;
     height: var(--admin-header-height);
     padding: 0 1rem;
     background: var(--pico-primary-background);
@@ -36,6 +37,37 @@
     display: flex;
     align-items: center;
     gap: 1rem;
+}
+
+.admin-context-switcher {
+    display: flex;
+    align-items: center;
+    gap: 0.6rem;
+    margin-left: auto;
+}
+
+.admin-context-switcher label {
+    display: flex;
+    align-items: center;
+    gap: 0.35rem;
+    margin: 0;
+    color: var(--pico-primary-inverse);
+    font-size: 0.8rem;
+}
+
+.admin-context-switcher select {
+    margin: 0;
+    min-width: 6.5rem;
+    padding: 0.2rem 0.45rem;
+    height: auto;
+    font-size: 0.8rem;
+    background: rgba(255, 255, 255, 0.15);
+    color: var(--pico-primary-inverse);
+    border-color: rgba(255, 255, 255, 0.4);
+}
+
+.admin-context-switcher option {
+    color: #111;
 }
 
 .admin-body {
@@ -138,7 +170,8 @@
 
 /* Hide shell when not authenticated */
 .admin-layout[data-auth="false"] .admin-header .user-info,
-.admin-layout[data-auth="false"] .admin-sidebar {
+.admin-layout[data-auth="false"] .admin-sidebar,
+.admin-layout[data-auth="false"] .admin-context-switcher {
     display: none;
 }
 

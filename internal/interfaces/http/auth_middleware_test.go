@@ -5,6 +5,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/akarso/shopanda/internal/application/admin"
@@ -510,6 +511,80 @@ func TestAdminContextMiddleware_RoleSupport(t *testing.T) {
 	}))
 
 	req := httptest.NewRequest("GET", "/", nil)
+	req = req.WithContext(auth.WithIdentity(req.Context(), id))
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d", rec.Code, http.StatusOK)
+	}
+}
+
+func TestAdminContextMiddleware_WithScopeHeaders(t *testing.T) {
+	id, err := identity.NewIdentity("admin-1", identity.RoleAdmin)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	mw := shophttp.AdminContextMiddleware()
+
+	handler := mw(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		ac, ctxErr := admin.FromContext(r.Context())
+		if ctxErr != nil {
+			t.Fatalf("FromContext error: %v", ctxErr)
+		}
+		if ac.StoreID != "store-eu" {
+			t.Fatalf("StoreID = %q, want %q", ac.StoreID, "store-eu")
+		}
+		if ac.Language != "en" {
+			t.Fatalf("Language = %q, want %q", ac.Language, "en")
+		}
+		if ac.Currency != "EUR" {
+			t.Fatalf("Currency = %q, want %q", ac.Currency, "EUR")
+		}
+		w.WriteHeader(http.StatusOK)
+	}))
+
+	req := httptest.NewRequest("GET", "/", nil)
+	req.Header.Set("X-Admin-Store-ID", " store-eu ")
+	req.Header.Set("X-Admin-Language", "en")
+	req.Header.Set("X-Admin-Currency", "EUR")
+	req = req.WithContext(auth.WithIdentity(req.Context(), id))
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d", rec.Code, http.StatusOK)
+	}
+}
+
+func TestAdminContextMiddleware_ScopeHeaderSanitization(t *testing.T) {
+	id, err := identity.NewIdentity("admin-2", identity.RoleAdmin)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	mw := shophttp.AdminContextMiddleware()
+
+	handler := mw(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		ac, ctxErr := admin.FromContext(r.Context())
+		if ctxErr != nil {
+			t.Fatalf("FromContext error: %v", ctxErr)
+		}
+		if len(ac.StoreID) != 64 {
+			t.Fatalf("StoreID length = %d, want 64", len(ac.StoreID))
+		}
+		if ac.Language != "" {
+			t.Fatalf("Language = %q, want empty", ac.Language)
+		}
+		if ac.Currency != "USD" {
+			t.Fatalf("Currency = %q, want %q", ac.Currency, "USD")
+		}
+		w.WriteHeader(http.StatusOK)
+	}))
+
+	req := httptest.NewRequest("GET", "/", nil)
+	req.Header.Set("X-Admin-Store-ID", strings.Repeat("s", 80))
+	req.Header.Set("X-Admin-Language", "   ")
+	req.Header.Set("X-Admin-Currency", " USD ")
 	req = req.WithContext(auth.WithIdentity(req.Context(), id))
 	rec := httptest.NewRecorder()
 	handler.ServeHTTP(rec, req)
