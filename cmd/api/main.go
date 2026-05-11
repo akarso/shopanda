@@ -695,7 +695,7 @@ func runServe(cfg *config.Config, log logger.Logger) error {
 			Subject: "Shopanda SMTP test",
 			Body:    "<p>This is a test email from Shopanda admin settings.</p>",
 		})
-	})
+	}, log)
 	schemaHandler := shophttp.NewSchemaHandler(adminRegistry)
 	pageHandler := shophttp.NewPageHandler(pageRepo, contentTranslator)
 	pageAdmin := shophttp.NewPageAdminHandler(pageRepo, bus)

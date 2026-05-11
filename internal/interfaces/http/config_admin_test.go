@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -13,6 +14,7 @@ import (
 	domainCfg "github.com/akarso/shopanda/internal/domain/config"
 	shophttp "github.com/akarso/shopanda/internal/interfaces/http"
 	appconfig "github.com/akarso/shopanda/internal/platform/config"
+	"github.com/akarso/shopanda/internal/platform/logger"
 )
 
 type mockConfigRepo struct {
@@ -78,11 +80,16 @@ func testConfigAdminHandler(repo domainCfg.Repository, testEmail shophttp.SMTPTe
 	cfg.Media.Storage = "local"
 	cfg.Media.Local.BasePath = "./public/media"
 	cfg.Media.Local.BaseURL = "/media"
-	return shophttp.NewConfigAdminHandler(repo, cfg, testEmail)
+	return shophttp.NewConfigAdminHandler(repo, cfg, testEmail, logger.NewWithWriter(io.Discard, "error"))
 }
 
 func withAdminStoreScope(req *http.Request, storeID string) *http.Request {
 	ctx := (&admin.AdminContext{StoreID: storeID}).WithContext(req.Context())
+	return req.WithContext(ctx)
+}
+
+func withAdminScope(req *http.Request, storeID, language, currency string) *http.Request {
+	ctx := (&admin.AdminContext{StoreID: storeID, Language: language, Currency: currency}).WithContext(req.Context())
 	return req.WithContext(ctx)
 }
 
@@ -422,5 +429,78 @@ func TestConfigAdmin_ScopedUpdateAndRead_ContextScopeOverridesConflictingQuery(t
 	}
 	if conflictEnv.Data.Entries["currency.display_format"] != "USD {amount}" {
 		t.Fatalf("currency.display_format = %v, want USD {amount}", conflictEnv.Data.Entries["currency.display_format"])
+	}
+}
+
+func TestConfigAdmin_Get_ScopeIncludesLanguageAndCurrency(t *testing.T) {
+	repo := newMockConfigRepo()
+	h := testConfigAdminHandler(repo, func(context.Context, shophttp.SMTPTestConfig, string) error { return nil })
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/admin/config?group=currency", nil)
+	req = withAdminScope(req, "store-eu", "en", "EUR")
+	h.Get().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d; body: %s", rec.Code, http.StatusOK, rec.Body.String())
+	}
+
+	var envelope struct {
+		Data struct {
+			Scope struct {
+				StoreID  string `json:"store_id"`
+				Language string `json:"language"`
+				Currency string `json:"currency"`
+			} `json:"scope"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &envelope); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if envelope.Data.Scope.StoreID != "store-eu" {
+		t.Fatalf("scope.store_id = %q, want %q", envelope.Data.Scope.StoreID, "store-eu")
+	}
+	if envelope.Data.Scope.Language != "en" {
+		t.Fatalf("scope.language = %q, want %q", envelope.Data.Scope.Language, "en")
+	}
+	if envelope.Data.Scope.Currency != "EUR" {
+		t.Fatalf("scope.currency = %q, want %q", envelope.Data.Scope.Currency, "EUR")
+	}
+}
+
+func TestConfigAdmin_Update_ScopeIncludesLanguageAndCurrency(t *testing.T) {
+	repo := newMockConfigRepo()
+	h := testConfigAdminHandler(repo, func(context.Context, shophttp.SMTPTestConfig, string) error { return nil })
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPut, "/api/v1/admin/config", strings.NewReader(`{"entries":{"currency.display_format":"{amount} {currency}"}}`))
+	req.Header.Set("Content-Type", "application/json")
+	req = withAdminScope(req, "store-eu", "en", "EUR")
+	h.Update().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d; body: %s", rec.Code, http.StatusOK, rec.Body.String())
+	}
+
+	var envelope struct {
+		Data struct {
+			Scope struct {
+				StoreID  string `json:"store_id"`
+				Language string `json:"language"`
+				Currency string `json:"currency"`
+			} `json:"scope"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &envelope); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if envelope.Data.Scope.StoreID != "store-eu" {
+		t.Fatalf("scope.store_id = %q, want %q", envelope.Data.Scope.StoreID, "store-eu")
+	}
+	if envelope.Data.Scope.Language != "en" {
+		t.Fatalf("scope.language = %q, want %q", envelope.Data.Scope.Language, "en")
+	}
+	if envelope.Data.Scope.Currency != "EUR" {
+		t.Fatalf("scope.currency = %q, want %q", envelope.Data.Scope.Currency, "EUR")
 	}
 }
