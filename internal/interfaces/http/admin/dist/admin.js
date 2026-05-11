@@ -1224,6 +1224,7 @@
         container.innerHTML =
             '<h2>Settings</h2>' +
             '<div id="settings-global-msg"></div>' +
+            '<div id="settings-scope-banner" class="settings-scope-banner"></div>' +
             '<div class="settings-grid">' +
             '<section><h3>Store Info</h3><div id="settings-store-msg"></div><form id="settings-store-form"></form></section>' +
             '<section><h3>Email</h3><div id="settings-email-msg"></div><form id="settings-email-form"></form></section>' +
@@ -1241,20 +1242,96 @@
             api('/admin/config?group=tax')
         ]).then(function (results) {
             var stores = normalizeStores(results[0] && results[0].data && results[0].data.stores ? results[0].data.stores : []);
-            var storeSettings = results[1] && results[1].data && results[1].data.entries ? results[1].data.entries : {};
-            var emailSettings = results[2] && results[2].data && results[2].data.entries ? results[2].data.entries : {};
-            var mediaSettings = results[3] && results[3].data && results[3].data.entries ? results[3].data.entries : {};
-            var currencySettings = results[4] && results[4].data && results[4].data.entries ? results[4].data.entries : {};
-            var taxSettings = results[5] && results[5].data && results[5].data.entries ? results[5].data.entries : {};
+            var storePayload = settingsPayloadFromResult(results[1]);
+            var emailPayload = settingsPayloadFromResult(results[2]);
+            var mediaPayload = settingsPayloadFromResult(results[3]);
+            var currencyPayload = settingsPayloadFromResult(results[4]);
+            var taxPayload = settingsPayloadFromResult(results[5]);
 
-            renderStoreSettingsForm(container, choosePrimaryStore(stores), storeSettings);
-            renderEmailSettingsForm(container, emailSettings);
-            renderMediaSettingsForm(container, mediaSettings);
-            renderCurrencySettingsForm(container, currencySettings);
-            renderTaxSettingsForm(container, taxSettings);
+            var activeStoreID = resolveSettingsScopeStoreID([storePayload, emailPayload, mediaPayload, currencyPayload, taxPayload]);
+            renderSettingsScopeBanner(stores, activeStoreID);
+
+            renderStoreSettingsForm(container, choosePrimaryStore(stores), storePayload.entries, storePayload.fieldScopes, activeStoreID);
+            renderEmailSettingsForm(container, emailPayload.entries, emailPayload.fieldScopes, activeStoreID);
+            renderMediaSettingsForm(container, mediaPayload.entries, mediaPayload.fieldScopes, activeStoreID);
+            renderCurrencySettingsForm(container, currencyPayload.entries, currencyPayload.fieldScopes, activeStoreID);
+            renderTaxSettingsForm(container, taxPayload.entries, taxPayload.fieldScopes, activeStoreID);
         }).catch(function () {
             container.innerHTML = '<h2>Settings</h2><p role="alert">Failed to load settings.</p>';
         });
+    }
+
+    function settingsPayloadFromResult(result) {
+        var data = result && result.data ? result.data : {};
+        var scope = data.scope || {};
+        return {
+            entries: data.entries || {},
+            fieldScopes: data.field_scopes || {},
+            storeID: scope.store_id || ''
+        };
+    }
+
+    function resolveSettingsScopeStoreID(payloads) {
+        for (var i = 0; i < payloads.length; i++) {
+            if (payloads[i] && payloads[i].storeID) {
+                return payloads[i].storeID;
+            }
+        }
+        return adminScope.store_id || '';
+    }
+
+    function renderSettingsScopeBanner(stores, storeID) {
+        var banner = document.getElementById('settings-scope-banner');
+        if (!banner) {
+            return;
+        }
+        var storeName = '';
+        for (var i = 0; i < stores.length; i++) {
+            if (stores[i] && stores[i].id === storeID) {
+                storeName = stores[i].name || stores[i].code || stores[i].id;
+                break;
+            }
+        }
+        if (storeID) {
+            banner.innerHTML = '<p><strong>Current settings scope:</strong> Store override for <strong>' + esc(storeName || storeID) + '</strong>. Change store in the header switcher to edit another store override.</p>';
+            return;
+        }
+        banner.innerHTML = '<p><strong>Current settings scope:</strong> Global defaults. Select a store in the header switcher to edit store-specific overrides.</p>';
+    }
+
+    function fieldScopeType(fieldScopes, key) {
+        if (fieldScopes && fieldScopes[key]) {
+            return fieldScopes[key];
+        }
+        return 'global';
+    }
+
+    function renderFieldScopeBadge(fieldScopes, key) {
+        var scope = fieldScopeType(fieldScopes, key);
+        if (scope === 'store') {
+            return ' <span class="settings-scope-badge settings-scope-badge-store">Store-scoped</span>';
+        }
+        if (scope === 'translatable') {
+            return ' <span class="settings-scope-badge settings-scope-badge-translatable">Translatable</span>';
+        }
+        return ' <span class="settings-scope-badge settings-scope-badge-global">Global</span>';
+    }
+
+    function renderFormScopeNote(fieldScopes, keys, storeID) {
+        var hasStoreScoped = false;
+        for (var i = 0; i < keys.length; i++) {
+            if (fieldScopeType(fieldScopes, keys[i]) === 'store') {
+                hasStoreScoped = true;
+                break;
+            }
+        }
+        if (hasStoreScoped) {
+            if (storeID) {
+                return '<p class="settings-scope-note">Edits to store-scoped fields save as overrides for the current store context.</p>';
+            }
+            return '<p class="settings-scope-note">Store-scoped fields currently save as global defaults because no store context is active.</p>';
+        }
+        return '<p class="settings-scope-note">These fields are global and apply across stores.</p>';
     }
 
     function choosePrimaryStore(stores) {
@@ -1269,17 +1346,18 @@
         return stores[0];
     }
 
-    function renderStoreSettingsForm(container, store, storeSettings) {
+    function renderStoreSettingsForm(container, store, storeSettings, fieldScopes, activeStoreID) {
         var form = document.getElementById('settings-store-form');
         form.innerHTML = '' +
+            renderFormScopeNote(fieldScopes, ['store.address', 'store.logo'], activeStoreID) +
             '<label>Code<input name="code" value="' + esc(store ? store.code : '') + '" required></label>' +
             '<label>Name<input name="name" value="' + esc(store ? store.name : '') + '" required></label>' +
             '<label>Domain / URL<input name="domain" value="' + esc(store ? store.domain : '') + '"></label>' +
             '<label>Country<input name="country" value="' + esc(store ? store.country : '') + '" required></label>' +
             '<label>Language<input name="language" value="' + esc(store ? store.language : '') + '" required></label>' +
             '<label>Currency<input name="currency" value="' + esc(store ? store.currency : '') + '" required></label>' +
-            '<label>Address<textarea name="store_address">' + esc(valueOf(storeSettings, 'store.address', '')) + '</textarea></label>' +
-            '<label>Logo URL<input name="store_logo" value="' + esc(valueOf(storeSettings, 'store.logo', '')) + '"></label>' +
+            '<label>Address' + renderFieldScopeBadge(fieldScopes, 'store.address') + '<textarea name="store_address">' + esc(valueOf(storeSettings, 'store.address', '')) + '</textarea></label>' +
+            '<label>Logo URL' + renderFieldScopeBadge(fieldScopes, 'store.logo') + '<input name="store_logo" value="' + esc(valueOf(storeSettings, 'store.logo', '')) + '"></label>' +
             '<label><input type="checkbox" name="is_default" ' + (store && store.is_default ? 'checked' : '') + '> Default store</label>' +
             '<button type="submit">Save Store Info</button>';
 
@@ -1328,15 +1406,16 @@
         });
     }
 
-    function renderEmailSettingsForm(container, settings) {
+    function renderEmailSettingsForm(container, settings, fieldScopes, activeStoreID) {
         var form = document.getElementById('settings-email-form');
         var passwordValue = valueOf(settings, 'mail.smtp.password', '');
         form.innerHTML = '' +
-            '<label>SMTP Host<input name="host" value="' + esc(valueOf(settings, 'mail.smtp.host', '')) + '"></label>' +
-            '<label>SMTP Port<input name="port" type="number" min="1" value="' + esc(String(valueOf(settings, 'mail.smtp.port', 0) || '')) + '"></label>' +
-            '<label>SMTP User<input name="user" value="' + esc(valueOf(settings, 'mail.smtp.user', '')) + '"></label>' +
-            '<label>SMTP Password<input name="password" type="password" value="' + esc(passwordValue) + '"></label>' +
-            '<label>From Address<input name="from" value="' + esc(valueOf(settings, 'mail.smtp.from', '')) + '"></label>' +
+            renderFormScopeNote(fieldScopes, ['mail.smtp.host', 'mail.smtp.port', 'mail.smtp.user', 'mail.smtp.password', 'mail.smtp.from'], activeStoreID) +
+            '<label>SMTP Host' + renderFieldScopeBadge(fieldScopes, 'mail.smtp.host') + '<input name="host" value="' + esc(valueOf(settings, 'mail.smtp.host', '')) + '"></label>' +
+            '<label>SMTP Port' + renderFieldScopeBadge(fieldScopes, 'mail.smtp.port') + '<input name="port" type="number" min="1" value="' + esc(String(valueOf(settings, 'mail.smtp.port', 0) || '')) + '"></label>' +
+            '<label>SMTP User' + renderFieldScopeBadge(fieldScopes, 'mail.smtp.user') + '<input name="user" value="' + esc(valueOf(settings, 'mail.smtp.user', '')) + '"></label>' +
+            '<label>SMTP Password' + renderFieldScopeBadge(fieldScopes, 'mail.smtp.password') + '<input name="password" type="password" value="' + esc(passwordValue) + '"></label>' +
+            '<label>From Address' + renderFieldScopeBadge(fieldScopes, 'mail.smtp.from') + '<input name="from" value="' + esc(valueOf(settings, 'mail.smtp.from', '')) + '"></label>' +
             '<label>Test Recipient<input name="test_to" type="email" placeholder="merchant@example.com"></label>' +
             '<div class="settings-actions">' +
             '<button type="submit">Save Email Settings</button>' +
@@ -1383,19 +1462,20 @@
         });
     }
 
-    function renderMediaSettingsForm(container, settings) {
+    function renderMediaSettingsForm(container, settings, fieldScopes, activeStoreID) {
         var form = document.getElementById('settings-media-form');
         form.innerHTML = '' +
-            '<label>Storage<select name="storage">' +
+            renderFormScopeNote(fieldScopes, ['media.storage', 'media.local.base_path', 'media.local.base_url', 'media.s3.endpoint', 'media.s3.bucket', 'media.s3.region', 'media.s3.base_url', 'media.s3.public_acl'], activeStoreID) +
+            '<label>Storage' + renderFieldScopeBadge(fieldScopes, 'media.storage') + '<select name="storage">' +
             renderSelectOptions(['local', 's3'], valueOf(settings, 'media.storage', 'local')) +
             '</select></label>' +
-            '<label>Local Base Path<input name="local_base_path" value="' + esc(valueOf(settings, 'media.local.base_path', '')) + '"></label>' +
-            '<label>Local Base URL<input name="local_base_url" value="' + esc(valueOf(settings, 'media.local.base_url', '')) + '"></label>' +
-            '<label>S3 Endpoint<input name="s3_endpoint" value="' + esc(valueOf(settings, 'media.s3.endpoint', '')) + '"></label>' +
-            '<label>S3 Bucket<input name="s3_bucket" value="' + esc(valueOf(settings, 'media.s3.bucket', '')) + '"></label>' +
-            '<label>S3 Region<input name="s3_region" value="' + esc(valueOf(settings, 'media.s3.region', '')) + '"></label>' +
-            '<label>S3 Base URL<input name="s3_base_url" value="' + esc(valueOf(settings, 'media.s3.base_url', '')) + '"></label>' +
-            '<label><input type="checkbox" name="s3_public_acl" ' + (truthy(valueOf(settings, 'media.s3.public_acl', false)) ? 'checked' : '') + '> S3 Public ACL</label>' +
+            '<label>Local Base Path' + renderFieldScopeBadge(fieldScopes, 'media.local.base_path') + '<input name="local_base_path" value="' + esc(valueOf(settings, 'media.local.base_path', '')) + '"></label>' +
+            '<label>Local Base URL' + renderFieldScopeBadge(fieldScopes, 'media.local.base_url') + '<input name="local_base_url" value="' + esc(valueOf(settings, 'media.local.base_url', '')) + '"></label>' +
+            '<label>S3 Endpoint' + renderFieldScopeBadge(fieldScopes, 'media.s3.endpoint') + '<input name="s3_endpoint" value="' + esc(valueOf(settings, 'media.s3.endpoint', '')) + '"></label>' +
+            '<label>S3 Bucket' + renderFieldScopeBadge(fieldScopes, 'media.s3.bucket') + '<input name="s3_bucket" value="' + esc(valueOf(settings, 'media.s3.bucket', '')) + '"></label>' +
+            '<label>S3 Region' + renderFieldScopeBadge(fieldScopes, 'media.s3.region') + '<input name="s3_region" value="' + esc(valueOf(settings, 'media.s3.region', '')) + '"></label>' +
+            '<label>S3 Base URL' + renderFieldScopeBadge(fieldScopes, 'media.s3.base_url') + '<input name="s3_base_url" value="' + esc(valueOf(settings, 'media.s3.base_url', '')) + '"></label>' +
+            '<label><input type="checkbox" name="s3_public_acl" ' + (truthy(valueOf(settings, 'media.s3.public_acl', false)) ? 'checked' : '') + '> S3 Public ACL' + renderFieldScopeBadge(fieldScopes, 'media.s3.public_acl') + '</label>' +
             '<button type="submit">Save Media Settings</button>';
 
         form.addEventListener('submit', function (e) {
@@ -1413,11 +1493,12 @@
         });
     }
 
-    function renderCurrencySettingsForm(container, settings) {
+    function renderCurrencySettingsForm(container, settings, fieldScopes, activeStoreID) {
         var form = document.getElementById('settings-currency-form');
         form.innerHTML = '' +
-            '<label>Default Currency<input name="default_currency" value="' + esc(valueOf(settings, 'default_currency', 'EUR')) + '"></label>' +
-            '<label>Display Format<input name="display_format" value="' + esc(valueOf(settings, 'currency.display_format', '{currency} {amount}')) + '"></label>' +
+            renderFormScopeNote(fieldScopes, ['default_currency', 'currency.display_format'], activeStoreID) +
+            '<label>Default Currency' + renderFieldScopeBadge(fieldScopes, 'default_currency') + '<input name="default_currency" value="' + esc(valueOf(settings, 'default_currency', 'EUR')) + '"></label>' +
+            '<label>Display Format' + renderFieldScopeBadge(fieldScopes, 'currency.display_format') + '<input name="display_format" value="' + esc(valueOf(settings, 'currency.display_format', '{currency} {amount}')) + '"></label>' +
             '<small class="admin-form-hint">Use {currency} and {amount} placeholders, for example "{currency} {amount}" or "{amount} {currency}".</small>' +
             '<button type="submit">Save Currency Settings</button>';
         form.addEventListener('submit', function (e) {
@@ -1429,11 +1510,12 @@
         });
     }
 
-    function renderTaxSettingsForm(container, settings) {
+    function renderTaxSettingsForm(container, settings, fieldScopes, activeStoreID) {
         var form = document.getElementById('settings-tax-form');
         form.innerHTML = '' +
-            '<label>Default Tax Class<input name="default_class" value="' + esc(valueOf(settings, 'tax.default_class', 'standard')) + '"></label>' +
-            '<label><input type="checkbox" name="tax_included" ' + (truthy(valueOf(settings, 'tax.included', false)) ? 'checked' : '') + '> Prices Include Tax</label>' +
+            renderFormScopeNote(fieldScopes, ['tax.default_class', 'tax.included'], activeStoreID) +
+            '<label>Default Tax Class' + renderFieldScopeBadge(fieldScopes, 'tax.default_class') + '<input name="default_class" value="' + esc(valueOf(settings, 'tax.default_class', 'standard')) + '"></label>' +
+            '<label><input type="checkbox" name="tax_included" ' + (truthy(valueOf(settings, 'tax.included', false)) ? 'checked' : '') + '> Prices Include Tax' + renderFieldScopeBadge(fieldScopes, 'tax.included') + '</label>' +
             '<button type="submit">Save Tax Settings</button>';
         form.addEventListener('submit', function (e) {
             e.preventDefault();
