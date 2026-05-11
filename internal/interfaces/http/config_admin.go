@@ -158,10 +158,20 @@ func (h *ConfigAdminHandler) Update() http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		var req updateConfigRequest
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			// Emit audit for invalid request body
+			h.auditConfigError(r, admin.AuditSettingsChange, "config_group", "", map[string]interface{}{
+				"outcome": "failure",
+				"reason":  "invalid request body",
+			}, nil)
 			JSONError(w, apperror.Validation("invalid request body"))
 			return
 		}
 		if len(req.Entries) == 0 {
+			// Emit audit for missing entries
+			h.auditConfigError(r, admin.AuditSettingsChange, "config_group", "", map[string]interface{}{
+				"outcome": "failure",
+				"reason":  "entries are required",
+			}, nil)
 			JSONError(w, apperror.Validation("entries are required"))
 			return
 		}
@@ -262,9 +272,15 @@ func scopePayloadFromRequest(r *http.Request) map[string]interface{} {
 	if err != nil || ac == nil {
 		return payload
 	}
-	payload["store_id"] = strings.TrimSpace(ac.StoreID)
-	payload["language"] = strings.TrimSpace(ac.Language)
-	payload["currency"] = strings.TrimSpace(ac.Currency)
+	if s := strings.TrimSpace(ac.StoreID); s != "" {
+		payload["store_id"] = s
+	}
+	if l := strings.TrimSpace(ac.Language); l != "" {
+		payload["language"] = l
+	}
+	if c := strings.TrimSpace(ac.Currency); c != "" {
+		payload["currency"] = c
+	}
 	return payload
 }
 
@@ -277,11 +293,17 @@ func adminAuditInfoFromRequest(r *http.Request) (string, map[string]interface{})
 	if adminID == "" {
 		adminID = "system"
 	}
-	return adminID, map[string]interface{}{
-		"store_id": strings.TrimSpace(ac.StoreID),
-		"language": strings.TrimSpace(ac.Language),
-		"currency": strings.TrimSpace(ac.Currency),
+	details := map[string]interface{}{}
+	if s := strings.TrimSpace(ac.StoreID); s != "" {
+		details["store_id"] = s
 	}
+	if l := strings.TrimSpace(ac.Language); l != "" {
+		details["language"] = l
+	}
+	if c := strings.TrimSpace(ac.Currency); c != "" {
+		details["currency"] = c
+	}
+	return adminID, details
 }
 
 func mergeAuditDetails(a, b map[string]interface{}) map[string]interface{} {
