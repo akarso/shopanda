@@ -8,6 +8,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/akarso/shopanda/internal/application/admin"
 	domainCfg "github.com/akarso/shopanda/internal/domain/config"
 	"github.com/akarso/shopanda/internal/platform/apperror"
 	appconfig "github.com/akarso/shopanda/internal/platform/config"
@@ -33,6 +34,12 @@ type ConfigAdminHandler struct {
 }
 
 const redactedSecretValue = "***"
+
+const (
+	configScopeGlobal       = "global"
+	configScopeStore        = "store"
+	configScopeTranslatable = "translatable"
+)
 
 var configGroupKeys = map[string][]string{
 	"store": {
@@ -68,6 +75,15 @@ var configGroupKeys = map[string][]string{
 
 var secretConfigKeys = map[string]struct{}{
 	"mail.smtp.password": {},
+}
+
+var configKeyScopes = map[string]string{
+	"store.address":           configScopeStore,
+	"store.logo":              configScopeStore,
+	"default_currency":        configScopeStore,
+	"currency.display_format": configScopeStore,
+	"tax.default_class":       configScopeStore,
+	"tax.included":            configScopeStore,
 }
 
 // NewConfigAdminHandler creates a ConfigAdminHandler.
@@ -106,23 +122,25 @@ func (h *ConfigAdminHandler) Get() http.HandlerFunc {
 			JSONError(w, apperror.Validation(err.Error()))
 			return
 		}
-
-		stored, err := h.repo.All(r.Context())
-		if err != nil {
-			JSONError(w, err)
-			return
-		}
+		storeID := resolveStoreScopeID(r)
 
 		values := h.defaultEntries(keys)
-		for i := range stored {
-			if containsKey(keys, stored[i].Key) {
-				values[stored[i].Key] = stored[i].Value
+		for _, key := range keys {
+			value, err := h.resolveScopedValue(r.Context(), key, storeID)
+			if err != nil {
+				JSONError(w, err)
+				return
+			}
+			if value != nil {
+				values[key] = value
 			}
 		}
 
 		JSON(w, http.StatusOK, map[string]interface{}{
-			"group":   group,
-			"entries": h.redactEntries(values),
+			"group":        group,
+			"entries":      h.redactEntries(values),
+			"scope":        map[string]interface{}{"store_id": storeID},
+			"field_scopes": fieldScopesForKeys(keys),
 		})
 	}
 }
@@ -145,16 +163,69 @@ func (h *ConfigAdminHandler) Update() http.HandlerFunc {
 			JSONError(w, err)
 			return
 		}
+		storeID := resolveStoreScopeID(r)
+		persisted := make(map[string]interface{}, len(entries))
+		for key, value := range entries {
+			targetKey := key
+			if scopeForConfigKey(key) == configScopeStore && storeID != "" {
+				targetKey = scopedConfigKey(storeID, key)
+			}
+			persisted[targetKey] = value
+		}
 
-		if err := h.repo.SetMany(r.Context(), entries); err != nil {
+		if err := h.repo.SetMany(r.Context(), persisted); err != nil {
 			JSONError(w, err)
 			return
 		}
 
 		JSON(w, http.StatusOK, map[string]interface{}{
 			"entries": h.redactEntries(req.Entries),
+			"scope":   map[string]interface{}{"store_id": storeID},
 		})
 	}
+}
+
+func (h *ConfigAdminHandler) resolveScopedValue(ctx context.Context, key, storeID string) (interface{}, error) {
+	if scopeForConfigKey(key) == configScopeStore && storeID != "" {
+		overrideValue, err := h.repo.Get(ctx, scopedConfigKey(storeID, key))
+		if err != nil {
+			return nil, err
+		}
+		if overrideValue != nil {
+			return overrideValue, nil
+		}
+	}
+	return h.repo.Get(ctx, key)
+}
+
+func resolveStoreScopeID(r *http.Request) string {
+	if explicit := strings.TrimSpace(r.URL.Query().Get("store_id")); explicit != "" {
+		return explicit
+	}
+	ac, err := admin.FromContext(r.Context())
+	if err != nil || ac == nil {
+		return ""
+	}
+	return strings.TrimSpace(ac.StoreID)
+}
+
+func scopedConfigKey(storeID, key string) string {
+	return "store::" + storeID + "::" + key
+}
+
+func fieldScopesForKeys(keys []string) map[string]string {
+	out := make(map[string]string, len(keys))
+	for _, key := range keys {
+		out[key] = scopeForConfigKey(key)
+	}
+	return out
+}
+
+func scopeForConfigKey(key string) string {
+	if scope, ok := configKeyScopes[key]; ok {
+		return scope
+	}
+	return configScopeGlobal
 }
 
 // TestEmail handles POST /api/v1/admin/config/test-email.
