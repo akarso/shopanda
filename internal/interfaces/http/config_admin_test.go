@@ -9,6 +9,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/akarso/shopanda/internal/application/admin"
 	domainCfg "github.com/akarso/shopanda/internal/domain/config"
 	shophttp "github.com/akarso/shopanda/internal/interfaces/http"
 	appconfig "github.com/akarso/shopanda/internal/platform/config"
@@ -78,6 +79,11 @@ func testConfigAdminHandler(repo domainCfg.Repository, testEmail shophttp.SMTPTe
 	cfg.Media.Local.BasePath = "./public/media"
 	cfg.Media.Local.BaseURL = "/media"
 	return shophttp.NewConfigAdminHandler(repo, cfg, testEmail)
+}
+
+func withAdminStoreScope(req *http.Request, storeID string) *http.Request {
+	ctx := (&admin.AdminContext{StoreID: storeID}).WithContext(req.Context())
+	return req.WithContext(ctx)
 }
 
 func TestConfigAdmin_Get_GroupEmail(t *testing.T) {
@@ -268,5 +274,153 @@ func TestConfigAdmin_TestEmail_RepoError(t *testing.T) {
 	}
 	if called {
 		t.Fatal("test email function should not be called on repo error")
+	}
+}
+
+func TestConfigAdmin_Get_FieldScopesIncluded(t *testing.T) {
+	repo := newMockConfigRepo()
+	h := testConfigAdminHandler(repo, func(context.Context, shophttp.SMTPTestConfig, string) error { return nil })
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/admin/config?group=currency", nil)
+	h.Get().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d; body: %s", rec.Code, http.StatusOK, rec.Body.String())
+	}
+
+	var envelope struct {
+		Data struct {
+			FieldScopes map[string]string `json:"field_scopes"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &envelope); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if envelope.Data.FieldScopes["currency.display_format"] != "store" {
+		t.Fatalf("currency.display_format scope = %q, want %q", envelope.Data.FieldScopes["currency.display_format"], "store")
+	}
+	if envelope.Data.FieldScopes["default_currency"] != "store" {
+		t.Fatalf("default_currency scope = %q, want %q", envelope.Data.FieldScopes["default_currency"], "store")
+	}
+}
+
+func TestConfigAdmin_ScopedUpdateAndRead_BackwardFallback(t *testing.T) {
+	repo := newMockConfigRepo()
+	h := testConfigAdminHandler(repo, func(context.Context, shophttp.SMTPTestConfig, string) error { return nil })
+
+	// Write global value first.
+	globalRec := httptest.NewRecorder()
+	globalReq := httptest.NewRequest(http.MethodPut, "/api/v1/admin/config", strings.NewReader(`{"entries":{"currency.display_format":"{currency} {amount}"}}`))
+	globalReq.Header.Set("Content-Type", "application/json")
+	h.Update().ServeHTTP(globalRec, globalReq)
+	if globalRec.Code != http.StatusOK {
+		t.Fatalf("global update status = %d, want %d; body: %s", globalRec.Code, http.StatusOK, globalRec.Body.String())
+	}
+
+	// Write store override with explicit scoped context.
+	scopedRec := httptest.NewRecorder()
+	scopedReq := httptest.NewRequest(http.MethodPut, "/api/v1/admin/config", strings.NewReader(`{"entries":{"currency.display_format":"{amount} {currency}"}}`))
+	scopedReq.Header.Set("Content-Type", "application/json")
+	scopedReq = withAdminStoreScope(scopedReq, "store-eu")
+	h.Update().ServeHTTP(scopedRec, scopedReq)
+	if scopedRec.Code != http.StatusOK {
+		t.Fatalf("scoped update status = %d, want %d; body: %s", scopedRec.Code, http.StatusOK, scopedRec.Body.String())
+	}
+
+	// Scoped read gets override.
+	scopedGetRec := httptest.NewRecorder()
+	scopedGetReq := httptest.NewRequest(http.MethodGet, "/api/v1/admin/config?group=currency", nil)
+	scopedGetReq = withAdminStoreScope(scopedGetReq, "store-eu")
+	h.Get().ServeHTTP(scopedGetRec, scopedGetReq)
+	if scopedGetRec.Code != http.StatusOK {
+		t.Fatalf("scoped get status = %d, want %d; body: %s", scopedGetRec.Code, http.StatusOK, scopedGetRec.Body.String())
+	}
+	var scopedEnv struct {
+		Data struct {
+			Entries map[string]interface{} `json:"entries"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(scopedGetRec.Body.Bytes(), &scopedEnv); err != nil {
+		t.Fatalf("unmarshal scoped get: %v", err)
+	}
+	if scopedEnv.Data.Entries["currency.display_format"] != "{amount} {currency}" {
+		t.Fatalf("scoped currency.display_format = %v, want {amount} {currency}", scopedEnv.Data.Entries["currency.display_format"])
+	}
+
+	// Global read keeps global value.
+	globalGetRec := httptest.NewRecorder()
+	globalGetReq := httptest.NewRequest(http.MethodGet, "/api/v1/admin/config?group=currency", nil)
+	h.Get().ServeHTTP(globalGetRec, globalGetReq)
+	if globalGetRec.Code != http.StatusOK {
+		t.Fatalf("global get status = %d, want %d; body: %s", globalGetRec.Code, http.StatusOK, globalGetRec.Body.String())
+	}
+	var globalEnv struct {
+		Data struct {
+			Entries map[string]interface{} `json:"entries"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(globalGetRec.Body.Bytes(), &globalEnv); err != nil {
+		t.Fatalf("unmarshal global get: %v", err)
+	}
+	if globalEnv.Data.Entries["currency.display_format"] != "{currency} {amount}" {
+		t.Fatalf("global currency.display_format = %v, want {currency} {amount}", globalEnv.Data.Entries["currency.display_format"])
+	}
+}
+
+func TestConfigAdmin_ScopedUpdateAndRead_ContextScopeOverridesConflictingQuery(t *testing.T) {
+	repo := newMockConfigRepo()
+	h := testConfigAdminHandler(repo, func(context.Context, shophttp.SMTPTestConfig, string) error { return nil })
+
+	globalRec := httptest.NewRecorder()
+	globalReq := httptest.NewRequest(http.MethodPut, "/api/v1/admin/config", strings.NewReader(`{"entries":{"currency.display_format":"{currency} {amount}"}}`))
+	globalReq.Header.Set("Content-Type", "application/json")
+	h.Update().ServeHTTP(globalRec, globalReq)
+	if globalRec.Code != http.StatusOK {
+		t.Fatalf("global update status = %d, want %d; body: %s", globalRec.Code, http.StatusOK, globalRec.Body.String())
+	}
+
+	euRec := httptest.NewRecorder()
+	euReq := httptest.NewRequest(http.MethodPut, "/api/v1/admin/config", strings.NewReader(`{"entries":{"currency.display_format":"{amount} EUR"}}`))
+	euReq.Header.Set("Content-Type", "application/json")
+	euReq = withAdminStoreScope(euReq, "store-eu")
+	h.Update().ServeHTTP(euRec, euReq)
+	if euRec.Code != http.StatusOK {
+		t.Fatalf("eu scoped update status = %d, want %d; body: %s", euRec.Code, http.StatusOK, euRec.Body.String())
+	}
+
+	usRec := httptest.NewRecorder()
+	usReq := httptest.NewRequest(http.MethodPut, "/api/v1/admin/config", strings.NewReader(`{"entries":{"currency.display_format":"USD {amount}"}}`))
+	usReq.Header.Set("Content-Type", "application/json")
+	usReq = withAdminStoreScope(usReq, "store-us")
+	h.Update().ServeHTTP(usRec, usReq)
+	if usRec.Code != http.StatusOK {
+		t.Fatalf("us scoped update status = %d, want %d; body: %s", usRec.Code, http.StatusOK, usRec.Body.String())
+	}
+
+	conflictGetRec := httptest.NewRecorder()
+	conflictGetReq := httptest.NewRequest(http.MethodGet, "/api/v1/admin/config?group=currency&store_id=store-eu", nil)
+	conflictGetReq = withAdminStoreScope(conflictGetReq, "store-us")
+	h.Get().ServeHTTP(conflictGetRec, conflictGetReq)
+	if conflictGetRec.Code != http.StatusOK {
+		t.Fatalf("conflict scoped get status = %d, want %d; body: %s", conflictGetRec.Code, http.StatusOK, conflictGetRec.Body.String())
+	}
+
+	var conflictEnv struct {
+		Data struct {
+			Entries map[string]interface{} `json:"entries"`
+			Scope   struct {
+				StoreID string `json:"store_id"`
+			} `json:"scope"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(conflictGetRec.Body.Bytes(), &conflictEnv); err != nil {
+		t.Fatalf("unmarshal conflict scoped get: %v", err)
+	}
+	if conflictEnv.Data.Scope.StoreID != "store-us" {
+		t.Fatalf("resolved store scope = %q, want %q", conflictEnv.Data.Scope.StoreID, "store-us")
+	}
+	if conflictEnv.Data.Entries["currency.display_format"] != "USD {amount}" {
+		t.Fatalf("currency.display_format = %v, want USD {amount}", conflictEnv.Data.Entries["currency.display_format"])
 	}
 }
