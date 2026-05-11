@@ -12,6 +12,7 @@ import (
 	domainCfg "github.com/akarso/shopanda/internal/domain/config"
 	"github.com/akarso/shopanda/internal/platform/apperror"
 	appconfig "github.com/akarso/shopanda/internal/platform/config"
+	"github.com/akarso/shopanda/internal/platform/logger"
 )
 
 // SMTPTestConfig carries SMTP settings for a test email request.
@@ -31,6 +32,7 @@ type ConfigAdminHandler struct {
 	repo          domainCfg.Repository
 	cfg           *appconfig.Config
 	testEmailFunc SMTPTestFunc
+	auditor       *admin.Auditor
 }
 
 const redactedSecretValue = "***"
@@ -87,7 +89,7 @@ var configKeyScopes = map[string]string{
 }
 
 // NewConfigAdminHandler creates a ConfigAdminHandler.
-func NewConfigAdminHandler(repo domainCfg.Repository, cfg *appconfig.Config, testEmailFunc SMTPTestFunc) *ConfigAdminHandler {
+func NewConfigAdminHandler(repo domainCfg.Repository, cfg *appconfig.Config, testEmailFunc SMTPTestFunc, log logger.Logger) *ConfigAdminHandler {
 	if repo == nil {
 		panic("http: config repository must not be nil")
 	}
@@ -97,7 +99,10 @@ func NewConfigAdminHandler(repo domainCfg.Repository, cfg *appconfig.Config, tes
 	if testEmailFunc == nil {
 		panic("http: config test email function must not be nil")
 	}
-	return &ConfigAdminHandler{repo: repo, cfg: cfg, testEmailFunc: testEmailFunc}
+	if log == nil {
+		panic("http: config logger must not be nil")
+	}
+	return &ConfigAdminHandler{repo: repo, cfg: cfg, testEmailFunc: testEmailFunc, auditor: admin.NewAuditor(log)}
 }
 
 type updateConfigRequest struct {
@@ -119,6 +124,7 @@ func (h *ConfigAdminHandler) Get() http.HandlerFunc {
 		group := strings.TrimSpace(r.URL.Query().Get("group"))
 		keys, err := keysForGroup(group)
 		if err != nil {
+			h.auditConfigError(r, admin.AuditSettingsRead, "config_group", "", map[string]interface{}{"group": group}, err)
 			JSONError(w, apperror.Validation(err.Error()))
 			return
 		}
@@ -128,6 +134,7 @@ func (h *ConfigAdminHandler) Get() http.HandlerFunc {
 		for _, key := range keys {
 			value, err := h.resolveScopedValue(r.Context(), key, storeID)
 			if err != nil {
+				h.auditConfigError(r, admin.AuditSettingsRead, "config_group", "", map[string]interface{}{"group": group, "key": key}, err)
 				JSONError(w, err)
 				return
 			}
@@ -135,11 +142,12 @@ func (h *ConfigAdminHandler) Get() http.HandlerFunc {
 				values[key] = value
 			}
 		}
+		h.auditConfigSuccess(r, admin.AuditSettingsRead, "config_group", "", map[string]interface{}{"group": group, "keys_count": len(keys)})
 
 		JSON(w, http.StatusOK, map[string]interface{}{
 			"group":        group,
 			"entries":      h.redactEntries(values),
-			"scope":        map[string]interface{}{"store_id": storeID},
+			"scope":        scopePayloadFromRequest(r),
 			"field_scopes": fieldScopesForKeys(keys),
 		})
 	}
@@ -160,6 +168,7 @@ func (h *ConfigAdminHandler) Update() http.HandlerFunc {
 
 		entries, err := h.normalizeUpdateEntries(r.Context(), req.Entries)
 		if err != nil {
+			h.auditConfigError(r, admin.AuditSettingsChange, "config_group", "", map[string]interface{}{"entries_count": len(req.Entries)}, err)
 			JSONError(w, err)
 			return
 		}
@@ -174,15 +183,44 @@ func (h *ConfigAdminHandler) Update() http.HandlerFunc {
 		}
 
 		if err := h.repo.SetMany(r.Context(), persisted); err != nil {
+			h.auditConfigError(r, admin.AuditSettingsChange, "config_group", "", map[string]interface{}{"entries_count": len(entries), "store_id": storeID}, err)
 			JSONError(w, err)
 			return
 		}
+		h.auditConfigSuccess(r, admin.AuditSettingsChange, "config_group", "", map[string]interface{}{"entries_count": len(entries), "store_id": storeID})
 
 		JSON(w, http.StatusOK, map[string]interface{}{
 			"entries": h.redactEntries(req.Entries),
-			"scope":   map[string]interface{}{"store_id": storeID},
+			"scope":   scopePayloadFromRequest(r),
 		})
 	}
+}
+
+func (h *ConfigAdminHandler) auditConfigSuccess(r *http.Request, action admin.AuditAction, resourceType, resourceID string, details map[string]interface{}) {
+	adminID, scopeDetails := adminAuditInfoFromRequest(r)
+	merged := mergeAuditDetails(details, scopeDetails)
+	h.auditor.LogAction(r.Context(), admin.AuditEntry{
+		AdminID:      adminID,
+		Action:       action,
+		ResourceType: resourceType,
+		ResourceID:   resourceID,
+		Details:      merged,
+		Result:       "success",
+	})
+}
+
+func (h *ConfigAdminHandler) auditConfigError(r *http.Request, action admin.AuditAction, resourceType, resourceID string, details map[string]interface{}, err error) {
+	adminID, scopeDetails := adminAuditInfoFromRequest(r)
+	merged := mergeAuditDetails(details, scopeDetails)
+	h.auditor.LogAction(r.Context(), admin.AuditEntry{
+		AdminID:      adminID,
+		Action:       action,
+		ResourceType: resourceType,
+		ResourceID:   resourceID,
+		Details:      merged,
+		Result:       "error",
+		Error:        err.Error(),
+	})
 }
 
 func (h *ConfigAdminHandler) resolveScopedValue(ctx context.Context, key, storeID string) (interface{}, error) {
@@ -212,6 +250,49 @@ func resolveStoreScopeID(r *http.Request) string {
 		}
 	}
 	return explicit
+}
+
+func scopePayloadFromRequest(r *http.Request) map[string]interface{} {
+	payload := map[string]interface{}{
+		"store_id": strings.TrimSpace(r.URL.Query().Get("store_id")),
+		"language": "",
+		"currency": "",
+	}
+	ac, err := admin.FromContext(r.Context())
+	if err != nil || ac == nil {
+		return payload
+	}
+	payload["store_id"] = strings.TrimSpace(ac.StoreID)
+	payload["language"] = strings.TrimSpace(ac.Language)
+	payload["currency"] = strings.TrimSpace(ac.Currency)
+	return payload
+}
+
+func adminAuditInfoFromRequest(r *http.Request) (string, map[string]interface{}) {
+	ac, err := admin.FromContext(r.Context())
+	if err != nil || ac == nil {
+		return "system", map[string]interface{}{}
+	}
+	adminID := strings.TrimSpace(ac.AdminID)
+	if adminID == "" {
+		adminID = "system"
+	}
+	return adminID, map[string]interface{}{
+		"store_id": strings.TrimSpace(ac.StoreID),
+		"language": strings.TrimSpace(ac.Language),
+		"currency": strings.TrimSpace(ac.Currency),
+	}
+}
+
+func mergeAuditDetails(a, b map[string]interface{}) map[string]interface{} {
+	out := make(map[string]interface{}, len(a)+len(b))
+	for k, v := range a {
+		out[k] = v
+	}
+	for k, v := range b {
+		out[k] = v
+	}
+	return out
 }
 
 func scopedConfigKey(storeID, key string) string {
