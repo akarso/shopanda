@@ -141,8 +141,8 @@
         "/admin/media": { title: "Media", render: renderMediaLibrary, auth: true },
         // Operations
         "/admin/operations/inventory": { title: "Inventory", render: renderPlaceholder("Inventory"), auth: true },
-        "/admin/operations/shipping": { title: "Shipping", render: renderPlaceholder("Shipping"), auth: true },
-        "/admin/operations/payments": { title: "Payments", render: renderPlaceholder("Payments"), auth: true },
+        "/admin/operations/shipping": { title: "Shipping", render: renderShippingSettingsPage, auth: true },
+        "/admin/operations/payments": { title: "Payments", render: renderPaymentSettingsPage, auth: true },
         // Settings
         "/admin/settings": { title: "Settings", render: renderSettingsPage, auth: true },
         "/admin/settings/localization": { title: "Localization", render: renderPlaceholder("Localization"), auth: true },
@@ -1225,39 +1225,78 @@
             '<h2>Settings</h2>' +
             '<div id="settings-global-msg"></div>' +
             '<div id="settings-scope-banner" class="settings-scope-banner"></div>' +
+            '<p class="settings-scope-note">Operational configuration has moved to <a href="/admin/operations/shipping" data-link>Shipping</a> and <a href="/admin/operations/payments" data-link>Payments</a>.</p>' +
             '<div class="settings-grid">' +
             '<section><h3>Store Info</h3><div id="settings-store-msg"></div><form id="settings-store-form"></form></section>' +
             '<section><h3>Email</h3><div id="settings-email-msg"></div><form id="settings-email-form"></form></section>' +
             '<section><h3>Media</h3><div id="settings-media-msg"></div><form id="settings-media-form"></form></section>' +
-            '<section><h3>Currency</h3><div id="settings-currency-msg"></div><form id="settings-currency-form"></form></section>' +
-            '<section><h3>Tax</h3><div id="settings-tax-msg"></div><form id="settings-tax-form"></form></section>' +
             '</div>';
 
         Promise.all([
             api('/admin/stores'),
             api('/admin/config?group=store'),
             api('/admin/config?group=email'),
-            api('/admin/config?group=media'),
-            api('/admin/config?group=currency'),
-            api('/admin/config?group=tax')
+            api('/admin/config?group=media')
         ]).then(function (results) {
             var stores = normalizeStores(results[0] && results[0].data && results[0].data.stores ? results[0].data.stores : []);
             var storePayload = settingsPayloadFromResult(results[1]);
             var emailPayload = settingsPayloadFromResult(results[2]);
             var mediaPayload = settingsPayloadFromResult(results[3]);
-            var currencyPayload = settingsPayloadFromResult(results[4]);
-            var taxPayload = settingsPayloadFromResult(results[5]);
 
-            var activeStoreID = resolveSettingsScopeStoreID([storePayload, emailPayload, mediaPayload, currencyPayload, taxPayload]);
+            var activeStoreID = resolveSettingsScopeStoreID([storePayload, emailPayload, mediaPayload]);
             renderSettingsScopeBanner(stores, activeStoreID);
 
             renderStoreSettingsForm(container, choosePrimaryStore(stores), storePayload.entries, storePayload.fieldScopes, activeStoreID);
             renderEmailSettingsForm(container, emailPayload.entries, emailPayload.fieldScopes, activeStoreID);
             renderMediaSettingsForm(container, mediaPayload.entries, mediaPayload.fieldScopes, activeStoreID);
-            renderCurrencySettingsForm(container, currencyPayload.entries, currencyPayload.fieldScopes, activeStoreID);
-            renderTaxSettingsForm(container, taxPayload.entries, taxPayload.fieldScopes, activeStoreID);
         }).catch(function () {
             container.innerHTML = '<h2>Settings</h2><p role="alert">Failed to load settings.</p>';
+        });
+    }
+
+    function renderShippingSettingsPage(container) {
+        container.innerHTML =
+            '<h2>Shipping</h2>' +
+            '<div id="shipping-scope-banner" class="settings-scope-banner"></div>' +
+            '<div class="settings-grid">' +
+            '<section><h3>Tax Rules</h3><div id="settings-tax-msg"></div><form id="settings-tax-form"></form></section>' +
+            '</div>';
+
+        Promise.all([
+            api('/admin/stores'),
+            api('/admin/config?group=tax')
+        ]).then(function (results) {
+            var stores = normalizeStores(results[0] && results[0].data && results[0].data.stores ? results[0].data.stores : []);
+            var taxPayload = settingsPayloadFromResult(results[1]);
+            var activeStoreID = resolveSettingsScopeStoreID([taxPayload]);
+
+            renderSettingsScopeBanner(stores, activeStoreID, 'shipping-scope-banner');
+            renderTaxSettingsForm(container, taxPayload.entries, taxPayload.fieldScopes, activeStoreID);
+        }).catch(function () {
+            container.innerHTML = '<h2>Shipping</h2><p role="alert">Failed to load shipping settings.</p>';
+        });
+    }
+
+    function renderPaymentSettingsPage(container) {
+        container.innerHTML =
+            '<h2>Payments</h2>' +
+            '<div id="payments-scope-banner" class="settings-scope-banner"></div>' +
+            '<div class="settings-grid">' +
+            '<section><h3>Currency & Display</h3><div id="settings-currency-msg"></div><form id="settings-currency-form"></form></section>' +
+            '</div>';
+
+        Promise.all([
+            api('/admin/stores'),
+            api('/admin/config?group=currency')
+        ]).then(function (results) {
+            var stores = normalizeStores(results[0] && results[0].data && results[0].data.stores ? results[0].data.stores : []);
+            var currencyPayload = settingsPayloadFromResult(results[1]);
+            var activeStoreID = resolveSettingsScopeStoreID([currencyPayload]);
+
+            renderSettingsScopeBanner(stores, activeStoreID, 'payments-scope-banner');
+            renderCurrencySettingsForm(container, currencyPayload.entries, currencyPayload.fieldScopes, activeStoreID);
+        }).catch(function () {
+            container.innerHTML = '<h2>Payments</h2><p role="alert">Failed to load payment settings.</p>';
         });
     }
 
@@ -1280,8 +1319,9 @@
         return adminScope.store_id || '';
     }
 
-    function renderSettingsScopeBanner(stores, storeID) {
-        var banner = document.getElementById('settings-scope-banner');
+    function renderSettingsScopeBanner(stores, storeID, bannerID) {
+        var targetID = bannerID || 'settings-scope-banner';
+        var banner = document.getElementById(targetID);
         if (!banner) {
             return;
         }
