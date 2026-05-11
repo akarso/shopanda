@@ -121,6 +121,12 @@ func TestAdminHandler_StaticJS(t *testing.T) {
 	if !strings.Contains(normalizedBody, "field_scopes") || !strings.Contains(normalizedBody, "Store-scoped") || !strings.Contains(normalizedBody, "Current settings scope") {
 		t.Fatalf("expected scope metadata settings UX wiring in JS")
 	}
+	if !strings.Contains(normalizedBody, "renderShippingSettingsPage") || !strings.Contains(normalizedBody, "renderPaymentSettingsPage") {
+		t.Fatalf("expected operations settings pages wiring in JS")
+	}
+	if !strings.Contains(normalizedBody, "Operational configuration has moved") {
+		t.Fatalf("expected settings relocation guidance in JS")
+	}
 }
 
 func TestAdminHandler_SPAFallback(t *testing.T) {
