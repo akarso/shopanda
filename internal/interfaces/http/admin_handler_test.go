@@ -68,6 +68,9 @@ func TestAdminHandler_StaticCSS(t *testing.T) {
 	if !strings.Contains(body, "admin-context-switcher") {
 		t.Fatalf("expected context switcher styles in CSS")
 	}
+	if !strings.Contains(body, "settings-scope-badge") || !strings.Contains(body, "settings-scope-banner") {
+		t.Fatalf("expected settings scope affordance styles in CSS")
+	}
 	if !strings.Contains(body, "nav-group") {
 		t.Fatalf("expected grouped nav styles in CSS")
 	}
@@ -114,6 +117,9 @@ func TestAdminHandler_StaticJS(t *testing.T) {
 	}
 	if !strings.Contains(normalizedBody, "X-Admin-Store-ID") || !strings.Contains(normalizedBody, "X-Admin-Language") || !strings.Contains(normalizedBody, "X-Admin-Currency") {
 		t.Fatalf("expected admin scope headers in JS")
+	}
+	if !strings.Contains(normalizedBody, "field_scopes") || !strings.Contains(normalizedBody, "Store-scoped") || !strings.Contains(normalizedBody, "Current settings scope") {
+		t.Fatalf("expected scope metadata settings UX wiring in JS")
 	}
 }
 

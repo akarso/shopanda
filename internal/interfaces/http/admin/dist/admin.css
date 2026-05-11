@@ -353,6 +353,18 @@
     gap: 1rem;
 }
 
+.settings-scope-banner {
+    margin-bottom: 1rem;
+}
+
+.settings-scope-banner p {
+    margin: 0;
+    padding: 0.7rem 0.9rem;
+    border-radius: 8px;
+    background: var(--pico-secondary-background);
+    border: 1px solid var(--pico-muted-border-color);
+}
+
 .settings-grid section {
     margin: 0;
 }
@@ -360,6 +372,41 @@
 .settings-grid form {
     display: grid;
     gap: 0.75rem;
+}
+
+.settings-scope-note {
+    margin: 0;
+    color: var(--pico-muted-color);
+    font-size: 0.85rem;
+}
+
+.settings-scope-badge {
+    display: inline-block;
+    margin-left: 0.35rem;
+    padding: 0.08rem 0.4rem;
+    border-radius: 999px;
+    font-size: 0.67rem;
+    line-height: 1.2;
+    vertical-align: middle;
+    border: 1px solid transparent;
+}
+
+.settings-scope-badge-global {
+    background: #ecf6ff;
+    color: #0b4a7a;
+    border-color: #b6dcf8;
+}
+
+.settings-scope-badge-store {
+    background: #fff4df;
+    color: #7a4f00;
+    border-color: #f2c870;
+}
+
+.settings-scope-badge-translatable {
+    background: #efeaff;
+    color: #49308a;
+    border-color: #cfc1ff;
 }
 
 .settings-actions {
