@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"strings"
 
 	"github.com/akarso/shopanda/internal/application/admin"
 	"github.com/akarso/shopanda/internal/domain/order"
@@ -56,6 +57,24 @@ func (h *OrderAdminHandler) getAdminID(r *http.Request) string {
 	return ac.AdminID
 }
 
+func adminScopeDetailsFromRequest(r *http.Request) map[string]interface{} {
+	details := make(map[string]interface{})
+	ac, err := admin.FromContext(r.Context())
+	if err != nil || ac == nil {
+		return details
+	}
+	if s := strings.TrimSpace(ac.StoreID); s != "" {
+		details["store_id"] = s
+	}
+	if l := strings.TrimSpace(ac.Language); l != "" {
+		details["language"] = l
+	}
+	if c := strings.TrimSpace(ac.Currency); c != "" {
+		details["currency"] = c
+	}
+	return details
+}
+
 // List handles GET /api/v1/admin/orders with Track 3 audit logging.
 func (h *OrderAdminHandler) List() http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
@@ -76,10 +95,12 @@ func (h *OrderAdminHandler) List() http.HandlerFunc {
 
 		orders, err := h.orders.List(r.Context(), offset, limit)
 		if err != nil {
+			scopeDetails := adminScopeDetailsFromRequest(r)
 			h.auditor.LogAction(r.Context(), admin.AuditEntry{
 				AdminID:      adminID,
 				Action:       admin.AuditOrderList,
 				ResourceType: "orders",
+				Details:      scopeDetails,
 				Result:       "error",
 				Error:        err.Error(),
 			})
@@ -88,7 +109,19 @@ func (h *OrderAdminHandler) List() http.HandlerFunc {
 		}
 
 		// Log successful list operation for compliance.
-		h.auditor.LogOrderListAccess(r.Context(), adminID, offset, limit)
+		scopeDetails := adminScopeDetailsFromRequest(r)
+		if scopeDetails == nil {
+			scopeDetails = make(map[string]interface{})
+		}
+		scopeDetails["offset"] = offset
+		scopeDetails["limit"] = limit
+		h.auditor.LogAction(r.Context(), admin.AuditEntry{
+			AdminID:      adminID,
+			Action:       admin.AuditOrderList,
+			ResourceType: "orders",
+			Result:       "success",
+			Details:      scopeDetails,
+		})
 
 		out := make([]orderResponse, 0, len(orders))
 		for i := range orders {
@@ -115,11 +148,13 @@ func (h *OrderAdminHandler) Get() http.HandlerFunc {
 
 		o, err := h.orders.FindByID(r.Context(), orderID)
 		if err != nil {
+			scopeDetails := adminScopeDetailsFromRequest(r)
 			h.auditor.LogAction(r.Context(), admin.AuditEntry{
 				AdminID:      adminID,
 				Action:       admin.AuditOrderRead,
 				ResourceType: "order",
 				ResourceID:   orderID,
+				Details:      scopeDetails,
 				Result:       "error",
 				Error:        err.Error(),
 			})
@@ -133,7 +168,15 @@ func (h *OrderAdminHandler) Get() http.HandlerFunc {
 		}
 
 		// Log successful read access for compliance.
-		h.auditor.LogOrderRead(r.Context(), adminID, orderID)
+		scopeDetails := adminScopeDetailsFromRequest(r)
+		h.auditor.LogAction(r.Context(), admin.AuditEntry{
+			AdminID:      adminID,
+			Action:       admin.AuditOrderRead,
+			ResourceType: "order",
+			ResourceID:   orderID,
+			Result:       "success",
+			Details:      scopeDetails,
+		})
 
 		JSON(w, http.StatusOK, map[string]interface{}{
 			"order": toOrderResponse(o),
@@ -163,13 +206,30 @@ func (h *OrderAdminHandler) Update() http.HandlerFunc {
 		dec := json.NewDecoder(http.MaxBytesReader(w, r.Body, maxUpdateOrderBodyBytes))
 		dec.DisallowUnknownFields()
 		if err := dec.Decode(&req); err != nil {
+			scopeDetails := adminScopeDetailsFromRequest(r)
 			var maxErr *http.MaxBytesError
 			if errors.As(err, &maxErr) {
-				h.auditor.LogOrderUpdateError(r.Context(), adminID, orderID, "request body too large")
+				h.auditor.LogAction(r.Context(), admin.AuditEntry{
+					AdminID:      adminID,
+					Action:       admin.AuditOrderUpdate,
+					ResourceType: "order",
+					ResourceID:   orderID,
+					Result:       "error",
+					Error:        "request body too large",
+					Details:      scopeDetails,
+				})
 				JSONError(w, apperror.Validation("request body too large"))
 				return
 			}
-			h.auditor.LogOrderUpdateError(r.Context(), adminID, orderID, "invalid request body")
+			h.auditor.LogAction(r.Context(), admin.AuditEntry{
+				AdminID:      adminID,
+				Action:       admin.AuditOrderUpdate,
+				ResourceType: "order",
+				ResourceID:   orderID,
+				Result:       "error",
+				Error:        "invalid request body",
+				Details:      scopeDetails,
+			})
 			JSONError(w, apperror.Validation("invalid request body"))
 			return
 		}
@@ -178,18 +238,45 @@ func (h *OrderAdminHandler) Update() http.HandlerFunc {
 		switch next {
 		case order.OrderStatusConfirmed, order.OrderStatusPaid, order.OrderStatusCancelled, order.OrderStatusFailed:
 		case order.OrderStatusPending:
-			h.auditor.LogOrderUpdateError(r.Context(), adminID, orderID, "transition to pending not allowed")
+			scopeDetails := adminScopeDetailsFromRequest(r)
+			h.auditor.LogAction(r.Context(), admin.AuditEntry{
+				AdminID:      adminID,
+				Action:       admin.AuditOrderUpdate,
+				ResourceType: "order",
+				ResourceID:   orderID,
+				Result:       "error",
+				Error:        "transition to pending not allowed",
+				Details:      scopeDetails,
+			})
 			JSONError(w, apperror.Validation("transition to pending not allowed"))
 			return
 		default:
-			h.auditor.LogOrderUpdateError(r.Context(), adminID, orderID, "invalid target status")
+			scopeDetails := adminScopeDetailsFromRequest(r)
+			h.auditor.LogAction(r.Context(), admin.AuditEntry{
+				AdminID:      adminID,
+				Action:       admin.AuditOrderUpdate,
+				ResourceType: "order",
+				ResourceID:   orderID,
+				Result:       "error",
+				Error:        "invalid target status",
+				Details:      scopeDetails,
+			})
 			JSONError(w, apperror.Validation("invalid target status"))
 			return
 		}
 
 		o, err := h.orders.FindByID(r.Context(), orderID)
 		if err != nil {
-			h.auditor.LogOrderUpdateError(r.Context(), adminID, orderID, err.Error())
+			scopeDetails := adminScopeDetailsFromRequest(r)
+			h.auditor.LogAction(r.Context(), admin.AuditEntry{
+				AdminID:      adminID,
+				Action:       admin.AuditOrderUpdate,
+				ResourceType: "order",
+				ResourceID:   orderID,
+				Result:       "error",
+				Error:        err.Error(),
+				Details:      scopeDetails,
+			})
 			JSONError(w, err)
 			return
 		}
@@ -207,19 +294,50 @@ func (h *OrderAdminHandler) Update() http.HandlerFunc {
 		oldStatus := string(o.Status())
 
 		if err := applyOrderStatusTransition(o, next); err != nil {
-			h.auditor.LogOrderUpdateError(r.Context(), adminID, orderID, err.Error())
+			scopeDetails := adminScopeDetailsFromRequest(r)
+			h.auditor.LogAction(r.Context(), admin.AuditEntry{
+				AdminID:      adminID,
+				Action:       admin.AuditOrderUpdate,
+				ResourceType: "order",
+				ResourceID:   orderID,
+				Result:       "error",
+				Error:        err.Error(),
+				Details:      scopeDetails,
+			})
 			JSONError(w, apperror.Validation(err.Error()))
 			return
 		}
 
 		if err := h.orders.UpdateStatus(r.Context(), o); err != nil {
-			h.auditor.LogOrderUpdateError(r.Context(), adminID, orderID, err.Error())
+			scopeDetails := adminScopeDetailsFromRequest(r)
+			h.auditor.LogAction(r.Context(), admin.AuditEntry{
+				AdminID:      adminID,
+				Action:       admin.AuditOrderUpdate,
+				ResourceType: "order",
+				ResourceID:   orderID,
+				Result:       "error",
+				Error:        err.Error(),
+				Details:      scopeDetails,
+			})
 			JSONError(w, err)
 			return
 		}
 
 		// Log successful status transition for compliance and audit trail.
-		h.auditor.LogOrderUpdate(r.Context(), adminID, orderID, oldStatus, string(next))
+		scopeDetails := adminScopeDetailsFromRequest(r)
+		if scopeDetails == nil {
+			scopeDetails = make(map[string]interface{})
+		}
+		scopeDetails["old_status"] = oldStatus
+		scopeDetails["new_status"] = string(next)
+		h.auditor.LogAction(r.Context(), admin.AuditEntry{
+			AdminID:      adminID,
+			Action:       admin.AuditOrderStatusChange,
+			ResourceType: "order",
+			ResourceID:   orderID,
+			Result:       "success",
+			Details:      scopeDetails,
+		})
 
 		JSON(w, http.StatusOK, map[string]interface{}{"order": toOrderResponse(o)})
 	}

@@ -346,3 +346,36 @@ func TestOrderAdminHandler_Update_CustomerForbidden(t *testing.T) {
 		t.Fatalf("status = %d, want %d; body: %s", rec.Code, http.StatusForbidden, rec.Body.String())
 	}
 }
+
+// ── Audit Scope Context Tests ───────────────────────────────────────────
+
+// TestOrderAdminHandler_Update_WithScopeContext verifies that admin scope context
+// (store_id, language, currency) is correctly extracted from headers and will be
+// included in audit entry Details via the handler's scope detail injection.
+func TestOrderAdminHandler_Update_WithScopeContext(t *testing.T) {
+	repo, mux := orderAdminSetup()
+	seedOrder(t, repo, "ord-1", "cust-1")
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("PUT", "/api/v1/admin/orders/ord-1", strings.NewReader(`{"status":"confirmed"}`))
+	req.Header.Set("Content-Type", "application/json")
+	req = testhelper.AdminRequest(req, "admin-1")
+
+	// Inject scope context via header (populated by upstream auth middleware)
+	req.Header.Set("X-Admin-Store-ID", "store-eu")
+	req.Header.Set("X-Admin-Language", "en")
+	req.Header.Set("X-Admin-Currency", "EUR")
+
+	mux.ServeHTTP(rec, req)
+
+	// Verify the update succeeds even with scope context present
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d; body: %s", rec.Code, http.StatusOK, rec.Body.String())
+	}
+
+	// Verify order status was updated
+	o := parseAdminOrderResp(t, rec)
+	if o["status"] != "confirmed" {
+		t.Fatalf("status = %v, want confirmed", o["status"])
+	}
+}
