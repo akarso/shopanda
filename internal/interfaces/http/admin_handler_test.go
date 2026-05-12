@@ -121,6 +121,9 @@ func TestAdminHandler_StaticJS(t *testing.T) {
 	if !strings.Contains(normalizedBody, "field_scopes") || !strings.Contains(normalizedBody, "Store-scoped") || !strings.Contains(normalizedBody, "Current settings scope") {
 		t.Fatalf("expected scope metadata settings UX wiring in JS")
 	}
+	if !strings.Contains(normalizedBody, "Language: <strong>") || !strings.Contains(normalizedBody, "Currency: <strong>") {
+		t.Fatalf("expected scope banner to include language and currency context in JS")
+	}
 	if !strings.Contains(normalizedBody, "renderShippingSettingsPage") || !strings.Contains(normalizedBody, "renderPaymentSettingsPage") {
 		t.Fatalf("expected operations settings pages wiring in JS")
 	}
