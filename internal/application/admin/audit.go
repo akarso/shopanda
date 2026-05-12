@@ -20,6 +20,7 @@ const (
 	AuditProductCreate  AuditAction = "product.create"
 	AuditProductRead    AuditAction = "product.read"
 	AuditProductUpdate  AuditAction = "product.update"
+	AuditStatsRead      AuditAction = "stats.read"
 	AuditCustomerRead   AuditAction = "customer.read"
 	AuditSettingsRead   AuditAction = "settings.read"
 	AuditSettingsChange AuditAction = "settings.change"

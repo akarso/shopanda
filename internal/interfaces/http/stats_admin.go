@@ -3,20 +3,34 @@ package http
 import (
 	"net/http"
 
-	"github.com/akarso/shopanda/internal/domain/admin"
+	adminapp "github.com/akarso/shopanda/internal/application/admin"
+	domainadmin "github.com/akarso/shopanda/internal/domain/admin"
+	"github.com/akarso/shopanda/internal/platform/logger"
 )
 
 // StatsAdminHandler serves the admin dashboard stats endpoint.
 type StatsAdminHandler struct {
-	stats admin.StatsRepository
+	stats   domainadmin.StatsRepository
+	auditor *adminapp.Auditor
 }
 
 // NewStatsAdminHandler creates a StatsAdminHandler.
-func NewStatsAdminHandler(stats admin.StatsRepository) *StatsAdminHandler {
+func NewStatsAdminHandler(stats domainadmin.StatsRepository) *StatsAdminHandler {
 	if stats == nil {
 		panic("http: stats repository must not be nil")
 	}
-	return &StatsAdminHandler{stats: stats}
+	return NewStatsAdminHandlerWithAuditor(stats, adminapp.NewAuditor(logger.New("info")))
+}
+
+// NewStatsAdminHandlerWithAuditor creates a StatsAdminHandler with a custom auditor.
+func NewStatsAdminHandlerWithAuditor(stats domainadmin.StatsRepository, auditor *adminapp.Auditor) *StatsAdminHandler {
+	if stats == nil {
+		panic("http: stats repository must not be nil")
+	}
+	if auditor == nil {
+		panic("http: auditor must not be nil")
+	}
+	return &StatsAdminHandler{stats: stats, auditor: auditor}
 }
 
 // Overview handles GET /api/v1/admin/stats/overview.
@@ -25,8 +39,21 @@ func (h *StatsAdminHandler) Overview() http.HandlerFunc {
 	const recentLimit = 10
 
 	return func(w http.ResponseWriter, r *http.Request) {
+		adminID := adminIDFromRequest(r)
+		details := fullAdminScopeDetailsFromRequest(r)
+		details["low_stock_threshold"] = lowStockThreshold
+		details["recent_limit"] = recentLimit
+
 		stats, err := h.stats.GetDashboardStats(r.Context(), lowStockThreshold, recentLimit)
 		if err != nil {
+			h.auditor.LogAction(r.Context(), adminapp.AuditEntry{
+				AdminID:      adminID,
+				Action:       adminapp.AuditStatsRead,
+				ResourceType: "stats_overview",
+				Result:       "error",
+				Error:        err.Error(),
+				Details:      details,
+			})
 			JSONError(w, err)
 			return
 		}
@@ -42,6 +69,14 @@ func (h *StatsAdminHandler) Overview() http.HandlerFunc {
 				CreatedAt:   o.CreatedAt,
 			})
 		}
+
+		h.auditor.LogAction(r.Context(), adminapp.AuditEntry{
+			AdminID:      adminID,
+			Action:       adminapp.AuditStatsRead,
+			ResourceType: "stats_overview",
+			Result:       "success",
+			Details:      details,
+		})
 
 		JSON(w, http.StatusOK, statsOverviewResp{
 			OrdersToday:   stats.OrdersToday,
