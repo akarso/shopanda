@@ -491,4 +491,13 @@ func TestOrderAdminHandler_List_ErrorAuditIncludesPagination(t *testing.T) {
 	if got := entry.context["detail_limit"]; got != 9 {
 		t.Errorf("detail_limit = %v, want %d", got, 9)
 	}
+	if got := entry.context["detail_store_id"]; got != "store-eu" {
+		t.Errorf("detail_store_id = %v, want %q", got, "store-eu")
+	}
+	if got := entry.context["detail_language"]; got != "en" {
+		t.Errorf("detail_language = %v, want %q", got, "en")
+	}
+	if got := entry.context["detail_currency"]; got != "EUR" {
+		t.Errorf("detail_currency = %v, want %q", got, "EUR")
+	}
 }
