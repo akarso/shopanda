@@ -3,11 +3,12 @@ package http
 import (
 	"encoding/json"
 	"net/http"
-	"strings"
 
 	"github.com/akarso/shopanda/internal/application/admin"
 	"github.com/akarso/shopanda/internal/domain/catalog"
+	"github.com/akarso/shopanda/internal/domain/identity"
 	"github.com/akarso/shopanda/internal/platform/apperror"
+	"github.com/akarso/shopanda/internal/platform/auth"
 	"github.com/akarso/shopanda/internal/platform/event"
 	"github.com/akarso/shopanda/internal/platform/id"
 	"github.com/akarso/shopanda/internal/platform/logger"
@@ -15,45 +16,46 @@ import (
 
 // ProductAdminHandler serves product write endpoints.
 type ProductAdminHandler struct {
-	repo catalog.ProductRepository
-	bus  *event.Bus
+	repo    catalog.ProductRepository
+	bus     *event.Bus
 	auditor *admin.Auditor
+	log     logger.Logger
 }
 
 // NewProductAdminHandler creates a ProductAdminHandler.
 func NewProductAdminHandler(repo catalog.ProductRepository, bus *event.Bus) *ProductAdminHandler {
-	return NewProductAdminHandlerWithAuditor(repo, bus, admin.NewAuditor(logger.New("error")))
+	log := logger.New("info")
+	return NewProductAdminHandlerWithAuditor(repo, bus, admin.NewAuditor(log), log)
 }
 
 // NewProductAdminHandlerWithAuditor creates a ProductAdminHandler with a custom auditor.
-func NewProductAdminHandlerWithAuditor(repo catalog.ProductRepository, bus *event.Bus, auditor *admin.Auditor) *ProductAdminHandler {
-	return &ProductAdminHandler{repo: repo, bus: bus, auditor: auditor}
+func NewProductAdminHandlerWithAuditor(repo catalog.ProductRepository, bus *event.Bus, auditor *admin.Auditor, log logger.Logger) *ProductAdminHandler {
+	if log == nil {
+		log = logger.New("warn")
+	}
+	return &ProductAdminHandler{repo: repo, bus: bus, auditor: auditor, log: log}
 }
 
 func (h *ProductAdminHandler) getAdminID(r *http.Request) string {
 	ac, err := admin.FromContext(r.Context())
 	if err != nil || ac == nil || ac.AdminID == "" {
+		id := auth.IdentityFrom(r.Context())
+		if id.Role == identity.RoleAdmin {
+			h.log.Warn("admin.context.missing", map[string]interface{}{
+				"component":   "product_admin.getAdminID",
+				"path":        r.URL.Path,
+				"admin_id":    "system",
+				"identity_id": id.UserID,
+				"reason":      "admin context missing or empty",
+			})
+		}
 		return "system"
 	}
 	return ac.AdminID
 }
 
 func productAdminScopeDetailsFromRequest(r *http.Request) map[string]interface{} {
-	details := make(map[string]interface{})
-	ac, err := admin.FromContext(r.Context())
-	if err != nil || ac == nil {
-		return details
-	}
-	storeID := strings.TrimSpace(ac.StoreID)
-	language := strings.TrimSpace(ac.Language)
-	currency := strings.TrimSpace(ac.Currency)
-	if storeID == "" || language == "" || currency == "" {
-		return details
-	}
-	details["store_id"] = storeID
-	details["language"] = language
-	details["currency"] = currency
-	return details
+	return fullAdminScopeDetailsFromRequest(r)
 }
 
 // List handles GET /api/v1/admin/products.
