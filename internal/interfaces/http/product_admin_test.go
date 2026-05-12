@@ -87,6 +87,14 @@ func newAdminRouterWithAudit(h *shophttp.ProductAdminHandler) *http.ServeMux {
 	return mux
 }
 
+func newAdminCreateRouterWithAudit(h *shophttp.ProductAdminHandler) *http.ServeMux {
+	requireAdmin := shophttp.RequireRole(identity.RoleAdmin)
+	withAdminContext := shophttp.AdminContextMiddleware()
+	mux := http.NewServeMux()
+	mux.Handle("POST /api/v1/admin/products", withAdminContext(requireAdmin(h.Create())))
+	return mux
+}
+
 func testAdminBus() *event.Bus {
 	return event.NewBus(logger.NewWithWriter(io.Discard, "error"))
 }
@@ -425,6 +433,102 @@ func TestProductAdminHandler_Create_DuplicateSlug(t *testing.T) {
 
 	if rec.Code != http.StatusConflict {
 		t.Fatalf("status = %d, want %d", rec.Code, http.StatusConflict)
+	}
+}
+
+func TestProductAdminHandler_Create_AuditIncludesScopeContext(t *testing.T) {
+	repo := &mockAdminProductRepo{
+		createFn: func(_ context.Context, p *catalog.Product) error {
+			return nil
+		},
+	}
+	sink := &auditSink{}
+	h := shophttp.NewProductAdminHandlerWithAuditor(repo, testAdminBus(), admin.NewAuditor(sink), logger.NewWithWriter(io.Discard, "info"))
+
+	body := jsonBody(t, map[string]interface{}{
+		"name": "Widget",
+		"slug": "widget",
+	})
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("POST", "/api/v1/admin/products", body)
+	req = testhelper.AdminRequest(req, "admin-1")
+	req.Header.Set("X-Admin-Store-ID", "store-eu")
+	req.Header.Set("X-Admin-Language", "en")
+	req.Header.Set("X-Admin-Currency", "EUR")
+	newAdminCreateRouterWithAudit(h).ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("status = %d, want %d; body: %s", rec.Code, http.StatusCreated, rec.Body.String())
+	}
+
+	entry := sink.Last(t)
+	if entry.event != "admin.action" {
+		t.Fatalf("event = %q, want %q", entry.event, "admin.action")
+	}
+	if got := entry.context["action"]; got != admin.AuditProductCreate {
+		t.Errorf("action = %v, want %q", got, admin.AuditProductCreate)
+	}
+	if got := entry.context["resource_type"]; got != "product" {
+		t.Errorf("resource_type = %v, want %q", got, "product")
+	}
+	if got := entry.context["resource_id"]; got == nil || got == "" {
+		t.Errorf("resource_id = %v, want non-empty", got)
+	}
+	if got := entry.context["detail_store_id"]; got != "store-eu" {
+		t.Errorf("detail_store_id = %v, want %q", got, "store-eu")
+	}
+	if got := entry.context["detail_language"]; got != "en" {
+		t.Errorf("detail_language = %v, want %q", got, "en")
+	}
+	if got := entry.context["detail_currency"]; got != "EUR" {
+		t.Errorf("detail_currency = %v, want %q", got, "EUR")
+	}
+	if got := entry.context["result"]; got != "success" {
+		t.Errorf("result = %v, want %q", got, "success")
+	}
+}
+
+func TestProductAdminHandler_Create_AuditFailureIncludesError(t *testing.T) {
+	repo := &mockAdminProductRepo{}
+	sink := &auditSink{}
+	h := shophttp.NewProductAdminHandlerWithAuditor(repo, testAdminBus(), admin.NewAuditor(sink), logger.NewWithWriter(io.Discard, "info"))
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("POST", "/api/v1/admin/products", bytes.NewReader([]byte("not json")))
+	req = testhelper.AdminRequest(req, "admin-1")
+	req.Header.Set("X-Admin-Store-ID", "store-eu")
+	req.Header.Set("X-Admin-Language", "en")
+	req.Header.Set("X-Admin-Currency", "EUR")
+	newAdminCreateRouterWithAudit(h).ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("status = %d, want %d; body: %s", rec.Code, http.StatusUnprocessableEntity, rec.Body.String())
+	}
+
+	entry := sink.Last(t)
+	if entry.event != "admin.action.failed" {
+		t.Fatalf("event = %q, want %q", entry.event, "admin.action.failed")
+	}
+	if got := entry.context["action"]; got != admin.AuditProductCreate {
+		t.Errorf("action = %v, want %q", got, admin.AuditProductCreate)
+	}
+	if got := entry.context["resource_type"]; got != "product" {
+		t.Errorf("resource_type = %v, want %q", got, "product")
+	}
+	if got := entry.context["result"]; got != "error" {
+		t.Errorf("result = %v, want %q", got, "error")
+	}
+	if got := entry.context["error"]; got == nil || got == "" {
+		t.Errorf("error = %v, want non-empty", got)
+	}
+	if got := entry.context["detail_store_id"]; got != "store-eu" {
+		t.Errorf("detail_store_id = %v, want %q", got, "store-eu")
+	}
+	if got := entry.context["detail_language"]; got != "en" {
+		t.Errorf("detail_language = %v, want %q", got, "en")
+	}
+	if got := entry.context["detail_currency"]; got != "EUR" {
+		t.Errorf("detail_currency = %v, want %q", got, "EUR")
 	}
 }
 

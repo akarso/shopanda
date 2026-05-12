@@ -126,14 +126,33 @@ type updateProductRequest struct {
 // Create handles POST /api/v1/admin/products.
 func (h *ProductAdminHandler) Create() http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		adminID := h.getAdminID(r)
+		details := productAdminScopeDetailsFromRequest(r)
+
 		var req createProductRequest
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			h.auditor.LogAction(r.Context(), admin.AuditEntry{
+				AdminID:      adminID,
+				Action:       admin.AuditProductCreate,
+				ResourceType: "product",
+				Result:       "error",
+				Error:        "invalid request body",
+				Details:      details,
+			})
 			JSONError(w, apperror.Validation("invalid request body"))
 			return
 		}
 
 		product, err := catalog.NewProduct(id.New(), req.Name, req.Slug)
 		if err != nil {
+			h.auditor.LogAction(r.Context(), admin.AuditEntry{
+				AdminID:      adminID,
+				Action:       admin.AuditProductCreate,
+				ResourceType: "product",
+				Result:       "error",
+				Error:        err.Error(),
+				Details:      details,
+			})
 			JSONError(w, apperror.Validation(err.Error()))
 			return
 		}
@@ -143,9 +162,27 @@ func (h *ProductAdminHandler) Create() http.HandlerFunc {
 		}
 
 		if err := h.repo.Create(r.Context(), &product); err != nil {
+			h.auditor.LogAction(r.Context(), admin.AuditEntry{
+				AdminID:      adminID,
+				Action:       admin.AuditProductCreate,
+				ResourceType: "product",
+				ResourceID:   product.ID,
+				Result:       "error",
+				Error:        err.Error(),
+				Details:      details,
+			})
 			JSONError(w, err)
 			return
 		}
+
+		h.auditor.LogAction(r.Context(), admin.AuditEntry{
+			AdminID:      adminID,
+			Action:       admin.AuditProductCreate,
+			ResourceType: "product",
+			ResourceID:   product.ID,
+			Result:       "success",
+			Details:      details,
+		})
 
 		_ = h.bus.Publish(r.Context(), event.New(catalog.EventProductCreated, "product.admin", catalog.ProductCreatedData{
 			ProductID: product.ID,
