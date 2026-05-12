@@ -115,6 +115,65 @@ func TestStatsAdminHandler_Overview_AuditIncludesScopeContext(t *testing.T) {
 	}
 }
 
+func TestStatsAdminHandler_Overview_AuditOmitsPartialScopeContext(t *testing.T) {
+	repo := &mockStatsRepo{
+		getDashboardStatsFn: func(_ context.Context, lowStockThreshold, recentLimit int) (admin.DashboardStats, error) {
+			return admin.DashboardStats{
+				OrdersToday:   1,
+				RevenueToday:  1000,
+				Currency:      "EUR",
+				TotalProducts: 4,
+				LowStockCount: 1,
+			}, nil
+		},
+	}
+	sink := &auditSink{}
+	h := shophttp.NewStatsAdminHandlerWithAuditor(repo, adminapp.NewAuditor(sink))
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("GET", "/api/v1/admin/stats/overview", nil)
+	req = testhelper.AdminRequest(req, "admin-1")
+	req.Header.Set("X-Admin-Store-ID", "store-eu")
+	req.Header.Set("X-Admin-Language", "en")
+	newStatsAdminRouterWithAudit(h).ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d; body: %s", rec.Code, http.StatusOK, rec.Body.String())
+	}
+
+	entry := sink.Last(t)
+	if entry.event != "admin.action" {
+		t.Fatalf("event = %q, want %q", entry.event, "admin.action")
+	}
+	if got := entry.context["action"]; got != adminapp.AuditStatsRead {
+		t.Errorf("action = %v, want %q", got, adminapp.AuditStatsRead)
+	}
+	if got := entry.context["resource_type"]; got != "stats_overview" {
+		t.Errorf("resource_type = %v, want %q", got, "stats_overview")
+	}
+	if got := entry.context["detail_low_stock_threshold"]; got != 10 {
+		t.Errorf("detail_low_stock_threshold = %v, want %d", got, 10)
+	}
+	if got := entry.context["detail_recent_limit"]; got != 10 {
+		t.Errorf("detail_recent_limit = %v, want %d", got, 10)
+	}
+	if got := entry.context["admin_id"]; got != "admin-1" {
+		t.Errorf("admin_id = %v, want %q", got, "admin-1")
+	}
+	if got := entry.context["result"]; got != "success" {
+		t.Errorf("result = %v, want %q", got, "success")
+	}
+	if _, ok := entry.context["detail_store_id"]; ok {
+		t.Errorf("detail_store_id present = %v, want absent", entry.context["detail_store_id"])
+	}
+	if _, ok := entry.context["detail_language"]; ok {
+		t.Errorf("detail_language present = %v, want absent", entry.context["detail_language"])
+	}
+	if _, ok := entry.context["detail_currency"]; ok {
+		t.Errorf("detail_currency present = %v, want absent", entry.context["detail_currency"])
+	}
+}
+
 func TestStatsAdminHandler_Overview_AuditFailureIncludesError(t *testing.T) {
 	repo := &mockStatsRepo{
 		getDashboardStatsFn: func(_ context.Context, lowStockThreshold, recentLimit int) (admin.DashboardStats, error) {
