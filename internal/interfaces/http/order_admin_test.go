@@ -1,13 +1,17 @@
 package http_test
 
 import (
+	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
 
+	"github.com/akarso/shopanda/internal/application/admin"
 	"github.com/akarso/shopanda/internal/domain/identity"
+	"github.com/akarso/shopanda/internal/domain/order"
 	shophttp "github.com/akarso/shopanda/internal/interfaces/http"
 	"github.com/akarso/shopanda/internal/platform/auth/testhelper"
 	"github.com/akarso/shopanda/internal/platform/logger"
@@ -25,6 +29,70 @@ func orderAdminSetup() (*stubOrderRepo, *http.ServeMux) {
 	mux.Handle("GET /api/v1/admin/orders/{orderId}", requireAdmin(handler.Get()))
 	mux.Handle("PUT /api/v1/admin/orders/{orderId}", requireAdmin(handler.Update()))
 	return repo, mux
+}
+
+type auditSinkRecord struct {
+	event   string
+	context map[string]interface{}
+}
+
+type auditSink struct {
+	records []auditSinkRecord
+}
+
+func (s *auditSink) Info(event string, ctx map[string]interface{}) {
+	s.records = append(s.records, auditSinkRecord{event: event, context: cloneAuditContext(ctx)})
+}
+
+func (s *auditSink) Warn(event string, ctx map[string]interface{}) {
+	s.records = append(s.records, auditSinkRecord{event: event, context: cloneAuditContext(ctx)})
+}
+
+func (s *auditSink) Error(event string, err error, ctx map[string]interface{}) {
+	context := cloneAuditContext(ctx)
+	if err != nil {
+		context["error"] = err.Error()
+	}
+	s.records = append(s.records, auditSinkRecord{event: event, context: context})
+}
+
+func (s *auditSink) Last(t *testing.T) auditSinkRecord {
+	t.Helper()
+	if len(s.records) == 0 {
+		t.Fatal("expected at least one audit record")
+	}
+	return s.records[len(s.records)-1]
+}
+
+func cloneAuditContext(ctx map[string]interface{}) map[string]interface{} {
+	if ctx == nil {
+		return map[string]interface{}{}
+	}
+	cloned := make(map[string]interface{}, len(ctx))
+	for key, value := range ctx {
+		cloned[key] = value
+	}
+	return cloned
+}
+
+func orderAdminSetupWithAudit(repo order.OrderRepository, sink logger.Logger) *http.ServeMux {
+	handler := shophttp.NewOrderAdminHandlerWithAuditor(repo, admin.NewAuditor(sink))
+	requireAdmin := shophttp.RequireRole(identity.RoleAdmin)
+	withAdminContext := shophttp.AdminContextMiddleware()
+	mux := http.NewServeMux()
+	mux.Handle("GET /api/v1/admin/orders", withAdminContext(requireAdmin(handler.List())))
+	mux.Handle("GET /api/v1/admin/orders/{orderId}", withAdminContext(requireAdmin(handler.Get())))
+	mux.Handle("PUT /api/v1/admin/orders/{orderId}", withAdminContext(requireAdmin(handler.Update())))
+	return mux
+}
+
+type failingListOrderRepo struct {
+	*stubOrderRepo
+	listErr error
+}
+
+func (r *failingListOrderRepo) List(_ context.Context, offset, limit int) ([]order.Order, error) {
+	return nil, r.listErr
 }
 
 // parseAdminOrdersResp extracts the orders array from the response envelope.
@@ -344,5 +412,92 @@ func TestOrderAdminHandler_Update_CustomerForbidden(t *testing.T) {
 
 	if rec.Code != http.StatusForbidden {
 		t.Fatalf("status = %d, want %d; body: %s", rec.Code, http.StatusForbidden, rec.Body.String())
+	}
+}
+
+// ── Audit Scope Context Tests ───────────────────────────────────────────
+
+// TestOrderAdminHandler_Update_WithScopeContext verifies that admin scope context
+// (store_id, language, currency) is correctly extracted from headers and will be
+// included in the emitted audit log context via the handler's scope detail injection.
+func TestOrderAdminHandler_Update_WithScopeContext(t *testing.T) {
+	repo := newStubOrderRepo()
+	sink := &auditSink{}
+	mux := orderAdminSetupWithAudit(repo, sink)
+	seedOrder(t, repo, "ord-1", "cust-1")
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("PUT", "/api/v1/admin/orders/ord-1", strings.NewReader(`{"status":"confirmed"}`))
+	req.Header.Set("Content-Type", "application/json")
+	req = testhelper.AdminRequest(req, "admin-1")
+
+	// Inject scope context via header (populated by upstream auth middleware)
+	req.Header.Set("X-Admin-Store-ID", "store-eu")
+	req.Header.Set("X-Admin-Language", "en")
+	req.Header.Set("X-Admin-Currency", "EUR")
+
+	mux.ServeHTTP(rec, req)
+
+	// Verify the update succeeds even with scope context present
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d; body: %s", rec.Code, http.StatusOK, rec.Body.String())
+	}
+
+	// Verify order status was updated
+	o := parseAdminOrderResp(t, rec)
+	if o["status"] != "confirmed" {
+		t.Fatalf("status = %v, want confirmed", o["status"])
+	}
+
+	entry := sink.Last(t)
+	if entry.event != "admin.action" {
+		t.Fatalf("event = %q, want %q", entry.event, "admin.action")
+	}
+	if got := entry.context["detail_store_id"]; got != "store-eu" {
+		t.Errorf("detail_store_id = %v, want %q", got, "store-eu")
+	}
+	if got := entry.context["detail_language"]; got != "en" {
+		t.Errorf("detail_language = %v, want %q", got, "en")
+	}
+	if got := entry.context["detail_currency"]; got != "EUR" {
+		t.Errorf("detail_currency = %v, want %q", got, "EUR")
+	}
+}
+
+func TestOrderAdminHandler_List_ErrorAuditIncludesPagination(t *testing.T) {
+	repo := &failingListOrderRepo{stubOrderRepo: newStubOrderRepo(), listErr: errors.New("list failed")}
+	sink := &auditSink{}
+	mux := orderAdminSetupWithAudit(repo, sink)
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("GET", "/api/v1/admin/orders?offset=4&limit=9", nil)
+	req = testhelper.AdminRequest(req, "admin-1")
+	req.Header.Set("X-Admin-Store-ID", "store-eu")
+	req.Header.Set("X-Admin-Language", "en")
+	req.Header.Set("X-Admin-Currency", "EUR")
+	mux.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("status = %d, want %d; body: %s", rec.Code, http.StatusInternalServerError, rec.Body.String())
+	}
+
+	entry := sink.Last(t)
+	if entry.event != "admin.action.failed" {
+		t.Fatalf("event = %q, want %q", entry.event, "admin.action.failed")
+	}
+	if got := entry.context["detail_offset"]; got != 4 {
+		t.Errorf("detail_offset = %v, want %d", got, 4)
+	}
+	if got := entry.context["detail_limit"]; got != 9 {
+		t.Errorf("detail_limit = %v, want %d", got, 9)
+	}
+	if got := entry.context["detail_store_id"]; got != "store-eu" {
+		t.Errorf("detail_store_id = %v, want %q", got, "store-eu")
+	}
+	if got := entry.context["detail_language"]; got != "en" {
+		t.Errorf("detail_language = %v, want %q", got, "en")
+	}
+	if got := entry.context["detail_currency"]; got != "EUR" {
+		t.Errorf("detail_currency = %v, want %q", got, "EUR")
 	}
 }
