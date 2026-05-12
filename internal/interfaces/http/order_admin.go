@@ -63,15 +63,15 @@ func adminScopeDetailsFromRequest(r *http.Request) map[string]interface{} {
 	if err != nil || ac == nil {
 		return details
 	}
-	if s := strings.TrimSpace(ac.StoreID); s != "" {
-		details["store_id"] = s
+	storeID := strings.TrimSpace(ac.StoreID)
+	language := strings.TrimSpace(ac.Language)
+	currency := strings.TrimSpace(ac.Currency)
+	if storeID == "" || language == "" || currency == "" {
+		return details
 	}
-	if l := strings.TrimSpace(ac.Language); l != "" {
-		details["language"] = l
-	}
-	if c := strings.TrimSpace(ac.Currency); c != "" {
-		details["currency"] = c
-	}
+	details["store_id"] = storeID
+	details["language"] = language
+	details["currency"] = currency
 	return details
 }
 
@@ -96,6 +96,8 @@ func (h *OrderAdminHandler) List() http.HandlerFunc {
 		orders, err := h.orders.List(r.Context(), offset, limit)
 		if err != nil {
 			scopeDetails := adminScopeDetailsFromRequest(r)
+			scopeDetails["offset"] = offset
+			scopeDetails["limit"] = limit
 			h.auditor.LogAction(r.Context(), admin.AuditEntry{
 				AdminID:      adminID,
 				Action:       admin.AuditOrderList,
