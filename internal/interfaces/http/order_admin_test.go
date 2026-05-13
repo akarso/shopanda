@@ -501,3 +501,200 @@ func TestOrderAdminHandler_List_ErrorAuditIncludesPagination(t *testing.T) {
 		t.Errorf("detail_currency = %v, want %q", got, "EUR")
 	}
 }
+
+func TestOrderAdminHandler_List_AuditOmitsPartialScopeContext(t *testing.T) {
+	repo := newStubOrderRepo()
+	seedOrder(t, repo, "ord-1", "cust-1")
+	sink := &auditSink{}
+	mux := orderAdminSetupWithAudit(repo, sink)
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("GET", "/api/v1/admin/orders?offset=0&limit=10", nil)
+	req = testhelper.AdminRequest(req, "admin-1")
+	req.Header.Set("X-Admin-Store-ID", "store-eu")
+	req.Header.Set("X-Admin-Language", "en")
+	mux.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d; body: %s", rec.Code, http.StatusOK, rec.Body.String())
+	}
+
+	entry := sink.Last(t)
+	if entry.event != "admin.action" {
+		t.Fatalf("event = %q, want %q", entry.event, "admin.action")
+	}
+	if got := entry.context["detail_offset"]; got != 0 {
+		t.Errorf("detail_offset = %v, want %d", got, 0)
+	}
+	if got := entry.context["detail_limit"]; got != 10 {
+		t.Errorf("detail_limit = %v, want %d", got, 10)
+	}
+	if _, ok := entry.context["detail_store_id"]; ok {
+		t.Errorf("detail_store_id present = %v, want absent", entry.context["detail_store_id"])
+	}
+	if _, ok := entry.context["detail_language"]; ok {
+		t.Errorf("detail_language present = %v, want absent", entry.context["detail_language"])
+	}
+	if _, ok := entry.context["detail_currency"]; ok {
+		t.Errorf("detail_currency present = %v, want absent", entry.context["detail_currency"])
+	}
+}
+
+func TestOrderAdminHandler_List_AuditFailureOmitsPartialScopeContext(t *testing.T) {
+	repo := &failingListOrderRepo{stubOrderRepo: newStubOrderRepo(), listErr: errors.New("list failed")}
+	sink := &auditSink{}
+	mux := orderAdminSetupWithAudit(repo, sink)
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("GET", "/api/v1/admin/orders?offset=0&limit=10", nil)
+	req = testhelper.AdminRequest(req, "admin-1")
+	req.Header.Set("X-Admin-Store-ID", "store-eu")
+	req.Header.Set("X-Admin-Language", "en")
+	mux.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("status = %d, want %d; body: %s", rec.Code, http.StatusInternalServerError, rec.Body.String())
+	}
+
+	entry := sink.Last(t)
+	if entry.event != "admin.action.failed" {
+		t.Fatalf("event = %q, want %q", entry.event, "admin.action.failed")
+	}
+	if got := entry.context["detail_offset"]; got != 0 {
+		t.Errorf("detail_offset = %v, want %d", got, 0)
+	}
+	if got := entry.context["detail_limit"]; got != 10 {
+		t.Errorf("detail_limit = %v, want %d", got, 10)
+	}
+	if _, ok := entry.context["detail_store_id"]; ok {
+		t.Errorf("detail_store_id present = %v, want absent", entry.context["detail_store_id"])
+	}
+	if _, ok := entry.context["detail_language"]; ok {
+		t.Errorf("detail_language present = %v, want absent", entry.context["detail_language"])
+	}
+	if _, ok := entry.context["detail_currency"]; ok {
+		t.Errorf("detail_currency present = %v, want absent", entry.context["detail_currency"])
+	}
+}
+
+func TestOrderAdminHandler_Get_AuditOmitsPartialScopeContext(t *testing.T) {
+	repo := newStubOrderRepo()
+	seedOrder(t, repo, "ord-1", "cust-1")
+	sink := &auditSink{}
+	mux := orderAdminSetupWithAudit(repo, sink)
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("GET", "/api/v1/admin/orders/ord-1", nil)
+	req = testhelper.AdminRequest(req, "admin-1")
+	req.Header.Set("X-Admin-Store-ID", "store-eu")
+	req.Header.Set("X-Admin-Language", "en")
+	mux.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d; body: %s", rec.Code, http.StatusOK, rec.Body.String())
+	}
+
+	entry := sink.Last(t)
+	if entry.event != "admin.action" {
+		t.Fatalf("event = %q, want %q", entry.event, "admin.action")
+	}
+	if _, ok := entry.context["detail_store_id"]; ok {
+		t.Errorf("detail_store_id present = %v, want absent", entry.context["detail_store_id"])
+	}
+	if _, ok := entry.context["detail_language"]; ok {
+		t.Errorf("detail_language present = %v, want absent", entry.context["detail_language"])
+	}
+	if _, ok := entry.context["detail_currency"]; ok {
+		t.Errorf("detail_currency present = %v, want absent", entry.context["detail_currency"])
+	}
+}
+
+func TestOrderAdminHandler_Get_AuditFailureOmitsPartialScopeContext(t *testing.T) {
+	repo := newStubOrderRepo()
+	sink := &auditSink{}
+	mux := orderAdminSetupWithAudit(repo, sink)
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("GET", "/api/v1/admin/orders/ord-not-found", nil)
+	req = testhelper.AdminRequest(req, "admin-1")
+	req.Header.Set("X-Admin-Store-ID", "store-eu")
+	req.Header.Set("X-Admin-Language", "en")
+	mux.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("status = %d, want %d; body: %s", rec.Code, http.StatusNotFound, rec.Body.String())
+	}
+
+	// No audit record on 404 to prevent enumeration
+	if len(sink.records) != 0 {
+		t.Fatalf("audit records = %d, want 0 on 404", len(sink.records))
+	}
+}
+
+func TestOrderAdminHandler_Update_AuditOmitsPartialScopeContext(t *testing.T) {
+	repo := newStubOrderRepo()
+	sink := &auditSink{}
+	mux := orderAdminSetupWithAudit(repo, sink)
+	seedOrder(t, repo, "ord-1", "cust-1")
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("PUT", "/api/v1/admin/orders/ord-1", strings.NewReader(`{"status":"confirmed"}`))
+	req.Header.Set("Content-Type", "application/json")
+	req = testhelper.AdminRequest(req, "admin-1")
+	req.Header.Set("X-Admin-Store-ID", "store-eu")
+	req.Header.Set("X-Admin-Language", "en")
+
+	mux.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d; body: %s", rec.Code, http.StatusOK, rec.Body.String())
+	}
+
+	entry := sink.Last(t)
+	if entry.event != "admin.action" {
+		t.Fatalf("event = %q, want %q", entry.event, "admin.action")
+	}
+	if _, ok := entry.context["detail_store_id"]; ok {
+		t.Errorf("detail_store_id present = %v, want absent", entry.context["detail_store_id"])
+	}
+	if _, ok := entry.context["detail_language"]; ok {
+		t.Errorf("detail_language present = %v, want absent", entry.context["detail_language"])
+	}
+	if _, ok := entry.context["detail_currency"]; ok {
+		t.Errorf("detail_currency present = %v, want absent", entry.context["detail_currency"])
+	}
+}
+
+func TestOrderAdminHandler_Update_AuditFailureOmitsPartialScopeContext(t *testing.T) {
+	repo := newStubOrderRepo()
+	sink := &auditSink{}
+	mux := orderAdminSetupWithAudit(repo, sink)
+	seedOrder(t, repo, "ord-1", "cust-1")
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("PUT", "/api/v1/admin/orders/ord-1", strings.NewReader(`{"status":"invalid"}`))
+	req.Header.Set("Content-Type", "application/json")
+	req = testhelper.AdminRequest(req, "admin-1")
+	req.Header.Set("X-Admin-Store-ID", "store-eu")
+	req.Header.Set("X-Admin-Language", "en")
+
+	mux.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("status = %d, want %d; body: %s", rec.Code, http.StatusUnprocessableEntity, rec.Body.String())
+	}
+
+	entry := sink.Last(t)
+	if entry.event != "admin.action.failed" {
+		t.Fatalf("event = %q, want %q", entry.event, "admin.action.failed")
+	}
+	if _, ok := entry.context["detail_store_id"]; ok {
+		t.Errorf("detail_store_id present = %v, want absent", entry.context["detail_store_id"])
+	}
+	if _, ok := entry.context["detail_language"]; ok {
+		t.Errorf("detail_language present = %v, want absent", entry.context["detail_language"])
+	}
+	if _, ok := entry.context["detail_currency"]; ok {
+		t.Errorf("detail_currency present = %v, want absent", entry.context["detail_currency"])
+	}
+}
