@@ -532,6 +532,106 @@ func TestProductAdminHandler_Create_AuditFailureIncludesError(t *testing.T) {
 	}
 }
 
+func TestProductAdminHandler_Create_AuditOmitsPartialScopeContext(t *testing.T) {
+	repo := &mockAdminProductRepo{
+		createFn: func(_ context.Context, p *catalog.Product) error {
+			return nil
+		},
+	}
+	sink := &auditSink{}
+	h := shophttp.NewProductAdminHandlerWithAuditor(repo, testAdminBus(), admin.NewAuditor(sink), logger.NewWithWriter(io.Discard, "info"))
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("POST", "/api/v1/admin/products", bytes.NewReader([]byte(`{"name":"Widget","slug":"widget"}`)))
+	req.Header.Set("Content-Type", "application/json")
+	req = testhelper.AdminRequest(req, "admin-1")
+	req.Header.Set("X-Admin-Store-ID", "store-eu")
+	req.Header.Set("X-Admin-Language", "en")
+	newAdminCreateRouterWithAudit(h).ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("status = %d, want %d; body: %s", rec.Code, http.StatusCreated, rec.Body.String())
+	}
+
+	entry := sink.Last(t)
+	if entry.event != "admin.action" {
+		t.Fatalf("event = %q, want %q", entry.event, "admin.action")
+	}
+	if got := entry.context["action"]; got != admin.AuditProductCreate {
+		t.Errorf("action = %v, want %q", got, admin.AuditProductCreate)
+	}
+	if got := entry.context["resource_type"]; got != "product" {
+		t.Errorf("resource_type = %v, want %q", got, "product")
+	}
+	if got := entry.context["resource_id"]; got == nil || got == "" {
+		t.Errorf("resource_id = %v, want non-empty", got)
+	}
+	if got := entry.context["admin_id"]; got != "admin-1" {
+		t.Errorf("admin_id = %v, want %q", got, "admin-1")
+	}
+	if got := entry.context["result"]; got != "success" {
+		t.Errorf("result = %v, want %q", got, "success")
+	}
+	if _, ok := entry.context["detail_store_id"]; ok {
+		t.Errorf("detail_store_id present = %v, want absent", entry.context["detail_store_id"])
+	}
+	if _, ok := entry.context["detail_language"]; ok {
+		t.Errorf("detail_language present = %v, want absent", entry.context["detail_language"])
+	}
+	if _, ok := entry.context["detail_currency"]; ok {
+		t.Errorf("detail_currency present = %v, want absent", entry.context["detail_currency"])
+	}
+	if _, ok := entry.context["error"]; ok {
+		t.Errorf("error present = %v, want absent", entry.context["error"])
+	}
+}
+
+func TestProductAdminHandler_Create_AuditFailureOmitsPartialScopeContext(t *testing.T) {
+	repo := &mockAdminProductRepo{}
+	sink := &auditSink{}
+	h := shophttp.NewProductAdminHandlerWithAuditor(repo, testAdminBus(), admin.NewAuditor(sink), logger.NewWithWriter(io.Discard, "info"))
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("POST", "/api/v1/admin/products", bytes.NewReader([]byte("not json")))
+	req = testhelper.AdminRequest(req, "admin-1")
+	req.Header.Set("X-Admin-Store-ID", "store-eu")
+	req.Header.Set("X-Admin-Language", "en")
+	newAdminCreateRouterWithAudit(h).ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("status = %d, want %d; body: %s", rec.Code, http.StatusUnprocessableEntity, rec.Body.String())
+	}
+
+	entry := sink.Last(t)
+	if entry.event != "admin.action.failed" {
+		t.Fatalf("event = %q, want %q", entry.event, "admin.action.failed")
+	}
+	if got := entry.context["action"]; got != admin.AuditProductCreate {
+		t.Errorf("action = %v, want %q", got, admin.AuditProductCreate)
+	}
+	if got := entry.context["resource_type"]; got != "product" {
+		t.Errorf("resource_type = %v, want %q", got, "product")
+	}
+	if got := entry.context["result"]; got != "error" {
+		t.Errorf("result = %v, want %q", got, "error")
+	}
+	if got := entry.context["admin_id"]; got != "admin-1" {
+		t.Errorf("admin_id = %v, want %q", got, "admin-1")
+	}
+	if got := entry.context["error"]; got == nil || got == "" {
+		t.Errorf("error = %v, want non-empty", got)
+	}
+	if _, ok := entry.context["detail_store_id"]; ok {
+		t.Errorf("detail_store_id present = %v, want absent", entry.context["detail_store_id"])
+	}
+	if _, ok := entry.context["detail_language"]; ok {
+		t.Errorf("detail_language present = %v, want absent", entry.context["detail_language"])
+	}
+	if _, ok := entry.context["detail_currency"]; ok {
+		t.Errorf("detail_currency present = %v, want absent", entry.context["detail_currency"])
+	}
+}
+
 // --- Update tests ---
 
 func TestProductAdminHandler_Update_OK(t *testing.T) {
@@ -833,6 +933,117 @@ func TestProductAdminHandler_Update_AuditFailureIncludesError(t *testing.T) {
 	}
 	if got := entry.context["detail_currency"]; got != "EUR" {
 		t.Errorf("detail_currency = %v, want %q", got, "EUR")
+	}
+}
+
+func TestProductAdminHandler_Update_AuditOmitsPartialScopeContext(t *testing.T) {
+	repo := &mockAdminProductRepo{
+		findByIDFn: func(_ context.Context, id string) (*catalog.Product, error) {
+			return &catalog.Product{ID: id, Name: "Widget", Slug: "widget", Status: catalog.StatusDraft}, nil
+		},
+		updateFn: func(_ context.Context, p *catalog.Product) error {
+			return nil
+		},
+	}
+	sink := &auditSink{}
+	h := shophttp.NewProductAdminHandlerWithAuditor(repo, testAdminBus(), admin.NewAuditor(sink), logger.NewWithWriter(io.Discard, "info"))
+
+	body := jsonBody(t, map[string]interface{}{"status": "active"})
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("PUT", "/api/v1/admin/products/p1", body)
+	req = testhelper.AdminRequest(req, "admin-1")
+	req.Header.Set("X-Admin-Store-ID", "store-eu")
+	req.Header.Set("X-Admin-Language", "en")
+	newAdminRouterWithAudit(h).ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d; body: %s", rec.Code, http.StatusOK, rec.Body.String())
+	}
+
+	entry := sink.Last(t)
+	if entry.event != "admin.action" {
+		t.Fatalf("event = %q, want %q", entry.event, "admin.action")
+	}
+	if got := entry.context["action"]; got != admin.AuditProductUpdate {
+		t.Errorf("action = %v, want %q", got, admin.AuditProductUpdate)
+	}
+	if got := entry.context["resource_type"]; got != "product" {
+		t.Errorf("resource_type = %v, want %q", got, "product")
+	}
+	if got := entry.context["resource_id"]; got != "p1" {
+		t.Errorf("resource_id = %v, want %q", got, "p1")
+	}
+	if got := entry.context["admin_id"]; got != "admin-1" {
+		t.Errorf("admin_id = %v, want %q", got, "admin-1")
+	}
+	if got := entry.context["result"]; got != "success" {
+		t.Errorf("result = %v, want %q", got, "success")
+	}
+	if _, ok := entry.context["detail_store_id"]; ok {
+		t.Errorf("detail_store_id present = %v, want absent", entry.context["detail_store_id"])
+	}
+	if _, ok := entry.context["detail_language"]; ok {
+		t.Errorf("detail_language present = %v, want absent", entry.context["detail_language"])
+	}
+	if _, ok := entry.context["detail_currency"]; ok {
+		t.Errorf("detail_currency present = %v, want absent", entry.context["detail_currency"])
+	}
+	if _, ok := entry.context["error"]; ok {
+		t.Errorf("error present = %v, want absent", entry.context["error"])
+	}
+}
+
+func TestProductAdminHandler_Update_AuditFailureOmitsPartialScopeContext(t *testing.T) {
+	repo := &mockAdminProductRepo{
+		findByIDFn: func(_ context.Context, id string) (*catalog.Product, error) {
+			return &catalog.Product{ID: id, Name: "Widget", Slug: "widget", Status: catalog.StatusDraft}, nil
+		},
+	}
+	sink := &auditSink{}
+	h := shophttp.NewProductAdminHandlerWithAuditor(repo, testAdminBus(), admin.NewAuditor(sink), logger.NewWithWriter(io.Discard, "info"))
+
+	body := jsonBody(t, map[string]interface{}{"status": "invalid"})
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("PUT", "/api/v1/admin/products/p1", body)
+	req = testhelper.AdminRequest(req, "admin-1")
+	req.Header.Set("X-Admin-Store-ID", "store-eu")
+	req.Header.Set("X-Admin-Language", "en")
+	newAdminRouterWithAudit(h).ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("status = %d, want %d; body: %s", rec.Code, http.StatusUnprocessableEntity, rec.Body.String())
+	}
+
+	entry := sink.Last(t)
+	if entry.event != "admin.action.failed" {
+		t.Fatalf("event = %q, want %q", entry.event, "admin.action.failed")
+	}
+	if got := entry.context["action"]; got != admin.AuditProductUpdate {
+		t.Errorf("action = %v, want %q", got, admin.AuditProductUpdate)
+	}
+	if got := entry.context["resource_type"]; got != "product" {
+		t.Errorf("resource_type = %v, want %q", got, "product")
+	}
+	if got := entry.context["resource_id"]; got != "p1" {
+		t.Errorf("resource_id = %v, want %q", got, "p1")
+	}
+	if got := entry.context["admin_id"]; got != "admin-1" {
+		t.Errorf("admin_id = %v, want %q", got, "admin-1")
+	}
+	if got := entry.context["result"]; got != "error" {
+		t.Errorf("result = %v, want %q", got, "error")
+	}
+	if got := entry.context["error"]; got == nil || got == "" {
+		t.Errorf("error = %v, want non-empty", got)
+	}
+	if _, ok := entry.context["detail_store_id"]; ok {
+		t.Errorf("detail_store_id present = %v, want absent", entry.context["detail_store_id"])
+	}
+	if _, ok := entry.context["detail_language"]; ok {
+		t.Errorf("detail_language present = %v, want absent", entry.context["detail_language"])
+	}
+	if _, ok := entry.context["detail_currency"]; ok {
+		t.Errorf("detail_currency present = %v, want absent", entry.context["detail_currency"])
 	}
 }
 
