@@ -51,14 +51,23 @@ type customerAdminResponse struct {
 // List handles GET /api/v1/admin/customers.
 func (h *CustomerAdminHandler) List() http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		adminID := adminIDFromRequest(r)
+		details := fullAdminScopeDetailsFromRequest(r)
+
 		offset, limit, err := parsePagination(r)
 		if err != nil {
+			h.auditor.LogAction(r.Context(), admin.AuditEntry{
+				AdminID:      adminID,
+				Action:       admin.AuditCustomerRead,
+				ResourceType: "customers",
+				Result:       "error",
+				Error:        err.Error(),
+				Details:      details,
+			})
 			JSONError(w, err)
 			return
 		}
 
-		adminID := adminIDFromRequest(r)
-		details := fullAdminScopeDetailsFromRequest(r)
 		details["offset"] = offset
 		details["limit"] = limit
 
