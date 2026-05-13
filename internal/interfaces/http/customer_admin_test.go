@@ -481,6 +481,66 @@ func TestCustomerAdminHandler_Get_AuditIncludesScopeContext(t *testing.T) {
 	}
 }
 
+func TestCustomerAdminHandler_Get_AuditOmitsPartialScopeContext(t *testing.T) {
+	repo := &mockAdminCustomerRepo{
+		findByIDFn: func(_ context.Context, id string) (*customer.Customer, error) {
+			return &customer.Customer{
+				ID:        "cust-1",
+				Email:     "cust@example.com",
+				FirstName: "Ada",
+				LastName:  "Lovelace",
+				Role:      customer.RoleCustomer,
+				Status:    customer.StatusActive,
+			}, nil
+		},
+	}
+	sink := &auditSink{}
+	h := shophttp.NewCustomerAdminHandlerWithAuditor(repo, adminapp.NewAuditor(sink))
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("GET", "/api/v1/admin/customers/cust-1", nil)
+	req = testhelper.AdminRequest(req, "admin-1")
+	req.Header.Set("X-Admin-Store-ID", "store-eu")
+	req.Header.Set("X-Admin-Language", "en")
+	newCustomerAdminRouterWithAudit(h).ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d; body: %s", rec.Code, http.StatusOK, rec.Body.String())
+	}
+
+	entry := sink.Last(t)
+	if entry.event != "admin.action" {
+		t.Fatalf("event = %q, want %q", entry.event, "admin.action")
+	}
+	if got := entry.context["action"]; got != adminapp.AuditCustomerRead {
+		t.Errorf("action = %v, want %q", got, adminapp.AuditCustomerRead)
+	}
+	if got := entry.context["resource_type"]; got != "customer" {
+		t.Errorf("resource_type = %v, want %q", got, "customer")
+	}
+	if got := entry.context["resource_id"]; got != "cust-1" {
+		t.Errorf("resource_id = %v, want %q", got, "cust-1")
+	}
+	if got := entry.context["admin_id"]; got != "admin-1" {
+		t.Errorf("admin_id = %v, want %q", got, "admin-1")
+	}
+	if got := entry.context["result"]; got != "success" {
+		t.Errorf("result = %v, want %q", got, "success")
+	}
+	if _, ok := entry.context["detail_store_id"]; ok {
+		t.Errorf("detail_store_id present = %v, want absent", entry.context["detail_store_id"])
+	}
+	if _, ok := entry.context["detail_language"]; ok {
+		t.Errorf("detail_language present = %v, want absent", entry.context["detail_language"])
+	}
+	if _, ok := entry.context["detail_currency"]; ok {
+		t.Errorf("detail_currency present = %v, want absent", entry.context["detail_currency"])
+	}
+	if _, ok := entry.context["error"]; ok {
+		t.Errorf("error present = %v, want absent", entry.context["error"])
+	}
+}
+
 func TestCustomerAdminHandler_Get_AuditFailureIncludesError(t *testing.T) {
 	repo := &mockAdminCustomerRepo{
 		findByIDFn: func(_ context.Context, id string) (*customer.Customer, error) {
@@ -529,6 +589,59 @@ func TestCustomerAdminHandler_Get_AuditFailureIncludesError(t *testing.T) {
 	}
 	if got := entry.context["detail_currency"]; got != "EUR" {
 		t.Errorf("detail_currency = %v, want %q", got, "EUR")
+	}
+}
+
+func TestCustomerAdminHandler_Get_AuditFailureOmitsPartialScopeContext(t *testing.T) {
+	repo := &mockAdminCustomerRepo{
+		findByIDFn: func(_ context.Context, id string) (*customer.Customer, error) {
+			return nil, errors.New("customer lookup failed")
+		},
+	}
+	sink := &auditSink{}
+	h := shophttp.NewCustomerAdminHandlerWithAuditor(repo, adminapp.NewAuditor(sink))
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("GET", "/api/v1/admin/customers/cust-1", nil)
+	req = testhelper.AdminRequest(req, "admin-1")
+	req.Header.Set("X-Admin-Store-ID", "store-eu")
+	req.Header.Set("X-Admin-Language", "en")
+	newCustomerAdminRouterWithAudit(h).ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("status = %d, want %d; body: %s", rec.Code, http.StatusInternalServerError, rec.Body.String())
+	}
+
+	entry := sink.Last(t)
+	if entry.event != "admin.action.failed" {
+		t.Fatalf("event = %q, want %q", entry.event, "admin.action.failed")
+	}
+	if got := entry.context["action"]; got != adminapp.AuditCustomerRead {
+		t.Errorf("action = %v, want %q", got, adminapp.AuditCustomerRead)
+	}
+	if got := entry.context["resource_type"]; got != "customer" {
+		t.Errorf("resource_type = %v, want %q", got, "customer")
+	}
+	if got := entry.context["resource_id"]; got != "cust-1" {
+		t.Errorf("resource_id = %v, want %q", got, "cust-1")
+	}
+	if got := entry.context["admin_id"]; got != "admin-1" {
+		t.Errorf("admin_id = %v, want %q", got, "admin-1")
+	}
+	if got := entry.context["result"]; got != "error" {
+		t.Errorf("result = %v, want %q", got, "error")
+	}
+	if got := entry.context["error"]; got != "customer lookup failed" {
+		t.Errorf("error = %v, want %q", got, "customer lookup failed")
+	}
+	if _, ok := entry.context["detail_store_id"]; ok {
+		t.Errorf("detail_store_id present = %v, want absent", entry.context["detail_store_id"])
+	}
+	if _, ok := entry.context["detail_language"]; ok {
+		t.Errorf("detail_language present = %v, want absent", entry.context["detail_language"])
+	}
+	if _, ok := entry.context["detail_currency"]; ok {
+		t.Errorf("detail_currency present = %v, want absent", entry.context["detail_currency"])
 	}
 }
 
