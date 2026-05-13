@@ -793,6 +793,7 @@ func runServe(cfg *config.Config, log logger.Logger) error {
 	router.Handle("PUT /api/v1/admin/products/{id}/variants/{variantId}", requireProductsWrite(variantHandler.Update()))
 	router.Handle("GET /api/v1/admin/stats/overview", requireOrdersRead(statsAdmin.Overview()))
 	router.Handle("GET /api/v1/admin/customers", requireCustomersRead(customerAdmin.List()))
+	router.Handle("GET /api/v1/admin/customers/{customerId}", requireCustomersRead(customerAdmin.Get()))
 	router.Handle("GET /api/v1/admin/orders", requireOrdersRead(orderAdmin.List()))
 	router.Handle("GET /api/v1/admin/orders/{orderId}", requireOrdersRead(orderAdmin.Get()))
 	router.Handle("PUT /api/v1/admin/orders/{orderId}", requireOrdersWrite(orderAdmin.Update()))

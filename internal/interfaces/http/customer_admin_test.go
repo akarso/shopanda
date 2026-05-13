@@ -18,10 +18,14 @@ import (
 )
 
 type mockAdminCustomerRepo struct {
+	findByIDFn      func(ctx context.Context, id string) (*customer.Customer, error)
 	listCustomersFn func(ctx context.Context, offset, limit int) ([]customer.Customer, error)
 }
 
-func (m *mockAdminCustomerRepo) FindByID(_ context.Context, _ string) (*customer.Customer, error) {
+func (m *mockAdminCustomerRepo) FindByID(ctx context.Context, id string) (*customer.Customer, error) {
+	if m.findByIDFn != nil {
+		return m.findByIDFn(ctx, id)
+	}
 	return nil, nil
 }
 
@@ -61,6 +65,7 @@ func newCustomerAdminRouterWithAudit(h *shophttp.CustomerAdminHandler) *http.Ser
 	withAdminContext := shophttp.AdminContextMiddleware()
 	mux := http.NewServeMux()
 	mux.Handle("GET /api/v1/admin/customers", withAdminContext(requireCustomersRead(h.List())))
+	mux.Handle("GET /api/v1/admin/customers/{customerId}", withAdminContext(requireCustomersRead(h.Get())))
 	return mux
 }
 
@@ -379,6 +384,192 @@ func TestCustomerAdminHandler_List_GuestUnauthorized(t *testing.T) {
 
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest("GET", "/api/v1/admin/customers", nil)
+	newCustomerAdminRouterWithAudit(h).ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("status = %d, want %d; body: %s", rec.Code, http.StatusUnauthorized, rec.Body.String())
+	}
+}
+
+func TestCustomerAdminHandler_Get_AuditIncludesScopeContext(t *testing.T) {
+	now := time.Date(2026, time.May, 12, 10, 0, 0, 0, time.UTC)
+	repo := &mockAdminCustomerRepo{
+		findByIDFn: func(_ context.Context, id string) (*customer.Customer, error) {
+			if id != "cust-1" {
+				t.Errorf("id = %q, want %q", id, "cust-1")
+			}
+			c := &customer.Customer{
+				ID:        "cust-1",
+				Email:     "cust@example.com",
+				FirstName: "Ada",
+				LastName:  "Lovelace",
+				Role:      customer.RoleCustomer,
+				Status:    customer.StatusActive,
+				CreatedAt: now,
+				UpdatedAt: now,
+			}
+			return c, nil
+		},
+	}
+	sink := &auditSink{}
+	h := shophttp.NewCustomerAdminHandlerWithAuditor(repo, adminapp.NewAuditor(sink))
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("GET", "/api/v1/admin/customers/cust-1", nil)
+	req = testhelper.AdminRequest(req, "admin-1")
+	req.Header.Set("X-Admin-Store-ID", "store-eu")
+	req.Header.Set("X-Admin-Language", "en")
+	req.Header.Set("X-Admin-Currency", "EUR")
+	newCustomerAdminRouterWithAudit(h).ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d; body: %s", rec.Code, http.StatusOK, rec.Body.String())
+	}
+
+	var body map[string]interface{}
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	data, ok := body["data"].(map[string]interface{})
+	if !ok {
+		t.Fatalf("data = %#v, want object", body["data"])
+	}
+	item, ok := data["customer"].(map[string]interface{})
+	if !ok {
+		t.Fatalf("customer = %#v, want object", data["customer"])
+	}
+	if got := item["id"]; got != "cust-1" {
+		t.Errorf("id = %v, want %q", got, "cust-1")
+	}
+	if got := item["first_name"]; got != "Ada" {
+		t.Errorf("first_name = %v, want %q", got, "Ada")
+	}
+	if got := item["last_name"]; got != "Lovelace" {
+		t.Errorf("last_name = %v, want %q", got, "Lovelace")
+	}
+	if _, ok := item["password_hash"]; ok {
+		t.Errorf("password_hash present = %v, want absent", item["password_hash"])
+	}
+	if _, ok := item["token_generation"]; ok {
+		t.Errorf("token_generation present = %v, want absent", item["token_generation"])
+	}
+
+	entry := sink.Last(t)
+	if entry.event != "admin.action" {
+		t.Fatalf("event = %q, want %q", entry.event, "admin.action")
+	}
+	if got := entry.context["action"]; got != adminapp.AuditCustomerRead {
+		t.Errorf("action = %v, want %q", got, adminapp.AuditCustomerRead)
+	}
+	if got := entry.context["resource_type"]; got != "customer" {
+		t.Errorf("resource_type = %v, want %q", got, "customer")
+	}
+	if got := entry.context["resource_id"]; got != "cust-1" {
+		t.Errorf("resource_id = %v, want %q", got, "cust-1")
+	}
+	if got := entry.context["detail_store_id"]; got != "store-eu" {
+		t.Errorf("detail_store_id = %v, want %q", got, "store-eu")
+	}
+	if got := entry.context["detail_language"]; got != "en" {
+		t.Errorf("detail_language = %v, want %q", got, "en")
+	}
+	if got := entry.context["detail_currency"]; got != "EUR" {
+		t.Errorf("detail_currency = %v, want %q", got, "EUR")
+	}
+	if got := entry.context["result"]; got != "success" {
+		t.Errorf("result = %v, want %q", got, "success")
+	}
+}
+
+func TestCustomerAdminHandler_Get_AuditFailureIncludesError(t *testing.T) {
+	repo := &mockAdminCustomerRepo{
+		findByIDFn: func(_ context.Context, id string) (*customer.Customer, error) {
+			return nil, errors.New("customer lookup failed")
+		},
+	}
+	sink := &auditSink{}
+	h := shophttp.NewCustomerAdminHandlerWithAuditor(repo, adminapp.NewAuditor(sink))
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("GET", "/api/v1/admin/customers/cust-1", nil)
+	req = testhelper.AdminRequest(req, "admin-1")
+	req.Header.Set("X-Admin-Store-ID", "store-eu")
+	req.Header.Set("X-Admin-Language", "en")
+	req.Header.Set("X-Admin-Currency", "EUR")
+	newCustomerAdminRouterWithAudit(h).ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("status = %d, want %d; body: %s", rec.Code, http.StatusInternalServerError, rec.Body.String())
+	}
+
+	entry := sink.Last(t)
+	if entry.event != "admin.action.failed" {
+		t.Fatalf("event = %q, want %q", entry.event, "admin.action.failed")
+	}
+	if got := entry.context["action"]; got != adminapp.AuditCustomerRead {
+		t.Errorf("action = %v, want %q", got, adminapp.AuditCustomerRead)
+	}
+	if got := entry.context["resource_type"]; got != "customer" {
+		t.Errorf("resource_type = %v, want %q", got, "customer")
+	}
+	if got := entry.context["resource_id"]; got != "cust-1" {
+		t.Errorf("resource_id = %v, want %q", got, "cust-1")
+	}
+	if got := entry.context["result"]; got != "error" {
+		t.Errorf("result = %v, want %q", got, "error")
+	}
+	if got := entry.context["error"]; got != "customer lookup failed" {
+		t.Errorf("error = %v, want %q", got, "customer lookup failed")
+	}
+	if got := entry.context["detail_store_id"]; got != "store-eu" {
+		t.Errorf("detail_store_id = %v, want %q", got, "store-eu")
+	}
+	if got := entry.context["detail_language"]; got != "en" {
+		t.Errorf("detail_language = %v, want %q", got, "en")
+	}
+	if got := entry.context["detail_currency"]; got != "EUR" {
+		t.Errorf("detail_currency = %v, want %q", got, "EUR")
+	}
+}
+
+func TestCustomerAdminHandler_Get_NotFound(t *testing.T) {
+	repo := &mockAdminCustomerRepo{}
+	sink := &auditSink{}
+	h := shophttp.NewCustomerAdminHandlerWithAuditor(repo, adminapp.NewAuditor(sink))
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("GET", "/api/v1/admin/customers/cust-404", nil)
+	req = testhelper.AdminRequest(req, "admin-1")
+	newCustomerAdminRouterWithAudit(h).ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("status = %d, want %d; body: %s", rec.Code, http.StatusNotFound, rec.Body.String())
+	}
+	if len(sink.records) != 0 {
+		t.Fatalf("audit records = %d, want 0", len(sink.records))
+	}
+}
+
+func TestCustomerAdminHandler_Get_CustomerForbidden(t *testing.T) {
+	repo := &mockAdminCustomerRepo{}
+	h := shophttp.NewCustomerAdminHandlerWithAuditor(repo, adminapp.NewAuditor(logger.NewWithWriter(nilWriter{}, "info")))
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("GET", "/api/v1/admin/customers/cust-1", nil)
+	req = testhelper.CustomerRequest(req, "cust-1")
+	newCustomerAdminRouterWithAudit(h).ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("status = %d, want %d; body: %s", rec.Code, http.StatusForbidden, rec.Body.String())
+	}
+}
+
+func TestCustomerAdminHandler_Get_GuestUnauthorized(t *testing.T) {
+	repo := &mockAdminCustomerRepo{}
+	h := shophttp.NewCustomerAdminHandlerWithAuditor(repo, adminapp.NewAuditor(logger.NewWithWriter(nilWriter{}, "info")))
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("GET", "/api/v1/admin/customers/cust-1", nil)
 	newCustomerAdminRouterWithAudit(h).ServeHTTP(rec, req)
 
 	if rec.Code != http.StatusUnauthorized {
