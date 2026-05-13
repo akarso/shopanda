@@ -22,6 +22,7 @@ const (
 	AuditProductUpdate  AuditAction = "product.update"
 	AuditStatsRead      AuditAction = "stats.read"
 	AuditCustomerRead   AuditAction = "customer.read"
+	AuditCustomerRevoke AuditAction = "customer.revoke_sessions"
 	AuditSettingsRead   AuditAction = "settings.read"
 	AuditSettingsChange AuditAction = "settings.change"
 )
