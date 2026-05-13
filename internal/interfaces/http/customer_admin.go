@@ -5,6 +5,7 @@ import (
 
 	"github.com/akarso/shopanda/internal/application/admin"
 	"github.com/akarso/shopanda/internal/domain/customer"
+	"github.com/akarso/shopanda/internal/platform/apperror"
 	"github.com/akarso/shopanda/internal/platform/logger"
 )
 
@@ -100,6 +101,47 @@ func (h *CustomerAdminHandler) List() http.HandlerFunc {
 
 		JSON(w, http.StatusOK, map[string]interface{}{
 			"customers": out,
+		})
+	}
+}
+
+// Get handles GET /api/v1/admin/customers/{customerId}.
+func (h *CustomerAdminHandler) Get() http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		customerID := r.PathValue("customerId")
+		adminID := adminIDFromRequest(r)
+		details := fullAdminScopeDetailsFromRequest(r)
+
+		c, err := h.repo.FindByID(r.Context(), customerID)
+		if err != nil {
+			h.auditor.LogAction(r.Context(), admin.AuditEntry{
+				AdminID:      adminID,
+				Action:       admin.AuditCustomerRead,
+				ResourceType: "customer",
+				ResourceID:   customerID,
+				Result:       "error",
+				Error:        err.Error(),
+				Details:      details,
+			})
+			JSONError(w, err)
+			return
+		}
+		if c == nil {
+			JSONError(w, apperror.NotFound("customer not found"))
+			return
+		}
+
+		h.auditor.LogAction(r.Context(), admin.AuditEntry{
+			AdminID:      adminID,
+			Action:       admin.AuditCustomerRead,
+			ResourceType: "customer",
+			ResourceID:   customerID,
+			Result:       "success",
+			Details:      details,
+		})
+
+		JSON(w, http.StatusOK, map[string]interface{}{
+			"customer": toCustomerAdminResponse(c),
 		})
 	}
 }
