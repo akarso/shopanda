@@ -1098,6 +1098,53 @@ func TestCustomerAdminHandler_Delete_AuditFailureIncludesError(t *testing.T) {
 	}
 }
 
+func TestCustomerAdminHandler_Delete_MisconfiguredAuditsFailure(t *testing.T) {
+	repo := &mockAdminCustomerRepo{}
+	sink := &auditSink{}
+	h := shophttp.NewCustomerAdminHandlerWithAuditorAndDeleter(repo, nil, adminapp.NewAuditor(sink))
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("DELETE", "/api/v1/admin/customers/cust-1", nil)
+	req = testhelper.AdminRequest(req, "admin-1")
+	req.Header.Set("X-Admin-Store-ID", "store-eu")
+	req.Header.Set("X-Admin-Language", "en")
+	req.Header.Set("X-Admin-Currency", "EUR")
+	newCustomerAdminRouterWithAudit(h).ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("status = %d, want %d; body: %s", rec.Code, http.StatusInternalServerError, rec.Body.String())
+	}
+
+	entry := sink.Last(t)
+	if entry.event != "admin.action.failed" {
+		t.Fatalf("event = %q, want %q", entry.event, "admin.action.failed")
+	}
+	if got := entry.context["action"]; got != adminapp.AuditCustomerDelete {
+		t.Errorf("action = %v, want %q", got, adminapp.AuditCustomerDelete)
+	}
+	if got := entry.context["resource_type"]; got != "customer" {
+		t.Errorf("resource_type = %v, want %q", got, "customer")
+	}
+	if got := entry.context["resource_id"]; got != "cust-1" {
+		t.Errorf("resource_id = %v, want %q", got, "cust-1")
+	}
+	if got := entry.context["result"]; got != "error" {
+		t.Errorf("result = %v, want %q", got, "error")
+	}
+	if got := entry.context["error"]; got != "customer delete is not configured" {
+		t.Errorf("error = %v, want %q", got, "customer delete is not configured")
+	}
+	if got := entry.context["detail_store_id"]; got != "store-eu" {
+		t.Errorf("detail_store_id = %v, want %q", got, "store-eu")
+	}
+	if got := entry.context["detail_language"]; got != "en" {
+		t.Errorf("detail_language = %v, want %q", got, "en")
+	}
+	if got := entry.context["detail_currency"]; got != "EUR" {
+		t.Errorf("detail_currency = %v, want %q", got, "EUR")
+	}
+}
+
 func TestCustomerAdminHandler_Delete_NotFound(t *testing.T) {
 	repo := &mockAdminCustomerRepo{
 		deleteAccountFn: func(_ context.Context, customerID string) error {

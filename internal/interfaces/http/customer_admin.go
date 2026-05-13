@@ -212,6 +212,15 @@ func (h *CustomerAdminHandler) Delete() http.HandlerFunc {
 		details := fullAdminScopeDetailsFromRequest(r)
 
 		if h.deleter == nil {
+			h.auditor.LogAction(r.Context(), admin.AuditEntry{
+				AdminID:      adminID,
+				Action:       admin.AuditCustomerDelete,
+				ResourceType: "customer",
+				ResourceID:   customerID,
+				Result:       "error",
+				Error:        "customer delete is not configured",
+				Details:      details,
+			})
 			JSONError(w, apperror.Internal("customer delete is not configured"))
 			return
 		}
