@@ -153,19 +153,6 @@ func (h *CustomerAdminHandler) RevokeSessions() http.HandlerFunc {
 		adminID := adminIDFromRequest(r)
 		details := fullAdminScopeDetailsFromRequest(r)
 
-		if customerID == "" {
-			h.auditor.LogAction(r.Context(), admin.AuditEntry{
-				AdminID:      adminID,
-				Action:       admin.AuditCustomerRevoke,
-				ResourceType: "customer",
-				Result:       "error",
-				Error:        "customer id is required",
-				Details:      details,
-			})
-			JSONError(w, apperror.Validation("customer id is required"))
-			return
-		}
-
 		if err := h.repo.BumpTokenGeneration(r.Context(), customerID); err != nil {
 			if apperror.Is(err, apperror.CodeNotFound) {
 				JSONError(w, err)
