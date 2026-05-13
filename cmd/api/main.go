@@ -620,6 +620,7 @@ func runServe(cfg *config.Config, log logger.Logger) error {
 	orderHandler := shophttp.NewOrderHandler(orderRepo)
 	orderAdmin := shophttp.NewOrderAdminHandler(orderRepo, log)
 	statsAdmin := shophttp.NewStatsAdminHandler(statsRepo)
+	customerAdmin := shophttp.NewCustomerAdminHandler(customerRepo, log)
 	authHandler := shophttp.NewAuthHandler(authService)
 	webhookVerifier := webhook.NewHMACVerifier(cfg.Webhooks.Secrets)
 	paymentWebhook := shophttp.NewPaymentWebhookHandler(paymentRepo, bus, webhookVerifier)
@@ -747,6 +748,7 @@ func runServe(cfg *config.Config, log logger.Logger) error {
 	// Permission-based middleware for admin routes.
 	requireProductsRead := shophttp.RequirePermission(rbac.ProductsRead)
 	requireProductsWrite := shophttp.RequirePermission(rbac.ProductsWrite)
+	requireCustomersRead := shophttp.RequirePermission(rbac.CustomersRead)
 	requireOrdersRead := shophttp.RequirePermission(rbac.OrdersRead)
 	requireOrdersWrite := shophttp.RequirePermission(rbac.OrdersWrite)
 	requireMediaRead := shophttp.RequirePermission(rbac.MediaRead)
@@ -790,6 +792,7 @@ func runServe(cfg *config.Config, log logger.Logger) error {
 	router.Handle("POST /api/v1/admin/products/{id}/variants", requireProductsWrite(variantHandler.Create()))
 	router.Handle("PUT /api/v1/admin/products/{id}/variants/{variantId}", requireProductsWrite(variantHandler.Update()))
 	router.Handle("GET /api/v1/admin/stats/overview", requireOrdersRead(statsAdmin.Overview()))
+	router.Handle("GET /api/v1/admin/customers", requireCustomersRead(customerAdmin.List()))
 	router.Handle("GET /api/v1/admin/orders", requireOrdersRead(orderAdmin.List()))
 	router.Handle("GET /api/v1/admin/orders/{orderId}", requireOrdersRead(orderAdmin.Get()))
 	router.Handle("PUT /api/v1/admin/orders/{orderId}", requireOrdersWrite(orderAdmin.Update()))
