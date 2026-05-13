@@ -12,6 +12,7 @@ import (
 // CustomerAdminHandler serves admin customer endpoints.
 type CustomerAdminHandler struct {
 	repo    customer.CustomerRepository
+	deleter AccountDeleter
 	auditor *admin.Auditor
 }
 
@@ -23,18 +24,34 @@ func NewCustomerAdminHandler(repo customer.CustomerRepository, log logger.Logger
 	if log == nil {
 		panic("http: logger must not be nil")
 	}
-	return NewCustomerAdminHandlerWithAuditor(repo, admin.NewAuditor(log))
+	return NewCustomerAdminHandlerWithDeleter(repo, nil, log)
+}
+
+// NewCustomerAdminHandlerWithDeleter creates a CustomerAdminHandler with a delete use case.
+func NewCustomerAdminHandlerWithDeleter(repo customer.CustomerRepository, deleter AccountDeleter, log logger.Logger) *CustomerAdminHandler {
+	if repo == nil {
+		panic("http: customer repository must not be nil")
+	}
+	if log == nil {
+		panic("http: logger must not be nil")
+	}
+	return NewCustomerAdminHandlerWithAuditorAndDeleter(repo, deleter, admin.NewAuditor(log))
 }
 
 // NewCustomerAdminHandlerWithAuditor creates a CustomerAdminHandler with a custom auditor.
 func NewCustomerAdminHandlerWithAuditor(repo customer.CustomerRepository, auditor *admin.Auditor) *CustomerAdminHandler {
+	return NewCustomerAdminHandlerWithAuditorAndDeleter(repo, nil, auditor)
+}
+
+// NewCustomerAdminHandlerWithAuditorAndDeleter creates a CustomerAdminHandler with custom dependencies.
+func NewCustomerAdminHandlerWithAuditorAndDeleter(repo customer.CustomerRepository, deleter AccountDeleter, auditor *admin.Auditor) *CustomerAdminHandler {
 	if repo == nil {
 		panic("http: customer repository must not be nil")
 	}
 	if auditor == nil {
 		panic("http: auditor must not be nil")
 	}
-	return &CustomerAdminHandler{repo: repo, auditor: auditor}
+	return &CustomerAdminHandler{repo: repo, deleter: deleter, auditor: auditor}
 }
 
 type customerAdminResponse struct {
@@ -183,6 +200,52 @@ func (h *CustomerAdminHandler) RevokeSessions() http.HandlerFunc {
 		JSON(w, http.StatusOK, map[string]interface{}{
 			"customer_id": customerID,
 			"status":      "sessions_revoked",
+		})
+	}
+}
+
+// Delete handles DELETE /api/v1/admin/customers/{customerId}.
+func (h *CustomerAdminHandler) Delete() http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		customerID := r.PathValue("customerId")
+		adminID := adminIDFromRequest(r)
+		details := fullAdminScopeDetailsFromRequest(r)
+
+		if h.deleter == nil {
+			JSONError(w, apperror.Internal("customer delete is not configured"))
+			return
+		}
+
+		if err := h.deleter.DeleteAccount(r.Context(), customerID); err != nil {
+			if apperror.Is(err, apperror.CodeNotFound) {
+				JSONError(w, err)
+				return
+			}
+			h.auditor.LogAction(r.Context(), admin.AuditEntry{
+				AdminID:      adminID,
+				Action:       admin.AuditCustomerDelete,
+				ResourceType: "customer",
+				ResourceID:   customerID,
+				Result:       "error",
+				Error:        err.Error(),
+				Details:      details,
+			})
+			JSONError(w, err)
+			return
+		}
+
+		h.auditor.LogAction(r.Context(), admin.AuditEntry{
+			AdminID:      adminID,
+			Action:       admin.AuditCustomerDelete,
+			ResourceType: "customer",
+			ResourceID:   customerID,
+			Result:       "success",
+			Details:      details,
+		})
+
+		JSON(w, http.StatusOK, map[string]interface{}{
+			"deleted":     true,
+			"customer_id": customerID,
 		})
 	}
 }
