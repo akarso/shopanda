@@ -190,6 +190,69 @@ func TestCustomerAdminHandler_List_AuditIncludesScopeContext(t *testing.T) {
 	}
 }
 
+func TestCustomerAdminHandler_List_AuditOmitsPartialScopeContext(t *testing.T) {
+	repo := &mockAdminCustomerRepo{
+		listCustomersFn: func(_ context.Context, offset, limit int) ([]customer.Customer, error) {
+			return []customer.Customer{{
+				ID:        "cust-1",
+				Email:     "cust@example.com",
+				FirstName: "Ada",
+				LastName:  "Lovelace",
+				Role:      customer.RoleCustomer,
+				Status:    customer.StatusActive,
+			}}, nil
+		},
+	}
+	sink := &auditSink{}
+	h := shophttp.NewCustomerAdminHandlerWithAuditor(repo, adminapp.NewAuditor(sink))
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("GET", "/api/v1/admin/customers?offset=2&limit=7", nil)
+	req = testhelper.AdminRequest(req, "admin-1")
+	req.Header.Set("X-Admin-Store-ID", "store-eu")
+	req.Header.Set("X-Admin-Language", "en")
+	newCustomerAdminRouterWithAudit(h).ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d; body: %s", rec.Code, http.StatusOK, rec.Body.String())
+	}
+
+	entry := sink.Last(t)
+	if entry.event != "admin.action" {
+		t.Fatalf("event = %q, want %q", entry.event, "admin.action")
+	}
+	if got := entry.context["action"]; got != adminapp.AuditCustomerRead {
+		t.Errorf("action = %v, want %q", got, adminapp.AuditCustomerRead)
+	}
+	if got := entry.context["detail_offset"]; got != 2 {
+		t.Errorf("detail_offset = %v, want %d", got, 2)
+	}
+	if got := entry.context["detail_limit"]; got != 7 {
+		t.Errorf("detail_limit = %v, want %d", got, 7)
+	}
+	if got := entry.context["admin_id"]; got != "admin-1" {
+		t.Errorf("admin_id = %v, want %q", got, "admin-1")
+	}
+	if got := entry.context["resource_type"]; got != "customers" {
+		t.Errorf("resource_type = %v, want %q", got, "customers")
+	}
+	if got := entry.context["result"]; got != "success" {
+		t.Errorf("result = %v, want %q", got, "success")
+	}
+	if _, ok := entry.context["detail_store_id"]; ok {
+		t.Errorf("detail_store_id present = %v, want absent", entry.context["detail_store_id"])
+	}
+	if _, ok := entry.context["detail_language"]; ok {
+		t.Errorf("detail_language present = %v, want absent", entry.context["detail_language"])
+	}
+	if _, ok := entry.context["detail_currency"]; ok {
+		t.Errorf("detail_currency present = %v, want absent", entry.context["detail_currency"])
+	}
+	if _, ok := entry.context["error"]; ok {
+		t.Errorf("error present = %v, want absent", entry.context["error"])
+	}
+}
+
 func TestCustomerAdminHandler_List_AuditFailureIncludesError(t *testing.T) {
 	repo := &mockAdminCustomerRepo{
 		listCustomersFn: func(_ context.Context, offset, limit int) ([]customer.Customer, error) {
