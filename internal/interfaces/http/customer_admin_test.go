@@ -20,6 +20,7 @@ import (
 
 type mockAdminCustomerRepo struct {
 	bumpTokenGenerationFn func(ctx context.Context, customerID string) error
+	deleteAccountFn       func(ctx context.Context, customerID string) error
 	findByIDFn            func(ctx context.Context, id string) (*customer.Customer, error)
 	listCustomersFn       func(ctx context.Context, offset, limit int) ([]customer.Customer, error)
 }
@@ -65,6 +66,13 @@ func (m *mockAdminCustomerRepo) Delete(_ context.Context, _ string) error {
 	return nil
 }
 
+func (m *mockAdminCustomerRepo) DeleteAccount(ctx context.Context, customerID string) error {
+	if m.deleteAccountFn != nil {
+		return m.deleteAccountFn(ctx, customerID)
+	}
+	return nil
+}
+
 func newCustomerAdminRouterWithAudit(h *shophttp.CustomerAdminHandler) *http.ServeMux {
 	requireCustomersRead := shophttp.RequirePermission(rbac.CustomersRead)
 	requireCustomersWrite := shophttp.RequirePermission(rbac.CustomersWrite)
@@ -72,6 +80,7 @@ func newCustomerAdminRouterWithAudit(h *shophttp.CustomerAdminHandler) *http.Ser
 	mux := http.NewServeMux()
 	mux.Handle("GET /api/v1/admin/customers", withAdminContext(requireCustomersRead(h.List())))
 	mux.Handle("GET /api/v1/admin/customers/{customerId}", withAdminContext(requireCustomersRead(h.Get())))
+	mux.Handle("DELETE /api/v1/admin/customers/{customerId}", withAdminContext(requireCustomersWrite(h.Delete())))
 	mux.Handle("POST /api/v1/admin/customers/{customerId}/revoke-sessions", withAdminContext(requireCustomersWrite(h.RevokeSessions())))
 	return mux
 }
@@ -965,6 +974,219 @@ func TestCustomerAdminHandler_RevokeSessions_GuestUnauthorized(t *testing.T) {
 
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest("POST", "/api/v1/admin/customers/cust-1/revoke-sessions", nil)
+	newCustomerAdminRouterWithAudit(h).ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("status = %d, want %d; body: %s", rec.Code, http.StatusUnauthorized, rec.Body.String())
+	}
+}
+
+func TestCustomerAdminHandler_Delete_AuditIncludesScopeContext(t *testing.T) {
+	repo := &mockAdminCustomerRepo{
+		deleteAccountFn: func(_ context.Context, customerID string) error {
+			if customerID != "cust-1" {
+				t.Errorf("customerID = %q, want %q", customerID, "cust-1")
+			}
+			return nil
+		},
+	}
+	sink := &auditSink{}
+	h := shophttp.NewCustomerAdminHandlerWithAuditorAndDeleter(repo, repo, adminapp.NewAuditor(sink))
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("DELETE", "/api/v1/admin/customers/cust-1", nil)
+	req = testhelper.AdminRequest(req, "admin-1")
+	req.Header.Set("X-Admin-Store-ID", "store-eu")
+	req.Header.Set("X-Admin-Language", "en")
+	req.Header.Set("X-Admin-Currency", "EUR")
+	newCustomerAdminRouterWithAudit(h).ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d; body: %s", rec.Code, http.StatusOK, rec.Body.String())
+	}
+
+	var body map[string]interface{}
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	data, ok := body["data"].(map[string]interface{})
+	if !ok {
+		t.Fatalf("data = %#v, want object", body["data"])
+	}
+	if got := data["deleted"]; got != true {
+		t.Errorf("deleted = %v, want true", got)
+	}
+	if got := data["customer_id"]; got != "cust-1" {
+		t.Errorf("customer_id = %v, want %q", got, "cust-1")
+	}
+
+	entry := sink.Last(t)
+	if entry.event != "admin.action" {
+		t.Fatalf("event = %q, want %q", entry.event, "admin.action")
+	}
+	if got := entry.context["action"]; got != adminapp.AuditCustomerDelete {
+		t.Errorf("action = %v, want %q", got, adminapp.AuditCustomerDelete)
+	}
+	if got := entry.context["resource_type"]; got != "customer" {
+		t.Errorf("resource_type = %v, want %q", got, "customer")
+	}
+	if got := entry.context["resource_id"]; got != "cust-1" {
+		t.Errorf("resource_id = %v, want %q", got, "cust-1")
+	}
+	if got := entry.context["detail_store_id"]; got != "store-eu" {
+		t.Errorf("detail_store_id = %v, want %q", got, "store-eu")
+	}
+	if got := entry.context["detail_language"]; got != "en" {
+		t.Errorf("detail_language = %v, want %q", got, "en")
+	}
+	if got := entry.context["detail_currency"]; got != "EUR" {
+		t.Errorf("detail_currency = %v, want %q", got, "EUR")
+	}
+	if got := entry.context["result"]; got != "success" {
+		t.Errorf("result = %v, want %q", got, "success")
+	}
+}
+
+func TestCustomerAdminHandler_Delete_AuditFailureIncludesError(t *testing.T) {
+	repo := &mockAdminCustomerRepo{
+		deleteAccountFn: func(_ context.Context, customerID string) error {
+			return errors.New("delete failed")
+		},
+	}
+	sink := &auditSink{}
+	h := shophttp.NewCustomerAdminHandlerWithAuditorAndDeleter(repo, repo, adminapp.NewAuditor(sink))
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("DELETE", "/api/v1/admin/customers/cust-1", nil)
+	req = testhelper.AdminRequest(req, "admin-1")
+	req.Header.Set("X-Admin-Store-ID", "store-eu")
+	req.Header.Set("X-Admin-Language", "en")
+	req.Header.Set("X-Admin-Currency", "EUR")
+	newCustomerAdminRouterWithAudit(h).ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("status = %d, want %d; body: %s", rec.Code, http.StatusInternalServerError, rec.Body.String())
+	}
+
+	entry := sink.Last(t)
+	if entry.event != "admin.action.failed" {
+		t.Fatalf("event = %q, want %q", entry.event, "admin.action.failed")
+	}
+	if got := entry.context["action"]; got != adminapp.AuditCustomerDelete {
+		t.Errorf("action = %v, want %q", got, adminapp.AuditCustomerDelete)
+	}
+	if got := entry.context["resource_type"]; got != "customer" {
+		t.Errorf("resource_type = %v, want %q", got, "customer")
+	}
+	if got := entry.context["resource_id"]; got != "cust-1" {
+		t.Errorf("resource_id = %v, want %q", got, "cust-1")
+	}
+	if got := entry.context["result"]; got != "error" {
+		t.Errorf("result = %v, want %q", got, "error")
+	}
+	if got := entry.context["error"]; got != "delete failed" {
+		t.Errorf("error = %v, want %q", got, "delete failed")
+	}
+	if got := entry.context["detail_store_id"]; got != "store-eu" {
+		t.Errorf("detail_store_id = %v, want %q", got, "store-eu")
+	}
+	if got := entry.context["detail_language"]; got != "en" {
+		t.Errorf("detail_language = %v, want %q", got, "en")
+	}
+	if got := entry.context["detail_currency"]; got != "EUR" {
+		t.Errorf("detail_currency = %v, want %q", got, "EUR")
+	}
+}
+
+func TestCustomerAdminHandler_Delete_MisconfiguredAuditsFailure(t *testing.T) {
+	repo := &mockAdminCustomerRepo{}
+	sink := &auditSink{}
+	h := shophttp.NewCustomerAdminHandlerWithAuditorAndDeleter(repo, nil, adminapp.NewAuditor(sink))
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("DELETE", "/api/v1/admin/customers/cust-1", nil)
+	req = testhelper.AdminRequest(req, "admin-1")
+	req.Header.Set("X-Admin-Store-ID", "store-eu")
+	req.Header.Set("X-Admin-Language", "en")
+	req.Header.Set("X-Admin-Currency", "EUR")
+	newCustomerAdminRouterWithAudit(h).ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("status = %d, want %d; body: %s", rec.Code, http.StatusInternalServerError, rec.Body.String())
+	}
+
+	entry := sink.Last(t)
+	if entry.event != "admin.action.failed" {
+		t.Fatalf("event = %q, want %q", entry.event, "admin.action.failed")
+	}
+	if got := entry.context["action"]; got != adminapp.AuditCustomerDelete {
+		t.Errorf("action = %v, want %q", got, adminapp.AuditCustomerDelete)
+	}
+	if got := entry.context["resource_type"]; got != "customer" {
+		t.Errorf("resource_type = %v, want %q", got, "customer")
+	}
+	if got := entry.context["resource_id"]; got != "cust-1" {
+		t.Errorf("resource_id = %v, want %q", got, "cust-1")
+	}
+	if got := entry.context["result"]; got != "error" {
+		t.Errorf("result = %v, want %q", got, "error")
+	}
+	if got := entry.context["error"]; got != "customer delete is not configured" {
+		t.Errorf("error = %v, want %q", got, "customer delete is not configured")
+	}
+	if got := entry.context["detail_store_id"]; got != "store-eu" {
+		t.Errorf("detail_store_id = %v, want %q", got, "store-eu")
+	}
+	if got := entry.context["detail_language"]; got != "en" {
+		t.Errorf("detail_language = %v, want %q", got, "en")
+	}
+	if got := entry.context["detail_currency"]; got != "EUR" {
+		t.Errorf("detail_currency = %v, want %q", got, "EUR")
+	}
+}
+
+func TestCustomerAdminHandler_Delete_NotFound(t *testing.T) {
+	repo := &mockAdminCustomerRepo{
+		deleteAccountFn: func(_ context.Context, customerID string) error {
+			return apperror.NotFound("customer not found")
+		},
+	}
+	sink := &auditSink{}
+	h := shophttp.NewCustomerAdminHandlerWithAuditorAndDeleter(repo, repo, adminapp.NewAuditor(sink))
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("DELETE", "/api/v1/admin/customers/cust-404", nil)
+	req = testhelper.AdminRequest(req, "admin-1")
+	newCustomerAdminRouterWithAudit(h).ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("status = %d, want %d; body: %s", rec.Code, http.StatusNotFound, rec.Body.String())
+	}
+	if len(sink.records) != 0 {
+		t.Fatalf("audit records = %d, want 0", len(sink.records))
+	}
+}
+
+func TestCustomerAdminHandler_Delete_CustomerForbidden(t *testing.T) {
+	repo := &mockAdminCustomerRepo{}
+	h := shophttp.NewCustomerAdminHandlerWithAuditorAndDeleter(repo, repo, adminapp.NewAuditor(logger.NewWithWriter(nilWriter{}, "info")))
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("DELETE", "/api/v1/admin/customers/cust-1", nil)
+	req = testhelper.CustomerRequest(req, "cust-1")
+	newCustomerAdminRouterWithAudit(h).ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("status = %d, want %d; body: %s", rec.Code, http.StatusForbidden, rec.Body.String())
+	}
+}
+
+func TestCustomerAdminHandler_Delete_GuestUnauthorized(t *testing.T) {
+	repo := &mockAdminCustomerRepo{}
+	h := shophttp.NewCustomerAdminHandlerWithAuditorAndDeleter(repo, repo, adminapp.NewAuditor(logger.NewWithWriter(nilWriter{}, "info")))
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("DELETE", "/api/v1/admin/customers/cust-1", nil)
 	newCustomerAdminRouterWithAudit(h).ServeHTTP(rec, req)
 
 	if rec.Code != http.StatusUnauthorized {
