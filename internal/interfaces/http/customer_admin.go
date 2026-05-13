@@ -146,6 +146,47 @@ func (h *CustomerAdminHandler) Get() http.HandlerFunc {
 	}
 }
 
+// RevokeSessions handles POST /api/v1/admin/customers/{customerId}/revoke-sessions.
+func (h *CustomerAdminHandler) RevokeSessions() http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		customerID := r.PathValue("customerId")
+		adminID := adminIDFromRequest(r)
+		details := fullAdminScopeDetailsFromRequest(r)
+
+		if err := h.repo.BumpTokenGeneration(r.Context(), customerID); err != nil {
+			if apperror.Is(err, apperror.CodeNotFound) {
+				JSONError(w, err)
+				return
+			}
+			h.auditor.LogAction(r.Context(), admin.AuditEntry{
+				AdminID:      adminID,
+				Action:       admin.AuditCustomerRevoke,
+				ResourceType: "customer",
+				ResourceID:   customerID,
+				Result:       "error",
+				Error:        err.Error(),
+				Details:      details,
+			})
+			JSONError(w, err)
+			return
+		}
+
+		h.auditor.LogAction(r.Context(), admin.AuditEntry{
+			AdminID:      adminID,
+			Action:       admin.AuditCustomerRevoke,
+			ResourceType: "customer",
+			ResourceID:   customerID,
+			Result:       "success",
+			Details:      details,
+		})
+
+		JSON(w, http.StatusOK, map[string]interface{}{
+			"customer_id": customerID,
+			"status":      "sessions_revoked",
+		})
+	}
+}
+
 func toCustomerAdminResponse(c *customer.Customer) customerAdminResponse {
 	resp := customerAdminResponse{
 		ID:        c.ID,
