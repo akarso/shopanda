@@ -579,8 +579,6 @@ func TestConfigAdmin_Get_AuditOmitsPartialScopeContext(t *testing.T) {
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/admin/config?group=email", nil)
 	req = withAdminScope(req, "store-eu", "en", "")
-	req.Header.Set("X-Admin-Store-ID", "store-eu")
-	req.Header.Set("X-Admin-Language", "en")
 	h.Get().ServeHTTP(rec, req)
 
 	if rec.Code != http.StatusOK {
@@ -623,8 +621,6 @@ func TestConfigAdmin_Get_AuditFailureOmitsPartialScopeContext(t *testing.T) {
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/admin/config?group=email", nil)
 	req = withAdminScope(req, "store-eu", "en", "")
-	req.Header.Set("X-Admin-Store-ID", "store-eu")
-	req.Header.Set("X-Admin-Language", "en")
 	h.Get().ServeHTTP(rec, req)
 
 	if rec.Code != http.StatusInternalServerError {
@@ -667,8 +663,6 @@ func TestConfigAdmin_Update_AuditOmitsPartialScopeContext(t *testing.T) {
 	req := httptest.NewRequest(http.MethodPut, "/api/v1/admin/config", strings.NewReader(`{"entries":{"mail.smtp.host":"smtp.new.test"}}`))
 	req.Header.Set("Content-Type", "application/json")
 	req = withAdminScope(req, "store-eu", "en", "")
-	req.Header.Set("X-Admin-Store-ID", "store-eu")
-	req.Header.Set("X-Admin-Language", "en")
 	h.Update().ServeHTTP(rec, req)
 
 	if rec.Code != http.StatusOK {
@@ -712,8 +706,6 @@ func TestConfigAdmin_Update_AuditFailureOmitsPartialScopeContext(t *testing.T) {
 	req := httptest.NewRequest(http.MethodPut, "/api/v1/admin/config", strings.NewReader(`{"entries":{"mail.smtp.host":"smtp.new.test"}}`))
 	req.Header.Set("Content-Type", "application/json")
 	req = withAdminScope(req, "store-eu", "en", "")
-	req.Header.Set("X-Admin-Store-ID", "store-eu")
-	req.Header.Set("X-Admin-Language", "en")
 	h.Update().ServeHTTP(rec, req)
 
 	if rec.Code != http.StatusInternalServerError {
