@@ -558,3 +558,183 @@ func TestConfigAdmin_Update_InvalidBody_DoesNotPanicAndReturnsValidation(t *test
 		t.Fatalf("status = %d, want %d; body: %s", rec.Code, http.StatusUnprocessableEntity, rec.Body.String())
 	}
 }
+
+func testConfigAdminHandlerWithAudit(repo domainCfg.Repository, sink logger.Logger) *shophttp.ConfigAdminHandler {
+	cfg := &appconfig.Config{}
+	cfg.Mail.SMTP.Host = "smtp.default.test"
+	cfg.Mail.SMTP.Port = 2525
+	cfg.Mail.SMTP.From = "ops@example.com"
+	cfg.Media.Storage = "local"
+	cfg.Media.Local.BasePath = "./public/media"
+	cfg.Media.Local.BaseURL = "/media"
+	return shophttp.NewConfigAdminHandler(repo, cfg, func(context.Context, shophttp.SMTPTestConfig, string) error { return nil }, sink)
+}
+
+func TestConfigAdmin_Get_AuditOmitsPartialScopeContext(t *testing.T) {
+	repo := newMockConfigRepo()
+	repo.entries["mail.smtp.host"] = "smtp.db.test"
+	sink := &auditSink{}
+	h := testConfigAdminHandlerWithAudit(repo, sink)
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/admin/config?group=email", nil)
+	req = withAdminScope(req, "store-eu", "en", "")
+	h.Get().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d; body: %s", rec.Code, http.StatusOK, rec.Body.String())
+	}
+
+	entry := sink.Last(t)
+	if entry.event != "admin.action" {
+		t.Fatalf("event = %q, want %q", entry.event, "admin.action")
+	}
+	if got := entry.context["action"]; got != admin.AuditSettingsRead {
+		t.Errorf("action = %v, want %q", got, admin.AuditSettingsRead)
+	}
+	if got := entry.context["resource_type"]; got != "config_group" {
+		t.Errorf("resource_type = %v, want %q", got, "config_group")
+	}
+	if got := entry.context["result"]; got != "success" {
+		t.Errorf("result = %v, want %q", got, "success")
+	}
+	if _, ok := entry.context["store_id"]; ok {
+		t.Errorf("store_id present = %v, want absent", entry.context["store_id"])
+	}
+	if _, ok := entry.context["language"]; ok {
+		t.Errorf("language present = %v, want absent", entry.context["language"])
+	}
+	if _, ok := entry.context["currency"]; ok {
+		t.Errorf("currency present = %v, want absent", entry.context["currency"])
+	}
+	if _, ok := entry.context["error"]; ok {
+		t.Errorf("error present = %v, want absent", entry.context["error"])
+	}
+}
+
+func TestConfigAdmin_Get_AuditFailureOmitsPartialScopeContext(t *testing.T) {
+	repo := newMockConfigRepo()
+	repo.getErr = errors.New("database error")
+	sink := &auditSink{}
+	h := testConfigAdminHandlerWithAudit(repo, sink)
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/admin/config?group=email", nil)
+	req = withAdminScope(req, "store-eu", "en", "")
+	h.Get().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("status = %d, want %d; body: %s", rec.Code, http.StatusInternalServerError, rec.Body.String())
+	}
+
+	entry := sink.Last(t)
+	if entry.event != "admin.action.failed" {
+		t.Fatalf("event = %q, want %q", entry.event, "admin.action.failed")
+	}
+	if got := entry.context["action"]; got != admin.AuditSettingsRead {
+		t.Errorf("action = %v, want %q", got, admin.AuditSettingsRead)
+	}
+	if got := entry.context["resource_type"]; got != "config_group" {
+		t.Errorf("resource_type = %v, want %q", got, "config_group")
+	}
+	if got := entry.context["result"]; got != "error" {
+		t.Errorf("result = %v, want %q", got, "error")
+	}
+	if _, ok := entry.context["store_id"]; ok {
+		t.Errorf("store_id present = %v, want absent", entry.context["store_id"])
+	}
+	if _, ok := entry.context["language"]; ok {
+		t.Errorf("language present = %v, want absent", entry.context["language"])
+	}
+	if _, ok := entry.context["currency"]; ok {
+		t.Errorf("currency present = %v, want absent", entry.context["currency"])
+	}
+	if err, ok := entry.context["error"]; !ok || err == "" {
+		t.Errorf("error = %v, want non-empty string", err)
+	}
+}
+
+func TestConfigAdmin_Update_AuditOmitsPartialScopeContext(t *testing.T) {
+	repo := newMockConfigRepo()
+	sink := &auditSink{}
+	h := testConfigAdminHandlerWithAudit(repo, sink)
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPut, "/api/v1/admin/config", strings.NewReader(`{"entries":{"mail.smtp.host":"smtp.new.test"}}`))
+	req.Header.Set("Content-Type", "application/json")
+	req = withAdminScope(req, "store-eu", "en", "")
+	h.Update().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d; body: %s", rec.Code, http.StatusOK, rec.Body.String())
+	}
+
+	entry := sink.Last(t)
+	if entry.event != "admin.action" {
+		t.Fatalf("event = %q, want %q", entry.event, "admin.action")
+	}
+	if got := entry.context["action"]; got != admin.AuditSettingsChange {
+		t.Errorf("action = %v, want %q", got, admin.AuditSettingsChange)
+	}
+	if got := entry.context["resource_type"]; got != "config_group" {
+		t.Errorf("resource_type = %v, want %q", got, "config_group")
+	}
+	if got := entry.context["result"]; got != "success" {
+		t.Errorf("result = %v, want %q", got, "success")
+	}
+	if _, ok := entry.context["store_id"]; ok {
+		t.Errorf("store_id present = %v, want absent", entry.context["store_id"])
+	}
+	if _, ok := entry.context["language"]; ok {
+		t.Errorf("language present = %v, want absent", entry.context["language"])
+	}
+	if _, ok := entry.context["currency"]; ok {
+		t.Errorf("currency present = %v, want absent", entry.context["currency"])
+	}
+	if _, ok := entry.context["error"]; ok {
+		t.Errorf("error present = %v, want absent", entry.context["error"])
+	}
+}
+
+func TestConfigAdmin_Update_AuditFailureOmitsPartialScopeContext(t *testing.T) {
+	repo := newMockConfigRepo()
+	repo.setManyErr = errors.New("database error")
+	sink := &auditSink{}
+	h := testConfigAdminHandlerWithAudit(repo, sink)
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPut, "/api/v1/admin/config", strings.NewReader(`{"entries":{"mail.smtp.host":"smtp.new.test"}}`))
+	req.Header.Set("Content-Type", "application/json")
+	req = withAdminScope(req, "store-eu", "en", "")
+	h.Update().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("status = %d, want %d; body: %s", rec.Code, http.StatusInternalServerError, rec.Body.String())
+	}
+
+	entry := sink.Last(t)
+	if entry.event != "admin.action.failed" {
+		t.Fatalf("event = %q, want %q", entry.event, "admin.action.failed")
+	}
+	if got := entry.context["action"]; got != admin.AuditSettingsChange {
+		t.Errorf("action = %v, want %q", got, admin.AuditSettingsChange)
+	}
+	if got := entry.context["resource_type"]; got != "config_group" {
+		t.Errorf("resource_type = %v, want %q", got, "config_group")
+	}
+	if got := entry.context["result"]; got != "error" {
+		t.Errorf("result = %v, want %q", got, "error")
+	}
+	if _, ok := entry.context["store_id"]; ok {
+		t.Errorf("store_id present = %v, want absent", entry.context["store_id"])
+	}
+	if _, ok := entry.context["language"]; ok {
+		t.Errorf("language present = %v, want absent", entry.context["language"])
+	}
+	if _, ok := entry.context["currency"]; ok {
+		t.Errorf("currency present = %v, want absent", entry.context["currency"])
+	}
+	if err, ok := entry.context["error"]; !ok || err == "" {
+		t.Errorf("error = %v, want non-empty string", err)
+	}
+}
