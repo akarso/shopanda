@@ -207,7 +207,8 @@ func (h *ConfigAdminHandler) Update() http.HandlerFunc {
 }
 
 func (h *ConfigAdminHandler) auditConfigSuccess(r *http.Request, action admin.AuditAction, resourceType, resourceID string, details map[string]interface{}) {
-	adminID, scopeDetails := adminAuditInfoFromRequest(r)
+	adminID := adminIDFromRequest(r)
+	scopeDetails := fullAdminScopeDetailsFromRequest(r)
 	merged := mergeAuditDetails(details, scopeDetails)
 	h.auditor.LogAction(r.Context(), admin.AuditEntry{
 		AdminID:      adminID,
@@ -220,7 +221,8 @@ func (h *ConfigAdminHandler) auditConfigSuccess(r *http.Request, action admin.Au
 }
 
 func (h *ConfigAdminHandler) auditConfigError(r *http.Request, action admin.AuditAction, resourceType, resourceID string, details map[string]interface{}, err error) {
-	adminID, scopeDetails := adminAuditInfoFromRequest(r)
+	adminID := adminIDFromRequest(r)
+	scopeDetails := fullAdminScopeDetailsFromRequest(r)
 	merged := mergeAuditDetails(details, scopeDetails)
 	errMsg := ""
 	if err != nil {
@@ -286,28 +288,6 @@ func scopePayloadFromRequest(r *http.Request) map[string]interface{} {
 		payload["currency"] = c
 	}
 	return payload
-}
-
-func adminAuditInfoFromRequest(r *http.Request) (string, map[string]interface{}) {
-	ac, err := admin.FromContext(r.Context())
-	if err != nil || ac == nil {
-		return "system", map[string]interface{}{}
-	}
-	adminID := strings.TrimSpace(ac.AdminID)
-	if adminID == "" {
-		adminID = "system"
-	}
-	details := map[string]interface{}{}
-	if s := strings.TrimSpace(ac.StoreID); s != "" {
-		details["store_id"] = s
-	}
-	if l := strings.TrimSpace(ac.Language); l != "" {
-		details["language"] = l
-	}
-	if c := strings.TrimSpace(ac.Currency); c != "" {
-		details["currency"] = c
-	}
-	return adminID, details
 }
 
 func mergeAuditDetails(a, b map[string]interface{}) map[string]interface{} {
