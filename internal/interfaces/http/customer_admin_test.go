@@ -787,8 +787,6 @@ func TestCustomerAdminHandler_RevokeSessions_AuditOmitsPartialScopeContext(t *te
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest("POST", "/api/v1/admin/customers/cust-1/revoke-sessions", nil)
 	req = testhelper.AdminRequest(req, "admin-1")
-	req.Header.Set("X-Admin-Store-ID", "store-eu")
-	req.Header.Set("X-Admin-Language", "en")
 	newCustomerAdminRouterWithAudit(h).ServeHTTP(rec, req)
 
 	if rec.Code != http.StatusOK {
@@ -891,8 +889,6 @@ func TestCustomerAdminHandler_RevokeSessions_AuditFailureOmitsPartialScopeContex
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest("POST", "/api/v1/admin/customers/cust-1/revoke-sessions", nil)
 	req = testhelper.AdminRequest(req, "admin-1")
-	req.Header.Set("X-Admin-Store-ID", "store-eu")
-	req.Header.Set("X-Admin-Language", "en")
 	newCustomerAdminRouterWithAudit(h).ServeHTTP(rec, req)
 
 	if rec.Code != http.StatusInternalServerError {
