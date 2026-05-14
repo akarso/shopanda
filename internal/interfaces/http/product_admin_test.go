@@ -15,6 +15,7 @@ import (
 	"github.com/akarso/shopanda/internal/application/admin"
 	"github.com/akarso/shopanda/internal/domain/catalog"
 	"github.com/akarso/shopanda/internal/domain/identity"
+	"github.com/akarso/shopanda/internal/domain/rbac"
 	"github.com/akarso/shopanda/internal/platform/apperror"
 	"github.com/akarso/shopanda/internal/platform/auth/testhelper"
 	"github.com/akarso/shopanda/internal/platform/event"
@@ -79,19 +80,20 @@ func newAdminRouter(h *shophttp.ProductAdminHandler) *http.ServeMux {
 }
 
 func newAdminRouterWithAudit(h *shophttp.ProductAdminHandler) *http.ServeMux {
-	requireAdmin := shophttp.RequireRole(identity.RoleAdmin)
+	requireProductsRead := shophttp.RequirePermission(rbac.ProductsRead)
+	requireProductsWrite := shophttp.RequirePermission(rbac.ProductsWrite)
 	withAdminContext := shophttp.AdminContextMiddleware()
 	mux := http.NewServeMux()
-	mux.Handle("GET /api/v1/admin/products", withAdminContext(requireAdmin(h.List())))
-	mux.Handle("PUT /api/v1/admin/products/{id}", withAdminContext(requireAdmin(h.Update())))
+	mux.Handle("GET /api/v1/admin/products", withAdminContext(requireProductsRead(h.List())))
+	mux.Handle("PUT /api/v1/admin/products/{id}", withAdminContext(requireProductsWrite(h.Update())))
 	return mux
 }
 
 func newAdminCreateRouterWithAudit(h *shophttp.ProductAdminHandler) *http.ServeMux {
-	requireAdmin := shophttp.RequireRole(identity.RoleAdmin)
+	requireProductsWrite := shophttp.RequirePermission(rbac.ProductsWrite)
 	withAdminContext := shophttp.AdminContextMiddleware()
 	mux := http.NewServeMux()
-	mux.Handle("POST /api/v1/admin/products", withAdminContext(requireAdmin(h.Create())))
+	mux.Handle("POST /api/v1/admin/products", withAdminContext(requireProductsWrite(h.Create())))
 	return mux
 }
 
@@ -1121,7 +1123,7 @@ func TestProductAdminHandler_Update_EmitsEvent(t *testing.T) {
 	}
 }
 
-// ── admin route guard tests ────────────────────────────────────────────
+// ── product permission guard tests ─────────────────────────────────────
 
 func createProductBody(t *testing.T) *bytes.Reader {
 	t.Helper()
@@ -1129,10 +1131,12 @@ func createProductBody(t *testing.T) *bytes.Reader {
 }
 
 func newGuardedAdminRouter(h *shophttp.ProductAdminHandler) *http.ServeMux {
-	requireAdmin := shophttp.RequireRole(identity.RoleAdmin)
+	requireProductsRead := shophttp.RequirePermission(rbac.ProductsRead)
+	requireProductsWrite := shophttp.RequirePermission(rbac.ProductsWrite)
 	mux := http.NewServeMux()
-	mux.Handle("POST /api/v1/admin/products", requireAdmin(h.Create()))
-	mux.Handle("PUT /api/v1/admin/products/{id}", requireAdmin(h.Update()))
+	mux.Handle("GET /api/v1/admin/products", requireProductsRead(h.List()))
+	mux.Handle("POST /api/v1/admin/products", requireProductsWrite(h.Create()))
+	mux.Handle("PUT /api/v1/admin/products/{id}", requireProductsWrite(h.Update()))
 	return mux
 }
 
@@ -1163,7 +1167,31 @@ func TestAdminGuard_GuestUnauthorized(t *testing.T) {
 	}
 }
 
-func TestAdminGuard_AdminAllowed(t *testing.T) {
+func TestAdminGuard_SupportListAllowed(t *testing.T) {
+	repo := &mockAdminProductRepo{
+		listFn: func(_ context.Context, offset, limit int) ([]catalog.Product, error) {
+			if offset != 0 {
+				t.Errorf("offset = %d, want 0", offset)
+			}
+			if limit != 20 {
+				t.Errorf("limit = %d, want 20", limit)
+			}
+			return []catalog.Product{{ID: "p1", Name: "Widget", Slug: "widget", Status: catalog.StatusActive}}, nil
+		},
+	}
+	h := shophttp.NewProductAdminHandler(repo, testAdminBus())
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("GET", "/api/v1/admin/products", nil)
+	req = testhelper.AuthenticatedRequest(req, "support-1", identity.RoleSupport)
+	newGuardedAdminRouter(h).ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d; body: %s", rec.Code, http.StatusOK, rec.Body.String())
+	}
+}
+
+func TestAdminGuard_EditorAllowed(t *testing.T) {
 	var created *catalog.Product
 	repo := &mockAdminProductRepo{
 		createFn: func(_ context.Context, p *catalog.Product) error {
@@ -1175,7 +1203,7 @@ func TestAdminGuard_AdminAllowed(t *testing.T) {
 
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest("POST", "/api/v1/admin/products", createProductBody(t))
-	req = testhelper.AdminRequest(req, "admin-1")
+	req = testhelper.AuthenticatedRequest(req, "editor-1", identity.RoleEditor)
 	newGuardedAdminRouter(h).ServeHTTP(rec, req)
 
 	if rec.Code != http.StatusCreated {
@@ -1186,7 +1214,7 @@ func TestAdminGuard_AdminAllowed(t *testing.T) {
 	}
 }
 
-// ── integration test: AuthMiddleware → RequireRole(admin) ──────────────
+// ── integration test: AuthMiddleware → RequirePermission(...) ──────────
 
 // stubAdminTokenParser parses test tokens of the form "test-token:<userID>:<role>".
 type stubAdminTokenParser struct{}
@@ -1204,9 +1232,11 @@ func (p *stubAdminTokenParser) Parse(_ context.Context, token string) (identity.
 }
 
 func newIntegrationAdminRouter(h *shophttp.ProductAdminHandler) http.Handler {
-	requireAdmin := shophttp.RequireRole(identity.RoleAdmin)
+	requireProductsRead := shophttp.RequirePermission(rbac.ProductsRead)
+	requireProductsWrite := shophttp.RequirePermission(rbac.ProductsWrite)
 	mux := http.NewServeMux()
-	mux.Handle("POST /api/v1/admin/products", requireAdmin(h.Create()))
+	mux.Handle("GET /api/v1/admin/products", requireProductsRead(h.List()))
+	mux.Handle("POST /api/v1/admin/products", requireProductsWrite(h.Create()))
 
 	authMW := shophttp.AuthMiddleware(&stubAdminTokenParser{})
 	return authMW(mux)
@@ -1239,7 +1269,31 @@ func TestAdminGuard_Integration_CustomerToken(t *testing.T) {
 	}
 }
 
-func TestAdminGuard_Integration_AdminToken(t *testing.T) {
+func TestAdminGuard_Integration_SupportTokenListAllowed(t *testing.T) {
+	repo := &mockAdminProductRepo{
+		listFn: func(_ context.Context, offset, limit int) ([]catalog.Product, error) {
+			if offset != 0 {
+				t.Errorf("offset = %d, want 0", offset)
+			}
+			if limit != 20 {
+				t.Errorf("limit = %d, want 20", limit)
+			}
+			return []catalog.Product{{ID: "p1", Name: "Widget", Slug: "widget", Status: catalog.StatusActive}}, nil
+		},
+	}
+	h := shophttp.NewProductAdminHandler(repo, testAdminBus())
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("GET", "/api/v1/admin/products", nil)
+	req.Header.Set("Authorization", "Bearer test-token:support-1:support")
+	newIntegrationAdminRouter(h).ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d; body: %s", rec.Code, http.StatusOK, rec.Body.String())
+	}
+}
+
+func TestAdminGuard_Integration_EditorToken(t *testing.T) {
 	var created *catalog.Product
 	repo := &mockAdminProductRepo{
 		createFn: func(_ context.Context, p *catalog.Product) error {
@@ -1251,7 +1305,7 @@ func TestAdminGuard_Integration_AdminToken(t *testing.T) {
 
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest("POST", "/api/v1/admin/products", createProductBody(t))
-	req.Header.Set("Authorization", "Bearer test-token:admin-1:admin")
+	req.Header.Set("Authorization", "Bearer test-token:editor-1:editor")
 	newIntegrationAdminRouter(h).ServeHTTP(rec, req)
 
 	if rec.Code != http.StatusCreated {
