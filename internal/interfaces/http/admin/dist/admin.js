@@ -4,6 +4,7 @@
 
     var TOKEN_KEY = "shopanda_admin_token";
     var ADMIN_SCOPE_KEY = "shopanda_admin_scope";
+    var LOGIN_MESSAGE_KEY = "shopanda_admin_login_message";
     var API_BASE = "/api/v1";
     var ADMIN_STORE_HEADER = "X-Admin-Store-ID";
     var ADMIN_LANGUAGE_HEADER = "X-Admin-Language";
@@ -25,6 +26,24 @@
 
     function clearToken() {
         localStorage.removeItem(TOKEN_KEY);
+    }
+
+    function setLoginMessage(message) {
+        try {
+            sessionStorage.setItem(LOGIN_MESSAGE_KEY, message || "");
+        } catch (err) {
+            // best effort
+        }
+    }
+
+    function popLoginMessage() {
+        try {
+            var message = sessionStorage.getItem(LOGIN_MESSAGE_KEY) || "";
+            sessionStorage.removeItem(LOGIN_MESSAGE_KEY);
+            return message;
+        } catch (err) {
+            return "";
+        }
     }
 
     function isAuthenticated() {
@@ -57,6 +76,7 @@
         return fetch(API_BASE + url, options).then(function (res) {
             if (res.status === 401) {
                 clearToken();
+                setLoginMessage("Your session expired. Sign in again to continue.");
                 navigateTo("/admin");
                 return Promise.reject(new Error("unauthorized"));
             }
@@ -96,6 +116,7 @@
                 }
                 if (xhr.status === 401) {
                     clearToken();
+                    setLoginMessage("Your session expired. Sign in again to continue.");
                     navigateTo("/admin");
                     reject(new Error("unauthorized"));
                     return;
@@ -198,11 +219,6 @@
             if ((gridResponse.error && gridResponse.error.code === "forbidden") ||
                 (productsResponse.error && productsResponse.error.code === "forbidden")) {
                 gridBox.innerHTML = '<p role="alert">Your account does not have products access.</p>';
-                return;
-            }
-            if ((gridResponse.error && gridResponse.error.code === "unauthorized") ||
-                (productsResponse.error && productsResponse.error.code === "unauthorized")) {
-                gridBox.innerHTML = '<p role="alert">Your session expired. Sign in again to load products.</p>';
                 return;
             }
             var grid = gridResponse.data && gridResponse.data.grid;
@@ -985,11 +1001,15 @@
         container.innerHTML = html;
 
         var form = document.getElementById("login-form");
+        var initialMessage = popLoginMessage();
+        var errBox = document.getElementById("login-error");
+        if (initialMessage) {
+            errBox.textContent = initialMessage;
+        }
         form.addEventListener("submit", function (e) {
             e.preventDefault();
             var email = form.elements.email.value;
             var password = form.elements.password.value;
-            var errBox = document.getElementById("login-error");
             errBox.textContent = "";
 
             fetch(API_BASE + "/auth/login", {
