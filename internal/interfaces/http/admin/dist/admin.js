@@ -150,7 +150,7 @@
         "/admin/catalog/categories": { title: "Categories", render: renderPlaceholder("Categories"), auth: true },
         "/admin/catalog/attributes": { title: "Attributes", render: renderPlaceholder("Attributes"), auth: true },
         // Customers
-        "/admin/customers": { title: "Customers", render: renderPlaceholder("Customers"), auth: true },
+        "/admin/customers": { title: "Customers", render: renderCustomersGrid, auth: true },
         "/admin/customers/groups": { title: "Groups", render: renderPlaceholder("Groups"), auth: true },
         // Marketing
         "/admin/marketing/promotions": { title: "Promotions", render: renderPlaceholder("Promotions"), auth: true },
@@ -620,6 +620,37 @@
             }
         }
         return out;
+    }
+
+    function normalizeCustomers(customers) {
+        if (!Array.isArray(customers)) {
+            return [];
+        }
+        var out = [];
+        for (var i = 0; i < customers.length; i++) {
+            var customer = normalizeCustomer(customers[i]);
+            if (customer) {
+                out.push(customer);
+            }
+        }
+        return out;
+    }
+
+    function normalizeCustomer(raw) {
+        if (!raw) {
+            return null;
+        }
+        return {
+            id: pick(raw, "id", "ID"),
+            email: pick(raw, "email", "Email"),
+            first_name: pick(raw, "first_name", "FirstName"),
+            last_name: pick(raw, "last_name", "LastName"),
+            role: pick(raw, "role", "Role"),
+            status: pick(raw, "status", "Status"),
+            email_verified_at: pick(raw, "email_verified_at", "EmailVerifiedAt"),
+            created_at: pick(raw, "created_at", "CreatedAt"),
+            updated_at: pick(raw, "updated_at", "UpdatedAt")
+        };
     }
 
     function normalizeStores(stores) {
@@ -1229,6 +1260,51 @@
             renderRows();
         }).catch(function () {
             grid.innerHTML = '<p role="alert">Failed to load orders.</p>';
+        });
+    }
+
+    function renderCustomersGrid(container) {
+        container.innerHTML = '<h2>Customers</h2><div id="customers-grid"></div>';
+
+        var grid = document.getElementById("customers-grid");
+        api("/admin/customers?offset=0&limit=50").then(function (body) {
+            if (body && body.error && body.error.code === "forbidden") {
+                grid.innerHTML = '<p role="alert">Your account does not have customer access.</p>';
+                return;
+            }
+
+            var customersRaw = body && body.data && body.data.customers;
+            if (!Array.isArray(customersRaw)) {
+                grid.innerHTML = '<p role="alert">' + esc(extractErrorMessage(body, 'Failed to load customers.')) + '</p>';
+                return;
+            }
+
+            var customers = normalizeCustomers(customersRaw);
+            var html = '<table><thead><tr>' +
+                '<th>Name</th><th>Email</th><th>Role</th><th>Status</th><th>Verified</th><th>Created</th>' +
+                '</tr></thead><tbody>';
+
+            if (customers.length === 0) {
+                html += '<tr><td colspan="6">No customers found.</td></tr>';
+            } else {
+                for (var i = 0; i < customers.length; i++) {
+                    var customer = customers[i];
+                    var fullName = ((customer.first_name || '') + ' ' + (customer.last_name || '')).trim();
+                    html += '<tr>' +
+                        '<td>' + esc(fullName || customer.email || customer.id || '') + '</td>' +
+                        '<td>' + esc(customer.email || '') + '</td>' +
+                        '<td>' + esc(customer.role || '') + '</td>' +
+                        '<td><span class="badge badge-' + esc(customer.status || 'unknown') + '">' + esc(customer.status || 'unknown') + '</span></td>' +
+                        '<td>' + esc(customer.email_verified_at ? 'Verified' : 'Pending') + '</td>' +
+                        '<td>' + esc(customer.created_at ? String(customer.created_at).substring(0, 10) : '') + '</td>' +
+                        '</tr>';
+                }
+            }
+
+            html += '</tbody></table>';
+            grid.innerHTML = html;
+        }).catch(function (err) {
+            grid.innerHTML = '<p role="alert">' + esc(extractErrorMessage(err, 'Failed to load customers.')) + '</p>';
         });
     }
 
