@@ -115,6 +115,9 @@ func TestAdminHandler_StaticJS(t *testing.T) {
 	if !strings.Contains(normalizedBody, "Your account does not have products access.") {
 		t.Fatalf("expected products permission error message in JS")
 	}
+	if !strings.Contains(normalizedBody, "Your account does not have customer access.") {
+		t.Fatalf("expected customer permission error message in JS")
+	}
 	if !strings.Contains(normalizedBody, "shopanda_admin_login_message") {
 		t.Fatalf("expected admin login flash storage key in JS")
 	}
@@ -123,6 +126,9 @@ func TestAdminHandler_StaticJS(t *testing.T) {
 	}
 	if !strings.Contains(normalizedBody, "Failed to load product grid.") || !strings.Contains(normalizedBody, "Failed to load products.") {
 		t.Fatalf("expected granular products loading error messages in JS")
+	}
+	if !strings.Contains(normalizedBody, "renderCustomersGrid") || !strings.Contains(normalizedBody, "/admin/customers?offset=0&limit=50") || !strings.Contains(normalizedBody, "Failed to load customers.") {
+		t.Fatalf("expected customers admin surface wiring in JS")
 	}
 	if !strings.Contains(normalizedBody, "X-Admin-Store-ID") || !strings.Contains(normalizedBody, "X-Admin-Language") || !strings.Contains(normalizedBody, "X-Admin-Currency") {
 		t.Fatalf("expected admin scope headers in JS")
