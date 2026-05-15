@@ -115,8 +115,11 @@ func TestAdminHandler_StaticJS(t *testing.T) {
 	if !strings.Contains(normalizedBody, "Your account does not have products access.") {
 		t.Fatalf("expected products permission error message in JS")
 	}
-	if !strings.Contains(normalizedBody, "Your session expired. Sign in again to load products.") {
-		t.Fatalf("expected products reauthentication message in JS")
+	if !strings.Contains(normalizedBody, "shopanda_admin_login_message") {
+		t.Fatalf("expected admin login flash storage key in JS")
+	}
+	if !strings.Contains(normalizedBody, "Your session expired. Sign in again to continue.") {
+		t.Fatalf("expected admin reauthentication flash message in JS")
 	}
 	if !strings.Contains(normalizedBody, "Failed to load product grid.") || !strings.Contains(normalizedBody, "Failed to load products.") {
 		t.Fatalf("expected granular products loading error messages in JS")
