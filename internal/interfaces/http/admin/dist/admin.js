@@ -204,6 +204,15 @@
                 render: function (container) { renderOrderDetail(container, orderID); }
             };
         }
+        var customerMatch = path.match(/^\/admin\/customers\/([^/]+)$/);
+        if (customerMatch) {
+            var customerID = decodeURIComponent(customerMatch[1]);
+            return {
+                title: "Customer Detail",
+                auth: true,
+                render: function (container) { renderCustomerDetail(container, customerID); }
+            };
+        }
         return routes["/admin/dashboard"];
     }
     // --- Product Grid ---
@@ -1291,7 +1300,7 @@
                     var customer = customers[i];
                     var fullName = ((customer.first_name || '') + ' ' + (customer.last_name || '')).trim();
                     html += '<tr>' +
-                        '<td>' + esc(fullName || customer.email || customer.id || '') + '</td>' +
+                        '<td><a href="/admin/customers/' + esc(customer.id || '') + '" data-link>' + esc(fullName || customer.email || customer.id || '') + '</a></td>' +
                         '<td>' + esc(customer.email || '') + '</td>' +
                         '<td>' + esc(customer.role || '') + '</td>' +
                         '<td><span class="badge badge-' + esc(customer.status || 'unknown') + '">' + esc(customer.status || 'unknown') + '</span></td>' +
@@ -1305,6 +1314,46 @@
             grid.innerHTML = html;
         }).catch(function (err) {
             grid.innerHTML = '<p role="alert">' + esc(extractErrorMessage(err, 'Failed to load customers.')) + '</p>';
+        });
+    }
+
+    function renderCustomerDetail(container, customerID) {
+        container.innerHTML =
+            '<h2>Customer Detail</h2>' +
+            '<p><a href="/admin/customers" data-link>Back to customers</a></p>' +
+            '<div id="customer-detail-body">Loading…</div>';
+
+        var bodyBox = document.getElementById("customer-detail-body");
+        api("/admin/customers/" + encodeURIComponent(customerID)).then(function (body) {
+            if (body && body.error && body.error.code === "forbidden") {
+                bodyBox.innerHTML = '<p role="alert">Your account does not have customer access.</p>';
+                return;
+            }
+            if (body && body.error && body.error.code === "not_found") {
+                bodyBox.innerHTML = '<p role="alert">Customer not found.</p>';
+                return;
+            }
+
+            var customer = normalizeCustomer(body && body.data && body.data.customer);
+            if (!customer) {
+                bodyBox.innerHTML = '<p role="alert">' + esc(extractErrorMessage(body, 'Failed to load customer.')) + '</p>';
+                return;
+            }
+
+            var fullName = ((customer.first_name || '') + ' ' + (customer.last_name || '')).trim();
+            bodyBox.innerHTML = '' +
+                '<div class="admin-detail-card">' +
+                '<p><strong>Name:</strong> ' + esc(fullName || customer.email || customer.id || '') + '</p>' +
+                '<p><strong>Email:</strong> ' + esc(customer.email || '') + '</p>' +
+                '<p><strong>Role:</strong> ' + esc(customer.role || '') + '</p>' +
+                '<p><strong>Status:</strong> <span class="badge badge-' + esc(customer.status || 'unknown') + '">' + esc(customer.status || 'unknown') + '</span></p>' +
+                '<p><strong>Email Verification:</strong> ' + esc(customer.email_verified_at ? 'Verified' : 'Pending') + '</p>' +
+                '<p><strong>Created:</strong> ' + esc(customer.created_at ? String(customer.created_at).substring(0, 10) : '') + '</p>' +
+                '<p><strong>Updated:</strong> ' + esc(customer.updated_at ? String(customer.updated_at).substring(0, 10) : '') + '</p>' +
+                '<p><strong>Customer ID:</strong> ' + esc(customer.id || '') + '</p>' +
+                '</div>';
+        }).catch(function (err) {
+            bodyBox.innerHTML = '<p role="alert">' + esc(extractErrorMessage(err, 'Failed to load customer.')) + '</p>';
         });
     }
 

@@ -118,6 +118,12 @@ func TestAdminHandler_StaticJS(t *testing.T) {
 	if !strings.Contains(normalizedBody, "Your account does not have customer access.") {
 		t.Fatalf("expected customer permission error message in JS")
 	}
+	if !strings.Contains(normalizedBody, "renderCustomerDetail") || !strings.Contains(normalizedBody, "/admin/customers/") {
+		t.Fatalf("expected customer detail route wiring in JS")
+	}
+	if !strings.Contains(normalizedBody, "Customer not found.") || !strings.Contains(normalizedBody, "Failed to load customer.") {
+		t.Fatalf("expected customer detail error messages in JS")
+	}
 	if !strings.Contains(normalizedBody, "shopanda_admin_login_message") {
 		t.Fatalf("expected admin login flash storage key in JS")
 	}
