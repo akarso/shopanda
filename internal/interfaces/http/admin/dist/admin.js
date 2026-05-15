@@ -193,17 +193,29 @@
             api("/admin/grids/product.grid"),
             api("/admin/products?page=1&per_page=20&sort=created_at&order=desc")
         ]).then(function (results) {
-            if (results[1] && results[1].error && results[1].error.code === "forbidden") {
+            var gridResponse = results[0] || {};
+            var productsResponse = results[1] || {};
+            if ((gridResponse.error && gridResponse.error.code === "forbidden") ||
+                (productsResponse.error && productsResponse.error.code === "forbidden")) {
                 gridBox.innerHTML = '<p role="alert">Your account does not have products access.</p>';
                 return;
             }
-            var grid = results[0] && results[0].data && results[0].data.grid;
-            var productsRaw = results[1] && results[1].data && results[1].data.products;
-            var products = normalizeProducts(productsRaw);
-            if (!grid || !Array.isArray(products)) {
-                gridBox.innerHTML = '<p role="alert">Failed to load grid or data.</p>';
+            if ((gridResponse.error && gridResponse.error.code === "unauthorized") ||
+                (productsResponse.error && productsResponse.error.code === "unauthorized")) {
+                gridBox.innerHTML = '<p role="alert">Your session expired. Sign in again to load products.</p>';
                 return;
             }
+            var grid = gridResponse.data && gridResponse.data.grid;
+            var productsRaw = productsResponse.data && productsResponse.data.products;
+            if (!grid) {
+                gridBox.innerHTML = '<p role="alert">' + esc(extractErrorMessage(gridResponse, 'Failed to load product grid.')) + '</p>';
+                return;
+            }
+            if (!Array.isArray(productsRaw)) {
+                gridBox.innerHTML = '<p role="alert">' + esc(extractErrorMessage(productsResponse, 'Failed to load products.')) + '</p>';
+                return;
+            }
+            var products = normalizeProducts(productsRaw);
             var html = '<div style="margin-bottom:1rem"><button id="new-product-btn">New Product</button></div>';
             html += '<table class="admin-table"><thead><tr>';
             for (var i = 0; i < grid.columns.length; i++) {
@@ -232,8 +244,8 @@
             gridBox.innerHTML = html;
             var newBtn = document.getElementById("new-product-btn");
             if (newBtn) newBtn.addEventListener("click", function() { navigateTo("/admin/products/new"); });
-        }).catch(function () {
-            gridBox.innerHTML = '<p role="alert">Failed to load products.</p>';
+        }).catch(function (err) {
+            gridBox.innerHTML = '<p role="alert">' + esc(extractErrorMessage(err, 'Failed to load products.')) + '</p>';
         });
     }
 

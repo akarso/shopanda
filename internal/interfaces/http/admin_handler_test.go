@@ -115,6 +115,12 @@ func TestAdminHandler_StaticJS(t *testing.T) {
 	if !strings.Contains(normalizedBody, "Your account does not have products access.") {
 		t.Fatalf("expected products permission error message in JS")
 	}
+	if !strings.Contains(normalizedBody, "Your session expired. Sign in again to load products.") {
+		t.Fatalf("expected products reauthentication message in JS")
+	}
+	if !strings.Contains(normalizedBody, "Failed to load product grid.") || !strings.Contains(normalizedBody, "Failed to load products.") {
+		t.Fatalf("expected granular products loading error messages in JS")
+	}
 	if !strings.Contains(normalizedBody, "X-Admin-Store-ID") || !strings.Contains(normalizedBody, "X-Admin-Language") || !strings.Contains(normalizedBody, "X-Admin-Currency") {
 		t.Fatalf("expected admin scope headers in JS")
 	}
