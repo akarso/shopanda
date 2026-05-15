@@ -118,6 +118,12 @@ func TestAdminHandler_StaticJS(t *testing.T) {
 	if !strings.Contains(normalizedBody, "Your account does not have customer access.") {
 		t.Fatalf("expected customer permission error message in JS")
 	}
+	if !strings.Contains(normalizedBody, "renderPagesGrid") || !strings.Contains(normalizedBody, "/admin/pages?offset=0&limit=50") {
+		t.Fatalf("expected pages admin surface wiring in JS")
+	}
+	if !strings.Contains(normalizedBody, "Your account does not have pages access.") || !strings.Contains(normalizedBody, "Failed to load pages.") {
+		t.Fatalf("expected pages admin error messages in JS")
+	}
 	if !strings.Contains(normalizedBody, "renderCustomerDetail") || !strings.Contains(normalizedBody, "/admin/customers/") {
 		t.Fatalf("expected customer detail route wiring in JS")
 	}
