@@ -156,7 +156,7 @@
         "/admin/marketing/promotions": { title: "Promotions", render: renderPlaceholder("Promotions"), auth: true },
         "/admin/marketing/coupons": { title: "Coupons", render: renderPlaceholder("Coupons"), auth: true },
         // Content
-        "/admin/content/pages": { title: "Pages", render: renderPlaceholder("Pages"), auth: true },
+        "/admin/content/pages": { title: "Pages", render: renderPagesGrid, auth: true },
         "/admin/content/navigation": { title: "Navigation", render: renderPlaceholder("Navigation"), auth: true },
         "/admin/content/blocks": { title: "Blocks", render: renderPlaceholder("Blocks"), auth: true },
         "/admin/media": { title: "Media", render: renderMediaLibrary, auth: true },
@@ -657,6 +657,35 @@
             role: pick(raw, "role", "Role"),
             status: pick(raw, "status", "Status"),
             email_verified_at: pick(raw, "email_verified_at", "EmailVerifiedAt"),
+            created_at: pick(raw, "created_at", "CreatedAt"),
+            updated_at: pick(raw, "updated_at", "UpdatedAt")
+        };
+    }
+
+    function normalizePages(pages) {
+        if (!Array.isArray(pages)) {
+            return [];
+        }
+        var out = [];
+        for (var i = 0; i < pages.length; i++) {
+            var page = normalizePage(pages[i]);
+            if (page) {
+                out.push(page);
+            }
+        }
+        return out;
+    }
+
+    function normalizePage(raw) {
+        if (!raw) {
+            return null;
+        }
+        return {
+            id: pick(raw, "id", "ID"),
+            slug: pick(raw, "slug", "Slug"),
+            title: pick(raw, "title", "Title"),
+            content: pick(raw, "content", "Content"),
+            is_active: !!pick(raw, "is_active", "IsActive"),
             created_at: pick(raw, "created_at", "CreatedAt"),
             updated_at: pick(raw, "updated_at", "UpdatedAt")
         };
@@ -1314,6 +1343,48 @@
             grid.innerHTML = html;
         }).catch(function (err) {
             grid.innerHTML = '<p role="alert">' + esc(extractErrorMessage(err, 'Failed to load customers.')) + '</p>';
+        });
+    }
+
+    function renderPagesGrid(container) {
+        container.innerHTML = '<h2>Pages</h2><div id="pages-grid"></div>';
+
+        var grid = document.getElementById("pages-grid");
+        api("/admin/pages?offset=0&limit=50").then(function (body) {
+            if (body && body.error && body.error.code === "forbidden") {
+                grid.innerHTML = '<p role="alert">Your account does not have pages access.</p>';
+                return;
+            }
+
+            var pagesRaw = body && body.data && body.data.pages;
+            if (!Array.isArray(pagesRaw)) {
+                grid.innerHTML = '<p role="alert">' + esc(extractErrorMessage(body, 'Failed to load pages.')) + '</p>';
+                return;
+            }
+
+            var pages = normalizePages(pagesRaw);
+            var html = '<table><thead><tr>' +
+                '<th>Title</th><th>Slug</th><th>Status</th><th>Updated</th>' +
+                '</tr></thead><tbody>';
+
+            if (pages.length === 0) {
+                html += '<tr><td colspan="4">No pages found.</td></tr>';
+            } else {
+                for (var i = 0; i < pages.length; i++) {
+                    var page = pages[i];
+                    html += '<tr>' +
+                        '<td>' + esc(page.title || page.slug || page.id || '') + '</td>' +
+                        '<td>' + esc(page.slug || '') + '</td>' +
+                        '<td><span class="badge badge-' + esc(page.is_active ? 'active' : 'draft') + '">' + esc(page.is_active ? 'active' : 'draft') + '</span></td>' +
+                        '<td>' + esc(page.updated_at ? String(page.updated_at).substring(0, 10) : '') + '</td>' +
+                        '</tr>';
+                }
+            }
+
+            html += '</tbody></table>';
+            grid.innerHTML = html;
+        }).catch(function (err) {
+            grid.innerHTML = '<p role="alert">' + esc(extractErrorMessage(err, 'Failed to load pages.')) + '</p>';
         });
     }
 
