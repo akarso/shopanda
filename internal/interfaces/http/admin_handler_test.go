@@ -130,6 +130,12 @@ func TestAdminHandler_StaticJS(t *testing.T) {
 	if !strings.Contains(normalizedBody, "Your account does not have stores access.") || !strings.Contains(normalizedBody, "Failed to load stores.") {
 		t.Fatalf("expected stores admin error messages in JS")
 	}
+	if !strings.Contains(normalizedBody, "renderLocalizationSettingsPage") || !strings.Contains(normalizedBody, "/admin/config?group=currency") {
+		t.Fatalf("expected localization admin surface wiring in JS")
+	}
+	if !strings.Contains(normalizedBody, "Your account does not have settings access.") || !strings.Contains(normalizedBody, "Failed to load localization settings.") {
+		t.Fatalf("expected localization admin error messages in JS")
+	}
 	if !strings.Contains(normalizedBody, "renderCustomerDetail") || !strings.Contains(normalizedBody, "/admin/customers/") {
 		t.Fatalf("expected customer detail route wiring in JS")
 	}
