@@ -166,7 +166,7 @@
         "/admin/operations/payments": { title: "Payments", render: renderPaymentSettingsPage, auth: true },
         // Settings
         "/admin/settings": { title: "Settings", render: renderSettingsPage, auth: true },
-        "/admin/settings/localization": { title: "Localization", render: renderPlaceholder("Localization"), auth: true },
+        "/admin/settings/localization": { title: "Localization", render: renderLocalizationSettingsPage, auth: true },
         "/admin/settings/users": { title: "Users & Roles", render: renderPlaceholder("Users & Roles"), auth: true },
         // Store Management
         "/admin/store": { title: "Stores", render: renderStoresGrid, auth: true },
@@ -1572,6 +1572,51 @@
         });
     }
 
+    function renderLocalizationSettingsPage(container) {
+        container.innerHTML =
+            '<h2>Localization</h2>' +
+            '<div id="localization-scope-banner" class="settings-scope-banner"></div>' +
+            '<div class="settings-grid">' +
+            '<section><h3>Currency & Display</h3><div id="settings-currency-msg"></div><form id="settings-currency-form"></form></section>' +
+            '<section><h3>Store Languages</h3><div id="localization-language-grid"></div></section>' +
+            '</div>';
+
+        Promise.all([
+            api('/admin/stores'),
+            api('/admin/config?group=currency')
+        ]).then(function (results) {
+            var storesResponse = results[0];
+            var currencyResponse = results[1];
+
+            if ((storesResponse && storesResponse.error && storesResponse.error.code === 'forbidden') ||
+                (currencyResponse && currencyResponse.error && currencyResponse.error.code === 'forbidden')) {
+                container.innerHTML = '<h2>Localization</h2><p role="alert">Your account does not have settings access.</p>';
+                return;
+            }
+
+            var storesRaw = storesResponse && storesResponse.data && storesResponse.data.stores;
+            if (!Array.isArray(storesRaw)) {
+                container.innerHTML = '<h2>Localization</h2><p role="alert">' + esc(extractErrorMessage(storesResponse, 'Failed to load localization settings.')) + '</p>';
+                return;
+            }
+
+            if (!currencyResponse || !currencyResponse.data || typeof currencyResponse.data !== 'object') {
+                container.innerHTML = '<h2>Localization</h2><p role="alert">' + esc(extractErrorMessage(currencyResponse, 'Failed to load localization settings.')) + '</p>';
+                return;
+            }
+
+            var stores = normalizeStores(storesRaw);
+            var currencyPayload = settingsPayloadFromResult(currencyResponse);
+            var activeScope = resolveSettingsScope([currencyPayload]);
+
+            renderSettingsScopeBanner(stores, activeScope, 'localization-scope-banner');
+            renderCurrencySettingsForm(container, currencyPayload.entries, currencyPayload.fieldScopes, activeScope.storeID);
+            renderStoreLocalizationSummary(stores);
+        }).catch(function () {
+            container.innerHTML = '<h2>Localization</h2><p role="alert">Failed to load localization settings.</p>';
+        });
+    }
+
     function settingsPayloadFromResult(result) {
         var data = result && result.data ? result.data : {};
         var scope = data.scope || {};
@@ -1751,6 +1796,33 @@
                 setSettingsMessage('settings-store-msg', extractErrorMessage(err, 'Failed to save store settings.'), true);
             });
         });
+    }
+
+    function renderStoreLocalizationSummary(stores) {
+        var grid = document.getElementById('localization-language-grid');
+        if (!grid) {
+            return;
+        }
+
+        var html = '<p class="settings-scope-note">Review the assigned language and default currency for each store.</p>' +
+            '<table><thead><tr><th>Store</th><th>Language</th><th>Currency</th><th>Domain</th></tr></thead><tbody>';
+
+        if (!stores || stores.length === 0) {
+            html += '<tr><td colspan="4">No stores found.</td></tr>';
+        } else {
+            for (var i = 0; i < stores.length; i++) {
+                var store = stores[i];
+                html += '<tr>' +
+                    '<td>' + esc(store.name || store.code || store.id || '') + '</td>' +
+                    '<td>' + esc(store.language || '') + '</td>' +
+                    '<td>' + esc(store.currency || '') + '</td>' +
+                    '<td>' + esc(store.domain || '') + '</td>' +
+                    '</tr>';
+            }
+        }
+
+        html += '</tbody></table>';
+        grid.innerHTML = html;
     }
 
     function renderEmailSettingsForm(container, settings, fieldScopes, activeStoreID) {
