@@ -169,7 +169,7 @@
         "/admin/settings/localization": { title: "Localization", render: renderPlaceholder("Localization"), auth: true },
         "/admin/settings/users": { title: "Users & Roles", render: renderPlaceholder("Users & Roles"), auth: true },
         // Store Management
-        "/admin/store": { title: "Stores", render: renderPlaceholder("Stores"), auth: true },
+        "/admin/store": { title: "Stores", render: renderStoresGrid, auth: true },
         "/admin/store/domains": { title: "Domains", render: renderPlaceholder("Domains"), auth: true },
         "/admin/store/languages": { title: "Languages", render: renderPlaceholder("Languages"), auth: true },
         "/admin/store/currencies": { title: "Currencies", render: renderPlaceholder("Currencies"), auth: true },
@@ -1385,6 +1385,50 @@
             grid.innerHTML = html;
         }).catch(function (err) {
             grid.innerHTML = '<p role="alert">' + esc(extractErrorMessage(err, 'Failed to load pages.')) + '</p>';
+        });
+    }
+
+    function renderStoresGrid(container) {
+        container.innerHTML = '<h2>Stores</h2><div id="stores-grid"></div>';
+
+        var grid = document.getElementById("stores-grid");
+        api("/admin/stores").then(function (body) {
+            if (body && body.error && body.error.code === "forbidden") {
+                grid.innerHTML = '<p role="alert">Your account does not have stores access.</p>';
+                return;
+            }
+
+            var storesRaw = body && body.data && body.data.stores;
+            if (!Array.isArray(storesRaw)) {
+                grid.innerHTML = '<p role="alert">' + esc(extractErrorMessage(body, 'Failed to load stores.')) + '</p>';
+                return;
+            }
+
+            var stores = normalizeStores(storesRaw);
+            var html = '<table><thead><tr>' +
+                '<th>Name</th><th>Code</th><th>Domain</th><th>Language</th><th>Currency</th><th>Default</th>' +
+                '</tr></thead><tbody>';
+
+            if (stores.length === 0) {
+                html += '<tr><td colspan="6">No stores found.</td></tr>';
+            } else {
+                for (var i = 0; i < stores.length; i++) {
+                    var store = stores[i];
+                    html += '<tr>' +
+                        '<td>' + esc(store.name || store.code || store.id || '') + '</td>' +
+                        '<td>' + esc(store.code || '') + '</td>' +
+                        '<td>' + esc(store.domain || '') + '</td>' +
+                        '<td>' + esc(store.language || '') + '</td>' +
+                        '<td>' + esc(store.currency || '') + '</td>' +
+                        '<td>' + esc(store.is_default ? 'Yes' : 'No') + '</td>' +
+                        '</tr>';
+                }
+            }
+
+            html += '</tbody></table>';
+            grid.innerHTML = html;
+        }).catch(function (err) {
+            grid.innerHTML = '<p role="alert">' + esc(extractErrorMessage(err, 'Failed to load stores.')) + '</p>';
         });
     }
 
