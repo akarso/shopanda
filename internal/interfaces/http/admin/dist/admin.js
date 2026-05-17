@@ -172,7 +172,7 @@
         "/admin/store": { title: "Stores", render: renderStoresGrid, auth: true },
         "/admin/store/domains": { title: "Domains", render: renderStoreDomainsPage, auth: true },
         "/admin/store/languages": { title: "Languages", render: renderStoreLanguagesPage, auth: true },
-        "/admin/store/currencies": { title: "Currencies", render: renderPlaceholder("Currencies"), auth: true },
+        "/admin/store/currencies": { title: "Currencies", render: renderStoreCurrenciesPage, auth: true },
         // Integrations
         "/admin/integrations": { title: "Integrations", render: renderPlaceholder("Integrations"), auth: true },
         // Account (accessible from header user-info link)
@@ -1513,6 +1513,49 @@
             grid.innerHTML = html;
         }).catch(function (err) {
             grid.innerHTML = '<p role="alert">' + esc(extractErrorMessage(err, 'Failed to load store languages.')) + '</p>';
+        });
+    }
+
+    function renderStoreCurrenciesPage(container) {
+        container.innerHTML = '<h2>Currencies</h2><div id="store-currencies-grid"></div>';
+
+        var grid = document.getElementById('store-currencies-grid');
+        api('/admin/stores').then(function (body) {
+            if (body && body.error && body.error.code === 'forbidden') {
+                grid.innerHTML = '<p role="alert">Your account does not have stores access.</p>';
+                return;
+            }
+
+            var storesRaw = body && body.data && body.data.stores;
+            if (!Array.isArray(storesRaw)) {
+                grid.innerHTML = '<p role="alert">' + esc(extractErrorMessage(body, 'Failed to load store currencies.')) + '</p>';
+                return;
+            }
+
+            var stores = normalizeStores(storesRaw);
+            var html = '<table><thead><tr>' +
+                '<th>Store</th><th>Currency</th><th>Language</th><th>Domain</th><th>Default</th>' +
+                '</tr></thead><tbody>';
+
+            if (stores.length === 0) {
+                html += '<tr><td colspan="5">No store currencies found.</td></tr>';
+            } else {
+                for (var i = 0; i < stores.length; i++) {
+                    var store = stores[i];
+                    html += '<tr>' +
+                        '<td>' + esc(store.name || store.code || store.id || '') + '</td>' +
+                        '<td>' + esc(store.currency || '') + '</td>' +
+                        '<td>' + esc(store.language || '') + '</td>' +
+                        '<td>' + esc(store.domain || '') + '</td>' +
+                        '<td>' + esc(store.is_default ? 'Yes' : 'No') + '</td>' +
+                        '</tr>';
+                }
+            }
+
+            html += '</tbody></table>';
+            grid.innerHTML = html;
+        }).catch(function (err) {
+            grid.innerHTML = '<p role="alert">' + esc(extractErrorMessage(err, 'Failed to load store currencies.')) + '</p>';
         });
     }
 
