@@ -148,6 +148,12 @@ func TestAdminHandler_StaticJS(t *testing.T) {
 	if !strings.Contains(normalizedBody, "Your account does not have stores access.") || !strings.Contains(normalizedBody, "Failed to load store currencies.") {
 		t.Fatalf("expected store currencies admin error messages in JS")
 	}
+	if !strings.Contains(normalizedBody, "renderUsersRolesPage") || !strings.Contains(normalizedBody, "/admin/customers?offset=0&limit=50") {
+		t.Fatalf("expected users and roles admin surface wiring in JS")
+	}
+	if !strings.Contains(normalizedBody, "Role capabilities reflect the current core RBAC model.") || !strings.Contains(normalizedBody, "Failed to load users and roles.") {
+		t.Fatalf("expected users and roles admin messages in JS")
+	}
 	if !strings.Contains(normalizedBody, "renderLocalizationSettingsPage") || !strings.Contains(normalizedBody, "/admin/config?group=currency") {
 		t.Fatalf("expected localization admin surface wiring in JS")
 	}

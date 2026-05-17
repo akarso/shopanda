@@ -167,7 +167,7 @@
         // Settings
         "/admin/settings": { title: "Settings", render: renderSettingsPage, auth: true },
         "/admin/settings/localization": { title: "Localization", render: renderLocalizationSettingsPage, auth: true },
-        "/admin/settings/users": { title: "Users & Roles", render: renderPlaceholder("Users & Roles"), auth: true },
+        "/admin/settings/users": { title: "Users & Roles", render: renderUsersRolesPage, auth: true },
         // Store Management
         "/admin/store": { title: "Stores", render: renderStoresGrid, auth: true },
         "/admin/store/domains": { title: "Domains", render: renderStoreDomainsPage, auth: true },
@@ -1053,6 +1053,57 @@
         return role === "admin" || role === "manager" || role === "editor" || role === "support";
     }
 
+    function adminRoleDefinitions() {
+        return [
+            {
+                role: 'admin',
+                label: 'Administrator',
+                permissions: [
+                    'products.read', 'products.write',
+                    'orders.read', 'orders.write',
+                    'categories.read', 'categories.write',
+                    'customers.read', 'customers.write',
+                    'invoices.read',
+                    'media.read', 'media.write',
+                    'settings.read', 'settings.write',
+                    'shipping.read', 'shipping.write'
+                ]
+            },
+            {
+                role: 'manager',
+                label: 'Manager',
+                permissions: [
+                    'products.read', 'products.write',
+                    'orders.read', 'orders.write',
+                    'categories.read', 'categories.write',
+                    'customers.read',
+                    'invoices.read',
+                    'media.read', 'media.write',
+                    'shipping.read', 'shipping.write'
+                ]
+            },
+            {
+                role: 'editor',
+                label: 'Editor',
+                permissions: [
+                    'products.read', 'products.write',
+                    'categories.read', 'categories.write',
+                    'media.read', 'media.write'
+                ]
+            },
+            {
+                role: 'support',
+                label: 'Support',
+                permissions: [
+                    'products.read',
+                    'orders.read',
+                    'customers.read',
+                    'invoices.read'
+                ]
+            }
+        ];
+    }
+
     // --- Pages ---
 
     function renderLogin(container) {
@@ -1343,6 +1394,77 @@
             grid.innerHTML = html;
         }).catch(function (err) {
             grid.innerHTML = '<p role="alert">' + esc(extractErrorMessage(err, 'Failed to load customers.')) + '</p>';
+        });
+    }
+
+    function renderUsersRolesPage(container) {
+        container.innerHTML = '' +
+            '<h2>Users & Roles</h2>' +
+            '<div class="settings-grid">' +
+            '<section><h3>Admin Users</h3><div id="users-roles-users-grid"></div></section>' +
+            '<section><h3>Role Capabilities</h3><div id="users-roles-roles-grid"></div></section>' +
+            '</div>';
+
+        var usersGrid = document.getElementById('users-roles-users-grid');
+        var rolesGrid = document.getElementById('users-roles-roles-grid');
+        var roleDefs = adminRoleDefinitions();
+        var rolesHtml = '<p class="settings-scope-note">Role capabilities reflect the current core RBAC model.</p>' +
+            '<table><thead><tr><th>Role</th><th>Permissions</th></tr></thead><tbody>';
+
+        for (var i = 0; i < roleDefs.length; i++) {
+            var roleDef = roleDefs[i];
+            rolesHtml += '<tr>' +
+                '<td>' + esc(roleDef.label) + '</td>' +
+                '<td>' + esc(roleDef.permissions.join(', ')) + '</td>' +
+                '</tr>';
+        }
+        rolesHtml += '</tbody></table>';
+        rolesGrid.innerHTML = rolesHtml;
+
+        api('/admin/customers?offset=0&limit=50').then(function (body) {
+            if (body && body.error && body.error.code === 'forbidden') {
+                usersGrid.innerHTML = '<p role="alert">Your account does not have customer access.</p>';
+                return;
+            }
+
+            var customersRaw = body && body.data && body.data.customers;
+            if (!Array.isArray(customersRaw)) {
+                usersGrid.innerHTML = '<p role="alert">' + esc(extractErrorMessage(body, 'Failed to load users and roles.')) + '</p>';
+                return;
+            }
+
+            var customers = normalizeCustomers(customersRaw);
+            var adminUsers = [];
+            for (var j = 0; j < customers.length; j++) {
+                if (hasAdminPanelAccess(customers[j] && customers[j].role)) {
+                    adminUsers.push(customers[j]);
+                }
+            }
+
+            var usersHtml = '<table><thead><tr>' +
+                '<th>Name</th><th>Email</th><th>Role</th><th>Status</th><th>Verified</th>' +
+                '</tr></thead><tbody>';
+
+            if (adminUsers.length === 0) {
+                usersHtml += '<tr><td colspan="5">No admin users found in the current customer page.</td></tr>';
+            } else {
+                for (var k = 0; k < adminUsers.length; k++) {
+                    var user = adminUsers[k];
+                    var fullName = ((user.first_name || '') + ' ' + (user.last_name || '')).trim();
+                    usersHtml += '<tr>' +
+                        '<td>' + esc(fullName || user.email || user.id || '') + '</td>' +
+                        '<td>' + esc(user.email || '') + '</td>' +
+                        '<td>' + esc(user.role || '') + '</td>' +
+                        '<td><span class="badge badge-' + esc(user.status || 'unknown') + '">' + esc(user.status || 'unknown') + '</span></td>' +
+                        '<td>' + esc(user.email_verified_at ? 'Verified' : 'Pending') + '</td>' +
+                        '</tr>';
+                }
+            }
+
+            usersHtml += '</tbody></table>';
+            usersGrid.innerHTML = usersHtml;
+        }).catch(function (err) {
+            usersGrid.innerHTML = '<p role="alert">' + esc(extractErrorMessage(err, 'Failed to load users and roles.')) + '</p>';
         });
     }
 
