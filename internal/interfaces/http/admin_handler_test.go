@@ -115,6 +115,12 @@ func TestAdminHandler_StaticJS(t *testing.T) {
 	if !strings.Contains(normalizedBody, "Your account does not have products access.") {
 		t.Fatalf("expected products permission error message in JS")
 	}
+	if !strings.Contains(normalizedBody, "renderCategoriesPage") || !strings.Contains(normalizedBody, "/categories") {
+		t.Fatalf("expected categories admin surface wiring in JS")
+	}
+	if !strings.Contains(normalizedBody, "Category management is currently read-only in the admin UI.") || !strings.Contains(normalizedBody, "Failed to load categories.") {
+		t.Fatalf("expected categories admin messages in JS")
+	}
 	if !strings.Contains(normalizedBody, "Your account does not have customer access.") {
 		t.Fatalf("expected customer permission error message in JS")
 	}

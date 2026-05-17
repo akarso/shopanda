@@ -147,7 +147,7 @@
         "/admin/sales/transactions": { title: "Transactions", render: renderPlaceholder("Transactions"), auth: true },
         // Catalog
         "/admin/products": { title: "Products", render: renderProductsGrid, auth: true },
-        "/admin/catalog/categories": { title: "Categories", render: renderPlaceholder("Categories"), auth: true },
+        "/admin/catalog/categories": { title: "Categories", render: renderCategoriesPage, auth: true },
         "/admin/catalog/attributes": { title: "Attributes", render: renderPlaceholder("Attributes"), auth: true },
         // Customers
         "/admin/customers": { title: "Customers", render: renderCustomersGrid, auth: true },
@@ -272,6 +272,50 @@
         }).catch(function (err) {
             gridBox.innerHTML = '<p role="alert">' + esc(extractErrorMessage(err, 'Failed to load products.')) + '</p>';
         });
+    }
+
+    function renderCategoriesPage(container) {
+        container.innerHTML = '' +
+            '<h2>Categories</h2>' +
+            '<p class="settings-scope-note">Category management is currently read-only in the admin UI. The tree below reflects the existing category API.</p>' +
+            '<div id="categories-tree"></div>';
+
+        var tree = document.getElementById('categories-tree');
+        api('/categories').then(function (body) {
+            var categories = body && body.data && body.data.categories;
+            if (!Array.isArray(categories)) {
+                tree.innerHTML = '<p role="alert">' + esc(extractErrorMessage(body, 'Failed to load categories.')) + '</p>';
+                return;
+            }
+
+            if (categories.length === 0) {
+                tree.innerHTML = '<p>No categories found.</p>';
+                return;
+            }
+
+            tree.innerHTML = renderCategoryTreeNodes(categories);
+        }).catch(function (err) {
+            tree.innerHTML = '<p role="alert">' + esc(extractErrorMessage(err, 'Failed to load categories.')) + '</p>';
+        });
+    }
+
+    function renderCategoryTreeNodes(nodes) {
+        if (!Array.isArray(nodes) || nodes.length === 0) {
+            return '';
+        }
+
+        var html = '<ul class="admin-tree-list">';
+        for (var i = 0; i < nodes.length; i++) {
+            var node = nodes[i] || {};
+            var children = Array.isArray(node.children) ? node.children : [];
+            html += '<li>' +
+                '<strong>' + esc(node.name || node.slug || node.id || '') + '</strong>' +
+                ' <span class="settings-scope-note">/' + esc(node.slug || '') + '</span>' +
+                renderCategoryTreeNodes(children) +
+                '</li>';
+        }
+        html += '</ul>';
+        return html;
     }
 
     function renderProductCreate(container) {
