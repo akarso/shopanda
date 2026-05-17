@@ -154,6 +154,12 @@ func TestAdminHandler_StaticJS(t *testing.T) {
 	if !strings.Contains(normalizedBody, "Role capabilities reflect the current core RBAC model.") || !strings.Contains(normalizedBody, "Failed to load users and roles.") {
 		t.Fatalf("expected users and roles admin messages in JS")
 	}
+	if !strings.Contains(normalizedBody, "renderIntegrationsPage") || !strings.Contains(normalizedBody, "/admin/config?group=email") || !strings.Contains(normalizedBody, "/admin/config?group=media") {
+		t.Fatalf("expected integrations admin surface wiring in JS")
+	}
+	if !strings.Contains(normalizedBody, "Plugin integrations are registered at application boot.") || !strings.Contains(normalizedBody, "Failed to load integrations.") {
+		t.Fatalf("expected integrations admin messages in JS")
+	}
 	if !strings.Contains(normalizedBody, "renderLocalizationSettingsPage") || !strings.Contains(normalizedBody, "/admin/config?group=currency") {
 		t.Fatalf("expected localization admin surface wiring in JS")
 	}
