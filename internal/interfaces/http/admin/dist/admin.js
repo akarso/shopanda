@@ -174,7 +174,7 @@
         "/admin/store/languages": { title: "Languages", render: renderStoreLanguagesPage, auth: true },
         "/admin/store/currencies": { title: "Currencies", render: renderStoreCurrenciesPage, auth: true },
         // Integrations
-        "/admin/integrations": { title: "Integrations", render: renderPlaceholder("Integrations"), auth: true },
+        "/admin/integrations": { title: "Integrations", render: renderIntegrationsPage, auth: true },
         // Account (accessible from header user-info link)
         "/admin/account": { title: "Account", render: renderAdminAccount, auth: true }
     };
@@ -1863,6 +1863,68 @@
             renderStoreLocalizationSummary(stores);
         }).catch(function () {
             container.innerHTML = '<h2>Localization</h2><p role="alert">Failed to load localization settings.</p>';
+        });
+    }
+
+    function renderIntegrationsPage(container) {
+        container.innerHTML = '<h2>Integrations</h2><div id="integrations-grid"></div>';
+
+        var grid = document.getElementById('integrations-grid');
+        Promise.all([
+            api('/admin/config?group=email'),
+            api('/admin/config?group=media')
+        ]).then(function (results) {
+            var emailResponse = results[0];
+            var mediaResponse = results[1];
+
+            if ((emailResponse && emailResponse.error && emailResponse.error.code === 'forbidden') ||
+                (mediaResponse && mediaResponse.error && mediaResponse.error.code === 'forbidden')) {
+                grid.innerHTML = '<p role="alert">Your account does not have settings access.</p>';
+                return;
+            }
+
+            if (!emailResponse || !emailResponse.data || typeof emailResponse.data !== 'object' ||
+                !mediaResponse || !mediaResponse.data || typeof mediaResponse.data !== 'object') {
+                grid.innerHTML = '<p role="alert">Failed to load integrations.</p>';
+                return;
+            }
+
+            var emailPayload = settingsPayloadFromResult(emailResponse);
+            var mediaPayload = settingsPayloadFromResult(mediaResponse);
+            var smtpHost = valueOf(emailPayload.entries, 'mail.smtp.host', '');
+            var smtpFrom = valueOf(emailPayload.entries, 'mail.smtp.from', '');
+            var mediaStorage = valueOf(mediaPayload.entries, 'media.storage', 'local');
+            var mediaEndpoint = mediaStorage === 's3'
+                ? (valueOf(mediaPayload.entries, 'media.s3.bucket', '') || valueOf(mediaPayload.entries, 'media.s3.base_url', '') || valueOf(mediaPayload.entries, 'media.s3.endpoint', ''))
+                : (valueOf(mediaPayload.entries, 'media.local.base_url', '') || valueOf(mediaPayload.entries, 'media.local.base_path', ''));
+
+            grid.innerHTML = '' +
+                '<div class="settings-grid">' +
+                '<section>' +
+                '<h3>Email Delivery</h3>' +
+                '<p><strong>Status:</strong> ' + esc(smtpHost ? 'Configured' : 'Needs configuration') + '</p>' +
+                '<p><strong>SMTP Host:</strong> ' + esc(smtpHost || 'Not set') + '</p>' +
+                '<p><strong>From Address:</strong> ' + esc(smtpFrom || 'Not set') + '</p>' +
+                '<p><a href="/admin/settings" data-link>Open settings</a></p>' +
+                '</section>' +
+                '<section>' +
+                '<h3>Media Storage</h3>' +
+                '<p><strong>Backend:</strong> ' + esc(mediaStorage || 'local') + '</p>' +
+                '<p><strong>Endpoint:</strong> ' + esc(mediaEndpoint || 'Not set') + '</p>' +
+                '<p><a href="/admin/settings" data-link>Open settings</a></p>' +
+                '</section>' +
+                '<section>' +
+                '<h3>Operational Providers</h3>' +
+                '<p>Shipping and payment provider configuration is managed under Operations.</p>' +
+                '<p><a href="/admin/operations/shipping" data-link>Shipping</a> and <a href="/admin/operations/payments" data-link>Payments</a></p>' +
+                '</section>' +
+                '<section>' +
+                '<h3>Plugin Extensions</h3>' +
+                '<p>Plugin integrations are registered at application boot. Runtime plugin status is not currently exposed in the admin API.</p>' +
+                '</section>' +
+                '</div>';
+        }).catch(function () {
+            grid.innerHTML = '<p role="alert">Failed to load integrations.</p>';
         });
     }
 
