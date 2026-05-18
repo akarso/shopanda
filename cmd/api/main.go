@@ -748,6 +748,7 @@ func runServe(cfg *config.Config, log logger.Logger) error {
 	// Permission-based middleware for admin routes.
 	requireProductsRead := shophttp.RequirePermission(rbac.ProductsRead)
 	requireProductsWrite := shophttp.RequirePermission(rbac.ProductsWrite)
+	requireCategoriesRead := shophttp.RequirePermission(rbac.CategoriesRead)
 	requireCustomersRead := shophttp.RequirePermission(rbac.CustomersRead)
 	requireCustomersWrite := shophttp.RequirePermission(rbac.CustomersWrite)
 	requireOrdersRead := shophttp.RequirePermission(rbac.OrdersRead)
@@ -790,6 +791,7 @@ func runServe(cfg *config.Config, log logger.Logger) error {
 	router.Handle("GET /api/v1/admin/products", requireProductsRead(productAdmin.List()))
 	router.Handle("POST /api/v1/admin/products", requireProductsWrite(productAdmin.Create()))
 	router.Handle("PUT /api/v1/admin/products/{id}", requireProductsWrite(productAdmin.Update()))
+	router.Handle("GET /api/v1/admin/categories", requireCategoriesRead(categoryHandler.Tree()))
 	router.Handle("POST /api/v1/admin/products/{id}/variants", requireProductsWrite(variantHandler.Create()))
 	router.Handle("PUT /api/v1/admin/products/{id}/variants/{variantId}", requireProductsWrite(variantHandler.Update()))
 	router.Handle("GET /api/v1/admin/stats/overview", requireOrdersRead(statsAdmin.Overview()))
