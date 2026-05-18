@@ -121,7 +121,7 @@ func TestAdminHandler_StaticJS(t *testing.T) {
 	if !strings.Contains(normalizedBody, "renderCategoryForm") || !strings.Contains(normalizedBody, "/admin/categories/new") || !strings.Contains(normalizedBody, "Delete Category") || !strings.Contains(normalizedBody, "Move up") || !strings.Contains(normalizedBody, "Move down") {
 		t.Fatalf("expected category CRUD routing in JS")
 	}
-	if !strings.Contains(normalizedBody, "/admin/categories/") || !strings.Contains(normalizedBody, "/products?offset=0&limit=50") || !strings.Contains(normalizedBody, "Assign Product") || !strings.Contains(normalizedBody, "Product removed from category.") {
+	if !strings.Contains(normalizedBody, "/admin/categories/") || !strings.Contains(normalizedBody, "/admin/products?offset=0&limit=50") || !strings.Contains(normalizedBody, "Assign Product") || !strings.Contains(normalizedBody, "Product removed from category.") {
 		t.Fatalf("expected category product assignment wiring in JS")
 	}
 	if !strings.Contains(normalizedBody, "Your account does not have categories access.") || !strings.Contains(normalizedBody, "Failed to load categories.") || !strings.Contains(normalizedBody, "Failed to load category form.") || !strings.Contains(normalizedBody, "Category meta must be a JSON object.") || !strings.Contains(normalizedBody, "Category order saved.") || !strings.Contains(normalizedBody, "Failed to save category order.") || !strings.Contains(normalizedBody, "Failed to load assigned products.") || !strings.Contains(normalizedBody, "Failed to assign product.") || !strings.Contains(normalizedBody, "Failed to remove product.") || !strings.Contains(normalizedBody, "Your account does not have products access, so product assignment is unavailable.") {

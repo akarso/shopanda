@@ -746,6 +746,18 @@ func TestCategoryProductAssignmentAdminHandler_Assign_OK(t *testing.T) {
 	if !assigned {
 		t.Fatal("expected assignment repo to be called")
 	}
+
+	var assignBody struct {
+		Data struct {
+			Assigned bool `json:"assigned"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &assignBody); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if !assignBody.Data.Assigned {
+		t.Fatalf("assigned = %v, want true", assignBody.Data.Assigned)
+	}
 }
 
 func TestCategoryProductAssignmentAdminHandler_Unassign_OK(t *testing.T) {
@@ -789,6 +801,18 @@ func TestCategoryProductAssignmentAdminHandler_Unassign_OK(t *testing.T) {
 	}
 	if !removed {
 		t.Fatal("expected assignment repo to be called")
+	}
+
+	var unassignBody struct {
+		Data struct {
+			Assigned bool `json:"assigned"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &unassignBody); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if unassignBody.Data.Assigned {
+		t.Fatalf("assigned = %v, want false", unassignBody.Data.Assigned)
 	}
 }
 

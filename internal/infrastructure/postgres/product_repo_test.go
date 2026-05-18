@@ -350,6 +350,9 @@ func TestProductRepo_AssignAndRemoveCategory(t *testing.T) {
 	if err := repo.AssignCategory(ctx, p.ID, c.ID); err != nil {
 		t.Fatalf("AssignCategory: %v", err)
 	}
+	if err := repo.AssignCategory(ctx, p.ID, c.ID); err != nil {
+		t.Fatalf("AssignCategory second call: %v", err)
+	}
 
 	products, err := repo.FindByCategoryID(ctx, c.ID, 0, 20)
 	if err != nil {
@@ -361,6 +364,9 @@ func TestProductRepo_AssignAndRemoveCategory(t *testing.T) {
 
 	if err := repo.RemoveCategory(ctx, p.ID, c.ID); err != nil {
 		t.Fatalf("RemoveCategory: %v", err)
+	}
+	if err := repo.RemoveCategory(ctx, p.ID, c.ID); err != nil {
+		t.Fatalf("RemoveCategory second call: %v", err)
 	}
 
 	products, err = repo.FindByCategoryID(ctx, c.ID, 0, 20)
