@@ -281,7 +281,12 @@
             '<div id="categories-tree"></div>';
 
         var tree = document.getElementById('categories-tree');
-        api('/categories').then(function (body) {
+        api('/admin/categories').then(function (body) {
+            if (body && body.error && body.error.code === 'forbidden') {
+                tree.innerHTML = '<p role="alert">Your account does not have categories access.</p>';
+                return;
+            }
+
             var categories = body && body.data && body.data.categories;
             if (!Array.isArray(categories)) {
                 tree.innerHTML = '<p role="alert">' + esc(extractErrorMessage(body, 'Failed to load categories.')) + '</p>';

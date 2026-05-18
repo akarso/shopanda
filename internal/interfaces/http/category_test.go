@@ -9,7 +9,10 @@ import (
 	"testing"
 
 	"github.com/akarso/shopanda/internal/domain/catalog"
+	"github.com/akarso/shopanda/internal/domain/identity"
+	"github.com/akarso/shopanda/internal/domain/rbac"
 	shophttp "github.com/akarso/shopanda/internal/interfaces/http"
+	"github.com/akarso/shopanda/internal/platform/auth/testhelper"
 )
 
 // --- mock category repository ---
@@ -125,6 +128,14 @@ func newCategoryRouter(h *shophttp.CategoryHandler) *http.ServeMux {
 	mux.HandleFunc("GET /api/v1/categories", h.Tree())
 	mux.HandleFunc("GET /api/v1/categories/{id}", h.Get())
 	mux.HandleFunc("GET /api/v1/categories/{id}/products", h.Products())
+	return mux
+}
+
+func newAdminCategoryRouter(h *shophttp.CategoryHandler) *http.ServeMux {
+	requireCategoriesRead := shophttp.RequirePermission(rbac.CategoriesRead)
+	withAdminContext := shophttp.AdminContextMiddleware()
+	mux := http.NewServeMux()
+	mux.Handle("GET /api/v1/admin/categories", withAdminContext(requireCategoriesRead(h.Tree())))
 	return mux
 }
 
@@ -351,5 +362,52 @@ func TestCategoryHandler_Tree_Empty(t *testing.T) {
 	}
 	if len(envelope.Data.Categories) != 0 {
 		t.Fatalf("categories count = %d, want 0", len(envelope.Data.Categories))
+	}
+}
+
+func TestCategoryHandler_AdminTree_OK(t *testing.T) {
+	cats := &mockCategoryRepo{
+		findAllFn: func(_ context.Context) ([]catalog.Category, error) {
+			return []catalog.Category{
+				{ID: "cat-1", Name: "Electronics", Slug: "electronics", Position: 1},
+			}, nil
+		},
+	}
+	h := shophttp.NewCategoryHandler(cats, &mockCatProductRepo{})
+	mux := newAdminCategoryRouter(h)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/admin/categories", nil)
+	req = testhelper.AuthenticatedRequest(req, "editor-1", identity.RoleEditor)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d", rec.Code, http.StatusOK)
+	}
+
+	var envelope struct {
+		Data struct {
+			Categories []json.RawMessage `json:"categories"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &envelope); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if len(envelope.Data.Categories) != 1 {
+		t.Fatalf("categories count = %d, want 1", len(envelope.Data.Categories))
+	}
+}
+
+func TestCategoryHandler_AdminTree_Forbidden(t *testing.T) {
+	h := shophttp.NewCategoryHandler(&mockCategoryRepo{}, &mockCatProductRepo{})
+	mux := newAdminCategoryRouter(h)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/admin/categories", nil)
+	req = testhelper.AuthenticatedRequest(req, "support-1", identity.RoleSupport)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("status = %d, want %d", rec.Code, http.StatusForbidden)
 	}
 }
