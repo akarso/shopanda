@@ -558,6 +558,41 @@ func TestCategoryAdminHandler_Update_RejectsCycle(t *testing.T) {
 	}
 }
 
+func TestCategoryAdminHandler_Update_RejectsRepeatedAncestor(t *testing.T) {
+	repo := &mockCategoryRepo{
+		findByIDFn: func(_ context.Context, id string) (*catalog.Category, error) {
+			switch id {
+			case "cat-1":
+				return &catalog.Category{ID: "cat-1", Name: "Root", Slug: "root"}, nil
+			case "child-1":
+				return &catalog.Category{ID: "child-1", ParentID: strPtr("loop-1"), Name: "Child", Slug: "child"}, nil
+			case "loop-1":
+				return &catalog.Category{ID: "loop-1", ParentID: strPtr("loop-2"), Name: "Loop 1", Slug: "loop-1"}, nil
+			case "loop-2":
+				return &catalog.Category{ID: "loop-2", ParentID: strPtr("loop-1"), Name: "Loop 2", Slug: "loop-2"}, nil
+			default:
+				return nil, nil
+			}
+		},
+	}
+	read := shophttp.NewCategoryHandler(repo, &mockCatProductRepo{})
+	admin := shophttp.NewCategoryAdminHandler(repo, categoryBus())
+	mux := newAdminCategoryCRUDRouter(read, admin)
+
+	body := bytes.NewBufferString(`{"parent_id":"child-1"}`)
+	req := httptest.NewRequest(http.MethodPut, "/api/v1/admin/categories/cat-1", body)
+	req = testhelper.AuthenticatedRequest(req, "editor-1", identity.RoleEditor)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("status = %d, want %d", rec.Code, http.StatusUnprocessableEntity)
+	}
+	if !bytes.Contains(rec.Body.Bytes(), []byte("invalid parent chain: cycle detected at ID loop-1")) {
+		t.Fatalf("body = %s, want cycle-detected message", rec.Body.String())
+	}
+}
+
 func TestCategoryAdminHandler_Delete_OK(t *testing.T) {
 	deletedID := ""
 	repo := &mockCategoryRepo{
@@ -597,6 +632,39 @@ func TestCategoryAdminHandler_Create_Forbidden(t *testing.T) {
 
 	body := bytes.NewBufferString(`{"name":"Accessories","slug":"accessories"}`)
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/admin/categories", body)
+	req = testhelper.AuthenticatedRequest(req, "support-1", identity.RoleSupport)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("status = %d, want %d", rec.Code, http.StatusForbidden)
+	}
+}
+
+func TestCategoryAdminHandler_Update_Forbidden(t *testing.T) {
+	repo := &mockCategoryRepo{}
+	read := shophttp.NewCategoryHandler(repo, &mockCatProductRepo{})
+	admin := shophttp.NewCategoryAdminHandler(repo, categoryBus())
+	mux := newAdminCategoryCRUDRouter(read, admin)
+
+	body := bytes.NewBufferString(`{"name":"Accessories","slug":"accessories"}`)
+	req := httptest.NewRequest(http.MethodPut, "/api/v1/admin/categories/1", body)
+	req = testhelper.AuthenticatedRequest(req, "support-1", identity.RoleSupport)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("status = %d, want %d", rec.Code, http.StatusForbidden)
+	}
+}
+
+func TestCategoryAdminHandler_Delete_Forbidden(t *testing.T) {
+	repo := &mockCategoryRepo{}
+	read := shophttp.NewCategoryHandler(repo, &mockCatProductRepo{})
+	admin := shophttp.NewCategoryAdminHandler(repo, categoryBus())
+	mux := newAdminCategoryCRUDRouter(read, admin)
+
+	req := httptest.NewRequest(http.MethodDelete, "/api/v1/admin/categories/1", nil)
 	req = testhelper.AuthenticatedRequest(req, "support-1", identity.RoleSupport)
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, req)

@@ -2,6 +2,7 @@ package http
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"strings"
 
@@ -66,7 +67,7 @@ func (h *CategoryAdminHandler) validateParent(r *http.Request, categoryID string
 	visited := map[string]struct{}{}
 	for currentID != "" {
 		if _, seen := visited[currentID]; seen {
-			break
+			return apperror.Validation(fmt.Sprintf("invalid parent chain: cycle detected at ID %s", currentID))
 		}
 		visited[currentID] = struct{}{}
 		if categoryID != "" && currentID == categoryID {
