@@ -319,3 +319,64 @@ func TestCategoryRepo_Create_Nil(t *testing.T) {
 		t.Fatal("expected error for nil category")
 	}
 }
+
+func TestCategoryRepo_Delete(t *testing.T) {
+	db := testDB(t)
+	ensureProductsTable(t, db)
+	mustExec(t, db, "DELETE FROM categories")
+	t.Cleanup(func() { mustExec(t, db, "DELETE FROM categories") })
+
+	repo, err := postgres.NewCategoryRepo(db)
+	if err != nil {
+		t.Fatalf("NewCategoryRepo: %v", err)
+	}
+	ctx := context.Background()
+
+	c := mustNewCategory(t, "Delete Me", "delete-me")
+	if err := repo.Create(ctx, &c); err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+
+	if err := repo.Delete(ctx, c.ID); err != nil {
+		t.Fatalf("Delete: %v", err)
+	}
+
+	got, err := repo.FindByID(ctx, c.ID)
+	if err != nil {
+		t.Fatalf("FindByID: %v", err)
+	}
+	if got != nil {
+		t.Fatal("expected category to be deleted")
+	}
+}
+
+func TestCategoryRepo_Delete_WithChildrenConflict(t *testing.T) {
+	db := testDB(t)
+	ensureProductsTable(t, db)
+	mustExec(t, db, "DELETE FROM categories")
+	t.Cleanup(func() { mustExec(t, db, "DELETE FROM categories") })
+
+	repo, err := postgres.NewCategoryRepo(db)
+	if err != nil {
+		t.Fatalf("NewCategoryRepo: %v", err)
+	}
+	ctx := context.Background()
+
+	parent := mustNewCategory(t, "Parent", "parent-delete")
+	if err := repo.Create(ctx, &parent); err != nil {
+		t.Fatalf("Create parent: %v", err)
+	}
+	child := mustNewCategory(t, "Child", "child-delete")
+	child.ParentID = &parent.ID
+	if err := repo.Create(ctx, &child); err != nil {
+		t.Fatalf("Create child: %v", err)
+	}
+
+	err = repo.Delete(ctx, parent.ID)
+	if err == nil {
+		t.Fatal("expected conflict deleting parent category with children")
+	}
+	if !apperror.Is(err, apperror.CodeConflict) {
+		t.Fatalf("expected conflict, got %v", err)
+	}
+}

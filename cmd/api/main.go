@@ -653,6 +653,7 @@ func runServe(cfg *config.Config, log logger.Logger) error {
 
 	shippingRates := shophttp.NewShippingRatesHandler(flatRateProvider)
 	categoryHandler := shophttp.NewCategoryHandler(categoryRepo, productRepo)
+	categoryAdmin := shophttp.NewCategoryAdminHandler(categoryRepo, bus)
 	searchHandler := shophttp.NewSearchHandler(searchEngine)
 	mediaService := mediaApp.NewService(mediaStorage, assetRepo, bus, log)
 	if thumbCfg := cfg.Media.Thumbnails; len(thumbCfg) > 0 {
@@ -749,6 +750,7 @@ func runServe(cfg *config.Config, log logger.Logger) error {
 	requireProductsRead := shophttp.RequirePermission(rbac.ProductsRead)
 	requireProductsWrite := shophttp.RequirePermission(rbac.ProductsWrite)
 	requireCategoriesRead := shophttp.RequirePermission(rbac.CategoriesRead)
+	requireCategoriesWrite := shophttp.RequirePermission(rbac.CategoriesWrite)
 	requireCustomersRead := shophttp.RequirePermission(rbac.CustomersRead)
 	requireCustomersWrite := shophttp.RequirePermission(rbac.CustomersWrite)
 	requireOrdersRead := shophttp.RequirePermission(rbac.OrdersRead)
@@ -792,6 +794,10 @@ func runServe(cfg *config.Config, log logger.Logger) error {
 	router.Handle("POST /api/v1/admin/products", requireProductsWrite(productAdmin.Create()))
 	router.Handle("PUT /api/v1/admin/products/{id}", requireProductsWrite(productAdmin.Update()))
 	router.Handle("GET /api/v1/admin/categories", requireCategoriesRead(categoryHandler.Tree()))
+	router.Handle("GET /api/v1/admin/categories/{id}", requireCategoriesRead(categoryHandler.Get()))
+	router.Handle("POST /api/v1/admin/categories", requireCategoriesWrite(categoryAdmin.Create()))
+	router.Handle("PUT /api/v1/admin/categories/{id}", requireCategoriesWrite(categoryAdmin.Update()))
+	router.Handle("DELETE /api/v1/admin/categories/{id}", requireCategoriesWrite(categoryAdmin.Delete()))
 	router.Handle("POST /api/v1/admin/products/{id}/variants", requireProductsWrite(variantHandler.Create()))
 	router.Handle("PUT /api/v1/admin/products/{id}/variants/{variantId}", requireProductsWrite(variantHandler.Update()))
 	router.Handle("GET /api/v1/admin/stats/overview", requireOrdersRead(statsAdmin.Overview()))

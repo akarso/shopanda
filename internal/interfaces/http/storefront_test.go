@@ -81,6 +81,8 @@ func (m *mockStorefrontCategoryRepo) Create(_ context.Context, _ *catalog.Catego
 
 func (m *mockStorefrontCategoryRepo) Update(_ context.Context, _ *catalog.Category) error { return nil }
 
+func (m *mockStorefrontCategoryRepo) Delete(_ context.Context, _ string) error { return nil }
+
 // --- test theme helpers ---
 
 func createTestTheme(t *testing.T) *theme.Engine {

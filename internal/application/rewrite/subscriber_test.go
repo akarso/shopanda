@@ -146,6 +146,7 @@ func TestHandleCategoryUpdated(t *testing.T) {
 		CategoryID: "cat-2",
 		Name:       "Apparel",
 		Slug:       "apparel",
+		OldSlug:    "old-apparel",
 	})
 
 	err := sub.HandleCategoryUpdated(context.Background(), evt)
@@ -165,6 +166,27 @@ func TestHandleCategoryUpdated(t *testing.T) {
 	}
 	if rw.EntityID() != "cat-2" {
 		t.Errorf("entity_id = %q, want %q", rw.EntityID(), "cat-2")
+	}
+	if len(repo.deleted) != 1 || repo.deleted[0] != "/old-apparel" {
+		t.Fatalf("deleted = %#v, want [/old-apparel]", repo.deleted)
+	}
+}
+
+func TestHandleCategoryDeleted(t *testing.T) {
+	repo := &fakeRewriteRepo{}
+	sub := rewrite.NewSubscriber(repo, &fakeLog{})
+
+	evt := event.New(catalog.EventCategoryDeleted, "test", catalog.CategoryDeletedData{
+		CategoryID: "cat-3",
+		Slug:       "clearance",
+	})
+
+	err := sub.HandleCategoryDeleted(context.Background(), evt)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(repo.deleted) != 1 || repo.deleted[0] != "/clearance" {
+		t.Fatalf("deleted = %#v, want [/clearance]", repo.deleted)
 	}
 }
 
@@ -390,6 +412,9 @@ func TestRegister(t *testing.T) {
 	}
 	if bus.Handlers(catalog.EventCategoryUpdated) != 1 {
 		t.Error("expected 1 handler for category.updated")
+	}
+	if bus.Handlers(catalog.EventCategoryDeleted) != 1 {
+		t.Error("expected 1 handler for category.deleted")
 	}
 	if bus.Handlers(cms.EventPageCreated) != 1 {
 		t.Error("expected 1 handler for cms.page.created")

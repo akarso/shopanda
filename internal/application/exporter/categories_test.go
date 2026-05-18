@@ -35,6 +35,7 @@ func (m *mockCategoryRepo) FindAll(_ context.Context) ([]catalog.Category, error
 }
 func (m *mockCategoryRepo) Create(_ context.Context, _ *catalog.Category) error { return nil }
 func (m *mockCategoryRepo) Update(_ context.Context, _ *catalog.Category) error { return nil }
+func (m *mockCategoryRepo) Delete(_ context.Context, _ string) error            { return nil }
 
 // --- tests ---
 

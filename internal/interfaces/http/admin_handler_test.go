@@ -118,7 +118,10 @@ func TestAdminHandler_StaticJS(t *testing.T) {
 	if !strings.Contains(normalizedBody, "renderCategoriesPage") || !strings.Contains(normalizedBody, "/admin/catalog/categories") || !strings.Contains(normalizedBody, "/admin/categories") {
 		t.Fatalf("expected categories admin surface wiring in JS")
 	}
-	if !strings.Contains(normalizedBody, "Your account does not have categories access.") || !strings.Contains(normalizedBody, "Category management is currently read-only in the admin UI.") || !strings.Contains(normalizedBody, "Failed to load categories.") {
+	if !strings.Contains(normalizedBody, "renderCategoryForm") || !strings.Contains(normalizedBody, "/admin/categories/new") || !strings.Contains(normalizedBody, "Delete Category") {
+		t.Fatalf("expected category CRUD routing in JS")
+	}
+	if !strings.Contains(normalizedBody, "Your account does not have categories access.") || !strings.Contains(normalizedBody, "Failed to load categories.") || !strings.Contains(normalizedBody, "Failed to load category form.") || !strings.Contains(normalizedBody, "Category meta must be a JSON object.") {
 		t.Fatalf("expected categories admin messages in JS")
 	}
 	if !strings.Contains(normalizedBody, "Your account does not have customer access.") {
