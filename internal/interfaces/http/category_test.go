@@ -91,6 +91,11 @@ type mockCatProductRepo struct {
 	updateFn           func(ctx context.Context, p *catalog.Product) error
 }
 
+type mockProductCategoryAssignmentRepo struct {
+	assignFn func(ctx context.Context, productID, categoryID string) error
+	removeFn func(ctx context.Context, productID, categoryID string) error
+}
+
 func (m *mockCatProductRepo) FindByID(ctx context.Context, id string) (*catalog.Product, error) {
 	if m.findByIDFn != nil {
 		return m.findByIDFn(ctx, id)
@@ -133,6 +138,20 @@ func (m *mockCatProductRepo) Update(ctx context.Context, p *catalog.Product) err
 	return nil
 }
 
+func (m *mockProductCategoryAssignmentRepo) AssignCategory(ctx context.Context, productID, categoryID string) error {
+	if m.assignFn != nil {
+		return m.assignFn(ctx, productID, categoryID)
+	}
+	return nil
+}
+
+func (m *mockProductCategoryAssignmentRepo) RemoveCategory(ctx context.Context, productID, categoryID string) error {
+	if m.removeFn != nil {
+		return m.removeFn(ctx, productID, categoryID)
+	}
+	return nil
+}
+
 // --- router helper ---
 
 func newCategoryRouter(h *shophttp.CategoryHandler) *http.ServeMux {
@@ -161,6 +180,17 @@ func newAdminCategoryCRUDRouter(read *shophttp.CategoryHandler, admin *shophttp.
 	mux.Handle("POST /api/v1/admin/categories", withAdminContext(requireCategoriesWrite(admin.Create())))
 	mux.Handle("PUT /api/v1/admin/categories/{id}", withAdminContext(requireCategoriesWrite(admin.Update())))
 	mux.Handle("DELETE /api/v1/admin/categories/{id}", withAdminContext(requireCategoriesWrite(admin.Delete())))
+	return mux
+}
+
+func newAdminCategoryAssignmentRouter(read *shophttp.CategoryHandler, assignment *shophttp.CategoryProductAssignmentAdminHandler) *http.ServeMux {
+	requireCategoriesRead := shophttp.RequirePermission(rbac.CategoriesRead)
+	requireCategoriesWrite := shophttp.RequirePermission(rbac.CategoriesWrite)
+	withAdminContext := shophttp.AdminContextMiddleware()
+	mux := http.NewServeMux()
+	mux.Handle("GET /api/v1/admin/categories/{id}/products", withAdminContext(requireCategoriesRead(read.Products())))
+	mux.Handle("POST /api/v1/admin/categories/{id}/products/{productId}", withAdminContext(requireCategoriesWrite(assignment.Assign())))
+	mux.Handle("DELETE /api/v1/admin/categories/{id}/products/{productId}", withAdminContext(requireCategoriesWrite(assignment.Unassign())))
 	return mux
 }
 
@@ -665,6 +695,135 @@ func TestCategoryAdminHandler_Delete_Forbidden(t *testing.T) {
 	mux := newAdminCategoryCRUDRouter(read, admin)
 
 	req := httptest.NewRequest(http.MethodDelete, "/api/v1/admin/categories/1", nil)
+	req = testhelper.AuthenticatedRequest(req, "support-1", identity.RoleSupport)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("status = %d, want %d", rec.Code, http.StatusForbidden)
+	}
+}
+
+func TestCategoryProductAssignmentAdminHandler_Assign_OK(t *testing.T) {
+	assigned := false
+	cats := &mockCategoryRepo{
+		findByIDFn: func(_ context.Context, id string) (*catalog.Category, error) {
+			if id == "cat-1" {
+				return &catalog.Category{ID: "cat-1", Name: "Accessories", Slug: "accessories"}, nil
+			}
+			return nil, nil
+		},
+	}
+	prods := &mockCatProductRepo{
+		findByIDFn: func(_ context.Context, id string) (*catalog.Product, error) {
+			if id == "prod-1" {
+				return &catalog.Product{ID: "prod-1", Name: "Hat", Slug: "hat"}, nil
+			}
+			return nil, nil
+		},
+	}
+	assignments := &mockProductCategoryAssignmentRepo{
+		assignFn: func(_ context.Context, productID, categoryID string) error {
+			if productID != "prod-1" || categoryID != "cat-1" {
+				t.Fatalf("assign(%q, %q), want (%q, %q)", productID, categoryID, "prod-1", "cat-1")
+			}
+			assigned = true
+			return nil
+		},
+	}
+	read := shophttp.NewCategoryHandler(cats, prods)
+	h := shophttp.NewCategoryProductAssignmentAdminHandler(cats, prods, assignments)
+	mux := newAdminCategoryAssignmentRouter(read, h)
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/admin/categories/cat-1/products/prod-1", nil)
+	req = testhelper.AuthenticatedRequest(req, "editor-1", identity.RoleEditor)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d", rec.Code, http.StatusOK)
+	}
+	if !assigned {
+		t.Fatal("expected assignment repo to be called")
+	}
+
+	var assignBody struct {
+		Data struct {
+			Assigned bool `json:"assigned"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &assignBody); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if !assignBody.Data.Assigned {
+		t.Fatalf("assigned = %v, want true", assignBody.Data.Assigned)
+	}
+}
+
+func TestCategoryProductAssignmentAdminHandler_Unassign_OK(t *testing.T) {
+	removed := false
+	cats := &mockCategoryRepo{
+		findByIDFn: func(_ context.Context, id string) (*catalog.Category, error) {
+			if id == "cat-1" {
+				return &catalog.Category{ID: "cat-1", Name: "Accessories", Slug: "accessories"}, nil
+			}
+			return nil, nil
+		},
+	}
+	prods := &mockCatProductRepo{
+		findByIDFn: func(_ context.Context, id string) (*catalog.Product, error) {
+			if id == "prod-1" {
+				return &catalog.Product{ID: "prod-1", Name: "Hat", Slug: "hat"}, nil
+			}
+			return nil, nil
+		},
+	}
+	assignments := &mockProductCategoryAssignmentRepo{
+		removeFn: func(_ context.Context, productID, categoryID string) error {
+			if productID != "prod-1" || categoryID != "cat-1" {
+				t.Fatalf("remove(%q, %q), want (%q, %q)", productID, categoryID, "prod-1", "cat-1")
+			}
+			removed = true
+			return nil
+		},
+	}
+	read := shophttp.NewCategoryHandler(cats, prods)
+	h := shophttp.NewCategoryProductAssignmentAdminHandler(cats, prods, assignments)
+	mux := newAdminCategoryAssignmentRouter(read, h)
+
+	req := httptest.NewRequest(http.MethodDelete, "/api/v1/admin/categories/cat-1/products/prod-1", nil)
+	req = testhelper.AuthenticatedRequest(req, "editor-1", identity.RoleEditor)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d", rec.Code, http.StatusOK)
+	}
+	if !removed {
+		t.Fatal("expected assignment repo to be called")
+	}
+
+	var unassignBody struct {
+		Data struct {
+			Assigned bool `json:"assigned"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &unassignBody); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if unassignBody.Data.Assigned {
+		t.Fatalf("assigned = %v, want false", unassignBody.Data.Assigned)
+	}
+}
+
+func TestCategoryProductAssignmentAdminHandler_Assign_Forbidden(t *testing.T) {
+	cats := &mockCategoryRepo{}
+	prods := &mockCatProductRepo{}
+	read := shophttp.NewCategoryHandler(cats, prods)
+	h := shophttp.NewCategoryProductAssignmentAdminHandler(cats, prods, &mockProductCategoryAssignmentRepo{})
+	mux := newAdminCategoryAssignmentRouter(read, h)
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/admin/categories/cat-1/products/prod-1", nil)
 	req = testhelper.AuthenticatedRequest(req, "support-1", identity.RoleSupport)
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, req)

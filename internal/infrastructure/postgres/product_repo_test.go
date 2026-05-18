@@ -320,3 +320,60 @@ func TestProductRepo_Attributes(t *testing.T) {
 		t.Errorf("size = %v, want M", got.Attributes["size"])
 	}
 }
+
+func TestProductRepo_AssignAndRemoveCategory(t *testing.T) {
+	db := testDB(t)
+	ensureProductsTable(t, db)
+	mustExec(t, db, "DELETE FROM product_categories")
+	mustExec(t, db, "DELETE FROM categories")
+	t.Cleanup(func() {
+		mustExec(t, db, "DELETE FROM product_categories")
+		mustExec(t, db, "DELETE FROM categories")
+	})
+
+	repo, err := postgres.NewProductRepo(db)
+	if err != nil {
+		t.Fatalf("NewProductRepo: %v", err)
+	}
+	ctx := context.Background()
+
+	p := mustNewProduct(t, "Assigned", "assigned")
+	if err := repo.Create(ctx, &p); err != nil {
+		t.Fatalf("Create product: %v", err)
+	}
+	c, err := catalog.NewCategory(id.New(), "Accessories", "accessories-assignment")
+	if err != nil {
+		t.Fatalf("NewCategory: %v", err)
+	}
+	mustExec(t, db, "INSERT INTO categories (id, parent_id, name, slug, position, meta, created_at, updated_at) VALUES ($1, NULL, $2, $3, 0, '{}'::jsonb, $4, $5)", c.ID, c.Name, c.Slug, c.CreatedAt, c.UpdatedAt)
+
+	if err := repo.AssignCategory(ctx, p.ID, c.ID); err != nil {
+		t.Fatalf("AssignCategory: %v", err)
+	}
+	if err := repo.AssignCategory(ctx, p.ID, c.ID); err != nil {
+		t.Fatalf("AssignCategory second call: %v", err)
+	}
+
+	products, err := repo.FindByCategoryID(ctx, c.ID, 0, 20)
+	if err != nil {
+		t.Fatalf("FindByCategoryID: %v", err)
+	}
+	if len(products) != 1 || products[0].ID != p.ID {
+		t.Fatalf("products = %+v, want assigned product %q", products, p.ID)
+	}
+
+	if err := repo.RemoveCategory(ctx, p.ID, c.ID); err != nil {
+		t.Fatalf("RemoveCategory: %v", err)
+	}
+	if err := repo.RemoveCategory(ctx, p.ID, c.ID); err != nil {
+		t.Fatalf("RemoveCategory second call: %v", err)
+	}
+
+	products, err = repo.FindByCategoryID(ctx, c.ID, 0, 20)
+	if err != nil {
+		t.Fatalf("FindByCategoryID after remove: %v", err)
+	}
+	if len(products) != 0 {
+		t.Fatalf("products len = %d, want 0", len(products))
+	}
+}

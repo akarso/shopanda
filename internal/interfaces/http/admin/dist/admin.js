@@ -476,7 +476,12 @@
             '<h2>' + title + '</h2>' +
             '<p><a href="/admin/catalog/categories" data-link>Back to categories</a></p>' +
             '<div id="category-form-msg"></div>' +
-            '<form id="category-form"><p>Loading…</p></form>';
+            '<form id="category-form"><p>Loading…</p></form>' +
+            '<section id="category-products-panel" style="display:none; margin-top:2rem;">' +
+            '<h3>Assigned Products</h3>' +
+            '<div id="category-products-msg"></div>' +
+            '<div id="category-products-body"></div>' +
+            '</section>';
 
         var msg = document.getElementById('category-form-msg');
         var form = document.getElementById('category-form');
@@ -554,6 +559,7 @@
             });
 
             if (categoryID) {
+                setupCategoryProductAssignment(categoryID);
                 var deleteBtn = document.getElementById('delete-category-btn');
                 if (deleteBtn) {
                     deleteBtn.addEventListener('click', function () {
@@ -576,6 +582,137 @@
             msg.innerHTML = '<p role="alert">' + esc(extractErrorMessage(err, 'Failed to load category form.')) + '</p>';
             form.innerHTML = '';
         });
+    }
+
+    function setupCategoryProductAssignment(categoryID) {
+        var panel = document.getElementById('category-products-panel');
+        var msg = document.getElementById('category-products-msg');
+        var body = document.getElementById('category-products-body');
+        if (!panel || !msg || !body) {
+            return;
+        }
+        panel.style.display = '';
+
+        function setMessage(text, isError) {
+            msg.innerHTML = text ? '<p' + (isError ? ' role="alert"' : '') + '>' + esc(text) + '</p>' : '';
+        }
+
+        function loadAssignments() {
+            body.innerHTML = '<p>Loading…</p>';
+            Promise.all([
+                api('/admin/categories/' + encodeURIComponent(categoryID) + '/products?offset=0&limit=50'),
+                api('/admin/products?offset=0&limit=50')
+            ]).then(function (results) {
+                var assignedBody = results[0] || {};
+                var productsBody = results[1] || {};
+                if (assignedBody.error && assignedBody.error.code === 'forbidden') {
+                    body.innerHTML = '<p role="alert">Your account does not have categories access.</p>';
+                    return;
+                }
+                if (productsBody.error && productsBody.error.code === 'forbidden') {
+                    body.innerHTML = '<p role="alert">Your account does not have products access, so product assignment is unavailable.</p>';
+                    return;
+                }
+
+                var assignedProducts = normalizeProducts(assignedBody.data && assignedBody.data.products);
+                var allProducts = normalizeProducts(productsBody.data && productsBody.data.products);
+                if (!Array.isArray(assignedProducts) || !Array.isArray(allProducts)) {
+                    body.innerHTML = '<p role="alert">' + esc(extractErrorMessage(assignedBody.error ? assignedBody : productsBody, 'Failed to load assigned products.')) + '</p>';
+                    return;
+                }
+
+                var assignedIDs = {};
+                for (var i = 0; i < assignedProducts.length; i++) {
+                    assignedIDs[String(assignedProducts[i].id || '')] = true;
+                }
+
+                var availableProducts = [];
+                for (var j = 0; j < allProducts.length; j++) {
+                    var candidate = allProducts[j] || {};
+                    if (!assignedIDs[String(candidate.id || '')]) {
+                        availableProducts.push(candidate);
+                    }
+                }
+
+                body.innerHTML = renderCategoryProductAssignmentBody(assignedProducts, availableProducts);
+                bindCategoryProductAssignmentActions(categoryID, body, setMessage, loadAssignments);
+            }).catch(function (err) {
+                body.innerHTML = '<p role="alert">' + esc(extractErrorMessage(err, 'Failed to load assigned products.')) + '</p>';
+            });
+        }
+
+        loadAssignments();
+    }
+
+    function renderCategoryProductAssignmentBody(assignedProducts, availableProducts) {
+        var html = '<div style="margin-bottom:1rem">';
+        if (availableProducts.length > 0) {
+            html += '<label>Assign product<select id="category-assignment-product">';
+            for (var i = 0; i < availableProducts.length; i++) {
+                var product = availableProducts[i] || {};
+                html += '<option value="' + esc(String(product.id || '')) + '">' + esc((product.name || product.slug || product.id || '') + ' (' + (product.slug || product.id || '') + ')') + '</option>';
+            }
+            html += '</select></label> <button type="button" id="assign-category-product-btn">Assign Product</button>';
+        } else {
+            html += '<p class="settings-scope-note">All loaded products are already assigned to this category.</p>';
+        }
+        html += '</div>';
+        html += '<table class="admin-table"><thead><tr><th>Name</th><th>Slug</th><th>Status</th><th></th></tr></thead><tbody>';
+        if (assignedProducts.length === 0) {
+            html += '<tr><td colspan="4">No products assigned.</td></tr>';
+        } else {
+            for (var j = 0; j < assignedProducts.length; j++) {
+                var assigned = assignedProducts[j] || {};
+                html += '<tr>' +
+                    '<td>' + esc(assigned.name || '') + '</td>' +
+                    '<td>' + esc(assigned.slug || '') + '</td>' +
+                    '<td>' + esc(assigned.status || '') + '</td>' +
+                    '<td><button type="button" data-category-product-remove="' + esc(String(assigned.id || '')) + '">Remove</button></td>' +
+                    '</tr>';
+            }
+        }
+        html += '</tbody></table>';
+        return html;
+    }
+
+    function bindCategoryProductAssignmentActions(categoryID, container, setMessage, reload) {
+        var assignBtn = document.getElementById('assign-category-product-btn');
+        if (assignBtn) {
+            assignBtn.addEventListener('click', function () {
+                var select = document.getElementById('category-assignment-product');
+                var productID = select && select.value ? select.value : '';
+                if (!productID) {
+                    return;
+                }
+                api('/admin/categories/' + encodeURIComponent(categoryID) + '/products/' + encodeURIComponent(productID), { method: 'POST' }).then(function (body) {
+                    if (body && body.error) {
+                        setMessage(body.error.message || 'Failed to assign product.', true);
+                        return;
+                    }
+                    setMessage('Product assigned.', false);
+                    reload();
+                }).catch(function (err) {
+                    setMessage(extractErrorMessage(err, 'Failed to assign product.'), true);
+                });
+            });
+        }
+
+        var removeButtons = container.querySelectorAll('[data-category-product-remove]');
+        for (var i = 0; i < removeButtons.length; i++) {
+            removeButtons[i].addEventListener('click', function () {
+                var productID = this.getAttribute('data-category-product-remove');
+                api('/admin/categories/' + encodeURIComponent(categoryID) + '/products/' + encodeURIComponent(productID), { method: 'DELETE' }).then(function (body) {
+                    if (body && body.error) {
+                        setMessage(body.error.message || 'Failed to remove product.', true);
+                        return;
+                    }
+                    setMessage('Product removed from category.', false);
+                    reload();
+                }).catch(function (err) {
+                    setMessage(extractErrorMessage(err, 'Failed to remove product.'), true);
+                });
+            });
+        }
     }
 
     function renderCategoryFormFields(categories, category) {
