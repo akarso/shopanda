@@ -72,6 +72,10 @@ func (m *mockCategoryRepo) Update(_ context.Context, c *catalog.Category) error 
 	return nil
 }
 
+func (m *mockCategoryRepo) Delete(_ context.Context, _ string) error {
+	return nil
+}
+
 func TestCategoryImport_Basic(t *testing.T) {
 	csv := "name,slug,parent_slug,position\nElectronics,electronics,,0\nPhones,phones,electronics,1\nSmartphones,smartphones,phones,0\n"
 	repo := newMockCategoryRepo()

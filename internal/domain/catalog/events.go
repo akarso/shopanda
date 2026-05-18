@@ -6,6 +6,7 @@ const (
 	EventProductUpdated  = "catalog.product.updated"
 	EventCategoryCreated = "catalog.category.created"
 	EventCategoryUpdated = "catalog.category.updated"
+	EventCategoryDeleted = "catalog.category.deleted"
 )
 
 // ProductCreatedData is the payload for catalog.product.created.
@@ -35,5 +36,12 @@ type CategoryCreatedData struct {
 type CategoryUpdatedData struct {
 	CategoryID string `json:"category_id"`
 	Name       string `json:"name"`
+	Slug       string `json:"slug"`
+	OldSlug    string `json:"old_slug,omitempty"`
+}
+
+// CategoryDeletedData is the payload for catalog.category.deleted.
+type CategoryDeletedData struct {
+	CategoryID string `json:"category_id"`
 	Slug       string `json:"slug"`
 }

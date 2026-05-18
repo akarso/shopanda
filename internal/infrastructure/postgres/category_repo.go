@@ -203,6 +203,35 @@ func (r *CategoryRepo) Update(ctx context.Context, c *catalog.Category) error {
 	return nil
 }
 
+// Delete removes a category by ID.
+func (r *CategoryRepo) Delete(ctx context.Context, id string) error {
+	if id == "" {
+		return fmt.Errorf("category_repo: delete: empty id")
+	}
+	const q = `DELETE FROM categories WHERE id = $1`
+	res, err := r.db.ExecContext(ctx, q, id)
+	if err != nil {
+		var pqErr *pq.Error
+		if errors.As(err, &pqErr) && pqErr.Code == "23503" {
+			switch pqErr.Constraint {
+			case "categories_parent_id_fkey":
+				return apperror.Conflict("category has child categories")
+			default:
+				return apperror.Conflict("category is still referenced")
+			}
+		}
+		return fmt.Errorf("category_repo: delete: %w", err)
+	}
+	rows, err := res.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("category_repo: delete: rows affected: %w", err)
+	}
+	if rows == 0 {
+		return apperror.NotFound("category not found")
+	}
+	return nil
+}
+
 // FindAll returns all categories ordered by position asc, then name asc.
 func (r *CategoryRepo) FindAll(ctx context.Context) ([]catalog.Category, error) {
 	q := `SELECT ` + categoryColumns + ` FROM categories ORDER BY position ASC, name ASC`

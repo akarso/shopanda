@@ -1,9 +1,11 @@
 package http_test
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -13,6 +15,8 @@ import (
 	"github.com/akarso/shopanda/internal/domain/rbac"
 	shophttp "github.com/akarso/shopanda/internal/interfaces/http"
 	"github.com/akarso/shopanda/internal/platform/auth/testhelper"
+	"github.com/akarso/shopanda/internal/platform/event"
+	"github.com/akarso/shopanda/internal/platform/logger"
 )
 
 // --- mock category repository ---
@@ -24,6 +28,7 @@ type mockCategoryRepo struct {
 	findAllFn      func(ctx context.Context) ([]catalog.Category, error)
 	createFn       func(ctx context.Context, c *catalog.Category) error
 	updateFn       func(ctx context.Context, c *catalog.Category) error
+	deleteFn       func(ctx context.Context, id string) error
 }
 
 func (m *mockCategoryRepo) FindByID(ctx context.Context, id string) (*catalog.Category, error) {
@@ -64,6 +69,13 @@ func (m *mockCategoryRepo) Create(ctx context.Context, c *catalog.Category) erro
 func (m *mockCategoryRepo) Update(ctx context.Context, c *catalog.Category) error {
 	if m.updateFn != nil {
 		return m.updateFn(ctx, c)
+	}
+	return nil
+}
+
+func (m *mockCategoryRepo) Delete(ctx context.Context, id string) error {
+	if m.deleteFn != nil {
+		return m.deleteFn(ctx, id)
 	}
 	return nil
 }
@@ -137,6 +149,23 @@ func newAdminCategoryRouter(h *shophttp.CategoryHandler) *http.ServeMux {
 	mux := http.NewServeMux()
 	mux.Handle("GET /api/v1/admin/categories", withAdminContext(requireCategoriesRead(h.Tree())))
 	return mux
+}
+
+func newAdminCategoryCRUDRouter(read *shophttp.CategoryHandler, admin *shophttp.CategoryAdminHandler) *http.ServeMux {
+	requireCategoriesRead := shophttp.RequirePermission(rbac.CategoriesRead)
+	requireCategoriesWrite := shophttp.RequirePermission(rbac.CategoriesWrite)
+	withAdminContext := shophttp.AdminContextMiddleware()
+	mux := http.NewServeMux()
+	mux.Handle("GET /api/v1/admin/categories", withAdminContext(requireCategoriesRead(read.Tree())))
+	mux.Handle("GET /api/v1/admin/categories/{id}", withAdminContext(requireCategoriesRead(read.Get())))
+	mux.Handle("POST /api/v1/admin/categories", withAdminContext(requireCategoriesWrite(admin.Create())))
+	mux.Handle("PUT /api/v1/admin/categories/{id}", withAdminContext(requireCategoriesWrite(admin.Update())))
+	mux.Handle("DELETE /api/v1/admin/categories/{id}", withAdminContext(requireCategoriesWrite(admin.Delete())))
+	return mux
+}
+
+func categoryBus() *event.Bus {
+	return event.NewBus(logger.NewWithWriter(io.Discard, "error"))
 }
 
 // --- tests ---
@@ -410,4 +439,173 @@ func TestCategoryHandler_AdminTree_Forbidden(t *testing.T) {
 	if rec.Code != http.StatusForbidden {
 		t.Fatalf("status = %d, want %d", rec.Code, http.StatusForbidden)
 	}
+}
+
+func TestCategoryAdminHandler_Create_OK(t *testing.T) {
+	var created *catalog.Category
+	repo := &mockCategoryRepo{
+		findByIDFn: func(_ context.Context, id string) (*catalog.Category, error) {
+			if id == "root-1" {
+				return &catalog.Category{ID: "root-1", Name: "Root", Slug: "root"}, nil
+			}
+			return nil, nil
+		},
+		createFn: func(_ context.Context, c *catalog.Category) error {
+			clone := *c
+			created = &clone
+			return nil
+		},
+	}
+	read := shophttp.NewCategoryHandler(repo, &mockCatProductRepo{})
+	admin := shophttp.NewCategoryAdminHandler(repo, categoryBus())
+	mux := newAdminCategoryCRUDRouter(read, admin)
+
+	body := bytes.NewBufferString(`{"name":"Accessories","slug":"accessories","parent_id":"root-1","position":3,"meta":{"nav_label":"Accessories"}}`)
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/admin/categories", body)
+	req = testhelper.AuthenticatedRequest(req, "editor-1", identity.RoleEditor)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("status = %d, want %d", rec.Code, http.StatusCreated)
+	}
+	if created == nil {
+		t.Fatal("expected category to be created")
+	}
+	if created.ParentID == nil || *created.ParentID != "root-1" {
+		t.Fatalf("parent_id = %v, want root-1", created.ParentID)
+	}
+	if created.Position != 3 {
+		t.Fatalf("position = %d, want 3", created.Position)
+	}
+	if created.Meta["nav_label"] != "Accessories" {
+		t.Fatalf("meta.nav_label = %v, want Accessories", created.Meta["nav_label"])
+	}
+}
+
+func TestCategoryAdminHandler_Update_OK(t *testing.T) {
+	category := &catalog.Category{ID: "cat-1", ParentID: strPtr("root-1"), Name: "Old", Slug: "old", Position: 1, Meta: map[string]interface{}{"nav_label": "Old"}}
+	var updated *catalog.Category
+	repo := &mockCategoryRepo{
+		findByIDFn: func(_ context.Context, id string) (*catalog.Category, error) {
+			switch id {
+			case "cat-1":
+				return category, nil
+			case "root-2":
+				return &catalog.Category{ID: "root-2", Name: "Root Two", Slug: "root-two"}, nil
+			default:
+				return nil, nil
+			}
+		},
+		updateFn: func(_ context.Context, c *catalog.Category) error {
+			clone := *c
+			updated = &clone
+			return nil
+		},
+	}
+	read := shophttp.NewCategoryHandler(repo, &mockCatProductRepo{})
+	admin := shophttp.NewCategoryAdminHandler(repo, categoryBus())
+	mux := newAdminCategoryCRUDRouter(read, admin)
+
+	body := bytes.NewBufferString(`{"name":"New","slug":"new","parent_id":"root-2","position":7,"meta":{"nav_label":"New"}}`)
+	req := httptest.NewRequest(http.MethodPut, "/api/v1/admin/categories/cat-1", body)
+	req = testhelper.AuthenticatedRequest(req, "editor-1", identity.RoleEditor)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d", rec.Code, http.StatusOK)
+	}
+	if updated == nil {
+		t.Fatal("expected category to be updated")
+	}
+	if updated.Name != "New" || updated.Slug != "new" {
+		t.Fatalf("updated category = %+v", updated)
+	}
+	if updated.ParentID == nil || *updated.ParentID != "root-2" {
+		t.Fatalf("parent_id = %v, want root-2", updated.ParentID)
+	}
+	if updated.Position != 7 {
+		t.Fatalf("position = %d, want 7", updated.Position)
+	}
+}
+
+func TestCategoryAdminHandler_Update_RejectsCycle(t *testing.T) {
+	repo := &mockCategoryRepo{
+		findByIDFn: func(_ context.Context, id string) (*catalog.Category, error) {
+			switch id {
+			case "cat-1":
+				return &catalog.Category{ID: "cat-1", ParentID: nil, Name: "Root", Slug: "root"}, nil
+			case "child-1":
+				return &catalog.Category{ID: "child-1", ParentID: strPtr("cat-1"), Name: "Child", Slug: "child"}, nil
+			default:
+				return nil, nil
+			}
+		},
+	}
+	read := shophttp.NewCategoryHandler(repo, &mockCatProductRepo{})
+	admin := shophttp.NewCategoryAdminHandler(repo, categoryBus())
+	mux := newAdminCategoryCRUDRouter(read, admin)
+
+	body := bytes.NewBufferString(`{"parent_id":"child-1"}`)
+	req := httptest.NewRequest(http.MethodPut, "/api/v1/admin/categories/cat-1", body)
+	req = testhelper.AuthenticatedRequest(req, "editor-1", identity.RoleEditor)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("status = %d, want %d", rec.Code, http.StatusUnprocessableEntity)
+	}
+}
+
+func TestCategoryAdminHandler_Delete_OK(t *testing.T) {
+	deletedID := ""
+	repo := &mockCategoryRepo{
+		findByIDFn: func(_ context.Context, id string) (*catalog.Category, error) {
+			if id == "cat-1" {
+				return &catalog.Category{ID: "cat-1", Name: "Accessories", Slug: "accessories"}, nil
+			}
+			return nil, nil
+		},
+		deleteFn: func(_ context.Context, id string) error {
+			deletedID = id
+			return nil
+		},
+	}
+	read := shophttp.NewCategoryHandler(repo, &mockCatProductRepo{})
+	admin := shophttp.NewCategoryAdminHandler(repo, categoryBus())
+	mux := newAdminCategoryCRUDRouter(read, admin)
+
+	req := httptest.NewRequest(http.MethodDelete, "/api/v1/admin/categories/cat-1", nil)
+	req = testhelper.AuthenticatedRequest(req, "editor-1", identity.RoleEditor)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d", rec.Code, http.StatusOK)
+	}
+	if deletedID != "cat-1" {
+		t.Fatalf("deleted id = %q, want %q", deletedID, "cat-1")
+	}
+}
+
+func TestCategoryAdminHandler_Create_Forbidden(t *testing.T) {
+	repo := &mockCategoryRepo{}
+	read := shophttp.NewCategoryHandler(repo, &mockCatProductRepo{})
+	admin := shophttp.NewCategoryAdminHandler(repo, categoryBus())
+	mux := newAdminCategoryCRUDRouter(read, admin)
+
+	body := bytes.NewBufferString(`{"name":"Accessories","slug":"accessories"}`)
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/admin/categories", body)
+	req = testhelper.AuthenticatedRequest(req, "support-1", identity.RoleSupport)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("status = %d, want %d", rec.Code, http.StatusForbidden)
+	}
+}
+
+func strPtr(v string) *string {
+	return &v
 }

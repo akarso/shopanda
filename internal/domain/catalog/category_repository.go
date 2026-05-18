@@ -25,4 +25,7 @@ type CategoryRepository interface {
 
 	// Update persists changes to an existing category.
 	Update(ctx context.Context, c *Category) error
+
+	// Delete removes a category by ID.
+	Delete(ctx context.Context, id string) error
 }

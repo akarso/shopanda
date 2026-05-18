@@ -186,6 +186,9 @@
         if (path === "/admin/products/new") {
             return { title: "New Product", render: renderProductCreate, auth: true };
         }
+        if (path === "/admin/categories/new") {
+            return { title: "New Category", render: renderCategoryCreate, auth: true };
+        }
         var productMatch = path.match(/^\/admin\/products\/([^/]+)$/);
         if (productMatch) {
             var productID = decodeURIComponent(productMatch[1]);
@@ -193,6 +196,15 @@
                 title: "Edit Product",
                 auth: true,
                 render: function (container) { renderProductEdit(container, productID); }
+            };
+        }
+        var categoryMatch = path.match(/^\/admin\/categories\/([^/]+)$/);
+        if (categoryMatch) {
+            var categoryID = decodeURIComponent(categoryMatch[1]);
+            return {
+                title: "Edit Category",
+                auth: true,
+                render: function (container) { renderCategoryEdit(container, categoryID); }
             };
         }
         var orderMatch = path.match(/^\/admin\/orders\/([^/]+)$/);
@@ -277,31 +289,48 @@
     function renderCategoriesPage(container) {
         container.innerHTML = '' +
             '<h2>Categories</h2>' +
-            '<p class="settings-scope-note">Category management is currently read-only in the admin UI. The tree below reflects the existing category API.</p>' +
+            '<div id="categories-msg"></div>' +
+            '<div style="margin-bottom:1rem"><button id="new-category-btn">New Category</button></div>' +
             '<div id="categories-tree"></div>';
 
+        var msg = document.getElementById('categories-msg');
         var tree = document.getElementById('categories-tree');
-        api('/admin/categories').then(function (body) {
-            if (body && body.error && body.error.code === 'forbidden') {
-                tree.innerHTML = '<p role="alert">Your account does not have categories access.</p>';
-                return;
-            }
 
-            var categories = body && body.data && body.data.categories;
-            if (!Array.isArray(categories)) {
-                tree.innerHTML = '<p role="alert">' + esc(extractErrorMessage(body, 'Failed to load categories.')) + '</p>';
-                return;
-            }
+        function setMessage(text, isError) {
+            msg.innerHTML = text ? '<p' + (isError ? ' role="alert"' : '') + '>' + esc(text) + '</p>' : '';
+        }
 
-            if (categories.length === 0) {
-                tree.innerHTML = '<p>No categories found.</p>';
-                return;
-            }
+        function loadCategories() {
+            tree.innerHTML = '<p>Loading…</p>';
+            api('/admin/categories').then(function (body) {
+                if (body && body.error && body.error.code === 'forbidden') {
+                    tree.innerHTML = '<p role="alert">Your account does not have categories access.</p>';
+                    return;
+                }
 
-            tree.innerHTML = renderCategoryTreeNodes(categories);
-        }).catch(function (err) {
-            tree.innerHTML = '<p role="alert">' + esc(extractErrorMessage(err, 'Failed to load categories.')) + '</p>';
+                var categories = normalizeCategoryTree(body && body.data && body.data.categories);
+                if (!Array.isArray(categories)) {
+                    tree.innerHTML = '<p role="alert">' + esc(extractErrorMessage(body, 'Failed to load categories.')) + '</p>';
+                    return;
+                }
+
+                if (categories.length === 0) {
+                    tree.innerHTML = '<p>No categories found.</p>';
+                    return;
+                }
+
+                tree.innerHTML = renderCategoryTreeNodes(categories);
+                bindCategoryTreeActions(tree, setMessage, loadCategories);
+            }).catch(function (err) {
+                tree.innerHTML = '<p role="alert">' + esc(extractErrorMessage(err, 'Failed to load categories.')) + '</p>';
+            });
+        }
+
+        document.getElementById('new-category-btn').addEventListener('click', function () {
+            navigateTo('/admin/categories/new');
         });
+
+        loadCategories();
     }
 
     function renderCategoryTreeNodes(nodes) {
@@ -314,13 +343,258 @@
             var node = nodes[i] || {};
             var children = Array.isArray(node.children) ? node.children : [];
             html += '<li>' +
+                '<div>' +
                 '<strong>' + esc(node.name || node.slug || node.id || '') + '</strong>' +
                 ' <span class="settings-scope-note">/' + esc(node.slug || '') + '</span>' +
+                ' <span class="settings-scope-note">position ' + esc(String(node.position == null ? 0 : node.position)) + '</span>' +
+                ' <a href="/admin/categories/' + encodeURIComponent(String(node.id || '')) + '" data-link>Edit</a>' +
+                ' <button type="button" data-category-delete="' + esc(String(node.id || '')) + '" data-category-name="' + esc(String(node.name || node.slug || node.id || '')) + '">Delete</button>' +
+                '</div>' +
                 renderCategoryTreeNodes(children) +
                 '</li>';
         }
         html += '</ul>';
         return html;
+    }
+
+    function bindCategoryTreeActions(container, setMessage, reload) {
+        var buttons = container.querySelectorAll('[data-category-delete]');
+        for (var i = 0; i < buttons.length; i++) {
+            buttons[i].addEventListener('click', function () {
+                var categoryID = this.getAttribute('data-category-delete');
+                var categoryName = this.getAttribute('data-category-name') || categoryID;
+                if (!window.confirm('Delete ' + categoryName + '?')) {
+                    return;
+                }
+                api('/admin/categories/' + encodeURIComponent(categoryID), { method: 'DELETE' }).then(function (body) {
+                    if (body && body.error) {
+                        setMessage(body.error.message || 'Failed to delete category.', true);
+                        return;
+                    }
+                    setMessage('Category deleted.', false);
+                    reload();
+                }).catch(function (err) {
+                    setMessage(extractErrorMessage(err, 'Failed to delete category.'), true);
+                });
+            });
+        }
+    }
+
+    function renderCategoryCreate(container) {
+        renderCategoryForm(container, null);
+    }
+
+    function renderCategoryEdit(container, categoryID) {
+        renderCategoryForm(container, categoryID);
+    }
+
+    function renderCategoryForm(container, categoryID) {
+        var title = categoryID ? 'Edit Category' : 'New Category';
+        container.innerHTML =
+            '<h2>' + title + '</h2>' +
+            '<p><a href="/admin/catalog/categories" data-link>Back to categories</a></p>' +
+            '<div id="category-form-msg"></div>' +
+            '<form id="category-form"><p>Loading…</p></form>';
+
+        var msg = document.getElementById('category-form-msg');
+        var form = document.getElementById('category-form');
+        var requests = [api('/admin/categories')];
+        if (categoryID) {
+            requests.push(api('/admin/categories/' + encodeURIComponent(categoryID)));
+        }
+
+        Promise.all(requests).then(function (results) {
+            var categoriesBody = results[0] || {};
+            if (categoriesBody.error && categoriesBody.error.code === 'forbidden') {
+                msg.innerHTML = '<p role="alert">Your account does not have categories access.</p>';
+                form.innerHTML = '';
+                return;
+            }
+
+            var categories = normalizeCategoryTree(categoriesBody.data && categoriesBody.data.categories);
+            if (!Array.isArray(categories)) {
+                msg.innerHTML = '<p role="alert">' + esc(extractErrorMessage(categoriesBody, 'Failed to load category form.')) + '</p>';
+                form.innerHTML = '';
+                return;
+            }
+
+            var category = null;
+            if (categoryID) {
+                var detailBody = results[1] || {};
+                if (detailBody.error && detailBody.error.code === 'forbidden') {
+                    msg.innerHTML = '<p role="alert">Your account does not have categories access.</p>';
+                    form.innerHTML = '';
+                    return;
+                }
+                category = normalizeCategory(detailBody.data && detailBody.data.category);
+                if (!category) {
+                    msg.innerHTML = '<p role="alert">Category not found.</p>';
+                    form.innerHTML = '';
+                    return;
+                }
+            }
+
+            form.innerHTML = renderCategoryFormFields(categories, category);
+
+            form.addEventListener('submit', function (e) {
+                e.preventDefault();
+
+                var meta;
+                try {
+                    meta = parseCategoryMeta(form.elements.meta.value);
+                } catch (err) {
+                    msg.innerHTML = '<p role="alert">' + esc(err.message || 'Category meta must be a JSON object.') + '</p>';
+                    return;
+                }
+
+                var payload = {
+                    name: form.elements.name.value,
+                    slug: form.elements.slug.value,
+                    parent_id: form.elements.parent_id.value,
+                    position: Number(form.elements.position.value || 0),
+                    meta: meta
+                };
+                var method = categoryID ? 'PUT' : 'POST';
+                var url = categoryID ? '/admin/categories/' + encodeURIComponent(categoryID) : '/admin/categories';
+                api(url, { method: method, body: JSON.stringify(payload) }).then(function (body) {
+                    if (body && body.error) {
+                        msg.innerHTML = '<p role="alert">' + esc(body.error.message || 'Save failed.') + '</p>';
+                        return;
+                    }
+                    msg.innerHTML = '<p>Saved.</p>';
+                    var savedCategory = normalizeCategory(body && body.data && body.data.category);
+                    if (!categoryID && savedCategory && savedCategory.id) {
+                        navigateTo('/admin/categories/' + encodeURIComponent(savedCategory.id));
+                    }
+                }).catch(function (err) {
+                    msg.innerHTML = '<p role="alert">' + esc(extractErrorMessage(err, 'Save failed.')) + '</p>';
+                });
+            });
+
+            if (categoryID) {
+                var deleteBtn = document.getElementById('delete-category-btn');
+                if (deleteBtn) {
+                    deleteBtn.addEventListener('click', function () {
+                        if (!window.confirm('Delete ' + (category.name || category.slug || category.id) + '?')) {
+                            return;
+                        }
+                        api('/admin/categories/' + encodeURIComponent(categoryID), { method: 'DELETE' }).then(function (body) {
+                            if (body && body.error) {
+                                msg.innerHTML = '<p role="alert">' + esc(body.error.message || 'Failed to delete category.') + '</p>';
+                                return;
+                            }
+                            navigateTo('/admin/catalog/categories');
+                        }).catch(function (err) {
+                            msg.innerHTML = '<p role="alert">' + esc(extractErrorMessage(err, 'Failed to delete category.')) + '</p>';
+                        });
+                    });
+                }
+            }
+        }).catch(function (err) {
+            msg.innerHTML = '<p role="alert">' + esc(extractErrorMessage(err, 'Failed to load category form.')) + '</p>';
+            form.innerHTML = '';
+        });
+    }
+
+    function renderCategoryFormFields(categories, category) {
+        var parentID = category && category.parent_id ? category.parent_id : '';
+        var options = flattenCategoryOptions(categories, 0, []);
+        var html = '' +
+            '<label>Name<input name="name" required value="' + esc(category && category.name ? category.name : '') + '"></label>' +
+            '<label>Slug<input name="slug" required value="' + esc(category && category.slug ? category.slug : '') + '"></label>' +
+            '<label>Parent<select name="parent_id"><option value="">Top level</option>' + renderCategoryParentOptions(options, parentID, category && category.id) + '</select></label>' +
+            '<label>Position<input type="number" name="position" value="' + esc(String(category && category.position != null ? category.position : 0)) + '"></label>' +
+            '<label>Meta (JSON)<textarea name="meta">' + esc(formatCategoryMeta(category && category.meta ? category.meta : {})) + '</textarea></label>' +
+            '<button type="submit">' + (category ? 'Save Category' : 'Create Category') + '</button>';
+        if (category) {
+            html += ' <button type="button" id="delete-category-btn" class="contrast">Delete Category</button>';
+        }
+        return html;
+    }
+
+    function renderCategoryParentOptions(options, selectedID, excludeID) {
+        var html = '';
+        for (var i = 0; i < options.length; i++) {
+            var option = options[i];
+            if (excludeID && option.id === excludeID) {
+                continue;
+            }
+            var selected = option.id === selectedID ? ' selected' : '';
+            html += '<option value="' + esc(option.id) + '"' + selected + '>' + esc(option.label) + '</option>';
+        }
+        return html;
+    }
+
+    function flattenCategoryOptions(nodes, depth, out) {
+        out = out || [];
+        if (!Array.isArray(nodes)) {
+            return out;
+        }
+        for (var i = 0; i < nodes.length; i++) {
+            var node = nodes[i] || {};
+            var prefix = '';
+            for (var j = 0; j < depth; j++) {
+                prefix += '-- ';
+            }
+            out.push({
+                id: node.id || '',
+                label: prefix + (node.name || node.slug || node.id || '')
+            });
+            flattenCategoryOptions(node.children, depth + 1, out);
+        }
+        return out;
+    }
+
+    function normalizeCategory(raw) {
+        if (!raw) {
+            return null;
+        }
+        return {
+            id: pick(raw, 'id', 'ID'),
+            parent_id: pick(raw, 'parent_id', 'ParentID'),
+            name: pick(raw, 'name', 'Name'),
+            slug: pick(raw, 'slug', 'Slug'),
+            position: pick(raw, 'position', 'Position'),
+            meta: pick(raw, 'meta', 'Meta') || {},
+            created_at: pick(raw, 'created_at', 'CreatedAt'),
+            updated_at: pick(raw, 'updated_at', 'UpdatedAt')
+        };
+    }
+
+    function normalizeCategoryTree(nodes) {
+        if (!Array.isArray(nodes)) {
+            return null;
+        }
+        var out = [];
+        for (var i = 0; i < nodes.length; i++) {
+            var node = normalizeCategory(nodes[i]);
+            if (!node) {
+                continue;
+            }
+            node.children = normalizeCategoryTree((nodes[i] || {}).children) || [];
+            out.push(node);
+        }
+        return out;
+    }
+
+    function formatCategoryMeta(meta) {
+        try {
+            return JSON.stringify(meta || {}, null, 2);
+        } catch (err) {
+            return '{}';
+        }
+    }
+
+    function parseCategoryMeta(raw) {
+        var value = String(raw || '').trim();
+        if (!value) {
+            return {};
+        }
+        var parsed = JSON.parse(value);
+        if (!parsed || Array.isArray(parsed) || typeof parsed !== 'object') {
+            throw new Error('Category meta must be a JSON object.');
+        }
+        return parsed;
     }
 
     function renderProductCreate(container) {

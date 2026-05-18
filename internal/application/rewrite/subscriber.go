@@ -36,6 +36,7 @@ func (s *Subscriber) Register(bus *event.Bus) {
 	bus.On(catalog.EventProductUpdated, s.HandleProductUpdated)
 	bus.On(catalog.EventCategoryCreated, s.HandleCategoryCreated)
 	bus.On(catalog.EventCategoryUpdated, s.HandleCategoryUpdated)
+	bus.On(catalog.EventCategoryDeleted, s.HandleCategoryDeleted)
 	bus.On(cms.EventPageCreated, s.HandlePageCreated)
 	bus.On(cms.EventPageUpdated, s.HandlePageUpdated)
 	bus.On(cms.EventPageDeleted, s.HandlePageDeleted)
@@ -74,7 +75,21 @@ func (s *Subscriber) HandleCategoryUpdated(ctx context.Context, evt event.Event)
 	if !ok {
 		return fmt.Errorf("rewrite: unexpected event data type %T", evt.Data)
 	}
+	if data.OldSlug != "" && data.OldSlug != data.Slug {
+		if err := s.removeRewrite(ctx, "/"+data.OldSlug); err != nil {
+			return err
+		}
+	}
 	return s.saveRewrite(ctx, "/"+data.Slug, "category", data.CategoryID)
+}
+
+// HandleCategoryDeleted removes the URL rewrite for a deleted category.
+func (s *Subscriber) HandleCategoryDeleted(ctx context.Context, evt event.Event) error {
+	data, ok := evt.Data.(catalog.CategoryDeletedData)
+	if !ok {
+		return fmt.Errorf("rewrite: unexpected event data type %T", evt.Data)
+	}
+	return s.removeRewrite(ctx, "/"+data.Slug)
 }
 
 // HandlePageCreated saves a URL rewrite for a newly created page.

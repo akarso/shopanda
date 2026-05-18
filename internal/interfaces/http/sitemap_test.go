@@ -55,6 +55,7 @@ func (m *stubSitemapCategoryRepo) FindAll(_ context.Context) ([]catalog.Category
 }
 func (m *stubSitemapCategoryRepo) Create(_ context.Context, _ *catalog.Category) error { return nil }
 func (m *stubSitemapCategoryRepo) Update(_ context.Context, _ *catalog.Category) error { return nil }
+func (m *stubSitemapCategoryRepo) Delete(_ context.Context, _ string) error            { return nil }
 
 type stubSitemapPageRepo struct {
 	pages []*cms.Page
