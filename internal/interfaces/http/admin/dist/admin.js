@@ -320,7 +320,7 @@
                 }
 
                 tree.innerHTML = renderCategoryTreeNodes(categories);
-                bindCategoryTreeActions(tree, setMessage, loadCategories);
+                bindCategoryTreeActions(tree, categories, setMessage, loadCategories);
             }).catch(function (err) {
                 tree.innerHTML = '<p role="alert">' + esc(extractErrorMessage(err, 'Failed to load categories.')) + '</p>';
             });
@@ -342,11 +342,19 @@
         for (var i = 0; i < nodes.length; i++) {
             var node = nodes[i] || {};
             var children = Array.isArray(node.children) ? node.children : [];
+            var orderingControls = '';
+            if (i > 0) {
+                orderingControls += ' <button type="button" data-category-move="up" data-category-id="' + esc(String(node.id || '')) + '">Move up</button>';
+            }
+            if (i < nodes.length - 1) {
+                orderingControls += ' <button type="button" data-category-move="down" data-category-id="' + esc(String(node.id || '')) + '">Move down</button>';
+            }
             html += '<li>' +
                 '<div>' +
                 '<strong>' + esc(node.name || node.slug || node.id || '') + '</strong>' +
                 ' <span class="settings-scope-note">/' + esc(node.slug || '') + '</span>' +
                 ' <span class="settings-scope-note">position ' + esc(String(node.position == null ? 0 : node.position)) + '</span>' +
+                orderingControls +
                 ' <a href="/admin/categories/' + encodeURIComponent(String(node.id || '')) + '" data-link>Edit</a>' +
                 ' <button type="button" data-category-delete="' + esc(String(node.id || '')) + '" data-category-name="' + esc(String(node.name || node.slug || node.id || '')) + '">Delete</button>' +
                 '</div>' +
@@ -357,10 +365,10 @@
         return html;
     }
 
-    function bindCategoryTreeActions(container, setMessage, reload) {
-        var buttons = container.querySelectorAll('[data-category-delete]');
-        for (var i = 0; i < buttons.length; i++) {
-            buttons[i].addEventListener('click', function () {
+    function bindCategoryTreeActions(container, categories, setMessage, reload) {
+        var deleteButtons = container.querySelectorAll('[data-category-delete]');
+        for (var i = 0; i < deleteButtons.length; i++) {
+            deleteButtons[i].addEventListener('click', function () {
                 var categoryID = this.getAttribute('data-category-delete');
                 var categoryName = this.getAttribute('data-category-name') || categoryID;
                 if (!window.confirm('Delete ' + categoryName + '?')) {
@@ -378,6 +386,80 @@
                 });
             });
         }
+
+        var moveButtons = container.querySelectorAll('[data-category-move]');
+        for (var j = 0; j < moveButtons.length; j++) {
+            moveButtons[j].addEventListener('click', function () {
+                var categoryID = this.getAttribute('data-category-id');
+                var direction = this.getAttribute('data-category-move');
+                moveCategoryOrdering(categories, categoryID, direction, setMessage, reload);
+            });
+        }
+    }
+
+    function moveCategoryOrdering(categories, categoryID, direction, setMessage, reload) {
+        var match = findCategorySiblings(categories, categoryID);
+        if (!match || !Array.isArray(match.siblings)) {
+            setMessage('Failed to save category order.', true);
+            return;
+        }
+
+        var fromIndex = match.index;
+        var toIndex = direction === 'up' ? fromIndex - 1 : fromIndex + 1;
+        if (toIndex < 0 || toIndex >= match.siblings.length) {
+            return;
+        }
+
+        var reordered = match.siblings.slice();
+        var moved = reordered.splice(fromIndex, 1)[0];
+        reordered.splice(toIndex, 0, moved);
+
+        var requests = [];
+        for (var i = 0; i < reordered.length; i++) {
+            var sibling = reordered[i] || {};
+            var nextPosition = i;
+            if (Number(sibling.position) === nextPosition) {
+                continue;
+            }
+            requests.push(api('/admin/categories/' + encodeURIComponent(String(sibling.id || '')), {
+                method: 'PUT',
+                body: JSON.stringify({ position: nextPosition })
+            }));
+        }
+
+        if (requests.length === 0) {
+            return;
+        }
+
+        Promise.all(requests).then(function (responses) {
+            for (var k = 0; k < responses.length; k++) {
+                if (responses[k] && responses[k].error) {
+                    setMessage(responses[k].error.message || 'Failed to save category order.', true);
+                    return;
+                }
+            }
+            setMessage('Category order saved.', false);
+            reload();
+        }).catch(function (err) {
+            setMessage(extractErrorMessage(err, 'Failed to save category order.'), true);
+        });
+    }
+
+    function findCategorySiblings(nodes, categoryID) {
+        if (!Array.isArray(nodes)) {
+            return null;
+        }
+        for (var i = 0; i < nodes.length; i++) {
+            var node = nodes[i] || {};
+            if (String(node.id || '') === String(categoryID || '')) {
+                return { siblings: nodes, index: i };
+            }
+            var nested = findCategorySiblings(node.children, categoryID);
+            if (nested) {
+                return nested;
+            }
+        }
+        return null;
     }
 
     function renderCategoryCreate(container) {
