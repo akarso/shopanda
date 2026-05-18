@@ -17,6 +17,7 @@ const maxListLimit = 100
 
 // Compile-time check that ProductRepo implements catalog.ProductRepository.
 var _ catalog.ProductRepository = (*ProductRepo)(nil)
+var _ catalog.ProductCategoryAssignmentRepository = (*ProductRepo)(nil)
 
 // ProductRepo implements catalog.ProductRepository using PostgreSQL.
 type ProductRepo struct {
@@ -278,4 +279,56 @@ func (r *ProductRepo) FindByCategoryID(ctx context.Context, categoryID string, o
 		return nil, fmt.Errorf("product_repo: find by category rows: %w", err)
 	}
 	return products, nil
+}
+
+// AssignCategory creates a product-category link when it does not already exist.
+func (r *ProductRepo) AssignCategory(ctx context.Context, productID, categoryID string) error {
+	if productID == "" {
+		return apperror.Validation("product id must not be empty")
+	}
+	if categoryID == "" {
+		return apperror.Validation("category id must not be empty")
+	}
+
+	const q = `INSERT INTO product_categories (product_id, category_id)
+		VALUES ($1, $2)
+		ON CONFLICT (product_id, category_id) DO NOTHING`
+
+	var execer interface {
+		ExecContext(context.Context, string, ...interface{}) (sql.Result, error)
+	}
+	if r.tx != nil {
+		execer = r.tx
+	} else {
+		execer = r.db
+	}
+	if _, err := execer.ExecContext(ctx, q, productID, categoryID); err != nil {
+		return fmt.Errorf("product_repo: assign category: %w", err)
+	}
+	return nil
+}
+
+// RemoveCategory deletes a product-category link.
+func (r *ProductRepo) RemoveCategory(ctx context.Context, productID, categoryID string) error {
+	if productID == "" {
+		return apperror.Validation("product id must not be empty")
+	}
+	if categoryID == "" {
+		return apperror.Validation("category id must not be empty")
+	}
+
+	const q = `DELETE FROM product_categories WHERE product_id = $1 AND category_id = $2`
+
+	var execer interface {
+		ExecContext(context.Context, string, ...interface{}) (sql.Result, error)
+	}
+	if r.tx != nil {
+		execer = r.tx
+	} else {
+		execer = r.db
+	}
+	if _, err := execer.ExecContext(ctx, q, productID, categoryID); err != nil {
+		return fmt.Errorf("product_repo: remove category: %w", err)
+	}
+	return nil
 }
