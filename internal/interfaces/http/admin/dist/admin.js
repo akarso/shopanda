@@ -588,6 +588,7 @@
         var panel = document.getElementById('category-products-panel');
         var msg = document.getElementById('category-products-msg');
         var body = document.getElementById('category-products-body');
+        var pickerState = { offset: 0, limit: 50 };
         if (!panel || !msg || !body) {
             return;
         }
@@ -601,7 +602,7 @@
             body.innerHTML = '<p>Loading…</p>';
             Promise.all([
                 api('/admin/categories/' + encodeURIComponent(categoryID) + '/products?offset=0&limit=50'),
-                api('/admin/products?offset=0&limit=50')
+                api('/admin/products?offset=' + pickerState.offset + '&limit=' + pickerState.limit)
             ]).then(function (results) {
                 var assignedBody = results[0] || {};
                 var productsBody = results[1] || {};
@@ -634,8 +635,8 @@
                     }
                 }
 
-                body.innerHTML = renderCategoryProductAssignmentBody(assignedProducts, availableProducts);
-                bindCategoryProductAssignmentActions(categoryID, body, setMessage, loadAssignments);
+                body.innerHTML = renderCategoryProductAssignmentBody(assignedProducts, availableProducts, pickerState, allProducts.length);
+                bindCategoryProductAssignmentActions(categoryID, body, setMessage, loadAssignments, pickerState);
             }).catch(function (err) {
                 body.innerHTML = '<p role="alert">' + esc(extractErrorMessage(err, 'Failed to load assigned products.')) + '</p>';
             });
@@ -644,8 +645,12 @@
         loadAssignments();
     }
 
-    function renderCategoryProductAssignmentBody(assignedProducts, availableProducts) {
+    function renderCategoryProductAssignmentBody(assignedProducts, availableProducts, pickerState, loadedProductCount) {
+        var pageNumber = Math.floor(pickerState.offset / pickerState.limit) + 1;
+        var hasPreviousPage = pickerState.offset > 0;
+        var hasNextPage = loadedProductCount >= pickerState.limit;
         var html = '<div style="margin-bottom:1rem">';
+        html += '<p class="settings-scope-note">Product picker page ' + esc(String(pageNumber)) + '.</p>';
         if (availableProducts.length > 0) {
             html += '<label>Assign product<select id="category-assignment-product">';
             for (var i = 0; i < availableProducts.length; i++) {
@@ -653,9 +658,15 @@
                 html += '<option value="' + esc(String(product.id || '')) + '">' + esc((product.name || product.slug || product.id || '') + ' (' + (product.slug || product.id || '') + ')') + '</option>';
             }
             html += '</select></label> <button type="button" id="assign-category-product-btn">Assign Product</button>';
+        } else if (loadedProductCount > 0) {
+            html += '<p class="settings-scope-note">All products on this page are already assigned to this category.</p>';
         } else {
-            html += '<p class="settings-scope-note">All loaded products are already assigned to this category.</p>';
+            html += '<p class="settings-scope-note">No products found on this page.</p>';
         }
+        html += '<div style="margin-top:0.75rem">' +
+            '<button type="button" id="category-assignment-prev-page"' + (hasPreviousPage ? '' : ' disabled') + '>Previous Product Page</button> ' +
+            '<button type="button" id="category-assignment-next-page"' + (hasNextPage ? '' : ' disabled') + '>Next Product Page</button>' +
+            '</div>';
         html += '</div>';
         html += '<table class="admin-table"><thead><tr><th>Name</th><th>Slug</th><th>Status</th><th></th></tr></thead><tbody>';
         if (assignedProducts.length === 0) {
@@ -675,7 +686,7 @@
         return html;
     }
 
-    function bindCategoryProductAssignmentActions(categoryID, container, setMessage, reload) {
+    function bindCategoryProductAssignmentActions(categoryID, container, setMessage, reload, pickerState) {
         var assignBtn = document.getElementById('assign-category-product-btn');
         if (assignBtn) {
             assignBtn.addEventListener('click', function () {
@@ -694,6 +705,25 @@
                 }).catch(function (err) {
                     setMessage(extractErrorMessage(err, 'Failed to assign product.'), true);
                 });
+            });
+        }
+
+        var prevBtn = document.getElementById('category-assignment-prev-page');
+        if (prevBtn) {
+            prevBtn.addEventListener('click', function () {
+                if (pickerState.offset <= 0) {
+                    return;
+                }
+                pickerState.offset = Math.max(0, pickerState.offset - pickerState.limit);
+                reload();
+            });
+        }
+
+        var nextBtn = document.getElementById('category-assignment-next-page');
+        if (nextBtn) {
+            nextBtn.addEventListener('click', function () {
+                pickerState.offset += pickerState.limit;
+                reload();
             });
         }
 
