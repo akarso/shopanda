@@ -589,6 +589,7 @@
         var msg = document.getElementById('category-products-msg');
         var body = document.getElementById('category-products-body');
         var pickerState = { offset: 0, limit: 50, search: '' };
+        var assignedState = { offset: 0, limit: 20, search: '' };
         if (!panel || !msg || !body) {
             return;
         }
@@ -601,7 +602,7 @@
         function loadAssignments() {
             body.innerHTML = '<p>Loading…</p>';
             Promise.all([
-                api('/admin/categories/' + encodeURIComponent(categoryID) + '/products?offset=0&limit=50'),
+                api('/admin/categories/' + encodeURIComponent(categoryID) + '/products?offset=' + assignedState.offset + '&limit=' + assignedState.limit),
                 api('/admin/products?offset=' + pickerState.offset + '&limit=' + pickerState.limit)
             ]).then(function (results) {
                 var assignedBody = results[0] || {};
@@ -642,19 +643,22 @@
         }
 
         function renderCategoryProductAssignmentView(assignedProducts, availableProducts, loadedProductCount) {
-            body.innerHTML = renderCategoryProductAssignmentBody(assignedProducts, availableProducts, pickerState, loadedProductCount);
-            bindCategoryProductAssignmentActions(categoryID, body, setMessage, loadAssignments, renderCategoryProductAssignmentView, assignedProducts, availableProducts, loadedProductCount, pickerState);
+            body.innerHTML = renderCategoryProductAssignmentBody(assignedProducts, availableProducts, pickerState, loadedProductCount, assignedState);
+            bindCategoryProductAssignmentActions(categoryID, body, setMessage, loadAssignments, renderCategoryProductAssignmentView, assignedProducts, availableProducts, loadedProductCount, pickerState, assignedState);
         }
 
         loadAssignments();
     }
 
-    function renderCategoryProductAssignmentBody(assignedProducts, availableProducts, pickerState, loadedProductCount) {
+    function renderCategoryProductAssignmentBody(assignedProducts, availableProducts, pickerState, loadedProductCount, assignedState) {
         var filteredAssignedProducts = filterProductAssignmentOptions(assignedProducts, pickerState.search);
         var filteredAvailableProducts = filterProductAssignmentOptions(availableProducts, pickerState.search);
         var pageNumber = Math.floor(pickerState.offset / pickerState.limit) + 1;
         var hasPreviousPage = pickerState.offset > 0;
         var hasNextPage = loadedProductCount >= pickerState.limit;
+        var assignedPageNumber = Math.floor((assignedState && assignedState.offset || 0) / (assignedState && assignedState.limit || 20)) + 1;
+        var hasAssignedPrev = (assignedState && assignedState.offset || 0) > 0;
+        var hasAssignedNext = assignedProducts.length >= (assignedState && assignedState.limit || 20);
         var html = '<div style="margin-bottom:1rem">';
         html += '<p class="settings-scope-note">Product picker page ' + esc(String(pageNumber)) + '.</p>';
         html += '<label>Filter products<input type="search" id="category-product-search" placeholder="Search products" value="' + esc(pickerState.search || '') + '"></label>';
@@ -676,6 +680,11 @@
             '<button type="button" id="category-assignment-prev-page"' + (hasPreviousPage ? '' : ' disabled') + '>Previous Product Page</button> ' +
             '<button type="button" id="category-assignment-next-page"' + (hasNextPage ? '' : ' disabled') + '>Next Product Page</button>' +
             '</div>';
+        html += '</div>';
+        html += '<div style="margin-bottom:0.5rem">';
+        html += '<p class="settings-scope-note">Assigned products page ' + esc(String(assignedPageNumber)) + '.</p>';
+        html += '<button type="button" id="assigned-products-prev-page"' + (hasAssignedPrev ? '' : ' disabled') + '>Previous Assigned Page</button> ';
+        html += '<button type="button" id="assigned-products-next-page"' + (hasAssignedNext ? '' : ' disabled') + '>Next Assigned Page</button>';
         html += '</div>';
         html += '<table class="admin-table"><thead><tr><th>Name</th><th>Slug</th><th>Status</th><th></th></tr></thead><tbody>';
         if (assignedProducts.length === 0) {
@@ -703,6 +712,21 @@
             searchInput.addEventListener('input', function () {
                 pickerState.search = this.value || '';
                 rerender(assignedProducts, availableProducts, loadedProductCount);
+            });
+        }
+        var assignedPrevBtn = document.getElementById('assigned-products-prev-page');
+        if (assignedPrevBtn) {
+            assignedPrevBtn.addEventListener('click', function () {
+                if (assignedState.offset <= 0) return;
+                assignedState.offset = Math.max(0, assignedState.offset - assignedState.limit);
+                reload();
+            });
+        }
+        var assignedNextBtn = document.getElementById('assigned-products-next-page');
+        if (assignedNextBtn) {
+            assignedNextBtn.addEventListener('click', function () {
+                assignedState.offset += assignedState.limit;
+                reload();
             });
         }
 
