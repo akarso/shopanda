@@ -588,7 +588,7 @@
         var panel = document.getElementById('category-products-panel');
         var msg = document.getElementById('category-products-msg');
         var body = document.getElementById('category-products-body');
-        var pickerState = { offset: 0, limit: 50 };
+        var pickerState = { offset: 0, limit: 50, search: '' };
         if (!panel || !msg || !body) {
             return;
         }
@@ -635,29 +635,38 @@
                     }
                 }
 
-                body.innerHTML = renderCategoryProductAssignmentBody(assignedProducts, availableProducts, pickerState, allProducts.length);
-                bindCategoryProductAssignmentActions(categoryID, body, setMessage, loadAssignments, pickerState);
+                renderCategoryProductAssignmentView(assignedProducts, availableProducts, allProducts.length);
             }).catch(function (err) {
                 body.innerHTML = '<p role="alert">' + esc(extractErrorMessage(err, 'Failed to load assigned products.')) + '</p>';
             });
+        }
+
+        function renderCategoryProductAssignmentView(assignedProducts, availableProducts, loadedProductCount) {
+            body.innerHTML = renderCategoryProductAssignmentBody(assignedProducts, availableProducts, pickerState, loadedProductCount);
+            bindCategoryProductAssignmentActions(categoryID, body, setMessage, loadAssignments, renderCategoryProductAssignmentView, assignedProducts, availableProducts, loadedProductCount, pickerState);
         }
 
         loadAssignments();
     }
 
     function renderCategoryProductAssignmentBody(assignedProducts, availableProducts, pickerState, loadedProductCount) {
+        var filteredAssignedProducts = filterProductAssignmentOptions(assignedProducts, pickerState.search);
+        var filteredAvailableProducts = filterProductAssignmentOptions(availableProducts, pickerState.search);
         var pageNumber = Math.floor(pickerState.offset / pickerState.limit) + 1;
         var hasPreviousPage = pickerState.offset > 0;
         var hasNextPage = loadedProductCount >= pickerState.limit;
         var html = '<div style="margin-bottom:1rem">';
         html += '<p class="settings-scope-note">Product picker page ' + esc(String(pageNumber)) + '.</p>';
-        if (availableProducts.length > 0) {
+        html += '<label>Filter products<input type="search" id="category-product-search" placeholder="Search products" value="' + esc(pickerState.search || '') + '"></label>';
+        if (availableProducts.length > 0 && filteredAvailableProducts.length > 0) {
             html += '<label>Assign product<select id="category-assignment-product">';
-            for (var i = 0; i < availableProducts.length; i++) {
-                var product = availableProducts[i] || {};
+            for (var i = 0; i < filteredAvailableProducts.length; i++) {
+                var product = filteredAvailableProducts[i] || {};
                 html += '<option value="' + esc(String(product.id || '')) + '">' + esc((product.name || product.slug || product.id || '') + ' (' + (product.slug || product.id || '') + ')') + '</option>';
             }
             html += '</select></label> <button type="button" id="assign-category-product-btn">Assign Product</button>';
+        } else if (availableProducts.length > 0) {
+            html += '<p class="settings-scope-note">No available products match this filter.</p>';
         } else if (loadedProductCount > 0) {
             html += '<p class="settings-scope-note">All products on this page are already assigned to this category.</p>';
         } else {
@@ -671,9 +680,11 @@
         html += '<table class="admin-table"><thead><tr><th>Name</th><th>Slug</th><th>Status</th><th></th></tr></thead><tbody>';
         if (assignedProducts.length === 0) {
             html += '<tr><td colspan="4">No products assigned.</td></tr>';
+        } else if (filteredAssignedProducts.length === 0) {
+            html += '<tr><td colspan="4">No assigned products match this filter.</td></tr>';
         } else {
-            for (var j = 0; j < assignedProducts.length; j++) {
-                var assigned = assignedProducts[j] || {};
+            for (var j = 0; j < filteredAssignedProducts.length; j++) {
+                var assigned = filteredAssignedProducts[j] || {};
                 html += '<tr>' +
                     '<td>' + esc(assigned.name || '') + '</td>' +
                     '<td>' + esc(assigned.slug || '') + '</td>' +
@@ -686,7 +697,15 @@
         return html;
     }
 
-    function bindCategoryProductAssignmentActions(categoryID, container, setMessage, reload, pickerState) {
+    function bindCategoryProductAssignmentActions(categoryID, container, setMessage, reload, rerender, assignedProducts, availableProducts, loadedProductCount, pickerState) {
+        var searchInput = document.getElementById('category-product-search');
+        if (searchInput) {
+            searchInput.addEventListener('input', function () {
+                pickerState.search = this.value || '';
+                rerender(assignedProducts, availableProducts, loadedProductCount);
+            });
+        }
+
         var assignBtn = document.getElementById('assign-category-product-btn');
         if (assignBtn) {
             assignBtn.addEventListener('click', function () {
@@ -743,6 +762,25 @@
                 });
             });
         }
+    }
+
+    function filterProductAssignmentOptions(products, searchTerm) {
+        if (!Array.isArray(products)) {
+            return [];
+        }
+        var query = String(searchTerm || '').trim().toLowerCase();
+        if (!query) {
+            return products.slice();
+        }
+        var out = [];
+        for (var i = 0; i < products.length; i++) {
+            var product = products[i] || {};
+            var text = ((product.name || '') + ' ' + (product.slug || '') + ' ' + (product.id || '')).toLowerCase();
+            if (text.indexOf(query) !== -1) {
+                out.push(product);
+            }
+        }
+        return out;
     }
 
     function renderCategoryFormFields(categories, category) {
