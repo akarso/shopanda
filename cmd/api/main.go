@@ -792,6 +792,7 @@ func runServe(cfg *config.Config, log logger.Logger) error {
 
 	// Admin routes (behind RequirePermission).
 	router.Handle("GET /api/v1/admin/products", requireProductsRead(productAdmin.List()))
+	router.Handle("GET /api/v1/admin/products/{id}", requireProductsRead(productAdmin.Get()))
 	router.Handle("POST /api/v1/admin/products", requireProductsWrite(productAdmin.Create()))
 	router.Handle("PUT /api/v1/admin/products/{id}", requireProductsWrite(productAdmin.Update()))
 	router.Handle("GET /api/v1/admin/categories", requireCategoriesRead(categoryHandler.Tree()))

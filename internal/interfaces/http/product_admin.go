@@ -1,6 +1,7 @@
 package http
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 
@@ -20,6 +21,10 @@ type ProductAdminHandler struct {
 	bus     *event.Bus
 	auditor *admin.Auditor
 	log     logger.Logger
+}
+
+type productCategoryAssignmentReader interface {
+	ListCategoryIDsByProduct(ctx context.Context, productID string) ([]string, error)
 }
 
 // NewProductAdminHandler creates a ProductAdminHandler.
@@ -102,6 +107,108 @@ func (h *ProductAdminHandler) List() http.HandlerFunc {
 
 		JSON(w, http.StatusOK, map[string]interface{}{
 			"products": products,
+		})
+	}
+}
+
+// Get handles GET /api/v1/admin/products/{id}.
+func (h *ProductAdminHandler) Get() http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		pid := r.PathValue("id")
+		adminID := h.getAdminID(r)
+		if pid == "" {
+			details := productAdminScopeDetailsFromRequest(r)
+			h.auditor.LogAction(r.Context(), admin.AuditEntry{
+				AdminID:      adminID,
+				Action:       admin.AuditProductRead,
+				ResourceType: "product",
+				Result:       "error",
+				Error:        "product id is required",
+				Details:      details,
+			})
+			JSONError(w, apperror.Validation("product id is required"))
+			return
+		}
+
+		product, err := h.repo.FindByID(r.Context(), pid)
+		if err != nil {
+			details := productAdminScopeDetailsFromRequest(r)
+			h.auditor.LogAction(r.Context(), admin.AuditEntry{
+				AdminID:      adminID,
+				Action:       admin.AuditProductRead,
+				ResourceType: "product",
+				ResourceID:   pid,
+				Result:       "error",
+				Error:        err.Error(),
+				Details:      details,
+			})
+			JSONError(w, err)
+			return
+		}
+		if product == nil {
+			details := productAdminScopeDetailsFromRequest(r)
+			h.auditor.LogAction(r.Context(), admin.AuditEntry{
+				AdminID:      adminID,
+				Action:       admin.AuditProductRead,
+				ResourceType: "product",
+				ResourceID:   pid,
+				Result:       "error",
+				Error:        "product not found",
+				Details:      details,
+			})
+			JSONError(w, apperror.NotFound("product not found"))
+			return
+		}
+
+		assignments, ok := h.repo.(productCategoryAssignmentReader)
+		if !ok {
+			err := apperror.Internal("product repository missing category lookup capability")
+			details := productAdminScopeDetailsFromRequest(r)
+			h.auditor.LogAction(r.Context(), admin.AuditEntry{
+				AdminID:      adminID,
+				Action:       admin.AuditProductRead,
+				ResourceType: "product",
+				ResourceID:   pid,
+				Result:       "error",
+				Error:        "product repository missing category lookup capability",
+				Details:      details,
+			})
+			JSONError(w, err)
+			return
+		}
+
+		categoryIDs, err := assignments.ListCategoryIDsByProduct(r.Context(), pid)
+		if err != nil {
+			details := productAdminScopeDetailsFromRequest(r)
+			h.auditor.LogAction(r.Context(), admin.AuditEntry{
+				AdminID:      adminID,
+				Action:       admin.AuditProductRead,
+				ResourceType: "product",
+				ResourceID:   pid,
+				Result:       "error",
+				Error:        err.Error(),
+				Details:      details,
+			})
+			JSONError(w, err)
+			return
+		}
+		if categoryIDs == nil {
+			categoryIDs = []string{}
+		}
+
+		details := productAdminScopeDetailsFromRequest(r)
+		h.auditor.LogAction(r.Context(), admin.AuditEntry{
+			AdminID:      adminID,
+			Action:       admin.AuditProductRead,
+			ResourceType: "product",
+			ResourceID:   pid,
+			Result:       "success",
+			Details:      details,
+		})
+
+		JSON(w, http.StatusOK, map[string]interface{}{
+			"product":      product,
+			"category_ids": categoryIDs,
 		})
 	}
 }

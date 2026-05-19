@@ -332,3 +332,40 @@ func (r *ProductRepo) RemoveCategory(ctx context.Context, productID, categoryID 
 	}
 	return nil
 }
+
+// ListCategoryIDsByProduct returns assigned category IDs for a product.
+func (r *ProductRepo) ListCategoryIDsByProduct(ctx context.Context, productID string) ([]string, error) {
+	if productID == "" {
+		return nil, apperror.Validation("product id must not be empty")
+	}
+
+	const q = `SELECT category_id
+		FROM product_categories
+		WHERE product_id = $1
+		ORDER BY category_id ASC`
+
+	var rows *sql.Rows
+	var err error
+	if r.tx != nil {
+		rows, err = r.tx.QueryContext(ctx, q, productID)
+	} else {
+		rows, err = r.db.QueryContext(ctx, q, productID)
+	}
+	if err != nil {
+		return nil, fmt.Errorf("product_repo: list category ids by product: %w", err)
+	}
+	defer rows.Close()
+
+	ids := make([]string, 0)
+	for rows.Next() {
+		var categoryID string
+		if err := rows.Scan(&categoryID); err != nil {
+			return nil, fmt.Errorf("product_repo: list category ids by product scan: %w", err)
+		}
+		ids = append(ids, categoryID)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("product_repo: list category ids by product rows: %w", err)
+	}
+	return ids, nil
+}
