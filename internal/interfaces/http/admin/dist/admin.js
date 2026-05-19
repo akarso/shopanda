@@ -939,6 +939,7 @@
         var panel = document.getElementById('product-category-panel');
         var msg = document.getElementById('product-category-msg');
         var body = document.getElementById('product-category-body');
+        var assignmentState = { search: '' };
         if (!panel || !msg || !body) {
             return;
         }
@@ -985,25 +986,34 @@
                     }
                 }
 
-                body.innerHTML = renderProductCategoryAssignmentBody(assignedCategories, availableCategories);
-                bindProductCategoryAssignmentActions(productID, body, setMessage, loadAssignments);
+                renderProductCategoryAssignmentView(assignedCategories, availableCategories);
             }).catch(function (err) {
                 body.innerHTML = '<p role="alert">' + esc(extractErrorMessage(err, 'Failed to load assigned categories.')) + '</p>';
             });
         }
 
+        function renderProductCategoryAssignmentView(assignedCategories, availableCategories) {
+            body.innerHTML = renderProductCategoryAssignmentBody(assignedCategories, availableCategories, assignmentState.search);
+            bindProductCategoryAssignmentActions(productID, body, setMessage, loadAssignments, renderProductCategoryAssignmentView, assignedCategories, availableCategories, assignmentState);
+        }
+
         loadAssignments();
     }
 
-    function renderProductCategoryAssignmentBody(assignedCategories, availableCategories) {
+    function renderProductCategoryAssignmentBody(assignedCategories, availableCategories, searchTerm) {
+        var filteredAssignedCategories = filterCategoryAssignmentOptions(assignedCategories, searchTerm);
+        var filteredAvailableCategories = filterCategoryAssignmentOptions(availableCategories, searchTerm);
         var html = '<div style="margin-bottom:1rem">';
-        if (availableCategories.length > 0) {
+        html += '<label>Filter categories<input type="search" id="product-category-search" placeholder="Search categories" value="' + esc(searchTerm || '') + '"></label>';
+        if (availableCategories.length > 0 && filteredAvailableCategories.length > 0) {
             html += '<label>Assign category<select id="product-assignment-category">';
-            for (var i = 0; i < availableCategories.length; i++) {
-                var category = availableCategories[i] || {};
+            for (var i = 0; i < filteredAvailableCategories.length; i++) {
+                var category = filteredAvailableCategories[i] || {};
                 html += '<option value="' + esc(String(category.id || '')) + '">' + esc(category.label || category.id || '') + '</option>';
             }
             html += '</select></label> <button type="button" id="assign-product-category-btn">Assign Category</button>';
+        } else if (availableCategories.length > 0) {
+            html += '<p class="settings-scope-note">No available categories match this filter.</p>';
         } else {
             html += '<p class="settings-scope-note">All categories are already assigned to this product.</p>';
         }
@@ -1011,9 +1021,11 @@
         html += '<table class="admin-table"><thead><tr><th>Name</th><th></th></tr></thead><tbody>';
         if (assignedCategories.length === 0) {
             html += '<tr><td colspan="2">No categories assigned.</td></tr>';
+        } else if (filteredAssignedCategories.length === 0) {
+            html += '<tr><td colspan="2">No assigned categories match this filter.</td></tr>';
         } else {
-            for (var j = 0; j < assignedCategories.length; j++) {
-                var assigned = assignedCategories[j] || {};
+            for (var j = 0; j < filteredAssignedCategories.length; j++) {
+                var assigned = filteredAssignedCategories[j] || {};
                 html += '<tr>' +
                     '<td>' + esc(assigned.label || assigned.id || '') + '</td>' +
                     '<td><button type="button" data-product-category-remove="' + esc(String(assigned.id || '')) + '">Remove</button></td>' +
@@ -1024,7 +1036,15 @@
         return html;
     }
 
-    function bindProductCategoryAssignmentActions(productID, container, setMessage, reload) {
+    function bindProductCategoryAssignmentActions(productID, container, setMessage, reload, rerender, assignedCategories, availableCategories, assignmentState) {
+        var searchInput = document.getElementById('product-category-search');
+        if (searchInput) {
+            searchInput.addEventListener('input', function () {
+                assignmentState.search = this.value || '';
+                rerender(assignedCategories, availableCategories);
+            });
+        }
+
         var assignBtn = document.getElementById('assign-product-category-btn');
         if (assignBtn) {
             assignBtn.addEventListener('click', function () {
@@ -1062,6 +1082,25 @@
                 });
             });
         }
+    }
+
+    function filterCategoryAssignmentOptions(options, searchTerm) {
+        if (!Array.isArray(options)) {
+            return [];
+        }
+        var query = String(searchTerm || '').trim().toLowerCase();
+        if (!query) {
+            return options.slice();
+        }
+        var out = [];
+        for (var i = 0; i < options.length; i++) {
+            var option = options[i] || {};
+            var label = String(option.label || option.id || '').toLowerCase();
+            if (label.indexOf(query) !== -1) {
+                out.push(option);
+            }
+        }
+        return out;
     }
 
     function renderSchemaField(field, product) {
