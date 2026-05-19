@@ -354,6 +354,14 @@ func TestProductRepo_AssignAndRemoveCategory(t *testing.T) {
 		t.Fatalf("AssignCategory second call: %v", err)
 	}
 
+	categoryIDs, err := repo.ListCategoryIDsByProduct(ctx, p.ID)
+	if err != nil {
+		t.Fatalf("ListCategoryIDsByProduct: %v", err)
+	}
+	if len(categoryIDs) != 1 || categoryIDs[0] != c.ID {
+		t.Fatalf("categoryIDs = %+v, want [%q]", categoryIDs, c.ID)
+	}
+
 	products, err := repo.FindByCategoryID(ctx, c.ID, 0, 20)
 	if err != nil {
 		t.Fatalf("FindByCategoryID: %v", err)
@@ -367,6 +375,14 @@ func TestProductRepo_AssignAndRemoveCategory(t *testing.T) {
 	}
 	if err := repo.RemoveCategory(ctx, p.ID, c.ID); err != nil {
 		t.Fatalf("RemoveCategory second call: %v", err)
+	}
+
+	categoryIDs, err = repo.ListCategoryIDsByProduct(ctx, p.ID)
+	if err != nil {
+		t.Fatalf("ListCategoryIDsByProduct after remove: %v", err)
+	}
+	if len(categoryIDs) != 0 {
+		t.Fatalf("categoryIDs len = %d, want 0", len(categoryIDs))
 	}
 
 	products, err = repo.FindByCategoryID(ctx, c.ID, 0, 20)

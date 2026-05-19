@@ -92,8 +92,9 @@ type mockCatProductRepo struct {
 }
 
 type mockProductCategoryAssignmentRepo struct {
-	assignFn func(ctx context.Context, productID, categoryID string) error
-	removeFn func(ctx context.Context, productID, categoryID string) error
+	assignFn                   func(ctx context.Context, productID, categoryID string) error
+	removeFn                   func(ctx context.Context, productID, categoryID string) error
+	listCategoryIDsByProductFn func(ctx context.Context, productID string) ([]string, error)
 }
 
 func (m *mockCatProductRepo) FindByID(ctx context.Context, id string) (*catalog.Product, error) {
@@ -150,6 +151,13 @@ func (m *mockProductCategoryAssignmentRepo) RemoveCategory(ctx context.Context, 
 		return m.removeFn(ctx, productID, categoryID)
 	}
 	return nil
+}
+
+func (m *mockProductCategoryAssignmentRepo) ListCategoryIDsByProduct(ctx context.Context, productID string) ([]string, error) {
+	if m.listCategoryIDsByProductFn != nil {
+		return m.listCategoryIDsByProductFn(ctx, productID)
+	}
+	return nil, nil
 }
 
 // --- router helper ---

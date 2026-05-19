@@ -115,6 +115,9 @@ func TestAdminHandler_StaticJS(t *testing.T) {
 	if !strings.Contains(normalizedBody, "Your account does not have products access.") {
 		t.Fatalf("expected products permission error message in JS")
 	}
+	if !strings.Contains(normalizedBody, "/admin/products/") || !strings.Contains(normalizedBody, "Assign Category") || !strings.Contains(normalizedBody, "Category removed from product.") {
+		t.Fatalf("expected product detail assignment wiring in JS")
+	}
 	if !strings.Contains(normalizedBody, "renderCategoriesPage") || !strings.Contains(normalizedBody, "/admin/catalog/categories") || !strings.Contains(normalizedBody, "/admin/categories") {
 		t.Fatalf("expected categories admin surface wiring in JS")
 	}
@@ -124,7 +127,7 @@ func TestAdminHandler_StaticJS(t *testing.T) {
 	if !strings.Contains(normalizedBody, "/admin/categories/") || !strings.Contains(normalizedBody, "/admin/products?offset=") || !strings.Contains(normalizedBody, "Assign Product") || !strings.Contains(normalizedBody, "Product removed from category.") || !strings.Contains(normalizedBody, "Previous Product Page") || !strings.Contains(normalizedBody, "Next Product Page") {
 		t.Fatalf("expected category product assignment wiring in JS")
 	}
-	if !strings.Contains(normalizedBody, "Your account does not have categories access.") || !strings.Contains(normalizedBody, "Failed to load categories.") || !strings.Contains(normalizedBody, "Failed to load category form.") || !strings.Contains(normalizedBody, "Category meta must be a JSON object.") || !strings.Contains(normalizedBody, "Category order saved.") || !strings.Contains(normalizedBody, "Failed to save category order.") || !strings.Contains(normalizedBody, "Failed to load assigned products.") || !strings.Contains(normalizedBody, "Failed to assign product.") || !strings.Contains(normalizedBody, "Failed to remove product.") || !strings.Contains(normalizedBody, "Your account does not have products access, so product assignment is unavailable.") {
+	if !strings.Contains(normalizedBody, "Your account does not have categories access.") || !strings.Contains(normalizedBody, "Failed to load categories.") || !strings.Contains(normalizedBody, "Failed to load category form.") || !strings.Contains(normalizedBody, "Category meta must be a JSON object.") || !strings.Contains(normalizedBody, "Category order saved.") || !strings.Contains(normalizedBody, "Failed to save category order.") || !strings.Contains(normalizedBody, "Failed to load assigned products.") || !strings.Contains(normalizedBody, "Failed to assign product.") || !strings.Contains(normalizedBody, "Failed to remove product.") || !strings.Contains(normalizedBody, "Your account does not have products access, so product assignment is unavailable.") || !strings.Contains(normalizedBody, "Failed to load assigned categories.") || !strings.Contains(normalizedBody, "Failed to assign category.") || !strings.Contains(normalizedBody, "Failed to remove category.") || !strings.Contains(normalizedBody, "Your account does not have categories access, so category assignment is unavailable.") {
 		t.Fatalf("expected categories admin messages in JS")
 	}
 	if !strings.Contains(normalizedBody, "Your account does not have customer access.") {

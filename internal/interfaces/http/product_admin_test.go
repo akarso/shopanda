@@ -27,10 +27,11 @@ import (
 // --- mock for admin tests ---
 
 type mockAdminProductRepo struct {
-	findByIDFn func(ctx context.Context, id string) (*catalog.Product, error)
-	listFn     func(ctx context.Context, offset, limit int) ([]catalog.Product, error)
-	createFn   func(ctx context.Context, p *catalog.Product) error
-	updateFn   func(ctx context.Context, p *catalog.Product) error
+	findByIDFn                 func(ctx context.Context, id string) (*catalog.Product, error)
+	listFn                     func(ctx context.Context, offset, limit int) ([]catalog.Product, error)
+	createFn                   func(ctx context.Context, p *catalog.Product) error
+	updateFn                   func(ctx context.Context, p *catalog.Product) error
+	listCategoryIDsByProductFn func(ctx context.Context, productID string) ([]string, error)
 }
 
 func (m *mockAdminProductRepo) FindByID(ctx context.Context, id string) (*catalog.Product, error) {
@@ -64,6 +65,12 @@ func (m *mockAdminProductRepo) Update(ctx context.Context, p *catalog.Product) e
 	}
 	return nil
 }
+func (m *mockAdminProductRepo) ListCategoryIDsByProduct(ctx context.Context, productID string) ([]string, error) {
+	if m.listCategoryIDsByProductFn != nil {
+		return m.listCategoryIDsByProductFn(ctx, productID)
+	}
+	return nil, nil
+}
 func (m *mockAdminProductRepo) FindByCategoryID(_ context.Context, _ string, _, _ int) ([]catalog.Product, error) {
 	return nil, nil
 }
@@ -74,6 +81,7 @@ func (m *mockAdminProductRepo) WithTx(_ *sql.Tx) catalog.ProductRepository { ret
 func newAdminRouter(h *shophttp.ProductAdminHandler) *http.ServeMux {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /api/v1/admin/products", h.List())
+	mux.HandleFunc("GET /api/v1/admin/products/{id}", h.Get())
 	mux.HandleFunc("POST /api/v1/admin/products", h.Create())
 	mux.HandleFunc("PUT /api/v1/admin/products/{id}", h.Update())
 	return mux
@@ -85,6 +93,7 @@ func newAdminRouterWithAudit(h *shophttp.ProductAdminHandler) *http.ServeMux {
 	withAdminContext := shophttp.AdminContextMiddleware()
 	mux := http.NewServeMux()
 	mux.Handle("GET /api/v1/admin/products", withAdminContext(requireProductsRead(h.List())))
+	mux.Handle("GET /api/v1/admin/products/{id}", withAdminContext(requireProductsRead(h.Get())))
 	mux.Handle("PUT /api/v1/admin/products/{id}", withAdminContext(requireProductsWrite(h.Update())))
 	return mux
 }
@@ -111,6 +120,68 @@ func jsonBody(t *testing.T, v interface{}) *bytes.Reader {
 }
 
 // --- List tests ---
+
+func TestProductAdminHandler_Get_OK(t *testing.T) {
+	repo := &mockAdminProductRepo{
+		findByIDFn: func(_ context.Context, id string) (*catalog.Product, error) {
+			if id != "p1" {
+				t.Fatalf("id = %q, want %q", id, "p1")
+			}
+			return &catalog.Product{ID: "p1", Name: "Widget", Slug: "widget", Status: catalog.StatusActive}, nil
+		},
+		listCategoryIDsByProductFn: func(_ context.Context, productID string) ([]string, error) {
+			if productID != "p1" {
+				t.Fatalf("productID = %q, want %q", productID, "p1")
+			}
+			return []string{"cat-1", "cat-2"}, nil
+		},
+	}
+	h := shophttp.NewProductAdminHandler(repo, testAdminBus())
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("GET", "/api/v1/admin/products/p1", nil)
+	newAdminRouter(h).ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d; body: %s", rec.Code, http.StatusOK, rec.Body.String())
+	}
+
+	var body map[string]interface{}
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	data, ok := body["data"].(map[string]interface{})
+	if !ok {
+		t.Fatalf("data is not an object: %v", body)
+	}
+	product, ok := data["product"].(map[string]interface{})
+	if !ok {
+		t.Fatalf("product is not an object: %v", data)
+	}
+	if product["ID"] != "p1" {
+		t.Fatalf("product ID = %v, want %q", product["ID"], "p1")
+	}
+	categoryIDs, ok := data["category_ids"].([]interface{})
+	if !ok {
+		t.Fatalf("category_ids is not an array: %v", data)
+	}
+	if len(categoryIDs) != 2 {
+		t.Fatalf("category_ids len = %d, want 2", len(categoryIDs))
+	}
+}
+
+func TestProductAdminHandler_Get_NotFound(t *testing.T) {
+	repo := &mockAdminProductRepo{}
+	h := shophttp.NewProductAdminHandler(repo, testAdminBus())
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("GET", "/api/v1/admin/products/p1", nil)
+	newAdminRouter(h).ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("status = %d, want %d; body: %s", rec.Code, http.StatusNotFound, rec.Body.String())
+	}
+}
 
 func TestProductAdminHandler_List_OK(t *testing.T) {
 	repo := &mockAdminProductRepo{
