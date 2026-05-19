@@ -160,26 +160,40 @@ func (h *ProductAdminHandler) Get() http.HandlerFunc {
 			return
 		}
 
-		categoryIDs := []string{}
-		if assignments, ok := h.repo.(productCategoryAssignmentReader); ok {
-			categoryIDs, err = assignments.ListCategoryIDsByProduct(r.Context(), pid)
-			if err != nil {
-				details := productAdminScopeDetailsFromRequest(r)
-				h.auditor.LogAction(r.Context(), admin.AuditEntry{
-					AdminID:      adminID,
-					Action:       admin.AuditProductRead,
-					ResourceType: "product",
-					ResourceID:   pid,
-					Result:       "error",
-					Error:        err.Error(),
-					Details:      details,
-				})
-				JSONError(w, err)
-				return
-			}
-			if categoryIDs == nil {
-				categoryIDs = []string{}
-			}
+		assignments, ok := h.repo.(productCategoryAssignmentReader)
+		if !ok {
+			err := apperror.Internal("product repository missing category lookup capability")
+			details := productAdminScopeDetailsFromRequest(r)
+			h.auditor.LogAction(r.Context(), admin.AuditEntry{
+				AdminID:      adminID,
+				Action:       admin.AuditProductRead,
+				ResourceType: "product",
+				ResourceID:   pid,
+				Result:       "error",
+				Error:        "product repository missing category lookup capability",
+				Details:      details,
+			})
+			JSONError(w, err)
+			return
+		}
+
+		categoryIDs, err := assignments.ListCategoryIDsByProduct(r.Context(), pid)
+		if err != nil {
+			details := productAdminScopeDetailsFromRequest(r)
+			h.auditor.LogAction(r.Context(), admin.AuditEntry{
+				AdminID:      adminID,
+				Action:       admin.AuditProductRead,
+				ResourceType: "product",
+				ResourceID:   pid,
+				Result:       "error",
+				Error:        err.Error(),
+				Details:      details,
+			})
+			JSONError(w, err)
+			return
+		}
+		if categoryIDs == nil {
+			categoryIDs = []string{}
 		}
 
 		details := productAdminScopeDetailsFromRequest(r)

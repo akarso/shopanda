@@ -34,6 +34,10 @@ type mockAdminProductRepo struct {
 	listCategoryIDsByProductFn func(ctx context.Context, productID string) ([]string, error)
 }
 
+type mockAdminProductRepoWithoutCategoryLookup struct {
+	findByIDFn func(ctx context.Context, id string) (*catalog.Product, error)
+}
+
 func (m *mockAdminProductRepo) FindByID(ctx context.Context, id string) (*catalog.Product, error) {
 	if m.findByIDFn != nil {
 		return m.findByIDFn(ctx, id)
@@ -75,6 +79,33 @@ func (m *mockAdminProductRepo) FindByCategoryID(_ context.Context, _ string, _, 
 	return nil, nil
 }
 func (m *mockAdminProductRepo) WithTx(_ *sql.Tx) catalog.ProductRepository { return m }
+
+func (m *mockAdminProductRepoWithoutCategoryLookup) FindByID(ctx context.Context, id string) (*catalog.Product, error) {
+	if m.findByIDFn != nil {
+		return m.findByIDFn(ctx, id)
+	}
+	return nil, nil
+}
+
+func (m *mockAdminProductRepoWithoutCategoryLookup) FindBySlug(_ context.Context, _ string) (*catalog.Product, error) {
+	return nil, nil
+}
+
+func (m *mockAdminProductRepoWithoutCategoryLookup) List(_ context.Context, _, _ int) ([]catalog.Product, error) {
+	return nil, nil
+}
+
+func (m *mockAdminProductRepoWithoutCategoryLookup) FindByCategoryID(_ context.Context, _ string, _, _ int) ([]catalog.Product, error) {
+	return nil, nil
+}
+
+func (m *mockAdminProductRepoWithoutCategoryLookup) Create(_ context.Context, _ *catalog.Product) error {
+	return nil
+}
+
+func (m *mockAdminProductRepoWithoutCategoryLookup) Update(_ context.Context, _ *catalog.Product) error {
+	return nil
+}
 
 // --- helpers ---
 
@@ -180,6 +211,42 @@ func TestProductAdminHandler_Get_NotFound(t *testing.T) {
 
 	if rec.Code != http.StatusNotFound {
 		t.Fatalf("status = %d, want %d; body: %s", rec.Code, http.StatusNotFound, rec.Body.String())
+	}
+}
+
+func TestProductAdminHandler_Get_MissingCategoryLookupCapability(t *testing.T) {
+	repo := &mockAdminProductRepoWithoutCategoryLookup{
+		findByIDFn: func(_ context.Context, id string) (*catalog.Product, error) {
+			return &catalog.Product{ID: id, Name: "Widget", Slug: "widget", Status: catalog.StatusActive}, nil
+		},
+	}
+	sink := &auditSink{}
+	h := shophttp.NewProductAdminHandlerWithAuditor(repo, testAdminBus(), admin.NewAuditor(sink), logger.NewWithWriter(io.Discard, "info"))
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("GET", "/api/v1/admin/products/p1", nil)
+	req = testhelper.AdminRequest(req, "admin-1")
+	newAdminRouterWithAudit(h).ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("status = %d, want %d; body: %s", rec.Code, http.StatusInternalServerError, rec.Body.String())
+	}
+
+	entry := sink.Last(t)
+	if entry.event != "admin.action.failed" {
+		t.Fatalf("event = %q, want %q", entry.event, "admin.action.failed")
+	}
+	if got := entry.context["action"]; got != admin.AuditProductRead {
+		t.Errorf("action = %v, want %q", got, admin.AuditProductRead)
+	}
+	if got := entry.context["resource_id"]; got != "p1" {
+		t.Errorf("resource_id = %v, want %q", got, "p1")
+	}
+	if got := entry.context["result"]; got != "error" {
+		t.Errorf("result = %v, want %q", got, "error")
+	}
+	if got := entry.context["error"]; got != "product repository missing category lookup capability" {
+		t.Errorf("error = %v, want %q", got, "product repository missing category lookup capability")
 	}
 }
 
@@ -1256,6 +1323,54 @@ func TestAdminGuard_SupportListAllowed(t *testing.T) {
 	req := httptest.NewRequest("GET", "/api/v1/admin/products", nil)
 	req = testhelper.AuthenticatedRequest(req, "support-1", identity.RoleSupport)
 	newGuardedAdminRouter(h).ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d; body: %s", rec.Code, http.StatusOK, rec.Body.String())
+	}
+}
+
+func TestAdminGuardWithAudit_ProductGetUnauthorized(t *testing.T) {
+	repo := &mockAdminProductRepo{}
+	h := shophttp.NewProductAdminHandler(repo, testAdminBus())
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("GET", "/api/v1/admin/products/p1", nil)
+	newAdminRouterWithAudit(h).ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("status = %d, want %d; body: %s", rec.Code, http.StatusUnauthorized, rec.Body.String())
+	}
+}
+
+func TestAdminGuardWithAudit_ProductGetForbidden(t *testing.T) {
+	repo := &mockAdminProductRepo{}
+	h := shophttp.NewProductAdminHandler(repo, testAdminBus())
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("GET", "/api/v1/admin/products/p1", nil)
+	req = testhelper.CustomerRequest(req, "cust-1")
+	newAdminRouterWithAudit(h).ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("status = %d, want %d; body: %s", rec.Code, http.StatusForbidden, rec.Body.String())
+	}
+}
+
+func TestAdminGuardWithAudit_ProductGetAllowed(t *testing.T) {
+	repo := &mockAdminProductRepo{
+		findByIDFn: func(_ context.Context, id string) (*catalog.Product, error) {
+			return &catalog.Product{ID: id, Name: "Widget", Slug: "widget", Status: catalog.StatusActive}, nil
+		},
+		listCategoryIDsByProductFn: func(_ context.Context, productID string) ([]string, error) {
+			return []string{"cat-1"}, nil
+		},
+	}
+	h := shophttp.NewProductAdminHandler(repo, testAdminBus())
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("GET", "/api/v1/admin/products/p1", nil)
+	req = testhelper.AuthenticatedRequest(req, "support-1", identity.RoleSupport)
+	newAdminRouterWithAudit(h).ServeHTTP(rec, req)
 
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d, want %d; body: %s", rec.Code, http.StatusOK, rec.Body.String())
