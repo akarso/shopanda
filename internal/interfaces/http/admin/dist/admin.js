@@ -623,6 +623,14 @@
                     return;
                 }
 
+                // Keep the user on their current assigned-products page when possible,
+                // but step back one page if a mutation emptied the current page.
+                if (assignedState.offset > 0 && assignedProducts.length === 0) {
+                    assignedState.offset = Math.max(0, assignedState.offset - assignedState.limit);
+                    loadAssignments();
+                    return;
+                }
+
                 var assignedIDs = {};
                 for (var i = 0; i < assignedProducts.length; i++) {
                     assignedIDs[String(assignedProducts[i].id || '')] = true;
@@ -706,7 +714,7 @@
         return html;
     }
 
-    function bindCategoryProductAssignmentActions(categoryID, container, setMessage, reload, rerender, assignedProducts, availableProducts, loadedProductCount, pickerState) {
+    function bindCategoryProductAssignmentActions(categoryID, container, setMessage, reload, rerender, assignedProducts, availableProducts, loadedProductCount, pickerState, assignedState) {
         var searchInput = document.getElementById('category-product-search');
         if (searchInput) {
             searchInput.addEventListener('input', function () {
