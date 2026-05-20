@@ -747,7 +747,9 @@
         if (searchInput) {
             searchInput.addEventListener('input', function () {
                 pickerState.search = this.value || '';
-                rerender(assignedProducts, availableProducts, loadedProductCount);
+                pickerState.offset = 0;
+                assignedState.offset = 0;
+                reload();
             });
         }
         var assignedPrevBtn = document.getElementById('assigned-products-prev-page');
