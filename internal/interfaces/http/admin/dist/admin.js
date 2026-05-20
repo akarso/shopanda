@@ -590,6 +590,7 @@
         var body = document.getElementById('category-products-body');
         var pickerState = { offset: 0, limit: 50, search: '' };
         var assignedState = { offset: 0, limit: 20, search: '' };
+        var assignedLookupLimit = 100;
         if (!panel || !msg || !body) {
             return;
         }
@@ -599,14 +600,41 @@
             msg.innerHTML = text ? '<p' + (isError ? ' role="alert"' : '') + '>' + esc(text) + '</p>' : '';
         }
 
+        function loadAllAssignedProducts() {
+            var all = [];
+
+            function loadBatch(offset) {
+                return api('/admin/categories/' + encodeURIComponent(categoryID) + '/products?offset=' + offset + '&limit=' + assignedLookupLimit).then(function (body) {
+                    if (body && body.error) {
+                        return Promise.reject(body);
+                    }
+                    var products = normalizeProducts(body && body.data && body.data.products);
+                    if (!Array.isArray(products)) {
+                        return Promise.reject(body);
+                    }
+                    for (var i = 0; i < products.length; i++) {
+                        all.push(products[i]);
+                    }
+                    if (products.length < assignedLookupLimit) {
+                        return all;
+                    }
+                    return loadBatch(offset + assignedLookupLimit);
+                });
+            }
+
+            return loadBatch(0);
+        }
+
         function loadAssignments() {
             body.innerHTML = '<p>Loading…</p>';
             Promise.all([
                 api('/admin/categories/' + encodeURIComponent(categoryID) + '/products?offset=' + assignedState.offset + '&limit=' + assignedState.limit),
+                loadAllAssignedProducts(),
                 api('/admin/products?offset=' + pickerState.offset + '&limit=' + pickerState.limit)
             ]).then(function (results) {
                 var assignedBody = results[0] || {};
-                var productsBody = results[1] || {};
+                var allAssignedProducts = results[1] || [];
+                var productsBody = results[2] || {};
                 if (assignedBody.error && assignedBody.error.code === 'forbidden') {
                     body.innerHTML = '<p role="alert">Your account does not have categories access.</p>';
                     return;
@@ -618,7 +646,7 @@
 
                 var assignedProducts = normalizeProducts(assignedBody.data && assignedBody.data.products);
                 var allProducts = normalizeProducts(productsBody.data && productsBody.data.products);
-                if (!Array.isArray(assignedProducts) || !Array.isArray(allProducts)) {
+                if (!Array.isArray(assignedProducts) || !Array.isArray(allAssignedProducts) || !Array.isArray(allProducts)) {
                     body.innerHTML = '<p role="alert">' + esc(extractErrorMessage(assignedBody.error ? assignedBody : productsBody, 'Failed to load assigned products.')) + '</p>';
                     return;
                 }
@@ -632,8 +660,8 @@
                 }
 
                 var assignedIDs = {};
-                for (var i = 0; i < assignedProducts.length; i++) {
-                    assignedIDs[String(assignedProducts[i].id || '')] = true;
+                for (var i = 0; i < allAssignedProducts.length; i++) {
+                    assignedIDs[String(allAssignedProducts[i].id || '')] = true;
                 }
 
                 var availableProducts = [];
