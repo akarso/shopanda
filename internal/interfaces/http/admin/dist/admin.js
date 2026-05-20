@@ -1009,7 +1009,7 @@
         var panel = document.getElementById('product-category-panel');
         var msg = document.getElementById('product-category-msg');
         var body = document.getElementById('product-category-body');
-        var assignmentState = { search: '' };
+        var assignmentState = { search: '', offset: 0, limit: 20 };
         if (!panel || !msg || !body) {
             return;
         }
@@ -1056,6 +1056,12 @@
                     }
                 }
 
+                if (assignedCategories.length === 0) {
+                    assignmentState.offset = 0;
+                } else if (assignmentState.offset >= assignedCategories.length) {
+                    assignmentState.offset = Math.max(0, assignmentState.offset - assignmentState.limit);
+                }
+
                 renderProductCategoryAssignmentView(assignedCategories, availableCategories);
             }).catch(function (err) {
                 body.innerHTML = '<p role="alert">' + esc(extractErrorMessage(err, 'Failed to load assigned categories.')) + '</p>';
@@ -1063,16 +1069,23 @@
         }
 
         function renderProductCategoryAssignmentView(assignedCategories, availableCategories) {
-            body.innerHTML = renderProductCategoryAssignmentBody(assignedCategories, availableCategories, assignmentState.search);
+            body.innerHTML = renderProductCategoryAssignmentBody(assignedCategories, availableCategories, assignmentState);
             bindProductCategoryAssignmentActions(productID, body, setMessage, loadAssignments, renderProductCategoryAssignmentView, assignedCategories, availableCategories, assignmentState);
         }
 
         loadAssignments();
     }
 
-    function renderProductCategoryAssignmentBody(assignedCategories, availableCategories, searchTerm) {
+    function renderProductCategoryAssignmentBody(assignedCategories, availableCategories, assignmentState) {
+        var searchTerm = assignmentState.search;
         var filteredAssignedCategories = filterCategoryAssignmentOptions(assignedCategories, searchTerm);
         var filteredAvailableCategories = filterCategoryAssignmentOptions(availableCategories, searchTerm);
+        var assignedStart = assignmentState.offset;
+        var assignedEnd = assignedStart + assignmentState.limit;
+        var pagedAssignedCategories = filteredAssignedCategories.slice(assignedStart, assignedEnd);
+        var assignedPageNumber = Math.floor(assignedStart / assignmentState.limit) + 1;
+        var hasAssignedPrev = assignedStart > 0;
+        var hasAssignedNext = filteredAssignedCategories.length > assignedEnd;
         var html = '<div style="margin-bottom:1rem">';
         html += '<label>Filter categories<input type="search" id="product-category-search" placeholder="Search categories" value="' + esc(searchTerm || '') + '"></label>';
         if (availableCategories.length > 0 && filteredAvailableCategories.length > 0) {
@@ -1088,14 +1101,19 @@
             html += '<p class="settings-scope-note">All categories are already assigned to this product.</p>';
         }
         html += '</div>';
+        html += '<div style="margin-bottom:0.5rem">';
+        html += '<p class="settings-scope-note">Assigned categories page ' + esc(String(assignedPageNumber)) + '.</p>';
+        html += '<button type="button" id="product-assignment-prev-page"' + (hasAssignedPrev ? '' : ' disabled') + '>Previous Assigned Categories Page</button> ';
+        html += '<button type="button" id="product-assignment-next-page"' + (hasAssignedNext ? '' : ' disabled') + '>Next Assigned Categories Page</button>';
+        html += '</div>';
         html += '<table class="admin-table"><thead><tr><th>Name</th><th></th></tr></thead><tbody>';
         if (assignedCategories.length === 0) {
             html += '<tr><td colspan="2">No categories assigned.</td></tr>';
         } else if (filteredAssignedCategories.length === 0) {
             html += '<tr><td colspan="2">No assigned categories match this filter.</td></tr>';
         } else {
-            for (var j = 0; j < filteredAssignedCategories.length; j++) {
-                var assigned = filteredAssignedCategories[j] || {};
+            for (var j = 0; j < pagedAssignedCategories.length; j++) {
+                var assigned = pagedAssignedCategories[j] || {};
                 html += '<tr>' +
                     '<td>' + esc(assigned.label || assigned.id || '') + '</td>' +
                     '<td><button type="button" data-product-category-remove="' + esc(String(assigned.id || '')) + '">Remove</button></td>' +
@@ -1111,6 +1129,26 @@
         if (searchInput) {
             searchInput.addEventListener('input', function () {
                 assignmentState.search = this.value || '';
+                assignmentState.offset = 0;
+                rerender(assignedCategories, availableCategories);
+            });
+        }
+
+        var prevAssignedBtn = document.getElementById('product-assignment-prev-page');
+        if (prevAssignedBtn) {
+            prevAssignedBtn.addEventListener('click', function () {
+                if (assignmentState.offset <= 0) {
+                    return;
+                }
+                assignmentState.offset = Math.max(0, assignmentState.offset - assignmentState.limit);
+                rerender(assignedCategories, availableCategories);
+            });
+        }
+
+        var nextAssignedBtn = document.getElementById('product-assignment-next-page');
+        if (nextAssignedBtn) {
+            nextAssignedBtn.addEventListener('click', function () {
+                assignmentState.offset += assignmentState.limit;
                 rerender(assignedCategories, availableCategories);
             });
         }
