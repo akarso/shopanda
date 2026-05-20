@@ -1108,6 +1108,9 @@
         var searchTerm = assignmentState.search;
         var filteredAssignedCategories = filterCategoryAssignmentOptions(assignedCategories, searchTerm);
         var filteredAvailableCategories = filterCategoryAssignmentOptions(availableCategories, searchTerm);
+        if (assignmentState.offset > 0 && assignmentState.offset >= filteredAssignedCategories.length) {
+            assignmentState.offset = Math.max(0, assignmentState.offset - assignmentState.limit);
+        }
         var assignedStart = assignmentState.offset;
         var assignedEnd = assignedStart + assignmentState.limit;
         var pagedAssignedCategories = filteredAssignedCategories.slice(assignedStart, assignedEnd);
