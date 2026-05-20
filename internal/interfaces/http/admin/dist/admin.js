@@ -1086,11 +1086,7 @@
                     }
                 }
 
-                if (assignedCategories.length === 0) {
-                    assignmentState.offset = 0;
-                } else if (assignmentState.offset >= assignedCategories.length) {
-                    assignmentState.offset = Math.max(0, assignmentState.offset - assignmentState.limit);
-                }
+                assignmentState.offset = clampPagedOffset(assignmentState.offset, assignmentState.limit, assignedCategories.length);
 
                 renderProductCategoryAssignmentView(assignedCategories, availableCategories);
             }).catch(function (err) {
@@ -1110,9 +1106,7 @@
         var searchTerm = assignmentState.search;
         var filteredAssignedCategories = filterCategoryAssignmentOptions(assignedCategories, searchTerm);
         var filteredAvailableCategories = filterCategoryAssignmentOptions(availableCategories, searchTerm);
-        if (assignmentState.offset > 0 && assignmentState.offset >= filteredAssignedCategories.length) {
-            assignmentState.offset = Math.max(0, assignmentState.offset - assignmentState.limit);
-        }
+        assignmentState.offset = clampPagedOffset(assignmentState.offset, assignmentState.limit, filteredAssignedCategories.length);
         var assignedStart = assignmentState.offset;
         var assignedEnd = assignedStart + assignmentState.limit;
         var pagedAssignedCategories = filteredAssignedCategories.slice(assignedStart, assignedEnd);
@@ -1242,6 +1236,19 @@
             }
         }
         return out;
+    }
+
+    function clampPagedOffset(offset, limit, total) {
+        var pageLimit = Number(limit || 0);
+        if (pageLimit <= 0 || total <= 0) {
+            return 0;
+        }
+        var rawOffset = Number(offset || 0);
+        if (rawOffset <= 0) {
+            return 0;
+        }
+        var maxOffset = Math.floor((total - 1) / pageLimit) * pageLimit;
+        return rawOffset > maxOffset ? maxOffset : rawOffset;
     }
 
     function renderSchemaField(field, product) {

@@ -115,7 +115,7 @@ func TestAdminHandler_StaticJS(t *testing.T) {
 	if !strings.Contains(normalizedBody, "Your account does not have products access.") {
 		t.Fatalf("expected products permission error message in JS")
 	}
-	if !strings.Contains(normalizedBody, "/admin/products/") || !strings.Contains(normalizedBody, "Assign Category") || !strings.Contains(normalizedBody, "Category removed from product.") || !strings.Contains(normalizedBody, "Filter categories") || !strings.Contains(normalizedBody, "Assigned categories page") || !strings.Contains(normalizedBody, "Previous Assigned Categories Page") || !strings.Contains(normalizedBody, "Next Assigned Categories Page") {
+	if !strings.Contains(normalizedBody, "/admin/products/") || !strings.Contains(normalizedBody, "Assign Category") || !strings.Contains(normalizedBody, "Category removed from product.") || !strings.Contains(normalizedBody, "Filter categories") || !strings.Contains(normalizedBody, "Assigned categories page") || !strings.Contains(normalizedBody, "Previous Assigned Categories Page") || !strings.Contains(normalizedBody, "Next Assigned Categories Page") || !strings.Contains(normalizedBody, "clampPagedOffset") {
 		t.Fatalf("expected product detail assignment wiring in JS")
 	}
 	if !strings.Contains(normalizedBody, "renderCategoriesPage") || !strings.Contains(normalizedBody, "/admin/catalog/categories") || !strings.Contains(normalizedBody, "/admin/categories") {
