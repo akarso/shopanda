@@ -887,6 +887,7 @@
             }
             out.push({
                 id: node.id || '',
+                slug: node.slug || '',
                 label: prefix + (node.name || node.slug || node.id || '')
             });
             flattenCategoryOptions(node.children, depth + 1, out);
@@ -1264,8 +1265,8 @@
         var out = [];
         for (var i = 0; i < options.length; i++) {
             var option = options[i] || {};
-            var label = String(option.label || option.id || '').toLowerCase();
-            if (label.indexOf(query) !== -1) {
+            var text = ((option.label || '') + ' ' + (option.slug || '') + ' ' + (option.id || '')).toLowerCase();
+            if (text.indexOf(query) !== -1) {
                 out.push(option);
             }
         }
