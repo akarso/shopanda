@@ -1150,16 +1150,17 @@
         html += '<button type="button" id="product-assignment-prev-page"' + (hasAssignedPrev ? '' : ' disabled') + '>Previous Assigned Categories Page</button> ';
         html += '<button type="button" id="product-assignment-next-page"' + (hasAssignedNext ? '' : ' disabled') + '>Next Assigned Categories Page</button>';
         html += '</div>';
-        html += '<table class="admin-table"><thead><tr><th>Name</th><th></th></tr></thead><tbody>';
+        html += '<table class="admin-table"><thead><tr><th>Name</th><th>Slug</th><th></th></tr></thead><tbody>';
         if (assignedCategories.length === 0) {
-            html += '<tr><td colspan="2">No categories assigned.</td></tr>';
+            html += '<tr><td colspan="3">No categories assigned.</td></tr>';
         } else if (filteredAssignedCategories.length === 0) {
-            html += '<tr><td colspan="2">No assigned categories match this filter.</td></tr>';
+            html += '<tr><td colspan="3">No assigned categories match this filter.</td></tr>';
         } else {
             for (var j = 0; j < pagedAssignedCategories.length; j++) {
                 var assigned = pagedAssignedCategories[j] || {};
                 html += '<tr>' +
-                    '<td>' + esc((assigned.label || assigned.id || '') + ' (' + (assigned.slug || assigned.id || '') + ')') + '</td>' +
+                    '<td>' + esc(assigned.label || assigned.id || '') + '</td>' +
+                    '<td>' + esc(assigned.slug || assigned.id || '') + '</td>' +
                     '<td><button type="button" data-product-category-remove="' + esc(String(assigned.id || '')) + '">Remove</button></td>' +
                     '</tr>';
             }
