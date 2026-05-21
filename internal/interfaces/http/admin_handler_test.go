@@ -133,6 +133,7 @@ func TestAdminHandler_StaticJS(t *testing.T) {
 		"assignedCategories.push",
 		"availableCategories.push",
 		"rerender(assignedCategories, availableCategories)",
+		"reload()",
 		"clampPagedOffset",
 		"totalAssignedPages",
 		"totalAvailablePages",
