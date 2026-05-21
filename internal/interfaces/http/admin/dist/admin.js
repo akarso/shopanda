@@ -1119,6 +1119,8 @@
         var pagedAvailableCategories = filteredAvailableCategories.slice(availableStart, availableEnd);
         var assignedPageNumber = Math.floor(assignedStart / assignmentState.limit) + 1;
         var availablePageNumber = Math.floor(availableStart / availableState.limit) + 1;
+        var totalAssignedPages = filteredAssignedCategories.length === 0 ? 1 : Math.ceil(filteredAssignedCategories.length / assignmentState.limit);
+        var totalAvailablePages = filteredAvailableCategories.length === 0 ? 1 : Math.ceil(filteredAvailableCategories.length / availableState.limit);
         var hasAssignedPrev = assignedStart > 0;
         var hasAssignedNext = filteredAssignedCategories.length > assignedEnd;
         var hasAvailablePrev = availableStart > 0;
@@ -1138,13 +1140,13 @@
             html += '<p class="settings-scope-note">All categories are already assigned to this product.</p>';
         }
         html += '<div style="margin-top:0.5rem">';
-        html += '<p class="settings-scope-note">Available categories page ' + esc(String(availablePageNumber)) + '.</p>';
+        html += '<p class="settings-scope-note">Available categories page ' + esc(String(availablePageNumber)) + ' of ' + esc(String(totalAvailablePages)) + '.</p>';
         html += '<button type="button" id="product-available-prev-page"' + (hasAvailablePrev ? '' : ' disabled') + '>Previous Available Categories Page</button> ';
         html += '<button type="button" id="product-available-next-page"' + (hasAvailableNext ? '' : ' disabled') + '>Next Available Categories Page</button>';
         html += '</div>';
         html += '</div>';
         html += '<div style="margin-bottom:0.5rem">';
-        html += '<p class="settings-scope-note">Assigned categories page ' + esc(String(assignedPageNumber)) + '.</p>';
+        html += '<p class="settings-scope-note">Assigned categories page ' + esc(String(assignedPageNumber)) + ' of ' + esc(String(totalAssignedPages)) + '.</p>';
         html += '<button type="button" id="product-assignment-prev-page"' + (hasAssignedPrev ? '' : ' disabled') + '>Previous Assigned Categories Page</button> ';
         html += '<button type="button" id="product-assignment-next-page"' + (hasAssignedNext ? '' : ' disabled') + '>Next Assigned Categories Page</button>';
         html += '</div>';
