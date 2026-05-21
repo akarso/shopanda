@@ -1232,7 +1232,23 @@
                         return;
                     }
                     setMessage('Category assigned.', false);
-                    reload();
+                    var movedCategory = null;
+                    for (var i = 0; i < availableCategories.length; i++) {
+                        var available = availableCategories[i] || {};
+                        if (String(available.id || '') === String(categoryID)) {
+                            movedCategory = available;
+                            availableCategories.splice(i, 1);
+                            break;
+                        }
+                    }
+                    if (!movedCategory) {
+                        reload();
+                        return;
+                    }
+                    assignedCategories.push(movedCategory);
+                    availableState.offset = clampPagedOffset(availableState.offset, availableState.limit, availableCategories.length);
+                    assignmentState.offset = clampPagedOffset(assignmentState.offset, assignmentState.limit, assignedCategories.length);
+                    rerender(assignedCategories, availableCategories);
                 }).catch(function (err) {
                     setMessage(extractErrorMessage(err, 'Failed to assign category.'), true);
                 });
@@ -1249,7 +1265,23 @@
                         return;
                     }
                     setMessage('Category removed from product.', false);
-                    reload();
+                    var movedCategory = null;
+                    for (var j = 0; j < assignedCategories.length; j++) {
+                        var assigned = assignedCategories[j] || {};
+                        if (String(assigned.id || '') === String(categoryID)) {
+                            movedCategory = assigned;
+                            assignedCategories.splice(j, 1);
+                            break;
+                        }
+                    }
+                    if (!movedCategory) {
+                        reload();
+                        return;
+                    }
+                    availableCategories.push(movedCategory);
+                    assignmentState.offset = clampPagedOffset(assignmentState.offset, assignmentState.limit, assignedCategories.length);
+                    availableState.offset = clampPagedOffset(availableState.offset, availableState.limit, availableCategories.length);
+                    rerender(assignedCategories, availableCategories);
                 }).catch(function (err) {
                     setMessage(extractErrorMessage(err, 'Failed to remove category.'), true);
                 });
