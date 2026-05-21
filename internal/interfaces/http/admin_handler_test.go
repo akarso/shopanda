@@ -115,8 +115,26 @@ func TestAdminHandler_StaticJS(t *testing.T) {
 	if !strings.Contains(normalizedBody, "Your account does not have products access.") {
 		t.Fatalf("expected products permission error message in JS")
 	}
-	if !strings.Contains(normalizedBody, "/admin/products/") || !strings.Contains(normalizedBody, "Assign Category") || !strings.Contains(normalizedBody, "Category removed from product.") || !strings.Contains(normalizedBody, "Filter categories") || !strings.Contains(normalizedBody, "Assigned categories page") || !strings.Contains(normalizedBody, "Available categories page") || !strings.Contains(normalizedBody, "Previous Available Categories Page") || !strings.Contains(normalizedBody, "Next Available Categories Page") || !strings.Contains(normalizedBody, "Previous Assigned Categories Page") || !strings.Contains(normalizedBody, "Next Assigned Categories Page") || !strings.Contains(normalizedBody, "option.slug") || !strings.Contains(normalizedBody, "clampPagedOffset") {
-		t.Fatalf("expected product detail assignment wiring in JS")
+	expectedProductAssignmentWiring := []string{
+		"/admin/products/",
+		"Assign Category",
+		"Category removed from product.",
+		"Filter categories",
+		"Assigned categories page",
+		"Available categories page",
+		"Previous Available Categories Page",
+		"Next Available Categories Page",
+		"Previous Assigned Categories Page",
+		"Next Assigned Categories Page",
+		"option.slug",
+		"clampPagedOffset",
+		"totalAssignedPages",
+		"totalAvailablePages",
+	}
+	for _, expected := range expectedProductAssignmentWiring {
+		if !strings.Contains(normalizedBody, expected) {
+			t.Fatalf("expected product detail assignment wiring in JS normalizedBody to contain %q", expected)
+		}
 	}
 	if !strings.Contains(normalizedBody, "renderCategoriesPage") || !strings.Contains(normalizedBody, "/admin/catalog/categories") || !strings.Contains(normalizedBody, "/admin/categories") {
 		t.Fatalf("expected categories admin surface wiring in JS")
