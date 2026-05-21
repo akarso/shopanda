@@ -1131,7 +1131,7 @@
             html += '<label>Assign category<select id="product-assignment-category">';
             for (var i = 0; i < pagedAvailableCategories.length; i++) {
                 var category = pagedAvailableCategories[i] || {};
-                html += '<option value="' + esc(String(category.id || '')) + '">' + esc(category.label || category.id || '') + '</option>';
+                html += '<option value="' + esc(String(category.id || '')) + '">' + esc((category.label || category.id || '') + ' (' + (category.slug || category.id || '') + ')') + '</option>';
             }
             html += '</select></label> <button type="button" id="assign-product-category-btn">Assign Category</button>';
         } else if (availableCategories.length > 0) {
@@ -1159,7 +1159,7 @@
             for (var j = 0; j < pagedAssignedCategories.length; j++) {
                 var assigned = pagedAssignedCategories[j] || {};
                 html += '<tr>' +
-                    '<td>' + esc(assigned.label || assigned.id || '') + '</td>' +
+                    '<td>' + esc((assigned.label || assigned.id || '') + ' (' + (assigned.slug || assigned.id || '') + ')') + '</td>' +
                     '<td><button type="button" data-product-category-remove="' + esc(String(assigned.id || '')) + '">Remove</button></td>' +
                     '</tr>';
             }
