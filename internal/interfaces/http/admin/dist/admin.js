@@ -1040,6 +1040,7 @@
         var msg = document.getElementById('product-category-msg');
         var body = document.getElementById('product-category-body');
         var assignmentState = { search: '', offset: 0, limit: 20 };
+        var availableState = { offset: 0, limit: 20 };
         if (!panel || !msg || !body) {
             return;
         }
@@ -1087,6 +1088,7 @@
                 }
 
                 assignmentState.offset = clampPagedOffset(assignmentState.offset, assignmentState.limit, assignedCategories.length);
+                availableState.offset = clampPagedOffset(availableState.offset, availableState.limit, availableCategories.length);
 
                 renderProductCategoryAssignmentView(assignedCategories, availableCategories);
             }).catch(function (err) {
@@ -1095,30 +1097,37 @@
         }
 
         function renderProductCategoryAssignmentView(assignedCategories, availableCategories) {
-            body.innerHTML = renderProductCategoryAssignmentBody(assignedCategories, availableCategories, assignmentState);
-            bindProductCategoryAssignmentActions(productID, body, setMessage, loadAssignments, renderProductCategoryAssignmentView, assignedCategories, availableCategories, assignmentState);
+            body.innerHTML = renderProductCategoryAssignmentBody(assignedCategories, availableCategories, assignmentState, availableState);
+            bindProductCategoryAssignmentActions(productID, body, setMessage, loadAssignments, renderProductCategoryAssignmentView, assignedCategories, availableCategories, assignmentState, availableState);
         }
 
         loadAssignments();
     }
 
-    function renderProductCategoryAssignmentBody(assignedCategories, availableCategories, assignmentState) {
+    function renderProductCategoryAssignmentBody(assignedCategories, availableCategories, assignmentState, availableState) {
         var searchTerm = assignmentState.search;
         var filteredAssignedCategories = filterCategoryAssignmentOptions(assignedCategories, searchTerm);
         var filteredAvailableCategories = filterCategoryAssignmentOptions(availableCategories, searchTerm);
         assignmentState.offset = clampPagedOffset(assignmentState.offset, assignmentState.limit, filteredAssignedCategories.length);
+        availableState.offset = clampPagedOffset(availableState.offset, availableState.limit, filteredAvailableCategories.length);
         var assignedStart = assignmentState.offset;
         var assignedEnd = assignedStart + assignmentState.limit;
         var pagedAssignedCategories = filteredAssignedCategories.slice(assignedStart, assignedEnd);
+        var availableStart = availableState.offset;
+        var availableEnd = availableStart + availableState.limit;
+        var pagedAvailableCategories = filteredAvailableCategories.slice(availableStart, availableEnd);
         var assignedPageNumber = Math.floor(assignedStart / assignmentState.limit) + 1;
+        var availablePageNumber = Math.floor(availableStart / availableState.limit) + 1;
         var hasAssignedPrev = assignedStart > 0;
         var hasAssignedNext = filteredAssignedCategories.length > assignedEnd;
+        var hasAvailablePrev = availableStart > 0;
+        var hasAvailableNext = filteredAvailableCategories.length > availableEnd;
         var html = '<div style="margin-bottom:1rem">';
         html += '<label>Filter categories<input type="search" id="product-category-search" placeholder="Search categories" value="' + esc(searchTerm || '') + '"></label>';
         if (availableCategories.length > 0 && filteredAvailableCategories.length > 0) {
             html += '<label>Assign category<select id="product-assignment-category">';
-            for (var i = 0; i < filteredAvailableCategories.length; i++) {
-                var category = filteredAvailableCategories[i] || {};
+            for (var i = 0; i < pagedAvailableCategories.length; i++) {
+                var category = pagedAvailableCategories[i] || {};
                 html += '<option value="' + esc(String(category.id || '')) + '">' + esc(category.label || category.id || '') + '</option>';
             }
             html += '</select></label> <button type="button" id="assign-product-category-btn">Assign Category</button>';
@@ -1127,6 +1136,11 @@
         } else {
             html += '<p class="settings-scope-note">All categories are already assigned to this product.</p>';
         }
+        html += '<div style="margin-top:0.5rem">';
+        html += '<p class="settings-scope-note">Available categories page ' + esc(String(availablePageNumber)) + '.</p>';
+        html += '<button type="button" id="product-available-prev-page"' + (hasAvailablePrev ? '' : ' disabled') + '>Previous Available Categories Page</button> ';
+        html += '<button type="button" id="product-available-next-page"' + (hasAvailableNext ? '' : ' disabled') + '>Next Available Categories Page</button>';
+        html += '</div>';
         html += '</div>';
         html += '<div style="margin-bottom:0.5rem">';
         html += '<p class="settings-scope-note">Assigned categories page ' + esc(String(assignedPageNumber)) + '.</p>';
@@ -1151,12 +1165,32 @@
         return html;
     }
 
-    function bindProductCategoryAssignmentActions(productID, container, setMessage, reload, rerender, assignedCategories, availableCategories, assignmentState) {
+    function bindProductCategoryAssignmentActions(productID, container, setMessage, reload, rerender, assignedCategories, availableCategories, assignmentState, availableState) {
         var searchInput = document.getElementById('product-category-search');
         if (searchInput) {
             searchInput.addEventListener('input', function () {
                 assignmentState.search = this.value || '';
                 assignmentState.offset = 0;
+                availableState.offset = 0;
+                rerender(assignedCategories, availableCategories);
+            });
+        }
+
+        var availablePrevBtn = document.getElementById('product-available-prev-page');
+        if (availablePrevBtn) {
+            availablePrevBtn.addEventListener('click', function () {
+                if (availableState.offset <= 0) {
+                    return;
+                }
+                availableState.offset = Math.max(0, availableState.offset - availableState.limit);
+                rerender(assignedCategories, availableCategories);
+            });
+        }
+
+        var availableNextBtn = document.getElementById('product-available-next-page');
+        if (availableNextBtn) {
+            availableNextBtn.addEventListener('click', function () {
+                availableState.offset += availableState.limit;
                 rerender(assignedCategories, availableCategories);
             });
         }
