@@ -128,7 +128,7 @@ func TestAdminHandler_StaticJS(t *testing.T) {
 		"Next Assigned Categories Page",
 		"option.slug",
 		"category.slug || category.id",
-			"assigned.slug || assigned.id",
+		"assigned.slug || assigned.id",
 		"clampPagedOffset",
 		"totalAssignedPages",
 		"totalAvailablePages",
