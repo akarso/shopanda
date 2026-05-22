@@ -1319,6 +1319,15 @@
             return;
         }
         var categoryID = String(category.id || '');
+        if (categoryID) {
+            // Ensure local mutation paths cannot duplicate the same category in a target list.
+            for (var existingIndex = list.length - 1; existingIndex >= 0; existingIndex--) {
+                var existing = list[existingIndex] || {};
+                if (String(existing.id || '') === categoryID) {
+                    list.splice(existingIndex, 1);
+                }
+            }
+        }
         var targetOrder = orderLookup ? orderLookup[categoryID] : null;
         if (typeof targetOrder !== 'number') {
             list.push(category);

@@ -132,6 +132,7 @@ func TestAdminHandler_StaticJS(t *testing.T) {
 		"availableCategories.splice",
 		"insertCategoryByOrder(assignedCategories, movedCategory, categoryOrderLookup)",
 		"insertCategoryByOrder(availableCategories, movedCategory, categoryOrderLookup)",
+		"String(existing.id || '') === categoryID",
 		"rerender(assignedCategories, availableCategories)",
 		"reload()",
 		"clampPagedOffset",
