@@ -1042,6 +1042,7 @@
         var body = document.getElementById('product-category-body');
         var assignmentState = { search: '', offset: 0, limit: 20 };
         var availableState = { offset: 0, limit: 20 };
+        var categoryOrderLookup = {};
         if (!panel || !msg || !body) {
             return;
         }
@@ -1076,6 +1077,11 @@
                 for (var i = 0; i < assignedIDs.length; i++) {
                     assignedLookup[String(assignedIDs[i] || '')] = true;
                 }
+                categoryOrderLookup = {};
+                for (var orderIndex = 0; orderIndex < categoryOptions.length; orderIndex++) {
+                    var orderedOption = categoryOptions[orderIndex] || {};
+                    categoryOrderLookup[String(orderedOption.id || '')] = orderIndex;
+                }
 
                 var assignedCategories = [];
                 var availableCategories = [];
@@ -1099,7 +1105,7 @@
 
         function renderProductCategoryAssignmentView(assignedCategories, availableCategories) {
             body.innerHTML = renderProductCategoryAssignmentBody(assignedCategories, availableCategories, assignmentState, availableState);
-            bindProductCategoryAssignmentActions(productID, body, setMessage, loadAssignments, renderProductCategoryAssignmentView, assignedCategories, availableCategories, assignmentState, availableState);
+            bindProductCategoryAssignmentActions(productID, body, setMessage, loadAssignments, renderProductCategoryAssignmentView, assignedCategories, availableCategories, assignmentState, availableState, categoryOrderLookup);
         }
 
         loadAssignments();
@@ -1169,7 +1175,7 @@
         return html;
     }
 
-    function bindProductCategoryAssignmentActions(productID, container, setMessage, reload, rerender, assignedCategories, availableCategories, assignmentState, availableState) {
+    function bindProductCategoryAssignmentActions(productID, container, setMessage, reload, rerender, assignedCategories, availableCategories, assignmentState, availableState, categoryOrderLookup) {
         var searchInput = document.getElementById('product-category-search');
         if (searchInput) {
             searchInput.addEventListener('input', function () {
@@ -1245,7 +1251,7 @@
                         reload();
                         return;
                     }
-                    assignedCategories.push(movedCategory);
+                    insertCategoryByOrder(assignedCategories, movedCategory, categoryOrderLookup);
                     availableState.offset = clampPagedOffset(availableState.offset, availableState.limit, availableCategories.length);
                     assignmentState.offset = clampPagedOffset(assignmentState.offset, assignmentState.limit, assignedCategories.length);
                     rerender(assignedCategories, availableCategories);
@@ -1278,7 +1284,7 @@
                         reload();
                         return;
                     }
-                    availableCategories.push(movedCategory);
+                    insertCategoryByOrder(availableCategories, movedCategory, categoryOrderLookup);
                     assignmentState.offset = clampPagedOffset(assignmentState.offset, assignmentState.limit, assignedCategories.length);
                     availableState.offset = clampPagedOffset(availableState.offset, availableState.limit, availableCategories.length);
                     rerender(assignedCategories, availableCategories);
@@ -1306,6 +1312,27 @@
             }
         }
         return out;
+    }
+
+    function insertCategoryByOrder(list, category, orderLookup) {
+        if (!Array.isArray(list) || !category) {
+            return;
+        }
+        var categoryID = String(category.id || '');
+        var targetOrder = orderLookup ? orderLookup[categoryID] : null;
+        if (typeof targetOrder !== 'number') {
+            list.push(category);
+            return;
+        }
+        for (var i = 0; i < list.length; i++) {
+            var current = list[i] || {};
+            var currentOrder = orderLookup[String(current.id || '')];
+            if (typeof currentOrder !== 'number' || currentOrder > targetOrder) {
+                list.splice(i, 0, category);
+                return;
+            }
+        }
+        list.push(category);
     }
 
     function clampPagedOffset(offset, limit, total) {
