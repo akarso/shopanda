@@ -1182,6 +1182,7 @@
 
         function setMutationBusy(isBusy) {
             container.setAttribute('data-product-category-mutation-busy', isBusy ? '1' : '0');
+            container.setAttribute('aria-busy', isBusy ? 'true' : 'false');
             var assignActionButton = document.getElementById('assign-product-category-btn');
             if (assignActionButton) {
                 assignActionButton.disabled = !!isBusy;
@@ -1251,6 +1252,7 @@
                 if (!categoryID) {
                     return;
                 }
+                setMessage('Saving category assignment...', false);
                 setMutationBusy(true);
                 api('/admin/categories/' + encodeURIComponent(categoryID) + '/products/' + encodeURIComponent(productID), { method: 'POST' }).then(function (body) {
                     if (body && body.error) {
@@ -1292,6 +1294,7 @@
                     return;
                 }
                 var categoryID = this.getAttribute('data-product-category-remove');
+                setMessage('Saving category assignment...', false);
                 setMutationBusy(true);
                 api('/admin/categories/' + encodeURIComponent(categoryID) + '/products/' + encodeURIComponent(productID), { method: 'DELETE' }).then(function (body) {
                     if (body && body.error) {
