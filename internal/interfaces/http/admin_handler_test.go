@@ -133,6 +133,8 @@ func TestAdminHandler_StaticJS(t *testing.T) {
 		"insertCategoryByOrder(assignedCategories, movedCategory, categoryOrderLookup)",
 		"insertCategoryByOrder(availableCategories, movedCategory, categoryOrderLookup)",
 		"String(existing.id || '') === categoryID",
+		"data-product-category-mutation-busy",
+		"setMutationBusy(true)",
 		"rerender(assignedCategories, availableCategories)",
 		"reload()",
 		"clampPagedOffset",

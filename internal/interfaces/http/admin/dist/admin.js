@@ -1176,6 +1176,22 @@
     }
 
     function bindProductCategoryAssignmentActions(productID, container, setMessage, reload, rerender, assignedCategories, availableCategories, assignmentState, availableState, categoryOrderLookup) {
+        function isMutationBusy() {
+            return container.getAttribute('data-product-category-mutation-busy') === '1';
+        }
+
+        function setMutationBusy(isBusy) {
+            container.setAttribute('data-product-category-mutation-busy', isBusy ? '1' : '0');
+            var assignActionButton = document.getElementById('assign-product-category-btn');
+            if (assignActionButton) {
+                assignActionButton.disabled = !!isBusy;
+            }
+            var removeActionButtons = container.querySelectorAll('[data-product-category-remove]');
+            for (var idx = 0; idx < removeActionButtons.length; idx++) {
+                removeActionButtons[idx].disabled = !!isBusy;
+            }
+        }
+
         var searchInput = document.getElementById('product-category-search');
         if (searchInput) {
             searchInput.addEventListener('input', function () {
@@ -1227,14 +1243,19 @@
         var assignBtn = document.getElementById('assign-product-category-btn');
         if (assignBtn) {
             assignBtn.addEventListener('click', function () {
+                if (isMutationBusy()) {
+                    return;
+                }
                 var select = document.getElementById('product-assignment-category');
                 var categoryID = select && select.value ? select.value : '';
                 if (!categoryID) {
                     return;
                 }
+                setMutationBusy(true);
                 api('/admin/categories/' + encodeURIComponent(categoryID) + '/products/' + encodeURIComponent(productID), { method: 'POST' }).then(function (body) {
                     if (body && body.error) {
                         setMessage(body.error.message || 'Failed to assign category.', true);
+                        setMutationBusy(false);
                         return;
                     }
                     setMessage('Category assigned.', false);
@@ -1248,15 +1269,18 @@
                         }
                     }
                     if (!movedCategory) {
+                        setMutationBusy(false);
                         reload();
                         return;
                     }
                     insertCategoryByOrder(assignedCategories, movedCategory, categoryOrderLookup);
                     availableState.offset = clampPagedOffset(availableState.offset, availableState.limit, availableCategories.length);
                     assignmentState.offset = clampPagedOffset(assignmentState.offset, assignmentState.limit, assignedCategories.length);
+                    setMutationBusy(false);
                     rerender(assignedCategories, availableCategories);
                 }).catch(function (err) {
                     setMessage(extractErrorMessage(err, 'Failed to assign category.'), true);
+                    setMutationBusy(false);
                 });
             });
         }
@@ -1264,10 +1288,15 @@
         var removeButtons = container.querySelectorAll('[data-product-category-remove]');
         for (var i = 0; i < removeButtons.length; i++) {
             removeButtons[i].addEventListener('click', function () {
+                if (isMutationBusy()) {
+                    return;
+                }
                 var categoryID = this.getAttribute('data-product-category-remove');
+                setMutationBusy(true);
                 api('/admin/categories/' + encodeURIComponent(categoryID) + '/products/' + encodeURIComponent(productID), { method: 'DELETE' }).then(function (body) {
                     if (body && body.error) {
                         setMessage(body.error.message || 'Failed to remove category.', true);
+                        setMutationBusy(false);
                         return;
                     }
                     setMessage('Category removed from product.', false);
@@ -1281,15 +1310,18 @@
                         }
                     }
                     if (!movedCategory) {
+                        setMutationBusy(false);
                         reload();
                         return;
                     }
                     insertCategoryByOrder(availableCategories, movedCategory, categoryOrderLookup);
                     assignmentState.offset = clampPagedOffset(assignmentState.offset, assignmentState.limit, assignedCategories.length);
                     availableState.offset = clampPagedOffset(availableState.offset, availableState.limit, availableCategories.length);
+                    setMutationBusy(false);
                     rerender(assignedCategories, availableCategories);
                 }).catch(function (err) {
                     setMessage(extractErrorMessage(err, 'Failed to remove category.'), true);
+                    setMutationBusy(false);
                 });
             });
         }
