@@ -135,6 +135,7 @@ func TestAdminHandler_StaticJS(t *testing.T) {
 		"String(existing.id || '') === categoryID",
 		"data-product-category-mutation-busy",
 		"setMutationBusy(true)",
+		"setMutationBusy(false)",
 		"rerender(assignedCategories, availableCategories)",
 		"reload()",
 		"clampPagedOffset",
