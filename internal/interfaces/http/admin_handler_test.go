@@ -136,6 +136,7 @@ func TestAdminHandler_StaticJS(t *testing.T) {
 		"data-product-category-mutation-busy",
 		"aria-busy",
 		"aria-live=\"polite\"",
+		"role=\"status\"",
 		"Saving category assignment...",
 		"setMutationBusy(true)",
 		"setMutationBusy(false)",
