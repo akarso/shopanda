@@ -135,6 +135,7 @@ func TestAdminHandler_StaticJS(t *testing.T) {
 		"String(existing.id || '') === categoryID",
 		"data-product-category-mutation-busy",
 		"aria-busy",
+		"aria-live=\"polite\"",
 		"Saving category assignment...",
 		"setMutationBusy(true)",
 		"setMutationBusy(false)",

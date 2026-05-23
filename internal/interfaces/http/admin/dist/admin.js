@@ -297,7 +297,7 @@
         var tree = document.getElementById('categories-tree');
 
         function setMessage(text, isError) {
-            msg.innerHTML = text ? '<p' + (isError ? ' role="alert"' : '') + '>' + esc(text) + '</p>' : '';
+            msg.innerHTML = text ? '<p' + (isError ? ' role="alert"' : ' role="status" aria-live="polite"') + '>' + esc(text) + '</p>' : '';
         }
 
         function loadCategories() {
@@ -597,7 +597,7 @@
         panel.style.display = '';
 
         function setMessage(text, isError) {
-            msg.innerHTML = text ? '<p' + (isError ? ' role="alert"' : '') + '>' + esc(text) + '</p>' : '';
+            msg.innerHTML = text ? '<p' + (isError ? ' role="alert"' : ' role="status" aria-live="polite"') + '>' + esc(text) + '</p>' : '';
         }
 
         function loadAllAssignedProducts() {
@@ -1049,7 +1049,7 @@
         panel.style.display = '';
 
         function setMessage(text, isError) {
-            msg.innerHTML = text ? '<p' + (isError ? ' role="alert"' : '') + '>' + esc(text) + '</p>' : '';
+            msg.innerHTML = text ? '<p' + (isError ? ' role="alert"' : ' role="status" aria-live="polite"') + '>' + esc(text) + '</p>' : '';
         }
 
         function loadAssignments() {
