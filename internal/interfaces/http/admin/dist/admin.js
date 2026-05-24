@@ -693,6 +693,7 @@
         var hasPreviousPage = pickerState.offset > 0;
         var hasNextPage = loadedProductCount >= pickerState.limit;
         var assignedPageNumber = Math.floor((assignedState && assignedState.offset || 0) / (assignedState && assignedState.limit || 20)) + 1;
+        var totalAssignedPages = Math.max(1, Math.ceil(assignedProducts.length / (assignedState && assignedState.limit || 20)));
         var hasAssignedPrev = (assignedState && assignedState.offset || 0) > 0;
         var hasAssignedNext = assignedProducts.length >= (assignedState && assignedState.limit || 20);
         var html = '<div style="margin-bottom:1rem">';
@@ -718,7 +719,7 @@
             '</div>';
         html += '</div>';
         html += '<div style="margin-bottom:0.5rem">';
-        html += '<p class="settings-scope-note">Assigned products page ' + esc(String(assignedPageNumber)) + '.</p>';
+        html += '<p class="settings-scope-note">Assigned products page ' + esc(String(assignedPageNumber)) + ' of ' + esc(String(totalAssignedPages)) + '.</p>';
         html += '<button type="button" id="assigned-products-prev-page"' + (hasAssignedPrev ? '' : ' disabled') + '>Previous Assigned Page</button> ';
         html += '<button type="button" id="assigned-products-next-page"' + (hasAssignedNext ? '' : ' disabled') + '>Next Assigned Page</button>';
         html += '</div>';
