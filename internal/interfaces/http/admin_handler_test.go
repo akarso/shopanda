@@ -134,6 +134,7 @@ func TestAdminHandler_StaticJS(t *testing.T) {
 		"insertCategoryByOrder(availableCategories, movedCategory, categoryOrderLookup)",
 		"String(existing.id || '') === categoryID",
 		"data-product-category-mutation-busy",
+		"Assigned products page ' + esc(String(assignedPageNumber)) + ' of ' + esc(String(totalAssignedPages))",
 		"aria-busy",
 		"aria-live=\"polite\"",
 		"role=\"status\"",
