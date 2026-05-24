@@ -730,11 +730,12 @@
         } else {
             for (var j = 0; j < filteredAssignedProducts.length; j++) {
                 var assigned = filteredAssignedProducts[j] || {};
+                var productLabel = esc((assigned.name || assigned.slug || assigned.id || 'Product'));
                 html += '<tr>' +
                     '<td>' + esc(assigned.name || '') + '</td>' +
                     '<td>' + esc(assigned.slug || '') + '</td>' +
                     '<td>' + esc(assigned.status || '') + '</td>' +
-                    '<td><button type="button" data-category-product-remove="' + esc(String(assigned.id || '')) + '">Remove</button></td>' +
+                    '<td><button type="button" aria-label="Remove product ' + productLabel + '" data-category-product-remove="' + esc(String(assigned.id || '')) + '">Remove</button></td>' +
                     '</tr>';
             }
         }
@@ -1164,10 +1165,11 @@
         } else {
             for (var j = 0; j < pagedAssignedCategories.length; j++) {
                 var assigned = pagedAssignedCategories[j] || {};
+                var categoryLabel = esc((assigned.label || assigned.slug || assigned.id || 'Category'));
                 html += '<tr>' +
                     '<td>' + esc(assigned.label || assigned.id || '') + '</td>' +
                     '<td>' + esc(assigned.slug || assigned.id || '') + '</td>' +
-                    '<td><button type="button" data-product-category-remove="' + esc(String(assigned.id || '')) + '">Remove</button></td>' +
+                    '<td><button type="button" aria-label="Remove category ' + categoryLabel + '" data-product-category-remove="' + esc(String(assigned.id || '')) + '">Remove</button></td>' +
                     '</tr>';
             }
         }
