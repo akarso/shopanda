@@ -258,7 +258,7 @@
             for (var i = 0; i < grid.columns.length; i++) {
                 html += '<th>' + esc(grid.columns[i].label || grid.columns[i].name) + '</th>';
             }
-            html += '<th></th></tr></thead><tbody>';
+            html += '<th>Action</th></tr></thead><tbody>';
             if (products.length === 0) {
                 html += '<tr><td colspan="' + (grid.columns.length+1) + '">No products.</td></tr>';
             } else {
@@ -1573,7 +1573,7 @@
             container.innerHTML = '<p>No variants yet.</p>';
             return;
         }
-        var html = '<table><thead><tr><th>SKU</th><th>Name</th><th>Weight</th><th></th></tr></thead><tbody>';
+        var html = '<table><thead><tr><th>SKU</th><th>Name</th><th>Weight</th><th>Action</th></tr></thead><tbody>';
         for (var i = 0; i < variants.length; i++) {
             var v = variants[i];
             html += '<tr data-variant-id="' + esc(v.id) + '">';
@@ -2357,7 +2357,7 @@
             }
 
             var html = '<table><thead><tr>' +
-                '<th>ID</th><th>Customer</th><th>Total</th><th>Status</th><th>Payment</th><th>Date</th><th></th>' +
+                '<th>ID</th><th>Customer</th><th>Total</th><th>Status</th><th>Payment</th><th>Date</th><th>Action</th>' +
                 '</tr></thead><tbody>';
 
             if (orders.length === 0) {
