@@ -158,7 +158,7 @@ func TestAdminHandler_StaticJS(t *testing.T) {
 	if !strings.Contains(normalizedBody, "renderCategoriesPage") || !strings.Contains(normalizedBody, "/admin/catalog/categories") || !strings.Contains(normalizedBody, "/admin/categories") {
 		t.Fatalf("expected categories admin surface wiring in JS")
 	}
-	if !strings.Contains(normalizedBody, "renderCategoryForm") || !strings.Contains(normalizedBody, "/admin/categories/new") || !strings.Contains(normalizedBody, "Delete Category") || !strings.Contains(normalizedBody, "Move up") || !strings.Contains(normalizedBody, "Move down") {
+	if !strings.Contains(normalizedBody, "renderCategoryForm") || !strings.Contains(normalizedBody, "/admin/categories/new") || !strings.Contains(normalizedBody, "Delete Category") || !strings.Contains(normalizedBody, "Move up") || !strings.Contains(normalizedBody, "Move down") || !strings.Contains(normalizedBody, "aria-label=\"Move category") || !strings.Contains(normalizedBody, "aria-label=\"Delete category") {
 		t.Fatalf("expected category CRUD routing in JS")
 	}
 	if !strings.Contains(normalizedBody, "/admin/categories/") || !strings.Contains(normalizedBody, "/admin/products?offset=") || !strings.Contains(normalizedBody, "Assign Product") || !strings.Contains(normalizedBody, "Product removed from category.") || !strings.Contains(normalizedBody, "Previous Product Page") || !strings.Contains(normalizedBody, "Next Product Page") || !strings.Contains(normalizedBody, "Previous Assigned Page") || !strings.Contains(normalizedBody, "Next Assigned Page") || !strings.Contains(normalizedBody, "Assigned products page") || !strings.Contains(normalizedBody, "loadAllAssignedProducts") || !strings.Contains(normalizedBody, "Filter products") {
