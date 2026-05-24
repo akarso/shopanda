@@ -342,12 +342,13 @@
         for (var i = 0; i < nodes.length; i++) {
             var node = nodes[i] || {};
             var children = Array.isArray(node.children) ? node.children : [];
+            var categoryLabel = esc((node.name || node.slug || node.id || 'Category'));
             var orderingControls = '';
             if (i > 0) {
-                orderingControls += ' <button type="button" data-category-move="up" data-category-id="' + esc(String(node.id || '')) + '">Move up</button>';
+                orderingControls += ' <button type="button" aria-label="Move category ' + categoryLabel + ' up" data-category-move="up" data-category-id="' + esc(String(node.id || '')) + '">Move up</button>';
             }
             if (i < nodes.length - 1) {
-                orderingControls += ' <button type="button" data-category-move="down" data-category-id="' + esc(String(node.id || '')) + '">Move down</button>';
+                orderingControls += ' <button type="button" aria-label="Move category ' + categoryLabel + ' down" data-category-move="down" data-category-id="' + esc(String(node.id || '')) + '">Move down</button>';
             }
             html += '<li>' +
                 '<div>' +
@@ -356,7 +357,7 @@
                 ' <span class="settings-scope-note">position ' + esc(String(node.position == null ? 0 : node.position)) + '</span>' +
                 orderingControls +
                 ' <a href="/admin/categories/' + encodeURIComponent(String(node.id || '')) + '" data-link>Edit</a>' +
-                ' <button type="button" data-category-delete="' + esc(String(node.id || '')) + '" data-category-name="' + esc(String(node.name || node.slug || node.id || '')) + '">Delete</button>' +
+                ' <button type="button" aria-label="Delete category ' + categoryLabel + '" data-category-delete="' + esc(String(node.id || '')) + '" data-category-name="' + esc(String(node.name || node.slug || node.id || '')) + '">Delete</button>' +
                 '</div>' +
                 renderCategoryTreeNodes(children) +
                 '</li>';
