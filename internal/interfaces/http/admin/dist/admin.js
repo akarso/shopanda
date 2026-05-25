@@ -256,9 +256,9 @@
             var html = '<div style="margin-bottom:1rem"><button id="new-product-btn">New Product</button></div>';
             html += '<table class="admin-table"><thead><tr>';
             for (var i = 0; i < grid.columns.length; i++) {
-                html += '<th>' + esc(grid.columns[i].label || grid.columns[i].name) + '</th>';
+                html += '<th scope="col">' + esc(grid.columns[i].label || grid.columns[i].name) + '</th>';
             }
-            html += '<th>Action</th></tr></thead><tbody>';
+            html += '<th scope="col">Action</th></tr></thead><tbody>';
             if (products.length === 0) {
                 html += '<tr><td colspan="' + (grid.columns.length+1) + '">No products.</td></tr>';
             } else {
@@ -1574,7 +1574,7 @@
             container.innerHTML = '<p>No variants yet.</p>';
             return;
         }
-        var html = '<table><thead><tr><th>SKU</th><th>Name</th><th>Weight</th><th>Action</th></tr></thead><tbody>';
+        var html = '<table><thead><tr><th scope="col">SKU</th><th scope="col">Name</th><th scope="col">Weight</th><th scope="col">Action</th></tr></thead><tbody>';
         for (var i = 0; i < variants.length; i++) {
             var v = variants[i];
             var variantLabel = esc((v.sku || v.name || v.id || 'variant'));
@@ -2359,7 +2359,7 @@
             }
 
             var html = '<table><thead><tr>' +
-                '<th>ID</th><th>Customer</th><th>Total</th><th>Status</th><th>Payment</th><th>Date</th><th>Action</th>' +
+                '<th scope="col">ID</th><th scope="col">Customer</th><th scope="col">Total</th><th scope="col">Status</th><th scope="col">Payment</th><th scope="col">Date</th><th scope="col">Action</th>' +
                 '</tr></thead><tbody>';
 
             if (orders.length === 0) {
