@@ -1577,11 +1577,12 @@
         var html = '<table><thead><tr><th>SKU</th><th>Name</th><th>Weight</th><th>Action</th></tr></thead><tbody>';
         for (var i = 0; i < variants.length; i++) {
             var v = variants[i];
+            var variantLabel = esc((v.sku || v.name || v.id || 'variant'));
             html += '<tr data-variant-id="' + esc(v.id) + '">';
             html += '<td><input data-field="sku" value="' + esc(v.sku || '') + '"></td>';
             html += '<td><input data-field="name" value="' + esc(v.name || '') + '"></td>';
             html += '<td><input data-field="weight" type="number" step="0.01" min="0" value="' + esc(v.weight == null ? '' : String(v.weight)) + '"></td>';
-            html += '<td><button type="button" class="variant-save-btn">Save</button></td>';
+            html += '<td><button type="button" aria-label="Save variant ' + variantLabel + '" class="variant-save-btn">Save</button></td>';
             html += '</tr>';
         }
         html += '</tbody></table>';
