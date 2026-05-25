@@ -148,7 +148,9 @@ func TestAdminHandler_StaticJS(t *testing.T) {
 		"totalAvailablePages",
 		"aria-label=\"Remove product",
 		"aria-label=\"Remove category",
-		"Action</th>",
+		"<th>SKU</th><th>Name</th><th>Weight</th><th>Action</th>",
+		"<th>ID</th><th>Customer</th><th>Total</th><th>Status</th><th>Payment</th><th>Date</th><th>Action</th>",
+		"aria-label=\"Save variant",
 	}
 	for _, expected := range expectedProductAssignmentWiring {
 		if !strings.Contains(normalizedBody, expected) {
