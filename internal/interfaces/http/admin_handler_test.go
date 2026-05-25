@@ -148,8 +148,8 @@ func TestAdminHandler_StaticJS(t *testing.T) {
 		"totalAvailablePages",
 		"aria-label=\"Remove product",
 		"aria-label=\"Remove category",
-		"<th>SKU</th><th>Name</th><th>Weight</th><th>Action</th>",
-		"<th>ID</th><th>Customer</th><th>Total</th><th>Status</th><th>Payment</th><th>Date</th><th>Action</th>",
+		"<th scope=\"col\">SKU</th><th scope=\"col\">Name</th><th scope=\"col\">Weight</th><th scope=\"col\">Action</th>",
+		"<th scope=\"col\">ID</th><th scope=\"col\">Customer</th><th scope=\"col\">Total</th><th scope=\"col\">Status</th><th scope=\"col\">Payment</th><th scope=\"col\">Date</th><th scope=\"col\">Action</th>",
 		"aria-label=\"Save variant",
 	}
 	for _, expected := range expectedProductAssignmentWiring {
