@@ -161,6 +161,42 @@ func TestGenerateFromOrder_Success(t *testing.T) {
 	}
 }
 
+func TestGenerateFromOrder_GuestOrder(t *testing.T) {
+	price := shared.MustNewMoney(1000, "EUR")
+	item, err := order.NewItem("v-1", "SKU-001", "Blue Shirt", 2, price)
+	if err != nil {
+		t.Fatalf("NewItem: %v", err)
+	}
+	ord, err := order.NewOrder("ord-guest", "", "guest@example.com", "EUR", []order.Item{item})
+	if err != nil {
+		t.Fatalf("NewOrder guest: %v", err)
+	}
+	if err := ord.Confirm(); err != nil {
+		t.Fatalf("Confirm: %v", err)
+	}
+	if err := ord.MarkPaid(); err != nil {
+		t.Fatalf("MarkPaid: %v", err)
+	}
+
+	orders := &fakeOrderRepo{orders: map[string]*order.Order{"ord-guest": &ord}}
+	invoices := &fakeInvoiceRepo{}
+	svc := newService(orders, invoices, &fakeRenderer{}, &fakeStorage{})
+
+	result, err := svc.GenerateFromOrder(context.Background(), appInvoice.GenerateInput{
+		OrderID:   "ord-guest",
+		TaxAmount: shared.MustNewMoney(380, "EUR"),
+	})
+	if err != nil {
+		t.Fatalf("GenerateFromOrder guest: %v", err)
+	}
+	if result.Invoice.CustomerID() != "" {
+		t.Errorf("CustomerID = %q, want empty for guest invoice", result.Invoice.CustomerID())
+	}
+	if invoices.saved == nil {
+		t.Fatal("expected guest invoice to be saved")
+	}
+}
+
 func TestGenerateFromOrder_EmptyOrderID(t *testing.T) {
 	svc := newService(
 		&fakeOrderRepo{},

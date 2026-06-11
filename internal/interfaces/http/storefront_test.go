@@ -130,7 +130,7 @@ func createTestTheme(t *testing.T) *theme.Engine {
 		t.Fatal(err)
 	}
 
-	checkoutAddress := `{{ define "title" }}Checkout: Address{{ end }}{{ define "content" }}<section><h1>Checkout</h1>{{ if .RequiresAuth }}<p>Sign in to continue checkout.</p>{{ else }}<form action="/checkout/shipping" method="post"><input type="hidden" name="csrf_token" value="{{ .CSRFToken }}"><input name="contact_email" value="{{ .ContactEmail }}"><input name="first_name" value="{{ .Address.FirstName }}"><input name="last_name" value="{{ .Address.LastName }}"><input name="street" value="{{ .Address.Street }}"><input name="city" value="{{ .Address.City }}"><input name="postcode" value="{{ .Address.Postcode }}"><select name="country">{{ range .Countries }}<option value="{{ .Value }}" {{ if .Selected }}selected{{ end }}>{{ .Label }}</option>{{ end }}</select><button type="submit">Continue to Shipping</button></form>{{ end }}{{ if .ErrorMessage }}<p>{{ .ErrorMessage }}</p>{{ end }}</section>{{ end }}{{ template "layout.html" . }}`
+	checkoutAddress := `{{ define "title" }}Checkout: Address{{ end }}{{ define "content" }}<section><h1>Checkout</h1><form action="/checkout/shipping" method="post"><input type="hidden" name="csrf_token" value="{{ .CSRFToken }}"><input name="contact_email" value="{{ .ContactEmail }}"><input name="first_name" value="{{ .Address.FirstName }}"><input name="last_name" value="{{ .Address.LastName }}"><input name="street" value="{{ .Address.Street }}"><input name="city" value="{{ .Address.City }}"><input name="postcode" value="{{ .Address.Postcode }}"><select name="country">{{ range .Countries }}<option value="{{ .Value }}" {{ if .Selected }}selected{{ end }}>{{ .Label }}</option>{{ end }}</select><button type="submit">Continue to Shipping</button></form>{{ if .ErrorMessage }}<p>{{ .ErrorMessage }}</p>{{ end }}</section>{{ end }}{{ template "layout.html" . }}`
 	if err := os.WriteFile(filepath.Join(tplDir, "checkout_address.html"), []byte(checkoutAddress), 0644); err != nil {
 		t.Fatal(err)
 	}
@@ -145,7 +145,7 @@ func createTestTheme(t *testing.T) *theme.Engine {
 		t.Fatal(err)
 	}
 
-	checkoutConfirm := `{{ define "title" }}Checkout: Confirm{{ end }}{{ define "content" }}<section><h1>Order Placed</h1>{{ if .Confirmation }}<p>Order #{{ .Confirmation.OrderID }}</p><p>{{ .Confirmation.TotalText }}</p><p>{{ .Confirmation.Notice }}</p>{{ end }}</section>{{ end }}{{ template "layout.html" . }}`
+	checkoutConfirm := `{{ define "title" }}Checkout: Confirm{{ end }}{{ define "content" }}<section><h1>Order Placed</h1>{{ if .Confirmation }}<p>Order #{{ .Confirmation.OrderID }}</p><p>{{ .Confirmation.TotalText }}</p><p>{{ .Confirmation.Notice }}</p>{{ if .Confirmation.GuestEmail }}<p id="guest-confirmation-email">Confirmation will be sent to {{ .Confirmation.GuestEmail }}</p>{{ end }}{{ if .Confirmation.ViewOrderURL }}<a id="view-order" href="{{ .Confirmation.ViewOrderURL }}">View Order</a>{{ end }}{{ end }}</section>{{ end }}{{ template "layout.html" . }}`
 	if err := os.WriteFile(filepath.Join(tplDir, "checkout_confirm.html"), []byte(checkoutConfirm), 0644); err != nil {
 		t.Fatal(err)
 	}

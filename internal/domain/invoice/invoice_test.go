@@ -75,11 +75,14 @@ func TestNewInvoice_EmptyOrderID(t *testing.T) {
 	}
 }
 
-func TestNewInvoice_EmptyCustomerID(t *testing.T) {
+func TestNewInvoice_EmptyCustomerID_AllowsGuestInvoice(t *testing.T) {
 	item := validItem(t)
-	_, err := invoice.NewInvoice(id.New(), "ord-1", "", "EUR", []invoice.Item{item}, validTax())
-	if err == nil {
-		t.Fatal("expected error for empty customer id")
+	inv, err := invoice.NewInvoice(id.New(), "ord-1", "", "EUR", []invoice.Item{item}, validTax())
+	if err != nil {
+		t.Fatalf("NewInvoice guest: %v", err)
+	}
+	if inv.CustomerID() != "" {
+		t.Errorf("CustomerID = %q, want empty for guest invoice", inv.CustomerID())
 	}
 }
 

@@ -31,7 +31,14 @@
 
 <p>We'll notify you when your order ships.</p>
 
-{{if .StoreURL}}
+{{if .Data.Guest}}
+<p style="color: #999999; font-size: 13px;">
+  Keep this email — it is your order reference. You can use this email address
+  later to claim the order from a customer account.
+</p>
+{{end}}
+
+{{if and .StoreURL (not .Data.Guest)}}
 <p style="margin: 24px 0;">
   <a href="{{.StoreURL}}/account/orders/{{.Data.OrderID}}"
      style="display: inline-block; padding: 12px 24px; background: #333333; color: #ffffff; text-decoration: none; border-radius: 4px;">

@@ -18,16 +18,6 @@
 
     <div class="checkout-grid">
         <section class="checkout-panel">
-            {{ if .RequiresAuth }}
-            <div class="checkout-auth-note">
-                <h2>Sign in to continue checkout</h2>
-                <p>The current order pipeline still creates customer-owned orders, so checkout is only available to signed-in customers.</p>
-                <div class="checkout-actions">
-                    <a class="button-link" href="/account/login">Sign in</a>
-                    <a class="chip" href="/cart">Back to cart</a>
-                </div>
-            </div>
-            {{ else }}
             <form class="checkout-form" action="/checkout/shipping" method="post">
                 <input type="hidden" name="csrf_token" value="{{ .CSRFToken }}">
                 {{ if .ErrorMessage }}
@@ -73,7 +63,6 @@
                     <button type="submit">Continue to Shipping</button>
                 </div>
             </form>
-            {{ end }}
         </section>
 
         <aside class="checkout-summary-panel">

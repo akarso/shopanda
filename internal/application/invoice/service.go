@@ -161,6 +161,7 @@ func (s *Service) GenerateFromOrder(ctx context.Context, input GenerateInput) (*
 		"invoice_id":     inv.ID(),
 		"invoice_number": inv.InvoiceNumber(),
 		"order_id":       inv.OrderID(),
+		"guest":          inv.CustomerID() == "",
 		"pdf_path":       pdfPath,
 	})
 

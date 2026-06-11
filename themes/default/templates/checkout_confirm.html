@@ -12,8 +12,13 @@
         {{ if .StripePending }}
         <p class="muted-note">Stripe confirmation happens after the payment intent is created by the checkout workflow.</p>
         {{ end }}
+        {{ if .Confirmation.GuestEmail }}
+        <p class="muted-note">A confirmation email will be sent to <strong>{{ .Confirmation.GuestEmail }}</strong>. Keep it — you can use that email address later to claim this order from a customer account.</p>
+        {{ end }}
         <div class="checkout-actions checkout-actions--centered">
+            {{ if .Confirmation.ViewOrderURL }}
             <a class="button-link" href="{{ .Confirmation.ViewOrderURL }}">View Order</a>
+            {{ end }}
             <a class="chip" href="{{ .Confirmation.ContinueURL }}">Continue Shopping</a>
         </div>
         {{ else }}
