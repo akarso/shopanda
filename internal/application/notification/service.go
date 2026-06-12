@@ -147,12 +147,13 @@ type orderRecipient struct {
 
 func (s *Service) resolveOrderRecipient(ctx context.Context, o *order.Order, handler string) (orderRecipient, error) {
 	if o.CustomerID == "" {
-		if o.ContactEmail == "" {
+		contact := strings.TrimSpace(o.ContactEmail)
+		if contact == "" {
 			err := fmt.Errorf("notification: guest order %s has no contact email", o.ID)
 			s.log.Error(handler+".guest_contact_email_missing", err, map[string]interface{}{"order_id": o.ID})
 			return orderRecipient{}, err
 		}
-		return orderRecipient{Email: o.ContactEmail, Guest: true}, nil
+		return orderRecipient{Email: contact, Guest: true}, nil
 	}
 
 	cust, err := s.customers.FindByID(ctx, o.CustomerID)
