@@ -97,7 +97,7 @@ func New(
 func RegisterTemplates(t *mail.Templates) {
 	t.Register("order_confirmed",
 		"Order {{.Data.OrderID}} — Confirmation",
-		"<h1>Thank you, {{.Data.FirstName}}!</h1>"+
+		"{{if .Data.FirstName}}<h1>Thank you, {{.Data.FirstName}}!</h1>{{else}}<h1>Thank you for your order!</h1>{{end}}"+
 			"<p>Your order <strong>{{.Data.OrderID}}</strong> has been paid and confirmed.</p>")
 
 	t.Register("password_reset",
@@ -130,15 +130,48 @@ func RegisterTemplates(t *mail.Templates) {
 	t.Register("invoice_created",
 		"Invoice #{{.Data.InvoiceNumber}} for Order {{.Data.OrderID}}",
 		"<h1>Your Invoice</h1>"+
-			"<p>Hi {{.Data.FirstName}},</p>"+
+			"<p>Hi{{if .Data.FirstName}} {{.Data.FirstName}}{{end}},</p>"+
 			"<p>Invoice <strong>#{{.Data.InvoiceNumber}}</strong> for order "+
 			"<strong>{{.Data.OrderID}}</strong> is attached as a PDF.</p>"+
 			"<p>Total: <strong>{{.Data.Total}}</strong></p>")
 }
 
+// orderRecipient resolves the notification recipient for an order.
+// Authenticated orders resolve via the customer record; guest orders
+// (empty CustomerID) fall back to the order's contact email.
+type orderRecipient struct {
+	Email     string
+	FirstName string
+	Guest     bool
+}
+
+func (s *Service) resolveOrderRecipient(ctx context.Context, o *order.Order, handler string) (orderRecipient, error) {
+	if o.CustomerID == "" {
+		contact := strings.TrimSpace(o.ContactEmail)
+		if contact == "" {
+			err := fmt.Errorf("notification: guest order %s has no contact email", o.ID)
+			s.log.Error(handler+".guest_contact_email_missing", err, map[string]interface{}{"order_id": o.ID})
+			return orderRecipient{}, err
+		}
+		return orderRecipient{Email: contact, Guest: true}, nil
+	}
+
+	cust, err := s.customers.FindByID(ctx, o.CustomerID)
+	if err != nil {
+		s.log.Error(handler+".customer_lookup_failed", err, map[string]interface{}{"order_id": o.ID, "customer_id": o.CustomerID})
+		return orderRecipient{}, fmt.Errorf("notification: find customer %s: %w", o.CustomerID, err)
+	}
+	if cust == nil {
+		err := fmt.Errorf("notification: customer %s not found", o.CustomerID)
+		s.log.Error(handler+".customer_not_found", err, map[string]interface{}{"order_id": o.ID, "customer_id": o.CustomerID})
+		return orderRecipient{}, err
+	}
+	return orderRecipient{Email: cust.Email, FirstName: cust.FirstName}, nil
+}
+
 // HandleOrderPaid is an event handler for order.paid.
-// It looks up the customer, renders the confirmation template,
-// and enqueues an email.send job.
+// It resolves the recipient (customer or guest contact email), renders the
+// confirmation template, and enqueues an email.send job.
 func (s *Service) HandleOrderPaid(ctx context.Context, evt event.Event) error {
 	data, ok := evt.Data.(order.OrderStatusChangedData)
 	if !ok {
@@ -156,14 +189,8 @@ func (s *Service) HandleOrderPaid(ctx context.Context, evt event.Event) error {
 		return err
 	}
 
-	cust, err := s.customers.FindByID(ctx, o.CustomerID)
+	recipient, err := s.resolveOrderRecipient(ctx, o, "HandleOrderPaid")
 	if err != nil {
-		s.log.Error("HandleOrderPaid.customer_lookup_failed", err, map[string]interface{}{"order_id": data.OrderID, "customer_id": o.CustomerID})
-		return fmt.Errorf("notification: find customer %s: %w", o.CustomerID, err)
-	}
-	if cust == nil {
-		err := fmt.Errorf("notification: customer %s not found", o.CustomerID)
-		s.log.Error("HandleOrderPaid.customer_not_found", err, map[string]interface{}{"order_id": data.OrderID, "customer_id": o.CustomerID})
 		return err
 	}
 
@@ -181,13 +208,14 @@ func (s *Service) HandleOrderPaid(ctx context.Context, evt event.Event) error {
 		StoreURL: s.storeURL,
 		Data: map[string]interface{}{
 			"OrderID":   data.OrderID,
-			"FirstName": cust.FirstName,
+			"FirstName": recipient.FirstName,
+			"Guest":     recipient.Guest,
 			"Items":     tmplItems,
 			"Total":     o.TotalAmount.String(),
 		},
 	}
 
-	msg, err := s.templates.Render("order_confirmed", cust.Email, ed)
+	msg, err := s.templates.Render("order_confirmed", recipient.Email, ed)
 	if err != nil {
 		s.log.Error("HandleOrderPaid.template_render_failed", err, map[string]interface{}{"order_id": data.OrderID, "customer_id": o.CustomerID})
 		return fmt.Errorf("notification: render template: %w", err)
@@ -196,6 +224,7 @@ func (s *Service) HandleOrderPaid(ctx context.Context, evt event.Event) error {
 	return s.enqueueEmail(ctx, msg, "HandleOrderPaid", map[string]interface{}{
 		"order_id":    data.OrderID,
 		"customer_id": o.CustomerID,
+		"guest":       recipient.Guest,
 	})
 }
 
@@ -345,14 +374,8 @@ func (s *Service) HandleShipmentShipped(ctx context.Context, evt event.Event) er
 		return err
 	}
 
-	cust, err := s.customers.FindByID(ctx, o.CustomerID)
+	recipient, err := s.resolveOrderRecipient(ctx, o, "HandleShipmentShipped")
 	if err != nil {
-		s.log.Error("HandleShipmentShipped.customer_lookup_failed", err, map[string]interface{}{"order_id": data.OrderID, "customer_id": o.CustomerID})
-		return fmt.Errorf("notification: find customer %s: %w", o.CustomerID, err)
-	}
-	if cust == nil {
-		err := fmt.Errorf("notification: customer %s not found", o.CustomerID)
-		s.log.Error("HandleShipmentShipped.customer_not_found", err, map[string]interface{}{"order_id": data.OrderID, "customer_id": o.CustomerID})
 		return err
 	}
 
@@ -360,7 +383,8 @@ func (s *Service) HandleShipmentShipped(ctx context.Context, evt event.Event) er
 		StoreURL: s.storeURL,
 		Data: map[string]interface{}{
 			"OrderID":   data.OrderID,
-			"FirstName": cust.FirstName,
+			"FirstName": recipient.FirstName,
+			"Guest":     recipient.Guest,
 		},
 	}
 	if data.TrackingNumber != "" {
@@ -370,7 +394,7 @@ func (s *Service) HandleShipmentShipped(ctx context.Context, evt event.Event) er
 		ed.Data["Carrier"] = data.ProviderRef
 	}
 
-	msg, err := s.templates.Render("order_shipped", cust.Email, ed)
+	msg, err := s.templates.Render("order_shipped", recipient.Email, ed)
 	if err != nil {
 		s.log.Error("HandleShipmentShipped.template_render_failed", err, map[string]interface{}{"order_id": data.OrderID, "shipment_id": data.ShipmentID})
 		return fmt.Errorf("notification: render template: %w", err)
@@ -380,6 +404,7 @@ func (s *Service) HandleShipmentShipped(ctx context.Context, evt event.Event) er
 		"order_id":    data.OrderID,
 		"shipment_id": data.ShipmentID,
 		"customer_id": o.CustomerID,
+		"guest":       recipient.Guest,
 	})
 }
 
@@ -428,14 +453,19 @@ func (s *Service) HandleInvoiceCreated(ctx context.Context, evt event.Event) err
 		return err
 	}
 
-	cust, err := s.customers.FindByID(ctx, data.CustomerID)
+	o, err := s.orders.FindByID(ctx, inv.OrderID())
 	if err != nil {
-		s.log.Error("HandleInvoiceCreated.customer_lookup_failed", err, map[string]interface{}{"invoice_id": data.InvoiceID, "customer_id": data.CustomerID})
-		return fmt.Errorf("notification: find customer %s: %w", data.CustomerID, err)
+		s.log.Error("HandleInvoiceCreated.order_lookup_failed", err, map[string]interface{}{"invoice_id": data.InvoiceID, "order_id": inv.OrderID()})
+		return fmt.Errorf("notification: find order %s: %w", inv.OrderID(), err)
 	}
-	if cust == nil {
-		err := fmt.Errorf("notification: customer %s not found", data.CustomerID)
-		s.log.Error("HandleInvoiceCreated.customer_not_found", err, map[string]interface{}{"invoice_id": data.InvoiceID, "customer_id": data.CustomerID})
+	if o == nil {
+		err := fmt.Errorf("notification: order %s not found", inv.OrderID())
+		s.log.Error("HandleInvoiceCreated.order_not_found", err, map[string]interface{}{"invoice_id": data.InvoiceID, "order_id": inv.OrderID()})
+		return err
+	}
+
+	recipient, err := s.resolveOrderRecipient(ctx, o, "HandleInvoiceCreated")
+	if err != nil {
 		return err
 	}
 
@@ -460,13 +490,14 @@ func (s *Service) HandleInvoiceCreated(ctx context.Context, evt event.Event) err
 		Data: map[string]interface{}{
 			"OrderID":       data.OrderID,
 			"InvoiceNumber": data.InvoiceNumber,
-			"FirstName":     cust.FirstName,
+			"FirstName":     recipient.FirstName,
+			"Guest":         recipient.Guest,
 			"Items":         tmplItems,
 			"Total":         inv.TotalAmount().String(),
 		},
 	}
 
-	msg, err := s.templates.Render("invoice_created", cust.Email, ed)
+	msg, err := s.templates.Render("invoice_created", recipient.Email, ed)
 	if err != nil {
 		s.log.Error("HandleInvoiceCreated.template_render_failed", err, map[string]interface{}{"invoice_id": data.InvoiceID})
 		return fmt.Errorf("notification: render template: %w", err)
@@ -482,6 +513,7 @@ func (s *Service) HandleInvoiceCreated(ctx context.Context, evt event.Event) err
 		"invoice_id":  data.InvoiceID,
 		"order_id":    data.OrderID,
 		"customer_id": data.CustomerID,
+		"guest":       recipient.Guest,
 	})
 }
 

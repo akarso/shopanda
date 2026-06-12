@@ -103,9 +103,11 @@ func (s *Service) StartCheckout(ctx context.Context, cartID, customerID string, 
 	cctx.SetMeta("checkout_payment_method", input.PaymentMethod)
 
 	s.log.Info("checkout.started", map[string]interface{}{
-		"cart_id":     cartID,
-		"customer_id": customerID,
-		"items":       c.ItemCount(),
+		"cart_id":           cartID,
+		"customer_id":       customerID,
+		"guest":             customerID == "",
+		"has_contact_email": input.ContactEmail != "",
+		"items":             c.ItemCount(),
 	})
 
 	if err := s.workflow.Execute(ctx, cctx); err != nil {

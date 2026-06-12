@@ -724,7 +724,7 @@
         html += '<button type="button" id="assigned-products-prev-page"' + (hasAssignedPrev ? '' : ' disabled') + '>Previous Assigned Page</button> ';
         html += '<button type="button" id="assigned-products-next-page"' + (hasAssignedNext ? '' : ' disabled') + '>Next Assigned Page</button>';
         html += '</div>';
-        html += '<table class="admin-table"><thead><tr><th>Name</th><th>Slug</th><th>Status</th><th>Action</th></tr></thead><tbody>';
+        html += '<table class="admin-table"><thead><tr><th scope="col">Name</th><th scope="col">Slug</th><th scope="col">Status</th><th scope="col">Action</th></tr></thead><tbody>';
         if (assignedProducts.length === 0) {
             html += '<tr><td colspan="4">No products assigned.</td></tr>';
         } else if (filteredAssignedProducts.length === 0) {
@@ -1159,7 +1159,7 @@
         html += '<button type="button" id="product-assignment-prev-page"' + (hasAssignedPrev ? '' : ' disabled') + '>Previous Assigned Categories Page</button> ';
         html += '<button type="button" id="product-assignment-next-page"' + (hasAssignedNext ? '' : ' disabled') + '>Next Assigned Categories Page</button>';
         html += '</div>';
-        html += '<table class="admin-table"><thead><tr><th>Name</th><th>Slug</th><th>Action</th></tr></thead><tbody>';
+        html += '<table class="admin-table"><thead><tr><th scope="col">Name</th><th scope="col">Slug</th><th scope="col">Action</th></tr></thead><tbody>';
         if (assignedCategories.length === 0) {
             html += '<tr><td colspan="3">No categories assigned.</td></tr>';
         } else if (filteredAssignedCategories.length === 0) {

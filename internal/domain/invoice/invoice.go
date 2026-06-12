@@ -41,15 +41,14 @@ type Invoice struct {
 
 // NewInvoice creates an issued invoice with validation.
 // InvoiceNumber is left as 0; it is assigned by the repository on save.
+// An empty customerID denotes a guest order invoice; the recoverable guest
+// identity (contact email) lives on the referenced order.
 func NewInvoice(id, orderID, customerID, currency string, items []Item, taxAmount shared.Money) (Invoice, error) {
 	if id == "" {
 		return Invoice{}, errors.New("invoice: id must not be empty")
 	}
 	if orderID == "" {
 		return Invoice{}, errors.New("invoice: order id must not be empty")
-	}
-	if customerID == "" {
-		return Invoice{}, errors.New("invoice: customer id must not be empty")
 	}
 	if !shared.IsValidCurrency(currency) {
 		return Invoice{}, errors.New("invoice: invalid currency code")

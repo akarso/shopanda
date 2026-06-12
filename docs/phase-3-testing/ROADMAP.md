@@ -13,9 +13,34 @@
 | Track | Status | Goal | Notes |
 | --- | --- | --- | --- |
 | 1 | done in PR-306 | Guest cart continuity across login/register | Anonymous cart is claimed or merged into the authenticated customer's active cart, and the guest cart cookie is cleared so storefront surfaces stay in sync |
-| 2 | in progress (PR-318) | Guest checkout without account creation | Let anonymous customers complete checkout without a customer account while preserving a later path to account creation or order claiming |
-| 3 | planned | Admin bootstrap, permissions, and usability hardening | Remove insecure first-boot admin defaults, restore admin product data access, and close missing admin UX gaps |
-| 4 | planned | Customer account UX and account-security hardening | Make account state visible in the storefront, add complete account management flows, and introduce stronger authentication for sensitive account changes |
+| 2 | mostly done (PR-318–321); remaining: PR-393, PR-394 | Guest checkout without account creation | Guest checkout, `contact_email`, and claim/link APIs shipped; guest notifications, claim UI, and Postgres link persistence remain |
+| 3 | mostly done (PR-322–392); remaining: PR-395–397 | Admin bootstrap, permissions, and usability hardening | Shell, context switcher, scoped settings, audit slices, and admin surfaces shipped; PR-E catalog/content scoped editing, bootstrap password defaults, and audit gaps remain |
+| 4 | mostly done (PR-309–317); remaining: PR-398, PR-399 | Customer account UX and account-security hardening | Header account entry, profile/security split, step-up auth, and email verification shipped; addresses/preferences self-service and email change remain |
+
+---
+
+## Closing Plan — Remaining PRs
+
+Verified against the codebase as of PR-392. Each PR below has a planned spec under `prs/`.
+
+| PR | Track | Scope |
+| --- | --- | --- |
+| PR-393 | 2 | Guest order notification and confirmation parity: notifications/invoices fall back to `contact_email`, fix guest confirmation page, remove stale auth-gate template copy |
+| PR-394 | 2 | Guest order claim end-to-end: persist `customer_id` on link in Postgres, wire claim search to discovery, add the `/account/orders/claim` page the claim email already links to |
+| PR-395 | 3 | Admin scoped product editing (PR-E catalog): translatable fields per language via `content_translations`, store-scoped pricing, scope badges driven by the context switcher |
+| PR-396 | 3 | Admin pages editing with language scope (PR-E content): pages CRUD UI over the existing API, content-domain permissions for the Editor role, page audit logging |
+| PR-397 | 3 | Admin hardening closeout: remove `changeme` bootstrap defaults, fix stale seeding docs, add audit logging to categories/stores/media handlers |
+| PR-398 | 4 | Storefront profile completion: saved addresses with checkout prefill, preferences page surfacing the existing consent API |
+| PR-399 | 4 | Account email change behind step-up with re-verification of the new address |
+
+### Explicitly Deferred (out of roadmap closure)
+
+* REST `/api/v1/checkout` guest parity for headless clients — storefront SSR covers the Track 2 validation target
+* Store Management structural CRUD relocation — store editing works under Settings → General; moving it is a UI reshuffle without behavior gain
+* Admin user/role management beyond the read-only Users & Roles surface — static RBAC is the accepted model
+* Login-time 2FA / TOTP — registration email verification plus step-up re-auth is the accepted Track 4 model
+* Placeholder admin sections (Marketing, Returns, Transactions, Attributes, Customer Groups, Inventory, Navigation, Blocks) — new features, not part of this roadmap's hardening goals
+* Persistent audit table and audit browsing UI — audit stays logger-based for now
 
 ---
 

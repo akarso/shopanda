@@ -148,6 +148,75 @@ func TestHandleOrderPaid(t *testing.T) {
 	}
 }
 
+func TestHandleOrderPaid_GuestOrder(t *testing.T) {
+	tmpl := mail.NewTemplates()
+	notification.RegisterTemplates(tmpl)
+
+	q := &mockQueue{}
+	custRepo := &mockCustomerRepo{
+		findByID: func(_ context.Context, id string) (*customer.Customer, error) {
+			t.Fatalf("unexpected customer lookup for guest order: %q", id)
+			return nil, nil
+		},
+	}
+	ordRepo := &mockOrderRepo{
+		findByID: func(_ context.Context, id string) (*order.Order, error) {
+			if id == "ord-1" {
+				return &order.Order{ID: "ord-1", CustomerID: "", ContactEmail: "guest@example.com"}, nil
+			}
+			return nil, nil
+		},
+	}
+
+	svc := newTestService(t, tmpl, custRepo, ordRepo, q)
+	evt := event.New(order.EventOrderPaid, "core.order", order.OrderStatusChangedData{
+		OrderID:   "ord-1",
+		OldStatus: "pending",
+		NewStatus: "paid",
+	})
+
+	if err := svc.HandleOrderPaid(context.Background(), evt); err != nil {
+		t.Fatalf("HandleOrderPaid guest: %v", err)
+	}
+
+	if len(q.enqueued) != 1 {
+		t.Fatalf("expected 1 enqueued job, got %d", len(q.enqueued))
+	}
+	job := q.enqueued[0]
+	if to, _ := job.Payload["to"].(string); to != "guest@example.com" {
+		t.Errorf("payload.to = %q, want guest@example.com", to)
+	}
+	body, _ := job.Payload["body"].(string)
+	if strings.Contains(body, "Thank you, !") {
+		t.Errorf("guest body has broken empty-name salutation: %q", body)
+	}
+	if body == "" {
+		t.Error("payload.body is empty")
+	}
+}
+
+func TestHandleOrderPaid_GuestOrderMissingContactEmail(t *testing.T) {
+	tmpl := mail.NewTemplates()
+	notification.RegisterTemplates(tmpl)
+
+	q := &mockQueue{}
+	ordRepo := &mockOrderRepo{
+		findByID: func(_ context.Context, _ string) (*order.Order, error) {
+			return &order.Order{ID: "ord-1", CustomerID: "", ContactEmail: ""}, nil
+		},
+	}
+
+	svc := newTestService(t, tmpl, &mockCustomerRepo{}, ordRepo, q)
+	evt := event.New(order.EventOrderPaid, "core.order", order.OrderStatusChangedData{OrderID: "ord-1"})
+
+	if err := svc.HandleOrderPaid(context.Background(), evt); err == nil {
+		t.Fatal("expected error for guest order without contact email")
+	}
+	if len(q.enqueued) != 0 {
+		t.Fatalf("expected 0 enqueued jobs, got %d", len(q.enqueued))
+	}
+}
+
 func TestHandleOrderPaid_OrderNotFound(t *testing.T) {
 	tmpl := mail.NewTemplates()
 	notification.RegisterTemplates(tmpl)
@@ -576,6 +645,46 @@ func TestHandleShipmentShipped(t *testing.T) {
 	}
 }
 
+func TestHandleShipmentShipped_GuestOrder(t *testing.T) {
+	tmpl := mail.NewTemplates()
+	notification.RegisterTemplates(tmpl)
+
+	q := &mockQueue{}
+	custRepo := &mockCustomerRepo{
+		findByID: func(_ context.Context, id string) (*customer.Customer, error) {
+			t.Fatalf("unexpected customer lookup for guest order: %q", id)
+			return nil, nil
+		},
+	}
+	ordRepo := &mockOrderRepo{
+		findByID: func(_ context.Context, id string) (*order.Order, error) {
+			if id == "ord-1" {
+				return &order.Order{ID: "ord-1", CustomerID: "", ContactEmail: "guest@example.com"}, nil
+			}
+			return nil, nil
+		},
+	}
+
+	svc := newTestService(t, tmpl, custRepo, ordRepo, q)
+	evt := event.New(shipping.EventShipmentShipped, "core.shipping", shipping.ShipmentStatusChangedData{
+		ShipmentID:     "ship-1",
+		OrderID:        "ord-1",
+		OldStatus:      shipping.StatusPending,
+		NewStatus:      shipping.StatusShipped,
+		TrackingNumber: "TRACK-123",
+	})
+
+	if err := svc.HandleShipmentShipped(context.Background(), evt); err != nil {
+		t.Fatalf("HandleShipmentShipped guest: %v", err)
+	}
+	if len(q.enqueued) != 1 {
+		t.Fatalf("expected 1 enqueued job, got %d", len(q.enqueued))
+	}
+	if to, _ := q.enqueued[0].Payload["to"].(string); to != "guest@example.com" {
+		t.Errorf("payload.to = %q, want guest@example.com", to)
+	}
+}
+
 func TestHandleShipmentShipped_OrderNotFound(t *testing.T) {
 	tmpl := mail.NewTemplates()
 	notification.RegisterTemplates(tmpl)
@@ -698,7 +807,14 @@ func TestHandleInvoiceCreated(t *testing.T) {
 			return nil, nil
 		},
 	}
-	ordRepo := &mockOrderRepo{}
+	ordRepo := &mockOrderRepo{
+		findByID: func(_ context.Context, id string) (*order.Order, error) {
+			if id == "ord-1" {
+				return &order.Order{ID: "ord-1", CustomerID: "cust-1"}, nil
+			}
+			return nil, nil
+		},
+	}
 
 	taxAmount, _ := shared.NewMoney(0, "EUR")
 	unitPrice, _ := shared.NewMoney(2500, "EUR")
@@ -810,8 +926,13 @@ func TestHandleInvoiceCreated_CustomerNotFound(t *testing.T) {
 		},
 	}
 	renderer := &mockPDFRenderer{}
+	ordRepo := &mockOrderRepo{
+		findByID: func(_ context.Context, _ string) (*order.Order, error) {
+			return &order.Order{ID: "ord-1", CustomerID: "cust-1"}, nil
+		},
+	}
 
-	svc := newInvoiceTestService(t, tmpl, custRepo, &mockOrderRepo{}, q, invRepo, renderer)
+	svc := newInvoiceTestService(t, tmpl, custRepo, ordRepo, q, invRepo, renderer)
 	evt := event.New(domainInvoice.EventInvoiceCreated, "invoice.service", domainInvoice.InvoiceCreatedData{
 		InvoiceID:  "inv-1",
 		OrderID:    "ord-1",
@@ -821,6 +942,65 @@ func TestHandleInvoiceCreated_CustomerNotFound(t *testing.T) {
 	err := svc.HandleInvoiceCreated(context.Background(), evt)
 	if err == nil {
 		t.Fatal("expected error for missing customer")
+	}
+}
+
+func TestHandleInvoiceCreated_GuestOrder(t *testing.T) {
+	tmpl := mail.NewTemplates()
+	notification.RegisterTemplates(tmpl)
+
+	q := &mockQueue{}
+	custRepo := &mockCustomerRepo{
+		findByID: func(_ context.Context, id string) (*customer.Customer, error) {
+			t.Fatalf("unexpected customer lookup for guest invoice: %q", id)
+			return nil, nil
+		},
+	}
+	ordRepo := &mockOrderRepo{
+		findByID: func(_ context.Context, id string) (*order.Order, error) {
+			if id == "ord-1" {
+				return &order.Order{ID: "ord-1", CustomerID: "", ContactEmail: "guest@example.com"}, nil
+			}
+			return nil, nil
+		},
+	}
+
+	taxAmount, _ := shared.NewMoney(0, "EUR")
+	unitPrice, _ := shared.NewMoney(2500, "EUR")
+	item, _ := domainInvoice.NewItem("var-1", "SKU-1", "Widget", 2, unitPrice)
+	inv, err := domainInvoice.NewInvoice("inv-1", "ord-1", "", "EUR", []domainInvoice.Item{item}, taxAmount)
+	if err != nil {
+		t.Fatalf("NewInvoice guest: %v", err)
+	}
+	inv.SetInvoiceNumberFromDB(1002)
+
+	invRepo := &mockInvoiceRepo{
+		findByID: func(_ context.Context, id string) (*domainInvoice.Invoice, error) {
+			if id == "inv-1" {
+				return &inv, nil
+			}
+			return nil, nil
+		},
+	}
+	renderer := &mockPDFRenderer{}
+
+	svc := newInvoiceTestService(t, tmpl, custRepo, ordRepo, q, invRepo, renderer)
+	evt := event.New(domainInvoice.EventInvoiceCreated, "invoice.service", domainInvoice.InvoiceCreatedData{
+		InvoiceID:     "inv-1",
+		InvoiceNumber: 1002,
+		OrderID:       "ord-1",
+		CustomerID:    "",
+		Currency:      "EUR",
+	})
+
+	if err := svc.HandleInvoiceCreated(context.Background(), evt); err != nil {
+		t.Fatalf("HandleInvoiceCreated guest: %v", err)
+	}
+	if len(q.enqueued) != 1 {
+		t.Fatalf("expected 1 enqueued job, got %d", len(q.enqueued))
+	}
+	if to, _ := q.enqueued[0].Payload["to"].(string); to != "guest@example.com" {
+		t.Errorf("payload.to = %q, want guest@example.com", to)
 	}
 }
 

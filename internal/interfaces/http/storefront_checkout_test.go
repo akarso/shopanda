@@ -415,6 +415,13 @@ func TestStorefrontHandler_CheckoutFlow_Manual_GuestOK(t *testing.T) {
 	if orders.saved.ContactEmail != "guest@example.com" {
 		t.Fatalf("saved guest contact email = %q, want %q", orders.saved.ContactEmail, "guest@example.com")
 	}
+	confirmBody := confirmRec.Body.String()
+	if !strings.Contains(confirmBody, "guest-confirmation-email") || !strings.Contains(confirmBody, "guest@example.com") {
+		t.Fatalf("guest confirmation missing contact email notice: %s", confirmBody)
+	}
+	if strings.Contains(confirmBody, `id="view-order"`) {
+		t.Fatalf("guest confirmation should not link to an account order page: %s", confirmBody)
+	}
 }
 
 func TestStorefrontHandler_CheckoutAddress_AllowsAuthenticatedCustomerWithoutAccountSecurityWiring(t *testing.T) {
@@ -629,6 +636,12 @@ func TestStorefrontHandler_CheckoutFlow_Manual_OK(t *testing.T) {
 	}
 	if !strings.Contains(body, "EUR 30.00") {
 		t.Fatalf("confirmation page missing order total: %s", body)
+	}
+	if !strings.Contains(body, `href="/account/orders/`+orders.saved.ID+`"`) {
+		t.Fatalf("confirmation page missing account order link: %s", body)
+	}
+	if strings.Contains(body, "guest-confirmation-email") {
+		t.Fatalf("authenticated confirmation should not show guest email notice: %s", body)
 	}
 }
 

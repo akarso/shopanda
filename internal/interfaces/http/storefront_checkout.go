@@ -57,8 +57,9 @@ type StorefrontCheckoutConfirmation struct {
 	Status       string
 	TotalText    string
 	Notice       string
-	ViewOrderURL string
+	ViewOrderURL string // empty for guest orders, which have no account order page
 	ContinueURL  string
+	GuestEmail   string // set for guest orders; confirmation is sent here
 }
 
 type StorefrontCheckoutPageData struct {
@@ -76,7 +77,6 @@ type StorefrontCheckoutPageData struct {
 	Confirmation   *StorefrontCheckoutConfirmation
 	CSRFToken      string
 	ErrorMessage   string
-	RequiresAuth   bool
 	StripePending  bool
 	PrimaryAction  string
 	SecondaryURL   string
@@ -279,12 +279,16 @@ func (h *StorefrontHandler) CheckoutConfirm() http.HandlerFunc {
 		}
 		page.Progress = storefrontCheckoutProgress("confirm")
 		page.Confirmation = &StorefrontCheckoutConfirmation{
-			OrderID:      cctx.Order.ID,
-			Status:       string(cctx.Order.Status()),
-			TotalText:    storefrontCheckoutDisplayTotal(cctx, selectedRate.CostText),
-			Notice:       storefrontCheckoutConfirmationNotice(h.payment),
-			ViewOrderURL: "/api/v1/orders/" + cctx.Order.ID,
-			ContinueURL:  "/products",
+			OrderID:     cctx.Order.ID,
+			Status:      string(cctx.Order.Status()),
+			TotalText:   storefrontCheckoutDisplayTotal(cctx, selectedRate.CostText),
+			Notice:      storefrontCheckoutConfirmationNotice(h.payment),
+			ContinueURL: "/products",
+		}
+		if customerID == "" {
+			page.Confirmation.GuestEmail = cctx.Order.ContactEmail
+		} else {
+			page.Confirmation.ViewOrderURL = "/account/orders/" + cctx.Order.ID
 		}
 		page.StripePending = h.payment != nil && h.payment.Method() == payment.MethodStripe
 		h.renderPage(w, "checkout_confirm", page)
