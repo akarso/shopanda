@@ -176,6 +176,14 @@ func (s *LinkOrderService) RegisterAndClaimByEmail(ctx context.Context, in Regis
 		return RegisterAndLinkOutput{}, fmt.Errorf("link order service: register: %w", err)
 	}
 
+	// Run the same per-order domain checks as RegisterAndLink before the
+	// atomic persist so invalid rows abort without touching the database.
+	for i := range guestOrders {
+		if err := guestOrders[i].LinkToCustomer(regOut.CustomerID); err != nil {
+			return s.cleanupAndFail(ctx, regOut.CustomerID, fmt.Errorf("link order service: link order %s: %w", guestOrders[i].ID, err))
+		}
+	}
+
 	// Link all matching guest orders in one atomic repository operation so a
 	// failure can never leave a partially claimed set of orders.
 	linked, err := s.orders.LinkToCustomerByContactEmail(ctx, in.ContactEmail, regOut.CustomerID, time.Now().UTC())

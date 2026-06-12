@@ -331,6 +331,33 @@ func TestLinkOrderService_RegisterAndClaimByEmail_PersistFails_CleansUpCustomer(
 	}
 }
 
+func TestLinkOrderService_RegisterAndClaimByEmail_DomainValidationFails_CleansUpCustomer(t *testing.T) {
+	repo := newMockOrderRepository()
+	alreadyLinked := mustNewTestGuestOrder(t, "guest@example.com")
+	alreadyLinked.CustomerID = "cust-existing"
+	repo.findByContactEmailResult = []domainOrder.Order{alreadyLinked}
+
+	mockAuth := &mockOrderAuther{
+		registerOutput: auth.RegisterOutput{CustomerID: "cust-new", Token: "jwt-token"},
+	}
+	jwtIssuer, err := jwt.NewIssuer("test-secret", time.Hour)
+	if err != nil {
+		t.Fatalf("NewIssuer: %v", err)
+	}
+	svc := order.NewLinkOrderService(repo, mockAuth, jwtIssuer)
+
+	_, err = svc.RegisterAndClaimByEmail(context.Background(), order.RegisterAndClaimInput{
+		ContactEmail: "guest@example.com",
+		Password:     "SecurePass123",
+	})
+	if err == nil {
+		t.Fatal("expected domain validation failure")
+	}
+	if len(mockAuth.deletedIDs) != 1 || mockAuth.deletedIDs[0] != "cust-new" {
+		t.Fatalf("expected cleanup of cust-new, got %v", mockAuth.deletedIDs)
+	}
+}
+
 func TestLinkOrderService_RegisterAndLink_EmptyInputs(t *testing.T) {
 	repo := newMockOrderRepository()
 	mockAuth := &mockOrderAuther{}

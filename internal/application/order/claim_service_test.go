@@ -14,8 +14,9 @@ import (
 )
 
 type mockOrderRepository struct {
-	orders  map[string]*domainOrder.Order
-	linkErr error
+	orders                   map[string]*domainOrder.Order
+	linkErr                  error
+	findByContactEmailResult []domainOrder.Order // optional test override
 }
 
 func newMockOrderRepository() *mockOrderRepository {
@@ -44,6 +45,9 @@ func (r *mockOrderRepository) FindByCustomerID(ctx context.Context, customerID s
 }
 
 func (r *mockOrderRepository) FindByContactEmail(ctx context.Context, contactEmail string) ([]domainOrder.Order, error) {
+	if r.findByContactEmailResult != nil {
+		return r.findByContactEmailResult, nil
+	}
 	contactEmailNorm := strings.ToLower(strings.TrimSpace(contactEmail))
 	var orders []domainOrder.Order
 	for _, o := range r.orders {
