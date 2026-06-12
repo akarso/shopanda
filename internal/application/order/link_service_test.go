@@ -180,9 +180,9 @@ func TestLinkOrderService_RegisterAndLink_AlreadyLinked(t *testing.T) {
 	}
 }
 
-func TestLinkOrderService_RegisterAndLink_UpdateStatusFails_CleansUpCustomer(t *testing.T) {
+func TestLinkOrderService_RegisterAndLink_PersistLinkFails_CleansUpCustomer(t *testing.T) {
 	repo := newMockOrderRepository()
-	repo.updateStatusErr = errors.New("db write failed")
+	repo.linkErr = errors.New("db write failed")
 	mockAuth := &mockOrderAuther{
 		registerOutput: auth.RegisterOutput{
 			CustomerID: "cust-new",
@@ -217,6 +217,117 @@ func TestLinkOrderService_RegisterAndLink_UpdateStatusFails_CleansUpCustomer(t *
 	}
 	if mockAuth.deletedIDs[0] != "cust-new" {
 		t.Fatalf("DeleteCustomer called with %q, want %q", mockAuth.deletedIDs[0], "cust-new")
+	}
+}
+
+func TestLinkOrderService_RegisterAndClaimByEmail_LinksAllGuestOrders(t *testing.T) {
+	repo := newMockOrderRepository()
+	mockAuth := &mockOrderAuther{
+		registerOutput: auth.RegisterOutput{
+			CustomerID: "cust-new",
+			Token:      "jwt-token",
+			ExpiresAt:  time.Now().Add(time.Hour),
+		},
+	}
+	jwtIssuer, err := jwt.NewIssuer("test-secret", time.Hour)
+	if err != nil {
+		t.Fatalf("NewIssuer: %v", err)
+	}
+	svc := order.NewLinkOrderService(repo, mockAuth, jwtIssuer)
+
+	contactEmail := "guest@example.com"
+	o1 := mustNewTestGuestOrder(t, contactEmail)
+	o2 := mustNewTestGuestOrder(t, contactEmail)
+	other := mustNewTestGuestOrder(t, "other@example.com")
+	for _, o := range []*domainOrder.Order{&o1, &o2, &other} {
+		if err := repo.Save(context.Background(), o); err != nil {
+			t.Fatalf("Save: %v", err)
+		}
+	}
+
+	out, err := svc.RegisterAndClaimByEmail(context.Background(), order.RegisterAndClaimInput{
+		ContactEmail: contactEmail,
+		Password:     "SecurePass123",
+		FirstName:    "Jane",
+		LastName:     "Doe",
+	})
+	if err != nil {
+		t.Fatalf("RegisterAndClaimByEmail: %v", err)
+	}
+	if out.CustomerID != "cust-new" {
+		t.Errorf("CustomerID = %q, want cust-new", out.CustomerID)
+	}
+	if out.Token != "jwt-token" {
+		t.Errorf("Token = %q, want jwt-token", out.Token)
+	}
+
+	for _, id := range []string{o1.ID, o2.ID} {
+		got, err := repo.FindByID(context.Background(), id)
+		if err != nil || got == nil {
+			t.Fatalf("FindByID(%s): %v, %v", id, got, err)
+		}
+		if got.CustomerID != "cust-new" {
+			t.Errorf("order %s CustomerID = %q, want cust-new", id, got.CustomerID)
+		}
+	}
+	untouched, err := repo.FindByID(context.Background(), other.ID)
+	if err != nil || untouched == nil {
+		t.Fatalf("FindByID(other): %v, %v", untouched, err)
+	}
+	if untouched.CustomerID != "" {
+		t.Errorf("unrelated guest order was linked to %q", untouched.CustomerID)
+	}
+}
+
+func TestLinkOrderService_RegisterAndClaimByEmail_NoOrders(t *testing.T) {
+	repo := newMockOrderRepository()
+	mockAuth := &mockOrderAuther{
+		registerOutput: auth.RegisterOutput{CustomerID: "cust-new", Token: "jwt-token"},
+	}
+	jwtIssuer, err := jwt.NewIssuer("test-secret", time.Hour)
+	if err != nil {
+		t.Fatalf("NewIssuer: %v", err)
+	}
+	svc := order.NewLinkOrderService(repo, mockAuth, jwtIssuer)
+
+	_, err = svc.RegisterAndClaimByEmail(context.Background(), order.RegisterAndClaimInput{
+		ContactEmail: "nobody@example.com",
+		Password:     "SecurePass123",
+	})
+	if err == nil {
+		t.Fatal("expected error for email without claimable orders")
+	}
+	if len(mockAuth.deletedIDs) != 0 {
+		t.Fatalf("expected no customer registration, got cleanup of %v", mockAuth.deletedIDs)
+	}
+}
+
+func TestLinkOrderService_RegisterAndClaimByEmail_PersistFails_CleansUpCustomer(t *testing.T) {
+	repo := newMockOrderRepository()
+	repo.linkErr = errors.New("db write failed")
+	mockAuth := &mockOrderAuther{
+		registerOutput: auth.RegisterOutput{CustomerID: "cust-new", Token: "jwt-token"},
+	}
+	jwtIssuer, err := jwt.NewIssuer("test-secret", time.Hour)
+	if err != nil {
+		t.Fatalf("NewIssuer: %v", err)
+	}
+	svc := order.NewLinkOrderService(repo, mockAuth, jwtIssuer)
+
+	o := mustNewTestGuestOrder(t, "guest@example.com")
+	if err := repo.Save(context.Background(), &o); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+
+	_, err = svc.RegisterAndClaimByEmail(context.Background(), order.RegisterAndClaimInput{
+		ContactEmail: "guest@example.com",
+		Password:     "SecurePass123",
+	})
+	if err == nil {
+		t.Fatal("expected persist failure")
+	}
+	if len(mockAuth.deletedIDs) != 1 || mockAuth.deletedIDs[0] != "cust-new" {
+		t.Fatalf("expected cleanup of cust-new, got %v", mockAuth.deletedIDs)
 	}
 }
 

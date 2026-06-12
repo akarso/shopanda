@@ -2,6 +2,7 @@ package order_test
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"testing"
 
@@ -12,8 +13,8 @@ import (
 )
 
 type mockOrderRepository struct {
-	orders          map[string]*domainOrder.Order
-	updateStatusErr error
+	orders  map[string]*domainOrder.Order
+	linkErr error
 }
 
 func newMockOrderRepository() *mockOrderRepository {
@@ -27,7 +28,8 @@ func (r *mockOrderRepository) FindByID(ctx context.Context, id string) (*domainO
 	if !ok {
 		return nil, nil
 	}
-	return o, nil
+	clone := *o
+	return &clone, nil
 }
 
 func (r *mockOrderRepository) FindByCustomerID(ctx context.Context, customerID string) ([]domainOrder.Order, error) {
@@ -44,7 +46,7 @@ func (r *mockOrderRepository) FindByContactEmail(ctx context.Context, contactEma
 	contactEmailNorm := strings.ToLower(strings.TrimSpace(contactEmail))
 	var orders []domainOrder.Order
 	for _, o := range r.orders {
-		if strings.ToLower(strings.TrimSpace(o.ContactEmail)) == contactEmailNorm {
+		if o.CustomerID == "" && strings.ToLower(strings.TrimSpace(o.ContactEmail)) == contactEmailNorm {
 			orders = append(orders, *o)
 		}
 	}
@@ -56,12 +58,29 @@ func (r *mockOrderRepository) List(ctx context.Context, offset, limit int) ([]do
 }
 
 func (r *mockOrderRepository) Save(ctx context.Context, o *domainOrder.Order) error {
-	r.orders[o.ID] = o
+	clone := *o
+	r.orders[o.ID] = &clone
 	return nil
 }
 
 func (r *mockOrderRepository) UpdateStatus(ctx context.Context, o *domainOrder.Order) error {
-	return r.updateStatusErr
+	return nil
+}
+
+func (r *mockOrderRepository) LinkToCustomer(ctx context.Context, o *domainOrder.Order) error {
+	if r.linkErr != nil {
+		return r.linkErr
+	}
+	stored, ok := r.orders[o.ID]
+	if !ok {
+		return errors.New("mock: link to customer: order not found")
+	}
+	if stored.CustomerID != "" {
+		return errors.New("mock: link to customer: already linked")
+	}
+	clone := *o
+	r.orders[o.ID] = &clone
+	return nil
 }
 
 func mustNewTestGuestOrder(t *testing.T, contactEmail string) domainOrder.Order {

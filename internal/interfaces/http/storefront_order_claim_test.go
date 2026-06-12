@@ -3,6 +3,7 @@ package http_test
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -38,8 +39,15 @@ func (r *storefrontOrderClaimRepoStub) FindByCustomerID(_ context.Context, _ str
 	return nil, nil
 }
 
-func (r *storefrontOrderClaimRepoStub) FindByContactEmail(_ context.Context, _ string) ([]domainOrder.Order, error) {
-	return nil, nil
+func (r *storefrontOrderClaimRepoStub) FindByContactEmail(_ context.Context, contactEmail string) ([]domainOrder.Order, error) {
+	norm := strings.ToLower(strings.TrimSpace(contactEmail))
+	var orders []domainOrder.Order
+	for _, o := range r.byID {
+		if o.CustomerID == "" && strings.ToLower(strings.TrimSpace(o.ContactEmail)) == norm {
+			orders = append(orders, *o)
+		}
+	}
+	return orders, nil
 }
 
 func (r *storefrontOrderClaimRepoStub) List(_ context.Context, _, _ int) ([]domainOrder.Order, error) {
@@ -58,6 +66,19 @@ func (r *storefrontOrderClaimRepoStub) UpdateStatus(_ context.Context, o *domain
 	return nil
 }
 
+func (r *storefrontOrderClaimRepoStub) LinkToCustomer(_ context.Context, o *domainOrder.Order) error {
+	stored := r.byID[o.ID]
+	if stored == nil {
+		return errors.New("stub: link to customer: order not found")
+	}
+	if stored.CustomerID != "" {
+		return errors.New("stub: link to customer: already linked")
+	}
+	clone := *o
+	r.byID[o.ID] = &clone
+	return nil
+}
+
 type storefrontOrderClaimEmailerStub struct {
 	lastEmail string
 	lastToken string
@@ -70,10 +91,12 @@ func (e *storefrontOrderClaimEmailerStub) SendClaimEmail(contactEmail, claimToke
 }
 
 type storefrontOrderLinkerStub struct {
-	customerID string
-	token      string
-	err        error
-	called     bool
+	customerID  string
+	token       string
+	err         error
+	called      bool
+	claimCalled bool
+	claimEmail  string
 }
 
 func (s *storefrontOrderLinkerStub) RegisterAndLink(_ *http.Request, _, _, _, _, _ string) (string, string, error) {
@@ -82,6 +105,15 @@ func (s *storefrontOrderLinkerStub) RegisterAndLink(_ *http.Request, _, _, _, _,
 		return "", "", s.err
 	}
 	return s.customerID, s.token, nil
+}
+
+func (s *storefrontOrderLinkerStub) RegisterAndClaimByEmail(_ *http.Request, contactEmail, _, _, _ string) (string, string, time.Time, error) {
+	s.claimCalled = true
+	s.claimEmail = contactEmail
+	if s.err != nil {
+		return "", "", time.Time{}, s.err
+	}
+	return s.customerID, s.token, time.Now().Add(time.Hour), nil
 }
 
 func TestStorefrontHandler_ClaimRegister_Success(t *testing.T) {
@@ -208,6 +240,206 @@ func TestStorefrontHandler_ClaimRegister_ValidatesMissingFields(t *testing.T) {
 	}
 	if linker.called {
 		t.Fatal("did not expect linker to be called for invalid payload")
+	}
+}
+
+func TestStorefrontHandler_ClaimOrderSearch_NoMatches_SkipsEmail(t *testing.T) {
+	repo := newStorefrontOrderClaimRepoStub()
+	emailer := &storefrontOrderClaimEmailerStub{}
+	claimSvc := orderApp.NewClaimService(repo)
+
+	h := shophttp.NewStorefrontHandler(nil, nil, nil, nil, nil, nil).
+		WithOrderClaim(claimSvc).
+		WithOrderClaimEmailer(emailer).
+		WithAccountSecurity("test-secret", time.Minute)
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/orders/claim-search", strings.NewReader(url.Values{
+		"contact_email": []string{"nobody@example.com"},
+	}.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	rec := httptest.NewRecorder()
+	h.ClaimOrderSearch().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d; body: %s", rec.Code, http.StatusOK, rec.Body.String())
+	}
+	if emailer.lastToken != "" || emailer.lastEmail != "" {
+		t.Fatalf("expected no claim email for unknown address, got email to %q", emailer.lastEmail)
+	}
+	if !strings.Contains(rec.Body.String(), "If any orders exist for this email") {
+		t.Fatalf("expected generic message, got body: %s", rec.Body.String())
+	}
+}
+
+func TestStorefrontHandler_ClaimOrderSearch_Matches_SendsEmailWithSameResponse(t *testing.T) {
+	repo := newStorefrontOrderClaimRepoStub()
+	emailer := &storefrontOrderClaimEmailerStub{}
+	claimSvc := orderApp.NewClaimService(repo)
+
+	h := shophttp.NewStorefrontHandler(nil, nil, nil, nil, nil, nil).
+		WithOrderClaim(claimSvc).
+		WithOrderClaimEmailer(emailer).
+		WithAccountSecurity("test-secret", time.Minute)
+
+	o := mustNewStorefrontGuestOrder(t, "guest@example.com")
+	if err := repo.Save(context.Background(), &o); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/orders/claim-search", strings.NewReader(url.Values{
+		"contact_email": []string{"guest@example.com"},
+	}.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	rec := httptest.NewRecorder()
+	h.ClaimOrderSearch().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d; body: %s", rec.Code, http.StatusOK, rec.Body.String())
+	}
+	if emailer.lastToken == "" || emailer.lastEmail != "guest@example.com" {
+		t.Fatalf("expected claim email to guest@example.com, got %q (token %q)", emailer.lastEmail, emailer.lastToken)
+	}
+	if !strings.Contains(rec.Body.String(), "If any orders exist for this email") {
+		t.Fatalf("expected generic message, got body: %s", rec.Body.String())
+	}
+}
+
+func newStorefrontClaimPageHandler(t *testing.T, repo *storefrontOrderClaimRepoStub, linker *storefrontOrderLinkerStub) *shophttp.StorefrontHandler {
+	t.Helper()
+	return shophttp.NewStorefrontHandler(createTestTheme(t), nil, newStorefrontCategoryMock(), nil, nil, nil).
+		WithOrderClaim(orderApp.NewClaimService(repo)).
+		WithOrderLinker(linker).
+		WithAccountSecurity("test-secret", time.Minute)
+}
+
+func storefrontClaimTokenForTest(t *testing.T, h *shophttp.StorefrontHandler, repo *storefrontOrderClaimRepoStub, contactEmail string) string {
+	t.Helper()
+	emailer := &storefrontOrderClaimEmailerStub{}
+	searchHandler := h.WithOrderClaimEmailer(emailer).ClaimOrderSearch()
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/orders/claim-search", strings.NewReader(url.Values{
+		"contact_email": []string{contactEmail},
+	}.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	rec := httptest.NewRecorder()
+	searchHandler.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("claim-search status = %d; body: %s", rec.Code, rec.Body.String())
+	}
+	if emailer.lastToken == "" {
+		t.Fatal("expected claim token to be generated")
+	}
+	return emailer.lastToken
+}
+
+func TestStorefrontHandler_AccountOrdersClaim_RendersClaimableOrders(t *testing.T) {
+	repo := newStorefrontOrderClaimRepoStub()
+	linker := &storefrontOrderLinkerStub{customerID: "cust-1", token: "jwt"}
+	h := newStorefrontClaimPageHandler(t, repo, linker)
+
+	o := mustNewStorefrontGuestOrder(t, "guest@example.com")
+	if err := repo.Save(context.Background(), &o); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+	token := storefrontClaimTokenForTest(t, h, repo, "guest@example.com")
+
+	req := httptest.NewRequest(http.MethodGet, "/account/orders/claim?claim_token="+url.QueryEscape(token), nil)
+	rec := httptest.NewRecorder()
+	h.AccountOrdersClaim().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d; body: %s", rec.Code, http.StatusOK, rec.Body.String())
+	}
+	body := rec.Body.String()
+	if !strings.Contains(body, o.ID) {
+		t.Fatalf("expected order %s on claim page; body: %s", o.ID, body)
+	}
+	if !strings.Contains(body, "guest@example.com") {
+		t.Fatalf("expected contact email on claim page; body: %s", body)
+	}
+	if !strings.Contains(body, `name="claim_token"`) {
+		t.Fatalf("expected registration form with claim token; body: %s", body)
+	}
+}
+
+func TestStorefrontHandler_AccountOrdersClaim_InvalidToken(t *testing.T) {
+	repo := newStorefrontOrderClaimRepoStub()
+	linker := &storefrontOrderLinkerStub{}
+	h := newStorefrontClaimPageHandler(t, repo, linker)
+
+	req := httptest.NewRequest(http.MethodGet, "/account/orders/claim?claim_token=bogus", nil)
+	rec := httptest.NewRecorder()
+	h.AccountOrdersClaim().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("status = %d, want %d; body: %s", rec.Code, http.StatusForbidden, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "invalid or has expired") {
+		t.Fatalf("expected invalid-token message; body: %s", rec.Body.String())
+	}
+}
+
+func TestStorefrontHandler_AccountOrdersClaim_RegistersLinksAndSignsIn(t *testing.T) {
+	repo := newStorefrontOrderClaimRepoStub()
+	linker := &storefrontOrderLinkerStub{customerID: "cust-9", token: "session-jwt"}
+	h := newStorefrontClaimPageHandler(t, repo, linker)
+
+	o := mustNewStorefrontGuestOrder(t, "guest@example.com")
+	if err := repo.Save(context.Background(), &o); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+	token := storefrontClaimTokenForTest(t, h, repo, "guest@example.com")
+
+	req := httptest.NewRequest(http.MethodPost, "/account/orders/claim", strings.NewReader(url.Values{
+		"claim_token": []string{token},
+		"password":    []string{"SecurePass123"},
+		"first_name":  []string{"Jane"},
+		"last_name":   []string{"Doe"},
+	}.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	rec := httptest.NewRecorder()
+	h.AccountOrdersClaim().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusSeeOther {
+		t.Fatalf("status = %d, want %d; body: %s", rec.Code, http.StatusSeeOther, rec.Body.String())
+	}
+	if got := rec.Header().Get("Location"); got != "/account/orders" {
+		t.Fatalf("redirect = %q, want /account/orders", got)
+	}
+	if !linker.claimCalled {
+		t.Fatal("expected RegisterAndClaimByEmail to be called")
+	}
+	if linker.claimEmail != "guest@example.com" {
+		t.Fatalf("claim email = %q, want guest@example.com", linker.claimEmail)
+	}
+	sessionCookie := ""
+	for _, c := range rec.Result().Cookies() {
+		if c.Name == "shopanda_storefront_session" {
+			sessionCookie = c.Value
+		}
+	}
+	if sessionCookie != "session-jwt" {
+		t.Fatalf("session cookie = %q, want session-jwt", sessionCookie)
+	}
+}
+
+func TestStorefrontHandler_AccountOrdersClaim_PostInvalidToken(t *testing.T) {
+	repo := newStorefrontOrderClaimRepoStub()
+	linker := &storefrontOrderLinkerStub{}
+	h := newStorefrontClaimPageHandler(t, repo, linker)
+
+	req := httptest.NewRequest(http.MethodPost, "/account/orders/claim", strings.NewReader(url.Values{
+		"claim_token": []string{"bogus"},
+		"password":    []string{"SecurePass123"},
+	}.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	rec := httptest.NewRecorder()
+	h.AccountOrdersClaim().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("status = %d, want %d; body: %s", rec.Code, http.StatusForbidden, rec.Body.String())
+	}
+	if linker.claimCalled {
+		t.Fatal("did not expect registration for invalid token")
 	}
 }
 

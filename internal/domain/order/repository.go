@@ -24,4 +24,9 @@ type OrderRepository interface {
 
 	// UpdateStatus updates only the status and updated_at of an existing order.
 	UpdateStatus(ctx context.Context, order *Order) error
+
+	// LinkToCustomer persists customer ownership for a previously guest order.
+	// The order must already carry the new CustomerID (set via Order.LinkToCustomer).
+	// Fails when the order does not exist or is already linked to a customer.
+	LinkToCustomer(ctx context.Context, order *Order) error
 }

@@ -360,6 +360,115 @@ func TestOrderRepo_UpdateStatus_NotFound(t *testing.T) {
 	}
 }
 
+func TestOrderRepo_LinkToCustomer(t *testing.T) {
+	db := testDB(t)
+	ensureProductsTable(t, db)
+	t.Cleanup(func() {
+		db.Exec("DELETE FROM order_items")
+		db.Exec("DELETE FROM orders")
+	})
+
+	repo, err := postgres.NewOrderRepo(db)
+	if err != nil {
+		t.Fatalf("NewOrderRepo: %v", err)
+	}
+	ctx := context.Background()
+
+	o := mustNewGuestOrder(t, "guest@example.com", "EUR")
+	if err := repo.Save(ctx, &o); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+
+	if err := o.LinkToCustomer("cust-77"); err != nil {
+		t.Fatalf("domain LinkToCustomer: %v", err)
+	}
+	if err := repo.LinkToCustomer(ctx, &o); err != nil {
+		t.Fatalf("repo LinkToCustomer: %v", err)
+	}
+
+	got, err := repo.FindByID(ctx, o.ID)
+	if err != nil {
+		t.Fatalf("FindByID: %v", err)
+	}
+	if got == nil {
+		t.Fatal("FindByID returned nil after link")
+	}
+	if got.CustomerID != "cust-77" {
+		t.Errorf("CustomerID = %q, want cust-77", got.CustomerID)
+	}
+
+	// Linked order is no longer discoverable as a guest order.
+	guests, err := repo.FindByContactEmail(ctx, "guest@example.com")
+	if err != nil {
+		t.Fatalf("FindByContactEmail: %v", err)
+	}
+	if len(guests) != 0 {
+		t.Errorf("FindByContactEmail returned %d orders after link, want 0", len(guests))
+	}
+
+	// Linked orders show up in the customer's order history.
+	history, err := repo.FindByCustomerID(ctx, "cust-77")
+	if err != nil {
+		t.Fatalf("FindByCustomerID: %v", err)
+	}
+	if len(history) != 1 || history[0].ID != o.ID {
+		t.Errorf("FindByCustomerID = %v, want the linked order", history)
+	}
+}
+
+func TestOrderRepo_LinkToCustomer_AlreadyLinked(t *testing.T) {
+	db := testDB(t)
+	ensureProductsTable(t, db)
+	t.Cleanup(func() {
+		db.Exec("DELETE FROM order_items")
+		db.Exec("DELETE FROM orders")
+	})
+
+	repo, err := postgres.NewOrderRepo(db)
+	if err != nil {
+		t.Fatalf("NewOrderRepo: %v", err)
+	}
+	ctx := context.Background()
+
+	o := mustNewOrder(t, "cust-1", "EUR")
+	if err := repo.Save(ctx, &o); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+
+	relink := o
+	relink.CustomerID = "cust-2"
+	if err := repo.LinkToCustomer(ctx, &relink); err == nil {
+		t.Fatal("expected error when relinking an already-linked order")
+	}
+
+	got, err := repo.FindByID(ctx, o.ID)
+	if err != nil {
+		t.Fatalf("FindByID: %v", err)
+	}
+	if got.CustomerID != "cust-1" {
+		t.Errorf("CustomerID = %q, want cust-1 (unchanged)", got.CustomerID)
+	}
+}
+
+func TestOrderRepo_LinkToCustomer_NotFound(t *testing.T) {
+	db := testDB(t)
+	ensureProductsTable(t, db)
+
+	repo, err := postgres.NewOrderRepo(db)
+	if err != nil {
+		t.Fatalf("NewOrderRepo: %v", err)
+	}
+
+	o := mustNewGuestOrder(t, "guest@example.com", "EUR")
+	if err := o.LinkToCustomer("cust-77"); err != nil {
+		t.Fatalf("domain LinkToCustomer: %v", err)
+	}
+	// Never saved — should fail.
+	if err := repo.LinkToCustomer(context.Background(), &o); err == nil {
+		t.Fatal("expected error for non-existent order")
+	}
+}
+
 func TestOrderRepo_MultipleItems(t *testing.T) {
 	db := testDB(t)
 	ensureProductsTable(t, db)

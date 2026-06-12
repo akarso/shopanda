@@ -136,7 +136,8 @@ func (r *stubCheckoutOrderRepo) Save(_ context.Context, o *order.Order) error {
 	r.saved = o
 	return nil
 }
-func (r *stubCheckoutOrderRepo) UpdateStatus(_ context.Context, _ *order.Order) error { return nil }
+func (r *stubCheckoutOrderRepo) UpdateStatus(_ context.Context, _ *order.Order) error   { return nil }
+func (r *stubCheckoutOrderRepo) LinkToCustomer(_ context.Context, _ *order.Order) error { return nil }
 
 // stubCheckoutPriceRepo ─────────────────────────────────────────────────
 
