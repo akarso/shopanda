@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/akarso/shopanda/internal/application/auth"
 	"github.com/akarso/shopanda/internal/domain/order"
@@ -60,6 +61,16 @@ type RegisterAndLinkOutput struct {
 	CustomerID string
 	Email      string
 	Token      string
+	ExpiresAt  time.Time
+}
+
+// RegisterAndClaimInput contains registration fields for claiming all guest
+// orders under a verified contact email.
+type RegisterAndClaimInput struct {
+	ContactEmail string
+	Password     string
+	FirstName    string
+	LastName     string
 }
 
 // RegisterAndLink registers a new customer and links their claimed order in one transaction.
@@ -115,17 +126,88 @@ func (s *LinkOrderService) RegisterAndLink(ctx context.Context, in RegisterAndLi
 		return RegisterAndLinkOutput{}, fmt.Errorf("link order service: link order: %w", err)
 	}
 
-	// Persist the updated order
-	if err := s.orders.UpdateStatus(ctx, o); err != nil {
+	// Persist the customer linking
+	if err := s.orders.LinkToCustomer(ctx, o); err != nil {
 		if cleanupErr := s.auth.DeleteCustomer(ctx, createdCustomerID); cleanupErr != nil {
-			return RegisterAndLinkOutput{}, fmt.Errorf("link order service: update order: %w (cleanup customer: %v)", err, cleanupErr)
+			return RegisterAndLinkOutput{}, fmt.Errorf("link order service: persist link: %w (cleanup customer: %v)", err, cleanupErr)
 		}
-		return RegisterAndLinkOutput{}, fmt.Errorf("link order service: update order: %w", err)
+		return RegisterAndLinkOutput{}, fmt.Errorf("link order service: persist link: %w", err)
 	}
 
 	return RegisterAndLinkOutput{
 		CustomerID: regOut.CustomerID,
 		Email:      in.Email,
 		Token:      regOut.Token,
+		ExpiresAt:  regOut.ExpiresAt,
 	}, nil
+}
+
+// RegisterAndClaimByEmail registers a new customer under a verified guest
+// contact email and links every guest order carrying that contact email.
+// The caller is responsible for having verified that the contact email
+// belongs to the requester (claim token).
+func (s *LinkOrderService) RegisterAndClaimByEmail(ctx context.Context, in RegisterAndClaimInput) (RegisterAndLinkOutput, error) {
+	in.ContactEmail = strings.ToLower(strings.TrimSpace(in.ContactEmail))
+	in.FirstName = strings.TrimSpace(in.FirstName)
+	in.LastName = strings.TrimSpace(in.LastName)
+
+	if in.ContactEmail == "" {
+		return RegisterAndLinkOutput{}, fmt.Errorf("link order service: contact email must not be empty")
+	}
+	if in.Password == "" {
+		return RegisterAndLinkOutput{}, fmt.Errorf("link order service: password must not be empty")
+	}
+
+	guestOrders, err := s.orders.FindByContactEmail(ctx, in.ContactEmail)
+	if err != nil {
+		return RegisterAndLinkOutput{}, fmt.Errorf("link order service: find guest orders: %w", err)
+	}
+	if len(guestOrders) == 0 {
+		return RegisterAndLinkOutput{}, fmt.Errorf("link order service: no claimable orders for this email")
+	}
+
+	regOut, err := s.auth.Register(ctx, auth.RegisterInput{
+		Email:     in.ContactEmail,
+		Password:  in.Password,
+		FirstName: in.FirstName,
+		LastName:  in.LastName,
+	})
+	if err != nil {
+		return RegisterAndLinkOutput{}, fmt.Errorf("link order service: register: %w", err)
+	}
+
+	// Run the same per-order domain checks as RegisterAndLink before the
+	// atomic persist so invalid rows abort without touching the database.
+	for i := range guestOrders {
+		if err := guestOrders[i].LinkToCustomer(regOut.CustomerID); err != nil {
+			return s.cleanupAndFail(ctx, regOut.CustomerID, fmt.Errorf("link order service: link order %s: %w", guestOrders[i].ID, err))
+		}
+	}
+
+	// Link all matching guest orders in one atomic repository operation so a
+	// failure can never leave a partially claimed set of orders.
+	linked, err := s.orders.LinkToCustomerByContactEmail(ctx, in.ContactEmail, regOut.CustomerID, time.Now().UTC())
+	if err != nil {
+		return s.cleanupAndFail(ctx, regOut.CustomerID, fmt.Errorf("link order service: persist links: %w", err))
+	}
+	if linked == 0 {
+		// The orders found above were claimed by someone else in the meantime.
+		return s.cleanupAndFail(ctx, regOut.CustomerID, fmt.Errorf("link order service: no claimable orders for this email"))
+	}
+
+	return RegisterAndLinkOutput{
+		CustomerID: regOut.CustomerID,
+		Email:      in.ContactEmail,
+		Token:      regOut.Token,
+		ExpiresAt:  regOut.ExpiresAt,
+	}, nil
+}
+
+// cleanupAndFail removes the just-registered customer after a linking failure
+// so a retry of the claim flow is possible.
+func (s *LinkOrderService) cleanupAndFail(ctx context.Context, customerID string, cause error) (RegisterAndLinkOutput, error) {
+	if cleanupErr := s.auth.DeleteCustomer(ctx, customerID); cleanupErr != nil {
+		return RegisterAndLinkOutput{}, fmt.Errorf("%w (cleanup customer: %v)", cause, cleanupErr)
+	}
+	return RegisterAndLinkOutput{}, cause
 }

@@ -196,6 +196,12 @@ func (r *storefrontAccountOrderRepoStub) Save(_ context.Context, _ *order.Order)
 func (r *storefrontAccountOrderRepoStub) UpdateStatus(_ context.Context, _ *order.Order) error {
 	return nil
 }
+func (r *storefrontAccountOrderRepoStub) LinkToCustomer(_ context.Context, _ *order.Order) error {
+	return nil
+}
+func (r *storefrontAccountOrderRepoStub) LinkToCustomerByContactEmail(_ context.Context, _, _ string, _ time.Time) (int64, error) {
+	return 0, nil
+}
 
 type storefrontAccountDeleterStub struct{ deleted string }
 

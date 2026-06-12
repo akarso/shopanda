@@ -9,6 +9,7 @@ import (
 	"net/url"
 	"os"
 	"os/signal"
+	"path"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -927,6 +928,8 @@ func runServe(cfg *config.Config, log logger.Logger) error {
 		router.HandleFunc("GET /account/verify-email", storefront.AccountVerifyEmail())
 		router.HandleFunc("POST /account/logout", storefront.Logout())
 		router.HandleFunc("GET /account/orders", storefront.AccountOrders())
+		router.HandleFunc("GET /account/orders/claim", storefront.AccountOrdersClaim())
+		router.HandleFunc("POST /account/orders/claim", storefront.AccountOrdersClaim())
 		router.HandleFunc("GET /account/orders/{orderId}", storefront.AccountOrderDetail())
 		router.HandleFunc("GET /account/profile", storefront.AccountProfile())
 		router.HandleFunc("POST /account/profile", storefront.AccountProfile())
@@ -961,7 +964,6 @@ func runServe(cfg *config.Config, log logger.Logger) error {
 
 		// Guest order claim routes (public, no auth required).
 		router.HandleFunc("POST /api/v1/orders/claim-search", storefront.ClaimOrderSearch())
-		router.HandleFunc("POST /api/v1/orders/claim", storefront.ClaimOrder())
 		router.HandleFunc("POST /api/v1/orders/claim-register", storefront.ClaimLink())
 	}
 
@@ -1942,7 +1944,9 @@ func (e storefrontOrderClaimEmailer) SendClaimEmail(contactEmail, claimToken str
 	if err != nil || baseURL.Scheme == "" || baseURL.Host == "" {
 		return fmt.Errorf("storefront order claim emailer: invalid store base URL")
 	}
-	baseURL.Path = "/account/orders/claim"
+	// Preserve any configured base path so deployments mounted under a
+	// subpath still produce valid claim links.
+	baseURL.Path = path.Join("/", baseURL.Path, "account/orders/claim")
 	q := baseURL.Query()
 	q.Set("claim_token", claimToken)
 	baseURL.RawQuery = q.Encode()

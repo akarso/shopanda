@@ -170,6 +170,11 @@ func createTestTheme(t *testing.T) *theme.Engine {
 		t.Fatal(err)
 	}
 
+	accountOrdersClaim := `{{ define "title" }}Claim Orders{{ end }}{{ define "content" }}<section><h1>Claim your orders</h1>{{ if .ErrorMessage }}<p class="error">{{ .ErrorMessage }}</p>{{ end }}{{ if .Orders }}<p>Orders for {{ .Email }}</p>{{ range .Orders }}<article><strong>{{ .ID }}</strong><span>{{ .DateText }}</span><span>{{ .TotalText }}</span><em>{{ .Status }}</em></article>{{ end }}<form action="/account/orders/claim" method="post"><input type="hidden" name="csrf_token" value="{{ .CSRFToken }}"><input type="hidden" name="claim_token" value="{{ .ClaimToken }}"><input name="first_name" value="{{ .FirstName }}"><input name="last_name" value="{{ .LastName }}"><input name="password" type="password"><button type="submit">Create Account</button></form>{{ else if .EmptyMessage }}<p>{{ .EmptyMessage }}</p>{{ end }}</section>{{ end }}{{ template "layout.html" . }}`
+	if err := os.WriteFile(filepath.Join(tplDir, "account_orders_claim.html"), []byte(accountOrdersClaim), 0644); err != nil {
+		t.Fatal(err)
+	}
+
 	accountOrderDetail := `{{ define "title" }}Account Order{{ end }}{{ define "content" }}<section><nav><a href="{{ .AccountNav.OrdersURL }}">Orders</a><a href="{{ .AccountNav.ProfileURL }}">Profile</a><a href="{{ .AccountNav.SecurityURL }}">Security</a></nav><h1>Order {{ .OrderID }}</h1><p>{{ .Status }}</p><p>{{ .TotalText }}</p>{{ range .Items }}<article><strong>{{ .Name }}</strong><span>{{ .Quantity }}</span><span>{{ .LineTotalText }}</span></article>{{ end }}<a href="{{ .BackURL }}">Back</a></section>{{ end }}{{ template "layout.html" . }}`
 	if err := os.WriteFile(filepath.Join(tplDir, "account_order_detail.html"), []byte(accountOrderDetail), 0644); err != nil {
 		t.Fatal(err)
@@ -238,6 +243,8 @@ func newStorefrontRouter(h *shophttp.StorefrontHandler) http.Handler {
 	router.HandleFunc("GET /account/verify-email", h.AccountVerifyEmail())
 	router.HandleFunc("POST /account/logout", h.Logout())
 	router.HandleFunc("GET /account/orders", h.AccountOrders())
+	router.HandleFunc("GET /account/orders/claim", h.AccountOrdersClaim())
+	router.HandleFunc("POST /account/orders/claim", h.AccountOrdersClaim())
 	router.HandleFunc("GET /account/orders/{orderId}", h.AccountOrderDetail())
 	router.HandleFunc("GET /account/profile", h.AccountProfile())
 	router.HandleFunc("POST /account/profile", h.AccountProfile())
