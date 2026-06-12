@@ -5,6 +5,7 @@ import (
 	"errors"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/akarso/shopanda/internal/application/order"
 	domainOrder "github.com/akarso/shopanda/internal/domain/order"
@@ -81,6 +82,24 @@ func (r *mockOrderRepository) LinkToCustomer(ctx context.Context, o *domainOrder
 	clone := *o
 	r.orders[o.ID] = &clone
 	return nil
+}
+
+func (r *mockOrderRepository) LinkToCustomerByContactEmail(ctx context.Context, contactEmail, customerID string, updatedAt time.Time) (int64, error) {
+	if r.linkErr != nil {
+		return 0, r.linkErr
+	}
+	norm := strings.ToLower(strings.TrimSpace(contactEmail))
+	var linked int64
+	for id, o := range r.orders {
+		if o.CustomerID == "" && strings.ToLower(strings.TrimSpace(o.ContactEmail)) == norm {
+			clone := *o
+			clone.CustomerID = customerID
+			clone.UpdatedAt = updatedAt
+			r.orders[id] = &clone
+			linked++
+		}
+	}
+	return linked, nil
 }
 
 func mustNewTestGuestOrder(t *testing.T, contactEmail string) domainOrder.Order {

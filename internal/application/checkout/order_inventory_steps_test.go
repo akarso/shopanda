@@ -86,8 +86,11 @@ func (r *mockOrderRepo) Save(_ context.Context, o *order.Order) error {
 	r.saved = o
 	return nil
 }
-func (r *mockOrderRepo) UpdateStatus(_ context.Context, _ *order.Order) error    { return nil }
-func (r *mockOrderRepo) LinkToCustomer(_ context.Context, _ *order.Order) error  { return nil }
+func (r *mockOrderRepo) UpdateStatus(_ context.Context, _ *order.Order) error   { return nil }
+func (r *mockOrderRepo) LinkToCustomer(_ context.Context, _ *order.Order) error { return nil }
+func (r *mockOrderRepo) LinkToCustomerByContactEmail(_ context.Context, _, _ string, _ time.Time) (int64, error) {
+	return 0, nil
+}
 
 // ============================================================
 // Helpers

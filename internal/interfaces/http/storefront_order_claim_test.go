@@ -79,6 +79,21 @@ func (r *storefrontOrderClaimRepoStub) LinkToCustomer(_ context.Context, o *doma
 	return nil
 }
 
+func (r *storefrontOrderClaimRepoStub) LinkToCustomerByContactEmail(_ context.Context, contactEmail, customerID string, updatedAt time.Time) (int64, error) {
+	norm := strings.ToLower(strings.TrimSpace(contactEmail))
+	var linked int64
+	for id, o := range r.byID {
+		if o.CustomerID == "" && strings.ToLower(strings.TrimSpace(o.ContactEmail)) == norm {
+			clone := *o
+			clone.CustomerID = customerID
+			clone.UpdatedAt = updatedAt
+			r.byID[id] = &clone
+			linked++
+		}
+	}
+	return linked, nil
+}
+
 type storefrontOrderClaimEmailerStub struct {
 	lastEmail string
 	lastToken string
@@ -280,27 +295,43 @@ func TestStorefrontHandler_ClaimOrderSearch_Matches_SendsEmailWithSameResponse(t
 		WithOrderClaim(claimSvc).
 		WithOrderClaimEmailer(emailer).
 		WithAccountSecurity("test-secret", time.Minute)
+	handler := h.ClaimOrderSearch()
 
 	o := mustNewStorefrontGuestOrder(t, "guest@example.com")
 	if err := repo.Save(context.Background(), &o); err != nil {
 		t.Fatalf("Save: %v", err)
 	}
 
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/orders/claim-search", strings.NewReader(url.Values{
-		"contact_email": []string{"guest@example.com"},
-	}.Encode()))
-	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	rec := httptest.NewRecorder()
-	h.ClaimOrderSearch().ServeHTTP(rec, req)
+	search := func(email string) *httptest.ResponseRecorder {
+		req := httptest.NewRequest(http.MethodPost, "/api/v1/orders/claim-search", strings.NewReader(url.Values{
+			"contact_email": []string{email},
+		}.Encode()))
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		rec := httptest.NewRecorder()
+		handler.ServeHTTP(rec, req)
+		return rec
+	}
 
-	if rec.Code != http.StatusOK {
-		t.Fatalf("status = %d, want %d; body: %s", rec.Code, http.StatusOK, rec.Body.String())
+	noMatchRec := search("nobody@example.com")
+	if noMatchRec.Code != http.StatusOK {
+		t.Fatalf("no-match status = %d, want %d; body: %s", noMatchRec.Code, http.StatusOK, noMatchRec.Body.String())
+	}
+	if emailer.lastToken != "" {
+		t.Fatal("did not expect claim email for unknown address")
+	}
+
+	matchRec := search("guest@example.com")
+	if matchRec.Code != http.StatusOK {
+		t.Fatalf("match status = %d, want %d; body: %s", matchRec.Code, http.StatusOK, matchRec.Body.String())
 	}
 	if emailer.lastToken == "" || emailer.lastEmail != "guest@example.com" {
 		t.Fatalf("expected claim email to guest@example.com, got %q (token %q)", emailer.lastEmail, emailer.lastToken)
 	}
-	if !strings.Contains(rec.Body.String(), "If any orders exist for this email") {
-		t.Fatalf("expected generic message, got body: %s", rec.Body.String())
+
+	// The full payload must be identical in both branches so the endpoint
+	// cannot be used to enumerate which emails have orders.
+	if matchRec.Body.String() != noMatchRec.Body.String() {
+		t.Fatalf("response bodies differ:\nno match: %s\nmatch:    %s", noMatchRec.Body.String(), matchRec.Body.String())
 	}
 }
 

@@ -76,6 +76,9 @@ func (r *stubOrderRepo) Save(_ context.Context, o *order.Order) error {
 
 func (r *stubOrderRepo) UpdateStatus(_ context.Context, _ *order.Order) error   { return nil }
 func (r *stubOrderRepo) LinkToCustomer(_ context.Context, _ *order.Order) error { return nil }
+func (r *stubOrderRepo) LinkToCustomerByContactEmail(_ context.Context, _, _ string, _ time.Time) (int64, error) {
+	return 0, nil
+}
 
 // ── helpers ─────────────────────────────────────────────────────────────
 

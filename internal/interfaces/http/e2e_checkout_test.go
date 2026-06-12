@@ -128,6 +128,9 @@ func (r *e2eOrderRepo) Save(_ context.Context, o *order.Order) error {
 }
 func (r *e2eOrderRepo) UpdateStatus(context.Context, *order.Order) error   { return nil }
 func (r *e2eOrderRepo) LinkToCustomer(context.Context, *order.Order) error { return nil }
+func (r *e2eOrderRepo) LinkToCustomerByContactEmail(context.Context, string, string, time.Time) (int64, error) {
+	return 0, nil
+}
 
 func e2eLogger() logger.Logger {
 	return logger.NewWithWriter(io.Discard, "error")

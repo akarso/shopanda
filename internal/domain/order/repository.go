@@ -1,6 +1,9 @@
 package order
 
-import "context"
+import (
+	"context"
+	"time"
+)
 
 // OrderRepository defines persistence operations for orders.
 type OrderRepository interface {
@@ -29,4 +32,9 @@ type OrderRepository interface {
 	// The order must already carry the new CustomerID (set via Order.LinkToCustomer).
 	// Fails when the order does not exist or is already linked to a customer.
 	LinkToCustomer(ctx context.Context, order *Order) error
+
+	// LinkToCustomerByContactEmail atomically links every unclaimed guest order
+	// carrying the contact email to the customer, so a multi-order claim can
+	// never be partially persisted. Returns the number of orders linked.
+	LinkToCustomerByContactEmail(ctx context.Context, contactEmail, customerID string, updatedAt time.Time) (int64, error)
 }

@@ -9,6 +9,7 @@ import (
 	"net/url"
 	"os"
 	"os/signal"
+	"path"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -1943,7 +1944,9 @@ func (e storefrontOrderClaimEmailer) SendClaimEmail(contactEmail, claimToken str
 	if err != nil || baseURL.Scheme == "" || baseURL.Host == "" {
 		return fmt.Errorf("storefront order claim emailer: invalid store base URL")
 	}
-	baseURL.Path = "/account/orders/claim"
+	// Preserve any configured base path so deployments mounted under a
+	// subpath still produce valid claim links.
+	baseURL.Path = path.Join("/", baseURL.Path, "account/orders/claim")
 	q := baseURL.Query()
 	q.Set("claim_token", claimToken)
 	baseURL.RawQuery = q.Encode()

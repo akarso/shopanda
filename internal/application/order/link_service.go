@@ -176,17 +176,15 @@ func (s *LinkOrderService) RegisterAndClaimByEmail(ctx context.Context, in Regis
 		return RegisterAndLinkOutput{}, fmt.Errorf("link order service: register: %w", err)
 	}
 
-	// Validate and mutate all domain objects before persisting anything so a
-	// validation failure cannot leave a partially claimed set of orders.
-	for i := range guestOrders {
-		if err := guestOrders[i].LinkToCustomer(regOut.CustomerID); err != nil {
-			return s.cleanupAndFail(ctx, regOut.CustomerID, fmt.Errorf("link order service: link order %s: %w", guestOrders[i].ID, err))
-		}
+	// Link all matching guest orders in one atomic repository operation so a
+	// failure can never leave a partially claimed set of orders.
+	linked, err := s.orders.LinkToCustomerByContactEmail(ctx, in.ContactEmail, regOut.CustomerID, time.Now().UTC())
+	if err != nil {
+		return s.cleanupAndFail(ctx, regOut.CustomerID, fmt.Errorf("link order service: persist links: %w", err))
 	}
-	for i := range guestOrders {
-		if err := s.orders.LinkToCustomer(ctx, &guestOrders[i]); err != nil {
-			return s.cleanupAndFail(ctx, regOut.CustomerID, fmt.Errorf("link order service: persist link %s: %w", guestOrders[i].ID, err))
-		}
+	if linked == 0 {
+		// The orders found above were claimed by someone else in the meantime.
+		return s.cleanupAndFail(ctx, regOut.CustomerID, fmt.Errorf("link order service: no claimable orders for this email"))
 	}
 
 	return RegisterAndLinkOutput{

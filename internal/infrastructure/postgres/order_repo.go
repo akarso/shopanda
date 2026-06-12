@@ -298,11 +298,12 @@ func (r *OrderRepo) LinkToCustomer(ctx context.Context, o *order.Order) error {
 	if o == nil {
 		return fmt.Errorf("order_repo: link to customer: order must not be nil")
 	}
-	if strings.TrimSpace(o.CustomerID) == "" {
+	customerID := strings.TrimSpace(o.CustomerID)
+	if customerID == "" {
 		return fmt.Errorf("order_repo: link to customer: empty customer id")
 	}
 	const q = `UPDATE orders SET customer_id = $1, updated_at = $2 WHERE id = $3 AND customer_id = ''`
-	res, err := r.db.ExecContext(ctx, q, o.CustomerID, o.UpdatedAt, o.ID)
+	res, err := r.db.ExecContext(ctx, q, customerID, o.UpdatedAt, o.ID)
 	if err != nil {
 		return fmt.Errorf("order_repo: link to customer: %w", err)
 	}
@@ -314,6 +315,30 @@ func (r *OrderRepo) LinkToCustomer(ctx context.Context, o *order.Order) error {
 		return fmt.Errorf("order_repo: link to customer: order not found or already linked")
 	}
 	return nil
+}
+
+// LinkToCustomerByContactEmail atomically links every unclaimed guest order
+// carrying the contact email to the customer. A single UPDATE statement keeps
+// the multi-order claim all-or-nothing.
+func (r *OrderRepo) LinkToCustomerByContactEmail(ctx context.Context, contactEmail, customerID string, updatedAt time.Time) (int64, error) {
+	email := strings.ToLower(strings.TrimSpace(contactEmail))
+	if email == "" {
+		return 0, fmt.Errorf("order_repo: link by contact email: empty email")
+	}
+	customerID = strings.TrimSpace(customerID)
+	if customerID == "" {
+		return 0, fmt.Errorf("order_repo: link by contact email: empty customer id")
+	}
+	const q = `UPDATE orders SET customer_id = $1, updated_at = $2 WHERE LOWER(contact_email) = $3 AND customer_id = ''`
+	res, err := r.db.ExecContext(ctx, q, customerID, updatedAt, email)
+	if err != nil {
+		return 0, fmt.Errorf("order_repo: link by contact email: %w", err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return 0, fmt.Errorf("order_repo: link by contact email rows affected: %w", err)
+	}
+	return n, nil
 }
 
 // loadItems fetches all items for a single order, ordered by created_at.

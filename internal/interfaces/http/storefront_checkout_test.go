@@ -91,6 +91,9 @@ func (r *storefrontCheckoutOrderRepoStub) UpdateStatus(_ context.Context, _ *ord
 func (r *storefrontCheckoutOrderRepoStub) LinkToCustomer(_ context.Context, _ *order.Order) error {
 	return nil
 }
+func (r *storefrontCheckoutOrderRepoStub) LinkToCustomerByContactEmail(_ context.Context, _, _ string, _ time.Time) (int64, error) {
+	return 0, nil
+}
 
 type storefrontCheckoutShipmentRepoStub struct {
 	created *shipping.Shipment
