@@ -58,6 +58,21 @@ func TestRegisterProductSchemas_Form(t *testing.T) {
 	if statusField.Default != "draft" {
 		t.Errorf("status default = %v, want %q", statusField.Default, "draft")
 	}
+
+	// Each field declares its scope so the admin UI can render scope badges.
+	wantScopes := map[string]string{
+		"name":        "translatable",
+		"slug":        "global",
+		"description": "translatable",
+		"status":      "global",
+	}
+	for _, field := range form.Fields {
+		want := wantScopes[field.Name]
+		got, _ := field.Meta["scope"].(string)
+		if got != want {
+			t.Errorf("field %q scope = %q, want %q", field.Name, got, want)
+		}
+	}
 }
 
 func TestRegisterProductSchemas_Grid(t *testing.T) {

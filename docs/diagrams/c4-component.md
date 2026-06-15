@@ -17,6 +17,8 @@ C4Component
             Component(authHandler, "AuthHandler", "HTTP", "Register, Login, Logout, Me, PasswordReset")
             Component(productHandler, "ProductHandler", "HTTP", "List, Get products (public)")
             Component(productAdmin, "ProductAdminHandler", "HTTP", "Create, Update products (admin)")
+            Component(productTranslationAdmin, "ProductTranslationAdminHandler", "HTTP", "Read/write per-language product translations for active language scope (admin)")
+            Component(productPriceAdmin, "ProductPriceAdminHandler", "HTTP", "Read/write store-scoped variant prices for active store+currency scope (admin)")
             Component(variantHandler, "VariantHandler", "HTTP", "CRUD variants")
             Component(cartHandler, "CartHandler", "HTTP", "Create, Get, AddItem, UpdateItem, RemoveItem")
             Component(checkoutHandler, "CheckoutHandler", "HTTP", "StartCheckout")
