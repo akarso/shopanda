@@ -48,7 +48,15 @@ func (s *stubTranslationRepo) Upsert(_ context.Context, ct *translation.ContentT
 	}
 	s.upserts = append(s.upserts, *ct)
 	key := ct.EntityID + "|" + ct.Language
-	s.byEntityLang[key] = append(s.byEntityLang[key], *ct)
+	existing := s.byEntityLang[key]
+	for i := range existing {
+		if existing[i].Field == ct.Field {
+			existing[i] = *ct
+			s.byEntityLang[key] = existing
+			return nil
+		}
+	}
+	s.byEntityLang[key] = append(existing, *ct)
 	return nil
 }
 

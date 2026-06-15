@@ -180,10 +180,10 @@ func (h *ProductTranslationAdminHandler) Update() http.HandlerFunc {
 		}
 		for field, value := range req.Entries {
 			value = strings.TrimSpace(value)
-			entries[field] = value
 			if value == "" {
 				continue
 			}
+			entries[field] = value
 			ct, err := translation.NewContentTranslation(pid, language, field, value)
 			if err != nil {
 				err := apperror.Validation(err.Error())
