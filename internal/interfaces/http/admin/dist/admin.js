@@ -963,6 +963,7 @@
         container.innerHTML =
             '<h2>' + title + '</h2>' +
             '<p><a href="/admin/products" data-link>Back to products</a></p>' +
+            '<div id="product-scope-banner" class="settings-scope-banner"></div>' +
             '<div id="product-form-msg"></div>' +
             '<form id="product-form"></form>' +
             '<section id="product-category-panel" style="display:none; margin-top:2rem;">' +
@@ -984,17 +985,30 @@
 
         var msg = document.getElementById("product-form-msg");
         var form = document.getElementById("product-form");
+        var activeScope = {
+            storeID: adminScope.store_id || '',
+            language: adminScope.language || '',
+            currency: adminScope.currency || ''
+        };
+        renderProductScopeBanner(activeScope);
 
         var requests = [api("/admin/forms/product.form")];
         if (productID) {
             requests.push(api("/admin/products/" + encodeURIComponent(productID)));
+            if (activeScope.language) {
+                requests.push(api("/admin/products/" + encodeURIComponent(productID) + "/translations"));
+            }
         }
 
         Promise.all(requests).then(function (results) {
             var schema = results[0] && results[0].data && results[0].data.form;
             var product = null;
+            var translations = {};
             if (productID) {
                 product = normalizeProduct(results[1] && results[1].data && results[1].data.product);
+                if (activeScope.language && results[2] && results[2].data && results[2].data.entries) {
+                    translations = results[2].data.entries;
+                }
             }
             if (!schema || !schema.fields) {
                 msg.innerHTML = '<p role="alert">Failed to load form schema.</p>';
@@ -1003,7 +1017,7 @@
 
             var html = "";
             for (var i = 0; i < schema.fields.length; i++) {
-                html += renderSchemaField(schema.fields[i], product);
+                html += renderSchemaField(schema.fields[i], product, translations, !!productID);
             }
             html += renderProductMediaField(product);
             html += '<button type="submit">' + (productID ? 'Save Product' : 'Create Product') + '</button>';
@@ -1013,7 +1027,7 @@
 
             form.addEventListener("submit", function (e) {
                 e.preventDefault();
-                var payload = collectProductPayload(schema.fields, form);
+                var payload = collectProductPayload(schema.fields, form, !!productID);
                 var method = productID ? "PUT" : "POST";
                 var url = productID ? "/admin/products/" + encodeURIComponent(productID) : "/admin/products";
                 api(url, { method: method, body: JSON.stringify(payload) }).then(function (body) {
@@ -1021,10 +1035,14 @@
                         msg.innerHTML = '<p role="alert">' + esc(body.error.message || "Save failed") + '</p>';
                         return;
                     }
-                    msg.innerHTML = '<p>Saved.</p>';
-                    if (!productID && body && body.data && body.data.product && body.data.product.id) {
-                        navigateTo("/admin/products/" + body.data.product.id);
+                    if (!productID) {
+                        msg.innerHTML = '<p>Saved.</p>';
+                        if (body && body.data && body.data.product && body.data.product.id) {
+                            navigateTo("/admin/products/" + body.data.product.id);
+                        }
+                        return;
                     }
+                    saveProductTranslations(productID, activeScope, schema.fields, form, msg);
                 }).catch(function () {
                     msg.innerHTML = '<p role="alert">Save failed.</p>';
                 });
@@ -1037,6 +1055,65 @@
         }).catch(function () {
             msg.innerHTML = '<p role="alert">Failed to load product form.</p>';
         });
+    }
+
+    function saveProductTranslations(productID, activeScope, fields, form, msg) {
+        var entries = collectProductTranslationPayload(fields, form);
+        if (!activeScope.language || !entries) {
+            msg.innerHTML = '<p>Saved.</p>';
+            return;
+        }
+        api("/admin/products/" + encodeURIComponent(productID) + "/translations", {
+            method: "PUT",
+            body: JSON.stringify({ entries: entries })
+        }).then(function (body) {
+            if (body && body.error) {
+                msg.innerHTML = '<p role="alert">' + esc(body.error.message || "Save failed") + '</p>';
+                return;
+            }
+            msg.innerHTML = '<p>Saved.</p>';
+        }).catch(function () {
+            msg.innerHTML = '<p role="alert">Save failed.</p>';
+        });
+    }
+
+    function productFieldScope(field) {
+        if (field && field.meta && typeof field.meta.scope === "string" && field.meta.scope) {
+            return field.meta.scope;
+        }
+        return "global";
+    }
+
+    function renderProductFieldScopeBadge(scope) {
+        if (scope === "store") {
+            return ' <span class="settings-scope-badge settings-scope-badge-store">Store-scoped</span>';
+        }
+        if (scope === "translatable") {
+            return ' <span class="settings-scope-badge settings-scope-badge-translatable">Translatable</span>';
+        }
+        return ' <span class="settings-scope-badge settings-scope-badge-global">Global</span>';
+    }
+
+    function renderProductScopeBanner(scope) {
+        var banner = document.getElementById("product-scope-banner");
+        if (!banner) {
+            return;
+        }
+        var language = scope && scope.language ? scope.language : "";
+        var storeID = scope && scope.storeID ? scope.storeID : "";
+        var currency = scope && scope.currency ? scope.currency : "";
+        var meta = "";
+        if (storeID) {
+            meta += ' Store: <strong>' + esc(storeID) + '</strong>.';
+        }
+        if (currency) {
+            meta += ' Currency: <strong>' + esc(currency) + '</strong>.';
+        }
+        if (language) {
+            banner.innerHTML = '<p><strong>Current catalog scope:</strong> Translatable fields edit the <strong>' + esc(language) + '</strong> translation; global fields apply to all stores and languages.' + meta + ' Change language in the header switcher to edit another translation.</p>';
+            return;
+        }
+        banner.innerHTML = '<p><strong>Current catalog scope:</strong> Global defaults. Select a language in the header switcher to edit per-language translations.' + meta + '</p>';
     }
 
     function setupProductCategoryAssignment(productID) {
@@ -1396,12 +1473,16 @@
         return rawOffset > maxOffset ? maxOffset : rawOffset;
     }
 
-    function renderSchemaField(field, product) {
+    function renderSchemaField(field, product, translations, isEdit) {
         var name = field.name;
-        var label = esc(field.label || name);
+        var scope = productFieldScope(field);
+        var label = esc(field.label || name) + renderProductFieldScopeBadge(scope);
         var value = field.default;
         if (product && product[name] != null) {
             value = product[name];
+        }
+        if (isEdit && scope === "translatable" && translations && typeof translations[name] === "string" && translations[name] !== "") {
+            value = translations[name];
         }
         if (value == null) {
             value = "";
@@ -1432,12 +1513,17 @@
         return '<label>' + label + '<input type="text" name="' + esc(name) + '" value="' + esc(String(value)) + '" ' + (field.required ? 'required' : '') + '></label>';
     }
 
-    function collectProductPayload(fields, form) {
+    function collectProductPayload(fields, form, isEdit) {
         var payload = { attributes: {} };
         for (var i = 0; i < fields.length; i++) {
             var f = fields[i];
             var el = form.elements[f.name];
             if (!el) {
+                continue;
+            }
+            // In edit mode translatable fields are persisted via the per-language
+            // translations API, so leave the global product values untouched.
+            if (isEdit && productFieldScope(f) === "translatable") {
                 continue;
             }
             var v;
@@ -1461,6 +1547,24 @@
             delete payload.attributes;
         }
         return payload;
+    }
+
+    function collectProductTranslationPayload(fields, form) {
+        var entries = {};
+        var has = false;
+        for (var i = 0; i < fields.length; i++) {
+            var f = fields[i];
+            if (productFieldScope(f) !== "translatable") {
+                continue;
+            }
+            var el = form.elements[f.name];
+            if (!el) {
+                continue;
+            }
+            entries[f.name] = el.value;
+            has = true;
+        }
+        return has ? entries : null;
     }
 
     function renderProductMediaField(product) {
@@ -1574,7 +1678,10 @@
             container.innerHTML = '<p>No variants yet.</p>';
             return;
         }
-        var html = '<table><thead><tr><th scope="col">SKU</th><th scope="col">Name</th><th scope="col">Weight</th><th scope="col">Action</th></tr></thead><tbody>';
+        var currency = adminScope.currency || '';
+        var storeID = adminScope.store_id || '';
+        var priceHeader = currency ? ('Price (minor units, ' + esc(currency) + ')') : 'Price';
+        var html = '<table><thead><tr><th scope="col">SKU</th><th scope="col">Name</th><th scope="col">Weight</th><th scope="col">' + priceHeader + '</th><th scope="col">Action</th></tr></thead><tbody>';
         for (var i = 0; i < variants.length; i++) {
             var v = variants[i];
             var variantLabel = esc((v.sku || v.name || v.id || 'variant'));
@@ -1582,10 +1689,19 @@
             html += '<td><input data-field="sku" value="' + esc(v.sku || '') + '"></td>';
             html += '<td><input data-field="name" value="' + esc(v.name || '') + '"></td>';
             html += '<td><input data-field="weight" type="number" step="0.01" min="0" value="' + esc(v.weight == null ? '' : String(v.weight)) + '"></td>';
+            if (currency) {
+                html += '<td><input data-field="price" type="number" step="1" min="1" aria-label="Store price for ' + variantLabel + '"> <button type="button" aria-label="Save price ' + variantLabel + '" class="variant-price-save-btn">Save Price</button></td>';
+            } else {
+                html += '<td><span class="settings-scope-note">Select a currency context to edit price.</span></td>';
+            }
             html += '<td><button type="button" aria-label="Save variant ' + variantLabel + '" class="variant-save-btn">Save</button></td>';
             html += '</tr>';
         }
         html += '</tbody></table>';
+        if (currency) {
+            var scopeText = storeID ? ('store override for ' + esc(storeID)) : 'the global/default price';
+            html += '<p class="settings-scope-note">Prices save as ' + scopeText + ' in <strong>' + esc(currency) + '</strong>. Change store or currency in the header switcher to edit another scope.</p>';
+        }
         container.innerHTML = html;
 
         var buttons = container.querySelectorAll(".variant-save-btn");
@@ -1608,6 +1724,65 @@
                         return;
                     }
                     reload();
+                });
+            });
+        }
+
+        if (currency) {
+            loadVariantPrices(container, productID);
+            bindVariantPriceSave(container, productID);
+        }
+    }
+
+    function loadVariantPrices(container, productID) {
+        var rows = container.querySelectorAll('tr[data-variant-id]');
+        for (var i = 0; i < rows.length; i++) {
+            (function (row) {
+                var variantID = row.getAttribute('data-variant-id');
+                var input = row.querySelector('[data-field="price"]');
+                if (!input) {
+                    return;
+                }
+                api("/admin/products/" + encodeURIComponent(productID) + "/variants/" + encodeURIComponent(variantID) + "/price").then(function (body) {
+                    if (body && body.data && body.data.price && body.data.price.amount != null) {
+                        input.value = String(body.data.price.amount);
+                    }
+                }).catch(function () {});
+            })(rows[i]);
+        }
+    }
+
+    function bindVariantPriceSave(container, productID) {
+        var buttons = container.querySelectorAll('.variant-price-save-btn');
+        for (var j = 0; j < buttons.length; j++) {
+            buttons[j].addEventListener("click", function (e) {
+                var row = e.target.closest("tr");
+                var variantID = row.getAttribute("data-variant-id");
+                var input = row.querySelector('[data-field="price"]');
+                var msg = document.getElementById("variant-msg");
+                if (!input || input.value === "") {
+                    if (msg) {
+                        msg.innerHTML = '<p role="alert">Enter a price amount in minor units.</p>';
+                    }
+                    return;
+                }
+                api("/admin/products/" + encodeURIComponent(productID) + "/variants/" + encodeURIComponent(variantID) + "/price", {
+                    method: "PUT",
+                    body: JSON.stringify({ amount: Number(input.value) })
+                }).then(function (body) {
+                    if (body && body.error) {
+                        if (msg) {
+                            msg.innerHTML = '<p role="alert">' + esc(body.error.message || "Save price failed") + '</p>';
+                        }
+                        return;
+                    }
+                    if (msg) {
+                        msg.innerHTML = '<p>Price saved.</p>';
+                    }
+                }).catch(function () {
+                    if (msg) {
+                        msg.innerHTML = '<p role="alert">Save price failed.</p>';
+                    }
                 });
             });
         }

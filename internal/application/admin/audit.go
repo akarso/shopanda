@@ -20,6 +20,13 @@ const (
 	AuditProductCreate  AuditAction = "product.create"
 	AuditProductRead    AuditAction = "product.read"
 	AuditProductUpdate  AuditAction = "product.update"
+
+	// Scoped catalog editing (PR-E catalog slice)
+	AuditProductTranslationRead   AuditAction = "product.translation.read"
+	AuditProductTranslationUpdate AuditAction = "product.translation.update"
+	AuditPriceRead                AuditAction = "price.read"
+	AuditPriceUpdate              AuditAction = "price.update"
+
 	AuditStatsRead      AuditAction = "stats.read"
 	AuditCustomerDelete AuditAction = "customer.delete"
 	AuditCustomerRead   AuditAction = "customer.read"

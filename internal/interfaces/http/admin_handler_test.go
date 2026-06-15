@@ -148,7 +148,7 @@ func TestAdminHandler_StaticJS(t *testing.T) {
 		"totalAvailablePages",
 		"aria-label=\"Remove product",
 		"aria-label=\"Remove category",
-		"<th scope=\"col\">SKU</th><th scope=\"col\">Name</th><th scope=\"col\">Weight</th><th scope=\"col\">Action</th>",
+		"<th scope=\"col\">SKU</th><th scope=\"col\">Name</th><th scope=\"col\">Weight</th><th scope=\"col\">' + priceHeader + '</th><th scope=\"col\">Action</th>",
 		"<th scope=\"col\">ID</th><th scope=\"col\">Customer</th><th scope=\"col\">Total</th><th scope=\"col\">Status</th><th scope=\"col\">Payment</th><th scope=\"col\">Date</th><th scope=\"col\">Action</th>",
 		"aria-label=\"Save variant",
 	}
@@ -249,6 +249,27 @@ func TestAdminHandler_StaticJS(t *testing.T) {
 	}
 	if !strings.Contains(normalizedBody, "Language: <strong>") || !strings.Contains(normalizedBody, "Currency: <strong>") {
 		t.Fatalf("expected scope banner to include language and currency context in JS")
+	}
+	expectedScopedCatalogWiring := []string{
+		"product-scope-banner",
+		"renderProductScopeBanner",
+		"renderProductFieldScopeBadge",
+		"productFieldScope",
+		"Current catalog scope:",
+		"collectProductTranslationPayload",
+		"saveProductTranslations",
+		"/translations",
+		"loadVariantPrices",
+		"bindVariantPriceSave",
+		"/price",
+		"variant-price-save-btn",
+		"Price (minor units, ",
+		"Select a currency context to edit price.",
+	}
+	for _, expected := range expectedScopedCatalogWiring {
+		if !strings.Contains(normalizedBody, expected) {
+			t.Fatalf("expected scoped catalog editing wiring in JS to contain %q", expected)
+		}
 	}
 	if !strings.Contains(normalizedBody, "renderShippingSettingsPage") || !strings.Contains(normalizedBody, "renderPaymentSettingsPage") {
 		t.Fatalf("expected operations settings pages wiring in JS")

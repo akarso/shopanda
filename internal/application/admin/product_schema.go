@@ -2,13 +2,25 @@ package admin
 
 import "github.com/akarso/shopanda/internal/domain/admin"
 
+// Field scope values mirror the config field_scopes model so the admin UI can
+// render the same scope banner and per-field badges for catalog editing.
+const (
+	scopeGlobal       = "global"
+	scopeTranslatable = "translatable"
+	scopeStore        = "store"
+)
+
+func scopeMeta(scope string) map[string]interface{} {
+	return map[string]interface{}{"scope": scope}
+}
+
 // RegisterProductSchemas registers the product form and grid with the admin registry.
 func RegisterProductSchemas(r *admin.Registry) {
 	r.RegisterForm("product.form", admin.Form{
 		Fields: []admin.Field{
-			{Name: "name", Type: "text", Label: "Product Name", Required: true},
-			{Name: "slug", Type: "text", Label: "Slug", Required: true},
-			{Name: "description", Type: "text", Label: "Description"},
+			{Name: "name", Type: "text", Label: "Product Name", Required: true, Meta: scopeMeta(scopeTranslatable)},
+			{Name: "slug", Type: "text", Label: "Slug", Required: true, Meta: scopeMeta(scopeGlobal)},
+			{Name: "description", Type: "text", Label: "Description", Meta: scopeMeta(scopeTranslatable)},
 			{
 				Name:  "status",
 				Type:  "select",
@@ -19,6 +31,7 @@ func RegisterProductSchemas(r *admin.Registry) {
 					{Label: "Archived", Value: "archived"},
 				},
 				Default: "draft",
+				Meta:    scopeMeta(scopeGlobal),
 			},
 		},
 	})
