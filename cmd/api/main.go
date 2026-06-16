@@ -367,6 +367,12 @@ func runServe(cfg *config.Config, log logger.Logger) error {
 		return err
 	}
 
+	// Saved customer addresses repository.
+	customerAddressRepo, err := postgres.NewCustomerAddressRepo(conn)
+	if err != nil {
+		return err
+	}
+
 	// Providers.
 	manualPayProvider := manualpay.NewProvider()
 	flatRateProvider := flatrate.NewProvider(shared.MustNewMoney(500, "USD"))
@@ -917,6 +923,7 @@ func runServe(cfg *config.Config, log logger.Logger) error {
 			WithCart(variantRepo, cartService).
 			WithCheckout([]shipping.Provider{flatRateProvider}, payProvider, checkoutService).
 			WithAccount(authService, orderRepo, accountService).
+			WithAccountProfile(customerAddressRepo, consentRepo).
 			WithOrderClaim(claimService).
 			WithOrderClaimEmailer(claimEmailer).
 			WithOrderLinker(linkLinker).
@@ -941,6 +948,13 @@ func runServe(cfg *config.Config, log logger.Logger) error {
 		router.HandleFunc("GET /account/orders/{orderId}", storefront.AccountOrderDetail())
 		router.HandleFunc("GET /account/profile", storefront.AccountProfile())
 		router.HandleFunc("POST /account/profile", storefront.AccountProfile())
+		router.HandleFunc("GET /account/addresses", storefront.AccountAddresses())
+		router.HandleFunc("POST /account/addresses", storefront.AccountAddressCreate())
+		router.HandleFunc("POST /account/addresses/{addressId}", storefront.AccountAddressUpdate())
+		router.HandleFunc("POST /account/addresses/{addressId}/default", storefront.AccountAddressSetDefault())
+		router.HandleFunc("POST /account/addresses/{addressId}/delete", storefront.AccountAddressDelete())
+		router.HandleFunc("GET /account/preferences", storefront.AccountPreferences())
+		router.HandleFunc("POST /account/preferences", storefront.AccountPreferences())
 		router.HandleFunc("GET /account/security", storefront.AccountSecurity())
 		router.HandleFunc("GET /account/security/verify", storefront.AccountSecurityVerify())
 		router.HandleFunc("POST /account/security/verify", storefront.AccountSecurityVerify())

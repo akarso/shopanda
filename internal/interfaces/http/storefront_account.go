@@ -86,10 +86,12 @@ type StorefrontAccountOrderDetailPageData struct {
 }
 
 type StorefrontAccountNavData struct {
-	OrdersURL   string
-	ProfileURL  string
-	SecurityURL string
-	Current     string
+	OrdersURL      string
+	ProfileURL     string
+	AddressesURL   string
+	PreferencesURL string
+	SecurityURL    string
+	Current        string
 }
 
 type StorefrontAccountProfilePageData struct {
@@ -619,10 +621,12 @@ func (h *StorefrontHandler) requireStorefrontAccount(w http.ResponseWriter, r *h
 
 func storefrontAccountNav(current string) StorefrontAccountNavData {
 	return StorefrontAccountNavData{
-		OrdersURL:   "/account/orders",
-		ProfileURL:  "/account/profile",
-		SecurityURL: "/account/security",
-		Current:     strings.TrimSpace(current),
+		OrdersURL:      "/account/orders",
+		ProfileURL:     "/account/profile",
+		AddressesURL:   "/account/addresses",
+		PreferencesURL: "/account/preferences",
+		SecurityURL:    "/account/security",
+		Current:        strings.TrimSpace(current),
 	}
 }
 

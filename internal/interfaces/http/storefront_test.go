@@ -185,6 +185,16 @@ func createTestTheme(t *testing.T) *theme.Engine {
 		t.Fatal(err)
 	}
 
+	accountAddresses := `{{ define "title" }}Account Addresses{{ end }}{{ define "content" }}<section><nav><a href="{{ .AccountNav.OrdersURL }}">Orders</a><a href="{{ .AccountNav.AddressesURL }}">Addresses</a><a href="{{ .AccountNav.PreferencesURL }}">Preferences</a></nav><h1>Addresses</h1>{{ if .SuccessMessage }}<p class="notice">{{ .SuccessMessage }}</p>{{ end }}{{ if .ErrorMessage }}<p class="error">{{ .ErrorMessage }}</p>{{ end }}{{ if .Addresses }}<ul>{{ range .Addresses }}<li id="address-{{ .ID }}">{{ if .IsDefault }}<span class="default">Default</span>{{ end }}<strong>{{ .Recipient }}</strong>{{ range .Lines }}<span>{{ . }}</span>{{ end }}<a href="{{ .EditURL }}">Edit</a><form action="/account/addresses/{{ .ID }}/default" method="post"><input type="hidden" name="csrf_token" value="{{ $.CSRFToken }}"><button>Make default</button></form><form action="/account/addresses/{{ .ID }}/delete" method="post"><input type="hidden" name="csrf_token" value="{{ $.CSRFToken }}"><button>Delete</button></form></li>{{ end }}</ul>{{ else }}<p>{{ .EmptyMessage }}</p>{{ end }}<h2>{{ .FormTitle }}</h2><form action="{{ .FormAction }}" method="post"><input type="hidden" name="csrf_token" value="{{ .CSRFToken }}"><input name="label" value="{{ .Form.Label }}"><input name="recipient" value="{{ .Form.Recipient }}"><input name="street" value="{{ .Form.Street }}"><input name="city" value="{{ .Form.City }}"><input name="postcode" value="{{ .Form.Postcode }}"><select name="country">{{ range .Countries }}<option value="{{ .Value }}" {{ if .Selected }}selected{{ end }}>{{ .Label }}</option>{{ end }}</select><input type="checkbox" name="is_default" value="1" {{ if .Form.IsDefault }}checked{{ end }}><button type="submit">{{ .SubmitLabel }}</button></form></section>{{ end }}{{ template "layout.html" . }}`
+	if err := os.WriteFile(filepath.Join(tplDir, "account_addresses.html"), []byte(accountAddresses), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	accountPreferences := `{{ define "title" }}Account Preferences{{ end }}{{ define "content" }}<section><nav><a href="{{ .AccountNav.PreferencesURL }}">Preferences</a></nav><h1>Preferences</h1>{{ if .SuccessMessage }}<p class="notice">{{ .SuccessMessage }}</p>{{ end }}{{ if .ErrorMessage }}<p class="error">{{ .ErrorMessage }}</p>{{ end }}<form action="/account/preferences" method="post"><input type="hidden" name="csrf_token" value="{{ .CSRFToken }}"><input type="checkbox" name="marketing" value="1" {{ if .Marketing }}checked{{ end }}><button type="submit">Save preferences</button></form></section>{{ end }}{{ template "layout.html" . }}`
+	if err := os.WriteFile(filepath.Join(tplDir, "account_preferences.html"), []byte(accountPreferences), 0644); err != nil {
+		t.Fatal(err)
+	}
+
 	accountSecurity := `{{ define "title" }}Account Security{{ end }}{{ define "content" }}<section><nav><a href="{{ .AccountNav.OrdersURL }}">Orders</a><a href="{{ .AccountNav.ProfileURL }}">Profile</a><a href="{{ .AccountNav.SecurityURL }}">Security</a></nav><h1>Security</h1>{{ if .PasswordErrorMessage }}<p>{{ .PasswordErrorMessage }}</p>{{ end }}{{ if .DeleteErrorMessage }}<p>{{ .DeleteErrorMessage }}</p>{{ end }}<p>{{ .Email }}</p><form action="/account/security/password" method="post"><input type="hidden" name="csrf_token" value="{{ .CSRFToken }}"><input name="current_password" type="password"><input name="new_password" type="password"><button type="submit">Change Password</button></form><form action="/account/security/delete" method="post"><input type="hidden" name="csrf_token" value="{{ .CSRFToken }}"><input name="confirm_delete"><button type="submit">Delete Account</button></form><form action="/account/logout" method="post"><input type="hidden" name="csrf_token" value="{{ .CSRFToken }}"><button type="submit">Log Out</button></form></section>{{ end }}{{ template "layout.html" . }}`
 	if err := os.WriteFile(filepath.Join(tplDir, "account_security.html"), []byte(accountSecurity), 0644); err != nil {
 		t.Fatal(err)
@@ -248,6 +258,13 @@ func newStorefrontRouter(h *shophttp.StorefrontHandler) http.Handler {
 	router.HandleFunc("GET /account/orders/{orderId}", h.AccountOrderDetail())
 	router.HandleFunc("GET /account/profile", h.AccountProfile())
 	router.HandleFunc("POST /account/profile", h.AccountProfile())
+	router.HandleFunc("GET /account/addresses", h.AccountAddresses())
+	router.HandleFunc("POST /account/addresses", h.AccountAddressCreate())
+	router.HandleFunc("POST /account/addresses/{addressId}", h.AccountAddressUpdate())
+	router.HandleFunc("POST /account/addresses/{addressId}/default", h.AccountAddressSetDefault())
+	router.HandleFunc("POST /account/addresses/{addressId}/delete", h.AccountAddressDelete())
+	router.HandleFunc("GET /account/preferences", h.AccountPreferences())
+	router.HandleFunc("POST /account/preferences", h.AccountPreferences())
 	router.HandleFunc("GET /account/security", h.AccountSecurity())
 	router.HandleFunc("GET /account/security/verify", h.AccountSecurityVerify())
 	router.HandleFunc("POST /account/security/verify", h.AccountSecurityVerify())
