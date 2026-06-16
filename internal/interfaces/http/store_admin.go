@@ -20,7 +20,10 @@ type StoreAdminHandler struct {
 	auditor *admin.Auditor
 }
 
-// NewStoreAdminHandler creates a StoreAdminHandler with a default auditor.
+// NewStoreAdminHandler creates a StoreAdminHandler with a default info-level
+// auditor. It is a convenience constructor for tests and simple wiring;
+// production should use NewStoreAdminHandlerWithAuditor to pass an auditor built
+// from the application's configured logger (see cmd/api/main.go).
 func NewStoreAdminHandler(repo store.StoreRepository, bus *event.Bus) *StoreAdminHandler {
 	return NewStoreAdminHandlerWithAuditor(repo, bus, admin.NewAuditor(logger.New("info")))
 }
