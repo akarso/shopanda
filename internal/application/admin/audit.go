@@ -17,15 +17,21 @@ const (
 	AuditOrderStatusChange AuditAction = "order.status_change"
 
 	// Future actions (for extensibility)
-	AuditProductCreate  AuditAction = "product.create"
-	AuditProductRead    AuditAction = "product.read"
-	AuditProductUpdate  AuditAction = "product.update"
+	AuditProductCreate AuditAction = "product.create"
+	AuditProductRead   AuditAction = "product.read"
+	AuditProductUpdate AuditAction = "product.update"
 
 	// Scoped catalog editing (PR-E catalog slice)
 	AuditProductTranslationRead   AuditAction = "product.translation.read"
 	AuditProductTranslationUpdate AuditAction = "product.translation.update"
 	AuditPriceRead                AuditAction = "price.read"
 	AuditPriceUpdate              AuditAction = "price.update"
+
+	// Scoped content editing (PR-E content slice)
+	AuditPageRead   AuditAction = "page.read"
+	AuditPageCreate AuditAction = "page.create"
+	AuditPageUpdate AuditAction = "page.update"
+	AuditPageDelete AuditAction = "page.delete"
 
 	AuditStatsRead      AuditAction = "stats.read"
 	AuditCustomerDelete AuditAction = "customer.delete"

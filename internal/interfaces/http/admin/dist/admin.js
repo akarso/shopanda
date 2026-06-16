@@ -189,6 +189,18 @@
         if (path === "/admin/categories/new") {
             return { title: "New Category", render: renderCategoryCreate, auth: true };
         }
+        if (path === "/admin/content/pages/new") {
+            return { title: "New Page", render: renderPageCreate, auth: true };
+        }
+        var pageMatch = path.match(/^\/admin\/content\/pages\/([^/]+)$/);
+        if (pageMatch) {
+            var pageID = decodeURIComponent(pageMatch[1]);
+            return {
+                title: "Edit Page",
+                auth: true,
+                render: function (container) { renderPageEdit(container, pageID); }
+            };
+        }
         var productMatch = path.match(/^\/admin\/products\/([^/]+)$/);
         if (productMatch) {
             var productID = decodeURIComponent(productMatch[1]);
@@ -1900,6 +1912,7 @@
             slug: pick(raw, "slug", "Slug"),
             title: pick(raw, "title", "Title"),
             content: pick(raw, "content", "Content"),
+            language: pick(raw, "language", "Language") || "",
             is_active: !!pick(raw, "is_active", "IsActive"),
             created_at: pick(raw, "created_at", "CreatedAt"),
             updated_at: pick(raw, "updated_at", "UpdatedAt")
@@ -2700,18 +2713,21 @@
             }
 
             var pages = normalizePages(pagesRaw);
-            var html = '<table><thead><tr>' +
-                '<th>Title</th><th>Slug</th><th>Status</th><th>Updated</th>' +
+            var html = '<div style="margin-bottom:1rem"><a class="button" href="/admin/content/pages/new" data-link id="new-page-btn">New Page</a></div>';
+            html += '<table><thead><tr>' +
+                '<th>Title</th><th>Slug</th><th>Language</th><th>Status</th><th>Updated</th>' +
                 '</tr></thead><tbody>';
 
             if (pages.length === 0) {
-                html += '<tr><td colspan="4">No pages found.</td></tr>';
+                html += '<tr><td colspan="5">No pages found.</td></tr>';
             } else {
                 for (var i = 0; i < pages.length; i++) {
                     var page = pages[i];
+                    var editHref = '/admin/content/pages/' + encodeURIComponent(page.id || '');
                     html += '<tr>' +
-                        '<td>' + esc(page.title || page.slug || page.id || '') + '</td>' +
+                        '<td><a href="' + editHref + '" data-link>' + esc(page.title || page.slug || page.id || '') + '</a></td>' +
                         '<td>' + esc(page.slug || '') + '</td>' +
+                        '<td>' + esc(page.language || '—') + '</td>' +
                         '<td><span class="badge badge-' + esc(page.is_active ? 'active' : 'draft') + '">' + esc(page.is_active ? 'active' : 'draft') + '</span></td>' +
                         '<td>' + esc(page.updated_at ? String(page.updated_at).substring(0, 10) : '') + '</td>' +
                         '</tr>';
@@ -2722,6 +2738,126 @@
             grid.innerHTML = html;
         }).catch(function (err) {
             grid.innerHTML = '<p role="alert">' + esc(extractErrorMessage(err, 'Failed to load pages.')) + '</p>';
+        });
+    }
+
+    function renderPageCreate(container) {
+        renderPageForm(container, null);
+    }
+
+    function renderPageEdit(container, pageID) {
+        renderPageForm(container, pageID);
+    }
+
+    function renderPageFormFields(page) {
+        var defaultLanguage = page ? (page.language || '') : (adminScope.language || '');
+        var isActive = page ? !!page.is_active : true;
+        return '' +
+            '<label>Title<input name="title" value="' + esc(page ? (page.title || '') : '') + '" required></label>' +
+            '<label>Slug<input name="slug" value="' + esc(page ? (page.slug || '') : '') + '" required></label>' +
+            '<label>Language<input name="language" value="' + esc(defaultLanguage) + '" placeholder="e.g. en, fr (blank = default)"></label>' +
+            '<label>Body<textarea name="content" rows="12">' + esc(page ? (page.content || '') : '') + '</textarea></label>' +
+            '<label><input type="checkbox" name="is_active"' + (isActive ? ' checked' : '') + '> Active</label>' +
+            '<div style="margin-top:1rem"><button type="submit">Save</button>' +
+            (page ? ' <button type="button" id="delete-page-btn" class="danger">Delete</button>' : '') +
+            '</div>';
+    }
+
+    function renderPageForm(container, pageID) {
+        var title = pageID ? 'Edit Page' : 'New Page';
+        container.innerHTML =
+            '<h2>' + title + '</h2>' +
+            '<p><a href="/admin/content/pages" data-link>Back to pages</a></p>' +
+            '<div id="page-form-msg"></div>' +
+            '<form id="page-form"><p>Loading…</p></form>';
+
+        var msg = document.getElementById('page-form-msg');
+        var form = document.getElementById('page-form');
+
+        function bindForm(page) {
+            form.innerHTML = renderPageFormFields(page);
+
+            form.addEventListener('submit', function (e) {
+                e.preventDefault();
+                var payload = {
+                    title: form.elements.title.value,
+                    slug: form.elements.slug.value,
+                    language: form.elements.language.value,
+                    content: form.elements.content.value,
+                    is_active: form.elements.is_active.checked
+                };
+                var method = pageID ? 'PUT' : 'POST';
+                var url = pageID ? '/admin/pages/' + encodeURIComponent(pageID) : '/admin/pages';
+                api(url, { method: method, body: JSON.stringify(payload) }).then(function (body) {
+                    if (body && body.error) {
+                        msg.innerHTML = '<p role="alert">' + esc(body.error.message || 'Save failed.') + '</p>';
+                        return;
+                    }
+                    msg.innerHTML = '<p>Saved.</p>';
+                    var savedPage = normalizePage(body && body.data && body.data.page);
+                    if (!pageID && savedPage && savedPage.id) {
+                        navigateTo('/admin/content/pages/' + encodeURIComponent(savedPage.id));
+                    }
+                }).catch(function (err) {
+                    msg.innerHTML = '<p role="alert">' + esc(extractErrorMessage(err, 'Save failed.')) + '</p>';
+                });
+            });
+
+            if (pageID) {
+                var deleteBtn = document.getElementById('delete-page-btn');
+                if (deleteBtn) {
+                    deleteBtn.addEventListener('click', function () {
+                        if (!window.confirm('Delete ' + (page.title || page.slug || page.id) + '?')) {
+                            return;
+                        }
+                        api('/admin/pages/' + encodeURIComponent(pageID), { method: 'DELETE' }).then(function (body) {
+                            if (body && body.error) {
+                                msg.innerHTML = '<p role="alert">' + esc(body.error.message || 'Failed to delete page.') + '</p>';
+                                return;
+                            }
+                            navigateTo('/admin/content/pages');
+                        }).catch(function (err) {
+                            msg.innerHTML = '<p role="alert">' + esc(extractErrorMessage(err, 'Failed to delete page.')) + '</p>';
+                        });
+                    });
+                }
+            }
+        }
+
+        if (!pageID) {
+            bindForm(null);
+            return;
+        }
+
+        api('/admin/pages?offset=0&limit=100').then(function (body) {
+            if (body && body.error && body.error.code === 'forbidden') {
+                msg.innerHTML = '<p role="alert">Your account does not have pages access.</p>';
+                form.innerHTML = '';
+                return;
+            }
+            var pagesRaw = body && body.data && body.data.pages;
+            if (!Array.isArray(pagesRaw)) {
+                msg.innerHTML = '<p role="alert">' + esc(extractErrorMessage(body, 'Failed to load page.')) + '</p>';
+                form.innerHTML = '';
+                return;
+            }
+            var pages = normalizePages(pagesRaw);
+            var page = null;
+            for (var i = 0; i < pages.length; i++) {
+                if (pages[i].id === pageID) {
+                    page = pages[i];
+                    break;
+                }
+            }
+            if (!page) {
+                msg.innerHTML = '<p role="alert">Page not found.</p>';
+                form.innerHTML = '';
+                return;
+            }
+            bindForm(page);
+        }).catch(function (err) {
+            msg.innerHTML = '<p role="alert">' + esc(extractErrorMessage(err, 'Failed to load page.')) + '</p>';
+            form.innerHTML = '';
         });
     }
 

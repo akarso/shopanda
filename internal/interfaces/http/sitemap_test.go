@@ -129,7 +129,7 @@ func TestSitemapHandler_ProductsCategoriesPages(t *testing.T) {
 	categories := []catalog.Category{
 		{ID: "c1", Name: "Tools", Slug: "tools", UpdatedAt: now},
 	}
-	page := cms.NewPageFromDB("pg1", "about", "About", "", true, now, now)
+	page := cms.NewPageFromDB("pg1", "about", "About", "", "", true, now, now)
 
 	h := shophttp.NewSitemapHandler("https://shop.test",
 		&stubSitemapProductRepo{products: products},
@@ -170,7 +170,7 @@ func TestSitemapHandler_ProductsCategoriesPages(t *testing.T) {
 
 func TestSitemapHandler_InactivePageExcluded(t *testing.T) {
 	now := time.Now().UTC()
-	inactivePage := cms.NewPageFromDB("pg1", "hidden", "Hidden", "", false, now, now)
+	inactivePage := cms.NewPageFromDB("pg1", "hidden", "Hidden", "", "", false, now, now)
 
 	h := shophttp.NewSitemapHandler("https://shop.test",
 		&stubSitemapProductRepo{},

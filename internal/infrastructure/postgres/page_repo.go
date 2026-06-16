@@ -28,17 +28,17 @@ func NewPageRepo(db *sql.DB) (*PageRepo, error) {
 	return &PageRepo{db: db}, nil
 }
 
-const pageColumns = `id, slug, title, content, is_active, created_at, updated_at`
+const pageColumns = `id, slug, title, content, language, is_active, created_at, updated_at`
 
 func hydratePage(scan func(dest ...interface{}) error) (*cms.Page, error) {
-	var id, slug, title, content string
+	var id, slug, title, content, language string
 	var isActive bool
 	var createdAt, updatedAt time.Time
 
-	if err := scan(&id, &slug, &title, &content, &isActive, &createdAt, &updatedAt); err != nil {
+	if err := scan(&id, &slug, &title, &content, &language, &isActive, &createdAt, &updatedAt); err != nil {
 		return nil, err
 	}
-	return cms.NewPageFromDB(id, slug, title, content, isActive, createdAt, updatedAt), nil
+	return cms.NewPageFromDB(id, slug, title, content, language, isActive, createdAt, updatedAt), nil
 }
 
 // FindByID returns a page by its ID.
@@ -131,9 +131,9 @@ func (r *PageRepo) Create(ctx context.Context, p *cms.Page) error {
 	if p == nil {
 		return fmt.Errorf("page_repo: create: nil page")
 	}
-	q := `INSERT INTO pages (id, slug, title, content, is_active, created_at, updated_at)
-	      VALUES ($1, $2, $3, $4, $5, $6, $7)`
-	_, err := r.db.ExecContext(ctx, q, p.ID(), p.Slug(), p.Title(), p.Content(), p.IsActive(), p.CreatedAt(), p.UpdatedAt())
+	q := `INSERT INTO pages (id, slug, title, content, language, is_active, created_at, updated_at)
+	      VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`
+	_, err := r.db.ExecContext(ctx, q, p.ID(), p.Slug(), p.Title(), p.Content(), p.Language(), p.IsActive(), p.CreatedAt(), p.UpdatedAt())
 	if err != nil {
 		var pqErr *pq.Error
 		if errors.As(err, &pqErr) && pqErr.Code == "23505" {
@@ -152,9 +152,9 @@ func (r *PageRepo) Update(ctx context.Context, p *cms.Page) error {
 	if p == nil {
 		return fmt.Errorf("page_repo: update: nil page")
 	}
-	q := `UPDATE pages SET slug = $2, title = $3, content = $4, is_active = $5, updated_at = $6
+	q := `UPDATE pages SET slug = $2, title = $3, content = $4, language = $5, is_active = $6, updated_at = $7
 	      WHERE id = $1`
-	result, err := r.db.ExecContext(ctx, q, p.ID(), p.Slug(), p.Title(), p.Content(), p.IsActive(), p.UpdatedAt())
+	result, err := r.db.ExecContext(ctx, q, p.ID(), p.Slug(), p.Title(), p.Content(), p.Language(), p.IsActive(), p.UpdatedAt())
 	if err != nil {
 		var pqErr *pq.Error
 		if errors.As(err, &pqErr) && pqErr.Code == "23505" {

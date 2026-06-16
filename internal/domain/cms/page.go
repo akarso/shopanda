@@ -6,18 +6,21 @@ import (
 	"time"
 )
 
-// Page is a CMS content page.
+// Page is a CMS content page. A page carries a single language; per-language
+// content is modelled as one page record per language (no multi-locale model).
 type Page struct {
 	id        string
 	slug      string
 	title     string
 	content   string
+	language  string
 	isActive  bool
 	createdAt time.Time
 	updatedAt time.Time
 }
 
-// NewPage creates a validated Page.
+// NewPage creates a validated Page. Language is unset (empty) by default and
+// can be assigned via SetLanguage.
 func NewPage(id, slug, title, content string) (*Page, error) {
 	if id == "" {
 		return nil, fmt.Errorf("page: empty id")
@@ -44,12 +47,13 @@ func NewPage(id, slug, title, content string) (*Page, error) {
 }
 
 // NewPageFromDB reconstructs a Page from stored data.
-func NewPageFromDB(id, slug, title, content string, isActive bool, createdAt, updatedAt time.Time) *Page {
+func NewPageFromDB(id, slug, title, content, language string, isActive bool, createdAt, updatedAt time.Time) *Page {
 	return &Page{
 		id:        id,
 		slug:      slug,
 		title:     title,
 		content:   content,
+		language:  language,
 		isActive:  isActive,
 		createdAt: createdAt,
 		updatedAt: updatedAt,
@@ -60,6 +64,7 @@ func (p *Page) ID() string           { return p.id }
 func (p *Page) Slug() string         { return p.slug }
 func (p *Page) Title() string        { return p.title }
 func (p *Page) Content() string      { return p.content }
+func (p *Page) Language() string     { return p.language }
 func (p *Page) IsActive() bool       { return p.isActive }
 func (p *Page) CreatedAt() time.Time { return p.createdAt }
 func (p *Page) UpdatedAt() time.Time { return p.updatedAt }
@@ -96,5 +101,11 @@ func (p *Page) SetContent(content string) {
 // SetActive sets the active state.
 func (p *Page) SetActive(active bool) {
 	p.isActive = active
+	p.updatedAt = time.Now().UTC()
+}
+
+// SetLanguage assigns the page language. An empty value means unspecified.
+func (p *Page) SetLanguage(language string) {
+	p.language = strings.TrimSpace(language)
 	p.updatedAt = time.Now().UTC()
 }

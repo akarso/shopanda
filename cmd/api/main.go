@@ -605,8 +605,8 @@ func runServe(cfg *config.Config, log logger.Logger) error {
 	}{
 		{"form", "product.form", adminRegistry.SetFormPermission("product.form", rbac.ProductsWrite)},
 		{"grid", "product.grid", adminRegistry.SetGridPermission("product.grid", rbac.ProductsRead)},
-		{"form", "page.form", adminRegistry.SetFormPermission("page.form", rbac.SettingsWrite)},
-		{"grid", "page.grid", adminRegistry.SetGridPermission("page.grid", rbac.SettingsRead)},
+		{"form", "page.form", adminRegistry.SetFormPermission("page.form", rbac.ContentWrite)},
+		{"grid", "page.grid", adminRegistry.SetGridPermission("page.grid", rbac.ContentRead)},
 	} {
 		if sp.err != nil {
 			return fmt.Errorf("admin schema permission wiring failed for %s %q: %w", sp.kind, sp.name, sp.err)
@@ -703,7 +703,7 @@ func runServe(cfg *config.Config, log logger.Logger) error {
 	}, log)
 	schemaHandler := shophttp.NewSchemaHandler(adminRegistry)
 	pageHandler := shophttp.NewPageHandler(pageRepo, contentTranslator)
-	pageAdmin := shophttp.NewPageAdminHandler(pageRepo, bus)
+	pageAdmin := shophttp.NewPageAdminHandlerWithAuditor(pageRepo, bus, adminApp.NewAuditor(log))
 	storeAdmin := shophttp.NewStoreAdminHandler(storeRepo, bus)
 	shippingZoneAdmin := shophttp.NewShippingZoneAdminHandler(zoneRepo)
 	accountService := accountApp.NewService(customerRepo, consentRepo, bus, log, conn)
@@ -763,6 +763,8 @@ func runServe(cfg *config.Config, log logger.Logger) error {
 	requireMediaWrite := shophttp.RequirePermission(rbac.MediaWrite)
 	requireSettingsRead := shophttp.RequirePermission(rbac.SettingsRead)
 	requireSettingsWrite := shophttp.RequirePermission(rbac.SettingsWrite)
+	requireContentRead := shophttp.RequirePermission(rbac.ContentRead)
+	requireContentWrite := shophttp.RequirePermission(rbac.ContentWrite)
 	requireShippingRead := shophttp.RequirePermission(rbac.ShippingRead)
 	requireShippingWrite := shophttp.RequirePermission(rbac.ShippingWrite)
 
@@ -832,10 +834,10 @@ func runServe(cfg *config.Config, log logger.Logger) error {
 	router.Handle("POST /api/v1/admin/config/test-email", requireSettingsWrite(configAdmin.TestEmail()))
 	router.Handle("GET /api/v1/admin/forms/{name}", requireAuth(schemaHandler.GetForm()))
 	router.Handle("GET /api/v1/admin/grids/{name}", requireAuth(schemaHandler.GetGrid()))
-	router.Handle("GET /api/v1/admin/pages", requireSettingsRead(pageAdmin.List()))
-	router.Handle("POST /api/v1/admin/pages", requireSettingsWrite(pageAdmin.Create()))
-	router.Handle("PUT /api/v1/admin/pages/{id}", requireSettingsWrite(pageAdmin.Update()))
-	router.Handle("DELETE /api/v1/admin/pages/{id}", requireSettingsWrite(pageAdmin.Delete()))
+	router.Handle("GET /api/v1/admin/pages", requireContentRead(pageAdmin.List()))
+	router.Handle("POST /api/v1/admin/pages", requireContentWrite(pageAdmin.Create()))
+	router.Handle("PUT /api/v1/admin/pages/{id}", requireContentWrite(pageAdmin.Update()))
+	router.Handle("DELETE /api/v1/admin/pages/{id}", requireContentWrite(pageAdmin.Delete()))
 	router.Handle("GET /api/v1/admin/stores", requireSettingsRead(storeAdmin.List()))
 	router.Handle("POST /api/v1/admin/stores", requireSettingsWrite(storeAdmin.Create()))
 	router.Handle("PUT /api/v1/admin/stores/{id}", requireSettingsWrite(storeAdmin.Update()))

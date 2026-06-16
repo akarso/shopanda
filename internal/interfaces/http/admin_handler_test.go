@@ -181,6 +181,21 @@ func TestAdminHandler_StaticJS(t *testing.T) {
 	if !strings.Contains(normalizedBody, "Your account does not have pages access.") || !strings.Contains(normalizedBody, "Failed to load pages.") {
 		t.Fatalf("expected pages admin error messages in JS")
 	}
+	expectedPageCrudWiring := []string{
+		"renderPageForm",
+		"renderPageCreate",
+		"renderPageEdit",
+		"/admin/content/pages/new",
+		"new-page-btn",
+		"delete-page-btn",
+		"Failed to delete page.",
+		"Page not found.",
+	}
+	for _, expected := range expectedPageCrudWiring {
+		if !strings.Contains(normalizedBody, expected) {
+			t.Fatalf("expected pages CRUD wiring %q in JS", expected)
+		}
+	}
 	if !strings.Contains(normalizedBody, "renderStoresGrid") || !strings.Contains(normalizedBody, "/admin/stores") {
 		t.Fatalf("expected stores admin surface wiring in JS")
 	}
