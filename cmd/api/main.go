@@ -605,8 +605,8 @@ func runServe(cfg *config.Config, log logger.Logger) error {
 	}{
 		{"form", "product.form", adminRegistry.SetFormPermission("product.form", rbac.ProductsWrite)},
 		{"grid", "product.grid", adminRegistry.SetGridPermission("product.grid", rbac.ProductsRead)},
-		{"form", "page.form", adminRegistry.SetFormPermission("page.form", rbac.SettingsWrite)},
-		{"grid", "page.grid", adminRegistry.SetGridPermission("page.grid", rbac.SettingsRead)},
+		{"form", "page.form", adminRegistry.SetFormPermission("page.form", rbac.ContentWrite)},
+		{"grid", "page.grid", adminRegistry.SetGridPermission("page.grid", rbac.ContentRead)},
 	} {
 		if sp.err != nil {
 			return fmt.Errorf("admin schema permission wiring failed for %s %q: %w", sp.kind, sp.name, sp.err)

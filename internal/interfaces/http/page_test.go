@@ -489,7 +489,10 @@ func TestPageAdminHandler_Create_PersistsLanguageWithScopedAudit(t *testing.T) {
 	if rec.Code != http.StatusCreated {
 		t.Fatalf("status = %d, want %d; body: %s", rec.Code, http.StatusCreated, rec.Body.String())
 	}
-	if created == nil || created.Language() != "fr" {
+	if created == nil {
+		t.Fatal("page was not created")
+	}
+	if created.Language() != "fr" {
 		t.Fatalf("created language = %q, want fr", created.Language())
 	}
 	data := parsePageBody(t, rec)["data"].(map[string]interface{})
@@ -532,7 +535,10 @@ func TestPageAdminHandler_Update_PersistsLanguageWithScopedAudit(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d, want %d; body: %s", rec.Code, http.StatusOK, rec.Body.String())
 	}
-	if updated == nil || updated.Language() != "de" {
+	if updated == nil {
+		t.Fatal("page was not updated")
+	}
+	if updated.Language() != "de" {
 		t.Fatalf("updated language = %q, want de", updated.Language())
 	}
 
