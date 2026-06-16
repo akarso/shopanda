@@ -5,21 +5,51 @@ import (
 	"net/http"
 	"strings"
 
+	"github.com/akarso/shopanda/internal/application/admin"
 	"github.com/akarso/shopanda/internal/domain/store"
 	"github.com/akarso/shopanda/internal/platform/apperror"
 	"github.com/akarso/shopanda/internal/platform/event"
 	"github.com/akarso/shopanda/internal/platform/id"
+	"github.com/akarso/shopanda/internal/platform/logger"
 )
 
 // StoreAdminHandler serves store write endpoints.
 type StoreAdminHandler struct {
-	repo store.StoreRepository
-	bus  *event.Bus
+	repo    store.StoreRepository
+	bus     *event.Bus
+	auditor *admin.Auditor
 }
 
-// NewStoreAdminHandler creates a StoreAdminHandler.
+// NewStoreAdminHandler creates a StoreAdminHandler with a default auditor.
 func NewStoreAdminHandler(repo store.StoreRepository, bus *event.Bus) *StoreAdminHandler {
-	return &StoreAdminHandler{repo: repo, bus: bus}
+	return NewStoreAdminHandlerWithAuditor(repo, bus, admin.NewAuditor(logger.New("info")))
+}
+
+// NewStoreAdminHandlerWithAuditor creates a StoreAdminHandler with a custom auditor.
+func NewStoreAdminHandlerWithAuditor(repo store.StoreRepository, bus *event.Bus, auditor *admin.Auditor) *StoreAdminHandler {
+	if auditor == nil {
+		panic("StoreAdminHandler: auditor must not be nil")
+	}
+	return &StoreAdminHandler{repo: repo, bus: bus, auditor: auditor}
+}
+
+func (h *StoreAdminHandler) audit(r *http.Request, action admin.AuditAction, resourceID string, details map[string]interface{}, err error) {
+	merged := mergeAuditDetails(details, fullAdminScopeDetailsFromRequest(r))
+	result := "success"
+	errMsg := ""
+	if err != nil {
+		result = "error"
+		errMsg = err.Error()
+	}
+	h.auditor.LogAction(r.Context(), admin.AuditEntry{
+		AdminID:      adminIDFromRequest(r),
+		Action:       action,
+		ResourceType: "store",
+		ResourceID:   resourceID,
+		Details:      merged,
+		Result:       result,
+		Error:        errMsg,
+	})
 }
 
 type createStoreRequest struct {
@@ -64,13 +94,17 @@ func (h *StoreAdminHandler) Create() http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		var req createStoreRequest
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-			JSONError(w, apperror.Validation("invalid request body"))
+			verr := apperror.Validation("invalid request body")
+			h.audit(r, admin.AuditStoreCreate, "", nil, verr)
+			JSONError(w, verr)
 			return
 		}
 
 		s, err := store.NewStore(id.New(), req.Code, req.Name, req.Currency, req.Country, req.Language, req.Domain)
 		if err != nil {
-			JSONError(w, apperror.Validation(err.Error()))
+			verr := apperror.Validation(err.Error())
+			h.audit(r, admin.AuditStoreCreate, "", nil, verr)
+			JSONError(w, verr)
 			return
 		}
 		if req.IsDefault != nil && *req.IsDefault {
@@ -78,9 +112,12 @@ func (h *StoreAdminHandler) Create() http.HandlerFunc {
 		}
 
 		if err := h.repo.Create(r.Context(), &s); err != nil {
+			h.audit(r, admin.AuditStoreCreate, s.ID, nil, err)
 			JSONError(w, err)
 			return
 		}
+
+		h.audit(r, admin.AuditStoreCreate, s.ID, map[string]interface{}{"code": s.Code}, nil)
 
 		_ = h.bus.Publish(r.Context(), event.New("store.created", "store.admin", map[string]interface{}{
 			"store_id": s.ID,
@@ -98,30 +135,39 @@ func (h *StoreAdminHandler) Update() http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		sid := r.PathValue("id")
 		if sid == "" {
-			JSONError(w, apperror.Validation("store id is required"))
+			verr := apperror.Validation("store id is required")
+			h.audit(r, admin.AuditStoreUpdate, "", nil, verr)
+			JSONError(w, verr)
 			return
 		}
 
 		var req updateStoreRequest
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-			JSONError(w, apperror.Validation("invalid request body"))
+			verr := apperror.Validation("invalid request body")
+			h.audit(r, admin.AuditStoreUpdate, sid, nil, verr)
+			JSONError(w, verr)
 			return
 		}
 
 		s, err := h.repo.FindByID(r.Context(), sid)
 		if err != nil {
+			h.audit(r, admin.AuditStoreUpdate, sid, nil, err)
 			JSONError(w, err)
 			return
 		}
 		if s == nil {
-			JSONError(w, apperror.NotFound("store not found"))
+			nf := apperror.NotFound("store not found")
+			h.audit(r, admin.AuditStoreUpdate, sid, nil, nf)
+			JSONError(w, nf)
 			return
 		}
 
 		if req.Code != nil {
 			c := strings.TrimSpace(*req.Code)
 			if c == "" {
-				JSONError(w, apperror.Validation("code must not be empty"))
+				verr := apperror.Validation("code must not be empty")
+				h.audit(r, admin.AuditStoreUpdate, sid, nil, verr)
+				JSONError(w, verr)
 				return
 			}
 			s.Code = c
@@ -129,7 +175,9 @@ func (h *StoreAdminHandler) Update() http.HandlerFunc {
 		if req.Name != nil {
 			n := strings.TrimSpace(*req.Name)
 			if n == "" {
-				JSONError(w, apperror.Validation("name must not be empty"))
+				verr := apperror.Validation("name must not be empty")
+				h.audit(r, admin.AuditStoreUpdate, sid, nil, verr)
+				JSONError(w, verr)
 				return
 			}
 			s.Name = n
@@ -137,7 +185,9 @@ func (h *StoreAdminHandler) Update() http.HandlerFunc {
 		if req.Currency != nil {
 			cur, curErr := store.NormalizeCurrency(*req.Currency)
 			if curErr != nil {
-				JSONError(w, apperror.Validation(curErr.Error()))
+				verr := apperror.Validation(curErr.Error())
+				h.audit(r, admin.AuditStoreUpdate, sid, nil, verr)
+				JSONError(w, verr)
 				return
 			}
 			s.Currency = cur
@@ -145,7 +195,9 @@ func (h *StoreAdminHandler) Update() http.HandlerFunc {
 		if req.Country != nil {
 			cty, ctyErr := store.NormalizeCountry(*req.Country)
 			if ctyErr != nil {
-				JSONError(w, apperror.Validation(ctyErr.Error()))
+				verr := apperror.Validation(ctyErr.Error())
+				h.audit(r, admin.AuditStoreUpdate, sid, nil, verr)
+				JSONError(w, verr)
 				return
 			}
 			s.Country = cty
@@ -153,7 +205,9 @@ func (h *StoreAdminHandler) Update() http.HandlerFunc {
 		if req.Language != nil {
 			lng, lngErr := store.NormalizeLanguage(*req.Language)
 			if lngErr != nil {
-				JSONError(w, apperror.Validation(lngErr.Error()))
+				verr := apperror.Validation(lngErr.Error())
+				h.audit(r, admin.AuditStoreUpdate, sid, nil, verr)
+				JSONError(w, verr)
 				return
 			}
 			s.Language = lng
@@ -166,9 +220,12 @@ func (h *StoreAdminHandler) Update() http.HandlerFunc {
 		}
 
 		if err := h.repo.Update(r.Context(), s); err != nil {
+			h.audit(r, admin.AuditStoreUpdate, sid, nil, err)
 			JSONError(w, err)
 			return
 		}
+
+		h.audit(r, admin.AuditStoreUpdate, sid, map[string]interface{}{"code": s.Code}, nil)
 
 		_ = h.bus.Publish(r.Context(), event.New("store.updated", "store.admin", map[string]interface{}{
 			"store_id": s.ID,

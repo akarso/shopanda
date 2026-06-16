@@ -394,7 +394,7 @@ SHOPANDA_WEBHOOKS_SECRET_PAYPAL=${SHOPANDA_WEBHOOKS_SECRET_PAYPAL:-}
 SHOPANDA_RATE_LIMIT_ENABLED=${SHOPANDA_RATE_LIMIT_ENABLED:-false}
 SHOPANDA_RATE_LIMIT_DEFAULT_RATE=${SHOPANDA_RATE_LIMIT_DEFAULT_RATE:-10}
 SHOPANDA_RATE_LIMIT_DEFAULT_BURST=${SHOPANDA_RATE_LIMIT_DEFAULT_BURST:-20}
-SHOPANDA_SEED_ADMIN_PASSWORD=${SHOPANDA_SEED_ADMIN_PASSWORD:-changeme}
+SHOPANDA_SEED_ADMIN_PASSWORD=${SHOPANDA_SEED_ADMIN_PASSWORD:-}
 SHOPANDA_DEV_MODE=${SHOPANDA_DEV_MODE:-}
 SHOPANDA_TEST_DSN=${SHOPANDA_TEST_DSN:-}
 
@@ -453,7 +453,12 @@ prompt_value SHOPANDA_RATE_LIMIT_DEFAULT_RATE 'Rate limit default rate' "$SHOPAN
 prompt_value SHOPANDA_RATE_LIMIT_DEFAULT_BURST 'Rate limit default burst' "$SHOPANDA_RATE_LIMIT_DEFAULT_BURST"
 
 printf '\nOptional seeding and development settings\n'
-prompt_value SHOPANDA_SEED_ADMIN_PASSWORD 'Seed admin password' "$SHOPANDA_SEED_ADMIN_PASSWORD" true
+prompt_value SHOPANDA_SEED_ADMIN_PASSWORD 'Seed admin password (leave blank to auto-generate)' "$SHOPANDA_SEED_ADMIN_PASSWORD" true
+SEED_ADMIN_PASSWORD_GENERATED=false
+if [[ -z "$SHOPANDA_SEED_ADMIN_PASSWORD" ]]; then
+  SHOPANDA_SEED_ADMIN_PASSWORD=$(generate_secret)
+  SEED_ADMIN_PASSWORD_GENERATED=true
+fi
 prompt_value SHOPANDA_DEV_MODE 'Development mode flag (optional)' "$SHOPANDA_DEV_MODE"
 prompt_value SHOPANDA_TEST_DSN 'Test DSN (optional)' "$SHOPANDA_TEST_DSN"
 
@@ -463,6 +468,17 @@ if ! write_env_file; then
 fi
 
 printf '\nWrote %s\n' "$ENV_FILE"
+
+if [[ "$SEED_ADMIN_PASSWORD_GENERATED" == "true" ]]; then
+  printf '\n'
+  printf '=============================================================================\n'
+  printf 'Generated admin seed password (shown once — store it securely now):\n\n'
+  printf '  %s\n\n' "$SHOPANDA_SEED_ADMIN_PASSWORD"
+  printf 'It is saved in %s as SHOPANDA_SEED_ADMIN_PASSWORD and used by `app seed`\n' "$ENV_FILE"
+  printf 'to create admin@example.com. Change it after first login.\n'
+  printf '=============================================================================\n'
+fi
+
 printf 'Next steps:\n'
 printf '  1. Review .env\n'
 printf '  2. Run ./shopanda setup or ./app setup depending on your binary name\n'

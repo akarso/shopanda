@@ -106,7 +106,8 @@ if !repo.ExistsByEmail("admin@example.com") {
 
 ```text
 email: admin@example.com
-password: admin123
+password: value of SHOPANDA_SEED_ADMIN_PASSWORD (no default; admin creation is
+          skipped when the variable is unset/empty)
 ```
 
 ---

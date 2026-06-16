@@ -16,6 +16,24 @@ func (stubLogger) Info(_ string, _ map[string]interface{})           {}
 func (stubLogger) Warn(_ string, _ map[string]interface{})           {}
 func (stubLogger) Error(_ string, _ error, _ map[string]interface{}) {}
 
+// recordingLogger captures Info events for assertions.
+type recordingLogger struct {
+	events []recordedEvent
+}
+
+type recordedEvent struct {
+	event  string
+	fields map[string]interface{}
+}
+
+func (l *recordingLogger) Info(event string, fields map[string]interface{}) {
+	l.events = append(l.events, recordedEvent{event: event, fields: fields})
+}
+func (l *recordingLogger) Warn(event string, fields map[string]interface{}) {
+	l.events = append(l.events, recordedEvent{event: event, fields: fields})
+}
+func (l *recordingLogger) Error(_ string, _ error, _ map[string]interface{}) {}
+
 type recordingSeeder struct {
 	name    string
 	called  bool
@@ -164,6 +182,29 @@ func TestRegistry_DepsPassed(t *testing.T) {
 	}
 	if receivedDeps.DB != nil {
 		t.Error("expected nil DB in test")
+	}
+}
+
+// TestAdminSeeder_SkipsWhenPasswordUnset verifies that with no seed password
+// set, the admin seeder skips creation without touching the database (nil DB),
+// so a fresh install never produces a guessable default admin account.
+func TestAdminSeeder_SkipsWhenPasswordUnset(t *testing.T) {
+	t.Setenv("SHOPANDA_SEED_ADMIN_PASSWORD", "")
+
+	log := &recordingLogger{}
+	s := &seed.AdminSeeder{}
+	if err := s.Seed(context.Background(), seed.Deps{DB: nil, Logger: log}); err != nil {
+		t.Fatalf("Seed() error = %v, want nil", err)
+	}
+
+	var skipped bool
+	for _, e := range log.events {
+		if e.event == "seed.admin.skip" && e.fields["reason"] == "admin seed password not set" {
+			skipped = true
+		}
+	}
+	if !skipped {
+		t.Errorf("expected seed.admin.skip with unset-password reason, got events %+v", log.events)
 	}
 }
 

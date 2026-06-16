@@ -33,6 +33,21 @@ const (
 	AuditPageUpdate AuditAction = "page.update"
 	AuditPageDelete AuditAction = "page.delete"
 
+	// Category operations
+	AuditCategoryCreate          AuditAction = "category.create"
+	AuditCategoryUpdate          AuditAction = "category.update"
+	AuditCategoryDelete          AuditAction = "category.delete"
+	AuditCategoryProductAssign   AuditAction = "category.product_assign"
+	AuditCategoryProductUnassign AuditAction = "category.product_unassign"
+
+	// Store operations
+	AuditStoreCreate AuditAction = "store.create"
+	AuditStoreUpdate AuditAction = "store.update"
+
+	// Media operations
+	AuditMediaUpload AuditAction = "media.upload"
+	AuditMediaDelete AuditAction = "media.delete"
+
 	AuditStatsRead      AuditAction = "stats.read"
 	AuditCustomerDelete AuditAction = "customer.delete"
 	AuditCustomerRead   AuditAction = "customer.read"

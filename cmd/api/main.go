@@ -656,8 +656,8 @@ func runServe(cfg *config.Config, log logger.Logger) error {
 
 	shippingRates := shophttp.NewShippingRatesHandler(flatRateProvider)
 	categoryHandler := shophttp.NewCategoryHandler(categoryRepo, productRepo)
-	categoryAdmin := shophttp.NewCategoryAdminHandler(categoryRepo, bus)
-	categoryProductAssignmentAdmin := shophttp.NewCategoryProductAssignmentAdminHandler(categoryRepo, productRepo, productRepo)
+	categoryAdmin := shophttp.NewCategoryAdminHandlerWithAuditor(categoryRepo, bus, adminApp.NewAuditor(log))
+	categoryProductAssignmentAdmin := shophttp.NewCategoryProductAssignmentAdminHandlerWithAuditor(categoryRepo, productRepo, productRepo, adminApp.NewAuditor(log))
 	searchHandler := shophttp.NewSearchHandler(searchEngine)
 	mediaService := mediaApp.NewService(mediaStorage, assetRepo, bus, log)
 	if thumbCfg := cfg.Media.Thumbnails; len(thumbCfg) > 0 {
@@ -686,7 +686,7 @@ func runServe(cfg *config.Config, log logger.Logger) error {
 			})
 		}
 	}
-	mediaHandler := shophttp.NewMediaHandler(mediaService)
+	mediaHandler := shophttp.NewMediaHandlerWithAuditor(mediaService, adminApp.NewAuditor(log))
 	configAdmin := shophttp.NewConfigAdminHandler(configRepo, cfg, func(ctx context.Context, smtpCfg shophttp.SMTPTestConfig, to string) error {
 		mailer := smtpmail.New(smtpmail.Config{
 			Host:     smtpCfg.Host,
@@ -704,7 +704,7 @@ func runServe(cfg *config.Config, log logger.Logger) error {
 	schemaHandler := shophttp.NewSchemaHandler(adminRegistry)
 	pageHandler := shophttp.NewPageHandler(pageRepo, contentTranslator)
 	pageAdmin := shophttp.NewPageAdminHandlerWithAuditor(pageRepo, bus, adminApp.NewAuditor(log))
-	storeAdmin := shophttp.NewStoreAdminHandler(storeRepo, bus)
+	storeAdmin := shophttp.NewStoreAdminHandlerWithAuditor(storeRepo, bus, adminApp.NewAuditor(log))
 	shippingZoneAdmin := shophttp.NewShippingZoneAdminHandler(zoneRepo)
 	accountService := accountApp.NewService(customerRepo, consentRepo, bus, log, conn)
 	customerAdmin := shophttp.NewCustomerAdminHandlerWithDeleter(customerRepo, accountService, log)

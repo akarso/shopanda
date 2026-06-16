@@ -22,6 +22,18 @@ type AdminSeeder struct{}
 func (s *AdminSeeder) Name() string { return "admin-user" }
 
 func (s *AdminSeeder) Seed(ctx context.Context, deps Deps) error {
+	// Resolve the seed password first: when it is unset, admin creation is
+	// skipped entirely, so there is no reason to touch the database. This keeps
+	// the skip path side-effect free (and unit-testable without a DB).
+	adminPwd := os.Getenv(adminPasswordEnvKey)
+	if adminPwd == "" {
+		deps.Logger.Info("seed.admin.skip", map[string]interface{}{
+			"email":  adminEmail,
+			"reason": "admin seed password not set",
+		})
+		return nil
+	}
+
 	repo, err := postgres.NewCustomerRepo(deps.DB)
 	if err != nil {
 		return err
@@ -34,15 +46,6 @@ func (s *AdminSeeder) Seed(ctx context.Context, deps Deps) error {
 	if existing != nil {
 		deps.Logger.Info("seed.admin.skip", map[string]interface{}{
 			"email": adminEmail,
-		})
-		return nil
-	}
-
-	adminPwd := os.Getenv(adminPasswordEnvKey)
-	if adminPwd == "" {
-		deps.Logger.Info("seed.admin.skip", map[string]interface{}{
-			"email":  adminEmail,
-			"reason": "admin seed password not set",
 		})
 		return nil
 	}
