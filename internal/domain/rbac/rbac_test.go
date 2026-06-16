@@ -16,6 +16,7 @@ func TestHasPermission_Admin(t *testing.T) {
 		rbac.CustomersRead, rbac.CustomersWrite,
 		rbac.InvoicesRead,
 		rbac.MediaRead, rbac.MediaWrite,
+		rbac.ContentRead, rbac.ContentWrite,
 		rbac.SettingsRead, rbac.SettingsWrite,
 		rbac.ShippingRead, rbac.ShippingWrite,
 	} {
@@ -34,10 +35,12 @@ func TestHasPermission_Manager(t *testing.T) {
 		rbac.CustomersRead,
 		rbac.InvoicesRead,
 		rbac.MediaRead, rbac.MediaWrite,
+		rbac.ContentRead,
 		rbac.ShippingRead, rbac.ShippingWrite,
 	}
 	denied := []rbac.Permission{
 		rbac.CustomersWrite,
+		rbac.ContentWrite,
 		rbac.SettingsRead, rbac.SettingsWrite,
 	}
 
@@ -58,6 +61,7 @@ func TestHasPermission_Editor(t *testing.T) {
 		rbac.ProductsRead, rbac.ProductsWrite,
 		rbac.CategoriesRead, rbac.CategoriesWrite,
 		rbac.MediaRead, rbac.MediaWrite,
+		rbac.ContentRead, rbac.ContentWrite,
 	}
 	denied := []rbac.Permission{
 		rbac.OrdersRead, rbac.OrdersWrite,
@@ -84,6 +88,7 @@ func TestHasPermission_Support(t *testing.T) {
 		rbac.OrdersRead,
 		rbac.CustomersRead,
 		rbac.InvoicesRead,
+		rbac.ContentRead,
 	}
 	denied := []rbac.Permission{
 		rbac.ProductsWrite,
@@ -91,6 +96,7 @@ func TestHasPermission_Support(t *testing.T) {
 		rbac.CategoriesRead, rbac.CategoriesWrite,
 		rbac.CustomersWrite,
 		rbac.MediaRead, rbac.MediaWrite,
+		rbac.ContentWrite,
 		rbac.SettingsRead, rbac.SettingsWrite,
 	}
 
@@ -126,8 +132,34 @@ func TestHasPermission_Unknown(t *testing.T) {
 
 func TestPermissionsForRole_Admin(t *testing.T) {
 	perms := rbac.PermissionsForRole(identity.RoleAdmin)
-	if len(perms) != 15 {
-		t.Errorf("admin permissions count = %d, want 15", len(perms))
+	if len(perms) != 17 {
+		t.Errorf("admin permissions count = %d, want 17", len(perms))
+	}
+}
+
+// TestContentPermissions_ScopedByRole documents that content authors (Admin,
+// Editor) may mutate pages while read-only roles (Manager, Support) can list
+// but not mutate them — the PR-396 permission contract.
+func TestContentPermissions_ScopedByRole(t *testing.T) {
+	cases := []struct {
+		role     identity.Role
+		canRead  bool
+		canWrite bool
+	}{
+		{identity.RoleAdmin, true, true},
+		{identity.RoleEditor, true, true},
+		{identity.RoleManager, true, false},
+		{identity.RoleSupport, true, false},
+		{identity.RoleCustomer, false, false},
+		{identity.RoleGuest, false, false},
+	}
+	for _, c := range cases {
+		if got := rbac.HasPermission(c.role, rbac.ContentRead); got != c.canRead {
+			t.Errorf("%s content.read = %v, want %v", c.role, got, c.canRead)
+		}
+		if got := rbac.HasPermission(c.role, rbac.ContentWrite); got != c.canWrite {
+			t.Errorf("%s content.write = %v, want %v", c.role, got, c.canWrite)
+		}
 	}
 }
 

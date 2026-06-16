@@ -19,6 +19,7 @@ C4Component
             Component(productAdmin, "ProductAdminHandler", "HTTP", "Create, Update products (admin)")
             Component(productTranslationAdmin, "ProductTranslationAdminHandler", "HTTP", "Read/write per-language product translations for active language scope (admin)")
             Component(productPriceAdmin, "ProductPriceAdminHandler", "HTTP", "Read/write store-scoped variant prices for active store+currency scope (admin)")
+            Component(pageAdmin, "PageAdminHandler", "HTTP", "Create/Update/Delete CMS pages with explicit language scope and audit (admin, content.* permissions)")
             Component(variantHandler, "VariantHandler", "HTTP", "CRUD variants")
             Component(cartHandler, "CartHandler", "HTTP", "Create, Get, AddItem, UpdateItem, RemoveItem")
             Component(checkoutHandler, "CheckoutHandler", "HTTP", "StartCheckout")

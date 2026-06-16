@@ -23,6 +23,9 @@ const (
 	MediaRead  Permission = "media.read"
 	MediaWrite Permission = "media.write"
 
+	ContentRead  Permission = "content.read"
+	ContentWrite Permission = "content.write"
+
 	SettingsRead  Permission = "settings.read"
 	SettingsWrite Permission = "settings.write"
 

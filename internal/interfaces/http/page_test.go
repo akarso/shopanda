@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/akarso/shopanda/internal/application/admin"
 	"github.com/akarso/shopanda/internal/domain/cms"
 	"github.com/akarso/shopanda/internal/domain/translation"
 	"github.com/akarso/shopanda/internal/platform/apperror"
@@ -147,7 +148,7 @@ func parsePageBody(t *testing.T, rec *httptest.ResponseRecorder) map[string]inte
 }
 
 func testPage() *cms.Page {
-	return cms.NewPageFromDB("page-1", "about", "About Us", "<p>Hello</p>", true,
+	return cms.NewPageFromDB("page-1", "about", "About Us", "<p>Hello</p>", "", true,
 		fixedTime, fixedTime)
 }
 
@@ -455,4 +456,117 @@ func TestPageAdminHandler_Delete_NotFound(t *testing.T) {
 	if rec.Code != http.StatusNotFound {
 		t.Fatalf("status = %d, want %d", rec.Code, http.StatusNotFound)
 	}
+}
+
+// --- admin handler: language scope + scoped audit ---
+
+func pageAdminWithSink(repo cms.PageRepository, sink logger.Logger) *shophttp.PageAdminHandler {
+	return shophttp.NewPageAdminHandlerWithAuditor(repo, pageBus(), admin.NewAuditor(sink))
+}
+
+func TestPageAdminHandler_Create_PersistsLanguageWithScopedAudit(t *testing.T) {
+	var created *cms.Page
+	repo := &mockPageRepo{
+		createFn: func(_ context.Context, p *cms.Page) error {
+			created = p
+			return nil
+		},
+	}
+	sink := &auditSink{}
+	h := pageAdminWithSink(repo, sink)
+
+	body := pageBody(t, map[string]interface{}{
+		"slug":     "a-propos",
+		"title":    "À propos",
+		"content":  "<p>Bonjour</p>",
+		"language": "fr",
+	})
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("POST", "/api/v1/admin/pages", body)
+	req = withAdminFullScope(req, "admin-1", "store-eu", "fr", "EUR")
+	newPageAdminRouter(h).ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("status = %d, want %d; body: %s", rec.Code, http.StatusCreated, rec.Body.String())
+	}
+	if created == nil || created.Language() != "fr" {
+		t.Fatalf("created language = %q, want fr", created.Language())
+	}
+	data := parsePageBody(t, rec)["data"].(map[string]interface{})
+	page := data["page"].(map[string]interface{})
+	if page["language"] != "fr" {
+		t.Errorf("response language = %v, want fr", page["language"])
+	}
+
+	last := sink.Last(t)
+	if last.context["action"] != admin.AuditPageCreate {
+		t.Errorf("audit action = %v, want %v", last.context["action"], admin.AuditPageCreate)
+	}
+	assertScopeTriad(t, last.context, "store-eu", "fr", "EUR")
+}
+
+func TestPageAdminHandler_Update_PersistsLanguageWithScopedAudit(t *testing.T) {
+	existing := testPage()
+	var updated *cms.Page
+	repo := &mockPageRepo{
+		findByIDFn: func(_ context.Context, id string) (*cms.Page, error) {
+			if id != "page-1" {
+				return nil, nil
+			}
+			return existing, nil
+		},
+		updateFn: func(_ context.Context, p *cms.Page) error {
+			updated = p
+			return nil
+		},
+	}
+	sink := &auditSink{}
+	h := pageAdminWithSink(repo, sink)
+
+	body := pageBody(t, map[string]interface{}{"language": "de"})
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("PUT", "/api/v1/admin/pages/page-1", body)
+	req = withAdminFullScope(req, "admin-1", "store-de", "de", "EUR")
+	newPageAdminRouter(h).ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d; body: %s", rec.Code, http.StatusOK, rec.Body.String())
+	}
+	if updated == nil || updated.Language() != "de" {
+		t.Fatalf("updated language = %q, want de", updated.Language())
+	}
+
+	last := sink.Last(t)
+	if last.context["action"] != admin.AuditPageUpdate {
+		t.Errorf("audit action = %v, want %v", last.context["action"], admin.AuditPageUpdate)
+	}
+	assertScopeTriad(t, last.context, "store-de", "de", "EUR")
+}
+
+func TestPageAdminHandler_Delete_ScopedAudit(t *testing.T) {
+	repo := &mockPageRepo{
+		findByIDFn: func(_ context.Context, id string) (*cms.Page, error) {
+			if id == "page-1" {
+				return testPage(), nil
+			}
+			return nil, nil
+		},
+		deleteFn: func(_ context.Context, _ string) error { return nil },
+	}
+	sink := &auditSink{}
+	h := pageAdminWithSink(repo, sink)
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("DELETE", "/api/v1/admin/pages/page-1", nil)
+	req = withAdminFullScope(req, "admin-1", "store-eu", "en", "USD")
+	newPageAdminRouter(h).ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d; body: %s", rec.Code, http.StatusOK, rec.Body.String())
+	}
+	last := sink.Last(t)
+	if last.context["action"] != admin.AuditPageDelete {
+		t.Errorf("audit action = %v, want %v", last.context["action"], admin.AuditPageDelete)
+	}
+	assertScopeTriad(t, last.context, "store-eu", "en", "USD")
 }
