@@ -5,20 +5,50 @@ import (
 	"net/http"
 	"path/filepath"
 
+	"github.com/akarso/shopanda/internal/application/admin"
 	mediaApp "github.com/akarso/shopanda/internal/application/media"
 	"github.com/akarso/shopanda/internal/platform/apperror"
+	"github.com/akarso/shopanda/internal/platform/logger"
 )
 
 const maxUploadSize = 10 << 20 // 10 MB
 
 // MediaHandler handles media endpoints.
 type MediaHandler struct {
-	svc *mediaApp.Service
+	svc     *mediaApp.Service
+	auditor *admin.Auditor
 }
 
-// NewMediaHandler creates a MediaHandler.
+// NewMediaHandler creates a MediaHandler with a default auditor.
 func NewMediaHandler(svc *mediaApp.Service) *MediaHandler {
-	return &MediaHandler{svc: svc}
+	return NewMediaHandlerWithAuditor(svc, admin.NewAuditor(logger.New("info")))
+}
+
+// NewMediaHandlerWithAuditor creates a MediaHandler with a custom auditor.
+func NewMediaHandlerWithAuditor(svc *mediaApp.Service, auditor *admin.Auditor) *MediaHandler {
+	if auditor == nil {
+		panic("MediaHandler: auditor must not be nil")
+	}
+	return &MediaHandler{svc: svc, auditor: auditor}
+}
+
+func (h *MediaHandler) audit(r *http.Request, action admin.AuditAction, resourceID string, details map[string]interface{}, err error) {
+	merged := mergeAuditDetails(details, fullAdminScopeDetailsFromRequest(r))
+	result := "success"
+	errMsg := ""
+	if err != nil {
+		result = "error"
+		errMsg = err.Error()
+	}
+	h.auditor.LogAction(r.Context(), admin.AuditEntry{
+		AdminID:      adminIDFromRequest(r),
+		Action:       action,
+		ResourceType: "media",
+		ResourceID:   resourceID,
+		Details:      merged,
+		Result:       result,
+		Error:        errMsg,
+	})
 }
 
 type assetResponse struct {
@@ -78,17 +108,23 @@ func (h *MediaHandler) Upload() http.HandlerFunc {
 		if err != nil {
 			var maxErr *http.MaxBytesError
 			if errors.As(err, &maxErr) {
-				JSONError(w, apperror.Validation("file exceeds maximum upload size of 10MB"))
+				verr := apperror.Validation("file exceeds maximum upload size of 10MB")
+				h.audit(r, admin.AuditMediaUpload, "", nil, verr)
+				JSONError(w, verr)
 				return
 			}
-			JSONError(w, apperror.Validation("file is required"))
+			verr := apperror.Validation("file is required")
+			h.audit(r, admin.AuditMediaUpload, "", nil, verr)
+			JSONError(w, verr)
 			return
 		}
 		defer file.Close()
 
 		filename := filepath.Base(header.Filename)
 		if filename == "." || filename == "/" {
-			JSONError(w, apperror.Validation("invalid filename"))
+			verr := apperror.Validation("invalid filename")
+			h.audit(r, admin.AuditMediaUpload, "", nil, verr)
+			JSONError(w, verr)
 			return
 		}
 
@@ -97,9 +133,12 @@ func (h *MediaHandler) Upload() http.HandlerFunc {
 			File:     file,
 		})
 		if err != nil {
+			h.audit(r, admin.AuditMediaUpload, "", map[string]interface{}{"filename": filename}, err)
 			JSONError(w, err)
 			return
 		}
+
+		h.audit(r, admin.AuditMediaUpload, result.Asset.ID, map[string]interface{}{"filename": filename}, nil)
 
 		JSON(w, http.StatusCreated, toAssetResponse(mediaApp.AssetView{
 			Asset:      result.Asset,
@@ -114,13 +153,17 @@ func (h *MediaHandler) Delete() http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		assetID := r.PathValue("assetId")
 		if assetID == "" {
-			JSONError(w, apperror.Validation("asset id is required"))
+			verr := apperror.Validation("asset id is required")
+			h.audit(r, admin.AuditMediaDelete, "", nil, verr)
+			JSONError(w, verr)
 			return
 		}
 		if err := h.svc.Delete(r.Context(), assetID); err != nil {
+			h.audit(r, admin.AuditMediaDelete, assetID, nil, err)
 			JSONError(w, err)
 			return
 		}
+		h.audit(r, admin.AuditMediaDelete, assetID, nil, nil)
 		JSON(w, http.StatusOK, map[string]interface{}{"deleted": true, "asset_id": assetID})
 	}
 }

@@ -11,6 +11,7 @@ import (
 	"net/textproto"
 	"testing"
 
+	"github.com/akarso/shopanda/internal/application/admin"
 	mediaApp "github.com/akarso/shopanda/internal/application/media"
 	domainMedia "github.com/akarso/shopanda/internal/domain/media"
 	"github.com/akarso/shopanda/internal/platform/event"
@@ -295,4 +296,100 @@ func TestMediaHandler_Delete(t *testing.T) {
 	if len(repo.deleted) != 1 || repo.deleted[0] != "asset-1" {
 		t.Fatalf("deleted = %#v", repo.deleted)
 	}
+}
+
+// --- audit assertions ---
+
+type recordingAuditLogger struct {
+	fields []map[string]interface{}
+}
+
+func (l *recordingAuditLogger) Info(_ string, f map[string]interface{}) {
+	l.fields = append(l.fields, f)
+}
+func (l *recordingAuditLogger) Warn(_ string, f map[string]interface{}) {
+	l.fields = append(l.fields, f)
+}
+func (l *recordingAuditLogger) Error(_ string, _ error, f map[string]interface{}) {
+	l.fields = append(l.fields, f)
+}
+
+func (l *recordingAuditLogger) last(t *testing.T) map[string]interface{} {
+	t.Helper()
+	if len(l.fields) == 0 {
+		t.Fatal("expected at least one audit log entry")
+	}
+	return l.fields[len(l.fields)-1]
+}
+
+func withMediaAdminScope(req *http.Request) *http.Request {
+	ac := &admin.AdminContext{AdminID: "admin-1", StoreID: "store-eu", Language: "en", Currency: "USD"}
+	return req.WithContext(ac.WithContext(req.Context()))
+}
+
+func assertMediaScopeTriad(t *testing.T, fields map[string]interface{}, action admin.AuditAction) {
+	t.Helper()
+	if fields["action"] != action {
+		t.Errorf("audit action = %v, want %v", fields["action"], action)
+	}
+	if fields["detail_store_id"] != "store-eu" {
+		t.Errorf("detail_store_id = %v, want store-eu", fields["detail_store_id"])
+	}
+	if fields["detail_language"] != "en" {
+		t.Errorf("detail_language = %v, want en", fields["detail_language"])
+	}
+	if fields["detail_currency"] != "USD" {
+		t.Errorf("detail_currency = %v, want USD", fields["detail_currency"])
+	}
+}
+
+func TestMediaHandler_Upload_AuditsScope(t *testing.T) {
+	rec0 := &recordingAuditLogger{}
+	handler := NewMediaHandlerWithAuditor(newTestMediaService(), admin.NewAuditor(rec0))
+
+	jpegHeader := []byte{0xFF, 0xD8, 0xFF, 0xE0, 0x00, 0x10, 0x4A, 0x46, 0x49, 0x46, 0x00}
+	var body bytes.Buffer
+	writer := multipart.NewWriter(&body)
+	h := make(textproto.MIMEHeader)
+	h.Set("Content-Disposition", `form-data; name="file"; filename="photo.jpg"`)
+	h.Set("Content-Type", "image/jpeg")
+	part, err := writer.CreatePart(h)
+	if err != nil {
+		t.Fatal(err)
+	}
+	part.Write(jpegHeader)
+	writer.Close()
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/admin/media/upload", &body)
+	req.Header.Set("Content-Type", writer.FormDataContentType())
+	req = withMediaAdminScope(req)
+	rec := httptest.NewRecorder()
+	handler.Upload().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("status = %d, want %d; body = %s", rec.Code, http.StatusCreated, rec.Body.String())
+	}
+	assertMediaScopeTriad(t, rec0.last(t), admin.AuditMediaUpload)
+}
+
+func TestMediaHandler_Delete_AuditsScope(t *testing.T) {
+	bus := event.NewBus(hMockLogger{})
+	asset, err := domainMedia.NewAsset("asset-1", "uploads/asset-1/photo.jpg", "photo.jpg", "image/jpeg", 12)
+	if err != nil {
+		t.Fatal(err)
+	}
+	repo := &hListAssetRepo{assets: []domainMedia.Asset{asset}}
+	rec0 := &recordingAuditLogger{}
+	handler := NewMediaHandlerWithAuditor(mediaApp.NewService(hMockStorage{}, repo, bus, hMockLogger{}), admin.NewAuditor(rec0))
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodDelete, "/api/v1/admin/media/asset-1", nil)
+	req.SetPathValue("assetId", "asset-1")
+	req = withMediaAdminScope(req)
+	handler.Delete().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d; body = %s", rec.Code, http.StatusOK, rec.Body.String())
+	}
+	assertMediaScopeTriad(t, rec0.last(t), admin.AuditMediaDelete)
 }
