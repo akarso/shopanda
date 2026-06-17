@@ -153,7 +153,7 @@
         "/admin/customers": { title: "Customers", render: renderCustomersGrid, auth: true },
         "/admin/customers/groups": { title: "Groups", render: renderPlaceholder("Groups"), auth: true },
         // Marketing
-        "/admin/marketing/promotions": { title: "Promotions", render: renderPlaceholder("Promotions"), auth: true },
+        "/admin/marketing/promotions": { title: "Promotions", render: renderPromotionsGrid, auth: true },
         "/admin/marketing/coupons": { title: "Coupons", render: renderCouponsGrid, auth: true },
         // Content
         "/admin/content/pages": { title: "Pages", render: renderPagesGrid, auth: true },
@@ -194,6 +194,18 @@
         }
         if (path === "/admin/marketing/coupons/new") {
             return { title: "New Coupon", render: renderCouponCreate, auth: true };
+        }
+        if (path === "/admin/marketing/promotions/new") {
+            return { title: "New Promotion", render: renderPromotionCreate, auth: true };
+        }
+        var promotionMatch = path.match(/^\/admin\/marketing\/promotions\/([^/]+)$/);
+        if (promotionMatch) {
+            var promotionID = decodeURIComponent(promotionMatch[1]);
+            return {
+                title: "Edit Promotion",
+                auth: true,
+                render: function (container) { renderPromotionEdit(container, promotionID); }
+            };
         }
         var couponMatch = path.match(/^\/admin\/marketing\/coupons\/([^/]+)$/);
         if (couponMatch) {
@@ -2708,6 +2720,189 @@
         });
     }
 
+    function renderPromotionsGrid(container) {
+        container.innerHTML = '<h2>Promotions</h2><div id="promotions-grid"></div>';
+
+        var grid = document.getElementById("promotions-grid");
+        api("/admin/promotions?offset=0&limit=50").then(function (body) {
+            if (body && body.error && body.error.code === "forbidden") {
+                grid.innerHTML = '<p role="alert">Your account does not have products access.</p>';
+                return;
+            }
+
+            var promotionsRaw = body && body.data && body.data.promotions;
+            if (!Array.isArray(promotionsRaw)) {
+                grid.innerHTML = '<p role="alert">' + esc(extractErrorMessage(body, 'Failed to load promotions.')) + '</p>';
+                return;
+            }
+
+            var html = '<div style="margin-bottom:1rem"><a class="button" href="/admin/marketing/promotions/new" data-link id="new-promotion-btn">New Promotion</a></div>';
+            html += '<table><thead><tr>' +
+                '<th>Name</th><th>Type</th><th>Discount</th><th>Status</th><th>Updated</th>' +
+                '</tr></thead><tbody>';
+
+            if (promotionsRaw.length === 0) {
+                html += '<tr><td colspan="5">No promotions found.</td></tr>';
+            } else {
+                for (var i = 0; i < promotionsRaw.length; i++) {
+                    var promo = promotionsRaw[i];
+                    var editHref = '/admin/marketing/promotions/' + encodeURIComponent(promo.id || '');
+                    var discount = promo.action_type === 'fixed'
+                        ? esc(String(promo.action_amount || 0)) + ' minor units'
+                        : esc(String(promo.action_percentage || 0)) + '%';
+                    html += '<tr>' +
+                        '<td><a href="' + editHref + '" data-link>' + esc(promo.name || promo.id || '') + '</a></td>' +
+                        '<td>' + esc(promo.type || '') + '</td>' +
+                        '<td>' + discount + '</td>' +
+                        '<td><span class="badge badge-' + esc(promo.active ? 'active' : 'draft') + '">' + esc(promo.active ? 'active' : 'inactive') + '</span></td>' +
+                        '<td>' + esc(promo.updated_at ? String(promo.updated_at).substring(0, 10) : '') + '</td>' +
+                        '</tr>';
+                }
+            }
+
+            html += '</tbody></table>';
+            grid.innerHTML = html;
+        }).catch(function (err) {
+            grid.innerHTML = '<p role="alert">' + esc(extractErrorMessage(err, 'Failed to load promotions.')) + '</p>';
+        });
+    }
+
+    function renderPromotionCreate(container) {
+        renderPromotionForm(container, null);
+    }
+
+    function renderPromotionEdit(container, promotionID) {
+        renderPromotionForm(container, promotionID);
+    }
+
+    function renderPromotionFormFields(promotion) {
+        var type = promotion ? (promotion.type || 'catalog') : 'catalog';
+        var conditionType = promotion ? (promotion.condition_type || 'always') : 'always';
+        var actionType = promotion ? (promotion.action_type || 'percentage') : 'percentage';
+        var isActive = promotion ? !!promotion.active : true;
+        var couponBound = promotion ? !!promotion.coupon_bound : false;
+        return '' +
+            '<label>Name<input name="name" value="' + esc(promotion ? (promotion.name || '') : '') + '" required></label>' +
+            '<label>Type<select name="type">' +
+            '<option value="catalog"' + (type === 'catalog' ? ' selected' : '') + '>Catalog (line item)</option>' +
+            '<option value="cart"' + (type === 'cart' ? ' selected' : '') + '>Cart (order total)</option>' +
+            '</select></label>' +
+            '<label>Priority<input name="priority" type="number" value="' + esc(promotion ? String(promotion.priority || 0) : '0') + '"></label>' +
+            '<label>Condition<select name="condition_type">' +
+            '<option value="always"' + (conditionType === 'always' ? ' selected' : '') + '>Always</option>' +
+            '<option value="min_quantity"' + (conditionType === 'min_quantity' ? ' selected' : '') + '>Minimum quantity (catalog)</option>' +
+            '<option value="min_cart_total"' + (conditionType === 'min_cart_total' ? ' selected' : '') + '>Minimum cart total (cart)</option>' +
+            '</select></label>' +
+            '<label>Condition value<input name="condition_value" type="number" min="0" value="' + esc(promotion ? String(promotion.condition_value || 0) : '0') + '"></label>' +
+            '<p class="hint">For min_cart_total use minor currency units (e.g. 5000 = $50.00).</p>' +
+            '<label>Discount type<select name="action_type">' +
+            '<option value="percentage"' + (actionType === 'percentage' ? ' selected' : '') + '>Percentage</option>' +
+            '<option value="fixed"' + (actionType === 'fixed' ? ' selected' : '') + '>Fixed amount</option>' +
+            '</select></label>' +
+            '<label>Percentage<input name="action_percentage" type="number" min="1" max="100" value="' + esc(promotion ? String(promotion.action_percentage || 10) : '10') + '"></label>' +
+            '<label>Fixed amount (minor units)<input name="action_amount" type="number" min="0" value="' + esc(promotion ? String(promotion.action_amount || 0) : '0') + '"></label>' +
+            '<label>Start at<input name="start_at" value="' + esc(promotion && promotion.start_at ? String(promotion.start_at).substring(0, 16) : '') + '" placeholder="2026-01-01T00:00"></label>' +
+            '<label>End at<input name="end_at" value="' + esc(promotion && promotion.end_at ? String(promotion.end_at).substring(0, 16) : '') + '" placeholder="2026-12-31T23:59"></label>' +
+            '<label><input type="checkbox" name="active"' + (isActive ? ' checked' : '') + '> Active</label>' +
+            '<label><input type="checkbox" name="coupon_bound"' + (couponBound ? ' checked' : '') + '> Requires coupon code</label>' +
+            '<div style="margin-top:1rem"><button type="submit">Save</button>' +
+            (promotion ? ' <button type="button" id="delete-promotion-btn" class="danger">Delete</button>' : '') +
+            '</div>';
+    }
+
+    function renderPromotionForm(container, promotionID) {
+        var title = promotionID ? 'Edit Promotion' : 'New Promotion';
+        container.innerHTML =
+            '<h2>' + title + '</h2>' +
+            '<p><a href="/admin/marketing/promotions" data-link>Back to promotions</a></p>' +
+            '<div id="promotion-form-msg"></div>' +
+            '<form id="promotion-form"><p>Loading…</p></form>';
+
+        var msg = document.getElementById('promotion-form-msg');
+        var form = document.getElementById('promotion-form');
+
+        function bindForm(promotion) {
+            form.innerHTML = renderPromotionFormFields(promotion);
+
+            form.addEventListener('submit', function (e) {
+                e.preventDefault();
+                var payload = {
+                    name: form.elements.name.value,
+                    type: form.elements.type.value,
+                    priority: parseInt(form.elements.priority.value, 10) || 0,
+                    condition_type: form.elements.condition_type.value,
+                    condition_value: parseInt(form.elements.condition_value.value, 10) || 0,
+                    action_type: form.elements.action_type.value,
+                    action_percentage: parseInt(form.elements.action_percentage.value, 10) || 0,
+                    action_amount: parseInt(form.elements.action_amount.value, 10) || 0,
+                    active: form.elements.active.checked,
+                    coupon_bound: form.elements.coupon_bound.checked
+                };
+                if (form.elements.start_at.value) {
+                    payload.start_at = form.elements.start_at.value.length === 16
+                        ? form.elements.start_at.value + ':00Z'
+                        : form.elements.start_at.value;
+                }
+                if (form.elements.end_at.value) {
+                    payload.end_at = form.elements.end_at.value.length === 16
+                        ? form.elements.end_at.value + ':00Z'
+                        : form.elements.end_at.value;
+                }
+                var method = promotionID ? 'PUT' : 'POST';
+                var url = promotionID ? '/admin/promotions/' + encodeURIComponent(promotionID) : '/admin/promotions';
+                api(url, { method: method, body: JSON.stringify(payload) }).then(function (body) {
+                    if (body && body.error) {
+                        msg.innerHTML = '<p role="alert">' + esc(body.error.message || 'Save failed.') + '</p>';
+                        return;
+                    }
+                    navigate('/admin/marketing/promotions');
+                }).catch(function (err) {
+                    msg.innerHTML = '<p role="alert">' + esc(extractErrorMessage(err, 'Save failed.')) + '</p>';
+                });
+            });
+
+            if (promotionID) {
+                var deleteBtn = document.getElementById('delete-promotion-btn');
+                if (deleteBtn) {
+                    deleteBtn.addEventListener('click', function () {
+                        if (!window.confirm('Delete this promotion? Linked coupons will also be removed.')) {
+                            return;
+                        }
+                        api('/admin/promotions/' + encodeURIComponent(promotionID), { method: 'DELETE' }).then(function (body) {
+                            if (body && body.error) {
+                                msg.innerHTML = '<p role="alert">' + esc(body.error.message || 'Failed to delete promotion.') + '</p>';
+                                return;
+                            }
+                            navigate('/admin/marketing/promotions');
+                        }).catch(function (err) {
+                            msg.innerHTML = '<p role="alert">' + esc(extractErrorMessage(err, 'Failed to delete promotion.')) + '</p>';
+                        });
+                    });
+                }
+            }
+        }
+
+        if (!promotionID) {
+            bindForm(null);
+            return;
+        }
+
+        api('/admin/promotions/' + encodeURIComponent(promotionID)).then(function (body) {
+            if (body && body.error && body.error.code === 'forbidden') {
+                form.innerHTML = '<p role="alert">Your account does not have products access.</p>';
+                return;
+            }
+            var promotion = body && body.data && body.data.promotion;
+            if (!promotion) {
+                form.innerHTML = '<p role="alert">' + esc(extractErrorMessage(body, 'Promotion not found.')) + '</p>';
+                return;
+            }
+            bindForm(promotion);
+        }).catch(function (err) {
+            form.innerHTML = '<p role="alert">' + esc(extractErrorMessage(err, 'Failed to load promotion form.')) + '</p>';
+        });
+    }
+
     function renderCouponsGrid(container) {
         container.innerHTML = '<h2>Coupons</h2><div id="coupons-grid"></div>';
 
@@ -2761,12 +2956,22 @@
         renderCouponForm(container, couponID);
     }
 
-    function renderCouponFormFields(coupon) {
+    function renderCouponFormFields(coupon, promotions) {
         var isActive = coupon ? !!coupon.active : true;
+        var selectedPromotionID = coupon ? (coupon.promotion_id || '') : '';
+        var promotionOptions = '<option value="">Select promotion</option>';
+        for (var i = 0; i < promotions.length; i++) {
+            var promo = promotions[i];
+            var promoID = promo.id || '';
+            promotionOptions += '<option value="' + esc(promoID) + '"' +
+                (promoID === selectedPromotionID ? ' selected' : '') + '>' +
+                esc(promo.name || promoID) + ' (' + esc(promo.type || '') + ')' +
+                '</option>';
+        }
         return '' +
             '<label>Code<input name="code" value="' + esc(coupon ? (coupon.code || '') : '') + '" required placeholder="SAVE10"></label>' +
             '<p class="hint">Uppercase letters, digits, and hyphens (min 3 characters).</p>' +
-            '<label>Promotion ID<input name="promotion_id" value="' + esc(coupon ? (coupon.promotion_id || '') : '') + '" required placeholder="UUID"></label>' +
+            '<label>Promotion<select name="promotion_id" required>' + promotionOptions + '</select></label>' +
             '<label>Usage limit<input name="usage_limit" type="number" min="0" value="' + esc(coupon ? String(coupon.usage_limit || 0) : '0') + '"></label>' +
             '<p class="hint">0 means unlimited redemptions.</p>' +
             '<label><input type="checkbox" name="active"' + (isActive ? ' checked' : '') + '> Active</label>' +
@@ -2786,8 +2991,8 @@
         var msg = document.getElementById('coupon-form-msg');
         var form = document.getElementById('coupon-form');
 
-        function bindForm(coupon) {
-            form.innerHTML = renderCouponFormFields(coupon);
+        function bindForm(coupon, promotions) {
+            form.innerHTML = renderCouponFormFields(coupon, promotions || []);
 
             form.addEventListener('submit', function (e) {
                 e.preventDefault();
@@ -2836,22 +3041,51 @@
             }
         }
 
+        function loadPromotionsThen(callback) {
+            api('/admin/promotions?offset=0&limit=100').then(function (body) {
+                if (body && body.error && body.error.code === 'forbidden') {
+                    form.innerHTML = '<p role="alert">Your account does not have products access.</p>';
+                    return;
+                }
+                var promotions = body && body.data && body.data.promotions;
+                if (!Array.isArray(promotions)) {
+                    form.innerHTML = '<p role="alert">' + esc(extractErrorMessage(body, 'Failed to load promotions.')) + '</p>';
+                    return;
+                }
+                callback(promotions);
+            }).catch(function (err) {
+                form.innerHTML = '<p role="alert">' + esc(extractErrorMessage(err, 'Failed to load promotions.')) + '</p>';
+            });
+        }
+
         if (!couponID) {
-            bindForm(null);
+            loadPromotionsThen(function (promotions) {
+                bindForm(null, promotions);
+            });
             return;
         }
 
-        api('/admin/coupons/' + encodeURIComponent(couponID)).then(function (body) {
-            if (body && body.error && body.error.code === 'forbidden') {
+        Promise.all([
+            api('/admin/coupons/' + encodeURIComponent(couponID)),
+            api('/admin/promotions?offset=0&limit=100')
+        ]).then(function (results) {
+            var couponBody = results[0];
+            var promotionsBody = results[1];
+            if (couponBody && couponBody.error && couponBody.error.code === 'forbidden') {
                 form.innerHTML = '<p role="alert">Your account does not have products access.</p>';
                 return;
             }
-            var coupon = body && body.data && body.data.coupon;
+            var coupon = couponBody && couponBody.data && couponBody.data.coupon;
             if (!coupon) {
-                form.innerHTML = '<p role="alert">' + esc(extractErrorMessage(body, 'Coupon not found.')) + '</p>';
+                form.innerHTML = '<p role="alert">' + esc(extractErrorMessage(couponBody, 'Coupon not found.')) + '</p>';
                 return;
             }
-            bindForm(coupon);
+            var promotions = promotionsBody && promotionsBody.data && promotionsBody.data.promotions;
+            if (!Array.isArray(promotions)) {
+                form.innerHTML = '<p role="alert">' + esc(extractErrorMessage(promotionsBody, 'Failed to load promotions.')) + '</p>';
+                return;
+            }
+            bindForm(coupon, promotions);
         }).catch(function (err) {
             form.innerHTML = '<p role="alert">' + esc(extractErrorMessage(err, 'Failed to load coupon form.')) + '</p>';
         });

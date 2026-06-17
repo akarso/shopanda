@@ -71,6 +71,37 @@ func (r *PromotionRepo) FindByID(ctx context.Context, id string) (*promotion.Pro
 	return p, nil
 }
 
+func (r *PromotionRepo) List(ctx context.Context, offset, limit int) ([]promotion.Promotion, error) {
+	const q = `SELECT id, name, type, priority, active, start_at, end_at,
+		conditions, actions, coupon_bound, created_at, updated_at
+		FROM promotions
+		ORDER BY created_at DESC, id DESC
+		LIMIT $1 OFFSET $2`
+
+	rows, err := r.query(ctx, q, limit, offset)
+	if err != nil {
+		return nil, fmt.Errorf("promotion_repo: list: %w", err)
+	}
+	defer rows.Close()
+
+	var result []promotion.Promotion
+	for rows.Next() {
+		var p promotion.Promotion
+		if err := rows.Scan(
+			&p.ID, &p.Name, &p.Type, &p.Priority, &p.Active,
+			&p.StartAt, &p.EndAt, &p.Conditions, &p.Actions,
+			&p.CouponBound, &p.CreatedAt, &p.UpdatedAt,
+		); err != nil {
+			return nil, fmt.Errorf("promotion_repo: list scan: %w", err)
+		}
+		result = append(result, p)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("promotion_repo: list rows: %w", err)
+	}
+	return result, nil
+}
+
 func (r *PromotionRepo) ListActive(ctx context.Context, typ promotion.PromotionType) ([]promotion.Promotion, error) {
 	const q = `SELECT id, name, type, priority, active, start_at, end_at,
 		conditions, actions, coupon_bound, created_at, updated_at

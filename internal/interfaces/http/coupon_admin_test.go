@@ -84,6 +84,10 @@ func (m *mockPromotionRepo) ListActive(context.Context, promotion.PromotionType)
 	return nil, nil
 }
 
+func (m *mockPromotionRepo) List(context.Context, int, int) ([]promotion.Promotion, error) {
+	return nil, nil
+}
+
 func (m *mockPromotionRepo) Save(context.Context, *promotion.Promotion) error { return nil }
 func (m *mockPromotionRepo) Delete(context.Context, string) error             { return nil }
 

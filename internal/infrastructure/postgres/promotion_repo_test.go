@@ -129,6 +129,38 @@ func TestPromotionRepo_ListActive(t *testing.T) {
 	}
 }
 
+func TestPromotionRepo_List(t *testing.T) {
+	db := testDB(t)
+	ensureProductsTable(t, db)
+	t.Cleanup(func() { db.Exec("DELETE FROM promotions") })
+
+	repo, err := postgres.NewPromotionRepo(db)
+	if err != nil {
+		t.Fatalf("NewPromotionRepo: %v", err)
+	}
+	ctx := context.Background()
+
+	first := mustNewPromotion(t, "First")
+	second := mustNewPromotion(t, "Second")
+	if err := repo.Save(ctx, &first); err != nil {
+		t.Fatalf("Save first: %v", err)
+	}
+	if err := repo.Save(ctx, &second); err != nil {
+		t.Fatalf("Save second: %v", err)
+	}
+
+	got, err := repo.List(ctx, 0, 10)
+	if err != nil {
+		t.Fatalf("List: %v", err)
+	}
+	if len(got) != 2 {
+		t.Fatalf("len = %d, want 2", len(got))
+	}
+	if got[0].Name != "Second" {
+		t.Errorf("first name = %q, want Second (newest first)", got[0].Name)
+	}
+}
+
 func TestPromotionRepo_ListActive_InactiveExcluded(t *testing.T) {
 	db := testDB(t)
 	ensureProductsTable(t, db)
