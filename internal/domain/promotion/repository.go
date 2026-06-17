@@ -31,6 +31,9 @@ type CouponRepository interface {
 	// ListByPromotion returns all coupons for a promotion.
 	ListByPromotion(ctx context.Context, promotionID string) ([]Coupon, error)
 
+	// List returns coupons ordered by created_at descending.
+	List(ctx context.Context, offset, limit int) ([]Coupon, error)
+
 	// Save creates or updates a coupon.
 	Save(ctx context.Context, c *Coupon) error
 

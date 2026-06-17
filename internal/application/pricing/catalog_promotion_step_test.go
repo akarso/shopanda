@@ -72,6 +72,10 @@ func (r *stubCouponRepo) ListByPromotion(_ context.Context, promoID string) ([]p
 	return out, nil
 }
 
+func (r *stubCouponRepo) List(_ context.Context, _, _ int) ([]promotion.Coupon, error) {
+	return append([]promotion.Coupon(nil), r.coupons...), nil
+}
+
 func (r *stubCouponRepo) Save(_ context.Context, _ *promotion.Coupon) error { return nil }
 func (r *stubCouponRepo) Delete(_ context.Context, _ string) error          { return nil }
 

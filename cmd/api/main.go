@@ -64,12 +64,12 @@ import (
 	"github.com/akarso/shopanda/internal/platform/config"
 	"github.com/akarso/shopanda/internal/platform/db"
 	"github.com/akarso/shopanda/internal/platform/event"
-	"github.com/akarso/shopanda/internal/platform/id"
 	"github.com/akarso/shopanda/internal/platform/jwt"
 	"github.com/akarso/shopanda/internal/platform/logger"
 	"github.com/akarso/shopanda/internal/platform/migrate"
 
 	"github.com/akarso/shopanda/internal/platform/plugin"
+	"github.com/akarso/shopanda/internal/platform/runtime"
 	"github.com/akarso/shopanda/internal/seed"
 
 	shophttp "github.com/akarso/shopanda/internal/interfaces/http"
@@ -117,7 +117,9 @@ func run() error {
 		case "migrate":
 			return runMigrate(cfg, log)
 		case "serve":
-			return runServe(cfg, log)
+			return runServe(cfg, log, false)
+		case "dev":
+			return runServe(cfg, log, cfg.Dev.EmbedScheduler)
 		case "worker":
 			return runWorker(cfg, log)
 		case "scheduler":
@@ -159,11 +161,11 @@ func run() error {
 		}
 	}
 
-	// Default: start HTTP server.
-	return runServe(cfg, log)
+	// Default: start HTTP server (production-style, no embedded scheduler).
+	return runServe(cfg, log, false)
 }
 
-func runServe(cfg *config.Config, log logger.Logger) error {
+func runServe(cfg *config.Config, log logger.Logger, embedScheduler bool) error {
 	// Database.
 	dsn := config.DatabaseDSN(cfg)
 	conn, err := db.Open(dsn)
@@ -714,6 +716,7 @@ func runServe(cfg *config.Config, log logger.Logger) error {
 	schemaHandler := shophttp.NewSchemaHandler(adminRegistry)
 	pageHandler := shophttp.NewPageHandler(pageRepo, contentTranslator)
 	pageAdmin := shophttp.NewPageAdminHandlerWithAuditor(pageRepo, bus, adminApp.NewAuditor(log))
+	couponAdmin := shophttp.NewCouponAdminHandlerWithAuditor(couponRepo, promotionRepo, adminApp.NewAuditor(log))
 	storeAdmin := shophttp.NewStoreAdminHandlerWithAuditor(storeRepo, bus, adminApp.NewAuditor(log))
 	shippingZoneAdmin := shophttp.NewShippingZoneAdminHandler(zoneRepo)
 	accountService := accountApp.NewService(customerRepo, consentRepo, bus, log, conn)
@@ -848,6 +851,11 @@ func runServe(cfg *config.Config, log logger.Logger) error {
 	router.Handle("POST /api/v1/admin/pages", requireContentWrite(pageAdmin.Create()))
 	router.Handle("PUT /api/v1/admin/pages/{id}", requireContentWrite(pageAdmin.Update()))
 	router.Handle("DELETE /api/v1/admin/pages/{id}", requireContentWrite(pageAdmin.Delete()))
+	router.Handle("GET /api/v1/admin/coupons", requireProductsRead(couponAdmin.List()))
+	router.Handle("GET /api/v1/admin/coupons/{id}", requireProductsRead(couponAdmin.Get()))
+	router.Handle("POST /api/v1/admin/coupons", requireProductsWrite(couponAdmin.Create()))
+	router.Handle("PUT /api/v1/admin/coupons/{id}", requireProductsWrite(couponAdmin.Update()))
+	router.Handle("DELETE /api/v1/admin/coupons/{id}", requireProductsWrite(couponAdmin.Delete()))
 	router.Handle("GET /api/v1/admin/stores", requireSettingsRead(storeAdmin.List()))
 	router.Handle("POST /api/v1/admin/stores", requireSettingsWrite(storeAdmin.Create()))
 	router.Handle("PUT /api/v1/admin/stores/{id}", requireSettingsWrite(storeAdmin.Update()))
@@ -997,6 +1005,22 @@ func runServe(cfg *config.Config, log logger.Logger) error {
 
 	srv := shophttp.NewServer(cfg.Server.Host, cfg.Server.Port, router.Handler(), log)
 
+	var sched scheduler.Scheduler
+	var schedulerCancel context.CancelFunc
+	var schedulerDone chan struct{}
+	if embedScheduler {
+		sched = cron.New(log)
+		runtime.RegisterCacheCleanup(jobQueue, cacheApp.JobType, log, sched)
+		schedulerCtx, cancel := context.WithCancel(context.Background())
+		schedulerCancel = cancel
+		schedulerDone = make(chan struct{})
+		go func() {
+			defer close(schedulerDone)
+			sched.Start(schedulerCtx)
+		}()
+		log.Info("app.dev.scheduler.embedded", nil)
+	}
+
 	// Start job worker in background.
 	workerCtx, workerCancel := context.WithCancel(context.Background())
 	workerDone := make(chan struct{})
@@ -1008,13 +1032,15 @@ func runServe(cfg *config.Config, log logger.Logger) error {
 	// Block until server shuts down (handles SIGINT/SIGTERM internally).
 	err = srv.ListenAndServe()
 
-	// Gracefully stop the worker, giving in-flight jobs time to finish.
-	workerCancel()
-	select {
-	case <-workerDone:
-	case <-time.After(10 * time.Second):
-		log.Info("worker.shutdown.timeout", nil)
+	var cancels []func()
+	var dones []<-chan struct{}
+	if schedulerCancel != nil {
+		cancels = append(cancels, schedulerCancel)
+		dones = append(dones, schedulerDone)
 	}
+	cancels = append(cancels, workerCancel)
+	dones = append(dones, workerDone)
+	runtime.ShutdownBackground(log, 10*time.Second, sched, cancels, dones)
 
 	return err
 }
@@ -1449,19 +1475,7 @@ func runScheduler(cfg *config.Config, log logger.Logger) error {
 		return fmt.Errorf("job queue: %w", err)
 	}
 	var sched scheduler.Scheduler = cron.New(log)
-
-	sched.Register("cache.cleanup", "*/5 * * * *", func() {
-		job, err := jobs.NewJob(id.New(), cacheApp.JobType, nil)
-		if err != nil {
-			log.Error("cache.cleanup.schedule", err, nil)
-			return
-		}
-		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		defer cancel()
-		if err := jobQueue.Enqueue(ctx, job); err != nil {
-			log.Error("cache.cleanup.enqueue", err, nil)
-		}
-	})
+	runtime.RegisterCacheCleanup(jobQueue, cacheApp.JobType, log, sched)
 
 	// Block until interrupted (context cancelled via signal).
 	ctx, cancel := context.WithCancel(context.Background())
@@ -1935,7 +1949,8 @@ func printHelp() {
 	fmt.Println(`Usage: app <command> [arguments]
 
 Commands:
-  serve                Start the HTTP server (default)
+  dev                  Start HTTP server with embedded worker and scheduler (local dev)
+  serve                Start the HTTP server with embedded worker (default)
   setup                Run first-time setup (migrate + seed + verify)
   worker               Start the background job worker
   scheduler            Start the cron scheduler

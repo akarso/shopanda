@@ -178,6 +178,27 @@ func TestAdminHandler_StaticJS(t *testing.T) {
 	if !strings.Contains(normalizedBody, "renderPagesGrid") || !strings.Contains(normalizedBody, "/admin/pages?offset=0&limit=50") {
 		t.Fatalf("expected pages admin surface wiring in JS")
 	}
+	if !strings.Contains(normalizedBody, "renderCouponsGrid") || !strings.Contains(normalizedBody, "/admin/coupons?offset=0&limit=50") {
+		t.Fatalf("expected coupons admin surface wiring in JS")
+	}
+	if !strings.Contains(normalizedBody, "Your account does not have products access.") || !strings.Contains(normalizedBody, "Failed to load coupons.") {
+		t.Fatalf("expected coupons admin error messages in JS")
+	}
+	expectedCouponCrudWiring := []string{
+		"renderCouponForm",
+		"renderCouponCreate",
+		"renderCouponEdit",
+		"/admin/marketing/coupons/new",
+		"new-coupon-btn",
+		"delete-coupon-btn",
+		"Failed to delete coupon.",
+		"Coupon not found.",
+	}
+	for _, expected := range expectedCouponCrudWiring {
+		if !strings.Contains(normalizedBody, expected) {
+			t.Fatalf("expected coupons CRUD wiring %q in JS", expected)
+		}
+	}
 	if !strings.Contains(normalizedBody, "Your account does not have pages access.") || !strings.Contains(normalizedBody, "Failed to load pages.") {
 		t.Fatalf("expected pages admin error messages in JS")
 	}

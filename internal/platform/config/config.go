@@ -37,6 +37,12 @@ type Config struct {
 	RateLimit RateLimitConfig `yaml:"rate_limit"`
 	Payment   PaymentConfig   `yaml:"payment"`
 	Search    SearchConfig    `yaml:"search"`
+	Dev       DevConfig       `yaml:"dev"`
+}
+
+// DevConfig holds development-mode runtime options.
+type DevConfig struct {
+	EmbedScheduler bool `yaml:"embed_scheduler"`
 }
 
 // WebhooksConfig holds per-provider webhook secrets.
@@ -453,6 +459,9 @@ func defaults() Config {
 			Mode:      "ssr",
 			ThemePath: "themes/default",
 		},
+		Dev: DevConfig{
+			EmbedScheduler: true,
+		},
 	}
 }
 
@@ -657,6 +666,11 @@ func applyEnv(cfg *Config) {
 			cfg.RateLimit.Default.Burst = b
 		}
 	}
+	if v := os.Getenv("SHOPANDA_DEV_EMBED_SCHEDULER"); v != "" {
+		if b, err := strconv.ParseBool(v); err == nil {
+			cfg.Dev.EmbedScheduler = b
+		}
+	}
 }
 
 // flatten converts the Config struct into a dot-notation key-value map.
@@ -702,6 +716,7 @@ func flatten(cfg *Config) map[string]string {
 	m["frontend.enabled"] = strconv.FormatBool(cfg.Frontend.Enabled)
 	m["frontend.mode"] = cfg.Frontend.Mode
 	m["frontend.theme_path"] = cfg.Frontend.ThemePath
+	m["dev.embed_scheduler"] = strconv.FormatBool(cfg.Dev.EmbedScheduler)
 	m["cdn.base_url"] = cfg.CDN.BaseURL
 	m["payment.stripe.enabled"] = strconv.FormatBool(cfg.Payment.Stripe.Enabled)
 	for k, v := range cfg.Webhooks.Secrets {

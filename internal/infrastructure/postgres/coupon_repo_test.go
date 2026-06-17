@@ -201,6 +201,39 @@ func TestCouponRepo_Delete(t *testing.T) {
 	}
 }
 
+func TestCouponRepo_List(t *testing.T) {
+	db := testDB(t)
+	ensureProductsTable(t, db)
+	t.Cleanup(func() { db.Exec("DELETE FROM coupons") })
+
+	repo, err := postgres.NewCouponRepo(db)
+	if err != nil {
+		t.Fatalf("NewCouponRepo: %v", err)
+	}
+	ctx := context.Background()
+
+	promoID := id.New()
+	first := mustNewCoupon(t, "LIST10", promoID)
+	second := mustNewCoupon(t, "LIST20", promoID)
+	if err := repo.Save(ctx, &first); err != nil {
+		t.Fatalf("Save first: %v", err)
+	}
+	if err := repo.Save(ctx, &second); err != nil {
+		t.Fatalf("Save second: %v", err)
+	}
+
+	got, err := repo.List(ctx, 0, 10)
+	if err != nil {
+		t.Fatalf("List: %v", err)
+	}
+	if len(got) != 2 {
+		t.Fatalf("len = %d, want 2", len(got))
+	}
+	if got[0].Code != "LIST20" {
+		t.Errorf("first code = %q, want LIST20 (newest first)", got[0].Code)
+	}
+}
+
 func TestCouponRepo_Delete_NotFound(t *testing.T) {
 	db := testDB(t)
 	ensureProductsTable(t, db)

@@ -40,6 +40,7 @@ KNOWN_ENV_KEYS=(
   SHOPANDA_RATE_LIMIT_DEFAULT_RATE
   SHOPANDA_RATE_LIMIT_DEFAULT_BURST
   SHOPANDA_SEED_ADMIN_PASSWORD
+  SHOPANDA_DEV_EMBED_SCHEDULER
   SHOPANDA_DEV_MODE
   SHOPANDA_TEST_DSN
 )
@@ -332,6 +333,7 @@ write_env_file() {
     printf '\n'
 
     printf '# === Development ===\n'
+    write_env_line SHOPANDA_DEV_EMBED_SCHEDULER "$SHOPANDA_DEV_EMBED_SCHEDULER"
     write_env_line SHOPANDA_DEV_MODE "$SHOPANDA_DEV_MODE"
     printf '\n'
 
@@ -395,6 +397,7 @@ SHOPANDA_RATE_LIMIT_ENABLED=${SHOPANDA_RATE_LIMIT_ENABLED:-false}
 SHOPANDA_RATE_LIMIT_DEFAULT_RATE=${SHOPANDA_RATE_LIMIT_DEFAULT_RATE:-10}
 SHOPANDA_RATE_LIMIT_DEFAULT_BURST=${SHOPANDA_RATE_LIMIT_DEFAULT_BURST:-20}
 SHOPANDA_SEED_ADMIN_PASSWORD=${SHOPANDA_SEED_ADMIN_PASSWORD:-}
+SHOPANDA_DEV_EMBED_SCHEDULER=${SHOPANDA_DEV_EMBED_SCHEDULER:-true}
 SHOPANDA_DEV_MODE=${SHOPANDA_DEV_MODE:-}
 SHOPANDA_TEST_DSN=${SHOPANDA_TEST_DSN:-}
 
@@ -459,6 +462,7 @@ if [[ -z "$SHOPANDA_SEED_ADMIN_PASSWORD" ]]; then
   SHOPANDA_SEED_ADMIN_PASSWORD=$(generate_secret)
   SEED_ADMIN_PASSWORD_GENERATED=true
 fi
+prompt_choice SHOPANDA_DEV_EMBED_SCHEDULER 'Embed scheduler in app dev' "$SHOPANDA_DEV_EMBED_SCHEDULER" true false
 prompt_value SHOPANDA_DEV_MODE 'Development mode flag (optional)' "$SHOPANDA_DEV_MODE"
 prompt_value SHOPANDA_TEST_DSN 'Test DSN (optional)' "$SHOPANDA_TEST_DSN"
 
@@ -482,4 +486,4 @@ fi
 printf 'Next steps:\n'
 printf '  1. Review .env\n'
 printf '  2. Run ./shopanda setup or ./app setup depending on your binary name\n'
-printf '  3. Start the server with ./shopanda serve or ./app serve\n'
+printf '  3. Start the server with ./shopanda dev or ./app dev (HTTP + worker + scheduler)\n'

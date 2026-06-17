@@ -154,7 +154,7 @@
         "/admin/customers/groups": { title: "Groups", render: renderPlaceholder("Groups"), auth: true },
         // Marketing
         "/admin/marketing/promotions": { title: "Promotions", render: renderPlaceholder("Promotions"), auth: true },
-        "/admin/marketing/coupons": { title: "Coupons", render: renderPlaceholder("Coupons"), auth: true },
+        "/admin/marketing/coupons": { title: "Coupons", render: renderCouponsGrid, auth: true },
         // Content
         "/admin/content/pages": { title: "Pages", render: renderPagesGrid, auth: true },
         "/admin/content/navigation": { title: "Navigation", render: renderPlaceholder("Navigation"), auth: true },
@@ -191,6 +191,18 @@
         }
         if (path === "/admin/content/pages/new") {
             return { title: "New Page", render: renderPageCreate, auth: true };
+        }
+        if (path === "/admin/marketing/coupons/new") {
+            return { title: "New Coupon", render: renderCouponCreate, auth: true };
+        }
+        var couponMatch = path.match(/^\/admin\/marketing\/coupons\/([^/]+)$/);
+        if (couponMatch) {
+            var couponID = decodeURIComponent(couponMatch[1]);
+            return {
+                title: "Edit Coupon",
+                auth: true,
+                render: function (container) { renderCouponEdit(container, couponID); }
+            };
         }
         var pageMatch = path.match(/^\/admin\/content\/pages\/([^/]+)$/);
         if (pageMatch) {
@@ -2693,6 +2705,155 @@
             usersGrid.innerHTML = usersHtml;
         }).catch(function (err) {
             usersGrid.innerHTML = '<p role="alert">' + esc(extractErrorMessage(err, 'Failed to load users and roles.')) + '</p>';
+        });
+    }
+
+    function renderCouponsGrid(container) {
+        container.innerHTML = '<h2>Coupons</h2><div id="coupons-grid"></div>';
+
+        var grid = document.getElementById("coupons-grid");
+        api("/admin/coupons?offset=0&limit=50").then(function (body) {
+            if (body && body.error && body.error.code === "forbidden") {
+                grid.innerHTML = '<p role="alert">Your account does not have products access.</p>';
+                return;
+            }
+
+            var couponsRaw = body && body.data && body.data.coupons;
+            if (!Array.isArray(couponsRaw)) {
+                grid.innerHTML = '<p role="alert">' + esc(extractErrorMessage(body, 'Failed to load coupons.')) + '</p>';
+                return;
+            }
+
+            var html = '<div style="margin-bottom:1rem"><a class="button" href="/admin/marketing/coupons/new" data-link id="new-coupon-btn">New Coupon</a></div>';
+            html += '<table><thead><tr>' +
+                '<th>Code</th><th>Promotion</th><th>Usage</th><th>Status</th><th>Updated</th>' +
+                '</tr></thead><tbody>';
+
+            if (couponsRaw.length === 0) {
+                html += '<tr><td colspan="5">No coupons found.</td></tr>';
+            } else {
+                for (var i = 0; i < couponsRaw.length; i++) {
+                    var coupon = couponsRaw[i];
+                    var editHref = '/admin/marketing/coupons/' + encodeURIComponent(coupon.id || '');
+                    var usageText = String(coupon.usage_count || 0) + ' / ' + (coupon.usage_limit > 0 ? String(coupon.usage_limit) : '∞');
+                    html += '<tr>' +
+                        '<td><a href="' + editHref + '" data-link>' + esc(coupon.code || coupon.id || '') + '</a></td>' +
+                        '<td>' + esc(coupon.promotion_name || coupon.promotion_id || '—') + '</td>' +
+                        '<td>' + esc(usageText) + '</td>' +
+                        '<td><span class="badge badge-' + esc(coupon.active ? 'active' : 'draft') + '">' + esc(coupon.active ? 'active' : 'inactive') + '</span></td>' +
+                        '<td>' + esc(coupon.updated_at ? String(coupon.updated_at).substring(0, 10) : '') + '</td>' +
+                        '</tr>';
+                }
+            }
+
+            html += '</tbody></table>';
+            grid.innerHTML = html;
+        }).catch(function (err) {
+            grid.innerHTML = '<p role="alert">' + esc(extractErrorMessage(err, 'Failed to load coupons.')) + '</p>';
+        });
+    }
+
+    function renderCouponCreate(container) {
+        renderCouponForm(container, null);
+    }
+
+    function renderCouponEdit(container, couponID) {
+        renderCouponForm(container, couponID);
+    }
+
+    function renderCouponFormFields(coupon) {
+        var isActive = coupon ? !!coupon.active : true;
+        return '' +
+            '<label>Code<input name="code" value="' + esc(coupon ? (coupon.code || '') : '') + '" required placeholder="SAVE10"></label>' +
+            '<p class="hint">Uppercase letters, digits, and hyphens (min 3 characters).</p>' +
+            '<label>Promotion ID<input name="promotion_id" value="' + esc(coupon ? (coupon.promotion_id || '') : '') + '" required placeholder="UUID"></label>' +
+            '<label>Usage limit<input name="usage_limit" type="number" min="0" value="' + esc(coupon ? String(coupon.usage_limit || 0) : '0') + '"></label>' +
+            '<p class="hint">0 means unlimited redemptions.</p>' +
+            '<label><input type="checkbox" name="active"' + (isActive ? ' checked' : '') + '> Active</label>' +
+            '<div style="margin-top:1rem"><button type="submit">Save</button>' +
+            (coupon ? ' <button type="button" id="delete-coupon-btn" class="danger">Delete</button>' : '') +
+            '</div>';
+    }
+
+    function renderCouponForm(container, couponID) {
+        var title = couponID ? 'Edit Coupon' : 'New Coupon';
+        container.innerHTML =
+            '<h2>' + title + '</h2>' +
+            '<p><a href="/admin/marketing/coupons" data-link>Back to coupons</a></p>' +
+            '<div id="coupon-form-msg"></div>' +
+            '<form id="coupon-form"><p>Loading…</p></form>';
+
+        var msg = document.getElementById('coupon-form-msg');
+        var form = document.getElementById('coupon-form');
+
+        function bindForm(coupon) {
+            form.innerHTML = renderCouponFormFields(coupon);
+
+            form.addEventListener('submit', function (e) {
+                e.preventDefault();
+                var usageLimit = parseInt(form.elements.usage_limit.value, 10);
+                if (isNaN(usageLimit) || usageLimit < 0) {
+                    msg.innerHTML = '<p role="alert">Usage limit must be zero or greater.</p>';
+                    return;
+                }
+                var payload = {
+                    code: form.elements.code.value,
+                    promotion_id: form.elements.promotion_id.value,
+                    usage_limit: usageLimit,
+                    active: form.elements.active.checked
+                };
+                var method = couponID ? 'PUT' : 'POST';
+                var url = couponID ? '/admin/coupons/' + encodeURIComponent(couponID) : '/admin/coupons';
+                api(url, { method: method, body: JSON.stringify(payload) }).then(function (body) {
+                    if (body && body.error) {
+                        msg.innerHTML = '<p role="alert">' + esc(body.error.message || 'Save failed.') + '</p>';
+                        return;
+                    }
+                    navigate('/admin/marketing/coupons');
+                }).catch(function (err) {
+                    msg.innerHTML = '<p role="alert">' + esc(extractErrorMessage(err, 'Save failed.')) + '</p>';
+                });
+            });
+
+            if (couponID) {
+                var deleteBtn = document.getElementById('delete-coupon-btn');
+                if (deleteBtn) {
+                    deleteBtn.addEventListener('click', function () {
+                        if (!window.confirm('Delete this coupon?')) {
+                            return;
+                        }
+                        api('/admin/coupons/' + encodeURIComponent(couponID), { method: 'DELETE' }).then(function (body) {
+                            if (body && body.error) {
+                                msg.innerHTML = '<p role="alert">' + esc(body.error.message || 'Failed to delete coupon.') + '</p>';
+                                return;
+                            }
+                            navigate('/admin/marketing/coupons');
+                        }).catch(function (err) {
+                            msg.innerHTML = '<p role="alert">' + esc(extractErrorMessage(err, 'Failed to delete coupon.')) + '</p>';
+                        });
+                    });
+                }
+            }
+        }
+
+        if (!couponID) {
+            bindForm(null);
+            return;
+        }
+
+        api('/admin/coupons/' + encodeURIComponent(couponID)).then(function (body) {
+            if (body && body.error && body.error.code === 'forbidden') {
+                form.innerHTML = '<p role="alert">Your account does not have products access.</p>';
+                return;
+            }
+            var coupon = body && body.data && body.data.coupon;
+            if (!coupon) {
+                form.innerHTML = '<p role="alert">' + esc(extractErrorMessage(body, 'Coupon not found.')) + '</p>';
+                return;
+            }
+            bindForm(coupon);
+        }).catch(function (err) {
+            form.innerHTML = '<p role="alert">' + esc(extractErrorMessage(err, 'Failed to load coupon form.')) + '</p>';
         });
     }
 

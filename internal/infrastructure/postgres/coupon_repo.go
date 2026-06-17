@@ -89,6 +89,36 @@ func (r *CouponRepo) FindByID(ctx context.Context, id string) (*promotion.Coupon
 	return c, nil
 }
 
+func (r *CouponRepo) List(ctx context.Context, offset, limit int) ([]promotion.Coupon, error) {
+	const q = `SELECT id, code, promotion_id, usage_limit, usage_count,
+		active, created_at, updated_at
+		FROM coupons
+		ORDER BY created_at DESC, id DESC
+		LIMIT $1 OFFSET $2`
+
+	rows, err := r.query(ctx, q, limit, offset)
+	if err != nil {
+		return nil, fmt.Errorf("coupon_repo: list: %w", err)
+	}
+	defer rows.Close()
+
+	var result []promotion.Coupon
+	for rows.Next() {
+		var c promotion.Coupon
+		if err := rows.Scan(
+			&c.ID, &c.Code, &c.PromotionID, &c.UsageLimit, &c.UsageCount,
+			&c.Active, &c.CreatedAt, &c.UpdatedAt,
+		); err != nil {
+			return nil, fmt.Errorf("coupon_repo: list scan: %w", err)
+		}
+		result = append(result, c)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("coupon_repo: list rows: %w", err)
+	}
+	return result, nil
+}
+
 func (r *CouponRepo) ListByPromotion(ctx context.Context, promotionID string) ([]promotion.Coupon, error) {
 	const q = `SELECT id, code, promotion_id, usage_limit, usage_count,
 		active, created_at, updated_at

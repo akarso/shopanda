@@ -141,6 +141,12 @@ frontend:
   # Filesystem path to the active theme directory.
   theme_path: "themes/default"
 
+# --- Development runtime (app dev) --------------------------------------------
+dev:
+  # Embed the cron scheduler in app dev (cache cleanup jobs). Disable to test
+  # scheduler as a separate process.
+  embed_scheduler: true
+
 # --- CDN (optional) -----------------------------------------------------------
 cdn:
   # When set, asset URLs use this as base instead of local paths.
