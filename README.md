@@ -149,7 +149,7 @@ cd shopanda
 # or: cp .env.example .env
 go build -o app ./cmd/api
 ./app setup
-./app serve
+./app dev
 ```
 
 `./install.sh` is an interactive helper that writes a complete `.env` file. If you prefer to edit configuration manually, skip it and copy `.env.example` yourself.

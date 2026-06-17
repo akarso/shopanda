@@ -168,6 +168,14 @@ func (r *stubCouponRepo) ListByPromotion(_ context.Context, _ string) ([]promoti
 	return nil, nil
 }
 
+func (r *stubCouponRepo) List(_ context.Context, _, _ int) ([]promotion.Coupon, error) {
+	out := make([]promotion.Coupon, 0, len(r.coupons))
+	for _, coupon := range r.coupons {
+		out = append(out, *coupon)
+	}
+	return out, nil
+}
+
 func (r *stubCouponRepo) Save(_ context.Context, _ *promotion.Coupon) error { return nil }
 func (r *stubCouponRepo) Delete(_ context.Context, _ string) error          { return nil }
 

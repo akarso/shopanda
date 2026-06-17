@@ -54,6 +54,12 @@ const (
 	AuditCustomerRevoke AuditAction = "customer.revoke_sessions"
 	AuditSettingsRead   AuditAction = "settings.read"
 	AuditSettingsChange AuditAction = "settings.change"
+
+	// Coupon operations
+	AuditCouponRead   AuditAction = "coupon.read"
+	AuditCouponCreate AuditAction = "coupon.create"
+	AuditCouponUpdate AuditAction = "coupon.update"
+	AuditCouponDelete AuditAction = "coupon.delete"
 )
 
 // AuditEntry represents a single admin audit log entry.

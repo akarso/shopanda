@@ -482,4 +482,4 @@ fi
 printf 'Next steps:\n'
 printf '  1. Review .env\n'
 printf '  2. Run ./shopanda setup or ./app setup depending on your binary name\n'
-printf '  3. Start the server with ./shopanda serve or ./app serve\n'
+printf '  3. Start the server with ./shopanda dev or ./app dev (HTTP + worker + scheduler)\n'
