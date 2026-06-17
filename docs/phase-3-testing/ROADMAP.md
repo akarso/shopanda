@@ -15,7 +15,7 @@
 | 1 | done in PR-306 | Guest cart continuity across login/register | Anonymous cart is claimed or merged into the authenticated customer's active cart, and the guest cart cookie is cleared so storefront surfaces stay in sync |
 | 2 | done (PR-318–321, PR-393, PR-394) | Guest checkout without account creation | Guest checkout, `contact_email`, claim/link APIs, guest notifications, the `/account/orders/claim` page, and Postgres link persistence all shipped |
 | 3 | done (PR-322–397) | Admin bootstrap, permissions, and usability hardening | Shell, context switcher, scoped settings, audit slices, admin surfaces, PR-E catalog + content (pages) scoped editing, removal of `changeme` bootstrap defaults, and audit coverage for category/store/media mutations all shipped |
-| 4 | mostly done (PR-309–317, PR-398); remaining: PR-399 | Customer account UX and account-security hardening | Header account entry, profile/security split, step-up auth, email verification, and profile-side addresses/preferences self-service (with checkout prefill) shipped; account email change remains |
+| 4 | done (PR-309–317, PR-398, PR-399) | Customer account UX and account-security hardening | Header account entry, profile/security split, step-up auth, email verification, profile-side addresses/preferences self-service (with checkout prefill), and step-up-gated account email change with re-verification of the new address all shipped |
 
 ---
 
@@ -31,7 +31,6 @@ Verified against the codebase as of PR-392. Each PR below has a planned spec und
 | PR-396 | 3 | Admin pages editing with language scope (PR-E content): pages CRUD UI over the existing API, content-domain permissions for the Editor role, page audit logging |
 | PR-397 | 3 | Admin hardening closeout: remove `changeme` bootstrap defaults, fix stale seeding docs, add audit logging to categories/stores/media handlers |
 | PR-398 | 4 | Storefront profile completion: saved addresses with checkout prefill, preferences page surfacing the existing consent API |
-| PR-399 | 4 | Account email change behind step-up with re-verification of the new address |
 
 ### Explicitly Deferred (out of roadmap closure)
 

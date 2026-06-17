@@ -32,6 +32,7 @@ const defaultStorefrontSecurityFreshSessionTTL = 5 * time.Minute
 const (
 	storefrontEmailTokenPurposeSecurity        = "security_verification"
 	storefrontEmailTokenPurposeAccountEmail    = "account_email_verification"
+	storefrontEmailTokenPurposeEmailChange     = "account_email_change"
 	storefrontEmailVerificationDefaultRedirect = "/account/orders"
 )
 
@@ -60,6 +61,14 @@ type storefrontSecurityEmailTokenClaims struct {
 	Purpose    string `json:"purpose"`
 	CustomerID string `json:"customer_id"`
 	RedirectTo string `json:"redirect_to"`
+	ExpiresAt  int64  `json:"expires_at"`
+}
+
+type storefrontEmailChangeTokenClaims struct {
+	Purpose    string `json:"purpose"`
+	CustomerID string `json:"customer_id"`
+	NewEmail   string `json:"new_email"`
+	Nonce      string `json:"nonce"`
 	ExpiresAt  int64  `json:"expires_at"`
 }
 
@@ -207,6 +216,63 @@ func (v *storefrontAccountSecurityVerifier) securityEmailToken(customerID, redir
 
 func (v *storefrontAccountSecurityVerifier) emailVerificationToken(customerID, redirectTo string, now time.Time) (string, error) {
 	return v.emailToken(storefrontEmailTokenPurposeAccountEmail, customerID, redirectTo, storefrontEmailVerificationDefaultRedirect, now)
+}
+
+// emailChangeToken signs a token carrying the pending new address and its nonce.
+func (v *storefrontAccountSecurityVerifier) emailChangeToken(customerID, newEmail, nonce string, now time.Time) (string, error) {
+	claims := storefrontEmailChangeTokenClaims{
+		Purpose:    storefrontEmailTokenPurposeEmailChange,
+		CustomerID: strings.TrimSpace(customerID),
+		NewEmail:   strings.ToLower(strings.TrimSpace(newEmail)),
+		Nonce:      strings.TrimSpace(nonce),
+		ExpiresAt:  now.UTC().Add(v.emailTokenTTL).Unix(),
+	}
+	raw, err := json.Marshal(claims)
+	if err != nil {
+		return "", fmt.Errorf("storefront email change token: marshal claims: %w", err)
+	}
+	payload := base64.RawURLEncoding.EncodeToString(raw)
+	return payload + "." + v.signEmailToken(payload), nil
+}
+
+// verifyEmailChangeToken validates signature, purpose, and expiry, returning the
+// embedded customer id, new email, and nonce.
+func (v *storefrontAccountSecurityVerifier) verifyEmailChangeToken(token string) (string, string, string, bool) {
+	if v == nil || strings.TrimSpace(token) == "" {
+		return "", "", "", false
+	}
+	parts := strings.SplitN(strings.TrimSpace(token), ".", 2)
+	if len(parts) != 2 {
+		return "", "", "", false
+	}
+	expectedSig := v.signEmailToken(parts[0])
+	if !hmac.Equal([]byte(parts[1]), []byte(expectedSig)) {
+		return "", "", "", false
+	}
+	raw, err := base64.RawURLEncoding.DecodeString(parts[0])
+	if err != nil {
+		return "", "", "", false
+	}
+	var claims storefrontEmailChangeTokenClaims
+	if err := json.Unmarshal(raw, &claims); err != nil {
+		return "", "", "", false
+	}
+	if strings.TrimSpace(claims.Purpose) != storefrontEmailTokenPurposeEmailChange {
+		return "", "", "", false
+	}
+	if time.Unix(claims.ExpiresAt, 0).UTC().Before(time.Now().UTC()) {
+		return "", "", "", false
+	}
+	return strings.TrimSpace(claims.CustomerID), strings.ToLower(strings.TrimSpace(claims.NewEmail)), strings.TrimSpace(claims.Nonce), true
+}
+
+// newStorefrontEmailChangeNonce returns a random nonce for email-change tokens.
+func newStorefrontEmailChangeNonce() (string, error) {
+	buf := make([]byte, 16)
+	if _, err := io.ReadFull(rand.Reader, buf); err != nil {
+		return "", fmt.Errorf("storefront email change nonce: %w", err)
+	}
+	return base64.RawURLEncoding.EncodeToString(buf), nil
 }
 
 func (v *storefrontAccountSecurityVerifier) checkoutResumeToken(customerID string, state storefrontCheckoutResumeState, now time.Time) (string, error) {

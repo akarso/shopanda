@@ -121,6 +121,22 @@ func RegisterTemplates(t *mail.Templates) {
 			"<p><a href=\"{{.Data.VerifyURL}}\">Verify access to your account security settings</a></p>"+
 			"<p>This link is time-limited and only works while you are signed in.</p>")
 
+	t.Register("email_change_verification",
+		"Confirm your new email address",
+		"<h1>Confirm Your New Email</h1>"+
+			"<p>Hi {{.Data.FirstName}},</p>"+
+			"<p>Confirm <strong>{{.Data.NewEmail}}</strong> as the new email for your account.</p>"+
+			"<p><a href=\"{{.Data.VerifyURL}}\">Confirm new email address</a></p>"+
+			"<p>This link is time-limited. Your current email keeps working until you confirm.</p>")
+
+	t.Register("email_change_notice",
+		"A change to your account email was requested",
+		"<h1>Email Change Requested</h1>"+
+			"<p>Hi {{.Data.FirstName}},</p>"+
+			"<p>Someone requested to change your account email to <strong>{{.Data.NewEmail}}</strong>.</p>"+
+			"<p>The change only takes effect after the new address is confirmed. "+
+			"If this wasn't you, change your password immediately.</p>")
+
 	t.Register("order_shipped",
 		"Order {{.Data.OrderID}} — Shipped",
 		"<h1>Your order is on its way!</h1>"+
@@ -352,6 +368,97 @@ func (s *Service) HandleSecurityVerification(ctx context.Context, evt event.Even
 	}
 
 	return s.enqueueEmail(ctx, msg, "HandleSecurityVerification", map[string]interface{}{
+		"customer_id": data.CustomerID,
+	})
+}
+
+// HandleEmailChangeRequested is an event handler for
+// customer.email_change.requested. The verification link is delivered to the
+// NEW address the customer is switching to (carried in the event payload),
+// not the account's current email.
+func (s *Service) HandleEmailChangeRequested(ctx context.Context, evt event.Event) error {
+	data, ok := evt.Data.(customer.EmailChangeRequestedData)
+	if !ok {
+		return fmt.Errorf("notification: unexpected event data type %T", evt.Data)
+	}
+
+	newEmail := strings.TrimSpace(data.NewEmail)
+	if newEmail == "" {
+		return fmt.Errorf("notification: email change for customer %s has no new email", data.CustomerID)
+	}
+	verifyURL := strings.TrimSpace(data.VerifyURL)
+	parsedVerifyURL, err := url.Parse(verifyURL)
+	if verifyURL == "" || err != nil || !parsedVerifyURL.IsAbs() || strings.TrimSpace(parsedVerifyURL.Host) == "" {
+		return fmt.Errorf("notification: invalid verify url for customer %s", data.CustomerID)
+	}
+
+	// Best-effort personalization: the address and link come from the event, so a
+	// lookup failure should not block delivery of the verification email.
+	firstName := ""
+	if cust, err := s.customers.FindByID(ctx, data.CustomerID); err != nil {
+		s.log.Warn("HandleEmailChangeRequested.customer_lookup_failed", map[string]interface{}{"customer_id": data.CustomerID, "error": err.Error()})
+	} else if cust != nil {
+		firstName = cust.FirstName
+	}
+
+	ed := mail.EmailData{
+		StoreURL: s.storeURL,
+		Data: map[string]interface{}{
+			"FirstName": firstName,
+			"VerifyURL": verifyURL,
+			"NewEmail":  newEmail,
+		},
+	}
+
+	msg, err := s.templates.Render("email_change_verification", newEmail, ed)
+	if err != nil {
+		s.log.Error("HandleEmailChangeRequested.template_render_failed", err, map[string]interface{}{"customer_id": data.CustomerID})
+		return fmt.Errorf("notification: render template: %w", err)
+	}
+
+	return s.enqueueEmail(ctx, msg, "HandleEmailChangeRequested", map[string]interface{}{
+		"customer_id": data.CustomerID,
+	})
+}
+
+// HandleEmailChangeNotified is an event handler for
+// customer.email_change.notified. It alerts the current (old) address that a
+// change to a different address was requested.
+func (s *Service) HandleEmailChangeNotified(ctx context.Context, evt event.Event) error {
+	data, ok := evt.Data.(customer.EmailChangeNotifiedData)
+	if !ok {
+		return fmt.Errorf("notification: unexpected event data type %T", evt.Data)
+	}
+
+	oldEmail := strings.TrimSpace(data.OldEmail)
+	if oldEmail == "" {
+		return fmt.Errorf("notification: email change notice for customer %s has no old email", data.CustomerID)
+	}
+
+	// Best-effort personalization: the old address comes from the event, so a
+	// lookup failure should not block delivery of the security notice.
+	firstName := ""
+	if cust, err := s.customers.FindByID(ctx, data.CustomerID); err != nil {
+		s.log.Warn("HandleEmailChangeNotified.customer_lookup_failed", map[string]interface{}{"customer_id": data.CustomerID, "error": err.Error()})
+	} else if cust != nil {
+		firstName = cust.FirstName
+	}
+
+	ed := mail.EmailData{
+		StoreURL: s.storeURL,
+		Data: map[string]interface{}{
+			"FirstName": firstName,
+			"NewEmail":  strings.TrimSpace(data.NewEmail),
+		},
+	}
+
+	msg, err := s.templates.Render("email_change_notice", oldEmail, ed)
+	if err != nil {
+		s.log.Error("HandleEmailChangeNotified.template_render_failed", err, map[string]interface{}{"customer_id": data.CustomerID})
+		return fmt.Errorf("notification: render template: %w", err)
+	}
+
+	return s.enqueueEmail(ctx, msg, "HandleEmailChangeNotified", map[string]interface{}{
 		"customer_id": data.CustomerID,
 	})
 }

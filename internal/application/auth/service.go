@@ -3,6 +3,7 @@ package auth
 import (
 	"context"
 	"fmt"
+	"net/mail"
 	"strings"
 	"time"
 
@@ -145,6 +146,167 @@ func (s *Service) ChangePassword(ctx context.Context, in ChangePasswordInput) er
 	})
 
 	return nil
+}
+
+// RequestEmailChangeInput contains the fields to request an email change.
+type RequestEmailChangeInput struct {
+	CustomerID string
+	NewEmail   string
+	// Nonce is the latest token nonce; recording it invalidates older links.
+	Nonce string
+	// VerifyURL is the confirmation link delivered to the new address.
+	VerifyURL string
+}
+
+// RequestEmailChange validates a requested new email, records the latest change
+// nonce (invalidating older links), and publishes events to verify the new
+// address and notify the old address. Validation/uniqueness failures return
+// before any state change or email is sent.
+func (s *Service) RequestEmailChange(ctx context.Context, in RequestEmailChangeInput) error {
+	if strings.TrimSpace(in.CustomerID) == "" {
+		return apperror.Validation("customer id is required")
+	}
+	if strings.TrimSpace(in.Nonce) == "" {
+		return apperror.Validation("nonce is required")
+	}
+	if strings.TrimSpace(in.VerifyURL) == "" {
+		return apperror.Validation("verify url is required")
+	}
+	newEmail, err := normalizeEmail(in.NewEmail)
+	if err != nil {
+		return err
+	}
+
+	c, err := s.customers.FindByID(ctx, in.CustomerID)
+	if err != nil {
+		return fmt.Errorf("auth service: request email change: %w", err)
+	}
+	if c == nil {
+		return apperror.NotFound("customer not found")
+	}
+	if c.Status != customer.StatusActive {
+		return apperror.Unauthorized("account is not active")
+	}
+	if strings.EqualFold(strings.TrimSpace(c.Email), newEmail) {
+		return apperror.Validation("new email must be different from your current email")
+	}
+
+	existing, err := s.customers.FindByEmail(ctx, newEmail)
+	if err != nil {
+		return fmt.Errorf("auth service: request email change: %w", err)
+	}
+	if existing != nil && existing.ID != c.ID {
+		return apperror.Conflict("email already registered")
+	}
+
+	oldEmail := strings.TrimSpace(c.Email)
+	c.SetPendingEmailNonce(in.Nonce)
+	if err := s.customers.Update(ctx, c); err != nil {
+		return fmt.Errorf("auth service: request email change: %w", err)
+	}
+
+	if err := s.bus.Publish(ctx, event.New(customer.EventEmailChangeRequested, "auth.service", customer.EmailChangeRequestedData{
+		CustomerID: c.ID,
+		NewEmail:   newEmail,
+		VerifyURL:  strings.TrimSpace(in.VerifyURL),
+	})); err != nil {
+		s.log.Warn("auth.event.publish_failed", map[string]interface{}{
+			"event": customer.EventEmailChangeRequested,
+			"error": err.Error(),
+		})
+		return fmt.Errorf("auth service: request email change: %w", err)
+	}
+	if err := s.bus.Publish(ctx, event.New(customer.EventEmailChangeNotified, "auth.service", customer.EmailChangeNotifiedData{
+		CustomerID: c.ID,
+		OldEmail:   oldEmail,
+		NewEmail:   newEmail,
+	})); err != nil {
+		s.log.Warn("auth.event.publish_failed", map[string]interface{}{
+			"event": customer.EventEmailChangeNotified,
+			"error": err.Error(),
+		})
+		return fmt.Errorf("auth service: request email change: %w", err)
+	}
+
+	s.log.Info("auth.email_change.requested", map[string]interface{}{
+		"customer_id": c.ID,
+	})
+	return nil
+}
+
+// ConfirmEmailChangeInput contains the fields to confirm an email change.
+type ConfirmEmailChangeInput struct {
+	CustomerID string
+	NewEmail   string
+	Nonce      string
+}
+
+// ConfirmEmailChange applies a previously requested email change after verifying
+// the token nonce matches the latest request and that the new address is still
+// free. Existing sessions stay valid (token generation is not bumped).
+func (s *Service) ConfirmEmailChange(ctx context.Context, in ConfirmEmailChangeInput) (*customer.Customer, error) {
+	if strings.TrimSpace(in.CustomerID) == "" || strings.TrimSpace(in.Nonce) == "" {
+		return nil, apperror.Unauthorized("invalid or expired link")
+	}
+	newEmail, err := normalizeEmail(in.NewEmail)
+	if err != nil {
+		return nil, apperror.Unauthorized("invalid or expired link")
+	}
+
+	c, err := s.customers.FindByID(ctx, in.CustomerID)
+	if err != nil {
+		return nil, fmt.Errorf("auth service: confirm email change: %w", err)
+	}
+	if c == nil {
+		return nil, apperror.Unauthorized("invalid or expired link")
+	}
+	if c.Status != customer.StatusActive {
+		return nil, apperror.Unauthorized("account is not active")
+	}
+	// Reject superseded or already-consumed links.
+	if strings.TrimSpace(c.PendingEmailNonce) == "" || c.PendingEmailNonce != strings.TrimSpace(in.Nonce) {
+		return nil, apperror.Unauthorized("invalid or expired link")
+	}
+
+	existing, err := s.customers.FindByEmail(ctx, newEmail)
+	if err != nil {
+		return nil, fmt.Errorf("auth service: confirm email change: %w", err)
+	}
+	if existing != nil && existing.ID != c.ID {
+		return nil, apperror.Conflict("email already registered")
+	}
+
+	c.ApplyEmailChange(newEmail)
+	if err := s.customers.Update(ctx, c); err != nil {
+		// A concurrent registration may surface here as a unique-violation conflict.
+		if apperror.Is(err, apperror.CodeConflict) {
+			return nil, apperror.Conflict("email already registered")
+		}
+		// A concurrent account deletion makes the link target gone; treat it as an
+		// invalid link (4xx) rather than an internal error.
+		if apperror.Is(err, apperror.CodeNotFound) {
+			return nil, apperror.Unauthorized("invalid or expired link")
+		}
+		return nil, fmt.Errorf("auth service: confirm email change: %w", err)
+	}
+
+	s.log.Info("auth.email_change.confirmed", map[string]interface{}{
+		"customer_id": c.ID,
+	})
+	return c, nil
+}
+
+// normalizeEmail trims, lowercases, and format-validates an email address.
+func normalizeEmail(raw string) (string, error) {
+	trimmed := strings.TrimSpace(raw)
+	if trimmed == "" {
+		return "", apperror.Validation("email is required")
+	}
+	addr, err := mail.ParseAddress(trimmed)
+	if err != nil {
+		return "", apperror.Validation("email is not valid")
+	}
+	return strings.ToLower(strings.TrimSpace(addr.Address)), nil
 }
 
 // VerifyPassword checks whether the provided password matches the current

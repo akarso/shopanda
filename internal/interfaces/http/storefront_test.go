@@ -195,7 +195,7 @@ func createTestTheme(t *testing.T) *theme.Engine {
 		t.Fatal(err)
 	}
 
-	accountSecurity := `{{ define "title" }}Account Security{{ end }}{{ define "content" }}<section><nav><a href="{{ .AccountNav.OrdersURL }}">Orders</a><a href="{{ .AccountNav.ProfileURL }}">Profile</a><a href="{{ .AccountNav.SecurityURL }}">Security</a></nav><h1>Security</h1>{{ if .PasswordErrorMessage }}<p>{{ .PasswordErrorMessage }}</p>{{ end }}{{ if .DeleteErrorMessage }}<p>{{ .DeleteErrorMessage }}</p>{{ end }}<p>{{ .Email }}</p><form action="/account/security/password" method="post"><input type="hidden" name="csrf_token" value="{{ .CSRFToken }}"><input name="current_password" type="password"><input name="new_password" type="password"><button type="submit">Change Password</button></form><form action="/account/security/delete" method="post"><input type="hidden" name="csrf_token" value="{{ .CSRFToken }}"><input name="confirm_delete"><button type="submit">Delete Account</button></form><form action="/account/logout" method="post"><input type="hidden" name="csrf_token" value="{{ .CSRFToken }}"><button type="submit">Log Out</button></form></section>{{ end }}{{ template "layout.html" . }}`
+	accountSecurity := `{{ define "title" }}Account Security{{ end }}{{ define "content" }}<section><nav><a href="{{ .AccountNav.OrdersURL }}">Orders</a><a href="{{ .AccountNav.ProfileURL }}">Profile</a><a href="{{ .AccountNav.SecurityURL }}">Security</a></nav><h1>Security</h1>{{ if .PasswordErrorMessage }}<p>{{ .PasswordErrorMessage }}</p>{{ end }}{{ if .DeleteErrorMessage }}<p>{{ .DeleteErrorMessage }}</p>{{ end }}{{ if .EmailChangeMessage }}<p class="email-notice">{{ .EmailChangeMessage }}</p>{{ end }}{{ if .EmailErrorMessage }}<p class="email-error">{{ .EmailErrorMessage }}</p>{{ end }}<p>{{ .Email }}</p><form action="/account/security/password" method="post"><input type="hidden" name="csrf_token" value="{{ .CSRFToken }}"><input name="current_password" type="password"><input name="new_password" type="password"><button type="submit">Change Password</button></form><form action="/account/security/email" method="post"><input type="hidden" name="csrf_token" value="{{ .CSRFToken }}"><input name="new_email" type="email"><button type="submit">Send Confirmation Link</button></form><form action="/account/security/delete" method="post"><input type="hidden" name="csrf_token" value="{{ .CSRFToken }}"><input name="confirm_delete"><button type="submit">Delete Account</button></form><form action="/account/logout" method="post"><input type="hidden" name="csrf_token" value="{{ .CSRFToken }}"><button type="submit">Log Out</button></form></section>{{ end }}{{ template "layout.html" . }}`
 	if err := os.WriteFile(filepath.Join(tplDir, "account_security.html"), []byte(accountSecurity), 0644); err != nil {
 		t.Fatal(err)
 	}
@@ -269,6 +269,8 @@ func newStorefrontRouter(h *shophttp.StorefrontHandler) http.Handler {
 	router.HandleFunc("GET /account/security/verify", h.AccountSecurityVerify())
 	router.HandleFunc("POST /account/security/verify", h.AccountSecurityVerify())
 	router.HandleFunc("POST /account/security/password", h.AccountPassword())
+	router.HandleFunc("POST /account/security/email", h.AccountEmailChange())
+	router.HandleFunc("GET /account/security/email/confirm", h.AccountEmailChangeConfirm())
 	router.HandleFunc("POST /account/security/delete", h.AccountDelete())
 	router.HandleFunc("POST /account/profile/password", h.AccountPassword())
 	router.HandleFunc("POST /account/profile/delete", h.AccountDelete())

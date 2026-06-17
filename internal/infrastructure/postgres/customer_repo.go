@@ -37,7 +37,7 @@ func (r *CustomerRepo) WithTx(tx *sql.Tx) customer.CustomerRepository {
 // FindByID returns a customer by its ID.
 // Returns (nil, nil) when not found.
 func (r *CustomerRepo) FindByID(ctx context.Context, id string) (*customer.Customer, error) {
-	const q = `SELECT id, email, first_name, last_name, password_hash, token_generation, email_verified_at, role, status, created_at, updated_at
+	const q = `SELECT id, email, first_name, last_name, password_hash, token_generation, email_verified_at, role, status, pending_email_nonce, created_at, updated_at
 		FROM customers WHERE id = $1`
 
 	row := r.queryRow(ctx, q, id)
@@ -54,7 +54,7 @@ func (r *CustomerRepo) FindByID(ctx context.Context, id string) (*customer.Custo
 // FindByEmail returns a customer by email address.
 // Returns (nil, nil) when not found.
 func (r *CustomerRepo) FindByEmail(ctx context.Context, email string) (*customer.Customer, error) {
-	const q = `SELECT id, email, first_name, last_name, password_hash, token_generation, email_verified_at, role, status, created_at, updated_at
+	const q = `SELECT id, email, first_name, last_name, password_hash, token_generation, email_verified_at, role, status, pending_email_nonce, created_at, updated_at
 		FROM customers WHERE email = $1`
 
 	row := r.queryRow(ctx, q, email)
@@ -73,12 +73,12 @@ func (r *CustomerRepo) Create(ctx context.Context, c *customer.Customer) error {
 	if !c.Role.IsValid() {
 		return apperror.Validation("invalid customer role")
 	}
-	const q = `INSERT INTO customers (id, email, first_name, last_name, password_hash, token_generation, email_verified_at, role, status, created_at, updated_at)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`
+	const q = `INSERT INTO customers (id, email, first_name, last_name, password_hash, token_generation, email_verified_at, role, status, pending_email_nonce, created_at, updated_at)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)`
 
 	_, err := r.exec(ctx, q,
 		c.ID, c.Email, c.FirstName, c.LastName,
-		c.PasswordHash, c.TokenGeneration, c.EmailVerifiedAt, string(c.Role), string(c.Status),
+		c.PasswordHash, c.TokenGeneration, c.EmailVerifiedAt, string(c.Role), string(c.Status), c.PendingEmailNonce,
 		c.CreatedAt, c.UpdatedAt,
 	)
 	if err != nil {
@@ -103,12 +103,12 @@ func (r *CustomerRepo) Update(ctx context.Context, c *customer.Customer) error {
 
 	const q = `UPDATE customers
 		SET email = $1, first_name = $2, last_name = $3,
-			password_hash = $4, token_generation = $5, email_verified_at = $6, role = $7, status = $8, updated_at = $9
-		WHERE id = $10`
+			password_hash = $4, token_generation = $5, email_verified_at = $6, role = $7, status = $8, pending_email_nonce = $9, updated_at = $10
+		WHERE id = $11`
 
 	result, err := r.exec(ctx, q,
 		c.Email, c.FirstName, c.LastName,
-		c.PasswordHash, c.TokenGeneration, c.EmailVerifiedAt, string(c.Role), string(c.Status),
+		c.PasswordHash, c.TokenGeneration, c.EmailVerifiedAt, string(c.Role), string(c.Status), c.PendingEmailNonce,
 		updatedAt, c.ID,
 	)
 	if err != nil {
@@ -258,7 +258,7 @@ func scanCustomer(s interface{ Scan(...interface{}) error }) (*customer.Customer
 
 	err := s.Scan(
 		&c.ID, &c.Email, &c.FirstName, &c.LastName,
-		&c.PasswordHash, &c.TokenGeneration, &emailVerifiedAt, &role, &status, &c.CreatedAt, &c.UpdatedAt,
+		&c.PasswordHash, &c.TokenGeneration, &emailVerifiedAt, &role, &status, &c.PendingEmailNonce, &c.CreatedAt, &c.UpdatedAt,
 	)
 	if err != nil {
 		return nil, err

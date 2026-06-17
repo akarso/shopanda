@@ -55,6 +55,11 @@ func (r *mockCustomerRepo) Create(_ context.Context, c *customer.Customer) error
 
 func (r *mockCustomerRepo) Update(_ context.Context, c *customer.Customer) error {
 	r.customers[c.ID] = c
+	for email, existing := range r.byEmail {
+		if existing.ID == c.ID && email != c.Email {
+			delete(r.byEmail, email)
+		}
+	}
 	r.byEmail[c.Email] = c
 	return nil
 }
