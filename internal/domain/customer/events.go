@@ -7,6 +7,8 @@ const (
 	EventEmailVerificationRequested    = "customer.email_verification.requested"
 	EventPasswordResetRequested        = "customer.password_reset.requested"
 	EventSecurityVerificationRequested = "customer.security_verification.requested"
+	EventEmailChangeRequested          = "customer.email_change.requested"
+	EventEmailChangeNotified           = "customer.email_change.notified"
 )
 
 // CustomerCreatedData is the payload for customer.created.
@@ -37,4 +39,22 @@ type EmailVerificationRequestedData struct {
 type SecurityVerificationRequestedData struct {
 	CustomerID string `json:"customer_id"`
 	VerifyURL  string `json:"verify_url"`
+}
+
+// EmailChangeRequestedData is the payload for customer.email_change.requested.
+// VerifyURL points to the confirmation link and must be delivered to NewEmail,
+// the address the customer is switching to (not yet active on the account).
+type EmailChangeRequestedData struct {
+	CustomerID string `json:"customer_id"`
+	NewEmail   string `json:"new_email"`
+	VerifyURL  string `json:"verify_url"`
+}
+
+// EmailChangeNotifiedData is the payload for customer.email_change.notified.
+// It is delivered to the current (old) address to alert the owner that a change
+// was requested.
+type EmailChangeNotifiedData struct {
+	CustomerID string `json:"customer_id"`
+	OldEmail   string `json:"old_email"`
+	NewEmail   string `json:"new_email"`
 }

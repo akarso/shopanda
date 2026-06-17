@@ -477,6 +477,97 @@ func TestHandleEmailVerification_BadEventData(t *testing.T) {
 	}
 }
 
+func TestHandleEmailChangeRequested_SendsToNewAddress(t *testing.T) {
+	tmpl := mail.NewTemplates()
+	notification.RegisterTemplates(tmpl)
+
+	q := &mockQueue{}
+	custRepo := &mockCustomerRepo{
+		findByID: func(_ context.Context, id string) (*customer.Customer, error) {
+			if id == "cust-1" {
+				c, _ := customer.NewCustomer("cust-1", "old@example.com")
+				c.FirstName = "Alice"
+				return &c, nil
+			}
+			return nil, nil
+		},
+	}
+
+	svc := newTestService(t, tmpl, custRepo, &mockOrderRepo{}, q)
+	evt := event.New(customer.EventEmailChangeRequested, "auth.service", customer.EmailChangeRequestedData{
+		CustomerID: "cust-1",
+		NewEmail:   "new@example.com",
+		VerifyURL:  "https://shop.test/account/security/email/confirm?email_token=abc",
+	})
+
+	if err := svc.HandleEmailChangeRequested(context.Background(), evt); err != nil {
+		t.Fatalf("HandleEmailChangeRequested: %v", err)
+	}
+	if len(q.enqueued) != 1 {
+		t.Fatalf("expected 1 enqueued job, got %d", len(q.enqueued))
+	}
+	if to, _ := q.enqueued[0].Payload["to"].(string); to != "new@example.com" {
+		t.Fatalf("payload.to = %q, want new@example.com (the new address)", to)
+	}
+	body, _ := q.enqueued[0].Payload["body"].(string)
+	if !strings.Contains(body, "email_token=abc") {
+		t.Fatalf("body missing confirmation link: %q", body)
+	}
+}
+
+func TestHandleEmailChangeRequested_InvalidVerifyURL(t *testing.T) {
+	tmpl := mail.NewTemplates()
+	notification.RegisterTemplates(tmpl)
+	q := &mockQueue{}
+	svc := newTestService(t, tmpl, &mockCustomerRepo{}, &mockOrderRepo{}, q)
+	evt := event.New(customer.EventEmailChangeRequested, "auth.service", customer.EmailChangeRequestedData{
+		CustomerID: "cust-1",
+		NewEmail:   "new@example.com",
+		VerifyURL:  "   ",
+	})
+
+	if err := svc.HandleEmailChangeRequested(context.Background(), evt); err == nil {
+		t.Fatal("expected error for invalid verify URL")
+	}
+	if len(q.enqueued) != 0 {
+		t.Fatalf("expected 0 enqueued jobs, got %d", len(q.enqueued))
+	}
+}
+
+func TestHandleEmailChangeNotified_SendsToOldAddress(t *testing.T) {
+	tmpl := mail.NewTemplates()
+	notification.RegisterTemplates(tmpl)
+
+	q := &mockQueue{}
+	custRepo := &mockCustomerRepo{
+		findByID: func(_ context.Context, id string) (*customer.Customer, error) {
+			if id == "cust-1" {
+				c, _ := customer.NewCustomer("cust-1", "old@example.com")
+				c.FirstName = "Alice"
+				return &c, nil
+			}
+			return nil, nil
+		},
+	}
+
+	svc := newTestService(t, tmpl, custRepo, &mockOrderRepo{}, q)
+	evt := event.New(customer.EventEmailChangeNotified, "auth.service", customer.EmailChangeNotifiedData{
+		CustomerID: "cust-1",
+		OldEmail:   "old@example.com",
+		NewEmail:   "new@example.com",
+	})
+
+	if err := svc.HandleEmailChangeNotified(context.Background(), evt); err != nil {
+		t.Fatalf("HandleEmailChangeNotified: %v", err)
+	}
+	if len(q.enqueued) != 1 {
+		t.Fatalf("expected 1 enqueued job, got %d", len(q.enqueued))
+	}
+	if to, _ := q.enqueued[0].Payload["to"].(string); to != "old@example.com" {
+		t.Fatalf("payload.to = %q, want old@example.com (the current address)", to)
+	}
+}
+
 func TestHandlePasswordReset_CustomerNotFound(t *testing.T) {
 	tmpl := mail.NewTemplates()
 	notification.RegisterTemplates(tmpl)

@@ -2,6 +2,7 @@ package customer
 
 import (
 	"errors"
+	"strings"
 	"time"
 )
 
@@ -53,8 +54,12 @@ type Customer struct {
 	EmailVerifiedAt *time.Time
 	Role            Role
 	Status          Status
-	CreatedAt       time.Time
-	UpdatedAt       time.Time
+	// PendingEmailNonce is the latest issued email-change token nonce. A new
+	// change request overwrites it so that previously issued links are rejected.
+	// It is cleared once a change is confirmed.
+	PendingEmailNonce string
+	CreatedAt         time.Time
+	UpdatedAt         time.Time
 }
 
 // NewCustomer creates a Customer with the required fields.
@@ -122,5 +127,22 @@ func (c *Customer) MarkEmailVerified() {
 	}
 	now := time.Now().UTC()
 	c.EmailVerifiedAt = &now
+	c.UpdatedAt = now
+}
+
+// SetPendingEmailNonce records the latest email-change nonce, invalidating any
+// previously issued change links.
+func (c *Customer) SetPendingEmailNonce(nonce string) {
+	c.PendingEmailNonce = strings.TrimSpace(nonce)
+	c.UpdatedAt = time.Now().UTC()
+}
+
+// ApplyEmailChange switches the active email to the confirmed new address,
+// marks it verified, and clears the pending change nonce.
+func (c *Customer) ApplyEmailChange(newEmail string) {
+	now := time.Now().UTC()
+	c.Email = strings.TrimSpace(newEmail)
+	c.EmailVerifiedAt = &now
+	c.PendingEmailNonce = ""
 	c.UpdatedAt = now
 }

@@ -114,6 +114,8 @@ type StorefrontAccountSecurityPageData struct {
 	Email                string
 	PasswordErrorMessage string
 	DeleteErrorMessage   string
+	EmailErrorMessage    string
+	EmailChangeMessage   string
 }
 
 func (h *StorefrontHandler) Login() http.HandlerFunc {
@@ -480,7 +482,11 @@ func (h *StorefrontHandler) AccountSecurity() http.HandlerFunc {
 			http.Error(w, "Internal Server Error", http.StatusInternalServerError)
 			return
 		}
-		h.renderPage(w, "account_security", storefrontAccountSecurityPage(h, r, profile))
+		page := storefrontAccountSecurityPage(h, r, profile)
+		if r.URL.Query().Get("email_change") == "sent" {
+			page.EmailChangeMessage = "Check your new email address for a link to confirm the change. Your current email stays active until you confirm."
+		}
+		h.renderPage(w, "account_security", page)
 	}
 }
 

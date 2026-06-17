@@ -429,6 +429,10 @@ func runServe(cfg *config.Config, log logger.Logger) error {
 	// Wire storefront security verification → email notification.
 	bus.OnAsync(customer.EventSecurityVerificationRequested, notifSvc.HandleSecurityVerification)
 
+	// Wire account email change → verification link (new address) + notice (old address).
+	bus.OnAsync(customer.EventEmailChangeRequested, notifSvc.HandleEmailChangeRequested)
+	bus.OnAsync(customer.EventEmailChangeNotified, notifSvc.HandleEmailChangeNotified)
+
 	// Wire shipment.shipped → email notification.
 	bus.OnAsync(shipping.EventShipmentShipped, notifSvc.HandleShipmentShipped)
 
@@ -959,6 +963,8 @@ func runServe(cfg *config.Config, log logger.Logger) error {
 		router.HandleFunc("GET /account/security/verify", storefront.AccountSecurityVerify())
 		router.HandleFunc("POST /account/security/verify", storefront.AccountSecurityVerify())
 		router.HandleFunc("POST /account/security/password", storefront.AccountPassword())
+		router.HandleFunc("POST /account/security/email", storefront.AccountEmailChange())
+		router.HandleFunc("GET /account/security/email/confirm", storefront.AccountEmailChangeConfirm())
 		router.HandleFunc("POST /account/security/delete", storefront.AccountDelete())
 		router.HandleFunc("POST /account/profile/password", storefront.AccountPassword())
 		router.HandleFunc("POST /account/profile/delete", storefront.AccountDelete())

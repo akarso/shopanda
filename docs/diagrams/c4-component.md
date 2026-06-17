@@ -31,7 +31,7 @@ C4Component
             Component(schemaHandler, "SchemaHandler", "HTTP", "Expose admin form and grid schemas (admin)")
             Component(shippingHandler, "ShippingRatesHandler", "HTTP", "List shipping rates")
             Component(webhookHandler, "PaymentWebhookHandler", "HTTP", "Handle payment callbacks (public)")
-            Component(storefrontHandler, "StorefrontHandler", "HTTP", "SSR storefront: catalog/PDP/PLP, cart, checkout (prefilled from default saved address), and profile-side account pages incl. saved addresses + marketing preferences (optional, gated by frontend.enabled)")
+            Component(storefrontHandler, "StorefrontHandler", "HTTP", "SSR storefront: catalog/PDP/PLP, cart, checkout (prefilled from default saved address), profile-side account pages incl. saved addresses + marketing preferences, and step-up-gated account email change with re-verification (optional, gated by frontend.enabled)")
             Component(storeAdmin, "StoreAdminHandler", "HTTP", "List, Create, Update stores (admin)")
         }
 

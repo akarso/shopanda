@@ -39,6 +39,21 @@
                     <button type="submit">Change Password</button>
                 </div>
             </form>
+
+            {{ if .EmailChangeMessage }}<p class="checkout-form__notice" role="status">{{ .EmailChangeMessage }}</p>{{ end }}
+            {{ if .EmailErrorMessage }}<p class="checkout-form__error" role="alert">{{ .EmailErrorMessage }}</p>{{ end }}
+            <h2>Change email</h2>
+            <p class="muted-note">We send a confirmation link to your new address. Your current email keeps working until you confirm the link.</p>
+            <form class="checkout-form" action="/account/security/email" method="post">
+                <input type="hidden" name="csrf_token" value="{{ .CSRFToken }}">
+                <label>
+                    <span>New email address</span>
+                    <input name="new_email" type="email" autocomplete="email" required>
+                </label>
+                <div class="checkout-actions">
+                    <button type="submit">Send Confirmation Link</button>
+                </div>
+            </form>
         </section>
 
         <section class="account-panel">
