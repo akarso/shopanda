@@ -127,6 +127,7 @@ func (h *StorefrontHandler) CheckoutAddress() http.HandlerFunc {
 			if h.renderCheckoutResume(w, r, currentCart, customerID, page) {
 				return
 			}
+			h.prefillCheckoutFromDefaultAddress(r, customerID, &page)
 		}
 		page.PrimaryAction = "/checkout/shipping"
 		page.SecondaryURL = "/cart"
@@ -334,6 +335,46 @@ func (h *StorefrontHandler) checkoutAddressPageFromPost(w http.ResponseWriter, r
 		}
 	}
 	return currentCart, page, true
+}
+
+// prefillCheckoutFromDefaultAddress best-effort populates the checkout address
+// form from the authenticated customer's saved default address. It never blocks
+// checkout: any lookup failure leaves the form empty for manual entry.
+func (h *StorefrontHandler) prefillCheckoutFromDefaultAddress(r *http.Request, customerID string, page *StorefrontCheckoutPageData) {
+	if h.addresses == nil {
+		return
+	}
+	addr, err := h.addresses.FindDefault(r.Context(), customerID)
+	if err != nil || addr == nil {
+		return
+	}
+	firstName, lastName := storefrontSplitRecipient(addr.Recipient)
+	page.Address = StorefrontCheckoutAddress{
+		FirstName: firstName,
+		LastName:  lastName,
+		Street:    addr.Street,
+		City:      addr.City,
+		Postcode:  addr.Postcode,
+		Country:   addr.Country,
+	}
+	page.Countries = storefrontCheckoutCountryOptions(addr.Country)
+	if strings.TrimSpace(page.ContactEmail) == "" && h.auth != nil {
+		if profile, err := h.auth.Me(r.Context(), customerID); err == nil && profile != nil {
+			page.ContactEmail = profile.Email
+		}
+	}
+}
+
+func storefrontSplitRecipient(recipient string) (string, string) {
+	recipient = strings.TrimSpace(recipient)
+	if recipient == "" {
+		return "", ""
+	}
+	parts := strings.SplitN(recipient, " ", 2)
+	if len(parts) == 1 {
+		return parts[0], ""
+	}
+	return strings.TrimSpace(parts[0]), strings.TrimSpace(parts[1])
 }
 
 func (h *StorefrontHandler) checkoutVerifiedEmailGateEnabled() bool {

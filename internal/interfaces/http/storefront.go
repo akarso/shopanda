@@ -19,6 +19,8 @@ import (
 	"github.com/akarso/shopanda/internal/application/composition"
 	orderApp "github.com/akarso/shopanda/internal/application/order"
 	"github.com/akarso/shopanda/internal/domain/catalog"
+	"github.com/akarso/shopanda/internal/domain/customer"
+	"github.com/akarso/shopanda/internal/domain/legal"
 	"github.com/akarso/shopanda/internal/domain/order"
 	"github.com/akarso/shopanda/internal/domain/payment"
 	"github.com/akarso/shopanda/internal/domain/search"
@@ -47,6 +49,8 @@ type StorefrontHandler struct {
 	emailer     OrderClaimEmailer
 	orderLinker OrderLinker
 	account     AccountDeleter
+	addresses   customer.AddressRepository
+	consents    legal.ConsentRepository
 	security    *storefrontAccountSecurityVerifier
 	shipping    []shipping.Provider
 	payment     payment.Provider
@@ -262,6 +266,15 @@ func (h *StorefrontHandler) WithAccount(authService *appAuth.Service, orders ord
 	h.auth = authService
 	h.orders = orders
 	h.account = account
+	return h
+}
+
+// WithAccountProfile enables profile-side account surfaces: saved addresses and
+// marketing preferences. These pages are gated by an authenticated session only
+// (no step-up), consistent with /account/profile.
+func (h *StorefrontHandler) WithAccountProfile(addresses customer.AddressRepository, consents legal.ConsentRepository) *StorefrontHandler {
+	h.addresses = addresses
+	h.consents = consents
 	return h
 }
 

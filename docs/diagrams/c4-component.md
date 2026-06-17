@@ -31,7 +31,7 @@ C4Component
             Component(schemaHandler, "SchemaHandler", "HTTP", "Expose admin form and grid schemas (admin)")
             Component(shippingHandler, "ShippingRatesHandler", "HTTP", "List shipping rates")
             Component(webhookHandler, "PaymentWebhookHandler", "HTTP", "Handle payment callbacks (public)")
-            Component(storefrontHandler, "StorefrontHandler", "HTTP", "SSR product page: slug lookup → PDP pipeline → theme render (optional, gated by frontend.enabled)")
+            Component(storefrontHandler, "StorefrontHandler", "HTTP", "SSR storefront: catalog/PDP/PLP, cart, checkout (prefilled from default saved address), and profile-side account pages incl. saved addresses + marketing preferences (optional, gated by frontend.enabled)")
             Component(storeAdmin, "StoreAdminHandler", "HTTP", "List, Create, Update stores (admin)")
         }
 
@@ -60,7 +60,7 @@ C4Component
         }
 
         Boundary(infrastructure, "Infrastructure Layer (Adapters)") {
-            Component(postgresRepos, "PostgreSQL Repositories", "Go, lib/pq", "15 repo implementations: Product, Variant, Price, Cart, Order, Customer, Stock, Reservation, Payment, Shipping, Category, Collection, ResetToken, TaxRate, Store")
+            Component(postgresRepos, "PostgreSQL Repositories", "Go, lib/pq", "16 repo implementations: Product, Variant, Price, Cart, Order, Customer, CustomerAddress, Stock, Reservation, Payment, Shipping, Category, Collection, ResetToken, TaxRate, Store")
             Component(postgresSearch, "PostgresSearchEngine", "Go, tsvector", "Full-text search via PostgreSQL tsvector, filters, facets")
             Component(postgresJobQueue, "PostgresJobQueue", "Go, lib/pq", "Job queue with FOR UPDATE SKIP LOCKED dequeue, retry logic")
             Component(manualPay, "ManualPayProvider", "Go", "Offline payment processing")

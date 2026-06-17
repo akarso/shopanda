@@ -1,0 +1,101 @@
+{{ define "title" }}Addresses{{ end }}
+
+{{ define "content" }}
+<section class="account-shell">
+    <div class="page-intro">
+        <span class="eyebrow">Account</span>
+        <h1>Addresses</h1>
+        <p>Save the addresses you ship to so checkout can be prefilled from your default.</p>
+    </div>
+
+    <nav class="checkout-actions" aria-label="Account sections">
+        <a class="chip {{ if eq .AccountNav.Current "orders" }}chip--active{{ end }}" href="{{ .AccountNav.OrdersURL }}">Orders</a>
+        <a class="chip {{ if eq .AccountNav.Current "profile" }}chip--active{{ end }}" href="{{ .AccountNav.ProfileURL }}">Profile</a>
+        <a class="chip {{ if eq .AccountNav.Current "addresses" }}chip--active{{ end }}" href="{{ .AccountNav.AddressesURL }}">Addresses</a>
+        <a class="chip {{ if eq .AccountNav.Current "preferences" }}chip--active{{ end }}" href="{{ .AccountNav.PreferencesURL }}">Preferences</a>
+        <a class="chip {{ if eq .AccountNav.Current "security" }}chip--active{{ end }}" href="{{ .AccountNav.SecurityURL }}">Security</a>
+    </nav>
+
+    <section class="account-panel">
+        {{ if .SuccessMessage }}<p class="account-notice">{{ .SuccessMessage }}</p>{{ end }}
+        {{ if .Addresses }}
+        <ul class="account-address-list">
+            {{ range .Addresses }}
+            <li class="account-address" id="address-{{ .ID }}">
+                <div class="account-address__body">
+                    {{ if .IsDefault }}<span class="badge">Default</span>{{ end }}
+                    {{ if .Label }}<strong>{{ .Label }}</strong>{{ end }}
+                    <p>{{ .Recipient }}</p>
+                    {{ range .Lines }}<p>{{ . }}</p>{{ end }}
+                </div>
+                <div class="checkout-actions">
+                    <a class="chip" href="{{ .EditURL }}">Edit</a>
+                    {{ if not .IsDefault }}
+                    <form action="/account/addresses/{{ .ID }}/default" method="post">
+                        <input type="hidden" name="csrf_token" value="{{ $.CSRFToken }}">
+                        <button type="submit">Make default</button>
+                    </form>
+                    {{ end }}
+                    <form action="/account/addresses/{{ .ID }}/delete" method="post">
+                        <input type="hidden" name="csrf_token" value="{{ $.CSRFToken }}">
+                        <button type="submit">Delete</button>
+                    </form>
+                </div>
+            </li>
+            {{ end }}
+        </ul>
+        {{ else }}
+        <p class="account-empty">{{ .EmptyMessage }}</p>
+        {{ end }}
+    </section>
+
+    <section class="account-panel">
+        <h2>{{ .FormTitle }}</h2>
+        {{ if .ErrorMessage }}<p class="checkout-form__error" role="alert">{{ .ErrorMessage }}</p>{{ end }}
+        <form class="checkout-form" action="{{ .FormAction }}" method="post">
+            <input type="hidden" name="csrf_token" value="{{ .CSRFToken }}">
+            <div class="checkout-form__grid">
+                <label class="checkout-form__full">
+                    <span>Label (optional)</span>
+                    <input name="label" value="{{ .Form.Label }}" placeholder="Home, Work…">
+                </label>
+                <label class="checkout-form__full">
+                    <span>Recipient</span>
+                    <input name="recipient" value="{{ .Form.Recipient }}" autocomplete="name" required>
+                </label>
+                <label class="checkout-form__full">
+                    <span>Street</span>
+                    <input name="street" value="{{ .Form.Street }}" autocomplete="street-address" required>
+                </label>
+                <label>
+                    <span>City</span>
+                    <input name="city" value="{{ .Form.City }}" autocomplete="address-level2" required>
+                </label>
+                <label>
+                    <span>Postcode</span>
+                    <input name="postcode" value="{{ .Form.Postcode }}" autocomplete="postal-code" required>
+                </label>
+                <label class="checkout-form__full">
+                    <span>Country</span>
+                    <select name="country" autocomplete="country-name" required>
+                        <option value="">Select a country</option>
+                        {{ range .Countries }}
+                        <option value="{{ .Value }}" {{ if .Selected }}selected{{ end }}>{{ .Label }}</option>
+                        {{ end }}
+                    </select>
+                </label>
+                <label class="checkout-form__full account-address__default">
+                    <input type="checkbox" name="is_default" value="1" {{ if .Form.IsDefault }}checked{{ end }}>
+                    <span>Use as my default address</span>
+                </label>
+            </div>
+            <div class="checkout-actions">
+                {{ if .Editing }}<a class="chip" href="/account/addresses">Cancel</a>{{ end }}
+                <button type="submit">{{ .SubmitLabel }}</button>
+            </div>
+        </form>
+    </section>
+</section>
+{{ end }}
+
+{{ template "layout.html" . }}
