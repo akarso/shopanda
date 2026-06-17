@@ -392,13 +392,12 @@ func (s *Service) HandleEmailChangeRequested(ctx context.Context, evt event.Even
 		return fmt.Errorf("notification: invalid verify url for customer %s", data.CustomerID)
 	}
 
-	cust, err := s.customers.FindByID(ctx, data.CustomerID)
-	if err != nil {
-		s.log.Error("HandleEmailChangeRequested.customer_lookup_failed", err, map[string]interface{}{"customer_id": data.CustomerID})
-		return fmt.Errorf("notification: find customer %s: %w", data.CustomerID, err)
-	}
+	// Best-effort personalization: the address and link come from the event, so a
+	// lookup failure should not block delivery of the verification email.
 	firstName := ""
-	if cust != nil {
+	if cust, err := s.customers.FindByID(ctx, data.CustomerID); err != nil {
+		s.log.Warn("HandleEmailChangeRequested.customer_lookup_failed", map[string]interface{}{"customer_id": data.CustomerID, "error": err.Error()})
+	} else if cust != nil {
 		firstName = cust.FirstName
 	}
 
@@ -436,13 +435,12 @@ func (s *Service) HandleEmailChangeNotified(ctx context.Context, evt event.Event
 		return fmt.Errorf("notification: email change notice for customer %s has no old email", data.CustomerID)
 	}
 
-	cust, err := s.customers.FindByID(ctx, data.CustomerID)
-	if err != nil {
-		s.log.Error("HandleEmailChangeNotified.customer_lookup_failed", err, map[string]interface{}{"customer_id": data.CustomerID})
-		return fmt.Errorf("notification: find customer %s: %w", data.CustomerID, err)
-	}
+	// Best-effort personalization: the old address comes from the event, so a
+	// lookup failure should not block delivery of the security notice.
 	firstName := ""
-	if cust != nil {
+	if cust, err := s.customers.FindByID(ctx, data.CustomerID); err != nil {
+		s.log.Warn("HandleEmailChangeNotified.customer_lookup_failed", map[string]interface{}{"customer_id": data.CustomerID, "error": err.Error()})
+	} else if cust != nil {
 		firstName = cust.FirstName
 	}
 

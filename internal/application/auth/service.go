@@ -225,6 +225,7 @@ func (s *Service) RequestEmailChange(ctx context.Context, in RequestEmailChangeI
 			"event": customer.EventEmailChangeNotified,
 			"error": err.Error(),
 		})
+		return fmt.Errorf("auth service: request email change: %w", err)
 	}
 
 	s.log.Info("auth.email_change.requested", map[string]interface{}{
@@ -259,6 +260,9 @@ func (s *Service) ConfirmEmailChange(ctx context.Context, in ConfirmEmailChangeI
 	if c == nil {
 		return nil, apperror.Unauthorized("invalid or expired link")
 	}
+	if c.Status != customer.StatusActive {
+		return nil, apperror.Unauthorized("account is not active")
+	}
 	// Reject superseded or already-consumed links.
 	if strings.TrimSpace(c.PendingEmailNonce) == "" || c.PendingEmailNonce != strings.TrimSpace(in.Nonce) {
 		return nil, apperror.Unauthorized("invalid or expired link")
@@ -277,6 +281,11 @@ func (s *Service) ConfirmEmailChange(ctx context.Context, in ConfirmEmailChangeI
 		// A concurrent registration may surface here as a unique-violation conflict.
 		if apperror.Is(err, apperror.CodeConflict) {
 			return nil, apperror.Conflict("email already registered")
+		}
+		// A concurrent account deletion makes the link target gone; treat it as an
+		// invalid link (4xx) rather than an internal error.
+		if apperror.Is(err, apperror.CodeNotFound) {
+			return nil, apperror.Unauthorized("invalid or expired link")
 		}
 		return nil, fmt.Errorf("auth service: confirm email change: %w", err)
 	}

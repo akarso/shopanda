@@ -31,7 +31,6 @@ Verified against the codebase as of PR-392. Each PR below has a planned spec und
 | PR-396 | 3 | Admin pages editing with language scope (PR-E content): pages CRUD UI over the existing API, content-domain permissions for the Editor role, page audit logging |
 | PR-397 | 3 | Admin hardening closeout: remove `changeme` bootstrap defaults, fix stale seeding docs, add audit logging to categories/stores/media handlers |
 | PR-398 | 4 | Storefront profile completion: saved addresses with checkout prefill, preferences page surfacing the existing consent API |
-| PR-399 | 4 | Account email change behind step-up with re-verification of the new address |
 
 ### Explicitly Deferred (out of roadmap closure)
 
