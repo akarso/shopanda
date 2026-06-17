@@ -6,7 +6,7 @@ Full specs for PR-400–434. Format matches Phase 3: `Summary`, `Why`, `Scope`, 
 | --- | --- | --- | --- |
 | PR-400 | A | done | [Admin coupons CRUD](PR-400.md) |
 | PR-401 | A | done | [Admin promotions CRUD](PR-401.md) |
-| PR-402 | A | planned | [Admin attributes UI](PR-402.md) |
+| PR-402 | A | done | [Admin attributes UI](PR-402.md) |
 | PR-403 | A | planned | [Inventory list + adjust](PR-403.md) |
 | PR-404 | A | planned | [Scoped prices on product edit](PR-404.md) |
 | PR-405 | A | planned | [Phase 3 doc closure](PR-405.md) |

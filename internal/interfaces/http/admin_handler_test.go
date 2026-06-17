@@ -184,6 +184,30 @@ func TestAdminHandler_StaticJS(t *testing.T) {
 	if !strings.Contains(normalizedBody, "renderPromotionsGrid") || !strings.Contains(normalizedBody, "/admin/promotions?offset=0&limit=50") {
 		t.Fatalf("expected promotions admin surface wiring in JS")
 	}
+	if !strings.Contains(normalizedBody, "renderAttributesGrid") || !strings.Contains(normalizedBody, "/admin/attributes") {
+		t.Fatalf("expected attributes admin surface wiring in JS")
+	}
+	if !strings.Contains(normalizedBody, "Your account does not have categories access.") || !strings.Contains(normalizedBody, "Failed to load attributes.") {
+		t.Fatalf("expected attributes admin error messages in JS")
+	}
+	expectedAttributeCrudWiring := []string{
+		"renderAttributeForm",
+		"renderAttributeCreate",
+		"renderAttributeEdit",
+		"/admin/catalog/attributes/new",
+		"new-attribute-btn",
+		"delete-attribute-btn",
+		"Failed to delete attribute.",
+		"Attribute not found.",
+		"renderAttributeGroupForm",
+		"/admin/catalog/attribute-groups/new",
+		"delete-attribute-group-btn",
+	}
+	for _, expected := range expectedAttributeCrudWiring {
+		if !strings.Contains(normalizedBody, expected) {
+			t.Fatalf("expected attributes CRUD wiring %q in JS", expected)
+		}
+	}
 	if !strings.Contains(normalizedBody, "Failed to load promotions.") {
 		t.Fatalf("expected promotions admin error messages in JS")
 	}

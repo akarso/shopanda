@@ -1,22 +1,27 @@
 package http
 
 import (
+	"context"
 	"net/http"
 
+	adminApp "github.com/akarso/shopanda/internal/application/admin"
 	"github.com/akarso/shopanda/internal/domain/admin"
 	"github.com/akarso/shopanda/internal/domain/rbac"
 	"github.com/akarso/shopanda/internal/platform/apperror"
 	"github.com/akarso/shopanda/internal/platform/auth"
 )
 
+const productFormName = "product.form"
+
 // SchemaHandler serves admin schema endpoints.
 type SchemaHandler struct {
-	registry *admin.Registry
+	registry  *admin.Registry
+	attrStore *adminApp.AttributeStore
 }
 
 // NewSchemaHandler creates a SchemaHandler.
-func NewSchemaHandler(registry *admin.Registry) *SchemaHandler {
-	return &SchemaHandler{registry: registry}
+func NewSchemaHandler(registry *admin.Registry, attrStore *adminApp.AttributeStore) *SchemaHandler {
+	return &SchemaHandler{registry: registry, attrStore: attrStore}
 }
 
 // --- JSON-safe response DTOs ---
@@ -71,6 +76,14 @@ func (h *SchemaHandler) GetForm() http.HandlerFunc {
 		if !ok {
 			JSONError(w, apperror.NotFound("form not found"))
 			return
+		}
+		if name == productFormName {
+			var err error
+			form, err = h.mergeProductAttributeFields(r.Context(), form)
+			if err != nil {
+				JSONError(w, err)
+				return
+			}
 		}
 
 		if perm, hasPerm := h.registry.FormPermission(name); hasPerm {
@@ -160,4 +173,22 @@ func toGridDTO(g admin.Grid) gridDTO {
 		}
 	}
 	return gridDTO{Name: g.Name, Columns: cols, Actions: acts}
+}
+
+func (h *SchemaHandler) mergeProductAttributeFields(ctx context.Context, form admin.Form) (admin.Form, error) {
+	if h.attrStore == nil {
+		return form, nil
+	}
+	attrs, err := h.attrStore.ListAttributes(ctx, "")
+	if err != nil {
+		return admin.Form{}, apperror.Validation(err.Error())
+	}
+	for _, attr := range attrs {
+		field, err := adminApp.AttributeToFormField(attr)
+		if err != nil {
+			return admin.Form{}, apperror.Validation(err.Error())
+		}
+		form.Fields = append(form.Fields, field)
+	}
+	return form, nil
 }

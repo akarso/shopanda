@@ -148,7 +148,7 @@
         // Catalog
         "/admin/products": { title: "Products", render: renderProductsGrid, auth: true },
         "/admin/catalog/categories": { title: "Categories", render: renderCategoriesPage, auth: true },
-        "/admin/catalog/attributes": { title: "Attributes", render: renderPlaceholder("Attributes"), auth: true },
+        "/admin/catalog/attributes": { title: "Attributes", render: renderAttributesGrid, auth: true },
         // Customers
         "/admin/customers": { title: "Customers", render: renderCustomersGrid, auth: true },
         "/admin/customers/groups": { title: "Groups", render: renderPlaceholder("Groups"), auth: true },
@@ -197,6 +197,30 @@
         }
         if (path === "/admin/marketing/promotions/new") {
             return { title: "New Promotion", render: renderPromotionCreate, auth: true };
+        }
+        if (path === "/admin/catalog/attributes/new") {
+            return { title: "New Attribute", render: renderAttributeCreate, auth: true };
+        }
+        if (path === "/admin/catalog/attribute-groups/new") {
+            return { title: "New Attribute Group", render: renderAttributeGroupCreate, auth: true };
+        }
+        var attributeMatch = path.match(/^\/admin\/catalog\/attributes\/([^/]+)$/);
+        if (attributeMatch) {
+            var attributeCode = decodeURIComponent(attributeMatch[1]);
+            return {
+                title: "Edit Attribute",
+                auth: true,
+                render: function (container) { renderAttributeEdit(container, attributeCode); }
+            };
+        }
+        var attributeGroupMatch = path.match(/^\/admin\/catalog\/attribute-groups\/([^/]+)$/);
+        if (attributeGroupMatch) {
+            var groupCode = decodeURIComponent(attributeGroupMatch[1]);
+            return {
+                title: "Edit Attribute Group",
+                auth: true,
+                render: function (container) { renderAttributeGroupEdit(container, groupCode); }
+            };
         }
         var promotionMatch = path.match(/^\/admin\/marketing\/promotions\/([^/]+)$/);
         if (promotionMatch) {
@@ -1516,6 +1540,8 @@
         var value = field.default;
         if (product && product[name] != null) {
             value = product[name];
+        } else if (product && product.attributes && product.attributes[name] != null) {
+            value = product.attributes[name];
         }
         if (isEdit && scope === "translatable" && translations && typeof translations[name] === "string" && translations[name] !== "") {
             value = translations[name];
@@ -1565,6 +1591,8 @@
             var v;
             if (f.type === "checkbox") {
                 v = !!el.checked;
+            } else if (f.type === "number") {
+                v = el.value === "" ? null : parseFloat(el.value);
             } else {
                 v = el.value;
             }
@@ -3088,6 +3116,350 @@
             bindForm(coupon, promotions);
         }).catch(function (err) {
             form.innerHTML = '<p role="alert">' + esc(extractErrorMessage(err, 'Failed to load coupon form.')) + '</p>';
+        });
+    }
+
+    function renderAttributesGrid(container) {
+        container.innerHTML = '<h2>Attributes</h2><div id="attributes-grid"></div>';
+
+        var grid = document.getElementById("attributes-grid");
+        Promise.all([
+            api("/admin/attribute-groups"),
+            api("/admin/attributes")
+        ]).then(function (results) {
+            var groupsBody = results[0];
+            var attrsBody = results[1];
+            if ((groupsBody && groupsBody.error && groupsBody.error.code === "forbidden") ||
+                (attrsBody && attrsBody.error && attrsBody.error.code === "forbidden")) {
+                grid.innerHTML = '<p role="alert">Your account does not have categories access.</p>';
+                return;
+            }
+
+            var groups = groupsBody && groupsBody.data && groupsBody.data.groups;
+            var attrsRaw = attrsBody && attrsBody.data && attrsBody.data.attributes;
+            if (!Array.isArray(groups) || !Array.isArray(attrsRaw)) {
+                grid.innerHTML = '<p role="alert">' + esc(extractErrorMessage(attrsBody, 'Failed to load attributes.')) + '</p>';
+                return;
+            }
+
+            var html = '<div style="margin-bottom:1rem">' +
+                '<a class="button" href="/admin/catalog/attributes/new" data-link id="new-attribute-btn">New Attribute</a> ' +
+                '<a class="button" href="/admin/catalog/attribute-groups/new" data-link id="new-attribute-group-btn">New Group</a>' +
+                '</div>';
+
+            html += '<h3>Attribute Groups</h3><table><thead><tr><th>Code</th><th>Label</th><th>Attributes</th></tr></thead><tbody>';
+            if (groups.length === 0) {
+                html += '<tr><td colspan="3">No groups defined.</td></tr>';
+            } else {
+                for (var g = 0; g < groups.length; g++) {
+                    var group = groups[g];
+                    var groupHref = '/admin/catalog/attribute-groups/' + encodeURIComponent(group.code || '');
+                    var memberCodes = Array.isArray(group.attributes) ? group.attributes.join(', ') : '';
+                    html += '<tr>' +
+                        '<td><a href="' + groupHref + '" data-link>' + esc(group.code || '') + '</a></td>' +
+                        '<td>' + esc(group.label || '') + '</td>' +
+                        '<td>' + esc(memberCodes) + '</td>' +
+                        '</tr>';
+                }
+            }
+            html += '</tbody></table>';
+
+            html += '<h3 style="margin-top:2rem">Attributes</h3>';
+            html += '<label>Filter by group <select id="attribute-group-filter"><option value="">All groups</option>';
+            for (var gi = 0; gi < groups.length; gi++) {
+                html += '<option value="' + esc(groups[gi].code || '') + '">' + esc(groups[gi].label || groups[gi].code || '') + '</option>';
+            }
+            html += '</select></label>';
+            html += '<table style="margin-top:1rem"><thead><tr>' +
+                '<th>Code</th><th>Label</th><th>Type</th><th>Required</th><th>Groups</th>' +
+                '</tr></thead><tbody id="attributes-table-body">';
+
+            function renderAttributeRows(filterGroup) {
+                var rows = '';
+                for (var i = 0; i < attrsRaw.length; i++) {
+                    var attr = attrsRaw[i];
+                    var groupList = Array.isArray(attr.groups) ? attr.groups : [];
+                    if (filterGroup && groupList.indexOf(filterGroup) < 0) {
+                        continue;
+                    }
+                    var editHref = '/admin/catalog/attributes/' + encodeURIComponent(attr.code || '');
+                    rows += '<tr>' +
+                        '<td><a href="' + editHref + '" data-link>' + esc(attr.code || '') + '</a></td>' +
+                        '<td>' + esc(attr.label || '') + '</td>' +
+                        '<td>' + esc(attr.type || '') + '</td>' +
+                        '<td>' + esc(attr.required ? 'yes' : 'no') + '</td>' +
+                        '<td>' + esc(groupList.join(', ')) + '</td>' +
+                        '</tr>';
+                }
+                if (rows === '') {
+                    rows = '<tr><td colspan="5">No attributes found.</td></tr>';
+                }
+                return rows;
+            }
+
+            html += renderAttributeRows('');
+            html += '</tbody></table>';
+            grid.innerHTML = html;
+
+            var filterEl = document.getElementById('attribute-group-filter');
+            var tbody = document.getElementById('attributes-table-body');
+            if (filterEl && tbody) {
+                filterEl.addEventListener('change', function () {
+                    tbody.innerHTML = renderAttributeRows(filterEl.value);
+                });
+            }
+        }).catch(function (err) {
+            grid.innerHTML = '<p role="alert">' + esc(extractErrorMessage(err, 'Failed to load attributes.')) + '</p>';
+        });
+    }
+
+    function renderAttributeFormFields(attribute) {
+        var attrType = attribute ? (attribute.type || 'text') : 'text';
+        var isRequired = attribute ? !!attribute.required : false;
+        var options = attribute && Array.isArray(attribute.options) ? attribute.options.join(', ') : '';
+        return '' +
+            (attribute ? '' : '<label>Code<input name="code" value="" required pattern="[a-zA-Z0-9_-]+"></label>') +
+            '<label>Label<input name="label" value="' + esc(attribute ? (attribute.label || '') : '') + '" required></label>' +
+            '<label>Type<select name="type">' +
+            '<option value="text"' + (attrType === 'text' ? ' selected' : '') + '>Text</option>' +
+            '<option value="number"' + (attrType === 'number' ? ' selected' : '') + '>Number</option>' +
+            '<option value="boolean"' + (attrType === 'boolean' ? ' selected' : '') + '>Boolean</option>' +
+            '<option value="select"' + (attrType === 'select' ? ' selected' : '') + '>Select</option>' +
+            '</select></label>' +
+            '<label>Options (comma-separated, for select)<input name="options" value="' + esc(options) + '"></label>' +
+            '<label><input type="checkbox" name="required"' + (isRequired ? ' checked' : '') + '> Required</label>' +
+            '<div style="margin-top:1rem"><button type="submit">Save</button>' +
+            (attribute ? ' <button type="button" id="delete-attribute-btn" class="danger">Delete</button>' : '') +
+            '</div>';
+    }
+
+    function parseAttributeOptions(raw) {
+        if (!raw) {
+            return [];
+        }
+        return raw.split(',').map(function (part) { return part.trim(); }).filter(function (part) { return part !== ''; });
+    }
+
+    function renderAttributeCreate(container) {
+        renderAttributeForm(container, null);
+    }
+
+    function renderAttributeEdit(container, attributeCode) {
+        renderAttributeForm(container, attributeCode);
+    }
+
+    function renderAttributeForm(container, attributeCode) {
+        var title = attributeCode ? 'Edit Attribute' : 'New Attribute';
+        container.innerHTML =
+            '<h2>' + title + '</h2>' +
+            '<p><a href="/admin/catalog/attributes" data-link>Back to attributes</a></p>' +
+            '<div id="attribute-form-msg"></div>' +
+            '<form id="attribute-form"><p>Loading…</p></form>';
+
+        var msg = document.getElementById('attribute-form-msg');
+        var form = document.getElementById('attribute-form');
+
+        function bindForm(attribute) {
+            form.innerHTML = renderAttributeFormFields(attribute);
+            form.addEventListener('submit', function (e) {
+                e.preventDefault();
+                var payload = {
+                    label: form.elements.label.value,
+                    type: form.elements.type.value,
+                    required: form.elements.required.checked,
+                    options: parseAttributeOptions(form.elements.options.value)
+                };
+                if (!attributeCode) {
+                    payload.code = form.elements.code.value;
+                }
+                var method = attributeCode ? 'PUT' : 'POST';
+                var url = attributeCode
+                    ? '/admin/attributes/' + encodeURIComponent(attributeCode)
+                    : '/admin/attributes';
+                api(url, { method: method, body: JSON.stringify(payload) }).then(function (body) {
+                    if (body && body.error) {
+                        msg.innerHTML = '<p role="alert">' + esc(body.error.message || 'Save failed.') + '</p>';
+                        return;
+                    }
+                    navigate('/admin/catalog/attributes');
+                }).catch(function (err) {
+                    msg.innerHTML = '<p role="alert">' + esc(extractErrorMessage(err, 'Save failed.')) + '</p>';
+                });
+            });
+
+            if (attributeCode) {
+                var deleteBtn = document.getElementById('delete-attribute-btn');
+                if (deleteBtn) {
+                    deleteBtn.addEventListener('click', function () {
+                        if (!window.confirm('Delete this attribute? It will be removed from all groups.')) {
+                            return;
+                        }
+                        api('/admin/attributes/' + encodeURIComponent(attributeCode), { method: 'DELETE' }).then(function (body) {
+                            if (body && body.error) {
+                                msg.innerHTML = '<p role="alert">' + esc(body.error.message || 'Failed to delete attribute.') + '</p>';
+                                return;
+                            }
+                            navigate('/admin/catalog/attributes');
+                        }).catch(function (err) {
+                            msg.innerHTML = '<p role="alert">' + esc(extractErrorMessage(err, 'Failed to delete attribute.')) + '</p>';
+                        });
+                    });
+                }
+            }
+        }
+
+        if (!attributeCode) {
+            bindForm(null);
+            return;
+        }
+
+        api('/admin/attributes/' + encodeURIComponent(attributeCode)).then(function (body) {
+            if (body && body.error && body.error.code === 'forbidden') {
+                form.innerHTML = '<p role="alert">Your account does not have categories access.</p>';
+                return;
+            }
+            var attribute = body && body.data && body.data.attribute;
+            if (!attribute) {
+                form.innerHTML = '<p role="alert">' + esc(extractErrorMessage(body, 'Attribute not found.')) + '</p>';
+                return;
+            }
+            bindForm(attribute);
+        }).catch(function (err) {
+            form.innerHTML = '<p role="alert">' + esc(extractErrorMessage(err, 'Failed to load attribute form.')) + '</p>';
+        });
+    }
+
+    function renderAttributeGroupCreate(container) {
+        renderAttributeGroupForm(container, null);
+    }
+
+    function renderAttributeGroupEdit(container, groupCode) {
+        renderAttributeGroupForm(container, groupCode);
+    }
+
+    function renderAttributeGroupForm(container, groupCode) {
+        var title = groupCode ? 'Edit Attribute Group' : 'New Attribute Group';
+        container.innerHTML =
+            '<h2>' + title + '</h2>' +
+            '<p><a href="/admin/catalog/attributes" data-link>Back to attributes</a></p>' +
+            '<div id="attribute-group-form-msg"></div>' +
+            '<form id="attribute-group-form"><p>Loading…</p></form>';
+
+        var msg = document.getElementById('attribute-group-form-msg');
+        var form = document.getElementById('attribute-group-form');
+
+        function bindForm(group, allAttributes) {
+            var selected = {};
+            if (group && Array.isArray(group.attributes)) {
+                for (var i = 0; i < group.attributes.length; i++) {
+                    selected[group.attributes[i]] = true;
+                }
+            }
+            var html = (group ? '' : '<label>Code<input name="code" value="" required pattern="[a-zA-Z0-9_-]+"></label>') +
+                '<label>Label<input name="label" value="' + esc(group ? (group.label || '') : '') + '" required></label>' +
+                '<fieldset><legend>Attributes</legend>';
+            if (!Array.isArray(allAttributes) || allAttributes.length === 0) {
+                html += '<p>No attributes defined yet.</p>';
+            } else {
+                for (var a = 0; a < allAttributes.length; a++) {
+                    var attr = allAttributes[a];
+                    var checked = selected[attr.code] ? ' checked' : '';
+                    html += '<label><input type="checkbox" name="attr_' + esc(attr.code) + '" value="' + esc(attr.code) + '"' + checked + '> ' +
+                        esc(attr.label || attr.code || '') + ' (' + esc(attr.code || '') + ')</label>';
+                }
+            }
+            html += '</fieldset>' +
+                '<div style="margin-top:1rem"><button type="submit">Save</button>' +
+                (group ? ' <button type="button" id="delete-attribute-group-btn" class="danger">Delete</button>' : '') +
+                '</div>';
+            form.innerHTML = html;
+
+            form.addEventListener('submit', function (e) {
+                e.preventDefault();
+                var attributes = [];
+                if (Array.isArray(allAttributes)) {
+                    for (var j = 0; j < allAttributes.length; j++) {
+                        var code = allAttributes[j].code;
+                        var el = form.elements['attr_' + code];
+                        if (el && el.checked) {
+                            attributes.push(code);
+                        }
+                    }
+                }
+                var payload = {
+                    label: form.elements.label.value,
+                    attributes: attributes
+                };
+                if (!groupCode) {
+                    payload.code = form.elements.code.value;
+                }
+                var method = groupCode ? 'PUT' : 'POST';
+                var url = groupCode
+                    ? '/admin/attribute-groups/' + encodeURIComponent(groupCode)
+                    : '/admin/attribute-groups';
+                api(url, { method: method, body: JSON.stringify(payload) }).then(function (body) {
+                    if (body && body.error) {
+                        msg.innerHTML = '<p role="alert">' + esc(body.error.message || 'Save failed.') + '</p>';
+                        return;
+                    }
+                    navigate('/admin/catalog/attributes');
+                }).catch(function (err) {
+                    msg.innerHTML = '<p role="alert">' + esc(extractErrorMessage(err, 'Save failed.')) + '</p>';
+                });
+            });
+
+            if (groupCode) {
+                var deleteBtn = document.getElementById('delete-attribute-group-btn');
+                if (deleteBtn) {
+                    deleteBtn.addEventListener('click', function () {
+                        if (!window.confirm('Delete this attribute group?')) {
+                            return;
+                        }
+                        api('/admin/attribute-groups/' + encodeURIComponent(groupCode), { method: 'DELETE' }).then(function (body) {
+                            if (body && body.error) {
+                                msg.innerHTML = '<p role="alert">' + esc(body.error.message || 'Failed to delete attribute group.') + '</p>';
+                                return;
+                            }
+                            navigate('/admin/catalog/attributes');
+                        }).catch(function (err) {
+                            msg.innerHTML = '<p role="alert">' + esc(extractErrorMessage(err, 'Failed to delete attribute group.')) + '</p>';
+                        });
+                    });
+                }
+            }
+        }
+
+        Promise.all([
+            groupCode ? api('/admin/attribute-groups/' + encodeURIComponent(groupCode)) : Promise.resolve(null),
+            api('/admin/attributes')
+        ]).then(function (results) {
+            var groupBody = results[0];
+            var attrsBody = results[1];
+            if (attrsBody && attrsBody.error && attrsBody.error.code === 'forbidden') {
+                form.innerHTML = '<p role="alert">Your account does not have categories access.</p>';
+                return;
+            }
+            var allAttributes = attrsBody && attrsBody.data && attrsBody.data.attributes;
+            if (!Array.isArray(allAttributes)) {
+                form.innerHTML = '<p role="alert">' + esc(extractErrorMessage(attrsBody, 'Failed to load attributes.')) + '</p>';
+                return;
+            }
+            if (groupCode) {
+                if (groupBody && groupBody.error && groupBody.error.code === 'forbidden') {
+                    form.innerHTML = '<p role="alert">Your account does not have categories access.</p>';
+                    return;
+                }
+                var group = groupBody && groupBody.data && groupBody.data.group;
+                if (!group) {
+                    form.innerHTML = '<p role="alert">' + esc(extractErrorMessage(groupBody, 'Attribute group not found.')) + '</p>';
+                    return;
+                }
+                bindForm(group, allAttributes);
+                return;
+            }
+            bindForm(null, allAttributes);
+        }).catch(function (err) {
+            form.innerHTML = '<p role="alert">' + esc(extractErrorMessage(err, 'Failed to load attribute group form.')) + '</p>';
         });
     }
 

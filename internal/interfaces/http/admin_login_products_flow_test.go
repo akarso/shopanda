@@ -36,7 +36,7 @@ func newAdminLoginProductsFlowRouter(t *testing.T, customers *authMockCustomerRe
 	if err := registry.SetGridPermission("product.grid", rbac.ProductsRead); err != nil {
 		t.Fatalf("SetGridPermission: %v", err)
 	}
-	schemaHandler := shophttp.NewSchemaHandler(registry)
+	schemaHandler := shophttp.NewSchemaHandler(registry, nil)
 
 	requireAuth := shophttp.RequireAuth()
 	requireProductsRead := shophttp.RequirePermission(rbac.ProductsRead)
