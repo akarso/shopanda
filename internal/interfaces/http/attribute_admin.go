@@ -173,11 +173,21 @@ func groupFromUpdateRequest(req updateAttributeGroupRequest, code string) (catal
 	return group, nil
 }
 
-func storeValidationError(err error) error {
+func storeAPIError(err error) error {
 	if err == nil {
 		return nil
 	}
-	return apperror.Validation(err.Error())
+	if admin.IsValidationError(err) {
+		return apperror.Validation(err.Error())
+	}
+	msg := err.Error()
+	if strings.Contains(msg, "not found") {
+		return apperror.NotFound(msg)
+	}
+	if strings.Contains(msg, "already exists") {
+		return apperror.Conflict(msg)
+	}
+	return apperror.Internal("attribute store operation failed")
 }
 
 // ListAttributes handles GET /api/v1/admin/attributes.
@@ -186,7 +196,7 @@ func (h *AttributeAdminHandler) ListAttributes() http.HandlerFunc {
 		groupCode := strings.TrimSpace(r.URL.Query().Get("group"))
 		attrs, err := h.store.ListAttributes(r.Context(), groupCode)
 		if err != nil {
-			verr := storeValidationError(err)
+			verr := storeAPIError(err)
 			h.auditAttribute(r, admin.AuditAttributeRead, "", map[string]interface{}{"group": groupCode}, verr)
 			JSONError(w, verr)
 			return
@@ -196,8 +206,9 @@ func (h *AttributeAdminHandler) ListAttributes() http.HandlerFunc {
 		for _, attr := range attrs {
 			groups, gerr := h.store.GroupCodesForAttribute(r.Context(), attr.Code)
 			if gerr != nil {
-				h.auditAttribute(r, admin.AuditAttributeRead, "", nil, gerr)
-				JSONError(w, gerr)
+				apiErr := storeAPIError(gerr)
+				h.auditAttribute(r, admin.AuditAttributeRead, "", nil, apiErr)
+				JSONError(w, apiErr)
 				return
 			}
 			resp = append(resp, toAttributeResponse(attr, groups))
@@ -216,15 +227,16 @@ func (h *AttributeAdminHandler) GetAttribute() http.HandlerFunc {
 		code := strings.TrimSpace(r.PathValue("code"))
 		attr, err := h.store.GetAttribute(r.Context(), code)
 		if err != nil {
-			verr := storeValidationError(err)
+			verr := storeAPIError(err)
 			h.auditAttribute(r, admin.AuditAttributeRead, code, nil, verr)
 			JSONError(w, verr)
 			return
 		}
 		groups, gerr := h.store.GroupCodesForAttribute(r.Context(), attr.Code)
 		if gerr != nil {
-			h.auditAttribute(r, admin.AuditAttributeRead, code, nil, gerr)
-			JSONError(w, gerr)
+			apiErr := storeAPIError(gerr)
+			h.auditAttribute(r, admin.AuditAttributeRead, code, nil, apiErr)
+			JSONError(w, apiErr)
 			return
 		}
 		h.auditAttribute(r, admin.AuditAttributeRead, code, nil, nil)
@@ -252,13 +264,19 @@ func (h *AttributeAdminHandler) CreateAttribute() http.HandlerFunc {
 		}
 
 		if err := h.store.CreateAttribute(r.Context(), attr); err != nil {
-			verr := storeValidationError(err)
+			verr := storeAPIError(err)
 			h.auditAttribute(r, admin.AuditAttributeCreate, attr.Code, nil, verr)
 			JSONError(w, verr)
 			return
 		}
 
-		groups, _ := h.store.GroupCodesForAttribute(r.Context(), attr.Code)
+		groups, gerr := h.store.GroupCodesForAttribute(r.Context(), attr.Code)
+		if gerr != nil {
+			apiErr := storeAPIError(gerr)
+			h.auditAttribute(r, admin.AuditAttributeCreate, attr.Code, nil, apiErr)
+			JSONError(w, apiErr)
+			return
+		}
 		h.auditAttribute(r, admin.AuditAttributeCreate, attr.Code, nil, nil)
 		JSON(w, http.StatusCreated, map[string]interface{}{"attribute": toAttributeResponse(attr, groups)})
 	}
@@ -285,13 +303,19 @@ func (h *AttributeAdminHandler) UpdateAttribute() http.HandlerFunc {
 		}
 
 		if err := h.store.UpdateAttribute(r.Context(), code, attr); err != nil {
-			verr := storeValidationError(err)
+			verr := storeAPIError(err)
 			h.auditAttribute(r, admin.AuditAttributeUpdate, code, nil, verr)
 			JSONError(w, verr)
 			return
 		}
 
-		groups, _ := h.store.GroupCodesForAttribute(r.Context(), attr.Code)
+		groups, gerr := h.store.GroupCodesForAttribute(r.Context(), attr.Code)
+		if gerr != nil {
+			apiErr := storeAPIError(gerr)
+			h.auditAttribute(r, admin.AuditAttributeUpdate, code, nil, apiErr)
+			JSONError(w, apiErr)
+			return
+		}
 		h.auditAttribute(r, admin.AuditAttributeUpdate, code, nil, nil)
 		JSON(w, http.StatusOK, map[string]interface{}{"attribute": toAttributeResponse(attr, groups)})
 	}
@@ -302,7 +326,7 @@ func (h *AttributeAdminHandler) DeleteAttribute() http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		code := strings.TrimSpace(r.PathValue("code"))
 		if err := h.store.DeleteAttribute(r.Context(), code); err != nil {
-			verr := storeValidationError(err)
+			verr := storeAPIError(err)
 			h.auditAttribute(r, admin.AuditAttributeDelete, code, nil, verr)
 			JSONError(w, verr)
 			return
@@ -317,8 +341,9 @@ func (h *AttributeAdminHandler) ListGroups() http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		groups, err := h.store.ListGroups(r.Context())
 		if err != nil {
-			h.auditGroup(r, admin.AuditAttributeGroupRead, "", nil, err)
-			JSONError(w, err)
+			apiErr := storeAPIError(err)
+			h.auditGroup(r, admin.AuditAttributeGroupRead, "", nil, apiErr)
+			JSONError(w, apiErr)
 			return
 		}
 		resp := make([]adminAttributeGroupResponse, 0, len(groups))
@@ -336,7 +361,7 @@ func (h *AttributeAdminHandler) GetGroup() http.HandlerFunc {
 		code := strings.TrimSpace(r.PathValue("code"))
 		group, err := h.store.GetGroup(r.Context(), code)
 		if err != nil {
-			verr := storeValidationError(err)
+			verr := storeAPIError(err)
 			h.auditGroup(r, admin.AuditAttributeGroupRead, code, nil, verr)
 			JSONError(w, verr)
 			return
@@ -366,7 +391,7 @@ func (h *AttributeAdminHandler) CreateGroup() http.HandlerFunc {
 		}
 
 		if err := h.store.CreateGroup(r.Context(), group); err != nil {
-			verr := storeValidationError(err)
+			verr := storeAPIError(err)
 			h.auditGroup(r, admin.AuditAttributeGroupCreate, group.Code, nil, verr)
 			JSONError(w, verr)
 			return
@@ -398,7 +423,7 @@ func (h *AttributeAdminHandler) UpdateGroup() http.HandlerFunc {
 		}
 
 		if err := h.store.UpdateGroup(r.Context(), code, group); err != nil {
-			verr := storeValidationError(err)
+			verr := storeAPIError(err)
 			h.auditGroup(r, admin.AuditAttributeGroupUpdate, code, nil, verr)
 			JSONError(w, verr)
 			return
@@ -414,7 +439,7 @@ func (h *AttributeAdminHandler) DeleteGroup() http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		code := strings.TrimSpace(r.PathValue("code"))
 		if err := h.store.DeleteGroup(r.Context(), code); err != nil {
-			verr := storeValidationError(err)
+			verr := storeAPIError(err)
 			h.auditGroup(r, admin.AuditAttributeGroupDelete, code, nil, verr)
 			JSONError(w, verr)
 			return

@@ -2,6 +2,7 @@ package admin_test
 
 import (
 	"context"
+	"fmt"
 	"testing"
 
 	adminApp "github.com/akarso/shopanda/internal/application/admin"
@@ -104,6 +105,44 @@ func TestAttributeStore_DeleteRemovesFromGroups(t *testing.T) {
 	}
 	if len(group.Attributes) != 0 {
 		t.Fatalf("group attributes = %v, want empty", group.Attributes)
+	}
+}
+
+type failSetManyConfigRepo struct {
+	*mockConfigRepo
+}
+
+func (m *failSetManyConfigRepo) SetMany(_ context.Context, _ map[string]interface{}) error {
+	return fmt.Errorf("persist failed")
+}
+
+func TestAttributeStore_DeleteKeepsStateOnPersistFailure(t *testing.T) {
+	repo := &failSetManyConfigRepo{mockConfigRepo: newMockConfigRepo()}
+	store := adminApp.NewAttributeStore(repo)
+	ctx := context.Background()
+
+	if err := store.CreateAttribute(ctx, catalog.Attribute{Code: "color", Label: "Color", Type: catalog.AttributeTypeText}); err != nil {
+		t.Fatalf("CreateAttribute: %v", err)
+	}
+	if err := store.CreateGroup(ctx, catalog.AttributeGroup{
+		Code: "apparel", Label: "Apparel", Attributes: []string{"color"},
+	}); err != nil {
+		t.Fatalf("CreateGroup: %v", err)
+	}
+
+	if err := store.DeleteAttribute(ctx, "color"); err == nil {
+		t.Fatal("expected delete persistence error")
+	}
+
+	if _, err := store.GetAttribute(ctx, "color"); err != nil {
+		t.Fatalf("attribute should remain after failed delete: %v", err)
+	}
+	group, err := store.GetGroup(ctx, "apparel")
+	if err != nil {
+		t.Fatalf("GetGroup: %v", err)
+	}
+	if len(group.Attributes) != 1 || group.Attributes[0] != "color" {
+		t.Fatalf("group attributes = %v, want [color]", group.Attributes)
 	}
 }
 

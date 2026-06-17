@@ -3,9 +3,11 @@ package admin
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"sort"
 	"strings"
+	"sync"
 
 	"github.com/akarso/shopanda/internal/domain/catalog"
 	"github.com/akarso/shopanda/internal/domain/config"
@@ -19,6 +21,25 @@ const (
 // AttributeStore manages attribute and attribute-group definitions in config storage.
 type AttributeStore struct {
 	config config.Repository
+	mu     sync.Mutex
+}
+
+type validationError struct {
+	msg string
+}
+
+func (e *validationError) Error() string {
+	return e.msg
+}
+
+func validationErr(format string, args ...interface{}) error {
+	return &validationError{msg: fmt.Sprintf(format, args...)}
+}
+
+// IsValidationError reports whether err is a client-facing attribute validation error.
+func IsValidationError(err error) bool {
+	var ve *validationError
+	return errors.As(err, &ve)
 }
 
 // NewAttributeStore creates an AttributeStore backed by the config repository.
@@ -91,20 +112,29 @@ func (s *AttributeStore) saveGroups(ctx context.Context, groups []catalog.Attrib
 	return nil
 }
 
+func (s *AttributeStore) saveAttributesAndGroups(ctx context.Context, attrs []catalog.Attribute, groups []catalog.AttributeGroup) error {
+	sort.Slice(attrs, func(i, j int) bool { return attrs[i].Code < attrs[j].Code })
+	sort.Slice(groups, func(i, j int) bool { return groups[i].Code < groups[j].Code })
+	return s.config.SetMany(ctx, map[string]interface{}{
+		configKeyAttributes:      attrs,
+		configKeyAttributeGroups: groups,
+	})
+}
+
 func validateAttributeDefinition(attr catalog.Attribute) error {
 	code := strings.TrimSpace(attr.Code)
 	label := strings.TrimSpace(attr.Label)
 	if code == "" {
-		return fmt.Errorf("attribute code must not be empty")
+		return validationErr("attribute code must not be empty")
 	}
 	if label == "" {
-		return fmt.Errorf("attribute label must not be empty")
+		return validationErr("attribute label must not be empty")
 	}
 	if !attr.Type.IsValid() {
-		return fmt.Errorf("attribute type is invalid")
+		return validationErr("attribute type is invalid")
 	}
 	if attr.Type == catalog.AttributeTypeSelect && len(attr.Options) == 0 {
-		return fmt.Errorf("select attribute must have at least one option")
+		return validationErr("select attribute must have at least one option")
 	}
 	return nil
 }
@@ -173,7 +203,7 @@ func validateGroupReferences(attrs []catalog.Attribute, group catalog.AttributeG
 	}
 	for _, code := range group.Attributes {
 		if _, ok := known[code]; !ok {
-			return fmt.Errorf("attribute %q not registered", code)
+			return validationErr("attribute %q not registered", code)
 		}
 	}
 	return nil
@@ -216,7 +246,7 @@ func (s *AttributeStore) ListAttributes(ctx context.Context, groupCode string) (
 func (s *AttributeStore) GetAttribute(ctx context.Context, code string) (catalog.Attribute, error) {
 	code = strings.TrimSpace(code)
 	if code == "" {
-		return catalog.Attribute{}, fmt.Errorf("attribute code must not be empty")
+		return catalog.Attribute{}, validationErr("attribute code must not be empty")
 	}
 	attrs, err := s.loadAttributes(ctx)
 	if err != nil {
@@ -231,12 +261,15 @@ func (s *AttributeStore) GetAttribute(ctx context.Context, code string) (catalog
 
 // CreateAttribute adds a new attribute definition.
 func (s *AttributeStore) CreateAttribute(ctx context.Context, attr catalog.Attribute) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
 	attr = normalizeAttribute(attr)
 	if err := validateAttributeDefinition(attr); err != nil {
 		return err
 	}
 	if _, err := catalog.NewAttribute(attr.Code, attr.Label, attr.Type); err != nil {
-		return err
+		return validationErr("%s", err.Error())
 	}
 	attrs, err := s.loadAttributes(ctx)
 	if err != nil {
@@ -251,9 +284,12 @@ func (s *AttributeStore) CreateAttribute(ctx context.Context, attr catalog.Attri
 
 // UpdateAttribute replaces an existing attribute definition.
 func (s *AttributeStore) UpdateAttribute(ctx context.Context, code string, attr catalog.Attribute) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
 	code = strings.TrimSpace(code)
 	if code == "" {
-		return fmt.Errorf("attribute code must not be empty")
+		return validationErr("attribute code must not be empty")
 	}
 	attr = normalizeAttribute(attr)
 	attr.Code = code
@@ -261,7 +297,7 @@ func (s *AttributeStore) UpdateAttribute(ctx context.Context, code string, attr 
 		return err
 	}
 	if _, err := catalog.NewAttribute(attr.Code, attr.Label, attr.Type); err != nil {
-		return err
+		return validationErr("%s", err.Error())
 	}
 	attrs, err := s.loadAttributes(ctx)
 	if err != nil {
@@ -277,9 +313,12 @@ func (s *AttributeStore) UpdateAttribute(ctx context.Context, code string, attr 
 
 // DeleteAttribute removes an attribute and drops it from all groups.
 func (s *AttributeStore) DeleteAttribute(ctx context.Context, code string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
 	code = strings.TrimSpace(code)
 	if code == "" {
-		return fmt.Errorf("attribute code must not be empty")
+		return validationErr("attribute code must not be empty")
 	}
 	attrs, err := s.loadAttributes(ctx)
 	if err != nil {
@@ -290,25 +329,22 @@ func (s *AttributeStore) DeleteAttribute(ctx context.Context, code string) error
 		return fmt.Errorf("attribute %q not found", code)
 	}
 	attrs = append(attrs[:idx], attrs[idx+1:]...)
-	if err := s.saveAttributes(ctx, attrs); err != nil {
-		return err
-	}
 
 	groups, err := s.loadGroups(ctx)
 	if err != nil {
 		return err
 	}
-	changed := false
+	groupsChanged := false
 	for i := range groups {
 		if groups[i].HasAttribute(code) {
 			groups[i].RemoveAttribute(code)
-			changed = true
+			groupsChanged = true
 		}
 	}
-	if changed {
-		return s.saveGroups(ctx, groups)
+	if groupsChanged {
+		return s.saveAttributesAndGroups(ctx, attrs, groups)
 	}
-	return nil
+	return s.saveAttributes(ctx, attrs)
 }
 
 // ListGroups returns all attribute groups.
@@ -325,7 +361,7 @@ func (s *AttributeStore) ListGroups(ctx context.Context) ([]catalog.AttributeGro
 func (s *AttributeStore) GetGroup(ctx context.Context, code string) (catalog.AttributeGroup, error) {
 	code = strings.TrimSpace(code)
 	if code == "" {
-		return catalog.AttributeGroup{}, fmt.Errorf("attribute group code must not be empty")
+		return catalog.AttributeGroup{}, validationErr("attribute group code must not be empty")
 	}
 	groups, err := s.loadGroups(ctx)
 	if err != nil {
@@ -340,15 +376,18 @@ func (s *AttributeStore) GetGroup(ctx context.Context, code string) (catalog.Att
 
 // CreateGroup adds a new attribute group.
 func (s *AttributeStore) CreateGroup(ctx context.Context, group catalog.AttributeGroup) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
 	group = normalizeGroup(group)
 	if group.Code == "" {
-		return fmt.Errorf("attribute group code must not be empty")
+		return validationErr("attribute group code must not be empty")
 	}
 	if group.Label == "" {
-		return fmt.Errorf("attribute group label must not be empty")
+		return validationErr("attribute group label must not be empty")
 	}
 	if _, err := catalog.NewAttributeGroup(group.Code, group.Label); err != nil {
-		return err
+		return validationErr("%s", err.Error())
 	}
 	attrs, err := s.loadAttributes(ctx)
 	if err != nil {
@@ -370,17 +409,20 @@ func (s *AttributeStore) CreateGroup(ctx context.Context, group catalog.Attribut
 
 // UpdateGroup replaces an existing attribute group.
 func (s *AttributeStore) UpdateGroup(ctx context.Context, code string, group catalog.AttributeGroup) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
 	code = strings.TrimSpace(code)
 	if code == "" {
-		return fmt.Errorf("attribute group code must not be empty")
+		return validationErr("attribute group code must not be empty")
 	}
 	group = normalizeGroup(group)
 	group.Code = code
 	if group.Label == "" {
-		return fmt.Errorf("attribute group label must not be empty")
+		return validationErr("attribute group label must not be empty")
 	}
 	if _, err := catalog.NewAttributeGroup(group.Code, group.Label); err != nil {
-		return err
+		return validationErr("%s", err.Error())
 	}
 	attrs, err := s.loadAttributes(ctx)
 	if err != nil {
@@ -403,9 +445,12 @@ func (s *AttributeStore) UpdateGroup(ctx context.Context, code string, group cat
 
 // DeleteGroup removes an attribute group definition.
 func (s *AttributeStore) DeleteGroup(ctx context.Context, code string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
 	code = strings.TrimSpace(code)
 	if code == "" {
-		return fmt.Errorf("attribute group code must not be empty")
+		return validationErr("attribute group code must not be empty")
 	}
 	groups, err := s.loadGroups(ctx)
 	if err != nil {

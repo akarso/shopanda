@@ -136,8 +136,8 @@ func TestAttributeAdminHandler_CreateDuplicateRejected(t *testing.T) {
 	router.ServeHTTP(rec, httptest.NewRequest("POST", "/api/v1/admin/attributes", attributeBody(t, map[string]interface{}{
 		"code": "color", "label": "Colour", "type": "text",
 	})))
-	if rec.Code != http.StatusUnprocessableEntity {
-		t.Fatalf("duplicate status = %d, want 422; body: %s", rec.Code, rec.Body.String())
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("duplicate status = %d, want %d; body: %s", rec.Code, http.StatusConflict, rec.Body.String())
 	}
 }
 

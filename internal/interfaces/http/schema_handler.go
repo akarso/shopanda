@@ -77,14 +77,6 @@ func (h *SchemaHandler) GetForm() http.HandlerFunc {
 			JSONError(w, apperror.NotFound("form not found"))
 			return
 		}
-		if name == productFormName {
-			var err error
-			form, err = h.mergeProductAttributeFields(r.Context(), form)
-			if err != nil {
-				JSONError(w, err)
-				return
-			}
-		}
 
 		if perm, hasPerm := h.registry.FormPermission(name); hasPerm {
 			id := auth.IdentityFrom(r.Context())
@@ -94,6 +86,15 @@ func (h *SchemaHandler) GetForm() http.HandlerFunc {
 			}
 			if !rbac.HasPermission(id.Role, perm) {
 				JSONError(w, apperror.Forbidden("insufficient permissions"))
+				return
+			}
+		}
+
+		if name == productFormName {
+			var err error
+			form, err = h.mergeProductAttributeFields(r.Context(), form)
+			if err != nil {
+				JSONError(w, err)
 				return
 			}
 		}
@@ -181,12 +182,12 @@ func (h *SchemaHandler) mergeProductAttributeFields(ctx context.Context, form ad
 	}
 	attrs, err := h.attrStore.ListAttributes(ctx, "")
 	if err != nil {
-		return admin.Form{}, apperror.Validation(err.Error())
+		return admin.Form{}, storeAPIError(err)
 	}
 	for _, attr := range attrs {
 		field, err := adminApp.AttributeToFormField(attr)
 		if err != nil {
-			return admin.Form{}, apperror.Validation(err.Error())
+			return admin.Form{}, apperror.Internal("attribute form field mapping failed")
 		}
 		form.Fields = append(form.Fields, field)
 	}
