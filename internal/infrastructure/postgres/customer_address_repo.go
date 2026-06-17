@@ -95,6 +95,11 @@ func (r *CustomerAddressRepo) Create(ctx context.Context, a *customer.Address) e
 		return apperror.Validation(err.Error())
 	}
 	return r.withTx(ctx, func(tx *sql.Tx) error {
+		// Serialize default management per customer so concurrent first-address
+		// inserts cannot both decide they are the default.
+		if err := lockCustomerForUpdate(ctx, tx, a.CustomerID); err != nil {
+			return err
+		}
 		makeDefault := a.IsDefault
 		if !makeDefault {
 			var existing int
@@ -134,6 +139,9 @@ func (r *CustomerAddressRepo) Update(ctx context.Context, a *customer.Address) e
 		return apperror.Validation(err.Error())
 	}
 	return r.withTx(ctx, func(tx *sql.Tx) error {
+		if err := lockCustomerForUpdate(ctx, tx, a.CustomerID); err != nil {
+			return err
+		}
 		if a.IsDefault {
 			if err := clearCustomerDefaultAddress(ctx, tx, a.CustomerID); err != nil {
 				return err
@@ -165,6 +173,9 @@ func (r *CustomerAddressRepo) Update(ctx context.Context, a *customer.Address) e
 // SetDefault marks one address as the customer's default and clears the rest.
 func (r *CustomerAddressRepo) SetDefault(ctx context.Context, customerID, addressID string) error {
 	return r.withTx(ctx, func(tx *sql.Tx) error {
+		if err := lockCustomerForUpdate(ctx, tx, customerID); err != nil {
+			return err
+		}
 		if err := clearCustomerDefaultAddress(ctx, tx, customerID); err != nil {
 			return err
 		}
@@ -202,6 +213,20 @@ func (r *CustomerAddressRepo) Delete(ctx context.Context, customerID, addressID 
 	}
 	if affected == 0 {
 		return apperror.NotFound("address not found")
+	}
+	return nil
+}
+
+// lockCustomerForUpdate takes a row lock on the parent customer, serializing all
+// default-address management for that customer within concurrent transactions.
+func lockCustomerForUpdate(ctx context.Context, tx *sql.Tx, customerID string) error {
+	var locked string
+	err := tx.QueryRowContext(ctx, `SELECT id FROM customers WHERE id = $1 FOR UPDATE`, customerID).Scan(&locked)
+	if errors.Is(err, sql.ErrNoRows) {
+		return apperror.NotFound("customer not found")
+	}
+	if err != nil {
+		return fmt.Errorf("lock customer: %w", err)
 	}
 	return nil
 }

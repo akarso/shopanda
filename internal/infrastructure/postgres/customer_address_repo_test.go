@@ -2,6 +2,7 @@ package postgres_test
 
 import (
 	"context"
+	"database/sql"
 	"testing"
 
 	"github.com/akarso/shopanda/internal/domain/customer"
@@ -9,6 +10,19 @@ import (
 	"github.com/akarso/shopanda/internal/platform/apperror"
 	"github.com/akarso/shopanda/internal/platform/id"
 )
+
+func newCustomerAddressRepos(t *testing.T, db *sql.DB) (*postgres.CustomerRepo, *postgres.CustomerAddressRepo) {
+	t.Helper()
+	customerRepo, err := postgres.NewCustomerRepo(db)
+	if err != nil {
+		t.Fatalf("NewCustomerRepo: %v", err)
+	}
+	repo, err := postgres.NewCustomerAddressRepo(db)
+	if err != nil {
+		t.Fatalf("NewCustomerAddressRepo: %v", err)
+	}
+	return customerRepo, repo
+}
 
 func seedAddressCustomer(t *testing.T, repo *postgres.CustomerRepo, email string) string {
 	t.Helper()
@@ -37,14 +51,7 @@ func TestCustomerAddressRepo_CreateFirstBecomesDefault(t *testing.T) {
 		db.Exec("DELETE FROM customers")
 	})
 
-	customerRepo, err := postgres.NewCustomerRepo(db)
-	if err != nil {
-		t.Fatalf("NewCustomerRepo: %v", err)
-	}
-	repo, err := postgres.NewCustomerAddressRepo(db)
-	if err != nil {
-		t.Fatalf("NewCustomerAddressRepo: %v", err)
-	}
+	customerRepo, repo := newCustomerAddressRepos(t, db)
 	ctx := context.Background()
 	customerID := seedAddressCustomer(t, customerRepo, "addr-default@example.com")
 
@@ -73,8 +80,7 @@ func TestCustomerAddressRepo_SetDefaultIsExclusive(t *testing.T) {
 		db.Exec("DELETE FROM customers")
 	})
 
-	customerRepo, _ := postgres.NewCustomerRepo(db)
-	repo, _ := postgres.NewCustomerAddressRepo(db)
+	customerRepo, repo := newCustomerAddressRepos(t, db)
 	ctx := context.Background()
 	customerID := seedAddressCustomer(t, customerRepo, "addr-exclusive@example.com")
 
@@ -124,8 +130,7 @@ func TestCustomerAddressRepo_UpdateAndDelete(t *testing.T) {
 		db.Exec("DELETE FROM customers")
 	})
 
-	customerRepo, _ := postgres.NewCustomerRepo(db)
-	repo, _ := postgres.NewCustomerAddressRepo(db)
+	customerRepo, repo := newCustomerAddressRepos(t, db)
 	ctx := context.Background()
 	customerID := seedAddressCustomer(t, customerRepo, "addr-update@example.com")
 
@@ -164,8 +169,7 @@ func TestCustomerAddressRepo_DeleteForeignAddressNotFound(t *testing.T) {
 		db.Exec("DELETE FROM customers")
 	})
 
-	customerRepo, _ := postgres.NewCustomerRepo(db)
-	repo, _ := postgres.NewCustomerAddressRepo(db)
+	customerRepo, repo := newCustomerAddressRepos(t, db)
 	ctx := context.Background()
 	ownerID := seedAddressCustomer(t, customerRepo, "addr-owner@example.com")
 	otherID := seedAddressCustomer(t, customerRepo, "addr-other@example.com")
