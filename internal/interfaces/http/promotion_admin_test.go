@@ -236,3 +236,70 @@ func TestPromotionAdminHandler_List_OK(t *testing.T) {
 		t.Fatalf("status = %d, want %d; body: %s", rec.Code, http.StatusOK, rec.Body.String())
 	}
 }
+
+func TestPromotionAdminHandler_Update_PartialNameOnly(t *testing.T) {
+	promotionID := id.New()
+	conditions := []byte(`{"type":"always"}`)
+	actions := []byte(`{"type":"percentage","percentage":10}`)
+	existing := &promotion.Promotion{
+		ID:          promotionID,
+		Name:        "Original",
+		Type:        promotion.TypeCatalog,
+		Active:      true,
+		Conditions:  conditions,
+		Actions:     actions,
+		CouponBound: false,
+	}
+	var saved *promotion.Promotion
+	repo := &mockPromotionAdminRepo{
+		findByIDFn: func(_ context.Context, id string) (*promotion.Promotion, error) {
+			if id == promotionID {
+				copy := *existing
+				return &copy, nil
+			}
+			return nil, nil
+		},
+		saveFn: func(_ context.Context, p *promotion.Promotion) error {
+			saved = p
+			return nil
+		},
+	}
+	h := shophttp.NewPromotionAdminHandler(repo)
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("PUT", "/api/v1/admin/promotions/"+promotionID, promotionBody(t, map[string]interface{}{
+		"name": "Renamed Sale",
+	}))
+	newPromotionAdminRouter(h).ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d; body: %s", rec.Code, http.StatusOK, rec.Body.String())
+	}
+	if saved == nil {
+		t.Fatal("promotion was not saved")
+	}
+	if saved.Name != "Renamed Sale" {
+		t.Fatalf("name = %q, want Renamed Sale", saved.Name)
+	}
+	if string(saved.Conditions) != string(conditions) {
+		t.Fatalf("conditions changed: %s", saved.Conditions)
+	}
+	if string(saved.Actions) != string(actions) {
+		t.Fatalf("actions changed: %s", saved.Actions)
+	}
+}
+
+func TestPromotionAdminHandler_Create_WhitespaceNameRejected(t *testing.T) {
+	repo := &mockPromotionAdminRepo{}
+	h := shophttp.NewPromotionAdminHandler(repo)
+
+	payload := catalogPromotionPayload("   ")
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("POST", "/api/v1/admin/promotions", promotionBody(t, payload))
+	newPromotionAdminRouter(h).ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("status = %d, want %d; body: %s", rec.Code, http.StatusUnprocessableEntity, rec.Body.String())
+	}
+}

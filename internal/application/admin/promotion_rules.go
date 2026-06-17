@@ -94,10 +94,16 @@ func decodePromotionCondition(typ promotion.PromotionType, data []byte) (Promoti
 		if typ != promotion.TypeCatalog {
 			return PromotionRuleForm{}, fmt.Errorf("min_quantity condition is invalid for type %q", typ)
 		}
+		if cfg.Value <= 0 {
+			return PromotionRuleForm{}, fmt.Errorf("min_quantity value must be positive")
+		}
 		return PromotionRuleForm{ConditionType: "min_quantity", ConditionValue: cfg.Value}, nil
 	case "min_cart_total":
 		if typ != promotion.TypeCart {
 			return PromotionRuleForm{}, fmt.Errorf("min_cart_total condition is invalid for type %q", typ)
+		}
+		if cfg.Value <= 0 {
+			return PromotionRuleForm{}, fmt.Errorf("min_cart_total value must be positive")
 		}
 		return PromotionRuleForm{ConditionType: "min_cart_total", ConditionValue: cfg.Value}, nil
 	default:
@@ -138,11 +144,17 @@ func decodePromotionAction(data []byte) (PromotionRuleForm, error) {
 	}
 	switch cfg.Type {
 	case "percentage":
+		if cfg.Percentage <= 0 || cfg.Percentage > 100 {
+			return PromotionRuleForm{}, fmt.Errorf("percentage must be between 1 and 100")
+		}
 		return PromotionRuleForm{
 			ActionType:       "percentage",
 			ActionPercentage: cfg.Percentage,
 		}, nil
 	case "fixed":
+		if cfg.Amount <= 0 {
+			return PromotionRuleForm{}, fmt.Errorf("fixed amount must be positive")
+		}
 		return PromotionRuleForm{
 			ActionType:   "fixed",
 			ActionAmount: cfg.Amount,

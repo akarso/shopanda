@@ -35,6 +35,26 @@ func TestPromotionRuleForm_RoundTrip(t *testing.T) {
 	}
 }
 
+func TestDecodePromotionRules_RejectsInvalidStoredValues(t *testing.T) {
+	_, err := adminApp.DecodePromotionRules(
+		promotion.TypeCatalog,
+		[]byte(`{"type":"min_quantity","value":0}`),
+		[]byte(`{"type":"percentage","percentage":10}`),
+	)
+	if err == nil {
+		t.Fatal("expected error for non-positive min_quantity")
+	}
+
+	_, err = adminApp.DecodePromotionRules(
+		promotion.TypeCatalog,
+		[]byte(`{"type":"always"}`),
+		[]byte(`{"type":"percentage","percentage":0}`),
+	)
+	if err == nil {
+		t.Fatal("expected error for invalid percentage")
+	}
+}
+
 func TestEncodePromotionRules_AppliedByCatalogPromotionStep(t *testing.T) {
 	conditions, actions, err := adminApp.EncodePromotionRules(promotion.TypeCatalog, adminApp.PromotionRuleForm{
 		ConditionType:    "always",

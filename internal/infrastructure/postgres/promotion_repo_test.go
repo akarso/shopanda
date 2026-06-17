@@ -3,6 +3,7 @@ package postgres_test
 import (
 	"context"
 	"testing"
+	"time"
 
 	"github.com/akarso/shopanda/internal/domain/promotion"
 	"github.com/akarso/shopanda/internal/infrastructure/postgres"
@@ -142,6 +143,10 @@ func TestPromotionRepo_List(t *testing.T) {
 
 	first := mustNewPromotion(t, "First")
 	second := mustNewPromotion(t, "Second")
+	first.CreatedAt = time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC)
+	first.UpdatedAt = first.CreatedAt
+	second.CreatedAt = time.Date(2025, 1, 2, 0, 0, 0, 0, time.UTC)
+	second.UpdatedAt = second.CreatedAt
 	if err := repo.Save(ctx, &first); err != nil {
 		t.Fatalf("Save first: %v", err)
 	}
