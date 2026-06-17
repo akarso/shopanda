@@ -181,6 +181,30 @@ func TestAdminHandler_StaticJS(t *testing.T) {
 	if !strings.Contains(normalizedBody, "renderCouponsGrid") || !strings.Contains(normalizedBody, "/admin/coupons?offset=0&limit=50") {
 		t.Fatalf("expected coupons admin surface wiring in JS")
 	}
+	if !strings.Contains(normalizedBody, "renderPromotionsGrid") || !strings.Contains(normalizedBody, "/admin/promotions?offset=0&limit=50") {
+		t.Fatalf("expected promotions admin surface wiring in JS")
+	}
+	if !strings.Contains(normalizedBody, "Failed to load promotions.") {
+		t.Fatalf("expected promotions admin error messages in JS")
+	}
+	expectedPromotionCrudWiring := []string{
+		"renderPromotionForm",
+		"renderPromotionCreate",
+		"renderPromotionEdit",
+		"/admin/marketing/promotions/new",
+		"new-promotion-btn",
+		"delete-promotion-btn",
+		"Failed to delete promotion.",
+		"Promotion not found.",
+	}
+	for _, expected := range expectedPromotionCrudWiring {
+		if !strings.Contains(normalizedBody, expected) {
+			t.Fatalf("expected promotions CRUD wiring %q in JS", expected)
+		}
+	}
+	if !strings.Contains(normalizedBody, "<select name=\"promotion_id\" required>") {
+		t.Fatalf("expected coupon promotion select in JS")
+	}
 	if !strings.Contains(normalizedBody, "Your account does not have products access.") || !strings.Contains(normalizedBody, "Failed to load coupons.") {
 		t.Fatalf("expected coupons admin error messages in JS")
 	}

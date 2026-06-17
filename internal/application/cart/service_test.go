@@ -137,6 +137,10 @@ func (r *stubPromotionRepo) ListActive(_ context.Context, _ promotion.PromotionT
 	return nil, nil
 }
 
+func (r *stubPromotionRepo) List(_ context.Context, _, _ int) ([]promotion.Promotion, error) {
+	return nil, nil
+}
+
 func (r *stubPromotionRepo) Save(_ context.Context, _ *promotion.Promotion) error { return nil }
 func (r *stubPromotionRepo) Delete(_ context.Context, _ string) error             { return nil }
 

@@ -3,6 +3,7 @@ package postgres_test
 import (
 	"context"
 	"testing"
+	"time"
 
 	"github.com/akarso/shopanda/internal/domain/promotion"
 	"github.com/akarso/shopanda/internal/infrastructure/postgres"
@@ -126,6 +127,42 @@ func TestPromotionRepo_ListActive(t *testing.T) {
 	}
 	if len(cartResult) != 1 {
 		t.Fatalf("ListActive cart: got %d, want 1", len(cartResult))
+	}
+}
+
+func TestPromotionRepo_List(t *testing.T) {
+	db := testDB(t)
+	ensureProductsTable(t, db)
+	t.Cleanup(func() { db.Exec("DELETE FROM promotions") })
+
+	repo, err := postgres.NewPromotionRepo(db)
+	if err != nil {
+		t.Fatalf("NewPromotionRepo: %v", err)
+	}
+	ctx := context.Background()
+
+	first := mustNewPromotion(t, "First")
+	second := mustNewPromotion(t, "Second")
+	first.CreatedAt = time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC)
+	first.UpdatedAt = first.CreatedAt
+	second.CreatedAt = time.Date(2025, 1, 2, 0, 0, 0, 0, time.UTC)
+	second.UpdatedAt = second.CreatedAt
+	if err := repo.Save(ctx, &first); err != nil {
+		t.Fatalf("Save first: %v", err)
+	}
+	if err := repo.Save(ctx, &second); err != nil {
+		t.Fatalf("Save second: %v", err)
+	}
+
+	got, err := repo.List(ctx, 0, 10)
+	if err != nil {
+		t.Fatalf("List: %v", err)
+	}
+	if len(got) != 2 {
+		t.Fatalf("len = %d, want 2", len(got))
+	}
+	if got[0].Name != "Second" {
+		t.Errorf("first name = %q, want Second (newest first)", got[0].Name)
 	}
 }
 

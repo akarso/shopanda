@@ -12,6 +12,9 @@ type PromotionRepository interface {
 	// excluded by the caller, not the query.
 	ListActive(ctx context.Context, typ PromotionType) ([]Promotion, error)
 
+	// List returns promotions ordered by created_at descending.
+	List(ctx context.Context, offset, limit int) ([]Promotion, error)
+
 	// Save creates or updates a promotion.
 	Save(ctx context.Context, p *Promotion) error
 

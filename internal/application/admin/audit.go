@@ -60,6 +60,12 @@ const (
 	AuditCouponCreate AuditAction = "coupon.create"
 	AuditCouponUpdate AuditAction = "coupon.update"
 	AuditCouponDelete AuditAction = "coupon.delete"
+
+	// Promotion operations
+	AuditPromotionRead   AuditAction = "promotion.read"
+	AuditPromotionCreate AuditAction = "promotion.create"
+	AuditPromotionUpdate AuditAction = "promotion.update"
+	AuditPromotionDelete AuditAction = "promotion.delete"
 )
 
 // AuditEntry represents a single admin audit log entry.

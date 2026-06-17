@@ -37,6 +37,10 @@ func (r *stubPromotionRepo) ListActive(_ context.Context, typ promotion.Promotio
 	return out, nil
 }
 
+func (r *stubPromotionRepo) List(_ context.Context, _, _ int) ([]promotion.Promotion, error) {
+	return append([]promotion.Promotion(nil), r.promos...), nil
+}
+
 func (r *stubPromotionRepo) Save(_ context.Context, _ *promotion.Promotion) error { return nil }
 func (r *stubPromotionRepo) Delete(_ context.Context, _ string) error             { return nil }
 
