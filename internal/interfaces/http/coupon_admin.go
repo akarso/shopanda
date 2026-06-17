@@ -100,12 +100,29 @@ func (h *CouponAdminHandler) promotionName(ctx context.Context, promotionID stri
 	return p.Name
 }
 
-func (h *CouponAdminHandler) toResponse(ctx context.Context, c *promotion.Coupon) adminCouponResponse {
+func (h *CouponAdminHandler) buildPromotionNameCache(ctx context.Context, coupons []promotion.Coupon) map[string]string {
+	names := make(map[string]string)
+	seen := make(map[string]struct{}, len(coupons))
+	for i := range coupons {
+		promotionID := coupons[i].PromotionID
+		if promotionID == "" {
+			continue
+		}
+		if _, ok := seen[promotionID]; ok {
+			continue
+		}
+		seen[promotionID] = struct{}{}
+		names[promotionID] = h.promotionName(ctx, promotionID)
+	}
+	return names
+}
+
+func (h *CouponAdminHandler) toResponse(c *promotion.Coupon, promotionNames map[string]string) adminCouponResponse {
 	return adminCouponResponse{
 		ID:            c.ID,
 		Code:          c.Code,
 		PromotionID:   c.PromotionID,
-		PromotionName: h.promotionName(ctx, c.PromotionID),
+		PromotionName: promotionNames[c.PromotionID],
 		UsageLimit:    c.UsageLimit,
 		UsageCount:    c.UsageCount,
 		Active:        c.Active,
@@ -155,8 +172,9 @@ func (h *CouponAdminHandler) List() http.HandlerFunc {
 		}
 
 		result := make([]adminCouponResponse, 0, len(coupons))
+		promotionNames := h.buildPromotionNameCache(r.Context(), coupons)
 		for i := range coupons {
-			result = append(result, h.toResponse(r.Context(), &coupons[i]))
+			result = append(result, h.toResponse(&coupons[i], promotionNames))
 		}
 
 		JSON(w, http.StatusOK, map[string]interface{}{
@@ -190,8 +208,9 @@ func (h *CouponAdminHandler) Get() http.HandlerFunc {
 		}
 
 		h.audit(r, admin.AuditCouponRead, couponID, map[string]interface{}{"code": coupon.Code}, nil)
+		names := map[string]string{coupon.PromotionID: h.promotionName(r.Context(), coupon.PromotionID)}
 		JSON(w, http.StatusOK, map[string]interface{}{
-			"coupon": h.toResponse(r.Context(), coupon),
+			"coupon": h.toResponse(coupon, names),
 		})
 	}
 }
@@ -244,8 +263,9 @@ func (h *CouponAdminHandler) Create() http.HandlerFunc {
 		}
 
 		h.audit(r, admin.AuditCouponCreate, coupon.ID, map[string]interface{}{"code": coupon.Code}, nil)
+		names := map[string]string{coupon.PromotionID: h.promotionName(r.Context(), coupon.PromotionID)}
 		JSON(w, http.StatusCreated, map[string]interface{}{
-			"coupon": h.toResponse(r.Context(), &coupon),
+			"coupon": h.toResponse(&coupon, names),
 		})
 	}
 }
@@ -330,8 +350,9 @@ func (h *CouponAdminHandler) Update() http.HandlerFunc {
 		}
 
 		h.audit(r, admin.AuditCouponUpdate, couponID, map[string]interface{}{"code": coupon.Code}, nil)
+		names := map[string]string{coupon.PromotionID: h.promotionName(r.Context(), coupon.PromotionID)}
 		JSON(w, http.StatusOK, map[string]interface{}{
-			"coupon": h.toResponse(r.Context(), coupon),
+			"coupon": h.toResponse(coupon, names),
 		})
 	}
 }

@@ -93,7 +93,7 @@ func (r *CouponRepo) List(ctx context.Context, offset, limit int) ([]promotion.C
 	const q = `SELECT id, code, promotion_id, usage_limit, usage_count,
 		active, created_at, updated_at
 		FROM coupons
-		ORDER BY created_at DESC
+		ORDER BY created_at DESC, id DESC
 		LIMIT $1 OFFSET $2`
 
 	rows, err := r.query(ctx, q, limit, offset)

@@ -1010,7 +1010,7 @@ func runServe(cfg *config.Config, log logger.Logger, embedScheduler bool) error 
 	var schedulerDone chan struct{}
 	if embedScheduler {
 		sched = cron.New(log)
-		runtime.RegisterCacheCleanup(jobQueue, log, sched)
+		runtime.RegisterCacheCleanup(jobQueue, cacheApp.JobType, log, sched)
 		schedulerCtx, cancel := context.WithCancel(context.Background())
 		schedulerCancel = cancel
 		schedulerDone = make(chan struct{})
@@ -1475,7 +1475,7 @@ func runScheduler(cfg *config.Config, log logger.Logger) error {
 		return fmt.Errorf("job queue: %w", err)
 	}
 	var sched scheduler.Scheduler = cron.New(log)
-	runtime.RegisterCacheCleanup(jobQueue, log, sched)
+	runtime.RegisterCacheCleanup(jobQueue, cacheApp.JobType, log, sched)
 
 	// Block until interrupted (context cancelled via signal).
 	ctx, cancel := context.WithCancel(context.Background())

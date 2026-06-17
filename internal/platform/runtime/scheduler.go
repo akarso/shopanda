@@ -4,7 +4,6 @@ import (
 	"context"
 	"time"
 
-	cacheApp "github.com/akarso/shopanda/internal/application/cache"
 	"github.com/akarso/shopanda/internal/domain/jobs"
 	"github.com/akarso/shopanda/internal/domain/scheduler"
 	"github.com/akarso/shopanda/internal/platform/id"
@@ -12,9 +11,9 @@ import (
 )
 
 // RegisterCacheCleanup registers the periodic cache cleanup task on sched.
-func RegisterCacheCleanup(jobQueue jobs.Queue, log logger.Logger, sched scheduler.Scheduler) {
+func RegisterCacheCleanup(jobQueue jobs.Queue, jobType string, log logger.Logger, sched scheduler.Scheduler) {
 	sched.Register("cache.cleanup", "*/5 * * * *", func() {
-		job, err := jobs.NewJob(id.New(), cacheApp.JobType, nil)
+		job, err := jobs.NewJob(id.New(), jobType, nil)
 		if err != nil {
 			log.Error("cache.cleanup.schedule", err, nil)
 			return

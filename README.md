@@ -163,7 +163,8 @@ For a complete operator-focused setup, including Docker, health checks, and envi
 | `help` | Show built-in command help |
 | `setup` | Run first-time setup (connectivity check, migrations, seed) |
 | `migrate` | Run database schema migrations |
-| `serve` | Start the HTTP server (default) |
+| `dev` | Start HTTP server with embedded worker and scheduler (local development) |
+| `serve` | Start the HTTP server with embedded worker (default) |
 | `worker` | Start the background job worker |
 | `scheduler` | Start the cron scheduler |
 | `seed` | Run seed data framework |
