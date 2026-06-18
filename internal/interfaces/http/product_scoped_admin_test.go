@@ -319,6 +319,7 @@ func TestProductPriceAdmin_Get_ReturnsStoreScopedPrice(t *testing.T) {
 				Currency string `json:"currency"`
 				StoreID  string `json:"store_id"`
 			} `json:"price"`
+			PriceScope string `json:"price_scope"`
 		} `json:"data"`
 	}
 	if err := json.Unmarshal(rec.Body.Bytes(), &env); err != nil {
@@ -327,7 +328,66 @@ func TestProductPriceAdmin_Get_ReturnsStoreScopedPrice(t *testing.T) {
 	if env.Data.Price.Amount != 1999 || env.Data.Price.Currency != "EUR" || env.Data.Price.StoreID != "store-eu" {
 		t.Fatalf("price = %+v, want 1999/EUR/store-eu", env.Data.Price)
 	}
+	if env.Data.PriceScope != "store" {
+		t.Errorf("price_scope = %q, want store", env.Data.PriceScope)
+	}
 	assertScopeTriad(t, sink.Last(t).context, "store-eu", "en", "EUR")
+}
+
+func TestProductPriceAdmin_Get_ReturnsGlobalFallbackWhenStoreScopedMissing(t *testing.T) {
+	priceRepo := newScopedPriceRepo()
+	globalMoney := shared.MustNewMoney(1500, "EUR")
+	globalPrice, _ := pricing.NewPrice("price-global", "v1", "", globalMoney)
+	priceRepo.prices[priceStubKey("v1", "EUR", "")] = globalPrice
+	sink := &auditSink{}
+	h := shophttp.NewProductPriceAdminHandler(productExistsRepo("p1"), seededVariantRepo(), priceRepo, admin.NewAuditor(sink), logger.NewWithWriter(io.Discard, "info"))
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("GET", "/api/v1/admin/products/p1/variants/v1/price", nil)
+	req = withAdminFullScope(req, "admin-1", "store-eu", "en", "EUR")
+	newPriceAdminMux(h).ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d; body: %s", rec.Code, http.StatusOK, rec.Body.String())
+	}
+	var env struct {
+		Data struct {
+			Price *struct {
+				Amount int64 `json:"amount"`
+			} `json:"price"`
+			GlobalFallback struct {
+				Amount   int64  `json:"amount"`
+				Currency string `json:"currency"`
+				StoreID  string `json:"store_id"`
+			} `json:"global_fallback"`
+			PriceScope string `json:"price_scope"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &env); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if env.Data.Price != nil {
+		t.Fatalf("price = %+v, want nil", env.Data.Price)
+	}
+	if env.Data.GlobalFallback.Amount != 1500 || env.Data.GlobalFallback.Currency != "EUR" || env.Data.GlobalFallback.StoreID != "" {
+		t.Fatalf("global_fallback = %+v, want 1500/EUR/empty store", env.Data.GlobalFallback)
+	}
+	if env.Data.PriceScope != "unset" {
+		t.Errorf("price_scope = %q, want unset", env.Data.PriceScope)
+	}
+}
+
+func TestProductPriceAdmin_Update_RejectsUnknownFields(t *testing.T) {
+	h := shophttp.NewProductPriceAdminHandler(productExistsRepo("p1"), seededVariantRepo(), newScopedPriceRepo(), admin.NewAuditor(&auditSink{}), logger.NewWithWriter(io.Discard, "info"))
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("PUT", "/api/v1/admin/products/p1/variants/v1/price", jsonBody(t, map[string]interface{}{"amount": 2500, "currency": "EUR"}))
+	req = withAdminFullScope(req, "admin-1", "store-eu", "en", "EUR")
+	newPriceAdminMux(h).ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("status = %d, want %d; body: %s", rec.Code, http.StatusUnprocessableEntity, rec.Body.String())
+	}
 }
 
 func TestProductPriceAdmin_Get_CurrencyRequired(t *testing.T) {
