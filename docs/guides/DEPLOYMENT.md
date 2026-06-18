@@ -333,13 +333,17 @@ The default compose file already runs background processes as separate services 
 
 | Service | Command | Role |
 | --- | --- | --- |
-| `app` | `serve` | HTTP server (admin, storefront, REST API) |
-| `worker` | `worker` | Job consumer (transactional email, cache cleanup) |
+| `app` | `serve` | HTTP server plus embedded job worker (admin, storefront, REST API) |
+| `worker` | `worker` | Dedicated job consumer (transactional email, cache cleanup) |
 | `scheduler` | `scheduler` | Cron dispatcher (enqueues recurring jobs) |
 
-All three share the same `.env` and database connection settings. Scale `app` horizontally if needed; keep a single `scheduler` replica.
+All three share the same `.env` and database connection settings.
 
-**Emails require the worker.** Orders complete in `app`, but confirmation and password-reset emails are enqueued and delivered only when `worker` is running and SMTP is configured.
+The `serve` command starts an embedded worker goroutine in the same process as HTTP (`cmd/api/main.go`). The dedicated `worker` service runs additional job consumers from the same image. Both use `FOR UPDATE SKIP LOCKED` on the Postgres queue, so concurrent consumers are safe.
+
+Scale `app` horizontally for HTTP capacity; each replica also runs an embedded worker, so background job load grows with web replicas. Scale the `worker` service independently when email or async throughput needs more capacity. Keep a single `scheduler` replica.
+
+**Emails require job workers and SMTP.** Orders complete in `app`, but confirmation and password-reset emails are enqueued and delivered by job workers (`app`'s embedded worker and/or the dedicated `worker` service). Configure SMTP in `.env` and verify delivery from `/admin/settings`.
 
 For bare-metal or custom orchestration without Compose, run the same three commands as separate processes — see [Example systemd units](#example-systemd-units).
 

@@ -12,6 +12,7 @@
 #   docker compose run --rm app seed
 #
 # Local email testing:
+#   Set SHOPANDA_MAIL_SMTP_HOST=mailpit and SHOPANDA_MAIL_SMTP_PORT=1025 in .env
 #   docker compose --profile dev up -d    # Mailpit UI at http://localhost:8025
 # =============================================================================
 
@@ -29,10 +30,6 @@ x-shopanda-common: &shopanda-common
     SHOPANDA_DATABASE_USER: "${SHOPANDA_DATABASE_USER:-shopanda}"
     SHOPANDA_DATABASE_PASSWORD: "${SHOPANDA_DATABASE_PASSWORD:-changeme}"
     SHOPANDA_DATABASE_NAME: "${SHOPANDA_DATABASE_NAME:-shopanda}"
-    # Mail: defaults to mailpit hostname for compose dev (--profile dev).
-    # Production: set SHOPANDA_MAIL_SMTP_* in .env to your real SMTP provider.
-    SHOPANDA_MAIL_SMTP_HOST: ${SHOPANDA_MAIL_SMTP_HOST:-mailpit}
-    SHOPANDA_MAIL_SMTP_PORT: ${SHOPANDA_MAIL_SMTP_PORT:-1025}
   depends_on:
     postgres:
       condition: service_healthy
