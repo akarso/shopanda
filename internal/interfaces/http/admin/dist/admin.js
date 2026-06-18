@@ -1170,10 +1170,22 @@
             meta += ' Currency: <strong>' + esc(currency) + '</strong>.';
         }
         if (language) {
-            banner.innerHTML = '<p><strong>Current catalog scope:</strong> Translatable fields edit the <strong>' + esc(language) + '</strong> translation; global fields apply to all stores and languages.' + meta + ' Change language in the header switcher to edit another translation.</p>';
+            var priceNote = "";
+            if (currency) {
+                priceNote = storeID
+                    ? " Variant prices edit the store override for this currency."
+                    : " Variant prices edit the global/default price for this currency.";
+            }
+            banner.innerHTML = '<p><strong>Current catalog scope:</strong> Translatable fields edit the <strong>' + esc(language) + '</strong> translation; global fields apply to all stores and languages.' + priceNote + meta + ' Change language in the header switcher to edit another translation.</p>';
             return;
         }
-        banner.innerHTML = '<p><strong>Current catalog scope:</strong> Global defaults. Select a language in the header switcher to edit per-language translations.' + meta + '</p>';
+        var priceNoteGlobal = "";
+        if (currency) {
+            priceNoteGlobal = storeID
+                ? " Variant prices edit the store override for this currency."
+                : " Variant prices edit the global/default price for this currency.";
+        }
+        banner.innerHTML = '<p><strong>Current catalog scope:</strong> Global defaults. Select a language in the header switcher to edit per-language translations.' + priceNoteGlobal + meta + '</p>';
     }
 
     function setupProductCategoryAssignment(productID) {
@@ -1744,7 +1756,10 @@
         }
         var currency = adminScope.currency || '';
         var storeID = adminScope.store_id || '';
-        var priceHeader = currency ? ('Price (minor units, ' + esc(currency) + ')') : 'Price';
+        var priceScopeBadge = storeID
+            ? renderProductFieldScopeBadge('store')
+            : renderProductFieldScopeBadge('global');
+        var priceHeader = currency ? ('Price (minor units, ' + esc(currency) + ')' + priceScopeBadge) : ('Price' + priceScopeBadge);
         var html = '<table><thead><tr><th scope="col">SKU</th><th scope="col">Name</th><th scope="col">Weight</th><th scope="col">' + priceHeader + '</th><th scope="col">Action</th></tr></thead><tbody>';
         for (var i = 0; i < variants.length; i++) {
             var v = variants[i];
@@ -1754,7 +1769,7 @@
             html += '<td><input data-field="name" value="' + esc(v.name || '') + '"></td>';
             html += '<td><input data-field="weight" type="number" step="0.01" min="0" value="' + esc(v.weight == null ? '' : String(v.weight)) + '"></td>';
             if (currency) {
-                html += '<td><input data-field="price" type="number" step="1" min="1" aria-label="Store price for ' + variantLabel + '"> <button type="button" aria-label="Save price ' + variantLabel + '" class="variant-price-save-btn">Save Price</button></td>';
+                html += '<td><input data-field="price" type="number" step="1" min="1" aria-label="Store price for ' + variantLabel + '"><span class="variant-price-scope-hint settings-scope-note"></span> <button type="button" aria-label="Save price ' + variantLabel + '" class="variant-price-save-btn">Save Price</button></td>';
             } else {
                 html += '<td><span class="settings-scope-note">Select a currency context to edit price.</span></td>';
             }
@@ -1798,20 +1813,75 @@
         }
     }
 
+    function setVariantPriceScopeHint(row, scope, fallbackAmount) {
+        var hint = row.querySelector(".variant-price-scope-hint");
+        if (!hint) {
+            return;
+        }
+        if (scope === "store") {
+            hint.textContent = "Store override";
+            return;
+        }
+        if (scope === "global") {
+            hint.textContent = "Global price";
+            return;
+        }
+        if (fallbackAmount != null) {
+            hint.textContent = "No store override; global fallback " + fallbackAmount;
+            return;
+        }
+        hint.textContent = "No price set for this scope";
+    }
+
     function loadVariantPrices(container, productID) {
         var rows = container.querySelectorAll('tr[data-variant-id]');
+        var msg = document.getElementById("variant-msg");
+        var errors = 0;
+        var pending = rows.length;
+        if (pending === 0) {
+            return;
+        }
+
+        function checkDone() {
+            pending -= 1;
+            if (pending === 0 && errors > 0 && msg) {
+                msg.innerHTML = '<p role="alert">Failed to load one or more variant prices.</p>';
+            }
+        }
+
         for (var i = 0; i < rows.length; i++) {
             (function (row) {
                 var variantID = row.getAttribute('data-variant-id');
                 var input = row.querySelector('[data-field="price"]');
                 if (!input) {
+                    checkDone();
                     return;
                 }
                 api("/admin/products/" + encodeURIComponent(productID) + "/variants/" + encodeURIComponent(variantID) + "/price").then(function (body) {
-                    if (body && body.data && body.data.price && body.data.price.amount != null) {
-                        input.value = String(body.data.price.amount);
+                    var data = body && body.data;
+                    if (!data) {
+                        checkDone();
+                        return;
                     }
-                }).catch(function () {});
+                    if (data.price && data.price.amount != null) {
+                        input.value = String(data.price.amount);
+                        input.placeholder = "";
+                        setVariantPriceScopeHint(row, data.price_scope || (data.price.store_id ? "store" : "global"));
+                    } else if (data.global_fallback && data.global_fallback.amount != null) {
+                        input.value = "";
+                        input.placeholder = String(data.global_fallback.amount);
+                        setVariantPriceScopeHint(row, "unset", data.global_fallback.amount);
+                    } else {
+                        input.value = "";
+                        input.placeholder = "";
+                        setVariantPriceScopeHint(row, data.price_scope || "unset");
+                    }
+                    checkDone();
+                }).catch(function () {
+                    errors += 1;
+                    setVariantPriceScopeHint(row, "unset");
+                    checkDone();
+                });
             })(rows[i]);
         }
     }
@@ -1839,6 +1909,11 @@
                             msg.innerHTML = '<p role="alert">' + esc(body.error.message || "Save price failed") + '</p>';
                         }
                         return;
+                    }
+                    if (body && body.data && body.data.price && body.data.price.amount != null) {
+                        input.value = String(body.data.price.amount);
+                        input.placeholder = "";
+                        setVariantPriceScopeHint(row, body.data.price_scope || "store");
                     }
                     if (msg) {
                         msg.innerHTML = '<p>Price saved.</p>';

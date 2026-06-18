@@ -107,12 +107,32 @@ func (h *ProductPriceAdminHandler) Get() http.HandlerFunc {
 			return
 		}
 
+		var globalFallback map[string]interface{}
+		priceScope := "unset"
+		if price != nil {
+			if price.StoreID == "" {
+				priceScope = "global"
+			} else {
+				priceScope = "store"
+			}
+		} else if storeID != "" {
+			globalPrice, err := h.prices.FindByVariantCurrencyAndStore(r.Context(), vid, currency, "")
+			if err != nil {
+				h.audit(r, admin.AuditPriceRead, vid, nil, err)
+				JSONError(w, err)
+				return
+			}
+			globalFallback = pricePayload(globalPrice)
+		}
+
 		h.audit(r, admin.AuditPriceRead, vid, map[string]interface{}{"found": price != nil}, nil)
 
 		JSON(w, http.StatusOK, map[string]interface{}{
-			"price":    pricePayload(price),
-			"currency": currency,
-			"scope":    scopePayloadFromRequest(r),
+			"price":           pricePayload(price),
+			"global_fallback": globalFallback,
+			"price_scope":     priceScope,
+			"currency":        currency,
+			"scope":           scopePayloadFromRequest(r),
 		})
 	}
 }
@@ -136,7 +156,9 @@ func (h *ProductPriceAdminHandler) Update() http.HandlerFunc {
 		}
 
 		var req updateProductPriceRequest
-		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		dec := json.NewDecoder(r.Body)
+		dec.DisallowUnknownFields()
+		if err := dec.Decode(&req); err != nil {
 			h.audit(r, admin.AuditPriceUpdate, vid, nil, apperror.Validation("invalid request body"))
 			JSONError(w, apperror.Validation("invalid request body"))
 			return
@@ -175,9 +197,11 @@ func (h *ProductPriceAdminHandler) Update() http.HandlerFunc {
 		h.audit(r, admin.AuditPriceUpdate, vid, map[string]interface{}{"amount": *req.Amount, "price_store_id": storeID}, nil)
 
 		JSON(w, http.StatusOK, map[string]interface{}{
-			"price":    pricePayload(&price),
-			"currency": currency,
-			"scope":    scopePayloadFromRequest(r),
+			"price":           pricePayload(&price),
+			"global_fallback": nil,
+			"price_scope":     priceScopeForStore(storeID),
+			"currency":        currency,
+			"scope":           scopePayloadFromRequest(r),
 		})
 	}
 }
@@ -191,6 +215,13 @@ func pricePayload(p *pricing.Price) map[string]interface{} {
 		"currency": p.Amount.Currency(),
 		"store_id": p.StoreID,
 	}
+}
+
+func priceScopeForStore(storeID string) string {
+	if storeID == "" {
+		return "global"
+	}
+	return "store"
 }
 
 func (h *ProductPriceAdminHandler) audit(r *http.Request, action admin.AuditAction, resourceID string, details map[string]interface{}, err error) {
