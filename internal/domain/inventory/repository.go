@@ -15,4 +15,8 @@ type StockRepository interface {
 	// ListStock returns a page of stock entries ordered by variant_id.
 	// offset must be >= 0; limit must be > 0.
 	ListStock(ctx context.Context, offset, limit int) ([]StockEntry, error)
+
+	// ListInventory returns a paginated admin inventory view for all variants.
+	// search filters by SKU, variant name, or product name (case-insensitive).
+	ListInventory(ctx context.Context, offset, limit int, search string) ([]InventoryListItem, error)
 }

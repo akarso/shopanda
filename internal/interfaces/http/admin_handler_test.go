@@ -208,6 +208,12 @@ func TestAdminHandler_StaticJS(t *testing.T) {
 			t.Fatalf("expected attributes CRUD wiring %q in JS", expected)
 		}
 	}
+	if !strings.Contains(normalizedBody, "renderInventoryGrid") || !strings.Contains(normalizedBody, "/admin/inventory?offset=0&limit=50") {
+		t.Fatalf("expected inventory admin surface wiring in JS")
+	}
+	if !strings.Contains(normalizedBody, "Failed to load inventory.") || !strings.Contains(normalizedBody, "inventory-save-btn") {
+		t.Fatalf("expected inventory admin error/adjust wiring in JS")
+	}
 	if !strings.Contains(normalizedBody, "Failed to load promotions.") {
 		t.Fatalf("expected promotions admin error messages in JS")
 	}

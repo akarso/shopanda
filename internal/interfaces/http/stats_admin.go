@@ -35,7 +35,7 @@ func NewStatsAdminHandlerWithAuditor(stats domainadmin.StatsRepository, auditor 
 
 // Overview handles GET /api/v1/admin/stats/overview.
 func (h *StatsAdminHandler) Overview() http.HandlerFunc {
-	const lowStockThreshold = 10
+	const lowStockThreshold = adminapp.LowStockThreshold
 	const recentLimit = 10
 
 	return func(w http.ResponseWriter, r *http.Request) {

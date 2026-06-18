@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/akarso/shopanda/internal/domain/inventory"
@@ -103,4 +104,75 @@ func (r *StockRepo) ListStock(ctx context.Context, offset, limit int) ([]invento
 		return nil, fmt.Errorf("stock_repo: list stock: rows: %w", err)
 	}
 	return entries, nil
+}
+
+// ListInventory returns a paginated admin inventory view for all variants.
+func (r *StockRepo) ListInventory(ctx context.Context, offset, limit int, search string) ([]inventory.InventoryListItem, error) {
+	if offset < 0 {
+		return nil, fmt.Errorf("stock_repo: list inventory: negative offset")
+	}
+	if limit <= 0 {
+		return nil, fmt.Errorf("stock_repo: list inventory: non-positive limit")
+	}
+	if limit > 100 {
+		limit = 100
+	}
+
+	search = strings.TrimSpace(search)
+	pattern := ""
+	if search != "" {
+		pattern = "%" + search + "%"
+	}
+
+	const q = `
+		SELECT
+			v.id,
+			v.product_id,
+			v.sku,
+			p.name,
+			COALESCE(v.name, ''),
+			COALESCE(s.quantity, 0),
+			COALESCE(reserved.reserved_qty, 0),
+			COALESCE(s.updated_at, to_timestamp(0))
+		FROM variants v
+		INNER JOIN products p ON p.id = v.product_id
+		LEFT JOIN stock s ON s.variant_id = v.id
+		LEFT JOIN LATERAL (
+			SELECT COALESCE(SUM(r.quantity), 0) AS reserved_qty
+			FROM reservations r
+			WHERE r.variant_id = v.id
+			  AND r.status = 'active'
+			  AND r.expires_at > now()
+		) reserved ON TRUE
+		WHERE ($3 = '' OR v.sku ILIKE $4 OR COALESCE(v.name, '') ILIKE $4 OR p.name ILIKE $4)
+		ORDER BY v.sku
+		LIMIT $1 OFFSET $2`
+
+	rows, err := r.db.QueryContext(ctx, q, limit, offset, search, pattern)
+	if err != nil {
+		return nil, fmt.Errorf("stock_repo: list inventory: %w", err)
+	}
+	defer rows.Close()
+
+	var items []inventory.InventoryListItem
+	for rows.Next() {
+		var item inventory.InventoryListItem
+		if err := rows.Scan(
+			&item.VariantID,
+			&item.ProductID,
+			&item.SKU,
+			&item.ProductName,
+			&item.VariantName,
+			&item.Quantity,
+			&item.Reserved,
+			&item.UpdatedAt,
+		); err != nil {
+			return nil, fmt.Errorf("stock_repo: list inventory: scan: %w", err)
+		}
+		items = append(items, item)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("stock_repo: list inventory: rows: %w", err)
+	}
+	return items, nil
 }

@@ -161,7 +161,7 @@
         "/admin/content/blocks": { title: "Blocks", render: renderPlaceholder("Blocks"), auth: true },
         "/admin/media": { title: "Media", render: renderMediaLibrary, auth: true },
         // Operations
-        "/admin/operations/inventory": { title: "Inventory", render: renderPlaceholder("Inventory"), auth: true },
+        "/admin/operations/inventory": { title: "Inventory", render: renderInventoryGrid, auth: true },
         "/admin/operations/shipping": { title: "Shipping", render: renderShippingSettingsPage, auth: true },
         "/admin/operations/payments": { title: "Payments", render: renderPaymentSettingsPage, auth: true },
         // Settings
@@ -3461,6 +3461,111 @@
         }).catch(function (err) {
             form.innerHTML = '<p role="alert">' + esc(extractErrorMessage(err, 'Failed to load attribute group form.')) + '</p>';
         });
+    }
+
+    function renderInventoryGrid(container) {
+        container.innerHTML =
+            '<h2>Inventory</h2>' +
+            '<form id="inventory-search-form" style="margin-bottom:1rem">' +
+            '<label>Search SKU or product <input name="search" placeholder="SKU or product name"></label> ' +
+            '<button type="submit">Search</button>' +
+            '</form>' +
+            '<div id="inventory-grid"></div>';
+
+        var grid = document.getElementById("inventory-grid");
+        var searchForm = document.getElementById("inventory-search-form");
+        var currentSearch = "";
+
+        function loadInventory() {
+            var url = "/admin/inventory?offset=0&limit=50";
+            if (currentSearch) {
+                url += "&search=" + encodeURIComponent(currentSearch);
+            }
+            api(url).then(function (body) {
+                if (body && body.error && body.error.code === "forbidden") {
+                    grid.innerHTML = '<p role="alert">Your account does not have products access.</p>';
+                    return;
+                }
+                var items = body && body.data && body.data.items;
+                var threshold = body && body.data && body.data.low_stock_threshold;
+                if (!Array.isArray(items)) {
+                    grid.innerHTML = '<p role="alert">' + esc(extractErrorMessage(body, 'Failed to load inventory.')) + '</p>';
+                    return;
+                }
+
+                var html = '<table><thead><tr>' +
+                    '<th>SKU</th><th>Product</th><th>Variant</th><th>On hand</th><th>Reserved</th><th>Available</th><th>Status</th><th>Adjust</th>' +
+                    '</tr></thead><tbody>';
+                if (items.length === 0) {
+                    html += '<tr><td colspan="8">No variants found.</td></tr>';
+                } else {
+                    for (var i = 0; i < items.length; i++) {
+                        var item = items[i];
+                        var status = item.low_stock
+                            ? '<span class="badge badge-draft">low stock</span>'
+                            : (item.quantity > 0 ? '<span class="badge badge-active">in stock</span>' : '<span class="badge badge-draft">out of stock</span>');
+                        html += '<tr data-variant-id="' + esc(item.variant_id || '') + '">' +
+                            '<td>' + esc(item.sku || '') + '</td>' +
+                            '<td>' + esc(item.product_name || '') + '</td>' +
+                            '<td>' + esc(item.variant_name || '') + '</td>' +
+                            '<td>' + esc(String(item.quantity || 0)) + '</td>' +
+                            '<td>' + esc(String(item.reserved || 0)) + '</td>' +
+                            '<td>' + esc(String(item.available || 0)) + '</td>' +
+                            '<td>' + status + '</td>' +
+                            '<td><input type="number" min="0" class="inventory-qty-input" value="' + esc(String(item.quantity || 0)) + '" style="width:5rem"> ' +
+                            '<button type="button" class="inventory-save-btn">Save</button></td>' +
+                            '</tr>';
+                    }
+                }
+                html += '</tbody></table>';
+                if (typeof threshold === "number") {
+                    html += '<p class="hint">Low stock badge applies when on-hand quantity is below ' + esc(String(threshold)) + '.</p>';
+                }
+                grid.innerHTML = html;
+
+                var saveButtons = grid.querySelectorAll(".inventory-save-btn");
+                for (var j = 0; j < saveButtons.length; j++) {
+                    saveButtons[j].addEventListener("click", function (e) {
+                        var row = e.target.closest("tr");
+                        if (!row) {
+                            return;
+                        }
+                        var variantID = row.getAttribute("data-variant-id");
+                        var input = row.querySelector(".inventory-qty-input");
+                        if (!variantID || !input) {
+                            return;
+                        }
+                        var qty = parseInt(input.value, 10);
+                        if (isNaN(qty) || qty < 0) {
+                            window.alert("Quantity must be zero or greater.");
+                            return;
+                        }
+                        api("/admin/inventory/" + encodeURIComponent(variantID), {
+                            method: "PUT",
+                            body: JSON.stringify({ quantity: qty })
+                        }).then(function (resp) {
+                            if (resp && resp.error) {
+                                window.alert(resp.error.message || "Failed to update stock.");
+                                return;
+                            }
+                            loadInventory();
+                        }).catch(function (err) {
+                            window.alert(extractErrorMessage(err, "Failed to update stock."));
+                        });
+                    });
+                }
+            }).catch(function (err) {
+                grid.innerHTML = '<p role="alert">' + esc(extractErrorMessage(err, 'Failed to load inventory.')) + '</p>';
+            });
+        }
+
+        searchForm.addEventListener("submit", function (e) {
+            e.preventDefault();
+            currentSearch = searchForm.elements.search.value.trim();
+            loadInventory();
+        });
+
+        loadInventory();
     }
 
     function renderPagesGrid(container) {
