@@ -19,18 +19,13 @@
 
 ---
 
-## Closing Plan — Remaining PRs
+## Completed in Phase 3
 
-Verified against the codebase as of PR-392. Each PR below has a planned spec under `prs/`.
+All four refactor tracks shipped. See **Refactor Tracks** above for per-track status, PR ranges, and completion notes.
 
-| PR | Track | Scope |
-| --- | --- | --- |
-| PR-393 | 2 | Guest order notification and confirmation parity: notifications/invoices fall back to `contact_email`, fix guest confirmation page, remove stale auth-gate template copy |
-| PR-394 | 2 | Guest order claim end-to-end: persist `customer_id` on link in Postgres, wire claim search to discovery, add the `/account/orders/claim` page the claim email already links to |
-| PR-395 | 3 | Admin scoped product editing (PR-E catalog): translatable fields per language via `content_translations`, store-scoped pricing, scope badges driven by the context switcher |
-| PR-396 | 3 | Admin pages editing with language scope (PR-E content): pages CRUD UI over the existing API, content-domain permissions for the Editor role, page audit logging |
-| PR-397 | 3 | Admin hardening closeout: remove `changeme` bootstrap defaults, fix stale seeding docs, add audit logging to categories/stores/media handlers |
-| PR-398 | 4 | Storefront profile completion: saved addresses with checkout prefill, preferences page surfacing the existing consent API |
+The PRs that were listed here as remaining closure work (PR-393–398) are done; individual specs remain under [`prs/`](prs/).
+
+Phase 4 is the active roadmap: [`docs/phase-4-refactoring/ROADMAP.md`](../phase-4-refactoring/ROADMAP.md).
 
 ### Explicitly Deferred (out of roadmap closure)
 

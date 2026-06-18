@@ -1,43 +1,64 @@
 # =============================================================================
 # Shopanda — Docker Compose
 # =============================================================================
-# Default profile:  app + postgres
+# Default profile:  app + worker + scheduler + postgres (production layout)
 # Dev profile:      adds mailpit   (docker compose --profile dev up)
 # Search profile:   adds meilisearch (docker compose --profile search up)
 #
 # Quick start:
-#   cp .env.example .env          # edit values
+#   cp .env.example .env          # edit values (set real SMTP for production)
 #   docker compose up -d
 #   docker compose run --rm app migrate
 #   docker compose run --rm app seed
+#
+# Local email testing:
+#   docker compose --profile dev up -d    # Mailpit UI at http://localhost:8025
 # =============================================================================
 
+x-shopanda-common: &shopanda-common
+  build: .
+  env_file:
+    - path: .env
+      required: false
+  environment:
+    # Service-to-service defaults — override .env / config defaults that
+    # assume localhost, which is unreachable from inside the container.
+    # Keep these in sync with the postgres service defaults below.
+    SHOPANDA_DATABASE_HOST: postgres
+    SHOPANDA_DATABASE_PORT: 5432
+    SHOPANDA_DATABASE_USER: "${SHOPANDA_DATABASE_USER:-shopanda}"
+    SHOPANDA_DATABASE_PASSWORD: "${SHOPANDA_DATABASE_PASSWORD:-changeme}"
+    SHOPANDA_DATABASE_NAME: "${SHOPANDA_DATABASE_NAME:-shopanda}"
+    # Mail: defaults to mailpit hostname for compose dev (--profile dev).
+    # Production: set SHOPANDA_MAIL_SMTP_* in .env to your real SMTP provider.
+    SHOPANDA_MAIL_SMTP_HOST: ${SHOPANDA_MAIL_SMTP_HOST:-mailpit}
+    SHOPANDA_MAIL_SMTP_PORT: ${SHOPANDA_MAIL_SMTP_PORT:-1025}
+  depends_on:
+    postgres:
+      condition: service_healthy
+  restart: unless-stopped
+
 services:
-  # ---------- Application -----------------------------------------------------
+  # ---------- Application (HTTP) ----------------------------------------------
   app:
-    build: .
+    <<: *shopanda-common
+    command: serve
     ports:
       - "${SHOPANDA_SERVER_PORT:-8080}:8080"
-    environment:
-      # Service-to-service defaults — override .env / config defaults that
-      # assume localhost, which is unreachable from inside the container.
-      # Keep these in sync with the postgres service defaults below.
-      SHOPANDA_DATABASE_HOST: postgres
-      SHOPANDA_DATABASE_PORT: 5432
-      SHOPANDA_DATABASE_USER: "${SHOPANDA_DATABASE_USER:-shopanda}"
-      SHOPANDA_DATABASE_PASSWORD: "${SHOPANDA_DATABASE_PASSWORD:-changeme}"
-      SHOPANDA_DATABASE_NAME: "${SHOPANDA_DATABASE_NAME:-shopanda}"
-      # Mailpit (dev profile). If mailpit is not running, mail simply fails
-      # on connection refused — harmless for local development.
-      SHOPANDA_MAIL_SMTP_HOST: mailpit
-      SHOPANDA_MAIL_SMTP_PORT: 1025
-    env_file:
-      - path: .env
-        required: false
-    depends_on:
-      postgres:
-        condition: service_healthy
-    restart: unless-stopped
+
+  # ---------- Background worker (email, cache cleanup, …) ---------------------
+  worker:
+    <<: *shopanda-common
+    command: worker
+    healthcheck:
+      disable: true
+
+  # ---------- Cron scheduler (enqueues recurring jobs) ------------------------
+  scheduler:
+    <<: *shopanda-common
+    command: scheduler
+    healthcheck:
+      disable: true
 
   # ---------- PostgreSQL ------------------------------------------------------
   # Pinned 2026-04-17; refresh periodically.

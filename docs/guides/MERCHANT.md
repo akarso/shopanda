@@ -280,11 +280,14 @@ Shopanda supports operational emails such as:
 - password reset
 - invoice email with PDF attachment
 
+**Order emails are sent asynchronously.** Checkout completes in the web server, but delivery depends on a background **worker** process and valid SMTP settings. In Docker Compose deployments, the default stack includes a `worker` service; on bare metal, run `shopanda worker` as a separate service (see the [Deployment Guide](DEPLOYMENT.md)).
+
 If customers report missing emails:
 
-1. verify SMTP settings in `/admin/settings`
-2. send a test email
-3. confirm the sender address and mail credentials are still valid
+1. confirm the worker process is running
+2. verify SMTP settings in `/admin/settings`
+3. send a test email
+4. confirm the sender address and mail credentials are still valid
 
 ## Current Release Notes
 

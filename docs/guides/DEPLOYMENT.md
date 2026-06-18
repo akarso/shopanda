@@ -277,10 +277,37 @@ docker run --rm --env-file .env shopanda setup
 
 Current repository behavior:
 
-- `docker-compose.yml` starts `app` and `postgres` by default
-- `mailpit` is available behind the `dev` profile
+- `docker-compose.yml` starts `app`, `worker`, `scheduler`, and `postgres` by default
+- `mailpit` is available behind the `dev` profile (local SMTP capture at http://localhost:8025)
 - `meilisearch` is available behind the `search` profile
 - Postgres data persists in the `pgdata` named volume
+
+Quick start:
+
+```bash
+cp .env.example .env
+docker compose up -d
+docker compose run --rm app migrate
+docker compose run --rm app seed
+```
+
+For local email testing with Mailpit:
+
+```bash
+docker compose --profile dev up -d
+```
+
+### Minimum production checklist (Compose)
+
+Before relying on the store in production:
+
+1. Postgres migrated (`docker compose run --rm app migrate` or init job).
+2. `app` (HTTP) reachable behind TLS termination.
+3. `worker` running continuously (order emails, password reset, async jobs).
+4. `scheduler` running continuously (cache cleanup and recurring tasks).
+5. SMTP configured in `.env` and verified (send a test email from `/admin/settings`).
+6. `SHOPANDA_SERVER_PUBLIC_BASE_URL` set to the public storefront URL.
+7. Stripe keys + webhook secret if card payments are enabled.
 
 ### Persist uploaded media
 
@@ -300,35 +327,21 @@ volumes:
 
 Without this, uploaded files disappear when the application container is replaced.
 
-### Run worker and scheduler containers
+### Background processes in Compose
 
-For production, run background processes separately from the web server even though they use the same image.
+The default compose file already runs background processes as separate services from the same image:
 
-Example compose override:
+| Service | Command | Role |
+| --- | --- | --- |
+| `app` | `serve` | HTTP server (admin, storefront, REST API) |
+| `worker` | `worker` | Job consumer (transactional email, cache cleanup) |
+| `scheduler` | `scheduler` | Cron dispatcher (enqueues recurring jobs) |
 
-```yaml
-services:
-  app:
-    command: serve
+All three share the same `.env` and database connection settings. Scale `app` horizontally if needed; keep a single `scheduler` replica.
 
-  worker:
-    image: shopanda
-    command: worker
-    env_file:
-      - .env
-    depends_on:
-      postgres:
-        condition: service_healthy
+**Emails require the worker.** Orders complete in `app`, but confirmation and password-reset emails are enqueued and delivered only when `worker` is running and SMTP is configured.
 
-  scheduler:
-    image: shopanda
-    command: scheduler
-    env_file:
-      - .env
-    depends_on:
-      postgres:
-        condition: service_healthy
-```
+For bare-metal or custom orchestration without Compose, run the same three commands as separate processes — see [Example systemd units](#example-systemd-units).
 
 ## Deploy To Cloud Platforms
 
