@@ -187,7 +187,7 @@ func (h *SchemaHandler) mergeProductAttributeFields(ctx context.Context, form ad
 	for _, attr := range attrs {
 		field, err := adminApp.AttributeToFormField(attr)
 		if err != nil {
-			return admin.Form{}, apperror.Internal("attribute form field mapping failed")
+			return admin.Form{}, apperror.Wrap(apperror.CodeInternal, "attribute form field mapping failed", err)
 		}
 		form.Fields = append(form.Fields, field)
 	}
