@@ -40,7 +40,7 @@ func NewInventoryAdminHandlerWithAuditor(stock inventory.StockRepository, varian
 }
 
 type adjustStockRequest struct {
-	Quantity int `json:"quantity"`
+	Quantity *int `json:"quantity"`
 }
 
 type adminInventoryItemResponse struct {
@@ -142,12 +142,21 @@ func (h *InventoryAdminHandler) Adjust() http.HandlerFunc {
 		}
 
 		var req adjustStockRequest
-		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		dec := json.NewDecoder(r.Body)
+		dec.DisallowUnknownFields()
+		if err := dec.Decode(&req); err != nil {
 			verr := apperror.Validation("invalid request body")
 			h.audit(r, admin.AuditStockUpdate, variantID, nil, verr)
 			JSONError(w, verr)
 			return
 		}
+		if req.Quantity == nil {
+			verr := apperror.Validation("quantity is required")
+			h.audit(r, admin.AuditStockUpdate, variantID, nil, verr)
+			JSONError(w, verr)
+			return
+		}
+		quantity := *req.Quantity
 
 		variant, err := h.variants.FindByID(r.Context(), variantID)
 		if err != nil {
@@ -169,12 +178,12 @@ func (h *InventoryAdminHandler) Adjust() http.HandlerFunc {
 			return
 		}
 
-		entry, err := inventory.NewStockEntry(variantID, req.Quantity)
+		entry, err := inventory.NewStockEntry(variantID, quantity)
 		if err != nil {
 			verr := apperror.Validation(err.Error())
 			h.audit(r, admin.AuditStockUpdate, variantID, map[string]interface{}{
 				"quantity_before": before.Quantity,
-				"quantity_after":  req.Quantity,
+				"quantity_after":  quantity,
 			}, verr)
 			JSONError(w, verr)
 			return
@@ -183,7 +192,7 @@ func (h *InventoryAdminHandler) Adjust() http.HandlerFunc {
 		if err := h.stock.SetStock(r.Context(), &entry); err != nil {
 			h.audit(r, admin.AuditStockUpdate, variantID, map[string]interface{}{
 				"quantity_before": before.Quantity,
-				"quantity_after":  req.Quantity,
+				"quantity_after":  quantity,
 			}, err)
 			JSONError(w, apperror.Internal("inventory update failed"))
 			return
@@ -195,13 +204,15 @@ func (h *InventoryAdminHandler) Adjust() http.HandlerFunc {
 			"quantity_after":  entry.Quantity,
 		}, nil)
 
-		item := inventory.InventoryListItem{
-			VariantID:   variantID,
-			ProductID:   variant.ProductID,
-			SKU:         variant.SKU,
-			VariantName: variant.Name,
-			Quantity:    entry.Quantity,
-			UpdatedAt:   entry.UpdatedAt,
+		item, err := h.stock.GetInventoryItem(r.Context(), variantID)
+		if err != nil {
+			h.audit(r, admin.AuditStockUpdate, variantID, map[string]interface{}{
+				"sku":             variant.SKU,
+				"quantity_before": before.Quantity,
+				"quantity_after":  entry.Quantity,
+			}, err)
+			JSONError(w, apperror.Internal("inventory read failed"))
+			return
 		}
 		JSON(w, http.StatusOK, map[string]interface{}{
 			"item":                toInventoryItemResponse(item),

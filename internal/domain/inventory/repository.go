@@ -19,4 +19,7 @@ type StockRepository interface {
 	// ListInventory returns a paginated admin inventory view for all variants.
 	// search filters by SKU, variant name, or product name (case-insensitive).
 	ListInventory(ctx context.Context, offset, limit int, search string) ([]InventoryListItem, error)
+
+	// GetInventoryItem returns the admin inventory view for a single variant.
+	GetInventoryItem(ctx context.Context, variantID string) (InventoryListItem, error)
 }
