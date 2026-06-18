@@ -207,6 +207,23 @@ func TestCartHandler_Get_OK(t *testing.T) {
 	}
 }
 
+func TestCartHandler_Get_GuestCannotReadCustomerCart(t *testing.T) {
+	carts, _, _, mux := cartSetup()
+
+	c, _ := domainCart.NewCart("cart-1", "EUR")
+	c.SetCustomerID("cust-1")
+	carts.Save(context.Background(), &c)
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("GET", "/api/v1/carts/cart-1", nil)
+	req = testhelper.GuestRequest(req)
+	mux.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("status = %d, want %d; body: %s", rec.Code, http.StatusForbidden, rec.Body.String())
+	}
+}
+
 func TestCartHandler_Get_NotFound(t *testing.T) {
 	_, _, _, mux := cartSetup()
 
@@ -441,7 +458,7 @@ func TestCartHandler_Create_Guest_OK(t *testing.T) {
 	}
 }
 
-func TestCartHandler_Unauthenticated(t *testing.T) {
+func TestCartHandler_Create_NoAuth_GuestSucceeds(t *testing.T) {
 	_, _, _, mux := cartSetup()
 
 	rec := httptest.NewRecorder()

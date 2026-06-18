@@ -446,7 +446,7 @@ func (h *StorefrontHandler) currentCart(r *http.Request) (*cart.Cart, error) {
 	if err != nil {
 		return nil, err
 	}
-	currentCart, err := h.carts.GetCart(r.Context(), cookie.Value)
+	currentCart, err := h.carts.GetCart(r.Context(), cookie.Value, storefrontCustomerID(r))
 	if apperror.Is(err, apperror.CodeNotFound) {
 		return nil, nil
 	}

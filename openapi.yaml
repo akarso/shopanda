@@ -556,6 +556,8 @@ paths:
                 $ref: "#/components/schemas/CartEnvelope"
         "404":
           $ref: "#/components/responses/NotFound"
+        "403":
+          $ref: "#/components/responses/Forbidden"
 
   /api/v1/carts/{cartId}/items:
     post:
@@ -587,6 +589,8 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/CartEnvelope"
+        "403":
+          $ref: "#/components/responses/Forbidden"
         "422":
           $ref: "#/components/responses/Validation"
 
@@ -619,6 +623,8 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/CartEnvelope"
+        "403":
+          $ref: "#/components/responses/Forbidden"
     delete:
       operationId: removeCartItem
       tags: [Cart]
@@ -636,6 +642,8 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/CartEnvelope"
+        "403":
+          $ref: "#/components/responses/Forbidden"
 
   /api/v1/carts/{cartId}/coupon:
     post:

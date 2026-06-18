@@ -78,6 +78,7 @@ func (h *CheckoutHandler) StartCheckout() http.HandlerFunc {
 
 		customerID := auth.IdentityFrom(r.Context()).UserID
 
+		// Guest contact_email rules are enforced in checkout.Service.StartCheckout.
 		cctx, err := h.svc.StartCheckout(r.Context(), req.CartID, customerID, checkoutApp.Input{
 			ContactEmail: req.ContactEmail,
 			Address: checkoutApp.Address{

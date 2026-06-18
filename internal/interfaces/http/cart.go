@@ -121,7 +121,7 @@ func (h *CartHandler) Get() http.HandlerFunc {
 			return
 		}
 
-		c, err := h.svc.GetCart(r.Context(), cartID)
+		c, err := h.svc.GetCart(r.Context(), cartID, auth.IdentityFrom(r.Context()).UserID)
 		if err != nil {
 			JSONError(w, err)
 			return

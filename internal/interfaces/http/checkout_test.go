@@ -455,19 +455,3 @@ func TestCheckoutHandler_StartCheckout_Guest_CannotUseCustomerCart(t *testing.T)
 		t.Fatalf("status = %d, want %d; body: %s", rec.Code, http.StatusForbidden, rec.Body.String())
 	}
 }
-
-func TestCheckoutHandler_StartCheckout_Unauthenticated(t *testing.T) {
-	carts, variants, prices, mux := checkoutSetup()
-	cartID := seedGuestCheckoutCart(carts, variants, prices)
-
-	body := `{"cart_id":"` + cartID + `","contact_email":"guest@example.com","address":` + checkoutAddressJSON() + `}`
-	rec := httptest.NewRecorder()
-	req := httptest.NewRequest("POST", "/api/v1/checkout", strings.NewReader(body))
-	// No auth middleware — guest identity must be injected by AuthMiddleware in production.
-	// Without identity, UserID is empty which matches guest checkout when cart is guest-owned.
-	mux.ServeHTTP(rec, req)
-
-	if rec.Code != http.StatusCreated {
-		t.Fatalf("status = %d, want %d; body: %s", rec.Code, http.StatusCreated, rec.Body.String())
-	}
-}

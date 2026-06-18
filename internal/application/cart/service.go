@@ -71,14 +71,18 @@ func (s *Service) CreateCart(ctx context.Context, customerID, currency string) (
 	return &c, nil
 }
 
-// GetCart returns a cart by ID.
-func (s *Service) GetCart(ctx context.Context, cartID string) (*domainCart.Cart, error) {
+// GetCart returns a cart by ID when it belongs to customerID.
+// Guest callers pass an empty customerID and may only read guest-owned carts.
+func (s *Service) GetCart(ctx context.Context, cartID, customerID string) (*domainCart.Cart, error) {
 	c, err := s.carts.FindByID(ctx, cartID)
 	if err != nil {
 		return nil, fmt.Errorf("cart service: get: %w", err)
 	}
 	if c == nil {
 		return nil, apperror.NotFound("cart not found")
+	}
+	if c.CustomerID != customerID {
+		return nil, apperror.Forbidden("cannot access another customer's cart")
 	}
 	return c, nil
 }
