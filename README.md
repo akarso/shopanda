@@ -198,8 +198,11 @@ Current guides live in [`docs/guides/`](docs/guides/):
 
 ### Planning & Reference
 
+- [Phase 4 Roadmap](docs/phase-4-refactoring/ROADMAP.md) — active product-complete milestones (admin gaps, plugin tiers, runtime modes)
+- [Runtime Modes](docs/phase-4-refactoring/specs/RUNTIME_MODES.md) — dev vs production process layout (`serve`, `worker`, `scheduler`, `app dev`)
 - [Phase 1 Roadmap](docs/phase-1-core/ROADMAP.md) — core platform milestones and archived planning context
 - [Phase 2 Roadmap](docs/phase-2-merchant-ready/ROADMAP.md) — merchant-ready milestones and implementation history
+- [Phase 3 Roadmap](docs/phase-3-testing/ROADMAP.md) — runtime refactor tracks (guest checkout, admin hardening, account UX); archived
 - [C4 Context Diagram](docs/diagrams/c4-context.md) — system context
 - [C4 Container Diagram](docs/diagrams/c4-container.md) — runtime containers
 - [C4 Component Diagram](docs/diagrams/c4-component.md) — major component boundaries

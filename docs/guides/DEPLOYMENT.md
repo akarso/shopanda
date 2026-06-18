@@ -277,10 +277,37 @@ docker run --rm --env-file .env shopanda setup
 
 Current repository behavior:
 
-- `docker-compose.yml` starts `app` and `postgres` by default
-- `mailpit` is available behind the `dev` profile
+- `docker-compose.yml` starts `app`, `worker`, `scheduler`, and `postgres` by default
+- `mailpit` is available behind the `dev` profile (local SMTP capture at http://localhost:8025)
 - `meilisearch` is available behind the `search` profile
 - Postgres data persists in the `pgdata` named volume
+
+Quick start:
+
+```bash
+cp .env.example .env
+docker compose up -d
+docker compose run --rm app migrate
+docker compose run --rm app seed
+```
+
+For local email testing with Mailpit:
+
+```bash
+docker compose --profile dev up -d
+```
+
+### Minimum production checklist (Compose)
+
+Before relying on the store in production:
+
+1. Postgres migrated (`docker compose run --rm app migrate` or init job).
+2. `app` (HTTP) reachable behind TLS termination.
+3. `worker` running continuously (order emails, password reset, async jobs).
+4. `scheduler` running continuously (cache cleanup and recurring tasks).
+5. SMTP configured in `.env` and verified (send a test email from `/admin/settings`).
+6. `SHOPANDA_SERVER_PUBLIC_BASE_URL` set to the public storefront URL.
+7. Stripe keys + webhook secret if card payments are enabled.
 
 ### Persist uploaded media
 
@@ -300,35 +327,25 @@ volumes:
 
 Without this, uploaded files disappear when the application container is replaced.
 
-### Run worker and scheduler containers
+### Background processes in Compose
 
-For production, run background processes separately from the web server even though they use the same image.
+The default compose file already runs background processes as separate services from the same image:
 
-Example compose override:
+| Service | Command | Role |
+| --- | --- | --- |
+| `app` | `serve` | HTTP server plus embedded job worker (admin, storefront, REST API) |
+| `worker` | `worker` | Dedicated job consumer (transactional email, cache cleanup) |
+| `scheduler` | `scheduler` | Cron dispatcher (enqueues recurring jobs) |
 
-```yaml
-services:
-  app:
-    command: serve
+All three share the same `.env` and database connection settings.
 
-  worker:
-    image: shopanda
-    command: worker
-    env_file:
-      - .env
-    depends_on:
-      postgres:
-        condition: service_healthy
+The `serve` command starts an embedded worker goroutine in the same process as HTTP (`cmd/api/main.go`). The dedicated `worker` service runs additional job consumers from the same image. Both use `FOR UPDATE SKIP LOCKED` on the Postgres queue, so concurrent consumers are safe.
 
-  scheduler:
-    image: shopanda
-    command: scheduler
-    env_file:
-      - .env
-    depends_on:
-      postgres:
-        condition: service_healthy
-```
+Scale `app` horizontally for HTTP capacity; each replica also runs an embedded worker, so background job load grows with web replicas. Scale the `worker` service independently when email or async throughput needs more capacity. Keep a single `scheduler` replica.
+
+**Emails require job workers and SMTP.** Orders complete in `app`, but confirmation and password-reset emails are enqueued and delivered by job workers (`app`'s embedded worker and/or the dedicated `worker` service). Configure SMTP in `.env` and verify delivery from `/admin/settings`.
+
+For bare-metal or custom orchestration without Compose, run the same three commands as separate processes — see [Example systemd units](#example-systemd-units).
 
 ## Deploy To Cloud Platforms
 

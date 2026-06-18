@@ -52,11 +52,11 @@ For scheduler parity without `dev`, run a second terminal:
 ./app scheduler
 ```
 
-Or use Docker Compose (Postgres only today — **worker is not a compose service yet**; PR-431 adds it for production profiles).
+Or use Docker Compose (Postgres + `app`, `worker`, and `scheduler` services — see [Production Mode](#production-mode-pr-431)).
 
 ---
 
-## Production Mode (target after PR-431)
+## Production Mode (PR-431)
 
 **Goal:** explicit, restart-safe process separation suitable for Docker, systemd, Fly.io, or Kubernetes.
 
@@ -82,12 +82,29 @@ Or use Docker Compose (Postgres only today — **worker is not a compose service
 
 ### Docker Compose (production layout — PR-431)
 
+The repository `docker-compose.yml` starts four services by default:
+
 ```text
 services:
-  app:        command: serve
+  app:        command: serve       # HTTP on port 8080
   worker:     command: worker      # same image, no published ports
-  scheduler:  command: scheduler   # same image, single replica
+  scheduler:  command: scheduler # same image, single replica
   postgres:   ...
+```
+
+Quick start:
+
+```bash
+cp .env.example .env              # set SHOPANDA_MAIL_SMTP_* for production
+docker compose up -d
+docker compose run --rm app migrate
+docker compose run --rm app seed
+```
+
+For local email capture, add the `dev` profile (Mailpit at http://localhost:8025):
+
+```bash
+docker compose --profile dev up -d
 ```
 
 Optional profiles: `dev` (mailpit), `search` (meilisearch), `queue` (rabbitmq — PR-416).
