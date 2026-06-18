@@ -892,17 +892,17 @@ func runServe(cfg *config.Config, log logger.Logger, embedScheduler bool) error 
 	router.Handle("PUT /api/v1/admin/shipping/zones/{zoneId}/rates/{rateId}", requireShippingWrite(shippingZoneAdmin.UpdateRate()))
 	router.Handle("DELETE /api/v1/admin/shipping/zones/{zoneId}/rates/{rateId}", requireShippingWrite(shippingZoneAdmin.DeleteRate()))
 
-	// Cart routes (behind RequireAuth).
-	router.Handle("POST /api/v1/carts", requireAuth(cartHandler.Create()))
-	router.Handle("GET /api/v1/carts/{cartId}", requireAuth(cartHandler.Get()))
-	router.Handle("POST /api/v1/carts/{cartId}/items", requireAuth(cartHandler.AddItem()))
-	router.Handle("PUT /api/v1/carts/{cartId}/items/{variantId}", requireAuth(cartHandler.UpdateItem()))
-	router.Handle("DELETE /api/v1/carts/{cartId}/items/{variantId}", requireAuth(cartHandler.RemoveItem()))
-	router.Handle("POST /api/v1/carts/{cartId}/coupon", requireAuth(cartHandler.ApplyCoupon()))
-	router.Handle("DELETE /api/v1/carts/{cartId}/coupon", requireAuth(cartHandler.RemoveCoupon()))
+	// Cart routes (guest-capable; ownership enforced in cart service).
+	router.Handle("POST /api/v1/carts", cartHandler.Create())
+	router.Handle("GET /api/v1/carts/{cartId}", cartHandler.Get())
+	router.Handle("POST /api/v1/carts/{cartId}/items", cartHandler.AddItem())
+	router.Handle("PUT /api/v1/carts/{cartId}/items/{variantId}", cartHandler.UpdateItem())
+	router.Handle("DELETE /api/v1/carts/{cartId}/items/{variantId}", cartHandler.RemoveItem())
+	router.Handle("POST /api/v1/carts/{cartId}/coupon", cartHandler.ApplyCoupon())
+	router.Handle("DELETE /api/v1/carts/{cartId}/coupon", cartHandler.RemoveCoupon())
 
-	// Checkout route (behind RequireAuth).
-	router.Handle("POST /api/v1/checkout", requireAuth(checkoutHandler.StartCheckout()))
+	// Checkout route (guest-capable when contact_email is provided).
+	router.Handle("POST /api/v1/checkout", checkoutHandler.StartCheckout())
 
 	// Order routes (behind RequireAuth).
 	router.Handle("GET /api/v1/orders", requireAuth(orderHandler.List()))

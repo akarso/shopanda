@@ -211,9 +211,8 @@ func checkoutSetup() (*stubCheckoutCartRepo, *stubCheckoutVariantRepo, *stubChec
 	svc := checkoutApp.NewService(carts, workflow, log)
 	handler := shophttp.NewCheckoutHandler(svc)
 
-	requireAuth := shophttp.RequireAuth()
 	mux := http.NewServeMux()
-	mux.Handle("POST /api/v1/checkout", requireAuth(handler.StartCheckout()))
+	mux.Handle("POST /api/v1/checkout", handler.StartCheckout())
 	return carts, variants, prices, mux
 }
 
@@ -221,6 +220,18 @@ func seedCheckoutCart(carts *stubCheckoutCartRepo, variants *stubCheckoutVariant
 	cartID := id.New()
 	c, _ := cart.NewCart(cartID, "EUR")
 	_ = c.SetCustomerID("cust-1")
+	_ = c.AddItem("var-1", 2, shared.MustNewMoney(1500, "EUR"))
+	carts.Save(context.Background(), &c)
+
+	variants.set("var-1", "prod-1", "SKU-VAR1", "Widget A")
+	prices.set("var-1", "EUR", 1500)
+
+	return cartID
+}
+
+func seedGuestCheckoutCart(carts *stubCheckoutCartRepo, variants *stubCheckoutVariantRepo, prices *stubCheckoutPriceRepo) string {
+	cartID := id.New()
+	c, _ := cart.NewCart(cartID, "EUR")
 	_ = c.AddItem("var-1", 2, shared.MustNewMoney(1500, "EUR"))
 	carts.Save(context.Background(), &c)
 
@@ -393,15 +404,70 @@ func TestCheckoutHandler_StartCheckout_EmptyCart(t *testing.T) {
 	}
 }
 
-func TestCheckoutHandler_StartCheckout_Unauthenticated(t *testing.T) {
-	_, _, _, mux := checkoutSetup()
+func TestCheckoutHandler_StartCheckout_Guest_OK(t *testing.T) {
+	carts, variants, prices, mux := checkoutSetup()
+	cartID := seedGuestCheckoutCart(carts, variants, prices)
 
+	body := `{"cart_id":"` + cartID + `","contact_email":"guest@example.com","address":` + checkoutAddressJSON() + `}`
 	rec := httptest.NewRecorder()
-	req := httptest.NewRequest("POST", "/api/v1/checkout", strings.NewReader(`{"cart_id":"cart-1","address":`+checkoutAddressJSON()+`}`))
-	// No auth set — guest identity.
+	req := httptest.NewRequest("POST", "/api/v1/checkout", strings.NewReader(body))
+	req = testhelper.GuestRequest(req)
 	mux.ServeHTTP(rec, req)
 
-	if rec.Code != http.StatusUnauthorized {
-		t.Fatalf("status = %d, want %d", rec.Code, http.StatusUnauthorized)
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("status = %d, want %d; body: %s", rec.Code, http.StatusCreated, rec.Body.String())
+	}
+	resp := parseCheckoutBody(t, rec)
+	data := resp["data"].(map[string]interface{})
+	o := data["order"].(map[string]interface{})
+
+	if o["customer_id"] != "" {
+		t.Errorf("customer_id = %v, want empty for guest", o["customer_id"])
+	}
+}
+
+func TestCheckoutHandler_StartCheckout_Guest_MissingContactEmail(t *testing.T) {
+	carts, variants, prices, mux := checkoutSetup()
+	cartID := seedGuestCheckoutCart(carts, variants, prices)
+
+	body := `{"cart_id":"` + cartID + `","address":` + checkoutAddressJSON() + `}`
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("POST", "/api/v1/checkout", strings.NewReader(body))
+	req = testhelper.GuestRequest(req)
+	mux.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("status = %d, want %d; body: %s", rec.Code, http.StatusUnprocessableEntity, rec.Body.String())
+	}
+}
+
+func TestCheckoutHandler_StartCheckout_Guest_CannotUseCustomerCart(t *testing.T) {
+	carts, variants, prices, mux := checkoutSetup()
+	cartID := seedCheckoutCart(carts, variants, prices)
+
+	body := `{"cart_id":"` + cartID + `","contact_email":"guest@example.com","address":` + checkoutAddressJSON() + `}`
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("POST", "/api/v1/checkout", strings.NewReader(body))
+	req = testhelper.GuestRequest(req)
+	mux.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("status = %d, want %d; body: %s", rec.Code, http.StatusForbidden, rec.Body.String())
+	}
+}
+
+func TestCheckoutHandler_StartCheckout_Unauthenticated(t *testing.T) {
+	carts, variants, prices, mux := checkoutSetup()
+	cartID := seedGuestCheckoutCart(carts, variants, prices)
+
+	body := `{"cart_id":"` + cartID + `","contact_email":"guest@example.com","address":` + checkoutAddressJSON() + `}`
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("POST", "/api/v1/checkout", strings.NewReader(body))
+	// No auth middleware — guest identity must be injected by AuthMiddleware in production.
+	// Without identity, UserID is empty which matches guest checkout when cart is guest-owned.
+	mux.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("status = %d, want %d; body: %s", rec.Code, http.StatusCreated, rec.Body.String())
 	}
 }

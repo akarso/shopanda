@@ -106,13 +106,12 @@ func cartTestPipeline(prices pricing.PriceRepository) pricing.Pipeline {
 }
 
 func newCartRouter(h *shophttp.CartHandler) *http.ServeMux {
-	requireAuth := shophttp.RequireAuth()
 	mux := http.NewServeMux()
-	mux.Handle("POST /api/v1/carts", requireAuth(h.Create()))
-	mux.Handle("GET /api/v1/carts/{cartId}", requireAuth(h.Get()))
-	mux.Handle("POST /api/v1/carts/{cartId}/items", requireAuth(h.AddItem()))
-	mux.Handle("PUT /api/v1/carts/{cartId}/items/{variantId}", requireAuth(h.UpdateItem()))
-	mux.Handle("DELETE /api/v1/carts/{cartId}/items/{variantId}", requireAuth(h.RemoveItem()))
+	mux.Handle("POST /api/v1/carts", h.Create())
+	mux.Handle("GET /api/v1/carts/{cartId}", h.Get())
+	mux.Handle("POST /api/v1/carts/{cartId}/items", h.AddItem())
+	mux.Handle("PUT /api/v1/carts/{cartId}/items/{variantId}", h.UpdateItem())
+	mux.Handle("DELETE /api/v1/carts/{cartId}/items/{variantId}", h.RemoveItem())
 	return mux
 }
 
@@ -423,16 +422,34 @@ func TestCartHandler_RemoveItem_ItemNotFound(t *testing.T) {
 	}
 }
 
+func TestCartHandler_Create_Guest_OK(t *testing.T) {
+	_, _, _, mux := cartSetup()
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("POST", "/api/v1/carts", strings.NewReader(`{"currency":"EUR"}`))
+	req = testhelper.GuestRequest(req)
+	mux.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("status = %d, want %d; body: %s", rec.Code, http.StatusCreated, rec.Body.String())
+	}
+	body := parseCartBody(t, rec)
+	data := body["data"].(map[string]interface{})
+	c := data["cart"].(map[string]interface{})
+	if c["customer_id"] != nil && c["customer_id"] != "" {
+		t.Errorf("customer_id = %v, want empty for guest cart", c["customer_id"])
+	}
+}
+
 func TestCartHandler_Unauthenticated(t *testing.T) {
 	_, _, _, mux := cartSetup()
 
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest("POST", "/api/v1/carts", strings.NewReader(`{"currency":"EUR"}`))
-	// No auth context — guest identity.
 	mux.ServeHTTP(rec, req)
 
-	if rec.Code != http.StatusUnauthorized {
-		t.Fatalf("status = %d, want %d", rec.Code, http.StatusUnauthorized)
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("status = %d, want %d; body: %s", rec.Code, http.StatusCreated, rec.Body.String())
 	}
 }
 

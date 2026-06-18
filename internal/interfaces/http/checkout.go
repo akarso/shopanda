@@ -27,8 +27,9 @@ func NewCheckoutHandler(svc *checkoutApp.Service) *CheckoutHandler {
 // ── request / response types ────────────────────────────────────────────
 
 type checkoutRequest struct {
-	CartID  string                 `json:"cart_id"`
-	Address checkoutAddressRequest `json:"address"`
+	CartID       string                 `json:"cart_id"`
+	ContactEmail string                 `json:"contact_email"`
+	Address      checkoutAddressRequest `json:"address"`
 }
 
 type checkoutAddressRequest struct {
@@ -78,6 +79,7 @@ func (h *CheckoutHandler) StartCheckout() http.HandlerFunc {
 		customerID := auth.IdentityFrom(r.Context()).UserID
 
 		cctx, err := h.svc.StartCheckout(r.Context(), req.CartID, customerID, checkoutApp.Input{
+			ContactEmail: req.ContactEmail,
 			Address: checkoutApp.Address{
 				FirstName: req.Address.FirstName,
 				LastName:  req.Address.LastName,
