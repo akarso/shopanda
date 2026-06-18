@@ -66,6 +66,18 @@ const (
 	AuditPromotionCreate AuditAction = "promotion.create"
 	AuditPromotionUpdate AuditAction = "promotion.update"
 	AuditPromotionDelete AuditAction = "promotion.delete"
+
+	// Attribute operations
+	AuditAttributeRead   AuditAction = "attribute.read"
+	AuditAttributeCreate AuditAction = "attribute.create"
+	AuditAttributeUpdate AuditAction = "attribute.update"
+	AuditAttributeDelete AuditAction = "attribute.delete"
+
+	// Attribute group operations
+	AuditAttributeGroupRead   AuditAction = "attribute_group.read"
+	AuditAttributeGroupCreate AuditAction = "attribute_group.create"
+	AuditAttributeGroupUpdate AuditAction = "attribute_group.update"
+	AuditAttributeGroupDelete AuditAction = "attribute_group.delete"
 )
 
 // AuditEntry represents a single admin audit log entry.

@@ -608,6 +608,8 @@ func runServe(cfg *config.Config, log logger.Logger, embedScheduler bool) error 
 	adminApp.RegisterProductSchemas(adminRegistry)
 	adminApp.RegisterPageSchemas(adminRegistry)
 
+	attributeStore := adminApp.NewAttributeStore(configRepo)
+
 	// Associate permissions with schemas so the schema handler can
 	// filter access per role. Fail closed if any wiring is broken.
 	for _, sp := range []struct {
@@ -713,11 +715,12 @@ func runServe(cfg *config.Config, log logger.Logger, embedScheduler bool) error 
 			Body:    "<p>This is a test email from Shopanda admin settings.</p>",
 		})
 	}, log)
-	schemaHandler := shophttp.NewSchemaHandler(adminRegistry)
+	schemaHandler := shophttp.NewSchemaHandler(adminRegistry, attributeStore)
 	pageHandler := shophttp.NewPageHandler(pageRepo, contentTranslator)
 	pageAdmin := shophttp.NewPageAdminHandlerWithAuditor(pageRepo, bus, adminApp.NewAuditor(log))
 	couponAdmin := shophttp.NewCouponAdminHandlerWithAuditor(couponRepo, promotionRepo, adminApp.NewAuditor(log))
 	promotionAdmin := shophttp.NewPromotionAdminHandlerWithAuditor(promotionRepo, adminApp.NewAuditor(log))
+	attributeAdmin := shophttp.NewAttributeAdminHandlerWithAuditor(attributeStore, adminApp.NewAuditor(log))
 	storeAdmin := shophttp.NewStoreAdminHandlerWithAuditor(storeRepo, bus, adminApp.NewAuditor(log))
 	shippingZoneAdmin := shophttp.NewShippingZoneAdminHandler(zoneRepo)
 	accountService := accountApp.NewService(customerRepo, consentRepo, bus, log, conn)
@@ -862,6 +865,16 @@ func runServe(cfg *config.Config, log logger.Logger, embedScheduler bool) error 
 	router.Handle("POST /api/v1/admin/promotions", requireProductsWrite(promotionAdmin.Create()))
 	router.Handle("PUT /api/v1/admin/promotions/{id}", requireProductsWrite(promotionAdmin.Update()))
 	router.Handle("DELETE /api/v1/admin/promotions/{id}", requireProductsWrite(promotionAdmin.Delete()))
+	router.Handle("GET /api/v1/admin/attributes", requireCategoriesRead(attributeAdmin.ListAttributes()))
+	router.Handle("GET /api/v1/admin/attributes/{code}", requireCategoriesRead(attributeAdmin.GetAttribute()))
+	router.Handle("POST /api/v1/admin/attributes", requireCategoriesWrite(attributeAdmin.CreateAttribute()))
+	router.Handle("PUT /api/v1/admin/attributes/{code}", requireCategoriesWrite(attributeAdmin.UpdateAttribute()))
+	router.Handle("DELETE /api/v1/admin/attributes/{code}", requireCategoriesWrite(attributeAdmin.DeleteAttribute()))
+	router.Handle("GET /api/v1/admin/attribute-groups", requireCategoriesRead(attributeAdmin.ListGroups()))
+	router.Handle("GET /api/v1/admin/attribute-groups/{code}", requireCategoriesRead(attributeAdmin.GetGroup()))
+	router.Handle("POST /api/v1/admin/attribute-groups", requireCategoriesWrite(attributeAdmin.CreateGroup()))
+	router.Handle("PUT /api/v1/admin/attribute-groups/{code}", requireCategoriesWrite(attributeAdmin.UpdateGroup()))
+	router.Handle("DELETE /api/v1/admin/attribute-groups/{code}", requireCategoriesWrite(attributeAdmin.DeleteGroup()))
 	router.Handle("GET /api/v1/admin/stores", requireSettingsRead(storeAdmin.List()))
 	router.Handle("POST /api/v1/admin/stores", requireSettingsWrite(storeAdmin.Create()))
 	router.Handle("PUT /api/v1/admin/stores/{id}", requireSettingsWrite(storeAdmin.Update()))

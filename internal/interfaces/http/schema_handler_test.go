@@ -32,7 +32,7 @@ func schemaSetup() (*admin.Registry, *http.ServeMux) {
 		},
 	})
 
-	handler := shophttp.NewSchemaHandler(reg)
+	handler := shophttp.NewSchemaHandler(reg, nil)
 	requireAdmin := shophttp.RequireRole(identity.RoleAdmin)
 	mux := http.NewServeMux()
 	mux.Handle("GET /api/v1/admin/forms/{name}", requireAdmin(handler.GetForm()))
@@ -202,7 +202,7 @@ func schemaPermSetup() (*admin.Registry, *http.ServeMux) {
 	_ = reg.SetFormPermission("product.form", rbac.ProductsWrite)
 	_ = reg.SetGridPermission("product.grid", rbac.ProductsRead)
 
-	handler := shophttp.NewSchemaHandler(reg)
+	handler := shophttp.NewSchemaHandler(reg, nil)
 	requireAuth := shophttp.RequireAuth()
 	mux := http.NewServeMux()
 	mux.Handle("GET /api/v1/admin/forms/{name}", requireAuth(handler.GetForm()))
@@ -281,7 +281,7 @@ func schemaPermNoAuthSetup() *http.ServeMux {
 	_ = reg.SetFormPermission("product.form", rbac.ProductsWrite)
 	_ = reg.SetGridPermission("product.grid", rbac.ProductsRead)
 
-	handler := shophttp.NewSchemaHandler(reg)
+	handler := shophttp.NewSchemaHandler(reg, nil)
 	mux := http.NewServeMux()
 	mux.Handle("GET /api/v1/admin/forms/{name}", handler.GetForm())
 	mux.Handle("GET /api/v1/admin/grids/{name}", handler.GetGrid())
