@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/akarso/shopanda/internal/domain/inventory"
@@ -103,4 +104,132 @@ func (r *StockRepo) ListStock(ctx context.Context, offset, limit int) ([]invento
 		return nil, fmt.Errorf("stock_repo: list stock: rows: %w", err)
 	}
 	return entries, nil
+}
+
+// ListInventory returns a paginated admin inventory view for all variants.
+func (r *StockRepo) ListInventory(ctx context.Context, offset, limit int, search string) ([]inventory.InventoryListItem, error) {
+	if offset < 0 {
+		return nil, fmt.Errorf("stock_repo: list inventory: negative offset")
+	}
+	if limit <= 0 {
+		return nil, fmt.Errorf("stock_repo: list inventory: non-positive limit")
+	}
+	if limit > 100 {
+		limit = 100
+	}
+
+	search = strings.TrimSpace(search)
+	pattern := ""
+	if search != "" {
+		pattern = "%" + search + "%"
+	}
+
+	const inventorySelect = `
+		SELECT
+			v.id,
+			v.product_id,
+			v.sku,
+			p.name,
+			COALESCE(v.name, ''),
+			COALESCE(s.quantity, 0),
+			COALESCE(reserved.reserved_qty, 0),
+			s.updated_at
+		FROM variants v
+		INNER JOIN products p ON p.id = v.product_id
+		LEFT JOIN stock s ON s.variant_id = v.id
+		LEFT JOIN LATERAL (
+			SELECT COALESCE(SUM(r.quantity), 0) AS reserved_qty
+			FROM reservations r
+			WHERE r.variant_id = v.id
+			  AND r.status = 'active'
+			  AND r.expires_at > now()
+		) reserved ON TRUE`
+
+	const q = inventorySelect + `
+		WHERE ($3 = '' OR v.sku ILIKE $4 OR COALESCE(v.name, '') ILIKE $4 OR p.name ILIKE $4)
+		ORDER BY v.sku
+		LIMIT $1 OFFSET $2`
+
+	rows, err := r.db.QueryContext(ctx, q, limit, offset, search, pattern)
+	if err != nil {
+		return nil, fmt.Errorf("stock_repo: list inventory: %w", err)
+	}
+	defer rows.Close()
+
+	var items []inventory.InventoryListItem
+	for rows.Next() {
+		item, err := scanInventoryListItem(rows)
+		if err != nil {
+			return nil, fmt.Errorf("stock_repo: list inventory: scan: %w", err)
+		}
+		items = append(items, item)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("stock_repo: list inventory: rows: %w", err)
+	}
+	return items, nil
+}
+
+type inventoryRowScanner interface {
+	Scan(dest ...interface{}) error
+}
+
+func scanInventoryListItem(row inventoryRowScanner) (inventory.InventoryListItem, error) {
+	var item inventory.InventoryListItem
+	var updatedAt sql.NullTime
+	if err := row.Scan(
+		&item.VariantID,
+		&item.ProductID,
+		&item.SKU,
+		&item.ProductName,
+		&item.VariantName,
+		&item.Quantity,
+		&item.Reserved,
+		&updatedAt,
+	); err != nil {
+		return inventory.InventoryListItem{}, err
+	}
+	if updatedAt.Valid {
+		item.UpdatedAt = updatedAt.Time
+	}
+	return item, nil
+}
+
+// GetInventoryItem returns the admin inventory view for a single variant.
+func (r *StockRepo) GetInventoryItem(ctx context.Context, variantID string) (inventory.InventoryListItem, error) {
+	if variantID == "" {
+		return inventory.InventoryListItem{}, fmt.Errorf("stock_repo: get inventory item: empty variantID")
+	}
+
+	const q = `
+		SELECT
+			v.id,
+			v.product_id,
+			v.sku,
+			p.name,
+			COALESCE(v.name, ''),
+			COALESCE(s.quantity, 0),
+			COALESCE(reserved.reserved_qty, 0),
+			s.updated_at
+		FROM variants v
+		INNER JOIN products p ON p.id = v.product_id
+		LEFT JOIN stock s ON s.variant_id = v.id
+		LEFT JOIN LATERAL (
+			SELECT COALESCE(SUM(r.quantity), 0) AS reserved_qty
+			FROM reservations r
+			WHERE r.variant_id = v.id
+			  AND r.status = 'active'
+			  AND r.expires_at > now()
+		) reserved ON TRUE
+		WHERE v.id = $1`
+
+	row := r.db.QueryRowContext(ctx, q, variantID)
+	item, err := scanInventoryListItem(row)
+	if errors.Is(err, sql.ErrNoRows) {
+		return inventory.InventoryListItem{}, fmt.Errorf("stock_repo: variant %q not found", variantID)
+	}
+	if err != nil {
+		return inventory.InventoryListItem{}, fmt.Errorf("stock_repo: get inventory item: %w", err)
+	}
+	return item, nil
 }

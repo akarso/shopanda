@@ -67,6 +67,10 @@ const (
 	AuditPromotionUpdate AuditAction = "promotion.update"
 	AuditPromotionDelete AuditAction = "promotion.delete"
 
+	// Stock operations
+	AuditStockRead   AuditAction = "stock.read"
+	AuditStockUpdate AuditAction = "stock.update"
+
 	// Attribute operations
 	AuditAttributeRead   AuditAction = "attribute.read"
 	AuditAttributeCreate AuditAction = "attribute.create"
