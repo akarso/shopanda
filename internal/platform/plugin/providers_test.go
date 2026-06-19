@@ -62,6 +62,18 @@ func TestApp_RegisterSearchProvider_NilPanics(t *testing.T) {
 	app.RegisterSearchProvider(nil)
 }
 
+func TestApp_RegisterSearchProvider_DoubleRegistrationPanics(t *testing.T) {
+	app := &plugin.App{}
+	app.RegisterSearchProvider(&stubSearchProvider{name: "first"})
+
+	defer func() {
+		if r := recover(); r == nil {
+			t.Fatal("expected panic for double search provider registration")
+		}
+	}()
+	app.RegisterSearchProvider(&stubSearchProvider{name: "second"})
+}
+
 func TestRegistry_StubCorePluginRegistersProvider(t *testing.T) {
 	log := logger.NewWithWriter(io.Discard, "error")
 	reg := plugin.NewRegistry(log)

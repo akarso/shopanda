@@ -14,6 +14,9 @@ func (a *App) RegisterSearchProvider(provider any) {
 	if provider == nil {
 		panic("plugin: search provider must not be nil")
 	}
+	if a.searchProvider != nil {
+		panic("plugin: search provider already registered")
+	}
 	a.searchProvider = provider
 }
 
@@ -22,6 +25,9 @@ func (a *App) RegisterSearchProvider(provider any) {
 func (a *App) RegisterCache(cache any) {
 	if cache == nil {
 		panic("plugin: cache must not be nil")
+	}
+	if a.cache != nil {
+		panic("plugin: cache already registered")
 	}
 	a.cache = cache
 }
@@ -32,6 +38,9 @@ func (a *App) RegisterQueue(queue any) {
 	if queue == nil {
 		panic("plugin: queue must not be nil")
 	}
+	if a.queue != nil {
+		panic("plugin: queue already registered")
+	}
 	a.queue = queue
 }
 
@@ -41,6 +50,9 @@ func (a *App) RegisterPaymentProvider(provider any) {
 	if provider == nil {
 		panic("plugin: payment provider must not be nil")
 	}
+	if a.paymentProvider != nil {
+		panic("plugin: payment provider already registered")
+	}
 	a.paymentProvider = provider
 }
 
@@ -49,6 +61,9 @@ func (a *App) RegisterPaymentProvider(provider any) {
 func (a *App) RegisterMediaStorage(storage any) {
 	if storage == nil {
 		panic("plugin: media storage must not be nil")
+	}
+	if a.mediaStorage != nil {
+		panic("plugin: media storage already registered")
 	}
 	a.mediaStorage = storage
 }
