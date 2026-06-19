@@ -31,6 +31,8 @@ type Config struct {
 	Mail      MailConfig      `yaml:"mail"`
 	Media     MediaConfig     `yaml:"media"`
 	Cache     CacheConfig     `yaml:"cache"`
+	Queue     QueueConfig     `yaml:"queue"`
+	Plugins   PluginsConfig   `yaml:"plugins"`
 	Frontend  FrontendConfig  `yaml:"frontend"`
 	CDN       CDNConfig       `yaml:"cdn"`
 	Webhooks  WebhooksConfig  `yaml:"webhooks"`
@@ -288,6 +290,25 @@ type CacheConfig struct {
 	Driver string `yaml:"driver"`
 }
 
+// QueueConfig holds background job queue settings.
+type QueueConfig struct {
+	Driver string `yaml:"driver"`
+}
+
+// PluginsConfig holds plugin system settings.
+type PluginsConfig struct {
+	Core CorePluginsConfig `yaml:"core"`
+}
+
+// CorePluginsConfig allows explicit enable/disable of core infrastructure plugins.
+// When a field is nil, enablement is inferred from the corresponding driver switch
+// (search.engine, cache.driver, queue.driver).
+type CorePluginsConfig struct {
+	PostgresSearch *bool `yaml:"postgres_search,omitempty"`
+	PostgresCache  *bool `yaml:"postgres_cache,omitempty"`
+	PostgresQueue  *bool `yaml:"postgres_queue,omitempty"`
+}
+
 type FrontendConfig struct {
 	Enabled   bool   `yaml:"enabled"`
 	Mode      string `yaml:"mode"`
@@ -365,6 +386,10 @@ func Load(path string) (*LoadResult, error) {
 
 	if err := normalizePublicBaseURL(&cfg); err != nil {
 		return nil, fmt.Errorf("config: %w", err)
+	}
+
+	if err := normalizeAndValidate(&cfg); err != nil {
+		return nil, err
 	}
 
 	values = flatten(&cfg)
@@ -452,6 +477,9 @@ func defaults() Config {
 			},
 		},
 		Cache: CacheConfig{
+			Driver: "postgres",
+		},
+		Queue: QueueConfig{
 			Driver: "postgres",
 		},
 		Frontend: FrontendConfig{
@@ -613,6 +641,9 @@ func applyEnv(cfg *Config) {
 	if v := os.Getenv("SHOPANDA_CACHE_DRIVER"); v != "" {
 		cfg.Cache.Driver = v
 	}
+	if v := os.Getenv("SHOPANDA_QUEUE_DRIVER"); v != "" {
+		cfg.Queue.Driver = v
+	}
 	if v := os.Getenv("SHOPANDA_FRONTEND_ENABLED"); v != "" {
 		cfg.Frontend.Enabled = v == "true" || v == "1"
 	}
@@ -713,6 +744,7 @@ func flatten(cfg *Config) map[string]string {
 	m["search.meilisearch.host"] = cfg.Search.Meilisearch.Host
 	m["search.meilisearch.index"] = cfg.Search.Meilisearch.Index
 	m["cache.driver"] = cfg.Cache.Driver
+	m["queue.driver"] = cfg.Queue.Driver
 	m["frontend.enabled"] = strconv.FormatBool(cfg.Frontend.Enabled)
 	m["frontend.mode"] = cfg.Frontend.Mode
 	m["frontend.theme_path"] = cfg.Frontend.ThemePath
@@ -767,6 +799,7 @@ func (c *Config) String() string {
 		fmt.Sprintf("media.storage=%s media.local.base_path=%s media.local.base_url=%s media.s3.bucket=%s media.s3.region=%s", c.Media.Storage, c.Media.Local.BasePath, c.Media.Local.BaseURL, c.Media.S3.Bucket, c.Media.S3.Region),
 		fmt.Sprintf("search.engine=%s", c.Search.Engine),
 		fmt.Sprintf("cache.driver=%s", c.Cache.Driver),
+		fmt.Sprintf("queue.driver=%s", c.Queue.Driver),
 		fmt.Sprintf("frontend.enabled=%t frontend.mode=%s frontend.theme_path=%s", c.Frontend.Enabled, c.Frontend.Mode, c.Frontend.ThemePath),
 	}, " ")
 }

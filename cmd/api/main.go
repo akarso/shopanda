@@ -53,11 +53,9 @@ import (
 	"github.com/akarso/shopanda/internal/infrastructure/flatrate"
 	"github.com/akarso/shopanda/internal/infrastructure/imaging"
 	"github.com/akarso/shopanda/internal/infrastructure/invoicepdf"
-	"github.com/akarso/shopanda/internal/infrastructure/localfs"
 	"github.com/akarso/shopanda/internal/infrastructure/manualpay"
 	"github.com/akarso/shopanda/internal/infrastructure/meili"
 	"github.com/akarso/shopanda/internal/infrastructure/postgres"
-	"github.com/akarso/shopanda/internal/infrastructure/s3store"
 	smtpmail "github.com/akarso/shopanda/internal/infrastructure/smtp"
 	"github.com/akarso/shopanda/internal/infrastructure/stripepay"
 	"github.com/akarso/shopanda/internal/infrastructure/webhook"
@@ -71,6 +69,7 @@ import (
 	"github.com/akarso/shopanda/internal/platform/plugin"
 	"github.com/akarso/shopanda/internal/platform/runtime"
 	"github.com/akarso/shopanda/internal/seed"
+	"github.com/akarso/shopanda/plugins/core"
 
 	shophttp "github.com/akarso/shopanda/internal/interfaces/http"
 
@@ -257,31 +256,34 @@ func runServe(cfg *config.Config, log logger.Logger, embedScheduler bool) error 
 		return err
 	}
 
+	// Event bus (created early for plugin init and later handlers).
+	bus := event.NewBus(log)
+
+	// Core plugin registry — infrastructure providers register during Init.
+	registry := plugin.NewRegistry(log)
+	core.Register(registry, cfg)
+	pluginApp := &plugin.App{
+		Logger:    log,
+		Bus:       bus,
+		Config:    cfg,
+		Bootstrap: &plugin.Bootstrap{DB: conn},
+	}
+	summary := registry.InitAll(pluginApp)
+	plugin.LogStartup(log, registry, cfg)
+	log.Info("plugin.init.summary", map[string]interface{}{
+		"registered":  summary.Registered,
+		"initialized": summary.Initialized,
+		"failed":      summary.Failed,
+	})
+
 	// Search engine.
-	var searchEngine search.SearchEngine
-	switch cfg.Search.Engine {
-	case "meilisearch":
-		me, meErr := meili.New(meili.Config{
-			Host:   cfg.Search.Meilisearch.Host,
-			APIKey: cfg.Search.Meilisearch.APIKey,
-			Index:  cfg.Search.Meilisearch.Index,
-		})
-		if meErr != nil {
-			return fmt.Errorf("search: init meilisearch: %w", meErr)
-		}
-		searchEngine = me
-	case "postgres", "":
-		pgSearch, pgSearchErr := postgres.NewSearchEngine(conn)
-		if pgSearchErr != nil {
-			return pgSearchErr
-		}
-		searchEngine = pgSearch
-	default:
-		return fmt.Errorf("unsupported search.engine: %q", cfg.Search.Engine)
+	searchEngine, err := resolveSearchEngine(pluginApp, conn, cfg)
+	if err != nil {
+		return err
 	}
 
 	// Job queue, worker, mailer, cache — shared setup.
-	jobWorker, jobQueue, appCache, err := setupWorker(conn, cfg, log)
+	jobWorker, jobQueue, appCache, err := setupWorker(conn, cfg, log, pluginApp)
 	if err != nil {
 		return err
 	}
@@ -303,26 +305,9 @@ func runServe(cfg *config.Config, log logger.Logger, embedScheduler bool) error 
 	)
 
 	// Media storage.
-	var mediaStorage media.Storage
-	switch cfg.Media.Storage {
-	case "local":
-		mediaStorage = localfs.New(cfg.Media.Local.BasePath, cfg.Media.Local.BaseURL)
-	case "s3":
-		s3s, s3Err := s3store.New(s3store.Config{
-			Endpoint:  cfg.Media.S3.Endpoint,
-			Bucket:    cfg.Media.S3.Bucket,
-			Region:    cfg.Media.S3.Region,
-			AccessKey: cfg.Media.S3.AccessKey,
-			SecretKey: cfg.Media.S3.SecretKey,
-			BaseURL:   cfg.Media.S3.BaseURL,
-			PublicACL: cfg.Media.S3.PublicACL,
-		})
-		if s3Err != nil {
-			return fmt.Errorf("media: init s3 storage: %w", s3Err)
-		}
-		mediaStorage = s3s
-	default:
-		return fmt.Errorf("unsupported media.storage: %s", cfg.Media.Storage)
+	mediaStorage, err := resolveMediaStorage(pluginApp, cfg)
+	if err != nil {
+		return err
 	}
 
 	// Asset repository.
@@ -404,9 +389,6 @@ func runServe(cfg *config.Config, log logger.Logger, embedScheduler bool) error 
 			log.Info("payment.provider.stripe", nil)
 		}
 	}
-
-	// Event bus.
-	bus := event.NewBus(log)
 
 	// Dev handler: log password reset tokens alongside email delivery.
 	if os.Getenv("SHOPANDA_DEV_MODE") != "" {
@@ -491,22 +473,6 @@ func runServe(cfg *config.Config, log logger.Logger, embedScheduler bool) error 
 			CreatedAt:   p.CreatedAt,
 			Attributes:  p.Attributes,
 		})
-	})
-
-	// Plugin registry.
-	registry := plugin.NewRegistry(log)
-	// Register plugins here:
-	// registry.Register(myplugin.New())
-	pluginApp := &plugin.App{
-		Logger: log,
-		Bus:    bus,
-		Config: cfg,
-	}
-	summary := registry.InitAll(pluginApp)
-	log.Info("plugin.init.summary", map[string]interface{}{
-		"registered":  summary.Registered,
-		"initialized": summary.Initialized,
-		"failed":      summary.Failed,
 	})
 
 	// Base URL for SEO (sitemap, canonical, robots).
@@ -2027,10 +1993,10 @@ func (e storefrontOrderClaimEmailer) SendClaimEmail(contactEmail, claimToken str
 // setupWorker creates a job queue, worker, mail handler, and cache cleanup
 // handler. It returns the configured worker, the job queue (needed by
 // notification services), and the cache instance.
-func setupWorker(conn *sql.DB, cfg *config.Config, log logger.Logger) (*jobs.Worker, jobs.Queue, cache.Cache, error) {
-	jobQueue, err := postgres.NewJobQueue(conn)
+func setupWorker(conn *sql.DB, cfg *config.Config, log logger.Logger, app *plugin.App) (*jobs.Worker, jobs.Queue, cache.Cache, error) {
+	jobQueue, err := resolveJobQueue(app, conn, cfg)
 	if err != nil {
-		return nil, nil, nil, fmt.Errorf("job queue: %w", err)
+		return nil, nil, nil, err
 	}
 	jobWorker := jobs.NewWorker(jobQueue, log, time.Second)
 
@@ -2043,16 +2009,9 @@ func setupWorker(conn *sql.DB, cfg *config.Config, log logger.Logger) (*jobs.Wor
 	})
 	jobWorker.Register(notification.NewEmailSendHandler(mailer))
 
-	var appCache cache.Cache
-	switch cfg.Cache.Driver {
-	case "postgres":
-		cs, csErr := postgres.NewCacheStore(conn)
-		if csErr != nil {
-			return nil, nil, nil, fmt.Errorf("cache store: %w", csErr)
-		}
-		appCache = cs
-	default:
-		return nil, nil, nil, fmt.Errorf("unsupported cache.driver: %s", cfg.Cache.Driver)
+	appCache, err := resolveCache(app, conn, cfg)
+	if err != nil {
+		return nil, nil, nil, err
 	}
 	ed, ok := appCache.(cacheApp.ExpiredDeleter)
 	if !ok {
@@ -2071,7 +2030,16 @@ func runWorker(cfg *config.Config, log logger.Logger) error {
 	}
 	defer conn.Close()
 
-	jobWorker, _, _, err := setupWorker(conn, cfg, log)
+	registry := plugin.NewRegistry(log)
+	core.Register(registry, cfg)
+	pluginApp := &plugin.App{
+		Logger:    log,
+		Config:    cfg,
+		Bootstrap: &plugin.Bootstrap{DB: conn},
+	}
+	registry.InitAll(pluginApp)
+
+	jobWorker, _, _, err := setupWorker(conn, cfg, log, pluginApp)
 	if err != nil {
 		return err
 	}
