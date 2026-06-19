@@ -136,10 +136,14 @@ func e2eLogger() logger.Logger {
 	return logger.NewWithWriter(io.Discard, "error")
 }
 
-// ── E2E smoke test: cart → add item → checkout → order ──────────────────
+type e2eCheckoutEnv struct {
+	mux    *http.ServeMux
+	orders *e2eOrderRepo
+}
 
-func TestE2E_CartToCheckout(t *testing.T) {
-	// Wire all shared repos.
+func setupE2ECheckout(t *testing.T, seed func(variants *e2eVariantRepo, prices *e2ePriceRepo)) e2eCheckoutEnv {
+	t.Helper()
+
 	carts := &e2eCartRepo{carts: make(map[string]*domainCart.Cart)}
 	prices := &e2ePriceRepo{prices: make(map[string]*pricing.Price)}
 	variants := &e2eVariantRepo{variants: make(map[string]*catalog.Variant)}
@@ -148,15 +152,10 @@ func TestE2E_CartToCheckout(t *testing.T) {
 	log := e2eLogger()
 	bus := event.NewBus(log)
 
-	// Seed variant + price.
-	v, _ := catalog.NewVariant("var-e2e-1", "prod-e2e-1", "SKU-E2E")
-	v.Name = "E2E Widget"
-	variants.variants["var-e2e-1"] = &v
+	if seed != nil {
+		seed(variants, prices)
+	}
 
-	p, _ := pricing.NewPrice("price-e2e-1", "var-e2e-1", "", shared.MustNewMoney(2000, "EUR"))
-	prices.prices["var-e2e-1:EUR:"] = &p
-
-	// Build services.
 	pipeline := pricing.NewPipeline(
 		appPricing.NewBasePriceStep(prices),
 		pricing.NewFinalizeStep(),
@@ -182,15 +181,11 @@ func TestE2E_CartToCheckout(t *testing.T) {
 	mux.Handle("POST /api/v1/carts/{cartId}/items", cartHandler.AddItem())
 	mux.Handle("POST /api/v1/checkout", checkoutHandler.StartCheckout())
 
-	// Step 1: Create cart.
-	rec := httptest.NewRecorder()
-	req := httptest.NewRequest("POST", "/api/v1/carts", strings.NewReader(`{"currency":"EUR"}`))
-	req = testhelper.CustomerRequest(req, "cust-e2e")
-	mux.ServeHTTP(rec, req)
+	return e2eCheckoutEnv{mux: mux, orders: orders}
+}
 
-	if rec.Code != http.StatusCreated {
-		t.Fatalf("create cart: status = %d, body = %s", rec.Code, rec.Body.String())
-	}
+func e2eParseCreateCartID(t *testing.T, rec *httptest.ResponseRecorder) string {
+	t.Helper()
 
 	var createResp struct {
 		Data struct {
@@ -202,17 +197,41 @@ func TestE2E_CartToCheckout(t *testing.T) {
 	if err := json.Unmarshal(rec.Body.Bytes(), &createResp); err != nil {
 		t.Fatalf("parse create response: %v", err)
 	}
-	cartID := createResp.Data.Cart.ID
-	if cartID == "" {
+	if createResp.Data.Cart.ID == "" {
 		t.Fatal("create cart returned empty id")
 	}
+	return createResp.Data.Cart.ID
+}
+
+// ── E2E smoke test: cart → add item → checkout → order ──────────────────
+
+func TestE2E_CartToCheckout(t *testing.T) {
+	env := setupE2ECheckout(t, func(variants *e2eVariantRepo, prices *e2ePriceRepo) {
+		v, _ := catalog.NewVariant("var-e2e-1", "prod-e2e-1", "SKU-E2E")
+		v.Name = "E2E Widget"
+		variants.variants["var-e2e-1"] = &v
+
+		p, _ := pricing.NewPrice("price-e2e-1", "var-e2e-1", "", shared.MustNewMoney(2000, "EUR"))
+		prices.prices["var-e2e-1:EUR:"] = &p
+	})
+
+	// Step 1: Create cart.
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("POST", "/api/v1/carts", strings.NewReader(`{"currency":"EUR"}`))
+	req = testhelper.CustomerRequest(req, "cust-e2e")
+	env.mux.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("create cart: status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+	cartID := e2eParseCreateCartID(t, rec)
 
 	// Step 2: Add item.
 	rec = httptest.NewRecorder()
 	addBody := `{"variant_id":"var-e2e-1","quantity":2}`
 	req = httptest.NewRequest("POST", "/api/v1/carts/"+cartID+"/items", strings.NewReader(addBody))
 	req = testhelper.CustomerRequest(req, "cust-e2e")
-	mux.ServeHTTP(rec, req)
+	env.mux.ServeHTTP(rec, req)
 
 	if rec.Code != http.StatusOK {
 		t.Fatalf("add item: status = %d, body = %s", rec.Code, rec.Body.String())
@@ -223,91 +242,50 @@ func TestE2E_CartToCheckout(t *testing.T) {
 	checkoutBody := `{"cart_id":"` + cartID + `","address":{"first_name":"Ada","last_name":"Lovelace","street":"1 Logic Lane","city":"Berlin","postcode":"10115","country":"DE"}}`
 	req = httptest.NewRequest("POST", "/api/v1/checkout", strings.NewReader(checkoutBody))
 	req = testhelper.CustomerRequest(req, "cust-e2e")
-	mux.ServeHTTP(rec, req)
+	env.mux.ServeHTTP(rec, req)
 
 	if rec.Code != http.StatusCreated {
 		t.Fatalf("checkout: status = %d, body = %s", rec.Code, rec.Body.String())
 	}
 
 	// Verify order was created.
-	if orders.saved == nil {
+	if env.orders.saved == nil {
 		t.Fatal("checkout did not create an order")
 	}
-	if orders.saved.CustomerID != "cust-e2e" {
-		t.Fatalf("order customer = %q, want cust-e2e", orders.saved.CustomerID)
+	if env.orders.saved.CustomerID != "cust-e2e" {
+		t.Fatalf("order customer = %q, want cust-e2e", env.orders.saved.CustomerID)
 	}
-	if len(orders.saved.Items()) != 1 {
-		t.Fatalf("order items = %d, want 1", len(orders.saved.Items()))
+	if len(env.orders.saved.Items()) != 1 {
+		t.Fatalf("order items = %d, want 1", len(env.orders.saved.Items()))
 	}
-	if orders.saved.Items()[0].Quantity != 2 {
-		t.Fatalf("order item quantity = %d, want 2", orders.saved.Items()[0].Quantity)
+	if env.orders.saved.Items()[0].Quantity != 2 {
+		t.Fatalf("order item quantity = %d, want 2", env.orders.saved.Items()[0].Quantity)
 	}
 }
 
 func TestE2E_GuestCartToCheckout(t *testing.T) {
-	carts := &e2eCartRepo{carts: make(map[string]*domainCart.Cart)}
-	prices := &e2ePriceRepo{prices: make(map[string]*pricing.Price)}
-	variants := &e2eVariantRepo{variants: make(map[string]*catalog.Variant)}
-	reservations := &e2eReservationRepo{}
-	orders := &e2eOrderRepo{}
-	log := e2eLogger()
-	bus := event.NewBus(log)
+	env := setupE2ECheckout(t, func(variants *e2eVariantRepo, prices *e2ePriceRepo) {
+		v, _ := catalog.NewVariant("var-guest-1", "prod-guest-1", "SKU-GUEST")
+		v.Name = "Guest Widget"
+		variants.variants["var-guest-1"] = &v
 
-	v, _ := catalog.NewVariant("var-guest-1", "prod-guest-1", "SKU-GUEST")
-	v.Name = "Guest Widget"
-	variants.variants["var-guest-1"] = &v
-
-	p, _ := pricing.NewPrice("price-guest-1", "var-guest-1", "", shared.MustNewMoney(1200, "EUR"))
-	prices.prices["var-guest-1:EUR:"] = &p
-
-	pipeline := pricing.NewPipeline(
-		appPricing.NewBasePriceStep(prices),
-		pricing.NewFinalizeStep(),
-	)
-
-	cartSvc := cartApp.NewService(carts, prices, nil, nil, pipeline, log, bus)
-	cartHandler := shophttp.NewCartHandler(cartSvc)
-
-	validateStep := checkoutApp.NewValidateCartStep(variants)
-	pricingStep := checkoutApp.NewRecalculatePricingStep(pipeline)
-	reserveStep := checkoutApp.NewReserveInventoryStep(reservations)
-	createOrderStep := checkoutApp.NewCreateOrderStep(orders, variants)
-	workflow := checkoutApp.NewWorkflow([]checkoutApp.Step{
-		validateStep, pricingStep, reserveStep, createOrderStep,
-	}, bus, log)
-
-	checkoutSvc := checkoutApp.NewService(carts, workflow, log)
-	checkoutHandler := shophttp.NewCheckoutHandler(checkoutSvc)
-
-	mux := http.NewServeMux()
-	mux.Handle("POST /api/v1/carts", cartHandler.Create())
-	mux.Handle("POST /api/v1/carts/{cartId}/items", cartHandler.AddItem())
-	mux.Handle("POST /api/v1/checkout", checkoutHandler.StartCheckout())
+		p, _ := pricing.NewPrice("price-guest-1", "var-guest-1", "", shared.MustNewMoney(1200, "EUR"))
+		prices.prices["var-guest-1:EUR:"] = &p
+	})
 
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest("POST", "/api/v1/carts", strings.NewReader(`{"currency":"EUR"}`))
 	req = testhelper.GuestRequest(req)
-	mux.ServeHTTP(rec, req)
+	env.mux.ServeHTTP(rec, req)
 	if rec.Code != http.StatusCreated {
 		t.Fatalf("create guest cart: status = %d, body = %s", rec.Code, rec.Body.String())
 	}
-
-	var createResp struct {
-		Data struct {
-			Cart struct {
-				ID string `json:"id"`
-			} `json:"cart"`
-		} `json:"data"`
-	}
-	if err := json.Unmarshal(rec.Body.Bytes(), &createResp); err != nil {
-		t.Fatalf("parse create response: %v", err)
-	}
-	cartID := createResp.Data.Cart.ID
+	cartID := e2eParseCreateCartID(t, rec)
 
 	rec = httptest.NewRecorder()
 	req = httptest.NewRequest("POST", "/api/v1/carts/"+cartID+"/items", strings.NewReader(`{"variant_id":"var-guest-1","quantity":1}`))
 	req = testhelper.GuestRequest(req)
-	mux.ServeHTTP(rec, req)
+	env.mux.ServeHTTP(rec, req)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("add item: status = %d, body = %s", rec.Code, rec.Body.String())
 	}
@@ -316,18 +294,18 @@ func TestE2E_GuestCartToCheckout(t *testing.T) {
 	checkoutBody := `{"cart_id":"` + cartID + `","contact_email":"guest@example.com","address":{"first_name":"Guest","last_name":"Shopper","street":"1 Lane","city":"Berlin","postcode":"10115","country":"DE"}}`
 	req = httptest.NewRequest("POST", "/api/v1/checkout", strings.NewReader(checkoutBody))
 	req = testhelper.GuestRequest(req)
-	mux.ServeHTTP(rec, req)
+	env.mux.ServeHTTP(rec, req)
 	if rec.Code != http.StatusCreated {
 		t.Fatalf("checkout: status = %d, body = %s", rec.Code, rec.Body.String())
 	}
 
-	if orders.saved == nil {
+	if env.orders.saved == nil {
 		t.Fatal("checkout did not create an order")
 	}
-	if orders.saved.CustomerID != "" {
-		t.Fatalf("order customer = %q, want empty guest id", orders.saved.CustomerID)
+	if env.orders.saved.CustomerID != "" {
+		t.Fatalf("order customer = %q, want empty guest id", env.orders.saved.CustomerID)
 	}
-	if orders.saved.ContactEmail != "guest@example.com" {
-		t.Fatalf("order contact email = %q, want guest@example.com", orders.saved.ContactEmail)
+	if env.orders.saved.ContactEmail != "guest@example.com" {
+		t.Fatalf("order contact email = %q, want guest@example.com", env.orders.saved.ContactEmail)
 	}
 }

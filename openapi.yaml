@@ -672,6 +672,8 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/CartEnvelope"
+        "403":
+          $ref: "#/components/responses/Forbidden"
         "422":
           $ref: "#/components/responses/Validation"
     delete:
@@ -690,8 +692,8 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/CartEnvelope"
-        "401":
-          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
 
   # ── Checkout ───────────────────────────────────────────
   /api/v1/checkout:
