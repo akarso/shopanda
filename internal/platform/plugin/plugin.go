@@ -23,13 +23,20 @@ type Plugin interface {
 
 // App provides the system facilities available to plugins during initialization.
 type App struct {
-	Logger logger.Logger
-	Bus    *event.Bus
-	Config *config.Config
+	Logger    logger.Logger
+	Bus       *event.Bus
+	Config    *config.Config
+	Bootstrap *Bootstrap
 
 	pricingSteps     []any
 	checkoutSteps    []any
 	compositionSteps map[string][]any
+
+	searchProvider  any
+	cache           any
+	queue           any
+	paymentProvider any
+	mediaStorage    any
 }
 
 // RegisterPricingStep registers a pricing pipeline step.

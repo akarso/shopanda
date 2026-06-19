@@ -465,21 +465,96 @@ func TestLoad_CacheDriverEnvOverlay(t *testing.T) {
 	withTestBaseURL(t)
 	path := writeYAML(t, "")
 
-	// Use a clearly fake value to exercise the env overlay without implying runtime support.
-	t.Setenv("SHOPANDA_CACHE_DRIVER", "test-driver")
+	t.Setenv("SHOPANDA_CACHE_DRIVER", "redis")
 
 	cfg, err := loadCfg(t, path)
 	if err != nil {
 		t.Fatalf("Load() error: %v", err)
 	}
 
-	if cfg.Cache.Driver != "test-driver" {
-		t.Errorf("Cache.Driver = %q, want %q", cfg.Cache.Driver, "test-driver")
+	if cfg.Cache.Driver != "redis" {
+		t.Errorf("Cache.Driver = %q, want %q", cfg.Cache.Driver, "redis")
 	}
 
-	// Verify flattened key.
-	if v := Get("cache.driver"); v != "test-driver" {
-		t.Errorf("Get(\"cache.driver\") = %q, want %q", v, "test-driver")
+	if v := Get("cache.driver"); v != "redis" {
+		t.Errorf("Get(\"cache.driver\") = %q, want %q", v, "redis")
+	}
+}
+
+func TestLoad_QueueDriverDefault(t *testing.T) {
+	withTestBaseURL(t)
+	path := writeYAML(t, "")
+
+	cfg, err := loadCfg(t, path)
+	if err != nil {
+		t.Fatalf("Load() error: %v", err)
+	}
+
+	if cfg.Queue.Driver != "postgres" {
+		t.Errorf("Queue.Driver = %q, want postgres", cfg.Queue.Driver)
+	}
+}
+
+func TestLoad_QueueDriverEnvOverlay(t *testing.T) {
+	withTestBaseURL(t)
+	path := writeYAML(t, "")
+
+	t.Setenv("SHOPANDA_QUEUE_DRIVER", "rabbitmq")
+
+	cfg, err := loadCfg(t, path)
+	if err != nil {
+		t.Fatalf("Load() error: %v", err)
+	}
+
+	if cfg.Queue.Driver != "rabbitmq" {
+		t.Errorf("Queue.Driver = %q, want rabbitmq", cfg.Queue.Driver)
+	}
+}
+
+func TestLoad_InvalidQueueDriver(t *testing.T) {
+	withTestBaseURL(t)
+	path := writeYAML(t, `
+queue:
+  driver: invalid
+`)
+
+	_, err := loadIsolated(t, path)
+	if err == nil {
+		t.Fatal("Load() expected error for invalid queue.driver")
+	}
+	if !strings.Contains(err.Error(), "queue.driver") {
+		t.Errorf("error = %q, want mention of queue.driver", err)
+	}
+}
+
+func TestLoad_InvalidCacheDriver(t *testing.T) {
+	withTestBaseURL(t)
+	path := writeYAML(t, `
+cache:
+  driver: memcached
+`)
+
+	_, err := loadIsolated(t, path)
+	if err == nil {
+		t.Fatal("Load() expected error for invalid cache.driver")
+	}
+	if !strings.Contains(err.Error(), "cache.driver") {
+		t.Errorf("error = %q, want mention of cache.driver", err)
+	}
+}
+
+func TestConfigString_ContainsQueueDriver(t *testing.T) {
+	withTestBaseURL(t)
+	path := writeYAML(t, "")
+
+	cfg, err := loadCfg(t, path)
+	if err != nil {
+		t.Fatalf("Load() error: %v", err)
+	}
+
+	s := cfg.String()
+	if !strings.Contains(s, "queue.driver=postgres") {
+		t.Errorf("String() = %q, should contain queue.driver=postgres", s)
 	}
 }
 

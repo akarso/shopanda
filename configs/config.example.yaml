@@ -129,8 +129,22 @@ search:
 
 # --- Cache --------------------------------------------------------------------
 cache:
-  # Driver: postgres (default, uses UNLOGGED table).
+  # Driver: postgres (default, uses UNLOGGED table), redis (PR-414).
   driver: "postgres"
+
+# --- Queue (background jobs) --------------------------------------------------
+queue:
+  # Driver: postgres (default), redis (PR-415), rabbitmq (PR-416).
+  driver: "postgres"
+
+# --- Core plugins -------------------------------------------------------------
+# Core infrastructure plugins are enabled by driver switches above.
+# Optional explicit toggles override inference (postgres_* only in PR-410).
+# plugins:
+#   core:
+#     postgres_search: true
+#     postgres_cache: true
+#     postgres_queue: true
 
 # --- Frontend (optional SSR storefront) ---------------------------------------
 frontend:
