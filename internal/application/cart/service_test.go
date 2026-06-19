@@ -296,7 +296,7 @@ func TestService_GetCart(t *testing.T) {
 	svc := cartApp.NewService(carts, prices, nil, nil, testPipeline(prices), testLogger(), testBus())
 
 	c, _ := svc.CreateCart(context.Background(), "cust-1", "EUR")
-	got, err := svc.GetCart(context.Background(), c.ID)
+	got, err := svc.GetCart(context.Background(), c.ID, "cust-1")
 	if err != nil {
 		t.Fatalf("GetCart: %v", err)
 	}
@@ -305,12 +305,27 @@ func TestService_GetCart(t *testing.T) {
 	}
 }
 
+func TestService_GetCart_ForbiddenForOtherCustomer(t *testing.T) {
+	carts := newStubCartRepo()
+	prices := newStubPriceRepo()
+	svc := cartApp.NewService(carts, prices, nil, nil, testPipeline(prices), testLogger(), testBus())
+
+	c, _ := svc.CreateCart(context.Background(), "cust-1", "EUR")
+	_, err := svc.GetCart(context.Background(), c.ID, "cust-2")
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	if !apperror.Is(err, apperror.CodeForbidden) {
+		t.Errorf("expected forbidden, got: %v", err)
+	}
+}
+
 func TestService_GetCart_NotFound(t *testing.T) {
 	carts := newStubCartRepo()
 	prices := newStubPriceRepo()
 	svc := cartApp.NewService(carts, prices, nil, nil, testPipeline(prices), testLogger(), testBus())
 
-	_, err := svc.GetCart(context.Background(), "no-such-id")
+	_, err := svc.GetCart(context.Background(), "no-such-id", "cust-1")
 	if err == nil {
 		t.Fatal("expected error")
 	}
@@ -594,7 +609,7 @@ func TestService_ClaimGuestCart_MergesIntoExistingCustomerCart(t *testing.T) {
 	if quantities["var-2"] != 1 {
 		t.Fatalf("var-2 quantity = %d, want 1", quantities["var-2"])
 	}
-	deletedGuest, err := svc.GetCart(ctx, guestCart.ID)
+	deletedGuest, err := svc.GetCart(ctx, guestCart.ID, "")
 	if !apperror.Is(err, apperror.CodeNotFound) {
 		t.Fatalf("GetCart(guest) error = %v, want not_found", err)
 	}
@@ -709,7 +724,7 @@ func TestService_ClaimGuestCart_CurrencyMismatch_EmptyCustomerCart(t *testing.T)
 	if claimed == nil || claimed.ID != guestCart.ID {
 		t.Fatalf("claimed cart = %#v, want guest cart %q", claimed, guestCart.ID)
 	}
-	if _, err := svc.GetCart(ctx, customerCart.ID); !apperror.Is(err, apperror.CodeNotFound) {
+	if _, err := svc.GetCart(ctx, customerCart.ID, "cust-1"); !apperror.Is(err, apperror.CodeNotFound) {
 		t.Fatalf("GetCart(old customer cart) error = %v, want not_found", err)
 	}
 }

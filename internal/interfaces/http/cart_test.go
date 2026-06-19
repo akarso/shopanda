@@ -106,13 +106,12 @@ func cartTestPipeline(prices pricing.PriceRepository) pricing.Pipeline {
 }
 
 func newCartRouter(h *shophttp.CartHandler) *http.ServeMux {
-	requireAuth := shophttp.RequireAuth()
 	mux := http.NewServeMux()
-	mux.Handle("POST /api/v1/carts", requireAuth(h.Create()))
-	mux.Handle("GET /api/v1/carts/{cartId}", requireAuth(h.Get()))
-	mux.Handle("POST /api/v1/carts/{cartId}/items", requireAuth(h.AddItem()))
-	mux.Handle("PUT /api/v1/carts/{cartId}/items/{variantId}", requireAuth(h.UpdateItem()))
-	mux.Handle("DELETE /api/v1/carts/{cartId}/items/{variantId}", requireAuth(h.RemoveItem()))
+	mux.Handle("POST /api/v1/carts", h.Create())
+	mux.Handle("GET /api/v1/carts/{cartId}", h.Get())
+	mux.Handle("POST /api/v1/carts/{cartId}/items", h.AddItem())
+	mux.Handle("PUT /api/v1/carts/{cartId}/items/{variantId}", h.UpdateItem())
+	mux.Handle("DELETE /api/v1/carts/{cartId}/items/{variantId}", h.RemoveItem())
 	return mux
 }
 
@@ -205,6 +204,23 @@ func TestCartHandler_Get_OK(t *testing.T) {
 	cart := data["cart"].(map[string]interface{})
 	if cart["id"] != "cart-1" {
 		t.Errorf("id = %v, want cart-1", cart["id"])
+	}
+}
+
+func TestCartHandler_Get_GuestCannotReadCustomerCart(t *testing.T) {
+	carts, _, _, mux := cartSetup()
+
+	c, _ := domainCart.NewCart("cart-1", "EUR")
+	c.SetCustomerID("cust-1")
+	carts.Save(context.Background(), &c)
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("GET", "/api/v1/carts/cart-1", nil)
+	req = testhelper.GuestRequest(req)
+	mux.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("status = %d, want %d; body: %s", rec.Code, http.StatusForbidden, rec.Body.String())
 	}
 }
 
@@ -423,16 +439,34 @@ func TestCartHandler_RemoveItem_ItemNotFound(t *testing.T) {
 	}
 }
 
-func TestCartHandler_Unauthenticated(t *testing.T) {
+func TestCartHandler_Create_Guest_OK(t *testing.T) {
 	_, _, _, mux := cartSetup()
 
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest("POST", "/api/v1/carts", strings.NewReader(`{"currency":"EUR"}`))
-	// No auth context — guest identity.
+	req = testhelper.GuestRequest(req)
 	mux.ServeHTTP(rec, req)
 
-	if rec.Code != http.StatusUnauthorized {
-		t.Fatalf("status = %d, want %d", rec.Code, http.StatusUnauthorized)
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("status = %d, want %d; body: %s", rec.Code, http.StatusCreated, rec.Body.String())
+	}
+	body := parseCartBody(t, rec)
+	data := body["data"].(map[string]interface{})
+	c := data["cart"].(map[string]interface{})
+	if c["customer_id"] != nil && c["customer_id"] != "" {
+		t.Errorf("customer_id = %v, want empty for guest cart", c["customer_id"])
+	}
+}
+
+func TestCartHandler_Create_NoAuth_GuestSucceeds(t *testing.T) {
+	_, _, _, mux := cartSetup()
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("POST", "/api/v1/carts", strings.NewReader(`{"currency":"EUR"}`))
+	mux.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("status = %d, want %d; body: %s", rec.Code, http.StatusCreated, rec.Body.String())
 	}
 }
 

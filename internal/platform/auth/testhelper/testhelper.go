@@ -30,3 +30,8 @@ func AdminRequest(r *http.Request, userID string) *http.Request {
 func CustomerRequest(r *http.Request, userID string) *http.Request {
 	return AuthenticatedRequest(r, userID, identity.RoleCustomer)
 }
+
+// GuestRequest injects a guest identity into the request context.
+func GuestRequest(r *http.Request) *http.Request {
+	return r.WithContext(auth.WithIdentity(r.Context(), identity.Guest()))
+}

@@ -22,7 +22,7 @@ Full specs for PR-400–434. Format matches Phase 3: `Summary`, `Why`, `Scope`, 
 | PR-422 | C | planned (stretch) | [Plugin config in admin](PR-422.md) |
 | PR-430 | D | done | [`app dev` single-process](PR-430.md) |
 | PR-431 | D | done | [Prod compose worker+scheduler](PR-431.md) |
-| PR-432 | D | planned | [REST guest checkout](PR-432.md) |
+| PR-432 | D | done | [REST guest checkout](PR-432.md) |
 | PR-433 | D | planned | [Auth email normalization](PR-433.md) |
 | PR-434 | D | planned (stretch) | [Persistent audit log](PR-434.md) |
 
