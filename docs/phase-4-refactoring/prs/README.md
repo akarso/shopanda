@@ -11,7 +11,7 @@ Full specs for PR-400–434. Format matches Phase 3: `Summary`, `Why`, `Scope`, 
 | PR-404 | A | done | [Scoped prices on product edit](PR-404.md) |
 | PR-405 | A | done | [Phase 3 doc closure](PR-405.md) |
 | PR-410 | B | done | [Core plugin enablement](PR-410.md) |
-| PR-411 | B | planned | [Meilisearch core plugin](PR-411.md) |
+| PR-411 | B | done | [Meilisearch core plugin](PR-411.md) |
 | PR-412 | B | planned | [Stripe/manual payment plugins](PR-412.md) |
 | PR-413 | B | planned | [Local/S3 storage plugins](PR-413.md) |
 | PR-414 | B | planned | [Redis cache driver](PR-414.md) |
