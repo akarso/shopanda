@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -43,8 +44,13 @@ func (r *mockCustomerRepo) FindByID(_ context.Context, id string) (*customer.Cus
 }
 
 func (r *mockCustomerRepo) FindByEmail(_ context.Context, email string) (*customer.Customer, error) {
-	c := r.byEmail[email]
-	return c, nil
+	email = strings.ToLower(strings.TrimSpace(email))
+	for e, c := range r.byEmail {
+		if strings.ToLower(strings.TrimSpace(e)) == email {
+			return c, nil
+		}
+	}
+	return nil, nil
 }
 
 func (r *mockCustomerRepo) Create(_ context.Context, c *customer.Customer) error {
@@ -243,6 +249,85 @@ func TestRegister_DuplicateEmail(t *testing.T) {
 	var appErr *apperror.Error
 	if !errors.As(err, &appErr) || appErr.Code != apperror.CodeConflict {
 		t.Errorf("expected conflict error, got %v", err)
+	}
+}
+
+func TestRegister_MixedCaseEmailStoredNormalized(t *testing.T) {
+	repo := newMockRepo()
+	svc := newTestService(repo)
+
+	out, err := svc.Register(context.Background(), auth.RegisterInput{
+		Email: "Foo@Bar.com", Password: "password123",
+	})
+	if err != nil {
+		t.Fatalf("Register: %v", err)
+	}
+	if repo.customers[out.CustomerID].Email != "foo@bar.com" {
+		t.Fatalf("stored email = %q, want foo@bar.com", repo.customers[out.CustomerID].Email)
+	}
+}
+
+func TestRegister_DuplicateEmailCaseInsensitive(t *testing.T) {
+	repo := newMockRepo()
+	svc := newTestService(repo)
+
+	_, err := svc.Register(context.Background(), auth.RegisterInput{
+		Email: "Foo@Bar.com", Password: "password123",
+	})
+	if err != nil {
+		t.Fatalf("Register: %v", err)
+	}
+	_, err = svc.Register(context.Background(), auth.RegisterInput{
+		Email: "foo@bar.com", Password: "password123",
+	})
+	if err == nil {
+		t.Fatal("expected conflict for case-variant duplicate")
+	}
+	var appErr *apperror.Error
+	if !errors.As(err, &appErr) || appErr.Code != apperror.CodeConflict {
+		t.Fatalf("expected conflict error, got %v", err)
+	}
+}
+
+func TestLogin_DifferentCaseSucceeds(t *testing.T) {
+	repo := newMockRepo()
+	svc := newTestService(repo)
+
+	_, err := svc.Register(context.Background(), auth.RegisterInput{
+		Email: "Foo@Bar.com", Password: "password123",
+	})
+	if err != nil {
+		t.Fatalf("Register: %v", err)
+	}
+
+	_, err = svc.Login(context.Background(), auth.LoginInput{
+		Email: "foo@bar.com", Password: "password123",
+	})
+	if err != nil {
+		t.Fatalf("Login with different case: %v", err)
+	}
+}
+
+func TestRequestPasswordReset_DifferentCaseSucceeds(t *testing.T) {
+	repo := newMockRepo()
+	resetRepo := newMockResetRepo()
+	issuer, _ := jwt.NewIssuer("test-secret", time.Hour)
+	bus := event.NewBus(testLogger{})
+	svc := auth.NewService(repo, resetRepo, issuer, bus, testLogger{}, time.Hour)
+
+	_, err := svc.Register(context.Background(), auth.RegisterInput{
+		Email: "Reset@Example.com", Password: "password123",
+	})
+	if err != nil {
+		t.Fatalf("Register: %v", err)
+	}
+
+	err = svc.RequestPasswordReset(context.Background(), "reset@example.com")
+	if err != nil {
+		t.Fatalf("RequestPasswordReset: %v", err)
+	}
+	if len(resetRepo.tokens) != 1 {
+		t.Fatalf("reset tokens = %d, want 1", len(resetRepo.tokens))
 	}
 }
 
@@ -476,8 +561,8 @@ func TestVerifyPassword_DisabledAccount(t *testing.T) {
 	if !errors.As(err, &appErr) || appErr.Code != apperror.CodeUnauthorized {
 		t.Fatalf("expected unauthorized error, got %v", err)
 	}
-	if appErr.Message != "invalid email or password" {
-		t.Fatalf("message = %q, want %q", appErr.Message, "invalid email or password")
+	if appErr.Message != "account is not active" {
+		t.Fatalf("message = %q, want %q", appErr.Message, "account is not active")
 	}
 }
 

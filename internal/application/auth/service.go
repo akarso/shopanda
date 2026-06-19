@@ -431,8 +431,9 @@ type RegisterOutput struct {
 
 // Register creates a new customer account and returns a JWT.
 func (s *Service) Register(ctx context.Context, in RegisterInput) (RegisterOutput, error) {
-	if in.Email == "" {
-		return RegisterOutput{}, apperror.Validation("email is required")
+	email, err := normalizeEmail(in.Email)
+	if err != nil {
+		return RegisterOutput{}, err
 	}
 	if in.Password == "" {
 		return RegisterOutput{}, apperror.Validation("password is required")
@@ -442,7 +443,7 @@ func (s *Service) Register(ctx context.Context, in RegisterInput) (RegisterOutpu
 	}
 
 	// Check uniqueness.
-	existing, err := s.customers.FindByEmail(ctx, in.Email)
+	existing, err := s.customers.FindByEmail(ctx, email)
 	if err != nil {
 		return RegisterOutput{}, fmt.Errorf("auth service: register: %w", err)
 	}
@@ -455,7 +456,7 @@ func (s *Service) Register(ctx context.Context, in RegisterInput) (RegisterOutpu
 		return RegisterOutput{}, fmt.Errorf("auth service: hash password: %w", err)
 	}
 
-	c, err := customer.NewCustomer(id.New(), in.Email)
+	c, err := customer.NewCustomer(id.New(), email)
 	if err != nil {
 		return RegisterOutput{}, fmt.Errorf("auth service: new customer: %w", err)
 	}
@@ -509,14 +510,15 @@ type LoginOutput struct {
 
 // Login authenticates a customer and returns a JWT.
 func (s *Service) Login(ctx context.Context, in LoginInput) (LoginOutput, error) {
-	if in.Email == "" {
-		return LoginOutput{}, apperror.Validation("email is required")
+	email, err := normalizeEmail(in.Email)
+	if err != nil {
+		return LoginOutput{}, err
 	}
 	if in.Password == "" {
 		return LoginOutput{}, apperror.Validation("password is required")
 	}
 
-	c, err := s.customers.FindByEmail(ctx, in.Email)
+	c, err := s.customers.FindByEmail(ctx, email)
 	if err != nil {
 		return LoginOutput{}, fmt.Errorf("auth service: login: %w", err)
 	}
@@ -633,9 +635,10 @@ func (s *Service) DeleteCustomer(ctx context.Context, customerID string) error {
 // RequestPasswordReset generates a reset token and emits an event
 // for downstream delivery (email plugin). Always returns success to
 // prevent email enumeration.
-func (s *Service) RequestPasswordReset(ctx context.Context, email string) error {
-	if email == "" {
-		return apperror.Validation("email is required")
+func (s *Service) RequestPasswordReset(ctx context.Context, emailRaw string) error {
+	email, err := normalizeEmail(emailRaw)
+	if err != nil {
+		return err
 	}
 
 	c, err := s.customers.FindByEmail(ctx, email)
