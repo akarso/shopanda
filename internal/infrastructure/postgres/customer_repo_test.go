@@ -143,6 +143,14 @@ func TestCustomerRepo_FindByEmail_CaseInsensitive(t *testing.T) {
 	if got.ID != c.ID {
 		t.Fatalf("ID = %q, want %q", got.ID, c.ID)
 	}
+
+	got, err = repo.FindByEmail(ctx, "  mixed@example.com  ")
+	if err != nil {
+		t.Fatalf("FindByEmail padded: %v", err)
+	}
+	if got == nil || got.ID != c.ID {
+		t.Fatalf("FindByEmail padded = %#v, want ID %q", got, c.ID)
+	}
 }
 
 func TestCustomerRepo_FindByEmail_NotFound(t *testing.T) {

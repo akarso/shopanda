@@ -267,6 +267,21 @@ func TestRegister_MixedCaseEmailStoredNormalized(t *testing.T) {
 	}
 }
 
+func TestRegister_PaddedEmailStoredNormalized(t *testing.T) {
+	repo := newMockRepo()
+	svc := newTestService(repo)
+
+	out, err := svc.Register(context.Background(), auth.RegisterInput{
+		Email: "  foo@bar.com  ", Password: "password123",
+	})
+	if err != nil {
+		t.Fatalf("Register: %v", err)
+	}
+	if repo.customers[out.CustomerID].Email != "foo@bar.com" {
+		t.Fatalf("stored email = %q, want foo@bar.com", repo.customers[out.CustomerID].Email)
+	}
+}
+
 func TestRegister_DuplicateEmailCaseInsensitive(t *testing.T) {
 	repo := newMockRepo()
 	svc := newTestService(repo)
@@ -308,6 +323,25 @@ func TestLogin_DifferentCaseSucceeds(t *testing.T) {
 	}
 }
 
+func TestLogin_PaddedEmailSucceeds(t *testing.T) {
+	repo := newMockRepo()
+	svc := newTestService(repo)
+
+	_, err := svc.Register(context.Background(), auth.RegisterInput{
+		Email: "foo@bar.com", Password: "password123",
+	})
+	if err != nil {
+		t.Fatalf("Register: %v", err)
+	}
+
+	_, err = svc.Login(context.Background(), auth.LoginInput{
+		Email: "  foo@bar.com  ", Password: "password123",
+	})
+	if err != nil {
+		t.Fatalf("Login with padded email: %v", err)
+	}
+}
+
 func TestRequestPasswordReset_DifferentCaseSucceeds(t *testing.T) {
 	repo := newMockRepo()
 	resetRepo := newMockResetRepo()
@@ -323,6 +357,29 @@ func TestRequestPasswordReset_DifferentCaseSucceeds(t *testing.T) {
 	}
 
 	err = svc.RequestPasswordReset(context.Background(), "reset@example.com")
+	if err != nil {
+		t.Fatalf("RequestPasswordReset: %v", err)
+	}
+	if len(resetRepo.tokens) != 1 {
+		t.Fatalf("reset tokens = %d, want 1", len(resetRepo.tokens))
+	}
+}
+
+func TestRequestPasswordReset_PaddedEmailSucceeds(t *testing.T) {
+	repo := newMockRepo()
+	resetRepo := newMockResetRepo()
+	issuer, _ := jwt.NewIssuer("test-secret", time.Hour)
+	bus := event.NewBus(testLogger{})
+	svc := auth.NewService(repo, resetRepo, issuer, bus, testLogger{}, time.Hour)
+
+	_, err := svc.Register(context.Background(), auth.RegisterInput{
+		Email: "reset@example.com", Password: "password123",
+	})
+	if err != nil {
+		t.Fatalf("Register: %v", err)
+	}
+
+	err = svc.RequestPasswordReset(context.Background(), "  reset@example.com  ")
 	if err != nil {
 		t.Fatalf("RequestPasswordReset: %v", err)
 	}
