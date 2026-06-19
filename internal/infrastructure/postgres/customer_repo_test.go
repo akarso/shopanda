@@ -117,6 +117,42 @@ func TestCustomerRepo_FindByEmail(t *testing.T) {
 	}
 }
 
+func TestCustomerRepo_FindByEmail_CaseInsensitive(t *testing.T) {
+	db := testDB(t)
+	ensureMigrations(t, db)
+	t.Cleanup(func() { db.Exec("DELETE FROM customers") })
+
+	repo, err := postgres.NewCustomerRepo(db)
+	if err != nil {
+		t.Fatalf("NewCustomerRepo: %v", err)
+	}
+	ctx := context.Background()
+
+	c := mustNewCustomer(t, "Mixed@Example.com")
+	if err := repo.Create(ctx, &c); err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+
+	got, err := repo.FindByEmail(ctx, "mixed@example.com")
+	if err != nil {
+		t.Fatalf("FindByEmail: %v", err)
+	}
+	if got == nil {
+		t.Fatal("FindByEmail returned nil")
+	}
+	if got.ID != c.ID {
+		t.Fatalf("ID = %q, want %q", got.ID, c.ID)
+	}
+
+	got, err = repo.FindByEmail(ctx, "  mixed@example.com  ")
+	if err != nil {
+		t.Fatalf("FindByEmail padded: %v", err)
+	}
+	if got == nil || got.ID != c.ID {
+		t.Fatalf("FindByEmail padded = %#v, want ID %q", got, c.ID)
+	}
+}
+
 func TestCustomerRepo_FindByEmail_NotFound(t *testing.T) {
 	db := testDB(t)
 	ensureMigrations(t, db)

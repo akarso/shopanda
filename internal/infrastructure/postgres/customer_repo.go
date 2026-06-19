@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/akarso/shopanda/internal/domain/customer"
@@ -51,11 +52,15 @@ func (r *CustomerRepo) FindByID(ctx context.Context, id string) (*customer.Custo
 	return c, nil
 }
 
-// FindByEmail returns a customer by email address.
+// FindByEmail returns a customer by email address (case-insensitive).
 // Returns (nil, nil) when not found.
 func (r *CustomerRepo) FindByEmail(ctx context.Context, email string) (*customer.Customer, error) {
+	email = strings.ToLower(strings.TrimSpace(email))
+	if email == "" {
+		return nil, nil
+	}
 	const q = `SELECT id, email, first_name, last_name, password_hash, token_generation, email_verified_at, role, status, pending_email_nonce, created_at, updated_at
-		FROM customers WHERE email = $1`
+		FROM customers WHERE LOWER(email) = $1`
 
 	row := r.queryRow(ctx, q, email)
 	c, err := scanCustomer(row)
