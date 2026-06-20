@@ -87,3 +87,52 @@ func TestRegister_ExplicitPostgresSearchOverridesMeilisearchEngine(t *testing.T)
 		t.Fatal("meilisearch plugin must not register when postgres search wins")
 	}
 }
+
+func TestRegister_AlwaysRegistersManualPaymentPlugin(t *testing.T) {
+	log := logger.NewWithWriter(io.Discard, "error")
+	reg := plugin.NewRegistry(log)
+
+	cfg := &config.Config{
+		Search: config.SearchConfig{Engine: "postgres"},
+	}
+	core.Register(reg, cfg)
+
+	var hasManual bool
+	for _, e := range reg.Entries() {
+		if e.Name == "core/manualpay" {
+			hasManual = true
+		}
+	}
+	if !hasManual {
+		t.Fatal("expected core/manualpay to always register")
+	}
+}
+
+func TestRegister_StripePaymentBeforeManualWhenEnabled(t *testing.T) {
+	log := logger.NewWithWriter(io.Discard, "error")
+	reg := plugin.NewRegistry(log)
+
+	cfg := &config.Config{
+		Payment: config.PaymentConfig{
+			Stripe: config.StripeConfig{Enabled: true},
+		},
+	}
+	core.Register(reg, cfg)
+
+	entries := reg.Entries()
+	var stripeIdx, manualIdx = -1, -1
+	for i, e := range entries {
+		switch e.Name {
+		case "core/stripe":
+			stripeIdx = i
+		case "core/manualpay":
+			manualIdx = i
+		}
+	}
+	if stripeIdx < 0 || manualIdx < 0 {
+		t.Fatalf("entries = %v, want stripe and manual payment plugins", entries)
+	}
+	if stripeIdx > manualIdx {
+		t.Fatal("stripe payment plugin must register before manualpay so Stripe can take the provider slot")
+	}
+}

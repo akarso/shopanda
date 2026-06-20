@@ -7,8 +7,10 @@ import (
 	"github.com/akarso/shopanda/internal/domain/cache"
 	"github.com/akarso/shopanda/internal/domain/jobs"
 	"github.com/akarso/shopanda/internal/domain/media"
+	"github.com/akarso/shopanda/internal/domain/payment"
 	"github.com/akarso/shopanda/internal/domain/search"
 	"github.com/akarso/shopanda/internal/infrastructure/localfs"
+	"github.com/akarso/shopanda/internal/infrastructure/manualpay"
 	"github.com/akarso/shopanda/internal/infrastructure/postgres"
 	"github.com/akarso/shopanda/internal/infrastructure/s3store"
 	"github.com/akarso/shopanda/internal/platform/config"
@@ -105,4 +107,15 @@ func resolveCache(app *plugin.App, conn *sql.DB, cfg *config.Config) (cache.Cach
 	default:
 		return nil, fmt.Errorf("unsupported cache.driver: %s", cfg.Cache.Driver)
 	}
+}
+
+func resolvePaymentProvider(app *plugin.App) (payment.Provider, error) {
+	if v, ok := app.PaymentProvider(); ok {
+		p, ok := v.(payment.Provider)
+		if !ok {
+			return nil, fmt.Errorf("plugin payment provider: invalid type %T", v)
+		}
+		return p, nil
+	}
+	return manualpay.NewProvider(), nil
 }
