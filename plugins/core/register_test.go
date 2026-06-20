@@ -55,3 +55,35 @@ func TestRegister_PostgresEngineRegistersPostgresSearchOnly(t *testing.T) {
 		}
 	}
 }
+
+func TestRegister_ExplicitPostgresSearchOverridesMeilisearchEngine(t *testing.T) {
+	log := logger.NewWithWriter(io.Discard, "error")
+	reg := plugin.NewRegistry(log)
+
+	enabled := true
+	cfg := &config.Config{
+		Search: config.SearchConfig{Engine: "meilisearch"},
+		Plugins: config.PluginsConfig{
+			Core: config.CorePluginsConfig{
+				PostgresSearch: &enabled,
+			},
+		},
+	}
+	core.Register(reg, cfg)
+
+	var hasMeili, hasPostgresSearch bool
+	for _, e := range reg.Entries() {
+		switch e.Name {
+		case "core/meilisearch-search":
+			hasMeili = true
+		case "core/postgres-search":
+			hasPostgresSearch = true
+		}
+	}
+	if !hasPostgresSearch {
+		t.Fatal("expected postgres search plugin when explicitly enabled")
+	}
+	if hasMeili {
+		t.Fatal("meilisearch plugin must not register when postgres search wins")
+	}
+}

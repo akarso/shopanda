@@ -11,8 +11,7 @@ import (
 func Register(registry *plugin.Registry, cfg *config.Config) {
 	if cfg.CorePostgresSearchEnabled() {
 		registry.Register(corepostgres.NewSearchPlugin())
-	}
-	if cfg.CoreMeilisearchSearchEnabled() {
+	} else if cfg.CoreMeilisearchSearchEnabled() {
 		registry.Register(coremeili.NewSearchPlugin())
 	}
 	if cfg.CorePostgresCacheEnabled() {
