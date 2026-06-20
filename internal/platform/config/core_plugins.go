@@ -10,6 +10,11 @@ func (c *Config) CorePostgresSearchEnabled() bool {
 	return engine == "" || engine == "postgres"
 }
 
+// CoreMeilisearchSearchEnabled reports whether the Meilisearch search core plugin should load.
+func (c *Config) CoreMeilisearchSearchEnabled() bool {
+	return c.Search.Engine == "meilisearch"
+}
+
 // CorePostgresCacheEnabled reports whether the postgres cache core plugin should load.
 func (c *Config) CorePostgresCacheEnabled() bool {
 	if c.Plugins.Core.PostgresCache != nil {

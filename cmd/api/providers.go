@@ -9,7 +9,6 @@ import (
 	"github.com/akarso/shopanda/internal/domain/media"
 	"github.com/akarso/shopanda/internal/domain/search"
 	"github.com/akarso/shopanda/internal/infrastructure/localfs"
-	"github.com/akarso/shopanda/internal/infrastructure/meili"
 	"github.com/akarso/shopanda/internal/infrastructure/postgres"
 	"github.com/akarso/shopanda/internal/infrastructure/s3store"
 	"github.com/akarso/shopanda/internal/platform/config"
@@ -27,15 +26,7 @@ func resolveSearchEngine(app *plugin.App, conn *sql.DB, cfg *config.Config) (sea
 
 	switch cfg.Search.Engine {
 	case "meilisearch":
-		me, err := meili.New(meili.Config{
-			Host:   cfg.Search.Meilisearch.Host,
-			APIKey: cfg.Search.Meilisearch.APIKey,
-			Index:  cfg.Search.Meilisearch.Index,
-		})
-		if err != nil {
-			return nil, fmt.Errorf("search: init meilisearch: %w", err)
-		}
-		return me, nil
+		return nil, fmt.Errorf("search: meilisearch engine configured but no search provider registered (core plugin init failed?)")
 	case "postgres":
 		pgSearch, err := postgres.NewSearchEngine(conn)
 		if err != nil {

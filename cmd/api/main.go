@@ -54,7 +54,6 @@ import (
 	"github.com/akarso/shopanda/internal/infrastructure/imaging"
 	"github.com/akarso/shopanda/internal/infrastructure/invoicepdf"
 	"github.com/akarso/shopanda/internal/infrastructure/manualpay"
-	"github.com/akarso/shopanda/internal/infrastructure/meili"
 	"github.com/akarso/shopanda/internal/infrastructure/postgres"
 	smtpmail "github.com/akarso/shopanda/internal/infrastructure/smtp"
 	"github.com/akarso/shopanda/internal/infrastructure/stripepay"
@@ -2070,26 +2069,18 @@ func runSearchReindex(cfg *config.Config, log logger.Logger) error {
 	}
 	defer conn.Close()
 
-	var searchEngine search.SearchEngine
-	switch cfg.Search.Engine {
-	case "meilisearch":
-		me, meErr := meili.New(meili.Config{
-			Host:   cfg.Search.Meilisearch.Host,
-			APIKey: cfg.Search.Meilisearch.APIKey,
-			Index:  cfg.Search.Meilisearch.Index,
-		})
-		if meErr != nil {
-			return fmt.Errorf("search engine: %w", meErr)
-		}
-		searchEngine = me
-	case "postgres", "":
-		pgSearch, pgErr := postgres.NewSearchEngine(conn)
-		if pgErr != nil {
-			return fmt.Errorf("search engine: %w", pgErr)
-		}
-		searchEngine = pgSearch
-	default:
-		return fmt.Errorf("unsupported search.engine: %q", cfg.Search.Engine)
+	registry := plugin.NewRegistry(log)
+	core.Register(registry, cfg)
+	pluginApp := &plugin.App{
+		Logger:    log,
+		Config:    cfg,
+		Bootstrap: &plugin.Bootstrap{DB: conn},
+	}
+	registry.InitAll(pluginApp)
+
+	searchEngine, err := resolveSearchEngine(pluginApp, conn, cfg)
+	if err != nil {
+		return err
 	}
 
 	log.Info("search.reindex.start", map[string]interface{}{
