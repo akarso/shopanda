@@ -53,10 +53,8 @@ import (
 	"github.com/akarso/shopanda/internal/infrastructure/flatrate"
 	"github.com/akarso/shopanda/internal/infrastructure/imaging"
 	"github.com/akarso/shopanda/internal/infrastructure/invoicepdf"
-	"github.com/akarso/shopanda/internal/infrastructure/manualpay"
 	"github.com/akarso/shopanda/internal/infrastructure/postgres"
 	smtpmail "github.com/akarso/shopanda/internal/infrastructure/smtp"
-	"github.com/akarso/shopanda/internal/infrastructure/stripepay"
 	"github.com/akarso/shopanda/internal/infrastructure/webhook"
 	"github.com/akarso/shopanda/internal/platform/config"
 	"github.com/akarso/shopanda/internal/platform/db"
@@ -360,33 +358,11 @@ func runServe(cfg *config.Config, log logger.Logger, embedScheduler bool) error 
 	}
 
 	// Providers.
-	manualPayProvider := manualpay.NewProvider()
 	flatRateProvider := flatrate.NewProvider(shared.MustNewMoney(500, "USD"))
 
-	// Payment provider: use Stripe when configured, otherwise manual.
-	// The Stripe secret key is sourced exclusively from the
-	// SHOPANDA_PAYMENT_STRIPE_SECRET_KEY environment variable.
-	// YAML values for secret_key are ignored to avoid secrets in config files.
-	var payProvider payment.Provider = manualPayProvider
-	if cfg.Payment.Stripe.Enabled {
-		stripeKey := os.Getenv("SHOPANDA_PAYMENT_STRIPE_SECRET_KEY")
-		if stripeKey == "" {
-			if cfg.Payment.Stripe.SecretKey != "" {
-				log.Warn("payment.stripe.yaml_secret_ignored", map[string]interface{}{
-					"message": "Stripe secret_key in YAML is ignored; set SHOPANDA_PAYMENT_STRIPE_SECRET_KEY env var",
-				})
-			}
-			log.Warn("payment.stripe.no_secret", map[string]interface{}{
-				"message": "Stripe enabled but SHOPANDA_PAYMENT_STRIPE_SECRET_KEY not set; falling back to manual provider",
-			})
-		} else {
-			sp, err := stripepay.NewProvider(stripeKey)
-			if err != nil {
-				return fmt.Errorf("stripe provider: %w", err)
-			}
-			payProvider = sp
-			log.Info("payment.provider.stripe", nil)
-		}
+	payProvider, err := resolvePaymentProvider(pluginApp)
+	if err != nil {
+		return err
 	}
 
 	// Dev handler: log password reset tokens alongside email delivery.

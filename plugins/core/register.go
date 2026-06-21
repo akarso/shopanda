@@ -3,8 +3,10 @@ package core
 import (
 	"github.com/akarso/shopanda/internal/platform/config"
 	"github.com/akarso/shopanda/internal/platform/plugin"
+	cmanualpay "github.com/akarso/shopanda/plugins/core/manualpay"
 	coremeili "github.com/akarso/shopanda/plugins/core/meilisearch"
 	corepostgres "github.com/akarso/shopanda/plugins/core/postgres"
+	corestripe "github.com/akarso/shopanda/plugins/core/stripe"
 )
 
 // Register adds core infrastructure plugins implied by the active driver switches.
@@ -20,4 +22,8 @@ func Register(registry *plugin.Registry, cfg *config.Config) {
 	if cfg.CorePostgresQueueEnabled() {
 		registry.Register(corepostgres.NewQueuePlugin())
 	}
+	if cfg.Payment.Stripe.Enabled {
+		registry.Register(corestripe.NewPaymentPlugin())
+	}
+	registry.Register(cmanualpay.NewPaymentPlugin())
 }
