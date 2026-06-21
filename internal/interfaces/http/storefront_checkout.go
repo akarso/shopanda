@@ -674,8 +674,12 @@ func storefrontFindCheckoutPayment(methods []StorefrontCheckoutPayment, method s
 	if len(methods) == 0 {
 		return nil
 	}
+	method = strings.TrimSpace(method)
+	if method == "" {
+		return nil
+	}
 	for i := range methods {
-		methods[i].Selected = methods[i].Method == method || (method == "" && i == 0)
+		methods[i].Selected = methods[i].Method == method
 		if methods[i].Selected {
 			return &methods[i]
 		}

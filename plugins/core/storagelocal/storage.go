@@ -22,6 +22,12 @@ func (p *StoragePlugin) Init(app *plugin.App) error {
 	if storage != "" && storage != "local" {
 		return fmt.Errorf("local storage: disabled (media.storage=%q)", storage)
 	}
+	if app.Config.Media.Local.BasePath == "" {
+		return fmt.Errorf("local storage: empty base_path")
+	}
+	if app.Config.Media.Local.BaseURL == "" {
+		return fmt.Errorf("local storage: empty base_url")
+	}
 	app.RegisterMediaStorage(localfs.New(app.Config.Media.Local.BasePath, app.Config.Media.Local.BaseURL))
 	return nil
 }

@@ -180,6 +180,37 @@ func TestRefund_NoProviderRef(t *testing.T) {
 	}
 }
 
+func TestRefund_ProviderMismatch(t *testing.T) {
+	amt := shared.MustNewMoney(5000, "EUR")
+	py, err := payment.NewPayment("pay-manual-1", "ord-1", payment.MethodManual, amt)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := py.Complete("manual:pay-manual-1"); err != nil {
+		t.Fatal(err)
+	}
+	repo := &mockPaymentRepo{
+		findByOrderFn: func(_ context.Context, _ string) (*payment.Payment, error) {
+			return &py, nil
+		},
+	}
+	refunder := &mockRefunder{
+		refundFn: func(_ context.Context, _ string, _ int64, _ string) (payment.RefundResult, error) {
+			t.Fatal("refunder should not be called for non-Stripe payment")
+			return payment.RefundResult{}, nil
+		},
+	}
+	mux := refundSetup(repo, refunder)
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("POST", "/api/v1/admin/orders/ord-1/refund", strings.NewReader(`{"amount": 5000}`))
+	mux.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("status = %d, want %d; body: %s", rec.Code, http.StatusUnprocessableEntity, rec.Body.String())
+	}
+}
+
 func TestRefund_RefunderError(t *testing.T) {
 	py := seedCompletedPayment(t)
 	repo := &mockPaymentRepo{

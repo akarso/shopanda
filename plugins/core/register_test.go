@@ -138,7 +138,7 @@ func TestRegister_LocalStorageByDefault(t *testing.T) {
 	reg := plugin.NewRegistry(log)
 
 	cfg := &config.Config{
-		Media: config.MediaConfig{Storage: "local"},
+		Media: config.MediaConfig{},
 	}
 	core.Register(reg, cfg)
 

@@ -56,3 +56,12 @@ func TestStoragePlugin_Init_WrongStorageDriver(t *testing.T) {
 		t.Fatal("Init() expected error when media.storage is s3")
 	}
 }
+
+func TestStoragePlugin_Init_MissingLocalConfig(t *testing.T) {
+	cfg := &config.Config{
+		Media: config.MediaConfig{Storage: "local"},
+	}
+	if err := cstoragelocal.NewStoragePlugin().Init(testApp(cfg)); err == nil {
+		t.Fatal("Init() expected error when base_path and base_url are empty")
+	}
+}

@@ -79,6 +79,11 @@ func (h *RefundHandler) Refund() http.HandlerFunc {
 			return
 		}
 
+		if p.Method != payment.MethodStripe {
+			JSONError(w, apperror.Validation("provider mismatch"))
+			return
+		}
+
 		// Call the provider to create the refund.
 		result, err := h.refunder.Refund(r.Context(), p.ProviderRef, req.Amount, p.Currency())
 		if err != nil {
