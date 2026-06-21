@@ -50,6 +50,7 @@ type StorefrontCheckoutPayment struct {
 	IsManual     bool
 	IsStripe     bool
 	Instructions []string
+	Selected     bool
 }
 
 type StorefrontCheckoutConfirmation struct {
@@ -74,6 +75,7 @@ type StorefrontCheckoutPageData struct {
 	Rates          []StorefrontCheckoutRate
 	SelectedRate   *StorefrontCheckoutRate
 	Payment        StorefrontCheckoutPayment
+	PaymentMethods []StorefrontCheckoutPayment
 	Confirmation   *StorefrontCheckoutConfirmation
 	CSRFToken      string
 	ErrorMessage   string
@@ -200,7 +202,10 @@ func (h *StorefrontHandler) CheckoutPayment() http.HandlerFunc {
 		page.Progress = storefrontCheckoutProgress("payment")
 		page.Rates = rates
 		page.SelectedRate = selected
-		page.Payment = storefrontCheckoutPaymentView(h.payment)
+		page.PaymentMethods = storefrontCheckoutPaymentMethods(h.payments)
+		if len(page.PaymentMethods) == 1 {
+			page.Payment = page.PaymentMethods[0]
+		}
 		page.PrimaryAction = "/checkout/confirm"
 		page.SecondaryURL = "/checkout/address"
 		page.SecondaryLabel = "Start over"
@@ -242,9 +247,16 @@ func (h *StorefrontHandler) CheckoutConfirm() http.HandlerFunc {
 		page.Progress = storefrontCheckoutProgress("payment")
 		page.Rates = rates
 		page.SelectedRate = selectedRate
-		page.Payment = storefrontCheckoutPaymentView(h.payment)
+		page.PaymentMethods = storefrontCheckoutPaymentMethods(h.payments)
 		paymentMethod := strings.TrimSpace(r.FormValue("payment_method"))
-		if paymentMethod == "" || page.Payment.Method != paymentMethod {
+		selectedPayment := storefrontFindCheckoutPayment(page.PaymentMethods, paymentMethod)
+		if selectedPayment == nil {
+			if len(page.PaymentMethods) == 1 {
+				selectedPayment = &page.PaymentMethods[0]
+				paymentMethod = selectedPayment.Method
+			}
+		}
+		if selectedPayment == nil {
 			page.ErrorMessage = "Select a valid payment method to continue."
 			page.PrimaryAction = "/checkout/confirm"
 			page.SecondaryURL = "/checkout/address"
@@ -252,6 +264,7 @@ func (h *StorefrontHandler) CheckoutConfirm() http.HandlerFunc {
 			h.renderPageStatus(w, "checkout_payment", page, http.StatusUnprocessableEntity)
 			return
 		}
+		page.Payment = *selectedPayment
 		if h.checkout == nil {
 			http.Error(w, "Not Found", http.StatusNotFound)
 			return
@@ -283,7 +296,7 @@ func (h *StorefrontHandler) CheckoutConfirm() http.HandlerFunc {
 			OrderID:     cctx.Order.ID,
 			Status:      string(cctx.Order.Status()),
 			TotalText:   storefrontCheckoutDisplayTotal(cctx, selectedRate.CostText),
-			Notice:      storefrontCheckoutConfirmationNotice(h.payment),
+			Notice:      storefrontCheckoutConfirmationNotice(payment.PaymentMethod(paymentMethod)),
 			ContinueURL: "/products",
 		}
 		if customerID == "" {
@@ -291,7 +304,7 @@ func (h *StorefrontHandler) CheckoutConfirm() http.HandlerFunc {
 		} else {
 			page.Confirmation.ViewOrderURL = "/account/orders/" + cctx.Order.ID
 		}
-		page.StripePending = h.payment != nil && h.payment.Method() == payment.MethodStripe
+		page.StripePending = paymentMethod == string(payment.MethodStripe)
 		h.renderPage(w, "checkout_confirm", page)
 	}
 }
@@ -472,10 +485,17 @@ func (h *StorefrontHandler) renderCheckoutResume(w http.ResponseWriter, r *http.
 		page.Progress = storefrontCheckoutProgress("payment")
 		page.Rates = rates
 		page.SelectedRate = selectedRate
-		page.Payment = storefrontCheckoutPaymentView(h.payment)
-		if strings.TrimSpace(state.PaymentMethod) != "" && page.Payment.Method != strings.TrimSpace(state.PaymentMethod) {
+		page.PaymentMethods = storefrontCheckoutPaymentMethods(h.payments)
+		selectedPayment := storefrontFindCheckoutPayment(page.PaymentMethods, strings.TrimSpace(state.PaymentMethod))
+		if selectedPayment == nil {
+			if len(page.PaymentMethods) == 1 {
+				selectedPayment = &page.PaymentMethods[0]
+			}
+		}
+		if selectedPayment == nil {
 			return false
 		}
+		page.Payment = *selectedPayment
 		page.PrimaryAction = "/checkout/confirm"
 		page.SecondaryURL = "/checkout/address"
 		page.SecondaryLabel = "Start over"
@@ -629,6 +649,40 @@ func storefrontFindCheckoutRate(rates []StorefrontCheckoutRate, method string) *
 	return nil
 }
 
+func storefrontCheckoutPaymentMethods(registry *payment.ProviderRegistry) []StorefrontCheckoutPayment {
+	if registry == nil || registry.Len() == 0 {
+		return []StorefrontCheckoutPayment{storefrontCheckoutPaymentView(nil)}
+	}
+	methods := registry.Methods()
+	views := make([]StorefrontCheckoutPayment, 0, len(methods))
+	for i, method := range methods {
+		provider, ok := registry.Get(method)
+		if !ok {
+			continue
+		}
+		view := storefrontCheckoutPaymentView(provider)
+		view.Selected = i == 0 && len(methods) == 1
+		views = append(views, view)
+	}
+	if len(views) == 0 {
+		return []StorefrontCheckoutPayment{storefrontCheckoutPaymentView(nil)}
+	}
+	return views
+}
+
+func storefrontFindCheckoutPayment(methods []StorefrontCheckoutPayment, method string) *StorefrontCheckoutPayment {
+	if len(methods) == 0 {
+		return nil
+	}
+	for i := range methods {
+		methods[i].Selected = methods[i].Method == method || (method == "" && i == 0)
+		if methods[i].Selected {
+			return &methods[i]
+		}
+	}
+	return nil
+}
+
 func storefrontCheckoutPaymentView(provider payment.Provider) StorefrontCheckoutPayment {
 	view := StorefrontCheckoutPayment{Method: "manual", Label: "Manual payment"}
 	if provider == nil {
@@ -658,8 +712,8 @@ func storefrontCheckoutPaymentView(provider payment.Provider) StorefrontCheckout
 	return view
 }
 
-func storefrontCheckoutConfirmationNotice(provider payment.Provider) string {
-	if provider != nil && provider.Method() == payment.MethodStripe {
+func storefrontCheckoutConfirmationNotice(method payment.PaymentMethod) string {
+	if method == payment.MethodStripe {
 		return "Your order is created and Stripe payment confirmation is still required."
 	}
 	return "Your order has been placed and manual payment instructions are ready."

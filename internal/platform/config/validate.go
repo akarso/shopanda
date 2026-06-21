@@ -31,5 +31,14 @@ func normalizeAndValidate(cfg *Config) error {
 		return fmt.Errorf("config: unsupported search.engine: %q (allowed: postgres, meilisearch)", cfg.Search.Engine)
 	}
 
+	if cfg.Media.Storage == "" {
+		cfg.Media.Storage = "local"
+	}
+	switch cfg.Media.Storage {
+	case "local", "s3":
+	default:
+		return fmt.Errorf("config: unsupported media.storage: %q (allowed: local, s3)", cfg.Media.Storage)
+	}
+
 	return nil
 }

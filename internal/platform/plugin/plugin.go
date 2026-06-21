@@ -2,6 +2,7 @@ package plugin
 
 import (
 	"github.com/akarso/shopanda/internal/domain/identity"
+	"github.com/akarso/shopanda/internal/domain/payment"
 	"github.com/akarso/shopanda/internal/domain/rbac"
 	"github.com/akarso/shopanda/internal/platform/config"
 	"github.com/akarso/shopanda/internal/platform/event"
@@ -35,7 +36,7 @@ type App struct {
 	searchProvider  any
 	cache           any
 	queue           any
-	paymentProvider any
+	paymentRegistry *payment.ProviderRegistry
 	mediaStorage    any
 }
 

@@ -360,7 +360,7 @@ func runServe(cfg *config.Config, log logger.Logger, embedScheduler bool) error 
 	// Providers.
 	flatRateProvider := flatrate.NewProvider(shared.MustNewMoney(500, "USD"))
 
-	payProvider, err := resolvePaymentProvider(pluginApp)
+	payRegistry, err := resolvePaymentRegistry(pluginApp)
 	if err != nil {
 		return err
 	}
@@ -509,7 +509,7 @@ func runServe(cfg *config.Config, log logger.Logger, embedScheduler bool) error 
 	reserveInventoryStep := checkoutApp.NewReserveInventoryStep(reservationRepo)
 	createOrderStep := checkoutApp.NewCreateOrderStep(orderRepo, variantRepo)
 	selectShippingStep := checkoutApp.NewSelectShippingStep(flatRateProvider, shippingRepo)
-	initiatePaymentStep := checkoutApp.NewInitiatePaymentStep(payProvider, paymentRepo)
+	initiatePaymentStep := checkoutApp.NewInitiatePaymentStep(payRegistry, paymentRepo)
 	checkoutSteps := []checkoutApp.Step{
 		validateCartStep,
 		recalculatePricingStep,
@@ -604,7 +604,7 @@ func runServe(cfg *config.Config, log logger.Logger, embedScheduler bool) error 
 
 	// Refund handler: only available when the payment provider supports refunds.
 	var refundHandler *shophttp.RefundHandler
-	if refunder, ok := payProvider.(payment.Refunder); ok {
+	if refunder, ok := payRegistry.Refunder(payment.MethodStripe); ok {
 		refundHandler = shophttp.NewRefundHandler(paymentRepo, refunder, bus)
 		log.Info("payment.refund_handler_enabled", nil)
 	}
@@ -896,7 +896,7 @@ func runServe(cfg *config.Config, log logger.Logger, embedScheduler bool) error 
 
 		storefront := shophttp.NewStorefrontHandler(themeEngine, productRepo, categoryRepo, pdp, plp, searchEngine).
 			WithCart(variantRepo, cartService).
-			WithCheckout([]shipping.Provider{flatRateProvider}, payProvider, checkoutService).
+			WithCheckout([]shipping.Provider{flatRateProvider}, payRegistry, checkoutService).
 			WithAccount(authService, orderRepo, accountService).
 			WithAccountProfile(customerAddressRepo, consentRepo).
 			WithOrderClaim(claimService).

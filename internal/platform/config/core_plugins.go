@@ -15,6 +15,17 @@ func (c *Config) CoreMeilisearchSearchEnabled() bool {
 	return c.Search.Engine == "meilisearch"
 }
 
+// CoreLocalStorageEnabled reports whether the local filesystem storage core plugin should load.
+func (c *Config) CoreLocalStorageEnabled() bool {
+	storage := c.Media.Storage
+	return storage == "" || storage == "local"
+}
+
+// CoreS3StorageEnabled reports whether the S3 storage core plugin should load.
+func (c *Config) CoreS3StorageEnabled() bool {
+	return c.Media.Storage == "s3"
+}
+
 // CorePostgresCacheEnabled reports whether the postgres cache core plugin should load.
 func (c *Config) CorePostgresCacheEnabled() bool {
 	if c.Plugins.Core.PostgresCache != nil {

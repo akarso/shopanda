@@ -12,7 +12,6 @@ import (
 	"github.com/akarso/shopanda/internal/infrastructure/localfs"
 	"github.com/akarso/shopanda/internal/infrastructure/manualpay"
 	"github.com/akarso/shopanda/internal/infrastructure/postgres"
-	"github.com/akarso/shopanda/internal/infrastructure/s3store"
 	"github.com/akarso/shopanda/internal/platform/config"
 	"github.com/akarso/shopanda/internal/platform/plugin"
 )
@@ -50,22 +49,10 @@ func resolveMediaStorage(app *plugin.App, cfg *config.Config) (media.Storage, er
 	}
 
 	switch cfg.Media.Storage {
+	case "s3":
+		return nil, fmt.Errorf("media: s3 storage configured but no storage plugin registered (core plugin init failed?)")
 	case "local":
 		return localfs.New(cfg.Media.Local.BasePath, cfg.Media.Local.BaseURL), nil
-	case "s3":
-		s3s, err := s3store.New(s3store.Config{
-			Endpoint:  cfg.Media.S3.Endpoint,
-			Bucket:    cfg.Media.S3.Bucket,
-			Region:    cfg.Media.S3.Region,
-			AccessKey: cfg.Media.S3.AccessKey,
-			SecretKey: cfg.Media.S3.SecretKey,
-			BaseURL:   cfg.Media.S3.BaseURL,
-			PublicACL: cfg.Media.S3.PublicACL,
-		})
-		if err != nil {
-			return nil, fmt.Errorf("media: init s3 storage: %w", err)
-		}
-		return s3s, nil
 	default:
 		return nil, fmt.Errorf("unsupported media.storage: %s", cfg.Media.Storage)
 	}
@@ -109,13 +96,11 @@ func resolveCache(app *plugin.App, conn *sql.DB, cfg *config.Config) (cache.Cach
 	}
 }
 
-func resolvePaymentProvider(app *plugin.App) (payment.Provider, error) {
-	if v, ok := app.PaymentProvider(); ok {
-		p, ok := v.(payment.Provider)
-		if !ok {
-			return nil, fmt.Errorf("plugin payment provider: invalid type %T", v)
-		}
-		return p, nil
+func resolvePaymentRegistry(app *plugin.App) (*payment.ProviderRegistry, error) {
+	if reg := app.PaymentRegistry(); reg != nil && reg.Len() > 0 {
+		return reg, nil
 	}
-	return manualpay.NewProvider(), nil
+	reg := payment.NewProviderRegistry()
+	reg.Register(manualpay.NewProvider())
+	return reg, nil
 }
