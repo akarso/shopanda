@@ -15,9 +15,10 @@ import (
 var _ jobs.Queue = (*JobQueue)(nil)
 
 const (
-	queueBackoffBase = 5 * time.Second
-	queueBackoffMax  = 5 * time.Minute
-	queueJitterRatio = 0.25
+	queueBackoffBase        = 5 * time.Second
+	queueBackoffMax         = 5 * time.Minute
+	queueJitterRatio        = 0.25
+	terminalJobRetentionTTL = 7 * 24 * time.Hour
 )
 
 const promoteDelayedLua = `
@@ -70,6 +71,7 @@ type storedJob struct {
 	RunAt      time.Time              `json:"run_at"`
 	CreatedAt  time.Time              `json:"created_at"`
 	UpdatedAt  time.Time              `json:"updated_at"`
+	LastError  string                 `json:"last_error,omitempty"`
 }
 
 func toStoredJob(job jobs.Job) storedJob {
@@ -113,13 +115,33 @@ func (q *JobQueue) readyKey() string          { return q.prefix + "ready" }
 func (q *JobQueue) processingKey() string     { return q.prefix + "processing" }
 func (q *JobQueue) delayedKey() string        { return q.prefix + "delayed" }
 
+func jobRetentionTTL(status jobs.Status) time.Duration {
+	switch status {
+	case jobs.StatusDone, jobs.StatusFailed:
+		return terminalJobRetentionTTL
+	default:
+		return 0
+	}
+}
+
 func (q *JobQueue) saveJob(ctx context.Context, job storedJob) error {
 	data, err := json.Marshal(job)
 	if err != nil {
 		return fmt.Errorf("job_queue: marshal job %q: %w", job.ID, err)
 	}
-	if err := q.client.Set(ctx, q.jobKey(job.ID), data, 0).Err(); err != nil {
+	ttl := jobRetentionTTL(job.Status)
+	if err := q.client.Set(ctx, q.jobKey(job.ID), data, ttl).Err(); err != nil {
 		return fmt.Errorf("job_queue: save job %q: %w", job.ID, err)
+	}
+	return nil
+}
+
+func (q *JobQueue) releaseClaim(ctx context.Context, id string) error {
+	if _, err := q.client.LRem(ctx, q.processingKey(), 1, id).Result(); err != nil {
+		return fmt.Errorf("job_queue: release claim %q: %w", id, err)
+	}
+	if err := q.client.LPush(ctx, q.readyKey(), id).Err(); err != nil {
+		return fmt.Errorf("job_queue: requeue %q: %w", id, err)
 	}
 	return nil
 }
@@ -198,7 +220,9 @@ func (q *JobQueue) Dequeue(ctx context.Context) (*jobs.Job, error) {
 
 	stored, err := q.loadJob(ctx, id)
 	if err != nil {
-		_, _ = q.client.LRem(ctx, q.processingKey(), 1, id).Result()
+		if releaseErr := q.releaseClaim(ctx, id); releaseErr != nil {
+			return nil, fmt.Errorf("job_queue: load job %q: %w (release claim: %v)", id, err, releaseErr)
+		}
 		return nil, err
 	}
 
@@ -206,7 +230,9 @@ func (q *JobQueue) Dequeue(ctx context.Context) (*jobs.Job, error) {
 	stored.Attempts++
 	stored.UpdatedAt = time.Now().UTC()
 	if err := q.saveJob(ctx, stored); err != nil {
-		_, _ = q.client.LRem(ctx, q.processingKey(), 1, id).Result()
+		if releaseErr := q.releaseClaim(ctx, id); releaseErr != nil {
+			return nil, fmt.Errorf("job_queue: save job %q: %w (release claim: %v)", id, err, releaseErr)
+		}
 		return nil, err
 	}
 
@@ -243,7 +269,7 @@ func queueRetryDelay(attempt int) time.Duration {
 }
 
 // Fail re-queues a job for retry or marks it as permanently failed.
-func (q *JobQueue) Fail(ctx context.Context, id string, _ error) error {
+func (q *JobQueue) Fail(ctx context.Context, id string, jobErr error) error {
 	removed, err := q.client.LRem(ctx, q.processingKey(), 1, id).Result()
 	if err != nil {
 		return fmt.Errorf("job_queue: fail: %w", err)
@@ -259,6 +285,9 @@ func (q *JobQueue) Fail(ctx context.Context, id string, _ error) error {
 
 	now := time.Now().UTC()
 	stored.UpdatedAt = now
+	if jobErr != nil {
+		stored.LastError = jobErr.Error()
+	}
 
 	if stored.Attempts >= stored.MaxRetries {
 		stored.Status = jobs.StatusFailed

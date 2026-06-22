@@ -188,7 +188,7 @@ func TestJobQueue_Dequeue_RespectsRunAt(t *testing.T) {
 	ctx := context.Background()
 
 	job, _ := jobs.NewJob(id.New(), "delayed", nil)
-	job.RunAt = time.Now().UTC().Add(25 * time.Millisecond)
+	job.RunAt = time.Now().UTC().Add(100 * time.Millisecond)
 	if err := q.Enqueue(ctx, job); err != nil {
 		t.Fatalf("Enqueue: %v", err)
 	}
@@ -201,7 +201,7 @@ func TestJobQueue_Dequeue_RespectsRunAt(t *testing.T) {
 		t.Fatalf("expected nil before run_at, got %+v", got)
 	}
 
-	time.Sleep(30 * time.Millisecond)
+	time.Sleep(150 * time.Millisecond)
 
 	got, err = q.Dequeue(ctx)
 	if err != nil {

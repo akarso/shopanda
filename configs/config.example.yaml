@@ -145,7 +145,7 @@ queue:
   # redis:
   #   url: "redis://localhost:6379/0"
   #   key_prefix: "shopanda:queue"
-  # Or set REDIS_URL / SHOPANDA_QUEUE_REDIS_URL environment variables.
+  # Or set REDIS_URL / SHOPANDA_QUEUE_REDIS_URL / SHOPANDA_QUEUE_REDIS_KEY_PREFIX environment variables.
 
 # --- Core plugins -------------------------------------------------------------
 # Core infrastructure plugins are enabled by driver switches above.

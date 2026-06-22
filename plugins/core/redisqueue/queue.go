@@ -16,6 +16,9 @@ func NewQueuePlugin() *QueuePlugin { return &QueuePlugin{} }
 func (p *QueuePlugin) Name() string { return "core/redis-queue" }
 
 func (p *QueuePlugin) Init(app *plugin.App) error {
+	if app == nil {
+		return fmt.Errorf("redis queue: app not configured")
+	}
 	if app.Config == nil {
 		return fmt.Errorf("redis queue: config not configured")
 	}
