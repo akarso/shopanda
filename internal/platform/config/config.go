@@ -299,7 +299,14 @@ type RedisCacheConfig struct {
 
 // QueueConfig holds background job queue settings.
 type QueueConfig struct {
-	Driver string `yaml:"driver"`
+	Driver string           `yaml:"driver"`
+	Redis  RedisQueueConfig `yaml:"redis"`
+}
+
+// RedisQueueConfig holds Redis job queue connection settings.
+type RedisQueueConfig struct {
+	URL       string `yaml:"url"`
+	KeyPrefix string `yaml:"key_prefix"`
 }
 
 // PluginsConfig holds plugin system settings.
@@ -648,9 +655,6 @@ func applyEnv(cfg *Config) {
 	if v := os.Getenv("SHOPANDA_CACHE_DRIVER"); v != "" {
 		cfg.Cache.Driver = v
 	}
-	if v := os.Getenv("REDIS_URL"); v != "" && cfg.Cache.Redis.URL == "" {
-		cfg.Cache.Redis.URL = v
-	}
 	if v := os.Getenv("SHOPANDA_CACHE_REDIS_URL"); v != "" {
 		cfg.Cache.Redis.URL = v
 	}
@@ -659,6 +663,20 @@ func applyEnv(cfg *Config) {
 	}
 	if v := os.Getenv("SHOPANDA_QUEUE_DRIVER"); v != "" {
 		cfg.Queue.Driver = v
+	}
+	if v := os.Getenv("REDIS_URL"); v != "" {
+		if cfg.Cache.Redis.URL == "" {
+			cfg.Cache.Redis.URL = v
+		}
+		if cfg.Queue.Redis.URL == "" {
+			cfg.Queue.Redis.URL = v
+		}
+	}
+	if v := os.Getenv("SHOPANDA_QUEUE_REDIS_URL"); v != "" {
+		cfg.Queue.Redis.URL = v
+	}
+	if v := os.Getenv("SHOPANDA_QUEUE_REDIS_KEY_PREFIX"); v != "" {
+		cfg.Queue.Redis.KeyPrefix = v
 	}
 	if v := os.Getenv("SHOPANDA_FRONTEND_ENABLED"); v != "" {
 		cfg.Frontend.Enabled = v == "true" || v == "1"
@@ -763,6 +781,8 @@ func flatten(cfg *Config) map[string]string {
 	m["cache.redis.url"] = cfg.Cache.Redis.URL
 	m["cache.redis.key_prefix"] = cfg.Cache.Redis.KeyPrefix
 	m["queue.driver"] = cfg.Queue.Driver
+	m["queue.redis.url"] = cfg.Queue.Redis.URL
+	m["queue.redis.key_prefix"] = cfg.Queue.Redis.KeyPrefix
 	m["frontend.enabled"] = strconv.FormatBool(cfg.Frontend.Enabled)
 	m["frontend.mode"] = cfg.Frontend.Mode
 	m["frontend.theme_path"] = cfg.Frontend.ThemePath

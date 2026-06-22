@@ -42,6 +42,14 @@ func (c *Config) CoreRedisCacheEnabled() bool {
 	return c.Cache.Driver == "redis"
 }
 
+// CoreRedisQueueEnabled reports whether the Redis queue core plugin should load.
+func (c *Config) CoreRedisQueueEnabled() bool {
+	if c.Plugins.Core.PostgresQueue != nil && *c.Plugins.Core.PostgresQueue {
+		return false
+	}
+	return c.Queue.Driver == "redis"
+}
+
 // CorePostgresQueueEnabled reports whether the postgres queue core plugin should load.
 func (c *Config) CorePostgresQueueEnabled() bool {
 	if c.Plugins.Core.PostgresQueue != nil {
