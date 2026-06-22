@@ -14,7 +14,7 @@ Full specs for PR-400–434. Format matches Phase 3: `Summary`, `Why`, `Scope`, 
 | PR-411 | B | done | [Meilisearch core plugin](PR-411.md) |
 | PR-412 | B | done | [Stripe/manual payment plugins](PR-412.md) |
 | PR-413 | B | done | [Local/S3 storage plugins](PR-413.md) |
-| PR-414 | B | planned | [Redis cache driver](PR-414.md) |
+| PR-414 | B | done | [Redis cache driver](PR-414.md) |
 | PR-415 | B | planned | [Redis queue driver](PR-415.md) |
 | PR-416 | B | planned | [RabbitMQ queue driver](PR-416.md) |
 | PR-420 | C | planned | [Example external plugin](PR-420.md) |

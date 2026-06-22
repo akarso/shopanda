@@ -287,7 +287,14 @@ type MeilisearchConfig struct {
 }
 
 type CacheConfig struct {
-	Driver string `yaml:"driver"`
+	Driver string           `yaml:"driver"`
+	Redis  RedisCacheConfig `yaml:"redis"`
+}
+
+// RedisCacheConfig holds Redis cache connection settings.
+type RedisCacheConfig struct {
+	URL       string `yaml:"url"`
+	KeyPrefix string `yaml:"key_prefix"`
 }
 
 // QueueConfig holds background job queue settings.
@@ -641,6 +648,15 @@ func applyEnv(cfg *Config) {
 	if v := os.Getenv("SHOPANDA_CACHE_DRIVER"); v != "" {
 		cfg.Cache.Driver = v
 	}
+	if v := os.Getenv("REDIS_URL"); v != "" && cfg.Cache.Redis.URL == "" {
+		cfg.Cache.Redis.URL = v
+	}
+	if v := os.Getenv("SHOPANDA_CACHE_REDIS_URL"); v != "" {
+		cfg.Cache.Redis.URL = v
+	}
+	if v := os.Getenv("SHOPANDA_CACHE_REDIS_KEY_PREFIX"); v != "" {
+		cfg.Cache.Redis.KeyPrefix = v
+	}
 	if v := os.Getenv("SHOPANDA_QUEUE_DRIVER"); v != "" {
 		cfg.Queue.Driver = v
 	}
@@ -744,6 +760,8 @@ func flatten(cfg *Config) map[string]string {
 	m["search.meilisearch.host"] = cfg.Search.Meilisearch.Host
 	m["search.meilisearch.index"] = cfg.Search.Meilisearch.Index
 	m["cache.driver"] = cfg.Cache.Driver
+	m["cache.redis.url"] = cfg.Cache.Redis.URL
+	m["cache.redis.key_prefix"] = cfg.Cache.Redis.KeyPrefix
 	m["queue.driver"] = cfg.Queue.Driver
 	m["frontend.enabled"] = strconv.FormatBool(cfg.Frontend.Enabled)
 	m["frontend.mode"] = cfg.Frontend.Mode
