@@ -1,5 +1,19 @@
 # 🔌 Plugins — Authoring Guide (PLUGINS.md, v1)
 
+> **Current model:** Shopanda now documents a **three-tier** extension model (core / core plugin / external plugin). See the up-to-date [root PLUGINS.md](../../../PLUGINS.md) and [Developer Guide](../../guides/DEVELOPER.md). This Phase 1 spec remains as historical design context; some API examples below predate Track B packaging.
+
+## Three tiers (Phase 4)
+
+| Tier | Location | Enabled by |
+| --- | --- | --- |
+| Core | `internal/` | always |
+| Core plugin | `plugins/core/` | config drivers (`search.engine`, `cache.driver`, …) |
+| External plugin | author packages | compile-time `registry.Register` in `register_plugins.go` |
+
+Reference external plugin: [`plugins/example/`](../../../plugins/example/README.md).
+
+---
+
 ## 1. Overview
 
 Plugins are the primary mechanism for extending the system.
@@ -142,28 +156,28 @@ type Plugin interface {
 
 ---
 
-### 🟢 Option A — Compile-Time (Recommended for MVP)
+### 🟢 Compile-Time Registration (Current)
 
-```go id="q2km0x"
-import (
-    _ "plugins/stripe"
-    _ "plugins/flat_shipping"
-)
+Core plugins register from `plugins/core/register.go`. External plugins register from `cmd/api/register_plugins.go`:
+
+```go
+func registerPlugins(registry *plugin.Registry, cfg *config.Config) {
+    core.Register(registry, cfg)
+    if cfg.Plugins.Example.Enabled {
+        registry.Register(example.New())
+    }
+}
 ```
-
----
 
 Pros:
 
-* simplest
-* safest
+* simplest and safest
 * no runtime magic
+* failed init disables a plugin without crashing the app
 
 ---
 
----
-
-### 🟡 Option B — Go Plugins (.so)
+### 🟡 Go Plugins (.so) — Deferred
 
 * dynamically loaded
 * still in-process
@@ -174,12 +188,11 @@ Limitations:
 
 * OS-dependent
 * Go version compatibility
+* **not implemented** in Shopanda v1
 
 ---
 
----
-
-### 🔴 Option C — Process-Based Plugins (NOT DEFAULT)
+### 🔴 Process-Based Plugins (NOT DEFAULT)
 
 Reserved for:
 
@@ -199,15 +212,25 @@ Reserved for:
 
 ---
 
-### Register providers
+### Core plugins — register infrastructure providers
 
-```go id="b0q76x"
-RegisterPaymentProvider("stripe", StripeProvider{})
+Core plugins under `plugins/core/` set search, cache, queue, storage, or payment providers on `plugin.App` during `Init`. See `plugins/core/register.go`.
+
+---
+
+### External plugins — extend pipelines and events
+
+```go
+app.RegisterPricingStep(myStep{})
+app.RegisterCheckoutStep(myStep{})
+app.RegisterCompositionStep("pdp", myStep{})
+app.Bus.OnAsync("order.created", handler)
+app.RegisterPermission("myplugin.reports.read", []string{"Admin"})
 ```
 
 ---
 
-### Extend pipelines
+### Extend pipelines (legacy examples — see Developer Guide for current contracts)
 
 ```go id="3znw3g"
 RegisterCompositionStep("product", MyStep{}, "after:pricing")

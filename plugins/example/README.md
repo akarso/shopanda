@@ -24,7 +24,7 @@ SHOPANDA_PLUGINS_EXAMPLE_ENABLED=true
 SHOPANDA_PLUGINS_EXAMPLE_FEE_MINOR_UNITS=100
 ```
 
-Restart the application after changing config. The plugin is registered in `cmd/api/main.go` only when `plugins.example.enabled` is true.
+Restart the application after changing config. The plugin is registered in `cmd/api/register_plugins.go` when `plugins.example.enabled` is true.
 
 ## Authoring notes
 
@@ -32,4 +32,4 @@ Restart the application after changing config. The plugin is registered in `cmd/
 - Register extensions in `Init` via `plugin.App` — do not modify core domain packages
 - Keep infrastructure adapters in core plugins; external plugins should extend behavior through events, pipelines, and permissions
 
-See also: [DEVELOPER.md](../../docs/guides/DEVELOPER.md) · [PLUGINS.md](../../docs/phase-1-core/specs/PLUGINS.md)
+See also: [DEVELOPER.md](../../docs/guides/DEVELOPER.md) · [PLUGINS.md](../../PLUGINS.md)
