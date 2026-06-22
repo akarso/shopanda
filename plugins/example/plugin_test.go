@@ -78,8 +78,25 @@ func TestPlugin_Init_RegistersPricingStepPermissionAndListener(t *testing.T) {
 	}
 }
 
+func TestPlugin_Init_RegistersAdminConfig(t *testing.T) {
+	reg := plugin.NewRegistry(logger.NewWithWriter(io.Discard, "error"))
+	reg.Register(example.New())
+	cfg := &config.Config{
+		Plugins: config.PluginsConfig{
+			Example: config.ExamplePluginConfig{Enabled: true, FeeMinorUnits: 100},
+		},
+	}
+	app := testApp(cfg)
+	reg.InitAll(app)
+	keys := reg.ConfigRegistry().Keys()
+	if len(keys) != 1 || keys[0] != "plugins.example.fee_minor_units" {
+		t.Fatalf("ConfigRegistry keys = %v, want [plugins.example.fee_minor_units]", keys)
+	}
+}
+
 func TestExampleFeeStep_AddsFeeToPipeline(t *testing.T) {
-	step := example.NewExampleFeeStep(100)
+	fee := int64(100)
+	step := example.NewExampleFeeStep(&fee)
 	pctx, err := pricing.NewPricingContext("EUR")
 	if err != nil {
 		t.Fatalf("NewPricingContext: %v", err)
@@ -104,5 +121,32 @@ func TestExampleFeeStep_AddsFeeToPipeline(t *testing.T) {
 	}
 	if pctx.GrandTotal.Amount() != 1100 {
 		t.Fatalf("GrandTotal = %d, want 1100", pctx.GrandTotal.Amount())
+	}
+}
+
+func TestExampleFeeStep_ReflectsRuntimeConfigChange(t *testing.T) {
+	fee := int64(100)
+	step := example.NewExampleFeeStep(&fee)
+	pctx, err := pricing.NewPricingContext("EUR")
+	if err != nil {
+		t.Fatalf("NewPricingContext: %v", err)
+	}
+	unit, err := shared.NewMoney(1000, "EUR")
+	if err != nil {
+		t.Fatalf("NewMoney: %v", err)
+	}
+	item, err := pricing.NewPricingItem("v1", 1, unit)
+	if err != nil {
+		t.Fatalf("NewPricingItem: %v", err)
+	}
+	pctx.Items = []pricing.PricingItem{item}
+	pipe := pricing.NewPipeline(step, pricing.NewFinalizeStep())
+
+	fee = 250
+	if err := pipe.Execute(context.Background(), &pctx); err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	if pctx.FeesTotal.Amount() != 250 {
+		t.Fatalf("FeesTotal = %d, want 250", pctx.FeesTotal.Amount())
 	}
 }

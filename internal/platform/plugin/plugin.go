@@ -38,6 +38,8 @@ type App struct {
 	queue           any
 	paymentRegistry *payment.ProviderRegistry
 	mediaStorage    any
+
+	configRegistry *ConfigRegistry
 }
 
 // RegisterPricingStep registers a pricing pipeline step.
@@ -100,4 +102,12 @@ func (a *App) CompositionSteps(pipeline string) []any {
 // that are granted it. The permission must not conflict with core permissions.
 func (a *App) RegisterPermission(perm rbac.Permission, roles ...identity.Role) error {
 	return rbac.RegisterPluginPermission(perm, roles...)
+}
+
+// RegisterConfig registers admin-editable settings for this plugin.
+func (a *App) RegisterConfig(def ConfigDefinition) error {
+	if a.configRegistry == nil {
+		a.configRegistry = NewConfigRegistry()
+	}
+	return a.configRegistry.Register(def)
 }

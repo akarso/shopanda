@@ -32,8 +32,9 @@ type Entry struct {
 
 // Registry manages plugin loading and initialization.
 type Registry struct {
-	entries []Entry
-	log     logger.Logger
+	entries        []Entry
+	log            logger.Logger
+	configRegistry *ConfigRegistry
 }
 
 // NewRegistry creates a Registry.
@@ -41,7 +42,18 @@ func NewRegistry(log logger.Logger) *Registry {
 	if log == nil {
 		panic("plugin: logger must not be nil")
 	}
-	return &Registry{log: log}
+	return &Registry{
+		log:            log,
+		configRegistry: NewConfigRegistry(),
+	}
+}
+
+// ConfigRegistry returns plugin-registered admin config fields.
+func (r *Registry) ConfigRegistry() *ConfigRegistry {
+	if r == nil {
+		return nil
+	}
+	return r.configRegistry
 }
 
 // Register adds a plugin to the registry in the loaded state.
@@ -77,6 +89,7 @@ func (r *Registry) InitAll(app *App) InitSummary {
 	if app == nil {
 		panic("plugin: app must not be nil")
 	}
+	app.configRegistry = r.configRegistry
 	summary := InitSummary{Registered: len(r.entries)}
 	for i := range r.entries {
 		e := &r.entries[i]
