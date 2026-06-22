@@ -4,6 +4,7 @@
 # Default profile:  app + worker + scheduler + postgres (production layout)
 # Dev profile:      adds mailpit   (docker compose --profile dev up)
 # Search profile:   adds meilisearch (docker compose --profile search up)
+# Queue profile:    adds rabbitmq   (docker compose --profile queue up)
 #
 # Quick start:
 #   cp .env.example .env          # edit values (set real SMTP for production)
@@ -101,6 +102,25 @@ services:
     volumes:
       - meilidata:/meili_data
     profiles: ["search"]
+    restart: unless-stopped
+
+  # ---------- RabbitMQ (queue profile) ----------------------------------------
+  # Message broker for queue.driver=rabbitmq — AMQP at localhost:5672,
+  # management UI at http://localhost:15672 (guest/changeme by default).
+  rabbitmq:
+    image: rabbitmq:3.13-management-alpine
+    environment:
+      RABBITMQ_DEFAULT_USER: "${RABBITMQ_DEFAULT_USER:-shopanda}"
+      RABBITMQ_DEFAULT_PASS: "${RABBITMQ_DEFAULT_PASS:-changeme}"
+    ports:
+      - "127.0.0.1:5672:5672"
+      - "127.0.0.1:15672:15672"
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    profiles: ["queue"]
     restart: unless-stopped
 
 volumes:

@@ -133,6 +133,34 @@ func TestRegister_ManualAndStripeBothRegisterWhenEnabled(t *testing.T) {
 	}
 }
 
+func TestRegister_RabbitMQQueueDriverRegistersRabbitMQPlugin(t *testing.T) {
+	log := logger.NewWithWriter(io.Discard, "error")
+	reg := plugin.NewRegistry(log)
+
+	cfg := &config.Config{
+		Queue: config.QueueConfig{Driver: "rabbitmq"},
+	}
+	core.Register(reg, cfg)
+
+	var hasRabbitMQ, hasPostgresQueue, hasRedis bool
+	for _, e := range reg.Entries() {
+		switch e.Name {
+		case "core/rabbitmq-queue":
+			hasRabbitMQ = true
+		case "core/postgres-queue":
+			hasPostgresQueue = true
+		case "core/redis-queue":
+			hasRedis = true
+		}
+	}
+	if !hasRabbitMQ {
+		t.Fatal("expected core/rabbitmq-queue to register when queue.driver=rabbitmq")
+	}
+	if hasPostgresQueue || hasRedis {
+		t.Fatal("only rabbitmq queue plugin should register when queue.driver=rabbitmq")
+	}
+}
+
 func TestRegister_RedisQueueDriverRegistersRedisPlugin(t *testing.T) {
 	log := logger.NewWithWriter(io.Discard, "error")
 	reg := plugin.NewRegistry(log)

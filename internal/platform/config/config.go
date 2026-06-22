@@ -299,8 +299,15 @@ type RedisCacheConfig struct {
 
 // QueueConfig holds background job queue settings.
 type QueueConfig struct {
-	Driver string           `yaml:"driver"`
-	Redis  RedisQueueConfig `yaml:"redis"`
+	Driver   string              `yaml:"driver"`
+	Redis    RedisQueueConfig      `yaml:"redis"`
+	RabbitMQ RabbitMQQueueConfig   `yaml:"rabbitmq"`
+}
+
+// RabbitMQQueueConfig holds RabbitMQ job queue connection settings.
+type RabbitMQQueueConfig struct {
+	URL         string `yaml:"url"`
+	QueuePrefix string `yaml:"queue_prefix"`
 }
 
 // RedisQueueConfig holds Redis job queue connection settings.
@@ -678,6 +685,15 @@ func applyEnv(cfg *Config) {
 	if v := os.Getenv("SHOPANDA_QUEUE_REDIS_KEY_PREFIX"); v != "" {
 		cfg.Queue.Redis.KeyPrefix = v
 	}
+	if v := os.Getenv("RABBITMQ_URL"); v != "" && cfg.Queue.RabbitMQ.URL == "" {
+		cfg.Queue.RabbitMQ.URL = v
+	}
+	if v := os.Getenv("SHOPANDA_QUEUE_RABBITMQ_URL"); v != "" {
+		cfg.Queue.RabbitMQ.URL = v
+	}
+	if v := os.Getenv("SHOPANDA_QUEUE_RABBITMQ_QUEUE_PREFIX"); v != "" {
+		cfg.Queue.RabbitMQ.QueuePrefix = v
+	}
 	if v := os.Getenv("SHOPANDA_FRONTEND_ENABLED"); v != "" {
 		cfg.Frontend.Enabled = v == "true" || v == "1"
 	}
@@ -783,6 +799,8 @@ func flatten(cfg *Config) map[string]string {
 	m["queue.driver"] = cfg.Queue.Driver
 	m["queue.redis.url"] = cfg.Queue.Redis.URL
 	m["queue.redis.key_prefix"] = cfg.Queue.Redis.KeyPrefix
+	m["queue.rabbitmq.url"] = cfg.Queue.RabbitMQ.URL
+	m["queue.rabbitmq.queue_prefix"] = cfg.Queue.RabbitMQ.QueuePrefix
 	m["frontend.enabled"] = strconv.FormatBool(cfg.Frontend.Enabled)
 	m["frontend.mode"] = cfg.Frontend.Mode
 	m["frontend.theme_path"] = cfg.Frontend.ThemePath
