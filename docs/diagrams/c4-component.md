@@ -8,6 +8,10 @@ C4Component
 
     ContainerDb(postgres, "PostgreSQL", "Database")
     System_Ext(paymentGateway, "Payment Gateway", "External")
+    System_Ext(meilisearch, "Meilisearch", "Search engine (optional)")
+    System_Ext(redis, "Redis", "Cache/queue backend (optional)")
+    System_Ext(rabbitmq, "RabbitMQ", "Queue backend (optional)")
+    System_Ext(objectStorage, "S3-compatible storage", "Object storage (optional)")
 
     Container_Boundary(api, "API Server") {
 
@@ -82,7 +86,7 @@ C4Component
 
         Boundary(platform, "Platform Layer (Cross-Cutting)") {
             Component(eventBus, "EventBus", "Go", "Pub/sub for domain events (sync + async)")
-            Component(pluginRegistry, "PluginRegistry", "Go", "Plugin lifecycle: register → init → collect steps")
+            Component(pluginRegistry, "PluginRegistry", "Go", "Plugin lifecycle: register → init → collect steps and providers")
             Component(jwtPkg, "JWT", "Go, crypto", "Token issuing and verification")
             Component(configPkg, "Config", "Go, yaml.v3", "YAML configuration loading")
             Component(loggerPkg, "Logger", "Go", "Structured logging (info, error, metadata)")
@@ -90,6 +94,20 @@ C4Component
             Component(adminSeeder, "AdminSeeder", "Go", "Seeds default admin user (admin@example.com)")
             Component(configSeeder, "ConfigSeeder", "Go", "Seeds store config (default currency EUR)")
             Component(catalogSeeder, "CatalogSeeder", "Go", "Seeds categories, products, variants, prices, stock")
+        }
+
+        Boundary(corePlugins, "Core Plugins (plugins/core/, config-gated)") {
+            Component(corePostgresPlugins, "Postgres Core Plugins", "Go", "Default search, cache, queue adapters when driver=postgres")
+            Component(coreMeilisearch, "Meilisearch Core Plugin", "Go", "Registers Meilisearch engine when search.engine=meilisearch")
+            Component(coreRedisCache, "Redis Cache Core Plugin", "Go", "Registers Redis cache when cache.driver=redis")
+            Component(coreRedisQueue, "Redis Queue Core Plugin", "Go", "Registers Redis job queue when queue.driver=redis")
+            Component(coreRabbitMQ, "RabbitMQ Core Plugin", "Go", "Registers AMQP job queue when queue.driver=rabbitmq")
+            Component(coreStripe, "Stripe Core Plugin", "Go", "Registers Stripe payment provider when payment.stripe.enabled")
+            Component(coreS3Storage, "S3 Storage Core Plugin", "Go", "Registers S3 media storage when storage.driver=s3")
+        }
+
+        Boundary(externalPlugins, "External Plugins (compile-time register)") {
+            Component(examplePlugin, "Example Plugin", "Go", "Reference: pricing step, order.created listener, example.reports.read permission (plugins.example.enabled)")
         }
     }
 
@@ -131,7 +149,7 @@ C4Component
     Rel(cartService, postgresRepos, "Cart persistence")
     Rel(checkoutWorkflow, postgresRepos, "Order, inventory, payment, shipping persistence")
     Rel(productHandler, postgresRepos, "Product queries")
-    Rel(pluginRegistry, adminRegistry, "Plugins register schemas")
+    Rel(pluginRegistry, adminRegistry, "Plugins register permissions and schemas")
     Rel(importerService, attributeRegistry, "Validates attribute values")
     Rel(exporterService, postgresRepos, "Reads products and variants")
     Rel(stockImporter, postgresRepos, "Looks up variants by SKU, writes stock entries")
@@ -171,10 +189,30 @@ C4Component
     Rel(pluginRegistry, checkoutWorkflow, "Provides checkout steps via pluginApp")
     Rel(pluginRegistry, compositionPipeline, "Provides composition steps via pluginApp")
     Rel(pluginRegistry, eventBus, "Provides event handlers via pluginApp")
+
+    Rel(configPkg, pluginRegistry, "Driver switches select active core plugins")
+    Rel(pluginRegistry, corePostgresPlugins, "Registers when postgres drivers active")
+    Rel(pluginRegistry, coreMeilisearch, "Registers when search.engine=meilisearch")
+    Rel(pluginRegistry, coreRedisCache, "Registers when cache.driver=redis")
+    Rel(pluginRegistry, coreRedisQueue, "Registers when queue.driver=redis")
+    Rel(pluginRegistry, coreRabbitMQ, "Registers when queue.driver=rabbitmq")
+    Rel(pluginRegistry, coreStripe, "Registers when payment.stripe.enabled")
+    Rel(pluginRegistry, coreS3Storage, "Registers when storage.driver=s3")
+    Rel(pluginRegistry, examplePlugin, "Registers when plugins.example.enabled")
+
+    Rel(corePostgresPlugins, postgresSearch, "Provides default search engine")
+    Rel(corePostgresPlugins, pgCacheStore, "Provides default cache store")
+    Rel(corePostgresPlugins, postgresJobQueue, "Provides default job queue")
+    Rel(coreMeilisearch, meilisearch, "Indexes and queries products", "HTTP")
+    Rel(coreRedisCache, redis, "Key-value cache with TTL", "Redis protocol")
+    Rel(coreRedisQueue, redis, "Job enqueue/dequeue", "Redis protocol")
+    Rel(coreRabbitMQ, rabbitmq, "AMQP job dispatch", "AMQP")
+    Rel(coreStripe, paymentGateway, "Payment initiation and refunds", "HTTPS")
+    Rel(coreS3Storage, objectStorage, "Media object read/write", "HTTPS")
+    Rel(examplePlugin, pricingPipeline, "Example fee pricing step via pluginApp")
+    Rel(examplePlugin, eventBus, "order.created async listener via pluginApp")
 ```
 
-> **Wiring note:** PluginRegistry calls `plugin.Init(pluginApp)` for each plugin.
-> Plugins register steps/handlers into `pluginApp` during init.
-> `main.go` then extracts those steps from `pluginApp` and wires them into
-> the pipelines, workflows, and event bus — hexagonal-style explicit wiring,
-> not direct injection by the registry.
+> **Wiring note (post PR-410–421):** `cmd/api/register_plugins.go` calls `core.Register()` for config-gated core plugins and optionally registers external plugins (e.g. `plugins/example`). `PluginRegistry` calls `plugin.Init(pluginApp)` for each registered plugin. Core plugins set infrastructure providers on `pluginApp`; external plugins register pipeline steps, event handlers, and permissions. `main.go` then resolves providers and extracts steps from `pluginApp` into pipelines, workflows, and the event bus — explicit hexagonal wiring, not runtime discovery.
+>
+> **Deferred:** dynamic `.so` loading, plugin marketplace, plugin CLI registration.

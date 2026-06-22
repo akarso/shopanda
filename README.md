@@ -91,9 +91,35 @@ Extensibility is built around four mechanisms:
 - **Workflows** — ordered, stateful flows such as checkout.
 - **Composition pipelines** — API response building for views such as PDP and PLP.
 
-## Plugin model
+## Extension model (three tiers)
 
-Plugins are in-process Go interfaces.
+Shopanda separates **core**, **core plugins**, and **external plugins**. All three use the same in-process `plugin.Plugin` contract; what differs is who ships the code and how it is enabled.
+
+```text
+┌─────────────────────────────────────────────────────────────┐
+│  Tier 1 — Core (always on)                                  │
+│  Domain · application · Postgres repos · default adapters     │
+│  Postgres search/cache/queue · manual pay · local storage   │
+└─────────────────────────────────────────────────────────────┘
+                              │
+┌─────────────────────────────────────────────────────────────┐
+│  Tier 2 — Core plugins (shipped in repo, config-gated)    │
+│  Meilisearch · Redis cache/queue · RabbitMQ · Stripe · S3   │
+│  Registered via plugins/core; one backend per resource slot │
+└─────────────────────────────────────────────────────────────┘
+                              │
+┌─────────────────────────────────────────────────────────────┐
+│  Tier 3 — External plugins (author-owned)                   │
+│  Custom pricing/checkout steps · events · permissions       │
+│  Compile-time register in cmd/api/register_plugins.go       │
+└─────────────────────────────────────────────────────────────┘
+```
+
+| Tier | Location | Enabled by | Typical use |
+| --- | --- | --- | --- |
+| **Core** | `internal/` | always | Commerce engine, default Postgres stack |
+| **Core plugin** | `plugins/core/` | config driver switches (`search.engine`, `cache.driver`, `queue.driver`, etc.) | Optional backends shipped with the repo |
+| **External plugin** | e.g. `plugins/example/` or your own module | compile-time import + config flag | Custom business rules without forking core |
 
 ```go
 type Plugin interface {
@@ -102,32 +128,33 @@ type Plugin interface {
 }
 ```
 
-Plugins can:
+Extension mechanisms (events, pricing/checkout/composition pipelines, permissions) are wired through `PluginRegistry` at startup. There is no dynamic plugin discovery yet — core and external plugins are registered explicitly at compile time.
 
-- Extend pricing, checkout, and composition pipelines.
-- Listen to sync and async events.
-- Register permissions.
-- Add optional integrations and advanced capabilities.
+See [Developer Guide](docs/guides/DEVELOPER.md) for how to enable core plugins and add an external plugin. Reference implementation: [`plugins/example/`](plugins/example/).
 
-Infrastructure adapters such as payment, shipping, storage, and search are currently wired explicitly in application code rather than discovered dynamically through the plugin registry.
+**Not yet supported:** `.so` dynamic loading, plugin marketplace, plugin-registered CLI commands.
 
-The core is designed to stay stable while plugins handle variation.
+Full Phase 4 plan: [Phase 4 Roadmap](docs/phase-4-refactoring/ROADMAP.md).
 
 ## Default stack
 
-Shopanda uses a minimal default stack:
+Shopanda uses a minimal default stack (Tier 1 only — no optional services required):
 
-- **Language:** Go
-- **Database:** PostgreSQL
-- **Queue:** PostgreSQL-backed job queue with worker and retry logic
-- **Search:** PostgreSQL full-text search (tsvector)
-- **Storage:** Local filesystem by default
-- **Email:** SMTP mailer with async job-based delivery
-- **Cron:** In-process scheduler for recurring tasks
-- **Themes:** Server-side rendered templates with layout support
-- **Data exchange:** CSV import/export for products, stock, customers, and attribute/group definitions
+| Component | Default | Optional core plugin |
+| --- | --- | --- |
+| **Language** | Go | — |
+| **Database** | PostgreSQL | — |
+| **Queue** | PostgreSQL job queue | Redis or RabbitMQ (`queue.driver`) |
+| **Search** | PostgreSQL full-text (tsvector) | Meilisearch (`search.engine`) |
+| **Cache** | PostgreSQL UNLOGGED table | Redis (`cache.driver`) |
+| **Storage** | Local filesystem | S3-compatible (`storage.driver`) |
+| **Payments** | Manual (offline) | Stripe (`payment.stripe.enabled`) |
+| **Email** | SMTP + async jobs | — |
+| **Cron** | In-process scheduler | — |
+| **Storefront** | SSR templates | — |
+| **Data exchange** | CSV import/export | — |
 
-Optional infrastructure such as Redis, Meilisearch, S3, or CDN support can be added through plugins.
+Enable optional backends via YAML or environment variables — see [Deployment Guide](docs/guides/DEPLOYMENT.md) and `configs/config.example.yaml`.
 
 ## Early-stage note
 
@@ -194,7 +221,8 @@ Current guides live in [`docs/guides/`](docs/guides/):
 
 - [Merchant Guide](docs/guides/MERCHANT.md) — day-to-day store operations, admin UI, orders, and catalog workflows
 - [Deployment Guide](docs/guides/DEPLOYMENT.md) — Docker, bare metal, cloud deployment, TLS, backups, and monitoring
-- [Developer Guide](docs/guides/DEVELOPER.md) — plugin contracts, extension points, events, pipelines, and API integration
+- [Developer Guide](docs/guides/DEVELOPER.md) — three-tier plugin model, extension points, events, pipelines, and API integration
+- [Plugin Authoring Guide](PLUGINS.md) — core vs external boundaries, extension mechanisms, deferred capabilities
 
 ### Planning & Reference
 

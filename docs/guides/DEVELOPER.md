@@ -9,7 +9,9 @@ For deployment and operational setup, see [Deployment Guide](DEPLOYMENT.md). For
 ## Table of Contents
 
 - [Architecture Overview](#architecture-overview)
-- [Create a Plugin](#create-a-plugin)
+- [Three-Tier Extension Model](#three-tier-extension-model)
+- [Enable Core Plugins](#enable-core-plugins)
+- [Create an External Plugin](#create-an-external-plugin)
 - [Add a Payment Provider](#add-a-payment-provider)
 - [Add a Shipping Provider](#add-a-shipping-provider)
 - [Add a Storage Backend](#add-a-storage-backend)
@@ -43,7 +45,92 @@ When extending the system:
 - keep business rules out of HTTP handlers and storage adapters
 - prefer composition, events, pipelines, and workflows over direct core overrides
 
-## Create a Plugin
+## Three-Tier Extension Model
+
+Shopanda has three extension tiers. All use the same `plugin.Plugin` interface; the difference is packaging and enablement.
+
+| Tier | What it is | Where it lives | How it is enabled |
+| --- | --- | --- | --- |
+| **Core** | Always-on commerce engine and default Postgres adapters | `internal/domain`, `internal/application`, `internal/infrastructure/postgres` | No config switch — runs on every deployment |
+| **Core plugin** | Optional backends shipped in this repository | `plugins/core/*` | Driver switches in config (`search.engine`, `cache.driver`, `queue.driver`, `storage.driver`, `payment.stripe.enabled`) |
+| **External plugin** | Author-owned behavior extensions | Your module or `plugins/example/` | Compile-time registration in `cmd/api/register_plugins.go` + optional config flag |
+
+```text
+Core (always on)
+  └── Core plugins (config-gated, plugins/core/)
+        └── External plugins (compile-time register)
+```
+
+**Core plugins** replace infrastructure ports (search engine, cache store, job queue, media storage, payment providers). Only one backend is active per resource slot — for example, `queue.driver` is `postgres`, `redis`, or `rabbitmq`, never more than one.
+
+**External plugins** extend behavior through well-defined hooks: pricing, checkout, and composition pipeline steps; sync/async event listeners; admin permissions. They should not reimplement infrastructure adapters — use a core plugin or contribute one under `plugins/core/`.
+
+**What still requires compile-time wiring:**
+
+- Registering any plugin (core plugins are registered from `plugins/core/register.go`; external plugins from `cmd/api/register_plugins.go`)
+- Adding payment/shipping providers that are not yet packaged as core plugins
+- Adding HTTP webhook routes for new payment providers
+- Adding CLI subcommands (`cmd/api/main.go` subcommand switch)
+
+**Deferred (not implemented):** dynamic `.so` loading, plugin marketplace, plugin-defined config UI in admin (see PR-422), plugin-registered CLI commands.
+
+See also: [PLUGINS.md](../../PLUGINS.md) · [Phase 4 Roadmap](../phase-4-refactoring/ROADMAP.md) · [plugins/example/README.md](../../plugins/example/README.md)
+
+## Enable Core Plugins
+
+Core plugins register through `plugins/core/register.go`, called from `registerPlugins()` in `cmd/api/register_plugins.go`. You do not import individual core plugins in your own code — change config and restart.
+
+### Driver switches
+
+| Resource | Config key | Default | Alternatives |
+| --- | --- | --- | --- |
+| Search | `search.engine` | `postgres` | `meilisearch` |
+| Cache | `cache.driver` | `postgres` | `redis` |
+| Queue | `queue.driver` | `postgres` | `redis`, `rabbitmq` |
+| Storage | `storage.driver` | `local` | `s3` |
+| Stripe payments | `payment.stripe.enabled` | `false` | set `true` + Stripe env vars |
+
+Example (`configs/config.example.yaml`):
+
+```yaml
+search:
+  engine: meilisearch
+  meilisearch:
+    host: "http://localhost:7700"
+    index: products
+
+cache:
+  driver: redis
+  redis:
+    url: "redis://localhost:6379/0"
+
+queue:
+  driver: rabbitmq
+  rabbitmq:
+    url: "amqp://guest:guest@localhost:5672/"
+
+storage:
+  driver: s3
+  s3:
+    bucket: my-bucket
+    region: eu-west-1
+
+payment:
+  stripe:
+    enabled: true
+```
+
+Environment overlays use the `SHOPANDA_` prefix (e.g. `SHOPANDA_SEARCH_ENGINE=meilisearch`, `SHOPANDA_QUEUE_DRIVER=redis`).
+
+### Startup behavior
+
+- Core plugins register only when their driver switch matches.
+- Failed plugin `Init` does not crash the process — the plugin is marked failed and skipped; check logs for `plugin.init.summary`.
+- After `InitAll`, `main.go` resolves providers from `plugin.App` (search engine, job queue, cache, storage, payment registry).
+
+Manual pay is always registered as a core plugin. Stripe registers additionally when enabled.
+
+## Create an External Plugin
 
 The current plugin contract lives in `internal/platform/plugin`.
 
@@ -117,20 +204,21 @@ func (productStep) Apply(ctx *composition.ProductContext) error {
 
 ### Register the plugin at startup
 
-Plugin registration is currently explicit and compile-time. Add the plugin in `cmd/api/main.go` where the registry is created:
+External plugins are registered in `cmd/api/register_plugins.go` (not discovered at runtime):
 
 ```go
-registry := plugin.NewRegistry(log)
-registry.Register(myplugin.New())
-
-pluginApp := &plugin.App{
-    Logger: log,
-    Bus:    bus,
-    Config: cfg,
+func registerPlugins(registry *plugin.Registry, cfg *config.Config) {
+    core.Register(registry, cfg)
+    if cfg.Plugins.Example.Enabled {
+        registry.Register(example.New())
+    }
+    // registry.Register(acme.New())  // your plugin
 }
-
-summary := registry.InitAll(pluginApp)
 ```
+
+`main.go` creates the registry, calls `registerPlugins`, builds `plugin.App`, and runs `registry.InitAll(pluginApp)`.
+
+Reference implementation: [`plugins/example/`](../../plugins/example/) — pricing step, `order.created` listener, admin permission.
 
 Current behavior to keep in mind:
 
@@ -158,7 +246,7 @@ type Refunder interface {
 }
 ```
 
-The built-in Stripe adapter is a useful reference because it implements both initiation and refunds.
+The built-in Stripe adapter is a useful reference because it implements both initiation and refunds. In production deployments, Stripe is packaged as a **core plugin** (`plugins/core/stripe`) and enabled via `payment.stripe.enabled`.
 
 ### Provider skeleton
 
@@ -188,12 +276,14 @@ func (p *Provider) Initiate(ctx context.Context, py *payment.Payment) (payment.P
 
 ### Wire the provider
 
-Current provider selection is code-driven in `cmd/api/main.go`, not plugin-discovered. That means adding a provider usually requires:
+Payment providers ship as **core plugins** under `plugins/core/` (manual pay always on; Stripe when enabled). The active provider is selected at checkout from the payment registry populated during plugin init.
 
-1. instantiating the adapter from configuration
-2. selecting it as the active `payment.Provider`
+Adding a **new** payment provider that is not yet a core plugin still requires:
+
+1. implementing the adapter (see skeleton below)
+2. registering it — either as a new core plugin in `plugins/core/` or temporarily in `register_plugins.go`
 3. optionally exposing refund support via `payment.Refunder`
-4. adding any provider-specific webhook route and handler
+4. adding any provider-specific webhook route and handler in `cmd/api/main.go`
 
 ### Handle webhooks
 
@@ -281,7 +371,7 @@ type Storage interface {
 }
 ```
 
-The built-in local filesystem backend and the S3-compatible backend are good references.
+The built-in local filesystem backend and the S3-compatible backend are good references. Both are **core plugins** (`plugins/core/storagelocal`, `plugins/core/storages3`) selected by `storage.driver`.
 
 ### Storage backend skeleton
 
@@ -315,7 +405,7 @@ Storage adapters are used by the media service and HTTP media handlers. A new ba
 
 ### Configuration integration
 
-Storage selection is currently configured in app config rather than a dynamic backend registry. Follow the existing local and S3 patterns when introducing another backend.
+Storage selection is config-driven via `storage.driver`. Core plugins register the active backend during startup. Follow the local and S3 core plugin patterns when adding another storage backend.
 
 ## Add Custom Pipeline Steps
 
@@ -513,4 +603,4 @@ When adding an extension, prefer this order:
 4. add tests at the adapter boundary
 5. only then consider whether the pattern should be generalized into a reusable plugin hook
 
-Shopanda already has real extension points for plugins, events, pipelines, workflows, and infrastructure ports. It does not yet have dynamic plugin discovery or a plugin-based CLI registry, so keep the guide and the code honest about where extension is explicit rather than magical.
+Shopanda already has real extension points for plugins, events, pipelines, workflows, and infrastructure ports. Core and external plugins register at compile time through `register_plugins.go`; there is no dynamic plugin discovery or plugin-based CLI registry yet — keep the guide and the code honest about where extension is explicit rather than magical.
