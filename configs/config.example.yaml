@@ -160,6 +160,9 @@ queue:
 #     postgres_search: true
 #     postgres_cache: true
 #     postgres_queue: true
+#   example:
+#     enabled: false
+#     fee_minor_units: 100
 
 # --- Frontend (optional SSR storefront) ---------------------------------------
 frontend:

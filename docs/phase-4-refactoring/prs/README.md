@@ -17,7 +17,7 @@ Full specs for PR-400–434. Format matches Phase 3: `Summary`, `Why`, `Scope`, 
 | PR-414 | B | done | [Redis cache driver](PR-414.md) |
 | PR-415 | B | done | [Redis queue driver](PR-415.md) |
 | PR-416 | B | done | [RabbitMQ queue driver](PR-416.md) |
-| PR-420 | C | planned | [Example external plugin](PR-420.md) |
+| PR-420 | C | done | [Example external plugin](PR-420.md) |
 | PR-421 | C | planned | [Three-tier plugin docs](PR-421.md) |
 | PR-422 | C | planned (stretch) | [Plugin config in admin](PR-422.md) |
 | PR-430 | D | done | [`app dev` single-process](PR-430.md) |

@@ -589,6 +589,19 @@ func TestConfigString_ContainsCacheDriver(t *testing.T) {
 	}
 }
 
+func TestLoad_PluginsExampleDisabledByDefault(t *testing.T) {
+	withTestBaseURL(t)
+	path := writeYAML(t, "")
+
+	cfg, err := loadCfg(t, path)
+	if err != nil {
+		t.Fatalf("Load() error: %v", err)
+	}
+	if cfg.Plugins.Example.Enabled {
+		t.Fatal("Plugins.Example.Enabled = true, want false by default")
+	}
+}
+
 func TestLoad_PublicBaseURL_RejectsWildcardHost(t *testing.T) {
 	path := writeYAML(t, "")
 
