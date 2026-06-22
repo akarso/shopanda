@@ -5,6 +5,7 @@ package rabbitmq_test
 import (
 	"context"
 	"os"
+	"strings"
 	"testing"
 	"time"
 
@@ -19,9 +20,10 @@ func setupRabbitQueue(t *testing.T) jobs.Queue {
 	if url == "" {
 		url = "amqp://guest:guest@127.0.0.1:5672/"
 	}
+	prefix := "shopanda-test-" + strings.ReplaceAll(t.Name(), "/", "_")
 	q, err := inrabbitmq.NewJobQueue(inrabbitmq.QueueConfig{
 		URL:         url,
-		QueuePrefix: "shopanda-test",
+		QueuePrefix: prefix,
 	})
 	if err != nil {
 		t.Fatalf("NewJobQueue: %v", err)
@@ -69,18 +71,30 @@ func TestJobQueue_Fail_Permanent(t *testing.T) {
 	q := setupRabbitQueue(t)
 	ctx := context.Background()
 
-	job, _ := jobs.NewJob(id.New(), "test", nil)
+	job, err := jobs.NewJob(id.New(), "test", nil)
+	if err != nil {
+		t.Fatalf("NewJob: %v", err)
+	}
 	job.MaxRetries = 1
 	if err := q.Enqueue(ctx, job); err != nil {
 		t.Fatalf("Enqueue: %v", err)
 	}
 
-	got, _ := q.Dequeue(ctx)
+	got, err := q.Dequeue(ctx)
+	if err != nil {
+		t.Fatalf("Dequeue: %v", err)
+	}
+	if got == nil {
+		t.Fatal("Dequeue returned nil job")
+	}
 	if err := q.Fail(ctx, got.ID, nil); err != nil {
 		t.Fatalf("Fail: %v", err)
 	}
 
-	next, _ := q.Dequeue(ctx)
+	next, err := q.Dequeue(ctx)
+	if err != nil {
+		t.Fatalf("Dequeue after fail: %v", err)
+	}
 	if next != nil {
 		t.Fatal("permanently failed job should not return to main queue")
 	}
@@ -90,26 +104,38 @@ func TestJobQueue_Fail_Retry(t *testing.T) {
 	q := setupRabbitQueue(t)
 	ctx := context.Background()
 
-	job, _ := jobs.NewJob(id.New(), "test", nil)
+	job, err := jobs.NewJob(id.New(), "test", nil)
+	if err != nil {
+		t.Fatalf("NewJob: %v", err)
+	}
 	if err := q.Enqueue(ctx, job); err != nil {
 		t.Fatalf("Enqueue: %v", err)
 	}
 
-	got, _ := q.Dequeue(ctx)
+	got, err := q.Dequeue(ctx)
+	if err != nil {
+		t.Fatalf("Dequeue: %v", err)
+	}
+	if got == nil {
+		t.Fatal("Dequeue returned nil job")
+	}
 	if err := q.Fail(ctx, got.ID, nil); err != nil {
 		t.Fatalf("Fail: %v", err)
 	}
 
-	time.Sleep(7 * time.Second)
-
-	retry, err := q.Dequeue(ctx)
-	if err != nil {
-		t.Fatalf("Dequeue retry: %v", err)
+	deadline := time.Now().Add(15 * time.Second)
+	for time.Now().Before(deadline) {
+		retry, err := q.Dequeue(ctx)
+		if err != nil {
+			t.Fatalf("Dequeue retry: %v", err)
+		}
+		if retry != nil && retry.ID == job.ID {
+			if retry.Attempts != 2 {
+				t.Fatalf("retry attempts = %d, want 2", retry.Attempts)
+			}
+			return
+		}
+		time.Sleep(200 * time.Millisecond)
 	}
-	if retry == nil || retry.ID != job.ID {
-		t.Fatalf("retry job = %+v, want %q", retry, job.ID)
-	}
-	if retry.Attempts != 2 {
-		t.Fatalf("retry attempts = %d, want 2", retry.Attempts)
-	}
+	t.Fatal("timed out waiting for retry job")
 }

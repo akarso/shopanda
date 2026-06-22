@@ -1,6 +1,7 @@
 package rabbitmq_test
 
 import (
+	"strings"
 	"testing"
 	"time"
 
@@ -35,6 +36,20 @@ func TestEncodeDecodeJobMessage_RoundTrip(t *testing.T) {
 	}
 	if got.Payload["to"] != "a@b.com" {
 		t.Fatalf("payload = %v", got.Payload)
+	}
+}
+
+func TestEncodeJobMessageWithLastError_PreservedInJSON(t *testing.T) {
+	job, err := jobs.NewJob("job-2", "test", nil)
+	if err != nil {
+		t.Fatalf("NewJob: %v", err)
+	}
+	data, err := inrabbitmq.EncodeJobMessageWithLastErrorForTest(job, "smtp timeout")
+	if err != nil {
+		t.Fatalf("EncodeJobMessageWithLastErrorForTest: %v", err)
+	}
+	if !strings.Contains(string(data), "last_error") || !strings.Contains(string(data), "smtp timeout") {
+		t.Fatalf("json = %s, want last_error field", data)
 	}
 }
 

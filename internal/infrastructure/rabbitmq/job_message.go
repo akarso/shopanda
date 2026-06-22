@@ -79,6 +79,17 @@ func EncodeJobMessageForTest(job jobs.Job) ([]byte, error) {
 	return encodeJobMessage(job)
 }
 
+// EncodeJobMessageWithLastErrorForTest encodes a job message including LastError.
+func EncodeJobMessageWithLastErrorForTest(job jobs.Job, lastError string) ([]byte, error) {
+	msg := toJobMessage(job)
+	msg.LastError = lastError
+	data, err := json.Marshal(msg)
+	if err != nil {
+		return nil, fmt.Errorf("job_queue: marshal job %q: %w", job.ID, err)
+	}
+	return data, nil
+}
+
 // DecodeJobMessageForTest exposes job JSON decoding for unit tests.
 func DecodeJobMessageForTest(data []byte) (jobs.Job, error) {
 	return decodeJobMessage(data)

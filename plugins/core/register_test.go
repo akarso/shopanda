@@ -245,6 +245,40 @@ func TestRegister_ExplicitPostgresQueueOverridesRedisDriver(t *testing.T) {
 	}
 }
 
+func TestRegister_ExplicitPostgresQueueOverridesRabbitMQDriver(t *testing.T) {
+	log := logger.NewWithWriter(io.Discard, "error")
+	reg := plugin.NewRegistry(log)
+
+	enabled := true
+	cfg := &config.Config{
+		Queue: config.QueueConfig{Driver: "rabbitmq"},
+		Plugins: config.PluginsConfig{
+			Core: config.CorePluginsConfig{
+				PostgresQueue: &enabled,
+			},
+		},
+	}
+	core.Register(reg, cfg)
+
+	var hasPostgresQueue, hasRabbitMQ, hasRedis bool
+	for _, e := range reg.Entries() {
+		switch e.Name {
+		case "core/postgres-queue":
+			hasPostgresQueue = true
+		case "core/rabbitmq-queue":
+			hasRabbitMQ = true
+		case "core/redis-queue":
+			hasRedis = true
+		}
+	}
+	if !hasPostgresQueue {
+		t.Fatal("expected postgres queue plugin when explicitly enabled")
+	}
+	if hasRabbitMQ || hasRedis {
+		t.Fatal("alternate queue plugins must not register when postgres queue wins")
+	}
+}
+
 func TestRegister_RedisCacheDriverRegistersRedisPlugin(t *testing.T) {
 	log := logger.NewWithWriter(io.Discard, "error")
 	reg := plugin.NewRegistry(log)

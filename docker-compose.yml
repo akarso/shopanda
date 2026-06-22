@@ -106,7 +106,7 @@ services:
 
   # ---------- RabbitMQ (queue profile) ----------------------------------------
   # Message broker for queue.driver=rabbitmq — AMQP at localhost:5672,
-  # management UI at http://localhost:15672 (guest/changeme by default).
+  # management UI at http://localhost:15672 (shopanda/changeme by default).
   rabbitmq:
     image: rabbitmq:3.13-management-alpine
     environment:

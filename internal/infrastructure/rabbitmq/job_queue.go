@@ -2,6 +2,7 @@ package rabbitmq
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"math"
 	"math/rand/v2"
@@ -23,14 +24,15 @@ const (
 
 // JobQueue implements jobs.Queue using RabbitMQ durable queues.
 //
-// Retry strategy: on Fail, the in-flight message is acked and re-published to the
-// main queue with a per-message expiration (backoff). RunAt delays use the same
-// expiration mechanism on Enqueue. Permanently failed jobs are published to a
-// separate durable failed queue for observability.
+// Delayed delivery uses a dead-letter delay queue: messages published with a TTL
+// are routed to the main queue after expiration. Retries and RunAt scheduling
+// use the same mechanism. Permanently failed jobs are published to a separate
+// durable failed queue for observability.
 type JobQueue struct {
 	conn        *amqp.Connection
 	ch          *amqp.Channel
 	mainQueue   string
+	delayQueue  string
 	failedQueue string
 	mu          sync.Mutex
 	inflight    map[string]inflightEntry
@@ -69,13 +71,26 @@ func NewJobQueue(cfg QueueConfig) (*JobQueue, error) {
 		prefix = "shopanda"
 	}
 	mainQueue := prefix + ".jobs"
+	delayQueue := prefix + ".jobs.delay"
 	failedQueue := prefix + ".jobs.failed"
 
-	for _, name := range []string{mainQueue, failedQueue} {
-		if _, err := ch.QueueDeclare(name, true, false, false, false, nil); err != nil {
+	delayArgs := amqp.Table{
+		"x-dead-letter-exchange":    "",
+		"x-dead-letter-routing-key": mainQueue,
+	}
+
+	for _, spec := range []struct {
+		name string
+		args amqp.Table
+	}{
+		{mainQueue, nil},
+		{delayQueue, delayArgs},
+		{failedQueue, nil},
+	} {
+		if _, err := ch.QueueDeclare(spec.name, true, false, false, false, spec.args); err != nil {
 			_ = ch.Close()
 			_ = conn.Close()
-			return nil, fmt.Errorf("NewJobQueue: declare queue %q: %w", name, err)
+			return nil, fmt.Errorf("NewJobQueue: declare queue %q: %w", spec.name, err)
 		}
 	}
 
@@ -83,12 +98,13 @@ func NewJobQueue(cfg QueueConfig) (*JobQueue, error) {
 		conn:        conn,
 		ch:          ch,
 		mainQueue:   mainQueue,
+		delayQueue:  delayQueue,
 		failedQueue: failedQueue,
 		inflight:    make(map[string]inflightEntry),
 	}, nil
 }
 
-func (q *JobQueue) publish(ctx context.Context, queue string, msg jobMessage) error {
+func (q *JobQueue) publishTo(ctx context.Context, queue string, msg jobMessage, delay time.Duration) error {
 	_ = ctx
 	body, err := jsonMarshalJobMessage(msg)
 	if err != nil {
@@ -99,7 +115,7 @@ func (q *JobQueue) publish(ctx context.Context, queue string, msg jobMessage) er
 		Body:         body,
 		DeliveryMode: amqp.Persistent,
 	}
-	if delay := time.Until(msg.RunAt); delay > 0 {
+	if delay > 0 {
 		pub.Expiration = strconv.FormatInt(delay.Milliseconds(), 10)
 	}
 	if err := q.ch.Publish("", queue, false, false, pub); err != nil {
@@ -117,7 +133,10 @@ func (q *JobQueue) Enqueue(ctx context.Context, job jobs.Job) error {
 	if msg.MaxRetries == 0 {
 		msg.MaxRetries = jobs.DefaultMaxRetries
 	}
-	return q.publish(ctx, q.mainQueue, msg)
+	if delay := time.Until(msg.RunAt); delay > 0 {
+		return q.publishTo(ctx, q.delayQueue, msg, delay)
+	}
+	return q.publishTo(ctx, q.mainQueue, msg, 0)
 }
 
 // Dequeue atomically claims the next pending job.
@@ -133,7 +152,12 @@ func (q *JobQueue) Dequeue(ctx context.Context) (*jobs.Job, error) {
 
 	msg, err := decodeJobMessageBytes(delivery.Body)
 	if err != nil {
-		_ = delivery.Nack(false, true)
+		_ = q.ch.Publish("", q.failedQueue, false, false, amqp.Publishing{
+			ContentType:  "application/octet-stream",
+			Body:         delivery.Body,
+			DeliveryMode: amqp.Persistent,
+		})
+		_ = delivery.Nack(false, false)
 		return nil, err
 	}
 
@@ -149,26 +173,32 @@ func (q *JobQueue) Dequeue(ctx context.Context) (*jobs.Job, error) {
 	return &job, nil
 }
 
-func (q *JobQueue) takeInflight(id string) (inflightEntry, error) {
+func (q *JobQueue) inflightEntry(id string) (inflightEntry, error) {
 	q.mu.Lock()
 	defer q.mu.Unlock()
 	entry, ok := q.inflight[id]
 	if !ok {
 		return inflightEntry{}, fmt.Errorf("job_queue: job %s not found or not processing", id)
 	}
-	delete(q.inflight, id)
 	return entry, nil
+}
+
+func (q *JobQueue) removeInflight(id string) {
+	q.mu.Lock()
+	delete(q.inflight, id)
+	q.mu.Unlock()
 }
 
 // Complete marks a job as done.
 func (q *JobQueue) Complete(ctx context.Context, id string) error {
-	entry, err := q.takeInflight(id)
+	entry, err := q.inflightEntry(id)
 	if err != nil {
 		return err
 	}
 	if err := q.ch.Ack(entry.tag, false); err != nil {
 		return fmt.Errorf("job_queue: complete ack: %w", err)
 	}
+	q.removeInflight(id)
 	_ = ctx
 	return nil
 }
@@ -184,12 +214,9 @@ func queueRetryDelay(attempt int) time.Duration {
 
 // Fail re-queues a job for retry or marks it as permanently failed.
 func (q *JobQueue) Fail(ctx context.Context, id string, jobErr error) error {
-	entry, err := q.takeInflight(id)
+	entry, err := q.inflightEntry(id)
 	if err != nil {
 		return err
-	}
-	if err := q.ch.Ack(entry.tag, false); err != nil {
-		return fmt.Errorf("job_queue: fail ack: %w", err)
 	}
 
 	msg := entry.job
@@ -199,26 +226,39 @@ func (q *JobQueue) Fail(ctx context.Context, id string, jobErr error) error {
 		msg.LastError = jobErr.Error()
 	}
 
+	var publishErr error
 	if msg.Attempts >= msg.MaxRetries {
 		msg.Status = jobs.StatusFailed
-		return q.publish(ctx, q.failedQueue, msg)
+		publishErr = q.publishTo(ctx, q.failedQueue, msg, 0)
+	} else {
+		delay := queueRetryDelay(msg.Attempts - 1)
+		msg.Status = jobs.StatusPending
+		msg.RunAt = now.Add(delay)
+		publishErr = q.publishTo(ctx, q.delayQueue, msg, delay)
+	}
+	if publishErr != nil {
+		return publishErr
 	}
 
-	delay := queueRetryDelay(msg.Attempts - 1)
-	msg.Status = jobs.StatusPending
-	msg.RunAt = now.Add(delay)
-	return q.publish(ctx, q.mainQueue, msg)
+	if err := q.ch.Ack(entry.tag, false); err != nil {
+		return fmt.Errorf("job_queue: fail ack: %w", err)
+	}
+	q.removeInflight(id)
+	return nil
 }
 
-// json helpers keep encode/decode in job_message.go testable from this package.
 func jsonMarshalJobMessage(msg jobMessage) ([]byte, error) {
-	return encodeJobMessage(msg.toJob())
+	data, err := json.Marshal(msg)
+	if err != nil {
+		return nil, fmt.Errorf("job_queue: marshal job %q: %w", msg.ID, err)
+	}
+	return data, nil
 }
 
 func decodeJobMessageBytes(data []byte) (jobMessage, error) {
-	job, err := decodeJobMessage(data)
-	if err != nil {
-		return jobMessage{}, err
+	var msg jobMessage
+	if err := json.Unmarshal(data, &msg); err != nil {
+		return jobMessage{}, fmt.Errorf("job_queue: unmarshal job: %w", err)
 	}
-	return toJobMessage(job), nil
+	return msg, nil
 }
