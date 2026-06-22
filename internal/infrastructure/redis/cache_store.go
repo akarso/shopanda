@@ -13,6 +13,8 @@ import (
 
 var _ cache.Cache = (*CacheStore)(nil)
 
+const deleteByPrefixBatchSize = 1000
+
 // CacheStore implements cache.Cache using Redis.
 type CacheStore struct {
 	client *goredis.Client
@@ -93,18 +95,23 @@ func (s *CacheStore) Delete(key string) error {
 func (s *CacheStore) DeleteByPrefix(ctx context.Context, prefix string) error {
 	match := s.key(prefix) + "*"
 	iter := s.client.Scan(ctx, 0, match, 100).Iterator()
-	var keys []string
+	keys := make([]string, 0, deleteByPrefixBatchSize)
 	for iter.Next(ctx) {
 		keys = append(keys, iter.Val())
+		if len(keys) >= deleteByPrefixBatchSize {
+			if err := s.client.Del(ctx, keys...).Err(); err != nil {
+				return fmt.Errorf("redis cache: delete by prefix %q: %w", prefix, err)
+			}
+			keys = keys[:0]
+		}
 	}
 	if err := iter.Err(); err != nil {
 		return fmt.Errorf("redis cache: scan prefix %q: %w", prefix, err)
 	}
-	if len(keys) == 0 {
-		return nil
-	}
-	if err := s.client.Del(ctx, keys...).Err(); err != nil {
-		return fmt.Errorf("redis cache: delete by prefix %q: %w", prefix, err)
+	if len(keys) > 0 {
+		if err := s.client.Del(ctx, keys...).Err(); err != nil {
+			return fmt.Errorf("redis cache: delete by prefix %q: %w", prefix, err)
+		}
 	}
 	return nil
 }

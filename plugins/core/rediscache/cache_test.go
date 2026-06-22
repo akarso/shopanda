@@ -70,3 +70,28 @@ func TestCachePlugin_Init_MissingRedisURL(t *testing.T) {
 		t.Fatal("Init() expected error when redis url is empty")
 	}
 }
+
+func TestCachePlugin_Init_UsesRedisURLEnvFallback(t *testing.T) {
+	mr, err := miniredis.Run()
+	if err != nil {
+		t.Fatalf("miniredis.Run: %v", err)
+	}
+	defer mr.Close()
+
+	t.Setenv("REDIS_URL", "redis://"+mr.Addr())
+
+	cfg := &config.Config{
+		Cache: config.CacheConfig{Driver: "redis"},
+	}
+	app := testApp(cfg)
+	if err := crediscache.NewCachePlugin().Init(app); err != nil {
+		t.Fatalf("Init() error: %v", err)
+	}
+	v, ok := app.Cache()
+	if !ok {
+		t.Fatal("Cache() ok = false, want redis cache")
+	}
+	if _, ok := v.(cache.Cache); !ok {
+		t.Fatalf("Cache() type = %T, want cache.Cache", v)
+	}
+}
