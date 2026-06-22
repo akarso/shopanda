@@ -8,6 +8,7 @@ import (
 	corepostgres "github.com/akarso/shopanda/plugins/core/postgres"
 	crediscache "github.com/akarso/shopanda/plugins/core/rediscache"
 	credisqueue "github.com/akarso/shopanda/plugins/core/redisqueue"
+	crabbitmq "github.com/akarso/shopanda/plugins/core/rabbitmqqueue"
 	cstoragelocal "github.com/akarso/shopanda/plugins/core/storagelocal"
 	cstorages3 "github.com/akarso/shopanda/plugins/core/storages3"
 	corestripe "github.com/akarso/shopanda/plugins/core/stripe"
@@ -29,6 +30,8 @@ func Register(registry *plugin.Registry, cfg *config.Config) {
 		registry.Register(corepostgres.NewQueuePlugin())
 	} else if cfg.CoreRedisQueueEnabled() {
 		registry.Register(credisqueue.NewQueuePlugin())
+	} else if cfg.CoreRabbitMQQueueEnabled() {
+		registry.Register(crabbitmq.NewQueuePlugin())
 	}
 	registry.Register(cmanualpay.NewPaymentPlugin())
 	if cfg.Payment.Stripe.Enabled {

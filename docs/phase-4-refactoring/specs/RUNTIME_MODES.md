@@ -107,7 +107,23 @@ For local email capture, add the `dev` profile (Mailpit at http://localhost:8025
 docker compose --profile dev up -d
 ```
 
-Optional profiles: `dev` (mailpit), `search` (meilisearch), `queue` (rabbitmq — PR-416).
+Optional profiles: `dev` (mailpit), `search` (meilisearch), `queue` (rabbitmq).
+
+RabbitMQ queue example (requires `queue` profile):
+
+```bash
+docker compose --profile queue up -d
+```
+
+Set in `.env`:
+
+```env
+SHOPANDA_QUEUE_DRIVER=rabbitmq
+RABBITMQ_URL=amqp://shopanda:changeme@localhost:5672/
+# SHOPANDA_QUEUE_RABBITMQ_QUEUE_PREFIX=shopanda
+```
+
+Management UI: http://localhost:15672 (default user/pass match compose env).
 
 ---
 

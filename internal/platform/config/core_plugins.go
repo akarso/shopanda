@@ -50,6 +50,14 @@ func (c *Config) CoreRedisQueueEnabled() bool {
 	return c.Queue.Driver == "redis"
 }
 
+// CoreRabbitMQQueueEnabled reports whether the RabbitMQ queue core plugin should load.
+func (c *Config) CoreRabbitMQQueueEnabled() bool {
+	if c.Plugins.Core.PostgresQueue != nil && *c.Plugins.Core.PostgresQueue {
+		return false
+	}
+	return c.Queue.Driver == "rabbitmq"
+}
+
 // CorePostgresQueueEnabled reports whether the postgres queue core plugin should load.
 func (c *Config) CorePostgresQueueEnabled() bool {
 	if c.Plugins.Core.PostgresQueue != nil {
