@@ -133,6 +133,58 @@ func TestRegister_ManualAndStripeBothRegisterWhenEnabled(t *testing.T) {
 	}
 }
 
+func TestRegister_RedisQueueDriverRegistersRedisPlugin(t *testing.T) {
+	log := logger.NewWithWriter(io.Discard, "error")
+	reg := plugin.NewRegistry(log)
+
+	cfg := &config.Config{
+		Queue: config.QueueConfig{Driver: "redis"},
+	}
+	core.Register(reg, cfg)
+
+	var hasRedis, hasPostgresQueue bool
+	for _, e := range reg.Entries() {
+		switch e.Name {
+		case "core/redis-queue":
+			hasRedis = true
+		case "core/postgres-queue":
+			hasPostgresQueue = true
+		}
+	}
+	if !hasRedis {
+		t.Fatal("expected core/redis-queue to register when queue.driver=redis")
+	}
+	if hasPostgresQueue {
+		t.Fatal("postgres queue plugin should not register when queue.driver=redis")
+	}
+}
+
+func TestRegister_PostgresQueueByDefault(t *testing.T) {
+	log := logger.NewWithWriter(io.Discard, "error")
+	reg := plugin.NewRegistry(log)
+
+	cfg := &config.Config{
+		Queue: config.QueueConfig{},
+	}
+	core.Register(reg, cfg)
+
+	var hasPostgresQueue, hasRedis bool
+	for _, e := range reg.Entries() {
+		switch e.Name {
+		case "core/postgres-queue":
+			hasPostgresQueue = true
+		case "core/redis-queue":
+			hasRedis = true
+		}
+	}
+	if !hasPostgresQueue {
+		t.Fatal("expected core/postgres-queue to register by default")
+	}
+	if hasRedis {
+		t.Fatal("redis queue plugin should not register when queue driver is unset")
+	}
+}
+
 func TestRegister_RedisCacheDriverRegistersRedisPlugin(t *testing.T) {
 	log := logger.NewWithWriter(io.Discard, "error")
 	reg := plugin.NewRegistry(log)

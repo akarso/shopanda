@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"strings"
 	"time"
 
 	"github.com/akarso/shopanda/internal/domain/cache"
@@ -32,24 +31,11 @@ func New(cfg Config) (*CacheStore, error) {
 	if cfg.URL == "" {
 		return nil, fmt.Errorf("redis cache: empty url")
 	}
-	opts, err := goredis.ParseURL(cfg.URL)
+	client, err := ConnectURL(cfg.URL)
 	if err != nil {
-		return nil, fmt.Errorf("redis cache: parse url: %w", err)
+		return nil, fmt.Errorf("redis cache: init client: %w", err)
 	}
-	client := goredis.NewClient(opts)
-
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-	if err := client.Ping(ctx).Err(); err != nil {
-		_ = client.Close()
-		return nil, fmt.Errorf("redis cache: ping: %w", err)
-	}
-
-	prefix := cfg.KeyPrefix
-	if prefix != "" && !strings.HasSuffix(prefix, ":") {
-		prefix += ":"
-	}
-	return &CacheStore{client: client, prefix: prefix}, nil
+	return &CacheStore{client: client, prefix: NormalizeKeyPrefix(cfg.KeyPrefix)}, nil
 }
 
 func (s *CacheStore) key(k string) string {
