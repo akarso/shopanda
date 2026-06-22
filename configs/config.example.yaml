@@ -161,6 +161,13 @@ queue:
 #     postgres_cache: true
 #     postgres_queue: true
 
+# --- External plugins ---------------------------------------------------------
+# Third-party-style plugins (see plugins/example). Not part of plugins/core/.
+# plugins:
+#   example:
+#     enabled: false
+#     fee_minor_units: 100
+
 # --- Frontend (optional SSR storefront) ---------------------------------------
 frontend:
   # Set to true to enable the built-in server-rendered storefront.

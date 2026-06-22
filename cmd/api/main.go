@@ -66,7 +66,6 @@ import (
 	"github.com/akarso/shopanda/internal/platform/plugin"
 	"github.com/akarso/shopanda/internal/platform/runtime"
 	"github.com/akarso/shopanda/internal/seed"
-	"github.com/akarso/shopanda/plugins/core"
 
 	shophttp "github.com/akarso/shopanda/internal/interfaces/http"
 
@@ -258,7 +257,7 @@ func runServe(cfg *config.Config, log logger.Logger, embedScheduler bool) error 
 
 	// Core plugin registry — infrastructure providers register during Init.
 	registry := plugin.NewRegistry(log)
-	core.Register(registry, cfg)
+	registerPlugins(registry, cfg)
 	pluginApp := &plugin.App{
 		Logger:    log,
 		Bus:       bus,
@@ -2006,7 +2005,7 @@ func runWorker(cfg *config.Config, log logger.Logger) error {
 	defer conn.Close()
 
 	registry := plugin.NewRegistry(log)
-	core.Register(registry, cfg)
+	registerPlugins(registry, cfg)
 	pluginApp := &plugin.App{
 		Logger:    log,
 		Config:    cfg,
@@ -2046,7 +2045,7 @@ func runSearchReindex(cfg *config.Config, log logger.Logger) error {
 	defer conn.Close()
 
 	registry := plugin.NewRegistry(log)
-	core.Register(registry, cfg)
+	registerPlugins(registry, cfg)
 	pluginApp := &plugin.App{
 		Logger:    log,
 		Config:    cfg,
