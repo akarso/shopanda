@@ -6,6 +6,7 @@ import (
 	cmanualpay "github.com/akarso/shopanda/plugins/core/manualpay"
 	coremeili "github.com/akarso/shopanda/plugins/core/meilisearch"
 	corepostgres "github.com/akarso/shopanda/plugins/core/postgres"
+	crediscache "github.com/akarso/shopanda/plugins/core/rediscache"
 	cstoragelocal "github.com/akarso/shopanda/plugins/core/storagelocal"
 	cstorages3 "github.com/akarso/shopanda/plugins/core/storages3"
 	corestripe "github.com/akarso/shopanda/plugins/core/stripe"
@@ -20,6 +21,8 @@ func Register(registry *plugin.Registry, cfg *config.Config) {
 	}
 	if cfg.CorePostgresCacheEnabled() {
 		registry.Register(corepostgres.NewCachePlugin())
+	} else if cfg.CoreRedisCacheEnabled() {
+		registry.Register(crediscache.NewCachePlugin())
 	}
 	if cfg.CorePostgresQueueEnabled() {
 		registry.Register(corepostgres.NewQueuePlugin())

@@ -131,6 +131,11 @@ search:
 cache:
   # Driver: postgres (default, uses UNLOGGED table), redis (PR-414).
   driver: "postgres"
+  # Redis settings (used when driver=redis):
+  # redis:
+  #   url: "redis://localhost:6379/0"
+  #   key_prefix: "shopanda"
+  # Or set REDIS_URL / SHOPANDA_CACHE_REDIS_URL environment variables.
 
 # --- Queue (background jobs) --------------------------------------------------
 queue:

@@ -133,6 +133,58 @@ func TestRegister_ManualAndStripeBothRegisterWhenEnabled(t *testing.T) {
 	}
 }
 
+func TestRegister_RedisCacheDriverRegistersRedisPlugin(t *testing.T) {
+	log := logger.NewWithWriter(io.Discard, "error")
+	reg := plugin.NewRegistry(log)
+
+	cfg := &config.Config{
+		Cache: config.CacheConfig{Driver: "redis"},
+	}
+	core.Register(reg, cfg)
+
+	var hasRedis, hasPostgresCache bool
+	for _, e := range reg.Entries() {
+		switch e.Name {
+		case "core/redis-cache":
+			hasRedis = true
+		case "core/postgres-cache":
+			hasPostgresCache = true
+		}
+	}
+	if !hasRedis {
+		t.Fatal("expected core/redis-cache to register when cache.driver=redis")
+	}
+	if hasPostgresCache {
+		t.Fatal("postgres cache plugin should not register when cache.driver=redis")
+	}
+}
+
+func TestRegister_PostgresCacheByDefault(t *testing.T) {
+	log := logger.NewWithWriter(io.Discard, "error")
+	reg := plugin.NewRegistry(log)
+
+	cfg := &config.Config{
+		Cache: config.CacheConfig{},
+	}
+	core.Register(reg, cfg)
+
+	var hasPostgresCache, hasRedis bool
+	for _, e := range reg.Entries() {
+		switch e.Name {
+		case "core/postgres-cache":
+			hasPostgresCache = true
+		case "core/redis-cache":
+			hasRedis = true
+		}
+	}
+	if !hasPostgresCache {
+		t.Fatal("expected core/postgres-cache to register by default")
+	}
+	if hasRedis {
+		t.Fatal("redis cache plugin should not register when cache driver is unset")
+	}
+}
+
 func TestRegister_LocalStorageByDefault(t *testing.T) {
 	log := logger.NewWithWriter(io.Discard, "error")
 	reg := plugin.NewRegistry(log)
