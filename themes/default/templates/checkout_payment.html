@@ -5,7 +5,7 @@
     <div class="page-intro">
         <span class="eyebrow">Checkout</span>
         <h1>Payment</h1>
-        <p>Review the selected shipping method and place the order.</p>
+        <p>Choose a payment method and place the order.</p>
     </div>
 
     <ol class="checkout-progress" aria-label="Checkout progress">
@@ -28,10 +28,28 @@
                 <input type="hidden" name="postcode" value="{{ .Address.Postcode }}">
                 <input type="hidden" name="country" value="{{ .Address.Country }}">
                 <input type="hidden" name="shipping_method" value="{{ if .SelectedRate }}{{ .SelectedRate.Method }}{{ end }}">
-                <input type="hidden" name="payment_method" value="{{ .Payment.Method }}">
                 {{ if .ErrorMessage }}
                 <p class="checkout-form__error" role="alert">{{ .ErrorMessage }}</p>
                 {{ end }}
+                {{ if gt (len .PaymentMethods) 1 }}
+                <fieldset class="checkout-payment-options">
+                    <legend class="eyebrow">Payment Method</legend>
+                    {{ range .PaymentMethods }}
+                    <label class="checkout-payment-option">
+                        <input type="radio" name="payment_method" value="{{ .Method }}"{{ if .Selected }} checked{{ end }}>
+                        <span class="checkout-payment-option__title">{{ .Label }}</span>
+                        {{ if .Instructions }}
+                        <ul class="checkout-payment-card__notes">
+                            {{ range .Instructions }}
+                            <li>{{ . }}</li>
+                            {{ end }}
+                        </ul>
+                        {{ end }}
+                    </label>
+                    {{ end }}
+                </fieldset>
+                {{ else }}
+                <input type="hidden" name="payment_method" value="{{ .Payment.Method }}">
                 <div class="checkout-payment-card">
                     <div>
                         <span class="eyebrow">Payment Method</span>
@@ -62,6 +80,7 @@
                         {{ end }}
                     </ul>
                 </div>
+                {{ end }}
                 <div class="checkout-actions">
                     <a class="chip" href="/checkout/address">Start over</a>
                     <button type="submit">Place Order</button>

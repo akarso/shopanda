@@ -108,7 +108,7 @@ func TestRegister_AlwaysRegistersManualPaymentPlugin(t *testing.T) {
 	}
 }
 
-func TestRegister_StripePaymentBeforeManualWhenEnabled(t *testing.T) {
+func TestRegister_ManualAndStripeBothRegisterWhenEnabled(t *testing.T) {
 	log := logger.NewWithWriter(io.Discard, "error")
 	reg := plugin.NewRegistry(log)
 
@@ -119,20 +119,68 @@ func TestRegister_StripePaymentBeforeManualWhenEnabled(t *testing.T) {
 	}
 	core.Register(reg, cfg)
 
-	entries := reg.Entries()
-	var stripeIdx, manualIdx = -1, -1
-	for i, e := range entries {
+	var hasManual, hasStripe bool
+	for _, e := range reg.Entries() {
 		switch e.Name {
-		case "core/stripe":
-			stripeIdx = i
 		case "core/manualpay":
-			manualIdx = i
+			hasManual = true
+		case "core/stripe":
+			hasStripe = true
 		}
 	}
-	if stripeIdx < 0 || manualIdx < 0 {
-		t.Fatalf("entries = %v, want stripe and manual payment plugins", entries)
+	if !hasManual || !hasStripe {
+		t.Fatalf("entries = %v, want manual and stripe plugins", reg.Entries())
 	}
-	if stripeIdx > manualIdx {
-		t.Fatal("stripe payment plugin must register before manualpay so Stripe can take the provider slot")
+}
+
+func TestRegister_LocalStorageByDefault(t *testing.T) {
+	log := logger.NewWithWriter(io.Discard, "error")
+	reg := plugin.NewRegistry(log)
+
+	cfg := &config.Config{
+		Media: config.MediaConfig{},
+	}
+	core.Register(reg, cfg)
+
+	var hasLocal, hasS3 bool
+	for _, e := range reg.Entries() {
+		switch e.Name {
+		case "core/storage-local":
+			hasLocal = true
+		case "core/storage-s3":
+			hasS3 = true
+		}
+	}
+	if !hasLocal {
+		t.Fatal("expected core/storage-local to register for local media storage")
+	}
+	if hasS3 {
+		t.Fatal("s3 storage plugin should not register when media.storage=local")
+	}
+}
+
+func TestRegister_S3StorageOnlyWhenConfigured(t *testing.T) {
+	log := logger.NewWithWriter(io.Discard, "error")
+	reg := plugin.NewRegistry(log)
+
+	cfg := &config.Config{
+		Media: config.MediaConfig{Storage: "s3"},
+	}
+	core.Register(reg, cfg)
+
+	var hasLocal, hasS3 bool
+	for _, e := range reg.Entries() {
+		switch e.Name {
+		case "core/storage-local":
+			hasLocal = true
+		case "core/storage-s3":
+			hasS3 = true
+		}
+	}
+	if !hasS3 {
+		t.Fatal("expected core/storage-s3 to register when media.storage=s3")
+	}
+	if hasLocal {
+		t.Fatal("local storage plugin should not register when media.storage=s3")
 	}
 }

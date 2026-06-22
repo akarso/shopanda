@@ -1,6 +1,11 @@
 package plugin
 
-import "database/sql"
+import (
+	"database/sql"
+	"fmt"
+
+	"github.com/akarso/shopanda/internal/domain/payment"
+)
 
 // Bootstrap holds infrastructure handles plugins need during Init.
 // Populated by the application before InitAll.
@@ -44,16 +49,21 @@ func (a *App) RegisterQueue(queue any) {
 	a.queue = queue
 }
 
-// RegisterPaymentProvider registers the active payment provider implementation.
+// RegisterPaymentProvider registers a payment provider for its Method().
+// Multiple providers may be registered when they use distinct methods.
 // The provider must implement payment.Provider.
 func (a *App) RegisterPaymentProvider(provider any) {
 	if provider == nil {
 		panic("plugin: payment provider must not be nil")
 	}
-	if a.paymentProvider != nil {
-		panic("plugin: payment provider already registered")
+	p, ok := provider.(payment.Provider)
+	if !ok {
+		panic(fmt.Sprintf("plugin: payment provider must implement payment.Provider, got %T", provider))
 	}
-	a.paymentProvider = provider
+	if a.paymentRegistry == nil {
+		a.paymentRegistry = payment.NewProviderRegistry()
+	}
+	a.paymentRegistry.Register(p)
 }
 
 // RegisterMediaStorage registers the active media storage backend implementation.
@@ -92,12 +102,21 @@ func (a *App) Queue() (any, bool) {
 	return a.queue, true
 }
 
-// PaymentProvider returns the registered payment provider, if any.
+// PaymentRegistry returns the registered payment providers, if any.
+func (a *App) PaymentRegistry() *payment.ProviderRegistry {
+	return a.paymentRegistry
+}
+
+// PaymentProvider returns the default payment provider for backward compatibility.
 func (a *App) PaymentProvider() (any, bool) {
-	if a.paymentProvider == nil {
+	if a.paymentRegistry == nil || a.paymentRegistry.Len() == 0 {
 		return nil, false
 	}
-	return a.paymentProvider, true
+	p, err := a.paymentRegistry.Resolve("")
+	if err != nil {
+		return nil, false
+	}
+	return p, true
 }
 
 // MediaStorage returns the registered media storage backend, if any.

@@ -37,8 +37,8 @@ func TestPaymentPlugin_Init_Disabled(t *testing.T) {
 	if err := cstripe.NewPaymentPlugin().Init(app); err != nil {
 		t.Fatalf("Init() error: %v", err)
 	}
-	if _, ok := app.PaymentProvider(); ok {
-		t.Fatal("PaymentProvider() should not be set when Stripe is disabled")
+	if app.PaymentRegistry() != nil && app.PaymentRegistry().Len() > 0 {
+		t.Fatal("PaymentRegistry should not be set when Stripe is disabled")
 	}
 }
 
@@ -54,8 +54,8 @@ func TestPaymentPlugin_Init_EnabledWithoutKey(t *testing.T) {
 	if err := cstripe.NewPaymentPlugin().Init(app); err != nil {
 		t.Fatalf("Init() error: %v", err)
 	}
-	if _, ok := app.PaymentProvider(); ok {
-		t.Fatal("PaymentProvider() should not be set without secret key")
+	if app.PaymentRegistry() != nil && app.PaymentRegistry().Len() > 0 {
+		t.Fatal("PaymentRegistry should not be set without secret key")
 	}
 }
 
@@ -72,15 +72,15 @@ func TestPaymentPlugin_Init_RegistersStripeProvider(t *testing.T) {
 		t.Fatalf("Init() error: %v", err)
 	}
 
-	v, ok := app.PaymentProvider()
-	if !ok {
-		t.Fatal("PaymentProvider() ok = false, want stripe provider")
+	reg := app.PaymentRegistry()
+	if reg == nil || reg.Len() != 1 {
+		t.Fatal("PaymentRegistry should contain stripe provider")
 	}
-	prov, ok := v.(payment.Provider)
-	if !ok {
-		t.Fatalf("PaymentProvider() type = %T, want payment.Provider", v)
+	p, err := reg.Resolve(string(payment.MethodStripe))
+	if err != nil {
+		t.Fatalf("Resolve(stripe) error: %v", err)
 	}
-	if prov.Method() != payment.MethodStripe {
-		t.Fatalf("Method() = %q, want stripe", prov.Method())
+	if p.Method() != payment.MethodStripe {
+		t.Fatalf("Method() = %q, want stripe", p.Method())
 	}
 }

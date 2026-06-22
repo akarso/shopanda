@@ -186,7 +186,15 @@ func storefrontLatestCheckoutEmailRedirect(t *testing.T, published []customer.Em
 	return claims.RedirectTo
 }
 
-func newStorefrontCheckoutService(carts *storefrontCartRepoStub, prices *storefrontPriceRepoStub, variants catalog.VariantRepository) (*checkoutApp.Service, shipping.Provider, payment.Provider, *storefrontCheckoutOrderRepoStub) {
+func testPaymentRegistry(providers ...payment.Provider) *payment.ProviderRegistry {
+	reg := payment.NewProviderRegistry()
+	for _, p := range providers {
+		reg.Register(p)
+	}
+	return reg
+}
+
+func newStorefrontCheckoutService(carts *storefrontCartRepoStub, prices *storefrontPriceRepoStub, variants catalog.VariantRepository) (*checkoutApp.Service, shipping.Provider, *payment.ProviderRegistry, *storefrontCheckoutOrderRepoStub) {
 	log := logger.NewWithWriter(io.Discard, "error")
 	bus := event.NewBus(log)
 	pipeline := pricing.NewPipeline(appPricing.NewBasePriceStep(prices), pricing.NewFinalizeStep())
@@ -194,16 +202,16 @@ func newStorefrontCheckoutService(carts *storefrontCartRepoStub, prices *storefr
 	shipments := &storefrontCheckoutShipmentRepoStub{}
 	payments := &storefrontCheckoutPaymentRepoStub{}
 	shippingProvider := flatrate.NewProvider(shared.MustNewMoney(500, "EUR"))
-	paymentProvider := manualpay.NewProvider()
+	payRegistry := testPaymentRegistry(manualpay.NewProvider())
 	workflow := checkoutApp.NewWorkflow([]checkoutApp.Step{
 		checkoutApp.NewValidateCartStep(variants),
 		checkoutApp.NewRecalculatePricingStep(pipeline),
 		checkoutApp.NewReserveInventoryStep(&storefrontCheckoutReservationRepoStub{}),
 		checkoutApp.NewCreateOrderStep(orders, variants),
 		checkoutApp.NewSelectShippingStep(shippingProvider, shipments),
-		checkoutApp.NewInitiatePaymentStep(paymentProvider, payments),
+		checkoutApp.NewInitiatePaymentStep(payRegistry, payments),
 	}, bus, log)
-	return checkoutApp.NewService(carts, workflow, log), shippingProvider, paymentProvider, orders
+	return checkoutApp.NewService(carts, workflow, log), shippingProvider, payRegistry, orders
 }
 
 func TestStorefrontHandler_CheckoutAddress_GuestCanAccessAddressForm(t *testing.T) {
@@ -222,8 +230,8 @@ func TestStorefrontHandler_CheckoutAddress_GuestCanAccessAddressForm(t *testing.
 	variants := &mockStorefrontVariantRepo{findByIDFn: func(_ context.Context, id string) (*catalog.Variant, error) {
 		return &catalog.Variant{ID: id, ProductID: "prod-1", SKU: "SKU-1", Name: "Widget Default"}, nil
 	}}
-	checkoutSvc, shippingProvider, paymentProvider, _ := newStorefrontCheckoutService(carts, prices, variants)
-	h := shophttp.NewStorefrontHandler(engine, &mockStorefrontRepo{}, newStorefrontCategoryMock(), pdp, plp, newStorefrontSearchMock()).WithCart(variants, cartSvc).WithCheckout([]shipping.Provider{shippingProvider}, paymentProvider, checkoutSvc)
+	checkoutSvc, shippingProvider, payRegistry, _ := newStorefrontCheckoutService(carts, prices, variants)
+	h := shophttp.NewStorefrontHandler(engine, &mockStorefrontRepo{}, newStorefrontCategoryMock(), pdp, plp, newStorefrontSearchMock()).WithCart(variants, cartSvc).WithCheckout([]shipping.Provider{shippingProvider}, payRegistry, checkoutSvc)
 
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest("GET", "/checkout/address", nil)
@@ -254,8 +262,8 @@ func TestStorefrontHandler_CheckoutShipping_GuestRequiresContactEmail(t *testing
 	variants := &mockStorefrontVariantRepo{findByIDFn: func(_ context.Context, id string) (*catalog.Variant, error) {
 		return &catalog.Variant{ID: id, ProductID: "prod-1", SKU: "SKU-1", Name: "Widget Default"}, nil
 	}}
-	checkoutSvc, shippingProvider, paymentProvider, _ := newStorefrontCheckoutService(carts, prices, variants)
-	h := shophttp.NewStorefrontHandler(engine, &mockStorefrontRepo{}, newStorefrontCategoryMock(), pdp, plp, newStorefrontSearchMock()).WithCart(variants, cartSvc).WithCheckout([]shipping.Provider{shippingProvider}, paymentProvider, checkoutSvc)
+	checkoutSvc, shippingProvider, payRegistry, _ := newStorefrontCheckoutService(carts, prices, variants)
+	h := shophttp.NewStorefrontHandler(engine, &mockStorefrontRepo{}, newStorefrontCategoryMock(), pdp, plp, newStorefrontSearchMock()).WithCart(variants, cartSvc).WithCheckout([]shipping.Provider{shippingProvider}, payRegistry, checkoutSvc)
 	router := newStorefrontRouter(h)
 
 	addressRec := httptest.NewRecorder()
@@ -311,8 +319,8 @@ func TestStorefrontHandler_CheckoutFlow_Manual_GuestOK(t *testing.T) {
 	plp := composition.NewPipeline[composition.ListingContext]()
 	cartSvc, carts, prices := newStorefrontCartService()
 	prices.set("var-1", "EUR", 1500)
-	checkoutSvc, shippingProvider, paymentProvider, orders := newStorefrontCheckoutService(carts, prices, variants)
-	h := shophttp.NewStorefrontHandler(engine, products, newStorefrontCategoryMock(), pdp, plp, newStorefrontSearchMock()).WithCart(variants, cartSvc).WithCheckout([]shipping.Provider{shippingProvider}, paymentProvider, checkoutSvc)
+	checkoutSvc, shippingProvider, payRegistry, orders := newStorefrontCheckoutService(carts, prices, variants)
+	h := shophttp.NewStorefrontHandler(engine, products, newStorefrontCategoryMock(), pdp, plp, newStorefrontSearchMock()).WithCart(variants, cartSvc).WithCheckout([]shipping.Provider{shippingProvider}, payRegistry, checkoutSvc)
 	router := newStorefrontRouter(h)
 
 	currentCart, err := cartSvc.CreateCart(context.Background(), "", "EUR")
@@ -442,8 +450,8 @@ func TestStorefrontHandler_CheckoutAddress_AllowsAuthenticatedCustomerWithoutAcc
 	plp := composition.NewPipeline[composition.ListingContext]()
 	cartSvc, carts, prices := newStorefrontCartService()
 	prices.set("var-1", "EUR", 1500)
-	checkoutSvc, shippingProvider, paymentProvider, _ := newStorefrontCheckoutService(carts, prices, variants)
-	h := shophttp.NewStorefrontHandler(engine, products, newStorefrontCategoryMock(), pdp, plp, newStorefrontSearchMock()).WithCart(variants, cartSvc).WithCheckout([]shipping.Provider{shippingProvider}, paymentProvider, checkoutSvc)
+	checkoutSvc, shippingProvider, payRegistry, _ := newStorefrontCheckoutService(carts, prices, variants)
+	h := shophttp.NewStorefrontHandler(engine, products, newStorefrontCategoryMock(), pdp, plp, newStorefrontSearchMock()).WithCart(variants, cartSvc).WithCheckout([]shipping.Provider{shippingProvider}, payRegistry, checkoutSvc)
 	router := newStorefrontRouter(h)
 
 	currentCart, err := cartSvc.CreateCart(context.Background(), "cust-1", "EUR")
@@ -478,7 +486,7 @@ func TestStorefrontHandler_CheckoutAddress_RedirectsToEmailVerification_WhenEmai
 	plp := composition.NewPipeline[composition.ListingContext]()
 	cartSvc, carts, prices := newStorefrontCartService()
 	prices.set("var-1", "EUR", 1500)
-	checkoutSvc, shippingProvider, paymentProvider, _ := newStorefrontCheckoutService(carts, prices, variants)
+	checkoutSvc, shippingProvider, payRegistry, _ := newStorefrontCheckoutService(carts, prices, variants)
 	bus := event.NewBus(logger.New("error"))
 	var published []customer.EmailVerificationRequestedData
 	bus.On(customer.EventEmailVerificationRequested, func(_ context.Context, evt event.Event) error {
@@ -494,7 +502,7 @@ func TestStorefrontHandler_CheckoutAddress_RedirectsToEmailVerification_WhenEmai
 	if err != nil {
 		t.Fatalf("Register: %v", err)
 	}
-	h := shophttp.NewStorefrontHandler(engine, products, newStorefrontCategoryMock(), pdp, plp, newStorefrontSearchMock()).WithCart(variants, cartSvc).WithCheckout([]shipping.Provider{shippingProvider}, paymentProvider, checkoutSvc).WithAccount(authSvc, newStorefrontAccountOrderRepoStub(), &storefrontAccountDeleterStub{}).WithAccountSecurity("test-secret", time.Minute).WithAccountSecurityEmailLinks("https://shop.test", 45*time.Minute)
+	h := shophttp.NewStorefrontHandler(engine, products, newStorefrontCategoryMock(), pdp, plp, newStorefrontSearchMock()).WithCart(variants, cartSvc).WithCheckout([]shipping.Provider{shippingProvider}, payRegistry, checkoutSvc).WithAccount(authSvc, newStorefrontAccountOrderRepoStub(), &storefrontAccountDeleterStub{}).WithAccountSecurity("test-secret", time.Minute).WithAccountSecurityEmailLinks("https://shop.test", 45*time.Minute)
 	router := newStorefrontRouter(h)
 
 	currentCart, err := cartSvc.CreateCart(context.Background(), out.CustomerID, "EUR")
@@ -530,14 +538,14 @@ func TestStorefrontHandler_CheckoutFlow_Manual_OK(t *testing.T) {
 	plp := composition.NewPipeline[composition.ListingContext]()
 	cartSvc, carts, prices := newStorefrontCartService()
 	prices.set("var-1", "EUR", 1500)
-	checkoutSvc, shippingProvider, paymentProvider, orders := newStorefrontCheckoutService(carts, prices, variants)
+	checkoutSvc, shippingProvider, payRegistry, orders := newStorefrontCheckoutService(carts, prices, variants)
 	authSvc, repo := newStorefrontAuthService(t)
 	out, err := authSvc.Register(context.Background(), appAuth.RegisterInput{Email: "ada@example.com", Password: "password123", FirstName: "Ada", LastName: "Lovelace"})
 	if err != nil {
 		t.Fatalf("Register: %v", err)
 	}
 	storefrontMarkCustomerEmailVerified(t, repo, out.CustomerID)
-	h := shophttp.NewStorefrontHandler(engine, products, newStorefrontCategoryMock(), pdp, plp, newStorefrontSearchMock()).WithCart(variants, cartSvc).WithCheckout([]shipping.Provider{shippingProvider}, paymentProvider, checkoutSvc).WithAccount(authSvc, newStorefrontAccountOrderRepoStub(), &storefrontAccountDeleterStub{}).WithAccountSecurity("test-secret", time.Minute).WithAccountSecurityEmailLinks("https://shop.test", 45*time.Minute)
+	h := shophttp.NewStorefrontHandler(engine, products, newStorefrontCategoryMock(), pdp, plp, newStorefrontSearchMock()).WithCart(variants, cartSvc).WithCheckout([]shipping.Provider{shippingProvider}, payRegistry, checkoutSvc).WithAccount(authSvc, newStorefrontAccountOrderRepoStub(), &storefrontAccountDeleterStub{}).WithAccountSecurity("test-secret", time.Minute).WithAccountSecurityEmailLinks("https://shop.test", 45*time.Minute)
 	router := newStorefrontRouter(h)
 
 	currentCart, err := cartSvc.CreateCart(context.Background(), out.CustomerID, "EUR")
@@ -663,7 +671,7 @@ func TestStorefrontHandler_CheckoutConfirm_RedirectsToEmailVerification_WhenEmai
 	plp := composition.NewPipeline[composition.ListingContext]()
 	cartSvc, carts, prices := newStorefrontCartService()
 	prices.set("var-1", "EUR", 1500)
-	checkoutSvc, shippingProvider, paymentProvider, orders := newStorefrontCheckoutService(carts, prices, variants)
+	checkoutSvc, shippingProvider, payRegistry, orders := newStorefrontCheckoutService(carts, prices, variants)
 	bus := event.NewBus(logger.New("error"))
 	var published []customer.EmailVerificationRequestedData
 	bus.On(customer.EventEmailVerificationRequested, func(_ context.Context, evt event.Event) error {
@@ -679,7 +687,7 @@ func TestStorefrontHandler_CheckoutConfirm_RedirectsToEmailVerification_WhenEmai
 	if err != nil {
 		t.Fatalf("Register: %v", err)
 	}
-	h := shophttp.NewStorefrontHandler(engine, products, newStorefrontCategoryMock(), pdp, plp, newStorefrontSearchMock()).WithCart(variants, cartSvc).WithCheckout([]shipping.Provider{shippingProvider}, paymentProvider, checkoutSvc).WithAccount(authSvc, newStorefrontAccountOrderRepoStub(), &storefrontAccountDeleterStub{}).WithAccountSecurity("test-secret", time.Minute).WithAccountSecurityEmailLinks("https://shop.test", 45*time.Minute)
+	h := shophttp.NewStorefrontHandler(engine, products, newStorefrontCategoryMock(), pdp, plp, newStorefrontSearchMock()).WithCart(variants, cartSvc).WithCheckout([]shipping.Provider{shippingProvider}, payRegistry, checkoutSvc).WithAccount(authSvc, newStorefrontAccountOrderRepoStub(), &storefrontAccountDeleterStub{}).WithAccountSecurity("test-secret", time.Minute).WithAccountSecurityEmailLinks("https://shop.test", 45*time.Minute)
 	router := newStorefrontRouter(h)
 
 	currentCart, err := cartSvc.CreateCart(context.Background(), out.CustomerID, "EUR")
@@ -745,7 +753,7 @@ func TestStorefrontHandler_CheckoutConfirm_ResumesPaymentAfterEmailVerification(
 	plp := composition.NewPipeline[composition.ListingContext]()
 	cartSvc, carts, prices := newStorefrontCartService()
 	prices.set("var-1", "EUR", 1500)
-	checkoutSvc, shippingProvider, paymentProvider, orders := newStorefrontCheckoutService(carts, prices, variants)
+	checkoutSvc, shippingProvider, payRegistry, orders := newStorefrontCheckoutService(carts, prices, variants)
 	bus := event.NewBus(logger.New("error"))
 	var published []customer.EmailVerificationRequestedData
 	bus.On(customer.EventEmailVerificationRequested, func(_ context.Context, evt event.Event) error {
@@ -761,7 +769,7 @@ func TestStorefrontHandler_CheckoutConfirm_ResumesPaymentAfterEmailVerification(
 	if err != nil {
 		t.Fatalf("Register: %v", err)
 	}
-	h := shophttp.NewStorefrontHandler(engine, products, newStorefrontCategoryMock(), pdp, plp, newStorefrontSearchMock()).WithCart(variants, cartSvc).WithCheckout([]shipping.Provider{shippingProvider}, paymentProvider, checkoutSvc).WithAccount(authSvc, newStorefrontAccountOrderRepoStub(), &storefrontAccountDeleterStub{}).WithAccountSecurity("test-secret", time.Minute).WithAccountSecurityEmailLinks("https://shop.test", 45*time.Minute)
+	h := shophttp.NewStorefrontHandler(engine, products, newStorefrontCategoryMock(), pdp, plp, newStorefrontSearchMock()).WithCart(variants, cartSvc).WithCheckout([]shipping.Provider{shippingProvider}, payRegistry, checkoutSvc).WithAccount(authSvc, newStorefrontAccountOrderRepoStub(), &storefrontAccountDeleterStub{}).WithAccountSecurity("test-secret", time.Minute).WithAccountSecurityEmailLinks("https://shop.test", 45*time.Minute)
 	router := newStorefrontRouter(h)
 
 	currentCart, err := cartSvc.CreateCart(context.Background(), out.CustomerID, "EUR")
@@ -846,14 +854,14 @@ func TestStorefrontHandler_CheckoutAddress_FallsBackToAddressFormOnInvalidResume
 	plp := composition.NewPipeline[composition.ListingContext]()
 	cartSvc, carts, prices := newStorefrontCartService()
 	prices.set("var-1", "EUR", 1500)
-	checkoutSvc, shippingProvider, paymentProvider, orders := newStorefrontCheckoutService(carts, prices, variants)
+	checkoutSvc, shippingProvider, payRegistry, orders := newStorefrontCheckoutService(carts, prices, variants)
 	authSvc, repo := newStorefrontAuthService(t)
 	out, err := authSvc.Register(context.Background(), appAuth.RegisterInput{Email: "ada@example.com", Password: "password123", FirstName: "Ada", LastName: "Lovelace"})
 	if err != nil {
 		t.Fatalf("Register: %v", err)
 	}
 	storefrontMarkCustomerEmailVerified(t, repo, out.CustomerID)
-	h := shophttp.NewStorefrontHandler(engine, products, newStorefrontCategoryMock(), pdp, plp, newStorefrontSearchMock()).WithCart(variants, cartSvc).WithCheckout([]shipping.Provider{shippingProvider}, paymentProvider, checkoutSvc).WithAccount(authSvc, newStorefrontAccountOrderRepoStub(), &storefrontAccountDeleterStub{}).WithAccountSecurity("test-secret", time.Minute).WithAccountSecurityEmailLinks("https://shop.test", 45*time.Minute)
+	h := shophttp.NewStorefrontHandler(engine, products, newStorefrontCategoryMock(), pdp, plp, newStorefrontSearchMock()).WithCart(variants, cartSvc).WithCheckout([]shipping.Provider{shippingProvider}, payRegistry, checkoutSvc).WithAccount(authSvc, newStorefrontAccountOrderRepoStub(), &storefrontAccountDeleterStub{}).WithAccountSecurity("test-secret", time.Minute).WithAccountSecurityEmailLinks("https://shop.test", 45*time.Minute)
 	router := newStorefrontRouter(h)
 
 	currentCart, err := cartSvc.CreateCart(context.Background(), out.CustomerID, "EUR")
@@ -908,14 +916,14 @@ func TestStorefrontHandler_CheckoutConfirm_SanitizesServerErrors(t *testing.T) {
 	workflow := checkoutApp.NewWorkflow([]checkoutApp.Step{failingCheckoutStep{err: errors.New("db credentials leaked")}}, event.NewBus(log), log)
 	checkoutSvc := checkoutApp.NewService(carts, workflow, log)
 	shippingProvider := flatrate.NewProvider(shared.MustNewMoney(500, "EUR"))
-	paymentProvider := manualpay.NewProvider()
+	payRegistry := testPaymentRegistry(manualpay.NewProvider())
 	authSvc, repo := newStorefrontAuthService(t)
 	out, err := authSvc.Register(context.Background(), appAuth.RegisterInput{Email: "ada@example.com", Password: "password123", FirstName: "Ada", LastName: "Lovelace"})
 	if err != nil {
 		t.Fatalf("Register: %v", err)
 	}
 	storefrontMarkCustomerEmailVerified(t, repo, out.CustomerID)
-	h := shophttp.NewStorefrontHandler(engine, products, newStorefrontCategoryMock(), pdp, plp, newStorefrontSearchMock()).WithCart(variants, cartSvc).WithCheckout([]shipping.Provider{shippingProvider}, paymentProvider, checkoutSvc).WithAccount(authSvc, newStorefrontAccountOrderRepoStub(), &storefrontAccountDeleterStub{}).WithAccountSecurity("test-secret", time.Minute).WithAccountSecurityEmailLinks("https://shop.test", 45*time.Minute)
+	h := shophttp.NewStorefrontHandler(engine, products, newStorefrontCategoryMock(), pdp, plp, newStorefrontSearchMock()).WithCart(variants, cartSvc).WithCheckout([]shipping.Provider{shippingProvider}, payRegistry, checkoutSvc).WithAccount(authSvc, newStorefrontAccountOrderRepoStub(), &storefrontAccountDeleterStub{}).WithAccountSecurity("test-secret", time.Minute).WithAccountSecurityEmailLinks("https://shop.test", 45*time.Minute)
 	router := newStorefrontRouter(h)
 
 	currentCart, err := cartSvc.CreateCart(context.Background(), out.CustomerID, "EUR")
@@ -964,8 +972,8 @@ func TestStorefrontHandler_CheckoutShipping_RejectsMissingCSRF(t *testing.T) {
 	variants := &mockStorefrontVariantRepo{findByIDFn: func(_ context.Context, id string) (*catalog.Variant, error) {
 		return &catalog.Variant{ID: id, ProductID: "prod-1", SKU: "SKU-1", Name: "Widget Default"}, nil
 	}}
-	checkoutSvc, shippingProvider, paymentProvider, _ := newStorefrontCheckoutService(carts, prices, variants)
-	h := shophttp.NewStorefrontHandler(engine, &mockStorefrontRepo{}, newStorefrontCategoryMock(), pdp, plp, newStorefrontSearchMock()).WithCart(variants, cartSvc).WithCheckout([]shipping.Provider{shippingProvider}, paymentProvider, checkoutSvc)
+	checkoutSvc, shippingProvider, payRegistry, _ := newStorefrontCheckoutService(carts, prices, variants)
+	h := shophttp.NewStorefrontHandler(engine, &mockStorefrontRepo{}, newStorefrontCategoryMock(), pdp, plp, newStorefrontSearchMock()).WithCart(variants, cartSvc).WithCheckout([]shipping.Provider{shippingProvider}, payRegistry, checkoutSvc)
 
 	currentCart, err := cartSvc.CreateCart(context.Background(), "cust-1", "EUR")
 	if err != nil {

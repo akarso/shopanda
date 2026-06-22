@@ -10,24 +10,24 @@ import (
 	"github.com/akarso/shopanda/internal/platform/id"
 )
 
-// InitiatePaymentStep creates a payment record and initiates it via the provider.
+// InitiatePaymentStep creates a payment record and initiates it via the selected provider.
 type InitiatePaymentStep struct {
-	provider payment.Provider
-	payments payment.PaymentRepository
+	providers *payment.ProviderRegistry
+	payments  payment.PaymentRepository
 }
 
 // NewInitiatePaymentStep creates an InitiatePaymentStep.
 func NewInitiatePaymentStep(
-	provider payment.Provider,
+	providers *payment.ProviderRegistry,
 	payments payment.PaymentRepository,
 ) *InitiatePaymentStep {
-	if provider == nil {
-		panic("checkout: payment provider must not be nil")
+	if providers == nil || providers.Len() == 0 {
+		panic("checkout: payment providers must not be empty")
 	}
 	if payments == nil {
 		panic("checkout: payment repository must not be nil")
 	}
-	return &InitiatePaymentStep{provider: provider, payments: payments}
+	return &InitiatePaymentStep{providers: providers, payments: payments}
 }
 
 func (s *InitiatePaymentStep) Name() string { return "initiate_payment" }
@@ -45,11 +45,13 @@ func (s *InitiatePaymentStep) Execute(cctx *Context) error {
 	if cctx.Order == nil {
 		return fmt.Errorf("initiate_payment: order not created yet")
 	}
-	if cctx.Input.PaymentMethod != "" && string(s.provider.Method()) != cctx.Input.PaymentMethod {
+
+	provider, err := s.providers.Resolve(cctx.Input.PaymentMethod)
+	if err != nil {
 		return apperror.Validation("selected payment method is unavailable")
 	}
 
-	py, err := payment.NewPayment(id.New(), cctx.Order.ID, s.provider.Method(), cctx.Order.TotalAmount)
+	py, err := payment.NewPayment(id.New(), cctx.Order.ID, provider.Method(), cctx.Order.TotalAmount)
 	if err != nil {
 		return fmt.Errorf("initiate_payment: create payment: %w", err)
 	}
@@ -60,7 +62,7 @@ func (s *InitiatePaymentStep) Execute(cctx *Context) error {
 
 	prevUpdatedAt := py.UpdatedAt
 
-	result, err := s.provider.Initiate(context.Background(), &py)
+	result, err := provider.Initiate(context.Background(), &py)
 	if err != nil {
 		return fmt.Errorf("initiate_payment: provider error: %w", err)
 	}

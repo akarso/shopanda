@@ -398,7 +398,7 @@ func TestStorefrontHandler_CheckoutAddress_PrefillsDefaultAddress(t *testing.T) 
 	variants := &mockStorefrontVariantRepo{findByIDFn: func(_ context.Context, vid string) (*catalog.Variant, error) {
 		return &catalog.Variant{ID: vid, ProductID: "prod-1", SKU: "SKU-1", Name: "Widget"}, nil
 	}}
-	checkoutSvc, shippingProvider, paymentProvider, _ := newStorefrontCheckoutService(carts, prices, variants)
+	checkoutSvc, shippingProvider, payRegistry, _ := newStorefrontCheckoutService(carts, prices, variants)
 	authSvc, _ := newStorefrontAuthService(t)
 	out, err := authSvc.Register(context.Background(), appAuth.RegisterInput{Email: "ada@example.com", Password: "password123", FirstName: "Ada", LastName: "Lovelace"})
 	if err != nil {
@@ -411,7 +411,7 @@ func TestStorefrontHandler_CheckoutAddress_PrefillsDefaultAddress(t *testing.T) 
 	}
 	h := shophttp.NewStorefrontHandler(engine, &mockStorefrontRepo{}, newStorefrontCategoryMock(), pdp, plp, newStorefrontSearchMock()).
 		WithCart(variants, cartSvc).
-		WithCheckout([]shipping.Provider{shippingProvider}, paymentProvider, checkoutSvc).
+		WithCheckout([]shipping.Provider{shippingProvider}, payRegistry, checkoutSvc).
 		WithAccount(authSvc, newStorefrontAccountOrderRepoStub(), &storefrontAccountDeleterStub{}).
 		WithAccountProfile(addresses, newStubConsentRepo())
 	router := newStorefrontRouter(h)

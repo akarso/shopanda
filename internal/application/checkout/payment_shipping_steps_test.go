@@ -313,9 +313,17 @@ func TestSelectShippingStep_Idempotent(t *testing.T) {
 // InitiatePaymentStep tests
 // ============================================================
 
+func paymentRegistryWith(providers ...payment.Provider) *payment.ProviderRegistry {
+	reg := payment.NewProviderRegistry()
+	for _, p := range providers {
+		reg.Register(p)
+	}
+	return reg
+}
+
 func TestInitiatePaymentStep_Name(t *testing.T) {
 	step := checkout.NewInitiatePaymentStep(
-		&mockPaymentProvider047{method: payment.MethodManual},
+		paymentRegistryWith(&mockPaymentProvider047{method: payment.MethodManual}),
 		&mockPaymentRepo047{},
 	)
 	if step.Name() != "initiate_payment" {
@@ -332,7 +340,7 @@ func TestInitiatePaymentStep_Success(t *testing.T) {
 		},
 	}
 	repo := &mockPaymentRepo047{}
-	step := checkout.NewInitiatePaymentStep(provider, repo)
+	step := checkout.NewInitiatePaymentStep(paymentRegistryWith(provider), repo)
 
 	cctx := checkout.NewContext("cart-1", "cust-1", "EUR")
 	cctx.Order = orderForCheckout047(t)
@@ -376,7 +384,7 @@ func TestInitiatePaymentStep_RejectsUnavailableSelectedMethod(t *testing.T) {
 		result: payment.ProviderResult{ProviderRef: "manual:pay-1", Success: true},
 	}
 	repo := &mockPaymentRepo047{}
-	step := checkout.NewInitiatePaymentStep(provider, repo)
+	step := checkout.NewInitiatePaymentStep(paymentRegistryWith(provider), repo)
 
 	cctx := checkout.NewContext("cart-1", "cust-1", "EUR")
 	cctx.Order = orderForCheckout047(t)
@@ -391,6 +399,30 @@ func TestInitiatePaymentStep_RejectsUnavailableSelectedMethod(t *testing.T) {
 	}
 }
 
+func TestInitiatePaymentStep_SelectsProviderByMethod(t *testing.T) {
+	manual := &mockPaymentProvider047{
+		method: payment.MethodManual,
+		result: payment.ProviderResult{ProviderRef: "manual:pay-1", Success: true},
+	}
+	stripe := &mockPaymentProvider047{
+		method: payment.MethodStripe,
+		result: payment.ProviderResult{ProviderRef: "pi_test", Pending: true, ClientSecret: "sec"},
+	}
+	repo := &mockPaymentRepo047{}
+	step := checkout.NewInitiatePaymentStep(paymentRegistryWith(manual, stripe), repo)
+
+	cctx := checkout.NewContext("cart-1", "cust-1", "EUR")
+	cctx.Order = orderForCheckout047(t)
+	cctx.Input = checkout.Input{PaymentMethod: string(payment.MethodStripe)}
+
+	if err := step.Execute(cctx); err != nil {
+		t.Fatalf("Execute() error: %v", err)
+	}
+	if repo.created == nil || repo.created.Method != payment.MethodStripe {
+		t.Fatalf("created.Method = %q, want stripe", repo.created.Method)
+	}
+}
+
 func TestInitiatePaymentStep_Declined(t *testing.T) {
 	provider := &mockPaymentProvider047{
 		method: payment.MethodManual,
@@ -399,7 +431,7 @@ func TestInitiatePaymentStep_Declined(t *testing.T) {
 		},
 	}
 	repo := &mockPaymentRepo047{}
-	step := checkout.NewInitiatePaymentStep(provider, repo)
+	step := checkout.NewInitiatePaymentStep(paymentRegistryWith(provider), repo)
 
 	cctx := checkout.NewContext("cart-1", "cust-1", "EUR")
 	cctx.Order = orderForCheckout047(t)
@@ -429,7 +461,7 @@ func TestInitiatePaymentStep_ProviderError(t *testing.T) {
 		err:    errors.New("provider unreachable"),
 	}
 	repo := &mockPaymentRepo047{}
-	step := checkout.NewInitiatePaymentStep(provider, repo)
+	step := checkout.NewInitiatePaymentStep(paymentRegistryWith(provider), repo)
 
 	cctx := checkout.NewContext("cart-1", "cust-1", "EUR")
 	cctx.Order = orderForCheckout047(t)
@@ -453,7 +485,7 @@ func TestInitiatePaymentStep_CreateError(t *testing.T) {
 		result: payment.ProviderResult{Success: true},
 	}
 	repo := &mockPaymentRepo047{createErr: errors.New("db down")}
-	step := checkout.NewInitiatePaymentStep(provider, repo)
+	step := checkout.NewInitiatePaymentStep(paymentRegistryWith(provider), repo)
 
 	cctx := checkout.NewContext("cart-1", "cust-1", "EUR")
 	cctx.Order = orderForCheckout047(t)
@@ -473,7 +505,7 @@ func TestInitiatePaymentStep_UpdateStatusError(t *testing.T) {
 		result: payment.ProviderResult{ProviderRef: "ref", Success: true},
 	}
 	repo := &mockPaymentRepo047{updateErr: errors.New("conflict")}
-	step := checkout.NewInitiatePaymentStep(provider, repo)
+	step := checkout.NewInitiatePaymentStep(paymentRegistryWith(provider), repo)
 
 	cctx := checkout.NewContext("cart-1", "cust-1", "EUR")
 	cctx.Order = orderForCheckout047(t)
@@ -489,7 +521,7 @@ func TestInitiatePaymentStep_UpdateStatusError(t *testing.T) {
 
 func TestInitiatePaymentStep_NoOrder(t *testing.T) {
 	provider := &mockPaymentProvider047{method: payment.MethodManual}
-	step := checkout.NewInitiatePaymentStep(provider, &mockPaymentRepo047{})
+	step := checkout.NewInitiatePaymentStep(paymentRegistryWith(provider), &mockPaymentRepo047{})
 
 	cctx := checkout.NewContext("cart-1", "cust-1", "EUR")
 
@@ -501,7 +533,7 @@ func TestInitiatePaymentStep_NoOrder(t *testing.T) {
 
 func TestInitiatePaymentStep_NilContext(t *testing.T) {
 	provider := &mockPaymentProvider047{method: payment.MethodManual}
-	step := checkout.NewInitiatePaymentStep(provider, &mockPaymentRepo047{})
+	step := checkout.NewInitiatePaymentStep(paymentRegistryWith(provider), &mockPaymentRepo047{})
 
 	err := step.Execute(nil)
 	if err == nil {
@@ -515,7 +547,7 @@ func TestInitiatePaymentStep_Idempotent(t *testing.T) {
 		result: payment.ProviderResult{ProviderRef: "ref", Success: true},
 	}
 	repo := &mockPaymentRepo047{}
-	step := checkout.NewInitiatePaymentStep(provider, repo)
+	step := checkout.NewInitiatePaymentStep(paymentRegistryWith(provider), repo)
 
 	cctx := checkout.NewContext("cart-1", "cust-1", "EUR")
 	cctx.Order = orderForCheckout047(t)
@@ -544,7 +576,7 @@ func TestInitiatePaymentStep_Pending(t *testing.T) {
 		},
 	}
 	repo := &mockPaymentRepo047{}
-	step := checkout.NewInitiatePaymentStep(provider, repo)
+	step := checkout.NewInitiatePaymentStep(paymentRegistryWith(provider), repo)
 
 	cctx := checkout.NewContext("cart-1", "cust-1", "EUR")
 	cctx.Order = orderForCheckout047(t)
@@ -596,7 +628,7 @@ func TestInitiatePaymentStep_Pending_NoClientSecret(t *testing.T) {
 		},
 	}
 	repo := &mockPaymentRepo047{}
-	step := checkout.NewInitiatePaymentStep(provider, repo)
+	step := checkout.NewInitiatePaymentStep(paymentRegistryWith(provider), repo)
 
 	cctx := checkout.NewContext("cart-1", "cust-1", "EUR")
 	cctx.Order = orderForCheckout047(t)
@@ -622,7 +654,7 @@ func TestInitiatePaymentStep_Pending_EmptyProviderRef(t *testing.T) {
 		},
 	}
 	repo := &mockPaymentRepo047{}
-	step := checkout.NewInitiatePaymentStep(provider, repo)
+	step := checkout.NewInitiatePaymentStep(paymentRegistryWith(provider), repo)
 
 	cctx := checkout.NewContext("cart-1", "cust-1", "EUR")
 	cctx.Order = orderForCheckout047(t)

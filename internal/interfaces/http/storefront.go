@@ -53,7 +53,7 @@ type StorefrontHandler struct {
 	consents    legal.ConsentRepository
 	security    *storefrontAccountSecurityVerifier
 	shipping    []shipping.Provider
-	payment     payment.Provider
+	payments    *payment.ProviderRegistry
 	log         logger.Logger
 	catNav      storefrontCategoryCache
 }
@@ -252,10 +252,10 @@ func (h *StorefrontHandler) WithLog(log logger.Logger) *StorefrontHandler {
 }
 
 // WithCheckout enables storefront checkout rendering and order placement using
-// the provided shipping providers, payment provider, and checkout service.
-func (h *StorefrontHandler) WithCheckout(shippingProviders []shipping.Provider, paymentProvider payment.Provider, checkout *checkoutApp.Service) *StorefrontHandler {
+// the provided shipping providers, payment registry, and checkout service.
+func (h *StorefrontHandler) WithCheckout(shippingProviders []shipping.Provider, payments *payment.ProviderRegistry, checkout *checkoutApp.Service) *StorefrontHandler {
 	h.shipping = append([]shipping.Provider(nil), shippingProviders...)
-	h.payment = paymentProvider
+	h.payments = payments
 	h.checkout = checkout
 	return h
 }

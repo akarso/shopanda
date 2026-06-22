@@ -5,7 +5,6 @@ import (
 	"testing"
 
 	"github.com/akarso/shopanda/internal/domain/payment"
-	inmanual "github.com/akarso/shopanda/internal/infrastructure/manualpay"
 	"github.com/akarso/shopanda/internal/platform/event"
 	"github.com/akarso/shopanda/internal/platform/logger"
 	"github.com/akarso/shopanda/internal/platform/plugin"
@@ -32,24 +31,15 @@ func TestPaymentPlugin_Init_RegistersManualProvider(t *testing.T) {
 		t.Fatalf("Init() error: %v", err)
 	}
 
-	v, ok := app.PaymentProvider()
-	if !ok {
-		t.Fatal("PaymentProvider() ok = false, want manual provider")
+	reg := app.PaymentRegistry()
+	if reg == nil || reg.Len() != 1 {
+		t.Fatalf("PaymentRegistry().Len() = %d, want 1", reg.Len())
 	}
-	prov, ok := v.(payment.Provider)
-	if !ok {
-		t.Fatalf("PaymentProvider() type = %T, want payment.Provider", v)
+	p, err := reg.Resolve(string(payment.MethodManual))
+	if err != nil {
+		t.Fatalf("Resolve(manual) error: %v", err)
 	}
-	if prov.Method() != payment.MethodManual {
-		t.Fatalf("Method() = %q, want manual", prov.Method())
-	}
-}
-
-func TestPaymentPlugin_Init_SkipsWhenProviderAlreadySet(t *testing.T) {
-	app := testApp()
-	app.RegisterPaymentProvider(inmanual.NewProvider())
-
-	if err := cmanual.NewPaymentPlugin().Init(app); err != nil {
-		t.Fatalf("Init() error: %v", err)
+	if p.Method() != payment.MethodManual {
+		t.Fatalf("Method() = %q, want manual", p.Method())
 	}
 }

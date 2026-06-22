@@ -543,6 +543,22 @@ cache:
 	}
 }
 
+func TestLoad_InvalidMediaStorage(t *testing.T) {
+	withTestBaseURL(t)
+	path := writeYAML(t, `
+media:
+  storage: gcs
+`)
+
+	_, err := loadIsolated(t, path)
+	if err == nil {
+		t.Fatal("Load() expected error for invalid media.storage")
+	}
+	if !strings.Contains(err.Error(), "media.storage") {
+		t.Errorf("error = %q, want mention of media.storage", err)
+	}
+}
+
 func TestConfigString_ContainsQueueDriver(t *testing.T) {
 	withTestBaseURL(t)
 	path := writeYAML(t, "")
