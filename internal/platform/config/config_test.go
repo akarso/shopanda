@@ -600,6 +600,9 @@ func TestLoad_PluginsExampleDisabledByDefault(t *testing.T) {
 	if cfg.Plugins.Example.Enabled {
 		t.Fatal("Plugins.Example.Enabled = true, want false by default")
 	}
+	if cfg.Plugins.Example.FeeMinorUnits != 0 {
+		t.Fatalf("Plugins.Example.FeeMinorUnits = %d, want 0 by default", cfg.Plugins.Example.FeeMinorUnits)
+	}
 }
 
 func TestLoad_PublicBaseURL_RejectsWildcardHost(t *testing.T) {

@@ -19,9 +19,6 @@ type ExampleFeeStep struct {
 
 // NewExampleFeeStep returns a pricing step that adds amountMinor units in the cart currency.
 func NewExampleFeeStep(amountMinor int64) *ExampleFeeStep {
-	if amountMinor <= 0 {
-		amountMinor = defaultExampleFeeMinorUnits
-	}
 	return &ExampleFeeStep{amountMinor: amountMinor}
 }
 

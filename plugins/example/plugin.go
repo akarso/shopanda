@@ -31,8 +31,14 @@ func (p *Plugin) Init(app *plugin.App) error {
 		return fmt.Errorf("example plugin: disabled (plugins.example.enabled=false)")
 	}
 
-	app.RegisterPricingStep(NewExampleFeeStep(app.Config.Plugins.Example.FeeMinorUnits))
-	app.Bus.OnAsync(order.EventOrderCreated, newOrderCreatedListener(app.Logger))
+	feeMinor := app.Config.Plugins.Example.FeeMinorUnits
+	if feeMinor <= 0 {
+		feeMinor = defaultExampleFeeMinorUnits
+	}
+	app.RegisterPricingStep(NewExampleFeeStep(feeMinor))
+	if app.Bus != nil {
+		app.Bus.OnAsync(order.EventOrderCreated, newOrderCreatedListener(app.Logger))
+	}
 	if err := app.RegisterPermission(PermissionReportsRead, identity.RoleAdmin); err != nil {
 		return fmt.Errorf("example plugin: register permission: %w", err)
 	}

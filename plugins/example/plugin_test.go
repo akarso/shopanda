@@ -44,6 +44,7 @@ func TestPlugin_Init_DisabledConfigReturnsError(t *testing.T) {
 }
 
 func TestPlugin_Init_RegistersPricingStepPermissionAndListener(t *testing.T) {
+	rbac.ResetPluginPermissions()
 	t.Cleanup(rbac.ResetPluginPermissions)
 
 	cfg := &config.Config{
