@@ -9,7 +9,7 @@ C4Context
     Person(customer, "Customer", "Browses catalog, manages cart, places orders")
     Person(admin, "Admin", "Manages products, categories, collections, orders")
 
-    System(shopanda, "Shopanda", "E-commerce backend engine exposing a REST API for catalog, cart, checkout, and order management")
+    System(shopanda, "Shopanda", "Self-hosted ecommerce engine: SSR storefront, admin, REST API, checkout, and order management")
 
     System_Ext(paymentGateway, "Payment Gateway", "External payment processor that sends webhook callbacks on payment events")
 

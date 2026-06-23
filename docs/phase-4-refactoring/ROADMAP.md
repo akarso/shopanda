@@ -154,6 +154,8 @@ Recommended execution order: **D (430–431) early** so local dev and deploy doc
 
 ## Explicitly Deferred (beyond Phase 4)
 
+These items are **planned for Phase 5** — see [Phase 5 Roadmap](../phase-5-maturity/ROADMAP.md):
+
 * Customer groups, returns workflow, transaction ledger admin
 * Navigation builder, content blocks, marketing automation
 * Login-time TOTP / authenticator apps
@@ -162,6 +164,7 @@ Recommended execution order: **D (430–431) early** so local dev and deploy doc
 * Other message brokers beyond RabbitMQ (e.g. Kafka, SQS)
 * Plugin `.so` hot-loading
 * Complex promotion rule builder (tiered discounts, buy-X-get-Y, customer segments)
+* EU compliance depth (WEEE, EPR, GPSR, Omnibus verification, OSS/e-invoicing stretch)
 
 ---
 

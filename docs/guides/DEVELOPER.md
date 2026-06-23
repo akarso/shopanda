@@ -19,6 +19,7 @@ For deployment and operational setup, see [Deployment Guide](DEPLOYMENT.md). For
 - [Add Custom Event Listeners](#add-custom-event-listeners)
 - [Add Custom CLI Commands](#add-custom-cli-commands)
 - [Use the API Reference](#use-the-api-reference)
+- [Roadmap and Future Work](#roadmap-and-future-work)
 - [Practical Advice](#practical-advice)
 
 ## Architecture Overview
@@ -594,6 +595,22 @@ curl http://localhost:8080/api/v1/admin/orders \
 ### Admin UI note
 
 The embedded admin SPA stores its JWT in browser local storage and sends it as a bearer token on API requests. Extension work against admin APIs should continue to use the same bearer-token model rather than inventing a separate admin auth flow.
+
+## Roadmap and Future Work
+
+Phase 4 (**product complete**) is shipped. **Phase 5 — Mature Commerce** is the active planning track:
+
+| Track | Focus |
+| --- | --- |
+| A | Returns/RMA, customer groups, payment ledger admin |
+| B | Advanced promotions, navigation builder, content blocks |
+| C | Admin user CRUD, MFA, audit export, shipping UI |
+| D | EU compliance — Omnibus verification, WEEE, EPR, GPSR |
+| E | Merchant webhooks, plugin CLI, optional Kafka/SQS (stretch) |
+
+Full plan: [Phase 5 Roadmap](../phase-5-maturity/ROADMAP.md). EU directive mapping: [Compliance Reference](../phase-5-maturity/specs/COMPLIANCE_EU.md). **OSS vs B2B split:** [Commercial Licensing](../COMMERCIAL.md).
+
+When extending toward Phase 5 features, keep the same hexagonal rules: domain ports first, explicit wiring, plugin only when the behavior is optional or author-owned.
 
 ## Practical Advice
 

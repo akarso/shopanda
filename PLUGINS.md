@@ -13,6 +13,7 @@ This document describes the **three-tier model**, extension boundaries, and what
 | **Core** | `internal/*` | always on | Domain, application, default Postgres adapters |
 | **Core plugin** | `plugins/core/*` | config driver switches | Optional backends (Meilisearch, Redis, RabbitMQ, Stripe, S3, …) |
 | **External plugin** | author module, e.g. `plugins/example/` | compile-time register + config | Custom pipeline steps, events, permissions |
+| **B2B module** | `plugins/b2b/` | compile-time register + license key | Commercial wholesale / business-buyer features ([COMMERCIAL.md](docs/COMMERCIAL.md)) |
 
 All tiers implement the same interface:
 
@@ -137,9 +138,11 @@ Not implemented; do not assume these exist:
 - Go plugin `.so` dynamic loading
 - Plugin marketplace or version resolver
 - Hot reload
-- Plugin-registered CLI commands
+- Plugin-registered CLI commands (planned Phase 5 — PR-541)
 
 Plugin settings (string, int, bool) can be registered with `RegisterConfig` and edited on the admin Integrations page when the plugin is enabled at boot.
+
+**Phase 5 platform work:** merchant webhooks, Kafka/SQS queue plugins, GraphQL stretch — see [Phase 5 Roadmap](docs/phase-5-maturity/ROADMAP.md) Track E.
 
 ---
 
@@ -147,6 +150,8 @@ Plugin settings (string, int, bool) can be registered with `RegisterConfig` and 
 
 - [Developer Guide](docs/guides/DEVELOPER.md) — architecture, examples, API usage
 - [Example external plugin](plugins/example/README.md) — pricing step, event listener, permission
+- [Commercial licensing](docs/COMMERCIAL.md) — OSS vs B2B module boundary
+- [B2B plugin scaffold](plugins/b2b/README.md)
 - [Phase 4 Roadmap — three tiers](docs/phase-4-refactoring/ROADMAP.md#target-architecture-three-tiers)
 - [C4 component diagram](docs/diagrams/c4-component.md) — registry wiring
 - [Phase 1 authoring spec (historical)](docs/phase-1-core/specs/PLUGINS.md)
