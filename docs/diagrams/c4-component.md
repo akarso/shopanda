@@ -33,6 +33,14 @@ C4Component
             Component(searchHandler, "SearchHandler", "HTTP", "Full-text product search (public)")
             Component(mediaHandler, "MediaHandler", "HTTP", "Upload media files (admin)")
             Component(schemaHandler, "SchemaHandler", "HTTP", "Expose admin form and grid schemas (admin)")
+            Component(configAdmin, "ConfigAdminHandler", "HTTP", "Grouped store settings + plugin config (admin)")
+            Component(couponAdmin, "CouponAdminHandler", "HTTP", "Coupons CRUD (admin)")
+            Component(promotionAdmin, "PromotionAdminHandler", "HTTP", "Promotions CRUD (admin)")
+            Component(attributeAdmin, "AttributeAdminHandler", "HTTP", "Attributes and groups (admin)")
+            Component(inventoryAdmin, "InventoryAdminHandler", "HTTP", "Stock list and adjust (admin)")
+            Component(customerAdmin, "CustomerAdminHandler", "HTTP", "Customer list, detail, delete (admin)")
+            Component(auditLogAdmin, "AuditLogAdminHandler", "HTTP", "Read-only audit log list (admin, audit.read)")
+            Component(accountHandler, "AccountHandler", "HTTP", "Profile, consent, GDPR export/delete (customer)")
             Component(shippingHandler, "ShippingRatesHandler", "HTTP", "List shipping rates")
             Component(webhookHandler, "PaymentWebhookHandler", "HTTP", "Handle payment callbacks (public)")
             Component(storefrontHandler, "StorefrontHandler", "HTTP", "SSR storefront: catalog/PDP/PLP, cart, checkout (prefilled from default saved address), profile-side account pages incl. saved addresses + marketing preferences, and step-up-gated account email change with re-verification (optional, gated by frontend.enabled)")
@@ -58,13 +66,15 @@ C4Component
             Component(priceImporter, "PriceImporter", "Go", "CSV price import: SKU lookup, currency validation, upsert per variant+currency")
             Component(priceExporter, "PriceExporter", "Go", "Paginated price export to CSV with SKU resolution")
             Component(notifService, "NotificationService", "Go", "Listens to order.paid, renders email template, enqueues email.send job")
+            Component(auditor, "Auditor", "Go", "Structured admin audit logging with best-effort DB persistence")
             Component(mediaService, "MediaService", "Go", "Upload files: validate type, save to storage, persist asset record")
             Component(cacheCleanupHandler, "CacheCleanupHandler", "Go", "Handles cache.cleanup jobs: removes expired cache entries")
             Component(productSchemaRegistration, "ProductSchemaRegistration", "Go", "Registers product form and grid schemas with admin registry")
         }
 
         Boundary(infrastructure, "Infrastructure Layer (Adapters)") {
-            Component(postgresRepos, "PostgreSQL Repositories", "Go, lib/pq", "16 repo implementations: Product, Variant, Price, Cart, Order, Customer, CustomerAddress, Stock, Reservation, Payment, Shipping, Category, Collection, ResetToken, TaxRate, Store")
+            Component(postgresRepos, "PostgreSQL Repositories", "Go, lib/pq", "Catalog, cart, order, customer, payment, shipping, CMS, config, and related repos")
+            Component(auditLogRepo, "AuditLogRepo", "Go, lib/pq", "Insert and filtered list for admin_audit_log")
             Component(postgresSearch, "PostgresSearchEngine", "Go, tsvector", "Full-text search via PostgreSQL tsvector, filters, facets")
             Component(postgresJobQueue, "PostgresJobQueue", "Go, lib/pq", "Job queue with FOR UPDATE SKIP LOCKED dequeue, retry logic")
             Component(manualPay, "ManualPayProvider", "Go", "Offline payment processing")
@@ -213,6 +223,8 @@ C4Component
     Rel(examplePlugin, eventBus, "order.created async listener via pluginApp")
 ```
 
-> **Wiring note (post PR-410–421):** `cmd/api/register_plugins.go` calls `core.Register()` for config-gated core plugins and optionally registers external plugins (e.g. `plugins/example`). `PluginRegistry` calls `plugin.Init(pluginApp)` for each registered plugin. Core plugins set infrastructure providers on `pluginApp`; external plugins register pipeline steps, event handlers, and permissions. `main.go` then resolves providers and extracts steps from `pluginApp` into pipelines, workflows, and the event bus — explicit hexagonal wiring, not runtime discovery.
+> **Wiring note (post PR-410–434):** `cmd/api/register_plugins.go` calls `core.Register()` for config-gated core plugins and optionally registers external plugins (e.g. `plugins/example`). A shared `Auditor` with `AuditLogRepo` is wired to admin mutation handlers. `PluginRegistry` calls `plugin.Init(pluginApp)` for each registered plugin. Core plugins set infrastructure providers on `pluginApp`; external plugins register pipeline steps, event handlers, permissions, and optional `RegisterConfig` settings. `main.go` resolves providers and extracts steps into pipelines, workflows, and the event bus — explicit hexagonal wiring, not runtime discovery.
+>
+> **Phase 5 (planned):** returns/RMA, customer groups, advanced promotions, EU compliance fields (WEEE/EPR/GPSR), admin MFA — see [Phase 5 Roadmap](../phase-5-maturity/ROADMAP.md).
 >
 > **Deferred:** dynamic `.so` loading, plugin marketplace, plugin CLI registration.

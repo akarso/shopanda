@@ -71,7 +71,7 @@ Shopanda aims to provide a broad commerce foundation out of the box:
 | SEO | Structured data, sitemap generation, canonical URLs |
 | Multi-Store | Store contexts with scoped pricing and tax rules |
 | Localization | Translations for system and content, multi-language support |
-| Legal | GDPR support, cookie consent, EU price indication |
+| Legal | GDPR consent, data export/delete, EU price indication (Omnibus data); WEEE/EPR/GPSR planned Phase 5 |
 | Mailer | Async email delivery with pluggable providers |
 
 ## Architecture
@@ -134,7 +134,7 @@ See [Developer Guide](docs/guides/DEVELOPER.md) for how to enable core plugins a
 
 **Not yet supported:** `.so` dynamic loading, plugin marketplace, plugin-registered CLI commands.
 
-Full Phase 4 plan: [Phase 4 Roadmap](docs/phase-4-refactoring/ROADMAP.md).
+Full Phase 4 plan: [Phase 4 Roadmap](docs/phase-4-refactoring/ROADMAP.md) (shipped). Next: [Phase 5 — Mature Commerce](docs/phase-5-maturity/ROADMAP.md).
 
 ## Default stack
 
@@ -158,9 +158,9 @@ Enable optional backends via YAML or environment variables — see [Deployment G
 
 ## Early-stage note
 
-Shopanda is still early in its journey.
+Phases 1–4 (**product complete**) are shipped: merchant admin for catalog, orders, promotions, inventory, plugin tiers, guest checkout, and audit log. **Phase 5** ([roadmap](docs/phase-5-maturity/ROADMAP.md)) covers mature commerce features — returns, customer groups, EU compliance (WEEE, Omnibus, GPSR), and admin platform depth.
 
-The long-term goal is to build a commerce engine that is:
+The long-term goal remains a commerce engine that is:
 
 - fast,
 - easy to self-host,
@@ -226,7 +226,9 @@ Current guides live in [`docs/guides/`](docs/guides/):
 
 ### Planning & Reference
 
-- [Phase 4 Roadmap](docs/phase-4-refactoring/ROADMAP.md) — active product-complete milestones (admin gaps, plugin tiers, runtime modes)
+- [Phase 5 Roadmap](docs/phase-5-maturity/ROADMAP.md) — **active** mature commerce milestones (returns, segments, EU compliance, admin platform)
+- [EU Compliance Reference](docs/phase-5-maturity/specs/COMPLIANCE_EU.md) — Omnibus, WEEE, EPR, GPSR mapping to planned work
+- [Phase 4 Roadmap](docs/phase-4-refactoring/ROADMAP.md) — product-complete milestones (shipped)
 - [Runtime Modes](docs/phase-4-refactoring/specs/RUNTIME_MODES.md) — dev vs production process layout (`serve`, `worker`, `scheduler`, `app dev`)
 - [Phase 1 Roadmap](docs/phase-1-core/ROADMAP.md) — core platform milestones and archived planning context
 - [Phase 2 Roadmap](docs/phase-2-merchant-ready/ROADMAP.md) — merchant-ready milestones and implementation history

@@ -300,3 +300,21 @@ The merchant-facing experience is usable today, but a few workflows still live o
 - refunds depend on provider support and deployment wiring
 
 That split is intentional for now: the admin SPA covers the most frequent merchant workflows first, while more technical or less frequent operations remain explicit and scriptable.
+
+## Roadmap and Known Gaps
+
+Phase 4 delivered day-to-day catalog, order, promotion, and inventory admin. **Phase 5** adds operational and compliance depth. See the [Phase 5 Roadmap](../phase-5-maturity/ROADMAP.md) for the full plan.
+
+| Capability | Today | Phase 5 direction |
+| --- | --- | --- |
+| Returns / RMA | Manual or external | PR-502–503: workflow + admin/account UI |
+| Customer groups | Not available | PR-500–501: groups + group pricing |
+| Advanced promotions | Simple rules only | PR-510: tiered / buy-X-get-Y |
+| Payment ledger in admin | API/email only | PR-504: read-only transaction grid |
+| Navigation / page blocks | Static theme + CMS pages | PR-511–512: builder |
+| Shipping zones UI | Admin API only | PR-524: settings UI |
+| WEEE / packaging / GPSR | Not modeled | PR-531–533: product compliance fields |
+| Omnibus price display | Backend data exists | PR-530: verified storefront display |
+| Admin users / MFA | Seed user + fixed roles | PR-520–522: CRUD + optional TOTP |
+
+EU directive overview: [Compliance Reference](../phase-5-maturity/specs/COMPLIANCE_EU.md).
