@@ -570,15 +570,23 @@ func runServe(cfg *config.Config, log logger.Logger, embedScheduler bool) error 
 		}
 	}
 
+	// Shared admin auditor with optional persistent audit log.
+	auditLogRepo, err := postgres.NewAuditLogRepo(conn)
+	if err != nil {
+		return err
+	}
+	sharedAuditor := adminApp.NewAuditor(log)
+	sharedAuditor.SetAuditLogRepository(auditLogRepo)
+
 	// Handlers.
 	productHandler := shophttp.NewProductHandler(productRepo, pdp, plp, contentTranslator)
-	productAdmin := shophttp.NewProductAdminHandler(productRepo, bus)
-	productTranslationAdmin := shophttp.NewProductTranslationAdminHandler(productRepo, contentTranslationRepo, adminApp.NewAuditor(log), log)
-	productPriceAdmin := shophttp.NewProductPriceAdminHandler(productRepo, variantRepo, priceRepo, adminApp.NewAuditor(log), log)
+	productAdmin := shophttp.NewProductAdminHandlerWithAuditor(productRepo, bus, sharedAuditor, log)
+	productTranslationAdmin := shophttp.NewProductTranslationAdminHandler(productRepo, contentTranslationRepo, sharedAuditor, log)
+	productPriceAdmin := shophttp.NewProductPriceAdminHandler(productRepo, variantRepo, priceRepo, sharedAuditor, log)
 	variantHandler := shophttp.NewVariantHandler(productRepo, variantRepo, bus)
 	cartHandler := shophttp.NewCartHandler(cartService)
 	orderHandler := shophttp.NewOrderHandler(orderRepo)
-	orderAdmin := shophttp.NewOrderAdminHandler(orderRepo, log)
+	orderAdmin := shophttp.NewOrderAdminHandlerWithAuditor(orderRepo, sharedAuditor)
 	statsAdmin := shophttp.NewStatsAdminHandler(statsRepo)
 	authHandler := shophttp.NewAuthHandler(authService)
 	webhookVerifier := webhook.NewHMACVerifier(cfg.Webhooks.Secrets)
@@ -613,8 +621,8 @@ func runServe(cfg *config.Config, log logger.Logger, embedScheduler bool) error 
 
 	shippingRates := shophttp.NewShippingRatesHandler(flatRateProvider)
 	categoryHandler := shophttp.NewCategoryHandler(categoryRepo, productRepo)
-	categoryAdmin := shophttp.NewCategoryAdminHandlerWithAuditor(categoryRepo, bus, adminApp.NewAuditor(log))
-	categoryProductAssignmentAdmin := shophttp.NewCategoryProductAssignmentAdminHandlerWithAuditor(categoryRepo, productRepo, productRepo, adminApp.NewAuditor(log))
+	categoryAdmin := shophttp.NewCategoryAdminHandlerWithAuditor(categoryRepo, bus, sharedAuditor)
+	categoryProductAssignmentAdmin := shophttp.NewCategoryProductAssignmentAdminHandlerWithAuditor(categoryRepo, productRepo, productRepo, sharedAuditor)
 	searchHandler := shophttp.NewSearchHandler(searchEngine)
 	mediaService := mediaApp.NewService(mediaStorage, assetRepo, bus, log)
 	if thumbCfg := cfg.Media.Thumbnails; len(thumbCfg) > 0 {
@@ -643,7 +651,7 @@ func runServe(cfg *config.Config, log logger.Logger, embedScheduler bool) error 
 			})
 		}
 	}
-	mediaHandler := shophttp.NewMediaHandlerWithAuditor(mediaService, adminApp.NewAuditor(log))
+	mediaHandler := shophttp.NewMediaHandlerWithAuditor(mediaService, sharedAuditor)
 	configAdmin := shophttp.NewConfigAdminHandler(configRepo, cfg, func(ctx context.Context, smtpCfg shophttp.SMTPTestConfig, to string) error {
 		mailer := smtpmail.New(smtpmail.Config{
 			Host:     smtpCfg.Host,
@@ -657,18 +665,19 @@ func runServe(cfg *config.Config, log logger.Logger, embedScheduler bool) error 
 			Subject: "Shopanda SMTP test",
 			Body:    "<p>This is a test email from Shopanda admin settings.</p>",
 		})
-	}, log, registry.ConfigRegistry())
+	}, sharedAuditor, registry.ConfigRegistry())
 	schemaHandler := shophttp.NewSchemaHandler(adminRegistry, attributeStore)
 	pageHandler := shophttp.NewPageHandler(pageRepo, contentTranslator)
-	pageAdmin := shophttp.NewPageAdminHandlerWithAuditor(pageRepo, bus, adminApp.NewAuditor(log))
-	couponAdmin := shophttp.NewCouponAdminHandlerWithAuditor(couponRepo, promotionRepo, adminApp.NewAuditor(log))
-	promotionAdmin := shophttp.NewPromotionAdminHandlerWithAuditor(promotionRepo, adminApp.NewAuditor(log))
-	attributeAdmin := shophttp.NewAttributeAdminHandlerWithAuditor(attributeStore, adminApp.NewAuditor(log))
-	inventoryAdmin := shophttp.NewInventoryAdminHandlerWithAuditor(stockRepo, variantRepo, adminApp.NewAuditor(log))
-	storeAdmin := shophttp.NewStoreAdminHandlerWithAuditor(storeRepo, bus, adminApp.NewAuditor(log))
+	pageAdmin := shophttp.NewPageAdminHandlerWithAuditor(pageRepo, bus, sharedAuditor)
+	couponAdmin := shophttp.NewCouponAdminHandlerWithAuditor(couponRepo, promotionRepo, sharedAuditor)
+	promotionAdmin := shophttp.NewPromotionAdminHandlerWithAuditor(promotionRepo, sharedAuditor)
+	attributeAdmin := shophttp.NewAttributeAdminHandlerWithAuditor(attributeStore, sharedAuditor)
+	inventoryAdmin := shophttp.NewInventoryAdminHandlerWithAuditor(stockRepo, variantRepo, sharedAuditor)
+	storeAdmin := shophttp.NewStoreAdminHandlerWithAuditor(storeRepo, bus, sharedAuditor)
+	auditLogAdmin := shophttp.NewAuditLogAdminHandler(auditLogRepo, sharedAuditor)
 	shippingZoneAdmin := shophttp.NewShippingZoneAdminHandler(zoneRepo)
 	accountService := accountApp.NewService(customerRepo, consentRepo, bus, log, conn)
-	customerAdmin := shophttp.NewCustomerAdminHandlerWithDeleter(customerRepo, accountService, log)
+	customerAdmin := shophttp.NewCustomerAdminHandlerWithAuditorAndDeleter(customerRepo, accountService, sharedAuditor)
 	accountHandler := shophttp.NewAccountHandler(customerRepo, orderRepo, consentRepo, accountService)
 	sitemapHandler := shophttp.NewSitemapHandler(baseURL, productRepo, categoryRepo, pageRepo)
 	robotsHandler := shophttp.NewRobotsHandler(baseURL)
@@ -728,6 +737,7 @@ func runServe(cfg *config.Config, log logger.Logger, embedScheduler bool) error 
 	requireContentWrite := shophttp.RequirePermission(rbac.ContentWrite)
 	requireShippingRead := shophttp.RequirePermission(rbac.ShippingRead)
 	requireShippingWrite := shophttp.RequirePermission(rbac.ShippingWrite)
+	requireAuditRead := shophttp.RequirePermission(rbac.AuditRead)
 
 	// Auth routes.
 	router.HandleFunc("POST /api/v1/auth/register", authHandler.Register())
@@ -793,6 +803,7 @@ func runServe(cfg *config.Config, log logger.Logger, embedScheduler bool) error 
 	router.Handle("GET /api/v1/admin/config", requireSettingsRead(configAdmin.Get()))
 	router.Handle("PUT /api/v1/admin/config", requireSettingsWrite(configAdmin.Update()))
 	router.Handle("POST /api/v1/admin/config/test-email", requireSettingsWrite(configAdmin.TestEmail()))
+	router.Handle("GET /api/v1/admin/audit", requireAuditRead(auditLogAdmin.List()))
 	router.Handle("GET /api/v1/admin/forms/{name}", requireAuth(schemaHandler.GetForm()))
 	router.Handle("GET /api/v1/admin/grids/{name}", requireAuth(schemaHandler.GetGrid()))
 	router.Handle("GET /api/v1/admin/pages", requireContentRead(pageAdmin.List()))

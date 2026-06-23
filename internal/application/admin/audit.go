@@ -2,7 +2,9 @@ package admin
 
 import (
 	"context"
+	"fmt"
 
+	domainadmin "github.com/akarso/shopanda/internal/domain/admin"
 	"github.com/akarso/shopanda/internal/platform/logger"
 )
 
@@ -82,6 +84,8 @@ const (
 	AuditAttributeGroupCreate AuditAction = "attribute_group.create"
 	AuditAttributeGroupUpdate AuditAction = "attribute_group.update"
 	AuditAttributeGroupDelete AuditAction = "attribute_group.delete"
+
+	AuditLogList AuditAction = "audit.list"
 )
 
 // AuditEntry represents a single admin audit log entry.
@@ -97,7 +101,8 @@ type AuditEntry struct {
 
 // Auditor logs admin actions with context.
 type Auditor struct {
-	log logger.Logger
+	log  logger.Logger
+	repo domainadmin.AuditLogRepository
 }
 
 // NewAuditor creates an Auditor that logs to the provided logger.
@@ -106,6 +111,14 @@ func NewAuditor(log logger.Logger) *Auditor {
 		panic("auditor: logger must not be nil")
 	}
 	return &Auditor{log: log}
+}
+
+// SetAuditLogRepository enables best-effort persistence of audit entries.
+func (a *Auditor) SetAuditLogRepository(repo domainadmin.AuditLogRepository) {
+	if a == nil {
+		return
+	}
+	a.repo = repo
 }
 
 // LogAction records an admin action to the audit log.
@@ -144,6 +157,63 @@ func (a *Auditor) LogAction(ctx context.Context, entry AuditEntry) {
 		a.log.Warn("admin.action.failed", logFields)
 	} else {
 		a.log.Info("admin.action", logFields)
+	}
+
+	a.persistEntry(ctx, entry)
+}
+
+func (a *Auditor) persistEntry(ctx context.Context, entry AuditEntry) {
+	if a == nil || a.repo == nil {
+		return
+	}
+	record := auditRecordFromEntry(entry)
+	if err := a.repo.Insert(ctx, record); err != nil {
+		a.log.Warn("admin.audit.persist_failed", map[string]interface{}{
+			"admin_id":      record.AdminID,
+			"action":        record.Action,
+			"resource_type": record.ResourceType,
+			"resource_id":   record.ResourceID,
+			"error":         err.Error(),
+		})
+	}
+}
+
+func auditRecordFromEntry(entry AuditEntry) domainadmin.AuditLogRecord {
+	adminID := entry.AdminID
+	if adminID == "" {
+		adminID = "unknown"
+	}
+	result := entry.Result
+	if result == "" {
+		result = "unknown"
+	}
+
+	metadata := make(map[string]interface{})
+	storeID, language, currency := "", "", ""
+	for k, v := range entry.Details {
+		switch k {
+		case "store_id":
+			storeID = fmt.Sprint(v)
+		case "language":
+			language = fmt.Sprint(v)
+		case "currency":
+			currency = fmt.Sprint(v)
+		default:
+			metadata[k] = v
+		}
+	}
+
+	return domainadmin.AuditLogRecord{
+		AdminID:      adminID,
+		Action:       string(entry.Action),
+		ResourceType: entry.ResourceType,
+		ResourceID:   entry.ResourceID,
+		Result:       result,
+		ErrorMessage: entry.Error,
+		StoreID:      storeID,
+		Language:     language,
+		Currency:     currency,
+		Metadata:     metadata,
 	}
 }
 
