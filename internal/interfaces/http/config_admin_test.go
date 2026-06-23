@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -843,7 +844,63 @@ func TestConfigAdmin_Update_PluginConfigAppliesRuntime(t *testing.T) {
 	if cfg.Plugins.Example.FeeMinorUnits != 300 {
 		t.Fatalf("runtime FeeMinorUnits = %d, want 300", cfg.Plugins.Example.FeeMinorUnits)
 	}
-	if repo.entries["plugins.example.fee_minor_units"] != float64(300) {
-		t.Fatalf("persisted value = %v, want 300", repo.entries["plugins.example.fee_minor_units"])
+	persisted := repo.entries["plugins.example.fee_minor_units"]
+	if persisted != float64(300) && persisted != int64(300) {
+		t.Fatalf("persisted value = %v, want 300", persisted)
+	}
+}
+
+func TestConfigAdmin_Update_PluginConfigZeroRejectedBeforePersist(t *testing.T) {
+	repo := newMockConfigRepo()
+	cfg := &appconfig.Config{
+		Plugins: appconfig.PluginsConfig{
+			Example: appconfig.ExamplePluginConfig{Enabled: true, FeeMinorUnits: 100},
+		},
+	}
+	pluginReg := plugin.NewConfigRegistry()
+	if err := pluginReg.Register(plugin.ConfigDefinition{
+		Plugin: "example/demo",
+		Fields: []plugin.ConfigField{
+			{
+				Key:   "plugins.example.fee_minor_units",
+				Label: "Example fee (minor units)",
+				Type:  plugin.ConfigFieldInt,
+				Get: func(c *appconfig.Config) interface{} {
+					return c.Plugins.Example.FeeMinorUnits
+				},
+				Apply: func(c *appconfig.Config, value interface{}) error {
+					switch v := value.(type) {
+					case int64:
+						if v <= 0 {
+							return fmt.Errorf("fee must be positive")
+						}
+						c.Plugins.Example.FeeMinorUnits = v
+					case float64:
+						if v <= 0 {
+							return fmt.Errorf("fee must be positive")
+						}
+						c.Plugins.Example.FeeMinorUnits = int64(v)
+					}
+					return nil
+				},
+			},
+		},
+	}); err != nil {
+		t.Fatalf("Register() error: %v", err)
+	}
+	h := shophttp.NewConfigAdminHandler(repo, cfg, func(context.Context, shophttp.SMTPTestConfig, string) error { return nil }, logger.NewWithWriter(io.Discard, "error"), pluginReg)
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPut, "/api/v1/admin/config", strings.NewReader(`{"entries":{"plugins.example.fee_minor_units":0}}`))
+	req.Header.Set("Content-Type", "application/json")
+	h.Update().ServeHTTP(rec, req)
+	if rec.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("status = %d, want %d; body: %s", rec.Code, http.StatusUnprocessableEntity, rec.Body.String())
+	}
+	if cfg.Plugins.Example.FeeMinorUnits != 100 {
+		t.Fatalf("runtime FeeMinorUnits = %d, want unchanged 100", cfg.Plugins.Example.FeeMinorUnits)
+	}
+	if _, ok := repo.entries["plugins.example.fee_minor_units"]; ok {
+		t.Fatal("zero fee should not be persisted")
 	}
 }

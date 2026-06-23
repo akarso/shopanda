@@ -152,6 +152,15 @@ func (r *ConfigRegistry) ValueFromConfig(cfg *config.Config, key string) interfa
 	return field.Get(cfg)
 }
 
+// CoerceValue validates and normalizes a plugin config value to its declared type.
+func (r *ConfigRegistry) CoerceValue(key string, value interface{}) (interface{}, error) {
+	field, ok := r.Field(key)
+	if !ok {
+		return nil, fmt.Errorf("plugin: unknown config key %q", key)
+	}
+	return normalizeConfigValue(field, value)
+}
+
 // ApplyToConfig updates in-memory cfg from persisted entries.
 func (r *ConfigRegistry) ApplyToConfig(cfg *config.Config, entries map[string]interface{}) error {
 	if r == nil || cfg == nil {
@@ -241,6 +250,9 @@ func toInt64(value interface{}) (int64, error) {
 	case float64:
 		if typed != math.Trunc(typed) {
 			return 0, fmt.Errorf("non-integer float64 %v", typed)
+		}
+		if typed < float64(math.MinInt64) || typed > float64(math.MaxInt64) {
+			return 0, fmt.Errorf("float64 %v out of int64 range", typed)
 		}
 		return int64(typed), nil
 	case jsonNumber:

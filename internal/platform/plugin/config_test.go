@@ -128,3 +128,20 @@ func TestApp_RegisterConfig(t *testing.T) {
 		t.Fatalf("RegisterConfig() error: %v", err)
 	}
 }
+
+func TestToInt64_Float64OutOfRange(t *testing.T) {
+	reg := plugin.NewConfigRegistry()
+	if err := reg.Register(plugin.ConfigDefinition{
+		Plugin: "test/plugin",
+		Fields: []plugin.ConfigField{{
+			Key: "plugins.test.n", Label: "N", Type: plugin.ConfigFieldInt,
+			Get:   func(*config.Config) interface{} { return int64(0) },
+			Apply: func(*config.Config, interface{}) error { return nil },
+		}},
+	}); err != nil {
+		t.Fatalf("Register() error: %v", err)
+	}
+	if _, err := reg.CoerceValue("plugins.test.n", float64(1e20)); err == nil {
+		t.Fatal("expected out-of-range float64 to be rejected")
+	}
+}

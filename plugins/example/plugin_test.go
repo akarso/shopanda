@@ -87,7 +87,10 @@ func TestPlugin_Init_RegistersAdminConfig(t *testing.T) {
 		},
 	}
 	app := testApp(cfg)
-	reg.InitAll(app)
+	summary := reg.InitAll(app)
+	if summary.Failed > 0 || summary.Initialized != 1 {
+		t.Fatalf("InitAll() summary = %+v, want 1 initialized and 0 failed", summary)
+	}
 	keys := reg.ConfigRegistry().Keys()
 	if len(keys) != 1 || keys[0] != "plugins.example.fee_minor_units" {
 		t.Fatalf("ConfigRegistry keys = %v, want [plugins.example.fee_minor_units]", keys)
@@ -142,11 +145,23 @@ func TestExampleFeeStep_ReflectsRuntimeConfigChange(t *testing.T) {
 	pctx.Items = []pricing.PricingItem{item}
 	pipe := pricing.NewPipeline(step, pricing.NewFinalizeStep())
 
-	fee = 250
 	if err := pipe.Execute(context.Background(), &pctx); err != nil {
-		t.Fatalf("Execute: %v", err)
+		t.Fatalf("first Execute: %v", err)
+	}
+	if pctx.FeesTotal.Amount() != 100 {
+		t.Fatalf("FeesTotal after first run = %d, want 100", pctx.FeesTotal.Amount())
+	}
+
+	fee = 250
+	pctx, err = pricing.NewPricingContext("EUR")
+	if err != nil {
+		t.Fatalf("NewPricingContext: %v", err)
+	}
+	pctx.Items = []pricing.PricingItem{item}
+	if err := pipe.Execute(context.Background(), &pctx); err != nil {
+		t.Fatalf("second Execute: %v", err)
 	}
 	if pctx.FeesTotal.Amount() != 250 {
-		t.Fatalf("FeesTotal = %d, want 250", pctx.FeesTotal.Amount())
+		t.Fatalf("FeesTotal after second run = %d, want 250", pctx.FeesTotal.Amount())
 	}
 }

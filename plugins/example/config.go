@@ -35,8 +35,8 @@ func examplePluginConfigDefinition() plugin.ConfigDefinition {
 					if err != nil {
 						return err
 					}
-					if n < 0 {
-						return fmt.Errorf("example plugin: fee_minor_units must be non-negative")
+					if n <= 0 {
+						return fmt.Errorf("example plugin: fee_minor_units must be positive")
 					}
 					cfg.Plugins.Example.FeeMinorUnits = n
 					return nil

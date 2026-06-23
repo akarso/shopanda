@@ -188,6 +188,11 @@ func (h *ConfigAdminHandler) Update() http.HandlerFunc {
 			JSONError(w, err)
 			return
 		}
+		if err := h.applyPluginRuntimeConfig(entries); err != nil {
+			h.auditConfigError(r, admin.AuditSettingsChange, "config_group", "", map[string]interface{}{"entries_count": len(entries)}, err)
+			JSONError(w, apperror.Validation(err.Error()))
+			return
+		}
 		storeID := resolveStoreScopeID(r)
 		persisted := make(map[string]interface{}, len(entries))
 		for key, value := range entries {
@@ -201,11 +206,6 @@ func (h *ConfigAdminHandler) Update() http.HandlerFunc {
 		if err := h.repo.SetMany(r.Context(), persisted); err != nil {
 			h.auditConfigError(r, admin.AuditSettingsChange, "config_group", "", map[string]interface{}{"entries_count": len(entries), "store_id": storeID}, err)
 			JSONError(w, err)
-			return
-		}
-		if err := h.applyPluginRuntimeConfig(entries); err != nil {
-			h.auditConfigError(r, admin.AuditSettingsChange, "config_group", "", map[string]interface{}{"entries_count": len(entries), "store_id": storeID}, err)
-			JSONError(w, apperror.Validation(err.Error()))
 			return
 		}
 		h.auditConfigSuccess(r, admin.AuditSettingsChange, "config_group", "", map[string]interface{}{"entries_count": len(entries), "store_id": storeID})
@@ -495,7 +495,11 @@ func (h *ConfigAdminHandler) normalizeUpdateEntries(ctx context.Context, entries
 					continue
 				}
 			}
-			normalized[key] = value
+			coerced, err := h.pluginConfigs.CoerceValue(key, value)
+			if err != nil {
+				return nil, apperror.Validation(err.Error())
+			}
+			normalized[key] = coerced
 			continue
 		}
 		if isSecretConfigKey(key) {
