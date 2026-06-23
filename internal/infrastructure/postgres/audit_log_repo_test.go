@@ -20,7 +20,7 @@ func TestAuditLogRepo_InsertAndList(t *testing.T) {
 	}
 	ctx := context.Background()
 
-	sharedTS := time.Date(2026, 6, 1, 12, 0, 0, 0, time.UTC)
+	baseTS := time.Date(2026, 6, 1, 12, 0, 0, 0, time.UTC)
 	records := []admin.AuditLogRecord{
 		{
 			ID:           id.New(),
@@ -33,7 +33,7 @@ func TestAuditLogRepo_InsertAndList(t *testing.T) {
 			Language:     "en",
 			Currency:     "EUR",
 			Metadata:     map[string]interface{}{"name": "Updated"},
-			CreatedAt:    sharedTS,
+			CreatedAt:    baseTS.Add(2 * time.Hour),
 		},
 		{
 			ID:           id.New(),
@@ -42,7 +42,7 @@ func TestAuditLogRepo_InsertAndList(t *testing.T) {
 			ResourceType: "product",
 			ResourceID:   "prod-2",
 			Result:       "success",
-			CreatedAt:    sharedTS,
+			CreatedAt:    baseTS.Add(1 * time.Hour),
 		},
 		{
 			ID:           id.New(),
@@ -51,7 +51,7 @@ func TestAuditLogRepo_InsertAndList(t *testing.T) {
 			ResourceType: "product",
 			ResourceID:   "prod-3",
 			Result:       "success",
-			CreatedAt:    sharedTS,
+			CreatedAt:    baseTS,
 		},
 	}
 	for _, record := range records {
@@ -69,6 +69,9 @@ func TestAuditLogRepo_InsertAndList(t *testing.T) {
 		t.Fatalf("entries len = %d, want 3", len(entries))
 	}
 	got := entries[0]
+	if got.ResourceID != "prod-1" {
+		t.Fatalf("first entry resource_id = %q, want prod-1", got.ResourceID)
+	}
 	if got.StoreID != "store-eu" || got.Language != "en" || got.Currency != "EUR" {
 		t.Fatalf("scope triad = %+v", got)
 	}
