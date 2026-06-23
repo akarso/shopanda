@@ -143,7 +143,7 @@ Full compliance overview: [`specs/COMPLIANCE_EU.md`](specs/COMPLIANCE_EU.md).
 
 | PR | License | Title | Short description |
 | --- | --- | --- | --- |
-| PR-530 | [oss] | Omnibus storefront verification | Ensure discounted PDP/PLP shows lowest prior price (30d) using existing `price_history`; admin toggle per store |
+| PR-530 | [oss] | Omnibus storefront verification | done | Ensure discounted PDP/PLP shows lowest prior price (30d) using existing `price_history`; admin toggle per store |
 | PR-531 | [oss] | WEEE product fields | Producer registration number, WEEE category, take-back info; PDP/footer display helpers |
 | PR-532 | [oss] | EPR / packaging data | Packaging material weights, recyclability flags, registration IDs per market (config-driven) |
 | PR-533 | [oss] | GPSR product safety | Manufacturer/importer contact, safety warnings, product identifiers for applicable catalogs |

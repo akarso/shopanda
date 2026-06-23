@@ -10,10 +10,13 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/akarso/shopanda/internal/application/composition"
 	"github.com/akarso/shopanda/internal/domain/catalog"
+	"github.com/akarso/shopanda/internal/domain/pricing"
 	"github.com/akarso/shopanda/internal/domain/search"
+	"github.com/akarso/shopanda/internal/domain/shared"
 	"github.com/akarso/shopanda/internal/domain/theme"
 	"github.com/akarso/shopanda/internal/platform/apperror"
 
@@ -736,5 +739,109 @@ func TestStorefrontHandler_Product_WithPipeline(t *testing.T) {
 	// Pipeline ran but template still renders product name.
 	if !strings.Contains(rec.Body.String(), "Widget") {
 		t.Errorf("body missing product name")
+	}
+}
+
+type storefrontVariantRepo struct {
+	variants []catalog.Variant
+}
+
+func (m *storefrontVariantRepo) ListByProductID(_ context.Context, _ string, _, _ int) ([]catalog.Variant, error) {
+	return m.variants, nil
+}
+func (m *storefrontVariantRepo) FindByID(_ context.Context, _ string) (*catalog.Variant, error) {
+	return nil, nil
+}
+func (m *storefrontVariantRepo) FindBySKU(_ context.Context, _ string) (*catalog.Variant, error) {
+	return nil, nil
+}
+func (m *storefrontVariantRepo) Create(_ context.Context, _ *catalog.Variant) error { return nil }
+func (m *storefrontVariantRepo) Update(_ context.Context, _ *catalog.Variant) error { return nil }
+
+type storefrontPriceRepo struct {
+	price *pricing.Price
+}
+
+func (m *storefrontPriceRepo) FindByVariantCurrencyAndStore(_ context.Context, _, _, _ string) (*pricing.Price, error) {
+	return m.price, nil
+}
+func (m *storefrontPriceRepo) ListByVariantID(_ context.Context, _ string) ([]pricing.Price, error) {
+	return nil, nil
+}
+func (m *storefrontPriceRepo) Upsert(_ context.Context, _ *pricing.Price) error { return nil }
+func (m *storefrontPriceRepo) List(_ context.Context, _, _ int) ([]pricing.Price, error) {
+	return nil, nil
+}
+
+type storefrontPriceHistoryRepo struct {
+	snapshot *pricing.PriceSnapshot
+}
+
+func (m *storefrontPriceHistoryRepo) Record(_ context.Context, _ *pricing.PriceSnapshot) error {
+	return nil
+}
+func (m *storefrontPriceHistoryRepo) LowestSince(_ context.Context, _, _, _ string, _ time.Time) (*pricing.PriceSnapshot, error) {
+	return m.snapshot, nil
+}
+
+func createTestThemeWithOmnibusProduct(t *testing.T) *theme.Engine {
+	t.Helper()
+	dir := t.TempDir()
+	tplDir := filepath.Join(dir, "templates")
+	if err := os.MkdirAll(tplDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "theme.yaml"), []byte("name: test\nversion: \"0.1.0\"\nstorefront:\n  search_action: /catalog\n  cart_url: /basket\n  cart_label: Basket (2)\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	layout := `<!DOCTYPE html><html><body>{{ template "content" . }}</body></html>`
+	if err := os.WriteFile(filepath.Join(tplDir, "layout.html"), []byte(layout), 0644); err != nil {
+		t.Fatal(err)
+	}
+	product := `{{ define "content" }}<h1>{{ .Product.Name }}</h1>{{ range .Blocks }}{{ if eq .Type "price_indication" }}<p class="price-indication">Lowest price in the last 30 days: {{ index .Data "currency" }} {{ index .Data "lowest_30d_price" }}</p>{{ end }}{{ end }}{{ end }}{{ template "layout.html" . }}`
+	if err := os.WriteFile(filepath.Join(tplDir, "product.html"), []byte(product), 0644); err != nil {
+		t.Fatal(err)
+	}
+	eng, err := theme.Load(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return eng
+}
+
+func TestStorefrontHandler_Product_RendersOmnibusPriceIndication(t *testing.T) {
+	repo := &mockStorefrontRepo{
+		findBySlugFn: func(_ context.Context, slug string) (*catalog.Product, error) {
+			return &catalog.Product{ID: "p1", Name: "Widget", Slug: slug, Status: catalog.StatusActive}, nil
+		},
+	}
+	engine := createTestThemeWithOmnibusProduct(t)
+	pdp := composition.NewPipeline[composition.ProductContext]()
+	pdp.AddStep(composition.NewPriceIndicationStep(
+		&storefrontVariantRepo{variants: []catalog.Variant{{ID: "v1", ProductID: "p1"}}},
+		&storefrontPriceRepo{price: &pricing.Price{VariantID: "v1", Amount: shared.MustNewMoney(3999, "EUR")}},
+		&storefrontPriceHistoryRepo{snapshot: &pricing.PriceSnapshot{
+			VariantID:  "v1",
+			Amount:     shared.MustNewMoney(2999, "EUR"),
+			RecordedAt: time.Now().UTC().AddDate(0, 0, -5),
+		}},
+		nil,
+	))
+	plp := composition.NewPipeline[composition.ListingContext]()
+	h := shophttp.NewStorefrontHandler(engine, repo, newStorefrontCategoryMock(), pdp, plp, newStorefrontSearchMock())
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("GET", "/products/widget", nil)
+	newStorefrontRouter(h).ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d; body: %s", rec.Code, http.StatusOK, rec.Body.String())
+	}
+	body := rec.Body.String()
+	if !strings.Contains(body, "Lowest price in the last 30 days") {
+		t.Fatalf("body missing omnibus disclosure: %s", body)
+	}
+	if !strings.Contains(body, "29.99") {
+		t.Fatalf("body missing lowest 30d price: %s", body)
 	}
 }

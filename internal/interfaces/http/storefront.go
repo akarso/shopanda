@@ -123,13 +123,16 @@ type StorefrontProductPageData struct {
 }
 
 type StorefrontProductCard struct {
-	Name         string
-	Slug         string
-	Description  string
-	ImageURL     string
-	HasPrice     bool
-	PriceText    string
-	Availability string
+	Name              string
+	Slug              string
+	Description       string
+	ImageURL          string
+	HasPrice          bool
+	PriceText         string
+	Availability      string
+	OmnibusLowest30d  string
+	OmnibusCurrency   string
+	ShowOmnibus       bool
 }
 
 type StorefrontPaginationLink struct {
@@ -471,6 +474,7 @@ func (h *StorefrontHandler) renderListing(searchMode bool) http.HandlerFunc {
 			if ctx.Country == "" {
 				ctx.Country = s.Country
 			}
+			ctx.StoreID = s.ID
 		}
 		if err := h.plp.Execute(ctx); err != nil {
 			http.Error(w, "Internal Server Error", http.StatusInternalServerError)
@@ -543,6 +547,7 @@ func (h *StorefrontHandler) renderCategory(root bool) http.HandlerFunc {
 			if ctx.Country == "" {
 				ctx.Country = s.Country
 			}
+			ctx.StoreID = s.ID
 		}
 		if err := h.plp.Execute(ctx); err != nil {
 			http.Error(w, "Internal Server Error", http.StatusInternalServerError)
@@ -720,7 +725,7 @@ func (h *StorefrontHandler) buildListingPageData(r *http.Request, layout Storefr
 		Query:         params.Query,
 		ResultSummary: resultSummary,
 		EmptyMessage:  emptyMessage,
-		Products:      storefrontCards(ctx.Products, result.Products, ctx.Currency),
+		Products:      storefrontCards(ctx.Products, result.Products, ctx.Currency, composition.PriceIndicationsFromMeta(ctx.Meta)),
 		Pagination:    storefrontPagination(r, params, result.Total),
 		SortOptions:   storefrontSortLinks(r, params),
 		Filters:       storefrontFilters(result.Facets),
@@ -829,7 +834,7 @@ func searchProductsToCatalog(products []search.Product) []*catalog.Product {
 	return out
 }
 
-func storefrontCards(products []*catalog.Product, indexed []search.Product, currency string) []StorefrontProductCard {
+func storefrontCards(products []*catalog.Product, indexed []search.Product, currency string, indications map[string]map[string]interface{}) []StorefrontProductCard {
 	indexedByID := make(map[string]search.Product, len(indexed))
 	for i := range indexed {
 		indexedByID[indexed[i].ID] = indexed[i]
@@ -858,6 +863,18 @@ func storefrontCards(products []*catalog.Product, indexed []search.Product, curr
 			PriceText:    priceText,
 			Availability: availability,
 		})
+		card := &out[len(out)-1]
+		if indications != nil {
+			if data, ok := indications[product.ID]; ok && data != nil {
+				if lowest, ok := data["lowest_30d_price"].(string); ok && lowest != "" {
+					card.ShowOmnibus = true
+					card.OmnibusLowest30d = lowest
+					if cur, ok := data["currency"].(string); ok {
+						card.OmnibusCurrency = cur
+					}
+				}
+			}
+		}
 	}
 	return out
 }

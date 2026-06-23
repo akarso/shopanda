@@ -20,6 +20,11 @@
         {{ else }}
         <p>No merchandising description has been added yet.</p>
         {{ end }}
+        {{ range .Blocks }}
+        {{ if eq .Type "price_indication" }}
+        <p class="price-indication muted-note">Lowest price in the last 30 days: {{ index .Data "currency" }} {{ index .Data "lowest_30d_price" }} (current price: {{ index .Data "currency" }} {{ index .Data "current_price" }})</p>
+        {{ end }}
+        {{ end }}
         <dl class="detail-grid">
             <div>
                 <dt>Store</dt>

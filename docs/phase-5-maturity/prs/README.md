@@ -20,7 +20,7 @@ Planned specs for **PR-500–549**. Individual PR markdown files will be added w
 | PR-522 | C | [oss] | planned | Admin TOTP / MFA |
 | PR-523 | C | [oss] | planned | Audit export + retention |
 | PR-524 | C | [oss] | planned | Shipping zones admin UI |
-| PR-530 | D | [oss] | planned | Omnibus storefront verification |
+| PR-530 | D | [oss] | done | [Omnibus storefront verification](PR-530.md) |
 | PR-531 | D | [oss] | planned | WEEE product fields |
 | PR-532 | D | [oss] | planned | EPR / packaging data |
 | PR-533 | D | [oss] | planned | GPSR product safety |

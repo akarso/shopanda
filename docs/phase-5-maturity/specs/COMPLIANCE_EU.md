@@ -9,7 +9,7 @@ This document maps **common EU merchant obligations** to Shopanda's current capa
 | Directive / regulation | What merchants need | Shopanda today | Phase 5 target |
 | --- | --- | --- | --- |
 | **GDPR** | Lawful processing, access, erasure, consent | Cookie consent, `GET/DELETE /account`, data export | Hardening only if gaps found |
-| **Omnibus (Price Indication)** | Show lowest price in prior 30 days when showing a discount | `price_history` table, `PriceIndicationStep` in composition pipeline | PR-530: verify storefront display + admin toggle |
+| **Omnibus (Price Indication)** | Show lowest price in prior 30 days when showing a discount | `price_history`, `PriceIndicationStep`, SSR PDP/PLP templates | **Done (PR-530)** — store toggle `legal.omnibus_enabled` |
 | **WEEE** | Register as producer; display symbol + reg. number; take-back info | Not modeled | PR-531: product/store compliance fields + PDP templates |
 | **EPR (packaging)** | Report packaging placed on market; registration per member state | Not modeled | PR-532: packaging metadata on products/variants |
 | **GPSR** (Dec 2024) | Manufacturer/importer details, warnings, traceability | Not modeled | PR-533: safety metadata + PDP disclosure |
