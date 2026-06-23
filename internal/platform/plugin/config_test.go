@@ -111,6 +111,25 @@ func TestLoadPersisted_OverlaysRegisteredKeys(t *testing.T) {
 	}
 }
 
+func TestConfigRegistry_SnapshotValues(t *testing.T) {
+	reg := plugin.NewConfigRegistry()
+	cfg := &config.Config{Plugins: config.PluginsConfig{Example: config.ExamplePluginConfig{FeeMinorUnits: 125}}}
+	if err := reg.Register(plugin.ConfigDefinition{
+		Plugin: "test/plugin",
+		Fields: []plugin.ConfigField{{
+			Key: "plugins.test.n", Label: "N", Type: plugin.ConfigFieldInt,
+			Get:   func(c *config.Config) interface{} { return c.Plugins.Example.FeeMinorUnits },
+			Apply: func(c *config.Config, value interface{}) error { c.Plugins.Example.FeeMinorUnits = value.(int64); return nil },
+		}},
+	}); err != nil {
+		t.Fatalf("Register() error: %v", err)
+	}
+	snap := reg.SnapshotValues(cfg, map[string]interface{}{"plugins.test.n": int64(999)})
+	if snap["plugins.test.n"] != int64(125) {
+		t.Fatalf("snapshot = %v, want 125", snap["plugins.test.n"])
+	}
+}
+
 func TestApp_RegisterConfig(t *testing.T) {
 	app := &plugin.App{Config: &config.Config{}}
 	if err := app.RegisterConfig(plugin.ConfigDefinition{

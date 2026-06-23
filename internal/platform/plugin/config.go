@@ -174,6 +174,21 @@ func (r *ConfigRegistry) ApplyToConfig(cfg *config.Config, entries map[string]in
 	return nil
 }
 
+// SnapshotValues captures current in-memory values for registered plugin keys in entries.
+func (r *ConfigRegistry) SnapshotValues(cfg *config.Config, entries map[string]interface{}) map[string]interface{} {
+	if r == nil || cfg == nil || len(entries) == 0 {
+		return nil
+	}
+	out := make(map[string]interface{})
+	for key := range entries {
+		if !r.HasKey(key) {
+			continue
+		}
+		out[key] = r.ValueFromConfig(cfg, key)
+	}
+	return out
+}
+
 // LoadPersisted overlays DB-stored values onto cfg for registered keys.
 func LoadPersisted(ctx context.Context, repo domainCfg.Repository, cfg *config.Config, registry *ConfigRegistry) error {
 	if repo == nil || cfg == nil || registry == nil {

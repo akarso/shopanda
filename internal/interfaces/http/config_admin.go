@@ -188,6 +188,7 @@ func (h *ConfigAdminHandler) Update() http.HandlerFunc {
 			JSONError(w, err)
 			return
 		}
+		pluginSnapshot := h.snapshotPluginRuntimeConfig(entries)
 		if err := h.applyPluginRuntimeConfig(entries); err != nil {
 			h.auditConfigError(r, admin.AuditSettingsChange, "config_group", "", map[string]interface{}{"entries_count": len(entries)}, err)
 			JSONError(w, apperror.Validation(err.Error()))
@@ -204,6 +205,7 @@ func (h *ConfigAdminHandler) Update() http.HandlerFunc {
 		}
 
 		if err := h.repo.SetMany(r.Context(), persisted); err != nil {
+			h.restorePluginRuntimeConfig(pluginSnapshot)
 			h.auditConfigError(r, admin.AuditSettingsChange, "config_group", "", map[string]interface{}{"entries_count": len(entries), "store_id": storeID}, err)
 			JSONError(w, err)
 			return
@@ -375,6 +377,20 @@ func (h *ConfigAdminHandler) applyPluginRuntimeConfig(entries map[string]interfa
 		return nil
 	}
 	return h.pluginConfigs.ApplyToConfig(h.cfg, entries)
+}
+
+func (h *ConfigAdminHandler) snapshotPluginRuntimeConfig(entries map[string]interface{}) map[string]interface{} {
+	if h.pluginConfigs == nil || len(entries) == 0 {
+		return nil
+	}
+	return h.pluginConfigs.SnapshotValues(h.cfg, entries)
+}
+
+func (h *ConfigAdminHandler) restorePluginRuntimeConfig(snapshot map[string]interface{}) {
+	if h.pluginConfigs == nil || len(snapshot) == 0 {
+		return
+	}
+	_ = h.pluginConfigs.ApplyToConfig(h.cfg, snapshot)
 }
 
 func (h *ConfigAdminHandler) defaultValue(key string) interface{} {
