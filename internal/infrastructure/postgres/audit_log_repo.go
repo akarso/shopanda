@@ -95,7 +95,7 @@ func (r *AuditLogRepo) List(ctx context.Context, filter domainadmin.AuditLogFilt
 	if len(conds) > 0 {
 		q += " WHERE " + strings.Join(conds, " AND ")
 	}
-	q += " ORDER BY created_at DESC"
+	q += " ORDER BY created_at DESC, id DESC"
 	q += fmt.Sprintf(" OFFSET $%d LIMIT $%d", argNum, argNum+1)
 	args = append(args, filter.Offset, filter.Limit)
 

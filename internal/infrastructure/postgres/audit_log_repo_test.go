@@ -20,29 +20,53 @@ func TestAuditLogRepo_InsertAndList(t *testing.T) {
 	}
 	ctx := context.Background()
 
-	record := admin.AuditLogRecord{
-		ID:           id.New(),
-		AdminID:      "admin-1",
-		Action:       "product.update",
-		ResourceType: "product",
-		ResourceID:   "prod-1",
-		Result:       "success",
-		StoreID:      "store-eu",
-		Language:     "en",
-		Currency:     "EUR",
-		Metadata:     map[string]interface{}{"name": "Updated"},
-		CreatedAt:    time.Now().UTC(),
+	sharedTS := time.Date(2026, 6, 1, 12, 0, 0, 0, time.UTC)
+	records := []admin.AuditLogRecord{
+		{
+			ID:           id.New(),
+			AdminID:      "admin-1",
+			Action:       "product.update",
+			ResourceType: "product",
+			ResourceID:   "prod-1",
+			Result:       "success",
+			StoreID:      "store-eu",
+			Language:     "en",
+			Currency:     "EUR",
+			Metadata:     map[string]interface{}{"name": "Updated"},
+			CreatedAt:    sharedTS,
+		},
+		{
+			ID:           id.New(),
+			AdminID:      "admin-1",
+			Action:       "product.update",
+			ResourceType: "product",
+			ResourceID:   "prod-2",
+			Result:       "success",
+			CreatedAt:    sharedTS,
+		},
+		{
+			ID:           id.New(),
+			AdminID:      "admin-1",
+			Action:       "product.update",
+			ResourceType: "product",
+			ResourceID:   "prod-3",
+			Result:       "success",
+			CreatedAt:    sharedTS,
+		},
 	}
-	if err := repo.Insert(ctx, record); err != nil {
-		t.Fatalf("Insert: %v", err)
+	for _, record := range records {
+		if err := repo.Insert(ctx, record); err != nil {
+			t.Fatalf("Insert(%s): %v", record.ResourceID, err)
+		}
 	}
 
-	entries, err := repo.List(ctx, admin.AuditLogFilter{Offset: 0, Limit: 10, Action: "product.update"})
+	filter := admin.AuditLogFilter{Offset: 0, Limit: 10, Action: "product.update"}
+	entries, err := repo.List(ctx, filter)
 	if err != nil {
 		t.Fatalf("List: %v", err)
 	}
-	if len(entries) != 1 {
-		t.Fatalf("entries len = %d, want 1", len(entries))
+	if len(entries) != 3 {
+		t.Fatalf("entries len = %d, want 3", len(entries))
 	}
 	got := entries[0]
 	if got.StoreID != "store-eu" || got.Language != "en" || got.Currency != "EUR" {
@@ -50,5 +74,45 @@ func TestAuditLogRepo_InsertAndList(t *testing.T) {
 	}
 	if got.Metadata["name"] != "Updated" {
 		t.Fatalf("metadata = %#v", got.Metadata)
+	}
+
+	var pagedIDs []string
+	for offset := 0; offset < len(records); offset++ {
+		page, err := repo.List(ctx, admin.AuditLogFilter{
+			Action: "product.update",
+			Offset: offset,
+			Limit:  1,
+		})
+		if err != nil {
+			t.Fatalf("List page offset=%d: %v", offset, err)
+		}
+		if len(page) != 1 {
+			t.Fatalf("page offset=%d len = %d, want 1", offset, len(page))
+		}
+		pagedIDs = append(pagedIDs, page[0].ID)
+	}
+	if len(pagedIDs) != len(records) {
+		t.Fatalf("paged IDs len = %d, want %d", len(pagedIDs), len(records))
+	}
+	seen := make(map[string]struct{}, len(pagedIDs))
+	for _, pageID := range pagedIDs {
+		if _, ok := seen[pageID]; ok {
+			t.Fatalf("duplicate ID across pages: %s", pageID)
+		}
+		seen[pageID] = struct{}{}
+	}
+
+	first, err := repo.List(ctx, filter)
+	if err != nil {
+		t.Fatalf("List repeat: %v", err)
+	}
+	second, err := repo.List(ctx, filter)
+	if err != nil {
+		t.Fatalf("List repeat: %v", err)
+	}
+	for i := range first {
+		if first[i].ID != second[i].ID {
+			t.Fatalf("order changed between calls at index %d: %s vs %s", i, first[i].ID, second[i].ID)
+		}
 	}
 }

@@ -82,6 +82,78 @@ func TestAuditLogAdmin_List_ReturnsEntries(t *testing.T) {
 	}
 }
 
+func TestAuditLogAdmin_List_DateOnlyToIncludesSameDayEntries(t *testing.T) {
+	afternoon := time.Date(2026, 6, 1, 15, 30, 0, 0, time.UTC)
+	repo := &filteringAuditLogListRepo{
+		entries: []domainadmin.AuditLogRecord{{
+			ID:           "audit-afternoon",
+			CreatedAt:    afternoon,
+			AdminID:      "admin-1",
+			Action:       string(admin.AuditProductUpdate),
+			ResourceType: "product",
+			ResourceID:   "prod-1",
+			Result:       "success",
+		}},
+	}
+	auditor := admin.NewAuditor(logger.New("error"))
+	h := shophttp.NewAuditLogAdminHandler(repo, auditor)
+
+	mux := http.NewServeMux()
+	mux.Handle("GET /api/v1/admin/audit", shophttp.RequirePermission(rbac.AuditRead)(h.List()))
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/admin/audit?to=2026-06-01", nil)
+	req = testhelper.AdminRequest(req, "admin-1")
+	mux.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d; body: %s", rec.Code, http.StatusOK, rec.Body.String())
+	}
+	wantTo := time.Date(2026, 6, 1, 23, 59, 59, 999999999, time.UTC)
+	if repo.last.To == nil {
+		t.Fatal("expected to filter to be set")
+	}
+	if !repo.last.To.Equal(wantTo) {
+		t.Fatalf("to filter = %v, want %v", repo.last.To, wantTo)
+	}
+
+	var envelope struct {
+		Data struct {
+			Entries []map[string]interface{} `json:"entries"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &envelope); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if len(envelope.Data.Entries) != 1 {
+		t.Fatalf("entries len = %d, want 1 (same-day entry should be included)", len(envelope.Data.Entries))
+	}
+}
+
+type filteringAuditLogListRepo struct {
+	entries []domainadmin.AuditLogRecord
+	last    domainadmin.AuditLogFilter
+}
+
+func (m *filteringAuditLogListRepo) Insert(context.Context, domainadmin.AuditLogRecord) error {
+	return nil
+}
+
+func (m *filteringAuditLogListRepo) List(_ context.Context, filter domainadmin.AuditLogFilter) ([]domainadmin.AuditLogRecord, error) {
+	m.last = filter
+	out := make([]domainadmin.AuditLogRecord, 0, len(m.entries))
+	for _, entry := range m.entries {
+		if filter.From != nil && entry.CreatedAt.Before(*filter.From) {
+			continue
+		}
+		if filter.To != nil && entry.CreatedAt.After(*filter.To) {
+			continue
+		}
+		out = append(out, entry)
+	}
+	return out, nil
+}
+
 func TestAuditLogAdmin_List_ForbiddenWithoutPermission(t *testing.T) {
 	repo := &mockAuditLogListRepo{}
 	auditor := admin.NewAuditor(logger.New("error"))

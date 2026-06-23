@@ -59,13 +59,13 @@ func (h *AuditLogAdminHandler) List() http.HandlerFunc {
 			Offset:       offset,
 			Limit:        limit,
 		}
-		if from, err := parseAuditTimeFilter(r.URL.Query().Get("from")); err != nil {
+		if from, err := parseAuditTimeFilter(r.URL.Query().Get("from"), false); err != nil {
 			JSONError(w, apperror.Validation(err.Error()))
 			return
 		} else if from != nil {
 			filter.From = from
 		}
-		if to, err := parseAuditTimeFilter(r.URL.Query().Get("to")); err != nil {
+		if to, err := parseAuditTimeFilter(r.URL.Query().Get("to"), true); err != nil {
 			JSONError(w, apperror.Validation(err.Error()))
 			return
 		} else if to != nil {
@@ -123,7 +123,7 @@ func (h *AuditLogAdminHandler) List() http.HandlerFunc {
 	}
 }
 
-func parseAuditTimeFilter(raw string) (*time.Time, error) {
+func parseAuditTimeFilter(raw string, endOfDay bool) (*time.Time, error) {
 	raw = strings.TrimSpace(raw)
 	if raw == "" {
 		return nil, nil
@@ -133,8 +133,12 @@ func parseAuditTimeFilter(raw string) (*time.Time, error) {
 		return &utc, nil
 	}
 	if t, err := time.Parse("2006-01-02", raw); err == nil {
-		utc := t.UTC()
-		return &utc, nil
+		if endOfDay {
+			end := time.Date(t.Year(), t.Month(), t.Day(), 23, 59, 59, 999999999, time.UTC)
+			return &end, nil
+		}
+		start := time.Date(t.Year(), t.Month(), t.Day(), 0, 0, 0, 0, time.UTC)
+		return &start, nil
 	}
 	return nil, fmt.Errorf("invalid time filter %q (use RFC3339 or YYYY-MM-DD)", raw)
 }
