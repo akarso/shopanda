@@ -51,7 +51,7 @@ func (s *ListingPriceIndicationStep) Apply(ctx *ListingContext) error {
 		if product == nil {
 			continue
 		}
-		blk, err := buildPriceIndicationBlock(ctx.Ctx, s.variants, s.prices, s.history, product.ID, ctx.StoreID, ctx.Currency)
+		blk, err := buildListingPriceIndicationBlock(ctx.Ctx, s.variants, s.prices, s.history, product.ID, ctx.StoreID, ctx.Currency)
 		if err != nil {
 			return err
 		}

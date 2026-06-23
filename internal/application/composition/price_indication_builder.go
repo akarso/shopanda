@@ -11,6 +11,8 @@ import (
 
 const metaPriceIndications = "price_indications"
 
+const maxVariantsForPriceIndication = 100
+
 // priceIndicationData holds Omnibus block payload fields.
 type priceIndicationData struct {
 	CurrentPrice   string
@@ -36,18 +38,76 @@ func buildPriceIndicationBlock(
 	if len(productVariants) == 0 {
 		return nil, nil
 	}
-	variantID := productVariants[0].ID
-
-	if currency == "" {
-		currency = "EUR"
-	}
-
-	currentPrice, err := lookupCurrentPrice(ctx, prices, variantID, currency, storeID)
+	currentPrice, err := lookupCurrentPrice(ctx, prices, productVariants[0].ID, currency, storeID)
 	if err != nil {
 		return nil, fmt.Errorf("price indication: current price: %w", err)
 	}
+	return buildPriceIndicationBlockFromVariant(ctx, history, productVariants[0].ID, storeID, currency, currentPrice)
+}
+
+// buildListingPriceIndicationBlock uses the lowest store-scoped variant price,
+// matching the PLP search engine's displayed price selection.
+func buildListingPriceIndicationBlock(
+	ctx context.Context,
+	variants catalog.VariantRepository,
+	prices pricing.PriceRepository,
+	history pricing.PriceHistoryRepository,
+	productID, storeID, currency string,
+) (*Block, error) {
+	if variants == nil || prices == nil || history == nil {
+		return nil, nil
+	}
+	variantID, currentPrice, err := resolveLowestPriceVariant(ctx, variants, prices, productID, storeID, currency)
+	if err != nil {
+		return nil, err
+	}
+	if variantID == "" {
+		return nil, nil
+	}
+	return buildPriceIndicationBlockFromVariant(ctx, history, variantID, storeID, currency, currentPrice)
+}
+
+func resolveLowestPriceVariant(
+	ctx context.Context,
+	variants catalog.VariantRepository,
+	prices pricing.PriceRepository,
+	productID, storeID, currency string,
+) (string, *pricing.Price, error) {
+	productVariants, err := variants.ListByProductID(ctx, productID, 0, maxVariantsForPriceIndication)
+	if err != nil {
+		return "", nil, fmt.Errorf("price indication: list variants: %w", err)
+	}
+	var (
+		bestVariantID string
+		bestPrice     *pricing.Price
+	)
+	for _, variant := range productVariants {
+		price, err := lookupCurrentPrice(ctx, prices, variant.ID, currency, storeID)
+		if err != nil {
+			return "", nil, fmt.Errorf("price indication: current price: %w", err)
+		}
+		if price == nil {
+			continue
+		}
+		if bestPrice == nil || price.Amount.Amount() < bestPrice.Amount.Amount() {
+			bestPrice = price
+			bestVariantID = variant.ID
+		}
+	}
+	return bestVariantID, bestPrice, nil
+}
+
+func buildPriceIndicationBlockFromVariant(
+	ctx context.Context,
+	history pricing.PriceHistoryRepository,
+	variantID, storeID, currency string,
+	currentPrice *pricing.Price,
+) (*Block, error) {
 	if currentPrice == nil {
 		return nil, nil
+	}
+	if currency == "" {
+		currency = "EUR"
 	}
 
 	since := time.Now().UTC().AddDate(0, 0, -30)
