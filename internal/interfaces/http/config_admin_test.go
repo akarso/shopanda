@@ -95,6 +95,24 @@ func withAdminScope(req *http.Request, storeID, language, currency string) *http
 	return req.WithContext(ctx)
 }
 
+func applyTestPluginFeeMinorUnits(c *appconfig.Config, value interface{}, requirePositive bool) error {
+	switch v := value.(type) {
+	case int64:
+		if requirePositive && v <= 0 {
+			return fmt.Errorf("fee must be positive")
+		}
+		c.Plugins.Example.FeeMinorUnits = v
+	case float64:
+		if requirePositive && v <= 0 {
+			return fmt.Errorf("fee must be positive")
+		}
+		c.Plugins.Example.FeeMinorUnits = int64(v)
+	default:
+		return fmt.Errorf("unsupported fee value type %T", value)
+	}
+	return nil
+}
+
 func TestConfigAdmin_Get_GroupEmail(t *testing.T) {
 	repo := newMockConfigRepo()
 	repo.entries["mail.smtp.host"] = "smtp.db.test"
@@ -760,13 +778,7 @@ func TestConfigAdmin_Get_GroupPlugins(t *testing.T) {
 					return c.Plugins.Example.FeeMinorUnits
 				},
 				Apply: func(c *appconfig.Config, value interface{}) error {
-					switch v := value.(type) {
-					case int64:
-						c.Plugins.Example.FeeMinorUnits = v
-					case float64:
-						c.Plugins.Example.FeeMinorUnits = int64(v)
-					}
-					return nil
+					return applyTestPluginFeeMinorUnits(c, value, false)
 				},
 			},
 		},
@@ -819,13 +831,7 @@ func TestConfigAdmin_Update_PluginConfigAppliesRuntime(t *testing.T) {
 					return c.Plugins.Example.FeeMinorUnits
 				},
 				Apply: func(c *appconfig.Config, value interface{}) error {
-					switch v := value.(type) {
-					case int64:
-						c.Plugins.Example.FeeMinorUnits = v
-					case float64:
-						c.Plugins.Example.FeeMinorUnits = int64(v)
-					}
-					return nil
+					return applyTestPluginFeeMinorUnits(c, value, false)
 				},
 			},
 		},
@@ -869,19 +875,7 @@ func TestConfigAdmin_Update_PluginConfigZeroRejectedBeforePersist(t *testing.T) 
 					return c.Plugins.Example.FeeMinorUnits
 				},
 				Apply: func(c *appconfig.Config, value interface{}) error {
-					switch v := value.(type) {
-					case int64:
-						if v <= 0 {
-							return fmt.Errorf("fee must be positive")
-						}
-						c.Plugins.Example.FeeMinorUnits = v
-					case float64:
-						if v <= 0 {
-							return fmt.Errorf("fee must be positive")
-						}
-						c.Plugins.Example.FeeMinorUnits = int64(v)
-					}
-					return nil
+					return applyTestPluginFeeMinorUnits(c, value, true)
 				},
 			},
 		},
@@ -925,19 +919,7 @@ func TestConfigAdmin_Update_PluginConfigRollbackOnPersistFailure(t *testing.T) {
 					return c.Plugins.Example.FeeMinorUnits
 				},
 				Apply: func(c *appconfig.Config, value interface{}) error {
-					switch v := value.(type) {
-					case int64:
-						if v <= 0 {
-							return fmt.Errorf("fee must be positive")
-						}
-						c.Plugins.Example.FeeMinorUnits = v
-					case float64:
-						if v <= 0 {
-							return fmt.Errorf("fee must be positive")
-						}
-						c.Plugins.Example.FeeMinorUnits = int64(v)
-					}
-					return nil
+					return applyTestPluginFeeMinorUnits(c, value, true)
 				},
 			},
 		},
