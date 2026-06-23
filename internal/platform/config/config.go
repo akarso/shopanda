@@ -320,12 +320,19 @@ type RedisQueueConfig struct {
 type PluginsConfig struct {
 	Core    CorePluginsConfig    `yaml:"core"`
 	Example ExamplePluginConfig  `yaml:"example"`
+	B2B     B2BPluginConfig      `yaml:"b2b"`
 }
 
 // ExamplePluginConfig toggles the reference external plugin in plugins/example.
 type ExamplePluginConfig struct {
 	Enabled       bool  `yaml:"enabled"`
 	FeeMinorUnits int64 `yaml:"fee_minor_units"`
+}
+
+// B2BPluginConfig toggles the commercial B2B module in plugins/b2b.
+type B2BPluginConfig struct {
+	Enabled    bool   `yaml:"enabled"`
+	LicenseKey string `yaml:"license_key"`
 }
 
 // CorePluginsConfig allows explicit enable/disable of core infrastructure plugins.
@@ -709,6 +716,12 @@ func applyEnv(cfg *Config) {
 			cfg.Plugins.Example.FeeMinorUnits = n
 		}
 	}
+	if v := os.Getenv("SHOPANDA_PLUGINS_B2B_ENABLED"); v != "" {
+		cfg.Plugins.B2B.Enabled = v == "true" || v == "1"
+	}
+	if v := os.Getenv("SHOPANDA_PLUGINS_B2B_LICENSE_KEY"); v != "" {
+		cfg.Plugins.B2B.LicenseKey = v
+	}
 	if v := os.Getenv("SHOPANDA_FRONTEND_ENABLED"); v != "" {
 		cfg.Frontend.Enabled = v == "true" || v == "1"
 	}
@@ -818,6 +831,7 @@ func flatten(cfg *Config) map[string]string {
 	m["queue.rabbitmq.queue_prefix"] = cfg.Queue.RabbitMQ.QueuePrefix
 	m["plugins.example.enabled"] = strconv.FormatBool(cfg.Plugins.Example.Enabled)
 	m["plugins.example.fee_minor_units"] = strconv.FormatInt(cfg.Plugins.Example.FeeMinorUnits, 10)
+	m["plugins.b2b.enabled"] = strconv.FormatBool(cfg.Plugins.B2B.Enabled)
 	m["frontend.enabled"] = strconv.FormatBool(cfg.Frontend.Enabled)
 	m["frontend.mode"] = cfg.Frontend.Mode
 	m["frontend.theme_path"] = cfg.Frontend.ThemePath

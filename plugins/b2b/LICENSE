@@ -1,0 +1,16 @@
+Shopanda B2B Module — Commercial License (Draft)
+
+Copyright (c) Shopanda contributors.
+
+The files in this directory (plugins/b2b/) are NOT licensed under the GPL v3
+that applies to the rest of the Shopanda repository.
+
+Use of this module in production requires a valid commercial license from the
+copyright holder. See docs/COMMERCIAL.md for the product split and contact
+information.
+
+Development use with DEV-prefixed license keys is permitted for building and
+testing against the open core only.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND. FINAL LICENSE
+TERMS WILL BE PUBLISHED BEFORE PAID GENERAL AVAILABILITY.

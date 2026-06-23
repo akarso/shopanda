@@ -120,6 +120,7 @@ Shopanda separates **core**, **core plugins**, and **external plugins**. All thr
 | **Core** | `internal/` | always | Commerce engine, default Postgres stack |
 | **Core plugin** | `plugins/core/` | config driver switches (`search.engine`, `cache.driver`, `queue.driver`, etc.) | Optional backends shipped with the repo |
 | **External plugin** | e.g. `plugins/example/` or your own module | compile-time import + config flag | Custom business rules without forking core |
+| **B2B module (commercial)** | `plugins/b2b/` | compile-time import + license key | Wholesale, groups, quotes — see [Commercial licensing](docs/COMMERCIAL.md) |
 
 ```go
 type Plugin interface {
@@ -226,6 +227,7 @@ Current guides live in [`docs/guides/`](docs/guides/):
 
 ### Planning & Reference
 
+- [Commercial Licensing](docs/COMMERCIAL.md) — open core (GPL) vs paid B2B module
 - [Phase 5 Roadmap](docs/phase-5-maturity/ROADMAP.md) — **active** mature commerce milestones (returns, segments, EU compliance, admin platform)
 - [EU Compliance Reference](docs/phase-5-maturity/specs/COMPLIANCE_EU.md) — Omnibus, WEEE, EPR, GPSR mapping to planned work
 - [Phase 4 Roadmap](docs/phase-4-refactoring/ROADMAP.md) — product-complete milestones (shipped)

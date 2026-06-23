@@ -608,7 +608,7 @@ Phase 4 (**product complete**) is shipped. **Phase 5 — Mature Commerce** is th
 | D | EU compliance — Omnibus verification, WEEE, EPR, GPSR |
 | E | Merchant webhooks, plugin CLI, optional Kafka/SQS (stretch) |
 
-Full plan: [Phase 5 Roadmap](../phase-5-maturity/ROADMAP.md). EU directive mapping: [Compliance Reference](../phase-5-maturity/specs/COMPLIANCE_EU.md).
+Full plan: [Phase 5 Roadmap](../phase-5-maturity/ROADMAP.md). EU directive mapping: [Compliance Reference](../phase-5-maturity/specs/COMPLIANCE_EU.md). **OSS vs B2B split:** [Commercial Licensing](../COMMERCIAL.md).
 
 When extending toward Phase 5 features, keep the same hexagonal rules: domain ports first, explicit wiring, plugin only when the behavior is optional or author-owned.
 

@@ -9,6 +9,19 @@
 * One PR = one responsibility; each PR must be runnable and reviewable in ~10–20 minutes
 * PR specs will live under `prs/` (planned range **PR-500–549**)
 
+Each PR is tagged **`[oss]`** (GPL open core) or **`[b2b]`** (commercial `plugins/b2b/`). See [Commercial licensing](../COMMERCIAL.md).
+
+---
+
+## Licensing split (OSS vs B2B)
+
+| Tag | Where it ships | License |
+| --- | --- | --- |
+| **`[oss]`** | `internal/`, `plugins/core/`, storefront, admin | GPL v3 |
+| **`[b2b]`** | `plugins/b2b/` only | Commercial |
+
+Open core must build and pass CI **without** a B2B license key. B2B PRs implement ports exposed by prior OSS PRs.
+
 ---
 
 ## Starting Point (after Phase 4)
@@ -79,14 +92,14 @@ Full compliance overview: [`specs/COMPLIANCE_EU.md`](specs/COMPLIANCE_EU.md).
 
 **Goal:** Merchants handle returns and customer tiers without spreadsheets or external OMS tools.
 
-| PR | Title | Short description |
-| --- | --- | --- |
-| PR-500 | Customer groups domain | `customer_groups` table, group membership, repository port, admin API list/create/update |
-| PR-501 | Group-aware pricing | Optional price rows or promotion conditions scoped to customer group |
-| PR-502 | Returns domain + workflow | RMA entity, states (requested → approved → received → refunded/restocked), links to order lines |
-| PR-503 | Returns admin + account UI | Admin list/detail/actions; customer "request return" on eligible orders |
-| PR-504 | Payment transaction ledger admin | Read-only admin grid over payments/refunds/chargebacks with order link |
-| PR-505 | Store credit / gift cards (stretch) | Issued credit balance, redemption at checkout — only if returns (502–503) expose clear need |
+| PR | License | Title | Short description |
+| --- | --- | --- | --- |
+| PR-500 | [b2b] | Customer groups domain | `customer_groups` table, group membership, repository port, admin API list/create/update |
+| PR-501 | [b2b] | Group-aware pricing | Optional price rows or promotion conditions scoped to customer group |
+| PR-502 | [oss] | Returns domain + workflow | RMA entity, states (requested → approved → received → refunded/restocked), links to order lines |
+| PR-503 | [oss] | Returns admin + account UI | Admin list/detail/actions; customer "request return" on eligible orders |
+| PR-504 | [oss] | Payment transaction ledger admin | Read-only admin grid over payments/refunds/chargebacks with order link |
+| PR-505 | [oss] | Store credit / gift cards (stretch) | Issued credit balance, redemption at checkout — only if returns (502–503) expose clear need |
 
 **Out of scope for Track A:** Full OMS/WMS, drop-ship vendor portals, marketplace split payouts.
 
@@ -96,13 +109,13 @@ Full compliance overview: [`specs/COMPLIANCE_EU.md`](specs/COMPLIANCE_EU.md).
 
 **Goal:** Merchants run richer campaigns and structure storefront content without code changes.
 
-| PR | Title | Short description |
-| --- | --- | --- |
-| PR-510 | Advanced promotion rules | Tiered discounts, buy-X-get-Y, min qty, optional customer group + date window; admin rule builder (simple UI) |
-| PR-511 | Navigation builder | Menu entities (header/footer), nested items, link to category/page/URL, storefront render |
-| PR-512 | Content blocks | Reusable block types (hero, rich text, product carousel), assign to pages or layouts |
-| PR-513 | Abandoned cart recovery (stretch) | Scheduled job + email template for stale carts |
-| PR-514 | Product reviews (stretch) | Moderated reviews on PDP; optional syndication later |
+| PR | License | Title | Short description |
+| --- | --- | --- | --- |
+| PR-510 | [oss] | Advanced promotion rules | Tiered discounts, buy-X-get-Y, min qty, date window; group conditions when B2B licensed |
+| PR-511 | [oss] | Navigation builder | Menu entities (header/footer), nested items, link to category/page/URL, storefront render |
+| PR-512 | [oss] | Content blocks | Reusable block types (hero, rich text, product carousel), assign to pages or layouts |
+| PR-513 | [oss] | Abandoned cart recovery (stretch) | Scheduled job + email template for stale carts |
+| PR-514 | [oss] | Product reviews (stretch) | Moderated reviews on PDP; optional syndication later |
 
 **Carried from Phase 4 deferred:** complex promotion builder, navigation builder, content blocks, marketing automation (513 covers minimal automation).
 
@@ -112,13 +125,13 @@ Full compliance overview: [`specs/COMPLIANCE_EU.md`](specs/COMPLIANCE_EU.md).
 
 **Goal:** Teams operate Shopanda as a multi-user admin product with stronger security and visibility.
 
-| PR | Title | Short description |
-| --- | --- | --- |
-| PR-520 | Admin user CRUD | Create/disable admin users, assign role, force password reset |
-| PR-521 | Custom roles editor | Edit role → permission matrix (within core permission catalog + plugin permissions) |
-| PR-522 | Admin TOTP / MFA | Optional second factor at admin login; recovery codes |
-| PR-523 | Audit export + retention | CSV/JSON export of `admin_audit_log`; configurable retention job |
-| PR-524 | Shipping zones admin UI | Embed existing shipping zone/rate API into settings (closes MERCHANT.md API-only gap) |
+| PR | License | Title | Short description |
+| --- | --- | --- | --- |
+| PR-520 | [oss] | Admin user CRUD | Create/disable admin users, assign role, force password reset |
+| PR-521 | [oss] | Custom roles editor | Edit role → permission matrix (within core permission catalog + plugin permissions) |
+| PR-522 | [oss] | Admin TOTP / MFA | Optional second factor at admin login; recovery codes |
+| PR-523 | [oss] | Audit export + retention | CSV/JSON export of `admin_audit_log`; configurable retention job |
+| PR-524 | [oss] | Shipping zones admin UI | Embed existing shipping zone/rate API into settings (closes MERCHANT.md API-only gap) |
 
 **Carried from Phase 4 deferred:** admin user/role CRUD beyond read-only, login-time TOTP, audit persistence follow-ups (export/retention).
 
@@ -128,13 +141,13 @@ Full compliance overview: [`specs/COMPLIANCE_EU.md`](specs/COMPLIANCE_EU.md).
 
 **Goal:** EU-facing merchants meet common product, pricing, and reporting obligations with explicit data models — not legal advice baked into code.
 
-| PR | Title | Short description |
-| --- | --- | --- |
-| PR-530 | Omnibus storefront verification | Ensure discounted PDP/PLP shows lowest prior price (30d) using existing `price_history`; admin toggle per store |
-| PR-531 | WEEE product fields | Producer registration number, WEEE category, take-back info; PDP/footer display helpers |
-| PR-532 | EPR / packaging data | Packaging material weights, recyclability flags, registration IDs per market (config-driven) |
-| PR-533 | GPSR product safety | Manufacturer/importer contact, safety warnings, product identifiers for applicable catalogs |
-| PR-534 | Cross-border tax & e-invoicing (stretch) | OSS/IOSS summary exports; Peppol/e-invoice adapter as core plugin |
+| PR | License | Title | Short description |
+| --- | --- | --- | --- |
+| PR-530 | [oss] | Omnibus storefront verification | Ensure discounted PDP/PLP shows lowest prior price (30d) using existing `price_history`; admin toggle per store |
+| PR-531 | [oss] | WEEE product fields | Producer registration number, WEEE category, take-back info; PDP/footer display helpers |
+| PR-532 | [oss] | EPR / packaging data | Packaging material weights, recyclability flags, registration IDs per market (config-driven) |
+| PR-533 | [oss] | GPSR product safety | Manufacturer/importer contact, safety warnings, product identifiers for applicable catalogs |
+| PR-534 | [oss] | Cross-border tax & e-invoicing (stretch) | OSS/IOSS summary exports; Peppol/e-invoice adapter as core plugin |
 
 **Already in core (Phase 1–4):** cookie consent, GDPR export/delete, tax modes, credit notes domain, price history recording.
 
@@ -146,13 +159,13 @@ See [`specs/COMPLIANCE_EU.md`](specs/COMPLIANCE_EU.md) for directive mapping and
 
 **Goal:** Optional scale-out and integrator ergonomics without changing Postgres-first defaults.
 
-| PR | Title | Short description |
-| --- | --- | --- |
-| PR-540 | Merchant outbound webhooks | Subscribe to order/payment events; signed delivery + retry |
-| PR-541 | Plugin CLI registration | Plugins register subcommands via registry (document + example) |
-| PR-542 | Kafka / SQS queue plugins | Alternative `jobs.Queue` backends as core plugins |
-| PR-543 | GraphQL API plugin (stretch) | Read-heavy headless layer; REST remains canonical |
-| PR-544 | Dynamic plugin loading (research) | Spike only — document why `.so` loading stays deferred if rejected |
+| PR | License | Title | Short description |
+| --- | --- | --- | --- |
+| PR-540 | [oss] | Merchant outbound webhooks | Subscribe to order/payment events; signed delivery + retry |
+| PR-541 | [oss] | Plugin CLI registration | Plugins register subcommands via registry (document + example) |
+| PR-542 | [oss] | Kafka / SQS queue plugins | Alternative `jobs.Queue` backends as core plugins |
+| PR-543 | [oss] | GraphQL API plugin (stretch) | Read-heavy headless layer; REST remains canonical |
+| PR-544 | [oss] | Dynamic plugin loading (research) | Spike only — document why `.so` loading stays deferred if rejected |
 
 **Carried from Phase 4 deferred:** Kafka/SQS brokers, plugin `.so` hot-loading (544 is explicit research gate).
 
@@ -162,16 +175,16 @@ See [`specs/COMPLIANCE_EU.md`](specs/COMPLIANCE_EU.md) for directive mapping and
 
 Items worth tracking but not yet assigned PR numbers:
 
-| Theme | Examples | Notes |
-| --- | --- | --- |
-| **Catalog depth** | Bundles, configurable products, downloadable goods, back-in-stock alerts | Prefer plugins where possible |
-| **Fulfillment** | Partial shipments, multi-warehouse, pick-up in store (BOPIS) | Needs inventory model extensions |
-| **B2B** | Quotes, purchase orders, net payment terms, shared carts | Often pairs with customer groups (500) |
-| **Subscriptions** | Recurring billing | Stripe Billing as core plugin candidate; out of scope until payment team need |
-| **Analytics** | Cohort reports, funnel, merchandising dashboards | Extend stats repo + admin charts |
-| **Marketplace** | Multi-vendor, split cart, seller KYC | Large architectural fork — defer beyond Phase 5 |
-| **Localization** | RTL, locale-aware formats, translation workflows | Incremental PRs on existing i18n |
-| **Store admin UX** | Store management menu reshuffle | Phase 4 deferred cosmetic item |
+| Theme | Examples | License | Notes |
+| --- | --- | --- | --- |
+| **Catalog depth** | Bundles, configurable products, downloadable goods, back-in-stock alerts | [oss] | Prefer plugins where possible |
+| **Fulfillment** | Partial shipments, multi-warehouse, pick-up in store (BOPIS) | [oss] | Needs inventory model extensions |
+| **B2B** | Quotes, purchase orders, net payment terms, shared carts, approvals | [b2b] | Lives in `plugins/b2b/`; pairs with PR-500–501 |
+| **Subscriptions** | Recurring billing | [oss] plugin | Stripe Billing as core plugin candidate |
+| **Analytics** | Cohort reports, funnel, merchandising dashboards | [oss] | Extend stats repo + admin charts |
+| **Marketplace** | Multi-vendor, split cart, seller KYC | — | Defer beyond Phase 5 |
+| **Localization** | RTL, locale-aware formats, translation workflows | [oss] | Incremental PRs on existing i18n |
+| **Store admin UX** | Store management menu reshuffle | [oss] | Phase 4 deferred cosmetic item |
 
 ---
 
@@ -217,34 +230,34 @@ Items worth tracking but not yet assigned PR numbers:
 
 ## PR Index (quick reference)
 
-| PR | Track | One-liner |
-| --- | --- | --- |
-| 500 | A | Customer groups domain |
-| 501 | A | Group-aware pricing |
-| 502 | A | Returns domain + workflow |
-| 503 | A | Returns admin + account UI |
-| 504 | A | Payment ledger admin |
-| 505 | A | Store credit / gift cards (stretch) |
-| 510 | B | Advanced promotion rules |
-| 511 | B | Navigation builder |
-| 512 | B | Content blocks |
-| 513 | B | Abandoned cart recovery (stretch) |
-| 514 | B | Product reviews (stretch) |
-| 520 | C | Admin user CRUD |
-| 521 | C | Custom roles editor |
-| 522 | C | Admin TOTP / MFA |
-| 523 | C | Audit export + retention |
-| 524 | C | Shipping zones admin UI |
-| 530 | D | Omnibus storefront verification |
-| 531 | D | WEEE product fields |
-| 532 | D | EPR / packaging data |
-| 533 | D | GPSR product safety |
-| 534 | D | OSS / e-invoicing (stretch) |
-| 540 | E | Merchant webhooks |
-| 541 | E | Plugin CLI registration |
-| 542 | E | Kafka / SQS queue plugins |
-| 543 | E | GraphQL plugin (stretch) |
-| 544 | E | Dynamic plugin loading research |
+| PR | Track | License | One-liner |
+| --- | --- | --- | --- |
+| 500 | A | [b2b] | Customer groups domain |
+| 501 | A | [b2b] | Group-aware pricing |
+| 502 | A | [oss] | Returns domain + workflow |
+| 503 | A | [oss] | Returns admin + account UI |
+| 504 | A | [oss] | Payment ledger admin |
+| 505 | A | [oss] | Store credit / gift cards (stretch) |
+| 510 | B | [oss] | Advanced promotion rules |
+| 511 | B | [oss] | Navigation builder |
+| 512 | B | [oss] | Content blocks |
+| 513 | B | [oss] | Abandoned cart recovery (stretch) |
+| 514 | B | [oss] | Product reviews (stretch) |
+| 520 | C | [oss] | Admin user CRUD |
+| 521 | C | [oss] | Custom roles editor |
+| 522 | C | [oss] | Admin TOTP / MFA |
+| 523 | C | [oss] | Audit export + retention |
+| 524 | C | [oss] | Shipping zones admin UI |
+| 530 | D | [oss] | Omnibus storefront verification |
+| 531 | D | [oss] | WEEE product fields |
+| 532 | D | [oss] | EPR / packaging data |
+| 533 | D | [oss] | GPSR product safety |
+| 534 | D | [oss] | OSS / e-invoicing (stretch) |
+| 540 | E | [oss] | Merchant webhooks |
+| 541 | E | [oss] | Plugin CLI registration |
+| 542 | E | [oss] | Kafka / SQS queue plugins |
+| 543 | E | [oss] | GraphQL plugin (stretch) |
+| 544 | E | [oss] | Dynamic plugin loading research |
 
 PR specs: [`prs/`](prs/) (to be added as work starts).
 

@@ -119,6 +119,10 @@ C4Component
         Boundary(externalPlugins, "External Plugins (compile-time register)") {
             Component(examplePlugin, "Example Plugin", "Go", "Reference: pricing step, order.created listener, example.reports.read permission (plugins.example.enabled)")
         }
+
+        Boundary(b2bModule, "B2B Module (commercial, plugins/b2b/)") {
+            Component(b2bPlugin, "B2B Plugin", "Go", "License-gated: customer groups, quotes, PO (planned). Stub validates plugins.b2b.license_key.")
+        }
     }
 
     Rel(middleware, authHandler, "Routes requests")
@@ -209,6 +213,7 @@ C4Component
     Rel(pluginRegistry, coreStripe, "Registers when payment.stripe.enabled")
     Rel(pluginRegistry, coreS3Storage, "Registers when storage.driver=s3")
     Rel(pluginRegistry, examplePlugin, "Registers when plugins.example.enabled")
+    Rel(pluginRegistry, b2bPlugin, "Registers when plugins.b2b.enabled + valid license")
 
     Rel(corePostgresPlugins, postgresSearch, "Provides default search engine")
     Rel(corePostgresPlugins, pgCacheStore, "Provides default cache store")
@@ -225,6 +230,6 @@ C4Component
 
 > **Wiring note (post PR-410–434):** `cmd/api/register_plugins.go` calls `core.Register()` for config-gated core plugins and optionally registers external plugins (e.g. `plugins/example`). A shared `Auditor` with `AuditLogRepo` is wired to admin mutation handlers. `PluginRegistry` calls `plugin.Init(pluginApp)` for each registered plugin. Core plugins set infrastructure providers on `pluginApp`; external plugins register pipeline steps, event handlers, permissions, and optional `RegisterConfig` settings. `main.go` resolves providers and extracts steps into pipelines, workflows, and the event bus — explicit hexagonal wiring, not runtime discovery.
 >
-> **Phase 5 (planned):** returns/RMA, customer groups, advanced promotions, EU compliance fields (WEEE/EPR/GPSR), admin MFA — see [Phase 5 Roadmap](../phase-5-maturity/ROADMAP.md).
+> **Phase 5 (planned):** returns/RMA, customer groups, advanced promotions, EU compliance fields (WEEE/EPR/GPSR), admin MFA — see [Phase 5 Roadmap](../phase-5-maturity/ROADMAP.md). **[b2b]** features ship in `plugins/b2b/` under commercial license — see [Commercial Licensing](../COMMERCIAL.md).
 >
 > **Deferred:** dynamic `.so` loading, plugin marketplace, plugin CLI registration.

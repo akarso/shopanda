@@ -168,6 +168,13 @@ queue:
 #     enabled: false
 #     fee_minor_units: 100
 
+# --- B2B module (commercial) --------------------------------------------------
+# Requires a valid license key. See docs/COMMERCIAL.md and plugins/b2b/README.md.
+# plugins:
+#   b2b:
+#     enabled: false
+#     license_key: "DEV-local"
+
 # --- Frontend (optional SSR storefront) ---------------------------------------
 frontend:
   # Set to true to enable the built-in server-rendered storefront.

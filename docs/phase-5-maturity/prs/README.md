@@ -2,35 +2,37 @@
 
 Planned specs for **PR-500–549**. Individual PR markdown files will be added when implementation starts (same format as Phase 4: Summary, Why, Scope, Out of scope, Validation).
 
-| PR | Track | Status | Spec |
-| --- | --- | --- | --- |
-| PR-500 | A | planned | Customer groups domain |
-| PR-501 | A | planned | Group-aware pricing |
-| PR-502 | A | planned | Returns domain + workflow |
-| PR-503 | A | planned | Returns admin + account UI |
-| PR-504 | A | planned | Payment transaction ledger admin |
-| PR-505 | A | planned | Store credit / gift cards (stretch) |
-| PR-510 | B | planned | Advanced promotion rules |
-| PR-511 | B | planned | Navigation builder |
-| PR-512 | B | planned | Content blocks |
-| PR-513 | B | planned | Abandoned cart recovery (stretch) |
-| PR-514 | B | planned | Product reviews (stretch) |
-| PR-520 | C | planned | Admin user CRUD |
-| PR-521 | C | planned | Custom roles editor |
-| PR-522 | C | planned | Admin TOTP / MFA |
-| PR-523 | C | planned | Audit export + retention |
-| PR-524 | C | planned | Shipping zones admin UI |
-| PR-530 | D | planned | Omnibus storefront verification |
-| PR-531 | D | planned | WEEE product fields |
-| PR-532 | D | planned | EPR / packaging data |
-| PR-533 | D | planned | GPSR product safety |
-| PR-534 | D | planned | OSS / e-invoicing (stretch) |
-| PR-540 | E | planned | Merchant outbound webhooks |
-| PR-541 | E | planned | Plugin CLI registration |
-| PR-542 | E | planned | Kafka / SQS queue plugins |
-| PR-543 | E | planned | GraphQL API plugin (stretch) |
-| PR-544 | E | planned | Dynamic plugin loading research |
+| PR | Track | License | Status | Spec |
+| --- | --- | --- | --- | --- |
+| PR-500 | A | [b2b] | planned | Customer groups domain |
+| PR-501 | A | [b2b] | planned | Group-aware pricing |
+| PR-502 | A | [oss] | planned | Returns domain + workflow |
+| PR-503 | A | [oss] | planned | Returns admin + account UI |
+| PR-504 | A | [oss] | planned | Payment transaction ledger admin |
+| PR-505 | A | [oss] | planned | Store credit / gift cards (stretch) |
+| PR-510 | B | [oss] | planned | Advanced promotion rules |
+| PR-511 | B | [oss] | planned | Navigation builder |
+| PR-512 | B | [oss] | planned | Content blocks |
+| PR-513 | B | [oss] | planned | Abandoned cart recovery (stretch) |
+| PR-514 | B | [oss] | planned | Product reviews (stretch) |
+| PR-520 | C | [oss] | planned | Admin user CRUD |
+| PR-521 | C | [oss] | planned | Custom roles editor |
+| PR-522 | C | [oss] | planned | Admin TOTP / MFA |
+| PR-523 | C | [oss] | planned | Audit export + retention |
+| PR-524 | C | [oss] | planned | Shipping zones admin UI |
+| PR-530 | D | [oss] | planned | Omnibus storefront verification |
+| PR-531 | D | [oss] | planned | WEEE product fields |
+| PR-532 | D | [oss] | planned | EPR / packaging data |
+| PR-533 | D | [oss] | planned | GPSR product safety |
+| PR-534 | D | [oss] | planned | OSS / e-invoicing (stretch) |
+| PR-540 | E | [oss] | planned | Merchant outbound webhooks |
+| PR-541 | E | [oss] | planned | Plugin CLI registration |
+| PR-542 | E | [oss] | planned | Kafka / SQS queue plugins |
+| PR-543 | E | [oss] | planned | GraphQL API plugin (stretch) |
+| PR-544 | E | [oss] | planned | Dynamic plugin loading research |
 
-Roadmap: [`../ROADMAP.md`](../ROADMAP.md) · EU compliance: [`../specs/COMPLIANCE_EU.md`](../specs/COMPLIANCE_EU.md)
+Roadmap: [`../ROADMAP.md`](../ROADMAP.md) · EU compliance: [`../specs/COMPLIANCE_EU.md`](../specs/COMPLIANCE_EU.md) · Licensing: [`../../COMMERCIAL.md`](../../COMMERCIAL.md)
 
-**Suggested first PRs:** PR-530 (Omnibus verification — builds on existing price history) and PR-500 (customer groups) in parallel.
+**Suggested first PRs:** PR-530 [oss] (Omnibus verification) and PR-500 [b2b] (customer groups) in parallel.
+
+[b2b] PRs implement in [`plugins/b2b/`](../../../plugins/b2b/). [oss] PRs stay in open core.
