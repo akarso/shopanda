@@ -265,6 +265,9 @@ func runServe(cfg *config.Config, log logger.Logger, embedScheduler bool) error 
 		Bootstrap: &plugin.Bootstrap{DB: conn},
 	}
 	summary := registry.InitAll(pluginApp)
+	if err := plugin.LoadPersisted(context.Background(), configRepo, cfg, registry.ConfigRegistry()); err != nil {
+		return fmt.Errorf("load plugin config: %w", err)
+	}
 	plugin.LogStartup(log, registry, cfg)
 	log.Info("plugin.init.summary", map[string]interface{}{
 		"registered":  summary.Registered,
@@ -654,7 +657,7 @@ func runServe(cfg *config.Config, log logger.Logger, embedScheduler bool) error 
 			Subject: "Shopanda SMTP test",
 			Body:    "<p>This is a test email from Shopanda admin settings.</p>",
 		})
-	}, log)
+	}, log, registry.ConfigRegistry())
 	schemaHandler := shophttp.NewSchemaHandler(adminRegistry, attributeStore)
 	pageHandler := shophttp.NewPageHandler(pageRepo, contentTranslator)
 	pageAdmin := shophttp.NewPageAdminHandlerWithAuditor(pageRepo, bus, adminApp.NewAuditor(log))

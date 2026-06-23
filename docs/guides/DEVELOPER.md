@@ -72,7 +72,9 @@ Core (always on)
 - Adding HTTP webhook routes for new payment providers
 - Adding CLI subcommands (`cmd/api/main.go` subcommand switch)
 
-**Deferred (not implemented):** dynamic `.so` loading, plugin marketplace, plugin-defined config UI in admin (see PR-422), plugin-registered CLI commands.
+**Deferred (not implemented):** dynamic `.so` loading, plugin marketplace, plugin-registered CLI commands.
+
+Plugin-defined settings can be registered via `RegisterConfig` and edited on the admin Integrations page (`group=plugins` API). Plugin enable/disable remains compile-time + config file.
 
 See also: [PLUGINS.md](../../PLUGINS.md) · [Phase 4 Roadmap](../phase-4-refactoring/ROADMAP.md) · [plugins/example/README.md](../../plugins/example/README.md)
 

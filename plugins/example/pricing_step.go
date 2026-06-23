@@ -14,11 +14,12 @@ const defaultExampleFeeMinorUnits = 100
 
 // ExampleFeeStep adds a fixed example fee adjustment to the pricing context.
 type ExampleFeeStep struct {
-	amountMinor int64
+	amountMinor *int64
 }
 
 // NewExampleFeeStep returns a pricing step that adds amountMinor units in the cart currency.
-func NewExampleFeeStep(amountMinor int64) *ExampleFeeStep {
+// When amountMinor points at live config, admin updates apply without restart.
+func NewExampleFeeStep(amountMinor *int64) *ExampleFeeStep {
 	return &ExampleFeeStep{amountMinor: amountMinor}
 }
 
@@ -28,7 +29,11 @@ func (s *ExampleFeeStep) Apply(_ context.Context, pctx *pricing.PricingContext) 
 	if len(pctx.Items) == 0 {
 		return nil
 	}
-	fee, err := shared.NewMoney(s.amountMinor, pctx.Currency)
+	amount := int64(defaultExampleFeeMinorUnits)
+	if s.amountMinor != nil && *s.amountMinor > 0 {
+		amount = *s.amountMinor
+	}
+	fee, err := shared.NewMoney(amount, pctx.Currency)
 	if err != nil {
 		return err
 	}

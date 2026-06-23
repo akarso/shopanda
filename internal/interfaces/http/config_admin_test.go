@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -15,6 +16,7 @@ import (
 	shophttp "github.com/akarso/shopanda/internal/interfaces/http"
 	appconfig "github.com/akarso/shopanda/internal/platform/config"
 	"github.com/akarso/shopanda/internal/platform/logger"
+	"github.com/akarso/shopanda/internal/platform/plugin"
 )
 
 type mockConfigRepo struct {
@@ -80,7 +82,7 @@ func testConfigAdminHandler(repo domainCfg.Repository, testEmail shophttp.SMTPTe
 	cfg.Media.Storage = "local"
 	cfg.Media.Local.BasePath = "./public/media"
 	cfg.Media.Local.BaseURL = "/media"
-	return shophttp.NewConfigAdminHandler(repo, cfg, testEmail, logger.NewWithWriter(io.Discard, "error"))
+	return shophttp.NewConfigAdminHandler(repo, cfg, testEmail, logger.NewWithWriter(io.Discard, "error"), nil)
 }
 
 func withAdminStoreScope(req *http.Request, storeID string) *http.Request {
@@ -91,6 +93,24 @@ func withAdminStoreScope(req *http.Request, storeID string) *http.Request {
 func withAdminScope(req *http.Request, storeID, language, currency string) *http.Request {
 	ctx := (&admin.AdminContext{StoreID: storeID, Language: language, Currency: currency}).WithContext(req.Context())
 	return req.WithContext(ctx)
+}
+
+func applyTestPluginFeeMinorUnits(c *appconfig.Config, value interface{}, requirePositive bool) error {
+	switch v := value.(type) {
+	case int64:
+		if requirePositive && v <= 0 {
+			return fmt.Errorf("fee must be positive")
+		}
+		c.Plugins.Example.FeeMinorUnits = v
+	case float64:
+		if requirePositive && v <= 0 {
+			return fmt.Errorf("fee must be positive")
+		}
+		c.Plugins.Example.FeeMinorUnits = int64(v)
+	default:
+		return fmt.Errorf("unsupported fee value type %T", value)
+	}
+	return nil
 }
 
 func TestConfigAdmin_Get_GroupEmail(t *testing.T) {
@@ -567,7 +587,7 @@ func testConfigAdminHandlerWithAudit(repo domainCfg.Repository, sink logger.Logg
 	cfg.Media.Storage = "local"
 	cfg.Media.Local.BasePath = "./public/media"
 	cfg.Media.Local.BaseURL = "/media"
-	return shophttp.NewConfigAdminHandler(repo, cfg, func(context.Context, shophttp.SMTPTestConfig, string) error { return nil }, sink)
+	return shophttp.NewConfigAdminHandler(repo, cfg, func(context.Context, shophttp.SMTPTestConfig, string) error { return nil }, sink, nil)
 }
 
 func TestConfigAdmin_Get_AuditOmitsPartialScopeContext(t *testing.T) {
@@ -736,5 +756,189 @@ func TestConfigAdmin_Update_AuditFailureOmitsPartialScopeContext(t *testing.T) {
 	}
 	if err, ok := entry.context["error"]; !ok || err == "" {
 		t.Errorf("error = %v, want non-empty string", err)
+	}
+}
+
+func TestConfigAdmin_Get_GroupPlugins(t *testing.T) {
+	repo := newMockConfigRepo()
+	cfg := &appconfig.Config{
+		Plugins: appconfig.PluginsConfig{
+			Example: appconfig.ExamplePluginConfig{Enabled: true, FeeMinorUnits: 150},
+		},
+	}
+	pluginReg := plugin.NewConfigRegistry()
+	if err := pluginReg.Register(plugin.ConfigDefinition{
+		Plugin: "example/demo",
+		Fields: []plugin.ConfigField{
+			{
+				Key:   "plugins.example.fee_minor_units",
+				Label: "Example fee (minor units)",
+				Type:  plugin.ConfigFieldInt,
+				Get: func(c *appconfig.Config) interface{} {
+					return c.Plugins.Example.FeeMinorUnits
+				},
+				Apply: func(c *appconfig.Config, value interface{}) error {
+					return applyTestPluginFeeMinorUnits(c, value, false)
+				},
+			},
+		},
+	}); err != nil {
+		t.Fatalf("Register() error: %v", err)
+	}
+	h := shophttp.NewConfigAdminHandler(repo, cfg, func(context.Context, shophttp.SMTPTestConfig, string) error { return nil }, logger.NewWithWriter(io.Discard, "error"), pluginReg)
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/admin/config?group=plugins", nil)
+	h.Get().ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d; body: %s", rec.Code, http.StatusOK, rec.Body.String())
+	}
+
+	var envelope struct {
+		Data struct {
+			Entries   map[string]interface{}   `json:"entries"`
+			FieldDefs []map[string]interface{} `json:"field_defs"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &envelope); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	got := envelope.Data.Entries["plugins.example.fee_minor_units"]
+	if got != float64(150) && got != int64(150) {
+		t.Fatalf("fee = %v, want 150", got)
+	}
+	if len(envelope.Data.FieldDefs) != 1 {
+		t.Fatalf("field_defs len = %d, want 1", len(envelope.Data.FieldDefs))
+	}
+}
+
+func TestConfigAdmin_Update_PluginConfigAppliesRuntime(t *testing.T) {
+	repo := newMockConfigRepo()
+	cfg := &appconfig.Config{
+		Plugins: appconfig.PluginsConfig{
+			Example: appconfig.ExamplePluginConfig{Enabled: true, FeeMinorUnits: 100},
+		},
+	}
+	pluginReg := plugin.NewConfigRegistry()
+	if err := pluginReg.Register(plugin.ConfigDefinition{
+		Plugin: "example/demo",
+		Fields: []plugin.ConfigField{
+			{
+				Key:   "plugins.example.fee_minor_units",
+				Label: "Example fee (minor units)",
+				Type:  plugin.ConfigFieldInt,
+				Get: func(c *appconfig.Config) interface{} {
+					return c.Plugins.Example.FeeMinorUnits
+				},
+				Apply: func(c *appconfig.Config, value interface{}) error {
+					return applyTestPluginFeeMinorUnits(c, value, false)
+				},
+			},
+		},
+	}); err != nil {
+		t.Fatalf("Register() error: %v", err)
+	}
+	h := shophttp.NewConfigAdminHandler(repo, cfg, func(context.Context, shophttp.SMTPTestConfig, string) error { return nil }, logger.NewWithWriter(io.Discard, "error"), pluginReg)
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPut, "/api/v1/admin/config", strings.NewReader(`{"entries":{"plugins.example.fee_minor_units":300}}`))
+	req.Header.Set("Content-Type", "application/json")
+	h.Update().ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d; body: %s", rec.Code, http.StatusOK, rec.Body.String())
+	}
+	if cfg.Plugins.Example.FeeMinorUnits != 300 {
+		t.Fatalf("runtime FeeMinorUnits = %d, want 300", cfg.Plugins.Example.FeeMinorUnits)
+	}
+	persisted := repo.entries["plugins.example.fee_minor_units"]
+	if persisted != float64(300) && persisted != int64(300) {
+		t.Fatalf("persisted value = %v, want 300", persisted)
+	}
+}
+
+func TestConfigAdmin_Update_PluginConfigZeroRejectedBeforePersist(t *testing.T) {
+	repo := newMockConfigRepo()
+	cfg := &appconfig.Config{
+		Plugins: appconfig.PluginsConfig{
+			Example: appconfig.ExamplePluginConfig{Enabled: true, FeeMinorUnits: 100},
+		},
+	}
+	pluginReg := plugin.NewConfigRegistry()
+	if err := pluginReg.Register(plugin.ConfigDefinition{
+		Plugin: "example/demo",
+		Fields: []plugin.ConfigField{
+			{
+				Key:   "plugins.example.fee_minor_units",
+				Label: "Example fee (minor units)",
+				Type:  plugin.ConfigFieldInt,
+				Get: func(c *appconfig.Config) interface{} {
+					return c.Plugins.Example.FeeMinorUnits
+				},
+				Apply: func(c *appconfig.Config, value interface{}) error {
+					return applyTestPluginFeeMinorUnits(c, value, true)
+				},
+			},
+		},
+	}); err != nil {
+		t.Fatalf("Register() error: %v", err)
+	}
+	h := shophttp.NewConfigAdminHandler(repo, cfg, func(context.Context, shophttp.SMTPTestConfig, string) error { return nil }, logger.NewWithWriter(io.Discard, "error"), pluginReg)
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPut, "/api/v1/admin/config", strings.NewReader(`{"entries":{"plugins.example.fee_minor_units":0}}`))
+	req.Header.Set("Content-Type", "application/json")
+	h.Update().ServeHTTP(rec, req)
+	if rec.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("status = %d, want %d; body: %s", rec.Code, http.StatusUnprocessableEntity, rec.Body.String())
+	}
+	if cfg.Plugins.Example.FeeMinorUnits != 100 {
+		t.Fatalf("runtime FeeMinorUnits = %d, want unchanged 100", cfg.Plugins.Example.FeeMinorUnits)
+	}
+	if _, ok := repo.entries["plugins.example.fee_minor_units"]; ok {
+		t.Fatal("zero fee should not be persisted")
+	}
+}
+
+func TestConfigAdmin_Update_PluginConfigRollbackOnPersistFailure(t *testing.T) {
+	repo := newMockConfigRepo()
+	repo.setManyErr = errors.New("database error")
+	cfg := &appconfig.Config{
+		Plugins: appconfig.PluginsConfig{
+			Example: appconfig.ExamplePluginConfig{Enabled: true, FeeMinorUnits: 100},
+		},
+	}
+	pluginReg := plugin.NewConfigRegistry()
+	if err := pluginReg.Register(plugin.ConfigDefinition{
+		Plugin: "example/demo",
+		Fields: []plugin.ConfigField{
+			{
+				Key:   "plugins.example.fee_minor_units",
+				Label: "Example fee (minor units)",
+				Type:  plugin.ConfigFieldInt,
+				Get: func(c *appconfig.Config) interface{} {
+					return c.Plugins.Example.FeeMinorUnits
+				},
+				Apply: func(c *appconfig.Config, value interface{}) error {
+					return applyTestPluginFeeMinorUnits(c, value, true)
+				},
+			},
+		},
+	}); err != nil {
+		t.Fatalf("Register() error: %v", err)
+	}
+	h := shophttp.NewConfigAdminHandler(repo, cfg, func(context.Context, shophttp.SMTPTestConfig, string) error { return nil }, logger.NewWithWriter(io.Discard, "error"), pluginReg)
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPut, "/api/v1/admin/config", strings.NewReader(`{"entries":{"plugins.example.fee_minor_units":300}}`))
+	req.Header.Set("Content-Type", "application/json")
+	h.Update().ServeHTTP(rec, req)
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("status = %d, want %d; body: %s", rec.Code, http.StatusInternalServerError, rec.Body.String())
+	}
+	if cfg.Plugins.Example.FeeMinorUnits != 100 {
+		t.Fatalf("runtime FeeMinorUnits = %d, want rolled back to 100", cfg.Plugins.Example.FeeMinorUnits)
+	}
+	if _, ok := repo.entries["plugins.example.fee_minor_units"]; ok {
+		t.Fatal("failed update should not be persisted")
 	}
 }

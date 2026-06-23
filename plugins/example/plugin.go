@@ -31,11 +31,10 @@ func (p *Plugin) Init(app *plugin.App) error {
 		return fmt.Errorf("example plugin: disabled (plugins.example.enabled=false)")
 	}
 
-	feeMinor := app.Config.Plugins.Example.FeeMinorUnits
-	if feeMinor <= 0 {
-		feeMinor = defaultExampleFeeMinorUnits
+	if err := app.RegisterConfig(examplePluginConfigDefinition()); err != nil {
+		return fmt.Errorf("example plugin: register config: %w", err)
 	}
-	app.RegisterPricingStep(NewExampleFeeStep(feeMinor))
+	app.RegisterPricingStep(NewExampleFeeStep(&app.Config.Plugins.Example.FeeMinorUnits))
 	if app.Bus != nil {
 		app.Bus.OnAsync(order.EventOrderCreated, newOrderCreatedListener(app.Logger))
 	}

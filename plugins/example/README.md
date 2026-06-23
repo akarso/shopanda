@@ -26,6 +26,8 @@ SHOPANDA_PLUGINS_EXAMPLE_FEE_MINOR_UNITS=100
 
 Restart the application after changing config. The plugin is registered in `cmd/api/register_plugins.go` when `plugins.example.enabled` is true.
 
+When enabled, **Example fee (minor units)** can also be edited on **Admin → Integrations** without restart. Values persist to the config store and apply to the pricing step immediately.
+
 ## Authoring notes
 
 - Implement `plugin.Plugin` with a unique `Name()` (use a vendor prefix, e.g. `acme/shipping`)

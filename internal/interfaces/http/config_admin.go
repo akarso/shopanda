@@ -13,6 +13,7 @@ import (
 	"github.com/akarso/shopanda/internal/platform/apperror"
 	appconfig "github.com/akarso/shopanda/internal/platform/config"
 	"github.com/akarso/shopanda/internal/platform/logger"
+	"github.com/akarso/shopanda/internal/platform/plugin"
 )
 
 // SMTPTestConfig carries SMTP settings for a test email request.
@@ -29,10 +30,11 @@ type SMTPTestFunc func(ctx context.Context, cfg SMTPTestConfig, to string) error
 
 // ConfigAdminHandler serves grouped admin config endpoints.
 type ConfigAdminHandler struct {
-	repo          domainCfg.Repository
-	cfg           *appconfig.Config
-	testEmailFunc SMTPTestFunc
-	auditor       *admin.Auditor
+	repo           domainCfg.Repository
+	cfg            *appconfig.Config
+	testEmailFunc  SMTPTestFunc
+	auditor        *admin.Auditor
+	pluginConfigs  *plugin.ConfigRegistry
 }
 
 const redactedSecretValue = "***"
@@ -89,7 +91,7 @@ var configKeyScopes = map[string]string{
 }
 
 // NewConfigAdminHandler creates a ConfigAdminHandler.
-func NewConfigAdminHandler(repo domainCfg.Repository, cfg *appconfig.Config, testEmailFunc SMTPTestFunc, log logger.Logger) *ConfigAdminHandler {
+func NewConfigAdminHandler(repo domainCfg.Repository, cfg *appconfig.Config, testEmailFunc SMTPTestFunc, log logger.Logger, pluginConfigs *plugin.ConfigRegistry) *ConfigAdminHandler {
 	if repo == nil {
 		panic("http: config repository must not be nil")
 	}
@@ -102,7 +104,7 @@ func NewConfigAdminHandler(repo domainCfg.Repository, cfg *appconfig.Config, tes
 	if log == nil {
 		panic("http: config logger must not be nil")
 	}
-	return &ConfigAdminHandler{repo: repo, cfg: cfg, testEmailFunc: testEmailFunc, auditor: admin.NewAuditor(log)}
+	return &ConfigAdminHandler{repo: repo, cfg: cfg, testEmailFunc: testEmailFunc, auditor: admin.NewAuditor(log), pluginConfigs: pluginConfigs}
 }
 
 type updateConfigRequest struct {
@@ -122,7 +124,7 @@ type testEmailRequest struct {
 func (h *ConfigAdminHandler) Get() http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		group := strings.TrimSpace(r.URL.Query().Get("group"))
-		keys, err := keysForGroup(group)
+		keys, err := keysForGroup(group, h.pluginConfigs)
 		if err != nil {
 			h.auditConfigError(r, admin.AuditSettingsRead, "config_group", "", map[string]interface{}{"group": group}, err)
 			JSONError(w, apperror.Validation(err.Error()))
@@ -144,12 +146,16 @@ func (h *ConfigAdminHandler) Get() http.HandlerFunc {
 		}
 		h.auditConfigSuccess(r, admin.AuditSettingsRead, "config_group", "", map[string]interface{}{"group": group, "keys_count": len(keys)})
 
-		JSON(w, http.StatusOK, map[string]interface{}{
+		payload := map[string]interface{}{
 			"group":        group,
 			"entries":      h.redactEntries(values),
 			"scope":        scopePayloadFromRequest(r),
 			"field_scopes": fieldScopesForKeys(keys),
-		})
+		}
+		if group == "plugins" && h.pluginConfigs != nil {
+			payload["field_defs"] = h.pluginConfigs.Definitions()
+		}
+		JSON(w, http.StatusOK, payload)
 	}
 }
 
@@ -182,6 +188,12 @@ func (h *ConfigAdminHandler) Update() http.HandlerFunc {
 			JSONError(w, err)
 			return
 		}
+		pluginSnapshot := h.snapshotPluginRuntimeConfig(entries)
+		if err := h.applyPluginRuntimeConfig(entries); err != nil {
+			h.auditConfigError(r, admin.AuditSettingsChange, "config_group", "", map[string]interface{}{"entries_count": len(entries)}, err)
+			JSONError(w, apperror.Validation(err.Error()))
+			return
+		}
 		storeID := resolveStoreScopeID(r)
 		persisted := make(map[string]interface{}, len(entries))
 		for key, value := range entries {
@@ -193,6 +205,7 @@ func (h *ConfigAdminHandler) Update() http.HandlerFunc {
 		}
 
 		if err := h.repo.SetMany(r.Context(), persisted); err != nil {
+			h.restorePluginRuntimeConfig(pluginSnapshot)
 			h.auditConfigError(r, admin.AuditSettingsChange, "config_group", "", map[string]interface{}{"entries_count": len(entries), "store_id": storeID}, err)
 			JSONError(w, err)
 			return
@@ -359,7 +372,31 @@ func (h *ConfigAdminHandler) defaultEntries(keys []string) map[string]interface{
 	return values
 }
 
+func (h *ConfigAdminHandler) applyPluginRuntimeConfig(entries map[string]interface{}) error {
+	if h.pluginConfigs == nil || len(entries) == 0 {
+		return nil
+	}
+	return h.pluginConfigs.ApplyToConfig(h.cfg, entries)
+}
+
+func (h *ConfigAdminHandler) snapshotPluginRuntimeConfig(entries map[string]interface{}) map[string]interface{} {
+	if h.pluginConfigs == nil || len(entries) == 0 {
+		return nil
+	}
+	return h.pluginConfigs.SnapshotValues(h.cfg, entries)
+}
+
+func (h *ConfigAdminHandler) restorePluginRuntimeConfig(snapshot map[string]interface{}) {
+	if h.pluginConfigs == nil || len(snapshot) == 0 {
+		return
+	}
+	_ = h.pluginConfigs.ApplyToConfig(h.cfg, snapshot)
+}
+
 func (h *ConfigAdminHandler) defaultValue(key string) interface{} {
+	if h.pluginConfigs != nil && h.pluginConfigs.HasKey(key) {
+		return h.pluginConfigs.ValueFromConfig(h.cfg, key)
+	}
 	switch key {
 	case "store.address", "store.logo", "currency.display_format", "tax.default_class":
 		return ""
@@ -457,11 +494,29 @@ func (h *ConfigAdminHandler) resolveSMTPSettings(ctx context.Context, req testEm
 func (h *ConfigAdminHandler) normalizeUpdateEntries(ctx context.Context, entries map[string]interface{}) (map[string]interface{}, error) {
 	normalized := make(map[string]interface{}, len(entries))
 	for key, value := range entries {
-		if !isAllowedConfigKey(key) {
+		if !isAllowedConfigKey(key, h.pluginConfigs) {
 			return nil, apperror.Validation("invalid config key: " + key)
 		}
 		if value == nil {
 			return nil, apperror.Validation("config value must not be null: " + key)
+		}
+		if h.pluginConfigs != nil && h.pluginConfigs.HasKey(key) {
+			field, _ := h.pluginConfigs.Field(key)
+			if field.Secret {
+				secretValue, ok := value.(string)
+				if !ok {
+					return nil, apperror.Validation("config value must be string: " + key)
+				}
+				if secretValue == redactedSecretValue || strings.TrimSpace(secretValue) == "" {
+					continue
+				}
+			}
+			coerced, err := h.pluginConfigs.CoerceValue(key, value)
+			if err != nil {
+				return nil, apperror.Validation(err.Error())
+			}
+			normalized[key] = coerced
+			continue
 		}
 		if isSecretConfigKey(key) {
 			secretValue, ok := value.(string)
@@ -480,13 +535,21 @@ func (h *ConfigAdminHandler) normalizeUpdateEntries(ctx context.Context, entries
 func (h *ConfigAdminHandler) redactEntries(entries map[string]interface{}) map[string]interface{} {
 	redacted := make(map[string]interface{}, len(entries))
 	for key, value := range entries {
-		if isSecretConfigKey(key) {
+		if isSecretConfigKey(key) || h.isPluginSecretKey(key) {
 			redacted[key] = redactSecretValue(value)
 			continue
 		}
 		redacted[key] = value
 	}
 	return redacted
+}
+
+func (h *ConfigAdminHandler) isPluginSecretKey(key string) bool {
+	if h.pluginConfigs == nil {
+		return false
+	}
+	field, ok := h.pluginConfigs.Field(key)
+	return ok && field.Secret
 }
 
 func (h *ConfigAdminHandler) lookupConfigString(ctx context.Context, key string) (string, error) {
@@ -540,11 +603,24 @@ func redactSecretValue(value interface{}) interface{} {
 	return redactedSecretValue
 }
 
-func keysForGroup(group string) ([]string, error) {
+func keysForGroup(group string, pluginConfigs *plugin.ConfigRegistry) ([]string, error) {
+	if group == "plugins" {
+		if pluginConfigs == nil {
+			return nil, fmt.Errorf("unknown config group")
+		}
+		keys := pluginConfigs.Keys()
+		if len(keys) == 0 {
+			return nil, fmt.Errorf("unknown config group")
+		}
+		return keys, nil
+	}
 	if group == "" {
 		keys := make([]string, 0)
 		for _, groupKeys := range configGroupKeys {
 			keys = append(keys, groupKeys...)
+		}
+		if pluginConfigs != nil {
+			keys = append(keys, pluginConfigs.Keys()...)
 		}
 		sort.Strings(keys)
 		return keys, nil
@@ -558,7 +634,10 @@ func keysForGroup(group string) ([]string, error) {
 	return copyKeys, nil
 }
 
-func isAllowedConfigKey(key string) bool {
+func isAllowedConfigKey(key string, pluginConfigs *plugin.ConfigRegistry) bool {
+	if pluginConfigs != nil && pluginConfigs.HasKey(key) {
+		return true
+	}
 	for _, keys := range configGroupKeys {
 		if containsKey(keys, key) {
 			return true

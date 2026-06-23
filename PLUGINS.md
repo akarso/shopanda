@@ -68,6 +68,7 @@ Available today through `plugin.App`:
 | **Composition pipelines** | `RegisterCompositionStep("pdp"\|"plp", …)` | Enrich API/storefront product responses |
 | **Events** | `Bus.On` / `Bus.OnAsync` | React to domain changes |
 | **Permissions** | `RegisterPermission` | Admin RBAC strings |
+| **Admin config** | `RegisterConfig` | Simple settings on Integrations page (`GET/PUT /admin/config?group=plugins`) |
 
 Core plugins additionally expose providers on `plugin.App` during init (search engine, job queue, cache store, media storage, payment registry entries) which `main.go` resolves after `InitAll`.
 
@@ -137,7 +138,8 @@ Not implemented; do not assume these exist:
 - Plugin marketplace or version resolver
 - Hot reload
 - Plugin-registered CLI commands
-- Admin UI for plugin config (planned: PR-422)
+
+Plugin settings (string, int, bool) can be registered with `RegisterConfig` and edited on the admin Integrations page when the plugin is enabled at boot.
 
 ---
 

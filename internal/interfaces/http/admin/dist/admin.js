@@ -4170,10 +4170,12 @@
         var grid = document.getElementById('integrations-grid');
         Promise.all([
             api('/admin/config?group=email'),
-            api('/admin/config?group=media')
+            api('/admin/config?group=media'),
+            api('/admin/config?group=plugins')
         ]).then(function (results) {
             var emailResponse = results[0];
             var mediaResponse = results[1];
+            var pluginsResponse = results[2];
 
             if ((emailResponse && emailResponse.error && emailResponse.error.code === 'forbidden') ||
                 (mediaResponse && mediaResponse.error && mediaResponse.error.code === 'forbidden')) {
@@ -4189,12 +4191,21 @@
 
             var emailPayload = settingsPayloadFromResult(emailResponse);
             var mediaPayload = settingsPayloadFromResult(mediaResponse);
+            var pluginsPayload = pluginsResponse && pluginsResponse.data && typeof pluginsResponse.data === 'object'
+                ? settingsPayloadFromResult(pluginsResponse)
+                : { entries: {}, fieldScopes: {}, fieldDefs: [] };
+            if (pluginsResponse && pluginsResponse.data && Array.isArray(pluginsResponse.data.field_defs)) {
+                pluginsPayload.fieldDefs = pluginsResponse.data.field_defs;
+            }
+
             var smtpHost = valueOf(emailPayload.entries, 'mail.smtp.host', '');
             var smtpFrom = valueOf(emailPayload.entries, 'mail.smtp.from', '');
             var mediaStorage = valueOf(mediaPayload.entries, 'media.storage', 'local');
             var mediaEndpoint = mediaStorage === 's3'
                 ? (valueOf(mediaPayload.entries, 'media.s3.bucket', '') || valueOf(mediaPayload.entries, 'media.s3.base_url', '') || valueOf(mediaPayload.entries, 'media.s3.endpoint', ''))
                 : (valueOf(mediaPayload.entries, 'media.local.base_url', '') || valueOf(mediaPayload.entries, 'media.local.base_path', ''));
+
+            var pluginSectionHTML = renderPluginConfigSection(pluginsPayload);
 
             grid.innerHTML = '' +
                 '<div class="settings-grid">' +
@@ -4216,15 +4227,75 @@
                 '<p>Shipping and payment provider configuration is managed under Operations.</p>' +
                 '<p><a href="/admin/operations/shipping" data-link>Shipping</a> and <a href="/admin/operations/payments" data-link>Payments</a></p>' +
                 '</section>' +
-                '<section>' +
-                '<h3>Plugin Extensions</h3>' +
-                '<p>Plugin integrations are registered at application boot. Runtime plugin status is not currently exposed in the admin API.</p>' +
-                '</section>' +
+                pluginSectionHTML +
                 '</div>';
         }).catch(function () {
             grid.innerHTML = '<p role="alert">Failed to load integrations.</p>';
         });
     }
+
+    function renderPluginConfigSection(pluginsPayload) {
+        var defs = pluginsPayload.fieldDefs || [];
+        if (!defs.length) {
+            return '<section>' +
+                '<h3>Plugin Extensions</h3>' +
+                '<p>Plugin integrations are registered at application boot. No plugin settings are exposed in admin for the current configuration.</p>' +
+                '</section>';
+        }
+
+        var fieldsHTML = '';
+        for (var i = 0; i < defs.length; i++) {
+            var field = defs[i];
+            var value = valueOf(pluginsPayload.entries, field.key, '');
+            var inputType = field.type === 'int' ? 'number' : (field.type === 'bool' ? 'checkbox' : 'text');
+            var inputHTML;
+            if (field.type === 'bool') {
+                inputHTML = '<input type="checkbox" id="plugin-' + esc(field.key) + '" data-plugin-key="' + esc(field.key) + '"' + (value ? ' checked' : '') + '>';
+            } else {
+                inputHTML = '<input type="' + esc(inputType) + '" id="plugin-' + esc(field.key) + '" data-plugin-key="' + esc(field.key) + '" value="' + esc(value) + '">';
+            }
+            fieldsHTML += '<label for="plugin-' + esc(field.key) + '"><strong>' + esc(field.label || field.key) + '</strong></label>';
+            if (field.description) {
+                fieldsHTML += '<p class="hint">' + esc(field.description) + '</p>';
+            }
+            fieldsHTML += inputHTML;
+            fieldsHTML += '<p class="hint">Plugin: ' + esc(field.plugin || '') + '</p>';
+        }
+
+        return '<section>' +
+            '<h3>Plugin Settings</h3>' +
+            '<form id="integrations-plugin-form" class="settings-form">' +
+            fieldsHTML +
+            '<button type="submit">Save plugin settings</button>' +
+            '<div id="integrations-plugin-msg"></div>' +
+            '</form>' +
+            '</section>';
+    }
+
+    document.addEventListener('submit', function (evt) {
+        var form = evt.target;
+        if (!form || form.id !== 'integrations-plugin-form') {
+            return;
+        }
+        evt.preventDefault();
+        var entries = {};
+        var inputs = form.querySelectorAll('[data-plugin-key]');
+        for (var i = 0; i < inputs.length; i++) {
+            var input = inputs[i];
+            var key = input.getAttribute('data-plugin-key');
+            if (!key) {
+                continue;
+            }
+            if (input.type === 'checkbox') {
+                entries[key] = input.checked;
+            } else if (input.type === 'number') {
+                entries[key] = parseInt(input.value, 10) || 0;
+            } else {
+                entries[key] = input.value;
+            }
+        }
+        saveSettingsEntries('integrations-plugin-msg', entries);
+    }, true);
 
     function settingsPayloadFromResult(result) {
         var data = result && result.data ? result.data : {};
