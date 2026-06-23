@@ -82,7 +82,7 @@ func testConfigAdminHandler(repo domainCfg.Repository, testEmail shophttp.SMTPTe
 	cfg.Media.Storage = "local"
 	cfg.Media.Local.BasePath = "./public/media"
 	cfg.Media.Local.BaseURL = "/media"
-	return shophttp.NewConfigAdminHandler(repo, cfg, testEmail, logger.NewWithWriter(io.Discard, "error"), nil)
+	return shophttp.NewConfigAdminHandler(repo, cfg, testEmail, admin.NewAuditor(logger.NewWithWriter(io.Discard, "error")), nil)
 }
 
 func withAdminStoreScope(req *http.Request, storeID string) *http.Request {
@@ -587,7 +587,7 @@ func testConfigAdminHandlerWithAudit(repo domainCfg.Repository, sink logger.Logg
 	cfg.Media.Storage = "local"
 	cfg.Media.Local.BasePath = "./public/media"
 	cfg.Media.Local.BaseURL = "/media"
-	return shophttp.NewConfigAdminHandler(repo, cfg, func(context.Context, shophttp.SMTPTestConfig, string) error { return nil }, sink, nil)
+	return shophttp.NewConfigAdminHandler(repo, cfg, func(context.Context, shophttp.SMTPTestConfig, string) error { return nil }, admin.NewAuditor(sink), nil)
 }
 
 func TestConfigAdmin_Get_AuditOmitsPartialScopeContext(t *testing.T) {
@@ -785,7 +785,7 @@ func TestConfigAdmin_Get_GroupPlugins(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("Register() error: %v", err)
 	}
-	h := shophttp.NewConfigAdminHandler(repo, cfg, func(context.Context, shophttp.SMTPTestConfig, string) error { return nil }, logger.NewWithWriter(io.Discard, "error"), pluginReg)
+	h := shophttp.NewConfigAdminHandler(repo, cfg, func(context.Context, shophttp.SMTPTestConfig, string) error { return nil }, admin.NewAuditor(logger.NewWithWriter(io.Discard, "error")), pluginReg)
 
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/admin/config?group=plugins", nil)
@@ -838,7 +838,7 @@ func TestConfigAdmin_Update_PluginConfigAppliesRuntime(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("Register() error: %v", err)
 	}
-	h := shophttp.NewConfigAdminHandler(repo, cfg, func(context.Context, shophttp.SMTPTestConfig, string) error { return nil }, logger.NewWithWriter(io.Discard, "error"), pluginReg)
+	h := shophttp.NewConfigAdminHandler(repo, cfg, func(context.Context, shophttp.SMTPTestConfig, string) error { return nil }, admin.NewAuditor(logger.NewWithWriter(io.Discard, "error")), pluginReg)
 
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodPut, "/api/v1/admin/config", strings.NewReader(`{"entries":{"plugins.example.fee_minor_units":300}}`))
@@ -882,7 +882,7 @@ func TestConfigAdmin_Update_PluginConfigZeroRejectedBeforePersist(t *testing.T) 
 	}); err != nil {
 		t.Fatalf("Register() error: %v", err)
 	}
-	h := shophttp.NewConfigAdminHandler(repo, cfg, func(context.Context, shophttp.SMTPTestConfig, string) error { return nil }, logger.NewWithWriter(io.Discard, "error"), pluginReg)
+	h := shophttp.NewConfigAdminHandler(repo, cfg, func(context.Context, shophttp.SMTPTestConfig, string) error { return nil }, admin.NewAuditor(logger.NewWithWriter(io.Discard, "error")), pluginReg)
 
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodPut, "/api/v1/admin/config", strings.NewReader(`{"entries":{"plugins.example.fee_minor_units":0}}`))
@@ -926,7 +926,7 @@ func TestConfigAdmin_Update_PluginConfigRollbackOnPersistFailure(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("Register() error: %v", err)
 	}
-	h := shophttp.NewConfigAdminHandler(repo, cfg, func(context.Context, shophttp.SMTPTestConfig, string) error { return nil }, logger.NewWithWriter(io.Discard, "error"), pluginReg)
+	h := shophttp.NewConfigAdminHandler(repo, cfg, func(context.Context, shophttp.SMTPTestConfig, string) error { return nil }, admin.NewAuditor(logger.NewWithWriter(io.Discard, "error")), pluginReg)
 
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodPut, "/api/v1/admin/config", strings.NewReader(`{"entries":{"plugins.example.fee_minor_units":300}}`))

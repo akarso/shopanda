@@ -12,7 +12,6 @@ import (
 	domainCfg "github.com/akarso/shopanda/internal/domain/config"
 	"github.com/akarso/shopanda/internal/platform/apperror"
 	appconfig "github.com/akarso/shopanda/internal/platform/config"
-	"github.com/akarso/shopanda/internal/platform/logger"
 	"github.com/akarso/shopanda/internal/platform/plugin"
 )
 
@@ -91,7 +90,7 @@ var configKeyScopes = map[string]string{
 }
 
 // NewConfigAdminHandler creates a ConfigAdminHandler.
-func NewConfigAdminHandler(repo domainCfg.Repository, cfg *appconfig.Config, testEmailFunc SMTPTestFunc, log logger.Logger, pluginConfigs *plugin.ConfigRegistry) *ConfigAdminHandler {
+func NewConfigAdminHandler(repo domainCfg.Repository, cfg *appconfig.Config, testEmailFunc SMTPTestFunc, auditor *admin.Auditor, pluginConfigs *plugin.ConfigRegistry) *ConfigAdminHandler {
 	if repo == nil {
 		panic("http: config repository must not be nil")
 	}
@@ -101,10 +100,10 @@ func NewConfigAdminHandler(repo domainCfg.Repository, cfg *appconfig.Config, tes
 	if testEmailFunc == nil {
 		panic("http: config test email function must not be nil")
 	}
-	if log == nil {
-		panic("http: config logger must not be nil")
+	if auditor == nil {
+		panic("http: config auditor must not be nil")
 	}
-	return &ConfigAdminHandler{repo: repo, cfg: cfg, testEmailFunc: testEmailFunc, auditor: admin.NewAuditor(log), pluginConfigs: pluginConfigs}
+	return &ConfigAdminHandler{repo: repo, cfg: cfg, testEmailFunc: testEmailFunc, auditor: auditor, pluginConfigs: pluginConfigs}
 }
 
 type updateConfigRequest struct {

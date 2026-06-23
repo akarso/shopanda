@@ -168,6 +168,7 @@
         "/admin/settings": { title: "Settings", render: renderSettingsPage, auth: true },
         "/admin/settings/localization": { title: "Localization", render: renderLocalizationSettingsPage, auth: true },
         "/admin/settings/users": { title: "Users & Roles", render: renderUsersRolesPage, auth: true },
+        "/admin/settings/audit": { title: "Audit Log", render: renderAuditLogPage, auth: true },
         // Store Management
         "/admin/store": { title: "Stores", render: renderStoresGrid, auth: true },
         "/admin/store/domains": { title: "Domains", render: renderStoreDomainsPage, auth: true },
@@ -2421,6 +2422,7 @@
                     'invoices.read',
                     'media.read', 'media.write',
                     'settings.read', 'settings.write',
+                    'audit.read',
                     'shipping.read', 'shipping.write'
                 ]
             },
@@ -2820,6 +2822,46 @@
             usersGrid.innerHTML = usersHtml;
         }).catch(function (err) {
             usersGrid.innerHTML = '<p role="alert">' + esc(extractErrorMessage(err, 'Failed to load users and roles.')) + '</p>';
+        });
+    }
+
+    function renderAuditLogPage(container) {
+        container.innerHTML = '<h2>Audit Log</h2><div id="audit-log-grid"></div>';
+        var grid = document.getElementById('audit-log-grid');
+        api('/admin/audit?offset=0&limit=50').then(function (body) {
+            if (body && body.error && body.error.code === 'forbidden') {
+                grid.innerHTML = '<p role="alert">Your account does not have audit log access.</p>';
+                return;
+            }
+            var entries = body && body.data && body.data.entries;
+            if (!Array.isArray(entries)) {
+                grid.innerHTML = '<p role="alert">Failed to load audit log.</p>';
+                return;
+            }
+            if (entries.length === 0) {
+                grid.innerHTML = '<p>No audit entries yet.</p>';
+                return;
+            }
+            var html = '<table><thead><tr>' +
+                '<th>Time</th><th>Admin</th><th>Action</th><th>Resource</th><th>Scope</th><th>Result</th>' +
+                '</tr></thead><tbody>';
+            for (var i = 0; i < entries.length; i++) {
+                var entry = entries[i];
+                var scope = [entry.store_id, entry.language, entry.currency].filter(Boolean).join(' / ');
+                var resource = (entry.resource_type || '') + (entry.resource_id ? (' #' + entry.resource_id) : '');
+                html += '<tr>' +
+                    '<td>' + esc(entry.created_at || '') + '</td>' +
+                    '<td>' + esc(entry.admin_id || '') + '</td>' +
+                    '<td>' + esc(entry.action || '') + '</td>' +
+                    '<td>' + esc(resource) + '</td>' +
+                    '<td>' + esc(scope || '—') + '</td>' +
+                    '<td>' + esc(entry.result || '') + '</td>' +
+                    '</tr>';
+            }
+            html += '</tbody></table>';
+            grid.innerHTML = html;
+        }).catch(function () {
+            grid.innerHTML = '<p role="alert">Failed to load audit log.</p>';
         });
     }
 

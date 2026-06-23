@@ -31,4 +31,6 @@ const (
 
 	ShippingRead  Permission = "shipping.read"
 	ShippingWrite Permission = "shipping.write"
+
+	AuditRead Permission = "audit.read"
 )
