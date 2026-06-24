@@ -118,8 +118,11 @@ func TestConfigRegistry_SnapshotValues(t *testing.T) {
 		Plugin: "test/plugin",
 		Fields: []plugin.ConfigField{{
 			Key: "plugins.test.n", Label: "N", Type: plugin.ConfigFieldInt,
-			Get:   func(c *config.Config) interface{} { return c.Plugins.Example.FeeMinorUnits },
-			Apply: func(c *config.Config, value interface{}) error { c.Plugins.Example.FeeMinorUnits = value.(int64); return nil },
+			Get: func(c *config.Config) interface{} { return c.Plugins.Example.FeeMinorUnits },
+			Apply: func(c *config.Config, value interface{}) error {
+				c.Plugins.Example.FeeMinorUnits = value.(int64)
+				return nil
+			},
 		}},
 	}); err != nil {
 		t.Fatalf("Register() error: %v", err)

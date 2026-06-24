@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"github.com/akarso/shopanda/internal/testutil"
 	"strings"
 	"testing"
 
@@ -60,6 +61,10 @@ func (m *mockVariantRepo) FindBySKU(_ context.Context, _ string) (*catalog.Varia
 func (m *mockVariantRepo) ListByProductID(_ context.Context, _ string, _, _ int) ([]catalog.Variant, error) {
 	return nil, nil
 }
+func (m *mockVariantRepo) ListByProductIDs(ctx context.Context, productIDs []string, limitPerProduct int) (map[string][]catalog.Variant, error) {
+	return testutil.ListByProductIDsFromList(ctx, m.ListByProductID, productIDs, limitPerProduct)
+}
+
 func (m *mockVariantRepo) Create(ctx context.Context, v *catalog.Variant) error {
 	if m.createFn != nil {
 		return m.createFn(ctx, v)

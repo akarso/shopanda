@@ -33,7 +33,7 @@ func (f *fakeOrderRepo) FindByContactEmail(context.Context, string) ([]order.Ord
 func (f *fakeOrderRepo) List(context.Context, int, int) ([]order.Order, error) {
 	return nil, nil
 }
-func (f *fakeOrderRepo) Save(context.Context, *order.Order) error         { return nil }
+func (f *fakeOrderRepo) Save(context.Context, *order.Order) error           { return nil }
 func (f *fakeOrderRepo) UpdateStatus(context.Context, *order.Order) error   { return nil }
 func (f *fakeOrderRepo) LinkToCustomer(context.Context, *order.Order) error { return nil }
 func (f *fakeOrderRepo) LinkToCustomerByContactEmail(context.Context, string, string, time.Time) (int64, error) {

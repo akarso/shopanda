@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"github.com/akarso/shopanda/internal/testutil"
 	"strings"
 	"testing"
 
@@ -27,6 +28,10 @@ func (m *mockVariantRepoForStock) FindBySKU(_ context.Context, sku string) (*cat
 func (m *mockVariantRepoForStock) ListByProductID(_ context.Context, _ string, _, _ int) ([]catalog.Variant, error) {
 	return nil, nil
 }
+func (m *mockVariantRepoForStock) ListByProductIDs(ctx context.Context, productIDs []string, limitPerProduct int) (map[string][]catalog.Variant, error) {
+	return testutil.ListByProductIDsFromList(ctx, m.ListByProductID, productIDs, limitPerProduct)
+}
+
 func (m *mockVariantRepoForStock) Create(_ context.Context, _ *catalog.Variant) error { return nil }
 func (m *mockVariantRepoForStock) Update(_ context.Context, _ *catalog.Variant) error { return nil }
 func (m *mockVariantRepoForStock) WithTx(_ *sql.Tx) catalog.VariantRepository {
@@ -60,6 +65,14 @@ func (m *mockStockRepo) SetStock(_ context.Context, entry *inventory.StockEntry)
 
 func (m *mockStockRepo) ListStock(_ context.Context, offset, limit int) ([]inventory.StockEntry, error) {
 	return nil, nil
+}
+
+func (m *mockStockRepo) ListInventory(_ context.Context, _, _ int, _ string) ([]inventory.InventoryListItem, error) {
+	return nil, nil
+}
+
+func (m *mockStockRepo) GetInventoryItem(_ context.Context, variantID string) (inventory.InventoryListItem, error) {
+	return inventory.InventoryListItem{VariantID: variantID}, nil
 }
 
 // --- tests ---

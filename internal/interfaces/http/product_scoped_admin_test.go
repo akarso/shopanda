@@ -3,6 +3,7 @@ package http_test
 import (
 	"context"
 	"encoding/json"
+	"github.com/akarso/shopanda/internal/testutil"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -88,6 +89,10 @@ func (s *scopedPriceRepo) FindByVariantCurrencyAndStore(_ context.Context, varia
 	return nil, nil
 }
 
+func (s *scopedPriceRepo) FindByVariantsCurrencyAndStore(ctx context.Context, variantIDs []string, currency, storeID string) (map[string]*pricing.Price, error) {
+	return testutil.FindByVariantsCurrencyAndStoreFromFind(ctx, s.FindByVariantCurrencyAndStore, variantIDs, currency, storeID)
+}
+
 func (s *scopedPriceRepo) ListByVariantID(_ context.Context, _ string) ([]pricing.Price, error) {
 	return nil, nil
 }
@@ -131,6 +136,10 @@ func (s *stubVariantRepo) FindBySKU(_ context.Context, _ string) (*catalog.Varia
 
 func (s *stubVariantRepo) ListByProductID(_ context.Context, _ string, _, _ int) ([]catalog.Variant, error) {
 	return nil, nil
+}
+
+func (s *stubVariantRepo) ListByProductIDs(ctx context.Context, productIDs []string, limitPerProduct int) (map[string][]catalog.Variant, error) {
+	return testutil.ListByProductIDsFromList(ctx, s.ListByProductID, productIDs, limitPerProduct)
 }
 
 func (s *stubVariantRepo) Create(_ context.Context, _ *catalog.Variant) error { return nil }

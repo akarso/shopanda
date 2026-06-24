@@ -6,10 +6,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/alicebob/miniredis/v2"
 	"github.com/akarso/shopanda/internal/domain/jobs"
 	inredis "github.com/akarso/shopanda/internal/infrastructure/redis"
 	"github.com/akarso/shopanda/internal/platform/id"
+	"github.com/alicebob/miniredis/v2"
 )
 
 func setupJobQueue(t *testing.T) (*miniredis.Miniredis, jobs.Queue) {

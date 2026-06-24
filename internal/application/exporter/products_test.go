@@ -6,6 +6,7 @@ import (
 	"database/sql"
 	"encoding/csv"
 	"fmt"
+	"github.com/akarso/shopanda/internal/testutil"
 	"strings"
 	"testing"
 
@@ -71,6 +72,10 @@ func (m *mockVariantRepo) ListByProductID(_ context.Context, productID string, o
 	}
 	return all[offset:end], nil
 }
+func (m *mockVariantRepo) ListByProductIDs(ctx context.Context, productIDs []string, limitPerProduct int) (map[string][]catalog.Variant, error) {
+	return testutil.ListByProductIDsFromList(ctx, m.ListByProductID, productIDs, limitPerProduct)
+}
+
 func (m *mockVariantRepo) Create(_ context.Context, _ *catalog.Variant) error { return nil }
 func (m *mockVariantRepo) Update(_ context.Context, _ *catalog.Variant) error { return nil }
 func (m *mockVariantRepo) WithTx(_ *sql.Tx) catalog.VariantRepository         { return m }

@@ -3,8 +3,8 @@ package composition
 import (
 	"fmt"
 
-	domainlegal "github.com/akarso/shopanda/internal/domain/legal"
 	"github.com/akarso/shopanda/internal/domain/catalog"
+	domainlegal "github.com/akarso/shopanda/internal/domain/legal"
 	"github.com/akarso/shopanda/internal/domain/pricing"
 )
 

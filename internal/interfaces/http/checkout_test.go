@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"github.com/akarso/shopanda/internal/testutil"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -89,6 +90,10 @@ func (r *stubCheckoutVariantRepo) FindBySKU(_ context.Context, _ string) (*catal
 func (r *stubCheckoutVariantRepo) ListByProductID(_ context.Context, _ string, _, _ int) ([]catalog.Variant, error) {
 	return nil, nil
 }
+func (r *stubCheckoutVariantRepo) ListByProductIDs(ctx context.Context, productIDs []string, limitPerProduct int) (map[string][]catalog.Variant, error) {
+	return testutil.ListByProductIDsFromList(ctx, r.ListByProductID, productIDs, limitPerProduct)
+}
+
 func (r *stubCheckoutVariantRepo) Create(_ context.Context, _ *catalog.Variant) error { return nil }
 func (r *stubCheckoutVariantRepo) Update(_ context.Context, _ *catalog.Variant) error { return nil }
 func (r *stubCheckoutVariantRepo) WithTx(_ *sql.Tx) catalog.VariantRepository {
@@ -164,6 +169,10 @@ func (r *stubCheckoutPriceRepo) setWithStore(variantID, currency, storeID string
 
 func (r *stubCheckoutPriceRepo) FindByVariantCurrencyAndStore(_ context.Context, variantID, currency, storeID string) (*pricing.Price, error) {
 	return r.prices[variantID+":"+currency+":"+storeID], nil
+}
+
+func (r *stubCheckoutPriceRepo) FindByVariantsCurrencyAndStore(ctx context.Context, variantIDs []string, currency, storeID string) (map[string]*pricing.Price, error) {
+	return testutil.FindByVariantsCurrencyAndStoreFromFind(ctx, r.FindByVariantCurrencyAndStore, variantIDs, currency, storeID)
 }
 
 func (r *stubCheckoutPriceRepo) ListByVariantID(_ context.Context, _ string) ([]pricing.Price, error) {

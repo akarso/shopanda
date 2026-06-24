@@ -126,6 +126,51 @@ func (r *VariantRepo) ListByProductID(ctx context.Context, productID string, off
 	return variants, nil
 }
 
+// ListByProductIDs returns variants grouped by product ID.
+func (r *VariantRepo) ListByProductIDs(ctx context.Context, productIDs []string, limitPerProduct int) (map[string][]catalog.Variant, error) {
+	if len(productIDs) == 0 {
+		return nil, nil
+	}
+	if limitPerProduct <= 0 {
+		return nil, apperror.Validation("limitPerProduct must be > 0")
+	}
+	if limitPerProduct > maxVariantListLimit {
+		limitPerProduct = maxVariantListLimit
+	}
+
+	const q = `SELECT id, product_id, sku, name, weight, attributes, created_at, updated_at
+		FROM variants WHERE product_id = ANY($1) ORDER BY product_id, created_at ASC`
+
+	var rows *sql.Rows
+	var err error
+	if r.tx != nil {
+		rows, err = r.tx.QueryContext(ctx, q, pq.Array(productIDs))
+	} else {
+		rows, err = r.db.QueryContext(ctx, q, pq.Array(productIDs))
+	}
+	if err != nil {
+		return nil, fmt.Errorf("variant_repo: list by products: %w", err)
+	}
+	defer rows.Close()
+
+	out := make(map[string][]catalog.Variant, len(productIDs))
+	for rows.Next() {
+		v, err := r.scanVariant(rows)
+		if err != nil {
+			return nil, fmt.Errorf("variant_repo: list by products scan: %w", err)
+		}
+		list := out[v.ProductID]
+		if len(list) >= limitPerProduct {
+			continue
+		}
+		out[v.ProductID] = append(list, *v)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("variant_repo: list by products rows: %w", err)
+	}
+	return out, nil
+}
+
 // skuConflict returns an apperror.Conflict when err is a unique-constraint
 // violation on the variants_sku_key index; otherwise it returns nil.
 func skuConflict(err error) error {

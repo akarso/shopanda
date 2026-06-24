@@ -29,11 +29,11 @@ type SMTPTestFunc func(ctx context.Context, cfg SMTPTestConfig, to string) error
 
 // ConfigAdminHandler serves grouped admin config endpoints.
 type ConfigAdminHandler struct {
-	repo           domainCfg.Repository
-	cfg            *appconfig.Config
-	testEmailFunc  SMTPTestFunc
-	auditor        *admin.Auditor
-	pluginConfigs  *plugin.ConfigRegistry
+	repo          domainCfg.Repository
+	cfg           *appconfig.Config
+	testEmailFunc SMTPTestFunc
+	auditor       *admin.Auditor
+	pluginConfigs *plugin.ConfigRegistry
 }
 
 const redactedSecretValue = "***"

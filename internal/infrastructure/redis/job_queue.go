@@ -110,10 +110,10 @@ func (s storedJob) toJob() jobs.Job {
 	}
 }
 
-func (q *JobQueue) jobKey(id string) string   { return q.prefix + "job:" + id }
-func (q *JobQueue) readyKey() string          { return q.prefix + "ready" }
-func (q *JobQueue) processingKey() string     { return q.prefix + "processing" }
-func (q *JobQueue) delayedKey() string        { return q.prefix + "delayed" }
+func (q *JobQueue) jobKey(id string) string { return q.prefix + "job:" + id }
+func (q *JobQueue) readyKey() string        { return q.prefix + "ready" }
+func (q *JobQueue) processingKey() string   { return q.prefix + "processing" }
+func (q *JobQueue) delayedKey() string      { return q.prefix + "delayed" }
 
 func jobRetentionTTL(status jobs.Status) time.Duration {
 	switch status {

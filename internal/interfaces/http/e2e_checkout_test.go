@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"github.com/akarso/shopanda/internal/testutil"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -78,6 +79,10 @@ func (r *e2eVariantRepo) FindBySKU(context.Context, string) (*catalog.Variant, e
 func (r *e2eVariantRepo) ListByProductID(context.Context, string, int, int) ([]catalog.Variant, error) {
 	return nil, nil
 }
+func (r *e2eVariantRepo) ListByProductIDs(ctx context.Context, productIDs []string, limitPerProduct int) (map[string][]catalog.Variant, error) {
+	return testutil.ListByProductIDsFromList(ctx, r.ListByProductID, productIDs, limitPerProduct)
+}
+
 func (r *e2eVariantRepo) Create(context.Context, *catalog.Variant) error { return nil }
 func (r *e2eVariantRepo) Update(context.Context, *catalog.Variant) error { return nil }
 func (r *e2eVariantRepo) WithTx(*sql.Tx) catalog.VariantRepository       { return r }
@@ -89,6 +94,10 @@ type e2ePriceRepo struct {
 func (r *e2ePriceRepo) FindByVariantCurrencyAndStore(_ context.Context, vid, cur, sid string) (*pricing.Price, error) {
 	return r.prices[vid+":"+cur+":"+sid], nil
 }
+func (r *e2ePriceRepo) FindByVariantsCurrencyAndStore(ctx context.Context, variantIDs []string, currency, storeID string) (map[string]*pricing.Price, error) {
+	return testutil.FindByVariantsCurrencyAndStoreFromFind(ctx, r.FindByVariantCurrencyAndStore, variantIDs, currency, storeID)
+}
+
 func (r *e2ePriceRepo) ListByVariantID(context.Context, string) ([]pricing.Price, error) {
 	return nil, nil
 }

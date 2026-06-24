@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/akarso/shopanda/internal/testutil"
 	"io"
 	"testing"
 
@@ -84,6 +85,10 @@ func (r *stubPriceRepo) setWithStore(variantID, currency, storeID string, amount
 
 func (r *stubPriceRepo) FindByVariantCurrencyAndStore(_ context.Context, variantID, currency, storeID string) (*pricing.Price, error) {
 	return r.prices[variantID+":"+currency+":"+storeID], nil
+}
+
+func (r *stubPriceRepo) FindByVariantsCurrencyAndStore(ctx context.Context, variantIDs []string, currency, storeID string) (map[string]*pricing.Price, error) {
+	return testutil.FindByVariantsCurrencyAndStoreFromFind(ctx, r.FindByVariantCurrencyAndStore, variantIDs, currency, storeID)
 }
 
 func (r *stubPriceRepo) ListByVariantID(_ context.Context, _ string) ([]pricing.Price, error) {

@@ -2,7 +2,9 @@ package composition_test
 
 import (
 	"context"
+
 	"errors"
+	"github.com/akarso/shopanda/internal/testutil"
 	"testing"
 
 	"github.com/akarso/shopanda/internal/application/composition"
@@ -32,6 +34,27 @@ func (m *mockVariantRepo) ListByProductID(ctx context.Context, _ string, _, _ in
 	m.capturedCtx = ctx
 	return m.variants, m.err
 }
+func (m *mockVariantRepo) ListByProductIDs(ctx context.Context, productIDs []string, limitPerProduct int) (map[string][]catalog.Variant, error) {
+	m.capturedCtx = ctx
+	if m.err != nil {
+		return nil, m.err
+	}
+	out := make(map[string][]catalog.Variant, len(productIDs))
+	for _, pid := range productIDs {
+		for _, v := range m.variants {
+			if v.ProductID != pid {
+				continue
+			}
+			list := out[pid]
+			if len(list) >= limitPerProduct {
+				break
+			}
+			out[pid] = append(list, v)
+		}
+	}
+	return out, nil
+}
+
 func (m *mockVariantRepo) Create(_ context.Context, _ *catalog.Variant) error { return nil }
 func (m *mockVariantRepo) Update(_ context.Context, _ *catalog.Variant) error { return nil }
 
@@ -51,6 +74,10 @@ func (m *mockPriceRepo) FindByVariantCurrencyAndStore(ctx context.Context, varia
 	m.capturedStore = storeID
 	return m.price, m.err
 }
+func (m *mockPriceRepo) FindByVariantsCurrencyAndStore(ctx context.Context, variantIDs []string, currency, storeID string) (map[string]*pricing.Price, error) {
+	return testutil.FindByVariantsCurrencyAndStoreFromFind(ctx, m.FindByVariantCurrencyAndStore, variantIDs, currency, storeID)
+}
+
 func (m *mockPriceRepo) ListByVariantID(_ context.Context, _ string) ([]pricing.Price, error) {
 	return nil, nil
 }

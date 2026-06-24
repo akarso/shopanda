@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"github.com/akarso/shopanda/internal/testutil"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -75,6 +76,10 @@ func (m *mockVariantRepoForInventory) FindBySKU(context.Context, string) (*catal
 }
 func (m *mockVariantRepoForInventory) ListByProductID(ctx context.Context, productID string, offset, limit int) ([]catalog.Variant, error) {
 	return nil, nil
+}
+
+func (m *mockVariantRepoForInventory) ListByProductIDs(ctx context.Context, productIDs []string, limitPerProduct int) (map[string][]catalog.Variant, error) {
+	return testutil.ListByProductIDsFromList(ctx, m.ListByProductID, productIDs, limitPerProduct)
 }
 
 func newInventoryAdminRouter(h *shophttp.InventoryAdminHandler) *http.ServeMux {

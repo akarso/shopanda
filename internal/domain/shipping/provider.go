@@ -8,9 +8,9 @@ import (
 
 // ShippingRate represents a rate quote from a shipping provider.
 type ShippingRate struct {
-	ProviderRef string     // provider-specific identifier for the rate
+	ProviderRef string // provider-specific identifier for the rate
 	Cost        shared.Money
-	Label       string     // human-readable label (e.g. "Standard Shipping")
+	Label       string // human-readable label (e.g. "Standard Shipping")
 }
 
 // Provider defines the interface for shipping rate calculation.

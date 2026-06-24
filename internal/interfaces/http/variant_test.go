@@ -5,6 +5,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"github.com/akarso/shopanda/internal/testutil"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -69,6 +70,10 @@ func (m *mockVariantRepo) ListByProductID(ctx context.Context, productID string,
 	}
 	return nil, nil
 }
+func (m *mockVariantRepo) ListByProductIDs(ctx context.Context, productIDs []string, limitPerProduct int) (map[string][]catalog.Variant, error) {
+	return testutil.ListByProductIDsFromList(ctx, m.ListByProductID, productIDs, limitPerProduct)
+}
+
 func (m *mockVariantRepo) Create(ctx context.Context, v *catalog.Variant) error {
 	if m.createFn != nil {
 		return m.createFn(ctx, v)

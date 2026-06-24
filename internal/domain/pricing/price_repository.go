@@ -9,6 +9,12 @@ type PriceRepository interface {
 	// Returns a nil price and no error when no price exists.
 	FindByVariantCurrencyAndStore(ctx context.Context, variantID, currency, storeID string) (*Price, error)
 
+	// FindByVariantsCurrencyAndStore returns prices keyed by variant ID for the given
+	// currency and store. When storeID is non-empty, variants without a store-scoped
+	// row fall back to the global price (empty store_id), matching
+	// FindByVariantCurrencyAndStore.
+	FindByVariantsCurrencyAndStore(ctx context.Context, variantIDs []string, currency, storeID string) (map[string]*Price, error)
+
 	// ListByVariantID returns all prices for a variant (one per currency+store),
 	// ordered ascending by currency code then store_id. All implementations
 	// must preserve this ordering so callers can rely on the sort.

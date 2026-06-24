@@ -45,47 +45,79 @@ func buildPriceIndicationBlock(
 	return buildPriceIndicationBlockFromVariant(ctx, history, productVariants[0].ID, storeID, currency, currentPrice)
 }
 
-// buildListingPriceIndicationBlock uses the lowest store-scoped variant price,
-// matching the PLP search engine's displayed price selection.
-func buildListingPriceIndicationBlock(
+// buildListingPriceIndicationsBatch prefetches variants, prices, and history for a PLP page.
+func buildListingPriceIndicationsBatch(
 	ctx context.Context,
 	variants catalog.VariantRepository,
 	prices pricing.PriceRepository,
 	history pricing.PriceHistoryRepository,
-	productID, storeID, currency string,
-) (*Block, error) {
-	if variants == nil || prices == nil || history == nil {
+	productIDs []string,
+	storeID, currency string,
+) (map[string]map[string]interface{}, error) {
+	if variants == nil || prices == nil || history == nil || len(productIDs) == 0 {
 		return nil, nil
 	}
-	variantID, currentPrice, err := resolveLowestPriceVariant(ctx, variants, prices, productID, storeID, currency)
+
+	byProduct, err := variants.ListByProductIDs(ctx, productIDs, maxVariantsForPriceIndication)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("listing price indication: list variants: %w", err)
 	}
-	if variantID == "" {
+	if len(byProduct) == 0 {
 		return nil, nil
 	}
-	return buildPriceIndicationBlockFromVariant(ctx, history, variantID, storeID, currency, currentPrice)
+
+	variantIDs := make([]string, 0)
+	for _, productVariants := range byProduct {
+		for _, variant := range productVariants {
+			variantIDs = append(variantIDs, variant.ID)
+		}
+	}
+
+	pricesByVariant, err := prices.FindByVariantsCurrencyAndStore(ctx, variantIDs, currency, storeID)
+	if err != nil {
+		return nil, fmt.Errorf("listing price indication: batch prices: %w", err)
+	}
+
+	since := time.Now().UTC().AddDate(0, 0, -30)
+	lowestByVariant, err := history.LowestSinceByVariants(ctx, variantIDs, currency, storeID, since)
+	if err != nil {
+		return nil, fmt.Errorf("listing price indication: batch history: %w", err)
+	}
+
+	indications := make(map[string]map[string]interface{}, len(productIDs))
+	for _, productID := range productIDs {
+		productVariants := byProduct[productID]
+		if len(productVariants) == 0 {
+			continue
+		}
+		variantID, currentPrice := resolveLowestPriceVariantFromMaps(productVariants, pricesByVariant)
+		if variantID == "" || currentPrice == nil {
+			continue
+		}
+		blk, err := buildPriceIndicationBlockFromSnapshot(currentPrice, lowestByVariant[variantID], currency)
+		if err != nil {
+			return nil, err
+		}
+		if blk != nil {
+			indications[productID] = blk.Data
+		}
+	}
+	if len(indications) == 0 {
+		return nil, nil
+	}
+	return indications, nil
 }
 
-func resolveLowestPriceVariant(
-	ctx context.Context,
-	variants catalog.VariantRepository,
-	prices pricing.PriceRepository,
-	productID, storeID, currency string,
-) (string, *pricing.Price, error) {
-	productVariants, err := variants.ListByProductID(ctx, productID, 0, maxVariantsForPriceIndication)
-	if err != nil {
-		return "", nil, fmt.Errorf("price indication: list variants: %w", err)
-	}
+func resolveLowestPriceVariantFromMaps(
+	productVariants []catalog.Variant,
+	pricesByVariant map[string]*pricing.Price,
+) (string, *pricing.Price) {
 	var (
 		bestVariantID string
 		bestPrice     *pricing.Price
 	)
 	for _, variant := range productVariants {
-		price, err := lookupCurrentPrice(ctx, prices, variant.ID, currency, storeID)
-		if err != nil {
-			return "", nil, fmt.Errorf("price indication: current price: %w", err)
-		}
+		price := pricesByVariant[variant.ID]
 		if price == nil {
 			continue
 		}
@@ -94,7 +126,7 @@ func resolveLowestPriceVariant(
 			bestVariantID = variant.ID
 		}
 	}
-	return bestVariantID, bestPrice, nil
+	return bestVariantID, bestPrice
 }
 
 func buildPriceIndicationBlockFromVariant(
@@ -114,6 +146,20 @@ func buildPriceIndicationBlockFromVariant(
 	lowest, err := history.LowestSince(ctx, variantID, currency, storeID, since)
 	if err != nil {
 		return nil, fmt.Errorf("price indication: lowest since: %w", err)
+	}
+	return buildPriceIndicationBlockFromSnapshot(currentPrice, lowest, currency)
+}
+
+func buildPriceIndicationBlockFromSnapshot(
+	currentPrice *pricing.Price,
+	lowest *pricing.PriceSnapshot,
+	currency string,
+) (*Block, error) {
+	if currentPrice == nil {
+		return nil, nil
+	}
+	if currency == "" {
+		currency = "EUR"
 	}
 	if lowest == nil {
 		return nil, nil

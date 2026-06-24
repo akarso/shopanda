@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"github.com/akarso/shopanda/internal/testutil"
 	"testing"
 
 	"github.com/akarso/shopanda/internal/application/checkout"
@@ -42,6 +43,10 @@ func (r *mockVariantRepo) FindBySKU(_ context.Context, _ string) (*catalog.Varia
 func (r *mockVariantRepo) ListByProductID(_ context.Context, _ string, _, _ int) ([]catalog.Variant, error) {
 	return nil, nil
 }
+func (r *mockVariantRepo) ListByProductIDs(ctx context.Context, productIDs []string, limitPerProduct int) (map[string][]catalog.Variant, error) {
+	return testutil.ListByProductIDsFromList(ctx, r.ListByProductID, productIDs, limitPerProduct)
+}
+
 func (r *mockVariantRepo) Create(_ context.Context, _ *catalog.Variant) error { return nil }
 func (r *mockVariantRepo) Update(_ context.Context, _ *catalog.Variant) error { return nil }
 func (r *mockVariantRepo) WithTx(_ *sql.Tx) catalog.VariantRepository         { return r }
@@ -64,6 +69,10 @@ func (r *mockPriceRepo036) FindByVariantCurrencyAndStore(_ context.Context, vari
 		return nil, nil
 	}
 	return p, nil
+}
+
+func (r *mockPriceRepo036) FindByVariantsCurrencyAndStore(ctx context.Context, variantIDs []string, currency, storeID string) (map[string]*pricing.Price, error) {
+	return testutil.FindByVariantsCurrencyAndStoreFromFind(ctx, r.FindByVariantCurrencyAndStore, variantIDs, currency, storeID)
 }
 
 func (r *mockPriceRepo036) ListByVariantID(_ context.Context, _ string) ([]pricing.Price, error) {

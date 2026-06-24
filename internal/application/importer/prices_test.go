@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"github.com/akarso/shopanda/internal/testutil"
 	"strings"
 	"testing"
 	"time"
@@ -35,6 +36,10 @@ func (m *mockVariantRepoForPrice) FindBySKU(_ context.Context, sku string) (*cat
 func (m *mockVariantRepoForPrice) ListByProductID(_ context.Context, _ string, _, _ int) ([]catalog.Variant, error) {
 	return nil, nil
 }
+func (m *mockVariantRepoForPrice) ListByProductIDs(ctx context.Context, productIDs []string, limitPerProduct int) (map[string][]catalog.Variant, error) {
+	return testutil.ListByProductIDsFromList(ctx, m.ListByProductID, productIDs, limitPerProduct)
+}
+
 func (m *mockVariantRepoForPrice) Create(_ context.Context, _ *catalog.Variant) error { return nil }
 func (m *mockVariantRepoForPrice) Update(_ context.Context, _ *catalog.Variant) error { return nil }
 func (m *mockVariantRepoForPrice) WithTx(_ *sql.Tx) catalog.VariantRepository         { return m }
@@ -54,6 +59,10 @@ func (m *mockPriceRepoForImport) FindByVariantCurrencyAndStore(_ context.Context
 		return nil, m.findErr
 	}
 	return m.prices[variantID+":"+currency+":"+storeID], nil
+}
+
+func (m *mockPriceRepoForImport) FindByVariantsCurrencyAndStore(ctx context.Context, variantIDs []string, currency, storeID string) (map[string]*pricing.Price, error) {
+	return testutil.FindByVariantsCurrencyAndStoreFromFind(ctx, m.FindByVariantCurrencyAndStore, variantIDs, currency, storeID)
 }
 
 func (m *mockPriceRepoForImport) ListByVariantID(_ context.Context, _ string) ([]pricing.Price, error) {
@@ -357,6 +366,9 @@ func (m *countingVariantRepoForPrice) FindBySKU(_ context.Context, sku string) (
 func (m *countingVariantRepoForPrice) ListByProductID(_ context.Context, _ string, _, _ int) ([]catalog.Variant, error) {
 	return nil, nil
 }
+func (m *countingVariantRepoForPrice) ListByProductIDs(ctx context.Context, productIDs []string, limitPerProduct int) (map[string][]catalog.Variant, error) {
+	return testutil.ListByProductIDsFromList(ctx, m.ListByProductID, productIDs, limitPerProduct)
+}
 func (m *countingVariantRepoForPrice) Create(_ context.Context, _ *catalog.Variant) error { return nil }
 func (m *countingVariantRepoForPrice) Update(_ context.Context, _ *catalog.Variant) error { return nil }
 func (m *countingVariantRepoForPrice) WithTx(_ *sql.Tx) catalog.VariantRepository         { return m }
@@ -380,8 +392,11 @@ func (m *mockPriceHistoryRepoForImport) LowestSince(_ context.Context, _, _, _ s
 	return nil, nil
 }
 
-// --- history tests ---
+func (m *mockPriceHistoryRepoForImport) LowestSinceByVariants(ctx context.Context, variantIDs []string, currency, storeID string, since time.Time) (map[string]*pricing.PriceSnapshot, error) {
+	return testutil.LowestSinceByVariantsFromLowest(ctx, m.LowestSince, variantIDs, currency, storeID, since)
+}
 
+// --- history tests ---
 func TestPriceImport_RecordsHistory(t *testing.T) {
 	variants := priceVariants()
 	prices := newMockPriceRepoForImport()

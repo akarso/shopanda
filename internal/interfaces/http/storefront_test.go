@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"github.com/akarso/shopanda/internal/testutil"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -749,6 +750,10 @@ type storefrontVariantRepo struct {
 func (m *storefrontVariantRepo) ListByProductID(_ context.Context, _ string, _, _ int) ([]catalog.Variant, error) {
 	return m.variants, nil
 }
+func (m *storefrontVariantRepo) ListByProductIDs(ctx context.Context, productIDs []string, limitPerProduct int) (map[string][]catalog.Variant, error) {
+	return testutil.ListByProductIDsFromList(ctx, m.ListByProductID, productIDs, limitPerProduct)
+}
+
 func (m *storefrontVariantRepo) FindByID(_ context.Context, _ string) (*catalog.Variant, error) {
 	return nil, nil
 }
@@ -765,6 +770,10 @@ type storefrontPriceRepo struct {
 func (m *storefrontPriceRepo) FindByVariantCurrencyAndStore(_ context.Context, _, _, _ string) (*pricing.Price, error) {
 	return m.price, nil
 }
+func (m *storefrontPriceRepo) FindByVariantsCurrencyAndStore(ctx context.Context, variantIDs []string, currency, storeID string) (map[string]*pricing.Price, error) {
+	return testutil.FindByVariantsCurrencyAndStoreFromFind(ctx, m.FindByVariantCurrencyAndStore, variantIDs, currency, storeID)
+}
+
 func (m *storefrontPriceRepo) ListByVariantID(_ context.Context, _ string) ([]pricing.Price, error) {
 	return nil, nil
 }
@@ -782,6 +791,10 @@ func (m *storefrontPriceHistoryRepo) Record(_ context.Context, _ *pricing.PriceS
 }
 func (m *storefrontPriceHistoryRepo) LowestSince(_ context.Context, _, _, _ string, _ time.Time) (*pricing.PriceSnapshot, error) {
 	return m.snapshot, nil
+}
+
+func (m *storefrontPriceHistoryRepo) LowestSinceByVariants(ctx context.Context, variantIDs []string, currency, storeID string, since time.Time) (map[string]*pricing.PriceSnapshot, error) {
+	return testutil.LowestSinceByVariantsFromLowest(ctx, m.LowestSince, variantIDs, currency, storeID, since)
 }
 
 func createTestThemeWithOmnibusProduct(t *testing.T) *theme.Engine {
