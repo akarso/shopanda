@@ -36,6 +36,8 @@ This document maps **common EU merchant obligations** to Shopanda's current capa
 - Store-level enable/disable and styling hooks
 - Admin documentation for merchants (when discounts trigger recording)
 
+**Follow-up (PR-535):** batch variant/price/history reads for PLP composition to avoid per-product N+1 queries.
+
 ---
 
 ## WEEE Directive

@@ -79,10 +79,10 @@ Developers should still extend via plugins without core overrides. Optional infr
 | **A** | Post-sale & segments | PR-500–505 | Returns/RMA, customer groups, payment ledger admin |
 | **B** | Marketing & CMS depth | PR-510–514 | Advanced promotions, navigation builder, content blocks |
 | **C** | Admin platform | PR-520–524 | Admin user/role CRUD, MFA, audit export, shipping UI |
-| **D** | EU compliance | PR-530–534 | WEEE/EPR/GPSR fields, Omnibus storefront verification, OSS/e-invoicing stretch |
+| **D** | EU compliance | PR-530–535 | Omnibus storefront + PLP batch reads, WEEE/EPR/GPSR fields, OSS/e-invoicing stretch |
 | **E** | Platform & integrations | PR-540–544 | Merchant webhooks, plugin CLI, extra queue brokers (stretch) |
 
-Recommended order: **D (530)** early for EU merchants already on Shopanda, **A (500–503)** in parallel for operational maturity, then **B**, **C**, **E**.
+Recommended order: **D (530, then 535)** early for EU merchants already on Shopanda, **A (500–503)** in parallel for operational maturity, then **B**, **C**, **E**.
 
 Full compliance overview: [`specs/COMPLIANCE_EU.md`](specs/COMPLIANCE_EU.md).
 
@@ -144,6 +144,7 @@ Full compliance overview: [`specs/COMPLIANCE_EU.md`](specs/COMPLIANCE_EU.md).
 | PR | License | Title | Short description |
 | --- | --- | --- | --- |
 | PR-530 | [oss] | Omnibus storefront verification (done) | Ensure discounted PDP/PLP shows lowest prior price (30d) using existing `price_history`; admin toggle per store |
+| PR-535 | [oss] | Omnibus listing batch reads | Batch variant/price/history repo methods; refactor `ListingPriceIndicationStep` to avoid PLP N+1 |
 | PR-531 | [oss] | WEEE product fields | Producer registration number, WEEE category, take-back info; PDP/footer display helpers |
 | PR-532 | [oss] | EPR / packaging data | Packaging material weights, recyclability flags, registration IDs per market (config-driven) |
 | PR-533 | [oss] | GPSR product safety | Manufacturer/importer contact, safety warnings, product identifiers for applicable catalogs |
@@ -249,6 +250,7 @@ Items worth tracking but not yet assigned PR numbers:
 | 523 | C | [oss] | Audit export + retention |
 | 524 | C | [oss] | Shipping zones admin UI |
 | 530 | D | [oss] | Omnibus storefront verification (done) |
+| 535 | D | [oss] | Omnibus listing batch reads |
 | 531 | D | [oss] | WEEE product fields |
 | 532 | D | [oss] | EPR / packaging data |
 | 533 | D | [oss] | GPSR product safety |
