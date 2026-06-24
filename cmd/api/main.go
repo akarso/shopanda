@@ -461,10 +461,11 @@ func runServe(cfg *config.Config, log logger.Logger, embedScheduler bool) error 
 	pdp.AddStep(composition.ProductMetaStep{})
 	pdp.AddStep(composition.NewJSONLDProductStep(variantRepo, priceRepo, stockRepo))
 	pdp.AddStep(composition.NewCanonicalURLStep(baseURL))
-	pdp.AddStep(composition.NewPriceIndicationStep(variantRepo, priceRepo, priceHistoryRepo))
+	pdp.AddStep(composition.NewPriceIndicationStep(variantRepo, priceRepo, priceHistoryRepo, configRepo))
 	plp := composition.NewPipeline[composition.ListingContext]()
 	plp.AddStep(composition.ListingMetaStep{})
 	plp.AddStep(composition.NewListingCanonicalURLStep(baseURL))
+	plp.AddStep(composition.NewListingPriceIndicationStep(variantRepo, priceRepo, priceHistoryRepo, configRepo))
 	for _, s := range pluginApp.CompositionSteps("pdp") {
 		if v, ok := s.(composition.Step[composition.ProductContext]); ok {
 			pdp.AddStep(v)

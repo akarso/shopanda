@@ -71,7 +71,7 @@ Shopanda aims to provide a broad commerce foundation out of the box:
 | SEO | Structured data, sitemap generation, canonical URLs |
 | Multi-Store | Store contexts with scoped pricing and tax rules |
 | Localization | Translations for system and content, multi-language support |
-| Legal | GDPR consent, data export/delete, EU price indication (Omnibus data); WEEE/EPR/GPSR planned Phase 5 |
+| Legal | GDPR consent, data export/delete, Omnibus price indication on PDP/PLP (PR-530); WEEE/EPR/GPSR planned Phase 5 |
 | Mailer | Async email delivery with pluggable providers |
 
 ## Architecture

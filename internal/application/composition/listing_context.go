@@ -30,6 +30,7 @@ type ListingContext struct {
 	Blocks      []Block
 	Currency    string
 	Country     string
+	StoreID     string
 	Meta        map[string]interface{}
 }
 

@@ -73,6 +73,12 @@ func (m *mockStockRepo) SetStock(_ context.Context, _ *inventory.StockEntry) err
 func (m *mockStockRepo) ListStock(_ context.Context, _, _ int) ([]inventory.StockEntry, error) {
 	return nil, nil
 }
+func (m *mockStockRepo) ListInventory(_ context.Context, _, _ int, _ string) ([]inventory.InventoryListItem, error) {
+	return nil, nil
+}
+func (m *mockStockRepo) GetInventoryItem(_ context.Context, _ string) (inventory.InventoryListItem, error) {
+	return inventory.InventoryListItem{}, nil
+}
 
 // --- tests ---
 

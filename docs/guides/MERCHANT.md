@@ -314,7 +314,7 @@ Phase 4 delivered day-to-day catalog, order, promotion, and inventory admin. **P
 | Navigation / page blocks | Static theme + CMS pages | PR-511–512: builder |
 | Shipping zones UI | Admin API only | PR-524: settings UI |
 | WEEE / packaging / GPSR | Not modeled | PR-531–533: product compliance fields |
-| Omnibus price display | Backend data exists | PR-530: verified storefront display |
+| Omnibus price display | Backend + SSR templates (PR-530) | Toggle under Operations → Shipping → EU Price Indication |
 | Admin users / MFA | Seed user + fixed roles | PR-520–522: CRUD + optional TOTP |
 
 EU directive overview: [Compliance Reference](../phase-5-maturity/specs/COMPLIANCE_EU.md).

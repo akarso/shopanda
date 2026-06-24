@@ -56,6 +56,9 @@
                 {{ else }}
                 <a class="muted-note" href="/products/{{ .Slug }}">Check price</a>
                 {{ end }}
+                {{ if .ShowOmnibus }}
+                <span class="price-indication muted-note">Lowest in 30 days: {{ .OmnibusCurrency }} {{ .OmnibusLowest30d }}</span>
+                {{ end }}
                 {{ if .Availability }}
                 <span class="muted-note">{{ .Availability }}</span>
                 {{ end }}

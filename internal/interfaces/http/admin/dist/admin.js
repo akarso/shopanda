@@ -4121,18 +4121,22 @@
             '<div id="shipping-scope-banner" class="settings-scope-banner"></div>' +
             '<div class="settings-grid">' +
             '<section><h3>Tax Rules</h3><div id="settings-tax-msg"></div><form id="settings-tax-form"></form></section>' +
+            '<section><h3>EU Price Indication (Omnibus)</h3><div id="settings-legal-msg"></div><form id="settings-legal-form"></form></section>' +
             '</div>';
 
         Promise.all([
             api('/admin/stores'),
-            api('/admin/config?group=tax')
+            api('/admin/config?group=tax'),
+            api('/admin/config?group=legal')
         ]).then(function (results) {
             var stores = normalizeStores(results[0] && results[0].data && results[0].data.stores ? results[0].data.stores : []);
             var taxPayload = settingsPayloadFromResult(results[1]);
-            var activeScope = resolveSettingsScope([taxPayload]);
+            var legalPayload = settingsPayloadFromResult(results[2]);
+            var activeScope = resolveSettingsScope([taxPayload, legalPayload]);
 
             renderSettingsScopeBanner(stores, activeScope, 'shipping-scope-banner');
             renderTaxSettingsForm(container, taxPayload.entries, taxPayload.fieldScopes, activeScope.storeID);
+            renderLegalSettingsForm(container, legalPayload.entries, legalPayload.fieldScopes, activeScope.storeID);
         }).catch(function () {
             container.innerHTML = '<h2>Shipping</h2><p role="alert">Failed to load shipping settings.</p>';
         });
@@ -4663,6 +4667,21 @@
             saveSettingsEntries('settings-tax-msg', {
                 'tax.default_class': form.elements.default_class.value,
                 'tax.included': !!form.elements.tax_included.checked
+            });
+        });
+    }
+
+    function renderLegalSettingsForm(container, settings, fieldScopes, activeStoreID) {
+        var form = document.getElementById('settings-legal-form');
+        form.innerHTML = '' +
+            renderFormScopeNote(fieldScopes, ['legal.omnibus_enabled'], activeStoreID) +
+            '<label><input type="checkbox" name="omnibus_enabled" ' + (truthy(valueOf(settings, 'legal.omnibus_enabled', true)) ? 'checked' : '') + '> Show lowest price in last 30 days on discounted products (EU Omnibus)' + renderFieldScopeBadge(fieldScopes, 'legal.omnibus_enabled') + '</label>' +
+            '<small class="admin-form-hint">When enabled, product and listing pages show the lowest prior price when the current price is reduced.</small>' +
+            '<button type="submit">Save Legal Settings</button>';
+        form.addEventListener('submit', function (e) {
+            e.preventDefault();
+            saveSettingsEntries('settings-legal-msg', {
+                'legal.omnibus_enabled': !!form.elements.omnibus_enabled.checked
             });
         });
     }
