@@ -170,9 +170,13 @@ func (r *Return) MarkReceived() error {
 }
 
 // RecordRestocked marks inventory restock completion for a received return.
+// Repeated calls are a no-op and preserve the first RestockedAt timestamp.
 func (r *Return) RecordRestocked(restockedAt time.Time) error {
 	if r.status != StatusReceived {
 		return errors.New("return: can only record restock for a received return")
+	}
+	if r.RestockedAt != nil {
+		return nil
 	}
 	if restockedAt.IsZero() {
 		return errors.New("return: restocked_at must not be zero")

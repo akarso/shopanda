@@ -267,8 +267,14 @@ func TestService_Refund_RetryDoesNotDoubleRefund(t *testing.T) {
 	if err != nil {
 		t.Fatalf("RequestReturn: %v", err)
 	}
-	ret, _ = svc.Approve(context.Background(), ret.ID)
-	ret, _ = svc.Receive(context.Background(), ret.ID)
+	ret, err = svc.Approve(context.Background(), ret.ID)
+	if err != nil {
+		t.Fatalf("Approve: %v", err)
+	}
+	ret, err = svc.Receive(context.Background(), ret.ID)
+	if err != nil {
+		t.Fatalf("Receive: %v", err)
+	}
 	ret, err = svc.Refund(context.Background(), ret.ID)
 	if err != nil {
 		t.Fatalf("Refund: %v", err)

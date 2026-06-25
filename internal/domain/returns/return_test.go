@@ -53,6 +53,13 @@ func TestReturn_ApproveReceiveRefund(t *testing.T) {
 	if ret.RestockedAt == nil {
 		t.Fatal("expected restocked_at")
 	}
+	first := *ret.RestockedAt
+	if err := ret.RecordRestocked(now.Add(time.Hour)); err != nil {
+		t.Fatalf("RecordRestocked retry: %v", err)
+	}
+	if !ret.RestockedAt.Equal(first) {
+		t.Fatal("RecordRestocked should preserve first restocked_at")
+	}
 	if err := ret.MarkRefunded(now); err != nil {
 		t.Fatalf("MarkRefunded: %v", err)
 	}
