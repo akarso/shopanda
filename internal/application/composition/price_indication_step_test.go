@@ -2,6 +2,7 @@ package composition_test
 
 import (
 	"context"
+	"github.com/akarso/shopanda/internal/testutil"
 	"testing"
 	"time"
 
@@ -27,6 +28,10 @@ func (m *mockPriceHistoryRepo) LowestSince(_ context.Context, _, _, _ string, _ 
 }
 
 // --- tests ---
+
+func (m *mockPriceHistoryRepo) LowestSinceByVariants(ctx context.Context, variantIDs []string, currency, storeID string, since time.Time) (map[string]*pricing.PriceSnapshot, error) {
+	return testutil.LowestSinceByVariantsFromLowest(ctx, m.LowestSince, variantIDs, currency, storeID, since)
+}
 
 func TestPriceIndicationStep_Name(t *testing.T) {
 	s := composition.NewPriceIndicationStep(&mockVariantRepo{}, &mockPriceRepo{}, &mockPriceHistoryRepo{}, nil)

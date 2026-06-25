@@ -5,6 +5,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"github.com/akarso/shopanda/internal/testutil"
 	"strings"
 	"testing"
 	"time"
@@ -48,6 +49,14 @@ func (m *mockStockRepo) ListStock(_ context.Context, offset, limit int) ([]inven
 	return m.entries[offset:end], nil
 }
 
+func (m *mockStockRepo) ListInventory(_ context.Context, _, _ int, _ string) ([]inventory.InventoryListItem, error) {
+	return nil, nil
+}
+
+func (m *mockStockRepo) GetInventoryItem(_ context.Context, variantID string) (inventory.InventoryListItem, error) {
+	return inventory.InventoryListItem{VariantID: variantID}, nil
+}
+
 type mockVariantRepoForStockExport struct {
 	variants map[string]*catalog.Variant // keyed by ID
 }
@@ -61,6 +70,10 @@ func (m *mockVariantRepoForStockExport) FindBySKU(_ context.Context, _ string) (
 func (m *mockVariantRepoForStockExport) ListByProductID(_ context.Context, _ string, _, _ int) ([]catalog.Variant, error) {
 	return nil, nil
 }
+func (m *mockVariantRepoForStockExport) ListByProductIDs(ctx context.Context, productIDs []string, limitPerProduct int) (map[string][]catalog.Variant, error) {
+	return testutil.ListByProductIDsFromList(ctx, m.ListByProductID, productIDs, limitPerProduct)
+}
+
 func (m *mockVariantRepoForStockExport) Create(_ context.Context, _ *catalog.Variant) error {
 	return nil
 }

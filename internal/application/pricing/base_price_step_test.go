@@ -3,6 +3,7 @@ package pricing_test
 import (
 	"context"
 	"errors"
+	"github.com/akarso/shopanda/internal/testutil"
 	"testing"
 	"time"
 
@@ -31,6 +32,10 @@ func (m *mockPriceRepo) FindByVariantCurrencyAndStore(_ context.Context, variant
 		}
 	}
 	return nil, nil
+}
+
+func (m *mockPriceRepo) FindByVariantsCurrencyAndStore(ctx context.Context, variantIDs []string, currency, storeID string) (map[string]*domain.Price, error) {
+	return testutil.FindByVariantsCurrencyAndStoreFromFind(ctx, m.FindByVariantCurrencyAndStore, variantIDs, currency, storeID)
 }
 
 func (m *mockPriceRepo) ListByVariantID(_ context.Context, _ string) ([]domain.Price, error) {

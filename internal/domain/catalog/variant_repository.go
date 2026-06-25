@@ -16,6 +16,11 @@ type VariantRepository interface {
 	// offset must be >= 0, limit must be > 0. The implementation may cap limit.
 	ListByProductID(ctx context.Context, productID string, offset, limit int) ([]Variant, error)
 
+	// ListByProductIDs returns variants grouped by product ID, ordered by created_at asc
+	// within each product. Empty productIDs returns nil and no error. limitPerProduct
+	// must be > 0; implementations may cap it.
+	ListByProductIDs(ctx context.Context, productIDs []string, limitPerProduct int) (map[string][]Variant, error)
+
 	// Create persists a new variant.
 	Create(ctx context.Context, v *Variant) error
 

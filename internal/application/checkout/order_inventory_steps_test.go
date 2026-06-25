@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"github.com/akarso/shopanda/internal/testutil"
 	"testing"
 	"time"
 
@@ -524,6 +525,10 @@ func (r *mockVariantRepo037) FindBySKU(_ context.Context, _ string) (*catalog.Va
 func (r *mockVariantRepo037) ListByProductID(_ context.Context, _ string, _, _ int) ([]catalog.Variant, error) {
 	return nil, nil
 }
+func (r *mockVariantRepo037) ListByProductIDs(ctx context.Context, productIDs []string, limitPerProduct int) (map[string][]catalog.Variant, error) {
+	return testutil.ListByProductIDsFromList(ctx, r.ListByProductID, productIDs, limitPerProduct)
+}
+
 func (r *mockVariantRepo037) Create(_ context.Context, _ *catalog.Variant) error { return nil }
 func (r *mockVariantRepo037) Update(_ context.Context, _ *catalog.Variant) error { return nil }
 func (r *mockVariantRepo037) WithTx(_ *sql.Tx) catalog.VariantRepository         { return r }

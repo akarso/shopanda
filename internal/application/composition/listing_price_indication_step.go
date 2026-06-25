@@ -3,8 +3,8 @@ package composition
 import (
 	"fmt"
 
-	domainlegal "github.com/akarso/shopanda/internal/domain/legal"
 	"github.com/akarso/shopanda/internal/domain/catalog"
+	domainlegal "github.com/akarso/shopanda/internal/domain/legal"
 	"github.com/akarso/shopanda/internal/domain/pricing"
 )
 
@@ -46,18 +46,15 @@ func (s *ListingPriceIndicationStep) Apply(ctx *ListingContext) error {
 		return nil
 	}
 
-	indications := make(map[string]map[string]interface{}, len(ctx.Products))
+	productIDs := make([]string, 0, len(ctx.Products))
 	for _, product := range ctx.Products {
-		if product == nil {
-			continue
+		if product != nil {
+			productIDs = append(productIDs, product.ID)
 		}
-		blk, err := buildListingPriceIndicationBlock(ctx.Ctx, s.variants, s.prices, s.history, product.ID, ctx.StoreID, ctx.Currency)
-		if err != nil {
-			return err
-		}
-		if blk != nil {
-			indications[product.ID] = blk.Data
-		}
+	}
+	indications, err := buildListingPriceIndicationsBatch(ctx.Ctx, s.variants, s.prices, s.history, productIDs, ctx.StoreID, ctx.Currency)
+	if err != nil {
+		return err
 	}
 	if len(indications) == 0 {
 		return nil

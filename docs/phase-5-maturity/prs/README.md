@@ -21,7 +21,7 @@ Planned specs for **PR-500–549**. Individual PR markdown files will be added w
 | PR-523 | C | [oss] | planned | Audit export + retention |
 | PR-524 | C | [oss] | planned | Shipping zones admin UI |
 | PR-530 | D | [oss] | done | [Omnibus storefront verification](PR-530.md) |
-| PR-535 | D | [oss] | planned | [Omnibus listing batch reads](PR-535.md) |
+| PR-535 | D | [oss] | done | [Omnibus listing batch reads](PR-535.md) |
 | PR-531 | D | [oss] | planned | WEEE product fields |
 | PR-532 | D | [oss] | planned | EPR / packaging data |
 | PR-533 | D | [oss] | planned | GPSR product safety |
@@ -34,6 +34,6 @@ Planned specs for **PR-500–549**. Individual PR markdown files will be added w
 
 Roadmap: [`../ROADMAP.md`](../ROADMAP.md) · EU compliance: [`../specs/COMPLIANCE_EU.md`](../specs/COMPLIANCE_EU.md) · Licensing: [`../../COMMERCIAL.md`](../../COMMERCIAL.md)
 
-**Suggested next PRs:** PR-535 [oss] (Omnibus PLP batch reads, after 530) and PR-502 [oss] / PR-500 [b2b] in parallel.
+**Suggested next PRs:** PR-502 [oss] (returns domain) and PR-500 [b2b] (customer groups) in parallel.
 
 [b2b] PRs implement in [`plugins/b2b/`](../../../plugins/b2b/). [oss] PRs stay in open core.

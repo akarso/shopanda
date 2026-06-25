@@ -5,9 +5,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/alicebob/miniredis/v2"
 	"github.com/akarso/shopanda/internal/domain/cache"
 	inredis "github.com/akarso/shopanda/internal/infrastructure/redis"
+	"github.com/alicebob/miniredis/v2"
 )
 
 func setupRedisCache(t *testing.T, keyPrefix string) (*miniredis.Miniredis, cache.Cache) {

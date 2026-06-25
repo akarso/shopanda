@@ -292,7 +292,7 @@ func (r *OrderRepo) UpdateStatus(ctx context.Context, o *order.Order) error {
 }
 
 // LinkToCustomer persists customer ownership for a previously guest order.
-// The WHERE guard (customer_id = '') ensures an already-linked order is never
+// The WHERE guard (customer_id = ”) ensures an already-linked order is never
 // silently reassigned to another customer.
 func (r *OrderRepo) LinkToCustomer(ctx context.Context, o *order.Order) error {
 	if o == nil {

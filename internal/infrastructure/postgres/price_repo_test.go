@@ -4,6 +4,7 @@ import (
 	"context"
 	"testing"
 
+	"github.com/akarso/shopanda/internal/domain/catalog"
 	"github.com/akarso/shopanda/internal/domain/pricing"
 	"github.com/akarso/shopanda/internal/domain/shared"
 	"github.com/akarso/shopanda/internal/infrastructure/postgres"
@@ -336,5 +337,57 @@ func TestPriceRepo_StoreScopedCoexistence(t *testing.T) {
 	}
 	if foundScoped == nil || foundScoped.Amount.Amount() != 799 {
 		t.Errorf("scoped amount = %v, want 799", foundScoped)
+	}
+}
+
+func TestPriceRepo_FindByVariantsCurrencyAndStore_Fallback(t *testing.T) {
+	db := testDB(t)
+	ensureProductsTable(t, db)
+	t.Cleanup(func() { db.Exec("DELETE FROM prices") })
+
+	ctx := context.Background()
+
+	prodRepo, err := postgres.NewProductRepo(db)
+	if err != nil {
+		t.Fatalf("NewProductRepo: %v", err)
+	}
+	prod := mustNewProduct(t, "Batch Product", "test-batch-"+id.New()[:8])
+	if err := prodRepo.Create(ctx, &prod); err != nil {
+		t.Fatalf("create product: %v", err)
+	}
+	variantRepo, err := postgres.NewVariantRepo(db)
+	if err != nil {
+		t.Fatalf("NewVariantRepo: %v", err)
+	}
+	vScoped := mustNewVariant(t, prod.ID, "SKU-SCOPED-"+id.New()[:8])
+	vGlobal := mustNewVariant(t, prod.ID, "SKU-GLOBAL-"+id.New()[:8])
+	for _, v := range []catalog.Variant{vScoped, vGlobal} {
+		if err := variantRepo.Create(ctx, &v); err != nil {
+			t.Fatalf("create variant: %v", err)
+		}
+	}
+
+	repo, err := postgres.NewPriceRepo(db)
+	if err != nil {
+		t.Fatalf("NewPriceRepo: %v", err)
+	}
+	scoped := mustNewPriceWithStore(t, vScoped.ID, "store-de", 500, "EUR")
+	global := mustNewPriceWithStore(t, vGlobal.ID, "", 300, "EUR")
+	if err := repo.Upsert(ctx, &scoped); err != nil {
+		t.Fatalf("upsert scoped: %v", err)
+	}
+	if err := repo.Upsert(ctx, &global); err != nil {
+		t.Fatalf("upsert global: %v", err)
+	}
+
+	got, err := repo.FindByVariantsCurrencyAndStore(ctx, []string{vScoped.ID, vGlobal.ID}, "EUR", "store-de")
+	if err != nil {
+		t.Fatalf("FindByVariantsCurrencyAndStore: %v", err)
+	}
+	if got[vScoped.ID] == nil || got[vScoped.ID].Amount.Amount() != 500 {
+		t.Fatalf("scoped price = %v, want 500", got[vScoped.ID])
+	}
+	if got[vGlobal.ID] == nil || got[vGlobal.ID].Amount.Amount() != 300 {
+		t.Fatalf("global fallback price = %v, want 300", got[vGlobal.ID])
 	}
 }

@@ -38,7 +38,7 @@ type ConfigDefinition struct {
 
 // ConfigRegistry collects plugin config schemas registered during Init.
 type ConfigRegistry struct {
-	fields map[string]ConfigField
+	fields  map[string]ConfigField
 	plugins map[string]string // key -> plugin name
 }
 

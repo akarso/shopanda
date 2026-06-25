@@ -300,8 +300,8 @@ type RedisCacheConfig struct {
 // QueueConfig holds background job queue settings.
 type QueueConfig struct {
 	Driver   string              `yaml:"driver"`
-	Redis    RedisQueueConfig      `yaml:"redis"`
-	RabbitMQ RabbitMQQueueConfig   `yaml:"rabbitmq"`
+	Redis    RedisQueueConfig    `yaml:"redis"`
+	RabbitMQ RabbitMQQueueConfig `yaml:"rabbitmq"`
 }
 
 // RabbitMQQueueConfig holds RabbitMQ job queue connection settings.
@@ -318,9 +318,9 @@ type RedisQueueConfig struct {
 
 // PluginsConfig holds plugin system settings.
 type PluginsConfig struct {
-	Core    CorePluginsConfig    `yaml:"core"`
-	Example ExamplePluginConfig  `yaml:"example"`
-	B2B     B2BPluginConfig      `yaml:"b2b"`
+	Core    CorePluginsConfig   `yaml:"core"`
+	Example ExamplePluginConfig `yaml:"example"`
+	B2B     B2BPluginConfig     `yaml:"b2b"`
 }
 
 // ExamplePluginConfig toggles the reference external plugin in plugins/example.

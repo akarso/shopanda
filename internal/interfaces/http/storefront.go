@@ -123,16 +123,16 @@ type StorefrontProductPageData struct {
 }
 
 type StorefrontProductCard struct {
-	Name              string
-	Slug              string
-	Description       string
-	ImageURL          string
-	HasPrice          bool
-	PriceText         string
-	Availability      string
-	OmnibusLowest30d  string
-	OmnibusCurrency   string
-	ShowOmnibus       bool
+	Name             string
+	Slug             string
+	Description      string
+	ImageURL         string
+	HasPrice         bool
+	PriceText        string
+	Availability     string
+	OmnibusLowest30d string
+	OmnibusCurrency  string
+	ShowOmnibus      bool
 }
 
 type StorefrontPaginationLink struct {

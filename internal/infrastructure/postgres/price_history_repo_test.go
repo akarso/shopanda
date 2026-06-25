@@ -123,3 +123,43 @@ func TestPriceHistoryRepo_Record_Nil(t *testing.T) {
 		t.Fatal("expected error for nil snapshot")
 	}
 }
+
+func TestPriceHistoryRepo_LowestSinceByVariants(t *testing.T) {
+	db := testDB(t)
+	ensureProductsTable(t, db)
+	mustExec(t, db, "DELETE FROM price_history")
+	t.Cleanup(func() { mustExec(t, db, "DELETE FROM price_history") })
+
+	repo, err := postgres.NewPriceHistoryRepo(db)
+	if err != nil {
+		t.Fatalf("NewPriceHistoryRepo: %v", err)
+	}
+	ctx := context.Background()
+
+	v1 := id.New()
+	v2 := id.New()
+	for _, pair := range []struct {
+		variantID string
+		amount    int64
+	}{
+		{v1, 3000},
+		{v1, 1500},
+		{v2, 2200},
+	} {
+		s := mustNewPriceSnapshot(t, pair.variantID, pair.amount)
+		if err := repo.Record(ctx, &s); err != nil {
+			t.Fatalf("Record: %v", err)
+		}
+	}
+
+	got, err := repo.LowestSinceByVariants(ctx, []string{v1, v2, id.New()}, "USD", "", time.Now().Add(-time.Hour))
+	if err != nil {
+		t.Fatalf("LowestSinceByVariants: %v", err)
+	}
+	if got[v1].Amount.Amount() != 1500 {
+		t.Errorf("v1 lowest = %d, want 1500", got[v1].Amount.Amount())
+	}
+	if got[v2].Amount.Amount() != 2200 {
+		t.Errorf("v2 lowest = %d, want 2200", got[v2].Amount.Amount())
+	}
+}

@@ -9,6 +9,7 @@ import (
 
 	"github.com/akarso/shopanda/internal/domain/pricing"
 	"github.com/akarso/shopanda/internal/domain/shared"
+	"github.com/lib/pq"
 )
 
 // Compile-time check that PriceHistoryRepo implements pricing.PriceHistoryRepository.
@@ -78,6 +79,53 @@ func (r *PriceHistoryRepo) LowestSince(ctx context.Context, variantID, currency,
 	}
 	s.Amount = m
 	return &s, nil
+}
+
+// LowestSinceByVariants returns the lowest snapshot per variant in the window.
+func (r *PriceHistoryRepo) LowestSinceByVariants(ctx context.Context, variantIDs []string, currency, storeID string, since time.Time) (map[string]*pricing.PriceSnapshot, error) {
+	if len(variantIDs) == 0 {
+		return nil, nil
+	}
+
+	const q = `SELECT DISTINCT ON (variant_id) id, variant_id, store_id, currency, amount, recorded_at
+		FROM price_history
+		WHERE variant_id = ANY($1) AND currency = $2 AND store_id = $3 AND recorded_at >= $4
+		ORDER BY variant_id, amount ASC, recorded_at ASC`
+	// Uses idx_price_history_lookup (variant_id, currency, store_id, amount, recorded_at).
+
+	rows, err := r.query(ctx, q, pq.Array(variantIDs), currency, storeID, since)
+	if err != nil {
+		return nil, fmt.Errorf("price_history_repo: lowest since by variants: %w", err)
+	}
+	defer rows.Close()
+
+	out := make(map[string]*pricing.PriceSnapshot)
+	for rows.Next() {
+		var s pricing.PriceSnapshot
+		var amount int64
+		var cur string
+		if err := rows.Scan(&s.ID, &s.VariantID, &s.StoreID, &cur, &amount, &s.RecordedAt); err != nil {
+			return nil, fmt.Errorf("price_history_repo: lowest since by variants scan: %w", err)
+		}
+		m, err := shared.NewMoney(amount, cur)
+		if err != nil {
+			return nil, fmt.Errorf("price_history_repo: reconstruct money: %w", err)
+		}
+		s.Amount = m
+		out[s.VariantID] = &s
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("price_history_repo: lowest since by variants rows: %w", err)
+	}
+	return out, nil
+}
+
+// query delegates to tx or db.
+func (r *PriceHistoryRepo) query(ctx context.Context, q string, args ...interface{}) (*sql.Rows, error) {
+	if r.tx != nil {
+		return r.tx.QueryContext(ctx, q, args...)
+	}
+	return r.db.QueryContext(ctx, q, args...)
 }
 
 // queryRow delegates to tx or db.

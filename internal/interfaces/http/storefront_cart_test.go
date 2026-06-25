@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/tls"
+	"github.com/akarso/shopanda/internal/testutil"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -82,6 +83,10 @@ func (r *storefrontPriceRepoStub) FindByVariantCurrencyAndStore(_ context.Contex
 	return r.prices[variantID+":"+currency+":"+storeID], nil
 }
 
+func (r *storefrontPriceRepoStub) FindByVariantsCurrencyAndStore(ctx context.Context, variantIDs []string, currency, storeID string) (map[string]*pricing.Price, error) {
+	return testutil.FindByVariantsCurrencyAndStoreFromFind(ctx, r.FindByVariantCurrencyAndStore, variantIDs, currency, storeID)
+}
+
 func (r *storefrontPriceRepoStub) ListByVariantID(_ context.Context, _ string) ([]pricing.Price, error) {
 	return nil, nil
 }
@@ -113,6 +118,10 @@ func (m *mockStorefrontVariantRepo) ListByProductID(ctx context.Context, product
 		return m.listByProductIDFn(ctx, productID, offset, limit)
 	}
 	return nil, nil
+}
+
+func (m *mockStorefrontVariantRepo) ListByProductIDs(ctx context.Context, productIDs []string, limitPerProduct int) (map[string][]catalog.Variant, error) {
+	return testutil.ListByProductIDsFromList(ctx, m.ListByProductID, productIDs, limitPerProduct)
 }
 
 func (m *mockStorefrontVariantRepo) Create(_ context.Context, _ *catalog.Variant) error { return nil }

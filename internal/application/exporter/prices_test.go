@@ -5,6 +5,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"github.com/akarso/shopanda/internal/testutil"
 	"strings"
 	"testing"
 
@@ -23,6 +24,10 @@ type mockPriceRepoForExport struct {
 
 func (m *mockPriceRepoForExport) FindByVariantCurrencyAndStore(_ context.Context, _, _, _ string) (*pricing.Price, error) {
 	return nil, nil
+}
+
+func (m *mockPriceRepoForExport) FindByVariantsCurrencyAndStore(ctx context.Context, variantIDs []string, currency, storeID string) (map[string]*pricing.Price, error) {
+	return testutil.FindByVariantsCurrencyAndStoreFromFind(ctx, m.FindByVariantCurrencyAndStore, variantIDs, currency, storeID)
 }
 
 func (m *mockPriceRepoForExport) ListByVariantID(_ context.Context, _ string) ([]pricing.Price, error) {
@@ -60,6 +65,10 @@ func (m *mockVariantRepoForPriceExport) FindBySKU(_ context.Context, _ string) (
 func (m *mockVariantRepoForPriceExport) ListByProductID(_ context.Context, _ string, _, _ int) ([]catalog.Variant, error) {
 	return nil, nil
 }
+func (m *mockVariantRepoForPriceExport) ListByProductIDs(ctx context.Context, productIDs []string, limitPerProduct int) (map[string][]catalog.Variant, error) {
+	return testutil.ListByProductIDsFromList(ctx, m.ListByProductID, productIDs, limitPerProduct)
+}
+
 func (m *mockVariantRepoForPriceExport) Create(_ context.Context, _ *catalog.Variant) error {
 	return nil
 }
@@ -250,6 +259,9 @@ func (m *countingVariantRepo) FindBySKU(_ context.Context, _ string) (*catalog.V
 }
 func (m *countingVariantRepo) ListByProductID(_ context.Context, _ string, _, _ int) ([]catalog.Variant, error) {
 	return nil, nil
+}
+func (m *countingVariantRepo) ListByProductIDs(ctx context.Context, productIDs []string, limitPerProduct int) (map[string][]catalog.Variant, error) {
+	return testutil.ListByProductIDsFromList(ctx, m.ListByProductID, productIDs, limitPerProduct)
 }
 func (m *countingVariantRepo) Create(_ context.Context, _ *catalog.Variant) error { return nil }
 func (m *countingVariantRepo) Update(_ context.Context, _ *catalog.Variant) error { return nil }

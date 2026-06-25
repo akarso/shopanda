@@ -3,6 +3,7 @@ package postgres_test
 import (
 	"context"
 	"database/sql"
+	"fmt"
 	"testing"
 
 	"github.com/akarso/shopanda/internal/domain/catalog"
@@ -299,5 +300,63 @@ func TestVariantRepo_Attributes(t *testing.T) {
 	}
 	if got.Attributes["color"] != "red" {
 		t.Errorf("attributes[color] = %v, want red", got.Attributes["color"])
+	}
+}
+
+func TestVariantRepo_ListByProductIDs(t *testing.T) {
+	db := testDB(t)
+	ensureVariantsTable(t, db)
+	repo, err := postgres.NewVariantRepo(db)
+	if err != nil {
+		t.Fatalf("NewVariantRepo: %v", err)
+	}
+	ctx := context.Background()
+
+	p1 := createTestProduct(t, db)
+	p2 := createTestProduct(t, db)
+	v1 := mustNewVariant(t, p1.ID, "BATCH-A")
+	v2 := mustNewVariant(t, p1.ID, "BATCH-B")
+	v3 := mustNewVariant(t, p2.ID, "BATCH-C")
+	for _, v := range []catalog.Variant{v1, v2, v3} {
+		if err := repo.Create(ctx, &v); err != nil {
+			t.Fatalf("Create: %v", err)
+		}
+	}
+
+	got, err := repo.ListByProductIDs(ctx, []string{p1.ID, p2.ID, id.New()}, 10)
+	if err != nil {
+		t.Fatalf("ListByProductIDs: %v", err)
+	}
+	if len(got[p1.ID]) != 2 {
+		t.Fatalf("p1 variants = %d, want 2", len(got[p1.ID]))
+	}
+	if len(got[p2.ID]) != 1 {
+		t.Fatalf("p2 variants = %d, want 1", len(got[p2.ID]))
+	}
+}
+
+func TestVariantRepo_ListByProductIDs_RespectsLimitPerProduct(t *testing.T) {
+	db := testDB(t)
+	ensureVariantsTable(t, db)
+	repo, err := postgres.NewVariantRepo(db)
+	if err != nil {
+		t.Fatalf("NewVariantRepo: %v", err)
+	}
+	ctx := context.Background()
+
+	p := createTestProduct(t, db)
+	for i := 0; i < 5; i++ {
+		v := mustNewVariant(t, p.ID, fmt.Sprintf("LIMIT-SKU-%d", i))
+		if err := repo.Create(ctx, &v); err != nil {
+			t.Fatalf("Create: %v", err)
+		}
+	}
+
+	got, err := repo.ListByProductIDs(ctx, []string{p.ID}, 2)
+	if err != nil {
+		t.Fatalf("ListByProductIDs: %v", err)
+	}
+	if len(got[p.ID]) != 2 {
+		t.Fatalf("variants = %d, want 2 (server-side limit)", len(got[p.ID]))
 	}
 }

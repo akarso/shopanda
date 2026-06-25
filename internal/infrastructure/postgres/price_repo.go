@@ -8,6 +8,7 @@ import (
 
 	"github.com/akarso/shopanda/internal/domain/pricing"
 	"github.com/akarso/shopanda/internal/domain/shared"
+	"github.com/lib/pq"
 )
 
 // Compile-time check that PriceRepo implements pricing.PriceRepository.
@@ -57,6 +58,69 @@ func (r *PriceRepo) FindByVariantCurrencyAndStore(ctx context.Context, variantID
 	}
 	p.Amount = m
 	return &p, nil
+}
+
+// FindByVariantsCurrencyAndStore returns prices for multiple variants.
+func (r *PriceRepo) FindByVariantsCurrencyAndStore(ctx context.Context, variantIDs []string, currency, storeID string) (map[string]*pricing.Price, error) {
+	if len(variantIDs) == 0 {
+		return nil, nil
+	}
+
+	const q = `SELECT id, variant_id, store_id, currency, amount, created_at
+		FROM prices WHERE variant_id = ANY($1) AND currency = $2 AND store_id = $3`
+
+	rows, err := r.query(ctx, q, pq.Array(variantIDs), currency, storeID)
+	if err != nil {
+		return nil, fmt.Errorf("price_repo: find by variants currency and store: %w", err)
+	}
+	defer rows.Close()
+
+	out, err := scanPricesByVariant(rows)
+	if err != nil {
+		return nil, err
+	}
+
+	if storeID != "" {
+		var missing []string
+		for _, id := range variantIDs {
+			if out[id] == nil {
+				missing = append(missing, id)
+			}
+		}
+		if len(missing) > 0 {
+			fallback, err := r.FindByVariantsCurrencyAndStore(ctx, missing, currency, "")
+			if err != nil {
+				return nil, err
+			}
+			for id, price := range fallback {
+				out[id] = price
+			}
+		}
+	}
+
+	return out, nil
+}
+
+func scanPricesByVariant(rows *sql.Rows) (map[string]*pricing.Price, error) {
+	out := make(map[string]*pricing.Price)
+	for rows.Next() {
+		var p pricing.Price
+		var amount int64
+		var cur string
+		if err := rows.Scan(&p.ID, &p.VariantID, &p.StoreID, &cur, &amount, &p.CreatedAt); err != nil {
+			return nil, fmt.Errorf("price_repo: scan: %w", err)
+		}
+		m, err := shared.NewMoney(amount, cur)
+		if err != nil {
+			return nil, fmt.Errorf("price_repo: reconstruct money: %w", err)
+		}
+		p.Amount = m
+		out[p.VariantID] = &p
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("price_repo: rows: %w", err)
+	}
+	return out, nil
 }
 
 // ListByVariantID returns all prices for a variant.
