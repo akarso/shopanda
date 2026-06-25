@@ -139,14 +139,21 @@ func (r *VariantRepo) ListByProductIDs(ctx context.Context, productIDs []string,
 	}
 
 	const q = `SELECT id, product_id, sku, name, weight, attributes, created_at, updated_at
-		FROM variants WHERE product_id = ANY($1) ORDER BY product_id, created_at ASC`
+		FROM (
+			SELECT id, product_id, sku, name, weight, attributes, created_at, updated_at,
+				ROW_NUMBER() OVER (PARTITION BY product_id ORDER BY created_at ASC) AS rn
+			FROM variants
+			WHERE product_id = ANY($1)
+		) ranked
+		WHERE rn <= $2
+		ORDER BY product_id, created_at ASC`
 
 	var rows *sql.Rows
 	var err error
 	if r.tx != nil {
-		rows, err = r.tx.QueryContext(ctx, q, pq.Array(productIDs))
+		rows, err = r.tx.QueryContext(ctx, q, pq.Array(productIDs), limitPerProduct)
 	} else {
-		rows, err = r.db.QueryContext(ctx, q, pq.Array(productIDs))
+		rows, err = r.db.QueryContext(ctx, q, pq.Array(productIDs), limitPerProduct)
 	}
 	if err != nil {
 		return nil, fmt.Errorf("variant_repo: list by products: %w", err)
@@ -159,11 +166,7 @@ func (r *VariantRepo) ListByProductIDs(ctx context.Context, productIDs []string,
 		if err != nil {
 			return nil, fmt.Errorf("variant_repo: list by products scan: %w", err)
 		}
-		list := out[v.ProductID]
-		if len(list) >= limitPerProduct {
-			continue
-		}
-		out[v.ProductID] = append(list, *v)
+		out[v.ProductID] = append(out[v.ProductID], *v)
 	}
 	if err := rows.Err(); err != nil {
 		return nil, fmt.Errorf("variant_repo: list by products rows: %w", err)

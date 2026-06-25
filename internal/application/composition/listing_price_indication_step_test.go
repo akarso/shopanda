@@ -147,52 +147,76 @@ func (m *batchCallVariantRepo) ListByProductIDs(ctx context.Context, productIDs 
 
 type batchCallPriceRepo struct {
 	mockPriceRepo
-	batchCalls int
+	batchCalls        int
+	lastBatchCurrency string
 }
 
 func (m *batchCallPriceRepo) FindByVariantsCurrencyAndStore(ctx context.Context, variantIDs []string, currency, storeID string) (map[string]*pricing.Price, error) {
 	m.batchCalls++
+	m.lastBatchCurrency = currency
 	return testutil.FindByVariantsCurrencyAndStoreFromFind(ctx, m.FindByVariantCurrencyAndStore, variantIDs, currency, storeID)
 }
 
 type batchCallHistoryRepo struct {
 	mockPriceHistoryRepo
-	batchCalls int
+	batchCalls        int
+	lastBatchCurrency string
 }
 
 func (m *batchCallHistoryRepo) LowestSinceByVariants(ctx context.Context, variantIDs []string, currency, storeID string, since time.Time) (map[string]*pricing.PriceSnapshot, error) {
 	m.batchCalls++
+	m.lastBatchCurrency = currency
 	return testutil.LowestSinceByVariantsFromLowest(ctx, m.LowestSince, variantIDs, currency, storeID, since)
 }
 
 func TestListingPriceIndicationStep_UsesBatchReads(t *testing.T) {
-	variants := &batchCallVariantRepo{mockVariantRepo: mockVariantRepo{variants: []catalog.Variant{
-		{ID: "v1", ProductID: "p1"},
-		{ID: "v2", ProductID: "p2"},
-	}}}
-	prices := &batchCallPriceRepo{mockPriceRepo: mockPriceRepo{price: &pricing.Price{VariantID: "v1", Amount: shared.MustNewMoney(3999, "EUR")}}}
-	history := &batchCallHistoryRepo{mockPriceHistoryRepo: mockPriceHistoryRepo{snapshot: &pricing.PriceSnapshot{
-		VariantID:  "v1",
-		Amount:     shared.MustNewMoney(2999, "EUR"),
-		RecordedAt: time.Now().UTC().AddDate(0, 0, -10),
-	}}}
+	runBatchReadTest := func(t *testing.T, currency string) {
+		t.Helper()
+		variants := &batchCallVariantRepo{mockVariantRepo: mockVariantRepo{variants: []catalog.Variant{
+			{ID: "v1", ProductID: "p1"},
+			{ID: "v2", ProductID: "p2"},
+		}}}
+		prices := &batchCallPriceRepo{mockPriceRepo: mockPriceRepo{price: &pricing.Price{VariantID: "v1", Amount: shared.MustNewMoney(3999, "EUR")}}}
+		history := &batchCallHistoryRepo{mockPriceHistoryRepo: mockPriceHistoryRepo{snapshot: &pricing.PriceSnapshot{
+			VariantID:  "v1",
+			Amount:     shared.MustNewMoney(2999, "EUR"),
+			RecordedAt: time.Now().UTC().AddDate(0, 0, -10),
+		}}}
 
-	s := composition.NewListingPriceIndicationStep(variants, prices, history, nil)
-	ctx := composition.NewListingContext([]*catalog.Product{
-		{ID: "p1", Name: "One"},
-		{ID: "p2", Name: "Two"},
+		s := composition.NewListingPriceIndicationStep(variants, prices, history, nil)
+		ctx := composition.NewListingContext([]*catalog.Product{
+			{ID: "p1", Name: "One"},
+			{ID: "p2", Name: "Two"},
+		})
+		ctx.Currency = currency
+		if err := s.Apply(ctx); err != nil {
+			t.Fatalf("Apply: %v", err)
+		}
+		if variants.listByProductIDsCalls != 1 {
+			t.Fatalf("ListByProductIDs calls = %d, want 1", variants.listByProductIDsCalls)
+		}
+		if prices.batchCalls != 1 {
+			t.Fatalf("FindByVariantsCurrencyAndStore calls = %d, want 1", prices.batchCalls)
+		}
+		if history.batchCalls != 1 {
+			t.Fatalf("LowestSinceByVariants calls = %d, want 1", history.batchCalls)
+		}
+		wantCurrency := currency
+		if wantCurrency == "" {
+			wantCurrency = "EUR"
+		}
+		if prices.lastBatchCurrency != wantCurrency {
+			t.Fatalf("batch price currency = %q, want %q", prices.lastBatchCurrency, wantCurrency)
+		}
+		if history.lastBatchCurrency != wantCurrency {
+			t.Fatalf("batch history currency = %q, want %q", history.lastBatchCurrency, wantCurrency)
+		}
+	}
+
+	t.Run("explicit currency", func(t *testing.T) {
+		runBatchReadTest(t, "EUR")
 	})
-	ctx.Currency = "EUR"
-	if err := s.Apply(ctx); err != nil {
-		t.Fatalf("Apply: %v", err)
-	}
-	if variants.listByProductIDsCalls != 1 {
-		t.Fatalf("ListByProductIDs calls = %d, want 1", variants.listByProductIDsCalls)
-	}
-	if prices.batchCalls != 1 {
-		t.Fatalf("FindByVariantsCurrencyAndStore calls = %d, want 1", prices.batchCalls)
-	}
-	if history.batchCalls != 1 {
-		t.Fatalf("LowestSinceByVariants calls = %d, want 1", history.batchCalls)
-	}
+	t.Run("empty currency defaults to EUR", func(t *testing.T) {
+		runBatchReadTest(t, "")
+	})
 }

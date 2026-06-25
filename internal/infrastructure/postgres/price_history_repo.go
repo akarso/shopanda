@@ -91,6 +91,7 @@ func (r *PriceHistoryRepo) LowestSinceByVariants(ctx context.Context, variantIDs
 		FROM price_history
 		WHERE variant_id = ANY($1) AND currency = $2 AND store_id = $3 AND recorded_at >= $4
 		ORDER BY variant_id, amount ASC, recorded_at ASC`
+	// Uses idx_price_history_lookup (variant_id, currency, store_id, amount, recorded_at).
 
 	rows, err := r.query(ctx, q, pq.Array(variantIDs), currency, storeID, since)
 	if err != nil {

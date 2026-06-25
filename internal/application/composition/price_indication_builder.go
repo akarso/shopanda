@@ -13,6 +13,15 @@ const metaPriceIndications = "price_indications"
 
 const maxVariantsForPriceIndication = 100
 
+const defaultPriceIndicationCurrency = "EUR"
+
+func priceIndicationCurrency(currency string) string {
+	if currency == "" {
+		return defaultPriceIndicationCurrency
+	}
+	return currency
+}
+
 // priceIndicationData holds Omnibus block payload fields.
 type priceIndicationData struct {
 	CurrentPrice   string
@@ -65,6 +74,8 @@ func buildListingPriceIndicationsBatch(
 	if len(byProduct) == 0 {
 		return nil, nil
 	}
+
+	currency = priceIndicationCurrency(currency)
 
 	variantIDs := make([]string, 0)
 	for _, productVariants := range byProduct {
@@ -138,9 +149,7 @@ func buildPriceIndicationBlockFromVariant(
 	if currentPrice == nil {
 		return nil, nil
 	}
-	if currency == "" {
-		currency = "EUR"
-	}
+	currency = priceIndicationCurrency(currency)
 
 	since := time.Now().UTC().AddDate(0, 0, -30)
 	lowest, err := history.LowestSince(ctx, variantID, currency, storeID, since)
@@ -158,9 +167,7 @@ func buildPriceIndicationBlockFromSnapshot(
 	if currentPrice == nil {
 		return nil, nil
 	}
-	if currency == "" {
-		currency = "EUR"
-	}
+	currency = priceIndicationCurrency(currency)
 	if lowest == nil {
 		return nil, nil
 	}
