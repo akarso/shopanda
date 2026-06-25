@@ -620,16 +620,14 @@ func runServe(cfg *config.Config, log logger.Logger, embedScheduler bool) error 
 
 	// Refund handler: only available when the payment provider supports refunds.
 	var refundHandler *shophttp.RefundHandler
+	var stripeRefunder payment.Refunder
 	if refunder, ok := payRegistry.Refunder(payment.MethodStripe); ok {
+		stripeRefunder = refunder
 		refundHandler = shophttp.NewRefundHandler(paymentRepo, refunder, bus)
 		log.Info("payment.refund_handler_enabled", nil)
 	}
 
-	var returnRefunder payment.Refunder
-	if refunder, ok := payRegistry.Refunder(payment.MethodStripe); ok {
-		returnRefunder = refunder
-	}
-	returnService := returnsApp.NewService(returnRepo, orderRepo, stockRepo, paymentRepo, returnRefunder, bus, log)
+	returnService := returnsApp.NewService(returnRepo, orderRepo, stockRepo, paymentRepo, stripeRefunder, bus, log)
 	_ = returnService // HTTP handlers in PR-503
 
 	shippingRates := shophttp.NewShippingRatesHandler(flatRateProvider)

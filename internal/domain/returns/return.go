@@ -159,15 +159,24 @@ func (r *Return) Cancel() error {
 	return nil
 }
 
-// MarkReceived transitions approved → received.
-func (r *Return) MarkReceived(restockedAt time.Time) error {
+// MarkReceived transitions approved → received without recording restock time.
+func (r *Return) MarkReceived() error {
 	if r.status != StatusApproved {
 		return errors.New("return: can only receive an approved return")
+	}
+	r.status = StatusReceived
+	r.touch()
+	return nil
+}
+
+// RecordRestocked marks inventory restock completion for a received return.
+func (r *Return) RecordRestocked(restockedAt time.Time) error {
+	if r.status != StatusReceived {
+		return errors.New("return: can only record restock for a received return")
 	}
 	if restockedAt.IsZero() {
 		return errors.New("return: restocked_at must not be zero")
 	}
-	r.status = StatusReceived
 	t := restockedAt.UTC()
 	r.RestockedAt = &t
 	r.touch()

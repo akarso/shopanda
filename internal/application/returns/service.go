@@ -172,7 +172,22 @@ func (s *Service) Receive(ctx context.Context, returnID string) (*domainReturns.
 	if err != nil {
 		return nil, err
 	}
+	if ret.RestockedAt != nil {
+		return ret, nil
+	}
+
 	now := time.Now().UTC()
+	if ret.Status() == domainReturns.StatusApproved {
+		if err := ret.MarkReceived(); err != nil {
+			return nil, apperror.Validation(err.Error())
+		}
+		if err := s.returns.Update(ctx, ret); err != nil {
+			return nil, fmt.Errorf("returns: receive update: %w", err)
+		}
+	} else if ret.Status() != domainReturns.StatusReceived {
+		return nil, apperror.Validation("return is not in a receivable state")
+	}
+
 	for _, item := range ret.Items() {
 		entry, err := s.stock.GetStock(ctx, item.VariantID)
 		if err != nil {
@@ -184,11 +199,11 @@ func (s *Service) Receive(ctx context.Context, returnID string) (*domainReturns.
 			return nil, fmt.Errorf("returns: restock: %w", err)
 		}
 	}
-	if err := ret.MarkReceived(now); err != nil {
+	if err := ret.RecordRestocked(now); err != nil {
 		return nil, apperror.Validation(err.Error())
 	}
 	if err := s.returns.Update(ctx, ret); err != nil {
-		return nil, fmt.Errorf("returns: receive update: %w", err)
+		return nil, fmt.Errorf("returns: receive restock update: %w", err)
 	}
 	s.publish(ctx, domainReturns.EventReturnReceived, *ret)
 	return ret, nil
@@ -200,9 +215,8 @@ func (s *Service) Refund(ctx context.Context, returnID string) (*domainReturns.R
 	if err != nil {
 		return nil, err
 	}
-	total, err := ret.TotalAmount()
-	if err != nil {
-		return nil, fmt.Errorf("returns: total amount: %w", err)
+	if ret.Status() == domainReturns.StatusRefunded {
+		return ret, nil
 	}
 
 	p, err := s.payments.FindByOrderID(ctx, ret.OrderID)
@@ -216,12 +230,6 @@ func (s *Service) Refund(ctx context.Context, returnID string) (*domainReturns.R
 		return nil, apperror.Validation("payment is not in a refundable state")
 	}
 
-	if s.refunder != nil && p.ProviderRef != "" {
-		if _, err := s.refunder.Refund(ctx, p.ProviderRef, total.Amount(), total.Currency()); err != nil {
-			return nil, fmt.Errorf("returns: provider refund: %w", err)
-		}
-	}
-
 	now := time.Now().UTC()
 	if err := ret.MarkRefunded(now); err != nil {
 		return nil, apperror.Validation(err.Error())
@@ -229,6 +237,17 @@ func (s *Service) Refund(ctx context.Context, returnID string) (*domainReturns.R
 	if err := s.returns.Update(ctx, ret); err != nil {
 		return nil, fmt.Errorf("returns: refund update: %w", err)
 	}
+
+	if s.refunder != nil && p.ProviderRef != "" {
+		total, err := ret.TotalAmount()
+		if err != nil {
+			return nil, fmt.Errorf("returns: total amount: %w", err)
+		}
+		if _, err := s.refunder.Refund(ctx, p.ProviderRef, total.Amount(), total.Currency()); err != nil {
+			return nil, fmt.Errorf("returns: provider refund: %w", err)
+		}
+	}
+
 	s.publish(ctx, domainReturns.EventReturnRefunded, *ret)
 	return ret, nil
 }
@@ -294,9 +313,6 @@ func (s *Service) validateReturnQuantities(ctx context.Context, orderID string, 
 	already := make(map[string]int)
 	for _, ret := range existing {
 		if ret.Status().IsTerminal() && ret.Status() != domainReturns.StatusRefunded {
-			continue
-		}
-		if ret.Status() == domainReturns.StatusRejected || ret.Status() == domainReturns.StatusCancelled {
 			continue
 		}
 		for _, item := range ret.Items() {

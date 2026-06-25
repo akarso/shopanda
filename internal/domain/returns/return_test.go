@@ -41,8 +41,14 @@ func TestReturn_ApproveReceiveRefund(t *testing.T) {
 		t.Fatalf("Approve: %v", err)
 	}
 	now := time.Now().UTC()
-	if err := ret.MarkReceived(now); err != nil {
+	if err := ret.MarkReceived(); err != nil {
 		t.Fatalf("MarkReceived: %v", err)
+	}
+	if ret.RestockedAt != nil {
+		t.Fatal("restocked_at should not be set until RecordRestocked")
+	}
+	if err := ret.RecordRestocked(now); err != nil {
+		t.Fatalf("RecordRestocked: %v", err)
 	}
 	if ret.RestockedAt == nil {
 		t.Fatal("expected restocked_at")

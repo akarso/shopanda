@@ -216,3 +216,75 @@ func TestService_RequestReturn_ExceedsOrderedQty(t *testing.T) {
 		t.Fatal("expected validation error")
 	}
 }
+
+func TestService_Receive_RetryDoesNotDoubleRestock(t *testing.T) {
+	orders := &memOrderRepo{order: paidOrder(t)}
+	returns := newMemReturnRepo()
+	stock := &memStockRepo{qty: map[string]int{"v1": 5}}
+	svc := newService(t, orders, returns, stock, &memPaymentRepo{}, nil)
+
+	ret, err := svc.RequestReturn(context.Background(), "o1", "c1", "damaged", []returnsApp.RequestLine{
+		{VariantID: "v1", Quantity: 1},
+	})
+	if err != nil {
+		t.Fatalf("RequestReturn: %v", err)
+	}
+	ret, err = svc.Approve(context.Background(), ret.ID)
+	if err != nil {
+		t.Fatalf("Approve: %v", err)
+	}
+	ret, err = svc.Receive(context.Background(), ret.ID)
+	if err != nil {
+		t.Fatalf("Receive: %v", err)
+	}
+	ret, err = svc.Receive(context.Background(), ret.ID)
+	if err != nil {
+		t.Fatalf("Receive retry: %v", err)
+	}
+	if stock.qty["v1"] != 6 {
+		t.Fatalf("stock = %d, want 6 after idempotent retry", stock.qty["v1"])
+	}
+	if ret.RestockedAt == nil {
+		t.Fatal("expected restocked_at after receive")
+	}
+}
+
+func TestService_Refund_RetryDoesNotDoubleRefund(t *testing.T) {
+	orders := &memOrderRepo{order: paidOrder(t)}
+	returns := newMemReturnRepo()
+	stock := &memStockRepo{qty: map[string]int{"v1": 5}}
+	pay, err := payment.NewPayment("pay1", "o1", payment.MethodStripe, shared.MustNewMoney(2000, "EUR"))
+	if err != nil {
+		t.Fatalf("NewPayment: %v", err)
+	}
+	_ = pay.Complete("pi_123")
+	refunder := &stubRefunder{}
+	svc := newService(t, orders, returns, stock, &memPaymentRepo{payment: &pay}, refunder)
+
+	ret, err := svc.RequestReturn(context.Background(), "o1", "c1", "damaged", []returnsApp.RequestLine{
+		{VariantID: "v1", Quantity: 1},
+	})
+	if err != nil {
+		t.Fatalf("RequestReturn: %v", err)
+	}
+	ret, _ = svc.Approve(context.Background(), ret.ID)
+	ret, _ = svc.Receive(context.Background(), ret.ID)
+	ret, err = svc.Refund(context.Background(), ret.ID)
+	if err != nil {
+		t.Fatalf("Refund: %v", err)
+	}
+	if !refunder.called {
+		t.Fatal("expected provider refund")
+	}
+	refunder.called = false
+	ret, err = svc.Refund(context.Background(), ret.ID)
+	if err != nil {
+		t.Fatalf("Refund retry: %v", err)
+	}
+	if refunder.called {
+		t.Fatal("expected idempotent refund retry to skip provider call")
+	}
+	if ret.Status() != domainReturns.StatusRefunded {
+		t.Fatalf("status = %q", ret.Status())
+	}
+}
