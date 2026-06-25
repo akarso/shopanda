@@ -29,6 +29,7 @@ import (
 	"github.com/akarso/shopanda/internal/application/notification"
 	orderApp "github.com/akarso/shopanda/internal/application/order"
 	appPricing "github.com/akarso/shopanda/internal/application/pricing"
+	returnsApp "github.com/akarso/shopanda/internal/application/returns"
 	"github.com/akarso/shopanda/internal/application/rewrite"
 	"github.com/akarso/shopanda/internal/domain/admin"
 	"github.com/akarso/shopanda/internal/domain/cache"
@@ -207,6 +208,10 @@ func runServe(cfg *config.Config, log logger.Logger, embedScheduler bool) error 
 		return err
 	}
 	orderRepo, err := postgres.NewOrderRepo(conn)
+	if err != nil {
+		return err
+	}
+	returnRepo, err := postgres.NewReturnRepo(conn)
 	if err != nil {
 		return err
 	}
@@ -615,10 +620,15 @@ func runServe(cfg *config.Config, log logger.Logger, embedScheduler bool) error 
 
 	// Refund handler: only available when the payment provider supports refunds.
 	var refundHandler *shophttp.RefundHandler
+	var stripeRefunder payment.Refunder
 	if refunder, ok := payRegistry.Refunder(payment.MethodStripe); ok {
+		stripeRefunder = refunder
 		refundHandler = shophttp.NewRefundHandler(paymentRepo, refunder, bus)
 		log.Info("payment.refund_handler_enabled", nil)
 	}
+
+	returnService := returnsApp.NewService(returnRepo, orderRepo, stockRepo, paymentRepo, stripeRefunder, bus, log)
+	_ = returnService // HTTP handlers in PR-503
 
 	shippingRates := shophttp.NewShippingRatesHandler(flatRateProvider)
 	categoryHandler := shophttp.NewCategoryHandler(categoryRepo, productRepo)

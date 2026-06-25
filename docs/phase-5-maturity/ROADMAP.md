@@ -96,7 +96,7 @@ Full compliance overview: [`specs/COMPLIANCE_EU.md`](specs/COMPLIANCE_EU.md).
 | --- | --- | --- | --- |
 | PR-500 | [b2b] | Customer groups domain | `customer_groups` table, group membership, repository port, admin API list/create/update |
 | PR-501 | [b2b] | Group-aware pricing | Optional price rows or promotion conditions scoped to customer group |
-| PR-502 | [oss] | Returns domain + workflow | RMA entity, states (requested → approved → received → refunded/restocked), links to order lines |
+| PR-502 | [oss] | Returns domain + workflow (done) | RMA entity, states (requested → approved → received → refunded/restocked), links to order lines |
 | PR-503 | [oss] | Returns admin + account UI | Admin list/detail/actions; customer "request return" on eligible orders |
 | PR-504 | [oss] | Payment transaction ledger admin | Read-only admin grid over payments/refunds/chargebacks with order link |
 | PR-505 | [oss] | Store credit / gift cards (stretch) | Issued credit balance, redemption at checkout — only if returns (502–503) expose clear need |
@@ -235,7 +235,7 @@ Items worth tracking but not yet assigned PR numbers:
 | --- | --- | --- | --- |
 | 500 | A | [b2b] | Customer groups domain |
 | 501 | A | [b2b] | Group-aware pricing |
-| 502 | A | [oss] | Returns domain + workflow |
+| 502 | A | [oss] | Returns domain + workflow (done) |
 | 503 | A | [oss] | Returns admin + account UI |
 | 504 | A | [oss] | Payment ledger admin |
 | 505 | A | [oss] | Store credit / gift cards (stretch) |
