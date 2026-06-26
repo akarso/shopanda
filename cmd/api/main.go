@@ -467,6 +467,7 @@ func runServe(cfg *config.Config, log logger.Logger, embedScheduler bool) error 
 	pdp.AddStep(composition.NewJSONLDProductStep(variantRepo, priceRepo, stockRepo))
 	pdp.AddStep(composition.NewCanonicalURLStep(baseURL))
 	pdp.AddStep(composition.NewPriceIndicationStep(variantRepo, priceRepo, priceHistoryRepo, configRepo))
+	pdp.AddStep(composition.NewWeeeStep(configRepo))
 	plp := composition.NewPipeline[composition.ListingContext]()
 	plp.AddStep(composition.ListingMetaStep{})
 	plp.AddStep(composition.NewListingCanonicalURLStep(baseURL))
@@ -935,6 +936,7 @@ func runServe(cfg *config.Config, log logger.Logger, embedScheduler bool) error 
 		linkLinker := shophttp.NewStorefrontOrderLinkerAdapter(linkService)
 
 		storefront := shophttp.NewStorefrontHandler(themeEngine, productRepo, categoryRepo, pdp, plp, searchEngine).
+			WithLegalConfig(configRepo).
 			WithCart(variantRepo, cartService).
 			WithCheckout([]shipping.Provider{flatRateProvider}, payRegistry, checkoutService).
 			WithAccount(authService, orderRepo, accountService).
@@ -1950,6 +1952,7 @@ func registerDefaultSeeders(reg *seed.Registry) {
 	reg.Register(&seed.TaxSeeder{})
 	reg.Register(&seed.AdminSeeder{})
 	reg.Register(&seed.CatalogSeeder{})
+	reg.Register(&seed.WeeeAttributesSeeder{})
 }
 
 func printHelp() {

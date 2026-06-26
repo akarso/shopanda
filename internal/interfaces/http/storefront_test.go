@@ -15,14 +15,29 @@ import (
 
 	"github.com/akarso/shopanda/internal/application/composition"
 	"github.com/akarso/shopanda/internal/domain/catalog"
+	"github.com/akarso/shopanda/internal/domain/legal"
 	"github.com/akarso/shopanda/internal/domain/pricing"
 	"github.com/akarso/shopanda/internal/domain/search"
 	"github.com/akarso/shopanda/internal/domain/shared"
+	"github.com/akarso/shopanda/internal/domain/store"
 	"github.com/akarso/shopanda/internal/domain/theme"
 	"github.com/akarso/shopanda/internal/platform/apperror"
 
 	shophttp "github.com/akarso/shopanda/internal/interfaces/http"
 )
+
+type stubLegalConfig map[string]interface{}
+
+func (s stubLegalConfig) Get(_ context.Context, key string) (interface{}, error) {
+	if s == nil {
+		return nil, nil
+	}
+	v, ok := s[key]
+	if !ok {
+		return nil, nil
+	}
+	return v, nil
+}
 
 // --- mock repo for storefront tests ---
 
@@ -856,5 +871,72 @@ func TestStorefrontHandler_Product_RendersOmnibusPriceIndication(t *testing.T) {
 	}
 	if !strings.Contains(body, "29.99") {
 		t.Fatalf("body missing lowest 30d price: %s", body)
+	}
+}
+
+func createTestThemeWithWeeeProduct(t *testing.T) *theme.Engine {
+	t.Helper()
+	dir := t.TempDir()
+	tplDir := filepath.Join(dir, "templates")
+	if err := os.MkdirAll(tplDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "theme.yaml"), []byte("name: test\nversion: \"0.1.0\"\nstorefront:\n  search_action: /catalog\n  cart_url: /basket\n  cart_label: Basket (2)\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	layout := `<!DOCTYPE html><html><body>{{ template "content" . }}</body></html>`
+	if err := os.WriteFile(filepath.Join(tplDir, "layout.html"), []byte(layout), 0644); err != nil {
+		t.Fatal(err)
+	}
+	product := `{{ define "content" }}<h1>{{ .Product.Name }}</h1>{{ range .Blocks }}{{ if eq .Type "weee_disclosure" }}<aside class="weee-disclosure"><p>WEEE category: {{ index .Data "category_label" }}</p><p>Producer registration: {{ index .Data "producer_registration" }}</p></aside>{{ end }}{{ end }}{{ end }}{{ template "layout.html" . }}`
+	if err := os.WriteFile(filepath.Join(tplDir, "product.html"), []byte(product), 0644); err != nil {
+		t.Fatal(err)
+	}
+	eng, err := theme.Load(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return eng
+}
+
+func TestStorefrontHandler_Product_RendersWeeeDisclosure(t *testing.T) {
+	repo := &mockStorefrontRepo{
+		findBySlugFn: func(_ context.Context, slug string) (*catalog.Product, error) {
+			return &catalog.Product{
+				ID:     "p1",
+				Name:   "Mouse",
+				Slug:   slug,
+				Status: catalog.StatusActive,
+				Attributes: map[string]interface{}{
+					legal.AttrWeeeCategory: "small_it_telecom",
+				},
+			}, nil
+		},
+	}
+	engine := createTestThemeWithWeeeProduct(t)
+	cfg := stubLegalConfig{
+		legal.ScopedConfigKey("store-eu", legal.WeeeEnabledConfigKey):               true,
+		legal.ScopedConfigKey("store-eu", legal.WeeeProducerRegistrationConfigKey): "PL-WEEE-99",
+	}
+	pdp := composition.NewPipeline[composition.ProductContext]()
+	pdp.AddStep(composition.NewWeeeStep(cfg))
+	plp := composition.NewPipeline[composition.ListingContext]()
+	h := shophttp.NewStorefrontHandler(engine, repo, newStorefrontCategoryMock(), pdp, plp, newStorefrontSearchMock()).
+		WithLegalConfig(cfg)
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("GET", "/products/mouse", nil)
+	req = req.WithContext(store.WithStore(req.Context(), &store.Store{ID: "store-eu", Name: "EU Store"}))
+	newStorefrontRouter(h).ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d; body: %s", rec.Code, http.StatusOK, rec.Body.String())
+	}
+	body := rec.Body.String()
+	if !strings.Contains(body, "Small IT and telecommunications equipment") {
+		t.Fatalf("body missing WEEE category: %s", body)
+	}
+	if !strings.Contains(body, "PL-WEEE-99") {
+		t.Fatalf("body missing producer registration: %s", body)
 	}
 }

@@ -10,7 +10,7 @@ This document maps **common EU merchant obligations** to Shopanda's current capa
 | --- | --- | --- | --- |
 | **GDPR** | Lawful processing, access, erasure, consent | Cookie consent, `GET/DELETE /account`, data export | Hardening only if gaps found |
 | **Omnibus (Price Indication)** | Show lowest price in prior 30 days when showing a discount | `price_history`, `PriceIndicationStep`, SSR PDP/PLP templates | **Done (PR-530)** — store toggle `legal.omnibus_enabled` |
-| **WEEE** | Register as producer; display symbol + reg. number; take-back info | Not modeled | PR-531: product/store compliance fields + PDP templates |
+| **WEEE** | Register as producer; display symbol + reg. number; take-back info | Product attributes + store config + PDP/footer templates | **Done (PR-531)** — opt-in `legal.weee_enabled`, WEEE attribute group |
 | **EPR (packaging)** | Report packaging placed on market; registration per member state | Not modeled | PR-532: packaging metadata on products/variants |
 | **GPSR** (Dec 2024) | Manufacturer/importer details, warnings, traceability | Not modeled | PR-533: safety metadata + PDP disclosure |
 | **VAT / OSS-IOSS** | Correct VAT on cross-border B2C; periodic OSS returns | Country tax rates, store scoping | PR-534 (stretch): export helpers, not filing automation |

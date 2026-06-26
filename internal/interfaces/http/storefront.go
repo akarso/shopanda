@@ -56,6 +56,7 @@ type StorefrontHandler struct {
 	security    *storefrontAccountSecurityVerifier
 	shipping    []shipping.Provider
 	payments    *payment.ProviderRegistry
+	legalConfig legal.ConfigGetter
 	log         logger.Logger
 	catNav      storefrontCategoryCache
 }
@@ -110,6 +111,8 @@ type StorefrontLayoutData struct {
 	CurrentYear        int
 	Nav                []StorefrontNavLink
 	Categories         []StorefrontCategoryNavItem
+	WeeeFooterEnabled  bool
+	WeeeProducerReg    string
 }
 
 type StorefrontHomePageData struct {
@@ -245,6 +248,12 @@ func NewStorefrontHandler(
 func (h *StorefrontHandler) WithCart(variants catalog.VariantRepository, carts *cartApp.Service) *StorefrontHandler {
 	h.variants = variants
 	h.carts = carts
+	return h
+}
+
+// WithLegalConfig enables store-scoped legal/compliance settings on storefront pages.
+func (h *StorefrontHandler) WithLegalConfig(cfg legal.ConfigGetter) *StorefrontHandler {
+	h.legalConfig = cfg
 	return h
 }
 
@@ -649,6 +658,23 @@ func (h *StorefrontHandler) buildLayoutData(r *http.Request, categories []catalo
 			{Label: "Account", URL: accountURL},
 		}
 	}
+	storeID := ""
+	if s := store.FromContext(r.Context()); s != nil {
+		storeID = s.ID
+	}
+	weeeFooterEnabled := false
+	weeeProducerReg := ""
+	if h.legalConfig != nil {
+		if enabled, err := legal.WeeeEnabled(r.Context(), h.legalConfig, storeID); err == nil && enabled {
+			if reg, err := legal.StoreProducerRegistration(r.Context(), h.legalConfig, storeID); err == nil {
+				reg = strings.TrimSpace(reg)
+				if reg != "" {
+					weeeFooterEnabled = true
+					weeeProducerReg = reg
+				}
+			}
+		}
+	}
 	return StorefrontLayoutData{
 		SiteName:           siteName,
 		SearchAction:       searchAction,
@@ -669,6 +695,8 @@ func (h *StorefrontHandler) buildLayoutData(r *http.Request, categories []catalo
 		CurrentYear:        time.Now().UTC().Year(),
 		Nav:                nav,
 		Categories:         storefrontCategoryTree(categories),
+		WeeeFooterEnabled:  weeeFooterEnabled,
+		WeeeProducerReg:    weeeProducerReg,
 	}
 }
 
