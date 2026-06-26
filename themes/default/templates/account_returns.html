@@ -1,0 +1,56 @@
+{{ define "title" }}Returns{{ end }}
+
+{{ define "content" }}
+<section class="account-shell">
+    <div class="page-intro">
+        <span class="eyebrow">Account</span>
+        <h1>Returns</h1>
+        <p>Track return requests and their status.</p>
+    </div>
+
+    <nav class="checkout-actions" aria-label="Account sections">
+        <a class="chip {{ if eq .AccountNav.Current "orders" }}chip--active{{ end }}" href="{{ .AccountNav.OrdersURL }}">Orders</a>
+        <a class="chip {{ if eq .AccountNav.Current "returns" }}chip--active{{ end }}" href="{{ .AccountNav.ReturnsURL }}">Returns</a>
+        <a class="chip {{ if eq .AccountNav.Current "profile" }}chip--active{{ end }}" href="{{ .AccountNav.ProfileURL }}">Profile</a>
+        <a class="chip {{ if eq .AccountNav.Current "addresses" }}chip--active{{ end }}" href="{{ .AccountNav.AddressesURL }}">Addresses</a>
+        <a class="chip {{ if eq .AccountNav.Current "preferences" }}chip--active{{ end }}" href="{{ .AccountNav.PreferencesURL }}">Preferences</a>
+        <a class="chip {{ if eq .AccountNav.Current "security" }}chip--active{{ end }}" href="{{ .AccountNav.SecurityURL }}">Security</a>
+    </nav>
+
+    <section class="account-panel">
+        {{ if .Returns }}
+        <div class="account-orders-table" role="table" aria-label="Return requests">
+            <div class="account-orders-table__head" role="row">
+                <span role="columnheader">Return</span>
+                <span role="columnheader">Order</span>
+                <span role="columnheader">Date</span>
+                <span role="columnheader">Status</span>
+                <span role="columnheader">Action</span>
+            </div>
+            {{ range .Returns }}
+            <div class="account-orders-table__row" role="row">
+                <span role="cell">{{ .ID }}</span>
+                <span role="cell"><a href="{{ .URL }}">{{ .OrderID }}</a></span>
+                <span role="cell">{{ .DateText }}</span>
+                <span role="cell">{{ .Status }}</span>
+                <span role="cell">
+                    {{ if .CanCancel }}
+                    <form action="/account/returns/{{ .ID }}/cancel" method="post" style="display:inline">
+                        <input type="hidden" name="csrf_token" value="{{ $.CSRFToken }}">
+                        <button type="submit" class="chip">Cancel</button>
+                    </form>
+                    {{ else }}
+                    —
+                    {{ end }}
+                </span>
+            </div>
+            {{ end }}
+        </div>
+        {{ else }}
+        <p>{{ .EmptyMessage }}</p>
+        {{ end }}
+    </section>
+</section>
+{{ end }}
+
+{{ template "layout.html" . }}

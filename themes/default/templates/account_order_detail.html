@@ -10,11 +10,15 @@
 
     <nav class="checkout-actions" aria-label="Account sections">
         <a class="chip {{ if eq .AccountNav.Current "orders" }}chip--active{{ end }}" href="{{ .AccountNav.OrdersURL }}">Orders</a>
+        <a class="chip {{ if eq .AccountNav.Current "returns" }}chip--active{{ end }}" href="{{ .AccountNav.ReturnsURL }}">Returns</a>
         <a class="chip {{ if eq .AccountNav.Current "profile" }}chip--active{{ end }}" href="{{ .AccountNav.ProfileURL }}">Profile</a>
         <a class="chip {{ if eq .AccountNav.Current "addresses" }}chip--active{{ end }}" href="{{ .AccountNav.AddressesURL }}">Addresses</a>
         <a class="chip {{ if eq .AccountNav.Current "preferences" }}chip--active{{ end }}" href="{{ .AccountNav.PreferencesURL }}">Preferences</a>
         <a class="chip {{ if eq .AccountNav.Current "security" }}chip--active{{ end }}" href="{{ .AccountNav.SecurityURL }}">Security</a>
     </nav>
+
+    {{ if .SuccessMessage }}<p class="notice">{{ .SuccessMessage }}</p>{{ end }}
+    {{ if .ErrorMessage }}<p class="error">{{ .ErrorMessage }}</p>{{ end }}
 
     <section class="account-panel">
         <div class="checkout-summary-panel__totals">
@@ -34,8 +38,43 @@
         </ul>
         <div class="checkout-actions">
             <a class="chip" href="{{ .BackURL }}">Back to orders</a>
+            <a class="chip" href="{{ .ReturnsURL }}">View returns</a>
         </div>
     </section>
+
+    {{ if .Returns }}
+    <section class="account-panel">
+        <h2>Return requests</h2>
+        <ul class="checkout-summary-panel__items">
+            {{ range .Returns }}
+            <li>
+                <div>
+                    <strong>{{ .Status }}</strong>
+                    <span>{{ .Reason }} · {{ .DateText }}</span>
+                </div>
+            </li>
+            {{ end }}
+        </ul>
+    </section>
+    {{ end }}
+
+    {{ if .CanRequestReturn }}
+    <section class="account-panel">
+        <h2>Request a return</h2>
+        <form action="/account/orders/{{ .OrderID }}/returns" method="post">
+            <input type="hidden" name="csrf_token" value="{{ .CSRFToken }}">
+            <label>Reason
+                <input name="reason" required maxlength="500" placeholder="Describe why you are returning items">
+            </label>
+            {{ range .ReturnableLines }}
+            <label>{{ .Name }} ({{ .SKU }}) — max {{ .Returnable }}
+                <input type="number" name="qty_{{ .VariantID }}" min="0" max="{{ .Returnable }}" value="0">
+            </label>
+            {{ end }}
+            <button type="submit">Submit return request</button>
+        </form>
+    </section>
+    {{ end }}
 </section>
 {{ end }}
 

@@ -73,20 +73,43 @@ type StorefrontAccountOrderItem struct {
 	LineTotalText string
 }
 
+type StorefrontAccountReturnableLine struct {
+	VariantID  string
+	SKU        string
+	Name       string
+	Returnable int
+}
+
+type StorefrontAccountOrderReturnRow struct {
+	ID       string
+	Status   string
+	Reason   string
+	DateText string
+	URL      string
+}
+
 type StorefrontAccountOrderDetailPageData struct {
-	Layout     StorefrontLayoutData
-	Theme      theme.Theme
-	AccountNav StorefrontAccountNavData
-	OrderID    string
-	DateText   string
-	Status     string
-	TotalText  string
-	Items      []StorefrontAccountOrderItem
-	BackURL    string
+	Layout           StorefrontLayoutData
+	Theme            theme.Theme
+	AccountNav       StorefrontAccountNavData
+	CSRFToken        string
+	OrderID          string
+	DateText         string
+	Status           string
+	TotalText        string
+	Items            []StorefrontAccountOrderItem
+	Returns          []StorefrontAccountOrderReturnRow
+	ReturnableLines  []StorefrontAccountReturnableLine
+	CanRequestReturn bool
+	ErrorMessage     string
+	SuccessMessage   string
+	BackURL          string
+	ReturnsURL       string
 }
 
 type StorefrontAccountNavData struct {
 	OrdersURL      string
+	ReturnsURL     string
 	ProfileURL     string
 	AddressesURL   string
 	PreferencesURL string
@@ -392,32 +415,15 @@ func (h *StorefrontHandler) AccountOrderDetail() http.HandlerFunc {
 			http.NotFound(w, r)
 			return
 		}
-		items := make([]StorefrontAccountOrderItem, 0, len(o.Items()))
-		for _, item := range o.Items() {
-			lineTotal, err := item.LineTotal()
-			if err != nil {
-				http.Error(w, "Internal Server Error", http.StatusInternalServerError)
-				return
-			}
-			items = append(items, StorefrontAccountOrderItem{
-				Name:          item.Name,
-				SKU:           item.SKU,
-				Quantity:      item.Quantity,
-				UnitPriceText: formatStorefrontMoney(item.UnitPrice.Amount(), item.UnitPrice.Currency()),
-				LineTotalText: formatStorefrontMoney(lineTotal.Amount(), lineTotal.Currency()),
-			})
+		page, err := h.buildAccountOrderDetailPage(r, o, customerID)
+		if err != nil {
+			http.Error(w, "Internal Server Error", http.StatusInternalServerError)
+			return
 		}
-		h.renderPage(w, "account_order_detail", StorefrontAccountOrderDetailPageData{
-			Layout:     h.layoutDataBestEffort(r),
-			Theme:      h.engine.Theme(),
-			AccountNav: storefrontAccountNav("orders"),
-			OrderID:    o.ID,
-			DateText:   o.CreatedAt.UTC().Format("2006-01-02"),
-			Status:     storefrontAccountOrderStatus(o.Status()),
-			TotalText:  formatStorefrontMoney(o.TotalAmount.Amount(), o.TotalAmount.Currency()),
-			Items:      items,
-			BackURL:    "/account/orders",
-		})
+		if r.URL.Query().Get("return_requested") == "1" {
+			page.SuccessMessage = "Return request submitted. We will review it shortly."
+		}
+		h.renderPage(w, "account_order_detail", page)
 	}
 }
 
@@ -628,6 +634,7 @@ func (h *StorefrontHandler) requireStorefrontAccount(w http.ResponseWriter, r *h
 func storefrontAccountNav(current string) StorefrontAccountNavData {
 	return StorefrontAccountNavData{
 		OrdersURL:      "/account/orders",
+		ReturnsURL:     "/account/returns",
 		ProfileURL:     "/account/profile",
 		AddressesURL:   "/account/addresses",
 		PreferencesURL: "/account/preferences",

@@ -43,6 +43,31 @@ func (r *memReturnRepo) FindByOrderID(_ context.Context, orderID string) ([]doma
 	return r.byOrder[orderID], nil
 }
 
+func (r *memReturnRepo) FindByCustomerID(_ context.Context, customerID string) ([]domainReturns.Return, error) {
+	var out []domainReturns.Return
+	for _, ret := range r.byID {
+		if ret.CustomerID == customerID {
+			out = append(out, *ret)
+		}
+	}
+	return out, nil
+}
+
+func (r *memReturnRepo) List(_ context.Context, offset, limit int) ([]domainReturns.Return, error) {
+	all := make([]domainReturns.Return, 0, len(r.byID))
+	for _, ret := range r.byID {
+		all = append(all, *ret)
+	}
+	if offset >= len(all) {
+		return nil, nil
+	}
+	end := offset + limit
+	if end > len(all) {
+		end = len(all)
+	}
+	return all[offset:end], nil
+}
+
 func (r *memReturnRepo) Update(_ context.Context, ret *domainReturns.Return) error {
 	cp := *ret
 	r.byID[ret.ID] = &cp

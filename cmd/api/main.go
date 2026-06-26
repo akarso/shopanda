@@ -628,7 +628,8 @@ func runServe(cfg *config.Config, log logger.Logger, embedScheduler bool) error 
 	}
 
 	returnService := returnsApp.NewService(returnRepo, orderRepo, stockRepo, paymentRepo, stripeRefunder, bus, log)
-	_ = returnService // HTTP handlers in PR-503
+	returnAdmin := shophttp.NewReturnAdminHandler(returnService, sharedAuditor)
+	returnAccount := shophttp.NewReturnAccountHandler(returnService)
 
 	shippingRates := shophttp.NewShippingRatesHandler(flatRateProvider)
 	categoryHandler := shophttp.NewCategoryHandler(categoryRepo, productRepo)
@@ -807,6 +808,12 @@ func runServe(cfg *config.Config, log logger.Logger, embedScheduler bool) error 
 	if refundHandler != nil {
 		router.Handle("POST /api/v1/admin/orders/{orderId}/refund", requireOrdersWrite(refundHandler.Refund()))
 	}
+	router.Handle("GET /api/v1/admin/returns", requireOrdersRead(returnAdmin.List()))
+	router.Handle("GET /api/v1/admin/returns/{returnId}", requireOrdersRead(returnAdmin.Get()))
+	router.Handle("POST /api/v1/admin/returns/{returnId}/approve", requireOrdersWrite(returnAdmin.Approve()))
+	router.Handle("POST /api/v1/admin/returns/{returnId}/reject", requireOrdersWrite(returnAdmin.Reject()))
+	router.Handle("POST /api/v1/admin/returns/{returnId}/receive", requireOrdersWrite(returnAdmin.Receive()))
+	router.Handle("POST /api/v1/admin/returns/{returnId}/refund", requireOrdersWrite(returnAdmin.Refund()))
 	router.Handle("GET /api/v1/admin/media", requireMediaRead(mediaHandler.List()))
 	router.Handle("POST /api/v1/admin/media", requireMediaWrite(mediaHandler.Upload()))
 	router.Handle("POST /api/v1/admin/media/upload", requireMediaWrite(mediaHandler.Upload()))
@@ -872,8 +879,14 @@ func runServe(cfg *config.Config, log logger.Logger, embedScheduler bool) error 
 	// Order routes (behind RequireAuth).
 	router.Handle("GET /api/v1/orders", requireAuth(orderHandler.List()))
 	router.Handle("GET /api/v1/orders/{orderId}", requireAuth(orderHandler.Get()))
+	router.Handle("GET /api/v1/orders/{orderId}/returns", requireAuth(returnAccount.ListByOrder()))
+	router.Handle("GET /api/v1/orders/{orderId}/returnable-lines", requireAuth(returnAccount.ReturnableLines()))
+	router.Handle("POST /api/v1/orders/{orderId}/returns", requireAuth(returnAccount.Request()))
 
 	// Account routes (behind RequireAuth).
+	router.Handle("GET /api/v1/account/returns", requireAuth(returnAccount.List()))
+	router.Handle("GET /api/v1/account/returns/{returnId}", requireAuth(returnAccount.Get()))
+	router.Handle("POST /api/v1/account/returns/{returnId}/cancel", requireAuth(returnAccount.Cancel()))
 	router.Handle("GET /api/v1/account/consent", requireAuth(accountHandler.GetConsent()))
 	router.Handle("PUT /api/v1/account/consent", requireAuth(accountHandler.UpdateConsent()))
 	router.Handle("GET /api/v1/account/data", requireAuth(accountHandler.GetData()))
@@ -922,6 +935,7 @@ func runServe(cfg *config.Config, log logger.Logger, embedScheduler bool) error 
 			WithCart(variantRepo, cartService).
 			WithCheckout([]shipping.Provider{flatRateProvider}, payRegistry, checkoutService).
 			WithAccount(authService, orderRepo, accountService).
+			WithReturns(returnService).
 			WithAccountProfile(customerAddressRepo, consentRepo).
 			WithOrderClaim(claimService).
 			WithOrderClaimEmailer(claimEmailer).
@@ -945,6 +959,9 @@ func runServe(cfg *config.Config, log logger.Logger, embedScheduler bool) error 
 		router.HandleFunc("GET /account/orders/claim", storefront.AccountOrdersClaim())
 		router.HandleFunc("POST /account/orders/claim", storefront.AccountOrdersClaim())
 		router.HandleFunc("GET /account/orders/{orderId}", storefront.AccountOrderDetail())
+		router.HandleFunc("POST /account/orders/{orderId}/returns", storefront.AccountOrderReturnRequest())
+		router.HandleFunc("GET /account/returns", storefront.AccountReturns())
+		router.HandleFunc("POST /account/returns/{returnId}/cancel", storefront.AccountReturnCancel())
 		router.HandleFunc("GET /account/profile", storefront.AccountProfile())
 		router.HandleFunc("POST /account/profile", storefront.AccountProfile())
 		router.HandleFunc("GET /account/addresses", storefront.AccountAddresses())

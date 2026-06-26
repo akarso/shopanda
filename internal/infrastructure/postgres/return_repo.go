@@ -123,15 +123,40 @@ func (r *ReturnRepo) FindByID(ctx context.Context, id string) (*domainReturns.Re
 	return ret, nil
 }
 
+// FindByCustomerID returns all returns for a customer, newest first.
+func (r *ReturnRepo) FindByCustomerID(ctx context.Context, customerID string) ([]domainReturns.Return, error) {
+	if customerID == "" {
+		return nil, fmt.Errorf("return_repo: find by customer: empty customer id")
+	}
+	q := `SELECT ` + returnCols + ` FROM order_returns WHERE customer_id = $1 ORDER BY created_at DESC`
+	return r.queryReturnsWithItems(ctx, q, customerID)
+}
+
+// List returns returns ordered by created_at desc with pagination.
+func (r *ReturnRepo) List(ctx context.Context, offset, limit int) ([]domainReturns.Return, error) {
+	if offset < 0 {
+		return nil, fmt.Errorf("return_repo: list: negative offset")
+	}
+	if limit <= 0 {
+		return nil, fmt.Errorf("return_repo: list: limit must be positive")
+	}
+	q := `SELECT ` + returnCols + ` FROM order_returns ORDER BY created_at DESC OFFSET $1 LIMIT $2`
+	return r.queryReturnsWithItems(ctx, q, offset, limit)
+}
+
 // FindByOrderID returns all returns for an order, newest first.
 func (r *ReturnRepo) FindByOrderID(ctx context.Context, orderID string) ([]domainReturns.Return, error) {
 	if orderID == "" {
 		return nil, fmt.Errorf("return_repo: find by order: empty order id")
 	}
 	q := `SELECT ` + returnCols + ` FROM order_returns WHERE order_id = $1 ORDER BY created_at DESC`
-	rows, err := r.db.QueryContext(ctx, q, orderID)
+	return r.queryReturnsWithItems(ctx, q, orderID)
+}
+
+func (r *ReturnRepo) queryReturnsWithItems(ctx context.Context, q string, args ...interface{}) ([]domainReturns.Return, error) {
+	rows, err := r.db.QueryContext(ctx, q, args...)
 	if err != nil {
-		return nil, fmt.Errorf("return_repo: find by order: %w", err)
+		return nil, fmt.Errorf("return_repo: query: %w", err)
 	}
 	defer rows.Close()
 

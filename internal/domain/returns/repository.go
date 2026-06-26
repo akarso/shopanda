@@ -14,6 +14,12 @@ type Repository interface {
 	// FindByOrderID returns all returns for an order, newest first.
 	FindByOrderID(ctx context.Context, orderID string) ([]Return, error)
 
+	// FindByCustomerID returns all returns for a customer, newest first.
+	FindByCustomerID(ctx context.Context, customerID string) ([]Return, error)
+
+	// List returns returns ordered by created_at desc with pagination.
+	List(ctx context.Context, offset, limit int) ([]Return, error)
+
 	// Update persists status transitions and timestamps.
 	Update(ctx context.Context, ret *Return) error
 }

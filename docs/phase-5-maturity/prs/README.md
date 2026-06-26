@@ -7,7 +7,7 @@ Planned specs for **PR-500–549**. Individual PR markdown files will be added w
 | PR-500 | A | [b2b] | planned | Customer groups domain |
 | PR-501 | A | [b2b] | planned | Group-aware pricing |
 | PR-502 | A | [oss] | done | [Returns domain + workflow](PR-502.md) |
-| PR-503 | A | [oss] | planned | Returns admin + account UI |
+| PR-503 | A | [oss] | done | [Returns admin + account UI](PR-503.md) |
 | PR-504 | A | [oss] | planned | Payment transaction ledger admin |
 | PR-505 | A | [oss] | planned | Store credit / gift cards (stretch) |
 | PR-510 | B | [oss] | planned | Advanced promotion rules |
@@ -34,6 +34,6 @@ Planned specs for **PR-500–549**. Individual PR markdown files will be added w
 
 Roadmap: [`../ROADMAP.md`](../ROADMAP.md) · EU compliance: [`../specs/COMPLIANCE_EU.md`](../specs/COMPLIANCE_EU.md) · Licensing: [`../../COMMERCIAL.md`](../../COMMERCIAL.md)
 
-**Suggested next PRs:** PR-503 [oss] (returns admin + account UI) and PR-500 [b2b] (customer groups) in parallel.
+**Suggested next PRs:** PR-504 [oss] (payment ledger admin) and PR-500 [b2b] (customer groups) in parallel.
 
 [b2b] PRs implement in [`plugins/b2b/`](../../../plugins/b2b/). [oss] PRs stay in open core.
