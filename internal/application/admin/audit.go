@@ -92,6 +92,9 @@ const (
 	AuditReturnReceive AuditAction = "return.receive"
 	AuditReturnRefund  AuditAction = "return.refund"
 
+	AuditPaymentList AuditAction = "payment.list"
+	AuditPaymentRead AuditAction = "payment.read"
+
 	AuditLogList AuditAction = "audit.list"
 )
 

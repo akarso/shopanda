@@ -98,7 +98,7 @@ Full compliance overview: [`specs/COMPLIANCE_EU.md`](specs/COMPLIANCE_EU.md).
 | PR-501 | [b2b] | Group-aware pricing | Optional price rows or promotion conditions scoped to customer group |
 | PR-502 | [oss] | Returns domain + workflow (done) | RMA entity, states (requested → approved → received → refunded/restocked), links to order lines |
 | PR-503 | [oss] | Returns admin + account UI (done) | Admin list/detail/actions; customer "request return" on eligible orders |
-| PR-504 | [oss] | Payment transaction ledger admin | Read-only admin grid over payments/refunds/chargebacks with order link |
+| PR-504 | [oss] | Payment transaction ledger admin (done) | Read-only admin grid over payment records with order links and status filter |
 | PR-505 | [oss] | Store credit / gift cards (stretch) | Issued credit balance, redemption at checkout — only if returns (502–503) expose clear need |
 
 **Out of scope for Track A:** Full OMS/WMS, drop-ship vendor portals, marketplace split payouts.
@@ -237,7 +237,7 @@ Items worth tracking but not yet assigned PR numbers:
 | 501 | A | [b2b] | Group-aware pricing |
 | 502 | A | [oss] | Returns domain + workflow (done) |
 | 503 | A | [oss] | Returns admin + account UI (done) |
-| 504 | A | [oss] | Payment ledger admin |
+| 504 | A | [oss] | Payment ledger admin (done) |
 | 505 | A | [oss] | Store credit / gift cards (stretch) |
 | 510 | B | [oss] | Advanced promotion rules |
 | 511 | B | [oss] | Navigation builder |

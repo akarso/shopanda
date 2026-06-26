@@ -22,4 +22,14 @@ type PaymentRepository interface {
 	// Uses optimistic locking: prevUpdatedAt must match the row's current
 	// updated_at or a conflict error is returned.
 	UpdateStatus(ctx context.Context, p *Payment, prevUpdatedAt time.Time) error
+
+	// List returns payments ordered by created_at desc with optional status filter.
+	List(ctx context.Context, filter ListFilter) ([]Payment, error)
+}
+
+// ListFilter controls paginated payment listing for admin read surfaces.
+type ListFilter struct {
+	Status PaymentStatus // empty = all statuses
+	Offset int
+	Limit  int
 }

@@ -102,6 +102,9 @@ func (r *mockPaymentRepo047) UpdateStatus(_ context.Context, _ *payment.Payment,
 	r.updateCalled = true
 	return r.updateErr
 }
+func (r *mockPaymentRepo047) List(_ context.Context, _ payment.ListFilter) ([]payment.Payment, error) {
+	return nil, nil
+}
 
 // ============================================================
 // Helpers

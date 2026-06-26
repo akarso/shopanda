@@ -144,7 +144,7 @@
         // Sales
         "/admin/orders": { title: "Orders", render: renderOrdersGrid, auth: true },
         "/admin/sales/returns": { title: "Returns", render: renderReturnsGrid, auth: true },
-        "/admin/sales/transactions": { title: "Transactions", render: renderPlaceholder("Transactions"), auth: true },
+        "/admin/sales/transactions": { title: "Transactions", render: renderTransactionsGrid, auth: true },
         // Catalog
         "/admin/products": { title: "Products", render: renderProductsGrid, auth: true },
         "/admin/catalog/categories": { title: "Categories", render: renderCategoriesPage, auth: true },
@@ -2153,6 +2153,37 @@
         };
     }
 
+    function normalizePayments(payments) {
+        if (!Array.isArray(payments)) {
+            return [];
+        }
+        var out = [];
+        for (var i = 0; i < payments.length; i++) {
+            var pay = normalizePayment(payments[i]);
+            if (pay) {
+                out.push(pay);
+            }
+        }
+        return out;
+    }
+
+    function normalizePayment(raw) {
+        if (!raw) {
+            return null;
+        }
+        return {
+            id: pick(raw, "id", "ID"),
+            order_id: pick(raw, "order_id", "OrderID"),
+            method: pick(raw, "method", "Method"),
+            status: pick(raw, "status", "Status"),
+            amount: pick(raw, "amount", "Amount"),
+            currency: pick(raw, "currency", "Currency"),
+            provider_ref: pick(raw, "provider_ref", "ProviderRef"),
+            created_at: pick(raw, "created_at", "CreatedAt"),
+            updated_at: pick(raw, "updated_at", "UpdatedAt")
+        };
+    }
+
     function normalizeAssets(assets) {
         if (!Array.isArray(assets)) {
             return [];
@@ -3024,6 +3055,64 @@
         }
 
         load();
+    }
+
+    function renderTransactionsGrid(container) {
+        container.innerHTML =
+            '<h2>Transactions</h2>' +
+            '<label>Status Filter<select id="payments-status-filter">' +
+            '<option value="">All</option>' +
+            '<option value="pending">pending</option>' +
+            '<option value="completed">completed</option>' +
+            '<option value="refunded">refunded</option>' +
+            '<option value="failed">failed</option>' +
+            '</select></label>' +
+            '<div id="payments-grid"></div>';
+
+        var grid = document.getElementById('payments-grid');
+        var filter = document.getElementById('payments-status-filter');
+
+        function loadRows() {
+            var query = '/admin/payments?offset=0&limit=50';
+            if (filter.value) {
+                query += '&status=' + encodeURIComponent(filter.value);
+            }
+            grid.innerHTML = '<p>Loading…</p>';
+            api(query).then(function (body) {
+                if (body && body.error && body.error.code === 'forbidden') {
+                    grid.innerHTML = '<p role="alert">Your account does not have orders access.</p>';
+                    return;
+                }
+                var payments = normalizePayments(body && body.data && body.data.payments ? body.data.payments : []);
+                var html = '<table><thead><tr>' +
+                    '<th>ID</th><th>Order</th><th>Method</th><th>Status</th><th>Amount</th><th>Provider ref</th><th>Date</th><th>Action</th>' +
+                    '</tr></thead><tbody>';
+                if (payments.length === 0) {
+                    html += '<tr><td colspan="8">No transactions found.</td></tr>';
+                } else {
+                    for (var i = 0; i < payments.length; i++) {
+                        var pay = payments[i];
+                        html += '<tr>' +
+                            '<td>' + esc(pay.id || '') + '</td>' +
+                            '<td><a href="/admin/orders/' + esc(pay.order_id || '') + '" data-link>' + esc(pay.order_id || '') + '</a></td>' +
+                            '<td>' + esc(pay.method || '') + '</td>' +
+                            '<td><span class="badge badge-' + esc(pay.status || '') + '">' + esc(pay.status || '') + '</span></td>' +
+                            '<td>' + formatMoney(Number(pay.amount || 0), pay.currency) + '</td>' +
+                            '<td>' + esc(pay.provider_ref || '—') + '</td>' +
+                            '<td>' + esc(pay.created_at ? String(pay.created_at).substring(0, 10) : '') + '</td>' +
+                            '<td><a href="/admin/orders/' + esc(pay.order_id || '') + '" data-link>View order</a></td>' +
+                            '</tr>';
+                    }
+                }
+                html += '</tbody></table>';
+                grid.innerHTML = html;
+            }).catch(function () {
+                grid.innerHTML = '<p role="alert">Failed to load transactions.</p>';
+            });
+        }
+
+        filter.addEventListener('change', loadRows);
+        loadRows();
     }
 
     function renderPromotionsGrid(container) {

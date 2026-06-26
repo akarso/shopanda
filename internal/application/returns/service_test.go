@@ -136,6 +136,9 @@ func (r *memPaymentRepo) Create(context.Context, *payment.Payment) error { retur
 func (r *memPaymentRepo) UpdateStatus(context.Context, *payment.Payment, time.Time) error {
 	return nil
 }
+func (r *memPaymentRepo) List(context.Context, payment.ListFilter) ([]payment.Payment, error) {
+	return nil, nil
+}
 
 type stubRefunder struct {
 	called bool

@@ -30,16 +30,19 @@ func NewPaymentRepo(db *sql.DB) (*PaymentRepo, error) {
 }
 
 // hydratePayment reads a payment row from a *sql.Row.
-func hydratePayment(row *sql.Row) (*payment.Payment, error) {
+type paymentScanner interface {
+	Scan(dest ...interface{}) error
+}
+
+func hydratePaymentFromScanner(s paymentScanner) (*payment.Payment, error) {
 	var id, orderID string
 	var status, method string
 	var amount int64
 	var currency string
 	var providerRef sql.NullString
 	var createdAt, updatedAt time.Time
-	err := row.Scan(&id, &orderID, &method, &status,
-		&amount, &currency, &providerRef, &createdAt, &updatedAt)
-	if err != nil {
+	if err := s.Scan(&id, &orderID, &method, &status,
+		&amount, &currency, &providerRef, &createdAt, &updatedAt); err != nil {
 		return nil, err
 	}
 	money, err := shared.NewMoney(amount, currency)
@@ -51,6 +54,10 @@ func hydratePayment(row *sql.Row) (*payment.Payment, error) {
 		ref = providerRef.String
 	}
 	return payment.NewPaymentFromDB(id, orderID, payment.PaymentMethod(method), status, money, ref, createdAt, updatedAt)
+}
+
+func hydratePayment(row *sql.Row) (*payment.Payment, error) {
+	return hydratePaymentFromScanner(row)
 }
 
 const paymentColumns = `id, order_id, method, status, amount, currency, provider_ref, created_at, updated_at`
@@ -138,4 +145,41 @@ func (r *PaymentRepo) UpdateStatus(ctx context.Context, p *payment.Payment, prev
 		return apperror.Conflict("payment was modified concurrently")
 	}
 	return nil
+}
+
+// List returns payments ordered by created_at desc with optional status filter.
+func (r *PaymentRepo) List(ctx context.Context, filter payment.ListFilter) ([]payment.Payment, error) {
+	if filter.Offset < 0 {
+		return nil, fmt.Errorf("payment_repo: list: negative offset")
+	}
+	if filter.Limit <= 0 {
+		return nil, fmt.Errorf("payment_repo: list: limit must be positive")
+	}
+
+	args := []interface{}{filter.Offset, filter.Limit}
+	q := `SELECT ` + paymentColumns + ` FROM payments`
+	if filter.Status != "" {
+		q += ` WHERE status = $3`
+		args = append(args, string(filter.Status))
+	}
+	q += ` ORDER BY created_at DESC OFFSET $1 LIMIT $2`
+
+	rows, err := r.db.QueryContext(ctx, q, args...)
+	if err != nil {
+		return nil, fmt.Errorf("payment_repo: list: %w", err)
+	}
+	defer rows.Close()
+
+	var out []payment.Payment
+	for rows.Next() {
+		p, err := hydratePaymentFromScanner(rows)
+		if err != nil {
+			return nil, fmt.Errorf("payment_repo: list scan: %w", err)
+		}
+		out = append(out, *p)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("payment_repo: list rows: %w", err)
+	}
+	return out, nil
 }

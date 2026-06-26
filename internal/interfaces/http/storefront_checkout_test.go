@@ -134,6 +134,9 @@ func (r *storefrontCheckoutPaymentRepoStub) UpdateStatus(_ context.Context, p *p
 	r.created = &clone
 	return nil
 }
+func (r *storefrontCheckoutPaymentRepoStub) List(_ context.Context, _ payment.ListFilter) ([]payment.Payment, error) {
+	return nil, nil
+}
 
 func storefrontCustomerRequest(req *http.Request, customerID string) *http.Request {
 	id, err := identity.NewIdentity(customerID, identity.RoleCustomer)
