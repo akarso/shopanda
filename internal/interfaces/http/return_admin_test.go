@@ -139,6 +139,9 @@ func (r *returnHTTPPaymentRepo) Create(context.Context, *payment.Payment) error 
 func (r *returnHTTPPaymentRepo) UpdateStatus(context.Context, *payment.Payment, time.Time) error {
 	return nil
 }
+func (r *returnHTTPPaymentRepo) List(context.Context, payment.ListFilter) ([]payment.Payment, error) {
+	return nil, nil
+}
 
 func returnHTTPPaidOrder(t *testing.T) *order.Order {
 	t.Helper()

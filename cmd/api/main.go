@@ -630,6 +630,7 @@ func runServe(cfg *config.Config, log logger.Logger, embedScheduler bool) error 
 	returnService := returnsApp.NewService(returnRepo, orderRepo, stockRepo, paymentRepo, stripeRefunder, bus, log)
 	returnAdmin := shophttp.NewReturnAdminHandler(returnService, sharedAuditor)
 	returnAccount := shophttp.NewReturnAccountHandler(returnService)
+	paymentAdmin := shophttp.NewPaymentAdminHandler(paymentRepo, sharedAuditor)
 
 	shippingRates := shophttp.NewShippingRatesHandler(flatRateProvider)
 	categoryHandler := shophttp.NewCategoryHandler(categoryRepo, productRepo)
@@ -814,6 +815,8 @@ func runServe(cfg *config.Config, log logger.Logger, embedScheduler bool) error 
 	router.Handle("POST /api/v1/admin/returns/{returnId}/reject", requireOrdersWrite(returnAdmin.Reject()))
 	router.Handle("POST /api/v1/admin/returns/{returnId}/receive", requireOrdersWrite(returnAdmin.Receive()))
 	router.Handle("POST /api/v1/admin/returns/{returnId}/refund", requireOrdersWrite(returnAdmin.Refund()))
+	router.Handle("GET /api/v1/admin/payments", requireOrdersRead(paymentAdmin.List()))
+	router.Handle("GET /api/v1/admin/payments/{paymentId}", requireOrdersRead(paymentAdmin.Get()))
 	router.Handle("GET /api/v1/admin/media", requireMediaRead(mediaHandler.List()))
 	router.Handle("POST /api/v1/admin/media", requireMediaWrite(mediaHandler.Upload()))
 	router.Handle("POST /api/v1/admin/media/upload", requireMediaWrite(mediaHandler.Upload()))

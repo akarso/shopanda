@@ -139,3 +139,58 @@ func (r *PaymentRepo) UpdateStatus(ctx context.Context, p *payment.Payment, prev
 	}
 	return nil
 }
+
+// List returns payments ordered by created_at desc with optional status filter.
+func (r *PaymentRepo) List(ctx context.Context, filter payment.ListFilter) ([]payment.Payment, error) {
+	if filter.Offset < 0 {
+		return nil, fmt.Errorf("payment_repo: list: negative offset")
+	}
+	if filter.Limit <= 0 {
+		return nil, fmt.Errorf("payment_repo: list: limit must be positive")
+	}
+
+	args := []interface{}{filter.Offset, filter.Limit}
+	q := `SELECT ` + paymentColumns + ` FROM payments`
+	if filter.Status != "" {
+		q += ` WHERE status = $3`
+		args = append(args, string(filter.Status))
+	}
+	q += ` ORDER BY created_at DESC OFFSET $1 LIMIT $2`
+
+	rows, err := r.db.QueryContext(ctx, q, args...)
+	if err != nil {
+		return nil, fmt.Errorf("payment_repo: list: %w", err)
+	}
+	defer rows.Close()
+
+	var out []payment.Payment
+	for rows.Next() {
+		var id, orderID string
+		var status, method string
+		var amount int64
+		var currency string
+		var providerRef sql.NullString
+		var createdAt, updatedAt time.Time
+		if err := rows.Scan(&id, &orderID, &method, &status,
+			&amount, &currency, &providerRef, &createdAt, &updatedAt); err != nil {
+			return nil, fmt.Errorf("payment_repo: list scan: %w", err)
+		}
+		money, err := shared.NewMoney(amount, currency)
+		if err != nil {
+			return nil, fmt.Errorf("payment_repo: list money: %w", err)
+		}
+		var ref string
+		if providerRef.Valid {
+			ref = providerRef.String
+		}
+		p, err := payment.NewPaymentFromDB(id, orderID, payment.PaymentMethod(method), status, money, ref, createdAt, updatedAt)
+		if err != nil {
+			return nil, fmt.Errorf("payment_repo: list hydrate: %w", err)
+		}
+		out = append(out, *p)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("payment_repo: list rows: %w", err)
+	}
+	return out, nil
+}

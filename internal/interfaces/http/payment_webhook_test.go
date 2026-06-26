@@ -59,6 +59,10 @@ func (m *mockPaymentRepo) UpdateStatus(ctx context.Context, p *payment.Payment, 
 	return nil
 }
 
+func (m *mockPaymentRepo) List(context.Context, payment.ListFilter) ([]payment.Payment, error) {
+	return nil, nil
+}
+
 // ── helpers ─────────────────────────────────────────────────────────────
 
 func webhookTestLogger() logger.Logger {

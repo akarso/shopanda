@@ -240,3 +240,58 @@ func TestPaymentRepo_UpdateStatus_OptimisticLock(t *testing.T) {
 		t.Fatalf("expected conflict error for stale timestamp, got %v", err)
 	}
 }
+
+func TestPaymentRepo_List(t *testing.T) {
+	db := testDB(t)
+	ensureProductsTable(t, db)
+	t.Cleanup(func() {
+		db.Exec("DELETE FROM payments")
+		db.Exec("DELETE FROM orders")
+	})
+
+	repo, err := postgres.NewPaymentRepo(db)
+	if err != nil {
+		t.Fatalf("NewPaymentRepo: %v", err)
+	}
+	ctx := context.Background()
+
+	orderCompleted := mustInsertOrder(t, db)
+	pCompleted := mustNewPayment(t, orderCompleted)
+	if err := pCompleted.Complete("ref-done"); err != nil {
+		t.Fatalf("Complete: %v", err)
+	}
+	if err := repo.Create(ctx, &pCompleted); err != nil {
+		t.Fatalf("Create completed: %v", err)
+	}
+
+	orderRefunded := mustInsertOrder(t, db)
+	pRefunded := mustNewPayment(t, orderRefunded)
+	if err := pRefunded.Complete("ref-refund"); err != nil {
+		t.Fatalf("Complete: %v", err)
+	}
+	if err := pRefunded.Refund(); err != nil {
+		t.Fatalf("Refund: %v", err)
+	}
+	if err := repo.Create(ctx, &pRefunded); err != nil {
+		t.Fatalf("Create refunded: %v", err)
+	}
+
+	all, err := repo.List(ctx, payment.ListFilter{Offset: 0, Limit: 10})
+	if err != nil {
+		t.Fatalf("List all: %v", err)
+	}
+	if len(all) != 2 {
+		t.Fatalf("List all len = %d, want 2", len(all))
+	}
+
+	refunded, err := repo.List(ctx, payment.ListFilter{Status: payment.StatusRefunded, Offset: 0, Limit: 10})
+	if err != nil {
+		t.Fatalf("List refunded: %v", err)
+	}
+	if len(refunded) != 1 {
+		t.Fatalf("List refunded len = %d, want 1", len(refunded))
+	}
+	if refunded[0].Status() != payment.StatusRefunded {
+		t.Fatalf("status = %q", refunded[0].Status())
+	}
+}
