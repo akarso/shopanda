@@ -9,6 +9,7 @@ import (
 	"github.com/akarso/shopanda/internal/domain/order"
 	"github.com/akarso/shopanda/internal/domain/payment"
 	domainReturns "github.com/akarso/shopanda/internal/domain/returns"
+	"github.com/akarso/shopanda/internal/domain/shared"
 	"github.com/akarso/shopanda/internal/platform/apperror"
 	"github.com/akarso/shopanda/internal/platform/event"
 	"github.com/akarso/shopanda/internal/platform/id"
@@ -250,6 +251,130 @@ func (s *Service) Refund(ctx context.Context, returnID string) (*domainReturns.R
 
 	s.publish(ctx, domainReturns.EventReturnRefunded, *ret)
 	return ret, nil
+}
+
+// Get loads a return by ID.
+func (s *Service) Get(ctx context.Context, returnID string) (*domainReturns.Return, error) {
+	return s.loadReturn(ctx, returnID)
+}
+
+// List returns paginated returns, newest first.
+func (s *Service) List(ctx context.Context, offset, limit int) ([]domainReturns.Return, error) {
+	if offset < 0 {
+		return nil, apperror.Validation("offset must not be negative")
+	}
+	if limit <= 0 || limit > 100 {
+		return nil, apperror.Validation("limit must be between 1 and 100")
+	}
+	list, err := s.returns.List(ctx, offset, limit)
+	if err != nil {
+		return nil, fmt.Errorf("returns: list: %w", err)
+	}
+	return list, nil
+}
+
+// ListByOrderID returns all returns for an order.
+func (s *Service) ListByOrderID(ctx context.Context, orderID string) ([]domainReturns.Return, error) {
+	if orderID == "" {
+		return nil, apperror.Validation("order id must not be empty")
+	}
+	list, err := s.returns.FindByOrderID(ctx, orderID)
+	if err != nil {
+		return nil, fmt.Errorf("returns: list by order: %w", err)
+	}
+	return list, nil
+}
+
+// ListByOrderForCustomer returns returns for an order after verifying customer ownership.
+func (s *Service) ListByOrderForCustomer(ctx context.Context, orderID, customerID string) ([]domainReturns.Return, error) {
+	if err := s.assertOrderCustomer(ctx, orderID, customerID); err != nil {
+		return nil, err
+	}
+	return s.ListByOrderID(ctx, orderID)
+}
+
+// ListByCustomerID returns all returns for a customer.
+func (s *Service) ListByCustomerID(ctx context.Context, customerID string) ([]domainReturns.Return, error) {
+	if customerID == "" {
+		return nil, apperror.Validation("customer id must not be empty")
+	}
+	list, err := s.returns.FindByCustomerID(ctx, customerID)
+	if err != nil {
+		return nil, fmt.Errorf("returns: list by customer: %w", err)
+	}
+	return list, nil
+}
+
+// ReturnableLine describes how many units of an order line can still be returned.
+type ReturnableLine struct {
+	VariantID  string
+	SKU        string
+	Name       string
+	Ordered    int
+	Returnable int
+	UnitPrice  shared.Money
+}
+
+// ReturnableLines computes remaining returnable quantities for a paid order.
+func (s *Service) ReturnableLines(ctx context.Context, orderID, customerID string) ([]ReturnableLine, error) {
+	if err := s.assertOrderCustomer(ctx, orderID, customerID); err != nil {
+		return nil, err
+	}
+	ord, err := s.orders.FindByID(ctx, orderID)
+	if err != nil {
+		return nil, fmt.Errorf("returns: find order: %w", err)
+	}
+	if ord == nil {
+		return nil, apperror.NotFound("order not found")
+	}
+	if ord.Status() != order.OrderStatusPaid {
+		return nil, apperror.Validation("returns are only allowed for paid orders")
+	}
+
+	existing, err := s.returns.FindByOrderID(ctx, orderID)
+	if err != nil {
+		return nil, fmt.Errorf("returns: list existing: %w", err)
+	}
+	already := make(map[string]int)
+	for _, ret := range existing {
+		if ret.Status().IsTerminal() && ret.Status() != domainReturns.StatusRefunded {
+			continue
+		}
+		for _, item := range ret.Items() {
+			already[item.VariantID] += item.Quantity
+		}
+	}
+
+	out := make([]ReturnableLine, 0, len(ord.Items()))
+	for _, item := range ord.Items() {
+		returnable := item.Quantity - already[item.VariantID]
+		if returnable <= 0 {
+			continue
+		}
+		out = append(out, ReturnableLine{
+			VariantID:  item.VariantID,
+			SKU:        item.SKU,
+			Name:       item.Name,
+			Ordered:    item.Quantity,
+			Returnable: returnable,
+			UnitPrice:  item.UnitPrice,
+		})
+	}
+	return out, nil
+}
+
+func (s *Service) assertOrderCustomer(ctx context.Context, orderID, customerID string) error {
+	ord, err := s.orders.FindByID(ctx, orderID)
+	if err != nil {
+		return fmt.Errorf("returns: find order: %w", err)
+	}
+	if ord == nil {
+		return apperror.NotFound("order not found")
+	}
+	if customerID != "" && ord.CustomerID != "" && ord.CustomerID != customerID {
+		return apperror.Forbidden("order not found")
+	}
+	return nil
 }
 
 func (s *Service) loadReturn(ctx context.Context, returnID string) (*domainReturns.Return, error) {

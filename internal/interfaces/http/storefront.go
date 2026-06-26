@@ -18,6 +18,7 @@ import (
 	checkoutApp "github.com/akarso/shopanda/internal/application/checkout"
 	"github.com/akarso/shopanda/internal/application/composition"
 	orderApp "github.com/akarso/shopanda/internal/application/order"
+	returnsApp "github.com/akarso/shopanda/internal/application/returns"
 	"github.com/akarso/shopanda/internal/domain/catalog"
 	"github.com/akarso/shopanda/internal/domain/customer"
 	"github.com/akarso/shopanda/internal/domain/legal"
@@ -45,6 +46,7 @@ type StorefrontHandler struct {
 	auth        *appAuth.Service
 	checkout    *checkoutApp.Service
 	orders      order.OrderRepository
+	returns     *returnsApp.Service
 	orderClaim  *orderApp.ClaimService
 	emailer     OrderClaimEmailer
 	orderLinker OrderLinker
@@ -278,6 +280,12 @@ func (h *StorefrontHandler) WithAccount(authService *appAuth.Service, orders ord
 func (h *StorefrontHandler) WithAccountProfile(addresses customer.AddressRepository, consents legal.ConsentRepository) *StorefrontHandler {
 	h.addresses = addresses
 	h.consents = consents
+	return h
+}
+
+// WithReturns enables storefront return request and tracking pages.
+func (h *StorefrontHandler) WithReturns(returns *returnsApp.Service) *StorefrontHandler {
+	h.returns = returns
 	return h
 }
 

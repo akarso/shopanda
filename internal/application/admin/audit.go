@@ -85,6 +85,13 @@ const (
 	AuditAttributeGroupUpdate AuditAction = "attribute_group.update"
 	AuditAttributeGroupDelete AuditAction = "attribute_group.delete"
 
+	AuditReturnList    AuditAction = "return.list"
+	AuditReturnRead    AuditAction = "return.read"
+	AuditReturnApprove AuditAction = "return.approve"
+	AuditReturnReject  AuditAction = "return.reject"
+	AuditReturnReceive AuditAction = "return.receive"
+	AuditReturnRefund  AuditAction = "return.refund"
+
 	AuditLogList AuditAction = "audit.list"
 )
 

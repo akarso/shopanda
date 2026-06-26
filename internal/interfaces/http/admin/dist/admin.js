@@ -143,7 +143,7 @@
         "/admin/dashboard": { title: "Dashboard", render: renderDashboard, auth: true },
         // Sales
         "/admin/orders": { title: "Orders", render: renderOrdersGrid, auth: true },
-        "/admin/sales/returns": { title: "Returns", render: renderPlaceholder("Returns"), auth: true },
+        "/admin/sales/returns": { title: "Returns", render: renderReturnsGrid, auth: true },
         "/admin/sales/transactions": { title: "Transactions", render: renderPlaceholder("Transactions"), auth: true },
         // Catalog
         "/admin/products": { title: "Products", render: renderProductsGrid, auth: true },
@@ -275,6 +275,15 @@
                 title: "Order Detail",
                 auth: true,
                 render: function (container) { renderOrderDetail(container, orderID); }
+            };
+        }
+        var returnMatch = path.match(/^\/admin\/sales\/returns\/([^/]+)$/);
+        if (returnMatch) {
+            var returnID = decodeURIComponent(returnMatch[1]);
+            return {
+                title: "Return Detail",
+                auth: true,
+                render: function (container) { renderReturnDetail(container, returnID); }
             };
         }
         var customerMatch = path.match(/^\/admin\/customers\/([^/]+)$/);
@@ -2112,6 +2121,38 @@
         return out;
     }
 
+    function normalizeReturns(returns) {
+        if (!Array.isArray(returns)) {
+            return [];
+        }
+        var out = [];
+        for (var i = 0; i < returns.length; i++) {
+            var ret = normalizeReturn(returns[i]);
+            if (ret) {
+                out.push(ret);
+            }
+        }
+        return out;
+    }
+
+    function normalizeReturn(raw) {
+        if (!raw) {
+            return null;
+        }
+        return {
+            id: pick(raw, "id", "ID"),
+            order_id: pick(raw, "order_id", "OrderID"),
+            customer_id: pick(raw, "customer_id", "CustomerID"),
+            reason: pick(raw, "reason", "Reason"),
+            status: pick(raw, "status", "Status"),
+            currency: pick(raw, "currency", "Currency"),
+            total_amount: pick(raw, "total_amount", "TotalAmount"),
+            created_at: pick(raw, "created_at", "CreatedAt"),
+            updated_at: pick(raw, "updated_at", "UpdatedAt"),
+            items: normalizeOrderItems(pick(raw, "items", "Items"))
+        };
+    }
+
     function normalizeAssets(assets) {
         if (!Array.isArray(assets)) {
             return [];
@@ -2863,6 +2904,126 @@
         }).catch(function () {
             grid.innerHTML = '<p role="alert">Failed to load audit log.</p>';
         });
+    }
+
+    function renderReturnsGrid(container) {
+        container.innerHTML = '<h2>Returns</h2><div id="returns-grid"></div>';
+        var grid = document.getElementById('returns-grid');
+        api('/admin/returns?offset=0&limit=50').then(function (body) {
+            if (body && body.error && body.error.code === 'forbidden') {
+                grid.innerHTML = '<p role="alert">Your account does not have orders access.</p>';
+                return;
+            }
+            var returns = normalizeReturns(body && body.data && body.data.returns ? body.data.returns : []);
+            var html = '<table><thead><tr>' +
+                '<th>ID</th><th>Order</th><th>Customer</th><th>Status</th><th>Total</th><th>Date</th><th>Action</th>' +
+                '</tr></thead><tbody>';
+            if (returns.length === 0) {
+                html += '<tr><td colspan="7">No returns found.</td></tr>';
+            } else {
+                for (var i = 0; i < returns.length; i++) {
+                    var ret = returns[i];
+                    html += '<tr>' +
+                        '<td>' + esc(ret.id || '') + '</td>' +
+                        '<td>' + esc(ret.order_id || '') + '</td>' +
+                        '<td>' + esc(ret.customer_id || '') + '</td>' +
+                        '<td><span class="badge badge-' + esc(ret.status || '') + '">' + esc(ret.status || '') + '</span></td>' +
+                        '<td>' + formatMoney(Number(ret.total_amount || 0), ret.currency) + '</td>' +
+                        '<td>' + esc(ret.created_at ? String(ret.created_at).substring(0, 10) : '') + '</td>' +
+                        '<td><a href="/admin/sales/returns/' + esc(ret.id || '') + '" data-link>View</a></td>' +
+                        '</tr>';
+                }
+            }
+            html += '</tbody></table>';
+            grid.innerHTML = html;
+        }).catch(function () {
+            grid.innerHTML = '<p role="alert">Failed to load returns.</p>';
+        });
+    }
+
+    function renderReturnDetail(container, returnID) {
+        container.innerHTML =
+            '<h2>Return Detail</h2>' +
+            '<p><a href="/admin/sales/returns" data-link>Back to returns</a></p>' +
+            '<div id="return-detail-msg"></div>' +
+            '<div id="return-detail-body">Loading…</div>';
+
+        var msg = document.getElementById('return-detail-msg');
+        var bodyBox = document.getElementById('return-detail-body');
+
+        function actionButton(label, path) {
+            return '<button type="button" class="chip return-action" data-action="' + esc(path) + '">' + esc(label) + '</button>';
+        }
+
+        function load() {
+            api('/admin/returns/' + encodeURIComponent(returnID)).then(function (res) {
+                var ret = normalizeReturn(res && res.data && res.data.return);
+                if (!ret) {
+                    bodyBox.innerHTML = '<p role="alert">Return not found.</p>';
+                    return;
+                }
+
+                var actions = '';
+                if (ret.status === 'requested') {
+                    actions = actionButton('Approve', 'approve') + ' ' + actionButton('Reject', 'reject');
+                } else if (ret.status === 'approved') {
+                    actions = actionButton('Mark received', 'receive');
+                } else if (ret.status === 'received') {
+                    actions = actionButton('Issue refund', 'refund');
+                }
+
+                var items = ret.items || [];
+                var itemsHtml = '<table><thead><tr><th>Product</th><th>SKU</th><th>Qty</th><th>Price</th></tr></thead><tbody>';
+                if (items.length === 0) {
+                    itemsHtml += '<tr><td colspan="4">No items.</td></tr>';
+                } else {
+                    for (var j = 0; j < items.length; j++) {
+                        var it = items[j];
+                        itemsHtml += '<tr>' +
+                            '<td>' + esc(it.name || '') + '</td>' +
+                            '<td>' + esc(it.sku || '') + '</td>' +
+                            '<td>' + esc(String(it.quantity || 0)) + '</td>' +
+                            '<td>' + formatMoney(Number(it.unit_price || 0), it.currency || ret.currency) + '</td>' +
+                            '</tr>';
+                    }
+                }
+                itemsHtml += '</tbody></table>';
+
+                bodyBox.innerHTML =
+                    '<article>' +
+                    '<p><strong>Return ID:</strong> ' + esc(ret.id) + '</p>' +
+                    '<p><strong>Order:</strong> <a href="/admin/orders/' + esc(ret.order_id || '') + '" data-link>' + esc(ret.order_id || '') + '</a></p>' +
+                    '<p><strong>Status:</strong> <span class="badge badge-' + esc(ret.status) + '">' + esc(ret.status) + '</span></p>' +
+                    '<p><strong>Reason:</strong> ' + esc(ret.reason || '') + '</p>' +
+                    '<p><strong>Customer:</strong> ' + esc(ret.customer_id || '') + '</p>' +
+                    '<p><strong>Date:</strong> ' + esc(ret.created_at || '') + '</p>' +
+                    '<div class="checkout-actions">' + actions + '</div>' +
+                    '<h3>Items</h3>' + itemsHtml +
+                    '<p><strong>Total:</strong> ' + formatMoney(Number(ret.total_amount || 0), ret.currency) + '</p>' +
+                    '</article>';
+
+                var buttons = bodyBox.querySelectorAll('.return-action');
+                for (var k = 0; k < buttons.length; k++) {
+                    buttons[k].addEventListener('click', function () {
+                        var action = this.getAttribute('data-action');
+                        api('/admin/returns/' + encodeURIComponent(returnID) + '/' + action, { method: 'POST' }).then(function (updateResp) {
+                            if (updateResp && updateResp.error) {
+                                msg.innerHTML = '<p role="alert">' + esc(updateResp.error.message || 'Action failed.') + '</p>';
+                                return;
+                            }
+                            msg.innerHTML = '<p>Return updated.</p>';
+                            load();
+                        }).catch(function () {
+                            msg.innerHTML = '<p role="alert">Action failed.</p>';
+                        });
+                    });
+                }
+            }).catch(function () {
+                bodyBox.innerHTML = '<p role="alert">Failed to load return.</p>';
+            });
+        }
+
+        load();
     }
 
     function renderPromotionsGrid(container) {
