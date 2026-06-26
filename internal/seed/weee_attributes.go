@@ -20,24 +20,20 @@ func (s *WeeeAttributesSeeder) Seed(ctx context.Context, deps Deps) error {
 	cfg := postgres.NewConfigRepo(deps.DB)
 	store := adminApp.NewAttributeStore(cfg)
 
-	attrs, err := store.ListAttributes(ctx, "")
+	existing, err := store.ListAttributes(ctx, "")
 	if err != nil {
 		return err
 	}
-	for _, a := range attrs {
-		if a.Code == legal.AttrWeeeCategory {
-			deps.Logger.Info("seed.weee_attributes.skip", map[string]interface{}{
-				"reason": "already registered",
-			})
-			return s.seedDemoProduct(ctx, deps)
-		}
+	known := make(map[string]struct{}, len(existing))
+	for _, a := range existing {
+		known[a.Code] = struct{}{}
 	}
 
 	definitions := []catalog.Attribute{
 		{
-			Code:  legal.AttrWeeeCategory,
-			Label: "WEEE category",
-			Type:  catalog.AttributeTypeSelect,
+			Code:    legal.AttrWeeeCategory,
+			Label:   "WEEE category",
+			Type:    catalog.AttributeTypeSelect,
 			Options: legal.WeeeCategoryOptions(),
 		},
 		{
@@ -57,6 +53,12 @@ func (s *WeeeAttributesSeeder) Seed(ctx context.Context, deps Deps) error {
 		},
 	}
 	for _, attr := range definitions {
+		if _, ok := known[attr.Code]; ok {
+			deps.Logger.Info("seed.weee_attribute.skip", map[string]interface{}{
+				"code": attr.Code,
+			})
+			continue
+		}
 		if err := store.CreateAttribute(ctx, attr); err != nil {
 			return err
 		}
@@ -65,22 +67,39 @@ func (s *WeeeAttributesSeeder) Seed(ctx context.Context, deps Deps) error {
 		})
 	}
 
-	group, err := catalog.NewAttributeGroup(legal.AttributeGroupWeee, "WEEE compliance")
+	groups, err := store.ListGroups(ctx)
 	if err != nil {
 		return err
 	}
-	group.Attributes = []string{
-		legal.AttrWeeeCategory,
-		legal.AttrWeeeProducerRegistration,
-		legal.AttrWeeeTakeBackInfo,
-		legal.AttrWeeeSymbolVisible,
+	groupExists := false
+	for _, g := range groups {
+		if g.Code == legal.AttributeGroupWeee {
+			groupExists = true
+			break
+		}
 	}
-	if err := store.CreateGroup(ctx, group); err != nil {
-		return err
+	if !groupExists {
+		group, err := catalog.NewAttributeGroup(legal.AttributeGroupWeee, "WEEE compliance")
+		if err != nil {
+			return err
+		}
+		group.Attributes = []string{
+			legal.AttrWeeeCategory,
+			legal.AttrWeeeProducerRegistration,
+			legal.AttrWeeeTakeBackInfo,
+			legal.AttrWeeeSymbolVisible,
+		}
+		if err := store.CreateGroup(ctx, group); err != nil {
+			return err
+		}
+		deps.Logger.Info("seed.weee_attribute_group.created", map[string]interface{}{
+			"code": legal.AttributeGroupWeee,
+		})
+	} else {
+		deps.Logger.Info("seed.weee_attribute_group.skip", map[string]interface{}{
+			"code": legal.AttributeGroupWeee,
+		})
 	}
-	deps.Logger.Info("seed.weee_attribute_group.created", map[string]interface{}{
-		"code": legal.AttributeGroupWeee,
-	})
 
 	return s.seedDemoProduct(ctx, deps)
 }

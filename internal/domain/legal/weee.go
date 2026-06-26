@@ -142,7 +142,7 @@ func (w WeeeInfo) HasDisclosure() bool {
 	if strings.TrimSpace(w.TakeBackInfo) != "" {
 		return true
 	}
-	return w.SymbolVisible && strings.TrimSpace(w.ProducerRegistration) != ""
+	return false
 }
 
 // BlockData returns composition block payload for weee_disclosure.

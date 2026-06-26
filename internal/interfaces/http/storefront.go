@@ -662,19 +662,7 @@ func (h *StorefrontHandler) buildLayoutData(r *http.Request, categories []catalo
 	if s := store.FromContext(r.Context()); s != nil {
 		storeID = s.ID
 	}
-	weeeFooterEnabled := false
-	weeeProducerReg := ""
-	if h.legalConfig != nil {
-		if enabled, err := legal.WeeeEnabled(r.Context(), h.legalConfig, storeID); err == nil && enabled {
-			if reg, err := legal.StoreProducerRegistration(r.Context(), h.legalConfig, storeID); err == nil {
-				reg = strings.TrimSpace(reg)
-				if reg != "" {
-					weeeFooterEnabled = true
-					weeeProducerReg = reg
-				}
-			}
-		}
-	}
+	weeeFooterEnabled, weeeProducerReg := h.weeeFooterData(r, storeID)
 	return StorefrontLayoutData{
 		SiteName:           siteName,
 		SearchAction:       searchAction,
@@ -698,6 +686,25 @@ func (h *StorefrontHandler) buildLayoutData(r *http.Request, categories []catalo
 		WeeeFooterEnabled:  weeeFooterEnabled,
 		WeeeProducerReg:    weeeProducerReg,
 	}
+}
+
+func (h *StorefrontHandler) weeeFooterData(r *http.Request, storeID string) (enabled bool, producerReg string) {
+	if h.legalConfig == nil {
+		return false, ""
+	}
+	ok, err := legal.WeeeEnabled(r.Context(), h.legalConfig, storeID)
+	if err != nil || !ok {
+		return false, ""
+	}
+	reg, err := legal.StoreProducerRegistration(r.Context(), h.legalConfig, storeID)
+	if err != nil {
+		return false, ""
+	}
+	reg = strings.TrimSpace(reg)
+	if reg == "" {
+		return false, ""
+	}
+	return true, reg
 }
 
 func (h *StorefrontHandler) storefrontAccountDisplayName(customerID, displayName string) string {
