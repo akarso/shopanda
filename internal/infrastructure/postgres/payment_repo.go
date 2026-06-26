@@ -30,16 +30,19 @@ func NewPaymentRepo(db *sql.DB) (*PaymentRepo, error) {
 }
 
 // hydratePayment reads a payment row from a *sql.Row.
-func hydratePayment(row *sql.Row) (*payment.Payment, error) {
+type paymentScanner interface {
+	Scan(dest ...interface{}) error
+}
+
+func hydratePaymentFromScanner(s paymentScanner) (*payment.Payment, error) {
 	var id, orderID string
 	var status, method string
 	var amount int64
 	var currency string
 	var providerRef sql.NullString
 	var createdAt, updatedAt time.Time
-	err := row.Scan(&id, &orderID, &method, &status,
-		&amount, &currency, &providerRef, &createdAt, &updatedAt)
-	if err != nil {
+	if err := s.Scan(&id, &orderID, &method, &status,
+		&amount, &currency, &providerRef, &createdAt, &updatedAt); err != nil {
 		return nil, err
 	}
 	money, err := shared.NewMoney(amount, currency)
@@ -51,6 +54,10 @@ func hydratePayment(row *sql.Row) (*payment.Payment, error) {
 		ref = providerRef.String
 	}
 	return payment.NewPaymentFromDB(id, orderID, payment.PaymentMethod(method), status, money, ref, createdAt, updatedAt)
+}
+
+func hydratePayment(row *sql.Row) (*payment.Payment, error) {
+	return hydratePaymentFromScanner(row)
 }
 
 const paymentColumns = `id, order_id, method, status, amount, currency, provider_ref, created_at, updated_at`
@@ -165,27 +172,9 @@ func (r *PaymentRepo) List(ctx context.Context, filter payment.ListFilter) ([]pa
 
 	var out []payment.Payment
 	for rows.Next() {
-		var id, orderID string
-		var status, method string
-		var amount int64
-		var currency string
-		var providerRef sql.NullString
-		var createdAt, updatedAt time.Time
-		if err := rows.Scan(&id, &orderID, &method, &status,
-			&amount, &currency, &providerRef, &createdAt, &updatedAt); err != nil {
+		p, err := hydratePaymentFromScanner(rows)
+		if err != nil {
 			return nil, fmt.Errorf("payment_repo: list scan: %w", err)
-		}
-		money, err := shared.NewMoney(amount, currency)
-		if err != nil {
-			return nil, fmt.Errorf("payment_repo: list money: %w", err)
-		}
-		var ref string
-		if providerRef.Valid {
-			ref = providerRef.String
-		}
-		p, err := payment.NewPaymentFromDB(id, orderID, payment.PaymentMethod(method), status, money, ref, createdAt, updatedAt)
-		if err != nil {
-			return nil, fmt.Errorf("payment_repo: list hydrate: %w", err)
 		}
 		out = append(out, *p)
 	}
