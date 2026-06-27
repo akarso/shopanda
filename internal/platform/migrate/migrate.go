@@ -3,6 +3,7 @@ package migrate
 import (
 	"database/sql"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"sort"
@@ -10,9 +11,53 @@ import (
 )
 
 // Run applies all pending SQL migrations from dir to the database.
-// Migration files must be named like 001_description.sql and contain plain SQL.
-// Applied migrations are tracked in the schema_migrations table.
 func Run(db *sql.DB, dir string) (int, error) {
+	return runMigrations(db, func() ([]migrationFile, error) {
+		paths, err := listMigrations(dir)
+		if err != nil {
+			return nil, err
+		}
+		files := make([]migrationFile, len(paths))
+		for i, path := range paths {
+			content, err := os.ReadFile(path)
+			if err != nil {
+				return nil, fmt.Errorf("read %s: %w", path, err)
+			}
+			files[i] = migrationFile{name: filepath.Base(path), content: string(content)}
+		}
+		return files, nil
+	})
+}
+
+// RunFS applies pending SQL migrations from fsys under dir.
+func RunFS(db *sql.DB, fsys fs.FS, dir string) (int, error) {
+	return runMigrations(db, func() ([]migrationFile, error) {
+		entries, err := fs.ReadDir(fsys, dir)
+		if err != nil {
+			return nil, fmt.Errorf("migrate: read dir %s: %w", dir, err)
+		}
+		var files []migrationFile
+		for _, e := range entries {
+			if e.IsDir() || !strings.HasSuffix(e.Name(), ".sql") {
+				continue
+			}
+			content, err := fs.ReadFile(fsys, filepath.Join(dir, e.Name()))
+			if err != nil {
+				return nil, fmt.Errorf("read %s: %w", e.Name(), err)
+			}
+			files = append(files, migrationFile{name: e.Name(), content: string(content)})
+		}
+		sort.Slice(files, func(i, j int) bool { return files[i].name < files[j].name })
+		return files, nil
+	})
+}
+
+type migrationFile struct {
+	name    string
+	content string
+}
+
+func runMigrations(db *sql.DB, list func() ([]migrationFile, error)) (int, error) {
 	if err := ensureTable(db); err != nil {
 		return 0, err
 	}
@@ -22,19 +67,18 @@ func Run(db *sql.DB, dir string) (int, error) {
 		return 0, err
 	}
 
-	files, err := listMigrations(dir)
+	files, err := list()
 	if err != nil {
 		return 0, err
 	}
 
 	count := 0
 	for _, f := range files {
-		name := filepath.Base(f)
-		if applied[name] {
+		if applied[f.name] {
 			continue
 		}
-		if err := applyMigration(db, f, name); err != nil {
-			return count, fmt.Errorf("migrate %s: %w", name, err)
+		if err := applyMigrationContent(db, f.name, f.content); err != nil {
+			return count, fmt.Errorf("migrate %s: %w", f.name, err)
 		}
 		count++
 	}
@@ -100,13 +144,16 @@ func applyMigration(db *sql.DB, path, name string) error {
 	if err != nil {
 		return fmt.Errorf("read: %w", err)
 	}
+	return applyMigrationContent(db, name, string(content))
+}
 
+func applyMigrationContent(db *sql.DB, name, content string) error {
 	tx, err := db.Begin()
 	if err != nil {
 		return fmt.Errorf("begin tx: %w", err)
 	}
 
-	if _, err := tx.Exec(string(content)); err != nil {
+	if _, err := tx.Exec(content); err != nil {
 		tx.Rollback()
 		return fmt.Errorf("exec: %w", err)
 	}

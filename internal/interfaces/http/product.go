@@ -3,7 +3,6 @@ package http
 import (
 	"context"
 	"net/http"
-	"strconv"
 
 	"github.com/akarso/shopanda/internal/application/composition"
 	"github.com/akarso/shopanda/internal/domain/catalog"
@@ -104,38 +103,6 @@ func (h *ProductHandler) Get() http.HandlerFunc {
 
 		JSON(w, http.StatusOK, productResponse(ctx))
 	}
-}
-
-const (
-	defaultLimit = 20
-	maxLimit     = 100
-)
-
-// parsePagination extracts offset and limit query parameters.
-func parsePagination(r *http.Request) (int, int, error) {
-	offset := 0
-	limit := defaultLimit
-
-	if v := r.URL.Query().Get("offset"); v != "" {
-		n, err := strconv.Atoi(v)
-		if err != nil || n < 0 {
-			return 0, 0, apperror.Validation("offset must be a non-negative integer")
-		}
-		offset = n
-	}
-
-	if v := r.URL.Query().Get("limit"); v != "" {
-		n, err := strconv.Atoi(v)
-		if err != nil || n < 1 {
-			return 0, 0, apperror.Validation("limit must be a positive integer")
-		}
-		if n > maxLimit {
-			n = maxLimit
-		}
-		limit = n
-	}
-
-	return offset, limit, nil
 }
 
 // productResponse builds the response body for a single product.

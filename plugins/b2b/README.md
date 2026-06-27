@@ -9,7 +9,7 @@ Optional commercial extension for wholesale and business-buyer workflows.
 
 ## Status
 
-**Scaffold only.** License validation stub is wired; B2B features (customer groups, quotes, PO, approvals) are planned in Phase 5 and tagged `[b2b]` in the roadmap.
+**Customer groups (PR-500)** — domain port in open core; schema, repository, and admin API in this plugin. Quotes, PO, and approvals remain planned.
 
 ---
 
@@ -43,28 +43,45 @@ Production keys will be issued on purchase. Do not rely on `DEV-*` outside devel
 
 ---
 
+## Customer groups API
+
+Requires B2B plugin enabled and admin JWT with `b2b.groups.read` / `b2b.groups.write`.
+
+| Method | Path | Permission |
+| --- | --- | --- |
+| GET | `/api/v1/admin/customer-groups` | `b2b.groups.read` |
+| POST | `/api/v1/admin/customer-groups` | `b2b.groups.write` |
+| GET | `/api/v1/admin/customer-groups/{groupId}` | `b2b.groups.read` |
+| PUT | `/api/v1/admin/customer-groups/{groupId}` | `b2b.groups.write` |
+| GET | `/api/v1/admin/customers/{customerId}/customer-group` | `b2b.groups.read` |
+| PUT | `/api/v1/admin/customers/{customerId}/customer-group` | `b2b.groups.write` |
+| DELETE | `/api/v1/admin/customers/{customerId}/customer-group` | `b2b.groups.write` |
+
+---
+
 ## Architecture
 
 B2B extends Shopanda through the same `plugin.Plugin` contract as external plugins:
 
 - Implements domain **ports** defined in open core (never the reverse)
 - Registers admin permissions, HTTP routes, pricing/checkout steps via `plugin.App`
-- Does not modify `internal/domain` or core schema directly
+- Does not modify core schema directly; plugin-owned tables ship via embedded migrations
 
-Planned feature map: [Phase 5 roadmap — B2B PRs](../../docs/phase-5-maturity/ROADMAP.md).
+Feature map: [Phase 5 roadmap — B2B PRs](../../docs/phase-5-maturity/ROADMAP.md).
 
 ---
 
-## Package layout (intended)
+## Package layout
 
 ```text
 plugins/b2b/
   plugin.go       # Plugin entry, Init wiring
   license.go      # Entitlement validation (stub → online check)
+  migrations/     # customer_groups, customer_group_members
+  groups/         # Postgres repo + admin HTTP handlers
   LICENSE         # Commercial terms (draft)
   README.md
   # Future:
-  # groups/       # PR-500–501
   # quotes/       # backlog
   # company/      # multi-buyer accounts
 ```
