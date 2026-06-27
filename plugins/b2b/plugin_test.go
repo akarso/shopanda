@@ -14,8 +14,6 @@ import (
 	"github.com/akarso/shopanda/internal/platform/migrate"
 	"github.com/akarso/shopanda/internal/platform/plugin"
 	"github.com/akarso/shopanda/plugins/b2b"
-
-	_ "github.com/lib/pq"
 )
 
 func testApp(cfg *config.Config, db *sql.DB) *plugin.App {
@@ -111,8 +109,32 @@ func TestPlugin_Init_RegistersPermissionsAndRoutes(t *testing.T) {
 		t.Fatal("expected b2b.groups.write for manager")
 	}
 
+	wantRoutes := []struct {
+		pattern    string
+		permission rbac.Permission
+	}{
+		{"GET /api/v1/admin/customer-groups", b2b.PermissionGroupsRead},
+		{"GET /api/v1/admin/customer-groups/{groupId}", b2b.PermissionGroupsRead},
+		{"POST /api/v1/admin/customer-groups", b2b.PermissionGroupsWrite},
+		{"PUT /api/v1/admin/customer-groups/{groupId}", b2b.PermissionGroupsWrite},
+		{"DELETE /api/v1/admin/customer-groups/{groupId}", b2b.PermissionGroupsWrite},
+		{"GET /api/v1/admin/customers/{customerId}/customer-group", b2b.PermissionGroupsRead},
+		{"PUT /api/v1/admin/customers/{customerId}/customer-group", b2b.PermissionGroupsWrite},
+		{"DELETE /api/v1/admin/customers/{customerId}/customer-group", b2b.PermissionGroupsWrite},
+	}
 	routes := app.AdminRoutes()
-	if len(routes) != 7 {
-		t.Fatalf("AdminRoutes() len = %d, want 7", len(routes))
+	if len(routes) != len(wantRoutes) {
+		t.Fatalf("AdminRoutes() len = %d, want %d", len(routes), len(wantRoutes))
+	}
+	for i, want := range wantRoutes {
+		if routes[i].Pattern != want.pattern {
+			t.Fatalf("route[%d] pattern = %q, want %q", i, routes[i].Pattern, want.pattern)
+		}
+		if routes[i].Permission != want.permission {
+			t.Fatalf("route[%d] permission = %q, want %q", i, routes[i].Permission, want.permission)
+		}
+		if routes[i].Handler == nil {
+			t.Fatalf("route[%d] handler is nil", i)
+		}
 	}
 }

@@ -5,6 +5,7 @@ import (
 	"net/http"
 
 	"github.com/akarso/shopanda/internal/domain/identity"
+	"github.com/akarso/shopanda/internal/domain/rbac"
 	"github.com/akarso/shopanda/internal/infrastructure/postgres"
 	"github.com/akarso/shopanda/internal/platform/plugin"
 	"github.com/akarso/shopanda/plugins/b2b/groups"
@@ -62,13 +63,25 @@ func (p *Plugin) Init(app *plugin.App) error {
 
 	groupAdmin := groups.NewAdminHandler(groupRepo, customerRepo)
 
-	app.RegisterAdminRoute("GET /api/v1/admin/customer-groups", PermissionGroupsRead, http.HandlerFunc(groupAdmin.List()))
-	app.RegisterAdminRoute("GET /api/v1/admin/customer-groups/{groupId}", PermissionGroupsRead, http.HandlerFunc(groupAdmin.Get()))
-	app.RegisterAdminRoute("POST /api/v1/admin/customer-groups", PermissionGroupsWrite, http.HandlerFunc(groupAdmin.Create()))
-	app.RegisterAdminRoute("PUT /api/v1/admin/customer-groups/{groupId}", PermissionGroupsWrite, http.HandlerFunc(groupAdmin.Update()))
-	app.RegisterAdminRoute("GET /api/v1/admin/customers/{customerId}/customer-group", PermissionGroupsRead, http.HandlerFunc(groupAdmin.GetCustomerGroup()))
-	app.RegisterAdminRoute("PUT /api/v1/admin/customers/{customerId}/customer-group", PermissionGroupsWrite, http.HandlerFunc(groupAdmin.AssignCustomer()))
-	app.RegisterAdminRoute("DELETE /api/v1/admin/customers/{customerId}/customer-group", PermissionGroupsWrite, http.HandlerFunc(groupAdmin.RemoveCustomer()))
+	routes := []struct {
+		pattern string
+		perm    rbac.Permission
+		handler http.HandlerFunc
+	}{
+		{"GET /api/v1/admin/customer-groups", PermissionGroupsRead, groupAdmin.List()},
+		{"GET /api/v1/admin/customer-groups/{groupId}", PermissionGroupsRead, groupAdmin.Get()},
+		{"POST /api/v1/admin/customer-groups", PermissionGroupsWrite, groupAdmin.Create()},
+		{"PUT /api/v1/admin/customer-groups/{groupId}", PermissionGroupsWrite, groupAdmin.Update()},
+		{"DELETE /api/v1/admin/customer-groups/{groupId}", PermissionGroupsWrite, groupAdmin.Delete()},
+		{"GET /api/v1/admin/customers/{customerId}/customer-group", PermissionGroupsRead, groupAdmin.GetCustomerGroup()},
+		{"PUT /api/v1/admin/customers/{customerId}/customer-group", PermissionGroupsWrite, groupAdmin.AssignCustomer()},
+		{"DELETE /api/v1/admin/customers/{customerId}/customer-group", PermissionGroupsWrite, groupAdmin.RemoveCustomer()},
+	}
+	for _, route := range routes {
+		if err := app.RegisterAdminRoute(route.pattern, route.perm, route.handler); err != nil {
+			return fmt.Errorf("b2b plugin: register %s: %w", route.pattern, err)
+		}
+	}
 
 	if app.Logger != nil {
 		app.Logger.Info("b2b plugin: customer groups registered", nil)

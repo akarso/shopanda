@@ -96,6 +96,25 @@ func (r *PostgresRepo) Save(ctx context.Context, group *customergroup.Group) err
 	return nil
 }
 
+func (r *PostgresRepo) Delete(ctx context.Context, id string) error {
+	id = strings.TrimSpace(id)
+	if id == "" {
+		return fmt.Errorf("b2b groups repo: empty id")
+	}
+	res, err := r.db.ExecContext(ctx, `DELETE FROM customer_groups WHERE id = $1`, id)
+	if err != nil {
+		return fmt.Errorf("b2b groups repo: delete: %w", err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("b2b groups repo: delete rows affected: %w", err)
+	}
+	if n == 0 {
+		return fmt.Errorf("b2b groups repo: group not found")
+	}
+	return nil
+}
+
 func (r *PostgresRepo) AssignCustomer(ctx context.Context, customerID, groupID string) error {
 	customerID = strings.TrimSpace(customerID)
 	groupID = strings.TrimSpace(groupID)

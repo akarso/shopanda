@@ -16,6 +16,9 @@ type Repository interface {
 	// Save inserts or updates a group.
 	Save(ctx context.Context, group *Group) error
 
+	// Delete removes a group by ID.
+	Delete(ctx context.Context, id string) error
+
 	// AssignCustomer sets the customer's group membership (replaces any existing).
 	AssignCustomer(ctx context.Context, customerID, groupID string) error
 

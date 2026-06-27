@@ -111,21 +111,16 @@ func (h *AdminHandler) Create() http.HandlerFunc {
 			shophttp.JSONError(w, apperror.Validation("invalid JSON body"))
 			return
 		}
-		code := strings.ToLower(strings.TrimSpace(req.Code))
-		if existing, err := h.groups.FindByCode(r.Context(), code); err != nil {
-			shophttp.JSONError(w, apperror.Wrap(apperror.CodeInternal, "create customer group failed", err))
-			return
-		} else if existing != nil {
-			shophttp.JSONError(w, apperror.Validation("customer group code already exists"))
-			return
-		}
-
 		g, err := customergroup.NewGroup(id.New(), req.Code, req.Name, req.Description)
 		if err != nil {
 			shophttp.JSONError(w, apperror.Validation(err.Error()))
 			return
 		}
 		if err := h.groups.Save(r.Context(), &g); err != nil {
+			if strings.Contains(err.Error(), "code already exists") {
+				shophttp.JSONError(w, apperror.Validation("customer group code already exists"))
+				return
+			}
 			shophttp.JSONError(w, apperror.Wrap(apperror.CodeInternal, "create customer group failed", err))
 			return
 		}
@@ -164,6 +159,31 @@ func (h *AdminHandler) Update() http.HandlerFunc {
 	}
 }
 
+// Delete handles DELETE /api/v1/admin/customer-groups/{groupId}.
+func (h *AdminHandler) Delete() http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		groupID := strings.TrimSpace(r.PathValue("groupId"))
+		g, err := h.groups.FindByID(r.Context(), groupID)
+		if err != nil {
+			shophttp.JSONError(w, apperror.Wrap(apperror.CodeInternal, "delete customer group failed", err))
+			return
+		}
+		if g == nil {
+			shophttp.JSONError(w, apperror.NotFound("customer group not found"))
+			return
+		}
+		if err := h.groups.Delete(r.Context(), groupID); err != nil {
+			if strings.Contains(err.Error(), "not found") {
+				shophttp.JSONError(w, apperror.NotFound("customer group not found"))
+				return
+			}
+			shophttp.JSONError(w, apperror.Wrap(apperror.CodeInternal, "delete customer group failed", err))
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
+	}
+}
+
 // AssignCustomer handles PUT /api/v1/admin/customers/{customerId}/customer-group.
 func (h *AdminHandler) AssignCustomer() http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
@@ -184,6 +204,10 @@ func (h *AdminHandler) AssignCustomer() http.HandlerFunc {
 			return
 		}
 		groupID := strings.TrimSpace(req.GroupID)
+		if groupID == "" {
+			shophttp.JSONError(w, apperror.Validation("group_id is required"))
+			return
+		}
 		g, err := h.groups.FindByID(r.Context(), groupID)
 		if err != nil {
 			shophttp.JSONError(w, apperror.Wrap(apperror.CodeInternal, "assign customer group failed", err))
@@ -221,6 +245,15 @@ func (h *AdminHandler) RemoveCustomer() http.HandlerFunc {
 func (h *AdminHandler) GetCustomerGroup() http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		customerID := strings.TrimSpace(r.PathValue("customerId"))
+		cust, err := h.customers.FindByID(r.Context(), customerID)
+		if err != nil {
+			shophttp.JSONError(w, apperror.Wrap(apperror.CodeInternal, "get customer group failed", err))
+			return
+		}
+		if cust == nil {
+			shophttp.JSONError(w, apperror.NotFound("customer not found"))
+			return
+		}
 		g, err := h.groups.FindGroupByCustomerID(r.Context(), customerID)
 		if err != nil {
 			shophttp.JSONError(w, apperror.Wrap(apperror.CodeInternal, "get customer group failed", err))

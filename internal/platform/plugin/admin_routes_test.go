@@ -16,7 +16,9 @@ func TestApp_RegisterAdminRoute(t *testing.T) {
 		called = true
 		w.WriteHeader(http.StatusOK)
 	})
-	app.RegisterAdminRoute("GET /api/v1/admin/example", rbac.Permission("example.read"), handler)
+	if err := app.RegisterAdminRoute("GET /api/v1/admin/example", rbac.Permission("example.read"), handler); err != nil {
+		t.Fatalf("RegisterAdminRoute() error: %v", err)
+	}
 
 	routes := app.AdminRoutes()
 	if len(routes) != 1 {
@@ -68,6 +70,18 @@ func TestApp_RegisterAdminRoute_EmptyPermissionPanics(t *testing.T) {
 	}()
 	app := &plugin.App{}
 	app.RegisterAdminRoute("GET /x", "", http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
+}
+
+func TestApp_RegisterAdminRoute_DuplicatePatternReturnsError(t *testing.T) {
+	app := &plugin.App{}
+	handler := http.HandlerFunc(func(http.ResponseWriter, *http.Request) {})
+	if err := app.RegisterAdminRoute("GET /api/v1/admin/example", rbac.Permission("example.read"), handler); err != nil {
+		t.Fatalf("first RegisterAdminRoute() error: %v", err)
+	}
+	err := app.RegisterAdminRoute("GET /api/v1/admin/example", rbac.Permission("example.write"), handler)
+	if err == nil {
+		t.Fatal("expected error for duplicate admin route pattern")
+	}
 }
 
 func TestApp_AdminRoutes_Empty(t *testing.T) {

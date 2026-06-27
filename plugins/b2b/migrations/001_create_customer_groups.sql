@@ -4,7 +4,11 @@ CREATE TABLE customer_groups (
     name        TEXT NOT NULL CHECK (length(btrim(name)) > 0),
     description TEXT NOT NULL DEFAULT '',
     created_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
-    updated_at  TIMESTAMPTZ NOT NULL DEFAULT now()
+    updated_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
+    CONSTRAINT customer_groups_code_canonical CHECK (
+        code = lower(btrim(code))
+        AND code ~ '^[a-z0-9][a-z0-9_-]{0,48}[a-z0-9]$'
+    )
 );
 
 CREATE INDEX idx_customer_groups_code ON customer_groups (code);

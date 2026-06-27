@@ -17,6 +17,13 @@ func TestNewGroup_Success(t *testing.T) {
 	}
 }
 
+func TestNewGroup_InvalidID(t *testing.T) {
+	_, err := customergroup.NewGroup("not-a-uuid", "wholesale", "Name", "")
+	if err == nil {
+		t.Fatal("expected invalid id error")
+	}
+}
+
 func TestNewGroup_InvalidCode(t *testing.T) {
 	_, err := customergroup.NewGroup(id.New(), "Bad Code", "Name", "")
 	if err == nil {

@@ -6,11 +6,12 @@ import (
 	"regexp"
 	"strings"
 	"time"
-
-	"github.com/akarso/shopanda/internal/platform/id"
 )
 
-var codeRegex = regexp.MustCompile(`^[a-z0-9][a-z0-9_-]{0,48}[a-z0-9]$`)
+var (
+	codeRegex = regexp.MustCompile(`^[a-z0-9][a-z0-9_-]{0,48}[a-z0-9]$`)
+	uuidRegex = regexp.MustCompile(`(?i)^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$`)
+)
 
 // Group segments customers for B2B pricing and promotions.
 type Group struct {
@@ -32,7 +33,7 @@ func NewGroup(groupID, code, name, description string) (Group, error) {
 	if groupID == "" {
 		return Group{}, errors.New("customer group: id must not be empty")
 	}
-	if !id.IsValid(groupID) {
+	if !uuidRegex.MatchString(groupID) {
 		return Group{}, errors.New("customer group: id must be a valid UUID")
 	}
 	if err := validateCode(code); err != nil {

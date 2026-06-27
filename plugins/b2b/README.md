@@ -53,6 +53,7 @@ Requires B2B plugin enabled and admin JWT with `b2b.groups.read` / `b2b.groups.w
 | POST | `/api/v1/admin/customer-groups` | `b2b.groups.write` |
 | GET | `/api/v1/admin/customer-groups/{groupId}` | `b2b.groups.read` |
 | PUT | `/api/v1/admin/customer-groups/{groupId}` | `b2b.groups.write` |
+| DELETE | `/api/v1/admin/customer-groups/{groupId}` | `b2b.groups.write` |
 | GET | `/api/v1/admin/customers/{customerId}/customer-group` | `b2b.groups.read` |
 | PUT | `/api/v1/admin/customers/{customerId}/customer-group` | `b2b.groups.write` |
 | DELETE | `/api/v1/admin/customers/{customerId}/customer-group` | `b2b.groups.write` |

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io/fs"
 	"os"
+	"path"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -41,7 +42,7 @@ func RunFS(db *sql.DB, fsys fs.FS, dir string) (int, error) {
 			if e.IsDir() || !strings.HasSuffix(e.Name(), ".sql") {
 				continue
 			}
-			content, err := fs.ReadFile(fsys, filepath.Join(dir, e.Name()))
+			content, err := fs.ReadFile(fsys, path.Join(dir, e.Name()))
 			if err != nil {
 				return nil, fmt.Errorf("read %s: %w", e.Name(), err)
 			}

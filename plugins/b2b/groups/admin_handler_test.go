@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -60,8 +61,21 @@ func (s *stubGroupRepo) FindByCode(_ context.Context, code string) (*customergro
 }
 
 func (s *stubGroupRepo) Save(_ context.Context, group *customergroup.Group) error {
+	if existing, ok := s.byCode[group.Code]; ok && existing.ID != group.ID {
+		return fmt.Errorf("b2b groups repo: code already exists")
+	}
 	s.byID[group.ID] = *group
 	s.byCode[group.Code] = *group
+	return nil
+}
+
+func (s *stubGroupRepo) Delete(_ context.Context, groupID string) error {
+	g, ok := s.byID[groupID]
+	if !ok {
+		return fmt.Errorf("b2b groups repo: group not found")
+	}
+	delete(s.byID, groupID)
+	delete(s.byCode, g.Code)
 	return nil
 }
 
@@ -125,6 +139,7 @@ func newGroupAdminRouter(h *groups.AdminHandler) *http.ServeMux {
 	mux.HandleFunc("GET /api/v1/admin/customer-groups/{groupId}", h.Get())
 	mux.HandleFunc("POST /api/v1/admin/customer-groups", h.Create())
 	mux.HandleFunc("PUT /api/v1/admin/customer-groups/{groupId}", h.Update())
+	mux.HandleFunc("DELETE /api/v1/admin/customer-groups/{groupId}", h.Delete())
 	mux.HandleFunc("GET /api/v1/admin/customers/{customerId}/customer-group", h.GetCustomerGroup())
 	mux.HandleFunc("PUT /api/v1/admin/customers/{customerId}/customer-group", h.AssignCustomer())
 	mux.HandleFunc("DELETE /api/v1/admin/customers/{customerId}/customer-group", h.RemoveCustomer())
@@ -221,9 +236,13 @@ func TestAdminHandler_AssignCustomerGroup(t *testing.T) {
 }
 
 func TestAdminHandler_GetCustomerGroup_UnassignedReturnsNull(t *testing.T) {
-	h := groups.NewAdminHandler(newStubGroupRepo(), newStubCustomerRepo())
+	customerRepo := newStubCustomerRepo()
+	customerID := id.New()
+	customerRepo.byID[customerID] = &customer.Customer{ID: customerID, Email: "buyer@example.com"}
+
+	h := groups.NewAdminHandler(newStubGroupRepo(), customerRepo)
 	router := newGroupAdminRouter(h)
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/admin/customers/"+id.New()+"/customer-group", nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/admin/customers/"+customerID+"/customer-group", nil)
 	rec := httptest.NewRecorder()
 	router.ServeHTTP(rec, req)
 	if rec.Code != http.StatusOK {
@@ -231,5 +250,32 @@ func TestAdminHandler_GetCustomerGroup_UnassignedReturnsNull(t *testing.T) {
 	}
 	if !bytes.Contains(rec.Body.Bytes(), []byte(`"group":null`)) {
 		t.Fatalf("body = %s, want group:null", rec.Body.String())
+	}
+}
+
+func TestAdminHandler_GetCustomerGroup_CustomerNotFound(t *testing.T) {
+	h := groups.NewAdminHandler(newStubGroupRepo(), newStubCustomerRepo())
+	router := newGroupAdminRouter(h)
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/admin/customers/"+id.New()+"/customer-group", nil)
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, req)
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("status = %d, want 404", rec.Code)
+	}
+}
+
+func TestAdminHandler_AssignCustomer_BlankGroupID(t *testing.T) {
+	customerRepo := newStubCustomerRepo()
+	customerID := id.New()
+	customerRepo.byID[customerID] = &customer.Customer{ID: customerID, Email: "buyer@example.com"}
+
+	h := groups.NewAdminHandler(newStubGroupRepo(), customerRepo)
+	router := newGroupAdminRouter(h)
+	body := bytes.NewBufferString(`{"group_id":"   "}`)
+	req := httptest.NewRequest(http.MethodPut, "/api/v1/admin/customers/"+customerID+"/customer-group", body)
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, req)
+	if rec.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("status = %d, want 422", rec.Code)
 	}
 }
