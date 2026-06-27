@@ -4,7 +4,7 @@ Planned specs for **PR-500–549**. Individual PR markdown files will be added w
 
 | PR | Track | License | Status | Spec |
 | --- | --- | --- | --- | --- |
-| PR-500 | A | [b2b] | planned | Customer groups domain |
+| PR-500 | A | [b2b] | done | [Customer groups domain](PR-500.md) |
 | PR-501 | A | [b2b] | planned | Group-aware pricing |
 | PR-502 | A | [oss] | done | [Returns domain + workflow](PR-502.md) |
 | PR-503 | A | [oss] | done | [Returns admin + account UI](PR-503.md) |
@@ -34,6 +34,6 @@ Planned specs for **PR-500–549**. Individual PR markdown files will be added w
 
 Roadmap: [`../ROADMAP.md`](../ROADMAP.md) · EU compliance: [`../specs/COMPLIANCE_EU.md`](../specs/COMPLIANCE_EU.md) · Licensing: [`../../COMMERCIAL.md`](../../COMMERCIAL.md)
 
-**Suggested next PRs:** PR-500 [b2b] (customer groups) and PR-505 [oss] (store credit stretch) or Track B/C items.
+**Suggested next PRs:** PR-501 [b2b] (group-aware pricing) and PR-505 [oss] (store credit stretch) or Track B/C items.
 
 [b2b] PRs implement in [`plugins/b2b/`](../../../plugins/b2b/). [oss] PRs stay in open core.

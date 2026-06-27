@@ -40,6 +40,8 @@ type App struct {
 	mediaStorage    any
 
 	configRegistry *ConfigRegistry
+
+	adminRoutes []AdminRoute
 }
 
 // RegisterPricingStep registers a pricing pipeline step.

@@ -869,6 +869,11 @@ func runServe(cfg *config.Config, log logger.Logger, embedScheduler bool) error 
 	router.Handle("POST /api/v1/admin/stores", requireSettingsWrite(storeAdmin.Create()))
 	router.Handle("PUT /api/v1/admin/stores/{id}", requireSettingsWrite(storeAdmin.Update()))
 
+	// Plugin admin routes (permission-guarded; registered during plugin Init).
+	for _, route := range pluginApp.AdminRoutes() {
+		router.Handle(route.Pattern, shophttp.RequirePermission(route.Permission)(route.Handler))
+	}
+
 	// Shipping zone admin routes.
 	router.Handle("GET /api/v1/admin/shipping/zones", requireShippingRead(shippingZoneAdmin.ListZones()))
 	router.Handle("POST /api/v1/admin/shipping/zones", requireShippingWrite(shippingZoneAdmin.CreateZone()))
