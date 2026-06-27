@@ -24,6 +24,14 @@
         {{ if eq .Type "price_indication" }}
         <p class="price-indication muted-note">Lowest price in the last 30 days: {{ index .Data "currency" }} {{ index .Data "lowest_30d_price" }} (current price: {{ index .Data "currency" }} {{ index .Data "current_price" }})</p>
         {{ end }}
+        {{ if eq .Type "weee_disclosure" }}
+        <aside class="weee-disclosure muted-note" aria-label="WEEE recycling information">
+            {{ if index .Data "symbol_visible" }}<p class="weee-disclosure__symbol" aria-hidden="true">♻ WEEE</p>{{ end }}
+            {{ if index .Data "category_label" }}<p>WEEE category: {{ index .Data "category_label" }}</p>{{ end }}
+            {{ if index .Data "producer_registration" }}<p>Producer registration: {{ index .Data "producer_registration" }}</p>{{ end }}
+            {{ if index .Data "take_back_info" }}<p>{{ index .Data "take_back_info" }}</p>{{ end }}
+        </aside>
+        {{ end }}
         {{ end }}
         <dl class="detail-grid">
             <div>

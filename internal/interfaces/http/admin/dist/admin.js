@@ -4924,14 +4924,20 @@
     function renderLegalSettingsForm(container, settings, fieldScopes, activeStoreID) {
         var form = document.getElementById('settings-legal-form');
         form.innerHTML = '' +
-            renderFormScopeNote(fieldScopes, ['legal.omnibus_enabled'], activeStoreID) +
+            renderFormScopeNote(fieldScopes, ['legal.omnibus_enabled', 'legal.weee_enabled', 'legal.weee_producer_registration'], activeStoreID) +
             '<label><input type="checkbox" name="omnibus_enabled" ' + (truthy(valueOf(settings, 'legal.omnibus_enabled', true)) ? 'checked' : '') + '> Show lowest price in last 30 days on discounted products (EU Omnibus)' + renderFieldScopeBadge(fieldScopes, 'legal.omnibus_enabled') + '</label>' +
             '<small class="admin-form-hint">When enabled, product and listing pages show the lowest prior price when the current price is reduced.</small>' +
+            '<label><input type="checkbox" name="weee_enabled" ' + (truthy(valueOf(settings, 'legal.weee_enabled', false)) ? 'checked' : '') + '> Show WEEE recycling disclosure on product pages' + renderFieldScopeBadge(fieldScopes, 'legal.weee_enabled') + '</label>' +
+            '<small class="admin-form-hint">Enable for electronics sellers. Configure per-product WEEE fields via Catalog → Attributes and the product form.</small>' +
+            '<label>Default producer registration number' + renderFieldScopeBadge(fieldScopes, 'legal.weee_producer_registration') + '<input name="weee_producer_registration" value="' + esc(valueOf(settings, 'legal.weee_producer_registration', '')) + '" placeholder="e.g. PL-WEEE-12345"></label>' +
+            '<small class="admin-form-hint">Used on the storefront footer and as a fallback when a product has no producer registration attribute.</small>' +
             '<button type="submit">Save Legal Settings</button>';
         form.addEventListener('submit', function (e) {
             e.preventDefault();
             saveSettingsEntries('settings-legal-msg', {
-                'legal.omnibus_enabled': !!form.elements.omnibus_enabled.checked
+                'legal.omnibus_enabled': !!form.elements.omnibus_enabled.checked,
+                'legal.weee_enabled': !!form.elements.weee_enabled.checked,
+                'legal.weee_producer_registration': form.elements.weee_producer_registration.value
             });
         });
     }

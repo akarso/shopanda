@@ -110,6 +110,9 @@
         <div>
             <span>Legal</span>
             <span>Privacy</span>
+            {{ if .Layout.WeeeFooterEnabled }}
+            <span class="weee-footer">WEEE producer reg.: {{ .Layout.WeeeProducerReg }}</span>
+            {{ end }}
             <span>© {{ .Layout.CurrentYear }}</span>
         </div>
     </footer>

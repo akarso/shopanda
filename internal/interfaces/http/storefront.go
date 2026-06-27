@@ -56,6 +56,7 @@ type StorefrontHandler struct {
 	security    *storefrontAccountSecurityVerifier
 	shipping    []shipping.Provider
 	payments    *payment.ProviderRegistry
+	legalConfig legal.ConfigGetter
 	log         logger.Logger
 	catNav      storefrontCategoryCache
 }
@@ -110,6 +111,8 @@ type StorefrontLayoutData struct {
 	CurrentYear        int
 	Nav                []StorefrontNavLink
 	Categories         []StorefrontCategoryNavItem
+	WeeeFooterEnabled  bool
+	WeeeProducerReg    string
 }
 
 type StorefrontHomePageData struct {
@@ -245,6 +248,12 @@ func NewStorefrontHandler(
 func (h *StorefrontHandler) WithCart(variants catalog.VariantRepository, carts *cartApp.Service) *StorefrontHandler {
 	h.variants = variants
 	h.carts = carts
+	return h
+}
+
+// WithLegalConfig enables store-scoped legal/compliance settings on storefront pages.
+func (h *StorefrontHandler) WithLegalConfig(cfg legal.ConfigGetter) *StorefrontHandler {
+	h.legalConfig = cfg
 	return h
 }
 
@@ -649,6 +658,11 @@ func (h *StorefrontHandler) buildLayoutData(r *http.Request, categories []catalo
 			{Label: "Account", URL: accountURL},
 		}
 	}
+	storeID := ""
+	if s := store.FromContext(r.Context()); s != nil {
+		storeID = s.ID
+	}
+	weeeFooterEnabled, weeeProducerReg := h.weeeFooterData(r, storeID)
 	return StorefrontLayoutData{
 		SiteName:           siteName,
 		SearchAction:       searchAction,
@@ -669,7 +683,28 @@ func (h *StorefrontHandler) buildLayoutData(r *http.Request, categories []catalo
 		CurrentYear:        time.Now().UTC().Year(),
 		Nav:                nav,
 		Categories:         storefrontCategoryTree(categories),
+		WeeeFooterEnabled:  weeeFooterEnabled,
+		WeeeProducerReg:    weeeProducerReg,
 	}
+}
+
+func (h *StorefrontHandler) weeeFooterData(r *http.Request, storeID string) (enabled bool, producerReg string) {
+	if h.legalConfig == nil {
+		return false, ""
+	}
+	ok, err := legal.WeeeEnabled(r.Context(), h.legalConfig, storeID)
+	if err != nil || !ok {
+		return false, ""
+	}
+	reg, err := legal.StoreProducerRegistration(r.Context(), h.legalConfig, storeID)
+	if err != nil {
+		return false, ""
+	}
+	reg = strings.TrimSpace(reg)
+	if reg == "" {
+		return false, ""
+	}
+	return true, reg
 }
 
 func (h *StorefrontHandler) storefrontAccountDisplayName(customerID, displayName string) string {

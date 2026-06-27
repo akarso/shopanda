@@ -76,6 +76,8 @@ var configGroupKeys = map[string][]string{
 	},
 	"legal": {
 		"legal.omnibus_enabled",
+		"legal.weee_enabled",
+		"legal.weee_producer_registration",
 	},
 }
 
@@ -90,7 +92,9 @@ var configKeyScopes = map[string]string{
 	"currency.display_format": configScopeStore,
 	"tax.default_class":       configScopeStore,
 	"tax.included":            configScopeStore,
-	"legal.omnibus_enabled":   configScopeStore,
+	"legal.omnibus_enabled":              configScopeStore,
+	"legal.weee_enabled":                   configScopeStore,
+	"legal.weee_producer_registration":     configScopeStore,
 }
 
 // NewConfigAdminHandler creates a ConfigAdminHandler.
@@ -407,6 +411,10 @@ func (h *ConfigAdminHandler) defaultValue(key string) interface{} {
 		return false
 	case "legal.omnibus_enabled":
 		return true
+	case "legal.weee_enabled":
+		return false
+	case "legal.weee_producer_registration":
+		return ""
 	case "mail.smtp.host":
 		return h.cfg.Mail.SMTP.Host
 	case "mail.smtp.port":
