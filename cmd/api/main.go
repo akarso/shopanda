@@ -152,6 +152,8 @@ func run() error {
 			return runImportPrices(cfg, log)
 		case "export:prices":
 			return runExportPrices(cfg, log)
+		case "export:epr":
+			return runExportEpr(cfg, log)
 		default:
 			return fmt.Errorf("unknown command: %s (run 'help' for usage)", os.Args[1])
 		}
@@ -631,6 +633,8 @@ func runServe(cfg *config.Config, log logger.Logger, embedScheduler bool) error 
 	returnService := returnsApp.NewService(returnRepo, orderRepo, stockRepo, paymentRepo, stripeRefunder, bus, log)
 	returnAdmin := shophttp.NewReturnAdminHandler(returnService, sharedAuditor)
 	returnAccount := shophttp.NewReturnAccountHandler(returnService)
+	eprExporter := exporter.NewEprExporter(productRepo, variantRepo, configRepo)
+	eprReportAdmin := shophttp.NewEprReportHandler(eprExporter)
 	paymentAdmin := shophttp.NewPaymentAdminHandler(paymentRepo, sharedAuditor)
 
 	shippingRates := shophttp.NewShippingRatesHandler(flatRateProvider)
@@ -816,6 +820,7 @@ func runServe(cfg *config.Config, log logger.Logger, embedScheduler bool) error 
 	router.Handle("POST /api/v1/admin/returns/{returnId}/reject", requireOrdersWrite(returnAdmin.Reject()))
 	router.Handle("POST /api/v1/admin/returns/{returnId}/receive", requireOrdersWrite(returnAdmin.Receive()))
 	router.Handle("POST /api/v1/admin/returns/{returnId}/refund", requireOrdersWrite(returnAdmin.Refund()))
+	router.Handle("GET /api/v1/admin/reports/epr", requireProductsRead(eprReportAdmin.Export()))
 	router.Handle("GET /api/v1/admin/payments", requireOrdersRead(paymentAdmin.List()))
 	router.Handle("GET /api/v1/admin/payments/{paymentId}", requireOrdersRead(paymentAdmin.Get()))
 	router.Handle("GET /api/v1/admin/media", requireMediaRead(mediaHandler.List()))
@@ -1056,12 +1061,15 @@ func runServe(cfg *config.Config, log logger.Logger, embedScheduler bool) error 
 
 func runSetup(cfg *config.Config, log logger.Logger) error {
 	skipSeed := false
+	demoSeed := false
 	verbose := false
 
 	for _, arg := range os.Args[2:] {
 		switch arg {
 		case "--skip-seed":
 			skipSeed = true
+		case "--demo-seed":
+			demoSeed = true
 		case "--verbose":
 			verbose = true
 		case "--non-interactive":
@@ -1071,6 +1079,7 @@ func runSetup(cfg *config.Config, log logger.Logger) error {
 
 Flags:
   --skip-seed          Skip the seeding step
+  --demo-seed          Populate demo compliance metadata on seed catalog products
   --verbose            Print structured log entries during setup
   --non-interactive    Use env vars only, no prompts (default)
   --help, -h           Show this help`)
@@ -1120,7 +1129,7 @@ Flags:
 		reg := seed.NewRegistry()
 		registerDefaultSeeders(reg)
 
-		deps := seed.Deps{DB: conn, Logger: log}
+		deps := seed.Deps{DB: conn, Logger: log, DemoData: demoSeed}
 		result, seedErr := reg.Run(context.Background(), deps)
 		if seedErr != nil {
 			return fmt.Errorf("setup: seed: %w", seedErr)
@@ -1915,7 +1924,104 @@ func runExportPrices(cfg *config.Config, log logger.Logger) error {
 	return nil
 }
 
+func runExportEpr(cfg *config.Config, log logger.Logger) error {
+	filePath, includeEmpty, err := parseEprExportArgs(os.Args[2:])
+	if err != nil {
+		return err
+	}
+
+	dsn := config.DatabaseDSN(cfg)
+	conn, err := db.Open(dsn)
+	if err != nil {
+		return fmt.Errorf("database: %w", err)
+	}
+	defer conn.Close()
+
+	productRepo, err := postgres.NewProductRepo(conn)
+	if err != nil {
+		return fmt.Errorf("product repo: %w", err)
+	}
+	variantRepo, err := postgres.NewVariantRepo(conn)
+	if err != nil {
+		return fmt.Errorf("variant repo: %w", err)
+	}
+	configRepo := postgres.NewConfigRepo(conn)
+	exp := exporter.NewEprExporter(productRepo, variantRepo, configRepo)
+
+	tmpFile, err := os.CreateTemp(filepath.Dir(filePath), "epr-export-*.csv")
+	if err != nil {
+		return fmt.Errorf("create temp file: %w", err)
+	}
+	tmpPath := tmpFile.Name()
+
+	log.Info("export.epr.start", map[string]interface{}{"file": filePath})
+
+	result, err := exp.Export(context.Background(), tmpFile, exporter.EprExportOptions{IncludeEmpty: includeEmpty})
+	if closeErr := tmpFile.Close(); closeErr != nil {
+		os.Remove(tmpPath)
+		if err != nil {
+			return fmt.Errorf("export epr: %w", err)
+		}
+		return fmt.Errorf("close temp file: %w", closeErr)
+	}
+	if err != nil {
+		os.Remove(tmpPath)
+		return fmt.Errorf("export epr: %w", err)
+	}
+
+	if err := os.Rename(tmpPath, filePath); err != nil {
+		os.Remove(tmpPath)
+		return fmt.Errorf("rename temp file: %w", err)
+	}
+
+	log.Info("export.epr.complete", map[string]interface{}{
+		"rows": result.Rows,
+	})
+
+	return nil
+}
+
+func parseEprExportArgs(args []string) (filePath string, includeEmpty bool, err error) {
+	for _, arg := range args {
+		if arg == "--include-empty" {
+			includeEmpty = true
+			continue
+		}
+		if strings.HasPrefix(arg, "--") {
+			return "", false, fmt.Errorf("export:epr: unknown flag %q", arg)
+		}
+		if filePath != "" {
+			return "", false, fmt.Errorf("export:epr: unexpected argument %q", arg)
+		}
+		filePath = arg
+	}
+	if filePath == "" {
+		return "", false, fmt.Errorf("usage: app export:epr [--include-empty] <file.csv>")
+	}
+	return filePath, includeEmpty, nil
+}
+
 func runSeed(cfg *config.Config, log logger.Logger) error {
+	demoData := false
+	for _, arg := range os.Args[2:] {
+		switch arg {
+		case "--demo-seed":
+			demoData = true
+		case "--help", "-h":
+			fmt.Println(`Usage: shopanda seed [flags]
+
+Flags:
+  --demo-seed   Populate demo compliance metadata on seed catalog products
+  --help, -h    Show this help`)
+			return nil
+		default:
+			if strings.HasPrefix(arg, "--") {
+				return fmt.Errorf("seed: unknown flag %q", arg)
+			}
+			return fmt.Errorf("seed: unexpected argument %q", arg)
+		}
+	}
+
 	dsn := config.DatabaseDSN(cfg)
 	conn, err := db.Open(dsn)
 	if err != nil {
@@ -1929,8 +2035,9 @@ func runSeed(cfg *config.Config, log logger.Logger) error {
 	registerDefaultSeeders(reg)
 
 	deps := seed.Deps{
-		DB:     conn,
-		Logger: log,
+		DB:       conn,
+		Logger:   log,
+		DemoData: demoData,
 	}
 
 	result, err := reg.Run(context.Background(), deps)
@@ -1953,6 +2060,7 @@ func registerDefaultSeeders(reg *seed.Registry) {
 	reg.Register(&seed.AdminSeeder{})
 	reg.Register(&seed.CatalogSeeder{})
 	reg.Register(&seed.WeeeAttributesSeeder{})
+	reg.Register(&seed.EprAttributesSeeder{})
 }
 
 func printHelp() {
@@ -1981,6 +2089,7 @@ Commands:
   export:categories <f> Export categories to a CSV file
   import:prices <f>    Import prices from a CSV file
   export:prices <f>    Export prices to a CSV file
+  export:epr <f>       Export EPR packaging metadata ([--include-empty] <file.csv>)
   help                 Show this help message`)
 }
 
