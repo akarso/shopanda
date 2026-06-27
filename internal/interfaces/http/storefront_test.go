@@ -940,3 +940,70 @@ func TestStorefrontHandler_Product_RendersWeeeDisclosure(t *testing.T) {
 		t.Fatalf("body missing producer registration: %s", body)
 	}
 }
+
+func createTestThemeWithGpsrProduct(t *testing.T) *theme.Engine {
+	t.Helper()
+	dir := t.TempDir()
+	tplDir := filepath.Join(dir, "templates")
+	if err := os.MkdirAll(tplDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "theme.yaml"), []byte("name: test\nversion: \"0.1.0\"\nstorefront:\n  search_action: /catalog\n  cart_url: /basket\n  cart_label: Basket (2)\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	layout := `<!DOCTYPE html><html><body>{{ template "content" . }}</body></html>`
+	if err := os.WriteFile(filepath.Join(tplDir, "layout.html"), []byte(layout), 0644); err != nil {
+		t.Fatal(err)
+	}
+	product := `{{ define "content" }}<h1>{{ .Product.Name }}</h1>{{ range .Blocks }}{{ if eq .Type "gpsr_safety_disclosure" }}<aside class="gpsr-disclosure"><p>{{ index .Data "safety_warnings" }}</p><p>{{ index .Data "manufacturer_name" }}</p></aside>{{ end }}{{ end }}{{ end }}{{ template "layout.html" . }}`
+	if err := os.WriteFile(filepath.Join(tplDir, "product.html"), []byte(product), 0644); err != nil {
+		t.Fatal(err)
+	}
+	eng, err := theme.Load(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return eng
+}
+
+func TestStorefrontHandler_Product_RendersGpsrDisclosure(t *testing.T) {
+	repo := &mockStorefrontRepo{
+		findBySlugFn: func(_ context.Context, slug string) (*catalog.Product, error) {
+			return &catalog.Product{
+				ID:     "p1",
+				Name:   "T-Shirt",
+				Slug:   slug,
+				Status: catalog.StatusActive,
+				Attributes: map[string]interface{}{
+					legal.AttrGpsrSafetyWarnings: "Keep away from fire.",
+				},
+			}, nil
+		},
+	}
+	engine := createTestThemeWithGpsrProduct(t)
+	cfg := stubLegalConfig{
+		legal.ScopedConfigKey("store-eu", legal.GpsrEnabledConfigKey):              true,
+		legal.ScopedConfigKey("store-eu", legal.GpsrManufacturerNameConfigKey):     "Demo Apparel GmbH",
+		legal.ScopedConfigKey("store-eu", legal.GpsrManufacturerContactConfigKey):  "safety@demo.example",
+	}
+	pdp := composition.NewPipeline[composition.ProductContext]()
+	pdp.AddStep(composition.NewGpsrStep(cfg))
+	plp := composition.NewPipeline[composition.ListingContext]()
+	h := shophttp.NewStorefrontHandler(engine, repo, newStorefrontCategoryMock(), pdp, plp, newStorefrontSearchMock())
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("GET", "/products/tshirt", nil)
+	req = req.WithContext(store.WithStore(req.Context(), &store.Store{ID: "store-eu", Name: "EU Store"}))
+	newStorefrontRouter(h).ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d; body: %s", rec.Code, http.StatusOK, rec.Body.String())
+	}
+	body := rec.Body.String()
+	if !strings.Contains(body, "Keep away from fire.") {
+		t.Fatalf("body missing safety warnings: %s", body)
+	}
+	if !strings.Contains(body, "Demo Apparel GmbH") {
+		t.Fatalf("body missing manufacturer name: %s", body)
+	}
+}
