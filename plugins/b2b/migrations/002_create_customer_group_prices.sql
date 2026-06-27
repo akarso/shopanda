@@ -8,5 +8,3 @@ CREATE TABLE customer_group_prices (
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     UNIQUE (group_id, variant_id, currency, store_id)
 );
-
-CREATE INDEX idx_customer_group_prices_lookup ON customer_group_prices (group_id, variant_id, currency, store_id);

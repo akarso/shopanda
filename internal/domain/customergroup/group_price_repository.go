@@ -9,7 +9,12 @@ type GroupPriceRepository interface {
 	// the global group price (empty store_id).
 	FindByVariantsGroupCurrencyAndStore(ctx context.Context, variantIDs []string, groupID, currency, storeID string) (map[string]*GroupPrice, error)
 
-	// FindByVariantGroupCurrencyAndStore returns a single group price row.
+	// FindExactByVariantGroupCurrencyAndStore returns the row for the exact store
+	// scope only. (nil, nil) when not found. No global fallback.
+	FindExactByVariantGroupCurrencyAndStore(ctx context.Context, variantID, groupID, currency, storeID string) (*GroupPrice, error)
+
+	// FindByVariantGroupCurrencyAndStore returns a single group price row with
+	// store-scoped fallback to the global group price when storeID is non-empty.
 	FindByVariantGroupCurrencyAndStore(ctx context.Context, variantID, groupID, currency, storeID string) (*GroupPrice, error)
 
 	// Upsert creates or updates a group price for variant+group+currency+store.

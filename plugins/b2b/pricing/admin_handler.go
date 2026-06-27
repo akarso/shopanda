@@ -57,7 +57,7 @@ func (h *AdminHandler) Get() http.HandlerFunc {
 			return
 		}
 
-		price, err := h.prices.FindByVariantGroupCurrencyAndStore(r.Context(), variantID, groupID, currency, storeID)
+		price, err := h.prices.FindExactByVariantGroupCurrencyAndStore(r.Context(), variantID, groupID, currency, storeID)
 		if err != nil {
 			shophttp.JSONError(w, apperror.Wrap(apperror.CodeInternal, "get group price failed", err))
 			return
@@ -72,7 +72,7 @@ func (h *AdminHandler) Get() http.HandlerFunc {
 				priceScope = "store"
 			}
 		} else if storeID != "" {
-			globalPrice, err := h.prices.FindByVariantGroupCurrencyAndStore(r.Context(), variantID, groupID, currency, "")
+			globalPrice, err := h.prices.FindExactByVariantGroupCurrencyAndStore(r.Context(), variantID, groupID, currency, "")
 			if err != nil {
 				shophttp.JSONError(w, apperror.Wrap(apperror.CodeInternal, "get group price failed", err))
 				return
@@ -168,7 +168,7 @@ func (h *AdminHandler) Delete() http.HandlerFunc {
 			return
 		}
 
-		price, err := h.prices.FindByVariantGroupCurrencyAndStore(r.Context(), variantID, groupID, currency, storeID)
+		price, err := h.prices.FindExactByVariantGroupCurrencyAndStore(r.Context(), variantID, groupID, currency, storeID)
 		if err != nil {
 			shophttp.JSONError(w, apperror.Wrap(apperror.CodeInternal, "delete group price failed", err))
 			return

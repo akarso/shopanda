@@ -49,7 +49,11 @@ func (s *stubGroupPrices) FindByVariantsGroupCurrencyAndStore(_ context.Context,
 	return out, nil
 }
 
-func (s *stubGroupPrices) FindByVariantGroupCurrencyAndStore(_ context.Context, variantID, _, _, _ string) (*customergroup.GroupPrice, error) {
+func (s *stubGroupPrices) FindExactByVariantGroupCurrencyAndStore(_ context.Context, variantID, _, _, _ string) (*customergroup.GroupPrice, error) {
+	return s.byVariant[variantID], nil
+}
+
+func (s *stubGroupPrices) FindByVariantGroupCurrencyAndStore(_ context.Context, variantID, _, _, storeID string) (*customergroup.GroupPrice, error) {
 	return s.byVariant[variantID], nil
 }
 

@@ -3,6 +3,7 @@ package pricing
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"strings"
 
@@ -69,6 +70,26 @@ func (r *PostgresGroupPriceRepo) FindByVariantsGroupCurrencyAndStore(ctx context
 	return out, nil
 }
 
+func (r *PostgresGroupPriceRepo) FindExactByVariantGroupCurrencyAndStore(ctx context.Context, variantID, groupID, currency, storeID string) (*customergroup.GroupPrice, error) {
+	variantID = strings.TrimSpace(variantID)
+	groupID = strings.TrimSpace(groupID)
+	currency = strings.TrimSpace(currency)
+	if variantID == "" || groupID == "" || currency == "" {
+		return nil, fmt.Errorf("b2b group price repo: variant id, group id, and currency required")
+	}
+	const q = `SELECT id, group_id, variant_id, store_id, currency, amount, created_at
+		FROM customer_group_prices
+		WHERE variant_id = $1 AND group_id = $2 AND currency = $3 AND store_id = $4`
+	p, err := scanGroupPrice(r.db.QueryRowContext(ctx, q, variantID, groupID, currency, storeID))
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("b2b group price repo: find exact: %w", err)
+	}
+	return p, nil
+}
+
 func (r *PostgresGroupPriceRepo) FindByVariantGroupCurrencyAndStore(ctx context.Context, variantID, groupID, currency, storeID string) (*customergroup.GroupPrice, error) {
 	out, err := r.FindByVariantsGroupCurrencyAndStore(ctx, []string{variantID}, groupID, currency, storeID)
 	if err != nil {
@@ -84,9 +105,7 @@ func (r *PostgresGroupPriceRepo) Upsert(ctx context.Context, price *customergrou
 	const q = `INSERT INTO customer_group_prices (id, group_id, variant_id, store_id, currency, amount, created_at)
 		VALUES ($1, $2, $3, $4, $5, $6, $7)
 		ON CONFLICT (group_id, variant_id, currency, store_id) DO UPDATE
-		SET amount = EXCLUDED.amount,
-		    id = EXCLUDED.id,
-		    created_at = EXCLUDED.created_at`
+		SET amount = EXCLUDED.amount`
 	_, err := r.db.ExecContext(ctx, q,
 		price.ID, price.GroupID, price.VariantID, price.StoreID,
 		price.Amount.Currency(), price.Amount.Amount(), price.CreatedAt,
