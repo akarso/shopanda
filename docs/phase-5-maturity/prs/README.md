@@ -25,7 +25,7 @@ Planned specs for **PR-500–549**. Individual PR markdown files will be added w
 | PR-531 | D | [oss] | done | [WEEE product fields](PR-531.md) |
 | PR-532 | D | [oss] | done | [EPR / packaging data](PR-532.md) |
 | PR-533 | D | [oss] | done | [GPSR product safety](PR-533.md) |
-| PR-534 | D | [oss] | planned | OSS / e-invoicing (stretch) |
+| PR-534 | D | [oss] | done | [OSS / IOSS tax export](PR-534.md) |
 | PR-540 | E | [oss] | planned | Merchant outbound webhooks |
 | PR-541 | E | [oss] | planned | Plugin CLI registration |
 | PR-542 | E | [oss] | planned | Kafka / SQS queue plugins |
@@ -34,6 +34,6 @@ Planned specs for **PR-500–549**. Individual PR markdown files will be added w
 
 Roadmap: [`../ROADMAP.md`](../ROADMAP.md) · EU compliance: [`../specs/COMPLIANCE_EU.md`](../specs/COMPLIANCE_EU.md) · Licensing: [`../../COMMERCIAL.md`](../../COMMERCIAL.md)
 
-**Suggested next PRs:** PR-500 [b2b] (customer groups) and PR-534 [oss] (OSS / e-invoicing stretch).
+**Suggested next PRs:** PR-500 [b2b] (customer groups) and PR-505 [oss] (store credit stretch) or Track B/C items.
 
 [b2b] PRs implement in [`plugins/b2b/`](../../../plugins/b2b/). [oss] PRs stay in open core.

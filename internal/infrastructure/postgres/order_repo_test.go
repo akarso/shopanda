@@ -579,3 +579,37 @@ func TestOrderRepo_MultipleItems(t *testing.T) {
 		t.Errorf("TotalAmount = %d, want 2500", got.TotalAmount.Amount())
 	}
 }
+
+func TestOrderRepo_TaxSnapshotRoundTrip(t *testing.T) {
+	db := testDB(t)
+	ensureProductsTable(t, db)
+	t.Cleanup(func() {
+		db.Exec("DELETE FROM order_items")
+		db.Exec("DELETE FROM orders")
+	})
+
+	repo, err := postgres.NewOrderRepo(db)
+	if err != nil {
+		t.Fatalf("NewOrderRepo: %v", err)
+	}
+	ctx := context.Background()
+
+	o := mustNewOrder(t, "cust-1", "EUR")
+	if err := o.SetTaxSnapshot("FR", shared.MustNewMoney(420, "EUR")); err != nil {
+		t.Fatalf("SetTaxSnapshot: %v", err)
+	}
+	if err := repo.Save(ctx, &o); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+
+	got, err := repo.FindByID(ctx, o.ID)
+	if err != nil {
+		t.Fatalf("FindByID: %v", err)
+	}
+	if got.DestinationCountry != "FR" {
+		t.Fatalf("DestinationCountry = %q", got.DestinationCountry)
+	}
+	if got.TaxAmount.Amount() != 420 {
+		t.Fatalf("TaxAmount = %d", got.TaxAmount.Amount())
+	}
+}

@@ -307,3 +307,21 @@ func TestSetStatusFromDB_Invalid(t *testing.T) {
 		t.Errorf("Status changed to %q after invalid SetStatusFromDB, want %q", o.Status(), before)
 	}
 }
+
+func TestSetTaxSnapshot(t *testing.T) {
+	item := validItem(t)
+	o, err := order.NewOrder(id.New(), "cust-1", "", "EUR", []order.Item{item})
+	if err != nil {
+		t.Fatalf("NewOrder: %v", err)
+	}
+	tax := shared.MustNewMoney(380, "EUR")
+	if err := o.SetTaxSnapshot("de", tax); err != nil {
+		t.Fatalf("SetTaxSnapshot: %v", err)
+	}
+	if o.DestinationCountry != "DE" {
+		t.Fatalf("DestinationCountry = %q", o.DestinationCountry)
+	}
+	if o.TaxAmount.Amount() != 380 {
+		t.Fatalf("TaxAmount = %d", o.TaxAmount.Amount())
+	}
+}

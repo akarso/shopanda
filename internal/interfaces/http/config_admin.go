@@ -83,6 +83,7 @@ var configGroupKeys = map[string][]string{
 		"legal.gpsr_enabled",
 		"legal.gpsr_manufacturer_name",
 		"legal.gpsr_manufacturer_contact",
+		"legal.oss_enabled",
 	},
 }
 
@@ -105,6 +106,7 @@ var configKeyScopes = map[string]string{
 	"legal.gpsr_enabled":                   configScopeStore,
 	"legal.gpsr_manufacturer_name":         configScopeStore,
 	"legal.gpsr_manufacturer_contact":      configScopeStore,
+	"legal.oss_enabled":                    configScopeStore,
 }
 
 // NewConfigAdminHandler creates a ConfigAdminHandler.
@@ -433,6 +435,8 @@ func (h *ConfigAdminHandler) defaultValue(key string) interface{} {
 		return false
 	case "legal.gpsr_manufacturer_name", "legal.gpsr_manufacturer_contact":
 		return ""
+	case "legal.oss_enabled":
+		return false
 	case "mail.smtp.host":
 		return h.cfg.Mail.SMTP.Host
 	case "mail.smtp.port":

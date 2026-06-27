@@ -79,6 +79,9 @@ func (r *stubOrderRepo) LinkToCustomer(_ context.Context, _ *order.Order) error 
 func (r *stubOrderRepo) LinkToCustomerByContactEmail(_ context.Context, _, _ string, _ time.Time) (int64, error) {
 	return 0, nil
 }
+func (r *stubOrderRepo) ListPaidTaxSnapshots(context.Context, time.Time, time.Time) ([]order.TaxSnapshotRow, error) {
+	return nil, nil
+}
 
 // ── helpers ─────────────────────────────────────────────────────────────
 

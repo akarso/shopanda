@@ -92,6 +92,9 @@ func (r *mockOrderRepo) LinkToCustomer(_ context.Context, _ *order.Order) error 
 func (r *mockOrderRepo) LinkToCustomerByContactEmail(_ context.Context, _, _ string, _ time.Time) (int64, error) {
 	return 0, nil
 }
+func (r *mockOrderRepo) ListPaidTaxSnapshots(_ context.Context, _, _ time.Time) ([]order.TaxSnapshotRow, error) {
+	return nil, nil
+}
 
 // ============================================================
 // Helpers

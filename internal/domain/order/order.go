@@ -39,6 +39,10 @@ type Order struct {
 	Currency     string
 	items        []Item
 	TotalAmount  shared.Money
+	// DestinationCountry is the ISO 3166-1 alpha-2 shipping country at checkout.
+	DestinationCountry string
+	// TaxAmount is the VAT total applied at checkout (zero when unset).
+	TaxAmount    shared.Money
 	CreatedAt    time.Time
 	UpdatedAt    time.Time
 }
@@ -90,6 +94,11 @@ func NewOrder(id, customerID, contactEmail, currency string, items []Item) (Orde
 	cp := make([]Item, len(items))
 	copy(cp, items)
 
+	taxZero, err := shared.Zero(currency)
+	if err != nil {
+		return Order{}, err
+	}
+
 	now := time.Now().UTC()
 	return Order{
 		ID:           id,
@@ -99,9 +108,27 @@ func NewOrder(id, customerID, contactEmail, currency string, items []Item) (Orde
 		Currency:     currency,
 		items:        cp,
 		TotalAmount:  total,
+		TaxAmount:    taxZero,
 		CreatedAt:    now,
 		UpdatedAt:    now,
 	}, nil
+}
+
+// SetTaxSnapshot records the shipping destination and VAT total for OSS reporting.
+func (o *Order) SetTaxSnapshot(destinationCountry string, taxAmount shared.Money) error {
+	destinationCountry = strings.ToUpper(strings.TrimSpace(destinationCountry))
+	if destinationCountry != "" && len(destinationCountry) != 2 {
+		return errors.New("order: destination country must be a 2-letter ISO code")
+	}
+	if taxAmount.Currency() != o.Currency {
+		return errors.New("order: tax amount currency mismatch")
+	}
+	if taxAmount.IsNegative() {
+		return errors.New("order: tax amount must be non-negative")
+	}
+	o.DestinationCountry = destinationCountry
+	o.TaxAmount = taxAmount
+	return nil
 }
 
 // Items returns a defensive copy of the order's line items.

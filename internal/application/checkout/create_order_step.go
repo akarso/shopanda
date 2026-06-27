@@ -3,6 +3,7 @@ package checkout
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	"github.com/akarso/shopanda/internal/domain/catalog"
 	"github.com/akarso/shopanda/internal/domain/order"
@@ -86,6 +87,13 @@ func (s *CreateOrderStep) Execute(cctx *Context) error {
 	o, err := order.NewOrder(id.New(), cctx.CustomerID, cctx.Input.ContactEmail, cctx.Currency, items)
 	if err != nil {
 		return fmt.Errorf("create_order: %w", err)
+	}
+
+	if err := o.SetTaxSnapshot(
+		strings.ToUpper(strings.TrimSpace(cctx.Input.Address.Country)),
+		pctx.TaxTotal,
+	); err != nil {
+		return fmt.Errorf("create_order: tax snapshot: %w", err)
 	}
 
 	if err := s.orders.Save(ctx, &o); err != nil {

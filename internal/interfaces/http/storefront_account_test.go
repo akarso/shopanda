@@ -202,6 +202,9 @@ func (r *storefrontAccountOrderRepoStub) LinkToCustomer(_ context.Context, _ *or
 func (r *storefrontAccountOrderRepoStub) LinkToCustomerByContactEmail(_ context.Context, _, _ string, _ time.Time) (int64, error) {
 	return 0, nil
 }
+func (r *storefrontAccountOrderRepoStub) ListPaidTaxSnapshots(context.Context, time.Time, time.Time) ([]order.TaxSnapshotRow, error) {
+	return nil, nil
+}
 
 type storefrontAccountDeleterStub struct{ deleted string }
 
