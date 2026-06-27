@@ -107,6 +107,9 @@ func (r *returnHTTPOrderRepo) LinkToCustomer(context.Context, *order.Order) erro
 func (r *returnHTTPOrderRepo) LinkToCustomerByContactEmail(context.Context, string, string, time.Time) (int64, error) {
 	return 0, nil
 }
+func (r *returnHTTPOrderRepo) ListPaidTaxSnapshots(context.Context, time.Time, time.Time) ([]order.TaxSnapshotRow, error) {
+	return nil, nil
+}
 
 type returnHTTPStockRepo struct {
 	qty map[string]int

@@ -37,4 +37,8 @@ type OrderRepository interface {
 	// carrying the contact email to the customer, so a multi-order claim can
 	// never be partially persisted. Returns the number of orders linked.
 	LinkToCustomerByContactEmail(ctx context.Context, contactEmail, customerID string, updatedAt time.Time) (int64, error)
+
+	// ListPaidTaxSnapshots returns paid orders with a destination country in
+	// [from, to). Rows are ordered by created_at then id.
+	ListPaidTaxSnapshots(ctx context.Context, from, to time.Time) ([]TaxSnapshotRow, error)
 }

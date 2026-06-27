@@ -88,6 +88,10 @@ func (s *CreateOrderStep) Execute(cctx *Context) error {
 		return fmt.Errorf("create_order: %w", err)
 	}
 
+	if err := o.SetTaxSnapshot(cctx.Input.Address.Country, pctx.TaxTotal); err != nil {
+		return fmt.Errorf("create_order: tax snapshot: %w", err)
+	}
+
 	if err := s.orders.Save(ctx, &o); err != nil {
 		return fmt.Errorf("create_order: save: %w", err)
 	}

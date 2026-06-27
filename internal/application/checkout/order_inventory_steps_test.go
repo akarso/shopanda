@@ -19,6 +19,12 @@ import (
 	"github.com/akarso/shopanda/internal/platform/id"
 )
 
+func attachCreateOrderInput(cctx *checkout.Context) {
+	cctx.Input = checkout.Input{
+		Address: checkout.Address{Country: "DE"},
+	}
+}
+
 // ============================================================
 // Mock reservation repository
 // ============================================================
@@ -91,6 +97,9 @@ func (r *mockOrderRepo) UpdateStatus(_ context.Context, _ *order.Order) error   
 func (r *mockOrderRepo) LinkToCustomer(_ context.Context, _ *order.Order) error { return nil }
 func (r *mockOrderRepo) LinkToCustomerByContactEmail(_ context.Context, _, _ string, _ time.Time) (int64, error) {
 	return 0, nil
+}
+func (r *mockOrderRepo) ListPaidTaxSnapshots(_ context.Context, _, _ time.Time) ([]order.TaxSnapshotRow, error) {
+	return nil, nil
 }
 
 // ============================================================
@@ -329,6 +338,7 @@ func TestCreateOrderStep_Success(t *testing.T) {
 	step := checkout.NewCreateOrderStep(orderRepo, variantRepo)
 
 	cctx := checkout.NewContext("cart-1", "cust-1", "EUR")
+	attachCreateOrderInput(cctx)
 	cctx.Cart = cartWithItems037(t, "cust-1", "v1", "v2")
 	cctx.SetMeta("pricing", pricingContext037(t, "v1", "v2"))
 
@@ -371,6 +381,7 @@ func TestCreateOrderStep_ItemPricesFromPricing(t *testing.T) {
 	step := checkout.NewCreateOrderStep(orderRepo, variantRepo)
 
 	cctx := checkout.NewContext("cart-1", "cust-1", "EUR")
+	attachCreateOrderInput(cctx)
 	cctx.Cart = cartWithItems037(t, "cust-1", "v1")
 
 	// Override pricing with a different unit price to prove snapshot is from pricing
@@ -434,6 +445,7 @@ func TestCreateOrderStep_SaveError(t *testing.T) {
 	step := checkout.NewCreateOrderStep(orderRepo, variantRepo)
 
 	cctx := checkout.NewContext("cart-1", "cust-1", "EUR")
+	attachCreateOrderInput(cctx)
 	cctx.Cart = cartWithItems037(t, "cust-1", "v1")
 	cctx.SetMeta("pricing", pricingContext037(t, "v1"))
 
@@ -452,6 +464,7 @@ func TestCreateOrderStep_Idempotent(t *testing.T) {
 	step := checkout.NewCreateOrderStep(orderRepo, variantRepo)
 
 	cctx := checkout.NewContext("cart-1", "cust-1", "EUR")
+	attachCreateOrderInput(cctx)
 	cctx.Cart = cartWithItems037(t, "cust-1", "v1")
 	cctx.SetMeta("pricing", pricingContext037(t, "v1"))
 

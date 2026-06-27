@@ -13,8 +13,8 @@ This document maps **common EU merchant obligations** to Shopanda's current capa
 | **WEEE** | Register as producer; display symbol + reg. number; take-back info | Product attributes + store config + PDP/footer templates | **Done (PR-531)** — opt-in `legal.weee_enabled`, WEEE attribute group |
 | **EPR (packaging)** | Report packaging placed on market; registration per member state | Product/variant attributes + CSV export | **Done (PR-532)** — opt-in `legal.epr_enabled`, EPR attribute group |
 | **GPSR** (Dec 2024) | Manufacturer/importer details, warnings, traceability | Product attributes + PDP templates | **Done (PR-533)** — opt-in `legal.gpsr_enabled`, GPSR attribute group |
-| **VAT / OSS-IOSS** | Correct VAT on cross-border B2C; periodic OSS returns | Country tax rates, store scoping | PR-534 (stretch): export helpers, not filing automation |
-| **E-invoicing (Peppol, etc.)** | Structured invoices in B2G/B2B markets | PDF invoices + credit notes | PR-534 (stretch): adapter core plugin |
+| **VAT / OSS-IOSS** | Correct VAT on cross-border B2C; periodic OSS returns | Country tax rates, store scoping | **Done (PR-534)** — opt-in `legal.oss_enabled`, CSV export helpers |
+| **E-invoicing (Peppol, etc.)** | Structured invoices in B2G/B2B markets | PDF invoices + credit notes | Future core plugin (out of PR-534 scope) |
 | **Consumer Rights Directive** | Withdrawal period, clear pre-contract info | Order emails, CMS pages (merchant-authored) | Returns workflow (PR-502–503) supports withdrawal handling |
 | **DSA** (marketplaces) | Trader traceability, complaint handling | N/A for single-merchant stores | Marketplace mode explicitly out of scope |
 
@@ -113,11 +113,11 @@ Phase 5 may add audit-log correlation for admin-initiated customer deletes (alre
 
 Shopanda supports **country-based tax rates** and store scoping. Merchants still use external accounting for OSS return filing.
 
-**Phase 5 stretch (PR-534):**
+**Phase 5 stretch (PR-534) — done:**
 
-- Export order tax breakdown by destination country
-- Optional OSS summary report (CSV)
-- E-invoice generation via Peppol as **core plugin**, not mandatory core
+- Export order tax breakdown by destination country (detail + summary CSV)
+- Opt-in store toggle `legal.oss_enabled`
+- E-invoice generation via Peppol as **core plugin**, not mandatory core (still deferred)
 
 ---
 

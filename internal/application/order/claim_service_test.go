@@ -106,6 +106,10 @@ func (r *mockOrderRepository) LinkToCustomerByContactEmail(ctx context.Context, 
 	return linked, nil
 }
 
+func (r *mockOrderRepository) ListPaidTaxSnapshots(context.Context, time.Time, time.Time) ([]domainOrder.TaxSnapshotRow, error) {
+	return nil, nil
+}
+
 func mustNewTestGuestOrder(t *testing.T, contactEmail string) domainOrder.Order {
 	t.Helper()
 	price := shared.MustNewMoney(1000, "EUR")

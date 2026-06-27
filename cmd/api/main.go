@@ -154,6 +154,8 @@ func run() error {
 			return runExportPrices(cfg, log)
 		case "export:epr":
 			return runExportEpr(cfg, log)
+		case "export:oss":
+			return runExportOss(cfg, log)
 		default:
 			return fmt.Errorf("unknown command: %s (run 'help' for usage)", os.Args[1])
 		}
@@ -636,6 +638,8 @@ func runServe(cfg *config.Config, log logger.Logger, embedScheduler bool) error 
 	returnAccount := shophttp.NewReturnAccountHandler(returnService)
 	eprExporter := exporter.NewEprExporter(productRepo, variantRepo, configRepo)
 	eprReportAdmin := shophttp.NewEprReportHandler(eprExporter)
+	ossExporter := exporter.NewOssExporter(orderRepo, configRepo)
+	ossReportAdmin := shophttp.NewOssReportHandler(ossExporter)
 	paymentAdmin := shophttp.NewPaymentAdminHandler(paymentRepo, sharedAuditor)
 
 	shippingRates := shophttp.NewShippingRatesHandler(flatRateProvider)
@@ -822,6 +826,7 @@ func runServe(cfg *config.Config, log logger.Logger, embedScheduler bool) error 
 	router.Handle("POST /api/v1/admin/returns/{returnId}/receive", requireOrdersWrite(returnAdmin.Receive()))
 	router.Handle("POST /api/v1/admin/returns/{returnId}/refund", requireOrdersWrite(returnAdmin.Refund()))
 	router.Handle("GET /api/v1/admin/reports/epr", requireProductsRead(eprReportAdmin.Export()))
+	router.Handle("GET /api/v1/admin/reports/oss", requireOrdersRead(ossReportAdmin.Export()))
 	router.Handle("GET /api/v1/admin/payments", requireOrdersRead(paymentAdmin.List()))
 	router.Handle("GET /api/v1/admin/payments/{paymentId}", requireOrdersRead(paymentAdmin.Get()))
 	router.Handle("GET /api/v1/admin/media", requireMediaRead(mediaHandler.List()))
@@ -2002,6 +2007,111 @@ func parseEprExportArgs(args []string) (filePath string, includeEmpty bool, err 
 	return filePath, includeEmpty, nil
 }
 
+func runExportOss(cfg *config.Config, log logger.Logger) error {
+	filePath, summary, from, to, err := parseOssExportArgs(os.Args[2:])
+	if err != nil {
+		return err
+	}
+
+	dsn := config.DatabaseDSN(cfg)
+	conn, err := db.Open(dsn)
+	if err != nil {
+		return fmt.Errorf("database: %w", err)
+	}
+	defer conn.Close()
+
+	orderRepo, err := postgres.NewOrderRepo(conn)
+	if err != nil {
+		return err
+	}
+	configRepo := postgres.NewConfigRepo(conn)
+
+	exp := exporter.NewOssExporter(orderRepo, configRepo)
+	tmpFile, err := os.CreateTemp(filepath.Dir(filePath), "oss-export-*.csv")
+	if err != nil {
+		return fmt.Errorf("create temp file: %w", err)
+	}
+	tmpPath := tmpFile.Name()
+
+	log.Info("export.oss.start", map[string]interface{}{"file": filePath, "summary": summary})
+
+	result, err := exp.Export(context.Background(), tmpFile, exporter.OssExportOptions{
+		From:    from,
+		To:      to,
+		Summary: summary,
+	})
+	if closeErr := tmpFile.Close(); closeErr != nil {
+		os.Remove(tmpPath)
+		if err != nil {
+			return fmt.Errorf("export oss: %w", err)
+		}
+		return fmt.Errorf("close temp file: %w", closeErr)
+	}
+	if err != nil {
+		os.Remove(tmpPath)
+		return fmt.Errorf("export oss: %w", err)
+	}
+
+	if err := os.Rename(tmpPath, filePath); err != nil {
+		os.Remove(tmpPath)
+		return fmt.Errorf("rename temp file: %w", err)
+	}
+
+	log.Info("export.oss.complete", map[string]interface{}{
+		"rows":    result.Rows,
+		"summary": summary,
+	})
+
+	return nil
+}
+
+func parseOssExportArgs(args []string) (filePath string, summary bool, from, to time.Time, err error) {
+	var fromRaw, toRaw string
+	for _, arg := range args {
+		switch {
+		case arg == "--summary":
+			summary = true
+		case strings.HasPrefix(arg, "--from="):
+			fromRaw = strings.TrimPrefix(arg, "--from=")
+		case strings.HasPrefix(arg, "--to="):
+			toRaw = strings.TrimPrefix(arg, "--to=")
+		case strings.HasPrefix(arg, "--"):
+			return "", false, time.Time{}, time.Time{}, fmt.Errorf("export:oss: unknown flag %q", arg)
+		default:
+			if filePath != "" {
+				return "", false, time.Time{}, time.Time{}, fmt.Errorf("export:oss: unexpected argument %q", arg)
+			}
+			filePath = arg
+		}
+	}
+	if filePath == "" {
+		return "", false, time.Time{}, time.Time{}, fmt.Errorf("usage: app export:oss [--summary] [--from=YYYY-MM-DD] [--to=YYYY-MM-DD] <file.csv>")
+	}
+
+	fromDate, err := exporter.ParseReportDate(fromRaw)
+	if err != nil {
+		return "", false, time.Time{}, time.Time{}, fmt.Errorf("export:oss: %w", err)
+	}
+	toDate, err := exporter.ParseReportDate(toRaw)
+	if err != nil {
+		return "", false, time.Time{}, time.Time{}, fmt.Errorf("export:oss: %w", err)
+	}
+	if fromDate.IsZero() && toDate.IsZero() {
+		now := time.Now().UTC()
+		year, month, _ := now.Date()
+		quarterStartMonth := time.Month(((int(month)-1)/3)*3 + 1)
+		fromDate = time.Date(year, quarterStartMonth, 1, 0, 0, 0, 0, time.UTC)
+		toDate = now
+	} else if fromDate.IsZero() || toDate.IsZero() {
+		return "", false, time.Time{}, time.Time{}, fmt.Errorf("export:oss: --from and --to are required unless both are omitted")
+	}
+	toExclusive := exporter.ReportDateRangeEnd(toDate)
+	if !toExclusive.After(fromDate) {
+		return "", false, time.Time{}, time.Time{}, fmt.Errorf("export:oss: --to must be on or after --from")
+	}
+	return filePath, summary, fromDate, toExclusive, nil
+}
+
 func runSeed(cfg *config.Config, log logger.Logger) error {
 	demoData := false
 	for _, arg := range os.Args[2:] {
@@ -2092,6 +2202,7 @@ Commands:
   import:prices <f>    Import prices from a CSV file
   export:prices <f>    Export prices to a CSV file
   export:epr <f>       Export EPR packaging metadata ([--include-empty] <file.csv>)
+  export:oss <f>       Export OSS/IOSS tax report ([--summary] [--from=YYYY-MM-DD] [--to=YYYY-MM-DD] <file.csv>)
   help                 Show this help message`)
 }
 

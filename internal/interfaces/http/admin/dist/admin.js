@@ -4954,10 +4954,53 @@
         });
     }
 
+    function downloadOssReport(fromDate, toDate, summary) {
+        var url = API_BASE + '/admin/reports/oss';
+        var params = [];
+        if (fromDate) {
+            params.push('from=' + encodeURIComponent(fromDate));
+        }
+        if (toDate) {
+            params.push('to=' + encodeURIComponent(toDate));
+        }
+        if (summary) {
+            params.push('summary=true');
+        }
+        if (params.length) {
+            url += '?' + params.join('&');
+        }
+        var headers = buildHeaders({});
+        fetch(url, { headers: headers }).then(function (res) {
+            if (res.status === 401) {
+                clearToken();
+                setLoginMessage('Your session expired. Sign in again to continue.');
+                navigateTo('/admin');
+                return Promise.reject(new Error('unauthorized'));
+            }
+            if (!res.ok) {
+                return res.json().then(function (body) {
+                    throw new Error((body && body.error && body.error.message) || 'OSS export failed.');
+                });
+            }
+            return res.blob();
+        }).then(function (blob) {
+            if (!blob) {
+                return;
+            }
+            var link = document.createElement('a');
+            link.href = URL.createObjectURL(blob);
+            link.download = summary ? 'oss-tax-summary.csv' : 'oss-tax-detail.csv';
+            link.click();
+            URL.revokeObjectURL(link.href);
+        }).catch(function (err) {
+            setSettingsMessage('settings-legal-msg', extractErrorMessage(err, 'OSS export failed.'), true);
+        });
+    }
+
     function renderLegalSettingsForm(container, settings, fieldScopes, activeStoreID) {
         var form = document.getElementById('settings-legal-form');
         form.innerHTML = '' +
-            renderFormScopeNote(fieldScopes, ['legal.omnibus_enabled', 'legal.weee_enabled', 'legal.weee_producer_registration', 'legal.epr_enabled', 'legal.epr_scheme_registration_id', 'legal.gpsr_enabled', 'legal.gpsr_manufacturer_name', 'legal.gpsr_manufacturer_contact'], activeStoreID) +
+            renderFormScopeNote(fieldScopes, ['legal.omnibus_enabled', 'legal.weee_enabled', 'legal.weee_producer_registration', 'legal.epr_enabled', 'legal.epr_scheme_registration_id', 'legal.gpsr_enabled', 'legal.gpsr_manufacturer_name', 'legal.gpsr_manufacturer_contact', 'legal.oss_enabled'], activeStoreID) +
             '<label><input type="checkbox" name="omnibus_enabled" ' + (truthy(valueOf(settings, 'legal.omnibus_enabled', true)) ? 'checked' : '') + '> Show lowest price in last 30 days on discounted products (EU Omnibus)' + renderFieldScopeBadge(fieldScopes, 'legal.omnibus_enabled') + '</label>' +
             '<small class="admin-form-hint">When enabled, product and listing pages show the lowest prior price when the current price is reduced.</small>' +
             '<label><input type="checkbox" name="weee_enabled" ' + (truthy(valueOf(settings, 'legal.weee_enabled', false)) ? 'checked' : '') + '> Show WEEE recycling disclosure on product pages' + renderFieldScopeBadge(fieldScopes, 'legal.weee_enabled') + '</label>' +
@@ -4971,10 +5014,22 @@
             '<small class="admin-form-hint">Enable for EU product safety (GPSR). Configure per-product fields via Catalog → Attributes and the product form.</small>' +
             '<label>Default manufacturer name' + renderFieldScopeBadge(fieldScopes, 'legal.gpsr_manufacturer_name') + '<input name="gpsr_manufacturer_name" value="' + esc(valueOf(settings, 'legal.gpsr_manufacturer_name', '')) + '" placeholder="e.g. Demo Apparel GmbH"></label>' +
             '<label>Default manufacturer EU contact' + renderFieldScopeBadge(fieldScopes, 'legal.gpsr_manufacturer_contact') + '<input name="gpsr_manufacturer_contact" value="' + esc(valueOf(settings, 'legal.gpsr_manufacturer_contact', '')) + '" placeholder="e.g. safety@merchant.example"></label>' +
+            '<label><input type="checkbox" name="oss_enabled" ' + (truthy(valueOf(settings, 'legal.oss_enabled', false)) ? 'checked' : '') + '> Enable OSS/IOSS tax export helpers' + renderFieldScopeBadge(fieldScopes, 'legal.oss_enabled') + '</label>' +
+            '<small class="admin-form-hint">Export paid-order VAT breakdown by shipping destination country for OSS return filing (external accounting).</small>' +
+            '<label>OSS report from<input type="date" name="oss_from"></label>' +
+            '<label>OSS report to<input type="date" name="oss_to"></label>' +
+            '<button type="button" id="oss-export-btn">Download OSS tax detail CSV</button>' +
+            '<button type="button" id="oss-summary-export-btn">Download OSS tax summary CSV</button>' +
             '<button type="button" id="epr-export-btn">Download EPR packaging CSV</button>' +
             '<button type="submit">Save Legal Settings</button>';
         document.getElementById('epr-export-btn').addEventListener('click', function () {
             downloadEprReport(activeStoreID);
+        });
+        document.getElementById('oss-export-btn').addEventListener('click', function () {
+            downloadOssReport(form.elements.oss_from.value, form.elements.oss_to.value, false);
+        });
+        document.getElementById('oss-summary-export-btn').addEventListener('click', function () {
+            downloadOssReport(form.elements.oss_from.value, form.elements.oss_to.value, true);
         });
         form.addEventListener('submit', function (e) {
             e.preventDefault();
@@ -4986,7 +5041,8 @@
                 'legal.epr_scheme_registration_id': form.elements.epr_scheme_registration_id.value,
                 'legal.gpsr_enabled': !!form.elements.gpsr_enabled.checked,
                 'legal.gpsr_manufacturer_name': form.elements.gpsr_manufacturer_name.value,
-                'legal.gpsr_manufacturer_contact': form.elements.gpsr_manufacturer_contact.value
+                'legal.gpsr_manufacturer_contact': form.elements.gpsr_manufacturer_contact.value,
+                'legal.oss_enabled': !!form.elements.oss_enabled.checked
             });
         });
     }

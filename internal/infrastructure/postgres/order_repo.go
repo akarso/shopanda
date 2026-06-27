@@ -16,6 +16,9 @@ import (
 // Compile-time check that OrderRepo implements order.OrderRepository.
 var _ order.OrderRepository = (*OrderRepo)(nil)
 
+const orderSelectColumns = `id, customer_id, contact_email, status, currency,
+	total_amount, total_currency, destination_country, tax_amount, created_at, updated_at`
+
 // OrderRepo implements order.OrderRepository using PostgreSQL.
 type OrderRepo struct {
 	db *sql.DB
@@ -39,14 +42,17 @@ func (r *OrderRepo) hydrateOrder(s orderScanner) (*order.Order, error) {
 	var o order.Order
 	var status string
 	var contactEmail sql.NullString
+	var destinationCountry sql.NullString
 	var totalAmount int64
 	var totalCurrency string
+	var taxAmount sql.NullInt64
 	err := s.Scan(&o.ID, &o.CustomerID, &contactEmail, &status, &o.Currency,
-		&totalAmount, &totalCurrency, &o.CreatedAt, &o.UpdatedAt)
+		&totalAmount, &totalCurrency, &destinationCountry, &taxAmount, &o.CreatedAt, &o.UpdatedAt)
 	if err != nil {
 		return nil, err
 	}
 	o.ContactEmail = strings.TrimSpace(contactEmail.String)
+	o.DestinationCountry = strings.TrimSpace(destinationCountry.String)
 	if err := o.SetStatusFromDB(status); err != nil {
 		return nil, err
 	}
@@ -55,6 +61,19 @@ func (r *OrderRepo) hydrateOrder(s orderScanner) (*order.Order, error) {
 		return nil, fmt.Errorf("order_repo: total money: %w", err)
 	}
 	o.TotalAmount = total
+	if taxAmount.Valid {
+		tax, err := shared.NewMoney(taxAmount.Int64, totalCurrency)
+		if err != nil {
+			return nil, fmt.Errorf("order_repo: tax money: %w", err)
+		}
+		o.TaxAmount = tax
+	} else {
+		zero, err := shared.Zero(totalCurrency)
+		if err != nil {
+			return nil, fmt.Errorf("order_repo: zero tax money: %w", err)
+		}
+		o.TaxAmount = zero
+	}
 	return &o, nil
 }
 
@@ -64,7 +83,7 @@ func (r *OrderRepo) FindByID(ctx context.Context, id string) (*order.Order, erro
 	if id == "" {
 		return nil, fmt.Errorf("order_repo: find: empty id")
 	}
-	const q = `SELECT id, customer_id, contact_email, status, currency, total_amount, total_currency, created_at, updated_at
+	const q = `SELECT ` + orderSelectColumns + `
 		FROM orders WHERE id = $1`
 	o, err := r.hydrateOrder(r.db.QueryRowContext(ctx, q, id))
 	if errors.Is(err, sql.ErrNoRows) {
@@ -88,7 +107,7 @@ func (r *OrderRepo) FindByCustomerID(ctx context.Context, customerID string) ([]
 	if customerID == "" {
 		return nil, fmt.Errorf("order_repo: find by customer: empty customer id")
 	}
-	const q = `SELECT id, customer_id, contact_email, status, currency, total_amount, total_currency, created_at, updated_at
+	const q = `SELECT ` + orderSelectColumns + `
 		FROM orders WHERE customer_id = $1
 		ORDER BY created_at DESC`
 	rows, err := r.db.QueryContext(ctx, q, customerID)
@@ -134,7 +153,7 @@ func (r *OrderRepo) FindByContactEmail(ctx context.Context, contactEmail string)
 		return nil, fmt.Errorf("order_repo: find by contact email: empty email")
 	}
 	contactEmail = strings.ToLower(trimmed)
-	const q = `SELECT id, customer_id, contact_email, status, currency, total_amount, total_currency, created_at, updated_at
+	const q = `SELECT ` + orderSelectColumns + `
 		FROM orders WHERE LOWER(contact_email) = $1 AND customer_id = ''
 		ORDER BY created_at DESC`
 	rows, err := r.db.QueryContext(ctx, q, contactEmail)
@@ -183,7 +202,7 @@ func (r *OrderRepo) List(ctx context.Context, offset, limit int) ([]order.Order,
 	if limit > 100 {
 		limit = 100
 	}
-	const q = `SELECT id, customer_id, contact_email, status, currency, total_amount, total_currency, created_at, updated_at
+	const q = `SELECT ` + orderSelectColumns + `
 		FROM orders ORDER BY created_at DESC LIMIT $1 OFFSET $2`
 	rows, err := r.db.QueryContext(ctx, q, limit, offset)
 	if err != nil {
@@ -220,6 +239,37 @@ func (r *OrderRepo) List(ctx context.Context, offset, limit int) ([]order.Order,
 	return orders, nil
 }
 
+// ListPaidTaxSnapshots returns paid orders with destination country in [from, to).
+func (r *OrderRepo) ListPaidTaxSnapshots(ctx context.Context, from, to time.Time) ([]order.TaxSnapshotRow, error) {
+	if !to.After(from) {
+		return nil, fmt.Errorf("order_repo: list tax snapshots: to must be after from")
+	}
+	const q = `SELECT id, created_at, destination_country, currency, total_amount, COALESCE(tax_amount, 0)
+		FROM orders
+		WHERE status = 'paid'
+		  AND destination_country IS NOT NULL
+		  AND created_at >= $1 AND created_at < $2
+		ORDER BY created_at, id`
+	rows, err := r.db.QueryContext(ctx, q, from, to)
+	if err != nil {
+		return nil, fmt.Errorf("order_repo: list tax snapshots: %w", err)
+	}
+	defer rows.Close()
+
+	var result []order.TaxSnapshotRow
+	for rows.Next() {
+		var row order.TaxSnapshotRow
+		if err := rows.Scan(&row.OrderID, &row.CreatedAt, &row.DestinationCountry, &row.Currency, &row.SubtotalAmount, &row.TaxAmount); err != nil {
+			return nil, fmt.Errorf("order_repo: scan tax snapshot: %w", err)
+		}
+		result = append(result, row)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("order_repo: tax snapshot rows: %w", err)
+	}
+	return result, nil
+}
+
 // Save persists an order and its items (insert-only).
 func (r *OrderRepo) Save(ctx context.Context, o *order.Order) error {
 	if o == nil {
@@ -232,11 +282,21 @@ func (r *OrderRepo) Save(ctx context.Context, o *order.Order) error {
 	}
 	defer tx.Rollback()
 
-	const insertOrder = `INSERT INTO orders (id, customer_id, contact_email, status, currency, total_amount, total_currency, created_at, updated_at)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`
+	const insertOrder = `INSERT INTO orders (id, customer_id, contact_email, status, currency,
+		total_amount, total_currency, destination_country, tax_amount, created_at, updated_at)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`
+	var destinationCountry interface{}
+	if strings.TrimSpace(o.DestinationCountry) != "" {
+		destinationCountry = strings.ToUpper(strings.TrimSpace(o.DestinationCountry))
+	}
+	var taxAmount interface{}
+	if strings.TrimSpace(o.DestinationCountry) != "" {
+		taxAmount = o.TaxAmount.Amount()
+	}
 	_, err = tx.ExecContext(ctx, insertOrder,
 		o.ID, o.CustomerID, strings.TrimSpace(o.ContactEmail), string(o.Status()), o.Currency,
 		o.TotalAmount.Amount(), o.TotalAmount.Currency(),
+		destinationCountry, taxAmount,
 		o.CreatedAt, o.UpdatedAt,
 	)
 	if err != nil {

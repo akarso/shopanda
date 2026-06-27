@@ -39,6 +39,9 @@ func (f *fakeOrderRepo) LinkToCustomer(context.Context, *order.Order) error { re
 func (f *fakeOrderRepo) LinkToCustomerByContactEmail(context.Context, string, string, time.Time) (int64, error) {
 	return 0, nil
 }
+func (f *fakeOrderRepo) ListPaidTaxSnapshots(context.Context, time.Time, time.Time) ([]order.TaxSnapshotRow, error) {
+	return nil, nil
+}
 
 type fakeInvoiceRepo struct {
 	saved   *domainInvoice.Invoice

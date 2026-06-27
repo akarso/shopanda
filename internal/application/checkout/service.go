@@ -7,6 +7,9 @@ import (
 	"strings"
 
 	"github.com/akarso/shopanda/internal/domain/cart"
+	"github.com/akarso/shopanda/internal/domain/order"
+	"github.com/akarso/shopanda/internal/domain/store"
+	"github.com/akarso/shopanda/internal/domain/tax"
 	"github.com/akarso/shopanda/internal/platform/apperror"
 	"github.com/akarso/shopanda/internal/platform/logger"
 )
@@ -101,6 +104,16 @@ func (s *Service) StartCheckout(ctx context.Context, cartID, customerID string, 
 	cctx.SetMeta("checkout_contact_email", input.ContactEmail)
 	cctx.SetMeta("checkout_shipping_method", input.ShippingMethod)
 	cctx.SetMeta("checkout_payment_method", input.PaymentMethod)
+
+	country, err := order.ValidateDestinationCountry(input.Address.Country)
+	if err != nil {
+		return nil, apperror.Validation("country must be a 2-letter ISO code")
+	}
+	cctx.SetMeta("tax_country", country)
+	cctx.SetMeta("tax_mode", string(tax.ModeExclusive))
+	if st := store.FromContext(ctx); st != nil {
+		cctx.SetMeta("store_id", st.ID)
+	}
 
 	s.log.Info("checkout.started", map[string]interface{}{
 		"cart_id":           cartID,

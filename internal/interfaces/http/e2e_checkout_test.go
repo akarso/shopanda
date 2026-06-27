@@ -140,6 +140,9 @@ func (r *e2eOrderRepo) LinkToCustomer(context.Context, *order.Order) error { ret
 func (r *e2eOrderRepo) LinkToCustomerByContactEmail(context.Context, string, string, time.Time) (int64, error) {
 	return 0, nil
 }
+func (r *e2eOrderRepo) ListPaidTaxSnapshots(context.Context, time.Time, time.Time) ([]order.TaxSnapshotRow, error) {
+	return nil, nil
+}
 
 func e2eLogger() logger.Logger {
 	return logger.NewWithWriter(io.Discard, "error")

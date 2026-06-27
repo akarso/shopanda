@@ -94,6 +94,10 @@ func (r *storefrontOrderClaimRepoStub) LinkToCustomerByContactEmail(_ context.Co
 	return linked, nil
 }
 
+func (r *storefrontOrderClaimRepoStub) ListPaidTaxSnapshots(context.Context, time.Time, time.Time) ([]domainOrder.TaxSnapshotRow, error) {
+	return nil, nil
+}
+
 type storefrontOrderClaimEmailerStub struct {
 	lastEmail string
 	lastToken string

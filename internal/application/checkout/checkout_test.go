@@ -479,6 +479,23 @@ func TestService_StartCheckout_MissingAddress(t *testing.T) {
 	}
 }
 
+func TestService_StartCheckout_InvalidCountry(t *testing.T) {
+	bus := testBus(t)
+	log := testLogger()
+	wf := checkout.NewWorkflow(nil, bus, log)
+
+	c := activeCart(t, "cust-1")
+	repo := &mockCartRepo{cart: c}
+	svc := checkout.NewService(repo, wf, log)
+
+	input := validCheckoutInput()
+	input.Address.Country = "Germany"
+	_, err := svc.StartCheckout(context.Background(), c.ID, "cust-1", input)
+	if err == nil {
+		t.Fatal("expected error for non-ISO country")
+	}
+}
+
 func TestService_StartCheckout_CartNotFound(t *testing.T) {
 	bus := testBus(t)
 	log := testLogger()
