@@ -88,6 +88,7 @@ func TestPlugin_Init_RegistersPermissionsAndRoutes(t *testing.T) {
 		t.Fatalf("run core migrations: %v", err)
 	}
 	t.Cleanup(func() {
+		_, _ = db.Exec(`DELETE FROM customer_group_prices`)
 		_, _ = db.Exec(`DELETE FROM customer_group_members`)
 		_, _ = db.Exec(`DELETE FROM customer_groups`)
 	})
@@ -109,6 +110,15 @@ func TestPlugin_Init_RegistersPermissionsAndRoutes(t *testing.T) {
 		t.Fatal("expected b2b.groups.write for manager")
 	}
 
+	if !rbac.HasPermission(identity.RoleManager, b2b.PermissionPricesWrite) {
+		t.Fatal("expected b2b.prices.write for manager")
+	}
+
+	steps := app.PricingSteps()
+	if len(steps) != 1 {
+		t.Fatalf("PricingSteps() len = %d, want 1", len(steps))
+	}
+
 	wantRoutes := []struct {
 		pattern    string
 		permission rbac.Permission
@@ -121,6 +131,9 @@ func TestPlugin_Init_RegistersPermissionsAndRoutes(t *testing.T) {
 		{"GET /api/v1/admin/customers/{customerId}/customer-group", b2b.PermissionGroupsRead},
 		{"PUT /api/v1/admin/customers/{customerId}/customer-group", b2b.PermissionGroupsWrite},
 		{"DELETE /api/v1/admin/customers/{customerId}/customer-group", b2b.PermissionGroupsWrite},
+		{"GET /api/v1/admin/customer-groups/{groupId}/variants/{variantId}/price", b2b.PermissionPricesRead},
+		{"PUT /api/v1/admin/customer-groups/{groupId}/variants/{variantId}/price", b2b.PermissionPricesWrite},
+		{"DELETE /api/v1/admin/customer-groups/{groupId}/variants/{variantId}/price", b2b.PermissionPricesWrite},
 	}
 	routes := app.AdminRoutes()
 	if len(routes) != len(wantRoutes) {

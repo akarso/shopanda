@@ -499,8 +499,6 @@ func runServe(cfg *config.Config, log logger.Logger, embedScheduler bool) error 
 	// Pricing pipeline (core + plugin steps + finalize).
 	pricingSteps := []pricing.PricingStep{
 		appPricing.NewBasePriceStep(priceRepo),
-		appPricing.NewCatalogPromotionStep(promotionRepo, couponRepo),
-		appPricing.NewTaxStep(taxRateRepo, "standard"),
 	}
 	for _, s := range pluginApp.PricingSteps() {
 		if v, ok := s.(pricing.PricingStep); ok {
@@ -511,7 +509,11 @@ func runServe(cfg *config.Config, log logger.Logger, embedScheduler bool) error 
 			})
 		}
 	}
-	pricingSteps = append(pricingSteps, pricing.NewFinalizeStep())
+	pricingSteps = append(pricingSteps,
+		appPricing.NewCatalogPromotionStep(promotionRepo, couponRepo),
+		appPricing.NewTaxStep(taxRateRepo, "standard"),
+		pricing.NewFinalizeStep(),
+	)
 	pricingPipeline := pricing.NewPipeline(pricingSteps...)
 
 	// Application services.
