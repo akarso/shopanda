@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/akarso/shopanda/internal/application/exporter"
+	"github.com/akarso/shopanda/internal/domain/legal"
 	"github.com/akarso/shopanda/internal/domain/order"
 )
 
@@ -49,7 +50,7 @@ func TestOssExport_DetailRows(t *testing.T) {
 			TaxAmount:          2000,
 		}},
 	}
-	exp := exporter.NewOssExporter(repo)
+	exp := exporter.NewOssExporter(repo, stubOssExportConfig{legal.OssEnabledConfigKey: true})
 	from := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
 	to := time.Date(2026, 4, 1, 0, 0, 0, 0, time.UTC)
 
@@ -75,7 +76,7 @@ func TestOssExport_SummaryRows(t *testing.T) {
 			{OrderID: "o3", DestinationCountry: "DE", Currency: "EUR", SubtotalAmount: 500, TaxAmount: 95},
 		},
 	}
-	exp := exporter.NewOssExporter(repo)
+	exp := exporter.NewOssExporter(repo, stubOssExportConfig{legal.OssEnabledConfigKey: true})
 	from := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
 	to := time.Date(2027, 1, 1, 0, 0, 0, 0, time.UTC)
 
@@ -96,5 +97,28 @@ func TestOssExport_SummaryRows(t *testing.T) {
 	}
 	if records[2][0] != "FR" || records[2][2] != "2" || records[2][3] != "30.00" {
 		t.Fatalf("unexpected FR summary row: %v", records[2])
+	}
+}
+
+type stubOssExportConfig map[string]interface{}
+
+func (s stubOssExportConfig) Get(_ context.Context, key string) (interface{}, error) {
+	if s == nil {
+		return nil, nil
+	}
+	v, ok := s[key]
+	if !ok {
+		return nil, nil
+	}
+	return v, nil
+}
+
+func TestOssExport_Disabled(t *testing.T) {
+	exp := exporter.NewOssExporter(&stubOssOrderRepo{}, stubOssExportConfig{legal.OssEnabledConfigKey: false})
+	from := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	to := time.Date(2026, 4, 1, 0, 0, 0, 0, time.UTC)
+	_, err := exp.Export(context.Background(), &bytes.Buffer{}, exporter.OssExportOptions{From: from, To: to})
+	if err == nil {
+		t.Fatal("expected error when oss export disabled")
 	}
 }

@@ -116,9 +116,9 @@ func NewOrder(id, customerID, contactEmail, currency string, items []Item) (Orde
 
 // SetTaxSnapshot records the shipping destination and VAT total for OSS reporting.
 func (o *Order) SetTaxSnapshot(destinationCountry string, taxAmount shared.Money) error {
-	destinationCountry = strings.ToUpper(strings.TrimSpace(destinationCountry))
-	if destinationCountry != "" && len(destinationCountry) != 2 {
-		return errors.New("order: destination country must be a 2-letter ISO code")
+	normalized, err := ValidateDestinationCountry(destinationCountry)
+	if err != nil {
+		return err
 	}
 	if taxAmount.Currency() != o.Currency {
 		return errors.New("order: tax amount currency mismatch")
@@ -126,9 +126,26 @@ func (o *Order) SetTaxSnapshot(destinationCountry string, taxAmount shared.Money
 	if taxAmount.IsNegative() {
 		return errors.New("order: tax amount must be non-negative")
 	}
-	o.DestinationCountry = destinationCountry
+	o.DestinationCountry = normalized
 	o.TaxAmount = taxAmount
 	return nil
+}
+
+// ValidateDestinationCountry normalizes and validates an ISO 3166-1 alpha-2 code.
+func ValidateDestinationCountry(code string) (string, error) {
+	code = strings.ToUpper(strings.TrimSpace(code))
+	if code == "" {
+		return "", errors.New("order: destination country must not be empty")
+	}
+	if len(code) != 2 {
+		return "", errors.New("order: destination country must be a 2-letter ISO code")
+	}
+	for _, r := range code {
+		if r < 'A' || r > 'Z' {
+			return "", errors.New("order: destination country must be a 2-letter ISO code")
+		}
+	}
+	return code, nil
 }
 
 // Items returns a defensive copy of the order's line items.

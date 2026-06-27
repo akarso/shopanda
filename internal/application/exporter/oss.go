@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/akarso/shopanda/internal/domain/legal"
 	"github.com/akarso/shopanda/internal/domain/order"
 )
 
@@ -20,6 +21,7 @@ type OssResult struct {
 
 // OssExportOptions controls OSS CSV export behavior.
 type OssExportOptions struct {
+	StoreID string
 	From    time.Time
 	To      time.Time
 	Summary bool
@@ -28,11 +30,12 @@ type OssExportOptions struct {
 // OssExporter writes OSS/IOSS tax breakdown CSV for merchant accounting tools.
 type OssExporter struct {
 	orders order.OrderRepository
+	config legal.ConfigGetter
 }
 
 // NewOssExporter creates an OssExporter.
-func NewOssExporter(orders order.OrderRepository) *OssExporter {
-	return &OssExporter{orders: orders}
+func NewOssExporter(orders order.OrderRepository, config legal.ConfigGetter) *OssExporter {
+	return &OssExporter{orders: orders, config: config}
 }
 
 var ossDetailHeader = []string{
@@ -61,6 +64,9 @@ func (exp *OssExporter) Export(ctx context.Context, w io.Writer, opts OssExportO
 	}
 	if !opts.To.After(opts.From) {
 		return nil, fmt.Errorf("oss export: to must be after from")
+	}
+	if err := legal.EnsureOssExportEnabled(ctx, exp.config, opts.StoreID); err != nil {
+		return nil, fmt.Errorf("oss export: %w", err)
 	}
 
 	rows, err := exp.orders.ListPaidTaxSnapshots(ctx, opts.From, opts.To)

@@ -19,6 +19,12 @@ import (
 	"github.com/akarso/shopanda/internal/platform/id"
 )
 
+func attachCreateOrderInput(cctx *checkout.Context) {
+	cctx.Input = checkout.Input{
+		Address: checkout.Address{Country: "DE"},
+	}
+}
+
 // ============================================================
 // Mock reservation repository
 // ============================================================
@@ -332,6 +338,7 @@ func TestCreateOrderStep_Success(t *testing.T) {
 	step := checkout.NewCreateOrderStep(orderRepo, variantRepo)
 
 	cctx := checkout.NewContext("cart-1", "cust-1", "EUR")
+	attachCreateOrderInput(cctx)
 	cctx.Cart = cartWithItems037(t, "cust-1", "v1", "v2")
 	cctx.SetMeta("pricing", pricingContext037(t, "v1", "v2"))
 
@@ -374,6 +381,7 @@ func TestCreateOrderStep_ItemPricesFromPricing(t *testing.T) {
 	step := checkout.NewCreateOrderStep(orderRepo, variantRepo)
 
 	cctx := checkout.NewContext("cart-1", "cust-1", "EUR")
+	attachCreateOrderInput(cctx)
 	cctx.Cart = cartWithItems037(t, "cust-1", "v1")
 
 	// Override pricing with a different unit price to prove snapshot is from pricing
@@ -437,6 +445,7 @@ func TestCreateOrderStep_SaveError(t *testing.T) {
 	step := checkout.NewCreateOrderStep(orderRepo, variantRepo)
 
 	cctx := checkout.NewContext("cart-1", "cust-1", "EUR")
+	attachCreateOrderInput(cctx)
 	cctx.Cart = cartWithItems037(t, "cust-1", "v1")
 	cctx.SetMeta("pricing", pricingContext037(t, "v1"))
 
@@ -455,6 +464,7 @@ func TestCreateOrderStep_Idempotent(t *testing.T) {
 	step := checkout.NewCreateOrderStep(orderRepo, variantRepo)
 
 	cctx := checkout.NewContext("cart-1", "cust-1", "EUR")
+	attachCreateOrderInput(cctx)
 	cctx.Cart = cartWithItems037(t, "cust-1", "v1")
 	cctx.SetMeta("pricing", pricingContext037(t, "v1"))
 

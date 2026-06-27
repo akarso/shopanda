@@ -2,9 +2,13 @@ package legal
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 )
+
+// ErrOssExportDisabled is returned when legal.oss_enabled is off.
+var ErrOssExportDisabled = errors.New("legal: oss export disabled")
 
 // Config keys for OSS/IOSS tax reporting (store-scoped via ScopedConfigKey).
 const (
@@ -34,6 +38,18 @@ func OssEnabled(ctx context.Context, repo ConfigGetter, storeID string) (bool, e
 		return false, nil
 	}
 	return truthy(v), nil
+}
+
+// EnsureOssExportEnabled returns ErrOssExportDisabled when the store toggle is off.
+func EnsureOssExportEnabled(ctx context.Context, repo ConfigGetter, storeID string) error {
+	enabled, err := OssEnabled(ctx, repo, storeID)
+	if err != nil {
+		return err
+	}
+	if !enabled {
+		return ErrOssExportDisabled
+	}
+	return nil
 }
 
 // NormalizeCountryCode uppercases and trims a 2-letter ISO country code.

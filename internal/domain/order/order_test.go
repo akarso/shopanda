@@ -325,3 +325,39 @@ func TestSetTaxSnapshot(t *testing.T) {
 		t.Fatalf("TaxAmount = %d", o.TaxAmount.Amount())
 	}
 }
+
+func TestSetTaxSnapshot_InvalidInputs(t *testing.T) {
+	item := validItem(t)
+	base, err := order.NewOrder(id.New(), "cust-1", "", "EUR", []order.Item{item})
+	if err != nil {
+		t.Fatalf("NewOrder: %v", err)
+	}
+
+	tests := []struct {
+		name    string
+		country string
+		tax     shared.Money
+	}{
+		{name: "invalid country length", country: "DEU", tax: shared.MustNewMoney(100, "EUR")},
+		{name: "non-letter country", country: "D1", tax: shared.MustNewMoney(100, "EUR")},
+		{name: "currency mismatch", country: "DE", tax: shared.MustNewMoney(100, "USD")},
+		{name: "negative tax", country: "DE", tax: shared.MustNewMoney(-1, "EUR")},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			o := base
+			beforeCountry := o.DestinationCountry
+			beforeTax := o.TaxAmount.Amount()
+			if err := o.SetTaxSnapshot(tt.country, tt.tax); err == nil {
+				t.Fatal("expected error")
+			}
+			if o.DestinationCountry != beforeCountry {
+				t.Fatalf("DestinationCountry changed to %q", o.DestinationCountry)
+			}
+			if o.TaxAmount.Amount() != beforeTax {
+				t.Fatalf("TaxAmount changed to %d", o.TaxAmount.Amount())
+			}
+		})
+	}
+}

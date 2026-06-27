@@ -2,6 +2,7 @@ package postgres_test
 
 import (
 	"context"
+	"database/sql"
 	"testing"
 
 	"github.com/akarso/shopanda/internal/domain/order"
@@ -611,5 +612,37 @@ func TestOrderRepo_TaxSnapshotRoundTrip(t *testing.T) {
 	}
 	if got.TaxAmount.Amount() != 420 {
 		t.Fatalf("TaxAmount = %d", got.TaxAmount.Amount())
+	}
+}
+
+func TestOrderRepo_TaxSnapshotPersistsZeroTax(t *testing.T) {
+	db := testDB(t)
+	ensureProductsTable(t, db)
+	t.Cleanup(func() {
+		db.Exec("DELETE FROM order_items")
+		db.Exec("DELETE FROM orders")
+	})
+
+	repo, err := postgres.NewOrderRepo(db)
+	if err != nil {
+		t.Fatalf("NewOrderRepo: %v", err)
+	}
+	ctx := context.Background()
+
+	o := mustNewOrder(t, "cust-1", "EUR")
+	if err := o.SetTaxSnapshot("DE", shared.MustNewMoney(0, "EUR")); err != nil {
+		t.Fatalf("SetTaxSnapshot: %v", err)
+	}
+	if err := repo.Save(ctx, &o); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+
+	var taxAmount sql.NullInt64
+	err = db.QueryRow(`SELECT tax_amount FROM orders WHERE id = $1`, o.ID).Scan(&taxAmount)
+	if err != nil {
+		t.Fatalf("query tax_amount: %v", err)
+	}
+	if !taxAmount.Valid || taxAmount.Int64 != 0 {
+		t.Fatalf("tax_amount = %v, want 0", taxAmount)
 	}
 }

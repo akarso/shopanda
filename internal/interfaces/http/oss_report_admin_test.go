@@ -9,9 +9,11 @@ import (
 	"time"
 
 	"github.com/akarso/shopanda/internal/application/exporter"
+	"github.com/akarso/shopanda/internal/domain/legal"
 	"github.com/akarso/shopanda/internal/domain/order"
 	"github.com/akarso/shopanda/internal/domain/rbac"
 	shophttp "github.com/akarso/shopanda/internal/interfaces/http"
+	"github.com/akarso/shopanda/internal/platform/auth/testhelper"
 )
 
 type ossReportOrderRepo struct {
@@ -36,6 +38,16 @@ func (m *ossReportOrderRepo) ListPaidTaxSnapshots(_ context.Context, _, _ time.T
 	return m.rows, nil
 }
 
+type stubOssReportConfig map[string]interface{}
+
+func (s stubOssReportConfig) Get(_ context.Context, key string) (interface{}, error) {
+	v, ok := s[key]
+	if !ok {
+		return nil, nil
+	}
+	return v, nil
+}
+
 func TestOssReportHandler_ExportDetailCSV(t *testing.T) {
 	repo := &ossReportOrderRepo{
 		rows: []order.TaxSnapshotRow{{
@@ -47,7 +59,8 @@ func TestOssReportHandler_ExportDetailCSV(t *testing.T) {
 			TaxAmount:          1050,
 		}},
 	}
-	exp := exporter.NewOssExporter(repo)
+	cfg := stubOssReportConfig{legal.OssEnabledConfigKey: true}
+	exp := exporter.NewOssExporter(repo, cfg)
 	h := shophttp.NewOssReportHandler(exp)
 
 	rec := httptest.NewRecorder()
@@ -63,8 +76,8 @@ func TestOssReportHandler_ExportDetailCSV(t *testing.T) {
 	}
 }
 
-func TestOssReportHandler_RequiresOrdersRead(t *testing.T) {
-	exp := exporter.NewOssExporter(&ossReportOrderRepo{})
+func TestOssReportHandler_GuestUnauthorized(t *testing.T) {
+	exp := exporter.NewOssExporter(&ossReportOrderRepo{}, stubOssReportConfig{legal.OssEnabledConfigKey: true})
 	h := shophttp.NewOssReportHandler(exp)
 	mux := http.NewServeMux()
 	mux.Handle("GET /api/v1/admin/reports/oss", shophttp.RequirePermission(rbac.OrdersRead)(h.Export()))
@@ -72,7 +85,34 @@ func TestOssReportHandler_RequiresOrdersRead(t *testing.T) {
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/admin/reports/oss", nil)
 	mux.ServeHTTP(rec, req)
-	if rec.Code != http.StatusUnauthorized && rec.Code != http.StatusForbidden {
-		t.Fatalf("status = %d, want unauthorized/forbidden", rec.Code)
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("status = %d, want %d", rec.Code, http.StatusUnauthorized)
+	}
+}
+
+func TestOssReportHandler_CustomerForbidden(t *testing.T) {
+	exp := exporter.NewOssExporter(&ossReportOrderRepo{}, stubOssReportConfig{legal.OssEnabledConfigKey: true})
+	h := shophttp.NewOssReportHandler(exp)
+	mux := http.NewServeMux()
+	mux.Handle("GET /api/v1/admin/reports/oss", shophttp.RequirePermission(rbac.OrdersRead)(h.Export()))
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/admin/reports/oss", nil)
+	req = testhelper.CustomerRequest(req, "cust-1")
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("status = %d, want %d", rec.Code, http.StatusForbidden)
+	}
+}
+
+func TestOssReportHandler_DisabledForbidden(t *testing.T) {
+	exp := exporter.NewOssExporter(&ossReportOrderRepo{}, stubOssReportConfig{legal.OssEnabledConfigKey: false})
+	h := shophttp.NewOssReportHandler(exp)
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/admin/reports/oss?from=2026-01-01&to=2026-12-31", nil)
+	h.Export()(rec, req)
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("status = %d, want %d; body = %s", rec.Code, http.StatusForbidden, rec.Body.String())
 	}
 }

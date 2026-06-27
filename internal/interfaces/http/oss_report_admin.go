@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/akarso/shopanda/internal/application/exporter"
+	"github.com/akarso/shopanda/internal/domain/legal"
 	"github.com/akarso/shopanda/internal/platform/apperror"
 )
 
@@ -33,13 +34,19 @@ func (h *OssReportHandler) Export() http.HandlerFunc {
 			return
 		}
 		summary := strings.EqualFold(r.URL.Query().Get("summary"), "true")
+		storeID := resolveStoreScopeID(r)
 
 		var buf bytes.Buffer
 		if _, err := h.exporter.Export(r.Context(), &buf, exporter.OssExportOptions{
+			StoreID: storeID,
 			From:    from,
 			To:      to,
 			Summary: summary,
 		}); err != nil {
+			if errors.Is(err, legal.ErrOssExportDisabled) {
+				JSONError(w, apperror.Forbidden("OSS export is disabled for this store"))
+				return
+			}
 			JSONError(w, apperror.Wrap(apperror.CodeInternal, "oss export failed", err))
 			return
 		}

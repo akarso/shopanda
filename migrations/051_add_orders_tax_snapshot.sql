@@ -5,6 +5,6 @@ ALTER TABLE orders
     ADD COLUMN tax_amount BIGINT
         CHECK (tax_amount IS NULL OR tax_amount >= 0);
 
-CREATE INDEX idx_orders_paid_destination_created
-    ON orders (destination_country, created_at)
+CREATE INDEX idx_orders_paid_tax_snapshot_created
+    ON orders (created_at, id)
     WHERE status = 'paid' AND destination_country IS NOT NULL;

@@ -2,6 +2,7 @@ package legal_test
 
 import (
 	"context"
+	"errors"
 	"testing"
 
 	"github.com/akarso/shopanda/internal/domain/legal"
@@ -33,5 +34,12 @@ func TestOssEnabled_StoreScoped(t *testing.T) {
 func TestNormalizeCountryCode(t *testing.T) {
 	if got := legal.NormalizeCountryCode(" de "); got != "DE" {
 		t.Fatalf("got %q", got)
+	}
+}
+
+func TestEnsureOssExportEnabled(t *testing.T) {
+	err := legal.EnsureOssExportEnabled(context.Background(), stubConfigGetter{}, "store-1")
+	if !errors.Is(err, legal.ErrOssExportDisabled) {
+		t.Fatalf("err = %v, want ErrOssExportDisabled", err)
 	}
 }

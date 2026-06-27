@@ -638,7 +638,7 @@ func runServe(cfg *config.Config, log logger.Logger, embedScheduler bool) error 
 	returnAccount := shophttp.NewReturnAccountHandler(returnService)
 	eprExporter := exporter.NewEprExporter(productRepo, variantRepo, configRepo)
 	eprReportAdmin := shophttp.NewEprReportHandler(eprExporter)
-	ossExporter := exporter.NewOssExporter(orderRepo)
+	ossExporter := exporter.NewOssExporter(orderRepo, configRepo)
 	ossReportAdmin := shophttp.NewOssReportHandler(ossExporter)
 	paymentAdmin := shophttp.NewPaymentAdminHandler(paymentRepo, sharedAuditor)
 
@@ -2024,8 +2024,9 @@ func runExportOss(cfg *config.Config, log logger.Logger) error {
 	if err != nil {
 		return err
 	}
+	configRepo := postgres.NewConfigRepo(conn)
 
-	exp := exporter.NewOssExporter(orderRepo)
+	exp := exporter.NewOssExporter(orderRepo, configRepo)
 	tmpFile, err := os.CreateTemp(filepath.Dir(filePath), "oss-export-*.csv")
 	if err != nil {
 		return fmt.Errorf("create temp file: %w", err)

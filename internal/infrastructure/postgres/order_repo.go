@@ -290,7 +290,7 @@ func (r *OrderRepo) Save(ctx context.Context, o *order.Order) error {
 		destinationCountry = strings.ToUpper(strings.TrimSpace(o.DestinationCountry))
 	}
 	var taxAmount interface{}
-	if o.TaxAmount.Amount() > 0 {
+	if strings.TrimSpace(o.DestinationCountry) != "" {
 		taxAmount = o.TaxAmount.Amount()
 	}
 	_, err = tx.ExecContext(ctx, insertOrder,
