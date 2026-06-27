@@ -106,21 +106,18 @@ func StoreSchemeRegistrationID(ctx context.Context, repo ConfigGetter, storeID s
 }
 
 // ParseEprPackaging merges product- and variant-level EPR attributes.
-// Variant packaging weight overrides the product value when both are set.
+// Variant values override product values when both are set (same precedence as
+// material, recyclability, and recycled content). Numeric zero means unset for
+// packaging weight in HasData and CSV output.
 func ParseEprPackaging(productAttrs, variantAttrs map[string]interface{}) EprPackaging {
 	material := stringValue(firstAttr(productAttrs, variantAttrs, AttrEprPackagingMaterial))
 
-	weight := numberValue(attrValue(productAttrs, AttrEprPackagingWeightG))
-	if v := numberValue(attrValue(variantAttrs, AttrEprPackagingWeightG)); v > 0 {
-		weight = v
-	}
-
 	return EprPackaging{
-		Material:           material,
-		MaterialLabel:      EprMaterialLabel(material),
-		WeightG:            weight,
-		Recyclable:         boolValue(firstAttr(productAttrs, variantAttrs, AttrEprRecyclable)),
-		RecycledContentPct: numberValue(firstAttr(productAttrs, variantAttrs, AttrEprRecycledContentPct)),
+		Material:             material,
+		MaterialLabel:        EprMaterialLabel(material),
+		WeightG:              numberValue(firstAttr(productAttrs, variantAttrs, AttrEprPackagingWeightG)),
+		Recyclable:           boolValue(firstAttr(productAttrs, variantAttrs, AttrEprRecyclable)),
+		RecycledContentPct:   numberValue(firstAttr(productAttrs, variantAttrs, AttrEprRecycledContentPct)),
 		SchemeRegistrationID: stringValue(firstAttr(productAttrs, variantAttrs, AttrEprSchemeRegistrationID)),
 	}
 }

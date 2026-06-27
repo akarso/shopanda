@@ -111,6 +111,13 @@ func (s *EprAttributesSeeder) Seed(ctx context.Context, deps Deps) error {
 }
 
 func (s *EprAttributesSeeder) seedDemoProduct(ctx context.Context, deps Deps) error {
+	if !deps.DemoData {
+		deps.Logger.Info("seed.epr_demo_product.skip", map[string]interface{}{
+			"reason": "demo data disabled (pass --demo-seed to enable)",
+		})
+		return nil
+	}
+
 	prodRepo, err := postgres.NewProductRepo(deps.DB)
 	if err != nil {
 		return err
@@ -121,8 +128,16 @@ func (s *EprAttributesSeeder) seedDemoProduct(ctx context.Context, deps Deps) er
 	}
 
 	p, err := prodRepo.FindBySlug(ctx, "usb-c-cable")
-	if err != nil || p == nil {
+	if err != nil {
 		return err
+	}
+	if p == nil {
+		// Demo catalog product absent — skip without failing attribute registration.
+		deps.Logger.Info("seed.epr_demo_product.skip", map[string]interface{}{
+			"slug":   "usb-c-cable",
+			"reason": "product not found",
+		})
+		return nil
 	}
 	if v, ok := p.Attributes[legal.AttrEprPackagingMaterial]; ok && strings.TrimSpace(catalogString(v)) != "" {
 		return nil
@@ -138,8 +153,15 @@ func (s *EprAttributesSeeder) seedDemoProduct(ctx context.Context, deps Deps) er
 	}
 
 	v, err := variantRepo.FindBySKU(ctx, "USBC-1M")
-	if err != nil || v == nil {
+	if err != nil {
 		return err
+	}
+	if v == nil {
+		deps.Logger.Info("seed.epr_demo_product.skip", map[string]interface{}{
+			"sku":    "USBC-1M",
+			"reason": "variant not found",
+		})
+		return nil
 	}
 	if v.Attributes == nil {
 		v.Attributes = make(map[string]interface{})

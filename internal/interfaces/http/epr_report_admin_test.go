@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/akarso/shopanda/internal/application/admin"
 	"github.com/akarso/shopanda/internal/application/exporter"
 	"github.com/akarso/shopanda/internal/domain/catalog"
 	"github.com/akarso/shopanda/internal/domain/legal"
@@ -102,6 +103,46 @@ func TestEprReportHandler_ExportCSV(t *testing.T) {
 	if !strings.Contains(body, "USBC-1M") || !strings.Contains(body, "paper_cardboard") {
 		t.Fatalf("unexpected csv: %s", body)
 	}
+}
+
+func TestEprReportHandler_UsesAdminStoreScope(t *testing.T) {
+	cfg := stubEprReportConfig{
+		legal.ScopedConfigKey("store-de", legal.EprSchemeRegistrationConfigKey): "DE-LUCID-ADMIN",
+	}
+	prodRepo := &eprExportProductRepo{
+		products: []catalog.Product{{
+			ID:   "p1",
+			Name: "Shirt",
+			Slug: "tshirt",
+		}},
+	}
+	varRepo := &eprExportVariantRepo{
+		variants: map[string][]catalog.Variant{
+			"p1": {{ID: "v1", ProductID: "p1", SKU: "TSHIRT-M"}},
+		},
+	}
+	exp := exporter.NewEprExporter(prodRepo, varRepo, cfg)
+	h := shophttp.NewEprReportHandler(exp)
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/admin/reports/epr", nil)
+	req = req.WithContext((&admin.AdminContext{StoreID: "store-de"}).WithContext(req.Context()))
+	h.Export()(rec, req)
+
+	body := rec.Body.String()
+	if !strings.Contains(body, "DE-LUCID-ADMIN") {
+		t.Fatalf("expected store-scoped scheme in csv: %s", body)
+	}
+}
+
+type stubEprReportConfig map[string]interface{}
+
+func (s stubEprReportConfig) Get(_ context.Context, key string) (interface{}, error) {
+	v, ok := s[key]
+	if !ok {
+		return nil, nil
+	}
+	return v, nil
 }
 
 func TestEprReportHandler_RequiresProductsRead(t *testing.T) {

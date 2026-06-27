@@ -58,13 +58,13 @@ func TestEprExport_WritesPackagingRows(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Export: %v", err)
 	}
-	if result.Rows != 1 {
-		t.Fatalf("rows = %d, want 1", result.Rows)
+	if result.Rows != 2 {
+		t.Fatalf("rows = %d, want 2 (cable + store-scheme-only shirt)", result.Rows)
 	}
 
 	records := parseCSV(t, &buf)
-	if len(records) != 2 {
-		t.Fatalf("csv rows = %d, want header + 1 data row", len(records))
+	if len(records) != 3 {
+		t.Fatalf("csv rows = %d, want header + 2 data rows", len(records))
 	}
 	if records[1][0] != "USBC-1M" || records[1][3] != "plastic" || records[1][4] != "45" {
 		t.Fatalf("unexpected row: %v", records[1])

@@ -21,8 +21,9 @@ type Seeder interface {
 
 // Deps provides the dependencies available to seeders.
 type Deps struct {
-	DB     *sql.DB
-	Logger logger.Logger
+	DB       *sql.DB
+	Logger   logger.Logger
+	DemoData bool // when true, seeders may populate demo catalog compliance metadata
 }
 
 // Result holds the summary of a seed run.

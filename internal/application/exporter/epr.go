@@ -80,11 +80,10 @@ func (exp *EprExporter) Export(ctx context.Context, w io.Writer, opts EprExportO
 					return nil, fmt.Errorf("epr export: list variants for %q: %w", p.Slug, err)
 				}
 				for _, v := range variants {
-					packaging := legal.ParseEprPackaging(p.Attributes, v.Attributes)
+					packaging := legal.ParseEprPackaging(p.Attributes, v.Attributes).WithStoreSchemeID(storeScheme)
 					if !opts.IncludeEmpty && !packaging.HasData() {
 						continue
 					}
-					packaging = packaging.WithStoreSchemeID(storeScheme)
 					record := []string{
 						v.SKU,
 						p.Slug,

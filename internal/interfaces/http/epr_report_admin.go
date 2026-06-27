@@ -1,13 +1,13 @@
 package http
 
 import (
-	"bytes"
 	"net/http"
 	"strings"
 
 	"github.com/akarso/shopanda/internal/application/exporter"
 	"github.com/akarso/shopanda/internal/platform/apperror"
 )
+
 type EprReportHandler struct {
 	exporter *exporter.EprExporter
 }
@@ -24,19 +24,17 @@ func NewEprReportHandler(exp *exporter.EprExporter) *EprReportHandler {
 func (h *EprReportHandler) Export() http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		includeEmpty := strings.EqualFold(r.URL.Query().Get("include_empty"), "true")
-		storeID := strings.TrimSpace(r.URL.Query().Get("store_id"))
+		storeID := resolveStoreScopeID(r)
 
-		var buf bytes.Buffer
-		if _, err := h.exporter.Export(r.Context(), &buf, exporter.EprExportOptions{
+		w.Header().Set("Content-Type", "text/csv; charset=utf-8")
+		w.Header().Set("Content-Disposition", `attachment; filename="epr-packaging.csv"`)
+
+		if _, err := h.exporter.Export(r.Context(), w, exporter.EprExportOptions{
 			StoreID:      storeID,
 			IncludeEmpty: includeEmpty,
 		}); err != nil {
 			JSONError(w, apperror.Wrap(apperror.CodeInternal, "epr export failed", err))
 			return
 		}
-
-		w.Header().Set("Content-Type", "text/csv; charset=utf-8")
-		w.Header().Set("Content-Disposition", `attachment; filename="epr-packaging.csv"`)
-		_, _ = w.Write(buf.Bytes())
 	}
 }
