@@ -152,6 +152,8 @@ func run() error {
 			return runImportPrices(cfg, log)
 		case "export:prices":
 			return runExportPrices(cfg, log)
+		case "export:epr":
+			return runExportEpr(cfg, log)
 		default:
 			return fmt.Errorf("unknown command: %s (run 'help' for usage)", os.Args[1])
 		}
@@ -631,6 +633,8 @@ func runServe(cfg *config.Config, log logger.Logger, embedScheduler bool) error 
 	returnService := returnsApp.NewService(returnRepo, orderRepo, stockRepo, paymentRepo, stripeRefunder, bus, log)
 	returnAdmin := shophttp.NewReturnAdminHandler(returnService, sharedAuditor)
 	returnAccount := shophttp.NewReturnAccountHandler(returnService)
+	eprExporter := exporter.NewEprExporter(productRepo, variantRepo, configRepo)
+	eprReportAdmin := shophttp.NewEprReportHandler(eprExporter)
 	paymentAdmin := shophttp.NewPaymentAdminHandler(paymentRepo, sharedAuditor)
 
 	shippingRates := shophttp.NewShippingRatesHandler(flatRateProvider)
@@ -816,6 +820,7 @@ func runServe(cfg *config.Config, log logger.Logger, embedScheduler bool) error 
 	router.Handle("POST /api/v1/admin/returns/{returnId}/reject", requireOrdersWrite(returnAdmin.Reject()))
 	router.Handle("POST /api/v1/admin/returns/{returnId}/receive", requireOrdersWrite(returnAdmin.Receive()))
 	router.Handle("POST /api/v1/admin/returns/{returnId}/refund", requireOrdersWrite(returnAdmin.Refund()))
+	router.Handle("GET /api/v1/admin/reports/epr", requireProductsRead(eprReportAdmin.Export()))
 	router.Handle("GET /api/v1/admin/payments", requireOrdersRead(paymentAdmin.List()))
 	router.Handle("GET /api/v1/admin/payments/{paymentId}", requireOrdersRead(paymentAdmin.Get()))
 	router.Handle("GET /api/v1/admin/media", requireMediaRead(mediaHandler.List()))
@@ -1915,6 +1920,57 @@ func runExportPrices(cfg *config.Config, log logger.Logger) error {
 	return nil
 }
 
+func runExportEpr(cfg *config.Config, log logger.Logger) error {
+	if len(os.Args) < 3 {
+		return fmt.Errorf("usage: app export:epr <file.csv>")
+	}
+	filePath := os.Args[2]
+
+	dsn := config.DatabaseDSN(cfg)
+	conn, err := db.Open(dsn)
+	if err != nil {
+		return fmt.Errorf("database: %w", err)
+	}
+	defer conn.Close()
+
+	productRepo, err := postgres.NewProductRepo(conn)
+	if err != nil {
+		return fmt.Errorf("product repo: %w", err)
+	}
+	variantRepo, err := postgres.NewVariantRepo(conn)
+	if err != nil {
+		return fmt.Errorf("variant repo: %w", err)
+	}
+	configRepo := postgres.NewConfigRepo(conn)
+	exp := exporter.NewEprExporter(productRepo, variantRepo, configRepo)
+
+	f, err := os.Create(filePath)
+	if err != nil {
+		return fmt.Errorf("create csv: %w", err)
+	}
+	defer f.Close()
+
+	log.Info("export.epr.start", map[string]interface{}{"file": filePath})
+
+	includeEmpty := false
+	for _, arg := range os.Args[3:] {
+		if arg == "--include-empty" {
+			includeEmpty = true
+		}
+	}
+
+	result, err := exp.Export(context.Background(), f, exporter.EprExportOptions{IncludeEmpty: includeEmpty})
+	if err != nil {
+		return fmt.Errorf("export epr: %w", err)
+	}
+
+	log.Info("export.epr.complete", map[string]interface{}{
+		"rows": result.Rows,
+	})
+
+	return nil
+}
+
 func runSeed(cfg *config.Config, log logger.Logger) error {
 	dsn := config.DatabaseDSN(cfg)
 	conn, err := db.Open(dsn)
@@ -1953,6 +2009,7 @@ func registerDefaultSeeders(reg *seed.Registry) {
 	reg.Register(&seed.AdminSeeder{})
 	reg.Register(&seed.CatalogSeeder{})
 	reg.Register(&seed.WeeeAttributesSeeder{})
+	reg.Register(&seed.EprAttributesSeeder{})
 }
 
 func printHelp() {
@@ -1981,6 +2038,7 @@ Commands:
   export:categories <f> Export categories to a CSV file
   import:prices <f>    Import prices from a CSV file
   export:prices <f>    Export prices to a CSV file
+  export:epr <f>       Export EPR packaging metadata to a CSV file (--include-empty optional)
   help                 Show this help message`)
 }
 

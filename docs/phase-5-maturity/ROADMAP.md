@@ -48,7 +48,7 @@ Phases 1–4 delivered a runnable commerce engine with SSR storefront, schema-dr
 | Transaction ledger not in admin | Payment/refund history hard to reconcile in UI |
 | CMS limits | No navigation builder or reusable content blocks |
 | Admin identity frozen | Users & roles read-only; no MFA for admin |
-| Compliance partial | Omnibus done (PR-530/535); WEEE on PDP (PR-531); EPR/GPSR/e-invoicing not modeled |
+| Compliance partial | Omnibus done (PR-530/535); WEEE on PDP (PR-531); EPR export (PR-532); GPSR/e-invoicing not modeled |
 | Platform stretch items | No merchant webhooks, plugin CLI, alternate brokers |
 
 Phase 4 deferred items are **in scope** for Phase 5 unless marked stretch below.
@@ -146,7 +146,7 @@ Full compliance overview: [`specs/COMPLIANCE_EU.md`](specs/COMPLIANCE_EU.md).
 | PR-530 | [oss] | Omnibus storefront verification (done) | Ensure discounted PDP/PLP shows lowest prior price (30d) using existing `price_history`; admin toggle per store |
 | PR-535 | [oss] | Omnibus listing batch reads (done) | Batch variant/price/history repo methods; refactor `ListingPriceIndicationStep` to avoid PLP N+1 |
 | PR-531 | [oss] | WEEE product fields (done) | Producer registration number, WEEE category, take-back info; PDP/footer display helpers |
-| PR-532 | [oss] | EPR / packaging data | Packaging material weights, recyclability flags, registration IDs per market (config-driven) |
+| PR-532 | [oss] | EPR / packaging data (done) | Packaging material weights, recyclability flags, registration IDs per market (config-driven) |
 | PR-533 | [oss] | GPSR product safety | Manufacturer/importer contact, safety warnings, product identifiers for applicable catalogs |
 | PR-534 | [oss] | Cross-border tax & e-invoicing (stretch) | OSS/IOSS summary exports; Peppol/e-invoice adapter as core plugin |
 
@@ -252,7 +252,7 @@ Items worth tracking but not yet assigned PR numbers:
 | 530 | D | [oss] | Omnibus storefront verification (done) |
 | 535 | D | [oss] | Omnibus listing batch reads (done) |
 | 531 | D | [oss] | WEEE product fields (done) |
-| 532 | D | [oss] | EPR / packaging data |
+| 532 | D | [oss] | EPR / packaging data (done) |
 | 533 | D | [oss] | GPSR product safety |
 | 534 | D | [oss] | OSS / e-invoicing (stretch) |
 | 540 | E | [oss] | Merchant webhooks |

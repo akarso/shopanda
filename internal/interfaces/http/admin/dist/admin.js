@@ -4921,23 +4921,65 @@
         });
     }
 
+    function downloadEprReport(storeID) {
+        var url = API_BASE + '/admin/reports/epr';
+        if (storeID) {
+            url += '?store_id=' + encodeURIComponent(storeID);
+        }
+        var headers = buildHeaders({});
+        fetch(url, { headers: headers }).then(function (res) {
+            if (res.status === 401) {
+                clearToken();
+                setLoginMessage('Your session expired. Sign in again to continue.');
+                navigateTo('/admin');
+                return Promise.reject(new Error('unauthorized'));
+            }
+            if (!res.ok) {
+                return res.json().then(function (body) {
+                    throw new Error((body && body.error && body.error.message) || 'EPR export failed.');
+                });
+            }
+            return res.blob();
+        }).then(function (blob) {
+            if (!blob) {
+                return;
+            }
+            var link = document.createElement('a');
+            link.href = URL.createObjectURL(blob);
+            link.download = 'epr-packaging.csv';
+            link.click();
+            URL.revokeObjectURL(link.href);
+        }).catch(function (err) {
+            setSettingsMessage('settings-legal-msg', extractErrorMessage(err, 'EPR export failed.'), true);
+        });
+    }
+
     function renderLegalSettingsForm(container, settings, fieldScopes, activeStoreID) {
         var form = document.getElementById('settings-legal-form');
         form.innerHTML = '' +
-            renderFormScopeNote(fieldScopes, ['legal.omnibus_enabled', 'legal.weee_enabled', 'legal.weee_producer_registration'], activeStoreID) +
+            renderFormScopeNote(fieldScopes, ['legal.omnibus_enabled', 'legal.weee_enabled', 'legal.weee_producer_registration', 'legal.epr_enabled', 'legal.epr_scheme_registration_id'], activeStoreID) +
             '<label><input type="checkbox" name="omnibus_enabled" ' + (truthy(valueOf(settings, 'legal.omnibus_enabled', true)) ? 'checked' : '') + '> Show lowest price in last 30 days on discounted products (EU Omnibus)' + renderFieldScopeBadge(fieldScopes, 'legal.omnibus_enabled') + '</label>' +
             '<small class="admin-form-hint">When enabled, product and listing pages show the lowest prior price when the current price is reduced.</small>' +
             '<label><input type="checkbox" name="weee_enabled" ' + (truthy(valueOf(settings, 'legal.weee_enabled', false)) ? 'checked' : '') + '> Show WEEE recycling disclosure on product pages' + renderFieldScopeBadge(fieldScopes, 'legal.weee_enabled') + '</label>' +
             '<small class="admin-form-hint">Enable for electronics sellers. Configure per-product WEEE fields via Catalog → Attributes and the product form.</small>' +
             '<label>Default producer registration number' + renderFieldScopeBadge(fieldScopes, 'legal.weee_producer_registration') + '<input name="weee_producer_registration" value="' + esc(valueOf(settings, 'legal.weee_producer_registration', '')) + '" placeholder="e.g. PL-WEEE-12345"></label>' +
             '<small class="admin-form-hint">Used on the storefront footer and as a fallback when a product has no producer registration attribute.</small>' +
+            '<label><input type="checkbox" name="epr_enabled" ' + (truthy(valueOf(settings, 'legal.epr_enabled', false)) ? 'checked' : '') + '> Track EPR packaging metadata' + renderFieldScopeBadge(fieldScopes, 'legal.epr_enabled') + '</label>' +
+            '<small class="admin-form-hint">Enable for merchants reporting packaging placed on market. Configure fields via Catalog → Attributes and export below.</small>' +
+            '<label>Default EPR scheme registration ID' + renderFieldScopeBadge(fieldScopes, 'legal.epr_scheme_registration_id') + '<input name="epr_scheme_registration_id" value="' + esc(valueOf(settings, 'legal.epr_scheme_registration_id', '')) + '" placeholder="e.g. DE-LUCID-12345"></label>' +
+            '<button type="button" id="epr-export-btn">Download EPR packaging CSV</button>' +
             '<button type="submit">Save Legal Settings</button>';
+        document.getElementById('epr-export-btn').addEventListener('click', function () {
+            downloadEprReport(activeStoreID);
+        });
         form.addEventListener('submit', function (e) {
             e.preventDefault();
             saveSettingsEntries('settings-legal-msg', {
                 'legal.omnibus_enabled': !!form.elements.omnibus_enabled.checked,
                 'legal.weee_enabled': !!form.elements.weee_enabled.checked,
-                'legal.weee_producer_registration': form.elements.weee_producer_registration.value
+                'legal.weee_producer_registration': form.elements.weee_producer_registration.value,
+                'legal.epr_enabled': !!form.elements.epr_enabled.checked,
+                'legal.epr_scheme_registration_id': form.elements.epr_scheme_registration_id.value
             });
         });
     }
