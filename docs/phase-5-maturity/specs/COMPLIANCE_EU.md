@@ -93,7 +93,7 @@ This document maps **common EU merchant obligations** to Shopanda's current capa
 
 - Compliance attribute group on catalog (`gpsr`)
 - PDP `gpsr_safety_disclosure` section rendered when fields present and `legal.gpsr_enabled`
-- Admin validation for required combinations deferred to category-driven plugin
+- Admin validation for required combinations — **not in PR-533**; planned as future work via a category-driven plugin (not yet implemented)
 
 ---
 
