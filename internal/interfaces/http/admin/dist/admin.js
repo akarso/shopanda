@@ -4957,7 +4957,7 @@
     function renderLegalSettingsForm(container, settings, fieldScopes, activeStoreID) {
         var form = document.getElementById('settings-legal-form');
         form.innerHTML = '' +
-            renderFormScopeNote(fieldScopes, ['legal.omnibus_enabled', 'legal.weee_enabled', 'legal.weee_producer_registration', 'legal.epr_enabled', 'legal.epr_scheme_registration_id'], activeStoreID) +
+            renderFormScopeNote(fieldScopes, ['legal.omnibus_enabled', 'legal.weee_enabled', 'legal.weee_producer_registration', 'legal.epr_enabled', 'legal.epr_scheme_registration_id', 'legal.gpsr_enabled', 'legal.gpsr_manufacturer_name', 'legal.gpsr_manufacturer_contact'], activeStoreID) +
             '<label><input type="checkbox" name="omnibus_enabled" ' + (truthy(valueOf(settings, 'legal.omnibus_enabled', true)) ? 'checked' : '') + '> Show lowest price in last 30 days on discounted products (EU Omnibus)' + renderFieldScopeBadge(fieldScopes, 'legal.omnibus_enabled') + '</label>' +
             '<small class="admin-form-hint">When enabled, product and listing pages show the lowest prior price when the current price is reduced.</small>' +
             '<label><input type="checkbox" name="weee_enabled" ' + (truthy(valueOf(settings, 'legal.weee_enabled', false)) ? 'checked' : '') + '> Show WEEE recycling disclosure on product pages' + renderFieldScopeBadge(fieldScopes, 'legal.weee_enabled') + '</label>' +
@@ -4967,6 +4967,10 @@
             '<label><input type="checkbox" name="epr_enabled" ' + (truthy(valueOf(settings, 'legal.epr_enabled', false)) ? 'checked' : '') + '> Track EPR packaging metadata' + renderFieldScopeBadge(fieldScopes, 'legal.epr_enabled') + '</label>' +
             '<small class="admin-form-hint">Enable for merchants reporting packaging placed on market. Configure fields via Catalog → Attributes and export below.</small>' +
             '<label>Default EPR scheme registration ID' + renderFieldScopeBadge(fieldScopes, 'legal.epr_scheme_registration_id') + '<input name="epr_scheme_registration_id" value="' + esc(valueOf(settings, 'legal.epr_scheme_registration_id', '')) + '" placeholder="e.g. DE-LUCID-12345"></label>' +
+            '<label><input type="checkbox" name="gpsr_enabled" ' + (truthy(valueOf(settings, 'legal.gpsr_enabled', false)) ? 'checked' : '') + '> Show GPSR product safety disclosure on product pages' + renderFieldScopeBadge(fieldScopes, 'legal.gpsr_enabled') + '</label>' +
+            '<small class="admin-form-hint">Enable for EU product safety (GPSR). Configure per-product fields via Catalog → Attributes and the product form.</small>' +
+            '<label>Default manufacturer name' + renderFieldScopeBadge(fieldScopes, 'legal.gpsr_manufacturer_name') + '<input name="gpsr_manufacturer_name" value="' + esc(valueOf(settings, 'legal.gpsr_manufacturer_name', '')) + '" placeholder="e.g. Demo Apparel GmbH"></label>' +
+            '<label>Default manufacturer EU contact' + renderFieldScopeBadge(fieldScopes, 'legal.gpsr_manufacturer_contact') + '<input name="gpsr_manufacturer_contact" value="' + esc(valueOf(settings, 'legal.gpsr_manufacturer_contact', '')) + '" placeholder="e.g. safety@merchant.example"></label>' +
             '<button type="button" id="epr-export-btn">Download EPR packaging CSV</button>' +
             '<button type="submit">Save Legal Settings</button>';
         document.getElementById('epr-export-btn').addEventListener('click', function () {
@@ -4979,7 +4983,10 @@
                 'legal.weee_enabled': !!form.elements.weee_enabled.checked,
                 'legal.weee_producer_registration': form.elements.weee_producer_registration.value,
                 'legal.epr_enabled': !!form.elements.epr_enabled.checked,
-                'legal.epr_scheme_registration_id': form.elements.epr_scheme_registration_id.value
+                'legal.epr_scheme_registration_id': form.elements.epr_scheme_registration_id.value,
+                'legal.gpsr_enabled': !!form.elements.gpsr_enabled.checked,
+                'legal.gpsr_manufacturer_name': form.elements.gpsr_manufacturer_name.value,
+                'legal.gpsr_manufacturer_contact': form.elements.gpsr_manufacturer_contact.value
             });
         });
     }

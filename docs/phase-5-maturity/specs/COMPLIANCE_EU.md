@@ -12,7 +12,7 @@ This document maps **common EU merchant obligations** to Shopanda's current capa
 | **Omnibus (Price Indication)** | Show lowest price in prior 30 days when showing a discount | `price_history`, `PriceIndicationStep`, SSR PDP/PLP templates | **Done (PR-530)** — store toggle `legal.omnibus_enabled` |
 | **WEEE** | Register as producer; display symbol + reg. number; take-back info | Product attributes + store config + PDP/footer templates | **Done (PR-531)** — opt-in `legal.weee_enabled`, WEEE attribute group |
 | **EPR (packaging)** | Report packaging placed on market; registration per member state | Product/variant attributes + CSV export | **Done (PR-532)** — opt-in `legal.epr_enabled`, EPR attribute group |
-| **GPSR** (Dec 2024) | Manufacturer/importer details, warnings, traceability | Not modeled | PR-533: safety metadata + PDP disclosure |
+| **GPSR** (Dec 2024) | Manufacturer/importer details, warnings, traceability | Product attributes + PDP templates | **Done (PR-533)** — opt-in `legal.gpsr_enabled`, GPSR attribute group |
 | **VAT / OSS-IOSS** | Correct VAT on cross-border B2C; periodic OSS returns | Country tax rates, store scoping | PR-534 (stretch): export helpers, not filing automation |
 | **E-invoicing (Peppol, etc.)** | Structured invoices in B2G/B2B markets | PDF invoices + credit notes | PR-534 (stretch): adapter core plugin |
 | **Consumer Rights Directive** | Withdrawal period, clear pre-contract info | Order emails, CMS pages (merchant-authored) | Returns workflow (PR-502–503) supports withdrawal handling |
@@ -91,9 +91,9 @@ This document maps **common EU merchant obligations** to Shopanda's current capa
 
 **Phase 5 (PR-533):**
 
-- Compliance attribute group on catalog
-- PDP section rendered when fields present
-- Admin validation for required combinations (category-driven rules later as plugin)
+- Compliance attribute group on catalog (`gpsr`)
+- PDP `gpsr_safety_disclosure` section rendered when fields present and `legal.gpsr_enabled`
+- Admin validation for required combinations deferred to category-driven plugin
 
 ---
 

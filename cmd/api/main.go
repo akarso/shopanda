@@ -470,6 +470,7 @@ func runServe(cfg *config.Config, log logger.Logger, embedScheduler bool) error 
 	pdp.AddStep(composition.NewCanonicalURLStep(baseURL))
 	pdp.AddStep(composition.NewPriceIndicationStep(variantRepo, priceRepo, priceHistoryRepo, configRepo))
 	pdp.AddStep(composition.NewWeeeStep(configRepo))
+	pdp.AddStep(composition.NewGpsrStep(configRepo))
 	plp := composition.NewPipeline[composition.ListingContext]()
 	plp.AddStep(composition.ListingMetaStep{})
 	plp.AddStep(composition.NewListingCanonicalURLStep(baseURL))
@@ -2061,6 +2062,7 @@ func registerDefaultSeeders(reg *seed.Registry) {
 	reg.Register(&seed.CatalogSeeder{})
 	reg.Register(&seed.WeeeAttributesSeeder{})
 	reg.Register(&seed.EprAttributesSeeder{})
+	reg.Register(&seed.GpsrAttributesSeeder{})
 }
 
 func printHelp() {

@@ -32,6 +32,16 @@
             {{ if index .Data "take_back_info" }}<p>{{ index .Data "take_back_info" }}</p>{{ end }}
         </aside>
         {{ end }}
+        {{ if eq .Type "gpsr_safety_disclosure" }}
+        <aside class="gpsr-disclosure muted-note" aria-label="Product safety information">
+            {{ if index .Data "manufacturer_name" }}<p>Manufacturer: {{ index .Data "manufacturer_name" }}{{ if index .Data "manufacturer_contact" }} ({{ index .Data "manufacturer_contact" }}){{ end }}</p>{{ end }}
+            {{ if index .Data "importer_name" }}<p>EU importer: {{ index .Data "importer_name" }}{{ if index .Data "importer_contact" }} ({{ index .Data "importer_contact" }}){{ end }}</p>{{ end }}
+            {{ if index .Data "product_identifier" }}<p>Product identifier: {{ index .Data "product_identifier" }}</p>{{ end }}
+            {{ if index .Data "conformity_mark_label" }}<p>{{ index .Data "conformity_mark_label" }}</p>{{ end }}
+            {{ if index .Data "age_restriction_label" }}<p>{{ index .Data "age_restriction_label" }}</p>{{ end }}
+            {{ if index .Data "safety_warnings" }}<p>{{ index .Data "safety_warnings" }}</p>{{ end }}
+        </aside>
+        {{ end }}
         {{ end }}
         <dl class="detail-grid">
             <div>
