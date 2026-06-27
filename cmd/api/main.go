@@ -1948,17 +1948,30 @@ func runExportEpr(cfg *config.Config, log logger.Logger) error {
 	configRepo := postgres.NewConfigRepo(conn)
 	exp := exporter.NewEprExporter(productRepo, variantRepo, configRepo)
 
-	f, err := os.Create(filePath)
+	tmpFile, err := os.CreateTemp(filepath.Dir(filePath), "epr-export-*.csv")
 	if err != nil {
-		return fmt.Errorf("create csv: %w", err)
+		return fmt.Errorf("create temp file: %w", err)
 	}
-	defer f.Close()
+	tmpPath := tmpFile.Name()
 
 	log.Info("export.epr.start", map[string]interface{}{"file": filePath})
 
-	result, err := exp.Export(context.Background(), f, exporter.EprExportOptions{IncludeEmpty: includeEmpty})
+	result, err := exp.Export(context.Background(), tmpFile, exporter.EprExportOptions{IncludeEmpty: includeEmpty})
+	if closeErr := tmpFile.Close(); closeErr != nil {
+		os.Remove(tmpPath)
+		if err != nil {
+			return fmt.Errorf("export epr: %w", err)
+		}
+		return fmt.Errorf("close temp file: %w", closeErr)
+	}
 	if err != nil {
+		os.Remove(tmpPath)
 		return fmt.Errorf("export epr: %w", err)
+	}
+
+	if err := os.Rename(tmpPath, filePath); err != nil {
+		os.Remove(tmpPath)
+		return fmt.Errorf("rename temp file: %w", err)
 	}
 
 	log.Info("export.epr.complete", map[string]interface{}{

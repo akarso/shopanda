@@ -107,7 +107,8 @@ func TestEprReportHandler_ExportCSV(t *testing.T) {
 
 func TestEprReportHandler_UsesAdminStoreScope(t *testing.T) {
 	cfg := stubEprReportConfig{
-		legal.ScopedConfigKey("store-de", legal.EprSchemeRegistrationConfigKey): "DE-LUCID-ADMIN",
+		legal.ScopedConfigKey("store-de", legal.EprSchemeRegistrationConfigKey):    "DE-LUCID-ADMIN",
+		legal.ScopedConfigKey("other-store", legal.EprSchemeRegistrationConfigKey): "OTHER-SCHEME",
 	}
 	prodRepo := &eprExportProductRepo{
 		products: []catalog.Product{{
@@ -125,13 +126,16 @@ func TestEprReportHandler_UsesAdminStoreScope(t *testing.T) {
 	h := shophttp.NewEprReportHandler(exp)
 
 	rec := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/admin/reports/epr", nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/admin/reports/epr?store_id=other-store", nil)
 	req = req.WithContext((&admin.AdminContext{StoreID: "store-de"}).WithContext(req.Context()))
 	h.Export()(rec, req)
 
 	body := rec.Body.String()
 	if !strings.Contains(body, "DE-LUCID-ADMIN") {
-		t.Fatalf("expected store-scoped scheme in csv: %s", body)
+		t.Fatalf("expected admin context store scope in csv, got: %s", body)
+	}
+	if strings.Contains(body, "OTHER-SCHEME") {
+		t.Fatalf("query store_id must not override admin context: %s", body)
 	}
 }
 
