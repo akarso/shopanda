@@ -9,6 +9,7 @@ import (
 	"github.com/akarso/shopanda/internal/infrastructure/postgres"
 	"github.com/akarso/shopanda/internal/platform/plugin"
 	"github.com/akarso/shopanda/plugins/b2b/groups"
+	b2bpricing "github.com/akarso/shopanda/plugins/b2b/pricing"
 )
 
 // Plugin is the commercial B2B extension module.
@@ -49,19 +50,40 @@ func (p *Plugin) Init(app *plugin.App) error {
 	if err != nil {
 		return fmt.Errorf("b2b plugin: groups repo: %w", err)
 	}
+	groupPriceRepo, err := b2bpricing.NewPostgresGroupPriceRepo(app.Bootstrap.DB)
+	if err != nil {
+		return fmt.Errorf("b2b plugin: group price repo: %w", err)
+	}
 	customerRepo, err := postgres.NewCustomerRepo(app.Bootstrap.DB)
 	if err != nil {
 		return fmt.Errorf("b2b plugin: customer repo: %w", err)
 	}
+	productRepo, err := postgres.NewProductRepo(app.Bootstrap.DB)
+	if err != nil {
+		return fmt.Errorf("b2b plugin: product repo: %w", err)
+	}
+	variantRepo, err := postgres.NewVariantRepo(app.Bootstrap.DB)
+	if err != nil {
+		return fmt.Errorf("b2b plugin: variant repo: %w", err)
+	}
 
 	if err := app.RegisterPermission(PermissionGroupsRead, identity.RoleAdmin, identity.RoleManager); err != nil {
-		return fmt.Errorf("b2b plugin: register read permission: %w", err)
+		return fmt.Errorf("b2b plugin: register groups read permission: %w", err)
 	}
 	if err := app.RegisterPermission(PermissionGroupsWrite, identity.RoleAdmin, identity.RoleManager); err != nil {
-		return fmt.Errorf("b2b plugin: register write permission: %w", err)
+		return fmt.Errorf("b2b plugin: register groups write permission: %w", err)
+	}
+	if err := app.RegisterPermission(PermissionPricesRead, identity.RoleAdmin, identity.RoleManager); err != nil {
+		return fmt.Errorf("b2b plugin: register prices read permission: %w", err)
+	}
+	if err := app.RegisterPermission(PermissionPricesWrite, identity.RoleAdmin, identity.RoleManager); err != nil {
+		return fmt.Errorf("b2b plugin: register prices write permission: %w", err)
 	}
 
+	app.RegisterPricingStep(b2bpricing.NewGroupPriceStep(groupRepo, groupPriceRepo))
+
 	groupAdmin := groups.NewAdminHandler(groupRepo, customerRepo)
+	priceAdmin := b2bpricing.NewAdminHandler(groupRepo, groupPriceRepo, productRepo, variantRepo)
 
 	routes := []struct {
 		pattern string
@@ -76,6 +98,9 @@ func (p *Plugin) Init(app *plugin.App) error {
 		{"GET /api/v1/admin/customers/{customerId}/customer-group", PermissionGroupsRead, groupAdmin.GetCustomerGroup()},
 		{"PUT /api/v1/admin/customers/{customerId}/customer-group", PermissionGroupsWrite, groupAdmin.AssignCustomer()},
 		{"DELETE /api/v1/admin/customers/{customerId}/customer-group", PermissionGroupsWrite, groupAdmin.RemoveCustomer()},
+		{"GET /api/v1/admin/customer-groups/{groupId}/variants/{variantId}/price", PermissionPricesRead, priceAdmin.Get()},
+		{"PUT /api/v1/admin/customer-groups/{groupId}/variants/{variantId}/price", PermissionPricesWrite, priceAdmin.Update()},
+		{"DELETE /api/v1/admin/customer-groups/{groupId}/variants/{variantId}/price", PermissionPricesWrite, priceAdmin.Delete()},
 	}
 	for _, route := range routes {
 		if err := app.RegisterAdminRoute(route.pattern, route.perm, route.handler); err != nil {
@@ -84,7 +109,7 @@ func (p *Plugin) Init(app *plugin.App) error {
 	}
 
 	if app.Logger != nil {
-		app.Logger.Info("b2b plugin: customer groups registered", nil)
+		app.Logger.Info("b2b plugin: customer groups and group pricing registered", nil)
 	}
 	return nil
 }

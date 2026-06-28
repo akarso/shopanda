@@ -9,7 +9,7 @@ Optional commercial extension for wholesale and business-buyer workflows.
 
 ## Status
 
-**Customer groups (PR-500)** — domain port in open core; schema, repository, and admin API in this plugin. Quotes, PO, and approvals remain planned.
+**Customer groups (PR-500)** and **group-aware pricing (PR-501)** — domain ports in open core; schema, repository, pricing step, and admin API in this plugin. Quotes, PO, and approvals remain planned.
 
 ---
 
@@ -58,6 +58,16 @@ Requires B2B plugin enabled and admin JWT with `b2b.groups.read` / `b2b.groups.w
 | PUT | `/api/v1/admin/customers/{customerId}/customer-group` | `b2b.groups.write` |
 | DELETE | `/api/v1/admin/customers/{customerId}/customer-group` | `b2b.groups.write` |
 
+### Group prices
+
+Requires admin currency context (same as variant price admin).
+
+| Method | Path | Permission |
+| --- | --- | --- |
+| GET | `/api/v1/admin/customer-groups/{groupId}/variants/{variantId}/price` | `b2b.prices.read` |
+| PUT | `/api/v1/admin/customer-groups/{groupId}/variants/{variantId}/price` | `b2b.prices.write` |
+| DELETE | `/api/v1/admin/customer-groups/{groupId}/variants/{variantId}/price` | `b2b.prices.write` |
+
 ---
 
 ## Architecture
@@ -80,6 +90,7 @@ plugins/b2b/
   license.go      # Entitlement validation (stub → online check)
   migrations/     # customer_groups, customer_group_members
   groups/         # Postgres repo + admin HTTP handlers
+  pricing/        # Group price repo, pipeline step, admin HTTP
   LICENSE         # Commercial terms (draft)
   README.md
   # Future:

@@ -362,6 +362,9 @@ func (s *Service) recalculate(ctx context.Context, c *domainCart.Cart) error {
 	if c.CouponCode != "" {
 		pctx.Meta["coupon_code"] = c.CouponCode
 	}
+	if c.CustomerID != "" {
+		pctx.Meta["customer_id"] = c.CustomerID
+	}
 
 	// Propagate store scope and storefront tax defaults when the request has
 	// not provided explicit tax metadata yet.

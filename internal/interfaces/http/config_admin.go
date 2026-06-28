@@ -284,6 +284,11 @@ func (h *ConfigAdminHandler) resolveScopedValue(ctx context.Context, key, storeI
 	return h.repo.Get(ctx, key)
 }
 
+// ResolveStoreScopeID returns the active admin store scope from context or query.
+func ResolveStoreScopeID(r *http.Request) string {
+	return resolveStoreScopeID(r)
+}
+
 func resolveStoreScopeID(r *http.Request) string {
 	explicit := strings.TrimSpace(r.URL.Query().Get("store_id"))
 	ac, err := admin.FromContext(r.Context())

@@ -54,6 +54,11 @@ func (s *RecalculatePricingStep) Execute(cctx *Context) error {
 			pctx.Meta[key] = v
 		}
 	}
+	if cctx.CustomerID != "" {
+		pctx.Meta["customer_id"] = cctx.CustomerID
+	} else if cctx.Cart != nil && cctx.Cart.CustomerID != "" {
+		pctx.Meta["customer_id"] = cctx.Cart.CustomerID
+	}
 
 	if err := s.pipeline.Execute(context.Background(), &pctx); err != nil {
 		return fmt.Errorf("recalculate_pricing: %w", err)
