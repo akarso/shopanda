@@ -10,5 +10,6 @@ type ContentBlockRepository interface {
 	Update(ctx context.Context, block *ContentBlock) error
 	Delete(ctx context.Context, id string) error
 	FindBlocksByTarget(ctx context.Context, targetType TargetType, targetKey string) ([]*ContentBlock, error)
+	FindActiveBlocksByTarget(ctx context.Context, targetType TargetType, targetKey string) ([]*ContentBlock, error)
 	SaveTargetPlacements(ctx context.Context, targetType TargetType, targetKey string, blockIDs []string) error
 }

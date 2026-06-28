@@ -63,6 +63,9 @@ func (m *mockContentBlockRepo) FindBlocksByTarget(ctx context.Context, targetTyp
 	}
 	return nil, nil
 }
+func (m *mockContentBlockRepo) FindActiveBlocksByTarget(ctx context.Context, targetType cms.TargetType, targetKey string) ([]*cms.ContentBlock, error) {
+	return m.FindBlocksByTarget(ctx, targetType, targetKey)
+}
 func (m *mockContentBlockRepo) SaveTargetPlacements(ctx context.Context, targetType cms.TargetType, targetKey string, blockIDs []string) error {
 	if m.saveTargetPlacementsFn != nil {
 		return m.saveTargetPlacementsFn(ctx, targetType, targetKey, blockIDs)

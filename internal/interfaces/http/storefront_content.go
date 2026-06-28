@@ -2,6 +2,7 @@ package http
 
 import (
 	"context"
+	"html/template"
 	"net/http"
 
 	cmsApp "github.com/akarso/shopanda/internal/application/cms"
@@ -18,7 +19,7 @@ type StorefrontContentBlock struct {
 	CTALabel      string
 	CTAURL        string
 	ImageURL      string
-	Body          string
+	Body          template.HTML
 	CarouselTitle string
 	Products      []StorefrontProductCard
 }
@@ -28,7 +29,7 @@ type StorefrontCMSPageData struct {
 	Layout  StorefrontLayoutData
 	Theme   theme.Theme
 	Title   string
-	Content string
+	Content template.HTML
 	Blocks  []StorefrontContentBlock
 }
 
@@ -73,7 +74,7 @@ func (h *StorefrontHandler) CMSPage() http.HandlerFunc {
 			Layout:  h.layoutDataBestEffort(r),
 			Theme:   h.engine.Theme(),
 			Title:   page.Title(),
-			Content: page.Content(),
+			Content: cms.SanitizeHTML(page.Content()),
 			Blocks:  blocks,
 		}
 		h.renderPage(w, "page", data)
@@ -84,7 +85,7 @@ func (h *StorefrontHandler) loadStorefrontBlocks(ctx context.Context, targetType
 	if h.contentBlocks == nil || h.blockResolver == nil {
 		return nil, nil
 	}
-	blocks, err := h.contentBlocks.FindBlocksByTarget(ctx, targetType, targetKey)
+	blocks, err := h.contentBlocks.FindActiveBlocksByTarget(ctx, targetType, targetKey)
 	if err != nil {
 		return nil, err
 	}
@@ -110,7 +111,7 @@ func storefrontBlocksFromResolved(blocks []cmsApp.ResolvedContentBlock) []Storef
 			item.CTAURL = stringValue(block.Data, "cta_url")
 			item.ImageURL = stringValue(block.Data, "image_url")
 		case string(cms.BlockTypeRichText):
-			item.Body = stringValue(block.Data, "body")
+			item.Body = cms.SanitizeHTML(stringValue(block.Data, "body"))
 		case string(cms.BlockTypeProductCarousel):
 			item.CarouselTitle = stringValue(block.Data, "title")
 			item.Products = storefrontCarouselProducts(block.Data["products"])

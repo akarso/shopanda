@@ -312,7 +312,7 @@ func (h *ContentBlockAdminHandler) UpdateTarget() http.HandlerFunc {
 
 func parseContentBlockTarget(r *http.Request) (cms.TargetType, string, error) {
 	targetType := cms.TargetType(r.PathValue("targetType"))
-	targetKey := r.PathValue("targetKey")
+	targetKey := cms.NormalizeTargetKey(r.PathValue("targetKey"))
 	if targetKey == "" {
 		return "", "", apperror.Validation("target key is required")
 	}

@@ -1,6 +1,7 @@
 package cms_test
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/akarso/shopanda/internal/domain/cms"
@@ -32,5 +33,32 @@ func TestValidLayoutTarget(t *testing.T) {
 	}
 	if cms.ValidLayoutTarget("footer") {
 		t.Fatal("expected unknown layout target invalid")
+	}
+}
+
+func TestContentBlockConfigDefensiveCopy(t *testing.T) {
+	input := map[string]interface{}{"headline": "Welcome"}
+	block, err := cms.NewContentBlock("block-1", "Hero", cms.BlockTypeHero, input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	input["headline"] = "Changed"
+	if block.Config()["headline"] != "Welcome" {
+		t.Fatal("expected internal config isolated from caller map")
+	}
+	config := block.Config()
+	config["headline"] = "Mutated"
+	if block.Config()["headline"] != "Welcome" {
+		t.Fatal("expected Config() to return defensive copy")
+	}
+}
+
+func TestSanitizeHTMLStripsScript(t *testing.T) {
+	html := cms.SanitizeHTML(`<p>Hello</p><script>alert(1)</script>`)
+	if strings.Contains(string(html), "<script") {
+		t.Fatalf("script tag not stripped: %s", html)
+	}
+	if !strings.Contains(string(html), "<p>Hello</p>") {
+		t.Fatalf("expected safe markup preserved: %s", html)
 	}
 }

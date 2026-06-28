@@ -165,11 +165,21 @@ func (r *ContentBlockRepo) Delete(ctx context.Context, blockID string) error {
 	return nil
 }
 
-// FindBlocksByTarget returns active blocks assigned to a target ordered by position.
+// FindBlocksByTarget returns placed blocks for admin views, including inactive blocks.
 func (r *ContentBlockRepo) FindBlocksByTarget(ctx context.Context, targetType cms.TargetType, targetKey string) ([]*cms.ContentBlock, error) {
+	return r.findBlocksByTarget(ctx, targetType, targetKey, false)
+}
+
+// FindActiveBlocksByTarget returns active placed blocks for storefront and public APIs.
+func (r *ContentBlockRepo) FindActiveBlocksByTarget(ctx context.Context, targetType cms.TargetType, targetKey string) ([]*cms.ContentBlock, error) {
+	return r.findBlocksByTarget(ctx, targetType, targetKey, true)
+}
+
+func (r *ContentBlockRepo) findBlocksByTarget(ctx context.Context, targetType cms.TargetType, targetKey string, activeOnly bool) ([]*cms.ContentBlock, error) {
 	if !cms.ValidTargetType(targetType) {
 		return nil, fmt.Errorf("content_block_repo: find by target: invalid target type")
 	}
+	targetKey = cms.NormalizeTargetKey(targetKey)
 	if targetKey == "" {
 		return nil, fmt.Errorf("content_block_repo: find by target: empty target key")
 	}
@@ -179,8 +189,12 @@ func (r *ContentBlockRepo) FindBlocksByTarget(ctx context.Context, targetType cm
 		JOIN content_blocks b ON b.id = p.block_id
 		WHERE p.target_type = $1
 		  AND p.target_key = $2
-		  AND p.is_active = true
-		  AND b.is_active = true
+		  AND p.is_active = true`
+	if activeOnly {
+		q += `
+		  AND b.is_active = true`
+	}
+	q += `
 		ORDER BY p.position, b.title`
 	rows, err := r.db.QueryContext(ctx, q, string(targetType), targetKey)
 	if err != nil {
@@ -210,6 +224,10 @@ func (r *ContentBlockRepo) SaveTargetPlacements(ctx context.Context, targetType 
 	if targetKey == "" {
 		return apperror.Validation("target key is required")
 	}
+	targetKey = cms.NormalizeTargetKey(targetKey)
+	if targetKey == "" {
+		return apperror.Validation("target key is required")
+	}
 	if targetType == cms.TargetTypeLayout && !cms.ValidLayoutTarget(targetKey) {
 		return apperror.Validation("invalid layout target")
 	}
@@ -232,6 +250,11 @@ func (r *ContentBlockRepo) SaveTargetPlacements(ctx context.Context, targetType 
 		return fmt.Errorf("content_block_repo: save placements begin tx: %w", err)
 	}
 	defer func() { _ = tx.Rollback() }()
+
+	lockKey := string(targetType) + ":" + targetKey
+	if _, err := tx.ExecContext(ctx, `SELECT pg_advisory_xact_lock(hashtext($1))`, lockKey); err != nil {
+		return fmt.Errorf("content_block_repo: save placements lock: %w", err)
+	}
 
 	for _, blockID := range blockIDs {
 		var exists bool
@@ -259,6 +282,9 @@ func (r *ContentBlockRepo) SaveTargetPlacements(ctx context.Context, targetType 
 			) VALUES ($1, $2, $3, $4, $5, true, now(), now())`,
 			placementID, blockID, string(targetType), targetKey, position,
 		); err != nil {
+			if pqErr, ok := err.(*pq.Error); ok && pqErr.Code == "23505" {
+				return apperror.Conflict("content block placements conflict for target")
+			}
 			return fmt.Errorf("content_block_repo: save placements insert: %w", err)
 		}
 	}

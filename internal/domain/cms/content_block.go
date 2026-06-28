@@ -53,6 +53,11 @@ func ValidLayoutTarget(key string) bool {
 	return ok
 }
 
+// NormalizeTargetKey trims whitespace from a placement target key.
+func NormalizeTargetKey(key string) string {
+	return strings.TrimSpace(key)
+}
+
 // ContentBlock is a reusable CMS block definition.
 type ContentBlock struct {
 	id        string
@@ -84,7 +89,7 @@ func NewContentBlock(id, title string, blockType BlockType, config map[string]in
 		id:        id,
 		title:     strings.TrimSpace(title),
 		blockType: blockType,
-		config:    normalized,
+		config:    cloneConfigMap(normalized),
 		isActive:  true,
 		createdAt: now,
 		updatedAt: now,
@@ -106,7 +111,7 @@ func NewContentBlockFromDB(
 		id:        id,
 		title:     title,
 		blockType: blockType,
-		config:    config,
+		config:    cloneConfigMap(config),
 		isActive:  isActive,
 		createdAt: createdAt,
 		updatedAt: updatedAt,
@@ -116,7 +121,9 @@ func NewContentBlockFromDB(
 func (b *ContentBlock) ID() string                      { return b.id }
 func (b *ContentBlock) Title() string                   { return b.title }
 func (b *ContentBlock) BlockType() BlockType            { return b.blockType }
-func (b *ContentBlock) Config() map[string]interface{}  { return b.config }
+func (b *ContentBlock) Config() map[string]interface{} {
+	return cloneConfigMap(b.config)
+}
 func (b *ContentBlock) IsActive() bool                  { return b.isActive }
 func (b *ContentBlock) CreatedAt() time.Time            { return b.createdAt }
 func (b *ContentBlock) UpdatedAt() time.Time            { return b.updatedAt }
@@ -137,7 +144,7 @@ func (b *ContentBlock) SetConfig(config map[string]interface{}) error {
 	if err != nil {
 		return err
 	}
-	b.config = normalized
+	b.config = cloneConfigMap(normalized)
 	b.updatedAt = time.Now().UTC()
 	return nil
 }
@@ -220,4 +227,21 @@ func stringSliceField(config map[string]interface{}, key string) []string {
 	default:
 		return []string{}
 	}
+}
+
+func cloneConfigMap(config map[string]interface{}) map[string]interface{} {
+	if config == nil {
+		return map[string]interface{}{}
+	}
+	out := make(map[string]interface{}, len(config))
+	for key, value := range config {
+		switch typed := value.(type) {
+		case []string:
+			copied := append([]string(nil), typed...)
+			out[key] = copied
+		default:
+			out[key] = value
+		}
+	}
+	return out
 }

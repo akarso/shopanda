@@ -59,7 +59,7 @@ func toPublicContentBlocks(blocks []cmsApp.ResolvedContentBlock) []publicContent
 func (h *ContentBlockHandler) GetByTarget() http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		targetType := cms.TargetType(r.PathValue("targetType"))
-		targetKey := r.PathValue("targetKey")
+		targetKey := cms.NormalizeTargetKey(r.PathValue("targetKey"))
 		if targetKey == "" {
 			JSONError(w, apperror.Validation("target key is required"))
 			return
@@ -87,7 +87,7 @@ func (h *ContentBlockHandler) GetByTarget() http.HandlerFunc {
 			resolvedTargetKey = page.ID()
 		}
 
-		blocks, err := h.blocks.FindBlocksByTarget(r.Context(), targetType, resolvedTargetKey)
+		blocks, err := h.blocks.FindActiveBlocksByTarget(r.Context(), targetType, resolvedTargetKey)
 		if err != nil {
 			JSONError(w, err)
 			return
