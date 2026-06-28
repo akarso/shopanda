@@ -197,24 +197,80 @@ func (r *stubCheckoutPriceRepo) List(_ context.Context, _, _ int) ([]pricing.Pri
 func (r *stubCheckoutPriceRepo) Upsert(_ context.Context, _ *pricing.Price) error { return nil }
 
 type stubCheckoutStoreCreditRepo struct {
-	balance  int64
-	redeemed []int64
-	issued   []int64
+	balances        map[string]int64
+	getBalanceCalls []struct {
+		customerID string
+		currency   string
+	}
+	redeemCalls []struct {
+		customerID string
+		orderID    string
+		amount     int64
+		currency   string
+	}
+	issueCalls []struct {
+		customerID string
+		amount     int64
+		currency   string
+		note       string
+	}
 }
 
-func (s *stubCheckoutStoreCreditRepo) GetBalance(_ context.Context, _, currency string) (shared.Money, error) {
-	return shared.MustNewMoney(s.balance, currency), nil
+func newStubCheckoutStoreCreditRepo() *stubCheckoutStoreCreditRepo {
+	return &stubCheckoutStoreCreditRepo{balances: make(map[string]int64)}
 }
 
-func (s *stubCheckoutStoreCreditRepo) Issue(_ context.Context, _ string, amount shared.Money, _ string) error {
-	s.issued = append(s.issued, amount.Amount())
-	s.balance += amount.Amount()
+func (s *stubCheckoutStoreCreditRepo) setBalance(customerID, currency string, amount int64) {
+	s.balances[storeCreditBalanceKey(customerID, currency)] = amount
+}
+
+func (s *stubCheckoutStoreCreditRepo) balanceFor(customerID, currency string) int64 {
+	return s.balances[storeCreditBalanceKey(customerID, currency)]
+}
+
+func storeCreditBalanceKey(customerID, currency string) string {
+	return customerID + ":" + currency
+}
+
+func (s *stubCheckoutStoreCreditRepo) GetBalance(_ context.Context, customerID, currency string) (shared.Money, error) {
+	s.getBalanceCalls = append(s.getBalanceCalls, struct {
+		customerID string
+		currency   string
+	}{customerID: customerID, currency: currency})
+	return shared.MustNewMoney(s.balanceFor(customerID, currency), currency), nil
+}
+
+func (s *stubCheckoutStoreCreditRepo) Issue(_ context.Context, customerID string, amount shared.Money, note string) error {
+	s.issueCalls = append(s.issueCalls, struct {
+		customerID string
+		amount     int64
+		currency   string
+		note       string
+	}{
+		customerID: customerID,
+		amount:     amount.Amount(),
+		currency:   amount.Currency(),
+		note:       note,
+	})
+	key := storeCreditBalanceKey(customerID, amount.Currency())
+	s.balances[key] += amount.Amount()
 	return nil
 }
 
-func (s *stubCheckoutStoreCreditRepo) Redeem(_ context.Context, _, _ string, amount shared.Money) error {
-	s.redeemed = append(s.redeemed, amount.Amount())
-	s.balance -= amount.Amount()
+func (s *stubCheckoutStoreCreditRepo) Redeem(_ context.Context, customerID, orderID string, amount shared.Money) error {
+	s.redeemCalls = append(s.redeemCalls, struct {
+		customerID string
+		orderID    string
+		amount     int64
+		currency   string
+	}{
+		customerID: customerID,
+		orderID:    orderID,
+		amount:     amount.Amount(),
+		currency:   amount.Currency(),
+	})
+	key := storeCreditBalanceKey(customerID, amount.Currency())
+	s.balances[key] -= amount.Amount()
 	return nil
 }
 
@@ -589,7 +645,8 @@ func TestCheckoutHandler_StartCheckout_Guest_CannotUseCustomerCart(t *testing.T)
 }
 
 func TestCheckoutHandler_StartCheckout_WithStoreCredit(t *testing.T) {
-	creditRepo := &stubCheckoutStoreCreditRepo{balance: 2000}
+	creditRepo := newStubCheckoutStoreCreditRepo()
+	creditRepo.setBalance("cust-1", "EUR", 2000)
 	carts, variants, prices, credits, mux := checkoutBuild(creditRepo, false)
 	cartID := seedCheckoutCart(carts, variants, prices)
 
@@ -612,16 +669,30 @@ func TestCheckoutHandler_StartCheckout_WithStoreCredit(t *testing.T) {
 	if o["payable_amount"].(float64) != 2000 {
 		t.Errorf("payable_amount = %v, want 2000", o["payable_amount"])
 	}
-	if len(credits.redeemed) != 1 || credits.redeemed[0] != 1000 {
-		t.Errorf("redeemed = %v, want [1000]", credits.redeemed)
+	if len(credits.getBalanceCalls) != 1 {
+		t.Fatalf("getBalanceCalls = %d, want 1", len(credits.getBalanceCalls))
 	}
-	if credits.balance != 1000 {
-		t.Errorf("balance = %d, want 1000", credits.balance)
+	if credits.getBalanceCalls[0].customerID != "cust-1" || credits.getBalanceCalls[0].currency != "EUR" {
+		t.Errorf("getBalanceCalls = %+v, want cust-1/EUR", credits.getBalanceCalls[0])
+	}
+	if len(credits.redeemCalls) != 1 {
+		t.Fatalf("redeemCalls = %d, want 1", len(credits.redeemCalls))
+	}
+	redeem := credits.redeemCalls[0]
+	if redeem.customerID != "cust-1" || redeem.currency != "EUR" || redeem.amount != 1000 {
+		t.Errorf("redeemCalls[0] = %+v, want cust-1/EUR/1000", redeem)
+	}
+	if redeem.orderID == "" {
+		t.Error("redeemCalls[0].orderID should not be empty")
+	}
+	if credits.balanceFor("cust-1", "EUR") != 1000 {
+		t.Errorf("balance cust-1/EUR = %d, want 1000", credits.balanceFor("cust-1", "EUR"))
 	}
 }
 
 func TestCheckoutHandler_StartCheckout_FullStoreCreditZeroPayable(t *testing.T) {
-	creditRepo := &stubCheckoutStoreCreditRepo{balance: 5000}
+	creditRepo := newStubCheckoutStoreCreditRepo()
+	creditRepo.setBalance("cust-1", "EUR", 5000)
 	carts, variants, prices, credits, mux := checkoutBuild(creditRepo, true)
 	cartID := seedCheckoutCart(carts, variants, prices)
 
@@ -647,7 +718,14 @@ func TestCheckoutHandler_StartCheckout_FullStoreCreditZeroPayable(t *testing.T) 
 	if _, ok := data["payment"]; ok {
 		t.Error("payment should be omitted when payable is zero")
 	}
-	if len(credits.redeemed) != 1 || credits.redeemed[0] != 3000 {
-		t.Errorf("redeemed = %v, want [3000]", credits.redeemed)
+	if len(credits.redeemCalls) != 1 {
+		t.Fatalf("redeemCalls = %d, want 1", len(credits.redeemCalls))
+	}
+	redeem := credits.redeemCalls[0]
+	if redeem.customerID != "cust-1" || redeem.currency != "EUR" || redeem.amount != 3000 {
+		t.Errorf("redeemCalls[0] = %+v, want cust-1/EUR/3000", redeem)
+	}
+	if credits.balanceFor("cust-1", "EUR") != 2000 {
+		t.Errorf("balance cust-1/EUR = %d, want 2000", credits.balanceFor("cust-1", "EUR"))
 	}
 }

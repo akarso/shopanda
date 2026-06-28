@@ -141,9 +141,28 @@ func TestStoreCreditAdminHandler_Get(t *testing.T) {
 	if balance["amount"].(float64) != 1800 {
 		t.Errorf("balance amount = %v, want 1800", balance["amount"])
 	}
+	if balance["currency"] != "EUR" {
+		t.Errorf("balance currency = %v, want EUR", balance["currency"])
+	}
 	ledger, ok := resp.Data["ledger"].([]interface{})
 	if !ok || len(ledger) != 1 {
 		t.Fatalf("ledger = %#v, want one entry", resp.Data["ledger"])
+	}
+	entry := ledger[0].(map[string]interface{})
+	if entry["id"] != "entry-1" {
+		t.Errorf("ledger id = %v, want entry-1", entry["id"])
+	}
+	if entry["kind"] != "issue" {
+		t.Errorf("ledger kind = %v, want issue", entry["kind"])
+	}
+	if entry["amount"].(float64) != 500 {
+		t.Errorf("ledger amount = %v, want 500", entry["amount"])
+	}
+	if entry["currency"] != "EUR" {
+		t.Errorf("ledger currency = %v, want EUR", entry["currency"])
+	}
+	if entry["note"] != "goodwill" {
+		t.Errorf("ledger note = %v, want goodwill", entry["note"])
 	}
 }
 
