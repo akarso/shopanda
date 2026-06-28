@@ -16,7 +16,7 @@ func TestValidMenuCode(t *testing.T) {
 }
 
 func TestNewMenuItemValidation(t *testing.T) {
-	_, err := cms.NewMenuItem("item-1", "menu-1", "", "", cms.LinkTypeURL, "", 0)
+	_, err := cms.NewMenuItem("item-1", "menu-1", "", "Home", cms.LinkTypeURL, "", 0)
 	if err == nil {
 		t.Fatal("expected url target required")
 	}
@@ -40,6 +40,14 @@ func TestValidateMenuItemsCycle(t *testing.T) {
 	}
 	if err := cms.ValidateMenuItems([]*cms.MenuItem{a, b, c}); err != nil {
 		t.Fatalf("valid tree rejected: %v", err)
+	}
+}
+
+func TestValidateMenuItemsDuplicateID(t *testing.T) {
+	a, _ := cms.NewMenuItem("dup", "menu-1", "", "A", cms.LinkTypeURL, "/", 0)
+	b, _ := cms.NewMenuItem("dup", "menu-1", "", "B", cms.LinkTypeURL, "/b", 1)
+	if err := cms.ValidateMenuItems([]*cms.MenuItem{a, b}); err == nil {
+		t.Fatal("expected duplicate id error")
 	}
 }
 

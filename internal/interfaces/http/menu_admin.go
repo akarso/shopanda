@@ -248,6 +248,12 @@ func (h *MenuAdminHandler) Update() http.HandlerFunc {
 			JSONError(w, err)
 			return
 		}
+		if saved == nil {
+			notFound := apperror.NotFound("menu not found")
+			h.audit(r, admin.AuditMenuUpdate, menuID, map[string]interface{}{"code": menu.Code()}, notFound)
+			JSONError(w, notFound)
+			return
+		}
 		h.audit(r, admin.AuditMenuUpdate, menuID, map[string]interface{}{
 			"code":        menu.Code(),
 			"items_count": len(saved.Items),

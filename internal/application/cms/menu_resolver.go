@@ -23,6 +23,11 @@ type MenuResolver struct {
 	pages      domaincms.PageRepository
 }
 
+type resolveTargets struct {
+	categories map[string]*catalog.Category
+	pages      map[string]*domaincms.Page
+}
+
 // NewMenuResolver creates a MenuResolver.
 func NewMenuResolver(categories catalog.CategoryRepository, pages domaincms.PageRepository) *MenuResolver {
 	return &MenuResolver{categories: categories, pages: pages}
@@ -38,6 +43,10 @@ func (r *MenuResolver) ResolveTree(ctx context.Context, items []*domaincms.MenuI
 	}
 	if len(active) == 0 {
 		return nil, nil
+	}
+	targets, err := r.loadTargets(ctx, active)
+	if err != nil {
+		return nil, err
 	}
 	byID := make(map[string]*domaincms.MenuItem, len(active))
 	children := make(map[string][]*domaincms.MenuItem)
@@ -62,7 +71,7 @@ func (r *MenuResolver) ResolveTree(ctx context.Context, items []*domaincms.MenuI
 	}
 	out := make([]ResolvedMenuItem, 0, len(roots))
 	for _, root := range roots {
-		resolved, err := r.resolveItem(ctx, root, children)
+		resolved, err := r.resolveItem(root, children, targets)
 		if err != nil {
 			return nil, err
 		}
@@ -73,8 +82,48 @@ func (r *MenuResolver) ResolveTree(ctx context.Context, items []*domaincms.MenuI
 	return out, nil
 }
 
-func (r *MenuResolver) resolveItem(ctx context.Context, item *domaincms.MenuItem, children map[string][]*domaincms.MenuItem) (*ResolvedMenuItem, error) {
-	url, ok, err := r.resolveURL(ctx, item)
+func (r *MenuResolver) loadTargets(ctx context.Context, items []*domaincms.MenuItem) (*resolveTargets, error) {
+	targets := &resolveTargets{
+		categories: make(map[string]*catalog.Category),
+		pages:      make(map[string]*domaincms.Page),
+	}
+	categoryIDs := make(map[string]struct{})
+	pageIDs := make(map[string]struct{})
+	for _, item := range items {
+		switch item.LinkType() {
+		case domaincms.LinkTypeCategory:
+			categoryIDs[item.LinkTarget()] = struct{}{}
+		case domaincms.LinkTypePage:
+			pageIDs[item.LinkTarget()] = struct{}{}
+		}
+	}
+	if r.categories != nil {
+		for id := range categoryIDs {
+			category, err := r.categories.FindByID(ctx, id)
+			if err != nil {
+				return nil, fmt.Errorf("menu resolver: category %q: %w", id, err)
+			}
+			if category != nil {
+				targets.categories[id] = category
+			}
+		}
+	}
+	if r.pages != nil {
+		for id := range pageIDs {
+			page, err := r.pages.FindByID(ctx, id)
+			if err != nil {
+				return nil, fmt.Errorf("menu resolver: page %q: %w", id, err)
+			}
+			if page != nil {
+				targets.pages[id] = page
+			}
+		}
+	}
+	return targets, nil
+}
+
+func (r *MenuResolver) resolveItem(item *domaincms.MenuItem, children map[string][]*domaincms.MenuItem, targets *resolveTargets) (*ResolvedMenuItem, error) {
+	url, ok, err := r.resolveURL(item, targets)
 	if err != nil {
 		return nil, err
 	}
@@ -83,7 +132,7 @@ func (r *MenuResolver) resolveItem(ctx context.Context, item *domaincms.MenuItem
 	}
 	resolved := ResolvedMenuItem{Label: item.Label(), URL: url}
 	for _, child := range children[item.ID()] {
-		childResolved, err := r.resolveItem(ctx, child, children)
+		childResolved, err := r.resolveItem(child, children, targets)
 		if err != nil {
 			return nil, err
 		}
@@ -94,7 +143,7 @@ func (r *MenuResolver) resolveItem(ctx context.Context, item *domaincms.MenuItem
 	return &resolved, nil
 }
 
-func (r *MenuResolver) resolveURL(ctx context.Context, item *domaincms.MenuItem) (string, bool, error) {
+func (r *MenuResolver) resolveURL(item *domaincms.MenuItem, targets *resolveTargets) (string, bool, error) {
 	switch item.LinkType() {
 	case domaincms.LinkTypeURL:
 		return item.LinkTarget(), true, nil
@@ -102,10 +151,7 @@ func (r *MenuResolver) resolveURL(ctx context.Context, item *domaincms.MenuItem)
 		if r.categories == nil {
 			return "", false, nil
 		}
-		category, err := r.categories.FindByID(ctx, item.LinkTarget())
-		if err != nil {
-			return "", false, fmt.Errorf("menu resolver: category %q: %w", item.LinkTarget(), err)
-		}
+		category := targets.categories[item.LinkTarget()]
 		if category == nil {
 			return "", false, nil
 		}
@@ -118,10 +164,7 @@ func (r *MenuResolver) resolveURL(ctx context.Context, item *domaincms.MenuItem)
 		if r.pages == nil {
 			return "", false, nil
 		}
-		page, err := r.pages.FindByID(ctx, item.LinkTarget())
-		if err != nil {
-			return "", false, fmt.Errorf("menu resolver: page %q: %w", item.LinkTarget(), err)
-		}
+		page := targets.pages[item.LinkTarget()]
 		if page == nil || !page.IsActive() {
 			return "", false, nil
 		}

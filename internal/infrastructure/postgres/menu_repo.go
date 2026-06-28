@@ -157,6 +157,15 @@ func (r *MenuRepo) Save(ctx context.Context, data *cms.MenuWithItems) error {
 	if err := cms.ValidateMenuItems(data.Items); err != nil {
 		return apperror.Validation(err.Error())
 	}
+	menu := data.Menu
+	for _, item := range data.Items {
+		if item.MenuID() != menu.ID() {
+			return apperror.Validation(fmt.Sprintf(
+				"menu items: item %q belongs to menu %q, expected %q",
+				item.ID(), item.MenuID(), menu.ID(),
+			))
+		}
+	}
 
 	tx, err := r.db.BeginTx(ctx, nil)
 	if err != nil {
@@ -164,7 +173,6 @@ func (r *MenuRepo) Save(ctx context.Context, data *cms.MenuWithItems) error {
 	}
 	defer func() { _ = tx.Rollback() }()
 
-	menu := data.Menu
 	res, err := tx.ExecContext(ctx, `
 		UPDATE menus
 		SET title = $2, is_active = $3, updated_at = now()

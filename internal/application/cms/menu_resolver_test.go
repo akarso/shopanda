@@ -82,3 +82,48 @@ func TestMenuResolverResolveTree(t *testing.T) {
 		t.Fatalf("page url: %s", tree[0].Children[1].URL)
 	}
 }
+
+func TestMenuResolverLoadsTargetsOnce(t *testing.T) {
+	cat, _ := catalog.NewCategory("cat-1", "Headphones", "headphones")
+	calls := 0
+	categories := countingCategoryRepo{
+		category: &cat,
+		onFind:   func() { calls++ },
+	}
+	resolver := cmsApp.NewMenuResolver(categories, stubPageRepo{byID: map[string]*cms.Page{}})
+
+	itemA, _ := cms.NewMenuItem("a", "menu-1", "", "A", cms.LinkTypeCategory, "cat-1", 0)
+	itemB, _ := cms.NewMenuItem("b", "menu-1", "", "B", cms.LinkTypeCategory, "cat-1", 1)
+	_, err := resolver.ResolveTree(context.Background(), []*cms.MenuItem{itemA, itemB})
+	if err != nil {
+		t.Fatalf("resolve: %v", err)
+	}
+	if calls != 1 {
+		t.Fatalf("FindByID calls = %d, want 1", calls)
+	}
+}
+
+type countingCategoryRepo struct {
+	category *catalog.Category
+	onFind   func()
+}
+
+func (c countingCategoryRepo) FindByID(_ context.Context, id string) (*catalog.Category, error) {
+	if c.onFind != nil {
+		c.onFind()
+	}
+	if id == c.category.ID {
+		return c.category, nil
+	}
+	return nil, nil
+}
+func (countingCategoryRepo) FindBySlug(context.Context, string) (*catalog.Category, error) {
+	return nil, nil
+}
+func (countingCategoryRepo) FindByParentID(context.Context, *string) ([]catalog.Category, error) {
+	return nil, nil
+}
+func (countingCategoryRepo) FindAll(context.Context) ([]catalog.Category, error) { return nil, nil }
+func (countingCategoryRepo) Create(context.Context, *catalog.Category) error      { return nil }
+func (countingCategoryRepo) Update(context.Context, *catalog.Category) error      { return nil }
+func (countingCategoryRepo) Delete(context.Context, string) error                   { return nil }

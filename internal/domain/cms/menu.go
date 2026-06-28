@@ -208,6 +208,9 @@ func ValidateMenuItems(items []*MenuItem) error {
 		if item == nil {
 			return fmt.Errorf("menu items: nil item")
 		}
+		if _, exists := ids[item.ID()]; exists {
+			return fmt.Errorf("menu items: duplicate id %q", item.ID())
+		}
 		ids[item.ID()] = struct{}{}
 	}
 	for _, item := range items {

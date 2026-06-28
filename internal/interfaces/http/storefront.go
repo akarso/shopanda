@@ -686,7 +686,7 @@ func (h *StorefrontHandler) buildPrimaryNav(r *http.Request, themeCfg theme.Stor
 		data, err := h.menus.FindByCode(r.Context(), "header")
 		if err == nil && data != nil && data.Menu.IsActive() && len(data.Items) > 0 {
 			tree, resolveErr := h.menuResolver.ResolveTree(r.Context(), data.Items)
-			if resolveErr == nil && len(tree) > 0 {
+			if resolveErr == nil {
 				return storefrontNavFromResolved(tree, accountURL)
 			}
 		}
