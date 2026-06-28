@@ -39,6 +39,8 @@ type Order struct {
 	Currency     string
 	items        []Item
 	TotalAmount  shared.Money
+	// StoreCreditApplied is credit redeemed against this order total.
+	StoreCreditApplied shared.Money
 	// DestinationCountry is the ISO 3166-1 alpha-2 shipping country at checkout.
 	DestinationCountry string
 	// TaxAmount is the VAT total applied at checkout (zero when unset).
@@ -101,17 +103,39 @@ func NewOrder(id, customerID, contactEmail, currency string, items []Item) (Orde
 
 	now := time.Now().UTC()
 	return Order{
-		ID:           id,
-		CustomerID:   customerID,
-		ContactEmail: contactEmail,
-		status:       OrderStatusPending,
-		Currency:     currency,
-		items:        cp,
-		TotalAmount:  total,
-		TaxAmount:    taxZero,
-		CreatedAt:    now,
-		UpdatedAt:    now,
+		ID:                 id,
+		CustomerID:         customerID,
+		ContactEmail:       contactEmail,
+		status:             OrderStatusPending,
+		Currency:           currency,
+		items:              cp,
+		TotalAmount:        total,
+		StoreCreditApplied: taxZero,
+		TaxAmount:          taxZero,
+		CreatedAt:          now,
+		UpdatedAt:          now,
 	}, nil
+}
+
+// ApplyStoreCredit records redeemed store credit against the order total.
+func (o *Order) ApplyStoreCredit(amount shared.Money) error {
+	if amount.Currency() != o.Currency {
+		return errors.New("order: store credit currency mismatch")
+	}
+	if amount.IsNegative() {
+		return errors.New("order: store credit must be non-negative")
+	}
+	if amount.Amount() > o.TotalAmount.Amount() {
+		return errors.New("order: store credit exceeds order total")
+	}
+	o.StoreCreditApplied = amount
+	o.UpdatedAt = time.Now().UTC()
+	return nil
+}
+
+// PayableAmount returns the amount still due after store credit.
+func (o Order) PayableAmount() (shared.Money, error) {
+	return o.TotalAmount.Sub(o.StoreCreditApplied), nil
 }
 
 // SetTaxSnapshot records the shipping destination and VAT total for OSS reporting.

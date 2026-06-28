@@ -7,24 +7,32 @@ import (
 	"github.com/akarso/shopanda/internal/domain/catalog"
 	"github.com/akarso/shopanda/internal/domain/order"
 	"github.com/akarso/shopanda/internal/domain/pricing"
+	"github.com/akarso/shopanda/internal/domain/shared"
+	"github.com/akarso/shopanda/internal/platform/apperror"
 	"github.com/akarso/shopanda/internal/platform/id"
 )
+
+type storeCreditService interface {
+	GetBalance(ctx context.Context, customerID, currency string) (shared.Money, error)
+	Redeem(ctx context.Context, customerID, orderID string, amount shared.Money) error
+}
 
 // CreateOrderStep builds and persists an order from the cart and pricing snapshot.
 type CreateOrderStep struct {
 	orders   order.OrderRepository
 	variants catalog.VariantRepository
+	credits  storeCreditService
 }
 
 // NewCreateOrderStep creates a CreateOrderStep.
-func NewCreateOrderStep(orders order.OrderRepository, variants catalog.VariantRepository) *CreateOrderStep {
+func NewCreateOrderStep(orders order.OrderRepository, variants catalog.VariantRepository, credits storeCreditService) *CreateOrderStep {
 	if orders == nil {
 		panic("checkout: orders must not be nil")
 	}
 	if variants == nil {
 		panic("checkout: variants must not be nil")
 	}
-	return &CreateOrderStep{orders: orders, variants: variants}
+	return &CreateOrderStep{orders: orders, variants: variants, credits: credits}
 }
 
 func (s *CreateOrderStep) Name() string { return "create_order" }
@@ -54,7 +62,6 @@ func (s *CreateOrderStep) Execute(cctx *Context) error {
 		return fmt.Errorf("create_order: invalid pricing context type")
 	}
 
-	// Build a map from variantID → pricing item for price lookup.
 	priceByVariant := make(map[string]pricing.PricingItem, len(pctx.Items))
 	for _, pi := range pctx.Items {
 		priceByVariant[pi.VariantID] = pi
@@ -92,11 +99,56 @@ func (s *CreateOrderStep) Execute(cctx *Context) error {
 		return fmt.Errorf("create_order: tax snapshot: %w", err)
 	}
 
+	if err := s.applyStoreCredit(ctx, cctx, &o); err != nil {
+		return err
+	}
+
 	if err := s.orders.Save(ctx, &o); err != nil {
 		return fmt.Errorf("create_order: save: %w", err)
 	}
 
 	cctx.Order = &o
 	cctx.SetMeta("created_order_id", o.ID)
+	return nil
+}
+
+func (s *CreateOrderStep) applyStoreCredit(ctx context.Context, cctx *Context, o *order.Order) error {
+	requested := cctx.Input.StoreCreditAmount
+	if requested <= 0 {
+		return nil
+	}
+	if cctx.CustomerID == "" {
+		return apperror.Validation("store credit requires an authenticated customer")
+	}
+	if s.credits == nil {
+		return apperror.Validation("store credit is not available")
+	}
+
+	balance, err := s.credits.GetBalance(ctx, cctx.CustomerID, cctx.Currency)
+	if err != nil {
+		return fmt.Errorf("create_order: store credit balance: %w", err)
+	}
+
+	applyAmount := requested
+	if balance.Amount() < applyAmount {
+		applyAmount = balance.Amount()
+	}
+	if o.TotalAmount.Amount() < applyAmount {
+		applyAmount = o.TotalAmount.Amount()
+	}
+	if applyAmount <= 0 {
+		return nil
+	}
+
+	creditMoney, err := shared.NewMoney(applyAmount, cctx.Currency)
+	if err != nil {
+		return fmt.Errorf("create_order: store credit amount: %w", err)
+	}
+	if err := s.credits.Redeem(ctx, cctx.CustomerID, o.ID, creditMoney); err != nil {
+		return fmt.Errorf("create_order: redeem store credit: %w", err)
+	}
+	if err := o.ApplyStoreCredit(creditMoney); err != nil {
+		return fmt.Errorf("create_order: apply store credit: %w", err)
+	}
 	return nil
 }

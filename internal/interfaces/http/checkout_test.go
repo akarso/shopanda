@@ -211,7 +211,7 @@ func checkoutSetup() (*stubCheckoutCartRepo, *stubCheckoutVariantRepo, *stubChec
 	validateStep := checkoutApp.NewValidateCartStep(variants)
 	pricingStep := checkoutApp.NewRecalculatePricingStep(pipeline)
 	reserveStep := checkoutApp.NewReserveInventoryStep(reservations)
-	createOrderStep := checkoutApp.NewCreateOrderStep(orders, variants)
+	createOrderStep := checkoutApp.NewCreateOrderStep(orders, variants, nil)
 
 	workflow := checkoutApp.NewWorkflow([]checkoutApp.Step{
 		validateStep,

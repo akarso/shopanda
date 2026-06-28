@@ -30,6 +30,7 @@ import (
 	orderApp "github.com/akarso/shopanda/internal/application/order"
 	appPricing "github.com/akarso/shopanda/internal/application/pricing"
 	returnsApp "github.com/akarso/shopanda/internal/application/returns"
+	storecreditApp "github.com/akarso/shopanda/internal/application/storecredit"
 	"github.com/akarso/shopanda/internal/application/rewrite"
 	"github.com/akarso/shopanda/internal/domain/admin"
 	"github.com/akarso/shopanda/internal/domain/cache"
@@ -212,6 +213,10 @@ func runServe(cfg *config.Config, log logger.Logger, embedScheduler bool) error 
 		return err
 	}
 	orderRepo, err := postgres.NewOrderRepo(conn)
+	if err != nil {
+		return err
+	}
+	storeCreditRepo, err := postgres.NewStoreCreditRepo(conn)
 	if err != nil {
 		return err
 	}
@@ -518,12 +523,13 @@ func runServe(cfg *config.Config, log logger.Logger, embedScheduler bool) error 
 
 	// Application services.
 	cartService := cartApp.NewService(cartRepo, priceRepo, promotionRepo, couponRepo, pricingPipeline, log, bus)
+	storeCreditService := storecreditApp.NewService(storeCreditRepo, customerRepo)
 
 	// Checkout workflow.
 	validateCartStep := checkoutApp.NewValidateCartStep(variantRepo)
 	recalculatePricingStep := checkoutApp.NewRecalculatePricingStep(pricingPipeline)
 	reserveInventoryStep := checkoutApp.NewReserveInventoryStep(reservationRepo)
-	createOrderStep := checkoutApp.NewCreateOrderStep(orderRepo, variantRepo)
+	createOrderStep := checkoutApp.NewCreateOrderStep(orderRepo, variantRepo, storeCreditService)
 	selectShippingStep := checkoutApp.NewSelectShippingStep(flatRateProvider, shippingRepo)
 	initiatePaymentStep := checkoutApp.NewInitiatePaymentStep(payRegistry, paymentRepo)
 	checkoutSteps := []checkoutApp.Step{
@@ -703,6 +709,8 @@ func runServe(cfg *config.Config, log logger.Logger, embedScheduler bool) error 
 	shippingZoneAdmin := shophttp.NewShippingZoneAdminHandler(zoneRepo)
 	accountService := accountApp.NewService(customerRepo, consentRepo, bus, log, conn)
 	customerAdmin := shophttp.NewCustomerAdminHandlerWithAuditorAndDeleter(customerRepo, accountService, sharedAuditor)
+	storeCreditAdmin := shophttp.NewStoreCreditAdminHandler(storeCreditService)
+	storeCreditAccount := shophttp.NewStoreCreditAccountHandler(storeCreditService)
 	accountHandler := shophttp.NewAccountHandler(customerRepo, orderRepo, consentRepo, accountService)
 	sitemapHandler := shophttp.NewSitemapHandler(baseURL, productRepo, categoryRepo, pageRepo)
 	robotsHandler := shophttp.NewRobotsHandler(baseURL)
@@ -815,6 +823,8 @@ func runServe(cfg *config.Config, log logger.Logger, embedScheduler bool) error 
 	router.Handle("GET /api/v1/admin/customers/{customerId}", requireCustomersRead(customerAdmin.Get()))
 	router.Handle("DELETE /api/v1/admin/customers/{customerId}", requireCustomersWrite(customerAdmin.Delete()))
 	router.Handle("POST /api/v1/admin/customers/{customerId}/revoke-sessions", requireCustomersWrite(customerAdmin.RevokeSessions()))
+	router.Handle("GET /api/v1/admin/customers/{customerId}/store-credit", requireCustomersRead(storeCreditAdmin.Get()))
+	router.Handle("POST /api/v1/admin/customers/{customerId}/store-credit/issue", requireCustomersWrite(storeCreditAdmin.Issue()))
 	router.Handle("GET /api/v1/admin/orders", requireOrdersRead(orderAdmin.List()))
 	router.Handle("GET /api/v1/admin/orders/{orderId}", requireOrdersRead(orderAdmin.Get()))
 	router.Handle("PUT /api/v1/admin/orders/{orderId}", requireOrdersWrite(orderAdmin.Update()))
@@ -910,6 +920,7 @@ func runServe(cfg *config.Config, log logger.Logger, embedScheduler bool) error 
 	router.Handle("GET /api/v1/account/returns/{returnId}", requireAuth(returnAccount.Get()))
 	router.Handle("POST /api/v1/account/returns/{returnId}/cancel", requireAuth(returnAccount.Cancel()))
 	router.Handle("GET /api/v1/account/consent", requireAuth(accountHandler.GetConsent()))
+	router.Handle("GET /api/v1/account/store-credit", requireAuth(storeCreditAccount.GetBalance()))
 	router.Handle("PUT /api/v1/account/consent", requireAuth(accountHandler.UpdateConsent()))
 	router.Handle("GET /api/v1/account/data", requireAuth(accountHandler.GetData()))
 	router.Handle("GET /api/v1/account/export", requireAuth(accountHandler.Export()))

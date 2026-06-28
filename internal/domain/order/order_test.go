@@ -326,6 +326,40 @@ func TestSetTaxSnapshot(t *testing.T) {
 	}
 }
 
+func TestOrder_ApplyStoreCredit(t *testing.T) {
+	item := validItem(t)
+	o, err := order.NewOrder(id.New(), "cust-1", "", "EUR", []order.Item{item})
+	if err != nil {
+		t.Fatalf("NewOrder: %v", err)
+	}
+	credit := shared.MustNewMoney(500, "EUR")
+	if err := o.ApplyStoreCredit(credit); err != nil {
+		t.Fatalf("ApplyStoreCredit: %v", err)
+	}
+	if o.StoreCreditApplied.Amount() != 500 {
+		t.Errorf("StoreCreditApplied = %d, want 500", o.StoreCreditApplied.Amount())
+	}
+	payable, err := o.PayableAmount()
+	if err != nil {
+		t.Fatalf("PayableAmount: %v", err)
+	}
+	if payable.Amount() != 1500 {
+		t.Errorf("PayableAmount = %d, want 1500", payable.Amount())
+	}
+}
+
+func TestOrder_ApplyStoreCredit_ExceedsTotal(t *testing.T) {
+	item := validItem(t)
+	o, err := order.NewOrder(id.New(), "cust-1", "", "EUR", []order.Item{item})
+	if err != nil {
+		t.Fatalf("NewOrder: %v", err)
+	}
+	credit := shared.MustNewMoney(2500, "EUR")
+	if err := o.ApplyStoreCredit(credit); err == nil {
+		t.Fatal("expected error when store credit exceeds order total")
+	}
+}
+
 func TestSetTaxSnapshot_InvalidInputs(t *testing.T) {
 	item := validItem(t)
 	base, err := order.NewOrder(id.New(), "cust-1", "", "EUR", []order.Item{item})
