@@ -67,9 +67,7 @@
 
         <nav class="site-nav" aria-label="Primary">
             <ul>
-                {{ range .Layout.Nav }}
-                <li><a href="{{ .URL }}">{{ .Label }}</a></li>
-                {{ end }}
+                {{ template "nav-items" .Layout.Nav }}
             </ul>
         </nav>
 
@@ -118,3 +116,16 @@
     </footer>
 </body>
 </html>
+
+{{ define "nav-items" }}
+{{ range . }}
+<li>
+    <a href="{{ .URL }}">{{ .Label }}</a>
+    {{ if .Children }}
+    <ul>
+        {{ template "nav-items" .Children }}
+    </ul>
+    {{ end }}
+</li>
+{{ end }}
+{{ end }}

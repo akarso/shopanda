@@ -21,6 +21,7 @@ import (
 	authApp "github.com/akarso/shopanda/internal/application/auth"
 	cacheApp "github.com/akarso/shopanda/internal/application/cache"
 	cartApp "github.com/akarso/shopanda/internal/application/cart"
+	cmsApp "github.com/akarso/shopanda/internal/application/cms"
 	checkoutApp "github.com/akarso/shopanda/internal/application/checkout"
 	"github.com/akarso/shopanda/internal/application/composition"
 	"github.com/akarso/shopanda/internal/application/exporter"
@@ -340,6 +341,13 @@ func runServe(cfg *config.Config, log logger.Logger, embedScheduler bool) error 
 	if err != nil {
 		return err
 	}
+
+	// Menu repository.
+	menuRepo, err := postgres.NewMenuRepo(conn)
+	if err != nil {
+		return err
+	}
+	menuResolver := cmsApp.NewMenuResolver(categoryRepo, pageRepo)
 
 	// Store repository.
 	storeRepo, err := postgres.NewStoreRepo(conn)
@@ -701,6 +709,8 @@ func runServe(cfg *config.Config, log logger.Logger, embedScheduler bool) error 
 	schemaHandler := shophttp.NewSchemaHandler(adminRegistry, attributeStore)
 	pageHandler := shophttp.NewPageHandler(pageRepo, contentTranslator)
 	pageAdmin := shophttp.NewPageAdminHandlerWithAuditor(pageRepo, bus, sharedAuditor)
+	menuHandler := shophttp.NewMenuHandler(menuRepo, menuResolver)
+	menuAdmin := shophttp.NewMenuAdminHandler(menuRepo, sharedAuditor)
 	couponAdmin := shophttp.NewCouponAdminHandlerWithAuditor(couponRepo, promotionRepo, sharedAuditor)
 	promotionAdmin := shophttp.NewPromotionAdminHandlerWithAuditor(promotionRepo, sharedAuditor)
 	attributeAdmin := shophttp.NewAttributeAdminHandlerWithAuditor(attributeStore, sharedAuditor)
@@ -800,6 +810,9 @@ func runServe(cfg *config.Config, log logger.Logger, embedScheduler bool) error 
 	// Page routes (public).
 	router.HandleFunc("GET /api/v1/pages/{slug}", pageHandler.Get())
 
+	// Menu routes (public).
+	router.HandleFunc("GET /api/v1/menus/{code}", menuHandler.GetByCode())
+
 	// Admin routes (behind RequirePermission).
 	router.Handle("GET /api/v1/admin/products", requireProductsRead(productAdmin.List()))
 	router.Handle("GET /api/v1/admin/products/{id}", requireProductsRead(productAdmin.Get()))
@@ -856,6 +869,9 @@ func runServe(cfg *config.Config, log logger.Logger, embedScheduler bool) error 
 	router.Handle("POST /api/v1/admin/pages", requireContentWrite(pageAdmin.Create()))
 	router.Handle("PUT /api/v1/admin/pages/{id}", requireContentWrite(pageAdmin.Update()))
 	router.Handle("DELETE /api/v1/admin/pages/{id}", requireContentWrite(pageAdmin.Delete()))
+	router.Handle("GET /api/v1/admin/menus", requireContentRead(menuAdmin.List()))
+	router.Handle("GET /api/v1/admin/menus/{id}", requireContentRead(menuAdmin.Get()))
+	router.Handle("PUT /api/v1/admin/menus/{id}", requireContentWrite(menuAdmin.Update()))
 	router.Handle("GET /api/v1/admin/coupons", requireProductsRead(couponAdmin.List()))
 	router.Handle("GET /api/v1/admin/coupons/{id}", requireProductsRead(couponAdmin.Get()))
 	router.Handle("POST /api/v1/admin/coupons", requireProductsWrite(couponAdmin.Create()))
@@ -967,6 +983,7 @@ func runServe(cfg *config.Config, log logger.Logger, embedScheduler bool) error 
 
 		storefront := shophttp.NewStorefrontHandler(themeEngine, productRepo, categoryRepo, pdp, plp, searchEngine).
 			WithLegalConfig(configRepo).
+			WithMenus(menuRepo, menuResolver).
 			WithCart(variantRepo, cartService).
 			WithCheckout([]shipping.Provider{flatRateProvider}, payRegistry, checkoutService).
 			WithAccount(authService, orderRepo, accountService).
