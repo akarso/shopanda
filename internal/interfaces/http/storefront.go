@@ -15,11 +15,13 @@ import (
 
 	appAuth "github.com/akarso/shopanda/internal/application/auth"
 	cartApp "github.com/akarso/shopanda/internal/application/cart"
+	cmsApp "github.com/akarso/shopanda/internal/application/cms"
 	checkoutApp "github.com/akarso/shopanda/internal/application/checkout"
 	"github.com/akarso/shopanda/internal/application/composition"
 	orderApp "github.com/akarso/shopanda/internal/application/order"
 	returnsApp "github.com/akarso/shopanda/internal/application/returns"
 	"github.com/akarso/shopanda/internal/domain/catalog"
+	"github.com/akarso/shopanda/internal/domain/cms"
 	"github.com/akarso/shopanda/internal/domain/customer"
 	"github.com/akarso/shopanda/internal/domain/legal"
 	"github.com/akarso/shopanda/internal/domain/order"
@@ -56,9 +58,11 @@ type StorefrontHandler struct {
 	security    *storefrontAccountSecurityVerifier
 	shipping    []shipping.Provider
 	payments    *payment.ProviderRegistry
-	legalConfig legal.ConfigGetter
-	log         logger.Logger
-	catNav      storefrontCategoryCache
+	legalConfig  legal.ConfigGetter
+	menus        cms.MenuRepository
+	menuResolver *cmsApp.MenuResolver
+	log          logger.Logger
+	catNav       storefrontCategoryCache
 }
 
 type storefrontCategoryCache struct {
@@ -69,8 +73,9 @@ type storefrontCategoryCache struct {
 }
 
 type StorefrontNavLink struct {
-	Label string
-	URL   string
+	Label    string
+	URL      string
+	Children []StorefrontNavLink
 }
 
 type StorefrontCategoryNavItem struct {
@@ -254,6 +259,13 @@ func (h *StorefrontHandler) WithCart(variants catalog.VariantRepository, carts *
 // WithLegalConfig enables store-scoped legal/compliance settings on storefront pages.
 func (h *StorefrontHandler) WithLegalConfig(cfg legal.ConfigGetter) *StorefrontHandler {
 	h.legalConfig = cfg
+	return h
+}
+
+// WithMenus enables DB-backed header navigation with URL resolution.
+func (h *StorefrontHandler) WithMenus(menus cms.MenuRepository, resolver *cmsApp.MenuResolver) *StorefrontHandler {
+	h.menus = menus
+	h.menuResolver = resolver
 	return h
 }
 
@@ -638,26 +650,7 @@ func (h *StorefrontHandler) buildLayoutData(r *http.Request, categories []catalo
 		accountURL = accountProfileURL
 		accountName = h.storefrontAccountDisplayName(customerID, identity.DisplayName)
 	}
-	nav := make([]StorefrontNavLink, 0, len(themeCfg.Nav))
-	if len(themeCfg.Nav) > 0 {
-		for _, item := range themeCfg.Nav {
-			if item.Label == "" || item.URL == "" {
-				continue
-			}
-			url := item.URL
-			if item.URL == "/account" || item.URL == "/account/" {
-				url = accountURL
-			}
-			nav = append(nav, StorefrontNavLink{Label: item.Label, URL: url})
-		}
-	}
-	if len(nav) == 0 {
-		nav = []StorefrontNavLink{
-			{Label: "Home", URL: "/"},
-			{Label: "Categories", URL: "/categories"},
-			{Label: "Account", URL: accountURL},
-		}
-	}
+	nav := h.buildPrimaryNav(r, themeCfg, accountURL)
 	storeID := ""
 	if s := store.FromContext(r.Context()); s != nil {
 		storeID = s.ID
@@ -686,6 +679,58 @@ func (h *StorefrontHandler) buildLayoutData(r *http.Request, categories []catalo
 		WeeeFooterEnabled:  weeeFooterEnabled,
 		WeeeProducerReg:    weeeProducerReg,
 	}
+}
+
+func (h *StorefrontHandler) buildPrimaryNav(r *http.Request, themeCfg theme.StorefrontConfig, accountURL string) []StorefrontNavLink {
+	if h.menus != nil && h.menuResolver != nil {
+		data, err := h.menus.FindByCode(r.Context(), "header")
+		if err == nil && data != nil && data.Menu.IsActive() && len(data.Items) > 0 {
+			tree, resolveErr := h.menuResolver.ResolveTree(r.Context(), data.Items)
+			if resolveErr == nil && len(tree) > 0 {
+				return storefrontNavFromResolved(tree, accountURL)
+			}
+		}
+	}
+	nav := make([]StorefrontNavLink, 0, len(themeCfg.Nav))
+	if len(themeCfg.Nav) > 0 {
+		for _, item := range themeCfg.Nav {
+			if item.Label == "" || item.URL == "" {
+				continue
+			}
+			url := storefrontSubstituteAccountURL(item.URL, accountURL)
+			nav = append(nav, StorefrontNavLink{Label: item.Label, URL: url})
+		}
+	}
+	if len(nav) == 0 {
+		nav = []StorefrontNavLink{
+			{Label: "Home", URL: "/"},
+			{Label: "Categories", URL: "/categories"},
+			{Label: "Account", URL: accountURL},
+		}
+	}
+	return nav
+}
+
+func storefrontNavFromResolved(items []cmsApp.ResolvedMenuItem, accountURL string) []StorefrontNavLink {
+	out := make([]StorefrontNavLink, 0, len(items))
+	for _, item := range items {
+		link := StorefrontNavLink{
+			Label: item.Label,
+			URL:   storefrontSubstituteAccountURL(item.URL, accountURL),
+		}
+		if len(item.Children) > 0 {
+			link.Children = storefrontNavFromResolved(item.Children, accountURL)
+		}
+		out = append(out, link)
+	}
+	return out
+}
+
+func storefrontSubstituteAccountURL(url, accountURL string) string {
+	if url == "/account" || url == "/account/" {
+		return accountURL
+	}
+	return url
 }
 
 func (h *StorefrontHandler) weeeFooterData(r *http.Request, storeID string) (enabled bool, producerReg string) {

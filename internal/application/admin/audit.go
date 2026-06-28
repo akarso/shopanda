@@ -35,6 +35,9 @@ const (
 	AuditPageUpdate AuditAction = "page.update"
 	AuditPageDelete AuditAction = "page.delete"
 
+	AuditMenuRead   AuditAction = "menu.read"
+	AuditMenuUpdate AuditAction = "menu.update"
+
 	// Category operations
 	AuditCategoryCreate          AuditAction = "category.create"
 	AuditCategoryUpdate          AuditAction = "category.update"

@@ -11,7 +11,7 @@ Planned specs for **PR-500–549**. Individual PR markdown files will be added w
 | PR-504 | A | [oss] | done | [Payment transaction ledger admin](PR-504.md) |
 | PR-505 | A | [oss] | done | [Store credit (stretch)](PR-505.md) |
 | PR-510 | B | [oss] | done | [Advanced promotion rules](PR-510.md) |
-| PR-511 | B | [oss] | planned | Navigation builder |
+| PR-511 | B | [oss] | done | [Navigation builder](PR-511.md) |
 | PR-512 | B | [oss] | planned | Content blocks |
 | PR-513 | B | [oss] | planned | Abandoned cart recovery (stretch) |
 | PR-514 | B | [oss] | planned | Product reviews (stretch) |
@@ -34,6 +34,6 @@ Planned specs for **PR-500–549**. Individual PR markdown files will be added w
 
 Roadmap: [`../ROADMAP.md`](../ROADMAP.md) · EU compliance: [`../specs/COMPLIANCE_EU.md`](../specs/COMPLIANCE_EU.md) · Licensing: [`../../COMMERCIAL.md`](../../COMMERCIAL.md)
 
-**Suggested next PRs:** PR-511 (navigation builder) or Track C (PR-520 admin user CRUD).
+**Suggested next PRs:** PR-512 (content blocks) or Track C (PR-520 admin user CRUD).
 
 [b2b] PRs implement in [`plugins/b2b/`](../../../plugins/b2b/). [oss] PRs stay in open core.

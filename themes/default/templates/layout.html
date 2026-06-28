@@ -68,7 +68,16 @@
         <nav class="site-nav" aria-label="Primary">
             <ul>
                 {{ range .Layout.Nav }}
-                <li><a href="{{ .URL }}">{{ .Label }}</a></li>
+                <li>
+                    <a href="{{ .URL }}">{{ .Label }}</a>
+                    {{ if .Children }}
+                    <ul>
+                        {{ range .Children }}
+                        <li><a href="{{ .URL }}">{{ .Label }}</a></li>
+                        {{ end }}
+                    </ul>
+                    {{ end }}
+                </li>
                 {{ end }}
             </ul>
         </nav>
