@@ -27,9 +27,10 @@ func NewCheckoutHandler(svc *checkoutApp.Service) *CheckoutHandler {
 // ── request / response types ────────────────────────────────────────────
 
 type checkoutRequest struct {
-	CartID       string                 `json:"cart_id"`
-	ContactEmail string                 `json:"contact_email"`
-	Address      checkoutAddressRequest `json:"address"`
+	CartID            string                 `json:"cart_id"`
+	ContactEmail      string                 `json:"contact_email"`
+	Address           checkoutAddressRequest `json:"address"`
+	StoreCreditAmount int64                  `json:"store_credit_amount"`
 }
 
 type checkoutAddressRequest struct {
@@ -42,13 +43,15 @@ type checkoutAddressRequest struct {
 }
 
 type checkoutOrderResponse struct {
-	ID          string            `json:"id"`
-	CustomerID  string            `json:"customer_id"`
-	Status      order.OrderStatus `json:"status"`
-	Currency    string            `json:"currency"`
-	Items       []orderItemResp   `json:"items"`
-	TotalAmount int64             `json:"total_amount"`
-	CreatedAt   string            `json:"created_at"`
+	ID                 string            `json:"id"`
+	CustomerID         string            `json:"customer_id"`
+	Status             order.OrderStatus `json:"status"`
+	Currency           string            `json:"currency"`
+	Items              []orderItemResp   `json:"items"`
+	TotalAmount        int64             `json:"total_amount"`
+	StoreCreditApplied int64             `json:"store_credit_applied"`
+	PayableAmount      int64             `json:"payable_amount"`
+	CreatedAt          string            `json:"created_at"`
 }
 
 type orderItemResp struct {
@@ -80,7 +83,8 @@ func (h *CheckoutHandler) StartCheckout() http.HandlerFunc {
 
 		// Guest contact_email rules are enforced in checkout.Service.StartCheckout.
 		cctx, err := h.svc.StartCheckout(r.Context(), req.CartID, customerID, checkoutApp.Input{
-			ContactEmail: req.ContactEmail,
+			ContactEmail:      req.ContactEmail,
+			StoreCreditAmount: req.StoreCreditAmount,
 			Address: checkoutApp.Address{
 				FirstName: req.Address.FirstName,
 				LastName:  req.Address.LastName,
@@ -107,15 +111,23 @@ func (h *CheckoutHandler) StartCheckout() http.HandlerFunc {
 			})
 		}
 
+		payable, err := cctx.Order.PayableAmount()
+		if err != nil {
+			JSONError(w, apperror.Wrap(apperror.CodeInternal, "payable amount failed", err))
+			return
+		}
+
 		resp := map[string]interface{}{
 			"order": checkoutOrderResponse{
-				ID:          cctx.Order.ID,
-				CustomerID:  cctx.Order.CustomerID,
-				Status:      cctx.Order.Status(),
-				Currency:    cctx.Order.Currency,
-				Items:       items,
-				TotalAmount: cctx.Order.TotalAmount.Amount(),
-				CreatedAt:   cctx.Order.CreatedAt.UTC().Format(time.RFC3339),
+				ID:                 cctx.Order.ID,
+				CustomerID:         cctx.Order.CustomerID,
+				Status:             cctx.Order.Status(),
+				Currency:           cctx.Order.Currency,
+				Items:              items,
+				TotalAmount:        cctx.Order.TotalAmount.Amount(),
+				StoreCreditApplied: cctx.Order.StoreCreditApplied.Amount(),
+				PayableAmount:      payable.Amount(),
+				CreatedAt:          cctx.Order.CreatedAt.UTC().Format(time.RFC3339),
 			},
 		}
 

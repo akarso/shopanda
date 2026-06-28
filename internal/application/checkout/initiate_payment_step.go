@@ -46,12 +46,29 @@ func (s *InitiatePaymentStep) Execute(cctx *Context) error {
 		return fmt.Errorf("initiate_payment: order not created yet")
 	}
 
+	if v, ok := cctx.GetMeta("payment_skipped"); ok {
+		if b, isBool := v.(bool); isBool && b {
+			cctx.SetMeta("payment_initiated", true)
+			return nil
+		}
+	}
+
+	payable, err := cctx.Order.PayableAmount()
+	if err != nil {
+		return fmt.Errorf("initiate_payment: payable amount: %w", err)
+	}
+	if payable.Amount() == 0 {
+		cctx.SetMeta("payment_initiated", true)
+		cctx.SetMeta("payment_skipped", true)
+		return nil
+	}
+
 	provider, err := s.providers.Resolve(cctx.Input.PaymentMethod)
 	if err != nil {
 		return apperror.Validation("selected payment method is unavailable")
 	}
 
-	py, err := payment.NewPayment(id.New(), cctx.Order.ID, provider.Method(), cctx.Order.TotalAmount)
+	py, err := payment.NewPayment(id.New(), cctx.Order.ID, provider.Method(), payable)
 	if err != nil {
 		return fmt.Errorf("initiate_payment: create payment: %w", err)
 	}
