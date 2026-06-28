@@ -74,3 +74,29 @@ func TestCartPromotionStep_FullPipeline(t *testing.T) {
 		t.Errorf("expected grand total 5400, got %d", pctx.GrandTotal.Amount())
 	}
 }
+
+func TestCartPromotionStep_UsesCatalogDiscountedSubtotal(t *testing.T) {
+	catalogPromos := &stubPromotionRepo{promos: []promotion.Promotion{
+		makePromo("cat10", "10% off", true, false,
+			map[string]string{"type": "always"},
+			map[string]interface{}{"type": "percentage", "percentage": 10}),
+	}}
+	cartPromos := &stubPromotionRepo{promos: []promotion.Promotion{
+		makeCartPromo("cart5000", "Cart threshold", true, false,
+			map[string]interface{}{"type": "min_cart_total", "value": 5400},
+			map[string]interface{}{"type": "fixed", "amount": 500}),
+	}}
+	catalog := appPricing.NewCatalogPromotionStep(catalogPromos, &stubCouponRepo{})
+	cart := appPricing.NewCartPromotionStep(cartPromos, &stubCouponRepo{})
+
+	pctx := makePricingCtx(t, "USD", makeItem(t, "v1", 2, 3000, "USD"))
+	if err := catalog.Apply(context.Background(), pctx); err != nil {
+		t.Fatalf("catalog apply: %v", err)
+	}
+	if err := cart.Apply(context.Background(), pctx); err != nil {
+		t.Fatalf("cart apply: %v", err)
+	}
+	if len(pctx.Adjustments) != 1 {
+		t.Fatalf("expected cart adjustment after discounted subtotal 5400, got %d adjustments", len(pctx.Adjustments))
+	}
+}

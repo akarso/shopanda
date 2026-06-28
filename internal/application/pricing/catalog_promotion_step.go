@@ -263,11 +263,11 @@ func (a catalogAction) compute(item *domain.PricingItem, currency string) (share
 }
 
 func (a catalogAction) tierPercentage(qty int) int {
-	best := 0
+	matched := 0
 	for _, tier := range a.tiers {
-		if qty >= tier.minQty && tier.percentage > best {
-			best = tier.percentage
+		if qty >= tier.minQty {
+			matched = tier.percentage
 		}
 	}
-	return best
+	return matched
 }

@@ -31,7 +31,7 @@ func EncodePromotionRules(typ promotion.PromotionType, form PromotionRuleForm) (
 	if err != nil {
 		return nil, nil, err
 	}
-	actions, err = encodePromotionAction(form)
+	actions, err = encodePromotionAction(typ, form)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -44,7 +44,7 @@ func DecodePromotionRules(typ promotion.PromotionType, conditions, actions []byt
 	if err != nil {
 		return PromotionRuleForm{}, err
 	}
-	actionForm, err := decodePromotionAction(actions)
+	actionForm, err := decodePromotionAction(typ, actions)
 	if err != nil {
 		return PromotionRuleForm{}, err
 	}
@@ -132,7 +132,7 @@ type actionPayload struct {
 	GetQty     int                 `json:"get_qty,omitempty"`
 }
 
-func encodePromotionAction(form PromotionRuleForm) ([]byte, error) {
+func encodePromotionAction(typ promotion.PromotionType, form PromotionRuleForm) ([]byte, error) {
 	switch form.ActionType {
 	case "percentage":
 		if form.ActionPercentage <= 0 || form.ActionPercentage > 100 {
@@ -145,6 +145,9 @@ func encodePromotionAction(form PromotionRuleForm) ([]byte, error) {
 		}
 		return json.Marshal(actionPayload{Type: "fixed", Amount: form.ActionAmount})
 	case "tiered":
+		if typ != promotion.TypeCatalog {
+			return nil, fmt.Errorf("tiered action applies only to catalog promotions")
+		}
 		if len(form.ActionTiers) == 0 {
 			return nil, fmt.Errorf("tiered action requires at least one tier")
 		}
@@ -154,6 +157,9 @@ func encodePromotionAction(form PromotionRuleForm) ([]byte, error) {
 		}
 		return json.Marshal(actionPayload{Type: "tiered", Tiers: tiers})
 	case "buy_x_get_y":
+		if typ != promotion.TypeCatalog {
+			return nil, fmt.Errorf("buy_x_get_y action applies only to catalog promotions")
+		}
 		if form.ActionBuyQty <= 0 {
 			return nil, fmt.Errorf("buy_qty must be positive")
 		}
@@ -183,7 +189,7 @@ func validatePromotionTiers(tiers []PromotionTierForm) error {
 	return nil
 }
 
-func decodePromotionAction(data []byte) (PromotionRuleForm, error) {
+func decodePromotionAction(typ promotion.PromotionType, data []byte) (PromotionRuleForm, error) {
 	if len(data) == 0 || string(data) == "null" || string(data) == "[]" {
 		return PromotionRuleForm{}, fmt.Errorf("action config is required")
 	}
@@ -209,6 +215,12 @@ func decodePromotionAction(data []byte) (PromotionRuleForm, error) {
 			ActionAmount: cfg.Amount,
 		}, nil
 	case "tiered":
+		if typ != promotion.TypeCatalog {
+			return PromotionRuleForm{}, fmt.Errorf("tiered action is invalid for type %q", typ)
+		}
+		if len(cfg.Tiers) == 0 {
+			return PromotionRuleForm{}, fmt.Errorf("tiered action requires at least one tier")
+		}
 		tiers := append([]PromotionTierForm(nil), cfg.Tiers...)
 		if err := validatePromotionTiers(tiers); err != nil {
 			return PromotionRuleForm{}, err
@@ -218,6 +230,9 @@ func decodePromotionAction(data []byte) (PromotionRuleForm, error) {
 			ActionTiers: tiers,
 		}, nil
 	case "buy_x_get_y":
+		if typ != promotion.TypeCatalog {
+			return PromotionRuleForm{}, fmt.Errorf("buy_x_get_y action is invalid for type %q", typ)
+		}
 		if cfg.BuyQty <= 0 {
 			return PromotionRuleForm{}, fmt.Errorf("buy_qty must be positive")
 		}

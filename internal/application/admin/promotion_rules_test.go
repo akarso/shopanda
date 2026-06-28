@@ -117,6 +117,57 @@ func TestPromotionRuleForm_TieredRoundTrip(t *testing.T) {
 	if got.ActionType != "tiered" || len(got.ActionTiers) != 2 {
 		t.Fatalf("got = %+v", got)
 	}
+	if got.ActionTiers[0].MinQty != 2 || got.ActionTiers[0].Percentage != 5 {
+		t.Fatalf("tier[0] = %+v, want min_qty=2 percentage=5", got.ActionTiers[0])
+	}
+	if got.ActionTiers[1].MinQty != 5 || got.ActionTiers[1].Percentage != 15 {
+		t.Fatalf("tier[1] = %+v, want min_qty=5 percentage=15", got.ActionTiers[1])
+	}
+}
+
+func TestPromotionRuleForm_BuyXGetYRoundTrip(t *testing.T) {
+	form := adminApp.PromotionRuleForm{
+		ConditionType: "always",
+		ActionType:    "buy_x_get_y",
+		ActionBuyQty:  2,
+		ActionGetQty:  1,
+	}
+	conditions, actions, err := adminApp.EncodePromotionRules(promotion.TypeCatalog, form)
+	if err != nil {
+		t.Fatalf("EncodePromotionRules: %v", err)
+	}
+	got, err := adminApp.DecodePromotionRules(promotion.TypeCatalog, conditions, actions)
+	if err != nil {
+		t.Fatalf("DecodePromotionRules: %v", err)
+	}
+	if got.ActionType != "buy_x_get_y" || got.ActionBuyQty != 2 || got.ActionGetQty != 1 {
+		t.Fatalf("got = %+v, want buy_x_get_y 2/1", got)
+	}
+}
+
+func TestDecodePromotionRules_RejectsEmptyTieredAction(t *testing.T) {
+	_, err := adminApp.DecodePromotionRules(
+		promotion.TypeCatalog,
+		[]byte(`{"type":"always"}`),
+		[]byte(`{"type":"tiered","tiers":[]}`),
+	)
+	if err == nil {
+		t.Fatal("expected error for empty tiered action")
+	}
+}
+
+func TestEncodePromotionRules_RejectsCatalogActionOnCart(t *testing.T) {
+	_, _, err := adminApp.EncodePromotionRules(promotion.TypeCart, adminApp.PromotionRuleForm{
+		ConditionType:  "min_cart_total",
+		ConditionValue: 5000,
+		ActionType:     "tiered",
+		ActionTiers: []adminApp.PromotionTierForm{
+			{MinQty: 2, Percentage: 5},
+		},
+	})
+	if err == nil {
+		t.Fatal("expected error for tiered cart promotion")
+	}
 }
 
 func TestEncodePromotionRules_TieredAppliedByCatalogPromotionStep(t *testing.T) {

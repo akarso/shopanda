@@ -42,7 +42,7 @@ func (s *CartPromotionStep) Apply(ctx context.Context, pctx *domain.PricingConte
 
 	subtotal := shared.MustZero(pctx.Currency)
 	for _, item := range pctx.Items {
-		subtotal = subtotal.Add(item.Total)
+		subtotal = subtotal.Add(itemNetTotal(item))
 	}
 
 	now := time.Now()
@@ -175,4 +175,14 @@ func (a cartAction) compute(subtotal shared.Money, currency string) (shared.Mone
 	default:
 		return shared.Money{}, fmt.Errorf("unsupported cart action: %q", a.typ)
 	}
+}
+
+func itemNetTotal(item domain.PricingItem) shared.Money {
+	net := item.Total
+	for _, adj := range item.Adjustments {
+		if adj.Type == domain.AdjustmentDiscount {
+			net = net.Sub(adj.Amount)
+		}
+	}
+	return net
 }

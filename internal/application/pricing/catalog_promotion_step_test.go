@@ -534,3 +534,29 @@ func TestCatalogPromotionStep_BuyXGetY(t *testing.T) {
 		t.Errorf("expected discount 2000, got %d", pctx.Items[0].Adjustments[0].Amount.Amount())
 	}
 }
+
+func TestCatalogPromotionStep_TieredUsesHighestThreshold(t *testing.T) {
+	promos := &stubPromotionRepo{promos: []promotion.Promotion{
+		makePromo("pt2", "Non-monotonic tiers", true, false,
+			map[string]string{"type": "always"},
+			map[string]interface{}{
+				"type": "tiered",
+				"tiers": []map[string]interface{}{
+					{"min_qty": 2, "percentage": 20},
+					{"min_qty": 5, "percentage": 10},
+				},
+			}),
+	}}
+	step := appPricing.NewCatalogPromotionStep(promos, &stubCouponRepo{})
+	pctx := makePricingCtx(t, "USD", makeItem(t, "v1", 5, 1000, "USD"))
+
+	if err := step.Apply(context.Background(), pctx); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(pctx.Items[0].Adjustments) != 1 {
+		t.Fatalf("expected 1 adjustment, got %d", len(pctx.Items[0].Adjustments))
+	}
+	if pctx.Items[0].Adjustments[0].Amount.Amount() != 500 {
+		t.Errorf("expected discount 500 (10%% from min_qty=5 tier), got %d", pctx.Items[0].Adjustments[0].Amount.Amount())
+	}
+}
