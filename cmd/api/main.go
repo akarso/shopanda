@@ -349,6 +349,12 @@ func runServe(cfg *config.Config, log logger.Logger, embedScheduler bool) error 
 	}
 	menuResolver := cmsApp.NewMenuResolver(categoryRepo, pageRepo)
 
+	contentBlockRepo, err := postgres.NewContentBlockRepo(conn)
+	if err != nil {
+		return err
+	}
+	blockResolver := cmsApp.NewBlockResolver(productRepo)
+
 	// Store repository.
 	storeRepo, err := postgres.NewStoreRepo(conn)
 	if err != nil {
@@ -711,6 +717,8 @@ func runServe(cfg *config.Config, log logger.Logger, embedScheduler bool) error 
 	pageAdmin := shophttp.NewPageAdminHandlerWithAuditor(pageRepo, bus, sharedAuditor)
 	menuHandler := shophttp.NewMenuHandler(menuRepo, menuResolver)
 	menuAdmin := shophttp.NewMenuAdminHandler(menuRepo, sharedAuditor)
+	contentBlockHandler := shophttp.NewContentBlockHandler(contentBlockRepo, pageRepo, blockResolver)
+	contentBlockAdmin := shophttp.NewContentBlockAdminHandler(contentBlockRepo, sharedAuditor)
 	couponAdmin := shophttp.NewCouponAdminHandlerWithAuditor(couponRepo, promotionRepo, sharedAuditor)
 	promotionAdmin := shophttp.NewPromotionAdminHandlerWithAuditor(promotionRepo, sharedAuditor)
 	attributeAdmin := shophttp.NewAttributeAdminHandlerWithAuditor(attributeStore, sharedAuditor)
@@ -813,6 +821,9 @@ func runServe(cfg *config.Config, log logger.Logger, embedScheduler bool) error 
 	// Menu routes (public).
 	router.HandleFunc("GET /api/v1/menus/{code}", menuHandler.GetByCode())
 
+	// Content block routes (public).
+	router.HandleFunc("GET /api/v1/content-blocks/{targetType}/{targetKey}", contentBlockHandler.GetByTarget())
+
 	// Admin routes (behind RequirePermission).
 	router.Handle("GET /api/v1/admin/products", requireProductsRead(productAdmin.List()))
 	router.Handle("GET /api/v1/admin/products/{id}", requireProductsRead(productAdmin.Get()))
@@ -872,6 +883,13 @@ func runServe(cfg *config.Config, log logger.Logger, embedScheduler bool) error 
 	router.Handle("GET /api/v1/admin/menus", requireContentRead(menuAdmin.List()))
 	router.Handle("GET /api/v1/admin/menus/{id}", requireContentRead(menuAdmin.Get()))
 	router.Handle("PUT /api/v1/admin/menus/{id}", requireContentWrite(menuAdmin.Update()))
+	router.Handle("GET /api/v1/admin/content-blocks", requireContentRead(contentBlockAdmin.List()))
+	router.Handle("POST /api/v1/admin/content-blocks", requireContentWrite(contentBlockAdmin.Create()))
+	router.Handle("GET /api/v1/admin/content-blocks/{id}", requireContentRead(contentBlockAdmin.Get()))
+	router.Handle("PUT /api/v1/admin/content-blocks/{id}", requireContentWrite(contentBlockAdmin.Update()))
+	router.Handle("DELETE /api/v1/admin/content-blocks/{id}", requireContentWrite(contentBlockAdmin.Delete()))
+	router.Handle("GET /api/v1/admin/content-block-targets/{targetType}/{targetKey}", requireContentRead(contentBlockAdmin.GetTarget()))
+	router.Handle("PUT /api/v1/admin/content-block-targets/{targetType}/{targetKey}", requireContentWrite(contentBlockAdmin.UpdateTarget()))
 	router.Handle("GET /api/v1/admin/coupons", requireProductsRead(couponAdmin.List()))
 	router.Handle("GET /api/v1/admin/coupons/{id}", requireProductsRead(couponAdmin.Get()))
 	router.Handle("POST /api/v1/admin/coupons", requireProductsWrite(couponAdmin.Create()))
@@ -984,6 +1002,7 @@ func runServe(cfg *config.Config, log logger.Logger, embedScheduler bool) error 
 		storefront := shophttp.NewStorefrontHandler(themeEngine, productRepo, categoryRepo, pdp, plp, searchEngine).
 			WithLegalConfig(configRepo).
 			WithMenus(menuRepo, menuResolver).
+			WithContentBlocks(contentBlockRepo, blockResolver, pageRepo).
 			WithCart(variantRepo, cartService).
 			WithCheckout([]shipping.Provider{flatRateProvider}, payRegistry, checkoutService).
 			WithAccount(authService, orderRepo, accountService).
@@ -1042,6 +1061,7 @@ func runServe(cfg *config.Config, log logger.Logger, embedScheduler bool) error 
 		router.HandleFunc("GET /fragments/cart-count", storefront.CartCountFragment())
 		router.HandleFunc("GET /fragments/mini-cart", storefront.MiniCartFragment())
 		router.HandleFunc("GET /{$}", storefront.Home())
+		router.HandleFunc("GET /pages/{slug}", storefront.CMSPage())
 		router.HandleFunc("GET /categories", storefront.Categories())
 		router.HandleFunc("GET /categories/{slug}", storefront.Category())
 		router.HandleFunc("POST /cart/add", storefront.AddToCart())

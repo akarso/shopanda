@@ -1,0 +1,13 @@
+{{ define "title" }}{{ .Title }}{{ end }}
+
+{{ define "content" }}
+{{ if .Blocks }}
+{{ template "content-blocks" .Blocks }}
+{{ end }}
+{{ if .Content }}
+<section class="page-content">
+    <div class="rich-text">{{ .Content }}</div>
+</section>
+{{ end }}
+{{ end }}
+{{ template "layout.html" . }}

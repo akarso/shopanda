@@ -129,3 +129,43 @@
 </li>
 {{ end }}
 {{ end }}
+
+{{ define "content-blocks" }}
+{{ range . }}
+{{ if eq .Type "hero" }}
+<section class="hero-panel content-block content-block--hero">
+    <div>
+        {{ if .Subheadline }}<p class="eyebrow">{{ .Subheadline }}</p>{{ end }}
+        <h1>{{ .Headline }}</h1>
+    </div>
+    <div class="hero-panel__card">
+        {{ if .ImageURL }}<img src="{{ .ImageURL }}" alt="{{ .Headline }}">{{ end }}
+        {{ if and .CTALabel .CTAURL }}<a class="button-link" href="{{ .CTAURL }}">{{ .CTALabel }}</a>{{ end }}
+    </div>
+</section>
+{{ else if eq .Type "rich_text" }}
+<section class="page-content content-block content-block--rich-text">
+    <div class="rich-text">{{ .Body }}</div>
+</section>
+{{ else if eq .Type "product_carousel" }}
+<section class="content-block content-block--carousel" aria-label="{{ .CarouselTitle }}">
+    {{ if .CarouselTitle }}<h2>{{ .CarouselTitle }}</h2>{{ end }}
+    {{ if .Products }}
+    <div class="product-listing product-listing--grid">
+        {{ range .Products }}
+        <article class="product-card">
+            <a class="product-card__media" href="/products/{{ .Slug }}">
+                {{ if .ImageURL }}<img src="{{ .ImageURL }}" alt="{{ .Name }}">{{ else }}<span>{{ .Name }}</span>{{ end }}
+            </a>
+            <div class="product-card__body">
+                <h3><a href="/products/{{ .Slug }}">{{ .Name }}</a></h3>
+                {{ if .Description }}<p>{{ .Description }}</p>{{ end }}
+            </div>
+        </article>
+        {{ end }}
+    </div>
+    {{ end }}
+</section>
+{{ end }}
+{{ end }}
+{{ end }}

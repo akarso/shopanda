@@ -38,6 +38,11 @@ const (
 	AuditMenuRead   AuditAction = "menu.read"
 	AuditMenuUpdate AuditAction = "menu.update"
 
+	AuditContentBlockRead   AuditAction = "content_block.read"
+	AuditContentBlockCreate AuditAction = "content_block.create"
+	AuditContentBlockUpdate AuditAction = "content_block.update"
+	AuditContentBlockDelete AuditAction = "content_block.delete"
+
 	// Category operations
 	AuditCategoryCreate          AuditAction = "category.create"
 	AuditCategoryUpdate          AuditAction = "category.update"
