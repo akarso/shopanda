@@ -144,14 +144,28 @@ func (c catalogCondition) matches(item *domain.PricingItem) bool {
 
 type actionConfig struct {
 	Type       string `json:"type"`
-	Percentage int    `json:"percentage,omitempty"` // whole percentage, e.g. 10 = 10%
-	Amount     int64  `json:"amount,omitempty"`     // minor currency units
+	Percentage int    `json:"percentage,omitempty"`
+	Amount     int64  `json:"amount,omitempty"`
+	Tiers      []struct {
+		MinQty     int `json:"min_qty"`
+		Percentage int `json:"percentage"`
+	} `json:"tiers,omitempty"`
+	BuyQty int `json:"buy_qty,omitempty"`
+	GetQty int `json:"get_qty,omitempty"`
+}
+
+type promotionTier struct {
+	minQty     int
+	percentage int
 }
 
 type catalogAction struct {
 	typ        string
 	percentage int
 	amount     int64
+	tiers      []promotionTier
+	buyQty     int
+	getQty     int
 }
 
 func decodeCatalogAction(data []byte) (catalogAction, error) {
@@ -173,6 +187,34 @@ func decodeCatalogAction(data []byte) (catalogAction, error) {
 			return catalogAction{}, fmt.Errorf("fixed amount must be positive")
 		}
 		return catalogAction{typ: cfg.Type, amount: cfg.Amount}, nil
+	case "tiered":
+		if len(cfg.Tiers) == 0 {
+			return catalogAction{}, fmt.Errorf("tiered action requires at least one tier")
+		}
+		tiers := make([]promotionTier, len(cfg.Tiers))
+		prev := 0
+		for i, tier := range cfg.Tiers {
+			if tier.MinQty <= 0 {
+				return catalogAction{}, fmt.Errorf("tier %d min_qty must be positive", i)
+			}
+			if tier.MinQty <= prev {
+				return catalogAction{}, fmt.Errorf("tier min_qty values must be strictly increasing")
+			}
+			if tier.Percentage <= 0 || tier.Percentage > 100 {
+				return catalogAction{}, fmt.Errorf("tier %d percentage must be 1-100", i)
+			}
+			tiers[i] = promotionTier{minQty: tier.MinQty, percentage: tier.Percentage}
+			prev = tier.MinQty
+		}
+		return catalogAction{typ: cfg.Type, tiers: tiers}, nil
+	case "buy_x_get_y":
+		if cfg.BuyQty <= 0 {
+			return catalogAction{}, fmt.Errorf("buy_qty must be positive")
+		}
+		if cfg.GetQty <= 0 {
+			return catalogAction{}, fmt.Errorf("get_qty must be positive")
+		}
+		return catalogAction{typ: cfg.Type, buyQty: cfg.BuyQty, getQty: cfg.GetQty}, nil
 	default:
 		return catalogAction{}, fmt.Errorf("unknown action type: %q", cfg.Type)
 	}
@@ -196,7 +238,36 @@ func (a catalogAction) compute(item *domain.PricingItem, currency string) (share
 			return item.Total, nil
 		}
 		return discount, nil
+	case "tiered":
+		pct := a.tierPercentage(item.Quantity)
+		if pct == 0 {
+			return shared.Zero(currency)
+		}
+		raw := item.Total.Amount() * int64(pct) / 100
+		return shared.NewMoney(raw, currency)
+	case "buy_x_get_y":
+		bundle := a.buyQty + a.getQty
+		sets := item.Quantity / bundle
+		if sets == 0 {
+			return shared.Zero(currency)
+		}
+		freeItems := sets * a.getQty
+		raw := item.UnitPrice.Amount() * int64(freeItems)
+		if raw > item.Total.Amount() {
+			raw = item.Total.Amount()
+		}
+		return shared.NewMoney(raw, currency)
 	default:
 		return shared.Money{}, fmt.Errorf("unsupported action: %q", a.typ)
 	}
+}
+
+func (a catalogAction) tierPercentage(qty int) int {
+	matched := 0
+	for _, tier := range a.tiers {
+		if qty >= tier.minQty {
+			matched = tier.percentage
+		}
+	}
+	return matched
 }
