@@ -130,7 +130,7 @@ func TestPromotionAdminHandler_Create_InvalidAction(t *testing.T) {
 	h := shophttp.NewPromotionAdminHandler(repo)
 
 	payload := catalogPromotionPayload("Bad Promo")
-	payload["action_type"] = "tiered"
+	payload["action_type"] = "bogus"
 
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest("POST", "/api/v1/admin/promotions", promotionBody(t, payload))
@@ -138,6 +138,71 @@ func TestPromotionAdminHandler_Create_InvalidAction(t *testing.T) {
 
 	if rec.Code != http.StatusUnprocessableEntity {
 		t.Fatalf("status = %d, want %d", rec.Code, http.StatusUnprocessableEntity)
+	}
+}
+
+func TestPromotionAdminHandler_Create_Tiered(t *testing.T) {
+	var saved *promotion.Promotion
+	repo := &mockPromotionAdminRepo{
+		saveFn: func(_ context.Context, p *promotion.Promotion) error {
+			saved = p
+			return nil
+		},
+	}
+	h := shophttp.NewPromotionAdminHandler(repo)
+
+	payload := catalogPromotionPayload("Tiered Promo")
+	payload["action_type"] = "tiered"
+	payload["action_tiers"] = []map[string]interface{}{
+		{"min_qty": 2, "percentage": 5},
+		{"min_qty": 5, "percentage": 15},
+	}
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("POST", "/api/v1/admin/promotions", promotionBody(t, payload))
+	newPromotionAdminRouter(h).ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("status = %d, want %d; body: %s", rec.Code, http.StatusCreated, rec.Body.String())
+	}
+	if saved == nil {
+		t.Fatal("promotion was not saved")
+	}
+	body := parsePageBody(t, rec)
+	promo := body["data"].(map[string]interface{})["promotion"].(map[string]interface{})
+	if promo["action_type"] != "tiered" {
+		t.Fatalf("action_type = %v, want tiered", promo["action_type"])
+	}
+	tiers := promo["action_tiers"].([]interface{})
+	if len(tiers) != 2 {
+		t.Fatalf("action_tiers len = %d, want 2", len(tiers))
+	}
+}
+
+func TestPromotionAdminHandler_Create_BuyXGetY(t *testing.T) {
+	var saved *promotion.Promotion
+	repo := &mockPromotionAdminRepo{
+		saveFn: func(_ context.Context, p *promotion.Promotion) error {
+			saved = p
+			return nil
+		},
+	}
+	h := shophttp.NewPromotionAdminHandler(repo)
+
+	payload := catalogPromotionPayload("B2G1")
+	payload["action_type"] = "buy_x_get_y"
+	payload["action_buy_qty"] = 2
+	payload["action_get_qty"] = 1
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("POST", "/api/v1/admin/promotions", promotionBody(t, payload))
+	newPromotionAdminRouter(h).ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("status = %d, want %d; body: %s", rec.Code, http.StatusCreated, rec.Body.String())
+	}
+	if saved == nil {
+		t.Fatal("promotion was not saved")
 	}
 }
 

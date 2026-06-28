@@ -7,13 +7,22 @@ import (
 	"github.com/akarso/shopanda/internal/domain/promotion"
 )
 
+// PromotionTierForm is one quantity breakpoint for tiered catalog discounts.
+type PromotionTierForm struct {
+	MinQty     int `json:"min_qty"`
+	Percentage int `json:"percentage"`
+}
+
 // PromotionRuleForm is the admin-facing representation of promotion conditions/actions.
 type PromotionRuleForm struct {
 	ConditionType    string // always, min_quantity, min_cart_total
 	ConditionValue   int
-	ActionType       string // percentage, fixed
+	ActionType       string // percentage, fixed, tiered, buy_x_get_y
 	ActionPercentage int
 	ActionAmount     int64 // minor currency units
+	ActionTiers      []PromotionTierForm
+	ActionBuyQty     int
+	ActionGetQty     int
 }
 
 // EncodePromotionRules maps admin form fields to JSON stored on promotion.Promotion.
@@ -42,6 +51,9 @@ func DecodePromotionRules(typ promotion.PromotionType, conditions, actions []byt
 	form.ActionType = actionForm.ActionType
 	form.ActionPercentage = actionForm.ActionPercentage
 	form.ActionAmount = actionForm.ActionAmount
+	form.ActionTiers = actionForm.ActionTiers
+	form.ActionBuyQty = actionForm.ActionBuyQty
+	form.ActionGetQty = actionForm.ActionGetQty
 	return form, nil
 }
 
@@ -112,9 +124,12 @@ func decodePromotionCondition(typ promotion.PromotionType, data []byte) (Promoti
 }
 
 type actionPayload struct {
-	Type       string `json:"type"`
-	Percentage int    `json:"percentage,omitempty"`
-	Amount     int64  `json:"amount,omitempty"`
+	Type       string              `json:"type"`
+	Percentage int                 `json:"percentage,omitempty"`
+	Amount     int64               `json:"amount,omitempty"`
+	Tiers      []PromotionTierForm `json:"tiers,omitempty"`
+	BuyQty     int                 `json:"buy_qty,omitempty"`
+	GetQty     int                 `json:"get_qty,omitempty"`
 }
 
 func encodePromotionAction(form PromotionRuleForm) ([]byte, error) {
@@ -129,9 +144,43 @@ func encodePromotionAction(form PromotionRuleForm) ([]byte, error) {
 			return nil, fmt.Errorf("fixed amount must be positive")
 		}
 		return json.Marshal(actionPayload{Type: "fixed", Amount: form.ActionAmount})
+	case "tiered":
+		if len(form.ActionTiers) == 0 {
+			return nil, fmt.Errorf("tiered action requires at least one tier")
+		}
+		tiers := append([]PromotionTierForm(nil), form.ActionTiers...)
+		if err := validatePromotionTiers(tiers); err != nil {
+			return nil, err
+		}
+		return json.Marshal(actionPayload{Type: "tiered", Tiers: tiers})
+	case "buy_x_get_y":
+		if form.ActionBuyQty <= 0 {
+			return nil, fmt.Errorf("buy_qty must be positive")
+		}
+		if form.ActionGetQty <= 0 {
+			return nil, fmt.Errorf("get_qty must be positive")
+		}
+		return json.Marshal(actionPayload{Type: "buy_x_get_y", BuyQty: form.ActionBuyQty, GetQty: form.ActionGetQty})
 	default:
 		return nil, fmt.Errorf("unknown action type: %q", form.ActionType)
 	}
+}
+
+func validatePromotionTiers(tiers []PromotionTierForm) error {
+	prev := 0
+	for i, tier := range tiers {
+		if tier.MinQty <= 0 {
+			return fmt.Errorf("tier %d min_qty must be positive", i)
+		}
+		if tier.MinQty <= prev {
+			return fmt.Errorf("tier min_qty values must be strictly increasing")
+		}
+		if tier.Percentage <= 0 || tier.Percentage > 100 {
+			return fmt.Errorf("tier %d percentage must be between 1 and 100", i)
+		}
+		prev = tier.MinQty
+	}
+	return nil
 }
 
 func decodePromotionAction(data []byte) (PromotionRuleForm, error) {
@@ -158,6 +207,27 @@ func decodePromotionAction(data []byte) (PromotionRuleForm, error) {
 		return PromotionRuleForm{
 			ActionType:   "fixed",
 			ActionAmount: cfg.Amount,
+		}, nil
+	case "tiered":
+		tiers := append([]PromotionTierForm(nil), cfg.Tiers...)
+		if err := validatePromotionTiers(tiers); err != nil {
+			return PromotionRuleForm{}, err
+		}
+		return PromotionRuleForm{
+			ActionType:  "tiered",
+			ActionTiers: tiers,
+		}, nil
+	case "buy_x_get_y":
+		if cfg.BuyQty <= 0 {
+			return PromotionRuleForm{}, fmt.Errorf("buy_qty must be positive")
+		}
+		if cfg.GetQty <= 0 {
+			return PromotionRuleForm{}, fmt.Errorf("get_qty must be positive")
+		}
+		return PromotionRuleForm{
+			ActionType:   "buy_x_get_y",
+			ActionBuyQty: cfg.BuyQty,
+			ActionGetQty: cfg.GetQty,
 		}, nil
 	default:
 		return PromotionRuleForm{}, fmt.Errorf("unsupported action type: %q", cfg.Type)

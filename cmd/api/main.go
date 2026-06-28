@@ -516,6 +516,7 @@ func runServe(cfg *config.Config, log logger.Logger, embedScheduler bool) error 
 	}
 	pricingSteps = append(pricingSteps,
 		appPricing.NewCatalogPromotionStep(promotionRepo, couponRepo),
+		appPricing.NewCartPromotionStep(promotionRepo, couponRepo),
 		appPricing.NewTaxStep(taxRateRepo, "standard"),
 		pricing.NewFinalizeStep(),
 	)

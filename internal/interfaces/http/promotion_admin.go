@@ -36,36 +36,47 @@ func NewPromotionAdminHandlerWithAuditor(promotions promotion.PromotionRepositor
 }
 
 type promotionWriteRequest struct {
-	Name             string  `json:"name"`
-	Type             string  `json:"type"`
-	Priority         *int    `json:"priority"`
-	Active           *bool   `json:"active"`
-	CouponBound      *bool   `json:"coupon_bound"`
-	StartAt          *string `json:"start_at"`
-	EndAt            *string `json:"end_at"`
-	ConditionType    string  `json:"condition_type"`
-	ConditionValue   int     `json:"condition_value"`
-	ActionType       string  `json:"action_type"`
-	ActionPercentage int     `json:"action_percentage"`
-	ActionAmount     int64   `json:"action_amount"`
+	Name             string                   `json:"name"`
+	Type             string                   `json:"type"`
+	Priority         *int                     `json:"priority"`
+	Active           *bool                    `json:"active"`
+	CouponBound      *bool                    `json:"coupon_bound"`
+	StartAt          *string                  `json:"start_at"`
+	EndAt            *string                  `json:"end_at"`
+	ConditionType    string                   `json:"condition_type"`
+	ConditionValue   int                      `json:"condition_value"`
+	ActionType       string                   `json:"action_type"`
+	ActionPercentage int                      `json:"action_percentage"`
+	ActionAmount     int64                    `json:"action_amount"`
+	ActionTiers      []admin.PromotionTierForm `json:"action_tiers"`
+	ActionBuyQty     int                      `json:"action_buy_qty"`
+	ActionGetQty     int                      `json:"action_get_qty"`
+}
+
+type adminPromotionTierResponse struct {
+	MinQty     int `json:"min_qty"`
+	Percentage int `json:"percentage"`
 }
 
 type adminPromotionResponse struct {
-	ID               string `json:"id"`
-	Name             string `json:"name"`
-	Type             string `json:"type"`
-	Priority         int    `json:"priority"`
-	Active           bool   `json:"active"`
-	CouponBound      bool   `json:"coupon_bound"`
-	StartAt          string `json:"start_at,omitempty"`
-	EndAt            string `json:"end_at,omitempty"`
-	ConditionType    string `json:"condition_type"`
-	ConditionValue   int    `json:"condition_value"`
-	ActionType       string `json:"action_type"`
-	ActionPercentage int    `json:"action_percentage"`
-	ActionAmount     int64  `json:"action_amount"`
-	CreatedAt        string `json:"created_at"`
-	UpdatedAt        string `json:"updated_at"`
+	ID               string                       `json:"id"`
+	Name             string                       `json:"name"`
+	Type             string                       `json:"type"`
+	Priority         int                          `json:"priority"`
+	Active           bool                         `json:"active"`
+	CouponBound      bool                         `json:"coupon_bound"`
+	StartAt          string                       `json:"start_at,omitempty"`
+	EndAt            string                       `json:"end_at,omitempty"`
+	ConditionType    string                       `json:"condition_type"`
+	ConditionValue   int                          `json:"condition_value"`
+	ActionType       string                       `json:"action_type"`
+	ActionPercentage int                          `json:"action_percentage"`
+	ActionAmount     int64                        `json:"action_amount"`
+	ActionTiers      []adminPromotionTierResponse `json:"action_tiers,omitempty"`
+	ActionBuyQty     int                          `json:"action_buy_qty,omitempty"`
+	ActionGetQty     int                          `json:"action_get_qty,omitempty"`
+	CreatedAt        string                       `json:"created_at"`
+	UpdatedAt        string                       `json:"updated_at"`
 }
 
 func (h *PromotionAdminHandler) audit(r *http.Request, action admin.AuditAction, resourceID string, details map[string]interface{}, err error) {
@@ -129,9 +140,26 @@ func (h *PromotionAdminHandler) toResponse(p *promotion.Promotion) (adminPromoti
 		ActionType:       rules.ActionType,
 		ActionPercentage: rules.ActionPercentage,
 		ActionAmount:     rules.ActionAmount,
+		ActionTiers:      toAdminPromotionTierResponses(rules.ActionTiers),
+		ActionBuyQty:     rules.ActionBuyQty,
+		ActionGetQty:     rules.ActionGetQty,
 		CreatedAt:        p.CreatedAt.UTC().Format(time.RFC3339),
 		UpdatedAt:        p.UpdatedAt.UTC().Format(time.RFC3339),
 	}, nil
+}
+
+func toAdminPromotionTierResponses(tiers []admin.PromotionTierForm) []adminPromotionTierResponse {
+	if len(tiers) == 0 {
+		return nil
+	}
+	out := make([]adminPromotionTierResponse, len(tiers))
+	for i, tier := range tiers {
+		out[i] = adminPromotionTierResponse{
+			MinQty:     tier.MinQty,
+			Percentage: tier.Percentage,
+		}
+	}
+	return out
 }
 
 func (h *PromotionAdminHandler) applyWriteRequest(p *promotion.Promotion, req promotionWriteRequest, mergeRules bool) error {
@@ -187,6 +215,9 @@ func (h *PromotionAdminHandler) applyWriteRequest(p *promotion.Promotion, req pr
 		ActionType:       req.ActionType,
 		ActionPercentage: req.ActionPercentage,
 		ActionAmount:     req.ActionAmount,
+		ActionTiers:      append([]admin.PromotionTierForm(nil), req.ActionTiers...),
+		ActionBuyQty:     req.ActionBuyQty,
+		ActionGetQty:     req.ActionGetQty,
 	}
 	if mergeRules {
 		existing, err := admin.DecodePromotionRules(p.Type, p.Conditions, p.Actions)
@@ -201,6 +232,9 @@ func (h *PromotionAdminHandler) applyWriteRequest(p *promotion.Promotion, req pr
 			rules.ActionType = existing.ActionType
 			rules.ActionPercentage = existing.ActionPercentage
 			rules.ActionAmount = existing.ActionAmount
+			rules.ActionTiers = existing.ActionTiers
+			rules.ActionBuyQty = existing.ActionBuyQty
+			rules.ActionGetQty = existing.ActionGetQty
 		}
 	}
 	conditions, actions, err := admin.EncodePromotionRules(p.Type, rules)

@@ -488,3 +488,49 @@ func TestCatalogPromotionStep_FullPipeline(t *testing.T) {
 		t.Errorf("expected grand total 1800, got %d", pctx.GrandTotal.Amount())
 	}
 }
+
+func TestCatalogPromotionStep_TieredDiscount(t *testing.T) {
+	promos := &stubPromotionRepo{promos: []promotion.Promotion{
+		makePromo("pt", "Tiered", true, false,
+			map[string]string{"type": "always"},
+			map[string]interface{}{
+				"type": "tiered",
+				"tiers": []map[string]interface{}{
+					{"min_qty": 2, "percentage": 5},
+					{"min_qty": 5, "percentage": 15},
+				},
+			}),
+	}}
+	step := appPricing.NewCatalogPromotionStep(promos, &stubCouponRepo{})
+	pctx := makePricingCtx(t, "USD", makeItem(t, "v1", 5, 1000, "USD"))
+
+	if err := step.Apply(context.Background(), pctx); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(pctx.Items[0].Adjustments) != 1 {
+		t.Fatalf("expected 1 adjustment, got %d", len(pctx.Items[0].Adjustments))
+	}
+	if pctx.Items[0].Adjustments[0].Amount.Amount() != 750 {
+		t.Errorf("expected discount 750, got %d", pctx.Items[0].Adjustments[0].Amount.Amount())
+	}
+}
+
+func TestCatalogPromotionStep_BuyXGetY(t *testing.T) {
+	promos := &stubPromotionRepo{promos: []promotion.Promotion{
+		makePromo("pb", "Buy 2 Get 1", true, false,
+			map[string]string{"type": "always"},
+			map[string]interface{}{"type": "buy_x_get_y", "buy_qty": 2, "get_qty": 1}),
+	}}
+	step := appPricing.NewCatalogPromotionStep(promos, &stubCouponRepo{})
+	pctx := makePricingCtx(t, "USD", makeItem(t, "v1", 6, 1000, "USD"))
+
+	if err := step.Apply(context.Background(), pctx); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(pctx.Items[0].Adjustments) != 1 {
+		t.Fatalf("expected 1 adjustment, got %d", len(pctx.Items[0].Adjustments))
+	}
+	if pctx.Items[0].Adjustments[0].Amount.Amount() != 2000 {
+		t.Errorf("expected discount 2000, got %d", pctx.Items[0].Adjustments[0].Amount.Amount())
+	}
+}
