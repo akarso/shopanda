@@ -15,10 +15,13 @@ import (
 	checkoutApp "github.com/akarso/shopanda/internal/application/checkout"
 	"github.com/akarso/shopanda/internal/domain/cart"
 	"github.com/akarso/shopanda/internal/domain/catalog"
+	"github.com/akarso/shopanda/internal/domain/customer"
 	"github.com/akarso/shopanda/internal/domain/inventory"
 	"github.com/akarso/shopanda/internal/domain/order"
+	"github.com/akarso/shopanda/internal/domain/payment"
 	"github.com/akarso/shopanda/internal/domain/pricing"
 	"github.com/akarso/shopanda/internal/domain/shared"
+	credit "github.com/akarso/shopanda/internal/domain/storecredit"
 	shophttp "github.com/akarso/shopanda/internal/interfaces/http"
 	"github.com/akarso/shopanda/internal/platform/auth/testhelper"
 	"github.com/akarso/shopanda/internal/platform/event"
@@ -26,6 +29,7 @@ import (
 	"github.com/akarso/shopanda/internal/platform/logger"
 
 	appPricing "github.com/akarso/shopanda/internal/application/pricing"
+	storecreditApp "github.com/akarso/shopanda/internal/application/storecredit"
 )
 
 // ── stubs (checkout-specific) ───────────────────────────────────────────
@@ -123,6 +127,7 @@ func (r *stubCheckoutReservationRepo) ReleaseExpiredBefore(_ context.Context, _ 
 
 type stubCheckoutOrderRepo struct {
 	saved *order.Order
+	err   error
 }
 
 func (r *stubCheckoutOrderRepo) FindByID(_ context.Context, _ string) (*order.Order, error) {
@@ -138,6 +143,9 @@ func (r *stubCheckoutOrderRepo) List(_ context.Context, _, _ int) ([]order.Order
 	return nil, nil
 }
 func (r *stubCheckoutOrderRepo) Save(_ context.Context, o *order.Order) error {
+	if r.err != nil {
+		return r.err
+	}
 	r.saved = o
 	return nil
 }
@@ -188,6 +196,96 @@ func (r *stubCheckoutPriceRepo) List(_ context.Context, _, _ int) ([]pricing.Pri
 
 func (r *stubCheckoutPriceRepo) Upsert(_ context.Context, _ *pricing.Price) error { return nil }
 
+type stubCheckoutStoreCreditRepo struct {
+	balance  int64
+	redeemed []int64
+	issued   []int64
+}
+
+func (s *stubCheckoutStoreCreditRepo) GetBalance(_ context.Context, _, currency string) (shared.Money, error) {
+	return shared.MustNewMoney(s.balance, currency), nil
+}
+
+func (s *stubCheckoutStoreCreditRepo) Issue(_ context.Context, _ string, amount shared.Money, _ string) error {
+	s.issued = append(s.issued, amount.Amount())
+	s.balance += amount.Amount()
+	return nil
+}
+
+func (s *stubCheckoutStoreCreditRepo) Redeem(_ context.Context, _, _ string, amount shared.Money) error {
+	s.redeemed = append(s.redeemed, amount.Amount())
+	s.balance -= amount.Amount()
+	return nil
+}
+
+func (s *stubCheckoutStoreCreditRepo) ListLedger(_ context.Context, _, _ string, _, _ int) ([]credit.Entry, error) {
+	return nil, nil
+}
+
+type stubCheckoutCustomerRepo struct{}
+
+func (s *stubCheckoutCustomerRepo) FindByID(_ context.Context, id string) (*customer.Customer, error) {
+	if id == "" {
+		return nil, nil
+	}
+	c, err := customer.NewCustomer(id, id+"@example.com")
+	if err != nil {
+		return nil, err
+	}
+	return &c, nil
+}
+
+func (s *stubCheckoutCustomerRepo) FindByEmail(_ context.Context, _ string) (*customer.Customer, error) {
+	return nil, nil
+}
+func (s *stubCheckoutCustomerRepo) Create(_ context.Context, _ *customer.Customer) error { return nil }
+func (s *stubCheckoutCustomerRepo) Update(_ context.Context, _ *customer.Customer) error { return nil }
+func (s *stubCheckoutCustomerRepo) ListCustomers(_ context.Context, _, _ int) ([]customer.Customer, error) {
+	return nil, nil
+}
+func (s *stubCheckoutCustomerRepo) BumpTokenGeneration(_ context.Context, _ string) error { return nil }
+func (s *stubCheckoutCustomerRepo) ChangePasswordAndBumpTokenGeneration(_ context.Context, _, _ string) error {
+	return nil
+}
+func (s *stubCheckoutCustomerRepo) Delete(_ context.Context, _ string) error { return nil }
+func (s *stubCheckoutCustomerRepo) DeleteAccount(_ context.Context, _ string) error {
+	return nil
+}
+
+type stubCheckoutPaymentProvider struct {
+	method payment.PaymentMethod
+}
+
+func (p *stubCheckoutPaymentProvider) Method() payment.PaymentMethod { return p.method }
+
+func (p *stubCheckoutPaymentProvider) Initiate(_ context.Context, py *payment.Payment) (payment.ProviderResult, error) {
+	return payment.ProviderResult{
+		ProviderRef: "manual:" + py.ID,
+		Success:     true,
+	}, nil
+}
+
+type stubCheckoutPaymentRepo struct {
+	created int
+}
+
+func (r *stubCheckoutPaymentRepo) Create(_ context.Context, _ *payment.Payment) error {
+	r.created++
+	return nil
+}
+func (r *stubCheckoutPaymentRepo) FindByID(_ context.Context, _ string) (*payment.Payment, error) {
+	return nil, nil
+}
+func (r *stubCheckoutPaymentRepo) FindByOrderID(_ context.Context, _ string) (*payment.Payment, error) {
+	return nil, nil
+}
+func (r *stubCheckoutPaymentRepo) UpdateStatus(_ context.Context, _ *payment.Payment, _ time.Time) error {
+	return nil
+}
+func (r *stubCheckoutPaymentRepo) List(_ context.Context, _ payment.ListFilter) ([]payment.Payment, error) {
+	return nil, nil
+}
+
 // ── helpers ─────────────────────────────────────────────────────────────
 
 func checkoutTestLogger() logger.Logger {
@@ -195,11 +293,20 @@ func checkoutTestLogger() logger.Logger {
 }
 
 func checkoutSetup() (*stubCheckoutCartRepo, *stubCheckoutVariantRepo, *stubCheckoutPriceRepo, *http.ServeMux) {
+	carts, variants, prices, _, mux := checkoutBuild(nil, false)
+	return carts, variants, prices, mux
+}
+
+func checkoutBuild(creditRepo *stubCheckoutStoreCreditRepo, withPayment bool) (*stubCheckoutCartRepo, *stubCheckoutVariantRepo, *stubCheckoutPriceRepo, *stubCheckoutStoreCreditRepo, *http.ServeMux) {
 	carts := newStubCheckoutCartRepo()
 	variants := newStubCheckoutVariantRepo()
 	prices := newStubCheckoutPriceRepo()
 	reservations := &stubCheckoutReservationRepo{}
 	orders := &stubCheckoutOrderRepo{}
+	var creditSvc *storecreditApp.Service
+	if creditRepo != nil {
+		creditSvc = storecreditApp.NewService(creditRepo, &stubCheckoutCustomerRepo{})
+	}
 	log := checkoutTestLogger()
 	bus := event.NewBus(log)
 
@@ -211,21 +318,28 @@ func checkoutSetup() (*stubCheckoutCartRepo, *stubCheckoutVariantRepo, *stubChec
 	validateStep := checkoutApp.NewValidateCartStep(variants)
 	pricingStep := checkoutApp.NewRecalculatePricingStep(pipeline)
 	reserveStep := checkoutApp.NewReserveInventoryStep(reservations)
-	createOrderStep := checkoutApp.NewCreateOrderStep(orders, variants, nil)
+	createOrderStep := checkoutApp.NewCreateOrderStep(orders, variants, creditSvc)
 
-	workflow := checkoutApp.NewWorkflow([]checkoutApp.Step{
+	steps := []checkoutApp.Step{
 		validateStep,
 		pricingStep,
 		reserveStep,
 		createOrderStep,
-	}, bus, log)
+	}
+	if withPayment {
+		reg := payment.NewProviderRegistry()
+		reg.Register(&stubCheckoutPaymentProvider{method: payment.MethodManual})
+		steps = append(steps, checkoutApp.NewInitiatePaymentStep(reg, &stubCheckoutPaymentRepo{}))
+	}
+
+	workflow := checkoutApp.NewWorkflow(steps, bus, log)
 
 	svc := checkoutApp.NewService(carts, workflow, log)
 	handler := shophttp.NewCheckoutHandler(svc)
 
 	mux := http.NewServeMux()
 	mux.Handle("POST /api/v1/checkout", handler.StartCheckout())
-	return carts, variants, prices, mux
+	return carts, variants, prices, creditRepo, mux
 }
 
 func seedCheckoutCart(carts *stubCheckoutCartRepo, variants *stubCheckoutVariantRepo, prices *stubCheckoutPriceRepo) string {
@@ -320,6 +434,12 @@ func TestCheckoutHandler_StartCheckout_OK(t *testing.T) {
 	// total_amount = 2 * 1500 = 3000
 	if o["total_amount"].(float64) != 3000 {
 		t.Errorf("total_amount = %v, want 3000", o["total_amount"])
+	}
+	if o["store_credit_applied"].(float64) != 0 {
+		t.Errorf("store_credit_applied = %v, want 0", o["store_credit_applied"])
+	}
+	if o["payable_amount"].(float64) != 3000 {
+		t.Errorf("payable_amount = %v, want 3000", o["payable_amount"])
 	}
 
 	if o["id"] == nil || o["id"] == "" {
@@ -465,5 +585,69 @@ func TestCheckoutHandler_StartCheckout_Guest_CannotUseCustomerCart(t *testing.T)
 
 	if rec.Code != http.StatusForbidden {
 		t.Fatalf("status = %d, want %d; body: %s", rec.Code, http.StatusForbidden, rec.Body.String())
+	}
+}
+
+func TestCheckoutHandler_StartCheckout_WithStoreCredit(t *testing.T) {
+	creditRepo := &stubCheckoutStoreCreditRepo{balance: 2000}
+	carts, variants, prices, credits, mux := checkoutBuild(creditRepo, false)
+	cartID := seedCheckoutCart(carts, variants, prices)
+
+	body := `{"cart_id":"` + cartID + `","store_credit_amount":1000,"address":` + checkoutAddressJSON() + `}`
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("POST", "/api/v1/checkout", strings.NewReader(body))
+	req = testhelper.CustomerRequest(req, "cust-1")
+	mux.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("status = %d, want %d; body: %s", rec.Code, http.StatusCreated, rec.Body.String())
+	}
+	resp := parseCheckoutBody(t, rec)
+	data := resp["data"].(map[string]interface{})
+	o := data["order"].(map[string]interface{})
+
+	if o["store_credit_applied"].(float64) != 1000 {
+		t.Errorf("store_credit_applied = %v, want 1000", o["store_credit_applied"])
+	}
+	if o["payable_amount"].(float64) != 2000 {
+		t.Errorf("payable_amount = %v, want 2000", o["payable_amount"])
+	}
+	if len(credits.redeemed) != 1 || credits.redeemed[0] != 1000 {
+		t.Errorf("redeemed = %v, want [1000]", credits.redeemed)
+	}
+	if credits.balance != 1000 {
+		t.Errorf("balance = %d, want 1000", credits.balance)
+	}
+}
+
+func TestCheckoutHandler_StartCheckout_FullStoreCreditZeroPayable(t *testing.T) {
+	creditRepo := &stubCheckoutStoreCreditRepo{balance: 5000}
+	carts, variants, prices, credits, mux := checkoutBuild(creditRepo, true)
+	cartID := seedCheckoutCart(carts, variants, prices)
+
+	body := `{"cart_id":"` + cartID + `","store_credit_amount":3000,"address":` + checkoutAddressJSON() + `}`
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("POST", "/api/v1/checkout", strings.NewReader(body))
+	req = testhelper.CustomerRequest(req, "cust-1")
+	mux.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("status = %d, want %d; body: %s", rec.Code, http.StatusCreated, rec.Body.String())
+	}
+	resp := parseCheckoutBody(t, rec)
+	data := resp["data"].(map[string]interface{})
+	o := data["order"].(map[string]interface{})
+
+	if o["store_credit_applied"].(float64) != 3000 {
+		t.Errorf("store_credit_applied = %v, want 3000", o["store_credit_applied"])
+	}
+	if o["payable_amount"].(float64) != 0 {
+		t.Errorf("payable_amount = %v, want 0", o["payable_amount"])
+	}
+	if _, ok := data["payment"]; ok {
+		t.Error("payment should be omitted when payable is zero")
+	}
+	if len(credits.redeemed) != 1 || credits.redeemed[0] != 3000 {
+		t.Errorf("redeemed = %v, want [3000]", credits.redeemed)
 	}
 }

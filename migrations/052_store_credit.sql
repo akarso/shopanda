@@ -19,4 +19,5 @@ CREATE TABLE store_credit_ledger (
 
 CREATE INDEX idx_store_credit_ledger_customer ON store_credit_ledger (customer_id, created_at DESC);
 
-ALTER TABLE orders ADD COLUMN store_credit_amount BIGINT NOT NULL DEFAULT 0 CHECK (store_credit_amount >= 0);
+ALTER TABLE orders ADD COLUMN store_credit_amount BIGINT NOT NULL DEFAULT 0
+    CHECK (store_credit_amount >= 0 AND store_credit_amount <= total_amount);

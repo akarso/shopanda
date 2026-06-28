@@ -101,6 +101,52 @@ func TestStoreCreditAdminHandler_Issue(t *testing.T) {
 	}
 }
 
+func TestStoreCreditAdminHandler_Get(t *testing.T) {
+	repo := &stubStoreCreditRepo{
+		balance: 1800,
+		entries: []credit.Entry{
+			{
+				ID:         "entry-1",
+				CustomerID: "cust-1",
+				Currency:   "EUR",
+				Amount:     shared.MustNewMoney(500, "EUR"),
+				Kind:       credit.KindIssue,
+				Note:       "goodwill",
+			},
+		},
+	}
+	svc := storecreditApp.NewService(repo, &mockAdminCustomerRepo{})
+	h := shophttp.NewStoreCreditAdminHandler(svc)
+	mux := newStoreCreditAdminRouter(h)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/admin/customers/cust-1/store-credit?offset=0&limit=10", nil)
+	req.SetPathValue("customerId", "cust-1")
+	req.Header.Set("X-Admin-Store-ID", "store-1")
+	req.Header.Set("X-Admin-Currency", "EUR")
+	req = testhelper.AdminRequest(req, "admin-1")
+
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body=%s", rec.Code, rec.Body.String())
+	}
+	var resp struct {
+		Data map[string]interface{} `json:"data"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	balance := resp.Data["balance"].(map[string]interface{})
+	if balance["amount"].(float64) != 1800 {
+		t.Errorf("balance amount = %v, want 1800", balance["amount"])
+	}
+	ledger, ok := resp.Data["ledger"].([]interface{})
+	if !ok || len(ledger) != 1 {
+		t.Fatalf("ledger = %#v, want one entry", resp.Data["ledger"])
+	}
+}
+
 func TestStoreCreditAccountHandler_GetBalance(t *testing.T) {
 	repo := &stubStoreCreditRepo{balance: 1200}
 	svc := storecreditApp.NewService(repo, &mockAdminCustomerRepo{})

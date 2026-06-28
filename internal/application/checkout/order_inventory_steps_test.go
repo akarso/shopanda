@@ -520,6 +520,7 @@ func TestCreateOrderStep_NilContext(t *testing.T) {
 type mockStoreCreditService struct {
 	balance  int64
 	redeemed []int64
+	issued   []int64
 }
 
 func (m *mockStoreCreditService) GetBalance(_ context.Context, _, currency string) (shared.Money, error) {
@@ -528,6 +529,13 @@ func (m *mockStoreCreditService) GetBalance(_ context.Context, _, currency strin
 
 func (m *mockStoreCreditService) Redeem(_ context.Context, _, _ string, amount shared.Money) error {
 	m.redeemed = append(m.redeemed, amount.Amount())
+	m.balance -= amount.Amount()
+	return nil
+}
+
+func (m *mockStoreCreditService) Issue(_ context.Context, _ string, amount shared.Money, _ string) error {
+	m.issued = append(m.issued, amount.Amount())
+	m.balance += amount.Amount()
 	return nil
 }
 
@@ -584,6 +592,36 @@ func TestCreateOrderStep_StoreCreditRequiresCustomer(t *testing.T) {
 	err = step.Execute(cctx)
 	if err == nil {
 		t.Fatal("expected validation error for guest store credit")
+	}
+}
+
+func TestCreateOrderStep_SaveErrorRollsBackStoreCredit(t *testing.T) {
+	orderRepo := &mockOrderRepo{err: errors.New("db down")}
+	variantRepo := &mockVariantRepo037{variants: variantMap037("v1")}
+	credits := &mockStoreCreditService{balance: 1500}
+	step := checkout.NewCreateOrderStep(orderRepo, variantRepo, credits)
+
+	cctx := checkout.NewContext("cart-1", "cust-1", "EUR")
+	attachCreateOrderInput(cctx)
+	cctx.Input.StoreCreditAmount = 1000
+	cctx.Cart = cartWithItems037(t, "cust-1", "v1")
+	cctx.SetMeta("pricing", pricingContext037(t, "v1"))
+
+	err := step.Execute(cctx)
+	if err == nil {
+		t.Fatal("expected error from save")
+	}
+	if len(credits.redeemed) != 1 || credits.redeemed[0] != 1000 {
+		t.Fatalf("redeemed = %v, want [1000]", credits.redeemed)
+	}
+	if len(credits.issued) != 1 || credits.issued[0] != 1000 {
+		t.Fatalf("issued rollback = %v, want [1000]", credits.issued)
+	}
+	if credits.balance != 1500 {
+		t.Errorf("balance = %d, want 1500 after rollback", credits.balance)
+	}
+	if _, ok := cctx.GetMeta("created_order_id"); ok {
+		t.Error("created_order_id should not be set on save failure")
 	}
 }
 

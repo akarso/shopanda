@@ -67,18 +67,23 @@ func (r *StoreCreditRepo) applyEntry(ctx context.Context, entry storecredit.Entr
 	}
 	defer tx.Rollback()
 
+	const ensureAccount = `INSERT INTO store_credit_accounts (customer_id, currency, balance, updated_at)
+		VALUES ($1, $2, 0, now())
+		ON CONFLICT (customer_id, currency) DO NOTHING`
+	if _, err := tx.ExecContext(ctx, ensureAccount, entry.CustomerID, entry.Currency); err != nil {
+		return fmt.Errorf("store_credit_repo: ensure account: %w", err)
+	}
+
 	var balance int64
 	err = tx.QueryRowContext(ctx,
 		`SELECT balance FROM store_credit_accounts WHERE customer_id = $1 AND currency = $2 FOR UPDATE`,
 		entry.CustomerID, entry.Currency,
 	).Scan(&balance)
-	if errors.Is(err, sql.ErrNoRows) {
-		balance = 0
-	} else if err != nil {
+	if err != nil {
 		return fmt.Errorf("store_credit_repo: lock account: %w", err)
 	}
 	if balance+delta < 0 {
-		return fmt.Errorf("store_credit_repo: insufficient balance")
+		return fmt.Errorf("%w", storecredit.ErrInsufficientBalance)
 	}
 	newBalance := balance + delta
 

@@ -15,6 +15,7 @@ import (
 type storeCreditService interface {
 	GetBalance(ctx context.Context, customerID, currency string) (shared.Money, error)
 	Redeem(ctx context.Context, customerID, orderID string, amount shared.Money) error
+	Issue(ctx context.Context, customerID string, amount shared.Money, note string) error
 }
 
 // CreateOrderStep builds and persists an order from the cart and pricing snapshot.
@@ -99,11 +100,21 @@ func (s *CreateOrderStep) Execute(cctx *Context) error {
 		return fmt.Errorf("create_order: tax snapshot: %w", err)
 	}
 
-	if err := s.applyStoreCredit(ctx, cctx, &o); err != nil {
+	if err := o.SetTaxSnapshot(cctx.Input.Address.Country, pctx.TaxTotal); err != nil {
+		return fmt.Errorf("create_order: tax snapshot: %w", err)
+	}
+
+	appliedCredit, err := s.applyStoreCredit(ctx, cctx, &o)
+	if err != nil {
 		return err
 	}
 
 	if err := s.orders.Save(ctx, &o); err != nil {
+		if appliedCredit != nil && s.credits != nil {
+			if rollbackErr := s.credits.Issue(ctx, cctx.CustomerID, *appliedCredit, fmt.Sprintf("create_order rollback: order save failed (%s)", o.ID)); rollbackErr != nil {
+				return fmt.Errorf("create_order: save: %w (store credit rollback failed: %v)", err, rollbackErr)
+			}
+		}
 		return fmt.Errorf("create_order: save: %w", err)
 	}
 
@@ -112,21 +123,21 @@ func (s *CreateOrderStep) Execute(cctx *Context) error {
 	return nil
 }
 
-func (s *CreateOrderStep) applyStoreCredit(ctx context.Context, cctx *Context, o *order.Order) error {
+func (s *CreateOrderStep) applyStoreCredit(ctx context.Context, cctx *Context, o *order.Order) (*shared.Money, error) {
 	requested := cctx.Input.StoreCreditAmount
 	if requested <= 0 {
-		return nil
+		return nil, nil
 	}
 	if cctx.CustomerID == "" {
-		return apperror.Validation("store credit requires an authenticated customer")
+		return nil, apperror.Validation("store credit requires an authenticated customer")
 	}
 	if s.credits == nil {
-		return apperror.Validation("store credit is not available")
+		return nil, apperror.Validation("store credit is not available")
 	}
 
 	balance, err := s.credits.GetBalance(ctx, cctx.CustomerID, cctx.Currency)
 	if err != nil {
-		return fmt.Errorf("create_order: store credit balance: %w", err)
+		return nil, fmt.Errorf("create_order: store credit balance: %w", err)
 	}
 
 	applyAmount := requested
@@ -137,18 +148,21 @@ func (s *CreateOrderStep) applyStoreCredit(ctx context.Context, cctx *Context, o
 		applyAmount = o.TotalAmount.Amount()
 	}
 	if applyAmount <= 0 {
-		return nil
+		return nil, nil
 	}
 
 	creditMoney, err := shared.NewMoney(applyAmount, cctx.Currency)
 	if err != nil {
-		return fmt.Errorf("create_order: store credit amount: %w", err)
+		return nil, fmt.Errorf("create_order: store credit amount: %w", err)
 	}
 	if err := s.credits.Redeem(ctx, cctx.CustomerID, o.ID, creditMoney); err != nil {
-		return fmt.Errorf("create_order: redeem store credit: %w", err)
+		return nil, fmt.Errorf("create_order: redeem store credit: %w", err)
 	}
 	if err := o.ApplyStoreCredit(creditMoney); err != nil {
-		return fmt.Errorf("create_order: apply store credit: %w", err)
+		if rollbackErr := s.credits.Issue(ctx, cctx.CustomerID, creditMoney, fmt.Sprintf("create_order rollback: apply failed (%s)", o.ID)); rollbackErr != nil {
+			return nil, fmt.Errorf("create_order: apply store credit: %w (rollback failed: %v)", err, rollbackErr)
+		}
+		return nil, fmt.Errorf("create_order: apply store credit: %w", err)
 	}
-	return nil
+	return &creditMoney, nil
 }

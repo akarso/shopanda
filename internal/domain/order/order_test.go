@@ -360,6 +360,30 @@ func TestOrder_ApplyStoreCredit_ExceedsTotal(t *testing.T) {
 	}
 }
 
+func TestOrder_PayableAmount_IncludesTax(t *testing.T) {
+	item := validItem(t)
+	o, err := order.NewOrder(id.New(), "cust-1", "", "EUR", []order.Item{item})
+	if err != nil {
+		t.Fatalf("NewOrder: %v", err)
+	}
+	tax := shared.MustNewMoney(380, "EUR")
+	if err := o.SetTaxSnapshot("DE", tax); err != nil {
+		t.Fatalf("SetTaxSnapshot: %v", err)
+	}
+	credit := shared.MustNewMoney(500, "EUR")
+	if err := o.ApplyStoreCredit(credit); err != nil {
+		t.Fatalf("ApplyStoreCredit: %v", err)
+	}
+	payable, err := o.PayableAmount()
+	if err != nil {
+		t.Fatalf("PayableAmount: %v", err)
+	}
+	// subtotal 2000 + tax 380 - credit 500 = 1880
+	if payable.Amount() != 1880 {
+		t.Errorf("PayableAmount = %d, want 1880", payable.Amount())
+	}
+}
+
 func TestSetTaxSnapshot_InvalidInputs(t *testing.T) {
 	item := validItem(t)
 	base, err := order.NewOrder(id.New(), "cust-1", "", "EUR", []order.Item{item})

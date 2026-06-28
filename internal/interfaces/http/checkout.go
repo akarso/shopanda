@@ -49,7 +49,7 @@ type checkoutOrderResponse struct {
 	Currency           string            `json:"currency"`
 	Items              []orderItemResp   `json:"items"`
 	TotalAmount        int64             `json:"total_amount"`
-	StoreCreditApplied int64             `json:"store_credit_applied,omitempty"`
+	StoreCreditApplied int64             `json:"store_credit_applied"`
 	PayableAmount      int64             `json:"payable_amount"`
 	CreatedAt          string            `json:"created_at"`
 }

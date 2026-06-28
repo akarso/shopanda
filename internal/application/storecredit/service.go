@@ -2,6 +2,7 @@ package storecredit
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
 	"github.com/akarso/shopanda/internal/domain/customer"
@@ -50,7 +51,7 @@ func (s *Service) GetBalance(ctx context.Context, customerID, currency string) (
 // Redeem debits store credit for an order.
 func (s *Service) Redeem(ctx context.Context, customerID, orderID string, amount shared.Money) error {
 	if err := s.credits.Redeem(ctx, customerID, orderID, amount); err != nil {
-		if err.Error() == "store_credit_repo: insufficient balance" {
+		if errors.Is(err, credit.ErrInsufficientBalance) {
 			return apperror.Validation("insufficient store credit balance")
 		}
 		return fmt.Errorf("storecredit: redeem: %w", err)
