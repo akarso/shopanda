@@ -30,7 +30,7 @@ func SignPendingLogin(jwtSecret string, claims PendingLoginClaims, ttl time.Dura
 	if err != nil {
 		return "", time.Time{}, fmt.Errorf("mfasec: pending login marshal: %w", err)
 	}
-	mac := hmac.New(sha256.New, deriveKey(jwtSecret))
+	mac := hmac.New(sha256.New, pendingLoginMACKey(jwtSecret))
 	mac.Write([]byte(pendingLoginPurpose))
 	mac.Write(payload)
 	sig := mac.Sum(nil)
@@ -52,7 +52,7 @@ func VerifyPendingLogin(jwtSecret, token string) (PendingLoginClaims, error) {
 	if err != nil {
 		return PendingLoginClaims{}, fmt.Errorf("mfasec: pending login: decode sig: %w", err)
 	}
-	mac := hmac.New(sha256.New, deriveKey(jwtSecret))
+	mac := hmac.New(sha256.New, pendingLoginMACKey(jwtSecret))
 	mac.Write([]byte(pendingLoginPurpose))
 	mac.Write(payload)
 	if !hmac.Equal(sig, mac.Sum(nil)) {

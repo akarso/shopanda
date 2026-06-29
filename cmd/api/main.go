@@ -604,7 +604,9 @@ func runServe(cfg *config.Config, log logger.Logger, embedScheduler bool) error 
 		return err
 	}
 	mfaService := mfaApp.NewService(mfaRepo, customerRepo, configRepo, cfg.Auth.JWTSecret, cfg.Auth.MFAEnabled)
-	authService.SetMFAClient(mfaService)
+	if cfg.Auth.MFAEnabled {
+		authService.SetMFAClient(mfaService)
+	}
 
 	// Admin schema registry.
 	adminRegistry := admin.NewRegistry()
@@ -826,7 +828,9 @@ func runServe(cfg *config.Config, log logger.Logger, embedScheduler bool) error 
 	// Auth routes.
 	router.HandleFunc("POST /api/v1/auth/register", authHandler.Register())
 	router.HandleFunc("POST /api/v1/auth/login", authHandler.Login())
-	router.HandleFunc("POST /api/v1/auth/login/mfa", authHandler.LoginMFA())
+	if cfg.Auth.MFAEnabled {
+		router.HandleFunc("POST /api/v1/auth/login/mfa", authHandler.LoginMFA())
+	}
 	router.Handle("POST /api/v1/auth/logout", requireAuth(authHandler.Logout()))
 	router.Handle("GET /api/v1/auth/me", requireAuth(authHandler.Me()))
 	router.Handle("PUT /api/v1/auth/me/profile", requireAuth(authHandler.UpdateProfile()))
@@ -921,11 +925,13 @@ func runServe(cfg *config.Config, log logger.Logger, embedScheduler bool) error 
 	router.Handle("GET /api/v1/admin/roles", requireSettingsRead(adminRoleHandler.List()))
 	router.Handle("GET /api/v1/admin/roles/{role}", requireSettingsRead(adminRoleHandler.Get()))
 	router.Handle("PUT /api/v1/admin/roles/{role}", requireSettingsWrite(adminRoleHandler.Update()))
-	router.Handle("GET /api/v1/admin/mfa", requireAuth(adminMFAHandler.Status()))
-	router.Handle("POST /api/v1/admin/mfa/enroll", requireAuth(adminMFAHandler.EnrollBegin()))
-	router.Handle("POST /api/v1/admin/mfa/enroll/confirm", requireAuth(adminMFAHandler.EnrollConfirm()))
-	router.Handle("DELETE /api/v1/admin/mfa", requireAuth(adminMFAHandler.Disable()))
-	router.Handle("POST /api/v1/admin/mfa/recovery/regenerate", requireAuth(adminMFAHandler.RegenerateRecoveryCodes()))
+	if cfg.Auth.MFAEnabled {
+		router.Handle("GET /api/v1/admin/mfa", requireAuth(adminMFAHandler.Status()))
+		router.Handle("POST /api/v1/admin/mfa/enroll", requireAuth(adminMFAHandler.EnrollBegin()))
+		router.Handle("POST /api/v1/admin/mfa/enroll/confirm", requireAuth(adminMFAHandler.EnrollConfirm()))
+		router.Handle("DELETE /api/v1/admin/mfa", requireAuth(adminMFAHandler.Disable()))
+		router.Handle("POST /api/v1/admin/mfa/recovery/regenerate", requireAuth(adminMFAHandler.RegenerateRecoveryCodes()))
+	}
 	router.Handle("GET /api/v1/admin/audit", requireAuditRead(auditLogAdmin.List()))
 	router.Handle("GET /api/v1/admin/forms/{name}", requireAuth(schemaHandler.GetForm()))
 	router.Handle("GET /api/v1/admin/grids/{name}", requireAuth(schemaHandler.GetGrid()))

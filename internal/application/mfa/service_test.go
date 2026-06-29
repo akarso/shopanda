@@ -29,10 +29,14 @@ func (s *stubMFARepo) SavePendingSecret(_ context.Context, customerID, secretEnc
 	return nil
 }
 
-func (s *stubMFARepo) ConfirmEnrollment(_ context.Context, customerID string, confirmedAt time.Time) error {
+func (s *stubMFARepo) FinalizeEnrollment(_ context.Context, customerID string, confirmedAt time.Time, codeHashes []string) error {
 	state := s.states[customerID]
 	state.ConfirmedAt = &confirmedAt
 	s.states[customerID] = state
+	if s.codes == nil {
+		s.codes = map[string][]string{}
+	}
+	s.codes[customerID] = append([]string(nil), codeHashes...)
 	return nil
 }
 
@@ -152,6 +156,71 @@ func TestService_EnrollAndLoginWithTOTP(t *testing.T) {
 	}
 	if out.ID != "u1" {
 		t.Fatalf("customer id = %q, want u1", out.ID)
+	}
+}
+
+func TestService_RequiredForLogin_PolicyWithoutEnrollment(t *testing.T) {
+	admin := &customer.Customer{
+		ID:     "u1",
+		Role:   customer.RoleAdmin,
+		Status: customer.StatusActive,
+	}
+	svc := mfaApp.NewService(
+		&stubMFARepo{states: map[string]mfadomain.State{}},
+		&stubCustomerRepo{byID: map[string]*customer.Customer{"u1": admin}},
+		&stubConfigRepo{values: map[string]interface{}{"security.admin_mfa_required": true}},
+		"test-secret",
+		true,
+	)
+
+	required, err := svc.RequiredForLogin(context.Background(), admin)
+	if err != nil {
+		t.Fatalf("RequiredForLogin: %v", err)
+	}
+	if !required {
+		t.Fatal("expected policy-required admin to require mfa challenge")
+	}
+}
+
+func TestService_CompleteLogin_LocksOutAfterFailures(t *testing.T) {
+	hash, err := password.Hash("password123")
+	if err != nil {
+		t.Fatalf("hash password: %v", err)
+	}
+	admin := &customer.Customer{
+		ID:              "u1",
+		Email:           "admin@example.com",
+		Role:            customer.RoleAdmin,
+		Status:          customer.StatusActive,
+		PasswordHash:    hash,
+		TokenGeneration: 1,
+	}
+	repo := &stubMFARepo{states: map[string]mfadomain.State{}}
+	customers := &stubCustomerRepo{byID: map[string]*customer.Customer{"u1": admin}}
+	svc := mfaApp.NewService(repo, customers, &stubConfigRepo{}, "test-secret", true)
+
+	begin, err := svc.BeginEnrollment(context.Background(), "u1")
+	if err != nil {
+		t.Fatalf("BeginEnrollment: %v", err)
+	}
+	code, err := mfasec.GenerateTOTPCode(begin.Secret, time.Now())
+	if err != nil {
+		t.Fatalf("GenerateTOTPCode: %v", err)
+	}
+	if _, err := svc.ConfirmEnrollment(context.Background(), "u1", code); err != nil {
+		t.Fatalf("ConfirmEnrollment: %v", err)
+	}
+
+	pending, _, err := svc.IssuePendingLogin(admin)
+	if err != nil {
+		t.Fatalf("IssuePendingLogin: %v", err)
+	}
+	for i := 0; i < 5; i++ {
+		_, _ = svc.CompleteLogin(context.Background(), pending, "000000")
+	}
+	_, err = svc.CompleteLogin(context.Background(), pending, "000000")
+	if err == nil {
+		t.Fatal("expected lockout after repeated failures")
 	}
 }
 

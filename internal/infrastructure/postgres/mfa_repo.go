@@ -68,35 +68,65 @@ func (r *MFARepo) SavePendingSecret(ctx context.Context, customerID, secretEnc s
 	return nil
 }
 
-// ConfirmEnrollment marks TOTP as active.
-func (r *MFARepo) ConfirmEnrollment(ctx context.Context, customerID string, confirmedAt time.Time) error {
-	const q = `UPDATE customers
+// ConfirmEnrollment marks TOTP as active and stores recovery codes atomically.
+func (r *MFARepo) FinalizeEnrollment(ctx context.Context, customerID string, confirmedAt time.Time, codeHashes []string) error {
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("mfa_repo: finalize enrollment begin: %w", err)
+	}
+	defer tx.Rollback() //nolint:errcheck
+
+	const confirmQ = `UPDATE customers
 		SET totp_confirmed_at = $1, updated_at = $2
 		WHERE id = $3 AND totp_secret_enc IS NOT NULL`
-	res, err := r.db.ExecContext(ctx, q, confirmedAt.UTC(), time.Now().UTC(), customerID)
+	res, err := tx.ExecContext(ctx, confirmQ, confirmedAt.UTC(), time.Now().UTC(), customerID)
 	if err != nil {
-		return fmt.Errorf("mfa_repo: confirm enrollment: %w", err)
+		return fmt.Errorf("mfa_repo: finalize enrollment confirm: %w", err)
 	}
 	n, err := res.RowsAffected()
 	if err != nil {
-		return fmt.Errorf("mfa_repo: confirm enrollment rows: %w", err)
+		return fmt.Errorf("mfa_repo: finalize enrollment confirm rows: %w", err)
 	}
 	if n == 0 {
 		return fmt.Errorf("mfa_repo: enrollment not pending")
+	}
+
+	if _, err := tx.ExecContext(ctx, `DELETE FROM admin_mfa_recovery_codes WHERE customer_id = $1`, customerID); err != nil {
+		return fmt.Errorf("mfa_repo: finalize enrollment delete codes: %w", err)
+	}
+	const insertQ = `INSERT INTO admin_mfa_recovery_codes (id, customer_id, code_hash, created_at)
+		VALUES ($1, $2, $3, $4)`
+	now := time.Now().UTC()
+	for _, hash := range codeHashes {
+		if _, err := tx.ExecContext(ctx, insertQ, id.New(), customerID, hash, now); err != nil {
+			return fmt.Errorf("mfa_repo: finalize enrollment insert code: %w", err)
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("mfa_repo: finalize enrollment commit: %w", err)
 	}
 	return nil
 }
 
 // ClearEnrollment removes MFA state for a customer.
 func (r *MFARepo) ClearEnrollment(ctx context.Context, customerID string) error {
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("mfa_repo: clear enrollment begin: %w", err)
+	}
+	defer tx.Rollback() //nolint:errcheck
+
 	const q = `UPDATE customers
 		SET totp_secret_enc = NULL, totp_confirmed_at = NULL, updated_at = $1
 		WHERE id = $2`
-	if _, err := r.db.ExecContext(ctx, q, time.Now().UTC(), customerID); err != nil {
+	if _, err := tx.ExecContext(ctx, q, time.Now().UTC(), customerID); err != nil {
 		return fmt.Errorf("mfa_repo: clear enrollment: %w", err)
 	}
-	if _, err := r.db.ExecContext(ctx, `DELETE FROM admin_mfa_recovery_codes WHERE customer_id = $1`, customerID); err != nil {
+	if _, err := tx.ExecContext(ctx, `DELETE FROM admin_mfa_recovery_codes WHERE customer_id = $1`, customerID); err != nil {
 		return fmt.Errorf("mfa_repo: clear recovery codes: %w", err)
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("mfa_repo: clear enrollment commit: %w", err)
 	}
 	return nil
 }

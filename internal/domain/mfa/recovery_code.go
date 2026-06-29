@@ -4,6 +4,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"fmt"
+	"strings"
 
 	"github.com/akarso/shopanda/internal/domain/customer"
 )
@@ -23,12 +24,13 @@ func NewRecoveryCodes(count int) (plaintext []string, hashes []string, err error
 			return nil, nil, err
 		}
 		plaintext = append(plaintext, code)
-		hashes = append(hashes, customer.HashToken(normalizeRecoveryCode(code)))
+		hashes = append(hashes, customer.HashToken(NormalizeRecoveryCode(code)))
 	}
 	return plaintext, hashes, nil
 }
 
-func normalizeRecoveryCode(code string) string {
+// NormalizeRecoveryCode strips separators and lowercases hex recovery codes.
+func NormalizeRecoveryCode(code string) string {
 	out := make([]byte, 0, len(code))
 	for i := 0; i < len(code); i++ {
 		switch c := code[i]; c {
@@ -38,7 +40,7 @@ func normalizeRecoveryCode(code string) string {
 			out = append(out, c)
 		}
 	}
-	return string(out)
+	return strings.ToLower(string(out))
 }
 
 func generateRecoveryCode() (string, error) {

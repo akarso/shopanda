@@ -20,7 +20,8 @@ func (s State) Enrolled() bool {
 type Repository interface {
 	GetState(ctx context.Context, customerID string) (State, error)
 	SavePendingSecret(ctx context.Context, customerID, secretEnc string) error
-	ConfirmEnrollment(ctx context.Context, customerID string, confirmedAt time.Time) error
+	// FinalizeEnrollment atomically confirms enrollment and stores recovery code hashes.
+	FinalizeEnrollment(ctx context.Context, customerID string, confirmedAt time.Time, codeHashes []string) error
 	ClearEnrollment(ctx context.Context, customerID string) error
 	ReplaceRecoveryCodes(ctx context.Context, customerID string, codeHashes []string) error
 	ConsumeRecoveryCode(ctx context.Context, customerID, codeHash string) (bool, error)

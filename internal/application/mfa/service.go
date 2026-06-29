@@ -16,14 +16,36 @@ import (
 
 const pendingLoginTTL = 5 * time.Minute
 const totpIssuer = "Shopanda Admin"
+const maxLoginMFAFailures = 5
+
+type loginAttemptGuard struct {
+	counts map[string]int
+}
+
+func (g *loginAttemptGuard) locked(token string) bool {
+	return g.counts[hashLoginAttemptKey(token)] >= maxLoginMFAFailures
+}
+
+func (g *loginAttemptGuard) recordFailure(token string) {
+	g.counts[hashLoginAttemptKey(token)]++
+}
+
+func (g *loginAttemptGuard) reset(token string) {
+	delete(g.counts, hashLoginAttemptKey(token))
+}
+
+func hashLoginAttemptKey(token string) string {
+	return customer.HashToken(token)
+}
 
 // Service manages admin TOTP enrollment and login verification.
 type Service struct {
-	repo         mfadomain.Repository
-	customers    customer.CustomerRepository
-	config       security.ConfigGetter
-	jwtSecret    string
+	repo          mfadomain.Repository
+	customers     customer.CustomerRepository
+	config        security.ConfigGetter
+	jwtSecret     string
 	deployEnabled bool
+	loginAttempts loginAttemptGuard
 }
 
 // NewService creates an MFA service.
@@ -49,7 +71,15 @@ func NewService(
 		config:        config,
 		jwtSecret:     jwtSecret,
 		deployEnabled: deployEnabled,
+		loginAttempts: loginAttemptGuard{counts: make(map[string]int)},
 	}
+}
+
+func (s *Service) ensureDeployed() error {
+	if !s.deployEnabled {
+		return apperror.Validation("admin mfa is disabled")
+	}
+	return nil
 }
 
 // Status describes MFA enrollment for the current user.
@@ -85,11 +115,7 @@ func (s *Service) RequiredForLogin(ctx context.Context, c *customer.Customer) (b
 	if !required {
 		return false, nil
 	}
-	state, err := s.repo.GetState(ctx, c.ID)
-	if err != nil {
-		return false, fmt.Errorf("mfa: get state: %w", err)
-	}
-	return state.Enrolled(), nil
+	return true, nil
 }
 
 // IssuePendingLogin creates a short-lived token after password verification.
@@ -106,9 +132,15 @@ func (s *Service) IssuePendingLogin(c *customer.Customer) (string, time.Time, er
 
 // CompleteLogin validates MFA and returns the authenticated customer.
 func (s *Service) CompleteLogin(ctx context.Context, pendingToken, code string) (*customer.Customer, error) {
+	if err := s.ensureDeployed(); err != nil {
+		return nil, err
+	}
 	code = strings.TrimSpace(code)
 	if pendingToken == "" || code == "" {
 		return nil, apperror.Validation("pending token and code are required")
+	}
+	if s.loginAttempts.locked(pendingToken) {
+		return nil, apperror.Unauthorized("invalid or expired login challenge")
 	}
 	claims, err := mfasec.VerifyPendingLogin(s.jwtSecret, pendingToken)
 	if err != nil {
@@ -130,8 +162,13 @@ func (s *Service) CompleteLogin(ctx context.Context, pendingToken, code string) 
 	if ok, err := s.validateCode(ctx, c.ID, code); err != nil {
 		return nil, err
 	} else if !ok {
+		s.loginAttempts.recordFailure(pendingToken)
+		if s.loginAttempts.locked(pendingToken) {
+			return nil, apperror.Unauthorized("invalid or expired login challenge")
+		}
 		return nil, apperror.Unauthorized("invalid authentication code")
 	}
+	s.loginAttempts.reset(pendingToken)
 	return c, nil
 }
 
@@ -154,12 +191,12 @@ func (s *Service) GetStatus(ctx context.Context, customerID string) (Status, err
 
 // BeginEnrollment starts TOTP setup for an admin user.
 func (s *Service) BeginEnrollment(ctx context.Context, customerID string) (*EnrollBeginResult, error) {
+	if err := s.ensureDeployed(); err != nil {
+		return nil, err
+	}
 	c, err := s.loadAdmin(ctx, customerID)
 	if err != nil {
 		return nil, err
-	}
-	if !s.deployEnabled {
-		return nil, apperror.Validation("admin mfa is disabled")
 	}
 	secret, err := mfasec.GenerateTOTPSecret()
 	if err != nil {
@@ -180,7 +217,11 @@ func (s *Service) BeginEnrollment(ctx context.Context, customerID string) (*Enro
 
 // ConfirmEnrollment verifies the first TOTP code and issues recovery codes.
 func (s *Service) ConfirmEnrollment(ctx context.Context, customerID, code string) (*EnrollConfirmResult, error) {
-	if strings.TrimSpace(code) == "" {
+	if err := s.ensureDeployed(); err != nil {
+		return nil, err
+	}
+	code = strings.TrimSpace(code)
+	if code == "" {
 		return nil, apperror.Validation("code is required")
 	}
 	if _, err := s.loadAdmin(ctx, customerID); err != nil {
@@ -203,22 +244,22 @@ func (s *Service) ConfirmEnrollment(ctx context.Context, customerID, code string
 	if !mfasec.ValidateTOTP(code, secret) {
 		return nil, apperror.Validation("invalid authentication code")
 	}
-	now := time.Now().UTC()
-	if err := s.repo.ConfirmEnrollment(ctx, customerID, now); err != nil {
-		return nil, fmt.Errorf("mfa: confirm enrollment: %w", err)
-	}
 	plaintext, hashes, err := mfadomain.NewRecoveryCodes(0)
 	if err != nil {
 		return nil, fmt.Errorf("mfa: recovery codes: %w", err)
 	}
-	if err := s.repo.ReplaceRecoveryCodes(ctx, customerID, hashes); err != nil {
-		return nil, fmt.Errorf("mfa: save recovery codes: %w", err)
+	now := time.Now().UTC()
+	if err := s.repo.FinalizeEnrollment(ctx, customerID, now, hashes); err != nil {
+		return nil, fmt.Errorf("mfa: finalize enrollment: %w", err)
 	}
 	return &EnrollConfirmResult{RecoveryCodes: plaintext}, nil
 }
 
 // Disable removes MFA after password confirmation and revokes sessions.
 func (s *Service) Disable(ctx context.Context, customerID, currentPassword string) error {
+	if err := s.ensureDeployed(); err != nil {
+		return err
+	}
 	c, err := s.loadAdmin(ctx, customerID)
 	if err != nil {
 		return err
@@ -226,14 +267,20 @@ func (s *Service) Disable(ctx context.Context, customerID, currentPassword strin
 	if err := verifyPassword(c, currentPassword); err != nil {
 		return err
 	}
+	if err := s.customers.BumpTokenGeneration(ctx, customerID); err != nil {
+		return fmt.Errorf("mfa: disable: %w", err)
+	}
 	if err := s.repo.ClearEnrollment(ctx, customerID); err != nil {
 		return fmt.Errorf("mfa: disable: %w", err)
 	}
-	return s.customers.BumpTokenGeneration(ctx, customerID)
+	return nil
 }
 
 // RegenerateRecoveryCodes replaces recovery codes after password confirmation.
 func (s *Service) RegenerateRecoveryCodes(ctx context.Context, customerID, currentPassword string) (*EnrollConfirmResult, error) {
+	if err := s.ensureDeployed(); err != nil {
+		return nil, err
+	}
 	c, err := s.loadAdmin(ctx, customerID)
 	if err != nil {
 		return nil, err
@@ -273,7 +320,7 @@ func (s *Service) validateCode(ctx context.Context, customerID, code string) (bo
 	if mfasec.ValidateTOTP(code, secret) {
 		return true, nil
 	}
-	consumed, err := s.repo.ConsumeRecoveryCode(ctx, customerID, customer.HashToken(normalizeRecoveryInput(code)))
+	consumed, err := s.repo.ConsumeRecoveryCode(ctx, customerID, customer.HashToken(mfadomain.NormalizeRecoveryCode(code)))
 	if err != nil {
 		return false, fmt.Errorf("mfa: consume recovery code: %w", err)
 	}
@@ -305,17 +352,4 @@ func verifyPassword(c *customer.Customer, raw string) error {
 		return apperror.Unauthorized("invalid password")
 	}
 	return nil
-}
-
-func normalizeRecoveryInput(code string) string {
-	out := make([]byte, 0, len(code))
-	for i := 0; i < len(code); i++ {
-		switch c := code[i]; c {
-		case '-', ' ':
-			continue
-		default:
-			out = append(out, c)
-		}
-	}
-	return string(out)
 }

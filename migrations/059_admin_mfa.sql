@@ -9,7 +9,8 @@ CREATE TABLE admin_mfa_recovery_codes (
     customer_id UUID NOT NULL REFERENCES customers(id) ON DELETE CASCADE,
     code_hash   TEXT NOT NULL,
     used_at     TIMESTAMPTZ,
-    created_at  TIMESTAMPTZ NOT NULL DEFAULT now()
+    created_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
+    UNIQUE (customer_id, code_hash)
 );
 
 CREATE INDEX idx_admin_mfa_recovery_codes_customer ON admin_mfa_recovery_codes (customer_id);
