@@ -111,6 +111,11 @@ const (
 	AuditAdminUserUpdate         AuditAction = "admin_user.update"
 	AuditAdminUserResetPassword  AuditAction = "admin_user.reset_password"
 
+	AuditPermissionCatalogRead AuditAction = "permission.catalog_read"
+	AuditRoleList              AuditAction = "role.list"
+	AuditRoleRead              AuditAction = "role.read"
+	AuditRoleUpdate            AuditAction = "role.update"
+
 	AuditPaymentList AuditAction = "payment.list"
 	AuditPaymentRead AuditAction = "payment.read"
 

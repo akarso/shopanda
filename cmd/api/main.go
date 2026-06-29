@@ -19,6 +19,7 @@ import (
 	accountApp "github.com/akarso/shopanda/internal/application/account"
 	adminApp "github.com/akarso/shopanda/internal/application/admin"
 	adminuserApp "github.com/akarso/shopanda/internal/application/adminuser"
+	adminroleApp "github.com/akarso/shopanda/internal/application/adminrole"
 	authApp "github.com/akarso/shopanda/internal/application/auth"
 	cacheApp "github.com/akarso/shopanda/internal/application/cache"
 	cartApp "github.com/akarso/shopanda/internal/application/cart"
@@ -295,6 +296,15 @@ func runServe(cfg *config.Config, log logger.Logger, embedScheduler bool) error 
 		"initialized": summary.Initialized,
 		"failed":      summary.Failed,
 	})
+
+	rolePermRepo, err := postgres.NewRolePermissionRepo(conn)
+	if err != nil {
+		return err
+	}
+	adminRoleService := adminroleApp.NewService(rolePermRepo)
+	if err := adminRoleService.SyncPluginDefaults(context.Background()); err != nil {
+		return fmt.Errorf("sync role permissions: %w", err)
+	}
 
 	// Search engine.
 	searchEngine, err := resolveSearchEngine(pluginApp, conn, cfg)
@@ -741,6 +751,7 @@ func runServe(cfg *config.Config, log logger.Logger, embedScheduler bool) error 
 	customerAdmin := shophttp.NewCustomerAdminHandlerWithAuditorAndDeleter(customerRepo, accountService, sharedAuditor)
 	adminUserService := adminuserApp.NewService(customerRepo)
 	adminUserHandler := shophttp.NewAdminUserHandler(adminUserService, sharedAuditor)
+	adminRoleHandler := shophttp.NewAdminRoleHandler(adminRoleService, sharedAuditor)
 	storeCreditAdmin := shophttp.NewStoreCreditAdminHandler(storeCreditService)
 	storeCreditAccount := shophttp.NewStoreCreditAccountHandler(storeCreditService)
 	accountHandler := shophttp.NewAccountHandler(customerRepo, orderRepo, consentRepo, accountService)
@@ -897,6 +908,10 @@ func runServe(cfg *config.Config, log logger.Logger, embedScheduler bool) error 
 	router.Handle("POST /api/v1/admin/users", requireSettingsWrite(adminUserHandler.Create()))
 	router.Handle("PUT /api/v1/admin/users/{userId}", requireSettingsWrite(adminUserHandler.Update()))
 	router.Handle("POST /api/v1/admin/users/{userId}/reset-password", requireSettingsWrite(adminUserHandler.ResetPassword()))
+	router.Handle("GET /api/v1/admin/permissions", requireSettingsRead(adminRoleHandler.Catalog()))
+	router.Handle("GET /api/v1/admin/roles", requireSettingsRead(adminRoleHandler.List()))
+	router.Handle("GET /api/v1/admin/roles/{role}", requireSettingsRead(adminRoleHandler.Get()))
+	router.Handle("PUT /api/v1/admin/roles/{role}", requireSettingsWrite(adminRoleHandler.Update()))
 	router.Handle("GET /api/v1/admin/audit", requireAuditRead(auditLogAdmin.List()))
 	router.Handle("GET /api/v1/admin/forms/{name}", requireAuth(schemaHandler.GetForm()))
 	router.Handle("GET /api/v1/admin/grids/{name}", requireAuth(schemaHandler.GetGrid()))

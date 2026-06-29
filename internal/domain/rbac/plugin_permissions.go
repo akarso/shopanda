@@ -2,6 +2,7 @@ package rbac
 
 import (
 	"fmt"
+	"sort"
 	"sync"
 
 	"github.com/akarso/shopanda/internal/domain/identity"
@@ -61,4 +62,37 @@ func ResetPluginPermissions() {
 	pluginMu.Lock()
 	pluginPerms = make(map[Permission]map[identity.Role]struct{})
 	pluginMu.Unlock()
+}
+
+// PluginPermissions returns registered plugin permissions and their default roles.
+func PluginPermissions() []PluginPermission {
+	pluginMu.RLock()
+	defer pluginMu.RUnlock()
+	out := make([]PluginPermission, 0, len(pluginPerms))
+	for perm, roles := range pluginPerms {
+		entry := PluginPermission{Permission: perm}
+		for role := range roles {
+			entry.DefaultRoles = append(entry.DefaultRoles, role)
+		}
+		sort.Slice(entry.DefaultRoles, func(i, j int) bool {
+			return entry.DefaultRoles[i] < entry.DefaultRoles[j]
+		})
+		out = append(out, entry)
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Permission < out[j].Permission })
+	return out
+}
+
+func pluginPermissionSnapshot() map[Permission]map[identity.Role]struct{} {
+	pluginMu.RLock()
+	defer pluginMu.RUnlock()
+	out := make(map[Permission]map[identity.Role]struct{}, len(pluginPerms))
+	for perm, roles := range pluginPerms {
+		roleCopy := make(map[identity.Role]struct{}, len(roles))
+		for role := range roles {
+			roleCopy[role] = struct{}{}
+		}
+		out[perm] = roleCopy
+	}
+	return out
 }

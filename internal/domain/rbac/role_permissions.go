@@ -6,8 +6,8 @@ import (
 	"github.com/akarso/shopanda/internal/domain/identity"
 )
 
-// rolePermissions maps each admin-level role to its granted permissions.
-// The mapping is static; dynamic roles are not supported (see ROLES.md §7).
+// rolePermissions maps each admin-level role to its compiled-in core permissions.
+// DB-backed overrides loaded via InitEffectivePermissions take precedence at runtime.
 var rolePermissions = map[identity.Role]map[Permission]struct{}{
 	identity.RoleAdmin: toSet(
 		ProductsRead, ProductsWrite,
@@ -47,31 +47,27 @@ var rolePermissions = map[identity.Role]map[Permission]struct{}{
 }
 
 // HasPermission reports whether the given role grants the specified permission.
-// Checks both core (static) and plugin-registered permissions.
 func HasPermission(role identity.Role, perm Permission) bool {
-	perms, ok := rolePermissions[role]
-	if ok {
-		if _, granted := perms[perm]; granted {
-			return true
-		}
+	if set, ok := effectiveSet(role); ok {
+		_, granted := set[perm]
+		return granted
 	}
-	return hasPluginPermission(role, perm)
+	return staticHasPermission(role, perm)
 }
 
 // PermissionsForRole returns all permissions granted to a role.
 // The result is sorted lexicographically for deterministic output.
 // Returns nil for unrecognised roles.
 func PermissionsForRole(role identity.Role) []Permission {
-	perms, ok := rolePermissions[role]
-	if !ok {
-		return nil
+	if set, ok := effectiveSet(role); ok {
+		out := make([]Permission, 0, len(set))
+		for p := range set {
+			out = append(out, p)
+		}
+		sort.Slice(out, func(i, j int) bool { return out[i] < out[j] })
+		return out
 	}
-	out := make([]Permission, 0, len(perms))
-	for p := range perms {
-		out = append(out, p)
-	}
-	sort.Slice(out, func(i, j int) bool { return out[i] < out[j] })
-	return out
+	return staticPermissionsForRole(role)
 }
 
 func toSet(perms ...Permission) map[Permission]struct{} {
