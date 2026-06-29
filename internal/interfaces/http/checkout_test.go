@@ -64,6 +64,14 @@ func (r *stubCheckoutCartRepo) Delete(_ context.Context, cid string) error {
 	return nil
 }
 
+func (r *stubCheckoutCartRepo) FindRecoveryCandidates(_ context.Context, _ time.Time, _ int) ([]*cart.Cart, error) {
+	return nil, nil
+}
+
+func (r *stubCheckoutCartRepo) MarkRecoveryEmailSent(_ context.Context, _ string, _ time.Time) (bool, error) {
+	return false, nil
+}
+
 // stubCheckoutVariantRepo ────────────────────────────────────────────────
 
 type stubCheckoutVariantRepo struct {

@@ -1087,6 +1087,7 @@ func runServe(cfg *config.Config, log logger.Logger, embedScheduler bool) error 
 	if embedScheduler {
 		sched = cron.New(log)
 		runtime.RegisterCacheCleanup(jobQueue, cacheApp.JobType, log, sched)
+		runtime.RegisterCartRecovery(jobQueue, log, sched)
 		schedulerCtx, cancel := context.WithCancel(context.Background())
 		schedulerCancel = cancel
 		schedulerDone = make(chan struct{})
@@ -1556,6 +1557,7 @@ func runScheduler(cfg *config.Config, log logger.Logger) error {
 	}
 	var sched scheduler.Scheduler = cron.New(log)
 	runtime.RegisterCacheCleanup(jobQueue, cacheApp.JobType, log, sched)
+	runtime.RegisterCartRecovery(jobQueue, log, sched)
 
 	// Block until interrupted (context cancelled via signal).
 	ctx, cancel := context.WithCancel(context.Background())
@@ -2318,6 +2320,35 @@ func setupWorker(conn *sql.DB, cfg *config.Config, log logger.Logger, app *plugi
 		return nil, nil, nil, fmt.Errorf("cache driver %q does not support expired entry cleanup", cfg.Cache.Driver)
 	}
 	jobWorker.Register(cacheApp.NewCleanupHandler(ed, log))
+
+	mailTemplates := mail.NewTemplates()
+	notification.RegisterTemplates(mailTemplates)
+	cartRepo, err := postgres.NewCartRepo(conn)
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	customerRepo, err := postgres.NewCustomerRepo(conn)
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	variantRepo, err := postgres.NewVariantRepo(conn)
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	productRepo, err := postgres.NewProductRepo(conn)
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	jobWorker.Register(cartApp.NewRecoveryHandler(cartApp.RecoveryHandlerConfig{
+		Carts:      cartRepo,
+		Customers:  customerRepo,
+		Variants:   variantRepo,
+		Products:   productRepo,
+		Templates:  mailTemplates,
+		Queue:      jobQueue,
+		StoreURL:   cfg.Server.PublicBaseURL,
+		Log:        log,
+	}))
 
 	return jobWorker, jobQueue, appCache, nil
 }

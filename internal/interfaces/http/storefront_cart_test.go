@@ -11,6 +11,7 @@ import (
 	"net/url"
 	"strings"
 	"testing"
+	"time"
 
 	cartApp "github.com/akarso/shopanda/internal/application/cart"
 	"github.com/akarso/shopanda/internal/application/composition"
@@ -63,6 +64,14 @@ func (r *storefrontCartRepoStub) Save(_ context.Context, c *domainCart.Cart) err
 func (r *storefrontCartRepoStub) Delete(_ context.Context, id string) error {
 	delete(r.carts, id)
 	return nil
+}
+
+func (r *storefrontCartRepoStub) FindRecoveryCandidates(_ context.Context, _ time.Time, _ int) ([]*domainCart.Cart, error) {
+	return nil, nil
+}
+
+func (r *storefrontCartRepoStub) MarkRecoveryEmailSent(_ context.Context, _ string, _ time.Time) (bool, error) {
+	return false, nil
 }
 
 type storefrontPriceRepoStub struct {

@@ -9,6 +9,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	cartApp "github.com/akarso/shopanda/internal/application/cart"
 	appPricing "github.com/akarso/shopanda/internal/application/pricing"
@@ -59,6 +60,14 @@ func (r *stubCartRepo) Save(_ context.Context, c *domainCart.Cart) error {
 func (r *stubCartRepo) Delete(_ context.Context, id string) error {
 	delete(r.carts, id)
 	return nil
+}
+
+func (r *stubCartRepo) FindRecoveryCandidates(_ context.Context, _ time.Time, _ int) ([]*domainCart.Cart, error) {
+	return nil, nil
+}
+
+func (r *stubCartRepo) MarkRecoveryEmailSent(_ context.Context, _ string, _ time.Time) (bool, error) {
+	return false, nil
 }
 
 type stubPriceRepo struct {

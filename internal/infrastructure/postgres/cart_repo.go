@@ -28,6 +28,8 @@ func NewCartRepo(db *sql.DB) (*CartRepo, error) {
 	return &CartRepo{db: db}, nil
 }
 
+const cartColumns = `id, customer_id, status, currency, coupon_code, merged_guest_id, version, created_at, updated_at, recovery_email_sent_at`
+
 // querier abstracts *sql.DB and *sql.Tx for read methods.
 type querier interface {
 	QueryRowContext(ctx context.Context, query string, args ...interface{}) *sql.Row
@@ -47,8 +49,7 @@ func (r *CartRepo) FindByID(ctx context.Context, id string) (*cart.Cart, error) 
 	}
 	defer tx.Rollback()
 
-	const q = `SELECT id, customer_id, status, currency, coupon_code, merged_guest_id, version, created_at, updated_at
-		FROM carts WHERE id = $1`
+	const q = `SELECT ` + cartColumns + ` FROM carts WHERE id = $1`
 	c, err := scanCart(tx.QueryRowContext(ctx, q, id))
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
@@ -77,8 +78,7 @@ func (r *CartRepo) FindActiveByCustomerID(ctx context.Context, customerID string
 	}
 	defer tx.Rollback()
 
-	const q = `SELECT id, customer_id, status, currency, coupon_code, merged_guest_id, version, created_at, updated_at
-		FROM carts WHERE customer_id = $1 AND status = 'active'
+	const q = `SELECT ` + cartColumns + ` FROM carts WHERE customer_id = $1 AND status = 'active'
 		LIMIT 1`
 	c, err := scanCart(tx.QueryRowContext(ctx, q, customerID))
 	if errors.Is(err, sql.ErrNoRows) {
@@ -193,6 +193,71 @@ func (r *CartRepo) Delete(ctx context.Context, id string) error {
 	return nil
 }
 
+// FindRecoveryCandidates returns active customer carts with items that are stale and unemailed.
+func (r *CartRepo) FindRecoveryCandidates(ctx context.Context, staleBefore time.Time, limit int) ([]*cart.Cart, error) {
+	if limit <= 0 {
+		return nil, fmt.Errorf("cart_repo: find recovery candidates: limit must be positive")
+	}
+	const q = `
+		SELECT c.id, c.customer_id, c.status, c.currency, c.coupon_code, c.merged_guest_id,
+		       c.version, c.created_at, c.updated_at, c.recovery_email_sent_at
+		FROM carts c
+		INNER JOIN customers cu ON cu.id = c.customer_id
+		WHERE c.status = 'active'
+		  AND cu.status = 'active'
+		  AND TRIM(cu.email) <> ''
+		  AND c.customer_id IS NOT NULL
+		  AND c.recovery_email_sent_at IS NULL
+		  AND c.updated_at <= $1
+		  AND EXISTS (SELECT 1 FROM cart_items ci WHERE ci.cart_id = c.id)
+		ORDER BY c.updated_at ASC
+		LIMIT $2`
+	rows, err := r.db.QueryContext(ctx, q, staleBefore, limit)
+	if err != nil {
+		return nil, fmt.Errorf("cart_repo: find recovery candidates: %w", err)
+	}
+	defer rows.Close()
+
+	var carts []*cart.Cart
+	for rows.Next() {
+		c, err := scanCartRow(rows.Scan)
+		if err != nil {
+			return nil, fmt.Errorf("cart_repo: find recovery candidates scan: %w", err)
+		}
+		items, err := loadItems(ctx, r.db, c.ID)
+		if err != nil {
+			return nil, err
+		}
+		c.Items = items
+		carts = append(carts, c)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("cart_repo: find recovery candidates rows: %w", err)
+	}
+	return carts, nil
+}
+
+// MarkRecoveryEmailSent records a recovery email send when not already recorded.
+func (r *CartRepo) MarkRecoveryEmailSent(ctx context.Context, cartID string, sentAt time.Time) (bool, error) {
+	if cartID == "" {
+		return false, fmt.Errorf("cart_repo: mark recovery email sent: empty id")
+	}
+	res, err := r.db.ExecContext(ctx, `
+		UPDATE carts
+		SET recovery_email_sent_at = $2
+		WHERE id = $1 AND recovery_email_sent_at IS NULL`,
+		cartID, sentAt,
+	)
+	if err != nil {
+		return false, fmt.Errorf("cart_repo: mark recovery email sent: %w", err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return false, fmt.Errorf("cart_repo: mark recovery email sent rows: %w", err)
+	}
+	return n == 1, nil
+}
+
 // loadItems fetches all items for a cart, ordered by created_at.
 func loadItems(ctx context.Context, q querier, cartID string) ([]cart.Item, error) {
 	const query = `SELECT variant_id, quantity, unit_price, currency, created_at, updated_at
@@ -234,12 +299,17 @@ func loadItems(ctx context.Context, q querier, cartID string) ([]cart.Item, erro
 
 // scanCart reads a cart header from a row scanner.
 func scanCart(row *sql.Row) (*cart.Cart, error) {
+	return scanCartRow(row.Scan)
+}
+
+func scanCartRow(scan func(dest ...interface{}) error) (*cart.Cart, error) {
 	var c cart.Cart
 	var customerID sql.NullString
 	var couponCode sql.NullString
 	var mergedGuestID sql.NullString
+	var recoveryEmailSentAt sql.NullTime
 	var status string
-	err := row.Scan(&c.ID, &customerID, &status, &c.Currency, &couponCode, &mergedGuestID, &c.Version, &c.CreatedAt, &c.UpdatedAt)
+	err := scan(&c.ID, &customerID, &status, &c.Currency, &couponCode, &mergedGuestID, &c.Version, &c.CreatedAt, &c.UpdatedAt, &recoveryEmailSentAt)
 	if err != nil {
 		return nil, err
 	}
@@ -251,6 +321,10 @@ func scanCart(row *sql.Row) (*cart.Cart, error) {
 	}
 	if mergedGuestID.Valid {
 		c.MergedGuestID = mergedGuestID.String
+	}
+	if recoveryEmailSentAt.Valid {
+		sentAt := recoveryEmailSentAt.Time
+		c.RecoveryEmailSentAt = &sentAt
 	}
 	// Reconstruct the cart with proper status via SetStatusFromDB.
 	if err := c.SetStatusFromDB(cart.CartStatus(status)); err != nil {

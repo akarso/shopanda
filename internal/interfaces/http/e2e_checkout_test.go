@@ -66,6 +66,14 @@ func (r *e2eCartRepo) Delete(_ context.Context, id string) error {
 	return nil
 }
 
+func (r *e2eCartRepo) FindRecoveryCandidates(_ context.Context, _ time.Time, _ int) ([]*domainCart.Cart, error) {
+	return nil, nil
+}
+
+func (r *e2eCartRepo) MarkRecoveryEmailSent(_ context.Context, _ string, _ time.Time) (bool, error) {
+	return false, nil
+}
+
 type e2eVariantRepo struct {
 	variants map[string]*catalog.Variant
 }
