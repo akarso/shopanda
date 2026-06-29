@@ -74,14 +74,6 @@ func (r *mockCustomerRepo) ListCustomers(_ context.Context, _, _ int) ([]custome
 	return nil, nil
 }
 
-func (r *mockCustomerRepo) ListAdminUsers(_ context.Context, _, _ int) ([]customer.Customer, error) {
-	return nil, nil
-}
-
-func (r *mockCustomerRepo) CountActiveByRole(_ context.Context, _ customer.Role) (int, error) {
-	return 0, nil
-}
-
 func (r *mockCustomerRepo) BumpTokenGeneration(_ context.Context, customerID string) error {
 	c := r.customers[customerID]
 	if c == nil {

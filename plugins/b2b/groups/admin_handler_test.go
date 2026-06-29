@@ -125,14 +125,6 @@ func (s *stubCustomerRepo) ListCustomers(_ context.Context, _, _ int) ([]custome
 	return nil, nil
 }
 
-func (s *stubCustomerRepo) ListAdminUsers(_ context.Context, _, _ int) ([]customer.Customer, error) {
-	return nil, nil
-}
-
-func (s *stubCustomerRepo) CountActiveByRole(_ context.Context, _ customer.Role) (int, error) {
-	return 0, nil
-}
-
 func (s *stubCustomerRepo) BumpTokenGeneration(_ context.Context, _ string) error { return nil }
 
 func (s *stubCustomerRepo) ChangePasswordAndBumpTokenGeneration(_ context.Context, _, _ string) error {

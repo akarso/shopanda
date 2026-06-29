@@ -8,13 +8,17 @@ import (
 	"strings"
 	"time"
 
+	"github.com/akarso/shopanda/internal/domain/adminuser"
 	"github.com/akarso/shopanda/internal/domain/customer"
 	"github.com/akarso/shopanda/internal/platform/apperror"
 	"github.com/lib/pq"
 )
 
-// Compile-time check that CustomerRepo implements customer.CustomerRepository.
-var _ customer.CustomerRepository = (*CustomerRepo)(nil)
+// Compile-time check that CustomerRepo implements customer and adminuser repositories.
+var (
+	_ customer.CustomerRepository = (*CustomerRepo)(nil)
+	_ adminuser.Repository        = (*CustomerRepo)(nil)
+)
 
 // CustomerRepo implements customer.CustomerRepository using PostgreSQL.
 type CustomerRepo struct {
@@ -208,17 +212,52 @@ func (r *CustomerRepo) ListAdminUsers(ctx context.Context, offset, limit int) ([
 	return users, nil
 }
 
-// CountActiveByRole returns the number of active customers with the given role.
-func (r *CustomerRepo) CountActiveByRole(ctx context.Context, role customer.Role) (int, error) {
-	if !role.IsValid() {
-		return 0, fmt.Errorf("customer_repo: count active by role: invalid role")
+// UpdateAdminUser atomically updates an admin user and enforces last-active-admin rules.
+func (r *CustomerRepo) UpdateAdminUser(ctx context.Context, c *customer.Customer, priorRole customer.Role, priorStatus customer.Status, revokeSessions bool) error {
+	if !c.Role.IsValid() {
+		return apperror.Validation("invalid customer role")
 	}
-	const q = `SELECT COUNT(*) FROM customers WHERE role = $1 AND status = 'active'`
-	var count int
-	if err := r.queryRow(ctx, q, string(role)).Scan(&count); err != nil {
-		return 0, fmt.Errorf("customer_repo: count active by role: %w", err)
+	updatedAt := time.Now().UTC()
+
+	const q = `UPDATE customers SET
+		first_name = $1,
+		last_name = $2,
+		role = $3,
+		status = $4,
+		token_generation = token_generation + CASE WHEN $5 THEN 1 ELSE 0 END,
+		updated_at = $6
+	WHERE id = $7
+	AND (
+		$8 <> 'admin' OR $9 <> 'active'
+		OR ($3 = 'admin' AND $4 = 'active')
+		OR (SELECT COUNT(*) FROM customers WHERE role = 'admin' AND status = 'active') > 1
+	)`
+
+	result, err := r.exec(ctx, q,
+		c.FirstName, c.LastName, string(c.Role), string(c.Status),
+		revokeSessions, updatedAt, c.ID,
+		string(priorRole), string(priorStatus),
+	)
+	if err != nil {
+		return fmt.Errorf("customer_repo: update admin user: %w", err)
 	}
-	return count, nil
+
+	rows, err := result.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("customer_repo: update admin user rows affected: %w", err)
+	}
+	if rows == 0 {
+		if priorRole == customer.RoleAdmin && priorStatus == customer.StatusActive &&
+			(c.Role != customer.RoleAdmin || c.Status != customer.StatusActive) {
+			return apperror.Validation("cannot remove the last active admin user")
+		}
+		return apperror.NotFound("customer not found")
+	}
+	c.UpdatedAt = updatedAt
+	if revokeSessions {
+		c.TokenGeneration++
+	}
+	return nil
 }
 
 // BumpTokenGeneration atomically increments the customer's token generation.

@@ -307,12 +307,6 @@ func (s *stubCheckoutCustomerRepo) Update(_ context.Context, _ *customer.Custome
 func (s *stubCheckoutCustomerRepo) ListCustomers(_ context.Context, _, _ int) ([]customer.Customer, error) {
 	return nil, nil
 }
-func (s *stubCheckoutCustomerRepo) ListAdminUsers(_ context.Context, _, _ int) ([]customer.Customer, error) {
-	return nil, nil
-}
-func (s *stubCheckoutCustomerRepo) CountActiveByRole(_ context.Context, _ customer.Role) (int, error) {
-	return 0, nil
-}
 func (s *stubCheckoutCustomerRepo) BumpTokenGeneration(_ context.Context, _ string) error { return nil }
 func (s *stubCheckoutCustomerRepo) ChangePasswordAndBumpTokenGeneration(_ context.Context, _, _ string) error {
 	return nil

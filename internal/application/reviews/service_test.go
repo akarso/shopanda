@@ -37,7 +37,7 @@ func (s *stubReviewRepo) FindByProductAndCustomer(_ context.Context, productID, 
 	return s.byPair[productID+":"+customerID], nil
 }
 
-func (s *stubReviewRepo) Update(_ context.Context, rev *domainReview.Review) error {
+func (s *stubReviewRepo) Update(_ context.Context, rev *domainReview.Review, _ domainReview.Status) error {
 	cp := *rev
 	s.updated = &cp
 	return nil
@@ -92,6 +92,12 @@ func TestService_Approve_FromPending(t *testing.T) {
 	}
 	if out.Status() != domainReview.StatusApproved {
 		t.Errorf("status = %q, want approved", out.Status())
+	}
+	if reviews.updated == nil {
+		t.Fatal("expected review update to persist")
+	}
+	if reviews.updated.ID != "r1" || reviews.updated.Status() != domainReview.StatusApproved {
+		t.Errorf("updated review = %+v, want r1 approved", reviews.updated)
 	}
 }
 

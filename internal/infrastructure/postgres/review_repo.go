@@ -7,6 +7,7 @@ import (
 	"fmt"
 
 	domainReview "github.com/akarso/shopanda/internal/domain/review"
+	"github.com/akarso/shopanda/internal/platform/apperror"
 	"github.com/lib/pq"
 )
 
@@ -77,7 +78,8 @@ func (r *ReviewRepo) Save(ctx context.Context, rev *domainReview.Review) error {
 	)
 	if err != nil {
 		var pqErr *pq.Error
-		if errors.As(err, &pqErr) && pqErr.Code == "23505" {
+		if errors.As(err, &pqErr) && pqErr.Code == "23505" &&
+			pqErr.Constraint == "product_reviews_product_id_customer_id_key" {
 			return fmt.Errorf("review_repo: duplicate review: %w", err)
 		}
 		return fmt.Errorf("review_repo: save: %w", err)
@@ -218,15 +220,15 @@ func (r *ReviewRepo) List(ctx context.Context, status domainReview.Status, offse
 	return out, nil
 }
 
-// Update persists moderation transitions.
-func (r *ReviewRepo) Update(ctx context.Context, rev *domainReview.Review) error {
+// Update persists moderation transitions when the review still has priorStatus.
+func (r *ReviewRepo) Update(ctx context.Context, rev *domainReview.Review, priorStatus domainReview.Status) error {
 	if rev == nil {
 		return fmt.Errorf("review_repo: update: review must not be nil")
 	}
 	const q = `UPDATE product_reviews
 		SET status = $2, updated_at = $3
-		WHERE id = $1`
-	res, err := r.db.ExecContext(ctx, q, rev.ID, string(rev.Status()), rev.UpdatedAt)
+		WHERE id = $1 AND status = $4`
+	res, err := r.db.ExecContext(ctx, q, rev.ID, string(rev.Status()), rev.UpdatedAt, string(priorStatus))
 	if err != nil {
 		return fmt.Errorf("review_repo: update: %w", err)
 	}
@@ -235,7 +237,7 @@ func (r *ReviewRepo) Update(ctx context.Context, rev *domainReview.Review) error
 		return fmt.Errorf("review_repo: update rows: %w", err)
 	}
 	if n == 0 {
-		return fmt.Errorf("review_repo: update: review not found")
+		return apperror.Conflict("review state changed")
 	}
 	return nil
 }

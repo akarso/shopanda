@@ -29,6 +29,6 @@ type Repository interface {
 	// List returns reviews ordered by created_at desc with optional status filter.
 	List(ctx context.Context, status Status, offset, limit int) ([]Review, error)
 
-	// Update persists moderation transitions.
-	Update(ctx context.Context, review *Review) error
+	// Update persists moderation transitions when the review still has priorStatus.
+	Update(ctx context.Context, review *Review, priorStatus Status) error
 }

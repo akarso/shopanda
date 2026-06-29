@@ -14,5 +14,5 @@ CREATE TABLE product_reviews (
     UNIQUE (product_id, customer_id)
 );
 
-CREATE INDEX idx_product_reviews_product_status ON product_reviews (product_id, status);
+CREATE INDEX idx_product_reviews_product_status ON product_reviews (product_id, status, created_at DESC);
 CREATE INDEX idx_product_reviews_status_created ON product_reviews (status, created_at DESC);

@@ -45,7 +45,7 @@ func (h *ReviewHandler) List() http.HandlerFunc {
 		}
 
 		JSON(w, http.StatusOK, map[string]interface{}{
-			"reviews": toReviewResponses(list),
+			"reviews": toPublicReviewResponses(list),
 			"offset":  offset,
 			"limit":   limit,
 		})
@@ -94,7 +94,7 @@ func (h *ReviewAccountHandler) Submit() http.HandlerFunc {
 		}
 
 		JSON(w, http.StatusCreated, map[string]interface{}{
-			"review": toReviewResponse(rev),
+			"review": toAdminReviewResponse(rev),
 		})
 	}
 }
@@ -112,14 +112,13 @@ type reviewResp struct {
 	UpdatedAt    string `json:"updated_at"`
 }
 
-func toReviewResponse(rev *domainReview.Review) reviewResp {
+func toPublicReviewResponse(rev *domainReview.Review) reviewResp {
 	if rev == nil {
 		return reviewResp{}
 	}
 	return reviewResp{
 		ID:           rev.ID,
 		ProductID:    rev.ProductID,
-		CustomerID:   rev.CustomerID,
 		Rating:       rev.Rating,
 		Title:        rev.Title,
 		Body:         rev.Body,
@@ -130,10 +129,24 @@ func toReviewResponse(rev *domainReview.Review) reviewResp {
 	}
 }
 
-func toReviewResponses(list []domainReview.Review) []reviewResp {
+func toAdminReviewResponse(rev *domainReview.Review) reviewResp {
+	resp := toPublicReviewResponse(rev)
+	resp.CustomerID = rev.CustomerID
+	return resp
+}
+
+func toPublicReviewResponses(list []domainReview.Review) []reviewResp {
 	out := make([]reviewResp, 0, len(list))
 	for i := range list {
-		out = append(out, toReviewResponse(&list[i]))
+		out = append(out, toPublicReviewResponse(&list[i]))
+	}
+	return out
+}
+
+func toAdminReviewResponses(list []domainReview.Review) []reviewResp {
+	out := make([]reviewResp, 0, len(list))
+	for i := range list {
+		out = append(out, toAdminReviewResponse(&list[i]))
 	}
 	return out
 }

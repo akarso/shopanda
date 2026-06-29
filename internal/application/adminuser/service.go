@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/akarso/shopanda/internal/domain/adminuser"
 	"github.com/akarso/shopanda/internal/domain/customer"
 	"github.com/akarso/shopanda/internal/platform/apperror"
 	"github.com/akarso/shopanda/internal/platform/id"
@@ -15,15 +16,15 @@ const minPasswordLen = 8
 
 // Service manages admin-panel user accounts stored as customers with admin roles.
 type Service struct {
-	customers customer.CustomerRepository
+	users adminuser.Repository
 }
 
 // NewService creates an admin user service.
-func NewService(customers customer.CustomerRepository) *Service {
-	if customers == nil {
-		panic("adminuser.NewService: nil customers repository")
+func NewService(users adminuser.Repository) *Service {
+	if users == nil {
+		panic("adminuser.NewService: nil admin user repository")
 	}
-	return &Service{customers: customers}
+	return &Service{users: users}
 }
 
 // CreateInput is the data required to create an admin user.
@@ -56,7 +57,7 @@ func (s *Service) Create(ctx context.Context, in CreateInput) (*customer.Custome
 		return nil, err
 	}
 
-	existing, err := s.customers.FindByEmail(ctx, email)
+	existing, err := s.users.FindByEmail(ctx, email)
 	if err != nil {
 		return nil, fmt.Errorf("adminuser: find email: %w", err)
 	}
@@ -80,7 +81,7 @@ func (s *Service) Create(ctx context.Context, in CreateInput) (*customer.Custome
 	if err := c.SetPassword(hash); err != nil {
 		return nil, apperror.Validation(err.Error())
 	}
-	if err := s.customers.Create(ctx, &c); err != nil {
+	if err := s.users.Create(ctx, &c); err != nil {
 		return nil, fmt.Errorf("adminuser: create: %w", err)
 	}
 	return &c, nil
@@ -99,7 +100,7 @@ func (s *Service) List(ctx context.Context, offset, limit int) ([]customer.Custo
 	if limit <= 0 {
 		limit = 20
 	}
-	return s.customers.ListAdminUsers(ctx, offset, limit)
+	return s.users.ListAdminUsers(ctx, offset, limit)
 }
 
 // Update changes role, name, or status for an admin user.
@@ -125,9 +126,9 @@ func (s *Service) Update(ctx context.Context, actorID, userID string, in UpdateI
 		}
 	}
 
-	if err := s.guardLastActiveAdmin(ctx, c, in.Role, in.Status); err != nil {
-		return nil, err
-	}
+	priorRole := c.Role
+	priorStatus := c.Status
+	revokeSessions := false
 
 	c.FirstName = strings.TrimSpace(in.FirstName)
 	c.LastName = strings.TrimSpace(in.LastName)
@@ -144,10 +145,11 @@ func (s *Service) Update(ctx context.Context, actorID, userID string, in UpdateI
 			if err := c.Disable(); err != nil {
 				return nil, apperror.Validation(err.Error())
 			}
+			revokeSessions = true
 		}
 	}
 
-	if err := s.customers.Update(ctx, c); err != nil {
+	if err := s.users.UpdateAdminUser(ctx, c, priorRole, priorStatus, revokeSessions); err != nil {
 		return nil, fmt.Errorf("adminuser: update: %w", err)
 	}
 	return c, nil
@@ -169,7 +171,7 @@ func (s *Service) ResetPassword(ctx context.Context, actorID, userID, newPasswor
 	if err != nil {
 		return fmt.Errorf("adminuser: hash password: %w", err)
 	}
-	if err := s.customers.ChangePasswordAndBumpTokenGeneration(ctx, userID, hash); err != nil {
+	if err := s.users.ChangePasswordAndBumpTokenGeneration(ctx, userID, hash); err != nil {
 		return fmt.Errorf("adminuser: reset password: %w", err)
 	}
 	return nil
@@ -179,7 +181,7 @@ func (s *Service) loadAdminUser(ctx context.Context, userID string) (*customer.C
 	if userID == "" {
 		return nil, apperror.Validation("user id must not be empty")
 	}
-	c, err := s.customers.FindByID(ctx, userID)
+	c, err := s.users.FindByID(ctx, userID)
 	if err != nil {
 		return nil, fmt.Errorf("adminuser: find: %w", err)
 	}
@@ -187,24 +189,6 @@ func (s *Service) loadAdminUser(ctx context.Context, userID string) (*customer.C
 		return nil, apperror.NotFound("admin user not found")
 	}
 	return c, nil
-}
-
-func (s *Service) guardLastActiveAdmin(ctx context.Context, c *customer.Customer, newRole customer.Role, newStatus customer.Status) error {
-	if c.Role != customer.RoleAdmin || c.Status != customer.StatusActive {
-		return nil
-	}
-	removingAdmin := newRole != customer.RoleAdmin || newStatus != customer.StatusActive
-	if !removingAdmin {
-		return nil
-	}
-	count, err := s.customers.CountActiveByRole(ctx, customer.RoleAdmin)
-	if err != nil {
-		return fmt.Errorf("adminuser: count admins: %w", err)
-	}
-	if count <= 1 {
-		return apperror.Validation("cannot remove the last active admin user")
-	}
-	return nil
 }
 
 func validateAssignableRole(role customer.Role) error {

@@ -44,12 +44,6 @@ func (m *mockCustomerRepoForExport) ListCustomers(_ context.Context, offset, lim
 	}
 	return m.customers[offset:end], nil
 }
-func (m *mockCustomerRepoForExport) ListAdminUsers(_ context.Context, _, _ int) ([]customer.Customer, error) {
-	return nil, nil
-}
-func (m *mockCustomerRepoForExport) CountActiveByRole(_ context.Context, _ customer.Role) (int, error) {
-	return 0, nil
-}
 func (m *mockCustomerRepoForExport) BumpTokenGeneration(_ context.Context, _ string) error {
 	return nil
 }

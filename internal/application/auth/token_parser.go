@@ -50,20 +50,14 @@ func (p *ValidatingTokenParser) Parse(ctx context.Context, token string) (identi
 		return identity.Identity{}, fmt.Errorf("validating parser: %w", err)
 	}
 
-	gen, ok := p.getCached(claims.Sub)
-	if !ok {
-		c, err := p.customers.FindByID(ctx, claims.Sub)
-		if err != nil {
-			return identity.Identity{}, fmt.Errorf("validating parser: %w", err)
-		}
-		if c == nil {
-			return identity.Identity{}, apperror.Unauthorized("invalid token")
-		}
-		gen = c.TokenGeneration
-		p.putCached(claims.Sub, gen)
+	c, err := p.customers.FindByID(ctx, claims.Sub)
+	if err != nil {
+		return identity.Identity{}, fmt.Errorf("validating parser: %w", err)
 	}
-
-	if gen != claims.Gen {
+	if c == nil || c.Status != customer.StatusActive {
+		return identity.Identity{}, apperror.Unauthorized("invalid token")
+	}
+	if c.TokenGeneration != claims.Gen {
 		return identity.Identity{}, apperror.Unauthorized("token revoked")
 	}
 

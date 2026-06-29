@@ -68,7 +68,7 @@ func (h *ReviewAdminHandler) List() http.HandlerFunc {
 		})
 
 		JSON(w, http.StatusOK, map[string]interface{}{
-			"reviews": toReviewResponses(list),
+			"reviews": toAdminReviewResponses(list),
 			"offset":  offset,
 			"limit":   limit,
 		})
@@ -104,7 +104,7 @@ func (h *ReviewAdminHandler) Get() http.HandlerFunc {
 		})
 
 		JSON(w, http.StatusOK, map[string]interface{}{
-			"review": toReviewResponse(rev),
+			"review": toAdminReviewResponse(rev),
 		})
 	}
 }
@@ -140,7 +140,7 @@ func (h *ReviewAdminHandler) transition(action admin.AuditAction, fn func(contex
 		})
 
 		JSON(w, http.StatusOK, map[string]interface{}{
-			"review": toReviewResponse(rev),
+			"review": toAdminReviewResponse(rev),
 		})
 	}
 }

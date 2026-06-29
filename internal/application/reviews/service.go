@@ -78,10 +78,14 @@ func (s *Service) Approve(ctx context.Context, reviewID string) (*domainReview.R
 	if err != nil {
 		return nil, err
 	}
+	priorStatus := rev.Status()
 	if err := rev.Approve(); err != nil {
 		return nil, apperror.Validation(err.Error())
 	}
-	if err := s.reviews.Update(ctx, rev); err != nil {
+	if err := s.reviews.Update(ctx, rev, priorStatus); err != nil {
+		if apperror.Is(err, apperror.CodeConflict) {
+			return nil, apperror.Validation("review was already moderated")
+		}
 		return nil, fmt.Errorf("reviews: approve update: %w", err)
 	}
 	return rev, nil
@@ -93,10 +97,14 @@ func (s *Service) Reject(ctx context.Context, reviewID string) (*domainReview.Re
 	if err != nil {
 		return nil, err
 	}
+	priorStatus := rev.Status()
 	if err := rev.Reject(); err != nil {
 		return nil, apperror.Validation(err.Error())
 	}
-	if err := s.reviews.Update(ctx, rev); err != nil {
+	if err := s.reviews.Update(ctx, rev, priorStatus); err != nil {
+		if apperror.Is(err, apperror.CodeConflict) {
+			return nil, apperror.Validation("review was already moderated")
+		}
 		return nil, fmt.Errorf("reviews: reject update: %w", err)
 	}
 	return rev, nil
@@ -117,8 +125,12 @@ func (s *Service) List(ctx context.Context, status domainReview.Status, offset, 
 
 // ListApprovedByProduct returns approved reviews for public display.
 func (s *Service) ListApprovedByProduct(ctx context.Context, productID string, offset, limit int) ([]domainReview.Review, error) {
-	if _, err := s.loadProduct(ctx, productID); err != nil {
+	product, err := s.loadProduct(ctx, productID)
+	if err != nil {
 		return nil, err
+	}
+	if product.Status != catalog.StatusActive {
+		return nil, apperror.NotFound("product not found")
 	}
 	if limit <= 0 {
 		limit = defaultListLimit
