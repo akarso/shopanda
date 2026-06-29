@@ -61,6 +61,9 @@ type StorefrontHandler struct {
 	legalConfig  legal.ConfigGetter
 	menus        cms.MenuRepository
 	menuResolver *cmsApp.MenuResolver
+	pages        cms.PageRepository
+	contentBlocks cms.ContentBlockRepository
+	blockResolver *cmsApp.BlockResolver
 	log          logger.Logger
 	catNav       storefrontCategoryCache
 }
@@ -123,6 +126,7 @@ type StorefrontLayoutData struct {
 type StorefrontHomePageData struct {
 	Layout StorefrontLayoutData
 	Theme  theme.Theme
+	Blocks []StorefrontContentBlock
 }
 
 type StorefrontProductPageData struct {
@@ -372,6 +376,15 @@ func (h *StorefrontHandler) Home() http.HandlerFunc {
 		page := StorefrontHomePageData{
 			Layout: h.layoutDataBestEffort(r),
 			Theme:  h.engine.Theme(),
+		}
+		blocks, err := h.loadStorefrontBlocks(r.Context(), cms.TargetTypeLayout, "home")
+		if err != nil {
+			h.log.Warn("storefront.content_blocks.load_failed", map[string]interface{}{
+				"path":  r.URL.Path,
+				"error": err.Error(),
+			})
+		} else {
+			page.Blocks = blocks
 		}
 		h.renderPage(w, "home", page)
 	}
