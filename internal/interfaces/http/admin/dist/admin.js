@@ -2897,8 +2897,50 @@
         });
     }
 
+    function downloadAuditExport(format) {
+        var url = API_BASE + '/admin/audit/export?format=' + encodeURIComponent(format);
+        var headers = buildHeaders({});
+        fetch(url, { headers: headers }).then(function (res) {
+            if (res.status === 401) {
+                clearToken();
+                setLoginMessage('Your session expired. Sign in again to continue.');
+                navigateTo('/admin');
+                return Promise.reject(new Error('unauthorized'));
+            }
+            if (!res.ok) {
+                return res.json().then(function (body) {
+                    throw new Error((body && body.error && body.error.message) || 'Audit export failed.');
+                });
+            }
+            return res.blob();
+        }).then(function (blob) {
+            if (!blob) {
+                return;
+            }
+            var link = document.createElement('a');
+            link.href = URL.createObjectURL(blob);
+            link.download = format === 'json' ? 'admin-audit-log.json' : 'admin-audit-log.csv';
+            link.click();
+            URL.revokeObjectURL(link.href);
+        }).catch(function (err) {
+            var grid = document.getElementById('audit-log-grid');
+            if (grid) {
+                grid.insertAdjacentHTML('beforebegin', '<p role="alert">' + esc(extractErrorMessage(err, 'Audit export failed.')) + '</p>');
+            }
+        });
+    }
+
     function renderAuditLogPage(container) {
-        container.innerHTML = '<h2>Audit Log</h2><div id="audit-log-grid"></div>';
+        container.innerHTML = '<h2>Audit Log</h2>' +
+            '<p><button type="button" id="audit-export-csv">Download CSV</button> ' +
+            '<button type="button" id="audit-export-json">Download JSON</button></p>' +
+            '<div id="audit-log-grid"></div>';
+        document.getElementById('audit-export-csv').addEventListener('click', function () {
+            downloadAuditExport('csv');
+        });
+        document.getElementById('audit-export-json').addEventListener('click', function () {
+            downloadAuditExport('json');
+        });
         var grid = document.getElementById('audit-log-grid');
         api('/admin/audit?offset=0&limit=50').then(function (body) {
             if (body && body.error && body.error.code === 'forbidden') {

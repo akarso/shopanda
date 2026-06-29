@@ -933,6 +933,7 @@ func runServe(cfg *config.Config, log logger.Logger, embedScheduler bool) error 
 		router.Handle("POST /api/v1/admin/mfa/recovery/regenerate", requireAuth(adminMFAHandler.RegenerateRecoveryCodes()))
 	}
 	router.Handle("GET /api/v1/admin/audit", requireAuditRead(auditLogAdmin.List()))
+	router.Handle("GET /api/v1/admin/audit/export", requireAuditRead(auditLogAdmin.Export()))
 	router.Handle("GET /api/v1/admin/forms/{name}", requireAuth(schemaHandler.GetForm()))
 	router.Handle("GET /api/v1/admin/grids/{name}", requireAuth(schemaHandler.GetGrid()))
 	router.Handle("GET /api/v1/admin/pages", requireContentRead(pageAdmin.List()))
@@ -1147,6 +1148,7 @@ func runServe(cfg *config.Config, log logger.Logger, embedScheduler bool) error 
 		sched = cron.New(log)
 		runtime.RegisterCacheCleanup(jobQueue, cacheApp.JobType, log, sched)
 		runtime.RegisterCartRecovery(jobQueue, log, sched)
+		runtime.RegisterAuditRetention(jobQueue, log, sched)
 		schedulerCtx, cancel := context.WithCancel(context.Background())
 		schedulerCancel = cancel
 		schedulerDone = make(chan struct{})
@@ -1617,6 +1619,7 @@ func runScheduler(cfg *config.Config, log logger.Logger) error {
 	var sched scheduler.Scheduler = cron.New(log)
 	runtime.RegisterCacheCleanup(jobQueue, cacheApp.JobType, log, sched)
 	runtime.RegisterCartRecovery(jobQueue, log, sched)
+	runtime.RegisterAuditRetention(jobQueue, log, sched)
 
 	// Block until interrupted (context cancelled via signal).
 	ctx, cancel := context.WithCancel(context.Background())
@@ -2408,6 +2411,13 @@ func setupWorker(conn *sql.DB, cfg *config.Config, log logger.Logger, app *plugi
 		StoreURL:   cfg.Server.PublicBaseURL,
 		Log:        log,
 	}))
+
+	auditLogRepo, err := postgres.NewAuditLogRepo(conn)
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	configRepo := postgres.NewConfigRepo(conn)
+	jobWorker.Register(adminApp.NewRetentionHandler(auditLogRepo, configRepo, log))
 
 	return jobWorker, jobQueue, appCache, nil
 }

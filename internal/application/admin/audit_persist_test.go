@@ -5,6 +5,7 @@ import (
 	"errors"
 	"io"
 	"testing"
+	"time"
 
 	"github.com/akarso/shopanda/internal/application/admin"
 	domainadmin "github.com/akarso/shopanda/internal/domain/admin"
@@ -26,6 +27,10 @@ func (m *mockAuditLogRepo) Insert(ctx context.Context, record domainadmin.AuditL
 
 func (m *mockAuditLogRepo) List(_ context.Context, _ domainadmin.AuditLogFilter) ([]domainadmin.AuditLogRecord, error) {
 	return nil, nil
+}
+
+func (m *mockAuditLogRepo) DeleteBefore(context.Context, time.Time) (int64, error) {
+	return 0, nil
 }
 
 func TestAuditor_LogAction_PersistsEntryWithScopeTriad(t *testing.T) {

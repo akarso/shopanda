@@ -39,7 +39,7 @@ C4Component
             Component(attributeAdmin, "AttributeAdminHandler", "HTTP", "Attributes and groups (admin)")
             Component(inventoryAdmin, "InventoryAdminHandler", "HTTP", "Stock list and adjust (admin)")
             Component(customerAdmin, "CustomerAdminHandler", "HTTP", "Customer list, detail, delete (admin)")
-            Component(auditLogAdmin, "AuditLogAdminHandler", "HTTP", "Read-only audit log list (admin, audit.read)")
+            Component(auditLogAdmin, "AuditLogAdminHandler", "HTTP", "Audit log list + CSV/JSON export (admin, audit.read)")
             Component(accountHandler, "AccountHandler", "HTTP", "Profile, consent, GDPR export/delete (customer)")
             Component(shippingHandler, "ShippingRatesHandler", "HTTP", "List shipping rates")
             Component(webhookHandler, "PaymentWebhookHandler", "HTTP", "Handle payment callbacks (public)")
@@ -69,12 +69,13 @@ C4Component
             Component(auditor, "Auditor", "Go", "Structured admin audit logging with best-effort DB persistence")
             Component(mediaService, "MediaService", "Go", "Upload files: validate type, save to storage, persist asset record")
             Component(cacheCleanupHandler, "CacheCleanupHandler", "Go", "Handles cache.cleanup jobs: removes expired cache entries")
+            Component(auditRetentionHandler, "AuditRetentionHandler", "Go", "Handles audit.retention jobs: prunes admin_audit_log by config")
             Component(productSchemaRegistration, "ProductSchemaRegistration", "Go", "Registers product form and grid schemas with admin registry")
         }
 
         Boundary(infrastructure, "Infrastructure Layer (Adapters)") {
             Component(postgresRepos, "PostgreSQL Repositories", "Go, lib/pq", "Catalog, cart, order, customer, payment, shipping, CMS, config, and related repos")
-            Component(auditLogRepo, "AuditLogRepo", "Go, lib/pq", "Insert and filtered list for admin_audit_log")
+            Component(auditLogRepo, "AuditLogRepo", "Go, lib/pq", "Insert, list, export, and retention delete for admin_audit_log")
             Component(postgresSearch, "PostgresSearchEngine", "Go, tsvector", "Full-text search via PostgreSQL tsvector, filters, facets")
             Component(postgresJobQueue, "PostgresJobQueue", "Go, lib/pq", "Job queue with FOR UPDATE SKIP LOCKED dequeue, retry logic")
             Component(manualPay, "ManualPayProvider", "Go", "Offline payment processing")
@@ -158,6 +159,8 @@ C4Component
     Rel(jobWorker, smtpMailer, "EmailSendHandler sends via Mailer")
     Rel(jobWorker, cacheCleanupHandler, "Dispatches cache.cleanup jobs")
     Rel(cacheCleanupHandler, pgCacheStore, "Calls DeleteExpired")
+    Rel(jobWorker, auditRetentionHandler, "Dispatches audit.retention jobs")
+    Rel(auditRetentionHandler, auditLogRepo, "DeleteBefore by retention config")
 
     Rel(authService, postgresRepos, "Customer + token queries")
     Rel(cartService, postgresRepos, "Cart persistence")

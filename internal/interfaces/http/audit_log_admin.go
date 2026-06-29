@@ -1,12 +1,14 @@
 package http
 
 import (
+	"bytes"
 	"fmt"
 	"net/http"
 	"strings"
 	"time"
 
 	adminapp "github.com/akarso/shopanda/internal/application/admin"
+	"github.com/akarso/shopanda/internal/application/exporter"
 	domainadmin "github.com/akarso/shopanda/internal/domain/admin"
 	"github.com/akarso/shopanda/internal/platform/apperror"
 )
@@ -52,25 +54,13 @@ func (h *AuditLogAdminHandler) List() http.HandlerFunc {
 			return
 		}
 
-		filter := domainadmin.AuditLogFilter{
-			Action:       strings.TrimSpace(r.URL.Query().Get("action")),
-			ResourceType: strings.TrimSpace(r.URL.Query().Get("resource_type")),
-			ResourceID:   strings.TrimSpace(r.URL.Query().Get("resource_id")),
-			Offset:       offset,
-			Limit:        limit,
-		}
-		if from, err := parseAuditTimeFilter(r.URL.Query().Get("from"), false); err != nil {
+		filter, err := buildAuditLogQuery(r)
+		if err != nil {
 			JSONError(w, apperror.Validation(err.Error()))
 			return
-		} else if from != nil {
-			filter.From = from
 		}
-		if to, err := parseAuditTimeFilter(r.URL.Query().Get("to"), true); err != nil {
-			JSONError(w, apperror.Validation(err.Error()))
-			return
-		} else if to != nil {
-			filter.To = to
-		}
+		filter.Offset = offset
+		filter.Limit = limit
 
 		entries, err := h.repo.List(r.Context(), filter)
 		if err != nil {
@@ -121,6 +111,88 @@ func (h *AuditLogAdminHandler) List() http.HandlerFunc {
 			"limit":   limit,
 		})
 	}
+}
+
+// Export handles GET /api/v1/admin/audit/export.
+func (h *AuditLogAdminHandler) Export() http.HandlerFunc {
+	exp := exporter.NewAuditLogExporter(h.repo)
+	return func(w http.ResponseWriter, r *http.Request) {
+		format, err := exporter.ParseAuditExportFormat(r.URL.Query().Get("format"))
+		if err != nil {
+			JSONError(w, apperror.Validation(err.Error()))
+			return
+		}
+
+		filter, err := buildAuditLogQuery(r)
+		if err != nil {
+			JSONError(w, apperror.Validation(err.Error()))
+			return
+		}
+
+		opts := exporter.AuditLogExportOptions{
+			Format:       format,
+			Action:       filter.Action,
+			ResourceType: filter.ResourceType,
+			ResourceID:   filter.ResourceID,
+			From:         filter.From,
+			To:           filter.To,
+		}
+
+		var buf bytes.Buffer
+		result, err := exp.Export(r.Context(), &buf, opts)
+		if err != nil {
+			h.auditor.LogAction(r.Context(), adminapp.AuditEntry{
+				AdminID:      adminIDFromRequest(r),
+				Action:       adminapp.AuditLogExport,
+				ResourceType: "audit_log",
+				Result:       "error",
+				Error:        err.Error(),
+			})
+			JSONError(w, apperror.Wrap(apperror.CodeInternal, "audit export failed", err))
+			return
+		}
+
+		filename := "admin-audit-log.csv"
+		contentType := "text/csv; charset=utf-8"
+		if format == exporter.AuditLogFormatJSON {
+			filename = "admin-audit-log.json"
+			contentType = "application/json; charset=utf-8"
+		}
+
+		h.auditor.LogAction(r.Context(), adminapp.AuditEntry{
+			AdminID:      adminIDFromRequest(r),
+			Action:       adminapp.AuditLogExport,
+			ResourceType: "audit_log",
+			Result:       "success",
+			Details: map[string]interface{}{
+				"format":  string(format),
+				"entries": result.Entries,
+			},
+		})
+
+		w.Header().Set("Content-Type", contentType)
+		w.Header().Set("Content-Disposition", `attachment; filename="`+filename+`"`)
+		_, _ = w.Write(buf.Bytes())
+	}
+}
+
+func buildAuditLogQuery(r *http.Request) (domainadmin.AuditLogFilter, error) {
+	filter := domainadmin.AuditLogFilter{
+		Action:       strings.TrimSpace(r.URL.Query().Get("action")),
+		ResourceType: strings.TrimSpace(r.URL.Query().Get("resource_type")),
+		ResourceID:   strings.TrimSpace(r.URL.Query().Get("resource_id")),
+	}
+	from, err := parseAuditTimeFilter(r.URL.Query().Get("from"), false)
+	if err != nil {
+		return domainadmin.AuditLogFilter{}, err
+	}
+	filter.From = from
+	to, err := parseAuditTimeFilter(r.URL.Query().Get("to"), true)
+	if err != nil {
+		return domainadmin.AuditLogFilter{}, err
+	}
+	filter.To = to
+	return filter, nil
 }
 
 func parseAuditTimeFilter(raw string, endOfDay bool) (*time.Time, error) {
