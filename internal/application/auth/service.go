@@ -24,6 +24,7 @@ type Service struct {
 	bus       *event.Bus
 	log       logger.Logger
 	resetTTL  time.Duration
+	mfa       MFAClient
 }
 
 // NewService creates an auth application service.
@@ -61,6 +62,11 @@ func NewService(
 		log:       log,
 		resetTTL:  resetTTL,
 	}
+}
+
+// SetMFAClient wires optional admin MFA login verification.
+func (s *Service) SetMFAClient(mfa MFAClient) {
+	s.mfa = mfa
 }
 
 // UpdateProfileInput contains editable customer profile fields.
@@ -501,11 +507,14 @@ type LoginInput struct {
 	Password string
 }
 
-// LoginOutput is the result of a successful login.
+// LoginOutput is the result of a successful login or MFA challenge.
 type LoginOutput struct {
-	CustomerID string
-	Token      string
-	ExpiresAt  time.Time
+	CustomerID       string
+	Token            string
+	ExpiresAt        time.Time
+	MFARequired      bool
+	PendingToken     string
+	PendingExpiresAt time.Time
 }
 
 // Login authenticates a customer and returns a JWT.
@@ -534,6 +543,28 @@ func (s *Service) Login(ctx context.Context, in LoginInput) (LoginOutput, error)
 		return LoginOutput{}, apperror.Unauthorized("invalid email or password")
 	}
 
+	if s.mfa != nil {
+		required, err := s.mfa.RequiredForLogin(ctx, c)
+		if err != nil {
+			return LoginOutput{}, fmt.Errorf("auth service: login mfa: %w", err)
+		}
+		if required {
+			pendingToken, pendingExpiresAt, err := s.mfa.IssuePendingLogin(c)
+			if err != nil {
+				return LoginOutput{}, fmt.Errorf("auth service: pending login: %w", err)
+			}
+			s.log.Info("auth.login.mfa_required", map[string]interface{}{
+				"customer_id": c.ID,
+			})
+			return LoginOutput{
+				CustomerID:       c.ID,
+				MFARequired:      true,
+				PendingToken:     pendingToken,
+				PendingExpiresAt: pendingExpiresAt,
+			}, nil
+		}
+	}
+
 	token, expiresAt, err := s.jwt.CreateWithDisplayName(c.ID, string(c.Role), c.TokenGeneration, customerDisplayName(c))
 	if err != nil {
 		return LoginOutput{}, fmt.Errorf("auth service: create token: %w", err)
@@ -543,6 +574,29 @@ func (s *Service) Login(ctx context.Context, in LoginInput) (LoginOutput, error)
 		"customer_id": c.ID,
 	})
 
+	return LoginOutput{
+		CustomerID: c.ID,
+		Token:      token,
+		ExpiresAt:  expiresAt,
+	}, nil
+}
+
+// VerifyLoginMFA completes admin login after TOTP or recovery code verification.
+func (s *Service) VerifyLoginMFA(ctx context.Context, pendingToken, code string) (LoginOutput, error) {
+	if s.mfa == nil {
+		return LoginOutput{}, apperror.Validation("mfa is not enabled")
+	}
+	c, err := s.mfa.CompleteLogin(ctx, pendingToken, code)
+	if err != nil {
+		return LoginOutput{}, err
+	}
+	token, expiresAt, err := s.jwt.CreateWithDisplayName(c.ID, string(c.Role), c.TokenGeneration, customerDisplayName(c))
+	if err != nil {
+		return LoginOutput{}, fmt.Errorf("auth service: create token: %w", err)
+	}
+	s.log.Info("auth.login.mfa_completed", map[string]interface{}{
+		"customer_id": c.ID,
+	})
 	return LoginOutput{
 		CustomerID: c.ID,
 		Token:      token,

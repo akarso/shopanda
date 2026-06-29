@@ -83,6 +83,44 @@ func (h *AuthHandler) Login() http.HandlerFunc {
 			return
 		}
 
+		if out.MFARequired {
+			JSON(w, http.StatusOK, map[string]interface{}{
+				"customer_id":        out.CustomerID,
+				"mfa_required":       true,
+				"pending_token":      out.PendingToken,
+				"pending_expires_at": out.PendingExpiresAt.UTC().Format("2006-01-02T15:04:05Z"),
+			})
+			return
+		}
+
+		JSON(w, http.StatusOK, authTokenResponse{
+			CustomerID: out.CustomerID,
+			Token:      out.Token,
+			ExpiresAt:  out.ExpiresAt.Format("2006-01-02T15:04:05Z"),
+		})
+	}
+}
+
+type loginMFARequest struct {
+	PendingToken string `json:"pending_token"`
+	Code         string `json:"code"`
+}
+
+// LoginMFA returns a handler for POST /auth/login/mfa.
+func (h *AuthHandler) LoginMFA() http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		var req loginMFARequest
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			JSONError(w, apperror.Validation("invalid request body"))
+			return
+		}
+
+		out, err := h.svc.VerifyLoginMFA(r.Context(), req.PendingToken, req.Code)
+		if err != nil {
+			JSONError(w, err)
+			return
+		}
+
 		JSON(w, http.StatusOK, authTokenResponse{
 			CustomerID: out.CustomerID,
 			Token:      out.Token,
