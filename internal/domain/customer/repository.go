@@ -21,6 +21,12 @@ type CustomerRepository interface {
 	// ListCustomers returns a paginated slice of customers ordered by email.
 	ListCustomers(ctx context.Context, offset, limit int) ([]Customer, error)
 
+	// ListAdminUsers returns admin-capable users (role != customer) ordered by email.
+	ListAdminUsers(ctx context.Context, offset, limit int) ([]Customer, error)
+
+	// CountActiveByRole returns active customers with the given role.
+	CountActiveByRole(ctx context.Context, role Role) (int, error)
+
 	// BumpTokenGeneration atomically increments the customer's token generation.
 	BumpTokenGeneration(ctx context.Context, customerID string) error
 

@@ -18,6 +18,7 @@ import (
 
 	accountApp "github.com/akarso/shopanda/internal/application/account"
 	adminApp "github.com/akarso/shopanda/internal/application/admin"
+	adminuserApp "github.com/akarso/shopanda/internal/application/adminuser"
 	authApp "github.com/akarso/shopanda/internal/application/auth"
 	cacheApp "github.com/akarso/shopanda/internal/application/cache"
 	cartApp "github.com/akarso/shopanda/internal/application/cart"
@@ -738,6 +739,8 @@ func runServe(cfg *config.Config, log logger.Logger, embedScheduler bool) error 
 	shippingZoneAdmin := shophttp.NewShippingZoneAdminHandler(zoneRepo)
 	accountService := accountApp.NewService(customerRepo, consentRepo, bus, log, conn)
 	customerAdmin := shophttp.NewCustomerAdminHandlerWithAuditorAndDeleter(customerRepo, accountService, sharedAuditor)
+	adminUserService := adminuserApp.NewService(customerRepo)
+	adminUserHandler := shophttp.NewAdminUserHandler(adminUserService, sharedAuditor)
 	storeCreditAdmin := shophttp.NewStoreCreditAdminHandler(storeCreditService)
 	storeCreditAccount := shophttp.NewStoreCreditAccountHandler(storeCreditService)
 	accountHandler := shophttp.NewAccountHandler(customerRepo, orderRepo, consentRepo, accountService)
@@ -889,6 +892,11 @@ func runServe(cfg *config.Config, log logger.Logger, embedScheduler bool) error 
 	router.Handle("GET /api/v1/admin/config", requireSettingsRead(configAdmin.Get()))
 	router.Handle("PUT /api/v1/admin/config", requireSettingsWrite(configAdmin.Update()))
 	router.Handle("POST /api/v1/admin/config/test-email", requireSettingsWrite(configAdmin.TestEmail()))
+	router.Handle("GET /api/v1/admin/users", requireSettingsRead(adminUserHandler.List()))
+	router.Handle("GET /api/v1/admin/users/{userId}", requireSettingsRead(adminUserHandler.Get()))
+	router.Handle("POST /api/v1/admin/users", requireSettingsWrite(adminUserHandler.Create()))
+	router.Handle("PUT /api/v1/admin/users/{userId}", requireSettingsWrite(adminUserHandler.Update()))
+	router.Handle("POST /api/v1/admin/users/{userId}/reset-password", requireSettingsWrite(adminUserHandler.ResetPassword()))
 	router.Handle("GET /api/v1/admin/audit", requireAuditRead(auditLogAdmin.List()))
 	router.Handle("GET /api/v1/admin/forms/{name}", requireAuth(schemaHandler.GetForm()))
 	router.Handle("GET /api/v1/admin/grids/{name}", requireAuth(schemaHandler.GetGrid()))

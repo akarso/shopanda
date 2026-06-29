@@ -51,6 +51,14 @@ func (m *mockAdminCustomerRepo) ListCustomers(ctx context.Context, offset, limit
 	return nil, nil
 }
 
+func (m *mockAdminCustomerRepo) ListAdminUsers(ctx context.Context, offset, limit int) ([]customer.Customer, error) {
+	return m.ListCustomers(ctx, offset, limit)
+}
+
+func (m *mockAdminCustomerRepo) CountActiveByRole(_ context.Context, _ customer.Role) (int, error) {
+	return 0, nil
+}
+
 func (m *mockAdminCustomerRepo) BumpTokenGeneration(ctx context.Context, customerID string) error {
 	if m.bumpTokenGenerationFn != nil {
 		return m.bumpTokenGenerationFn(ctx, customerID)

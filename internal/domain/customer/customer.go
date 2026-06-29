@@ -43,6 +43,16 @@ func (r Role) IsValid() bool {
 	return false
 }
 
+// IsAdminRole returns true when the role grants admin-panel access.
+func IsAdminRole(r Role) bool {
+	switch r {
+	case RoleAdmin, RoleManager, RoleEditor, RoleSupport:
+		return true
+	default:
+		return false
+	}
+}
+
 // Customer represents a registered customer account.
 type Customer struct {
 	ID              string

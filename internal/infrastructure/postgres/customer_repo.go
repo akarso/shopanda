@@ -170,6 +170,57 @@ func (r *CustomerRepo) ListCustomers(ctx context.Context, offset, limit int) ([]
 	return customers, nil
 }
 
+// ListAdminUsers returns admin-capable users ordered by email.
+func (r *CustomerRepo) ListAdminUsers(ctx context.Context, offset, limit int) ([]customer.Customer, error) {
+	if offset < 0 {
+		return nil, fmt.Errorf("customer_repo: list admin users: negative offset")
+	}
+	if limit <= 0 {
+		return nil, fmt.Errorf("customer_repo: list admin users: non-positive limit")
+	}
+	if limit > 100 {
+		limit = 100
+	}
+
+	const q = `SELECT id, email, first_name, last_name, token_generation, email_verified_at, role, status, created_at, updated_at
+		FROM customers
+		WHERE role <> 'customer'
+		ORDER BY email
+		LIMIT $1 OFFSET $2`
+
+	rows, err := r.query(ctx, q, limit, offset)
+	if err != nil {
+		return nil, fmt.Errorf("customer_repo: list admin users: %w", err)
+	}
+	defer rows.Close()
+
+	var users []customer.Customer
+	for rows.Next() {
+		c, err := scanCustomerList(rows)
+		if err != nil {
+			return nil, fmt.Errorf("customer_repo: list admin users: scan: %w", err)
+		}
+		users = append(users, *c)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("customer_repo: list admin users: rows: %w", err)
+	}
+	return users, nil
+}
+
+// CountActiveByRole returns the number of active customers with the given role.
+func (r *CustomerRepo) CountActiveByRole(ctx context.Context, role customer.Role) (int, error) {
+	if !role.IsValid() {
+		return 0, fmt.Errorf("customer_repo: count active by role: invalid role")
+	}
+	const q = `SELECT COUNT(*) FROM customers WHERE role = $1 AND status = 'active'`
+	var count int
+	if err := r.queryRow(ctx, q, string(role)).Scan(&count); err != nil {
+		return 0, fmt.Errorf("customer_repo: count active by role: %w", err)
+	}
+	return count, nil
+}
+
 // BumpTokenGeneration atomically increments the customer's token generation.
 func (r *CustomerRepo) BumpTokenGeneration(ctx context.Context, customerID string) error {
 	const q = `UPDATE customers SET token_generation = token_generation + 1, updated_at = $1 WHERE id = $2`

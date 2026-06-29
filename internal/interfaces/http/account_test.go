@@ -50,6 +50,12 @@ func (r *stubCustomerRepo) Update(_ context.Context, c *customer.Customer) error
 func (r *stubCustomerRepo) ListCustomers(_ context.Context, _, _ int) ([]customer.Customer, error) {
 	return nil, nil
 }
+func (r *stubCustomerRepo) ListAdminUsers(_ context.Context, _, _ int) ([]customer.Customer, error) {
+	return nil, nil
+}
+func (r *stubCustomerRepo) CountActiveByRole(_ context.Context, _ customer.Role) (int, error) {
+	return 0, nil
+}
 func (r *stubCustomerRepo) BumpTokenGeneration(_ context.Context, _ string) error { return nil }
 func (r *stubCustomerRepo) ChangePasswordAndBumpTokenGeneration(_ context.Context, id, passwordHash string) error {
 	if c, ok := r.customers[id]; ok {

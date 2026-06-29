@@ -45,6 +45,12 @@ func (m *mockCustomerRepoForImport) Update(_ context.Context, c *customer.Custom
 func (m *mockCustomerRepoForImport) ListCustomers(_ context.Context, _, _ int) ([]customer.Customer, error) {
 	return nil, nil
 }
+func (m *mockCustomerRepoForImport) ListAdminUsers(_ context.Context, _, _ int) ([]customer.Customer, error) {
+	return nil, nil
+}
+func (m *mockCustomerRepoForImport) CountActiveByRole(_ context.Context, _ customer.Role) (int, error) {
+	return 0, nil
+}
 func (m *mockCustomerRepoForImport) BumpTokenGeneration(_ context.Context, _ string) error {
 	return nil
 }

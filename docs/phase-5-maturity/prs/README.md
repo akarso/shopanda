@@ -15,7 +15,7 @@ Planned specs for **PR-500–549**. Individual PR markdown files will be added w
 | PR-512 | B | [oss] | done | [Content blocks](PR-512.md) |
 | PR-513 | B | [oss] | done | [Abandoned cart recovery (stretch)](PR-513.md) |
 | PR-514 | B | [oss] | done | [Product reviews (stretch)](PR-514.md) |
-| PR-520 | C | [oss] | planned | Admin user CRUD |
+| PR-520 | C | [oss] | done | [Admin user CRUD](PR-520.md) |
 | PR-521 | C | [oss] | planned | Custom roles editor |
 | PR-522 | C | [oss] | planned | Admin TOTP / MFA |
 | PR-523 | C | [oss] | planned | Audit export + retention |
@@ -34,6 +34,6 @@ Planned specs for **PR-500–549**. Individual PR markdown files will be added w
 
 Roadmap: [`../ROADMAP.md`](../ROADMAP.md) · EU compliance: [`../specs/COMPLIANCE_EU.md`](../specs/COMPLIANCE_EU.md) · Licensing: [`../../COMMERCIAL.md`](../../COMMERCIAL.md)
 
-**Suggested next PRs:** Track C (PR-520 admin user CRUD) or PR-540 (merchant outbound webhooks).
+**Suggested next PRs:** PR-521 (custom roles editor) or PR-540 (merchant outbound webhooks).
 
 [b2b] PRs implement in [`plugins/b2b/`](../../../plugins/b2b/). [oss] PRs stay in open core.

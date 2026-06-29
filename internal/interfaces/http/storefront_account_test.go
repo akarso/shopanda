@@ -132,6 +132,14 @@ func (r *storefrontAccountCustomerRepoStub) ListCustomers(_ context.Context, _, 
 	return nil, nil
 }
 
+func (r *storefrontAccountCustomerRepoStub) ListAdminUsers(_ context.Context, _, _ int) ([]customer.Customer, error) {
+	return nil, nil
+}
+
+func (r *storefrontAccountCustomerRepoStub) CountActiveByRole(_ context.Context, _ customer.Role) (int, error) {
+	return 0, nil
+}
+
 func (r *storefrontAccountCustomerRepoStub) BumpTokenGeneration(_ context.Context, customerID string) error {
 	if r.bumpErr != nil {
 		return r.bumpErr

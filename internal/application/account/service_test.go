@@ -30,6 +30,12 @@ func (m *mockCustomerRepo) Update(context.Context, *customer.Customer) error { r
 func (m *mockCustomerRepo) ListCustomers(context.Context, int, int) ([]customer.Customer, error) {
 	return nil, nil
 }
+func (m *mockCustomerRepo) ListAdminUsers(context.Context, int, int) ([]customer.Customer, error) {
+	return nil, nil
+}
+func (m *mockCustomerRepo) CountActiveByRole(context.Context, customer.Role) (int, error) {
+	return 0, nil
+}
 func (m *mockCustomerRepo) BumpTokenGeneration(context.Context, string) error { return nil }
 func (m *mockCustomerRepo) ChangePasswordAndBumpTokenGeneration(context.Context, string, string) error {
 	return nil
