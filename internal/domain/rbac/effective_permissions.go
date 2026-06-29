@@ -1,7 +1,6 @@
 package rbac
 
 import (
-	"sort"
 	"sync"
 
 	"github.com/akarso/shopanda/internal/domain/identity"
@@ -31,14 +30,32 @@ func ResetEffectivePermissions() {
 	effectiveMu.Unlock()
 }
 
-func effectiveSet(role identity.Role) (map[Permission]struct{}, bool) {
+// SetEffectiveRolePermissions updates one role in the effective store.
+func SetEffectiveRolePermissions(role identity.Role, perms []Permission) {
+	effectiveMu.Lock()
+	defer effectiveMu.Unlock()
+	if effectivePerms == nil {
+		effectivePerms = make(map[identity.Role]map[Permission]struct{})
+	}
+	effectivePerms[role] = toSet(perms...)
+}
+
+// effectiveAccess reports whether the effective store applies to role and its grants.
+// When initialized is false, callers should use static fallbacks.
+func effectiveAccess(role identity.Role) (set map[Permission]struct{}, initialized bool) {
 	effectiveMu.RLock()
 	defer effectiveMu.RUnlock()
 	if effectivePerms == nil {
 		return nil, false
 	}
+	if !IsAdminRole(role) {
+		return nil, false
+	}
 	set, ok := effectivePerms[role]
-	return set, ok
+	if !ok {
+		return map[Permission]struct{}{}, true
+	}
+	return set, true
 }
 
 func staticHasPermission(role identity.Role, perm Permission) bool {
@@ -52,22 +69,5 @@ func staticHasPermission(role identity.Role, perm Permission) bool {
 }
 
 func staticPermissionsForRole(role identity.Role) []Permission {
-	perms, ok := rolePermissions[role]
-	if !ok {
-		return nil
-	}
-	out := make([]Permission, 0, len(perms))
-	for p := range perms {
-		out = append(out, p)
-	}
-	for _, entry := range PluginPermissions() {
-		for _, r := range entry.DefaultRoles {
-			if r == role {
-				out = append(out, entry.Permission)
-				break
-			}
-		}
-	}
-	sort.Slice(out, func(i, j int) bool { return out[i] < out[j] })
-	return out
+	return DefaultPermissionsForRole(role)
 }

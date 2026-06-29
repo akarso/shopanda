@@ -70,6 +70,7 @@ func (h *AdminRoleHandler) Get() http.HandlerFunc {
 
 		role, err := parseAdminRole(roleName)
 		if err != nil {
+			h.audit(r.Context(), adminID, admin.AuditRoleRead, roleName, "error", err.Error(), nil)
 			JSONError(w, err)
 			return
 		}
@@ -99,12 +100,14 @@ func (h *AdminRoleHandler) Update() http.HandlerFunc {
 
 		role, err := parseAdminRole(roleName)
 		if err != nil {
+			h.audit(r.Context(), adminID, admin.AuditRoleUpdate, roleName, "error", err.Error(), nil)
 			JSONError(w, err)
 			return
 		}
 
 		var req updateRoleBody
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			h.audit(r.Context(), adminID, admin.AuditRoleUpdate, roleName, "error", "invalid request body", nil)
 			JSONError(w, apperror.Validation("invalid request body"))
 			return
 		}

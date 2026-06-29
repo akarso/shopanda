@@ -251,3 +251,21 @@ func TestInitEffectivePermissions_OverridesStaticDefaults(t *testing.T) {
 		t.Fatalf("PermissionsForRole = %v, want [products.write]", perms)
 	}
 }
+
+func TestInitEffectivePermissions_MissingAdminRoleHasNoGrants(t *testing.T) {
+	t.Cleanup(rbac.ResetEffectivePermissions)
+
+	rbac.InitEffectivePermissions(map[identity.Role][]rbac.Permission{
+		identity.RoleAdmin: {rbac.SettingsRead},
+	})
+
+	if rbac.HasPermission(identity.RoleManager, rbac.ProductsRead) {
+		t.Fatal("expected missing manager role to have no grants")
+	}
+	if perms := rbac.PermissionsForRole(identity.RoleManager); len(perms) != 0 {
+		t.Fatalf("PermissionsForRole(manager) = %v, want empty", perms)
+	}
+	if perms := rbac.PermissionsForRole("bogus"); perms != nil {
+		t.Fatalf("PermissionsForRole(bogus) = %v, want nil", perms)
+	}
+}

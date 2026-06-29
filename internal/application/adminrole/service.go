@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"sort"
+	"sync"
 
 	"github.com/akarso/shopanda/internal/domain/identity"
 	"github.com/akarso/shopanda/internal/domain/rbac"
@@ -13,6 +14,7 @@ import (
 // Service manages editable admin role permission assignments.
 type Service struct {
 	repo rbac.Repository
+	mu   sync.Mutex
 }
 
 // NewService creates an admin role service.
@@ -104,12 +106,13 @@ func (s *Service) UpdateRole(ctx context.Context, role identity.Role, rawPermiss
 		return nil, apperror.Validation("at least one permission is required")
 	}
 
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
 	if err := s.repo.ReplaceForRole(ctx, role, perms); err != nil {
 		return nil, fmt.Errorf("adminrole: update role: %w", err)
 	}
-	if err := s.LoadEffective(ctx); err != nil {
-		return nil, fmt.Errorf("adminrole: reload permissions: %w", err)
-	}
+	rbac.SetEffectiveRolePermissions(role, perms)
 
 	resp := toRolePermissions(role, perms)
 	return &resp, nil
@@ -117,16 +120,16 @@ func (s *Service) UpdateRole(ctx context.Context, role identity.Role, rawPermiss
 
 // LoadEffective loads DB assignments into the RBAC runtime store.
 func (s *Service) LoadEffective(ctx context.Context) error {
-	assignments, err := s.repo.ListAll(ctx)
-	if err != nil {
-		return fmt.Errorf("adminrole: load effective: %w", err)
-	}
-	rbac.InitEffectivePermissions(assignments)
-	return nil
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.loadEffectiveLocked(ctx)
 }
 
 // SyncPluginDefaults inserts plugin default grants that are not yet persisted.
 func (s *Service) SyncPluginDefaults(ctx context.Context) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
 	for _, entry := range rbac.PluginPermissions() {
 		for _, role := range entry.DefaultRoles {
 			if err := s.repo.EnsurePermissions(ctx, role, []rbac.Permission{entry.Permission}); err != nil {
@@ -134,7 +137,16 @@ func (s *Service) SyncPluginDefaults(ctx context.Context) error {
 			}
 		}
 	}
-	return s.LoadEffective(ctx)
+	return s.loadEffectiveLocked(ctx)
+}
+
+func (s *Service) loadEffectiveLocked(ctx context.Context) error {
+	assignments, err := s.repo.ListAll(ctx)
+	if err != nil {
+		return fmt.Errorf("adminrole: load effective: %w", err)
+	}
+	rbac.InitEffectivePermissions(assignments)
+	return nil
 }
 
 func normalizePermissions(raw []string) ([]rbac.Permission, error) {

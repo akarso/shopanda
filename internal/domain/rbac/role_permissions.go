@@ -48,7 +48,7 @@ var rolePermissions = map[identity.Role]map[Permission]struct{}{
 
 // HasPermission reports whether the given role grants the specified permission.
 func HasPermission(role identity.Role, perm Permission) bool {
-	if set, ok := effectiveSet(role); ok {
+	if set, initialized := effectiveAccess(role); initialized {
 		_, granted := set[perm]
 		return granted
 	}
@@ -59,7 +59,7 @@ func HasPermission(role identity.Role, perm Permission) bool {
 // The result is sorted lexicographically for deterministic output.
 // Returns nil for unrecognised roles.
 func PermissionsForRole(role identity.Role) []Permission {
-	if set, ok := effectiveSet(role); ok {
+	if set, initialized := effectiveAccess(role); initialized {
 		out := make([]Permission, 0, len(set))
 		for p := range set {
 			out = append(out, p)
