@@ -31,6 +31,7 @@ import (
 	orderApp "github.com/akarso/shopanda/internal/application/order"
 	appPricing "github.com/akarso/shopanda/internal/application/pricing"
 	returnsApp "github.com/akarso/shopanda/internal/application/returns"
+	reviewsApp "github.com/akarso/shopanda/internal/application/reviews"
 	storecreditApp "github.com/akarso/shopanda/internal/application/storecredit"
 	"github.com/akarso/shopanda/internal/application/rewrite"
 	"github.com/akarso/shopanda/internal/domain/admin"
@@ -222,6 +223,10 @@ func runServe(cfg *config.Config, log logger.Logger, embedScheduler bool) error 
 		return err
 	}
 	returnRepo, err := postgres.NewReturnRepo(conn)
+	if err != nil {
+		return err
+	}
+	reviewRepo, err := postgres.NewReviewRepo(conn)
 	if err != nil {
 		return err
 	}
@@ -485,6 +490,7 @@ func runServe(cfg *config.Config, log logger.Logger, embedScheduler bool) error 
 	baseURL := cfg.Server.PublicBaseURL
 
 	// Composition pipelines (core SEO steps + plugin steps).
+	reviewService := reviewsApp.NewService(reviewRepo, productRepo)
 	pdp := composition.NewPipeline[composition.ProductContext]()
 	pdp.AddStep(composition.ProductMetaStep{})
 	pdp.AddStep(composition.NewJSONLDProductStep(variantRepo, priceRepo, stockRepo))
@@ -492,6 +498,7 @@ func runServe(cfg *config.Config, log logger.Logger, embedScheduler bool) error 
 	pdp.AddStep(composition.NewPriceIndicationStep(variantRepo, priceRepo, priceHistoryRepo, configRepo))
 	pdp.AddStep(composition.NewWeeeStep(configRepo))
 	pdp.AddStep(composition.NewGpsrStep(configRepo))
+	pdp.AddStep(composition.NewReviewsStep(reviewService))
 	plp := composition.NewPipeline[composition.ListingContext]()
 	plp.AddStep(composition.ListingMetaStep{})
 	plp.AddStep(composition.NewListingCanonicalURLStep(baseURL))
@@ -659,6 +666,9 @@ func runServe(cfg *config.Config, log logger.Logger, embedScheduler bool) error 
 	returnService := returnsApp.NewService(returnRepo, orderRepo, stockRepo, paymentRepo, stripeRefunder, bus, log)
 	returnAdmin := shophttp.NewReturnAdminHandler(returnService, sharedAuditor)
 	returnAccount := shophttp.NewReturnAccountHandler(returnService)
+	reviewHandler := shophttp.NewReviewHandler(reviewService)
+	reviewAccount := shophttp.NewReviewAccountHandler(reviewService)
+	reviewAdmin := shophttp.NewReviewAdminHandler(reviewService, sharedAuditor)
 	eprExporter := exporter.NewEprExporter(productRepo, variantRepo, configRepo)
 	eprReportAdmin := shophttp.NewEprReportHandler(eprExporter)
 	ossExporter := exporter.NewOssExporter(orderRepo, configRepo)
@@ -803,6 +813,8 @@ func runServe(cfg *config.Config, log logger.Logger, embedScheduler bool) error 
 
 	router.HandleFunc("GET /api/v1/products", productHandler.List())
 	router.HandleFunc("GET /api/v1/products/{id}", productHandler.Get())
+	router.HandleFunc("GET /api/v1/products/{id}/reviews", reviewHandler.List())
+	router.Handle("POST /api/v1/products/{id}/reviews", requireAuth(reviewAccount.Submit()))
 	router.HandleFunc("GET /api/v1/products/{id}/variants", variantHandler.List())
 	router.HandleFunc("GET /api/v1/products/{id}/variants/{variantId}", variantHandler.Get())
 
@@ -862,6 +874,10 @@ func runServe(cfg *config.Config, log logger.Logger, embedScheduler bool) error 
 	router.Handle("POST /api/v1/admin/returns/{returnId}/reject", requireOrdersWrite(returnAdmin.Reject()))
 	router.Handle("POST /api/v1/admin/returns/{returnId}/receive", requireOrdersWrite(returnAdmin.Receive()))
 	router.Handle("POST /api/v1/admin/returns/{returnId}/refund", requireOrdersWrite(returnAdmin.Refund()))
+	router.Handle("GET /api/v1/admin/reviews", requireProductsRead(reviewAdmin.List()))
+	router.Handle("GET /api/v1/admin/reviews/{reviewId}", requireProductsRead(reviewAdmin.Get()))
+	router.Handle("POST /api/v1/admin/reviews/{reviewId}/approve", requireProductsWrite(reviewAdmin.Approve()))
+	router.Handle("POST /api/v1/admin/reviews/{reviewId}/reject", requireProductsWrite(reviewAdmin.Reject()))
 	router.Handle("GET /api/v1/admin/reports/epr", requireProductsRead(eprReportAdmin.Export()))
 	router.Handle("GET /api/v1/admin/reports/oss", requireOrdersRead(ossReportAdmin.Export()))
 	router.Handle("GET /api/v1/admin/payments", requireOrdersRead(paymentAdmin.List()))

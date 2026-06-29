@@ -42,6 +42,21 @@
             {{ if index .Data "safety_warnings" }}<p>{{ index .Data "safety_warnings" }}</p>{{ end }}
         </aside>
         {{ end }}
+        {{ if eq .Type "product_reviews" }}
+        <section class="product-reviews" aria-label="Customer reviews">
+            <h2>Customer reviews</h2>
+            <p class="product-reviews__summary">{{ printf "%.1f" (index .Data "average_rating") }} / 5 · {{ index .Data "review_count" }} review(s)</p>
+            <ul class="product-reviews__list">
+                {{ range index .Data "reviews" }}
+                <li class="product-reviews__item">
+                    <p class="product-reviews__meta"><strong>{{ index . "reviewer_name" }}</strong> · {{ index . "rating" }}/5 · {{ index . "created_at" }}</p>
+                    {{ if index . "title" }}<p class="product-reviews__title">{{ index . "title" }}</p>{{ end }}
+                    <p>{{ index . "body" }}</p>
+                </li>
+                {{ end }}
+            </ul>
+        </section>
+        {{ end }}
         {{ end }}
         <dl class="detail-grid">
             <div>

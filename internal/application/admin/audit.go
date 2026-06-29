@@ -100,6 +100,11 @@ const (
 	AuditReturnReceive AuditAction = "return.receive"
 	AuditReturnRefund  AuditAction = "return.refund"
 
+	AuditReviewList    AuditAction = "review.list"
+	AuditReviewRead    AuditAction = "review.read"
+	AuditReviewApprove AuditAction = "review.approve"
+	AuditReviewReject  AuditAction = "review.reject"
+
 	AuditPaymentList AuditAction = "payment.list"
 	AuditPaymentRead AuditAction = "payment.read"
 
