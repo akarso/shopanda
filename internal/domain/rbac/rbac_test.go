@@ -231,3 +231,41 @@ func TestRegisterPluginPermission_RejectsDuplicate(t *testing.T) {
 		t.Error("duplicate registration should not have taken effect")
 	}
 }
+
+func TestInitEffectivePermissions_OverridesStaticDefaults(t *testing.T) {
+	t.Cleanup(rbac.ResetEffectivePermissions)
+
+	rbac.InitEffectivePermissions(map[identity.Role][]rbac.Permission{
+		identity.RoleSupport: {rbac.ProductsWrite},
+	})
+
+	if !rbac.HasPermission(identity.RoleSupport, rbac.ProductsWrite) {
+		t.Fatal("expected customized support role to grant products.write")
+	}
+	if rbac.HasPermission(identity.RoleSupport, rbac.ProductsRead) {
+		t.Fatal("expected customized support role to drop default products.read")
+	}
+
+	perms := rbac.PermissionsForRole(identity.RoleSupport)
+	if len(perms) != 1 || perms[0] != rbac.ProductsWrite {
+		t.Fatalf("PermissionsForRole = %v, want [products.write]", perms)
+	}
+}
+
+func TestInitEffectivePermissions_MissingAdminRoleHasNoGrants(t *testing.T) {
+	t.Cleanup(rbac.ResetEffectivePermissions)
+
+	rbac.InitEffectivePermissions(map[identity.Role][]rbac.Permission{
+		identity.RoleAdmin: {rbac.SettingsRead},
+	})
+
+	if rbac.HasPermission(identity.RoleManager, rbac.ProductsRead) {
+		t.Fatal("expected missing manager role to have no grants")
+	}
+	if perms := rbac.PermissionsForRole(identity.RoleManager); len(perms) != 0 {
+		t.Fatalf("PermissionsForRole(manager) = %v, want empty", perms)
+	}
+	if perms := rbac.PermissionsForRole("bogus"); perms != nil {
+		t.Fatalf("PermissionsForRole(bogus) = %v, want nil", perms)
+	}
+}
