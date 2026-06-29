@@ -219,8 +219,9 @@ type LogConfig struct {
 }
 
 type AuthConfig struct {
-	JWTSecret string `yaml:"jwt_secret"`
-	JWTTTL    string `yaml:"jwt_ttl"`
+	JWTSecret  string `yaml:"jwt_secret"`
+	JWTTTL     string `yaml:"jwt_ttl"`
+	MFAEnabled bool   `yaml:"mfa_enabled"`
 }
 
 type MailConfig struct {
@@ -610,6 +611,9 @@ func applyEnv(cfg *Config) {
 	}
 	if v := os.Getenv("SHOPANDA_AUTH_JWT_TTL"); v != "" {
 		cfg.Auth.JWTTTL = v
+	}
+	if v := os.Getenv("SHOPANDA_AUTH_MFA_ENABLED"); v != "" {
+		cfg.Auth.MFAEnabled = strings.EqualFold(v, "true") || v == "1"
 	}
 	if v := os.Getenv("SHOPANDA_MAIL_DRIVER"); v != "" {
 		cfg.Mail.Driver = v
