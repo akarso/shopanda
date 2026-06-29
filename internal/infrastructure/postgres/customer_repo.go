@@ -8,13 +8,17 @@ import (
 	"strings"
 	"time"
 
+	"github.com/akarso/shopanda/internal/domain/adminuser"
 	"github.com/akarso/shopanda/internal/domain/customer"
 	"github.com/akarso/shopanda/internal/platform/apperror"
 	"github.com/lib/pq"
 )
 
-// Compile-time check that CustomerRepo implements customer.CustomerRepository.
-var _ customer.CustomerRepository = (*CustomerRepo)(nil)
+// Compile-time check that CustomerRepo implements customer and adminuser repositories.
+var (
+	_ customer.CustomerRepository = (*CustomerRepo)(nil)
+	_ adminuser.Repository        = (*CustomerRepo)(nil)
+)
 
 // CustomerRepo implements customer.CustomerRepository using PostgreSQL.
 type CustomerRepo struct {
@@ -168,6 +172,92 @@ func (r *CustomerRepo) ListCustomers(ctx context.Context, offset, limit int) ([]
 		return nil, fmt.Errorf("customer_repo: list customers: rows: %w", err)
 	}
 	return customers, nil
+}
+
+// ListAdminUsers returns admin-capable users ordered by email.
+func (r *CustomerRepo) ListAdminUsers(ctx context.Context, offset, limit int) ([]customer.Customer, error) {
+	if offset < 0 {
+		return nil, fmt.Errorf("customer_repo: list admin users: negative offset")
+	}
+	if limit <= 0 {
+		return nil, fmt.Errorf("customer_repo: list admin users: non-positive limit")
+	}
+	if limit > 100 {
+		limit = 100
+	}
+
+	const q = `SELECT id, email, first_name, last_name, token_generation, email_verified_at, role, status, created_at, updated_at
+		FROM customers
+		WHERE role <> 'customer'
+		ORDER BY email
+		LIMIT $1 OFFSET $2`
+
+	rows, err := r.query(ctx, q, limit, offset)
+	if err != nil {
+		return nil, fmt.Errorf("customer_repo: list admin users: %w", err)
+	}
+	defer rows.Close()
+
+	var users []customer.Customer
+	for rows.Next() {
+		c, err := scanCustomerList(rows)
+		if err != nil {
+			return nil, fmt.Errorf("customer_repo: list admin users: scan: %w", err)
+		}
+		users = append(users, *c)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("customer_repo: list admin users: rows: %w", err)
+	}
+	return users, nil
+}
+
+// UpdateAdminUser atomically updates an admin user and enforces last-active-admin rules.
+func (r *CustomerRepo) UpdateAdminUser(ctx context.Context, c *customer.Customer, priorRole customer.Role, priorStatus customer.Status, revokeSessions bool) error {
+	if !c.Role.IsValid() {
+		return apperror.Validation("invalid customer role")
+	}
+	updatedAt := time.Now().UTC()
+
+	const q = `UPDATE customers SET
+		first_name = $1,
+		last_name = $2,
+		role = $3,
+		status = $4,
+		token_generation = token_generation + CASE WHEN $5 THEN 1 ELSE 0 END,
+		updated_at = $6
+	WHERE id = $7
+	AND (
+		$8 <> 'admin' OR $9 <> 'active'
+		OR ($3 = 'admin' AND $4 = 'active')
+		OR (SELECT COUNT(*) FROM customers WHERE role = 'admin' AND status = 'active') > 1
+	)`
+
+	result, err := r.exec(ctx, q,
+		c.FirstName, c.LastName, string(c.Role), string(c.Status),
+		revokeSessions, updatedAt, c.ID,
+		string(priorRole), string(priorStatus),
+	)
+	if err != nil {
+		return fmt.Errorf("customer_repo: update admin user: %w", err)
+	}
+
+	rows, err := result.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("customer_repo: update admin user rows affected: %w", err)
+	}
+	if rows == 0 {
+		if priorRole == customer.RoleAdmin && priorStatus == customer.StatusActive &&
+			(c.Role != customer.RoleAdmin || c.Status != customer.StatusActive) {
+			return apperror.Validation("cannot remove the last active admin user")
+		}
+		return apperror.NotFound("customer not found")
+	}
+	c.UpdatedAt = updatedAt
+	if revokeSessions {
+		c.TokenGeneration++
+	}
+	return nil
 }
 
 // BumpTokenGeneration atomically increments the customer's token generation.

@@ -241,6 +241,15 @@ func TestRoleIsValid(t *testing.T) {
 	}
 }
 
+func TestIsAdminRole(t *testing.T) {
+	if !customer.IsAdminRole(customer.RoleManager) {
+		t.Fatal("manager should be admin role")
+	}
+	if customer.IsAdminRole(customer.RoleCustomer) {
+		t.Fatal("customer should not be admin role")
+	}
+}
+
 func TestNewCustomer_DefaultsToCustomerRole(t *testing.T) {
 	c, err := customer.NewCustomer("cust-1", "alice@example.com")
 	if err != nil {
