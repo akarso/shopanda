@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"testing"
+	"time"
 
 	"github.com/akarso/shopanda/internal/application/checkout"
 	"github.com/akarso/shopanda/internal/domain/cart"
@@ -39,6 +40,12 @@ func (r *mockCartRepo) FindActiveByCustomerID(_ context.Context, _ string) (*car
 }
 func (r *mockCartRepo) Save(_ context.Context, _ *cart.Cart) error { return nil }
 func (r *mockCartRepo) Delete(_ context.Context, _ string) error   { return nil }
+func (r *mockCartRepo) FindRecoveryCandidates(_ context.Context, _ time.Time, _ int) ([]*cart.Cart, error) {
+	return nil, nil
+}
+func (r *mockCartRepo) MarkRecoveryEmailSent(_ context.Context, _ string, _ time.Time) (bool, error) {
+	return false, nil
+}
 
 // --- Helpers ---
 

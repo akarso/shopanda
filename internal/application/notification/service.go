@@ -150,6 +150,14 @@ func RegisterTemplates(t *mail.Templates) {
 			"<p>Invoice <strong>#{{.Data.InvoiceNumber}}</strong> for order "+
 			"<strong>{{.Data.OrderID}}</strong> is attached as a PDF.</p>"+
 			"<p>Total: <strong>{{.Data.Total}}</strong></p>")
+
+	t.Register("cart_recovery",
+		"You left items in your cart",
+		"<h1>Complete your order</h1>"+
+			"{{if .Data.FirstName}}<p>Hi {{.Data.FirstName}},</p>{{end}}"+
+			"<p>You still have {{.Data.ItemCount}} item(s) waiting in your cart.</p>"+
+			"<ul>{{range .Data.Items}}<li>{{.Name}} × {{.Quantity}} — {{.Price}}</li>{{end}}</ul>"+
+			"<p><a href=\"{{.Data.CartURL}}\">Return to your cart</a></p>")
 }
 
 // orderRecipient resolves the notification recipient for an order.

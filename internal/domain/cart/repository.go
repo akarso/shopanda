@@ -1,6 +1,9 @@
 package cart
 
-import "context"
+import (
+	"context"
+	"time"
+)
 
 // CartRepository defines persistence operations for carts.
 type CartRepository interface {
@@ -17,4 +20,11 @@ type CartRepository interface {
 
 	// Delete removes a cart and its items by ID.
 	Delete(ctx context.Context, id string) error
+
+	// FindRecoveryCandidates returns active customer carts with items stale since staleBefore
+	// that have not yet received a recovery email.
+	FindRecoveryCandidates(ctx context.Context, staleBefore time.Time, limit int) ([]*Cart, error)
+
+	// MarkRecoveryEmailSent records that a recovery email was sent. Returns false when already sent.
+	MarkRecoveryEmailSent(ctx context.Context, cartID string, sentAt time.Time) (bool, error)
 }
