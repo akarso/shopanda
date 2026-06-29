@@ -133,11 +133,21 @@ func (h *RecoveryHandler) processCart(ctx context.Context, c *domainCart.Cart) e
 		return fmt.Errorf("find customer: %w", err)
 	}
 	if cust == nil || cust.Status != customer.StatusActive {
-		return fmt.Errorf("customer unavailable")
+		h.terminalSkipRecovery(ctx, c.ID)
+		return nil
 	}
 	email := strings.TrimSpace(cust.Email)
 	if email == "" {
-		return fmt.Errorf("customer email missing")
+		h.terminalSkipRecovery(ctx, c.ID)
+		return nil
+	}
+
+	marked, err := h.carts.MarkRecoveryEmailSent(ctx, c.ID, time.Now().UTC())
+	if err != nil {
+		return err
+	}
+	if !marked {
+		return nil
 	}
 
 	items, err := h.recoveryItems(ctx, c)
@@ -163,18 +173,13 @@ func (h *RecoveryHandler) processCart(ctx context.Context, c *domainCart.Cart) e
 	if err != nil {
 		return fmt.Errorf("render template: %w", err)
 	}
-	if err := h.enqueueEmail(ctx, msg, c.ID, c.CustomerID); err != nil {
-		return err
-	}
+	return h.enqueueEmail(ctx, msg, c.ID, c.CustomerID)
+}
 
-	marked, err := h.carts.MarkRecoveryEmailSent(ctx, c.ID, time.Now().UTC())
-	if err != nil {
-		return err
+func (h *RecoveryHandler) terminalSkipRecovery(ctx context.Context, cartID string) {
+	if _, err := h.carts.MarkRecoveryEmailSent(ctx, cartID, time.Now().UTC()); err != nil {
+		h.log.Error("cart.recovery.skip_failed", err, map[string]interface{}{"cart_id": cartID})
 	}
-	if !marked {
-		return fmt.Errorf("recovery email already sent")
-	}
-	return nil
 }
 
 func (h *RecoveryHandler) recoveryItems(ctx context.Context, c *domainCart.Cart) ([]map[string]interface{}, error) {

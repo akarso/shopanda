@@ -17,8 +17,9 @@ import (
 
 type recoveryCartRepo struct {
 	domainCart.CartRepository
-	candidates []domainCart.Cart
-	marked     []string
+	candidates    []domainCart.Cart
+	marked        []string
+	markClaimable bool
 }
 
 func (s *recoveryCartRepo) FindRecoveryCandidates(_ context.Context, _ time.Time, _ int) ([]*domainCart.Cart, error) {
@@ -31,6 +32,9 @@ func (s *recoveryCartRepo) FindRecoveryCandidates(_ context.Context, _ time.Time
 }
 
 func (s *recoveryCartRepo) MarkRecoveryEmailSent(_ context.Context, cartID string, _ time.Time) (bool, error) {
+	if !s.markClaimable {
+		return false, nil
+	}
 	s.marked = append(s.marked, cartID)
 	return true, nil
 }
@@ -134,7 +138,7 @@ func TestRecoveryHandler_Handle_SendsRecoveryEmail(t *testing.T) {
 		t.Fatalf("AddItem: %v", err)
 	}
 
-	carts := &recoveryCartRepo{candidates: []domainCart.Cart{c}}
+	carts := &recoveryCartRepo{candidates: []domainCart.Cart{c}, markClaimable: true}
 	customers := &recoveryCustomerRepo{byID: map[string]*customer.Customer{
 		"cust-1": {
 			ID:        "cust-1",
@@ -176,7 +180,7 @@ func TestRecoveryHandler_Handle_SkipsInactiveCustomer(t *testing.T) {
 		t.Fatalf("AddItem: %v", err)
 	}
 
-	carts := &recoveryCartRepo{candidates: []domainCart.Cart{c}}
+	carts := &recoveryCartRepo{candidates: []domainCart.Cart{c}, markClaimable: true}
 	customers := &recoveryCustomerRepo{byID: map[string]*customer.Customer{
 		"cust-2": {ID: "cust-2", Email: "gone@example.com", Status: customer.StatusDisabled},
 	}}
@@ -189,8 +193,43 @@ func TestRecoveryHandler_Handle_SkipsInactiveCustomer(t *testing.T) {
 	if len(queue.enqueued) != 0 {
 		t.Fatalf("expected no email jobs, got %d", len(queue.enqueued))
 	}
+	if len(carts.marked) != 1 || carts.marked[0] != "cart-2" {
+		t.Fatalf("expected terminal skip mark for cart-2, got %v", carts.marked)
+	}
+}
+
+func TestRecoveryHandler_Handle_SkipsAlreadyClaimedCart(t *testing.T) {
+	c, err := domainCart.NewCart("cart-3", "EUR")
+	if err != nil {
+		t.Fatalf("NewCart: %v", err)
+	}
+	if err := c.SetCustomerID("cust-3"); err != nil {
+		t.Fatalf("SetCustomerID: %v", err)
+	}
+	if err := c.AddItem("v1", 1, shared.MustNewMoney(999, "EUR")); err != nil {
+		t.Fatalf("AddItem: %v", err)
+	}
+
+	carts := &recoveryCartRepo{candidates: []domainCart.Cart{c}, markClaimable: false}
+	customers := &recoveryCustomerRepo{byID: map[string]*customer.Customer{
+		"cust-3": {
+			ID:        "cust-3",
+			Email:     "buyer@example.com",
+			FirstName: "Alex",
+			Status:    customer.StatusActive,
+		},
+	}}
+	h, queue := testRecoveryHandler(t, carts, customers)
+
+	err = h.Handle(context.Background(), jobs.Job{Type: cartApp.RecoveryJobType})
+	if err != nil {
+		t.Fatalf("Handle: %v", err)
+	}
+	if len(queue.enqueued) != 0 {
+		t.Fatalf("expected no email jobs when claim fails, got %d", len(queue.enqueued))
+	}
 	if len(carts.marked) != 0 {
-		t.Fatalf("expected cart not marked, got %v", carts.marked)
+		t.Fatalf("expected no mark when claim fails, got %v", carts.marked)
 	}
 }
 

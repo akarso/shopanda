@@ -199,9 +199,13 @@ func (r *CartRepo) FindRecoveryCandidates(ctx context.Context, staleBefore time.
 		return nil, fmt.Errorf("cart_repo: find recovery candidates: limit must be positive")
 	}
 	const q = `
-		SELECT ` + cartColumns + `
+		SELECT c.id, c.customer_id, c.status, c.currency, c.coupon_code, c.merged_guest_id,
+		       c.version, c.created_at, c.updated_at, c.recovery_email_sent_at
 		FROM carts c
+		INNER JOIN customers cu ON cu.id = c.customer_id
 		WHERE c.status = 'active'
+		  AND cu.status = 'active'
+		  AND TRIM(cu.email) <> ''
 		  AND c.customer_id IS NOT NULL
 		  AND c.recovery_email_sent_at IS NULL
 		  AND c.updated_at <= $1
