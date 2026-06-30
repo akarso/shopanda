@@ -883,6 +883,11 @@ func runServe(cfg *config.Config, log logger.Logger, embedScheduler bool) error 
 	// Content block routes (public).
 	router.HandleFunc("GET /api/v1/content-blocks/{targetType}/{targetKey}", contentBlockHandler.GetByTarget())
 
+	// Plugin public routes (registered during plugin Init).
+	for _, route := range pluginApp.PublicRoutes() {
+		router.Handle(route.Pattern, route.Handler)
+	}
+
 	// Admin routes (behind RequirePermission).
 	router.Handle("GET /api/v1/admin/products", requireProductsRead(productAdmin.List()))
 	router.Handle("GET /api/v1/admin/products/{id}", requireProductsRead(productAdmin.Get()))

@@ -10,6 +10,7 @@ import (
 	credisqueue "github.com/akarso/shopanda/plugins/core/redisqueue"
 	crabbitmq "github.com/akarso/shopanda/plugins/core/rabbitmqqueue"
 	ckafkaqueue "github.com/akarso/shopanda/plugins/core/kafkaqueue"
+	cgraphql "github.com/akarso/shopanda/plugins/core/graphql"
 	csqsqueue "github.com/akarso/shopanda/plugins/core/sqsqueue"
 	cstoragelocal "github.com/akarso/shopanda/plugins/core/storagelocal"
 	cstorages3 "github.com/akarso/shopanda/plugins/core/storages3"
@@ -47,5 +48,8 @@ func Register(registry *plugin.Registry, cfg *config.Config) {
 		registry.Register(cstoragelocal.NewStoragePlugin())
 	} else if cfg.CoreS3StorageEnabled() {
 		registry.Register(cstorages3.NewStoragePlugin())
+	}
+	if cfg.Plugins.GraphQL.Enabled {
+		registry.Register(cgraphql.NewPlugin())
 	}
 }

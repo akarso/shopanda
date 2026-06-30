@@ -42,8 +42,9 @@ type App struct {
 
 	configRegistry *ConfigRegistry
 
-	adminRoutes []AdminRoute
-	cliRegistry *cli.Registry
+	adminRoutes  []AdminRoute
+	publicRoutes []PublicRoute
+	cliRegistry  *cli.Registry
 }
 
 // RegisterPricingStep registers a pricing pipeline step.

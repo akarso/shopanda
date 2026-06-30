@@ -258,7 +258,7 @@ Items worth tracking but not yet assigned PR numbers:
 | 540 | E | [oss] | Merchant webhooks |
 | 541 | E | [oss] | Plugin CLI registration |
 | 542 | E | [oss] | Kafka / SQS queue plugins |
-| 543 | E | [oss] | GraphQL plugin (stretch) |
+| 543 | E | [oss] | GraphQL API plugin (stretch) |
 | 544 | E | [oss] | Dynamic plugin loading research |
 
 PR specs: [`prs/`](prs/).
@@ -293,4 +293,4 @@ Several Phase 5 PRs shipped **admin APIs only** (same pattern as PR-524 before i
 | PR-540 | Outbound webhooks API | [PR-620](../phase-6-merchant-complete/prs/PR-620.md) |
 | PR-513/514/510 | Marketing stretch APIs | [PR-641](../phase-6-merchant-complete/prs/PR-641.md), [PR-640](../phase-6-merchant-complete/prs/PR-640.md), [PR-642](../phase-6-merchant-complete/prs/PR-642.md) (stretch) |
 
-Phase 5 stretch **PR-543–544** (GraphQL, dynamic plugin loading) remain **integrator/platform** work — planned for Phase 7 unless explicitly promoted. See [Phase 6 roadmap](../phase-6-merchant-complete/ROADMAP.md) for the full merchant UI sequence.
+Phase 5 stretch **PR-544** (dynamic plugin loading) remains **integrator/platform** research. PR-543 GraphQL API is shipped. See [Phase 6 roadmap](../phase-6-merchant-complete/ROADMAP.md) for merchant UI work.

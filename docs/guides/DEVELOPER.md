@@ -90,6 +90,7 @@ Core plugins register through `plugins/core/register.go`, called from `registerP
 | Search | `search.engine` | `postgres` | `meilisearch` |
 | Cache | `cache.driver` | `postgres` | `redis` |
 | Queue | `queue.driver` | `postgres` | `redis`, `rabbitmq`, `kafka`, `sqs` |
+| GraphQL API | `plugins.graphql.enabled` | off | read-only catalog at `POST /api/v1/graphql` |
 | Storage | `storage.driver` | `local` | `s3` |
 | Stripe payments | `payment.stripe.enabled` | `false` | set `true` + Stripe env vars |
 

@@ -187,6 +187,12 @@ queue:
 #     enabled: false
 #     license_key: "DEV-local"
 
+# --- GraphQL API (optional, read-only) ----------------------------------------
+# Headless catalog queries; REST remains canonical for writes.
+# plugins:
+#   graphql:
+#     enabled: false
+
 # --- Frontend (optional SSR storefront) ---------------------------------------
 frontend:
   # Set to true to enable the built-in server-rendered storefront.
