@@ -294,7 +294,7 @@ If customers report missing emails:
 The merchant-facing experience is usable today, but a few workflows still live outside the embedded admin SPA:
 
 - bulk catalog changes use CLI CSV tools
-- shipping zone management is API-backed
+- shipping zone management is available under Operations → Shipping in the admin panel
 - payment-provider setup is deployment-level configuration
 - invoice viewing is email-first rather than an in-app viewer
 - refunds depend on provider support and deployment wiring
@@ -312,7 +312,7 @@ Phase 4 delivered day-to-day catalog, order, promotion, and inventory admin. **P
 | Advanced promotions | Simple rules only | PR-510: tiered / buy-X-get-Y |
 | Payment ledger in admin | API/email only | PR-504: read-only transaction grid |
 | Navigation / page blocks | Static theme + CMS pages | PR-511–512: builder |
-| Shipping zones UI | Admin API only | PR-524: settings UI |
+| Shipping zones UI | Operations → Shipping (zones + rates) | PR-524 |
 | WEEE / packaging / GPSR | Not modeled | PR-531–533: product compliance fields |
 | Omnibus price display | Backend + SSR templates (PR-530) | Toggle under Operations → Shipping → EU Price Indication |
 | Admin users / MFA | Seed user + fixed roles | PR-520–522: CRUD + optional TOTP |
