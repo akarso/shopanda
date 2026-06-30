@@ -9,6 +9,8 @@ import (
 	crediscache "github.com/akarso/shopanda/plugins/core/rediscache"
 	credisqueue "github.com/akarso/shopanda/plugins/core/redisqueue"
 	crabbitmq "github.com/akarso/shopanda/plugins/core/rabbitmqqueue"
+	ckafkaqueue "github.com/akarso/shopanda/plugins/core/kafkaqueue"
+	csqsqueue "github.com/akarso/shopanda/plugins/core/sqsqueue"
 	cstoragelocal "github.com/akarso/shopanda/plugins/core/storagelocal"
 	cstorages3 "github.com/akarso/shopanda/plugins/core/storages3"
 	corestripe "github.com/akarso/shopanda/plugins/core/stripe"
@@ -32,6 +34,10 @@ func Register(registry *plugin.Registry, cfg *config.Config) {
 		registry.Register(credisqueue.NewQueuePlugin())
 	} else if cfg.CoreRabbitMQQueueEnabled() {
 		registry.Register(crabbitmq.NewQueuePlugin())
+	} else if cfg.CoreKafkaQueueEnabled() {
+		registry.Register(ckafkaqueue.NewQueuePlugin())
+	} else if cfg.CoreSQSQueueEnabled() {
+		registry.Register(csqsqueue.NewQueuePlugin())
 	}
 	registry.Register(cmanualpay.NewPaymentPlugin())
 	if cfg.Payment.Stripe.Enabled {

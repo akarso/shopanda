@@ -139,7 +139,7 @@ cache:
 
 # --- Queue (background jobs) --------------------------------------------------
 queue:
-  # Driver: postgres (default), redis (PR-415), rabbitmq (PR-416).
+  # Driver: postgres (default), redis, rabbitmq, kafka, sqs.
   driver: "postgres"
   # Redis settings (used when driver=redis):
   # redis:
@@ -151,6 +151,18 @@ queue:
   #   url: "amqp://shopanda:changeme@localhost:5672/"
   #   queue_prefix: "shopanda"
   # Or set RABBITMQ_URL / SHOPANDA_QUEUE_RABBITMQ_URL / SHOPANDA_QUEUE_RABBITMQ_QUEUE_PREFIX environment variables.
+  # Kafka settings (used when driver=kafka):
+  # kafka:
+  #   brokers:
+  #     - "localhost:9092"
+  #   topic_prefix: "shopanda"
+  # Or set KAFKA_BROKERS / SHOPANDA_QUEUE_KAFKA_BROKERS / SHOPANDA_QUEUE_KAFKA_TOPIC_PREFIX environment variables.
+  # SQS settings (used when driver=sqs):
+  # sqs:
+  #   queue_url: "https://sqs.us-east-1.amazonaws.com/123456789012/shopanda-jobs"
+  #   failed_queue_url: "https://sqs.us-east-1.amazonaws.com/123456789012/shopanda-jobs-failed"
+  #   region: "us-east-1"
+  # Or set SQS_QUEUE_URL / SQS_FAILED_QUEUE_URL / SHOPANDA_QUEUE_SQS_* / AWS_REGION environment variables.
 
 # --- Core plugins -------------------------------------------------------------
 # Core infrastructure plugins are enabled by driver switches above.

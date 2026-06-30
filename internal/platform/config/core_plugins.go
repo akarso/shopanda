@@ -58,6 +58,22 @@ func (c *Config) CoreRabbitMQQueueEnabled() bool {
 	return c.Queue.Driver == "rabbitmq"
 }
 
+// CoreKafkaQueueEnabled reports whether the Kafka queue core plugin should load.
+func (c *Config) CoreKafkaQueueEnabled() bool {
+	if c.Plugins.Core.PostgresQueue != nil && *c.Plugins.Core.PostgresQueue {
+		return false
+	}
+	return c.Queue.Driver == "kafka"
+}
+
+// CoreSQSQueueEnabled reports whether the SQS queue core plugin should load.
+func (c *Config) CoreSQSQueueEnabled() bool {
+	if c.Plugins.Core.PostgresQueue != nil && *c.Plugins.Core.PostgresQueue {
+		return false
+	}
+	return c.Queue.Driver == "sqs"
+}
+
 // CorePostgresQueueEnabled reports whether the postgres queue core plugin should load.
 func (c *Config) CorePostgresQueueEnabled() bool {
 	if c.Plugins.Core.PostgresQueue != nil {

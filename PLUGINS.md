@@ -143,7 +143,7 @@ Not implemented; do not assume these exist:
 
 Plugin settings (string, int, bool) can be registered with `RegisterConfig` and edited on the admin Integrations page when the plugin is enabled at boot.
 
-**Phase 5 platform work:** Kafka/SQS queue plugins, GraphQL stretch — see [Phase 5 Roadmap](docs/phase-5-maturity/ROADMAP.md) Track E.
+**Phase 5 platform work:** GraphQL stretch — see [Phase 5 Roadmap](docs/phase-5-maturity/ROADMAP.md) Track E.
 
 ---
 

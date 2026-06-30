@@ -14,9 +14,9 @@ func normalizeAndValidate(cfg *Config) error {
 	}
 
 	switch cfg.Queue.Driver {
-	case "postgres", "redis", "rabbitmq":
+	case "postgres", "redis", "rabbitmq", "kafka", "sqs":
 	default:
-		return fmt.Errorf("config: unsupported queue.driver: %q (allowed: postgres, redis, rabbitmq)", cfg.Queue.Driver)
+		return fmt.Errorf("config: unsupported queue.driver: %q (allowed: postgres, redis, rabbitmq, kafka, sqs)", cfg.Queue.Driver)
 	}
 
 	switch cfg.Cache.Driver {

@@ -245,6 +245,62 @@ func TestRegister_ExplicitPostgresQueueOverridesRedisDriver(t *testing.T) {
 	}
 }
 
+func TestRegister_KafkaQueueDriverRegistersKafkaPlugin(t *testing.T) {
+	log := logger.NewWithWriter(io.Discard, "error")
+	reg := plugin.NewRegistry(log)
+
+	cfg := &config.Config{
+		Queue: config.QueueConfig{Driver: "kafka"},
+	}
+	core.Register(reg, cfg)
+
+	var hasKafka, hasPostgresQueue, hasSQS bool
+	for _, e := range reg.Entries() {
+		switch e.Name {
+		case "core/kafka-queue":
+			hasKafka = true
+		case "core/postgres-queue":
+			hasPostgresQueue = true
+		case "core/sqs-queue":
+			hasSQS = true
+		}
+	}
+	if !hasKafka {
+		t.Fatal("expected core/kafka-queue to register when queue.driver=kafka")
+	}
+	if hasPostgresQueue || hasSQS {
+		t.Fatal("only kafka queue plugin should register when queue.driver=kafka")
+	}
+}
+
+func TestRegister_SQSQueueDriverRegistersSQSPlugin(t *testing.T) {
+	log := logger.NewWithWriter(io.Discard, "error")
+	reg := plugin.NewRegistry(log)
+
+	cfg := &config.Config{
+		Queue: config.QueueConfig{Driver: "sqs"},
+	}
+	core.Register(reg, cfg)
+
+	var hasSQS, hasPostgresQueue, hasKafka bool
+	for _, e := range reg.Entries() {
+		switch e.Name {
+		case "core/sqs-queue":
+			hasSQS = true
+		case "core/postgres-queue":
+			hasPostgresQueue = true
+		case "core/kafka-queue":
+			hasKafka = true
+		}
+	}
+	if !hasSQS {
+		t.Fatal("expected core/sqs-queue to register when queue.driver=sqs")
+	}
+	if hasPostgresQueue || hasKafka {
+		t.Fatal("only sqs queue plugin should register when queue.driver=sqs")
+	}
+}
+
 func TestRegister_ExplicitPostgresQueueOverridesRabbitMQDriver(t *testing.T) {
 	log := logger.NewWithWriter(io.Discard, "error")
 	reg := plugin.NewRegistry(log)
