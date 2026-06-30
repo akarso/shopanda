@@ -1,6 +1,6 @@
 # Phase 6 PR Specs
 
-Planned specs for **PR-600–649** (Summary, Why, Scope, Out of scope, Validation — same format as Phase 5).
+Planned specs for **PR-600–651** (Summary, Why, Scope, Out of scope, Validation — same format as Phase 5).
 
 | PR | Track | License | Status | Spec |
 | --- | --- | --- | --- | --- |

@@ -6,7 +6,7 @@
 * **No new nav placeholders** — every sidebar item either works or is hidden until its PR ships
 * Prefer **vertical slices** that wire existing admin APIs into `admin.js` (same pattern as PR-524 shipping UI)
 * One PR = one admin surface or one merchant-doc refresh; runnable and reviewable in ~10–20 minutes
-* PR specs live under `prs/` (planned range **PR-600–649**)
+* PR specs live under `prs/` (planned range **PR-600–651**)
 
 Each PR is tagged **`[oss]`** or **`[b2b]`**. See [Commercial licensing](../COMMERCIAL.md).
 
