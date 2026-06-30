@@ -40,6 +40,14 @@ type QueueConfig struct {
 	TopicPrefix string
 }
 
+func isTopicExistsErr(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := err.Error()
+	return strings.Contains(msg, "Topic already exists") || strings.Contains(msg, "TOPIC_ALREADY_EXISTS")
+}
+
 // NewJobQueue connects to Kafka and prepares job topics.
 func NewJobQueue(cfg QueueConfig) (*JobQueue, error) {
 	if len(cfg.Brokers) == 0 {
@@ -60,11 +68,13 @@ func NewJobQueue(cfg QueueConfig) (*JobQueue, error) {
 	defer conn.Close()
 
 	for _, topic := range []string{mainTopic, delayTopic, failedTopic} {
-		_ = conn.CreateTopics(kafka.TopicConfig{
+		if err := conn.CreateTopics(kafka.TopicConfig{
 			Topic:             topic,
 			NumPartitions:     1,
 			ReplicationFactor: 1,
-		})
+		}); err != nil && !isTopicExistsErr(err) {
+			return nil, fmt.Errorf("NewJobQueue: create topic %q: %w", topic, err)
+		}
 	}
 
 	return &JobQueue{
@@ -115,6 +125,16 @@ func (q *JobQueue) publish(ctx context.Context, writer *kafka.Writer, msg jobque
 	return nil
 }
 
+func (q *JobQueue) quarantine(ctx context.Context, reader *kafka.Reader, msg kafka.Message) error {
+	if err := q.failedWriter.WriteMessages(ctx, kafka.Message{Value: msg.Value}); err != nil {
+		return fmt.Errorf("job_queue: quarantine: %w", err)
+	}
+	if err := reader.CommitMessages(ctx, msg); err != nil {
+		return fmt.Errorf("job_queue: quarantine commit: %w", err)
+	}
+	return nil
+}
+
 func (q *JobQueue) promoteDelayed(ctx context.Context) error {
 	now := time.Now().UTC()
 	for i := 0; i < promoteBatchLimit; i++ {
@@ -130,16 +150,17 @@ func (q *JobQueue) promoteDelayed(ctx context.Context) error {
 
 		jm, err := jobqueue.Decode(msg.Value)
 		if err != nil {
-			_ = q.delayReader.CommitMessages(ctx, msg)
-			_ = q.failedWriter.WriteMessages(ctx, kafka.Message{Value: msg.Value})
+			if qErr := q.quarantine(ctx, q.delayReader, msg); qErr != nil {
+				return qErr
+			}
 			continue
 		}
 
-		targetWriter := q.mainWriter
 		if jm.RunAt.After(now) {
-			targetWriter = q.delayWriter
+			return nil
 		}
-		if err := targetWriter.WriteMessages(ctx, kafka.Message{
+
+		if err := q.mainWriter.WriteMessages(ctx, kafka.Message{
 			Key:   []byte(jm.ID),
 			Value: msg.Value,
 		}); err != nil {
@@ -186,15 +207,23 @@ func (q *JobQueue) Dequeue(ctx context.Context) (*jobs.Job, error) {
 
 	jm, err := jobqueue.Decode(msg.Value)
 	if err != nil {
-		_ = q.mainReader.CommitMessages(ctx, msg)
-		_ = q.failedWriter.WriteMessages(ctx, kafka.Message{Value: msg.Value})
+		if qErr := q.quarantine(ctx, q.mainReader, msg); qErr != nil {
+			return nil, qErr
+		}
 		return nil, err
 	}
 
 	now := time.Now().UTC()
-	jm.Status = jobs.StatusProcessing
-	jm.Attempts++
-	jm.UpdatedAt = now
+	if jm.Status != jobs.StatusProcessing {
+		jm.Status = jobs.StatusProcessing
+		jm.Attempts++
+		jm.UpdatedAt = now
+	}
+	encoded, err := jobqueue.Encode(jm)
+	if err != nil {
+		return nil, err
+	}
+	msg.Value = encoded
 
 	q.mu.Lock()
 	q.inflight[jm.ID] = inflightEntry{msg: msg, job: jm}

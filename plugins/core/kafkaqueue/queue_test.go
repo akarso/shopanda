@@ -4,6 +4,7 @@ import (
 	"io"
 	"testing"
 
+	inkafka "github.com/akarso/shopanda/internal/infrastructure/kafka"
 	"github.com/akarso/shopanda/internal/platform/config"
 	"github.com/akarso/shopanda/internal/platform/event"
 	"github.com/akarso/shopanda/internal/platform/logger"
@@ -51,8 +52,15 @@ func TestQueuePlugin_Init_UsesKafkaBrokersEnvFallback(t *testing.T) {
 
 	cfg := &config.Config{Queue: config.QueueConfig{Driver: "kafka"}}
 	app := testApp(cfg)
-	if err := ckafka.NewQueuePlugin().Init(app); err != nil {
-		t.Skipf("Kafka broker not available: %v", err)
+	plugin := ckafka.NewQueuePlugin()
+	plugin.NewQueue = func(cfg inkafka.QueueConfig) (*inkafka.JobQueue, error) {
+		if len(cfg.Brokers) != 1 || cfg.Brokers[0] != "127.0.0.1:9092" {
+			t.Fatalf("brokers = %v, want [127.0.0.1:9092]", cfg.Brokers)
+		}
+		return &inkafka.JobQueue{}, nil
+	}
+	if err := plugin.Init(app); err != nil {
+		t.Fatalf("Init() error: %v", err)
 	}
 	if _, ok := app.Queue(); !ok {
 		t.Fatal("Queue() ok = false, want kafka queue")

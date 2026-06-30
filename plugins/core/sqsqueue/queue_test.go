@@ -1,9 +1,11 @@
 package sqsqueue_test
 
 import (
+	"context"
 	"io"
 	"testing"
 
+	insqs "github.com/akarso/shopanda/internal/infrastructure/sqs"
 	"github.com/akarso/shopanda/internal/platform/config"
 	"github.com/akarso/shopanda/internal/platform/event"
 	"github.com/akarso/shopanda/internal/platform/logger"
@@ -51,8 +53,15 @@ func TestQueuePlugin_Init_UsesSQSQueueURLEnvFallback(t *testing.T) {
 
 	cfg := &config.Config{Queue: config.QueueConfig{Driver: "sqs"}}
 	app := testApp(cfg)
-	if err := csqs.NewQueuePlugin().Init(app); err != nil {
-		t.Skipf("SQS queue not available: %v", err)
+	plugin := csqs.NewQueuePlugin()
+	plugin.NewQueue = func(_ context.Context, cfg insqs.QueueConfig) (*insqs.JobQueue, error) {
+		if cfg.QueueURL != "https://sqs.us-east-1.amazonaws.com/123456789012/test-jobs" {
+			t.Fatalf("queue url = %q", cfg.QueueURL)
+		}
+		return &insqs.JobQueue{}, nil
+	}
+	if err := plugin.Init(app); err != nil {
+		t.Fatalf("Init() error: %v", err)
 	}
 	if _, ok := app.Queue(); !ok {
 		t.Fatal("Queue() ok = false, want sqs queue")

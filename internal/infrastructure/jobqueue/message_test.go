@@ -35,12 +35,18 @@ func TestEncodeDecodeRoundTrip(t *testing.T) {
 }
 
 func TestFromJobDefaultsPayload(t *testing.T) {
-	job, err := jobs.NewJob("job-1", "test", nil)
-	if err != nil {
-		t.Fatalf("NewJob: %v", err)
-	}
-	msg := jobqueue.FromJob(job)
+	msg := jobqueue.FromJob(jobs.Job{
+		ID:   "job-1",
+		Type: "test",
+	})
 	if msg.Payload == nil {
 		t.Fatal("expected non-nil payload map")
+	}
+}
+
+func TestDecodeRejectsMissingRequiredFields(t *testing.T) {
+	_, err := jobqueue.Decode([]byte(`{"payload":{}}`))
+	if err == nil {
+		t.Fatal("expected decode validation error")
 	}
 }

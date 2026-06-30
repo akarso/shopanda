@@ -10,6 +10,7 @@ import (
 	"github.com/akarso/shopanda/internal/domain/jobs"
 	"github.com/akarso/shopanda/internal/infrastructure/jobqueue"
 	"github.com/aws/aws-sdk-go-v2/aws"
+	awsconfig "github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/service/sqs"
 	"github.com/aws/aws-sdk-go-v2/service/sqs/types"
 )
@@ -17,8 +18,9 @@ import (
 var _ jobs.Queue = (*JobQueue)(nil)
 
 const (
-	maxSQSDelaySeconds      = 900
-	maxSQSVisibilitySeconds = 43200
+	maxSQSDelaySeconds          = 900
+	maxSQSVisibilitySeconds     = 43200
+	processingVisibilitySeconds = int32(300)
 )
 
 // JobQueue implements jobs.Queue using Amazon SQS.
@@ -52,9 +54,11 @@ func NewJobQueue(ctx context.Context, cfg QueueConfig) (*JobQueue, error) {
 	if region == "" {
 		region = "us-east-1"
 	}
-	client := sqs.New(sqs.Options{
-		Region: region,
-	})
+	awsCfg, err := awsconfig.LoadDefaultConfig(ctx, awsconfig.WithRegion(region))
+	if err != nil {
+		return nil, fmt.Errorf("NewJobQueue: load aws config: %w", err)
+	}
+	client := sqs.NewFromConfig(awsCfg)
 	if _, err := client.GetQueueAttributes(ctx, &sqs.GetQueueAttributesInput{
 		QueueUrl:       aws.String(cfg.QueueURL),
 		AttributeNames: []types.QueueAttributeName{types.QueueAttributeNameQueueArn},
@@ -74,11 +78,11 @@ func sqsDelaySeconds(until time.Time) int32 {
 	if delay <= 0 {
 		return 0
 	}
-	seconds := int32(math.Ceil(delay.Seconds()))
+	seconds := math.Ceil(delay.Seconds())
 	if seconds > maxSQSDelaySeconds {
 		return maxSQSDelaySeconds
 	}
-	return seconds
+	return int32(seconds)
 }
 
 func visibilityTimeout(until time.Time) int32 {
@@ -86,11 +90,11 @@ func visibilityTimeout(until time.Time) int32 {
 	if delay <= 0 {
 		return 0
 	}
-	seconds := int32(math.Ceil(delay.Seconds()))
+	seconds := math.Ceil(delay.Seconds())
 	if seconds > maxSQSVisibilitySeconds {
 		return maxSQSVisibilitySeconds
 	}
-	return seconds
+	return int32(seconds)
 }
 
 // Enqueue inserts a new job into the queue.
@@ -141,12 +145,18 @@ func (q *JobQueue) Dequeue(ctx context.Context) (*jobs.Job, error) {
 		}
 		jm, err := jobqueue.Decode([]byte(*raw.Body))
 		if err != nil {
-			_ = q.deleteMessage(ctx, *raw.ReceiptHandle)
 			if q.failedQueueURL != "" {
-				_, _ = q.client.SendMessage(ctx, &sqs.SendMessageInput{
+				if _, sendErr := q.client.SendMessage(ctx, &sqs.SendMessageInput{
 					QueueUrl:    aws.String(q.failedQueueURL),
 					MessageBody: raw.Body,
-				})
+				}); sendErr != nil {
+					return nil, fmt.Errorf("job_queue: quarantine poison message: %w", sendErr)
+				}
+			} else {
+				return nil, fmt.Errorf("job_queue: decode message: %w", err)
+			}
+			if err := q.deleteMessage(ctx, *raw.ReceiptHandle); err != nil {
+				return nil, err
 			}
 			continue
 		}
@@ -162,10 +172,39 @@ func (q *JobQueue) Dequeue(ctx context.Context) (*jobs.Job, error) {
 			continue
 		}
 
+		q.mu.Lock()
+		if _, exists := q.inflight[jm.ID]; exists {
+			q.mu.Unlock()
+			if _, err := q.client.ChangeMessageVisibility(ctx, &sqs.ChangeMessageVisibilityInput{
+				QueueUrl:          aws.String(q.queueURL),
+				ReceiptHandle:     raw.ReceiptHandle,
+				VisibilityTimeout: 60,
+			}); err != nil {
+				return nil, fmt.Errorf("job_queue: defer duplicate inflight job: %w", err)
+			}
+			continue
+		}
+		q.mu.Unlock()
+
 		now := time.Now().UTC()
-		jm.Status = jobs.StatusProcessing
-		jm.Attempts++
-		jm.UpdatedAt = now
+		if jm.Status != jobs.StatusProcessing {
+			jm.Status = jobs.StatusProcessing
+			jm.Attempts++
+			jm.UpdatedAt = now
+		}
+		encoded, err := jobqueue.Encode(jm)
+		if err != nil {
+			return nil, err
+		}
+		raw.Body = aws.String(string(encoded))
+
+		if _, err := q.client.ChangeMessageVisibility(ctx, &sqs.ChangeMessageVisibilityInput{
+			QueueUrl:          aws.String(q.queueURL),
+			ReceiptHandle:     raw.ReceiptHandle,
+			VisibilityTimeout: processingVisibilitySeconds,
+		}); err != nil {
+			return nil, fmt.Errorf("job_queue: extend processing visibility: %w", err)
+		}
 
 		q.mu.Lock()
 		q.inflight[jm.ID] = inflightEntry{
@@ -233,38 +272,30 @@ func (q *JobQueue) Fail(ctx context.Context, id string, jobErr error) error {
 		msg.LastError = jobErr.Error()
 	}
 
-	body, err := jobqueue.Encode(msg)
-	if err != nil {
-		return err
-	}
-	bodyStr := string(body)
-
 	var publishErr error
 	if msg.Attempts >= msg.MaxRetries {
 		msg.Status = jobs.StatusFailed
-		body, err = jobqueue.Encode(msg)
+		body, err := jobqueue.Encode(msg)
 		if err != nil {
 			return err
 		}
-		bodyStr = string(body)
 		if q.failedQueueURL != "" {
 			_, publishErr = q.client.SendMessage(ctx, &sqs.SendMessageInput{
 				QueueUrl:    aws.String(q.failedQueueURL),
-				MessageBody: aws.String(bodyStr),
+				MessageBody: aws.String(string(body)),
 			})
 		}
 	} else {
 		delay := jobqueue.RetryDelay(msg.Attempts - 1)
 		msg.Status = jobs.StatusPending
 		msg.RunAt = now.Add(delay)
-		body, err = jobqueue.Encode(msg)
+		body, err := jobqueue.Encode(msg)
 		if err != nil {
 			return err
 		}
-		bodyStr = string(body)
 		input := &sqs.SendMessageInput{
 			QueueUrl:    aws.String(q.queueURL),
-			MessageBody: aws.String(bodyStr),
+			MessageBody: aws.String(string(body)),
 		}
 		if delaySec := sqsDelaySeconds(msg.RunAt); delaySec > 0 {
 			input.DelaySeconds = delaySec

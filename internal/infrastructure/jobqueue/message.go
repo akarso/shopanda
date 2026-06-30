@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"math"
 	"math/rand/v2"
+	"strings"
 	"time"
 
 	"github.com/akarso/shopanda/internal/domain/jobs"
@@ -83,7 +84,20 @@ func Decode(data []byte) (Message, error) {
 	if err := json.Unmarshal(data, &msg); err != nil {
 		return Message{}, fmt.Errorf("jobqueue: unmarshal job: %w", err)
 	}
+	if err := validateMessage(msg); err != nil {
+		return Message{}, err
+	}
 	return msg, nil
+}
+
+func validateMessage(msg Message) error {
+	if strings.TrimSpace(msg.ID) == "" {
+		return fmt.Errorf("jobqueue: job id is required")
+	}
+	if strings.TrimSpace(msg.Type) == "" {
+		return fmt.Errorf("jobqueue: job type is required")
+	}
+	return nil
 }
 
 // RetryDelay returns exponential backoff with jitter for the given attempt index.
@@ -93,5 +107,12 @@ func RetryDelay(attempt int) time.Duration {
 		delay = float64(BackoffMax)
 	}
 	jitter := delay * JitterRatio * (2*rand.Float64() - 1)
-	return time.Duration(delay + jitter)
+	total := delay + jitter
+	if total > float64(BackoffMax) {
+		total = float64(BackoffMax)
+	}
+	if total < 0 {
+		total = 0
+	}
+	return time.Duration(total)
 }

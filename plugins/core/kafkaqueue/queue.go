@@ -2,17 +2,20 @@ package kafkaqueue
 
 import (
 	"fmt"
-	"os"
-	"strings"
 
 	inkafka "github.com/akarso/shopanda/internal/infrastructure/kafka"
 	"github.com/akarso/shopanda/internal/platform/plugin"
 )
 
 // QueuePlugin registers the Kafka job queue backend.
-type QueuePlugin struct{}
+type QueuePlugin struct {
+	NewQueue func(inkafka.QueueConfig) (*inkafka.JobQueue, error)
+}
 
-func NewQueuePlugin() *QueuePlugin { return &QueuePlugin{} }
+// NewQueuePlugin creates a Kafka queue plugin.
+func NewQueuePlugin() *QueuePlugin {
+	return &QueuePlugin{NewQueue: inkafka.NewJobQueue}
+}
 
 func (p *QueuePlugin) Name() string { return "core/kafka-queue" }
 
@@ -27,22 +30,16 @@ func (p *QueuePlugin) Init(app *plugin.App) error {
 		return fmt.Errorf("kafka queue: disabled (queue.driver=%q)", app.Config.Queue.Driver)
 	}
 
-	brokers := append([]string(nil), app.Config.Queue.Kafka.Brokers...)
+	brokers := ResolveBrokers(app.Config.Queue.Kafka)
 	if len(brokers) == 0 {
-		if env := strings.TrimSpace(os.Getenv("KAFKA_BROKERS")); env != "" {
-			for _, part := range strings.Split(env, ",") {
-				part = strings.TrimSpace(part)
-				if part != "" {
-					brokers = append(brokers, part)
-				}
-			}
-		}
-	}
-	if len(brokers) == 0 {
-		return fmt.Errorf("kafka queue: empty brokers (set queue.kafka.brokers or KAFKA_BROKERS)")
+		return fmt.Errorf("kafka queue: empty brokers (set queue.kafka.brokers, KAFKA_BROKERS, or SHOPANDA_QUEUE_KAFKA_BROKERS)")
 	}
 
-	q, err := inkafka.NewJobQueue(inkafka.QueueConfig{
+	newQueue := p.NewQueue
+	if newQueue == nil {
+		newQueue = inkafka.NewJobQueue
+	}
+	q, err := newQueue(inkafka.QueueConfig{
 		Brokers:     brokers,
 		TopicPrefix: app.Config.Queue.Kafka.TopicPrefix,
 	})
