@@ -3,6 +3,7 @@ package plugin
 import (
 	"fmt"
 
+	"github.com/akarso/shopanda/internal/platform/cli"
 	"github.com/akarso/shopanda/internal/platform/logger"
 )
 
@@ -35,6 +36,7 @@ type Registry struct {
 	entries        []Entry
 	log            logger.Logger
 	configRegistry *ConfigRegistry
+	cliRegistry    *cli.Registry
 }
 
 // NewRegistry creates a Registry.
@@ -45,6 +47,7 @@ func NewRegistry(log logger.Logger) *Registry {
 	return &Registry{
 		log:            log,
 		configRegistry: NewConfigRegistry(),
+		cliRegistry:    cli.NewRegistry(),
 	}
 }
 
@@ -82,6 +85,14 @@ func (r *Registry) Register(p Plugin) {
 	})
 }
 
+// CLIRegistry returns plugin-registered CLI commands.
+func (r *Registry) CLIRegistry() *cli.Registry {
+	if r == nil {
+		return nil
+	}
+	return r.cliRegistry
+}
+
 // InitAll initializes all loaded plugins by calling Init(app).
 // Plugins that fail initialization (including panics) are marked as failed and skipped.
 // Returns an InitSummary describing the outcome.
@@ -90,6 +101,7 @@ func (r *Registry) InitAll(app *App) InitSummary {
 		panic("plugin: app must not be nil")
 	}
 	app.configRegistry = r.configRegistry
+	app.cliRegistry = r.cliRegistry
 	summary := InitSummary{Registered: len(r.entries)}
 	for i := range r.entries {
 		e := &r.entries[i]

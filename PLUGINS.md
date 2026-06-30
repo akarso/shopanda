@@ -70,6 +70,7 @@ Available today through `plugin.App`:
 | **Events** | `Bus.On` / `Bus.OnAsync` | React to domain changes |
 | **Permissions** | `RegisterPermission` | Admin RBAC strings |
 | **Admin config** | `RegisterConfig` | Simple settings on Integrations page (`GET/PUT /admin/config?group=plugins`) |
+| **CLI commands** | `RegisterCommand` | Operational subcommands (`domain:action`) |
 
 Core plugins additionally expose providers on `plugin.App` during init (search engine, job queue, cache store, media storage, payment registry entries) which `main.go` resolves after `InitAll`.
 
@@ -126,7 +127,8 @@ Honest list of gaps for external authors:
 | --- | --- |
 | Register external plugin | `cmd/api/register_plugins.go` |
 | New payment webhook HTTP route | `cmd/api/main.go` route table |
-| New CLI subcommand | `cmd/api/main.go` subcommand switch + `printHelp()` |
+| New CLI subcommand (core) | `cmd/api/main.go` subcommand switch + `printHelp()` |
+| New CLI subcommand (plugin) | `app.RegisterCommand` in plugin `Init` + compile-time registration in `register_plugins.go` |
 | New infrastructure backend | contribute under `plugins/core/` + driver switch |
 
 ---
@@ -138,11 +140,10 @@ Not implemented; do not assume these exist:
 - Go plugin `.so` dynamic loading
 - Plugin marketplace or version resolver
 - Hot reload
-- Plugin-registered CLI commands (planned Phase 5 — PR-541)
 
 Plugin settings (string, int, bool) can be registered with `RegisterConfig` and edited on the admin Integrations page when the plugin is enabled at boot.
 
-**Phase 5 platform work:** merchant webhooks, Kafka/SQS queue plugins, GraphQL stretch — see [Phase 5 Roadmap](docs/phase-5-maturity/ROADMAP.md) Track E.
+**Phase 5 platform work:** Kafka/SQS queue plugins, GraphQL stretch — see [Phase 5 Roadmap](docs/phase-5-maturity/ROADMAP.md) Track E.
 
 ---
 

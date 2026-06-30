@@ -243,4 +243,4 @@ C4Component
 >
 > **Phase 5 (planned):** returns/RMA, customer groups, advanced promotions, EU compliance fields (WEEE/EPR/GPSR), admin MFA — see [Phase 5 Roadmap](../phase-5-maturity/ROADMAP.md). **[b2b]** features ship in `plugins/b2b/` under commercial license — see [Commercial Licensing](../COMMERCIAL.md).
 >
-> **Deferred:** dynamic `.so` loading, plugin marketplace, plugin CLI registration.
+> **Deferred:** dynamic `.so` loading, plugin marketplace.

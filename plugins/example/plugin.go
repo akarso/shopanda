@@ -41,5 +41,6 @@ func (p *Plugin) Init(app *plugin.App) error {
 	if err := app.RegisterPermission(PermissionReportsRead, identity.RoleAdmin); err != nil {
 		return fmt.Errorf("example plugin: register permission: %w", err)
 	}
+	registerCLICommands(app)
 	return nil
 }

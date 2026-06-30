@@ -71,9 +71,9 @@ Core (always on)
 - Registering any plugin (core plugins are registered from `plugins/core/register.go`; external plugins from `cmd/api/register_plugins.go`)
 - Adding payment/shipping providers that are not yet packaged as core plugins
 - Adding HTTP webhook routes for new payment providers
-- Adding CLI subcommands (`cmd/api/main.go` subcommand switch)
+- Adding CLI subcommands — core commands in `cmd/api/main.go`; plugin commands via `RegisterCommand` in `Init`
 
-**Deferred (not implemented):** dynamic `.so` loading, plugin marketplace, plugin-registered CLI commands.
+**Deferred (not implemented):** dynamic `.so` loading, plugin marketplace.
 
 Plugin-defined settings can be registered via `RegisterConfig` and edited on the admin Integrations page (`group=plugins` API). Plugin enable/disable remains compile-time + config file.
 
@@ -541,31 +541,29 @@ app.Bus.OnAsync(order.EventOrderPaid, func(ctx context.Context, evt event.Event)
 
 ## Add Custom CLI Commands
 
-Current limitation: CLI subcommands are not plugin-registered.
-
-Today, the command surface is defined explicitly in `cmd/api/main.go` via:
-
-- the subcommand switch in `run()`
-- `printHelp()`
-- the individual `runXxx` helpers
-
-That means a custom command currently requires a code change in `main.go`.
-
-Recommended pattern:
-
-1. add a new `case` in the subcommand switch
-2. keep parsing and orchestration in a dedicated `runMyCommand(cfg, log)` helper
-3. keep domain/application logic outside `main.go`
-4. update `printHelp()` so the command appears in built-in help output
-
-Minimal sketch:
+Core commands are defined in `cmd/api/main.go`. Plugins register additional commands during `Init`:
 
 ```go
-case "sync:vendors":
-    return runVendorSync(cfg, log)
+import "github.com/akarso/shopanda/internal/platform/cli"
+
+func (p *Plugin) Init(app *plugin.App) error {
+    app.RegisterCommand(cli.Command{
+        Name:        "acme:sync",
+        Description: "Sync vendor catalog",
+        Run: func(ctx cli.Context, args []string) error {
+            // ctx.Config, ctx.Logger, ctx.DB available
+            return nil
+        },
+    })
+    return nil
+}
 ```
 
-This is not yet a plugin hook, so document it honestly in your own extension work.
+Commands use the `domain:action` naming convention (e.g. `example:ping`). Names must be unique across all plugins. Registered commands appear in `app help` and dispatch through the plugin CLI registry.
+
+For core-owned operational commands, add a `case` in the subcommand switch and a `runXxx` helper in `main.go` (unchanged pattern from earlier phases).
+
+See `plugins/example/cli.go` for a minimal working command.
 
 ## Use the API Reference
 
@@ -622,4 +620,4 @@ When adding an extension, prefer this order:
 4. add tests at the adapter boundary
 5. only then consider whether the pattern should be generalized into a reusable plugin hook
 
-Shopanda already has real extension points for plugins, events, pipelines, workflows, and infrastructure ports. Core and external plugins register at compile time through `register_plugins.go`; there is no dynamic plugin discovery or plugin-based CLI registry yet — keep the guide and the code honest about where extension is explicit rather than magical.
+Shopanda already has real extension points for plugins, events, pipelines, workflows, infrastructure ports, and plugin CLI commands. Core and external plugins register at compile time through `register_plugins.go`; there is no dynamic plugin discovery.

@@ -113,7 +113,7 @@ func run() error {
 	if len(os.Args) > 1 {
 		switch os.Args[1] {
 		case "help":
-			printHelp()
+			printHelp(cfg, log)
 			return nil
 		case "setup":
 			return runSetup(cfg, log)
@@ -164,6 +164,11 @@ func run() error {
 		case "export:oss":
 			return runExportOss(cfg, log)
 		default:
+			if ran, err := runPluginCLICommand(cfg, log, os.Args[1], os.Args[2:]); err != nil {
+				return err
+			} else if ran {
+				return nil
+			}
 			return fmt.Errorf("unknown command: %s (run 'help' for usage)", os.Args[1])
 		}
 	}
@@ -2309,8 +2314,8 @@ func registerDefaultSeeders(reg *seed.Registry) {
 	reg.Register(&seed.GpsrAttributesSeeder{})
 }
 
-func printHelp() {
-	fmt.Println(`Usage: app <command> [arguments]
+func printHelp(cfg *config.Config, log logger.Logger) {
+	fmt.Print(appendPluginCLIHelp(cfg, log, `Usage: app <command> [arguments]
 
 Commands:
   dev                  Start HTTP server with embedded worker and scheduler (local dev)
@@ -2337,7 +2342,8 @@ Commands:
   export:prices <f>    Export prices to a CSV file
   export:epr <f>       Export EPR packaging metadata ([--include-empty] <file.csv>)
   export:oss <f>       Export OSS/IOSS tax report ([--summary] [--from=YYYY-MM-DD] [--to=YYYY-MM-DD] <file.csv>)
-  help                 Show this help message`)
+  help                 Show this help message
+`))
 }
 
 type storefrontOrderClaimEmailer struct {

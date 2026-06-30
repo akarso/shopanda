@@ -7,6 +7,7 @@ Reference implementation for third-party-style plugins living outside `plugins/c
 - **Pricing step** — adds a fixed example fee (`example.fee`) to the pricing pipeline
 - **Event listener** — async handler on `order.created` that logs order metadata
 - **Admin permission** — registers `example.reports.read` for the Admin role
+- **CLI command** — registers `example:ping` via `RegisterCommand`
 
 ## Enable
 
@@ -27,6 +28,12 @@ SHOPANDA_PLUGINS_EXAMPLE_FEE_MINOR_UNITS=100
 Restart the application after changing config. The plugin is registered in `cmd/api/register_plugins.go` when `plugins.example.enabled` is true.
 
 When enabled, **Example fee (minor units)** can also be edited on **Admin → Integrations** without restart. Values persist to the config store and apply to the pricing step immediately.
+
+Try the CLI hook:
+
+```bash
+app example:ping
+```
 
 ## Authoring notes
 

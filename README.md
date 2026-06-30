@@ -133,7 +133,7 @@ Extension mechanisms (events, pricing/checkout/composition pipelines, permission
 
 See [Developer Guide](docs/guides/DEVELOPER.md) for how to enable core plugins and add an external plugin. Reference implementation: [`plugins/example/`](plugins/example/).
 
-**Not yet supported:** `.so` dynamic loading, plugin marketplace, plugin-registered CLI commands.
+**Not yet supported:** `.so` dynamic loading, plugin marketplace.
 
 Full Phase 4 plan: [Phase 4 Roadmap](docs/phase-4-refactoring/ROADMAP.md) (shipped). Next: [Phase 5 — Mature Commerce](docs/phase-5-maturity/ROADMAP.md).
 

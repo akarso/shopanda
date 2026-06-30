@@ -4,6 +4,7 @@ import (
 	"github.com/akarso/shopanda/internal/domain/identity"
 	"github.com/akarso/shopanda/internal/domain/payment"
 	"github.com/akarso/shopanda/internal/domain/rbac"
+	"github.com/akarso/shopanda/internal/platform/cli"
 	"github.com/akarso/shopanda/internal/platform/config"
 	"github.com/akarso/shopanda/internal/platform/event"
 	"github.com/akarso/shopanda/internal/platform/logger"
@@ -42,6 +43,7 @@ type App struct {
 	configRegistry *ConfigRegistry
 
 	adminRoutes []AdminRoute
+	cliRegistry *cli.Registry
 }
 
 // RegisterPricingStep registers a pricing pipeline step.
