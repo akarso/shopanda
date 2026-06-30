@@ -4829,11 +4829,13 @@
         Promise.all([
             api('/admin/config?group=email'),
             api('/admin/config?group=media'),
-            api('/admin/config?group=plugins')
+            api('/admin/config?group=plugins'),
+            api('/admin/webhooks')
         ]).then(function (results) {
             var emailResponse = results[0];
             var mediaResponse = results[1];
             var pluginsResponse = results[2];
+            var webhooksResponse = results[3];
 
             if ((emailResponse && emailResponse.error && emailResponse.error.code === 'forbidden') ||
                 (mediaResponse && mediaResponse.error && mediaResponse.error.code === 'forbidden')) {
@@ -4864,6 +4866,10 @@
                 : (valueOf(mediaPayload.entries, 'media.local.base_url', '') || valueOf(mediaPayload.entries, 'media.local.base_path', ''));
 
             var pluginSectionHTML = renderPluginConfigSection(pluginsPayload);
+            var webhookCount = 0;
+            if (webhooksResponse && webhooksResponse.data && Array.isArray(webhooksResponse.data.endpoints)) {
+                webhookCount = webhooksResponse.data.endpoints.length;
+            }
 
             grid.innerHTML = '' +
                 '<div class="settings-grid">' +
@@ -4873,6 +4879,11 @@
                 '<p><strong>SMTP Host:</strong> ' + esc(smtpHost || 'Not set') + '</p>' +
                 '<p><strong>From Address:</strong> ' + esc(smtpFrom || 'Not set') + '</p>' +
                 '<p><a href="/admin/settings" data-link>Open settings</a></p>' +
+                '</section>' +
+                '<section>' +
+                '<h3>Outbound Webhooks</h3>' +
+                '<p><strong>Configured endpoints:</strong> ' + esc(String(webhookCount)) + '</p>' +
+                '<p class="admin-form-hint">Manage signed order/payment webhook subscriptions via the API (<code>/api/v1/admin/webhooks</code>).</p>' +
                 '</section>' +
                 '<section>' +
                 '<h3>Media Storage</h3>' +

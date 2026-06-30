@@ -36,6 +36,7 @@ import (
 	returnsApp "github.com/akarso/shopanda/internal/application/returns"
 	reviewsApp "github.com/akarso/shopanda/internal/application/reviews"
 	storecreditApp "github.com/akarso/shopanda/internal/application/storecredit"
+	webhookApp "github.com/akarso/shopanda/internal/application/webhook"
 	"github.com/akarso/shopanda/internal/application/rewrite"
 	"github.com/akarso/shopanda/internal/domain/admin"
 	"github.com/akarso/shopanda/internal/domain/cache"
@@ -637,6 +638,10 @@ func runServe(cfg *config.Config, log logger.Logger, embedScheduler bool) error 
 	if err != nil {
 		return err
 	}
+	webhookEndpointRepo, err := postgres.NewWebhookEndpointRepo(conn)
+	if err != nil {
+		return err
+	}
 	sharedAuditor := adminApp.NewAuditor(log)
 	sharedAuditor.SetAuditLogRepository(auditLogRepo)
 
@@ -756,6 +761,9 @@ func runServe(cfg *config.Config, log logger.Logger, embedScheduler bool) error 
 	inventoryAdmin := shophttp.NewInventoryAdminHandlerWithAuditor(stockRepo, variantRepo, sharedAuditor)
 	storeAdmin := shophttp.NewStoreAdminHandlerWithAuditor(storeRepo, bus, sharedAuditor)
 	auditLogAdmin := shophttp.NewAuditLogAdminHandler(auditLogRepo, sharedAuditor)
+	webhookService := webhookApp.NewService(webhookEndpointRepo)
+	webhookEndpointAdmin := shophttp.NewWebhookEndpointAdminHandler(webhookService)
+	webhookApp.NewDispatcher(webhookEndpointRepo, jobQueue, log).Register(bus)
 	shippingZoneAdmin := shophttp.NewShippingZoneAdminHandler(zoneRepo)
 	accountService := accountApp.NewService(customerRepo, consentRepo, bus, log, conn)
 	customerAdmin := shophttp.NewCustomerAdminHandlerWithAuditorAndDeleter(customerRepo, accountService, sharedAuditor)
@@ -934,6 +942,12 @@ func runServe(cfg *config.Config, log logger.Logger, embedScheduler bool) error 
 	}
 	router.Handle("GET /api/v1/admin/audit", requireAuditRead(auditLogAdmin.List()))
 	router.Handle("GET /api/v1/admin/audit/export", requireAuditRead(auditLogAdmin.Export()))
+	router.Handle("GET /api/v1/admin/webhooks/events", requireSettingsRead(webhookEndpointAdmin.Catalog()))
+	router.Handle("GET /api/v1/admin/webhooks", requireSettingsRead(webhookEndpointAdmin.List()))
+	router.Handle("POST /api/v1/admin/webhooks", requireSettingsWrite(webhookEndpointAdmin.Create()))
+	router.Handle("GET /api/v1/admin/webhooks/{id}", requireSettingsRead(webhookEndpointAdmin.Get()))
+	router.Handle("PUT /api/v1/admin/webhooks/{id}", requireSettingsWrite(webhookEndpointAdmin.Update()))
+	router.Handle("DELETE /api/v1/admin/webhooks/{id}", requireSettingsWrite(webhookEndpointAdmin.Delete()))
 	router.Handle("GET /api/v1/admin/forms/{name}", requireAuth(schemaHandler.GetForm()))
 	router.Handle("GET /api/v1/admin/grids/{name}", requireAuth(schemaHandler.GetGrid()))
 	router.Handle("GET /api/v1/admin/pages", requireContentRead(pageAdmin.List()))
@@ -2418,6 +2432,12 @@ func setupWorker(conn *sql.DB, cfg *config.Config, log logger.Logger, app *plugi
 	}
 	configRepo := postgres.NewConfigRepo(conn)
 	jobWorker.Register(adminApp.NewRetentionHandler(auditLogRepo, configRepo, log))
+
+	merchantWebhookRepo, err := postgres.NewWebhookEndpointRepo(conn)
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	jobWorker.Register(webhookApp.NewDeliverHandler(merchantWebhookRepo, webhookApp.NewDefaultHTTPPoster(), log))
 
 	return jobWorker, jobQueue, appCache, nil
 }
