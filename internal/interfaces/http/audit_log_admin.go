@@ -160,6 +160,7 @@ func (h *AuditLogAdminHandler) Export() http.HandlerFunc {
 			if body.wrote {
 				return
 			}
+			w.Header().Del("Content-Disposition")
 			JSONError(w, apperror.Wrap(apperror.CodeInternal, "audit export failed", err))
 			return
 		}

@@ -89,7 +89,7 @@ func TestRetentionDays_RejectsOversizedValues(t *testing.T) {
 		name  string
 		value interface{}
 	}{
-		{name: "float64", value: float64(math.MaxInt) + 1},
+		{name: "float64", value: math.Nextafter(float64(math.MaxInt), math.Inf(1))},
 		{name: "string", value: "999999999999999999999"},
 	}
 	for _, tc := range tests {
