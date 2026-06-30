@@ -261,7 +261,7 @@ Items worth tracking but not yet assigned PR numbers:
 | 543 | E | [oss] | GraphQL plugin (stretch) |
 | 544 | E | [oss] | Dynamic plugin loading research |
 
-PR specs: [`prs/`](prs/) (to be added as work starts).
+PR specs: [`prs/`](prs/).
 
 ---
 
@@ -273,6 +273,24 @@ PR specs: [`prs/`](prs/) (to be added as work starts).
 | [Phase 2](../phase-2-merchant-ready/ROADMAP.md) | Merchant-ready surfaces | Shipped |
 | [Phase 3](../phase-3-testing/ROADMAP.md) | Hardening & guest checkout | Shipped |
 | [Phase 4](../phase-4-refactoring/ROADMAP.md) | Product complete | Shipped |
-| **Phase 5** | **Mature commerce** | **Planned** |
+| **Phase 5** | **Mature commerce** | **Shipped** |
+| [Phase 6](../phase-6-merchant-complete/ROADMAP.md) | Merchant-complete admin | Planned |
 
 Phase 4 "Explicitly Deferred" items are mapped to tracks above; see Phase 4 roadmap for the original list.
+
+---
+
+## Admin UI deferred to Phase 6
+
+Several Phase 5 PRs shipped **admin APIs only** (same pattern as PR-524 before its UI PR). Phase 6 wires these into `admin.js`:
+
+| Phase 5 PR | Capability | Phase 6 UI PR |
+| --- | --- | --- |
+| PR-511 | Navigation builder API | [PR-600](../phase-6-merchant-complete/prs/PR-600.md) |
+| PR-512 | Content blocks API | [PR-601](../phase-6-merchant-complete/prs/PR-601.md), [PR-602](../phase-6-merchant-complete/prs/PR-602.md) |
+| PR-505 | Store credit API | [PR-611](../phase-6-merchant-complete/prs/PR-611.md) |
+| PR-500/501 | Customer groups (B2B) | [PR-610](../phase-6-merchant-complete/prs/PR-610.md) |
+| PR-540 | Outbound webhooks API | [PR-620](../phase-6-merchant-complete/prs/PR-620.md) |
+| PR-513/514/510 | Marketing stretch APIs | [PR-641](../phase-6-merchant-complete/prs/PR-641.md), [PR-640](../phase-6-merchant-complete/prs/PR-640.md), [PR-642](../phase-6-merchant-complete/prs/PR-642.md) (stretch) |
+
+Phase 5 stretch **PR-543–544** (GraphQL, dynamic plugin loading) remain **integrator/platform** work — planned for Phase 7 unless explicitly promoted. See [Phase 6 roadmap](../phase-6-merchant-complete/ROADMAP.md) for the full merchant UI sequence.

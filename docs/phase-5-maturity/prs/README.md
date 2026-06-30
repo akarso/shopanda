@@ -34,6 +34,6 @@ Planned specs for **PR-500–549**. Individual PR markdown files will be added w
 
 Roadmap: [`../ROADMAP.md`](../ROADMAP.md) · EU compliance: [`../specs/COMPLIANCE_EU.md`](../specs/COMPLIANCE_EU.md) · Licensing: [`../../COMMERCIAL.md`](../../COMMERCIAL.md)
 
-**Suggested next PRs:** PR-543 (GraphQL API plugin, stretch) or PR-544 (dynamic plugin loading research).
+**Suggested next PRs:** [Phase 6 PR-600](../phase-6-merchant-complete/prs/PR-600.md) (navigation admin UI). Phase 5 stretch PR-543–544 deferred to Phase 7 — see [Phase 6 roadmap](../phase-6-merchant-complete/ROADMAP.md).
 
 [b2b] PRs implement in [`plugins/b2b/`](../../../plugins/b2b/). [oss] PRs stay in open core.

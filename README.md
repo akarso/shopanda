@@ -135,7 +135,7 @@ See [Developer Guide](docs/guides/DEVELOPER.md) for how to enable core plugins a
 
 **Not yet supported:** `.so` dynamic loading, plugin marketplace.
 
-Full Phase 4 plan: [Phase 4 Roadmap](docs/phase-4-refactoring/ROADMAP.md) (shipped). Next: [Phase 5 — Mature Commerce](docs/phase-5-maturity/ROADMAP.md).
+Full Phase 4 plan: [Phase 4 Roadmap](docs/phase-4-refactoring/ROADMAP.md) (shipped). Phase 5 ([Mature Commerce](docs/phase-5-maturity/ROADMAP.md)) is shipped. Next: [Phase 6 — Merchant-Complete Admin](docs/phase-6-merchant-complete/ROADMAP.md).
 
 ## Default stack
 
@@ -159,7 +159,7 @@ Enable optional backends via YAML or environment variables — see [Deployment G
 
 ## Early-stage note
 
-Phases 1–4 (**product complete**) are shipped: merchant admin for catalog, orders, promotions, inventory, plugin tiers, guest checkout, and audit log. **Phase 5** ([roadmap](docs/phase-5-maturity/ROADMAP.md)) covers mature commerce features — returns, customer groups, EU compliance (WEEE, Omnibus, GPSR), and admin platform depth.
+Phases 1–5 are shipped: merchant admin for catalog, orders, promotions, inventory, returns, EU compliance (Omnibus, WEEE, GPSR), webhooks, and platform plugins (Kafka/SQS, plugin CLI). **Phase 6** ([roadmap](docs/phase-6-merchant-complete/ROADMAP.md)) closes admin UI debt — navigation, content blocks, webhooks, store credit, bulk prices, and merchant docs.
 
 The long-term goal remains a commerce engine that is:
 
@@ -228,7 +228,8 @@ Current guides live in [`docs/guides/`](docs/guides/):
 ### Planning & Reference
 
 - [Commercial Licensing](docs/COMMERCIAL.md) — open core (GPL) vs paid B2B module
-- [Phase 5 Roadmap](docs/phase-5-maturity/ROADMAP.md) — **active** mature commerce milestones (returns, segments, EU compliance, admin platform)
+- [Phase 6 Roadmap](docs/phase-6-merchant-complete/ROADMAP.md) — **active** merchant-complete admin (navigation, blocks, webhooks, store credit, bulk prices)
+- [Phase 5 Roadmap](docs/phase-5-maturity/ROADMAP.md) — mature commerce milestones (shipped)
 - [EU Compliance Reference](docs/phase-5-maturity/specs/COMPLIANCE_EU.md) — Omnibus, WEEE, EPR, GPSR mapping to planned work
 - [Phase 4 Roadmap](docs/phase-4-refactoring/ROADMAP.md) — product-complete milestones (shipped)
 - [Runtime Modes](docs/phase-4-refactoring/specs/RUNTIME_MODES.md) — dev vs production process layout (`serve`, `worker`, `scheduler`, `app dev`)
