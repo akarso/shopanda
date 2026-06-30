@@ -5,6 +5,7 @@ import (
 	"io"
 	"testing"
 
+	"github.com/akarso/shopanda/internal/platform/cli"
 	"github.com/akarso/shopanda/internal/platform/config"
 	"github.com/akarso/shopanda/internal/platform/event"
 	"github.com/akarso/shopanda/internal/platform/logger"
@@ -255,5 +256,33 @@ func TestRegistry_InitAll_PanicRecovery(t *testing.T) {
 	}
 	if !normal.called {
 		t.Error("normal.Init not called")
+	}
+}
+
+type cliThenFailPlugin struct {
+	name string
+}
+
+func (p *cliThenFailPlugin) Name() string { return p.name }
+
+func (p *cliThenFailPlugin) Init(app *plugin.App) error {
+	app.RegisterCommand(cli.Command{
+		Name:        "fail:cmd",
+		Description: "Should not persist",
+		Run:         func(cli.Context, []string) error { return nil },
+	})
+	return errors.New("init failed after CLI registration")
+}
+
+func TestRegistry_InitAll_FailedPluginDoesNotRetainCLICommands(t *testing.T) {
+	log := testLogger()
+	reg := plugin.NewRegistry(log)
+	reg.Register(&cliThenFailPlugin{name: "cli-fail"})
+	summary := reg.InitAll(testApp(log))
+	if summary.Failed != 1 || summary.Initialized != 0 {
+		t.Fatalf("summary = %+v, want 0 initialized and 1 failed", summary)
+	}
+	if cmds := reg.CLIRegistry().List(); len(cmds) != 0 {
+		t.Fatalf("CLIRegistry().List() = %#v, want empty after failed init", cmds)
 	}
 }

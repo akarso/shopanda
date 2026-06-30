@@ -101,7 +101,6 @@ func (r *Registry) InitAll(app *App) InitSummary {
 		panic("plugin: app must not be nil")
 	}
 	app.configRegistry = r.configRegistry
-	app.cliRegistry = r.cliRegistry
 	summary := InitSummary{Registered: len(r.entries)}
 	for i := range r.entries {
 		e := &r.entries[i]
@@ -112,6 +111,8 @@ func (r *Registry) InitAll(app *App) InitSummary {
 		r.log.Info("plugin.init.start", map[string]interface{}{
 			"plugin": name,
 		})
+		stagingCLI := cli.NewRegistry()
+		app.cliRegistry = stagingCLI
 		if err := r.safeInit(e, app); err != nil {
 			e.State = StateFailed
 			e.Err = err
@@ -126,12 +127,14 @@ func (r *Registry) InitAll(app *App) InitSummary {
 			})
 			continue
 		}
+		r.cliRegistry.Merge(stagingCLI)
 		e.State = StateActive
 		summary.Initialized++
 		r.log.Info("plugin.init.complete", map[string]interface{}{
 			"plugin": name,
 		})
 	}
+	app.cliRegistry = r.cliRegistry
 	return summary
 }
 

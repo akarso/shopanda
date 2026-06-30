@@ -49,3 +49,18 @@ func TestRegistry_DuplicatePanics(t *testing.T) {
 	}()
 	reg.Register(cli.Command{Name: "x:y", Description: "dup", Run: func(cli.Context, []string) error { return nil }})
 }
+
+func TestRegistry_InvalidNamePanics(t *testing.T) {
+	cases := []string{"", "nodomain", "domain:", ":action", "too:many:parts"}
+	for _, name := range cases {
+		t.Run(name, func(t *testing.T) {
+			reg := cli.NewRegistry()
+			defer func() {
+				if recover() == nil {
+					t.Fatalf("expected panic for invalid name %q", name)
+				}
+			}()
+			reg.Register(cli.Command{Name: name, Description: "test", Run: func(cli.Context, []string) error { return nil }})
+		})
+	}
+}

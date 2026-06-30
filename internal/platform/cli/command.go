@@ -20,5 +20,6 @@ type Context struct {
 type Command struct {
 	Name        string
 	Description string
+	RequiresDB  bool
 	Run         func(ctx Context, args []string) error
 }

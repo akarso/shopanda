@@ -1,16 +1,21 @@
 package main
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/akarso/shopanda/internal/platform/config"
 	"github.com/akarso/shopanda/internal/platform/logger"
+	"github.com/akarso/shopanda/internal/platform/plugin"
+	"github.com/akarso/shopanda/plugins/example"
 )
 
 func TestRunPluginCLICommand_UnknownReturnsFalse(t *testing.T) {
 	cfg := &config.Config{}
 	log := logger.New("error")
-	ran, err := runPluginCLICommand(cfg, log, "does-not-exist", nil)
+	ran, err := runPluginCLICommand(cfg, log, func() *plugin.Registry {
+		return bootstrapPluginCLIRegistry(cfg, log)
+	}, "does-not-exist", nil)
 	if err != nil {
 		t.Fatalf("runPluginCLICommand: %v", err)
 	}
@@ -26,13 +31,17 @@ func TestPluginCLIHelpLines_IncludesExampleWhenEnabled(t *testing.T) {
 		},
 	}
 	log := logger.New("error")
-	lines := pluginCLIHelpLines(cfg, log)
+	registryFn := func() *plugin.Registry {
+		return bootstrapPluginCLIRegistry(cfg, log)
+	}
+	lines := pluginCLIHelpLines(registryFn)
 	if len(lines) < 2 {
 		t.Fatalf("help lines = %v, want plugin section", lines)
 	}
 	found := false
 	for _, line := range lines {
-		if line == "  example:ping         Verify example plugin CLI registration" {
+		fields := strings.Fields(line)
+		if len(fields) >= 2 && fields[0] == example.CommandPing && strings.Contains(line, "Verify example plugin CLI registration") {
 			found = true
 			break
 		}

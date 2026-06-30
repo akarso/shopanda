@@ -111,9 +111,16 @@ func run() error {
 
 	// Subcommand dispatch.
 	if len(os.Args) > 1 {
+		var pluginCLIRegistry *plugin.Registry
+		pluginCLIRegistryFn := func() *plugin.Registry {
+			if pluginCLIRegistry == nil {
+				pluginCLIRegistry = bootstrapPluginCLIRegistry(cfg, log)
+			}
+			return pluginCLIRegistry
+		}
 		switch os.Args[1] {
 		case "help":
-			printHelp(cfg, log)
+			printHelp(cfg, log, pluginCLIRegistryFn)
 			return nil
 		case "setup":
 			return runSetup(cfg, log)
@@ -164,7 +171,7 @@ func run() error {
 		case "export:oss":
 			return runExportOss(cfg, log)
 		default:
-			if ran, err := runPluginCLICommand(cfg, log, os.Args[1], os.Args[2:]); err != nil {
+			if ran, err := runPluginCLICommand(cfg, log, pluginCLIRegistryFn, os.Args[1], os.Args[2:]); err != nil {
 				return err
 			} else if ran {
 				return nil
@@ -2314,8 +2321,8 @@ func registerDefaultSeeders(reg *seed.Registry) {
 	reg.Register(&seed.GpsrAttributesSeeder{})
 }
 
-func printHelp(cfg *config.Config, log logger.Logger) {
-	fmt.Print(appendPluginCLIHelp(cfg, log, `Usage: app <command> [arguments]
+func printHelp(cfg *config.Config, log logger.Logger, pluginCLIRegistryFn func() *plugin.Registry) {
+	fmt.Print(appendPluginCLIHelp(pluginCLIRegistryFn, `Usage: app <command> [arguments]
 
 Commands:
   dev                  Start HTTP server with embedded worker and scheduler (local dev)

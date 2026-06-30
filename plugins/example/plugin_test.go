@@ -91,7 +91,9 @@ func TestPlugin_Init_RegistersCLICommand(t *testing.T) {
 			Example: config.ExamplePluginConfig{Enabled: true},
 		},
 	}
-	reg.InitAll(testApp(cfg))
+	if summary := reg.InitAll(testApp(cfg)); summary.Failed > 0 || summary.Initialized != 1 {
+		t.Fatalf("InitAll() summary = %+v, want 1 initialized and 0 failed", summary)
+	}
 
 	cmds := reg.CLIRegistry().List()
 	if len(cmds) != 1 || cmds[0].Name != example.CommandPing {

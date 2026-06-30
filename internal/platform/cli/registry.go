@@ -22,8 +22,8 @@ func (r *Registry) Register(cmd Command) {
 		panic("cli: registry must not be nil")
 	}
 	name := strings.TrimSpace(cmd.Name)
-	if name == "" {
-		panic("cli: command name must not be empty")
+	if err := validateCommandName(name); err != nil {
+		panic(err.Error())
 	}
 	if strings.TrimSpace(cmd.Description) == "" {
 		panic(fmt.Sprintf("cli: command %q description must not be empty", name))
@@ -70,4 +70,25 @@ func (r *Registry) Run(name string, ctx Context, args []string) error {
 		return fmt.Errorf("cli: unknown command %q", name)
 	}
 	return cmd.Run(ctx, args)
+}
+
+func validateCommandName(name string) error {
+	parts := strings.Split(name, ":")
+	if len(parts) != 2 {
+		return fmt.Errorf("cli: command name %q must use domain:action format", name)
+	}
+	if strings.TrimSpace(parts[0]) == "" || strings.TrimSpace(parts[1]) == "" {
+		return fmt.Errorf("cli: command name %q must use domain:action format", name)
+	}
+	return nil
+}
+
+// Merge registers all commands from other into r.
+func (r *Registry) Merge(other *Registry) {
+	if r == nil || other == nil {
+		return
+	}
+	for _, cmd := range other.List() {
+		r.Register(cmd)
+	}
 }
