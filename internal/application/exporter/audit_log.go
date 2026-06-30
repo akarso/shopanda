@@ -128,7 +128,8 @@ func (exp *AuditLogExporter) exportCSV(ctx context.Context, w io.Writer, opts Au
 }
 
 func (exp *AuditLogExporter) exportJSON(ctx context.Context, w io.Writer, opts AuditLogExportOptions) (*AuditLogExportResult, error) {
-	all := make([]auditLogExportItem, 0)
+	result := &AuditLogExportResult{}
+	started := false
 	offset := 0
 	for {
 		entries, err := exp.repo.List(ctx, exp.listFilter(opts, offset))
@@ -139,7 +140,7 @@ func (exp *AuditLogExporter) exportJSON(ctx context.Context, w io.Writer, opts A
 			break
 		}
 		for _, entry := range entries {
-			all = append(all, auditLogExportItem{
+			raw, err := json.Marshal(auditLogExportItem{
 				ID:           entry.ID,
 				CreatedAt:    entry.CreatedAt.UTC(),
 				AdminID:      entry.AdminID,
@@ -153,6 +154,21 @@ func (exp *AuditLogExporter) exportJSON(ctx context.Context, w io.Writer, opts A
 				Currency:     entry.Currency,
 				Metadata:     entry.Metadata,
 			})
+			if err != nil {
+				return nil, fmt.Errorf("audit export: marshal json: %w", err)
+			}
+			if !started {
+				if _, err := io.WriteString(w, "["); err != nil {
+					return nil, fmt.Errorf("audit export: write json: %w", err)
+				}
+				started = true
+			} else if _, err := io.WriteString(w, ","); err != nil {
+				return nil, fmt.Errorf("audit export: write json: %w", err)
+			}
+			if _, err := w.Write(raw); err != nil {
+				return nil, fmt.Errorf("audit export: write json: %w", err)
+			}
+			result.Entries++
 		}
 		if len(entries) < auditExportBatchSize {
 			break
@@ -160,14 +176,16 @@ func (exp *AuditLogExporter) exportJSON(ctx context.Context, w io.Writer, opts A
 		offset += len(entries)
 	}
 
-	raw, err := json.Marshal(all)
-	if err != nil {
-		return nil, fmt.Errorf("audit export: marshal json: %w", err)
+	if !started {
+		if _, err := io.WriteString(w, "[]"); err != nil {
+			return nil, fmt.Errorf("audit export: write json: %w", err)
+		}
+		return result, nil
 	}
-	if _, err := w.Write(raw); err != nil {
+	if _, err := io.WriteString(w, "]"); err != nil {
 		return nil, fmt.Errorf("audit export: write json: %w", err)
 	}
-	return &AuditLogExportResult{Entries: len(all)}, nil
+	return result, nil
 }
 
 func (exp *AuditLogExporter) listFilter(opts AuditLogExportOptions, offset int) domainadmin.AuditLogFilter {

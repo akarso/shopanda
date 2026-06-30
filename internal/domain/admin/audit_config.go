@@ -3,6 +3,7 @@ package admin
 import (
 	"context"
 	"fmt"
+	"math"
 	"strconv"
 	"strings"
 )
@@ -45,9 +46,15 @@ func parseRetentionDays(v interface{}) (int, error) {
 		if t < 0 {
 			return 0, fmt.Errorf("invalid value %d", t)
 		}
+		if t > math.MaxInt {
+			return 0, fmt.Errorf("invalid value %d", t)
+		}
 		return int(t), nil
 	case float64:
-		if t < 0 || float64(int(t)) != t {
+		if t < 0 || float64(int64(t)) != t {
+			return 0, fmt.Errorf("invalid value %v", v)
+		}
+		if t > math.MaxInt {
 			return 0, fmt.Errorf("invalid value %v", v)
 		}
 		return int(t), nil
@@ -56,11 +63,11 @@ func parseRetentionDays(v interface{}) (int, error) {
 		if s == "" {
 			return 0, nil
 		}
-		n, err := strconv.Atoi(s)
+		n, err := strconv.ParseInt(s, 10, strconv.IntSize)
 		if err != nil || n < 0 {
 			return 0, fmt.Errorf("invalid value %q", t)
 		}
-		return n, nil
+		return int(n), nil
 	default:
 		return 0, fmt.Errorf("invalid value %v", v)
 	}

@@ -131,9 +131,11 @@ func TestAuditLogRepo_DeleteBefore(t *testing.T) {
 	ctx := context.Background()
 
 	old := time.Date(2026, 1, 1, 12, 0, 0, 0, time.UTC)
+	cutoff := time.Date(2026, 3, 1, 0, 0, 0, 0, time.UTC)
 	recent := time.Date(2026, 6, 1, 12, 0, 0, 0, time.UTC)
 	for _, record := range []admin.AuditLogRecord{
 		{ID: id.New(), AdminID: "admin-1", Action: "product.update", Result: "success", CreatedAt: old},
+		{ID: id.New(), AdminID: "admin-1", Action: "product.update", Result: "success", CreatedAt: cutoff},
 		{ID: id.New(), AdminID: "admin-1", Action: "product.update", Result: "success", CreatedAt: recent},
 	} {
 		if err := repo.Insert(ctx, record); err != nil {
@@ -141,7 +143,7 @@ func TestAuditLogRepo_DeleteBefore(t *testing.T) {
 		}
 	}
 
-	deleted, err := repo.DeleteBefore(ctx, time.Date(2026, 3, 1, 0, 0, 0, 0, time.UTC))
+	deleted, err := repo.DeleteBefore(ctx, cutoff)
 	if err != nil {
 		t.Fatalf("DeleteBefore: %v", err)
 	}
@@ -153,10 +155,20 @@ func TestAuditLogRepo_DeleteBefore(t *testing.T) {
 	if err != nil {
 		t.Fatalf("List: %v", err)
 	}
-	if len(remaining) != 1 {
-		t.Fatalf("remaining = %d, want 1", len(remaining))
+	if len(remaining) != 2 {
+		t.Fatalf("remaining = %d, want 2", len(remaining))
 	}
-	if !remaining[0].CreatedAt.Equal(recent) {
-		t.Fatalf("remaining created_at = %v, want %v", remaining[0].CreatedAt, recent)
+	seenCutoff := false
+	seenRecent := false
+	for _, entry := range remaining {
+		if entry.CreatedAt.Equal(cutoff) {
+			seenCutoff = true
+		}
+		if entry.CreatedAt.Equal(recent) {
+			seenRecent = true
+		}
+	}
+	if !seenCutoff || !seenRecent {
+		t.Fatalf("expected cutoff and recent rows to remain: %+v", remaining)
 	}
 }

@@ -1,7 +1,6 @@
 package http
 
 import (
-	"bytes"
 	"fmt"
 	"net/http"
 	"strings"
@@ -138,8 +137,18 @@ func (h *AuditLogAdminHandler) Export() http.HandlerFunc {
 			To:           filter.To,
 		}
 
-		var buf bytes.Buffer
-		result, err := exp.Export(r.Context(), &buf, opts)
+		filename := "admin-audit-log.csv"
+		contentType := "text/csv; charset=utf-8"
+		if format == exporter.AuditLogFormatJSON {
+			filename = "admin-audit-log.json"
+			contentType = "application/json; charset=utf-8"
+		}
+
+		w.Header().Set("Content-Type", contentType)
+		w.Header().Set("Content-Disposition", `attachment; filename="`+filename+`"`)
+
+		body := &exportResponseWriter{ResponseWriter: w}
+		result, err := exp.Export(r.Context(), body, opts)
 		if err != nil {
 			h.auditor.LogAction(r.Context(), adminapp.AuditEntry{
 				AdminID:      adminIDFromRequest(r),
@@ -148,15 +157,11 @@ func (h *AuditLogAdminHandler) Export() http.HandlerFunc {
 				Result:       "error",
 				Error:        err.Error(),
 			})
+			if body.wrote {
+				return
+			}
 			JSONError(w, apperror.Wrap(apperror.CodeInternal, "audit export failed", err))
 			return
-		}
-
-		filename := "admin-audit-log.csv"
-		contentType := "text/csv; charset=utf-8"
-		if format == exporter.AuditLogFormatJSON {
-			filename = "admin-audit-log.json"
-			contentType = "application/json; charset=utf-8"
 		}
 
 		h.auditor.LogAction(r.Context(), adminapp.AuditEntry{
@@ -169,11 +174,19 @@ func (h *AuditLogAdminHandler) Export() http.HandlerFunc {
 				"entries": result.Entries,
 			},
 		})
-
-		w.Header().Set("Content-Type", contentType)
-		w.Header().Set("Content-Disposition", `attachment; filename="`+filename+`"`)
-		_, _ = w.Write(buf.Bytes())
 	}
+}
+
+type exportResponseWriter struct {
+	http.ResponseWriter
+	wrote bool
+}
+
+func (e *exportResponseWriter) Write(p []byte) (int, error) {
+	if len(p) > 0 {
+		e.wrote = true
+	}
+	return e.ResponseWriter.Write(p)
 }
 
 func buildAuditLogQuery(r *http.Request) (domainadmin.AuditLogFilter, error) {

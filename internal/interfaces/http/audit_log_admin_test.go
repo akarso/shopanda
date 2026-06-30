@@ -247,3 +247,50 @@ func TestAuditLogAdmin_Export_JSON(t *testing.T) {
 		t.Fatalf("items = %#v", items)
 	}
 }
+
+func TestAuditLogAdmin_Export_ForwardsFilters(t *testing.T) {
+	repo := &mockAuditLogListRepo{
+		entries: []domainadmin.AuditLogRecord{{
+			ID:           "audit-1",
+			CreatedAt:    time.Date(2026, 6, 1, 12, 0, 0, 0, time.UTC),
+			AdminID:      "admin-1",
+			Action:       "product.update",
+			ResourceType: "product",
+			ResourceID:   "prod-1",
+			Result:       "success",
+		}},
+	}
+	h := shophttp.NewAuditLogAdminHandler(repo, admin.NewAuditor(logger.New("error")))
+
+	mux := http.NewServeMux()
+	mux.Handle("GET /api/v1/admin/audit/export", shophttp.RequirePermission(rbac.AuditRead)(h.Export()))
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet,
+		"/api/v1/admin/audit/export?format=csv&action=product.update&resource_type=product&resource_id=prod-1&from=2026-01-01&to=2026-06-01",
+		nil,
+	)
+	req = testhelper.AdminRequest(req, "admin-1")
+	mux.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d; body: %s", rec.Code, http.StatusOK, rec.Body.String())
+	}
+	if repo.last.Action != "product.update" {
+		t.Fatalf("action filter = %q, want product.update", repo.last.Action)
+	}
+	if repo.last.ResourceType != "product" {
+		t.Fatalf("resource_type filter = %q, want product", repo.last.ResourceType)
+	}
+	if repo.last.ResourceID != "prod-1" {
+		t.Fatalf("resource_id filter = %q, want prod-1", repo.last.ResourceID)
+	}
+	wantFrom := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	if repo.last.From == nil || !repo.last.From.Equal(wantFrom) {
+		t.Fatalf("from filter = %v, want %v", repo.last.From, wantFrom)
+	}
+	wantTo := time.Date(2026, 6, 1, 23, 59, 59, 999999999, time.UTC)
+	if repo.last.To == nil || !repo.last.To.Equal(wantTo) {
+		t.Fatalf("to filter = %v, want %v", repo.last.To, wantTo)
+	}
+}
