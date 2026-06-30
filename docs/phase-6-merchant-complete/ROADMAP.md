@@ -246,3 +246,4 @@ PR specs: [`prs/`](prs/).
 | **Phase 6** | **Merchant-complete admin** | **Planned** |
 
 Phase 5 items marked “API only; admin UI deferred” map to Phase 6 tracks A–C. Phase 5 stretch **543–544** remain integrator/platform work for a future phase unless explicitly promoted.
+ 
