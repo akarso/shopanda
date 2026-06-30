@@ -52,9 +52,11 @@ func TestPlugin_Init_RegistersPricingStepPermissionAndListener(t *testing.T) {
 			Example: config.ExamplePluginConfig{Enabled: true, FeeMinorUnits: 100},
 		},
 	}
+	reg := plugin.NewRegistry(logger.NewWithWriter(io.Discard, "error"))
+	reg.Register(example.New())
 	app := testApp(cfg)
-	if err := example.New().Init(app); err != nil {
-		t.Fatalf("Init() error: %v", err)
+	if summary := reg.InitAll(app); summary.Failed > 0 || summary.Initialized != 1 {
+		t.Fatalf("InitAll() summary = %+v, want 1 initialized and 0 failed", summary)
 	}
 
 	steps := app.PricingSteps()
@@ -78,7 +80,31 @@ func TestPlugin_Init_RegistersPricingStepPermissionAndListener(t *testing.T) {
 	}
 }
 
+func TestPlugin_Init_RegistersCLICommand(t *testing.T) {
+	rbac.ResetPluginPermissions()
+	t.Cleanup(rbac.ResetPluginPermissions)
+
+	reg := plugin.NewRegistry(logger.NewWithWriter(io.Discard, "error"))
+	reg.Register(example.New())
+	cfg := &config.Config{
+		Plugins: config.PluginsConfig{
+			Example: config.ExamplePluginConfig{Enabled: true},
+		},
+	}
+	if summary := reg.InitAll(testApp(cfg)); summary.Failed > 0 || summary.Initialized != 1 {
+		t.Fatalf("InitAll() summary = %+v, want 1 initialized and 0 failed", summary)
+	}
+
+	cmds := reg.CLIRegistry().List()
+	if len(cmds) != 1 || cmds[0].Name != example.CommandPing {
+		t.Fatalf("CLI commands = %#v, want %q", cmds, example.CommandPing)
+	}
+}
+
 func TestPlugin_Init_RegistersAdminConfig(t *testing.T) {
+	rbac.ResetPluginPermissions()
+	t.Cleanup(rbac.ResetPluginPermissions)
+
 	reg := plugin.NewRegistry(logger.NewWithWriter(io.Discard, "error"))
 	reg.Register(example.New())
 	cfg := &config.Config{
