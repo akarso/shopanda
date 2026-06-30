@@ -42,8 +42,8 @@ func (e *Endpoint) Validate(supported map[string]struct{}) error {
 	if err != nil {
 		return fmt.Errorf("webhook: invalid url: %w", err)
 	}
-	if parsed.Scheme != "http" && parsed.Scheme != "https" {
-		return fmt.Errorf("webhook: url must use http or https")
+	if parsed.Scheme != "https" {
+		return fmt.Errorf("webhook: url must use https")
 	}
 	if strings.TrimSpace(parsed.Host) == "" {
 		return fmt.Errorf("webhook: url host is required")

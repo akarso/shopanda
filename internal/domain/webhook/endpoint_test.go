@@ -21,6 +21,17 @@ func TestEndpoint_Validate(t *testing.T) {
 	}
 }
 
+func TestEndpoint_ValidateRejectsHTTP(t *testing.T) {
+	ep := &domainwebhook.Endpoint{
+		URL:    "http://example.com/hooks",
+		Secret: "secret",
+		Events: []string{"order.paid"},
+	}
+	if err := ep.Validate(domainwebhook.SupportedEventSet()); err == nil {
+		t.Fatal("expected http url rejection")
+	}
+}
+
 func TestEndpoint_ValidateRejectsUnsupportedEvent(t *testing.T) {
 	ep := &domainwebhook.Endpoint{
 		URL:    "https://example.com/hooks",

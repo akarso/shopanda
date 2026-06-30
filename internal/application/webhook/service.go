@@ -36,11 +36,11 @@ type CreateInput struct {
 
 // UpdateInput updates an existing webhook endpoint.
 type UpdateInput struct {
-	ID          string
-	URL         string
-	Events      []string
-	Active      bool
-	Description string
+	ID           string
+	URL          string
+	Events       []string
+	Active       *bool
+	Description  string
 	RotateSecret bool
 }
 
@@ -122,7 +122,9 @@ func (s *Service) Update(ctx context.Context, in UpdateInput) (EndpointView, str
 	}
 	ep.URL = in.URL
 	ep.Events = append([]string(nil), in.Events...)
-	ep.Active = in.Active
+	if in.Active != nil {
+		ep.Active = *in.Active
+	}
 	ep.Description = in.Description
 	var rotatedSecret string
 	if in.RotateSecret {

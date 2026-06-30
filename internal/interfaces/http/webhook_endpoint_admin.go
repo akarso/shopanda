@@ -138,16 +138,12 @@ func (h *WebhookEndpointAdminHandler) Update() http.HandlerFunc {
 			JSONError(w, apperror.Validation("invalid request body"))
 			return
 		}
-		active := true
-		if req.Active != nil {
-			active = *req.Active
-		}
 		rotate := req.RotateSecret != nil && *req.RotateSecret
 		ep, secret, err := h.service.Update(r.Context(), webhookApp.UpdateInput{
 			ID:           endpointID,
 			URL:          req.URL,
 			Events:       req.Events,
-			Active:       active,
+			Active:       req.Active,
 			Description:  req.Description,
 			RotateSecret: rotate,
 		})

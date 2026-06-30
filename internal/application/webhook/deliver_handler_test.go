@@ -4,6 +4,7 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
+	"sync"
 	"testing"
 	"time"
 
@@ -47,12 +48,27 @@ func (s *stubWebhookRepo) Update(context.Context, *domainwebhook.Endpoint) error
 func (s *stubWebhookRepo) Delete(context.Context, string) error                  { return nil }
 
 type recordingQueue struct {
-	jobs []jobs.Job
+	mu       sync.Mutex
+	jobs     []jobs.Job
+	enqueued chan jobs.Job
 }
 
 func (q *recordingQueue) Enqueue(_ context.Context, job jobs.Job) error {
+	q.mu.Lock()
 	q.jobs = append(q.jobs, job)
+	q.mu.Unlock()
+	if q.enqueued != nil {
+		q.enqueued <- job
+	}
 	return nil
+}
+
+func (q *recordingQueue) snapshot() []jobs.Job {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	out := make([]jobs.Job, len(q.jobs))
+	copy(out, q.jobs)
+	return out
 }
 
 func (recordingQueue) Dequeue(context.Context) (*jobs.Job, error) { return nil, nil }
@@ -86,7 +102,7 @@ func TestDispatcher_EnqueuesMatchingEndpoints(t *testing.T) {
 			Active: true,
 		}},
 	}
-	queue := &recordingQueue{}
+	queue := &recordingQueue{enqueued: make(chan jobs.Job, 1)}
 	dispatcher := webhookApp.NewDispatcher(repo, queue, logger.New("error"))
 	bus := event.NewBus(logger.New("error"))
 	dispatcher.Register(bus)
@@ -96,12 +112,18 @@ func TestDispatcher_EnqueuesMatchingEndpoints(t *testing.T) {
 	})); err != nil {
 		t.Fatalf("Publish: %v", err)
 	}
-	time.Sleep(50 * time.Millisecond)
-	if len(queue.jobs) != 1 {
-		t.Fatalf("jobs = %d, want 1", len(queue.jobs))
+
+	select {
+	case job := <-queue.enqueued:
+		if job.Type != domainwebhook.DeliverJobType {
+			t.Fatalf("job type = %q", job.Type)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for webhook enqueue")
 	}
-	if queue.jobs[0].Type != domainwebhook.DeliverJobType {
-		t.Fatalf("job type = %q", queue.jobs[0].Type)
+	jobsSnapshot := queue.snapshot()
+	if len(jobsSnapshot) != 1 {
+		t.Fatalf("jobs = %d, want 1", len(jobsSnapshot))
 	}
 }
 
@@ -119,6 +141,7 @@ func TestDeliverHandler_PostsSignedPayload(t *testing.T) {
 				ID:     "ep-1",
 				URL:    srv.URL,
 				Secret: "top-secret",
+				Events: []string{order.EventOrderPaid},
 				Active: true,
 			},
 		},
@@ -154,6 +177,7 @@ func TestDeliverHandler_VerifiesSignature(t *testing.T) {
 				ID:     "ep-1",
 				URL:    "https://example.com/hook",
 				Secret: "top-secret",
+				Events: []string{order.EventOrderPaid},
 				Active: true,
 			},
 		},
@@ -179,11 +203,44 @@ func TestDeliverHandler_VerifiesSignature(t *testing.T) {
 	}
 }
 
+func TestDeliverHandler_SkipsUnsubscribedEvent(t *testing.T) {
+	poster := &stubPoster{status: http.StatusOK}
+	repo := &stubWebhookRepo{
+		byID: map[string]*domainwebhook.Endpoint{
+			"ep-1": {
+				ID:     "ep-1",
+				URL:    "https://example.com/hook",
+				Secret: "top-secret",
+				Events: []string{"order.created"},
+				Active: true,
+			},
+		},
+	}
+	h := webhookApp.NewDeliverHandler(repo, poster, logger.New("error"))
+	if err := h.Handle(context.Background(), jobs.Job{
+		ID:   "job-1",
+		Type: domainwebhook.DeliverJobType,
+		Payload: map[string]interface{}{
+			"endpoint_id":     "ep-1",
+			"event_name":      order.EventOrderPaid,
+			"event_id":        "evt-1",
+			"event_source":    "test",
+			"event_timestamp": "2026-06-17T12:00:00Z",
+			"event_data_json": `{}`,
+		},
+	}); err != nil {
+		t.Fatalf("Handle: %v", err)
+	}
+	if poster.lastURL != "" {
+		t.Fatal("expected delivery to be skipped for unsubscribed event")
+	}
+}
+
 func TestDeliverHandler_RetriesOnNon2xx(t *testing.T) {
 	poster := &stubPoster{status: http.StatusInternalServerError}
 	repo := &stubWebhookRepo{
 		byID: map[string]*domainwebhook.Endpoint{
-			"ep-1": {ID: "ep-1", URL: "https://example.com/hook", Secret: "s", Active: true},
+			"ep-1": {ID: "ep-1", URL: "https://example.com/hook", Secret: "s", Events: []string{order.EventOrderPaid}, Active: true},
 		},
 	}
 	h := webhookApp.NewDeliverHandler(repo, poster, logger.New("error"))

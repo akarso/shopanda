@@ -70,7 +70,7 @@ C4Component
             Component(mediaService, "MediaService", "Go", "Upload files: validate type, save to storage, persist asset record")
             Component(cacheCleanupHandler, "CacheCleanupHandler", "Go", "Handles cache.cleanup jobs: removes expired cache entries")
             Component(auditRetentionHandler, "AuditRetentionHandler", "Go", "Handles audit.retention jobs: prunes admin_audit_log by config")
-            Component(webhookDispatcher, "WebhookDispatcher", "Go", "Enqueues signed outbound webhook deliveries on domain events")
+            Component(webhookDispatcher, "WebhookDispatcher", "Go", "Enqueues outbound webhook deliveries on domain events")
             Component(webhookDeliverHandler, "WebhookDeliverHandler", "Go", "Handles webhook.deliver jobs: POST signed payloads")
             Component(productSchemaRegistration, "ProductSchemaRegistration", "Go", "Registers product form and grid schemas with admin registry")
         }
@@ -165,6 +165,7 @@ C4Component
     Rel(jobWorker, auditRetentionHandler, "Dispatches audit.retention jobs")
     Rel(auditRetentionHandler, auditLogRepo, "DeleteBefore by retention config")
     Rel(eventBus, webhookDispatcher, "order/payment events")
+    Rel(webhookDispatcher, webhookEndpointRepo, "Lists active endpoints for event")
     Rel(webhookDispatcher, postgresJobQueue, "Enqueues webhook.deliver jobs")
     Rel(jobWorker, webhookDeliverHandler, "Dispatches webhook.deliver jobs")
     Rel(webhookDeliverHandler, webhookEndpointRepo, "Load endpoint secret/url")

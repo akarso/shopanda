@@ -31,7 +31,12 @@ type DefaultHTTPPoster struct {
 // NewDefaultHTTPPoster creates an HTTPPoster with a delivery timeout.
 func NewDefaultHTTPPoster() *DefaultHTTPPoster {
 	return &DefaultHTTPPoster{
-		client: &http.Client{Timeout: deliverTimeout},
+		client: &http.Client{
+			Timeout: deliverTimeout,
+			CheckRedirect: func(*http.Request, []*http.Request) error {
+				return http.ErrUseLastResponse
+			},
+		},
 	}
 }
 
@@ -89,11 +94,11 @@ func (h *DeliverHandler) Handle(ctx context.Context, job jobs.Job) error {
 	if err != nil {
 		return fmt.Errorf("webhook deliver: find endpoint: %w", err)
 	}
-	if endpoint == nil || !endpoint.Active {
+	if endpoint == nil || !endpoint.Active || !endpoint.Subscribed(eventName) {
 		h.log.Info("webhook.deliver.skipped", map[string]interface{}{
 			"endpoint_id": endpointID,
 			"event_name":  eventName,
-			"reason":      "endpoint missing or inactive",
+			"reason":      "endpoint missing, inactive, or unsubscribed",
 		})
 		return nil
 	}
