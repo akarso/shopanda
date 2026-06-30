@@ -375,6 +375,9 @@ func TestAdminHandler_StaticJS(t *testing.T) {
 	if !strings.Contains(normalizedBody, "renderShippingSettingsPage") || !strings.Contains(normalizedBody, "renderPaymentSettingsPage") {
 		t.Fatalf("expected operations settings pages wiring in JS")
 	}
+	if !strings.Contains(normalizedBody, "/admin/shipping/zones") || !strings.Contains(normalizedBody, "Failed to load shipping zones.") {
+		t.Fatalf("expected shipping zones admin surface wiring in JS")
+	}
 	if !strings.Contains(normalizedBody, "Operational configuration has moved") {
 		t.Fatalf("expected settings relocation guidance in JS")
 	}

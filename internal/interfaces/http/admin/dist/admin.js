@@ -4407,6 +4407,324 @@
         });
     }
 
+    function parseShippingCountries(raw) {
+        return String(raw || '').split(/[,\s]+/).map(function (code) {
+            return code.trim().toUpperCase();
+        }).filter(function (code) {
+            return code.length > 0;
+        });
+    }
+
+    function formatShippingCountries(countries) {
+        return (countries || []).join(', ');
+    }
+
+    function setShippingZonesMessage(msgEl, text, isError) {
+        if (!msgEl) {
+            return;
+        }
+        if (!text) {
+            msgEl.innerHTML = '';
+            return;
+        }
+        msgEl.innerHTML = '<p role="' + (isError ? 'alert' : 'status') + '">' + esc(text) + '</p>';
+    }
+
+    function loadShippingZonesPanel() {
+        var panel = document.getElementById('shipping-zones-panel');
+        var msg = document.getElementById('shipping-zones-msg');
+        if (!panel) {
+            return;
+        }
+        panel.innerHTML = '<p>Loading shipping zones…</p>';
+        api('/admin/shipping/zones').then(function (body) {
+            if (body && body.error && body.error.code === 'forbidden') {
+                panel.innerHTML = '<p role="alert">Your account does not have shipping access.</p>';
+                return;
+            }
+            var zones = body && body.data && body.data.zones;
+            if (!Array.isArray(zones)) {
+                panel.innerHTML = '<p role="alert">' + esc(extractErrorMessage(body, 'Failed to load shipping zones.')) + '</p>';
+                return;
+            }
+            renderShippingZonesPanel(panel, msg, zones);
+        }).catch(function (err) {
+            panel.innerHTML = '<p role="alert">' + esc(extractErrorMessage(err, 'Failed to load shipping zones.')) + '</p>';
+        });
+    }
+
+    function renderShippingZonesPanel(panel, msgEl, zones) {
+        var html = '' +
+            '<p class="admin-form-hint">Configure geographic zones, weight-based rates, and optional free-shipping thresholds. Prices use minor currency units (e.g. 500 = €5.00).</p>' +
+            '<p><button type="button" id="shipping-zone-create-toggle">Add zone</button></p>' +
+            '<div id="shipping-zone-create-form" hidden></div>' +
+            '<table><thead><tr>' +
+            '<th>Name</th><th>Countries</th><th>Priority</th><th>Active</th><th>Free shipping</th><th>Actions</th>' +
+            '</tr></thead><tbody>';
+
+        if (zones.length === 0) {
+            html += '<tr><td colspan="6">No shipping zones yet.</td></tr>';
+        } else {
+            for (var i = 0; i < zones.length; i++) {
+                var zone = zones[i];
+                var freeLabel = zone.free_shipping_threshold > 0
+                    ? formatMoney(Number(zone.free_shipping_threshold || 0), zone.free_shipping_currency || 'EUR')
+                    : '—';
+                html += '<tr>' +
+                    '<td>' + esc(zone.name || '') + '</td>' +
+                    '<td>' + esc(formatShippingCountries(zone.countries)) + '</td>' +
+                    '<td>' + esc(String(zone.priority || 0)) + '</td>' +
+                    '<td>' + esc(zone.active ? 'yes' : 'no') + '</td>' +
+                    '<td>' + esc(freeLabel) + '</td>' +
+                    '<td>' +
+                    '<button type="button" class="shipping-zone-edit-btn" data-zone-id="' + esc(zone.id || '') + '">Edit</button> ' +
+                    '<button type="button" class="shipping-zone-rates-btn" data-zone-id="' + esc(zone.id || '') + '">Rates</button> ' +
+                    '<button type="button" class="shipping-zone-delete-btn danger" data-zone-id="' + esc(zone.id || '') + '">Delete</button>' +
+                    '</td></tr>';
+            }
+        }
+
+        html += '</tbody></table>' +
+            '<div id="shipping-zone-edit-form" hidden></div>' +
+            '<div id="shipping-zone-rates-panel" hidden></div>';
+
+        panel.innerHTML = html;
+
+        var createToggle = document.getElementById('shipping-zone-create-toggle');
+        if (createToggle) {
+            createToggle.addEventListener('click', function () {
+                renderShippingZoneForm(document.getElementById('shipping-zone-create-form'), msgEl, null, function () {
+                    loadShippingZonesPanel();
+                });
+            });
+        }
+
+        var editButtons = panel.querySelectorAll('.shipping-zone-edit-btn');
+        for (var e = 0; e < editButtons.length; e++) {
+            editButtons[e].addEventListener('click', function () {
+                var zoneID = this.getAttribute('data-zone-id');
+                var zone = zones.filter(function (z) { return z.id === zoneID; })[0];
+                if (!zone) {
+                    return;
+                }
+                var editForm = document.getElementById('shipping-zone-edit-form');
+                var ratesPanel = document.getElementById('shipping-zone-rates-panel');
+                if (ratesPanel) {
+                    ratesPanel.hidden = true;
+                    ratesPanel.innerHTML = '';
+                }
+                renderShippingZoneForm(editForm, msgEl, zone, function () {
+                    loadShippingZonesPanel();
+                });
+            });
+        }
+
+        var ratesButtons = panel.querySelectorAll('.shipping-zone-rates-btn');
+        for (var r = 0; r < ratesButtons.length; r++) {
+            ratesButtons[r].addEventListener('click', function () {
+                var zoneID = this.getAttribute('data-zone-id');
+                var zone = zones.filter(function (z) { return z.id === zoneID; })[0];
+                if (!zone) {
+                    return;
+                }
+                var editForm = document.getElementById('shipping-zone-edit-form');
+                if (editForm) {
+                    editForm.hidden = true;
+                    editForm.innerHTML = '';
+                }
+                renderShippingZoneRatesPanel(document.getElementById('shipping-zone-rates-panel'), msgEl, zone);
+            });
+        }
+
+        var deleteButtons = panel.querySelectorAll('.shipping-zone-delete-btn');
+        for (var d = 0; d < deleteButtons.length; d++) {
+            deleteButtons[d].addEventListener('click', function () {
+                var zoneID = this.getAttribute('data-zone-id');
+                if (!window.confirm('Delete this shipping zone and all of its rate tiers?')) {
+                    return;
+                }
+                api('/admin/shipping/zones/' + encodeURIComponent(zoneID), { method: 'DELETE' }).then(function (body) {
+                    if (body && body.error) {
+                        setShippingZonesMessage(msgEl, body.error.message || 'Failed to delete shipping zone.', true);
+                        return;
+                    }
+                    setShippingZonesMessage(msgEl, 'Shipping zone deleted.', false);
+                    loadShippingZonesPanel();
+                }).catch(function (err) {
+                    setShippingZonesMessage(msgEl, extractErrorMessage(err, 'Failed to delete shipping zone.'), true);
+                });
+            });
+        }
+    }
+
+    function renderShippingZoneForm(host, msgEl, zone, onSaved) {
+        if (!host) {
+            return;
+        }
+        host.hidden = false;
+        var isEdit = !!zone;
+        host.innerHTML = '' +
+            '<h4>' + (isEdit ? 'Edit zone' : 'New zone') + '</h4>' +
+            '<form id="shipping-zone-form">' +
+            '<label>Name<input name="name" required value="' + esc(zone ? (zone.name || '') : '') + '"></label>' +
+            '<label>Countries (ISO codes, comma-separated)<input name="countries" required value="' + esc(zone ? formatShippingCountries(zone.countries) : '') + '" placeholder="DE, FR, AT"></label>' +
+            '<label>Priority<input name="priority" type="number" value="' + esc(zone ? String(zone.priority || 0) : '0') + '"></label>' +
+            (isEdit ? '<label><input type="checkbox" name="active"' + (zone.active ? ' checked' : '') + '> Active</label>' : '') +
+            '<label>Free shipping threshold (minor units, 0 = disabled)<input name="free_shipping_threshold" type="number" min="0" value="' + esc(zone ? String(zone.free_shipping_threshold || 0) : '0') + '"></label>' +
+            '<label>Free shipping currency<input name="free_shipping_currency" value="' + esc(zone ? (zone.free_shipping_currency || 'EUR') : 'EUR') + '"></label>' +
+            '<div style="margin-top:0.75rem">' +
+            '<button type="submit">' + (isEdit ? 'Save zone' : 'Create zone') + '</button> ' +
+            '<button type="button" class="shipping-zone-form-cancel">Cancel</button>' +
+            '</div></form>';
+
+        var form = host.querySelector('#shipping-zone-form');
+        var cancelBtn = host.querySelector('.shipping-zone-form-cancel');
+        if (cancelBtn) {
+            cancelBtn.addEventListener('click', function () {
+                host.hidden = true;
+                host.innerHTML = '';
+            });
+        }
+        form.addEventListener('submit', function (e) {
+            e.preventDefault();
+            var countries = parseShippingCountries(form.elements.countries.value);
+            if (countries.length === 0) {
+                setShippingZonesMessage(msgEl, 'Enter at least one country code.', true);
+                return;
+            }
+            for (var i = 0; i < countries.length; i++) {
+                if (countries[i].length !== 2) {
+                    setShippingZonesMessage(msgEl, 'Country codes must be two letters: ' + countries[i], true);
+                    return;
+                }
+            }
+            var payload = {
+                name: form.elements.name.value,
+                countries: countries,
+                priority: parseInt(form.elements.priority.value, 10) || 0,
+                free_shipping_threshold: parseInt(form.elements.free_shipping_threshold.value, 10) || 0,
+                free_shipping_currency: form.elements.free_shipping_currency.value || 'EUR'
+            };
+            if (isEdit) {
+                payload.active = form.elements.active.checked;
+            }
+            var method = isEdit ? 'PUT' : 'POST';
+            var url = isEdit
+                ? '/admin/shipping/zones/' + encodeURIComponent(zone.id)
+                : '/admin/shipping/zones';
+            api(url, { method: method, body: JSON.stringify(payload) }).then(function (body) {
+                if (body && body.error) {
+                    setShippingZonesMessage(msgEl, body.error.message || 'Failed to save shipping zone.', true);
+                    return;
+                }
+                setShippingZonesMessage(msgEl, isEdit ? 'Shipping zone updated.' : 'Shipping zone created.', false);
+                host.hidden = true;
+                host.innerHTML = '';
+                if (typeof onSaved === 'function') {
+                    onSaved();
+                }
+            }).catch(function (err) {
+                setShippingZonesMessage(msgEl, extractErrorMessage(err, 'Failed to save shipping zone.'), true);
+            });
+        });
+    }
+
+    function renderShippingZoneRatesPanel(host, msgEl, zone) {
+        if (!host) {
+            return;
+        }
+        host.hidden = false;
+        host.innerHTML = '<h4>Rates for ' + esc(zone.name || zone.id || '') + '</h4><p>Loading rates…</p>';
+
+        api('/admin/shipping/zones/' + encodeURIComponent(zone.id) + '/rates').then(function (body) {
+            if (body && body.error) {
+                host.innerHTML = '<p role="alert">' + esc(body.error.message || 'Failed to load rate tiers.') + '</p>';
+                return;
+            }
+            var rates = body && body.data && body.data.rates;
+            if (!Array.isArray(rates)) {
+                host.innerHTML = '<p role="alert">' + esc(extractErrorMessage(body, 'Failed to load rate tiers.')) + '</p>';
+                return;
+            }
+
+            var html = '' +
+                '<p class="admin-form-hint">Weight values are in kilograms. Max weight 0 means no upper limit.</p>' +
+                '<table><thead><tr><th>Min kg</th><th>Max kg</th><th>Price</th><th>Actions</th></tr></thead><tbody>';
+            if (rates.length === 0) {
+                html += '<tr><td colspan="4">No rate tiers yet.</td></tr>';
+            } else {
+                for (var i = 0; i < rates.length; i++) {
+                    var rate = rates[i];
+                    html += '<tr>' +
+                        '<td>' + esc(String(rate.min_weight || 0)) + '</td>' +
+                        '<td>' + esc(String(rate.max_weight || 0)) + '</td>' +
+                        '<td>' + esc(formatMoney(Number(rate.price || 0), rate.currency || 'EUR')) + '</td>' +
+                        '<td><button type="button" class="shipping-rate-delete-btn danger" data-rate-id="' + esc(rate.id || '') + '">Delete</button></td>' +
+                        '</tr>';
+                }
+            }
+            html += '</tbody></table>' +
+                '<h5>Add rate tier</h5>' +
+                '<form id="shipping-rate-create-form">' +
+                '<label>Min weight (kg)<input name="min_weight" type="number" min="0" step="0.01" value="0"></label>' +
+                '<label>Max weight (kg, 0 = unlimited)<input name="max_weight" type="number" min="0" step="0.01" value="0"></label>' +
+                '<label>Price (minor units)<input name="price" type="number" min="0" required></label>' +
+                '<label>Currency<input name="currency" value="EUR"></label>' +
+                '<div style="margin-top:0.75rem"><button type="submit">Add rate</button></div>' +
+                '</form>';
+
+            host.innerHTML = html;
+
+            var createForm = host.querySelector('#shipping-rate-create-form');
+            createForm.addEventListener('submit', function (e) {
+                e.preventDefault();
+                var payload = {
+                    min_weight: parseFloat(createForm.elements.min_weight.value) || 0,
+                    max_weight: parseFloat(createForm.elements.max_weight.value) || 0,
+                    price: parseInt(createForm.elements.price.value, 10) || 0,
+                    currency: createForm.elements.currency.value || 'EUR'
+                };
+                api('/admin/shipping/zones/' + encodeURIComponent(zone.id) + '/rates', {
+                    method: 'POST',
+                    body: JSON.stringify(payload)
+                }).then(function (resp) {
+                    if (resp && resp.error) {
+                        setShippingZonesMessage(msgEl, resp.error.message || 'Failed to create rate tier.', true);
+                        return;
+                    }
+                    setShippingZonesMessage(msgEl, 'Rate tier added.', false);
+                    renderShippingZoneRatesPanel(host, msgEl, zone);
+                }).catch(function (err) {
+                    setShippingZonesMessage(msgEl, extractErrorMessage(err, 'Failed to create rate tier.'), true);
+                });
+            });
+
+            var deleteRateButtons = host.querySelectorAll('.shipping-rate-delete-btn');
+            for (var d = 0; d < deleteRateButtons.length; d++) {
+                deleteRateButtons[d].addEventListener('click', function () {
+                    var rateID = this.getAttribute('data-rate-id');
+                    if (!window.confirm('Delete this rate tier?')) {
+                        return;
+                    }
+                    api('/admin/shipping/zones/' + encodeURIComponent(zone.id) + '/rates/' + encodeURIComponent(rateID), {
+                        method: 'DELETE'
+                    }).then(function (resp) {
+                        if (resp && resp.error) {
+                            setShippingZonesMessage(msgEl, resp.error.message || 'Failed to delete rate tier.', true);
+                            return;
+                        }
+                        setShippingZonesMessage(msgEl, 'Rate tier deleted.', false);
+                        renderShippingZoneRatesPanel(host, msgEl, zone);
+                    }).catch(function (err) {
+                        setShippingZonesMessage(msgEl, extractErrorMessage(err, 'Failed to delete rate tier.'), true);
+                    });
+                });
+            }
+        }).catch(function (err) {
+            host.innerHTML = '<p role="alert">' + esc(extractErrorMessage(err, 'Failed to load rate tiers.')) + '</p>';
+        });
+    }
+
     function renderShippingSettingsPage(container) {
         container.innerHTML =
             '<h2>Shipping</h2>' +
@@ -4414,6 +4732,7 @@
             '<div class="settings-grid">' +
             '<section><h3>Tax Rules</h3><div id="settings-tax-msg"></div><form id="settings-tax-form"></form></section>' +
             '<section><h3>EU Price Indication (Omnibus)</h3><div id="settings-legal-msg"></div><form id="settings-legal-form"></form></section>' +
+            '<section><h3>Shipping Zones</h3><div id="shipping-zones-msg"></div><div id="shipping-zones-panel"></div></section>' +
             '</div>';
 
         Promise.all([
@@ -4429,6 +4748,7 @@
             renderSettingsScopeBanner(stores, activeScope, 'shipping-scope-banner');
             renderTaxSettingsForm(container, taxPayload.entries, taxPayload.fieldScopes, activeScope.storeID);
             renderLegalSettingsForm(container, legalPayload.entries, legalPayload.fieldScopes, activeScope.storeID);
+            loadShippingZonesPanel();
         }).catch(function () {
             container.innerHTML = '<h2>Shipping</h2><p role="alert">Failed to load shipping settings.</p>';
         });
