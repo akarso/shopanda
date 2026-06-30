@@ -127,3 +127,16 @@ func (r *AuditLogRepo) List(ctx context.Context, filter domainadmin.AuditLogFilt
 	}
 	return out, nil
 }
+
+func (r *AuditLogRepo) DeleteBefore(ctx context.Context, cutoff time.Time) (int64, error) {
+	const q = `DELETE FROM admin_audit_log WHERE created_at < $1`
+	res, err := r.db.ExecContext(ctx, q, cutoff.UTC())
+	if err != nil {
+		return 0, fmt.Errorf("audit_log_repo: delete before: %w", err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return 0, fmt.Errorf("audit_log_repo: delete before rows: %w", err)
+	}
+	return n, nil
+}

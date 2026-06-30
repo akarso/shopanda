@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	cacheApp "github.com/akarso/shopanda/internal/application/cache"
+	adminApp "github.com/akarso/shopanda/internal/application/admin"
 	"github.com/akarso/shopanda/internal/domain/jobs"
 	"github.com/akarso/shopanda/internal/domain/scheduler"
 	"github.com/akarso/shopanda/internal/platform/logger"
@@ -71,6 +72,30 @@ func TestRegisterCacheCleanup(t *testing.T) {
 	}
 	if queue.enqueued[0].Type != cacheApp.JobType {
 		t.Fatalf("job type = %q, want %q", queue.enqueued[0].Type, cacheApp.JobType)
+	}
+}
+
+func TestRegisterAuditRetention(t *testing.T) {
+	sched := &stubScheduler{}
+	queue := &recordingQueue{}
+	runtime.RegisterAuditRetention(queue, logger.New("error"), sched)
+
+	if len(sched.tasks) != 1 {
+		t.Fatalf("tasks len = %d, want 1", len(sched.tasks))
+	}
+	task := sched.tasks[0]
+	if task.name != "audit.retention" {
+		t.Fatalf("task name = %q, want audit.retention", task.name)
+	}
+	if task.schedule != "0 3 * * *" {
+		t.Fatalf("task schedule = %q, want 0 3 * * *", task.schedule)
+	}
+	task.fn()
+	if len(queue.enqueued) != 1 {
+		t.Fatalf("enqueued len = %d, want 1", len(queue.enqueued))
+	}
+	if queue.enqueued[0].Type != adminApp.RetentionJobType {
+		t.Fatalf("job type = %q, want %q", queue.enqueued[0].Type, adminApp.RetentionJobType)
 	}
 }
 

@@ -119,3 +119,56 @@ func TestAuditLogRepo_InsertAndList(t *testing.T) {
 		}
 	}
 }
+
+func TestAuditLogRepo_DeleteBefore(t *testing.T) {
+	db := testDB(t)
+	t.Cleanup(func() { db.Exec("DELETE FROM admin_audit_log") })
+
+	repo, err := postgres.NewAuditLogRepo(db)
+	if err != nil {
+		t.Fatalf("NewAuditLogRepo: %v", err)
+	}
+	ctx := context.Background()
+
+	old := time.Date(2026, 1, 1, 12, 0, 0, 0, time.UTC)
+	cutoff := time.Date(2026, 3, 1, 0, 0, 0, 0, time.UTC)
+	recent := time.Date(2026, 6, 1, 12, 0, 0, 0, time.UTC)
+	for _, record := range []admin.AuditLogRecord{
+		{ID: id.New(), AdminID: "admin-1", Action: "product.update", Result: "success", CreatedAt: old},
+		{ID: id.New(), AdminID: "admin-1", Action: "product.update", Result: "success", CreatedAt: cutoff},
+		{ID: id.New(), AdminID: "admin-1", Action: "product.update", Result: "success", CreatedAt: recent},
+	} {
+		if err := repo.Insert(ctx, record); err != nil {
+			t.Fatalf("Insert: %v", err)
+		}
+	}
+
+	deleted, err := repo.DeleteBefore(ctx, cutoff)
+	if err != nil {
+		t.Fatalf("DeleteBefore: %v", err)
+	}
+	if deleted != 1 {
+		t.Fatalf("deleted = %d, want 1", deleted)
+	}
+
+	remaining, err := repo.List(ctx, admin.AuditLogFilter{Offset: 0, Limit: 10})
+	if err != nil {
+		t.Fatalf("List: %v", err)
+	}
+	if len(remaining) != 2 {
+		t.Fatalf("remaining = %d, want 2", len(remaining))
+	}
+	seenCutoff := false
+	seenRecent := false
+	for _, entry := range remaining {
+		if entry.CreatedAt.Equal(cutoff) {
+			seenCutoff = true
+		}
+		if entry.CreatedAt.Equal(recent) {
+			seenRecent = true
+		}
+	}
+	if !seenCutoff || !seenRecent {
+		t.Fatalf("expected cutoff and recent rows to remain: %+v", remaining)
+	}
+}

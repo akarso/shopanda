@@ -119,7 +119,8 @@ const (
 	AuditPaymentList AuditAction = "payment.list"
 	AuditPaymentRead AuditAction = "payment.read"
 
-	AuditLogList AuditAction = "audit.list"
+	AuditLogList   AuditAction = "audit.list"
+	AuditLogExport AuditAction = "audit.export"
 )
 
 // AuditEntry represents a single admin audit log entry.
