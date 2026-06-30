@@ -48,7 +48,7 @@ func (p *Plugin) Init(app *plugin.App) error {
 		return fmt.Errorf("graphql plugin: schema: %w", err)
 	}
 
-	handler := NewHandler(schema)
+	handler := NewHandler(schema, app.Logger)
 	if err := app.RegisterPublicRoute("POST /api/v1/graphql", handler); err != nil {
 		return fmt.Errorf("graphql plugin: register route: %w", err)
 	}

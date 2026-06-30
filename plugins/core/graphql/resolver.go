@@ -14,8 +14,8 @@ const (
 
 // Resolver loads catalog data for GraphQL queries.
 type Resolver struct {
-	productRepo   catalog.ProductRepository
-	categoryRepo  catalog.CategoryRepository
+	productRepo  catalog.ProductRepository
+	categoryRepo catalog.CategoryRepository
 }
 
 // NewResolver creates a Resolver.
@@ -43,17 +43,23 @@ func (r *Resolver) productBySlug(ctx context.Context, slug string) (*catalog.Pro
 	return r.productRepo.FindBySlug(ctx, slug)
 }
 
+// normalizeLimit applies the shared pagination bounds: non-positive limits fall
+// back to defaultListLimit and limits above maxListLimit are capped.
+func normalizeLimit(limit int) int {
+	if limit <= 0 {
+		return defaultListLimit
+	}
+	if limit > maxListLimit {
+		return maxListLimit
+	}
+	return limit
+}
+
 func (r *Resolver) products(ctx context.Context, offset, limit int) ([]catalog.Product, error) {
 	if offset < 0 {
 		return nil, fmt.Errorf("offset must be >= 0")
 	}
-	if limit <= 0 {
-		limit = defaultListLimit
-	}
-	if limit > maxListLimit {
-		limit = maxListLimit
-	}
-	return r.productRepo.List(ctx, offset, limit)
+	return r.productRepo.List(ctx, offset, normalizeLimit(limit))
 }
 
 func (r *Resolver) categoryByID(ctx context.Context, id string) (*catalog.Category, error) {
@@ -74,13 +80,7 @@ func (r *Resolver) categoryProducts(ctx context.Context, categoryID string, offs
 	if offset < 0 {
 		return nil, fmt.Errorf("offset must be >= 0")
 	}
-	if limit <= 0 {
-		limit = defaultListLimit
-	}
-	if limit > maxListLimit {
-		limit = maxListLimit
-	}
-	return r.productRepo.FindByCategoryID(ctx, categoryID, offset, limit)
+	return r.productRepo.FindByCategoryID(ctx, categoryID, offset, normalizeLimit(limit))
 }
 
 func intArg(args map[string]interface{}, name string, fallback int) (int, error) {

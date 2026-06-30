@@ -19,6 +19,9 @@ func (a *App) RegisterPublicRoute(pattern string, handler http.Handler) error {
 	if handler == nil {
 		panic("plugin: public route handler must not be nil")
 	}
+	if err := validateRoutePattern(pattern); err != nil {
+		return err
+	}
 	for _, route := range a.publicRoutes {
 		if route.Pattern == pattern {
 			return fmt.Errorf("plugin: duplicate public route pattern %q", pattern)
@@ -28,6 +31,19 @@ func (a *App) RegisterPublicRoute(pattern string, handler http.Handler) error {
 		Pattern: pattern,
 		Handler: handler,
 	})
+	return nil
+}
+
+// validateRoutePattern reports whether pattern is a syntactically valid
+// net/http.ServeMux pattern. ServeMux panics on malformed patterns, so we
+// probe it on a throwaway mux and convert the panic into a registration error.
+func validateRoutePattern(pattern string) (err error) {
+	defer func() {
+		if rec := recover(); rec != nil {
+			err = fmt.Errorf("plugin: invalid public route pattern %q: %v", pattern, rec)
+		}
+	}()
+	http.NewServeMux().Handle(pattern, http.NotFoundHandler())
 	return nil
 }
 

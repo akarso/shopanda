@@ -883,9 +883,12 @@ func runServe(cfg *config.Config, log logger.Logger, embedScheduler bool) error 
 	// Content block routes (public).
 	router.HandleFunc("GET /api/v1/content-blocks/{targetType}/{targetKey}", contentBlockHandler.GetByTarget())
 
-	// Plugin public routes (registered during plugin Init).
+	// Plugin public routes (registered during plugin Init). Use TryHandle so a
+	// pattern that conflicts with a core route fails startup instead of panicking.
 	for _, route := range pluginApp.PublicRoutes() {
-		router.Handle(route.Pattern, route.Handler)
+		if err := router.TryHandle(route.Pattern, route.Handler); err != nil {
+			return fmt.Errorf("register plugin public route: %w", err)
+		}
 	}
 
 	// Admin routes (behind RequirePermission).

@@ -4,13 +4,17 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"testing"
 
 	"github.com/akarso/shopanda/internal/domain/catalog"
+	"github.com/akarso/shopanda/internal/platform/logger"
 	cgraphql "github.com/akarso/shopanda/plugins/core/graphql"
 )
+
+func testLogger() logger.Logger { return logger.NewWithWriter(io.Discard, "error") }
 
 type stubProductRepo struct {
 	findByIDFn         func(ctx context.Context, id string) (*catalog.Product, error)
@@ -47,8 +51,8 @@ func (s *stubProductRepo) FindByCategoryID(ctx context.Context, categoryID strin
 	return nil, nil
 }
 
-func (s *stubProductRepo) Create(context.Context, *catalog.Product) error  { return nil }
-func (s *stubProductRepo) Update(context.Context, *catalog.Product) error  { return nil }
+func (s *stubProductRepo) Create(context.Context, *catalog.Product) error { return nil }
+func (s *stubProductRepo) Update(context.Context, *catalog.Product) error { return nil }
 
 type stubCategoryRepo struct {
 	findByIDFn func(ctx context.Context, id string) (*catalog.Category, error)
@@ -123,7 +127,7 @@ func TestHandler_ProductQuery(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewSchema: %v", err)
 	}
-	h := cgraphql.NewHandler(schema)
+	h := cgraphql.NewHandler(schema, testLogger())
 
 	body := `{"query":"{ product(id: \"prod-1\") { id name slug status } }"}`
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/graphql", bytes.NewBufferString(body))
@@ -161,7 +165,7 @@ func TestHandler_RequiresQuery(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewSchema: %v", err)
 	}
-	h := cgraphql.NewHandler(schema)
+	h := cgraphql.NewHandler(schema, testLogger())
 
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/graphql", bytes.NewBufferString(`{}`))
 	rec := httptest.NewRecorder()
@@ -176,7 +180,7 @@ func TestHandler_RejectsNonPost(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewSchema: %v", err)
 	}
-	h := cgraphql.NewHandler(schema)
+	h := cgraphql.NewHandler(schema, testLogger())
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/graphql", nil)
 	rec := httptest.NewRecorder()

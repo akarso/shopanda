@@ -769,7 +769,9 @@ func applyEnv(cfg *Config) {
 		cfg.Queue.SQS.Region = v
 	}
 	if v := os.Getenv("SHOPANDA_PLUGINS_GRAPHQL_ENABLED"); v != "" {
-		cfg.Plugins.GraphQL.Enabled = v == "true" || v == "1"
+		if b, err := strconv.ParseBool(v); err == nil {
+			cfg.Plugins.GraphQL.Enabled = b
+		}
 	}
 	if v := os.Getenv("SHOPANDA_PLUGINS_EXAMPLE_ENABLED"); v != "" {
 		cfg.Plugins.Example.Enabled = v == "true" || v == "1"

@@ -1,6 +1,7 @@
 package http
 
 import (
+	"fmt"
 	"net/http"
 )
 
@@ -33,6 +34,20 @@ func (r *Router) Handle(pattern string, handler http.Handler) {
 // HandleFunc registers a handler function for the given pattern.
 func (r *Router) HandleFunc(pattern string, handler http.HandlerFunc) {
 	r.mux.HandleFunc(pattern, handler)
+}
+
+// TryHandle registers a handler, returning an error instead of panicking when
+// the pattern is malformed or conflicts with an already-registered route.
+// Use this for externally-supplied routes (e.g. plugin public routes) so a
+// conflict surfaces as a startup error rather than aborting the process.
+func (r *Router) TryHandle(pattern string, handler http.Handler) (err error) {
+	defer func() {
+		if rec := recover(); rec != nil {
+			err = fmt.Errorf("router: cannot register %q: %v", pattern, rec)
+		}
+	}()
+	r.mux.Handle(pattern, handler)
+	return nil
 }
 
 // Handler returns the final http.Handler with all middleware applied.
