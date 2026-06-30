@@ -303,6 +303,21 @@ type QueueConfig struct {
 	Driver   string              `yaml:"driver"`
 	Redis    RedisQueueConfig    `yaml:"redis"`
 	RabbitMQ RabbitMQQueueConfig `yaml:"rabbitmq"`
+	Kafka    KafkaQueueConfig    `yaml:"kafka"`
+	SQS      SQSQueueConfig      `yaml:"sqs"`
+}
+
+// KafkaQueueConfig holds Kafka job queue connection settings.
+type KafkaQueueConfig struct {
+	Brokers     []string `yaml:"brokers"`
+	TopicPrefix string   `yaml:"topic_prefix"`
+}
+
+// SQSQueueConfig holds Amazon SQS job queue connection settings.
+type SQSQueueConfig struct {
+	QueueURL       string `yaml:"queue_url"`
+	FailedQueueURL string `yaml:"failed_queue_url"`
+	Region         string `yaml:"region"`
 }
 
 // RabbitMQQueueConfig holds RabbitMQ job queue connection settings.
@@ -712,6 +727,41 @@ func applyEnv(cfg *Config) {
 	if v := os.Getenv("SHOPANDA_QUEUE_RABBITMQ_QUEUE_PREFIX"); v != "" {
 		cfg.Queue.RabbitMQ.QueuePrefix = v
 	}
+	if v := os.Getenv("KAFKA_BROKERS"); v != "" && len(cfg.Queue.Kafka.Brokers) == 0 {
+		for _, part := range strings.Split(v, ",") {
+			part = strings.TrimSpace(part)
+			if part != "" {
+				cfg.Queue.Kafka.Brokers = append(cfg.Queue.Kafka.Brokers, part)
+			}
+		}
+	}
+	if v := os.Getenv("SHOPANDA_QUEUE_KAFKA_BROKERS"); v != "" {
+		cfg.Queue.Kafka.Brokers = nil
+		for _, part := range strings.Split(v, ",") {
+			part = strings.TrimSpace(part)
+			if part != "" {
+				cfg.Queue.Kafka.Brokers = append(cfg.Queue.Kafka.Brokers, part)
+			}
+		}
+	}
+	if v := os.Getenv("SHOPANDA_QUEUE_KAFKA_TOPIC_PREFIX"); v != "" {
+		cfg.Queue.Kafka.TopicPrefix = v
+	}
+	if v := os.Getenv("SQS_QUEUE_URL"); v != "" && cfg.Queue.SQS.QueueURL == "" {
+		cfg.Queue.SQS.QueueURL = v
+	}
+	if v := os.Getenv("SHOPANDA_QUEUE_SQS_QUEUE_URL"); v != "" {
+		cfg.Queue.SQS.QueueURL = v
+	}
+	if v := os.Getenv("SQS_FAILED_QUEUE_URL"); v != "" && cfg.Queue.SQS.FailedQueueURL == "" {
+		cfg.Queue.SQS.FailedQueueURL = v
+	}
+	if v := os.Getenv("SHOPANDA_QUEUE_SQS_FAILED_QUEUE_URL"); v != "" {
+		cfg.Queue.SQS.FailedQueueURL = v
+	}
+	if v := os.Getenv("SHOPANDA_QUEUE_SQS_REGION"); v != "" {
+		cfg.Queue.SQS.Region = v
+	}
 	if v := os.Getenv("SHOPANDA_PLUGINS_EXAMPLE_ENABLED"); v != "" {
 		cfg.Plugins.Example.Enabled = v == "true" || v == "1"
 	}
@@ -833,6 +883,11 @@ func flatten(cfg *Config) map[string]string {
 	m["queue.redis.key_prefix"] = cfg.Queue.Redis.KeyPrefix
 	m["queue.rabbitmq.url"] = cfg.Queue.RabbitMQ.URL
 	m["queue.rabbitmq.queue_prefix"] = cfg.Queue.RabbitMQ.QueuePrefix
+	m["queue.kafka.brokers"] = strings.Join(cfg.Queue.Kafka.Brokers, ",")
+	m["queue.kafka.topic_prefix"] = cfg.Queue.Kafka.TopicPrefix
+	m["queue.sqs.queue_url"] = cfg.Queue.SQS.QueueURL
+	m["queue.sqs.failed_queue_url"] = cfg.Queue.SQS.FailedQueueURL
+	m["queue.sqs.region"] = cfg.Queue.SQS.Region
 	m["plugins.example.enabled"] = strconv.FormatBool(cfg.Plugins.Example.Enabled)
 	m["plugins.example.fee_minor_units"] = strconv.FormatInt(cfg.Plugins.Example.FeeMinorUnits, 10)
 	m["plugins.b2b.enabled"] = strconv.FormatBool(cfg.Plugins.B2B.Enabled)

@@ -11,6 +11,8 @@ C4Component
     System_Ext(meilisearch, "Meilisearch", "Search engine (optional)")
     System_Ext(redis, "Redis", "Cache/queue backend (optional)")
     System_Ext(rabbitmq, "RabbitMQ", "Queue backend (optional)")
+    System_Ext(kafka, "Kafka", "Queue backend (optional)")
+    System_Ext(sqs, "Amazon SQS", "Queue backend (optional)")
     System_Ext(objectStorage, "S3-compatible storage", "Object storage (optional)")
 
     Container_Boundary(api, "API Server") {
@@ -116,6 +118,8 @@ C4Component
             Component(coreRedisCache, "Redis Cache Core Plugin", "Go", "Registers Redis cache when cache.driver=redis")
             Component(coreRedisQueue, "Redis Queue Core Plugin", "Go", "Registers Redis job queue when queue.driver=redis")
             Component(coreRabbitMQ, "RabbitMQ Core Plugin", "Go", "Registers AMQP job queue when queue.driver=rabbitmq")
+            Component(coreKafkaQueue, "Kafka Queue Core Plugin", "Go", "Registers Kafka job queue when queue.driver=kafka")
+            Component(coreSQSQueue, "SQS Queue Core Plugin", "Go", "Registers SQS job queue when queue.driver=sqs")
             Component(coreStripe, "Stripe Core Plugin", "Go", "Registers Stripe payment provider when payment.stripe.enabled")
             Component(coreS3Storage, "S3 Storage Core Plugin", "Go", "Registers S3 media storage when storage.driver=s3")
         }
@@ -221,6 +225,8 @@ C4Component
     Rel(pluginRegistry, coreRedisCache, "Registers when cache.driver=redis")
     Rel(pluginRegistry, coreRedisQueue, "Registers when queue.driver=redis")
     Rel(pluginRegistry, coreRabbitMQ, "Registers when queue.driver=rabbitmq")
+    Rel(pluginRegistry, coreKafkaQueue, "Registers when queue.driver=kafka")
+    Rel(pluginRegistry, coreSQSQueue, "Registers when queue.driver=sqs")
     Rel(pluginRegistry, coreStripe, "Registers when payment.stripe.enabled")
     Rel(pluginRegistry, coreS3Storage, "Registers when storage.driver=s3")
     Rel(pluginRegistry, examplePlugin, "Registers when plugins.example.enabled")
@@ -233,6 +239,8 @@ C4Component
     Rel(coreRedisCache, redis, "Key-value cache with TTL", "Redis protocol")
     Rel(coreRedisQueue, redis, "Job enqueue/dequeue", "Redis protocol")
     Rel(coreRabbitMQ, rabbitmq, "AMQP job dispatch", "AMQP")
+    Rel(coreKafkaQueue, kafka, "Topic-based job dispatch", "Kafka protocol")
+    Rel(coreSQSQueue, sqs, "Queue-based job dispatch", "HTTPS")
     Rel(coreStripe, paymentGateway, "Payment initiation and refunds", "HTTPS")
     Rel(coreS3Storage, objectStorage, "Media object read/write", "HTTPS")
     Rel(examplePlugin, pricingPipeline, "Example fee pricing step via pluginApp")

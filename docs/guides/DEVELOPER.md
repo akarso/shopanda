@@ -62,7 +62,7 @@ Core (always on)
         └── External plugins (compile-time register)
 ```
 
-**Core plugins** replace infrastructure ports (search engine, cache store, job queue, media storage, payment providers). Only one backend is active per resource slot — for example, `queue.driver` is `postgres`, `redis`, or `rabbitmq`, never more than one.
+**Core plugins** replace infrastructure ports (search engine, cache store, job queue, media storage, payment providers). Only one backend is active per resource slot — for example, `queue.driver` is `postgres`, `redis`, `rabbitmq`, `kafka`, or `sqs`, never more than one.
 
 **External plugins** extend behavior through well-defined hooks: pricing, checkout, and composition pipeline steps; sync/async event listeners; admin permissions. They should not reimplement infrastructure adapters — use a core plugin or contribute one under `plugins/core/`.
 
@@ -89,7 +89,7 @@ Core plugins register through `plugins/core/register.go`, called from `registerP
 | --- | --- | --- | --- |
 | Search | `search.engine` | `postgres` | `meilisearch` |
 | Cache | `cache.driver` | `postgres` | `redis` |
-| Queue | `queue.driver` | `postgres` | `redis`, `rabbitmq` |
+| Queue | `queue.driver` | `postgres` | `redis`, `rabbitmq`, `kafka`, `sqs` |
 | Storage | `storage.driver` | `local` | `s3` |
 | Stripe payments | `payment.stripe.enabled` | `false` | set `true` + Stripe env vars |
 
