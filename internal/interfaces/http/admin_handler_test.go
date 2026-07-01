@@ -384,6 +384,33 @@ func TestAdminHandler_StaticJS(t *testing.T) {
 	if !strings.Contains(normalizedBody, "/admin/webhooks") || !strings.Contains(normalizedBody, "Outbound Webhooks") {
 		t.Fatalf("expected outbound webhooks admin surface wiring in JS")
 	}
+	expectedWebhookCrudWiring := []string{
+		"renderWebhooksGrid",
+		"renderWebhookForm",
+		"renderWebhookCreate",
+		"renderWebhookEdit",
+		"/admin/integrations/webhooks",
+		"/admin/integrations/webhooks/new",
+		"/admin/webhooks/events",
+		"new-webhook-btn",
+		"delete-webhook-btn",
+		"webhook_event",
+		"rotate_secret",
+		"renderWebhookSecretNotice",
+		"Signing secret (copy now — shown once)",
+		"Manage webhooks",
+		"Failed to load webhooks.",
+		"Failed to load webhook form.",
+		"Failed to load webhook events.",
+		"Webhook endpoint not found.",
+		"Failed to delete webhook.",
+		"Webhook saved.",
+	}
+	for _, expected := range expectedWebhookCrudWiring {
+		if !strings.Contains(normalizedBody, expected) {
+			t.Fatalf("expected webhook CRUD wiring %q in JS", expected)
+		}
+	}
 	if !strings.Contains(normalizedBody, "Plugin Settings") || !strings.Contains(normalizedBody, "integrations-plugin-form") || !strings.Contains(normalizedBody, "Failed to load integrations.") {
 		t.Fatalf("expected integrations admin messages in JS")
 	}
