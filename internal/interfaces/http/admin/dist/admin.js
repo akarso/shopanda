@@ -159,6 +159,7 @@
         "/admin/content/pages": { title: "Pages", render: renderPagesGrid, auth: true },
         "/admin/content/navigation": { title: "Navigation", render: renderNavigationGrid, auth: true },
         "/admin/content/blocks": { title: "Blocks", render: renderBlocksGrid, auth: true },
+        "/admin/content/home-blocks": { title: "Home Blocks", render: renderHomeBlockPlacements, auth: true },
         "/admin/media": { title: "Media", render: renderMediaLibrary, auth: true },
         // Operations
         "/admin/operations/inventory": { title: "Inventory", render: renderInventoryGrid, auth: true },
@@ -2551,7 +2552,10 @@
             }
 
             var blocks = normalizeContentBlocks(body && body.data);
-            var html = "<div style=\"margin-bottom:1rem\"><a class=\"button\" href=\"/admin/content/blocks/new\" data-link id=\"new-block-btn\">New Block</a></div>";
+            var html = "<div style=\"margin-bottom:1rem\">" +
+                "<a class=\"button\" href=\"/admin/content/blocks/new\" data-link id=\"new-block-btn\">New Block</a> " +
+                "<a class=\"button\" href=\"/admin/content/home-blocks\" data-link id=\"home-block-placements-btn\">Home page blocks</a>" +
+                "</div>";
             html += "<table><thead><tr>" +
                 "<th>Title</th><th>Type</th><th>Status</th><th>Updated</th>" +
                 "</tr></thead><tbody>";
@@ -2722,6 +2726,226 @@
             form.innerHTML = "";
             msg.innerHTML = "<p role=\"alert\">" + esc(extractErrorMessage(err, "Failed to load block form.")) + "</p>";
         });
+    }
+
+    function contentBlockTargetPath(targetType, targetKey) {
+        return "/admin/content-block-targets/" + encodeURIComponent(targetType) + "/" + encodeURIComponent(targetKey);
+    }
+
+    function normalizeBlockTargetPayload(raw) {
+        if (!raw) {
+            return { target_type: "", target_key: "", blocks: [] };
+        }
+        return {
+            target_type: pick(raw, "target_type", "TargetType") || "",
+            target_key: pick(raw, "target_key", "TargetKey") || "",
+            blocks: normalizeContentBlocks(pick(raw, "blocks", "Blocks"))
+        };
+    }
+
+    function mountBlockPlacementsPanel(mountEl, targetType, targetKey) {
+        if (!mountEl) {
+            return;
+        }
+        var panelID = mountEl.id;
+        if (!panelID) {
+            panelID = "block-placements-" + String(Date.now());
+            mountEl.id = panelID;
+        }
+        mountEl.innerHTML = "<p>Loading block placements…</p>";
+
+        Promise.all([
+            api(contentBlockTargetPath(targetType, targetKey)),
+            api("/admin/content-blocks?offset=0&limit=200")
+        ]).then(function (results) {
+            var targetBody = results[0];
+            var blocksBody = results[1];
+
+            if ((targetBody && targetBody.error && targetBody.error.code === "forbidden") ||
+                (blocksBody && blocksBody.error && blocksBody.error.code === "forbidden")) {
+                mountEl.innerHTML = "<p role=\"alert\">Your account does not have content blocks access.</p>";
+                return;
+            }
+            if (targetBody && targetBody.error) {
+                mountEl.innerHTML = "<p role=\"alert\">" + esc(extractErrorMessage(targetBody, "Failed to load block placements.")) + "</p>";
+                return;
+            }
+            if (blocksBody && blocksBody.error) {
+                mountEl.innerHTML = "<p role=\"alert\">" + esc(extractErrorMessage(blocksBody, "Failed to load content blocks.")) + "</p>";
+                return;
+            }
+
+            var targetPayload = normalizeBlockTargetPayload(targetBody && targetBody.data);
+            var allBlocks = normalizeContentBlocks(blocksBody && blocksBody.data);
+            var assignedBlocks = (targetPayload.blocks || []).slice();
+
+            function blockByID(id) {
+                for (var i = 0; i < allBlocks.length; i++) {
+                    if (String(allBlocks[i].id || "") === String(id)) {
+                        return allBlocks[i];
+                    }
+                }
+                for (var j = 0; j < assignedBlocks.length; j++) {
+                    if (String(assignedBlocks[j].id || "") === String(id)) {
+                        return assignedBlocks[j];
+                    }
+                }
+                return null;
+            }
+
+            function renderPanel() {
+                var msgID = panelID + "-msg";
+                var html = "<div id=\"" + msgID + "\"></div>";
+                if (assignedBlocks.length === 0) {
+                    html += "<p class=\"settings-scope-note\">No blocks assigned yet.</p>";
+                } else {
+                    html += "<ol class=\"block-placements-list\">";
+                    for (var i = 0; i < assignedBlocks.length; i++) {
+                        var block = assignedBlocks[i];
+                        var blockLabel = esc(block.title || block.id || "");
+                        html += "<li data-block-id=\"" + esc(block.id || "") + "\">" +
+                            blockLabel + " <span class=\"settings-scope-note\">(" + esc(formatBlockTypeLabel(block.block_type)) + ")</span>";
+                        if (i > 0) {
+                            html += " <button type=\"button\" class=\"block-placement-move-up\" data-block-id=\"" + esc(block.id || "") + "\" aria-label=\"Move block " + blockLabel + " up\">Move up</button>";
+                        }
+                        if (i < assignedBlocks.length - 1) {
+                            html += " <button type=\"button\" class=\"block-placement-move-down\" data-block-id=\"" + esc(block.id || "") + "\" aria-label=\"Move block " + blockLabel + " down\">Move down</button>";
+                        }
+                        html += " <button type=\"button\" class=\"block-placement-remove\" data-block-id=\"" + esc(block.id || "") + "\" aria-label=\"Remove block " + blockLabel + "\">Remove</button>";
+                        html += "</li>";
+                    }
+                    html += "</ol>";
+                }
+
+                var assignedIDMap = {};
+                for (var a = 0; a < assignedBlocks.length; a++) {
+                    assignedIDMap[String(assignedBlocks[a].id || "")] = true;
+                }
+                html += "<div style=\"margin-top:1rem\">" +
+                    "<label>Add block <select id=\"" + panelID + "-add-select\"><option value=\"\">Select block…</option>";
+                for (var b = 0; b < allBlocks.length; b++) {
+                    var candidate = allBlocks[b];
+                    if (!assignedIDMap[String(candidate.id || "")]) {
+                        html += "<option value=\"" + esc(candidate.id || "") + "\">" +
+                            esc(candidate.title || candidate.id || "") + " (" + esc(formatBlockTypeLabel(candidate.block_type)) + ")</option>";
+                    }
+                }
+                html += "</select></label> " +
+                    "<button type=\"button\" id=\"" + panelID + "-add-btn\">Add</button>" +
+                    "</div>" +
+                    "<div style=\"margin-top:1rem\"><button type=\"button\" id=\"" + panelID + "-save-btn\">Save placements</button></div>";
+
+                mountEl.innerHTML = html;
+                var msg = document.getElementById(msgID);
+
+                mountEl.querySelectorAll(".block-placement-move-up").forEach(function (btn) {
+                    btn.addEventListener("click", function () {
+                        var id = btn.getAttribute("data-block-id") || "";
+                        var index = -1;
+                        for (var upIndex = 0; upIndex < assignedBlocks.length; upIndex++) {
+                            if (String(assignedBlocks[upIndex].id || "") === String(id)) {
+                                index = upIndex;
+                                break;
+                            }
+                        }
+                        if (index > 0) {
+                            var previous = assignedBlocks[index - 1];
+                            assignedBlocks[index - 1] = assignedBlocks[index];
+                            assignedBlocks[index] = previous;
+                            renderPanel();
+                        }
+                    });
+                });
+
+                mountEl.querySelectorAll(".block-placement-move-down").forEach(function (btn) {
+                    btn.addEventListener("click", function () {
+                        var id = btn.getAttribute("data-block-id") || "";
+                        var index = -1;
+                        for (var downIndex = 0; downIndex < assignedBlocks.length; downIndex++) {
+                            if (String(assignedBlocks[downIndex].id || "") === String(id)) {
+                                index = downIndex;
+                                break;
+                            }
+                        }
+                        if (index >= 0 && index < assignedBlocks.length - 1) {
+                            var next = assignedBlocks[index + 1];
+                            assignedBlocks[index + 1] = assignedBlocks[index];
+                            assignedBlocks[index] = next;
+                            renderPanel();
+                        }
+                    });
+                });
+
+                mountEl.querySelectorAll(".block-placement-remove").forEach(function (btn) {
+                    btn.addEventListener("click", function () {
+                        var id = btn.getAttribute("data-block-id") || "";
+                        assignedBlocks = assignedBlocks.filter(function (block) {
+                            return String(block.id || "") !== String(id);
+                        });
+                        renderPanel();
+                    });
+                });
+
+                var addBtn = document.getElementById(panelID + "-add-btn");
+                if (addBtn) {
+                    addBtn.addEventListener("click", function () {
+                        var select = document.getElementById(panelID + "-add-select");
+                        var selectedID = select ? select.value : "";
+                        if (!selectedID) {
+                            return;
+                        }
+                        var selectedBlock = blockByID(selectedID);
+                        if (selectedBlock) {
+                            assignedBlocks.push(selectedBlock);
+                            renderPanel();
+                        }
+                    });
+                }
+
+                var saveBtn = document.getElementById(panelID + "-save-btn");
+                if (saveBtn) {
+                    saveBtn.addEventListener("click", function () {
+                        var blockIDs = assignedBlocks.map(function (block) {
+                            return block.id;
+                        });
+                        api(contentBlockTargetPath(targetType, targetKey), {
+                            method: "PUT",
+                            body: JSON.stringify({ block_ids: blockIDs })
+                        }).then(function (body) {
+                            if (body && body.error) {
+                                if (msg) {
+                                    msg.innerHTML = "<p role=\"alert\">" + esc(body.error.message || "Failed to save block placements.") + "</p>";
+                                }
+                                return;
+                            }
+                            if (msg) {
+                                msg.innerHTML = "<p>Block placements saved.</p>";
+                            }
+                            var savedPayload = normalizeBlockTargetPayload(body && body.data);
+                            assignedBlocks = (savedPayload.blocks || []).slice();
+                            renderPanel();
+                        }).catch(function (err) {
+                            if (msg) {
+                                msg.innerHTML = "<p role=\"alert\">" + esc(extractErrorMessage(err, "Failed to save block placements.")) + "</p>";
+                            }
+                        });
+                    });
+                }
+            }
+
+            renderPanel();
+        }).catch(function (err) {
+            mountEl.innerHTML = "<p role=\"alert\">" + esc(extractErrorMessage(err, "Failed to load block placements.")) + "</p>";
+        });
+    }
+
+    function renderHomeBlockPlacements(container) {
+        container.innerHTML =
+            "<h2>Home Page Blocks</h2>" +
+            "<p><a href=\"/admin/content/blocks\" data-link>Back to blocks</a></p>" +
+            "<p class=\"settings-scope-note\">Assign content blocks to the storefront home page (/).</p>" +
+            "<div id=\"home-block-placements\"></div>";
+        mountBlockPlacementsPanel(document.getElementById("home-block-placements"), "layout", "home");
     }
 
     function normalizeStores(stores) {
@@ -4718,7 +4942,10 @@
             '<h2>' + title + '</h2>' +
             '<p><a href="/admin/content/pages" data-link>Back to pages</a></p>' +
             '<div id="page-form-msg"></div>' +
-            '<form id="page-form"><p>Loading…</p></form>';
+            '<form id="page-form"><p>Loading…</p></form>' +
+            (pageID ? '<section style="margin-top:2rem"><h3>Content blocks</h3>' +
+                '<p class="settings-scope-note">Blocks render on this page in addition to the body above.</p>' +
+                '<div id="page-block-placements"></div></section>' : '');
 
         var msg = document.getElementById('page-form-msg');
         var form = document.getElementById('page-form');
@@ -4804,6 +5031,7 @@
                 return;
             }
             bindForm(page);
+            mountBlockPlacementsPanel(document.getElementById("page-block-placements"), "page", pageID);
         }).catch(function (err) {
             msg.innerHTML = '<p role="alert">' + esc(extractErrorMessage(err, 'Failed to load page.')) + '</p>';
             form.innerHTML = '';
