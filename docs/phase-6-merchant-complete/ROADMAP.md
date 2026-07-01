@@ -63,7 +63,7 @@ When Phase 6 ships, a merchant **without shell access** should be able to:
 - See **customer groups** in admin when B2B is licensed (assign members, basic CRUD)
 - Never land on a **placeholder** for a feature advertised in the sidebar
 
-Developers keep extending via plugins. Phase 5 stretch items (GraphQL, dynamic `.so` loading) remain **Phase 7 / optional** unless pulled forward explicitly.
+Developers keep extending via plugins. Phase 5 platform work (GraphQL, dynamic-loading research) is **complete**; compile-time plugins remain the extension model. See [PR-544 research](../phase-5-maturity/specs/DYNAMIC_PLUGIN_LOADING.md).
 
 ---
 
@@ -167,7 +167,7 @@ Recommended order: **A (600–602)** first — highest “broken menu” impact 
 
 | Theme | Examples | Notes |
 | --- | --- | --- |
-| **Platform stretch (Phase 5 carryover)** | GraphQL plugin (543), dynamic loading research (544) | Integrator-facing, not merchant 30-second test |
+| **Platform** | Multi-store admin workflow, analytics dashboards | Extend stats + charts |
 | **Fulfillment** | Shipments, labels, partial ship | Needs domain extensions |
 | **Analytics** | Sales reports, cohort views | Extend stats repo + charts |
 | **Email** | Template editor with preview | Stretch beyond 641 |
@@ -245,5 +245,5 @@ PR specs: [`prs/`](prs/).
 | [Phase 5](../phase-5-maturity/ROADMAP.md) | Mature commerce | Shipped |
 | **Phase 6** | **Merchant-complete admin** | **Planned** |
 
-Phase 5 items marked “API only; admin UI deferred” map to Phase 6 tracks A–C. Phase 5 stretch **543–544** remain integrator/platform work for a future phase unless explicitly promoted.
+Phase 5 items marked “API only; admin UI deferred” map to Phase 6 tracks A–C. Phase 5 is **complete** (including PR-544 dynamic-loading research).
  

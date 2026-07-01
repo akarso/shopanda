@@ -71,7 +71,7 @@ Shopanda aims to provide a broad commerce foundation out of the box:
 | SEO | Structured data, sitemap generation, canonical URLs |
 | Multi-Store | Store contexts with scoped pricing and tax rules |
 | Localization | Translations for system and content, multi-language support |
-| Legal | GDPR consent, data export/delete, Omnibus price indication on PDP/PLP (PR-530); WEEE/EPR/GPSR planned Phase 5 |
+| Legal | GDPR consent, data export/delete, Omnibus price indication (PR-530), WEEE/EPR/GPSR product fields (Phase 5) |
 | Mailer | Async email delivery with pluggable providers |
 
 ## Architecture
@@ -129,11 +129,11 @@ type Plugin interface {
 }
 ```
 
-Extension mechanisms (events, pricing/checkout/composition pipelines, permissions) are wired through `PluginRegistry` at startup. There is no dynamic plugin discovery yet — core and external plugins are registered explicitly at compile time.
+Extension mechanisms (events, pricing/checkout/composition pipelines, permissions, plugin CLI, public HTTP routes) are wired through `PluginRegistry` at startup. Plugins register at **compile time** via `register_plugins.go` — there is no runtime `.so` discovery. See [Dynamic plugin loading research](docs/phase-5-maturity/specs/DYNAMIC_PLUGIN_LOADING.md) (PR-544) for why `.so` loading stays deferred.
 
 See [Developer Guide](docs/guides/DEVELOPER.md) for how to enable core plugins and add an external plugin. Reference implementation: [`plugins/example/`](plugins/example/).
 
-**Not yet supported:** `.so` dynamic loading, plugin marketplace.
+**Not yet supported:** `.so` dynamic loading ([research](docs/phase-5-maturity/specs/DYNAMIC_PLUGIN_LOADING.md)), plugin marketplace, hot reload.
 
 Full Phase 4 plan: [Phase 4 Roadmap](docs/phase-4-refactoring/ROADMAP.md) (shipped). Phase 5 ([Mature Commerce](docs/phase-5-maturity/ROADMAP.md)) is shipped. Next: [Phase 6 — Merchant-Complete Admin](docs/phase-6-merchant-complete/ROADMAP.md).
 
@@ -159,7 +159,7 @@ Enable optional backends via YAML or environment variables — see [Deployment G
 
 ## Early-stage note
 
-Phases 1–5 are shipped: merchant admin for catalog, orders, promotions, inventory, returns, EU compliance (Omnibus, WEEE, GPSR), webhooks, and platform plugins (Kafka/SQS, plugin CLI). **Phase 6** ([roadmap](docs/phase-6-merchant-complete/ROADMAP.md)) closes admin UI debt — navigation, content blocks, webhooks, store credit, bulk prices, and merchant docs.
+Phases 1–5 are **complete**: merchant admin, returns, EU compliance, webhooks, platform plugins (Kafka/SQS, GraphQL, plugin CLI), and dynamic-loading research (compile-time plugins remain the model). **Phase 6** ([roadmap](docs/phase-6-merchant-complete/ROADMAP.md)) closes admin UI debt.
 
 The long-term goal remains a commerce engine that is:
 
@@ -229,8 +229,9 @@ Current guides live in [`docs/guides/`](docs/guides/):
 
 - [Commercial Licensing](docs/COMMERCIAL.md) — open core (GPL) vs paid B2B module
 - [Phase 6 Roadmap](docs/phase-6-merchant-complete/ROADMAP.md) — **active** merchant-complete admin (navigation, blocks, webhooks, store credit, bulk prices)
-- [Phase 5 Roadmap](docs/phase-5-maturity/ROADMAP.md) — mature commerce milestones (shipped)
-- [EU Compliance Reference](docs/phase-5-maturity/specs/COMPLIANCE_EU.md) — Omnibus, WEEE, EPR, GPSR mapping to planned work
+- [Phase 5 Roadmap](docs/phase-5-maturity/ROADMAP.md) — mature commerce milestones (**complete**)
+- [Phase 5 — Dynamic plugin loading research](docs/phase-5-maturity/specs/DYNAMIC_PLUGIN_LOADING.md) — PR-544 verdict (`.so` deferred)
+- [EU Compliance Reference](docs/phase-5-maturity/specs/COMPLIANCE_EU.md) — Omnibus, WEEE, EPR, GPSR mapping
 - [Phase 4 Roadmap](docs/phase-4-refactoring/ROADMAP.md) — product-complete milestones (shipped)
 - [Runtime Modes](docs/phase-4-refactoring/specs/RUNTIME_MODES.md) — dev vs production process layout (`serve`, `worker`, `scheduler`, `app dev`)
 - [Phase 1 Roadmap](docs/phase-1-core/ROADMAP.md) — core platform milestones and archived planning context

@@ -73,7 +73,7 @@ Core (always on)
 - Adding HTTP webhook routes for new payment providers
 - Adding CLI subcommands — core commands in `cmd/api/main.go`; plugin commands via `RegisterCommand` in `Init`
 
-**Deferred (not implemented):** dynamic `.so` loading, plugin marketplace.
+**Deferred (not implemented):** dynamic `.so` loading ([research](../phase-5-maturity/specs/DYNAMIC_PLUGIN_LOADING.md)), plugin marketplace, hot reload.
 
 Plugin-defined settings can be registered via `RegisterConfig` and edited on the admin Integrations page (`group=plugins` API). Plugin enable/disable remains compile-time + config file.
 
@@ -597,19 +597,16 @@ The embedded admin SPA stores its JWT in browser local storage and sends it as a
 
 ## Roadmap and Future Work
 
-Phase 4 (**product complete**) is shipped. **Phase 5 — Mature Commerce** is the active planning track:
+Phases 1–5 are **complete**. **Phase 6 — Merchant-Complete Admin** is the active track (admin UI for Phase 5 APIs).
 
-| Track | Focus |
+| Phase | Focus |
 | --- | --- |
-| A | Returns/RMA, customer groups, payment ledger admin |
-| B | Advanced promotions, navigation builder, content blocks |
-| C | Admin user CRUD, MFA, audit export, shipping UI |
-| D | EU compliance — Omnibus verification, WEEE, EPR, GPSR |
-| E | Merchant webhooks, plugin CLI, optional Kafka/SQS (stretch) |
+| 5 (done) | Returns, EU compliance, webhooks, plugin CLI, Kafka/SQS, GraphQL, dynamic-loading research |
+| 6 (active) | Navigation/blocks/webhooks/store-credit/bulk-price admin UI |
 
-Full plan: [Phase 5 Roadmap](../phase-5-maturity/ROADMAP.md). EU directive mapping: [Compliance Reference](../phase-5-maturity/specs/COMPLIANCE_EU.md). **OSS vs B2B split:** [Commercial Licensing](../COMMERCIAL.md).
+Full plans: [Phase 5 Roadmap](../phase-5-maturity/ROADMAP.md) · [Phase 6 Roadmap](../phase-6-merchant-complete/ROADMAP.md). EU mapping: [Compliance Reference](../phase-5-maturity/specs/COMPLIANCE_EU.md). Plugin loading: [Dynamic loading research](../phase-5-maturity/specs/DYNAMIC_PLUGIN_LOADING.md).
 
-When extending toward Phase 5 features, keep the same hexagonal rules: domain ports first, explicit wiring, plugin only when the behavior is optional or author-owned.
+When extending the platform, keep hexagonal rules: domain ports first, explicit wiring, plugin only when behavior is optional or author-owned.
 
 ## Practical Advice
 
