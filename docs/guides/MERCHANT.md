@@ -311,7 +311,7 @@ Phase 4 delivered day-to-day catalog, order, promotion, and inventory admin. **P
 | Customer groups | Not available | PR-500–501: groups + group pricing |
 | Advanced promotions | Simple rules only | PR-510: tiered / buy-X-get-Y |
 | Payment ledger in admin | API/email only | PR-504: read-only transaction grid |
-| Navigation / page blocks | Static theme + CMS pages | PR-511–512: builder |
+| Navigation / page blocks | Admin → Content → Navigation (header/footer menus); page blocks via CMS | PR-511 menus API; PR-600 navigation UI; PR-601 blocks UI |
 | Shipping zones UI | Operations → Shipping (zones + rates) | PR-524 |
 | WEEE / packaging / GPSR | Not modeled | PR-531–533: product compliance fields |
 | Omnibus price display | Backend + SSR templates (PR-530) | Toggle under Operations → Shipping → EU Price Indication |
