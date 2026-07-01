@@ -157,7 +157,7 @@
         "/admin/marketing/coupons": { title: "Coupons", render: renderCouponsGrid, auth: true },
         // Content
         "/admin/content/pages": { title: "Pages", render: renderPagesGrid, auth: true },
-        "/admin/content/navigation": { title: "Navigation", render: renderPlaceholder("Navigation"), auth: true },
+        "/admin/content/navigation": { title: "Navigation", render: renderNavigationGrid, auth: true },
         "/admin/content/blocks": { title: "Blocks", render: renderPlaceholder("Blocks"), auth: true },
         "/admin/media": { title: "Media", render: renderMediaLibrary, auth: true },
         // Operations
@@ -248,6 +248,15 @@
                 title: "Edit Page",
                 auth: true,
                 render: function (container) { renderPageEdit(container, pageID); }
+            };
+        }
+        var navigationMatch = path.match(/^\/admin\/content\/navigation\/([^/]+)$/);
+        if (navigationMatch) {
+            var menuID = decodeURIComponent(navigationMatch[1]);
+            return {
+                title: "Edit Menu",
+                auth: true,
+                render: function (container) { renderNavigationEdit(container, menuID); }
             };
         }
         var productMatch = path.match(/^\/admin\/products\/([^/]+)$/);
@@ -2054,6 +2063,353 @@
             created_at: pick(raw, "created_at", "CreatedAt"),
             updated_at: pick(raw, "updated_at", "UpdatedAt")
         };
+    }
+
+    function normalizeMenuItem(raw) {
+        if (!raw) {
+            return null;
+        }
+        return {
+            id: pick(raw, "id", "ID") || "",
+            parent_id: pick(raw, "parent_id", "ParentID") || "",
+            label: pick(raw, "label", "Label") || "",
+            link_type: pick(raw, "link_type", "LinkType") || "url",
+            link_target: pick(raw, "link_target", "LinkTarget") || "",
+            position: Number(pick(raw, "position", "Position")) || 0,
+            is_active: pick(raw, "is_active", "IsActive") !== false
+        };
+    }
+
+    function normalizeMenu(raw) {
+        if (!raw) {
+            return null;
+        }
+        var itemsRaw = pick(raw, "items", "Items");
+        var items = [];
+        if (Array.isArray(itemsRaw)) {
+            for (var i = 0; i < itemsRaw.length; i++) {
+                var item = normalizeMenuItem(itemsRaw[i]);
+                if (item) {
+                    items.push(item);
+                }
+            }
+        }
+        return {
+            id: pick(raw, "id", "ID"),
+            code: pick(raw, "code", "Code") || "",
+            title: pick(raw, "title", "Title") || "",
+            is_active: pick(raw, "is_active", "IsActive") !== false,
+            created_at: pick(raw, "created_at", "CreatedAt"),
+            updated_at: pick(raw, "updated_at", "UpdatedAt"),
+            items: items
+        };
+    }
+
+    function normalizeMenus(raw) {
+        if (!Array.isArray(raw)) {
+            return [];
+        }
+        var out = [];
+        for (var i = 0; i < raw.length; i++) {
+            var menu = normalizeMenu(raw[i]);
+            if (menu) {
+                out.push(menu);
+            }
+        }
+        return out;
+    }
+
+    var menuItemIdCounter = 0;
+
+    function newMenuItemId() {
+        menuItemIdCounter += 1;
+        return "new-" + Date.now() + "-" + menuItemIdCounter;
+    }
+
+    function sortMenuItems(items) {
+        return items.slice().sort(function (a, b) {
+            if ((a.position || 0) !== (b.position || 0)) {
+                return (a.position || 0) - (b.position || 0);
+            }
+            return String(a.label || "").localeCompare(String(b.label || ""));
+        });
+    }
+
+    function renderMenuItemTargetField(item, categories, pages) {
+        var linkType = item.link_type || "url";
+        if (linkType === "category") {
+            var categoryOptions = flattenCategoryOptions(categories, 0, []);
+            var categoryHtml = '<select name="link_target" class="menu-item-target">';
+            categoryHtml += '<option value="">Select category…</option>';
+            for (var i = 0; i < categoryOptions.length; i++) {
+                var option = categoryOptions[i] || {};
+                var selected = String(option.id || "") === String(item.link_target || "") ? " selected" : "";
+                categoryHtml += '<option value="' + esc(String(option.id || "")) + '"' + selected + '>' +
+                    esc(option.label || option.name || option.id || "") + '</option>';
+            }
+            categoryHtml += '</select>';
+            return categoryHtml;
+        }
+        if (linkType === "page") {
+            var pageHtml = '<select name="link_target" class="menu-item-target">';
+            pageHtml += '<option value="">Select page…</option>';
+            for (var j = 0; j < pages.length; j++) {
+                var page = pages[j] || {};
+                var pageSelected = String(page.id || "") === String(item.link_target || "") ? " selected" : "";
+                pageHtml += '<option value="' + esc(String(page.id || "")) + '"' + pageSelected + '>' +
+                    esc(page.title || page.slug || page.id || "") + '</option>';
+            }
+            pageHtml += '</select>';
+            return pageHtml;
+        }
+        return '<input name="link_target" class="menu-item-target" value="' + esc(item.link_target || "") + '" placeholder="https://…">';
+    }
+
+    function renderMenuItemsEditor(items, categories, pages) {
+        var sorted = sortMenuItems(items);
+        var html = '<table><thead><tr>' +
+            '<th>Label</th><th>Link type</th><th>Target</th><th>Parent</th><th>Position</th><th>Active</th><th></th>' +
+            '</tr></thead><tbody id="menu-items-body">';
+        if (sorted.length === 0) {
+            html += '<tr><td colspan="7">No menu items yet.</td></tr>';
+        } else {
+            for (var i = 0; i < sorted.length; i++) {
+                var item = sorted[i];
+                html += '<tr class="menu-item-row" data-item-id="' + esc(item.id || "") + '">' +
+                    '<td><input name="label" value="' + esc(item.label || "") + '" required></td>' +
+                    '<td><select name="link_type" class="menu-item-link-type">' +
+                    '<option value="url"' + (item.link_type === "url" ? " selected" : "") + '>URL</option>' +
+                    '<option value="category"' + (item.link_type === "category" ? " selected" : "") + '>Category</option>' +
+                    '<option value="page"' + (item.link_type === "page" ? " selected" : "") + '>Page</option>' +
+                    '</select></td>' +
+                    '<td class="menu-item-target-cell">' + renderMenuItemTargetField(item, categories, pages) + '</td>' +
+                    '<td><select name="parent_id" class="menu-item-parent">' +
+                    '<option value="">(none)</option>';
+                for (var p = 0; p < sorted.length; p++) {
+                    var parentCandidate = sorted[p];
+                    if (String(parentCandidate.id || "") === String(item.id || "")) {
+                        continue;
+                    }
+                    var parentSelected = String(parentCandidate.id || "") === String(item.parent_id || "") ? " selected" : "";
+                    html += '<option value="' + esc(String(parentCandidate.id || "")) + '"' + parentSelected + '>' +
+                        esc(parentCandidate.label || parentCandidate.id || "") + '</option>';
+                }
+                html += '</select></td>' +
+                    '<td><input name="position" type="number" min="0" step="1" value="' + esc(String(item.position || 0)) + '" style="width:4rem"></td>' +
+                    '<td><input type="checkbox" name="is_active"' + (item.is_active !== false ? " checked" : "") + '></td>' +
+                    '<td><button type="button" class="menu-item-remove-btn" aria-label="Remove menu item">Remove</button></td>' +
+                    '</tr>';
+            }
+        }
+        html += '</tbody></table>' +
+            '<div style="margin-top:0.75rem"><button type="button" id="add-menu-item-btn">Add item</button></div>';
+        return html;
+    }
+
+    function readMenuItemsFromEditor(editorRoot) {
+        var rows = editorRoot.querySelectorAll(".menu-item-row");
+        var items = [];
+        for (var i = 0; i < rows.length; i++) {
+            var row = rows[i];
+            var positionValue = parseInt(row.querySelector('[name="position"]').value, 10);
+            items.push({
+                id: row.getAttribute("data-item-id") || "",
+                parent_id: row.querySelector('[name="parent_id"]').value || "",
+                label: row.querySelector('[name="label"]').value,
+                link_type: row.querySelector('[name="link_type"]').value || "url",
+                link_target: row.querySelector('[name="link_target"]').value || "",
+                position: isNaN(positionValue) ? 0 : positionValue,
+                is_active: row.querySelector('[name="is_active"]').checked
+            });
+        }
+        return items;
+    }
+
+    function bindMenuItemsEditor(editorRoot, categories, pages, onItemsChange) {
+        function rerender(items) {
+            editorRoot.innerHTML = renderMenuItemsEditor(items, categories, pages);
+            bindMenuItemsEditor(editorRoot, categories, pages, onItemsChange);
+            if (onItemsChange) {
+                onItemsChange(items);
+            }
+        }
+
+        var addBtn = editorRoot.querySelector("#add-menu-item-btn");
+        if (addBtn) {
+            addBtn.addEventListener("click", function () {
+                var items = readMenuItemsFromEditor(editorRoot);
+                items.push({
+                    id: newMenuItemId(),
+                    parent_id: "",
+                    label: "",
+                    link_type: "url",
+                    link_target: "",
+                    position: items.length,
+                    is_active: true
+                });
+                rerender(items);
+            });
+        }
+
+        editorRoot.querySelectorAll(".menu-item-remove-btn").forEach(function (btn) {
+            btn.addEventListener("click", function () {
+                var row = btn.closest(".menu-item-row");
+                if (!row) {
+                    return;
+                }
+                var removeID = row.getAttribute("data-item-id") || "";
+                var items = readMenuItemsFromEditor(editorRoot).filter(function (item) {
+                    return String(item.id || "") !== String(removeID);
+                }).map(function (item) {
+                    if (String(item.parent_id || "") === String(removeID)) {
+                        return Object.assign({}, item, { parent_id: "" });
+                    }
+                    return item;
+                });
+                rerender(items);
+            });
+        });
+
+        editorRoot.querySelectorAll(".menu-item-link-type").forEach(function (select) {
+            select.addEventListener("change", function () {
+                var row = select.closest(".menu-item-row");
+                if (!row) {
+                    return;
+                }
+                var items = readMenuItemsFromEditor(editorRoot);
+                var rowID = row.getAttribute("data-item-id") || "";
+                for (var i = 0; i < items.length; i++) {
+                    if (String(items[i].id || "") === String(rowID)) {
+                        items[i].link_type = select.value || "url";
+                        items[i].link_target = "";
+                        break;
+                    }
+                }
+                rerender(items);
+            });
+        });
+    }
+
+    function renderNavigationGrid(container) {
+        container.innerHTML = '<h2>Navigation</h2><div id="navigation-grid"></div>';
+
+        var grid = document.getElementById("navigation-grid");
+        api("/admin/menus").then(function (body) {
+            if (body && body.error && body.error.code === "forbidden") {
+                grid.innerHTML = '<p role="alert">Your account does not have navigation access.</p>';
+                return;
+            }
+            if (body && body.error) {
+                grid.innerHTML = '<p role="alert">' + esc(extractErrorMessage(body, "Failed to load menus.")) + '</p>';
+                return;
+            }
+
+            var menus = normalizeMenus(body && body.data);
+            var html = '<table><thead><tr>' +
+                '<th>Title</th><th>Code</th><th>Status</th><th>Updated</th>' +
+                '</tr></thead><tbody>';
+
+            if (menus.length === 0) {
+                html += '<tr><td colspan="4">No menus found.</td></tr>';
+            } else {
+                for (var i = 0; i < menus.length; i++) {
+                    var menu = menus[i];
+                    var editHref = "/admin/content/navigation/" + encodeURIComponent(menu.id || "");
+                    html += "<tr>" +
+                        '<td><a href="' + editHref + '" data-link>' + esc(menu.title || menu.code || menu.id || "") + "</a></td>" +
+                        "<td>" + esc(menu.code || "") + "</td>" +
+                        '<td><span class="badge badge-' + esc(menu.is_active ? "active" : "draft") + '">' +
+                        esc(menu.is_active ? "active" : "inactive") + "</span></td>" +
+                        "<td>" + esc(menu.updated_at ? String(menu.updated_at).substring(0, 10) : "") + "</td>" +
+                        "</tr>";
+                }
+            }
+
+            html += "</tbody></table>";
+            grid.innerHTML = html;
+        }).catch(function (err) {
+            grid.innerHTML = '<p role="alert">' + esc(extractErrorMessage(err, "Failed to load menus.")) + "</p>";
+        });
+    }
+
+    function renderNavigationEdit(container, menuID) {
+        container.innerHTML =
+            "<h2>Edit Menu</h2>" +
+            '<p><a href="/admin/content/navigation" data-link>Back to navigation</a></p>' +
+            '<div id="navigation-form-msg"></div>' +
+            '<form id="navigation-form"><p>Loading…</p></form>';
+
+        var msg = document.getElementById("navigation-form-msg");
+        var form = document.getElementById("navigation-form");
+
+        Promise.all([
+            api("/admin/menus/" + encodeURIComponent(menuID)),
+            api("/admin/categories"),
+            api("/admin/pages?offset=0&limit=200")
+        ]).then(function (results) {
+            var menuBody = results[0];
+            var categoriesBody = results[1];
+            var pagesBody = results[2];
+
+            if (menuBody && menuBody.error) {
+                form.innerHTML = "";
+                msg.innerHTML = '<p role="alert">' + esc(extractErrorMessage(menuBody, "Menu not found.")) + "</p>";
+                return;
+            }
+
+            var menu = normalizeMenu(menuBody && menuBody.data);
+            if (!menu || !menu.id) {
+                form.innerHTML = "";
+                msg.innerHTML = '<p role="alert">Menu not found.</p>';
+                return;
+            }
+
+            var categories = normalizeCategoryTree(categoriesBody && categoriesBody.data && categoriesBody.data.categories);
+            var pages = normalizePages(pagesBody && pagesBody.data && pagesBody.data.pages);
+            var menuItems = sortMenuItems(menu.items || []);
+
+            form.innerHTML =
+                '<label>Title<input name="title" value="' + esc(menu.title || "") + '" required></label>' +
+                '<label><input type="checkbox" name="is_active"' + (menu.is_active ? " checked" : "") + "> Active</label>" +
+                "<h3>Menu items</h3>" +
+                '<div id="menu-items-editor"></div>' +
+                '<div style="margin-top:1rem"><button type="submit">Save menu</button></div>';
+
+            var editorRoot = document.getElementById("menu-items-editor");
+            editorRoot.innerHTML = renderMenuItemsEditor(menuItems, categories, pages);
+            bindMenuItemsEditor(editorRoot, categories, pages);
+
+            form.addEventListener("submit", function (e) {
+                e.preventDefault();
+                var payload = {
+                    title: form.elements.title.value,
+                    is_active: form.elements.is_active.checked,
+                    items: readMenuItemsFromEditor(editorRoot)
+                };
+                api("/admin/menus/" + encodeURIComponent(menuID), {
+                    method: "PUT",
+                    body: JSON.stringify(payload)
+                }).then(function (body) {
+                    if (body && body.error) {
+                        msg.innerHTML = '<p role="alert">' + esc(body.error.message || "Save failed.") + "</p>";
+                        return;
+                    }
+                    msg.innerHTML = "<p>Menu saved.</p>";
+                    var saved = normalizeMenu(body && body.data);
+                    if (!saved) {
+                        return;
+                    }
+                    menuItems = sortMenuItems(saved.items || []);
+                    editorRoot.innerHTML = renderMenuItemsEditor(menuItems, categories, pages);
+                    bindMenuItemsEditor(editorRoot, categories, pages);
+                }).catch(function (err) {
+                    msg.innerHTML = '<p role="alert">' + esc(extractErrorMessage(err, "Save failed.")) + "</p>";
+                });
+            });
+        }).catch(function (err) {
+            form.innerHTML = "";
+            msg.innerHTML = '<p role="alert">' + esc(extractErrorMessage(err, "Failed to load menu form.")) + "</p>";
+        });
     }
 
     function normalizeStores(stores) {

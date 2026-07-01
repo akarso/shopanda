@@ -178,6 +178,25 @@ func TestAdminHandler_StaticJS(t *testing.T) {
 	if !strings.Contains(normalizedBody, "renderPagesGrid") || !strings.Contains(normalizedBody, "/admin/pages?offset=0&limit=50") {
 		t.Fatalf("expected pages admin surface wiring in JS")
 	}
+	if !strings.Contains(normalizedBody, "renderNavigationGrid") || !strings.Contains(normalizedBody, "/admin/menus") {
+		t.Fatalf("expected navigation admin surface wiring in JS")
+	}
+	expectedNavigationCrudWiring := []string{
+		"renderNavigationEdit",
+		"/admin/content/navigation/",
+		"menu-items-editor",
+		"add-menu-item-btn",
+		"menu-item-remove-btn",
+		"Failed to load menus.",
+		"Failed to load menu form.",
+		"Menu not found.",
+		"Menu saved.",
+	}
+	for _, expected := range expectedNavigationCrudWiring {
+		if !strings.Contains(normalizedBody, expected) {
+			t.Fatalf("expected navigation CRUD wiring %q in JS", expected)
+		}
+	}
 	if !strings.Contains(normalizedBody, "renderCouponsGrid") || !strings.Contains(normalizedBody, "/admin/coupons?offset=0&limit=50") {
 		t.Fatalf("expected coupons admin surface wiring in JS")
 	}
