@@ -1,5 +1,9 @@
 # Phase 5 — Mature Commerce
 
+**Status: complete** (all tracks PR-500–544 shipped or researched)
+
+Phase index: [`README.md`](README.md) · Next: [Phase 6 — Merchant-Complete Admin](../phase-6-merchant-complete/ROADMAP.md)
+
 ## Strategy
 
 * Build on the **product-complete** baseline delivered in Phases 1–4 (catalog, checkout, admin, three-tier plugins, runtime modes)
@@ -258,10 +262,10 @@ Items worth tracking but not yet assigned PR numbers:
 | 540 | E | [oss] | Merchant webhooks |
 | 541 | E | [oss] | Plugin CLI registration |
 | 542 | E | [oss] | Kafka / SQS queue plugins |
-| 543 | E | [oss] | GraphQL API plugin (stretch) |
-| 544 | E | [oss] | Dynamic plugin loading research |
+| 543 | E | [oss] | GraphQL API plugin (done) |
+| 544 | E | [oss] | Dynamic plugin loading research (done — defer `.so`) |
 
-PR specs: [`prs/`](prs/).
+PR specs: [`prs/`](prs/) · Plugin loading research: [`specs/DYNAMIC_PLUGIN_LOADING.md`](specs/DYNAMIC_PLUGIN_LOADING.md).
 
 ---
 
@@ -293,4 +297,4 @@ Several Phase 5 PRs shipped **admin APIs only** (same pattern as PR-524 before i
 | PR-540 | Outbound webhooks API | [PR-620](../phase-6-merchant-complete/prs/PR-620.md) |
 | PR-513/514/510 | Marketing stretch APIs | [PR-641](../phase-6-merchant-complete/prs/PR-641.md), [PR-640](../phase-6-merchant-complete/prs/PR-640.md), [PR-642](../phase-6-merchant-complete/prs/PR-642.md) (stretch) |
 
-Phase 5 stretch **PR-544** (dynamic plugin loading) remains **integrator/platform** research. PR-543 GraphQL API is shipped. See [Phase 6 roadmap](../phase-6-merchant-complete/ROADMAP.md) for merchant UI work.
+Phase 5 is **complete**. PR-544 documents why Go `.so` dynamic loading stays deferred ([research](specs/DYNAMIC_PLUGIN_LOADING.md)). Admin UI for several Phase 5 APIs is tracked in [Phase 6](../phase-6-merchant-complete/ROADMAP.md).

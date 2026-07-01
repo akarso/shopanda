@@ -32,6 +32,10 @@ type Entry struct {
 }
 
 // Registry manages plugin loading and initialization.
+//
+// Plugins register at compile time (see cmd/api/register_plugins.go).
+// Runtime .so loading was evaluated and deferred — see
+// docs/phase-5-maturity/specs/DYNAMIC_PLUGIN_LOADING.md (PR-544).
 type Registry struct {
 	entries        []Entry
 	log            logger.Logger

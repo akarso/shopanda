@@ -141,7 +141,7 @@ Honest list of gaps for external authors:
 
 Not implemented; do not assume these exist:
 
-- Go plugin `.so` dynamic loading (see PR-544 research)
+- Go plugin `.so` dynamic loading — **deferred** ([PR-544 research](docs/phase-5-maturity/specs/DYNAMIC_PLUGIN_LOADING.md)); use compile-time `register_plugins.go`
 - Plugin marketplace or version resolver
 - Hot reload
 
@@ -155,6 +155,8 @@ Plugin settings (string, int, bool) can be registered with `RegisterConfig` and 
 - [Example external plugin](plugins/example/README.md) — pricing step, event listener, permission
 - [Commercial licensing](docs/COMMERCIAL.md) — OSS vs B2B module boundary
 - [B2B plugin scaffold](plugins/b2b/README.md)
+- [Dynamic plugin loading research](docs/phase-5-maturity/specs/DYNAMIC_PLUGIN_LOADING.md) — PR-544 verdict
+- [Phase 5 Roadmap](docs/phase-5-maturity/ROADMAP.md) — mature commerce (complete)
 - [Phase 4 Roadmap — three tiers](docs/phase-4-refactoring/ROADMAP.md#target-architecture-three-tiers)
 - [C4 component diagram](docs/diagrams/c4-component.md) — registry wiring
 - [Phase 1 authoring spec (historical)](docs/phase-1-core/specs/PLUGINS.md)

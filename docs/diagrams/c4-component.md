@@ -252,6 +252,6 @@ C4Component
 
 > **Wiring note (post PR-410–434):** `cmd/api/register_plugins.go` calls `core.Register()` for config-gated core plugins and optionally registers external plugins (e.g. `plugins/example`). A shared `Auditor` with `AuditLogRepo` is wired to admin mutation handlers. `PluginRegistry` calls `plugin.Init(pluginApp)` for each registered plugin. Core plugins set infrastructure providers on `pluginApp`; external plugins register pipeline steps, event handlers, permissions, and optional `RegisterConfig` settings. `main.go` resolves providers and extracts steps into pipelines, workflows, and the event bus — explicit hexagonal wiring, not runtime discovery.
 >
-> **Phase 5 (planned):** returns/RMA, customer groups, advanced promotions, EU compliance fields (WEEE/EPR/GPSR), admin MFA — see [Phase 5 Roadmap](../phase-5-maturity/ROADMAP.md). **[b2b]** features ship in `plugins/b2b/` under commercial license — see [Commercial Licensing](../COMMERCIAL.md).
+> **Phase 5 (complete):** returns/RMA, customer groups, advanced promotions, EU compliance (WEEE/EPR/GPSR/Omnibus), admin MFA, merchant webhooks, plugin CLI, Kafka/SQS/GraphQL plugins — see [Phase 5 Roadmap](../phase-5-maturity/ROADMAP.md). **[b2b]** features ship in `plugins/b2b/` under commercial license — see [Commercial Licensing](../COMMERCIAL.md).
 >
-> **Deferred:** dynamic `.so` loading, plugin marketplace.
+> **Deferred:** Go `.so` dynamic loading ([PR-544 research](../phase-5-maturity/specs/DYNAMIC_PLUGIN_LOADING.md)), plugin marketplace, hot reload.
