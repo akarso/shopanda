@@ -228,6 +228,27 @@ func TestAdminHandler_StaticJS(t *testing.T) {
 			t.Fatalf("expected content blocks CRUD wiring %q in JS", expected)
 		}
 	}
+	expectedBlockPlacementWiring := []string{
+		"renderHomeBlockPlacements",
+		"mountBlockPlacementsPanel",
+		"contentBlockTargetPath",
+		"/admin/content/home-blocks",
+		"home-block-placements-btn",
+		"page-block-placements",
+		"/admin/content-block-targets/",
+		"block_ids",
+		"block-placement-move-up",
+		"block-placement-move-down",
+		"block-placement-remove",
+		"Failed to load block placements.",
+		"Failed to save block placements.",
+		"Block placements saved.",
+	}
+	for _, expected := range expectedBlockPlacementWiring {
+		if !strings.Contains(normalizedBody, expected) {
+			t.Fatalf("expected block placement wiring %q in JS", expected)
+		}
+	}
 	if !strings.Contains(normalizedBody, "renderCouponsGrid") || !strings.Contains(normalizedBody, "/admin/coupons?offset=0&limit=50") {
 		t.Fatalf("expected coupons admin surface wiring in JS")
 	}
