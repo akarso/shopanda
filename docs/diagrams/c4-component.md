@@ -120,6 +120,7 @@ C4Component
             Component(coreRabbitMQ, "RabbitMQ Core Plugin", "Go", "Registers AMQP job queue when queue.driver=rabbitmq")
             Component(coreKafkaQueue, "Kafka Queue Core Plugin", "Go", "Registers Kafka job queue when queue.driver=kafka")
             Component(coreSQSQueue, "SQS Queue Core Plugin", "Go", "Registers SQS job queue when queue.driver=sqs")
+            Component(coreGraphQL, "GraphQL API Core Plugin", "Go", "Read-only catalog API when plugins.graphql.enabled")
             Component(coreStripe, "Stripe Core Plugin", "Go", "Registers Stripe payment provider when payment.stripe.enabled")
             Component(coreS3Storage, "S3 Storage Core Plugin", "Go", "Registers S3 media storage when storage.driver=s3")
         }
@@ -227,11 +228,13 @@ C4Component
     Rel(pluginRegistry, coreRabbitMQ, "Registers when queue.driver=rabbitmq")
     Rel(pluginRegistry, coreKafkaQueue, "Registers when queue.driver=kafka")
     Rel(pluginRegistry, coreSQSQueue, "Registers when queue.driver=sqs")
+    Rel(pluginRegistry, coreGraphQL, "Registers when plugins.graphql.enabled")
     Rel(pluginRegistry, coreStripe, "Registers when payment.stripe.enabled")
     Rel(pluginRegistry, coreS3Storage, "Registers when storage.driver=s3")
     Rel(pluginRegistry, examplePlugin, "Registers when plugins.example.enabled")
     Rel(pluginRegistry, b2bPlugin, "Registers when plugins.b2b.enabled + valid license")
 
+    Rel(coreGraphQL, postgresRepos, "Catalog read queries for GraphQL resolvers")
     Rel(corePostgresPlugins, postgresSearch, "Provides default search engine")
     Rel(corePostgresPlugins, pgCacheStore, "Provides default cache store")
     Rel(corePostgresPlugins, postgresJobQueue, "Provides default job queue")

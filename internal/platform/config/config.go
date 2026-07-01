@@ -335,8 +335,14 @@ type RedisQueueConfig struct {
 // PluginsConfig holds plugin system settings.
 type PluginsConfig struct {
 	Core    CorePluginsConfig   `yaml:"core"`
+	GraphQL GraphQLPluginConfig `yaml:"graphql"`
 	Example ExamplePluginConfig `yaml:"example"`
 	B2B     B2BPluginConfig     `yaml:"b2b"`
+}
+
+// GraphQLPluginConfig toggles the optional read-only GraphQL API core plugin.
+type GraphQLPluginConfig struct {
+	Enabled bool `yaml:"enabled"`
 }
 
 // ExamplePluginConfig toggles the reference external plugin in plugins/example.
@@ -762,6 +768,11 @@ func applyEnv(cfg *Config) {
 	if v := os.Getenv("SHOPANDA_QUEUE_SQS_REGION"); v != "" {
 		cfg.Queue.SQS.Region = v
 	}
+	if v := os.Getenv("SHOPANDA_PLUGINS_GRAPHQL_ENABLED"); v != "" {
+		if b, err := strconv.ParseBool(v); err == nil {
+			cfg.Plugins.GraphQL.Enabled = b
+		}
+	}
 	if v := os.Getenv("SHOPANDA_PLUGINS_EXAMPLE_ENABLED"); v != "" {
 		cfg.Plugins.Example.Enabled = v == "true" || v == "1"
 	}
@@ -888,6 +899,7 @@ func flatten(cfg *Config) map[string]string {
 	m["queue.sqs.queue_url"] = cfg.Queue.SQS.QueueURL
 	m["queue.sqs.failed_queue_url"] = cfg.Queue.SQS.FailedQueueURL
 	m["queue.sqs.region"] = cfg.Queue.SQS.Region
+	m["plugins.graphql.enabled"] = strconv.FormatBool(cfg.Plugins.GraphQL.Enabled)
 	m["plugins.example.enabled"] = strconv.FormatBool(cfg.Plugins.Example.Enabled)
 	m["plugins.example.fee_minor_units"] = strconv.FormatInt(cfg.Plugins.Example.FeeMinorUnits, 10)
 	m["plugins.b2b.enabled"] = strconv.FormatBool(cfg.Plugins.B2B.Enabled)

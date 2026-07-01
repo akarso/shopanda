@@ -71,6 +71,7 @@ Available today through `plugin.App`:
 | **Permissions** | `RegisterPermission` | Admin RBAC strings |
 | **Admin config** | `RegisterConfig` | Simple settings on Integrations page (`GET/PUT /admin/config?group=plugins`) |
 | **CLI commands** | `RegisterCommand` | Operational subcommands (`domain:action`) |
+| **Public HTTP routes** | `RegisterPublicRoute` | Register public HTTP handlers (e.g. an alternative API surface); mounted by `main.go` after `InitAll` |
 
 Core plugins additionally expose providers on `plugin.App` during init (search engine, job queue, cache store, media storage, payment registry entries) which `main.go` resolves after `InitAll`.
 
@@ -92,6 +93,9 @@ storage:
 payment:
   stripe:
     enabled: true
+plugins:
+  graphql:
+    enabled: true              # default: false — read-only catalog API at POST /api/v1/graphql
 ```
 
 See `configs/config.example.yaml` and [Deployment Guide](docs/guides/DEPLOYMENT.md).
@@ -137,13 +141,11 @@ Honest list of gaps for external authors:
 
 Not implemented; do not assume these exist:
 
-- Go plugin `.so` dynamic loading
+- Go plugin `.so` dynamic loading (see PR-544 research)
 - Plugin marketplace or version resolver
 - Hot reload
 
 Plugin settings (string, int, bool) can be registered with `RegisterConfig` and edited on the admin Integrations page when the plugin is enabled at boot.
-
-**Phase 5 platform work:** GraphQL stretch — see [Phase 5 Roadmap](docs/phase-5-maturity/ROADMAP.md) Track E.
 
 ---
 

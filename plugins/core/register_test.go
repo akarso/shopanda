@@ -413,6 +413,42 @@ func TestRegister_LocalStorageByDefault(t *testing.T) {
 	}
 }
 
+func TestRegister_GraphQLEnabledRegistersGraphQLPlugin(t *testing.T) {
+	log := logger.NewWithWriter(io.Discard, "error")
+	reg := plugin.NewRegistry(log)
+
+	cfg := &config.Config{
+		Plugins: config.PluginsConfig{
+			GraphQL: config.GraphQLPluginConfig{Enabled: true},
+		},
+	}
+	core.Register(reg, cfg)
+
+	var hasGraphQL bool
+	for _, e := range reg.Entries() {
+		if e.Name == "core/graphql-api" {
+			hasGraphQL = true
+		}
+	}
+	if !hasGraphQL {
+		t.Fatal("expected core/graphql-api when plugins.graphql.enabled=true")
+	}
+}
+
+func TestRegister_GraphQLDisabledDoesNotRegister(t *testing.T) {
+	log := logger.NewWithWriter(io.Discard, "error")
+	reg := plugin.NewRegistry(log)
+
+	cfg := &config.Config{}
+	core.Register(reg, cfg)
+
+	for _, e := range reg.Entries() {
+		if e.Name == "core/graphql-api" {
+			t.Fatal("graphql plugin should not register when disabled")
+		}
+	}
+}
+
 func TestRegister_S3StorageOnlyWhenConfigured(t *testing.T) {
 	log := logger.NewWithWriter(io.Discard, "error")
 	reg := plugin.NewRegistry(log)

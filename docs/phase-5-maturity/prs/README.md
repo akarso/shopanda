@@ -29,11 +29,11 @@ Planned specs for **PR-500–549**. Individual PR markdown files will be added w
 | PR-540 | E | [oss] | done | [Merchant outbound webhooks](PR-540.md) |
 | PR-541 | E | [oss] | done | [Plugin CLI registration](PR-541.md) |
 | PR-542 | E | [oss] | done | [Kafka / SQS queue plugins](PR-542.md) |
-| PR-543 | E | [oss] | planned | GraphQL API plugin (stretch) |
+| PR-543 | E | [oss] | done | [GraphQL API plugin (stretch)](PR-543.md) |
 | PR-544 | E | [oss] | planned | Dynamic plugin loading research |
 
 Roadmap: [`../ROADMAP.md`](../ROADMAP.md) · EU compliance: [`../specs/COMPLIANCE_EU.md`](../specs/COMPLIANCE_EU.md) · Licensing: [`../../COMMERCIAL.md`](../../COMMERCIAL.md)
 
-**Suggested next PRs:** [Phase 6 PR-600](../phase-6-merchant-complete/prs/PR-600.md) (navigation admin UI). Phase 5 stretch PR-543–544 deferred to Phase 7 — see [Phase 6 roadmap](../phase-6-merchant-complete/ROADMAP.md).
+**Suggested next PRs:** PR-544 (dynamic plugin loading research). Phase 6 merchant UI starts at [PR-600](../phase-6-merchant-complete/prs/PR-600.md).
 
 [b2b] PRs implement in [`plugins/b2b/`](../../../plugins/b2b/). [oss] PRs stay in open core.
