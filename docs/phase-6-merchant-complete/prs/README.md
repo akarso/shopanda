@@ -5,7 +5,7 @@ Planned specs for **PR-600–651** (Summary, Why, Scope, Out of scope, Validatio
 | PR | Track | License | Status | Spec |
 | --- | --- | --- | --- | --- |
 | PR-600 | A | [oss] | done | [Navigation builder admin UI](PR-600.md) |
-| PR-601 | A | [oss] | planned | [Content blocks admin UI](PR-601.md) |
+| PR-601 | A | [oss] | done | [Content blocks admin UI](PR-601.md) |
 | PR-602 | A | [oss] | planned | [Block placement admin UI](PR-602.md) |
 | PR-610 | B | [b2b] | planned | [Customer groups admin UI](PR-610.md) |
 | PR-611 | B | [oss] | planned | [Store credit admin UI](PR-611.md) |
@@ -22,7 +22,7 @@ Planned specs for **PR-600–651** (Summary, Why, Scope, Out of scope, Validatio
 
 Roadmap: [`../ROADMAP.md`](../ROADMAP.md) · Upstream: [Phase 5](../phase-5-maturity/ROADMAP.md) · Licensing: [`../../COMMERCIAL.md`](../../COMMERCIAL.md)
 
-**Suggested next PRs:** PR-601 (content blocks UI) → PR-602, then PR-620 (webhooks UI).
+**Suggested next PRs:** PR-602 (block placement UI) → PR-620 (webhooks UI).
 
 **Rule for Phase 6:** Do not merge backend/API PRs that add admin nav entries without the corresponding UI PR (or hide the nav item until the UI PR lands).
 
