@@ -177,6 +177,7 @@
         "/admin/store/currencies": { title: "Currencies", render: renderStoreCurrenciesPage, auth: true },
         // Integrations
         "/admin/integrations": { title: "Integrations", render: renderIntegrationsPage, auth: true },
+        "/admin/integrations/webhooks": { title: "Webhooks", render: renderWebhooksGrid, auth: true },
         // Account (accessible from header user-info link)
         "/admin/account": { title: "Account", render: renderAdminAccount, auth: true }
     };
@@ -196,6 +197,9 @@
         }
         if (path === "/admin/content/blocks/new") {
             return { title: "New Block", render: renderBlockCreate, auth: true };
+        }
+        if (path === "/admin/integrations/webhooks/new") {
+            return { title: "New Webhook", render: renderWebhookCreate, auth: true };
         }
         if (path === "/admin/marketing/coupons/new") {
             return { title: "New Coupon", render: renderCouponCreate, auth: true };
@@ -270,6 +274,15 @@
                 title: "Edit Block",
                 auth: true,
                 render: function (container) { renderBlockEdit(container, blockID); }
+            };
+        }
+        var webhookMatch = path.match(/^\/admin\/integrations\/webhooks\/([^/]+)$/);
+        if (webhookMatch) {
+            var webhookID = decodeURIComponent(webhookMatch[1]);
+            return {
+                title: "Edit Webhook",
+                auth: true,
+                render: function (container) { renderWebhookEdit(container, webhookID); }
             };
         }
         var productMatch = path.match(/^\/admin\/products\/([^/]+)$/);
@@ -5718,6 +5731,285 @@
         });
     }
 
+    function normalizeWebhookEndpoint(raw) {
+        if (!raw) {
+            return null;
+        }
+        var eventsRaw = pick(raw, "events", "Events");
+        var events = [];
+        if (Array.isArray(eventsRaw)) {
+            events = eventsRaw.slice();
+        }
+        return {
+            id: pick(raw, "id", "ID"),
+            url: pick(raw, "url", "URL") || "",
+            events: events,
+            active: pick(raw, "active", "Active") !== false,
+            description: pick(raw, "description", "Description") || "",
+            secret_prefix: pick(raw, "secret_prefix", "SecretPrefix") || "",
+            created_at: pick(raw, "created_at", "CreatedAt"),
+            updated_at: pick(raw, "updated_at", "UpdatedAt")
+        };
+    }
+
+    function normalizeWebhookEndpoints(raw) {
+        if (!Array.isArray(raw)) {
+            return [];
+        }
+        var out = [];
+        for (var i = 0; i < raw.length; i++) {
+            var endpoint = normalizeWebhookEndpoint(raw[i]);
+            if (endpoint) {
+                out.push(endpoint);
+            }
+        }
+        return out;
+    }
+
+    function renderWebhookSecretNotice(secret) {
+        if (!secret) {
+            return "";
+        }
+        return '<div class="webhook-secret-notice" role="alert">' +
+            "<p><strong>Signing secret (copy now — shown once):</strong></p>" +
+            "<code>" + esc(secret) + "</code>" +
+            "</div>";
+    }
+
+    function renderWebhookEventFields(events, selectedEvents) {
+        var selectedMap = {};
+        var selected = selectedEvents || [];
+        for (var i = 0; i < selected.length; i++) {
+            selectedMap[selected[i]] = true;
+        }
+        var html = "<fieldset><legend>Subscribed events</legend>";
+        if (!events || events.length === 0) {
+            html += "<p class=\"settings-scope-note\">No webhook events available.</p>";
+        } else {
+            for (var j = 0; j < events.length; j++) {
+                var eventName = events[j];
+                var checked = selectedMap[eventName] ? " checked" : "";
+                html += "<label><input type=\"checkbox\" name=\"webhook_event\" value=\"" + esc(eventName) + "\"" + checked + "> " + esc(eventName) + "</label>";
+            }
+        }
+        html += "</fieldset>";
+        return html;
+    }
+
+    function readWebhookEventsFromForm(form) {
+        var inputs = form.querySelectorAll('input[name="webhook_event"]:checked');
+        var out = [];
+        for (var i = 0; i < inputs.length; i++) {
+            if (inputs[i].value) {
+                out.push(inputs[i].value);
+            }
+        }
+        return out;
+    }
+
+    function renderWebhooksGrid(container) {
+        container.innerHTML =
+            "<h2>Outbound Webhooks</h2>" +
+            "<p><a href=\"/admin/integrations\" data-link>Back to integrations</a></p>" +
+            "<div id=\"webhooks-grid\"></div>";
+
+        var grid = document.getElementById("webhooks-grid");
+        api("/admin/webhooks").then(function (body) {
+            if (body && body.error && body.error.code === "forbidden") {
+                grid.innerHTML = "<p role=\"alert\">Your account does not have settings access.</p>";
+                return;
+            }
+            if (body && body.error) {
+                grid.innerHTML = "<p role=\"alert\">" + esc(extractErrorMessage(body, "Failed to load webhooks.")) + "</p>";
+                return;
+            }
+
+            var endpoints = normalizeWebhookEndpoints(body && body.data && body.data.endpoints);
+            var html = "<div style=\"margin-bottom:1rem\"><a class=\"button\" href=\"/admin/integrations/webhooks/new\" data-link id=\"new-webhook-btn\">New webhook</a></div>";
+            html += "<table><thead><tr>" +
+                "<th>URL</th><th>Events</th><th>Status</th><th>Updated</th>" +
+                "</tr></thead><tbody>";
+
+            if (endpoints.length === 0) {
+                html += "<tr><td colspan=\"4\">No webhook endpoints configured.</td></tr>";
+            } else {
+                for (var i = 0; i < endpoints.length; i++) {
+                    var endpoint = endpoints[i];
+                    var editHref = "/admin/integrations/webhooks/" + encodeURIComponent(endpoint.id || "");
+                    var eventsText = (endpoint.events || []).join(", ");
+                    html += "<tr>" +
+                        "<td><a href=\"" + editHref + "\" data-link>" + esc(endpoint.url || endpoint.id || "") + "</a></td>" +
+                        "<td>" + esc(eventsText || "—") + "</td>" +
+                        "<td><span class=\"badge badge-" + esc(endpoint.active ? "active" : "draft") + "\">" +
+                        esc(endpoint.active ? "active" : "inactive") + "</span></td>" +
+                        "<td>" + esc(endpoint.updated_at ? String(endpoint.updated_at).substring(0, 10) : "") + "</td>" +
+                        "</tr>";
+                }
+            }
+
+            html += "</tbody></table>";
+            grid.innerHTML = html;
+        }).catch(function (err) {
+            grid.innerHTML = "<p role=\"alert\">" + esc(extractErrorMessage(err, "Failed to load webhooks.")) + "</p>";
+        });
+    }
+
+    function renderWebhookCreate(container) {
+        renderWebhookForm(container, null);
+    }
+
+    function renderWebhookEdit(container, webhookID) {
+        renderWebhookForm(container, webhookID);
+    }
+
+    function renderWebhookFormFields(endpoint, events) {
+        var isActive = endpoint ? !!endpoint.active : true;
+        var html = "" +
+            "<label>URL<input name=\"url\" type=\"url\" value=\"" + esc(endpoint ? (endpoint.url || "") : "") + "\" required placeholder=\"https://example.com/webhooks\"></label>" +
+            "<label>Description<input name=\"description\" value=\"" + esc(endpoint ? (endpoint.description || "") : "") + "\"></label>" +
+            renderWebhookEventFields(events, endpoint ? endpoint.events : []) +
+            "<label><input type=\"checkbox\" name=\"active\"" + (isActive ? " checked" : "") + "> Active</label>";
+        if (endpoint && endpoint.secret_prefix) {
+            html += "<p class=\"settings-scope-note\">Current signing secret prefix: <code>" + esc(endpoint.secret_prefix) + "</code></p>";
+        }
+        if (endpoint) {
+            html += "<label><input type=\"checkbox\" name=\"rotate_secret\"> Rotate signing secret</label>";
+        }
+        html += "<div style=\"margin-top:1rem\"><button type=\"submit\">Save</button>" +
+            (endpoint ? " <button type=\"button\" id=\"delete-webhook-btn\" class=\"danger\">Delete</button>" : "") +
+            "</div>";
+        return html;
+    }
+
+    function renderWebhookForm(container, webhookID) {
+        var isCreate = !webhookID;
+        var title = isCreate ? "New Webhook" : "Edit Webhook";
+        container.innerHTML =
+            "<h2>" + title + "</h2>" +
+            "<p><a href=\"/admin/integrations/webhooks\" data-link>Back to webhooks</a></p>" +
+            "<div id=\"webhook-form-msg\"></div>" +
+            "<form id=\"webhook-form\"><p>Loading…</p></form>";
+
+        var msg = document.getElementById("webhook-form-msg");
+        var form = document.getElementById("webhook-form");
+
+        function bindForm(endpoint, events) {
+            form.innerHTML = renderWebhookFormFields(endpoint, events || []);
+
+            form.onsubmit = function (e) {
+                e.preventDefault();
+                var payload = {
+                    url: form.elements.url.value,
+                    description: form.elements.description.value,
+                    events: readWebhookEventsFromForm(form),
+                    active: form.elements.active.checked
+                };
+                if (!isCreate && form.elements.rotate_secret) {
+                    payload.rotate_secret = form.elements.rotate_secret.checked;
+                }
+                var method = isCreate ? "POST" : "PUT";
+                var url = isCreate
+                    ? "/admin/webhooks"
+                    : "/admin/webhooks/" + encodeURIComponent(webhookID);
+                api(url, { method: method, body: JSON.stringify(payload) }).then(function (body) {
+                    if (body && body.error) {
+                        msg.innerHTML = "<p role=\"alert\">" + esc(body.error.message || "Save failed.") + "</p>";
+                        return;
+                    }
+                    var savedEndpoint = normalizeWebhookEndpoint(body && body.data && body.data.endpoint);
+                    var secret = body && body.data && body.data.secret;
+                    var notice = renderWebhookSecretNotice(secret);
+                    if (isCreate && savedEndpoint && savedEndpoint.id) {
+                        msg.innerHTML = notice || "<p>Webhook saved.</p>";
+                        form.innerHTML = "<p>Webhook endpoint created. " +
+                            "<a href=\"/admin/integrations/webhooks/" + encodeURIComponent(savedEndpoint.id) + "\" data-link>Edit endpoint</a> | " +
+                            "<a href=\"/admin/integrations/webhooks\" data-link>Back to list</a></p>";
+                        form.onsubmit = null;
+                        return;
+                    }
+                    msg.innerHTML = notice || "<p>Webhook saved.</p>";
+                    if (savedEndpoint) {
+                        bindForm(savedEndpoint, events);
+                    }
+                }).catch(function (err) {
+                    msg.innerHTML = "<p role=\"alert\">" + esc(extractErrorMessage(err, "Save failed.")) + "</p>";
+                });
+            };
+
+            if (!isCreate) {
+                var deleteBtn = document.getElementById("delete-webhook-btn");
+                if (deleteBtn) {
+                    deleteBtn.onclick = function () {
+                        if (!window.confirm("Delete webhook endpoint " + (endpoint.url || endpoint.id) + "?")) {
+                            return;
+                        }
+                        api("/admin/webhooks/" + encodeURIComponent(webhookID), { method: "DELETE" }).then(function (body) {
+                            if (body && body.error) {
+                                msg.innerHTML = "<p role=\"alert\">" + esc(body.error.message || "Failed to delete webhook.") + "</p>";
+                                return;
+                            }
+                            navigateTo("/admin/integrations/webhooks");
+                        }).catch(function (err) {
+                            msg.innerHTML = "<p role=\"alert\">" + esc(extractErrorMessage(err, "Failed to delete webhook.")) + "</p>";
+                        });
+                    };
+                }
+            }
+        }
+
+        var requests = [api("/admin/webhooks/events")];
+        if (isCreate) {
+            requests.push(Promise.resolve(null));
+        } else {
+            requests.push(api("/admin/webhooks/" + encodeURIComponent(webhookID)));
+        }
+
+        Promise.all(requests).then(function (results) {
+            var eventsBody = results[0];
+            var endpointBody = results[1];
+
+            if ((eventsBody && eventsBody.error && eventsBody.error.code === "forbidden") ||
+                (endpointBody && endpointBody.error && endpointBody.error.code === "forbidden")) {
+                msg.innerHTML = "<p role=\"alert\">Your account does not have settings access.</p>";
+                form.innerHTML = "";
+                return;
+            }
+            if (eventsBody && eventsBody.error) {
+                msg.innerHTML = "<p role=\"alert\">" + esc(extractErrorMessage(eventsBody, "Failed to load webhook events.")) + "</p>";
+                form.innerHTML = "";
+                return;
+            }
+
+            var events = eventsBody && eventsBody.data && eventsBody.data.events;
+            if (!Array.isArray(events)) {
+                msg.innerHTML = "<p role=\"alert\">" + esc(extractErrorMessage(eventsBody, "Failed to load webhook events.")) + "</p>";
+                form.innerHTML = "";
+                return;
+            }
+
+            if (isCreate) {
+                bindForm(null, events);
+                return;
+            }
+
+            if (endpointBody && endpointBody.error) {
+                msg.innerHTML = "<p role=\"alert\">" + esc(extractErrorMessage(endpointBody, "Failed to load webhook.")) + "</p>";
+                form.innerHTML = "";
+                return;
+            }
+            var endpoint = normalizeWebhookEndpoint(endpointBody && endpointBody.data && endpointBody.data.endpoint);
+            if (!endpoint || !endpoint.id) {
+                msg.innerHTML = "<p role=\"alert\">Webhook endpoint not found.</p>";
+                form.innerHTML = "";
+                return;
+            }
+            bindForm(endpoint, events);
+        }).catch(function (err) {
+            form.innerHTML = "";
+            msg.innerHTML = "<p role=\"alert\">" + esc(extractErrorMessage(err, "Failed to load webhook form.")) + "</p>";
+        });
+    }
+
     function renderIntegrationsPage(container) {
         container.innerHTML = '<h2>Integrations</h2><div id="integrations-grid"></div>';
 
@@ -5779,7 +6071,7 @@
                 '<section>' +
                 '<h3>Outbound Webhooks</h3>' +
                 '<p><strong>Configured endpoints:</strong> ' + esc(String(webhookCount)) + '</p>' +
-                '<p class="admin-form-hint">Manage signed order/payment webhook subscriptions via the API (<code>/api/v1/admin/webhooks</code>).</p>' +
+                '<p><a href="/admin/integrations/webhooks" data-link>Manage webhooks</a></p>' +
                 '</section>' +
                 '<section>' +
                 '<h3>Media Storage</h3>' +
