@@ -2664,7 +2664,7 @@
                         msg.innerHTML = "<p role=\"alert\">" + esc(body.error.message || "Save failed.") + "</p>";
                         return;
                     }
-                    msg.innerHTML = "<p>Saved.</p>";
+                    msg.innerHTML = "<p>Block saved.</p>";
                     var savedBlock = normalizeContentBlock(body && body.data);
                     if (isCreate && savedBlock && savedBlock.id) {
                         navigateTo("/admin/content/blocks/" + encodeURIComponent(savedBlock.id));
