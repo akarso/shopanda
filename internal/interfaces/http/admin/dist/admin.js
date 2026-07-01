@@ -158,7 +158,7 @@
         // Content
         "/admin/content/pages": { title: "Pages", render: renderPagesGrid, auth: true },
         "/admin/content/navigation": { title: "Navigation", render: renderNavigationGrid, auth: true },
-        "/admin/content/blocks": { title: "Blocks", render: renderPlaceholder("Blocks"), auth: true },
+        "/admin/content/blocks": { title: "Blocks", render: renderBlocksGrid, auth: true },
         "/admin/media": { title: "Media", render: renderMediaLibrary, auth: true },
         // Operations
         "/admin/operations/inventory": { title: "Inventory", render: renderInventoryGrid, auth: true },
@@ -192,6 +192,9 @@
         }
         if (path === "/admin/content/pages/new") {
             return { title: "New Page", render: renderPageCreate, auth: true };
+        }
+        if (path === "/admin/content/blocks/new") {
+            return { title: "New Block", render: renderBlockCreate, auth: true };
         }
         if (path === "/admin/marketing/coupons/new") {
             return { title: "New Coupon", render: renderCouponCreate, auth: true };
@@ -257,6 +260,15 @@
                 title: "Edit Menu",
                 auth: true,
                 render: function (container) { renderNavigationEdit(container, menuID); }
+            };
+        }
+        var blockMatch = path.match(/^\/admin\/content\/blocks\/([^/]+)$/);
+        if (blockMatch) {
+            var blockID = decodeURIComponent(blockMatch[1]);
+            return {
+                title: "Edit Block",
+                auth: true,
+                render: function (container) { renderBlockEdit(container, blockID); }
             };
         }
         var productMatch = path.match(/^\/admin\/products\/([^/]+)$/);
@@ -2119,6 +2131,118 @@
         return out;
     }
 
+    function normalizeContentBlock(raw) {
+        if (!raw) {
+            return null;
+        }
+        var config = pick(raw, "config", "Config");
+        if (!config || typeof config !== "object" || Array.isArray(config)) {
+            config = {};
+        }
+        return {
+            id: pick(raw, "id", "ID"),
+            title: pick(raw, "title", "Title") || "",
+            block_type: pick(raw, "block_type", "BlockType") || "",
+            config: config,
+            is_active: pick(raw, "is_active", "IsActive") !== false,
+            created_at: pick(raw, "created_at", "CreatedAt"),
+            updated_at: pick(raw, "updated_at", "UpdatedAt")
+        };
+    }
+
+    function normalizeContentBlocks(raw) {
+        if (!Array.isArray(raw)) {
+            return [];
+        }
+        var out = [];
+        for (var i = 0; i < raw.length; i++) {
+            var block = normalizeContentBlock(raw[i]);
+            if (block) {
+                out.push(block);
+            }
+        }
+        return out;
+    }
+
+    function formatBlockTypeLabel(blockType) {
+        if (blockType === "hero") {
+            return "Hero";
+        }
+        if (blockType === "rich_text") {
+            return "Rich text";
+        }
+        if (blockType === "product_carousel") {
+            return "Product carousel";
+        }
+        return blockType || "—";
+    }
+
+    function parseProductIDsInput(text) {
+        var out = [];
+        var seen = {};
+        String(text || "").split(/[\n,]+/).forEach(function (part) {
+            var id = part.trim();
+            if (id && !seen[id]) {
+                seen[id] = true;
+                out.push(id);
+            }
+        });
+        return out;
+    }
+
+    function formatProductIDsInput(ids) {
+        if (!Array.isArray(ids)) {
+            return "";
+        }
+        return ids.map(function (id) {
+            return String(id || "").trim();
+        }).filter(Boolean).join("\n");
+    }
+
+    function renderBlockConfigFields(blockType, config) {
+        config = config || {};
+        if (blockType === "hero") {
+            return "" +
+                '<label>Headline<input name="headline" value="' + esc(config.headline || "") + '" required></label>' +
+                '<label>Subheadline<input name="subheadline" value="' + esc(config.subheadline || "") + '"></label>' +
+                '<label>CTA label<input name="cta_label" value="' + esc(config.cta_label || "") + '"></label>' +
+                '<label>CTA URL<input name="cta_url" value="' + esc(config.cta_url || "") + '"></label>' +
+                '<label>Image URL<input name="image_url" value="' + esc(config.image_url || "") + '"></label>';
+        }
+        if (blockType === "rich_text") {
+            return '<label>Body<textarea name="body" rows="12" required>' + esc(config.body || "") + "</textarea></label>";
+        }
+        if (blockType === "product_carousel") {
+            return "" +
+                '<label>Carousel title<input name="carousel_title" value="' + esc(config.title || "") + '"></label>' +
+                '<label>Product IDs<textarea name="product_ids" rows="6" placeholder="One product ID per line">' +
+                esc(formatProductIDsInput(config.product_ids)) + "</textarea></label>";
+        }
+        return "<p>Unknown block type.</p>";
+    }
+
+    function readBlockConfigFromForm(form, blockType) {
+        if (blockType === "hero") {
+            return {
+                headline: form.elements.headline.value,
+                subheadline: form.elements.subheadline.value,
+                cta_label: form.elements.cta_label.value,
+                cta_url: form.elements.cta_url.value,
+                image_url: form.elements.image_url.value
+            };
+        }
+        if (blockType === "rich_text") {
+            return { body: form.elements.body.value };
+        }
+        if (blockType === "product_carousel") {
+            return {
+                title: form.elements.carousel_title.value,
+                product_ids: parseProductIDsInput(form.elements.product_ids.value)
+            };
+        }
+        return {};
+    }
+
     var menuItemIdCounter = 0;
 
     function newMenuItemId() {
@@ -2409,6 +2533,194 @@
         }).catch(function (err) {
             form.innerHTML = "";
             msg.innerHTML = '<p role="alert">' + esc(extractErrorMessage(err, "Failed to load menu form.")) + "</p>";
+        });
+    }
+
+    function renderBlocksGrid(container) {
+        container.innerHTML = "<h2>Content Blocks</h2><div id=\"blocks-grid\"></div>";
+
+        var grid = document.getElementById("blocks-grid");
+        api("/admin/content-blocks?offset=0&limit=50").then(function (body) {
+            if (body && body.error && body.error.code === "forbidden") {
+                grid.innerHTML = "<p role=\"alert\">Your account does not have content blocks access.</p>";
+                return;
+            }
+            if (body && body.error) {
+                grid.innerHTML = "<p role=\"alert\">" + esc(extractErrorMessage(body, "Failed to load content blocks.")) + "</p>";
+                return;
+            }
+
+            var blocks = normalizeContentBlocks(body && body.data);
+            var html = "<div style=\"margin-bottom:1rem\"><a class=\"button\" href=\"/admin/content/blocks/new\" data-link id=\"new-block-btn\">New Block</a></div>";
+            html += "<table><thead><tr>" +
+                "<th>Title</th><th>Type</th><th>Status</th><th>Updated</th>" +
+                "</tr></thead><tbody>";
+
+            if (blocks.length === 0) {
+                html += "<tr><td colspan=\"4\">No content blocks found.</td></tr>";
+            } else {
+                for (var i = 0; i < blocks.length; i++) {
+                    var block = blocks[i];
+                    var editHref = "/admin/content/blocks/" + encodeURIComponent(block.id || "");
+                    html += "<tr>" +
+                        "<td><a href=\"" + editHref + "\" data-link>" + esc(block.title || block.id || "") + "</a></td>" +
+                        "<td>" + esc(formatBlockTypeLabel(block.block_type)) + "</td>" +
+                        "<td><span class=\"badge badge-" + esc(block.is_active ? "active" : "draft") + "\">" +
+                        esc(block.is_active ? "active" : "inactive") + "</span></td>" +
+                        "<td>" + esc(block.updated_at ? String(block.updated_at).substring(0, 10) : "") + "</td>" +
+                        "</tr>";
+                }
+            }
+
+            html += "</tbody></table>";
+            grid.innerHTML = html;
+        }).catch(function (err) {
+            grid.innerHTML = "<p role=\"alert\">" + esc(extractErrorMessage(err, "Failed to load content blocks.")) + "</p>";
+        });
+    }
+
+    function renderBlockCreate(container) {
+        renderBlockForm(container, null);
+    }
+
+    function renderBlockEdit(container, blockID) {
+        renderBlockForm(container, blockID);
+    }
+
+    function renderBlockFormShell(isCreate) {
+        var heading = isCreate ? "New Block" : "Edit Block";
+        return "<h2>" + heading + "</h2>" +
+            "<p><a href=\"/admin/content/blocks\" data-link>Back to blocks</a></p>" +
+            "<div id=\"block-form-msg\"></div>" +
+            "<form id=\"block-form\"><p>Loading…</p></form>";
+    }
+
+    function renderBlockFormBaseFields(block, isCreate) {
+        var isActive = block ? !!block.is_active : true;
+        var html = "<label>Title<input name=\"title\" value=\"" + esc(block ? (block.title || "") : "") + "\" required></label>";
+        if (isCreate) {
+            html += "<label>Block type<select name=\"block_type\" required>" +
+                "<option value=\"hero\">Hero</option>" +
+                "<option value=\"rich_text\">Rich text</option>" +
+                "<option value=\"product_carousel\">Product carousel</option>" +
+                "</select></label>";
+        } else {
+            html += "<p><strong>Type:</strong> " + esc(formatBlockTypeLabel(block.block_type)) + "</p>";
+        }
+        html += "<div id=\"block-config-fields\"></div>" +
+            "<label><input type=\"checkbox\" name=\"is_active\"" + (isActive ? " checked" : "") + "> Active</label>" +
+            "<div style=\"margin-top:1rem\"><button type=\"submit\">Save</button>" +
+            (isCreate ? "" : " <button type=\"button\" id=\"delete-block-btn\" class=\"danger\">Delete</button>") +
+            "</div>";
+        return html;
+    }
+
+    function syncBlockConfigFields(form, blockType, config) {
+        var panel = document.getElementById("block-config-fields");
+        if (!panel) {
+            return;
+        }
+        panel.innerHTML = renderBlockConfigFields(blockType, config || {});
+    }
+
+    function renderBlockForm(container, blockID) {
+        var isCreate = !blockID;
+        container.innerHTML = renderBlockFormShell(isCreate);
+
+        var msg = document.getElementById("block-form-msg");
+        var form = document.getElementById("block-form");
+
+        function bindForm(block) {
+            var blockType = isCreate ? "hero" : (block.block_type || "hero");
+            form.innerHTML = renderBlockFormBaseFields(block, isCreate);
+            if (isCreate && form.elements.block_type) {
+                form.elements.block_type.value = blockType;
+            }
+            syncBlockConfigFields(form, blockType, block ? block.config : {});
+
+            if (isCreate && form.elements.block_type) {
+                form.elements.block_type.addEventListener("change", function () {
+                    syncBlockConfigFields(form, form.elements.block_type.value, {});
+                });
+            }
+
+            form.addEventListener("submit", function (e) {
+                e.preventDefault();
+                var activeType = isCreate ? form.elements.block_type.value : blockType;
+                var payload = {
+                    title: form.elements.title.value,
+                    config: readBlockConfigFromForm(form, activeType),
+                    is_active: form.elements.is_active.checked
+                };
+                if (isCreate) {
+                    payload.block_type = activeType;
+                }
+                var method = isCreate ? "POST" : "PUT";
+                var url = isCreate
+                    ? "/admin/content-blocks"
+                    : "/admin/content-blocks/" + encodeURIComponent(blockID);
+                api(url, { method: method, body: JSON.stringify(payload) }).then(function (body) {
+                    if (body && body.error) {
+                        msg.innerHTML = "<p role=\"alert\">" + esc(body.error.message || "Save failed.") + "</p>";
+                        return;
+                    }
+                    msg.innerHTML = "<p>Block saved.</p>";
+                    var savedBlock = normalizeContentBlock(body && body.data);
+                    if (isCreate && savedBlock && savedBlock.id) {
+                        navigateTo("/admin/content/blocks/" + encodeURIComponent(savedBlock.id));
+                    }
+                }).catch(function (err) {
+                    msg.innerHTML = "<p role=\"alert\">" + esc(extractErrorMessage(err, "Save failed.")) + "</p>";
+                });
+            });
+
+            if (!isCreate) {
+                var deleteBtn = document.getElementById("delete-block-btn");
+                if (deleteBtn) {
+                    deleteBtn.addEventListener("click", function () {
+                        if (!window.confirm("Delete " + (block.title || block.id) + "?")) {
+                            return;
+                        }
+                        api("/admin/content-blocks/" + encodeURIComponent(blockID), { method: "DELETE" }).then(function (body) {
+                            if (body && body.error) {
+                                msg.innerHTML = "<p role=\"alert\">" + esc(body.error.message || "Failed to delete block.") + "</p>";
+                                return;
+                            }
+                            navigateTo("/admin/content/blocks");
+                        }).catch(function (err) {
+                            msg.innerHTML = "<p role=\"alert\">" + esc(extractErrorMessage(err, "Failed to delete block.")) + "</p>";
+                        });
+                    });
+                }
+            }
+        }
+
+        if (isCreate) {
+            bindForm(null);
+            return;
+        }
+
+        api("/admin/content-blocks/" + encodeURIComponent(blockID)).then(function (body) {
+            if (body && body.error && body.error.code === "forbidden") {
+                msg.innerHTML = "<p role=\"alert\">Your account does not have content blocks access.</p>";
+                form.innerHTML = "";
+                return;
+            }
+            if (body && body.error) {
+                msg.innerHTML = "<p role=\"alert\">" + esc(extractErrorMessage(body, "Failed to load block.")) + "</p>";
+                form.innerHTML = "";
+                return;
+            }
+            var block = normalizeContentBlock(body && body.data);
+            if (!block || !block.id) {
+                msg.innerHTML = "<p role=\"alert\">Content block not found.</p>";
+                form.innerHTML = "";
+                return;
+            }
+            bindForm(block);
+        }).catch(function (err) {
+            form.innerHTML = "";
+            msg.innerHTML = "<p role=\"alert\">" + esc(extractErrorMessage(err, "Failed to load block form.")) + "</p>";
         });
     }
 

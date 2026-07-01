@@ -197,6 +197,37 @@ func TestAdminHandler_StaticJS(t *testing.T) {
 			t.Fatalf("expected navigation CRUD wiring %q in JS", expected)
 		}
 	}
+	if !strings.Contains(normalizedBody, "renderBlocksGrid") || !strings.Contains(normalizedBody, "/admin/content-blocks?offset=0&limit=50") {
+		t.Fatalf("expected content blocks admin surface wiring in JS")
+	}
+	expectedContentBlockCrudWiring := []string{
+		"renderBlockForm",
+		"renderBlockCreate",
+		"renderBlockEdit",
+		"renderBlockConfigFields",
+		"readBlockConfigFromForm",
+		"/admin/content/blocks/new",
+		"new-block-btn",
+		"delete-block-btn",
+		`value="hero">Hero</option>`,
+		`value="rich_text">Rich text</option>`,
+		`value="product_carousel">Product carousel</option>`,
+		`name="headline"`,
+		`name="body"`,
+		`name="carousel_title"`,
+		`name="product_ids"`,
+		"Failed to load content blocks.",
+		"Failed to load block form.",
+		"Content block not found.",
+		"Failed to delete block.",
+		"Your account does not have content blocks access.",
+		"Block saved.",
+	}
+	for _, expected := range expectedContentBlockCrudWiring {
+		if !strings.Contains(normalizedBody, expected) {
+			t.Fatalf("expected content blocks CRUD wiring %q in JS", expected)
+		}
+	}
 	if !strings.Contains(normalizedBody, "renderCouponsGrid") || !strings.Contains(normalizedBody, "/admin/coupons?offset=0&limit=50") {
 		t.Fatalf("expected coupons admin surface wiring in JS")
 	}
