@@ -175,6 +175,67 @@ func TestHandler_RequiresQuery(t *testing.T) {
 	}
 }
 
+func TestHandler_ValidationErrorReturns400(t *testing.T) {
+	schema, err := cgraphql.NewSchema(testResolver(t))
+	if err != nil {
+		t.Fatalf("NewSchema: %v", err)
+	}
+	h := cgraphql.NewHandler(schema, testLogger())
+
+	body := `{"query":"{ noSuchRootField }"}`
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/graphql", bytes.NewBufferString(body))
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400, body = %s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestHandler_ResolverErrorReturns500(t *testing.T) {
+	resolver, err := cgraphql.NewResolver(
+		&stubProductRepo{
+			findByIDFn: func(context.Context, string) (*catalog.Product, error) {
+				return nil, errTestDBFailure
+			},
+		},
+		&stubCategoryRepo{},
+	)
+	if err != nil {
+		t.Fatalf("NewResolver: %v", err)
+	}
+	schema, err := cgraphql.NewSchema(resolver)
+	if err != nil {
+		t.Fatalf("NewSchema: %v", err)
+	}
+	h := cgraphql.NewHandler(schema, testLogger())
+
+	body := `{"query":"{ product(id: \"prod-1\") { id name } }"}`
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/graphql", bytes.NewBufferString(body))
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("status = %d, want 500, body = %s", rec.Code, rec.Body.String())
+	}
+
+	var resp struct {
+		Errors []struct {
+			Message string `json:"message"`
+		} `json:"errors"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if len(resp.Errors) == 0 || resp.Errors[0].Message != "internal server error" {
+		t.Fatalf("errors = %+v, want sanitized internal message", resp.Errors)
+	}
+}
+
+var errTestDBFailure = &testError{msg: "connection refused"}
+
+type testError struct{ msg string }
+
+func (e *testError) Error() string { return e.msg }
+
 func TestHandler_RejectsNonPost(t *testing.T) {
 	schema, err := cgraphql.NewSchema(testResolver(t))
 	if err != nil {

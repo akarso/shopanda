@@ -64,22 +64,28 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 
-	// GraphQL execution that succeeds returns HTTP 200. When the query fails
-	// validation or a resolver returns an error, result.Errors is non-empty and
-	// this endpoint responds with HTTP 400. Resolver/DB error text is never
-	// returned to clients: such errors are logged server-side and replaced with
-	// a generic message (see sanitizeErrors). Validation/syntax errors, which
-	// describe the client's own query, are passed through unchanged.
+	// HTTP status: 200 on success; 400 for client query/validation errors; 500
+	// when any resolver/DB failure was sanitized (see sanitizeErrors).
 	if len(result.Errors) > 0 {
-		w.WriteHeader(http.StatusBadRequest)
+		sanitized := h.sanitizeErrors(result.Errors)
+		status := http.StatusBadRequest
+		for _, e := range sanitized {
+			if e.Message == internalErrorMessage {
+				status = http.StatusInternalServerError
+				break
+			}
+		}
+		w.WriteHeader(status)
 		_ = json.NewEncoder(w).Encode(map[string]interface{}{
 			"data":   result.Data,
-			"errors": h.sanitizeErrors(result.Errors),
+			"errors": sanitized,
 		})
 		return
 	}
 	_ = json.NewEncoder(w).Encode(result)
 }
+
+const internalErrorMessage = "internal server error"
 
 // sanitizeErrors strips internal resolver/DB error text from GraphQL errors
 // before they reach the client. Errors originating from a resolver (i.e. with
@@ -103,7 +109,7 @@ func (h *Handler) sanitizeErrors(errs []gqlerrors.FormattedError) []gqlerrors.Fo
 			})
 		}
 		out[i] = gqlerrors.FormattedError{
-			Message:   "internal server error",
+			Message:   internalErrorMessage,
 			Locations: e.Locations,
 			Path:      e.Path,
 		}
