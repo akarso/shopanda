@@ -97,6 +97,29 @@ func (s *Storage) Delete(path string) error {
 	return nil
 }
 
+// Read returns file contents from basePath/path.
+func (s *Storage) Read(path string) ([]byte, error) {
+	full := filepath.Join(s.basePath, filepath.Clean(path))
+
+	abs, err := filepath.Abs(full)
+	if err != nil {
+		return nil, fmt.Errorf("localfs: resolve path: %w", err)
+	}
+	base, err := filepath.Abs(s.basePath)
+	if err != nil {
+		return nil, fmt.Errorf("localfs: resolve base: %w", err)
+	}
+	if abs != base && !strings.HasPrefix(abs, base+string(os.PathSeparator)) {
+		return nil, fmt.Errorf("localfs: path escapes base directory")
+	}
+
+	data, err := os.ReadFile(full)
+	if err != nil {
+		return nil, fmt.Errorf("localfs: read: %w", err)
+	}
+	return data, nil
+}
+
 // URL returns baseURL/path. Returns empty string if path escapes the storage root.
 func (s *Storage) URL(path string) string {
 	cleaned := filepath.Clean(path)
