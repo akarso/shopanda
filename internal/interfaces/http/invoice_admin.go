@@ -132,13 +132,13 @@ func (h *InvoiceAdminHandler) DownloadPDF() http.HandlerFunc {
 
 func (h *InvoiceAdminHandler) loadPDFBytes(inv domainInvoice.Invoice) ([]byte, error) {
 	pdfPath := fmt.Sprintf("invoices/%s/invoice-%d.pdf", inv.ID(), inv.InvoiceNumber())
-	if h.storage != nil {
-		if reader, ok := h.storage.(interface {
-			Read(path string) ([]byte, error)
-		}); ok {
-			if data, err := reader.Read(pdfPath); err == nil && len(data) > 0 {
-				return data, nil
-			}
+	if reader, ok := h.storage.(media.ReadableStorage); ok {
+		data, err := reader.Read(pdfPath)
+		if err == nil && len(data) > 0 {
+			return data, nil
+		}
+		if err != nil && !media.IsNotFound(err) {
+			return nil, fmt.Errorf("read stored invoice pdf: %w", err)
 		}
 	}
 	return h.renderer.Render(inv)

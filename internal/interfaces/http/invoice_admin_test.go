@@ -3,14 +3,17 @@ package http_test
 import (
 	"context"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"strings"
 	"testing"
 	"time"
 
 	domainInvoice "github.com/akarso/shopanda/internal/domain/invoice"
 	"github.com/akarso/shopanda/internal/domain/identity"
+	"github.com/akarso/shopanda/internal/domain/media"
 	"github.com/akarso/shopanda/internal/domain/order"
 	"github.com/akarso/shopanda/internal/domain/rbac"
 	"github.com/akarso/shopanda/internal/domain/shared"
@@ -78,6 +81,21 @@ func (s *stubInvoicePDFRenderer) Render(domainInvoice.Invoice) ([]byte, error) {
 	return []byte("%PDF-stub"), nil
 }
 
+type stubReadableStorage struct {
+	files map[string][]byte
+}
+
+func (s *stubReadableStorage) Name() string { return "stub-readable" }
+func (s *stubReadableStorage) Save(string, io.Reader) error { return nil }
+func (s *stubReadableStorage) Delete(string) error             { return nil }
+func (s *stubReadableStorage) URL(string) string               { return "" }
+func (s *stubReadableStorage) Read(path string) ([]byte, error) {
+	if data, ok := s.files[path]; ok {
+		return data, nil
+	}
+	return nil, os.ErrNotExist
+}
+
 func sampleHTTPInvoice(t *testing.T, invoiceID, orderID string, number int64) domainInvoice.Invoice {
 	t.Helper()
 	price, err := shared.NewMoney(1000, "EUR")
@@ -114,9 +132,9 @@ func sampleHTTPOrder(orderID string) *order.Order {
 	return &ord
 }
 
-func invoiceAdminMux(t *testing.T, invRepo *invoiceHTTPRepo, ordRepo *invoiceHTTPOrderRepo, renderer *stubInvoicePDFRenderer) *http.ServeMux {
+func invoiceAdminMux(t *testing.T, invRepo *invoiceHTTPRepo, ordRepo *invoiceHTTPOrderRepo, renderer *stubInvoicePDFRenderer, storage media.Storage) *http.ServeMux {
 	t.Helper()
-	h := shophttp.NewInvoiceAdminHandler(invRepo, ordRepo, renderer, nil)
+	h := shophttp.NewInvoiceAdminHandler(invRepo, ordRepo, renderer, storage)
 	withAdminContext := shophttp.AdminContextMiddleware()
 	requireInvoicesRead := shophttp.RequirePermission(rbac.InvoicesRead)
 	mux := http.NewServeMux()
@@ -129,7 +147,7 @@ func TestInvoiceAdminHandler_ListByOrder_Empty(t *testing.T) {
 	ordRepo := &invoiceHTTPOrderRepo{orders: map[string]*order.Order{
 		"order-1": sampleHTTPOrder("order-1"),
 	}}
-	mux := invoiceAdminMux(t, &invoiceHTTPRepo{byID: map[string]*domainInvoice.Invoice{}, byOrder: map[string]*domainInvoice.Invoice{}}, ordRepo, &stubInvoicePDFRenderer{})
+	mux := invoiceAdminMux(t, &invoiceHTTPRepo{byID: map[string]*domainInvoice.Invoice{}, byOrder: map[string]*domainInvoice.Invoice{}}, ordRepo, &stubInvoicePDFRenderer{}, nil)
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/admin/orders/order-1/invoices", nil)
 	req.SetPathValue("orderId", "order-1")
@@ -162,7 +180,7 @@ func TestInvoiceAdminHandler_ListByOrder_WithInvoice(t *testing.T) {
 		byID:    map[string]*domainInvoice.Invoice{"inv-1": &inv},
 		byOrder: map[string]*domainInvoice.Invoice{"order-1": &inv},
 	}
-	mux := invoiceAdminMux(t, invRepo, ordRepo, &stubInvoicePDFRenderer{})
+	mux := invoiceAdminMux(t, invRepo, ordRepo, &stubInvoicePDFRenderer{}, nil)
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/admin/orders/order-1/invoices", nil)
 	req.SetPathValue("orderId", "order-1")
@@ -179,7 +197,7 @@ func TestInvoiceAdminHandler_ListByOrder_WithInvoice(t *testing.T) {
 }
 
 func TestInvoiceAdminHandler_ListByOrder_OrderNotFound(t *testing.T) {
-	mux := invoiceAdminMux(t, &invoiceHTTPRepo{byID: map[string]*domainInvoice.Invoice{}, byOrder: map[string]*domainInvoice.Invoice{}}, &invoiceHTTPOrderRepo{orders: map[string]*order.Order{}}, &stubInvoicePDFRenderer{})
+	mux := invoiceAdminMux(t, &invoiceHTTPRepo{byID: map[string]*domainInvoice.Invoice{}, byOrder: map[string]*domainInvoice.Invoice{}}, &invoiceHTTPOrderRepo{orders: map[string]*order.Order{}}, &stubInvoicePDFRenderer{}, nil)
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/admin/orders/missing/invoices", nil)
 	req.SetPathValue("orderId", "missing")
@@ -193,7 +211,7 @@ func TestInvoiceAdminHandler_ListByOrder_OrderNotFound(t *testing.T) {
 }
 
 func TestInvoiceAdminHandler_ListByOrder_Forbidden(t *testing.T) {
-	mux := invoiceAdminMux(t, &invoiceHTTPRepo{byID: map[string]*domainInvoice.Invoice{}, byOrder: map[string]*domainInvoice.Invoice{}}, &invoiceHTTPOrderRepo{orders: map[string]*order.Order{}}, &stubInvoicePDFRenderer{})
+	mux := invoiceAdminMux(t, &invoiceHTTPRepo{byID: map[string]*domainInvoice.Invoice{}, byOrder: map[string]*domainInvoice.Invoice{}}, &invoiceHTTPOrderRepo{orders: map[string]*order.Order{}}, &stubInvoicePDFRenderer{}, nil)
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/admin/orders/order-1/invoices", nil)
 	req.SetPathValue("orderId", "order-1")
@@ -213,7 +231,7 @@ func TestInvoiceAdminHandler_DownloadPDF(t *testing.T) {
 		byOrder: map[string]*domainInvoice.Invoice{"order-1": &inv},
 	}
 	renderer := &stubInvoicePDFRenderer{data: []byte("%PDF-test-bytes")}
-	mux := invoiceAdminMux(t, invRepo, &invoiceHTTPOrderRepo{orders: map[string]*order.Order{}}, renderer)
+	mux := invoiceAdminMux(t, invRepo, &invoiceHTTPOrderRepo{orders: map[string]*order.Order{}}, renderer, nil)
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/admin/invoices/inv-1/pdf", nil)
 	req.SetPathValue("invoiceId", "inv-1")
@@ -236,8 +254,50 @@ func TestInvoiceAdminHandler_DownloadPDF(t *testing.T) {
 	}
 }
 
+func TestInvoiceAdminHandler_DownloadPDF_Forbidden(t *testing.T) {
+	mux := invoiceAdminMux(t, &invoiceHTTPRepo{byID: map[string]*domainInvoice.Invoice{}, byOrder: map[string]*domainInvoice.Invoice{}}, &invoiceHTTPOrderRepo{orders: map[string]*order.Order{}}, &stubInvoicePDFRenderer{}, nil)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/admin/invoices/inv-1/pdf", nil)
+	req.SetPathValue("invoiceId", "inv-1")
+	req = testhelper.AuthenticatedRequest(req, "editor-1", identity.RoleEditor)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("status = %d, want 403", rec.Code)
+	}
+}
+
+func TestInvoiceAdminHandler_DownloadPDF_FromStorage(t *testing.T) {
+	inv := sampleHTTPInvoice(t, "inv-1", "order-1", 42)
+	invRepo := &invoiceHTTPRepo{
+		byID:    map[string]*domainInvoice.Invoice{"inv-1": &inv},
+		byOrder: map[string]*domainInvoice.Invoice{"order-1": &inv},
+	}
+	storage := &stubReadableStorage{
+		files: map[string][]byte{
+			"invoices/inv-1/invoice-42.pdf": []byte("%PDF-from-storage"),
+		},
+	}
+	renderer := &stubInvoicePDFRenderer{data: []byte("%PDF-from-renderer")}
+	mux := invoiceAdminMux(t, invRepo, &invoiceHTTPOrderRepo{orders: map[string]*order.Order{}}, renderer, storage)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/admin/invoices/inv-1/pdf", nil)
+	req.SetPathValue("invoiceId", "inv-1")
+	req = testhelper.AdminRequest(req, "admin-1")
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body: %s", rec.Code, rec.Body.String())
+	}
+	if got := rec.Body.String(); got != "%PDF-from-storage" {
+		t.Fatalf("body = %q, want %%PDF-from-storage", got)
+	}
+}
+
 func TestInvoiceAdminHandler_DownloadPDF_NotFound(t *testing.T) {
-	mux := invoiceAdminMux(t, &invoiceHTTPRepo{byID: map[string]*domainInvoice.Invoice{}, byOrder: map[string]*domainInvoice.Invoice{}}, &invoiceHTTPOrderRepo{orders: map[string]*order.Order{}}, &stubInvoicePDFRenderer{})
+	mux := invoiceAdminMux(t, &invoiceHTTPRepo{byID: map[string]*domainInvoice.Invoice{}, byOrder: map[string]*domainInvoice.Invoice{}}, &invoiceHTTPOrderRepo{orders: map[string]*order.Order{}}, &stubInvoicePDFRenderer{}, nil)
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/admin/invoices/missing/pdf", nil)
 	req.SetPathValue("invoiceId", "missing")
@@ -266,7 +326,7 @@ func TestInvoiceAdminHandler_ListByOrder_CreatedAtFormat(t *testing.T) {
 		byID:    map[string]*domainInvoice.Invoice{"inv-1": &inv},
 		byOrder: map[string]*domainInvoice.Invoice{"order-1": &inv},
 	}
-	mux := invoiceAdminMux(t, invRepo, ordRepo, &stubInvoicePDFRenderer{})
+	mux := invoiceAdminMux(t, invRepo, ordRepo, &stubInvoicePDFRenderer{}, nil)
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/admin/orders/order-1/invoices", nil)
 	req.SetPathValue("orderId", "order-1")
