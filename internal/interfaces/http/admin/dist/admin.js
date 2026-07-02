@@ -5222,6 +5222,183 @@
         });
     }
 
+    function storeCreditApi(url, currency, options) {
+        options = options || {};
+        options.headers = options.headers || {};
+        if (currency) {
+            options.headers[ADMIN_CURRENCY_HEADER] = currency;
+        }
+        return api(url, options);
+    }
+
+    function collectStoreCurrencies(stores) {
+        var seen = {};
+        var out = [];
+        for (var i = 0; i < stores.length; i++) {
+            var currency = stores[i] && stores[i].currency;
+            if (currency && !seen[currency]) {
+                seen[currency] = true;
+                out.push(currency);
+            }
+        }
+        return out;
+    }
+
+    function normalizeStoreCreditLedger(entries) {
+        if (!Array.isArray(entries)) {
+            return [];
+        }
+        var out = [];
+        for (var i = 0; i < entries.length; i++) {
+            var raw = entries[i] || {};
+            out.push({
+                id: pick(raw, "id", "ID") || "",
+                kind: pick(raw, "kind", "Kind") || "",
+                amount: Number(pick(raw, "amount", "Amount")) || 0,
+                currency: pick(raw, "currency", "Currency") || "",
+                order_id: pick(raw, "order_id", "OrderID") || "",
+                note: pick(raw, "note", "Note") || "",
+                created_at: pick(raw, "created_at", "CreatedAt")
+            });
+        }
+        return out;
+    }
+
+    function mountCustomerStoreCreditPanel(mountEl, customerID) {
+        if (!mountEl) {
+            return;
+        }
+        mountEl.innerHTML = "<p>Loading store credit…</p>";
+
+        api("/admin/stores").then(function (storesBody) {
+            var stores = normalizeStores(storesBody && storesBody.data && storesBody.data.stores);
+            var currencies = collectStoreCurrencies(stores);
+            var selectedCurrency = adminScope.currency || (currencies[0] || "");
+            if (selectedCurrency && currencies.indexOf(selectedCurrency) === -1) {
+                currencies.unshift(selectedCurrency);
+            }
+            if (!selectedCurrency && currencies.length > 0) {
+                selectedCurrency = currencies[0];
+            }
+
+            function loadPanel() {
+                if (!selectedCurrency) {
+                    mountEl.innerHTML = "<p role=\"alert\">Select a currency in the header switcher to manage store credit.</p>";
+                    return;
+                }
+
+                storeCreditApi(
+                    "/admin/customers/" + encodeURIComponent(customerID) + "/store-credit?offset=0&limit=20",
+                    selectedCurrency
+                ).then(function (body) {
+                    if (body && body.error && body.error.code === "forbidden") {
+                        mountEl.innerHTML = "<p role=\"alert\">Your account does not have customer access.</p>";
+                        return;
+                    }
+                    if (body && body.error) {
+                        mountEl.innerHTML = "<p role=\"alert\">" + esc(extractErrorMessage(body, "Failed to load store credit.")) + "</p>";
+                        return;
+                    }
+
+                    var balanceRaw = body && body.data && body.data.balance;
+                    var balanceAmount = balanceRaw ? Number(balanceRaw.amount || 0) : 0;
+                    var balanceCurrency = balanceRaw ? (balanceRaw.currency || selectedCurrency) : selectedCurrency;
+                    var ledger = normalizeStoreCreditLedger(body && body.data && body.data.ledger);
+
+                    var currencyOptions = "";
+                    for (var c = 0; c < currencies.length; c++) {
+                        var code = currencies[c];
+                        currencyOptions += "<option value=\"" + esc(code) + "\"" +
+                            (code === selectedCurrency ? " selected" : "") + ">" + esc(code) + "</option>";
+                    }
+
+                    var html = "<div id=\"customer-store-credit-msg\"></div>" +
+                        "<p><strong>Balance:</strong> " + esc(formatMoney(balanceAmount, balanceCurrency)) + "</p>" +
+                        "<label>Currency <select id=\"customer-store-credit-currency\">" + currencyOptions + "</select></label>" +
+                        "<form id=\"customer-store-credit-issue-form\" style=\"margin-top:1rem\">" +
+                        "<label>Issue amount<input name=\"amount\" type=\"number\" min=\"0.01\" step=\"0.01\" required placeholder=\"25.00\"></label>" +
+                        "<p class=\"settings-scope-note\">Enter the amount in major units (e.g. 25.00 " + esc(balanceCurrency) + ").</p>" +
+                        "<label>Note<input name=\"note\" placeholder=\"Goodwill credit\"></label>" +
+                        "<div style=\"margin-top:0.75rem\"><button type=\"submit\">Issue credit</button></div>" +
+                        "</form>" +
+                        "<h4 style=\"margin-top:1.5rem\">Recent ledger</h4>";
+
+                    if (ledger.length === 0) {
+                        html += "<p class=\"settings-scope-note\">No store credit activity yet.</p>";
+                    } else {
+                        html += "<table><thead><tr><th>Date</th><th>Kind</th><th>Amount</th><th>Note</th><th>Order</th></tr></thead><tbody>";
+                        for (var i = 0; i < ledger.length; i++) {
+                            var entry = ledger[i];
+                            html += "<tr>" +
+                                "<td>" + esc(entry.created_at ? String(entry.created_at).substring(0, 10) : "") + "</td>" +
+                                "<td>" + esc(entry.kind || "") + "</td>" +
+                                "<td>" + esc(formatMoney(entry.amount, entry.currency || balanceCurrency)) + "</td>" +
+                                "<td>" + esc(entry.note || "—") + "</td>" +
+                                "<td>" + esc(entry.order_id || "—") + "</td>" +
+                                "</tr>";
+                        }
+                        html += "</tbody></table>";
+                    }
+
+                    mountEl.innerHTML = html;
+
+                    var currencySelect = document.getElementById("customer-store-credit-currency");
+                    if (currencySelect) {
+                        currencySelect.onchange = function () {
+                            selectedCurrency = currencySelect.value;
+                            loadPanel();
+                        };
+                    }
+
+                    var issueForm = document.getElementById("customer-store-credit-issue-form");
+                    var msg = document.getElementById("customer-store-credit-msg");
+                    if (issueForm) {
+                        issueForm.onsubmit = function (e) {
+                            e.preventDefault();
+                            var amountValue = parseFloat(issueForm.elements.amount.value);
+                            if (isNaN(amountValue) || amountValue <= 0) {
+                                msg.innerHTML = "<p role=\"alert\">Enter a positive amount.</p>";
+                                return;
+                            }
+                            var payload = {
+                                amount: Math.round(amountValue * 100),
+                                note: issueForm.elements.note.value
+                            };
+                            storeCreditApi(
+                                "/admin/customers/" + encodeURIComponent(customerID) + "/store-credit/issue",
+                                selectedCurrency,
+                                { method: "POST", body: JSON.stringify(payload) }
+                            ).then(function (issueBody) {
+                                if (issueBody && issueBody.error) {
+                                    if (issueBody.error.code === "forbidden") {
+                                        msg.innerHTML = "<p role=\"alert\">Your account does not have permission to issue store credit.</p>";
+                                        return;
+                                    }
+                                    msg.innerHTML = "<p role=\"alert\">" + esc(issueBody.error.message || "Failed to issue store credit.") + "</p>";
+                                    return;
+                                }
+                                msg.innerHTML = "<p>Store credit issued.</p>";
+                                loadPanel();
+                            }).catch(function (err) {
+                                if (err && err.error && err.error.code === "forbidden") {
+                                    msg.innerHTML = "<p role=\"alert\">Your account does not have permission to issue store credit.</p>";
+                                    return;
+                                }
+                                msg.innerHTML = "<p role=\"alert\">" + esc(extractErrorMessage(err, "Failed to issue store credit.")) + "</p>";
+                            });
+                        };
+                    }
+                }).catch(function (err) {
+                    mountEl.innerHTML = "<p role=\"alert\">" + esc(extractErrorMessage(err, "Failed to load store credit.")) + "</p>";
+                });
+            }
+
+            loadPanel();
+        }).catch(function () {
+            mountEl.innerHTML = "<p role=\"alert\">Failed to load store currencies.</p>";
+        });
+    }
+
     function renderCustomerDetail(container, customerID) {
         container.innerHTML =
             '<h2>Customer Detail</h2>' +
@@ -5256,7 +5433,9 @@
                 '<p><strong>Created:</strong> ' + esc(customer.created_at ? String(customer.created_at).substring(0, 10) : '') + '</p>' +
                 '<p><strong>Updated:</strong> ' + esc(customer.updated_at ? String(customer.updated_at).substring(0, 10) : '') + '</p>' +
                 '<p><strong>Customer ID:</strong> ' + esc(customer.id || '') + '</p>' +
-                '</div>';
+                '</div>' +
+                '<section style="margin-top:2rem"><h3>Store Credit</h3><div id="customer-store-credit"></div></section>';
+            mountCustomerStoreCreditPanel(document.getElementById("customer-store-credit"), customerID);
         }).catch(function (err) {
             bodyBox.innerHTML = '<p role="alert">' + esc(extractErrorMessage(err, 'Failed to load customer.')) + '</p>';
         });
