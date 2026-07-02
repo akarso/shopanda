@@ -442,6 +442,30 @@ func TestAdminHandler_StaticJS(t *testing.T) {
 			t.Fatalf("expected store credit wiring %q in JS", expected)
 		}
 	}
+	expectedCustomerGroupsWiring := []string{
+		"renderCustomerGroupsGrid",
+		"renderCustomerGroupForm",
+		"mountCustomerGroupMembersPanel",
+		"mountCustomerGroupPanel",
+		"refreshCustomerGroupsNavVisibility",
+		"probeCustomerGroupsApi",
+		"/admin/customer-groups",
+		"/admin/customers/groups/new",
+		"customer-group-assign-form",
+		"Customer group saved.",
+		"Customer assigned to group.",
+		"Failed to load customer groups.",
+		"Failed to load customer group form.",
+		"Your account does not have B2B groups access.",
+		"Your account does not have permission to manage customer groups.",
+		"plugins.b2b",
+		"plugins/b2b/README.md#group-prices",
+	}
+	for _, expected := range expectedCustomerGroupsWiring {
+		if !strings.Contains(normalizedBody, expected) {
+			t.Fatalf("expected customer groups wiring %q in JS", expected)
+		}
+	}
 	if !strings.Contains(normalizedBody, "Customer not found.") || !strings.Contains(normalizedBody, "Failed to load customer.") {
 		t.Fatalf("expected customer detail error messages in JS")
 	}
