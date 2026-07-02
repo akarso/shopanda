@@ -433,6 +433,7 @@ func TestAdminHandler_StaticJS(t *testing.T) {
 		"Store credit issued.",
 		"Failed to load store credit.",
 		"Failed to issue store credit.",
+		"Your account does not have customer access.",
 		"Your account does not have permission to issue store credit.",
 		"Recent ledger",
 	}
