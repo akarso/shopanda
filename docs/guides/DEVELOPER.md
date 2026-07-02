@@ -17,6 +17,7 @@ For deployment and operational setup, see [Deployment Guide](DEPLOYMENT.md). For
 - [Add a Storage Backend](#add-a-storage-backend)
 - [Add Custom Pipeline Steps](#add-custom-pipeline-steps)
 - [Add Custom Event Listeners](#add-custom-event-listeners)
+- [Multi-Plugin Composition](PLUGIN_COMPOSITION.md)
 - [Add Custom CLI Commands](#add-custom-cli-commands)
 - [Use the API Reference](#use-the-api-reference)
 - [Roadmap and Future Work](#roadmap-and-future-work)

@@ -75,6 +75,8 @@ Available today through `plugin.App`:
 
 Core plugins additionally expose providers on `plugin.App` during init (search engine, job queue, cache store, media storage, payment registry entries) which `main.go` resolves after `InitAll`.
 
+For combining multiple plugins (ordering, shared context, checkout-field walkthrough): [Multi-Plugin Composition](docs/guides/PLUGIN_COMPOSITION.md).
+
 ---
 
 ## Enable core plugins
