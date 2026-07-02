@@ -423,6 +423,25 @@ func TestAdminHandler_StaticJS(t *testing.T) {
 	if !strings.Contains(normalizedBody, "renderCustomerDetail") || !strings.Contains(normalizedBody, "/admin/customers/") {
 		t.Fatalf("expected customer detail route wiring in JS")
 	}
+	expectedStoreCreditWiring := []string{
+		"mountCustomerStoreCreditPanel",
+		"customer-store-credit",
+		"customer-store-credit-issue-form",
+		"/store-credit/issue",
+		"/store-credit?offset=0&limit=20",
+		"Issue credit",
+		"Store credit issued.",
+		"Failed to load store credit.",
+		"Failed to issue store credit.",
+		"Your account does not have customer access.",
+		"Your account does not have permission to issue store credit.",
+		"Recent ledger",
+	}
+	for _, expected := range expectedStoreCreditWiring {
+		if !strings.Contains(normalizedBody, expected) {
+			t.Fatalf("expected store credit wiring %q in JS", expected)
+		}
+	}
 	if !strings.Contains(normalizedBody, "Customer not found.") || !strings.Contains(normalizedBody, "Failed to load customer.") {
 		t.Fatalf("expected customer detail error messages in JS")
 	}

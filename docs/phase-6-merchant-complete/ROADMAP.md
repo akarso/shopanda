@@ -168,6 +168,7 @@ Recommended order: **A (600–602)** first — highest “broken menu” impact 
 | Theme | Examples | Notes |
 | --- | --- | --- |
 | **Platform** | Multi-store admin workflow, analytics dashboards | Extend stats + charts |
+| **Customization platform** | Extension fields registry, private/public visibility, dynamic hooks/slots, plugin asset injection | See `specs/CUSTOMIZATION_PLATFORM.md` |
 | **Fulfillment** | Shipments, labels, partial ship | Needs domain extensions |
 | **Analytics** | Sales reports, cohort views | Extend stats repo + charts |
 | **Email** | Template editor with preview | Stretch beyond 641 |
