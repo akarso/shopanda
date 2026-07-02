@@ -84,6 +84,22 @@
         });
     }
 
+    function apiDelete(url) {
+        var headers = buildHeaders({ "Content-Type": "application/json" });
+        return fetch(API_BASE + url, { method: "DELETE", headers: headers }).then(function (res) {
+            if (res.status === 401) {
+                clearToken();
+                setLoginMessage("Your session expired. Sign in again to continue.");
+                navigateTo("/admin");
+                return Promise.reject(new Error("unauthorized"));
+            }
+            if (res.status === 204) {
+                return {};
+            }
+            return res.json();
+        });
+    }
+
     function uploadAsset(file, onProgress) {
         return new Promise(function (resolve, reject) {
             var xhr = new XMLHttpRequest();
@@ -151,7 +167,7 @@
         "/admin/catalog/attributes": { title: "Attributes", render: renderAttributesGrid, auth: true },
         // Customers
         "/admin/customers": { title: "Customers", render: renderCustomersGrid, auth: true },
-        "/admin/customers/groups": { title: "Groups", render: renderPlaceholder("Groups"), auth: true },
+        "/admin/customers/groups": { title: "Customer Groups", render: renderCustomerGroupsGrid, auth: true },
         // Marketing
         "/admin/marketing/promotions": { title: "Promotions", render: renderPromotionsGrid, auth: true },
         "/admin/marketing/coupons": { title: "Coupons", render: renderCouponsGrid, auth: true },
@@ -212,6 +228,18 @@
         }
         if (path === "/admin/catalog/attribute-groups/new") {
             return { title: "New Attribute Group", render: renderAttributeGroupCreate, auth: true };
+        }
+        if (path === "/admin/customers/groups/new") {
+            return { title: "New Customer Group", render: renderCustomerGroupCreate, auth: true };
+        }
+        var customerGroupMatch = path.match(/^\/admin\/customers\/groups\/([^/]+)$/);
+        if (customerGroupMatch) {
+            var customerGroupID = decodeURIComponent(customerGroupMatch[1]);
+            return {
+                title: "Edit Customer Group",
+                auth: true,
+                render: function (container) { renderCustomerGroupEdit(container, customerGroupID); }
+            };
         }
         var attributeMatch = path.match(/^\/admin\/catalog\/attributes\/([^/]+)$/);
         if (attributeMatch) {
@@ -3686,6 +3714,528 @@
         });
     }
 
+    function normalizeCustomerGroup(raw) {
+        if (!raw) {
+            return null;
+        }
+        return {
+            id: pick(raw, "id", "ID") || "",
+            code: pick(raw, "code", "Code") || "",
+            name: pick(raw, "name", "Name") || "",
+            description: pick(raw, "description", "Description") || "",
+            created_at: pick(raw, "created_at", "CreatedAt"),
+            updated_at: pick(raw, "updated_at", "UpdatedAt")
+        };
+    }
+
+    function normalizeCustomerGroups(groups) {
+        if (!Array.isArray(groups)) {
+            return [];
+        }
+        var out = [];
+        for (var i = 0; i < groups.length; i++) {
+            var group = normalizeCustomerGroup(groups[i]);
+            if (group) {
+                out.push(group);
+            }
+        }
+        return out;
+    }
+
+    function customerGroupsLicenseMessage() {
+        return "Customer groups require the B2B plugin with a valid license. Enable <code>plugins.b2b</code> in configuration and set <code>plugins.b2b.license_key</code>. See <code>plugins/b2b/README.md</code> for setup and group price API details.";
+    }
+
+    function isCustomerGroupsForbidden(body) {
+        return !!(body && body.error && body.error.code === "forbidden");
+    }
+
+    function probeCustomerGroupsApi() {
+        var headers = buildHeaders({ "Content-Type": "application/json" });
+        var token = getToken();
+        if (token) {
+            headers.Authorization = "Bearer " + token;
+        }
+        return fetch(API_BASE + "/admin/customer-groups?offset=0&limit=1", { headers: headers }).then(function (res) {
+            if (res.status === 404) {
+                return { available: false };
+            }
+            if (res.status === 401) {
+                clearToken();
+                setLoginMessage("Your session expired. Sign in again to continue.");
+                navigateTo("/admin");
+                return { available: false };
+            }
+            return res.json().then(function (body) {
+                if (body && body.data && Array.isArray(body.data.groups)) {
+                    return { available: true, body: body };
+                }
+                if (isCustomerGroupsForbidden(body)) {
+                    return { available: true, forbidden: true, body: body };
+                }
+                return { available: false, body: body };
+            }).catch(function () {
+                return { available: false };
+            });
+        }).catch(function () {
+            return { available: false };
+        });
+    }
+
+    function refreshCustomerGroupsNavVisibility() {
+        var link = document.querySelector('.admin-sidebar a[href="/admin/customers/groups"]');
+        if (!link || !link.parentElement) {
+            return Promise.resolve();
+        }
+        if (!isAuthenticated()) {
+            link.parentElement.style.display = "";
+            return Promise.resolve();
+        }
+        return probeCustomerGroupsApi().then(function (result) {
+            link.parentElement.style.display = result.available ? "" : "none";
+        });
+    }
+
+    function renderCustomerGroupsUnavailable(container, message) {
+        container.innerHTML =
+            "<h2>Customer Groups</h2>" +
+            '<p class="settings-scope-note">' + (message || customerGroupsLicenseMessage()) + "</p>";
+    }
+
+    function renderCustomerGroupsGrid(container) {
+        container.innerHTML = "<h2>Customer Groups</h2><div id=\"customer-groups-grid\"></div>";
+        var grid = document.getElementById("customer-groups-grid");
+
+        probeCustomerGroupsApi().then(function (probe) {
+            if (!probe.available) {
+                grid.innerHTML = '<p class="settings-scope-note">' + customerGroupsLicenseMessage() + "</p>";
+                return;
+            }
+            return api("/admin/customer-groups?offset=0&limit=100").then(function (body) {
+                if (isCustomerGroupsForbidden(body)) {
+                    grid.innerHTML = '<p role="alert">Your account does not have B2B groups access.</p>';
+                    return;
+                }
+                if (body && body.error) {
+                    grid.innerHTML = '<p role="alert">' + esc(extractErrorMessage(body, "Failed to load customer groups.")) + "</p>";
+                    return;
+                }
+
+                var groups = normalizeCustomerGroups(body && body.data && body.data.groups);
+                var html = '<div style="margin-bottom:1rem"><a class="button" href="/admin/customers/groups/new" data-link id="new-customer-group-btn">New group</a></div>' +
+                    '<p class="settings-scope-note">Group-specific variant prices are managed via the B2B group price API. See <code>plugins/b2b/README.md#group-prices</code>.</p>' +
+                    '<table><thead><tr><th>Name</th><th>Code</th><th>Description</th><th>Updated</th></tr></thead><tbody>';
+
+                if (groups.length === 0) {
+                    html += '<tr><td colspan="4">No customer groups defined.</td></tr>';
+                } else {
+                    for (var i = 0; i < groups.length; i++) {
+                        var group = groups[i];
+                        var editHref = "/admin/customers/groups/" + encodeURIComponent(group.id || "");
+                        html += "<tr>" +
+                            '<td><a href="' + editHref + '" data-link>' + esc(group.name || group.code || group.id || "") + "</a></td>" +
+                            "<td>" + esc(group.code || "") + "</td>" +
+                            "<td>" + esc(group.description || "—") + "</td>" +
+                            "<td>" + esc(group.updated_at ? String(group.updated_at).substring(0, 10) : "") + "</td>" +
+                            "</tr>";
+                    }
+                }
+
+                html += "</tbody></table>";
+                grid.innerHTML = html;
+            });
+        }).catch(function (err) {
+            grid.innerHTML = '<p role="alert">' + esc(extractErrorMessage(err, "Failed to load customer groups.")) + "</p>";
+        });
+    }
+
+    function renderCustomerGroupCreate(container) {
+        renderCustomerGroupForm(container, null);
+    }
+
+    function renderCustomerGroupEdit(container, groupID) {
+        renderCustomerGroupForm(container, groupID);
+    }
+
+    function renderCustomerGroupForm(container, groupID) {
+        var isCreate = !groupID;
+        var title = isCreate ? "New Customer Group" : "Edit Customer Group";
+        container.innerHTML =
+            "<h2>" + title + "</h2>" +
+            '<p><a href="/admin/customers/groups" data-link>Back to customer groups</a></p>' +
+            '<div id="customer-group-form-msg"></div>' +
+            '<form id="customer-group-form"><p>Loading…</p></form>' +
+            (isCreate ? "" : '<section style="margin-top:2rem"><h3>Members</h3><div id="customer-group-members"></div></section>');
+
+        var msg = document.getElementById("customer-group-form-msg");
+        var form = document.getElementById("customer-group-form");
+
+        function bindForm(group) {
+            form.innerHTML =
+                (isCreate
+                    ? '<label>Code<input name="code" required pattern="[a-z0-9][a-z0-9_-]{0,48}[a-z0-9]" placeholder="wholesale"></label>' +
+                      '<p class="settings-scope-note">Lowercase letters, numbers, underscores, and hyphens.</p>'
+                    : '<p><strong>Code:</strong> <code>' + esc(group.code || "") + "</code></p>") +
+                '<label>Name<input name="name" value="' + esc(group ? (group.name || "") : "") + '" required></label>' +
+                '<label>Description<textarea name="description" rows="3">' + esc(group ? (group.description || "") : "") + "</textarea></label>" +
+                '<div style="margin-top:1rem"><button type="submit">Save</button>' +
+                (isCreate ? "" : ' <button type="button" id="delete-customer-group-btn" class="danger">Delete</button>') +
+                "</div>";
+
+            form.onsubmit = function (e) {
+                e.preventDefault();
+                var payload = {
+                    name: form.elements.name.value,
+                    description: form.elements.description.value
+                };
+                if (isCreate) {
+                    payload.code = form.elements.code.value;
+                }
+                var method = isCreate ? "POST" : "PUT";
+                var url = isCreate
+                    ? "/admin/customer-groups"
+                    : "/admin/customer-groups/" + encodeURIComponent(groupID);
+                api(url, { method: method, body: JSON.stringify(payload) }).then(function (body) {
+                    if (body && body.error) {
+                        if (isCustomerGroupsForbidden(body)) {
+                            msg.innerHTML = '<p role="alert">Your account does not have permission to manage customer groups.</p>';
+                            return;
+                        }
+                        msg.innerHTML = '<p role="alert">' + esc(body.error.message || "Save failed.") + "</p>";
+                        return;
+                    }
+                    var saved = normalizeCustomerGroup(body && body.data && body.data.group);
+                    msg.innerHTML = "<p>Customer group saved.</p>";
+                    if (isCreate && saved && saved.id) {
+                        navigateTo("/admin/customers/groups/" + encodeURIComponent(saved.id));
+                        return;
+                    }
+                    if (saved) {
+                        bindForm(saved);
+                    }
+                }).catch(function (err) {
+                    msg.innerHTML = '<p role="alert">' + esc(extractErrorMessage(err, "Save failed.")) + "</p>";
+                });
+            };
+
+            if (!isCreate) {
+                var deleteBtn = document.getElementById("delete-customer-group-btn");
+                if (deleteBtn) {
+                    deleteBtn.onclick = function () {
+                        if (!window.confirm("Delete customer group " + (group.name || group.code || group.id) + "?")) {
+                            return;
+                        }
+                        apiDelete("/admin/customer-groups/" + encodeURIComponent(groupID)).then(function (body) {
+                            if (body && body.error) {
+                                if (isCustomerGroupsForbidden(body)) {
+                                    msg.innerHTML = '<p role="alert">Your account does not have permission to manage customer groups.</p>';
+                                    return;
+                                }
+                                msg.innerHTML = '<p role="alert">' + esc(body.error.message || "Failed to delete customer group.") + "</p>";
+                                return;
+                            }
+                            navigateTo("/admin/customers/groups");
+                        }).catch(function (err) {
+                            msg.innerHTML = '<p role="alert">' + esc(extractErrorMessage(err, "Failed to delete customer group.")) + "</p>";
+                        });
+                    };
+                }
+                mountCustomerGroupMembersPanel(document.getElementById("customer-group-members"), groupID);
+            }
+        }
+
+        if (isCreate) {
+            probeCustomerGroupsApi().then(function (probe) {
+                if (!probe.available) {
+                    renderCustomerGroupsUnavailable(container);
+                    return;
+                }
+                bindForm(null);
+            });
+            return;
+        }
+
+        probeCustomerGroupsApi().then(function (probe) {
+            if (!probe.available) {
+                renderCustomerGroupsUnavailable(container);
+                return;
+            }
+            return api("/admin/customer-groups/" + encodeURIComponent(groupID)).then(function (body) {
+                if (isCustomerGroupsForbidden(body)) {
+                    msg.innerHTML = '<p role="alert">Your account does not have B2B groups access.</p>';
+                    form.innerHTML = "";
+                    return;
+                }
+                if (body && body.error) {
+                    msg.innerHTML = '<p role="alert">' + esc(extractErrorMessage(body, "Customer group not found.")) + "</p>";
+                    form.innerHTML = "";
+                    return;
+                }
+                var group = normalizeCustomerGroup(body && body.data && body.data.group);
+                if (!group || !group.id) {
+                    msg.innerHTML = '<p role="alert">Customer group not found.</p>';
+                    form.innerHTML = "";
+                    return;
+                }
+                bindForm(group);
+            });
+        }).catch(function (err) {
+            form.innerHTML = "";
+            msg.innerHTML = '<p role="alert">' + esc(extractErrorMessage(err, "Failed to load customer group form.")) + "</p>";
+        });
+    }
+
+    function mountCustomerGroupMembersPanel(mountEl, groupID) {
+        if (!mountEl) {
+            return;
+        }
+
+        function loadMembers() {
+            mountEl.innerHTML = "<p>Loading members…</p>";
+            Promise.all([
+                api("/admin/customers?offset=0&limit=100"),
+                api("/admin/customer-groups?offset=0&limit=100")
+            ]).then(function (results) {
+                var customersBody = results[0];
+                var groupsBody = results[1];
+                if (isCustomerGroupsForbidden(customersBody) || isCustomerGroupsForbidden(groupsBody)) {
+                    mountEl.innerHTML = '<p role="alert">Your account does not have B2B groups access.</p>';
+                    return;
+                }
+                if ((customersBody && customersBody.error) || (groupsBody && groupsBody.error)) {
+                    mountEl.innerHTML = '<p role="alert">Failed to load group members.</p>';
+                    return;
+                }
+
+                var customers = normalizeCustomers(customersBody && customersBody.data && customersBody.data.customers);
+                var checks = customers.map(function (customer) {
+                    return api("/admin/customers/" + encodeURIComponent(customer.id) + "/customer-group").then(function (body) {
+                        var group = body && body.data && body.data.group;
+                        if (group && group.id === groupID) {
+                            return { customer: customer, group: normalizeCustomerGroup(group) };
+                        }
+                        return null;
+                    });
+                });
+
+                Promise.all(checks).then(function (memberResults) {
+                    var members = [];
+                    for (var m = 0; m < memberResults.length; m++) {
+                        if (memberResults[m]) {
+                            members.push(memberResults[m]);
+                        }
+                    }
+
+                    var customerOptions = '<option value="">Select customer…</option>';
+                    for (var c = 0; c < customers.length; c++) {
+                        var cust = customers[c];
+                        var label = ((cust.first_name || "") + " " + (cust.last_name || "")).trim();
+                        if (!label) {
+                            label = cust.email || cust.id || "";
+                        }
+                        customerOptions += '<option value="' + esc(cust.id || "") + '">' + esc(label) + "</option>";
+                    }
+
+                    var html = '<div id="customer-group-members-msg"></div>' +
+                        '<form id="customer-group-assign-form" style="margin-bottom:1rem">' +
+                        '<label>Assign customer<select name="customer_id" required>' + customerOptions + "</select></label>" +
+                        '<div style="margin-top:0.75rem"><button type="submit">Assign to group</button></div>' +
+                        "</form>";
+
+                    if (members.length === 0) {
+                        html += '<p class="settings-scope-note">No members in this group yet (checked first 100 customers).</p>';
+                    } else {
+                        html += '<table><thead><tr><th>Customer</th><th>Email</th><th>Action</th></tr></thead><tbody>';
+                        for (var i = 0; i < members.length; i++) {
+                            var member = members[i];
+                            var memberName = ((member.customer.first_name || "") + " " + (member.customer.last_name || "")).trim();
+                            html += "<tr>" +
+                                '<td><a href="/admin/customers/' + esc(member.customer.id || "") + '" data-link>' + esc(memberName || member.customer.email || member.customer.id || "") + "</a></td>" +
+                                "<td>" + esc(member.customer.email || "") + "</td>" +
+                                '<td><button type="button" class="customer-group-remove-member-btn" data-customer-id="' + esc(member.customer.id || "") + '">Remove</button></td>' +
+                                "</tr>";
+                        }
+                        html += "</tbody></table>";
+                    }
+
+                    mountEl.innerHTML = html;
+
+                    var assignForm = document.getElementById("customer-group-assign-form");
+                    var membersMsg = document.getElementById("customer-group-members-msg");
+                    if (assignForm) {
+                        assignForm.onsubmit = function (e) {
+                            e.preventDefault();
+                            var customerID = assignForm.elements.customer_id.value;
+                            if (!customerID) {
+                                membersMsg.innerHTML = '<p role="alert">Select a customer.</p>';
+                                return;
+                            }
+                            api("/admin/customers/" + encodeURIComponent(customerID) + "/customer-group", {
+                                method: "PUT",
+                                body: JSON.stringify({ group_id: groupID })
+                            }).then(function (body) {
+                                if (body && body.error) {
+                                    if (isCustomerGroupsForbidden(body)) {
+                                        membersMsg.innerHTML = '<p role="alert">Your account does not have permission to manage customer groups.</p>';
+                                        return;
+                                    }
+                                    membersMsg.innerHTML = '<p role="alert">' + esc(body.error.message || "Failed to assign customer.") + "</p>";
+                                    return;
+                                }
+                                membersMsg.innerHTML = "<p>Customer assigned to group.</p>";
+                                loadMembers();
+                            }).catch(function (err) {
+                                membersMsg.innerHTML = '<p role="alert">' + esc(extractErrorMessage(err, "Failed to assign customer.")) + "</p>";
+                            });
+                        };
+                    }
+
+                    var removeButtons = mountEl.querySelectorAll(".customer-group-remove-member-btn");
+                    for (var r = 0; r < removeButtons.length; r++) {
+                        removeButtons[r].onclick = function () {
+                            var customerID = this.getAttribute("data-customer-id");
+                            if (!customerID || !window.confirm("Remove this customer from the group?")) {
+                                return;
+                            }
+                            apiDelete("/admin/customers/" + encodeURIComponent(customerID) + "/customer-group").then(function (body) {
+                                if (body && body.error) {
+                                    if (isCustomerGroupsForbidden(body)) {
+                                        membersMsg.innerHTML = '<p role="alert">Your account does not have permission to manage customer groups.</p>';
+                                        return;
+                                    }
+                                    membersMsg.innerHTML = '<p role="alert">' + esc(body.error.message || "Failed to remove customer from group.") + "</p>";
+                                    return;
+                                }
+                                membersMsg.innerHTML = "<p>Customer removed from group.</p>";
+                                loadMembers();
+                            }).catch(function (err) {
+                                membersMsg.innerHTML = '<p role="alert">' + esc(extractErrorMessage(err, "Failed to remove customer from group.")) + "</p>";
+                            });
+                        };
+                    }
+                });
+            }).catch(function () {
+                mountEl.innerHTML = '<p role="alert">Failed to load group members.</p>';
+            });
+        }
+
+        loadMembers();
+    }
+
+    function mountCustomerGroupPanel(mountEl, customerID) {
+        if (!mountEl) {
+            return;
+        }
+        mountEl.innerHTML = "<p>Loading customer group…</p>";
+
+        probeCustomerGroupsApi().then(function (probe) {
+            if (!probe.available) {
+                mountEl.innerHTML = "";
+                return;
+            }
+
+            Promise.all([
+                api("/admin/customers/" + encodeURIComponent(customerID) + "/customer-group"),
+                api("/admin/customer-groups?offset=0&limit=100")
+            ]).then(function (results) {
+                var membershipBody = results[0];
+                var groupsBody = results[1];
+
+                if (isCustomerGroupsForbidden(membershipBody) || isCustomerGroupsForbidden(groupsBody)) {
+                    mountEl.innerHTML = '<p role="alert">Your account does not have B2B groups access.</p>';
+                    return;
+                }
+                if ((membershipBody && membershipBody.error) || (groupsBody && groupsBody.error)) {
+                    mountEl.innerHTML = '<p role="alert">Failed to load customer group.</p>';
+                    return;
+                }
+
+                var currentGroup = normalizeCustomerGroup(membershipBody && membershipBody.data && membershipBody.data.group);
+                var groups = normalizeCustomerGroups(groupsBody && groupsBody.data && groupsBody.data.groups);
+                var groupOptions = '<option value="">No group</option>';
+                for (var g = 0; g < groups.length; g++) {
+                    var grp = groups[g];
+                    var selected = currentGroup && currentGroup.id === grp.id ? " selected" : "";
+                    groupOptions += '<option value="' + esc(grp.id || "") + '"' + selected + ">" + esc(grp.name || grp.code || grp.id || "") + "</option>";
+                }
+
+                mountEl.innerHTML =
+                    '<div id="customer-group-panel-msg"></div>' +
+                    "<p><strong>Current group:</strong> " + esc(currentGroup ? (currentGroup.name || currentGroup.code) : "None") + "</p>" +
+                    '<form id="customer-group-panel-form">' +
+                    '<label>Assign group<select name="group_id">' + groupOptions + "</select></label>" +
+                    '<div style="margin-top:0.75rem"><button type="submit">Save group</button>' +
+                    (currentGroup ? ' <button type="button" id="customer-group-panel-remove-btn">Remove from group</button>' : "") +
+                    "</div></form>";
+
+                var form = document.getElementById("customer-group-panel-form");
+                var msg = document.getElementById("customer-group-panel-msg");
+                if (form) {
+                    form.onsubmit = function (e) {
+                        e.preventDefault();
+                        var groupID = form.elements.group_id.value;
+                        if (!groupID) {
+                            apiDelete("/admin/customers/" + encodeURIComponent(customerID) + "/customer-group").then(function (body) {
+                                if (body && body.error) {
+                                    if (isCustomerGroupsForbidden(body)) {
+                                        msg.innerHTML = '<p role="alert">Your account does not have permission to manage customer groups.</p>';
+                                        return;
+                                    }
+                                    msg.innerHTML = '<p role="alert">' + esc(body.error.message || "Failed to remove customer from group.") + "</p>";
+                                    return;
+                                }
+                                msg.innerHTML = "<p>Customer group updated.</p>";
+                                mountCustomerGroupPanel(mountEl, customerID);
+                            }).catch(function (err) {
+                                msg.innerHTML = '<p role="alert">' + esc(extractErrorMessage(err, "Failed to remove customer from group.")) + "</p>";
+                            });
+                            return;
+                        }
+                        api("/admin/customers/" + encodeURIComponent(customerID) + "/customer-group", {
+                            method: "PUT",
+                            body: JSON.stringify({ group_id: groupID })
+                        }).then(function (body) {
+                            if (body && body.error) {
+                                if (isCustomerGroupsForbidden(body)) {
+                                    msg.innerHTML = '<p role="alert">Your account does not have permission to manage customer groups.</p>';
+                                    return;
+                                }
+                                msg.innerHTML = '<p role="alert">' + esc(body.error.message || "Failed to assign customer group.") + "</p>";
+                                return;
+                            }
+                            msg.innerHTML = "<p>Customer group updated.</p>";
+                            mountCustomerGroupPanel(mountEl, customerID);
+                        }).catch(function (err) {
+                            msg.innerHTML = '<p role="alert">' + esc(extractErrorMessage(err, "Failed to assign customer group.")) + "</p>";
+                        });
+                    };
+                }
+
+                var removeBtn = document.getElementById("customer-group-panel-remove-btn");
+                if (removeBtn) {
+                    removeBtn.onclick = function () {
+                        apiDelete("/admin/customers/" + encodeURIComponent(customerID) + "/customer-group").then(function (body) {
+                            if (body && body.error) {
+                                if (isCustomerGroupsForbidden(body)) {
+                                    msg.innerHTML = '<p role="alert">Your account does not have permission to manage customer groups.</p>';
+                                    return;
+                                }
+                                msg.innerHTML = '<p role="alert">' + esc(body.error.message || "Failed to remove customer from group.") + "</p>";
+                                return;
+                            }
+                            msg.innerHTML = "<p>Customer group updated.</p>";
+                            mountCustomerGroupPanel(mountEl, customerID);
+                        }).catch(function (err) {
+                            msg.innerHTML = '<p role="alert">' + esc(extractErrorMessage(err, "Failed to remove customer from group.")) + "</p>";
+                        });
+                    };
+                }
+            }).catch(function () {
+                mountEl.innerHTML = '<p role="alert">Failed to load customer group.</p>';
+            });
+        });
+    }
+
     function renderCustomersGrid(container) {
         container.innerHTML = '<h2>Customers</h2><div id="customers-grid"></div>';
 
@@ -5434,7 +5984,9 @@
                 '<p><strong>Updated:</strong> ' + esc(customer.updated_at ? String(customer.updated_at).substring(0, 10) : '') + '</p>' +
                 '<p><strong>Customer ID:</strong> ' + esc(customer.id || '') + '</p>' +
                 '</div>' +
+                '<section style="margin-top:2rem"><h3>Customer Group</h3><div id="customer-group-panel"></div></section>' +
                 '<section style="margin-top:2rem"><h3>Store Credit</h3><div id="customer-store-credit"></div></section>';
+            mountCustomerGroupPanel(document.getElementById("customer-group-panel"), customerID);
             mountCustomerStoreCreditPanel(document.getElementById("customer-store-credit"), customerID);
         }).catch(function (err) {
             bodyBox.innerHTML = '<p role="alert">' + esc(extractErrorMessage(err, 'Failed to load customer.')) + '</p>';
@@ -7265,7 +7817,10 @@
         window.addEventListener("popstate", handleRoute);
         loadCurrentUser().then(function () {
             return loadContextSwitcherData();
-        }).then(handleRoute);
+        }).then(function () {
+            refreshCustomerGroupsNavVisibility();
+            handleRoute();
+        });
     }
 
     if (document.readyState === "loading") {
