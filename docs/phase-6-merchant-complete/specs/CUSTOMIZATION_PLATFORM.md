@@ -78,7 +78,7 @@ Required attributes:
 - hidden from default admin forms
 - excluded from generic admin list endpoints unless explicit privileged include flag
 - still available to internal/plugin runtime and authorized API consumers
-- auditable in logs (subject to redaction policy)
+- auditable in logs via **metadata only** (`field_code`, `target_type`, `target_id`, actor, action, timestamp); payload values MUST NOT be emitted — any log path that touches private field data MUST redact or omit raw values
 
 Private fields solve "merchant must not tinker with every extension."
 
@@ -203,6 +203,20 @@ Support:
 - dynamic slots in template markup via slot markers (no Go code change per slot)
 
 Plugins register renderers against slot names with deterministic ordering.
+
+### 9.3 Multi-plugin composition
+
+**Chain handlers, not plugins.** Many plugins compose through ordered pipelines, workflows, and hook chains that share a mutable context — not through plugin-to-plugin imports or runtime dependency graphs.
+
+| Need | Mechanism |
+| --- | --- |
+| Same-request behavior (step B uses step A's output) | Pipeline / workflow step or hook chain with explicit priority |
+| Durable data across requests (cart → order) | Extension fields + snapshot policy |
+| React after something happened | Events (unordered; not for synchronous chaining) |
+
+Plugin `depends_on` (if added) should affect **init order only** — field registration before dependent handlers. Runtime sequence is defined by handler position on the shared hook or pipeline.
+
+Full walkthrough (checkout custom field + dependent plugin): [Multi-Plugin Composition](../../guides/PLUGIN_COMPOSITION.md).
 
 ---
 
