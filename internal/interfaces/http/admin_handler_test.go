@@ -74,6 +74,9 @@ func TestAdminHandler_StaticCSS(t *testing.T) {
 	if !strings.Contains(body, "settings-scope-badge") || !strings.Contains(body, "settings-scope-banner") {
 		t.Fatalf("expected settings scope affordance styles in CSS")
 	}
+	if !strings.Contains(body, "admin-tree-list") || !strings.Contains(body, "product-category-picker") {
+		t.Fatalf("expected category tree picker styles in CSS")
+	}
 	if !strings.Contains(body, "nav-group") {
 		t.Fatalf("expected grouped nav styles in CSS")
 	}
@@ -120,37 +123,26 @@ func TestAdminHandler_StaticJS(t *testing.T) {
 	}
 	expectedProductAssignmentWiring := []string{
 		"/admin/products/",
-		"Assign Category",
+		"renderProductCategoryPickerTree",
+		"renderProductCategoryPickerBody",
+		"bindProductCategoryPickerActions",
+		"filterCategoryTreeForSearch",
+		"product-category-picker",
+		"product-category-tree",
+		"data-product-category-toggle",
+		"countAssignedCategories",
 		"Category removed from product.",
 		"Filter categories",
-		"Assigned categories page",
-		"Available categories page",
-		"Previous Available Categories Page",
-		"Next Available Categories Page",
-		"Previous Assigned Categories Page",
-		"Next Assigned Categories Page",
-		"option.slug",
-		"category.slug || category.id",
-		"assigned.slug || assigned.id",
-		"availableCategories.splice",
-		"insertCategoryByOrder(assignedCategories, movedCategory, categoryOrderLookup)",
-		"insertCategoryByOrder(availableCategories, movedCategory, categoryOrderLookup)",
-		"String(existing.id || '') === categoryID",
+		"categories') + ' assigned.",
+		"categories.write",
 		"data-product-category-mutation-busy",
-		"Assigned products page ' + esc(String(assignedPageNumber)) + ' of ' + esc(String(totalAssignedPages))",
 		"aria-busy",
 		"aria-live=\"polite\"",
 		"role=\"status\"",
 		"Saving category assignment...",
-		"setMutationBusy(true)",
-		"setMutationBusy(false)",
-		"rerender(assignedCategories, availableCategories)",
-		"reload()",
+		"Category assigned.",
+		"aria-label=\"Assign category",
 		"clampPagedOffset",
-		"totalAssignedPages",
-		"totalAvailablePages",
-		"aria-label=\"Remove product",
-		"aria-label=\"Remove category",
 		"<th scope=\"col\">SKU</th><th scope=\"col\">Name</th><th scope=\"col\">Weight</th><th scope=\"col\">' + priceHeader + '</th><th scope=\"col\">Action</th>",
 		"<th scope=\"col\">ID</th><th scope=\"col\">Customer</th><th scope=\"col\">Total</th><th scope=\"col\">Status</th><th scope=\"col\">Payment</th><th scope=\"col\">Date</th><th scope=\"col\">Action</th>",
 		"aria-label=\"Save variant",
