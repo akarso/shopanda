@@ -414,3 +414,29 @@
     flex-wrap: wrap;
     gap: 0.5rem;
 }
+
+.admin-tree-list {
+    list-style: none;
+    margin: 0.5rem 0 0;
+    padding-left: 1.25rem;
+}
+
+.admin-tree-list > li {
+    margin: 0.35rem 0;
+}
+
+.product-category-picker {
+    margin-top: 0.75rem;
+}
+
+.product-category-tree {
+    margin-top: 0.75rem;
+    padding-left: 0;
+}
+
+.product-category-tree-label {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.35rem;
+    margin: 0;
+}

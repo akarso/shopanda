@@ -1101,7 +1101,8 @@
             '<div id="product-form-msg"></div>' +
             '<form id="product-form"></form>' +
             '<section id="product-category-panel" style="display:none; margin-top:2rem;">' +
-            '<h3>Assigned Categories</h3>' +
+            '<h3>Categories</h3>' +
+            '<p class="settings-scope-note">Toggle categories in the tree to assign or remove this product. Changes save immediately.</p>' +
             '<div id="product-category-msg"></div>' +
             '<div id="product-category-body"></div>' +
             '</section>' +
@@ -1266,9 +1267,10 @@
         var panel = document.getElementById('product-category-panel');
         var msg = document.getElementById('product-category-msg');
         var body = document.getElementById('product-category-body');
-        var assignmentState = { search: '', offset: 0, limit: 20 };
-        var availableState = { offset: 0, limit: 20 };
-        var categoryOrderLookup = {};
+        var categoriesTree = [];
+        var assignedLookup = {};
+        var searchTerm = '';
+        var canWrite = userHasPermission('categories.write');
         if (!panel || !msg || !body) {
             return;
         }
@@ -1292,318 +1294,193 @@
                 }
 
                 var categories = normalizeCategoryTree(categoriesBody.data && categoriesBody.data.categories);
-                var categoryOptions = flattenCategoryOptions(categories, 0, []);
                 var assignedIDs = (productBody.data && productBody.data.category_ids) || [];
                 if (!Array.isArray(categories) || !Array.isArray(assignedIDs)) {
                     body.innerHTML = '<p role="alert">' + esc(extractErrorMessage(productBody.error ? productBody : categoriesBody, 'Failed to load assigned categories.')) + '</p>';
                     return;
                 }
 
-                var assignedLookup = {};
+                categoriesTree = categories;
+                assignedLookup = {};
                 for (var i = 0; i < assignedIDs.length; i++) {
                     assignedLookup[String(assignedIDs[i] || '')] = true;
                 }
-                categoryOrderLookup = {};
-                for (var orderIndex = 0; orderIndex < categoryOptions.length; orderIndex++) {
-                    var orderedOption = categoryOptions[orderIndex] || {};
-                    categoryOrderLookup[String(orderedOption.id || '')] = orderIndex;
-                }
-
-                var assignedCategories = [];
-                var availableCategories = [];
-                for (var j = 0; j < categoryOptions.length; j++) {
-                    var option = categoryOptions[j] || {};
-                    if (assignedLookup[String(option.id || '')]) {
-                        assignedCategories.push(option);
-                    } else {
-                        availableCategories.push(option);
-                    }
-                }
-
-                assignmentState.offset = clampPagedOffset(assignmentState.offset, assignmentState.limit, assignedCategories.length);
-                availableState.offset = clampPagedOffset(availableState.offset, availableState.limit, availableCategories.length);
-
-                renderProductCategoryAssignmentView(assignedCategories, availableCategories);
+                renderPicker();
             }).catch(function (err) {
                 body.innerHTML = '<p role="alert">' + esc(extractErrorMessage(err, 'Failed to load assigned categories.')) + '</p>';
             });
         }
 
-        function renderProductCategoryAssignmentView(assignedCategories, availableCategories) {
-            body.innerHTML = renderProductCategoryAssignmentBody(assignedCategories, availableCategories, assignmentState, availableState);
-            bindProductCategoryAssignmentActions(productID, body, setMessage, loadAssignments, renderProductCategoryAssignmentView, assignedCategories, availableCategories, assignmentState, availableState, categoryOrderLookup);
+        function renderPicker() {
+            body.innerHTML = renderProductCategoryPickerBody(categoriesTree, assignedLookup, canWrite, searchTerm);
+            bindProductCategoryPickerActions(productID, body, assignedLookup, canWrite, function (term) {
+                searchTerm = term;
+                renderPicker();
+            }, setMessage, loadAssignments);
         }
 
         loadAssignments();
     }
 
-    function renderProductCategoryAssignmentBody(assignedCategories, availableCategories, assignmentState, availableState) {
-        var searchTerm = assignmentState.search;
-        var filteredAssignedCategories = filterCategoryAssignmentOptions(assignedCategories, searchTerm);
-        var filteredAvailableCategories = filterCategoryAssignmentOptions(availableCategories, searchTerm);
-        assignmentState.offset = clampPagedOffset(assignmentState.offset, assignmentState.limit, filteredAssignedCategories.length);
-        availableState.offset = clampPagedOffset(availableState.offset, availableState.limit, filteredAvailableCategories.length);
-        var assignedStart = assignmentState.offset;
-        var assignedEnd = assignedStart + assignmentState.limit;
-        var pagedAssignedCategories = filteredAssignedCategories.slice(assignedStart, assignedEnd);
-        var availableStart = availableState.offset;
-        var availableEnd = availableStart + availableState.limit;
-        var pagedAvailableCategories = filteredAvailableCategories.slice(availableStart, availableEnd);
-        var assignedPageNumber = Math.floor(assignedStart / assignmentState.limit) + 1;
-        var availablePageNumber = Math.floor(availableStart / availableState.limit) + 1;
-        var totalAssignedPages = filteredAssignedCategories.length === 0 ? 1 : Math.ceil(filteredAssignedCategories.length / assignmentState.limit);
-        var totalAvailablePages = filteredAvailableCategories.length === 0 ? 1 : Math.ceil(filteredAvailableCategories.length / availableState.limit);
-        var hasAssignedPrev = assignedStart > 0;
-        var hasAssignedNext = filteredAssignedCategories.length > assignedEnd;
-        var hasAvailablePrev = availableStart > 0;
-        var hasAvailableNext = filteredAvailableCategories.length > availableEnd;
-        var html = '<div style="margin-bottom:1rem">';
-        html += '<label>Filter categories<input type="search" id="product-category-search" placeholder="Search categories" value="' + esc(searchTerm || '') + '"></label>';
-        if (availableCategories.length > 0 && filteredAvailableCategories.length > 0) {
-            html += '<label>Assign category<select id="product-assignment-category">';
-            for (var i = 0; i < pagedAvailableCategories.length; i++) {
-                var category = pagedAvailableCategories[i] || {};
-                html += '<option value="' + esc(String(category.id || '')) + '">' + esc((category.label || category.id || '') + ' (' + (category.slug || category.id || '') + ')') + '</option>';
-            }
-            html += '</select></label> <button type="button" id="assign-product-category-btn">Assign Category</button>';
-        } else if (availableCategories.length > 0) {
-            html += '<p class="settings-scope-note">No available categories match this filter.</p>';
-        } else {
-            html += '<p class="settings-scope-note">All categories are already assigned to this product.</p>';
+    function countAssignedCategories(assignedLookup) {
+        if (!assignedLookup) {
+            return 0;
         }
-        html += '<div style="margin-top:0.5rem">';
-        html += '<p class="settings-scope-note">Available categories page ' + esc(String(availablePageNumber)) + ' of ' + esc(String(totalAvailablePages)) + '.</p>';
-        html += '<button type="button" id="product-available-prev-page"' + (hasAvailablePrev ? '' : ' disabled') + '>Previous Available Categories Page</button> ';
-        html += '<button type="button" id="product-available-next-page"' + (hasAvailableNext ? '' : ' disabled') + '>Next Available Categories Page</button>';
-        html += '</div>';
-        html += '</div>';
-        html += '<div style="margin-bottom:0.5rem">';
-        html += '<p class="settings-scope-note">Assigned categories page ' + esc(String(assignedPageNumber)) + ' of ' + esc(String(totalAssignedPages)) + '.</p>';
-        html += '<button type="button" id="product-assignment-prev-page"' + (hasAssignedPrev ? '' : ' disabled') + '>Previous Assigned Categories Page</button> ';
-        html += '<button type="button" id="product-assignment-next-page"' + (hasAssignedNext ? '' : ' disabled') + '>Next Assigned Categories Page</button>';
-        html += '</div>';
-        html += '<table class="admin-table"><thead><tr><th scope="col">Name</th><th scope="col">Slug</th><th scope="col">Action</th></tr></thead><tbody>';
-        if (assignedCategories.length === 0) {
-            html += '<tr><td colspan="3">No categories assigned.</td></tr>';
-        } else if (filteredAssignedCategories.length === 0) {
-            html += '<tr><td colspan="3">No assigned categories match this filter.</td></tr>';
-        } else {
-            for (var j = 0; j < pagedAssignedCategories.length; j++) {
-                var assigned = pagedAssignedCategories[j] || {};
-                var categoryLabel = esc((assigned.label || assigned.slug || assigned.id || 'Category'));
-                html += '<tr>' +
-                    '<td>' + esc(assigned.label || assigned.id || '') + '</td>' +
-                    '<td>' + esc(assigned.slug || assigned.id || '') + '</td>' +
-                    '<td><button type="button" aria-label="Remove category ' + categoryLabel + '" data-product-category-remove="' + esc(String(assigned.id || '')) + '">Remove</button></td>' +
-                    '</tr>';
+        var count = 0;
+        for (var id in assignedLookup) {
+            if (Object.prototype.hasOwnProperty.call(assignedLookup, id) && assignedLookup[id]) {
+                count += 1;
             }
         }
-        html += '</tbody></table>';
-        return html;
+        return count;
     }
 
-    function bindProductCategoryAssignmentActions(productID, container, setMessage, reload, rerender, assignedCategories, availableCategories, assignmentState, availableState, categoryOrderLookup) {
-        function isMutationBusy() {
-            return container.getAttribute('data-product-category-mutation-busy') === '1';
-        }
-
-        function setMutationBusy(isBusy) {
-            container.setAttribute('data-product-category-mutation-busy', isBusy ? '1' : '0');
-            container.setAttribute('aria-busy', isBusy ? 'true' : 'false');
-            var assignActionButton = document.getElementById('assign-product-category-btn');
-            if (assignActionButton) {
-                assignActionButton.disabled = !!isBusy;
-            }
-            var removeActionButtons = container.querySelectorAll('[data-product-category-remove]');
-            for (var idx = 0; idx < removeActionButtons.length; idx++) {
-                removeActionButtons[idx].disabled = !!isBusy;
-            }
-        }
-
-        var searchInput = document.getElementById('product-category-search');
-        if (searchInput) {
-            searchInput.addEventListener('input', function () {
-                assignmentState.search = this.value || '';
-                assignmentState.offset = 0;
-                availableState.offset = 0;
-                rerender(assignedCategories, availableCategories);
-            });
-        }
-
-        var availablePrevBtn = document.getElementById('product-available-prev-page');
-        if (availablePrevBtn) {
-            availablePrevBtn.addEventListener('click', function () {
-                if (availableState.offset <= 0) {
-                    return;
-                }
-                availableState.offset = Math.max(0, availableState.offset - availableState.limit);
-                rerender(assignedCategories, availableCategories);
-            });
-        }
-
-        var availableNextBtn = document.getElementById('product-available-next-page');
-        if (availableNextBtn) {
-            availableNextBtn.addEventListener('click', function () {
-                availableState.offset += availableState.limit;
-                rerender(assignedCategories, availableCategories);
-            });
-        }
-
-        var prevAssignedBtn = document.getElementById('product-assignment-prev-page');
-        if (prevAssignedBtn) {
-            prevAssignedBtn.addEventListener('click', function () {
-                if (assignmentState.offset <= 0) {
-                    return;
-                }
-                assignmentState.offset = Math.max(0, assignmentState.offset - assignmentState.limit);
-                rerender(assignedCategories, availableCategories);
-            });
-        }
-
-        var nextAssignedBtn = document.getElementById('product-assignment-next-page');
-        if (nextAssignedBtn) {
-            nextAssignedBtn.addEventListener('click', function () {
-                assignmentState.offset += assignmentState.limit;
-                rerender(assignedCategories, availableCategories);
-            });
-        }
-
-        var assignBtn = document.getElementById('assign-product-category-btn');
-        if (assignBtn) {
-            assignBtn.addEventListener('click', function () {
-                if (isMutationBusy()) {
-                    return;
-                }
-                var select = document.getElementById('product-assignment-category');
-                var categoryID = select && select.value ? select.value : '';
-                if (!categoryID) {
-                    return;
-                }
-                setMessage('Saving category assignment...', false);
-                setMutationBusy(true);
-                api('/admin/categories/' + encodeURIComponent(categoryID) + '/products/' + encodeURIComponent(productID), { method: 'POST' }).then(function (body) {
-                    if (body && body.error) {
-                        setMessage(body.error.message || 'Failed to assign category.', true);
-                        setMutationBusy(false);
-                        return;
-                    }
-                    setMessage('Category assigned.', false);
-                    var movedCategory = null;
-                    for (var i = 0; i < availableCategories.length; i++) {
-                        var available = availableCategories[i] || {};
-                        if (String(available.id || '') === String(categoryID)) {
-                            movedCategory = available;
-                            availableCategories.splice(i, 1);
-                            break;
-                        }
-                    }
-                    if (!movedCategory) {
-                        setMutationBusy(false);
-                        reload();
-                        return;
-                    }
-                    insertCategoryByOrder(assignedCategories, movedCategory, categoryOrderLookup);
-                    availableState.offset = clampPagedOffset(availableState.offset, availableState.limit, availableCategories.length);
-                    assignmentState.offset = clampPagedOffset(assignmentState.offset, assignmentState.limit, assignedCategories.length);
-                    setMutationBusy(false);
-                    rerender(assignedCategories, availableCategories);
-                }).catch(function (err) {
-                    setMessage(extractErrorMessage(err, 'Failed to assign category.'), true);
-                    setMutationBusy(false);
-                });
-            });
-        }
-
-        var removeButtons = container.querySelectorAll('[data-product-category-remove]');
-        for (var i = 0; i < removeButtons.length; i++) {
-            removeButtons[i].addEventListener('click', function () {
-                if (isMutationBusy()) {
-                    return;
-                }
-                var categoryID = this.getAttribute('data-product-category-remove');
-                setMessage('Saving category assignment...', false);
-                setMutationBusy(true);
-                api('/admin/categories/' + encodeURIComponent(categoryID) + '/products/' + encodeURIComponent(productID), { method: 'DELETE' }).then(function (body) {
-                    if (body && body.error) {
-                        setMessage(body.error.message || 'Failed to remove category.', true);
-                        setMutationBusy(false);
-                        return;
-                    }
-                    setMessage('Category removed from product.', false);
-                    var movedCategory = null;
-                    for (var j = 0; j < assignedCategories.length; j++) {
-                        var assigned = assignedCategories[j] || {};
-                        if (String(assigned.id || '') === String(categoryID)) {
-                            movedCategory = assigned;
-                            assignedCategories.splice(j, 1);
-                            break;
-                        }
-                    }
-                    if (!movedCategory) {
-                        setMutationBusy(false);
-                        reload();
-                        return;
-                    }
-                    insertCategoryByOrder(availableCategories, movedCategory, categoryOrderLookup);
-                    assignmentState.offset = clampPagedOffset(assignmentState.offset, assignmentState.limit, assignedCategories.length);
-                    availableState.offset = clampPagedOffset(availableState.offset, availableState.limit, availableCategories.length);
-                    setMutationBusy(false);
-                    rerender(assignedCategories, availableCategories);
-                }).catch(function (err) {
-                    setMessage(extractErrorMessage(err, 'Failed to remove category.'), true);
-                    setMutationBusy(false);
-                });
-            });
-        }
-    }
-
-    function filterCategoryAssignmentOptions(options, searchTerm) {
-        if (!Array.isArray(options)) {
+    function filterCategoryTreeForSearch(nodes, searchTerm) {
+        if (!Array.isArray(nodes)) {
             return [];
         }
         var query = String(searchTerm || '').trim().toLowerCase();
         if (!query) {
-            return options.slice();
+            return nodes.slice();
         }
         var out = [];
-        for (var i = 0; i < options.length; i++) {
-            var option = options[i] || {};
-            var text = ((option.label || '') + ' ' + (option.slug || '') + ' ' + (option.id || '')).toLowerCase();
-            if (text.indexOf(query) !== -1) {
-                out.push(option);
+        for (var i = 0; i < nodes.length; i++) {
+            var node = nodes[i] || {};
+            var text = ((node.name || '') + ' ' + (node.slug || '') + ' ' + (node.id || '')).toLowerCase();
+            var filteredChildren = filterCategoryTreeForSearch(node.children, searchTerm);
+            if (text.indexOf(query) !== -1 || filteredChildren.length > 0) {
+                out.push({
+                    id: node.id || '',
+                    name: node.name || '',
+                    slug: node.slug || '',
+                    position: node.position,
+                    children: filteredChildren
+                });
             }
         }
         return out;
     }
 
-    function insertCategoryByOrder(list, category, orderLookup) {
-        if (!Array.isArray(list) || !category) {
-            return;
+    function renderProductCategoryPickerBody(categoriesTree, assignedLookup, canWrite, searchTerm) {
+        var assignedCount = countAssignedCategories(assignedLookup);
+        var html = '<div class="product-category-picker" data-product-category-mutation-busy="0" aria-busy="false">';
+        html += '<label>Filter categories<input type="search" id="product-category-search" placeholder="Search by name or slug" value="' + esc(searchTerm || '') + '"></label>';
+        html += '<p class="settings-scope-note" id="product-category-assigned-count">' + esc(String(assignedCount)) + ' ' + (assignedCount === 1 ? 'category' : 'categories') + ' assigned.</p>';
+        if (!canWrite) {
+            html += '<p class="settings-scope-note">Your account can view assignments but cannot change them without categories write access.</p>';
         }
-        var categoryID = String(category.id || '');
-        if (categoryID) {
-            // Ensure local mutation paths cannot duplicate the same category in a target list.
-            for (var existingIndex = list.length - 1; existingIndex >= 0; existingIndex--) {
-                var existing = list[existingIndex] || {};
-                if (String(existing.id || '') === categoryID) {
-                    list.splice(existingIndex, 1);
-                }
+        html += renderProductCategoryPickerTree(categoriesTree, assignedLookup, canWrite, searchTerm);
+        html += '</div>';
+        return html;
+    }
+
+    function renderProductCategoryPickerTree(categoriesTree, assignedLookup, canWrite, searchTerm) {
+        var filtered = filterCategoryTreeForSearch(categoriesTree, searchTerm);
+        if (!filtered.length) {
+            if (!Array.isArray(categoriesTree) || categoriesTree.length === 0) {
+                return '<p class="settings-scope-note">No categories exist yet. Create categories under Catalog → Categories.</p>';
+            }
+            return '<p class="settings-scope-note">No categories match this filter.</p>';
+        }
+        return '<ul class="admin-tree-list product-category-tree">' + renderProductCategoryPickerNodes(filtered, assignedLookup, canWrite) + '</ul>';
+    }
+
+    function renderProductCategoryPickerNodes(nodes, assignedLookup, canWrite) {
+        if (!Array.isArray(nodes) || nodes.length === 0) {
+            return '';
+        }
+        var html = '';
+        for (var i = 0; i < nodes.length; i++) {
+            var node = nodes[i] || {};
+            var categoryID = String(node.id || '');
+            var categoryLabel = esc(node.name || node.slug || node.id || 'Category');
+            var checked = assignedLookup[categoryID] ? ' checked' : '';
+            var disabled = canWrite ? '' : ' disabled';
+            var children = Array.isArray(node.children) ? node.children : [];
+            html += '<li><label class="product-category-tree-label">' +
+                '<input type="checkbox" data-product-category-toggle="' + esc(categoryID) + '"' + checked + disabled + ' aria-label="Assign category ' + categoryLabel + '">' +
+                ' <strong>' + categoryLabel + '</strong> <span class="settings-scope-note">/' + esc(node.slug || categoryID) + '</span></label>';
+            if (children.length > 0) {
+                html += '<ul class="admin-tree-list">' + renderProductCategoryPickerNodes(children, assignedLookup, canWrite) + '</ul>';
+            }
+            html += '</li>';
+        }
+        return html;
+    }
+
+    function bindProductCategoryPickerActions(productID, container, assignedLookup, canWrite, setSearchTerm, setMessage, reload) {
+        var picker = container.querySelector('.product-category-picker');
+
+        function isMutationBusy() {
+            return picker && picker.getAttribute('data-product-category-mutation-busy') === '1';
+        }
+
+        function setMutationBusy(isBusy) {
+            if (picker) {
+                picker.setAttribute('data-product-category-mutation-busy', isBusy ? '1' : '0');
+                picker.setAttribute('aria-busy', isBusy ? 'true' : 'false');
+            }
+            var inputs = container.querySelectorAll('[data-product-category-toggle]');
+            for (var i = 0; i < inputs.length; i++) {
+                inputs[i].disabled = !canWrite || isBusy;
             }
         }
-        var targetOrder = orderLookup ? orderLookup[categoryID] : null;
-        if (typeof targetOrder !== 'number') {
-            list.push(category);
-            return;
-        }
-        for (var i = 0; i < list.length; i++) {
-            var current = list[i] || {};
-            var currentOrder = orderLookup[String(current.id || '')];
-            if (typeof currentOrder !== 'number' || currentOrder > targetOrder) {
-                list.splice(i, 0, category);
+
+        function updateAssignedCount() {
+            var countEl = document.getElementById('product-category-assigned-count');
+            if (!countEl) {
                 return;
             }
+            var assignedCount = countAssignedCategories(assignedLookup);
+            countEl.textContent = assignedCount + ' ' + (assignedCount === 1 ? 'category' : 'categories') + ' assigned.';
         }
-        list.push(category);
+
+        var searchInput = document.getElementById('product-category-search');
+        if (searchInput) {
+            searchInput.addEventListener('input', function () {
+                setSearchTerm(this.value || '');
+            });
+        }
+
+        var toggles = container.querySelectorAll('[data-product-category-toggle]');
+        for (var j = 0; j < toggles.length; j++) {
+            toggles[j].addEventListener('change', function (e) {
+                if (!canWrite || isMutationBusy()) {
+                    e.target.checked = !e.target.checked;
+                    return;
+                }
+                var categoryID = e.target.getAttribute('data-product-category-toggle');
+                if (!categoryID) {
+                    return;
+                }
+                var shouldAssign = !!e.target.checked;
+                setMessage('Saving category assignment...', false);
+                setMutationBusy(true);
+                api('/admin/categories/' + encodeURIComponent(categoryID) + '/products/' + encodeURIComponent(productID), {
+                    method: shouldAssign ? 'POST' : 'DELETE'
+                }).then(function (body) {
+                    if (body && body.error) {
+                        e.target.checked = !shouldAssign;
+                        setMessage(body.error.message || (shouldAssign ? 'Failed to assign category.' : 'Failed to remove category.'), true);
+                        setMutationBusy(false);
+                        return;
+                    }
+                    if (shouldAssign) {
+                        assignedLookup[categoryID] = true;
+                        setMessage('Category assigned.', false);
+                    } else {
+                        delete assignedLookup[categoryID];
+                        setMessage('Category removed from product.', false);
+                    }
+                    updateAssignedCount();
+                    setMutationBusy(false);
+                }).catch(function (err) {
+                    e.target.checked = !shouldAssign;
+                    setMessage(extractErrorMessage(err, shouldAssign ? 'Failed to assign category.' : 'Failed to remove category.'), true);
+                    setMutationBusy(false);
+                });
+            });
+        }
     }
 
     function clampPagedOffset(offset, limit, total) {
