@@ -11,8 +11,8 @@ Planned specs for **PR-600–651** (Summary, Why, Scope, Out of scope, Validatio
 | PR-611 | B | [oss] | done | [Store credit admin UI](PR-611.md) |
 | PR-620 | C | [oss] | done | [Webhook endpoints admin UI](PR-620.md) |
 | PR-621 | C | [oss] | done | [Order invoice admin UI](PR-621.md) |
-| PR-622 | C | [oss] | planned | [Refund UX polish](PR-622.md) |
-| PR-630 | D | [oss] | planned | [Bulk price admin grid](PR-630.md) |
+| PR-622 | C | [oss] | done | [Refund UX polish](PR-622.md) |
+| PR-630 | D | [oss] | done | [Bulk price admin grid](PR-630.md) |
 | PR-631 | D | [oss] | planned | [Product category picker UX (stretch)](PR-631.md) |
 | PR-640 | E | [oss] | planned | [Reviews moderation UI (stretch)](PR-640.md) |
 | PR-641 | E | [oss] | planned | [Abandoned cart settings UI (stretch)](PR-641.md) |
@@ -22,7 +22,7 @@ Planned specs for **PR-600–651** (Summary, Why, Scope, Out of scope, Validatio
 
 Roadmap: [`../ROADMAP.md`](../ROADMAP.md) · Upstream: [Phase 5](../phase-5-maturity/ROADMAP.md) · Licensing: [`../../COMMERCIAL.md`](../../COMMERCIAL.md)
 
-**Suggested next PRs:** PR-622 (refund UX).
+**Suggested next PRs:** PR-631 (product category picker UX, stretch).
 
 **Rule for Phase 6:** Do not merge backend/API PRs that add admin nav entries without the corresponding UI PR (or hide the nav item until the UI PR lands).
 

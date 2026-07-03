@@ -165,6 +165,7 @@
         "/admin/products": { title: "Products", render: renderProductsGrid, auth: true },
         "/admin/catalog/categories": { title: "Categories", render: renderCategoriesPage, auth: true },
         "/admin/catalog/attributes": { title: "Attributes", render: renderAttributesGrid, auth: true },
+        "/admin/catalog/prices": { title: "Bulk Prices", render: renderBulkPricesGrid, auth: true },
         // Customers
         "/admin/customers": { title: "Customers", render: renderCustomersGrid, auth: true },
         "/admin/customers/groups": { title: "Customer Groups", render: renderCustomerGroupsGrid, auth: true },
@@ -3466,6 +3467,19 @@
         ];
     }
 
+    function userHasPermission(permission) {
+        if (!currentUser || !currentUser.role) {
+            return false;
+        }
+        var defs = adminRoleDefinitions();
+        for (var i = 0; i < defs.length; i++) {
+            if (defs[i].role === currentUser.role) {
+                return defs[i].permissions.indexOf(permission) !== -1;
+            }
+        }
+        return false;
+    }
+
     // --- Pages ---
 
     function renderLogin(container) {
@@ -5430,6 +5444,203 @@
         });
 
         loadInventory();
+    }
+
+    function renderBulkPriceScopeBadge(scope) {
+        if (scope === "store") {
+            return '<span class="settings-scope-badge settings-scope-badge-store">Store override</span>';
+        }
+        if (scope === "global") {
+            return '<span class="settings-scope-badge settings-scope-badge-global">Global</span>';
+        }
+        return '<span class="settings-scope-badge settings-scope-badge-draft">Unset</span>';
+    }
+
+    function applyBulkPriceRowData(row, priceData) {
+        var input = row.querySelector('[data-field="price"]');
+        var scopeCell = row.querySelector(".bulk-price-scope");
+        if (!input || !scopeCell) {
+            return;
+        }
+        var data = priceData || {};
+        if (data.price && data.price.amount != null) {
+            input.value = String(data.price.amount);
+            input.placeholder = "";
+            scopeCell.innerHTML = renderBulkPriceScopeBadge(data.price_scope || (data.price.store_id ? "store" : "global"));
+        } else if (data.global_fallback && data.global_fallback.amount != null) {
+            input.value = "";
+            input.placeholder = String(data.global_fallback.amount);
+            scopeCell.innerHTML = renderBulkPriceScopeBadge("unset") +
+                ' <span class="settings-scope-note">Global fallback ' + esc(String(data.global_fallback.amount)) + "</span>";
+        } else {
+            input.value = "";
+            input.placeholder = "";
+            scopeCell.innerHTML = renderBulkPriceScopeBadge(data.price_scope || "unset");
+        }
+    }
+
+    function loadBulkPriceForRow(row, productID, variantID) {
+        return api("/admin/products/" + encodeURIComponent(productID) + "/variants/" + encodeURIComponent(variantID) + "/price")
+            .then(function (body) {
+                applyBulkPriceRowData(row, body && body.data);
+            });
+    }
+
+    function renderBulkPricesGrid(container) {
+        if (!userHasPermission("products.read")) {
+            container.innerHTML = '<h2>Bulk Prices</h2><p role="alert">Your account does not have products access.</p>';
+            return;
+        }
+
+        var currency = adminScope.currency || "";
+        var storeID = adminScope.store_id || "";
+        var scopeBadge = storeID
+            ? renderProductFieldScopeBadge("store")
+            : renderProductFieldScopeBadge("global");
+        var scopeNote = "";
+        if (currency) {
+            scopeNote = storeID
+                ? ("Prices save as store override for <strong>" + esc(storeID) + "</strong> in <strong>" + esc(currency) + "</strong>.")
+                : ("Prices save as the global/default price in <strong>" + esc(currency) + "</strong>.");
+        }
+
+        container.innerHTML =
+            "<h2>Bulk Prices" + (currency ? scopeBadge : "") + "</h2>" +
+            (currency
+                ? ('<p class="settings-scope-note">' + scopeNote + " Change store or currency in the header switcher to edit another scope.</p>")
+                : ('<p role="alert" class="settings-scope-note">Select a currency context in the header switcher to view and edit prices.</p>')) +
+            '<form id="bulk-price-search-form" style="margin-bottom:1rem">' +
+            '<label>Search SKU or product <input name="search" placeholder="SKU or product name"></label> ' +
+            '<button type="submit">Search</button>' +
+            "</form>" +
+            '<div id="bulk-price-grid"></div>' +
+            '<div id="bulk-price-msg"></div>';
+
+        if (!currency) {
+            return;
+        }
+
+        var grid = document.getElementById("bulk-price-grid");
+        var searchForm = document.getElementById("bulk-price-search-form");
+        var msg = document.getElementById("bulk-price-msg");
+        var currentSearch = "";
+        var canWrite = userHasPermission("products.write");
+
+        function loadBulkPrices() {
+            msg.innerHTML = "";
+            grid.innerHTML = "<p>Loading prices…</p>";
+            var url = "/admin/inventory?offset=0&limit=50";
+            if (currentSearch) {
+                url += "&search=" + encodeURIComponent(currentSearch);
+            }
+            api(url).then(function (body) {
+                if (body && body.error && body.error.code === "forbidden") {
+                    grid.innerHTML = '<p role="alert">Your account does not have products access.</p>';
+                    return;
+                }
+                var items = body && body.data && body.data.items;
+                if (!Array.isArray(items)) {
+                    grid.innerHTML = '<p role="alert">' + esc(extractErrorMessage(body, "Failed to load bulk prices.")) + "</p>";
+                    return;
+                }
+
+                var html = '<table><thead><tr>' +
+                    "<th scope=\"col\">SKU</th><th scope=\"col\">Product</th><th scope=\"col\">Variant</th>" +
+                    "<th scope=\"col\">Price (" + esc(currency) + ", minor units)</th><th scope=\"col\">Scope</th>";
+                if (canWrite) {
+                    html += '<th scope="col">Save</th>';
+                }
+                html += "</tr></thead><tbody>";
+                if (items.length === 0) {
+                    html += '<tr><td colspan="' + (canWrite ? "6" : "5") + '">No variants found.</td></tr>';
+                } else {
+                    for (var i = 0; i < items.length; i++) {
+                        var item = items[i];
+                        html += '<tr data-variant-id="' + esc(item.variant_id || "") + '" data-product-id="' + esc(item.product_id || "") + '">' +
+                            "<td>" + esc(item.sku || "") + "</td>" +
+                            "<td>" + esc(item.product_name || "") + "</td>" +
+                            "<td>" + esc(item.variant_name || "") + "</td>" +
+                            '<td><input data-field="price" type="number" step="1" min="1" aria-label="Price for ' + esc(item.sku || item.variant_id || "variant") + '" style="width:7rem"' +
+                            (canWrite ? "" : " disabled") + "></td>" +
+                            '<td class="bulk-price-scope"><span class="settings-scope-note">Loading…</span></td>';
+                        if (canWrite) {
+                            html += '<td><button type="button" class="bulk-price-save-btn">Save</button></td>';
+                        }
+                        html += "</tr>";
+                    }
+                }
+                html += "</tbody></table>";
+                grid.innerHTML = html;
+
+                var rows = grid.querySelectorAll("tr[data-variant-id]");
+                var pending = rows.length;
+                var loadErrors = 0;
+                if (pending === 0) {
+                    return;
+                }
+                function priceLoadDone() {
+                    pending -= 1;
+                    if (pending === 0 && loadErrors > 0) {
+                        msg.innerHTML = '<p role="alert">Failed to load one or more variant prices.</p>';
+                    }
+                }
+                for (var j = 0; j < rows.length; j++) {
+                    (function (row) {
+                        var productID = row.getAttribute("data-product-id");
+                        var variantID = row.getAttribute("data-variant-id");
+                        loadBulkPriceForRow(row, productID, variantID).catch(function () {
+                            loadErrors += 1;
+                            var scopeCell = row.querySelector(".bulk-price-scope");
+                            if (scopeCell) {
+                                scopeCell.innerHTML = renderBulkPriceScopeBadge("unset");
+                            }
+                        }).then(priceLoadDone);
+                    })(rows[j]);
+                }
+
+                if (canWrite) {
+                    var saveButtons = grid.querySelectorAll(".bulk-price-save-btn");
+                    for (var k = 0; k < saveButtons.length; k++) {
+                        saveButtons[k].addEventListener("click", function (e) {
+                            var row = e.target.closest("tr");
+                            if (!row) {
+                                return;
+                            }
+                            var productID = row.getAttribute("data-product-id");
+                            var variantID = row.getAttribute("data-variant-id");
+                            var input = row.querySelector('[data-field="price"]');
+                            if (!productID || !variantID || !input || input.value === "") {
+                                msg.innerHTML = '<p role="alert">Enter a price amount in minor units.</p>';
+                                return;
+                            }
+                            api("/admin/products/" + encodeURIComponent(productID) + "/variants/" + encodeURIComponent(variantID) + "/price", {
+                                method: "PUT",
+                                body: JSON.stringify({ amount: Number(input.value) })
+                            }).then(function (resp) {
+                                if (resp && resp.error) {
+                                    msg.innerHTML = '<p role="alert">' + esc(resp.error.message || "Save price failed") + "</p>";
+                                    return;
+                                }
+                                applyBulkPriceRowData(row, resp && resp.data);
+                                msg.innerHTML = "<p>Price saved.</p>";
+                            }).catch(function (err) {
+                                msg.innerHTML = '<p role="alert">' + esc(extractErrorMessage(err, "Save price failed")) + "</p>";
+                            });
+                        });
+                    }
+                }
+            }).catch(function (err) {
+                grid.innerHTML = '<p role="alert">' + esc(extractErrorMessage(err, "Failed to load bulk prices.")) + "</p>";
+            });
+        }
+
+        searchForm.addEventListener("submit", function (e) {
+            e.preventDefault();
+            currentSearch = searchForm.elements.search.value.trim();
+            loadBulkPrices();
+        });
+
+        loadBulkPrices();
     }
 
     function renderPagesGrid(container) {
@@ -7754,6 +7965,172 @@
         });
     }
 
+    function findPaymentForOrder(orderID) {
+        return api("/admin/payments?offset=0&limit=200").then(function (body) {
+            if (body && body.error) {
+                return { error: body };
+            }
+            var payments = normalizePayments(body && body.data && body.data.payments);
+            for (var i = 0; i < payments.length; i++) {
+                if (payments[i].order_id === orderID) {
+                    return { payment: payments[i] };
+                }
+            }
+            return { payment: null };
+        });
+    }
+
+    function probeRefundRoute(orderID) {
+        var headers = buildHeaders({ "Content-Type": "application/json" });
+        return fetch(API_BASE + "/admin/orders/" + encodeURIComponent(orderID) + "/refund", {
+            method: "POST",
+            headers: headers,
+            body: "{}"
+        }).then(function (res) {
+            if (res.status === 404) {
+                return false;
+            }
+            return true;
+        }).catch(function () {
+            return false;
+        });
+    }
+
+    function evaluateOrderRefundEligibility(order, payment, refundRouteAvailable) {
+        if (!order || order.status !== "paid") {
+            return {
+                eligible: false,
+                reason: "Refunds are only available for paid orders."
+            };
+        }
+        if (!payment) {
+            return {
+                eligible: false,
+                reason: "No payment record found for this order."
+            };
+        }
+        if (payment.status === "refunded") {
+            return {
+                eligible: false,
+                reason: "This payment has already been refunded."
+            };
+        }
+        if (payment.method !== "stripe") {
+            return {
+                eligible: false,
+                reason: "Online refunds are only supported for Stripe payments. Record manual refunds in your payment provider."
+            };
+        }
+        if (payment.status !== "completed") {
+            return {
+                eligible: false,
+                reason: "Payment is not in a refundable state (status: " + (payment.status || "unknown") + ")."
+            };
+        }
+        if (!payment.provider_ref) {
+            return {
+                eligible: false,
+                reason: "Payment has no provider reference, so an online refund cannot be issued."
+            };
+        }
+        if (!refundRouteAvailable) {
+            return {
+                eligible: false,
+                reason: "Refund API is not available. Enable the Stripe payment provider with refund support in Operations → Payments."
+            };
+        }
+        if (!userHasPermission("orders.write")) {
+            return {
+                eligible: false,
+                reason: "Your account does not have permission to issue refunds."
+            };
+        }
+        return { eligible: true, payment: payment };
+    }
+
+    function mountOrderRefundPanel(mountEl, order) {
+        if (!mountEl || !order || !order.id) {
+            return;
+        }
+        mountEl.innerHTML = "<p>Loading payment…</p>";
+
+        findPaymentForOrder(order.id).then(function (result) {
+            if (result.error) {
+                if (result.error.error && result.error.error.code === "forbidden") {
+                    mountEl.innerHTML = '<p role="alert">Your account does not have orders access.</p>';
+                    return;
+                }
+                mountEl.innerHTML = '<p role="alert">' + esc(extractErrorMessage(result.error, "Failed to load payment details.")) + "</p>";
+                return;
+            }
+
+            var payment = result.payment;
+            var paymentSummary = payment
+                ? "<p><strong>Method:</strong> " + esc(payment.method || "—") +
+                  " · <strong>Status:</strong> " + esc(payment.status || "—") +
+                  " · <strong>Amount:</strong> " + esc(formatMoney(Number(payment.amount || 0), payment.currency || order.currency)) + "</p>"
+                : "<p class=\"settings-scope-note\">No payment record found in the transaction ledger.</p>";
+
+            return probeRefundRoute(order.id).then(function (refundRouteAvailable) {
+                var eligibility = evaluateOrderRefundEligibility(order, payment, refundRouteAvailable);
+                var html = '<div id="order-refund-msg"></div>' + paymentSummary;
+
+                if (eligibility.eligible && payment) {
+                    var refundLabel = formatMoney(Number(payment.amount || 0), payment.currency || order.currency);
+                    html += '<p class="settings-scope-note">Only full refunds are supported. The refund amount must match the captured Stripe payment (' + esc(refundLabel) + ").</p>" +
+                        '<button type="button" id="order-refund-btn">Issue full refund</button>';
+                } else if (eligibility.reason) {
+                    html += '<p class="settings-scope-note">' + esc(eligibility.reason) + "</p>";
+                }
+
+                mountEl.innerHTML = html;
+
+                var refundBtn = document.getElementById("order-refund-btn");
+                var refundMsg = document.getElementById("order-refund-msg");
+                if (!refundBtn || !payment) {
+                    return;
+                }
+
+                refundBtn.onclick = function () {
+                    var amount = Number(payment.amount || 0);
+                    var confirmLabel = formatMoney(amount, payment.currency || order.currency);
+                    if (!window.confirm("Issue a full refund of " + confirmLabel + " to the customer's payment method? This action cannot be undone from admin.")) {
+                        return;
+                    }
+
+                    refundBtn.disabled = true;
+                    refundMsg.innerHTML = "<p>Issuing refund…</p>";
+
+                    api("/admin/orders/" + encodeURIComponent(order.id) + "/refund", {
+                        method: "POST",
+                        body: JSON.stringify({ amount: amount })
+                    }).then(function (body) {
+                        if (body && body.error) {
+                            if (body.error.code === "forbidden") {
+                                refundMsg.innerHTML = '<p role="alert">Your account does not have permission to issue refunds.</p>';
+                            } else {
+                                refundMsg.innerHTML = '<p role="alert">' + esc(body.error.message || "Refund failed.") + "</p>";
+                            }
+                            refundBtn.disabled = false;
+                            return;
+                        }
+                        refundMsg.innerHTML = "<p>Refund issued successfully.</p>";
+                        mountOrderRefundPanel(mountEl, order);
+                    }).catch(function (err) {
+                        if (err && err.error && err.error.code === "forbidden") {
+                            refundMsg.innerHTML = '<p role="alert">Your account does not have permission to issue refunds.</p>';
+                        } else {
+                            refundMsg.innerHTML = '<p role="alert">' + esc(extractErrorMessage(err, "Refund failed.")) + "</p>";
+                        }
+                        refundBtn.disabled = false;
+                    });
+                };
+            });
+        }).catch(function (err) {
+            mountEl.innerHTML = '<p role="alert">' + esc(extractErrorMessage(err, "Failed to load payment details.")) + "</p>";
+        });
+    }
+
     function renderOrderDetail(container, orderID) {
         container.innerHTML =
             '<h2>Order Detail</h2>' +
@@ -7814,12 +8191,13 @@
                     '<p><strong>Total:</strong> ' + formatMoney(Number(order.total_amount || 0), order.currency) + '</p>' +
                     '<h3>Shipping</h3>' +
                     '<p>Shipping details are not available in the current order payload.</p>' +
-                    '<h3>Payment</h3>' +
-                    '<p>Status: ' + esc(derivePaymentStatus(order.status)) + '</p>' +
+                    '<h3>Payment & Refund</h3>' +
+                    '<div id="order-refund-panel"></div>' +
                     '<h3>Invoices</h3>' +
                     '<div id="order-invoices-panel"></div>' +
                     '</article>';
 
+                mountOrderRefundPanel(document.getElementById("order-refund-panel"), order);
                 mountOrderInvoicesPanel(document.getElementById("order-invoices-panel"), order.id);
 
                 var form = document.getElementById("order-status-form");
