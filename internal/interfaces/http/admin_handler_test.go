@@ -48,6 +48,9 @@ func TestAdminHandler_IndexHTML(t *testing.T) {
 	if !strings.Contains(body, "/admin/catalog/prices") || !strings.Contains(body, "Bulk Prices") {
 		t.Fatalf("expected bulk prices nav link in index html")
 	}
+	if !strings.Contains(body, "/admin/catalog/reviews") || !strings.Contains(body, "Reviews") {
+		t.Fatalf("expected reviews nav link in index html")
+	}
 }
 
 func TestAdminHandler_StaticCSS(t *testing.T) {
@@ -522,6 +525,34 @@ func TestAdminHandler_StaticJS(t *testing.T) {
 	for _, expected := range expectedBulkPricesWiring {
 		if !strings.Contains(normalizedBody, expected) {
 			t.Fatalf("expected bulk prices wiring %q in JS", expected)
+		}
+	}
+	expectedReviewsWiring := []string{
+		"renderReviewsGrid",
+		"/admin/catalog/reviews",
+		"setupProductReviewsPanel",
+		"product-reviews-panel",
+		"moderateReview",
+		"review-approve-btn",
+		"review-reject-btn",
+		"renderReviewStatusBadge",
+		"filterReviewsByProduct",
+		"adminQueryParam",
+		"/admin/reviews",
+		`"/" + action`,
+		"Visible on storefront",
+		"Hidden from storefront",
+		"Moderate product reviews",
+		"Failed to load reviews.",
+		"Failed to load product reviews.",
+		"Review approved.",
+		"Review rejected.",
+		"products.read",
+		"products.write",
+	}
+	for _, expected := range expectedReviewsWiring {
+		if !strings.Contains(normalizedBody, expected) {
+			t.Fatalf("expected reviews wiring %q in JS", expected)
 		}
 	}
 	if !strings.Contains(normalizedBody, "Customer not found.") || !strings.Contains(normalizedBody, "Failed to load customer.") {

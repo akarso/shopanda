@@ -166,6 +166,7 @@
         "/admin/catalog/categories": { title: "Categories", render: renderCategoriesPage, auth: true },
         "/admin/catalog/attributes": { title: "Attributes", render: renderAttributesGrid, auth: true },
         "/admin/catalog/prices": { title: "Bulk Prices", render: renderBulkPricesGrid, auth: true },
+        "/admin/catalog/reviews": { title: "Reviews", render: renderReviewsGrid, auth: true },
         // Customers
         "/admin/customers": { title: "Customers", render: renderCustomersGrid, auth: true },
         "/admin/customers/groups": { title: "Customer Groups", render: renderCustomerGroupsGrid, auth: true },
@@ -1116,6 +1117,11 @@
             '<label>Weight<input name="weight" type="number" step="0.01" min="0"></label>' +
             '<button type="submit">Add Variant</button>' +
             '</form>' +
+            '</section>' +
+            '<section id="product-reviews-panel" style="display:none; margin-top:2rem;">' +
+            '<h3>Reviews</h3>' +
+            '<div id="product-reviews-msg"></div>' +
+            '<div id="product-reviews-body"></div>' +
             '</section>';
 
         var msg = document.getElementById("product-form-msg");
@@ -1186,6 +1192,7 @@
             if (productID) {
                 setupProductCategoryAssignment(productID);
                 setupVariantPanel(productID);
+                setupProductReviewsPanel(productID);
             }
         }).catch(function () {
             msg.innerHTML = '<p role="alert">Failed to load product form.</p>';
@@ -5518,6 +5525,301 @@
         });
 
         loadBulkPrices();
+    }
+
+    function adminQueryParam(name) {
+        try {
+            return new URLSearchParams(location.search).get(name) || "";
+        } catch (e) {
+            return "";
+        }
+    }
+
+    function normalizeReview(raw) {
+        if (!raw) {
+            return null;
+        }
+        return {
+            id: pick(raw, "id", "ID"),
+            product_id: pick(raw, "product_id", "ProductID"),
+            customer_id: pick(raw, "customer_id", "CustomerID"),
+            rating: pick(raw, "rating", "Rating"),
+            title: pick(raw, "title", "Title"),
+            body: pick(raw, "body", "Body"),
+            status: pick(raw, "status", "Status"),
+            reviewer_name: pick(raw, "reviewer_name", "ReviewerName"),
+            created_at: pick(raw, "created_at", "CreatedAt"),
+            updated_at: pick(raw, "updated_at", "UpdatedAt")
+        };
+    }
+
+    function normalizeReviews(reviews) {
+        if (!Array.isArray(reviews)) {
+            return [];
+        }
+        var out = [];
+        for (var i = 0; i < reviews.length; i++) {
+            var review = normalizeReview(reviews[i]);
+            if (review) {
+                out.push(review);
+            }
+        }
+        return out;
+    }
+
+    function renderReviewStatusBadge(status) {
+        var value = String(status || "").toLowerCase();
+        var badgeClass = "badge-draft";
+        if (value === "pending") {
+            badgeClass = "badge-pending";
+        } else if (value === "approved") {
+            badgeClass = "badge-paid";
+        } else if (value === "rejected") {
+            badgeClass = "badge-cancelled";
+        }
+        return '<span class="badge ' + badgeClass + '">' + esc(value || "unknown") + "</span>";
+    }
+
+    function renderReviewRatingStars(rating) {
+        var stars = Math.max(0, Math.min(5, Number(rating) || 0));
+        return esc(String(stars)) + "/5";
+    }
+
+    function filterReviewsByProduct(reviews, productID) {
+        if (!productID) {
+            return reviews;
+        }
+        var out = [];
+        for (var i = 0; i < reviews.length; i++) {
+            if (String(reviews[i].product_id || "") === String(productID)) {
+                out.push(reviews[i]);
+            }
+        }
+        return out;
+    }
+
+    function renderReviewsGrid(container) {
+        if (!userHasPermission("products.read")) {
+            container.innerHTML = "<h2>Reviews</h2><p role=\"alert\">Your account does not have products access.</p>";
+            return;
+        }
+
+        var productFilter = adminQueryParam("product");
+        var canWrite = userHasPermission("products.write");
+        var listState = { status: "pending", offset: 0, limit: 50 };
+
+        container.innerHTML =
+            "<h2>Reviews</h2>" +
+            (productFilter
+                ? ('<p class="settings-scope-note">Showing reviews for product <strong>' + esc(productFilter) + '</strong>. <a href="/admin/catalog/reviews" data-link>Show all reviews</a></p>')
+                : '<p class="settings-scope-note">Approve or reject pending reviews before they appear on the storefront.</p>') +
+            '<form id="reviews-filter-form" style="margin-bottom:1rem">' +
+            '<label>Status <select name="status" id="reviews-status-filter">' +
+            '<option value="pending">Pending</option>' +
+            '<option value="approved">Approved</option>' +
+            '<option value="rejected">Rejected</option>' +
+            '<option value="">All</option>' +
+            "</select></label> " +
+            '<button type="submit">Apply</button>' +
+            "</form>" +
+            '<div id="reviews-grid-msg"></div>' +
+            '<div id="reviews-grid"></div>';
+
+        var grid = document.getElementById("reviews-grid");
+        var msg = document.getElementById("reviews-grid-msg");
+        var filterForm = document.getElementById("reviews-filter-form");
+        var statusSelect = document.getElementById("reviews-status-filter");
+        if (statusSelect) {
+            statusSelect.value = listState.status;
+        }
+
+        function setMessage(text, isError) {
+            msg.innerHTML = text ? '<p' + (isError ? ' role="alert"' : ' role="status" aria-live="polite"') + ">" + esc(text) + "</p>" : "";
+        }
+
+        function loadReviews() {
+            setMessage("", false);
+            grid.innerHTML = "<p>Loading reviews…</p>";
+            var url = "/admin/reviews?offset=" + encodeURIComponent(String(listState.offset)) + "&limit=" + encodeURIComponent(String(listState.limit));
+            if (listState.status) {
+                url += "&status=" + encodeURIComponent(listState.status);
+            }
+            api(url).then(function (body) {
+                if (body && body.error && body.error.code === "forbidden") {
+                    grid.innerHTML = '<p role="alert">Your account does not have products access.</p>';
+                    return;
+                }
+                var reviews = normalizeReviews(body && body.data && body.data.reviews);
+                reviews = filterReviewsByProduct(reviews, productFilter);
+                var html = '<table class="admin-table"><thead><tr>' +
+                    '<th scope="col">Rating</th><th scope="col">Title</th><th scope="col">Product</th><th scope="col">Reviewer</th><th scope="col">Status</th><th scope="col">Submitted</th>';
+                if (canWrite) {
+                    html += '<th scope="col">Actions</th>';
+                }
+                html += "</tr></thead><tbody>";
+                if (reviews.length === 0) {
+                    html += '<tr><td colspan="' + (canWrite ? "7" : "6") + '">No reviews found.</td></tr>';
+                } else {
+                    for (var i = 0; i < reviews.length; i++) {
+                        var review = reviews[i];
+                        var productHref = "/admin/products/" + encodeURIComponent(review.product_id || "");
+                        var reviewLabel = esc(review.title || review.id || "Review");
+                        html += '<tr data-review-id="' + esc(review.id || "") + '">' +
+                            "<td>" + renderReviewRatingStars(review.rating) + "</td>" +
+                            "<td><strong>" + reviewLabel + "</strong>" +
+                            (review.body ? ('<p class="settings-scope-note">' + esc(review.body) + "</p>") : "") +
+                            "</td>" +
+                            '<td><a href="' + productHref + '" data-link>' + esc(review.product_id || "") + "</a></td>" +
+                            "<td>" + esc(review.reviewer_name || review.customer_id || "—") + "</td>" +
+                            "<td>" + renderReviewStatusBadge(review.status) + "</td>" +
+                            "<td>" + esc(review.created_at ? String(review.created_at).substring(0, 10) : "") + "</td>";
+                        if (canWrite) {
+                            html += "<td>";
+                            if (String(review.status || "").toLowerCase() === "pending") {
+                                html += '<button type="button" class="review-approve-btn" data-review-id="' + esc(review.id || "") + '" aria-label="Approve review ' + reviewLabel + '">Approve</button> ';
+                                html += '<button type="button" class="review-reject-btn" data-review-id="' + esc(review.id || "") + '" aria-label="Reject review ' + reviewLabel + '">Reject</button>';
+                            } else if (String(review.status || "").toLowerCase() === "approved") {
+                                html += '<span class="settings-scope-note">Visible on storefront</span>';
+                            } else {
+                                html += '<span class="settings-scope-note">Hidden from storefront</span>';
+                            }
+                            html += "</td>";
+                        }
+                        html += "</tr>";
+                    }
+                }
+                html += "</tbody></table>";
+                if (listState.offset > 0 || reviews.length >= listState.limit) {
+                    html += '<div style="margin-top:0.75rem">' +
+                        '<button type="button" id="reviews-prev-page"' + (listState.offset > 0 ? "" : " disabled") + ">Previous</button> " +
+                        '<button type="button" id="reviews-next-page"' + (reviews.length >= listState.limit ? "" : " disabled") + ">Next</button>" +
+                        "</div>";
+                }
+                grid.innerHTML = html;
+
+                var prevBtn = document.getElementById("reviews-prev-page");
+                if (prevBtn) {
+                    prevBtn.addEventListener("click", function () {
+                        listState.offset = Math.max(0, listState.offset - listState.limit);
+                        loadReviews();
+                    });
+                }
+                var nextBtn = document.getElementById("reviews-next-page");
+                if (nextBtn) {
+                    nextBtn.addEventListener("click", function () {
+                        listState.offset += listState.limit;
+                        loadReviews();
+                    });
+                }
+
+                if (canWrite) {
+                    var approveButtons = grid.querySelectorAll(".review-approve-btn");
+                    for (var j = 0; j < approveButtons.length; j++) {
+                        approveButtons[j].addEventListener("click", function (e) {
+                            moderateReview(e.target.getAttribute("data-review-id"), "approve", setMessage, loadReviews);
+                        });
+                    }
+                    var rejectButtons = grid.querySelectorAll(".review-reject-btn");
+                    for (var k = 0; k < rejectButtons.length; k++) {
+                        rejectButtons[k].addEventListener("click", function (e) {
+                            if (!window.confirm("Reject this review? It will be hidden from the storefront.")) {
+                                return;
+                            }
+                            moderateReview(e.target.getAttribute("data-review-id"), "reject", setMessage, loadReviews);
+                        });
+                    }
+                }
+            }).catch(function (err) {
+                grid.innerHTML = '<p role="alert">' + esc(extractErrorMessage(err, "Failed to load reviews.")) + "</p>";
+            });
+        }
+
+        filterForm.addEventListener("submit", function (e) {
+            e.preventDefault();
+            listState.status = filterForm.elements.status.value || "";
+            listState.offset = 0;
+            loadReviews();
+        });
+
+        loadReviews();
+    }
+
+    function moderateReview(reviewID, action, setMessage, reload) {
+        if (!reviewID) {
+            return;
+        }
+        setMessage(action === "approve" ? "Approving review…" : "Rejecting review…", false);
+        api("/admin/reviews/" + encodeURIComponent(reviewID) + "/" + action, { method: "POST" }).then(function (body) {
+            if (body && body.error) {
+                setMessage(body.error.message || "Review moderation failed.", true);
+                return;
+            }
+            setMessage(action === "approve" ? "Review approved." : "Review rejected.", false);
+            reload();
+        }).catch(function (err) {
+            setMessage(extractErrorMessage(err, "Review moderation failed."), true);
+        });
+    }
+
+    function setupProductReviewsPanel(productID) {
+        var panel = document.getElementById("product-reviews-panel");
+        var msg = document.getElementById("product-reviews-msg");
+        var body = document.getElementById("product-reviews-body");
+        if (!panel || !msg || !body) {
+            return;
+        }
+        panel.style.display = "";
+        if (!userHasPermission("products.read")) {
+            body.innerHTML = '<p role="alert">Your account does not have products access.</p>';
+            return;
+        }
+
+        body.innerHTML = "<p>Loading reviews…</p>";
+        api("/admin/reviews?offset=0&limit=100").then(function (res) {
+            if (res && res.error && res.error.code === "forbidden") {
+                body.innerHTML = '<p role="alert">Your account does not have products access.</p>';
+                return;
+            }
+            var reviews = filterReviewsByProduct(normalizeReviews(res && res.data && res.data.reviews), productID);
+            var pending = 0;
+            var approved = 0;
+            for (var i = 0; i < reviews.length; i++) {
+                var status = String(reviews[i].status || "").toLowerCase();
+                if (status === "pending") {
+                    pending += 1;
+                } else if (status === "approved") {
+                    approved += 1;
+                }
+            }
+            var html = '<p><strong>' + esc(String(approved)) + "</strong> approved";
+            if (pending > 0) {
+                html += ', <strong>' + esc(String(pending)) + "</strong> pending moderation";
+            }
+            html += ".</p>";
+            html += '<p><a href="/admin/catalog/reviews?product=' + encodeURIComponent(productID) + '" data-link>Moderate product reviews</a></p>';
+            if (reviews.length === 0) {
+                html += '<p class="settings-scope-note">No reviews submitted for this product yet.</p>';
+            } else {
+                html += '<table class="admin-table"><thead><tr><th scope="col">Rating</th><th scope="col">Title</th><th scope="col">Status</th><th scope="col">Submitted</th></tr></thead><tbody>';
+                var previewLimit = 5;
+                for (var j = 0; j < reviews.length && j < previewLimit; j++) {
+                    var review = reviews[j];
+                    html += "<tr>" +
+                        "<td>" + renderReviewRatingStars(review.rating) + "</td>" +
+                        "<td>" + esc(review.title || review.id || "") + "</td>" +
+                        "<td>" + renderReviewStatusBadge(review.status) + "</td>" +
+                        "<td>" + esc(review.created_at ? String(review.created_at).substring(0, 10) : "") + "</td>" +
+                        "</tr>";
+                }
+                html += "</tbody></table>";
+                if (reviews.length > previewLimit) {
+                    html += '<p class="settings-scope-note">Showing ' + esc(String(previewLimit)) + " of " + esc(String(reviews.length)) + ' reviews. Open moderation for the full list.</p>';
+                }
+            }
+            body.innerHTML = html;
+        }).catch(function (err) {
+            body.innerHTML = '<p role="alert">' + esc(extractErrorMessage(err, "Failed to load product reviews.")) + "</p>";
+        });
     }
 
     function renderPagesGrid(container) {
