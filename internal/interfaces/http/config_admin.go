@@ -74,6 +74,10 @@ var configGroupKeys = map[string][]string{
 		"tax.default_class",
 		"tax.included",
 	},
+	"marketing": {
+		"marketing.cart_recovery.enabled",
+		"marketing.cart_recovery.delay_hours",
+	},
 	"legal": {
 		"legal.omnibus_enabled",
 		"legal.weee_enabled",
@@ -442,6 +446,10 @@ func (h *ConfigAdminHandler) defaultValue(key string) interface{} {
 		return ""
 	case "legal.oss_enabled":
 		return false
+	case "marketing.cart_recovery.enabled":
+		return true
+	case "marketing.cart_recovery.delay_hours":
+		return 24
 	case "mail.smtp.host":
 		return h.cfg.Mail.SMTP.Host
 	case "mail.smtp.port":
@@ -566,6 +574,22 @@ func (h *ConfigAdminHandler) normalizeUpdateEntries(ctx context.Context, entries
 			if secretValue == redactedSecretValue || strings.TrimSpace(secretValue) == "" {
 				continue
 			}
+		}
+		if key == "marketing.cart_recovery.delay_hours" {
+			coerced, err := coerceMarketingDelayHours(value)
+			if err != nil {
+				return nil, apperror.Validation(err.Error())
+			}
+			normalized[key] = coerced
+			continue
+		}
+		if key == "marketing.cart_recovery.enabled" {
+			coerced, err := coerceMarketingEnabled(value)
+			if err != nil {
+				return nil, apperror.Validation(err.Error())
+			}
+			normalized[key] = coerced
+			continue
 		}
 		normalized[key] = value
 	}
@@ -702,4 +726,34 @@ func firstNonEmpty(values ...string) string {
 		}
 	}
 	return ""
+}
+
+func coerceMarketingEnabled(value interface{}) (bool, error) {
+	switch v := value.(type) {
+	case bool:
+		return v, nil
+	default:
+		return false, fmt.Errorf("marketing.cart_recovery.enabled must be a boolean")
+	}
+}
+
+func coerceMarketingDelayHours(value interface{}) (int, error) {
+	var hours int
+	switch v := value.(type) {
+	case float64:
+		if v != float64(int(v)) {
+			return 0, fmt.Errorf("marketing.cart_recovery.delay_hours must be a whole number")
+		}
+		hours = int(v)
+	case int:
+		hours = v
+	case int64:
+		hours = int(v)
+	default:
+		return 0, fmt.Errorf("marketing.cart_recovery.delay_hours must be a number")
+	}
+	if hours < 1 || hours > 720 {
+		return 0, fmt.Errorf("marketing.cart_recovery.delay_hours must be between 1 and 720")
+	}
+	return hours, nil
 }

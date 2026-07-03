@@ -89,6 +89,10 @@ func (l *recoveryLogger) Warn(_ string, _ map[string]interface{}) {}
 func (l *recoveryLogger) Error(_ string, _ error, _ map[string]interface{}) {}
 
 func testRecoveryHandler(t *testing.T, carts *recoveryCartRepo, customers *recoveryCustomerRepo) (*cartApp.RecoveryHandler, *recoveryQueue) {
+	return testRecoveryHandlerWithSettings(t, carts, customers, nil)
+}
+
+func testRecoveryHandlerWithSettings(t *testing.T, carts *recoveryCartRepo, customers *recoveryCustomerRepo, settings *stubRecoveryConfigRepo) (*cartApp.RecoveryHandler, *recoveryQueue) {
 	t.Helper()
 	templates := mail.NewTemplates()
 	notification.RegisterTemplates(templates)
@@ -99,10 +103,11 @@ func testRecoveryHandler(t *testing.T, carts *recoveryCartRepo, customers *recov
 		Variants: &recoveryVariantRepo{byID: map[string]*catalog.Variant{
 			"v1": {ID: "v1", ProductID: "p1", SKU: "SKU-1", Name: "Blue Tee"},
 		}},
-		Products: &recoveryProductRepo{byID: map[string]*catalog.Product{}},
+		Products:  &recoveryProductRepo{byID: map[string]*catalog.Product{}},
 		Templates: templates,
 		Queue:     queue,
 		StoreURL:  "https://shop.example",
+		Settings:  settings,
 		Log:       &recoveryLogger{},
 	})
 	return h, queue
@@ -230,6 +235,39 @@ func TestRecoveryHandler_Handle_SkipsAlreadyClaimedCart(t *testing.T) {
 	}
 	if len(carts.marked) != 0 {
 		t.Fatalf("expected no mark when claim fails, got %v", carts.marked)
+	}
+}
+
+func TestRecoveryHandler_Handle_SkipsWhenDisabled(t *testing.T) {
+	c, err := domainCart.NewCart("cart-off", "EUR")
+	if err != nil {
+		t.Fatalf("NewCart: %v", err)
+	}
+	if err := c.SetCustomerID("cust-1"); err != nil {
+		t.Fatalf("SetCustomerID: %v", err)
+	}
+	if err := c.AddItem("v1", 1, shared.MustNewMoney(999, "EUR")); err != nil {
+		t.Fatalf("AddItem: %v", err)
+	}
+
+	carts := &recoveryCartRepo{candidates: []domainCart.Cart{c}, markClaimable: true}
+	customers := &recoveryCustomerRepo{byID: map[string]*customer.Customer{
+		"cust-1": {ID: "cust-1", Email: "buyer@example.com", FirstName: "Alex", Status: customer.StatusActive},
+	}}
+	settings := &stubRecoveryConfigRepo{values: map[string]interface{}{
+		cartApp.ConfigKeyCartRecoveryEnabled: false,
+	}}
+	h, queue := testRecoveryHandlerWithSettings(t, carts, customers, settings)
+
+	err = h.Handle(context.Background(), jobs.Job{Type: cartApp.RecoveryJobType})
+	if err != nil {
+		t.Fatalf("Handle: %v", err)
+	}
+	if len(queue.enqueued) != 0 {
+		t.Fatalf("expected no enqueued jobs when disabled, got %d", len(queue.enqueued))
+	}
+	if len(carts.marked) != 0 {
+		t.Fatalf("expected no cart marks when disabled, got %v", carts.marked)
 	}
 }
 

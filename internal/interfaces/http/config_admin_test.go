@@ -184,6 +184,72 @@ func TestConfigAdmin_Update_OK(t *testing.T) {
 	}
 }
 
+func TestConfigAdmin_Get_GroupMarketing(t *testing.T) {
+	repo := newMockConfigRepo()
+	repo.entries["marketing.cart_recovery.enabled"] = false
+	repo.entries["marketing.cart_recovery.delay_hours"] = float64(48)
+	h := testConfigAdminHandler(repo, func(context.Context, shophttp.SMTPTestConfig, string) error { return nil })
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/admin/config?group=marketing", nil)
+	h.Get().ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d; body: %s", rec.Code, http.StatusOK, rec.Body.String())
+	}
+
+	var envelope struct {
+		Data struct {
+			Entries map[string]interface{} `json:"entries"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &envelope); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if envelope.Data.Entries["marketing.cart_recovery.enabled"] != false {
+		t.Fatalf("enabled = %v, want false", envelope.Data.Entries["marketing.cart_recovery.enabled"])
+	}
+	gotDelay := envelope.Data.Entries["marketing.cart_recovery.delay_hours"]
+	if gotDelay != float64(48) && gotDelay != int64(48) {
+		t.Fatalf("delay_hours = %v, want 48", gotDelay)
+	}
+}
+
+func TestConfigAdmin_Update_MarketingCartRecovery(t *testing.T) {
+	repo := newMockConfigRepo()
+	h := testConfigAdminHandler(repo, func(context.Context, shophttp.SMTPTestConfig, string) error { return nil })
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPut, "/api/v1/admin/config", strings.NewReader(`{"entries":{"marketing.cart_recovery.enabled":false,"marketing.cart_recovery.delay_hours":72}}`))
+	req.Header.Set("Content-Type", "application/json")
+	h.Update().ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d; body: %s", rec.Code, http.StatusOK, rec.Body.String())
+	}
+	if repo.entries["marketing.cart_recovery.enabled"] != false {
+		t.Fatalf("enabled = %v, want false", repo.entries["marketing.cart_recovery.enabled"])
+	}
+	gotDelay := repo.entries["marketing.cart_recovery.delay_hours"]
+	if gotDelay != float64(72) && gotDelay != int64(72) {
+		t.Fatalf("delay_hours = %v, want 72", gotDelay)
+	}
+}
+
+func TestConfigAdmin_Update_MarketingCartRecovery_InvalidDelay(t *testing.T) {
+	repo := newMockConfigRepo()
+	h := testConfigAdminHandler(repo, func(context.Context, shophttp.SMTPTestConfig, string) error { return nil })
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPut, "/api/v1/admin/config", strings.NewReader(`{"entries":{"marketing.cart_recovery.delay_hours":0}}`))
+	req.Header.Set("Content-Type", "application/json")
+	h.Update().ServeHTTP(rec, req)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want %d; body: %s", rec.Code, http.StatusBadRequest, rec.Body.String())
+	}
+	if _, ok := repo.entries["marketing.cart_recovery.delay_hours"]; ok {
+		t.Fatalf("expected invalid delay not persisted")
+	}
+}
+
 func TestConfigAdmin_Update_LeavesPasswordUnchanged(t *testing.T) {
 	repo := newMockConfigRepo()
 	repo.entries["mail.smtp.password"] = "persisted-secret"

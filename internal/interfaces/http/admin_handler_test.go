@@ -51,6 +51,9 @@ func TestAdminHandler_IndexHTML(t *testing.T) {
 	if !strings.Contains(body, "/admin/catalog/reviews") || !strings.Contains(body, "Reviews") {
 		t.Fatalf("expected reviews nav link in index html")
 	}
+	if !strings.Contains(body, "/admin/marketing/abandoned-cart") || !strings.Contains(body, "Abandoned Cart") {
+		t.Fatalf("expected abandoned cart nav link in index html")
+	}
 }
 
 func TestAdminHandler_StaticCSS(t *testing.T) {
@@ -553,6 +556,25 @@ func TestAdminHandler_StaticJS(t *testing.T) {
 	for _, expected := range expectedReviewsWiring {
 		if !strings.Contains(normalizedBody, expected) {
 			t.Fatalf("expected reviews wiring %q in JS", expected)
+		}
+	}
+	expectedAbandonedCartWiring := []string{
+		"renderAbandonedCartSettingsPage",
+		"renderAbandonedCartSettingsForm",
+		"/admin/marketing/abandoned-cart",
+		"/admin/config?group=marketing",
+		"marketing.cart_recovery.enabled",
+		"marketing.cart_recovery.delay_hours",
+		"cart_recovery_enabled",
+		"cart_recovery_delay_hours",
+		"Send abandoned cart recovery emails",
+		"Failed to load abandoned cart settings.",
+		"Delay must be between 1 and 720 hours.",
+		"cart_recovery",
+	}
+	for _, expected := range expectedAbandonedCartWiring {
+		if !strings.Contains(normalizedBody, expected) {
+			t.Fatalf("expected abandoned cart wiring %q in JS", expected)
 		}
 	}
 	if !strings.Contains(normalizedBody, "Customer not found.") || !strings.Contains(normalizedBody, "Failed to load customer.") {

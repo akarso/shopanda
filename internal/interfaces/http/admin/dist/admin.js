@@ -173,6 +173,7 @@
         // Marketing
         "/admin/marketing/promotions": { title: "Promotions", render: renderPromotionsGrid, auth: true },
         "/admin/marketing/coupons": { title: "Coupons", render: renderCouponsGrid, auth: true },
+        "/admin/marketing/abandoned-cart": { title: "Abandoned Cart", render: renderAbandonedCartSettingsPage, auth: true },
         // Content
         "/admin/content/pages": { title: "Pages", render: renderPagesGrid, auth: true },
         "/admin/content/navigation": { title: "Navigation", render: renderNavigationGrid, auth: true },
@@ -6804,6 +6805,62 @@
             renderCurrencySettingsForm(container, currencyPayload.entries, currencyPayload.fieldScopes, activeScope.storeID);
         }).catch(function () {
             container.innerHTML = '<h2>Payments</h2><p role="alert">Failed to load payment settings.</p>';
+        });
+    }
+
+    function renderAbandonedCartSettingsPage(container) {
+        container.innerHTML =
+            '<h2>Abandoned Cart</h2>' +
+            '<p class="admin-form-hint">Send reminder emails to signed-in customers who leave items in their cart.</p>' +
+            '<div class="settings-grid">' +
+            '<section><h3>Recovery emails</h3><div id="abandoned-cart-msg"></div><form id="abandoned-cart-form"></form></section>' +
+            '</div>';
+
+        api('/admin/config?group=marketing').then(function (body) {
+            if (body && body.error) {
+                if (body.error.code === 'forbidden') {
+                    container.innerHTML = '<h2>Abandoned Cart</h2><p role="alert">Your account does not have settings access.</p>';
+                    return;
+                }
+                container.innerHTML = '<h2>Abandoned Cart</h2><p role="alert">' + esc(extractErrorMessage(body, 'Failed to load abandoned cart settings.')) + '</p>';
+                return;
+            }
+            if (!body || !body.data || typeof body.data !== 'object') {
+                container.innerHTML = '<h2>Abandoned Cart</h2><p role="alert">' + esc(extractErrorMessage(body, 'Failed to load abandoned cart settings.')) + '</p>';
+                return;
+            }
+            var payload = settingsPayloadFromResult(body);
+            renderAbandonedCartSettingsForm(payload.entries);
+        }).catch(function (err) {
+            container.innerHTML = '<h2>Abandoned Cart</h2><p role="alert">' + esc(extractErrorMessage(err, 'Failed to load abandoned cart settings.')) + '</p>';
+        });
+    }
+
+    function renderAbandonedCartSettingsForm(settings) {
+        var form = document.getElementById('abandoned-cart-form');
+        if (!form) {
+            return;
+        }
+        var enabled = truthy(valueOf(settings, 'marketing.cart_recovery.enabled', true));
+        var delayHours = valueOf(settings, 'marketing.cart_recovery.delay_hours', 24);
+        form.innerHTML = '' +
+            '<label><input type="checkbox" name="cart_recovery_enabled" ' + (enabled ? 'checked' : '') + '> Send abandoned cart recovery emails</label>' +
+            '<small class="admin-form-hint">When disabled, the scheduled recovery job skips sending emails. Carts stay active so shoppers can return anytime.</small>' +
+            '<label>Delay (hours)<input type="number" name="cart_recovery_delay_hours" min="1" max="720" step="1" value="' + esc(String(delayHours)) + '"></label>' +
+            '<small class="admin-form-hint">Hours of inactivity before the first recovery email is sent (1–720).</small>' +
+            '<p class="admin-form-hint">Email template: <strong>cart_recovery</strong> (“You left items in your cart”). Configure SMTP under <a href="/admin/settings" data-link>Settings → General</a>.</p>' +
+            '<button type="submit">Save</button>';
+        form.addEventListener('submit', function (e) {
+            e.preventDefault();
+            var delay = parseInt(form.elements.cart_recovery_delay_hours.value, 10);
+            if (!Number.isFinite(delay) || delay < 1 || delay > 720) {
+                setSettingsMessage('abandoned-cart-msg', 'Delay must be between 1 and 720 hours.', true);
+                return;
+            }
+            saveSettingsEntries('abandoned-cart-msg', {
+                'marketing.cart_recovery.enabled': !!form.elements.cart_recovery_enabled.checked,
+                'marketing.cart_recovery.delay_hours': delay
+            });
         });
     }
 
