@@ -45,6 +45,9 @@ func TestAdminHandler_IndexHTML(t *testing.T) {
 	if !strings.Contains(body, "/admin/store") || !strings.Contains(body, "/admin/integrations") {
 		t.Fatalf("expected store management and integrations links in index html")
 	}
+	if !strings.Contains(body, "/admin/catalog/prices") || !strings.Contains(body, "Bulk Prices") {
+		t.Fatalf("expected bulk prices nav link in index html")
+	}
 }
 
 func TestAdminHandler_StaticCSS(t *testing.T) {
@@ -483,6 +486,50 @@ func TestAdminHandler_StaticJS(t *testing.T) {
 	for _, expected := range expectedOrderInvoicesWiring {
 		if !strings.Contains(normalizedBody, expected) {
 			t.Fatalf("expected order invoices wiring %q in JS", expected)
+		}
+	}
+	expectedOrderRefundWiring := []string{
+		"mountOrderRefundPanel",
+		"order-refund-panel",
+		"order-refund-btn",
+		"findPaymentForOrder",
+		"probeRefundRoute",
+		"evaluateOrderRefundEligibility",
+		"userHasPermission",
+		"/admin/orders/",
+		"/refund",
+		"Issue full refund",
+		"Refund issued successfully.",
+		"Refund failed.",
+		"Only full refunds are supported",
+		"Online refunds are only supported for Stripe payments",
+		"Your account does not have permission to issue refunds.",
+		"Refund API is not available",
+	}
+	for _, expected := range expectedOrderRefundWiring {
+		if !strings.Contains(normalizedBody, expected) {
+			t.Fatalf("expected order refund wiring %q in JS", expected)
+		}
+	}
+	expectedBulkPricesWiring := []string{
+		"renderBulkPricesGrid",
+		"/admin/catalog/prices",
+		"bulk-price-grid",
+		"bulk-price-save-btn",
+		"bulk-price-scope",
+		"renderBulkPriceScopeBadge",
+		"applyBulkPriceRowData",
+		"loadBulkPriceForRow",
+		"Store override",
+		"Global fallback",
+		"Select a currency context in the header switcher to view and edit prices.",
+		"Your account does not have products access.",
+		"Failed to load bulk prices.",
+		"Save price failed",
+	}
+	for _, expected := range expectedBulkPricesWiring {
+		if !strings.Contains(normalizedBody, expected) {
+			t.Fatalf("expected bulk prices wiring %q in JS", expected)
 		}
 	}
 	if !strings.Contains(normalizedBody, "Customer not found.") || !strings.Contains(normalizedBody, "Failed to load customer.") {
