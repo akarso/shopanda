@@ -10,7 +10,7 @@ Planned specs for **PR-600–651** (Summary, Why, Scope, Out of scope, Validatio
 | PR-610 | B | [b2b] | done | [Customer groups admin UI](PR-610.md) |
 | PR-611 | B | [oss] | done | [Store credit admin UI](PR-611.md) |
 | PR-620 | C | [oss] | done | [Webhook endpoints admin UI](PR-620.md) |
-| PR-621 | C | [oss] | planned | [Order invoice admin UI](PR-621.md) |
+| PR-621 | C | [oss] | done | [Order invoice admin UI](PR-621.md) |
 | PR-622 | C | [oss] | planned | [Refund UX polish](PR-622.md) |
 | PR-630 | D | [oss] | planned | [Bulk price admin grid](PR-630.md) |
 | PR-631 | D | [oss] | planned | [Product category picker UX (stretch)](PR-631.md) |
@@ -22,7 +22,7 @@ Planned specs for **PR-600–651** (Summary, Why, Scope, Out of scope, Validatio
 
 Roadmap: [`../ROADMAP.md`](../ROADMAP.md) · Upstream: [Phase 5](../phase-5-maturity/ROADMAP.md) · Licensing: [`../../COMMERCIAL.md`](../../COMMERCIAL.md)
 
-**Suggested next PRs:** PR-621 (order invoices) → PR-622 (refund UX).
+**Suggested next PRs:** PR-622 (refund UX).
 
 **Rule for Phase 6:** Do not merge backend/API PRs that add admin nav entries without the corresponding UI PR (or hide the nav item until the UI PR lands).
 

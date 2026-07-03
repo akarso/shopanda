@@ -341,11 +341,13 @@ func runServe(cfg *config.Config, log logger.Logger, embedScheduler bool) error 
 		return err
 	}
 
+	invoicePDFRenderer := invoicepdf.NewRenderer()
+
 	notifSvc := notification.New(mailTemplates, customerRepo, orderRepo, jobQueue, log,
 		notification.WithStoreURL(cfg.Server.PublicBaseURL),
 		notification.WithResetBaseURL(cfg.Server.PublicBaseURL+"/auth/reset-password"),
 		notification.WithInvoices(invoiceRepo),
-		notification.WithPDFRenderer(invoicepdf.NewRenderer()),
+		notification.WithPDFRenderer(invoicePDFRenderer),
 	)
 
 	// Media storage.
@@ -666,6 +668,7 @@ func runServe(cfg *config.Config, log logger.Logger, embedScheduler bool) error 
 	cartHandler := shophttp.NewCartHandler(cartService)
 	orderHandler := shophttp.NewOrderHandler(orderRepo)
 	orderAdmin := shophttp.NewOrderAdminHandlerWithAuditor(orderRepo, sharedAuditor)
+	invoiceAdmin := shophttp.NewInvoiceAdminHandler(invoiceRepo, orderRepo, invoicePDFRenderer, mediaStorage)
 	statsAdmin := shophttp.NewStatsAdminHandler(statsRepo)
 	authHandler := shophttp.NewAuthHandler(authService)
 	adminMFAHandler := shophttp.NewAdminMFAHandler(mfaService)
@@ -835,6 +838,7 @@ func runServe(cfg *config.Config, log logger.Logger, embedScheduler bool) error 
 	requireCustomersWrite := shophttp.RequirePermission(rbac.CustomersWrite)
 	requireOrdersRead := shophttp.RequirePermission(rbac.OrdersRead)
 	requireOrdersWrite := shophttp.RequirePermission(rbac.OrdersWrite)
+	requireInvoicesRead := shophttp.RequirePermission(rbac.InvoicesRead)
 	requireMediaRead := shophttp.RequirePermission(rbac.MediaRead)
 	requireMediaWrite := shophttp.RequirePermission(rbac.MediaWrite)
 	requireSettingsRead := shophttp.RequirePermission(rbac.SettingsRead)
@@ -920,6 +924,8 @@ func runServe(cfg *config.Config, log logger.Logger, embedScheduler bool) error 
 	router.Handle("GET /api/v1/admin/orders", requireOrdersRead(orderAdmin.List()))
 	router.Handle("GET /api/v1/admin/orders/{orderId}", requireOrdersRead(orderAdmin.Get()))
 	router.Handle("PUT /api/v1/admin/orders/{orderId}", requireOrdersWrite(orderAdmin.Update()))
+	router.Handle("GET /api/v1/admin/orders/{orderId}/invoices", requireInvoicesRead(invoiceAdmin.ListByOrder()))
+	router.Handle("GET /api/v1/admin/invoices/{invoiceId}/pdf", requireInvoicesRead(invoiceAdmin.DownloadPDF()))
 	if refundHandler != nil {
 		router.Handle("POST /api/v1/admin/orders/{orderId}/refund", requireOrdersWrite(refundHandler.Refund()))
 	}

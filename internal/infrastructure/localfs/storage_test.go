@@ -10,8 +10,11 @@ import (
 	"github.com/akarso/shopanda/internal/infrastructure/localfs"
 )
 
-// Compile-time interface check.
-var _ media.Storage = (*localfs.Storage)(nil)
+// Compile-time interface checks.
+var (
+	_ media.Storage         = (*localfs.Storage)(nil)
+	_ media.ReadableStorage = (*localfs.Storage)(nil)
+)
 
 func TestStorage_Name(t *testing.T) {
 	s := localfs.New(t.TempDir(), "/media")
@@ -90,6 +93,36 @@ func TestStorage_Delete_DirectoryTraversal(t *testing.T) {
 	s := localfs.New(dir, "/media")
 
 	err := s.Delete("../../etc/passwd")
+	if err == nil {
+		t.Fatal("expected error for directory traversal")
+	}
+	if !strings.Contains(err.Error(), "escapes base directory") {
+		t.Errorf("error = %q, want mention of escapes base directory", err.Error())
+	}
+}
+
+func TestStorage_Read(t *testing.T) {
+	dir := t.TempDir()
+	s := localfs.New(dir, "/media")
+
+	content := []byte("%PDF-from-disk")
+	if err := s.Save("invoices/inv-1/invoice-1.pdf", strings.NewReader(string(content))); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+
+	got, err := s.Read("invoices/inv-1/invoice-1.pdf")
+	if err != nil {
+		t.Fatalf("Read: %v", err)
+	}
+	if string(got) != string(content) {
+		t.Fatalf("Read = %q, want %q", got, content)
+	}
+}
+
+func TestStorage_Read_DirectoryTraversal(t *testing.T) {
+	s := localfs.New(t.TempDir(), "/media")
+
+	_, err := s.Read("../../etc/passwd")
 	if err == nil {
 		t.Fatal("expected error for directory traversal")
 	}

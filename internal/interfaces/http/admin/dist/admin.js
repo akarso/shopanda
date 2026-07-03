@@ -7637,6 +7637,123 @@
         return fallback;
     }
 
+    function normalizeOrderInvoices(invoices) {
+        if (!Array.isArray(invoices)) {
+            return [];
+        }
+        var out = [];
+        for (var i = 0; i < invoices.length; i++) {
+            var raw = invoices[i] || {};
+            out.push({
+                id: pick(raw, "id", "ID") || "",
+                invoice_number: Number(pick(raw, "invoice_number", "InvoiceNumber")) || 0,
+                order_id: pick(raw, "order_id", "OrderID") || "",
+                created_at: pick(raw, "created_at", "CreatedAt")
+            });
+        }
+        return out;
+    }
+
+    function downloadInvoicePdf(invoiceID, filename, onError) {
+        var headers = buildHeaders({});
+        fetch(API_BASE + "/admin/invoices/" + encodeURIComponent(invoiceID) + "/pdf", { headers: headers })
+            .then(function (res) {
+                if (res.status === 401) {
+                    clearToken();
+                    setLoginMessage("Your session expired. Sign in again to continue.");
+                    navigateTo("/admin");
+                    return Promise.reject(new Error("unauthorized"));
+                }
+                if (!res.ok) {
+                    return res.json().then(function (body) {
+                        throw body;
+                    }).catch(function (err) {
+                        if (err && err.error) {
+                            throw err;
+                        }
+                        throw { error: { message: "Failed to download invoice PDF." } };
+                    });
+                }
+                return res.blob();
+            })
+            .then(function (blob) {
+                if (!blob) {
+                    return;
+                }
+                var url = URL.createObjectURL(blob);
+                var link = document.createElement("a");
+                link.href = url;
+                link.download = filename || "invoice.pdf";
+                document.body.appendChild(link);
+                link.click();
+                link.remove();
+                URL.revokeObjectURL(url);
+            })
+            .catch(function (err) {
+                if (onError) {
+                    onError(err);
+                }
+            });
+    }
+
+    function mountOrderInvoicesPanel(mountEl, orderID) {
+        if (!mountEl) {
+            return;
+        }
+        mountEl.innerHTML = "<p>Loading invoices…</p>";
+
+        api("/admin/orders/" + encodeURIComponent(orderID) + "/invoices").then(function (body) {
+            if (body && body.error && body.error.code === "forbidden") {
+                mountEl.innerHTML = '<p role="alert">Your account does not have invoice access.</p>';
+                return;
+            }
+            if (body && body.error) {
+                mountEl.innerHTML = '<p role="alert">' + esc(extractErrorMessage(body, "Failed to load invoices.")) + "</p>";
+                return;
+            }
+
+            var invoices = normalizeOrderInvoices(body && body.data && body.data.invoices);
+            if (invoices.length === 0) {
+                mountEl.innerHTML = '<p class="settings-scope-note">No invoice has been issued for this order yet.</p>';
+                return;
+            }
+
+            var html = '<table><thead><tr><th>Invoice #</th><th>Created</th><th>Action</th></tr></thead><tbody>';
+            for (var i = 0; i < invoices.length; i++) {
+                var inv = invoices[i];
+                var filename = "invoice-" + String(inv.invoice_number || inv.id || "download") + ".pdf";
+                html += "<tr>" +
+                    "<td>" + esc(String(inv.invoice_number || inv.id || "")) + "</td>" +
+                    "<td>" + esc(inv.created_at ? String(inv.created_at).substring(0, 10) : "") + "</td>" +
+                    '<td><button type="button" class="order-invoice-download-btn" data-invoice-id="' + esc(inv.id || "") + '" data-filename="' + esc(filename) + '">Download PDF</button></td>' +
+                    "</tr>";
+            }
+            html += "</tbody></table><div id=\"order-invoices-msg\"></div>";
+            mountEl.innerHTML = html;
+
+            var msg = document.getElementById("order-invoices-msg");
+            var buttons = mountEl.querySelectorAll(".order-invoice-download-btn");
+            for (var b = 0; b < buttons.length; b++) {
+                buttons[b].onclick = function () {
+                    var invoiceID = this.getAttribute("data-invoice-id");
+                    var file = this.getAttribute("data-filename");
+                    if (!invoiceID) {
+                        return;
+                    }
+                    downloadInvoicePdf(invoiceID, file, function (err) {
+                        if (err && err.error && err.error.code === "forbidden") {
+                            msg.innerHTML = '<p role="alert">Your account does not have invoice access.</p>';
+                            return;
+                        }
+                        msg.innerHTML = '<p role="alert">' + esc(extractErrorMessage(err, "Failed to download invoice PDF.")) + "</p>";
+                    });
+                };
+            }
+        }).catch(function (err) {
+            mountEl.innerHTML = '<p role="alert">' + esc(extractErrorMessage(err, "Failed to load invoices.")) + "</p>";
+        });
+    }
+
     function renderOrderDetail(container, orderID) {
         container.innerHTML =
             '<h2>Order Detail</h2>' +
@@ -7699,7 +7816,11 @@
                     '<p>Shipping details are not available in the current order payload.</p>' +
                     '<h3>Payment</h3>' +
                     '<p>Status: ' + esc(derivePaymentStatus(order.status)) + '</p>' +
+                    '<h3>Invoices</h3>' +
+                    '<div id="order-invoices-panel"></div>' +
                     '</article>';
+
+                mountOrderInvoicesPanel(document.getElementById("order-invoices-panel"), order.id);
 
                 var form = document.getElementById("order-status-form");
                 if (form) {

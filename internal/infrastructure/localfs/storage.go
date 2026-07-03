@@ -10,8 +10,11 @@ import (
 	"github.com/akarso/shopanda/internal/domain/media"
 )
 
-// Compile-time check.
-var _ media.Storage = (*Storage)(nil)
+// Compile-time checks.
+var (
+	_ media.Storage         = (*Storage)(nil)
+	_ media.ReadableStorage = (*Storage)(nil)
+)
 
 // Storage implements media.Storage using the local filesystem.
 type Storage struct {
@@ -35,22 +38,29 @@ func New(basePath, baseURL string) *Storage {
 // Name returns "local".
 func (s *Storage) Name() string { return "local" }
 
-// Save writes file contents to basePath/path.
-// Intermediate directories are created as needed.
-func (s *Storage) Save(path string, file io.Reader) error {
+func (s *Storage) resolveSafePath(path string) (string, error) {
 	full := filepath.Join(s.basePath, filepath.Clean(path))
 
-	// Verify resolved path stays within basePath to prevent directory traversal.
 	abs, err := filepath.Abs(full)
 	if err != nil {
-		return fmt.Errorf("localfs: resolve path: %w", err)
+		return "", fmt.Errorf("localfs: resolve path: %w", err)
 	}
 	base, err := filepath.Abs(s.basePath)
 	if err != nil {
-		return fmt.Errorf("localfs: resolve base: %w", err)
+		return "", fmt.Errorf("localfs: resolve base: %w", err)
 	}
 	if abs != base && !strings.HasPrefix(abs, base+string(os.PathSeparator)) {
-		return fmt.Errorf("localfs: path escapes base directory")
+		return "", fmt.Errorf("localfs: path escapes base directory")
+	}
+	return full, nil
+}
+
+// Save writes file contents to basePath/path.
+// Intermediate directories are created as needed.
+func (s *Storage) Save(path string, file io.Reader) error {
+	full, err := s.resolveSafePath(path)
+	if err != nil {
+		return err
 	}
 
 	if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
@@ -77,24 +87,29 @@ func (s *Storage) Save(path string, file io.Reader) error {
 
 // Delete removes the file at basePath/path.
 func (s *Storage) Delete(path string) error {
-	full := filepath.Join(s.basePath, filepath.Clean(path))
-
-	abs, err := filepath.Abs(full)
+	full, err := s.resolveSafePath(path)
 	if err != nil {
-		return fmt.Errorf("localfs: resolve path: %w", err)
-	}
-	base, err := filepath.Abs(s.basePath)
-	if err != nil {
-		return fmt.Errorf("localfs: resolve base: %w", err)
-	}
-	if abs != base && !strings.HasPrefix(abs, base+string(os.PathSeparator)) {
-		return fmt.Errorf("localfs: path escapes base directory")
+		return err
 	}
 
 	if err := os.Remove(full); err != nil && !os.IsNotExist(err) {
 		return fmt.Errorf("localfs: delete: %w", err)
 	}
 	return nil
+}
+
+// Read returns file contents from basePath/path.
+func (s *Storage) Read(path string) ([]byte, error) {
+	full, err := s.resolveSafePath(path)
+	if err != nil {
+		return nil, err
+	}
+
+	data, err := os.ReadFile(full)
+	if err != nil {
+		return nil, fmt.Errorf("localfs: read: %w", err)
+	}
+	return data, nil
 }
 
 // URL returns baseURL/path. Returns empty string if path escapes the storage root.

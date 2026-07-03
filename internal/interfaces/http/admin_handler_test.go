@@ -466,6 +466,25 @@ func TestAdminHandler_StaticJS(t *testing.T) {
 			t.Fatalf("expected customer groups wiring %q in JS", expected)
 		}
 	}
+	expectedOrderInvoicesWiring := []string{
+		"mountOrderInvoicesPanel",
+		"order-invoices-panel",
+		"order-invoice-download-btn",
+		"downloadInvoicePdf",
+		"/admin/orders/",
+		"/invoices/",
+		"/pdf",
+		"No invoice has been issued for this order yet.",
+		"Failed to load invoices.",
+		"Failed to download invoice PDF.",
+		"Your account does not have invoice access.",
+		"Download PDF",
+	}
+	for _, expected := range expectedOrderInvoicesWiring {
+		if !strings.Contains(normalizedBody, expected) {
+			t.Fatalf("expected order invoices wiring %q in JS", expected)
+		}
+	}
 	if !strings.Contains(normalizedBody, "Customer not found.") || !strings.Contains(normalizedBody, "Failed to load customer.") {
 		t.Fatalf("expected customer detail error messages in JS")
 	}
