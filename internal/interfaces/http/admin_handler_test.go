@@ -539,8 +539,7 @@ func TestAdminHandler_StaticJS(t *testing.T) {
 		"filterReviewsByProduct",
 		"adminQueryParam",
 		"/admin/reviews",
-		"/approve",
-		"/reject",
+		`"/" + action`,
 		"Visible on storefront",
 		"Hidden from storefront",
 		"Moderate product reviews",
@@ -548,6 +547,7 @@ func TestAdminHandler_StaticJS(t *testing.T) {
 		"Failed to load product reviews.",
 		"Review approved.",
 		"Review rejected.",
+		"products.read",
 		"products.write",
 	}
 	for _, expected := range expectedReviewsWiring {
