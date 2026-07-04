@@ -24,6 +24,8 @@ Roadmap: [`../ROADMAP.md`](../ROADMAP.md) · Upstream: [Phase 5](../phase-5-matu
 
 **Phase 6 PR specs (PR-600–651) are complete.** Track F docs/policy: [PR-650](PR-650.md), [PR-651](PR-651.md).
 
+**Next:** [Phase 7 — Customization Platform](../phase-7-customization-platform/ROADMAP.md) (PR-700–710).
+
 **Rule for Phase 6:** Do not merge backend/API PRs that add admin nav entries without the corresponding UI PR (or hide the nav item until the UI PR lands).
 
 [b2b] PRs implement in [`plugins/b2b/`](../../../plugins/b2b/) where they touch licensed UX; OSS wiring may live in admin.js with license gates.

@@ -28,4 +28,4 @@ Phase 5 closed operational, compliance, and platform gaps on top of the Phase 4 
 
 ## Next phase
 
-[Phase 6 — Merchant-Complete Admin](../phase-6-merchant-complete/ROADMAP.md) wires Phase 5 APIs into admin UI (navigation, blocks, webhooks, store credit, bulk prices).
+[Phase 7 — Customization Platform](../phase-7-customization-platform/ROADMAP.md) implements extension fields, hooks, slots, and plugin assets (PR-700–710).

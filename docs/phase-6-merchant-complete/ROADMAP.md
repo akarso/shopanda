@@ -165,10 +165,11 @@ Recommended order: **A (600–602)** first — highest “broken menu” impact 
 
 ## Additional Backlog (unscheduled, Phase 7+)
 
+See [Phase 7 — Customization Platform](../phase-7-customization-platform/ROADMAP.md) for the active platform track (PR-700–710).
+
 | Theme | Examples | Notes |
 | --- | --- | --- |
 | **Platform** | Multi-store admin workflow, analytics dashboards | Extend stats + charts |
-| **Customization platform** | Extension fields registry, private/public visibility, dynamic hooks/slots, plugin asset injection | See `specs/CUSTOMIZATION_PLATFORM.md` |
 | **Fulfillment** | Shipments, labels, partial ship | Needs domain extensions |
 | **Analytics** | Sales reports, cohort views | Extend stats repo + charts |
 | **Email** | Template editor with preview | Stretch beyond 641 |
@@ -244,7 +245,8 @@ PR specs: [`prs/`](prs/).
 | [Phase 3](../phase-3-testing/ROADMAP.md) | Hardening & guest checkout | Shipped |
 | [Phase 4](../phase-4-refactoring/ROADMAP.md) | Product complete | Shipped |
 | [Phase 5](../phase-5-maturity/ROADMAP.md) | Mature commerce | Shipped |
-| **Phase 6** | **Merchant-complete admin** | **Planned** |
+| **Phase 6** | **Merchant-complete admin** | **Shipped** |
+| [Phase 7](../phase-7-customization-platform/ROADMAP.md) | Customization platform | Planned |
 
-Phase 5 items marked “API only; admin UI deferred” map to Phase 6 tracks A–C. Phase 5 is **complete** (including PR-544 dynamic-loading research).
+Phase 5 items marked “API only; admin UI deferred” map to Phase 6 tracks A–C. Phase 5 is **complete** (including PR-544 dynamic-loading research). Phase 6 is **complete** (PR-600–651).
  
