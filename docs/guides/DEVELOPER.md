@@ -598,14 +598,14 @@ The embedded admin SPA stores its JWT in browser local storage and sends it as a
 
 ## Roadmap and Future Work
 
-Phases 1–5 are **complete**. **Phase 6 — Merchant-Complete Admin** is the active track (admin UI for Phase 5 APIs).
+Phases 1–6 are **complete**. **Phase 7 — Customization Platform** is the active track (extension fields, hooks, slots, assets).
 
 | Phase | Focus |
 | --- | --- |
-| 5 (done) | Returns, EU compliance, webhooks, plugin CLI, Kafka/SQS, GraphQL, dynamic-loading research |
-| 6 (active) | Navigation/blocks/webhooks/store-credit/bulk-price admin UI |
+| 6 (done) | Merchant-complete admin UI (PR-600–651) |
+| 7 (active) | Extension field registry, values, cart→order snapshot, hooks, slots, assets, GraphQL parity |
 
-Full plans: [Phase 5 Roadmap](../phase-5-maturity/ROADMAP.md) · [Phase 6 Roadmap](../phase-6-merchant-complete/ROADMAP.md). EU mapping: [Compliance Reference](../phase-5-maturity/specs/COMPLIANCE_EU.md). Plugin loading: [Dynamic loading research](../phase-5-maturity/specs/DYNAMIC_PLUGIN_LOADING.md).
+Full plans: [Phase 5 Roadmap](../phase-5-maturity/ROADMAP.md) · [Phase 6 Roadmap](../phase-6-merchant-complete/ROADMAP.md) · [Phase 7 Roadmap](../phase-7-customization-platform/ROADMAP.md). EU mapping: [Compliance Reference](../phase-5-maturity/specs/COMPLIANCE_EU.md). Plugin loading: [Dynamic loading research](../phase-5-maturity/specs/DYNAMIC_PLUGIN_LOADING.md).
 
 When extending the platform, keep hexagonal rules: domain ports first, explicit wiring, plugin only when behavior is optional or author-owned.
 
