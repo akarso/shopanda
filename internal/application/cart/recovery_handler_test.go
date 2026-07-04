@@ -10,6 +10,7 @@ import (
 	domainCart "github.com/akarso/shopanda/internal/domain/cart"
 	"github.com/akarso/shopanda/internal/domain/catalog"
 	"github.com/akarso/shopanda/internal/domain/customer"
+	domainCfg "github.com/akarso/shopanda/internal/domain/config"
 	"github.com/akarso/shopanda/internal/domain/jobs"
 	"github.com/akarso/shopanda/internal/domain/mail"
 	"github.com/akarso/shopanda/internal/domain/shared"
@@ -92,7 +93,7 @@ func testRecoveryHandler(t *testing.T, carts *recoveryCartRepo, customers *recov
 	return testRecoveryHandlerWithSettings(t, carts, customers, nil)
 }
 
-func testRecoveryHandlerWithSettings(t *testing.T, carts *recoveryCartRepo, customers *recoveryCustomerRepo, settings *stubRecoveryConfigRepo) (*cartApp.RecoveryHandler, *recoveryQueue) {
+func testRecoveryHandlerWithSettings(t *testing.T, carts *recoveryCartRepo, customers *recoveryCustomerRepo, settings domainCfg.Repository) (*cartApp.RecoveryHandler, *recoveryQueue) {
 	t.Helper()
 	templates := mail.NewTemplates()
 	notification.RegisterTemplates(templates)

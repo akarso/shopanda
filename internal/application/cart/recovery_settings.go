@@ -17,8 +17,10 @@ const (
 )
 
 const (
-	minRecoveryDelayHours = 1
-	maxRecoveryDelayHours = 720
+	// MinRecoveryDelayHours is the minimum cart recovery delay (hours).
+	MinRecoveryDelayHours = 1
+	// MaxRecoveryDelayHours is the maximum cart recovery delay (hours).
+	MaxRecoveryDelayHours = 720
 )
 
 // RecoverySettings holds runtime cart recovery configuration.
@@ -58,17 +60,26 @@ func LoadRecoverySettings(ctx context.Context, repo domainCfg.Repository, defaul
 		return RecoverySettings{}, fmt.Errorf("cart recovery settings: delay_hours: %w", err)
 	}
 	if delayRaw != nil {
-		hours, err := coerceConfigInt(delayRaw)
+		hours, err := ParseRecoveryDelayHours(delayRaw)
 		if err != nil {
 			return RecoverySettings{}, fmt.Errorf("cart recovery settings: delay_hours: %w", err)
-		}
-		if hours < minRecoveryDelayHours || hours > maxRecoveryDelayHours {
-			return RecoverySettings{}, fmt.Errorf("cart recovery settings: delay_hours must be between %d and %d", minRecoveryDelayHours, maxRecoveryDelayHours)
 		}
 		out.StaleAfter = time.Duration(hours) * time.Hour
 	}
 
 	return out, nil
+}
+
+// ParseRecoveryDelayHours coerces a config value and validates delay bounds.
+func ParseRecoveryDelayHours(raw interface{}) (int, error) {
+	hours, err := coerceConfigInt(raw)
+	if err != nil {
+		return 0, err
+	}
+	if hours < MinRecoveryDelayHours || hours > MaxRecoveryDelayHours {
+		return 0, fmt.Errorf("must be between %d and %d", MinRecoveryDelayHours, MaxRecoveryDelayHours)
+	}
+	return hours, nil
 }
 
 func coerceConfigBool(raw interface{}) (bool, error) {

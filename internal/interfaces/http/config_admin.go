@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/akarso/shopanda/internal/application/admin"
+	cartApp "github.com/akarso/shopanda/internal/application/cart"
 	domainCfg "github.com/akarso/shopanda/internal/domain/config"
 	"github.com/akarso/shopanda/internal/platform/apperror"
 	appconfig "github.com/akarso/shopanda/internal/platform/config"
@@ -738,22 +739,9 @@ func coerceMarketingEnabled(value interface{}) (bool, error) {
 }
 
 func coerceMarketingDelayHours(value interface{}) (int, error) {
-	var hours int
-	switch v := value.(type) {
-	case float64:
-		if v != float64(int(v)) {
-			return 0, fmt.Errorf("marketing.cart_recovery.delay_hours must be a whole number")
-		}
-		hours = int(v)
-	case int:
-		hours = v
-	case int64:
-		hours = int(v)
-	default:
-		return 0, fmt.Errorf("marketing.cart_recovery.delay_hours must be a number")
-	}
-	if hours < 1 || hours > 720 {
-		return 0, fmt.Errorf("marketing.cart_recovery.delay_hours must be between 1 and 720")
+	hours, err := cartApp.ParseRecoveryDelayHours(value)
+	if err != nil {
+		return 0, fmt.Errorf("marketing.cart_recovery.delay_hours %w", err)
 	}
 	return hours, nil
 }

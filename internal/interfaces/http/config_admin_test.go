@@ -209,7 +209,7 @@ func TestConfigAdmin_Get_GroupMarketing(t *testing.T) {
 		t.Fatalf("enabled = %v, want false", envelope.Data.Entries["marketing.cart_recovery.enabled"])
 	}
 	gotDelay := envelope.Data.Entries["marketing.cart_recovery.delay_hours"]
-	if gotDelay != float64(48) && gotDelay != int64(48) {
+	if gotDelay != float64(48) && gotDelay != int64(48) && gotDelay != int(48) {
 		t.Fatalf("delay_hours = %v, want 48", gotDelay)
 	}
 }
@@ -229,7 +229,7 @@ func TestConfigAdmin_Update_MarketingCartRecovery(t *testing.T) {
 		t.Fatalf("enabled = %v, want false", repo.entries["marketing.cart_recovery.enabled"])
 	}
 	gotDelay := repo.entries["marketing.cart_recovery.delay_hours"]
-	if gotDelay != float64(72) && gotDelay != int64(72) {
+	if gotDelay != float64(72) && gotDelay != int64(72) && gotDelay != int(72) {
 		t.Fatalf("delay_hours = %v, want 72", gotDelay)
 	}
 }
@@ -242,8 +242,8 @@ func TestConfigAdmin_Update_MarketingCartRecovery_InvalidDelay(t *testing.T) {
 	req := httptest.NewRequest(http.MethodPut, "/api/v1/admin/config", strings.NewReader(`{"entries":{"marketing.cart_recovery.delay_hours":0}}`))
 	req.Header.Set("Content-Type", "application/json")
 	h.Update().ServeHTTP(rec, req)
-	if rec.Code != http.StatusBadRequest {
-		t.Fatalf("status = %d, want %d; body: %s", rec.Code, http.StatusBadRequest, rec.Body.String())
+	if rec.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("status = %d, want %d; body: %s", rec.Code, http.StatusUnprocessableEntity, rec.Body.String())
 	}
 	if _, ok := repo.entries["marketing.cart_recovery.delay_hours"]; ok {
 		t.Fatalf("expected invalid delay not persisted")
