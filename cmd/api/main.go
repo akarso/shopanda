@@ -27,6 +27,7 @@ import (
 	cmsApp "github.com/akarso/shopanda/internal/application/cms"
 	checkoutApp "github.com/akarso/shopanda/internal/application/checkout"
 	"github.com/akarso/shopanda/internal/application/composition"
+	extensionApp "github.com/akarso/shopanda/internal/application/extension"
 	"github.com/akarso/shopanda/internal/application/exporter"
 	"github.com/akarso/shopanda/internal/application/importer"
 	mediaApp "github.com/akarso/shopanda/internal/application/media"
@@ -294,12 +295,14 @@ func runServe(cfg *config.Config, log logger.Logger, embedScheduler bool) error 
 	// Core plugin registry — infrastructure providers register during Init.
 	registry := plugin.NewRegistry(log)
 	registerPlugins(registry, cfg)
+	extensionRegistry := extensionApp.NewRegistry()
 	pluginApp := &plugin.App{
 		Logger:    log,
 		Bus:       bus,
 		Config:    cfg,
 		Bootstrap: &plugin.Bootstrap{DB: conn},
 	}
+	pluginApp.SetExtensionRegistry(extensionRegistry)
 	summary := registry.InitAll(pluginApp)
 	if err := plugin.LoadPersisted(context.Background(), configRepo, cfg, registry.ConfigRegistry()); err != nil {
 		return fmt.Errorf("load plugin config: %w", err)
@@ -2485,6 +2488,7 @@ func runWorker(cfg *config.Config, log logger.Logger) error {
 		Config:    cfg,
 		Bootstrap: &plugin.Bootstrap{DB: conn},
 	}
+	pluginApp.SetExtensionRegistry(extensionApp.NewRegistry())
 	registry.InitAll(pluginApp)
 
 	jobWorker, _, _, err := setupWorker(conn, cfg, log, pluginApp)
@@ -2525,6 +2529,7 @@ func runSearchReindex(cfg *config.Config, log logger.Logger) error {
 		Config:    cfg,
 		Bootstrap: &plugin.Bootstrap{DB: conn},
 	}
+	pluginApp.SetExtensionRegistry(extensionApp.NewRegistry())
 	registry.InitAll(pluginApp)
 
 	searchEngine, err := resolveSearchEngine(pluginApp, conn, cfg)

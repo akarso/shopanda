@@ -1,6 +1,7 @@
 package plugin
 
 import (
+	"github.com/akarso/shopanda/internal/application/extension"
 	"github.com/akarso/shopanda/internal/domain/identity"
 	"github.com/akarso/shopanda/internal/domain/payment"
 	"github.com/akarso/shopanda/internal/domain/rbac"
@@ -45,6 +46,8 @@ type App struct {
 	adminRoutes  []AdminRoute
 	publicRoutes []PublicRoute
 	cliRegistry  *cli.Registry
+
+	extensionRegistry *extension.Registry
 }
 
 // RegisterPricingStep registers a pricing pipeline step.
