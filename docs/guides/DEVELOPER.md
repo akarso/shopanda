@@ -620,3 +620,17 @@ When adding an extension, prefer this order:
 5. only then consider whether the pattern should be generalized into a reusable plugin hook
 
 Shopanda already has real extension points for plugins, events, pipelines, workflows, infrastructure ports, and plugin CLI commands. Core and external plugins register at compile time through `register_plugins.go`; there is no dynamic plugin discovery.
+
+### Admin SPA navigation policy
+
+The embedded admin SPA (`internal/interfaces/http/admin/dist/`) must not expose sidebar links that render generic “coming soon” placeholders for shipped backend APIs.
+
+When adding a new admin API:
+
+1. ship the admin UI in the same phase (or hide the nav item until the UI PR lands)
+2. register a real `render*` handler in `admin.js` `routes`
+3. do not add `renderPlaceholder` routes for features advertised in the sidebar
+
+Regression guard: `TestAdminHandler_SidebarNavNotPlaceholder` in `admin_handler_test.go` parses sidebar `data-link` hrefs from `index.html` and asserts each maps to a real route. During migration only, paths may be listed in `adminNavPlaceholderAllowlist` — **keep that list empty** once the UI PR ships.
+
+Linked screens that are not in the sidebar (for example webhooks under Integrations) follow the same rule: either implement the screen or do not link to it from a visible admin surface.

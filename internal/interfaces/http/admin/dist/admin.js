@@ -8940,12 +8940,6 @@
         return d.innerHTML;
     }
 
-    function renderPlaceholder(name) {
-        return function (container) {
-            container.innerHTML = "<h2>" + name + "</h2><p>This section will be available in a future update.</p>";
-        };
-    }
-
     // --- Logout ---
 
     function handleLogout(e) {

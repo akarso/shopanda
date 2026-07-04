@@ -3,6 +3,7 @@ package http_test
 import (
 	"net/http"
 	"net/http/httptest"
+	"regexp"
 	"strings"
 	"testing"
 
@@ -683,6 +684,90 @@ func TestAdminHandler_SPAFallback(t *testing.T) {
 		if !strings.Contains(body, "admin-layout") {
 			t.Fatalf("%s: expected admin-layout in body", p)
 		}
+	}
+}
+
+// adminNavPlaceholderAllowlist lists sidebar paths temporarily allowed to use
+// renderPlaceholder during admin UI migration. Keep empty once the UI PR ships.
+var adminNavPlaceholderAllowlist = map[string]struct{}{}
+
+func TestAdminHandler_SidebarNavNotPlaceholder(t *testing.T) {
+	h := newAdminHandler(t)
+
+	indexRec := httptest.NewRecorder()
+	indexReq := httptest.NewRequest(http.MethodGet, "/admin", nil)
+	h.ServeHTTP(indexRec, indexReq)
+	if indexRec.Code != http.StatusOK {
+		t.Fatalf("index status = %d, want %d", indexRec.Code, http.StatusOK)
+	}
+
+	jsRec := httptest.NewRecorder()
+	jsReq := httptest.NewRequest(http.MethodGet, "/admin/admin.js", nil)
+	h.ServeHTTP(jsRec, jsReq)
+	if jsRec.Code != http.StatusOK {
+		t.Fatalf("admin.js status = %d, want %d", jsRec.Code, http.StatusOK)
+	}
+
+	jsBody := strings.NewReplacer(`\"`, `"`, `\\'`, `'`).Replace(jsRec.Body.String())
+	if strings.Contains(jsBody, "renderPlaceholder") {
+		t.Fatal("renderPlaceholder must not remain in admin.js")
+	}
+
+	for _, path := range extractAdminSidebarNavPaths(indexRec.Body.String()) {
+		if _, allowed := adminNavPlaceholderAllowlist[path]; allowed {
+			continue
+		}
+		assertAdminRouteNotPlaceholder(t, jsBody, path)
+	}
+}
+
+func extractAdminSidebarNavPaths(html string) []string {
+	start := strings.Index(html, `<aside class="admin-sidebar">`)
+	if start == -1 {
+		return nil
+	}
+	rest := html[start:]
+	endRel := strings.Index(rest, "</aside>")
+	if endRel == -1 {
+		return nil
+	}
+	section := rest[:endRel]
+
+	re := regexp.MustCompile(`href="(/admin[^"]+)"\s+data-link`)
+	matches := re.FindAllStringSubmatch(section, -1)
+	seen := make(map[string]struct{}, len(matches))
+	paths := make([]string, 0, len(matches))
+	for _, match := range matches {
+		if len(match) < 2 {
+			continue
+		}
+		path := match[1]
+		if _, ok := seen[path]; ok {
+			continue
+		}
+		seen[path] = struct{}{}
+		paths = append(paths, path)
+	}
+	return paths
+}
+
+func assertAdminRouteNotPlaceholder(t *testing.T, jsBody, path string) {
+	t.Helper()
+	needle := `"` + path + `": { title:`
+	idx := strings.Index(jsBody, needle)
+	if idx == -1 {
+		t.Fatalf("sidebar path %q has no routes map entry", path)
+	}
+	snippetEnd := idx + 160
+	if snippetEnd > len(jsBody) {
+		snippetEnd = len(jsBody)
+	}
+	snippet := jsBody[idx:snippetEnd]
+	if strings.Contains(snippet, "renderPlaceholder") {
+		t.Fatalf("sidebar path %q routes to renderPlaceholder", path)
+	}
+	if !strings.Contains(snippet, "render:") {
+		t.Fatalf("sidebar path %q missing render handler", path)
 	}
 }
 
