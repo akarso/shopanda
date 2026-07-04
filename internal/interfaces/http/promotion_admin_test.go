@@ -401,7 +401,13 @@ func TestPromotionAdminHandler_Create_AdvancedRulesJSON(t *testing.T) {
 	payload := catalogPromotionPayload("Advanced Promo")
 	payload["rules_mode"] = "advanced"
 	payload["conditions"] = map[string]interface{}{"type": "always"}
-	payload["actions"] = map[string]interface{}{"type": "percentage", "percentage": 12}
+	payload["actions"] = map[string]interface{}{
+		"type": "tiered",
+		"tiers": []map[string]interface{}{
+			{"min_qty": 2, "percentage": 5},
+			{"min_qty": 5, "percentage": 15},
+		},
+	}
 
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest("POST", "/api/v1/admin/promotions", promotionBody(t, payload))
@@ -413,16 +419,56 @@ func TestPromotionAdminHandler_Create_AdvancedRulesJSON(t *testing.T) {
 	if saved == nil {
 		t.Fatal("promotion was not saved")
 	}
-	var savedActions map[string]interface{}
-	if err := json.Unmarshal(saved.Actions, &savedActions); err != nil {
-		t.Fatalf("unmarshal actions: %v", err)
-	}
-	if savedActions["type"] != "percentage" || savedActions["percentage"].(float64) != 12 {
-		t.Fatalf("actions = %v, want type=percentage percentage=12", savedActions)
+	if _, err := admin.DecodePromotionRules(saved.Type, saved.Conditions, saved.Actions); err != nil {
+		t.Fatalf("saved rules not decode-compatible: %v", err)
 	}
 	body := parsePageBody(t, rec)
 	promo := body["data"].(map[string]interface{})["promotion"].(map[string]interface{})
+	if promo["action_type"] != "tiered" {
+		t.Fatalf("action_type = %v, want tiered", promo["action_type"])
+	}
 	if promo["conditions"] == nil || promo["actions"] == nil {
 		t.Fatalf("expected raw conditions/actions in response, got %+v", promo)
+	}
+}
+
+func TestPromotionAdminHandler_Create_AdvancedRulesJSON_RejectsUnsupported(t *testing.T) {
+	repo := &mockPromotionAdminRepo{
+		saveFn: func(_ context.Context, p *promotion.Promotion) error {
+			t.Fatal("save should not be called for unsupported advanced rules")
+			return nil
+		},
+	}
+	h := shophttp.NewPromotionAdminHandler(repo)
+
+	payload := catalogPromotionPayload("Bad Advanced Promo")
+	payload["rules_mode"] = "advanced"
+	payload["conditions"] = map[string]interface{}{"type": "always"}
+	payload["actions"] = map[string]interface{}{"type": "custom_engine_v2", "factor": 0.5}
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("POST", "/api/v1/admin/promotions", promotionBody(t, payload))
+	newPromotionAdminRouter(h).ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("status = %d, want %d; body: %s", rec.Code, http.StatusUnprocessableEntity, rec.Body.String())
+	}
+}
+
+func TestPromotionAdminHandler_Create_AdvancedRulesJSON_RejectsNullActions(t *testing.T) {
+	repo := &mockPromotionAdminRepo{}
+	h := shophttp.NewPromotionAdminHandler(repo)
+
+	payload := catalogPromotionPayload("Null Actions Promo")
+	payload["rules_mode"] = "advanced"
+	payload["conditions"] = map[string]interface{}{"type": "always"}
+	payload["actions"] = nil
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("POST", "/api/v1/admin/promotions", promotionBody(t, payload))
+	newPromotionAdminRouter(h).ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("status = %d, want %d; body: %s", rec.Code, http.StatusUnprocessableEntity, rec.Body.String())
 	}
 }
