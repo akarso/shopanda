@@ -51,6 +51,9 @@ type promotionWriteRequest struct {
 	ActionTiers      []admin.PromotionTierForm `json:"action_tiers"`
 	ActionBuyQty     int                      `json:"action_buy_qty"`
 	ActionGetQty     int                      `json:"action_get_qty"`
+	RulesMode        string                   `json:"rules_mode"`
+	Conditions       json.RawMessage          `json:"conditions"`
+	Actions          json.RawMessage          `json:"actions"`
 }
 
 type adminPromotionTierResponse struct {
@@ -75,6 +78,8 @@ type adminPromotionResponse struct {
 	ActionTiers      []adminPromotionTierResponse `json:"action_tiers,omitempty"`
 	ActionBuyQty     int                          `json:"action_buy_qty,omitempty"`
 	ActionGetQty     int                          `json:"action_get_qty,omitempty"`
+	Conditions       json.RawMessage              `json:"conditions,omitempty"`
+	Actions          json.RawMessage              `json:"actions,omitempty"`
 	CreatedAt        string                       `json:"created_at"`
 	UpdatedAt        string                       `json:"updated_at"`
 }
@@ -143,6 +148,8 @@ func (h *PromotionAdminHandler) toResponse(p *promotion.Promotion) (adminPromoti
 		ActionTiers:      toAdminPromotionTierResponses(rules.ActionTiers),
 		ActionBuyQty:     rules.ActionBuyQty,
 		ActionGetQty:     rules.ActionGetQty,
+		Conditions:       cloneRawJSON(p.Conditions),
+		Actions:          cloneRawJSON(p.Actions),
 		CreatedAt:        p.CreatedAt.UTC().Format(time.RFC3339),
 		UpdatedAt:        p.UpdatedAt.UTC().Format(time.RFC3339),
 	}, nil
@@ -160,6 +167,80 @@ func toAdminPromotionTierResponses(tiers []admin.PromotionTierForm) []adminPromo
 		}
 	}
 	return out
+}
+
+func cloneRawJSON(data []byte) json.RawMessage {
+	if len(data) == 0 || string(data) == "null" {
+		return nil
+	}
+	out := make(json.RawMessage, len(data))
+	copy(out, data)
+	return out
+}
+
+func applyAdvancedRules(p *promotion.Promotion, req promotionWriteRequest) error {
+	if len(req.Conditions) == 0 || len(req.Actions) == 0 {
+		return apperror.Validation("advanced rules require conditions and actions JSON")
+	}
+	if !json.Valid(req.Conditions) || !json.Valid(req.Actions) {
+		return apperror.Validation("conditions and actions must be valid JSON")
+	}
+	rules, err := admin.DecodePromotionRules(p.Type, req.Conditions, req.Actions)
+	if err != nil {
+		return apperror.Validation(err.Error())
+	}
+	conditions, actions, err := admin.EncodePromotionRules(p.Type, rules)
+	if err != nil {
+		return apperror.Validation(err.Error())
+	}
+	p.Conditions = conditions
+	p.Actions = actions
+	p.UpdatedAt = time.Now().UTC()
+	return nil
+}
+
+func applyGuidedRules(p *promotion.Promotion, req promotionWriteRequest, mergeRules bool) error {
+	if mergeRules && req.ConditionType == "" && req.ActionType == "" {
+		p.UpdatedAt = time.Now().UTC()
+		return nil
+	}
+
+	rules := admin.PromotionRuleForm{
+		ConditionType:    req.ConditionType,
+		ConditionValue:   req.ConditionValue,
+		ActionType:       req.ActionType,
+		ActionPercentage: req.ActionPercentage,
+		ActionAmount:     req.ActionAmount,
+		ActionTiers:      append([]admin.PromotionTierForm(nil), req.ActionTiers...),
+		ActionBuyQty:     req.ActionBuyQty,
+		ActionGetQty:     req.ActionGetQty,
+	}
+	if mergeRules {
+		existing, err := admin.DecodePromotionRules(p.Type, p.Conditions, p.Actions)
+		if err != nil {
+			return apperror.Validation(err.Error())
+		}
+		if req.ConditionType == "" {
+			rules.ConditionType = existing.ConditionType
+			rules.ConditionValue = existing.ConditionValue
+		}
+		if req.ActionType == "" {
+			rules.ActionType = existing.ActionType
+			rules.ActionPercentage = existing.ActionPercentage
+			rules.ActionAmount = existing.ActionAmount
+			rules.ActionTiers = existing.ActionTiers
+			rules.ActionBuyQty = existing.ActionBuyQty
+			rules.ActionGetQty = existing.ActionGetQty
+		}
+	}
+	conditions, actions, err := admin.EncodePromotionRules(p.Type, rules)
+	if err != nil {
+		return apperror.Validation(err.Error())
+	}
+	p.Conditions = conditions
+	p.Actions = actions
+	p.UpdatedAt = time.Now().UTC()
+	return nil
 }
 
 func (h *PromotionAdminHandler) applyWriteRequest(p *promotion.Promotion, req promotionWriteRequest, mergeRules bool) error {
@@ -204,47 +285,11 @@ func (h *PromotionAdminHandler) applyWriteRequest(p *promotion.Promotion, req pr
 		return apperror.Validation("start_at must be before end_at")
 	}
 
-	if mergeRules && req.ConditionType == "" && req.ActionType == "" {
-		p.UpdatedAt = time.Now().UTC()
-		return nil
+	if strings.EqualFold(strings.TrimSpace(req.RulesMode), "advanced") {
+		return applyAdvancedRules(p, req)
 	}
 
-	rules := admin.PromotionRuleForm{
-		ConditionType:    req.ConditionType,
-		ConditionValue:   req.ConditionValue,
-		ActionType:       req.ActionType,
-		ActionPercentage: req.ActionPercentage,
-		ActionAmount:     req.ActionAmount,
-		ActionTiers:      append([]admin.PromotionTierForm(nil), req.ActionTiers...),
-		ActionBuyQty:     req.ActionBuyQty,
-		ActionGetQty:     req.ActionGetQty,
-	}
-	if mergeRules {
-		existing, err := admin.DecodePromotionRules(p.Type, p.Conditions, p.Actions)
-		if err != nil {
-			return apperror.Validation(err.Error())
-		}
-		if req.ConditionType == "" {
-			rules.ConditionType = existing.ConditionType
-			rules.ConditionValue = existing.ConditionValue
-		}
-		if req.ActionType == "" {
-			rules.ActionType = existing.ActionType
-			rules.ActionPercentage = existing.ActionPercentage
-			rules.ActionAmount = existing.ActionAmount
-			rules.ActionTiers = existing.ActionTiers
-			rules.ActionBuyQty = existing.ActionBuyQty
-			rules.ActionGetQty = existing.ActionGetQty
-		}
-	}
-	conditions, actions, err := admin.EncodePromotionRules(p.Type, rules)
-	if err != nil {
-		return apperror.Validation(err.Error())
-	}
-	p.Conditions = conditions
-	p.Actions = actions
-	p.UpdatedAt = time.Now().UTC()
-	return nil
+	return applyGuidedRules(p, req, mergeRules)
 }
 
 // List handles GET /api/v1/admin/promotions.

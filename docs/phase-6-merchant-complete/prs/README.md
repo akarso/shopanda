@@ -16,13 +16,13 @@ Planned specs for **PR-600–651** (Summary, Why, Scope, Out of scope, Validatio
 | PR-631 | D | [oss] | done | [Product category picker UX (stretch)](PR-631.md) |
 | PR-640 | E | [oss] | done | [Reviews moderation UI (stretch)](PR-640.md) |
 | PR-641 | E | [oss] | done | [Abandoned cart settings UI (stretch)](PR-641.md) |
-| PR-642 | E | [oss] | planned | [Promotion rule helper UI (stretch)](PR-642.md) |
+| PR-642 | E | [oss] | done | [Promotion rule helper UI (stretch)](PR-642.md) |
 | PR-650 | F | [oss] | planned | [MERCHANT.md refresh](PR-650.md) |
 | PR-651 | F | [oss] | planned | [Admin empty states & nav policy](PR-651.md) |
 
 Roadmap: [`../ROADMAP.md`](../ROADMAP.md) · Upstream: [Phase 5](../phase-5-maturity/ROADMAP.md) · Licensing: [`../../COMMERCIAL.md`](../../COMMERCIAL.md)
 
-**Suggested next PRs:** PR-642 (promotion rule helper UI, stretch).
+**Suggested next PRs:** PR-650 (MERCHANT.md refresh), PR-651 (admin empty states & nav policy).
 
 **Rule for Phase 6:** Do not merge backend/API PRs that add admin nav entries without the corresponding UI PR (or hide the nav item until the UI PR lands).
 
