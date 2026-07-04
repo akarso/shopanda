@@ -9,6 +9,7 @@ import (
 	domainCart "github.com/akarso/shopanda/internal/domain/cart"
 	"github.com/akarso/shopanda/internal/domain/catalog"
 	"github.com/akarso/shopanda/internal/domain/customer"
+	"github.com/akarso/shopanda/internal/domain/config"
 	"github.com/akarso/shopanda/internal/domain/jobs"
 	"github.com/akarso/shopanda/internal/domain/mail"
 	"github.com/akarso/shopanda/internal/platform/id"
@@ -32,10 +33,11 @@ type RecoveryHandler struct {
 	variants  catalog.VariantRepository
 	products  catalog.ProductRepository
 	templates *mail.Templates
-	queue     jobs.Queue
-	storeURL  string
+	queue      jobs.Queue
+	storeURL   string
+	settings   config.Repository
 	staleAfter time.Duration
-	log       logger.Logger
+	log        logger.Logger
 }
 
 // RecoveryHandlerConfig configures a RecoveryHandler.
@@ -46,6 +48,7 @@ type RecoveryHandlerConfig struct {
 	Products   catalog.ProductRepository
 	Templates  *mail.Templates
 	Queue      jobs.Queue
+	Settings   config.Repository
 	StoreURL   string
 	StaleAfter time.Duration
 	Log        logger.Logger
@@ -86,6 +89,7 @@ func NewRecoveryHandler(cfg RecoveryHandlerConfig) *RecoveryHandler {
 		templates:  cfg.Templates,
 		queue:      cfg.Queue,
 		storeURL:   strings.TrimRight(strings.TrimSpace(cfg.StoreURL), "/"),
+		settings:   cfg.Settings,
 		staleAfter: staleAfter,
 		log:        cfg.Log,
 	}
@@ -96,7 +100,16 @@ func (h *RecoveryHandler) Type() string { return RecoveryJobType }
 
 // Handle scans for stale carts and enqueues recovery emails.
 func (h *RecoveryHandler) Handle(ctx context.Context, _ jobs.Job) error {
-	staleBefore := time.Now().UTC().Add(-h.staleAfter)
+	settings, err := LoadRecoverySettings(ctx, h.settings, h.staleAfter)
+	if err != nil {
+		return err
+	}
+	if !settings.Enabled {
+		h.log.Info("cart.recovery.skipped", map[string]interface{}{"reason": "disabled"})
+		return nil
+	}
+
+	staleBefore := time.Now().UTC().Add(-settings.StaleAfter)
 	candidates, err := h.carts.FindRecoveryCandidates(ctx, staleBefore, recoveryBatchSize)
 	if err != nil {
 		return err

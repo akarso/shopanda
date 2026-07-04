@@ -2442,6 +2442,7 @@ func setupWorker(conn *sql.DB, cfg *config.Config, log logger.Logger, app *plugi
 	if err != nil {
 		return nil, nil, nil, err
 	}
+	configRepo := postgres.NewConfigRepo(conn)
 	jobWorker.Register(cartApp.NewRecoveryHandler(cartApp.RecoveryHandlerConfig{
 		Carts:      cartRepo,
 		Customers:  customerRepo,
@@ -2450,6 +2451,7 @@ func setupWorker(conn *sql.DB, cfg *config.Config, log logger.Logger, app *plugi
 		Templates:  mailTemplates,
 		Queue:      jobQueue,
 		StoreURL:   cfg.Server.PublicBaseURL,
+		Settings:   configRepo,
 		Log:        log,
 	}))
 
@@ -2457,7 +2459,6 @@ func setupWorker(conn *sql.DB, cfg *config.Config, log logger.Logger, app *plugi
 	if err != nil {
 		return nil, nil, nil, err
 	}
-	configRepo := postgres.NewConfigRepo(conn)
 	jobWorker.Register(adminApp.NewRetentionHandler(auditLogRepo, configRepo, log))
 
 	merchantWebhookRepo, err := postgres.NewWebhookEndpointRepo(conn)

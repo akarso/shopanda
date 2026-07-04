@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/akarso/shopanda/internal/application/admin"
+	cartApp "github.com/akarso/shopanda/internal/application/cart"
 	domainCfg "github.com/akarso/shopanda/internal/domain/config"
 	"github.com/akarso/shopanda/internal/platform/apperror"
 	appconfig "github.com/akarso/shopanda/internal/platform/config"
@@ -73,6 +74,10 @@ var configGroupKeys = map[string][]string{
 	"tax": {
 		"tax.default_class",
 		"tax.included",
+	},
+	"marketing": {
+		"marketing.cart_recovery.enabled",
+		"marketing.cart_recovery.delay_hours",
 	},
 	"legal": {
 		"legal.omnibus_enabled",
@@ -442,6 +447,10 @@ func (h *ConfigAdminHandler) defaultValue(key string) interface{} {
 		return ""
 	case "legal.oss_enabled":
 		return false
+	case "marketing.cart_recovery.enabled":
+		return true
+	case "marketing.cart_recovery.delay_hours":
+		return 24
 	case "mail.smtp.host":
 		return h.cfg.Mail.SMTP.Host
 	case "mail.smtp.port":
@@ -566,6 +575,22 @@ func (h *ConfigAdminHandler) normalizeUpdateEntries(ctx context.Context, entries
 			if secretValue == redactedSecretValue || strings.TrimSpace(secretValue) == "" {
 				continue
 			}
+		}
+		if key == "marketing.cart_recovery.delay_hours" {
+			coerced, err := coerceMarketingDelayHours(value)
+			if err != nil {
+				return nil, apperror.Validation(err.Error())
+			}
+			normalized[key] = coerced
+			continue
+		}
+		if key == "marketing.cart_recovery.enabled" {
+			coerced, err := coerceMarketingEnabled(value)
+			if err != nil {
+				return nil, apperror.Validation(err.Error())
+			}
+			normalized[key] = coerced
+			continue
 		}
 		normalized[key] = value
 	}
@@ -702,4 +727,21 @@ func firstNonEmpty(values ...string) string {
 		}
 	}
 	return ""
+}
+
+func coerceMarketingEnabled(value interface{}) (bool, error) {
+	switch v := value.(type) {
+	case bool:
+		return v, nil
+	default:
+		return false, fmt.Errorf("marketing.cart_recovery.enabled must be a boolean")
+	}
+}
+
+func coerceMarketingDelayHours(value interface{}) (int, error) {
+	hours, err := cartApp.ParseRecoveryDelayHours(value)
+	if err != nil {
+		return 0, fmt.Errorf("marketing.cart_recovery.delay_hours %w", err)
+	}
+	return hours, nil
 }
