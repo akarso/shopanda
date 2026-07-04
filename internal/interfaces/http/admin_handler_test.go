@@ -713,7 +713,12 @@ func TestAdminHandler_SidebarNavNotPlaceholder(t *testing.T) {
 		t.Fatal("renderPlaceholder must not remain in admin.js")
 	}
 
-	for _, path := range extractAdminSidebarNavPaths(indexRec.Body.String()) {
+	navPaths := extractAdminSidebarNavPaths(indexRec.Body.String())
+	if len(navPaths) == 0 {
+		t.Fatal("expected sidebar nav paths from index.html, got none")
+	}
+
+	for _, path := range navPaths {
 		if _, allowed := adminNavPlaceholderAllowlist[path]; allowed {
 			continue
 		}
@@ -753,22 +758,43 @@ func extractAdminSidebarNavPaths(html string) []string {
 
 func assertAdminRouteNotPlaceholder(t *testing.T, jsBody, path string) {
 	t.Helper()
-	needle := `"` + path + `": { title:`
-	idx := strings.Index(jsBody, needle)
-	if idx == -1 {
+	entry, ok := extractJSRouteObject(jsBody, path)
+	if !ok {
 		t.Fatalf("sidebar path %q has no routes map entry", path)
 	}
-	snippetEnd := idx + 160
-	if snippetEnd > len(jsBody) {
-		snippetEnd = len(jsBody)
-	}
-	snippet := jsBody[idx:snippetEnd]
-	if strings.Contains(snippet, "renderPlaceholder") {
+	if strings.Contains(entry, "renderPlaceholder") {
 		t.Fatalf("sidebar path %q routes to renderPlaceholder", path)
 	}
-	if !strings.Contains(snippet, "render:") {
+	if !strings.Contains(entry, "render:") {
 		t.Fatalf("sidebar path %q missing render handler", path)
 	}
+}
+
+func extractJSRouteObject(jsBody, path string) (string, bool) {
+	needle := `"` + path + `": `
+	idx := strings.Index(jsBody, needle)
+	if idx == -1 {
+		return "", false
+	}
+	rest := jsBody[idx+len(needle):]
+	braceRel := strings.Index(rest, "{")
+	if braceRel == -1 {
+		return "", false
+	}
+	start := idx + len(needle) + braceRel
+	depth := 0
+	for i := start; i < len(jsBody); i++ {
+		switch jsBody[i] {
+		case '{':
+			depth++
+		case '}':
+			depth--
+			if depth == 0 {
+				return jsBody[start : i+1], true
+			}
+		}
+	}
+	return "", false
 }
 
 func TestAdminHandler_TrailingSlash(t *testing.T) {
