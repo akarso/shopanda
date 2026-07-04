@@ -5,7 +5,7 @@ Audience: core maintainers, plugin authors, integrators
 
 > Canonical architecture document. Phase 7 PRs (700–710) implement this spec in vertical slices.
 
-See the full specification: [Phase 6 copy](../phase-6-merchant-complete/specs/CUSTOMIZATION_PLATFORM.md) (identical content; retained for cross-links from Phase 6 backlog).
+See the full specification: [Phase 6 copy](../../phase-6-merchant-complete/specs/CUSTOMIZATION_PLATFORM.md) (identical content; retained for cross-links from Phase 6 backlog).
 
 Phase 7 delivery map:
 
