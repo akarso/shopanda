@@ -32,12 +32,54 @@ The dashboard at `/admin/dashboard` gives a quick operational snapshot:
 
 Use it as a daily start page. If low stock rises or recent orders begin to fail or stall, move straight into the Products or Orders sections.
 
+### Admin map
+
+Every major screen in the embedded admin SPA is listed below. Use the **Route** column to jump directly when you know the URL.
+
+| Area | Screen | Route | Notes |
+| --- | --- | --- | --- |
+| — | Dashboard | `/admin/dashboard` | Daily snapshot |
+| Sales | Orders | `/admin/orders` | List, detail, status updates |
+| Sales | Returns | `/admin/sales/returns` | RMA workflow ([PR-502](../phase-5-maturity/prs/PR-502.md)) |
+| Sales | Transactions | `/admin/sales/transactions` | Payment ledger ([PR-504](../phase-5-maturity/prs/PR-504.md)) |
+| Catalog | Products | `/admin/products` | Create, edit, variants, media |
+| Catalog | Categories | `/admin/catalog/categories` | Tree + product assignment ([PR-631](../phase-6-merchant-complete/prs/PR-631.md)) |
+| Catalog | Attributes | `/admin/catalog/attributes` | Attribute groups + product fields |
+| Catalog | Bulk Prices | `/admin/catalog/prices` | Grid price edits ([PR-630](../phase-6-merchant-complete/prs/PR-630.md)) |
+| Catalog | Reviews | `/admin/catalog/reviews` | Moderation ([PR-640](../phase-6-merchant-complete/prs/PR-640.md)) |
+| Customers | Customers | `/admin/customers` | Profile + store credit panel |
+| Customers | Groups | `/admin/customers/groups` | **B2B license required** ([PR-610](../phase-6-merchant-complete/prs/PR-610.md)) |
+| Marketing | Promotions | `/admin/marketing/promotions` | Guided + advanced rules ([PR-642](../phase-6-merchant-complete/prs/PR-642.md)) |
+| Marketing | Coupons | `/admin/marketing/coupons` | Coupon codes |
+| Marketing | Abandoned Cart | `/admin/marketing/abandoned-cart` | Recovery email settings ([PR-641](../phase-6-merchant-complete/prs/PR-641.md)) |
+| Content | Pages | `/admin/content/pages` | CMS pages |
+| Content | Navigation | `/admin/content/navigation` | Menu builder ([PR-600](../phase-6-merchant-complete/prs/PR-600.md)) |
+| Content | Blocks | `/admin/content/blocks` | Reusable blocks ([PR-601](../phase-6-merchant-complete/prs/PR-601.md)) |
+| Content | Home Blocks | `/admin/content/home-blocks` | Homepage placements ([PR-602](../phase-6-merchant-complete/prs/PR-602.md)) — linked from Blocks grid |
+| Content | Media | `/admin/media` | Asset library |
+| Operations | Inventory | `/admin/operations/inventory` | Stock levels |
+| Operations | Shipping | `/admin/operations/shipping` | Zones, rates, EU compliance toggles ([PR-524](../phase-5-maturity/prs/PR-524.md)) |
+| Operations | Payments | `/admin/operations/payments` | Currency display defaults |
+| Settings | General | `/admin/settings` | Store info, email, media |
+| Settings | Localization | `/admin/settings/localization` | Currency + store languages |
+| Settings | Users & Roles | `/admin/settings/users` | Admin users ([PR-520](../phase-5-maturity/prs/PR-520.md)) |
+| Settings | Audit Log | `/admin/settings/audit` | Admin action history |
+| Store | Stores | `/admin/store` | Multi-store entities |
+| Store | Domains | `/admin/store/domains` | Hostname mapping |
+| Store | Languages | `/admin/store/languages` | Store language config |
+| Store | Currencies | `/admin/store/currencies` | Store currency config |
+| Integrations | Integrations | `/admin/integrations` | SMTP/media/plugin summary |
+| Integrations | Webhooks | `/admin/integrations/webhooks` | Outbound endpoints ([PR-620](../phase-6-merchant-complete/prs/PR-620.md)) — linked from Integrations |
+| Account | Account | `/admin/account` | Your admin profile (header link) |
+
+Use the **Store / Language / Currency** switcher in the admin header when a screen is scope-sensitive (catalog, settings, bulk prices, store credit).
+
 ## Manage Products
 
 ### Create a product
 
 1. Open `/admin/products`.
-2. Select `New Product`.
+2. Select **New Product**.
 3. Fill in the product form fields shown on screen.
 4. Save the product.
 
@@ -48,7 +90,7 @@ The product form is schema-driven, so the exact fields can vary by deployment. U
 Variants are managed on the product edit page.
 
 1. Open an existing product.
-2. Scroll to the `Variants` section.
+2. Scroll to the **Variants** section.
 3. Add a new variant with SKU, name, and weight.
 4. Update existing variant rows as needed.
 
@@ -56,9 +98,9 @@ Use variants for sellable options such as size, pack size, or material when each
 
 ### Set prices
 
-The current embedded admin UI focuses on product records, variants, and media. Bulk price changes are available through CSV tools.
+**In admin:** open **Catalog → Bulk Prices** at `/admin/catalog/prices` to search variants and edit prices in a grid for the active store scope.
 
-If you or your operator has shell access, use:
+**Bulk CSV (optional):** operators with shell access can still use CLI export/import for large migrations:
 
 ```bash
 app export:prices prices.csv
@@ -72,20 +114,30 @@ Use price export before large edits so you have a clean rollback file.
 1. Open `/admin/media`.
 2. Upload images with the file picker or drag-and-drop.
 3. Return to a product edit page.
-4. In `Featured Image`, choose an asset from the media library.
+4. In **Featured Image**, choose an asset from the media library.
 
 The media library shows a thumbnail, file name, file size, public URL, and delete action for each asset.
 
 ### Organize products into categories
 
-Category structure exists in the platform and can be maintained through data import/export tooling.
+1. Open **Catalog → Categories** at `/admin/catalog/categories`.
+2. Create or edit categories in the tree.
+3. On a product edit page, use the **Categories** checkbox tree to assign the product.
 
-If your product form exposes category-related fields, assign products there. For larger category changes, use CSV workflows:
+For very large catalog migrations, CSV workflows remain available:
 
 ```bash
 app export:categories categories.csv
 app import:categories categories.csv
 ```
+
+### Moderate product reviews
+
+1. Open **Catalog → Reviews** at `/admin/catalog/reviews`.
+2. Filter by status (pending, approved, rejected).
+3. Approve or reject pending reviews.
+
+You can also open the **Reviews** panel on a product edit page for a product-specific summary and link to the filtered moderation list.
 
 ### Import and export catalog data
 
@@ -129,15 +181,17 @@ The order detail page shows:
 - line items
 - total amount
 - derived payment status
+- **Invoices** panel (when issued)
+- **Refund** panel (when eligible)
 
 ### Update order status
 
-The current admin flow supports the following progression:
+The admin flow supports the following progression:
 
-- `pending` -> `confirmed`
-- `confirmed` -> `paid`
-- `pending` or `confirmed` -> `cancelled`
-- `pending` -> `failed`
+- `pending` → `confirmed`
+- `confirmed` → `paid`
+- `pending` or `confirmed` → `cancelled`
+- `pending` → `failed`
 
 Use these transitions consistently:
 
@@ -148,93 +202,119 @@ Use these transitions consistently:
 
 ### Issue refunds
 
-Refunds are only available when the active payment provider supports them, such as Stripe.
+On the order detail page, open the **Refund** section when the payment provider supports online refunds (Stripe).
 
-In the current release, refund handling is wired through the admin order refund endpoint rather than a dedicated embedded admin page. If your store uses Stripe refunds, confirm with your technical operator how refunds are exposed in your deployment.
+- Only **full** refunds of the captured Stripe amount are supported in admin.
+- If the button is disabled, read the eligibility message (wrong provider, already refunded, missing permission, etc.).
+- Manual refunds outside Stripe must be recorded in your payment provider.
 
-### View invoices
+### View and download invoices
 
-Shopanda generates invoice emails with an attached PDF when invoice creation is wired in the deployment.
+On the order detail page, the **Invoices** panel lists issued invoices for that order.
 
-In the current release, invoice delivery is email-first:
+- Select **Download PDF** to save the invoice file.
+- Customers still receive invoice emails with PDF attachments when invoice creation is wired in your deployment.
 
-- customers receive the invoice PDF as an attachment
-- operators should treat the email record as the primary invoice handoff
-- the embedded admin SPA does not yet include a dedicated invoice viewer
+## Sales Operations
+
+### Returns (RMA)
+
+1. Open **Sales → Returns** at `/admin/sales/returns`.
+2. Open a return to review line items and status.
+3. Approve, reject, or mark received/refunded according to your workflow.
+
+### Payment transactions
+
+Open **Sales → Transactions** at `/admin/sales/transactions` for a read-only ledger of payment events (useful for reconciliation and support).
+
+## Customers
+
+### Customer profiles
+
+Open **Customers → Customers** at `/admin/customers` to browse accounts and open a profile.
+
+### Store credit
+
+On a customer detail page, use the **Store Credit** panel to view balance and issue credit in the selected currency ([PR-611](../phase-6-merchant-complete/prs/PR-611.md)).
+
+Select a currency in the header switcher if the panel asks for one.
+
+### Customer groups (B2B)
+
+**Requires the B2B plugin and a valid license.** Enable `plugins.b2b` and set `plugins.b2b.license_key` in configuration. See `plugins/b2b/README.md`.
+
+When licensed:
+
+1. Open **Customers → Groups** at `/admin/customers/groups`.
+2. Create groups and assign members.
+3. Group-specific variant prices use the B2B group price API (documented in the B2B plugin README).
+
+Without a license, the groups screen shows setup instructions instead of the grid.
+
+## Marketing
+
+### Promotions and coupons
+
+- **Promotions** (`/admin/marketing/promotions`): create catalog or cart promotions using templates (percentage, tiered quantity, buy-X-get-Y, fixed cart discount) or the **Advanced JSON** tab for power users.
+- **Coupons** (`/admin/marketing/coupons`): attach coupon codes to promotions.
+
+### Abandoned cart recovery
+
+Open **Marketing → Abandoned Cart** at `/admin/marketing/abandoned-cart` to enable or disable recovery emails and set the delay (hours) before the first reminder is sent. Configure SMTP under **Settings → General** so emails can be delivered.
+
+## Content and Storefront
+
+### Pages, navigation, and blocks
+
+- **Pages** (`/admin/content/pages`): CMS pages for legal text, landing pages, etc.
+- **Navigation** (`/admin/content/navigation`): edit header/footer menus and link items to categories or pages.
+- **Blocks** (`/admin/content/blocks`): reusable content sections; use **Home page blocks** from the blocks grid to manage homepage placements.
+- **Media** (`/admin/media`): shared asset library.
+
+## Operations
+
+### Inventory
+
+Open **Operations → Inventory** at `/admin/operations/inventory` to view and adjust stock by variant SKU.
+
+### Shipping and compliance
+
+Open **Operations → Shipping** at `/admin/operations/shipping` to configure:
+
+- shipping zones and rates
+- tax defaults
+- EU compliance toggles (Omnibus, WEEE, EPR, GPSR, OSS export helpers)
+
+### Payments display
+
+Open **Operations → Payments** at `/admin/operations/payments` for currency display format. Payment **provider credentials** (Stripe keys, etc.) remain deployment-level configuration—coordinate with your technical operator.
 
 ## Configure the Store
 
-### Update store settings
+### General settings
 
-Open `/admin/settings` to manage the grouped settings page.
+Open **Settings → General** at `/admin/settings` for:
 
-Available sections:
+- **Store Info** — code, name, domain, country, language, currency, address, logo
+- **Email** — SMTP host, port, credentials, sender; send a test email after changes
+- **Media** — storage backend settings (local or S3, depending on deployment)
 
-- `Store Info`
-- `Email`
-- `Media`
-- `Currency`
-- `Tax`
+### Localization
 
-Save each section independently.
+Open **Settings → Localization** at `/admin/settings/localization` for currency display and store language management.
 
-### Store Info
+### Admin users and audit
 
-Use the `Store Info` section for:
-
-- store code
-- store name
-- domain
-- country
-- language
-- currency
-- default-store flag
-- presentation fields such as address and logo URL
-
-Current behavior uses the default store, or the first available store when no default exists.
-
-### Email settings
-
-Use the `Email` section to configure SMTP delivery:
-
-- SMTP host
-- port
-- username
-- password
-- sender address
-
-After saving, send a test email from the settings page to verify delivery before relying on order or password-reset emails.
-
-### Media settings
-
-Use the `Media` section to manage storage-related values such as local or S3-backed media configuration, depending on what your deployment supports.
-
-### Currency and tax settings
-
-Use the `Currency` section for display defaults and the `Tax` section for tax behavior such as the default tax class and whether pricing is tax-inclusive.
-
-### Shipping zones and rates
-
-Shipping zones, countries, rate tiers, weight-based rules, and free-shipping thresholds are implemented in the platform, but they are currently managed through admin APIs rather than the embedded settings page.
-
-If your team manages shipping directly, the technical interface is under:
-
-- `GET /api/v1/admin/shipping/zones`
-- `POST /api/v1/admin/shipping/zones`
-- `PUT /api/v1/admin/shipping/zones/{id}`
-- `GET /api/v1/admin/shipping/zones/{id}/rates`
-
-Many merchants handle this once during setup, then revisit it only when rates or regions change.
-
-### Payment provider setup
-
-Payment provider selection and credentials are deployment-level concerns in the current release. Merchants usually coordinate these with the person who manages application configuration.
-
-Operationally, the most visible merchant effect is that some features, such as automated refunds, only appear when the active provider supports them.
+- **Users & Roles** (`/admin/settings/users`): manage admin accounts and roles.
+- **Audit Log** (`/admin/settings/audit`): review admin actions.
 
 ### Multi-store usage
 
-Shopanda includes store entities, but the current embedded admin settings page is optimized around the primary store selection rather than a full multi-store operator workflow. If you run multiple stores, confirm with your technical operator which store is currently marked as default before editing shared settings.
+Use **Store Management → Stores** at `/admin/store` for store entities, plus **Domains**, **Languages**, and **Currencies** sub-screens. Confirm which store is default before editing scope-sensitive catalog or settings.
+
+## Integrations
+
+Open **Integrations** at `/admin/integrations` for a summary of email, media, and plugin configuration. Follow the **Webhooks** link to manage outbound webhook endpoints at `/admin/integrations/webhooks`.
 
 ## Day-to-Day Operations
 
@@ -243,7 +323,7 @@ Shopanda includes store entities, but the current embedded admin settings page i
 1. Open the dashboard and scan low stock and recent orders.
 2. Review new `pending` orders.
 3. Confirm or cancel orders that need action.
-4. Check product availability and update stock through your normal import/export process when needed.
+4. Check **Operations → Inventory** or bulk stock CSV when many variants need updates.
 5. Verify email settings after any infrastructure or credential changes.
 
 ### Process orders consistently
@@ -254,11 +334,12 @@ Use a predictable workflow for every order:
 2. Confirm that payment and order contents look correct.
 3. Move the order to `confirmed`.
 4. Mark it `paid` once settlement is complete.
-5. Fulfill outside Shopanda if your warehouse flow is external.
+5. Download invoice PDFs or confirm email delivery when required.
+6. Fulfill outside Shopanda if your warehouse flow is external.
 
 ### Watch low stock
 
-The dashboard exposes a low stock count so operators can spot replenishment issues quickly. Use stock CSV export/import when many variants need updates at once.
+The dashboard exposes a low stock count. Use **Operations → Inventory** for quick adjustments, or stock CSV export/import for bulk updates.
 
 ### Handle customer inquiries
 
@@ -269,8 +350,7 @@ Use the order detail page as the source of truth for:
 - item list
 - totals
 - customer reference
-
-This is usually enough to answer “where is my order?” and “what did I buy?” style support questions, even when fulfillment happens in another tool.
+- invoice and refund status
 
 ### Understand email notifications
 
@@ -279,42 +359,44 @@ Shopanda supports operational emails such as:
 - order confirmation
 - password reset
 - invoice email with PDF attachment
+- abandoned cart recovery (when enabled under Marketing)
 
 **Order emails are sent asynchronously.** Checkout completes in the web server, but delivery depends on a background **worker** process and valid SMTP settings. In Docker Compose deployments, the default stack includes a `worker` service; on bare metal, run `shopanda worker` as a separate service (see the [Deployment Guide](DEPLOYMENT.md)).
 
 If customers report missing emails:
 
 1. confirm the worker process is running
-2. verify SMTP settings in `/admin/settings`
+2. verify SMTP settings in **Settings → General**
 3. send a test email
 4. confirm the sender address and mail credentials are still valid
 
 ## Current Release Notes
 
-The merchant-facing experience is usable today, but a few workflows still live outside the embedded admin SPA:
+The embedded admin SPA now covers the day-to-day merchant workflows listed in the [Admin map](#admin-map) above. A few items remain outside the SPA or need operator coordination:
 
-- bulk catalog changes use CLI CSV tools
-- shipping zone management is available under Operations → Shipping in the admin panel
-- payment-provider setup is deployment-level configuration
-- invoice viewing is email-first rather than an in-app viewer
-- refunds depend on provider support and deployment wiring
+| Workflow | Where to manage |
+| --- | --- |
+| Bulk catalog migration | Admin grids + optional CLI CSV tools |
+| Payment provider secrets | Deployment config (not in admin UI) |
+| B2B customer groups | Admin UI when B2B plugin is licensed |
+| Group-specific B2B prices | B2B API (see plugin README) |
 
-That split is intentional for now: the admin SPA covers the most frequent merchant workflows first, while more technical or less frequent operations remain explicit and scriptable.
+That split is intentional: frequent tasks live in admin; large migrations and provider secrets stay scriptable or deployment-level.
 
 ## Roadmap and Known Gaps
 
-Phase 4 delivered day-to-day catalog, order, promotion, and inventory admin. **Phase 5** adds operational and compliance depth. See the [Phase 5 Roadmap](../phase-5-maturity/ROADMAP.md) for the full plan.
+Phases 4–6 delivered merchant-complete admin coverage for catalog, sales, marketing, content, operations, and settings. See the [Phase 6 Roadmap](../phase-6-merchant-complete/ROADMAP.md) for the full plan.
 
-| Capability | Today | Phase 5 direction |
-| --- | --- | --- |
-| Returns / RMA | Manual or external | PR-502–503: workflow + admin/account UI |
-| Customer groups | Not available | PR-500–501: groups + group pricing |
-| Advanced promotions | Simple rules only | PR-510: tiered / buy-X-get-Y |
-| Payment ledger in admin | API/email only | PR-504: read-only transaction grid |
-| Navigation / page blocks | Admin → Content → Navigation, Blocks, Home page blocks; page edit for per-page blocks | PR-600–602 |
-| Shipping zones UI | Operations → Shipping (zones + rates) | PR-524 |
-| WEEE / packaging / GPSR | Not modeled | PR-531–533: product compliance fields |
-| Omnibus price display | Backend + SSR templates (PR-530) | Toggle under Operations → Shipping → EU Price Indication |
-| Admin users / MFA | Seed user + fixed roles | PR-520–522: CRUD + optional TOTP |
+| Capability | Status |
+| --- | --- |
+| Navigation / blocks / home placements | Shipped — [PR-600](../phase-6-merchant-complete/prs/PR-600.md)–[602](../phase-6-merchant-complete/prs/PR-602.md) |
+| Returns / transactions / invoices / refunds | Shipped — Phase 5–6 sales PRs |
+| Bulk prices + category picker | Shipped — [PR-630](../phase-6-merchant-complete/prs/PR-630.md), [PR-631](../phase-6-merchant-complete/prs/PR-631.md) |
+| Reviews + abandoned cart + promotion helper | Shipped — [PR-640](../phase-6-merchant-complete/prs/PR-640.md)–[642](../phase-6-merchant-complete/prs/PR-642.md) |
+| Customer groups | B2B plugin + license — [PR-610](../phase-6-merchant-complete/prs/PR-610.md) |
+| Store credit | Customer detail panel — [PR-611](../phase-6-merchant-complete/prs/PR-611.md) |
+| Webhooks | Integrations → Webhooks — [PR-620](../phase-6-merchant-complete/prs/PR-620.md) |
+| Payment provider setup | Deployment-level (Stripe keys, etc.) |
+| Non-English admin UI | Not available |
 
 EU directive overview: [Compliance Reference](../phase-5-maturity/specs/COMPLIANCE_EU.md).
