@@ -4538,9 +4538,7 @@
                 for (var i = 0; i < promotionsRaw.length; i++) {
                     var promo = promotionsRaw[i];
                     var editHref = '/admin/marketing/promotions/' + encodeURIComponent(promo.id || '');
-                    var discount = promo.action_type === 'fixed'
-                        ? esc(String(promo.action_amount || 0)) + ' minor units'
-                        : esc(String(promo.action_percentage || 0)) + '%';
+                    var discount = formatPromotionDiscountSummary(promo);
                     html += '<tr>' +
                         '<td><a href="' + editHref + '" data-link>' + esc(promo.name || promo.id || '') + '</a></td>' +
                         '<td>' + esc(promo.type || '') + '</td>' +
@@ -4566,32 +4564,482 @@
         renderPromotionForm(container, promotionID);
     }
 
+    function formatPromotionDiscountSummary(promo) {
+        if (!promo) {
+            return '';
+        }
+        if (promo.action_type === 'fixed') {
+            return esc(String(promo.action_amount || 0)) + ' minor units';
+        }
+        if (promo.action_type === 'tiered') {
+            var tiers = promo.action_tiers || [];
+            if (!Array.isArray(tiers) || tiers.length === 0) {
+                return 'Tiered';
+            }
+            var maxPct = 0;
+            for (var i = 0; i < tiers.length; i++) {
+                maxPct = Math.max(maxPct, tiers[i].percentage || 0);
+            }
+            return 'Tiered up to ' + esc(String(maxPct)) + '%';
+        }
+        if (promo.action_type === 'buy_x_get_y') {
+            return 'Buy ' + esc(String(promo.action_buy_qty || 0)) + ' get ' + esc(String(promo.action_get_qty || 0));
+        }
+        return esc(String(promo.action_percentage || 0)) + '%';
+    }
+
+    function detectPromotionTemplate(promotion) {
+        if (!promotion) {
+            return 'percentage_catalog';
+        }
+        var type = promotion.type || 'catalog';
+        var conditionType = promotion.condition_type || 'always';
+        var actionType = promotion.action_type || 'percentage';
+        if (actionType === 'tiered') {
+            return 'tiered';
+        }
+        if (actionType === 'buy_x_get_y') {
+            return 'bogo';
+        }
+        if (type === 'cart' && actionType === 'fixed') {
+            return 'fixed_cart';
+        }
+        if (type === 'cart') {
+            return 'percentage_cart';
+        }
+        if (conditionType === 'min_quantity') {
+            return 'min_qty_percentage';
+        }
+        return 'percentage_catalog';
+    }
+
+    function defaultPromotionTiers() {
+        return [
+            { min_qty: 2, percentage: 5 },
+            { min_qty: 5, percentage: 15 }
+        ];
+    }
+
+    function renderPromotionTierRows(tiers) {
+        var rows = Array.isArray(tiers) && tiers.length > 0 ? tiers : defaultPromotionTiers();
+        var html = '<table class="promotion-tiers-table"><thead><tr><th>Min quantity</th><th>Discount %</th><th></th></tr></thead><tbody>';
+        for (var i = 0; i < rows.length; i++) {
+            html += renderPromotionTierRow(rows[i], i);
+        }
+        html += '</tbody></table>';
+        return html;
+    }
+
+    function renderPromotionTierRow(tier, index) {
+        return '<tr data-tier-index="' + index + '">' +
+            '<td><input type="number" min="1" step="1" data-tier-field="min_qty" value="' + esc(String(tier.min_qty || 1)) + '"></td>' +
+            '<td><input type="number" min="1" max="100" step="1" data-tier-field="percentage" value="' + esc(String(tier.percentage || 1)) + '"></td>' +
+            '<td><button type="button" class="secondary promotion-remove-tier" data-tier-index="' + index + '">Remove</button></td>' +
+            '</tr>';
+    }
+
+    function readPromotionTiersFromEditor(root) {
+        var rows = root.querySelectorAll('tbody tr[data-tier-index]');
+        var tiers = [];
+        for (var i = 0; i < rows.length; i++) {
+            var row = rows[i];
+            var minQty = parseInt(row.querySelector('[data-tier-field="min_qty"]').value, 10);
+            var percentage = parseInt(row.querySelector('[data-tier-field="percentage"]').value, 10);
+            tiers.push({
+                min_qty: Number.isFinite(minQty) ? minQty : 0,
+                percentage: Number.isFinite(percentage) ? percentage : 0
+            });
+        }
+        return tiers;
+    }
+
+    function buildPromotionConditionsJSON(promoType, conditionType, conditionValue) {
+        if (conditionType === 'min_quantity') {
+            return { type: 'min_quantity', value: conditionValue || 0 };
+        }
+        if (conditionType === 'min_cart_total') {
+            return { type: 'min_cart_total', value: conditionValue || 0 };
+        }
+        return { type: 'always' };
+    }
+
+    function buildPromotionActionsJSON(actionType, fields) {
+        if (actionType === 'fixed') {
+            return { type: 'fixed', amount: fields.action_amount || 0 };
+        }
+        if (actionType === 'tiered') {
+            return { type: 'tiered', tiers: fields.action_tiers || [] };
+        }
+        if (actionType === 'buy_x_get_y') {
+            return { type: 'buy_x_get_y', buy_qty: fields.action_buy_qty || 0, get_qty: fields.action_get_qty || 0 };
+        }
+        return { type: 'percentage', percentage: fields.action_percentage || 0 };
+    }
+
+    function syncPromotionAdvancedJSON(form) {
+        if (!form.elements.conditions_json || !form.elements.actions_json) {
+            return;
+        }
+        var promoType = form.elements.type.value;
+        var conditionType = form.elements.condition_type.value;
+        var conditionValue = parseInt(form.elements.condition_value.value, 10) || 0;
+        var actionType = form.elements.action_type.value;
+        var tiersEditor = document.getElementById('promotion-tiers-editor');
+        var tiers = tiersEditor ? readPromotionTiersFromEditor(tiersEditor) : [];
+        form.elements.conditions_json.value = JSON.stringify(
+            buildPromotionConditionsJSON(promoType, conditionType, conditionValue),
+            null,
+            2
+        );
+        form.elements.actions_json.value = JSON.stringify(
+            buildPromotionActionsJSON(actionType, {
+                action_amount: parseInt(form.elements.action_amount.value, 10) || 0,
+                action_percentage: parseInt(form.elements.action_percentage.value, 10) || 0,
+                action_tiers: tiers,
+                action_buy_qty: parseInt(form.elements.action_buy_qty.value, 10) || 0,
+                action_get_qty: parseInt(form.elements.action_get_qty.value, 10) || 0
+            }),
+            null,
+            2
+        );
+    }
+
+    function applyPromotionTemplate(form, template) {
+        var typeEl = form.elements.type;
+        var conditionEl = form.elements.condition_type;
+        var actionEl = form.elements.action_type;
+        if (template === 'percentage_cart') {
+            typeEl.value = 'cart';
+            conditionEl.value = 'min_cart_total';
+            actionEl.value = 'percentage';
+            form.elements.condition_value.value = '5000';
+            form.elements.action_percentage.value = '10';
+        } else if (template === 'fixed_cart') {
+            typeEl.value = 'cart';
+            conditionEl.value = 'min_cart_total';
+            actionEl.value = 'fixed';
+            form.elements.condition_value.value = '5000';
+            form.elements.action_amount.value = '500';
+        } else if (template === 'min_qty_percentage') {
+            typeEl.value = 'catalog';
+            conditionEl.value = 'min_quantity';
+            actionEl.value = 'percentage';
+            form.elements.condition_value.value = '2';
+            form.elements.action_percentage.value = '10';
+        } else if (template === 'tiered') {
+            typeEl.value = 'catalog';
+            conditionEl.value = 'always';
+            actionEl.value = 'tiered';
+        } else if (template === 'bogo') {
+            typeEl.value = 'catalog';
+            conditionEl.value = 'always';
+            actionEl.value = 'buy_x_get_y';
+            form.elements.action_buy_qty.value = '2';
+            form.elements.action_get_qty.value = '1';
+        } else {
+            typeEl.value = 'catalog';
+            conditionEl.value = 'always';
+            actionEl.value = 'percentage';
+            form.elements.action_percentage.value = '10';
+        }
+        updatePromotionFormSections(form);
+    }
+
+    function updatePromotionFormSections(form) {
+        var guidedPanel = document.getElementById('promotion-guided-panel');
+        var advancedPanel = document.getElementById('promotion-advanced-panel');
+        var template = form.elements.promotion_template ? form.elements.promotion_template.value : 'percentage_catalog';
+        var isAdvanced = template === 'advanced';
+        if (guidedPanel) {
+            guidedPanel.style.display = isAdvanced ? 'none' : '';
+        }
+        if (advancedPanel) {
+            advancedPanel.style.display = isAdvanced ? '' : 'none';
+        }
+        if (isAdvanced) {
+            syncPromotionAdvancedJSON(form);
+            return;
+        }
+
+        var promoType = form.elements.type.value;
+        var conditionType = form.elements.condition_type.value;
+        var actionType = form.elements.action_type.value;
+        var conditionValueWrap = document.getElementById('promotion-condition-value-wrap');
+        var percentageWrap = document.getElementById('promotion-percentage-wrap');
+        var fixedWrap = document.getElementById('promotion-fixed-wrap');
+        var tieredWrap = document.getElementById('promotion-tiered-wrap');
+        var bogoWrap = document.getElementById('promotion-bogo-wrap');
+        var minQtyOption = form.elements.condition_type.querySelector('option[value="min_quantity"]');
+        var minCartOption = form.elements.condition_type.querySelector('option[value="min_cart_total"]');
+
+        if (minQtyOption) {
+            minQtyOption.disabled = promoType !== 'catalog';
+        }
+        if (minCartOption) {
+            minCartOption.disabled = promoType !== 'cart';
+        }
+        if (promoType === 'catalog' && conditionType === 'min_cart_total') {
+            form.elements.condition_type.value = 'always';
+            conditionType = 'always';
+        }
+        if (promoType === 'cart' && conditionType === 'min_quantity') {
+            form.elements.condition_type.value = 'min_cart_total';
+            conditionType = 'min_cart_total';
+        }
+        if (promoType === 'cart' && conditionType === 'always') {
+            form.elements.condition_type.value = 'min_cart_total';
+            conditionType = 'min_cart_total';
+        }
+
+        if (conditionValueWrap) {
+            conditionValueWrap.style.display = (conditionType === 'min_quantity' || conditionType === 'min_cart_total') ? '' : 'none';
+        }
+        if (percentageWrap) {
+            percentageWrap.style.display = actionType === 'percentage' ? '' : 'none';
+        }
+        if (fixedWrap) {
+            fixedWrap.style.display = actionType === 'fixed' ? '' : 'none';
+        }
+        if (tieredWrap) {
+            tieredWrap.style.display = actionType === 'tiered' ? '' : 'none';
+        }
+        if (bogoWrap) {
+            bogoWrap.style.display = actionType === 'buy_x_get_y' ? '' : 'none';
+        }
+
+        if (promoType === 'cart' && (actionType === 'tiered' || actionType === 'buy_x_get_y')) {
+            form.elements.action_type.value = 'percentage';
+            if (percentageWrap) {
+                percentageWrap.style.display = '';
+            }
+            if (tieredWrap) {
+                tieredWrap.style.display = 'none';
+            }
+            if (bogoWrap) {
+                bogoWrap.style.display = 'none';
+            }
+        }
+        if (promoType === 'catalog' && actionType === 'fixed') {
+            form.elements.action_type.value = 'percentage';
+            if (percentageWrap) {
+                percentageWrap.style.display = '';
+            }
+            if (fixedWrap) {
+                fixedWrap.style.display = 'none';
+            }
+        }
+    }
+
+    function bindPromotionTiersEditor(form) {
+        var editor = document.getElementById('promotion-tiers-editor');
+        var addBtn = document.getElementById('promotion-add-tier');
+        if (!editor || !addBtn) {
+            return;
+        }
+        addBtn.addEventListener('click', function () {
+            var tbody = editor.querySelector('tbody');
+            var index = tbody.querySelectorAll('tr[data-tier-index]').length;
+            tbody.insertAdjacentHTML('beforeend', renderPromotionTierRow({ min_qty: index > 0 ? index + 1 : 2, percentage: 10 }, index));
+            bindPromotionTierRemoveButtons(editor);
+        });
+        bindPromotionTierRemoveButtons(editor);
+    }
+
+    function bindPromotionTierRemoveButtons(editor) {
+        var buttons = editor.querySelectorAll('.promotion-remove-tier');
+        for (var i = 0; i < buttons.length; i++) {
+            buttons[i].onclick = function () {
+                var row = this.closest('tr[data-tier-index]');
+                var tbody = editor.querySelector('tbody');
+                if (!row || !tbody || tbody.querySelectorAll('tr[data-tier-index]').length <= 1) {
+                    return;
+                }
+                row.remove();
+            };
+        }
+    }
+
+    function setupPromotionFormInteractions(form, promotion) {
+        var template = detectPromotionTemplate(promotion);
+        if (form.elements.promotion_template) {
+            form.elements.promotion_template.value = template;
+        }
+        updatePromotionFormSections(form);
+        bindPromotionTiersEditor(form);
+
+        form.elements.promotion_template.addEventListener('change', function () {
+            if (form.elements.promotion_template.value !== 'advanced') {
+                applyPromotionTemplate(form, form.elements.promotion_template.value);
+            } else {
+                updatePromotionFormSections(form);
+            }
+        });
+        form.elements.type.addEventListener('change', function () {
+            updatePromotionFormSections(form);
+        });
+        form.elements.condition_type.addEventListener('change', function () {
+            updatePromotionFormSections(form);
+        });
+        form.elements.action_type.addEventListener('change', function () {
+            updatePromotionFormSections(form);
+        });
+
+        var syncBtn = document.getElementById('promotion-sync-json-btn');
+        if (syncBtn) {
+            syncBtn.addEventListener('click', function () {
+                syncPromotionAdvancedJSON(form);
+            });
+        }
+    }
+
+    function parsePromotionAdvancedPayload(form) {
+        var promoType = form.elements.type.value;
+        var conditions;
+        var actions;
+        try {
+            conditions = JSON.parse(form.elements.conditions_json.value || '{}');
+            actions = JSON.parse(form.elements.actions_json.value || '{}');
+        } catch (err) {
+            return { error: 'Conditions and actions must be valid JSON.' };
+        }
+        if (!conditions || !conditions.type || !actions || !actions.type) {
+            return { error: 'Conditions and actions JSON must include a type field.' };
+        }
+        var payload = {
+            name: form.elements.name.value,
+            type: promoType,
+            priority: parseInt(form.elements.priority.value, 10) || 0,
+            active: form.elements.active.checked,
+            coupon_bound: form.elements.coupon_bound.checked,
+            rules_mode: 'advanced',
+            conditions: conditions,
+            actions: actions
+        };
+        if (form.elements.start_at.value) {
+            payload.start_at = form.elements.start_at.value.length === 16
+                ? form.elements.start_at.value + ':00Z'
+                : form.elements.start_at.value;
+        }
+        if (form.elements.end_at.value) {
+            payload.end_at = form.elements.end_at.value.length === 16
+                ? form.elements.end_at.value + ':00Z'
+                : form.elements.end_at.value;
+        }
+        return { payload: payload };
+    }
+
+    function buildPromotionGuidedPayload(form) {
+        var tiersEditor = document.getElementById('promotion-tiers-editor');
+        var payload = {
+            name: form.elements.name.value,
+            type: form.elements.type.value,
+            priority: parseInt(form.elements.priority.value, 10) || 0,
+            condition_type: form.elements.condition_type.value,
+            condition_value: parseInt(form.elements.condition_value.value, 10) || 0,
+            action_type: form.elements.action_type.value,
+            action_percentage: parseInt(form.elements.action_percentage.value, 10) || 0,
+            action_amount: parseInt(form.elements.action_amount.value, 10) || 0,
+            active: form.elements.active.checked,
+            coupon_bound: form.elements.coupon_bound.checked
+        };
+        if (payload.action_type === 'tiered') {
+            payload.action_tiers = tiersEditor ? readPromotionTiersFromEditor(tiersEditor) : [];
+        }
+        if (payload.action_type === 'buy_x_get_y') {
+            payload.action_buy_qty = parseInt(form.elements.action_buy_qty.value, 10) || 0;
+            payload.action_get_qty = parseInt(form.elements.action_get_qty.value, 10) || 0;
+        }
+        if (form.elements.start_at.value) {
+            payload.start_at = form.elements.start_at.value.length === 16
+                ? form.elements.start_at.value + ':00Z'
+                : form.elements.start_at.value;
+        }
+        if (form.elements.end_at.value) {
+            payload.end_at = form.elements.end_at.value.length === 16
+                ? form.elements.end_at.value + ':00Z'
+                : form.elements.end_at.value;
+        }
+        return payload;
+    }
+
     function renderPromotionFormFields(promotion) {
         var type = promotion ? (promotion.type || 'catalog') : 'catalog';
         var conditionType = promotion ? (promotion.condition_type || 'always') : 'always';
         var actionType = promotion ? (promotion.action_type || 'percentage') : 'percentage';
         var isActive = promotion ? !!promotion.active : true;
         var couponBound = promotion ? !!promotion.coupon_bound : false;
+        var template = detectPromotionTemplate(promotion);
+        var tiers = promotion && Array.isArray(promotion.action_tiers) && promotion.action_tiers.length > 0
+            ? promotion.action_tiers
+            : defaultPromotionTiers();
+        var conditionsJSON = promotion && promotion.conditions
+            ? JSON.stringify(promotion.conditions, null, 2)
+            : JSON.stringify(buildPromotionConditionsJSON(type, conditionType, promotion ? promotion.condition_value : 0), null, 2);
+        var actionsJSON = promotion && promotion.actions
+            ? JSON.stringify(promotion.actions, null, 2)
+            : JSON.stringify(buildPromotionActionsJSON(actionType, {
+                action_amount: promotion ? promotion.action_amount : 0,
+                action_percentage: promotion ? promotion.action_percentage : 10,
+                action_tiers: tiers,
+                action_buy_qty: promotion ? promotion.action_buy_qty : 2,
+                action_get_qty: promotion ? promotion.action_get_qty : 1
+            }), null, 2);
         return '' +
+            '<label>Template<select name="promotion_template">' +
+            '<option value="percentage_catalog"' + (template === 'percentage_catalog' ? ' selected' : '') + '>Catalog — percentage off</option>' +
+            '<option value="min_qty_percentage"' + (template === 'min_qty_percentage' ? ' selected' : '') + '>Catalog — min quantity + percentage</option>' +
+            '<option value="tiered"' + (template === 'tiered' ? ' selected' : '') + '>Catalog — tiered quantity discount</option>' +
+            '<option value="bogo"' + (template === 'bogo' ? ' selected' : '') + '>Catalog — buy X get Y</option>' +
+            '<option value="percentage_cart"' + (template === 'percentage_cart' ? ' selected' : '') + '>Cart — percentage off order</option>' +
+            '<option value="fixed_cart"' + (template === 'fixed_cart' ? ' selected' : '') + '>Cart — fixed amount off order</option>' +
+            '<option value="advanced"' + (template === 'advanced' ? ' selected' : '') + '>Advanced JSON</option>' +
+            '</select></label>' +
+            '<div id="promotion-guided-panel">' +
             '<label>Name<input name="name" value="' + esc(promotion ? (promotion.name || '') : '') + '" required></label>' +
             '<label>Type<select name="type">' +
             '<option value="catalog"' + (type === 'catalog' ? ' selected' : '') + '>Catalog (line item)</option>' +
             '<option value="cart"' + (type === 'cart' ? ' selected' : '') + '>Cart (order total)</option>' +
             '</select></label>' +
             '<label>Priority<input name="priority" type="number" value="' + esc(promotion ? String(promotion.priority || 0) : '0') + '"></label>' +
-            '<label>Condition<select name="condition_type">' +
+            '<fieldset><legend>Condition</legend>' +
+            '<label>When<select name="condition_type">' +
             '<option value="always"' + (conditionType === 'always' ? ' selected' : '') + '>Always</option>' +
-            '<option value="min_quantity"' + (conditionType === 'min_quantity' ? ' selected' : '') + '>Minimum quantity (catalog)</option>' +
+            '<option value="min_quantity"' + (conditionType === 'min_quantity' ? ' selected' : '') + '>Minimum line quantity (catalog)</option>' +
             '<option value="min_cart_total"' + (conditionType === 'min_cart_total' ? ' selected' : '') + '>Minimum cart total (cart)</option>' +
             '</select></label>' +
-            '<label>Condition value<input name="condition_value" type="number" min="0" value="' + esc(promotion ? String(promotion.condition_value || 0) : '0') + '"></label>' +
+            '<div id="promotion-condition-value-wrap">' +
+            '<label>Threshold<input name="condition_value" type="number" min="0" value="' + esc(promotion ? String(promotion.condition_value || 0) : '0') + '"></label>' +
             '<p class="hint">For min_cart_total use minor currency units (e.g. 5000 = $50.00).</p>' +
+            '</div></fieldset>' +
+            '<fieldset><legend>Discount</legend>' +
             '<label>Discount type<select name="action_type">' +
             '<option value="percentage"' + (actionType === 'percentage' ? ' selected' : '') + '>Percentage</option>' +
             '<option value="fixed"' + (actionType === 'fixed' ? ' selected' : '') + '>Fixed amount</option>' +
+            '<option value="tiered"' + (actionType === 'tiered' ? ' selected' : '') + '>Tiered by quantity</option>' +
+            '<option value="buy_x_get_y"' + (actionType === 'buy_x_get_y' ? ' selected' : '') + '>Buy X get Y free</option>' +
             '</select></label>' +
+            '<div id="promotion-percentage-wrap">' +
             '<label>Percentage<input name="action_percentage" type="number" min="1" max="100" value="' + esc(promotion ? String(promotion.action_percentage || 10) : '10') + '"></label>' +
+            '</div>' +
+            '<div id="promotion-fixed-wrap">' +
             '<label>Fixed amount (minor units)<input name="action_amount" type="number" min="0" value="' + esc(promotion ? String(promotion.action_amount || 0) : '0') + '"></label>' +
+            '</div>' +
+            '<div id="promotion-tiered-wrap">' +
+            '<p class="hint">Tiers must have strictly increasing minimum quantities.</p>' +
+            '<div id="promotion-tiers-editor">' + renderPromotionTierRows(tiers) + '</div>' +
+            '<button type="button" class="secondary" id="promotion-add-tier">Add tier</button>' +
+            '</div>' +
+            '<div id="promotion-bogo-wrap">' +
+            '<label>Buy quantity<input name="action_buy_qty" type="number" min="1" value="' + esc(promotion ? String(promotion.action_buy_qty || 2) : '2') + '"></label>' +
+            '<label>Get free quantity<input name="action_get_qty" type="number" min="1" value="' + esc(promotion ? String(promotion.action_get_qty || 1) : '1') + '"></label>' +
+            '</div></fieldset>' +
+            '</div>' +
+            '<div id="promotion-advanced-panel">' +
+            '<p class="hint">Edit raw conditions/actions JSON. Use for unsupported rule shapes or power-user workflows.</p>' +
+            '<label>Conditions<textarea name="conditions_json" rows="6">' + esc(conditionsJSON) + '</textarea></label>' +
+            '<label>Actions<textarea name="actions_json" rows="8">' + esc(actionsJSON) + '</textarea></label>' +
+            '<button type="button" class="secondary" id="promotion-sync-json-btn">Sync from guided fields</button>' +
+            '</div>' +
             '<label>Start at<input name="start_at" value="' + esc(promotion && promotion.start_at ? String(promotion.start_at).substring(0, 16) : '') + '" placeholder="2026-01-01T00:00"></label>' +
             '<label>End at<input name="end_at" value="' + esc(promotion && promotion.end_at ? String(promotion.end_at).substring(0, 16) : '') + '" placeholder="2026-12-31T23:59"></label>' +
             '<label><input type="checkbox" name="active"' + (isActive ? ' checked' : '') + '> Active</label>' +
@@ -4614,31 +5062,19 @@
 
         function bindForm(promotion) {
             form.innerHTML = renderPromotionFormFields(promotion);
+            setupPromotionFormInteractions(form, promotion);
 
             form.addEventListener('submit', function (e) {
                 e.preventDefault();
-                var payload = {
-                    name: form.elements.name.value,
-                    type: form.elements.type.value,
-                    priority: parseInt(form.elements.priority.value, 10) || 0,
-                    condition_type: form.elements.condition_type.value,
-                    condition_value: parseInt(form.elements.condition_value.value, 10) || 0,
-                    action_type: form.elements.action_type.value,
-                    action_percentage: parseInt(form.elements.action_percentage.value, 10) || 0,
-                    action_amount: parseInt(form.elements.action_amount.value, 10) || 0,
-                    active: form.elements.active.checked,
-                    coupon_bound: form.elements.coupon_bound.checked
-                };
-                if (form.elements.start_at.value) {
-                    payload.start_at = form.elements.start_at.value.length === 16
-                        ? form.elements.start_at.value + ':00Z'
-                        : form.elements.start_at.value;
+                var template = form.elements.promotion_template ? form.elements.promotion_template.value : 'percentage_catalog';
+                var payloadResult = template === 'advanced'
+                    ? parsePromotionAdvancedPayload(form)
+                    : { payload: buildPromotionGuidedPayload(form) };
+                if (payloadResult.error) {
+                    msg.innerHTML = '<p role="alert">' + esc(payloadResult.error) + '</p>';
+                    return;
                 }
-                if (form.elements.end_at.value) {
-                    payload.end_at = form.elements.end_at.value.length === 16
-                        ? form.elements.end_at.value + ':00Z'
-                        : form.elements.end_at.value;
-                }
+                var payload = payloadResult.payload;
                 var method = promotionID ? 'PUT' : 'POST';
                 var url = promotionID ? '/admin/promotions/' + encodeURIComponent(promotionID) : '/admin/promotions';
                 api(url, { method: method, body: JSON.stringify(payload) }).then(function (body) {

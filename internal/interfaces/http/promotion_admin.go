@@ -51,6 +51,9 @@ type promotionWriteRequest struct {
 	ActionTiers      []admin.PromotionTierForm `json:"action_tiers"`
 	ActionBuyQty     int                      `json:"action_buy_qty"`
 	ActionGetQty     int                      `json:"action_get_qty"`
+	RulesMode        string                   `json:"rules_mode"`
+	Conditions       json.RawMessage          `json:"conditions"`
+	Actions          json.RawMessage          `json:"actions"`
 }
 
 type adminPromotionTierResponse struct {
@@ -75,6 +78,8 @@ type adminPromotionResponse struct {
 	ActionTiers      []adminPromotionTierResponse `json:"action_tiers,omitempty"`
 	ActionBuyQty     int                          `json:"action_buy_qty,omitempty"`
 	ActionGetQty     int                          `json:"action_get_qty,omitempty"`
+	Conditions       json.RawMessage              `json:"conditions,omitempty"`
+	Actions          json.RawMessage              `json:"actions,omitempty"`
 	CreatedAt        string                       `json:"created_at"`
 	UpdatedAt        string                       `json:"updated_at"`
 }
@@ -143,6 +148,8 @@ func (h *PromotionAdminHandler) toResponse(p *promotion.Promotion) (adminPromoti
 		ActionTiers:      toAdminPromotionTierResponses(rules.ActionTiers),
 		ActionBuyQty:     rules.ActionBuyQty,
 		ActionGetQty:     rules.ActionGetQty,
+		Conditions:       cloneRawJSON(p.Conditions),
+		Actions:          cloneRawJSON(p.Actions),
 		CreatedAt:        p.CreatedAt.UTC().Format(time.RFC3339),
 		UpdatedAt:        p.UpdatedAt.UTC().Format(time.RFC3339),
 	}, nil
@@ -159,6 +166,15 @@ func toAdminPromotionTierResponses(tiers []admin.PromotionTierForm) []adminPromo
 			Percentage: tier.Percentage,
 		}
 	}
+	return out
+}
+
+func cloneRawJSON(data []byte) json.RawMessage {
+	if len(data) == 0 || string(data) == "null" {
+		return nil
+	}
+	out := make(json.RawMessage, len(data))
+	copy(out, data)
 	return out
 }
 
@@ -202,6 +218,19 @@ func (h *PromotionAdminHandler) applyWriteRequest(p *promotion.Promotion, req pr
 	}
 	if p.StartAt != nil && p.EndAt != nil && p.StartAt.After(*p.EndAt) {
 		return apperror.Validation("start_at must be before end_at")
+	}
+
+	if strings.EqualFold(strings.TrimSpace(req.RulesMode), "advanced") {
+		if len(req.Conditions) == 0 || len(req.Actions) == 0 {
+			return apperror.Validation("advanced rules require conditions and actions JSON")
+		}
+		if !json.Valid(req.Conditions) || !json.Valid(req.Actions) {
+			return apperror.Validation("conditions and actions must be valid JSON")
+		}
+		p.Conditions = append([]byte(nil), req.Conditions...)
+		p.Actions = append([]byte(nil), req.Actions...)
+		p.UpdatedAt = time.Now().UTC()
+		return nil
 	}
 
 	if mergeRules && req.ConditionType == "" && req.ActionType == "" {

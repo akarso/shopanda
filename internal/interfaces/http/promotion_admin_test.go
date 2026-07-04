@@ -387,3 +387,42 @@ func TestPromotionAdminHandler_Create_WhitespaceNameRejected(t *testing.T) {
 		t.Fatalf("status = %d, want %d; body: %s", rec.Code, http.StatusUnprocessableEntity, rec.Body.String())
 	}
 }
+
+func TestPromotionAdminHandler_Create_AdvancedRulesJSON(t *testing.T) {
+	var saved *promotion.Promotion
+	repo := &mockPromotionAdminRepo{
+		saveFn: func(_ context.Context, p *promotion.Promotion) error {
+			saved = p
+			return nil
+		},
+	}
+	h := shophttp.NewPromotionAdminHandler(repo)
+
+	payload := catalogPromotionPayload("Advanced Promo")
+	payload["rules_mode"] = "advanced"
+	payload["conditions"] = map[string]interface{}{"type": "always"}
+	payload["actions"] = map[string]interface{}{"type": "percentage", "percentage": 12}
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("POST", "/api/v1/admin/promotions", promotionBody(t, payload))
+	newPromotionAdminRouter(h).ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("status = %d, want %d; body: %s", rec.Code, http.StatusCreated, rec.Body.String())
+	}
+	if saved == nil {
+		t.Fatal("promotion was not saved")
+	}
+	var savedActions map[string]interface{}
+	if err := json.Unmarshal(saved.Actions, &savedActions); err != nil {
+		t.Fatalf("unmarshal actions: %v", err)
+	}
+	if savedActions["type"] != "percentage" || savedActions["percentage"].(float64) != 12 {
+		t.Fatalf("actions = %v, want type=percentage percentage=12", savedActions)
+	}
+	body := parsePageBody(t, rec)
+	promo := body["data"].(map[string]interface{})["promotion"].(map[string]interface{})
+	if promo["conditions"] == nil || promo["actions"] == nil {
+		t.Fatalf("expected raw conditions/actions in response, got %+v", promo)
+	}
+}

@@ -304,6 +304,30 @@ func TestAdminHandler_StaticJS(t *testing.T) {
 			t.Fatalf("expected promotions CRUD wiring %q in JS", expected)
 		}
 	}
+	expectedPromotionHelperWiring := []string{
+		"formatPromotionDiscountSummary",
+		"detectPromotionTemplate",
+		"renderPromotionTierRows",
+		"setupPromotionFormInteractions",
+		"buildPromotionGuidedPayload",
+		"parsePromotionAdvancedPayload",
+		"promotion_template",
+		"promotion-tiers-editor",
+		"promotion-add-tier",
+		"promotion-advanced-panel",
+		"conditions_json",
+		"actions_json",
+		"rules_mode",
+		"Tiered up to",
+		"buy X get Y",
+		"Advanced JSON",
+		"Sync from guided fields",
+	}
+	for _, expected := range expectedPromotionHelperWiring {
+		if !strings.Contains(normalizedBody, expected) {
+			t.Fatalf("expected promotion helper wiring %q in JS", expected)
+		}
+	}
 	if !strings.Contains(normalizedBody, "<select name=\"promotion_id\" required>") {
 		t.Fatalf("expected coupon promotion select in JS")
 	}
