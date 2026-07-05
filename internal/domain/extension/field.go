@@ -1,8 +1,6 @@
 package extension
 
 import (
-	"errors"
-	"fmt"
 	"regexp"
 	"strings"
 )
@@ -137,22 +135,22 @@ var codePattern = regexp.MustCompile(`^[a-z][a-z0-9_]*(\.[a-z][a-z0-9_]*)+$`)
 func NewExtensionField(def FieldDef) (ExtensionField, error) {
 	code := strings.TrimSpace(def.Code)
 	if code == "" {
-		return ExtensionField{}, errors.New("extension field code must not be empty")
+		return ExtensionField{}, ValidationErr("extension field code must not be empty")
 	}
 	if !codePattern.MatchString(code) {
-		return ExtensionField{}, fmt.Errorf("extension field code %q must be namespaced (e.g. acme.gift.wrap_level)", code)
+		return ExtensionField{}, ValidationErrf("extension field code %q must be namespaced (e.g. acme.gift.wrap_level)", code)
 	}
 
 	label := strings.TrimSpace(def.Label)
 	if label == "" {
-		return ExtensionField{}, errors.New("extension field label must not be empty")
+		return ExtensionField{}, ValidationErr("extension field label must not be empty")
 	}
 
 	if !def.Type.IsValid() {
-		return ExtensionField{}, fmt.Errorf("extension field type %q is invalid", def.Type)
+		return ExtensionField{}, ValidationErrf("extension field type %q is invalid", def.Type)
 	}
 	if !def.Scope.IsValid() {
-		return ExtensionField{}, fmt.Errorf("extension field scope %q is invalid", def.Scope)
+		return ExtensionField{}, ValidationErrf("extension field scope %q is invalid", def.Scope)
 	}
 
 	storage := def.StorageMode
@@ -164,17 +162,17 @@ func NewExtensionField(def FieldDef) (ExtensionField, error) {
 		}
 	}
 	if !storage.IsValid() {
-		return ExtensionField{}, fmt.Errorf("extension field storage_mode %q is invalid", storage)
+		return ExtensionField{}, ValidationErrf("extension field storage_mode %q is invalid", storage)
 	}
 
 	switch storage {
 	case StorageComputed:
 		if !def.Scope.IsContext() {
-			return ExtensionField{}, fmt.Errorf("extension field %q: storage_mode computed requires a context scope", code)
+			return ExtensionField{}, ValidationErrf("extension field %q: storage_mode computed requires a context scope", code)
 		}
 	case StorageStored, StorageSnapshot:
 		if !def.Scope.IsEntity() {
-			return ExtensionField{}, fmt.Errorf("extension field %q: storage_mode %s requires an entity scope", code, storage)
+			return ExtensionField{}, ValidationErrf("extension field %q: storage_mode %s requires an entity scope", code, storage)
 		}
 	}
 
@@ -183,16 +181,16 @@ func NewExtensionField(def FieldDef) (ExtensionField, error) {
 		visibility = VisibilityPublic
 	}
 	if !visibility.IsValid() {
-		return ExtensionField{}, fmt.Errorf("extension field visibility %q is invalid", visibility)
+		return ExtensionField{}, ValidationErrf("extension field visibility %q is invalid", visibility)
 	}
 
 	if def.Type == FieldTypeEnum {
 		if len(def.Validation.Options) == 0 {
-			return ExtensionField{}, fmt.Errorf("extension field %q: enum type requires validation options", code)
+			return ExtensionField{}, ValidationErrf("extension field %q: enum type requires validation options", code)
 		}
 		for i, opt := range def.Validation.Options {
 			if strings.TrimSpace(opt) == "" {
-				return ExtensionField{}, fmt.Errorf("extension field %q: enum option at index %d must not be empty", code, i)
+				return ExtensionField{}, ValidationErrf("extension field %q: enum option at index %d must not be empty", code, i)
 			}
 		}
 	}

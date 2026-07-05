@@ -17,6 +17,14 @@ func newMemFieldRepo() *memFieldRepo {
 	return &memFieldRepo{fields: make(map[string]domainext.ExtensionField)}
 }
 
+func (m *memFieldRepo) Create(_ context.Context, field domainext.ExtensionField) error {
+	if _, ok := m.fields[field.Code]; ok {
+		return apperror.Conflict("extension field already exists")
+	}
+	m.fields[field.Code] = field
+	return nil
+}
+
 func (m *memFieldRepo) Save(_ context.Context, field domainext.ExtensionField) error {
 	m.fields[field.Code] = field
 	return nil
@@ -130,5 +138,71 @@ func TestFieldService_DeleteRemovesFromRegistry(t *testing.T) {
 	}
 	if _, ok := reg.Get(field.Code); ok {
 		t.Fatal("field still in registry after delete")
+	}
+}
+
+func TestFieldService_UpdateSuccess(t *testing.T) {
+	reg := extensionapp.NewRegistry()
+	repo := newMemFieldRepo()
+	svc := extensionapp.NewFieldService(reg, repo)
+
+	created, err := svc.Create(context.Background(), serviceFieldDef("acme.update.field"))
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+
+	updateDef := created.ToFieldDef()
+	updateDef.Label = "Updated label"
+	updated, err := svc.Update(context.Background(), created.Code, updateDef)
+	if err != nil {
+		t.Fatalf("Update: %v", err)
+	}
+	if updated.Label != "Updated label" {
+		t.Fatalf("Label = %q, want Updated label", updated.Label)
+	}
+	got, err := svc.Get(created.Code, false)
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if got.Label != "Updated label" {
+		t.Fatalf("registry label = %q", got.Label)
+	}
+}
+
+func TestFieldService_UpdateNotFound(t *testing.T) {
+	reg := extensionapp.NewRegistry()
+	repo := newMemFieldRepo()
+	svc := extensionapp.NewFieldService(reg, repo)
+
+	_, err := svc.Update(context.Background(), "acme.missing.field", serviceFieldDef("acme.missing.field"))
+	if err != extensionapp.ErrFieldNotFound {
+		t.Fatalf("Update err = %v, want ErrFieldNotFound", err)
+	}
+}
+
+func TestFieldService_UpdateRegistersWhenMissingFromRegistry(t *testing.T) {
+	reg := extensionapp.NewRegistry()
+	repo := newMemFieldRepo()
+	svc := extensionapp.NewFieldService(reg, repo)
+
+	field, err := domainext.NewExtensionField(serviceFieldDef("acme.repo.only"))
+	if err != nil {
+		t.Fatalf("NewExtensionField: %v", err)
+	}
+	if err := repo.Save(context.Background(), field); err != nil {
+		t.Fatalf("repo Save: %v", err)
+	}
+
+	updateDef := field.ToFieldDef()
+	updateDef.Label = "Repo restored"
+	updated, err := svc.Update(context.Background(), field.Code, updateDef)
+	if err != nil {
+		t.Fatalf("Update: %v", err)
+	}
+	if updated.Label != "Repo restored" {
+		t.Fatalf("Label = %q", updated.Label)
+	}
+	if _, ok := reg.Get(field.Code); !ok {
+		t.Fatal("expected field registered after update fallback")
 	}
 }

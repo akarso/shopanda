@@ -49,6 +49,20 @@ func TestExtensionFieldRepo_NilDB(t *testing.T) {
 	}
 }
 
+func TestExtensionFieldRepo_CreateDuplicateConflict(t *testing.T) {
+	repo := setupExtensionFieldRepo(t)
+	ctx := context.Background()
+	field := sampleExtensionField("acme.dup.field", domainext.TargetProduct)
+
+	if err := repo.Create(ctx, field); err != nil {
+		t.Fatalf("first Create: %v", err)
+	}
+	err := repo.Create(ctx, field)
+	if err == nil || !apperror.Is(err, apperror.CodeConflict) {
+		t.Fatalf("duplicate Create err = %v, want conflict", err)
+	}
+}
+
 func TestExtensionFieldRepo_SaveAndFindByCode(t *testing.T) {
 	repo := setupExtensionFieldRepo(t)
 	ctx := context.Background()

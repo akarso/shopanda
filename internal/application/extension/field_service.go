@@ -3,7 +3,6 @@ package extension
 import (
 	"context"
 	"errors"
-	"fmt"
 	"strings"
 
 	domainext "github.com/akarso/shopanda/internal/domain/extension"
@@ -43,7 +42,7 @@ func (s *FieldService) List(filter ListFilter) []domainext.ExtensionField {
 func (s *FieldService) Get(code string, includePrivate bool) (domainext.ExtensionField, error) {
 	code = strings.TrimSpace(code)
 	if code == "" {
-		return domainext.ExtensionField{}, fmt.Errorf("extension field code must not be empty")
+		return domainext.ExtensionField{}, domainext.ValidationErr("extension field code must not be empty")
 	}
 	field, ok := s.registry.Get(code)
 	if !ok {
@@ -61,10 +60,13 @@ func (s *FieldService) Create(ctx context.Context, def domainext.FieldDef) (doma
 	if err != nil {
 		return domainext.ExtensionField{}, err
 	}
-	if err := s.ensureCreateAllowed(ctx, field.Code); err != nil {
-		return domainext.ExtensionField{}, err
+	if _, ok := s.registry.Get(field.Code); ok {
+		return domainext.ExtensionField{}, ErrFieldAlreadyExists
 	}
-	if err := s.repo.Save(ctx, field); err != nil {
+	if err := s.repo.Create(ctx, field); err != nil {
+		if apperror.Is(err, apperror.CodeConflict) {
+			return domainext.ExtensionField{}, ErrFieldAlreadyExists
+		}
 		return domainext.ExtensionField{}, err
 	}
 	if err := s.registry.Register(field.ToFieldDef()); err != nil {
@@ -77,7 +79,7 @@ func (s *FieldService) Create(ctx context.Context, def domainext.FieldDef) (doma
 func (s *FieldService) Update(ctx context.Context, code string, def domainext.FieldDef) (domainext.ExtensionField, error) {
 	code = strings.TrimSpace(code)
 	if code == "" {
-		return domainext.ExtensionField{}, fmt.Errorf("extension field code must not be empty")
+		return domainext.ExtensionField{}, domainext.ValidationErr("extension field code must not be empty")
 	}
 	def.Code = code
 	field, err := domainext.NewExtensionField(def)
@@ -107,7 +109,7 @@ func (s *FieldService) Update(ctx context.Context, code string, def domainext.Fi
 func (s *FieldService) Delete(ctx context.Context, code string) error {
 	code = strings.TrimSpace(code)
 	if code == "" {
-		return fmt.Errorf("extension field code must not be empty")
+		return domainext.ValidationErr("extension field code must not be empty")
 	}
 	if err := s.repo.SoftDelete(ctx, code); err != nil {
 		return err
@@ -116,22 +118,8 @@ func (s *FieldService) Delete(ctx context.Context, code string) error {
 	return nil
 }
 
-func (s *FieldService) ensureCreateAllowed(ctx context.Context, code string) error {
-	if _, ok := s.registry.Get(code); ok {
-		return ErrFieldAlreadyExists
-	}
-	_, err := s.repo.FindByCode(ctx, code)
-	if err == nil {
-		return ErrFieldAlreadyExists
-	}
-	if apperror.Is(err, apperror.CodeNotFound) {
-		return nil
-	}
-	return err
-}
-
 func mapRegisterError(err error) error {
-	if err != nil && strings.Contains(err.Error(), "already registered") {
+	if errors.Is(err, ErrAlreadyRegistered) {
 		return ErrFieldAlreadyExists
 	}
 	return err

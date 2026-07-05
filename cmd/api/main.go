@@ -308,7 +308,7 @@ func runServe(cfg *config.Config, log logger.Logger, embedScheduler bool) error 
 	if err != nil {
 		return err
 	}
-	if err := extensionRegistry.LoadPersisted(context.Background(), extensionFieldRepo); err != nil {
+	if err := extensionRegistry.LoadPersisted(context.Background(), extensionFieldRepo, log); err != nil {
 		return fmt.Errorf("load extension fields: %w", err)
 	}
 	extensionFieldService := extensionApp.NewFieldService(extensionRegistry, extensionFieldRepo)

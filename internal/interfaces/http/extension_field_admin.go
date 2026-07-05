@@ -50,29 +50,25 @@ type extensionFieldValidationRequest struct {
 	Options  []string `json:"options,omitempty"`
 }
 
+type extensionFieldRequestBody struct {
+	Label       string                          `json:"label"`
+	Description string                          `json:"description,omitempty"`
+	Type        string                          `json:"type"`
+	Scope       string                          `json:"scope"`
+	TargetType  string                          `json:"target_type,omitempty"`
+	StorageMode string                          `json:"storage_mode,omitempty"`
+	Visibility  string                          `json:"visibility,omitempty"`
+	Access      extensionFieldAccessRequest     `json:"access"`
+	Validation  extensionFieldValidationRequest `json:"validation"`
+}
+
 type createExtensionFieldRequest struct {
-	Code        string                           `json:"code"`
-	Label       string                           `json:"label"`
-	Description string                           `json:"description,omitempty"`
-	Type        string                           `json:"type"`
-	Scope       string                           `json:"scope"`
-	TargetType  string                           `json:"target_type,omitempty"`
-	StorageMode string                           `json:"storage_mode,omitempty"`
-	Visibility  string                           `json:"visibility,omitempty"`
-	Access      extensionFieldAccessRequest      `json:"access"`
-	Validation  extensionFieldValidationRequest  `json:"validation"`
+	Code string `json:"code"`
+	extensionFieldRequestBody
 }
 
 type updateExtensionFieldRequest struct {
-	Label       string                           `json:"label"`
-	Description string                           `json:"description,omitempty"`
-	Type        string                           `json:"type"`
-	Scope       string                           `json:"scope"`
-	TargetType  string                           `json:"target_type,omitempty"`
-	StorageMode string                           `json:"storage_mode,omitempty"`
-	Visibility  string                           `json:"visibility,omitempty"`
-	Access      extensionFieldAccessRequest      `json:"access"`
-	Validation  extensionFieldValidationRequest  `json:"validation"`
+	extensionFieldRequestBody
 }
 
 type extensionFieldResponse struct {
@@ -130,54 +126,37 @@ func toExtensionFieldResponse(field domainext.ExtensionField) extensionFieldResp
 	}
 }
 
-func fieldDefFromCreateRequest(req createExtensionFieldRequest) domainext.FieldDef {
-	scope := resolveScopeFromRequest(req.Scope, req.TargetType)
+func fieldDefFromRequestBody(code string, body extensionFieldRequestBody) domainext.FieldDef {
+	scope := resolveScopeFromRequest(body.Scope, body.TargetType)
 	return domainext.FieldDef{
-		Code:        strings.TrimSpace(req.Code),
-		Label:       strings.TrimSpace(req.Label),
-		Description: strings.TrimSpace(req.Description),
-		Type:        domainext.FieldType(strings.TrimSpace(req.Type)),
+		Code:        strings.TrimSpace(code),
+		Label:       strings.TrimSpace(body.Label),
+		Description: strings.TrimSpace(body.Description),
+		Type:        domainext.FieldType(strings.TrimSpace(body.Type)),
 		Scope:       scope,
-		StorageMode: domainext.StorageMode(strings.TrimSpace(req.StorageMode)),
-		Visibility:  domainext.Visibility(strings.TrimSpace(req.Visibility)),
+		StorageMode: domainext.StorageMode(strings.TrimSpace(body.StorageMode)),
+		Visibility:  domainext.Visibility(strings.TrimSpace(body.Visibility)),
 		Access: domainext.Access{
-			ReadRoles:       req.Access.ReadRoles,
-			WriteRoles:      req.Access.WriteRoles,
-			PluginOnlyWrite: req.Access.PluginOnlyWrite,
+			ReadRoles:       body.Access.ReadRoles,
+			WriteRoles:      body.Access.WriteRoles,
+			PluginOnlyWrite: body.Access.PluginOnlyWrite,
 		},
 		Validation: domainext.Validation{
-			Required: req.Validation.Required,
-			Min:      req.Validation.Min,
-			Max:      req.Validation.Max,
-			Regex:    strings.TrimSpace(req.Validation.Regex),
-			Options:  req.Validation.Options,
+			Required: body.Validation.Required,
+			Min:      body.Validation.Min,
+			Max:      body.Validation.Max,
+			Regex:    strings.TrimSpace(body.Validation.Regex),
+			Options:  body.Validation.Options,
 		},
 	}
 }
 
+func fieldDefFromCreateRequest(req createExtensionFieldRequest) domainext.FieldDef {
+	return fieldDefFromRequestBody(req.Code, req.extensionFieldRequestBody)
+}
+
 func fieldDefFromUpdateRequest(req updateExtensionFieldRequest, code string) domainext.FieldDef {
-	scope := resolveScopeFromRequest(req.Scope, req.TargetType)
-	return domainext.FieldDef{
-		Code:        code,
-		Label:       strings.TrimSpace(req.Label),
-		Description: strings.TrimSpace(req.Description),
-		Type:        domainext.FieldType(strings.TrimSpace(req.Type)),
-		Scope:       scope,
-		StorageMode: domainext.StorageMode(strings.TrimSpace(req.StorageMode)),
-		Visibility:  domainext.Visibility(strings.TrimSpace(req.Visibility)),
-		Access: domainext.Access{
-			ReadRoles:       req.Access.ReadRoles,
-			WriteRoles:      req.Access.WriteRoles,
-			PluginOnlyWrite: req.Access.PluginOnlyWrite,
-		},
-		Validation: domainext.Validation{
-			Required: req.Validation.Required,
-			Min:      req.Validation.Min,
-			Max:      req.Validation.Max,
-			Regex:    strings.TrimSpace(req.Validation.Regex),
-			Options:  req.Validation.Options,
-		},
-	}
+	return fieldDefFromRequestBody(code, req.extensionFieldRequestBody)
 }
 
 func resolveScopeFromRequest(scope, targetType string) domainext.TargetType {
@@ -218,13 +197,8 @@ func extensionFieldAPIError(err error) error {
 	if apperror.Is(err, apperror.CodeNotFound) {
 		return err
 	}
-	msg := err.Error()
-	if strings.Contains(msg, "must not be empty") ||
-		strings.Contains(msg, "invalid") ||
-		strings.Contains(msg, "requires") ||
-		strings.Contains(msg, "namespaced") ||
-		strings.Contains(msg, "enum") {
-		return apperror.Validation(msg)
+	if domainext.IsValidationError(err) {
+		return apperror.Validation(err.Error())
 	}
 	return apperror.Internal("extension field operation failed")
 }

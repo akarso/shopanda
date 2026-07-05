@@ -1,7 +1,7 @@
 package extension_test
 
 import (
-	"strings"
+	"errors"
 	"testing"
 
 	"github.com/akarso/shopanda/internal/application/extension"
@@ -40,8 +40,8 @@ func TestRegistry_DuplicateCodeRejected(t *testing.T) {
 		t.Fatalf("first Register: %v", err)
 	}
 	err := reg.Register(sampleFieldDef())
-	if err == nil || !strings.Contains(err.Error(), "already registered") {
-		t.Fatalf("expected duplicate error, got %v", err)
+	if !errors.Is(err, extension.ErrAlreadyRegistered) {
+		t.Fatalf("expected ErrAlreadyRegistered, got %v", err)
 	}
 }
 

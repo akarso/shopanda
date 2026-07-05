@@ -2,10 +2,17 @@ package extension
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"sync"
 
 	domainext "github.com/akarso/shopanda/internal/domain/extension"
+	"github.com/akarso/shopanda/internal/platform/logger"
+)
+
+var (
+	// ErrAlreadyRegistered indicates a duplicate field code in the registry.
+	ErrAlreadyRegistered = errors.New("extension field already registered")
 )
 
 // ListFilter narrows registry list results.
@@ -44,7 +51,7 @@ func (r *Registry) Register(def domainext.FieldDef) error {
 
 // LoadPersisted merges active definitions from repo into the registry.
 // Plugin registrations already present win on code conflicts.
-func (r *Registry) LoadPersisted(ctx context.Context, repo domainext.FieldRepository) error {
+func (r *Registry) LoadPersisted(ctx context.Context, repo domainext.FieldRepository, log logger.Logger) error {
 	if r == nil {
 		return fmt.Errorf("extension: registry must not be nil")
 	}
@@ -56,7 +63,15 @@ func (r *Registry) LoadPersisted(ctx context.Context, repo domainext.FieldReposi
 		return fmt.Errorf("extension: load persisted fields: %w", err)
 	}
 	for _, field := range fields {
-		r.mergeField(field)
+		if r.mergeField(field) {
+			continue
+		}
+		if log != nil {
+			log.Info("extension.registry.merge_skipped", map[string]interface{}{
+				"field_code": field.Code,
+				"reason":     "already registered",
+			})
+		}
 	}
 	return nil
 }
@@ -65,21 +80,22 @@ func (r *Registry) registerField(field domainext.ExtensionField) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	if _, exists := r.fields[field.Code]; exists {
-		return fmt.Errorf("extension field %q already registered", field.Code)
+		return ErrAlreadyRegistered
 	}
 	r.fields[field.Code] = field
 	r.order = append(r.order, field.Code)
 	return nil
 }
 
-func (r *Registry) mergeField(field domainext.ExtensionField) {
+func (r *Registry) mergeField(field domainext.ExtensionField) bool {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	if _, exists := r.fields[field.Code]; exists {
-		return
+		return false
 	}
 	r.fields[field.Code] = field
 	r.order = append(r.order, field.Code)
+	return true
 }
 
 // Replace updates an existing registered field definition.

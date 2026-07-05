@@ -25,6 +25,14 @@ func newMockExtensionFieldRepo() *mockExtensionFieldRepo {
 	return &mockExtensionFieldRepo{fields: make(map[string]domainext.ExtensionField)}
 }
 
+func (m *mockExtensionFieldRepo) Create(_ context.Context, field domainext.ExtensionField) error {
+	if _, ok := m.fields[field.Code]; ok {
+		return apperror.Conflict("extension field already exists")
+	}
+	m.fields[field.Code] = field
+	return nil
+}
+
 func (m *mockExtensionFieldRepo) Save(_ context.Context, field domainext.ExtensionField) error {
 	m.fields[field.Code] = field
 	return nil
@@ -243,5 +251,85 @@ func TestExtensionFieldAdminHandler_CreateValidationError(t *testing.T) {
 	newExtensionFieldAdminRouter(h).ServeHTTP(rec, req)
 	if rec.Code != http.StatusUnprocessableEntity {
 		t.Fatalf("status = %d, want 422; body: %s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestExtensionFieldAdminHandler_UpdateSuccess(t *testing.T) {
+	reg := extensionapp.NewRegistry()
+	repo := newMockExtensionFieldRepo()
+	svc := extensionapp.NewFieldService(reg, repo)
+	h := shophttp.NewExtensionFieldAdminHandler(svc)
+	router := newExtensionFieldAdminRouter(h)
+
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, httptest.NewRequest("POST", "/api/v1/admin/extensions/fields", extensionFieldBody(t, map[string]interface{}{
+		"code": "acme.update.field", "label": "Before", "type": "string", "scope": "product",
+	})))
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("create status = %d; body: %s", rec.Code, rec.Body.String())
+	}
+
+	rec = httptest.NewRecorder()
+	router.ServeHTTP(rec, httptest.NewRequest("PUT", "/api/v1/admin/extensions/fields/acme.update.field", extensionFieldBody(t, map[string]interface{}{
+		"label": "After", "type": "string", "scope": "product",
+	})))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("update status = %d, want 200; body: %s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestExtensionFieldAdminHandler_UpdateNotFound(t *testing.T) {
+	reg := extensionapp.NewRegistry()
+	repo := newMockExtensionFieldRepo()
+	h := shophttp.NewExtensionFieldAdminHandler(extensionapp.NewFieldService(reg, repo))
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("PUT", "/api/v1/admin/extensions/fields/acme.missing.field", extensionFieldBody(t, map[string]interface{}{
+		"label": "Missing", "type": "string", "scope": "product",
+	}))
+	newExtensionFieldAdminRouter(h).ServeHTTP(rec, req)
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("status = %d, want 404; body: %s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestExtensionFieldAdminHandler_DeleteSuccess(t *testing.T) {
+	reg := extensionapp.NewRegistry()
+	repo := newMockExtensionFieldRepo()
+	svc := extensionapp.NewFieldService(reg, repo)
+	h := shophttp.NewExtensionFieldAdminHandler(svc)
+	router := newExtensionFieldAdminRouter(h)
+
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, httptest.NewRequest("POST", "/api/v1/admin/extensions/fields", extensionFieldBody(t, map[string]interface{}{
+		"code": "acme.delete.field", "label": "Delete me", "type": "string", "scope": "product",
+	})))
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("create status = %d", rec.Code)
+	}
+
+	rec = httptest.NewRecorder()
+	router.ServeHTTP(rec, httptest.NewRequest("DELETE", "/api/v1/admin/extensions/fields/acme.delete.field", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("delete status = %d, want 200; body: %s", rec.Code, rec.Body.String())
+	}
+
+	rec = httptest.NewRecorder()
+	router.ServeHTTP(rec, httptest.NewRequest("GET", "/api/v1/admin/extensions/fields/acme.delete.field", nil))
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("get after delete status = %d, want 404", rec.Code)
+	}
+}
+
+func TestExtensionFieldAdminHandler_DeleteNotFound(t *testing.T) {
+	reg := extensionapp.NewRegistry()
+	repo := newMockExtensionFieldRepo()
+	h := shophttp.NewExtensionFieldAdminHandler(extensionapp.NewFieldService(reg, repo))
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("DELETE", "/api/v1/admin/extensions/fields/acme.missing.field", nil)
+	newExtensionFieldAdminRouter(h).ServeHTTP(rec, req)
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("status = %d, want 404; body: %s", rec.Code, rec.Body.String())
 	}
 }
