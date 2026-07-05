@@ -16,6 +16,10 @@ const (
 	CodeForbidden    Code = "forbidden"
 	CodeRateLimited  Code = "rate_limited"
 	CodeInternal     Code = "internal"
+
+	CodeForbiddenPrivateField Code = "forbidden_private_field"
+	CodeUnknownFieldCode      Code = "unknown_field_code"
+	CodeFieldValidationFailed Code = "field_validation_failed"
 )
 
 // Error is a structured application error.
@@ -69,6 +73,21 @@ func Unauthorized(message string) *Error {
 // Forbidden creates a forbidden error.
 func Forbidden(message string) *Error {
 	return New(CodeForbidden, message)
+}
+
+// ForbiddenPrivateField creates a forbidden_private_field error.
+func ForbiddenPrivateField(message string) *Error {
+	return New(CodeForbiddenPrivateField, message)
+}
+
+// UnknownFieldCode creates an unknown_field_code error.
+func UnknownFieldCode(message string) *Error {
+	return New(CodeUnknownFieldCode, message)
+}
+
+// FieldValidationFailed creates a field_validation_failed error.
+func FieldValidationFailed(message string) *Error {
+	return New(CodeFieldValidationFailed, message)
 }
 
 // RateLimited creates a rate_limited error.

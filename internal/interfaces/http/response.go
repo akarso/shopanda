@@ -84,6 +84,10 @@ func StatusFromCode(code apperror.Code) int {
 		return http.StatusUnauthorized
 	case apperror.CodeForbidden:
 		return http.StatusForbidden
+	case apperror.CodeForbiddenPrivateField:
+		return http.StatusForbidden
+	case apperror.CodeUnknownFieldCode, apperror.CodeFieldValidationFailed:
+		return http.StatusUnprocessableEntity
 	case apperror.CodeRateLimited:
 		return http.StatusTooManyRequests
 	default:
