@@ -83,6 +83,22 @@
                 <input type="hidden" name="variant_id" value="{{ .CartForm.VariantID }}">
                 <input type="hidden" name="quantity" value="{{ .CartForm.Quantity }}">
                 <input type="hidden" name="redirect_to" value="{{ .CartForm.RedirectTo }}">
+                {{ range .CartForm.ExtensionFields }}
+                <label>{{ .Label }}
+                    {{ if eq .Type "bool" }}
+                    <input type="checkbox" name="{{ .FormName }}" value="true">
+                    {{ else if eq .Type "enum" }}
+                    <select name="{{ .FormName }}" {{ if .Required }}required{{ end }}>
+                        <option value="">—</option>
+                        {{ range .Options }}<option value="{{ . }}">{{ . }}</option>{{ end }}
+                    </select>
+                    {{ else if or (eq .Type "int") (eq .Type "money") }}
+                    <input type="number" step="1" name="{{ .FormName }}" {{ if .Required }}required{{ end }}>
+                    {{ else }}
+                    <input type="text" name="{{ .FormName }}" {{ if .Required }}required{{ end }}>
+                    {{ end }}
+                </label>
+                {{ end }}
                 <button type="submit">Add to cart</button>
                 <span id="product-cart-status" class="muted-note product-detail-card__cart-status" role="status" aria-live="polite"></span>
             </form>

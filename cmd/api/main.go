@@ -587,7 +587,7 @@ func runServe(cfg *config.Config, log logger.Logger, embedScheduler bool) error 
 	pricingPipeline := pricing.NewPipeline(pricingSteps...)
 
 	// Application services.
-	cartService := cartApp.NewService(cartRepo, priceRepo, promotionRepo, couponRepo, pricingPipeline, log, bus)
+	cartService := cartApp.NewService(cartRepo, priceRepo, promotionRepo, couponRepo, pricingPipeline, log, bus, extensionValueService)
 	storeCreditService := storecreditApp.NewService(storeCreditRepo, customerRepo)
 
 	// Checkout workflow.
@@ -681,7 +681,7 @@ func runServe(cfg *config.Config, log logger.Logger, embedScheduler bool) error 
 	productTranslationAdmin := shophttp.NewProductTranslationAdminHandler(productRepo, contentTranslationRepo, sharedAuditor, log)
 	productPriceAdmin := shophttp.NewProductPriceAdminHandler(productRepo, variantRepo, priceRepo, sharedAuditor, log)
 	variantHandler := shophttp.NewVariantHandler(productRepo, variantRepo, bus)
-	cartHandler := shophttp.NewCartHandler(cartService)
+	cartHandler := shophttp.NewCartHandler(cartService, extensionValueService)
 	orderHandler := shophttp.NewOrderHandler(orderRepo)
 	orderAdmin := shophttp.NewOrderAdminHandlerWithAuditor(orderRepo, sharedAuditor)
 	invoiceAdmin := shophttp.NewInvoiceAdminHandler(invoiceRepo, orderRepo, invoicePDFRenderer, mediaStorage)
@@ -1134,6 +1134,7 @@ func runServe(cfg *config.Config, log logger.Logger, embedScheduler bool) error 
 			WithMenus(menuRepo, menuResolver).
 			WithContentBlocks(contentBlockRepo, blockResolver, pageRepo).
 			WithCart(variantRepo, cartService).
+			WithExtensions(extensionValueService).
 			WithCheckout([]shipping.Provider{flatRateProvider}, payRegistry, checkoutService).
 			WithAccount(authService, orderRepo, accountService).
 			WithReturns(returnService).

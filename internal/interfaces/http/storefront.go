@@ -15,6 +15,7 @@ import (
 
 	appAuth "github.com/akarso/shopanda/internal/application/auth"
 	cartApp "github.com/akarso/shopanda/internal/application/cart"
+	extensionApp "github.com/akarso/shopanda/internal/application/extension"
 	cmsApp "github.com/akarso/shopanda/internal/application/cms"
 	checkoutApp "github.com/akarso/shopanda/internal/application/checkout"
 	"github.com/akarso/shopanda/internal/application/composition"
@@ -45,6 +46,7 @@ type StorefrontHandler struct {
 	search      search.SearchEngine
 	variants    catalog.VariantRepository
 	carts       *cartApp.Service
+	extensions  *extensionApp.ValueService
 	auth        *appAuth.Service
 	checkout    *checkoutApp.Service
 	orders      order.OrderRepository
@@ -257,6 +259,12 @@ func NewStorefrontHandler(
 func (h *StorefrontHandler) WithCart(variants catalog.VariantRepository, carts *cartApp.Service) *StorefrontHandler {
 	h.variants = variants
 	h.carts = carts
+	return h
+}
+
+// WithExtensions enables cart line extension capture and storefront display.
+func (h *StorefrontHandler) WithExtensions(extensions *extensionApp.ValueService) *StorefrontHandler {
+	h.extensions = extensions
 	return h
 }
 

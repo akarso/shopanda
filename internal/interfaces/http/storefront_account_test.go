@@ -14,6 +14,7 @@ import (
 	"time"
 
 	appAuth "github.com/akarso/shopanda/internal/application/auth"
+	cartApp "github.com/akarso/shopanda/internal/application/cart"
 	"github.com/akarso/shopanda/internal/application/composition"
 	"github.com/akarso/shopanda/internal/domain/customer"
 	"github.com/akarso/shopanda/internal/domain/identity"
@@ -386,7 +387,7 @@ func TestStorefrontHandler_AccountLogin_ClaimsGuestCart(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateCart guest: %v", err)
 	}
-	if _, err := cartSvc.AddItem(context.Background(), guestCart.ID, "", "var-1", 2); err != nil {
+	if _, err := cartSvc.AddItem(context.Background(), guestCart.ID, "", "var-1", 2, cartApp.AddItemOptions{}); err != nil {
 		t.Fatalf("AddItem guest: %v", err)
 	}
 	h := shophttp.NewStorefrontHandler(engine, &mockStorefrontRepo{}, newStorefrontCategoryMock(), pdp, plp, newStorefrontSearchMock()).
@@ -457,7 +458,7 @@ func TestStorefrontHandler_AccountRegister_ClaimsGuestCart(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateCart guest: %v", err)
 	}
-	if _, err := cartSvc.AddItem(context.Background(), guestCart.ID, "", "var-1", 1); err != nil {
+	if _, err := cartSvc.AddItem(context.Background(), guestCart.ID, "", "var-1", 1, cartApp.AddItemOptions{}); err != nil {
 		t.Fatalf("AddItem guest: %v", err)
 	}
 	h := shophttp.NewStorefrontHandler(engine, &mockStorefrontRepo{}, newStorefrontCategoryMock(), pdp, plp, newStorefrontSearchMock()).

@@ -56,18 +56,54 @@ func (s *ValueService) List(ctx context.Context, target domainext.Target, includ
 	return out, nil
 }
 
+// ValidateBatch validates extension inputs without persisting them.
+func (s *ValueService) ValidateBatch(ctx context.Context, target domainext.Target, inputs []domainext.ValueInput, canAccessPrivate bool) error {
+	_, err := s.validateBatchValues(target, inputs, "validate", canAccessPrivate, false)
+	return err
+}
+
+// DeleteAllForTarget removes all stored values for target.
+func (s *ValueService) DeleteAllForTarget(ctx context.Context, target domainext.Target) error {
+	target.Type = domainext.TargetType(strings.TrimSpace(string(target.Type)))
+	target.ID = strings.TrimSpace(target.ID)
+	if target.Type == "" || target.ID == "" {
+		return domainext.ValidationErr("target type and id must not be empty")
+	}
+	stored, err := s.repo.ListByTarget(ctx, target)
+	if err != nil {
+		return err
+	}
+	for _, value := range stored {
+		if err := s.repo.Delete(ctx, target, value.FieldCode); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 // UpsertBatch validates and stores values for target.
 func (s *ValueService) UpsertBatch(ctx context.Context, target domainext.Target, inputs []domainext.ValueInput, updatedBy string, canAccessPrivate bool) ([]domainext.Value, error) {
+	if len(inputs) == 0 {
+		return nil, domainext.ValidationErr("values must not be empty")
+	}
+	out, err := s.validateBatchValues(target, inputs, updatedBy, canAccessPrivate, true)
+	if err != nil {
+		return nil, err
+	}
+	if err := s.repo.UpsertBatch(ctx, out); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (s *ValueService) validateBatchValues(target domainext.Target, inputs []domainext.ValueInput, updatedBy string, canAccessPrivate, requireUpdatedBy bool) ([]domainext.Value, error) {
 	target.Type = domainext.TargetType(strings.TrimSpace(string(target.Type)))
 	target.ID = strings.TrimSpace(target.ID)
 	if target.Type == "" || target.ID == "" {
 		return nil, domainext.ValidationErr("target type and id must not be empty")
 	}
-	if len(inputs) == 0 {
-		return nil, domainext.ValidationErr("values must not be empty")
-	}
 	updatedBy = strings.TrimSpace(updatedBy)
-	if updatedBy == "" {
+	if requireUpdatedBy && updatedBy == "" {
 		return nil, domainext.ValidationErr("updated_by must not be empty")
 	}
 
@@ -115,11 +151,43 @@ func (s *ValueService) UpsertBatch(ctx context.Context, target domainext.Target,
 			UpdatedAt:  now,
 		})
 	}
-
-	if err := s.repo.UpsertBatch(ctx, out); err != nil {
-		return nil, err
-	}
 	return out, nil
+}
+
+// CopyTarget copies stored values from one target to another.
+func (s *ValueService) CopyTarget(ctx context.Context, from, to domainext.Target, updatedBy string) error {
+	from.Type = domainext.TargetType(strings.TrimSpace(string(from.Type)))
+	from.ID = strings.TrimSpace(from.ID)
+	to.Type = domainext.TargetType(strings.TrimSpace(string(to.Type)))
+	to.ID = strings.TrimSpace(to.ID)
+	if from.Type == "" || from.ID == "" || to.Type == "" || to.ID == "" {
+		return domainext.ValidationErr("source and destination targets must not be empty")
+	}
+	updatedBy = strings.TrimSpace(updatedBy)
+	if updatedBy == "" {
+		return domainext.ValidationErr("updated_by must not be empty")
+	}
+
+	stored, err := s.repo.ListByTarget(ctx, from)
+	if err != nil {
+		return err
+	}
+	if len(stored) == 0 {
+		return nil
+	}
+	now := time.Now().UTC()
+	out := make([]domainext.Value, 0, len(stored))
+	for _, value := range stored {
+		out = append(out, domainext.Value{
+			FieldCode:  value.FieldCode,
+			TargetType: to.Type,
+			TargetID:   to.ID,
+			Payload:    value.Payload,
+			UpdatedBy:  updatedBy,
+			UpdatedAt:  now,
+		})
+	}
+	return s.repo.UpsertBatch(ctx, out)
 }
 
 // Delete removes a stored value for target and field code.

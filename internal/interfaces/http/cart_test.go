@@ -13,10 +13,13 @@ import (
 
 	cartApp "github.com/akarso/shopanda/internal/application/cart"
 	appPricing "github.com/akarso/shopanda/internal/application/pricing"
+	extensionapp "github.com/akarso/shopanda/internal/application/extension"
 	domainCart "github.com/akarso/shopanda/internal/domain/cart"
+	domainext "github.com/akarso/shopanda/internal/domain/extension"
 	"github.com/akarso/shopanda/internal/domain/pricing"
 	"github.com/akarso/shopanda/internal/domain/shared"
 	shophttp "github.com/akarso/shopanda/internal/interfaces/http"
+	"github.com/akarso/shopanda/internal/platform/apperror"
 	"github.com/akarso/shopanda/internal/platform/auth/testhelper"
 	"github.com/akarso/shopanda/internal/platform/event"
 	"github.com/akarso/shopanda/internal/platform/logger"
@@ -133,8 +136,74 @@ func cartSetup() (*stubCartRepo, *stubPriceRepo, *shophttp.CartHandler, *http.Se
 	carts := newStubCartRepo()
 	prices := newStubPriceRepo()
 	bus := event.NewBus(cartTestLogger())
-	svc := cartApp.NewService(carts, prices, nil, nil, cartTestPipeline(prices), cartTestLogger(), bus)
-	h := shophttp.NewCartHandler(svc)
+	svc := cartApp.NewService(carts, prices, nil, nil, cartTestPipeline(prices), cartTestLogger(), bus, nil)
+	h := shophttp.NewCartHandler(svc, nil)
+	return carts, prices, h, newCartRouter(h)
+}
+
+type cartTestExtensionValueRepo struct {
+	values map[string]domainext.Value
+}
+
+func cartTestExtKey(target domainext.Target, fieldCode string) string {
+	return string(target.Type) + ":" + target.ID + ":" + fieldCode
+}
+
+func newCartTestExtensionValueRepo() *cartTestExtensionValueRepo {
+	return &cartTestExtensionValueRepo{values: make(map[string]domainext.Value)}
+}
+
+func (m *cartTestExtensionValueRepo) ListByTarget(_ context.Context, target domainext.Target) ([]domainext.Value, error) {
+	out := make([]domainext.Value, 0)
+	for _, value := range m.values {
+		if value.TargetType == target.Type && value.TargetID == target.ID {
+			out = append(out, value)
+		}
+	}
+	return out, nil
+}
+
+func (m *cartTestExtensionValueRepo) Upsert(_ context.Context, value domainext.Value) error {
+	m.values[cartTestExtKey(domainext.Target{Type: value.TargetType, ID: value.TargetID}, value.FieldCode)] = value
+	return nil
+}
+
+func (m *cartTestExtensionValueRepo) UpsertBatch(_ context.Context, values []domainext.Value) error {
+	for _, value := range values {
+		if err := m.Upsert(context.Background(), value); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (m *cartTestExtensionValueRepo) Delete(_ context.Context, target domainext.Target, fieldCode string) error {
+	key := cartTestExtKey(target, fieldCode)
+	if _, ok := m.values[key]; !ok {
+		return apperror.NotFound("extension value not found")
+	}
+	delete(m.values, key)
+	return nil
+}
+
+func cartExtensionSetup(t *testing.T) (*stubCartRepo, *stubPriceRepo, *shophttp.CartHandler, *http.ServeMux) {
+	t.Helper()
+	carts := newStubCartRepo()
+	prices := newStubPriceRepo()
+	reg := extensionapp.NewRegistry()
+	if err := reg.Register(domainext.FieldDef{
+		Code:        "acme.gift.message",
+		Label:       "Gift message",
+		Type:        domainext.FieldTypeString,
+		Scope:       domainext.TargetCartItem,
+		StorageMode: domainext.StorageStored,
+	}); err != nil {
+		t.Fatalf("register field: %v", err)
+	}
+	values := extensionapp.NewValueService(reg, newCartTestExtensionValueRepo())
+	bus := event.NewBus(cartTestLogger())
+	svc := cartApp.NewService(carts, prices, nil, nil, cartTestPipeline(prices), cartTestLogger(), bus, values)
+	h := shophttp.NewCartHandler(svc, values)
 	return carts, prices, h, newCartRouter(h)
 }
 
@@ -500,5 +569,103 @@ func TestCartHandler_AddItem_WrongCustomer(t *testing.T) {
 
 	if rec.Code != http.StatusForbidden {
 		t.Fatalf("status = %d, want %d; body: %s", rec.Code, http.StatusForbidden, rec.Body.String())
+	}
+}
+
+func TestCartHandler_AddItem_WithExtensions(t *testing.T) {
+	carts, prices, _, mux := cartExtensionSetup(t)
+	prices.set("var-1", "EUR", 1000)
+
+	c, _ := domainCart.NewCart("cart-1", "EUR")
+	c.SetCustomerID("cust-1")
+	carts.Save(context.Background(), &c)
+
+	rec := httptest.NewRecorder()
+	body := `{"variant_id":"var-1","quantity":1,"extensions":[{"field_code":"acme.gift.message","value":"Hello"}]}`
+	req := httptest.NewRequest("POST", "/api/v1/carts/cart-1/items", strings.NewReader(body))
+	req = testhelper.CustomerRequest(req, "cust-1")
+	mux.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d; body: %s", rec.Code, http.StatusOK, rec.Body.String())
+	}
+	parsed := parseCartBody(t, rec)
+	data := parsed["data"].(map[string]interface{})
+	cart := data["cart"].(map[string]interface{})
+	items := cart["items"].([]interface{})
+	if len(items) != 1 {
+		t.Fatalf("items = %d, want 1", len(items))
+	}
+	item := items[0].(map[string]interface{})
+	exts := item["extensions"].([]interface{})
+	if len(exts) != 1 {
+		t.Fatalf("extensions = %d, want 1", len(exts))
+	}
+	ext := exts[0].(map[string]interface{})
+	if ext["field_code"] != "acme.gift.message" || ext["value"] != "Hello" {
+		t.Fatalf("extension = %+v", ext)
+	}
+}
+
+func TestCartHandler_AddItem_InvalidExtensionRejected(t *testing.T) {
+	carts, prices, _, mux := cartExtensionSetup(t)
+	prices.set("var-1", "EUR", 1000)
+
+	c, _ := domainCart.NewCart("cart-1", "EUR")
+	c.SetCustomerID("cust-1")
+	carts.Save(context.Background(), &c)
+
+	rec := httptest.NewRecorder()
+	body := `{"variant_id":"var-1","quantity":1,"extensions":[{"field_code":"missing.field","value":"x"}]}`
+	req := httptest.NewRequest("POST", "/api/v1/carts/cart-1/items", strings.NewReader(body))
+	req = testhelper.CustomerRequest(req, "cust-1")
+	mux.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("status = %d, want %d; body: %s", rec.Code, http.StatusUnprocessableEntity, rec.Body.String())
+	}
+}
+
+func TestCartHandler_UpdateItem_PreservesExtensions(t *testing.T) {
+	carts, prices, _, mux := cartExtensionSetup(t)
+	prices.set("var-1", "EUR", 1000)
+
+	c, _ := domainCart.NewCart("cart-1", "EUR")
+	c.SetCustomerID("cust-1")
+	carts.Save(context.Background(), &c)
+
+	addRec := httptest.NewRecorder()
+	addBody := `{"variant_id":"var-1","quantity":1,"extensions":[{"field_code":"acme.gift.message","value":"Keep me"}]}`
+	addReq := httptest.NewRequest("POST", "/api/v1/carts/cart-1/items", strings.NewReader(addBody))
+	addReq = testhelper.CustomerRequest(addReq, "cust-1")
+	mux.ServeHTTP(addRec, addReq)
+	if addRec.Code != http.StatusOK {
+		t.Fatalf("add status = %d, want %d; body: %s", addRec.Code, http.StatusOK, addRec.Body.String())
+	}
+
+	rec := httptest.NewRecorder()
+	updateBody := `{"quantity":3}`
+	req := httptest.NewRequest("PUT", "/api/v1/carts/cart-1/items/var-1", strings.NewReader(updateBody))
+	req = testhelper.CustomerRequest(req, "cust-1")
+	mux.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d; body: %s", rec.Code, http.StatusOK, rec.Body.String())
+	}
+	parsed := parseCartBody(t, rec)
+	data := parsed["data"].(map[string]interface{})
+	cart := data["cart"].(map[string]interface{})
+	items := cart["items"].([]interface{})
+	item := items[0].(map[string]interface{})
+	if item["quantity"].(float64) != 3 {
+		t.Fatalf("quantity = %v, want 3", item["quantity"])
+	}
+	exts := item["extensions"].([]interface{})
+	if len(exts) != 1 {
+		t.Fatalf("extensions = %d, want 1", len(exts))
+	}
+	ext := exts[0].(map[string]interface{})
+	if ext["value"] != "Keep me" {
+		t.Fatalf("extension value = %v, want Keep me", ext["value"])
 	}
 }
