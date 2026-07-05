@@ -182,6 +182,14 @@ func NewExtensionField(def FieldDef) (ExtensionField, error) {
 	}
 
 	validation := def.Validation
+	if validation.Min != nil {
+		min := *validation.Min
+		validation.Min = &min
+	}
+	if validation.Max != nil {
+		max := *validation.Max
+		validation.Max = &max
+	}
 	if validation.Options != nil {
 		opts := make([]string, len(validation.Options))
 		copy(opts, validation.Options)

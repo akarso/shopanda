@@ -62,12 +62,15 @@ func (r *Registry) Get(code string) (domainext.ExtensionField, bool) {
 
 // List returns registered fields matching filter in registration order.
 func (r *Registry) List(filter ListFilter) []domainext.ExtensionField {
-	if r == nil || len(r.order) == 0 {
+	if r == nil {
 		return nil
 	}
 
 	r.mu.RLock()
 	defer r.mu.RUnlock()
+	if len(r.order) == 0 {
+		return nil
+	}
 
 	out := make([]domainext.ExtensionField, 0, len(r.order))
 	for _, code := range r.order {
@@ -88,11 +91,14 @@ func (r *Registry) List(filter ListFilter) []domainext.ExtensionField {
 
 // Codes returns registered field codes in registration order.
 func (r *Registry) Codes() []string {
-	if r == nil || len(r.order) == 0 {
+	if r == nil {
 		return nil
 	}
 	r.mu.RLock()
 	defer r.mu.RUnlock()
+	if len(r.order) == 0 {
+		return nil
+	}
 	out := make([]string, len(r.order))
 	copy(out, r.order)
 	return out

@@ -126,6 +126,29 @@ func TestNewExtensionField_DefaultVisibilityPublic(t *testing.T) {
 	}
 }
 
+func TestNewExtensionField_ClonesValidationPointers(t *testing.T) {
+	min := int64(1)
+	max := int64(10)
+	def := validProductFieldDef()
+	def.Type = extension.FieldTypeInt
+	def.Validation = extension.Validation{Min: &min, Max: &max}
+
+	field, err := extension.NewExtensionField(def)
+	if err != nil {
+		t.Fatalf("NewExtensionField: %v", err)
+	}
+
+	*def.Validation.Min = 99
+	*def.Validation.Max = 999
+
+	if field.Validation.Min == nil || *field.Validation.Min != 1 {
+		t.Errorf("Min = %v, want 1", field.Validation.Min)
+	}
+	if field.Validation.Max == nil || *field.Validation.Max != 10 {
+		t.Errorf("Max = %v, want 10", field.Validation.Max)
+	}
+}
+
 func TestTargetType_IsValid(t *testing.T) {
 	if !extension.TargetCartItem.IsValid() {
 		t.Error("cart_item should be valid")

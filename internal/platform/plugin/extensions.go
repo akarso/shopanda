@@ -26,16 +26,22 @@ func (a *App) SetExtensionRegistry(registry *extensionapp.Registry) {
 	if registry == nil {
 		panic("plugin: extension registry must not be nil")
 	}
+	a.extensionRegistryMu.Lock()
+	defer a.extensionRegistryMu.Unlock()
 	a.extensionRegistry = registry
 }
 
 // ExtensionRegistry returns the shared extension field registry.
 func (a *App) ExtensionRegistry() *extensionapp.Registry {
+	a.extensionRegistryMu.Lock()
+	defer a.extensionRegistryMu.Unlock()
 	return a.extensionRegistry
 }
 
 // Extensions returns the plugin-facing extension registration API.
 func (a *App) Extensions() *Extensions {
+	a.extensionRegistryMu.Lock()
+	defer a.extensionRegistryMu.Unlock()
 	if a.extensionRegistry == nil {
 		a.extensionRegistry = extensionapp.NewRegistry()
 	}

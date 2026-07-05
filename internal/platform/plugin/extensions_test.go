@@ -62,3 +62,27 @@ func TestApp_SetExtensionRegistry_NilPanics(t *testing.T) {
 	app := &plugin.App{}
 	app.SetExtensionRegistry(nil)
 }
+
+func TestApp_Extensions_ConcurrentLazyInit(t *testing.T) {
+	app := &plugin.App{}
+	const workers = 8
+	refs := make([]*extension.Registry, workers)
+	done := make(chan struct{}, workers)
+	for i := 0; i < workers; i++ {
+		i := i
+		go func() {
+			_ = app.Extensions()
+			refs[i] = app.ExtensionRegistry()
+			done <- struct{}{}
+		}()
+	}
+	for i := 0; i < workers; i++ {
+		<-done
+	}
+	first := refs[0]
+	for i := 1; i < workers; i++ {
+		if refs[i] != first {
+			t.Fatalf("ExtensionRegistry pointer mismatch at worker %d", i)
+		}
+	}
+}
