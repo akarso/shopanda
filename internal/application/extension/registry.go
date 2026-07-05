@@ -1,6 +1,7 @@
 package extension
 
 import (
+	"context"
 	"fmt"
 	"sync"
 
@@ -38,11 +39,46 @@ func (r *Registry) Register(def domainext.FieldDef) error {
 	if err != nil {
 		return err
 	}
+	return r.registerField(field)
+}
 
+// LoadPersisted merges active definitions from repo into the registry.
+// Plugin registrations already present win on code conflicts.
+func (r *Registry) LoadPersisted(ctx context.Context, repo domainext.FieldRepository) error {
+	if r == nil {
+		return fmt.Errorf("extension: registry must not be nil")
+	}
+	if repo == nil {
+		return fmt.Errorf("extension: field repository must not be nil")
+	}
+	fields, err := repo.ListActive(ctx, "")
+	if err != nil {
+		return fmt.Errorf("extension: load persisted fields: %w", err)
+	}
+	for _, field := range fields {
+		if err := r.mergeField(field); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (r *Registry) registerField(field domainext.ExtensionField) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	if _, exists := r.fields[field.Code]; exists {
 		return fmt.Errorf("extension field %q already registered", field.Code)
+	}
+	r.fields[field.Code] = field
+	r.order = append(r.order, field.Code)
+	return nil
+}
+
+func (r *Registry) mergeField(field domainext.ExtensionField) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if _, exists := r.fields[field.Code]; exists {
+		return nil
 	}
 	r.fields[field.Code] = field
 	r.order = append(r.order, field.Code)

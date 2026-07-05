@@ -68,18 +68,18 @@ func (v Visibility) IsValid() bool {
 
 // Access declares role-based read/write constraints.
 type Access struct {
-	ReadRoles       []string
-	WriteRoles      []string
-	PluginOnlyWrite bool
+	ReadRoles       []string `json:"read_roles,omitempty"`
+	WriteRoles      []string `json:"write_roles,omitempty"`
+	PluginOnlyWrite bool     `json:"plugin_only_write,omitempty"`
 }
 
 // Validation holds static constraints applied at write time.
 type Validation struct {
-	Required bool
-	Min      *int64
-	Max      *int64
-	Regex    string
-	Options  []string
+	Required bool     `json:"required,omitempty"`
+	Min      *int64   `json:"min,omitempty"`
+	Max      *int64   `json:"max,omitempty"`
+	Regex    string   `json:"regex,omitempty"`
+	Options  []string `json:"options,omitempty"`
 }
 
 // EnumOptions builds validation constraints for an enum field.
@@ -104,15 +104,30 @@ type FieldDef struct {
 
 // ExtensionField is a validated extension field definition.
 type ExtensionField struct {
-	Code        string
-	Label       string
-	Description string
-	Type        FieldType
-	Scope       TargetType
-	StorageMode StorageMode
-	Visibility  Visibility
-	Access      Access
-	Validation  Validation
+	Code        string      `json:"code"`
+	Label       string      `json:"label"`
+	Description string      `json:"description,omitempty"`
+	Type        FieldType   `json:"type"`
+	Scope       TargetType  `json:"scope"`
+	StorageMode StorageMode `json:"storage_mode"`
+	Visibility  Visibility  `json:"visibility"`
+	Access      Access      `json:"access"`
+	Validation  Validation  `json:"validation"`
+}
+
+// ToFieldDef converts a validated field back to registration input.
+func (f ExtensionField) ToFieldDef() FieldDef {
+	return FieldDef{
+		Code:        f.Code,
+		Label:       f.Label,
+		Description: f.Description,
+		Type:        f.Type,
+		Scope:       f.Scope,
+		StorageMode: f.StorageMode,
+		Visibility:  f.Visibility,
+		Access:      f.Access,
+		Validation:  f.Validation,
+	}
 }
 
 var codePattern = regexp.MustCompile(`^[a-z][a-z0-9_]*(\.[a-z][a-z0-9_]*)+$`)
