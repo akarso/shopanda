@@ -196,6 +196,12 @@ func (s *Service) mergeIntoCustomerCart(ctx context.Context, guestCart, customer
 		if err := s.copyCartItemExtensions(ctx, guestCart.ID, customerCart.ID, item.VariantID); err != nil {
 			return nil, err
 		}
+		if s.extensions != nil {
+			guestTarget := domainext.CartItemTarget(guestCart.ID, item.VariantID)
+			if err := s.extensions.DeleteAllForTarget(ctx, guestTarget); err != nil {
+				return nil, fmt.Errorf("cart service: merge guest cart: delete guest extensions: %w", err)
+			}
+		}
 	}
 	if err := s.applyEligibleGuestCoupon(ctx, customerCart, guestCart.CouponCode); err != nil {
 		return nil, err
@@ -279,15 +285,15 @@ func (s *Service) AddItem(ctx context.Context, cartID, customerID, variantID str
 		return nil, err
 	}
 
-	if err := s.carts.Save(ctx, c); err != nil {
-		return nil, fmt.Errorf("cart service: add item: save: %w", err)
-	}
-
-	if len(opts.Extensions) > 0 && s.extensions != nil {
+	if len(opts.Extensions) > 0 {
 		target := domainext.CartItemTarget(cartID, variantID)
 		if _, err := s.extensions.UpsertBatch(ctx, target, opts.Extensions, cartExtensionUpdatedBy(customerID, opts.UpdatedBy), false); err != nil {
 			return nil, err
 		}
+	}
+
+	if err := s.carts.Save(ctx, c); err != nil {
+		return nil, fmt.Errorf("cart service: add item: save: %w", err)
 	}
 
 	s.log.Info("cart.item.added", map[string]interface{}{
@@ -358,19 +364,19 @@ func (s *Service) RemoveItem(ctx context.Context, cartID, customerID, variantID 
 		return nil, apperror.Wrap(apperror.CodeValidation, "cannot remove item", err)
 	}
 
+	if s.extensions != nil {
+		target := domainext.CartItemTarget(cartID, variantID)
+		if err := s.extensions.DeleteAllForTarget(ctx, target); err != nil {
+			return nil, fmt.Errorf("cart service: remove item: delete extensions: %w", err)
+		}
+	}
+
 	if err := s.recalculate(ctx, c); err != nil {
 		return nil, err
 	}
 
 	if err := s.carts.Save(ctx, c); err != nil {
 		return nil, fmt.Errorf("cart service: remove item: save: %w", err)
-	}
-
-	if s.extensions != nil {
-		target := domainext.CartItemTarget(cartID, variantID)
-		if err := s.extensions.DeleteAllForTarget(ctx, target); err != nil {
-			return nil, fmt.Errorf("cart service: remove item: delete extensions: %w", err)
-		}
 	}
 
 	s.log.Info("cart.item.removed", map[string]interface{}{

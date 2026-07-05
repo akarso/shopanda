@@ -86,7 +86,8 @@
                 {{ range .CartForm.ExtensionFields }}
                 <label>{{ .Label }}
                     {{ if eq .Type "bool" }}
-                    <input type="checkbox" name="{{ .FormName }}" value="true">
+                    <input type="hidden" name="{{ .FormName }}" value="false">
+                    <input type="checkbox" name="{{ .FormName }}" value="true" {{ if .Required }}required{{ end }}>
                     {{ else if eq .Type "enum" }}
                     <select name="{{ .FormName }}" {{ if .Required }}required{{ end }}>
                         <option value="">—</option>

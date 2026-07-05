@@ -2,6 +2,7 @@ package cart_test
 
 import (
 	"context"
+	"errors"
 	"testing"
 
 	cartApp "github.com/akarso/shopanda/internal/application/cart"
@@ -117,7 +118,7 @@ func TestService_AddItem_InvalidExtensionRejected(t *testing.T) {
 		Extensions: []domainext.ValueInput{{FieldCode: "missing.field", Value: "x"}},
 		UpdatedBy:  "cust-1",
 	})
-	if err == nil || err != domainext.ErrUnknownFieldCode {
+	if !errors.Is(err, domainext.ErrUnknownFieldCode) {
 		t.Fatalf("AddItem err = %v, want ErrUnknownFieldCode", err)
 	}
 }
@@ -150,5 +151,79 @@ func TestService_UpdateItemQuantity_PreservesExtensions(t *testing.T) {
 	}
 	if len(stored) != 1 || stored[0].Payload.StringValue == nil || *stored[0].Payload.StringValue != "Keep me" {
 		t.Fatalf("stored after update = %+v", stored)
+	}
+}
+
+func TestService_RemoveItem_DeletesExtensions(t *testing.T) {
+	svc, repo := setupCartExtensionService(t)
+	ctx := context.Background()
+	c, err := svc.CreateCart(ctx, "cust-1", "EUR")
+	if err != nil {
+		t.Fatalf("CreateCart: %v", err)
+	}
+	if _, err := svc.AddItem(ctx, c.ID, "cust-1", "var-1", 1, cartApp.AddItemOptions{
+		Extensions: []domainext.ValueInput{{FieldCode: "acme.gift.message", Value: "Remove me"}},
+		UpdatedBy:  "cust-1",
+	}); err != nil {
+		t.Fatalf("AddItem: %v", err)
+	}
+
+	if _, err := svc.RemoveItem(ctx, c.ID, "cust-1", "var-1"); err != nil {
+		t.Fatalf("RemoveItem: %v", err)
+	}
+
+	stored, err := repo.ListByTarget(ctx, domainext.CartItemTarget(c.ID, "var-1"))
+	if err != nil {
+		t.Fatalf("ListByTarget: %v", err)
+	}
+	if len(stored) != 0 {
+		t.Fatalf("stored after remove = %+v, want empty", stored)
+	}
+}
+
+func TestService_ClaimGuestCart_MergeCopiesAndCleansExtensions(t *testing.T) {
+	svc, repo := setupCartExtensionService(t)
+	ctx := context.Background()
+
+	customerCart, err := svc.CreateCart(ctx, "cust-1", "EUR")
+	if err != nil {
+		t.Fatalf("CreateCart customer: %v", err)
+	}
+
+	guestCart, err := svc.CreateCart(ctx, "", "EUR")
+	if err != nil {
+		t.Fatalf("CreateCart guest: %v", err)
+	}
+	if _, err := svc.AddItem(ctx, guestCart.ID, "", "var-1", 1, cartApp.AddItemOptions{
+		Extensions: []domainext.ValueInput{{FieldCode: "acme.gift.message", Value: "Merged"}},
+		UpdatedBy:  "guest",
+	}); err != nil {
+		t.Fatalf("AddItem guest: %v", err)
+	}
+
+	merged, err := svc.ClaimGuestCart(ctx, guestCart.ID, "cust-1")
+	if err != nil {
+		t.Fatalf("ClaimGuestCart: %v", err)
+	}
+	if merged.ID != customerCart.ID {
+		t.Fatalf("merged cart id = %q, want %q", merged.ID, customerCart.ID)
+	}
+
+	customerTarget := domainext.CartItemTarget(customerCart.ID, "var-1")
+	stored, err := repo.ListByTarget(ctx, customerTarget)
+	if err != nil {
+		t.Fatalf("ListByTarget customer: %v", err)
+	}
+	if len(stored) != 1 || stored[0].Payload.StringValue == nil || *stored[0].Payload.StringValue != "Merged" {
+		t.Fatalf("customer stored = %+v", stored)
+	}
+
+	guestTarget := domainext.CartItemTarget(guestCart.ID, "var-1")
+	guestStored, err := repo.ListByTarget(ctx, guestTarget)
+	if err != nil {
+		t.Fatalf("ListByTarget guest: %v", err)
+	}
+	if len(guestStored) != 0 {
+		t.Fatalf("guest stored after merge = %+v, want empty", guestStored)
 	}
 }

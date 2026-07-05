@@ -188,7 +188,7 @@ func (h *StorefrontHandler) AddToCart() http.HandlerFunc {
 		}
 		customerID := storefrontCustomerID(r)
 		if _, err := h.carts.AddItem(r.Context(), currentCart.ID, customerID, variantID, quantity, cartApp.AddItemOptions{
-			Extensions: storefrontExtensionInputsFromForm(r),
+			Extensions: h.storefrontExtensionInputsFromForm(r),
 			UpdatedBy:  cartExtensionActor(customerID),
 		}); err != nil {
 			status := http.StatusInternalServerError
@@ -458,7 +458,7 @@ func (h *StorefrontHandler) storefrontCartExtensionFields() []StorefrontCartExte
 const storefrontExtensionFormPrefix = "ext__"
 
 func storefrontExtensionFormName(code string) string {
-	return storefrontExtensionFormPrefix + strings.ReplaceAll(code, ".", "__")
+	return storefrontExtensionFormPrefix + strings.ReplaceAll(code, ".", "-")
 }
 
 func storefrontExtensionCodeFromFormName(name string) (string, bool) {
@@ -466,10 +466,10 @@ func storefrontExtensionCodeFromFormName(name string) (string, bool) {
 		return "", false
 	}
 	code := strings.TrimPrefix(name, storefrontExtensionFormPrefix)
-	return strings.ReplaceAll(code, "__", "."), true
+	return strings.ReplaceAll(code, "-", "."), true
 }
 
-func storefrontExtensionInputsFromForm(r *http.Request) []domainext.ValueInput {
+func (h *StorefrontHandler) storefrontExtensionInputsFromForm(r *http.Request) []domainext.ValueInput {
 	if r == nil {
 		return nil
 	}
@@ -479,7 +479,18 @@ func storefrontExtensionInputsFromForm(r *http.Request) []domainext.ValueInput {
 		if !ok || len(values) == 0 {
 			continue
 		}
-		out = append(out, domainext.ValueInput{FieldCode: code, Value: values[0]})
+		raw := values[len(values)-1]
+		value := interface{}(raw)
+		if h.extensions != nil {
+			if field, ok := h.extensions.Registry().Get(code); ok && field.Type == domainext.FieldTypeBool {
+				parsed, err := strconv.ParseBool(raw)
+				if err != nil {
+					continue
+				}
+				value = parsed
+			}
+		}
+		out = append(out, domainext.ValueInput{FieldCode: code, Value: value})
 	}
 	return out
 }
