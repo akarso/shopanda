@@ -141,7 +141,7 @@ func newStorefrontCartService() (*cartApp.Service, *storefrontCartRepoStub, *sto
 	prices := newStorefrontPriceRepoStub()
 	log := logger.NewWithWriter(io.Discard, "error")
 	pipeline := pricing.NewPipeline(appPricing.NewBasePriceStep(prices), pricing.NewFinalizeStep())
-	service := cartApp.NewService(carts, prices, nil, nil, pipeline, log, event.NewBus(log))
+	service := cartApp.NewService(carts, prices, nil, nil, pipeline, log, event.NewBus(log), nil)
 	return service, carts, prices
 }
 
@@ -319,7 +319,7 @@ func TestStorefrontHandler_Cart_OK(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateCart: %v", err)
 	}
-	if _, err := cartSvc.AddItem(context.Background(), currentCart.ID, "", "var-1", 2); err != nil {
+	if _, err := cartSvc.AddItem(context.Background(), currentCart.ID, "", "var-1", 2, cartApp.AddItemOptions{}); err != nil {
 		t.Fatalf("AddItem: %v", err)
 	}
 	h := shophttp.NewStorefrontHandler(engine, repo, newStorefrontCategoryMock(), pdp, plp, newStorefrontSearchMock()).WithCart(variants, cartSvc)
@@ -360,7 +360,7 @@ func TestStorefrontHandler_CartUpdate_HTMX(t *testing.T) {
 	cartSvc, _, prices := newStorefrontCartService()
 	prices.set("var-1", "EUR", 1500)
 	currentCart, _ := cartSvc.CreateCart(context.Background(), "", "EUR")
-	_, _ = cartSvc.AddItem(context.Background(), currentCart.ID, "", "var-1", 1)
+	_, _ = cartSvc.AddItem(context.Background(), currentCart.ID, "", "var-1", 1, cartApp.AddItemOptions{})
 	h := shophttp.NewStorefrontHandler(engine, repo, newStorefrontCategoryMock(), pdp, plp, newStorefrontSearchMock()).WithCart(variants, cartSvc)
 
 	form := url.Values{"variant_id": {"var-1"}, "quantity": {"3"}}
@@ -399,7 +399,7 @@ func TestStorefrontHandler_CartRemove_HTMX(t *testing.T) {
 	cartSvc, _, prices := newStorefrontCartService()
 	prices.set("var-1", "EUR", 1500)
 	currentCart, _ := cartSvc.CreateCart(context.Background(), "", "EUR")
-	_, _ = cartSvc.AddItem(context.Background(), currentCart.ID, "", "var-1", 1)
+	_, _ = cartSvc.AddItem(context.Background(), currentCart.ID, "", "var-1", 1, cartApp.AddItemOptions{})
 	h := shophttp.NewStorefrontHandler(engine, repo, newStorefrontCategoryMock(), pdp, plp, newStorefrontSearchMock()).WithCart(variants, cartSvc)
 
 	form := url.Values{"variant_id": {"var-1"}}

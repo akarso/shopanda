@@ -3,9 +3,11 @@ package cart
 import (
 	"context"
 	"fmt"
+	"strings"
 	"time"
 
 	domainCart "github.com/akarso/shopanda/internal/domain/cart"
+	domainext "github.com/akarso/shopanda/internal/domain/extension"
 	"github.com/akarso/shopanda/internal/domain/pricing"
 	"github.com/akarso/shopanda/internal/domain/promotion"
 	"github.com/akarso/shopanda/internal/domain/shared"
@@ -17,6 +19,12 @@ import (
 	"github.com/akarso/shopanda/internal/platform/logger"
 )
 
+// AddItemOptions carries optional extension values for a cart line.
+type AddItemOptions struct {
+	Extensions []domainext.ValueInput
+	UpdatedBy  string
+}
+
 // Service orchestrates cart use cases.
 type Service struct {
 	carts      domainCart.CartRepository
@@ -24,8 +32,16 @@ type Service struct {
 	promotions promotion.PromotionRepository
 	coupons    promotion.CouponRepository
 	pipeline   pricing.Pipeline
+	extensions extensionValueWriter
 	log        logger.Logger
 	bus        *event.Bus
+}
+
+type extensionValueWriter interface {
+	ValidateBatch(ctx context.Context, target domainext.Target, inputs []domainext.ValueInput, canAccessPrivate bool) error
+	UpsertBatch(ctx context.Context, target domainext.Target, inputs []domainext.ValueInput, updatedBy string, canAccessPrivate bool) ([]domainext.Value, error)
+	DeleteAllForTarget(ctx context.Context, target domainext.Target) error
+	CopyTarget(ctx context.Context, from, to domainext.Target, updatedBy string) error
 }
 
 // NewService creates a cart application service.
@@ -37,6 +53,7 @@ func NewService(
 	pipeline pricing.Pipeline,
 	log logger.Logger,
 	bus *event.Bus,
+	extensions extensionValueWriter,
 ) *Service {
 	return &Service{
 		carts:      carts,
@@ -44,6 +61,7 @@ func NewService(
 		promotions: promotions,
 		coupons:    coupons,
 		pipeline:   pipeline,
+		extensions: extensions,
 		log:        log,
 		bus:        bus,
 	}
@@ -175,6 +193,15 @@ func (s *Service) mergeIntoCustomerCart(ctx context.Context, guestCart, customer
 		if err := customerCart.AddItem(item.VariantID, item.Quantity, item.UnitPrice); err != nil {
 			return nil, apperror.Wrap(apperror.CodeValidation, "cannot merge guest cart item", err)
 		}
+		if err := s.copyCartItemExtensions(ctx, guestCart.ID, customerCart.ID, item.VariantID); err != nil {
+			return nil, err
+		}
+		if s.extensions != nil {
+			guestTarget := domainext.CartItemTarget(guestCart.ID, item.VariantID)
+			if err := s.extensions.DeleteAllForTarget(ctx, guestTarget); err != nil {
+				return nil, fmt.Errorf("cart service: merge guest cart: delete guest extensions: %w", err)
+			}
+		}
 	}
 	if err := s.applyEligibleGuestCoupon(ctx, customerCart, guestCart.CouponCode); err != nil {
 		return nil, err
@@ -223,7 +250,7 @@ func (s *Service) applyEligibleGuestCoupon(ctx context.Context, customerCart *do
 }
 
 // AddItem adds an item to the cart and recalculates pricing.
-func (s *Service) AddItem(ctx context.Context, cartID, customerID, variantID string, quantity int) (*domainCart.Cart, error) {
+func (s *Service) AddItem(ctx context.Context, cartID, customerID, variantID string, quantity int, opts AddItemOptions) (*domainCart.Cart, error) {
 	c, err := s.carts.FindByID(ctx, cartID)
 	if err != nil {
 		return nil, fmt.Errorf("cart service: add item: find: %w", err)
@@ -233,6 +260,16 @@ func (s *Service) AddItem(ctx context.Context, cartID, customerID, variantID str
 	}
 	if c.CustomerID != customerID {
 		return nil, apperror.Forbidden("cannot modify another customer's cart")
+	}
+
+	if len(opts.Extensions) > 0 {
+		if s.extensions == nil {
+			return nil, apperror.Validation("extension values are not supported")
+		}
+		target := domainext.CartItemTarget(cartID, variantID)
+		if err := s.extensions.ValidateBatch(ctx, target, opts.Extensions, false); err != nil {
+			return nil, err
+		}
 	}
 
 	price, err := s.lookupPrice(ctx, variantID, c.Currency)
@@ -246,6 +283,13 @@ func (s *Service) AddItem(ctx context.Context, cartID, customerID, variantID str
 
 	if err := s.recalculate(ctx, c); err != nil {
 		return nil, err
+	}
+
+	if len(opts.Extensions) > 0 {
+		target := domainext.CartItemTarget(cartID, variantID)
+		if _, err := s.extensions.UpsertBatch(ctx, target, opts.Extensions, cartExtensionUpdatedBy(customerID, opts.UpdatedBy), false); err != nil {
+			return nil, err
+		}
 	}
 
 	if err := s.carts.Save(ctx, c); err != nil {
@@ -318,6 +362,13 @@ func (s *Service) RemoveItem(ctx context.Context, cartID, customerID, variantID 
 
 	if err := c.RemoveItem(variantID); err != nil {
 		return nil, apperror.Wrap(apperror.CodeValidation, "cannot remove item", err)
+	}
+
+	if s.extensions != nil {
+		target := domainext.CartItemTarget(cartID, variantID)
+		if err := s.extensions.DeleteAllForTarget(ctx, target); err != nil {
+			return nil, fmt.Errorf("cart service: remove item: delete extensions: %w", err)
+		}
 	}
 
 	if err := s.recalculate(ctx, c); err != nil {
@@ -523,3 +574,25 @@ func (s *Service) RemoveCoupon(ctx context.Context, cartID, customerID string) (
 
 // timeNow is a package-level function for testing seams.
 var timeNow = func() time.Time { return time.Now() }
+
+func cartExtensionUpdatedBy(customerID, explicit string) string {
+	if v := strings.TrimSpace(explicit); v != "" {
+		return v
+	}
+	if v := strings.TrimSpace(customerID); v != "" {
+		return v
+	}
+	return "guest"
+}
+
+func (s *Service) copyCartItemExtensions(ctx context.Context, fromCartID, toCartID, variantID string) error {
+	if s.extensions == nil {
+		return nil
+	}
+	from := domainext.CartItemTarget(fromCartID, variantID)
+	to := domainext.CartItemTarget(toCartID, variantID)
+	if err := s.extensions.CopyTarget(ctx, from, to, "system"); err != nil {
+		return fmt.Errorf("cart service: copy extensions: %w", err)
+	}
+	return nil
+}

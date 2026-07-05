@@ -14,6 +14,7 @@ import (
 	"time"
 
 	appAuth "github.com/akarso/shopanda/internal/application/auth"
+	cartApp "github.com/akarso/shopanda/internal/application/cart"
 	checkoutApp "github.com/akarso/shopanda/internal/application/checkout"
 	"github.com/akarso/shopanda/internal/application/composition"
 	appPricing "github.com/akarso/shopanda/internal/application/pricing"
@@ -230,7 +231,7 @@ func TestStorefrontHandler_CheckoutAddress_GuestCanAccessAddressForm(t *testing.
 	if err != nil {
 		t.Fatalf("CreateCart: %v", err)
 	}
-	if _, err := cartSvc.AddItem(context.Background(), currentCart.ID, "", "var-1", 1); err != nil {
+	if _, err := cartSvc.AddItem(context.Background(), currentCart.ID, "", "var-1", 1, cartApp.AddItemOptions{}); err != nil {
 		t.Fatalf("AddItem: %v", err)
 	}
 	variants := &mockStorefrontVariantRepo{findByIDFn: func(_ context.Context, id string) (*catalog.Variant, error) {
@@ -262,7 +263,7 @@ func TestStorefrontHandler_CheckoutShipping_GuestRequiresContactEmail(t *testing
 	if err != nil {
 		t.Fatalf("CreateCart: %v", err)
 	}
-	if _, err := cartSvc.AddItem(context.Background(), currentCart.ID, "", "var-1", 1); err != nil {
+	if _, err := cartSvc.AddItem(context.Background(), currentCart.ID, "", "var-1", 1, cartApp.AddItemOptions{}); err != nil {
 		t.Fatalf("AddItem: %v", err)
 	}
 	variants := &mockStorefrontVariantRepo{findByIDFn: func(_ context.Context, id string) (*catalog.Variant, error) {
@@ -333,7 +334,7 @@ func TestStorefrontHandler_CheckoutFlow_Manual_GuestOK(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateCart: %v", err)
 	}
-	if _, err := cartSvc.AddItem(context.Background(), currentCart.ID, "", "var-1", 2); err != nil {
+	if _, err := cartSvc.AddItem(context.Background(), currentCart.ID, "", "var-1", 2, cartApp.AddItemOptions{}); err != nil {
 		t.Fatalf("AddItem: %v", err)
 	}
 
@@ -464,7 +465,7 @@ func TestStorefrontHandler_CheckoutAddress_AllowsAuthenticatedCustomerWithoutAcc
 	if err != nil {
 		t.Fatalf("CreateCart: %v", err)
 	}
-	if _, err := cartSvc.AddItem(context.Background(), currentCart.ID, "cust-1", "var-1", 1); err != nil {
+	if _, err := cartSvc.AddItem(context.Background(), currentCart.ID, "cust-1", "var-1", 1, cartApp.AddItemOptions{}); err != nil {
 		t.Fatalf("AddItem: %v", err)
 	}
 
@@ -515,7 +516,7 @@ func TestStorefrontHandler_CheckoutAddress_RedirectsToEmailVerification_WhenEmai
 	if err != nil {
 		t.Fatalf("CreateCart: %v", err)
 	}
-	if _, err := cartSvc.AddItem(context.Background(), currentCart.ID, out.CustomerID, "var-1", 1); err != nil {
+	if _, err := cartSvc.AddItem(context.Background(), currentCart.ID, out.CustomerID, "var-1", 1, cartApp.AddItemOptions{}); err != nil {
 		t.Fatalf("AddItem: %v", err)
 	}
 
@@ -558,7 +559,7 @@ func TestStorefrontHandler_CheckoutFlow_Manual_OK(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateCart: %v", err)
 	}
-	if _, err := cartSvc.AddItem(context.Background(), currentCart.ID, out.CustomerID, "var-1", 2); err != nil {
+	if _, err := cartSvc.AddItem(context.Background(), currentCart.ID, out.CustomerID, "var-1", 2, cartApp.AddItemOptions{}); err != nil {
 		t.Fatalf("AddItem: %v", err)
 	}
 
@@ -700,7 +701,7 @@ func TestStorefrontHandler_CheckoutConfirm_RedirectsToEmailVerification_WhenEmai
 	if err != nil {
 		t.Fatalf("CreateCart: %v", err)
 	}
-	if _, err := cartSvc.AddItem(context.Background(), currentCart.ID, out.CustomerID, "var-1", 1); err != nil {
+	if _, err := cartSvc.AddItem(context.Background(), currentCart.ID, out.CustomerID, "var-1", 1, cartApp.AddItemOptions{}); err != nil {
 		t.Fatalf("AddItem: %v", err)
 	}
 
@@ -782,7 +783,7 @@ func TestStorefrontHandler_CheckoutConfirm_ResumesPaymentAfterEmailVerification(
 	if err != nil {
 		t.Fatalf("CreateCart: %v", err)
 	}
-	if _, err := cartSvc.AddItem(context.Background(), currentCart.ID, out.CustomerID, "var-1", 1); err != nil {
+	if _, err := cartSvc.AddItem(context.Background(), currentCart.ID, out.CustomerID, "var-1", 1, cartApp.AddItemOptions{}); err != nil {
 		t.Fatalf("AddItem: %v", err)
 	}
 
@@ -874,7 +875,7 @@ func TestStorefrontHandler_CheckoutAddress_FallsBackToAddressFormOnInvalidResume
 	if err != nil {
 		t.Fatalf("CreateCart: %v", err)
 	}
-	if _, err := cartSvc.AddItem(context.Background(), currentCart.ID, out.CustomerID, "var-1", 1); err != nil {
+	if _, err := cartSvc.AddItem(context.Background(), currentCart.ID, out.CustomerID, "var-1", 1, cartApp.AddItemOptions{}); err != nil {
 		t.Fatalf("AddItem: %v", err)
 	}
 
@@ -936,7 +937,7 @@ func TestStorefrontHandler_CheckoutConfirm_SanitizesServerErrors(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateCart: %v", err)
 	}
-	if _, err := cartSvc.AddItem(context.Background(), currentCart.ID, out.CustomerID, "var-1", 1); err != nil {
+	if _, err := cartSvc.AddItem(context.Background(), currentCart.ID, out.CustomerID, "var-1", 1, cartApp.AddItemOptions{}); err != nil {
 		t.Fatalf("AddItem: %v", err)
 	}
 
@@ -985,7 +986,7 @@ func TestStorefrontHandler_CheckoutShipping_RejectsMissingCSRF(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateCart: %v", err)
 	}
-	if _, err := cartSvc.AddItem(context.Background(), currentCart.ID, "cust-1", "var-1", 1); err != nil {
+	if _, err := cartSvc.AddItem(context.Background(), currentCart.ID, "cust-1", "var-1", 1, cartApp.AddItemOptions{}); err != nil {
 		t.Fatalf("AddItem: %v", err)
 	}
 

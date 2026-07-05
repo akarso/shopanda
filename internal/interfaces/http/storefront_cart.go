@@ -10,7 +10,10 @@ import (
 	"strings"
 	"time"
 
+	cartApp "github.com/akarso/shopanda/internal/application/cart"
+	extensionapp "github.com/akarso/shopanda/internal/application/extension"
 	"github.com/akarso/shopanda/internal/domain/cart"
+	domainext "github.com/akarso/shopanda/internal/domain/extension"
 	"github.com/akarso/shopanda/internal/domain/shared"
 	"github.com/akarso/shopanda/internal/domain/store"
 	"github.com/akarso/shopanda/internal/platform/apperror"
@@ -54,10 +57,20 @@ var storefrontMiniCartTemplate = template.Must(template.New("storefront-mini-car
 
 // StorefrontCartFormData provides the first available add-to-cart action from the PDP.
 type StorefrontCartFormData struct {
-	Action     string
-	VariantID  string
-	Quantity   int
-	RedirectTo string
+	Action           string
+	VariantID        string
+	Quantity         int
+	RedirectTo       string
+	ExtensionFields  []StorefrontCartExtensionField
+}
+
+type StorefrontCartExtensionField struct {
+	Code     string
+	FormName string
+	Label    string
+	Type     string
+	Required bool
+	Options  []string
 }
 
 type StorefrontCartItem struct {
@@ -69,6 +82,12 @@ type StorefrontCartItem struct {
 	Quantity      int
 	UnitPriceText string
 	LineTotalText string
+	Extensions    []StorefrontCartExtensionDisplay
+}
+
+type StorefrontCartExtensionDisplay struct {
+	Label string
+	Value string
 }
 
 type StorefrontCartSummary struct {
@@ -168,7 +187,10 @@ func (h *StorefrontHandler) AddToCart() http.HandlerFunc {
 			return
 		}
 		customerID := storefrontCustomerID(r)
-		if _, err := h.carts.AddItem(r.Context(), currentCart.ID, customerID, variantID, quantity); err != nil {
+		if _, err := h.carts.AddItem(r.Context(), currentCart.ID, customerID, variantID, quantity, cartApp.AddItemOptions{
+			Extensions: h.storefrontExtensionInputsFromForm(r),
+			UpdatedBy:  cartExtensionActor(customerID),
+		}); err != nil {
 			status := http.StatusInternalServerError
 			if apperror.Is(err, apperror.CodeValidation) {
 				status = http.StatusUnprocessableEntity
@@ -332,7 +354,7 @@ func (h *StorefrontHandler) buildCartPageData(r *http.Request, layout Storefront
 		if err != nil {
 			return StorefrontCartPageData{}, err
 		}
-		cartItem, err := h.storefrontCartItem(r, item, lineTotal)
+		cartItem, err := h.storefrontCartItem(r, currentCart.ID, item, lineTotal)
 		if err != nil {
 			return StorefrontCartPageData{}, err
 		}
@@ -347,13 +369,20 @@ func (h *StorefrontHandler) buildCartPageData(r *http.Request, layout Storefront
 	return page, nil
 }
 
-func (h *StorefrontHandler) storefrontCartItem(r *http.Request, item cart.Item, lineTotal shared.Money) (StorefrontCartItem, error) {
+func (h *StorefrontHandler) storefrontCartItem(r *http.Request, cartID string, item cart.Item, lineTotal shared.Money) (StorefrontCartItem, error) {
 	view := StorefrontCartItem{
 		ProductName:   item.VariantID,
 		VariantID:     item.VariantID,
 		Quantity:      item.Quantity,
 		UnitPriceText: formatStorefrontMoney(item.UnitPrice.Amount(), item.UnitPrice.Currency()),
 		LineTotalText: formatStorefrontMoney(lineTotal.Amount(), lineTotal.Currency()),
+	}
+	if h.extensions != nil {
+		extensions, err := cartItemExtensions(r.Context(), h.extensions, cartID, item.VariantID)
+		if err != nil {
+			return StorefrontCartItem{}, err
+		}
+		view.Extensions = storefrontExtensionDisplays(extensions)
 	}
 	if h.variants == nil {
 		return view, nil
@@ -399,10 +428,110 @@ func (h *StorefrontHandler) resolveCartForm(r *http.Request, productID string) *
 		return nil
 	}
 	return &StorefrontCartFormData{
-		Action:     "/cart/add",
-		VariantID:  variants[0].ID,
-		Quantity:   1,
-		RedirectTo: r.URL.Path,
+		Action:          "/cart/add",
+		VariantID:       variants[0].ID,
+		Quantity:        1,
+		RedirectTo:      r.URL.Path,
+		ExtensionFields: h.storefrontCartExtensionFields(),
+	}
+}
+
+func (h *StorefrontHandler) storefrontCartExtensionFields() []StorefrontCartExtensionField {
+	if h.extensions == nil {
+		return nil
+	}
+	fields := extensionapp.PublicFieldsForScope(h.extensions.Registry(), domainext.TargetCartItem)
+	out := make([]StorefrontCartExtensionField, 0, len(fields))
+	for _, field := range fields {
+		out = append(out, StorefrontCartExtensionField{
+			Code:     field.Code,
+			FormName: storefrontExtensionFormName(field.Code),
+			Label:    field.Label,
+			Type:     string(field.Type),
+			Required: field.Validation.Required,
+			Options:  field.Validation.Options,
+		})
+	}
+	return out
+}
+
+const storefrontExtensionFormPrefix = "ext__"
+
+func storefrontExtensionFormName(code string) string {
+	return storefrontExtensionFormPrefix + strings.ReplaceAll(code, ".", "-")
+}
+
+func storefrontExtensionCodeFromFormName(name string) (string, bool) {
+	if !strings.HasPrefix(name, storefrontExtensionFormPrefix) {
+		return "", false
+	}
+	code := strings.TrimPrefix(name, storefrontExtensionFormPrefix)
+	return strings.ReplaceAll(code, "-", "."), true
+}
+
+func (h *StorefrontHandler) storefrontExtensionInputsFromForm(r *http.Request) []domainext.ValueInput {
+	if r == nil {
+		return nil
+	}
+	out := make([]domainext.ValueInput, 0)
+	for key, values := range r.Form {
+		code, ok := storefrontExtensionCodeFromFormName(key)
+		if !ok || len(values) == 0 {
+			continue
+		}
+		raw := values[len(values)-1]
+		value := interface{}(raw)
+		if h.extensions != nil {
+			if field, ok := h.extensions.Registry().Get(code); ok && field.Type == domainext.FieldTypeBool {
+				parsed, err := strconv.ParseBool(raw)
+				if err != nil {
+					continue
+				}
+				value = parsed
+			}
+		}
+		out = append(out, domainext.ValueInput{FieldCode: code, Value: value})
+	}
+	return out
+}
+
+func cartExtensionActor(customerID string) string {
+	if strings.TrimSpace(customerID) != "" {
+		return customerID
+	}
+	return "guest"
+}
+
+func storefrontExtensionDisplays(items []cartItemExtensionResponse) []StorefrontCartExtensionDisplay {
+	if len(items) == 0 {
+		return nil
+	}
+	out := make([]StorefrontCartExtensionDisplay, 0, len(items))
+	for _, item := range items {
+		label := item.Label
+		if label == "" {
+			label = item.FieldCode
+		}
+		out = append(out, StorefrontCartExtensionDisplay{
+			Label: label,
+			Value: formatStorefrontExtensionValue(item.Value),
+		})
+	}
+	return out
+}
+
+func formatStorefrontExtensionValue(value interface{}) string {
+	if value == nil {
+		return ""
+	}
+	switch v := value.(type) {
+	case bool:
+		if v {
+			return "Yes"
+		}
+		return "No"
+	default:
+		return fmt.Sprint(v)
 	}
 }
 

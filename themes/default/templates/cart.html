@@ -15,6 +15,13 @@
             <div class="cart-row__details">
                 <h2>{{ if .ProductSlug }}<a href="/products/{{ .ProductSlug }}">{{ .ProductName }}</a>{{ else }}{{ .ProductName }}{{ end }}</h2>
                 <p>{{ if .VariantName }}{{ .VariantName }} · {{ end }}{{ .VariantSKU }}</p>
+                {{ if .Extensions }}
+                <ul class="cart-row__extensions">
+                    {{ range .Extensions }}
+                    <li><span>{{ .Label }}:</span> {{ .Value }}</li>
+                    {{ end }}
+                </ul>
+                {{ end }}
             </div>
             <div class="cart-row__price">{{ .UnitPriceText }}</div>
             <form class="cart-row__qty" action="/cart/update" method="post" hx-post="/cart/update" hx-target="#cart-page" hx-select="#cart-page" hx-swap="outerHTML">

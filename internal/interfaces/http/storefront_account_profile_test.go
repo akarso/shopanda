@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	appAuth "github.com/akarso/shopanda/internal/application/auth"
+	cartApp "github.com/akarso/shopanda/internal/application/cart"
 	"github.com/akarso/shopanda/internal/application/composition"
 	"github.com/akarso/shopanda/internal/domain/catalog"
 	"github.com/akarso/shopanda/internal/domain/customer"
@@ -420,7 +421,7 @@ func TestStorefrontHandler_CheckoutAddress_PrefillsDefaultAddress(t *testing.T) 
 	if err != nil {
 		t.Fatalf("CreateCart: %v", err)
 	}
-	if _, err := cartSvc.AddItem(context.Background(), currentCart.ID, out.CustomerID, "var-1", 1); err != nil {
+	if _, err := cartSvc.AddItem(context.Background(), currentCart.ID, out.CustomerID, "var-1", 1, cartApp.AddItemOptions{}); err != nil {
 		t.Fatalf("AddItem: %v", err)
 	}
 

@@ -1,11 +1,13 @@
 package http
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"time"
 
 	cartApp "github.com/akarso/shopanda/internal/application/cart"
+	extensionapp "github.com/akarso/shopanda/internal/application/extension"
 	"github.com/akarso/shopanda/internal/domain/cart"
 	"github.com/akarso/shopanda/internal/domain/shared"
 	"github.com/akarso/shopanda/internal/platform/apperror"
@@ -14,12 +16,13 @@ import (
 
 // CartHandler handles cart HTTP endpoints.
 type CartHandler struct {
-	svc *cartApp.Service
+	svc        *cartApp.Service
+	extensions *extensionapp.ValueService
 }
 
 // NewCartHandler creates a new CartHandler.
-func NewCartHandler(svc *cartApp.Service) *CartHandler {
-	return &CartHandler{svc: svc}
+func NewCartHandler(svc *cartApp.Service, extensions *extensionapp.ValueService) *CartHandler {
+	return &CartHandler{svc: svc, extensions: extensions}
 }
 
 // ── request / response types ────────────────────────────────────────────
@@ -29,8 +32,9 @@ type createCartRequest struct {
 }
 
 type addItemRequest struct {
-	VariantID string `json:"variant_id"`
-	Quantity  int    `json:"quantity"`
+	VariantID  string                     `json:"variant_id"`
+	Quantity   int                        `json:"quantity"`
+	Extensions []cartItemExtensionInput   `json:"extensions,omitempty"`
 }
 
 type updateItemRequest struct {
@@ -53,23 +57,29 @@ type cartResponse struct {
 }
 
 type cartItemResponse struct {
-	VariantID string `json:"variant_id"`
-	Quantity  int    `json:"quantity"`
-	UnitPrice int64  `json:"unit_price"`
-	Currency  string `json:"currency"`
-	LineTotal int64  `json:"line_total"`
+	VariantID  string                      `json:"variant_id"`
+	Quantity   int                         `json:"quantity"`
+	UnitPrice  int64                       `json:"unit_price"`
+	Currency   string                      `json:"currency"`
+	LineTotal  int64                       `json:"line_total"`
+	Extensions []cartItemExtensionResponse `json:"extensions,omitempty"`
 }
 
-func toCartResponse(c *cart.Cart) cartResponse {
+func (h *CartHandler) toCartResponse(ctx context.Context, c *cart.Cart) (cartResponse, error) {
 	items := make([]cartItemResponse, len(c.Items))
 	for i, item := range c.Items {
 		lineTotal, _ := item.UnitPrice.MulChecked(int64(item.Quantity))
+		extensions, err := cartItemExtensions(ctx, h.extensions, c.ID, item.VariantID)
+		if err != nil {
+			return cartResponse{}, err
+		}
 		items[i] = cartItemResponse{
-			VariantID: item.VariantID,
-			Quantity:  item.Quantity,
-			UnitPrice: item.UnitPrice.Amount(),
-			Currency:  item.UnitPrice.Currency(),
-			LineTotal: lineTotal.Amount(),
+			VariantID:  item.VariantID,
+			Quantity:   item.Quantity,
+			UnitPrice:  item.UnitPrice.Amount(),
+			Currency:   item.UnitPrice.Currency(),
+			LineTotal:  lineTotal.Amount(),
+			Extensions: extensions,
 		}
 	}
 	return cartResponse{
@@ -81,7 +91,16 @@ func toCartResponse(c *cart.Cart) cartResponse {
 		Items:      items,
 		CreatedAt:  c.CreatedAt.UTC().Format(time.RFC3339),
 		UpdatedAt:  c.UpdatedAt.UTC().Format(time.RFC3339),
+	}, nil
+}
+
+func (h *CartHandler) writeCart(w http.ResponseWriter, r *http.Request, c *cart.Cart, status int) {
+	resp, err := h.toCartResponse(r.Context(), c)
+	if err != nil {
+		JSONError(w, extensionapp.MapValueError(err))
+		return
 	}
+	JSON(w, status, map[string]interface{}{"cart": resp})
 }
 
 // ── handlers ────────────────────────────────────────────────────────────
@@ -106,9 +125,7 @@ func (h *CartHandler) Create() http.HandlerFunc {
 			return
 		}
 
-		JSON(w, http.StatusCreated, map[string]interface{}{
-			"cart": toCartResponse(c),
-		})
+		h.writeCart(w, r, c, http.StatusCreated)
 	}
 }
 
@@ -127,9 +144,7 @@ func (h *CartHandler) Get() http.HandlerFunc {
 			return
 		}
 
-		JSON(w, http.StatusOK, map[string]interface{}{
-			"cart": toCartResponse(c),
-		})
+		h.writeCart(w, r, c, http.StatusOK)
 	}
 }
 
@@ -157,15 +172,16 @@ func (h *CartHandler) AddItem() http.HandlerFunc {
 		}
 
 		userID := auth.IdentityFrom(r.Context()).UserID
-		c, err := h.svc.AddItem(r.Context(), cartID, userID, req.VariantID, req.Quantity)
+		c, err := h.svc.AddItem(r.Context(), cartID, userID, req.VariantID, req.Quantity, cartApp.AddItemOptions{
+			Extensions: extensionInputsFromRequest(req.Extensions),
+			UpdatedBy:  userID,
+		})
 		if err != nil {
-			JSONError(w, err)
+			JSONError(w, extensionapp.MapValueError(err))
 			return
 		}
 
-		JSON(w, http.StatusOK, map[string]interface{}{
-			"cart": toCartResponse(c),
-		})
+		h.writeCart(w, r, c, http.StatusOK)
 	}
 }
 
@@ -200,9 +216,7 @@ func (h *CartHandler) UpdateItem() http.HandlerFunc {
 			return
 		}
 
-		JSON(w, http.StatusOK, map[string]interface{}{
-			"cart": toCartResponse(c),
-		})
+		h.writeCart(w, r, c, http.StatusOK)
 	}
 }
 
@@ -227,9 +241,7 @@ func (h *CartHandler) RemoveItem() http.HandlerFunc {
 			return
 		}
 
-		JSON(w, http.StatusOK, map[string]interface{}{
-			"cart": toCartResponse(c),
-		})
+		h.writeCart(w, r, c, http.StatusOK)
 	}
 }
 
@@ -259,9 +271,7 @@ func (h *CartHandler) ApplyCoupon() http.HandlerFunc {
 			return
 		}
 
-		JSON(w, http.StatusOK, map[string]interface{}{
-			"cart": toCartResponse(c),
-		})
+		h.writeCart(w, r, c, http.StatusOK)
 	}
 }
 
@@ -281,8 +291,6 @@ func (h *CartHandler) RemoveCoupon() http.HandlerFunc {
 			return
 		}
 
-		JSON(w, http.StatusOK, map[string]interface{}{
-			"cart": toCartResponse(c),
-		})
+		h.writeCart(w, r, c, http.StatusOK)
 	}
 }
