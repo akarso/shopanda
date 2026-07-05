@@ -127,7 +127,7 @@ Recommended order: **A (700–702)** → **B (703–704)** → **C (705–706)**
 | PR | License | Title | Short description |
 | --- | --- | --- | --- |
 | PR-707 | [oss] | Dynamic hook registry | Plugin register hook handlers; catalog endpoint; ordered chain execution |
-| PR-708 | [oss] | Slot registry + storefront markers | Template slot markers; renderer registry; deterministic render on PDP and cart |
+| PR-708 | [oss] | Slot registry + storefront markers | Slot anchors with before/after/prepend/append placements; renderer registry; PDP + cart |
 
 **Out of scope:** Full page builder, hook debugging UI.
 

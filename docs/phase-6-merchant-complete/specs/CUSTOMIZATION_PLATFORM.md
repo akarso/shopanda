@@ -204,6 +204,48 @@ Support:
 
 Plugins register renderers against slot names with deterministic ordering.
 
+#### 9.2.1 Slot anchor placements
+
+Each slot is anchored to a **container** in theme markup. Renderers declare one of four placements relative to that container:
+
+| Placement | Position |
+| --- | --- |
+| `before` | Outside the container, immediately before its opening tag |
+| `after` | Outside the container, immediately after its closing tag |
+| `prepend` | Inside the container, as the first child (right after the opening tag) |
+| `append` | Inside the container, as the last child (right before the closing tag) |
+
+Example container wrapper (preferred for new markup):
+
+```html
+{{slot_container "pdp.price"}}
+<div class="product-price">...</div>
+{{/slot_container}}
+```
+
+The theme engine emits, in order: `before` renderers → opening tag → `prepend` → inner content → `append` → closing tag → `after` renderers.
+
+Explicit markers are also supported when wrapping existing markup is awkward:
+
+```html
+{{slot "pdp.price" "before"}}
+<div class="product-price">
+  {{slot "pdp.price" "prepend"}}
+  ...
+  {{slot "pdp.price" "append"}}
+</div>
+{{slot "pdp.price" "after"}}
+```
+
+Plugin registration pairs anchor name + placement (same anchor, different placements compose independently):
+
+```go
+app.Slots().RegisterRenderer("pdp.price", slot.PlacementAppend, 100, renderBadge)
+app.Slots().RegisterRenderer("pdp.price", slot.PlacementBefore, 200, renderPromoStrip)
+```
+
+Multiple renderers for the same `(anchor, placement)` run in ascending priority order.
+
 ### 9.3 Multi-plugin composition
 
 **Chain handlers, not plugins.** Many plugins compose through ordered pipelines, workflows, and hook chains that share a mutable context — not through plugin-to-plugin imports or runtime dependency graphs.

@@ -304,6 +304,13 @@ func runServe(cfg *config.Config, log logger.Logger, embedScheduler bool) error 
 	}
 	pluginApp.SetExtensionRegistry(extensionRegistry)
 	summary := registry.InitAll(pluginApp)
+	extensionFieldRepo, err := postgres.NewExtensionFieldRepo(conn)
+	if err != nil {
+		return err
+	}
+	if err := extensionRegistry.LoadPersisted(context.Background(), extensionFieldRepo); err != nil {
+		return fmt.Errorf("load extension fields: %w", err)
+	}
 	if err := plugin.LoadPersisted(context.Background(), configRepo, cfg, registry.ConfigRegistry()); err != nil {
 		return fmt.Errorf("load plugin config: %w", err)
 	}
