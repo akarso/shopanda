@@ -4,7 +4,7 @@ Planned specs for **PR-700–710** (Summary, Why, Scope, Out of scope, Validatio
 
 | PR | Track | License | Status | Spec |
 | --- | --- | --- | --- | --- |
-| PR-700 | A | [oss] | planned | [Extension field domain + registry](PR-700.md) |
+| PR-700 | A | [oss] | done | [Extension field domain + registry](PR-700.md) |
 | PR-701 | A | [oss] | planned | [Field definition persistence](PR-701.md) |
 | PR-702 | A | [oss] | planned | [Admin field registry API](PR-702.md) |
 | PR-703 | B | [oss] | planned | [Extension value storage + API](PR-703.md) |
@@ -18,6 +18,6 @@ Planned specs for **PR-700–710** (Summary, Why, Scope, Out of scope, Validatio
 
 Roadmap: [`../ROADMAP.md`](../ROADMAP.md) · Architecture: [`../specs/CUSTOMIZATION_PLATFORM.md`](../specs/CUSTOMIZATION_PLATFORM.md) · Upstream: [Phase 6](../../phase-6-merchant-complete/ROADMAP.md)
 
-**Suggested first PR:** PR-700 (extension field domain + registry service).
+**Suggested next PR:** PR-701 (field definition persistence).
 
 **Rule for Phase 7:** Extension field writes must go through the registry service — no ad hoc JSON columns in core entities.
