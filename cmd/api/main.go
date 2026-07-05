@@ -308,9 +308,10 @@ func runServe(cfg *config.Config, log logger.Logger, embedScheduler bool) error 
 	if err != nil {
 		return err
 	}
-	if err := extensionRegistry.LoadPersisted(context.Background(), extensionFieldRepo); err != nil {
+	if err := extensionRegistry.LoadPersisted(context.Background(), extensionFieldRepo, log); err != nil {
 		return fmt.Errorf("load extension fields: %w", err)
 	}
+	extensionFieldService := extensionApp.NewFieldService(extensionRegistry, extensionFieldRepo)
 	if err := plugin.LoadPersisted(context.Background(), configRepo, cfg, registry.ConfigRegistry()); err != nil {
 		return fmt.Errorf("load plugin config: %w", err)
 	}
@@ -783,6 +784,7 @@ func runServe(cfg *config.Config, log logger.Logger, embedScheduler bool) error 
 	couponAdmin := shophttp.NewCouponAdminHandlerWithAuditor(couponRepo, promotionRepo, sharedAuditor)
 	promotionAdmin := shophttp.NewPromotionAdminHandlerWithAuditor(promotionRepo, sharedAuditor)
 	attributeAdmin := shophttp.NewAttributeAdminHandlerWithAuditor(attributeStore, sharedAuditor)
+	extensionFieldAdmin := shophttp.NewExtensionFieldAdminHandlerWithAuditor(extensionFieldService, sharedAuditor)
 	inventoryAdmin := shophttp.NewInventoryAdminHandlerWithAuditor(stockRepo, variantRepo, sharedAuditor)
 	storeAdmin := shophttp.NewStoreAdminHandlerWithAuditor(storeRepo, bus, sharedAuditor)
 	auditLogAdmin := shophttp.NewAuditLogAdminHandler(auditLogRepo, sharedAuditor)
@@ -858,6 +860,8 @@ func runServe(cfg *config.Config, log logger.Logger, embedScheduler bool) error 
 	requireShippingRead := shophttp.RequirePermission(rbac.ShippingRead)
 	requireShippingWrite := shophttp.RequirePermission(rbac.ShippingWrite)
 	requireAuditRead := shophttp.RequirePermission(rbac.AuditRead)
+	requireExtensionsRead := shophttp.RequirePermission(rbac.ExtensionsRead)
+	requireExtensionsWrite := shophttp.RequirePermission(rbac.ExtensionsWrite)
 
 	// Auth routes.
 	router.HandleFunc("POST /api/v1/auth/register", authHandler.Register())
@@ -1020,6 +1024,11 @@ func runServe(cfg *config.Config, log logger.Logger, embedScheduler bool) error 
 	router.Handle("POST /api/v1/admin/attribute-groups", requireCategoriesWrite(attributeAdmin.CreateGroup()))
 	router.Handle("PUT /api/v1/admin/attribute-groups/{code}", requireCategoriesWrite(attributeAdmin.UpdateGroup()))
 	router.Handle("DELETE /api/v1/admin/attribute-groups/{code}", requireCategoriesWrite(attributeAdmin.DeleteGroup()))
+	router.Handle("GET /api/v1/admin/extensions/fields", requireExtensionsRead(extensionFieldAdmin.ListFields()))
+	router.Handle("GET /api/v1/admin/extensions/fields/{code}", requireExtensionsRead(extensionFieldAdmin.GetField()))
+	router.Handle("POST /api/v1/admin/extensions/fields", requireExtensionsWrite(extensionFieldAdmin.CreateField()))
+	router.Handle("PUT /api/v1/admin/extensions/fields/{code}", requireExtensionsWrite(extensionFieldAdmin.UpdateField()))
+	router.Handle("DELETE /api/v1/admin/extensions/fields/{code}", requireExtensionsWrite(extensionFieldAdmin.DeleteField()))
 	router.Handle("GET /api/v1/admin/inventory", requireProductsRead(inventoryAdmin.List()))
 	router.Handle("PUT /api/v1/admin/inventory/{variantId}", requireProductsWrite(inventoryAdmin.Adjust()))
 	router.Handle("GET /api/v1/admin/stores", requireSettingsRead(storeAdmin.List()))

@@ -25,6 +25,38 @@ func NewExtensionFieldRepo(db *sql.DB) (*ExtensionFieldRepo, error) {
 	return &ExtensionFieldRepo{db: db}, nil
 }
 
+// Create inserts a new active field or restores a soft-deleted row.
+func (r *ExtensionFieldRepo) Create(ctx context.Context, field domainext.ExtensionField) error {
+	if field.Code == "" {
+		return fmt.Errorf("extension_field_repo: create: empty code")
+	}
+	definition, err := json.Marshal(field)
+	if err != nil {
+		return fmt.Errorf("extension_field_repo: create: marshal definition: %w", err)
+	}
+	now := time.Now().UTC()
+	const q = `INSERT INTO extension_fields (code, definition, created_at, updated_at, deleted_at)
+		VALUES ($1, $2, $3, $3, NULL)
+		ON CONFLICT (code) DO UPDATE SET
+			definition = EXCLUDED.definition,
+			updated_at = EXCLUDED.updated_at,
+			deleted_at = NULL
+		WHERE extension_fields.deleted_at IS NOT NULL
+		RETURNING code`
+	var returnedCode string
+	err = r.db.QueryRowContext(ctx, q, field.Code, definition, now).Scan(&returnedCode)
+	if err == nil {
+		return nil
+	}
+	if errors.Is(err, sql.ErrNoRows) {
+		if _, findErr := r.FindByCode(ctx, field.Code); findErr == nil {
+			return apperror.Conflict("extension field already exists")
+		}
+		return fmt.Errorf("extension_field_repo: create: field %q was not persisted", field.Code)
+	}
+	return fmt.Errorf("extension_field_repo: create: %w", err)
+}
+
 // Save upserts an extension field definition.
 func (r *ExtensionFieldRepo) Save(ctx context.Context, field domainext.ExtensionField) error {
 	if field.Code == "" {

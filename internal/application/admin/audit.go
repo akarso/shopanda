@@ -93,6 +93,12 @@ const (
 	AuditAttributeGroupUpdate AuditAction = "attribute_group.update"
 	AuditAttributeGroupDelete AuditAction = "attribute_group.delete"
 
+	// Extension field operations
+	AuditExtensionFieldRead   AuditAction = "extension_field.read"
+	AuditExtensionFieldCreate AuditAction = "extension_field.create"
+	AuditExtensionFieldUpdate AuditAction = "extension_field.update"
+	AuditExtensionFieldDelete AuditAction = "extension_field.delete"
+
 	AuditReturnList    AuditAction = "return.list"
 	AuditReturnRead    AuditAction = "return.read"
 	AuditReturnApprove AuditAction = "return.approve"

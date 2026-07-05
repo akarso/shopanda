@@ -12,6 +12,10 @@ type stubFieldRepo struct {
 	fields []domainext.ExtensionField
 }
 
+func (s *stubFieldRepo) Create(_ context.Context, field domainext.ExtensionField) error {
+	panic("not implemented")
+}
+
 func (s *stubFieldRepo) Save(context.Context, domainext.ExtensionField) error {
 	panic("not implemented")
 }
@@ -68,7 +72,7 @@ func TestRegistry_LoadPersisted_MergesWithPluginFields(t *testing.T) {
 		},
 	}}
 
-	if err := reg.LoadPersisted(context.Background(), repo); err != nil {
+	if err := reg.LoadPersisted(context.Background(), repo, nil); err != nil {
 		t.Fatalf("LoadPersisted: %v", err)
 	}
 
