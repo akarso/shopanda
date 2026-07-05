@@ -583,6 +583,32 @@ func TestAdminHandler_StaticJS(t *testing.T) {
 			t.Fatalf("expected reviews wiring %q in JS", expected)
 		}
 	}
+	expectedProductExtensionsWiring := []string{
+		"setupProductExtensionsPanel",
+		"product-extensions-panel",
+		"product-extensions-form",
+		"renderExtensionFieldWidget",
+		"collectExtensionValues",
+		"filterProductExtensionFields",
+		"buildExtensionValueLookup",
+		"/admin/extensions/fields",
+		"/admin/products/",
+		"/extensions",
+		"target_type=product",
+		"Save Extensions",
+		"Extensions saved.",
+		"Failed to load extension fields.",
+		"Failed to load extension values.",
+		"Failed to save extensions.",
+		"extensions.read",
+		"extensions.write",
+		"Your account can view extensions but cannot save changes without extensions write access.",
+	}
+	for _, expected := range expectedProductExtensionsWiring {
+		if !strings.Contains(normalizedBody, expected) {
+			t.Fatalf("expected product extensions wiring %q in JS", expected)
+		}
+	}
 	expectedAbandonedCartWiring := []string{
 		"renderAbandonedCartSettingsPage",
 		"renderAbandonedCartSettingsForm",
