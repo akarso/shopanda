@@ -312,6 +312,11 @@ func runServe(cfg *config.Config, log logger.Logger, embedScheduler bool) error 
 		return fmt.Errorf("load extension fields: %w", err)
 	}
 	extensionFieldService := extensionApp.NewFieldService(extensionRegistry, extensionFieldRepo)
+	extensionValueRepo, err := postgres.NewExtensionValueRepo(conn)
+	if err != nil {
+		return err
+	}
+	extensionValueService := extensionApp.NewValueService(extensionRegistry, extensionValueRepo)
 	if err := plugin.LoadPersisted(context.Background(), configRepo, cfg, registry.ConfigRegistry()); err != nil {
 		return fmt.Errorf("load plugin config: %w", err)
 	}
@@ -785,6 +790,7 @@ func runServe(cfg *config.Config, log logger.Logger, embedScheduler bool) error 
 	promotionAdmin := shophttp.NewPromotionAdminHandlerWithAuditor(promotionRepo, sharedAuditor)
 	attributeAdmin := shophttp.NewAttributeAdminHandlerWithAuditor(attributeStore, sharedAuditor)
 	extensionFieldAdmin := shophttp.NewExtensionFieldAdminHandlerWithAuditor(extensionFieldService, sharedAuditor)
+	extensionValueAdmin := shophttp.NewExtensionValueAdminHandlerWithAuditor(extensionValueService, sharedAuditor)
 	inventoryAdmin := shophttp.NewInventoryAdminHandlerWithAuditor(stockRepo, variantRepo, sharedAuditor)
 	storeAdmin := shophttp.NewStoreAdminHandlerWithAuditor(storeRepo, bus, sharedAuditor)
 	auditLogAdmin := shophttp.NewAuditLogAdminHandler(auditLogRepo, sharedAuditor)
@@ -1029,6 +1035,11 @@ func runServe(cfg *config.Config, log logger.Logger, embedScheduler bool) error 
 	router.Handle("POST /api/v1/admin/extensions/fields", requireExtensionsWrite(extensionFieldAdmin.CreateField()))
 	router.Handle("PUT /api/v1/admin/extensions/fields/{code}", requireExtensionsWrite(extensionFieldAdmin.UpdateField()))
 	router.Handle("DELETE /api/v1/admin/extensions/fields/{code}", requireExtensionsWrite(extensionFieldAdmin.DeleteField()))
+	router.Handle("GET /api/v1/admin/extensions/values/{targetType}/{targetID}", requireExtensionsRead(extensionValueAdmin.ListValues()))
+	router.Handle("PUT /api/v1/admin/extensions/values/{targetType}/{targetID}", requireExtensionsWrite(extensionValueAdmin.PutValues()))
+	router.Handle("DELETE /api/v1/admin/extensions/values/{targetType}/{targetID}/{fieldCode}", requireExtensionsWrite(extensionValueAdmin.DeleteValue()))
+	router.Handle("GET /api/v1/admin/products/{id}/extensions", requireExtensionsRead(extensionValueAdmin.ListProductExtensions()))
+	router.Handle("PUT /api/v1/admin/products/{id}/extensions", requireExtensionsWrite(extensionValueAdmin.PutProductExtensions()))
 	router.Handle("GET /api/v1/admin/inventory", requireProductsRead(inventoryAdmin.List()))
 	router.Handle("PUT /api/v1/admin/inventory/{variantId}", requireProductsWrite(inventoryAdmin.Adjust()))
 	router.Handle("GET /api/v1/admin/stores", requireSettingsRead(storeAdmin.List()))
