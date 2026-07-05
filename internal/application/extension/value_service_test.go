@@ -36,6 +36,15 @@ func (m *memValueRepo) Upsert(_ context.Context, value domainext.Value) error {
 	return nil
 }
 
+func (m *memValueRepo) UpsertBatch(_ context.Context, values []domainext.Value) error {
+	for _, value := range values {
+		if err := m.Upsert(context.Background(), value); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 func (m *memValueRepo) Delete(_ context.Context, target domainext.Target, fieldCode string) error {
 	key := valueKey(target, fieldCode)
 	if _, ok := m.values[key]; !ok {
@@ -138,6 +147,47 @@ func TestValueService_ValidationFailed(t *testing.T) {
 	}, "admin-1", false)
 	if err == nil || !domainext.IsValidationError(err) {
 		t.Fatalf("UpsertBatch err = %v, want validation error", err)
+	}
+}
+
+func TestValueService_EmptyUpdatedByRejected(t *testing.T) {
+	reg := extensionapp.NewRegistry()
+	registerValueField(t, reg, domainext.FieldDef{
+		Code:        "acme.note",
+		Label:       "Note",
+		Type:        domainext.FieldTypeString,
+		Scope:       domainext.TargetProduct,
+		StorageMode: domainext.StorageStored,
+	})
+	svc := extensionapp.NewValueService(reg, newMemValueRepo())
+	target := domainext.Target{Type: domainext.TargetProduct, ID: "prod-1"}
+
+	_, err := svc.UpsertBatch(context.Background(), target, []domainext.ValueInput{
+		{FieldCode: "acme.note", Value: "hello"},
+	}, "   ", false)
+	if err == nil || !domainext.IsValidationError(err) {
+		t.Fatalf("UpsertBatch err = %v, want validation error for empty updated_by", err)
+	}
+}
+
+func TestValueService_DuplicateFieldCodeRejected(t *testing.T) {
+	reg := extensionapp.NewRegistry()
+	registerValueField(t, reg, domainext.FieldDef{
+		Code:        "acme.note",
+		Label:       "Note",
+		Type:        domainext.FieldTypeString,
+		Scope:       domainext.TargetProduct,
+		StorageMode: domainext.StorageStored,
+	})
+	svc := extensionapp.NewValueService(reg, newMemValueRepo())
+	target := domainext.Target{Type: domainext.TargetProduct, ID: "prod-1"}
+
+	_, err := svc.UpsertBatch(context.Background(), target, []domainext.ValueInput{
+		{FieldCode: "acme.note", Value: "first"},
+		{FieldCode: "acme.note", Value: "second"},
+	}, "admin-1", false)
+	if err == nil || !domainext.IsValidationError(err) {
+		t.Fatalf("UpsertBatch err = %v, want validation error for duplicate field_code", err)
 	}
 }
 

@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
 	"regexp"
 	"strconv"
 	"strings"
@@ -61,6 +62,9 @@ func PayloadFromInput(field ExtensionField, raw interface{}) (ValuePayload, erro
 	case FieldTypeInt, FieldTypeMoney:
 		switch v := raw.(type) {
 		case float64:
+			if math.Trunc(v) != v {
+				return ValuePayload{}, ValidationErrf("extension field %q: value must be an integer", field.Code)
+			}
 			i := int64(v)
 			return ValuePayload{IntValue: &i}, nil
 		case json.Number:

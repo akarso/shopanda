@@ -43,6 +43,15 @@ func (m *mockExtensionValueRepo) Upsert(_ context.Context, value domainext.Value
 	return nil
 }
 
+func (m *mockExtensionValueRepo) UpsertBatch(_ context.Context, values []domainext.Value) error {
+	for _, value := range values {
+		if err := m.Upsert(context.Background(), value); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 func (m *mockExtensionValueRepo) Delete(_ context.Context, target domainext.Target, fieldCode string) error {
 	key := valueStoreKey(target, fieldCode)
 	if _, ok := m.values[key]; !ok {

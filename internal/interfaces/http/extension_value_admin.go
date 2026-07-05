@@ -14,6 +14,8 @@ import (
 	"github.com/akarso/shopanda/internal/platform/logger"
 )
 
+const maxExtensionValueBodyBytes int64 = 1 << 20 // 1 MiB
+
 // ExtensionValueAdminHandler serves extension value admin endpoints.
 type ExtensionValueAdminHandler struct {
 	values  *extensionapp.ValueService
@@ -165,27 +167,61 @@ func writeIncludesPrivateField(registry *extensionapp.Registry, inputs []domaine
 	return false
 }
 
+func (h *ExtensionValueAdminHandler) listValues(w http.ResponseWriter, r *http.Request, target domainext.Target) {
+	includePrivate := includePrivateExtensionValues(r)
+	values, err := h.values.List(r.Context(), target, includePrivate)
+	if err != nil {
+		apiErr := extensionValueAPIError(err)
+		h.auditValue(r, admin.AuditExtensionValueRead, target, "", includePrivate, apiErr)
+		JSONError(w, apiErr)
+		return
+	}
+	resp, err := toExtensionValueResponses(values, h.values.Registry())
+	if err != nil {
+		apiErr := extensionValueAPIError(err)
+		h.auditValue(r, admin.AuditExtensionValueRead, target, "", includePrivate, apiErr)
+		JSONError(w, apiErr)
+		return
+	}
+	h.auditValue(r, admin.AuditExtensionValueRead, target, "", includePrivate, nil)
+	JSON(w, http.StatusOK, map[string]interface{}{"values": resp})
+}
+
+func (h *ExtensionValueAdminHandler) putValues(w http.ResponseWriter, r *http.Request, target domainext.Target) {
+	var req extensionValueWriteRequest
+	dec := json.NewDecoder(http.MaxBytesReader(w, r.Body, maxExtensionValueBodyBytes))
+	if err := dec.Decode(&req); err != nil {
+		apiErr := apperror.Validation("invalid request body")
+		h.auditValue(r, admin.AuditExtensionValueUpdate, target, "", false, apiErr)
+		JSONError(w, apiErr)
+		return
+	}
+	inputs := valueInputsFromRequest(req)
+	private := writeIncludesPrivateField(h.values.Registry(), inputs)
+	canAccessPrivate := canAccessPrivateExtensionFields(r)
+	values, err := h.values.UpsertBatch(r.Context(), target, inputs, adminIDFromRequest(r), canAccessPrivate)
+	if err != nil {
+		apiErr := extensionValueAPIError(err)
+		h.auditValue(r, admin.AuditExtensionValueUpdate, target, "", private, apiErr)
+		JSONError(w, apiErr)
+		return
+	}
+	resp, err := toExtensionValueResponses(values, h.values.Registry())
+	if err != nil {
+		apiErr := extensionValueAPIError(err)
+		h.auditValue(r, admin.AuditExtensionValueUpdate, target, "", private, apiErr)
+		JSONError(w, apiErr)
+		return
+	}
+	h.auditValue(r, admin.AuditExtensionValueUpdate, target, "", private, nil)
+	JSON(w, http.StatusOK, map[string]interface{}{"values": resp})
+}
+
 // ListValues handles GET /api/v1/admin/extensions/values/{targetType}/{targetID}.
 func (h *ExtensionValueAdminHandler) ListValues() http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		target := targetFromRequest(r.PathValue("targetType"), r.PathValue("targetID"))
-		includePrivate := includePrivateExtensionValues(r)
-		values, err := h.values.List(r.Context(), target, includePrivate)
-		if err != nil {
-			apiErr := extensionValueAPIError(err)
-			h.auditValue(r, admin.AuditExtensionValueRead, target, "", includePrivate, apiErr)
-			JSONError(w, apiErr)
-			return
-		}
-		resp, err := toExtensionValueResponses(values, h.values.Registry())
-		if err != nil {
-			apiErr := extensionValueAPIError(err)
-			h.auditValue(r, admin.AuditExtensionValueRead, target, "", includePrivate, apiErr)
-			JSONError(w, apiErr)
-			return
-		}
-		h.auditValue(r, admin.AuditExtensionValueRead, target, "", includePrivate, nil)
-		JSON(w, http.StatusOK, map[string]interface{}{"values": resp})
+		h.listValues(w, r, target)
 	}
 }
 
@@ -193,32 +229,7 @@ func (h *ExtensionValueAdminHandler) ListValues() http.HandlerFunc {
 func (h *ExtensionValueAdminHandler) PutValues() http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		target := targetFromRequest(r.PathValue("targetType"), r.PathValue("targetID"))
-		var req extensionValueWriteRequest
-		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-			apiErr := apperror.Validation("invalid request body")
-			h.auditValue(r, admin.AuditExtensionValueUpdate, target, "", false, apiErr)
-			JSONError(w, apiErr)
-			return
-		}
-		inputs := valueInputsFromRequest(req)
-		canAccessPrivate := canAccessPrivateExtensionFields(r)
-		values, err := h.values.UpsertBatch(r.Context(), target, inputs, adminIDFromRequest(r), canAccessPrivate)
-		if err != nil {
-			apiErr := extensionValueAPIError(err)
-			private := writeIncludesPrivateField(h.values.Registry(), inputs)
-			h.auditValue(r, admin.AuditExtensionValueUpdate, target, "", private, apiErr)
-			JSONError(w, apiErr)
-			return
-		}
-		resp, err := toExtensionValueResponses(values, h.values.Registry())
-		if err != nil {
-			apiErr := extensionValueAPIError(err)
-			h.auditValue(r, admin.AuditExtensionValueUpdate, target, "", writeIncludesPrivateField(h.values.Registry(), inputs), apiErr)
-			JSONError(w, apiErr)
-			return
-		}
-		h.auditValue(r, admin.AuditExtensionValueUpdate, target, "", writeIncludesPrivateField(h.values.Registry(), inputs), nil)
-		JSON(w, http.StatusOK, map[string]interface{}{"values": resp})
+		h.putValues(w, r, target)
 	}
 }
 
@@ -227,15 +238,16 @@ func (h *ExtensionValueAdminHandler) DeleteValue() http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		target := targetFromRequest(r.PathValue("targetType"), r.PathValue("targetID"))
 		fieldCode := strings.TrimSpace(r.PathValue("fieldCode"))
+		private := isPrivateField(h.values.Registry(), fieldCode)
 		canAccessPrivate := canAccessPrivateExtensionFields(r)
 		err := h.values.Delete(r.Context(), target, fieldCode, canAccessPrivate)
 		if err != nil {
 			apiErr := extensionValueAPIError(err)
-			h.auditValue(r, admin.AuditExtensionValueDelete, target, fieldCode, isPrivateField(h.values.Registry(), fieldCode), apiErr)
+			h.auditValue(r, admin.AuditExtensionValueDelete, target, fieldCode, private, apiErr)
 			JSONError(w, apiErr)
 			return
 		}
-		h.auditValue(r, admin.AuditExtensionValueDelete, target, fieldCode, isPrivateField(h.values.Registry(), fieldCode), nil)
+		h.auditValue(r, admin.AuditExtensionValueDelete, target, fieldCode, private, nil)
 		JSON(w, http.StatusOK, map[string]interface{}{"deleted": true})
 	}
 }
@@ -247,23 +259,7 @@ func (h *ExtensionValueAdminHandler) ListProductExtensions() http.HandlerFunc {
 			Type: domainext.TargetProduct,
 			ID:   strings.TrimSpace(r.PathValue("id")),
 		}
-		includePrivate := includePrivateExtensionValues(r)
-		values, err := h.values.List(r.Context(), target, includePrivate)
-		if err != nil {
-			apiErr := extensionValueAPIError(err)
-			h.auditValue(r, admin.AuditExtensionValueRead, target, "", includePrivate, apiErr)
-			JSONError(w, apiErr)
-			return
-		}
-		resp, err := toExtensionValueResponses(values, h.values.Registry())
-		if err != nil {
-			apiErr := extensionValueAPIError(err)
-			h.auditValue(r, admin.AuditExtensionValueRead, target, "", includePrivate, apiErr)
-			JSONError(w, apiErr)
-			return
-		}
-		h.auditValue(r, admin.AuditExtensionValueRead, target, "", includePrivate, nil)
-		JSON(w, http.StatusOK, map[string]interface{}{"values": resp})
+		h.listValues(w, r, target)
 	}
 }
 
@@ -274,31 +270,6 @@ func (h *ExtensionValueAdminHandler) PutProductExtensions() http.HandlerFunc {
 			Type: domainext.TargetProduct,
 			ID:   strings.TrimSpace(r.PathValue("id")),
 		}
-		var req extensionValueWriteRequest
-		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-			apiErr := apperror.Validation("invalid request body")
-			h.auditValue(r, admin.AuditExtensionValueUpdate, target, "", false, apiErr)
-			JSONError(w, apiErr)
-			return
-		}
-		inputs := valueInputsFromRequest(req)
-		canAccessPrivate := canAccessPrivateExtensionFields(r)
-		values, err := h.values.UpsertBatch(r.Context(), target, inputs, adminIDFromRequest(r), canAccessPrivate)
-		if err != nil {
-			apiErr := extensionValueAPIError(err)
-			private := writeIncludesPrivateField(h.values.Registry(), inputs)
-			h.auditValue(r, admin.AuditExtensionValueUpdate, target, "", private, apiErr)
-			JSONError(w, apiErr)
-			return
-		}
-		resp, err := toExtensionValueResponses(values, h.values.Registry())
-		if err != nil {
-			apiErr := extensionValueAPIError(err)
-			h.auditValue(r, admin.AuditExtensionValueUpdate, target, "", writeIncludesPrivateField(h.values.Registry(), inputs), apiErr)
-			JSONError(w, apiErr)
-			return
-		}
-		h.auditValue(r, admin.AuditExtensionValueUpdate, target, "", writeIncludesPrivateField(h.values.Registry(), inputs), nil)
-		JSON(w, http.StatusOK, map[string]interface{}{"values": resp})
+		h.putValues(w, r, target)
 	}
 }

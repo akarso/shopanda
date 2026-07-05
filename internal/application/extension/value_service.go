@@ -66,14 +66,24 @@ func (s *ValueService) UpsertBatch(ctx context.Context, target domainext.Target,
 	if len(inputs) == 0 {
 		return nil, domainext.ValidationErr("values must not be empty")
 	}
+	updatedBy = strings.TrimSpace(updatedBy)
+	if updatedBy == "" {
+		return nil, domainext.ValidationErr("updated_by must not be empty")
+	}
 
 	now := time.Now().UTC()
 	out := make([]domainext.Value, 0, len(inputs))
+	seen := make(map[string]struct{}, len(inputs))
 	for _, input := range inputs {
 		code := strings.TrimSpace(input.FieldCode)
 		if code == "" {
 			return nil, domainext.ValidationErr("field_code must not be empty")
 		}
+		if _, dup := seen[code]; dup {
+			return nil, domainext.ValidationErrf("duplicate field_code %q in batch", code)
+		}
+		seen[code] = struct{}{}
+
 		field, ok := s.registry.Get(code)
 		if !ok {
 			return nil, domainext.ErrUnknownFieldCode
@@ -90,27 +100,24 @@ func (s *ValueService) UpsertBatch(ctx context.Context, target domainext.Target,
 
 		payload, err := domainext.PayloadFromInput(field, input.Value)
 		if err != nil {
-			if domainext.IsValidationError(err) {
-				return nil, err
-			}
 			return nil, err
 		}
 		if err := domainext.ValidatePayload(field, payload); err != nil {
 			return nil, err
 		}
 
-		value := domainext.Value{
+		out = append(out, domainext.Value{
 			FieldCode:  code,
 			TargetType: target.Type,
 			TargetID:   target.ID,
 			Payload:    payload,
-			UpdatedBy:  strings.TrimSpace(updatedBy),
+			UpdatedBy:  updatedBy,
 			UpdatedAt:  now,
-		}
-		if err := s.repo.Upsert(ctx, value); err != nil {
-			return nil, err
-		}
-		out = append(out, value)
+		})
+	}
+
+	if err := s.repo.UpsertBatch(ctx, out); err != nil {
+		return nil, err
 	}
 	return out, nil
 }

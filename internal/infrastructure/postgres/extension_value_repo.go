@@ -52,6 +52,32 @@ func (r *ExtensionValueRepo) ListByTarget(ctx context.Context, target domainext.
 
 // Upsert stores or replaces a value row.
 func (r *ExtensionValueRepo) Upsert(ctx context.Context, value domainext.Value) error {
+	return r.UpsertBatch(ctx, []domainext.Value{value})
+}
+
+// UpsertBatch stores or replaces value rows in a single transaction.
+func (r *ExtensionValueRepo) UpsertBatch(ctx context.Context, values []domainext.Value) error {
+	if len(values) == 0 {
+		return nil
+	}
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("extension_value_repo: begin tx: %w", err)
+	}
+	defer tx.Rollback()
+
+	for _, value := range values {
+		if err := r.upsertTx(ctx, tx, value); err != nil {
+			return err
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("extension_value_repo: commit: %w", err)
+	}
+	return nil
+}
+
+func (r *ExtensionValueRepo) upsertTx(ctx context.Context, tx *sql.Tx, value domainext.Value) error {
 	payload, err := json.Marshal(value.Payload)
 	if err != nil {
 		return fmt.Errorf("extension_value_repo: upsert marshal: %w", err)
@@ -66,7 +92,7 @@ func (r *ExtensionValueRepo) Upsert(ctx context.Context, value domainext.Value) 
 			value = EXCLUDED.value,
 			updated_by = EXCLUDED.updated_by,
 			updated_at = EXCLUDED.updated_at`
-	_, err = r.db.ExecContext(ctx, q,
+	_, err = tx.ExecContext(ctx, q,
 		string(value.TargetType), value.TargetID, value.FieldCode, payload, value.UpdatedBy, updatedAt,
 	)
 	if err != nil {

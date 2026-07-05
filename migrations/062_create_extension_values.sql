@@ -9,5 +9,3 @@ CREATE TABLE extension_values (
     updated_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
     PRIMARY KEY (target_type, target_id, field_code)
 );
-
-CREATE INDEX idx_extension_values_target ON extension_values (target_type, target_id);
