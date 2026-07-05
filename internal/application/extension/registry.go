@@ -82,6 +82,40 @@ func (r *Registry) mergeField(field domainext.ExtensionField) {
 	r.order = append(r.order, field.Code)
 }
 
+// Replace updates an existing registered field definition.
+func (r *Registry) Replace(field domainext.ExtensionField) error {
+	if r == nil {
+		return fmt.Errorf("extension: registry must not be nil")
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if _, exists := r.fields[field.Code]; !exists {
+		return fmt.Errorf("extension field %q not registered", field.Code)
+	}
+	r.fields[field.Code] = field
+	return nil
+}
+
+// Remove drops a field from the in-process registry.
+func (r *Registry) Remove(code string) bool {
+	if r == nil {
+		return false
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if _, exists := r.fields[code]; !exists {
+		return false
+	}
+	delete(r.fields, code)
+	for i, c := range r.order {
+		if c == code {
+			r.order = append(r.order[:i], r.order[i+1:]...)
+			break
+		}
+	}
+	return true
+}
+
 // Get returns the field registered under code.
 func (r *Registry) Get(code string) (domainext.ExtensionField, bool) {
 	if r == nil {

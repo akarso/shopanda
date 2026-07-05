@@ -35,6 +35,7 @@ func CorePermissions() []Permission {
 		SettingsRead, SettingsWrite,
 		ShippingRead, ShippingWrite,
 		AuditRead,
+		ExtensionsRead, ExtensionsWrite, ExtensionsPrivateRead,
 	}
 }
 

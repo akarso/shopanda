@@ -33,4 +33,8 @@ const (
 	ShippingWrite Permission = "shipping.write"
 
 	AuditRead Permission = "audit.read"
+
+	ExtensionsRead        Permission = "extensions.read"
+	ExtensionsWrite       Permission = "extensions.write"
+	ExtensionsPrivateRead Permission = "extensions.private.read"
 )
