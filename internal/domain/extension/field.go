@@ -67,10 +67,11 @@ func (v Visibility) IsValid() bool {
 }
 
 // Access declares role-based read/write constraints.
+// JSON keys use Go field names (ReadRoles, WriteRoles, PluginOnlyWrite) to match persisted definition blobs.
 type Access struct {
-	ReadRoles       []string `json:"read_roles,omitempty"`
-	WriteRoles      []string `json:"write_roles,omitempty"`
-	PluginOnlyWrite bool     `json:"plugin_only_write,omitempty"`
+	ReadRoles       []string
+	WriteRoles      []string
+	PluginOnlyWrite bool
 }
 
 // Validation holds static constraints applied at write time.

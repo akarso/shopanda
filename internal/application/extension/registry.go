@@ -56,9 +56,7 @@ func (r *Registry) LoadPersisted(ctx context.Context, repo domainext.FieldReposi
 		return fmt.Errorf("extension: load persisted fields: %w", err)
 	}
 	for _, field := range fields {
-		if err := r.mergeField(field); err != nil {
-			return err
-		}
+		r.mergeField(field)
 	}
 	return nil
 }
@@ -74,15 +72,14 @@ func (r *Registry) registerField(field domainext.ExtensionField) error {
 	return nil
 }
 
-func (r *Registry) mergeField(field domainext.ExtensionField) error {
+func (r *Registry) mergeField(field domainext.ExtensionField) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	if _, exists := r.fields[field.Code]; exists {
-		return nil
+		return
 	}
 	r.fields[field.Code] = field
 	r.order = append(r.order, field.Code)
-	return nil
 }
 
 // Get returns the field registered under code.

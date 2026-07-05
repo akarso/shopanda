@@ -1,6 +1,7 @@
 package extension_test
 
 import (
+	"encoding/json"
 	"strings"
 	"testing"
 
@@ -146,6 +147,43 @@ func TestNewExtensionField_ClonesValidationPointers(t *testing.T) {
 	}
 	if field.Validation.Max == nil || *field.Validation.Max != 10 {
 		t.Errorf("Max = %v, want 10", field.Validation.Max)
+	}
+}
+
+func TestExtensionField_AccessJSONRoundTrip(t *testing.T) {
+	field, err := extension.NewExtensionField(extension.FieldDef{
+		Code:        "acme.access.field",
+		Label:       "Access test",
+		Type:        extension.FieldTypeString,
+		Scope:       extension.TargetProduct,
+		StorageMode: extension.StorageStored,
+		Access: extension.Access{
+			ReadRoles:       []string{"Admin", "Editor"},
+			WriteRoles:      []string{"Admin"},
+			PluginOnlyWrite: true,
+		},
+	})
+	if err != nil {
+		t.Fatalf("NewExtensionField: %v", err)
+	}
+
+	raw, err := json.Marshal(field)
+	if err != nil {
+		t.Fatalf("Marshal: %v", err)
+	}
+	if !strings.Contains(string(raw), `"ReadRoles"`) {
+		t.Fatalf("expected PascalCase ReadRoles key in JSON, got %s", raw)
+	}
+
+	var decoded extension.ExtensionField
+	if err := json.Unmarshal(raw, &decoded); err != nil {
+		t.Fatalf("Unmarshal: %v", err)
+	}
+	if len(decoded.Access.ReadRoles) != 2 || decoded.Access.ReadRoles[0] != "Admin" {
+		t.Fatalf("ReadRoles = %v", decoded.Access.ReadRoles)
+	}
+	if !decoded.Access.PluginOnlyWrite {
+		t.Fatal("expected PluginOnlyWrite true")
 	}
 }
 
