@@ -1119,6 +1119,12 @@
             '<button type="submit">Add Variant</button>' +
             '</form>' +
             '</section>' +
+            '<section id="product-extensions-panel" style="display:none; margin-top:2rem;">' +
+            '<h3>Extensions</h3>' +
+            '<p class="settings-scope-note">Custom product fields registered for the product scope. Values are saved separately from core product attributes.</p>' +
+            '<div id="product-extensions-msg"></div>' +
+            '<form id="product-extensions-form"></form>' +
+            '</section>' +
             '<section id="product-reviews-panel" style="display:none; margin-top:2rem;">' +
             '<h3>Reviews</h3>' +
             '<div id="product-reviews-msg"></div>' +
@@ -1193,6 +1199,7 @@
             if (productID) {
                 setupProductCategoryAssignment(productID);
                 setupVariantPanel(productID);
+                setupProductExtensionsPanel(productID);
                 setupProductReviewsPanel(productID);
             }
         }).catch(function () {
@@ -3314,7 +3321,8 @@
                     'media.read', 'media.write',
                     'settings.read', 'settings.write',
                     'audit.read',
-                    'shipping.read', 'shipping.write'
+                    'shipping.read', 'shipping.write',
+                    'extensions.read', 'extensions.write'
                 ]
             },
             {
@@ -6196,6 +6204,250 @@
         }).catch(function (err) {
             setMessage(extractErrorMessage(err, "Review moderation failed."), true);
         });
+    }
+
+    function setupProductExtensionsPanel(productID) {
+        var panel = document.getElementById("product-extensions-panel");
+        var msg = document.getElementById("product-extensions-msg");
+        var form = document.getElementById("product-extensions-form");
+        if (!panel || !msg || !form) {
+            return;
+        }
+        if (!userHasPermission("extensions.read")) {
+            panel.style.display = "none";
+            return;
+        }
+        var canWrite = userHasPermission("extensions.write");
+
+        function setMessage(text, isError) {
+            msg.innerHTML = text ? '<p' + (isError ? ' role="alert"' : ' role="status" aria-live="polite"') + '>' + esc(text) + '</p>' : '';
+        }
+
+        panel.style.display = "";
+        form.innerHTML = "<p>Loading extensions…</p>";
+        setMessage("", false);
+
+        Promise.all([
+            api("/admin/extensions/fields?target_type=product"),
+            api("/admin/products/" + encodeURIComponent(productID) + "/extensions")
+        ]).then(function (results) {
+            var fieldsBody = results[0] || {};
+            var valuesBody = results[1] || {};
+            if (fieldsBody.error && fieldsBody.error.code === "forbidden") {
+                form.innerHTML = '<p role="alert">Your account does not have extensions access.</p>';
+                return;
+            }
+            if (fieldsBody.error) {
+                form.innerHTML = '<p role="alert">' + esc(extractErrorMessage(fieldsBody, "Failed to load extension fields.")) + '</p>';
+                return;
+            }
+            if (valuesBody.error) {
+                form.innerHTML = '<p role="alert">' + esc(extractErrorMessage(valuesBody, "Failed to load extension values.")) + '</p>';
+                return;
+            }
+
+            var fields = filterProductExtensionFields(fieldsBody.data && fieldsBody.data.fields);
+            if (!fields.length) {
+                panel.style.display = "none";
+                return;
+            }
+
+            var valueLookup = buildExtensionValueLookup(valuesBody.data && valuesBody.data.values);
+            form.innerHTML = renderProductExtensionsForm(fields, valueLookup, canWrite);
+            if (!canWrite) {
+                var controls = form.querySelectorAll("input, select, textarea, button");
+                for (var i = 0; i < controls.length; i++) {
+                    controls[i].disabled = true;
+                }
+                form.insertAdjacentHTML("beforeend", '<p class="settings-scope-note">Your account can view extensions but cannot save changes without extensions write access.</p>');
+                return;
+            }
+
+            form.addEventListener("submit", function (e) {
+                e.preventDefault();
+                setMessage("", false);
+                var payload;
+                try {
+                    payload = collectExtensionValues(form);
+                } catch (err) {
+                    setMessage(extractErrorMessage(err, "Invalid extension value."), true);
+                    return;
+                }
+                api("/admin/products/" + encodeURIComponent(productID) + "/extensions", {
+                    method: "PUT",
+                    body: JSON.stringify(payload)
+                }).then(function (body) {
+                    if (body && body.error) {
+                        setMessage(body.error.message || "Failed to save extensions.", true);
+                        return;
+                    }
+                    setMessage("Extensions saved.", false);
+                }).catch(function (err) {
+                    setMessage(extractErrorMessage(err, "Failed to save extensions."), true);
+                });
+            });
+        }).catch(function (err) {
+            form.innerHTML = '<p role="alert">' + esc(extractErrorMessage(err, "Failed to load extension fields.")) + '</p>';
+        });
+    }
+
+    function filterProductExtensionFields(fields) {
+        if (!Array.isArray(fields)) {
+            return [];
+        }
+        var out = [];
+        for (var i = 0; i < fields.length; i++) {
+            var field = fields[i] || {};
+            if (String(field.visibility || "public").toLowerCase() === "private") {
+                continue;
+            }
+            if (String(field.storage_mode || "stored").toLowerCase() === "computed") {
+                continue;
+            }
+            if (!field.code) {
+                continue;
+            }
+            out.push(field);
+        }
+        return out;
+    }
+
+    function buildExtensionValueLookup(values) {
+        var lookup = {};
+        if (!Array.isArray(values)) {
+            return lookup;
+        }
+        for (var i = 0; i < values.length; i++) {
+            var item = values[i] || {};
+            if (item.field_code) {
+                lookup[item.field_code] = item.value;
+            }
+        }
+        return lookup;
+    }
+
+    function renderProductExtensionsForm(fields, valueLookup, canWrite) {
+        var html = "";
+        for (var i = 0; i < fields.length; i++) {
+            html += renderExtensionFieldWidget(fields[i], valueLookup[fields[i].code]);
+        }
+        if (canWrite) {
+            html += '<button type="submit">Save Extensions</button>';
+        }
+        return html;
+    }
+
+    function renderExtensionFieldWidget(field, value) {
+        var code = field.code || "";
+        var label = esc(field.label || code);
+        var desc = field.description ? '<span class="settings-scope-note">' + esc(field.description) + '</span>' : '';
+        var required = field.validation && field.validation.required;
+        var reqAttr = required ? " required" : "";
+        var type = String(field.type || "string").toLowerCase();
+        var attrs = ' data-extension-field="' + esc(code) + '" data-extension-type="' + esc(type) + '"';
+        if (value == null) {
+            value = "";
+        }
+
+        if (type === "bool") {
+            var checked = value === true || value === "true" ? " checked" : "";
+            return '<div class="extension-field">' +
+                '<label><input type="checkbox"' + attrs + checked + reqAttr + '> ' + label + '</label>' +
+                desc + '</div>';
+        }
+        if (type === "enum") {
+            var options = (field.validation && field.validation.options) || [];
+            var html = '<div class="extension-field"><label>' + label + '<select' + attrs + reqAttr + '>';
+            if (!required) {
+                html += '<option value="">—</option>';
+            }
+            for (var i = 0; i < options.length; i++) {
+                var opt = options[i];
+                var sel = String(value) === String(opt) ? " selected" : "";
+                html += '<option value="' + esc(String(opt)) + '"' + sel + '>' + esc(String(opt)) + '</option>';
+            }
+            html += '</select></label>' + desc + '</div>';
+            return html;
+        }
+        if (type === "int" || type === "money") {
+            var min = field.validation && field.validation.min != null ? ' min="' + esc(String(field.validation.min)) + '"' : "";
+            var max = field.validation && field.validation.max != null ? ' max="' + esc(String(field.validation.max)) + '"' : "";
+            return '<div class="extension-field"><label>' + label +
+                '<input type="number" step="1"' + attrs + ' value="' + esc(value === "" ? "" : String(value)) + '"' + min + max + reqAttr + '></label>' +
+                desc + '</div>';
+        }
+        if (type === "json") {
+            var jsonText = "";
+            if (value !== "" && value != null) {
+                jsonText = typeof value === "string" ? value : JSON.stringify(value, null, 2);
+            }
+            return '<div class="extension-field"><label>' + label +
+                '<textarea rows="4"' + attrs + reqAttr + '>' + esc(jsonText) + '</textarea></label>' +
+                desc + '</div>';
+        }
+        if (type === "date") {
+            return '<div class="extension-field"><label>' + label +
+                '<input type="date"' + attrs + ' value="' + esc(String(value)) + '"' + reqAttr + '></label>' +
+                desc + '</div>';
+        }
+        if (type === "datetime") {
+            return '<div class="extension-field"><label>' + label +
+                '<input type="text"' + attrs + ' value="' + esc(String(value)) + '" placeholder="YYYY-MM-DDTHH:MM:SSZ"' + reqAttr + '></label>' +
+                desc + '</div>';
+        }
+        var maxLen = field.validation && field.validation.max;
+        if (maxLen != null && maxLen > 200) {
+            return '<div class="extension-field"><label>' + label +
+                '<textarea rows="3"' + attrs + reqAttr + '>' + esc(String(value)) + '</textarea></label>' +
+                desc + '</div>';
+        }
+        return '<div class="extension-field"><label>' + label +
+            '<input type="text"' + attrs + ' value="' + esc(String(value)) + '"' + reqAttr + '></label>' +
+            desc + '</div>';
+    }
+
+    function collectExtensionValues(form) {
+        var nodes = form.querySelectorAll("[data-extension-field]");
+        var values = [];
+        for (var i = 0; i < nodes.length; i++) {
+            var el = nodes[i];
+            var code = el.getAttribute("data-extension-field");
+            var type = el.getAttribute("data-extension-type") || "string";
+            var v;
+            if (type === "bool") {
+                v = !!el.checked;
+                values.push({ field_code: code, value: v });
+                continue;
+            }
+            if (type === "int" || type === "money") {
+                var numRaw = String(el.value || "").trim();
+                if (numRaw === "") {
+                    continue;
+                }
+                v = Number(numRaw);
+                values.push({ field_code: code, value: v });
+                continue;
+            }
+            if (type === "json") {
+                var jsonRaw = String(el.value || "").trim();
+                if (jsonRaw === "") {
+                    continue;
+                }
+                try {
+                    v = JSON.parse(jsonRaw);
+                } catch (parseErr) {
+                    throw { error: { message: "Invalid JSON for extension field " + code + "." } };
+                }
+                values.push({ field_code: code, value: v });
+                continue;
+            }
+            v = el.value;
+            if (String(v).trim() === "" && type !== "string" && type !== "enum" && type !== "date" && type !== "datetime") {
+                continue;
+            }
+            values.push({ field_code: code, value: v });
+        }
+        return { values: values };
     }
 
     function setupProductReviewsPanel(productID) {
