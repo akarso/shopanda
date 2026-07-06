@@ -1119,7 +1119,7 @@ func runServe(cfg *config.Config, log logger.Logger, embedScheduler bool) error 
 
 	// Storefront SSR routes (optional, gated by frontend.enabled).
 	if cfg.Frontend.Enabled {
-		themeEngine, thErr := theme.Load(cfg.Frontend.ThemePath, theme.WithSlotRegistry(slotRegistry))
+		themeEngine, thErr := theme.Load(cfg.Frontend.ThemePath, theme.WithSlotSource(slotRegistryThemeSource{reg: slotRegistry}))
 		if thErr != nil {
 			return fmt.Errorf("theme load: %w", thErr)
 		}
@@ -2658,4 +2658,16 @@ func runSearchReindex(cfg *config.Config, log logger.Logger) error {
 	})
 
 	return nil
+}
+
+type slotRegistryThemeSource struct {
+	reg *slotsApp.Registry
+}
+
+func (s slotRegistryThemeSource) Render(anchor, placement string, data interface{}) string {
+	p, err := slotsApp.ParsePlacement(placement)
+	if err != nil {
+		return ""
+	}
+	return s.reg.Render(anchor, p, data)
 }

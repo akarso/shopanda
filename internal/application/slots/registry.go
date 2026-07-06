@@ -41,6 +41,7 @@ func (r *Registry) RegisterRenderer(anchor string, placement Placement, priority
 	if r == nil {
 		return fmt.Errorf("slots: registry must not be nil")
 	}
+	anchor = strings.TrimSpace(anchor)
 	if err := ValidateAnchorName(anchor); err != nil {
 		return err
 	}

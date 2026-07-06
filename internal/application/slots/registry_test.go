@@ -21,6 +21,20 @@ func TestRegistry_RenderOrdersByPriority(t *testing.T) {
 	}
 }
 
+func TestRegistry_RegisterRendererTrimsAnchorForLookup(t *testing.T) {
+	reg := slots.NewRegistry(nil)
+	if err := reg.RegisterRenderer(" pdp.price ", slots.PlacementAppend, 100, "plugin.a", func(ctx *slots.RenderContext) string {
+		return "<span>hit</span>"
+	}); err != nil {
+		t.Fatalf("RegisterRenderer: %v", err)
+	}
+
+	got := reg.Render("pdp.price", slots.PlacementAppend, nil)
+	if got != "<span>hit</span>" {
+		t.Fatalf("Render() = %q, want trimmed anchor lookup", got)
+	}
+}
+
 func TestRegistry_RenderUnknownAnchorNoop(t *testing.T) {
 	reg := slots.NewRegistry(nil)
 	if got := reg.Render("missing.anchor", slots.PlacementBefore, nil); got != "" {

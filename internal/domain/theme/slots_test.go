@@ -11,6 +11,22 @@ import (
 	"github.com/akarso/shopanda/internal/domain/theme"
 )
 
+type registrySlotSource struct {
+	reg *slots.Registry
+}
+
+func (s registrySlotSource) Render(anchor, placement string, data interface{}) string {
+	p, err := slots.ParsePlacement(placement)
+	if err != nil {
+		return ""
+	}
+	return s.reg.Render(anchor, p, data)
+}
+
+func slotSource(reg *slots.Registry) theme.SlotSource {
+	return registrySlotSource{reg: reg}
+}
+
 func TestSlotContainer_PlacementsInDOMOrder(t *testing.T) {
 	dir := t.TempDir()
 	writeThemeFiles(t, dir, `{{ define "title" }}Slots{{ end }}
@@ -35,7 +51,7 @@ func TestSlotContainer_PlacementsInDOMOrder(t *testing.T) {
 		return "<!--after-->"
 	})
 
-	engine, err := theme.Load(dir, theme.WithSlotRegistry(reg))
+	engine, err := theme.Load(dir, theme.WithSlotSource(slotSource(reg)))
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
@@ -50,18 +66,18 @@ func TestSlotContainer_PlacementsInDOMOrder(t *testing.T) {
 	prepend := strings.Index(out, "<!--prepend-->")
 	price := strings.Index(out, "9.99")
 	appendPos := strings.Index(out, "<!--append-->")
-	close := strings.Index(out, "</div>")
+	closePos := strings.Index(out, "</div>")
 	after := strings.Index(out, "<!--after-->")
 
 	for name, pos := range map[string]int{
 		"before": before, "open": open, "prepend": prepend, "price": price,
-		"append": appendPos, "close": close, "after": after,
+		"append": appendPos, "closePos": closePos, "after": after,
 	} {
 		if pos < 0 {
 			t.Fatalf("missing %s in output:\n%s", name, out)
 		}
 	}
-	if !(before < open && open < prepend && prepend < price && price < appendPos && appendPos < close && close < after) {
+	if !(before < open && open < prepend && prepend < price && price < appendPos && appendPos < closePos && closePos < after) {
 		t.Fatalf("slot placement order wrong:\n%s", out)
 	}
 }
@@ -70,7 +86,7 @@ func TestSlot_ExplicitMarkerUnknownAnchorNoop(t *testing.T) {
 	dir := t.TempDir()
 	writeThemeFiles(t, dir, `{{ define "content" }}{{slot . "missing.slot" "before"}}<p>ok</p>{{ end }}`, `<html><body>{{ template "content" . }}</body></html>`)
 
-	engine, err := theme.Load(dir, theme.WithSlotRegistry(slots.NewRegistry(nil)))
+	engine, err := theme.Load(dir, theme.WithSlotSource(slotSource(slots.NewRegistry(nil))))
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
@@ -92,7 +108,7 @@ func TestSlot_TwoRenderersSamePlacementCompose(t *testing.T) {
 	_ = reg.RegisterRenderer("cart.summary", slots.PlacementAppend, 200, "b", func(ctx *slots.RenderContext) string { return "B" })
 	_ = reg.RegisterRenderer("cart.summary", slots.PlacementAppend, 100, "a", func(ctx *slots.RenderContext) string { return "A" })
 
-	engine, err := theme.Load(dir, theme.WithSlotRegistry(reg))
+	engine, err := theme.Load(dir, theme.WithSlotSource(slotSource(reg)))
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}

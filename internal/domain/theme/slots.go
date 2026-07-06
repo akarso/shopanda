@@ -5,9 +5,12 @@ import (
 	"html/template"
 	"regexp"
 	"strings"
-
-	slotsapp "github.com/akarso/shopanda/internal/application/slots"
 )
+
+// SlotSource renders plugin HTML for a named anchor and placement.
+type SlotSource interface {
+	Render(anchor, placement string, data interface{}) string
+}
 
 var (
 	slotContainerPattern = regexp.MustCompile(`(?s)\{\{\s*slot_container\s+"([^"]+)"\s*\}\}(.*?)\{\{\s*/slot_container\s*\}\}`)
@@ -83,17 +86,13 @@ func splitSingleElement(inner string) (tag, attrs, content string, ok bool) {
 	return tag, attrs, content, true
 }
 
-func slotFuncMap(registry *slotsapp.Registry) template.FuncMap {
+func slotFuncMap(source SlotSource) template.FuncMap {
 	return template.FuncMap{
 		"slot": func(data interface{}, anchor, placement string) template.HTML {
-			if registry == nil {
+			if source == nil {
 				return template.HTML("")
 			}
-			p, err := slotsapp.ParsePlacement(placement)
-			if err != nil {
-				return template.HTML("")
-			}
-			return template.HTML(registry.Render(anchor, p, data))
+			return template.HTML(source.Render(anchor, placement, data))
 		},
 	}
 }

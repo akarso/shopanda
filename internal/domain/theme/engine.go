@@ -8,7 +8,6 @@ import (
 	"path/filepath"
 	"strings"
 
-	slotsapp "github.com/akarso/shopanda/internal/application/slots"
 	"gopkg.in/yaml.v3"
 )
 
@@ -16,13 +15,13 @@ import (
 type Option func(*loadOptions)
 
 type loadOptions struct {
-	slots *slotsapp.Registry
+	slots SlotSource
 }
 
-// WithSlotRegistry enables slot template markers backed by registry.
-func WithSlotRegistry(registry *slotsapp.Registry) Option {
+// WithSlotSource enables slot template markers backed by source.
+func WithSlotSource(source SlotSource) Option {
 	return func(o *loadOptions) {
-		o.slots = registry
+		o.slots = source
 	}
 }
 
