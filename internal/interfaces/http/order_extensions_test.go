@@ -38,6 +38,18 @@ func (m *orderTestExtensionValueRepo) ListByTarget(_ context.Context, target dom
 	return out, nil
 }
 
+func (m *orderTestExtensionValueRepo) ListByTargets(_ context.Context, targetType domainext.TargetType, targetIDs []string) ([]domainext.Value, error) {
+	out := make([]domainext.Value, 0)
+	for _, targetID := range targetIDs {
+		stored, err := m.ListByTarget(context.Background(), domainext.Target{Type: targetType, ID: targetID})
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, stored...)
+	}
+	return out, nil
+}
+
 func (m *orderTestExtensionValueRepo) Upsert(_ context.Context, value domainext.Value) error {
 	m.values[orderTestExtKey(domainext.Target{Type: value.TargetType, ID: value.TargetID}, value.FieldCode)] = value
 	return nil

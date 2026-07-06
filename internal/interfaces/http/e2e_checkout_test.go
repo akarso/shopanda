@@ -181,7 +181,7 @@ func setupE2ECheckout(t *testing.T, seed func(variants *e2eVariantRepo, prices *
 		pricing.NewFinalizeStep(),
 	)
 
-	cartSvc := cartApp.NewService(carts, prices, nil, nil, pipeline, log, bus, nil)
+	cartSvc := cartApp.NewService(carts, prices, nil, nil, pipeline, log, bus, nil, nil)
 	cartHandler := shophttp.NewCartHandler(cartSvc, nil)
 
 	validateStep := checkoutApp.NewValidateCartStep(variants)
@@ -193,7 +193,7 @@ func setupE2ECheckout(t *testing.T, seed func(variants *e2eVariantRepo, prices *
 	}, bus, log)
 
 	checkoutSvc := checkoutApp.NewService(carts, workflow, log)
-	checkoutHandler := shophttp.NewCheckoutHandler(checkoutSvc)
+	checkoutHandler := shophttp.NewCheckoutHandler(checkoutSvc, nil)
 
 	mux := http.NewServeMux()
 	mux.Handle("POST /api/v1/carts", cartHandler.Create())

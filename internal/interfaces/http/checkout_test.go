@@ -399,7 +399,7 @@ func checkoutBuild(creditRepo *stubCheckoutStoreCreditRepo, withPayment bool) (*
 	workflow := checkoutApp.NewWorkflow(steps, bus, log)
 
 	svc := checkoutApp.NewService(carts, workflow, log)
-	handler := shophttp.NewCheckoutHandler(svc)
+	handler := shophttp.NewCheckoutHandler(svc, nil)
 
 	mux := http.NewServeMux()
 	mux.Handle("POST /api/v1/checkout", handler.StartCheckout())

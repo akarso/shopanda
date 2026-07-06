@@ -136,7 +136,7 @@ func cartSetup() (*stubCartRepo, *stubPriceRepo, *shophttp.CartHandler, *http.Se
 	carts := newStubCartRepo()
 	prices := newStubPriceRepo()
 	bus := event.NewBus(cartTestLogger())
-	svc := cartApp.NewService(carts, prices, nil, nil, cartTestPipeline(prices), cartTestLogger(), bus, nil)
+	svc := cartApp.NewService(carts, prices, nil, nil, cartTestPipeline(prices), cartTestLogger(), bus, nil, nil)
 	h := shophttp.NewCartHandler(svc, nil)
 	return carts, prices, h, newCartRouter(h)
 }
@@ -159,6 +159,18 @@ func (m *cartTestExtensionValueRepo) ListByTarget(_ context.Context, target doma
 		if value.TargetType == target.Type && value.TargetID == target.ID {
 			out = append(out, value)
 		}
+	}
+	return out, nil
+}
+
+func (m *cartTestExtensionValueRepo) ListByTargets(_ context.Context, targetType domainext.TargetType, targetIDs []string) ([]domainext.Value, error) {
+	out := make([]domainext.Value, 0)
+	for _, targetID := range targetIDs {
+		stored, err := m.ListByTarget(context.Background(), domainext.Target{Type: targetType, ID: targetID})
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, stored...)
 	}
 	return out, nil
 }
@@ -202,7 +214,7 @@ func cartExtensionSetup(t *testing.T) (*stubCartRepo, *stubPriceRepo, *shophttp.
 	}
 	values := extensionapp.NewValueService(reg, newCartTestExtensionValueRepo())
 	bus := event.NewBus(cartTestLogger())
-	svc := cartApp.NewService(carts, prices, nil, nil, cartTestPipeline(prices), cartTestLogger(), bus, values)
+	svc := cartApp.NewService(carts, prices, nil, nil, cartTestPipeline(prices), cartTestLogger(), bus, values, nil)
 	h := shophttp.NewCartHandler(svc, values)
 	return carts, prices, h, newCartRouter(h)
 }

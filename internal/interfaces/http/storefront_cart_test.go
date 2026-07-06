@@ -141,7 +141,7 @@ func newStorefrontCartService() (*cartApp.Service, *storefrontCartRepoStub, *sto
 	prices := newStorefrontPriceRepoStub()
 	log := logger.NewWithWriter(io.Discard, "error")
 	pipeline := pricing.NewPipeline(appPricing.NewBasePriceStep(prices), pricing.NewFinalizeStep())
-	service := cartApp.NewService(carts, prices, nil, nil, pipeline, log, event.NewBus(log), nil)
+	service := cartApp.NewService(carts, prices, nil, nil, pipeline, log, event.NewBus(log), nil, nil)
 	return service, carts, prices
 }
 
