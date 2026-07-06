@@ -3,6 +3,7 @@ package checkout
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	"github.com/akarso/shopanda/internal/domain/catalog"
 	"github.com/akarso/shopanda/internal/domain/order"
@@ -18,22 +19,27 @@ type storeCreditService interface {
 	Issue(ctx context.Context, customerID string, amount shared.Money, note string) error
 }
 
+type extensionSnapshotter interface {
+	SnapshotCartItemToOrderItem(ctx context.Context, cartID, orderID, variantID, updatedBy string) error
+}
+
 // CreateOrderStep builds and persists an order from the cart and pricing snapshot.
 type CreateOrderStep struct {
-	orders   order.OrderRepository
-	variants catalog.VariantRepository
-	credits  storeCreditService
+	orders     order.OrderRepository
+	variants   catalog.VariantRepository
+	credits    storeCreditService
+	extensions extensionSnapshotter
 }
 
 // NewCreateOrderStep creates a CreateOrderStep.
-func NewCreateOrderStep(orders order.OrderRepository, variants catalog.VariantRepository, credits storeCreditService) *CreateOrderStep {
+func NewCreateOrderStep(orders order.OrderRepository, variants catalog.VariantRepository, credits storeCreditService, extensions extensionSnapshotter) *CreateOrderStep {
 	if orders == nil {
 		panic("checkout: orders must not be nil")
 	}
 	if variants == nil {
 		panic("checkout: variants must not be nil")
 	}
-	return &CreateOrderStep{orders: orders, variants: variants, credits: credits}
+	return &CreateOrderStep{orders: orders, variants: variants, credits: credits, extensions: extensions}
 }
 
 func (s *CreateOrderStep) Name() string { return "create_order" }
@@ -116,6 +122,18 @@ func (s *CreateOrderStep) Execute(cctx *Context) error {
 			}
 		}
 		return fmt.Errorf("create_order: save: %w", err)
+	}
+
+	if s.extensions != nil {
+		updatedBy := strings.TrimSpace(cctx.CustomerID)
+		if updatedBy == "" {
+			updatedBy = "system"
+		}
+		for _, ci := range cctx.Cart.Items {
+			if err := s.extensions.SnapshotCartItemToOrderItem(ctx, cctx.Cart.ID, o.ID, ci.VariantID, updatedBy); err != nil {
+				return fmt.Errorf("create_order: snapshot extensions for variant %s: %w", ci.VariantID, err)
+			}
+		}
 	}
 
 	cctx.Order = &o

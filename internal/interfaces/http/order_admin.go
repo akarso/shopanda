@@ -6,6 +6,7 @@ import (
 	"net/http"
 
 	"github.com/akarso/shopanda/internal/application/admin"
+	extensionapp "github.com/akarso/shopanda/internal/application/extension"
 	"github.com/akarso/shopanda/internal/domain/order"
 	"github.com/akarso/shopanda/internal/platform/apperror"
 	"github.com/akarso/shopanda/internal/platform/logger"
@@ -13,13 +14,14 @@ import (
 
 // OrderAdminHandler serves admin order endpoints with Track 3 hardening.
 type OrderAdminHandler struct {
-	orders    order.OrderRepository
-	auditor   *admin.Auditor
-	validator admin.OrderValidator
+	orders     order.OrderRepository
+	extensions *extensionapp.ValueService
+	auditor    *admin.Auditor
+	validator  admin.OrderValidator
 }
 
 // NewOrderAdminHandler creates an OrderAdminHandler.
-func NewOrderAdminHandler(orders order.OrderRepository, log logger.Logger) *OrderAdminHandler {
+func NewOrderAdminHandler(orders order.OrderRepository, log logger.Logger, extensions *extensionapp.ValueService) *OrderAdminHandler {
 	if orders == nil {
 		panic("http: order repository must not be nil")
 	}
@@ -27,14 +29,15 @@ func NewOrderAdminHandler(orders order.OrderRepository, log logger.Logger) *Orde
 		panic("http: logger must not be nil")
 	}
 	return &OrderAdminHandler{
-		orders:    orders,
-		auditor:   admin.NewAuditor(log),
-		validator: admin.NewOrderValidator(),
+		orders:     orders,
+		extensions: extensions,
+		auditor:    admin.NewAuditor(log),
+		validator:  admin.NewOrderValidator(),
 	}
 }
 
 // NewOrderAdminHandlerWithAuditor creates an OrderAdminHandler with custom auditor (for testing).
-func NewOrderAdminHandlerWithAuditor(orders order.OrderRepository, auditor *admin.Auditor) *OrderAdminHandler {
+func NewOrderAdminHandlerWithAuditor(orders order.OrderRepository, auditor *admin.Auditor, extensions *extensionapp.ValueService) *OrderAdminHandler {
 	if orders == nil {
 		panic("http: order repository must not be nil")
 	}
@@ -42,9 +45,10 @@ func NewOrderAdminHandlerWithAuditor(orders order.OrderRepository, auditor *admi
 		panic("http: auditor must not be nil")
 	}
 	return &OrderAdminHandler{
-		orders:    orders,
-		auditor:   auditor,
-		validator: admin.NewOrderValidator(),
+		orders:     orders,
+		extensions: extensions,
+		auditor:    auditor,
+		validator:  admin.NewOrderValidator(),
 	}
 }
 
@@ -112,7 +116,12 @@ func (h *OrderAdminHandler) List() http.HandlerFunc {
 
 		out := make([]orderResponse, 0, len(orders))
 		for i := range orders {
-			out = append(out, toOrderResponse(&orders[i]))
+			resp, err := toOrderResponse(r.Context(), h.extensions, &orders[i])
+			if err != nil {
+				JSONError(w, extensionapp.MapValueError(err))
+				return
+			}
+			out = append(out, resp)
 		}
 
 		JSON(w, http.StatusOK, map[string]interface{}{
@@ -165,8 +174,14 @@ func (h *OrderAdminHandler) Get() http.HandlerFunc {
 			Details:      scopeDetails,
 		})
 
+		resp, err := toOrderResponse(r.Context(), h.extensions, o)
+		if err != nil {
+			JSONError(w, extensionapp.MapValueError(err))
+			return
+		}
+
 		JSON(w, http.StatusOK, map[string]interface{}{
-			"order": toOrderResponse(o),
+			"order": resp,
 		})
 	}
 }
@@ -274,7 +289,12 @@ func (h *OrderAdminHandler) Update() http.HandlerFunc {
 		}
 
 		if o.Status() == next {
-			JSON(w, http.StatusOK, map[string]interface{}{"order": toOrderResponse(o)})
+			resp, err := toOrderResponse(r.Context(), h.extensions, o)
+			if err != nil {
+				JSONError(w, extensionapp.MapValueError(err))
+				return
+			}
+			JSON(w, http.StatusOK, map[string]interface{}{"order": resp})
 			return
 		}
 
@@ -326,7 +346,12 @@ func (h *OrderAdminHandler) Update() http.HandlerFunc {
 			Details:      scopeDetails,
 		})
 
-		JSON(w, http.StatusOK, map[string]interface{}{"order": toOrderResponse(o)})
+		resp, err := toOrderResponse(r.Context(), h.extensions, o)
+		if err != nil {
+			JSONError(w, extensionapp.MapValueError(err))
+			return
+		}
+		JSON(w, http.StatusOK, map[string]interface{}{"order": resp})
 	}
 }
 

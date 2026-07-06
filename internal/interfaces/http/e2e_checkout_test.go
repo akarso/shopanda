@@ -187,7 +187,7 @@ func setupE2ECheckout(t *testing.T, seed func(variants *e2eVariantRepo, prices *
 	validateStep := checkoutApp.NewValidateCartStep(variants)
 	pricingStep := checkoutApp.NewRecalculatePricingStep(pipeline)
 	reserveStep := checkoutApp.NewReserveInventoryStep(reservations)
-	createOrderStep := checkoutApp.NewCreateOrderStep(orders, variants, nil)
+	createOrderStep := checkoutApp.NewCreateOrderStep(orders, variants, nil, nil)
 	workflow := checkoutApp.NewWorkflow([]checkoutApp.Step{
 		validateStep, pricingStep, reserveStep, createOrderStep,
 	}, bus, log)

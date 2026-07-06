@@ -2941,7 +2941,25 @@
                 name: pick(it, "name", "Name"),
                 quantity: pick(it, "quantity", "Quantity"),
                 unit_price: pick(it, "unit_price", "UnitPrice"),
-                currency: pick(it, "currency", "Currency")
+                currency: pick(it, "currency", "Currency"),
+                extensions: normalizeOrderItemExtensions(pick(it, "extensions", "Extensions"))
+            });
+        }
+        return out;
+    }
+
+    function normalizeOrderItemExtensions(items) {
+        if (!Array.isArray(items)) {
+            return [];
+        }
+        var out = [];
+        for (var i = 0; i < items.length; i++) {
+            var ext = items[i] || {};
+            out.push({
+                field_code: pick(ext, "field_code", "FieldCode"),
+                label: pick(ext, "label", "Label"),
+                type: pick(ext, "type", "Type"),
+                value: pick(ext, "value", "Value")
             });
         }
         return out;
@@ -9085,20 +9103,32 @@
                 }
 
                 var items = order.items || [];
-                var itemsHtml = '<table><thead><tr><th>Product</th><th>SKU</th><th>Qty</th><th>Price</th><th>Line Total</th></tr></thead><tbody>';
+                var itemsHtml = '<table><thead><tr><th>Product</th><th>SKU</th><th>Qty</th><th>Price</th><th>Line Total</th><th>Extensions</th></tr></thead><tbody>';
                 if (items.length === 0) {
-                    itemsHtml += '<tr><td colspan="5">No items.</td></tr>';
+                    itemsHtml += '<tr><td colspan="6">No items.</td></tr>';
                 } else {
                     for (var j = 0; j < items.length; j++) {
                         var it = items[j];
                         var qty = Number(it.quantity || 0);
                         var unit = Number(it.unit_price || 0);
+                        var extList = it.extensions || [];
+                        var extHtml = "—";
+                        if (extList.length > 0) {
+                            extHtml = '<ul class="order-item-extensions">';
+                            for (var k = 0; k < extList.length; k++) {
+                                var ext = extList[k] || {};
+                                var extLabel = ext.label || ext.field_code || "Extension";
+                                extHtml += '<li><strong>' + esc(extLabel) + ':</strong> ' + esc(String(ext.value != null ? ext.value : "")) + '</li>';
+                            }
+                            extHtml += "</ul>";
+                        }
                         itemsHtml += '<tr>' +
                             '<td>' + esc(it.name || '') + '</td>' +
                             '<td>' + esc(it.sku || '') + '</td>' +
                             '<td>' + esc(String(qty)) + '</td>' +
                             '<td>' + formatMoney(unit, it.currency || order.currency) + '</td>' +
                             '<td>' + formatMoney(unit * qty, it.currency || order.currency) + '</td>' +
+                            '<td>' + extHtml + '</td>' +
                             '</tr>';
                     }
                 }

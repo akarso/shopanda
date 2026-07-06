@@ -55,12 +55,13 @@ type checkoutOrderResponse struct {
 }
 
 type orderItemResp struct {
-	VariantID string `json:"variant_id"`
-	SKU       string `json:"sku"`
-	Name      string `json:"name"`
-	Quantity  int    `json:"quantity"`
-	UnitPrice int64  `json:"unit_price"`
-	Currency  string `json:"currency"`
+	VariantID  string                      `json:"variant_id"`
+	SKU        string                      `json:"sku"`
+	Name       string                      `json:"name"`
+	Quantity   int                         `json:"quantity"`
+	UnitPrice  int64                       `json:"unit_price"`
+	Currency   string                      `json:"currency"`
+	Extensions []cartItemExtensionResponse `json:"extensions,omitempty"`
 }
 
 // ── handler ─────────────────────────────────────────────────────────────

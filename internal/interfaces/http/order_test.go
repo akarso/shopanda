@@ -87,7 +87,7 @@ func (r *stubOrderRepo) ListPaidTaxSnapshots(context.Context, time.Time, time.Ti
 
 func orderSetup() (*stubOrderRepo, *http.ServeMux) {
 	repo := newStubOrderRepo()
-	handler := shophttp.NewOrderHandler(repo)
+	handler := shophttp.NewOrderHandler(repo, nil)
 
 	requireAuth := shophttp.RequireAuth()
 	mux := http.NewServeMux()
