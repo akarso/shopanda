@@ -13,6 +13,9 @@ type ExtensionHookAdminHandler struct {
 
 // NewExtensionHookAdminHandler creates an ExtensionHookAdminHandler.
 func NewExtensionHookAdminHandler(hooks *hooksapp.Registry) *ExtensionHookAdminHandler {
+	if hooks == nil {
+		panic("http: hook registry must not be nil")
+	}
 	return &ExtensionHookAdminHandler{hooks: hooks}
 }
 

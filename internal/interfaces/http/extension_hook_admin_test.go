@@ -52,3 +52,12 @@ func TestExtensionHookAdminHandler_ListHooks(t *testing.T) {
 		t.Fatalf("handlers = %v", handlers)
 	}
 }
+
+func TestExtensionHookAdminHandler_NilRegistryPanics(t *testing.T) {
+	defer func() {
+		if r := recover(); r == nil {
+			t.Fatal("expected panic for nil hook registry")
+		}
+	}()
+	shophttp.NewExtensionHookAdminHandler(nil)
+}
