@@ -76,6 +76,7 @@
                 <dd>{{ len .Blocks }}</dd>
             </div>
         </dl>
+        {{slot_container "pdp.actions"}}
         <div class="product-detail-card__actions">
             <a class="button-link" href="/">Back to home</a>
             {{ if .CartForm }}
@@ -107,6 +108,7 @@
             <span class="muted-note">This product is not purchasable yet.</span>
             {{ end }}
         </div>
+        {{/slot_container}}
     </div>
 </section>
 {{ end }}

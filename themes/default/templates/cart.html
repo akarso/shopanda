@@ -39,6 +39,7 @@
         {{ end }}
     </section>
 
+    {{slot_container "cart.summary"}}
     <aside class="cart-summary">
         <span class="eyebrow">Summary</span>
         <div>
@@ -58,6 +59,7 @@
             <a class="button-link" href="/checkout/address">Checkout</a>
         </div>
     </aside>
+    {{/slot_container}}
     {{ else }}
     <section class="page-intro listing-empty">
         <span class="eyebrow">Nothing to show</span>

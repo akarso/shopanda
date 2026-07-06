@@ -25,6 +25,7 @@ import (
 	cacheApp "github.com/akarso/shopanda/internal/application/cache"
 	cartApp "github.com/akarso/shopanda/internal/application/cart"
 	hooksApp "github.com/akarso/shopanda/internal/application/hooks"
+	slotsApp "github.com/akarso/shopanda/internal/application/slots"
 	cmsApp "github.com/akarso/shopanda/internal/application/cms"
 	checkoutApp "github.com/akarso/shopanda/internal/application/checkout"
 	"github.com/akarso/shopanda/internal/application/composition"
@@ -298,6 +299,7 @@ func runServe(cfg *config.Config, log logger.Logger, embedScheduler bool) error 
 	registerPlugins(registry, cfg)
 	extensionRegistry := extensionApp.NewRegistry()
 	hookRegistry := hooksApp.NewRegistry(log)
+	slotRegistry := slotsApp.NewRegistry(log)
 	pluginApp := &plugin.App{
 		Logger:    log,
 		Bus:       bus,
@@ -306,6 +308,7 @@ func runServe(cfg *config.Config, log logger.Logger, embedScheduler bool) error 
 	}
 	pluginApp.SetExtensionRegistry(extensionRegistry)
 	pluginApp.SetHookRegistry(hookRegistry)
+	pluginApp.SetSlotRegistry(slotRegistry)
 	summary := registry.InitAll(pluginApp)
 	extensionFieldRepo, err := postgres.NewExtensionFieldRepo(conn)
 	if err != nil {
@@ -1116,7 +1119,7 @@ func runServe(cfg *config.Config, log logger.Logger, embedScheduler bool) error 
 
 	// Storefront SSR routes (optional, gated by frontend.enabled).
 	if cfg.Frontend.Enabled {
-		themeEngine, thErr := theme.Load(cfg.Frontend.ThemePath)
+		themeEngine, thErr := theme.Load(cfg.Frontend.ThemePath, theme.WithSlotSource(slotRegistryThemeSource{reg: slotRegistry}))
 		if thErr != nil {
 			return fmt.Errorf("theme load: %w", thErr)
 		}
@@ -2655,4 +2658,16 @@ func runSearchReindex(cfg *config.Config, log logger.Logger) error {
 	})
 
 	return nil
+}
+
+type slotRegistryThemeSource struct {
+	reg *slotsApp.Registry
+}
+
+func (s slotRegistryThemeSource) Render(anchor, placement string, data interface{}) string {
+	p, err := slotsApp.ParsePlacement(placement)
+	if err != nil {
+		return ""
+	}
+	return s.reg.Render(anchor, p, data)
 }

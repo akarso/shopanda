@@ -11,6 +11,20 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
+// Option configures theme loading.
+type Option func(*loadOptions)
+
+type loadOptions struct {
+	slots SlotSource
+}
+
+// WithSlotSource enables slot template markers backed by source.
+func WithSlotSource(source SlotSource) Option {
+	return func(o *loadOptions) {
+		o.slots = source
+	}
+}
+
 // Engine loads and renders theme templates.
 // Each page template is parsed together with layout.html (if present) so that
 // templates like "title" and "content" are scoped per page.
@@ -28,7 +42,14 @@ type Engine struct {
 //	<dir>/theme.yaml
 //	<dir>/templates/layout.html   (optional)
 //	<dir>/templates/*.html        (page templates)
-func Load(dir string) (*Engine, error) {
+func Load(dir string, opts ...Option) (*Engine, error) {
+	var cfg loadOptions
+	for _, opt := range opts {
+		if opt != nil {
+			opt(&cfg)
+		}
+	}
+
 	meta, err := loadThemeYAML(filepath.Join(dir, "theme.yaml"))
 	if err != nil {
 		return nil, fmt.Errorf("theme: load metadata: %w", err)
@@ -59,15 +80,11 @@ func Load(dir string) (*Engine, error) {
 		return nil, fmt.Errorf("theme: no page templates found (only layout.html)")
 	}
 
+	funcMap := slotFuncMap(cfg.slots)
 	pages := make(map[string]*template.Template, len(pageFiles))
 	for _, pf := range pageFiles {
 		name := strings.TrimSuffix(filepath.Base(pf), filepath.Ext(pf))
-		var t *template.Template
-		if layoutFile != "" {
-			t, err = template.ParseFiles(layoutFile, pf)
-		} else {
-			t, err = template.ParseFiles(pf)
-		}
+		t, err := parsePageTemplate(layoutFile, pf, funcMap)
 		if err != nil {
 			return nil, fmt.Errorf("theme: parse %s: %w", filepath.Base(pf), err)
 		}
@@ -96,6 +113,36 @@ func (e *Engine) Render(w io.Writer, name string, data interface{}) error {
 func (e *Engine) HasTemplate(name string) bool {
 	_, ok := e.pages[name]
 	return ok
+}
+
+func parsePageTemplate(layoutFile, pageFile string, funcMap template.FuncMap) (*template.Template, error) {
+	pageSource, err := os.ReadFile(pageFile)
+	if err != nil {
+		return nil, err
+	}
+	pageSource = []byte(preprocessSlotContainers(string(pageSource)))
+
+	if layoutFile == "" {
+		name := filepath.Base(pageFile)
+		return template.New(name).Funcs(funcMap).Parse(string(pageSource))
+	}
+
+	layoutSource, err := os.ReadFile(layoutFile)
+	if err != nil {
+		return nil, err
+	}
+	layoutSource = []byte(preprocessSlotContainers(string(layoutSource)))
+
+	layoutName := filepath.Base(layoutFile)
+	pageName := filepath.Base(pageFile)
+	root := template.New(layoutName).Funcs(funcMap)
+	if _, err := root.Parse(string(layoutSource)); err != nil {
+		return nil, err
+	}
+	if _, err := root.New(pageName).Parse(string(pageSource)); err != nil {
+		return nil, err
+	}
+	return root, nil
 }
 
 func loadThemeYAML(path string) (Theme, error) {
