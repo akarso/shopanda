@@ -100,6 +100,16 @@ func (h *OrderAdminHandler) List() http.HandlerFunc {
 		}
 
 		// Log successful list operation for compliance.
+		out := make([]orderResponse, 0, len(orders))
+		for i := range orders {
+			resp, err := toOrderResponse(r.Context(), h.extensions, &orders[i])
+			if err != nil {
+				JSONError(w, extensionapp.MapValueError(err))
+				return
+			}
+			out = append(out, resp)
+		}
+
 		scopeDetails := adminScopeDetailsFromRequest(r)
 		if scopeDetails == nil {
 			scopeDetails = make(map[string]interface{})
@@ -113,16 +123,6 @@ func (h *OrderAdminHandler) List() http.HandlerFunc {
 			Result:       "success",
 			Details:      scopeDetails,
 		})
-
-		out := make([]orderResponse, 0, len(orders))
-		for i := range orders {
-			resp, err := toOrderResponse(r.Context(), h.extensions, &orders[i])
-			if err != nil {
-				JSONError(w, extensionapp.MapValueError(err))
-				return
-			}
-			out = append(out, resp)
-		}
 
 		JSON(w, http.StatusOK, map[string]interface{}{
 			"orders": out,
@@ -163,6 +163,12 @@ func (h *OrderAdminHandler) Get() http.HandlerFunc {
 			return
 		}
 
+		resp, err := toOrderResponse(r.Context(), h.extensions, o)
+		if err != nil {
+			JSONError(w, extensionapp.MapValueError(err))
+			return
+		}
+
 		// Log successful read access for compliance.
 		scopeDetails := adminScopeDetailsFromRequest(r)
 		h.auditor.LogAction(r.Context(), admin.AuditEntry{
@@ -173,12 +179,6 @@ func (h *OrderAdminHandler) Get() http.HandlerFunc {
 			Result:       "success",
 			Details:      scopeDetails,
 		})
-
-		resp, err := toOrderResponse(r.Context(), h.extensions, o)
-		if err != nil {
-			JSONError(w, extensionapp.MapValueError(err))
-			return
-		}
 
 		JSON(w, http.StatusOK, map[string]interface{}{
 			"order": resp,
@@ -330,6 +330,12 @@ func (h *OrderAdminHandler) Update() http.HandlerFunc {
 			return
 		}
 
+		resp, err := toOrderResponse(r.Context(), h.extensions, o)
+		if err != nil {
+			JSONError(w, extensionapp.MapValueError(err))
+			return
+		}
+
 		// Log successful status transition for compliance and audit trail.
 		scopeDetails := adminScopeDetailsFromRequest(r)
 		if scopeDetails == nil {
@@ -346,11 +352,6 @@ func (h *OrderAdminHandler) Update() http.HandlerFunc {
 			Details:      scopeDetails,
 		})
 
-		resp, err := toOrderResponse(r.Context(), h.extensions, o)
-		if err != nil {
-			JSONError(w, extensionapp.MapValueError(err))
-			return
-		}
 		JSON(w, http.StatusOK, map[string]interface{}{"order": resp})
 	}
 }

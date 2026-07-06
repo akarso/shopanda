@@ -103,12 +103,18 @@ type orderResponse struct {
 }
 
 func toOrderResponse(ctx context.Context, extensions *extensionapp.ValueService, o *order.Order) (orderResponse, error) {
-	items := make([]orderItemResp, 0, len(o.Items()))
-	for _, item := range o.Items() {
-		exts, err := orderItemExtensions(ctx, extensions, o.ID, item.VariantID)
-		if err != nil {
-			return orderResponse{}, err
-		}
+	orderItems := o.Items()
+	variantIDs := make([]string, len(orderItems))
+	for i, item := range orderItems {
+		variantIDs[i] = item.VariantID
+	}
+	extByVariant, err := orderItemExtensionsMap(ctx, extensions, o.ID, variantIDs)
+	if err != nil {
+		return orderResponse{}, err
+	}
+
+	items := make([]orderItemResp, 0, len(orderItems))
+	for _, item := range orderItems {
 		items = append(items, orderItemResp{
 			VariantID:  item.VariantID,
 			SKU:        item.SKU,
@@ -116,7 +122,7 @@ func toOrderResponse(ctx context.Context, extensions *extensionapp.ValueService,
 			Quantity:   item.Quantity,
 			UnitPrice:  item.UnitPrice.Amount(),
 			Currency:   item.UnitPrice.Currency(),
-			Extensions: exts,
+			Extensions: orderItemExtensionsFromMap(extByVariant, item.VariantID),
 		})
 	}
 	return orderResponse{

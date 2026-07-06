@@ -124,6 +124,9 @@ func (s *CreateOrderStep) Execute(cctx *Context) error {
 		return fmt.Errorf("create_order: save: %w", err)
 	}
 
+	cctx.Order = &o
+	cctx.SetMeta("created_order_id", o.ID)
+
 	if s.extensions != nil {
 		updatedBy := strings.TrimSpace(cctx.CustomerID)
 		if updatedBy == "" {
@@ -136,8 +139,6 @@ func (s *CreateOrderStep) Execute(cctx *Context) error {
 		}
 	}
 
-	cctx.Order = &o
-	cctx.SetMeta("created_order_id", o.ID)
 	return nil
 }
 

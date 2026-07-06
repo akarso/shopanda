@@ -11,12 +11,19 @@ import (
 // SnapshotCartItemToOrderItem copies cart_item extension values with storage_mode=snapshot
 // onto the matching order_item target.
 func (s *ValueService) SnapshotCartItemToOrderItem(ctx context.Context, cartID, orderID, variantID, updatedBy string) error {
-	from := domainext.CartItemTarget(cartID, variantID)
-	to := domainext.OrderItemTarget(orderID, variantID)
+	cartID = strings.TrimSpace(cartID)
+	orderID = strings.TrimSpace(orderID)
+	variantID = strings.TrimSpace(variantID)
 	updatedBy = strings.TrimSpace(updatedBy)
+	if cartID == "" || orderID == "" || variantID == "" {
+		return domainext.ValidationErr("cart_id, order_id, and variant_id must not be empty")
+	}
 	if updatedBy == "" {
 		return domainext.ValidationErr("updated_by must not be empty")
 	}
+
+	from := domainext.CartItemTarget(cartID, variantID)
+	to := domainext.OrderItemTarget(orderID, variantID)
 
 	stored, err := s.repo.ListByTarget(ctx, from)
 	if err != nil {

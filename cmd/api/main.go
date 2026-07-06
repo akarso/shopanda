@@ -616,7 +616,7 @@ func runServe(cfg *config.Config, log logger.Logger, embedScheduler bool) error 
 	}
 	checkoutWorkflow := checkoutApp.NewWorkflow(checkoutSteps, bus, log)
 	checkoutService := checkoutApp.NewService(cartRepo, checkoutWorkflow, log)
-	checkoutHandler := shophttp.NewCheckoutHandler(checkoutService)
+	checkoutHandler := shophttp.NewCheckoutHandler(checkoutService, extensionValueService)
 
 	// JWT.
 	jwtTTL, err := time.ParseDuration(cfg.Auth.JWTTTL)
