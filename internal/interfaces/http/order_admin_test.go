@@ -21,7 +21,7 @@ import (
 
 func orderAdminSetup() (*stubOrderRepo, *http.ServeMux) {
 	repo := newStubOrderRepo()
-	handler := shophttp.NewOrderAdminHandler(repo, logger.New("error"))
+	handler := shophttp.NewOrderAdminHandler(repo, logger.New("error"), nil)
 
 	requireAdmin := shophttp.RequireRole(identity.RoleAdmin)
 	mux := http.NewServeMux()
@@ -76,7 +76,7 @@ func cloneAuditContext(ctx map[string]interface{}) map[string]interface{} {
 }
 
 func orderAdminSetupWithAudit(repo order.OrderRepository, sink logger.Logger) *http.ServeMux {
-	handler := shophttp.NewOrderAdminHandlerWithAuditor(repo, admin.NewAuditor(sink))
+	handler := shophttp.NewOrderAdminHandlerWithAuditor(repo, admin.NewAuditor(sink), nil)
 	requireAdmin := shophttp.RequireRole(identity.RoleAdmin)
 	withAdminContext := shophttp.AdminContextMiddleware()
 	mux := http.NewServeMux()

@@ -56,6 +56,51 @@ func (s *ValueService) List(ctx context.Context, target domainext.Target, includ
 	return out, nil
 }
 
+// ListByOrderItems returns public stored values grouped by variant ID for an order.
+func (s *ValueService) ListByOrderItems(ctx context.Context, orderID string, variantIDs []string, includePrivate bool) (map[string][]domainext.Value, error) {
+	orderID = strings.TrimSpace(orderID)
+	if orderID == "" || len(variantIDs) == 0 {
+		return map[string][]domainext.Value{}, nil
+	}
+
+	targetIDs := make([]string, 0, len(variantIDs))
+	variantByTargetID := make(map[string]string, len(variantIDs))
+	for _, variantID := range variantIDs {
+		variantID = strings.TrimSpace(variantID)
+		if variantID == "" {
+			continue
+		}
+		targetID := domainext.OrderItemTargetID(orderID, variantID)
+		targetIDs = append(targetIDs, targetID)
+		variantByTargetID[targetID] = variantID
+	}
+	if len(targetIDs) == 0 {
+		return map[string][]domainext.Value{}, nil
+	}
+
+	stored, err := s.repo.ListByTargets(ctx, domainext.TargetOrderItem, targetIDs)
+	if err != nil {
+		return nil, err
+	}
+
+	out := make(map[string][]domainext.Value, len(variantByTargetID))
+	for _, value := range stored {
+		field, ok := s.registry.Get(value.FieldCode)
+		if !ok {
+			continue
+		}
+		if field.Visibility == domainext.VisibilityPrivate && !includePrivate {
+			continue
+		}
+		variantID := variantByTargetID[value.TargetID]
+		if variantID == "" {
+			continue
+		}
+		out[variantID] = append(out[variantID], value)
+	}
+	return out, nil
+}
+
 // ValidateBatch validates extension inputs without persisting them.
 func (s *ValueService) ValidateBatch(ctx context.Context, target domainext.Target, inputs []domainext.ValueInput, canAccessPrivate bool) error {
 	_, err := s.validateBatchValues(target, inputs, "validate", canAccessPrivate, false)

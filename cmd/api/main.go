@@ -594,7 +594,7 @@ func runServe(cfg *config.Config, log logger.Logger, embedScheduler bool) error 
 	validateCartStep := checkoutApp.NewValidateCartStep(variantRepo)
 	recalculatePricingStep := checkoutApp.NewRecalculatePricingStep(pricingPipeline)
 	reserveInventoryStep := checkoutApp.NewReserveInventoryStep(reservationRepo)
-	createOrderStep := checkoutApp.NewCreateOrderStep(orderRepo, variantRepo, storeCreditService)
+	createOrderStep := checkoutApp.NewCreateOrderStep(orderRepo, variantRepo, storeCreditService, extensionValueService)
 	selectShippingStep := checkoutApp.NewSelectShippingStep(flatRateProvider, shippingRepo)
 	initiatePaymentStep := checkoutApp.NewInitiatePaymentStep(payRegistry, paymentRepo)
 	checkoutSteps := []checkoutApp.Step{
@@ -616,7 +616,7 @@ func runServe(cfg *config.Config, log logger.Logger, embedScheduler bool) error 
 	}
 	checkoutWorkflow := checkoutApp.NewWorkflow(checkoutSteps, bus, log)
 	checkoutService := checkoutApp.NewService(cartRepo, checkoutWorkflow, log)
-	checkoutHandler := shophttp.NewCheckoutHandler(checkoutService)
+	checkoutHandler := shophttp.NewCheckoutHandler(checkoutService, extensionValueService)
 
 	// JWT.
 	jwtTTL, err := time.ParseDuration(cfg.Auth.JWTTTL)
@@ -682,8 +682,8 @@ func runServe(cfg *config.Config, log logger.Logger, embedScheduler bool) error 
 	productPriceAdmin := shophttp.NewProductPriceAdminHandler(productRepo, variantRepo, priceRepo, sharedAuditor, log)
 	variantHandler := shophttp.NewVariantHandler(productRepo, variantRepo, bus)
 	cartHandler := shophttp.NewCartHandler(cartService, extensionValueService)
-	orderHandler := shophttp.NewOrderHandler(orderRepo)
-	orderAdmin := shophttp.NewOrderAdminHandlerWithAuditor(orderRepo, sharedAuditor)
+	orderHandler := shophttp.NewOrderHandler(orderRepo, extensionValueService)
+	orderAdmin := shophttp.NewOrderAdminHandlerWithAuditor(orderRepo, sharedAuditor, extensionValueService)
 	invoiceAdmin := shophttp.NewInvoiceAdminHandler(invoiceRepo, orderRepo, invoicePDFRenderer, mediaStorage)
 	statsAdmin := shophttp.NewStatsAdminHandler(statsRepo)
 	authHandler := shophttp.NewAuthHandler(authService)

@@ -1,9 +1,11 @@
 package http
 
 import (
+	"context"
 	"net/http"
 	"time"
 
+	extensionapp "github.com/akarso/shopanda/internal/application/extension"
 	"github.com/akarso/shopanda/internal/domain/order"
 	"github.com/akarso/shopanda/internal/platform/apperror"
 	"github.com/akarso/shopanda/internal/platform/auth"
@@ -11,15 +13,16 @@ import (
 
 // OrderHandler handles order read endpoints.
 type OrderHandler struct {
-	orders order.OrderRepository
+	orders     order.OrderRepository
+	extensions *extensionapp.ValueService
 }
 
 // NewOrderHandler creates an OrderHandler.
-func NewOrderHandler(orders order.OrderRepository) *OrderHandler {
+func NewOrderHandler(orders order.OrderRepository, extensions *extensionapp.ValueService) *OrderHandler {
 	if orders == nil {
 		panic("http: order repository must not be nil")
 	}
-	return &OrderHandler{orders: orders}
+	return &OrderHandler{orders: orders, extensions: extensions}
 }
 
 // Get handles GET /api/v1/orders/{orderId}.
@@ -47,8 +50,14 @@ func (h *OrderHandler) Get() http.HandlerFunc {
 			return
 		}
 
+		resp, err := toOrderResponse(r.Context(), h.extensions, o)
+		if err != nil {
+			JSONError(w, extensionapp.MapValueError(err))
+			return
+		}
+
 		JSON(w, http.StatusOK, map[string]interface{}{
-			"order": toOrderResponse(o),
+			"order": resp,
 		})
 	}
 }
@@ -66,7 +75,12 @@ func (h *OrderHandler) List() http.HandlerFunc {
 
 		out := make([]orderResponse, 0, len(orders))
 		for i := range orders {
-			out = append(out, toOrderResponse(&orders[i]))
+			resp, err := toOrderResponse(r.Context(), h.extensions, &orders[i])
+			if err != nil {
+				JSONError(w, extensionapp.MapValueError(err))
+				return
+			}
+			out = append(out, resp)
 		}
 
 		JSON(w, http.StatusOK, map[string]interface{}{
@@ -88,16 +102,27 @@ type orderResponse struct {
 	UpdatedAt   string            `json:"updated_at"`
 }
 
-func toOrderResponse(o *order.Order) orderResponse {
-	items := make([]orderItemResp, 0, len(o.Items()))
-	for _, item := range o.Items() {
+func toOrderResponse(ctx context.Context, extensions *extensionapp.ValueService, o *order.Order) (orderResponse, error) {
+	orderItems := o.Items()
+	variantIDs := make([]string, len(orderItems))
+	for i, item := range orderItems {
+		variantIDs[i] = item.VariantID
+	}
+	extByVariant, err := orderItemExtensionsMap(ctx, extensions, o.ID, variantIDs)
+	if err != nil {
+		return orderResponse{}, err
+	}
+
+	items := make([]orderItemResp, 0, len(orderItems))
+	for _, item := range orderItems {
 		items = append(items, orderItemResp{
-			VariantID: item.VariantID,
-			SKU:       item.SKU,
-			Name:      item.Name,
-			Quantity:  item.Quantity,
-			UnitPrice: item.UnitPrice.Amount(),
-			Currency:  item.UnitPrice.Currency(),
+			VariantID:  item.VariantID,
+			SKU:        item.SKU,
+			Name:       item.Name,
+			Quantity:   item.Quantity,
+			UnitPrice:  item.UnitPrice.Amount(),
+			Currency:   item.UnitPrice.Currency(),
+			Extensions: orderItemExtensionsFromMap(extByVariant, item.VariantID),
 		})
 	}
 	return orderResponse{
@@ -109,5 +134,5 @@ func toOrderResponse(o *order.Order) orderResponse {
 		TotalAmount: o.TotalAmount.Amount(),
 		CreatedAt:   o.CreatedAt.UTC().Format(time.RFC3339),
 		UpdatedAt:   o.UpdatedAt.UTC().Format(time.RFC3339),
-	}
+	}, nil
 }

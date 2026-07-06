@@ -9,6 +9,7 @@ import (
 
 	domainext "github.com/akarso/shopanda/internal/domain/extension"
 	"github.com/akarso/shopanda/internal/platform/apperror"
+	"github.com/lib/pq"
 )
 
 // ExtensionValueRepo persists extension field values in Postgres.
@@ -46,6 +47,48 @@ func (r *ExtensionValueRepo) ListByTarget(ctx context.Context, target domainext.
 	}
 	if err := rows.Err(); err != nil {
 		return nil, fmt.Errorf("extension_value_repo: list rows: %w", err)
+	}
+	return out, nil
+}
+
+// ListByTargets returns all values for many targets of the same type.
+func (r *ExtensionValueRepo) ListByTargets(ctx context.Context, targetType domainext.TargetType, targetIDs []string) ([]domainext.Value, error) {
+	if len(targetIDs) == 0 {
+		return nil, nil
+	}
+	const q = `SELECT target_id, field_code, value, updated_by, updated_at
+		FROM extension_values
+		WHERE target_type = $1 AND target_id = ANY($2)
+		ORDER BY target_id ASC, field_code ASC`
+	rows, err := r.db.QueryContext(ctx, q, string(targetType), pq.Array(targetIDs))
+	if err != nil {
+		return nil, fmt.Errorf("extension_value_repo: list targets: %w", err)
+	}
+	defer rows.Close()
+
+	out := make([]domainext.Value, 0)
+	for rows.Next() {
+		var targetID, fieldCode, updatedBy string
+		var payloadRaw []byte
+		var updatedAt time.Time
+		if err := rows.Scan(&targetID, &fieldCode, &payloadRaw, &updatedBy, &updatedAt); err != nil {
+			return nil, fmt.Errorf("extension_value_repo: list targets scan: %w", err)
+		}
+		var payload domainext.ValuePayload
+		if err := json.Unmarshal(payloadRaw, &payload); err != nil {
+			return nil, fmt.Errorf("extension_value_repo: list targets decode payload: %w", err)
+		}
+		out = append(out, domainext.Value{
+			FieldCode:  fieldCode,
+			TargetType: targetType,
+			TargetID:   targetID,
+			Payload:    payload,
+			UpdatedBy:  updatedBy,
+			UpdatedAt:  updatedAt.UTC(),
+		})
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("extension_value_repo: list targets rows: %w", err)
 	}
 	return out, nil
 }

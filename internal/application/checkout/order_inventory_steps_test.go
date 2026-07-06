@@ -327,6 +327,7 @@ func TestCreateOrderStep_Name(t *testing.T) {
 		&mockOrderRepo{},
 		&mockVariantRepo037{variants: variantMap037()},
 		nil,
+		nil,
 	)
 	if step.Name() != "create_order" {
 		t.Errorf("Name() = %q, want create_order", step.Name())
@@ -336,7 +337,7 @@ func TestCreateOrderStep_Name(t *testing.T) {
 func TestCreateOrderStep_Success(t *testing.T) {
 	orderRepo := &mockOrderRepo{}
 	variantRepo := &mockVariantRepo037{variants: variantMap037("v1", "v2")}
-	step := checkout.NewCreateOrderStep(orderRepo, variantRepo, nil)
+	step := checkout.NewCreateOrderStep(orderRepo, variantRepo, nil, nil)
 
 	cctx := checkout.NewContext("cart-1", "cust-1", "EUR")
 	attachCreateOrderInput(cctx)
@@ -379,7 +380,7 @@ func TestCreateOrderStep_Success(t *testing.T) {
 func TestCreateOrderStep_ItemPricesFromPricing(t *testing.T) {
 	orderRepo := &mockOrderRepo{}
 	variantRepo := &mockVariantRepo037{variants: variantMap037("v1")}
-	step := checkout.NewCreateOrderStep(orderRepo, variantRepo, nil)
+	step := checkout.NewCreateOrderStep(orderRepo, variantRepo, nil, nil)
 
 	cctx := checkout.NewContext("cart-1", "cust-1", "EUR")
 	attachCreateOrderInput(cctx)
@@ -412,6 +413,7 @@ func TestCreateOrderStep_NoPricing(t *testing.T) {
 		&mockOrderRepo{},
 		&mockVariantRepo037{variants: variantMap037("v1")},
 		nil,
+		nil,
 	)
 
 	cctx := checkout.NewContext("cart-1", "cust-1", "EUR")
@@ -432,6 +434,7 @@ func TestCreateOrderStep_NilCart(t *testing.T) {
 		&mockOrderRepo{},
 		&mockVariantRepo037{variants: variantMap037()},
 		nil,
+		nil,
 	)
 
 	cctx := checkout.NewContext("cart-1", "cust-1", "EUR")
@@ -445,7 +448,7 @@ func TestCreateOrderStep_NilCart(t *testing.T) {
 func TestCreateOrderStep_SaveError(t *testing.T) {
 	orderRepo := &mockOrderRepo{err: errors.New("db down")}
 	variantRepo := &mockVariantRepo037{variants: variantMap037("v1")}
-	step := checkout.NewCreateOrderStep(orderRepo, variantRepo, nil)
+	step := checkout.NewCreateOrderStep(orderRepo, variantRepo, nil, nil)
 
 	cctx := checkout.NewContext("cart-1", "cust-1", "EUR")
 	attachCreateOrderInput(cctx)
@@ -464,7 +467,7 @@ func TestCreateOrderStep_SaveError(t *testing.T) {
 func TestCreateOrderStep_Idempotent(t *testing.T) {
 	orderRepo := &mockOrderRepo{}
 	variantRepo := &mockVariantRepo037{variants: variantMap037("v1")}
-	step := checkout.NewCreateOrderStep(orderRepo, variantRepo, nil)
+	step := checkout.NewCreateOrderStep(orderRepo, variantRepo, nil, nil)
 
 	cctx := checkout.NewContext("cart-1", "cust-1", "EUR")
 	attachCreateOrderInput(cctx)
@@ -489,7 +492,7 @@ func TestCreateOrderStep_Idempotent(t *testing.T) {
 func TestCreateOrderStep_VariantNotFound(t *testing.T) {
 	orderRepo := &mockOrderRepo{}
 	variantRepo := &mockVariantRepo037{variants: variantMap037()} // empty
-	step := checkout.NewCreateOrderStep(orderRepo, variantRepo, nil)
+	step := checkout.NewCreateOrderStep(orderRepo, variantRepo, nil, nil)
 
 	cctx := checkout.NewContext("cart-1", "cust-1", "EUR")
 	cctx.Cart = cartWithItems037(t, "cust-1", "v1")
@@ -508,6 +511,7 @@ func TestCreateOrderStep_NilContext(t *testing.T) {
 	step := checkout.NewCreateOrderStep(
 		&mockOrderRepo{},
 		&mockVariantRepo037{variants: variantMap037()},
+		nil,
 		nil,
 	)
 
@@ -543,7 +547,7 @@ func TestCreateOrderStep_ApplyStoreCredit(t *testing.T) {
 	orderRepo := &mockOrderRepo{}
 	variantRepo := &mockVariantRepo037{variants: variantMap037("v1")}
 	credits := &mockStoreCreditService{balance: 1500}
-	step := checkout.NewCreateOrderStep(orderRepo, variantRepo, credits)
+	step := checkout.NewCreateOrderStep(orderRepo, variantRepo, credits, nil)
 
 	cctx := checkout.NewContext("cart-1", "cust-1", "EUR")
 	attachCreateOrderInput(cctx)
@@ -574,6 +578,7 @@ func TestCreateOrderStep_StoreCreditRequiresCustomer(t *testing.T) {
 		&mockOrderRepo{},
 		&mockVariantRepo037{variants: variantMap037("v1")},
 		&mockStoreCreditService{balance: 1000},
+		nil,
 	)
 
 	cctx := checkout.NewContext("cart-1", "", "EUR")
@@ -599,7 +604,7 @@ func TestCreateOrderStep_SaveErrorRollsBackStoreCredit(t *testing.T) {
 	orderRepo := &mockOrderRepo{err: errors.New("db down")}
 	variantRepo := &mockVariantRepo037{variants: variantMap037("v1")}
 	credits := &mockStoreCreditService{balance: 1500}
-	step := checkout.NewCreateOrderStep(orderRepo, variantRepo, credits)
+	step := checkout.NewCreateOrderStep(orderRepo, variantRepo, credits, nil)
 
 	cctx := checkout.NewContext("cart-1", "cust-1", "EUR")
 	attachCreateOrderInput(cctx)

@@ -6,6 +6,7 @@ import (
 	"time"
 
 	checkoutApp "github.com/akarso/shopanda/internal/application/checkout"
+	extensionapp "github.com/akarso/shopanda/internal/application/extension"
 	"github.com/akarso/shopanda/internal/domain/order"
 	"github.com/akarso/shopanda/internal/platform/apperror"
 	"github.com/akarso/shopanda/internal/platform/auth"
@@ -13,15 +14,16 @@ import (
 
 // CheckoutHandler handles checkout HTTP endpoints.
 type CheckoutHandler struct {
-	svc *checkoutApp.Service
+	svc        *checkoutApp.Service
+	extensions *extensionapp.ValueService
 }
 
 // NewCheckoutHandler creates a CheckoutHandler.
-func NewCheckoutHandler(svc *checkoutApp.Service) *CheckoutHandler {
+func NewCheckoutHandler(svc *checkoutApp.Service, extensions *extensionapp.ValueService) *CheckoutHandler {
 	if svc == nil {
 		panic("http: checkout service must not be nil")
 	}
-	return &CheckoutHandler{svc: svc}
+	return &CheckoutHandler{svc: svc, extensions: extensions}
 }
 
 // ── request / response types ────────────────────────────────────────────
@@ -55,12 +57,13 @@ type checkoutOrderResponse struct {
 }
 
 type orderItemResp struct {
-	VariantID string `json:"variant_id"`
-	SKU       string `json:"sku"`
-	Name      string `json:"name"`
-	Quantity  int    `json:"quantity"`
-	UnitPrice int64  `json:"unit_price"`
-	Currency  string `json:"currency"`
+	VariantID  string                      `json:"variant_id"`
+	SKU        string                      `json:"sku"`
+	Name       string                      `json:"name"`
+	Quantity   int                         `json:"quantity"`
+	UnitPrice  int64                       `json:"unit_price"`
+	Currency   string                      `json:"currency"`
+	Extensions []cartItemExtensionResponse `json:"extensions,omitempty"`
 }
 
 // ── handler ─────────────────────────────────────────────────────────────
@@ -99,16 +102,10 @@ func (h *CheckoutHandler) StartCheckout() http.HandlerFunc {
 			return
 		}
 
-		items := make([]orderItemResp, 0, len(cctx.Order.Items()))
-		for _, item := range cctx.Order.Items() {
-			items = append(items, orderItemResp{
-				VariantID: item.VariantID,
-				SKU:       item.SKU,
-				Name:      item.Name,
-				Quantity:  item.Quantity,
-				UnitPrice: item.UnitPrice.Amount(),
-				Currency:  item.UnitPrice.Currency(),
-			})
+		orderResp, err := toOrderResponse(r.Context(), h.extensions, cctx.Order)
+		if err != nil {
+			JSONError(w, extensionapp.MapValueError(err))
+			return
 		}
 
 		payable, err := cctx.Order.PayableAmount()
@@ -123,7 +120,7 @@ func (h *CheckoutHandler) StartCheckout() http.HandlerFunc {
 				CustomerID:         cctx.Order.CustomerID,
 				Status:             cctx.Order.Status(),
 				Currency:           cctx.Order.Currency,
-				Items:              items,
+				Items:              orderResp.Items,
 				TotalAmount:        cctx.Order.TotalAmount.Amount(),
 				StoreCreditApplied: cctx.Order.StoreCreditApplied.Amount(),
 				PayableAmount:      payable.Amount(),
