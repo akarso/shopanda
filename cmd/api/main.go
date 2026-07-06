@@ -26,6 +26,7 @@ import (
 	cartApp "github.com/akarso/shopanda/internal/application/cart"
 	hooksApp "github.com/akarso/shopanda/internal/application/hooks"
 	slotsApp "github.com/akarso/shopanda/internal/application/slots"
+	assetsApp "github.com/akarso/shopanda/internal/application/assets"
 	cmsApp "github.com/akarso/shopanda/internal/application/cms"
 	checkoutApp "github.com/akarso/shopanda/internal/application/checkout"
 	"github.com/akarso/shopanda/internal/application/composition"
@@ -300,6 +301,7 @@ func runServe(cfg *config.Config, log logger.Logger, embedScheduler bool) error 
 	extensionRegistry := extensionApp.NewRegistry()
 	hookRegistry := hooksApp.NewRegistry(log)
 	slotRegistry := slotsApp.NewRegistry(log)
+	assetRegistry := assetsApp.NewRegistry()
 	pluginApp := &plugin.App{
 		Logger:    log,
 		Bus:       bus,
@@ -309,6 +311,7 @@ func runServe(cfg *config.Config, log logger.Logger, embedScheduler bool) error 
 	pluginApp.SetExtensionRegistry(extensionRegistry)
 	pluginApp.SetHookRegistry(hookRegistry)
 	pluginApp.SetSlotRegistry(slotRegistry)
+	pluginApp.SetAssetRegistry(assetRegistry)
 	summary := registry.InitAll(pluginApp)
 	extensionFieldRepo, err := postgres.NewExtensionFieldRepo(conn)
 	if err != nil {
@@ -1151,7 +1154,9 @@ func runServe(cfg *config.Config, log logger.Logger, embedScheduler bool) error 
 			WithOrderClaimEmailer(claimEmailer).
 			WithOrderLinker(linkLinker).
 			WithAccountSecurity(cfg.Auth.JWTSecret, 10*time.Minute).
-			WithAccountSecurityEmailLinks(cfg.Server.PublicBaseURL, 45*time.Minute)
+			WithAccountSecurityEmailLinks(cfg.Server.PublicBaseURL, 45*time.Minute).
+			WithAssets(assetRegistry).
+			WithCSPEnabled(cfg.Frontend.CSPEnabled)
 		staticDir := filepath.Join(cfg.Frontend.ThemePath, "static")
 		staticHandler := http.StripPrefix("/static/", http.FileServer(http.Dir(staticDir)))
 		router.Handle("GET /static/{path...}", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

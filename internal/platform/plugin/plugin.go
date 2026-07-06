@@ -4,6 +4,7 @@ import (
 	"sync"
 
 	"github.com/akarso/shopanda/internal/application/extension"
+	assetsapp "github.com/akarso/shopanda/internal/application/assets"
 	hooksapp "github.com/akarso/shopanda/internal/application/hooks"
 	slotsapp "github.com/akarso/shopanda/internal/application/slots"
 	"github.com/akarso/shopanda/internal/domain/identity"
@@ -59,6 +60,9 @@ type App struct {
 
 	slotRegistry   *slotsapp.Registry
 	slotRegistryMu sync.Mutex
+
+	assetRegistry   *assetsapp.Registry
+	assetRegistryMu sync.Mutex
 }
 
 // RegisterPricingStep registers a pricing pipeline step.

@@ -367,9 +367,10 @@ type CorePluginsConfig struct {
 }
 
 type FrontendConfig struct {
-	Enabled   bool   `yaml:"enabled"`
-	Mode      string `yaml:"mode"`
-	ThemePath string `yaml:"theme_path"`
+	Enabled    bool   `yaml:"enabled"`
+	Mode       string `yaml:"mode"`
+	ThemePath  string `yaml:"theme_path"`
+	CSPEnabled bool   `yaml:"csp_enabled"`
 }
 
 type CDNConfig struct {
@@ -795,6 +796,9 @@ func applyEnv(cfg *Config) {
 	}
 	if v := os.Getenv("SHOPANDA_FRONTEND_THEME_PATH"); v != "" {
 		cfg.Frontend.ThemePath = v
+	}
+	if v := os.Getenv("SHOPANDA_FRONTEND_CSP_ENABLED"); v != "" {
+		cfg.Frontend.CSPEnabled = v == "true" || v == "1"
 	}
 	if v := os.Getenv("SHOPANDA_CDN_BASE_URL"); v != "" {
 		cfg.CDN.BaseURL = v

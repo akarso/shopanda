@@ -6,7 +6,9 @@
     <title>{{ template "title" . }} · {{ .Layout.SiteName }}</title>
     <link rel="stylesheet" href="/static/css/style.css">
     <link rel="stylesheet" href="/static/css/custom.css">
+    {{ range .Layout.Assets.HeadCSS }}<link rel="stylesheet" href="{{ .URL }}">{{ end }}
     {{ if .Layout.EnableCart }}<script src="/static/js/htmx.min.js" defer></script>{{ end }}
+    {{ range .Layout.Assets.HeadJS }}<script src="{{ .URL }}"{{ if $.Layout.CSPEnabled }} nonce="{{ $.Layout.CSPNonce }}"{{ end }} defer></script>{{ end }}
 </head>
 <body>
     <a class="skip-link" href="#content">Skip to content</a>
@@ -114,6 +116,7 @@
             <span>© {{ .Layout.CurrentYear }}</span>
         </div>
     </footer>
+    {{ range .Layout.Assets.FooterJS }}<script src="{{ .URL }}"{{ if $.Layout.CSPEnabled }} nonce="{{ $.Layout.CSPNonce }}"{{ end }} defer></script>{{ end }}
 </body>
 </html>
 
