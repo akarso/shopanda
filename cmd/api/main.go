@@ -24,6 +24,7 @@ import (
 	mfaApp "github.com/akarso/shopanda/internal/application/mfa"
 	cacheApp "github.com/akarso/shopanda/internal/application/cache"
 	cartApp "github.com/akarso/shopanda/internal/application/cart"
+	hooksApp "github.com/akarso/shopanda/internal/application/hooks"
 	cmsApp "github.com/akarso/shopanda/internal/application/cms"
 	checkoutApp "github.com/akarso/shopanda/internal/application/checkout"
 	"github.com/akarso/shopanda/internal/application/composition"
@@ -296,6 +297,7 @@ func runServe(cfg *config.Config, log logger.Logger, embedScheduler bool) error 
 	registry := plugin.NewRegistry(log)
 	registerPlugins(registry, cfg)
 	extensionRegistry := extensionApp.NewRegistry()
+	hookRegistry := hooksApp.NewRegistry(log)
 	pluginApp := &plugin.App{
 		Logger:    log,
 		Bus:       bus,
@@ -303,6 +305,7 @@ func runServe(cfg *config.Config, log logger.Logger, embedScheduler bool) error 
 		Bootstrap: &plugin.Bootstrap{DB: conn},
 	}
 	pluginApp.SetExtensionRegistry(extensionRegistry)
+	pluginApp.SetHookRegistry(hookRegistry)
 	summary := registry.InitAll(pluginApp)
 	extensionFieldRepo, err := postgres.NewExtensionFieldRepo(conn)
 	if err != nil {
@@ -587,7 +590,7 @@ func runServe(cfg *config.Config, log logger.Logger, embedScheduler bool) error 
 	pricingPipeline := pricing.NewPipeline(pricingSteps...)
 
 	// Application services.
-	cartService := cartApp.NewService(cartRepo, priceRepo, promotionRepo, couponRepo, pricingPipeline, log, bus, extensionValueService)
+	cartService := cartApp.NewService(cartRepo, priceRepo, promotionRepo, couponRepo, pricingPipeline, log, bus, extensionValueService, hookRegistry)
 	storeCreditService := storecreditApp.NewService(storeCreditRepo, customerRepo)
 
 	// Checkout workflow.
@@ -791,6 +794,7 @@ func runServe(cfg *config.Config, log logger.Logger, embedScheduler bool) error 
 	attributeAdmin := shophttp.NewAttributeAdminHandlerWithAuditor(attributeStore, sharedAuditor)
 	extensionFieldAdmin := shophttp.NewExtensionFieldAdminHandlerWithAuditor(extensionFieldService, sharedAuditor)
 	extensionValueAdmin := shophttp.NewExtensionValueAdminHandlerWithAuditor(extensionValueService, sharedAuditor)
+	extensionHookAdmin := shophttp.NewExtensionHookAdminHandler(hookRegistry)
 	inventoryAdmin := shophttp.NewInventoryAdminHandlerWithAuditor(stockRepo, variantRepo, sharedAuditor)
 	storeAdmin := shophttp.NewStoreAdminHandlerWithAuditor(storeRepo, bus, sharedAuditor)
 	auditLogAdmin := shophttp.NewAuditLogAdminHandler(auditLogRepo, sharedAuditor)
@@ -1040,6 +1044,7 @@ func runServe(cfg *config.Config, log logger.Logger, embedScheduler bool) error 
 	router.Handle("DELETE /api/v1/admin/extensions/values/{targetType}/{targetID}/{fieldCode}", requireExtensionsWrite(extensionValueAdmin.DeleteValue()))
 	router.Handle("GET /api/v1/admin/products/{id}/extensions", requireExtensionsRead(extensionValueAdmin.ListProductExtensions()))
 	router.Handle("PUT /api/v1/admin/products/{id}/extensions", requireExtensionsWrite(extensionValueAdmin.PutProductExtensions()))
+	router.Handle("GET /api/v1/admin/extensions/hooks", requireExtensionsRead(extensionHookAdmin.ListHooks()))
 	router.Handle("GET /api/v1/admin/inventory", requireProductsRead(inventoryAdmin.List()))
 	router.Handle("PUT /api/v1/admin/inventory/{variantId}", requireProductsWrite(inventoryAdmin.Adjust()))
 	router.Handle("GET /api/v1/admin/stores", requireSettingsRead(storeAdmin.List()))

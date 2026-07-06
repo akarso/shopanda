@@ -6,6 +6,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/akarso/shopanda/internal/application/hooks"
 	domainCart "github.com/akarso/shopanda/internal/domain/cart"
 	domainext "github.com/akarso/shopanda/internal/domain/extension"
 	"github.com/akarso/shopanda/internal/domain/pricing"
@@ -33,6 +34,7 @@ type Service struct {
 	coupons    promotion.CouponRepository
 	pipeline   pricing.Pipeline
 	extensions extensionValueWriter
+	hooks      *hooks.Registry
 	log        logger.Logger
 	bus        *event.Bus
 }
@@ -54,6 +56,7 @@ func NewService(
 	log logger.Logger,
 	bus *event.Bus,
 	extensions extensionValueWriter,
+	hookRegistry *hooks.Registry,
 ) *Service {
 	return &Service{
 		carts:      carts,
@@ -62,6 +65,7 @@ func NewService(
 		coupons:    coupons,
 		pipeline:   pipeline,
 		extensions: extensions,
+		hooks:      hookRegistry,
 		log:        log,
 		bus:        bus,
 	}
@@ -306,6 +310,17 @@ func (s *Service) AddItem(ctx context.Context, cartID, customerID, variantID str
 		VariantID: variantID,
 		Quantity:  quantity,
 	}))
+	if s.hooks != nil {
+		hookCtx := hooks.NewContext(hooks.HookCartAddItemAfter)
+		hookCtx.Set("cart_id", c.ID)
+		hookCtx.Set("customer_id", customerID)
+		hookCtx.Set("variant_id", variantID)
+		hookCtx.Set("quantity", quantity)
+		hookCtx.Set("cart", c)
+		if err := s.hooks.Invoke(ctx, hookCtx); err != nil {
+			return nil, fmt.Errorf("cart service: add item hook: %w", err)
+		}
+	}
 	return c, nil
 }
 

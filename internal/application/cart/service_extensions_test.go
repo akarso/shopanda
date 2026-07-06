@@ -33,6 +33,18 @@ func (m *memCartExtensionValueRepo) ListByTarget(_ context.Context, target domai
 	return out, nil
 }
 
+func (m *memCartExtensionValueRepo) ListByTargets(_ context.Context, targetType domainext.TargetType, targetIDs []string) ([]domainext.Value, error) {
+	out := make([]domainext.Value, 0)
+	for _, targetID := range targetIDs {
+		stored, err := m.ListByTarget(context.Background(), domainext.Target{Type: targetType, ID: targetID})
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, stored...)
+	}
+	return out, nil
+}
+
 func (m *memCartExtensionValueRepo) Upsert(_ context.Context, value domainext.Value) error {
 	m.values[cartExtKey(domainext.Target{Type: value.TargetType, ID: value.TargetID}, value.FieldCode)] = value
 	return nil
@@ -73,7 +85,7 @@ func setupCartExtensionService(t *testing.T) (*cartApp.Service, *memCartExtensio
 	carts := newStubCartRepo()
 	prices := newStubPriceRepo()
 	prices.set("var-1", "EUR", 1000)
-	svc := cartApp.NewService(carts, prices, nil, nil, testPipeline(prices), testLogger(), testBus(), values)
+	svc := cartApp.NewService(carts, prices, nil, nil, testPipeline(prices), testLogger(), testBus(), values, nil)
 	return svc, repo
 }
 

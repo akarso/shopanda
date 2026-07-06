@@ -241,7 +241,7 @@ func (r *stubTaxRateRepo) Delete(_ context.Context, _ string) error       { retu
 func TestService_CreateCart(t *testing.T) {
 	carts := newStubCartRepo()
 	prices := newStubPriceRepo()
-	svc := cartApp.NewService(carts, prices, nil, nil, testPipeline(prices), testLogger(), testBus(), nil)
+	svc := cartApp.NewService(carts, prices, nil, nil, testPipeline(prices), testLogger(), testBus(), nil, nil)
 
 	c, err := svc.CreateCart(context.Background(), "cust-1", "EUR")
 	if err != nil {
@@ -269,7 +269,7 @@ func TestService_CreateCart(t *testing.T) {
 func TestService_CreateCart_Guest(t *testing.T) {
 	carts := newStubCartRepo()
 	prices := newStubPriceRepo()
-	svc := cartApp.NewService(carts, prices, nil, nil, testPipeline(prices), testLogger(), testBus(), nil)
+	svc := cartApp.NewService(carts, prices, nil, nil, testPipeline(prices), testLogger(), testBus(), nil, nil)
 
 	c, err := svc.CreateCart(context.Background(), "", "EUR")
 	if err != nil {
@@ -293,7 +293,7 @@ func TestService_CreateCart_Guest(t *testing.T) {
 func TestService_CreateCart_InvalidCurrency(t *testing.T) {
 	carts := newStubCartRepo()
 	prices := newStubPriceRepo()
-	svc := cartApp.NewService(carts, prices, nil, nil, testPipeline(prices), testLogger(), testBus(), nil)
+	svc := cartApp.NewService(carts, prices, nil, nil, testPipeline(prices), testLogger(), testBus(), nil, nil)
 
 	_, err := svc.CreateCart(context.Background(), "cust-1", "bad")
 	if err == nil {
@@ -307,7 +307,7 @@ func TestService_CreateCart_InvalidCurrency(t *testing.T) {
 func TestService_GetCart(t *testing.T) {
 	carts := newStubCartRepo()
 	prices := newStubPriceRepo()
-	svc := cartApp.NewService(carts, prices, nil, nil, testPipeline(prices), testLogger(), testBus(), nil)
+	svc := cartApp.NewService(carts, prices, nil, nil, testPipeline(prices), testLogger(), testBus(), nil, nil)
 
 	c, _ := svc.CreateCart(context.Background(), "cust-1", "EUR")
 	got, err := svc.GetCart(context.Background(), c.ID, "cust-1")
@@ -322,7 +322,7 @@ func TestService_GetCart(t *testing.T) {
 func TestService_GetCart_ForbiddenForOtherCustomer(t *testing.T) {
 	carts := newStubCartRepo()
 	prices := newStubPriceRepo()
-	svc := cartApp.NewService(carts, prices, nil, nil, testPipeline(prices), testLogger(), testBus(), nil)
+	svc := cartApp.NewService(carts, prices, nil, nil, testPipeline(prices), testLogger(), testBus(), nil, nil)
 
 	c, _ := svc.CreateCart(context.Background(), "cust-1", "EUR")
 	_, err := svc.GetCart(context.Background(), c.ID, "cust-2")
@@ -337,7 +337,7 @@ func TestService_GetCart_ForbiddenForOtherCustomer(t *testing.T) {
 func TestService_GetCart_NotFound(t *testing.T) {
 	carts := newStubCartRepo()
 	prices := newStubPriceRepo()
-	svc := cartApp.NewService(carts, prices, nil, nil, testPipeline(prices), testLogger(), testBus(), nil)
+	svc := cartApp.NewService(carts, prices, nil, nil, testPipeline(prices), testLogger(), testBus(), nil, nil)
 
 	_, err := svc.GetCart(context.Background(), "no-such-id", "cust-1")
 	if err == nil {
@@ -352,7 +352,7 @@ func TestService_AddItem(t *testing.T) {
 	carts := newStubCartRepo()
 	prices := newStubPriceRepo()
 	prices.set("var-1", "EUR", 1500) // 15.00 EUR
-	svc := cartApp.NewService(carts, prices, nil, nil, testPipeline(prices), testLogger(), testBus(), nil)
+	svc := cartApp.NewService(carts, prices, nil, nil, testPipeline(prices), testLogger(), testBus(), nil, nil)
 	ctx := context.Background()
 
 	c, _ := svc.CreateCart(ctx, "cust-1", "EUR")
@@ -377,7 +377,7 @@ func TestService_AddItem(t *testing.T) {
 func TestService_AddItem_CartNotFound(t *testing.T) {
 	carts := newStubCartRepo()
 	prices := newStubPriceRepo()
-	svc := cartApp.NewService(carts, prices, nil, nil, testPipeline(prices), testLogger(), testBus(), nil)
+	svc := cartApp.NewService(carts, prices, nil, nil, testPipeline(prices), testLogger(), testBus(), nil, nil)
 
 	_, err := svc.AddItem(context.Background(), "no-cart", "cust-1", "var-1", 1, cartApp.AddItemOptions{})
 	if !apperror.Is(err, apperror.CodeNotFound) {
@@ -388,7 +388,7 @@ func TestService_AddItem_CartNotFound(t *testing.T) {
 func TestService_AddItem_NoPriceForVariant(t *testing.T) {
 	carts := newStubCartRepo()
 	prices := newStubPriceRepo()
-	svc := cartApp.NewService(carts, prices, nil, nil, testPipeline(prices), testLogger(), testBus(), nil)
+	svc := cartApp.NewService(carts, prices, nil, nil, testPipeline(prices), testLogger(), testBus(), nil, nil)
 	ctx := context.Background()
 
 	c, _ := svc.CreateCart(ctx, "cust-1", "EUR")
@@ -405,7 +405,7 @@ func TestService_AddItem_MergesQuantity(t *testing.T) {
 	carts := newStubCartRepo()
 	prices := newStubPriceRepo()
 	prices.set("var-1", "EUR", 1000)
-	svc := cartApp.NewService(carts, prices, nil, nil, testPipeline(prices), testLogger(), testBus(), nil)
+	svc := cartApp.NewService(carts, prices, nil, nil, testPipeline(prices), testLogger(), testBus(), nil, nil)
 	ctx := context.Background()
 
 	c, _ := svc.CreateCart(ctx, "cust-1", "EUR")
@@ -426,7 +426,7 @@ func TestService_UpdateItemQuantity(t *testing.T) {
 	carts := newStubCartRepo()
 	prices := newStubPriceRepo()
 	prices.set("var-1", "EUR", 1500)
-	svc := cartApp.NewService(carts, prices, nil, nil, testPipeline(prices), testLogger(), testBus(), nil)
+	svc := cartApp.NewService(carts, prices, nil, nil, testPipeline(prices), testLogger(), testBus(), nil, nil)
 	ctx := context.Background()
 
 	c, _ := svc.CreateCart(ctx, "cust-1", "EUR")
@@ -444,7 +444,7 @@ func TestService_UpdateItemQuantity(t *testing.T) {
 func TestService_UpdateItemQuantity_CartNotFound(t *testing.T) {
 	carts := newStubCartRepo()
 	prices := newStubPriceRepo()
-	svc := cartApp.NewService(carts, prices, nil, nil, testPipeline(prices), testLogger(), testBus(), nil)
+	svc := cartApp.NewService(carts, prices, nil, nil, testPipeline(prices), testLogger(), testBus(), nil, nil)
 
 	_, err := svc.UpdateItemQuantity(context.Background(), "no-cart", "cust-1", "var-1", 1)
 	if !apperror.Is(err, apperror.CodeNotFound) {
@@ -455,7 +455,7 @@ func TestService_UpdateItemQuantity_CartNotFound(t *testing.T) {
 func TestService_UpdateItemQuantity_ItemNotFound(t *testing.T) {
 	carts := newStubCartRepo()
 	prices := newStubPriceRepo()
-	svc := cartApp.NewService(carts, prices, nil, nil, testPipeline(prices), testLogger(), testBus(), nil)
+	svc := cartApp.NewService(carts, prices, nil, nil, testPipeline(prices), testLogger(), testBus(), nil, nil)
 	ctx := context.Background()
 
 	c, _ := svc.CreateCart(ctx, "cust-1", "EUR")
@@ -472,7 +472,7 @@ func TestService_RemoveItem(t *testing.T) {
 	carts := newStubCartRepo()
 	prices := newStubPriceRepo()
 	prices.set("var-1", "EUR", 1000)
-	svc := cartApp.NewService(carts, prices, nil, nil, testPipeline(prices), testLogger(), testBus(), nil)
+	svc := cartApp.NewService(carts, prices, nil, nil, testPipeline(prices), testLogger(), testBus(), nil, nil)
 	ctx := context.Background()
 
 	c, _ := svc.CreateCart(ctx, "cust-1", "EUR")
@@ -490,7 +490,7 @@ func TestService_RemoveItem(t *testing.T) {
 func TestService_RemoveItem_CartNotFound(t *testing.T) {
 	carts := newStubCartRepo()
 	prices := newStubPriceRepo()
-	svc := cartApp.NewService(carts, prices, nil, nil, testPipeline(prices), testLogger(), testBus(), nil)
+	svc := cartApp.NewService(carts, prices, nil, nil, testPipeline(prices), testLogger(), testBus(), nil, nil)
 
 	_, err := svc.RemoveItem(context.Background(), "no-cart", "cust-1", "var-1")
 	if !apperror.Is(err, apperror.CodeNotFound) {
@@ -501,7 +501,7 @@ func TestService_RemoveItem_CartNotFound(t *testing.T) {
 func TestService_RemoveItem_ItemNotFound(t *testing.T) {
 	carts := newStubCartRepo()
 	prices := newStubPriceRepo()
-	svc := cartApp.NewService(carts, prices, nil, nil, testPipeline(prices), testLogger(), testBus(), nil)
+	svc := cartApp.NewService(carts, prices, nil, nil, testPipeline(prices), testLogger(), testBus(), nil, nil)
 	ctx := context.Background()
 
 	c, _ := svc.CreateCart(ctx, "cust-1", "EUR")
@@ -517,7 +517,7 @@ func TestService_RemoveItem_ItemNotFound(t *testing.T) {
 func TestService_GetActiveCartByCustomer(t *testing.T) {
 	carts := newStubCartRepo()
 	prices := newStubPriceRepo()
-	svc := cartApp.NewService(carts, prices, nil, nil, testPipeline(prices), testLogger(), testBus(), nil)
+	svc := cartApp.NewService(carts, prices, nil, nil, testPipeline(prices), testLogger(), testBus(), nil, nil)
 	ctx := context.Background()
 
 	c, _ := svc.CreateCart(ctx, "cust-1", "EUR")
@@ -537,7 +537,7 @@ func TestService_ClaimGuestCart_AssignsGuestCartToCustomer(t *testing.T) {
 	carts := newStubCartRepo()
 	prices := newStubPriceRepo()
 	prices.set("var-1", "EUR", 1500)
-	svc := cartApp.NewService(carts, prices, nil, nil, testPipeline(prices), testLogger(), testBus(), nil)
+	svc := cartApp.NewService(carts, prices, nil, nil, testPipeline(prices), testLogger(), testBus(), nil, nil)
 	ctx := context.Background()
 
 	guestCart, err := svc.CreateCart(ctx, "", "EUR")
@@ -578,7 +578,7 @@ func TestService_ClaimGuestCart_MergesIntoExistingCustomerCart(t *testing.T) {
 	prices := newStubPriceRepo()
 	prices.set("var-1", "EUR", 1500)
 	prices.set("var-2", "EUR", 2500)
-	svc := cartApp.NewService(carts, prices, nil, nil, testPipeline(prices), testLogger(), testBus(), nil)
+	svc := cartApp.NewService(carts, prices, nil, nil, testPipeline(prices), testLogger(), testBus(), nil, nil)
 	ctx := context.Background()
 
 	customerCart, err := svc.CreateCart(ctx, "cust-1", "EUR")
@@ -635,7 +635,7 @@ func TestService_ClaimGuestCart_MergesIntoExistingCustomerCart(t *testing.T) {
 func TestService_ClaimGuestCart_ForeignOwnedGuestCart(t *testing.T) {
 	carts := newStubCartRepo()
 	prices := newStubPriceRepo()
-	svc := cartApp.NewService(carts, prices, nil, nil, testPipeline(prices), testLogger(), testBus(), nil)
+	svc := cartApp.NewService(carts, prices, nil, nil, testPipeline(prices), testLogger(), testBus(), nil, nil)
 	ctx := context.Background()
 
 	foreignCart, err := svc.CreateCart(ctx, "cust-2", "EUR")
@@ -655,7 +655,7 @@ func TestService_ClaimGuestCart_ForeignOwnedGuestCart(t *testing.T) {
 func TestService_ClaimGuestCart_EmptyGuestID(t *testing.T) {
 	carts := newStubCartRepo()
 	prices := newStubPriceRepo()
-	svc := cartApp.NewService(carts, prices, nil, nil, testPipeline(prices), testLogger(), testBus(), nil)
+	svc := cartApp.NewService(carts, prices, nil, nil, testPipeline(prices), testLogger(), testBus(), nil, nil)
 
 	claimed, err := svc.ClaimGuestCart(context.Background(), "", "cust-1")
 	if err != nil {
@@ -669,7 +669,7 @@ func TestService_ClaimGuestCart_EmptyGuestID(t *testing.T) {
 func TestService_ClaimGuestCart_EmptyCustomerID(t *testing.T) {
 	carts := newStubCartRepo()
 	prices := newStubPriceRepo()
-	svc := cartApp.NewService(carts, prices, nil, nil, testPipeline(prices), testLogger(), testBus(), nil)
+	svc := cartApp.NewService(carts, prices, nil, nil, testPipeline(prices), testLogger(), testBus(), nil, nil)
 
 	claimed, err := svc.ClaimGuestCart(context.Background(), id.New(), "")
 	if claimed != nil {
@@ -685,7 +685,7 @@ func TestService_ClaimGuestCart_CurrencyMismatch_NonEmptyCustomerCart(t *testing
 	prices := newStubPriceRepo()
 	prices.set("var-usd", "USD", 1500)
 	prices.set("var-eur", "EUR", 2500)
-	svc := cartApp.NewService(carts, prices, nil, nil, testPipeline(prices), testLogger(), testBus(), nil)
+	svc := cartApp.NewService(carts, prices, nil, nil, testPipeline(prices), testLogger(), testBus(), nil, nil)
 	ctx := context.Background()
 
 	customerCart, err := svc.CreateCart(ctx, "cust-1", "USD")
@@ -716,7 +716,7 @@ func TestService_ClaimGuestCart_CurrencyMismatch_EmptyCustomerCart(t *testing.T)
 	carts := newStubCartRepo()
 	prices := newStubPriceRepo()
 	prices.set("var-eur", "EUR", 1500)
-	svc := cartApp.NewService(carts, prices, nil, nil, testPipeline(prices), testLogger(), testBus(), nil)
+	svc := cartApp.NewService(carts, prices, nil, nil, testPipeline(prices), testLogger(), testBus(), nil, nil)
 	ctx := context.Background()
 
 	customerCart, err := svc.CreateCart(ctx, "cust-1", "USD")
@@ -755,7 +755,7 @@ func TestService_ClaimGuestCart_CouponCarryOver(t *testing.T) {
 		coupons := &stubCouponRepo{coupons: map[string]*promotion.Coupon{
 			"WELCOME-10": {ID: id.New(), Code: "WELCOME-10", PromotionID: promoID, Active: true},
 		}}
-		return cartApp.NewService(carts, prices, promos, coupons, testPipeline(prices), testLogger(), testBus(), nil), carts, prices
+		return cartApp.NewService(carts, prices, promos, coupons, testPipeline(prices), testLogger(), testBus(), nil, nil), carts, prices
 	}
 
 	t.Run("copies guest coupon when target has none", func(t *testing.T) {
@@ -833,7 +833,7 @@ func TestService_ClaimGuestCart_DeleteFailsAfterSave_RetryDoesNotDoubleQuantitie
 	carts := &deleteFailCartRepo{stubCartRepo: inner, deleteErr: errors.New("delete failed"), failDeleteCount: 1}
 	prices := newStubPriceRepo()
 	prices.set("var-1", "EUR", 1500)
-	svc := cartApp.NewService(carts, prices, nil, nil, testPipeline(prices), testLogger(), testBus(), nil)
+	svc := cartApp.NewService(carts, prices, nil, nil, testPipeline(prices), testLogger(), testBus(), nil, nil)
 	ctx := context.Background()
 
 	customerCart, err := svc.CreateCart(ctx, "cust-1", "EUR")
@@ -873,7 +873,7 @@ func TestService_ClaimGuestCart_DeleteFailsAfterSave_RetryDoesNotDoubleQuantitie
 func TestService_GetActiveCartByCustomer_NotFound(t *testing.T) {
 	carts := newStubCartRepo()
 	prices := newStubPriceRepo()
-	svc := cartApp.NewService(carts, prices, nil, nil, testPipeline(prices), testLogger(), testBus(), nil)
+	svc := cartApp.NewService(carts, prices, nil, nil, testPipeline(prices), testLogger(), testBus(), nil, nil)
 
 	_, err := svc.GetActiveCartByCustomer(context.Background(), "no-customer")
 	if !apperror.Is(err, apperror.CodeNotFound) {
@@ -886,7 +886,7 @@ func TestService_RecalculateUpdatesPrices(t *testing.T) {
 	prices := newStubPriceRepo()
 	prices.set("var-1", "EUR", 1000)
 	prices.set("var-2", "EUR", 2500)
-	svc := cartApp.NewService(carts, prices, nil, nil, testPipeline(prices), testLogger(), testBus(), nil)
+	svc := cartApp.NewService(carts, prices, nil, nil, testPipeline(prices), testLogger(), testBus(), nil, nil)
 	ctx := context.Background()
 
 	c, _ := svc.CreateCart(ctx, "cust-1", "EUR")
@@ -948,7 +948,7 @@ func TestService_AddItem_UsesStoreTaxDefaults(t *testing.T) {
 		}},
 		pricing.NewFinalizeStep(),
 	)
-	svc := cartApp.NewService(carts, prices, nil, nil, pipeline, testLogger(), testBus(), nil)
+	svc := cartApp.NewService(carts, prices, nil, nil, pipeline, testLogger(), testBus(), nil, nil)
 	ctx := store.WithStore(context.Background(), &store.Store{ID: "store-1", Country: "DE"})
 
 	c, err := svc.CreateCart(ctx, "cust-1", "EUR")
@@ -986,7 +986,7 @@ func TestService_AddItem_WithoutStoreTaxContext_SkipsTaxStep(t *testing.T) {
 		appPricing.NewTaxStep(taxRates, "standard"),
 		pricing.NewFinalizeStep(),
 	)
-	svc := cartApp.NewService(carts, prices, nil, nil, pipeline, testLogger(), testBus(), nil)
+	svc := cartApp.NewService(carts, prices, nil, nil, pipeline, testLogger(), testBus(), nil, nil)
 
 	c, err := svc.CreateCart(context.Background(), "cust-1", "EUR")
 	if err != nil {
@@ -1020,7 +1020,7 @@ func TestService_AddItem_SaveError(t *testing.T) {
 	carts := &errorCartRepo{stubCartRepo: inner, saveErr: errors.New("db down")}
 	prices := newStubPriceRepo()
 	prices.set("var-1", "EUR", 1000)
-	svc := cartApp.NewService(carts, prices, nil, nil, testPipeline(prices), testLogger(), testBus(), nil)
+	svc := cartApp.NewService(carts, prices, nil, nil, testPipeline(prices), testLogger(), testBus(), nil, nil)
 	ctx := context.Background()
 
 	// Create the cart directly in the inner repo.
@@ -1041,7 +1041,7 @@ func TestService_AddItem_EmitsEvent(t *testing.T) {
 	prices := newStubPriceRepo()
 	prices.set("var-1", "EUR", 1500)
 	bus := testBus()
-	svc := cartApp.NewService(carts, prices, nil, nil, testPipeline(prices), testLogger(), bus, nil)
+	svc := cartApp.NewService(carts, prices, nil, nil, testPipeline(prices), testLogger(), bus, nil, nil)
 	ctx := context.Background()
 
 	var captured event.Event
@@ -1076,7 +1076,7 @@ func TestService_UpdateItemQuantity_EmitsEvent(t *testing.T) {
 	prices := newStubPriceRepo()
 	prices.set("var-1", "EUR", 1000)
 	bus := testBus()
-	svc := cartApp.NewService(carts, prices, nil, nil, testPipeline(prices), testLogger(), bus, nil)
+	svc := cartApp.NewService(carts, prices, nil, nil, testPipeline(prices), testLogger(), bus, nil, nil)
 	ctx := context.Background()
 
 	var captured event.Event
@@ -1103,7 +1103,7 @@ func TestService_RemoveItem_EmitsEvent(t *testing.T) {
 	prices := newStubPriceRepo()
 	prices.set("var-1", "EUR", 1000)
 	bus := testBus()
-	svc := cartApp.NewService(carts, prices, nil, nil, testPipeline(prices), testLogger(), bus, nil)
+	svc := cartApp.NewService(carts, prices, nil, nil, testPipeline(prices), testLogger(), bus, nil, nil)
 	ctx := context.Background()
 
 	var captured event.Event
@@ -1138,7 +1138,7 @@ func TestService_AddItem_PublishError_Ignored(t *testing.T) {
 	bus.On(domainCart.EventItemAdded, func(_ context.Context, _ event.Event) error {
 		return errors.New("publish boom")
 	})
-	svc := cartApp.NewService(carts, prices, nil, nil, testPipeline(prices), testLogger(), bus, nil)
+	svc := cartApp.NewService(carts, prices, nil, nil, testPipeline(prices), testLogger(), bus, nil, nil)
 	ctx := context.Background()
 
 	c, _ := svc.CreateCart(ctx, "cust-1", "EUR")
@@ -1164,7 +1164,7 @@ func TestService_UpdateItemQuantity_PublishError_Ignored(t *testing.T) {
 	bus.On(domainCart.EventItemUpdated, func(_ context.Context, _ event.Event) error {
 		return errors.New("publish boom")
 	})
-	svc := cartApp.NewService(carts, prices, nil, nil, testPipeline(prices), testLogger(), bus, nil)
+	svc := cartApp.NewService(carts, prices, nil, nil, testPipeline(prices), testLogger(), bus, nil, nil)
 	ctx := context.Background()
 
 	c, _ := svc.CreateCart(ctx, "cust-1", "EUR")
@@ -1186,7 +1186,7 @@ func TestService_RemoveItem_PublishError_Ignored(t *testing.T) {
 	bus.On(domainCart.EventItemRemoved, func(_ context.Context, _ event.Event) error {
 		return errors.New("publish boom")
 	})
-	svc := cartApp.NewService(carts, prices, nil, nil, testPipeline(prices), testLogger(), bus, nil)
+	svc := cartApp.NewService(carts, prices, nil, nil, testPipeline(prices), testLogger(), bus, nil, nil)
 	ctx := context.Background()
 
 	c, _ := svc.CreateCart(ctx, "cust-1", "EUR")

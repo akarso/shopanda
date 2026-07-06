@@ -17,6 +17,10 @@ func (storefrontFormTestValueRepo) ListByTarget(_ context.Context, _ domainext.T
 	return nil, nil
 }
 
+func (storefrontFormTestValueRepo) ListByTargets(_ context.Context, _ domainext.TargetType, _ []string) ([]domainext.Value, error) {
+	return nil, nil
+}
+
 func (storefrontFormTestValueRepo) Upsert(_ context.Context, _ domainext.Value) error {
 	return nil
 }

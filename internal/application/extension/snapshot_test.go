@@ -54,3 +54,11 @@ func TestSnapshotCartItemToOrderItem_CopiesSnapshotFieldsOnly(t *testing.T) {
 		t.Fatalf("stored = %+v", stored)
 	}
 }
+
+func TestSnapshotCartItemToOrderItem_RejectsEmptyIDs(t *testing.T) {
+	reg := extensionapp.NewRegistry()
+	values := extensionapp.NewValueService(reg, newMemValueRepo())
+	if err := values.SnapshotCartItemToOrderItem(context.Background(), "", "ord-1", "var-1", "system"); err == nil {
+		t.Fatal("expected validation error for empty cart_id")
+	}
+}
