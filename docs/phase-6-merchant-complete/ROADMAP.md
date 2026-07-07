@@ -165,7 +165,7 @@ Recommended order: **A (600–602)** first — highest “broken menu” impact 
 
 ## Additional Backlog (unscheduled, Phase 7+)
 
-See [Phase 7 — Customization Platform](../phase-7-customization-platform/ROADMAP.md) for the active platform track (PR-700–710).
+See [Phase 7 — Customization Platform](../phase-7-customization-platform/ROADMAP.md) for the platform track (PR-700–710 shipped; **Track F PR-711–720** — storefront developer experience — active).
 
 | Theme | Examples | Notes |
 | --- | --- | --- |
@@ -246,7 +246,7 @@ PR specs: [`prs/`](prs/).
 | [Phase 4](../phase-4-refactoring/ROADMAP.md) | Product complete | Shipped |
 | [Phase 5](../phase-5-maturity/ROADMAP.md) | Mature commerce | Shipped |
 | **Phase 6** | **Merchant-complete admin** | **Shipped** |
-| [Phase 7](../phase-7-customization-platform/ROADMAP.md) | Customization platform | Planned |
+| [Phase 7](../phase-7-customization-platform/ROADMAP.md) | Customization platform + storefront DX | A–E shipped; Track F active |
 
 Phase 5 items marked “API only; admin UI deferred” map to Phase 6 tracks A–C. Phase 5 is **complete** (including PR-544 dynamic-loading research). Phase 6 is **complete** (PR-600–651).
  
