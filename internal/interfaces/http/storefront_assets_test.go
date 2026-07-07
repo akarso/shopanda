@@ -101,6 +101,9 @@ func TestStorefront_PluginAssetCSPNonceWhenEnabled(t *testing.T) {
 	if csp == "" || !strings.Contains(csp, "nonce-") {
 		t.Fatalf("CSP header = %q, want script-src with nonce", csp)
 	}
+	if !strings.Contains(csp, "object-src 'none'") || !strings.Contains(csp, "base-uri 'self'") {
+		t.Fatalf("CSP header = %q, want hardened directives", csp)
+	}
 }
 
 func TestStorefront_PluginAssetsStableOrderAcrossPlugins(t *testing.T) {

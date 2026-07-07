@@ -36,6 +36,12 @@ func (m Manifest) Validate() error {
 	if path == "" {
 		return fmt.Errorf("assets: path must not be empty")
 	}
+	if strings.HasPrefix(path, "//") {
+		return fmt.Errorf("assets: path %q must be same-origin", path)
+	}
+	if strings.Contains(path, "://") {
+		return fmt.Errorf("assets: path %q must be same-origin", path)
+	}
 	if !strings.HasPrefix(path, "/") {
 		return fmt.Errorf("assets: path %q must be absolute", path)
 	}

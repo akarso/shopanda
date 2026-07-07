@@ -91,5 +91,5 @@ func storefrontLayoutFromData(data interface{}) (StorefrontLayoutData, bool) {
 }
 
 func storefrontCSPHeader(nonce string) string {
-	return fmt.Sprintf("script-src 'self' 'nonce-%s'", nonce)
+	return fmt.Sprintf("script-src 'self' 'nonce-%s'; object-src 'none'; base-uri 'self'", nonce)
 }
