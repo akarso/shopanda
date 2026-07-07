@@ -4,7 +4,6 @@ import (
 	"fmt"
 
 	gql "github.com/graphql-go/graphql"
-	"github.com/graphql-go/graphql/language/ast"
 
 	"github.com/akarso/shopanda/internal/domain/catalog"
 	domainext "github.com/akarso/shopanda/internal/domain/extension"
@@ -51,18 +50,7 @@ func NewSchema(r *Resolver) (gql.Schema, error) {
 		},
 	})
 
-	jsonScalar := gql.NewScalar(gql.ScalarConfig{
-		Name: "JSON",
-		Serialize: func(v interface{}) interface{} {
-			return v
-		},
-		ParseValue: func(v interface{}) interface{} {
-			return v
-		},
-		ParseLiteral: func(vAST ast.Value) interface{} {
-			return nil
-		},
-	})
+	jsonScalar := newJSONScalar()
 
 	extensionValueType := gql.NewObject(gql.ObjectConfig{
 		Name: "ExtensionValue",

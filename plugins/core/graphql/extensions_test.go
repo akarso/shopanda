@@ -158,6 +158,27 @@ func TestHandler_ExtensionFieldsIncludePrivateRequiresPermission(t *testing.T) {
 	}
 }
 
+func TestHandler_ExtensionMutationInlineLiteralValue(t *testing.T) {
+	schema, err := cgraphql.NewSchema(testResolverWithExtensions(t))
+	if err != nil {
+		t.Fatalf("NewSchema: %v", err)
+	}
+	h := cgraphql.NewHandler(schema, testLogger())
+	body := `{"query":"mutation { upsertExtensionValues(targetType:\"product\", targetId:\"prod-1\", values:[{fieldCode:\"acme.public_note\", value:\"inline\"}]) { fieldCode value } }"}`
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/graphql", bytes.NewBufferString(body))
+	req = req.WithContext((&admin.AdminContext{
+		AdminID: "admin-1", Permissions: []string{string(rbac.ExtensionsWrite)},
+	}).WithContext(req.Context()))
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d body=%s", rec.Code, rec.Body.String())
+	}
+	if !bytes.Contains(rec.Body.Bytes(), []byte(`"value":"inline"`)) {
+		t.Fatalf("inline literal value not applied: %s", rec.Body.String())
+	}
+}
+
 func TestHandler_ExtensionMutationForbiddenWithoutCapability(t *testing.T) {
 	schema, err := cgraphql.NewSchema(testResolverWithExtensions(t))
 	if err != nil {

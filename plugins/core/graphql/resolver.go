@@ -2,6 +2,7 @@ package graphql
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 
@@ -242,10 +243,10 @@ func extensionAPIError(err error) error {
 	if domainext.IsValidationError(err) {
 		return apperror.FieldValidationFailed(err.Error())
 	}
-	if err == domainext.ErrUnknownFieldCode {
+	if errors.Is(err, domainext.ErrUnknownFieldCode) {
 		return apperror.UnknownFieldCode(err.Error())
 	}
-	if err == domainext.ErrForbiddenPrivateField {
+	if errors.Is(err, domainext.ErrForbiddenPrivateField) {
 		return apperror.ForbiddenPrivateField(err.Error())
 	}
 	return err
