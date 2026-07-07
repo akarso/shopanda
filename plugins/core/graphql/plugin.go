@@ -4,13 +4,14 @@ import (
 	"database/sql"
 	"fmt"
 
+	extensionapp "github.com/akarso/shopanda/internal/application/extension"
 	"github.com/akarso/shopanda/internal/infrastructure/postgres"
 	"github.com/akarso/shopanda/internal/platform/plugin"
 )
 
 // Plugin registers the optional read-only GraphQL catalog API.
 type Plugin struct {
-	NewResolver func(db *sql.DB) (*Resolver, error)
+	NewResolver func(db *sql.DB, extensionRegistry *extensionapp.Registry) (*Resolver, error)
 }
 
 // NewPlugin creates a GraphQL API plugin.
@@ -38,7 +39,7 @@ func (p *Plugin) Init(app *plugin.App) error {
 	if newResolver == nil {
 		newResolver = newResolverFromDB
 	}
-	resolver, err := newResolver(app.Bootstrap.DB)
+	resolver, err := newResolver(app.Bootstrap.DB, app.ExtensionRegistry())
 	if err != nil {
 		return fmt.Errorf("graphql plugin: resolver: %w", err)
 	}
@@ -59,7 +60,7 @@ func (p *Plugin) Init(app *plugin.App) error {
 	return nil
 }
 
-func newResolverFromDB(db *sql.DB) (*Resolver, error) {
+func newResolverFromDB(db *sql.DB, extensionRegistry *extensionapp.Registry) (*Resolver, error) {
 	productRepo, err := postgres.NewProductRepo(db)
 	if err != nil {
 		return nil, err
@@ -68,5 +69,23 @@ func newResolverFromDB(db *sql.DB) (*Resolver, error) {
 	if err != nil {
 		return nil, err
 	}
-	return NewResolver(productRepo, categoryRepo)
+	extFieldRepo, err := postgres.NewExtensionFieldRepo(db)
+	if err != nil {
+		return nil, err
+	}
+	extValueRepo, err := postgres.NewExtensionValueRepo(db)
+	if err != nil {
+		return nil, err
+	}
+	if extensionRegistry == nil {
+		extensionRegistry = extensionapp.NewRegistry()
+	}
+	fields := extensionapp.NewFieldService(extensionRegistry, extFieldRepo)
+	values := extensionapp.NewValueService(extensionRegistry, extValueRepo)
+
+	resolver, err := NewResolver(productRepo, categoryRepo)
+	if err != nil {
+		return nil, err
+	}
+	return resolver.WithExtensions(fields, values), nil
 }
