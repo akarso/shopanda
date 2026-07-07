@@ -598,12 +598,13 @@ The embedded admin SPA stores its JWT in browser local storage and sends it as a
 
 ## Roadmap and Future Work
 
-Phases 1–6 are **complete**. **Phase 7 — Customization Platform** is the active track (extension fields, hooks, slots, assets).
+Phases 1–6 are **complete**. **Phase 7 — Customization Platform** shipped tracks A–E (PR-700–710). **Track F** (PR-711–720) extends storefront developer experience (slots, theme inheritance, tooling).
 
 | Phase | Focus |
 | --- | --- |
 | 6 (done) | Merchant-complete admin UI (PR-600–651) |
-| 7 (active) | Extension field registry, values, cart→order snapshot, hooks, slots, assets, GraphQL parity |
+| 7 A–E (done) | Extension fields, values, cart→order snapshot, hooks, slots, assets, GraphQL parity |
+| 7 F (active) | Slot catalog, theme inheritance, layout partials, slot dev ergonomics |
 
 Full plans: [Phase 5 Roadmap](../phase-5-maturity/ROADMAP.md) · [Phase 6 Roadmap](../phase-6-merchant-complete/ROADMAP.md) · [Phase 7 Roadmap](../phase-7-customization-platform/ROADMAP.md). EU mapping: [Compliance Reference](../phase-5-maturity/specs/COMPLIANCE_EU.md). Plugin loading: [Dynamic loading research](../phase-5-maturity/specs/DYNAMIC_PLUGIN_LOADING.md).
 

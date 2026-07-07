@@ -18,6 +18,10 @@ Planned specs for **PR-700–710** (Summary, Why, Scope, Out of scope, Validatio
 
 Roadmap: [`../ROADMAP.md`](../ROADMAP.md) · Architecture: [`../specs/CUSTOMIZATION_PLATFORM.md`](../specs/CUSTOMIZATION_PLATFORM.md) · Upstream: [Phase 6](../../phase-6-merchant-complete/ROADMAP.md)
 
-**Suggested next PR:** Phase 7 complete (PR-700 to PR-710 done).
+**Tracks A–E complete** (PR-700 to PR-710 done).
+
+**Active: Track F — Storefront developer experience** (PR-711–720). See [ROADMAP § Track F](../ROADMAP.md#track-f--storefront-developer-experience-pr-711720).
+
+**Suggested next PR:** **PR-711** — standard slot catalog in default theme.
 
 **Rule for Phase 7:** Extension field writes must go through the registry service — no ad hoc JSON columns in core entities.
