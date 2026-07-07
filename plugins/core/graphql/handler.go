@@ -2,12 +2,14 @@ package graphql
 
 import (
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 
 	gql "github.com/graphql-go/graphql"
 	"github.com/graphql-go/graphql/gqlerrors"
 
+	"github.com/akarso/shopanda/internal/platform/apperror"
 	"github.com/akarso/shopanda/internal/platform/logger"
 )
 
@@ -101,6 +103,15 @@ func (h *Handler) sanitizeErrors(errs []gqlerrors.FormattedError) []gqlerrors.Fo
 		}
 		if inner == nil {
 			out[i] = e
+			continue
+		}
+		var appErr *apperror.Error
+		if errors.As(inner, &appErr) && appErr.Code != apperror.CodeInternal {
+			out[i] = gqlerrors.FormattedError{
+				Message:   appErr.Message,
+				Locations: e.Locations,
+				Path:      e.Path,
+			}
 			continue
 		}
 		if h.log != nil {

@@ -6,6 +6,7 @@ import (
 	"io"
 	"testing"
 
+	extensionapp "github.com/akarso/shopanda/internal/application/extension"
 	"github.com/akarso/shopanda/internal/domain/catalog"
 	"github.com/akarso/shopanda/internal/platform/config"
 	"github.com/akarso/shopanda/internal/platform/event"
@@ -58,7 +59,7 @@ func TestPlugin_Init_RegistersPublicRoute(t *testing.T) {
 	}
 
 	plugin := cgraphql.NewPlugin()
-	plugin.NewResolver = func(_ *sql.DB) (*cgraphql.Resolver, error) {
+	plugin.NewResolver = func(_ *sql.DB, _ *extensionapp.Registry) (*cgraphql.Resolver, error) {
 		return cgraphql.NewResolver(
 			&stubProductRepo{
 				listFn: func(_ context.Context, _, _ int) ([]catalog.Product, error) {

@@ -8,6 +8,7 @@
         {{ if .Category.Description }}<p>{{ .Category.Description }}</p>{{ end }}
         <p>{{ .ResultSummary }}</p>
     </div>
+    {{slot_container "plp.toolbar"}}
     <div class="listing-toolbar">
         <div class="listing-toolbar__group" aria-label="View mode">
             <a class="chip{{ if eq .View "grid" }} chip--active{{ end }}" href="{{ .GridURL }}"{{ if eq .View "grid" }} aria-current="true"{{ end }}>Grid</a>
@@ -19,6 +20,7 @@
             {{ end }}
         </div>
     </div>
+    {{/slot_container}}
 </section>
 
 {{ if .Breadcrumbs }}

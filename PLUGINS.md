@@ -72,8 +72,39 @@ Available today through `plugin.App`:
 | **Admin config** | `RegisterConfig` | Simple settings on Integrations page (`GET/PUT /admin/config?group=plugins`) |
 | **CLI commands** | `RegisterCommand` | Operational subcommands (`domain:action`) |
 | **Public HTTP routes** | `RegisterPublicRoute` | Register public HTTP handlers (e.g. an alternative API surface); mounted by `main.go` after `InitAll` |
+| **UI slots** | `Slots(registrant).RegisterRenderer` | Inject HTML at named theme anchors (see below) |
+| **Asset manifest** | `Assets().RegisterManifest` | Route-gated CSS/JS in layout head/footer without theme forks |
 
 Core plugins additionally expose providers on `plugin.App` during init (search engine, job queue, cache store, media storage, payment registry entries) which `main.go` resolves after `InitAll`.
+
+### UI slots (storefront)
+
+Plugins register HTML renderers against **anchor names** declared in theme templates. Each anchor supports four placements: `before`, `after`, `prepend`, `append` (see `internal/application/slots`).
+
+```go
+app.Slots("acme/badges").RegisterRenderer("pdp.info", slots.PlacementAppend, 100, renderEcoBadge)
+```
+
+**Default theme anchors** (custom themes should preserve these names or document their own):
+
+| Anchor | Location |
+| --- | --- |
+| `layout.head` | End of `<head>` (meta tags, inline snippets) |
+| `layout.body_start` | Start of `<body>` |
+| `layout.header` | Site header shell |
+| `layout.nav` | Primary navigation |
+| `layout.category_nav` | Category navigation (when categories exist) |
+| `layout.main` | Main content wrapper |
+| `layout.footer` | Site footer |
+| `layout.body_end` | End of `<body>` (after footer scripts) |
+| `pdp.gallery` | PDP media area |
+| `pdp.info` | PDP product info column |
+| `pdp.actions` | PDP add-to-cart actions |
+| `plp.toolbar` | Category / product list toolbar |
+| `cart.summary` | Cart summary aside |
+| `checkout.progress` | Checkout step indicator |
+
+Theme markers use `{{slot_container "anchor"}}…{{/slot_container}}` or explicit `{{slot . "anchor" "placement"}}`. Missing markers are a silent no-op — plugins do not auto-inject. Global CSS/JS belongs in the **asset manifest**, not slots.
 
 For combining multiple plugins (ordering, shared context, checkout-field walkthrough): [Multi-Plugin Composition](docs/guides/PLUGIN_COMPOSITION.md).
 

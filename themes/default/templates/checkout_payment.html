@@ -8,6 +8,7 @@
         <p>Choose a payment method and place the order.</p>
     </div>
 
+    {{slot_container "checkout.progress"}}
     <ol class="checkout-progress" aria-label="Checkout progress">
         {{ range .Progress }}
         <li class="checkout-progress__step{{ if .Current }} checkout-progress__step--current{{ end }}{{ if .Complete }} checkout-progress__step--complete{{ end }}">
@@ -15,6 +16,7 @@
         </li>
         {{ end }}
     </ol>
+    {{/slot_container}}
 
     <div class="checkout-grid">
         <section class="checkout-panel">
