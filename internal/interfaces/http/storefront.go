@@ -13,8 +13,9 @@ import (
 	"sync"
 	"time"
 
-	appAuth "github.com/akarso/shopanda/internal/application/auth"
+	appAuth 	"github.com/akarso/shopanda/internal/application/auth"
 	cartApp "github.com/akarso/shopanda/internal/application/cart"
+	assetsApp "github.com/akarso/shopanda/internal/application/assets"
 	extensionApp "github.com/akarso/shopanda/internal/application/extension"
 	cmsApp "github.com/akarso/shopanda/internal/application/cms"
 	checkoutApp "github.com/akarso/shopanda/internal/application/checkout"
@@ -68,6 +69,8 @@ type StorefrontHandler struct {
 	blockResolver *cmsApp.BlockResolver
 	log          logger.Logger
 	catNav       storefrontCategoryCache
+	assets       *assetsApp.Registry
+	cspEnabled   bool
 }
 
 type storefrontCategoryCache struct {
@@ -123,6 +126,9 @@ type StorefrontLayoutData struct {
 	Categories         []StorefrontCategoryNavItem
 	WeeeFooterEnabled  bool
 	WeeeProducerReg    string
+	Assets             StorefrontAssets
+	CSPEnabled         bool
+	CSPNonce           string
 }
 
 type StorefrontHomePageData struct {
@@ -473,6 +479,9 @@ func (h *StorefrontHandler) renderPage(w http.ResponseWriter, name string, data 
 }
 
 func (h *StorefrontHandler) renderPageStatus(w http.ResponseWriter, name string, data interface{}, status int) {
+	if layout, ok := storefrontLayoutFromData(data); ok && layout.CSPEnabled && layout.CSPNonce != "" {
+		w.Header().Set("Content-Security-Policy", storefrontCSPHeader(layout.CSPNonce))
+	}
 	var buf bytes.Buffer
 	if err := h.engine.Render(&buf, name, data); err != nil {
 		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
@@ -677,6 +686,7 @@ func (h *StorefrontHandler) buildLayoutData(r *http.Request, categories []catalo
 		storeID = s.ID
 	}
 	weeeFooterEnabled, weeeProducerReg := h.weeeFooterData(r, storeID)
+	cspNonce := h.newCSPNonce()
 	return StorefrontLayoutData{
 		SiteName:           siteName,
 		SearchAction:       searchAction,
@@ -699,6 +709,9 @@ func (h *StorefrontHandler) buildLayoutData(r *http.Request, categories []catalo
 		Categories:         storefrontCategoryTree(categories),
 		WeeeFooterEnabled:  weeeFooterEnabled,
 		WeeeProducerReg:    weeeProducerReg,
+		Assets:             h.resolveStorefrontAssets(r),
+		CSPEnabled:         h.cspEnabled && cspNonce != "",
+		CSPNonce:           cspNonce,
 	}
 }
 
