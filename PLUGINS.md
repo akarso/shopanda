@@ -85,7 +85,7 @@ Plugins register HTML renderers against **anchor names** declared in theme templ
 app.Slots("acme/badges").RegisterRenderer("pdp.info", slots.PlacementAppend, 100, renderEcoBadge)
 ```
 
-**Default theme anchors** (custom themes should preserve these names or document their own):
+**Default theme anchors** (custom themes should preserve these names or document their own). Source of truth: `slots.StandardAnchors()` in `internal/application/slots/catalog.go`.
 
 | Anchor | Location |
 | --- | --- |
@@ -101,10 +101,12 @@ app.Slots("acme/badges").RegisterRenderer("pdp.info", slots.PlacementAppend, 100
 | `pdp.info` | PDP product info column |
 | `pdp.actions` | PDP add-to-cart actions |
 | `plp.toolbar` | Category / product list toolbar |
+| `cart.items` | Cart line items table |
 | `cart.summary` | Cart summary aside |
 | `checkout.progress` | Checkout step indicator |
+| `checkout.summary` | Checkout order summary aside |
 
-Theme markers use `{{slot_container "anchor"}}…{{/slot_container}}` or explicit `{{slot . "anchor" "placement"}}`. Missing markers are a silent no-op — plugins do not auto-inject. Global CSS/JS belongs in the **asset manifest**, not slots.
+Theme markers use `{{slot_container "anchor"}}…{{/slot_container}}` or explicit `{{slot . "anchor" "placement"}}`. **Do not nest `slot_container` blocks** — the preprocessor cannot match inner closings; use explicit `slot` markers inside a container instead. Missing markers are a silent no-op — plugins do not auto-inject. Global CSS/JS belongs in the **asset manifest**, not slots.
 
 For combining multiple plugins (ordering, shared context, checkout-field walkthrough): [Multi-Plugin Composition](docs/guides/PLUGIN_COMPOSITION.md).
 

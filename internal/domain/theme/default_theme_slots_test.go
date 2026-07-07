@@ -27,15 +27,7 @@ func defaultThemeDir(t *testing.T) string {
 
 func TestDefaultTheme_StandardLayoutSlotsRender(t *testing.T) {
 	reg := slots.NewRegistry(nil)
-	for _, anchor := range []string{
-		"layout.head",
-		"layout.body_start",
-		"layout.header",
-		"layout.nav",
-		"layout.main",
-		"layout.footer",
-		"layout.body_end",
-	} {
+	for _, anchor := range slots.StandardAnchorNames() {
 		anchor := anchor
 		_ = reg.RegisterRenderer(anchor, slots.PlacementAppend, 100, "test", func(ctx *slots.RenderContext) string {
 			return "<!--" + anchor + "-->"
@@ -47,31 +39,76 @@ func TestDefaultTheme_StandardLayoutSlotsRender(t *testing.T) {
 		t.Fatalf("Load: %v", err)
 	}
 
-	var buf bytes.Buffer
-	if err := engine.Render(&buf, "home", map[string]interface{}{
-		"Layout": map[string]interface{}{
-			"SiteName":   "Shopanda",
-			"Nav":        []interface{}{},
-			"Categories": nil,
-			"Assets":     map[string]interface{}{},
-		},
-	}); err != nil {
-		t.Fatalf("Render: %v", err)
-	}
+	t.Run("home layout anchors", func(t *testing.T) {
+		var buf bytes.Buffer
+		if err := engine.Render(&buf, "home", map[string]interface{}{
+			"Layout": map[string]interface{}{
+				"SiteName":   "Shopanda",
+				"Nav":        []interface{}{},
+				"Categories": nil,
+				"Assets":     map[string]interface{}{},
+			},
+		}); err != nil {
+			t.Fatalf("Render: %v", err)
+		}
+		assertSlotMarkers(t, buf.String(), []string{
+			"layout.head", "layout.body_start", "layout.header", "layout.nav",
+			"layout.main", "layout.footer", "layout.body_end",
+		})
+	})
 
-	out := buf.String()
-	for _, anchor := range []string{
-		"layout.head",
-		"layout.body_start",
-		"layout.header",
-		"layout.nav",
-		"layout.main",
-		"layout.footer",
-		"layout.body_end",
-	} {
+	t.Run("product page anchors", func(t *testing.T) {
+		var buf bytes.Buffer
+		if err := engine.Render(&buf, "product", map[string]interface{}{
+			"Layout": map[string]interface{}{"SiteName": "Shopanda", "Nav": []interface{}{}, "Assets": map[string]interface{}{}},
+			"Product": map[string]interface{}{"Name": "Demo", "Slug": "demo", "Status": "active"},
+			"Blocks":  []interface{}{},
+		}); err != nil {
+			t.Fatalf("Render: %v", err)
+		}
+		assertSlotMarkers(t, buf.String(), []string{"pdp.gallery", "pdp.info", "pdp.actions"})
+	})
+
+	t.Run("cart page anchors", func(t *testing.T) {
+		var buf bytes.Buffer
+		if err := engine.Render(&buf, "cart", map[string]interface{}{
+			"Layout": map[string]interface{}{"SiteName": "Shopanda", "Nav": []interface{}{}, "Assets": map[string]interface{}{}},
+			"Items": []interface{}{
+				map[string]interface{}{
+					"ProductName": "Demo", "VariantID": "v1", "VariantSKU": "SKU",
+					"Quantity": 1, "UnitPriceText": "$1", "LineTotalText": "$1",
+				},
+			},
+			"Summary": map[string]interface{}{"ItemCount": 1, "TotalQuantity": 1, "SubtotalText": "$1"},
+		}); err != nil {
+			t.Fatalf("Render: %v", err)
+		}
+		assertSlotMarkers(t, buf.String(), []string{"cart.items", "cart.summary"})
+	})
+
+	t.Run("checkout page anchors", func(t *testing.T) {
+		var buf bytes.Buffer
+		if err := engine.Render(&buf, "checkout_address", map[string]interface{}{
+			"Layout":   map[string]interface{}{"SiteName": "Shopanda", "Nav": []interface{}{}, "Assets": map[string]interface{}{}},
+			"CSRFToken": "tok",
+			"Progress": []interface{}{map[string]interface{}{"Label": "Address", "Current": true}},
+			"Items":    []interface{}{},
+			"Summary":  map[string]interface{}{"TotalQuantity": 0, "SubtotalText": "$0"},
+			"Countries": []interface{}{},
+			"Address":  map[string]interface{}{},
+		}); err != nil {
+			t.Fatalf("Render: %v", err)
+		}
+		assertSlotMarkers(t, buf.String(), []string{"checkout.progress", "checkout.summary"})
+	})
+}
+
+func assertSlotMarkers(t *testing.T, html string, anchors []string) {
+	t.Helper()
+	for _, anchor := range anchors {
 		marker := "<!--" + anchor + "-->"
-		if !strings.Contains(out, marker) {
-			t.Fatalf("missing slot output %s in:\n%s", marker, out)
+		if !strings.Contains(html, marker) {
+			t.Fatalf("missing slot output %s", marker)
 		}
 	}
 }

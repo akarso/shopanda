@@ -19,4 +19,4 @@ Track F maximizes **developer satisfaction** for plugin and theme authors: canon
 
 ## Suggested next PR
 
-**PR-711** — standard slot catalog in the default theme (`layout.*`, page anchors, `PLUGINS.md` catalog). Partial groundwork may already exist; finish coverage + tests.
+**PR-712** — theme inheritance (`parent:` in `theme.yaml`; child overrides templates while preserving parent slot markers).

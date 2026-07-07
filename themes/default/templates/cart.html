@@ -9,6 +9,7 @@
     </div>
 
     {{ if .Items }}
+    {{slot_container "cart.items"}}
     <section class="cart-table" aria-label="Cart items">
         {{ range .Items }}
         <article class="cart-row">
@@ -38,6 +39,7 @@
         </article>
         {{ end }}
     </section>
+    {{/slot_container}}
 
     {{slot_container "cart.summary"}}
     <aside class="cart-summary">
