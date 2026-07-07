@@ -9,10 +9,13 @@
     {{ range .Layout.Assets.HeadCSS }}<link rel="stylesheet" href="{{ .URL }}">{{ end }}
     {{ if .Layout.EnableCart }}<script src="/static/js/htmx.min.js" defer></script>{{ end }}
     {{ range .Layout.Assets.HeadJS }}<script src="{{ .URL }}"{{ if $.Layout.CSPEnabled }} nonce="{{ $.Layout.CSPNonce }}"{{ end }} defer></script>{{ end }}
+    {{slot . "layout.head" "append"}}
 </head>
 <body>
+    {{slot . "layout.body_start" "append"}}
     <a class="skip-link" href="#content">Skip to content</a>
 
+    {{slot_container "layout.header"}}
     <header class="site-shell site-header">
         <div class="site-header__bar">
             <a class="site-brand" href="/">
@@ -67,14 +70,20 @@
             </div>
         </div>
 
+        {{slot . "layout.nav" "before"}}
         <nav class="site-nav" aria-label="Primary">
+            {{slot . "layout.nav" "prepend"}}
             <ul>
                 {{ template "nav-items" .Layout.Nav }}
             </ul>
+            {{slot . "layout.nav" "append"}}
         </nav>
+        {{slot . "layout.nav" "after"}}
 
         {{ if .Layout.Categories }}
+        {{slot . "layout.category_nav" "before"}}
         <nav class="site-category-nav" aria-label="Categories">
+            {{slot . "layout.category_nav" "prepend"}}
             <ul>
                 {{ range .Layout.Categories }}
                 <li>
@@ -89,14 +98,20 @@
                 </li>
                 {{ end }}
             </ul>
+            {{slot . "layout.category_nav" "append"}}
         </nav>
+        {{slot . "layout.category_nav" "after"}}
         {{ end }}
     </header>
+    {{/slot_container}}
 
+    {{slot_container "layout.main"}}
     <main id="content" class="site-shell site-main">
         {{ template "content" . }}
     </main>
+    {{/slot_container}}
 
+    {{slot_container "layout.footer"}}
     <footer class="site-shell site-footer">
         <div>
             <strong>{{ .Layout.SiteName }}</strong>
@@ -116,7 +131,9 @@
             <span>© {{ .Layout.CurrentYear }}</span>
         </div>
     </footer>
+    {{/slot_container}}
     {{ range .Layout.Assets.FooterJS }}<script src="{{ .URL }}"{{ if $.Layout.CSPEnabled }} nonce="{{ $.Layout.CSPNonce }}"{{ end }} defer></script>{{ end }}
+    {{slot . "layout.body_end" "append"}}
 </body>
 </html>
 
