@@ -6,7 +6,7 @@
 * **Explicit extension only** — registry, ACL, deterministic ordering; no reflection magic or core overrides
 * Prefer **vertical slices** (domain → persistence → HTTP → one consumer) over big-bang platform dumps
 * One PR = one responsibility; runnable and reviewable in ~10–20 minutes
-* PR specs live under `prs/` (planned range **PR-700–710**; storefront DX extension **PR-711–720**)
+* PR specs live under `prs/` (**PR-700–710** shipped; **PR-711–720** storefront DX extension planned)
 
 Each PR is tagged **`[oss]`** unless noted. See [Commercial licensing](../COMMERCIAL.md).
 
