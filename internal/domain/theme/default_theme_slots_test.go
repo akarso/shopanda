@@ -69,6 +69,23 @@ func TestDefaultTheme_StandardLayoutSlotsRender(t *testing.T) {
 		assertSlotMarkers(t, buf.String(), []string{"pdp.gallery", "pdp.info", "pdp.actions"})
 	})
 
+	t.Run("plp page anchors", func(t *testing.T) {
+		var buf bytes.Buffer
+		if err := engine.Render(&buf, "product_list", map[string]interface{}{
+			"Layout":        map[string]interface{}{"SiteName": "Shopanda", "Nav": []interface{}{}, "Assets": map[string]interface{}{}},
+			"Title":         "Products",
+			"Eyebrow":       "Catalog",
+			"ResultSummary": "1 result",
+			"View":          "grid",
+			"GridURL":       "/products?view=grid",
+			"ListURL":       "/products?view=list",
+			"SortOptions":   []interface{}{},
+		}); err != nil {
+			t.Fatalf("Render: %v", err)
+		}
+		assertSlotMarkers(t, buf.String(), []string{"plp.toolbar"})
+	})
+
 	t.Run("cart page anchors", func(t *testing.T) {
 		var buf bytes.Buffer
 		if err := engine.Render(&buf, "cart", map[string]interface{}{

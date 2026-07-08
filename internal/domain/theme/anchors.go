@@ -1,9 +1,6 @@
 package theme
 
 import (
-	"fmt"
-	"os"
-	"path/filepath"
 	"regexp"
 	"sort"
 	"strings"
@@ -14,24 +11,27 @@ var (
 	slotExplicitAnchorPattern  = regexp.MustCompile(`\{\{\s*slot\s+\.\s+"([^"]+)"`)
 )
 
-// DeclaredAnchors scans theme template files for slot_container and slot markers.
-func DeclaredAnchors(themeDir string) ([]string, error) {
-	templatesDir := filepath.Join(themeDir, "templates")
-	entries, err := os.ReadDir(templatesDir)
+// TemplateSource is a single template input for anchor extraction.
+type TemplateSource struct {
+	Name    string
+	Content string
+}
+
+// TemplateSourceProvider provides template sources from any storage backend.
+type TemplateSourceProvider interface {
+	TemplateSources() ([]TemplateSource, error)
+}
+
+// DeclaredAnchors extracts declared slot anchors from provider templates.
+func DeclaredAnchors(provider TemplateSourceProvider) ([]string, error) {
+	sources, err := provider.TemplateSources()
 	if err != nil {
-		return nil, fmt.Errorf("theme: list templates: %w", err)
+		return nil, err
 	}
 
 	seen := make(map[string]struct{})
-	for _, entry := range entries {
-		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".html") {
-			continue
-		}
-		source, err := os.ReadFile(filepath.Join(templatesDir, entry.Name()))
-		if err != nil {
-			return nil, fmt.Errorf("theme: read %s: %w", entry.Name(), err)
-		}
-		for _, name := range extractDeclaredAnchors(string(source)) {
+	for _, source := range sources {
+		for _, name := range extractDeclaredAnchors(source.Content) {
 			seen[name] = struct{}{}
 		}
 	}

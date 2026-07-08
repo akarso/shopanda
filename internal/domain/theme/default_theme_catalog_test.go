@@ -5,10 +5,11 @@ import (
 
 	"github.com/akarso/shopanda/internal/application/slots"
 	"github.com/akarso/shopanda/internal/domain/theme"
+	"github.com/akarso/shopanda/internal/infrastructure/themefs"
 )
 
 func TestDefaultTheme_DeclaresStandardAnchors(t *testing.T) {
-	declared, err := theme.DeclaredAnchors(defaultThemeDir(t))
+	declared, err := theme.DeclaredAnchors(themefs.AnchorSource{ThemeDir: defaultThemeDir(t)})
 	if err != nil {
 		t.Fatalf("DeclaredAnchors: %v", err)
 	}
