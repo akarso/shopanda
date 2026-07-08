@@ -19,4 +19,4 @@ Track F maximizes **developer satisfaction** for plugin and theme authors: canon
 
 ## Suggested next PR
 
-**PR-712** — theme inheritance (`parent:` in `theme.yaml`; child overrides templates while preserving parent slot markers).
+**PR-712** — theme inheritance + first stable API draft for hooks/slots (`parent:` in `theme.yaml`; child overrides templates while preserving parent slot markers).

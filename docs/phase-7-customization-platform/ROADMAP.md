@@ -112,9 +112,9 @@ Phase 7 Tracks A–E shipped the registry, hooks, slots, and assets. Track F clo
 | PR | License | Title | Short description |
 | --- | --- | --- | --- |
 | PR-711 | [oss] | Standard slot catalog | `layout.*` (head, header, nav, main, footer, body_end), `pdp.*`, `plp.*`, `checkout.*`, `cart.*` in default theme; catalog in `PLUGINS.md` |
-| PR-712 | [oss] | Theme inheritance | `parent:` in `theme.yaml`; child overrides templates; parent slot markers preserved when not overridden |
+| PR-712 | [oss] | Theme inheritance + stable API draft | `parent:` in `theme.yaml`; child overrides templates; parent slot markers preserved; draft first public hook/slot API surface (names/constants/types; Stable v0 vs Internal) |
 | PR-713 | [oss] | Layout partials | Split `layout.html` into `_header.html`, `_footer.html`, `_nav.html`; custom themes override partials not monolithic layout |
-| PR-714 | [oss] | Slot dev ergonomics | Dev-mode log when plugin registers anchor with no theme marker; `GET /api/v1/admin/extensions/slots` catalog (like hooks) |
+| PR-714 | [oss] | Slot dev ergonomics + stable API v0 | Dev-mode log when plugin registers anchor with no theme marker; `GET /api/v1/admin/extensions/slots`; publish v0 stability policy and compatibility tests for hook/slot contracts |
 | PR-715 | [oss] | Remaining page anchors | `account.nav`, `home.hero`, `checkout.panel`, `cart.items`; complete coverage for shipped page types |
 | PR-716 | [oss] | `layout.yaml` block ordering (stretch) | Declarative reorder of **named blocks within fixed containers** (e.g. PDP info column); no cross-container moves |
 | PR-717 | [oss] | Nested `slot_container` fix | Preprocessor handles nested containers OR enforce lint rule + docs (nested `slot_container` breaks today; use explicit `slot` inside) |
@@ -123,6 +123,21 @@ Phase 7 Tracks A–E shipped the registry, hooks, slots, and assets. Track F clo
 | PR-720 | [oss] | Slot marker validation (stretch) | Theme load warns on unknown anchor names or documents optional strict mode for CI |
 
 Recommended order: **711 → 712 → 713 → 714 → 715** (core DX), then **718** (proof), then **716–717–719–720** as needed.
+
+### Stable API draft scope (PR-712/714)
+
+Track F includes a first public stable API surface for extension authors, limited to **hooks + slots**:
+
+- **PR-712 (draft surface):**
+  - introduce a public Go package for stable contracts (names/constants/types for hook points and slot anchors)
+  - keep existing internals as implementation details; add adapters/aliases where needed
+  - document what is **Stable v0** vs **Internal**
+- **PR-714 (hardening):**
+  - publish stability policy (what breaks when, deprecation path)
+  - add compatibility guard tests for stable hook/slot contracts
+  - ensure tooling endpoints reflect the same canonical names
+
+Non-goal for this draft: freezing all plugin APIs. The v0 scope is intentionally narrow (hooks + slots).
 
 **Out of scope for Track F:** runtime `.so` plugins, admin drag-and-drop layout editor, replacing composition pipelines for API responses.
 
@@ -255,9 +270,9 @@ Recommended order: **711 → 712 → 713 → 714 → 715** (core DX), then **718
 | 709 | E | [oss] | Plugin asset manifest injection |
 | 710 | E | [oss] | GraphQL extension parity |
 | 711 | F | [oss] | Standard slot catalog (default theme) |
-| 712 | F | [oss] | Theme inheritance |
+| 712 | F | [oss] | Theme inheritance + hook/slot API draft |
 | 713 | F | [oss] | Layout partials |
-| 714 | F | [oss] | Slot dev ergonomics + admin catalog |
+| 714 | F | [oss] | Slot dev ergonomics + stable API v0 |
 | 715 | F | [oss] | Remaining page anchors |
 | 716 | F | [oss] | `layout.yaml` block ordering (stretch) |
 | 717 | F | [oss] | Nested `slot_container` fix |
