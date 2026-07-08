@@ -112,7 +112,7 @@ Phase 7 Tracks A–E shipped the registry, hooks, slots, and assets. Track F clo
 | PR | License | Title | Short description |
 | --- | --- | --- | --- |
 | PR-711 | [oss] | Standard slot catalog | `layout.*` (head, header, nav, main, footer, body_end), `pdp.*`, `plp.*`, `checkout.*`, `cart.*` in default theme; catalog in `PLUGINS.md` |
-| PR-712 | [oss] | Theme inheritance + stable API draft | `parent:` in `theme.yaml`; child overrides templates; parent slot markers preserved; introduce first stable Go API package for hook/slot contracts |
+| PR-712 | [oss] | Theme inheritance + stable API draft | `parent:` in `theme.yaml`; child overrides templates; parent slot markers preserved; draft first public hook/slot API surface (names/constants/types; Stable v0 vs Internal) |
 | PR-713 | [oss] | Layout partials | Split `layout.html` into `_header.html`, `_footer.html`, `_nav.html`; custom themes override partials not monolithic layout |
 | PR-714 | [oss] | Slot dev ergonomics + stable API v0 | Dev-mode log when plugin registers anchor with no theme marker; `GET /api/v1/admin/extensions/slots`; publish v0 stability policy and compatibility tests for hook/slot contracts |
 | PR-715 | [oss] | Remaining page anchors | `account.nav`, `home.hero`, `checkout.panel`, `cart.items`; complete coverage for shipped page types |
@@ -270,7 +270,7 @@ Non-goal for this draft: freezing all plugin APIs. The v0 scope is intentionally
 | 709 | E | [oss] | Plugin asset manifest injection |
 | 710 | E | [oss] | GraphQL extension parity |
 | 711 | F | [oss] | Standard slot catalog (default theme) |
-| 712 | F | [oss] | Theme inheritance + stable API draft |
+| 712 | F | [oss] | Theme inheritance + hook/slot API draft |
 | 713 | F | [oss] | Layout partials |
 | 714 | F | [oss] | Slot dev ergonomics + stable API v0 |
 | 715 | F | [oss] | Remaining page anchors |
