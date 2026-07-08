@@ -5,6 +5,7 @@ import (
 
 	"github.com/akarso/shopanda/internal/application/hooks"
 	"github.com/akarso/shopanda/internal/platform/plugin"
+	"github.com/akarso/shopanda/pkg/extapi"
 )
 
 func TestApp_Hooks_Register(t *testing.T) {
@@ -12,7 +13,7 @@ func TestApp_Hooks_Register(t *testing.T) {
 	app := &plugin.App{}
 	app.SetHookRegistry(reg)
 
-	if err := app.Hooks("acme.demo").Register(hooks.HookCartAddItemAfter, 100, func(ctx *hooks.Context) error {
+	if err := app.Hooks("acme.demo").Register(extapi.HookCartAddItemAfter, 100, func(ctx *extapi.HookContext) error {
 		return nil
 	}); err != nil {
 		t.Fatalf("Register: %v", err)

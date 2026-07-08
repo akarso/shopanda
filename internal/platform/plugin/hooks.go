@@ -4,6 +4,7 @@ import (
 	"fmt"
 
 	hooksapp "github.com/akarso/shopanda/internal/application/hooks"
+	"github.com/akarso/shopanda/pkg/extapi"
 )
 
 // Hooks exposes hook registration to plugins during Init.
@@ -13,11 +14,16 @@ type Hooks struct {
 }
 
 // Register adds a handler for hook at priority (lower runs first).
-func (h *Hooks) Register(hook string, priority int, handler hooksapp.Handler) error {
+func (h *Hooks) Register(hook extapi.HookPoint, priority int, handler extapi.HookHandler) error {
 	if h == nil || h.registry == nil {
 		return fmt.Errorf("plugin: hook registry not configured")
 	}
-	return h.registry.Register(hook, priority, h.registrant, handler)
+	if handler == nil {
+		return fmt.Errorf("plugin: hook handler must not be nil")
+	}
+	return h.registry.Register(string(hook), priority, h.registrant, func(ctx *hooksapp.Context) error {
+		return handler(toExtAPIHookContext(ctx))
+	})
 }
 
 // SetHookRegistry wires the shared hook registry before plugin Init.
@@ -45,4 +51,18 @@ func (a *App) Hooks(registrant string) *Hooks {
 		a.hookRegistry = hooksapp.NewRegistry(a.Logger)
 	}
 	return &Hooks{registry: a.hookRegistry, registrant: registrant}
+}
+
+func toExtAPIHookContext(ctx *hooksapp.Context) *extapi.HookContext {
+	if ctx == nil {
+		return &extapi.HookContext{}
+	}
+	out := &extapi.HookContext{Name: ctx.Name}
+	if len(ctx.Payload) > 0 {
+		out.Payload = make(map[string]interface{}, len(ctx.Payload))
+		for k, v := range ctx.Payload {
+			out.Payload[k] = v
+		}
+	}
+	return out
 }

@@ -5,6 +5,7 @@ import (
 
 	"github.com/akarso/shopanda/internal/application/slots"
 	"github.com/akarso/shopanda/internal/platform/plugin"
+	"github.com/akarso/shopanda/pkg/extapi"
 )
 
 func TestApp_SlotsRegisterRenderer(t *testing.T) {
@@ -12,7 +13,7 @@ func TestApp_SlotsRegisterRenderer(t *testing.T) {
 	app := &plugin.App{}
 	app.SetSlotRegistry(reg)
 
-	err := app.Slots("plugin.demo").RegisterRenderer("pdp.price", slots.PlacementAppend, 100, func(ctx *slots.RenderContext) string {
+	err := app.Slots("plugin.demo").RegisterRenderer(extapi.SlotAnchor("pdp.price"), extapi.PlacementAppend, 100, func(ctx *extapi.SlotRenderContext) string {
 		return "<span>eco</span>"
 	})
 	if err != nil {

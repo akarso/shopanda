@@ -42,8 +42,8 @@ func TestLoad_NoTemplates(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error when no .html templates exist")
 	}
-	if !strings.Contains(err.Error(), "no templates found") {
-		t.Errorf("error = %q, want it to mention no templates found", err.Error())
+	if !strings.Contains(err.Error(), "no page templates found") {
+		t.Errorf("error = %q, want it to mention no page templates found", err.Error())
 	}
 }
 

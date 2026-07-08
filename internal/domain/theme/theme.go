@@ -16,5 +16,6 @@ type StorefrontConfig struct {
 type Theme struct {
 	Name       string           `yaml:"name"`
 	Version    string           `yaml:"version"`
+	Parent     string           `yaml:"parent,omitempty"`
 	Storefront StorefrontConfig `yaml:"storefront"`
 }

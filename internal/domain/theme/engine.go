@@ -6,7 +6,6 @@ import (
 	"io"
 	"os"
 	"path/filepath"
-	"strings"
 
 	"gopkg.in/yaml.v3"
 )
@@ -39,9 +38,9 @@ type Engine struct {
 //
 // The expected structure is:
 //
-//	<dir>/theme.yaml
+//	<dir>/theme.yaml              (optional parent: relative path within theme boundary)
 //	<dir>/templates/layout.html   (optional)
-//	<dir>/templates/*.html        (page templates)
+//	<dir>/templates/*.html        (page templates; child overrides parent by filename)
 func Load(dir string, opts ...Option) (*Engine, error) {
 	var cfg loadOptions
 	for _, opt := range opts {
@@ -50,40 +49,16 @@ func Load(dir string, opts ...Option) (*Engine, error) {
 		}
 	}
 
-	meta, err := loadThemeYAML(filepath.Join(dir, "theme.yaml"))
+	resolved, meta, err := resolveRootTheme(dir)
 	if err != nil {
-		return nil, fmt.Errorf("theme: load metadata: %w", err)
+		return nil, err
 	}
 
-	templatesDir := filepath.Join(dir, "templates")
-	pattern := filepath.Join(templatesDir, "*.html")
-	matches, err := filepath.Glob(pattern)
-	if err != nil {
-		return nil, fmt.Errorf("theme: glob templates: %w", err)
-	}
-	if len(matches) == 0 {
-		return nil, fmt.Errorf("theme: no templates found in %s", pattern)
-	}
-
-	// Separate layout from page templates.
-	var layoutFile string
-	var pageFiles []string
-	for _, m := range matches {
-		base := filepath.Base(m)
-		if base == "layout.html" {
-			layoutFile = m
-		} else {
-			pageFiles = append(pageFiles, m)
-		}
-	}
-	if len(pageFiles) == 0 {
-		return nil, fmt.Errorf("theme: no page templates found (only layout.html)")
-	}
+	layoutFile := resolved.layoutFile
 
 	funcMap := slotFuncMap(cfg.slots)
-	pages := make(map[string]*template.Template, len(pageFiles))
-	for _, pf := range pageFiles {
-		name := strings.TrimSuffix(filepath.Base(pf), filepath.Ext(pf))
+	pages := make(map[string]*template.Template, len(resolved.pageFiles))
+	for name, pf := range resolved.pageFiles {
 		t, err := parsePageTemplate(layoutFile, pf, funcMap)
 		if err != nil {
 			return nil, fmt.Errorf("theme: parse %s: %w", filepath.Base(pf), err)

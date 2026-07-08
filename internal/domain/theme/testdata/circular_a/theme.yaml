@@ -1,0 +1,3 @@
+name: circular_a
+version: "0.1.0"
+parent: ../circular_b
