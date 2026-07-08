@@ -108,6 +108,8 @@ app.Slots("acme/badges").RegisterRenderer("pdp.info", slots.PlacementAppend, 100
 
 Theme markers use `{{slot_container "anchor"}}…{{/slot_container}}` or explicit `{{slot . "anchor" "placement"}}`. **Do not nest `slot_container` blocks** — the preprocessor cannot match inner closings; use explicit `slot` markers inside a container instead. Missing markers are a silent no-op — plugins do not auto-inject. Global CSS/JS belongs in the **asset manifest**, not slots.
 
+**Stable v0 contracts:** use [`pkg/extapi`](pkg/extapi) for hook/slot names and placements. See [Extension API guide](docs/guides/EXTENSION_API.md). Theme child inheritance: `parent:` in `theme.yaml` (PR-712).
+
 For combining multiple plugins (ordering, shared context, checkout-field walkthrough): [Multi-Plugin Composition](docs/guides/PLUGIN_COMPOSITION.md).
 
 ---
