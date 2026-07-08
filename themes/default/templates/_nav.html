@@ -1,0 +1,32 @@
+{{slot . "layout.nav" "before"}}
+<nav class="site-nav" aria-label="Primary">
+    {{slot . "layout.nav" "prepend"}}
+    <ul>
+        {{ template "nav-items" .Layout.Nav }}
+    </ul>
+    {{slot . "layout.nav" "append"}}
+</nav>
+{{slot . "layout.nav" "after"}}
+
+{{ if .Layout.Categories }}
+{{slot . "layout.category_nav" "before"}}
+<nav class="site-category-nav" aria-label="Categories">
+    {{slot . "layout.category_nav" "prepend"}}
+    <ul>
+        {{ range .Layout.Categories }}
+        <li>
+            <a href="{{ .URL }}">{{ .Label }}</a>
+            {{ if .Children }}
+            <ul>
+                {{ range .Children }}
+                <li><a href="{{ .URL }}">{{ .Label }}</a></li>
+                {{ end }}
+            </ul>
+            {{ end }}
+        </li>
+        {{ end }}
+    </ul>
+    {{slot . "layout.category_nav" "append"}}
+</nav>
+{{slot . "layout.category_nav" "after"}}
+{{ end }}

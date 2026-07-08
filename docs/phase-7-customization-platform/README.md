@@ -19,4 +19,4 @@ Track F maximizes **developer satisfaction** for plugin and theme authors: canon
 
 ## Suggested next PR
 
-**PR-713** — layout partials (`_header.html`, `_footer.html`, `_nav.html`; custom themes override partials not monolithic layout).
+**PR-714** — slot dev ergonomics + stable API v0 (dev warnings, admin slots catalog, compatibility policy).

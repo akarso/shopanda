@@ -17,12 +17,13 @@ Specs for Phase 7 PRs (Summary, Why, Scope, Out of scope, Validation — same fo
 | PR-710 | E | [oss] | done | [GraphQL extension parity](PR-710.md) |
 | PR-711 | F | [oss] | done | [Standard slot catalog](PR-711.md) |
 | PR-712 | F | [oss] | done | [Theme inheritance + stable API draft](PR-712.md) |
+| PR-713 | F | [oss] | done | [Layout partials](PR-713.md) |
 | PR-714 | F | [oss] | planned | [Slot dev ergonomics + stable API v0](PR-714.md) |
 
 Roadmap: [`../ROADMAP.md`](../ROADMAP.md) · Architecture: [`../specs/CUSTOMIZATION_PLATFORM.md`](../specs/CUSTOMIZATION_PLATFORM.md) · Upstream: [Phase 6](../../phase-6-merchant-complete/ROADMAP.md)
 
-**Track F** active (PR-711–712 done).
+**Track F** active (PR-711–713 done).
 
-**Suggested next PR:** **PR-713** — layout partials (`_header.html`, `_footer.html`, `_nav.html`).
+**Suggested next PR:** **PR-714** — slot dev ergonomics + stable API v0 (dev warnings, admin slots catalog, compatibility policy).
 
 **Rule for Phase 7:** Extension field writes must go through the registry service — no ad hoc JSON columns in core entities.

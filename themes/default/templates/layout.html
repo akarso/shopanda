@@ -15,95 +15,7 @@
     {{slot . "layout.body_start" "append"}}
     <a class="skip-link" href="#content">Skip to content</a>
 
-    {{slot_container "layout.header"}}
-    <header class="site-shell site-header">
-        <div class="site-header__bar">
-            <a class="site-brand" href="/">
-                <span class="site-brand__mark">S</span>
-                <span>
-                    <strong>{{ .Layout.SiteName }}</strong>
-                    <small>Merchant-ready storefront</small>
-                </span>
-            </a>
-
-            <form class="site-search" action="{{ .Layout.SearchAction }}" method="get" role="search">
-                <label class="sr-only" for="storefront-search">Search products</label>
-                <input id="storefront-search" name="q" type="search" placeholder="Search catalog" value="{{ .Layout.SearchQuery }}">
-                <button type="submit">Search</button>
-            </form>
-
-            <div class="site-utility">
-                <div class="account-widget">
-                    <a class="account-pill" href="{{ .Layout.AccountURL }}">{{ .Layout.AccountLabel }}</a>
-                    {{ if .Layout.AccountSignedIn }}
-                    <div class="account-widget__panel">
-                        <strong>{{ .Layout.AccountName }}</strong>
-                        <div class="account-widget__actions">
-                            <a href="{{ .Layout.AccountProfileURL }}">Profile</a>
-                            <a href="{{ .Layout.AccountOrdersURL }}">Orders</a>
-                            <a href="{{ .Layout.AccountSecurityURL }}">Security</a>
-                            <form action="{{ .Layout.AccountLogoutURL }}" method="post">
-                                <input type="hidden" name="csrf_token" value="{{ .Layout.CSRFToken }}">
-                                <button type="submit">Log out</button>
-                            </form>
-                        </div>
-                    </div>
-                    {{ else }}
-                    <p class="muted-note">Sign in to view orders and profile.</p>
-                    {{ end }}
-                </div>
-
-                <div class="cart-widget">
-                    <a class="cart-pill" href="{{ .Layout.CartURL }}">
-                        {{ if .Layout.EnableCart }}
-                        <span hx-get="/fragments/cart-count" hx-trigger="cart-updated from:body" hx-swap="innerHTML">{{ .Layout.CartLabel }}</span>
-                        {{ else }}
-                        {{ .Layout.CartLabel }}
-                        {{ end }}
-                    </a>
-                    {{ if .Layout.EnableCart }}
-                    <div id="mini-cart" class="mini-cart-shell" hx-get="/fragments/mini-cart" hx-trigger="load, cart-updated from:body" hx-swap="innerHTML">
-                        <p class="muted-note">Loading cart…</p>
-                    </div>
-                    {{ end }}
-                </div>
-            </div>
-        </div>
-
-        {{slot . "layout.nav" "before"}}
-        <nav class="site-nav" aria-label="Primary">
-            {{slot . "layout.nav" "prepend"}}
-            <ul>
-                {{ template "nav-items" .Layout.Nav }}
-            </ul>
-            {{slot . "layout.nav" "append"}}
-        </nav>
-        {{slot . "layout.nav" "after"}}
-
-        {{ if .Layout.Categories }}
-        {{slot . "layout.category_nav" "before"}}
-        <nav class="site-category-nav" aria-label="Categories">
-            {{slot . "layout.category_nav" "prepend"}}
-            <ul>
-                {{ range .Layout.Categories }}
-                <li>
-                    <a href="{{ .URL }}">{{ .Label }}</a>
-                    {{ if .Children }}
-                    <ul>
-                        {{ range .Children }}
-                        <li><a href="{{ .URL }}">{{ .Label }}</a></li>
-                        {{ end }}
-                    </ul>
-                    {{ end }}
-                </li>
-                {{ end }}
-            </ul>
-            {{slot . "layout.category_nav" "append"}}
-        </nav>
-        {{slot . "layout.category_nav" "after"}}
-        {{ end }}
-    </header>
-    {{/slot_container}}
+    {{ template "_header.html" . }}
 
     {{slot_container "layout.main"}}
     <main id="content" class="site-shell site-main">
@@ -111,27 +23,7 @@
     </main>
     {{/slot_container}}
 
-    {{slot_container "layout.footer"}}
-    <footer class="site-shell site-footer">
-        <div>
-            <strong>{{ .Layout.SiteName }}</strong>
-            <p>SSR-first commerce storefront with a bundled base theme.</p>
-        </div>
-        <div>
-            <a href="/">Home</a>
-            <a href="/categories">Categories</a>
-            <a href="{{ .Layout.AccountURL }}">Account</a>
-        </div>
-        <div>
-            <span>Legal</span>
-            <span>Privacy</span>
-            {{ if .Layout.WeeeFooterEnabled }}
-            <span class="weee-footer">WEEE producer reg.: {{ .Layout.WeeeProducerReg }}</span>
-            {{ end }}
-            <span>© {{ .Layout.CurrentYear }}</span>
-        </div>
-    </footer>
-    {{/slot_container}}
+    {{ template "_footer.html" . }}
     {{ range .Layout.Assets.FooterJS }}<script src="{{ .URL }}"{{ if $.Layout.CSPEnabled }} nonce="{{ $.Layout.CSPNonce }}"{{ end }} defer></script>{{ end }}
     {{slot . "layout.body_end" "append"}}
 </body>

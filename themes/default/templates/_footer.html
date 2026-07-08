@@ -1,0 +1,21 @@
+{{slot_container "layout.footer"}}
+<footer class="site-shell site-footer">
+    <div>
+        <strong>{{ .Layout.SiteName }}</strong>
+        <p>SSR-first commerce storefront with a bundled base theme.</p>
+    </div>
+    <div>
+        <a href="/">Home</a>
+        <a href="/categories">Categories</a>
+        <a href="{{ .Layout.AccountURL }}">Account</a>
+    </div>
+    <div>
+        <span>Legal</span>
+        <span>Privacy</span>
+        {{ if .Layout.WeeeFooterEnabled }}
+        <span class="weee-footer">WEEE producer reg.: {{ .Layout.WeeeProducerReg }}</span>
+        {{ end }}
+        <span>© {{ .Layout.CurrentYear }}</span>
+    </div>
+</footer>
+{{/slot_container}}
