@@ -38,7 +38,7 @@ type Engine struct {
 //
 // The expected structure is:
 //
-//	<dir>/theme.yaml              (optional parent: relative/absolute path)
+//	<dir>/theme.yaml              (optional parent: relative path within theme boundary)
 //	<dir>/templates/layout.html   (optional)
 //	<dir>/templates/*.html        (page templates; child overrides parent by filename)
 func Load(dir string, opts ...Option) (*Engine, error) {
@@ -49,12 +49,7 @@ func Load(dir string, opts ...Option) (*Engine, error) {
 		}
 	}
 
-	meta, err := loadThemeYAML(filepath.Join(dir, "theme.yaml"))
-	if err != nil {
-		return nil, fmt.Errorf("theme: load metadata: %w", err)
-	}
-
-	resolved, err := resolveThemeTemplates(dir, make(map[string]struct{}))
+	resolved, meta, err := resolveRootTheme(dir)
 	if err != nil {
 		return nil, err
 	}

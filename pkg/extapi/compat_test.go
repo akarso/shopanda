@@ -9,14 +9,14 @@ import (
 )
 
 func TestStableHookPointsMatchInternal(t *testing.T) {
-	if extapi.HookCartAddItemAfter != hooksapp.HookCartAddItemAfter {
+	if string(extapi.HookCartAddItemAfter) != hooksapp.HookCartAddItemAfter {
 		t.Fatalf("HookCartAddItemAfter = %q, want %q", extapi.HookCartAddItemAfter, hooksapp.HookCartAddItemAfter)
 	}
 }
 
 func TestStableSlotAnchorsMatchInternalCatalog(t *testing.T) {
 	internal := slotsapp.StandardAnchorNames()
-	stable := extapi.SlotAnchors()
+	stable := extapi.SlotAnchorNames()
 	if len(stable) != len(internal) {
 		t.Fatalf("stable anchors len = %d, internal len = %d", len(stable), len(internal))
 	}

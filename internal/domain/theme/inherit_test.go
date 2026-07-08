@@ -79,3 +79,42 @@ func TestLoad_CircularParentChain(t *testing.T) {
 		t.Fatalf("error = %q", err.Error())
 	}
 }
+
+func TestLoad_ParentLayoutOnlyInheritsPagesFromChild(t *testing.T) {
+	e, err := theme.Load("testdata/child_layout_inherit")
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+
+	var buf bytes.Buffer
+	if err := e.Render(&buf, "product", struct{}{}); err != nil {
+		t.Fatalf("Render: %v", err)
+	}
+	out := buf.String()
+	if !strings.Contains(out, "layout-only-parent") {
+		t.Fatalf("expected inherited parent layout in output:\n%s", out)
+	}
+	if !strings.Contains(out, "<h1>PAGE</h1>") {
+		t.Fatalf("expected child page content in output:\n%s", out)
+	}
+}
+
+func TestLoad_RejectsAbsoluteParentPath(t *testing.T) {
+	_, err := theme.Load("testdata/child_abs_parent")
+	if err == nil {
+		t.Fatal("expected error for absolute parent path")
+	}
+	if !strings.Contains(err.Error(), "relative path") {
+		t.Fatalf("error = %q", err.Error())
+	}
+}
+
+func TestLoad_RejectsParentOutsideBoundary(t *testing.T) {
+	_, err := theme.Load("testdata/child_escape_parent")
+	if err == nil {
+		t.Fatal("expected error for parent outside theme boundary")
+	}
+	if !strings.Contains(err.Error(), "outside allowed theme boundary") {
+		t.Fatalf("error = %q", err.Error())
+	}
+}
