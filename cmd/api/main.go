@@ -301,6 +301,19 @@ func runServe(cfg *config.Config, log logger.Logger, embedScheduler bool) error 
 	extensionRegistry := extensionApp.NewRegistry()
 	hookRegistry := hooksApp.NewRegistry(log)
 	slotRegistry := slotsApp.NewRegistry(log)
+	if cfg.Frontend.Enabled && cfg.Frontend.ThemePath != "" {
+		if anchors, anchorErr := theme.DeclaredAnchorsFromDir(cfg.Frontend.ThemePath); anchorErr != nil {
+			log.Warn("slots.theme_markers.load_failed", map[string]interface{}{
+				"theme_path": cfg.Frontend.ThemePath,
+				"error":      anchorErr.Error(),
+			})
+		} else {
+			slotRegistry.SetThemeMarkers(anchors)
+		}
+	}
+	if os.Getenv("SHOPANDA_DEV_MODE") != "" {
+		slotRegistry.SetDevMode(true)
+	}
 	assetRegistry := assetsApp.NewRegistry()
 	pluginApp := &plugin.App{
 		Logger:    log,
@@ -801,6 +814,7 @@ func runServe(cfg *config.Config, log logger.Logger, embedScheduler bool) error 
 	extensionFieldAdmin := shophttp.NewExtensionFieldAdminHandlerWithAuditor(extensionFieldService, sharedAuditor)
 	extensionValueAdmin := shophttp.NewExtensionValueAdminHandlerWithAuditor(extensionValueService, sharedAuditor)
 	extensionHookAdmin := shophttp.NewExtensionHookAdminHandler(hookRegistry)
+	extensionSlotAdmin := shophttp.NewExtensionSlotAdminHandler(slotRegistry)
 	inventoryAdmin := shophttp.NewInventoryAdminHandlerWithAuditor(stockRepo, variantRepo, sharedAuditor)
 	storeAdmin := shophttp.NewStoreAdminHandlerWithAuditor(storeRepo, bus, sharedAuditor)
 	auditLogAdmin := shophttp.NewAuditLogAdminHandler(auditLogRepo, sharedAuditor)
@@ -1051,6 +1065,7 @@ func runServe(cfg *config.Config, log logger.Logger, embedScheduler bool) error 
 	router.Handle("GET /api/v1/admin/products/{id}/extensions", requireExtensionsRead(extensionValueAdmin.ListProductExtensions()))
 	router.Handle("PUT /api/v1/admin/products/{id}/extensions", requireExtensionsWrite(extensionValueAdmin.PutProductExtensions()))
 	router.Handle("GET /api/v1/admin/extensions/hooks", requireExtensionsRead(extensionHookAdmin.ListHooks()))
+	router.Handle("GET /api/v1/admin/extensions/slots", requireExtensionsRead(extensionSlotAdmin.ListSlots()))
 	router.Handle("GET /api/v1/admin/inventory", requireProductsRead(inventoryAdmin.List()))
 	router.Handle("PUT /api/v1/admin/inventory/{variantId}", requireProductsWrite(inventoryAdmin.Adjust()))
 	router.Handle("GET /api/v1/admin/stores", requireSettingsRead(storeAdmin.List()))

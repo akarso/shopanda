@@ -45,12 +45,37 @@ Do not import these for compatibility-sensitive plugin code:
 
 Internal packages may change without a deprecation window.
 
-## Compatibility policy (v0 draft)
+## Compatibility policy (v0)
 
-- Stable v0 names/constants should remain wire-compatible within a major release.
-- New hook points and slot anchors may be added without breaking existing plugins.
-- Renames/removals require deprecation notes in release notes and `pkg/extapi` godoc.
-- `pkg/extapi/compat_test.go` guards mapping to internal catalogs.
+### What is stable
+
+- Hook point wire names (`extapi.HookPoints()`)
+- Slot anchor wire names (`extapi.SlotAnchorNames()`)
+- Placement wire values (`before`, `after`, `prepend`, `append`)
+- Handler/context types in `pkg/extapi`
+
+### Change rules
+
+| Change type | Policy |
+| --- | --- |
+| Add hook point or slot anchor | Allowed in minor releases; document in release notes and `pkg/extapi` godoc |
+| Rename or remove stable name | **Breaking** — requires deprecation notice for at least one minor release, migration note in release notes, and `pkg/extapi/compat_test.go` update |
+| Change handler/context field semantics | **Breaking** — same deprecation window as renames |
+| Internal registry or theme engine refactor | Allowed when `pkg/extapi` wire contracts stay compatible |
+
+### Guard tests
+
+`pkg/extapi/compat_test.go` fails CI when:
+
+- stable hook/slot names drift from internal catalogs
+- placement constants drift from internal slot placements
+- stable anchor ordering diverges from `slots.StandardAnchors()`
+
+Admin tooling (`GET /api/v1/admin/extensions/hooks`, `GET /api/v1/admin/extensions/slots`) uses the same canonical names as `pkg/extapi`.
+
+### Dev diagnostics
+
+When `SHOPANDA_DEV_MODE` is set and the storefront theme is enabled, registering a slot renderer for an anchor **not declared in the active theme** logs `slots.registration.unmarked_anchor`. Production behavior is unchanged (renderers for unmarked anchors are no-ops at render time).
 
 ## Theme inheritance (PR-712)
 

@@ -12,6 +12,11 @@ func TestStableHookPointsMatchInternal(t *testing.T) {
 	if string(extapi.HookCartAddItemAfter) != hooksapp.HookCartAddItemAfter {
 		t.Fatalf("HookCartAddItemAfter = %q, want %q", extapi.HookCartAddItemAfter, hooksapp.HookCartAddItemAfter)
 	}
+
+	stable := extapi.HookPoints()
+	if len(stable) != 1 || stable[0] != string(extapi.HookCartAddItemAfter) {
+		t.Fatalf("HookPoints() = %v", stable)
+	}
 }
 
 func TestStableSlotAnchorsMatchInternalCatalog(t *testing.T) {
@@ -23,6 +28,12 @@ func TestStableSlotAnchorsMatchInternalCatalog(t *testing.T) {
 	for i, name := range internal {
 		if stable[i] != name {
 			t.Fatalf("anchor[%d] = %q, want %q", i, stable[i], name)
+		}
+	}
+
+	for _, anchor := range extapi.SlotAnchors() {
+		if string(anchor) == "" {
+			t.Fatal("slot anchor constant must not be empty")
 		}
 	}
 }
