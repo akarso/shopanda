@@ -8,8 +8,9 @@ import (
 )
 
 type resolvedTemplates struct {
-	layoutFile string
-	pageFiles  map[string]string // page name -> absolute file path
+	layoutFile   string
+	partialFiles map[string]string // partial name -> absolute file path
+	pageFiles    map[string]string // page name -> absolute file path
 }
 
 func resolveRootTheme(loadDir string) (resolvedTemplates, Theme, error) {
@@ -49,7 +50,10 @@ func resolveThemeTemplates(themeDir, boundary string, visited map[string]struct{
 		return resolvedTemplates{}, fmt.Errorf("theme: load metadata: %w", err)
 	}
 
-	merged := resolvedTemplates{pageFiles: make(map[string]string)}
+	merged := resolvedTemplates{
+		pageFiles:    make(map[string]string),
+		partialFiles: make(map[string]string),
+	}
 	if parent := strings.TrimSpace(meta.Parent); parent != "" {
 		parentDir, err := resolveParentThemeDir(absDir, parent, boundary)
 		if err != nil {
@@ -116,12 +120,20 @@ func overlayThemeTemplates(themeDir string, merged *resolvedTemplates) error {
 	}
 	for _, m := range matches {
 		base := filepath.Base(m)
-		if base == "layout.html" {
+		switch {
+		case base == "layout.html":
 			merged.layoutFile = m
-			continue
+		case isPartialTemplate(base):
+			name := strings.TrimSuffix(base, filepath.Ext(base))
+			merged.partialFiles[name] = m
+		default:
+			name := strings.TrimSuffix(base, filepath.Ext(base))
+			merged.pageFiles[name] = m
 		}
-		name := strings.TrimSuffix(base, filepath.Ext(base))
-		merged.pageFiles[name] = m
 	}
 	return nil
+}
+
+func isPartialTemplate(base string) bool {
+	return strings.HasPrefix(base, "_") && strings.HasSuffix(base, ".html")
 }

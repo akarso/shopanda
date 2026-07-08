@@ -1,0 +1,58 @@
+{{slot_container "layout.header"}}
+<header class="site-shell site-header">
+    <div class="site-header__bar">
+        <a class="site-brand" href="/">
+            <span class="site-brand__mark">S</span>
+            <span>
+                <strong>{{ .Layout.SiteName }}</strong>
+                <small>Merchant-ready storefront</small>
+            </span>
+        </a>
+
+        <form class="site-search" action="{{ .Layout.SearchAction }}" method="get" role="search">
+            <label class="sr-only" for="storefront-search">Search products</label>
+            <input id="storefront-search" name="q" type="search" placeholder="Search catalog" value="{{ .Layout.SearchQuery }}">
+            <button type="submit">Search</button>
+        </form>
+
+        <div class="site-utility">
+            <div class="account-widget">
+                <a class="account-pill" href="{{ .Layout.AccountURL }}">{{ .Layout.AccountLabel }}</a>
+                {{ if .Layout.AccountSignedIn }}
+                <div class="account-widget__panel">
+                    <strong>{{ .Layout.AccountName }}</strong>
+                    <div class="account-widget__actions">
+                        <a href="{{ .Layout.AccountProfileURL }}">Profile</a>
+                        <a href="{{ .Layout.AccountOrdersURL }}">Orders</a>
+                        <a href="{{ .Layout.AccountSecurityURL }}">Security</a>
+                        <form action="{{ .Layout.AccountLogoutURL }}" method="post">
+                            <input type="hidden" name="csrf_token" value="{{ .Layout.CSRFToken }}">
+                            <button type="submit">Log out</button>
+                        </form>
+                    </div>
+                </div>
+                {{ else }}
+                <p class="muted-note">Sign in to view orders and profile.</p>
+                {{ end }}
+            </div>
+
+            <div class="cart-widget">
+                <a class="cart-pill" href="{{ .Layout.CartURL }}">
+                    {{ if .Layout.EnableCart }}
+                    <span hx-get="/fragments/cart-count" hx-trigger="cart-updated from:body" hx-swap="innerHTML">{{ .Layout.CartLabel }}</span>
+                    {{ else }}
+                    {{ .Layout.CartLabel }}
+                    {{ end }}
+                </a>
+                {{ if .Layout.EnableCart }}
+                <div id="mini-cart" class="mini-cart-shell" hx-get="/fragments/mini-cart" hx-trigger="load, cart-updated from:body" hx-swap="innerHTML">
+                    <p class="muted-note">Loading cart…</p>
+                </div>
+                {{ end }}
+            </div>
+        </div>
+    </div>
+
+    {{ template "_nav.html" . }}
+</header>
+{{/slot_container}}

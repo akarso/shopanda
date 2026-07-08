@@ -6,6 +6,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"sort"
 
 	"gopkg.in/yaml.v3"
 )
@@ -40,6 +41,7 @@ type Engine struct {
 //
 //	<dir>/theme.yaml              (optional parent: relative path within theme boundary)
 //	<dir>/templates/layout.html   (optional)
+//	<dir>/templates/_*.html       (optional layout partials; child overrides parent by filename)
 //	<dir>/templates/*.html        (page templates; child overrides parent by filename)
 func Load(dir string, opts ...Option) (*Engine, error) {
 	var cfg loadOptions
@@ -59,7 +61,7 @@ func Load(dir string, opts ...Option) (*Engine, error) {
 	funcMap := slotFuncMap(cfg.slots)
 	pages := make(map[string]*template.Template, len(resolved.pageFiles))
 	for name, pf := range resolved.pageFiles {
-		t, err := parsePageTemplate(layoutFile, pf, funcMap)
+		t, err := parsePageTemplate(layoutFile, resolved.partialFiles, pf, funcMap)
 		if err != nil {
 			return nil, fmt.Errorf("theme: parse %s: %w", filepath.Base(pf), err)
 		}
@@ -90,7 +92,7 @@ func (e *Engine) HasTemplate(name string) bool {
 	return ok
 }
 
-func parsePageTemplate(layoutFile, pageFile string, funcMap template.FuncMap) (*template.Template, error) {
+func parsePageTemplate(layoutFile string, partialFiles map[string]string, pageFile string, funcMap template.FuncMap) (*template.Template, error) {
 	pageSource, err := os.ReadFile(pageFile)
 	if err != nil {
 		return nil, err
@@ -114,10 +116,36 @@ func parsePageTemplate(layoutFile, pageFile string, funcMap template.FuncMap) (*
 	if _, err := root.Parse(string(layoutSource)); err != nil {
 		return nil, err
 	}
+	if err := parsePartialTemplates(root, partialFiles); err != nil {
+		return nil, err
+	}
 	if _, err := root.New(pageName).Parse(string(pageSource)); err != nil {
 		return nil, err
 	}
 	return root, nil
+}
+
+func parsePartialTemplates(root *template.Template, partialFiles map[string]string) error {
+	if len(partialFiles) == 0 {
+		return nil
+	}
+	names := make([]string, 0, len(partialFiles))
+	for name := range partialFiles {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+
+	for _, name := range names {
+		source, err := os.ReadFile(partialFiles[name])
+		if err != nil {
+			return fmt.Errorf("theme: read partial %s: %w", name, err)
+		}
+		source = []byte(preprocessSlotContainers(string(source)))
+		if _, err := root.New(name + ".html").Parse(string(source)); err != nil {
+			return fmt.Errorf("theme: parse partial %s: %w", name, err)
+		}
+	}
+	return nil
 }
 
 func loadThemeYAML(path string) (Theme, error) {
