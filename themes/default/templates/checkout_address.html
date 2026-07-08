@@ -67,6 +67,7 @@
             </form>
         </section>
 
+        {{slot_container "checkout.summary"}}
         <aside class="checkout-summary-panel">
             <span class="eyebrow">Order Summary</span>
             <ul class="checkout-summary-panel__items">
@@ -89,6 +90,7 @@
                 <strong>{{ .Summary.SubtotalText }}</strong>
             </div>
         </aside>
+        {{/slot_container}}
     </div>
 </section>
 {{ end }}
