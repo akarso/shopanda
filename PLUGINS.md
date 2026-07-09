@@ -104,7 +104,10 @@ app.Slots("acme/badges").RegisterRenderer("pdp.info", slots.PlacementAppend, 100
 | `cart.items` | Cart line items table |
 | `cart.summary` | Cart summary aside |
 | `checkout.progress` | Checkout step indicator |
+| `checkout.panel` | Checkout main form panel |
 | `checkout.summary` | Checkout order summary aside |
+| `home.hero` | Home page hero area |
+| `account.nav` | Signed-in account section navigation |
 
 Theme markers use `{{slot_container "anchor"}}…{{/slot_container}}` or explicit `{{slot . "anchor" "placement"}}`. **Do not nest `slot_container` blocks** — the preprocessor cannot match inner closings; use explicit `slot` markers inside a container instead. Missing markers are a silent no-op — plugins do not auto-inject. Global CSS/JS belongs in the **asset manifest**, not slots.
 

@@ -1,0 +1,12 @@
+{{slot_container "account.nav"}}
+<nav class="checkout-actions" aria-label="Account sections">
+    <a class="chip {{ if eq .AccountNav.Current "orders" }}chip--active{{ end }}" href="{{ .AccountNav.OrdersURL }}">Orders</a>
+    {{ if or (eq .AccountNav.Current "orders") (eq .AccountNav.Current "returns") }}
+    <a class="chip {{ if eq .AccountNav.Current "returns" }}chip--active{{ end }}" href="{{ .AccountNav.ReturnsURL }}">Returns</a>
+    {{ end }}
+    <a class="chip {{ if eq .AccountNav.Current "profile" }}chip--active{{ end }}" href="{{ .AccountNav.ProfileURL }}">Profile</a>
+    <a class="chip {{ if eq .AccountNav.Current "addresses" }}chip--active{{ end }}" href="{{ .AccountNav.AddressesURL }}">Addresses</a>
+    <a class="chip {{ if eq .AccountNav.Current "preferences" }}chip--active{{ end }}" href="{{ .AccountNav.PreferencesURL }}">Preferences</a>
+    <a class="chip {{ if eq .AccountNav.Current "security" }}chip--active{{ end }}" href="{{ .AccountNav.SecurityURL }}">Security</a>
+</nav>
+{{/slot_container}}

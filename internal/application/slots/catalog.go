@@ -3,10 +3,12 @@ package slots
 // Group names for standard storefront slot anchors.
 const (
 	GroupLayout   = "layout"
+	GroupHome     = "home"
 	GroupPDP      = "pdp"
 	GroupPLP      = "plp"
 	GroupCart     = "cart"
 	GroupCheckout = "checkout"
+	GroupAccount  = "account"
 )
 
 // StandardAnchor documents a canonical default-theme slot anchor.
@@ -28,6 +30,7 @@ func StandardAnchors() []StandardAnchor {
 		{Name: "layout.main", Group: GroupLayout, Description: "Main content wrapper"},
 		{Name: "layout.footer", Group: GroupLayout, Description: "Site footer"},
 		{Name: "layout.body_end", Group: GroupLayout, Description: "End of <body> (after footer scripts)"},
+		{Name: "home.hero", Group: GroupHome, Description: "Home page hero area"},
 		{Name: "pdp.gallery", Group: GroupPDP, Description: "PDP media area"},
 		{Name: "pdp.info", Group: GroupPDP, Description: "PDP product info column"},
 		{Name: "pdp.actions", Group: GroupPDP, Description: "PDP add-to-cart actions"},
@@ -35,7 +38,9 @@ func StandardAnchors() []StandardAnchor {
 		{Name: "cart.items", Group: GroupCart, Description: "Cart line items table"},
 		{Name: "cart.summary", Group: GroupCart, Description: "Cart summary aside"},
 		{Name: "checkout.progress", Group: GroupCheckout, Description: "Checkout step indicator"},
+		{Name: "checkout.panel", Group: GroupCheckout, Description: "Checkout main form panel"},
 		{Name: "checkout.summary", Group: GroupCheckout, Description: "Checkout order summary aside"},
+		{Name: "account.nav", Group: GroupAccount, Description: "Signed-in account section navigation"},
 	}
 }
 

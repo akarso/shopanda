@@ -1,8 +1,11 @@
 {{ define "title" }}Home{{ end }}
 {{ define "content" }}
 {{ if .Blocks }}
+{{slot . "home.hero" "before"}}
 {{ template "content-blocks" .Blocks }}
+{{slot . "home.hero" "after"}}
 {{ else }}
+{{slot_container "home.hero"}}
 <section class="hero-panel">
     <div>
         <p class="eyebrow">Base storefront theme</p>
@@ -18,6 +21,7 @@
         </ul>
     </div>
 </section>
+{{/slot_container}}
 
 <section class="feature-grid" aria-label="Storefront foundations">
     <article>

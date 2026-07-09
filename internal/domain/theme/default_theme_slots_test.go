@@ -54,7 +54,7 @@ func TestDefaultTheme_StandardLayoutSlotsRender(t *testing.T) {
 		}
 		assertSlotMarkers(t, buf.String(), []string{
 			"layout.head", "layout.body_start", "layout.header", "layout.nav",
-			"layout.main", "layout.footer", "layout.body_end",
+			"layout.main", "layout.footer", "layout.body_end", "home.hero",
 		})
 	})
 
@@ -117,7 +117,25 @@ func TestDefaultTheme_StandardLayoutSlotsRender(t *testing.T) {
 		}); err != nil {
 			t.Fatalf("Render: %v", err)
 		}
-		assertSlotMarkers(t, buf.String(), []string{"checkout.progress", "checkout.summary"})
+		assertSlotMarkers(t, buf.String(), []string{"checkout.progress", "checkout.panel", "checkout.summary"})
+	})
+
+	t.Run("account page anchors", func(t *testing.T) {
+		var buf bytes.Buffer
+		if err := engine.Render(&buf, "account_orders", map[string]interface{}{
+			"Layout": map[string]interface{}{"SiteName": "Shopanda", "Nav": []interface{}{}, "Assets": map[string]interface{}{}},
+			"AccountNav": map[string]interface{}{
+				"OrdersURL": "/account/orders", "ReturnsURL": "/account/returns",
+				"ProfileURL": "/account/profile", "AddressesURL": "/account/addresses",
+				"PreferencesURL": "/account/preferences", "SecurityURL": "/account/security",
+				"Current": "orders",
+			},
+			"Orders":       []interface{}{},
+			"EmptyMessage": "No orders",
+		}); err != nil {
+			t.Fatalf("Render: %v", err)
+		}
+		assertSlotMarkers(t, buf.String(), []string{"account.nav"})
 	})
 }
 

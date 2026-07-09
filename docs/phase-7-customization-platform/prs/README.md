@@ -19,11 +19,12 @@ Specs for Phase 7 PRs (Summary, Why, Scope, Out of scope, Validation — same fo
 | PR-712 | F | [oss] | done | [Theme inheritance + stable API draft](PR-712.md) |
 | PR-713 | F | [oss] | done | [Layout partials](PR-713.md) |
 | PR-714 | F | [oss] | done | [Slot dev ergonomics + stable API v0](PR-714.md) |
+| PR-715 | F | [oss] | done | [Remaining page anchors](PR-715.md) |
 
 Roadmap: [`../ROADMAP.md`](../ROADMAP.md) · Architecture: [`../specs/CUSTOMIZATION_PLATFORM.md`](../specs/CUSTOMIZATION_PLATFORM.md) · Upstream: [Phase 6](../../phase-6-merchant-complete/ROADMAP.md)
 
-**Track F** active (PR-711–714 done).
+**Track F** active (PR-711–715 done).
 
-**Suggested next PR:** **PR-715** — remaining page anchors (`account.nav`, `home.hero`, `checkout.panel`).
+**Suggested next PR:** **PR-718** — reference plugin slots E2E (proof), or **PR-719** — theme author guide.
 
 **Rule for Phase 7:** Extension field writes must go through the registry service — no ad hoc JSON columns in core entities.
