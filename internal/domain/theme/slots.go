@@ -59,20 +59,27 @@ func findMatchingSlotContainerClose(source string, from int) (closeStart, closeE
 	depth := 1
 	i := from
 	for i < len(source) && depth > 0 {
-		nextOpenRel := strings.Index(source[i:], "{{")
-		if nextOpenRel < 0 {
-			nextOpenRel = len(source)
-		} else {
-			nextOpenRel += i
-		}
 		nextCloseRel := strings.Index(source[i:], slotContainerCloseTag)
 		if nextCloseRel < 0 {
 			return 0, 0, false
 		}
 		nextClose := i + nextCloseRel
 
-		if nextOpenRel < nextClose && isSlotContainerOpenAt(source, nextOpenRel) {
-			_, _, openEnd, openOK := findSlotContainerOpen(source, nextOpenRel)
+		nextOpenRel := strings.Index(source[i:nextClose], "{{")
+		if nextOpenRel < 0 {
+			depth--
+			if depth == 0 {
+				closeStart = nextClose
+				closeEnd = nextClose + len(slotContainerCloseTag)
+				return closeStart, closeEnd, true
+			}
+			i = nextClose + len(slotContainerCloseTag)
+			continue
+		}
+		nextOpen := i + nextOpenRel
+
+		if isSlotContainerOpenAt(source, nextOpen) {
+			_, _, openEnd, openOK := findSlotContainerOpen(source, nextOpen)
 			if !openOK {
 				return 0, 0, false
 			}
@@ -81,15 +88,23 @@ func findMatchingSlotContainerClose(source string, from int) (closeStart, closeE
 			continue
 		}
 
-		depth--
-		if depth == 0 {
-			closeStart = nextClose
-			closeEnd = nextClose + len(slotContainerCloseTag)
-			return closeStart, closeEnd, true
-		}
-		i = nextClose + len(slotContainerCloseTag)
+		i = skipTemplateAction(source, nextOpen)
 	}
 	return 0, 0, false
+}
+
+func skipTemplateAction(source string, idx int) int {
+	if idx < 0 || idx >= len(source) || !strings.HasPrefix(source[idx:], "{{") {
+		return idx + 2
+	}
+	if strings.HasPrefix(source[idx:], slotContainerCloseTag) {
+		return idx
+	}
+	end := strings.Index(source[idx:], "}}")
+	if end < 0 {
+		return len(source)
+	}
+	return idx + end + 2
 }
 
 func isSlotContainerOpenAt(source string, idx int) bool {

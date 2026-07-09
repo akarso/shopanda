@@ -77,12 +77,35 @@ func TestPreprocessSlotContainers_SimpleWithTemplateExpr(t *testing.T) {
 }
 
 func TestPreprocessSlotContainers_NestedContainers(t *testing.T) {
-	source := `{{slot_container "outer"}}
+	t.Run("inner immediately after outer open", func(t *testing.T) {
+		source := `{{slot_container "outer"}}
 {{slot_container "inner"}}
 <div class="inner">x</div>
 {{/slot_container}}
 <p>tail</p>
 {{/slot_container}}`
+		assertNestedPreprocess(t, source)
+	})
+
+	t.Run("template actions before inner container", func(t *testing.T) {
+		source := `{{slot_container "outer"}}
+<div class="price">{{.Price}}</div>
+{{if .Show}}
+{{slot_container "inner"}}
+<div class="inner">x</div>
+{{/slot_container}}
+{{end}}
+<p>tail</p>
+{{/slot_container}}`
+		got := assertNestedPreprocess(t, source)
+		if !strings.Contains(got, `{{.Price}}`) || !strings.Contains(got, `{{if .Show}}`) {
+			t.Fatalf("template actions should remain:\n%s", got)
+		}
+	})
+}
+
+func assertNestedPreprocess(t *testing.T, source string) string {
+	t.Helper()
 
 	got := preprocessSlotContainers(source)
 
@@ -102,6 +125,7 @@ func TestPreprocessSlotContainers_NestedContainers(t *testing.T) {
 	if !(outerBefore < innerBefore && innerAfter < outerAfter) {
 		t.Fatalf("nested expansion order wrong:\n%s", got)
 	}
+	return got
 }
 
 func TestPreprocessSlotContainers_SiblingContainers(t *testing.T) {
