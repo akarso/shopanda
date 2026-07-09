@@ -49,10 +49,14 @@ func TestPlugin_Init_RegistersSlotRenderers(t *testing.T) {
 	}
 
 	reg := app.SlotRegistry()
-	if got := reg.Render(string(extapi.SlotLayoutFooter), slots.PlacementAppend, nil); got == "" {
-		t.Fatal("expected layout.footer renderer output")
-	}
-	if got := reg.Render(string(extapi.SlotPDPInfo), slots.PlacementAppend, nil); got == "" {
-		t.Fatal("expected pdp.info renderer output")
-	}
+	t.Run("layout.footer", func(t *testing.T) {
+		if got := reg.Render(string(extapi.SlotLayoutFooter), slots.PlacementAppend, nil); got == "" {
+			t.Fatal("expected layout.footer renderer output")
+		}
+	})
+	t.Run("pdp.info", func(t *testing.T) {
+		if got := reg.Render(string(extapi.SlotPDPInfo), slots.PlacementAppend, nil); got == "" {
+			t.Fatal("expected pdp.info renderer output")
+		}
+	})
 }

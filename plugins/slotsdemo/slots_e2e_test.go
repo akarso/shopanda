@@ -68,6 +68,7 @@ func TestSlotsDemo_ProductPageDOMPositions(t *testing.T) {
 	}
 
 	assertBefore(t, html, `class="product-detail-card__actions"`, `data-slotsdemo="pdp-info"`)
+	assertBefore(t, html, `<footer class="site-shell site-footer">`, `data-slotsdemo="layout-footer"`)
 	assertBefore(t, html, `data-slotsdemo="layout-footer"`, "</footer>")
 	assertBefore(t, html, `data-slotsdemo="pdp-info"`, `data-slotsdemo="layout-footer"`)
 }
