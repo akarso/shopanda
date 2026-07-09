@@ -19,6 +19,7 @@
     {{/slot_container}}
 
     <div class="checkout-grid">
+        {{slot_container "checkout.panel"}}
         <section class="checkout-panel">
             <form class="checkout-form" action="/checkout/shipping" method="post">
                 <input type="hidden" name="csrf_token" value="{{ .CSRFToken }}">
@@ -66,6 +67,7 @@
                 </div>
             </form>
         </section>
+        {{/slot_container}}
 
         {{slot_container "checkout.summary"}}
         <aside class="checkout-summary-panel">

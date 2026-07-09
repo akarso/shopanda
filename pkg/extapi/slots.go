@@ -31,6 +31,7 @@ const (
 	SlotLayoutMain        SlotAnchor = "layout.main"
 	SlotLayoutFooter      SlotAnchor = "layout.footer"
 	SlotLayoutBodyEnd     SlotAnchor = "layout.body_end"
+	SlotHomeHero          SlotAnchor = "home.hero"
 	SlotPDPGallery        SlotAnchor = "pdp.gallery"
 	SlotPDPInfo           SlotAnchor = "pdp.info"
 	SlotPDPActions        SlotAnchor = "pdp.actions"
@@ -38,7 +39,9 @@ const (
 	SlotCartItems         SlotAnchor = "cart.items"
 	SlotCartSummary       SlotAnchor = "cart.summary"
 	SlotCheckoutProgress  SlotAnchor = "checkout.progress"
+	SlotCheckoutPanel     SlotAnchor = "checkout.panel"
 	SlotCheckoutSummary   SlotAnchor = "checkout.summary"
+	SlotAccountNav        SlotAnchor = "account.nav"
 )
 
 var slotAnchorOrder = []SlotAnchor{
@@ -50,6 +53,7 @@ var slotAnchorOrder = []SlotAnchor{
 	SlotLayoutMain,
 	SlotLayoutFooter,
 	SlotLayoutBodyEnd,
+	SlotHomeHero,
 	SlotPDPGallery,
 	SlotPDPInfo,
 	SlotPDPActions,
@@ -57,7 +61,9 @@ var slotAnchorOrder = []SlotAnchor{
 	SlotCartItems,
 	SlotCartSummary,
 	SlotCheckoutProgress,
+	SlotCheckoutPanel,
 	SlotCheckoutSummary,
+	SlotAccountNav,
 }
 
 // SlotAnchors returns documented stable slot anchors.
