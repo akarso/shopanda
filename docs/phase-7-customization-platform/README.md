@@ -19,4 +19,4 @@ Track F maximizes **developer satisfaction** for plugin and theme authors: canon
 
 ## Suggested next PR
 
-**PR-718** — reference plugin slots E2E (demo plugin + integration test), or **PR-719** — theme author guide.
+**PR-719** — theme author guide (`docs/guides/THEME_SLOTS.md`).

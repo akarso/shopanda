@@ -113,6 +113,8 @@ Theme markers use `{{slot_container "anchor"}}…{{/slot_container}}` or explici
 
 **Stable v0 contracts:** use [`pkg/extapi`](pkg/extapi) for hook/slot names, placements, and handler types (`HookHandler`, `SlotRenderer`). See [Extension API guide](docs/guides/EXTENSION_API.md). Theme child inheritance: `parent:` in `theme.yaml` (PR-712).
 
+**Reference plugin:** [plugins/slotsdemo](plugins/slotsdemo/README.md) — layout + PDP slot renderers with integration tests.
+
 For combining multiple plugins (ordering, shared context, checkout-field walkthrough): [Multi-Plugin Composition](docs/guides/PLUGIN_COMPOSITION.md).
 
 ---
