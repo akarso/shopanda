@@ -19,4 +19,4 @@ Track F maximizes **developer satisfaction** for plugin and theme authors: canon
 
 ## Suggested next PR
 
-**PR-714** — slot dev ergonomics + stable API v0 (dev warnings, admin slots catalog, compatibility policy).
+**PR-715** — remaining page anchors (`account.nav`, `home.hero`, `checkout.panel`, `cart.items` coverage completion).

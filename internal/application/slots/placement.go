@@ -30,3 +30,18 @@ func ParsePlacement(raw string) (Placement, error) {
 		return "", fmt.Errorf("slots: unknown placement %q", raw)
 	}
 }
+
+func placementRank(p Placement) int {
+	switch p {
+	case PlacementBefore:
+		return 0
+	case PlacementPrepend:
+		return 1
+	case PlacementAppend:
+		return 2
+	case PlacementAfter:
+		return 3
+	default:
+		return 99
+	}
+}

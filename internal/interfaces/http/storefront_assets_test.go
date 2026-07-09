@@ -9,7 +9,7 @@ import (
 	"testing"
 
 	assetsApp "github.com/akarso/shopanda/internal/application/assets"
-	"github.com/akarso/shopanda/internal/domain/theme"
+	themeapp "github.com/akarso/shopanda/internal/application/theme"
 	shophttp "github.com/akarso/shopanda/internal/interfaces/http"
 )
 
@@ -31,7 +31,7 @@ func TestStorefront_PluginAssetGatedByRoute(t *testing.T) {
 		}
 	}
 
-	engine, err := theme.Load(dir)
+	engine, err := themeapp.Load(dir)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -76,7 +76,7 @@ func TestStorefront_PluginAssetCSPNonceWhenEnabled(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	engine, err := theme.Load(dir)
+	engine, err := themeapp.Load(dir)
 	if err != nil {
 		t.Fatal(err)
 	}

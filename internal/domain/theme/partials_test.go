@@ -5,11 +5,11 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/akarso/shopanda/internal/domain/theme"
+	themeapp "github.com/akarso/shopanda/internal/application/theme"
 )
 
 func TestLoad_PartialNotPageTemplate(t *testing.T) {
-	e, err := theme.Load("testdata/parent_partials")
+	e, err := themeapp.Load("testdata/parent_partials")
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
@@ -22,7 +22,7 @@ func TestLoad_PartialNotPageTemplate(t *testing.T) {
 }
 
 func TestLoad_ChildOverridesPartialOnly(t *testing.T) {
-	e, err := theme.Load("testdata/child_partial_footer")
+	e, err := themeapp.Load("testdata/child_partial_footer")
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}

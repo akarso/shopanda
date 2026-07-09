@@ -68,3 +68,64 @@ func TestValidateAnchorName(t *testing.T) {
 		t.Fatal("expected error for invalid anchor")
 	}
 }
+
+func TestRegistry_Catalog(t *testing.T) {
+	reg := slots.NewRegistry(nil)
+	_ = reg.RegisterRenderer("pdp.info", slots.PlacementAppend, 100, "plugin.a", func(ctx *slots.RenderContext) string {
+		return "A"
+	})
+	_ = reg.RegisterRenderer("pdp.info", slots.PlacementBefore, 200, "plugin.b", func(ctx *slots.RenderContext) string {
+		return "B"
+	})
+
+	catalog := reg.Catalog()
+	if len(catalog) != 1 || catalog[0].Name != "pdp.info" {
+		t.Fatalf("catalog = %#v", catalog)
+	}
+	if len(catalog[0].Handlers) != 2 {
+		t.Fatalf("handlers = %#v", catalog[0].Handlers)
+	}
+	if catalog[0].Handlers[0].Placement != slots.PlacementBefore {
+		t.Fatalf("first placement = %q", catalog[0].Handlers[0].Placement)
+	}
+}
+
+func TestRegistry_DevModeWarnsForUnmarkedAnchor(t *testing.T) {
+	var warned bool
+	log := &captureLogger{warn: func(event string, ctx map[string]interface{}) {
+		if event == "slots.registration.unmarked_anchor" {
+			warned = true
+		}
+	}}
+	reg := slots.NewRegistry(log)
+	reg.SetDevMode(true)
+	reg.SetThemeMarkers([]string{"pdp.info"})
+
+	_ = reg.RegisterRenderer("missing.anchor", slots.PlacementAppend, 100, "plugin.a", func(ctx *slots.RenderContext) string {
+		return ""
+	})
+	if !warned {
+		t.Fatal("expected dev warning for unmarked anchor")
+	}
+
+	warned = false
+	_ = reg.RegisterRenderer("pdp.info", slots.PlacementAppend, 100, "plugin.b", func(ctx *slots.RenderContext) string {
+		return ""
+	})
+	if warned {
+		t.Fatal("did not expect warning for marked anchor")
+	}
+}
+
+type captureLogger struct {
+	warn func(event string, ctx map[string]interface{})
+}
+
+func (l *captureLogger) Info(string, map[string]interface{}) {}
+func (l *captureLogger) Warn(event string, ctx map[string]interface{}) {
+	if l.warn != nil {
+		l.warn(event, ctx)
+	}
+}
+func (l *captureLogger) Error(string, error, map[string]interface{}) {}
+

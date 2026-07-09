@@ -21,6 +21,7 @@ import (
 	"github.com/akarso/shopanda/internal/domain/shared"
 	"github.com/akarso/shopanda/internal/domain/store"
 	"github.com/akarso/shopanda/internal/domain/theme"
+	themeapp "github.com/akarso/shopanda/internal/application/theme"
 	"github.com/akarso/shopanda/internal/platform/apperror"
 
 	shophttp "github.com/akarso/shopanda/internal/interfaces/http"
@@ -224,7 +225,7 @@ func createTestTheme(t *testing.T) *theme.Engine {
 		t.Fatal(err)
 	}
 
-	engine, err := theme.Load(dir)
+	engine, err := themeapp.Load(dir)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -254,7 +255,7 @@ func createTestThemeWithoutHome(t *testing.T) *theme.Engine {
 		t.Fatal(err)
 	}
 
-	engine, err := theme.Load(dir)
+	engine, err := themeapp.Load(dir)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -830,7 +831,7 @@ func createTestThemeWithOmnibusProduct(t *testing.T) *theme.Engine {
 	if err := os.WriteFile(filepath.Join(tplDir, "product.html"), []byte(product), 0644); err != nil {
 		t.Fatal(err)
 	}
-	eng, err := theme.Load(dir)
+	eng, err := themeapp.Load(dir)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -892,7 +893,7 @@ func createTestThemeWithWeeeProduct(t *testing.T) *theme.Engine {
 	if err := os.WriteFile(filepath.Join(tplDir, "product.html"), []byte(product), 0644); err != nil {
 		t.Fatal(err)
 	}
-	eng, err := theme.Load(dir)
+	eng, err := themeapp.Load(dir)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -959,7 +960,7 @@ func createTestThemeWithGpsrProduct(t *testing.T) *theme.Engine {
 	if err := os.WriteFile(filepath.Join(tplDir, "product.html"), []byte(product), 0644); err != nil {
 		t.Fatal(err)
 	}
-	eng, err := theme.Load(dir)
+	eng, err := themeapp.Load(dir)
 	if err != nil {
 		t.Fatal(err)
 	}

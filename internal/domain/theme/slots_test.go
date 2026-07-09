@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/akarso/shopanda/internal/application/slots"
+	themeapp "github.com/akarso/shopanda/internal/application/theme"
 	"github.com/akarso/shopanda/internal/domain/theme"
 )
 
@@ -51,7 +52,7 @@ func TestSlotContainer_PlacementsInDOMOrder(t *testing.T) {
 		return "<!--after-->"
 	})
 
-	engine, err := theme.Load(dir, theme.WithSlotSource(slotSource(reg)))
+	engine, err := themeapp.Load(dir, theme.WithSlotSource(slotSource(reg)))
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
@@ -86,7 +87,7 @@ func TestSlot_ExplicitMarkerUnknownAnchorNoop(t *testing.T) {
 	dir := t.TempDir()
 	writeThemeFiles(t, dir, `{{ define "content" }}{{slot . "missing.slot" "before"}}<p>ok</p>{{ end }}`, `<html><body>{{ template "content" . }}</body></html>`)
 
-	engine, err := theme.Load(dir, theme.WithSlotSource(slotSource(slots.NewRegistry(nil))))
+	engine, err := themeapp.Load(dir, theme.WithSlotSource(slotSource(slots.NewRegistry(nil))))
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
@@ -108,7 +109,7 @@ func TestSlot_TwoRenderersSamePlacementCompose(t *testing.T) {
 	_ = reg.RegisterRenderer("cart.summary", slots.PlacementAppend, 200, "b", func(ctx *slots.RenderContext) string { return "B" })
 	_ = reg.RegisterRenderer("cart.summary", slots.PlacementAppend, 100, "a", func(ctx *slots.RenderContext) string { return "A" })
 
-	engine, err := theme.Load(dir, theme.WithSlotSource(slotSource(reg)))
+	engine, err := themeapp.Load(dir, theme.WithSlotSource(slotSource(reg)))
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}

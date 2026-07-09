@@ -20,12 +20,27 @@ type registeredRenderer struct {
 	renderer   Renderer
 }
 
+// CatalogEntry describes a registered slot anchor and its renderers.
+type CatalogEntry struct {
+	Name     string
+	Handlers []CatalogHandler
+}
+
+// CatalogHandler describes one renderer registration.
+type CatalogHandler struct {
+	Placement  Placement
+	Priority   int
+	Registrant string
+}
+
 // Registry stores slot renderers and executes them in priority order.
 // Panics in renderers are recovered and logged so page rendering continues.
 type Registry struct {
-	mu        sync.RWMutex
-	renderers map[slotKey][]registeredRenderer
-	log       logger.Logger
+	mu           sync.RWMutex
+	renderers    map[slotKey][]registeredRenderer
+	log          logger.Logger
+	themeMarkers map[string]struct{}
+	devMode      bool
 }
 
 // NewRegistry creates an empty slot registry.
@@ -34,6 +49,35 @@ func NewRegistry(log logger.Logger) *Registry {
 		renderers: make(map[slotKey][]registeredRenderer),
 		log:       log,
 	}
+}
+
+// SetThemeMarkers configures active theme slot markers for dev diagnostics.
+// When dev mode is enabled, RegisterRenderer warns for anchors absent from markers.
+func (r *Registry) SetThemeMarkers(anchors []string) {
+	if r == nil {
+		return
+	}
+	markers := make(map[string]struct{}, len(anchors))
+	for _, anchor := range anchors {
+		anchor = strings.TrimSpace(anchor)
+		if anchor == "" {
+			continue
+		}
+		markers[anchor] = struct{}{}
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.themeMarkers = markers
+}
+
+// SetDevMode enables dev-only slot registration diagnostics.
+func (r *Registry) SetDevMode(enabled bool) {
+	if r == nil {
+		return
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.devMode = enabled
 }
 
 // RegisterRenderer adds a renderer for anchor at placement (lower priority runs first).
@@ -69,7 +113,21 @@ func (r *Registry) RegisterRenderer(anchor string, placement Placement, priority
 	sort.SliceStable(r.renderers[key], func(i, j int) bool {
 		return r.renderers[key][i].priority < r.renderers[key][j].priority
 	})
+	r.warnUnmarkedAnchorLocked(anchor, registrant)
 	return nil
+}
+
+func (r *Registry) warnUnmarkedAnchorLocked(anchor, registrant string) {
+	if !r.devMode || len(r.themeMarkers) == 0 || r.log == nil {
+		return
+	}
+	if _, ok := r.themeMarkers[anchor]; ok {
+		return
+	}
+	r.log.Warn("slots.registration.unmarked_anchor", map[string]interface{}{
+		"anchor":     anchor,
+		"registrant": registrant,
+	})
 }
 
 // Render runs all renderers for anchor at placement and concatenates their HTML.
@@ -112,4 +170,49 @@ func (r *Registry) runRenderer(ctx *RenderContext, reg registeredRenderer) (html
 		}
 	}()
 	return reg.renderer(ctx)
+}
+
+// Catalog returns registered slot renderers for tooling and admin APIs.
+func (r *Registry) Catalog() []CatalogEntry {
+	if r == nil {
+		return nil
+	}
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	if len(r.renderers) == 0 {
+		return nil
+	}
+
+	byAnchor := make(map[string][]CatalogHandler)
+	for key, regs := range r.renderers {
+		for _, reg := range regs {
+			byAnchor[key.anchor] = append(byAnchor[key.anchor], CatalogHandler{
+				Placement:  key.placement,
+				Priority:   reg.priority,
+				Registrant: reg.registrant,
+			})
+		}
+	}
+
+	names := make([]string, 0, len(byAnchor))
+	for name := range byAnchor {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+
+	out := make([]CatalogEntry, 0, len(names))
+	for _, name := range names {
+		handlers := byAnchor[name]
+		sort.SliceStable(handlers, func(i, j int) bool {
+			if placementRank(handlers[i].Placement) != placementRank(handlers[j].Placement) {
+				return placementRank(handlers[i].Placement) < placementRank(handlers[j].Placement)
+			}
+			if handlers[i].Priority != handlers[j].Priority {
+				return handlers[i].Priority < handlers[j].Priority
+			}
+			return handlers[i].Registrant < handlers[j].Registrant
+		})
+		out = append(out, CatalogEntry{Name: name, Handlers: handlers})
+	}
+	return out
 }
