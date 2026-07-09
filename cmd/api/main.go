@@ -59,7 +59,7 @@ import (
 	"github.com/akarso/shopanda/internal/domain/search"
 	"github.com/akarso/shopanda/internal/domain/shared"
 	"github.com/akarso/shopanda/internal/domain/shipping"
-	"github.com/akarso/shopanda/internal/domain/theme"
+	domtheme "github.com/akarso/shopanda/internal/domain/theme"
 	"github.com/akarso/shopanda/internal/domain/translation"
 	"github.com/akarso/shopanda/internal/infrastructure/cron"
 
@@ -1138,7 +1138,7 @@ func runServe(cfg *config.Config, log logger.Logger, embedScheduler bool) error 
 
 	// Storefront SSR routes (optional, gated by frontend.enabled).
 	if cfg.Frontend.Enabled {
-		themeEngine, thErr := theme.Load(cfg.Frontend.ThemePath, theme.WithSlotSource(slotRegistryThemeSource{reg: slotRegistry}))
+		themeEngine, thErr := themeapp.Load(cfg.Frontend.ThemePath, domtheme.WithSlotSource(slotRegistryThemeSource{reg: slotRegistry}))
 		if thErr != nil {
 			return fmt.Errorf("theme load: %w", thErr)
 		}

@@ -7,8 +7,6 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
-
-	"gopkg.in/yaml.v3"
 )
 
 // Option configures theme loading.
@@ -33,17 +31,8 @@ type Engine struct {
 	pages map[string]*template.Template
 }
 
-// Load reads theme.yaml and parses all .html templates from the theme directory.
-// If a layout.html exists, every other template is parsed together with it,
-// allowing each page to define blocks consumed by the layout.
-//
-// The expected structure is:
-//
-//	<dir>/theme.yaml              (optional parent: relative path within theme boundary)
-//	<dir>/templates/layout.html   (optional)
-//	<dir>/templates/_*.html       (optional layout partials; child overrides parent by filename)
-//	<dir>/templates/*.html        (page templates; child overrides parent by filename)
-func Load(dir string, opts ...Option) (*Engine, error) {
+// NewEngine builds an engine from already-resolved inherited templates.
+func NewEngine(resolved ResolvedTemplates, meta Theme, opts ...Option) (*Engine, error) {
 	var cfg loadOptions
 	for _, opt := range opts {
 		if opt != nil {
@@ -51,17 +40,12 @@ func Load(dir string, opts ...Option) (*Engine, error) {
 		}
 	}
 
-	resolved, meta, err := resolveRootTheme(dir)
-	if err != nil {
-		return nil, err
-	}
-
-	layoutFile := resolved.layoutFile
+	layoutFile := resolved.LayoutFile
 
 	funcMap := slotFuncMap(cfg.slots)
-	pages := make(map[string]*template.Template, len(resolved.pageFiles))
-	for name, pf := range resolved.pageFiles {
-		t, err := parsePageTemplate(layoutFile, resolved.partialFiles, pf, funcMap)
+	pages := make(map[string]*template.Template, len(resolved.PageFiles))
+	for name, pf := range resolved.PageFiles {
+		t, err := parsePageTemplate(layoutFile, resolved.PartialFiles, pf, funcMap)
 		if err != nil {
 			return nil, fmt.Errorf("theme: parse %s: %w", filepath.Base(pf), err)
 		}
@@ -148,19 +132,3 @@ func parsePartialTemplates(root *template.Template, partialFiles map[string]stri
 	return nil
 }
 
-func loadThemeYAML(path string) (Theme, error) {
-	f, err := os.Open(path)
-	if err != nil {
-		return Theme{}, err
-	}
-	defer f.Close()
-
-	var t Theme
-	if err := yaml.NewDecoder(f).Decode(&t); err != nil {
-		return Theme{}, err
-	}
-	if t.Name == "" {
-		return Theme{}, fmt.Errorf("theme: name is required in theme.yaml")
-	}
-	return t, nil
-}

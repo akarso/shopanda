@@ -12,20 +12,12 @@ type TemplatePaths struct {
 	Pages    map[string]string
 }
 
-// ResolveTemplatePaths returns inherited template file paths for loadDir.
-func ResolveTemplatePaths(loadDir string) (TemplatePaths, error) {
-	resolved, _, err := resolveRootTheme(loadDir)
-	if err != nil {
-		return TemplatePaths{}, err
-	}
-	return templatePathsFromResolved(resolved), nil
-}
-
-func templatePathsFromResolved(resolved resolvedTemplates) TemplatePaths {
+// TemplatePathsFromResolved maps resolved templates to a path view.
+func TemplatePathsFromResolved(resolved ResolvedTemplates) TemplatePaths {
 	return TemplatePaths{
-		Layout:   resolved.layoutFile,
-		Partials: resolved.partialFiles,
-		Pages:    resolved.pageFiles,
+		Layout:   resolved.LayoutFile,
+		Partials: resolved.PartialFiles,
+		Pages:    resolved.PageFiles,
 	}
 }
 

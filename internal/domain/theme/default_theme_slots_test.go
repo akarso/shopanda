@@ -10,6 +10,7 @@ import (
 
 	"github.com/akarso/shopanda/internal/application/slots"
 	"github.com/akarso/shopanda/internal/domain/theme"
+	themeapp "github.com/akarso/shopanda/internal/application/theme"
 )
 
 func defaultThemeDir(t *testing.T) string {
@@ -34,7 +35,7 @@ func TestDefaultTheme_StandardLayoutSlotsRender(t *testing.T) {
 		})
 	}
 
-	engine, err := theme.Load(defaultThemeDir(t), theme.WithSlotSource(slotSource(reg)))
+	engine, err := themeapp.Load(defaultThemeDir(t), theme.WithSlotSource(slotSource(reg)))
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}

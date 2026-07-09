@@ -5,11 +5,11 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/akarso/shopanda/internal/domain/theme"
+	themeapp "github.com/akarso/shopanda/internal/application/theme"
 )
 
 func TestLoad_ChildInheritsParentTemplate(t *testing.T) {
-	e, err := theme.Load("testdata/child_inherit_only")
+	e, err := themeapp.Load("testdata/child_inherit_only")
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
@@ -32,7 +32,7 @@ func TestLoad_ChildInheritsParentTemplate(t *testing.T) {
 }
 
 func TestLoad_ChildOverrideWinsOverParent(t *testing.T) {
-	e, err := theme.Load("testdata/child_override")
+	e, err := themeapp.Load("testdata/child_override")
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
@@ -61,7 +61,7 @@ func TestLoad_ChildOverrideWinsOverParent(t *testing.T) {
 }
 
 func TestLoad_InvalidParent(t *testing.T) {
-	_, err := theme.Load("testdata/child_bad_parent")
+	_, err := themeapp.Load("testdata/child_bad_parent")
 	if err == nil {
 		t.Fatal("expected error for missing parent theme")
 	}
@@ -71,7 +71,7 @@ func TestLoad_InvalidParent(t *testing.T) {
 }
 
 func TestLoad_CircularParentChain(t *testing.T) {
-	_, err := theme.Load("testdata/circular_a")
+	_, err := themeapp.Load("testdata/circular_a")
 	if err == nil {
 		t.Fatal("expected error for circular parent chain")
 	}
@@ -81,7 +81,7 @@ func TestLoad_CircularParentChain(t *testing.T) {
 }
 
 func TestLoad_ParentLayoutOnlyInheritsPagesFromChild(t *testing.T) {
-	e, err := theme.Load("testdata/child_layout_inherit")
+	e, err := themeapp.Load("testdata/child_layout_inherit")
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
@@ -100,7 +100,7 @@ func TestLoad_ParentLayoutOnlyInheritsPagesFromChild(t *testing.T) {
 }
 
 func TestLoad_RejectsAbsoluteParentPath(t *testing.T) {
-	_, err := theme.Load("testdata/child_abs_parent")
+	_, err := themeapp.Load("testdata/child_abs_parent")
 	if err == nil {
 		t.Fatal("expected error for absolute parent path")
 	}
@@ -110,7 +110,7 @@ func TestLoad_RejectsAbsoluteParentPath(t *testing.T) {
 }
 
 func TestLoad_RejectsParentOutsideBoundary(t *testing.T) {
-	_, err := theme.Load("testdata/child_escape_parent")
+	_, err := themeapp.Load("testdata/child_escape_parent")
 	if err == nil {
 		t.Fatal("expected error for parent outside theme boundary")
 	}

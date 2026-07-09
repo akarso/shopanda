@@ -14,14 +14,14 @@ type InheritedAnchorSource struct {
 
 // TemplateSources returns layout, partial, and page templates from the inherited theme chain.
 func (s InheritedAnchorSource) TemplateSources() ([]theme.TemplateSource, error) {
-	paths, err := theme.ResolveTemplatePaths(s.ThemeDir)
+	resolved, _, err := ResolveRootTheme(s.ThemeDir)
 	if err != nil {
 		return nil, fmt.Errorf("themefs: resolve inherited templates: %w", err)
 	}
 
-	ordered := paths.OrderedPaths()
-	out := make([]theme.TemplateSource, 0, len(ordered))
-	for _, path := range ordered {
+	paths := theme.TemplatePathsFromResolved(resolved).OrderedPaths()
+	out := make([]theme.TemplateSource, 0, len(paths))
+	for _, path := range paths {
 		content, err := os.ReadFile(path)
 		if err != nil {
 			return nil, fmt.Errorf("themefs: read %s: %w", theme.Basename(path), err)

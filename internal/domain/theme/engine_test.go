@@ -5,11 +5,11 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/akarso/shopanda/internal/domain/theme"
+	themeapp "github.com/akarso/shopanda/internal/application/theme"
 )
 
 func TestLoad_Valid(t *testing.T) {
-	e, err := theme.Load("testdata/valid")
+	e, err := themeapp.Load("testdata/valid")
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
@@ -31,14 +31,14 @@ func TestLoad_Valid(t *testing.T) {
 }
 
 func TestLoad_MissingDir(t *testing.T) {
-	_, err := theme.Load("testdata/nonexistent")
+	_, err := themeapp.Load("testdata/nonexistent")
 	if err == nil {
 		t.Fatal("expected error for missing directory")
 	}
 }
 
 func TestLoad_NoTemplates(t *testing.T) {
-	_, err := theme.Load("testdata/no_templates")
+	_, err := themeapp.Load("testdata/no_templates")
 	if err == nil {
 		t.Fatal("expected error when no .html templates exist")
 	}
@@ -48,7 +48,7 @@ func TestLoad_NoTemplates(t *testing.T) {
 }
 
 func TestLoad_NoName(t *testing.T) {
-	_, err := theme.Load("testdata/no_name")
+	_, err := themeapp.Load("testdata/no_name")
 	if err == nil {
 		t.Fatal("expected error when theme.yaml has no name")
 	}
@@ -58,7 +58,7 @@ func TestLoad_NoName(t *testing.T) {
 }
 
 func TestRender_WithLayout(t *testing.T) {
-	e, err := theme.Load("testdata/valid")
+	e, err := themeapp.Load("testdata/valid")
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
@@ -89,7 +89,7 @@ func TestRender_WithLayout(t *testing.T) {
 }
 
 func TestRender_ListingWithLayout(t *testing.T) {
-	e, err := theme.Load("testdata/valid")
+	e, err := themeapp.Load("testdata/valid")
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
@@ -116,7 +116,7 @@ func TestRender_ListingWithLayout(t *testing.T) {
 }
 
 func TestRender_WithoutLayout(t *testing.T) {
-	e, err := theme.Load("testdata/no_layout")
+	e, err := themeapp.Load("testdata/no_layout")
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
@@ -138,7 +138,7 @@ func TestRender_WithoutLayout(t *testing.T) {
 }
 
 func TestRender_NotFound(t *testing.T) {
-	e, err := theme.Load("testdata/valid")
+	e, err := themeapp.Load("testdata/valid")
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
