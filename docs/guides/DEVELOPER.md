@@ -18,6 +18,7 @@ For deployment and operational setup, see [Deployment Guide](DEPLOYMENT.md). For
 - [Add Custom Pipeline Steps](#add-custom-pipeline-steps)
 - [Add Custom Event Listeners](#add-custom-event-listeners)
 - [Multi-Plugin Composition](PLUGIN_COMPOSITION.md)
+- [Theme Slots & Inheritance](THEME_SLOTS.md)
 - [Add Custom CLI Commands](#add-custom-cli-commands)
 - [Use the API Reference](#use-the-api-reference)
 - [Roadmap and Future Work](#roadmap-and-future-work)

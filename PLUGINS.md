@@ -111,7 +111,7 @@ app.Slots("acme/badges").RegisterRenderer("pdp.info", slots.PlacementAppend, 100
 
 Theme markers use `{{slot_container "anchor"}}…{{/slot_container}}` or explicit `{{slot . "anchor" "placement"}}`. **Do not nest `slot_container` blocks** — the preprocessor cannot match inner closings; use explicit `slot` markers inside a container instead. Missing markers are a silent no-op — plugins do not auto-inject. Global CSS/JS belongs in the **asset manifest**, not slots.
 
-**Stable v0 contracts:** use [`pkg/extapi`](pkg/extapi) for hook/slot names, placements, and handler types (`HookHandler`, `SlotRenderer`). See [Extension API guide](docs/guides/EXTENSION_API.md). Theme child inheritance: `parent:` in `theme.yaml` (PR-712).
+**Stable v0 contracts:** use [`pkg/extapi`](pkg/extapi) for hook/slot names, placements, and handler types (`HookHandler`, `SlotRenderer`). See [Extension API guide](docs/guides/EXTENSION_API.md). Theme authors: [Theme slots & inheritance guide](docs/guides/THEME_SLOTS.md) (`parent:` in `theme.yaml`, partials, preserving anchors).
 
 **Reference plugin:** [plugins/slotsdemo](plugins/slotsdemo/README.md) — layout + PDP slot renderers with integration tests.
 
