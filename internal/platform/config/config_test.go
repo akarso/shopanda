@@ -1028,6 +1028,64 @@ func TestParseDotEnvLine(t *testing.T) {
 	}
 }
 
+func TestLoad_FrontendStrictSlotMarkers_EnvOverlay(t *testing.T) {
+	withTestBaseURL(t)
+	path := writeYAML(t, "")
+
+	t.Run("true", func(t *testing.T) {
+		t.Setenv("SHOPANDA_FRONTEND_STRICT_SLOT_MARKERS", "true")
+		cfg, err := loadCfg(t, path)
+		if err != nil {
+			t.Fatalf("Load() error: %v", err)
+		}
+		if !cfg.Frontend.StrictSlotMarkers {
+			t.Fatal("StrictSlotMarkers = false, want true from env")
+		}
+	})
+
+	t.Run("one", func(t *testing.T) {
+		t.Setenv("SHOPANDA_FRONTEND_STRICT_SLOT_MARKERS", "1")
+		cfg, err := loadCfg(t, path)
+		if err != nil {
+			t.Fatalf("Load() error: %v", err)
+		}
+		if !cfg.Frontend.StrictSlotMarkers {
+			t.Fatal("StrictSlotMarkers = false, want true from env")
+		}
+	})
+
+	t.Run("other values unchanged", func(t *testing.T) {
+		for _, v := range []string{"false", "0", "banana"} {
+			t.Setenv("SHOPANDA_FRONTEND_STRICT_SLOT_MARKERS", v)
+			cfg, err := loadCfg(t, path)
+			if err != nil {
+				t.Fatalf("Load() env=%q error: %v", v, err)
+			}
+			if cfg.Frontend.StrictSlotMarkers {
+				t.Fatalf("StrictSlotMarkers = true for env %q, want false", v)
+			}
+		}
+	})
+}
+
+func TestFrontendStrictSlotMarkers_FlattenEntries(t *testing.T) {
+	withTestBaseURL(t)
+	yaml := `
+frontend:
+  strict_slot_markers: true
+`
+	path := writeYAML(t, yaml)
+
+	_, err := loadIsolated(t, path)
+	if err != nil {
+		t.Fatalf("Load() error: %v", err)
+	}
+
+	if got := Get("frontend.strict_slot_markers"); got != "true" {
+		t.Errorf("Get(frontend.strict_slot_markers) = %q, want %q", got, "true")
+	}
+}
+
 func TestLoad_DotEnvUsedTrue(t *testing.T) {
 	withTestBaseURL(t)
 	dir := t.TempDir()

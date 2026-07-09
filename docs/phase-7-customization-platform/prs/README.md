@@ -23,11 +23,12 @@ Specs for Phase 7 PRs (Summary, Why, Scope, Out of scope, Validation — same fo
 | PR-718 | F | [oss] | done | [Reference plugin: slots E2E](PR-718.md) |
 | PR-719 | F | [oss] | done | [Theme author guide](PR-719.md) |
 | PR-717 | F | [oss] | done | [Nested `slot_container` fix](PR-717.md) |
+| PR-720 | F | [oss] | done | [Slot marker validation](PR-720.md) |
 
 Roadmap: [`../ROADMAP.md`](../ROADMAP.md) · Architecture: [`../specs/CUSTOMIZATION_PLATFORM.md`](../specs/CUSTOMIZATION_PLATFORM.md) · Upstream: [Phase 6](../../phase-6-merchant-complete/ROADMAP.md)
 
-**Track F** active (PR-711–715, 717–719 done).
+**Track F** complete (PR-711–715, 717–720 done; PR-716 stretch unscheduled).
 
-**Suggested next PR:** **PR-720** — slot marker validation (stretch).
+**Remaining stretch:** **PR-716** — `layout.yaml` block ordering.
 
 **Rule for Phase 7:** Extension field writes must go through the registry service — no ad hoc JSON columns in core entities.

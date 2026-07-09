@@ -203,6 +203,8 @@ frontend:
   mode: "ssr"
   # Filesystem path to the active theme directory.
   theme_path: "themes/default"
+  # Fail startup when theme templates declare slot anchors outside the standard catalog.
+  # strict_slot_markers: false
 
 # --- Development runtime (app dev) --------------------------------------------
 dev:

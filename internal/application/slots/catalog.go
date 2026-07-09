@@ -1,5 +1,10 @@
 package slots
 
+import (
+	"sort"
+	"strings"
+)
+
 // Group names for standard storefront slot anchors.
 const (
 	GroupLayout   = "layout"
@@ -52,4 +57,37 @@ func StandardAnchorNames() []string {
 		out[i] = item.Name
 	}
 	return out
+}
+
+// StandardAnchorNameSet returns canonical anchor names as a lookup set.
+func StandardAnchorNameSet() map[string]struct{} {
+	names := StandardAnchorNames()
+	set := make(map[string]struct{}, len(names))
+	for _, name := range names {
+		set[name] = struct{}{}
+	}
+	return set
+}
+
+// UnknownDeclaredAnchors returns declared anchors not present in StandardAnchors(), sorted.
+func UnknownDeclaredAnchors(declared []string) []string {
+	standard := StandardAnchorNameSet()
+	seen := make(map[string]struct{})
+	var unknown []string
+	for _, name := range declared {
+		name = strings.TrimSpace(name)
+		if name == "" {
+			continue
+		}
+		if _, ok := standard[name]; ok {
+			continue
+		}
+		if _, dup := seen[name]; dup {
+			continue
+		}
+		seen[name] = struct{}{}
+		unknown = append(unknown, name)
+	}
+	sort.Strings(unknown)
+	return unknown
 }
