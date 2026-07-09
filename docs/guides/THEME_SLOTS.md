@@ -251,6 +251,17 @@ If you rename `pdp.info` → `product.sidebar`, plugins registering on `pdp.info
 
 With dev mode enabled, the slot registry warns when a plugin registers an anchor **not declared** in the active theme (`slots.registration.unmarked_anchor`).
 
+At startup, the API warns when the theme declares anchors **outside the standard catalog** (`slots.theme.unknown_anchor`). Custom anchor names are allowed but should be documented for plugin authors.
+
+For CI or theme authoring guardrails, enable strict validation:
+
+```yaml
+frontend:
+  strict_slot_markers: true
+```
+
+Or `SHOPANDA_FRONTEND_STRICT_SLOT_MARKERS=true` — startup fails with `theme: unknown slot anchors: ...` when non-catalog anchors are present.
+
 Inspect registrations at runtime:
 
 - `GET /api/v1/admin/extensions/slots` (requires `extensions.read`)
@@ -277,7 +288,7 @@ Response includes the standard catalog plus registered handlers per anchor.
 | Magento-style `layout.xml` merge | Not supported |
 | Plugin-driven DOM reordering | Not supported — themes own structure |
 | `layout.yaml` block reorder (PR-716) | Stretch / not shipped yet |
-| Strict CI validation of unknown anchors (PR-720) | Stretch / not shipped yet |
+| Strict CI validation of unknown anchors (PR-720) | Shipped — `frontend.strict_slot_markers` |
 | Nested `slot_container` fix (PR-717) | Shipped — depth-aware preprocessor |
 
 ---

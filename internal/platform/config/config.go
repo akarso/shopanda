@@ -373,10 +373,11 @@ type CorePluginsConfig struct {
 }
 
 type FrontendConfig struct {
-	Enabled    bool   `yaml:"enabled"`
-	Mode       string `yaml:"mode"`
-	ThemePath  string `yaml:"theme_path"`
-	CSPEnabled bool   `yaml:"csp_enabled"`
+	Enabled           bool   `yaml:"enabled"`
+	Mode              string `yaml:"mode"`
+	ThemePath         string `yaml:"theme_path"`
+	CSPEnabled        bool   `yaml:"csp_enabled"`
+	StrictSlotMarkers bool   `yaml:"strict_slot_markers"`
 }
 
 type CDNConfig struct {
@@ -809,6 +810,9 @@ func applyEnv(cfg *Config) {
 	if v := os.Getenv("SHOPANDA_FRONTEND_CSP_ENABLED"); v != "" {
 		cfg.Frontend.CSPEnabled = v == "true" || v == "1"
 	}
+	if v := os.Getenv("SHOPANDA_FRONTEND_STRICT_SLOT_MARKERS"); v != "" {
+		cfg.Frontend.StrictSlotMarkers = v == "true" || v == "1"
+	}
 	if v := os.Getenv("SHOPANDA_CDN_BASE_URL"); v != "" {
 		cfg.CDN.BaseURL = v
 	}
@@ -920,6 +924,7 @@ func flatten(cfg *Config) map[string]string {
 	m["frontend.enabled"] = strconv.FormatBool(cfg.Frontend.Enabled)
 	m["frontend.mode"] = cfg.Frontend.Mode
 	m["frontend.theme_path"] = cfg.Frontend.ThemePath
+	m["frontend.strict_slot_markers"] = strconv.FormatBool(cfg.Frontend.StrictSlotMarkers)
 	m["dev.embed_scheduler"] = strconv.FormatBool(cfg.Dev.EmbedScheduler)
 	m["cdn.base_url"] = cfg.CDN.BaseURL
 	m["payment.stripe.enabled"] = strconv.FormatBool(cfg.Payment.Stripe.Enabled)

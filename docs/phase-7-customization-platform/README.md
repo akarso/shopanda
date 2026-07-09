@@ -19,6 +19,6 @@ Track F maximizes **developer satisfaction** for plugin and theme authors: canon
 
 ## Suggested next PR
 
-**PR-720** — slot marker validation (stretch).
+**PR-716** — `layout.yaml` block ordering (stretch).
 
-Theme author guide: [THEME_SLOTS.md](../guides/THEME_SLOTS.md) (PR-719).
+Track F core + stretch validation is complete (PR-720). Theme author guide: [THEME_SLOTS.md](../guides/THEME_SLOTS.md).
