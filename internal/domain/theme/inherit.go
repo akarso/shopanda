@@ -11,6 +11,7 @@ type ResolvedTemplates struct {
 	LayoutFile   string
 	PartialFiles map[string]string
 	PageFiles    map[string]string
+	Layout       LayoutConfig
 }
 
 // NewResolvedTemplates creates an empty resolved template set.

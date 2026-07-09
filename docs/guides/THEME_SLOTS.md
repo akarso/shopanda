@@ -188,6 +188,37 @@ Nested blocks are supported — the preprocessor matches opening/closing pairs b
 
 For fine-grained control inside a single region, explicit `{{slot . "anchor" "placement"}}` markers still work and compose with containers.
 
+### `layout.yaml` block ordering
+
+Reorder **named blocks within a fixed container** without forking the whole template. Cross-container moves are not supported.
+
+**`layout.yaml`** (optional, inherits like templates via theme `parent:`):
+
+```yaml
+version: "1"
+containers:
+  pdp.info:
+    blocks:
+      - meta
+      - description
+      - composition
+      - detail_grid
+      - actions
+```
+
+**Template markers** inside the container region:
+
+```html
+{{layout_blocks "pdp.info"}}
+{{block "meta"}}...{{/block}}
+{{block "description"}}...{{/block}}
+{{/layout_blocks}}
+```
+
+At load time the engine strips markers and emits blocks in `layout.yaml` order. Blocks omitted from config keep their template order after configured blocks. Unknown config entries are ignored.
+
+Default theme: [`themes/default/layout.yaml`](../../themes/default/layout.yaml) + [`product.html`](../../themes/default/templates/product.html).
+
 ---
 
 ## Standard anchor catalog
@@ -287,7 +318,7 @@ Response includes the standard catalog plus registered handlers per anchor.
 | --- | --- |
 | Magento-style `layout.xml` merge | Not supported |
 | Plugin-driven DOM reordering | Not supported — themes own structure |
-| `layout.yaml` block reorder (PR-716) | Stretch / not shipped yet |
+| `layout.yaml` block reorder (PR-716) | Shipped — `layout_blocks` + `layout.yaml` |
 | Strict CI validation of unknown anchors (PR-720) | Shipped — `frontend.strict_slot_markers` |
 | Nested `slot_container` fix (PR-717) | Shipped — depth-aware preprocessor |
 

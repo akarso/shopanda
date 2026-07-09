@@ -14,15 +14,21 @@
     {{/slot_container}}
     {{slot_container "pdp.info"}}
     <div class="product-detail-card__body">
+        {{layout_blocks "pdp.info"}}
+        {{block "meta"}}
         <div class="product-detail-card__meta">
             <span class="status-pill">{{ .Product.Status }}</span>
             <span>Slug: /products/{{ .Product.Slug }}</span>
         </div>
+        {{/block}}
+        {{block "description"}}
         {{ if .Product.Description }}
         <p>{{ .Product.Description }}</p>
         {{ else }}
         <p>No merchandising description has been added yet.</p>
         {{ end }}
+        {{/block}}
+        {{block "composition"}}
         {{ range .Blocks }}
         {{ if eq .Type "price_indication" }}
         <p class="price-indication muted-note">Lowest price in the last 30 days: {{ index .Data "currency" }} {{ index .Data "lowest_30d_price" }} (current price: {{ index .Data "currency" }} {{ index .Data "current_price" }})</p>
@@ -61,6 +67,8 @@
         </section>
         {{ end }}
         {{ end }}
+        {{/block}}
+        {{block "detail_grid"}}
         <dl class="detail-grid">
             <div>
                 <dt>Store</dt>
@@ -79,6 +87,8 @@
                 <dd>{{ len .Blocks }}</dd>
             </div>
         </dl>
+        {{/block}}
+        {{block "actions"}}
         {{slot . "pdp.actions" "before"}}
         <div class="product-detail-card__actions">
             {{slot . "pdp.actions" "prepend"}}
@@ -114,6 +124,8 @@
             {{slot . "pdp.actions" "append"}}
         </div>
         {{slot . "pdp.actions" "after"}}
+        {{/block}}
+        {{/layout_blocks}}
     </div>
     {{/slot_container}}
 </section>

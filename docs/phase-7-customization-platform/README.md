@@ -17,8 +17,4 @@ Track F maximizes **developer satisfaction** for plugin and theme authors: canon
 - [Phase 5 — Mature Commerce](../phase-5-maturity/ROADMAP.md)
 - [Plugin composition guide](../guides/PLUGIN_COMPOSITION.md)
 
-## Suggested next PR
-
-**PR-716** — `layout.yaml` block ordering (stretch).
-
-Track F core + stretch validation is complete (PR-720). Theme author guide: [THEME_SLOTS.md](../guides/THEME_SLOTS.md).
+Track F is **complete** (PR-711–716, 717–720). Theme author guide: [THEME_SLOTS.md](../guides/THEME_SLOTS.md).
