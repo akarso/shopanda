@@ -837,7 +837,8 @@ input {
     margin: 0;
 }
 
-.checkout-actions {
+.checkout-actions,
+.account-nav {
     display: flex;
     align-items: center;
     justify-content: space-between;
@@ -1018,6 +1019,7 @@ code {
     .mini-cart-panel__header,
     .mini-cart-panel__footer,
     .checkout-actions,
+    .account-nav,
     .checkout-rate,
     .checkout-summary-panel__items li,
     .checkout-summary-panel__totals {

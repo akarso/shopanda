@@ -105,37 +105,87 @@ func TestDefaultTheme_StandardLayoutSlotsRender(t *testing.T) {
 	})
 
 	t.Run("checkout page anchors", func(t *testing.T) {
-		var buf bytes.Buffer
-		if err := engine.Render(&buf, "checkout_address", map[string]interface{}{
-			"Layout":   map[string]interface{}{"SiteName": "Shopanda", "Nav": []interface{}{}, "Assets": map[string]interface{}{}},
-			"CSRFToken": "tok",
-			"Progress": []interface{}{map[string]interface{}{"Label": "Address", "Current": true}},
-			"Items":    []interface{}{},
-			"Summary":  map[string]interface{}{"TotalQuantity": 0, "SubtotalText": "$0"},
-			"Countries": []interface{}{},
-			"Address":  map[string]interface{}{},
-		}); err != nil {
-			t.Fatalf("Render: %v", err)
+		checkoutAnchors := []string{"checkout.progress", "checkout.panel", "checkout.summary"}
+		layout := map[string]interface{}{"SiteName": "Shopanda", "Nav": []interface{}{}, "Assets": map[string]interface{}{}}
+		address := map[string]interface{}{}
+		pages := []struct {
+			name string
+			data map[string]interface{}
+		}{
+			{
+				name: "checkout_address",
+				data: map[string]interface{}{
+					"Layout": layout, "CSRFToken": "tok",
+					"Progress": []interface{}{map[string]interface{}{"Label": "Address", "Current": true}},
+					"Items": []interface{}{}, "Summary": map[string]interface{}{"TotalQuantity": 0, "SubtotalText": "$0"},
+					"Countries": []interface{}{}, "Address": address,
+				},
+			},
+			{
+				name: "checkout_shipping",
+				data: map[string]interface{}{
+					"Layout": layout, "CSRFToken": "tok", "ContactEmail": "buyer@example.com",
+					"Progress": []interface{}{map[string]interface{}{"Label": "Shipping", "Current": true}},
+					"Address": address,
+					"Rates": []interface{}{
+						map[string]interface{}{"Method": "flat", "Label": "Standard", "CostText": "$5", "Selected": true},
+					},
+					"Summary": map[string]interface{}{"SubtotalText": "$0"},
+				},
+			},
 		}
-		assertSlotMarkers(t, buf.String(), []string{"checkout.progress", "checkout.panel", "checkout.summary"})
+		for _, page := range pages {
+			page := page
+			t.Run(page.name, func(t *testing.T) {
+				var buf bytes.Buffer
+				if err := engine.Render(&buf, page.name, page.data); err != nil {
+					t.Fatalf("Render: %v", err)
+				}
+				assertSlotMarkers(t, buf.String(), checkoutAnchors)
+			})
+		}
 	})
 
 	t.Run("account page anchors", func(t *testing.T) {
-		var buf bytes.Buffer
-		if err := engine.Render(&buf, "account_orders", map[string]interface{}{
-			"Layout": map[string]interface{}{"SiteName": "Shopanda", "Nav": []interface{}{}, "Assets": map[string]interface{}{}},
-			"AccountNav": map[string]interface{}{
+		layout := map[string]interface{}{"SiteName": "Shopanda", "Nav": []interface{}{}, "Assets": map[string]interface{}{}}
+		accountNav := func(current string) map[string]interface{} {
+			return map[string]interface{}{
 				"OrdersURL": "/account/orders", "ReturnsURL": "/account/returns",
 				"ProfileURL": "/account/profile", "AddressesURL": "/account/addresses",
 				"PreferencesURL": "/account/preferences", "SecurityURL": "/account/security",
-				"Current": "orders",
-			},
-			"Orders":       []interface{}{},
-			"EmptyMessage": "No orders",
-		}); err != nil {
-			t.Fatalf("Render: %v", err)
+				"Current": current,
+			}
 		}
-		assertSlotMarkers(t, buf.String(), []string{"account.nav"})
+		pages := []struct {
+			name string
+			data map[string]interface{}
+		}{
+			{
+				name: "account_orders",
+				data: map[string]interface{}{
+					"Layout": layout, "AccountNav": accountNav("orders"),
+					"Orders": []interface{}{}, "EmptyMessage": "No orders",
+				},
+			},
+			{
+				name: "account_profile",
+				data: map[string]interface{}{
+					"Layout": layout, "AccountNav": accountNav("profile"),
+					"CSRFToken": "tok", "Email": "buyer@example.com",
+					"FirstName": "Ada", "LastName": "Lovelace",
+				},
+			},
+		}
+		for _, page := range pages {
+			page := page
+			t.Run(page.name, func(t *testing.T) {
+				var buf bytes.Buffer
+				if err := engine.Render(&buf, page.name, page.data); err != nil {
+					t.Fatalf("Render: %v", err)
+				}
+				assertSlotMarkers(t, buf.String(), []string{"account.nav"})
+			})
+		}
 	})
 }
 
