@@ -26,6 +26,7 @@ import (
 	cartApp "github.com/akarso/shopanda/internal/application/cart"
 	hooksApp "github.com/akarso/shopanda/internal/application/hooks"
 	slotsApp "github.com/akarso/shopanda/internal/application/slots"
+	themeapp "github.com/akarso/shopanda/internal/application/theme"
 	assetsApp "github.com/akarso/shopanda/internal/application/assets"
 	cmsApp "github.com/akarso/shopanda/internal/application/cms"
 	checkoutApp "github.com/akarso/shopanda/internal/application/checkout"
@@ -302,7 +303,7 @@ func runServe(cfg *config.Config, log logger.Logger, embedScheduler bool) error 
 	hookRegistry := hooksApp.NewRegistry(log)
 	slotRegistry := slotsApp.NewRegistry(log)
 	if cfg.Frontend.Enabled && cfg.Frontend.ThemePath != "" {
-		if anchors, anchorErr := theme.DeclaredAnchorsFromDir(cfg.Frontend.ThemePath); anchorErr != nil {
+		if anchors, anchorErr := themeapp.DeclaredAnchorsFromDir(cfg.Frontend.ThemePath); anchorErr != nil {
 			log.Warn("slots.theme_markers.load_failed", map[string]interface{}{
 				"theme_path": cfg.Frontend.ThemePath,
 				"error":      anchorErr.Error(),

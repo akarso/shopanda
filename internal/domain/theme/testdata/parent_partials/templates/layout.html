@@ -2,6 +2,7 @@
 <html>
 <head>
     <title>{{ template "title" . }}</title>
+    {{slot . "layout.head" "append"}}
 </head>
 <body>
     {{ template "_header.html" . }}
