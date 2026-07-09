@@ -123,6 +123,49 @@ func TestSlot_TwoRenderersSamePlacementCompose(t *testing.T) {
 	}
 }
 
+func TestSlotContainer_NestedContainersRender(t *testing.T) {
+	dir := t.TempDir()
+	writeThemeFiles(t, dir, `{{ define "title" }}Nested{{ end }}
+{{ define "content" }}
+{{slot_container "pdp.info"}}
+<section class="pdp-info">
+{{slot_container "pdp.actions"}}
+<div class="pdp-actions">buy</div>
+{{/slot_container}}
+</section>
+{{/slot_container}}
+{{ end }}
+{{ template "layout.html" . }}`, `<!DOCTYPE html><html><body>{{ template "content" . }}</body></html>`)
+
+	reg := slots.NewRegistry(nil)
+	_ = reg.RegisterRenderer("pdp.info", slots.PlacementAppend, 100, "test", func(ctx *slots.RenderContext) string {
+		return `<!--info-->`
+	})
+	_ = reg.RegisterRenderer("pdp.actions", slots.PlacementAppend, 100, "test", func(ctx *slots.RenderContext) string {
+		return `<!--actions-->`
+	})
+
+	engine, err := themeapp.Load(dir, theme.WithSlotSource(slotSource(reg)))
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+
+	var buf bytes.Buffer
+	if err := engine.Render(&buf, "product", nil); err != nil {
+		t.Fatalf("Render: %v", err)
+	}
+	out := buf.String()
+	info := strings.Index(out, "<!--info-->")
+	actions := strings.Index(out, "<!--actions-->")
+	buy := strings.Index(out, "buy")
+	if info < 0 || actions < 0 || buy < 0 {
+		t.Fatalf("missing markers in output:\n%s", out)
+	}
+	if !(buy < actions && actions < info) {
+		t.Fatalf("nested slot order wrong:\n%s", out)
+	}
+}
+
 func writeThemeFiles(t *testing.T, dir, productHTML, layoutHTML string) {
 	t.Helper()
 	if err := os.WriteFile(filepath.Join(dir, "theme.yaml"), []byte("name: slot-test\nversion: 0.1.0\n"), 0o644); err != nil {

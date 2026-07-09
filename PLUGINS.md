@@ -109,7 +109,7 @@ app.Slots("acme/badges").RegisterRenderer("pdp.info", slots.PlacementAppend, 100
 | `home.hero` | Home page hero area |
 | `account.nav` | Signed-in account section navigation |
 
-Theme markers use `{{slot_container "anchor"}}…{{/slot_container}}` or explicit `{{slot . "anchor" "placement"}}`. **Do not nest `slot_container` blocks** — the preprocessor cannot match inner closings; use explicit `slot` markers inside a container instead. Missing markers are a silent no-op — plugins do not auto-inject. Global CSS/JS belongs in the **asset manifest**, not slots.
+Theme markers use `{{slot_container "anchor"}}…{{/slot_container}}` or explicit `{{slot . "anchor" "placement"}}`. Nested `slot_container` blocks are supported (depth-aware matching). Missing markers are a silent no-op — plugins do not auto-inject. Global CSS/JS belongs in the **asset manifest**, not slots.
 
 **Stable v0 contracts:** use [`pkg/extapi`](pkg/extapi) for hook/slot names, placements, and handler types (`HookHandler`, `SlotRenderer`). See [Extension API guide](docs/guides/EXTENSION_API.md). Theme authors: [Theme slots & inheritance guide](docs/guides/THEME_SLOTS.md) (`parent:` in `theme.yaml`, partials, preserving anchors).
 

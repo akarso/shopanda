@@ -19,6 +19,6 @@ Track F maximizes **developer satisfaction** for plugin and theme authors: canon
 
 ## Suggested next PR
 
-**PR-717** — nested `slot_container` fix (or **PR-720** slot marker validation stretch).
+**PR-720** — slot marker validation (stretch).
 
 Theme author guide: [THEME_SLOTS.md](../guides/THEME_SLOTS.md) (PR-719).

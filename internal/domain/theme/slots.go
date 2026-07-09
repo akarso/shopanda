@@ -13,21 +13,91 @@ type SlotSource interface {
 }
 
 var (
-	slotContainerPattern = regexp.MustCompile(`(?s)\{\{\s*slot_container\s+"([^"]+)"\s*\}\}(.*?)\{\{\s*/slot_container\s*\}\}`)
-	openTagPattern       = regexp.MustCompile(`(?is)^\s*<([a-zA-Z][\w-]*)(\s[^>]*)?>`)
+	slotContainerOpenPattern = regexp.MustCompile(`\{\{\s*slot_container\s+"([^"]+)"\s*\}\}`)
+	slotContainerCloseTag    = "{{/slot_container}}"
+	openTagPattern           = regexp.MustCompile(`(?is)^\s*<([a-zA-Z][\w-]*)(\s[^>]*)?>`)
 )
 
 // preprocessSlotContainers expands slot_container blocks into explicit slot markers.
+// Nested slot_container blocks are supported via depth-aware matching.
 func preprocessSlotContainers(source string) string {
-	return slotContainerPattern.ReplaceAllStringFunc(source, func(block string) string {
-		m := slotContainerPattern.FindStringSubmatch(block)
-		if len(m) != 3 {
-			return block
+	anchor, openStart, openEnd, ok := findSlotContainerOpen(source, 0)
+	if !ok {
+		return source
+	}
+	closeStart, closeEnd, ok := findMatchingSlotContainerClose(source, openEnd)
+	if !ok {
+		return source
+	}
+
+	inner := preprocessSlotContainers(source[openEnd:closeStart])
+	expanded := expandSlotContainer(anchor, inner)
+	return source[:openStart] + expanded + preprocessSlotContainers(source[closeEnd:])
+}
+
+func findSlotContainerOpen(source string, from int) (anchor string, openStart, openEnd int, ok bool) {
+	rest := source[from:]
+	idx := strings.Index(rest, "{{")
+	if idx < 0 {
+		return "", 0, 0, false
+	}
+	loc := slotContainerOpenPattern.FindStringSubmatchIndex(rest[idx:])
+	if loc == nil || loc[0] != 0 {
+		next := from + idx + 2
+		if next >= len(source) {
+			return "", 0, 0, false
 		}
-		anchor := m[1]
-		inner := m[2]
-		return expandSlotContainer(anchor, inner)
-	})
+		return findSlotContainerOpen(source, next)
+	}
+	match := slotContainerOpenPattern.FindStringSubmatch(rest[idx:])
+	openStart = from + idx
+	openEnd = openStart + loc[1]
+	return match[1], openStart, openEnd, true
+}
+
+func findMatchingSlotContainerClose(source string, from int) (closeStart, closeEnd int, ok bool) {
+	depth := 1
+	i := from
+	for i < len(source) && depth > 0 {
+		nextOpenRel := strings.Index(source[i:], "{{")
+		if nextOpenRel < 0 {
+			nextOpenRel = len(source)
+		} else {
+			nextOpenRel += i
+		}
+		nextCloseRel := strings.Index(source[i:], slotContainerCloseTag)
+		if nextCloseRel < 0 {
+			return 0, 0, false
+		}
+		nextClose := i + nextCloseRel
+
+		if nextOpenRel < nextClose && isSlotContainerOpenAt(source, nextOpenRel) {
+			_, _, openEnd, openOK := findSlotContainerOpen(source, nextOpenRel)
+			if !openOK {
+				return 0, 0, false
+			}
+			depth++
+			i = openEnd
+			continue
+		}
+
+		depth--
+		if depth == 0 {
+			closeStart = nextClose
+			closeEnd = nextClose + len(slotContainerCloseTag)
+			return closeStart, closeEnd, true
+		}
+		i = nextClose + len(slotContainerCloseTag)
+	}
+	return 0, 0, false
+}
+
+func isSlotContainerOpenAt(source string, idx int) bool {
+	if idx < 0 || idx >= len(source) {
+		return false
+	}
+	loc := slotContainerOpenPattern.FindStringSubmatchIndex(source[idx:])
+	return loc != nil && loc[0] == 0
 }
 
 func expandSlotContainer(anchor, inner string) string {
