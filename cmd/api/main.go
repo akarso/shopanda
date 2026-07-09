@@ -310,14 +310,14 @@ func runServe(cfg *config.Config, log logger.Logger, embedScheduler bool) error 
 			})
 		} else {
 			unknown, valErr := themeapp.ValidateDeclaredAnchors(anchors, cfg.Frontend.StrictSlotMarkers)
-			if valErr != nil {
-				return fmt.Errorf("theme slot markers: %w", valErr)
-			}
 			for _, anchor := range unknown {
 				log.Warn("slots.theme.unknown_anchor", map[string]interface{}{
 					"anchor":     anchor,
 					"theme_path": cfg.Frontend.ThemePath,
 				})
+			}
+			if valErr != nil {
+				return fmt.Errorf("theme slot markers: %w", valErr)
 			}
 			slotRegistry.SetThemeMarkers(anchors)
 		}
