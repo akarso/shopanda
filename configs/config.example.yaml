@@ -179,6 +179,8 @@ queue:
 #   example:
 #     enabled: false
 #     fee_minor_units: 100
+#   slotsdemo:
+#     enabled: false
 
 # --- B2B module (commercial) --------------------------------------------------
 # Requires a valid license key. See docs/COMMERCIAL.md and plugins/b2b/README.md.

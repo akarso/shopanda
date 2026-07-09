@@ -336,8 +336,9 @@ type RedisQueueConfig struct {
 type PluginsConfig struct {
 	Core    CorePluginsConfig   `yaml:"core"`
 	GraphQL GraphQLPluginConfig `yaml:"graphql"`
-	Example ExamplePluginConfig `yaml:"example"`
-	B2B     B2BPluginConfig     `yaml:"b2b"`
+	Example   ExamplePluginConfig   `yaml:"example"`
+	SlotsDemo SlotsDemoPluginConfig `yaml:"slotsdemo"`
+	B2B       B2BPluginConfig       `yaml:"b2b"`
 }
 
 // GraphQLPluginConfig toggles the optional read-only GraphQL API core plugin.
@@ -349,6 +350,11 @@ type GraphQLPluginConfig struct {
 type ExamplePluginConfig struct {
 	Enabled       bool  `yaml:"enabled"`
 	FeeMinorUnits int64 `yaml:"fee_minor_units"`
+}
+
+// SlotsDemoPluginConfig toggles the slots reference plugin in plugins/slotsdemo.
+type SlotsDemoPluginConfig struct {
+	Enabled bool `yaml:"enabled"`
 }
 
 // B2BPluginConfig toggles the commercial B2B module in plugins/b2b.
@@ -782,6 +788,9 @@ func applyEnv(cfg *Config) {
 			cfg.Plugins.Example.FeeMinorUnits = n
 		}
 	}
+	if v := os.Getenv("SHOPANDA_PLUGINS_SLOTSDEMO_ENABLED"); v != "" {
+		cfg.Plugins.SlotsDemo.Enabled = v == "true" || v == "1"
+	}
 	if v := os.Getenv("SHOPANDA_PLUGINS_B2B_ENABLED"); v != "" {
 		cfg.Plugins.B2B.Enabled = v == "true" || v == "1"
 	}
@@ -906,6 +915,7 @@ func flatten(cfg *Config) map[string]string {
 	m["plugins.graphql.enabled"] = strconv.FormatBool(cfg.Plugins.GraphQL.Enabled)
 	m["plugins.example.enabled"] = strconv.FormatBool(cfg.Plugins.Example.Enabled)
 	m["plugins.example.fee_minor_units"] = strconv.FormatInt(cfg.Plugins.Example.FeeMinorUnits, 10)
+	m["plugins.slotsdemo.enabled"] = strconv.FormatBool(cfg.Plugins.SlotsDemo.Enabled)
 	m["plugins.b2b.enabled"] = strconv.FormatBool(cfg.Plugins.B2B.Enabled)
 	m["frontend.enabled"] = strconv.FormatBool(cfg.Frontend.Enabled)
 	m["frontend.mode"] = cfg.Frontend.Mode
