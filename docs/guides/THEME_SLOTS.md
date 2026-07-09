@@ -172,23 +172,21 @@ Placements (same for all anchors):
 
 Plugins choose a placement when registering (`extapi.PlacementAppend`, etc.). Multiple plugins on the same anchor+placement run in **priority** order (lower number first).
 
-### Do not nest `slot_container`
+### Nested `slot_container`
 
-The preprocessor matches the **first** `{{/slot_container}}` — nested containers break. Use explicit `{{slot . "anchor" "placement"}}` inside a single container instead.
+Nested blocks are supported — the preprocessor matches opening/closing pairs by depth (inner containers expand first):
 
 ```html
-{{!-- BAD: nested slot_container --}}
-{{slot_container "outer"}}
-  {{slot_container "inner"}}...{{/slot_container}}
-{{/slot_container}}
-
-{{!-- GOOD: one container, explicit inner slots --}}
-{{slot_container "outer"}}
-  {{slot . "inner" "prepend"}}
-  ...
-  {{slot . "inner" "append"}}
+{{slot_container "pdp.info"}}
+<section class="pdp-info">
+  {{slot_container "pdp.actions"}}
+  <div class="pdp-actions">...</div>
+  {{/slot_container}}
+</section>
 {{/slot_container}}
 ```
+
+For fine-grained control inside a single region, explicit `{{slot . "anchor" "placement"}}` markers still work and compose with containers.
 
 ---
 
@@ -280,7 +278,7 @@ Response includes the standard catalog plus registered handlers per anchor.
 | Plugin-driven DOM reordering | Not supported — themes own structure |
 | `layout.yaml` block reorder (PR-716) | Stretch / not shipped yet |
 | Strict CI validation of unknown anchors (PR-720) | Stretch / not shipped yet |
-| Nested `slot_container` fix (PR-717) | Planned — use explicit `slot` until then |
+| Nested `slot_container` fix (PR-717) | Shipped — depth-aware preprocessor |
 
 ---
 
