@@ -1,6 +1,6 @@
 # Phase 7 — Customization Platform
 
-**Status:** Tracks A–E **shipped** (PR-700–710). **Track F** (PR-711–720) — storefront developer experience — **shipped**.
+**Status:** Tracks A–F **shipped** (PR-700–720).
 
 Phase 7 implements the [Customization Platform spec](specs/CUSTOMIZATION_PLATFORM.md): extension fields, value lifecycle, dynamic hooks/slots, and plugin asset injection — without theme forks or runtime `.so` loading.
 
@@ -17,4 +17,4 @@ Track F maximizes **developer satisfaction** for plugin and theme authors: canon
 - [Phase 5 — Mature Commerce](../phase-5-maturity/ROADMAP.md)
 - [Plugin composition guide](../guides/PLUGIN_COMPOSITION.md)
 
-Track F is **complete** (PR-711–716, 717–720). Theme author guide: [THEME_SLOTS.md](../guides/THEME_SLOTS.md).
+Phase 7 is **complete** (PR-700–720). Theme author guide: [THEME_SLOTS.md](../guides/THEME_SLOTS.md).
