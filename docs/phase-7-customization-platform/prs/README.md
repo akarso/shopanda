@@ -25,9 +25,10 @@ Specs for Phase 7 PRs (Summary, Why, Scope, Out of scope, Validation — same fo
 | PR-717 | F | [oss] | done | [Nested `slot_container` fix](PR-717.md) |
 | PR-720 | F | [oss] | done | [Slot marker validation](PR-720.md) |
 | PR-716 | F | [oss] | done | [`layout.yaml` block ordering](PR-716.md) |
+| PR-721 | — | [oss] | done | [Phase 7 closure (docs)](PR-721.md) |
 
 Roadmap: [`../ROADMAP.md`](../ROADMAP.md) · Architecture: [`../specs/CUSTOMIZATION_PLATFORM.md`](../specs/CUSTOMIZATION_PLATFORM.md) · Upstream: [Phase 6](../../phase-6-merchant-complete/ROADMAP.md)
 
-**Track F** complete (PR-711–716, 717–720).
+**Phase 7 complete** (PR-700–720; tracks A–F).
 
 **Rule for Phase 7:** Extension field writes must go through the registry service — no ad hoc JSON columns in core entities.

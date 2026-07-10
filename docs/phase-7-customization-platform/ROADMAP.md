@@ -6,7 +6,7 @@
 * **Explicit extension only** — registry, ACL, deterministic ordering; no reflection magic or core overrides
 * Prefer **vertical slices** (domain → persistence → HTTP → one consumer) over big-bang platform dumps
 * One PR = one responsibility; runnable and reviewable in ~10–20 minutes
-* PR specs live under `prs/` (**PR-700–710** shipped; **PR-711–720** storefront DX extension planned)
+* PR specs live under `prs/` (**PR-700–720** shipped)
 
 Each PR is tagged **`[oss]`** unless noted. See [Commercial licensing](../COMMERCIAL.md).
 
@@ -280,7 +280,7 @@ Non-goal for this draft: freezing all plugin APIs. The v0 scope is intentionally
 | 719 | F | [oss] | Theme author guide |
 | 720 | F | [oss] | Slot marker validation (stretch) |
 
-PR specs: [`prs/`](prs/) (700–710 done; 711+ planned in roadmap).
+PR specs: [`prs/`](prs/) (PR-700–720 done).
 
 ---
 
@@ -294,5 +294,5 @@ PR specs: [`prs/`](prs/) (700–710 done; 711+ planned in roadmap).
 | [Phase 4](../phase-4-refactoring/ROADMAP.md) | Product complete | Shipped |
 | [Phase 5](../phase-5-maturity/ROADMAP.md) | Mature commerce | Shipped |
 | [Phase 6](../phase-6-merchant-complete/ROADMAP.md) | Merchant-complete admin | Shipped |
-| **Phase 7** | **Customization platform** | **Tracks A–E shipped (PR-700–710); Track F (PR-711–720) active** |
+| **Phase 7** | **Customization platform** | **Shipped (PR-700–720; tracks A–F complete)** |
  
