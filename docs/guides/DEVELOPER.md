@@ -616,6 +616,7 @@ Phase 8 adds first-class seams for **commerce behavior** (positioned pricing ste
 - HTTP: `RegisterPublicRoute`, `RegisterAdminRoute`
 - CSV import: CLI `import:products`, `import:prices`, `import:stock`, `import:categories`, `import:customers`, `import:attributes` (no row-transform hooks yet)
 - Async: events + optional queue drivers
+- Port introspection: `GET /api/v1/admin/extensions/ports` (infrastructure backends + planned ports)
 
 **Planned in Phase 8** (see spec §Document map): pricing step positioning, cart validate hooks, import row pipelines, integration auth/idempotency, outbound sync jobs, registration introspection.
 

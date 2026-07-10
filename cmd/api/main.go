@@ -25,6 +25,7 @@ import (
 	cacheApp "github.com/akarso/shopanda/internal/application/cache"
 	cartApp "github.com/akarso/shopanda/internal/application/cart"
 	hooksApp "github.com/akarso/shopanda/internal/application/hooks"
+	portsapp "github.com/akarso/shopanda/internal/application/ports"
 	slotsApp "github.com/akarso/shopanda/internal/application/slots"
 	themeapp "github.com/akarso/shopanda/internal/application/theme"
 	assetsApp "github.com/akarso/shopanda/internal/application/assets"
@@ -826,6 +827,8 @@ func runServe(cfg *config.Config, log logger.Logger, embedScheduler bool) error 
 	extensionValueAdmin := shophttp.NewExtensionValueAdminHandlerWithAuditor(extensionValueService, sharedAuditor)
 	extensionHookAdmin := shophttp.NewExtensionHookAdminHandler(hookRegistry)
 	extensionSlotAdmin := shophttp.NewExtensionSlotAdminHandler(slotRegistry)
+	portSnapshot := portsapp.BuildSnapshot(pluginApp, cfg)
+	extensionPortAdmin := shophttp.NewExtensionPortAdminHandler(portSnapshot)
 	inventoryAdmin := shophttp.NewInventoryAdminHandlerWithAuditor(stockRepo, variantRepo, sharedAuditor)
 	storeAdmin := shophttp.NewStoreAdminHandlerWithAuditor(storeRepo, bus, sharedAuditor)
 	auditLogAdmin := shophttp.NewAuditLogAdminHandler(auditLogRepo, sharedAuditor)
@@ -1077,6 +1080,7 @@ func runServe(cfg *config.Config, log logger.Logger, embedScheduler bool) error 
 	router.Handle("PUT /api/v1/admin/products/{id}/extensions", requireExtensionsWrite(extensionValueAdmin.PutProductExtensions()))
 	router.Handle("GET /api/v1/admin/extensions/hooks", requireExtensionsRead(extensionHookAdmin.ListHooks()))
 	router.Handle("GET /api/v1/admin/extensions/slots", requireExtensionsRead(extensionSlotAdmin.ListSlots()))
+	router.Handle("GET /api/v1/admin/extensions/ports", requireExtensionsRead(extensionPortAdmin.ListPorts()))
 	router.Handle("GET /api/v1/admin/inventory", requireProductsRead(inventoryAdmin.List()))
 	router.Handle("PUT /api/v1/admin/inventory/{variantId}", requireProductsWrite(inventoryAdmin.Adjust()))
 	router.Handle("GET /api/v1/admin/stores", requireSettingsRead(storeAdmin.List()))

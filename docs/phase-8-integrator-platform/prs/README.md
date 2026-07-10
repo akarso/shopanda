@@ -5,7 +5,7 @@ Specs for Phase 8 PRs (Summary, Why, Scope, Out of scope, Validation — same fo
 | PR | Track | License | Status | Spec |
 | --- | --- | --- | --- | --- |
 | PR-800 | A | [oss] | done | [Integrator platform spec publish](PR-800.md) |
-| PR-801 | A | [oss] | planned | Port catalog + introspection |
+| PR-801 | A | [oss] | done | [Port catalog + introspection](PR-801.md) |
 | PR-802 | A | [oss] | planned | Precedence policy + composition guide |
 | PR-810 | B | [oss] | planned | Pricing step positioning |
 | PR-811 | B | [oss] | planned | Cart lifecycle hooks |
