@@ -13,9 +13,12 @@ type ContainerBlocks struct {
 
 // OverlayLayoutConfig overlays child container order onto parent (child wins per container).
 func OverlayLayoutConfig(base, overlay LayoutConfig) LayoutConfig {
-	merged := base
-	if merged.Containers == nil {
-		merged.Containers = make(map[string]ContainerBlocks)
+	merged := LayoutConfig{
+		Version:    base.Version,
+		Containers: make(map[string]ContainerBlocks, len(base.Containers)+len(overlay.Containers)),
+	}
+	for name, blocks := range base.Containers {
+		merged.Containers[name] = blocks
 	}
 	for name, blocks := range overlay.Containers {
 		merged.Containers[name] = blocks
@@ -51,6 +54,7 @@ func OrderedBlockNames(container string, layout LayoutConfig, templateOrder []st
 		if _, ok := added[name]; ok {
 			continue
 		}
+		added[name] = struct{}{}
 		out = append(out, name)
 	}
 	return out

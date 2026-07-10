@@ -52,14 +52,28 @@ containers:
 		t.Fatalf("Render: %v", err)
 	}
 	out := buf.String()
-	actions := strings.Index(out, `class="actions"`)
-	meta := strings.Index(out, `class="meta"`)
-	desc := strings.Index(out, `class="desc"`)
-	if actions < 0 || meta < 0 || desc < 0 {
-		t.Fatalf("missing markers in output:\n%s", out)
+	markers := []struct {
+		class string
+		label string
+	}{
+		{`class="actions"`, "actions"},
+		{`class="meta"`, "meta"},
+		{`class="desc"`, "description"},
+		{`class="comp"`, "composition"},
+		{`class="grid"`, "detail_grid"},
 	}
-	if !(actions < meta && meta < desc) {
-		t.Fatalf("expected actions before meta before description, got:\n%s", out)
+	positions := make([]int, len(markers))
+	for i, marker := range markers {
+		pos := strings.Index(out, marker.class)
+		if pos < 0 {
+			t.Fatalf("missing %s in output:\n%s", marker.label, out)
+		}
+		positions[i] = pos
+	}
+	for i := 1; i < len(positions); i++ {
+		if !(positions[i-1] < positions[i]) {
+			t.Fatalf("expected actions, meta, description, composition, detail_grid order, got:\n%s", out)
+		}
 	}
 }
 

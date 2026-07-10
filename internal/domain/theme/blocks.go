@@ -33,25 +33,30 @@ func preprocessLayoutBlocks(source string, layout LayoutConfig) string {
 		return source
 	}
 
-	inner := source[openEnd:closeStart]
+	inner := preprocessLayoutBlocks(source[openEnd:closeStart], layout)
 	blocks := extractNamedBlocks(inner)
 	order := make([]string, 0, len(blocks))
 	for _, block := range blocks {
 		order = append(order, block.name)
 	}
-	ordered := OrderedBlockNames(container, layout, order)
 
-	var b strings.Builder
-	for _, name := range ordered {
-		for _, block := range blocks {
-			if block.name == name {
-				b.WriteString(block.content)
-				break
+	var expanded string
+	if len(blocks) == 0 {
+		expanded = inner
+	} else {
+		ordered := OrderedBlockNames(container, layout, order)
+		var b strings.Builder
+		for _, name := range ordered {
+			for _, block := range blocks {
+				if block.name == name {
+					b.WriteString(block.content)
+					break
+				}
 			}
 		}
+		expanded = b.String()
 	}
 
-	expanded := b.String()
 	rest := preprocessLayoutBlocks(source[closeEnd:], layout)
 	return source[:openStart] + expanded + rest
 }
@@ -101,41 +106,7 @@ func findLayoutBlocksOpen(source string, from int) (container string, openStart,
 }
 
 func findMatchingLayoutBlocksClose(source string, from int) (closeStart, closeEnd int, ok bool) {
-	depth := 1
-	i := from
-	for i < len(source) && depth > 0 {
-		nextCloseRel := strings.Index(source[i:], layoutBlocksCloseTag)
-		if nextCloseRel < 0 {
-			return 0, 0, false
-		}
-		nextClose := i + nextCloseRel
-
-		nextOpenRel := strings.Index(source[i:nextClose], "{{")
-		if nextOpenRel < 0 {
-			depth--
-			if depth == 0 {
-				closeStart = nextClose
-				closeEnd = nextClose + len(layoutBlocksCloseTag)
-				return closeStart, closeEnd, true
-			}
-			i = nextClose + len(layoutBlocksCloseTag)
-			continue
-		}
-		nextOpen := i + nextOpenRel
-
-		if isLayoutBlocksOpenAt(source, nextOpen) {
-			_, _, openEnd, openOK := findLayoutBlocksOpen(source, nextOpen)
-			if !openOK {
-				return 0, 0, false
-			}
-			depth++
-			i = openEnd
-			continue
-		}
-
-		i = skipBlockScannerAction(source, nextOpen)
-	}
-	return 0, 0, false
+	return findMatchingTaggedClose(source, from, layoutBlocksCloseTag, isLayoutBlocksOpenAt, findLayoutBlocksOpen)
 }
 
 func findBlockOpen(source string, from int) (name string, openStart, openEnd int, ok bool) {
