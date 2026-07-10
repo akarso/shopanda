@@ -112,9 +112,9 @@ Cart mutations today: add / update qty / remove / coupon → `recalculate` → p
 | --- | --- | --- |
 | `cart.add_item.before` | Validate SKU rules, min qty, B2B assortment | Add |
 | `cart.add_item.after` | Extension capture, cross-sell meta | Shipped (Phase 7) |
-| `cart.update_item.before` | Block quantity changes |
-| `cart.remove_item.after` | Cleanup extension side effects |
-| `cart.recalculate.before` | Inject meta into pricing context |
+| `cart.update_item.before` | Block quantity changes | Add |
+| `cart.remove_item.after` | Cleanup extension side effects | Add |
+| `cart.recalculate.before` | Inject meta into pricing context | Add |
 | `cart.validate` | Structured errors returned to storefront API | Add chain |
 
 Hooks receive mutable payload (variant, qty, cart snapshot refs by ID). Heavy logic stays in application services; hooks orchestrate.
@@ -183,9 +183,14 @@ Core importer calls the chain **after** header validation, **before** repository
 ### Conventions (Phase 8)
 
 1. **Route prefix:** `/api/v1/integrations/{plugin}/…` — avoids colliding with storefront REST
-2. **Idempotency:** `Idempotency-Key` header → dedupe table; safe retries from ERP
-3. **Structured errors:** `{ "error": "code", "message": "…", "details": {} }` — ERP-parseable
-4. **Audit:** integration writes log plugin name + idempotency key (no secrets)
+2. **Idempotency:** `Idempotency-Key` header → dedupe table; safe retries from ERP when the same logical operation is submitted more than once
+3. **HMAC replay protection** (HMAC-authenticated routes only; enforced by integration auth middleware, separate from idempotency):
+   - Require a signed **timestamp** and unique **nonce** in the request (headers or canonical signature payload — documented per plugin)
+   - Reject requests outside a documented **freshness window** (e.g. ±5 minutes from server time)
+   - Reject previously seen **nonce** or **signature** combinations via a **replay store** checked before request processing
+   - Idempotency-Key dedupe handles duplicate *business operations*; replay protection handles duplicate *authenticated requests* (including replays of distinct payloads)
+4. **Structured errors:** `{ "error": "code", "message": "…", "details": {} }` — ERP-parseable
+5. **Audit:** integration writes log plugin name + idempotency key (no secrets)
 
 Reference plugin: accept SAP IDoc-shaped JSON (simplified) → update order status.
 

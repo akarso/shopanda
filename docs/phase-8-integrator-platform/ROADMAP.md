@@ -6,7 +6,7 @@
 * **Explicit extension only** — ports, ordered pipelines, import hooks, integration routes; no override folders or runtime preferences
 * Prefer **vertical slices** (port or hook → one importer or one reference plugin → docs)
 * One PR = one responsibility; runnable and reviewable in ~10–20 minutes
-* PR specs live under `prs/` (planned range **PR-800–860**)
+* PR specs live under `prs/` (planned range **PR-800–853**)
 
 Each PR is tagged **`[oss]`** unless noted. See [Commercial licensing](../COMMERCIAL.md).
 
