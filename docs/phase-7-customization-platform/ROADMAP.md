@@ -215,7 +215,7 @@ Non-goal for this draft: freezing all plugin APIs. The v0 scope is intentionally
 | --- | --- | --- |
 | **Reference plugin** | Custom dropdown on PDP → cart → order E2E demo | Overlaps PR-718; keep one canonical demo |
 | **Admin registry UI** | Grid CRUD for field definitions (today API-only in 702) | |
-| **Plugin SDK** | `plugin.App.Extensions()` helpers wrapping registry | |
+| **Plugin SDK** | `plugin.App.Extensions()` helpers wrapping registry | **Phase 8 Track F** (integrator-focused SDK) |
 | **Variant/customer scopes** | Extend entity matrix beyond product/cart/order | |
 
 *(Storefront slot catalog, theme inheritance, layout partials, and slot tooling moved to **Track F** above.)*
@@ -295,4 +295,5 @@ PR specs: [`prs/`](prs/) (PR-700–720 done).
 | [Phase 5](../phase-5-maturity/ROADMAP.md) | Mature commerce | Shipped |
 | [Phase 6](../phase-6-merchant-complete/ROADMAP.md) | Merchant-complete admin | Shipped |
 | **Phase 7** | **Customization platform** | **Shipped (PR-700–720; tracks A–F complete)** |
+| [Phase 8](../phase-8-integrator-platform/ROADMAP.md) | Integrator platform | Planned (PR-800+) |
  
