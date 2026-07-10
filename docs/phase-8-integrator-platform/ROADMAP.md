@@ -228,7 +228,7 @@ Recommended order: **A (800–802)** → **B (810–814)** and **C (820–823)**
 
 | PR | Track | License | One-liner |
 | --- | --- | --- | --- |
-| 800 | A | [oss] | Integrator platform spec publish |
+| 800 | A | [oss] | Integrator platform spec publish (done) |
 | 801 | A | [oss] | Port catalog + introspection |
 | 802 | A | [oss] | Precedence policy + composition guide |
 | 810 | B | [oss] | Pricing step positioning |
@@ -268,4 +268,4 @@ PR specs: [`prs/`](prs/) (planned).
 | [Phase 5](../phase-5-maturity/ROADMAP.md) | Mature commerce | Shipped |
 | [Phase 6](../phase-6-merchant-complete/ROADMAP.md) | Merchant-complete admin | Shipped |
 | [Phase 7](../phase-7-customization-platform/ROADMAP.md) | Customization platform | Shipped |
-| **Phase 8** | **Integrator platform** | **Planned (PR-800+)** |
+| **Phase 8** | **Integrator platform** | **In progress (PR-800+)** |
