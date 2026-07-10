@@ -18,3 +18,5 @@ Track F maximizes **developer satisfaction** for plugin and theme authors: canon
 - [Plugin composition guide](../guides/PLUGIN_COMPOSITION.md)
 
 Phase 7 is **complete** (PR-700–720). Theme author guide: [THEME_SLOTS.md](../guides/THEME_SLOTS.md).
+
+**Next:** [Phase 8 — Integrator Platform](../phase-8-integrator-platform/ROADMAP.md) (cart/pricing extension, import pipelines, ERP integration).
