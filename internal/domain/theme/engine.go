@@ -45,7 +45,7 @@ func NewEngine(resolved ResolvedTemplates, meta Theme, opts ...Option) (*Engine,
 	funcMap := slotFuncMap(cfg.slots)
 	pages := make(map[string]*template.Template, len(resolved.PageFiles))
 	for name, pf := range resolved.PageFiles {
-		t, err := parsePageTemplate(layoutFile, resolved.PartialFiles, pf, funcMap)
+		t, err := parsePageTemplate(layoutFile, resolved.PartialFiles, pf, resolved.Layout, funcMap)
 		if err != nil {
 			return nil, fmt.Errorf("theme: parse %s: %w", filepath.Base(pf), err)
 		}
@@ -76,12 +76,12 @@ func (e *Engine) HasTemplate(name string) bool {
 	return ok
 }
 
-func parsePageTemplate(layoutFile string, partialFiles map[string]string, pageFile string, funcMap template.FuncMap) (*template.Template, error) {
+func parsePageTemplate(layoutFile string, partialFiles map[string]string, pageFile string, layout LayoutConfig, funcMap template.FuncMap) (*template.Template, error) {
 	pageSource, err := os.ReadFile(pageFile)
 	if err != nil {
 		return nil, err
 	}
-	pageSource = []byte(preprocessSlotContainers(string(pageSource)))
+	pageSource = []byte(preprocessTemplateSource(string(pageSource), layout))
 
 	if layoutFile == "" {
 		name := filepath.Base(pageFile)
@@ -92,7 +92,7 @@ func parsePageTemplate(layoutFile string, partialFiles map[string]string, pageFi
 	if err != nil {
 		return nil, err
 	}
-	layoutSource = []byte(preprocessSlotContainers(string(layoutSource)))
+	layoutSource = []byte(preprocessTemplateSource(string(layoutSource), layout))
 
 	layoutName := filepath.Base(layoutFile)
 	pageName := filepath.Base(pageFile)
@@ -100,7 +100,7 @@ func parsePageTemplate(layoutFile string, partialFiles map[string]string, pageFi
 	if _, err := root.Parse(string(layoutSource)); err != nil {
 		return nil, err
 	}
-	if err := parsePartialTemplates(root, partialFiles); err != nil {
+	if err := parsePartialTemplates(root, partialFiles, layout); err != nil {
 		return nil, err
 	}
 	if _, err := root.New(pageName).Parse(string(pageSource)); err != nil {
@@ -109,7 +109,7 @@ func parsePageTemplate(layoutFile string, partialFiles map[string]string, pageFi
 	return root, nil
 }
 
-func parsePartialTemplates(root *template.Template, partialFiles map[string]string) error {
+func parsePartialTemplates(root *template.Template, partialFiles map[string]string, layout LayoutConfig) error {
 	if len(partialFiles) == 0 {
 		return nil
 	}
@@ -124,7 +124,7 @@ func parsePartialTemplates(root *template.Template, partialFiles map[string]stri
 		if err != nil {
 			return fmt.Errorf("theme: read partial %s: %w", name, err)
 		}
-		source = []byte(preprocessSlotContainers(string(source)))
+		source = []byte(preprocessTemplateSource(string(source), layout))
 		if _, err := root.New(name + ".html").Parse(string(source)); err != nil {
 			return fmt.Errorf("theme: parse partial %s: %w", name, err)
 		}

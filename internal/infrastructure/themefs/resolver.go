@@ -68,6 +68,9 @@ func resolveThemeTemplates(themeDir, boundary string, visited map[string]struct{
 		return theme.ResolvedTemplates{}, err
 	}
 	theme.OverlayTemplatePaths(&merged, templatePaths)
+	if err := overlayLayoutFile(absDir, &merged); err != nil {
+		return theme.ResolvedTemplates{}, err
+	}
 	return merged, nil
 }
 

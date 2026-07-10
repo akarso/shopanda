@@ -1,0 +1,9 @@
+version: "1"
+containers:
+  pdp.info:
+    blocks:
+      - meta
+      - description
+      - composition
+      - detail_grid
+      - actions

@@ -1,6 +1,6 @@
 # Phase 7 — Customization Platform
 
-**Status:** Tracks A–E **shipped** (PR-700–710). **Track F** (PR-711–720) — storefront developer experience — is the active follow-on.
+**Status:** Tracks A–E **shipped** (PR-700–710). **Track F** (PR-711–720) — storefront developer experience — **shipped**.
 
 Phase 7 implements the [Customization Platform spec](specs/CUSTOMIZATION_PLATFORM.md): extension fields, value lifecycle, dynamic hooks/slots, and plugin asset injection — without theme forks or runtime `.so` loading.
 
@@ -9,7 +9,7 @@ Track F maximizes **developer satisfaction** for plugin and theme authors: canon
 ## Roadmap
 
 - [**ROADMAP.md**](ROADMAP.md) — tracks A–F, PR index, validation targets
-- [**PR specs**](prs/README.md) — per-PR implementation notes (PR-700–710 done; 711+ planned)
+- [**PR specs**](prs/README.md) — per-PR implementation notes (PR-700–720 done)
 
 ## Upstream
 
@@ -17,8 +17,4 @@ Track F maximizes **developer satisfaction** for plugin and theme authors: canon
 - [Phase 5 — Mature Commerce](../phase-5-maturity/ROADMAP.md)
 - [Plugin composition guide](../guides/PLUGIN_COMPOSITION.md)
 
-## Suggested next PR
-
-**PR-716** — `layout.yaml` block ordering (stretch).
-
-Track F core + stretch validation is complete (PR-720). Theme author guide: [THEME_SLOTS.md](../guides/THEME_SLOTS.md).
+Track F is **complete** (PR-711–716, 717–720). Theme author guide: [THEME_SLOTS.md](../guides/THEME_SLOTS.md).
