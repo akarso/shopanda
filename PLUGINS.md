@@ -117,6 +117,8 @@ Theme markers use `{{slot_container "anchor"}}…{{/slot_container}}` or explici
 
 For combining multiple plugins (ordering, shared context, checkout-field walkthrough): [Multi-Plugin Composition](docs/guides/PLUGIN_COMPOSITION.md).
 
+**Integrator / ERP work (Phase 8):** cart rules, CSV import transforms, SAP-style inbound REST, warehouse/PIM sync — see [Integrator Platform spec](docs/phase-8-integrator-platform/specs/INTEGRATOR_PLATFORM.md) and [Phase 8 Roadmap](docs/phase-8-integrator-platform/ROADMAP.md). Use explicit ports and pipeline hooks; do not fork core importers or patch `main.go` when `RegisterPublicRoute` suffices.
+
 ---
 
 ## Enable core plugins
@@ -194,6 +196,8 @@ Plugin settings (string, int, bool) can be registered with `RegisterConfig` and 
 ## Reference links
 
 - [Developer Guide](docs/guides/DEVELOPER.md) — architecture, examples, API usage
+- [Integrator Platform spec](docs/phase-8-integrator-platform/specs/INTEGRATOR_PLATFORM.md) — cart/pricing, CSV import hooks, ERP integration (Phase 8)
+- [Phase 8 Roadmap](docs/phase-8-integrator-platform/ROADMAP.md) — integrator platform PR plan
 - [Example external plugin](plugins/example/README.md) — pricing step, event listener, permission
 - [Commercial licensing](docs/COMMERCIAL.md) — OSS vs B2B module boundary
 - [B2B plugin scaffold](plugins/b2b/README.md)

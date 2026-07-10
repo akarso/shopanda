@@ -1,14 +1,32 @@
 # Integrator Platform — Extension Strategy & External Systems
 
-Status: proposal (Phase 8)  
+Status: **published** (Phase 8 Track A — PR-800)  
+Implementation: **in progress** — sections marked **Phase 8** or **Planned** describe APIs not yet shipped; see [ROADMAP](../ROADMAP.md) for PR mapping.  
 Audience: core maintainers, integrators, plugin authors
 
 Related:
 
 - [Phase 8 ROADMAP](../ROADMAP.md)
+- [Plugin Authoring Guide](../../../PLUGINS.md)
+- [Developer Extension Guide](../../guides/DEVELOPER.md)
 - [PLUGIN_COMPOSITION.md](../../guides/PLUGIN_COMPOSITION.md)
 - [PRICING_PIPELINE.md](../../phase-1-core/specs/PRICING_PIPELINE.md)
 - [FOUNDATION.md](../../phase-1-core/specs/FOUNDATION.md) §2.7 — extensibility without chaos
+
+---
+
+## Document map
+
+| Section | Status |
+| --- | --- |
+| §2 Design position, §9 Precedence | **Published** — policy for all Phase 8 work |
+| §3 Port catalog | **Partial** — search/cache/queue/payment/media shipped; tax/mail/shipping planned |
+| §4 Behavioral catalog | **Partial** — pricing/checkout steps and `cart.add_item.after` shipped; positioning and cart hooks planned (Track B) |
+| §5 Import pipelines | **Planned** (Track C) — proposed `app.Import()` API |
+| §6 Inbound integration | **Partial** — `RegisterPublicRoute` / `RegisterAdminRoute` shipped; auth/idempotency middleware planned (Track D) |
+| §7 Outbound integration | **Partial** — events + queue shipped; sync job registration planned (Track E) |
+| §8 Wiring ergonomics | **Planned** (Track F) |
+| §10 Validation | **Phase 8 exit criteria** — not yet achievable end-to-end |
 
 ---
 

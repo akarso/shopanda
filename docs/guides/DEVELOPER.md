@@ -21,6 +21,7 @@ For deployment and operational setup, see [Deployment Guide](DEPLOYMENT.md). For
 - [Theme Slots & Inheritance](THEME_SLOTS.md)
 - [Add Custom CLI Commands](#add-custom-cli-commands)
 - [Use the API Reference](#use-the-api-reference)
+- [Integrator Platform (Phase 8)](#integrator-platform-phase-8)
 - [Roadmap and Future Work](#roadmap-and-future-work)
 - [Practical Advice](#practical-advice)
 
@@ -597,6 +598,29 @@ curl http://localhost:8080/api/v1/admin/orders \
 
 The embedded admin SPA stores its JWT in browser local storage and sends it as a bearer token on API requests. Extension work against admin APIs should continue to use the same bearer-token model rather than inventing a separate admin auth flow.
 
+## Integrator Platform (Phase 8)
+
+**Audience:** agencies and integrators connecting ERP, warehouse, PIM, or custom price/cart rules.
+
+Phase 8 adds first-class seams for **commerce behavior** (positioned pricing steps, cart hooks) and **external systems** (CSV import transforms, inbound REST, outbound sync jobs) — without core forks or Magento-style override folders.
+
+| Resource | Purpose |
+| --- | --- |
+| [Integrator Platform spec](../phase-8-integrator-platform/specs/INTEGRATOR_PLATFORM.md) | Design position, port catalog, import/integration patterns, precedence policy |
+| [Phase 8 Roadmap](../phase-8-integrator-platform/ROADMAP.md) | Tracks A–F, PR index (PR-800+) |
+
+**Shipped today (before Phase 8 implementation PRs):**
+
+- Infrastructure ports: search, cache, queue, payment, media (`RegisterSearchProvider`, …)
+- Behavioral: `RegisterPricingStep`, `RegisterCheckoutStep`, `RegisterCompositionStep`, hook `cart.add_item.after`
+- HTTP: `RegisterPublicRoute`, `RegisterAdminRoute`
+- CSV import: CLI `import:products`, `import:prices`, `import:stock`, `import:categories`, `import:customers`, `import:attributes` (no row-transform hooks yet)
+- Async: events + optional queue drivers
+
+**Planned in Phase 8** (see spec §Document map): pricing step positioning, cart validate hooks, import row pipelines, integration auth/idempotency, outbound sync jobs, registration introspection.
+
+When choosing an extension mechanism, start with [Multi-Plugin Composition](PLUGIN_COMPOSITION.md) for ordering rules; use the integrator spec when the task involves ERP/PIM/warehouse wiring or CSV pre-persist transforms.
+
 ## Roadmap and Future Work
 
 Phases 1–7 are **complete**. **Phase 7 — Customization Platform** shipped PR-700–720 (extension fields, hooks/slots, assets, GraphQL parity, storefront DX).
@@ -605,9 +629,9 @@ Phases 1–7 are **complete**. **Phase 7 — Customization Platform** shipped PR
 | --- | --- |
 | 6 (done) | Merchant-complete admin UI (PR-600–651) |
 | 7 (done) | Customization platform (PR-700–720) |
-| 8 (planned) | Integrator platform — cart/pricing seams, CSV import hooks, inbound/outbound ERP integration (PR-800+) |
+| 8 (in progress) | Integrator platform — cart/pricing seams, CSV import hooks, inbound/outbound ERP integration (PR-800+) |
 
-Full plans: [Phase 5 Roadmap](../phase-5-maturity/ROADMAP.md) · [Phase 6 Roadmap](../phase-6-merchant-complete/ROADMAP.md) · [Phase 7 Roadmap](../phase-7-customization-platform/ROADMAP.md) · [Phase 8 Roadmap](../phase-8-integrator-platform/ROADMAP.md). EU mapping: [Compliance Reference](../phase-5-maturity/specs/COMPLIANCE_EU.md). Plugin loading: [Dynamic loading research](../phase-5-maturity/specs/DYNAMIC_PLUGIN_LOADING.md).
+Full plans: [Phase 5 Roadmap](../phase-5-maturity/ROADMAP.md) · [Phase 6 Roadmap](../phase-6-merchant-complete/ROADMAP.md) · [Phase 7 Roadmap](../phase-7-customization-platform/ROADMAP.md) · [Phase 8 Roadmap](../phase-8-integrator-platform/ROADMAP.md) · [Integrator Platform spec](../phase-8-integrator-platform/specs/INTEGRATOR_PLATFORM.md). EU mapping: [Compliance Reference](../phase-5-maturity/specs/COMPLIANCE_EU.md). Plugin loading: [Dynamic loading research](../phase-5-maturity/specs/DYNAMIC_PLUGIN_LOADING.md).
 
 When extending the platform, keep hexagonal rules: domain ports first, explicit wiring, plugin only when behavior is optional or author-owned.
 
