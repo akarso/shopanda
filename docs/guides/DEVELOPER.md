@@ -619,7 +619,8 @@ Phase 8 adds first-class seams for **commerce behavior** (positioned pricing ste
 
 **Shipped in Phase 8 (Track A):**
 
-- Port introspection: `GET /api/v1/admin/extensions/ports` (infrastructure backends + planned ports; PR-801)
+- Port introspection: `GET /api/v1/admin/extensions/ports` (PR-801)
+- Precedence policy + integrator composition patterns: [PLUGIN_COMPOSITION.md](PLUGIN_COMPOSITION.md) (PR-802)
 
 **Planned in Phase 8** (see spec §Document map): pricing step positioning, cart validate hooks, import row pipelines, integration auth/idempotency, outbound sync jobs, full registration report (PR-851).
 
