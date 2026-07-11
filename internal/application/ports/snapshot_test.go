@@ -110,6 +110,17 @@ func TestBuildSnapshot_UnconfiguredRedisCache(t *testing.T) {
 	}
 }
 
+func TestBuildSnapshot_NilApp(t *testing.T) {
+	snap := ports.BuildSnapshot(nil, testConfig())
+	if len(snap.Ports) == 0 {
+		t.Fatal("expected ports from catalog")
+	}
+	search := indexPorts(snap.Ports)["search"]
+	if search.Status != ports.StatusCoreDefault {
+		t.Fatalf("search status = %q with nil app", search.Status)
+	}
+}
+
 func TestCatalog_IncludesShippedPorts(t *testing.T) {
 	names := make(map[string]struct{})
 	for _, entry := range ports.Catalog() {

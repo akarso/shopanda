@@ -47,7 +47,11 @@ type Snapshot struct {
 
 // BuildSnapshot inspects plugin registration and config to produce a port report.
 // It mirrors resolution rules in cmd/api/providers.go without requiring DB handles.
+// app and cfg may be nil; nil app is treated as an empty plugin.App.
 func BuildSnapshot(app *plugin.App, cfg *config.Config) Snapshot {
+	if app == nil {
+		app = &plugin.App{}
+	}
 	if cfg == nil {
 		cfg = &config.Config{}
 	}

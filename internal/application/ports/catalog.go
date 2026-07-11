@@ -37,7 +37,7 @@ func Catalog() []CatalogEntry {
 		{
 			Name:        "payment",
 			RegisterAPI: "RegisterPaymentProvider",
-			ConfigKey:   "payment.stripe.enabled",
+			ConfigKey:   "payment.providers",
 			Notes:       "Payment providers by method (manual, stripe, …); multiple may register",
 			Shipped:     true,
 		},
