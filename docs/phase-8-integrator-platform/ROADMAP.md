@@ -229,7 +229,7 @@ Recommended order: **A (800–802)** → **B (810–814)** and **C (820–823)**
 | PR | Track | License | One-liner |
 | --- | --- | --- | --- |
 | 800 | A | [oss] | Integrator platform spec publish (done) |
-| 801 | A | [oss] | Port catalog + introspection |
+| 801 | A | [oss] | Port catalog + introspection (done) |
 | 802 | A | [oss] | Precedence policy + composition guide |
 | 810 | B | [oss] | Pricing step positioning |
 | 811 | B | [oss] | Cart lifecycle hooks |

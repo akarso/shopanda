@@ -20,7 +20,7 @@ Related:
 | Section | Status |
 | --- | --- |
 | §2 Design position, §9 Precedence | **Published** — policy for all Phase 8 work |
-| §3 Port catalog | **Partial** — search/cache/queue/payment/media shipped; tax/mail/shipping planned |
+| §3 Port catalog | **Partial** — search/cache/queue/payment/media shipped; introspection at `GET /api/v1/admin/extensions/ports` (PR-801); tax/mail/shipping planned |
 | §4 Behavioral catalog | **Partial** — pricing/checkout steps and `cart.add_item.after` shipped; positioning and cart hooks planned (Track B) |
 | §5 Import pipelines | **Planned** (Track C) — proposed `app.Import()` API |
 | §6 Inbound integration | **Partial** — `RegisterPublicRoute` / `RegisterAdminRoute` shipped; auth/idempotency middleware planned (Track D) |
@@ -104,6 +104,8 @@ Single active implementation per port unless noted.
 | Address validation | `RegisterAddressValidator` | Backlog | Optional ERP validation |
 
 Config + `register_plugins.go` choose the winner. Conflicting double registration panics at startup (fail fast).
+
+**Introspection:** `GET /api/v1/admin/extensions/ports` (requires `extensions.read`) returns the catalog with runtime status (`active`, `core_default`, `unconfigured`, `planned`) and implementation types. Built at startup from plugin registration + config (mirrors `cmd/api/providers.go`).
 
 ---
 
