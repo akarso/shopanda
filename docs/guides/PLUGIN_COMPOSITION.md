@@ -124,16 +124,18 @@ Use this table before writing code. Full design rationale: [Integrator Platform 
 
 ## Cart and pricing composition
 
-Cart mutations follow a fixed core flow: **mutate cart → recalculate → pricing pipeline → persist**. Plugins extend this without patching `cart.Service`.
+Cart mutations follow a fixed core flow: **mutate cart → recalculate → pricing pipeline → persist** (add-item also runs extension upsert before persist when values are supplied). On add, the shipped `cart.add_item.after` hook runs **after persist**. Plugins extend this without patching `cart.Service`.
 
 ```text
 add / update / remove / coupon
   └─ [planned] cart.*.before hooks
-  └─ core mutation
-  └─ [shipped] cart.add_item.after hook
+  └─ core mutation (in memory)
   └─ recalculate
        └─ [planned] cart.recalculate.before → inject PricingContext.Meta
        └─ pricing pipeline (core steps + RegisterPricingStep)
+  └─ extension value upsert (add path, when provided)
+  └─ persist
+  └─ [shipped] cart.add_item.after hook (add path only)
   └─ [planned] cart.validate → structured storefront errors
 ```
 
@@ -162,7 +164,7 @@ Until then, use `RegisterCheckoutStep` for hard blocks at checkout or enforce vi
 
 ### Pattern: capture side effect after add (shipped)
 
-`cart.add_item.after` runs after successful add + recalculate — use for extension value capture or cross-sell meta:
+`cart.add_item.after` runs after successful add, recalculate, and persist — use for post-add side effects (extension capture, cross-sell meta). The hook receives the saved cart in payload (`cart` key).
 
 ```go
 app.Hooks("acme/engraving").Register(extapi.HookCartAddItemAfter, 100, handler)
@@ -254,7 +256,7 @@ When two teams (or plugins) extend the **same seam**, resolution is explicit —
 | **Public/admin route** | First registered pattern wins; duplicate panics | Use `/api/v1/integrations/{plugin}/…` prefix per vendor |
 | **Conflicting business rules** | No automatic merge | Integrator adjusts priorities or disables one plugin |
 
-**Compile-time vs runtime:** `register_plugins.go` order affects **Init** (who registers fields, routes, handlers). It does **not** define runtime pipeline/hook sequence — use priority APIs.
+**Compile-time vs runtime:** `register_plugins.go` order affects **Init** (who registers fields, routes, handlers). It does **not** assign hook priorities. For **append-only pipelines** (pricing, checkout today), the order each plugin calls `RegisterPricingStep` / `RegisterCheckoutStep` during Init is the runtime execution order for plugin steps. For **hooks** (and pipelines once positioning ships), use explicit **priority** or `before:`/`after:` APIs — lower hook priority runs first.
 
 **Fail fast:** Double infrastructure registration and duplicate HTTP patterns panic at startup rather than silently overriding.
 
