@@ -36,7 +36,7 @@ type App struct {
 	Config    *config.Config
 	Bootstrap *Bootstrap
 
-	pricingSteps     []any
+	pricingSteps     []pricingStepRegistration
 	checkoutSteps    []any
 	compositionSteps map[string][]any
 
@@ -65,15 +65,6 @@ type App struct {
 	assetRegistryMu sync.Mutex
 }
 
-// RegisterPricingStep registers a pricing pipeline step.
-// The step must implement pricing.PricingStep.
-func (a *App) RegisterPricingStep(step any) {
-	if step == nil {
-		panic("plugin: pricing step must not be nil")
-	}
-	a.pricingSteps = append(a.pricingSteps, step)
-}
-
 // RegisterCheckoutStep registers a checkout workflow step.
 // The step must implement checkout.Step.
 func (a *App) RegisterCheckoutStep(step any) {
@@ -97,11 +88,6 @@ func (a *App) RegisterCompositionStep(pipeline string, step any) {
 		a.compositionSteps = make(map[string][]any)
 	}
 	a.compositionSteps[pipeline] = append(a.compositionSteps[pipeline], step)
-}
-
-// PricingSteps returns a copy of the registered pricing steps.
-func (a *App) PricingSteps() []any {
-	return append([]any(nil), a.pricingSteps...)
 }
 
 // CheckoutSteps returns a copy of the registered checkout steps.
