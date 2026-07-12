@@ -32,10 +32,20 @@ func (c *HookContext) Set(key string, value interface{}) {
 	c.Payload[key] = value
 }
 
-const HookCartAddItemAfter HookPoint = "cart.add_item.after"
+const (
+	HookCartAddItemBefore      HookPoint = "cart.add_item.before"
+	HookCartAddItemAfter       HookPoint = "cart.add_item.after"
+	HookCartUpdateItemBefore   HookPoint = "cart.update_item.before"
+	HookCartRemoveItemAfter    HookPoint = "cart.remove_item.after"
+	HookCartRecalculateBefore  HookPoint = "cart.recalculate.before"
+)
 
 var hookPoints = []HookPoint{
+	HookCartAddItemBefore,
 	HookCartAddItemAfter,
+	HookCartUpdateItemBefore,
+	HookCartRemoveItemAfter,
+	HookCartRecalculateBefore,
 }
 
 // HookPoints returns all documented stable hook point names.

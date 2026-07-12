@@ -232,7 +232,7 @@ Recommended order: **A (800–802)** → **B (810–814)** and **C (820–823)**
 | 801 | A | [oss] | Port catalog + introspection (done) |
 | 802 | A | [oss] | Precedence policy + composition guide (done) |
 | 810 | B | [oss] | Pricing step positioning (done) |
-| 811 | B | [oss] | Cart lifecycle hooks |
+| 811 | B | [oss] | Cart lifecycle hooks (done) |
 | 812 | B | [oss] | Cart validate chain |
 | 813 | B | [oss] | Tax calculator port |
 | 814 | B | [oss] | Reference plugin: cart rule |

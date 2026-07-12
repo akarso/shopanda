@@ -108,7 +108,7 @@ Use this table before writing code. Full design rationale: [Integrator Platform 
 | Task | Mechanism | Ordering | Status |
 | --- | --- | --- | --- |
 | Custom fee / cart price rule | `RegisterPricingStep` | `before:` / `after:` anchors (PR-810) | Shipped |
-| Block or validate cart mutation | Cart hook chain (`cart.validate`, `cart.add_item.before`, …) | Lower priority runs first | Partial (`cart.add_item.after` shipped) |
+| Block or validate cart mutation | Cart hook chain (`cart.add_item.before`, `cart.update_item.before`, …) | Lower priority runs first | Partial (`cart.validate` planned PR-812) |
 | Custom checkout validation | `RegisterCheckoutStep` | Anchor positions planned | Shipped (append-only) |
 | ERP CSV column remap before DB write | Import row hook (`import.product.row`, …) | Lower priority runs first | Planned (Track C) |
 | SAP / ERP inbound REST callback | `RegisterPublicRoute` + integration auth middleware | Route per plugin | Routes shipped; auth planned (Track D) |
@@ -128,15 +128,15 @@ Cart mutations follow a fixed core flow: **mutate cart → recalculate → prici
 
 ```text
 add / update / remove / coupon
-  └─ [planned] cart.*.before hooks
+  └─ [shipped] cart.add_item.before hook
   └─ core mutation (in memory)
   └─ recalculate
-       └─ [planned] cart.recalculate.before → inject PricingContext.Meta
+       └─ [shipped] cart.recalculate.before → inject PricingContext.Meta via pricing_meta map
        └─ pricing pipeline (core steps + RegisterPricingStep)
   └─ extension value upsert (add path, when provided)
   └─ persist
   └─ [shipped] cart.add_item.after hook (add path only)
-  └─ [planned] cart.validate → structured storefront errors
+  └─ [shipped] cart.remove_item.after hook (remove path only)
 ```
 
 ### Pattern: custom price rule (two plugins)
@@ -148,19 +148,18 @@ add / update / remove / coupon
 
 Both steps read `PricingContext` and append `Adjustments`. They must **not** import each other — share context via `PricingContext.Meta` keys documented in README (e.g. `acme.assortment_tier`).
 
-### Pattern: block add-to-cart (planned hook)
+### Pattern: block add-to-cart (shipped)
 
-When `cart.add_item.before` ships (PR-811), register validation that returns an error to stop the mutation:
+Register validation on `cart.add_item.before` that returns an error to stop the mutation:
 
 ```go
-// Planned API (Track B — PR-811):
-app.Hooks("acme/assortment").Register("cart.add_item.before", 100, func(hctx *extapi.HookContext) error {
+app.Hooks("acme/assortment").Register(extapi.HookCartAddItemBefore, 100, func(hctx *extapi.HookContext) error {
     // read variant_id, qty from hctx.Payload; return error to block
     return nil
 })
 ```
 
-Until then, use `RegisterCheckoutStep` for hard blocks at checkout or enforce via pricing/adjustments.
+For update/remove, use `HookCartUpdateItemBefore` and `HookCartRemoveItemAfter` respectively.
 
 ### Pattern: capture side effect after add (shipped)
 

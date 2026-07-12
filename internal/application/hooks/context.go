@@ -44,9 +44,28 @@ func (c *Context) Set(key string, value interface{}) {
 }
 
 const (
+	// HookCartAddItemBefore runs before a cart line is added (mutation not yet applied).
+	HookCartAddItemBefore = "cart.add_item.before"
 	// HookCartAddItemAfter runs after a cart line is persisted.
 	HookCartAddItemAfter = "cart.add_item.after"
+	// HookCartUpdateItemBefore runs before an item quantity is updated.
+	HookCartUpdateItemBefore = "cart.update_item.before"
+	// HookCartRemoveItemAfter runs after an item is removed and the cart is persisted.
+	HookCartRemoveItemAfter = "cart.remove_item.after"
+	// HookCartRecalculateBefore runs before the pricing pipeline during cart recalculate.
+	HookCartRecalculateBefore = "cart.recalculate.before"
 )
+
+// CartHookPoints returns documented cart lifecycle hook names (stable ordering).
+func CartHookPoints() []string {
+	return []string{
+		HookCartAddItemBefore,
+		HookCartAddItemAfter,
+		HookCartUpdateItemBefore,
+		HookCartRemoveItemAfter,
+		HookCartRecalculateBefore,
+	}
+}
 
 var hookNamePattern = regexp.MustCompile(`^[a-z][a-z0-9_]*(\.[a-z][a-z0-9_]*)+$`)
 

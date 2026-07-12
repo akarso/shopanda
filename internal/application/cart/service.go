@@ -281,6 +281,10 @@ func (s *Service) AddItem(ctx context.Context, cartID, customerID, variantID str
 		return nil, err
 	}
 
+	if err := s.invokeCartItemBeforeHook(ctx, hooks.HookCartAddItemBefore, cartID, customerID, variantID, quantity, c); err != nil {
+		return nil, err
+	}
+
 	if err := c.AddItem(variantID, quantity, price); err != nil {
 		return nil, apperror.Wrap(apperror.CodeValidation, "cannot add item", err)
 	}
@@ -311,14 +315,8 @@ func (s *Service) AddItem(ctx context.Context, cartID, customerID, variantID str
 		Quantity:  quantity,
 	}))
 	if s.hooks != nil {
-		hookCtx := hooks.NewContext(hooks.HookCartAddItemAfter)
-		hookCtx.Set("cart_id", c.ID)
-		hookCtx.Set("customer_id", customerID)
-		hookCtx.Set("variant_id", variantID)
-		hookCtx.Set("quantity", quantity)
-		hookCtx.Set("cart", c)
-		if err := s.hooks.Invoke(ctx, hookCtx); err != nil {
-			return nil, fmt.Errorf("cart service: add item hook: %w", err)
+		if err := s.invokeCartItemAfterHook(ctx, hooks.HookCartAddItemAfter, c.ID, customerID, variantID, quantity, c); err != nil {
+			return nil, err
 		}
 	}
 	return c, nil
@@ -335,6 +333,10 @@ func (s *Service) UpdateItemQuantity(ctx context.Context, cartID, customerID, va
 	}
 	if c.CustomerID != customerID {
 		return nil, apperror.Forbidden("cannot modify another customer's cart")
+	}
+
+	if err := s.invokeCartItemBeforeHook(ctx, hooks.HookCartUpdateItemBefore, cartID, customerID, variantID, quantity, c); err != nil {
+		return nil, err
 	}
 
 	if err := c.UpdateItemQuantity(variantID, quantity); err != nil {
@@ -402,6 +404,11 @@ func (s *Service) RemoveItem(ctx context.Context, cartID, customerID, variantID 
 		CartID:    c.ID,
 		VariantID: variantID,
 	}))
+	if s.hooks != nil {
+		if err := s.invokeCartItemAfterHook(ctx, hooks.HookCartRemoveItemAfter, c.ID, customerID, variantID, 0, c); err != nil {
+			return nil, err
+		}
+	}
 	return c, nil
 }
 
@@ -410,6 +417,18 @@ func (s *Service) RemoveItem(ctx context.Context, cartID, customerID, variantID 
 func (s *Service) recalculate(ctx context.Context, c *domainCart.Cart) error {
 	if len(c.Items) == 0 {
 		return nil
+	}
+
+	pricingMeta := make(map[string]interface{})
+	if s.hooks != nil {
+		hookCtx := hooks.NewContext(hooks.HookCartRecalculateBefore)
+		hookCtx.Set("cart_id", c.ID)
+		hookCtx.Set("customer_id", c.CustomerID)
+		hookCtx.Set("cart", c)
+		hookCtx.Set("pricing_meta", pricingMeta)
+		if err := s.invokeCartHook(ctx, hooks.HookCartRecalculateBefore, hookCtx); err != nil {
+			return err
+		}
 	}
 
 	pctx, err := pricing.NewPricingContext(c.Currency)
@@ -430,6 +449,9 @@ func (s *Service) recalculate(ctx context.Context, c *domainCart.Cart) error {
 	}
 	if c.CustomerID != "" {
 		pctx.Meta["customer_id"] = c.CustomerID
+	}
+	for k, v := range pricingMeta {
+		pctx.Meta[k] = v
 	}
 
 	// Propagate store scope and storefront tax defaults when the request has

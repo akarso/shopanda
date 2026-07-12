@@ -622,6 +622,7 @@ Phase 8 adds first-class seams for **commerce behavior** (positioned pricing ste
 - Port introspection: `GET /api/v1/admin/extensions/ports` (PR-801)
 - Precedence policy + integrator composition patterns: [PLUGIN_COMPOSITION.md](PLUGIN_COMPOSITION.md) (PR-802)
 - Pricing step positioning: `RegisterPricingStep(step, "after:promotions")` — see `pkg/extapi` (PR-810)
+- Cart lifecycle hooks: `cart.add_item.before`, `cart.update_item.before`, `cart.remove_item.after`, `cart.recalculate.before` — see `pkg/extapi` (PR-811)
 
 **Planned in Phase 8** (see spec §Document map): cart validate hooks, import row pipelines, integration auth/idempotency, outbound sync jobs, full registration report (PR-851).
 
