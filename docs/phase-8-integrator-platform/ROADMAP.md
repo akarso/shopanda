@@ -230,7 +230,7 @@ Recommended order: **A (800–802)** → **B (810–814)** and **C (820–823)**
 | --- | --- | --- | --- |
 | 800 | A | [oss] | Integrator platform spec publish (done) |
 | 801 | A | [oss] | Port catalog + introspection (done) |
-| 802 | A | [oss] | Precedence policy + composition guide |
+| 802 | A | [oss] | Precedence policy + composition guide (done) |
 | 810 | B | [oss] | Pricing step positioning |
 | 811 | B | [oss] | Cart lifecycle hooks |
 | 812 | B | [oss] | Cart validate chain |

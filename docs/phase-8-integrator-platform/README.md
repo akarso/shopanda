@@ -1,6 +1,6 @@
 # Phase 8 — Integrator Platform
 
-**Status:** Track A **in progress** (PR-800 shipped; PR-801+ planned).
+**Status:** Track A **complete** (PR-800–802). Track B+ planned.
 
 Phase 8 closes the gap between **Magento-level customization freedom** and **Go-native explicit wiring**. Integrators and agencies must be able to change cart and pricing behavior, transform CSV imports before persistence, expose REST endpoints for ERP systems (SAP, etc.), and call external GraphQL/REST APIs (warehouse, PIM) — **without forking core**.
 

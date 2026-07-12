@@ -19,7 +19,7 @@ Related:
 
 | Section | Status |
 | --- | --- |
-| §2 Design position, §9 Precedence | **Published** — policy for all Phase 8 work |
+| §2 Design position, §9 Precedence | **Published** — policy in spec; practical guide in [PLUGIN_COMPOSITION.md](../../guides/PLUGIN_COMPOSITION.md) (PR-802) |
 | §3 Port catalog | **Partial** — search/cache/queue/payment/media shipped; introspection at `GET /api/v1/admin/extensions/ports` (PR-801); tax/mail/shipping planned |
 | §4 Behavioral catalog | **Partial** — pricing/checkout steps and `cart.add_item.after` shipped; positioning and cart hooks planned (Track B) |
 | §5 Import pipelines | **Planned** (Track C) — proposed `app.Import()` API |
@@ -266,7 +266,9 @@ Integrator owns **`cmd/api/register_plugins.go`** ordering for init; runtime han
 
 ## 9) Multi-team precedence
 
-When two plugins extend the same seam:
+When two plugins extend the same seam, resolution is **explicit** — no preference XML.
+
+**Practical guide:** [Multi-Plugin Composition §Multi-team precedence](../../guides/PLUGIN_COMPOSITION.md#multi-team-precedence) (PR-802).
 
 | Seam type | Resolution |
 | --- | --- |

@@ -115,7 +115,7 @@ Theme markers use `{{slot_container "anchor"}}…{{/slot_container}}` or explici
 
 **Reference plugin:** [plugins/slotsdemo](plugins/slotsdemo/README.md) — layout + PDP slot renderers with integration tests.
 
-For combining multiple plugins (ordering, shared context, checkout-field walkthrough): [Multi-Plugin Composition](docs/guides/PLUGIN_COMPOSITION.md).
+For combining multiple plugins (ordering, shared context, cart/import/ERP patterns): [Multi-Plugin Composition](docs/guides/PLUGIN_COMPOSITION.md).
 
 **Integrator / ERP work (Phase 8):** cart rules, CSV import transforms, SAP-style inbound REST, warehouse/PIM sync — see [Integrator Platform spec](docs/phase-8-integrator-platform/specs/INTEGRATOR_PLATFORM.md) and [Phase 8 Roadmap](docs/phase-8-integrator-platform/ROADMAP.md). Use explicit ports and pipeline hooks; do not fork core importers or patch `main.go` when `RegisterPublicRoute` suffices.
 

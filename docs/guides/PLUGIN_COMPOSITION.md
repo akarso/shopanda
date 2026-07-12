@@ -3,13 +3,15 @@
 How multiple plugins combine behavior without inheriting core classes or calling each other directly.
 
 Audience: plugin authors, integrators  
-Status: design guide (partially implemented today; hook registry is proposed)
+Status: design guide (Phase 7 hooks/slots/extensions shipped; Phase 8 cart/import/integration patterns documented — some APIs still planned)
 
 Related:
 
 - [Plugin Authoring Guide](../../PLUGINS.md)
 - [Developer Extension Guide](DEVELOPER.md)
+- [Integrator Platform spec](../phase-8-integrator-platform/specs/INTEGRATOR_PLATFORM.md) — architecture, port catalog, acceptance criteria
 - [Customization Platform spec](../phase-6-merchant-complete/specs/CUSTOMIZATION_PLATFORM.md)
+- [Extension API policy](EXTENSION_API.md)
 
 ---
 
@@ -64,22 +66,30 @@ Plugins register steps during `Init`:
 - `RegisterCheckoutStep` — validation or side effects during checkout
 - `RegisterCompositionStep("pdp"|"plp", …)` — enrich API/storefront responses
 
-Each step receives a **mutable context** and runs in registration order (core steps first, then plugin steps appended today).
+Each step receives a **mutable context** and runs in registration order (core steps first, then plugin steps appended today). Step positioning (`before:` / `after:`) is planned in Phase 8 Track B (PR-810+).
 
-Checkout context already supports cross-step data:
+### Hooks (Phase 7)
+
+Dynamic hook registry is **shipped**. Plugins register during `Init` via `app.Hooks("<registrant>")`:
 
 ```go
-// internal/application/checkout/context.go
-type Context struct {
-    CartID, CustomerID, Currency string
-    Cart   *cart.Cart
-    Input  Input
-    Order  *order.Order
-    Meta   map[string]interface{} // shared between steps in one run
-}
+app.Hooks("acme/rules").Register(extapi.HookCartAddItemAfter, 100, func(hctx *extapi.HookContext) error {
+    // read/write hctx.Payload; lower priority runs first
+    return nil
+})
 ```
 
-Pricing context works the same way — checkout copies relevant meta into `PricingContext.Meta` before running the pricing pipeline. The B2B group-price step reads `customer_id` from meta without importing another plugin.
+Stable v0 hook points: see [`pkg/extapi`](../../pkg/extapi) and `GET /api/v1/admin/extensions/hooks`. Additional cart lifecycle hooks (`cart.add_item.before`, `cart.validate`, …) are planned in Phase 8 Track B.
+
+Use hooks when the extension point is not already a first-class pipeline (e.g. reacting after add-to-cart, composing checkout fields in one render pass).
+
+### Extension fields, slots, assets (Phase 7)
+
+- **Extension fields** — `app.Extensions().RegisterField(...)`; values via REST/GraphQL; cart → order snapshot at checkout
+- **Slots** — `app.Slots("<registrant>").RegisterRenderer(anchor, placement, priority, fn)`
+- **Assets** — `app.Assets().RegisterManifest(...)` for route-gated CSS/JS
+
+Catalog endpoints: `GET /api/v1/admin/extensions/fields`, `/hooks`, `/slots`. Infrastructure ports: `GET /api/v1/admin/extensions/ports` (PR-801).
 
 ### Plugin init order
 
@@ -87,9 +97,168 @@ Pricing context works the same way — checkout copies relevant meta into `Prici
 
 Optional future enhancement: `depends_on` in plugin config to guarantee init order when plugin B registers handlers that assume plugin A's field definitions exist. Still not a runtime chain.
 
-### Proposed: hook registry
+Checkout and pricing contexts support cross-step data via `Meta` maps — the B2B group-price step reads `customer_id` from `PricingContext.Meta` without importing another plugin.
 
-The [Customization Platform spec](../phase-6-merchant-complete/specs/CUSTOMIZATION_PLATFORM.md) adds named hooks with ordered handlers and a shared `HookContext`. Use hooks when the extension point is not already a first-class pipeline (e.g. composing checkout form fields in one render pass).
+---
+
+## Integrator task → mechanism
+
+Use this table before writing code. Full design rationale: [Integrator Platform spec §2–§7](../phase-8-integrator-platform/specs/INTEGRATOR_PLATFORM.md).
+
+| Task | Mechanism | Ordering | Status |
+| --- | --- | --- | --- |
+| Custom fee / cart price rule | `RegisterPricingStep` | Registration order today; `before:`/`after:` planned (PR-810) | Shipped (append-only) |
+| Block or validate cart mutation | Cart hook chain (`cart.validate`, `cart.add_item.before`, …) | Lower priority runs first | Partial (`cart.add_item.after` shipped) |
+| Custom checkout validation | `RegisterCheckoutStep` | Anchor positions planned | Shipped (append-only) |
+| ERP CSV column remap before DB write | Import row hook (`import.product.row`, …) | Lower priority runs first | Planned (Track C) |
+| SAP / ERP inbound REST callback | `RegisterPublicRoute` + integration auth middleware | Route per plugin | Routes shipped; auth planned (Track D) |
+| Warehouse / PIM outbound sync | Sync job + events/queue | Job registration order | Planned (Track E) |
+| Replace search / cache / tax backend | Infrastructure port (`RegisterSearchProvider`, …) | Config picks one winner | Partial (ports shipped; tax planned) |
+| Enrich PDP from external PIM | `RegisterCompositionStep("pdp", …)` + cached fetch | Pipeline order | Shipped |
+| Durable custom line data | Extension field on `cart_item` → snapshot `order_item` | Registry + ACL | Shipped (Phase 7) |
+| Notify after order placed | `Bus.OnAsync("order.created", …)` | No order guarantee | Shipped |
+
+**Rule:** Same HTTP request → pipeline or hook chain. Cross-request durable data → extension fields. Side effects / fan-out → events or sync jobs.
+
+---
+
+## Cart and pricing composition
+
+Cart mutations follow a fixed core flow: **mutate cart → recalculate → pricing pipeline → persist** (add-item also runs extension upsert before persist when values are supplied). On add, the shipped `cart.add_item.after` hook runs **after persist**. Plugins extend this without patching `cart.Service`.
+
+```text
+add / update / remove / coupon
+  └─ [planned] cart.*.before hooks
+  └─ core mutation (in memory)
+  └─ recalculate
+       └─ [planned] cart.recalculate.before → inject PricingContext.Meta
+       └─ pricing pipeline (core steps + RegisterPricingStep)
+  └─ extension value upsert (add path, when provided)
+  └─ persist
+  └─ [shipped] cart.add_item.after hook (add path only)
+  └─ [planned] cart.validate → structured storefront errors
+```
+
+### Pattern: custom price rule (two plugins)
+
+| Plugin | Mechanism | Priority / position |
+| --- | --- | --- |
+| `acme/volume-discount` | `RegisterPricingStep` — quantity tiers | After promotions (PR-810) or last in chain today |
+| `acme/handling-fee` | `RegisterPricingStep` — flat fee | After volume discount |
+
+Both steps read `PricingContext` and append `Adjustments`. They must **not** import each other — share context via `PricingContext.Meta` keys documented in README (e.g. `acme.assortment_tier`).
+
+### Pattern: block add-to-cart (planned hook)
+
+When `cart.add_item.before` ships (PR-811), register validation that returns an error to stop the mutation:
+
+```go
+// Planned API (Track B — PR-811):
+app.Hooks("acme/assortment").Register("cart.add_item.before", 100, func(hctx *extapi.HookContext) error {
+    // read variant_id, qty from hctx.Payload; return error to block
+    return nil
+})
+```
+
+Until then, use `RegisterCheckoutStep` for hard blocks at checkout or enforce via pricing/adjustments.
+
+### Pattern: capture side effect after add (shipped)
+
+`cart.add_item.after` runs after successful add, recalculate, and persist — use for post-add side effects (extension capture, cross-sell meta). The hook receives the saved cart in payload (`cart` key).
+
+```go
+app.Hooks("acme/engraving").Register(extapi.HookCartAddItemAfter, 100, handler)
+```
+
+Inspect active handlers: `GET /api/v1/admin/extensions/hooks`.
+
+---
+
+## Import composition (planned — Track C)
+
+**Problem:** ERP CSV files use foreign column names; forking `internal/application/importer` breaks on upgrades.
+
+**Model:** one ordered row hook chain per entity, invoked after header validation and **before** repository write.
+
+```text
+CLI import:products file.csv
+  └─ parse headers
+  └─ for each row:
+       └─ ImportContext{Entity, Row map, RowIndex, Meta}
+       └─ plugin row hooks (priority order)
+       └─ core persist (or skip row / collect errors)
+```
+
+| Entity | CLI | Hook name (planned) |
+| --- | --- | --- |
+| Products | `import:products` | `import.product.row` |
+| Prices | `import:prices` | `import.price.row` |
+| Stock | `import:stock` | `import.stock.row` |
+
+**Composition rules:**
+
+- Handlers mutate `Row map[string]string` in place — remap ERP columns to core columns (`MATNR` → `sku`).
+- Use `Meta` for job-scoped scratch (store ID, import batch ID); do not store row data only in Meta.
+- Lower priority runs first; later hooks see earlier normalizations.
+- Return error to fail the row; set `Skip` (planned API) to skip without error.
+- **Do not** register competing importers — extend the chain.
+
+**Multi-plugin example:** Plugin A maps column names (priority 100); Plugin B validates attribute enums (priority 200); Plugin C enriches from external ID lookup via Meta cache (priority 300).
+
+---
+
+## Integration composition
+
+### Inbound (ERP → Shopanda)
+
+**Today:** `RegisterPublicRoute` mounts handlers after `InitAll` — no `main.go` edit.
+
+**Planned (Track D):** conventions under `/api/v1/integrations/{plugin}/…`, API-key/HMAC middleware, `Idempotency-Key` dedupe, HMAC replay protection (separate from idempotency).
+
+| Concern | Composition approach |
+| --- | --- |
+| Route namespace | Prefix `/api/v1/integrations/acme/…` — one plugin owns its tree |
+| Duplicate POST retries | Idempotency store keyed by `Idempotency-Key` |
+| Replay attacks on signed requests | HMAC middleware: timestamp + nonce + replay store |
+| Business logic | Thin handler → application service; no direct `postgres` imports from `plugins/*` |
+
+Multiple ERP plugins each register **disjoint route prefixes** — no shared handler chain. Conflicts on the same pattern fail at startup (duplicate route registration).
+
+### Outbound (Shopanda → warehouse / PIM)
+
+**Today:** `Bus.OnAsync` + queue port for retries; `RegisterCompositionStep` for read-path enrichment.
+
+**Planned (Track E):** `RegisterSyncJob` with cron or event triggers.
+
+| Pattern | Mechanism | Ordering |
+| --- | --- | --- |
+| Push order to ERP on create | `order.created` event → async HTTP POST | Events unordered — handler must be idempotent |
+| Pull stock every 5m | Sync job (planned) | One job per plugin registration |
+| Enrich PDP from PIM GraphQL | `RegisterCompositionStep("pdp", …)` | Pipeline order; cache externally |
+
+Outbound plugins **must not** import each other's clients. Share lookup tables via extension fields or documented DB views exposed through application services — not cross-plugin Go imports.
+
+---
+
+## Multi-team precedence
+
+When two teams (or plugins) extend the **same seam**, resolution is explicit — there is no Magento-style preference XML.
+
+| Seam type | Who wins | Integrator action |
+| --- | --- | --- |
+| **Infrastructure port** | One implementation per port; second `Register*` panics at startup | Pick driver in config; enable one core plugin per slot. Inspect: `GET /api/v1/admin/extensions/ports` |
+| **Pricing / checkout step** | Ordered chain; first core steps then plugin steps | Set priority / `before:`/`after:` when API ships; document order in project README |
+| **Hook chain** | Lower priority number runs first | Assign non-overlapping priority bands per team (e.g. 100–199 team A, 200–299 team B) |
+| **Import row hook** | Same as hook chain (planned) | Same priority band discipline |
+| **Extension field** | Field codes are global; first registration wins | Namespace codes (`vendor.feature.field`); coordinate via registry API |
+| **Slot renderer** | Registration order within placement | Priority integer on `RegisterRenderer` |
+| **Theme** | Child theme overrides parent templates | Slot markers preserved by convention — see [THEME_SLOTS.md](THEME_SLOTS.md) |
+| **Public/admin route** | First registered pattern wins; duplicate panics | Use `/api/v1/integrations/{plugin}/…` prefix per vendor |
+| **Conflicting business rules** | No automatic merge | Integrator adjusts priorities or disables one plugin |
+
+**Compile-time vs runtime:** `register_plugins.go` order affects **Init** (who registers fields, routes, handlers). It does **not** assign hook priorities. For **append-only pipelines** (pricing, checkout today), the order each plugin calls `RegisterPricingStep` / `RegisterCheckoutStep` during Init is the runtime execution order for plugin steps. For **hooks** (and pipelines once positioning ships), use explicit **priority** or `before:`/`after:` APIs — lower hook priority runs first.
+
+**Fail fast:** Double infrastructure registration and duplicate HTTP patterns panic at startup rather than silently overriding.
 
 ---
 
@@ -108,17 +277,17 @@ The [Customization Platform spec](../phase-6-merchant-complete/specs/CUSTOMIZATI
 
 ### Step 1 — Plugin A defines the durable contract
 
-During `Init`, register the field (proposed API):
+During `Init`, register the field:
 
 ```go
-app.Extensions().RegisterField(extensions.FieldDef{
+app.Extensions().RegisterField(domainext.FieldDef{
     Code:        "acme.gift.wrap_level",
     Label:       "Gift wrap",
     Type:        "enum",
     Scope:       "cart_item",
-    StorageMode: "snapshot", // cart_item → order_item at checkout
+    StorageMode: "snapshot",
     Visibility:  "public",
-    Validation:  extensions.EnumOptions("none", "standard", "premium"),
+    // ...
 })
 ```
 
@@ -126,18 +295,12 @@ The **field code** is the public contract. Plugin B depends on `acme.gift.wrap_l
 
 ### Step 2 — Plugin A adds the checkout UI field (same request)
 
-Register a hook handler (proposed):
+Register a hook handler when `checkout.fields.compose` ships, or use extension fields on the cart/checkout API today:
 
 ```go
-app.Hooks().Register("checkout.fields.compose", 100, func(hctx *hooks.Context) error {
-    fields := hctx.Payload["fields"].([]CheckoutField) // typed in real impl
-    fields = append(fields, CheckoutField{
-        Code:  "acme.gift.wrap_level",
-        Type:  "select",
-        Label: "Gift wrap",
-        Options: []Option{{"none", "None"}, {"standard", "Standard"}, {"premium", "Premium"}},
-    })
-    hctx.Payload["fields"] = fields
+// Planned hook (not yet in extapi v0):
+app.Hooks("acme/gift-wrap").Register("checkout.fields.compose", 100, func(hctx *extapi.HookContext) error {
+    // mutate hctx.Payload["fields"]
     return nil
 })
 ```
@@ -147,20 +310,13 @@ Priority `100` runs before plugin B's handler at `200`.
 ### Step 3 — Plugin B reads A's output from shared context
 
 ```go
-app.Hooks().Register("checkout.fields.compose", 200, func(hctx *hooks.Context) error {
-    fields := hctx.Payload["fields"].([]CheckoutField)
-    wrapLevel := currentWrapLevel(hctx) // from submitted form or cart_item extension value
-
+// Planned hook (not yet in extapi v0):
+app.Hooks("acme/loyalty").Register("checkout.fields.compose", 200, func(hctx *extapi.HookContext) error {
+    wrapLevel := currentWrapLevel(hctx) // from cart_item extension value
     if wrapLevel == "none" || wrapLevel == "" {
-        return nil // skip — no dependency failure if A is disabled
+        return nil // fail open when upstream contract absent
     }
-
-    fields = append(fields, CheckoutField{
-        Code:  "acme.loyalty.message",
-        Type:  "text",
-        Label: "Add a loyalty note",
-    })
-    hctx.Payload["fields"] = fields
+    // append loyalty field to hctx.Payload["fields"]
     return nil
 })
 ```
@@ -266,9 +422,11 @@ Go favors **composition through shared context**, not class inheritance.
 
 ## Checklist for plugin authors
 
-1. Publish a **contract** (field codes, hook names) in your plugin README.
-2. Register **handlers** on the right layer (pipeline, hook, or event).
-3. Set explicit **ordering** when your handler must run before/after another.
-4. Read sibling output from **shared context or extension values**, not from another plugin's package.
-5. **Fail open** when an optional upstream contract is absent (e.g. loyalty field skipped if gift wrap plugin disabled).
-6. Use **events** only for post-factum reactions, not intra-request sequencing.
+1. Publish a **contract** (field codes, hook names, Meta keys) in your plugin README.
+2. Pick the **mechanism** from [Integrator task → mechanism](#integrator-task--mechanism) — do not fork core importers or cart service.
+3. Register **handlers** on the right layer (pipeline, hook, port, route, or event).
+4. Set explicit **ordering** when your handler must run before/after another (priority bands for multi-team projects).
+5. Read sibling output from **shared context or extension values**, not from another plugin's package.
+6. **Fail open** when an optional upstream contract is absent (e.g. loyalty field skipped if gift wrap plugin disabled).
+7. Use **events** and **sync jobs** only for post-factum or async work, not intra-request sequencing.
+8. Inspect registrations: `/api/v1/admin/extensions/{hooks,slots,fields,ports}`.
