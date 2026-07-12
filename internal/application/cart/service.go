@@ -281,7 +281,7 @@ func (s *Service) AddItem(ctx context.Context, cartID, customerID, variantID str
 		return nil, err
 	}
 
-	if err := s.invokeCartItemBeforeHook(ctx, hooks.HookCartAddItemBefore, cartID, customerID, variantID, quantity, c); err != nil {
+	if err := s.invokeCartItemHook(ctx, hooks.HookCartAddItemBefore, cartID, customerID, variantID, quantity, c); err != nil {
 		return nil, err
 	}
 
@@ -314,10 +314,11 @@ func (s *Service) AddItem(ctx context.Context, cartID, customerID, variantID str
 		VariantID: variantID,
 		Quantity:  quantity,
 	}))
-	if s.hooks != nil {
-		if err := s.invokeCartItemAfterHook(ctx, hooks.HookCartAddItemAfter, c.ID, customerID, variantID, quantity, c); err != nil {
-			return nil, err
-		}
+	if err := s.invokeCartItemHook(ctx, hooks.HookCartAddItemAfter, c.ID, customerID, variantID, quantity, c); err != nil {
+		s.log.Error("cart.add_item.after_hook_failed", err, map[string]interface{}{
+			"cart_id":    c.ID,
+			"variant_id": variantID,
+		})
 	}
 	return c, nil
 }
@@ -335,7 +336,7 @@ func (s *Service) UpdateItemQuantity(ctx context.Context, cartID, customerID, va
 		return nil, apperror.Forbidden("cannot modify another customer's cart")
 	}
 
-	if err := s.invokeCartItemBeforeHook(ctx, hooks.HookCartUpdateItemBefore, cartID, customerID, variantID, quantity, c); err != nil {
+	if err := s.invokeCartItemHook(ctx, hooks.HookCartUpdateItemBefore, cartID, customerID, variantID, quantity, c); err != nil {
 		return nil, err
 	}
 
@@ -404,10 +405,11 @@ func (s *Service) RemoveItem(ctx context.Context, cartID, customerID, variantID 
 		CartID:    c.ID,
 		VariantID: variantID,
 	}))
-	if s.hooks != nil {
-		if err := s.invokeCartItemAfterHook(ctx, hooks.HookCartRemoveItemAfter, c.ID, customerID, variantID, 0, c); err != nil {
-			return nil, err
-		}
+	if err := s.invokeCartItemHook(ctx, hooks.HookCartRemoveItemAfter, c.ID, customerID, variantID, 0, c); err != nil {
+		s.log.Error("cart.remove_item.after_hook_failed", err, map[string]interface{}{
+			"cart_id":    c.ID,
+			"variant_id": variantID,
+		})
 	}
 	return c, nil
 }
@@ -420,15 +422,13 @@ func (s *Service) recalculate(ctx context.Context, c *domainCart.Cart) error {
 	}
 
 	pricingMeta := make(map[string]interface{})
-	if s.hooks != nil {
-		hookCtx := hooks.NewContext(hooks.HookCartRecalculateBefore)
-		hookCtx.Set("cart_id", c.ID)
-		hookCtx.Set("customer_id", c.CustomerID)
-		hookCtx.Set("cart", c)
-		hookCtx.Set("pricing_meta", pricingMeta)
-		if err := s.invokeCartHook(ctx, hooks.HookCartRecalculateBefore, hookCtx); err != nil {
-			return err
-		}
+	hookCtx := hooks.NewContext(hooks.HookCartRecalculateBefore)
+	hookCtx.Set("cart_id", c.ID)
+	hookCtx.Set("customer_id", c.CustomerID)
+	hookCtx.Set("cart", c)
+	hookCtx.Set("pricing_meta", pricingMeta)
+	if err := s.invokeCartHook(ctx, hooks.HookCartRecalculateBefore, hookCtx); err != nil {
+		return err
 	}
 
 	pctx, err := pricing.NewPricingContext(c.Currency)

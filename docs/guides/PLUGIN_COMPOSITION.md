@@ -127,16 +127,38 @@ Use this table before writing code. Full design rationale: [Integrator Platform 
 Cart mutations follow a fixed core flow: **mutate cart → recalculate → pricing pipeline → persist** (add-item also runs extension upsert before persist when values are supplied). On add, the shipped `cart.add_item.after` hook runs **after persist**. Plugins extend this without patching `cart.Service`.
 
 ```text
-add / update / remove / coupon
+add item
   └─ [shipped] cart.add_item.before hook
   └─ core mutation (in memory)
   └─ recalculate
        └─ [shipped] cart.recalculate.before → inject PricingContext.Meta via pricing_meta map
        └─ pricing pipeline (core steps + RegisterPricingStep)
-  └─ extension value upsert (add path, when provided)
+  └─ extension value upsert (when provided)
   └─ persist
-  └─ [shipped] cart.add_item.after hook (add path only)
-  └─ [shipped] cart.remove_item.after hook (remove path only)
+  └─ [shipped] cart.add_item.after hook
+
+update item quantity
+  └─ [shipped] cart.update_item.before hook
+  └─ core mutation (in memory)
+  └─ recalculate
+       └─ [shipped] cart.recalculate.before
+       └─ pricing pipeline
+  └─ persist
+
+remove item
+  └─ core mutation (in memory)
+  └─ recalculate
+       └─ [shipped] cart.recalculate.before
+       └─ pricing pipeline
+  └─ persist
+  └─ [shipped] cart.remove_item.after hook
+
+apply / remove coupon
+  └─ core mutation (in memory)
+  └─ recalculate
+       └─ [shipped] cart.recalculate.before
+       └─ pricing pipeline
+  └─ persist
 ```
 
 ### Pattern: custom price rule (two plugins)
@@ -154,7 +176,7 @@ Register validation on `cart.add_item.before` that returns an error to stop the 
 
 ```go
 app.Hooks("acme/assortment").Register(extapi.HookCartAddItemBefore, 100, func(hctx *extapi.HookContext) error {
-    // read variant_id, qty from hctx.Payload; return error to block
+    // read variant_id, quantity from hctx.Payload; return error to block
     return nil
 })
 ```

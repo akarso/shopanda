@@ -28,10 +28,6 @@ func newCartItemHookContext(name, cartID, customerID, variantID string, quantity
 	return hookCtx
 }
 
-func (s *Service) invokeCartItemBeforeHook(ctx context.Context, name, cartID, customerID, variantID string, quantity int, c *domainCart.Cart) error {
-	return s.invokeCartHook(ctx, name, newCartItemHookContext(name, cartID, customerID, variantID, quantity, c))
-}
-
-func (s *Service) invokeCartItemAfterHook(ctx context.Context, name, cartID, customerID, variantID string, quantity int, c *domainCart.Cart) error {
+func (s *Service) invokeCartItemHook(ctx context.Context, name, cartID, customerID, variantID string, quantity int, c *domainCart.Cart) error {
 	return s.invokeCartHook(ctx, name, newCartItemHookContext(name, cartID, customerID, variantID, quantity, c))
 }
