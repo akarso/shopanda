@@ -21,7 +21,7 @@ Related:
 | --- | --- |
 | §2 Design position, §9 Precedence | **Published** — policy in spec; practical guide in [PLUGIN_COMPOSITION.md](../../guides/PLUGIN_COMPOSITION.md) (PR-802) |
 | §3 Port catalog | **Partial** — search/cache/queue/payment/media shipped; introspection at `GET /api/v1/admin/extensions/ports` (PR-801); tax/mail/shipping planned |
-| §4 Behavioral catalog | **Partial** — pricing/checkout steps and `cart.add_item.after` shipped; positioning and cart hooks planned (Track B) |
+| §4 Behavioral catalog | **Partial** — pricing step positioning shipped (PR-810); cart hooks planned (Track B) |
 | §5 Import pipelines | **Planned** (Track C) — proposed `app.Import()` API |
 | §6 Inbound integration | **Partial** — `RegisterPublicRoute` / `RegisterAdminRoute` shipped; auth/idempotency middleware planned (Track D) |
 | §7 Outbound integration | **Partial** — events + queue shipped; sync job registration planned (Track E) |
@@ -115,12 +115,12 @@ Config + `register_plugins.go` choose the winner. Conflicting double registratio
 
 **Primary seam:** pricing pipeline (`PricingContext` in, adjustments out).
 
-| Extension | API | Phase 8 work |
-| --- | --- | --- |
-| Custom fees / discounts | `RegisterPricingStep` | Position API: `before:base_price`, `after:promotions`, replace-by-name |
-| Customer/group context | `PricingContext.Meta` | Document keys (`customer_id`, `store_id`); B2B step as reference |
-| Promotion rule types | Promotion pipeline step | Stretch: plugin registers rule evaluator, not admin UI |
-| Audit trail | `Adjustments[]` on context | Ensure plugins set `Code`, `Description`, `Meta` |
+| Extension | API | Phase 8 work | Status |
+| --- | --- | --- | --- |
+| Custom fees / discounts | `RegisterPricingStep` | `before:` / `after:` anchors (PR-810); aliases: `promotions`, `taxes` | Shipped |
+| Customer/group context | `PricingContext.Meta` | Document keys (`customer_id`, `store_id`); B2B step as reference | Partial |
+| Promotion rule types | Promotion pipeline step | Stretch: plugin registers rule evaluator, not admin UI | Planned |
+| Audit trail | `Adjustments[]` on context | Ensure plugins set `Code`, `Description`, `Meta` | Partial |
 
 Pricing runs on **cart recalculate** and **checkout recalculate** — one pipeline, deterministic order.
 

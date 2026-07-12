@@ -599,25 +599,32 @@ func runServe(cfg *config.Config, log logger.Logger, embedScheduler bool) error 
 		}
 	}
 
-	// Pricing pipeline (core + plugin steps + finalize).
-	pricingSteps := []pricing.PricingStep{
+	// Pricing pipeline (core + positioned plugin steps).
+	corePricingSteps := []pricing.PricingStep{
 		appPricing.NewBasePriceStep(priceRepo),
-	}
-	for _, s := range pluginApp.PricingSteps() {
-		if v, ok := s.(pricing.PricingStep); ok {
-			pricingSteps = append(pricingSteps, v)
-		} else {
-			log.Error("plugin.step.invalid_type", fmt.Errorf("expected pricing.PricingStep, got %T", s), map[string]interface{}{
-				"pipeline": "pricing",
-			})
-		}
-	}
-	pricingSteps = append(pricingSteps,
 		appPricing.NewCatalogPromotionStep(promotionRepo, couponRepo),
 		appPricing.NewCartPromotionStep(promotionRepo, couponRepo),
 		appPricing.NewTaxStep(taxRateRepo, "standard"),
 		pricing.NewFinalizeStep(),
-	)
+	}
+	pluginPricingRegs := make([]appPricing.PluginStepRegistration, 0)
+	for _, reg := range pluginApp.PricingStepRegistrations() {
+		step, ok := reg.Step.(pricing.PricingStep)
+		if !ok {
+			log.Error("plugin.step.invalid_type", fmt.Errorf("expected pricing.PricingStep, got %T", reg.Step), map[string]interface{}{
+				"pipeline": "pricing",
+			})
+			continue
+		}
+		pluginPricingRegs = append(pluginPricingRegs, appPricing.PluginStepRegistration{
+			Step:     step,
+			Position: reg.Position,
+		})
+	}
+	pricingSteps, err := appPricing.MergePluginSteps(corePricingSteps, pluginPricingRegs)
+	if err != nil {
+		return fmt.Errorf("pricing pipeline: %w", err)
+	}
 	pricingPipeline := pricing.NewPipeline(pricingSteps...)
 
 	// Application services.

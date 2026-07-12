@@ -64,7 +64,7 @@ Available today through `plugin.App`:
 
 | Mechanism | API | Use for |
 | --- | --- | --- |
-| **Pricing pipeline** | `RegisterPricingStep` | Fees, discounts, custom line adjustments |
+| **Pricing pipeline** | `RegisterPricingStep(step, position...)` | Fees, discounts; `before:`/`after:` core steps (`pkg/extapi`) |
 | **Checkout workflow** | `RegisterCheckoutStep` | Extra validation or side effects during checkout |
 | **Composition pipelines** | `RegisterCompositionStep("pdp"\|"plp", …)` | Enrich API/storefront product responses |
 | **Events** | `Bus.On` / `Bus.OnAsync` | React to domain changes |

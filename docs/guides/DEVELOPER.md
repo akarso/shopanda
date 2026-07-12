@@ -617,12 +617,13 @@ Phase 8 adds first-class seams for **commerce behavior** (positioned pricing ste
 - CSV import: CLI `import:products`, `import:prices`, `import:stock`, `import:categories`, `import:customers`, `import:attributes` (no row-transform hooks yet)
 - Async: events + optional queue drivers
 
-**Shipped in Phase 8 (Track A):**
+**Shipped in Phase 8:**
 
 - Port introspection: `GET /api/v1/admin/extensions/ports` (PR-801)
 - Precedence policy + integrator composition patterns: [PLUGIN_COMPOSITION.md](PLUGIN_COMPOSITION.md) (PR-802)
+- Pricing step positioning: `RegisterPricingStep(step, "after:promotions")` — see `pkg/extapi` (PR-810)
 
-**Planned in Phase 8** (see spec §Document map): pricing step positioning, cart validate hooks, import row pipelines, integration auth/idempotency, outbound sync jobs, full registration report (PR-851).
+**Planned in Phase 8** (see spec §Document map): cart validate hooks, import row pipelines, integration auth/idempotency, outbound sync jobs, full registration report (PR-851).
 
 When choosing an extension mechanism, start with [Multi-Plugin Composition](PLUGIN_COMPOSITION.md) for ordering rules; use the integrator spec when the task involves ERP/PIM/warehouse wiring or CSV pre-persist transforms.
 

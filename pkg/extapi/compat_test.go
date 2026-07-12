@@ -3,6 +3,7 @@ package extapi_test
 import (
 	"testing"
 
+	apppricing "github.com/akarso/shopanda/internal/application/pricing"
 	hooksapp "github.com/akarso/shopanda/internal/application/hooks"
 	slotsapp "github.com/akarso/shopanda/internal/application/slots"
 	"github.com/akarso/shopanda/pkg/extapi"
@@ -34,6 +35,19 @@ func TestStableSlotAnchorsMatchInternalCatalog(t *testing.T) {
 	for _, anchor := range extapi.SlotAnchors() {
 		if string(anchor) == "" {
 			t.Fatal("slot anchor constant must not be empty")
+		}
+	}
+}
+
+func TestStablePricingStepCatalog(t *testing.T) {
+	stable := extapi.PricingStepCatalog()
+	internal := apppricing.CoreStepCatalog
+	if len(stable) != len(internal) {
+		t.Fatalf("stable len = %d, internal len = %d", len(stable), len(internal))
+	}
+	for i, name := range internal {
+		if stable[i] != name {
+			t.Fatalf("step[%d] = %q, want %q", i, stable[i], name)
 		}
 	}
 }

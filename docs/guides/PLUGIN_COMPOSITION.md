@@ -66,7 +66,7 @@ Plugins register steps during `Init`:
 - `RegisterCheckoutStep` — validation or side effects during checkout
 - `RegisterCompositionStep("pdp"|"plp", …)` — enrich API/storefront responses
 
-Each step receives a **mutable context** and runs in registration order (core steps first, then plugin steps appended today). Step positioning (`before:` / `after:`) is planned in Phase 8 Track B (PR-810+).
+Each step receives a **mutable context**. Plugin steps use `RegisterPricingStep(step, position...)` with `before:<step>` / `after:<step>` (aliases: `promotions`, `taxes`). Default position is `after:base`. Checkout step positioning is still append-only (planned).
 
 ### Hooks (Phase 7)
 
@@ -107,7 +107,7 @@ Use this table before writing code. Full design rationale: [Integrator Platform 
 
 | Task | Mechanism | Ordering | Status |
 | --- | --- | --- | --- |
-| Custom fee / cart price rule | `RegisterPricingStep` | Registration order today; `before:`/`after:` planned (PR-810) | Shipped (append-only) |
+| Custom fee / cart price rule | `RegisterPricingStep` | `before:` / `after:` anchors (PR-810) | Shipped |
 | Block or validate cart mutation | Cart hook chain (`cart.validate`, `cart.add_item.before`, …) | Lower priority runs first | Partial (`cart.add_item.after` shipped) |
 | Custom checkout validation | `RegisterCheckoutStep` | Anchor positions planned | Shipped (append-only) |
 | ERP CSV column remap before DB write | Import row hook (`import.product.row`, …) | Lower priority runs first | Planned (Track C) |
@@ -143,8 +143,8 @@ add / update / remove / coupon
 
 | Plugin | Mechanism | Priority / position |
 | --- | --- | --- |
-| `acme/volume-discount` | `RegisterPricingStep` — quantity tiers | After promotions (PR-810) or last in chain today |
-| `acme/handling-fee` | `RegisterPricingStep` — flat fee | After volume discount |
+| `acme/volume-discount` | `RegisterPricingStep` — quantity tiers | `after:promotions` |
+| `acme/handling-fee` | `RegisterPricingStep` — flat fee | `after:promotions` or `before:tax` |
 
 Both steps read `PricingContext` and append `Adjustments`. They must **not** import each other — share context via `PricingContext.Meta` keys documented in README (e.g. `acme.assortment_tier`).
 

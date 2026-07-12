@@ -3,21 +3,40 @@ package plugin_test
 import (
 	"testing"
 
+	apppricing "github.com/akarso/shopanda/internal/application/pricing"
 	"github.com/akarso/shopanda/internal/platform/plugin"
 )
 
 func TestApp_RegisterPricingStep(t *testing.T) {
 	app := &plugin.App{}
 	app.RegisterPricingStep("step1")
-	app.RegisterPricingStep("step2")
+	app.RegisterPricingStep("step2", "after:promotions")
+
+	regs := app.PricingStepRegistrations()
+	if len(regs) != 2 {
+		t.Fatalf("PricingStepRegistrations() len = %d, want 2", len(regs))
+	}
+	if regs[0].Step != "step1" || regs[0].Position != apppricing.DefaultPluginStepPosition {
+		t.Errorf("first reg = %+v", regs[0])
+	}
+	if regs[1].Step != "step2" || regs[1].Position != "after:promotions" {
+		t.Errorf("second reg = %+v", regs[1])
+	}
 
 	steps := app.PricingSteps()
-	if len(steps) != 2 {
-		t.Fatalf("PricingSteps() len = %d, want 2", len(steps))
+	if len(steps) != 2 || steps[0] != "step1" || steps[1] != "step2" {
+		t.Errorf("PricingSteps() = %v", steps)
 	}
-	if steps[0] != "step1" || steps[1] != "step2" {
-		t.Errorf("PricingSteps() = %v, want [step1 step2]", steps)
-	}
+}
+
+func TestApp_RegisterPricingStep_InvalidPositionPanics(t *testing.T) {
+	defer func() {
+		if r := recover(); r == nil {
+			t.Fatal("expected panic for invalid pricing position")
+		}
+	}()
+	app := &plugin.App{}
+	app.RegisterPricingStep("step", "after:unknown")
 }
 
 func TestApp_RegisterPricingStep_NilPanics(t *testing.T) {
