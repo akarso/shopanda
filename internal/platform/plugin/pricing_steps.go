@@ -18,7 +18,7 @@ type pricingStepRegistration struct {
 // RegisterPricingStep registers a pricing pipeline step.
 // The step must implement pricing.PricingStep.
 //
-// Optional position uses before:<step> or after:<step> (aliases: base_price, promotions, taxes).
+// Optional position uses before:<step> or after:<step> (aliases: base_price, discounts, promotions, taxes, finalization).
 // Empty position defaults to after:base (between base price and catalog promotions).
 func (a *App) RegisterPricingStep(step any, position ...string) {
 	if step == nil {

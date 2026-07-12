@@ -115,12 +115,12 @@ Config + `register_plugins.go` choose the winner. Conflicting double registratio
 
 **Primary seam:** pricing pipeline (`PricingContext` in, adjustments out).
 
-| Extension | API | Phase 8 work |
-| --- | --- | --- |
+| Extension | API | Phase 8 work | Status |
+| --- | --- | --- | --- |
 | Custom fees / discounts | `RegisterPricingStep` | `before:` / `after:` anchors (PR-810); aliases: `promotions`, `taxes` | Shipped |
-| Customer/group context | `PricingContext.Meta` | Document keys (`customer_id`, `store_id`); B2B step as reference |
-| Promotion rule types | Promotion pipeline step | Stretch: plugin registers rule evaluator, not admin UI |
-| Audit trail | `Adjustments[]` on context | Ensure plugins set `Code`, `Description`, `Meta` |
+| Customer/group context | `PricingContext.Meta` | Document keys (`customer_id`, `store_id`); B2B step as reference | Partial |
+| Promotion rule types | Promotion pipeline step | Stretch: plugin registers rule evaluator, not admin UI | Planned |
+| Audit trail | `Adjustments[]` on context | Ensure plugins set `Code`, `Description`, `Meta` | Partial |
 
 Pricing runs on **cart recalculate** and **checkout recalculate** — one pipeline, deterministic order.
 
