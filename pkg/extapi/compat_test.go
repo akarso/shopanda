@@ -10,13 +10,15 @@ import (
 )
 
 func TestStableHookPointsMatchInternal(t *testing.T) {
-	if string(extapi.HookCartAddItemAfter) != hooksapp.HookCartAddItemAfter {
-		t.Fatalf("HookCartAddItemAfter = %q, want %q", extapi.HookCartAddItemAfter, hooksapp.HookCartAddItemAfter)
-	}
-
+	internal := hooksapp.CartHookPoints()
 	stable := extapi.HookPoints()
-	if len(stable) != 1 || stable[0] != string(extapi.HookCartAddItemAfter) {
-		t.Fatalf("HookPoints() = %v", stable)
+	if len(stable) != len(internal) {
+		t.Fatalf("stable hook points len = %d, internal len = %d", len(stable), len(internal))
+	}
+	for i, name := range internal {
+		if stable[i] != name {
+			t.Fatalf("hook[%d] = %q, want %q", i, stable[i], name)
+		}
 	}
 }
 
