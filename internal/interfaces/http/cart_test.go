@@ -12,6 +12,7 @@ import (
 	"time"
 
 	cartApp "github.com/akarso/shopanda/internal/application/cart"
+	"github.com/akarso/shopanda/internal/application/hooks"
 	appPricing "github.com/akarso/shopanda/internal/application/pricing"
 	extensionapp "github.com/akarso/shopanda/internal/application/extension"
 	domainCart "github.com/akarso/shopanda/internal/domain/cart"
@@ -23,6 +24,7 @@ import (
 	"github.com/akarso/shopanda/internal/platform/auth/testhelper"
 	"github.com/akarso/shopanda/internal/platform/event"
 	"github.com/akarso/shopanda/internal/platform/logger"
+	"github.com/akarso/shopanda/pkg/extapi"
 )
 
 // ── stubs (cart-specific) ───────────────────────────────────────────────
@@ -40,7 +42,10 @@ func (r *stubCartRepo) FindByID(_ context.Context, id string) (*domainCart.Cart,
 	if !ok {
 		return nil, nil
 	}
-	return c, nil
+	clone := *c
+	clone.Items = make([]domainCart.Item, len(c.Items))
+	copy(clone.Items, c.Items)
+	return &clone, nil
 }
 
 func (r *stubCartRepo) FindActiveByCustomerID(_ context.Context, customerID string) (*domainCart.Cart, error) {
@@ -679,5 +684,99 @@ func TestCartHandler_UpdateItem_PreservesExtensions(t *testing.T) {
 	ext := exts[0].(map[string]interface{})
 	if ext["value"] != "Keep me" {
 		t.Fatalf("extension value = %v, want Keep me", ext["value"])
+	}
+}
+
+func cartSetupWithHooks(reg *hooks.Registry) (*stubCartRepo, *stubPriceRepo, *shophttp.CartHandler, *http.ServeMux) {
+	carts := newStubCartRepo()
+	prices := newStubPriceRepo()
+	bus := event.NewBus(cartTestLogger())
+	svc := cartApp.NewService(carts, prices, nil, nil, cartTestPipeline(prices), cartTestLogger(), bus, nil, reg)
+	h := shophttp.NewCartHandler(svc, nil)
+	return carts, prices, h, newCartRouter(h)
+}
+
+func TestCartHandler_Get_IncludesValidationWarnings(t *testing.T) {
+	reg := hooks.NewRegistry(nil)
+	if err := reg.Register(hooks.HookCartValidate, 100, "plugin.test", func(ctx *hooks.Context) error {
+		hooks.AppendValidationIssue(ctx, extapi.CartValidationIssue{
+			Code:    "acme.soft",
+			Message: "consider bundle",
+			Level:   "warning",
+		})
+		return nil
+	}); err != nil {
+		t.Fatalf("Register: %v", err)
+	}
+
+	carts, prices, _, mux := cartSetupWithHooks(reg)
+	prices.set("var-1", "EUR", 1000)
+	c, _ := domainCart.NewCart("cart-1", "EUR")
+	c.SetCustomerID("cust-1")
+	_ = c.AddItem("var-1", 1, shared.MustNewMoney(1000, "EUR"))
+	carts.Save(context.Background(), &c)
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("GET", "/api/v1/carts/cart-1", nil)
+	req = testhelper.CustomerRequest(req, "cust-1")
+	mux.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d; body: %s", rec.Code, http.StatusOK, rec.Body.String())
+	}
+	parsed := parseCartBody(t, rec)
+	data := parsed["data"].(map[string]interface{})
+	issues := data["validation_errors"].([]interface{})
+	if len(issues) != 1 {
+		t.Fatalf("validation_errors = %v", data["validation_errors"])
+	}
+	issue := issues[0].(map[string]interface{})
+	if issue["code"] != "acme.soft" {
+		t.Fatalf("issue code = %v", issue["code"])
+	}
+}
+
+func TestCartHandler_AddItem_BlockedByValidateHook(t *testing.T) {
+	reg := hooks.NewRegistry(nil)
+	if err := reg.Register(hooks.HookCartValidate, 100, "plugin.test", func(ctx *hooks.Context) error {
+		hooks.AppendValidationIssue(ctx, extapi.CartValidationIssue{
+			Code:      "acme.blocked",
+			Message:   "not allowed",
+			VariantID: "var-1",
+		})
+		return nil
+	}); err != nil {
+		t.Fatalf("Register: %v", err)
+	}
+
+	carts, prices, _, mux := cartSetupWithHooks(reg)
+	prices.set("var-1", "EUR", 1000)
+	c, _ := domainCart.NewCart("cart-1", "EUR")
+	c.SetCustomerID("cust-1")
+	carts.Save(context.Background(), &c)
+
+	rec := httptest.NewRecorder()
+	body := `{"variant_id":"var-1","quantity":1}`
+	req := httptest.NewRequest("POST", "/api/v1/carts/cart-1/items", strings.NewReader(body))
+	req = testhelper.CustomerRequest(req, "cust-1")
+	mux.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("status = %d, want %d; body: %s", rec.Code, http.StatusUnprocessableEntity, rec.Body.String())
+	}
+	parsed := parseCartBody(t, rec)
+	errBody := parsed["error"].(map[string]interface{})
+	if errBody["code"] != "cart_validation_failed" {
+		t.Fatalf("error code = %v", errBody["code"])
+	}
+	data := parsed["data"].(map[string]interface{})
+	issues := data["validation_errors"].([]interface{})
+	if len(issues) != 1 {
+		t.Fatalf("validation_errors = %v", data["validation_errors"])
+	}
+	cart := data["cart"].(map[string]interface{})
+	items := cart["items"].([]interface{})
+	if len(items) != 0 {
+		t.Fatalf("persisted items = %d, want 0", len(items))
 	}
 }

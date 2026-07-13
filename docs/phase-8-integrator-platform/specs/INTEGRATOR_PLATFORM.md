@@ -21,7 +21,7 @@ Related:
 | --- | --- |
 | §2 Design position, §9 Precedence | **Published** — policy in spec; practical guide in [PLUGIN_COMPOSITION.md](../../guides/PLUGIN_COMPOSITION.md) (PR-802) |
 | §3 Port catalog | **Partial** — search/cache/queue/payment/media shipped; introspection at `GET /api/v1/admin/extensions/ports` (PR-801); tax/mail/shipping planned |
-| §4 Behavioral catalog | **Partial** — pricing positioning + cart lifecycle hooks shipped (PR-810–811); `cart.validate` planned (PR-812) |
+| §4 Behavioral catalog | **Partial** — pricing positioning + cart lifecycle hooks + `cart.validate` shipped (PR-810–812); tax port planned |
 | §5 Import pipelines | **Planned** (Track C) — proposed `app.Import()` API |
 | §6 Inbound integration | **Partial** — `RegisterPublicRoute` / `RegisterAdminRoute` shipped; auth/idempotency middleware planned (Track D) |
 | §7 Outbound integration | **Partial** — events + queue shipped; sync job registration planned (Track E) |
@@ -135,7 +135,7 @@ Cart mutations today: add / update qty / remove / coupon → `recalculate` → p
 | `cart.update_item.before` | Block quantity changes | Shipped |
 | `cart.remove_item.after` | Cleanup extension side effects | Shipped |
 | `cart.recalculate.before` | Inject meta into pricing context | Shipped |
-| `cart.validate` | Structured errors returned to storefront API | Add chain |
+| `cart.validate` | Structured errors returned to storefront API | Shipped |
 
 Hooks receive mutable payload (variant, qty, cart snapshot refs by ID). Heavy logic stays in application services; hooks orchestrate.
 

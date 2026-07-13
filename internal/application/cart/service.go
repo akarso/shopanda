@@ -293,6 +293,10 @@ func (s *Service) AddItem(ctx context.Context, cartID, customerID, variantID str
 		return nil, err
 	}
 
+	if err := s.enforceCartValidation(ctx, cartID, c); err != nil {
+		return nil, err
+	}
+
 	if len(opts.Extensions) > 0 {
 		target := domainext.CartItemTarget(cartID, variantID)
 		if _, err := s.extensions.UpsertBatch(ctx, target, opts.Extensions, cartExtensionUpdatedBy(customerID, opts.UpdatedBy), false); err != nil {
@@ -348,6 +352,10 @@ func (s *Service) UpdateItemQuantity(ctx context.Context, cartID, customerID, va
 		return nil, err
 	}
 
+	if err := s.enforceCartValidation(ctx, cartID, c); err != nil {
+		return nil, err
+	}
+
 	if err := s.carts.Save(ctx, c); err != nil {
 		return nil, fmt.Errorf("cart service: update item: save: %w", err)
 	}
@@ -390,6 +398,10 @@ func (s *Service) RemoveItem(ctx context.Context, cartID, customerID, variantID 
 	}
 
 	if err := s.recalculate(ctx, c); err != nil {
+		return nil, err
+	}
+
+	if err := s.enforceCartValidation(ctx, cartID, c); err != nil {
 		return nil, err
 	}
 
@@ -557,6 +569,10 @@ func (s *Service) ApplyCoupon(ctx context.Context, cartID, customerID, code stri
 		return nil, err
 	}
 
+	if err := s.enforceCartValidation(ctx, cartID, c); err != nil {
+		return nil, err
+	}
+
 	if err := s.carts.Save(ctx, c); err != nil {
 		return nil, fmt.Errorf("cart service: apply coupon: save: %w", err)
 	}
@@ -592,6 +608,10 @@ func (s *Service) RemoveCoupon(ctx context.Context, cartID, customerID string) (
 	}
 
 	if err := s.recalculate(ctx, c); err != nil {
+		return nil, err
+	}
+
+	if err := s.enforceCartValidation(ctx, cartID, c); err != nil {
 		return nil, err
 	}
 

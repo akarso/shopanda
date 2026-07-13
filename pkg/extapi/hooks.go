@@ -38,6 +38,7 @@ const (
 	HookCartUpdateItemBefore   HookPoint = "cart.update_item.before"
 	HookCartRemoveItemAfter    HookPoint = "cart.remove_item.after"
 	HookCartRecalculateBefore  HookPoint = "cart.recalculate.before"
+	HookCartValidate           HookPoint = "cart.validate"
 )
 
 var hookPoints = []HookPoint{
@@ -46,6 +47,7 @@ var hookPoints = []HookPoint{
 	HookCartUpdateItemBefore,
 	HookCartRemoveItemAfter,
 	HookCartRecalculateBefore,
+	HookCartValidate,
 }
 
 // HookPoints returns all documented stable hook point names.

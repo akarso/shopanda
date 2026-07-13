@@ -28,6 +28,33 @@ func TestApp_Hooks_Register(t *testing.T) {
 	}
 }
 
+func TestApp_Hooks_PayloadSyncValidationIssues(t *testing.T) {
+	reg := hooks.NewRegistry(nil)
+	app := &plugin.App{}
+	app.SetHookRegistry(reg)
+
+	if err := app.Hooks("acme.demo").Register(extapi.HookCartValidate, 100, func(ctx *extapi.HookContext) error {
+		ctx.AppendValidationError(extapi.CartValidationIssue{
+			Code:    "acme.rule",
+			Message: "blocked",
+		})
+		return nil
+	}); err != nil {
+		t.Fatalf("Register: %v", err)
+	}
+
+	hookCtx := hooks.NewContext(hooks.HookCartValidate)
+	issues := []extapi.CartValidationIssue{}
+	hookCtx.Set("validation_errors", &issues)
+	if err := reg.Invoke(nil, hookCtx); err != nil {
+		t.Fatalf("Invoke: %v", err)
+	}
+	got := hooks.ValidationIssuesFromContext(hookCtx)
+	if len(got) != 1 || got[0].Code != "acme.rule" {
+		t.Fatalf("issues = %+v", got)
+	}
+}
+
 func TestApp_SetHookRegistry_NilPanics(t *testing.T) {
 	defer func() {
 		if r := recover(); r == nil {

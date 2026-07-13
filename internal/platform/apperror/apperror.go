@@ -20,6 +20,7 @@ const (
 	CodeForbiddenPrivateField Code = "forbidden_private_field"
 	CodeUnknownFieldCode      Code = "unknown_field_code"
 	CodeFieldValidationFailed Code = "field_validation_failed"
+	CodeCartValidationFailed  Code = "cart_validation_failed"
 )
 
 // Error is a structured application error.
@@ -83,6 +84,11 @@ func ForbiddenPrivateField(message string) *Error {
 // UnknownFieldCode creates an unknown_field_code error.
 func UnknownFieldCode(message string) *Error {
 	return New(CodeUnknownFieldCode, message)
+}
+
+// CartValidationFailed creates a cart_validation_failed error.
+func CartValidationFailed(message string) *Error {
+	return New(CodeCartValidationFailed, message)
 }
 
 // FieldValidationFailed creates a field_validation_failed error.

@@ -12,6 +12,7 @@ import (
 	"github.com/akarso/shopanda/internal/domain/shared"
 	"github.com/akarso/shopanda/internal/platform/apperror"
 	"github.com/akarso/shopanda/internal/platform/auth"
+	"github.com/akarso/shopanda/pkg/extapi"
 )
 
 // CartHandler handles cart HTTP endpoints.
@@ -95,12 +96,54 @@ func (h *CartHandler) toCartResponse(ctx context.Context, c *cart.Cart) (cartRes
 }
 
 func (h *CartHandler) writeCart(w http.ResponseWriter, r *http.Request, c *cart.Cart, status int) {
+	h.writeCartWithValidation(w, r, c, nil, status, nil)
+}
+
+func (h *CartHandler) writeCartWithValidation(
+	w http.ResponseWriter,
+	r *http.Request,
+	c *cart.Cart,
+	issues []extapi.CartValidationIssue,
+	status int,
+	appErr error,
+) {
 	resp, err := h.toCartResponse(r.Context(), c)
 	if err != nil {
 		JSONError(w, extensionapp.MapValueError(err))
 		return
 	}
-	JSON(w, status, map[string]interface{}{"cart": resp})
+	data := map[string]interface{}{"cart": resp}
+	if len(issues) > 0 {
+		data["validation_errors"] = issues
+	}
+	if appErr != nil {
+		JSONWithError(w, status, data, appErr)
+		return
+	}
+	JSON(w, status, data)
+}
+
+func (h *CartHandler) handleCartServiceError(w http.ResponseWriter, r *http.Request, err error) bool {
+	if vf, ok := cartApp.ValidationFailedFrom(err); ok {
+		h.writeCartWithValidation(
+			w,
+			r,
+			vf.Cart,
+			vf.Issues,
+			http.StatusUnprocessableEntity,
+			apperror.CartValidationFailed(vf.Error()),
+		)
+		return true
+	}
+	return false
+}
+
+func (h *CartHandler) cartValidationIssues(ctx context.Context, c *cart.Cart) []extapi.CartValidationIssue {
+	issues, err := h.svc.ValidationIssues(ctx, c)
+	if err != nil || len(issues) == 0 {
+		return nil
+	}
+	return issues
 }
 
 // ── handlers ────────────────────────────────────────────────────────────
@@ -144,7 +187,7 @@ func (h *CartHandler) Get() http.HandlerFunc {
 			return
 		}
 
-		h.writeCart(w, r, c, http.StatusOK)
+		h.writeCartWithValidation(w, r, c, h.cartValidationIssues(r.Context(), c), http.StatusOK, nil)
 	}
 }
 
@@ -177,11 +220,14 @@ func (h *CartHandler) AddItem() http.HandlerFunc {
 			UpdatedBy:  userID,
 		})
 		if err != nil {
+			if h.handleCartServiceError(w, r, err) {
+				return
+			}
 			JSONError(w, extensionapp.MapValueError(err))
 			return
 		}
 
-		h.writeCart(w, r, c, http.StatusOK)
+		h.writeCartWithValidation(w, r, c, h.cartValidationIssues(r.Context(), c), http.StatusOK, nil)
 	}
 }
 
@@ -212,11 +258,14 @@ func (h *CartHandler) UpdateItem() http.HandlerFunc {
 		userID := auth.IdentityFrom(r.Context()).UserID
 		c, err := h.svc.UpdateItemQuantity(r.Context(), cartID, userID, variantID, req.Quantity)
 		if err != nil {
+			if h.handleCartServiceError(w, r, err) {
+				return
+			}
 			JSONError(w, err)
 			return
 		}
 
-		h.writeCart(w, r, c, http.StatusOK)
+		h.writeCartWithValidation(w, r, c, h.cartValidationIssues(r.Context(), c), http.StatusOK, nil)
 	}
 }
 
@@ -237,11 +286,14 @@ func (h *CartHandler) RemoveItem() http.HandlerFunc {
 		userID := auth.IdentityFrom(r.Context()).UserID
 		c, err := h.svc.RemoveItem(r.Context(), cartID, userID, variantID)
 		if err != nil {
+			if h.handleCartServiceError(w, r, err) {
+				return
+			}
 			JSONError(w, err)
 			return
 		}
 
-		h.writeCart(w, r, c, http.StatusOK)
+		h.writeCartWithValidation(w, r, c, h.cartValidationIssues(r.Context(), c), http.StatusOK, nil)
 	}
 }
 
@@ -267,11 +319,14 @@ func (h *CartHandler) ApplyCoupon() http.HandlerFunc {
 		userID := auth.IdentityFrom(r.Context()).UserID
 		c, err := h.svc.ApplyCoupon(r.Context(), cartID, userID, req.Code)
 		if err != nil {
+			if h.handleCartServiceError(w, r, err) {
+				return
+			}
 			JSONError(w, err)
 			return
 		}
 
-		h.writeCart(w, r, c, http.StatusOK)
+		h.writeCartWithValidation(w, r, c, h.cartValidationIssues(r.Context(), c), http.StatusOK, nil)
 	}
 }
 
@@ -287,10 +342,13 @@ func (h *CartHandler) RemoveCoupon() http.HandlerFunc {
 		userID := auth.IdentityFrom(r.Context()).UserID
 		c, err := h.svc.RemoveCoupon(r.Context(), cartID, userID)
 		if err != nil {
+			if h.handleCartServiceError(w, r, err) {
+				return
+			}
 			JSONError(w, err)
 			return
 		}
 
-		h.writeCart(w, r, c, http.StatusOK)
+		h.writeCartWithValidation(w, r, c, h.cartValidationIssues(r.Context(), c), http.StatusOK, nil)
 	}
 }

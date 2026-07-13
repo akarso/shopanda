@@ -22,7 +22,12 @@ func (h *Hooks) Register(hook extapi.HookPoint, priority int, handler extapi.Hoo
 		return fmt.Errorf("plugin: hook handler must not be nil")
 	}
 	return h.registry.Register(string(hook), priority, h.registrant, func(ctx *hooksapp.Context) error {
-		return handler(toExtAPIHookContext(ctx))
+		extCtx := toExtAPIHookContext(ctx)
+		if err := handler(extCtx); err != nil {
+			return err
+		}
+		syncHookPayload(ctx, extCtx)
+		return nil
 	})
 }
 
@@ -51,6 +56,15 @@ func (a *App) Hooks(registrant string) *Hooks {
 		a.hookRegistry = hooksapp.NewRegistry(a.Logger)
 	}
 	return &Hooks{registry: a.hookRegistry, registrant: registrant}
+}
+
+func syncHookPayload(dst *hooksapp.Context, src *extapi.HookContext) {
+	if dst == nil || src == nil || len(src.Payload) == 0 {
+		return
+	}
+	for k, v := range src.Payload {
+		dst.Set(k, v)
+	}
 }
 
 func toExtAPIHookContext(ctx *hooksapp.Context) *extapi.HookContext {
