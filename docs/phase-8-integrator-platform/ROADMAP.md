@@ -236,7 +236,7 @@ Recommended order: **A (800–802)** → **B (810–814)** and **C (820–823)**
 | 812 | B | [oss] | Cart validate chain (done) |
 | 813 | B | [oss] | Tax calculator port (done) |
 | 814 | B | [oss] | Reference plugin: cart rule (done) |
-| 820 | C | [oss] | Import row hook registry |
+| 820 | C | [oss] | Import row hook registry (done) |
 | 821 | C | [oss] | Wire core importers |
 | 822 | C | [oss] | Import context + errors |
 | 823 | C | [oss] | Reference plugin: CSV remap |

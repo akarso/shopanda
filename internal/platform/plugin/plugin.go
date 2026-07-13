@@ -6,6 +6,7 @@ import (
 	"github.com/akarso/shopanda/internal/application/extension"
 	assetsapp "github.com/akarso/shopanda/internal/application/assets"
 	hooksapp "github.com/akarso/shopanda/internal/application/hooks"
+	importctxapp "github.com/akarso/shopanda/internal/application/importctx"
 	slotsapp "github.com/akarso/shopanda/internal/application/slots"
 	"github.com/akarso/shopanda/internal/domain/identity"
 	"github.com/akarso/shopanda/internal/domain/payment"
@@ -64,6 +65,9 @@ type App struct {
 
 	assetRegistry   *assetsapp.Registry
 	assetRegistryMu sync.Mutex
+
+	importRegistry   *importctxapp.Registry
+	importRegistryMu sync.Mutex
 }
 
 // RegisterCheckoutStep registers a checkout workflow step.
