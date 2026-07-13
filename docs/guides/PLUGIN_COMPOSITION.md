@@ -79,7 +79,7 @@ app.Hooks("acme/rules").Register(extapi.HookCartAddItemAfter, 100, func(hctx *ex
 })
 ```
 
-Stable v0 hook points: see [`pkg/extapi`](../../pkg/extapi) and `GET /api/v1/admin/extensions/hooks`. Additional cart lifecycle hooks (`cart.add_item.before`, `cart.validate`, …) are planned in Phase 8 Track B.
+Stable v0 hook points: see [`pkg/extapi`](../../pkg/extapi) and `GET /api/v1/admin/extensions/hooks`. Cart lifecycle hooks (`cart.add_item.before`, `cart.validate`, …) ship in Phase 8 Track B.
 
 Use hooks when the extension point is not already a first-class pipeline (e.g. reacting after add-to-cart, composing checkout fields in one render pass).
 
@@ -108,7 +108,7 @@ Use this table before writing code. Full design rationale: [Integrator Platform 
 | Task | Mechanism | Ordering | Status |
 | --- | --- | --- | --- |
 | Custom fee / cart price rule | `RegisterPricingStep` | `before:` / `after:` anchors (PR-810) | Shipped |
-| Block or validate cart mutation | Cart hook chain (`cart.add_item.before`, `cart.update_item.before`, …) | Lower priority runs first | Partial (`cart.validate` planned PR-812) |
+| Block or validate cart mutation | Cart hook chain (`cart.add_item.before`, `cart.validate`, …) | Lower priority runs first | Shipped |
 | Custom checkout validation | `RegisterCheckoutStep` | Anchor positions planned | Shipped (append-only) |
 | ERP CSV column remap before DB write | Import row hook (`import.product.row`, …) | Lower priority runs first | Planned (Track C) |
 | SAP / ERP inbound REST callback | `RegisterPublicRoute` + integration auth middleware | Route per plugin | Routes shipped; auth planned (Track D) |
@@ -133,6 +133,7 @@ add item
   └─ recalculate
        └─ [shipped] cart.recalculate.before → inject PricingContext.Meta via pricing_meta map
        └─ pricing pipeline (core steps + RegisterPricingStep)
+  └─ [shipped] cart.validate → structured validation_errors (blocks persist on error-level issues)
   └─ extension value upsert (when provided)
   └─ persist
   └─ [shipped] cart.add_item.after hook
@@ -182,6 +183,24 @@ app.Hooks("acme/assortment").Register(extapi.HookCartAddItemBefore, 100, func(hc
 ```
 
 For update/remove, use `HookCartUpdateItemBefore` and `HookCartRemoveItemAfter` respectively.
+
+### Pattern: structured cart validation (shipped)
+
+Register `cart.validate` to append machine-readable issues. Error-level issues block mutations (HTTP 422); `level: "warning"` issues are returned on successful reads and mutations without blocking.
+
+```go
+app.Hooks("acme/assortment").Register(extapi.HookCartValidate, 100, func(hctx *extapi.HookContext) error {
+    cart, _ := hctx.Get("cart")
+    // inspect cart snapshot; append issues (do not return business errors from handler)
+    hctx.AppendValidationError(extapi.CartValidationIssue{
+        Code:    "acme.min_qty",
+        Message: "minimum quantity is 5 per line",
+    })
+    return nil
+})
+```
+
+Storefront cart responses include `data.validation_errors` alongside `data.cart`.
 
 ### Pattern: capture side effect after add (shipped)
 

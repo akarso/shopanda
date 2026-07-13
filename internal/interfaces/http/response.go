@@ -35,6 +35,45 @@ func JSON(w http.ResponseWriter, status int, data interface{}) {
 	_, _ = w.Write(body)
 }
 
+// JSONWithError writes a JSON response with data and an error envelope.
+func JSONWithError(w http.ResponseWriter, status int, data interface{}, err error) {
+	code := string(apperror.CodeInternal)
+	msg := "internal server error"
+	if status == 0 {
+		status = http.StatusInternalServerError
+	}
+
+	var appErr *apperror.Error
+	if errors.As(err, &appErr) {
+		if status == http.StatusInternalServerError {
+			status = StatusFromCode(appErr.Code)
+		}
+		code = string(appErr.Code)
+		msg = appErr.Message
+		if status == http.StatusInternalServerError {
+			code = string(apperror.CodeInternal)
+			msg = "internal server error"
+		}
+	}
+
+	body, marshalErr := json.Marshal(Response{
+		Data: data,
+		Error: &ErrorBody{
+			Code:    code,
+			Message: msg,
+		},
+	})
+	if marshalErr != nil {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusInternalServerError)
+		_, _ = w.Write([]byte(`{"data":null,"error":{"code":"internal","message":"internal server error"}}`))
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(status)
+	_, _ = w.Write(body)
+}
+
 // JSONError writes a JSON error response derived from err.
 // If err is an *apperror.Error, the code and message are taken from it.
 // Otherwise a generic 500 response is returned.
@@ -86,7 +125,7 @@ func StatusFromCode(code apperror.Code) int {
 		return http.StatusForbidden
 	case apperror.CodeForbiddenPrivateField:
 		return http.StatusForbidden
-	case apperror.CodeUnknownFieldCode, apperror.CodeFieldValidationFailed:
+	case apperror.CodeUnknownFieldCode, apperror.CodeFieldValidationFailed, apperror.CodeCartValidationFailed:
 		return http.StatusUnprocessableEntity
 	case apperror.CodeRateLimited:
 		return http.StatusTooManyRequests

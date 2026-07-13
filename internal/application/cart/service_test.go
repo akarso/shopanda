@@ -39,13 +39,19 @@ func (r *stubCartRepo) FindByID(_ context.Context, id string) (*domainCart.Cart,
 	if !ok {
 		return nil, nil
 	}
-	return c, nil
+	clone := *c
+	clone.Items = make([]domainCart.Item, len(c.Items))
+	copy(clone.Items, c.Items)
+	return &clone, nil
 }
 
 func (r *stubCartRepo) FindActiveByCustomerID(_ context.Context, customerID string) (*domainCart.Cart, error) {
 	for _, c := range r.carts {
 		if c.CustomerID == customerID && c.IsActive() {
-			return c, nil
+			clone := *c
+			clone.Items = make([]domainCart.Item, len(c.Items))
+			copy(clone.Items, c.Items)
+			return &clone, nil
 		}
 	}
 	return nil, nil

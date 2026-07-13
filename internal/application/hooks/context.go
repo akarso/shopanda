@@ -54,6 +54,8 @@ const (
 	HookCartRemoveItemAfter = "cart.remove_item.after"
 	// HookCartRecalculateBefore runs before the pricing pipeline during cart recalculate.
 	HookCartRecalculateBefore = "cart.recalculate.before"
+	// HookCartValidate runs to collect structured cart validation issues for storefront APIs.
+	HookCartValidate = "cart.validate"
 )
 
 // CartHookPoints returns documented cart lifecycle hook names (stable ordering).
@@ -64,6 +66,7 @@ func CartHookPoints() []string {
 		HookCartUpdateItemBefore,
 		HookCartRemoveItemAfter,
 		HookCartRecalculateBefore,
+		HookCartValidate,
 	}
 }
 

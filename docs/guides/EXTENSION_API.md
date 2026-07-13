@@ -8,7 +8,7 @@ Package: [`pkg/extapi`](../../pkg/extapi)
 
 | Surface | Stable v0 includes |
 | --- | --- |
-| Hook point names | `extapi.HookCartAddItemBefore`, `extapi.HookCartAddItemAfter`, `extapi.HookCartUpdateItemBefore`, `extapi.HookCartRemoveItemAfter`, `extapi.HookCartRecalculateBefore`, `extapi.HookPoints()` |
+| Hook point names | `extapi.HookCartAddItemBefore`, `extapi.HookCartAddItemAfter`, `extapi.HookCartUpdateItemBefore`, `extapi.HookCartRemoveItemAfter`, `extapi.HookCartRecalculateBefore`, `extapi.HookCartValidate`, `extapi.HookPoints()` |
 | Slot anchor names | `extapi.SlotPDPInfo`, `extapi.SlotAnchors()`, `extapi.SlotAnchorNames()`, … |
 | Slot placements | `extapi.PlacementBefore`, `PlacementAfter`, `PlacementPrepend`, `PlacementAppend` |
 | Handler types | `extapi.HookHandler`, `extapi.SlotRenderer` with `HookContext` / `SlotRenderContext` |
