@@ -113,7 +113,7 @@ Use this table before writing code. Full design rationale: [Integrator Platform 
 | ERP CSV column remap before DB write | Import row hook (`import.product.row`, …) | Lower priority runs first | Planned (Track C) |
 | SAP / ERP inbound REST callback | `RegisterPublicRoute` + integration auth middleware | Route per plugin | Routes shipped; auth planned (Track D) |
 | Warehouse / PIM outbound sync | Sync job + events/queue | Job registration order | Planned (Track E) |
-| Replace search / cache / tax backend | Infrastructure port (`RegisterSearchProvider`, …) | Config picks one winner | Partial (ports shipped; tax planned) |
+| Replace search / cache / tax backend | Infrastructure port (`RegisterSearchProvider`, `RegisterTaxCalculator`, …) | Config picks one winner | Partial (tax shipped PR-813; mail/shipping planned) |
 | Enrich PDP from external PIM | `RegisterCompositionStep("pdp", …)` + cached fetch | Pipeline order | Shipped |
 | Durable custom line data | Extension field on `cart_item` → snapshot `order_item` | Registry + ACL | Shipped (Phase 7) |
 | Notify after order placed | `Bus.OnAsync("order.created", …)` | No order guarantee | Shipped |

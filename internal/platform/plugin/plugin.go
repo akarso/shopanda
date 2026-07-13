@@ -45,6 +45,7 @@ type App struct {
 	queue           any
 	paymentRegistry *payment.ProviderRegistry
 	mediaStorage    any
+	taxCalculator   any
 
 	configRegistry *ConfigRegistry
 

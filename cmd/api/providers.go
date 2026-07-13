@@ -9,6 +9,8 @@ import (
 	"github.com/akarso/shopanda/internal/domain/media"
 	"github.com/akarso/shopanda/internal/domain/payment"
 	"github.com/akarso/shopanda/internal/domain/search"
+	"github.com/akarso/shopanda/internal/domain/tax"
+	appPricing "github.com/akarso/shopanda/internal/application/pricing"
 	"github.com/akarso/shopanda/internal/infrastructure/localfs"
 	"github.com/akarso/shopanda/internal/infrastructure/manualpay"
 	"github.com/akarso/shopanda/internal/infrastructure/postgres"
@@ -103,4 +105,18 @@ func resolvePaymentRegistry(app *plugin.App) (*payment.ProviderRegistry, error) 
 	reg := payment.NewProviderRegistry()
 	reg.Register(manualpay.NewProvider())
 	return reg, nil
+}
+
+func resolveTaxCalculator(app *plugin.App, rates tax.RateRepository) (tax.Calculator, error) {
+	if v, ok := app.TaxCalculator(); ok {
+		calc, ok := v.(tax.Calculator)
+		if !ok {
+			return nil, fmt.Errorf("plugin tax calculator: invalid type %T", v)
+		}
+		return calc, nil
+	}
+	if rates == nil {
+		return nil, fmt.Errorf("tax calculator: rate repository required for core default")
+	}
+	return appPricing.NewRateTableTaxCalculator(rates, "standard"), nil
 }

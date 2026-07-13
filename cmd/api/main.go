@@ -600,11 +600,15 @@ func runServe(cfg *config.Config, log logger.Logger, embedScheduler bool) error 
 	}
 
 	// Pricing pipeline (core + positioned plugin steps).
+	taxCalculator, err := resolveTaxCalculator(pluginApp, taxRateRepo)
+	if err != nil {
+		return fmt.Errorf("tax calculator: %w", err)
+	}
 	corePricingSteps := []pricing.PricingStep{
 		appPricing.NewBasePriceStep(priceRepo),
 		appPricing.NewCatalogPromotionStep(promotionRepo, couponRepo),
 		appPricing.NewCartPromotionStep(promotionRepo, couponRepo),
-		appPricing.NewTaxStep(taxRateRepo, "standard"),
+		appPricing.NewTaxStep(taxCalculator),
 		pricing.NewFinalizeStep(),
 	}
 	pluginPricingRegs := make([]appPricing.PluginStepRegistration, 0)

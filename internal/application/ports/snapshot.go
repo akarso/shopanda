@@ -87,6 +87,9 @@ func buildActivePort(app *plugin.App, cfg *config.Config, entry CatalogEntry) Ac
 	case "media":
 		provider, _ := app.MediaStorage()
 		return buildSingleProviderPort(port, provider, cfg.Media.Storage, coreMediaFallback(cfg))
+	case "tax":
+		provider, _ := app.TaxCalculator()
+		return buildSingleProviderPort(port, provider, "", coreTaxFallback())
 	case "payment":
 		return buildPaymentPort(port, app)
 	default:
@@ -189,6 +192,10 @@ func coreMediaFallback(cfg *config.Config) string {
 		return "localfs.Storage"
 	}
 	return ""
+}
+
+func coreTaxFallback() string {
+	return "pricing.RateTableCalculator"
 }
 
 func typeName(v any) string {

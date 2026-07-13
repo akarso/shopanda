@@ -1,10 +1,12 @@
 package plugin_test
 
 import (
+	"context"
 	"errors"
 	"io"
 	"testing"
 
+	"github.com/akarso/shopanda/internal/domain/pricing"
 	"github.com/akarso/shopanda/internal/platform/config"
 	"github.com/akarso/shopanda/internal/platform/event"
 	"github.com/akarso/shopanda/internal/platform/logger"
@@ -72,6 +74,48 @@ func TestApp_RegisterSearchProvider_DoubleRegistrationPanics(t *testing.T) {
 		}
 	}()
 	app.RegisterSearchProvider(&stubSearchProvider{name: "second"})
+}
+
+type stubTaxCalculator struct{}
+
+func (stubTaxCalculator) Calculate(_ context.Context, _ *pricing.PricingContext) error {
+	return nil
+}
+
+func TestApp_RegisterTaxCalculator(t *testing.T) {
+	app := &plugin.App{}
+	calc := stubTaxCalculator{}
+	app.RegisterTaxCalculator(calc)
+
+	got, ok := app.TaxCalculator()
+	if !ok {
+		t.Fatal("TaxCalculator() ok = false, want true")
+	}
+	if got != calc {
+		t.Fatalf("TaxCalculator() = %v, want %v", got, calc)
+	}
+}
+
+func TestApp_RegisterTaxCalculator_NilPanics(t *testing.T) {
+	defer func() {
+		if r := recover(); r == nil {
+			t.Fatal("expected panic for nil tax calculator")
+		}
+	}()
+	app := &plugin.App{}
+	app.RegisterTaxCalculator(nil)
+}
+
+func TestApp_RegisterTaxCalculator_DoubleRegistrationPanics(t *testing.T) {
+	app := &plugin.App{}
+	app.RegisterTaxCalculator(stubTaxCalculator{})
+
+	defer func() {
+		if r := recover(); r == nil {
+			t.Fatal("expected panic for double tax calculator registration")
+		}
+	}()
+	app.RegisterTaxCalculator(stubTaxCalculator{})
 }
 
 func TestRegistry_StubCorePluginRegistersProvider(t *testing.T) {

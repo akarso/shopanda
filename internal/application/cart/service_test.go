@@ -931,7 +931,7 @@ func TestService_AddItem_UsesStoreTaxDefaults(t *testing.T) {
 			sawTaxDefaults = true
 			return nil
 		}},
-		appPricing.NewTaxStep(taxRates, "standard"),
+		appPricing.NewTaxStep(appPricing.NewRateTableTaxCalculator(taxRates, "standard")),
 		probeStep{name: "assert-tax-applied", fn: func(_ context.Context, pctx *pricing.PricingContext) error {
 			if len(pctx.Items) != 1 {
 				return fmt.Errorf("items = %d, want 1", len(pctx.Items))
@@ -989,7 +989,7 @@ func TestService_AddItem_WithoutStoreTaxContext_SkipsTaxStep(t *testing.T) {
 	}}
 	pipeline := pricing.NewPipeline(
 		appPricing.NewBasePriceStep(prices),
-		appPricing.NewTaxStep(taxRates, "standard"),
+		appPricing.NewTaxStep(appPricing.NewRateTableTaxCalculator(taxRates, "standard")),
 		pricing.NewFinalizeStep(),
 	)
 	svc := cartApp.NewService(carts, prices, nil, nil, pipeline, testLogger(), testBus(), nil, nil)
