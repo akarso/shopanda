@@ -338,6 +338,7 @@ type PluginsConfig struct {
 	GraphQL GraphQLPluginConfig `yaml:"graphql"`
 	Example   ExamplePluginConfig   `yaml:"example"`
 	SlotsDemo SlotsDemoPluginConfig `yaml:"slotsdemo"`
+	CartDemo  CartDemoPluginConfig  `yaml:"cartdemo"`
 	B2B       B2BPluginConfig       `yaml:"b2b"`
 }
 
@@ -355,6 +356,13 @@ type ExamplePluginConfig struct {
 // SlotsDemoPluginConfig toggles the slots reference plugin in plugins/slotsdemo.
 type SlotsDemoPluginConfig struct {
 	Enabled bool `yaml:"enabled"`
+}
+
+// CartDemoPluginConfig toggles the cart rules reference plugin in plugins/cartdemo.
+type CartDemoPluginConfig struct {
+	Enabled               bool  `yaml:"enabled"`
+	MinQuantity           int   `yaml:"min_quantity"`
+	HandlingFeeMinorUnits int64 `yaml:"handling_fee_minor_units"`
 }
 
 // B2BPluginConfig toggles the commercial B2B module in plugins/b2b.
@@ -792,6 +800,19 @@ func applyEnv(cfg *Config) {
 	if v := os.Getenv("SHOPANDA_PLUGINS_SLOTSDEMO_ENABLED"); v != "" {
 		cfg.Plugins.SlotsDemo.Enabled = v == "true" || v == "1"
 	}
+	if v := os.Getenv("SHOPANDA_PLUGINS_CARTDEMO_ENABLED"); v != "" {
+		cfg.Plugins.CartDemo.Enabled = v == "true" || v == "1"
+	}
+	if v := os.Getenv("SHOPANDA_PLUGINS_CARTDEMO_MIN_QUANTITY"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil {
+			cfg.Plugins.CartDemo.MinQuantity = n
+		}
+	}
+	if v := os.Getenv("SHOPANDA_PLUGINS_CARTDEMO_HANDLING_FEE_MINOR_UNITS"); v != "" {
+		if n, err := strconv.ParseInt(v, 10, 64); err == nil {
+			cfg.Plugins.CartDemo.HandlingFeeMinorUnits = n
+		}
+	}
 	if v := os.Getenv("SHOPANDA_PLUGINS_B2B_ENABLED"); v != "" {
 		cfg.Plugins.B2B.Enabled = v == "true" || v == "1"
 	}
@@ -920,6 +941,9 @@ func flatten(cfg *Config) map[string]string {
 	m["plugins.example.enabled"] = strconv.FormatBool(cfg.Plugins.Example.Enabled)
 	m["plugins.example.fee_minor_units"] = strconv.FormatInt(cfg.Plugins.Example.FeeMinorUnits, 10)
 	m["plugins.slotsdemo.enabled"] = strconv.FormatBool(cfg.Plugins.SlotsDemo.Enabled)
+	m["plugins.cartdemo.enabled"] = strconv.FormatBool(cfg.Plugins.CartDemo.Enabled)
+	m["plugins.cartdemo.min_quantity"] = strconv.Itoa(cfg.Plugins.CartDemo.MinQuantity)
+	m["plugins.cartdemo.handling_fee_minor_units"] = strconv.FormatInt(cfg.Plugins.CartDemo.HandlingFeeMinorUnits, 10)
 	m["plugins.b2b.enabled"] = strconv.FormatBool(cfg.Plugins.B2B.Enabled)
 	m["frontend.enabled"] = strconv.FormatBool(cfg.Frontend.Enabled)
 	m["frontend.mode"] = cfg.Frontend.Mode

@@ -21,7 +21,7 @@ Related:
 | --- | --- |
 | §2 Design position, §9 Precedence | **Published** — policy in spec; practical guide in [PLUGIN_COMPOSITION.md](../../guides/PLUGIN_COMPOSITION.md) (PR-802) |
 | §3 Port catalog | **Partial** — search/cache/queue/payment/media/tax shipped; introspection at `GET /api/v1/admin/extensions/ports` (PR-801); mail/shipping planned |
-| §4 Behavioral catalog | **Partial** — pricing positioning + cart lifecycle hooks + `cart.validate` shipped (PR-810–812); reference cart plugin planned |
+| §4 Behavioral catalog | **Shipped** — pricing positioning + cart lifecycle hooks + `cart.validate` + reference cart plugin (PR-810–814) |
 | §5 Import pipelines | **Planned** (Track C) — proposed `app.Import()` API |
 | §6 Inbound integration | **Partial** — `RegisterPublicRoute` / `RegisterAdminRoute` shipped; auth/idempotency middleware planned (Track D) |
 | §7 Outbound integration | **Partial** — events + queue shipped; sync job registration planned (Track E) |

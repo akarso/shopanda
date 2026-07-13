@@ -188,6 +188,8 @@ For update/remove, use `HookCartUpdateItemBefore` and `HookCartRemoveItemAfter` 
 
 Register `cart.validate` to append machine-readable issues. Error-level issues block mutations (HTTP 422); `level: "warning"` issues are returned on successful reads and mutations without blocking.
 
+Reference implementation: [`plugins/cartdemo`](../../plugins/cartdemo) (PR-814).
+
 ```go
 app.Hooks("acme/assortment").Register(extapi.HookCartValidate, 100, func(hctx *extapi.HookContext) error {
     cart, _ := hctx.Get("cart")

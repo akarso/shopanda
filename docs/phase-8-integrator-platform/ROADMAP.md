@@ -76,7 +76,7 @@ Merchants continue using admin for day-to-day ops; Phase 8 is **integrator- and 
 | Track | Goal | PR range | Delivers |
 | --- | --- | --- | --- |
 | **A** | Strategy & catalog | PR-800–802 | Spec, port catalog, precedence policy, composition guide updates |
-| **B** | Commerce behavior | PR-810–814 | Pricing position API, cart hooks, cart validate chain, reference cart rule plugin |
+| **B** | Commerce behavior | PR-810–814 | Pricing position API, cart hooks, cart validate chain, reference cart rule plugin — **complete** |
 | **C** | Import pipelines | PR-820–823 | Row hook registry wired into CLI importers, reference CSV remap plugin |
 | **D** | Inbound integration | PR-830–833 | Integration auth middleware, idempotency, reference SAP-style endpoint |
 | **E** | Outbound integration | PR-840–843 | Sync job registration, client bootstrap, warehouse + PIM reference plugins |
@@ -235,7 +235,7 @@ Recommended order: **A (800–802)** → **B (810–814)** and **C (820–823)**
 | 811 | B | [oss] | Cart lifecycle hooks (done) |
 | 812 | B | [oss] | Cart validate chain (done) |
 | 813 | B | [oss] | Tax calculator port (done) |
-| 814 | B | [oss] | Reference plugin: cart rule |
+| 814 | B | [oss] | Reference plugin: cart rule (done) |
 | 820 | C | [oss] | Import row hook registry |
 | 821 | C | [oss] | Wire core importers |
 | 822 | C | [oss] | Import context + errors |
