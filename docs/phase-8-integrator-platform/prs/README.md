@@ -10,7 +10,7 @@ Specs for Phase 8 PRs (Summary, Why, Scope, Out of scope, Validation — same fo
 | PR-810 | B | [oss] | done | [Pricing step positioning](PR-810.md) |
 | PR-811 | B | [oss] | done | [Cart lifecycle hooks](PR-811.md) |
 | PR-812 | B | [oss] | done | [Cart validate chain](PR-812.md) |
-| PR-813 | B | [oss] | planned | Tax calculator port |
+| PR-813 | B | [oss] | done | [Tax calculator port](PR-813.md) |
 | PR-814 | B | [oss] | planned | Reference plugin: cart rule |
 | PR-820 | C | [oss] | planned | Import row hook registry |
 | PR-821 | C | [oss] | planned | Wire core importers |
@@ -33,6 +33,6 @@ Roadmap: [`../ROADMAP.md`](../ROADMAP.md) · Architecture: [`../specs/INTEGRATOR
 
 **Rule for Phase 8:** Integrators extend via registered seams only — no core service overrides, no override folders, no ad hoc importer forks.
 
-**Phase 8 Track A complete** (PR-800–802). **Track B in progress** (PR-810–812 done).
+**Phase 8 Track A complete** (PR-800–802). **Track B in progress** (PR-810–813 done).
 
 Individual PR spec files (`PR-812.md`, …) are added when implementation starts.

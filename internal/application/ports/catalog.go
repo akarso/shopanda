@@ -52,8 +52,8 @@ func Catalog() []CatalogEntry {
 			Name:        "tax",
 			RegisterAPI: "RegisterTaxCalculator",
 			ConfigKey:   "",
-			Notes:       "Tax calculation (Phase 8 Track B)",
-			Shipped:     false,
+			Notes:       "Tax calculation; core default uses rate tables",
+			Shipped:     true,
 		},
 		{
 			Name:        "shipping_rate",

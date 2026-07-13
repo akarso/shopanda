@@ -78,6 +78,18 @@ func (a *App) RegisterMediaStorage(storage any) {
 	a.mediaStorage = storage
 }
 
+// RegisterTaxCalculator registers the active tax calculation implementation.
+// The calculator must implement tax.Calculator.
+func (a *App) RegisterTaxCalculator(calculator any) {
+	if calculator == nil {
+		panic("plugin: tax calculator must not be nil")
+	}
+	if a.taxCalculator != nil {
+		panic("plugin: tax calculator already registered")
+	}
+	a.taxCalculator = calculator
+}
+
 // SearchProvider returns the registered search backend, if any.
 func (a *App) SearchProvider() (any, bool) {
 	if a.searchProvider == nil {
@@ -125,4 +137,12 @@ func (a *App) MediaStorage() (any, bool) {
 		return nil, false
 	}
 	return a.mediaStorage, true
+}
+
+// TaxCalculator returns the registered tax calculator, if any.
+func (a *App) TaxCalculator() (any, bool) {
+	if a.taxCalculator == nil {
+		return nil, false
+	}
+	return a.taxCalculator, true
 }

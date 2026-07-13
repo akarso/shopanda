@@ -20,8 +20,8 @@ Related:
 | Section | Status |
 | --- | --- |
 | §2 Design position, §9 Precedence | **Published** — policy in spec; practical guide in [PLUGIN_COMPOSITION.md](../../guides/PLUGIN_COMPOSITION.md) (PR-802) |
-| §3 Port catalog | **Partial** — search/cache/queue/payment/media shipped; introspection at `GET /api/v1/admin/extensions/ports` (PR-801); tax/mail/shipping planned |
-| §4 Behavioral catalog | **Partial** — pricing positioning + cart lifecycle hooks + `cart.validate` shipped (PR-810–812); tax port planned |
+| §3 Port catalog | **Partial** — search/cache/queue/payment/media/tax shipped; introspection at `GET /api/v1/admin/extensions/ports` (PR-801); mail/shipping planned |
+| §4 Behavioral catalog | **Partial** — pricing positioning + cart lifecycle hooks + `cart.validate` shipped (PR-810–812); reference cart plugin planned |
 | §5 Import pipelines | **Planned** (Track C) — proposed `app.Import()` API |
 | §6 Inbound integration | **Partial** — `RegisterPublicRoute` / `RegisterAdminRoute` shipped; auth/idempotency middleware planned (Track D) |
 | §7 Outbound integration | **Partial** — events + queue shipped; sync job registration planned (Track E) |
@@ -98,7 +98,7 @@ Single active implementation per port unless noted.
 | Queue | `RegisterQueue` | Shipped | sync / redis / kafka / sqs |
 | Payment | `RegisterPaymentProvider` | Shipped | Multi-provider registry by method |
 | Media storage | `RegisterMediaStorage` | Shipped | local / s3 |
-| Tax calculation | `RegisterTaxCalculator` | **Phase 8** | Default core; plugin replaces |
+| Tax calculation | `RegisterTaxCalculator` | Shipped | Default `RateTableCalculator`; plugin replaces |
 | Shipping rate | `RegisterShippingRateProvider` | **Phase 8 stretch** | Zone tables stay core; rating port for carriers |
 | Mail sender | `RegisterMailSender` | **Phase 8 stretch** | SMTP default; plugin for SendGrid, etc. |
 | Address validation | `RegisterAddressValidator` | Backlog | Optional ERP validation |

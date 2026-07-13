@@ -11,6 +11,25 @@ import (
 
 type stubSearch struct{}
 
+type stubTaxCalculator struct{}
+
+func TestBuildSnapshot_PluginTaxCalculator(t *testing.T) {
+	app := &plugin.App{}
+	app.RegisterTaxCalculator(stubTaxCalculator{})
+
+	snap := ports.BuildSnapshot(app, testConfig())
+	taxPort := indexPorts(snap.Ports)["tax"]
+	if taxPort.Status != ports.StatusActive {
+		t.Fatalf("tax status = %q, want active", taxPort.Status)
+	}
+	if taxPort.Source != "plugin" {
+		t.Fatalf("tax source = %q", taxPort.Source)
+	}
+	if taxPort.Implementation != "ports_test.stubTaxCalculator" {
+		t.Fatalf("tax implementation = %q", taxPort.Implementation)
+	}
+}
+
 func testConfig() *config.Config {
 	return &config.Config{
 		Search: config.SearchConfig{Engine: "postgres"},
@@ -24,12 +43,23 @@ func TestBuildSnapshot_PlannedPorts(t *testing.T) {
 	snap := ports.BuildSnapshot(&plugin.App{}, testConfig())
 	byName := indexPorts(snap.Ports)
 
-	tax := byName["tax"]
-	if tax.Status != ports.StatusPlanned {
-		t.Fatalf("tax status = %q, want planned", tax.Status)
+	shipping := byName["shipping_rate"]
+	if shipping.Status != ports.StatusPlanned {
+		t.Fatalf("shipping_rate status = %q, want planned", shipping.Status)
 	}
-	if tax.RegisterAPI != "RegisterTaxCalculator" {
-		t.Fatalf("tax register API = %q", tax.RegisterAPI)
+}
+
+func TestBuildSnapshot_TaxCoreDefault(t *testing.T) {
+	snap := ports.BuildSnapshot(&plugin.App{}, testConfig())
+	taxPort := indexPorts(snap.Ports)["tax"]
+	if taxPort.Status != ports.StatusCoreDefault {
+		t.Fatalf("tax status = %q, want core_default", taxPort.Status)
+	}
+	if taxPort.Implementation != "pricing.RateTableCalculator" {
+		t.Fatalf("tax implementation = %q", taxPort.Implementation)
+	}
+	if taxPort.RegisterAPI != "RegisterTaxCalculator" {
+		t.Fatalf("tax register API = %q", taxPort.RegisterAPI)
 	}
 }
 
