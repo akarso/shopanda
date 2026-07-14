@@ -19,10 +19,11 @@ import (
 
 // PriceResult holds the summary of a price import run.
 type PriceResult struct {
-	Created int
-	Updated int
-	Skipped int
-	Errors  []string
+	Created   int
+	Updated   int
+	Skipped   int
+	Errors    []string
+	RowErrors []importctx.ImportError
 }
 
 // txPriceRepo is an optional capability: a PriceRepository that supports
@@ -111,11 +112,9 @@ func (imp *PriceImporter) Import(ctx context.Context, r io.Reader) (*PriceResult
 
 		rowMap := RecordToRow(record, colIdx)
 		if imp.rowHooks != nil {
-			var hookErr error
-			rowMap, hookErr = imp.rowHooks.Invoke(ctx, importctx.EntityPrice, lineNum, rowMap)
-			if hookErr != nil {
-				result.Errors = append(result.Errors, RowHookError(lineNum, hookErr))
-				result.Skipped++
+			var cont bool
+			rowMap, cont = HandleRowHookOutcome(lineNum, imp.rowHooks.Invoke(ctx, importctx.EntityPrice, lineNum, rowMap), &result.Skipped, &result.Errors, &result.RowErrors)
+			if !cont {
 				continue
 			}
 		}

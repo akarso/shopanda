@@ -16,11 +16,12 @@ import (
 
 // CategoryResult holds the summary of a category import run.
 type CategoryResult struct {
-	Created  int
-	Updated  int
-	Skipped  int
-	Errors   []string
-	Warnings []string
+	Created   int
+	Updated   int
+	Skipped   int
+	Errors    []string
+	RowErrors []importctx.ImportError
+	Warnings  []string
 }
 
 // CategoryImporter imports categories from CSV.
@@ -85,7 +86,9 @@ func (imp *CategoryImporter) Import(ctx context.Context, r io.Reader) (*Category
 	var rows []catRow
 	lineNum := 1 // header is line 1
 
+	result := &CategoryResult{}
 	var parseErrors []string
+
 	var parseWarnings []string
 
 	for {
@@ -104,10 +107,9 @@ func (imp *CategoryImporter) Import(ctx context.Context, r io.Reader) (*Category
 
 		rowMap := RecordToRow(record, colIdx)
 		if imp.rowHooks != nil {
-			var hookErr error
-			rowMap, hookErr = imp.rowHooks.Invoke(ctx, importctx.EntityCategory, lineNum, rowMap)
-			if hookErr != nil {
-				parseErrors = append(parseErrors, RowHookError(lineNum, hookErr))
+			var cont bool
+			rowMap, cont = HandleRowHookOutcome(lineNum, imp.rowHooks.Invoke(ctx, importctx.EntityCategory, lineNum, rowMap), &result.Skipped, &result.Errors, &result.RowErrors)
+			if !cont {
 				continue
 			}
 		}
@@ -142,7 +144,6 @@ func (imp *CategoryImporter) Import(ctx context.Context, r io.Reader) (*Category
 		})
 	}
 
-	result := &CategoryResult{}
 	result.Errors = append(result.Errors, parseErrors...)
 	result.Skipped += len(parseErrors)
 	result.Warnings = append(result.Warnings, parseWarnings...)

@@ -16,10 +16,11 @@ import (
 
 // Result holds the summary of an import run.
 type Result struct {
-	Products int
-	Variants int
-	Skipped  int
-	Errors   []string
+	Products  int
+	Variants  int
+	Skipped   int
+	Errors    []string
+	RowErrors []importctx.ImportError
 }
 
 // TxStarter begins database transactions.
@@ -157,11 +158,9 @@ func (imp *ProductImporter) Import(ctx context.Context, r io.Reader) (*Result, e
 		}
 		rowMap := RecordToRow(record, colIndex)
 		if imp.rowHooks != nil {
-			var hookErr error
-			rowMap, hookErr = imp.rowHooks.Invoke(ctx, importctx.EntityProduct, lineNum, rowMap)
-			if hookErr != nil {
-				result.Errors = append(result.Errors, RowHookError(lineNum, hookErr))
-				result.Skipped++
+			var cont bool
+			rowMap, cont = HandleRowHookOutcome(lineNum, imp.rowHooks.Invoke(ctx, importctx.EntityProduct, lineNum, rowMap), &result.Skipped, &result.Errors, &result.RowErrors)
+			if !cont {
 				continue
 			}
 		}
