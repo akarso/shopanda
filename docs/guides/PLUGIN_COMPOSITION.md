@@ -110,7 +110,7 @@ Use this table before writing code. Full design rationale: [Integrator Platform 
 | Custom fee / cart price rule | `RegisterPricingStep` | `before:` / `after:` anchors (PR-810) | Shipped |
 | Block or validate cart mutation | Cart hook chain (`cart.add_item.before`, `cart.validate`, …) | Lower priority runs first | Shipped |
 | Custom checkout validation | `RegisterCheckoutStep` | Anchor positions planned | Shipped (append-only) |
-| ERP CSV column remap before DB write | Import row hook (`import.product.row`, …) | Lower priority runs first | Registry shipped (PR-820); importer wiring PR-821 |
+| ERP CSV column remap before DB write | Import row hook (`import.product.row`, …) | Lower priority runs first | Shipped (PR-820–821) |
 | SAP / ERP inbound REST callback | `RegisterPublicRoute` + integration auth middleware | Route per plugin | Routes shipped; auth planned (Track D) |
 | Warehouse / PIM outbound sync | Sync job + events/queue | Job registration order | Planned (Track E) |
 | Replace search / cache / tax backend | Infrastructure port (`RegisterSearchProvider`, `RegisterTaxCalculator`, …) | Config picks one winner | Partial (tax shipped PR-813; mail/shipping planned) |
@@ -218,7 +218,7 @@ Inspect active handlers: `GET /api/v1/admin/extensions/hooks`.
 
 ## Import composition (Track C)
 
-**Status:** row hook registry shipped (PR-820). Core importers invoke the chain in PR-821; skip/errors in PR-822.
+**Status:** row hook registry + importer wiring shipped (PR-820–821). Skip/errors API in PR-822.
 
 **Problem:** ERP CSV files use foreign column names; forking `internal/application/importer` breaks on upgrades.
 

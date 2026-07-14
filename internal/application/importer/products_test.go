@@ -111,33 +111,48 @@ Gadget,gadget,SKU-003,A cool gadget,Default
 	if len(prodRepo.products) != 2 {
 		t.Fatalf("products created = %d, want 2", len(prodRepo.products))
 	}
-	if prodRepo.products[0].Name != "Widget" {
-		t.Errorf("product[0].Name = %q, want Widget", prodRepo.products[0].Name)
+	bySlug := make(map[string]*catalog.Product, len(prodRepo.products))
+	for _, p := range prodRepo.products {
+		bySlug[p.Slug] = p
 	}
-	if prodRepo.products[0].Slug != "widget" {
-		t.Errorf("product[0].Slug = %q, want widget", prodRepo.products[0].Slug)
+	widget := bySlug["widget"]
+	if widget == nil {
+		t.Fatal("widget product not created")
 	}
-	if prodRepo.products[0].Description != "A fine widget" {
-		t.Errorf("product[0].Description = %q, want 'A fine widget'", prodRepo.products[0].Description)
+	if widget.Name != "Widget" {
+		t.Errorf("widget.Name = %q, want Widget", widget.Name)
+	}
+	if widget.Description != "A fine widget" {
+		t.Errorf("widget.Description = %q, want 'A fine widget'", widget.Description)
+	}
+	gadget := bySlug["gadget"]
+	if gadget == nil {
+		t.Fatal("gadget product not created")
+	}
+	if gadget.Name != "Gadget" {
+		t.Errorf("gadget.Name = %q, want Gadget", gadget.Name)
 	}
 
 	// Check variants.
 	if len(varRepo.variants) != 3 {
 		t.Fatalf("variants created = %d, want 3", len(varRepo.variants))
 	}
-	// First two variants belong to same product.
-	if varRepo.variants[0].ProductID != varRepo.variants[1].ProductID {
-		t.Error("first two variants should share product ID")
+	bySKU := make(map[string]*catalog.Variant, len(varRepo.variants))
+	for _, v := range varRepo.variants {
+		bySKU[v.SKU] = v
 	}
-	// Third variant is a different product.
-	if varRepo.variants[2].ProductID == varRepo.variants[0].ProductID {
-		t.Error("third variant should have a different product ID")
+	v1, v2, v3 := bySKU["SKU-001"], bySKU["SKU-002"], bySKU["SKU-003"]
+	if v1 == nil || v2 == nil || v3 == nil {
+		t.Fatalf("variants by SKU = %+v", bySKU)
 	}
-	if varRepo.variants[0].SKU != "SKU-001" {
-		t.Errorf("variant[0].SKU = %q, want SKU-001", varRepo.variants[0].SKU)
+	if v1.ProductID != v2.ProductID {
+		t.Error("SKU-001 and SKU-002 should share product ID")
 	}
-	if varRepo.variants[0].Name != "Size S" {
-		t.Errorf("variant[0].Name = %q, want 'Size S'", varRepo.variants[0].Name)
+	if v3.ProductID == v1.ProductID {
+		t.Error("SKU-003 should have a different product ID")
+	}
+	if v1.Name != "Size S" {
+		t.Errorf("SKU-001 name = %q, want 'Size S'", v1.Name)
 	}
 }
 

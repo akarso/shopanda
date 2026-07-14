@@ -1457,7 +1457,7 @@ func runImportProducts(cfg *config.Config, log logger.Logger) error {
 	if err != nil {
 		return fmt.Errorf("variant repo: %w", err)
 	}
-	imp := importer.NewProductImporter(productRepo, variantRepo, conn)
+	imp := importer.NewProductImporter(productRepo, variantRepo, conn).WithRowHooks(bootstrapImportRegistry(cfg, log))
 
 	log.Info("import.start", map[string]interface{}{"file": filePath})
 
@@ -1555,7 +1555,7 @@ func runImportStock(cfg *config.Config, log logger.Logger) error {
 	if err != nil {
 		return fmt.Errorf("stock repo: %w", err)
 	}
-	imp := importer.NewStockImporter(variantRepo, stockRepo)
+	imp := importer.NewStockImporter(variantRepo, stockRepo).WithRowHooks(bootstrapImportRegistry(cfg, log))
 
 	log.Info("import.stock.start", map[string]interface{}{"file": filePath})
 
@@ -1654,7 +1654,7 @@ func runImportCustomers(cfg *config.Config, log logger.Logger) error {
 	if err != nil {
 		return fmt.Errorf("customer repo: %w", err)
 	}
-	imp := importer.NewCustomerImporter(customerRepo)
+	imp := importer.NewCustomerImporter(customerRepo).WithRowHooks(bootstrapImportRegistry(cfg, log))
 
 	log.Info("import.customers.start", map[string]interface{}{"file": filePath})
 
@@ -1876,7 +1876,7 @@ func runImportAttributes(cfg *config.Config, log logger.Logger) error {
 	defer tx.Rollback() //nolint:errcheck // rollback after commit is a no-op
 
 	configRepo := postgres.NewConfigRepo(tx)
-	imp := importer.NewAttributeImporter(configRepo)
+	imp := importer.NewAttributeImporter(configRepo).WithRowHooks(bootstrapImportRegistry(cfg, log))
 
 	log.Info("import.attributes.start", map[string]interface{}{"file": filePath})
 
@@ -1977,7 +1977,7 @@ func runImportCategories(cfg *config.Config, log logger.Logger) error {
 	if err != nil {
 		return fmt.Errorf("category repo: %w", err)
 	}
-	imp := importer.NewCategoryImporter(categoryRepo)
+	imp := importer.NewCategoryImporter(categoryRepo).WithRowHooks(bootstrapImportRegistry(cfg, log))
 
 	log.Info("import.categories.start", map[string]interface{}{"file": filePath})
 
@@ -2096,7 +2096,7 @@ func runImportPrices(cfg *config.Config, log logger.Logger) error {
 	if err != nil {
 		return fmt.Errorf("price history repo: %w", err)
 	}
-	imp := importer.NewPriceImporter(variantRepo, priceRepo, priceHistoryRepo, conn, nil)
+	imp := importer.NewPriceImporter(variantRepo, priceRepo, priceHistoryRepo, conn, nil).WithRowHooks(bootstrapImportRegistry(cfg, log))
 
 	log.Info("import.prices.start", map[string]interface{}{"file": filePath})
 

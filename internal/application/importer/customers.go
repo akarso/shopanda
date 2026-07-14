@@ -7,6 +7,7 @@ import (
 	"io"
 	"strings"
 
+	importctx "github.com/akarso/shopanda/internal/application/importctx"
 	"github.com/akarso/shopanda/internal/domain/customer"
 	"github.com/akarso/shopanda/internal/platform/id"
 	"github.com/akarso/shopanda/internal/platform/password"
@@ -22,11 +23,18 @@ type CustomerResult struct {
 // CustomerImporter imports customers from CSV.
 type CustomerImporter struct {
 	customers customer.CustomerRepository
+	rowHooks  *RowHookRunner
 }
 
 // NewCustomerImporter creates a CustomerImporter.
 func NewCustomerImporter(customers customer.CustomerRepository) *CustomerImporter {
 	return &CustomerImporter{customers: customers}
+}
+
+// WithRowHooks wires import row hooks invoked after header validation and before persist.
+func (imp *CustomerImporter) WithRowHooks(registry *importctx.Registry) *CustomerImporter {
+	imp.rowHooks = NewRowHookRunner(registry)
+	return imp
 }
 
 // Import reads CSV rows from r and creates customer records.
@@ -47,16 +55,16 @@ func (imp *CustomerImporter) Import(ctx context.Context, r io.Reader) (*Customer
 		colIdx[strings.TrimSpace(strings.ToLower(h))] = i
 	}
 
-	emailIdx, hasEmail := colIdx["email"]
+	_, hasEmail := colIdx["email"]
 	if !hasEmail {
 		return nil, fmt.Errorf("customer import: CSV must have 'email' column")
 	}
 
-	firstNameIdx, hasFirstName := colIdx["first_name"]
-	lastNameIdx, hasLastName := colIdx["last_name"]
-	roleIdx, hasRole := colIdx["role"]
-	statusIdx, hasStatus := colIdx["status"]
-	passwordIdx, hasPassword := colIdx["password"]
+	_, hasFirstName := colIdx["first_name"]
+	_, hasLastName := colIdx["last_name"]
+	_, hasRole := colIdx["role"]
+	_, hasStatus := colIdx["status"]
+	_, hasPassword := colIdx["password"]
 
 	result := &CustomerResult{}
 	lineNum := 1 // header is line 1
@@ -73,7 +81,18 @@ func (imp *CustomerImporter) Import(ctx context.Context, r io.Reader) (*Customer
 			continue
 		}
 
-		email := strings.TrimSpace(record[emailIdx])
+		rowMap := RecordToRow(record, colIdx)
+		if imp.rowHooks != nil {
+			var hookErr error
+			rowMap, hookErr = imp.rowHooks.Invoke(ctx, importctx.EntityCustomer, lineNum, rowMap)
+			if hookErr != nil {
+				result.Errors = append(result.Errors, RowHookError(lineNum, hookErr))
+				result.Skipped++
+				continue
+			}
+		}
+
+		email := colValRow(rowMap, "email")
 		if email == "" {
 			result.Errors = append(result.Errors, fmt.Sprintf("line %d: empty email", lineNum))
 			result.Skipped++
@@ -87,17 +106,17 @@ func (imp *CustomerImporter) Import(ctx context.Context, r io.Reader) (*Customer
 			continue
 		}
 
-		if hasFirstName && firstNameIdx < len(record) {
-			c.FirstName = strings.TrimSpace(record[firstNameIdx])
+		if hasFirstName {
+			c.FirstName = colValRow(rowMap, "first_name")
 		}
-		if hasLastName && lastNameIdx < len(record) {
-			c.LastName = strings.TrimSpace(record[lastNameIdx])
+		if hasLastName {
+			c.LastName = colValRow(rowMap, "last_name")
 		}
 
-		if hasRole && roleIdx < len(record) {
-			r := customer.Role(strings.TrimSpace(strings.ToLower(record[roleIdx])))
+		if hasRole {
+			r := customer.Role(strings.ToLower(colValRow(rowMap, "role")))
 			if r != "" && !r.IsValid() {
-				result.Errors = append(result.Errors, fmt.Sprintf("line %d: invalid role %q", lineNum, record[roleIdx]))
+				result.Errors = append(result.Errors, fmt.Sprintf("line %d: invalid role %q", lineNum, rowMap["role"]))
 				result.Skipped++
 				continue
 			}
@@ -106,10 +125,10 @@ func (imp *CustomerImporter) Import(ctx context.Context, r io.Reader) (*Customer
 			}
 		}
 
-		if hasStatus && statusIdx < len(record) {
-			s := customer.Status(strings.TrimSpace(strings.ToLower(record[statusIdx])))
+		if hasStatus {
+			s := customer.Status(strings.ToLower(colValRow(rowMap, "status")))
 			if s != "" && !s.IsValid() {
-				result.Errors = append(result.Errors, fmt.Sprintf("line %d: invalid status %q", lineNum, record[statusIdx]))
+				result.Errors = append(result.Errors, fmt.Sprintf("line %d: invalid status %q", lineNum, rowMap["status"]))
 				result.Skipped++
 				continue
 			}
@@ -118,8 +137,8 @@ func (imp *CustomerImporter) Import(ctx context.Context, r io.Reader) (*Customer
 			}
 		}
 
-		if hasPassword && passwordIdx < len(record) {
-			plain := strings.TrimSpace(record[passwordIdx])
+		if hasPassword {
+			plain := colValRow(rowMap, "password")
 			if plain != "" {
 				hash, err := password.Hash(plain)
 				if err != nil {
