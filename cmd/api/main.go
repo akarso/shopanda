@@ -25,6 +25,7 @@ import (
 	cacheApp "github.com/akarso/shopanda/internal/application/cache"
 	cartApp "github.com/akarso/shopanda/internal/application/cart"
 	hooksApp "github.com/akarso/shopanda/internal/application/hooks"
+	importctxApp "github.com/akarso/shopanda/internal/application/importctx"
 	portsapp "github.com/akarso/shopanda/internal/application/ports"
 	slotsApp "github.com/akarso/shopanda/internal/application/slots"
 	themeapp "github.com/akarso/shopanda/internal/application/theme"
@@ -302,6 +303,7 @@ func runServe(cfg *config.Config, log logger.Logger, embedScheduler bool) error 
 	registerPlugins(registry, cfg)
 	extensionRegistry := extensionApp.NewRegistry()
 	hookRegistry := hooksApp.NewRegistry(log)
+	importRegistry := importctxApp.NewRegistry(log)
 	slotRegistry := slotsApp.NewRegistry(log)
 	if cfg.Frontend.Enabled && cfg.Frontend.ThemePath != "" {
 		if anchors, anchorErr := themeapp.DeclaredAnchorsFromDir(cfg.Frontend.ThemePath); anchorErr != nil {
@@ -335,6 +337,7 @@ func runServe(cfg *config.Config, log logger.Logger, embedScheduler bool) error 
 	}
 	pluginApp.SetExtensionRegistry(extensionRegistry)
 	pluginApp.SetHookRegistry(hookRegistry)
+	pluginApp.SetImportRegistry(importRegistry)
 	pluginApp.SetSlotRegistry(slotRegistry)
 	pluginApp.SetAssetRegistry(assetRegistry)
 	summary := registry.InitAll(pluginApp)

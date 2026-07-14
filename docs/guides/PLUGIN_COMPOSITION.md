@@ -110,7 +110,7 @@ Use this table before writing code. Full design rationale: [Integrator Platform 
 | Custom fee / cart price rule | `RegisterPricingStep` | `before:` / `after:` anchors (PR-810) | Shipped |
 | Block or validate cart mutation | Cart hook chain (`cart.add_item.before`, `cart.validate`, …) | Lower priority runs first | Shipped |
 | Custom checkout validation | `RegisterCheckoutStep` | Anchor positions planned | Shipped (append-only) |
-| ERP CSV column remap before DB write | Import row hook (`import.product.row`, …) | Lower priority runs first | Planned (Track C) |
+| ERP CSV column remap before DB write | Import row hook (`import.product.row`, …) | Lower priority runs first | Registry shipped (PR-820); importer wiring PR-821 |
 | SAP / ERP inbound REST callback | `RegisterPublicRoute` + integration auth middleware | Route per plugin | Routes shipped; auth planned (Track D) |
 | Warehouse / PIM outbound sync | Sync job + events/queue | Job registration order | Planned (Track E) |
 | Replace search / cache / tax backend | Infrastructure port (`RegisterSearchProvider`, `RegisterTaxCalculator`, …) | Config picks one winner | Partial (tax shipped PR-813; mail/shipping planned) |
@@ -216,7 +216,9 @@ Inspect active handlers: `GET /api/v1/admin/extensions/hooks`.
 
 ---
 
-## Import composition (planned — Track C)
+## Import composition (Track C)
+
+**Status:** row hook registry shipped (PR-820). Core importers invoke the chain in PR-821; skip/errors in PR-822.
 
 **Problem:** ERP CSV files use foreign column names; forking `internal/application/importer` breaks on upgrades.
 
@@ -231,11 +233,23 @@ CLI import:products file.csv
        └─ core persist (or skip row / collect errors)
 ```
 
-| Entity | CLI | Hook name (planned) |
+| Entity | CLI | Hook name |
 | --- | --- | --- |
 | Products | `import:products` | `import.product.row` |
 | Prices | `import:prices` | `import.price.row` |
 | Stock | `import:stock` | `import.stock.row` |
+| Categories | `import:categories` | `import.category.row` |
+| Customers | `import:customers` | `import.customer.row` |
+| Attributes | `import:attributes` | `import.attribute.row` |
+
+**Plugin registration (shipped PR-820):**
+
+```go
+app.Import("acme/erp").RegisterRowHook(extapi.ImportEntityProduct, 100, func(ctx *extapi.ImportRowContext) error {
+    ctx.Row["sku"] = ctx.Row["MATNR"]
+    return nil
+})
+```
 
 **Composition rules:**
 
@@ -291,7 +305,7 @@ When two teams (or plugins) extend the **same seam**, resolution is explicit —
 | **Infrastructure port** | One implementation per port; second `Register*` panics at startup | Pick driver in config; enable one core plugin per slot. Inspect: `GET /api/v1/admin/extensions/ports` |
 | **Pricing / checkout step** | Ordered chain; first core steps then plugin steps | Set priority / `before:`/`after:` when API ships; document order in project README |
 | **Hook chain** | Lower priority number runs first | Assign non-overlapping priority bands per team (e.g. 100–199 team A, 200–299 team B) |
-| **Import row hook** | Same as hook chain (planned) | Same priority band discipline |
+| **Import row hook** | Lower priority runs first (PR-820) | Same priority band discipline |
 | **Extension field** | Field codes are global; first registration wins | Namespace codes (`vendor.feature.field`); coordinate via registry API |
 | **Slot renderer** | Registration order within placement | Priority integer on `RegisterRenderer` |
 | **Theme** | Child theme overrides parent templates | Slot markers preserved by convention — see [THEME_SLOTS.md](THEME_SLOTS.md) |

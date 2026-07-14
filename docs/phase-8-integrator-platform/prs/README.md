@@ -12,7 +12,7 @@ Specs for Phase 8 PRs (Summary, Why, Scope, Out of scope, Validation — same fo
 | PR-812 | B | [oss] | done | [Cart validate chain](PR-812.md) |
 | PR-813 | B | [oss] | done | [Tax calculator port](PR-813.md) |
 | PR-814 | B | [oss] | done | [Reference plugin: cart rule](PR-814.md) |
-| PR-820 | C | [oss] | planned | Import row hook registry |
+| PR-820 | C | [oss] | done | [Import row hook registry](PR-820.md) |
 | PR-821 | C | [oss] | planned | Wire core importers |
 | PR-822 | C | [oss] | planned | Import context + errors |
 | PR-823 | C | [oss] | planned | Reference plugin: CSV remap |
