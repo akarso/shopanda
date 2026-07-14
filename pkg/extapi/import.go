@@ -33,12 +33,21 @@ func ImportEntities() []string {
 // ImportRowHandler mutates import row context during chain execution.
 type ImportRowHandler func(ctx *ImportRowContext) error
 
+// ImportError is a structured row-level import failure.
+type ImportError struct {
+	RowIndex int
+	Code     string
+	Message  string
+}
+
 // ImportRowContext carries mutable CSV row data across import row hook handlers.
 type ImportRowContext struct {
 	Entity   string
 	Row      map[string]string
 	RowIndex int
 	Meta     map[string]interface{}
+	Skip     bool
+	Errors   []ImportError
 }
 
 // GetMeta returns a meta value.
@@ -59,6 +68,26 @@ func (c *ImportRowContext) SetMeta(key string, value interface{}) {
 		c.Meta = make(map[string]interface{})
 	}
 	c.Meta[key] = value
+}
+
+// AppendError records a structured error on the row context.
+func (c *ImportRowContext) AppendError(code, message string) {
+	if c == nil {
+		return
+	}
+	c.Errors = append(c.Errors, ImportError{
+		RowIndex: c.RowIndex,
+		Code:     code,
+		Message:  message,
+	})
+}
+
+// SkipRow marks the row to be skipped without error after the hook chain completes.
+func (c *ImportRowContext) SkipRow() {
+	if c == nil {
+		return
+	}
+	c.Skip = true
 }
 
 // RowHookPoint returns the hook point name for entity (e.g. import.product.row).

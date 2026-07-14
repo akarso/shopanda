@@ -15,9 +15,10 @@ import (
 
 // CustomerResult holds the summary of a customer import run.
 type CustomerResult struct {
-	Created int
-	Skipped int
-	Errors  []string
+	Created   int
+	Skipped   int
+	Errors    []string
+	RowErrors []importctx.ImportError
 }
 
 // CustomerImporter imports customers from CSV.
@@ -83,11 +84,9 @@ func (imp *CustomerImporter) Import(ctx context.Context, r io.Reader) (*Customer
 
 		rowMap := RecordToRow(record, colIdx)
 		if imp.rowHooks != nil {
-			var hookErr error
-			rowMap, hookErr = imp.rowHooks.Invoke(ctx, importctx.EntityCustomer, lineNum, rowMap)
-			if hookErr != nil {
-				result.Errors = append(result.Errors, RowHookError(lineNum, hookErr))
-				result.Skipped++
+			var cont bool
+			rowMap, cont = HandleRowHookOutcome(lineNum, imp.rowHooks.Invoke(ctx, importctx.EntityCustomer, lineNum, rowMap), &result.Skipped, &result.Errors, &result.RowErrors)
+			if !cont {
 				continue
 			}
 		}

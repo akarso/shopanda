@@ -11,6 +11,8 @@ type RowContext struct {
 	Row      map[string]string
 	RowIndex int
 	Meta     map[string]interface{}
+	Skip     bool
+	Errors   []ImportError
 }
 
 // NewRowContext creates a row context for entity at rowIndex (1-based data row).

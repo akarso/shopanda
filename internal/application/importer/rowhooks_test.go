@@ -61,3 +61,58 @@ Widget,widget,SKU-001
 		t.Fatalf("expected no imports, got %+v", result)
 	}
 }
+
+func TestProductImport_RowHookSkipRow(t *testing.T) {
+	csv := `name,slug,sku
+Widget,widget,SKU-001
+Widget,widget,SKU-002
+`
+	prodRepo := &mockProductRepo{}
+	varRepo := &mockVariantRepo{}
+
+	reg := importctx.NewRegistry(nil)
+	_ = reg.Register(importctx.EntityProduct, 100, "test/skip", func(ctx *importctx.RowContext) error {
+		if ctx.Row["sku"] == "SKU-001" {
+			ctx.SkipRow()
+		}
+		return nil
+	})
+
+	imp := importer.NewProductImporter(prodRepo, varRepo, nil).WithRowHooks(reg)
+	result, err := imp.Import(context.Background(), strings.NewReader(csv))
+	if err != nil {
+		t.Fatalf("Import: %v", err)
+	}
+	if result.Skipped != 1 || result.Products != 1 || result.Variants != 1 {
+		t.Fatalf("result = %+v", result)
+	}
+	if len(result.Errors) != 0 || len(result.RowErrors) != 0 {
+		t.Fatalf("expected no errors, got errors=%v rowErrors=%v", result.Errors, result.RowErrors)
+	}
+}
+
+func TestProductImport_RowHookAppendErrorFailsRow(t *testing.T) {
+	csv := `name,slug,sku
+Widget,widget,SKU-001
+`
+	reg := importctx.NewRegistry(nil)
+	_ = reg.Register(importctx.EntityProduct, 100, "test/validate", func(ctx *importctx.RowContext) error {
+		ctx.AppendError("erp.invalid_sku", "SKU not in ERP catalog")
+		return nil
+	})
+
+	imp := importer.NewProductImporter(&mockProductRepo{}, &mockVariantRepo{}, nil).WithRowHooks(reg)
+	result, err := imp.Import(context.Background(), strings.NewReader(csv))
+	if err != nil {
+		t.Fatalf("Import: %v", err)
+	}
+	if result.Skipped != 1 || result.Products != 0 {
+		t.Fatalf("result = %+v", result)
+	}
+	if len(result.RowErrors) != 1 || result.RowErrors[0].Code != "erp.invalid_sku" || result.RowErrors[0].RowIndex != 2 {
+		t.Fatalf("rowErrors = %+v", result.RowErrors)
+	}
+	if len(result.Errors) != 1 || !strings.Contains(result.Errors[0], "erp.invalid_sku") {
+		t.Fatalf("errors = %v", result.Errors)
+	}
+}

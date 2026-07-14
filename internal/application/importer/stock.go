@@ -15,9 +15,10 @@ import (
 
 // StockResult holds the summary of a stock import run.
 type StockResult struct {
-	Updated int
-	Skipped int
-	Errors  []string
+	Updated   int
+	Skipped   int
+	Errors    []string
+	RowErrors []importctx.ImportError
 }
 
 // StockImporter imports stock quantities from CSV.
@@ -79,11 +80,9 @@ func (imp *StockImporter) Import(ctx context.Context, r io.Reader) (*StockResult
 
 		rowMap := RecordToRow(record, colIdx)
 		if imp.rowHooks != nil {
-			var hookErr error
-			rowMap, hookErr = imp.rowHooks.Invoke(ctx, importctx.EntityStock, lineNum, rowMap)
-			if hookErr != nil {
-				result.Errors = append(result.Errors, RowHookError(lineNum, hookErr))
-				result.Skipped++
+			var cont bool
+			rowMap, cont = HandleRowHookOutcome(lineNum, imp.rowHooks.Invoke(ctx, importctx.EntityStock, lineNum, rowMap), &result.Skipped, &result.Errors, &result.RowErrors)
+			if !cont {
 				continue
 			}
 		}

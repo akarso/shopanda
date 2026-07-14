@@ -62,6 +62,7 @@ func syncImportRowContext(dst *importctx.RowContext, src *extapi.ImportRowContex
 	if dst == nil || src == nil {
 		return
 	}
+	dst.Skip = src.Skip
 	if len(src.Row) > 0 {
 		if dst.Row == nil {
 			dst.Row = make(map[string]string, len(src.Row))
@@ -78,6 +79,21 @@ func syncImportRowContext(dst *importctx.RowContext, src *extapi.ImportRowContex
 			dst.Meta[k] = v
 		}
 	}
+	if len(src.Errors) > 0 {
+		dst.Errors = append(dst.Errors, extImportErrors(src.Errors)...)
+	}
+}
+
+func extImportErrors(src []extapi.ImportError) []importctx.ImportError {
+	out := make([]importctx.ImportError, len(src))
+	for i, e := range src {
+		out[i] = importctx.ImportError{
+			RowIndex: e.RowIndex,
+			Code:     e.Code,
+			Message:  e.Message,
+		}
+	}
+	return out
 }
 
 func toExtAPIImportRowContext(ctx *importctx.RowContext) *extapi.ImportRowContext {
@@ -90,6 +106,7 @@ func toExtAPIImportRowContext(ctx *importctx.RowContext) *extapi.ImportRowContex
 	out := &extapi.ImportRowContext{
 		Entity:   ctx.Entity,
 		RowIndex: ctx.RowIndex,
+		Skip:     ctx.Skip,
 		Row:      make(map[string]string, len(ctx.Row)),
 		Meta:     make(map[string]interface{}, len(ctx.Meta)),
 	}
@@ -98,6 +115,16 @@ func toExtAPIImportRowContext(ctx *importctx.RowContext) *extapi.ImportRowContex
 	}
 	for k, v := range ctx.Meta {
 		out.Meta[k] = v
+	}
+	if len(ctx.Errors) > 0 {
+		out.Errors = make([]extapi.ImportError, len(ctx.Errors))
+		for i, e := range ctx.Errors {
+			out.Errors[i] = extapi.ImportError{
+				RowIndex: e.RowIndex,
+				Code:     e.Code,
+				Message:  e.Message,
+			}
+		}
 	}
 	return out
 }

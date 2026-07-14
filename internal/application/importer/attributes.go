@@ -19,6 +19,7 @@ type AttributeResult struct {
 	Groups     int
 	Skipped    int
 	Errors     []string
+	RowErrors  []importctx.ImportError
 }
 
 // AttributeImporter imports attribute and group definitions from CSV.
@@ -103,11 +104,9 @@ func (imp *AttributeImporter) Import(ctx context.Context, r io.Reader) (*Attribu
 
 		rowMap := RecordToRow(record, colIdx)
 		if imp.rowHooks != nil {
-			var hookErr error
-			rowMap, hookErr = imp.rowHooks.Invoke(ctx, importctx.EntityAttribute, lineNum, rowMap)
-			if hookErr != nil {
-				result.Errors = append(result.Errors, RowHookError(lineNum, hookErr))
-				result.Skipped++
+			var cont bool
+			rowMap, cont = HandleRowHookOutcome(lineNum, imp.rowHooks.Invoke(ctx, importctx.EntityAttribute, lineNum, rowMap), &result.Skipped, &result.Errors, &result.RowErrors)
+			if !cont {
 				continue
 			}
 		}

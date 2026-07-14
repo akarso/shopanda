@@ -218,7 +218,7 @@ Inspect active handlers: `GET /api/v1/admin/extensions/hooks`.
 
 ## Import composition (Track C)
 
-**Status:** row hook registry + importer wiring shipped (PR-820–821). Skip/errors API in PR-822.
+**Status:** row hooks + skip/errors shipped (PR-820–822). Reference plugin in PR-823.
 
 **Problem:** ERP CSV files use foreign column names; forking `internal/application/importer` breaks on upgrades.
 
@@ -256,7 +256,8 @@ app.Import("acme/erp").RegisterRowHook(extapi.ImportEntityProduct, 100, func(ctx
 - Handlers mutate `Row map[string]string` in place — remap ERP columns to core columns (`MATNR` → `sku`).
 - Use `Meta` for job-scoped scratch (store ID, import batch ID); do not store row data only in Meta.
 - Lower priority runs first; later hooks see earlier normalizations.
-- Return error to fail the row; set `Skip` (planned API) to skip without error.
+- Return error to fail the row immediately; use `AppendError(code, msg)` to collect validation issues (row fails after chain)
+- Use `SkipRow()` to skip a row without recording an error (PR-822)
 - **Do not** register competing importers — extend the chain.
 
 **Multi-plugin example:** Plugin A maps column names (priority 100); Plugin B validates attribute enums (priority 200); Plugin C enriches from external ID lookup via Meta cache (priority 300).
