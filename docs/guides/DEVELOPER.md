@@ -614,7 +614,7 @@ Phase 8 adds first-class seams for **commerce behavior** (positioned pricing ste
 - Infrastructure ports: search, cache, queue, payment, media (`RegisterSearchProvider`, …)
 - Behavioral: `RegisterPricingStep`, `RegisterCheckoutStep`, `RegisterCompositionStep`, hook `cart.add_item.after`
 - HTTP: `RegisterPublicRoute`, `RegisterAdminRoute`
-- CSV import: CLI `import:products`, `import:prices`, `import:stock`, `import:categories`, `import:customers`, `import:attributes` (no row-transform hooks yet)
+- CSV import: CLI `import:products`, `import:prices`, `import:stock`, `import:categories`, `import:customers`, `import:attributes` — row hooks via `app.Import().RegisterRowHook` (PR-820–821)
 - Async: events + optional queue drivers
 
 **Shipped in Phase 8:**

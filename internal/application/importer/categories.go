@@ -9,6 +9,7 @@ import (
 	"strconv"
 	"strings"
 
+	importctx "github.com/akarso/shopanda/internal/application/importctx"
 	"github.com/akarso/shopanda/internal/domain/catalog"
 	"github.com/akarso/shopanda/internal/platform/id"
 )
@@ -25,11 +26,18 @@ type CategoryResult struct {
 // CategoryImporter imports categories from CSV.
 type CategoryImporter struct {
 	categories catalog.CategoryRepository
+	rowHooks   *RowHookRunner
 }
 
 // NewCategoryImporter creates a CategoryImporter.
 func NewCategoryImporter(categories catalog.CategoryRepository) *CategoryImporter {
 	return &CategoryImporter{categories: categories}
+}
+
+// WithRowHooks wires import row hooks invoked after header validation and before persist.
+func (imp *CategoryImporter) WithRowHooks(registry *importctx.Registry) *CategoryImporter {
+	imp.rowHooks = NewRowHookRunner(registry)
+	return imp
 }
 
 type catRow struct {
@@ -64,14 +72,14 @@ func (imp *CategoryImporter) Import(ctx context.Context, r io.Reader) (*Category
 		colIdx[strings.TrimSpace(strings.ToLower(h))] = i
 	}
 
-	nameIdx, hasName := colIdx["name"]
-	slugIdx, hasSlug := colIdx["slug"]
+	_, hasName := colIdx["name"]
+	_, hasSlug := colIdx["slug"]
 	if !hasName || !hasSlug {
 		return nil, fmt.Errorf("category import: CSV must have 'name' and 'slug' columns")
 	}
 
-	parentSlugIdx, hasParentSlug := colIdx["parent_slug"]
-	positionIdx, hasPosition := colIdx["position"]
+	_, hasParentSlug := colIdx["parent_slug"]
+	_, hasPosition := colIdx["position"]
 
 	// Parse all rows.
 	var rows []catRow
@@ -94,23 +102,27 @@ func (imp *CategoryImporter) Import(ctx context.Context, r io.Reader) (*Category
 			parseWarnings = append(parseWarnings, fmt.Sprintf("line %d: %v", lineNum, err))
 		}
 
-		name := ""
-		if nameIdx < len(record) {
-			name = strings.TrimSpace(record[nameIdx])
-		}
-		slug := ""
-		if slugIdx < len(record) {
-			slug = strings.TrimSpace(record[slugIdx])
+		rowMap := RecordToRow(record, colIdx)
+		if imp.rowHooks != nil {
+			var hookErr error
+			rowMap, hookErr = imp.rowHooks.Invoke(ctx, importctx.EntityCategory, lineNum, rowMap)
+			if hookErr != nil {
+				parseErrors = append(parseErrors, RowHookError(lineNum, hookErr))
+				continue
+			}
 		}
 
+		name := colValRow(rowMap, "name")
+		slug := colValRow(rowMap, "slug")
+
 		parentSlug := ""
-		if hasParentSlug && parentSlugIdx < len(record) {
-			parentSlug = strings.TrimSpace(record[parentSlugIdx])
+		if hasParentSlug {
+			parentSlug = colValRow(rowMap, "parent_slug")
 		}
 
 		position := 0
-		if hasPosition && positionIdx < len(record) {
-			posStr := strings.TrimSpace(record[positionIdx])
+		if hasPosition {
+			posStr := colValRow(rowMap, "position")
 			if posStr != "" {
 				p, pErr := strconv.Atoi(posStr)
 				if pErr != nil {

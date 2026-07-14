@@ -9,6 +9,7 @@ import (
 	"strconv"
 	"strings"
 
+	importctx "github.com/akarso/shopanda/internal/application/importctx"
 	"github.com/akarso/shopanda/internal/domain/catalog"
 	"github.com/akarso/shopanda/internal/domain/pricing"
 	"github.com/akarso/shopanda/internal/domain/shared"
@@ -45,6 +46,7 @@ type PriceImporter struct {
 	history   pricing.PriceHistoryRepository
 	txStarter TxStarter
 	bus       *event.Bus
+	rowHooks  *RowHookRunner
 }
 
 // NewPriceImporter creates a PriceImporter.
@@ -54,6 +56,12 @@ type PriceImporter struct {
 // bus may be nil; if nil, no events are published.
 func NewPriceImporter(variants catalog.VariantRepository, prices pricing.PriceRepository, history pricing.PriceHistoryRepository, txStarter TxStarter, bus *event.Bus) *PriceImporter {
 	return &PriceImporter{variants: variants, prices: prices, history: history, txStarter: txStarter, bus: bus}
+}
+
+// WithRowHooks wires import row hooks invoked after header validation and before persist.
+func (imp *PriceImporter) WithRowHooks(registry *importctx.Registry) *PriceImporter {
+	imp.rowHooks = NewRowHookRunner(registry)
+	return imp
 }
 
 // Import reads CSV rows from r and upserts prices.
@@ -77,10 +85,10 @@ func (imp *PriceImporter) Import(ctx context.Context, r io.Reader) (*PriceResult
 		colIdx[strings.TrimSpace(strings.ToLower(strings.TrimPrefix(h, "\uFEFF")))] = i
 	}
 
-	skuIdx, hasSKU := colIdx["sku"]
-	currencyIdx, hasCurrency := colIdx["currency"]
-	amountIdx, hasAmount := colIdx["amount"]
-	storeIDIdx, hasStoreID := colIdx["store_id"]
+	_, hasSKU := colIdx["sku"]
+	_, hasCurrency := colIdx["currency"]
+	_, hasAmount := colIdx["amount"]
+	_, hasStoreID := colIdx["store_id"]
 	if !hasSKU || !hasCurrency || !hasAmount {
 		return nil, fmt.Errorf("price import: CSV must have 'sku', 'currency', and 'amount' columns")
 	}
@@ -101,21 +109,32 @@ func (imp *PriceImporter) Import(ctx context.Context, r io.Reader) (*PriceResult
 			continue
 		}
 
-		sku := strings.TrimSpace(record[skuIdx])
+		rowMap := RecordToRow(record, colIdx)
+		if imp.rowHooks != nil {
+			var hookErr error
+			rowMap, hookErr = imp.rowHooks.Invoke(ctx, importctx.EntityPrice, lineNum, rowMap)
+			if hookErr != nil {
+				result.Errors = append(result.Errors, RowHookError(lineNum, hookErr))
+				result.Skipped++
+				continue
+			}
+		}
+
+		sku := colValRow(rowMap, "sku")
 		if sku == "" {
 			result.Errors = append(result.Errors, fmt.Sprintf("line %d: empty sku", lineNum))
 			result.Skipped++
 			continue
 		}
 
-		currency := strings.TrimSpace(strings.ToUpper(record[currencyIdx]))
+		currency := strings.ToUpper(colValRow(rowMap, "currency"))
 		if !shared.IsValidCurrency(currency) {
-			result.Errors = append(result.Errors, fmt.Sprintf("line %d: invalid currency %q", lineNum, record[currencyIdx]))
+			result.Errors = append(result.Errors, fmt.Sprintf("line %d: invalid currency %q", lineNum, rowMap["currency"]))
 			result.Skipped++
 			continue
 		}
 
-		amountStr := strings.TrimSpace(record[amountIdx])
+		amountStr := colValRow(rowMap, "amount")
 		amount, err := strconv.ParseInt(amountStr, 10, 64)
 		if err != nil {
 			result.Errors = append(result.Errors, fmt.Sprintf("line %d: invalid amount %q", lineNum, amountStr))
@@ -151,7 +170,7 @@ func (imp *PriceImporter) Import(ctx context.Context, r io.Reader) (*PriceResult
 
 		storeID := ""
 		if hasStoreID {
-			storeID = strings.TrimSpace(record[storeIDIdx])
+			storeID = colValRow(rowMap, "store_id")
 		}
 
 		existing, err := imp.prices.FindByVariantCurrencyAndStore(ctx, variant.ID, currency, storeID)

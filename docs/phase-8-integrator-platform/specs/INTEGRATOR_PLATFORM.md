@@ -22,7 +22,7 @@ Related:
 | §2 Design position, §9 Precedence | **Published** — policy in spec; practical guide in [PLUGIN_COMPOSITION.md](../../guides/PLUGIN_COMPOSITION.md) (PR-802) |
 | §3 Port catalog | **Partial** — search/cache/queue/payment/media/tax shipped; introspection at `GET /api/v1/admin/extensions/ports` (PR-801); mail/shipping planned |
 | §4 Behavioral catalog | **Shipped** — pricing positioning + cart lifecycle hooks + `cart.validate` + reference cart plugin (PR-810–814) |
-| §5 Import pipelines | **Partial** — row hook registry shipped (PR-820); importer wiring + skip/errors planned (PR-821–822) |
+| §5 Import pipelines | **Partial** — row hook registry + importer wiring shipped (PR-820–821); skip/errors planned (PR-822) |
 | §6 Inbound integration | **Partial** — `RegisterPublicRoute` / `RegisterAdminRoute` shipped; auth/idempotency middleware planned (Track D) |
 | §7 Outbound integration | **Partial** — events + queue shipped; sync job registration planned (Track E) |
 | §8 Wiring ergonomics | **Planned** (Track F) |
@@ -149,7 +149,7 @@ Hooks receive mutable payload (variant, qty, cart snapshot refs by ID). Heavy lo
 
 **Goal:** Integrator transforms row values **before** core persistence without copying `internal/application/importer`.
 
-**Status:** row hook registry shipped (PR-820). Importer invocation, skip row, and aggregated errors follow in PR-821–822.
+**Status:** row hook registry + importer wiring shipped (PR-820–821). Skip row and aggregated errors in PR-822.
 
 ### Model
 
@@ -184,7 +184,7 @@ app.Import("acme/erp").RegisterRowHook(extapi.ImportEntityProduct, 100, func(ctx
 })
 ```
 
-Core importer will call the chain **after** header validation, **before** repository write (PR-821). Transaction boundaries unchanged (one TX per batch or per row per existing importer).
+Core importer calls the chain **after** header validation, **before** repository write (PR-821). Transaction boundaries unchanged (one TX per batch or per row per existing importer).
 
 **Non-goals:** Replace admin CSV upload (CLI-first remains OK); arbitrary file formats in core (plugins can add CLI commands via `RegisterCommand`).
 

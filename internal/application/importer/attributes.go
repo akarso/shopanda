@@ -8,6 +8,7 @@ import (
 	"sort"
 	"strings"
 
+	importctx "github.com/akarso/shopanda/internal/application/importctx"
 	"github.com/akarso/shopanda/internal/domain/catalog"
 	"github.com/akarso/shopanda/internal/domain/config"
 )
@@ -22,12 +23,19 @@ type AttributeResult struct {
 
 // AttributeImporter imports attribute and group definitions from CSV.
 type AttributeImporter struct {
-	config config.Repository
+	config   config.Repository
+	rowHooks *RowHookRunner
 }
 
 // NewAttributeImporter creates an AttributeImporter.
 func NewAttributeImporter(config config.Repository) *AttributeImporter {
 	return &AttributeImporter{config: config}
+}
+
+// WithRowHooks wires import row hooks invoked after header validation and before persist.
+func (imp *AttributeImporter) WithRowHooks(registry *importctx.Registry) *AttributeImporter {
+	imp.rowHooks = NewRowHookRunner(registry)
+	return imp
 }
 
 // Import reads CSV rows from r and persists attribute definitions.
@@ -52,23 +60,23 @@ func (imp *AttributeImporter) Import(ctx context.Context, r io.Reader) (*Attribu
 		colIdx[strings.TrimSpace(strings.ToLower(h))] = i
 	}
 
-	codeIdx, hasCode := colIdx["code"]
+	_, hasCode := colIdx["code"]
 	if !hasCode {
 		return nil, fmt.Errorf("attribute import: CSV must have 'code' column")
 	}
-	labelIdx, hasLabel := colIdx["label"]
+	_, hasLabel := colIdx["label"]
 	if !hasLabel {
 		return nil, fmt.Errorf("attribute import: CSV must have 'label' column")
 	}
-	typeIdx, hasType := colIdx["type"]
+	_, hasType := colIdx["type"]
 	if !hasType {
 		return nil, fmt.Errorf("attribute import: CSV must have 'type' column")
 	}
 
-	requiredIdx, hasRequired := colIdx["required"]
-	optionsIdx, hasOptions := colIdx["options"]
-	groupIdx, hasGroup := colIdx["group"]
-	groupLabelIdx, hasGroupLabel := colIdx["group_label"]
+	_, hasRequired := colIdx["required"]
+	_, hasOptions := colIdx["options"]
+	_, hasGroup := colIdx["group"]
+	_, hasGroupLabel := colIdx["group_label"]
 
 	// Collect attributes and group memberships.
 	attrs := make(map[string]catalog.Attribute) // code → Attribute
@@ -93,36 +101,34 @@ func (imp *AttributeImporter) Import(ctx context.Context, r io.Reader) (*Attribu
 			continue
 		}
 
-		minIdx := codeIdx
-		if labelIdx > minIdx {
-			minIdx = labelIdx
-		}
-		if typeIdx > minIdx {
-			minIdx = typeIdx
-		}
-		if len(record) <= minIdx {
-			result.Errors = append(result.Errors, fmt.Sprintf("line %d: missing columns", lineNum))
-			result.Skipped++
-			continue
+		rowMap := RecordToRow(record, colIdx)
+		if imp.rowHooks != nil {
+			var hookErr error
+			rowMap, hookErr = imp.rowHooks.Invoke(ctx, importctx.EntityAttribute, lineNum, rowMap)
+			if hookErr != nil {
+				result.Errors = append(result.Errors, RowHookError(lineNum, hookErr))
+				result.Skipped++
+				continue
+			}
 		}
 
-		code := strings.TrimSpace(record[codeIdx])
+		code := colValRow(rowMap, "code")
 		if code == "" {
 			result.Errors = append(result.Errors, fmt.Sprintf("line %d: empty code", lineNum))
 			result.Skipped++
 			continue
 		}
 
-		label := strings.TrimSpace(record[labelIdx])
+		label := colValRow(rowMap, "label")
 		if label == "" {
 			result.Errors = append(result.Errors, fmt.Sprintf("line %d: empty label", lineNum))
 			result.Skipped++
 			continue
 		}
 
-		attrType := catalog.AttributeType(strings.TrimSpace(strings.ToLower(record[typeIdx])))
+		attrType := catalog.AttributeType(strings.ToLower(colValRow(rowMap, "type")))
 		if !attrType.IsValid() {
-			result.Errors = append(result.Errors, fmt.Sprintf("line %d: invalid type %q", lineNum, record[typeIdx]))
+			result.Errors = append(result.Errors, fmt.Sprintf("line %d: invalid type %q", lineNum, rowMap["type"]))
 			result.Skipped++
 			continue
 		}
@@ -134,13 +140,13 @@ func (imp *AttributeImporter) Import(ctx context.Context, r io.Reader) (*Attribu
 			continue
 		}
 
-		if hasRequired && requiredIdx < len(record) {
-			val := strings.TrimSpace(strings.ToLower(record[requiredIdx]))
+		if hasRequired {
+			val := strings.ToLower(colValRow(rowMap, "required"))
 			attr.Required = val == "true" || val == "1" || val == "yes"
 		}
 
-		if hasOptions && optionsIdx < len(record) {
-			raw := strings.TrimSpace(record[optionsIdx])
+		if hasOptions {
+			raw := colValRow(rowMap, "options")
 			if raw != "" {
 				opts := strings.Split(raw, ",")
 				cleaned := make([]string, 0, len(opts))
@@ -157,22 +163,22 @@ func (imp *AttributeImporter) Import(ctx context.Context, r io.Reader) (*Attribu
 		attrs[code] = attr
 
 		// Collect group membership.
-		if hasGroup && groupIdx < len(record) {
-			gc := strings.TrimSpace(record[groupIdx])
+		if hasGroup {
+			gc := colValRow(rowMap, "group")
 			if gc != "" {
 				gi, exists := groups[gc]
 				if !exists {
 					gl := gc // default label = code
-					if hasGroupLabel && groupLabelIdx < len(record) {
-						v := strings.TrimSpace(record[groupLabelIdx])
+					if hasGroupLabel {
+						v := colValRow(rowMap, "group_label")
 						if v != "" {
 							gl = v
 						}
 					}
 					gi = &groupInfo{label: gl}
 					groups[gc] = gi
-				} else if hasGroupLabel && groupLabelIdx < len(record) {
-					v := strings.TrimSpace(record[groupLabelIdx])
+				} else if hasGroupLabel {
+					v := colValRow(rowMap, "group_label")
 					if v != "" {
 						gi.label = v
 					}

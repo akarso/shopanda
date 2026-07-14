@@ -9,6 +9,7 @@ import (
 	"strconv"
 	"strings"
 
+	importctx "github.com/akarso/shopanda/internal/application/importctx"
 	"github.com/akarso/shopanda/internal/domain/catalog"
 	"github.com/akarso/shopanda/internal/platform/id"
 )
@@ -47,6 +48,7 @@ type ProductImporter struct {
 	txStarter TxStarter
 	registry  *catalog.AttributeRegistry
 	groupCode string
+	rowHooks  *RowHookRunner
 }
 
 // NewProductImporter creates a ProductImporter.
@@ -60,6 +62,12 @@ func NewProductImporter(products catalog.ProductRepository, variants catalog.Var
 func (imp *ProductImporter) WithAttributeValidation(registry *catalog.AttributeRegistry, groupCode string) *ProductImporter {
 	imp.registry = registry
 	imp.groupCode = groupCode
+	return imp
+}
+
+// WithRowHooks wires import row hooks invoked after header validation and before persist.
+func (imp *ProductImporter) WithRowHooks(registry *importctx.Registry) *ProductImporter {
+	imp.rowHooks = NewRowHookRunner(registry)
 	return imp
 }
 
@@ -104,10 +112,12 @@ func (imp *ProductImporter) Import(ctx context.Context, r io.Reader) (*Result, e
 		colIndex[strings.TrimSpace(strings.ToLower(h))] = i
 	}
 
-	// Validate required columns.
-	for _, col := range requiredColumns {
-		if _, ok := colIndex[col]; !ok {
-			return nil, fmt.Errorf("import: missing required column %q", col)
+	// Validate required columns in header when row hooks are disabled.
+	if imp.rowHooks == nil || !imp.rowHooks.Enabled() {
+		for _, col := range requiredColumns {
+			if _, ok := colIndex[col]; !ok {
+				return nil, fmt.Errorf("import: missing required column %q", col)
+			}
 		}
 	}
 
@@ -132,6 +142,7 @@ func (imp *ProductImporter) Import(ctx context.Context, r io.Reader) (*Result, e
 	// 1. Parse all rows, group by slug
 	groups := make(map[string][]parsedRow)
 	var allRows []parsedRow
+	result := &Result{}
 	lineNum := 1
 	for {
 		lineNum++
@@ -144,20 +155,31 @@ func (imp *ProductImporter) Import(ctx context.Context, r io.Reader) (*Result, e
 			allRows = append(allRows, parsedRow{lineNum: lineNum})
 			continue
 		}
+		rowMap := RecordToRow(record, colIndex)
+		if imp.rowHooks != nil {
+			var hookErr error
+			rowMap, hookErr = imp.rowHooks.Invoke(ctx, importctx.EntityProduct, lineNum, rowMap)
+			if hookErr != nil {
+				result.Errors = append(result.Errors, RowHookError(lineNum, hookErr))
+				result.Skipped++
+				continue
+			}
+		}
 		row := parsedRow{
 			lineNum:     lineNum,
-			name:        colVal(record, colIndex, "name"),
-			slug:        colVal(record, colIndex, "slug"),
-			sku:         colVal(record, colIndex, "sku"),
-			desc:        colVal(record, colIndex, "description"),
-			variantName: colVal(record, colIndex, "variant_name"),
+			name:        colValRow(rowMap, "name"),
+			slug:        colValRow(rowMap, "slug"),
+			sku:         colValRow(rowMap, "sku"),
+			desc:        colValRow(rowMap, "description"),
+			variantName: colValRow(rowMap, "variant_name"),
 		}
 		if len(attrColumns) > 0 {
 			raw := make(map[string]string, len(attrColumns))
-			for _, col := range attrColumns {
-				if v := colVal(record, colIndex, col); v != "" {
-					raw[col] = v
+			for col, v := range rowMap {
+				if _, known := knownColumns[col]; known || v == "" {
+					continue
 				}
+				raw[col] = v
 			}
 			if len(raw) > 0 {
 				row.rawAttrs = raw
@@ -167,7 +189,6 @@ func (imp *ProductImporter) Import(ctx context.Context, r io.Reader) (*Result, e
 		groups[row.slug] = append(groups[row.slug], row)
 	}
 
-	result := &Result{}
 	// 2. Validate all rows (required fields, duplicates, etc)
 	for _, row := range allRows {
 		if row.name == "" || row.slug == "" || row.sku == "" {
