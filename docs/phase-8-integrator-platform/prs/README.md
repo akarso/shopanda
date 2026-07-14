@@ -15,7 +15,7 @@ Specs for Phase 8 PRs (Summary, Why, Scope, Out of scope, Validation — same fo
 | PR-820 | C | [oss] | done | [Import row hook registry](PR-820.md) |
 | PR-821 | C | [oss] | done | [Wire core importers](PR-821.md) |
 | PR-822 | C | [oss] | done | [Import context + errors](PR-822.md) |
-| PR-823 | C | [oss] | planned | Reference plugin: CSV remap |
+| PR-823 | C | [oss] | done | [Reference plugin: CSV remap](PR-823.md) |
 | PR-830 | D | [oss] | planned | Integration route conventions |
 | PR-831 | D | [oss] | planned | Integration auth middleware |
 | PR-832 | D | [oss] | planned | Idempotency store |
@@ -33,6 +33,6 @@ Roadmap: [`../ROADMAP.md`](../ROADMAP.md) · Architecture: [`../specs/INTEGRATOR
 
 **Rule for Phase 8:** Integrators extend via registered seams only — no core service overrides, no override folders, no ad hoc importer forks.
 
-**Phase 8 Track A complete** (PR-800–802). **Track B complete** (PR-810–814).
+**Phase 8 Track A complete** (PR-800–802). **Track B complete** (PR-810–814). **Track C complete** (PR-820–823).
 
 Individual PR spec files (`PR-812.md`, …) are added when implementation starts.

@@ -239,7 +239,7 @@ Recommended order: **A (800–802)** → **B (810–814)** and **C (820–823)**
 | 820 | C | [oss] | Import row hook registry (done) |
 | 821 | C | [oss] | Wire core importers (done) |
 | 822 | C | [oss] | Import context + errors (done) |
-| 823 | C | [oss] | Reference plugin: CSV remap |
+| 823 | C | [oss] | Reference plugin: CSV remap (done) |
 | 830 | D | [oss] | Integration route conventions |
 | 831 | D | [oss] | Integration auth middleware |
 | 832 | D | [oss] | Idempotency store |

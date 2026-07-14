@@ -338,8 +338,9 @@ type PluginsConfig struct {
 	GraphQL GraphQLPluginConfig `yaml:"graphql"`
 	Example   ExamplePluginConfig   `yaml:"example"`
 	SlotsDemo SlotsDemoPluginConfig `yaml:"slotsdemo"`
-	CartDemo  CartDemoPluginConfig  `yaml:"cartdemo"`
-	B2B       B2BPluginConfig       `yaml:"b2b"`
+	CartDemo   CartDemoPluginConfig   `yaml:"cartdemo"`
+	ImportDemo ImportDemoPluginConfig `yaml:"importdemo"`
+	B2B        B2BPluginConfig        `yaml:"b2b"`
 }
 
 // GraphQLPluginConfig toggles the optional read-only GraphQL API core plugin.
@@ -363,6 +364,11 @@ type CartDemoPluginConfig struct {
 	Enabled               bool  `yaml:"enabled"`
 	MinQuantity           int   `yaml:"min_quantity"`
 	HandlingFeeMinorUnits int64 `yaml:"handling_fee_minor_units"`
+}
+
+// ImportDemoPluginConfig toggles the CSV import remap reference plugin in plugins/importdemo.
+type ImportDemoPluginConfig struct {
+	Enabled bool `yaml:"enabled"`
 }
 
 // B2BPluginConfig toggles the commercial B2B module in plugins/b2b.
@@ -813,6 +819,9 @@ func applyEnv(cfg *Config) {
 			cfg.Plugins.CartDemo.HandlingFeeMinorUnits = n
 		}
 	}
+	if v := os.Getenv("SHOPANDA_PLUGINS_IMPORTDEMO_ENABLED"); v != "" {
+		cfg.Plugins.ImportDemo.Enabled = v == "true" || v == "1"
+	}
 	if v := os.Getenv("SHOPANDA_PLUGINS_B2B_ENABLED"); v != "" {
 		cfg.Plugins.B2B.Enabled = v == "true" || v == "1"
 	}
@@ -944,6 +953,7 @@ func flatten(cfg *Config) map[string]string {
 	m["plugins.cartdemo.enabled"] = strconv.FormatBool(cfg.Plugins.CartDemo.Enabled)
 	m["plugins.cartdemo.min_quantity"] = strconv.Itoa(cfg.Plugins.CartDemo.MinQuantity)
 	m["plugins.cartdemo.handling_fee_minor_units"] = strconv.FormatInt(cfg.Plugins.CartDemo.HandlingFeeMinorUnits, 10)
+	m["plugins.importdemo.enabled"] = strconv.FormatBool(cfg.Plugins.ImportDemo.Enabled)
 	m["plugins.b2b.enabled"] = strconv.FormatBool(cfg.Plugins.B2B.Enabled)
 	m["frontend.enabled"] = strconv.FormatBool(cfg.Frontend.Enabled)
 	m["frontend.mode"] = cfg.Frontend.Mode
