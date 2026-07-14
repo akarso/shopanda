@@ -22,7 +22,7 @@ Related:
 | §2 Design position, §9 Precedence | **Published** — policy in spec; practical guide in [PLUGIN_COMPOSITION.md](../../guides/PLUGIN_COMPOSITION.md) (PR-802) |
 | §3 Port catalog | **Partial** — search/cache/queue/payment/media/tax shipped; introspection at `GET /api/v1/admin/extensions/ports` (PR-801); mail/shipping planned |
 | §4 Behavioral catalog | **Shipped** — pricing positioning + cart lifecycle hooks + `cart.validate` + reference cart plugin (PR-810–814) |
-| §5 Import pipelines | **Partial** — row hooks + skip/errors shipped (PR-820–822); reference plugin planned (PR-823) |
+| §5 Import pipelines | **Shipped** — row hooks, importer wiring, skip/errors, reference CSV remap plugin (PR-820–823) |
 | §6 Inbound integration | **Partial** — `RegisterPublicRoute` / `RegisterAdminRoute` shipped; auth/idempotency middleware planned (Track D) |
 | §7 Outbound integration | **Partial** — events + queue shipped; sync job registration planned (Track E) |
 | §8 Wiring ergonomics | **Planned** (Track F) |
@@ -149,7 +149,7 @@ Hooks receive mutable payload (variant, qty, cart snapshot refs by ID). Heavy lo
 
 **Goal:** Integrator transforms row values **before** core persistence without copying `internal/application/importer`.
 
-**Status:** row hook registry, importer wiring, and skip/errors shipped (PR-820–822). Reference CSV remap plugin in PR-823.
+**Status:** shipped (PR-820–823). Reference plugin: [`plugins/importdemo`](../../../plugins/importdemo).
 
 ### Model
 
