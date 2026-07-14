@@ -16,7 +16,7 @@ Specs for Phase 8 PRs (Summary, Why, Scope, Out of scope, Validation — same fo
 | PR-821 | C | [oss] | done | [Wire core importers](PR-821.md) |
 | PR-822 | C | [oss] | done | [Import context + errors](PR-822.md) |
 | PR-823 | C | [oss] | done | [Reference plugin: CSV remap](PR-823.md) |
-| PR-830 | D | [oss] | planned | Integration route conventions |
+| PR-830 | D | [oss] | done | [Integration route conventions](PR-830.md) |
 | PR-831 | D | [oss] | planned | Integration auth middleware |
 | PR-832 | D | [oss] | planned | Idempotency store |
 | PR-833 | D | [oss] | planned | Reference plugin: order status inbound |
