@@ -624,8 +624,9 @@ Phase 8 adds first-class seams for **commerce behavior** (positioned pricing ste
 - Pricing step positioning: `RegisterPricingStep(step, "after:promotions")` — see `pkg/extapi` (PR-810)
 - Cart lifecycle hooks: `cart.add_item.before`, `cart.update_item.before`, `cart.remove_item.after`, `cart.recalculate.before` — see `pkg/extapi` (PR-811)
 - Integration idempotency: `Idempotency-Key` dedupe on `RegisterSecureRoute` — see `pkg/integrationhttp` (PR-832)
+- Reference inbound order-status plugin: `plugins/integrationdemo` (PR-833)
 
-**Planned in Phase 8** (see spec §Document map): reference inbound order-status plugin (PR-833), outbound sync jobs, full registration report (PR-851).
+**Planned in Phase 8** (see spec §Document map): outbound sync jobs, full registration report (PR-851).
 
 When choosing an extension mechanism, start with [Multi-Plugin Composition](PLUGIN_COMPOSITION.md) for ordering rules; use the integrator spec when the task involves ERP/PIM/warehouse wiring or CSV pre-persist transforms.
 
