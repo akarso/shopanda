@@ -26,6 +26,7 @@ import (
 	cartApp "github.com/akarso/shopanda/internal/application/cart"
 	hooksApp "github.com/akarso/shopanda/internal/application/hooks"
 	importctxApp "github.com/akarso/shopanda/internal/application/importctx"
+	integrationApp "github.com/akarso/shopanda/internal/application/integration"
 	portsapp "github.com/akarso/shopanda/internal/application/ports"
 	slotsApp "github.com/akarso/shopanda/internal/application/slots"
 	themeapp "github.com/akarso/shopanda/internal/application/theme"
@@ -390,6 +391,9 @@ func runServe(cfg *config.Config, log logger.Logger, embedScheduler bool) error 
 	jobWorker, jobQueue, appCache, err := setupWorker(conn, cfg, log, pluginApp)
 	if err != nil {
 		return err
+	}
+	if err := integrationApp.RegisterSyncJobEventTriggers(pluginApp, bus, jobQueue, log); err != nil {
+		return fmt.Errorf("sync job event triggers: %w", err)
 	}
 
 	// Email notifications (needs jobQueue from setupWorker).
@@ -1284,6 +1288,9 @@ func runServe(cfg *config.Config, log logger.Logger, embedScheduler bool) error 
 		runtime.RegisterCacheCleanup(jobQueue, cacheApp.JobType, log, sched)
 		runtime.RegisterCartRecovery(jobQueue, log, sched)
 		runtime.RegisterAuditRetention(jobQueue, log, sched)
+		if err := integrationApp.RegisterSyncJobCronTriggers(pluginApp, jobQueue, sched, log); err != nil {
+			return fmt.Errorf("sync job cron triggers: %w", err)
+		}
 		schedulerCtx, cancel := context.WithCancel(context.Background())
 		schedulerCancel = cancel
 		schedulerDone = make(chan struct{})
@@ -1747,6 +1754,18 @@ func runScheduler(cfg *config.Config, log logger.Logger) error {
 	}
 	defer conn.Close()
 
+	registry := plugin.NewRegistry(log)
+	registerPlugins(registry, cfg)
+	pluginApp := &plugin.App{
+		Logger:    log,
+		Config:    cfg,
+		Bootstrap: &plugin.Bootstrap{DB: conn},
+	}
+	pluginApp.SetExtensionRegistry(extensionApp.NewRegistry())
+	if summary := registry.InitAll(pluginApp); summary.Failed > 0 {
+		return fmt.Errorf("plugin init failed: %d plugin(s) failed to initialize", summary.Failed)
+	}
+
 	jobQueue, err := postgres.NewJobQueue(conn)
 	if err != nil {
 		return fmt.Errorf("job queue: %w", err)
@@ -1755,6 +1774,9 @@ func runScheduler(cfg *config.Config, log logger.Logger) error {
 	runtime.RegisterCacheCleanup(jobQueue, cacheApp.JobType, log, sched)
 	runtime.RegisterCartRecovery(jobQueue, log, sched)
 	runtime.RegisterAuditRetention(jobQueue, log, sched)
+	if err := integrationApp.RegisterSyncJobCronTriggers(pluginApp, jobQueue, sched, log); err != nil {
+		return fmt.Errorf("sync job cron triggers: %w", err)
+	}
 
 	// Block until interrupted (context cancelled via signal).
 	ctx, cancel := context.WithCancel(context.Background())
@@ -2561,6 +2583,10 @@ func setupWorker(conn *sql.DB, cfg *config.Config, log logger.Logger, app *plugi
 		return nil, nil, nil, err
 	}
 	jobWorker.Register(webhookApp.NewDeliverHandler(merchantWebhookRepo, webhookApp.NewDefaultHTTPPoster(), log))
+
+	if err := integrationApp.RegisterSyncJobHandlers(app, jobWorker); err != nil {
+		return nil, nil, nil, fmt.Errorf("sync job handlers: %w", err)
+	}
 
 	return jobWorker, jobQueue, appCache, nil
 }

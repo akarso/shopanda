@@ -112,7 +112,7 @@ Use this table before writing code. Full design rationale: [Integrator Platform 
 | Custom checkout validation | `RegisterCheckoutStep` | Anchor positions planned | Shipped (append-only) |
 | ERP CSV column remap before DB write | Import row hook (`import.product.row`, …) | Lower priority runs first | Shipped (PR-820–823) |
 | SAP / ERP inbound REST callback | `app.Integration(slug).RegisterSecureRoute` | Route per plugin under `/api/v1/integrations/{plugin}/…` | Shipped (PR-830–832) |
-| Warehouse / PIM outbound sync | Sync job + events/queue | Job registration order | Planned (Track E) |
+| Warehouse / PIM outbound sync | `app.Integration(slug).RegisterSyncJob` | Cron or event → queue retry | Shipped (PR-840) |
 | Replace search / cache / tax backend | Infrastructure port (`RegisterSearchProvider`, `RegisterTaxCalculator`, …) | Config picks one winner | Partial (tax shipped PR-813; mail/shipping planned) |
 | Enrich PDP from external PIM | `RegisterCompositionStep("pdp", …)` + cached fetch | Pipeline order | Shipped |
 | Durable custom line data | Extension field on `cart_item` → snapshot `order_item` | Registry + ACL | Shipped (Phase 7) |
@@ -283,12 +283,14 @@ Multiple ERP plugins each register **disjoint route prefixes** — no shared han
 
 **Today:** `Bus.OnAsync` + queue port for retries; `RegisterCompositionStep` for read-path enrichment.
 
-**Planned (Track E):** `RegisterSyncJob` with cron or event triggers.
+**Today:** `app.Integration(slug).RegisterSyncJob(...)` registers outbound sync handlers with cron or event triggers (PR-840). Cron fires from the scheduler process; events enqueue from the API server; the worker executes jobs with queue retry.
+
+**Planned (Track E):** `pkg/integrationsdk` client helpers (PR-841), reference warehouse + PIM plugins (PR-842–843).
 
 | Pattern | Mechanism | Ordering |
 | --- | --- | --- |
 | Push order to ERP on create | `order.created` event → async HTTP POST | Events unordered — handler must be idempotent |
-| Pull stock every 5m | Sync job (planned) | One job per plugin registration |
+| Pull stock every 5m | `RegisterSyncJob` + `extapi.Cron("@every 5m")` | One job per plugin registration |
 | Enrich PDP from PIM GraphQL | `RegisterCompositionStep("pdp", …)` | Pipeline order; cache externally |
 
 Outbound plugins **must not** import each other's clients. Share lookup tables via extension fields or documented DB views exposed through application services — not cross-plugin Go imports.

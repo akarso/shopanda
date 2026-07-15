@@ -76,6 +76,8 @@ type App struct {
 
 	integrationOrderStatus   extapi.IntegrationOrderStatusUpdater
 	integrationOrderStatusMu sync.Mutex
+
+	syncJobs []SyncJobRegistration
 }
 
 // RegisterCheckoutStep registers a checkout workflow step.
