@@ -17,3 +17,10 @@ const (
 	IntegrationErrorAuthExpiredTimestamp = "auth.expired_timestamp"
 	IntegrationErrorAuthReplayDetected   = "auth.replay_detected"
 )
+
+// Idempotency header and error codes (Phase 8 inbound ERP).
+const (
+	IntegrationHeaderIdempotencyKey      = "Idempotency-Key"
+	IntegrationErrorIdempotencyConflict  = "idempotency.conflict"
+	IntegrationErrorIdempotencyInProgress = "idempotency.in_progress"
+)

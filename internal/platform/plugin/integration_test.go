@@ -89,6 +89,53 @@ func TestApp_Integration_RegisterSecureRoute(t *testing.T) {
 	}
 }
 
+func TestApp_Integration_RegisterSecureRoute_Idempotency(t *testing.T) {
+	app := &plugin.App{Logger: logger.NewWithWriter(io.Discard, "error")}
+	app.SetIntegrationIdempotencyStore(integrationhttp.NewMemoryIdempotencyStore())
+	replay := integrationhttp.NewMemoryReplayStore()
+	now := time.Unix(1_700_000_000, 0)
+	body := []byte(`{"order_id":"100"}`)
+	calls := 0
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls++
+		integrationhttp.WriteJSON(w, http.StatusAccepted, map[string]string{"status": "accepted"})
+	})
+	auth := integrationhttp.AuthConfig{
+		APIKey:      "secret",
+		HMACSecret:  "hmac",
+		ReplayStore: replay,
+		Now:         func() time.Time { return now },
+	}
+	if err := app.Integration("acme").RegisterSecureRoute("POST", "order-status", auth, handler); err != nil {
+		t.Fatalf("RegisterSecureRoute: %v", err)
+	}
+	routes := app.PublicRoutes()
+	if len(routes) != 1 {
+		t.Fatalf("routes = %+v", routes)
+	}
+
+	makeReq := func(nonce string) *http.Request {
+		req := httptest.NewRequest(http.MethodPost, "/api/v1/integrations/acme/order-status", bytes.NewReader(body))
+		req.Header.Set(extapi.IntegrationHeaderIdempotencyKey, "erp-key-1")
+		integrationhttp.SignRequest(req, body, "secret", "hmac", now.Unix(), nonce)
+		return req
+	}
+
+	rec1 := httptest.NewRecorder()
+	routes[0].Handler.ServeHTTP(rec1, makeReq("nonce-idem-1"))
+	rec2 := httptest.NewRecorder()
+	routes[0].Handler.ServeHTTP(rec2, makeReq("nonce-idem-2"))
+	if rec1.Code != http.StatusAccepted || rec2.Code != http.StatusAccepted {
+		t.Fatalf("statuses = %d %d", rec1.Code, rec2.Code)
+	}
+	if calls != 1 {
+		t.Fatalf("handler calls = %d, want 1", calls)
+	}
+	if rec2.Header().Get("X-Idempotency-Replayed") != "true" {
+		t.Fatalf("missing replay header")
+	}
+}
+
 func TestApp_Integration_RegisterRoute_InvalidSlug(t *testing.T) {
 	app := &plugin.App{}
 	err := app.Integration("Bad Slug").RegisterRoute("POST", "x", http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
