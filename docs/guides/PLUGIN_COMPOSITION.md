@@ -268,9 +268,7 @@ app.Import("acme/erp").RegisterRowHook(extapi.ImportEntityProduct, 100, func(ctx
 
 ### Inbound (ERP → Shopanda)
 
-**Today:** `app.Integration("acme").RegisterSecureRoute(...)` mounts authenticated handlers under `/api/v1/integrations/acme/…` (PR-830–832). Use `integrationhttp.AuthConfig` with API key and optional HMAC secret from plugin config. Mutating requests with `Idempotency-Key` are deduplicated automatically when the API wires the Postgres idempotency store.
-
-**Planned (Track D):** reference inbound plugin (PR-833).
+**Today:** `app.Integration("acme").RegisterSecureRoute(...)` mounts authenticated handlers under `/api/v1/integrations/acme/…` (PR-830–833). Use `integrationhttp.AuthConfig` with API key and optional HMAC secret from plugin config. Mutating requests with `Idempotency-Key` are deduplicated automatically when the API wires the Postgres idempotency store. See `plugins/integrationdemo` for a reference order-status callback.
 
 | Concern | Composition approach |
 | --- | --- |

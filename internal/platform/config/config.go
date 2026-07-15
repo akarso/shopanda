@@ -339,8 +339,9 @@ type PluginsConfig struct {
 	Example   ExamplePluginConfig   `yaml:"example"`
 	SlotsDemo SlotsDemoPluginConfig `yaml:"slotsdemo"`
 	CartDemo   CartDemoPluginConfig   `yaml:"cartdemo"`
-	ImportDemo ImportDemoPluginConfig `yaml:"importdemo"`
-	B2B        B2BPluginConfig        `yaml:"b2b"`
+	ImportDemo        ImportDemoPluginConfig        `yaml:"importdemo"`
+	IntegrationDemo   IntegrationDemoPluginConfig   `yaml:"integrationdemo"`
+	B2B               B2BPluginConfig               `yaml:"b2b"`
 }
 
 // GraphQLPluginConfig toggles the optional read-only GraphQL API core plugin.
@@ -369,6 +370,13 @@ type CartDemoPluginConfig struct {
 // ImportDemoPluginConfig toggles the CSV import remap reference plugin in plugins/importdemo.
 type ImportDemoPluginConfig struct {
 	Enabled bool `yaml:"enabled"`
+}
+
+// IntegrationDemoPluginConfig toggles the inbound ERP order-status reference plugin.
+type IntegrationDemoPluginConfig struct {
+	Enabled               bool   `yaml:"enabled"`
+	IntegrationAPIKey     string `yaml:"integration_api_key"`
+	IntegrationHMACSecret string `yaml:"integration_hmac_secret"`
 }
 
 // B2BPluginConfig toggles the commercial B2B module in plugins/b2b.
@@ -822,6 +830,15 @@ func applyEnv(cfg *Config) {
 	if v := os.Getenv("SHOPANDA_PLUGINS_IMPORTDEMO_ENABLED"); v != "" {
 		cfg.Plugins.ImportDemo.Enabled = v == "true" || v == "1"
 	}
+	if v := os.Getenv("SHOPANDA_PLUGINS_INTEGRATIONDEMO_ENABLED"); v != "" {
+		cfg.Plugins.IntegrationDemo.Enabled = v == "true" || v == "1"
+	}
+	if v := os.Getenv("SHOPANDA_PLUGINS_INTEGRATIONDEMO_INTEGRATION_API_KEY"); v != "" {
+		cfg.Plugins.IntegrationDemo.IntegrationAPIKey = v
+	}
+	if v := os.Getenv("SHOPANDA_PLUGINS_INTEGRATIONDEMO_INTEGRATION_HMAC_SECRET"); v != "" {
+		cfg.Plugins.IntegrationDemo.IntegrationHMACSecret = v
+	}
 	if v := os.Getenv("SHOPANDA_PLUGINS_B2B_ENABLED"); v != "" {
 		cfg.Plugins.B2B.Enabled = v == "true" || v == "1"
 	}
@@ -954,6 +971,9 @@ func flatten(cfg *Config) map[string]string {
 	m["plugins.cartdemo.min_quantity"] = strconv.Itoa(cfg.Plugins.CartDemo.MinQuantity)
 	m["plugins.cartdemo.handling_fee_minor_units"] = strconv.FormatInt(cfg.Plugins.CartDemo.HandlingFeeMinorUnits, 10)
 	m["plugins.importdemo.enabled"] = strconv.FormatBool(cfg.Plugins.ImportDemo.Enabled)
+	m["plugins.integrationdemo.enabled"] = strconv.FormatBool(cfg.Plugins.IntegrationDemo.Enabled)
+	m["plugins.integrationdemo.integration_api_key"] = cfg.Plugins.IntegrationDemo.IntegrationAPIKey
+	m["plugins.integrationdemo.integration_hmac_secret"] = cfg.Plugins.IntegrationDemo.IntegrationHMACSecret
 	m["plugins.b2b.enabled"] = strconv.FormatBool(cfg.Plugins.B2B.Enabled)
 	m["frontend.enabled"] = strconv.FormatBool(cfg.Frontend.Enabled)
 	m["frontend.mode"] = cfg.Frontend.Mode

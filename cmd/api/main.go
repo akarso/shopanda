@@ -345,6 +345,8 @@ func runServe(cfg *config.Config, log logger.Logger, embedScheduler bool) error 
 		return err
 	}
 	pluginApp.SetIntegrationIdempotencyStore(integrationIdempotencyRepo)
+	orderStatusService := orderApp.NewStatusService(orderRepo)
+	pluginApp.SetIntegrationOrderStatusUpdater(plugin.NewIntegrationOrderStatusUpdater(orderStatusService))
 	summary := registry.InitAll(pluginApp)
 	extensionFieldRepo, err := postgres.NewExtensionFieldRepo(conn)
 	if err != nil {

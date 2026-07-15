@@ -15,6 +15,7 @@ import (
 	"github.com/akarso/shopanda/internal/platform/config"
 	"github.com/akarso/shopanda/internal/platform/event"
 	"github.com/akarso/shopanda/internal/platform/logger"
+	"github.com/akarso/shopanda/pkg/extapi"
 	"github.com/akarso/shopanda/pkg/integrationhttp"
 )
 
@@ -72,6 +73,9 @@ type App struct {
 
 	integrationIdempotency   integrationhttp.IdempotencyStore
 	integrationIdempotencyMu sync.Mutex
+
+	integrationOrderStatus   extapi.IntegrationOrderStatusUpdater
+	integrationOrderStatusMu sync.Mutex
 }
 
 // RegisterCheckoutStep registers a checkout workflow step.

@@ -7,6 +7,7 @@ import (
 
 	"github.com/akarso/shopanda/internal/application/admin"
 	extensionapp "github.com/akarso/shopanda/internal/application/extension"
+	orderApp "github.com/akarso/shopanda/internal/application/order"
 	"github.com/akarso/shopanda/internal/domain/order"
 	"github.com/akarso/shopanda/internal/platform/apperror"
 	"github.com/akarso/shopanda/internal/platform/logger"
@@ -300,7 +301,7 @@ func (h *OrderAdminHandler) Update() http.HandlerFunc {
 
 		oldStatus := string(o.Status())
 
-		if err := applyOrderStatusTransition(o, next); err != nil {
+		if err := orderApp.ApplyStatusTransition(o, next); err != nil {
 			scopeDetails := adminScopeDetailsFromRequest(r)
 			h.auditor.LogAction(r.Context(), admin.AuditEntry{
 				AdminID:      adminID,
@@ -353,20 +354,5 @@ func (h *OrderAdminHandler) Update() http.HandlerFunc {
 		})
 
 		JSON(w, http.StatusOK, map[string]interface{}{"order": resp})
-	}
-}
-
-func applyOrderStatusTransition(o *order.Order, next order.OrderStatus) error {
-	switch next {
-	case order.OrderStatusConfirmed:
-		return o.Confirm()
-	case order.OrderStatusPaid:
-		return o.MarkPaid()
-	case order.OrderStatusCancelled:
-		return o.Cancel()
-	case order.OrderStatusFailed:
-		return o.Fail()
-	default:
-		return errors.New("unsupported target status")
 	}
 }
