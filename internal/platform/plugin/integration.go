@@ -6,6 +6,7 @@ import (
 
 	"github.com/akarso/shopanda/internal/domain/rbac"
 	"github.com/akarso/shopanda/pkg/extapi"
+	"github.com/akarso/shopanda/pkg/integrationhttp"
 )
 
 // Integration exposes inbound integration route registration scoped to a plugin slug.
@@ -33,6 +34,18 @@ func (i *Integration) RegisterRoute(method, path string, handler http.Handler) e
 		return fmt.Errorf("plugin: integration route: %w", err)
 	}
 	return i.app.RegisterPublicRoute(pattern, handler)
+}
+
+// RegisterSecureRoute registers a public integration route wrapped with auth middleware.
+func (i *Integration) RegisterSecureRoute(method, path string, auth integrationhttp.AuthConfig, handler http.Handler) error {
+	if auth.PluginSlug == "" {
+		slug, err := extapi.NormalizePluginSlug(i.slug)
+		if err != nil {
+			return fmt.Errorf("plugin: integration secure route: %w", err)
+		}
+		auth.PluginSlug = slug
+	}
+	return i.RegisterRoute(method, path, integrationhttp.SecureHandler(auth, handler))
 }
 
 // RegisterAdminRoute registers an admin integration route under /api/v1/admin/integrations/{plugin}/….

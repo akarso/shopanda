@@ -241,7 +241,7 @@ Recommended order: **A (800–802)** → **B (810–814)** and **C (820–823)**
 | 822 | C | [oss] | Import context + errors (done) |
 | 823 | C | [oss] | Reference plugin: CSV remap (done) |
 | 830 | D | [oss] | Integration route conventions (done) |
-| 831 | D | [oss] | Integration auth middleware |
+| 831 | D | [oss] | Integration auth middleware (done) |
 | 832 | D | [oss] | Idempotency store |
 | 833 | D | [oss] | Reference plugin: order status inbound |
 | 840 | E | [oss] | Sync job registration |
