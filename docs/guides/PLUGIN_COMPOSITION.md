@@ -111,7 +111,7 @@ Use this table before writing code. Full design rationale: [Integrator Platform 
 | Block or validate cart mutation | Cart hook chain (`cart.add_item.before`, `cart.validate`, …) | Lower priority runs first | Shipped |
 | Custom checkout validation | `RegisterCheckoutStep` | Anchor positions planned | Shipped (append-only) |
 | ERP CSV column remap before DB write | Import row hook (`import.product.row`, …) | Lower priority runs first | Shipped (PR-820–823) |
-| SAP / ERP inbound REST callback | `RegisterPublicRoute` + integration auth middleware | Route per plugin | Routes shipped; auth planned (Track D) |
+| SAP / ERP inbound REST callback | `app.Integration(slug).RegisterRoute` + auth middleware | Route per plugin under `/api/v1/integrations/{plugin}/…` | Routes + error envelope shipped (PR-830); auth PR-831 |
 | Warehouse / PIM outbound sync | Sync job + events/queue | Job registration order | Planned (Track E) |
 | Replace search / cache / tax backend | Infrastructure port (`RegisterSearchProvider`, `RegisterTaxCalculator`, …) | Config picks one winner | Partial (tax shipped PR-813; mail/shipping planned) |
 | Enrich PDP from external PIM | `RegisterCompositionStep("pdp", …)` + cached fetch | Pipeline order | Shipped |
@@ -268,9 +268,9 @@ app.Import("acme/erp").RegisterRowHook(extapi.ImportEntityProduct, 100, func(ctx
 
 ### Inbound (ERP → Shopanda)
 
-**Today:** `RegisterPublicRoute` mounts handlers after `InitAll` — no `main.go` edit.
+**Today:** `app.Integration("acme").RegisterRoute(...)` mounts handlers under `/api/v1/integrations/acme/…` after `InitAll` — no `main.go` edit. Use `pkg/integrationhttp.WriteError` for the structured ERP error envelope (PR-830).
 
-**Planned (Track D):** conventions under `/api/v1/integrations/{plugin}/…`, API-key/HMAC middleware, `Idempotency-Key` dedupe, HMAC replay protection (separate from idempotency).
+**Planned (Track D):** API-key/HMAC middleware (PR-831), `Idempotency-Key` dedupe (PR-832), HMAC replay protection (PR-831).
 
 | Concern | Composition approach |
 | --- | --- |
