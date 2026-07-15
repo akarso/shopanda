@@ -23,7 +23,7 @@ Related:
 | §3 Port catalog | **Partial** — search/cache/queue/payment/media/tax shipped; introspection at `GET /api/v1/admin/extensions/ports` (PR-801); mail/shipping planned |
 | §4 Behavioral catalog | **Shipped** — pricing positioning + cart lifecycle hooks + `cart.validate` + reference cart plugin (PR-810–814) |
 | §5 Import pipelines | **Shipped** — row hooks, importer wiring, skip/errors, reference CSV remap plugin (PR-820–823) |
-| §6 Inbound integration | **Partial** — routes + auth shipped (PR-830–831); idempotency planned (PR-832) |
+| §6 Inbound integration | **Partial** — routes + auth + idempotency shipped (PR-830–832); reference plugin planned (PR-833) |
 | §7 Outbound integration | **Partial** — events + queue shipped; sync job registration planned (Track E) |
 | §8 Wiring ergonomics | **Planned** (Track F) |
 | §10 Validation | **Phase 8 exit criteria** — not yet achievable end-to-end |
@@ -38,7 +38,7 @@ Phase 7 made **custom data and storefront injection** first-class. Real-world in
 | --- | --- | --- |
 | **Price rules & cart modifications** | `RegisterPricingStep` exists but ordering is append-only; one cart hook (`cart.add_item.after`) | Teams patch cart service or duplicate promotion logic |
 | **CSV import transforms** | Importers are core-owned; attribute columns pass through fixed validation only | ERP CSV layouts require one-off importer forks |
-| **Inbound ERP (SAP, etc.)** | `RegisterPublicRoute` exists; no integration auth/idempotency conventions | Every project reinvents webhook security and duplicate handling |
+| **Inbound ERP (SAP, etc.)** | Integration routes, auth, and idempotency conventions shipped (PR-830–832) | Reference inbound plugin still needed for end-to-end demo |
 | **Outbound warehouse / PIM** | Events + queue exist; no standard sync registration or client bootstrap | Plugins import `internal/*` or run cron outside the binary |
 | **“Replace search/cache/tax”** | Search, cache, queue, payment, media ports exist; tax/shipping/mail do not | Integrators assume Magento-style preferences |
 

@@ -15,6 +15,7 @@ import (
 	"github.com/akarso/shopanda/internal/platform/config"
 	"github.com/akarso/shopanda/internal/platform/event"
 	"github.com/akarso/shopanda/internal/platform/logger"
+	"github.com/akarso/shopanda/pkg/integrationhttp"
 )
 
 // Plugin defines the contract for extending the system.
@@ -68,6 +69,9 @@ type App struct {
 
 	importRegistry   *importctxapp.Registry
 	importRegistryMu sync.Mutex
+
+	integrationIdempotency   integrationhttp.IdempotencyStore
+	integrationIdempotencyMu sync.Mutex
 }
 
 // RegisterCheckoutStep registers a checkout workflow step.

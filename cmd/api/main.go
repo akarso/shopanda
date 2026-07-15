@@ -340,6 +340,11 @@ func runServe(cfg *config.Config, log logger.Logger, embedScheduler bool) error 
 	pluginApp.SetImportRegistry(importRegistry)
 	pluginApp.SetSlotRegistry(slotRegistry)
 	pluginApp.SetAssetRegistry(assetRegistry)
+	integrationIdempotencyRepo, err := postgres.NewIntegrationIdempotencyRepo(conn)
+	if err != nil {
+		return err
+	}
+	pluginApp.SetIntegrationIdempotencyStore(integrationIdempotencyRepo)
 	summary := registry.InitAll(pluginApp)
 	extensionFieldRepo, err := postgres.NewExtensionFieldRepo(conn)
 	if err != nil {

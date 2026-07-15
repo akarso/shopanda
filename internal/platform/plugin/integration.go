@@ -37,6 +37,7 @@ func (i *Integration) RegisterRoute(method, path string, handler http.Handler) e
 }
 
 // RegisterSecureRoute registers a public integration route wrapped with auth middleware.
+// When an idempotency store is configured on the app, mutating requests with Idempotency-Key are deduplicated.
 func (i *Integration) RegisterSecureRoute(method, path string, auth integrationhttp.AuthConfig, handler http.Handler) error {
 	if auth.PluginSlug == "" {
 		slug, err := extapi.NormalizePluginSlug(i.slug)
@@ -45,7 +46,11 @@ func (i *Integration) RegisterSecureRoute(method, path string, auth integrationh
 		}
 		auth.PluginSlug = slug
 	}
-	return i.RegisterRoute(method, path, integrationhttp.SecureHandler(auth, handler))
+	secured := handler
+	if store := i.app.IntegrationIdempotencyStore(); store != nil {
+		secured = integrationhttp.IdempotencyHandler(idempotencyConfig(i.app, i.slug), secured)
+	}
+	return i.RegisterRoute(method, path, integrationhttp.SecureHandler(auth, secured))
 }
 
 // RegisterAdminRoute registers an admin integration route under /api/v1/admin/integrations/{plugin}/….
