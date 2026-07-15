@@ -23,7 +23,7 @@ Related:
 | §3 Port catalog | **Partial** — search/cache/queue/payment/media/tax shipped; introspection at `GET /api/v1/admin/extensions/ports` (PR-801); mail/shipping planned |
 | §4 Behavioral catalog | **Shipped** — pricing positioning + cart lifecycle hooks + `cart.validate` + reference cart plugin (PR-810–814) |
 | §5 Import pipelines | **Shipped** — row hooks, importer wiring, skip/errors, reference CSV remap plugin (PR-820–823) |
-| §6 Inbound integration | **Partial** — route conventions + error envelope shipped (PR-830); auth/idempotency planned (PR-831–832) |
+| §6 Inbound integration | **Partial** — routes + auth shipped (PR-830–831); idempotency planned (PR-832) |
 | §7 Outbound integration | **Partial** — events + queue shipped; sync job registration planned (Track E) |
 | §8 Wiring ergonomics | **Planned** (Track F) |
 | §10 Validation | **Phase 8 exit criteria** — not yet achievable end-to-end |

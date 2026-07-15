@@ -1,14 +1,17 @@
 package plugin_test
 
 import (
+	"bytes"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"github.com/akarso/shopanda/internal/domain/rbac"
 	"github.com/akarso/shopanda/internal/platform/logger"
 	"github.com/akarso/shopanda/internal/platform/plugin"
+	"github.com/akarso/shopanda/pkg/extapi"
 	"github.com/akarso/shopanda/pkg/integrationhttp"
 )
 
@@ -44,6 +47,45 @@ func TestApp_Integration_RegisterAdminRoute(t *testing.T) {
 	routes := app.AdminRoutes()
 	if len(routes) != 1 || routes[0].Pattern != "GET /api/v1/admin/integrations/acme/health" {
 		t.Fatalf("routes = %+v", routes)
+	}
+}
+
+func TestApp_Integration_RegisterSecureRoute(t *testing.T) {
+	app := &plugin.App{Logger: logger.NewWithWriter(io.Discard, "error")}
+	replay := integrationhttp.NewMemoryReplayStore()
+	now := time.Unix(1_700_000_000, 0)
+	body := []byte(`{"ok":true}`)
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		integrationhttp.WriteJSON(w, http.StatusOK, map[string]string{"ok": "true"})
+	})
+	auth := integrationhttp.AuthConfig{
+		APIKey:      "secret",
+		HMACSecret:  "hmac",
+		ReplayStore: replay,
+		Now:         func() time.Time { return now },
+	}
+	if err := app.Integration("acme").RegisterSecureRoute("POST", "order-status", auth, handler); err != nil {
+		t.Fatalf("RegisterSecureRoute: %v", err)
+	}
+	routes := app.PublicRoutes()
+	if len(routes) != 1 {
+		t.Fatalf("routes = %+v", routes)
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/integrations/acme/order-status", bytes.NewReader(body))
+	integrationhttp.SignRequest(req, body, "secret", "hmac", now.Unix(), "nonce-secure")
+	rec := httptest.NewRecorder()
+	routes[0].Handler.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d body = %s", rec.Code, rec.Body.String())
+	}
+
+	rec2 := httptest.NewRecorder()
+	req2 := httptest.NewRequest(http.MethodPost, "/api/v1/integrations/acme/order-status", bytes.NewReader(body))
+	req2.Header.Set(extapi.IntegrationHeaderAPIKey, "wrong")
+	routes[0].Handler.ServeHTTP(rec2, req2)
+	if rec2.Code != http.StatusUnauthorized {
+		t.Fatalf("unauth status = %d", rec2.Code)
 	}
 }
 
