@@ -141,14 +141,15 @@ func (c *Client) Do(ctx context.Context, method, path string, headers map[string
 // DoJSON sends JSON and decodes a JSON response into dest when dest is non-nil.
 // Returns StatusError for non-2xx responses without decoding dest.
 func (c *Client) DoJSON(ctx context.Context, method, path string, headers map[string]string, reqBody, dest interface{}) error {
-	if headers == nil {
-		headers = map[string]string{}
+	reqHeaders := copyHeaders(headers)
+	if reqHeaders == nil {
+		reqHeaders = map[string]string{}
 	}
-	if _, ok := headers["Content-Type"]; !ok {
-		headers["Content-Type"] = "application/json"
+	if _, ok := reqHeaders["Content-Type"]; !ok {
+		reqHeaders["Content-Type"] = "application/json"
 	}
-	if _, ok := headers["Accept"]; !ok {
-		headers["Accept"] = "application/json"
+	if _, ok := reqHeaders["Accept"]; !ok {
+		reqHeaders["Accept"] = "application/json"
 	}
 
 	var body []byte
@@ -160,7 +161,7 @@ func (c *Client) DoJSON(ctx context.Context, method, path string, headers map[st
 		body = encoded
 	}
 
-	resp, err := c.Do(ctx, method, path, headers, body)
+	resp, err := c.Do(ctx, method, path, reqHeaders, body)
 	if err != nil {
 		return err
 	}

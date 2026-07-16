@@ -281,9 +281,7 @@ Multiple ERP plugins each register **disjoint route prefixes** — no shared han
 
 ### Outbound (Shopanda → warehouse / PIM)
 
-**Today:** `Bus.OnAsync` + queue port for retries; `RegisterCompositionStep` for read-path enrichment.
-
-**Today:** `app.Integration(slug).RegisterSyncJob(...)` registers outbound sync handlers with cron or event triggers (PR-840). Cron fires from the scheduler process; events enqueue from the API server; the worker executes jobs with queue retry.
+**Today:** `Bus.OnAsync` + queue port for retries; `RegisterCompositionStep` for read-path enrichment; `app.Integration(slug).RegisterSyncJob(...)` for cron/event outbound sync (PR-840); `pkg/integrationsdk/http` and `pkg/integrationsdk/graphql` for outbound REST/GraphQL clients (PR-841). Cron fires from the scheduler process; events enqueue from the API server; the worker executes jobs with queue retry.
 
 **Planned (Track E):** reference warehouse + PIM plugins (PR-842–843).
 

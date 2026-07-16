@@ -61,6 +61,29 @@ func TestClient_GetSuccess(t *testing.T) {
 	}
 }
 
+func TestClient_DoJSONPreservesCallerHeaders(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("X-Custom") != "keep" {
+			t.Fatalf("X-Custom = %q", r.Header.Get("X-Custom"))
+		}
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer srv.Close()
+
+	client, err := sdkhttp.New(sdkhttp.Config{BaseURL: srv.URL})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	headers := map[string]string{"X-Custom": "keep"}
+	err = client.DoJSON(context.Background(), http.MethodPost, "/", headers, nil, nil)
+	if err != nil {
+		t.Fatalf("DoJSON: %v", err)
+	}
+	if _, ok := headers["Content-Type"]; ok {
+		t.Fatalf("caller headers mutated: %+v", headers)
+	}
+}
+
 func TestClient_DoJSONPost(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		body, _ := io.ReadAll(r.Body)
