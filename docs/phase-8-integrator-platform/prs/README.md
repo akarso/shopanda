@@ -22,7 +22,7 @@ Specs for Phase 8 PRs (Summary, Why, Scope, Out of scope, Validation — same fo
 | PR-833 | D | [oss] | done | [Reference plugin: order status inbound](PR-833.md) |
 | PR-840 | E | [oss] | done | [Sync job registration](PR-840.md) |
 | PR-841 | E | [oss] | done | [Integration client bootstrap](PR-841.md) |
-| PR-842 | E | [oss] | planned | Reference plugin: warehouse stock |
+| PR-842 | E | [oss] | done | [Reference plugin: warehouse stock](PR-842.md) |
 | PR-843 | E | [oss] | planned | Reference plugin: PIM GraphQL PDP |
 | PR-850 | F | [oss] | planned | Plugin SDK package |
 | PR-851 | F | [oss] | planned | Registration report |

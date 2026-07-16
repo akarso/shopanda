@@ -341,6 +341,7 @@ type PluginsConfig struct {
 	CartDemo   CartDemoPluginConfig   `yaml:"cartdemo"`
 	ImportDemo        ImportDemoPluginConfig        `yaml:"importdemo"`
 	IntegrationDemo   IntegrationDemoPluginConfig   `yaml:"integrationdemo"`
+	WarehouseDemo     WarehouseDemoPluginConfig     `yaml:"warehousedemo"`
 	B2B               B2BPluginConfig               `yaml:"b2b"`
 }
 
@@ -377,6 +378,14 @@ type IntegrationDemoPluginConfig struct {
 	Enabled               bool   `yaml:"enabled"`
 	IntegrationAPIKey     string `yaml:"integration_api_key"`
 	IntegrationHMACSecret string `yaml:"integration_hmac_secret"`
+}
+
+// WarehouseDemoPluginConfig toggles the outbound warehouse stock reference plugin.
+type WarehouseDemoPluginConfig struct {
+	Enabled          bool   `yaml:"enabled"`
+	WarehouseBaseURL string `yaml:"warehouse_base_url"`
+	WarehouseAPIKey  string `yaml:"warehouse_api_key"`
+	SyncCron         string `yaml:"sync_cron"`
 }
 
 // B2BPluginConfig toggles the commercial B2B module in plugins/b2b.
@@ -839,6 +848,18 @@ func applyEnv(cfg *Config) {
 	if v := os.Getenv("SHOPANDA_PLUGINS_INTEGRATIONDEMO_INTEGRATION_HMAC_SECRET"); v != "" {
 		cfg.Plugins.IntegrationDemo.IntegrationHMACSecret = v
 	}
+	if v := os.Getenv("SHOPANDA_PLUGINS_WAREHOUSEDEMO_ENABLED"); v != "" {
+		cfg.Plugins.WarehouseDemo.Enabled = v == "true" || v == "1"
+	}
+	if v := os.Getenv("SHOPANDA_PLUGINS_WAREHOUSEDEMO_WAREHOUSE_BASE_URL"); v != "" {
+		cfg.Plugins.WarehouseDemo.WarehouseBaseURL = v
+	}
+	if v := os.Getenv("SHOPANDA_PLUGINS_WAREHOUSEDEMO_WAREHOUSE_API_KEY"); v != "" {
+		cfg.Plugins.WarehouseDemo.WarehouseAPIKey = v
+	}
+	if v := os.Getenv("SHOPANDA_PLUGINS_WAREHOUSEDEMO_SYNC_CRON"); v != "" {
+		cfg.Plugins.WarehouseDemo.SyncCron = v
+	}
 	if v := os.Getenv("SHOPANDA_PLUGINS_B2B_ENABLED"); v != "" {
 		cfg.Plugins.B2B.Enabled = v == "true" || v == "1"
 	}
@@ -974,6 +995,10 @@ func flatten(cfg *Config) map[string]string {
 	m["plugins.integrationdemo.enabled"] = strconv.FormatBool(cfg.Plugins.IntegrationDemo.Enabled)
 	m["plugins.integrationdemo.integration_api_key"] = cfg.Plugins.IntegrationDemo.IntegrationAPIKey
 	m["plugins.integrationdemo.integration_hmac_secret"] = cfg.Plugins.IntegrationDemo.IntegrationHMACSecret
+	m["plugins.warehousedemo.enabled"] = strconv.FormatBool(cfg.Plugins.WarehouseDemo.Enabled)
+	m["plugins.warehousedemo.warehouse_base_url"] = cfg.Plugins.WarehouseDemo.WarehouseBaseURL
+	m["plugins.warehousedemo.warehouse_api_key"] = cfg.Plugins.WarehouseDemo.WarehouseAPIKey
+	m["plugins.warehousedemo.sync_cron"] = cfg.Plugins.WarehouseDemo.SyncCron
 	m["plugins.b2b.enabled"] = strconv.FormatBool(cfg.Plugins.B2B.Enabled)
 	m["frontend.enabled"] = strconv.FormatBool(cfg.Frontend.Enabled)
 	m["frontend.mode"] = cfg.Frontend.Mode
