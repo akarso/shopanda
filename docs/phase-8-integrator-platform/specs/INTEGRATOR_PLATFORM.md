@@ -24,7 +24,7 @@ Related:
 | §4 Behavioral catalog | **Shipped** — pricing positioning + cart lifecycle hooks + `cart.validate` + reference cart plugin (PR-810–814) |
 | §5 Import pipelines | **Shipped** — row hooks, importer wiring, skip/errors, reference CSV remap plugin (PR-820–823) |
 | §6 Inbound integration | **Shipped** — routes, auth, idempotency, reference order-status plugin (PR-830–833) |
-| §7 Outbound integration | **Partial** — sync jobs + client SDK + warehouse reference plugin shipped (PR-840–842); PIM reference planned (PR-843) |
+| §7 Outbound integration | **Done** — sync jobs, client SDK, warehouse + PIM reference plugins (PR-840–843) |
 | §8 Wiring ergonomics | **Planned** (Track F) |
 | §10 Validation | **Phase 8 exit criteria** — not yet achievable end-to-end |
 

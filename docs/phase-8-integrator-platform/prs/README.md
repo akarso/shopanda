@@ -23,7 +23,7 @@ Specs for Phase 8 PRs (Summary, Why, Scope, Out of scope, Validation — same fo
 | PR-840 | E | [oss] | done | [Sync job registration](PR-840.md) |
 | PR-841 | E | [oss] | done | [Integration client bootstrap](PR-841.md) |
 | PR-842 | E | [oss] | done | [Reference plugin: warehouse stock](PR-842.md) |
-| PR-843 | E | [oss] | planned | Reference plugin: PIM GraphQL PDP |
+| PR-843 | E | [oss] | done | [Reference plugin: PIM GraphQL PDP](PR-843.md) |
 | PR-850 | F | [oss] | planned | Plugin SDK package |
 | PR-851 | F | [oss] | planned | Registration report |
 | PR-852 | F | [oss] | planned | Replace-by-name steps |
@@ -33,6 +33,6 @@ Roadmap: [`../ROADMAP.md`](../ROADMAP.md) · Architecture: [`../specs/INTEGRATOR
 
 **Rule for Phase 8:** Integrators extend via registered seams only — no core service overrides, no override folders, no ad hoc importer forks.
 
-**Phase 8 Track A complete** (PR-800–802). **Track B complete** (PR-810–814). **Track C complete** (PR-820–823). **Track D complete** (PR-830–833).
+**Phase 8 Track A complete** (PR-800–802). **Track B complete** (PR-810–814). **Track C complete** (PR-820–823). **Track D complete** (PR-830–833). **Track E complete** (PR-840–843).
 
 Individual PR spec files (`PR-812.md`, …) are added when implementation starts.

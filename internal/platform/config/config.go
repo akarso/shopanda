@@ -342,6 +342,7 @@ type PluginsConfig struct {
 	ImportDemo        ImportDemoPluginConfig        `yaml:"importdemo"`
 	IntegrationDemo   IntegrationDemoPluginConfig   `yaml:"integrationdemo"`
 	WarehouseDemo     WarehouseDemoPluginConfig     `yaml:"warehousedemo"`
+	PimDemo           PimDemoPluginConfig           `yaml:"pimdemo"`
 	B2B               B2BPluginConfig               `yaml:"b2b"`
 }
 
@@ -386,6 +387,14 @@ type WarehouseDemoPluginConfig struct {
 	WarehouseBaseURL string `yaml:"warehouse_base_url"`
 	WarehouseAPIKey  string `yaml:"warehouse_api_key"`
 	SyncCron         string `yaml:"sync_cron"`
+}
+
+// PimDemoPluginConfig toggles the outbound PIM GraphQL PDP enrichment reference plugin.
+type PimDemoPluginConfig struct {
+	Enabled            bool   `yaml:"enabled"`
+	PimGraphQLEndpoint string `yaml:"pim_graphql_endpoint"`
+	PimAPIKey          string `yaml:"pim_api_key"`
+	CacheTTL           string `yaml:"cache_ttl"`
 }
 
 // B2BPluginConfig toggles the commercial B2B module in plugins/b2b.
@@ -860,6 +869,18 @@ func applyEnv(cfg *Config) {
 	if v := os.Getenv("SHOPANDA_PLUGINS_WAREHOUSEDEMO_SYNC_CRON"); v != "" {
 		cfg.Plugins.WarehouseDemo.SyncCron = v
 	}
+	if v := os.Getenv("SHOPANDA_PLUGINS_PIMDEMO_ENABLED"); v != "" {
+		cfg.Plugins.PimDemo.Enabled = v == "true" || v == "1"
+	}
+	if v := os.Getenv("SHOPANDA_PLUGINS_PIMDEMO_PIM_GRAPHQL_ENDPOINT"); v != "" {
+		cfg.Plugins.PimDemo.PimGraphQLEndpoint = v
+	}
+	if v := os.Getenv("SHOPANDA_PLUGINS_PIMDEMO_PIM_API_KEY"); v != "" {
+		cfg.Plugins.PimDemo.PimAPIKey = v
+	}
+	if v := os.Getenv("SHOPANDA_PLUGINS_PIMDEMO_CACHE_TTL"); v != "" {
+		cfg.Plugins.PimDemo.CacheTTL = v
+	}
 	if v := os.Getenv("SHOPANDA_PLUGINS_B2B_ENABLED"); v != "" {
 		cfg.Plugins.B2B.Enabled = v == "true" || v == "1"
 	}
@@ -999,6 +1020,10 @@ func flatten(cfg *Config) map[string]string {
 	m["plugins.warehousedemo.warehouse_base_url"] = cfg.Plugins.WarehouseDemo.WarehouseBaseURL
 	m["plugins.warehousedemo.warehouse_api_key"] = cfg.Plugins.WarehouseDemo.WarehouseAPIKey
 	m["plugins.warehousedemo.sync_cron"] = cfg.Plugins.WarehouseDemo.SyncCron
+	m["plugins.pimdemo.enabled"] = strconv.FormatBool(cfg.Plugins.PimDemo.Enabled)
+	m["plugins.pimdemo.pim_graphql_endpoint"] = cfg.Plugins.PimDemo.PimGraphQLEndpoint
+	m["plugins.pimdemo.pim_api_key"] = cfg.Plugins.PimDemo.PimAPIKey
+	m["plugins.pimdemo.cache_ttl"] = cfg.Plugins.PimDemo.CacheTTL
 	m["plugins.b2b.enabled"] = strconv.FormatBool(cfg.Plugins.B2B.Enabled)
 	m["frontend.enabled"] = strconv.FormatBool(cfg.Frontend.Enabled)
 	m["frontend.mode"] = cfg.Frontend.Mode
