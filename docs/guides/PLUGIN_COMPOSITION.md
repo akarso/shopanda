@@ -285,7 +285,7 @@ Multiple ERP plugins each register **disjoint route prefixes** — no shared han
 
 **Today:** `app.Integration(slug).RegisterSyncJob(...)` registers outbound sync handlers with cron or event triggers (PR-840). Cron fires from the scheduler process; events enqueue from the API server; the worker executes jobs with queue retry.
 
-**Planned (Track E):** `pkg/integrationsdk` client helpers (PR-841), reference warehouse + PIM plugins (PR-842–843).
+**Planned (Track E):** reference warehouse + PIM plugins (PR-842–843).
 
 | Pattern | Mechanism | Ordering |
 | --- | --- | --- |
