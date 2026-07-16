@@ -626,8 +626,9 @@ Phase 8 adds first-class seams for **commerce behavior** (positioned pricing ste
 - Integration idempotency: `Idempotency-Key` dedupe on `RegisterSecureRoute` — see `pkg/integrationhttp` (PR-832)
 - Reference inbound order-status plugin: `plugins/integrationdemo` (PR-833)
 - Outbound sync jobs: `app.Integration(slug).RegisterSyncJob` — see `pkg/extapi` (PR-840)
+- Outbound HTTP/GraphQL clients: `pkg/integrationsdk/http`, `pkg/integrationsdk/graphql` (PR-841)
 
-**Planned in Phase 8** (see spec §Document map): integration client SDK (PR-841), reference outbound plugins (PR-842–843), full registration report (PR-851).
+**Planned in Phase 8** (see spec §Document map): reference outbound plugins (PR-842–843), full registration report (PR-851).
 
 When choosing an extension mechanism, start with [Multi-Plugin Composition](PLUGIN_COMPOSITION.md) for ordering rules; use the integrator spec when the task involves ERP/PIM/warehouse wiring or CSV pre-persist transforms.
 

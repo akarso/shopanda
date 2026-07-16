@@ -245,7 +245,7 @@ Recommended order: **A (800–802)** → **B (810–814)** and **C (820–823)**
 | 832 | D | [oss] | Idempotency store (done) |
 | 833 | D | [oss] | Reference plugin: order status inbound (done) |
 | 840 | E | [oss] | Sync job registration (done) |
-| 841 | E | [oss] | Integration client bootstrap |
+| 841 | E | [oss] | Integration client bootstrap (done) |
 | 842 | E | [oss] | Reference plugin: warehouse stock |
 | 843 | E | [oss] | Reference plugin: PIM GraphQL PDP |
 | 850 | F | [oss] | Plugin SDK package |
