@@ -182,7 +182,7 @@ Recommended order: **A (800–802)** → **B (810–814)** and **C (820–823)**
 
 | Theme | Examples | Notes |
 | --- | --- | --- |
-| **Checkout step positioning** | Same API as pricing for `RegisterCheckoutStep` | Spec exists; implement alongside PR-810 |
+| **Checkout step positioning** | Same API as pricing for `RegisterCheckoutStep` | Shipped (PR-854) |
 | **Export pipelines** | Row hooks on CSV export | Symmetric to Track C |
 | **Shipping rate port** | Carrier API replaces zone table math | Stretch in Track B |
 | **Mail sender port** | SendGrid, Postmark | Stretch in Track F |

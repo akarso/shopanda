@@ -40,7 +40,7 @@ type App struct {
 	Bootstrap *Bootstrap
 
 	pricingSteps     []pricingStepRegistration
-	checkoutSteps    []any
+	checkoutSteps    []checkoutStepRegistration
 	compositionSteps map[string][]any
 
 	searchProvider  any
@@ -83,15 +83,6 @@ type App struct {
 	syncJobs []SyncJobRegistration
 }
 
-// RegisterCheckoutStep registers a checkout workflow step.
-// The step must implement checkout.Step.
-func (a *App) RegisterCheckoutStep(step any) {
-	if step == nil {
-		panic("plugin: checkout step must not be nil")
-	}
-	a.checkoutSteps = append(a.checkoutSteps, step)
-}
-
 // RegisterCompositionStep registers a composition pipeline step.
 // Pipeline names: "pdp" (product detail), "plp" (product listing).
 // The step must implement the appropriate composition.Step[T].
@@ -106,11 +97,6 @@ func (a *App) RegisterCompositionStep(pipeline string, step any) {
 		a.compositionSteps = make(map[string][]any)
 	}
 	a.compositionSteps[pipeline] = append(a.compositionSteps[pipeline], step)
-}
-
-// CheckoutSteps returns a copy of the registered checkout steps.
-func (a *App) CheckoutSteps() []any {
-	return append([]any(nil), a.checkoutSteps...)
 }
 
 // CompositionSteps returns a copy of the registered composition steps for a pipeline.

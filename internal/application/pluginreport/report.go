@@ -6,6 +6,7 @@ import (
 
 	hooksapp "github.com/akarso/shopanda/internal/application/hooks"
 	importctxapp "github.com/akarso/shopanda/internal/application/importctx"
+	checkoutapp "github.com/akarso/shopanda/internal/application/checkout"
 	"github.com/akarso/shopanda/internal/application/ports"
 	apppricing "github.com/akarso/shopanda/internal/application/pricing"
 	"github.com/akarso/shopanda/internal/platform/config"
@@ -18,11 +19,12 @@ type Report struct {
 	Plugins           []PluginStatus         `json:"plugins"`
 	Ports             []ports.ActivePort     `json:"ports"`
 	CorePricingSteps  []string               `json:"core_pricing_steps"`
+	CoreCheckoutSteps []string               `json:"core_checkout_steps"`
 	PricingSteps      []PricingStep          `json:"pricing_steps"`
 	Hooks             []hooksapp.CatalogEntry `json:"hooks"`
 	ImportHooks       []importctxapp.CatalogEntry `json:"import_hooks"`
 	CompositionSteps  []CompositionStep      `json:"composition_steps"`
-	CheckoutSteps     []NamedStep            `json:"checkout_steps"`
+	CheckoutSteps     []CheckoutStep         `json:"checkout_steps"`
 	SyncJobs          []SyncJob              `json:"sync_jobs"`
 	PublicRoutes      []Route                `json:"public_routes"`
 	AdminRoutes       []AdminRoute             `json:"admin_routes"`
@@ -49,10 +51,11 @@ type CompositionStep struct {
 	Type     string `json:"type"`
 }
 
-// NamedStep describes a checkout pipeline step.
-type NamedStep struct {
-	Name string `json:"name"`
-	Type string `json:"type"`
+// CheckoutStep describes a plugin checkout workflow registration.
+type CheckoutStep struct {
+	Position string `json:"position"`
+	Name     string `json:"name"`
+	Type     string `json:"type"`
 }
 
 // SyncJob describes an outbound integration sync job registration.
@@ -86,7 +89,8 @@ func Build(registry *plugin.Registry, app *plugin.App, cfg *config.Config) Repor
 	report := Report{
 		GeneratedAt:      time.Now().UTC(),
 		Ports:            ports.BuildSnapshot(app, cfg).Ports,
-		CorePricingSteps: append([]string(nil), apppricing.CoreStepCatalog...),
+		CorePricingSteps:  append([]string(nil), apppricing.CoreStepCatalog...),
+		CoreCheckoutSteps: append([]string(nil), checkoutapp.CoreStepCatalog...),
 	}
 	if registry != nil {
 		for _, entry := range registry.Entries() {
@@ -119,10 +123,11 @@ func Build(registry *plugin.Registry, app *plugin.App, cfg *config.Config) Repor
 			})
 		}
 	}
-	for _, step := range app.CheckoutSteps() {
-		report.CheckoutSteps = append(report.CheckoutSteps, NamedStep{
-			Name: stepName(step),
-			Type: typeName(step),
+	for _, reg := range app.CheckoutStepRegistrations() {
+		report.CheckoutSteps = append(report.CheckoutSteps, CheckoutStep{
+			Position: reg.Position,
+			Name:     stepName(reg.Step),
+			Type:     typeName(reg.Step),
 		})
 	}
 	for _, job := range app.SyncJobs() {

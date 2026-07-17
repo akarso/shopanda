@@ -677,14 +677,23 @@ func runServe(cfg *config.Config, log logger.Logger, embedScheduler bool) error 
 		selectShippingStep,
 		initiatePaymentStep,
 	}
-	for _, s := range pluginApp.CheckoutSteps() {
-		if v, ok := s.(checkoutApp.Step); ok {
-			checkoutSteps = append(checkoutSteps, v)
-		} else {
-			log.Error("plugin.step.invalid_type", fmt.Errorf("expected checkout.Step, got %T", s), map[string]interface{}{
+	pluginCheckoutRegs := make([]checkoutApp.PluginStepRegistration, 0)
+	for _, reg := range pluginApp.CheckoutStepRegistrations() {
+		step, ok := reg.Step.(checkoutApp.Step)
+		if !ok {
+			log.Error("plugin.step.invalid_type", fmt.Errorf("expected checkout.Step, got %T", reg.Step), map[string]interface{}{
 				"pipeline": "checkout",
 			})
+			continue
 		}
+		pluginCheckoutRegs = append(pluginCheckoutRegs, checkoutApp.PluginStepRegistration{
+			Step:     step,
+			Position: reg.Position,
+		})
+	}
+	checkoutSteps, err = checkoutApp.MergePluginSteps(checkoutSteps, pluginCheckoutRegs)
+	if err != nil {
+		return fmt.Errorf("checkout workflow: %w", err)
 	}
 	checkoutWorkflow := checkoutApp.NewWorkflow(checkoutSteps, bus, log)
 	checkoutService := checkoutApp.NewService(cartRepo, checkoutWorkflow, log)

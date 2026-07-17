@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	apppricing "github.com/akarso/shopanda/internal/application/pricing"
+	checkoutapp "github.com/akarso/shopanda/internal/application/checkout"
 	"github.com/akarso/shopanda/internal/platform/plugin"
 )
 
@@ -63,11 +64,33 @@ func TestApp_RegisterPricingStep_DuplicateReplacePanics(t *testing.T) {
 func TestApp_RegisterCheckoutStep(t *testing.T) {
 	app := &plugin.App{}
 	app.RegisterCheckoutStep("step1")
+	app.RegisterCheckoutStep("step2", "before:create_order")
+
+	regs := app.CheckoutStepRegistrations()
+	if len(regs) != 2 {
+		t.Fatalf("CheckoutStepRegistrations() len = %d, want 2", len(regs))
+	}
+	if regs[0].Step != "step1" || regs[0].Position != checkoutapp.DefaultPluginStepPosition {
+		t.Errorf("first reg = %+v", regs[0])
+	}
+	if regs[1].Step != "step2" || regs[1].Position != "before:create_order" {
+		t.Errorf("second reg = %+v", regs[1])
+	}
 
 	steps := app.CheckoutSteps()
-	if len(steps) != 1 {
-		t.Fatalf("CheckoutSteps() len = %d, want 1", len(steps))
+	if len(steps) != 2 || steps[0] != "step1" || steps[1] != "step2" {
+		t.Errorf("CheckoutSteps() = %v", steps)
 	}
+}
+
+func TestApp_RegisterCheckoutStep_InvalidPositionPanics(t *testing.T) {
+	defer func() {
+		if r := recover(); r == nil {
+			t.Fatal("expected panic for invalid checkout position")
+		}
+	}()
+	app := &plugin.App{}
+	app.RegisterCheckoutStep("step", "after:unknown")
 }
 
 func TestApp_RegisterCheckoutStep_NilPanics(t *testing.T) {

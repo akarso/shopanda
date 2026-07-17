@@ -32,6 +32,36 @@ func TestAfterBeforePricingPosition(t *testing.T) {
 	}
 }
 
+func TestCheckoutPositionHelpers(t *testing.T) {
+	if got := string(pluginsdk.CheckoutStart()); got != "start" {
+		t.Fatalf("CheckoutStart() = %q", got)
+	}
+	if got := string(pluginsdk.CheckoutEnd()); got != "end" {
+		t.Fatalf("CheckoutEnd() = %q", got)
+	}
+	if got := string(pluginsdk.CheckoutBefore("order")); got != "before:order" {
+		t.Fatalf("CheckoutBefore() = %q", got)
+	}
+}
+
+func TestCheckout_Register(t *testing.T) {
+	app := testApp()
+	sdk := pluginsdk.New(app, "acme/demo")
+	sdk.Checkout().Register("step-a")
+	sdk.Checkout().Register("step-b", pluginsdk.CheckoutBefore("create_order"))
+
+	regs := app.CheckoutStepRegistrations()
+	if len(regs) != 2 {
+		t.Fatalf("registrations = %+v", regs)
+	}
+	if regs[0].Step != "step-a" || regs[0].Position != "end" {
+		t.Fatalf("first = %+v", regs[0])
+	}
+	if regs[1].Step != "step-b" || regs[1].Position != "before:create_order" {
+		t.Fatalf("second = %+v", regs[1])
+	}
+}
+
 func TestPricing_Register(t *testing.T) {
 	app := testApp()
 	sdk := pluginsdk.New(app, "acme/demo")

@@ -652,6 +652,21 @@ func (r *mockVariantRepo037) FindByID(_ context.Context, vid string) (*catalog.V
 func (r *mockVariantRepo037) FindBySKU(_ context.Context, _ string) (*catalog.Variant, error) {
 	return nil, nil
 }
+func (r *mockVariantRepo037) FindBySKUs(_ context.Context, skus []string) (map[string]*catalog.Variant, error) {
+	if r.err != nil {
+		return nil, r.err
+	}
+	out := make(map[string]*catalog.Variant, len(skus))
+	for _, sku := range skus {
+		for _, v := range r.variants {
+			if v != nil && v.SKU == sku {
+				out[sku] = v
+				break
+			}
+		}
+	}
+	return out, nil
+}
 func (r *mockVariantRepo037) ListByProductID(_ context.Context, _ string, _, _ int) ([]catalog.Variant, error) {
 	return nil, nil
 }

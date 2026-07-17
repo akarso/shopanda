@@ -28,11 +28,12 @@ Specs for Phase 8 PRs (Summary, Why, Scope, Out of scope, Validation — same fo
 | PR-851 | F | [oss] | done | [Registration report](PR-851.md) |
 | PR-852 | F | [oss] | done | [Replace-by-name steps](PR-852.md) |
 | PR-853 | F | [oss] | done | [Reference port replacement](PR-853.md) |
+| PR-854 | — | [oss] | done | [Checkout step positioning](PR-854.md) |
 
 Roadmap: [`../ROADMAP.md`](../ROADMAP.md) · Architecture: [`../specs/INTEGRATOR_PLATFORM.md`](../specs/INTEGRATOR_PLATFORM.md) · Upstream: [Phase 7](../../phase-7-customization-platform/ROADMAP.md)
 
 **Rule for Phase 8:** Integrators extend via registered seams only — no core service overrides, no override folders, no ad hoc importer forks.
 
-**Phase 8 Track A complete** (PR-800–802). **Track B complete** (PR-810–814). **Track C complete** (PR-820–823). **Track D complete** (PR-830–833). **Track E complete** (PR-840–843). **Track F complete** (PR-850–853).
+**Phase 8 Track A complete** (PR-800–802). **Track B complete** (PR-810–814). **Track C complete** (PR-820–823). **Track D complete** (PR-830–833). **Track E complete** (PR-840–843). **Track F complete** (PR-850–853). **Post-phase:** PR-854 checkout step positioning.
 
 Individual PR spec files (`PR-812.md`, …) are added when implementation starts.

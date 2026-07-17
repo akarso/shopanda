@@ -63,7 +63,7 @@ Same HTTP request?  ──yes──> pipeline or hook chain
 Plugins register steps during `Init`:
 
 - `RegisterPricingStep` — fees, discounts, adjustments
-- `RegisterCheckoutStep` — validation or side effects during checkout
+- `RegisterCheckoutStep` — validation or side effects during checkout (`start`, `end`, `before:<step>`, `after:<step>`)
 - `RegisterCompositionStep("pdp"|"plp", …)` — enrich API/storefront responses
 
 Each step receives a **mutable context**. Plugin steps use `RegisterPricingStep(step, position...)` with `before:<step>`, `after:<step>`, or `replace:<step>` (aliases: `promotions`, `taxes`). Default position is `after:base`. Checkout step positioning is still append-only (planned).
@@ -109,7 +109,7 @@ Use this table before writing code. Full design rationale: [Integrator Platform 
 | --- | --- | --- | --- |
 | Custom fee / cart price rule | `RegisterPricingStep` | `before:` / `after:` / `replace:` anchors (PR-810, PR-852) | Shipped |
 | Block or validate cart mutation | Cart hook chain (`cart.add_item.before`, `cart.validate`, …) | Lower priority runs first | Shipped |
-| Custom checkout validation | `RegisterCheckoutStep` | Anchor positions planned | Shipped (append-only) |
+| Custom checkout validation | `RegisterCheckoutStep` | `start` / `end` / `before:` / `after:` anchors (PR-854) | Shipped |
 | ERP CSV column remap before DB write | Import row hook (`import.product.row`, …) | Lower priority runs first | Shipped (PR-820–823) |
 | SAP / ERP inbound REST callback | `app.Integration(slug).RegisterSecureRoute` | Route per plugin under `/api/v1/integrations/{plugin}/…` | Shipped (PR-830–832) |
 | Warehouse / PIM outbound sync | `app.Integration(slug).RegisterSyncJob` | Cron or event → queue retry | Shipped (PR-840) |
