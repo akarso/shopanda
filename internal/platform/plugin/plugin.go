@@ -77,6 +77,9 @@ type App struct {
 	integrationOrderStatus   extapi.IntegrationOrderStatusUpdater
 	integrationOrderStatusMu sync.Mutex
 
+	integrationStockSync   extapi.IntegrationStockSyncer
+	integrationStockSyncMu sync.Mutex
+
 	syncJobs []SyncJobRegistration
 }
 

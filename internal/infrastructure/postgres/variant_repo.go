@@ -83,6 +83,43 @@ func (r *VariantRepo) FindBySKU(ctx context.Context, sku string) (*catalog.Varia
 	return v, nil
 }
 
+// FindBySKUs returns variants keyed by SKU for the given SKUs.
+func (r *VariantRepo) FindBySKUs(ctx context.Context, skus []string) (map[string]*catalog.Variant, error) {
+	if len(skus) == 0 {
+		return map[string]*catalog.Variant{}, nil
+	}
+	const q = `SELECT id, product_id, sku, name, weight, attributes, created_at, updated_at
+		FROM variants WHERE sku = ANY($1)`
+
+	var querier interface {
+		QueryContext(context.Context, string, ...interface{}) (*sql.Rows, error)
+	}
+	if r.tx != nil {
+		querier = r.tx
+	} else {
+		querier = r.db
+	}
+
+	rows, err := querier.QueryContext(ctx, q, pq.Array(skus))
+	if err != nil {
+		return nil, fmt.Errorf("variant_repo: find by skus: %w", err)
+	}
+	defer rows.Close()
+
+	out := make(map[string]*catalog.Variant, len(skus))
+	for rows.Next() {
+		v, err := r.scanVariant(rows)
+		if err != nil {
+			return nil, fmt.Errorf("variant_repo: find by skus: %w", err)
+		}
+		out[v.SKU] = v
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("variant_repo: find by skus: %w", err)
+	}
+	return out, nil
+}
+
 const maxVariantListLimit = 100
 
 // ListByProductID returns variants for the given product ordered by created_at asc.

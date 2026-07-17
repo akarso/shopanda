@@ -12,6 +12,10 @@ type StockRepository interface {
 	// Creates the record if it does not exist, updates it otherwise.
 	SetStock(ctx context.Context, entry *StockEntry) error
 
+	// SetStocks upserts absolute stock quantities for multiple variants.
+	// Empty entries returns nil and no error.
+	SetStocks(ctx context.Context, entries []StockEntry) error
+
 	// ListStock returns a page of stock entries ordered by variant_id.
 	// offset must be >= 0; limit must be > 0.
 	ListStock(ctx context.Context, offset, limit int) ([]StockEntry, error)

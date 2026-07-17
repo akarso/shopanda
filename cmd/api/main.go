@@ -348,6 +348,7 @@ func runServe(cfg *config.Config, log logger.Logger, embedScheduler bool) error 
 	pluginApp.SetIntegrationIdempotencyStore(integrationIdempotencyRepo)
 	orderStatusService := orderApp.NewStatusService(orderRepo)
 	pluginApp.SetIntegrationOrderStatusUpdater(plugin.NewIntegrationOrderStatusUpdater(orderStatusService))
+	wireIntegrationStockSyncer(pluginApp, variantRepo, stockRepo)
 	summary := registry.InitAll(pluginApp)
 	extensionFieldRepo, err := postgres.NewExtensionFieldRepo(conn)
 	if err != nil {
@@ -1762,6 +1763,9 @@ func runScheduler(cfg *config.Config, log logger.Logger) error {
 		Bootstrap: &plugin.Bootstrap{DB: conn},
 	}
 	pluginApp.SetExtensionRegistry(extensionApp.NewRegistry())
+	if err := wireIntegrationStockSyncerFromDB(conn, pluginApp); err != nil {
+		return err
+	}
 	if summary := registry.InitAll(pluginApp); summary.Failed > 0 {
 		return fmt.Errorf("plugin init failed: %d plugin(s) failed to initialize", summary.Failed)
 	}
@@ -2607,6 +2611,9 @@ func runWorker(cfg *config.Config, log logger.Logger) error {
 		Bootstrap: &plugin.Bootstrap{DB: conn},
 	}
 	pluginApp.SetExtensionRegistry(extensionApp.NewRegistry())
+	if err := wireIntegrationStockSyncerFromDB(conn, pluginApp); err != nil {
+		return err
+	}
 	registry.InitAll(pluginApp)
 
 	jobWorker, _, _, err := setupWorker(conn, cfg, log, pluginApp)

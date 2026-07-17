@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/akarso/shopanda/internal/domain/inventory"
+	"github.com/lib/pq"
 )
 
 // Compile-time check that StockRepo implements inventory.StockRepository.
@@ -68,6 +69,40 @@ func (r *StockRepo) SetStock(ctx context.Context, entry *inventory.StockEntry) e
 	)
 	if err != nil {
 		return fmt.Errorf("stock_repo: set stock: %w", err)
+	}
+	return nil
+}
+
+// SetStocks upserts stock quantities for multiple variants in one statement.
+func (r *StockRepo) SetStocks(ctx context.Context, entries []inventory.StockEntry) error {
+	if len(entries) == 0 {
+		return nil
+	}
+	byVariantID := make(map[string]inventory.StockEntry, len(entries))
+	for _, entry := range entries {
+		byVariantID[entry.VariantID] = entry
+	}
+
+	variantIDs := make([]string, 0, len(byVariantID))
+	quantities := make([]int, 0, len(byVariantID))
+	updatedAts := make([]time.Time, 0, len(byVariantID))
+	for _, entry := range byVariantID {
+		variantIDs = append(variantIDs, entry.VariantID)
+		quantities = append(quantities, entry.Quantity)
+		updatedAts = append(updatedAts, entry.UpdatedAt)
+	}
+
+	const q = `INSERT INTO stock (variant_id, quantity, updated_at)
+		SELECT variant_id, quantity, updated_at
+		FROM UNNEST($1::text[], $2::int[], $3::timestamptz[])
+			AS t(variant_id, quantity, updated_at)
+		ON CONFLICT (variant_id) DO UPDATE
+		SET quantity = EXCLUDED.quantity,
+		    updated_at = EXCLUDED.updated_at`
+
+	_, err := r.db.ExecContext(ctx, q, pq.Array(variantIDs), pq.Array(quantities), pq.Array(updatedAts))
+	if err != nil {
+		return fmt.Errorf("stock_repo: set stocks: %w", err)
 	}
 	return nil
 }
