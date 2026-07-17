@@ -4,7 +4,7 @@ import (
 	"fmt"
 
 	"github.com/akarso/shopanda/internal/platform/plugin"
-	"github.com/akarso/shopanda/pkg/extapi"
+	"github.com/akarso/shopanda/pkg/pluginsdk"
 	sdkhttp "github.com/akarso/shopanda/pkg/integrationsdk/http"
 )
 
@@ -53,11 +53,7 @@ func (p *Plugin) Init(app *plugin.App) error {
 		cronSpec = "@every 5m"
 	}
 	handler := NewStockSyncHandler(client, syncer, app.Logger)
-	if err := app.Integration(RouteSlug).RegisterSyncJob(extapi.SyncJob{
-		Name:    SyncJobStock,
-		Trigger: extapi.Cron(cronSpec),
-		Handler: handler,
-	}); err != nil {
+	if err := pluginsdk.New(app, p.Name()).Integration(RouteSlug).RegisterCron(SyncJobStock, cronSpec, handler); err != nil {
 		return fmt.Errorf("warehousedemo plugin: register stock sync job: %w", err)
 	}
 	if app.Logger != nil {
