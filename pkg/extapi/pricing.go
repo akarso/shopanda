@@ -33,3 +33,8 @@ func AfterPricingStep(anchor string) string {
 func BeforePricingStep(anchor string) string {
 	return "before:" + anchor
 }
+
+// ReplacePricingStep returns a replace-position that substitutes a core step by name.
+func ReplacePricingStep(step string) string {
+	return "replace:" + step
+}

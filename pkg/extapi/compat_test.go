@@ -54,6 +54,16 @@ func TestStablePricingStepCatalog(t *testing.T) {
 	}
 }
 
+func TestReplacePricingStep(t *testing.T) {
+	if got := extapi.ReplacePricingStep("tax"); got != "replace:tax" {
+		t.Fatalf("ReplacePricingStep() = %q", got)
+	}
+	mode, anchor, err := apppricing.ParseStepPosition(extapi.ReplacePricingStep("taxes"))
+	if err != nil || mode != apppricing.StepPositionReplace || anchor != "tax" {
+		t.Fatalf("parse replace = %q %q err=%v", mode, anchor, err)
+	}
+}
+
 func TestStablePlacementsMatchInternal(t *testing.T) {
 	cases := []struct {
 		stable extapi.Placement

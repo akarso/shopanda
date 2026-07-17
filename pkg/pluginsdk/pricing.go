@@ -17,6 +17,11 @@ func Before(step string) PricingPosition {
 	return PricingPosition(extapi.BeforePricingStep(step))
 }
 
+// Replace returns a position that substitutes the named core step.
+func Replace(step string) PricingPosition {
+	return PricingPosition(extapi.ReplacePricingStep(step))
+}
+
 // Pricing registers positioned pricing pipeline steps.
 type Pricing struct {
 	sdk *SDK
