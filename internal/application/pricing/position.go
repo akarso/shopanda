@@ -115,17 +115,17 @@ func MergePluginSteps(core []domainpricing.PricingStep, plugins []PluginStepRegi
 	}
 
 	corePipeline := make([]domainpricing.PricingStep, 0, len(core))
-	slotAnchors := make([][]string, 0, len(core))
+	slotAnchors := make([]string, 0, len(core))
 	for _, step := range core {
 		name := step.Name()
 		if replacement, ok := replacements[name]; ok {
 			corePipeline = append(corePipeline, replacement)
-			slotAnchors = append(slotAnchors, []string{name, replacement.Name()})
+			slotAnchors = append(slotAnchors, name)
 			delete(replacements, name)
 			continue
 		}
 		corePipeline = append(corePipeline, step)
-		slotAnchors = append(slotAnchors, []string{name})
+		slotAnchors = append(slotAnchors, name)
 	}
 	for anchor := range replacements {
 		return nil, fmt.Errorf("pricing replace %q: no core step with that name", anchor)
@@ -156,29 +156,20 @@ func MergePluginSteps(core []domainpricing.PricingStep, plugins []PluginStepRegi
 
 	out := make([]domainpricing.PricingStep, 0, len(corePipeline)+len(inserts))
 	for i, step := range corePipeline {
-		anchors := slotAnchors[i]
+		anchor := slotAnchors[i]
 		for _, k := range batchOrder {
-			if k.after || !anchorMatches(anchors, k.anchor) {
+			if k.after || k.anchor != anchor {
 				continue
 			}
 			out = append(out, batches[k]...)
 		}
 		out = append(out, step)
 		for _, k := range batchOrder {
-			if !k.after || !anchorMatches(anchors, k.anchor) {
+			if !k.after || k.anchor != anchor {
 				continue
 			}
 			out = append(out, batches[k]...)
 		}
 	}
 	return out, nil
-}
-
-func anchorMatches(anchors []string, anchor string) bool {
-	for _, name := range anchors {
-		if name == anchor {
-			return true
-		}
-	}
-	return false
 }
