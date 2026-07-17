@@ -104,7 +104,6 @@ func MergePluginSteps(core []Step, plugins []PluginStepRegistration) ([]Step, er
 		after  bool
 	}
 	batches := make(map[batchKey][]Step)
-	batchOrder := make([]batchKey, 0)
 
 	for _, reg := range plugins {
 		if reg.Step == nil {
@@ -115,28 +114,25 @@ func MergePluginSteps(core []Step, plugins []PluginStepRegistration) ([]Step, er
 			return nil, fmt.Errorf("checkout plugin step %q: %w", reg.Step.Name(), err)
 		}
 		k := batchKey{anchor: anchor, after: mode == StepPositionAfter}
-		if _, seen := batches[k]; !seen {
-			batchOrder = append(batchOrder, k)
-		}
 		batches[k] = append(batches[k], reg.Step)
 	}
 
 	out := make([]Step, 0, len(core)+len(plugins))
+	emitted := 0
 	for _, step := range core {
 		name := step.Name()
-		for _, k := range batchOrder {
-			if k.after || k.anchor != name {
-				continue
-			}
-			out = append(out, batches[k]...)
+		if steps := batches[batchKey{anchor: name, after: false}]; len(steps) > 0 {
+			out = append(out, steps...)
+			emitted += len(steps)
 		}
 		out = append(out, step)
-		for _, k := range batchOrder {
-			if !k.after || k.anchor != name {
-				continue
-			}
-			out = append(out, batches[k]...)
+		if steps := batches[batchKey{anchor: name, after: true}]; len(steps) > 0 {
+			out = append(out, steps...)
+			emitted += len(steps)
 		}
+	}
+	if emitted < len(plugins) {
+		return nil, fmt.Errorf("checkout plugin steps: %d registration(s) target missing core step(s)", len(plugins)-emitted)
 	}
 	return out, nil
 }

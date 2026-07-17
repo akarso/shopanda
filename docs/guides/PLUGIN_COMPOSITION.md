@@ -66,7 +66,7 @@ Plugins register steps during `Init`:
 - `RegisterCheckoutStep` — validation or side effects during checkout (`start`, `end`, `before:<step>`, `after:<step>`)
 - `RegisterCompositionStep("pdp"|"plp", …)` — enrich API/storefront responses
 
-Each step receives a **mutable context**. Plugin steps use `RegisterPricingStep(step, position...)` with `before:<step>`, `after:<step>`, or `replace:<step>` (aliases: `promotions`, `taxes`). Default position is `after:base`. Checkout step positioning is still append-only (planned).
+Each step receives a **mutable context**. Plugin steps use `RegisterPricingStep(step, position...)` with `before:<step>`, `after:<step>`, or `replace:<step>` (aliases: `promotions`, `taxes`). Default position is `after:base`. Checkout steps use `RegisterCheckoutStep(step, position...)` with `start`, `end`, `before:<step>`, or `after:<step>` (aliases: `validate`, `order`, `payment`, …). Default checkout position is `end` (legacy append-only behavior).
 
 ### Hooks (Phase 7)
 

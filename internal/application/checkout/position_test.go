@@ -110,3 +110,19 @@ func TestMergePluginSteps_SameAnchorPreservesRegistrationOrder(t *testing.T) {
 		t.Fatalf("order = %v", got)
 	}
 }
+
+func TestMergePluginSteps_MissingCoreAnchorRejected(t *testing.T) {
+	coreWithoutShipping := []checkoutapp.Step{
+		stubStep{name: "validate_cart"},
+		stubStep{name: "recalculate_pricing"},
+		stubStep{name: "reserve_inventory"},
+		stubStep{name: "create_order"},
+		stubStep{name: "initiate_payment"},
+	}
+	_, err := checkoutapp.MergePluginSteps(coreWithoutShipping, []checkoutapp.PluginStepRegistration{
+		{Step: stubStep{name: "orphan"}, Position: "after:select_shipping"},
+	})
+	if err == nil {
+		t.Fatal("expected error when anchor missing from core workflow")
+	}
+}
