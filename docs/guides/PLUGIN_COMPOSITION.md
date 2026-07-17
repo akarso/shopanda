@@ -113,7 +113,7 @@ Use this table before writing code. Full design rationale: [Integrator Platform 
 | ERP CSV column remap before DB write | Import row hook (`import.product.row`, …) | Lower priority runs first | Shipped (PR-820–823) |
 | SAP / ERP inbound REST callback | `app.Integration(slug).RegisterSecureRoute` | Route per plugin under `/api/v1/integrations/{plugin}/…` | Shipped (PR-830–832) |
 | Warehouse / PIM outbound sync | `app.Integration(slug).RegisterSyncJob` | Cron or event → queue retry | Shipped (PR-840) |
-| Replace search / cache / tax backend | Infrastructure port (`RegisterSearchProvider`, `RegisterTaxCalculator`, …) | Config picks one winner | Partial (tax shipped PR-813; mail/shipping planned) |
+| Replace search / cache / tax backend | Infrastructure port (`RegisterSearchProvider`, `RegisterTaxCalculator`, …) | Config picks one winner | Shipped (tax: PR-813, template: PR-853) |
 | Enrich PDP from external PIM | `RegisterCompositionStep("pdp", …)` + cached fetch | Pipeline order | Shipped |
 | Durable custom line data | Extension field on `cart_item` → snapshot `order_item` | Registry + ACL | Shipped (Phase 7) |
 | Notify after order placed | `Bus.OnAsync("order.created", …)` | No order guarantee | Shipped |
@@ -283,7 +283,7 @@ Multiple ERP plugins each register **disjoint route prefixes** — no shared han
 
 **Today:** `Bus.OnAsync` + queue port for retries; `RegisterCompositionStep` for read-path enrichment; `app.Integration(slug).RegisterSyncJob(...)` for cron/event outbound sync (PR-840); `pkg/integrationsdk/http` and `pkg/integrationsdk/graphql` for outbound REST/GraphQL clients (PR-841); reference warehouse stock plugin (`plugins/warehousedemo`, PR-842); reference PIM PDP enrichment plugin (`plugins/pimdemo`, PR-843). Cron fires from the scheduler process; events enqueue from the API server; the worker executes jobs with queue retry.
 
-**Planned (Track F):** replace-by-name steps (PR-852), port replacement template (PR-853).
+**Shipped (Track F):** replace-by-name steps (PR-852), port replacement template (PR-853).
 
 | Pattern | Mechanism | Ordering |
 | --- | --- | --- |

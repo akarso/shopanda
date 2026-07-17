@@ -339,6 +339,7 @@ type PluginsConfig struct {
 	Example   ExamplePluginConfig   `yaml:"example"`
 	SlotsDemo SlotsDemoPluginConfig `yaml:"slotsdemo"`
 	CartDemo   CartDemoPluginConfig   `yaml:"cartdemo"`
+	TaxDemo    TaxDemoPluginConfig    `yaml:"taxdemo"`
 	ImportDemo        ImportDemoPluginConfig        `yaml:"importdemo"`
 	IntegrationDemo   IntegrationDemoPluginConfig   `yaml:"integrationdemo"`
 	WarehouseDemo     WarehouseDemoPluginConfig     `yaml:"warehousedemo"`
@@ -367,6 +368,12 @@ type CartDemoPluginConfig struct {
 	Enabled               bool  `yaml:"enabled"`
 	MinQuantity           int   `yaml:"min_quantity"`
 	HandlingFeeMinorUnits int64 `yaml:"handling_fee_minor_units"`
+}
+
+// TaxDemoPluginConfig toggles the tax port replacement reference plugin in plugins/taxdemo.
+type TaxDemoPluginConfig struct {
+	Enabled     bool `yaml:"enabled"`
+	FlatRateBPS int  `yaml:"flat_rate_bps"`
 }
 
 // ImportDemoPluginConfig toggles the CSV import remap reference plugin in plugins/importdemo.
@@ -845,6 +852,14 @@ func applyEnv(cfg *Config) {
 			cfg.Plugins.CartDemo.HandlingFeeMinorUnits = n
 		}
 	}
+	if v := os.Getenv("SHOPANDA_PLUGINS_TAXDEMO_ENABLED"); v != "" {
+		cfg.Plugins.TaxDemo.Enabled = v == "true" || v == "1"
+	}
+	if v := os.Getenv("SHOPANDA_PLUGINS_TAXDEMO_FLAT_RATE_BPS"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil {
+			cfg.Plugins.TaxDemo.FlatRateBPS = n
+		}
+	}
 	if v := os.Getenv("SHOPANDA_PLUGINS_IMPORTDEMO_ENABLED"); v != "" {
 		cfg.Plugins.ImportDemo.Enabled = v == "true" || v == "1"
 	}
@@ -1019,6 +1034,8 @@ func flatten(cfg *Config) map[string]string {
 	m["plugins.cartdemo.enabled"] = strconv.FormatBool(cfg.Plugins.CartDemo.Enabled)
 	m["plugins.cartdemo.min_quantity"] = strconv.Itoa(cfg.Plugins.CartDemo.MinQuantity)
 	m["plugins.cartdemo.handling_fee_minor_units"] = strconv.FormatInt(cfg.Plugins.CartDemo.HandlingFeeMinorUnits, 10)
+	m["plugins.taxdemo.enabled"] = strconv.FormatBool(cfg.Plugins.TaxDemo.Enabled)
+	m["plugins.taxdemo.flat_rate_bps"] = strconv.Itoa(cfg.Plugins.TaxDemo.FlatRateBPS)
 	m["plugins.importdemo.enabled"] = strconv.FormatBool(cfg.Plugins.ImportDemo.Enabled)
 	m["plugins.integrationdemo.enabled"] = strconv.FormatBool(cfg.Plugins.IntegrationDemo.Enabled)
 	m["plugins.integrationdemo.integration_api_key"] = cfg.Plugins.IntegrationDemo.IntegrationAPIKey
