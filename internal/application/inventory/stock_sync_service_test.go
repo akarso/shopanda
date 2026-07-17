@@ -100,3 +100,25 @@ func TestStockSyncService_UpsertBySKU(t *testing.T) {
 		t.Fatalf("stock = %+v", stock.entries["var-1"])
 	}
 }
+
+func TestStockSyncService_UpsertBySKU_DeduplicatesLatestQuantity(t *testing.T) {
+	variants := &stockSyncVariantRepo{bySKU: map[string]*catalog.Variant{
+		"SKU-1": {ID: "var-1", SKU: "SKU-1"},
+	}}
+	stock := &stockSyncStockRepo{entries: make(map[string]inventory.StockEntry)}
+	svc := NewStockSyncService(variants, stock)
+
+	result, err := svc.UpsertBySKU(context.Background(), []extapi.StockLevelUpdate{
+		{SKU: "SKU-1", Quantity: 10},
+		{SKU: "SKU-1", Quantity: 25},
+	})
+	if err != nil {
+		t.Fatalf("UpsertBySKU: %v", err)
+	}
+	if result.Updated != 1 || result.Skipped != 0 {
+		t.Fatalf("result = %+v", result)
+	}
+	if stock.entries["var-1"].Quantity != 25 {
+		t.Fatalf("stock = %+v", stock.entries["var-1"])
+	}
+}

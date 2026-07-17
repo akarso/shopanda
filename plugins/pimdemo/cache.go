@@ -52,31 +52,29 @@ func (c *ttlCache) Set(slug string, data EnrichmentData) {
 	defer c.mu.Unlock()
 
 	now := time.Now()
+	_, slugPresent := c.items[slug]
+
+	var oldestKey string
+	var oldestExpiry time.Time
+	foundOldest := false
+
 	for key, entry := range c.items {
 		if now.After(entry.expiresAt) {
 			delete(c.items, key)
+			if key == slug {
+				slugPresent = false
+			}
+			continue
 		}
-	}
-	if c.maxEntries > 0 && len(c.items) >= c.maxEntries {
-		if _, ok := c.items[slug]; !ok {
-			c.evictOneLocked()
-		}
-	}
-	c.items[slug] = cacheEntry{data: data, expiresAt: now.Add(c.ttl)}
-}
-
-func (c *ttlCache) evictOneLocked() {
-	var oldestKey string
-	var oldestExpiry time.Time
-	first := true
-	for key, entry := range c.items {
-		if first || entry.expiresAt.Before(oldestExpiry) {
+		if !foundOldest || entry.expiresAt.Before(oldestExpiry) {
 			oldestKey = key
 			oldestExpiry = entry.expiresAt
-			first = false
+			foundOldest = true
 		}
 	}
-	if oldestKey != "" {
+
+	if c.maxEntries > 0 && len(c.items) >= c.maxEntries && !slugPresent && foundOldest {
 		delete(c.items, oldestKey)
 	}
+	c.items[slug] = cacheEntry{data: data, expiresAt: now.Add(c.ttl)}
 }
