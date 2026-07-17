@@ -27,6 +27,7 @@ import (
 	hooksApp "github.com/akarso/shopanda/internal/application/hooks"
 	importctxApp "github.com/akarso/shopanda/internal/application/importctx"
 	integrationApp "github.com/akarso/shopanda/internal/application/integration"
+	"github.com/akarso/shopanda/internal/application/pluginreport"
 	portsapp "github.com/akarso/shopanda/internal/application/ports"
 	slotsApp "github.com/akarso/shopanda/internal/application/slots"
 	themeapp "github.com/akarso/shopanda/internal/application/theme"
@@ -178,6 +179,16 @@ func run() error {
 			return runExportEpr(cfg, log)
 		case "export:oss":
 			return runExportOss(cfg, log)
+		case "plugins":
+			if len(os.Args) < 3 {
+				return fmt.Errorf("usage: app plugins report [--json]")
+			}
+			switch os.Args[2] {
+			case "report":
+				return runPluginsReport(os.Stdout, cfg, log, os.Args[3:])
+			default:
+				return fmt.Errorf("unknown plugins command: %s (try: plugins report)", os.Args[2])
+			}
 		default:
 			if ran, err := runPluginCLICommand(cfg, log, pluginCLIRegistryFn, os.Args[1], os.Args[2:]); err != nil {
 				return err
@@ -367,6 +378,7 @@ func runServe(cfg *config.Config, log logger.Logger, embedScheduler bool) error 
 		return fmt.Errorf("load plugin config: %w", err)
 	}
 	plugin.LogStartup(log, registry, cfg)
+	pluginreport.LogSummary(log, pluginreport.Build(registry, pluginApp, cfg))
 	log.Info("plugin.init.summary", map[string]interface{}{
 		"registered":  summary.Registered,
 		"initialized": summary.Initialized,
@@ -2484,6 +2496,7 @@ Commands:
   export:prices <f>    Export prices to a CSV file
   export:epr <f>       Export EPR packaging metadata ([--include-empty] <file.csv>)
   export:oss <f>       Export OSS/IOSS tax report ([--summary] [--from=YYYY-MM-DD] [--to=YYYY-MM-DD] <file.csv>)
+  plugins report       Print registered extension points and ports ([--json])
   help                 Show this help message
 `))
 }
