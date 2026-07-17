@@ -117,20 +117,12 @@ func TestStockSyncHandler_WarehouseHTTPError(t *testing.T) {
 	}))
 	t.Cleanup(srv.Close)
 
-	cfg := &config.Config{
-		Plugins: config.PluginsConfig{
-			WarehouseDemo: config.WarehouseDemoPluginConfig{
-				Enabled:          true,
-				WarehouseBaseURL: srv.URL,
-			},
-		},
+	app, stub := initWarehouseDemoPlugin(t, srv.URL)
+	handler := app.SyncJobs()[0].Job.Handler
+	if err := handler(context.Background(), extapi.SyncJobContext{JobID: "job-1"}); err == nil {
+		t.Fatal("expected handler error for 502 response")
 	}
-	stub := &stubStockSyncer{}
-	if err := warehousedemo.New().Init(testApp(cfg, stub)); err != nil {
-		t.Fatalf("Init: %v", err)
-	}
-	handler := warehousedemo.NewStockSyncHandler(nil, stub, nil)
-	if err := handler(context.Background(), extapi.SyncJobContext{}); err == nil {
-		t.Fatal("expected error for nil client")
+	if stub.calls != 0 {
+		t.Fatalf("syncer calls = %d, want 0", stub.calls)
 	}
 }

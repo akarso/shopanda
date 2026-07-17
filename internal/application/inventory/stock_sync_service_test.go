@@ -20,6 +20,16 @@ func (r *stockSyncVariantRepo) FindBySKU(_ context.Context, sku string) (*catalo
 	return r.bySKU[sku], nil
 }
 
+func (r *stockSyncVariantRepo) FindBySKUs(_ context.Context, skus []string) (map[string]*catalog.Variant, error) {
+	out := make(map[string]*catalog.Variant, len(skus))
+	for _, sku := range skus {
+		if v := r.bySKU[sku]; v != nil {
+			out[sku] = v
+		}
+	}
+	return out, nil
+}
+
 func (r *stockSyncVariantRepo) FindByID(context.Context, string) (*catalog.Variant, error) {
 	return nil, nil
 }
@@ -49,6 +59,14 @@ func (r *stockSyncStockRepo) SetStock(_ context.Context, entry *inventory.StockE
 	r.entries[entry.VariantID] = *entry
 	return nil
 }
+func (r *stockSyncStockRepo) SetStocks(_ context.Context, entries []inventory.StockEntry) error {
+	for i := range entries {
+		if err := r.SetStock(context.Background(), &entries[i]); err != nil {
+			return err
+		}
+	}
+	return nil
+}
 func (r *stockSyncStockRepo) ListStock(context.Context, int, int) ([]inventory.StockEntry, error) {
 	return nil, nil
 }
@@ -70,11 +88,12 @@ func TestStockSyncService_UpsertBySKU(t *testing.T) {
 		{SKU: "SKU-1", Quantity: 10},
 		{SKU: "MISSING", Quantity: 3},
 		{SKU: "", Quantity: 1},
+		{SKU: "SKU-1", Quantity: -5},
 	})
 	if err != nil {
 		t.Fatalf("UpsertBySKU: %v", err)
 	}
-	if result.Updated != 1 || result.Skipped != 2 || len(result.UnknownSKUs) != 1 || result.UnknownSKUs[0] != "MISSING" {
+	if result.Updated != 1 || result.Skipped != 3 || len(result.UnknownSKUs) != 1 || result.UnknownSKUs[0] != "MISSING" {
 		t.Fatalf("result = %+v", result)
 	}
 	if stock.entries["var-1"].Quantity != 10 {

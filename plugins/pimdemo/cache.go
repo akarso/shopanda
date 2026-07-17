@@ -5,6 +5,8 @@ import (
 	"time"
 )
 
+const defaultCacheMaxEntries = 256
+
 type cacheEntry struct {
 	data      EnrichmentData
 	expiresAt time.Time
@@ -12,16 +14,21 @@ type cacheEntry struct {
 
 // ttlCache stores PIM enrichment responses keyed by product slug.
 type ttlCache struct {
-	mu    sync.RWMutex
-	ttl   time.Duration
-	items map[string]cacheEntry
+	mu         sync.RWMutex
+	ttl        time.Duration
+	maxEntries int
+	items      map[string]cacheEntry
 }
 
 func newTTLCache(ttl time.Duration) *ttlCache {
 	if ttl <= 0 {
 		ttl = 5 * time.Minute
 	}
-	return &ttlCache{ttl: ttl, items: make(map[string]cacheEntry)}
+	return &ttlCache{
+		ttl:        ttl,
+		maxEntries: defaultCacheMaxEntries,
+		items:      make(map[string]cacheEntry),
+	}
 }
 
 func (c *ttlCache) Get(slug string) (EnrichmentData, bool) {
@@ -42,6 +49,34 @@ func (c *ttlCache) Set(slug string, data EnrichmentData) {
 		return
 	}
 	c.mu.Lock()
-	c.items[slug] = cacheEntry{data: data, expiresAt: time.Now().Add(c.ttl)}
-	c.mu.Unlock()
+	defer c.mu.Unlock()
+
+	now := time.Now()
+	for key, entry := range c.items {
+		if now.After(entry.expiresAt) {
+			delete(c.items, key)
+		}
+	}
+	if c.maxEntries > 0 && len(c.items) >= c.maxEntries {
+		if _, ok := c.items[slug]; !ok {
+			c.evictOneLocked()
+		}
+	}
+	c.items[slug] = cacheEntry{data: data, expiresAt: now.Add(c.ttl)}
+}
+
+func (c *ttlCache) evictOneLocked() {
+	var oldestKey string
+	var oldestExpiry time.Time
+	first := true
+	for key, entry := range c.items {
+		if first || entry.expiresAt.Before(oldestExpiry) {
+			oldestKey = key
+			oldestExpiry = entry.expiresAt
+			first = false
+		}
+	}
+	if oldestKey != "" {
+		delete(c.items, oldestKey)
+	}
 }

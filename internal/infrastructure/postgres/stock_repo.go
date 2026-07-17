@@ -72,6 +72,33 @@ func (r *StockRepo) SetStock(ctx context.Context, entry *inventory.StockEntry) e
 	return nil
 }
 
+// SetStocks upserts stock quantities for multiple variants in one transaction.
+func (r *StockRepo) SetStocks(ctx context.Context, entries []inventory.StockEntry) error {
+	if len(entries) == 0 {
+		return nil
+	}
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("stock_repo: set stocks: begin tx: %w", err)
+	}
+	defer tx.Rollback()
+
+	const q = `INSERT INTO stock (variant_id, quantity, updated_at)
+		VALUES ($1, $2, $3)
+		ON CONFLICT (variant_id) DO UPDATE
+		SET quantity = EXCLUDED.quantity,
+		    updated_at = EXCLUDED.updated_at`
+	for _, entry := range entries {
+		if _, err := tx.ExecContext(ctx, q, entry.VariantID, entry.Quantity, entry.UpdatedAt); err != nil {
+			return fmt.Errorf("stock_repo: set stocks: %w", err)
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("stock_repo: set stocks: commit: %w", err)
+	}
+	return nil
+}
+
 // ListStock returns a page of stock entries ordered by variant_id.
 func (r *StockRepo) ListStock(ctx context.Context, offset, limit int) ([]inventory.StockEntry, error) {
 	if offset < 0 {

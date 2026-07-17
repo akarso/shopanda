@@ -37,6 +37,7 @@ func (p *Plugin) Init(app *plugin.App) error {
 	}
 	client, err := sdkgraphql.New(sdkgraphql.Config{
 		Endpoint: cfg.PimGraphQLEndpoint,
+		Timeout:  2 * time.Second,
 		Headers:  headers,
 		Logger:   app.Logger,
 	})

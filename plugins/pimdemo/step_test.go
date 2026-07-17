@@ -98,3 +98,21 @@ func TestTTLCache_ExpiresEntries(t *testing.T) {
 		t.Fatal("expected expired cache miss")
 	}
 }
+
+func TestTTLCache_EvictsWhenAtCapacity(t *testing.T) {
+	cache := newTTLCache(time.Minute)
+	cache.maxEntries = 2
+	cache.Set("one", EnrichmentData{MarketingTitle: "1"})
+	cache.Set("two", EnrichmentData{MarketingTitle: "2"})
+	cache.Set("three", EnrichmentData{MarketingTitle: "3"})
+
+	if _, ok := cache.Get("one"); ok {
+		t.Fatal("expected oldest entry to be evicted")
+	}
+	if _, ok := cache.Get("two"); !ok {
+		t.Fatal("expected entry two to remain")
+	}
+	if _, ok := cache.Get("three"); !ok {
+		t.Fatal("expected entry three to remain")
+	}
+}

@@ -953,6 +953,13 @@ func applyEnv(cfg *Config) {
 	}
 }
 
+func redactSecret(value string) string {
+	if value == "" {
+		return ""
+	}
+	return "***"
+}
+
 // flatten converts the Config struct into a dot-notation key-value map.
 func flatten(cfg *Config) map[string]string {
 	m := make(map[string]string)
@@ -1018,11 +1025,11 @@ func flatten(cfg *Config) map[string]string {
 	m["plugins.integrationdemo.integration_hmac_secret"] = cfg.Plugins.IntegrationDemo.IntegrationHMACSecret
 	m["plugins.warehousedemo.enabled"] = strconv.FormatBool(cfg.Plugins.WarehouseDemo.Enabled)
 	m["plugins.warehousedemo.warehouse_base_url"] = cfg.Plugins.WarehouseDemo.WarehouseBaseURL
-	m["plugins.warehousedemo.warehouse_api_key"] = cfg.Plugins.WarehouseDemo.WarehouseAPIKey
+	m["plugins.warehousedemo.warehouse_api_key"] = redactSecret(cfg.Plugins.WarehouseDemo.WarehouseAPIKey)
 	m["plugins.warehousedemo.sync_cron"] = cfg.Plugins.WarehouseDemo.SyncCron
 	m["plugins.pimdemo.enabled"] = strconv.FormatBool(cfg.Plugins.PimDemo.Enabled)
 	m["plugins.pimdemo.pim_graphql_endpoint"] = cfg.Plugins.PimDemo.PimGraphQLEndpoint
-	m["plugins.pimdemo.pim_api_key"] = cfg.Plugins.PimDemo.PimAPIKey
+	m["plugins.pimdemo.pim_api_key"] = redactSecret(cfg.Plugins.PimDemo.PimAPIKey)
 	m["plugins.pimdemo.cache_ttl"] = cfg.Plugins.PimDemo.CacheTTL
 	m["plugins.b2b.enabled"] = strconv.FormatBool(cfg.Plugins.B2B.Enabled)
 	m["frontend.enabled"] = strconv.FormatBool(cfg.Frontend.Enabled)
