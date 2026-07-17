@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	apppricing "github.com/akarso/shopanda/internal/application/pricing"
+	checkoutapp "github.com/akarso/shopanda/internal/application/checkout"
 	hooksapp "github.com/akarso/shopanda/internal/application/hooks"
 	slotsapp "github.com/akarso/shopanda/internal/application/slots"
 	"github.com/akarso/shopanda/pkg/extapi"
@@ -44,6 +45,19 @@ func TestStableSlotAnchorsMatchInternalCatalog(t *testing.T) {
 func TestStablePricingStepCatalog(t *testing.T) {
 	stable := extapi.PricingStepCatalog()
 	internal := apppricing.CoreStepCatalog
+	if len(stable) != len(internal) {
+		t.Fatalf("stable len = %d, internal len = %d", len(stable), len(internal))
+	}
+	for i, name := range internal {
+		if stable[i] != name {
+			t.Fatalf("step[%d] = %q, want %q", i, stable[i], name)
+		}
+	}
+}
+
+func TestStableCheckoutStepCatalog(t *testing.T) {
+	stable := extapi.CheckoutStepCatalog()
+	internal := checkoutapp.CoreStepCatalog
 	if len(stable) != len(internal) {
 		t.Fatalf("stable len = %d, internal len = %d", len(stable), len(internal))
 	}

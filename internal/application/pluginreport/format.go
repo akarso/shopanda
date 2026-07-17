@@ -70,12 +70,16 @@ func FormatText(report Report) string {
 		}
 	}
 
-	b.WriteString("\nCheckout steps:\n")
+	b.WriteString("\nCore checkout steps:\n  ")
+	b.WriteString(strings.Join(report.CoreCheckoutSteps, " → "))
+	b.WriteByte('\n')
+
+	b.WriteString("\nPlugin checkout steps:\n")
 	if len(report.CheckoutSteps) == 0 {
 		b.WriteString("  (none)\n")
 	} else {
 		for _, step := range report.CheckoutSteps {
-			fmt.Fprintf(&b, "  %-24s %s\n", step.Name, step.Type)
+			fmt.Fprintf(&b, "  %-18s %-20s %s\n", step.Position, step.Name, step.Type)
 		}
 	}
 

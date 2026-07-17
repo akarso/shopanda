@@ -141,7 +141,7 @@ Hooks receive mutable payload (variant, qty, cart snapshot refs by ID). Heavy lo
 
 ### 4.3 Checkout
 
-`RegisterCheckoutStep` with anchor positions (`before:create_order`, etc.) — **implement positioning API** matching [CHECKOUT_WORKFLOW.md](../../phase-1-core/specs/CHECKOUT_WORKFLOW.md) (today: append-only).
+`RegisterCheckoutStep` with anchor positions (`before:create_order`, etc.) — **shipped** (PR-854); see [CHECKOUT_WORKFLOW.md](../../phase-1-core/specs/CHECKOUT_WORKFLOW.md).
 
 ---
 
