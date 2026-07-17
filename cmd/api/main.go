@@ -185,7 +185,7 @@ func run() error {
 			}
 			switch os.Args[2] {
 			case "report":
-				return runPluginsReport(cfg, log, os.Args[3:])
+				return runPluginsReport(os.Stdout, cfg, log, os.Args[3:])
 			default:
 				return fmt.Errorf("unknown plugins command: %s (try: plugins report)", os.Args[2])
 			}

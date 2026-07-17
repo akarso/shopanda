@@ -16,10 +16,6 @@ import (
 	"github.com/akarso/shopanda/plugins/cartdemo"
 )
 
-type namedStep struct{ name string }
-
-func (s namedStep) Name() string { return s.name }
-
 func TestBuild_IncludesPluginPricingAndHooks(t *testing.T) {
 	log := logger.New("error")
 	cfg := &config.Config{

@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+	"time"
 
 	hooksapp "github.com/akarso/shopanda/internal/application/hooks"
 	importctxapp "github.com/akarso/shopanda/internal/application/importctx"
@@ -12,18 +13,17 @@ import (
 // FormatText renders report as human-readable plain text.
 func FormatText(report Report) string {
 	var b strings.Builder
-	fmt.Fprintf(&b, "Plugin registration report (generated %s)\n\n", report.GeneratedAt.Format(timeRFC3339))
+	fmt.Fprintf(&b, "Plugin registration report (generated %s)\n\n", report.GeneratedAt.Format(time.RFC3339))
 
 	b.WriteString("Plugins:\n")
 	if len(report.Plugins) == 0 {
 		b.WriteString("  (none)\n")
 	} else {
 		for _, p := range report.Plugins {
-			line := fmt.Sprintf("  %-32s %s", p.Name, p.State)
+			fmt.Fprintf(&b, "  %-32s %s", p.Name, p.State)
 			if p.Error != "" {
-				line += " — " + p.Error
+				fmt.Fprintf(&b, " — %s", p.Error)
 			}
-			b.WriteString(line)
 			b.WriteByte('\n')
 		}
 	}
@@ -112,8 +112,6 @@ func FormatText(report Report) string {
 
 	return strings.TrimRight(b.String(), "\n") + "\n"
 }
-
-const timeRFC3339 = "2006-01-02T15:04:05Z07:00"
 
 func writeHooksSection(b *strings.Builder, hooks []hooksapp.CatalogEntry) {
 	b.WriteString("\nHooks:\n")

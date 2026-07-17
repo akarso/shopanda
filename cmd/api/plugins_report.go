@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"io"
 	"os"
 	"strings"
 
@@ -30,7 +31,10 @@ func bootstrapPluginReport(cfg *config.Config, log logger.Logger) (*plugin.Regis
 	return registry, app
 }
 
-func runPluginsReport(cfg *config.Config, log logger.Logger, args []string) error {
+func runPluginsReport(w io.Writer, cfg *config.Config, log logger.Logger, args []string) error {
+	if w == nil {
+		w = os.Stdout
+	}
 	jsonOut := false
 	for _, arg := range args {
 		switch arg {
@@ -55,12 +59,12 @@ Uses the same compile-time plugin set as the running application (no database re
 		if err != nil {
 			return err
 		}
-		_, err = os.Stdout.Write(data)
+		_, err = w.Write(data)
 		if err == nil && !strings.HasSuffix(string(data), "\n") {
-			_, err = os.Stdout.Write([]byte("\n"))
+			_, err = w.Write([]byte("\n"))
 		}
 		return err
 	}
-	_, err := fmt.Fprint(os.Stdout, pluginreport.FormatText(report))
+	_, err := fmt.Fprint(w, pluginreport.FormatText(report))
 	return err
 }
