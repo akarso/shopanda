@@ -5,6 +5,7 @@ import (
 
 	"github.com/akarso/shopanda/internal/platform/plugin"
 	"github.com/akarso/shopanda/pkg/extapi"
+	"github.com/akarso/shopanda/pkg/pluginsdk"
 )
 
 // Plugin demonstrates integrator CSV import remap via import.product.row hook.
@@ -25,7 +26,7 @@ func (p *Plugin) Init(app *plugin.App) error {
 	if !app.Config.Plugins.ImportDemo.Enabled {
 		return fmt.Errorf("importdemo plugin: disabled (plugins.importdemo.enabled=false)")
 	}
-	return app.Import(p.Name()).RegisterRowHook(extapi.ImportEntityProduct, 100, func(ctx *extapi.ImportRowContext) error {
+	return pluginsdk.New(app, p.Name()).Import().RegisterProductRow(100, func(ctx *extapi.ImportRowContext) error {
 		RemapProductRow(ctx)
 		return nil
 	})

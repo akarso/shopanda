@@ -5,6 +5,7 @@ import (
 
 	"github.com/akarso/shopanda/internal/platform/plugin"
 	"github.com/akarso/shopanda/pkg/extapi"
+	"github.com/akarso/shopanda/pkg/pluginsdk"
 )
 
 // Plugin demonstrates integrator cart rules: validate hook + positioned pricing step.
@@ -39,6 +40,6 @@ func (p *Plugin) Init(app *plugin.App) error {
 	if err := app.Hooks(p.Name()).Register(extapi.HookCartValidate, 100, minQuantityValidateHandler(minQty)); err != nil {
 		return fmt.Errorf("cartdemo plugin: register cart.validate: %w", err)
 	}
-	app.RegisterPricingStep(NewHandlingFeeStep(&feeMinor), "after:promotions")
+	pluginsdk.New(app, p.Name()).Pricing().Register(NewHandlingFeeStep(&feeMinor), pluginsdk.After("promotions"))
 	return nil
 }
