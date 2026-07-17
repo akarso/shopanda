@@ -27,6 +27,9 @@ func TestAfterBeforePricingPosition(t *testing.T) {
 	if got := string(pluginsdk.Before("tax")); got != "before:tax" {
 		t.Fatalf("Before() = %q", got)
 	}
+	if got := string(pluginsdk.Replace("taxes")); got != "replace:taxes" {
+		t.Fatalf("Replace() = %q", got)
+	}
 }
 
 func TestPricing_Register(t *testing.T) {

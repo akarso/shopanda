@@ -25,7 +25,7 @@ Related:
 | §5 Import pipelines | **Shipped** — row hooks, importer wiring, skip/errors, reference CSV remap plugin (PR-820–823) |
 | §6 Inbound integration | **Shipped** — routes, auth, idempotency, reference order-status plugin (PR-830–833) |
 | §7 Outbound integration | **Done** — sync jobs, client SDK, warehouse + PIM reference plugins (PR-840–843) |
-| §8 Wiring ergonomics | **Partial** — plugin SDK + registration report shipped (PR-850–851); replace-by-name planned (PR-852–853) |
+| §8 Wiring ergonomics | **Partial** — plugin SDK + registration report + replace-by-name shipped (PR-850–852); reference port replacement planned (PR-853) |
 | §10 Validation | **Phase 8 exit criteria** — not yet achievable end-to-end |
 
 ---
@@ -117,7 +117,7 @@ Config + `register_plugins.go` choose the winner. Conflicting double registratio
 
 | Extension | API | Phase 8 work | Status |
 | --- | --- | --- | --- |
-| Custom fees / discounts | `RegisterPricingStep` | `before:` / `after:` anchors (PR-810); aliases: `promotions`, `taxes` | Shipped |
+| Custom fees / discounts | `RegisterPricingStep` | `before:` / `after:` anchors (PR-810); `replace:` (PR-852); aliases: `promotions`, `taxes` | Shipped |
 | Customer/group context | `PricingContext.Meta` | Document keys (`customer_id`, `store_id`); B2B step as reference | Partial |
 | Promotion rule types | Promotion pipeline step | Stretch: plugin registers rule evaluator, not admin UI | Planned |
 | Audit trail | `Adjustments[]` on context | Ensure plugins set `Code`, `Description`, `Meta` | Partial |
@@ -259,7 +259,7 @@ Plugins **must not** import `internal/infrastructure/postgres` — use applicati
 | --- | --- |
 | **Registration report** | At startup: log/CLI dump of ports, pipeline steps, hooks, routes, sync jobs |
 | **Plugin SDK** | Typed helpers: `sdk.Pricing.Register(step, sdk.After("promotions"))` |
-| **Replace-by-name** | One step named `tax` replaces core default instead of stacking duplicates |
+| **Replace-by-name** | One plugin step replaces a named core step (`replace:tax`); one winner per core step name (PR-852) |
 | **depends_on** (config) | Optional init order when plugin B registers fields/hooks plugin A defines |
 
 Integrator owns **`cmd/api/register_plugins.go`** ordering for init; runtime handler order comes from pipeline/hook priority APIs.

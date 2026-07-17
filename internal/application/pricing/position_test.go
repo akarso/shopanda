@@ -59,6 +59,16 @@ func TestParseStepPosition_Invalid(t *testing.T) {
 	if _, _, err := apppricing.ParseStepPosition("after:unknown"); err == nil {
 		t.Fatal("expected error for unknown anchor")
 	}
+	if _, _, err := apppricing.ParseStepPosition("replace:unknown"); err == nil {
+		t.Fatal("expected error for unknown replace anchor")
+	}
+}
+
+func TestParseStepPosition_Replace(t *testing.T) {
+	mode, anchor, err := apppricing.ParseStepPosition("replace:taxes")
+	if err != nil || mode != apppricing.StepPositionReplace || anchor != "tax" {
+		t.Fatalf("replace = %q %q err=%v", mode, anchor, err)
+	}
 }
 
 func TestMergePluginSteps_DefaultAfterBase(t *testing.T) {
@@ -117,5 +127,63 @@ func TestMergePluginSteps_BeforeTax(t *testing.T) {
 	want := []string{"base", "catalog_promotions", "cart_promotions", "pre_tax", "tax", "finalize"}
 	if got := names(merged); len(got) != len(want) || got[3] != "pre_tax" {
 		t.Fatalf("names = %v, want %v", got, want)
+	}
+}
+
+func TestMergePluginSteps_ReplaceTax(t *testing.T) {
+	merged, err := apppricing.MergePluginSteps(corePipeline(), []apppricing.PluginStepRegistration{
+		{Step: stubStep{name: "acme.vat"}, Position: "replace:tax"},
+	})
+	if err != nil {
+		t.Fatalf("MergePluginSteps: %v", err)
+	}
+	want := []string{"base", "catalog_promotions", "cart_promotions", "acme.vat", "finalize"}
+	got := names(merged)
+	if len(got) != len(want) {
+		t.Fatalf("names = %v, want %v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("names = %v, want %v", got, want)
+		}
+	}
+}
+
+func TestMergePluginSteps_ReplaceAllowsBeforeAfterOnAnchor(t *testing.T) {
+	merged, err := apppricing.MergePluginSteps(corePipeline(), []apppricing.PluginStepRegistration{
+		{Step: stubStep{name: "acme.vat"}, Position: "replace:tax"},
+		{Step: stubStep{name: "pre_tax"}, Position: "before:tax"},
+	})
+	if err != nil {
+		t.Fatalf("MergePluginSteps: %v", err)
+	}
+	want := []string{"base", "catalog_promotions", "cart_promotions", "pre_tax", "acme.vat", "finalize"}
+	if got := names(merged); len(got) != len(want) {
+		t.Fatalf("names = %v, want %v", got, want)
+	}
+}
+
+func TestMergePluginSteps_DuplicateReplaceRejected(t *testing.T) {
+	_, err := apppricing.MergePluginSteps(corePipeline(), []apppricing.PluginStepRegistration{
+		{Step: stubStep{name: "a"}, Position: "replace:tax"},
+		{Step: stubStep{name: "b"}, Position: "replace:tax"},
+	})
+	if err == nil {
+		t.Fatal("expected duplicate replace error")
+	}
+}
+
+func TestMergePluginSteps_ReplaceUnknownCoreStep(t *testing.T) {
+	coreWithoutTax := []domainpricing.PricingStep{
+		stubStep{name: "base"},
+		stubStep{name: "catalog_promotions"},
+		stubStep{name: "cart_promotions"},
+		stubStep{name: "finalize"},
+	}
+	_, err := apppricing.MergePluginSteps(coreWithoutTax, []apppricing.PluginStepRegistration{
+		{Step: stubStep{name: "custom_tax"}, Position: "replace:tax"},
+	})
+	if err == nil {
+		t.Fatal("expected error when replace target missing from core pipeline")
 	}
 }

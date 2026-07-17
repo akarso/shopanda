@@ -66,7 +66,7 @@ Plugins register steps during `Init`:
 - `RegisterCheckoutStep` — validation or side effects during checkout
 - `RegisterCompositionStep("pdp"|"plp", …)` — enrich API/storefront responses
 
-Each step receives a **mutable context**. Plugin steps use `RegisterPricingStep(step, position...)` with `before:<step>` / `after:<step>` (aliases: `promotions`, `taxes`). Default position is `after:base`. Checkout step positioning is still append-only (planned).
+Each step receives a **mutable context**. Plugin steps use `RegisterPricingStep(step, position...)` with `before:<step>`, `after:<step>`, or `replace:<step>` (aliases: `promotions`, `taxes`). Default position is `after:base`. Checkout step positioning is still append-only (planned).
 
 ### Hooks (Phase 7)
 
@@ -107,7 +107,7 @@ Use this table before writing code. Full design rationale: [Integrator Platform 
 
 | Task | Mechanism | Ordering | Status |
 | --- | --- | --- | --- |
-| Custom fee / cart price rule | `RegisterPricingStep` | `before:` / `after:` anchors (PR-810) | Shipped |
+| Custom fee / cart price rule | `RegisterPricingStep` | `before:` / `after:` / `replace:` anchors (PR-810, PR-852) | Shipped |
 | Block or validate cart mutation | Cart hook chain (`cart.add_item.before`, `cart.validate`, …) | Lower priority runs first | Shipped |
 | Custom checkout validation | `RegisterCheckoutStep` | Anchor positions planned | Shipped (append-only) |
 | ERP CSV column remap before DB write | Import row hook (`import.product.row`, …) | Lower priority runs first | Shipped (PR-820–823) |

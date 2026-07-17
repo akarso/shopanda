@@ -26,7 +26,7 @@ Specs for Phase 8 PRs (Summary, Why, Scope, Out of scope, Validation — same fo
 | PR-843 | E | [oss] | done | [Reference plugin: PIM GraphQL PDP](PR-843.md) |
 | PR-850 | F | [oss] | done | [Plugin SDK package](PR-850.md) |
 | PR-851 | F | [oss] | done | [Registration report](PR-851.md) |
-| PR-852 | F | [oss] | planned | Replace-by-name steps |
+| PR-852 | F | [oss] | done | [Replace-by-name steps](PR-852.md) |
 | PR-853 | F | [oss] | planned | Reference port replacement |
 
 Roadmap: [`../ROADMAP.md`](../ROADMAP.md) · Architecture: [`../specs/INTEGRATOR_PLATFORM.md`](../specs/INTEGRATOR_PLATFORM.md) · Upstream: [Phase 7](../../phase-7-customization-platform/ROADMAP.md)

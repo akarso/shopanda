@@ -49,6 +49,17 @@ func TestApp_RegisterPricingStep_NilPanics(t *testing.T) {
 	app.RegisterPricingStep(nil)
 }
 
+func TestApp_RegisterPricingStep_DuplicateReplacePanics(t *testing.T) {
+	defer func() {
+		if r := recover(); r == nil {
+			t.Fatal("expected panic for duplicate replace registration")
+		}
+	}()
+	app := &plugin.App{}
+	app.RegisterPricingStep("vat-a", "replace:tax")
+	app.RegisterPricingStep("vat-b", "replace:taxes")
+}
+
 func TestApp_RegisterCheckoutStep(t *testing.T) {
 	app := &plugin.App{}
 	app.RegisterCheckoutStep("step1")
