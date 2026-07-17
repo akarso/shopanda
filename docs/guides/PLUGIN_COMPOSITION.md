@@ -283,7 +283,7 @@ Multiple ERP plugins each register **disjoint route prefixes** — no shared han
 
 **Today:** `Bus.OnAsync` + queue port for retries; `RegisterCompositionStep` for read-path enrichment; `app.Integration(slug).RegisterSyncJob(...)` for cron/event outbound sync (PR-840); `pkg/integrationsdk/http` and `pkg/integrationsdk/graphql` for outbound REST/GraphQL clients (PR-841); reference warehouse stock plugin (`plugins/warehousedemo`, PR-842); reference PIM PDP enrichment plugin (`plugins/pimdemo`, PR-843). Cron fires from the scheduler process; events enqueue from the API server; the worker executes jobs with queue retry.
 
-**Planned (Track F):** registration report (PR-851), replace-by-name steps (PR-852).
+**Planned (Track F):** replace-by-name steps (PR-852), port replacement template (PR-853).
 
 | Pattern | Mechanism | Ordering |
 | --- | --- | --- |

@@ -25,7 +25,7 @@ Related:
 | §5 Import pipelines | **Shipped** — row hooks, importer wiring, skip/errors, reference CSV remap plugin (PR-820–823) |
 | §6 Inbound integration | **Shipped** — routes, auth, idempotency, reference order-status plugin (PR-830–833) |
 | §7 Outbound integration | **Done** — sync jobs, client SDK, warehouse + PIM reference plugins (PR-840–843) |
-| §8 Wiring ergonomics | **Partial** — plugin SDK shipped (PR-850); registration report + replace-by-name planned (PR-851–852) |
+| §8 Wiring ergonomics | **Partial** — plugin SDK + registration report shipped (PR-850–851); replace-by-name planned (PR-852–853) |
 | §10 Validation | **Phase 8 exit criteria** — not yet achievable end-to-end |
 
 ---
