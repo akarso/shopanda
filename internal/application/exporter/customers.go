@@ -6,22 +6,33 @@ import (
 	"fmt"
 	"io"
 
+	exportctx "github.com/akarso/shopanda/internal/application/exportctx"
 	"github.com/akarso/shopanda/internal/domain/customer"
 )
 
 // CustomerResult holds the summary of a customer export run.
 type CustomerResult struct {
-	Entries int
+	Entries   int
+	Skipped   int
+	Errors    []string
+	RowErrors []exportctx.ExportError
 }
 
 // CustomerExporter writes customers to CSV.
 type CustomerExporter struct {
 	customers customer.CustomerRepository
+	rowHooks  *RowHookRunner
 }
 
 // NewCustomerExporter creates a CustomerExporter.
 func NewCustomerExporter(customers customer.CustomerRepository) *CustomerExporter {
 	return &CustomerExporter{customers: customers}
+}
+
+// WithRowHooks wires export row hooks invoked before CSV write.
+func (exp *CustomerExporter) WithRowHooks(registry *exportctx.Registry) *CustomerExporter {
+	exp.rowHooks = NewRowHookRunner(registry)
+	return exp
 }
 
 // Export writes all customers to w in CSV format.
@@ -35,6 +46,8 @@ func (exp *CustomerExporter) Export(ctx context.Context, w io.Writer) (*Customer
 	}
 
 	result := &CustomerResult{}
+	rowIndex := 0
+	header := []string{"email", "first_name", "last_name", "role", "status"}
 	offset := 0
 	for {
 		customers, err := exp.customers.ListCustomers(ctx, offset, pageSize)
@@ -45,14 +58,25 @@ func (exp *CustomerExporter) Export(ctx context.Context, w io.Writer) (*Customer
 			break
 		}
 		for _, c := range customers {
-			row := []string{
-				sanitizeCSVCell(c.Email),
-				sanitizeCSVCell(c.FirstName),
-				sanitizeCSVCell(c.LastName),
-				string(c.Role),
-				string(c.Status),
+			rowIndex++
+			rowMap := map[string]string{
+				"email":      c.Email,
+				"first_name": c.FirstName,
+				"last_name":  c.LastName,
+				"role":       string(c.Role),
+				"status":     string(c.Status),
 			}
-			if err := writer.Write(row); err != nil {
+			if exp.rowHooks != nil && exp.rowHooks.Enabled() {
+				var cont bool
+				rowMap, cont = HandleRowHookOutcome(rowIndex, exp.rowHooks.Invoke(ctx, exportctx.EntityCustomer, rowIndex, rowMap), &result.Skipped, &result.Errors, &result.RowErrors)
+				if !cont {
+					continue
+				}
+			}
+			for k, v := range rowMap {
+				rowMap[k] = sanitizeCSVCell(v)
+			}
+			if err := writer.Write(RowToRecord(header, rowMap)); err != nil {
 				return nil, fmt.Errorf("customer export: write row: %w", err)
 			}
 			result.Entries++

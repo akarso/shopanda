@@ -7,10 +7,12 @@ import (
 	assetsapp "github.com/akarso/shopanda/internal/application/assets"
 	hooksapp "github.com/akarso/shopanda/internal/application/hooks"
 	importctxapp "github.com/akarso/shopanda/internal/application/importctx"
+	exportctxapp "github.com/akarso/shopanda/internal/application/exportctx"
 	slotsapp "github.com/akarso/shopanda/internal/application/slots"
 	"github.com/akarso/shopanda/internal/domain/identity"
 	"github.com/akarso/shopanda/internal/domain/payment"
 	"github.com/akarso/shopanda/internal/domain/rbac"
+	"github.com/akarso/shopanda/internal/domain/shipping"
 	"github.com/akarso/shopanda/internal/platform/cli"
 	"github.com/akarso/shopanda/internal/platform/config"
 	"github.com/akarso/shopanda/internal/platform/event"
@@ -47,8 +49,10 @@ type App struct {
 	cache           any
 	queue           any
 	paymentRegistry *payment.ProviderRegistry
+	shippingRegistry *shipping.ProviderRegistry
 	mediaStorage    any
 	taxCalculator   any
+	mailSender      any
 
 	configRegistry *ConfigRegistry
 
@@ -70,6 +74,9 @@ type App struct {
 
 	importRegistry   *importctxapp.Registry
 	importRegistryMu sync.Mutex
+
+	exportRegistry   *exportctxapp.Registry
+	exportRegistryMu sync.Mutex
 
 	integrationIdempotency   integrationhttp.IdempotencyStore
 	integrationIdempotencyMu sync.Mutex

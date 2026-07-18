@@ -43,9 +43,33 @@ func TestBuildSnapshot_PlannedPorts(t *testing.T) {
 	snap := ports.BuildSnapshot(&plugin.App{}, testConfig())
 	byName := indexPorts(snap.Ports)
 
-	shipping := byName["shipping_rate"]
-	if shipping.Status != ports.StatusPlanned {
-		t.Fatalf("shipping_rate status = %q, want planned", shipping.Status)
+	addr := byName["address_validator"]
+	if addr.Status != ports.StatusPlanned {
+		t.Fatalf("address_validator status = %q, want planned", addr.Status)
+	}
+}
+
+func TestBuildSnapshot_ShippingCoreDefault(t *testing.T) {
+	snap := ports.BuildSnapshot(&plugin.App{}, testConfig())
+	shippingPort := indexPorts(snap.Ports)["shipping_rate"]
+	if shippingPort.Status != ports.StatusCoreDefault {
+		t.Fatalf("shipping_rate status = %q, want core_default", shippingPort.Status)
+	}
+	if len(shippingPort.Providers) != 1 || shippingPort.Providers[0].Key != "flat_rate" {
+		t.Fatalf("shipping providers = %+v", shippingPort.Providers)
+	}
+}
+
+func TestBuildSnapshot_MailCoreDefault(t *testing.T) {
+	cfg := testConfig()
+	cfg.Mail.Driver = "smtp"
+	snap := ports.BuildSnapshot(&plugin.App{}, cfg)
+	mailPort := indexPorts(snap.Ports)["mail_sender"]
+	if mailPort.Status != ports.StatusCoreDefault {
+		t.Fatalf("mail_sender status = %q, want core_default", mailPort.Status)
+	}
+	if mailPort.Implementation != "smtp.Mailer" {
+		t.Fatalf("mail implementation = %q", mailPort.Implementation)
 	}
 }
 

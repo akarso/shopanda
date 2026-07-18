@@ -34,6 +34,8 @@ Phase 7 delivered extension fields, hooks/slots, and storefront DX. Phase 8 deli
 - Visual rule builder / low-code promotion designer
 - Layered navigation, faceted search, or “install any npm package” theming (separate tracks)
 
-## Post-phase backlog (unscheduled)
+## Post-phase backlog
 
-Export row hooks, shipping rate port, mail sender port — see [ROADMAP §Additional Backlog](ROADMAP.md#additional-backlog-unscheduled-phase-8).
+Continued in [Phase 9 — Integrator Backlog & Merchant Discovery](../phase-9-merchant-discovery/ROADMAP.md) (PR-856+).
+
+Track C (**PRIORITY**): layered navigation (PR-900), advanced search (PR-901), attribute properties (PR-902), installation UX (PR-903).

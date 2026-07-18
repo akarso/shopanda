@@ -62,6 +62,9 @@ func (m *mockVariantRepoForPriceExport) FindByID(_ context.Context, id string) (
 func (m *mockVariantRepoForPriceExport) FindBySKU(_ context.Context, _ string) (*catalog.Variant, error) {
 	return nil, nil
 }
+func (m *mockVariantRepoForPriceExport) FindBySKUs(_ context.Context, _ []string) (map[string]*catalog.Variant, error) {
+	return map[string]*catalog.Variant{}, nil
+}
 func (m *mockVariantRepoForPriceExport) ListByProductID(_ context.Context, _ string, _, _ int) ([]catalog.Variant, error) {
 	return nil, nil
 }
@@ -256,6 +259,9 @@ func (m *countingVariantRepo) FindByID(_ context.Context, id string) (*catalog.V
 }
 func (m *countingVariantRepo) FindBySKU(_ context.Context, _ string) (*catalog.Variant, error) {
 	return nil, nil
+}
+func (m *countingVariantRepo) FindBySKUs(_ context.Context, _ []string) (map[string]*catalog.Variant, error) {
+	return map[string]*catalog.Variant{}, nil
 }
 func (m *countingVariantRepo) ListByProductID(_ context.Context, _ string, _, _ int) ([]catalog.Variant, error) {
 	return nil, nil

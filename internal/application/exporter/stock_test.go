@@ -35,6 +35,10 @@ func (m *mockStockRepo) SetStock(_ context.Context, _ *inventory.StockEntry) err
 	return nil
 }
 
+func (m *mockStockRepo) SetStocks(_ context.Context, _ []inventory.StockEntry) error {
+	return nil
+}
+
 func (m *mockStockRepo) ListStock(_ context.Context, offset, limit int) ([]inventory.StockEntry, error) {
 	if m.listErr != nil {
 		return nil, m.listErr
@@ -66,6 +70,9 @@ func (m *mockVariantRepoForStockExport) FindByID(_ context.Context, id string) (
 }
 func (m *mockVariantRepoForStockExport) FindBySKU(_ context.Context, _ string) (*catalog.Variant, error) {
 	return nil, nil
+}
+func (m *mockVariantRepoForStockExport) FindBySKUs(_ context.Context, _ []string) (map[string]*catalog.Variant, error) {
+	return map[string]*catalog.Variant{}, nil
 }
 func (m *mockVariantRepoForStockExport) ListByProductID(_ context.Context, _ string, _, _ int) ([]catalog.Variant, error) {
 	return nil, nil

@@ -8,6 +8,7 @@ import (
 
 	hooksapp "github.com/akarso/shopanda/internal/application/hooks"
 	importctxapp "github.com/akarso/shopanda/internal/application/importctx"
+	exportctxapp "github.com/akarso/shopanda/internal/application/exportctx"
 )
 
 // FormatText renders report as human-readable plain text.
@@ -60,6 +61,7 @@ func FormatText(report Report) string {
 
 	writeHooksSection(&b, report.Hooks)
 	writeImportHooksSection(&b, report.ImportHooks)
+	writeExportHooksSection(&b, report.ExportHooks)
 
 	b.WriteString("\nComposition steps:\n")
 	if len(report.CompositionSteps) == 0 {
@@ -126,6 +128,19 @@ func writeHooksSection(b *strings.Builder, hooks []hooksapp.CatalogEntry) {
 	for _, entry := range hooks {
 		for _, handler := range entry.Handlers {
 			fmt.Fprintf(b, "  %-28s priority=%-4d %s\n", entry.Name, handler.Priority, handler.Registrant)
+		}
+	}
+}
+
+func writeExportHooksSection(b *strings.Builder, hooks []exportctxapp.CatalogEntry) {
+	b.WriteString("\nExport row hooks:\n")
+	if len(hooks) == 0 {
+		b.WriteString("  (none)\n")
+		return
+	}
+	for _, entry := range hooks {
+		for _, handler := range entry.Handlers {
+			fmt.Fprintf(b, "  %-12s priority=%-4d %s\n", entry.Entity, handler.Priority, handler.Registrant)
 		}
 	}
 }

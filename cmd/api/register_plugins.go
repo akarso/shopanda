@@ -7,6 +7,8 @@ import (
 	"github.com/akarso/shopanda/plugins/cartdemo"
 	"github.com/akarso/shopanda/plugins/taxdemo"
 	"github.com/akarso/shopanda/plugins/importdemo"
+	"github.com/akarso/shopanda/plugins/exportdemo"
+	"github.com/akarso/shopanda/plugins/checkoutdemo"
 	"github.com/akarso/shopanda/plugins/integrationdemo"
 	"github.com/akarso/shopanda/plugins/pimdemo"
 	"github.com/akarso/shopanda/plugins/warehousedemo"
@@ -31,6 +33,12 @@ func registerPlugins(registry *plugin.Registry, cfg *config.Config) {
 	}
 	if cfg.Plugins.ImportDemo.Enabled {
 		registry.Register(importdemo.New())
+	}
+	if cfg.Plugins.ExportDemo.Enabled {
+		registry.Register(exportdemo.New())
+	}
+	if cfg.Plugins.CheckoutDemo.Enabled {
+		registry.Register(checkoutdemo.New())
 	}
 	if cfg.Plugins.IntegrationDemo.Enabled {
 		registry.Register(integrationdemo.New())

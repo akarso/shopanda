@@ -625,15 +625,14 @@ When choosing an extension mechanism, start with [Multi-Plugin Composition](PLUG
 
 ## Roadmap and Future Work
 
-Phases 1–8 are **complete**. **Phase 7 — Customization Platform** shipped PR-700–720. **Phase 8 — Integrator Platform** shipped PR-800–854.
+Phases 1–8 are **complete**. **Phase 9 — Integrator Backlog & Merchant Discovery** is **in progress** (PR-856+).
 
 | Phase | Focus |
 | --- | --- |
-| 6 (done) | Merchant-complete admin UI (PR-600–651) |
-| 7 (done) | Customization platform (PR-700–720) |
-| 8 (done) | Integrator platform — cart/pricing/checkout seams, CSV import hooks, inbound/outbound ERP integration (PR-800–854) |
+| 8 (done) | Integrator platform (PR-800–855) |
+| 9 (in progress) | Integrator backlog + Phase 7 carryover; then **PRIORITY** merchant discovery (PR-900–903) |
 
-Full plans: [Phase 5 Roadmap](../phase-5-maturity/ROADMAP.md) · [Phase 6 Roadmap](../phase-6-merchant-complete/ROADMAP.md) · [Phase 7 Roadmap](../phase-7-customization-platform/ROADMAP.md) · [Phase 8 Roadmap](../phase-8-integrator-platform/ROADMAP.md) · [Integrator Platform spec](../phase-8-integrator-platform/specs/INTEGRATOR_PLATFORM.md). EU mapping: [Compliance Reference](../phase-5-maturity/specs/COMPLIANCE_EU.md). Plugin loading: [Dynamic loading research](../phase-5-maturity/specs/DYNAMIC_PLUGIN_LOADING.md).
+Full plans: [Phase 5 Roadmap](../phase-5-maturity/ROADMAP.md) · [Phase 6 Roadmap](../phase-6-merchant-complete/ROADMAP.md) · [Phase 7 Roadmap](../phase-7-customization-platform/ROADMAP.md) · [Phase 8 Roadmap](../phase-8-integrator-platform/ROADMAP.md) · [Phase 9 Roadmap](../phase-9-merchant-discovery/ROADMAP.md) · [Integrator Platform spec](../phase-8-integrator-platform/specs/INTEGRATOR_PLATFORM.md). EU mapping: [Compliance Reference](../phase-5-maturity/specs/COMPLIANCE_EU.md). Plugin loading: [Dynamic loading research](../phase-5-maturity/specs/DYNAMIC_PLUGIN_LOADING.md).
 
 When extending the platform, keep hexagonal rules: domain ports first, explicit wiring, plugin only when behavior is optional or author-owned.
 
