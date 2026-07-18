@@ -83,7 +83,8 @@ Track C depends on catalog/search infrastructure (partially exists: search facet
 | PR | Track | Status |
 | --- | --- | --- |
 | 856–860 | A | done |
-| 861–862 | A | planned |
+| 861 | A | done |
+| 862 | A | planned |
 | 863, 865 | A | done |
 | 864 | A | planned |
 | 866–867 | B | planned |
