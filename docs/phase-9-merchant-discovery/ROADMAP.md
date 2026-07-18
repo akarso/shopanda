@@ -20,7 +20,7 @@ Phase 8 shipped integrator seams: positioned pricing/checkout steps, cart hooks,
 | --- | --- |
 | Export row hooks | Track A — PR-856–858 |
 | Shipping rate port | Track A — PR-859 |
-| Mail sender port | Track A — PR-860 (+ optional reference PR-861) |
+| Mail sender port | Track A — PR-860–861 (done) |
 | Promotion rule evaluator port | Track A — PR-862 |
 | Reference checkout plugin | Track A — PR-863 |
 | Admin idempotency UI | Track A — PR-864 |
@@ -44,7 +44,7 @@ Phase 8 shipped integrator seams: positioned pricing/checkout steps, cart hooks,
 | PR-858 | Reference plugin: export remap | Demo column transform on `export:products` |
 | PR-859 | Shipping rate provider port | `RegisterShippingRateProvider` + checkout resolution |
 | PR-860 | Mail sender port | `RegisterMailSender` + notification wiring |
-| PR-861 | Reference plugin: mail sender | Optional SendGrid-style template (stretch with PR-860) |
+| PR-861 | Reference plugin: mail sender | Log-backed `RegisterMailSender` reference (`plugins/maildemo`) |
 | PR-862 | Promotion rule evaluator port | Plugin-registered rule types alongside core JSON rules |
 | PR-863 | Reference plugin: checkout step | Positioned validation step (`before:create_order`) |
 | PR-864 | Admin idempotency UI | List/replay inbound integration idempotency records |

@@ -1068,6 +1068,7 @@ func flatten(cfg *Config) map[string]string {
 	m["plugins.cartdemo.handling_fee_minor_units"] = strconv.FormatInt(cfg.Plugins.CartDemo.HandlingFeeMinorUnits, 10)
 	m["plugins.taxdemo.enabled"] = strconv.FormatBool(cfg.Plugins.TaxDemo.Enabled)
 	m["plugins.maildemo.enabled"] = strconv.FormatBool(cfg.Plugins.MailDemo.Enabled)
+	m["plugins.maildemo.subject_prefix"] = cfg.Plugins.MailDemo.SubjectPrefix
 	m["plugins.taxdemo.flat_rate_bps"] = strconv.Itoa(cfg.Plugins.TaxDemo.FlatRateBPS)
 	m["plugins.importdemo.enabled"] = strconv.FormatBool(cfg.Plugins.ImportDemo.Enabled)
 	m["plugins.exportdemo.enabled"] = strconv.FormatBool(cfg.Plugins.ExportDemo.Enabled)
