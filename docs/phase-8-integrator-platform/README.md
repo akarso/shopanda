@@ -1,6 +1,6 @@
 # Phase 8 — Integrator Platform
 
-**Status:** Track A **complete** (PR-800–802). Track B **complete** (PR-810–814). Track C **complete** (PR-820–823). Track D **complete** (PR-830–833). Track E **in progress** (PR-840–841 done). Track F planned.
+**Status:** **Complete** (PR-800–854). Tracks A–F shipped; post-phase PR-854 added checkout step positioning.
 
 Phase 8 closes the gap between **Magento-level customization freedom** and **Go-native explicit wiring**. Integrators and agencies must be able to change cart and pricing behavior, transform CSV imports before persistence, expose REST endpoints for ERP systems (SAP, etc.), and call external GraphQL/REST APIs (warehouse, PIM) — **without forking core**.
 
@@ -10,7 +10,7 @@ Phase 7 delivered extension fields, hooks/slots, and storefront DX. Phase 8 deli
 
 - [**ROADMAP.md**](ROADMAP.md) — tracks A–F, PR index, validation targets
 - [**Integrator Platform spec**](specs/INTEGRATOR_PLATFORM.md) — design position, port catalog, integration patterns
-- [**PR specs**](prs/README.md) — per-PR implementation notes (planned PR-800+)
+- [**PR specs**](prs/README.md) — per-PR implementation notes (PR-800–855)
 
 ## Upstream
 
@@ -24,7 +24,7 @@ Phase 7 delivered extension fields, hooks/slots, and storefront DX. Phase 8 deli
 | Persona | Phase 8 delivers |
 | --- | --- |
 | **Integrator / agency** | CSV row transforms, ERP webhooks, warehouse sync, PIM enrichment — documented patterns, not ad hoc core patches |
-| **Plugin author** | Positioned pricing/cart steps, import hooks, integration auth, outbound job registration |
+| **Plugin author** | Positioned pricing/cart/checkout steps, import hooks, integration auth, outbound job registration |
 | **Core maintainer** | Port catalog, precedence policy, introspection — one answer per extension question |
 
 ## Explicit non-goals
@@ -33,3 +33,7 @@ Phase 7 delivered extension fields, hooks/slots, and storefront DX. Phase 8 deli
 - Runtime Go `.so` plugin loading
 - Visual rule builder / low-code promotion designer
 - Layered navigation, faceted search, or “install any npm package” theming (separate tracks)
+
+## Post-phase backlog (unscheduled)
+
+Export row hooks, shipping rate port, mail sender port — see [ROADMAP §Additional Backlog](ROADMAP.md#additional-backlog-unscheduled-phase-8).

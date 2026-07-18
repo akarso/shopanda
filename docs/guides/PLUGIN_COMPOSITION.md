@@ -3,7 +3,7 @@
 How multiple plugins combine behavior without inheriting core classes or calling each other directly.
 
 Audience: plugin authors, integrators  
-Status: design guide (Phase 7 hooks/slots/extensions shipped; Phase 8 cart/import/integration patterns documented — some APIs still planned)
+Status: design guide (Phase 7 hooks/slots/extensions shipped; Phase 8 integrator patterns shipped PR-800–854)
 
 Related:
 
@@ -311,7 +311,7 @@ When two teams (or plugins) extend the **same seam**, resolution is explicit —
 | **Public/admin route** | First registered pattern wins; duplicate panics | Use `/api/v1/integrations/{plugin}/…` prefix per vendor |
 | **Conflicting business rules** | No automatic merge | Integrator adjusts priorities or disables one plugin |
 
-**Compile-time vs runtime:** `register_plugins.go` order affects **Init** (who registers fields, routes, handlers). It does **not** assign hook priorities. For **append-only pipelines** (pricing, checkout today), the order each plugin calls `RegisterPricingStep` / `RegisterCheckoutStep` during Init is the runtime execution order for plugin steps. For **hooks** (and pipelines once positioning ships), use explicit **priority** or `before:`/`after:` APIs — lower hook priority runs first.
+**Compile-time vs runtime:** `register_plugins.go` order affects **Init** (who registers fields, routes, handlers). It does **not** assign hook priorities. For **positioned pipelines** (pricing, checkout), use explicit `before:` / `after:` / `replace:` (pricing) or `start` / `end` / `before:` / `after:` (checkout) — or hook **priority** for hook chains. Lower hook priority runs first.
 
 **Fail fast:** Double infrastructure registration and duplicate HTTP patterns panic at startup rather than silently overriding.
 
@@ -436,7 +436,7 @@ Use one of these (implement across pipelines and hooks consistently):
 | **Anchor position** | `before:create_order`, `after:recalculate_pricing` | Insert relative to core steps |
 | **Named handler** | `after:acme.gift_wrap_field` | Plugin B explicitly follows plugin A's handler |
 
-Checkout workflow spec already documents anchor positions; `RegisterCheckoutStep` should gain the same API as the spec (today: append-only).
+Checkout workflow supports anchor positions via `RegisterCheckoutStep(step, position...)` — see `pkg/extapi` and `pkg/pluginsdk` (PR-854).
 
 ---
 

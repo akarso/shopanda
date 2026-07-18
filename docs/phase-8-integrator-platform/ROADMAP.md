@@ -6,7 +6,7 @@
 * **Explicit extension only** — ports, ordered pipelines, import hooks, integration routes; no override folders or runtime preferences
 * Prefer **vertical slices** (port or hook → one importer or one reference plugin → docs)
 * One PR = one responsibility; runnable and reviewable in ~10–20 minutes
-* PR specs live under `prs/` (planned range **PR-800–853**)
+* PR specs live under `prs/` (**PR-800–855** shipped)
 
 Each PR is tagged **`[oss]`** unless noted. See [Commercial licensing](../COMMERCIAL.md).
 
@@ -31,9 +31,9 @@ Phase 7 closed customization platform work (PR-700–720). Developers extend via
 
 | Area | Status |
 | --- | --- |
-| Pricing | Pipeline with plugin steps; cart recalculate runs pipeline |
-| Checkout | Workflow with plugin steps (append-only registration) |
-| Cart hooks | `cart.add_item.after` (stable v0) |
+| Pricing | Pipeline with positioned plugin steps; cart recalculate runs pipeline |
+| Checkout | Workflow with positioned plugin steps |
+| Cart hooks | Full lifecycle + `cart.validate` (stable v0 via extapi) |
 | Infrastructure ports | Search, cache, queue, payment, media — single-slot registration |
 | HTTP surfaces | `RegisterAdminRoute`, `RegisterPublicRoute` |
 | CSV import | CLI importers for catalog, prices, stock, categories, customers |
@@ -75,14 +75,16 @@ Merchants continue using admin for day-to-day ops; Phase 8 is **integrator- and 
 
 | Track | Goal | PR range | Delivers |
 | --- | --- | --- | --- |
-| **A** | Strategy & catalog | PR-800–802 | Spec, port catalog, precedence policy, composition guide updates |
+| **A** | Strategy & catalog | PR-800–802 | Spec, port catalog, precedence policy, composition guide updates — **complete** |
 | **B** | Commerce behavior | PR-810–814 | Pricing position API, cart hooks, cart validate chain, reference cart rule plugin — **complete** |
-| **C** | Import pipelines | PR-820–823 | Row hook registry wired into CLI importers, reference CSV remap plugin |
-| **D** | Inbound integration | PR-830–833 | Integration auth middleware, idempotency, reference SAP-style endpoint |
-| **E** | Outbound integration | PR-840–843 | Sync job registration, client bootstrap, warehouse + PIM reference plugins |
-| **F** | Wiring ergonomics | PR-850–853 | Plugin SDK helpers, startup report, replace-by-name steps, port replacement template |
+| **C** | Import pipelines | PR-820–823 | Row hook registry wired into CLI importers, reference CSV remap plugin — **complete** |
+| **D** | Inbound integration | PR-830–833 | Integration auth middleware, idempotency, reference SAP-style endpoint — **complete** |
+| **E** | Outbound integration | PR-840–843 | Sync job registration, client bootstrap, warehouse + PIM reference plugins — **complete** |
+| **F** | Wiring ergonomics | PR-850–853 | Plugin SDK helpers, startup report, replace-by-name steps, port replacement template — **complete** |
 
-Recommended order: **A (800–802)** → **B (810–814)** and **C (820–823)** in parallel → **D (830–833)** + **E (840–843)** → **F (850–853)**.
+Post-phase: **PR-854** checkout step positioning (shipped).
+
+Recommended order: **A (800–802)** → **B (810–814)** and **C (820–823)** in parallel → **D (830–833)** + **E (840–843)** → **F (850–853)** → **854** (checkout positioning).
 
 ---
 
@@ -246,14 +248,16 @@ Recommended order: **A (800–802)** → **B (810–814)** and **C (820–823)**
 | 833 | D | [oss] | Reference plugin: order status inbound (done) |
 | 840 | E | [oss] | Sync job registration (done) |
 | 841 | E | [oss] | Integration client bootstrap (done) |
-| 842 | E | [oss] | Reference plugin: warehouse stock |
-| 843 | E | [oss] | Reference plugin: PIM GraphQL PDP |
-| 850 | F | [oss] | Plugin SDK package |
-| 851 | F | [oss] | Registration report |
-| 852 | F | [oss] | Replace-by-name steps |
-| 853 | F | [oss] | Reference port replacement |
+| 842 | E | [oss] | Reference plugin: warehouse stock (done) |
+| 843 | E | [oss] | Reference plugin: PIM GraphQL PDP (done) |
+| 850 | F | [oss] | Plugin SDK package (done) |
+| 851 | F | [oss] | Registration report (done) |
+| 852 | F | [oss] | Replace-by-name steps (done) |
+| 853 | F | [oss] | Reference port replacement (done) |
+| 854 | — | [oss] | Checkout step positioning (done) |
+| 855 | — | [oss] | Phase 8 closure docs (done) |
 
-PR specs: [`prs/`](prs/) (planned).
+PR specs: [`prs/`](prs/).
 
 ---
 
@@ -268,4 +272,4 @@ PR specs: [`prs/`](prs/) (planned).
 | [Phase 5](../phase-5-maturity/ROADMAP.md) | Mature commerce | Shipped |
 | [Phase 6](../phase-6-merchant-complete/ROADMAP.md) | Merchant-complete admin | Shipped |
 | [Phase 7](../phase-7-customization-platform/ROADMAP.md) | Customization platform | Shipped |
-| **Phase 8** | **Integrator platform** | **In progress (PR-800+)** |
+| **Phase 8** | **Integrator platform** | **Shipped (PR-800–854; tracks A–F complete)** |

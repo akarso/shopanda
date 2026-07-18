@@ -295,5 +295,5 @@ PR specs: [`prs/`](prs/) (PR-700–720 done).
 | [Phase 5](../phase-5-maturity/ROADMAP.md) | Mature commerce | Shipped |
 | [Phase 6](../phase-6-merchant-complete/ROADMAP.md) | Merchant-complete admin | Shipped |
 | **Phase 7** | **Customization platform** | **Shipped (PR-700–720; tracks A–F complete)** |
-| [Phase 8](../phase-8-integrator-platform/ROADMAP.md) | Integrator platform | In progress (PR-800 done) |
+| [Phase 8](../phase-8-integrator-platform/ROADMAP.md) | Integrator platform | Shipped (PR-800–854) |
  
