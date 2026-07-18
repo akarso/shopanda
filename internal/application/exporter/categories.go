@@ -7,23 +7,34 @@ import (
 	"io"
 	"strconv"
 
+	exportctx "github.com/akarso/shopanda/internal/application/exportctx"
 	"github.com/akarso/shopanda/internal/domain/catalog"
 )
 
 // CategoryResult holds the summary of a category export run.
 type CategoryResult struct {
-	Entries int
-	Orphans int
+	Entries   int
+	Orphans   int
+	Skipped   int
+	Errors    []string
+	RowErrors []exportctx.ExportError
 }
 
 // CategoryExporter writes categories to CSV.
 type CategoryExporter struct {
 	categories catalog.CategoryRepository
+	rowHooks   *RowHookRunner
 }
 
 // NewCategoryExporter creates a CategoryExporter.
 func NewCategoryExporter(categories catalog.CategoryRepository) *CategoryExporter {
 	return &CategoryExporter{categories: categories}
+}
+
+// WithRowHooks wires export row hooks invoked before CSV write.
+func (exp *CategoryExporter) WithRowHooks(registry *exportctx.Registry) *CategoryExporter {
+	exp.rowHooks = NewRowHookRunner(registry)
+	return exp
 }
 
 // Export writes all categories to w in CSV format.
@@ -52,6 +63,8 @@ func (exp *CategoryExporter) Export(ctx context.Context, w io.Writer) (*Category
 	}
 
 	result := &CategoryResult{}
+	rowIndex := 0
+	header := []string{"name", "slug", "parent_slug", "position"}
 
 	for _, c := range sorted {
 		parentSlug := ""
@@ -61,13 +74,24 @@ func (exp *CategoryExporter) Export(ctx context.Context, w io.Writer) (*Category
 			}
 		}
 
-		row := []string{
-			sanitizeCSVCell(c.Name),
-			sanitizeCSVCell(c.Slug),
-			sanitizeCSVCell(parentSlug),
-			strconv.Itoa(c.Position),
+		rowIndex++
+		rowMap := map[string]string{
+			"name":        c.Name,
+			"slug":        c.Slug,
+			"parent_slug": parentSlug,
+			"position":    strconv.Itoa(c.Position),
 		}
-		if err := writer.Write(row); err != nil {
+		if exp.rowHooks != nil && exp.rowHooks.Enabled() {
+			var cont bool
+			rowMap, cont = HandleRowHookOutcome(rowIndex, exp.rowHooks.Invoke(ctx, exportctx.EntityCategory, rowIndex, rowMap), &result.Skipped, &result.Errors, &result.RowErrors)
+			if !cont {
+				continue
+			}
+		}
+		for k, v := range rowMap {
+			rowMap[k] = sanitizeCSVCell(v)
+		}
+		if err := writer.Write(RowToRecord(header, rowMap)); err != nil {
 			return nil, fmt.Errorf("category export: write row: %w", err)
 		}
 		result.Entries++

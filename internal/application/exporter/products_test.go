@@ -58,6 +58,9 @@ func (m *mockVariantRepo) FindByID(_ context.Context, _ string) (*catalog.Varian
 func (m *mockVariantRepo) FindBySKU(_ context.Context, _ string) (*catalog.Variant, error) {
 	return nil, nil
 }
+func (m *mockVariantRepo) FindBySKUs(_ context.Context, _ []string) (map[string]*catalog.Variant, error) {
+	return map[string]*catalog.Variant{}, nil
+}
 func (m *mockVariantRepo) ListByProductID(_ context.Context, productID string, offset, limit int) ([]catalog.Variant, error) {
 	if m.listErr != nil {
 		return nil, m.listErr

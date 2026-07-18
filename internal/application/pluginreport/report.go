@@ -6,6 +6,7 @@ import (
 
 	hooksapp "github.com/akarso/shopanda/internal/application/hooks"
 	importctxapp "github.com/akarso/shopanda/internal/application/importctx"
+	exportctxapp "github.com/akarso/shopanda/internal/application/exportctx"
 	checkoutapp "github.com/akarso/shopanda/internal/application/checkout"
 	"github.com/akarso/shopanda/internal/application/ports"
 	apppricing "github.com/akarso/shopanda/internal/application/pricing"
@@ -23,6 +24,7 @@ type Report struct {
 	PricingSteps      []PricingStep          `json:"pricing_steps"`
 	Hooks             []hooksapp.CatalogEntry `json:"hooks"`
 	ImportHooks       []importctxapp.CatalogEntry `json:"import_hooks"`
+	ExportHooks       []exportctxapp.CatalogEntry `json:"export_hooks"`
 	CompositionSteps  []CompositionStep      `json:"composition_steps"`
 	CheckoutSteps     []CheckoutStep         `json:"checkout_steps"`
 	SyncJobs          []SyncJob              `json:"sync_jobs"`
@@ -113,6 +115,9 @@ func Build(registry *plugin.Registry, app *plugin.App, cfg *config.Config) Repor
 	}
 	if importReg := app.ImportRegistry(); importReg != nil {
 		report.ImportHooks = importReg.Catalog()
+	}
+	if exportReg := app.ExportRegistry(); exportReg != nil {
+		report.ExportHooks = exportReg.Catalog()
 	}
 	for _, pipeline := range compositionPipelines {
 		for _, step := range app.CompositionSteps(pipeline) {

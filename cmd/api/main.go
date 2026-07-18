@@ -26,6 +26,7 @@ import (
 	cartApp "github.com/akarso/shopanda/internal/application/cart"
 	hooksApp "github.com/akarso/shopanda/internal/application/hooks"
 	importctxApp "github.com/akarso/shopanda/internal/application/importctx"
+	exportctxApp "github.com/akarso/shopanda/internal/application/exportctx"
 	integrationApp "github.com/akarso/shopanda/internal/application/integration"
 	"github.com/akarso/shopanda/internal/application/pluginreport"
 	portsapp "github.com/akarso/shopanda/internal/application/ports"
@@ -61,13 +62,11 @@ import (
 	"github.com/akarso/shopanda/internal/domain/rbac"
 	"github.com/akarso/shopanda/internal/domain/scheduler"
 	"github.com/akarso/shopanda/internal/domain/search"
-	"github.com/akarso/shopanda/internal/domain/shared"
 	"github.com/akarso/shopanda/internal/domain/shipping"
 	domtheme "github.com/akarso/shopanda/internal/domain/theme"
 	"github.com/akarso/shopanda/internal/domain/translation"
 	"github.com/akarso/shopanda/internal/infrastructure/cron"
 
-	"github.com/akarso/shopanda/internal/infrastructure/flatrate"
 	"github.com/akarso/shopanda/internal/infrastructure/imaging"
 	"github.com/akarso/shopanda/internal/infrastructure/invoicepdf"
 	"github.com/akarso/shopanda/internal/infrastructure/postgres"
@@ -316,6 +315,7 @@ func runServe(cfg *config.Config, log logger.Logger, embedScheduler bool) error 
 	extensionRegistry := extensionApp.NewRegistry()
 	hookRegistry := hooksApp.NewRegistry(log)
 	importRegistry := importctxApp.NewRegistry(log)
+	exportRegistry := exportctxApp.NewRegistry(log)
 	slotRegistry := slotsApp.NewRegistry(log)
 	if cfg.Frontend.Enabled && cfg.Frontend.ThemePath != "" {
 		if anchors, anchorErr := themeapp.DeclaredAnchorsFromDir(cfg.Frontend.ThemePath); anchorErr != nil {
@@ -350,6 +350,7 @@ func runServe(cfg *config.Config, log logger.Logger, embedScheduler bool) error 
 	pluginApp.SetExtensionRegistry(extensionRegistry)
 	pluginApp.SetHookRegistry(hookRegistry)
 	pluginApp.SetImportRegistry(importRegistry)
+	pluginApp.SetExportRegistry(exportRegistry)
 	pluginApp.SetSlotRegistry(slotRegistry)
 	pluginApp.SetAssetRegistry(assetRegistry)
 	integrationIdempotencyRepo, err := postgres.NewIntegrationIdempotencyRepo(conn)
@@ -497,7 +498,10 @@ func runServe(cfg *config.Config, log logger.Logger, embedScheduler bool) error 
 	}
 
 	// Providers.
-	flatRateProvider := flatrate.NewProvider(shared.MustNewMoney(500, "USD"))
+	shippingReg, err := resolveShippingRegistry(pluginApp)
+	if err != nil {
+		return err
+	}
 
 	payRegistry, err := resolvePaymentRegistry(pluginApp)
 	if err != nil {
@@ -667,7 +671,7 @@ func runServe(cfg *config.Config, log logger.Logger, embedScheduler bool) error 
 	recalculatePricingStep := checkoutApp.NewRecalculatePricingStep(pricingPipeline)
 	reserveInventoryStep := checkoutApp.NewReserveInventoryStep(reservationRepo)
 	createOrderStep := checkoutApp.NewCreateOrderStep(orderRepo, variantRepo, storeCreditService, extensionValueService)
-	selectShippingStep := checkoutApp.NewSelectShippingStep(flatRateProvider, shippingRepo)
+	selectShippingStep := checkoutApp.NewSelectShippingStep(shippingReg, shippingRepo)
 	initiatePaymentStep := checkoutApp.NewInitiatePaymentStep(payRegistry, paymentRepo)
 	checkoutSteps := []checkoutApp.Step{
 		validateCartStep,
@@ -813,7 +817,7 @@ func runServe(cfg *config.Config, log logger.Logger, embedScheduler bool) error 
 	ossReportAdmin := shophttp.NewOssReportHandler(ossExporter)
 	paymentAdmin := shophttp.NewPaymentAdminHandler(paymentRepo, sharedAuditor)
 
-	shippingRates := shophttp.NewShippingRatesHandler(flatRateProvider)
+	shippingRates := shophttp.NewShippingRatesHandler(shippingReg.Providers()...)
 	categoryHandler := shophttp.NewCategoryHandler(categoryRepo, productRepo)
 	categoryAdmin := shophttp.NewCategoryAdminHandlerWithAuditor(categoryRepo, bus, sharedAuditor)
 	categoryProductAssignmentAdmin := shophttp.NewCategoryProductAssignmentAdminHandlerWithAuditor(categoryRepo, productRepo, productRepo, sharedAuditor)
@@ -1223,7 +1227,7 @@ func runServe(cfg *config.Config, log logger.Logger, embedScheduler bool) error 
 			WithContentBlocks(contentBlockRepo, blockResolver, pageRepo).
 			WithCart(variantRepo, cartService).
 			WithExtensions(extensionValueService).
-			WithCheckout([]shipping.Provider{flatRateProvider}, payRegistry, checkoutService).
+			WithCheckout(shippingReg.Providers(), payRegistry, checkoutService).
 			WithAccount(authService, orderRepo, accountService).
 			WithReturns(returnService).
 			WithAccountProfile(customerAddressRepo, consentRepo).
@@ -1541,7 +1545,7 @@ func runExportProducts(cfg *config.Config, log logger.Logger) error {
 	if err != nil {
 		return fmt.Errorf("variant repo: %w", err)
 	}
-	exp := exporter.NewProductExporter(productRepo, variantRepo)
+	exp := exporter.NewProductExporter(productRepo, variantRepo).WithRowHooks(bootstrapExportRegistry(cfg, log))
 
 	f, err := os.Create(filePath)
 	if err != nil {
@@ -1559,7 +1563,17 @@ func runExportProducts(cfg *config.Config, log logger.Logger) error {
 	log.Info("export.complete", map[string]interface{}{
 		"products": result.Products,
 		"variants": result.Variants,
+		"skipped":  result.Skipped,
+		"errors":   len(result.Errors),
 	})
+
+	for _, e := range result.Errors {
+		log.Error("export.row_error", errors.New(e), map[string]interface{}{})
+	}
+
+	if len(result.Errors) > 0 {
+		return fmt.Errorf("export completed with %d row-level errors", len(result.Errors))
+	}
 
 	return nil
 }
@@ -1638,7 +1652,7 @@ func runExportStock(cfg *config.Config, log logger.Logger) error {
 	if err != nil {
 		return fmt.Errorf("variant repo: %w", err)
 	}
-	exp := exporter.NewStockExporter(stockRepo, variantRepo)
+	exp := exporter.NewStockExporter(stockRepo, variantRepo).WithRowHooks(bootstrapExportRegistry(cfg, log))
 
 	tmpFile, err := os.CreateTemp(filepath.Dir(filePath), "stock-export-*.csv")
 	if err != nil {
@@ -1662,7 +1676,17 @@ func runExportStock(cfg *config.Config, log logger.Logger) error {
 
 	log.Info("export.stock.complete", map[string]interface{}{
 		"entries": result.Entries,
+		"skipped": result.Skipped,
+		"errors":  len(result.Errors),
 	})
+
+	for _, e := range result.Errors {
+		log.Error("export.stock.row_error", errors.New(e), map[string]interface{}{})
+	}
+
+	if len(result.Errors) > 0 {
+		return fmt.Errorf("export completed with %d row-level errors", len(result.Errors))
+	}
 
 	return nil
 }
@@ -1733,7 +1757,7 @@ func runExportCustomers(cfg *config.Config, log logger.Logger) error {
 	if err != nil {
 		return fmt.Errorf("customer repo: %w", err)
 	}
-	exp := exporter.NewCustomerExporter(customerRepo)
+	exp := exporter.NewCustomerExporter(customerRepo).WithRowHooks(bootstrapExportRegistry(cfg, log))
 
 	tmpFile, err := os.CreateTemp(filepath.Dir(filePath), "customer-export-*.csv")
 	if err != nil {
@@ -1763,7 +1787,17 @@ func runExportCustomers(cfg *config.Config, log logger.Logger) error {
 
 	log.Info("export.customers.complete", map[string]interface{}{
 		"entries": result.Entries,
+		"skipped": result.Skipped,
+		"errors":  len(result.Errors),
 	})
+
+	for _, e := range result.Errors {
+		log.Error("export.customers.row_error", errors.New(e), map[string]interface{}{})
+	}
+
+	if len(result.Errors) > 0 {
+		return fmt.Errorf("export completed with %d row-level errors", len(result.Errors))
+	}
 
 	return nil
 }
@@ -1973,7 +2007,7 @@ func runExportAttributes(cfg *config.Config, log logger.Logger) error {
 	defer conn.Close()
 
 	configRepo := postgres.NewConfigRepo(conn)
-	exp := exporter.NewAttributeExporter(configRepo)
+	exp := exporter.NewAttributeExporter(configRepo).WithRowHooks(bootstrapExportRegistry(cfg, log))
 
 	tmpFile, err := os.CreateTemp(filepath.Dir(filePath), "attribute-export-*.csv")
 	if err != nil {
@@ -2003,7 +2037,17 @@ func runExportAttributes(cfg *config.Config, log logger.Logger) error {
 
 	log.Info("export.attributes.complete", map[string]interface{}{
 		"entries": result.Entries,
+		"skipped": result.Skipped,
+		"errors":  len(result.Errors),
 	})
+
+	for _, e := range result.Errors {
+		log.Error("export.attributes.row_error", errors.New(e), map[string]interface{}{})
+	}
+
+	if len(result.Errors) > 0 {
+		return fmt.Errorf("export completed with %d row-level errors", len(result.Errors))
+	}
 
 	return nil
 }
@@ -2078,7 +2122,7 @@ func runExportCategories(cfg *config.Config, log logger.Logger) error {
 	if err != nil {
 		return fmt.Errorf("category repo: %w", err)
 	}
-	exp := exporter.NewCategoryExporter(categoryRepo)
+	exp := exporter.NewCategoryExporter(categoryRepo).WithRowHooks(bootstrapExportRegistry(cfg, log))
 
 	tmpFile, err := os.CreateTemp(filepath.Dir(filePath), "category-export-*.csv")
 	if err != nil {
@@ -2108,7 +2152,17 @@ func runExportCategories(cfg *config.Config, log logger.Logger) error {
 
 	log.Info("export.categories.complete", map[string]interface{}{
 		"entries": result.Entries,
+		"skipped": result.Skipped,
+		"errors":  len(result.Errors),
 	})
+
+	for _, e := range result.Errors {
+		log.Error("export.categories.row_error", errors.New(e), map[string]interface{}{})
+	}
+
+	if len(result.Errors) > 0 {
+		return fmt.Errorf("export completed with %d row-level errors", len(result.Errors))
+	}
 
 	if result.Orphans > 0 {
 		log.Warn("export.categories.orphans", map[string]interface{}{
@@ -2197,7 +2251,7 @@ func runExportPrices(cfg *config.Config, log logger.Logger) error {
 	if err != nil {
 		return fmt.Errorf("price repo: %w", err)
 	}
-	exp := exporter.NewPriceExporter(priceRepo, variantRepo)
+	exp := exporter.NewPriceExporter(priceRepo, variantRepo).WithRowHooks(bootstrapExportRegistry(cfg, log))
 
 	tmpFile, err := os.CreateTemp(filepath.Dir(filePath), "price-export-*.csv")
 	if err != nil {
@@ -2227,7 +2281,17 @@ func runExportPrices(cfg *config.Config, log logger.Logger) error {
 
 	log.Info("export.prices.complete", map[string]interface{}{
 		"entries": result.Entries,
+		"skipped": result.Skipped,
+		"errors":  len(result.Errors),
 	})
+
+	for _, e := range result.Errors {
+		log.Error("export.prices.row_error", errors.New(e), map[string]interface{}{})
+	}
+
+	if len(result.Errors) > 0 {
+		return fmt.Errorf("export completed with %d row-level errors", len(result.Errors))
+	}
 
 	return nil
 }
@@ -2548,13 +2612,10 @@ func setupWorker(conn *sql.DB, cfg *config.Config, log logger.Logger, app *plugi
 	}
 	jobWorker := jobs.NewWorker(jobQueue, log, time.Second)
 
-	mailer := smtpmail.New(smtpmail.Config{
-		Host:     cfg.Mail.SMTP.Host,
-		Port:     cfg.Mail.SMTP.Port,
-		User:     cfg.Mail.SMTP.User,
-		Password: cfg.Mail.SMTP.Password,
-		From:     cfg.Mail.SMTP.From,
-	})
+	mailer, err := resolveMailer(app, cfg)
+	if err != nil {
+		return nil, nil, nil, err
+	}
 	jobWorker.Register(notification.NewEmailSendHandler(mailer))
 
 	appCache, err := resolveCache(app, conn, cfg)

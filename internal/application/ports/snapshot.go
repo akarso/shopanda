@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/akarso/shopanda/internal/domain/payment"
+	"github.com/akarso/shopanda/internal/domain/shipping"
 	"github.com/akarso/shopanda/internal/platform/config"
 	"github.com/akarso/shopanda/internal/platform/plugin"
 )
@@ -90,6 +91,11 @@ func buildActivePort(app *plugin.App, cfg *config.Config, entry CatalogEntry) Ac
 	case "tax":
 		provider, _ := app.TaxCalculator()
 		return buildSingleProviderPort(port, provider, "", coreTaxFallback())
+	case "shipping_rate":
+		return buildShippingPort(port, app)
+	case "mail_sender":
+		provider, _ := app.MailSender()
+		return buildSingleProviderPort(port, provider, cfg.Mail.Driver, coreMailFallback(cfg))
 	case "payment":
 		return buildPaymentPort(port, app)
 	default:
@@ -158,6 +164,51 @@ func buildPaymentPort(port ActivePort, app *plugin.App) ActivePort {
 	return port
 }
 
+func buildShippingPort(port ActivePort, app *plugin.App) ActivePort {
+	reg := app.ShippingRegistry()
+	if reg == nil || reg.Len() == 0 {
+		port.Status = StatusCoreDefault
+		port.Source = "core"
+		port.Providers = []ProviderDetail{{
+			Key:            string(shipping.MethodFlatRate),
+			Implementation: "flatrate.Provider",
+			Source:         "core",
+		}}
+		return port
+	}
+
+	providers := make([]ProviderDetail, 0, reg.Len())
+	pluginRegistered := false
+	for _, p := range reg.Providers() {
+		source := shippingProviderSource(p)
+		if source == "plugin" {
+			pluginRegistered = true
+		}
+		providers = append(providers, ProviderDetail{
+			Key:            string(p.Method()),
+			Implementation: typeName(p),
+			Source:         source,
+		})
+	}
+	port.Providers = providers
+	if pluginRegistered {
+		port.Status = StatusActive
+		port.Source = "plugin"
+	} else {
+		port.Status = StatusCoreDefault
+		port.Source = "core"
+	}
+	return port
+}
+
+func shippingProviderSource(p shipping.Provider) string {
+	name := typeName(p)
+	if strings.HasPrefix(name, "flatrate.") {
+		return "core"
+	}
+	return "plugin"
+}
+
 func paymentProviderSource(p payment.Provider) string {
 	name := typeName(p)
 	if strings.HasPrefix(name, "manualpay.") || strings.HasPrefix(name, "stripepay.") {
@@ -196,6 +247,13 @@ func coreMediaFallback(cfg *config.Config) string {
 
 func coreTaxFallback() string {
 	return "pricing.RateTableCalculator"
+}
+
+func coreMailFallback(cfg *config.Config) string {
+	if cfg.Mail.Driver == "smtp" || cfg.Mail.Driver == "" {
+		return "smtp.Mailer"
+	}
+	return ""
 }
 
 func typeName(v any) string {

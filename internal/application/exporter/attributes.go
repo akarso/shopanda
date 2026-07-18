@@ -9,23 +9,34 @@ import (
 	"sort"
 	"strings"
 
+	exportctx "github.com/akarso/shopanda/internal/application/exportctx"
 	"github.com/akarso/shopanda/internal/domain/catalog"
 	"github.com/akarso/shopanda/internal/domain/config"
 )
 
 // AttributeResult holds the summary of an attribute export run.
 type AttributeResult struct {
-	Entries int
+	Entries   int
+	Skipped   int
+	Errors    []string
+	RowErrors []exportctx.ExportError
 }
 
 // AttributeExporter writes attribute and group definitions to CSV.
 type AttributeExporter struct {
-	config config.Repository
+	config   config.Repository
+	rowHooks *RowHookRunner
 }
 
 // NewAttributeExporter creates an AttributeExporter.
 func NewAttributeExporter(config config.Repository) *AttributeExporter {
 	return &AttributeExporter{config: config}
+}
+
+// WithRowHooks wires export row hooks invoked before CSV write.
+func (exp *AttributeExporter) WithRowHooks(registry *exportctx.Registry) *AttributeExporter {
+	exp.rowHooks = NewRowHookRunner(registry)
+	return exp
 }
 
 // Export writes all attribute definitions to w in CSV format.
@@ -63,6 +74,8 @@ func (exp *AttributeExporter) Export(ctx context.Context, w io.Writer) (*Attribu
 	sort.Slice(attrs, func(i, j int) bool { return attrs[i].Code < attrs[j].Code })
 
 	result := &AttributeResult{}
+	rowIndex := 0
+	header := []string{"code", "label", "type", "required", "options", "group", "group_label"}
 	for _, a := range attrs {
 		reqStr := "false"
 		if a.Required {
@@ -70,38 +83,44 @@ func (exp *AttributeExporter) Export(ctx context.Context, w io.Writer) (*Attribu
 		}
 		optStr := strings.Join(a.Options, ",")
 
-		safeOpt := sanitizeCSVCell(optStr)
-
 		refs := attrGroups[a.Code]
-		if len(refs) == 0 {
-			row := []string{
-				sanitizeCSVCell(a.Code),
-				sanitizeCSVCell(a.Label),
-				string(a.Type),
-				reqStr,
-				safeOpt,
-				"",
-				"",
+		writeRow := func(groupCode, groupLabel string) error {
+			rowIndex++
+			rowMap := map[string]string{
+				"code":        a.Code,
+				"label":       a.Label,
+				"type":        string(a.Type),
+				"required":    reqStr,
+				"options":     optStr,
+				"group":       groupCode,
+				"group_label": groupLabel,
 			}
-			if err := writer.Write(row); err != nil {
-				return nil, fmt.Errorf("attribute export: write row: %w", err)
+			if exp.rowHooks != nil && exp.rowHooks.Enabled() {
+				var cont bool
+				rowMap, cont = HandleRowHookOutcome(rowIndex, exp.rowHooks.Invoke(ctx, exportctx.EntityAttribute, rowIndex, rowMap), &result.Skipped, &result.Errors, &result.RowErrors)
+				if !cont {
+					return nil
+				}
+			}
+			for k, v := range rowMap {
+				rowMap[k] = sanitizeCSVCell(v)
+			}
+			if err := writer.Write(RowToRecord(header, rowMap)); err != nil {
+				return err
 			}
 			result.Entries++
+			return nil
+		}
+
+		if len(refs) == 0 {
+			if err := writeRow("", ""); err != nil {
+				return nil, fmt.Errorf("attribute export: write row: %w", err)
+			}
 		} else {
 			for _, ref := range refs {
-				row := []string{
-					sanitizeCSVCell(a.Code),
-					sanitizeCSVCell(a.Label),
-					string(a.Type),
-					reqStr,
-					safeOpt,
-					sanitizeCSVCell(ref.code),
-					sanitizeCSVCell(ref.label),
-				}
-				if err := writer.Write(row); err != nil {
+				if err := writeRow(ref.code, ref.label); err != nil {
 					return nil, fmt.Errorf("attribute export: write row: %w", err)
 				}
-				result.Entries++
 			}
 		}
 	}

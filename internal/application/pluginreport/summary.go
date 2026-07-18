@@ -18,12 +18,15 @@ func LogSummary(log logger.Logger, report Report) {
 			failed++
 		}
 	}
-	hookHandlers, importHandlers := 0, 0
+	hookHandlers, importHandlers, exportHandlers := 0, 0, 0
 	for _, entry := range report.Hooks {
 		hookHandlers += len(entry.Handlers)
 	}
 	for _, entry := range report.ImportHooks {
 		importHandlers += len(entry.Handlers)
+	}
+	for _, entry := range report.ExportHooks {
+		exportHandlers += len(entry.Handlers)
 	}
 	log.Info("plugin.registration.summary", map[string]interface{}{
 		"plugins_active":      active,
@@ -31,6 +34,7 @@ func LogSummary(log logger.Logger, report Report) {
 		"pricing_steps":       len(report.PricingSteps),
 		"hooks":               hookHandlers,
 		"import_row_hooks":    importHandlers,
+		"export_row_hooks":    exportHandlers,
 		"composition_steps":   len(report.CompositionSteps),
 		"checkout_steps":      len(report.CheckoutSteps),
 		"sync_jobs":           len(report.SyncJobs),

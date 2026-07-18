@@ -105,9 +105,18 @@ func (r *Registry) InitAll(app *App) InitSummary {
 		panic("plugin: app must not be nil")
 	}
 	app.configRegistry = r.configRegistry
-	summary := InitSummary{Registered: len(r.entries)}
-	for i := range r.entries {
-		e := &r.entries[i]
+	entries := r.entries
+	if app.Config != nil && len(app.Config.Plugins.DependsOn) > 0 {
+		sorted, err := SortEntriesByDependsOn(entries, app.Config.Plugins.DependsOn)
+		if err != nil {
+			r.log.Error("plugin.depends_on.sort_failed", err, nil)
+		} else {
+			entries = sorted
+		}
+	}
+	summary := InitSummary{Registered: len(entries)}
+	for i := range entries {
+		e := &entries[i]
 		if e.State != StateLoaded {
 			continue
 		}

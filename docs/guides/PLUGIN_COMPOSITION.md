@@ -302,7 +302,7 @@ When two teams (or plugins) extend the **same seam**, resolution is explicit —
 | Seam type | Who wins | Integrator action |
 | --- | --- | --- |
 | **Infrastructure port** | One implementation per port; second `Register*` panics at startup | Pick driver in config; enable one core plugin per slot. Inspect: `GET /api/v1/admin/extensions/ports` |
-| **Pricing / checkout step** | Ordered chain; first core steps then plugin steps | Set priority / `before:`/`after:` when API ships; document order in project README |
+| **Pricing / checkout step** | Ordered chain; plugin steps merge at declared positions (not blanket after-core) | Pricing: `before:` / `after:` / `replace:`; checkout: `start` / `end` / `before:` / `after:`; document order in project README |
 | **Hook chain** | Lower priority number runs first | Assign non-overlapping priority bands per team (e.g. 100–199 team A, 200–299 team B) |
 | **Import row hook** | Lower priority runs first (PR-820) | Same priority band discipline |
 | **Extension field** | Field codes are global; first registration wins | Namespace codes (`vendor.feature.field`); coordinate via registry API |

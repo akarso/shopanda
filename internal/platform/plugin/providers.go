@@ -4,7 +4,9 @@ import (
 	"database/sql"
 	"fmt"
 
+	"github.com/akarso/shopanda/internal/domain/mail"
 	"github.com/akarso/shopanda/internal/domain/payment"
+	"github.com/akarso/shopanda/internal/domain/shipping"
 )
 
 // Bootstrap holds infrastructure handles plugins need during Init.
@@ -90,6 +92,37 @@ func (a *App) RegisterTaxCalculator(calculator any) {
 	a.taxCalculator = calculator
 }
 
+// RegisterShippingRateProvider registers a shipping rate provider.
+// The provider must implement shipping.Provider.
+func (a *App) RegisterShippingRateProvider(provider any) {
+	if provider == nil {
+		panic("plugin: shipping rate provider must not be nil")
+	}
+	p, ok := provider.(shipping.Provider)
+	if !ok {
+		panic(fmt.Sprintf("plugin: shipping rate provider must implement shipping.Provider, got %T", provider))
+	}
+	if a.shippingRegistry == nil {
+		a.shippingRegistry = shipping.NewProviderRegistry()
+	}
+	a.shippingRegistry.Register(p)
+}
+
+// RegisterMailSender registers the active mail delivery implementation.
+// The mailer must implement mail.Mailer.
+func (a *App) RegisterMailSender(mailer any) {
+	if mailer == nil {
+		panic("plugin: mail sender must not be nil")
+	}
+	if _, ok := mailer.(mail.Mailer); !ok {
+		panic(fmt.Sprintf("plugin: mail sender must implement mail.Mailer, got %T", mailer))
+	}
+	if a.mailSender != nil {
+		panic("plugin: mail sender already registered")
+	}
+	a.mailSender = mailer
+}
+
 // SearchProvider returns the registered search backend, if any.
 func (a *App) SearchProvider() (any, bool) {
 	if a.searchProvider == nil {
@@ -145,4 +178,17 @@ func (a *App) TaxCalculator() (any, bool) {
 		return nil, false
 	}
 	return a.taxCalculator, true
+}
+
+// ShippingRegistry returns the registered shipping providers, if any.
+func (a *App) ShippingRegistry() *shipping.ProviderRegistry {
+	return a.shippingRegistry
+}
+
+// MailSender returns the registered mail sender, if any.
+func (a *App) MailSender() (any, bool) {
+	if a.mailSender == nil {
+		return nil, false
+	}
+	return a.mailSender, true
 }

@@ -334,6 +334,7 @@ type RedisQueueConfig struct {
 
 // PluginsConfig holds plugin system settings.
 type PluginsConfig struct {
+	DependsOn map[string][]string `yaml:"depends_on"`
 	Core    CorePluginsConfig   `yaml:"core"`
 	GraphQL GraphQLPluginConfig `yaml:"graphql"`
 	Example   ExamplePluginConfig   `yaml:"example"`
@@ -341,6 +342,8 @@ type PluginsConfig struct {
 	CartDemo   CartDemoPluginConfig   `yaml:"cartdemo"`
 	TaxDemo    TaxDemoPluginConfig    `yaml:"taxdemo"`
 	ImportDemo        ImportDemoPluginConfig        `yaml:"importdemo"`
+	ExportDemo        ExportDemoPluginConfig        `yaml:"exportdemo"`
+	CheckoutDemo      CheckoutDemoPluginConfig      `yaml:"checkoutdemo"`
 	IntegrationDemo   IntegrationDemoPluginConfig   `yaml:"integrationdemo"`
 	WarehouseDemo     WarehouseDemoPluginConfig     `yaml:"warehousedemo"`
 	PimDemo           PimDemoPluginConfig           `yaml:"pimdemo"`
@@ -378,6 +381,16 @@ type TaxDemoPluginConfig struct {
 
 // ImportDemoPluginConfig toggles the CSV import remap reference plugin in plugins/importdemo.
 type ImportDemoPluginConfig struct {
+	Enabled bool `yaml:"enabled"`
+}
+
+// ExportDemoPluginConfig toggles the CSV export remap reference plugin in plugins/exportdemo.
+type ExportDemoPluginConfig struct {
+	Enabled bool `yaml:"enabled"`
+}
+
+// CheckoutDemoPluginConfig toggles the positioned checkout validation reference plugin.
+type CheckoutDemoPluginConfig struct {
 	Enabled bool `yaml:"enabled"`
 }
 
@@ -863,6 +876,12 @@ func applyEnv(cfg *Config) {
 	if v := os.Getenv("SHOPANDA_PLUGINS_IMPORTDEMO_ENABLED"); v != "" {
 		cfg.Plugins.ImportDemo.Enabled = v == "true" || v == "1"
 	}
+	if v := os.Getenv("SHOPANDA_PLUGINS_EXPORTDEMO_ENABLED"); v != "" {
+		cfg.Plugins.ExportDemo.Enabled = v == "true" || v == "1"
+	}
+	if v := os.Getenv("SHOPANDA_PLUGINS_CHECKOUTDEMO_ENABLED"); v != "" {
+		cfg.Plugins.CheckoutDemo.Enabled = v == "true" || v == "1"
+	}
 	if v := os.Getenv("SHOPANDA_PLUGINS_INTEGRATIONDEMO_ENABLED"); v != "" {
 		cfg.Plugins.IntegrationDemo.Enabled = v == "true" || v == "1"
 	}
@@ -1037,6 +1056,8 @@ func flatten(cfg *Config) map[string]string {
 	m["plugins.taxdemo.enabled"] = strconv.FormatBool(cfg.Plugins.TaxDemo.Enabled)
 	m["plugins.taxdemo.flat_rate_bps"] = strconv.Itoa(cfg.Plugins.TaxDemo.FlatRateBPS)
 	m["plugins.importdemo.enabled"] = strconv.FormatBool(cfg.Plugins.ImportDemo.Enabled)
+	m["plugins.exportdemo.enabled"] = strconv.FormatBool(cfg.Plugins.ExportDemo.Enabled)
+	m["plugins.checkoutdemo.enabled"] = strconv.FormatBool(cfg.Plugins.CheckoutDemo.Enabled)
 	m["plugins.integrationdemo.enabled"] = strconv.FormatBool(cfg.Plugins.IntegrationDemo.Enabled)
 	m["plugins.integrationdemo.integration_api_key"] = cfg.Plugins.IntegrationDemo.IntegrationAPIKey
 	m["plugins.integrationdemo.integration_hmac_secret"] = cfg.Plugins.IntegrationDemo.IntegrationHMACSecret

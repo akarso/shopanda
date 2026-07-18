@@ -11,22 +11,22 @@ import (
 
 // SelectShippingStep calculates a shipping rate and creates a pending shipment.
 type SelectShippingStep struct {
-	provider  shipping.Provider
+	providers *shipping.ProviderRegistry
 	shipments shipping.ShipmentRepository
 }
 
 // NewSelectShippingStep creates a SelectShippingStep.
 func NewSelectShippingStep(
-	provider shipping.Provider,
+	providers *shipping.ProviderRegistry,
 	shipments shipping.ShipmentRepository,
 ) *SelectShippingStep {
-	if provider == nil {
-		panic("checkout: shipping provider must not be nil")
+	if providers == nil || providers.Len() == 0 {
+		panic("checkout: shipping registry must not be empty")
 	}
 	if shipments == nil {
 		panic("checkout: shipment repository must not be nil")
 	}
-	return &SelectShippingStep{provider: provider, shipments: shipments}
+	return &SelectShippingStep{providers: providers, shipments: shipments}
 }
 
 func (s *SelectShippingStep) Name() string { return "select_shipping" }
@@ -47,11 +47,12 @@ func (s *SelectShippingStep) Execute(cctx *Context) error {
 	if cctx.Cart == nil {
 		return fmt.Errorf("select_shipping: cart not loaded")
 	}
-	if cctx.Input.ShippingMethod != "" && string(s.provider.Method()) != cctx.Input.ShippingMethod {
+	provider, err := s.providers.Resolve(cctx.Input.ShippingMethod)
+	if err != nil {
 		return apperror.Validation("selected shipping method is unavailable")
 	}
 
-	rate, err := s.provider.CalculateRate(
+	rate, err := provider.CalculateRate(
 		context.Background(),
 		cctx.Order.ID,
 		cctx.Currency,
@@ -61,7 +62,7 @@ func (s *SelectShippingStep) Execute(cctx *Context) error {
 		return fmt.Errorf("select_shipping: calculate rate: %w", err)
 	}
 
-	shipment, err := shipping.NewShipment(id.New(), cctx.Order.ID, s.provider.Method(), rate.Cost)
+	shipment, err := shipping.NewShipment(id.New(), cctx.Order.ID, provider.Method(), rate.Cost)
 	if err != nil {
 		return fmt.Errorf("select_shipping: create shipment: %w", err)
 	}

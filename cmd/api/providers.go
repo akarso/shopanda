@@ -6,14 +6,19 @@ import (
 
 	"github.com/akarso/shopanda/internal/domain/cache"
 	"github.com/akarso/shopanda/internal/domain/jobs"
+	"github.com/akarso/shopanda/internal/domain/mail"
 	"github.com/akarso/shopanda/internal/domain/media"
 	"github.com/akarso/shopanda/internal/domain/payment"
 	"github.com/akarso/shopanda/internal/domain/search"
+	"github.com/akarso/shopanda/internal/domain/shipping"
 	"github.com/akarso/shopanda/internal/domain/tax"
 	appPricing "github.com/akarso/shopanda/internal/application/pricing"
+	"github.com/akarso/shopanda/internal/infrastructure/flatrate"
 	"github.com/akarso/shopanda/internal/infrastructure/localfs"
 	"github.com/akarso/shopanda/internal/infrastructure/manualpay"
 	"github.com/akarso/shopanda/internal/infrastructure/postgres"
+	smtpmail "github.com/akarso/shopanda/internal/infrastructure/smtp"
+	"github.com/akarso/shopanda/internal/domain/shared"
 	"github.com/akarso/shopanda/internal/platform/config"
 	"github.com/akarso/shopanda/internal/platform/plugin"
 )
@@ -119,4 +124,35 @@ func resolveTaxCalculator(app *plugin.App, rates tax.RateRepository) (tax.Calcul
 		return nil, fmt.Errorf("tax calculator: rate repository required for core default")
 	}
 	return appPricing.NewRateTableTaxCalculator(rates, "standard"), nil
+}
+
+func resolveShippingRegistry(app *plugin.App) (*shipping.ProviderRegistry, error) {
+	if reg := app.ShippingRegistry(); reg != nil && reg.Len() > 0 {
+		return reg, nil
+	}
+	reg := shipping.NewProviderRegistry()
+	reg.Register(flatrate.NewProvider(shared.MustNewMoney(500, "USD")))
+	return reg, nil
+}
+
+func resolveMailer(app *plugin.App, cfg *config.Config) (mail.Mailer, error) {
+	if v, ok := app.MailSender(); ok {
+		m, ok := v.(mail.Mailer)
+		if !ok {
+			return nil, fmt.Errorf("plugin mail sender: invalid type %T", v)
+		}
+		return m, nil
+	}
+	switch cfg.Mail.Driver {
+	case "smtp", "":
+		return smtpmail.New(smtpmail.Config{
+			Host:     cfg.Mail.SMTP.Host,
+			Port:     cfg.Mail.SMTP.Port,
+			User:     cfg.Mail.SMTP.User,
+			Password: cfg.Mail.SMTP.Password,
+			From:     cfg.Mail.SMTP.From,
+		}), nil
+	default:
+		return nil, fmt.Errorf("unsupported mail.driver: %q", cfg.Mail.Driver)
+	}
 }

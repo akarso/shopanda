@@ -18,6 +18,12 @@ import (
 // Mock shipping provider
 // ============================================================
 
+func shippingRegistryWith(p shipping.Provider) *shipping.ProviderRegistry {
+	reg := shipping.NewProviderRegistry()
+	reg.Register(p)
+	return reg
+}
+
 type mockShippingProvider047 struct {
 	method    shipping.ShippingMethod
 	rate      shipping.ShippingRate
@@ -129,7 +135,7 @@ func orderForCheckout047(t *testing.T) *order.Order {
 
 func TestSelectShippingStep_Name(t *testing.T) {
 	step := checkout.NewSelectShippingStep(
-		&mockShippingProvider047{method: shipping.MethodFlatRate},
+		shippingRegistryWith(&mockShippingProvider047{method: shipping.MethodFlatRate}),
 		&mockShipmentRepo047{},
 	)
 	if step.Name() != "select_shipping" {
@@ -148,7 +154,7 @@ func TestSelectShippingStep_Success(t *testing.T) {
 		},
 	}
 	repo := &mockShipmentRepo047{}
-	step := checkout.NewSelectShippingStep(provider, repo)
+	step := checkout.NewSelectShippingStep(shippingRegistryWith(provider), repo)
 
 	cctx := checkout.NewContext("cart-1", "cust-1", "EUR")
 	cctx.Cart = cartWithItems037(t, "cust-1", "v1")
@@ -188,7 +194,7 @@ func TestSelectShippingStep_CalculateRateError(t *testing.T) {
 		method: shipping.MethodFlatRate,
 		err:    errors.New("unsupported currency"),
 	}
-	step := checkout.NewSelectShippingStep(provider, &mockShipmentRepo047{})
+	step := checkout.NewSelectShippingStep(shippingRegistryWith(provider), &mockShipmentRepo047{})
 
 	cctx := checkout.NewContext("cart-1", "cust-1", "EUR")
 	cctx.Cart = cartWithItems037(t, "cust-1", "v1")
@@ -210,7 +216,7 @@ func TestSelectShippingStep_SaveError(t *testing.T) {
 		rate:   shipping.ShippingRate{Cost: cost},
 	}
 	repo := &mockShipmentRepo047{err: errors.New("db down")}
-	step := checkout.NewSelectShippingStep(provider, repo)
+	step := checkout.NewSelectShippingStep(shippingRegistryWith(provider), repo)
 
 	cctx := checkout.NewContext("cart-1", "cust-1", "EUR")
 	cctx.Cart = cartWithItems037(t, "cust-1", "v1")
@@ -230,7 +236,7 @@ func TestSelectShippingStep_UsesTotalQuantity(t *testing.T) {
 		method: shipping.MethodFlatRate,
 		rate:   shipping.ShippingRate{Cost: shared.MustNewMoney(500, "EUR")},
 	}
-	step := checkout.NewSelectShippingStep(provider, &mockShipmentRepo047{})
+	step := checkout.NewSelectShippingStep(shippingRegistryWith(provider), &mockShipmentRepo047{})
 
 	cctx := checkout.NewContext("cart-1", "cust-1", "EUR")
 	cctx.Cart = cartWithItems037(t, "cust-1", "v1", "v2")
@@ -249,7 +255,7 @@ func TestSelectShippingStep_RejectsUnavailableSelectedMethod(t *testing.T) {
 		method: shipping.MethodFlatRate,
 		rate:   shipping.ShippingRate{Cost: shared.MustNewMoney(500, "EUR")},
 	}
-	step := checkout.NewSelectShippingStep(provider, &mockShipmentRepo047{})
+	step := checkout.NewSelectShippingStep(shippingRegistryWith(provider), &mockShipmentRepo047{})
 
 	cctx := checkout.NewContext("cart-1", "cust-1", "EUR")
 	cctx.Cart = cartWithItems037(t, "cust-1", "v1")
@@ -264,7 +270,7 @@ func TestSelectShippingStep_RejectsUnavailableSelectedMethod(t *testing.T) {
 
 func TestSelectShippingStep_NoOrder(t *testing.T) {
 	provider := &mockShippingProvider047{method: shipping.MethodFlatRate}
-	step := checkout.NewSelectShippingStep(provider, &mockShipmentRepo047{})
+	step := checkout.NewSelectShippingStep(shippingRegistryWith(provider), &mockShipmentRepo047{})
 
 	cctx := checkout.NewContext("cart-1", "cust-1", "EUR")
 	cctx.Cart = cartWithItems037(t, "cust-1", "v1")
@@ -277,7 +283,7 @@ func TestSelectShippingStep_NoOrder(t *testing.T) {
 
 func TestSelectShippingStep_NilContext(t *testing.T) {
 	provider := &mockShippingProvider047{method: shipping.MethodFlatRate}
-	step := checkout.NewSelectShippingStep(provider, &mockShipmentRepo047{})
+	step := checkout.NewSelectShippingStep(shippingRegistryWith(provider), &mockShipmentRepo047{})
 
 	err := step.Execute(nil)
 	if err == nil {
@@ -292,7 +298,7 @@ func TestSelectShippingStep_Idempotent(t *testing.T) {
 		rate:   shipping.ShippingRate{Cost: cost},
 	}
 	repo := &mockShipmentRepo047{}
-	step := checkout.NewSelectShippingStep(provider, repo)
+	step := checkout.NewSelectShippingStep(shippingRegistryWith(provider), repo)
 
 	cctx := checkout.NewContext("cart-1", "cust-1", "EUR")
 	cctx.Cart = cartWithItems037(t, "cust-1", "v1")

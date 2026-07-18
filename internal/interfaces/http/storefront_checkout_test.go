@@ -209,13 +209,15 @@ func newStorefrontCheckoutService(carts *storefrontCartRepoStub, prices *storefr
 	shipments := &storefrontCheckoutShipmentRepoStub{}
 	payments := &storefrontCheckoutPaymentRepoStub{}
 	shippingProvider := flatrate.NewProvider(shared.MustNewMoney(500, "EUR"))
+	shippingReg := shipping.NewProviderRegistry()
+	shippingReg.Register(shippingProvider)
 	payRegistry := testPaymentRegistry(manualpay.NewProvider())
 	workflow := checkoutApp.NewWorkflow([]checkoutApp.Step{
 		checkoutApp.NewValidateCartStep(variants),
 		checkoutApp.NewRecalculatePricingStep(pipeline),
 		checkoutApp.NewReserveInventoryStep(&storefrontCheckoutReservationRepoStub{}),
 		checkoutApp.NewCreateOrderStep(orders, variants, nil, nil),
-		checkoutApp.NewSelectShippingStep(shippingProvider, shipments),
+		checkoutApp.NewSelectShippingStep(shippingReg, shipments),
 		checkoutApp.NewInitiatePaymentStep(payRegistry, payments),
 	}, bus, log)
 	return checkoutApp.NewService(carts, workflow, log), shippingProvider, payRegistry, orders
