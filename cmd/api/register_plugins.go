@@ -6,6 +6,7 @@ import (
 	"github.com/akarso/shopanda/plugins/b2b"
 	"github.com/akarso/shopanda/plugins/cartdemo"
 	"github.com/akarso/shopanda/plugins/taxdemo"
+	"github.com/akarso/shopanda/plugins/maildemo"
 	"github.com/akarso/shopanda/plugins/importdemo"
 	"github.com/akarso/shopanda/plugins/exportdemo"
 	"github.com/akarso/shopanda/plugins/checkoutdemo"
@@ -30,6 +31,9 @@ func registerPlugins(registry *plugin.Registry, cfg *config.Config) {
 	}
 	if cfg.Plugins.TaxDemo.Enabled {
 		registry.Register(taxdemo.New())
+	}
+	if cfg.Plugins.MailDemo.Enabled {
+		registry.Register(maildemo.New())
 	}
 	if cfg.Plugins.ImportDemo.Enabled {
 		registry.Register(importdemo.New())

@@ -341,6 +341,7 @@ type PluginsConfig struct {
 	SlotsDemo SlotsDemoPluginConfig `yaml:"slotsdemo"`
 	CartDemo   CartDemoPluginConfig   `yaml:"cartdemo"`
 	TaxDemo    TaxDemoPluginConfig    `yaml:"taxdemo"`
+	MailDemo   MailDemoPluginConfig   `yaml:"maildemo"`
 	ImportDemo        ImportDemoPluginConfig        `yaml:"importdemo"`
 	ExportDemo        ExportDemoPluginConfig        `yaml:"exportdemo"`
 	CheckoutDemo      CheckoutDemoPluginConfig      `yaml:"checkoutdemo"`
@@ -377,6 +378,12 @@ type CartDemoPluginConfig struct {
 type TaxDemoPluginConfig struct {
 	Enabled     bool `yaml:"enabled"`
 	FlatRateBPS int  `yaml:"flat_rate_bps"`
+}
+
+// MailDemoPluginConfig toggles the mail sender port replacement reference plugin in plugins/maildemo.
+type MailDemoPluginConfig struct {
+	Enabled       bool   `yaml:"enabled"`
+	SubjectPrefix string `yaml:"subject_prefix"`
 }
 
 // ImportDemoPluginConfig toggles the CSV import remap reference plugin in plugins/importdemo.
@@ -873,6 +880,12 @@ func applyEnv(cfg *Config) {
 			cfg.Plugins.TaxDemo.FlatRateBPS = n
 		}
 	}
+	if v := os.Getenv("SHOPANDA_PLUGINS_MAILDEMO_ENABLED"); v != "" {
+		cfg.Plugins.MailDemo.Enabled = v == "true" || v == "1"
+	}
+	if v := os.Getenv("SHOPANDA_PLUGINS_MAILDEMO_SUBJECT_PREFIX"); v != "" {
+		cfg.Plugins.MailDemo.SubjectPrefix = v
+	}
 	if v := os.Getenv("SHOPANDA_PLUGINS_IMPORTDEMO_ENABLED"); v != "" {
 		cfg.Plugins.ImportDemo.Enabled = v == "true" || v == "1"
 	}
@@ -1054,6 +1067,8 @@ func flatten(cfg *Config) map[string]string {
 	m["plugins.cartdemo.min_quantity"] = strconv.Itoa(cfg.Plugins.CartDemo.MinQuantity)
 	m["plugins.cartdemo.handling_fee_minor_units"] = strconv.FormatInt(cfg.Plugins.CartDemo.HandlingFeeMinorUnits, 10)
 	m["plugins.taxdemo.enabled"] = strconv.FormatBool(cfg.Plugins.TaxDemo.Enabled)
+	m["plugins.maildemo.enabled"] = strconv.FormatBool(cfg.Plugins.MailDemo.Enabled)
+	m["plugins.maildemo.subject_prefix"] = cfg.Plugins.MailDemo.SubjectPrefix
 	m["plugins.taxdemo.flat_rate_bps"] = strconv.Itoa(cfg.Plugins.TaxDemo.FlatRateBPS)
 	m["plugins.importdemo.enabled"] = strconv.FormatBool(cfg.Plugins.ImportDemo.Enabled)
 	m["plugins.exportdemo.enabled"] = strconv.FormatBool(cfg.Plugins.ExportDemo.Enabled)
