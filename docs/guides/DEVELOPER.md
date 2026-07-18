@@ -607,40 +607,31 @@ Phase 8 adds first-class seams for **commerce behavior** (positioned pricing ste
 | Resource | Purpose |
 | --- | --- |
 | [Integrator Platform spec](../phase-8-integrator-platform/specs/INTEGRATOR_PLATFORM.md) | Design position, port catalog, import/integration patterns, precedence policy |
-| [Phase 8 Roadmap](../phase-8-integrator-platform/ROADMAP.md) | Tracks A–F, PR index (PR-800+) |
+| [Phase 8 Roadmap](../phase-8-integrator-platform/ROADMAP.md) | Tracks A–F + post-phase PR-854 (PR-800–855) |
 
-**Available today:**
+**Available today (core + Phase 8):**
 
-- Infrastructure ports: search, cache, queue, payment, media (`RegisterSearchProvider`, …)
-- Behavioral: `RegisterPricingStep`, `RegisterCheckoutStep`, `RegisterCompositionStep`, hook `cart.add_item.after`
-- HTTP: `RegisterPublicRoute`, `RegisterAdminRoute`, `app.Integration(slug).RegisterRoute` / `RegisterSecureRoute` (inbound ERP — PR-830–832)
-- CSV import: CLI `import:products`, `import:prices`, `import:stock`, `import:categories`, `import:customers`, `import:attributes` — row hooks via `app.Import().RegisterRowHook` (PR-820–821)
+- Infrastructure ports: search, cache, queue, payment, media, tax (`RegisterSearchProvider`, `RegisterTaxCalculator`, …)
+- Behavioral: positioned `RegisterPricingStep`, positioned `RegisterCheckoutStep`, `RegisterCompositionStep`, cart hook chain — see `pkg/extapi`
+- HTTP: `RegisterPublicRoute`, `RegisterAdminRoute`, `app.Integration(slug).RegisterRoute` / `RegisterSecureRoute`
+- CSV import: CLI `import:*` with row hooks via `app.Import().RegisterRowHook` (PR-820–823)
+- Outbound sync: `app.Integration(slug).RegisterSyncJob` + `pkg/integrationsdk` (PR-840–841)
+- Registration report: `./app plugins report` (PR-851)
 - Async: events + optional queue drivers
 
-**Shipped in Phase 8:**
-
-- Port introspection: `GET /api/v1/admin/extensions/ports` (PR-801)
-- Precedence policy + integrator composition patterns: [PLUGIN_COMPOSITION.md](PLUGIN_COMPOSITION.md) (PR-802)
-- Pricing step positioning: `RegisterPricingStep(step, "after:promotions")` — see `pkg/extapi` (PR-810)
-- Cart lifecycle hooks: `cart.add_item.before`, `cart.update_item.before`, `cart.remove_item.after`, `cart.recalculate.before` — see `pkg/extapi` (PR-811)
-- Integration idempotency: `Idempotency-Key` dedupe on `RegisterSecureRoute` — see `pkg/integrationhttp` (PR-832)
-- Reference inbound order-status plugin: `plugins/integrationdemo` (PR-833)
-- Outbound sync jobs: `app.Integration(slug).RegisterSyncJob` — see `pkg/extapi` (PR-840)
-- Outbound HTTP/GraphQL clients: `pkg/integrationsdk/http`, `pkg/integrationsdk/graphql` (PR-841)
-
-**Planned in Phase 8** (see spec §Document map): reference outbound plugins (PR-842–843), full registration report (PR-851).
+**Reference plugins** (opt-in via config): `cartdemo`, `importdemo`, `integrationdemo`, `warehousedemo`, `pimdemo`, `taxdemo` — copy patterns; do not import from production plugins.
 
 When choosing an extension mechanism, start with [Multi-Plugin Composition](PLUGIN_COMPOSITION.md) for ordering rules; use the integrator spec when the task involves ERP/PIM/warehouse wiring or CSV pre-persist transforms.
 
 ## Roadmap and Future Work
 
-Phases 1–7 are **complete**. **Phase 7 — Customization Platform** shipped PR-700–720 (extension fields, hooks/slots, assets, GraphQL parity, storefront DX).
+Phases 1–8 are **complete**. **Phase 7 — Customization Platform** shipped PR-700–720. **Phase 8 — Integrator Platform** shipped PR-800–854.
 
 | Phase | Focus |
 | --- | --- |
 | 6 (done) | Merchant-complete admin UI (PR-600–651) |
 | 7 (done) | Customization platform (PR-700–720) |
-| 8 (in progress) | Integrator platform — cart/pricing seams, CSV import hooks, inbound/outbound ERP integration (PR-800+) |
+| 8 (done) | Integrator platform — cart/pricing/checkout seams, CSV import hooks, inbound/outbound ERP integration (PR-800–854) |
 
 Full plans: [Phase 5 Roadmap](../phase-5-maturity/ROADMAP.md) · [Phase 6 Roadmap](../phase-6-merchant-complete/ROADMAP.md) · [Phase 7 Roadmap](../phase-7-customization-platform/ROADMAP.md) · [Phase 8 Roadmap](../phase-8-integrator-platform/ROADMAP.md) · [Integrator Platform spec](../phase-8-integrator-platform/specs/INTEGRATOR_PLATFORM.md). EU mapping: [Compliance Reference](../phase-5-maturity/specs/COMPLIANCE_EU.md). Plugin loading: [Dynamic loading research](../phase-5-maturity/specs/DYNAMIC_PLUGIN_LOADING.md).
 

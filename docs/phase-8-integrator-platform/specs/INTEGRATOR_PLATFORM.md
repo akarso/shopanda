@@ -1,7 +1,6 @@
 # Integrator Platform — Extension Strategy & External Systems
 
-Status: **published** (Phase 8 Track A — PR-800)  
-Implementation: **in progress** — sections marked **Phase 8** or **Planned** describe APIs not yet shipped; see [ROADMAP](../ROADMAP.md) for PR mapping.  
+Status: **published** (Phase 8 complete — PR-800–854)  
 Audience: core maintainers, integrators, plugin authors
 
 Related:
@@ -26,7 +25,7 @@ Related:
 | §6 Inbound integration | **Shipped** — routes, auth, idempotency, reference order-status plugin (PR-830–833) |
 | §7 Outbound integration | **Done** — sync jobs, client SDK, warehouse + PIM reference plugins (PR-840–843) |
 | §8 Wiring ergonomics | **Shipped** — plugin SDK, registration report, replace-by-name, reference port replacement (PR-850–853) |
-| §10 Validation | **Phase 8 exit criteria** — not yet achievable end-to-end |
+| §10 Validation | **Achieved** — acceptance criteria met via reference plugins + CLI (PR-800–854) |
 
 ---
 
@@ -36,11 +35,11 @@ Phase 7 made **custom data and storefront injection** first-class. Real-world in
 
 | Pain (observed in the field) | Today | Risk if unaddressed |
 | --- | --- | --- |
-| **Price rules & cart modifications** | `RegisterPricingStep` exists but ordering is append-only; one cart hook (`cart.add_item.after`) | Teams patch cart service or duplicate promotion logic |
-| **CSV import transforms** | Importers are core-owned; attribute columns pass through fixed validation only | ERP CSV layouts require one-off importer forks |
-| **Inbound ERP (SAP, etc.)** | Integration routes, auth, and idempotency conventions shipped (PR-830–832) | Reference inbound plugin still needed for end-to-end demo |
-| **Outbound warehouse / PIM** | Events + queue exist; no standard sync registration or client bootstrap | Plugins import `internal/*` or run cron outside the binary |
-| **“Replace search/cache/tax”** | Search, cache, queue, payment, media ports exist; tax/shipping/mail do not | Integrators assume Magento-style preferences |
+| **Price rules & cart modifications** | Positioned pricing steps, cart lifecycle hooks, `cart.validate` (PR-810–814) | Teams patch cart service or duplicate promotion logic |
+| **CSV import transforms** | Import row hooks wired into CLI importers (PR-820–823) | ERP CSV layouts require one-off importer forks |
+| **Inbound ERP (SAP, etc.)** | Integration routes, auth, idempotency + reference inbound plugin (PR-830–833) | Ad hoc unsecured endpoints |
+| **Outbound warehouse / PIM** | Sync job registration, integrationsdk, reference plugins (PR-840–843) | Plugins import `internal/*` or run cron outside the binary |
+| **“Replace search/cache/tax”** | Search, cache, queue, payment, media, tax ports + reference tax plugin (PR-813, PR-853) | Integrators assume Magento-style preferences |
 
 Without explicit seams for **behavior change** and **external system wiring**, the platform fails integrators even when storefront customization works.
 
