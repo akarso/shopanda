@@ -189,6 +189,7 @@
         "/admin/settings/localization": { title: "Localization", render: renderLocalizationSettingsPage, auth: true },
         "/admin/settings/users": { title: "Users & Roles", render: renderUsersRolesPage, auth: true },
         "/admin/settings/audit": { title: "Audit Log", render: renderAuditLogPage, auth: true },
+        "/admin/settings/extension-fields": { title: "Extension Fields", render: renderExtensionFieldsGrid, auth: true },
         // Store Management
         "/admin/store": { title: "Stores", render: renderStoresGrid, auth: true },
         "/admin/store/domains": { title: "Domains", render: renderStoreDomainsPage, auth: true },
@@ -230,6 +231,9 @@
         if (path === "/admin/catalog/attributes/new") {
             return { title: "New Attribute", render: renderAttributeCreate, auth: true };
         }
+        if (path === "/admin/settings/extension-fields/new") {
+            return { title: "New Extension Field", render: renderExtensionFieldCreate, auth: true };
+        }
         if (path === "/admin/catalog/attribute-groups/new") {
             return { title: "New Attribute Group", render: renderAttributeGroupCreate, auth: true };
         }
@@ -252,6 +256,15 @@
                 title: "Edit Attribute",
                 auth: true,
                 render: function (container) { renderAttributeEdit(container, attributeCode); }
+            };
+        }
+        var extensionFieldMatch = path.match(/^\/admin\/settings\/extension-fields\/([^/]+)$/);
+        if (extensionFieldMatch) {
+            var extensionFieldCode = decodeURIComponent(extensionFieldMatch[1]);
+            return {
+                title: "Edit Extension Field",
+                auth: true,
+                render: function (container) { renderExtensionFieldEdit(container, extensionFieldCode); }
             };
         }
         var attributeGroupMatch = path.match(/^\/admin\/catalog\/attribute-groups\/([^/]+)$/);
@@ -6477,6 +6490,281 @@
             values.push({ field_code: code, value: v });
         }
         return { values: values };
+    }
+
+    var extensionFieldTargetTypes = [
+        { value: "", label: "All scopes" },
+        { value: "product", label: "Product" },
+        { value: "variant", label: "Variant" },
+        { value: "cart_item", label: "Cart item" },
+        { value: "order_item", label: "Order item" },
+        { value: "customer", label: "Customer" },
+        { value: "pdp", label: "PDP (computed)" },
+        { value: "plp_item", label: "PLP item (computed)" },
+        { value: "cart_view", label: "Cart view (computed)" },
+        { value: "checkout_view", label: "Checkout view (computed)" }
+    ];
+
+    var extensionFieldFormTargetTypes = extensionFieldTargetTypes.filter(function (item) {
+        return item.value !== "";
+    });
+
+    function renderExtensionFieldsGrid(container) {
+        container.innerHTML =
+            "<h2>Extension Fields</h2>" +
+            "<p class=\"settings-scope-note\">Define custom field schemas for products, cart lines, and other entities. Values are edited on entity forms (e.g. product Extensions panel).</p>" +
+            "<div id=\"extension-fields-grid\"></div>";
+
+        var grid = document.getElementById("extension-fields-grid");
+        var scopeFilter = "";
+
+        function loadGrid() {
+            var query = "/admin/extensions/fields?include_private=true";
+            if (scopeFilter) {
+                query += "&target_type=" + encodeURIComponent(scopeFilter);
+            }
+            api(query).then(function (body) {
+                if (body && body.error && body.error.code === "forbidden") {
+                    grid.innerHTML = "<p role=\"alert\">Your account does not have extensions access.</p>";
+                    return;
+                }
+                if (body && body.error) {
+                    grid.innerHTML = "<p role=\"alert\">" + esc(extractErrorMessage(body, "Failed to load extension fields.")) + "</p>";
+                    return;
+                }
+                var fields = body && body.data && body.data.fields;
+                if (!Array.isArray(fields)) {
+                    grid.innerHTML = "<p role=\"alert\">Failed to load extension fields.</p>";
+                    return;
+                }
+
+                var html = "";
+                if (userHasPermission("extensions.write")) {
+                    html += "<div style=\"margin-bottom:1rem\"><a class=\"button\" href=\"/admin/settings/extension-fields/new\" data-link id=\"new-extension-field-btn\">New Extension Field</a></div>";
+                }
+                html += "<label>Filter by scope <select id=\"extension-field-scope-filter\">";
+                for (var fi = 0; fi < extensionFieldTargetTypes.length; fi++) {
+                    var opt = extensionFieldTargetTypes[fi];
+                    html += "<option value=\"" + esc(opt.value) + "\"" + (opt.value === scopeFilter ? " selected" : "") + ">" + esc(opt.label) + "</option>";
+                }
+                html += "</select></label>";
+                html += "<table style=\"margin-top:1rem\"><thead><tr>" +
+                    "<th>Code</th><th>Label</th><th>Type</th><th>Scope</th><th>Visibility</th><th>Storage</th>" +
+                    "</tr></thead><tbody>";
+                if (fields.length === 0) {
+                    html += "<tr><td colspan=\"6\">No extension fields defined.</td></tr>";
+                } else {
+                    for (var i = 0; i < fields.length; i++) {
+                        var field = fields[i] || {};
+                        var editHref = "/admin/settings/extension-fields/" + encodeURIComponent(field.code || "");
+                        html += "<tr>" +
+                            "<td><a href=\"" + editHref + "\" data-link>" + esc(field.code || "") + "</a></td>" +
+                            "<td>" + esc(field.label || "") + "</td>" +
+                            "<td>" + esc(field.type || "") + "</td>" +
+                            "<td>" + esc(field.scope || "") + "</td>" +
+                            "<td>" + esc(field.visibility || "public") + "</td>" +
+                            "<td>" + esc(field.storage_mode || "stored") + "</td>" +
+                            "</tr>";
+                    }
+                }
+                html += "</tbody></table>";
+                grid.innerHTML = html;
+
+                var filterEl = document.getElementById("extension-field-scope-filter");
+                if (filterEl) {
+                    filterEl.addEventListener("change", function () {
+                        scopeFilter = filterEl.value;
+                        loadGrid();
+                    });
+                }
+            }).catch(function (err) {
+                grid.innerHTML = "<p role=\"alert\">" + esc(extractErrorMessage(err, "Failed to load extension fields.")) + "</p>";
+            });
+        }
+
+        if (!userHasPermission("extensions.read")) {
+            grid.innerHTML = "<p role=\"alert\">Your account does not have extensions access.</p>";
+            return;
+        }
+        loadGrid();
+    }
+
+    function renderExtensionFieldFormFields(field) {
+        var fieldType = field ? (field.type || "string") : "string";
+        var scope = field ? (field.scope || "product") : "product";
+        var visibility = field ? (field.visibility || "public") : "public";
+        var storageMode = field ? (field.storage_mode || "stored") : "stored";
+        var required = field && field.validation ? !!field.validation.required : false;
+        var options = field && field.validation && Array.isArray(field.validation.options)
+            ? field.validation.options.join(", ")
+            : "";
+
+        var html = "";
+        if (!field) {
+            html += "<label>Code<input name=\"code\" value=\"\" required placeholder=\"acme.gift.wrap_level\"></label>" +
+                "<p class=\"settings-scope-note\">Use a namespaced code: lowercase segments separated by dots (e.g. <code>vendor.field_name</code>).</p>";
+        } else {
+            html += "<p><strong>Code:</strong> <code>" + esc(field.code || "") + "</code></p>";
+        }
+        html += "<label>Label<input name=\"label\" value=\"" + esc(field ? (field.label || "") : "") + "\" required></label>" +
+            "<label>Description<textarea name=\"description\" rows=\"2\">" + esc(field ? (field.description || "") : "") + "</textarea></label>" +
+            "<label>Type<select name=\"type\">";
+        var typeOptions = ["string", "int", "bool", "enum", "json", "money", "date", "datetime"];
+        for (var ti = 0; ti < typeOptions.length; ti++) {
+            var t = typeOptions[ti];
+            html += "<option value=\"" + esc(t) + "\"" + (fieldType === t ? " selected" : "") + ">" + esc(t) + "</option>";
+        }
+        html += "</select></label>" +
+            "<label>Scope<select name=\"target_type\">";
+        for (var si = 0; si < extensionFieldFormTargetTypes.length; si++) {
+            var scopeOpt = extensionFieldFormTargetTypes[si];
+            html += "<option value=\"" + esc(scopeOpt.value) + "\"" + (scope === scopeOpt.value ? " selected" : "") + ">" + esc(scopeOpt.label) + "</option>";
+        }
+        html += "</select></label>" +
+            "<label>Visibility<select name=\"visibility\">" +
+            "<option value=\"public\"" + (visibility === "public" ? " selected" : "") + ">Public</option>" +
+            "<option value=\"private\"" + (visibility === "private" ? " selected" : "") + ">Private</option>" +
+            "</select></label>" +
+            "<label>Storage mode<select name=\"storage_mode\">" +
+            "<option value=\"stored\"" + (storageMode === "stored" ? " selected" : "") + ">Stored</option>" +
+            "<option value=\"computed\"" + (storageMode === "computed" ? " selected" : "") + ">Computed</option>" +
+            "<option value=\"snapshot\"" + (storageMode === "snapshot" ? " selected" : "") + ">Snapshot</option>" +
+            "</select></label>" +
+            "<label>Enum options (comma-separated)<input name=\"options\" value=\"" + esc(options) + "\"></label>" +
+            "<label><input type=\"checkbox\" name=\"required\"" + (required ? " checked" : "") + "> Required</label>" +
+            "<div style=\"margin-top:1rem\"><button type=\"submit\">Save</button>" +
+            (field && userHasPermission("extensions.write") ? " <button type=\"button\" id=\"delete-extension-field-btn\" class=\"danger\">Delete</button>" : "") +
+            "</div>";
+        return html;
+    }
+
+    function parseExtensionFieldOptions(raw) {
+        if (!raw) {
+            return [];
+        }
+        return raw.split(",").map(function (part) { return part.trim(); }).filter(function (part) { return part !== ""; });
+    }
+
+    function buildExtensionFieldPayload(form, fieldCode) {
+        var payload = {
+            label: form.elements.label.value,
+            description: form.elements.description.value,
+            type: form.elements.type.value,
+            target_type: form.elements.target_type.value,
+            visibility: form.elements.visibility.value,
+            storage_mode: form.elements.storage_mode.value,
+            validation: {
+                required: form.elements.required.checked,
+                options: parseExtensionFieldOptions(form.elements.options.value)
+            }
+        };
+        if (!fieldCode) {
+            payload.code = form.elements.code.value;
+        }
+        return payload;
+    }
+
+    function renderExtensionFieldCreate(container) {
+        renderExtensionFieldForm(container, null);
+    }
+
+    function renderExtensionFieldEdit(container, fieldCode) {
+        renderExtensionFieldForm(container, fieldCode);
+    }
+
+    function renderExtensionFieldForm(container, fieldCode) {
+        var title = fieldCode ? "Edit Extension Field" : "New Extension Field";
+        container.innerHTML =
+            "<h2>" + title + "</h2>" +
+            "<p><a href=\"/admin/settings/extension-fields\" data-link>Back to extension fields</a></p>" +
+            "<div id=\"extension-field-form-msg\"></div>" +
+            "<form id=\"extension-field-form\"><p>Loading…</p></form>";
+
+        var msg = document.getElementById("extension-field-form-msg");
+        var form = document.getElementById("extension-field-form");
+
+        if (!userHasPermission("extensions.read")) {
+            form.innerHTML = "<p role=\"alert\">Your account does not have extensions access.</p>";
+            return;
+        }
+        if (!fieldCode && !userHasPermission("extensions.write")) {
+            form.innerHTML = "<p role=\"alert\">Your account does not have extensions write access.</p>";
+            return;
+        }
+
+        function bindForm(field) {
+            form.innerHTML = renderExtensionFieldFormFields(field);
+            if (fieldCode && !userHasPermission("extensions.write")) {
+                var controls = form.querySelectorAll("input, select, textarea, button");
+                for (var i = 0; i < controls.length; i++) {
+                    controls[i].disabled = true;
+                }
+                form.insertAdjacentHTML("beforeend", "<p class=\"settings-scope-note\">Read-only — extensions write access required to edit definitions.</p>");
+                return;
+            }
+
+            form.addEventListener("submit", function (e) {
+                e.preventDefault();
+                var payload = buildExtensionFieldPayload(form, fieldCode);
+                var method = fieldCode ? "PUT" : "POST";
+                var url = fieldCode
+                    ? "/admin/extensions/fields/" + encodeURIComponent(fieldCode)
+                    : "/admin/extensions/fields";
+                api(url, { method: method, body: JSON.stringify(payload) }).then(function (body) {
+                    if (body && body.error) {
+                        msg.innerHTML = "<p role=\"alert\">" + esc(body.error.message || "Save failed.") + "</p>";
+                        return;
+                    }
+                    navigateTo("/admin/settings/extension-fields");
+                }).catch(function (err) {
+                    msg.innerHTML = "<p role=\"alert\">" + esc(extractErrorMessage(err, "Save failed.")) + "</p>";
+                });
+            });
+
+            if (fieldCode && userHasPermission("extensions.write")) {
+                var deleteBtn = document.getElementById("delete-extension-field-btn");
+                if (deleteBtn) {
+                    deleteBtn.addEventListener("click", function () {
+                        if (!window.confirm("Delete extension field \"" + fieldCode + "\"? Existing values may become orphaned.")) {
+                            return;
+                        }
+                        api("/admin/extensions/fields/" + encodeURIComponent(fieldCode), { method: "DELETE" }).then(function (body) {
+                            if (body && body.error) {
+                                msg.innerHTML = "<p role=\"alert\">" + esc(body.error.message || "Failed to delete extension field.") + "</p>";
+                                return;
+                            }
+                            navigateTo("/admin/settings/extension-fields");
+                        }).catch(function (err) {
+                            msg.innerHTML = "<p role=\"alert\">" + esc(extractErrorMessage(err, "Failed to delete extension field.")) + "</p>";
+                        });
+                    });
+                }
+            }
+        }
+
+        if (!fieldCode) {
+            bindForm(null);
+            return;
+        }
+
+        api("/admin/extensions/fields/" + encodeURIComponent(fieldCode) + "?include_private=true").then(function (body) {
+            if (body && body.error && body.error.code === "forbidden") {
+                form.innerHTML = "<p role=\"alert\">Your account does not have extensions access.</p>";
+                return;
+            }
+            if (body && body.error) {
+                form.innerHTML = "<p role=\"alert\">" + esc(extractErrorMessage(body, "Failed to load extension field.")) + "</p>";
+                return;
+            }
+            var field = body && body.data && body.data.field;
+            if (!field) {
+                form.innerHTML = "<p role=\"alert\">Extension field not found.</p>";
+                return;
+            }
+            bindForm(field);
+        }).catch(function (err) {
+            form.innerHTML = "<p role=\"alert\">" + esc(extractErrorMessage(err, "Failed to load extension field.")) + "</p>";
+        });
     }
 
     function setupProductReviewsPanel(productID) {

@@ -64,6 +64,7 @@ Every major screen in the embedded admin SPA is listed below. Use the **Route** 
 | Settings | Localization | `/admin/settings/localization` | Currency + store languages |
 | Settings | Users & Roles | `/admin/settings/users` | Admin users ([PR-520](../phase-5-maturity/prs/PR-520.md)) |
 | Settings | Audit Log | `/admin/settings/audit` | Admin action history |
+| Settings | Extension Fields | `/admin/settings/extension-fields` | Custom field definitions ([PR-866](../phase-9-merchant-discovery/prs/PR-866.md)) |
 | Store | Stores | `/admin/store` | Multi-store entities |
 | Store | Domains | `/admin/store/domains` | Hostname mapping |
 | Store | Languages | `/admin/store/languages` | Store language config |
@@ -308,6 +309,7 @@ Open **Settings → Localization** at `/admin/settings/localization` for currenc
 
 - **Users & Roles** (`/admin/settings/users`): manage admin accounts and roles.
 - **Audit Log** (`/admin/settings/audit`): review admin actions.
+- **Extension Fields** (`/admin/settings/extension-fields`): define custom field schemas for products, cart lines, and other entities ([PR-866](../phase-9-merchant-discovery/prs/PR-866.md)). Values are edited on entity forms (e.g. product Extensions panel).
 
 ### Multi-store usage
 

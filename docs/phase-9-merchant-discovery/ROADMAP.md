@@ -30,7 +30,7 @@ Phase 8 shipped integrator seams: positioned pricing/checkout steps, cart hooks,
 
 | Item | Status |
 | --- | --- |
-| Extension field admin grid | Track B — PR-866 |
+| Extension field admin grid | Track B — PR-866 (done) |
 | Variant extension scopes | Track B — PR-867 |
 
 ---
@@ -87,7 +87,8 @@ Track C depends on catalog/search infrastructure (partially exists: search facet
 | 862 | A | done |
 | 863, 865 | A | done |
 | 864 | A | done |
-| 866–867 | B | planned |
+| 866 | B | done |
+| 867 | B | planned |
 | 900–903 | C **PRIORITY** | planned |
 
 PR specs: [`prs/`](prs/).
