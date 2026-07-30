@@ -16,16 +16,19 @@ import (
 type CartPromotionStep struct {
 	promotions promotion.PromotionRepository
 	coupons    promotion.CouponRepository
+	evaluators *promotion.EvaluatorRegistry
 }
 
 // NewCartPromotionStep returns a new CartPromotionStep.
 func NewCartPromotionStep(
 	promotions promotion.PromotionRepository,
 	coupons promotion.CouponRepository,
+	evaluators *promotion.EvaluatorRegistry,
 ) *CartPromotionStep {
 	return &CartPromotionStep{
 		promotions: promotions,
 		coupons:    coupons,
+		evaluators: evaluators,
 	}
 }
 
@@ -65,19 +68,23 @@ func (s *CartPromotionStep) Apply(ctx context.Context, pctx *domain.PricingConte
 			}
 		}
 
-		cond, err := decodeCartCondition(p.Conditions)
+		cond, err := decodeCartCondition(p.Conditions, s.evaluators)
 		if err != nil {
 			return fmt.Errorf("cart promotions: %q: conditions: %w", p.Name, err)
 		}
-		if !cond.matches(subtotal) {
+		ok, err := cond.matches(ctx, subtotal, s.evaluators)
+		if err != nil {
+			return fmt.Errorf("cart promotions: %q: condition: %w", p.Name, err)
+		}
+		if !ok {
 			continue
 		}
 
-		act, err := decodeCartAction(p.Actions)
+		act, err := decodeCartAction(p.Actions, s.evaluators)
 		if err != nil {
 			return fmt.Errorf("cart promotions: %q: actions: %w", p.Name, err)
 		}
-		discount, err := act.compute(subtotal, pctx.Currency)
+		discount, err := act.compute(ctx, subtotal, pctx.Currency, s.evaluators)
 		if err != nil {
 			return fmt.Errorf("cart promotions: %q: compute: %w", p.Name, err)
 		}
@@ -96,11 +103,13 @@ func (s *CartPromotionStep) Apply(ctx context.Context, pctx *domain.PricingConte
 }
 
 type cartCondition struct {
-	typ   string
-	value int
+	typ       string
+	value     int
+	raw       []byte
+	usePlugin bool
 }
 
-func decodeCartCondition(data []byte) (cartCondition, error) {
+func decodeCartCondition(data []byte, reg *promotion.EvaluatorRegistry) (cartCondition, error) {
 	if len(data) == 0 || string(data) == "null" {
 		return cartCondition{}, fmt.Errorf("condition config is required")
 	}
@@ -115,16 +124,22 @@ func decodeCartCondition(data []byte) (cartCondition, error) {
 		}
 		return cartCondition{typ: cfg.Type, value: cfg.Value}, nil
 	default:
+		if reg != nil && reg.HasCartCondition(cfg.Type) {
+			return cartCondition{typ: cfg.Type, raw: append([]byte(nil), data...), usePlugin: true}, nil
+		}
 		return cartCondition{}, fmt.Errorf("unknown cart condition type: %q", cfg.Type)
 	}
 }
 
-func (c cartCondition) matches(subtotal shared.Money) bool {
+func (c cartCondition) matches(ctx context.Context, subtotal shared.Money, reg *promotion.EvaluatorRegistry) (bool, error) {
+	if c.usePlugin {
+		return reg.EvalCartCondition(ctx, c.typ, c.raw, subtotal)
+	}
 	switch c.typ {
 	case "min_cart_total":
-		return subtotal.Amount() >= int64(c.value)
+		return subtotal.Amount() >= int64(c.value), nil
 	default:
-		return false
+		return false, nil
 	}
 }
 
@@ -132,9 +147,11 @@ type cartAction struct {
 	typ        string
 	percentage int
 	amount     int64
+	raw        []byte
+	usePlugin  bool
 }
 
-func decodeCartAction(data []byte) (cartAction, error) {
+func decodeCartAction(data []byte, reg *promotion.EvaluatorRegistry) (cartAction, error) {
 	if len(data) == 0 || string(data) == "null" {
 		return cartAction{}, fmt.Errorf("action config is required")
 	}
@@ -154,11 +171,17 @@ func decodeCartAction(data []byte) (cartAction, error) {
 		}
 		return cartAction{typ: cfg.Type, amount: cfg.Amount}, nil
 	default:
+		if reg != nil && reg.HasCartAction(cfg.Type) {
+			return cartAction{typ: cfg.Type, raw: append([]byte(nil), data...), usePlugin: true}, nil
+		}
 		return cartAction{}, fmt.Errorf("unknown cart action type: %q", cfg.Type)
 	}
 }
 
-func (a cartAction) compute(subtotal shared.Money, currency string) (shared.Money, error) {
+func (a cartAction) compute(ctx context.Context, subtotal shared.Money, currency string, reg *promotion.EvaluatorRegistry) (shared.Money, error) {
+	if a.usePlugin {
+		return reg.EvalCartAction(ctx, a.typ, a.raw, subtotal, currency)
+	}
 	switch a.typ {
 	case "percentage":
 		raw := subtotal.Amount() * int64(a.percentage) / 100

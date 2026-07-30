@@ -8,7 +8,7 @@
 | PR-859 | A | done | [Shipping rate provider port](PR-859.md) |
 | PR-860 | A | done | [Mail sender port](PR-860.md) |
 | PR-861 | A | done | [Reference mail sender plugin](PR-861.md) |
-| PR-862 | A | planned | Promotion rule evaluator port |
+| PR-862 | A | done | [Promotion rule evaluator port](PR-862.md) |
 | PR-863 | A | done | [Reference checkout plugin](PR-863.md) |
 | PR-864 | A | planned | Admin idempotency UI |
 | PR-865 | A | done | [Plugin depends_on](PR-865.md) |

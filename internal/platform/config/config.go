@@ -342,6 +342,7 @@ type PluginsConfig struct {
 	CartDemo   CartDemoPluginConfig   `yaml:"cartdemo"`
 	TaxDemo    TaxDemoPluginConfig    `yaml:"taxdemo"`
 	MailDemo   MailDemoPluginConfig   `yaml:"maildemo"`
+	PromoDemo  PromoDemoPluginConfig  `yaml:"promodemo"`
 	ImportDemo        ImportDemoPluginConfig        `yaml:"importdemo"`
 	ExportDemo        ExportDemoPluginConfig        `yaml:"exportdemo"`
 	CheckoutDemo      CheckoutDemoPluginConfig      `yaml:"checkoutdemo"`
@@ -384,6 +385,11 @@ type TaxDemoPluginConfig struct {
 type MailDemoPluginConfig struct {
 	Enabled       bool   `yaml:"enabled"`
 	SubjectPrefix string `yaml:"subject_prefix"`
+}
+
+// PromoDemoPluginConfig toggles the promotion rule evaluator reference plugin in plugins/promodemo.
+type PromoDemoPluginConfig struct {
+	Enabled bool `yaml:"enabled"`
 }
 
 // ImportDemoPluginConfig toggles the CSV import remap reference plugin in plugins/importdemo.
@@ -886,6 +892,9 @@ func applyEnv(cfg *Config) {
 	if v := os.Getenv("SHOPANDA_PLUGINS_MAILDEMO_SUBJECT_PREFIX"); v != "" {
 		cfg.Plugins.MailDemo.SubjectPrefix = v
 	}
+	if v := os.Getenv("SHOPANDA_PLUGINS_PROMODEMO_ENABLED"); v != "" {
+		cfg.Plugins.PromoDemo.Enabled = v == "true" || v == "1"
+	}
 	if v := os.Getenv("SHOPANDA_PLUGINS_IMPORTDEMO_ENABLED"); v != "" {
 		cfg.Plugins.ImportDemo.Enabled = v == "true" || v == "1"
 	}
@@ -1069,6 +1078,7 @@ func flatten(cfg *Config) map[string]string {
 	m["plugins.taxdemo.enabled"] = strconv.FormatBool(cfg.Plugins.TaxDemo.Enabled)
 	m["plugins.maildemo.enabled"] = strconv.FormatBool(cfg.Plugins.MailDemo.Enabled)
 	m["plugins.maildemo.subject_prefix"] = cfg.Plugins.MailDemo.SubjectPrefix
+	m["plugins.promodemo.enabled"] = strconv.FormatBool(cfg.Plugins.PromoDemo.Enabled)
 	m["plugins.taxdemo.flat_rate_bps"] = strconv.Itoa(cfg.Plugins.TaxDemo.FlatRateBPS)
 	m["plugins.importdemo.enabled"] = strconv.FormatBool(cfg.Plugins.ImportDemo.Enabled)
 	m["plugins.exportdemo.enabled"] = strconv.FormatBool(cfg.Plugins.ExportDemo.Enabled)

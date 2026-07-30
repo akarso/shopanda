@@ -21,7 +21,7 @@ func TestCartPromotionStep_MinCartTotalFixed(t *testing.T) {
 			map[string]interface{}{"type": "min_cart_total", "value": 5000},
 			map[string]interface{}{"type": "fixed", "amount": 500}),
 	}}
-	step := appPricing.NewCartPromotionStep(promos, &stubCouponRepo{})
+	step := appPricing.NewCartPromotionStep(promos, &stubCouponRepo{}, nil)
 	pctx := makePricingCtx(t, "USD", makeItem(t, "v1", 2, 3000, "USD"))
 
 	if err := step.Apply(context.Background(), pctx); err != nil {
@@ -41,7 +41,7 @@ func TestCartPromotionStep_MinCartTotalNotMet(t *testing.T) {
 			map[string]interface{}{"type": "min_cart_total", "value": 10000},
 			map[string]interface{}{"type": "fixed", "amount": 500}),
 	}}
-	step := appPricing.NewCartPromotionStep(promos, &stubCouponRepo{})
+	step := appPricing.NewCartPromotionStep(promos, &stubCouponRepo{}, nil)
 	pctx := makePricingCtx(t, "USD", makeItem(t, "v1", 1, 3000, "USD"))
 
 	if err := step.Apply(context.Background(), pctx); err != nil {
@@ -58,8 +58,8 @@ func TestCartPromotionStep_FullPipeline(t *testing.T) {
 			map[string]interface{}{"type": "min_cart_total", "value": 5000},
 			map[string]interface{}{"type": "percentage", "percentage": 10}),
 	}}
-	catalog := appPricing.NewCatalogPromotionStep(&stubPromotionRepo{}, &stubCouponRepo{})
-	cart := appPricing.NewCartPromotionStep(promos, &stubCouponRepo{})
+	catalog := appPricing.NewCatalogPromotionStep(&stubPromotionRepo{}, &stubCouponRepo{}, nil)
+	cart := appPricing.NewCartPromotionStep(promos, &stubCouponRepo{}, nil)
 	finalize := domain.NewFinalizeStep()
 	pipeline := domain.NewPipeline(catalog, cart, finalize)
 
@@ -86,8 +86,8 @@ func TestCartPromotionStep_UsesCatalogDiscountedSubtotal(t *testing.T) {
 			map[string]interface{}{"type": "min_cart_total", "value": 5400},
 			map[string]interface{}{"type": "fixed", "amount": 500}),
 	}}
-	catalog := appPricing.NewCatalogPromotionStep(catalogPromos, &stubCouponRepo{})
-	cart := appPricing.NewCartPromotionStep(cartPromos, &stubCouponRepo{})
+	catalog := appPricing.NewCatalogPromotionStep(catalogPromos, &stubCouponRepo{}, nil)
+	cart := appPricing.NewCartPromotionStep(cartPromos, &stubCouponRepo{}, nil)
 
 	pctx := makePricingCtx(t, "USD", makeItem(t, "v1", 2, 3000, "USD"))
 	if err := catalog.Apply(context.Background(), pctx); err != nil {
