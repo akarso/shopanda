@@ -1,28 +1,23 @@
 package http
 
 import (
-	"context"
 	"encoding/json"
 	"net/http"
 	"strings"
 	"time"
+	"unicode/utf8"
 
-	"github.com/akarso/shopanda/internal/infrastructure/postgres"
+	domainintegration "github.com/akarso/shopanda/internal/domain/integration"
 	"github.com/akarso/shopanda/internal/platform/apperror"
 )
 
-type integrationIdempotencyAdminRepo interface {
-	List(ctx context.Context, filter postgres.IntegrationIdempotencyListFilter) ([]postgres.IntegrationIdempotencyAdminRecord, error)
-	Get(ctx context.Context, pluginSlug, key string) (*postgres.IntegrationIdempotencyAdminRecord, error)
-}
-
 // IntegrationIdempotencyAdminHandler serves read-only inbound integration idempotency admin APIs.
 type IntegrationIdempotencyAdminHandler struct {
-	repo integrationIdempotencyAdminRepo
+	repo domainintegration.IdempotencyAdminRepository
 }
 
 // NewIntegrationIdempotencyAdminHandler creates an IntegrationIdempotencyAdminHandler.
-func NewIntegrationIdempotencyAdminHandler(repo integrationIdempotencyAdminRepo) *IntegrationIdempotencyAdminHandler {
+func NewIntegrationIdempotencyAdminHandler(repo domainintegration.IdempotencyAdminRepository) *IntegrationIdempotencyAdminHandler {
 	if repo == nil {
 		panic("http: integration idempotency repository must not be nil")
 	}
@@ -57,7 +52,7 @@ func (h *IntegrationIdempotencyAdminHandler) List() http.HandlerFunc {
 			return
 		}
 
-		items, err := h.repo.List(r.Context(), postgres.IntegrationIdempotencyListFilter{
+		items, err := h.repo.List(r.Context(), domainintegration.IdempotencyListFilter{
 			PluginSlug: strings.TrimSpace(r.URL.Query().Get("plugin")),
 			Completed:  completed,
 			Offset:     offset,
@@ -139,7 +134,7 @@ func (h *IntegrationIdempotencyAdminHandler) Replay() http.HandlerFunc {
 	}
 }
 
-func toIntegrationIdempotencyResp(item postgres.IntegrationIdempotencyAdminRecord, includeBody bool) integrationIdempotencyResp {
+func toIntegrationIdempotencyResp(item domainintegration.IdempotencyAdminRecord, includeBody bool) integrationIdempotencyResp {
 	resp := integrationIdempotencyResp{
 		PluginSlug:     item.PluginSlug,
 		IdempotencyKey: item.IdempotencyKey,
@@ -165,7 +160,13 @@ func rawJSONOrString(body []byte) json.RawMessage {
 	if json.Valid(body) {
 		return json.RawMessage(body)
 	}
-	encoded, _ := json.Marshal(string(body))
+	if !utf8.Valid(body) {
+		return json.RawMessage(`"<non-utf8 body>"`)
+	}
+	encoded, err := json.Marshal(string(body))
+	if err != nil {
+		return json.RawMessage(`"<non-utf8 body>"`)
+	}
 	return encoded
 }
 

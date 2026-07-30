@@ -5,6 +5,7 @@ import (
 	"testing"
 	"time"
 
+	domainintegration "github.com/akarso/shopanda/internal/domain/integration"
 	"github.com/akarso/shopanda/internal/infrastructure/postgres"
 	"github.com/akarso/shopanda/pkg/integrationhttp"
 )
@@ -33,7 +34,7 @@ func TestIntegrationIdempotencyRepo_AdminListAndGet(t *testing.T) {
 	}
 
 	completed := true
-	items, err := repo.List(ctx, postgres.IntegrationIdempotencyListFilter{
+	items, err := repo.List(ctx, domainintegration.IdempotencyListFilter{
 		PluginSlug: "integrationdemo",
 		Completed:  &completed,
 		Offset:     0,
@@ -59,4 +60,8 @@ func TestIntegrationIdempotencyRepo_AdminListAndGet(t *testing.T) {
 
 func TestIntegrationIdempotencyRepo_ImplementsStore(t *testing.T) {
 	var _ integrationhttp.IdempotencyStore = (*postgres.IntegrationIdempotencyRepo)(nil)
+}
+
+func TestIntegrationIdempotencyRepo_ImplementsAdminRepository(t *testing.T) {
+	var _ domainintegration.IdempotencyAdminRepository = (*postgres.IntegrationIdempotencyRepo)(nil)
 }

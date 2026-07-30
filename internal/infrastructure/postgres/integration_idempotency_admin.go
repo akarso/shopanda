@@ -5,33 +5,14 @@ import (
 	"database/sql"
 	"fmt"
 	"strings"
-	"time"
+
+	domainintegration "github.com/akarso/shopanda/internal/domain/integration"
 )
 
-// IntegrationIdempotencyAdminRecord is a read model for admin list/detail APIs.
-type IntegrationIdempotencyAdminRecord struct {
-	PluginSlug     string
-	IdempotencyKey string
-	Method         string
-	Path           string
-	RequestHash    string
-	StatusCode     int
-	ResponseBody   []byte
-	Completed      bool
-	CreatedAt      time.Time
-	ExpiresAt      time.Time
-}
+var _ domainintegration.IdempotencyAdminRepository = (*IntegrationIdempotencyRepo)(nil)
 
-// IntegrationIdempotencyListFilter selects inbound idempotency rows for admin listing.
-type IntegrationIdempotencyListFilter struct {
-	PluginSlug string
-	Completed  *bool
-	Offset     int
-	Limit      int
-}
-
-// List returns idempotency records ordered by newest first.
-func (r *IntegrationIdempotencyRepo) List(ctx context.Context, filter IntegrationIdempotencyListFilter) ([]IntegrationIdempotencyAdminRecord, error) {
+// List returns idempotency records ordered by newest first (without response bodies).
+func (r *IntegrationIdempotencyRepo) List(ctx context.Context, filter domainintegration.IdempotencyListFilter) ([]domainintegration.IdempotencyAdminRecord, error) {
 	if r == nil || r.db == nil {
 		return nil, fmt.Errorf("integration idempotency: repository not configured")
 	}
@@ -44,7 +25,7 @@ func (r *IntegrationIdempotencyRepo) List(ctx context.Context, filter Integratio
 
 	plugin := strings.TrimSpace(filter.PluginSlug)
 	args := []interface{}{plugin, filter.Completed, filter.Offset, filter.Limit}
-	const q = `SELECT plugin_slug, idempotency_key, method, path, request_hash, status_code, response_body, completed, created_at, expires_at
+	const q = `SELECT plugin_slug, idempotency_key, method, path, request_hash, status_code, completed, created_at, expires_at
 		FROM integration_idempotency
 		WHERE ($1 = '' OR plugin_slug = $1)
 		  AND ($2::boolean IS NULL OR completed = $2)
@@ -57,9 +38,9 @@ func (r *IntegrationIdempotencyRepo) List(ctx context.Context, filter Integratio
 	}
 	defer rows.Close()
 
-	out := make([]IntegrationIdempotencyAdminRecord, 0, filter.Limit)
+	out := make([]domainintegration.IdempotencyAdminRecord, 0, filter.Limit)
 	for rows.Next() {
-		item, err := scanIntegrationIdempotencyAdminRecord(rows)
+		item, err := scanIntegrationIdempotencyAdminListRecord(rows)
 		if err != nil {
 			return nil, err
 		}
@@ -71,8 +52,8 @@ func (r *IntegrationIdempotencyRepo) List(ctx context.Context, filter Integratio
 	return out, nil
 }
 
-// Get returns one idempotency record by plugin slug and key.
-func (r *IntegrationIdempotencyRepo) Get(ctx context.Context, pluginSlug, key string) (*IntegrationIdempotencyAdminRecord, error) {
+// Get returns one idempotency record by plugin slug and key (includes stored response body).
+func (r *IntegrationIdempotencyRepo) Get(ctx context.Context, pluginSlug, key string) (*domainintegration.IdempotencyAdminRecord, error) {
 	if r == nil || r.db == nil {
 		return nil, fmt.Errorf("integration idempotency: repository not configured")
 	}
@@ -86,7 +67,7 @@ func (r *IntegrationIdempotencyRepo) Get(ctx context.Context, pluginSlug, key st
 		FROM integration_idempotency
 		WHERE plugin_slug = $1 AND idempotency_key = $2`
 	row := r.db.QueryRowContext(ctx, q, pluginSlug, key)
-	item, err := scanIntegrationIdempotencyAdminRecord(row)
+	item, err := scanIntegrationIdempotencyAdminDetailRecord(row)
 	if err == sql.ErrNoRows {
 		return nil, nil
 	}
@@ -100,8 +81,27 @@ type idempotencyAdminScanner interface {
 	Scan(dest ...interface{}) error
 }
 
-func scanIntegrationIdempotencyAdminRecord(row idempotencyAdminScanner) (IntegrationIdempotencyAdminRecord, error) {
-	var item IntegrationIdempotencyAdminRecord
+func scanIntegrationIdempotencyAdminListRecord(row idempotencyAdminScanner) (domainintegration.IdempotencyAdminRecord, error) {
+	var item domainintegration.IdempotencyAdminRecord
+	err := row.Scan(
+		&item.PluginSlug,
+		&item.IdempotencyKey,
+		&item.Method,
+		&item.Path,
+		&item.RequestHash,
+		&item.StatusCode,
+		&item.Completed,
+		&item.CreatedAt,
+		&item.ExpiresAt,
+	)
+	if err != nil {
+		return domainintegration.IdempotencyAdminRecord{}, err
+	}
+	return item, nil
+}
+
+func scanIntegrationIdempotencyAdminDetailRecord(row idempotencyAdminScanner) (domainintegration.IdempotencyAdminRecord, error) {
+	var item domainintegration.IdempotencyAdminRecord
 	var body []byte
 	err := row.Scan(
 		&item.PluginSlug,
@@ -116,7 +116,7 @@ func scanIntegrationIdempotencyAdminRecord(row idempotencyAdminScanner) (Integra
 		&item.ExpiresAt,
 	)
 	if err != nil {
-		return IntegrationIdempotencyAdminRecord{}, err
+		return domainintegration.IdempotencyAdminRecord{}, err
 	}
 	item.ResponseBody = append([]byte(nil), body...)
 	return item, nil

@@ -5,26 +5,27 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
+	domainintegration "github.com/akarso/shopanda/internal/domain/integration"
 	"github.com/akarso/shopanda/internal/domain/rbac"
-	"github.com/akarso/shopanda/internal/infrastructure/postgres"
 	shophttp "github.com/akarso/shopanda/internal/interfaces/http"
 	"github.com/akarso/shopanda/internal/platform/auth/testhelper"
 )
 
 type mockIntegrationIdempotencyRepo struct {
-	records []postgres.IntegrationIdempotencyAdminRecord
-	last    postgres.IntegrationIdempotencyListFilter
+	records []domainintegration.IdempotencyAdminRecord
+	last    domainintegration.IdempotencyListFilter
 }
 
-func (m *mockIntegrationIdempotencyRepo) List(_ context.Context, filter postgres.IntegrationIdempotencyListFilter) ([]postgres.IntegrationIdempotencyAdminRecord, error) {
+func (m *mockIntegrationIdempotencyRepo) List(_ context.Context, filter domainintegration.IdempotencyListFilter) ([]domainintegration.IdempotencyAdminRecord, error) {
 	m.last = filter
-	return append([]postgres.IntegrationIdempotencyAdminRecord(nil), m.records...), nil
+	return append([]domainintegration.IdempotencyAdminRecord(nil), m.records...), nil
 }
 
-func (m *mockIntegrationIdempotencyRepo) Get(_ context.Context, pluginSlug, key string) (*postgres.IntegrationIdempotencyAdminRecord, error) {
+func (m *mockIntegrationIdempotencyRepo) Get(_ context.Context, pluginSlug, key string) (*domainintegration.IdempotencyAdminRecord, error) {
 	for i := range m.records {
 		if m.records[i].PluginSlug == pluginSlug && m.records[i].IdempotencyKey == key {
 			copy := m.records[i]
@@ -36,14 +37,13 @@ func (m *mockIntegrationIdempotencyRepo) Get(_ context.Context, pluginSlug, key 
 
 func TestIntegrationIdempotencyAdmin_List(t *testing.T) {
 	now := time.Date(2026, 7, 1, 12, 0, 0, 0, time.UTC)
-	repo := &mockIntegrationIdempotencyRepo{records: []postgres.IntegrationIdempotencyAdminRecord{{
+	repo := &mockIntegrationIdempotencyRepo{records: []domainintegration.IdempotencyAdminRecord{{
 		PluginSlug:     "integrationdemo",
 		IdempotencyKey: "key-1",
 		Method:         "POST",
 		Path:           "/api/v1/integrations/integrationdemo/orders",
 		RequestHash:    "abc",
 		StatusCode:     200,
-		ResponseBody:   []byte(`{"ok":true}`),
 		Completed:      true,
 		CreatedAt:      now,
 		ExpiresAt:      now.Add(24 * time.Hour),
@@ -75,10 +75,13 @@ func TestIntegrationIdempotencyAdmin_List(t *testing.T) {
 	if len(envelope.Data.Records) != 1 {
 		t.Fatalf("records len = %d", len(envelope.Data.Records))
 	}
+	if _, ok := envelope.Data.Records[0]["response_body"]; ok {
+		t.Fatalf("list response should omit response_body, got %+v", envelope.Data.Records[0])
+	}
 }
 
 func TestIntegrationIdempotencyAdmin_ReplayRequiresCompleted(t *testing.T) {
-	repo := &mockIntegrationIdempotencyRepo{records: []postgres.IntegrationIdempotencyAdminRecord{{
+	repo := &mockIntegrationIdempotencyRepo{records: []domainintegration.IdempotencyAdminRecord{{
 		PluginSlug:     "integrationdemo",
 		IdempotencyKey: "key-1",
 		Completed:      false,
@@ -100,7 +103,7 @@ func TestIntegrationIdempotencyAdmin_ReplayRequiresCompleted(t *testing.T) {
 }
 
 func TestIntegrationIdempotencyAdmin_ReplayReturnsStoredResponse(t *testing.T) {
-	repo := &mockIntegrationIdempotencyRepo{records: []postgres.IntegrationIdempotencyAdminRecord{{
+	repo := &mockIntegrationIdempotencyRepo{records: []domainintegration.IdempotencyAdminRecord{{
 		PluginSlug:     "integrationdemo",
 		IdempotencyKey: "key-1",
 		StatusCode:     201,
@@ -133,5 +136,32 @@ func TestIntegrationIdempotencyAdmin_ReplayReturnsStoredResponse(t *testing.T) {
 	}
 	if !envelope.Data.Replayed || envelope.Data.StatusCode != 201 {
 		t.Fatalf("replay payload = %+v", envelope.Data)
+	}
+}
+
+func TestIntegrationIdempotencyAdmin_ReplayNonUTF8Body(t *testing.T) {
+	repo := &mockIntegrationIdempotencyRepo{records: []domainintegration.IdempotencyAdminRecord{{
+		PluginSlug:     "integrationdemo",
+		IdempotencyKey: "key-1",
+		StatusCode:     200,
+		ResponseBody:   []byte{0xff, 0xfe, 0xfd},
+		Completed:      true,
+	}}}
+	h := shophttp.NewIntegrationIdempotencyAdminHandler(repo)
+	mux := http.NewServeMux()
+	mux.Handle("POST /api/v1/admin/integrations/idempotency/{plugin}/{key}/replay", shophttp.RequirePermission(rbac.SettingsRead)(h.Replay()))
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/admin/integrations/idempotency/integrationdemo/key-1/replay", nil)
+	req.SetPathValue("plugin", "integrationdemo")
+	req.SetPathValue("key", "key-1")
+	req = testhelper.AdminRequest(req, "admin-1")
+	mux.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d body=%s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "non-utf8 body") {
+		t.Fatalf("body = %s", rec.Body.String())
 	}
 }
