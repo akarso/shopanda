@@ -1,0 +1,36 @@
+---
+description: Mandatory documentation updates when finishing a PR
+alwaysApply: true
+---
+
+# PR completion — documentation checklist
+
+When implementing or finishing a PR, **docs are part of the deliverable**. Before marking work done:
+
+## Always (every PR)
+
+1. Write/update **`docs/phase-<n>-<name>/prs/PR-<id>.md`** — status `done`, summary, scope, out of scope, validation commands.
+2. Update **`docs/phase-<n>-<name>/prs/README.md`** — row status + link.
+3. Update **`docs/phase-<n>-<name>/ROADMAP.md`** — PR status / index table if applicable.
+
+## When applicable (do not skip silently — note N/A in PR spec)
+
+| Change type | Update |
+| --- | --- |
+| New/changed **component, port, integration** | `docs/diagrams/c4-*.md` (context → container → component → code, as needed) |
+| New **plugin port** or reference plugin | `PLUGINS.md`, `docs/guides/DEVELOPER.md`, `docs/guides/PLUGIN_COMPOSITION.md`, `plugins/<name>/README.md` |
+| New **config / env vars** | `configs/config.example.yaml`, `docs/guides/DEPLOYMENT.md`, `RUNBOOK.md` |
+| **Operator / runtime** behavior | `RUNBOOK.md` |
+| New **CLI** or major product surface | root `README.md` |
+| Track or phase milestone | phase `README.md` |
+
+## Quality bar
+
+- Validation section lists exact `go test` / `go build` commands that were run.
+- If an artifact needs no change, write **“No change — …”** in the PR spec (e.g. “No C4 change — no new container or component”).
+- Match existing doc tone: tables, short bullets, runnable commands.
+- Do **not** defer doc updates to a follow-up PR unless the user explicitly asks.
+
+## Example (plugin port PR)
+
+PR-862-style: PR spec + phase index/roadmap + `plugins/promodemo/README.md` + config example + `register_plugins` note in PLUGINS.md + C4 component note for `EvaluatorRegistry` / pricing pipeline if architecture changed.
