@@ -80,7 +80,7 @@ type App struct {
 	exportRegistryMu sync.Mutex
 
 	promotionEvaluators   *promotion.EvaluatorRegistry
-	promotionEvaluatorsMu sync.Mutex
+	promotionEvaluatorsMu sync.RWMutex
 
 	integrationIdempotency   integrationhttp.IdempotencyStore
 	integrationIdempotencyMu sync.Mutex

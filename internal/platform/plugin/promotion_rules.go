@@ -28,19 +28,22 @@ func (a *App) SetPromotionEvaluatorRegistry(registry *promotion.EvaluatorRegistr
 
 // PromotionEvaluatorRegistry returns the shared promotion evaluator registry.
 func (a *App) PromotionEvaluatorRegistry() *promotion.EvaluatorRegistry {
-	a.promotionEvaluatorsMu.Lock()
-	defer a.promotionEvaluatorsMu.Unlock()
+	a.promotionEvaluatorsMu.RLock()
+	defer a.promotionEvaluatorsMu.RUnlock()
 	return a.promotionEvaluators
 }
 
 // PromotionRules returns plugin-facing promotion rule registration scoped to registrant.
+// Panics when SetPromotionEvaluatorRegistry was not called before plugin Init — the registry
+// must be the same instance passed to catalog/cart promotion pricing steps.
 func (a *App) PromotionRules(registrant string) *PromotionRules {
-	a.promotionEvaluatorsMu.Lock()
-	defer a.promotionEvaluatorsMu.Unlock()
-	if a.promotionEvaluators == nil {
-		a.promotionEvaluators = promotion.NewEvaluatorRegistry()
+	a.promotionEvaluatorsMu.RLock()
+	reg := a.promotionEvaluators
+	a.promotionEvaluatorsMu.RUnlock()
+	if reg == nil {
+		panic("plugin: promotion evaluator registry not configured; call SetPromotionEvaluatorRegistry before plugin Init")
 	}
-	return &PromotionRules{registry: a.promotionEvaluators, registrant: registrant}
+	return &PromotionRules{registry: reg, registrant: registrant}
 }
 
 // RegisterCatalogCondition adds a catalog condition evaluator for ruleType.

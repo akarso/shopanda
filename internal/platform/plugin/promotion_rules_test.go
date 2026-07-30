@@ -80,3 +80,23 @@ func TestApp_PromotionRules_RejectsNegativeDiscount(t *testing.T) {
 		t.Fatal("expected negative discount error")
 	}
 }
+
+func TestApp_SetPromotionEvaluatorRegistry_NilPanics(t *testing.T) {
+	defer func() {
+		if r := recover(); r == nil {
+			t.Fatal("expected panic for nil promotion evaluator registry")
+		}
+	}()
+	app := &plugin.App{}
+	app.SetPromotionEvaluatorRegistry(nil)
+}
+
+func TestApp_PromotionRules_RequiresSetRegistry(t *testing.T) {
+	defer func() {
+		if r := recover(); r == nil {
+			t.Fatal("expected panic when promotion evaluator registry not configured")
+		}
+	}()
+	app := &plugin.App{Logger: logger.NewWithWriter(io.Discard, "error")}
+	app.PromotionRules("acme.demo")
+}

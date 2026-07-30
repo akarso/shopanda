@@ -181,6 +181,8 @@ queue:
 #     fee_minor_units: 100
 #   slotsdemo:
 #     enabled: false
+#   promodemo:
+#     enabled: false   # custom catalog promotion rule types (min_line_total, line_bonus_percent)
 
 # --- B2B module (commercial) --------------------------------------------------
 # Requires a valid license key. See docs/COMMERCIAL.md and plugins/b2b/README.md.

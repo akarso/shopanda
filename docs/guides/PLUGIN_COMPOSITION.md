@@ -108,6 +108,7 @@ Use this table before writing code. Full design rationale: [Integrator Platform 
 | Task | Mechanism | Ordering | Status |
 | --- | --- | --- | --- |
 | Custom fee / cart price rule | `RegisterPricingStep` | `before:` / `after:` / `replace:` anchors (PR-810, PR-852) | Shipped |
+| Custom promotion rule JSON type | `PromotionRules().RegisterCatalogCondition/Action` (+ cart) | Evaluated in core catalog/cart promotion steps; bootstrap must wire shared registry (PR-862) | Shipped |
 | Block or validate cart mutation | Cart hook chain (`cart.add_item.before`, `cart.validate`, …) | Lower priority runs first | Shipped |
 | Custom checkout validation | `RegisterCheckoutStep` | `start` / `end` / `before:` / `after:` anchors (PR-854) | Shipped |
 | ERP CSV column remap before DB write | Import row hook (`import.product.row`, …) | Lower priority runs first | Shipped (PR-820–823) |
