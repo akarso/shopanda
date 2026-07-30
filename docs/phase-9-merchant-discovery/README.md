@@ -19,7 +19,7 @@ Phase 8 (integrator platform) shipped PR-800–855. Phase 9 clears the **unsched
 | Track | PR range | Delivers |
 | --- | --- | --- |
 | **A** | PR-856–865 | Export hooks, shipping/mail/promotion ports, checkout demo, idempotency admin UI, `depends_on` |
-| **B** | PR-866–867 | Extension field admin grid, variant scopes (Phase 7 carryover) |
+| **B** | PR-866–867 | Extension field admin grid + variant scopes (Phase 7 carryover) — **complete** |
 | **C — PRIORITY** | PR-900–903 | Layered navigation, advanced search, attribute properties, installer UX |
 
 Track C starts **after** tracks A and B are complete. Items in track C are **important** — do not defer indefinitely.

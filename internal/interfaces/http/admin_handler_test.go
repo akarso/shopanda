@@ -625,6 +625,22 @@ func TestAdminHandler_StaticJS(t *testing.T) {
 			t.Fatalf("expected product extensions wiring %q in JS", expected)
 		}
 	}
+	expectedVariantExtensionsWiring := []string{
+		"bindVariantExtensions",
+		"loadVariantExtensionsForm",
+		"variant-extensions-toggle-btn",
+		"variant-extensions-form",
+		"target_type=variant",
+		"/admin/extensions/values/variant/",
+		"Failed to load variant extension values.",
+		"Failed to save variant extensions.",
+		"Variant extensions saved.",
+	}
+	for _, expected := range expectedVariantExtensionsWiring {
+		if !strings.Contains(normalizedBody, expected) {
+			t.Fatalf("expected variant extensions wiring %q in JS", expected)
+		}
+	}
 	expectedExtensionFieldDefinitionWiring := []string{
 		"renderExtensionFieldsGrid",
 		"renderExtensionFieldForm",
