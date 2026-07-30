@@ -11,6 +11,7 @@ import (
 	slotsapp "github.com/akarso/shopanda/internal/application/slots"
 	"github.com/akarso/shopanda/internal/domain/identity"
 	"github.com/akarso/shopanda/internal/domain/payment"
+	"github.com/akarso/shopanda/internal/domain/promotion"
 	"github.com/akarso/shopanda/internal/domain/rbac"
 	"github.com/akarso/shopanda/internal/domain/shipping"
 	"github.com/akarso/shopanda/internal/platform/cli"
@@ -77,6 +78,9 @@ type App struct {
 
 	exportRegistry   *exportctxapp.Registry
 	exportRegistryMu sync.Mutex
+
+	promotionEvaluators   *promotion.EvaluatorRegistry
+	promotionEvaluatorsMu sync.RWMutex
 
 	integrationIdempotency   integrationhttp.IdempotencyStore
 	integrationIdempotencyMu sync.Mutex

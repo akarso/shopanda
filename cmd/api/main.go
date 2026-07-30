@@ -59,6 +59,7 @@ import (
 	"github.com/akarso/shopanda/internal/domain/order"
 	"github.com/akarso/shopanda/internal/domain/payment"
 	"github.com/akarso/shopanda/internal/domain/pricing"
+	"github.com/akarso/shopanda/internal/domain/promotion"
 	"github.com/akarso/shopanda/internal/domain/rbac"
 	"github.com/akarso/shopanda/internal/domain/scheduler"
 	"github.com/akarso/shopanda/internal/domain/search"
@@ -316,6 +317,7 @@ func runServe(cfg *config.Config, log logger.Logger, embedScheduler bool) error 
 	hookRegistry := hooksApp.NewRegistry(log)
 	importRegistry := importctxApp.NewRegistry(log)
 	exportRegistry := exportctxApp.NewRegistry(log)
+	promotionEvaluators := promotion.NewEvaluatorRegistry()
 	slotRegistry := slotsApp.NewRegistry(log)
 	if cfg.Frontend.Enabled && cfg.Frontend.ThemePath != "" {
 		if anchors, anchorErr := themeapp.DeclaredAnchorsFromDir(cfg.Frontend.ThemePath); anchorErr != nil {
@@ -351,6 +353,7 @@ func runServe(cfg *config.Config, log logger.Logger, embedScheduler bool) error 
 	pluginApp.SetHookRegistry(hookRegistry)
 	pluginApp.SetImportRegistry(importRegistry)
 	pluginApp.SetExportRegistry(exportRegistry)
+	pluginApp.SetPromotionEvaluatorRegistry(promotionEvaluators)
 	pluginApp.SetSlotRegistry(slotRegistry)
 	pluginApp.SetAssetRegistry(assetRegistry)
 	integrationIdempotencyRepo, err := postgres.NewIntegrationIdempotencyRepo(conn)
@@ -637,8 +640,8 @@ func runServe(cfg *config.Config, log logger.Logger, embedScheduler bool) error 
 	}
 	corePricingSteps := []pricing.PricingStep{
 		appPricing.NewBasePriceStep(priceRepo),
-		appPricing.NewCatalogPromotionStep(promotionRepo, couponRepo),
-		appPricing.NewCartPromotionStep(promotionRepo, couponRepo),
+		appPricing.NewCatalogPromotionStep(promotionRepo, couponRepo, promotionEvaluators),
+		appPricing.NewCartPromotionStep(promotionRepo, couponRepo, promotionEvaluators),
 		appPricing.NewTaxStep(taxCalculator),
 		pricing.NewFinalizeStep(),
 	}

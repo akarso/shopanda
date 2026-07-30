@@ -74,7 +74,7 @@ func TestEncodePromotionRules_AppliedByCatalogPromotionStep(t *testing.T) {
 		Actions:    actions,
 	}
 
-	step := appPricing.NewCatalogPromotionStep(&singlePromotionRepo{promo: p}, &noopCouponRepo{})
+	step := appPricing.NewCatalogPromotionStep(&singlePromotionRepo{promo: p}, &noopCouponRepo{}, nil)
 	up := shared.MustNewMoney(1000, "USD")
 	item, err := domain.NewPricingItem("v1", 2, up)
 	if err != nil {
@@ -190,7 +190,7 @@ func TestEncodePromotionRules_TieredAppliedByCatalogPromotionStep(t *testing.T) 
 		Conditions: conditions,
 		Actions:    actions,
 	}
-	step := appPricing.NewCatalogPromotionStep(&singlePromotionRepo{promo: p}, &noopCouponRepo{})
+	step := appPricing.NewCatalogPromotionStep(&singlePromotionRepo{promo: p}, &noopCouponRepo{}, nil)
 	up := shared.MustNewMoney(1000, "USD")
 	item, err := domain.NewPricingItem("v1", 5, up)
 	if err != nil {

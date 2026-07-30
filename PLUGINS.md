@@ -74,6 +74,9 @@ Available today through `plugin.App`:
 | **Public HTTP routes** | `RegisterPublicRoute` | Register public HTTP handlers (e.g. an alternative API surface); mounted by `main.go` after `InitAll` |
 | **UI slots** | `Slots(registrant).RegisterRenderer` | Inject HTML at named theme anchors (see below) |
 | **Asset manifest** | `Assets().RegisterManifest` | Route-gated CSS/JS in layout head/footer without theme forks |
+| **Promotion rule evaluators** | `PromotionRules(registrant).RegisterCatalogCondition/Action` (+ cart variants) | Custom JSON `"type"` values for catalog/cart promotions (PR-862) |
+
+**Bootstrap requirement (promotion rules):** `cmd/api/main.go` must call `SetPromotionEvaluatorRegistry` with the same registry instance passed to `NewCatalogPromotionStep` / `NewCartPromotionStep` **before** `InitAll`. Calling `PromotionRules()` without prior wiring panics at plugin init so misconfigured bootstraps fail loudly.
 
 Core plugins additionally expose providers on `plugin.App` during init (search engine, job queue, cache store, media storage, payment registry entries) which `main.go` resolves after `InitAll`.
 
@@ -199,6 +202,7 @@ Plugin settings (string, int, bool) can be registered with `RegisterConfig` and 
 - [Integrator Platform spec](docs/phase-8-integrator-platform/specs/INTEGRATOR_PLATFORM.md) — cart/pricing, CSV import hooks, ERP integration (Phase 8)
 - [Phase 8 Roadmap](docs/phase-8-integrator-platform/ROADMAP.md) — integrator platform PR plan
 - [Example external plugin](plugins/example/README.md) — pricing step, event listener, permission
+- [Promotion rule reference plugin](plugins/promodemo/README.md) — custom catalog promotion JSON rule types (PR-862)
 - [Commercial licensing](docs/COMMERCIAL.md) — OSS vs B2B module boundary
 - [B2B plugin scaffold](plugins/b2b/README.md)
 - [Dynamic plugin loading research](docs/phase-5-maturity/specs/DYNAMIC_PLUGIN_LOADING.md) — PR-544 verdict

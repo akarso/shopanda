@@ -131,14 +131,14 @@ func makeItem(t *testing.T, variantID string, qty int, unitPrice int64, currency
 // ── tests ───────────────────────────────────────────────────────────────
 
 func TestCatalogPromotionStep_Name(t *testing.T) {
-	step := appPricing.NewCatalogPromotionStep(&stubPromotionRepo{}, &stubCouponRepo{})
+	step := appPricing.NewCatalogPromotionStep(&stubPromotionRepo{}, &stubCouponRepo{}, nil)
 	if step.Name() != "catalog_promotions" {
 		t.Fatalf("expected name %q, got %q", "catalog_promotions", step.Name())
 	}
 }
 
 func TestCatalogPromotionStep_NoPromotions(t *testing.T) {
-	step := appPricing.NewCatalogPromotionStep(&stubPromotionRepo{}, &stubCouponRepo{})
+	step := appPricing.NewCatalogPromotionStep(&stubPromotionRepo{}, &stubCouponRepo{}, nil)
 	pctx := makePricingCtx(t, "USD", makeItem(t, "v1", 2, 1000, "USD"))
 
 	if err := step.Apply(context.Background(), pctx); err != nil {
@@ -155,7 +155,7 @@ func TestCatalogPromotionStep_PercentageDiscount(t *testing.T) {
 			map[string]string{"type": "always"},
 			map[string]interface{}{"type": "percentage", "percentage": 10}),
 	}}
-	step := appPricing.NewCatalogPromotionStep(promos, &stubCouponRepo{})
+	step := appPricing.NewCatalogPromotionStep(promos, &stubCouponRepo{}, nil)
 	pctx := makePricingCtx(t, "USD", makeItem(t, "v1", 2, 1000, "USD"))
 	// item total = 2 * 1000 = 2000; 10% of 2000 = 200
 
@@ -187,7 +187,7 @@ func TestCatalogPromotionStep_FixedDiscount(t *testing.T) {
 			map[string]string{"type": "always"},
 			map[string]interface{}{"type": "fixed", "amount": 200}),
 	}}
-	step := appPricing.NewCatalogPromotionStep(promos, &stubCouponRepo{})
+	step := appPricing.NewCatalogPromotionStep(promos, &stubCouponRepo{}, nil)
 	pctx := makePricingCtx(t, "USD", makeItem(t, "v1", 3, 1000, "USD"))
 	// item total = 3 * 1000 = 3000; fixed $2 per item * 3 = 600
 
@@ -209,7 +209,7 @@ func TestCatalogPromotionStep_FixedDiscount_CappedAtTotal(t *testing.T) {
 			map[string]string{"type": "always"},
 			map[string]interface{}{"type": "fixed", "amount": 5000}),
 	}}
-	step := appPricing.NewCatalogPromotionStep(promos, &stubCouponRepo{})
+	step := appPricing.NewCatalogPromotionStep(promos, &stubCouponRepo{}, nil)
 	pctx := makePricingCtx(t, "USD", makeItem(t, "v1", 1, 1000, "USD"))
 	// item total = 1000; fixed 5000 per item capped at 1000
 
@@ -231,7 +231,7 @@ func TestCatalogPromotionStep_MinQuantityCondition(t *testing.T) {
 			map[string]interface{}{"type": "min_quantity", "value": 3},
 			map[string]interface{}{"type": "percentage", "percentage": 10}),
 	}}
-	step := appPricing.NewCatalogPromotionStep(promos, &stubCouponRepo{})
+	step := appPricing.NewCatalogPromotionStep(promos, &stubCouponRepo{}, nil)
 
 	t.Run("quantity below threshold", func(t *testing.T) {
 		pctx := makePricingCtx(t, "USD", makeItem(t, "v1", 2, 1000, "USD"))
@@ -263,7 +263,7 @@ func TestCatalogPromotionStep_InactivePromotionSkipped(t *testing.T) {
 			map[string]string{"type": "always"},
 			map[string]interface{}{"type": "percentage", "percentage": 50}),
 	}}
-	step := appPricing.NewCatalogPromotionStep(promos, &stubCouponRepo{})
+	step := appPricing.NewCatalogPromotionStep(promos, &stubCouponRepo{}, nil)
 	pctx := makePricingCtx(t, "USD", makeItem(t, "v1", 1, 1000, "USD"))
 
 	if err := step.Apply(context.Background(), pctx); err != nil {
@@ -282,7 +282,7 @@ func TestCatalogPromotionStep_ExpiredPromotionSkipped(t *testing.T) {
 		map[string]interface{}{"type": "percentage", "percentage": 50})
 	p.EndAt = &past
 	promos := &stubPromotionRepo{promos: []promotion.Promotion{p}}
-	step := appPricing.NewCatalogPromotionStep(promos, &stubCouponRepo{})
+	step := appPricing.NewCatalogPromotionStep(promos, &stubCouponRepo{}, nil)
 	pctx := makePricingCtx(t, "USD", makeItem(t, "v1", 1, 1000, "USD"))
 
 	if err := step.Apply(context.Background(), pctx); err != nil {
@@ -299,7 +299,7 @@ func TestCatalogPromotionStep_CouponBound_NoCoupon(t *testing.T) {
 			map[string]string{"type": "always"},
 			map[string]interface{}{"type": "percentage", "percentage": 20}),
 	}}
-	step := appPricing.NewCatalogPromotionStep(promos, &stubCouponRepo{})
+	step := appPricing.NewCatalogPromotionStep(promos, &stubCouponRepo{}, nil)
 	pctx := makePricingCtx(t, "USD", makeItem(t, "v1", 1, 1000, "USD"))
 	// No coupon_code in Meta → coupon-bound promo is skipped.
 
@@ -321,7 +321,7 @@ func TestCatalogPromotionStep_CouponBound_ValidCoupon(t *testing.T) {
 	coupons := &stubCouponRepo{coupons: []promotion.Coupon{
 		{ID: "c1", Code: "SAVE20", PromotionID: promoID, Active: true},
 	}}
-	step := appPricing.NewCatalogPromotionStep(promos, coupons)
+	step := appPricing.NewCatalogPromotionStep(promos, coupons, nil)
 	pctx := makePricingCtx(t, "USD", makeItem(t, "v1", 1, 1000, "USD"))
 	pctx.Meta["coupon_code"] = "SAVE20"
 
@@ -346,7 +346,7 @@ func TestCatalogPromotionStep_CouponBound_WrongPromotion(t *testing.T) {
 	coupons := &stubCouponRepo{coupons: []promotion.Coupon{
 		{ID: "c2", Code: "OTHER", PromotionID: "other-promo-id", Active: true},
 	}}
-	step := appPricing.NewCatalogPromotionStep(promos, coupons)
+	step := appPricing.NewCatalogPromotionStep(promos, coupons, nil)
 	pctx := makePricingCtx(t, "USD", makeItem(t, "v1", 1, 1000, "USD"))
 	pctx.Meta["coupon_code"] = "OTHER"
 
@@ -364,7 +364,7 @@ func TestCatalogPromotionStep_MultipleItems(t *testing.T) {
 			map[string]string{"type": "always"},
 			map[string]interface{}{"type": "percentage", "percentage": 10}),
 	}}
-	step := appPricing.NewCatalogPromotionStep(promos, &stubCouponRepo{})
+	step := appPricing.NewCatalogPromotionStep(promos, &stubCouponRepo{}, nil)
 	pctx := makePricingCtx(t, "USD",
 		makeItem(t, "v1", 2, 1000, "USD"), // total 2000, discount 200
 		makeItem(t, "v2", 1, 500, "USD"),  // total 500, discount 50
@@ -390,7 +390,7 @@ func TestCatalogPromotionStep_MultiplePromotions(t *testing.T) {
 			map[string]string{"type": "always"},
 			map[string]interface{}{"type": "fixed", "amount": 100}),
 	}}
-	step := appPricing.NewCatalogPromotionStep(promos, &stubCouponRepo{})
+	step := appPricing.NewCatalogPromotionStep(promos, &stubCouponRepo{}, nil)
 	pctx := makePricingCtx(t, "USD", makeItem(t, "v1", 1, 1000, "USD"))
 	// promo A: 10% of 1000 = 100
 	// promo B: $1 * 1 = 100
@@ -419,7 +419,7 @@ func TestCatalogPromotionStep_NilConditions_DefaultsToAlways(t *testing.T) {
 		CreatedAt: time.Now(),
 		UpdatedAt: time.Now(),
 	}}}
-	step := appPricing.NewCatalogPromotionStep(promos, &stubCouponRepo{})
+	step := appPricing.NewCatalogPromotionStep(promos, &stubCouponRepo{}, nil)
 	pctx := makePricingCtx(t, "USD", makeItem(t, "v1", 1, 2000, "USD"))
 
 	if err := step.Apply(context.Background(), pctx); err != nil {
@@ -439,7 +439,7 @@ func TestCatalogPromotionStep_InvalidAction_Error(t *testing.T) {
 			map[string]string{"type": "always"},
 			map[string]interface{}{"type": "unknown_action"}),
 	}}
-	step := appPricing.NewCatalogPromotionStep(promos, &stubCouponRepo{})
+	step := appPricing.NewCatalogPromotionStep(promos, &stubCouponRepo{}, nil)
 	pctx := makePricingCtx(t, "USD", makeItem(t, "v1", 1, 1000, "USD"))
 
 	if err := step.Apply(context.Background(), pctx); err == nil {
@@ -453,7 +453,7 @@ func TestCatalogPromotionStep_InvalidCondition_Error(t *testing.T) {
 			map[string]string{"type": "unknown_condition"},
 			map[string]interface{}{"type": "percentage", "percentage": 10}),
 	}}
-	step := appPricing.NewCatalogPromotionStep(promos, &stubCouponRepo{})
+	step := appPricing.NewCatalogPromotionStep(promos, &stubCouponRepo{}, nil)
 	pctx := makePricingCtx(t, "USD", makeItem(t, "v1", 1, 1000, "USD"))
 
 	if err := step.Apply(context.Background(), pctx); err == nil {
@@ -467,7 +467,7 @@ func TestCatalogPromotionStep_FullPipeline(t *testing.T) {
 			map[string]string{"type": "always"},
 			map[string]interface{}{"type": "percentage", "percentage": 10}),
 	}}
-	step := appPricing.NewCatalogPromotionStep(promos, &stubCouponRepo{})
+	step := appPricing.NewCatalogPromotionStep(promos, &stubCouponRepo{}, nil)
 	finalize := domain.NewFinalizeStep()
 	pipeline := domain.NewPipeline(step, finalize)
 
@@ -501,7 +501,7 @@ func TestCatalogPromotionStep_TieredDiscount(t *testing.T) {
 				},
 			}),
 	}}
-	step := appPricing.NewCatalogPromotionStep(promos, &stubCouponRepo{})
+	step := appPricing.NewCatalogPromotionStep(promos, &stubCouponRepo{}, nil)
 	pctx := makePricingCtx(t, "USD", makeItem(t, "v1", 5, 1000, "USD"))
 
 	if err := step.Apply(context.Background(), pctx); err != nil {
@@ -521,7 +521,7 @@ func TestCatalogPromotionStep_BuyXGetY(t *testing.T) {
 			map[string]string{"type": "always"},
 			map[string]interface{}{"type": "buy_x_get_y", "buy_qty": 2, "get_qty": 1}),
 	}}
-	step := appPricing.NewCatalogPromotionStep(promos, &stubCouponRepo{})
+	step := appPricing.NewCatalogPromotionStep(promos, &stubCouponRepo{}, nil)
 	pctx := makePricingCtx(t, "USD", makeItem(t, "v1", 6, 1000, "USD"))
 
 	if err := step.Apply(context.Background(), pctx); err != nil {
@@ -547,7 +547,7 @@ func TestCatalogPromotionStep_TieredUsesHighestThreshold(t *testing.T) {
 				},
 			}),
 	}}
-	step := appPricing.NewCatalogPromotionStep(promos, &stubCouponRepo{})
+	step := appPricing.NewCatalogPromotionStep(promos, &stubCouponRepo{}, nil)
 	pctx := makePricingCtx(t, "USD", makeItem(t, "v1", 5, 1000, "USD"))
 
 	if err := step.Apply(context.Background(), pctx); err != nil {
@@ -558,5 +558,50 @@ func TestCatalogPromotionStep_TieredUsesHighestThreshold(t *testing.T) {
 	}
 	if pctx.Items[0].Adjustments[0].Amount.Amount() != 500 {
 		t.Errorf("expected discount 500 (10%% from min_qty=5 tier), got %d", pctx.Items[0].Adjustments[0].Amount.Amount())
+	}
+}
+
+func TestCatalogPromotionStep_PluginRuleTypes(t *testing.T) {
+	reg := promotion.NewEvaluatorRegistry()
+	if err := reg.RegisterCatalogCondition("min_line_total", "test", func(_ context.Context, config []byte, item *domain.PricingItem) (bool, error) {
+		var cfg struct {
+			Value int64 `json:"value"`
+		}
+		if err := json.Unmarshal(config, &cfg); err != nil {
+			return false, err
+		}
+		return item.Total.Amount() >= cfg.Value, nil
+	}); err != nil {
+		t.Fatalf("RegisterCatalogCondition: %v", err)
+	}
+	if err := reg.RegisterCatalogAction("line_bonus_percent", "test", func(_ context.Context, config []byte, item *domain.PricingItem, currency string) (shared.Money, error) {
+		var cfg struct {
+			Percentage int `json:"percentage"`
+		}
+		if err := json.Unmarshal(config, &cfg); err != nil {
+			return shared.Money{}, err
+		}
+		raw := item.Total.Amount() * int64(cfg.Percentage) / 100
+		return shared.NewMoney(raw, currency)
+	}); err != nil {
+		t.Fatalf("RegisterCatalogAction: %v", err)
+	}
+
+	promos := &stubPromotionRepo{promos: []promotion.Promotion{
+		makePromo("p-plugin", "Line bonus", true, false,
+			map[string]interface{}{"type": "min_line_total", "value": 5000},
+			map[string]interface{}{"type": "line_bonus_percent", "percentage": 10}),
+	}}
+	step := appPricing.NewCatalogPromotionStep(promos, &stubCouponRepo{}, reg)
+	pctx := makePricingCtx(t, "USD", makeItem(t, "v1", 2, 3000, "USD"))
+
+	if err := step.Apply(context.Background(), pctx); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(pctx.Items[0].Adjustments) != 1 {
+		t.Fatalf("expected 1 adjustment, got %d", len(pctx.Items[0].Adjustments))
+	}
+	if pctx.Items[0].Adjustments[0].Amount.Amount() != 600 {
+		t.Errorf("expected discount 600 (10%% of 6000 line total), got %d", pctx.Items[0].Adjustments[0].Amount.Amount())
 	}
 }

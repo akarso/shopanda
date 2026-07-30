@@ -232,6 +232,16 @@ Environment variables override YAML values.
 | `SHOPANDA_DEV_MODE` | No | empty | Enables development-only behavior |
 | `SHOPANDA_TEST_DSN` | No | empty | PostgreSQL DSN used by integration tests |
 
+### External reference plugins (opt-in)
+
+Reference plugins under `plugins/*demo` are disabled by default. Enable via YAML (`plugins.<name>.enabled`) or environment override. Each plugin must also be registered in `cmd/api/register_plugins.go` (compile-time).
+
+| Variable | Default | Purpose |
+| --- | --- | --- |
+| `SHOPANDA_PLUGINS_PROMODEMO_ENABLED` | `false` | Enable `plugins/promodemo` — registers custom catalog promotion rule types (`min_line_total`, `line_bonus_percent`) |
+
+See `configs/config.example.yaml` for YAML equivalents and other demo plugin flags (`SHOPANDA_PLUGINS_CARTDEMO_ENABLED`, `SHOPANDA_PLUGINS_MAILDEMO_ENABLED`, …).
+
 ### Security notes
 
 - never reuse the sample database password in real environments

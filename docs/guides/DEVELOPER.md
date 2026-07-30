@@ -611,15 +611,17 @@ Phase 8 adds first-class seams for **commerce behavior** (positioned pricing ste
 
 **Available today (core + Phase 8):**
 
-- Infrastructure ports: search, cache, queue, payment, media, tax (`RegisterSearchProvider`, `RegisterTaxCalculator`, …)
+- Infrastructure ports: search, cache, queue, payment, media, tax (`RegisterSearchProvider`, `RegisterTaxCalculator`, …), mail (`RegisterMailSender`), shipping rates (`RegisterShippingRateProvider`)
 - Behavioral: positioned `RegisterPricingStep`, positioned `RegisterCheckoutStep`, `RegisterCompositionStep`, cart hook chain — see `pkg/extapi`
+- Promotion rules: `app.PromotionRules(registrant).RegisterCatalogCondition/Action` (+ cart variants) for custom JSON rule `"type"` values evaluated in catalog/cart promotion pricing steps (PR-862). Requires `SetPromotionEvaluatorRegistry` in bootstrap before `InitAll`.
 - HTTP: `RegisterPublicRoute`, `RegisterAdminRoute`, `app.Integration(slug).RegisterRoute` / `RegisterSecureRoute`
 - CSV import: CLI `import:*` with row hooks via `app.Import().RegisterRowHook` (PR-820–823)
+- CSV export: CLI `export:*` with row hooks via `app.Export().RegisterRowHook` (PR-856–858)
 - Outbound sync: `app.Integration(slug).RegisterSyncJob` + `pkg/integrationsdk` (PR-840–841)
 - Registration report: `./app plugins report` (PR-851)
 - Async: events + optional queue drivers
 
-**Reference plugins** (opt-in via config): `cartdemo`, `importdemo`, `integrationdemo`, `warehousedemo`, `pimdemo`, `taxdemo` — copy patterns; do not import from production plugins.
+**Reference plugins** (opt-in via config): `cartdemo`, `importdemo`, `exportdemo`, `integrationdemo`, `warehousedemo`, `pimdemo`, `taxdemo`, `maildemo`, `promodemo` — copy patterns; do not import from production plugins.
 
 When choosing an extension mechanism, start with [Multi-Plugin Composition](PLUGIN_COMPOSITION.md) for ordering rules; use the integrator spec when the task involves ERP/PIM/warehouse wiring or CSV pre-persist transforms.
 

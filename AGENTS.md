@@ -199,8 +199,31 @@ Additional documents:
 
 ## Documentation
 
-* create /docs/prs/PR-00n.md with summary of changes after each implementation phase
-* update C4 diagrams in /docs/diagrams/ when a PR adds, removes, or changes components, containers, or external integrations
+Every **finished PR** must ship code **and** updated docs in the same change set. Do not mark a PR done until the checklist below is complete (or each item is explicitly N/A and noted in the PR spec).
+
+**Checklist** (see also `.cursor/rules/pr-documentation-checklist.mdc`):
+
+| Artifact | When to update |
+| --- | --- |
+| **PR spec** | Always — `docs/phase-<n>-<name>/prs/PR-<id>.md` (summary, scope, validation, what changed) |
+| **Phase index** | Always — `prs/README.md` status → `done` + link |
+| **Phase roadmap** | When PR status or recommended order changes — `ROADMAP.md` |
+| **Phase README** | When track completion or “next PR” guidance changes |
+| **C4 diagrams** | When adding/removing/changing components, containers, ports, or integrations — `docs/diagrams/c4-{context,container,component,code}.md` |
+| **PLUGINS.md** | New plugin ports, reference plugins, registration or config patterns |
+| **DEVELOPER.md** / **PLUGIN_COMPOSITION.md** | New integrator APIs, hooks, pipelines, workflows, extension points |
+| **DEPLOYMENT.md** | New env vars, config keys, runtime modes, deploy/ops steps |
+| **RUNBOOK.md** | Operator-facing behavior, troubleshooting, plugin/config notes |
+| **config.example.yaml** | New `plugins.*` or top-level config keys |
+| **Root README.md** | New CLI commands, major capabilities, planning links |
+| **Plugin README** | Reference/demo plugins under `plugins/<name>/README.md` |
+
+Rules:
+
+* PR spec path follows the **active phase** (e.g. phase-9 for PR-862+), not legacy `/docs/prs/`.
+* Update C4 only when architecture changed; say “no C4 change” in the PR spec if unchanged.
+* Config additions need **yaml example**, **env override** (if applicable), and **flatten map** in `internal/platform/config` when the project uses it.
+* Validation section in the PR spec must list **tests run** and **build commands**.
 
 ---
 

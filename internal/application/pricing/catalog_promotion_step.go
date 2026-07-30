@@ -20,16 +20,19 @@ import (
 type CatalogPromotionStep struct {
 	promotions promotion.PromotionRepository
 	coupons    promotion.CouponRepository
+	evaluators *promotion.EvaluatorRegistry
 }
 
 // NewCatalogPromotionStep returns a new CatalogPromotionStep.
 func NewCatalogPromotionStep(
 	promotions promotion.PromotionRepository,
 	coupons promotion.CouponRepository,
+	evaluators *promotion.EvaluatorRegistry,
 ) *CatalogPromotionStep {
 	return &CatalogPromotionStep{
 		promotions: promotions,
 		coupons:    coupons,
+		evaluators: evaluators,
 	}
 }
 
@@ -66,21 +69,25 @@ func (s *CatalogPromotionStep) Apply(ctx context.Context, pctx *domain.PricingCo
 			}
 		}
 
-		cond, err := decodeCatalogCondition(p.Conditions)
+		cond, err := decodeCatalogCondition(p.Conditions, s.evaluators)
 		if err != nil {
 			return fmt.Errorf("catalog promotions: %q: conditions: %w", p.Name, err)
 		}
-		act, err := decodeCatalogAction(p.Actions)
+		act, err := decodeCatalogAction(p.Actions, s.evaluators)
 		if err != nil {
 			return fmt.Errorf("catalog promotions: %q: actions: %w", p.Name, err)
 		}
 
 		for i := range pctx.Items {
 			item := &pctx.Items[i]
-			if !cond.matches(item) {
+			ok, err := cond.matches(ctx, item, s.evaluators)
+			if err != nil {
+				return fmt.Errorf("catalog promotions: %q: condition: %w", p.Name, err)
+			}
+			if !ok {
 				continue
 			}
-			discount, err := act.compute(item, pctx.Currency)
+			discount, err := act.compute(ctx, item, pctx.Currency, s.evaluators)
 			if err != nil {
 				return fmt.Errorf("catalog promotions: %q: compute: %w", p.Name, err)
 			}
@@ -106,11 +113,13 @@ type conditionConfig struct {
 }
 
 type catalogCondition struct {
-	typ   string
-	value int
+	typ       string
+	value     int
+	raw       []byte
+	usePlugin bool
 }
 
-func decodeCatalogCondition(data []byte) (catalogCondition, error) {
+func decodeCatalogCondition(data []byte, reg *promotion.EvaluatorRegistry) (catalogCondition, error) {
 	if len(data) == 0 || string(data) == "null" {
 		return catalogCondition{typ: "always"}, nil
 	}
@@ -127,18 +136,24 @@ func decodeCatalogCondition(data []byte) (catalogCondition, error) {
 		}
 		return catalogCondition{typ: cfg.Type, value: cfg.Value}, nil
 	default:
+		if reg != nil && reg.HasCatalogCondition(cfg.Type) {
+			return catalogCondition{typ: cfg.Type, raw: append([]byte(nil), data...), usePlugin: true}, nil
+		}
 		return catalogCondition{}, fmt.Errorf("unknown condition type: %q", cfg.Type)
 	}
 }
 
-func (c catalogCondition) matches(item *domain.PricingItem) bool {
+func (c catalogCondition) matches(ctx context.Context, item *domain.PricingItem, reg *promotion.EvaluatorRegistry) (bool, error) {
+	if c.usePlugin {
+		return reg.EvalCatalogCondition(ctx, c.typ, c.raw, item)
+	}
 	switch c.typ {
 	case "always":
-		return true
+		return true, nil
 	case "min_quantity":
-		return item.Quantity >= c.value
+		return item.Quantity >= c.value, nil
 	default:
-		return false
+		return false, nil
 	}
 }
 
@@ -166,9 +181,11 @@ type catalogAction struct {
 	tiers      []promotionTier
 	buyQty     int
 	getQty     int
+	raw        []byte
+	usePlugin  bool
 }
 
-func decodeCatalogAction(data []byte) (catalogAction, error) {
+func decodeCatalogAction(data []byte, reg *promotion.EvaluatorRegistry) (catalogAction, error) {
 	if len(data) == 0 || string(data) == "null" {
 		return catalogAction{}, fmt.Errorf("action config is required")
 	}
@@ -216,11 +233,17 @@ func decodeCatalogAction(data []byte) (catalogAction, error) {
 		}
 		return catalogAction{typ: cfg.Type, buyQty: cfg.BuyQty, getQty: cfg.GetQty}, nil
 	default:
+		if reg != nil && reg.HasCatalogAction(cfg.Type) {
+			return catalogAction{typ: cfg.Type, raw: append([]byte(nil), data...), usePlugin: true}, nil
+		}
 		return catalogAction{}, fmt.Errorf("unknown action type: %q", cfg.Type)
 	}
 }
 
-func (a catalogAction) compute(item *domain.PricingItem, currency string) (shared.Money, error) {
+func (a catalogAction) compute(ctx context.Context, item *domain.PricingItem, currency string, reg *promotion.EvaluatorRegistry) (shared.Money, error) {
+	if a.usePlugin {
+		return reg.EvalCatalogAction(ctx, a.typ, a.raw, item, currency)
+	}
 	switch a.typ {
 	case "percentage":
 		raw := item.Total.Amount() * int64(a.percentage) / 100
