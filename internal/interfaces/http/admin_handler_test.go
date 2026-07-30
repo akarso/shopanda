@@ -625,6 +625,68 @@ func TestAdminHandler_StaticJS(t *testing.T) {
 			t.Fatalf("expected product extensions wiring %q in JS", expected)
 		}
 	}
+	expectedVariantExtensionsWiring := []string{
+		"bindVariantExtensions",
+		"loadVariantExtensionsForm",
+		"variant-extensions-toggle-btn",
+		"variant-extensions-form",
+		"/admin/extensions/fields?target_type=variant",
+		"/admin/extensions/values/variant/",
+		"filterProductExtensionFields",
+		`form.setAttribute("data-loaded", "loading")`,
+		"Failed to load variant extension values.",
+		"Failed to save variant extensions.",
+		"Variant extensions saved.",
+	}
+	for _, expected := range expectedVariantExtensionsWiring {
+		if !strings.Contains(normalizedBody, expected) {
+			t.Fatalf("expected variant extensions wiring %q in JS", expected)
+		}
+	}
+	bindVariantExtensionsIdx := strings.Index(normalizedBody, "function bindVariantExtensions")
+	if bindVariantExtensionsIdx < 0 {
+		t.Fatal("expected bindVariantExtensions function in JS")
+	}
+	bindVariantExtensionsSnippet := normalizedBody[bindVariantExtensionsIdx:]
+	if end := strings.Index(bindVariantExtensionsSnippet, "function loadVariantExtensionsForm"); end > 0 {
+		bindVariantExtensionsSnippet = bindVariantExtensionsSnippet[:end]
+	}
+	for _, expected := range []string{
+		`userHasPermission("extensions.read")`,
+		`userHasPermission("extensions.write")`,
+	} {
+		if !strings.Contains(bindVariantExtensionsSnippet, expected) {
+			t.Fatalf("expected bindVariantExtensions to check %s", expected)
+		}
+	}
+	loadVariantsIdx := strings.Index(normalizedBody, "function loadVariants()")
+	if loadVariantsIdx < 0 {
+		t.Fatal("expected loadVariants function in JS")
+	}
+	loadVariantsSnippet := normalizedBody[loadVariantsIdx:]
+	if end := strings.Index(loadVariantsSnippet, "var createForm = document.getElementById(\"variant-create-form\")"); end > 0 {
+		loadVariantsSnippet = loadVariantsSnippet[:end]
+	}
+	for _, expected := range []string{
+		"/admin/extensions/fields?target_type=variant",
+		`userHasPermission("extensions.read")`,
+		"filterProductExtensionFields",
+	} {
+		if !strings.Contains(loadVariantsSnippet, expected) {
+			t.Fatalf("expected loadVariants variant extension contract %q in JS", expected)
+		}
+	}
+	filterProductExtensionFieldsIdx := strings.Index(normalizedBody, "function filterProductExtensionFields")
+	if filterProductExtensionFieldsIdx < 0 {
+		t.Fatal("expected filterProductExtensionFields function in JS")
+	}
+	filterSnippet := normalizedBody[filterProductExtensionFieldsIdx:]
+	if end := strings.Index(filterSnippet, "function buildExtensionValueLookup"); end > 0 {
+		filterSnippet = filterSnippet[:end]
+	}
+	if !strings.Contains(filterSnippet, `"private"`) {
+		t.Fatal("expected filterProductExtensionFields to exclude private fields")
+	}
 	expectedExtensionFieldDefinitionWiring := []string{
 		"renderExtensionFieldsGrid",
 		"renderExtensionFieldForm",

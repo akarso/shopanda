@@ -1700,9 +1700,19 @@
 
         function loadVariants() {
             var list = document.getElementById("variant-list");
-            api("/products/" + encodeURIComponent(productID) + "/variants").then(function (body) {
+            var variantsPromise = api("/products/" + encodeURIComponent(productID) + "/variants");
+            var fieldsPromise = userHasPermission("extensions.read")
+                ? api("/admin/extensions/fields?target_type=variant")
+                : Promise.resolve(null);
+            Promise.all([variantsPromise, fieldsPromise]).then(function (results) {
+                var body = results[0];
+                var fieldsBody = results[1];
                 var variants = normalizeVariants(body && body.data && body.data.variants ? body.data.variants : []);
-                renderVariants(list, productID, variants, loadVariants);
+                var extensionFields = [];
+                if (fieldsBody && !fieldsBody.error) {
+                    extensionFields = filterProductExtensionFields(fieldsBody.data && fieldsBody.data.fields);
+                }
+                renderVariants(list, productID, variants, loadVariants, extensionFields);
             }).catch(function () {
                 list.innerHTML = '<p role="alert">Failed to load variants.</p>';
             });
@@ -1739,7 +1749,9 @@
         loadVariants();
     }
 
-    function renderVariants(container, productID, variants, reload) {
+    function renderVariants(container, productID, variants, reload, extensionFields) {
+        extensionFields = extensionFields || [];
+        var hasExtensions = extensionFields.length > 0;
         if (!variants || variants.length === 0) {
             container.innerHTML = '<p>No variants yet.</p>';
             return;
@@ -1750,7 +1762,12 @@
             ? renderProductFieldScopeBadge('store')
             : renderProductFieldScopeBadge('global');
         var priceHeader = currency ? ('Price (minor units, ' + esc(currency) + ')' + priceScopeBadge) : ('Price' + priceScopeBadge);
-        var html = '<table><thead><tr><th scope="col">SKU</th><th scope="col">Name</th><th scope="col">Weight</th><th scope="col">' + priceHeader + '</th><th scope="col">Action</th></tr></thead><tbody>';
+        var colCount = 5 + (hasExtensions ? 1 : 0);
+        var html = '<table><thead><tr><th scope="col">SKU</th><th scope="col">Name</th><th scope="col">Weight</th><th scope="col">' + priceHeader + '</th><th scope="col">Action</th>';
+        if (hasExtensions) {
+            html += '<th scope="col">Extensions</th>';
+        }
+        html += '</tr></thead><tbody>';
         for (var i = 0; i < variants.length; i++) {
             var v = variants[i];
             var variantLabel = esc((v.sku || v.name || v.id || 'variant'));
@@ -1764,7 +1781,19 @@
                 html += '<td><span class="settings-scope-note">Select a currency context to edit price.</span></td>';
             }
             html += '<td><button type="button" aria-label="Save variant ' + variantLabel + '" class="variant-save-btn">Save</button></td>';
+            if (hasExtensions) {
+                html += '<td><button type="button" class="variant-extensions-toggle-btn" aria-expanded="false" aria-label="Edit extensions for ' + variantLabel + '">Extensions</button></td>';
+            }
             html += '</tr>';
+            if (hasExtensions) {
+                html += '<tr class="variant-extensions-row" data-variant-id="' + esc(v.id) + '" hidden>' +
+                    '<td colspan="' + colCount + '">' +
+                    '<div class="variant-extensions-panel">' +
+                    '<p class="settings-scope-note">Custom fields registered for the variant scope.</p>' +
+                    '<div class="variant-extensions-msg"></div>' +
+                    '<form class="variant-extensions-form" data-variant-id="' + esc(v.id) + '"><p>Loading extensions…</p></form>' +
+                    '</div></td></tr>';
+            }
         }
         html += '</tbody></table>';
         if (currency) {
@@ -1801,6 +1830,104 @@
             loadVariantPrices(container, productID);
             bindVariantPriceSave(container, productID);
         }
+        if (hasExtensions) {
+            bindVariantExtensions(container, extensionFields);
+        }
+    }
+
+    function bindVariantExtensions(container, extensionFields) {
+        if (!userHasPermission("extensions.read")) {
+            return;
+        }
+        var canWrite = userHasPermission("extensions.write");
+        var toggles = container.querySelectorAll(".variant-extensions-toggle-btn");
+        for (var i = 0; i < toggles.length; i++) {
+            toggles[i].addEventListener("click", function (e) {
+                var row = e.target.closest("tr");
+                if (!row) {
+                    return;
+                }
+                var variantID = row.getAttribute("data-variant-id");
+                var detailRow = container.querySelector('tr.variant-extensions-row[data-variant-id="' + variantID + '"]');
+                if (!detailRow) {
+                    return;
+                }
+                var expanded = e.target.getAttribute("aria-expanded") === "true";
+                e.target.setAttribute("aria-expanded", expanded ? "false" : "true");
+                if (expanded) {
+                    detailRow.hidden = true;
+                    return;
+                }
+                detailRow.hidden = false;
+                var form = detailRow.querySelector(".variant-extensions-form");
+                if (!form) {
+                    return;
+                }
+                var loadState = form.getAttribute("data-loaded");
+                if (loadState === "true" || loadState === "loading") {
+                    return;
+                }
+                loadVariantExtensionsForm(form, variantID, extensionFields, canWrite);
+            });
+        }
+    }
+
+    function loadVariantExtensionsForm(form, variantID, extensionFields, canWrite) {
+        var panel = form.closest(".variant-extensions-panel");
+        var msg = panel ? panel.querySelector(".variant-extensions-msg") : null;
+
+        function setMessage(text, isError) {
+            if (!msg) {
+                return;
+            }
+            msg.innerHTML = text ? '<p' + (isError ? ' role="alert"' : ' role="status" aria-live="polite"') + '>' + esc(text) + '</p>' : '';
+        }
+
+        form.setAttribute("data-loaded", "loading");
+        api("/admin/extensions/values/variant/" + encodeURIComponent(variantID)).then(function (body) {
+            if (body && body.error) {
+                form.removeAttribute("data-loaded");
+                form.innerHTML = '<p role="alert">' + esc(extractErrorMessage(body, "Failed to load variant extension values.")) + '</p>';
+                return;
+            }
+            var valueLookup = buildExtensionValueLookup(body.data && body.data.values);
+            form.innerHTML = renderProductExtensionsForm(extensionFields, valueLookup, canWrite);
+            form.setAttribute("data-loaded", "true");
+            if (!canWrite) {
+                var controls = form.querySelectorAll("input, select, textarea, button");
+                for (var i = 0; i < controls.length; i++) {
+                    controls[i].disabled = true;
+                }
+                form.insertAdjacentHTML("beforeend", '<p class="settings-scope-note">Your account can view extensions but cannot save changes without extensions write access.</p>');
+                return;
+            }
+            form.addEventListener("submit", function (e) {
+                e.preventDefault();
+                setMessage("", false);
+                var payload;
+                try {
+                    payload = collectExtensionValues(form);
+                } catch (err) {
+                    setMessage(extractErrorMessage(err, "Invalid extension value."), true);
+                    return;
+                }
+                api("/admin/extensions/values/variant/" + encodeURIComponent(variantID), {
+                    method: "PUT",
+                    body: JSON.stringify(payload)
+                }).then(function (body) {
+                    if (body && body.error) {
+                        setMessage(body.error.message || "Failed to save variant extensions.", true);
+                        return;
+                    }
+                    setMessage("Variant extensions saved.", false);
+                }).catch(function (err) {
+                    setMessage(extractErrorMessage(err, "Failed to save variant extensions."), true);
+                });
+            });
+        }).catch(function (err) {
+            form.removeAttribute("data-loaded");
+            form.innerHTML = '<p role="alert">' + esc(extractErrorMessage(err, "Failed to load variant extension values.")) + '</p>';
+        });
     }
 
     function setVariantPriceScopeHint(row, scope, fallbackAmount) {
@@ -6512,7 +6639,7 @@
     function renderExtensionFieldsGrid(container) {
         container.innerHTML =
             "<h2>Extension Fields</h2>" +
-            "<p class=\"settings-scope-note\">Define custom field schemas for products, cart lines, and other entities. Values are edited on entity forms (e.g. product Extensions panel).</p>" +
+            "<p class=\"settings-scope-note\">Define custom field schemas for products, variants, cart lines, and other entities. Values are edited on entity forms (e.g. product Extensions panel and per-variant Extensions).</p>" +
             "<div id=\"extension-fields-grid\"></div>";
 
         var grid = document.getElementById("extension-fields-grid");
