@@ -99,6 +99,9 @@ func (r *stubCheckoutVariantRepo) FindByID(_ context.Context, vid string) (*cata
 func (r *stubCheckoutVariantRepo) FindBySKU(_ context.Context, _ string) (*catalog.Variant, error) {
 	return nil, nil
 }
+func (r *stubCheckoutVariantRepo) FindBySKUs(_ context.Context, _ []string) (map[string]*catalog.Variant, error) {
+	return map[string]*catalog.Variant{}, nil
+}
 func (r *stubCheckoutVariantRepo) ListByProductID(_ context.Context, _ string, _, _ int) ([]catalog.Variant, error) {
 	return nil, nil
 }

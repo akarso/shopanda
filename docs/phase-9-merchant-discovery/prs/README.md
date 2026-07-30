@@ -10,7 +10,7 @@
 | PR-861 | A | done | [Reference mail sender plugin](PR-861.md) |
 | PR-862 | A | done | [Promotion rule evaluator port](PR-862.md) |
 | PR-863 | A | done | [Reference checkout plugin](PR-863.md) |
-| PR-864 | A | planned | Admin idempotency UI |
+| PR-864 | A | done | [Admin idempotency UI](PR-864.md) |
 | PR-865 | A | done | [Plugin depends_on](PR-865.md) |
 | PR-866 | B | planned | Extension field admin grid |
 | PR-867 | B | planned | Variant extension scopes |

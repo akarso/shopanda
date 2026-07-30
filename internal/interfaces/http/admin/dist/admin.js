@@ -197,6 +197,7 @@
         // Integrations
         "/admin/integrations": { title: "Integrations", render: renderIntegrationsPage, auth: true },
         "/admin/integrations/webhooks": { title: "Webhooks", render: renderWebhooksGrid, auth: true },
+        "/admin/integrations/idempotency": { title: "Inbound Idempotency", render: renderIntegrationIdempotencyGrid, auth: true },
         // Account (accessible from header user-info link)
         "/admin/account": { title: "Account", render: renderAdminAccount, auth: true }
     };
@@ -314,6 +315,16 @@
                 title: "Edit Webhook",
                 auth: true,
                 render: function (container) { renderWebhookEdit(container, webhookID); }
+            };
+        }
+        var idempotencyMatch = path.match(/^\/admin\/integrations\/idempotency\/([^/]+)\/([^/]+)$/);
+        if (idempotencyMatch) {
+            var idempotencyPlugin = decodeURIComponent(idempotencyMatch[1]);
+            var idempotencyKey = decodeURIComponent(idempotencyMatch[2]);
+            return {
+                title: "Idempotency Record",
+                auth: true,
+                render: function (container) { renderIntegrationIdempotencyDetail(container, idempotencyPlugin, idempotencyKey); }
             };
         }
         var productMatch = path.match(/^\/admin\/products\/([^/]+)$/);
@@ -7691,6 +7702,127 @@
         return out;
     }
 
+    function renderIntegrationIdempotencyGrid(container) {
+        container.innerHTML =
+            "<h2>Inbound Idempotency</h2>" +
+            "<p><a href=\"/admin/integrations\" data-link>Back to integrations</a></p>" +
+            "<p class=\"settings-scope-note\">Shows stored responses for integration callbacks that used <code>Idempotency-Key</code>. Completed records replay the stored HTTP response on ERP retries.</p>" +
+            "<div id=\"idempotency-grid\"></div>";
+
+        var grid = document.getElementById("idempotency-grid");
+        api("/admin/integrations/idempotency?offset=0&limit=50").then(function (body) {
+            if (body && body.error && body.error.code === "forbidden") {
+                grid.innerHTML = "<p role=\"alert\">Your account does not have settings access.</p>";
+                return;
+            }
+            if (body && body.error) {
+                grid.innerHTML = "<p role=\"alert\">" + esc(extractErrorMessage(body, "Failed to load idempotency records.")) + "</p>";
+                return;
+            }
+
+            var records = body && body.data && body.data.records;
+            if (!Array.isArray(records)) {
+                grid.innerHTML = "<p role=\"alert\">Failed to load idempotency records.</p>";
+                return;
+            }
+
+            var html = "<table><thead><tr>" +
+                "<th>Plugin</th><th>Key</th><th>Method</th><th>Path</th><th>Status</th><th>Completed</th><th>Created</th>" +
+                "</tr></thead><tbody>";
+            if (records.length === 0) {
+                html += "<tr><td colspan=\"7\">No idempotency records yet.</td></tr>";
+            } else {
+                for (var i = 0; i < records.length; i++) {
+                    var record = records[i];
+                    var detailHref = "/admin/integrations/idempotency/" +
+                        encodeURIComponent(record.plugin_slug || "") + "/" +
+                        encodeURIComponent(record.idempotency_key || "");
+                    html += "<tr>" +
+                        "<td>" + esc(record.plugin_slug || "") + "</td>" +
+                        "<td><a href=\"" + detailHref + "\" data-link>" + esc(record.idempotency_key || "") + "</a></td>" +
+                        "<td>" + esc(record.method || "") + "</td>" +
+                        "<td>" + esc(record.path || "") + "</td>" +
+                        "<td>" + esc(String(record.status_code || "")) + "</td>" +
+                        "<td><span class=\"badge badge-" + esc(record.completed ? "active" : "draft") + "\">" +
+                        esc(record.completed ? "yes" : "no") + "</span></td>" +
+                        "<td>" + esc(record.created_at ? String(record.created_at).substring(0, 19) : "") + "</td>" +
+                        "</tr>";
+                }
+            }
+            html += "</tbody></table>";
+            grid.innerHTML = html;
+        }).catch(function (err) {
+            grid.innerHTML = "<p role=\"alert\">" + esc(extractErrorMessage(err, "Failed to load idempotency records.")) + "</p>";
+        });
+    }
+
+    function renderIntegrationIdempotencyDetail(container, pluginSlug, idempotencyKey) {
+        container.innerHTML =
+            "<h2>Idempotency Record</h2>" +
+            "<p><a href=\"/admin/integrations/idempotency\" data-link>Back to idempotency list</a></p>" +
+            "<div id=\"idempotency-detail\"></div>";
+
+        var panel = document.getElementById("idempotency-detail");
+        var url = "/admin/integrations/idempotency/" +
+            encodeURIComponent(pluginSlug) + "/" + encodeURIComponent(idempotencyKey);
+        api(url).then(function (body) {
+            if (body && body.error && body.error.code === "forbidden") {
+                panel.innerHTML = "<p role=\"alert\">Your account does not have settings access.</p>";
+                return;
+            }
+            if (body && body.error) {
+                panel.innerHTML = "<p role=\"alert\">" + esc(extractErrorMessage(body, "Failed to load idempotency record.")) + "</p>";
+                return;
+            }
+            var record = body && body.data && body.data.record;
+            if (!record) {
+                panel.innerHTML = "<p role=\"alert\">Idempotency record not found.</p>";
+                return;
+            }
+
+            var html = "<dl>" +
+                "<dt>Plugin</dt><dd>" + esc(record.plugin_slug || "") + "</dd>" +
+                "<dt>Key</dt><dd><code>" + esc(record.idempotency_key || "") + "</code></dd>" +
+                "<dt>Method</dt><dd>" + esc(record.method || "") + "</dd>" +
+                "<dt>Path</dt><dd><code>" + esc(record.path || "") + "</code></dd>" +
+                "<dt>Request hash</dt><dd><code>" + esc(record.request_hash || "") + "</code></dd>" +
+                "<dt>Status</dt><dd>" + esc(String(record.status_code || "")) + "</dd>" +
+                "<dt>Completed</dt><dd>" + esc(record.completed ? "yes" : "no") + "</dd>" +
+                "<dt>Created</dt><dd>" + esc(record.created_at || "") + "</dd>" +
+                "<dt>Expires</dt><dd>" + esc(record.expires_at || "") + "</dd>" +
+                "</dl>";
+
+            if (record.can_replay) {
+                html += "<p><button type=\"button\" id=\"idempotency-replay-btn\">Preview replay response</button></p>" +
+                    "<pre id=\"idempotency-replay-output\" class=\"code-block\"></pre>";
+            } else {
+                html += "<p class=\"settings-scope-note\">Record is still in progress — no stored response to replay yet.</p>";
+            }
+
+            panel.innerHTML = html;
+
+            if (record.can_replay) {
+                document.getElementById("idempotency-replay-btn").addEventListener("click", function () {
+                    var replayURL = url + "/replay";
+                    api(replayURL, { method: "POST" }).then(function (replayBody) {
+                        var out = document.getElementById("idempotency-replay-output");
+                        if (replayBody && replayBody.error) {
+                            out.textContent = extractErrorMessage(replayBody, "Replay failed.");
+                            return;
+                        }
+                        var payload = replayBody && replayBody.data ? replayBody.data : {};
+                        out.textContent = JSON.stringify(payload, null, 2);
+                    }).catch(function (err) {
+                        document.getElementById("idempotency-replay-output").textContent =
+                            extractErrorMessage(err, "Replay failed.");
+                    });
+                });
+            }
+        }).catch(function (err) {
+            panel.innerHTML = "<p role=\"alert\">" + esc(extractErrorMessage(err, "Failed to load idempotency record.")) + "</p>";
+        });
+    }
+
     function renderWebhooksGrid(container) {
         container.innerHTML =
             "<h2>Outbound Webhooks</h2>" +
@@ -7956,6 +8088,11 @@
                 '<h3>Outbound Webhooks</h3>' +
                 '<p><strong>Configured endpoints:</strong> ' + esc(String(webhookCount)) + '</p>' +
                 '<p><a href="/admin/integrations/webhooks" data-link>Manage webhooks</a></p>' +
+                '</section>' +
+                '<section>' +
+                '<h3>Inbound Idempotency</h3>' +
+                '<p>Inspect ERP-safe retry keys for integration callbacks.</p>' +
+                '<p><a href="/admin/integrations/idempotency" data-link>View idempotency records</a></p>' +
                 '</section>' +
                 '<section>' +
                 '<h3>Media Storage</h3>' +

@@ -84,6 +84,9 @@ func (r *e2eVariantRepo) FindByID(_ context.Context, id string) (*catalog.Varian
 func (r *e2eVariantRepo) FindBySKU(context.Context, string) (*catalog.Variant, error) {
 	return nil, nil
 }
+func (r *e2eVariantRepo) FindBySKUs(context.Context, []string) (map[string]*catalog.Variant, error) {
+	return map[string]*catalog.Variant{}, nil
+}
 func (r *e2eVariantRepo) ListByProductID(context.Context, string, int, int) ([]catalog.Variant, error) {
 	return nil, nil
 }

@@ -2,6 +2,7 @@ package http_test
 
 import (
 	"context"
+	"database/sql"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -51,6 +52,10 @@ func (m *eprExportVariantRepo) FindByID(context.Context, string) (*catalog.Varia
 func (m *eprExportVariantRepo) FindBySKU(context.Context, string) (*catalog.Variant, error) {
 	return nil, nil
 }
+func (m *eprExportVariantRepo) FindBySKUs(context.Context, []string) (map[string]*catalog.Variant, error) {
+	return map[string]*catalog.Variant{}, nil
+}
+func (m *eprExportVariantRepo) WithTx(*sql.Tx) catalog.VariantRepository { return m }
 func (m *eprExportVariantRepo) ListByProductID(_ context.Context, productID string, offset, limit int) ([]catalog.Variant, error) {
 	all := m.variants[productID]
 	if offset >= len(all) {

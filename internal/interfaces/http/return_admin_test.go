@@ -122,6 +122,7 @@ func (r *returnHTTPStockRepo) SetStock(_ context.Context, entry *inventory.Stock
 	r.qty[entry.VariantID] = entry.Quantity
 	return nil
 }
+func (r *returnHTTPStockRepo) SetStocks(context.Context, []inventory.StockEntry) error { return nil }
 func (r *returnHTTPStockRepo) ListStock(context.Context, int, int) ([]inventory.StockEntry, error) {
 	return nil, nil
 }
