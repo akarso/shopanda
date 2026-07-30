@@ -1762,7 +1762,7 @@
             ? renderProductFieldScopeBadge('store')
             : renderProductFieldScopeBadge('global');
         var priceHeader = currency ? ('Price (minor units, ' + esc(currency) + ')' + priceScopeBadge) : ('Price' + priceScopeBadge);
-        var colCount = 4 + (currency ? 1 : 0) + (hasExtensions ? 1 : 0);
+        var colCount = 5 + (hasExtensions ? 1 : 0);
         var html = '<table><thead><tr><th scope="col">SKU</th><th scope="col">Name</th><th scope="col">Weight</th><th scope="col">' + priceHeader + '</th><th scope="col">Action</th>';
         if (hasExtensions) {
             html += '<th scope="col">Extensions</th>';
@@ -1860,7 +1860,11 @@
                 }
                 detailRow.hidden = false;
                 var form = detailRow.querySelector(".variant-extensions-form");
-                if (!form || form.getAttribute("data-loaded") === "true") {
+                if (!form) {
+                    return;
+                }
+                var loadState = form.getAttribute("data-loaded");
+                if (loadState === "true" || loadState === "loading") {
                     return;
                 }
                 loadVariantExtensionsForm(form, variantID, extensionFields, canWrite);
@@ -1879,8 +1883,10 @@
             msg.innerHTML = text ? '<p' + (isError ? ' role="alert"' : ' role="status" aria-live="polite"') + '>' + esc(text) + '</p>' : '';
         }
 
+        form.setAttribute("data-loaded", "loading");
         api("/admin/extensions/values/variant/" + encodeURIComponent(variantID)).then(function (body) {
             if (body && body.error) {
+                form.removeAttribute("data-loaded");
                 form.innerHTML = '<p role="alert">' + esc(extractErrorMessage(body, "Failed to load variant extension values.")) + '</p>';
                 return;
             }
@@ -1919,6 +1925,7 @@
                 });
             });
         }).catch(function (err) {
+            form.removeAttribute("data-loaded");
             form.innerHTML = '<p role="alert">' + esc(extractErrorMessage(err, "Failed to load variant extension values.")) + '</p>';
         });
     }
