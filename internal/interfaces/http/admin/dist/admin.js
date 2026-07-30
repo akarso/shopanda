@@ -6645,7 +6645,31 @@
         return raw.split(",").map(function (part) { return part.trim(); }).filter(function (part) { return part !== ""; });
     }
 
-    function buildExtensionFieldPayload(form, fieldCode) {
+    function extensionFieldAccessPayload(existingField) {
+        var access = existingField && existingField.access ? existingField.access : {};
+        return {
+            read_roles: Array.isArray(access.read_roles) ? access.read_roles.slice() : [],
+            write_roles: Array.isArray(access.write_roles) ? access.write_roles.slice() : [],
+            plugin_only_write: !!access.plugin_only_write
+        };
+    }
+
+    function buildExtensionFieldPayload(form, fieldCode, existingField) {
+        var validation = {
+            required: form.elements.required.checked,
+            options: parseExtensionFieldOptions(form.elements.options.value)
+        };
+        if (existingField && existingField.validation) {
+            if (existingField.validation.min != null) {
+                validation.min = existingField.validation.min;
+            }
+            if (existingField.validation.max != null) {
+                validation.max = existingField.validation.max;
+            }
+            if (existingField.validation.regex) {
+                validation.regex = existingField.validation.regex;
+            }
+        }
         var payload = {
             label: form.elements.label.value,
             description: form.elements.description.value,
@@ -6653,10 +6677,8 @@
             target_type: form.elements.target_type.value,
             visibility: form.elements.visibility.value,
             storage_mode: form.elements.storage_mode.value,
-            validation: {
-                required: form.elements.required.checked,
-                options: parseExtensionFieldOptions(form.elements.options.value)
-            }
+            access: extensionFieldAccessPayload(existingField),
+            validation: validation
         };
         if (!fieldCode) {
             payload.code = form.elements.code.value;
@@ -6705,7 +6727,7 @@
 
             form.addEventListener("submit", function (e) {
                 e.preventDefault();
-                var payload = buildExtensionFieldPayload(form, fieldCode);
+                var payload = buildExtensionFieldPayload(form, fieldCode, field);
                 var method = fieldCode ? "PUT" : "POST";
                 var url = fieldCode
                     ? "/admin/extensions/fields/" + encodeURIComponent(fieldCode)
