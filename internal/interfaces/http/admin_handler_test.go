@@ -440,6 +440,22 @@ func TestAdminHandler_StaticJS(t *testing.T) {
 	if !strings.Contains(normalizedBody, "Plugin Settings") || !strings.Contains(normalizedBody, "integrations-plugin-form") || !strings.Contains(normalizedBody, "Failed to load integrations.") {
 		t.Fatalf("expected integrations admin messages in JS")
 	}
+	expectedIdempotencyWiring := []string{
+		"renderIntegrationIdempotencyGrid",
+		"renderIntegrationIdempotencyDetail",
+		"/admin/integrations/idempotency",
+		"Inbound Idempotency",
+		"View idempotency records",
+		"Failed to load idempotency records.",
+		"Failed to load idempotency record.",
+		"Preview replay response",
+		"idempotency-replay-btn",
+	}
+	for _, expected := range expectedIdempotencyWiring {
+		if !strings.Contains(normalizedBody, expected) {
+			t.Fatalf("expected idempotency admin wiring %q in JS", expected)
+		}
+	}
 	if !strings.Contains(normalizedBody, "renderLocalizationSettingsPage") || !strings.Contains(normalizedBody, "/admin/config?group=currency") {
 		t.Fatalf("expected localization admin surface wiring in JS")
 	}

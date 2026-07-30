@@ -776,6 +776,9 @@ func (m *storefrontVariantRepo) FindByID(_ context.Context, _ string) (*catalog.
 func (m *storefrontVariantRepo) FindBySKU(_ context.Context, _ string) (*catalog.Variant, error) {
 	return nil, nil
 }
+func (m *storefrontVariantRepo) FindBySKUs(_ context.Context, _ []string) (map[string]*catalog.Variant, error) {
+	return map[string]*catalog.Variant{}, nil
+}
 func (m *storefrontVariantRepo) Create(_ context.Context, _ *catalog.Variant) error { return nil }
 func (m *storefrontVariantRepo) Update(_ context.Context, _ *catalog.Variant) error { return nil }
 

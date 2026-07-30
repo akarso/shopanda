@@ -3,6 +3,7 @@ package http_test
 import (
 	"bytes"
 	"context"
+	"database/sql"
 	"encoding/json"
 	"github.com/akarso/shopanda/internal/testutil"
 	"net/http"
@@ -41,6 +42,8 @@ func (m *mockStockRepo) SetStock(ctx context.Context, entry *inventory.StockEntr
 	return nil
 }
 
+func (m *mockStockRepo) SetStocks(context.Context, []inventory.StockEntry) error { return nil }
+
 func (m *mockStockRepo) ListStock(context.Context, int, int) ([]inventory.StockEntry, error) {
 	return nil, nil
 }
@@ -74,6 +77,10 @@ func (m *mockVariantRepoForInventory) FindByID(ctx context.Context, id string) (
 func (m *mockVariantRepoForInventory) FindBySKU(context.Context, string) (*catalog.Variant, error) {
 	return nil, nil
 }
+func (m *mockVariantRepoForInventory) FindBySKUs(context.Context, []string) (map[string]*catalog.Variant, error) {
+	return map[string]*catalog.Variant{}, nil
+}
+func (m *mockVariantRepoForInventory) WithTx(*sql.Tx) catalog.VariantRepository { return m }
 func (m *mockVariantRepoForInventory) ListByProductID(ctx context.Context, productID string, offset, limit int) ([]catalog.Variant, error) {
 	return nil, nil
 }

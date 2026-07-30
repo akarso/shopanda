@@ -23,7 +23,7 @@ Phase 8 shipped integrator seams: positioned pricing/checkout steps, cart hooks,
 | Mail sender port | Track A — PR-860–861 (done) |
 | Promotion rule evaluator port | Track A — PR-862 (done) |
 | Reference checkout plugin | Track A — PR-863 |
-| Admin idempotency UI | Track A — PR-864 |
+| Admin idempotency UI | Track A — PR-864 (done) |
 | `depends_on` init ordering | Track A — PR-865 |
 
 **Remaining from Phase 7 backlog**
@@ -86,7 +86,7 @@ Track C depends on catalog/search infrastructure (partially exists: search facet
 | 861 | A | done |
 | 862 | A | done |
 | 863, 865 | A | done |
-| 864 | A | planned |
+| 864 | A | done |
 | 866–867 | B | planned |
 | 900–903 | C **PRIORITY** | planned |
 

@@ -70,6 +70,7 @@ Every major screen in the embedded admin SPA is listed below. Use the **Route** 
 | Store | Currencies | `/admin/store/currencies` | Store currency config |
 | Integrations | Integrations | `/admin/integrations` | SMTP/media/plugin summary |
 | Integrations | Webhooks | `/admin/integrations/webhooks` | Outbound endpoints ([PR-620](../phase-6-merchant-complete/prs/PR-620.md)) — linked from Integrations |
+| Integrations | Inbound Idempotency | `/admin/integrations/idempotency` | ERP callback dedupe keys ([PR-864](../phase-9-merchant-discovery/prs/PR-864.md)) — linked from Integrations |
 | Account | Account | `/admin/account` | Your admin profile (header link) |
 
 Use the **Store / Language / Currency** switcher in the admin header when a screen is scope-sensitive (catalog, settings, bulk prices, store credit).
@@ -314,7 +315,7 @@ Use **Store Management → Stores** at `/admin/store` for store entities, plus *
 
 ## Integrations
 
-Open **Integrations** at `/admin/integrations` for a summary of email, media, and plugin configuration. Follow the **Webhooks** link to manage outbound webhook endpoints at `/admin/integrations/webhooks`.
+Open **Integrations** at `/admin/integrations` for a summary of email, media, and plugin configuration. Follow the **Webhooks** link to manage outbound webhook endpoints at `/admin/integrations/webhooks`. Use **Inbound Idempotency** at `/admin/integrations/idempotency` to inspect ERP callback dedupe keys and preview stored replay responses ([PR-864](../phase-9-merchant-discovery/prs/PR-864.md)).
 
 ## Day-to-Day Operations
 

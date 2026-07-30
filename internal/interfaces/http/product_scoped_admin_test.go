@@ -133,6 +133,9 @@ func (s *stubVariantRepo) FindByID(_ context.Context, id string) (*catalog.Varia
 func (s *stubVariantRepo) FindBySKU(_ context.Context, _ string) (*catalog.Variant, error) {
 	return nil, nil
 }
+func (s *stubVariantRepo) FindBySKUs(_ context.Context, _ []string) (map[string]*catalog.Variant, error) {
+	return map[string]*catalog.Variant{}, nil
+}
 
 func (s *stubVariantRepo) ListByProductID(_ context.Context, _ string, _, _ int) ([]catalog.Variant, error) {
 	return nil, nil
