@@ -625,6 +625,25 @@ func TestAdminHandler_StaticJS(t *testing.T) {
 			t.Fatalf("expected product extensions wiring %q in JS", expected)
 		}
 	}
+	expectedExtensionFieldDefinitionWiring := []string{
+		"renderExtensionFieldsGrid",
+		"renderExtensionFieldForm",
+		"renderExtensionFieldCreate",
+		"renderExtensionFieldEdit",
+		"/admin/settings/extension-fields",
+		"/admin/settings/extension-fields/new",
+		"New Extension Field",
+		"Failed to load extension fields.",
+		"Failed to load extension field.",
+		"delete-extension-field-btn",
+		"extension-field-scope-filter",
+		"include_private=true",
+	}
+	for _, expected := range expectedExtensionFieldDefinitionWiring {
+		if !strings.Contains(normalizedBody, expected) {
+			t.Fatalf("expected extension field definition wiring %q in JS", expected)
+		}
+	}
 	expectedAbandonedCartWiring := []string{
 		"renderAbandonedCartSettingsPage",
 		"renderAbandonedCartSettingsForm",
