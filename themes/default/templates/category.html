@@ -46,6 +46,21 @@
 </section>
 {{ end }}
 
+{{ if .Filters }}
+<aside class="listing-filters page-intro" aria-label="Available filters">
+    {{ range .Filters }}
+    <section>
+        <span class="eyebrow">{{ .Name }}</span>
+        <div class="facet-list">
+            {{ range .Values }}
+            <a class="chip{{ if .Selected }} chip--active{{ end }}" href="{{ .URL }}"{{ if .Selected }} aria-current="true"{{ end }}>{{ .Label }} <strong>{{ .Count }}</strong></a>
+            {{ end }}
+        </div>
+    </section>
+    {{ end }}
+</aside>
+{{ end }}
+
 {{ if .Products }}
 <section class="product-listing product-listing--{{ .View }}" aria-label="Products in category">
     {{ range .Products }}
