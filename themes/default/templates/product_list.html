@@ -29,7 +29,7 @@
         <span class="eyebrow">{{ .Name }}</span>
         <div class="facet-list">
             {{ range .Values }}
-            <span class="facet-pill">{{ .Label }} <strong>{{ .Count }}</strong></span>
+            <a class="chip{{ if .Selected }} chip--active{{ end }}" href="{{ .URL }}"{{ if .Selected }} aria-current="true"{{ end }}>{{ .Label }} <strong>{{ .Count }}</strong></a>
             {{ end }}
         </div>
     </section>

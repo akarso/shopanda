@@ -135,12 +135,12 @@ func createTestTheme(t *testing.T) *theme.Engine {
 		t.Fatal(err)
 	}
 
-	listing := `{{ define "title" }}{{ .Title }}{{ end }}{{ define "content" }}<h1>{{ .Title }}</h1><p>{{ .ResultSummary }}</p><div class="view-{{ .View }}">{{ range .Products }}<article><a href="/products/{{ .Slug }}">{{ .Name }}</a><span>{{ .PriceText }}</span><small>{{ .Availability }}</small></article>{{ else }}<p>{{ .EmptyMessage }}</p>{{ end }}</div><nav>{{ range .SortOptions }}{{ if .Selected }}<strong>{{ .Label }}</strong>{{ else }}<a href="{{ .URL }}">{{ .Label }}</a>{{ end }}{{ end }}</nav><div>{{ range .Pagination.Links }}{{ if .Current }}<strong>{{ .Label }}</strong>{{ else }}<a href="{{ .URL }}">{{ .Label }}</a>{{ end }}{{ end }}</div>{{ end }}{{ template "layout.html" . }}`
+	listing := `{{ define "title" }}{{ .Title }}{{ end }}{{ define "content" }}<h1>{{ .Title }}</h1><p>{{ .ResultSummary }}</p>{{ if .Filters }}<aside>{{ range .Filters }}{{ range .Values }}<a href="{{ .URL }}"{{ if .Selected }} data-selected="true"{{ end }}>{{ .Label }}</a>{{ end }}{{ end }}</aside>{{ end }}<div class="view-{{ .View }}">{{ range .Products }}<article><a href="/products/{{ .Slug }}">{{ .Name }}</a><span>{{ .PriceText }}</span><small>{{ .Availability }}</small></article>{{ else }}<p>{{ .EmptyMessage }}</p>{{ end }}</div><nav>{{ range .SortOptions }}{{ if .Selected }}<strong>{{ .Label }}</strong>{{ else }}<a href="{{ .URL }}">{{ .Label }}</a>{{ end }}{{ end }}</nav><div>{{ range .Pagination.Links }}{{ if .Current }}<strong>{{ .Label }}</strong>{{ else }}<a href="{{ .URL }}">{{ .Label }}</a>{{ end }}{{ end }}</div>{{ end }}{{ template "layout.html" . }}`
 	if err := os.WriteFile(filepath.Join(tplDir, "product_list.html"), []byte(listing), 0644); err != nil {
 		t.Fatal(err)
 	}
 
-	category := `{{ define "title" }}{{ .Category.Name }}{{ end }}{{ define "content" }}<h1>{{ .Category.Name }}</h1><p>{{ .Category.Description }}</p><nav>{{ range .Breadcrumbs }}<a href="{{ .URL }}">{{ .Label }}</a>{{ end }}</nav><section>{{ range .Subcategories }}<a href="{{ .URL }}">{{ .Name }}</a>{{ end }}</section><div>{{ range .Products }}<article>{{ .Name }}</article>{{ else }}<p>{{ .EmptyMessage }}</p>{{ end }}</div>{{ end }}{{ template "layout.html" . }}`
+	category := `{{ define "title" }}{{ .Category.Name }}{{ end }}{{ define "content" }}<h1>{{ .Category.Name }}</h1><p>{{ .Category.Description }}</p><nav>{{ range .Breadcrumbs }}<a href="{{ .URL }}">{{ .Label }}</a>{{ end }}</nav><section>{{ range .Subcategories }}<a href="{{ .URL }}">{{ .Name }}</a>{{ end }}</section>{{ if .Filters }}<aside>{{ range .Filters }}{{ range .Values }}<a href="{{ .URL }}"{{ if .Selected }} data-selected="true"{{ end }}>{{ .Label }}</a>{{ end }}{{ end }}</aside>{{ end }}<div>{{ range .Products }}<article>{{ .Name }}</article>{{ else }}<p>{{ .EmptyMessage }}</p>{{ end }}</div>{{ end }}{{ template "layout.html" . }}`
 	if err := os.WriteFile(filepath.Join(tplDir, "category.html"), []byte(category), 0644); err != nil {
 		t.Fatal(err)
 	}
@@ -570,6 +570,9 @@ func TestStorefrontHandler_Products_OK(t *testing.T) {
 	pdp := composition.NewPipeline[composition.ProductContext]()
 	plp := composition.NewPipeline[composition.ListingContext]()
 	plp.AddStep(addListingBlockStep{name: "listing", typ: "product_grid"})
+	categoryRepo := &mockStorefrontCategoryRepo{findAllFn: func(_ context.Context) ([]catalog.Category, error) {
+		return []catalog.Category{{ID: "cat-shoes", Name: "Shoes", Slug: "shoes"}}, nil
+	}}
 	searchEngine := &mockSearchEngine{searchFn: func(_ context.Context, query search.SearchQuery) (search.SearchResult, error) {
 		if query.Text != "" {
 			t.Fatalf("query.Text = %q, want empty", query.Text)
@@ -589,7 +592,7 @@ func TestStorefrontHandler_Products_OK(t *testing.T) {
 			Facets:   map[string][]search.FacetValue{"category": []search.FacetValue{{Value: "Shoes", Count: 1}}},
 		}, nil
 	}}
-	h := shophttp.NewStorefrontHandler(engine, repo, newStorefrontCategoryMock(), pdp, plp, searchEngine)
+	h := shophttp.NewStorefrontHandler(engine, repo, categoryRepo, pdp, plp, searchEngine)
 
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest("GET", "/products", nil)
@@ -607,6 +610,91 @@ func TestStorefrontHandler_Products_OK(t *testing.T) {
 	}
 	if !strings.Contains(body, "Newest") {
 		t.Fatalf("body missing sort option label: %s", body)
+	}
+	if !strings.Contains(body, `href="/products?category=cat-shoes`) {
+		t.Fatalf("body missing interactive category facet link: %s", body)
+	}
+}
+
+func TestStorefrontHandler_Products_CategoryFilterParam(t *testing.T) {
+	repo := &mockStorefrontRepo{}
+	engine := createTestTheme(t)
+	pdp := composition.NewPipeline[composition.ProductContext]()
+	plp := composition.NewPipeline[composition.ListingContext]()
+	categoryRepo := &mockStorefrontCategoryRepo{findAllFn: func(_ context.Context) ([]catalog.Category, error) {
+		return []catalog.Category{{ID: "cat-shoes", Name: "Shoes", Slug: "shoes"}}, nil
+	}}
+	searchEngine := &mockSearchEngine{searchFn: func(_ context.Context, query search.SearchQuery) (search.SearchResult, error) {
+		if query.Filters["category"] != "cat-shoes" {
+			t.Fatalf("category filter = %v, want cat-shoes", query.Filters["category"])
+		}
+		return search.SearchResult{
+			Products: []search.Product{{Name: "Runner", Slug: "runner"}},
+			Total:    1,
+			Facets:   map[string][]search.FacetValue{"category": []search.FacetValue{{Value: "Shoes", Count: 1}}},
+		}, nil
+	}}
+	h := shophttp.NewStorefrontHandler(engine, repo, categoryRepo, pdp, plp, searchEngine)
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("GET", "/products?category=cat-shoes", nil)
+	newStorefrontRouter(h).ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d; body: %s", rec.Code, http.StatusOK, rec.Body.String())
+	}
+	body := rec.Body.String()
+	if !strings.Contains(body, "Runner") {
+		t.Fatalf("body missing filtered product: %s", body)
+	}
+	if !strings.Contains(body, `data-selected="true"`) {
+		t.Fatalf("body missing selected category facet: %s", body)
+	}
+}
+
+func TestStorefrontHandler_Category_InteractiveFacets(t *testing.T) {
+	repo := &mockStorefrontRepo{}
+	parentID := "cat-root"
+	engine := createTestTheme(t)
+	pdp := composition.NewPipeline[composition.ProductContext]()
+	plp := composition.NewPipeline[composition.ListingContext]()
+	categoryRepo := &mockStorefrontCategoryRepo{findAllFn: func(_ context.Context) ([]catalog.Category, error) {
+		return []catalog.Category{
+			{ID: "cat-root", Name: "Electronics", Slug: "electronics"},
+			{ID: "cat-child", ParentID: &parentID, Name: "Headphones", Slug: "headphones"},
+			{ID: "cat-sibling", ParentID: &parentID, Name: "Speakers", Slug: "speakers"},
+		}, nil
+	}}
+	searchEngine := &mockSearchEngine{searchFn: func(_ context.Context, query search.SearchQuery) (search.SearchResult, error) {
+		if query.Filters["category"] != "cat-child" {
+			t.Fatalf("category filter = %v, want cat-child", query.Filters["category"])
+		}
+		return search.SearchResult{
+			Products: []search.Product{{Name: "Studio Headset", Slug: "studio-headset"}},
+			Total:    1,
+			Facets: map[string][]search.FacetValue{
+				"category": {
+					{Value: "Headphones", Count: 1},
+					{Value: "Speakers", Count: 2},
+				},
+			},
+		}, nil
+	}}
+	h := shophttp.NewStorefrontHandler(engine, repo, categoryRepo, pdp, plp, searchEngine)
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("GET", "/categories/headphones", nil)
+	newStorefrontRouter(h).ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d; body: %s", rec.Code, http.StatusOK, rec.Body.String())
+	}
+	body := rec.Body.String()
+	if !strings.Contains(body, `href="/categories/speakers"`) {
+		t.Fatalf("body missing sibling category facet link: %s", body)
+	}
+	if !strings.Contains(body, `href="/categories/headphones" data-selected="true"`) {
+		t.Fatalf("body missing selected current category facet: %s", body)
 	}
 }
 

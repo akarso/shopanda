@@ -183,8 +183,10 @@ type StorefrontSortOption struct {
 }
 
 type StorefrontFilterValue struct {
-	Label string
-	Count int
+	Label    string
+	Count    int
+	URL      string
+	Selected bool
 }
 
 type StorefrontFilterGroup struct {
@@ -219,11 +221,12 @@ type StorefrontCategoryPageData struct {
 }
 
 type storefrontListingParams struct {
-	Page    int
-	PerPage int
-	Sort    string
-	View    string
-	Query   string
+	Page       int
+	PerPage    int
+	Sort       string
+	View       string
+	Query      string
+	CategoryID string
 }
 
 var storefrontSortOptions = []struct {
@@ -506,12 +509,21 @@ func (h *StorefrontHandler) renderListing(searchMode bool) http.HandlerFunc {
 		}
 
 		result := search.SearchResult{Products: []search.Product{}, Facets: map[string][]search.FacetValue{}}
+		allCategories, catErr := h.cachedCategories(r.Context())
+		if catErr != nil {
+			http.Error(w, "Internal Server Error", http.StatusInternalServerError)
+			return
+		}
 		if !searchMode || params.Query != "" {
 			query := search.SearchQuery{
-				Text:   params.Query,
-				Sort:   storefrontSearchSort(params.Sort),
-				Limit:  params.PerPage,
-				Offset: (params.Page - 1) * params.PerPage,
+				Text:    params.Query,
+				Sort:    storefrontSearchSort(params.Sort),
+				Limit:   params.PerPage,
+				Offset:  (params.Page - 1) * params.PerPage,
+				Filters: map[string]interface{}{},
+			}
+			if params.CategoryID != "" {
+				query.Filters["category"] = params.CategoryID
 			}
 			if s := store.FromContext(r.Context()); s != nil {
 				query.StoreID = s.ID
@@ -540,7 +552,7 @@ func (h *StorefrontHandler) renderListing(searchMode bool) http.HandlerFunc {
 			return
 		}
 
-		h.renderPage(w, "product_list", h.buildListingPageData(r, h.layoutDataBestEffort(r), ctx, result, params, searchMode))
+		h.renderPage(w, "product_list", h.buildListingPageData(r, h.layoutDataBestEffort(r), ctx, result, params, searchMode, allCategories, nil))
 	}
 }
 
@@ -818,7 +830,7 @@ func (h *StorefrontHandler) cachedCategories(ctx context.Context) ([]catalog.Cat
 	return append([]catalog.Category(nil), cloned...), nil
 }
 
-func (h *StorefrontHandler) buildListingPageData(r *http.Request, layout StorefrontLayoutData, ctx *composition.ListingContext, result search.SearchResult, params storefrontListingParams, searchMode bool) StorefrontListingPageData {
+func (h *StorefrontHandler) buildListingPageData(r *http.Request, layout StorefrontLayoutData, ctx *composition.ListingContext, result search.SearchResult, params storefrontListingParams, searchMode bool, allCategories []catalog.Category, activeCategory *catalog.Category) StorefrontListingPageData {
 	title := "All Products"
 	eyebrow := "Catalog"
 	resultSummary := fmt.Sprintf("Showing %d product(s)", result.Total)
@@ -850,14 +862,14 @@ func (h *StorefrontHandler) buildListingPageData(r *http.Request, layout Storefr
 		Products:      storefrontCards(ctx.Products, result.Products, ctx.Currency, composition.PriceIndicationsFromMeta(ctx.Meta)),
 		Pagination:    storefrontPagination(r, params, result.Total),
 		SortOptions:   storefrontSortLinks(r, params),
-		Filters:       storefrontFilters(result.Facets),
+		Filters:       storefrontInteractiveFilters(r, params, result.Facets, allCategories, activeCategory),
 		Blocks:        ctx.Blocks,
 		Meta:          ctx.Meta,
 	}
 }
 
 func (h *StorefrontHandler) buildCategoryPageData(r *http.Request, layout StorefrontLayoutData, ctx *composition.ListingContext, result search.SearchResult, params storefrontListingParams, category *catalog.Category, allCategories []catalog.Category) StorefrontCategoryPageData {
-	listing := h.buildListingPageData(r, layout, ctx, result, params, false)
+	listing := h.buildListingPageData(r, layout, ctx, result, params, false, allCategories, category)
 	page := StorefrontCategoryPageData{
 		StorefrontListingPageData: listing,
 		Category: StorefrontCategorySummary{
@@ -909,11 +921,12 @@ func parseStorefrontListingParams(r *http.Request) (storefrontListingParams, err
 		view = "grid"
 	}
 	return storefrontListingParams{
-		Page:    page,
-		PerPage: perPage,
-		Sort:    storefrontSortValue(strings.TrimSpace(q.Get("sort"))),
-		View:    view,
-		Query:   strings.TrimSpace(q.Get("q")),
+		Page:       page,
+		PerPage:    perPage,
+		Sort:       storefrontSortValue(strings.TrimSpace(q.Get("sort"))),
+		View:       view,
+		Query:      strings.TrimSpace(q.Get("q")),
+		CategoryID: strings.TrimSpace(q.Get("category")),
 	}, nil
 }
 
@@ -1076,16 +1089,87 @@ func storefrontSortLinks(r *http.Request, params storefrontListingParams) []Stor
 	return out
 }
 
-func storefrontFilters(facets map[string][]search.FacetValue) []StorefrontFilterGroup {
-	groups := make([]StorefrontFilterGroup, 0, len(facets))
-	for name, values := range facets {
-		group := StorefrontFilterGroup{Name: name, Values: make([]StorefrontFilterValue, 0, len(values))}
-		for _, value := range values {
-			group.Values = append(group.Values, StorefrontFilterValue{Label: value.Value, Count: value.Count})
-		}
-		groups = append(groups, group)
+func storefrontInteractiveFilters(r *http.Request, params storefrontListingParams, facets map[string][]search.FacetValue, allCategories []catalog.Category, activeCategory *catalog.Category) []StorefrontFilterGroup {
+	values := append([]search.FacetValue(nil), facets["category"]...)
+	if extra, ok := facets["category_id"]; ok {
+		values = append(values, extra...)
 	}
-	return groups
+	if len(values) == 0 {
+		return nil
+	}
+
+	byID := make(map[string]catalog.Category, len(allCategories))
+	byName := make(map[string]catalog.Category, len(allCategories))
+	for _, category := range allCategories {
+		byID[category.ID] = category
+		byName[category.Name] = category
+	}
+
+	selectedID := ""
+	if activeCategory != nil {
+		selectedID = activeCategory.ID
+	} else if params.CategoryID != "" {
+		selectedID = params.CategoryID
+	}
+
+	onCategoryPage := r.URL.Path == "/categories" || strings.HasPrefix(r.URL.Path, "/categories/")
+	seen := make(map[string]struct{}, len(values))
+	group := StorefrontFilterGroup{Name: "Category", Values: make([]StorefrontFilterValue, 0, len(values))}
+	for _, facet := range values {
+		category, ok := storefrontCategoryFromFacet(facet.Value, byID, byName)
+		if !ok {
+			continue
+		}
+		if _, dup := seen[category.ID]; dup {
+			continue
+		}
+		seen[category.ID] = struct{}{}
+		selected := category.ID == selectedID
+		group.Values = append(group.Values, StorefrontFilterValue{
+			Label:    category.Name,
+			Count:    facet.Count,
+			URL:      storefrontCategoryFacetURL(r, params, category, selected, onCategoryPage),
+			Selected: selected,
+		})
+	}
+	if len(group.Values) == 0 {
+		return nil
+	}
+	return []StorefrontFilterGroup{group}
+}
+
+func storefrontCategoryFromFacet(value string, byID, byName map[string]catalog.Category) (catalog.Category, bool) {
+	if category, ok := byID[value]; ok {
+		return category, true
+	}
+	if category, ok := byName[value]; ok {
+		return category, true
+	}
+	return catalog.Category{}, false
+}
+
+func storefrontCategoryFacetURL(r *http.Request, params storefrontListingParams, category catalog.Category, selected, onCategoryPage bool) string {
+	if onCategoryPage {
+		q := url.Values{}
+		if params.Sort != "" && params.Sort != storefrontSortOptions[0].Value {
+			q.Set("sort", params.Sort)
+		}
+		if params.View != "" && params.View != "grid" {
+			q.Set("view", params.View)
+		}
+		path := "/categories/" + category.Slug
+		if encoded := q.Encode(); encoded != "" {
+			return path + "?" + encoded
+		}
+		return path
+	}
+	overrides := map[string]string{"page": "1"}
+	if selected {
+		overrides["category"] = ""
+	} else {
+		overrides["category"] = category.ID
+	}
+	return storefrontURL(r, params, overrides)
 }
 
 func storefrontURL(r *http.Request, params storefrontListingParams, overrides map[string]string) string {
@@ -1096,6 +1180,9 @@ func storefrontURL(r *http.Request, params storefrontListingParams, overrides ma
 	q.Set("view", params.View)
 	if params.Query != "" {
 		q.Set("q", params.Query)
+	}
+	if params.CategoryID != "" {
+		q.Set("category", params.CategoryID)
 	}
 	for key, value := range overrides {
 		if value == "" {
