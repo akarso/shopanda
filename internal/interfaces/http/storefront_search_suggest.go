@@ -34,6 +34,10 @@ type storefrontSearchSuggestionItem struct {
 // SearchSuggestFragment handles GET /fragments/search-suggest for storefront autocomplete.
 func (h *StorefrontHandler) SearchSuggestFragment() http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		if h.search == nil {
+			return
+		}
 		prefix := strings.TrimSpace(r.URL.Query().Get("q"))
 		data := storefrontSearchSuggestData{HasQuery: prefix != ""}
 		if prefix != "" {
@@ -61,7 +65,6 @@ func (h *StorefrontHandler) SearchSuggestFragment() http.HandlerFunc {
 			http.Error(w, "Internal Server Error", http.StatusInternalServerError)
 			return
 		}
-		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		_, _ = w.Write(buf.Bytes())
 	}
 }

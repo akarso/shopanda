@@ -764,6 +764,25 @@ func TestStorefrontHandler_SearchSuggestFragment_EmptyQuery(t *testing.T) {
 	}
 }
 
+func TestStorefrontHandler_SearchSuggestFragment_NoSearchEngine(t *testing.T) {
+	repo := &mockStorefrontRepo{}
+	engine := createTestTheme(t)
+	pdp := composition.NewPipeline[composition.ProductContext]()
+	plp := composition.NewPipeline[composition.ListingContext]()
+	h := shophttp.NewStorefrontHandler(engine, repo, newStorefrontCategoryMock(), pdp, plp, nil)
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("GET", "/fragments/search-suggest?q=wid", nil)
+	newStorefrontRouter(h).ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d; body: %s", rec.Code, http.StatusOK, rec.Body.String())
+	}
+	if strings.TrimSpace(rec.Body.String()) != "" {
+		t.Fatalf("body = %q, want empty", rec.Body.String())
+	}
+}
+
 func TestStorefrontHandler_Search_OK(t *testing.T) {
 	repo := &mockStorefrontRepo{}
 	engine := createTestTheme(t)
