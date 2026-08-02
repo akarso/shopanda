@@ -126,6 +126,7 @@ type StorefrontLayoutData struct {
 	Categories         []StorefrontCategoryNavItem
 	WeeeFooterEnabled  bool
 	WeeeProducerReg    string
+	EnableSearchSuggest bool
 	Assets             StorefrontAssets
 	CSPEnabled         bool
 	CSPNonce           string
@@ -721,6 +722,7 @@ func (h *StorefrontHandler) buildLayoutData(r *http.Request, categories []catalo
 		Categories:         storefrontCategoryTree(categories),
 		WeeeFooterEnabled:  weeeFooterEnabled,
 		WeeeProducerReg:    weeeProducerReg,
+		EnableSearchSuggest: h.search != nil,
 		Assets:             h.resolveStorefrontAssets(r),
 		CSPEnabled:         h.cspEnabled && cspNonce != "",
 		CSPNonce:           cspNonce,

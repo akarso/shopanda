@@ -306,6 +306,7 @@ func newStorefrontRouter(h *shophttp.StorefrontHandler) http.Handler {
 	router.HandleFunc("GET /categories/{slug}", h.Category())
 	router.HandleFunc("GET /fragments/cart-count", h.CartCountFragment())
 	router.HandleFunc("GET /fragments/mini-cart", h.MiniCartFragment())
+	router.HandleFunc("GET /fragments/search-suggest", h.SearchSuggestFragment())
 	router.HandleFunc("GET /products", h.Products())
 	router.HandleFunc("GET /products/{slug}", h.Product())
 	router.HandleFunc("POST /cart/add", h.AddToCart())
@@ -695,6 +696,71 @@ func TestStorefrontHandler_Category_InteractiveFacets(t *testing.T) {
 	}
 	if !strings.Contains(body, `href="/categories/headphones" data-selected="true"`) {
 		t.Fatalf("body missing selected current category facet: %s", body)
+	}
+}
+
+func TestStorefrontHandler_SearchSuggestFragment_OK(t *testing.T) {
+	repo := &mockStorefrontRepo{}
+	engine := createTestTheme(t)
+	pdp := composition.NewPipeline[composition.ProductContext]()
+	plp := composition.NewPipeline[composition.ListingContext]()
+	searchEngine := &mockSearchEngine{
+		searchFn: func(_ context.Context, _ search.SearchQuery) (search.SearchResult, error) {
+			return search.SearchResult{Facets: map[string][]search.FacetValue{}}, nil
+		},
+		suggestFn: func(_ context.Context, prefix string, limit int) ([]search.Suggestion, error) {
+			if prefix != "wid" {
+				t.Fatalf("prefix = %q, want wid", prefix)
+			}
+			if limit != search.DefaultSuggestLimit {
+				t.Fatalf("limit = %d, want %d", limit, search.DefaultSuggestLimit)
+			}
+			return []search.Suggestion{{Text: "Widget", Type: "product", URL: "/products/widget"}}, nil
+		},
+	}
+	h := shophttp.NewStorefrontHandler(engine, repo, newStorefrontCategoryMock(), pdp, plp, searchEngine)
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("GET", "/fragments/search-suggest?q=wid", nil)
+	newStorefrontRouter(h).ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d; body: %s", rec.Code, http.StatusOK, rec.Body.String())
+	}
+	body := rec.Body.String()
+	if !strings.Contains(body, `href="/products/widget"`) {
+		t.Fatalf("body missing suggestion link: %s", body)
+	}
+	if !strings.Contains(body, "Widget") {
+		t.Fatalf("body missing suggestion label: %s", body)
+	}
+}
+
+func TestStorefrontHandler_SearchSuggestFragment_EmptyQuery(t *testing.T) {
+	repo := &mockStorefrontRepo{}
+	engine := createTestTheme(t)
+	pdp := composition.NewPipeline[composition.ProductContext]()
+	plp := composition.NewPipeline[composition.ListingContext]()
+	searchEngine := &mockSearchEngine{
+		searchFn: func(_ context.Context, _ search.SearchQuery) (search.SearchResult, error) {
+			return search.SearchResult{Facets: map[string][]search.FacetValue{}}, nil
+		},
+		suggestFn: func(_ context.Context, _ string, _ int) ([]search.Suggestion, error) {
+			t.Fatal("Suggest should not be called for empty query")
+			return nil, nil
+		},
+	}
+	h := shophttp.NewStorefrontHandler(engine, repo, newStorefrontCategoryMock(), pdp, plp, searchEngine)
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("GET", "/fragments/search-suggest", nil)
+	newStorefrontRouter(h).ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d; body: %s", rec.Code, http.StatusOK, rec.Body.String())
+	}
+	if strings.TrimSpace(rec.Body.String()) != "" {
+		t.Fatalf("body = %q, want empty", rec.Body.String())
 	}
 }
 

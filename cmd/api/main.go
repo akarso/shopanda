@@ -1292,6 +1292,7 @@ func runServe(cfg *config.Config, log logger.Logger, embedScheduler bool) error 
 		router.HandleFunc("POST /checkout/confirm", storefront.CheckoutConfirm())
 		router.HandleFunc("GET /fragments/cart-count", storefront.CartCountFragment())
 		router.HandleFunc("GET /fragments/mini-cart", storefront.MiniCartFragment())
+		router.HandleFunc("GET /fragments/search-suggest", storefront.SearchSuggestFragment())
 		router.HandleFunc("GET /{$}", storefront.Home())
 		router.HandleFunc("GET /pages/{slug}", storefront.CMSPage())
 		router.HandleFunc("GET /categories", storefront.Categories())

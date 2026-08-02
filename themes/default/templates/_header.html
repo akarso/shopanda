@@ -10,8 +10,13 @@
         </a>
 
         <form class="site-search" action="{{ .Layout.SearchAction }}" method="get" role="search">
-            <label class="sr-only" for="storefront-search">Search products</label>
-            <input id="storefront-search" name="q" type="search" placeholder="Search catalog" value="{{ .Layout.SearchQuery }}">
+            <div class="site-search__field">
+                <label class="sr-only" for="storefront-search">Search products</label>
+                <input id="storefront-search" name="q" type="search" placeholder="Search catalog" value="{{ .Layout.SearchQuery }}" autocomplete="off"{{ if .Layout.EnableSearchSuggest }} aria-controls="search-suggest-panel" hx-get="/fragments/search-suggest" hx-trigger="input changed delay:300ms, search" hx-target="#search-suggest-panel" hx-swap="innerHTML"{{ end }}>
+                {{ if .Layout.EnableSearchSuggest }}
+                <div id="search-suggest-panel" class="search-suggest-panel" role="listbox" aria-label="Search suggestions"></div>
+                {{ end }}
+            </div>
             <button type="submit">Search</button>
         </form>
 
