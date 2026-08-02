@@ -1112,13 +1112,18 @@ func storefrontInteractiveFilters(r *http.Request, params storefrontListingParam
 		selectedID = params.CategoryID
 	}
 
-	onCategoryPage := strings.HasPrefix(r.URL.Path, "/categories/")
+	onCategoryPage := r.URL.Path == "/categories" || strings.HasPrefix(r.URL.Path, "/categories/")
+	seen := make(map[string]struct{}, len(values))
 	group := StorefrontFilterGroup{Name: "Category", Values: make([]StorefrontFilterValue, 0, len(values))}
 	for _, facet := range values {
 		category, ok := storefrontCategoryFromFacet(facet.Value, byID, byName)
 		if !ok {
 			continue
 		}
+		if _, dup := seen[category.ID]; dup {
+			continue
+		}
+		seen[category.ID] = struct{}{}
 		selected := category.ID == selectedID
 		group.Values = append(group.Values, StorefrontFilterValue{
 			Label:    category.Name,

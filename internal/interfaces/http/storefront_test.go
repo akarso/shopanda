@@ -693,7 +693,7 @@ func TestStorefrontHandler_Category_InteractiveFacets(t *testing.T) {
 	if !strings.Contains(body, `href="/categories/speakers"`) {
 		t.Fatalf("body missing sibling category facet link: %s", body)
 	}
-	if !strings.Contains(body, `href="/categories/headphones"`) && !strings.Contains(body, `data-selected="true"`) {
+	if !strings.Contains(body, `href="/categories/headphones" data-selected="true"`) {
 		t.Fatalf("body missing selected current category facet: %s", body)
 	}
 }
