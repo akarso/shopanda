@@ -212,6 +212,19 @@ func (r *CustomerRepo) ListAdminUsers(ctx context.Context, offset, limit int) ([
 	return users, nil
 }
 
+// HasActiveAdmin reports whether at least one active admin user exists.
+func (r *CustomerRepo) HasActiveAdmin(ctx context.Context) (bool, error) {
+	const q = `SELECT EXISTS(
+		SELECT 1 FROM customers WHERE role = 'admin' AND status = 'active'
+	)`
+
+	var exists bool
+	if err := r.queryRow(ctx, q).Scan(&exists); err != nil {
+		return false, fmt.Errorf("customer_repo: has active admin: %w", err)
+	}
+	return exists, nil
+}
+
 // UpdateAdminUser atomically updates an admin user and enforces last-active-admin rules.
 func (r *CustomerRepo) UpdateAdminUser(ctx context.Context, c *customer.Customer, priorRole customer.Role, priorStatus customer.Status, revokeSessions bool) error {
 	if !c.Role.IsValid() {

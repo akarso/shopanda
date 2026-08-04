@@ -77,7 +77,7 @@ func TestAttrExport_Basic(t *testing.T) {
 	if len(records) != 3 { // header + 2 rows
 		t.Fatalf("rows = %d, want 3", len(records))
 	}
-	if strings.Join(records[0], ",") != "code,label,type,required,options,group,group_label" {
+	if strings.Join(records[0], ",") != "code,label,type,required,options,use_in_advanced_search,use_in_layered_nav,use_in_promo_rules,group,group_label" {
 		t.Errorf("header = %v", records[0])
 	}
 	// First data row is color (sorted by code).
@@ -87,15 +87,18 @@ func TestAttrExport_Basic(t *testing.T) {
 	if records[1][3] != "true" {
 		t.Errorf("row1 required = %q, want true", records[1][3])
 	}
-	if records[1][5] != "apparel" {
-		t.Errorf("row1 group = %q, want apparel", records[1][5])
+	if records[1][5] != "false" {
+		t.Errorf("row1 use_in_advanced_search = %q, want false", records[1][5])
+	}
+	if records[1][8] != "apparel" {
+		t.Errorf("row1 group = %q, want apparel", records[1][8])
 	}
 	// Second row is weight (ungrouped).
 	if records[2][0] != "weight" {
 		t.Errorf("row2 code = %q, want weight", records[2][0])
 	}
-	if records[2][5] != "" {
-		t.Errorf("row2 group = %q, want empty", records[2][5])
+	if records[2][8] != "" {
+		t.Errorf("row2 group = %q, want empty", records[2][8])
 	}
 }
 
@@ -143,11 +146,11 @@ func TestAttrExport_MultiGroup(t *testing.T) {
 	if len(records) != 3 { // header + 2
 		t.Fatalf("rows = %d, want 3", len(records))
 	}
-	if records[1][5] != "apparel" {
-		t.Errorf("row1 group = %q, want apparel", records[1][5])
+	if records[1][8] != "apparel" {
+		t.Errorf("row1 group = %q, want apparel", records[1][8])
 	}
-	if records[2][5] != "display" {
-		t.Errorf("row2 group = %q, want display", records[2][5])
+	if records[2][8] != "display" {
+		t.Errorf("row2 group = %q, want display", records[2][8])
 	}
 }
 

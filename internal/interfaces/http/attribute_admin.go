@@ -34,18 +34,24 @@ func NewAttributeAdminHandlerWithAuditor(store *admin.AttributeStore, auditor *a
 }
 
 type createAttributeRequest struct {
-	Code     string   `json:"code"`
-	Label    string   `json:"label"`
-	Type     string   `json:"type"`
-	Required bool     `json:"required"`
-	Options  []string `json:"options"`
+	Code                string   `json:"code"`
+	Label               string   `json:"label"`
+	Type                string   `json:"type"`
+	Required            bool     `json:"required"`
+	Options             []string `json:"options"`
+	UseInAdvancedSearch bool     `json:"use_in_advanced_search"`
+	UseInLayeredNav     bool     `json:"use_in_layered_nav"`
+	UseInPromoRules     bool     `json:"use_in_promo_rules"`
 }
 
 type updateAttributeRequest struct {
-	Label    string   `json:"label"`
-	Type     string   `json:"type"`
-	Required bool     `json:"required"`
-	Options  []string `json:"options"`
+	Label               string   `json:"label"`
+	Type                string   `json:"type"`
+	Required            bool     `json:"required"`
+	Options             []string `json:"options"`
+	UseInAdvancedSearch bool     `json:"use_in_advanced_search"`
+	UseInLayeredNav     bool     `json:"use_in_layered_nav"`
+	UseInPromoRules     bool     `json:"use_in_promo_rules"`
 }
 
 type createAttributeGroupRequest struct {
@@ -60,12 +66,15 @@ type updateAttributeGroupRequest struct {
 }
 
 type adminAttributeResponse struct {
-	Code     string   `json:"code"`
-	Label    string   `json:"label"`
-	Type     string   `json:"type"`
-	Required bool     `json:"required"`
-	Options  []string `json:"options,omitempty"`
-	Groups   []string `json:"groups,omitempty"`
+	Code                string   `json:"code"`
+	Label               string   `json:"label"`
+	Type                string   `json:"type"`
+	Required            bool     `json:"required"`
+	Options             []string `json:"options,omitempty"`
+	Groups              []string `json:"groups,omitempty"`
+	UseInAdvancedSearch bool     `json:"use_in_advanced_search"`
+	UseInLayeredNav     bool     `json:"use_in_layered_nav"`
+	UseInPromoRules     bool     `json:"use_in_promo_rules"`
 }
 
 type adminAttributeGroupResponse struct {
@@ -106,12 +115,15 @@ func toAttributeResponse(attr catalog.Attribute, groups []string) adminAttribute
 		groups = []string{}
 	}
 	return adminAttributeResponse{
-		Code:     attr.Code,
-		Label:    attr.Label,
-		Type:     string(attr.Type),
-		Required: attr.Required,
-		Options:  attr.Options,
-		Groups:   groups,
+		Code:                attr.Code,
+		Label:               attr.Label,
+		Type:                string(attr.Type),
+		Required:            attr.Required,
+		Options:             attr.Options,
+		Groups:              groups,
+		UseInAdvancedSearch: attr.UseInAdvancedSearch,
+		UseInLayeredNav:     attr.UseInLayeredNav,
+		UseInPromoRules:     attr.UseInPromoRules,
 	}
 }
 
@@ -137,6 +149,9 @@ func attributeFromCreateRequest(req createAttributeRequest) (catalog.Attribute, 
 	}
 	attr.Required = req.Required
 	attr.Options = req.Options
+	attr.UseInAdvancedSearch = req.UseInAdvancedSearch
+	attr.UseInLayeredNav = req.UseInLayeredNav
+	attr.UseInPromoRules = req.UseInPromoRules
 	return attr, nil
 }
 
@@ -149,6 +164,9 @@ func attributeFromUpdateRequest(req updateAttributeRequest, code string) (catalo
 	}
 	attr.Required = req.Required
 	attr.Options = req.Options
+	attr.UseInAdvancedSearch = req.UseInAdvancedSearch
+	attr.UseInLayeredNav = req.UseInLayeredNav
+	attr.UseInPromoRules = req.UseInPromoRules
 	return attr, nil
 }
 

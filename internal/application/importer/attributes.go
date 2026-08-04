@@ -42,7 +42,8 @@ func (imp *AttributeImporter) WithRowHooks(registry *importctx.Registry) *Attrib
 // Import reads CSV rows from r and persists attribute definitions.
 //
 // Required columns: code, label, type.
-// Optional columns: required, options, group, group_label.
+// Optional columns: required, options, use_in_advanced_search, use_in_layered_nav,
+// use_in_promo_rules, group, group_label.
 //
 // Each row defines one attribute. When group and group_label are present,
 // the attribute is also added to the named group.
@@ -76,6 +77,9 @@ func (imp *AttributeImporter) Import(ctx context.Context, r io.Reader) (*Attribu
 
 	_, hasRequired := colIdx["required"]
 	_, hasOptions := colIdx["options"]
+	_, hasAdvancedSearch := colIdx["use_in_advanced_search"]
+	_, hasLayeredNav := colIdx["use_in_layered_nav"]
+	_, hasPromoRules := colIdx["use_in_promo_rules"]
 	_, hasGroup := colIdx["group"]
 	_, hasGroupLabel := colIdx["group_label"]
 
@@ -140,8 +144,17 @@ func (imp *AttributeImporter) Import(ctx context.Context, r io.Reader) (*Attribu
 		}
 
 		if hasRequired {
-			val := strings.ToLower(colValRow(rowMap, "required"))
-			attr.Required = val == "true" || val == "1" || val == "yes"
+			attr.Required = parseAttributeCSVBool(colValRow(rowMap, "required"))
+		}
+
+		if hasAdvancedSearch {
+			attr.UseInAdvancedSearch = parseAttributeCSVBool(colValRow(rowMap, "use_in_advanced_search"))
+		}
+		if hasLayeredNav {
+			attr.UseInLayeredNav = parseAttributeCSVBool(colValRow(rowMap, "use_in_layered_nav"))
+		}
+		if hasPromoRules {
+			attr.UseInPromoRules = parseAttributeCSVBool(colValRow(rowMap, "use_in_promo_rules"))
 		}
 
 		if hasOptions {
@@ -243,4 +256,13 @@ func (imp *AttributeImporter) Import(ctx context.Context, r io.Reader) (*Attribu
 	result.Attributes = len(attrSlice)
 	result.Groups = len(validGroups)
 	return result, nil
+}
+
+func parseAttributeCSVBool(raw string) bool {
+	switch strings.ToLower(strings.TrimSpace(raw)) {
+	case "true", "1", "yes":
+		return true
+	default:
+		return false
+	}
 }

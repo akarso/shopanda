@@ -118,6 +118,49 @@ func TestAttributeAdminHandler_CreateAndGet(t *testing.T) {
 	}
 }
 
+func TestAttributeAdminHandler_CreateWithDiscoveryFlags(t *testing.T) {
+	store := adminApp.NewAttributeStore(newMockConfigRepoForAttrAdmin())
+	h := shophttp.NewAttributeAdminHandler(store)
+	router := newAttributeAdminRouter(h)
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("POST", "/api/v1/admin/attributes", attributeBody(t, map[string]interface{}{
+		"code":                   "color",
+		"label":                  "Color",
+		"type":                   "select",
+		"options":                []string{"red", "blue"},
+		"use_in_advanced_search": true,
+		"use_in_layered_nav":     true,
+		"use_in_promo_rules":     false,
+	}))
+	router.ServeHTTP(rec, req)
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("status = %d, want %d; body: %s", rec.Code, http.StatusCreated, rec.Body.String())
+	}
+
+	rec = httptest.NewRecorder()
+	req = httptest.NewRequest("GET", "/api/v1/admin/attributes/color", nil)
+	router.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("get status = %d, want %d; body: %s", rec.Code, http.StatusOK, rec.Body.String())
+	}
+	var resp struct {
+		Data struct {
+			Attribute struct {
+				UseInAdvancedSearch bool `json:"use_in_advanced_search"`
+				UseInLayeredNav     bool `json:"use_in_layered_nav"`
+				UseInPromoRules     bool `json:"use_in_promo_rules"`
+			} `json:"attribute"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if !resp.Data.Attribute.UseInAdvancedSearch || !resp.Data.Attribute.UseInLayeredNav || resp.Data.Attribute.UseInPromoRules {
+		t.Fatalf("attribute flags = %+v", resp.Data.Attribute)
+	}
+}
+
 func TestAttributeAdminHandler_CreateDuplicateRejected(t *testing.T) {
 	store := adminApp.NewAttributeStore(newMockConfigRepoForAttrAdmin())
 	h := shophttp.NewAttributeAdminHandler(store)

@@ -5547,7 +5547,8 @@
             }
             html += '</select></label>';
             html += '<table style="margin-top:1rem"><thead><tr>' +
-                '<th>Code</th><th>Label</th><th>Type</th><th>Required</th><th>Groups</th>' +
+                '<th>Code</th><th>Label</th><th>Type</th><th>Required</th>' +
+                '<th>Adv. search</th><th>Layered nav</th><th>Promo rules</th><th>Groups</th>' +
                 '</tr></thead><tbody id="attributes-table-body">';
 
             function renderAttributeRows(filterGroup) {
@@ -5563,12 +5564,15 @@
                         '<td><a href="' + editHref + '" data-link>' + esc(attr.code || '') + '</a></td>' +
                         '<td>' + esc(attr.label || '') + '</td>' +
                         '<td>' + esc(attr.type || '') + '</td>' +
-                        '<td>' + esc(attr.required ? 'yes' : 'no') + '</td>' +
+                        '<td>' + esc(attributeFlagLabel(!!attr.required)) + '</td>' +
+                        '<td>' + esc(attributeFlagLabel(!!attr.use_in_advanced_search)) + '</td>' +
+                        '<td>' + esc(attributeFlagLabel(!!attr.use_in_layered_nav)) + '</td>' +
+                        '<td>' + esc(attributeFlagLabel(!!attr.use_in_promo_rules)) + '</td>' +
                         '<td>' + esc(groupList.join(', ')) + '</td>' +
                         '</tr>';
                 }
                 if (rows === '') {
-                    rows = '<tr><td colspan="5">No attributes found.</td></tr>';
+                    rows = '<tr><td colspan="8">No attributes found.</td></tr>';
                 }
                 return rows;
             }
@@ -5589,9 +5593,16 @@
         });
     }
 
+    function attributeFlagLabel(value) {
+        return value ? 'yes' : 'no';
+    }
+
     function renderAttributeFormFields(attribute) {
         var attrType = attribute ? (attribute.type || 'text') : 'text';
         var isRequired = attribute ? !!attribute.required : false;
+        var useAdvanced = attribute ? !!attribute.use_in_advanced_search : false;
+        var useLayered = attribute ? !!attribute.use_in_layered_nav : false;
+        var usePromo = attribute ? !!attribute.use_in_promo_rules : false;
         var options = attribute && Array.isArray(attribute.options) ? attribute.options.join(', ') : '';
         return '' +
             (attribute ? '' : '<label>Code<input name="code" value="" required pattern="[a-zA-Z0-9_-]+"></label>') +
@@ -5604,6 +5615,12 @@
             '</select></label>' +
             '<label>Options (comma-separated, for select)<input name="options" value="' + esc(options) + '"></label>' +
             '<label><input type="checkbox" name="required"' + (isRequired ? ' checked' : '') + '> Required</label>' +
+            '<fieldset class="attribute-properties" style="margin-top:1rem;border:0;padding:0">' +
+            '<legend class="settings-scope-note">Discovery &amp; rules</legend>' +
+            '<label><input type="checkbox" name="use_in_advanced_search"' + (useAdvanced ? ' checked' : '') + '> Use in advanced search</label>' +
+            '<label><input type="checkbox" name="use_in_layered_nav"' + (useLayered ? ' checked' : '') + '> Use in layered navigation</label>' +
+            '<label><input type="checkbox" name="use_in_promo_rules"' + (usePromo ? ' checked' : '') + '> Use in promotion rules</label>' +
+            '</fieldset>' +
             '<div style="margin-top:1rem"><button type="submit">Save</button>' +
             (attribute ? ' <button type="button" id="delete-attribute-btn" class="danger">Delete</button>' : '') +
             '</div>';
@@ -5643,7 +5660,10 @@
                     label: form.elements.label.value,
                     type: form.elements.type.value,
                     required: form.elements.required.checked,
-                    options: parseAttributeOptions(form.elements.options.value)
+                    options: parseAttributeOptions(form.elements.options.value),
+                    use_in_advanced_search: form.elements.use_in_advanced_search.checked,
+                    use_in_layered_nav: form.elements.use_in_layered_nav.checked,
+                    use_in_promo_rules: form.elements.use_in_promo_rules.checked
                 };
                 if (!attributeCode) {
                     payload.code = form.elements.code.value;
