@@ -128,7 +128,7 @@ The media library shows a thumbnail, file name, file size, public URL, and delet
 
 For very large catalog migrations, CSV workflows remain available:
 
-**On the storefront:** category pages and the product listing show clickable category facet chips when search returns facet counts. Shoppers can refine by category without leaving the catalog ([PR-900](../phase-9-merchant-discovery/prs/PR-900.md)). Attribute-based filters are planned separately.
+**On the storefront:** category pages and the product listing show clickable category facet chips when search returns facet counts. Shoppers can refine by category without leaving the catalog ([PR-900](../phase-9-merchant-discovery/prs/PR-900.md)). The header search box shows product name suggestions while typing ([PR-901](../phase-9-merchant-discovery/prs/PR-901.md)). Attribute-based filters are planned separately (PR-902).
 
 ```bash
 app export:categories categories.csv

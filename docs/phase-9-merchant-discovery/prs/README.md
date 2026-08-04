@@ -15,7 +15,7 @@
 | PR-866 | B | done | [Extension field admin grid](PR-866.md) |
 | PR-867 | B | done | [Variant extension scopes](PR-867.md) |
 | PR-900 | C **PRIORITY** | done | [Layered navigation (category facets)](PR-900.md) |
-| PR-901 | C **PRIORITY** | planned | Advanced search + autosuggest |
+| PR-901 | C **PRIORITY** | done | [Advanced search — storefront autosuggest](PR-901.md) |
 | PR-902 | C **PRIORITY** | planned | Attribute properties + admin |
 | PR-903 | C **PRIORITY** | planned | Installation UX |
 
