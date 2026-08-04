@@ -99,9 +99,6 @@ func TestPendingCount_WithPending(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(dir, "001_first.sql"), []byte("SELECT 1;"), 0644); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(dir, "002_second.sql"), []byte("SELECT 1;"), 0644); err != nil {
-		t.Fatal(err)
-	}
 
 	db, err := openPendingTestDB(t)
 	if err != nil {
@@ -111,6 +108,10 @@ func TestPendingCount_WithPending(t *testing.T) {
 
 	if _, err := Run(db, dir); err != nil {
 		t.Fatalf("run first migration: %v", err)
+	}
+
+	if err := os.WriteFile(filepath.Join(dir, "002_second.sql"), []byte("SELECT 1;"), 0644); err != nil {
+		t.Fatal(err)
 	}
 
 	pending, err := PendingCount(db, dir)
