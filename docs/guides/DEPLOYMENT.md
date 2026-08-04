@@ -65,18 +65,24 @@ If you already have a compiled binary, skip this step.
 
 ### 4. Run first-time setup
 
+**Option A — CLI (operators):**
+
 ```bash
 ./shopanda setup
 ```
 
-The setup command:
+**Option B — Web wizard (merchants):**
+
+Start the server first (step 5), then open `/setup` in a browser. The wizard runs migrations, seeds defaults, and creates the first admin account. Visiting `/admin` before setup completes redirects to `/setup` ([PR-903](../phase-9-merchant-discovery/prs/PR-903.md)).
+
+The setup command / wizard:
 
 - checks database connectivity
 - runs migrations
-- runs default seeders unless `--skip-seed` is used
-- prints store, admin API, and docs URLs
+- runs default seeders unless `--skip-seed` is used (CLI only)
+- prints store, admin API, and docs URLs (CLI) or links to `/admin` (web)
 
-If you prefer explicit commands instead of `setup`:
+If you prefer explicit CLI commands instead of `setup`:
 
 ```bash
 ./shopanda migrate

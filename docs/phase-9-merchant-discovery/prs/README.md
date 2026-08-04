@@ -16,8 +16,8 @@
 | PR-867 | B | done | [Variant extension scopes](PR-867.md) |
 | PR-900 | C **PRIORITY** | done | [Layered navigation (category facets)](PR-900.md) |
 | PR-901 | C **PRIORITY** | done | [Advanced search — storefront autosuggest](PR-901.md) |
-| PR-902 | C **PRIORITY** | planned | Attribute properties + admin |
-| PR-903 | C **PRIORITY** | planned | Installation UX |
+| PR-902 | C **PRIORITY** | done | [Attribute properties](PR-902.md) |
+| PR-903 | C **PRIORITY** | done | [Installation UX](PR-903.md) |
 
 Roadmap: [`../ROADMAP.md`](../ROADMAP.md)
 

@@ -41,7 +41,8 @@ func (exp *AttributeExporter) WithRowHooks(registry *exportctx.Registry) *Attrib
 
 // Export writes all attribute definitions to w in CSV format.
 //
-// CSV columns: code, label, type, required, options, group, group_label.
+// CSV columns: code, label, type, required, options, use_in_advanced_search,
+// use_in_layered_nav, use_in_promo_rules, group, group_label.
 // An attribute belonging to multiple groups produces one row per group.
 func (exp *AttributeExporter) Export(ctx context.Context, w io.Writer) (*AttributeResult, error) {
 	attrs, err := exp.loadAttributes(ctx)
@@ -66,7 +67,11 @@ func (exp *AttributeExporter) Export(ctx context.Context, w io.Writer) (*Attribu
 	}
 
 	writer := csv.NewWriter(w)
-	if err := writer.Write([]string{"code", "label", "type", "required", "options", "group", "group_label"}); err != nil {
+	if err := writer.Write([]string{
+		"code", "label", "type", "required", "options",
+		"use_in_advanced_search", "use_in_layered_nav", "use_in_promo_rules",
+		"group", "group_label",
+	}); err != nil {
 		return nil, fmt.Errorf("attribute export: write header: %w", err)
 	}
 
@@ -75,25 +80,32 @@ func (exp *AttributeExporter) Export(ctx context.Context, w io.Writer) (*Attribu
 
 	result := &AttributeResult{}
 	rowIndex := 0
-	header := []string{"code", "label", "type", "required", "options", "group", "group_label"}
+	header := []string{
+		"code", "label", "type", "required", "options",
+		"use_in_advanced_search", "use_in_layered_nav", "use_in_promo_rules",
+		"group", "group_label",
+	}
 	for _, a := range attrs {
-		reqStr := "false"
-		if a.Required {
-			reqStr = "true"
-		}
+		reqStr := boolCSV(a.Required)
+		advStr := boolCSV(a.UseInAdvancedSearch)
+		navStr := boolCSV(a.UseInLayeredNav)
+		promoStr := boolCSV(a.UseInPromoRules)
 		optStr := strings.Join(a.Options, ",")
 
 		refs := attrGroups[a.Code]
 		writeRow := func(groupCode, groupLabel string) error {
 			rowIndex++
 			rowMap := map[string]string{
-				"code":        a.Code,
-				"label":       a.Label,
-				"type":        string(a.Type),
-				"required":    reqStr,
-				"options":     optStr,
-				"group":       groupCode,
-				"group_label": groupLabel,
+				"code":                   a.Code,
+				"label":                  a.Label,
+				"type":                   string(a.Type),
+				"required":               reqStr,
+				"options":                optStr,
+				"use_in_advanced_search": advStr,
+				"use_in_layered_nav":     navStr,
+				"use_in_promo_rules":     promoStr,
+				"group":                  groupCode,
+				"group_label":            groupLabel,
 			}
 			if exp.rowHooks != nil && exp.rowHooks.Enabled() {
 				var cont bool
@@ -181,4 +193,11 @@ func decodeGroups(val interface{}) ([]catalog.AttributeGroup, error) {
 		return nil, fmt.Errorf("attribute export: decode groups: %w", err)
 	}
 	return groups, nil
+}
+
+func boolCSV(v bool) string {
+	if v {
+		return "true"
+	}
+	return "false"
 }

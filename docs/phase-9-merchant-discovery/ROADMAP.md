@@ -91,7 +91,8 @@ Track C depends on catalog/search infrastructure (partially exists: search facet
 | 867 | B | done |
 | 900 | C **PRIORITY** | done |
 | 901 | C **PRIORITY** | done |
-| 902–903 | C **PRIORITY** | planned |
+| 902 | C **PRIORITY** | done |
+| 903 | C **PRIORITY** | done |
 
 PR specs: [`prs/`](prs/).
 

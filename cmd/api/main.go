@@ -45,6 +45,7 @@ import (
 	appPricing "github.com/akarso/shopanda/internal/application/pricing"
 	returnsApp "github.com/akarso/shopanda/internal/application/returns"
 	reviewsApp "github.com/akarso/shopanda/internal/application/reviews"
+	setupApp "github.com/akarso/shopanda/internal/application/setup"
 	storecreditApp "github.com/akarso/shopanda/internal/application/storecredit"
 	webhookApp "github.com/akarso/shopanda/internal/application/webhook"
 	"github.com/akarso/shopanda/internal/application/rewrite"
@@ -895,6 +896,20 @@ func runServe(cfg *config.Config, log logger.Logger, embedScheduler bool) error 
 	customerAdmin := shophttp.NewCustomerAdminHandlerWithAuditorAndDeleter(customerRepo, accountService, sharedAuditor)
 	adminUserService := adminuserApp.NewService(customerRepo)
 	adminUserHandler := shophttp.NewAdminUserHandler(adminUserService, sharedAuditor)
+	setupService := setupApp.NewService(
+		conn,
+		"migrations",
+		customerRepo,
+		storeRepo,
+		setupAdminUserCreator{svc: adminUserService},
+		func(ctx context.Context, deps seed.Deps) (*seed.Result, error) {
+			reg := seed.NewRegistry()
+			registerDefaultSeeders(reg)
+			return reg.Run(ctx, deps)
+		},
+		log,
+	)
+	setupHandler := shophttp.NewSetupHandler(setupService, log)
 	adminRoleHandler := shophttp.NewAdminRoleHandler(adminRoleService, sharedAuditor)
 	storeCreditAdmin := shophttp.NewStoreCreditAdminHandler(storeCreditService)
 	storeCreditAccount := shophttp.NewStoreCreditAccountHandler(storeCreditService)
@@ -922,6 +937,8 @@ func runServe(cfg *config.Config, log logger.Logger, embedScheduler bool) error 
 	router.Use(shophttp.LanguageMiddleware())
 	router.Use(shophttp.CacheControlMiddleware([]string{
 		"/healthz",
+		"/setup",
+		"/api/v1/setup",
 		"/api/v1/carts",
 		"/api/v1/checkout",
 		"/api/v1/orders",
@@ -933,6 +950,9 @@ func runServe(cfg *config.Config, log logger.Logger, embedScheduler bool) error 
 
 	// Routes.
 	router.HandleFunc("GET /healthz", shophttp.HealthHandler())
+	router.HandleFunc("GET /setup", setupHandler.Page())
+	router.HandleFunc("GET /api/v1/setup/status", setupHandler.Status())
+	router.HandleFunc("POST /api/v1/setup/install", setupHandler.Install())
 	router.HandleFunc("GET /sitemap.xml", sitemapHandler.Serve())
 	router.HandleFunc("GET /robots.txt", robotsHandler.Serve())
 	router.HandleFunc("GET /docs", docsHandler.UI())
@@ -1205,8 +1225,9 @@ func runServe(cfg *config.Config, log logger.Logger, embedScheduler bool) error 
 	if adminErr != nil {
 		return fmt.Errorf("admin handler: %w", adminErr)
 	}
-	router.Handle("GET /admin", adminHandler)
-	router.Handle("GET /admin/{path...}", adminHandler)
+	adminWithSetup := shophttp.SetupGate(setupService, adminHandler)
+	router.Handle("GET /admin", adminWithSetup)
+	router.Handle("GET /admin/{path...}", adminWithSetup)
 
 	// Storefront SSR routes (optional, gated by frontend.enabled).
 	if cfg.Frontend.Enabled {
@@ -2838,6 +2859,20 @@ func runSearchReindex(cfg *config.Config, log logger.Logger) error {
 	})
 
 	return nil
+}
+
+type setupAdminUserCreator struct {
+	svc *adminuserApp.Service
+}
+
+func (a setupAdminUserCreator) Create(ctx context.Context, in setupApp.AdminUserCreateInput) (*customer.Customer, error) {
+	return a.svc.Create(ctx, adminuserApp.CreateInput{
+		Email:     in.Email,
+		Password:  in.Password,
+		FirstName: in.FirstName,
+		LastName:  in.LastName,
+		Role:      in.Role,
+	})
 }
 
 type slotRegistryThemeSource struct {

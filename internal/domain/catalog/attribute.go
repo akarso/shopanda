@@ -24,11 +24,14 @@ func (t AttributeType) IsValid() bool {
 // Attribute describes a named, typed attribute that can be assigned to products
 // and variants via attribute groups.
 type Attribute struct {
-	Code     string        // unique identifier, e.g. "color", "weight"
-	Label    string        // human-readable label
-	Type     AttributeType // value type
-	Required bool          // whether a value must be provided
-	Options  []string      // allowed values when Type == AttributeTypeSelect
+	Code                  string        // unique identifier, e.g. "color", "weight"
+	Label                 string        // human-readable label
+	Type                  AttributeType // value type
+	Required              bool          // whether a value must be provided
+	Options               []string      // allowed values when Type == AttributeTypeSelect
+	UseInAdvancedSearch   bool          // expose in storefront advanced search filters
+	UseInLayeredNav       bool          // expose as PLP layered navigation facet
+	UseInPromoRules       bool          // allow referencing in promotion rule conditions
 }
 
 // NewAttribute creates an Attribute with the required fields.

@@ -111,6 +111,45 @@ func (r *AttributeRegistry) GroupAttributes(groupCode string) ([]Attribute, erro
 	return out, nil
 }
 
+// AttributesForAdvancedSearch returns attributes flagged for advanced search filters.
+func (r *AttributeRegistry) AttributesForAdvancedSearch() []Attribute {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	out := make([]Attribute, 0)
+	for _, a := range r.attrs {
+		if a.UseInAdvancedSearch {
+			out = append(out, cloneAttribute(a))
+		}
+	}
+	return out
+}
+
+// AttributesForLayeredNav returns attributes flagged for PLP layered navigation facets.
+func (r *AttributeRegistry) AttributesForLayeredNav() []Attribute {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	out := make([]Attribute, 0)
+	for _, a := range r.attrs {
+		if a.UseInLayeredNav {
+			out = append(out, cloneAttribute(a))
+		}
+	}
+	return out
+}
+
+// AttributesForPromoRules returns attributes flagged for promotion rule conditions.
+func (r *AttributeRegistry) AttributesForPromoRules() []Attribute {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	out := make([]Attribute, 0)
+	for _, a := range r.attrs {
+		if a.UseInPromoRules {
+			out = append(out, cloneAttribute(a))
+		}
+	}
+	return out
+}
+
 // ValidateAttributes validates a map of attribute values against the attributes
 // in the given group. It checks that required attributes are present and that
 // values match their declared types.
