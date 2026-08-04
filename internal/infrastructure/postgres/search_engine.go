@@ -393,7 +393,7 @@ func (e *SearchEngine) attributeFacets(ctx context.Context, joinClause, whereCla
 		if !searchAttributeCodeValid(code) {
 			continue
 		}
-		facetArgs := append(append([]interface{}{}, args...), code, code, code)
+		facetArgs := append(append([]interface{}{}, args...), code)
 		codeIdx := len(args) + 1
 		q := fmt.Sprintf(
 			`SELECT p.attributes->>$%d, COUNT(DISTINCT p.id)
@@ -409,6 +409,7 @@ func (e *SearchEngine) attributeFacets(ctx context.Context, joinClause, whereCla
 		if err != nil {
 			return nil, fmt.Errorf("search_engine: attribute facets %q: %w", code, err)
 		}
+
 		var values []search.FacetValue
 		for rows.Next() {
 			var fv search.FacetValue
@@ -418,11 +419,12 @@ func (e *SearchEngine) attributeFacets(ctx context.Context, joinClause, whereCla
 			}
 			values = append(values, fv)
 		}
+		if err := rows.Err(); err != nil {
+			rows.Close()
+			return nil, fmt.Errorf("search_engine: attribute facet rows: %w", err)
+		}
 		if err := rows.Close(); err != nil {
 			return nil, err
-		}
-		if err := rows.Err(); err != nil {
-			return nil, fmt.Errorf("search_engine: attribute facet rows: %w", err)
 		}
 		if len(values) > 0 {
 			out[code] = values
