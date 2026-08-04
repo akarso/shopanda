@@ -901,7 +901,7 @@ func runServe(cfg *config.Config, log logger.Logger, embedScheduler bool) error 
 		"migrations",
 		customerRepo,
 		storeRepo,
-		adminUserService,
+		setupAdminUserCreator{svc: adminUserService},
 		func(ctx context.Context, deps seed.Deps) (*seed.Result, error) {
 			reg := seed.NewRegistry()
 			registerDefaultSeeders(reg)
@@ -909,7 +909,7 @@ func runServe(cfg *config.Config, log logger.Logger, embedScheduler bool) error 
 		},
 		log,
 	)
-	setupHandler := shophttp.NewSetupHandler(setupService)
+	setupHandler := shophttp.NewSetupHandler(setupService, log)
 	adminRoleHandler := shophttp.NewAdminRoleHandler(adminRoleService, sharedAuditor)
 	storeCreditAdmin := shophttp.NewStoreCreditAdminHandler(storeCreditService)
 	storeCreditAccount := shophttp.NewStoreCreditAccountHandler(storeCreditService)
@@ -2859,6 +2859,20 @@ func runSearchReindex(cfg *config.Config, log logger.Logger) error {
 	})
 
 	return nil
+}
+
+type setupAdminUserCreator struct {
+	svc *adminuserApp.Service
+}
+
+func (a setupAdminUserCreator) Create(ctx context.Context, in setupApp.AdminUserCreateInput) (*customer.Customer, error) {
+	return a.svc.Create(ctx, adminuserApp.CreateInput{
+		Email:     in.Email,
+		Password:  in.Password,
+		FirstName: in.FirstName,
+		LastName:  in.LastName,
+		Role:      in.Role,
+	})
 }
 
 type slotRegistryThemeSource struct {

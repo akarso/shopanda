@@ -9,6 +9,7 @@ import (
 
 	setupApp "github.com/akarso/shopanda/internal/application/setup"
 	"github.com/akarso/shopanda/internal/platform/apperror"
+	"github.com/akarso/shopanda/internal/platform/logger"
 )
 
 var setupWizardTemplate = template.Must(template.New("setup-wizard").Parse(`<!DOCTYPE html>
@@ -170,14 +171,18 @@ type SetupService interface {
 // SetupHandler serves the web installer and setup API.
 type SetupHandler struct {
 	svc SetupService
+	log logger.Logger
 }
 
 // NewSetupHandler creates a SetupHandler.
-func NewSetupHandler(svc SetupService) *SetupHandler {
+func NewSetupHandler(svc SetupService, log logger.Logger) *SetupHandler {
 	if svc == nil {
 		panic("http: setup service must not be nil")
 	}
-	return &SetupHandler{svc: svc}
+	if log == nil {
+		panic("http: setup handler logger must not be nil")
+	}
+	return &SetupHandler{svc: svc, log: log}
 }
 
 type setupInstallRequest struct {
@@ -208,7 +213,11 @@ func (h *SetupHandler) Page() http.HandlerFunc {
 
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		w.Header().Set("Cache-Control", "no-store")
-		setupWizardTemplate.Execute(w, nil)
+		if err := setupWizardTemplate.Execute(w, nil); err != nil {
+			h.log.Warn("setup.page.render_failed", map[string]interface{}{
+				"error": err.Error(),
+			})
+		}
 	}
 }
 
@@ -259,7 +268,11 @@ func SetupGate(svc SetupService, next http.Handler) http.Handler {
 	}
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		status, err := svc.Status(r.Context())
-		if err == nil && status.NeedsSetup {
+		if err != nil {
+			http.Redirect(w, r, "/setup", http.StatusFound)
+			return
+		}
+		if status.NeedsSetup {
 			http.Redirect(w, r, "/setup", http.StatusFound)
 			return
 		}

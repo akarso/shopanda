@@ -4,8 +4,8 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"strings"
 
-	adminuserApp "github.com/akarso/shopanda/internal/application/adminuser"
 	"github.com/akarso/shopanda/internal/domain/customer"
 	"github.com/akarso/shopanda/internal/domain/store"
 	"github.com/akarso/shopanda/internal/platform/apperror"
@@ -13,6 +13,9 @@ import (
 	"github.com/akarso/shopanda/internal/platform/migrate"
 	"github.com/akarso/shopanda/internal/seed"
 )
+
+// setupInstallAdvisoryLockKey serializes concurrent web install requests.
+const setupInstallAdvisoryLockKey int64 = 903001
 
 // AdminChecker reports whether the store already has an active admin account.
 type AdminChecker interface {
@@ -28,13 +31,27 @@ type StoreUpdater interface {
 // SeedRunner executes default seeders (migrate is handled separately).
 type SeedRunner func(ctx context.Context, deps seed.Deps) (*seed.Result, error)
 
+// AdminUserCreator provisions admin-capable accounts during first install.
+type AdminUserCreator interface {
+	Create(ctx context.Context, in AdminUserCreateInput) (*customer.Customer, error)
+}
+
+// AdminUserCreateInput is the data required to create the first admin user.
+type AdminUserCreateInput struct {
+	Email     string
+	Password  string
+	FirstName string
+	LastName  string
+	Role      customer.Role
+}
+
 // Service orchestrates first-time web installation.
 type Service struct {
 	db            *sql.DB
 	migrationsDir string
 	admins        AdminChecker
 	stores        StoreUpdater
-	adminUsers    *adminuserApp.Service
+	adminUsers    AdminUserCreator
 	runSeed       SeedRunner
 	log           logger.Logger
 }
@@ -45,7 +62,7 @@ func NewService(
 	migrationsDir string,
 	admins AdminChecker,
 	stores StoreUpdater,
-	adminUsers *adminuserApp.Service,
+	adminUsers AdminUserCreator,
 	runSeed SeedRunner,
 	log logger.Logger,
 ) *Service {
@@ -139,46 +156,72 @@ func (s *Service) Install(ctx context.Context, in InstallInput) (*InstallResult,
 		return nil, apperror.Conflict("store is already installed")
 	}
 
-	applied, err := migrate.Run(s.db, s.migrationsDir)
-	if err != nil {
-		return nil, fmt.Errorf("setup install: migrate: %w", err)
-	}
-
-	deps := seed.Deps{DB: s.db, Logger: s.log}
-	if _, err := s.runSeed(ctx, deps); err != nil {
-		return nil, fmt.Errorf("setup install: seed: %w", err)
-	}
-
-	hasAdmin, err := s.admins.HasActiveAdmin(ctx)
-	if err != nil {
-		return nil, fmt.Errorf("setup install: admin check: %w", err)
-	}
-	if !hasAdmin {
-		admin, err := s.adminUsers.Create(ctx, adminuserApp.CreateInput{
-			Email:     in.Email,
-			Password:  in.Password,
-			FirstName: in.FirstName,
-			LastName:  in.LastName,
-			Role:      customer.RoleAdmin,
-		})
+	var result *InstallResult
+	err = s.withInstallLock(ctx, func(ctx context.Context) error {
+		hasAdmin, err := s.admins.HasActiveAdmin(ctx)
 		if err != nil {
-			return nil, err
+			return fmt.Errorf("setup install: admin check: %w", err)
 		}
-		in.Email = admin.Email
-	}
+		if hasAdmin {
+			return apperror.Conflict("store is already installed")
+		}
 
-	if name := trimStoreName(in.StoreName); name != "" && s.stores != nil {
-		if err := s.renameDefaultStore(ctx, name); err != nil {
-			s.log.Warn("setup.install.store_rename_failed", map[string]interface{}{
-				"error": err.Error(),
+		applied, err := migrate.Run(s.db, s.migrationsDir)
+		if err != nil {
+			return fmt.Errorf("setup install: migrate: %w", err)
+		}
+
+		deps := seed.Deps{DB: s.db, Logger: s.log}
+		if _, err := s.runSeed(ctx, deps); err != nil {
+			return fmt.Errorf("setup install: seed: %w", err)
+		}
+
+		hasAdmin, err = s.admins.HasActiveAdmin(ctx)
+		if err != nil {
+			return fmt.Errorf("setup install: admin check: %w", err)
+		}
+		if !hasAdmin {
+			admin, err := s.adminUsers.Create(ctx, AdminUserCreateInput{
+				Email:     in.Email,
+				Password:  in.Password,
+				FirstName: in.FirstName,
+				LastName:  in.LastName,
+				Role:      customer.RoleAdmin,
 			})
+			if err != nil {
+				return err
+			}
+			in.Email = admin.Email
 		}
-	}
 
-	return &InstallResult{
-		AdminEmail:        in.Email,
-		MigrationsApplied: applied,
-	}, nil
+		if name := strings.TrimSpace(in.StoreName); name != "" && s.stores != nil {
+			if err := s.renameDefaultStore(ctx, name); err != nil {
+				s.log.Warn("setup.install.store_rename_failed", map[string]interface{}{
+					"error": err.Error(),
+				})
+			}
+		}
+
+		result = &InstallResult{
+			AdminEmail:        in.Email,
+			MigrationsApplied: applied,
+		}
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	return result, nil
+}
+
+func (s *Service) withInstallLock(ctx context.Context, fn func(context.Context) error) error {
+	if _, err := s.db.ExecContext(ctx, "SELECT pg_advisory_lock($1)", setupInstallAdvisoryLockKey); err != nil {
+		return fmt.Errorf("setup install: acquire lock: %w", err)
+	}
+	defer func() {
+		_, _ = s.db.ExecContext(context.Background(), "SELECT pg_advisory_unlock($1)", setupInstallAdvisoryLockKey)
+	}()
+	return fn(ctx)
 }
 
 func (s *Service) renameDefaultStore(ctx context.Context, name string) error {
@@ -191,14 +234,4 @@ func (s *Service) renameDefaultStore(ctx context.Context, name string) error {
 	}
 	st.Name = name
 	return s.stores.Update(ctx, st)
-}
-
-func trimStoreName(name string) string {
-	for len(name) > 0 && (name[0] == ' ' || name[0] == '\t') {
-		name = name[1:]
-	}
-	for len(name) > 0 && (name[len(name)-1] == ' ' || name[len(name)-1] == '\t') {
-		name = name[:len(name)-1]
-	}
-	return name
 }

@@ -3,6 +3,7 @@ package http_test
 import (
 	"context"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -11,6 +12,7 @@ import (
 	setupApp "github.com/akarso/shopanda/internal/application/setup"
 	shophttp "github.com/akarso/shopanda/internal/interfaces/http"
 	"github.com/akarso/shopanda/internal/platform/apperror"
+	"github.com/akarso/shopanda/internal/platform/logger"
 )
 
 type fakeSetupService struct {
@@ -36,10 +38,15 @@ func (f *fakeSetupService) Install(_ context.Context, in setupApp.InstallInput) 
 	return &setupApp.InstallResult{AdminEmail: in.Email}, nil
 }
 
+func testSetupHandler(t *testing.T, svc shophttp.SetupService) *shophttp.SetupHandler {
+	t.Helper()
+	return shophttp.NewSetupHandler(svc, logger.NewWithWriter(io.Discard, "info"))
+}
+
 func TestSetupHandler_Status_OK(t *testing.T) {
 	t.Parallel()
 
-	handler := shophttp.NewSetupHandler(&fakeSetupService{
+	handler := testSetupHandler(t, &fakeSetupService{
 		status: setupApp.Status{
 			NeedsSetup:        true,
 			DatabaseOK:        true,
@@ -78,7 +85,7 @@ func TestSetupHandler_Install_CreatesAdmin(t *testing.T) {
 			MigrationsApplied: 1,
 		},
 	}
-	handler := shophttp.NewSetupHandler(fake)
+	handler := testSetupHandler(t, fake)
 
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/setup/install", strings.NewReader(`{
 		"email":"owner@example.com",
@@ -102,7 +109,7 @@ func TestSetupHandler_Install_CreatesAdmin(t *testing.T) {
 func TestSetupHandler_Install_ConflictWhenInstalled(t *testing.T) {
 	t.Parallel()
 
-	handler := shophttp.NewSetupHandler(&fakeSetupService{
+	handler := testSetupHandler(t, &fakeSetupService{
 		status:     setupApp.Status{NeedsSetup: false, DatabaseOK: true, HasAdmin: true},
 		installErr: apperror.Conflict("store is already installed"),
 	})
@@ -120,7 +127,7 @@ func TestSetupHandler_Install_ConflictWhenInstalled(t *testing.T) {
 func TestSetupHandler_Page_RedirectsWhenInstalled(t *testing.T) {
 	t.Parallel()
 
-	handler := shophttp.NewSetupHandler(&fakeSetupService{
+	handler := testSetupHandler(t, &fakeSetupService{
 		status: setupApp.Status{NeedsSetup: false, DatabaseOK: true, HasAdmin: true},
 	})
 
@@ -182,10 +189,37 @@ func TestSetupGate_AllowsAdminWhenInstalled(t *testing.T) {
 	}
 }
 
+func TestSetupGate_RedirectsAdminToSetupOnStatusError(t *testing.T) {
+	t.Parallel()
+
+	called := false
+	next := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		called = true
+		w.WriteHeader(http.StatusOK)
+	})
+	gate := shophttp.SetupGate(&fakeSetupService{
+		statusErr: apperror.Internal("database unavailable"),
+	}, next)
+
+	req := httptest.NewRequest(http.MethodGet, "/admin", nil)
+	rec := httptest.NewRecorder()
+	gate.ServeHTTP(rec, req)
+
+	if called {
+		t.Fatal("expected next handler not to run on status error")
+	}
+	if rec.Code != http.StatusFound {
+		t.Fatalf("status = %d, want 302", rec.Code)
+	}
+	if loc := rec.Header().Get("Location"); loc != "/setup" {
+		t.Fatalf("location = %q, want /setup", loc)
+	}
+}
+
 func TestSetupHandler_Page_RendersWizardWhenNeeded(t *testing.T) {
 	t.Parallel()
 
-	handler := shophttp.NewSetupHandler(&fakeSetupService{
+	handler := testSetupHandler(t, &fakeSetupService{
 		status: setupApp.Status{NeedsSetup: true, DatabaseOK: true},
 	})
 
