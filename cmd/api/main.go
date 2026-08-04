@@ -1265,6 +1265,7 @@ func runServe(cfg *config.Config, log logger.Logger, embedScheduler bool) error 
 			WithAccountSecurity(cfg.Auth.JWTSecret, 10*time.Minute).
 			WithAccountSecurityEmailLinks(cfg.Server.PublicBaseURL, 45*time.Minute).
 			WithAssets(assetRegistry).
+			WithLayeredNavAttributes(attributeStore).
 			WithCSPEnabled(cfg.Frontend.CSPEnabled)
 		staticDir := filepath.Join(cfg.Frontend.ThemePath, "static")
 		staticHandler := http.StripPrefix("/static/", http.FileServer(http.Dir(staticDir)))

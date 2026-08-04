@@ -479,3 +479,16 @@ func (s *AttributeStore) GroupCodesForAttribute(ctx context.Context, attrCode st
 	sort.Strings(codes)
 	return codes, nil
 }
+
+// ListLayeredNavAttributes returns attributes flagged for PLP layered navigation.
+func (s *AttributeStore) ListLayeredNavAttributes(ctx context.Context) ([]catalog.Attribute, error) {
+	attrs, err := s.loadAttributes(ctx)
+	if err != nil {
+		return nil, err
+	}
+	reg := catalog.NewAttributeRegistry()
+	for _, attr := range attrs {
+		reg.RegisterAttribute(attr)
+	}
+	return reg.AttributesForLayeredNav(), nil
+}

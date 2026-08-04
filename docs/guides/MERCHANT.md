@@ -128,7 +128,7 @@ The media library shows a thumbnail, file name, file size, public URL, and delet
 
 For very large catalog migrations, CSV workflows remain available:
 
-**On the storefront:** category pages and the product listing show clickable category facet chips when search returns facet counts. Shoppers can refine by category without leaving the catalog ([PR-900](../phase-9-merchant-discovery/prs/PR-900.md)). The header search box shows product name suggestions while typing ([PR-901](../phase-9-merchant-discovery/prs/PR-901.md)). Attribute-based filters depend on catalog attribute flags ([PR-902](../phase-9-merchant-discovery/prs/PR-902.md)).
+**On the storefront:** category pages and the product listing show clickable category facet chips when search returns facet counts. Shoppers can refine by category without leaving the catalog ([PR-900](../phase-9-merchant-discovery/prs/PR-900.md)). Attributes flagged for layered navigation show additional facet groups (e.g. color, size) via `?attr_<code>=<value>` ([PR-904](../phase-9-merchant-discovery/prs/PR-904.md)). The header search box shows product name suggestions while typing ([PR-901](../phase-9-merchant-discovery/prs/PR-901.md)). Advanced search attribute filters are planned separately (PR-905).
 
 ### Attribute discovery flags
 
@@ -137,7 +137,7 @@ On **Catalog → Attributes**, each attribute has optional flags under **Discove
 | Flag | Purpose |
 | --- | --- |
 | Use in advanced search | Include in storefront search filters (follow-up PR) |
-| Use in layered navigation | Include as a PLP facet candidate (follow-up PR) |
+| Use in layered navigation | Include as a PLP facet candidate — interactive chips on `/products`, `/search`, and category pages ([PR-904](../phase-9-merchant-discovery/prs/PR-904.md)) |
 | Use in promotion rules | Allow in promotion condition builders (future) |
 
 All flags default to off for existing attributes.

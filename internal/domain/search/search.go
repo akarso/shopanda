@@ -16,11 +16,13 @@ const defaultSearchLimit = 20
 type SearchQuery struct {
 	Text     string
 	Filters  map[string]interface{}
-	Sort     string
-	StoreID  string
-	Currency string
-	Limit    int
-	Offset   int
+	// FacetAttributes lists product attribute codes to compute facet counts for.
+	FacetAttributes []string
+	Sort            string
+	StoreID         string
+	Currency        string
+	Limit           int
+	Offset          int
 }
 
 // Validate checks that the query is well-formed.

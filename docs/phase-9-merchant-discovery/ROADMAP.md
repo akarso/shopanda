@@ -78,6 +78,15 @@ Track C depends on catalog/search infrastructure (partially exists: search facet
 
 ---
 
+## Track D — Discovery follow-ups (PR-904+)
+
+| PR | Title | Short description |
+| --- | --- | --- |
+| PR-904 | Attribute facets (PLP) | Layered nav chips for `use_in_layered_nav` attributes |
+| PR-905 | Advanced search filters | Storefront + API filters for `use_in_advanced_search` (planned) |
+
+---
+
 ## PR index (quick reference)
 
 | PR | Track | Status |
@@ -93,6 +102,8 @@ Track C depends on catalog/search infrastructure (partially exists: search facet
 | 901 | C **PRIORITY** | done |
 | 902 | C **PRIORITY** | done |
 | 903 | C **PRIORITY** | done |
+| 904 | D | done |
+| 905 | D | planned |
 
 PR specs: [`prs/`](prs/).
 

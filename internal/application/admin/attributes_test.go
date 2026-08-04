@@ -173,6 +173,25 @@ func TestAttributeStore_ListAttributesByGroup(t *testing.T) {
 	}
 }
 
+func TestAttributeStore_ListLayeredNavAttributes(t *testing.T) {
+	ctx := context.Background()
+	store := adminApp.NewAttributeStore(newMockConfigRepo())
+	if err := store.CreateAttribute(ctx, catalog.Attribute{Code: "color", Label: "Color", Type: catalog.AttributeTypeText, UseInLayeredNav: true}); err != nil {
+		t.Fatalf("CreateAttribute color: %v", err)
+	}
+	if err := store.CreateAttribute(ctx, catalog.Attribute{Code: "weight", Label: "Weight", Type: catalog.AttributeTypeNumber}); err != nil {
+		t.Fatalf("CreateAttribute weight: %v", err)
+	}
+
+	attrs, err := store.ListLayeredNavAttributes(ctx)
+	if err != nil {
+		t.Fatalf("ListLayeredNavAttributes: %v", err)
+	}
+	if len(attrs) != 1 || attrs[0].Code != "color" {
+		t.Fatalf("attrs = %+v, want color only", attrs)
+	}
+}
+
 func TestAttributeToFormField(t *testing.T) {
 	field, err := adminApp.AttributeToFormField(catalog.Attribute{
 		Code: "size", Label: "Size", Type: catalog.AttributeTypeSelect,

@@ -18,6 +18,8 @@
 | PR-901 | C **PRIORITY** | done | [Advanced search — storefront autosuggest](PR-901.md) |
 | PR-902 | C **PRIORITY** | done | [Attribute properties](PR-902.md) |
 | PR-903 | C **PRIORITY** | done | [Installation UX](PR-903.md) |
+| PR-904 | D | done | [Attribute facets (PLP)](PR-904.md) |
+| PR-905 | D | planned | Advanced search attribute filters |
 
 Roadmap: [`../ROADMAP.md`](../ROADMAP.md)
 
