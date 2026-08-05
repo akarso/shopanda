@@ -128,7 +128,7 @@ The media library shows a thumbnail, file name, file size, public URL, and delet
 
 For very large catalog migrations, CSV workflows remain available:
 
-**On the storefront:** with the **PostgreSQL** search engine (default), category pages and the product listing show clickable category facet chips when search returns facet counts. Shoppers can refine by category without leaving the catalog ([PR-900](../phase-9-merchant-discovery/prs/PR-900.md)). Attributes flagged for layered navigation show additional facet groups (e.g. color, size) via `?attr_<code>=<value>` on PostgreSQL ([PR-904](../phase-9-merchant-discovery/prs/PR-904.md)). The same attribute filters and facets work with **Meilisearch** when that engine is enabled ([PR-906](../phase-9-merchant-discovery/prs/PR-906.md)). The header search box shows product name suggestions while typing ([PR-901](../phase-9-merchant-discovery/prs/PR-901.md)). On `/search`, attributes flagged for advanced search appear as additional filter chips ([PR-905](../phase-9-merchant-discovery/prs/PR-905.md)).
+**On the storefront:** with the **PostgreSQL** search engine (default), category pages and the product listing show clickable category facet chips when search returns facet counts. Shoppers can refine by category without leaving the catalog ([PR-900](../phase-9-merchant-discovery/prs/PR-900.md)). Attributes flagged for layered navigation show additional facet groups (e.g. color, size) via `?attr_<code>=<value>` on PostgreSQL and Meilisearch ([PR-904](../phase-9-merchant-discovery/prs/PR-904.md), [PR-906](../phase-9-merchant-discovery/prs/PR-906.md)). The header search box shows product name suggestions while typing ([PR-901](../phase-9-merchant-discovery/prs/PR-901.md)). On `/search`, attributes flagged for advanced search appear as additional filter chips on both engines ([PR-905](../phase-9-merchant-discovery/prs/PR-905.md)). PostgreSQL picks up discovery-flag changes on the next request; **Meilisearch** requires an **API restart** (to sync filterable fields) and a **product reindex** after you change discovery flags.
 
 ### Attribute discovery flags
 
@@ -136,8 +136,8 @@ On **Catalog → Attributes**, each attribute has optional flags under **Discove
 
 | Flag | Purpose |
 | --- | --- |
-| Use in advanced search | Include in storefront `/search` filters and `GET /api/v1/search` attribute params — PostgreSQL ([PR-905](../phase-9-merchant-discovery/prs/PR-905.md)) |
-| Use in layered navigation | Include as a PLP facet candidate — interactive chips on `/products`, `/search`, and category pages with PostgreSQL search ([PR-904](../phase-9-merchant-discovery/prs/PR-904.md)) |
+| Use in advanced search | Include in storefront `/search` filters and `GET /api/v1/search` attribute params — PostgreSQL and Meilisearch ([PR-905](../phase-9-merchant-discovery/prs/PR-905.md), [PR-906](../phase-9-merchant-discovery/prs/PR-906.md)); Meilisearch changes need API restart + reindex |
+| Use in layered navigation | Include as a PLP facet candidate — interactive chips on `/products`, `/search`, and category pages with PostgreSQL or Meilisearch search ([PR-904](../phase-9-merchant-discovery/prs/PR-904.md), [PR-906](../phase-9-merchant-discovery/prs/PR-906.md)); Meilisearch changes need API restart + reindex |
 | Use in promotion rules | Allow in promotion condition builders (future) |
 
 All flags default to off for existing attributes.

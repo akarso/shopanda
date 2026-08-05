@@ -52,9 +52,6 @@ type searchAttributeFacetConfigurer interface {
 }
 
 func configureSearchAttributeFacets(ctx context.Context, engine search.SearchEngine, codes []string) error {
-	if len(codes) == 0 {
-		return nil
-	}
 	configurer, ok := engine.(searchAttributeFacetConfigurer)
 	if !ok {
 		return nil
