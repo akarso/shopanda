@@ -203,6 +203,36 @@ func TestAttributeStore_ListLayeredNavAttributes(t *testing.T) {
 	}
 }
 
+func TestAttributeStore_ListAdvancedSearchAttributes(t *testing.T) {
+	ctx := context.Background()
+	store := adminApp.NewAttributeStore(newMockConfigRepo())
+	if err := store.CreateAttribute(ctx, catalog.Attribute{Code: "brand", Label: "Brand", Type: catalog.AttributeTypeText, UseInAdvancedSearch: true}); err != nil {
+		t.Fatalf("CreateAttribute brand: %v", err)
+	}
+	if err := store.CreateAttribute(ctx, catalog.Attribute{Code: "weight", Label: "Weight", Type: catalog.AttributeTypeNumber}); err != nil {
+		t.Fatalf("CreateAttribute weight: %v", err)
+	}
+
+	attrs, err := store.ListAdvancedSearchAttributes(ctx)
+	if err != nil {
+		t.Fatalf("ListAdvancedSearchAttributes: %v", err)
+	}
+	if len(attrs) != 1 || attrs[0].Code != "brand" {
+		t.Fatalf("attrs = %+v, want brand only", attrs)
+	}
+
+	if err := store.CreateAttribute(ctx, catalog.Attribute{Code: "color", Label: "Color", Type: catalog.AttributeTypeText, UseInAdvancedSearch: true}); err != nil {
+		t.Fatalf("CreateAttribute color: %v", err)
+	}
+	attrs, err = store.ListAdvancedSearchAttributes(ctx)
+	if err != nil {
+		t.Fatalf("ListAdvancedSearchAttributes again: %v", err)
+	}
+	if len(attrs) != 2 || attrs[0].Code != "brand" || attrs[1].Code != "color" {
+		t.Fatalf("attrs order = %+v, want brand then color", attrs)
+	}
+}
+
 func TestAttributeStore_RejectsReservedFacetCode(t *testing.T) {
 	ctx := context.Background()
 	store := adminApp.NewAttributeStore(newMockConfigRepo())

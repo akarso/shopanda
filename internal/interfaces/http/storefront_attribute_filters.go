@@ -30,7 +30,7 @@ func (h *StorefrontHandler) layeredNavAttributes(ctx context.Context) ([]catalog
 	return h.layeredNavAttrs.ListLayeredNavAttributes(ctx)
 }
 
-func storefrontBuildSearchQuery(params storefrontListingParams, layeredNav []catalog.Attribute) search.SearchQuery {
+func storefrontBuildSearchQuery(params storefrontListingParams, filterAttrs []catalog.Attribute) search.SearchQuery {
 	query := search.SearchQuery{
 		Text:    params.Query,
 		Sort:    storefrontSearchSort(params.Sort),
@@ -41,22 +41,15 @@ func storefrontBuildSearchQuery(params storefrontListingParams, layeredNav []cat
 	if params.CategoryID != "" {
 		query.Filters["category"] = params.CategoryID
 	}
-	allowed := storefrontLayeredNavAttrSet(layeredNav)
+	allowed := storefrontAllowedAttributeSet(filterAttrs)
 	for code, value := range params.AttributeFilters {
 		if _, ok := allowed[code]; !ok {
 			continue
 		}
 		query.Filters[storefrontAttributeQueryPrefix+code] = value
 	}
-	if len(layeredNav) > 0 {
-		codes := make([]string, 0, len(layeredNav))
-		for _, attr := range layeredNav {
-			if search.ReservedFacetKey(attr.Code) {
-				continue
-			}
-			codes = append(codes, attr.Code)
-		}
-		query.FacetAttributes = codes
+	if len(filterAttrs) > 0 {
+		query.FacetAttributes = storefrontFacetAttributeCodes(filterAttrs)
 	}
 	return query
 }
@@ -69,13 +62,7 @@ func storefrontApplyStoreScope(query *search.SearchQuery, r *http.Request) {
 }
 
 func storefrontLayeredNavAttrSet(attrs []catalog.Attribute) map[string]struct{} {
-	out := make(map[string]struct{}, len(attrs))
-	for _, attr := range attrs {
-		if storefrontAttributeCodeValid(attr.Code) && !search.ReservedFacetKey(attr.Code) {
-			out[attr.Code] = struct{}{}
-		}
-	}
-	return out
+	return storefrontAllowedAttributeSet(attrs)
 }
 
 func storefrontAttributeCodeValid(code string) bool {
