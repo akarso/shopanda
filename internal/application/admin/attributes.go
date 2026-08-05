@@ -513,3 +513,31 @@ func (s *AttributeStore) ListAdvancedSearchAttributes(ctx context.Context) ([]ca
 	sort.Slice(advanced, func(i, j int) bool { return advanced[i].Code < advanced[j].Code })
 	return advanced, nil
 }
+
+// ListDiscoveryAttributeCodes returns sorted attribute codes flagged for layered navigation or advanced search.
+func (s *AttributeStore) ListDiscoveryAttributeCodes(ctx context.Context) ([]string, error) {
+	layered, err := s.ListLayeredNavAttributes(ctx)
+	if err != nil {
+		return nil, err
+	}
+	advanced, err := s.ListAdvancedSearchAttributes(ctx)
+	if err != nil {
+		return nil, err
+	}
+	byCode := make(map[string]struct{}, len(layered)+len(advanced))
+	for _, attr := range layered {
+		byCode[attr.Code] = struct{}{}
+	}
+	for _, attr := range advanced {
+		byCode[attr.Code] = struct{}{}
+	}
+	if len(byCode) == 0 {
+		return nil, nil
+	}
+	codes := make([]string, 0, len(byCode))
+	for code := range byCode {
+		codes = append(codes, code)
+	}
+	sort.Strings(codes)
+	return codes, nil
+}

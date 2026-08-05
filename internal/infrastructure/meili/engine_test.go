@@ -13,7 +13,7 @@ import (
 // --- mock meiliAPI ---
 
 type mockAPI struct {
-	addDocs   [][]document
+	addDocs   [][]map[string]interface{}
 	addErr    error
 	deleteIDs []string
 	deleteErr error
@@ -31,7 +31,7 @@ type mockAPI struct {
 	taskErr    error
 }
 
-func (m *mockAPI) addDocuments(_ context.Context, docs []document) (int64, error) {
+func (m *mockAPI) addDocuments(_ context.Context, docs []map[string]interface{}) (int64, error) {
 	if m.addErr != nil {
 		return 0, m.addErr
 	}
@@ -92,7 +92,7 @@ func TestIndexProduct(t *testing.T) {
 		t.Fatalf("expected 1 doc batch, got %d", len(mock.addDocs))
 	}
 	doc := mock.addDocs[0][0]
-	if doc.ID != "p-1" || doc.Name != "Shoes" || doc.Slug != "shoes" {
+	if doc["id"] != "p-1" || doc["name"] != "Shoes" || doc["slug"] != "shoes" {
 		t.Errorf("doc = %+v, want id=p-1 name=Shoes slug=shoes", doc)
 	}
 }
@@ -255,6 +255,73 @@ func TestMapSearchResponse_Empty(t *testing.T) {
 	}
 }
 
+func TestBuildSearchRequest_AttributeFilter(t *testing.T) {
+	q := search.SearchQuery{
+		Text: "shoes",
+		Filters: map[string]interface{}{
+			"attr_color": "red",
+		},
+		FacetAttributes: []string{"color", "brand"},
+		Limit:           20,
+	}
+
+	req := buildSearchRequest(q)
+
+	if !strings.Contains(req.Filter, `attr_color = "red"`) {
+		t.Errorf("Filter = %q, want attr_color filter", req.Filter)
+	}
+	if len(req.Facets) != 3 {
+		t.Fatalf("Facets = %v, want [category_id attr_color attr_brand]", req.Facets)
+	}
+	if req.Facets[1] != "attr_color" || req.Facets[2] != "attr_brand" {
+		t.Errorf("Facets = %v, want attr_color and attr_brand", req.Facets)
+	}
+}
+
+func TestMapSearchResponse_AttributeFacetKeys(t *testing.T) {
+	resp := searchResponse{
+		FacetDistribution: map[string]map[string]int{
+			"attr_color": {"red": 2},
+		},
+	}
+	result := mapSearchResponse(resp)
+	if len(result.Facets["color"]) != 1 || result.Facets["color"][0].Value != "red" {
+		t.Fatalf("Facets[color] = %+v, want red facet", result.Facets["color"])
+	}
+}
+
+func TestConfigureAttributeFacets(t *testing.T) {
+	mock := &mockAPI{}
+	e := newWithAPI(mock, "products")
+
+	if err := e.ConfigureAttributeFacets(context.Background(), []string{"color", "brand"}); err != nil {
+		t.Fatalf("ConfigureAttributeFacets: %v", err)
+	}
+	want := []string{"category_id", "price", "in_stock", "attr_color", "attr_brand"}
+	if len(mock.settingsReq.FilterableAttributes) != len(want) {
+		t.Fatalf("FilterableAttributes = %v, want %v", mock.settingsReq.FilterableAttributes, want)
+	}
+	for i, field := range want {
+		if mock.settingsReq.FilterableAttributes[i] != field {
+			t.Fatalf("FilterableAttributes[%d] = %q, want %q", i, mock.settingsReq.FilterableAttributes[i], field)
+		}
+	}
+}
+
+func TestProductToDocMap_FlattensAttributes(t *testing.T) {
+	p := search.Product{
+		ID:         "p-99",
+		Attributes: map[string]interface{}{"color": "red", "brand": "acme"},
+	}
+	doc := productToDocMap(p)
+	if doc["attr_color"] != "red" {
+		t.Fatalf("attr_color = %v, want red", doc["attr_color"])
+	}
+	if doc["attr_brand"] != "acme" {
+		t.Fatalf("attr_brand = %v, want acme", doc["attr_brand"])
+	}
+}
+
 func TestProductToDoc(t *testing.T) {
 	p := search.Product{
 		ID:          "p-99",
@@ -266,21 +333,21 @@ func TestProductToDoc(t *testing.T) {
 		InStock:     true,
 		Attributes:  map[string]interface{}{"color": "red"},
 	}
-	doc := productToDoc(p)
-	if doc.ID != "p-99" || doc.Name != "Hat" || doc.Slug != "hat" {
+	doc := productToDocMap(p)
+	if doc["id"] != "p-99" || doc["name"] != "Hat" || doc["slug"] != "hat" {
 		t.Errorf("doc = %+v", doc)
 	}
-	if doc.CategoryID != "cat-5" {
-		t.Errorf("CategoryID = %q, want cat-5", doc.CategoryID)
+	if doc["category_id"] != "cat-5" {
+		t.Errorf("CategoryID = %v, want cat-5", doc["category_id"])
 	}
-	if doc.Price != 1999 {
-		t.Errorf("Price = %d, want 1999", doc.Price)
+	if doc["price"] != int64(1999) {
+		t.Errorf("Price = %v, want 1999", doc["price"])
 	}
-	if !doc.InStock {
+	if doc["in_stock"] != true {
 		t.Error("InStock = false, want true")
 	}
-	if doc.Attributes["color"] != "red" {
-		t.Errorf("Attributes = %+v, want color=red", doc.Attributes)
+	if doc["attr_color"] != "red" {
+		t.Errorf("attr_color = %v, want red", doc["attr_color"])
 	}
 }
 

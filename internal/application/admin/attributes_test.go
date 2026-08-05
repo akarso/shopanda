@@ -233,6 +233,28 @@ func TestAttributeStore_ListAdvancedSearchAttributes(t *testing.T) {
 	}
 }
 
+func TestAttributeStore_ListDiscoveryAttributeCodes(t *testing.T) {
+	ctx := context.Background()
+	store := adminApp.NewAttributeStore(newMockConfigRepo())
+	if err := store.CreateAttribute(ctx, catalog.Attribute{Code: "color", Label: "Color", Type: catalog.AttributeTypeText, UseInLayeredNav: true}); err != nil {
+		t.Fatalf("CreateAttribute color: %v", err)
+	}
+	if err := store.CreateAttribute(ctx, catalog.Attribute{Code: "brand", Label: "Brand", Type: catalog.AttributeTypeText, UseInAdvancedSearch: true}); err != nil {
+		t.Fatalf("CreateAttribute brand: %v", err)
+	}
+	if err := store.CreateAttribute(ctx, catalog.Attribute{Code: "weight", Label: "Weight", Type: catalog.AttributeTypeNumber}); err != nil {
+		t.Fatalf("CreateAttribute weight: %v", err)
+	}
+
+	codes, err := store.ListDiscoveryAttributeCodes(ctx)
+	if err != nil {
+		t.Fatalf("ListDiscoveryAttributeCodes: %v", err)
+	}
+	if len(codes) != 2 || codes[0] != "brand" || codes[1] != "color" {
+		t.Fatalf("codes = %v, want [brand color]", codes)
+	}
+}
+
 func TestAttributeStore_RejectsReservedFacetCode(t *testing.T) {
 	ctx := context.Background()
 	store := adminApp.NewAttributeStore(newMockConfigRepo())

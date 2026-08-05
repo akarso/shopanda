@@ -735,6 +735,14 @@ func runServe(cfg *config.Config, log logger.Logger, embedScheduler bool) error 
 
 	attributeStore := adminApp.NewAttributeStore(configRepo)
 
+	discoveryAttrCodes, err := attributeStore.ListDiscoveryAttributeCodes(context.Background())
+	if err != nil {
+		return fmt.Errorf("list discovery attribute codes: %w", err)
+	}
+	if err := configureSearchAttributeFacets(context.Background(), searchEngine, discoveryAttrCodes); err != nil {
+		return fmt.Errorf("configure search attribute facets: %w", err)
+	}
+
 	// Associate permissions with schemas so the schema handler can
 	// filter access per role. Fail closed if any wiring is broken.
 	for _, sp := range []struct {

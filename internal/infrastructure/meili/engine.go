@@ -37,7 +37,7 @@ type taskInfo struct {
 // meiliAPI is the subset of Meilisearch HTTP operations we use.
 // Extracting this interface makes unit-testing possible without a real server.
 type meiliAPI interface {
-	addDocuments(ctx context.Context, docs []document) (int64, error)
+	addDocuments(ctx context.Context, docs []map[string]interface{}) (int64, error)
 	deleteDocument(ctx context.Context, id string) (int64, error)
 	search(ctx context.Context, req searchRequest) (searchResponse, error)
 	updateSettings(ctx context.Context, settings indexSettings) (int64, error)
@@ -113,8 +113,8 @@ func (e *Engine) waitForTask(ctx context.Context, taskUID int64) error {
 
 // IndexProduct adds or updates a product in the Meilisearch index.
 func (e *Engine) IndexProduct(ctx context.Context, p search.Product) error {
-	doc := productToDoc(p)
-	if _, err := e.api.addDocuments(ctx, []document{doc}); err != nil {
+	doc := productToDocMap(p)
+	if _, err := e.api.addDocuments(ctx, []map[string]interface{}{doc}); err != nil {
 		return fmt.Errorf("meili: index product %s: %w", p.ID, err)
 	}
 	return nil
@@ -124,6 +124,34 @@ func (e *Engine) IndexProduct(ctx context.Context, p search.Product) error {
 func (e *Engine) RemoveProduct(ctx context.Context, productID string) error {
 	if _, err := e.api.deleteDocument(ctx, productID); err != nil {
 		return fmt.Errorf("meili: remove product %s: %w", productID, err)
+	}
+	return nil
+}
+
+// ConfigureAttributeFacets registers flattened attr_<code> fields as filterable for facets and filters.
+func (e *Engine) ConfigureAttributeFacets(ctx context.Context, codes []string) error {
+	settings := defaultSettings()
+	seen := make(map[string]struct{}, len(settings.FilterableAttributes)+len(codes))
+	for _, field := range settings.FilterableAttributes {
+		seen[field] = struct{}{}
+	}
+	for _, code := range codes {
+		if !search.AttributeCodeValid(code) || search.ReservedFacetKey(code) {
+			continue
+		}
+		field := search.AttributeIndexField(code)
+		if _, ok := seen[field]; ok {
+			continue
+		}
+		seen[field] = struct{}{}
+		settings.FilterableAttributes = append(settings.FilterableAttributes, field)
+	}
+	taskUID, err := e.api.updateSettings(ctx, settings)
+	if err != nil {
+		return fmt.Errorf("meili: configure attribute facets: %w", err)
+	}
+	if err := e.waitForTask(ctx, taskUID); err != nil {
+		return fmt.Errorf("meili: configure attribute facets: %w", err)
 	}
 	return nil
 }
@@ -163,8 +191,7 @@ func (e *Engine) Suggest(ctx context.Context, prefix string, limit int) ([]searc
 
 	suggestions := make([]search.Suggestion, 0, len(resp.Hits))
 	for _, raw := range resp.Hits {
-		var doc document
-		if json.Unmarshal(raw, &doc) == nil {
+		if doc, ok := docFromHit(raw); ok {
 			suggestions = append(suggestions, search.Suggestion{
 				Text: doc.Name,
 				Type: "product",
@@ -199,18 +226,50 @@ type document struct {
 	Attributes  map[string]interface{} `json:"attributes,omitempty"`
 }
 
-func productToDoc(p search.Product) document {
-	return document{
-		ID:          p.ID,
-		Name:        p.Name,
-		Description: p.Description,
-		Slug:        p.Slug,
-		CategoryID:  p.CategoryID,
-		Price:       p.Price,
-		InStock:     p.InStock,
-		CreatedAt:   p.CreatedAt.Unix(),
-		Attributes:  p.Attributes,
+func productToDocMap(p search.Product) map[string]interface{} {
+	doc := map[string]interface{}{
+		"id":          p.ID,
+		"name":        p.Name,
+		"description": p.Description,
+		"slug":        p.Slug,
+		"price":       p.Price,
+		"in_stock":    p.InStock,
+		"created_at":  p.CreatedAt.Unix(),
 	}
+	if p.CategoryID != "" {
+		doc["category_id"] = p.CategoryID
+	}
+	if len(p.Attributes) > 0 {
+		doc["attributes"] = p.Attributes
+		for code, raw := range p.Attributes {
+			if !search.AttributeCodeValid(code) || search.ReservedFacetKey(code) {
+				continue
+			}
+			if value := attributeIndexValue(raw); value != "" {
+				doc[search.AttributeIndexField(code)] = value
+			}
+		}
+	}
+	return doc
+}
+
+func attributeIndexValue(raw interface{}) string {
+	switch v := raw.(type) {
+	case string:
+		return strings.TrimSpace(v)
+	case fmt.Stringer:
+		return strings.TrimSpace(v.String())
+	default:
+		return strings.TrimSpace(fmt.Sprint(v))
+	}
+}
+
+func docFromHit(raw json.RawMessage) (document, bool) {
+	var doc document
+	if err := json.Unmarshal(raw, &doc); err != nil {
+		return document{}, false
+	}
+	return doc, true
 }
 
 // --- search request / response ---
@@ -249,6 +308,19 @@ func buildSearchRequest(q search.SearchQuery) searchRequest {
 			filters = append(filters, fmt.Sprintf("price <= %v", v))
 		case "in_stock":
 			filters = append(filters, fmt.Sprintf("in_stock = %v", v))
+		default:
+			if code, ok := search.AttributeCodeFromFilterKey(k); ok && !search.ReservedFacetKey(code) {
+				filters = append(filters, fmt.Sprintf("%s = %q", search.AttributeFilterKey(code), fmt.Sprint(v)))
+			}
+		}
+	}
+	for _, code := range q.FacetAttributes {
+		if !search.AttributeCodeValid(code) || search.ReservedFacetKey(code) {
+			continue
+		}
+		field := search.AttributeIndexField(code)
+		if !facetFieldIncluded(req.Facets, field) {
+			req.Facets = append(req.Facets, field)
 		}
 	}
 	if len(filters) > 0 {
@@ -266,11 +338,19 @@ func buildSearchRequest(q search.SearchQuery) searchRequest {
 	return req
 }
 
+func facetFieldIncluded(facets []string, field string) bool {
+	for _, f := range facets {
+		if f == field {
+			return true
+		}
+	}
+	return false
+}
+
 func mapSearchResponse(resp searchResponse) search.SearchResult {
 	products := make([]search.Product, 0, len(resp.Hits))
 	for _, raw := range resp.Hits {
-		var doc document
-		if json.Unmarshal(raw, &doc) == nil {
+		if doc, ok := docFromHit(raw); ok {
 			products = append(products, search.Product{
 				ID:          doc.ID,
 				Name:        doc.Name,
@@ -287,11 +367,15 @@ func mapSearchResponse(resp searchResponse) search.SearchResult {
 
 	facets := make(map[string][]search.FacetValue)
 	for key, dist := range resp.FacetDistribution {
+		outKey := key
+		if code, ok := search.AttributeCodeFromFilterKey(key); ok {
+			outKey = code
+		}
 		fv := make([]search.FacetValue, 0, len(dist))
 		for val, count := range dist {
 			fv = append(fv, search.FacetValue{Value: val, Count: count})
 		}
-		facets[key] = fv
+		facets[outKey] = fv
 	}
 
 	return search.SearchResult{
@@ -313,7 +397,7 @@ type indexSettings struct {
 func defaultSettings() indexSettings {
 	return indexSettings{
 		SearchableAttributes: []string{"name", "description", "slug"},
-		FilterableAttributes: []string{"category_id", "price", "in_stock", "attributes"},
+		FilterableAttributes: []string{"category_id", "price", "in_stock"},
 		SortableAttributes:   []string{"price", "name", "created_at"},
 		DisplayedAttributes:  []string{"*"},
 	}
@@ -328,7 +412,7 @@ type httpClient struct {
 	http   *http.Client
 }
 
-func (c *httpClient) addDocuments(ctx context.Context, docs []document) (int64, error) {
+func (c *httpClient) addDocuments(ctx context.Context, docs []map[string]interface{}) (int64, error) {
 	body, err := json.Marshal(docs)
 	if err != nil {
 		return 0, err
