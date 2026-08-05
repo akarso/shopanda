@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
+	"github.com/akarso/shopanda/internal/domain/catalog"
 	"github.com/akarso/shopanda/internal/domain/search"
 	"github.com/akarso/shopanda/internal/domain/store"
 	"github.com/akarso/shopanda/internal/platform/apperror"
@@ -20,6 +21,15 @@ import (
 type mockSearchEngine struct {
 	searchFn  func(ctx context.Context, query search.SearchQuery) (search.SearchResult, error)
 	suggestFn func(ctx context.Context, prefix string, limit int) ([]search.Suggestion, error)
+}
+
+type mockAdvancedSearchAttributeLister struct {
+	attrs []catalog.Attribute
+	err   error
+}
+
+func (m *mockAdvancedSearchAttributeLister) ListAdvancedSearchAttributes(context.Context) ([]catalog.Attribute, error) {
+	return m.attrs, m.err
 }
 
 func (m *mockSearchEngine) Name() string { return "mock" }
@@ -202,6 +212,59 @@ func TestSearchHandler_WithCategoryFilter(t *testing.T) {
 	}
 	if cat != "footwear" {
 		t.Errorf("category = %v, want footwear", cat)
+	}
+}
+
+func TestSearchHandler_WithAttributeFilter(t *testing.T) {
+	var capturedQuery search.SearchQuery
+	engine := &mockSearchEngine{
+		searchFn: func(_ context.Context, q search.SearchQuery) (search.SearchResult, error) {
+			capturedQuery = q
+			return search.SearchResult{Products: []search.Product{}, Facets: map[string][]search.FacetValue{}}, nil
+		},
+	}
+	lister := &mockAdvancedSearchAttributeLister{attrs: []catalog.Attribute{
+		{Code: "brand", Label: "Brand", Type: catalog.AttributeTypeSelect, UseInAdvancedSearch: true},
+	}}
+	h := shophttp.NewSearchHandler(engine).WithAdvancedSearchAttributes(lister)
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("GET", "/api/v1/search?q=shoes&attr_brand=nike", nil)
+	newSearchRouter(h).ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d", rec.Code, http.StatusOK)
+	}
+	if capturedQuery.Filters["attr_brand"] != "nike" {
+		t.Fatalf("attr_brand filter = %v, want nike", capturedQuery.Filters["attr_brand"])
+	}
+	if len(capturedQuery.FacetAttributes) != 1 || capturedQuery.FacetAttributes[0] != "brand" {
+		t.Fatalf("FacetAttributes = %v, want [brand]", capturedQuery.FacetAttributes)
+	}
+}
+
+func TestSearchHandler_IgnoresUnlistedAttributeFilter(t *testing.T) {
+	var capturedQuery search.SearchQuery
+	engine := &mockSearchEngine{
+		searchFn: func(_ context.Context, q search.SearchQuery) (search.SearchResult, error) {
+			capturedQuery = q
+			return search.SearchResult{Products: []search.Product{}, Facets: map[string][]search.FacetValue{}}, nil
+		},
+	}
+	lister := &mockAdvancedSearchAttributeLister{attrs: []catalog.Attribute{
+		{Code: "brand", Label: "Brand", Type: catalog.AttributeTypeSelect, UseInAdvancedSearch: true},
+	}}
+	h := shophttp.NewSearchHandler(engine).WithAdvancedSearchAttributes(lister)
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("GET", "/api/v1/search?q=shoes&attr_color=red", nil)
+	newSearchRouter(h).ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d", rec.Code, http.StatusOK)
+	}
+	if _, ok := capturedQuery.Filters["attr_color"]; ok {
+		t.Fatalf("unexpected attr_color filter: %v", capturedQuery.Filters)
 	}
 }
 

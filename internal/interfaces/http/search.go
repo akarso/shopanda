@@ -12,7 +12,8 @@ import (
 
 // SearchHandler serves the public search endpoint.
 type SearchHandler struct {
-	engine search.SearchEngine
+	engine              search.SearchEngine
+	advancedSearchAttrs AdvancedSearchAttributeLister
 }
 
 // NewSearchHandler creates a SearchHandler with the given search engine.
@@ -21,6 +22,12 @@ func NewSearchHandler(engine search.SearchEngine) *SearchHandler {
 		panic("SearchHandler: search engine must not be nil")
 	}
 	return &SearchHandler{engine: engine}
+}
+
+// WithAdvancedSearchAttributes enables attr_* query params for flagged catalog attributes.
+func (h *SearchHandler) WithAdvancedSearchAttributes(lister AdvancedSearchAttributeLister) *SearchHandler {
+	h.advancedSearchAttrs = lister
+	return h
 }
 
 // Search handles GET /api/v1/search.
@@ -58,6 +65,15 @@ func (h *SearchHandler) Search() http.HandlerFunc {
 
 		if v := q.Get("category"); v != "" {
 			query.Filters["category"] = v
+		}
+
+		if h.advancedSearchAttrs != nil {
+			allowed, err := h.advancedSearchAttrs.ListAdvancedSearchAttributes(r.Context())
+			if err != nil {
+				JSONError(w, err)
+				return
+			}
+			searchApplyAttributeFilters(&query, q, allowed)
 		}
 
 		result, err := h.engine.Search(r.Context(), query)

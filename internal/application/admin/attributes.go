@@ -498,3 +498,18 @@ func (s *AttributeStore) ListLayeredNavAttributes(ctx context.Context) ([]catalo
 	sort.Slice(layered, func(i, j int) bool { return layered[i].Code < layered[j].Code })
 	return layered, nil
 }
+
+// ListAdvancedSearchAttributes returns attributes flagged for storefront advanced search filters.
+func (s *AttributeStore) ListAdvancedSearchAttributes(ctx context.Context) ([]catalog.Attribute, error) {
+	attrs, err := s.loadAttributes(ctx)
+	if err != nil {
+		return nil, err
+	}
+	reg := catalog.NewAttributeRegistry()
+	for _, attr := range attrs {
+		reg.RegisterAttribute(attr)
+	}
+	advanced := reg.AttributesForAdvancedSearch()
+	sort.Slice(advanced, func(i, j int) bool { return advanced[i].Code < advanced[j].Code })
+	return advanced, nil
+}

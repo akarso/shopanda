@@ -825,7 +825,7 @@ func runServe(cfg *config.Config, log logger.Logger, embedScheduler bool) error 
 	categoryHandler := shophttp.NewCategoryHandler(categoryRepo, productRepo)
 	categoryAdmin := shophttp.NewCategoryAdminHandlerWithAuditor(categoryRepo, bus, sharedAuditor)
 	categoryProductAssignmentAdmin := shophttp.NewCategoryProductAssignmentAdminHandlerWithAuditor(categoryRepo, productRepo, productRepo, sharedAuditor)
-	searchHandler := shophttp.NewSearchHandler(searchEngine)
+	searchHandler := shophttp.NewSearchHandler(searchEngine).WithAdvancedSearchAttributes(attributeStore)
 	mediaService := mediaApp.NewService(mediaStorage, assetRepo, bus, log)
 	if thumbCfg := cfg.Media.Thumbnails; len(thumbCfg) > 0 {
 		names := make([]string, 0, len(thumbCfg))
@@ -1266,6 +1266,7 @@ func runServe(cfg *config.Config, log logger.Logger, embedScheduler bool) error 
 			WithAccountSecurityEmailLinks(cfg.Server.PublicBaseURL, 45*time.Minute).
 			WithAssets(assetRegistry).
 			WithLayeredNavAttributes(attributeStore).
+			WithAdvancedSearchAttributes(attributeStore).
 			WithCSPEnabled(cfg.Frontend.CSPEnabled)
 		staticDir := filepath.Join(cfg.Frontend.ThemePath, "static")
 		staticHandler := http.StripPrefix("/static/", http.FileServer(http.Dir(staticDir)))
