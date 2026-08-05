@@ -326,6 +326,9 @@ func (e *SearchEngine) Search(ctx context.Context, query search.SearchQuery) (se
 		return search.SearchResult{}, err
 	}
 	for code, values := range attrFacets {
+		if search.ReservedFacetKey(code) {
+			continue
+		}
 		facets[code] = values
 	}
 
@@ -390,7 +393,7 @@ func searchAttributeCodeValid(code string) bool {
 func (e *SearchEngine) attributeFacets(ctx context.Context, joinClause, whereClause string, args []interface{}, codes []string) (map[string][]search.FacetValue, error) {
 	out := map[string][]search.FacetValue{}
 	for _, code := range codes {
-		if !searchAttributeCodeValid(code) {
+		if !searchAttributeCodeValid(code) || search.ReservedFacetKey(code) {
 			continue
 		}
 		facetArgs := append(append([]interface{}{}, args...), code)

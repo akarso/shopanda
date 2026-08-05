@@ -11,6 +11,7 @@ import (
 
 	"github.com/akarso/shopanda/internal/domain/catalog"
 	"github.com/akarso/shopanda/internal/domain/config"
+	"github.com/akarso/shopanda/internal/domain/search"
 )
 
 const (
@@ -135,6 +136,9 @@ func validateAttributeDefinition(attr catalog.Attribute) error {
 	}
 	if attr.Type == catalog.AttributeTypeSelect && len(attr.Options) == 0 {
 		return validationErr("select attribute must have at least one option")
+	}
+	if search.ReservedFacetKey(code) {
+		return validationErr("attribute code %q is reserved for category facets", code)
 	}
 	return nil
 }

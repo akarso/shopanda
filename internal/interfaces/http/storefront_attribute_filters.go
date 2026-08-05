@@ -51,6 +51,9 @@ func storefrontBuildSearchQuery(params storefrontListingParams, layeredNav []cat
 	if len(layeredNav) > 0 {
 		codes := make([]string, 0, len(layeredNav))
 		for _, attr := range layeredNav {
+			if search.ReservedFacetKey(attr.Code) {
+				continue
+			}
 			codes = append(codes, attr.Code)
 		}
 		query.FacetAttributes = codes
@@ -68,7 +71,7 @@ func storefrontApplyStoreScope(query *search.SearchQuery, r *http.Request) {
 func storefrontLayeredNavAttrSet(attrs []catalog.Attribute) map[string]struct{} {
 	out := make(map[string]struct{}, len(attrs))
 	for _, attr := range attrs {
-		if storefrontAttributeCodeValid(attr.Code) {
+		if storefrontAttributeCodeValid(attr.Code) && !search.ReservedFacetKey(attr.Code) {
 			out[attr.Code] = struct{}{}
 		}
 	}
@@ -120,7 +123,7 @@ func storefrontAttributeFilterGroups(r *http.Request, params storefrontListingPa
 	groups := make([]StorefrontFilterGroup, 0, len(layeredNav))
 	for _, attr := range layeredNav {
 		values, ok := facets[attr.Code]
-		if !ok || len(values) == 0 {
+		if search.ReservedFacetKey(attr.Code) || !ok || len(values) == 0 {
 			continue
 		}
 		selectedValue := params.AttributeFilters[attr.Code]

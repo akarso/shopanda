@@ -192,6 +192,23 @@ func TestAttributeStore_ListLayeredNavAttributes(t *testing.T) {
 	}
 }
 
+func TestAttributeStore_RejectsReservedFacetCode(t *testing.T) {
+	ctx := context.Background()
+	store := adminApp.NewAttributeStore(newMockConfigRepo())
+	err := store.CreateAttribute(ctx, catalog.Attribute{
+		Code:            "category",
+		Label:           "Category",
+		Type:            catalog.AttributeTypeText,
+		UseInLayeredNav: true,
+	})
+	if err == nil {
+		t.Fatal("expected error for reserved attribute code category")
+	}
+	if !adminApp.IsValidationError(err) {
+		t.Fatalf("expected validation error, got %v", err)
+	}
+}
+
 func TestAttributeToFormField(t *testing.T) {
 	field, err := adminApp.AttributeToFormField(catalog.Attribute{
 		Code: "size", Label: "Size", Type: catalog.AttributeTypeSelect,
