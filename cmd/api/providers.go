@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"database/sql"
 	"fmt"
 
@@ -44,6 +45,18 @@ func resolveSearchEngine(app *plugin.App, conn *sql.DB, cfg *config.Config) (sea
 	default:
 		return nil, fmt.Errorf("unsupported search.engine: %q", cfg.Search.Engine)
 	}
+}
+
+type searchAttributeFacetConfigurer interface {
+	ConfigureAttributeFacets(context.Context, []string) error
+}
+
+func configureSearchAttributeFacets(ctx context.Context, engine search.SearchEngine, codes []string) error {
+	configurer, ok := engine.(searchAttributeFacetConfigurer)
+	if !ok {
+		return nil
+	}
+	return configurer.ConfigureAttributeFacets(ctx, codes)
 }
 
 func resolveMediaStorage(app *plugin.App, cfg *config.Config) (media.Storage, error) {
