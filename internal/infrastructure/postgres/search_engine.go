@@ -136,6 +136,24 @@ func (e *SearchEngine) Search(ctx context.Context, query search.SearchQuery) (se
 		}
 	}
 
+	// Product attribute filters (keys attr_<code>).
+	for key, raw := range query.Filters {
+		if !strings.HasPrefix(key, "attr_") {
+			continue
+		}
+		code := strings.TrimPrefix(key, "attr_")
+		if !searchAttributeCodeValid(code) {
+			continue
+		}
+		value, ok := raw.(string)
+		if !ok || strings.TrimSpace(value) == "" {
+			continue
+		}
+		codeArg := nextArg(code)
+		valArg := nextArg(value)
+		wheres = append(wheres, fmt.Sprintf("p.attributes->>%s = %s", codeArg, valArg))
+	}
+
 	// Price filter.
 	if priceFilter, ok := query.Filters["price"]; ok {
 		if priceMap, ok := priceFilter.(map[string]interface{}); ok {
@@ -298,10 +316,20 @@ func (e *SearchEngine) Search(ctx context.Context, query search.SearchQuery) (se
 		return search.SearchResult{}, fmt.Errorf("search_engine: rows: %w", err)
 	}
 
-	// Facets: category counts from the filtered result set.
+	// Facets: category and attribute counts from the filtered result set.
 	facets, err := e.categoryFacets(ctx, joinClause, whereClause, filterArgs)
 	if err != nil {
 		return search.SearchResult{}, err
+	}
+	attrFacets, err := e.attributeFacets(ctx, joinClause, whereClause, filterArgs, query.FacetAttributes)
+	if err != nil {
+		return search.SearchResult{}, err
+	}
+	for code, values := range attrFacets {
+		if search.ReservedFacetKey(code) {
+			continue
+		}
+		facets[code] = values
 	}
 
 	return search.SearchResult{
@@ -340,6 +368,72 @@ func (e *SearchEngine) categoryFacets(ctx context.Context, joinClause, whereClau
 		facets["category"] = values
 	}
 	return facets, nil
+}
+
+func searchAttributeCodeValid(code string) bool {
+	if code == "" || len(code) > 64 {
+		return false
+	}
+	for i, r := range code {
+		if r >= 'a' && r <= 'z' {
+			continue
+		}
+		if r >= '0' && r <= '9' && i > 0 {
+			continue
+		}
+		if r == '_' && i > 0 {
+			continue
+		}
+		return false
+	}
+	return true
+}
+
+// attributeFacets computes value counts for the given attribute codes on the filtered product set.
+func (e *SearchEngine) attributeFacets(ctx context.Context, joinClause, whereClause string, args []interface{}, codes []string) (map[string][]search.FacetValue, error) {
+	out := map[string][]search.FacetValue{}
+	for _, code := range codes {
+		if !searchAttributeCodeValid(code) || search.ReservedFacetKey(code) {
+			continue
+		}
+		facetArgs := append(append([]interface{}{}, args...), code)
+		codeIdx := len(args) + 1
+		q := fmt.Sprintf(
+			`SELECT p.attributes->>$%d, COUNT(DISTINCT p.id)
+			 FROM products p %s
+			 WHERE %s
+			   AND p.attributes->>$%d IS NOT NULL
+			   AND btrim(p.attributes->>$%d) <> ''
+			 GROUP BY 1
+			 ORDER BY COUNT(DISTINCT p.id) DESC`,
+			codeIdx, joinClause, whereClause, codeIdx, codeIdx,
+		)
+		rows, err := e.db.QueryContext(ctx, q, facetArgs...)
+		if err != nil {
+			return nil, fmt.Errorf("search_engine: attribute facets %q: %w", code, err)
+		}
+
+		var values []search.FacetValue
+		for rows.Next() {
+			var fv search.FacetValue
+			if err := rows.Scan(&fv.Value, &fv.Count); err != nil {
+				rows.Close()
+				return nil, fmt.Errorf("search_engine: attribute facet scan: %w", err)
+			}
+			values = append(values, fv)
+		}
+		if err := rows.Err(); err != nil {
+			rows.Close()
+			return nil, fmt.Errorf("search_engine: attribute facet rows: %w", err)
+		}
+		if err := rows.Close(); err != nil {
+			return nil, err
+		}
+		if len(values) > 0 {
+			out[code] = values
+		}
+	}
+	return out, nil
 }
 
 // toInt64 attempts to convert an interface value to int64.

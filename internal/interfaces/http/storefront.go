@@ -69,6 +69,7 @@ type StorefrontHandler struct {
 	blockResolver *cmsApp.BlockResolver
 	log          logger.Logger
 	catNav       storefrontCategoryCache
+	layeredNavAttrs LayeredNavAttributeLister
 	assets       *assetsApp.Registry
 	cspEnabled   bool
 }
@@ -222,12 +223,13 @@ type StorefrontCategoryPageData struct {
 }
 
 type storefrontListingParams struct {
-	Page       int
-	PerPage    int
-	Sort       string
-	View       string
-	Query      string
-	CategoryID string
+	Page              int
+	PerPage           int
+	Sort              string
+	View              string
+	Query             string
+	CategoryID        string
+	AttributeFilters  map[string]string
 }
 
 var storefrontSortOptions = []struct {
@@ -515,21 +517,14 @@ func (h *StorefrontHandler) renderListing(searchMode bool) http.HandlerFunc {
 			http.Error(w, "Internal Server Error", http.StatusInternalServerError)
 			return
 		}
+		layeredNavAttrs, attrErr := h.layeredNavAttributes(r.Context())
+		if attrErr != nil {
+			http.Error(w, "Internal Server Error", http.StatusInternalServerError)
+			return
+		}
 		if !searchMode || params.Query != "" {
-			query := search.SearchQuery{
-				Text:    params.Query,
-				Sort:    storefrontSearchSort(params.Sort),
-				Limit:   params.PerPage,
-				Offset:  (params.Page - 1) * params.PerPage,
-				Filters: map[string]interface{}{},
-			}
-			if params.CategoryID != "" {
-				query.Filters["category"] = params.CategoryID
-			}
-			if s := store.FromContext(r.Context()); s != nil {
-				query.StoreID = s.ID
-				query.Currency = s.Currency
-			}
+			query := storefrontBuildSearchQuery(params, layeredNavAttrs)
+			storefrontApplyStoreScope(&query, r)
 			result, err = h.search.Search(r.Context(), query)
 			if err != nil {
 				http.Error(w, "Internal Server Error", http.StatusInternalServerError)
@@ -553,7 +548,7 @@ func (h *StorefrontHandler) renderListing(searchMode bool) http.HandlerFunc {
 			return
 		}
 
-		h.renderPage(w, "product_list", h.buildListingPageData(r, h.layoutDataBestEffort(r), ctx, result, params, searchMode, allCategories, nil))
+		h.renderPage(w, "product_list", h.buildListingPageData(r, h.layoutDataBestEffort(r), ctx, result, params, searchMode, allCategories, nil, layeredNavAttrs))
 	}
 }
 
@@ -590,18 +585,16 @@ func (h *StorefrontHandler) renderCategory(root bool) http.HandlerFunc {
 			}
 		}
 
-		query := search.SearchQuery{
-			Sort:    storefrontSearchSort(params.Sort),
-			Limit:   params.PerPage,
-			Offset:  (params.Page - 1) * params.PerPage,
-			Filters: map[string]interface{}{},
+		layeredNavAttrs, attrErr := h.layeredNavAttributes(r.Context())
+		if attrErr != nil {
+			http.Error(w, "Internal Server Error", http.StatusInternalServerError)
+			return
 		}
+
+		query := storefrontBuildSearchQuery(params, layeredNavAttrs)
+		storefrontApplyStoreScope(&query, r)
 		if category != nil {
 			query.Filters["category"] = category.ID
-		}
-		if s := store.FromContext(r.Context()); s != nil {
-			query.StoreID = s.ID
-			query.Currency = s.Currency
 		}
 
 		result, err := h.search.Search(r.Context(), query)
@@ -632,7 +625,7 @@ func (h *StorefrontHandler) renderCategory(root bool) http.HandlerFunc {
 			return
 		}
 
-		page := h.buildCategoryPageData(r, layout, ctx, result, params, category, allCategories)
+		page := h.buildCategoryPageData(r, layout, ctx, result, params, category, allCategories, layeredNavAttrs)
 		h.renderPage(w, "category", page)
 	}
 }
@@ -832,7 +825,7 @@ func (h *StorefrontHandler) cachedCategories(ctx context.Context) ([]catalog.Cat
 	return append([]catalog.Category(nil), cloned...), nil
 }
 
-func (h *StorefrontHandler) buildListingPageData(r *http.Request, layout StorefrontLayoutData, ctx *composition.ListingContext, result search.SearchResult, params storefrontListingParams, searchMode bool, allCategories []catalog.Category, activeCategory *catalog.Category) StorefrontListingPageData {
+func (h *StorefrontHandler) buildListingPageData(r *http.Request, layout StorefrontLayoutData, ctx *composition.ListingContext, result search.SearchResult, params storefrontListingParams, searchMode bool, allCategories []catalog.Category, activeCategory *catalog.Category, layeredNavAttrs []catalog.Attribute) StorefrontListingPageData {
 	title := "All Products"
 	eyebrow := "Catalog"
 	resultSummary := fmt.Sprintf("Showing %d product(s)", result.Total)
@@ -864,14 +857,14 @@ func (h *StorefrontHandler) buildListingPageData(r *http.Request, layout Storefr
 		Products:      storefrontCards(ctx.Products, result.Products, ctx.Currency, composition.PriceIndicationsFromMeta(ctx.Meta)),
 		Pagination:    storefrontPagination(r, params, result.Total),
 		SortOptions:   storefrontSortLinks(r, params),
-		Filters:       storefrontInteractiveFilters(r, params, result.Facets, allCategories, activeCategory),
+		Filters:       storefrontInteractiveFilters(r, params, result.Facets, allCategories, activeCategory, layeredNavAttrs),
 		Blocks:        ctx.Blocks,
 		Meta:          ctx.Meta,
 	}
 }
 
-func (h *StorefrontHandler) buildCategoryPageData(r *http.Request, layout StorefrontLayoutData, ctx *composition.ListingContext, result search.SearchResult, params storefrontListingParams, category *catalog.Category, allCategories []catalog.Category) StorefrontCategoryPageData {
-	listing := h.buildListingPageData(r, layout, ctx, result, params, false, allCategories, category)
+func (h *StorefrontHandler) buildCategoryPageData(r *http.Request, layout StorefrontLayoutData, ctx *composition.ListingContext, result search.SearchResult, params storefrontListingParams, category *catalog.Category, allCategories []catalog.Category, layeredNavAttrs []catalog.Attribute) StorefrontCategoryPageData {
+	listing := h.buildListingPageData(r, layout, ctx, result, params, false, allCategories, category, layeredNavAttrs)
 	page := StorefrontCategoryPageData{
 		StorefrontListingPageData: listing,
 		Category: StorefrontCategorySummary{
@@ -923,12 +916,13 @@ func parseStorefrontListingParams(r *http.Request) (storefrontListingParams, err
 		view = "grid"
 	}
 	return storefrontListingParams{
-		Page:       page,
-		PerPage:    perPage,
-		Sort:       storefrontSortValue(strings.TrimSpace(q.Get("sort"))),
-		View:       view,
-		Query:      strings.TrimSpace(q.Get("q")),
-		CategoryID: strings.TrimSpace(q.Get("category")),
+		Page:             page,
+		PerPage:          perPage,
+		Sort:             storefrontSortValue(strings.TrimSpace(q.Get("sort"))),
+		View:             view,
+		Query:            strings.TrimSpace(q.Get("q")),
+		CategoryID:       strings.TrimSpace(q.Get("category")),
+		AttributeFilters: parseStorefrontAttributeFilters(q),
 	}, nil
 }
 
@@ -1091,7 +1085,19 @@ func storefrontSortLinks(r *http.Request, params storefrontListingParams) []Stor
 	return out
 }
 
-func storefrontInteractiveFilters(r *http.Request, params storefrontListingParams, facets map[string][]search.FacetValue, allCategories []catalog.Category, activeCategory *catalog.Category) []StorefrontFilterGroup {
+func storefrontInteractiveFilters(r *http.Request, params storefrontListingParams, facets map[string][]search.FacetValue, allCategories []catalog.Category, activeCategory *catalog.Category, layeredNavAttrs []catalog.Attribute) []StorefrontFilterGroup {
+	var groups []StorefrontFilterGroup
+	if categoryGroup := storefrontCategoryFilterGroup(r, params, facets, allCategories, activeCategory); categoryGroup != nil {
+		groups = append(groups, *categoryGroup)
+	}
+	groups = append(groups, storefrontAttributeFilterGroups(r, params, facets, layeredNavAttrs)...)
+	if len(groups) == 0 {
+		return nil
+	}
+	return groups
+}
+
+func storefrontCategoryFilterGroup(r *http.Request, params storefrontListingParams, facets map[string][]search.FacetValue, allCategories []catalog.Category, activeCategory *catalog.Category) *StorefrontFilterGroup {
 	values := append([]search.FacetValue(nil), facets["category"]...)
 	if extra, ok := facets["category_id"]; ok {
 		values = append(values, extra...)
@@ -1137,7 +1143,7 @@ func storefrontInteractiveFilters(r *http.Request, params storefrontListingParam
 	if len(group.Values) == 0 {
 		return nil
 	}
-	return []StorefrontFilterGroup{group}
+	return &group
 }
 
 func storefrontCategoryFromFacet(value string, byID, byName map[string]catalog.Category) (catalog.Category, bool) {
@@ -1185,6 +1191,12 @@ func storefrontURL(r *http.Request, params storefrontListingParams, overrides ma
 	}
 	if params.CategoryID != "" {
 		q.Set("category", params.CategoryID)
+	}
+	for code, value := range params.AttributeFilters {
+		if value == "" {
+			continue
+		}
+		q.Set(storefrontAttributeQueryPrefix+code, value)
 	}
 	for key, value := range overrides {
 		if value == "" {

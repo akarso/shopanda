@@ -173,6 +173,53 @@ func TestAttributeStore_ListAttributesByGroup(t *testing.T) {
 	}
 }
 
+func TestAttributeStore_ListLayeredNavAttributes(t *testing.T) {
+	ctx := context.Background()
+	store := adminApp.NewAttributeStore(newMockConfigRepo())
+	if err := store.CreateAttribute(ctx, catalog.Attribute{Code: "color", Label: "Color", Type: catalog.AttributeTypeText, UseInLayeredNav: true}); err != nil {
+		t.Fatalf("CreateAttribute color: %v", err)
+	}
+	if err := store.CreateAttribute(ctx, catalog.Attribute{Code: "weight", Label: "Weight", Type: catalog.AttributeTypeNumber}); err != nil {
+		t.Fatalf("CreateAttribute weight: %v", err)
+	}
+
+	attrs, err := store.ListLayeredNavAttributes(ctx)
+	if err != nil {
+		t.Fatalf("ListLayeredNavAttributes: %v", err)
+	}
+	if len(attrs) != 1 || attrs[0].Code != "color" {
+		t.Fatalf("attrs = %+v, want color only", attrs)
+	}
+
+	if err := store.CreateAttribute(ctx, catalog.Attribute{Code: "brand", Label: "Brand", Type: catalog.AttributeTypeText, UseInLayeredNav: true}); err != nil {
+		t.Fatalf("CreateAttribute brand: %v", err)
+	}
+	attrs, err = store.ListLayeredNavAttributes(ctx)
+	if err != nil {
+		t.Fatalf("ListLayeredNavAttributes again: %v", err)
+	}
+	if len(attrs) != 2 || attrs[0].Code != "brand" || attrs[1].Code != "color" {
+		t.Fatalf("attrs order = %+v, want brand then color", attrs)
+	}
+}
+
+func TestAttributeStore_RejectsReservedFacetCode(t *testing.T) {
+	ctx := context.Background()
+	store := adminApp.NewAttributeStore(newMockConfigRepo())
+	err := store.CreateAttribute(ctx, catalog.Attribute{
+		Code:            "category",
+		Label:           "Category",
+		Type:            catalog.AttributeTypeText,
+		UseInLayeredNav: true,
+	})
+	if err == nil {
+		t.Fatal("expected error for reserved attribute code category")
+	}
+	if !adminApp.IsValidationError(err) {
+		t.Fatalf("expected validation error, got %v", err)
+	}
+}
+
 func TestAttributeToFormField(t *testing.T) {
 	field, err := adminApp.AttributeToFormField(catalog.Attribute{
 		Code: "size", Label: "Size", Type: catalog.AttributeTypeSelect,

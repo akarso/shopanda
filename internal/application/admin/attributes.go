@@ -11,6 +11,7 @@ import (
 
 	"github.com/akarso/shopanda/internal/domain/catalog"
 	"github.com/akarso/shopanda/internal/domain/config"
+	"github.com/akarso/shopanda/internal/domain/search"
 )
 
 const (
@@ -135,6 +136,9 @@ func validateAttributeDefinition(attr catalog.Attribute) error {
 	}
 	if attr.Type == catalog.AttributeTypeSelect && len(attr.Options) == 0 {
 		return validationErr("select attribute must have at least one option")
+	}
+	if search.ReservedFacetKey(code) {
+		return validationErr("attribute code %q is reserved for category facets", code)
 	}
 	return nil
 }
@@ -478,4 +482,19 @@ func (s *AttributeStore) GroupCodesForAttribute(ctx context.Context, attrCode st
 	}
 	sort.Strings(codes)
 	return codes, nil
+}
+
+// ListLayeredNavAttributes returns attributes flagged for PLP layered navigation.
+func (s *AttributeStore) ListLayeredNavAttributes(ctx context.Context) ([]catalog.Attribute, error) {
+	attrs, err := s.loadAttributes(ctx)
+	if err != nil {
+		return nil, err
+	}
+	reg := catalog.NewAttributeRegistry()
+	for _, attr := range attrs {
+		reg.RegisterAttribute(attr)
+	}
+	layered := reg.AttributesForLayeredNav()
+	sort.Slice(layered, func(i, j int) bool { return layered[i].Code < layered[j].Code })
+	return layered, nil
 }
