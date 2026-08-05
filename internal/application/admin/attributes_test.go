@@ -190,6 +190,17 @@ func TestAttributeStore_ListLayeredNavAttributes(t *testing.T) {
 	if len(attrs) != 1 || attrs[0].Code != "color" {
 		t.Fatalf("attrs = %+v, want color only", attrs)
 	}
+
+	if err := store.CreateAttribute(ctx, catalog.Attribute{Code: "brand", Label: "Brand", Type: catalog.AttributeTypeText, UseInLayeredNav: true}); err != nil {
+		t.Fatalf("CreateAttribute brand: %v", err)
+	}
+	attrs, err = store.ListLayeredNavAttributes(ctx)
+	if err != nil {
+		t.Fatalf("ListLayeredNavAttributes again: %v", err)
+	}
+	if len(attrs) != 2 || attrs[0].Code != "brand" || attrs[1].Code != "color" {
+		t.Fatalf("attrs order = %+v, want brand then color", attrs)
+	}
 }
 
 func TestAttributeStore_RejectsReservedFacetCode(t *testing.T) {

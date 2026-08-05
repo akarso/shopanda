@@ -494,5 +494,7 @@ func (s *AttributeStore) ListLayeredNavAttributes(ctx context.Context) ([]catalo
 	for _, attr := range attrs {
 		reg.RegisterAttribute(attr)
 	}
-	return reg.AttributesForLayeredNav(), nil
+	layered := reg.AttributesForLayeredNav()
+	sort.Slice(layered, func(i, j int) bool { return layered[i].Code < layered[j].Code })
+	return layered, nil
 }

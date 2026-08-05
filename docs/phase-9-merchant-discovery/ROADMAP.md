@@ -82,8 +82,10 @@ Track C depends on catalog/search infrastructure (partially exists: search facet
 
 | PR | Title | Short description |
 | --- | --- | --- |
-| PR-904 | Attribute facets (PLP) | Layered nav chips for `use_in_layered_nav` attributes |
-| PR-905 | Advanced search filters | Storefront + API filters for `use_in_advanced_search` (planned) |
+| PR-904 | Attribute facets (PLP) | Layered nav chips for `use_in_layered_nav` attributes (PostgreSQL search) — **done** |
+| PR-905 | Advanced search filters | Storefront filter panel + `/api/v1/search` attribute params for `use_in_advanced_search` — **planned** |
+
+**PR-901** shipped storefront **autosuggest** only; attribute-based advanced search filters are **PR-905**, not PR-901.
 
 ---
 
