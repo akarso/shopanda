@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -170,6 +171,14 @@ func (r *recordingFacetSyncer) Sync(context.Context) error {
 	return nil
 }
 
+type failingFacetSyncer struct {
+	err error
+}
+
+func (f *failingFacetSyncer) Sync(context.Context) error {
+	return f.err
+}
+
 func TestAttributeAdminHandler_CreateSyncsDiscoveryFacets(t *testing.T) {
 	store := adminApp.NewAttributeStore(newMockConfigRepoForAttrAdmin())
 	syncer := &recordingFacetSyncer{}
@@ -220,6 +229,94 @@ func TestAttributeAdminHandler_UpdateClearsDiscoveryFlagsSyncsFacets(t *testing.
 	}
 	if syncer.calls != 2 {
 		t.Fatalf("sync calls = %d, want 2", syncer.calls)
+	}
+}
+
+func TestAttributeAdminHandler_DeleteSyncsDiscoveryFacets(t *testing.T) {
+	store := adminApp.NewAttributeStore(newMockConfigRepoForAttrAdmin())
+	syncer := &recordingFacetSyncer{}
+	h := shophttp.NewAttributeAdminHandler(store).WithDiscoveryFacetSync(syncer)
+	router := newAttributeAdminRouter(h)
+
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, httptest.NewRequest("POST", "/api/v1/admin/attributes", attributeBody(t, map[string]interface{}{
+		"code":               "color",
+		"label":              "Color",
+		"type":               "text",
+		"use_in_layered_nav": true,
+	})))
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("create status = %d", rec.Code)
+	}
+
+	rec = httptest.NewRecorder()
+	router.ServeHTTP(rec, httptest.NewRequest("DELETE", "/api/v1/admin/attributes/color", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("delete status = %d, want %d; body: %s", rec.Code, http.StatusOK, rec.Body.String())
+	}
+	if syncer.calls != 2 {
+		t.Fatalf("sync calls = %d, want 2", syncer.calls)
+	}
+}
+
+func TestAttributeAdminHandler_DeleteNotFoundRetriesFacetSync(t *testing.T) {
+	store := adminApp.NewAttributeStore(newMockConfigRepoForAttrAdmin())
+	failing := &failingFacetSyncer{err: errors.New("meili down")}
+	h := shophttp.NewAttributeAdminHandler(store).WithDiscoveryFacetSync(failing)
+	router := newAttributeAdminRouter(h)
+
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, httptest.NewRequest("POST", "/api/v1/admin/attributes", attributeBody(t, map[string]interface{}{
+		"code":               "color",
+		"label":              "Color",
+		"type":               "text",
+		"use_in_layered_nav": true,
+	})))
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("create status = %d, want %d", rec.Code, http.StatusInternalServerError)
+	}
+
+	rec = httptest.NewRecorder()
+	router.ServeHTTP(rec, httptest.NewRequest("DELETE", "/api/v1/admin/attributes/color", nil))
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("first delete status = %d, want %d; body: %s", rec.Code, http.StatusInternalServerError, rec.Body.String())
+	}
+
+	recording := &recordingFacetSyncer{}
+	h = shophttp.NewAttributeAdminHandler(store).WithDiscoveryFacetSync(recording)
+	router = newAttributeAdminRouter(h)
+
+	rec = httptest.NewRecorder()
+	router.ServeHTTP(rec, httptest.NewRequest("DELETE", "/api/v1/admin/attributes/color", nil))
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("retry delete status = %d, want %d", rec.Code, http.StatusNotFound)
+	}
+	if recording.calls != 1 {
+		t.Fatalf("sync calls = %d, want 1 on not-found delete retry", recording.calls)
+	}
+}
+
+func TestAttributeAdminHandler_SyncFailureReturnsInternalError(t *testing.T) {
+	store := adminApp.NewAttributeStore(newMockConfigRepoForAttrAdmin())
+	syncer := &failingFacetSyncer{err: errors.New("meili down")}
+	h := shophttp.NewAttributeAdminHandler(store).WithDiscoveryFacetSync(syncer)
+	router := newAttributeAdminRouter(h)
+
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, httptest.NewRequest("POST", "/api/v1/admin/attributes", attributeBody(t, map[string]interface{}{
+		"code":               "color",
+		"label":              "Color",
+		"type":               "text",
+		"use_in_layered_nav": true,
+	})))
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("create status = %d, want %d; body: %s", rec.Code, http.StatusInternalServerError, rec.Body.String())
+	}
+
+	rec = httptest.NewRecorder()
+	router.ServeHTTP(rec, httptest.NewRequest("GET", "/api/v1/admin/attributes/color", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("get status = %d, want %d; attribute should persist after sync failure", rec.Code, http.StatusOK)
 	}
 }
 

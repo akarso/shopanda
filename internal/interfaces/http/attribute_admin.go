@@ -59,6 +59,10 @@ func searchFacetSyncError(err error) error {
 	return apperror.Internal("attribute saved but search facet sync failed: " + err.Error())
 }
 
+func attributeNotFound(err error) bool {
+	return err != nil && strings.Contains(err.Error(), "not found")
+}
+
 type createAttributeRequest struct {
 	Code                string   `json:"code"`
 	Label               string   `json:"label"`
@@ -384,6 +388,14 @@ func (h *AttributeAdminHandler) DeleteAttribute() http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		code := strings.TrimSpace(r.PathValue("code"))
 		if err := h.store.DeleteAttribute(r.Context(), code); err != nil {
+			if attributeNotFound(err) {
+				if syncErr := h.syncDiscoveryFacets(r.Context()); syncErr != nil {
+					verr := searchFacetSyncError(syncErr)
+					h.auditAttribute(r, admin.AuditAttributeDelete, code, nil, verr)
+					JSONError(w, verr)
+					return
+				}
+			}
 			verr := storeAPIError(err)
 			h.auditAttribute(r, admin.AuditAttributeDelete, code, nil, verr)
 			JSONError(w, verr)

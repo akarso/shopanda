@@ -735,7 +735,11 @@ func runServe(cfg *config.Config, log logger.Logger, embedScheduler bool) error 
 
 	attributeStore := adminApp.NewAttributeStore(configRepo)
 
-	discoveryFacetSync := adminApp.NewDiscoveryFacetSyncer(attributeStore, searchEngine)
+	var facetConfigurer adminApp.AttributeFacetConfigurer
+	if c, ok := searchEngine.(adminApp.AttributeFacetConfigurer); ok {
+		facetConfigurer = c
+	}
+	discoveryFacetSync := adminApp.NewDiscoveryFacetSyncer(attributeStore, facetConfigurer)
 	if err := discoveryFacetSync.Sync(context.Background()); err != nil {
 		return fmt.Errorf("configure search attribute facets: %w", err)
 	}

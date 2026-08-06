@@ -41,7 +41,7 @@ func TestDiscoveryFacetSyncer_Sync(t *testing.T) {
 
 func TestDiscoveryFacetSyncer_NoOpWithoutConfigurer(t *testing.T) {
 	store := adminApp.NewAttributeStore(newMockConfigRepo())
-	syncer := adminApp.NewDiscoveryFacetSyncer(store, struct{}{})
+	syncer := adminApp.NewDiscoveryFacetSyncer(store, nil)
 	if err := syncer.Sync(context.Background()); err != nil {
 		t.Fatalf("Sync: %v", err)
 	}
