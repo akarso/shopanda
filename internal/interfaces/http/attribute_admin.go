@@ -1,6 +1,7 @@
 package http
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"strings"
@@ -13,8 +14,13 @@ import (
 
 // AttributeAdminHandler serves attribute and attribute-group admin endpoints.
 type AttributeAdminHandler struct {
-	store   *admin.AttributeStore
-	auditor *admin.Auditor
+	store     *admin.AttributeStore
+	auditor   *admin.Auditor
+	facetSync discoveryFacetSyncer
+}
+
+type discoveryFacetSyncer interface {
+	Sync(context.Context) error
 }
 
 // NewAttributeAdminHandler creates an AttributeAdminHandler with a default auditor.
@@ -31,6 +37,30 @@ func NewAttributeAdminHandlerWithAuditor(store *admin.AttributeStore, auditor *a
 		panic("AttributeAdminHandler: auditor must not be nil")
 	}
 	return &AttributeAdminHandler{store: store, auditor: auditor}
+}
+
+// WithDiscoveryFacetSync enables hot-reload of search-engine discovery attribute facets after mutations.
+func (h *AttributeAdminHandler) WithDiscoveryFacetSync(sync discoveryFacetSyncer) *AttributeAdminHandler {
+	h.facetSync = sync
+	return h
+}
+
+func (h *AttributeAdminHandler) syncDiscoveryFacets(ctx context.Context) error {
+	if h.facetSync == nil {
+		return nil
+	}
+	return h.facetSync.Sync(ctx)
+}
+
+func searchFacetSyncError(err error) error {
+	if err == nil {
+		return nil
+	}
+	return apperror.Internal("attribute saved but search facet sync failed: " + err.Error())
+}
+
+func attributeNotFound(err error) bool {
+	return err != nil && strings.Contains(err.Error(), "not found")
 }
 
 type createAttributeRequest struct {
@@ -288,6 +318,13 @@ func (h *AttributeAdminHandler) CreateAttribute() http.HandlerFunc {
 			return
 		}
 
+		if err := h.syncDiscoveryFacets(r.Context()); err != nil {
+			verr := searchFacetSyncError(err)
+			h.auditAttribute(r, admin.AuditAttributeCreate, attr.Code, nil, verr)
+			JSONError(w, verr)
+			return
+		}
+
 		groups, gerr := h.store.GroupCodesForAttribute(r.Context(), attr.Code)
 		if gerr != nil {
 			apiErr := storeAPIError(gerr)
@@ -327,6 +364,13 @@ func (h *AttributeAdminHandler) UpdateAttribute() http.HandlerFunc {
 			return
 		}
 
+		if err := h.syncDiscoveryFacets(r.Context()); err != nil {
+			verr := searchFacetSyncError(err)
+			h.auditAttribute(r, admin.AuditAttributeUpdate, code, nil, verr)
+			JSONError(w, verr)
+			return
+		}
+
 		groups, gerr := h.store.GroupCodesForAttribute(r.Context(), attr.Code)
 		if gerr != nil {
 			apiErr := storeAPIError(gerr)
@@ -344,7 +388,17 @@ func (h *AttributeAdminHandler) DeleteAttribute() http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		code := strings.TrimSpace(r.PathValue("code"))
 		if err := h.store.DeleteAttribute(r.Context(), code); err != nil {
+			if attributeNotFound(err) {
+				// Best-effort resync for delete retries; not-found stays 404 even if Meilisearch is down.
+				_ = h.syncDiscoveryFacets(r.Context())
+			}
 			verr := storeAPIError(err)
+			h.auditAttribute(r, admin.AuditAttributeDelete, code, nil, verr)
+			JSONError(w, verr)
+			return
+		}
+		if err := h.syncDiscoveryFacets(r.Context()); err != nil {
+			verr := searchFacetSyncError(err)
 			h.auditAttribute(r, admin.AuditAttributeDelete, code, nil, verr)
 			JSONError(w, verr)
 			return
