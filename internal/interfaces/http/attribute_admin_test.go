@@ -161,6 +161,68 @@ func TestAttributeAdminHandler_CreateWithDiscoveryFlags(t *testing.T) {
 	}
 }
 
+type recordingFacetSyncer struct {
+	calls int
+}
+
+func (r *recordingFacetSyncer) Sync(context.Context) error {
+	r.calls++
+	return nil
+}
+
+func TestAttributeAdminHandler_CreateSyncsDiscoveryFacets(t *testing.T) {
+	store := adminApp.NewAttributeStore(newMockConfigRepoForAttrAdmin())
+	syncer := &recordingFacetSyncer{}
+	h := shophttp.NewAttributeAdminHandler(store).WithDiscoveryFacetSync(syncer)
+	router := newAttributeAdminRouter(h)
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("POST", "/api/v1/admin/attributes", attributeBody(t, map[string]interface{}{
+		"code":               "color",
+		"label":              "Color",
+		"type":               "text",
+		"use_in_layered_nav": true,
+	}))
+	router.ServeHTTP(rec, req)
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("status = %d, want %d; body: %s", rec.Code, http.StatusCreated, rec.Body.String())
+	}
+	if syncer.calls != 1 {
+		t.Fatalf("sync calls = %d, want 1", syncer.calls)
+	}
+}
+
+func TestAttributeAdminHandler_UpdateClearsDiscoveryFlagsSyncsFacets(t *testing.T) {
+	store := adminApp.NewAttributeStore(newMockConfigRepoForAttrAdmin())
+	syncer := &recordingFacetSyncer{}
+	h := shophttp.NewAttributeAdminHandler(store).WithDiscoveryFacetSync(syncer)
+	router := newAttributeAdminRouter(h)
+
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, httptest.NewRequest("POST", "/api/v1/admin/attributes", attributeBody(t, map[string]interface{}{
+		"code":               "color",
+		"label":              "Color",
+		"type":               "text",
+		"use_in_layered_nav": true,
+	})))
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("create status = %d", rec.Code)
+	}
+
+	rec = httptest.NewRecorder()
+	router.ServeHTTP(rec, httptest.NewRequest("PUT", "/api/v1/admin/attributes/color", attributeBody(t, map[string]interface{}{
+		"label":              "Color",
+		"type":               "text",
+		"use_in_layered_nav": false,
+	})))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("update status = %d, want %d; body: %s", rec.Code, http.StatusOK, rec.Body.String())
+	}
+	if syncer.calls != 2 {
+		t.Fatalf("sync calls = %d, want 2", syncer.calls)
+	}
+}
+
 func TestAttributeAdminHandler_CreateDuplicateRejected(t *testing.T) {
 	store := adminApp.NewAttributeStore(newMockConfigRepoForAttrAdmin())
 	h := shophttp.NewAttributeAdminHandler(store)

@@ -735,11 +735,8 @@ func runServe(cfg *config.Config, log logger.Logger, embedScheduler bool) error 
 
 	attributeStore := adminApp.NewAttributeStore(configRepo)
 
-	discoveryAttrCodes, err := attributeStore.ListDiscoveryAttributeCodes(context.Background())
-	if err != nil {
-		return fmt.Errorf("list discovery attribute codes: %w", err)
-	}
-	if err := configureSearchAttributeFacets(context.Background(), searchEngine, discoveryAttrCodes); err != nil {
+	discoveryFacetSync := adminApp.NewDiscoveryFacetSyncer(attributeStore, searchEngine)
+	if err := discoveryFacetSync.Sync(context.Background()); err != nil {
 		return fmt.Errorf("configure search attribute facets: %w", err)
 	}
 
@@ -885,7 +882,8 @@ func runServe(cfg *config.Config, log logger.Logger, embedScheduler bool) error 
 	contentBlockAdmin := shophttp.NewContentBlockAdminHandler(contentBlockRepo, sharedAuditor)
 	couponAdmin := shophttp.NewCouponAdminHandlerWithAuditor(couponRepo, promotionRepo, sharedAuditor)
 	promotionAdmin := shophttp.NewPromotionAdminHandlerWithAuditor(promotionRepo, sharedAuditor)
-	attributeAdmin := shophttp.NewAttributeAdminHandlerWithAuditor(attributeStore, sharedAuditor)
+	attributeAdmin := shophttp.NewAttributeAdminHandlerWithAuditor(attributeStore, sharedAuditor).
+		WithDiscoveryFacetSync(discoveryFacetSync)
 	extensionFieldAdmin := shophttp.NewExtensionFieldAdminHandlerWithAuditor(extensionFieldService, sharedAuditor)
 	extensionValueAdmin := shophttp.NewExtensionValueAdminHandlerWithAuditor(extensionValueService, sharedAuditor)
 	extensionHookAdmin := shophttp.NewExtensionHookAdminHandler(hookRegistry)

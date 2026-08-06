@@ -21,6 +21,7 @@
 | PR-904 | D | done | [Attribute facets (PLP)](PR-904.md) |
 | PR-905 | D | done | [Advanced search attribute filters](PR-905.md) |
 | PR-906 | D | done | [Meilisearch attribute filter parity](PR-906.md) |
+| PR-907 | D | done | [Meilisearch discovery facet hot-reload](PR-907.md) |
 
 Roadmap: [`../ROADMAP.md`](../ROADMAP.md)
 
