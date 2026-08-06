@@ -22,6 +22,7 @@
 | PR-905 | D | done | [Advanced search attribute filters](PR-905.md) |
 | PR-906 | D | done | [Meilisearch attribute filter parity](PR-906.md) |
 | PR-907 | D | done | [Meilisearch discovery facet hot-reload](PR-907.md) |
+| PR-908 | D | done | [CSV attribute import facet sync](PR-908.md) |
 
 Roadmap: [`../ROADMAP.md`](../ROADMAP.md)
 

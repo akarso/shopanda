@@ -5,8 +5,12 @@ import (
 	"io"
 	"testing"
 
+	adminApp "github.com/akarso/shopanda/internal/application/admin"
+	"github.com/akarso/shopanda/internal/domain/catalog"
+	domainconfig "github.com/akarso/shopanda/internal/domain/config"
 	"github.com/akarso/shopanda/internal/domain/mail"
 	"github.com/akarso/shopanda/internal/domain/payment"
+	"github.com/akarso/shopanda/internal/domain/search"
 	"github.com/akarso/shopanda/internal/platform/config"
 	"github.com/akarso/shopanda/internal/platform/event"
 	"github.com/akarso/shopanda/internal/platform/logger"
@@ -14,6 +18,85 @@ import (
 	"github.com/akarso/shopanda/plugins/core"
 	"github.com/akarso/shopanda/plugins/maildemo"
 )
+
+type mockDiscoveryFacetConfigurer struct {
+	codes []string
+}
+
+func (m *mockDiscoveryFacetConfigurer) ConfigureAttributeFacets(_ context.Context, codes []string) error {
+	m.codes = append([]string(nil), codes...)
+	return nil
+}
+
+type facetSearchEngine struct {
+	mockDiscoveryFacetConfigurer
+	noopSearchEngine
+}
+
+type noopSearchEngine struct{}
+
+func (noopSearchEngine) Name() string { return "noop" }
+func (noopSearchEngine) IndexProduct(context.Context, search.Product) error { return nil }
+func (noopSearchEngine) RemoveProduct(context.Context, string) error         { return nil }
+func (noopSearchEngine) Search(context.Context, search.SearchQuery) (search.SearchResult, error) {
+	return search.SearchResult{}, nil
+}
+func (noopSearchEngine) Suggest(context.Context, string, int) ([]search.Suggestion, error) {
+	return nil, nil
+}
+
+type mockConfigRepoForFacetSync struct {
+	store map[string]interface{}
+}
+
+func (m *mockConfigRepoForFacetSync) Get(_ context.Context, key string) (interface{}, error) {
+	return m.store[key], nil
+}
+func (m *mockConfigRepoForFacetSync) Set(_ context.Context, key string, value interface{}) error {
+	m.store[key] = value
+	return nil
+}
+func (m *mockConfigRepoForFacetSync) SetMany(_ context.Context, entries map[string]interface{}) error {
+	for k, v := range entries {
+		m.store[k] = v
+	}
+	return nil
+}
+func (m *mockConfigRepoForFacetSync) Delete(_ context.Context, key string) error {
+	delete(m.store, key)
+	return nil
+}
+func (m *mockConfigRepoForFacetSync) All(_ context.Context) ([]domainconfig.Entry, error) {
+	return nil, nil
+}
+
+func TestNewDiscoveryFacetSyncer_UsesConfigurer(t *testing.T) {
+	ctx := context.Background()
+	repo := &mockConfigRepoForFacetSync{store: map[string]interface{}{}}
+	store := adminApp.NewAttributeStore(repo)
+	if err := store.CreateAttribute(ctx, catalog.Attribute{
+		Code: "color", Label: "Color", Type: catalog.AttributeTypeText, UseInLayeredNav: true,
+	}); err != nil {
+		t.Fatalf("CreateAttribute: %v", err)
+	}
+
+	engine := &facetSearchEngine{}
+	syncer := newDiscoveryFacetSyncer(store, engine)
+	if err := syncer.Sync(ctx); err != nil {
+		t.Fatalf("Sync: %v", err)
+	}
+	if len(engine.codes) != 1 || engine.codes[0] != "color" {
+		t.Fatalf("codes = %v, want [color]", engine.codes)
+	}
+}
+
+func TestNewDiscoveryFacetSyncer_NoOpWithoutConfigurer(t *testing.T) {
+	repo := &mockConfigRepoForFacetSync{store: map[string]interface{}{}}
+	syncer := newDiscoveryFacetSyncer(adminApp.NewAttributeStore(repo), noopSearchEngine{})
+	if err := syncer.Sync(context.Background()); err != nil {
+		t.Fatalf("Sync: %v", err)
+	}
+}
 
 func TestResolvePaymentRegistry_FromPlugin(t *testing.T) {
 	log := logger.NewWithWriter(io.Discard, "error")

@@ -1,9 +1,12 @@
 package main
 
 import (
+	"context"
 	"database/sql"
 	"fmt"
 
+	adminApp "github.com/akarso/shopanda/internal/application/admin"
+	extensionApp "github.com/akarso/shopanda/internal/application/extension"
 	"github.com/akarso/shopanda/internal/domain/cache"
 	"github.com/akarso/shopanda/internal/domain/jobs"
 	"github.com/akarso/shopanda/internal/domain/mail"
@@ -20,8 +23,38 @@ import (
 	smtpmail "github.com/akarso/shopanda/internal/infrastructure/smtp"
 	"github.com/akarso/shopanda/internal/domain/shared"
 	"github.com/akarso/shopanda/internal/platform/config"
+	"github.com/akarso/shopanda/internal/platform/logger"
 	"github.com/akarso/shopanda/internal/platform/plugin"
 )
+
+func newDiscoveryFacetSyncer(store *adminApp.AttributeStore, engine search.SearchEngine) *adminApp.DiscoveryFacetSyncer {
+	var configurer adminApp.AttributeFacetConfigurer
+	if c, ok := engine.(adminApp.AttributeFacetConfigurer); ok {
+		configurer = c
+	}
+	return adminApp.NewDiscoveryFacetSyncer(store, configurer)
+}
+
+func syncDiscoveryFacetsFromDB(cfg *config.Config, log logger.Logger, conn *sql.DB) error {
+	registry := plugin.NewRegistry(log)
+	registerPlugins(registry, cfg)
+	pluginApp := &plugin.App{
+		Logger:    log,
+		Config:    cfg,
+		Bootstrap: &plugin.Bootstrap{DB: conn},
+	}
+	pluginApp.SetExtensionRegistry(extensionApp.NewRegistry())
+	if summary := registry.InitAll(pluginApp); summary.Failed > 0 {
+		return fmt.Errorf("discovery facet sync: %d plugin(s) failed to initialize", summary.Failed)
+	}
+	searchEngine, err := resolveSearchEngine(pluginApp, conn, cfg)
+	if err != nil {
+		return err
+	}
+	configRepo := postgres.NewConfigRepo(conn)
+	syncer := newDiscoveryFacetSyncer(adminApp.NewAttributeStore(configRepo), searchEngine)
+	return syncer.Sync(context.Background())
+}
 
 func resolveSearchEngine(app *plugin.App, conn *sql.DB, cfg *config.Config) (search.SearchEngine, error) {
 	if v, ok := app.SearchProvider(); ok {

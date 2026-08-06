@@ -86,6 +86,7 @@ Track C depends on catalog/search infrastructure (partially exists: search facet
 | PR-905 | Advanced search filters | Storefront filter panel + `/api/v1/search` attribute params for `use_in_advanced_search` — **done** |
 | PR-906 | Meilisearch attribute parity | `attr_*` filters + facets when `search.engine=meilisearch` — **done** |
 | PR-907 | Meilisearch facet hot-reload | Admin discovery-flag changes sync Meilisearch filterable fields — **done** |
+| PR-908 | CSV import facet sync | `import:attributes` syncs Meilisearch discovery filterable fields — **done** |
 
 **PR-901** shipped storefront **autosuggest** only; attribute-based advanced search filters are **PR-905**, not PR-901.
 
@@ -110,6 +111,7 @@ Track C depends on catalog/search infrastructure (partially exists: search facet
 | 905 | D | done |
 | 906 | D | done |
 | 907 | D | done |
+| 908 | D | done |
 
 PR specs: [`prs/`](prs/).
 
