@@ -735,11 +735,7 @@ func runServe(cfg *config.Config, log logger.Logger, embedScheduler bool) error 
 
 	attributeStore := adminApp.NewAttributeStore(configRepo)
 
-	var facetConfigurer adminApp.AttributeFacetConfigurer
-	if c, ok := searchEngine.(adminApp.AttributeFacetConfigurer); ok {
-		facetConfigurer = c
-	}
-	discoveryFacetSync := adminApp.NewDiscoveryFacetSyncer(attributeStore, facetConfigurer)
+	discoveryFacetSync := newDiscoveryFacetSyncer(attributeStore, searchEngine)
 	if err := discoveryFacetSync.Sync(context.Background()); err != nil {
 		return fmt.Errorf("configure search attribute facets: %w", err)
 	}
@@ -2024,6 +2020,10 @@ func runImportAttributes(cfg *config.Config, log logger.Logger) error {
 
 	if err := tx.Commit(); err != nil {
 		return fmt.Errorf("import attributes: commit: %w", err)
+	}
+
+	if err := syncDiscoveryFacetsFromDB(cfg, log, conn); err != nil {
+		return fmt.Errorf("import committed but discovery facet sync failed: %w", err)
 	}
 
 	log.Info("import.attributes.complete", map[string]interface{}{
