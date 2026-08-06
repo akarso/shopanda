@@ -389,12 +389,8 @@ func (h *AttributeAdminHandler) DeleteAttribute() http.HandlerFunc {
 		code := strings.TrimSpace(r.PathValue("code"))
 		if err := h.store.DeleteAttribute(r.Context(), code); err != nil {
 			if attributeNotFound(err) {
-				if syncErr := h.syncDiscoveryFacets(r.Context()); syncErr != nil {
-					verr := searchFacetSyncError(syncErr)
-					h.auditAttribute(r, admin.AuditAttributeDelete, code, nil, verr)
-					JSONError(w, verr)
-					return
-				}
+				// Best-effort resync for delete retries; not-found stays 404 even if Meilisearch is down.
+				_ = h.syncDiscoveryFacets(r.Context())
 			}
 			verr := storeAPIError(err)
 			h.auditAttribute(r, admin.AuditAttributeDelete, code, nil, verr)

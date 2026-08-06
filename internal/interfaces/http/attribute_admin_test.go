@@ -296,6 +296,19 @@ func TestAttributeAdminHandler_DeleteNotFoundRetriesFacetSync(t *testing.T) {
 	}
 }
 
+func TestAttributeAdminHandler_DeleteNotFoundReturns404WhenSyncFails(t *testing.T) {
+	store := adminApp.NewAttributeStore(newMockConfigRepoForAttrAdmin())
+	syncer := &failingFacetSyncer{err: errors.New("meili down")}
+	h := shophttp.NewAttributeAdminHandler(store).WithDiscoveryFacetSync(syncer)
+	router := newAttributeAdminRouter(h)
+
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, httptest.NewRequest("DELETE", "/api/v1/admin/attributes/missing", nil))
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("status = %d, want %d; body: %s", rec.Code, http.StatusNotFound, rec.Body.String())
+	}
+}
+
 func TestAttributeAdminHandler_SyncFailureReturnsInternalError(t *testing.T) {
 	store := adminApp.NewAttributeStore(newMockConfigRepoForAttrAdmin())
 	syncer := &failingFacetSyncer{err: errors.New("meili down")}
