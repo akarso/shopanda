@@ -122,4 +122,5 @@ PR specs: [`prs/`](prs/).
 | Phase | Focus | Status |
 | --- | --- | --- |
 | Phase 8 | Integrator platform | Shipped (PR-800–855) |
-| **Phase 9** | Backlog + merchant discovery | **In progress** |
+| **Phase 9** | Backlog + merchant discovery | **Shipped (PR-856–908)** |
+| Phase 10 | Platform excellence (A / A+) | Planned — [`../phase-10-platform-excellence/ROADMAP.md`](../phase-10-platform-excellence/ROADMAP.md) |

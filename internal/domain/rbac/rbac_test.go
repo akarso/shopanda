@@ -135,9 +135,15 @@ func TestHasPermission_Unknown(t *testing.T) {
 }
 
 func TestPermissionsForRole_Admin(t *testing.T) {
+	rbac.ResetPluginPermissions()
+	t.Cleanup(rbac.ResetPluginPermissions)
+
 	perms := rbac.PermissionsForRole(identity.RoleAdmin)
-	if len(perms) != 18 {
-		t.Errorf("admin permissions count = %d, want 18", len(perms))
+	// Core admin grants in role_permissions.go (products/orders/categories/customers/
+	// invoices/media/content/settings/shipping/audit/extensions*).
+	const wantCoreAdmin = 21
+	if len(perms) != wantCoreAdmin {
+		t.Errorf("admin permissions count = %d, want %d (%v)", len(perms), wantCoreAdmin, perms)
 	}
 }
 

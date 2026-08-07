@@ -117,6 +117,14 @@ func (r *memStockRepo) SetStock(_ context.Context, entry *inventory.StockEntry) 
 	r.qty[entry.VariantID] = entry.Quantity
 	return nil
 }
+func (r *memStockRepo) SetStocks(ctx context.Context, entries []inventory.StockEntry) error {
+	for i := range entries {
+		if err := r.SetStock(ctx, &entries[i]); err != nil {
+			return err
+		}
+	}
+	return nil
+}
 func (r *memStockRepo) ListStock(context.Context, int, int) ([]inventory.StockEntry, error) {
 	return nil, nil
 }
