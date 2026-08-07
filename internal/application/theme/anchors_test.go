@@ -91,4 +91,3 @@ func TestValidateDeclaredAnchors_StrictFails(t *testing.T) {
 		t.Fatal("expected strict validation error")
 	}
 }
-

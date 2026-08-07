@@ -9,8 +9,8 @@ import (
 	"testing"
 	"time"
 
-	cmsApp "github.com/akarso/shopanda/internal/application/cms"
 	"github.com/akarso/shopanda/internal/application/admin"
+	cmsApp "github.com/akarso/shopanda/internal/application/cms"
 	"github.com/akarso/shopanda/internal/domain/cms"
 	"github.com/akarso/shopanda/internal/platform/logger"
 
@@ -18,12 +18,12 @@ import (
 )
 
 type mockContentBlockRepo struct {
-	listFn              func(ctx context.Context, offset, limit int) ([]*cms.ContentBlock, error)
-	findByIDFn          func(ctx context.Context, id string) (*cms.ContentBlock, error)
-	createFn            func(ctx context.Context, block *cms.ContentBlock) error
-	updateFn            func(ctx context.Context, block *cms.ContentBlock) error
-	deleteFn            func(ctx context.Context, id string) error
-	findByTargetFn      func(ctx context.Context, targetType cms.TargetType, targetKey string) ([]*cms.ContentBlock, error)
+	listFn                 func(ctx context.Context, offset, limit int) ([]*cms.ContentBlock, error)
+	findByIDFn             func(ctx context.Context, id string) (*cms.ContentBlock, error)
+	createFn               func(ctx context.Context, block *cms.ContentBlock) error
+	updateFn               func(ctx context.Context, block *cms.ContentBlock) error
+	deleteFn               func(ctx context.Context, id string) error
+	findByTargetFn         func(ctx context.Context, targetType cms.TargetType, targetKey string) ([]*cms.ContentBlock, error)
 	saveTargetPlacementsFn func(ctx context.Context, targetType cms.TargetType, targetKey string, blockIDs []string) error
 }
 
@@ -99,7 +99,7 @@ func TestContentBlockHandlerGetByTargetLayout(t *testing.T) {
 		Data struct {
 			TargetType string `json:"target_type"`
 			Blocks     []struct {
-				Type string `json:"type"`
+				Type string                 `json:"type"`
 				Data map[string]interface{} `json:"data"`
 			} `json:"blocks"`
 		} `json:"data"`

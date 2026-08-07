@@ -44,9 +44,9 @@ func (m *LogMailer) Send(_ context.Context, msg mail.Message) error {
 		subject = m.subjectPrefix + " " + subject
 	}
 	m.log.Info("maildemo.send", map[string]interface{}{
-		"to":              to,
-		"subject":         subject,
-		"body_bytes":      len(msg.Body),
+		"to":               to,
+		"subject":          subject,
+		"body_bytes":       len(msg.Body),
 		"attachment_count": len(msg.Attachments),
 	})
 	return nil

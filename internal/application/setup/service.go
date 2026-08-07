@@ -114,7 +114,7 @@ type InstallInput struct {
 
 // InstallResult summarizes a successful installation.
 type InstallResult struct {
-	AdminEmail       string `json:"admin_email"`
+	AdminEmail        string `json:"admin_email"`
 	MigrationsApplied int    `json:"migrations_applied"`
 }
 

@@ -13,13 +13,13 @@ import (
 	"sync"
 	"time"
 
-	appAuth 	"github.com/akarso/shopanda/internal/application/auth"
-	cartApp "github.com/akarso/shopanda/internal/application/cart"
 	assetsApp "github.com/akarso/shopanda/internal/application/assets"
-	extensionApp "github.com/akarso/shopanda/internal/application/extension"
-	cmsApp "github.com/akarso/shopanda/internal/application/cms"
+	appAuth "github.com/akarso/shopanda/internal/application/auth"
+	cartApp "github.com/akarso/shopanda/internal/application/cart"
 	checkoutApp "github.com/akarso/shopanda/internal/application/checkout"
+	cmsApp "github.com/akarso/shopanda/internal/application/cms"
 	"github.com/akarso/shopanda/internal/application/composition"
+	extensionApp "github.com/akarso/shopanda/internal/application/extension"
 	orderApp "github.com/akarso/shopanda/internal/application/order"
 	returnsApp "github.com/akarso/shopanda/internal/application/returns"
 	"github.com/akarso/shopanda/internal/domain/catalog"
@@ -39,40 +39,40 @@ import (
 
 // StorefrontHandler renders SSR pages using the theme engine.
 type StorefrontHandler struct {
-	engine      *theme.Engine
-	repo        catalog.ProductRepository
-	cats        catalog.CategoryRepository
-	pdp         *composition.Pipeline[composition.ProductContext]
-	plp         *composition.Pipeline[composition.ListingContext]
-	search      search.SearchEngine
-	variants    catalog.VariantRepository
-	carts       *cartApp.Service
-	extensions  *extensionApp.ValueService
-	auth        *appAuth.Service
-	checkout    *checkoutApp.Service
-	orders      order.OrderRepository
-	returns     *returnsApp.Service
-	orderClaim  *orderApp.ClaimService
-	emailer     OrderClaimEmailer
-	orderLinker OrderLinker
-	account     AccountDeleter
-	addresses   customer.AddressRepository
-	consents    legal.ConsentRepository
-	security    *storefrontAccountSecurityVerifier
-	shipping    []shipping.Provider
-	payments    *payment.ProviderRegistry
-	legalConfig  legal.ConfigGetter
-	menus        cms.MenuRepository
-	menuResolver *cmsApp.MenuResolver
-	pages        cms.PageRepository
-	contentBlocks cms.ContentBlockRepository
-	blockResolver *cmsApp.BlockResolver
-	log          logger.Logger
-	catNav       storefrontCategoryCache
-	layeredNavAttrs LayeredNavAttributeLister
+	engine              *theme.Engine
+	repo                catalog.ProductRepository
+	cats                catalog.CategoryRepository
+	pdp                 *composition.Pipeline[composition.ProductContext]
+	plp                 *composition.Pipeline[composition.ListingContext]
+	search              search.SearchEngine
+	variants            catalog.VariantRepository
+	carts               *cartApp.Service
+	extensions          *extensionApp.ValueService
+	auth                *appAuth.Service
+	checkout            *checkoutApp.Service
+	orders              order.OrderRepository
+	returns             *returnsApp.Service
+	orderClaim          *orderApp.ClaimService
+	emailer             OrderClaimEmailer
+	orderLinker         OrderLinker
+	account             AccountDeleter
+	addresses           customer.AddressRepository
+	consents            legal.ConsentRepository
+	security            *storefrontAccountSecurityVerifier
+	shipping            []shipping.Provider
+	payments            *payment.ProviderRegistry
+	legalConfig         legal.ConfigGetter
+	menus               cms.MenuRepository
+	menuResolver        *cmsApp.MenuResolver
+	pages               cms.PageRepository
+	contentBlocks       cms.ContentBlockRepository
+	blockResolver       *cmsApp.BlockResolver
+	log                 logger.Logger
+	catNav              storefrontCategoryCache
+	layeredNavAttrs     LayeredNavAttributeLister
 	advancedSearchAttrs AdvancedSearchAttributeLister
-	assets       *assetsApp.Registry
-	cspEnabled   bool
+	assets              *assetsApp.Registry
+	cspEnabled          bool
 }
 
 type storefrontCategoryCache struct {
@@ -107,31 +107,31 @@ type StorefrontCategorySummary struct {
 }
 
 type StorefrontLayoutData struct {
-	SiteName           string
-	SearchAction       string
-	SearchQuery        string
-	CartURL            string
-	CartLabel          string
-	EnableCart         bool
-	CSRFToken          string
-	AccountURL         string
-	AccountLabel       string
-	AccountName        string
-	AccountLoginURL    string
-	AccountOrdersURL   string
-	AccountProfileURL  string
-	AccountSecurityURL string
-	AccountLogoutURL   string
-	AccountSignedIn    bool
-	CurrentYear        int
-	Nav                []StorefrontNavLink
-	Categories         []StorefrontCategoryNavItem
-	WeeeFooterEnabled  bool
-	WeeeProducerReg    string
+	SiteName            string
+	SearchAction        string
+	SearchQuery         string
+	CartURL             string
+	CartLabel           string
+	EnableCart          bool
+	CSRFToken           string
+	AccountURL          string
+	AccountLabel        string
+	AccountName         string
+	AccountLoginURL     string
+	AccountOrdersURL    string
+	AccountProfileURL   string
+	AccountSecurityURL  string
+	AccountLogoutURL    string
+	AccountSignedIn     bool
+	CurrentYear         int
+	Nav                 []StorefrontNavLink
+	Categories          []StorefrontCategoryNavItem
+	WeeeFooterEnabled   bool
+	WeeeProducerReg     string
 	EnableSearchSuggest bool
-	Assets             StorefrontAssets
-	CSPEnabled         bool
-	CSPNonce           string
+	Assets              StorefrontAssets
+	CSPEnabled          bool
+	CSPNonce            string
 }
 
 type StorefrontHomePageData struct {
@@ -224,13 +224,13 @@ type StorefrontCategoryPageData struct {
 }
 
 type storefrontListingParams struct {
-	Page              int
-	PerPage           int
-	Sort              string
-	View              string
-	Query             string
-	CategoryID        string
-	AttributeFilters  map[string]string
+	Page             int
+	PerPage          int
+	Sort             string
+	View             string
+	Query            string
+	CategoryID       string
+	AttributeFilters map[string]string
 }
 
 var storefrontSortOptions = []struct {
@@ -707,31 +707,31 @@ func (h *StorefrontHandler) buildLayoutData(r *http.Request, categories []catalo
 	weeeFooterEnabled, weeeProducerReg := h.weeeFooterData(r, storeID)
 	cspNonce := h.newCSPNonce()
 	return StorefrontLayoutData{
-		SiteName:           siteName,
-		SearchAction:       searchAction,
-		SearchQuery:        strings.TrimSpace(r.URL.Query().Get("q")),
-		CartURL:            cartURL,
-		CartLabel:          h.cartLabelBestEffort(r, cartLabel),
-		EnableCart:         h.carts != nil,
-		CSRFToken:          shopandaCSRFToken(r),
-		AccountURL:         accountURL,
-		AccountLabel:       accountLabel,
-		AccountName:        accountName,
-		AccountLoginURL:    accountLoginURL,
-		AccountOrdersURL:   accountOrdersURL,
-		AccountProfileURL:  accountProfileURL,
-		AccountSecurityURL: accountSecurityURL,
-		AccountLogoutURL:   accountLogoutURL,
-		AccountSignedIn:    accountSignedIn,
-		CurrentYear:        time.Now().UTC().Year(),
-		Nav:                nav,
-		Categories:         storefrontCategoryTree(categories),
-		WeeeFooterEnabled:  weeeFooterEnabled,
-		WeeeProducerReg:    weeeProducerReg,
+		SiteName:            siteName,
+		SearchAction:        searchAction,
+		SearchQuery:         strings.TrimSpace(r.URL.Query().Get("q")),
+		CartURL:             cartURL,
+		CartLabel:           h.cartLabelBestEffort(r, cartLabel),
+		EnableCart:          h.carts != nil,
+		CSRFToken:           shopandaCSRFToken(r),
+		AccountURL:          accountURL,
+		AccountLabel:        accountLabel,
+		AccountName:         accountName,
+		AccountLoginURL:     accountLoginURL,
+		AccountOrdersURL:    accountOrdersURL,
+		AccountProfileURL:   accountProfileURL,
+		AccountSecurityURL:  accountSecurityURL,
+		AccountLogoutURL:    accountLogoutURL,
+		AccountSignedIn:     accountSignedIn,
+		CurrentYear:         time.Now().UTC().Year(),
+		Nav:                 nav,
+		Categories:          storefrontCategoryTree(categories),
+		WeeeFooterEnabled:   weeeFooterEnabled,
+		WeeeProducerReg:     weeeProducerReg,
 		EnableSearchSuggest: h.search != nil,
-		Assets:             h.resolveStorefrontAssets(r),
-		CSPEnabled:         h.cspEnabled && cspNonce != "",
-		CSPNonce:           cspNonce,
+		Assets:              h.resolveStorefrontAssets(r),
+		CSPEnabled:          h.cspEnabled && cspNonce != "",
+		CSPNonce:            cspNonce,
 	}
 }
 

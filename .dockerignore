@@ -22,12 +22,14 @@ docker-compose*.yml
 
 # Build output / test artifacts
 bin/
+api
 *.test
 *.out
 coverage.*
 *.coverprofile
 profile.cov
 
-# Temp / scratch
+# Local installer / scratch (not needed in image build context)
+install.sh
 src/
 scripts/

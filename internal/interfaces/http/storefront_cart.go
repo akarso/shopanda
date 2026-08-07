@@ -57,11 +57,11 @@ var storefrontMiniCartTemplate = template.Must(template.New("storefront-mini-car
 
 // StorefrontCartFormData provides the first available add-to-cart action from the PDP.
 type StorefrontCartFormData struct {
-	Action           string
-	VariantID        string
-	Quantity         int
-	RedirectTo       string
-	ExtensionFields  []StorefrontCartExtensionField
+	Action          string
+	VariantID       string
+	Quantity        int
+	RedirectTo      string
+	ExtensionFields []StorefrontCartExtensionField
 }
 
 type StorefrontCartExtensionField struct {

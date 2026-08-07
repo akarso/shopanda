@@ -8,8 +8,8 @@ import (
 
 	domainCart "github.com/akarso/shopanda/internal/domain/cart"
 	"github.com/akarso/shopanda/internal/domain/catalog"
-	"github.com/akarso/shopanda/internal/domain/customer"
 	"github.com/akarso/shopanda/internal/domain/config"
+	"github.com/akarso/shopanda/internal/domain/customer"
 	"github.com/akarso/shopanda/internal/domain/jobs"
 	"github.com/akarso/shopanda/internal/domain/mail"
 	"github.com/akarso/shopanda/internal/platform/id"
@@ -28,11 +28,11 @@ const recoveryBatchSize = 50
 
 // RecoveryHandler scans stale carts and enqueues recovery emails.
 type RecoveryHandler struct {
-	carts     domainCart.CartRepository
-	customers customer.CustomerRepository
-	variants  catalog.VariantRepository
-	products  catalog.ProductRepository
-	templates *mail.Templates
+	carts      domainCart.CartRepository
+	customers  customer.CustomerRepository
+	variants   catalog.VariantRepository
+	products   catalog.ProductRepository
+	templates  *mail.Templates
 	queue      jobs.Queue
 	storeURL   string
 	settings   config.Repository

@@ -11,7 +11,7 @@ import (
 
 func TestWeeeStep_AddsBlockWhenEnabled(t *testing.T) {
 	cfg := stubOmnibusConfig{
-		legal.ScopedConfigKey("store-eu", legal.WeeeEnabledConfigKey):               true,
+		legal.ScopedConfigKey("store-eu", legal.WeeeEnabledConfigKey):              true,
 		legal.ScopedConfigKey("store-eu", legal.WeeeProducerRegistrationConfigKey): "PL-WEEE-1",
 	}
 	step := composition.NewWeeeStep(cfg)

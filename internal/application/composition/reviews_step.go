@@ -37,12 +37,12 @@ func (s *ReviewsStep) Apply(ctx *ProductContext) error {
 	reviewItems := make([]map[string]interface{}, 0, len(data.Reviews))
 	for _, rev := range data.Reviews {
 		reviewItems = append(reviewItems, map[string]interface{}{
-			"id":             rev.ID,
-			"rating":         rev.Rating,
-			"title":          rev.Title,
-			"body":           rev.Body,
-			"reviewer_name":  rev.ReviewerName,
-			"created_at":     rev.CreatedAt.UTC().Format("2006-01-02"),
+			"id":            rev.ID,
+			"rating":        rev.Rating,
+			"title":         rev.Title,
+			"body":          rev.Body,
+			"reviewer_name": rev.ReviewerName,
+			"created_at":    rev.CreatedAt.UTC().Format("2006-01-02"),
 		})
 	}
 

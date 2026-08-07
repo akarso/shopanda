@@ -28,10 +28,10 @@ var CoreStepCatalog = []string{
 
 // anchorAliases maps ergonomic anchor names to canonical core step names.
 var anchorAliases = map[string]string{
-	"base_price":  "base",
-	"discounts":   "catalog_promotions",
-	"promotions":  "cart_promotions",
-	"taxes":       "tax",
+	"base_price":   "base",
+	"discounts":    "catalog_promotions",
+	"promotions":   "cart_promotions",
+	"taxes":        "tax",
 	"finalization": "finalize",
 }
 

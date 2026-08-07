@@ -116,11 +116,11 @@ const (
 	AuditReviewApprove AuditAction = "review.approve"
 	AuditReviewReject  AuditAction = "review.reject"
 
-	AuditAdminUserList           AuditAction = "admin_user.list"
-	AuditAdminUserRead           AuditAction = "admin_user.read"
-	AuditAdminUserCreate         AuditAction = "admin_user.create"
-	AuditAdminUserUpdate         AuditAction = "admin_user.update"
-	AuditAdminUserResetPassword  AuditAction = "admin_user.reset_password"
+	AuditAdminUserList          AuditAction = "admin_user.list"
+	AuditAdminUserRead          AuditAction = "admin_user.read"
+	AuditAdminUserCreate        AuditAction = "admin_user.create"
+	AuditAdminUserUpdate        AuditAction = "admin_user.update"
+	AuditAdminUserResetPassword AuditAction = "admin_user.reset_password"
 
 	AuditPermissionCatalogRead AuditAction = "permission.catalog_read"
 	AuditRoleList              AuditAction = "role.list"

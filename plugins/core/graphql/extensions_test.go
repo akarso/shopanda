@@ -17,9 +17,11 @@ import (
 
 type extFieldRepoStub struct{}
 
-func (extFieldRepoStub) Create(context.Context, domainext.ExtensionField) error                { return nil }
-func (extFieldRepoStub) Save(context.Context, domainext.ExtensionField) error                  { return nil }
-func (extFieldRepoStub) FindByCode(context.Context, string) (domainext.ExtensionField, error) { return domainext.ExtensionField{}, nil }
+func (extFieldRepoStub) Create(context.Context, domainext.ExtensionField) error { return nil }
+func (extFieldRepoStub) Save(context.Context, domainext.ExtensionField) error   { return nil }
+func (extFieldRepoStub) FindByCode(context.Context, string) (domainext.ExtensionField, error) {
+	return domainext.ExtensionField{}, nil
+}
 func (extFieldRepoStub) ListActive(context.Context, domainext.TargetType) ([]domainext.ExtensionField, error) {
 	return nil, nil
 }

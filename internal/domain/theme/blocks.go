@@ -6,10 +6,10 @@ import (
 )
 
 var (
-	layoutBlocksOpenPattern  = regexp.MustCompile(`\{\{\s*layout_blocks\s+"([^"]+)"\s*\}\}`)
-	layoutBlocksCloseTag     = "{{/layout_blocks}}"
-	blockOpenPattern         = regexp.MustCompile(`\{\{\s*block\s+"([^"]+)"\s*\}\}`)
-	blockCloseTag            = "{{/block}}"
+	layoutBlocksOpenPattern = regexp.MustCompile(`\{\{\s*layout_blocks\s+"([^"]+)"\s*\}\}`)
+	layoutBlocksCloseTag    = "{{/layout_blocks}}"
+	blockOpenPattern        = regexp.MustCompile(`\{\{\s*block\s+"([^"]+)"\s*\}\}`)
+	blockCloseTag           = "{{/block}}"
 )
 
 type namedBlock struct {

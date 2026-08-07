@@ -29,17 +29,17 @@ func LogSummary(log logger.Logger, report Report) {
 		exportHandlers += len(entry.Handlers)
 	}
 	log.Info("plugin.registration.summary", map[string]interface{}{
-		"plugins_active":      active,
-		"plugins_failed":      failed,
-		"pricing_steps":       len(report.PricingSteps),
-		"hooks":               hookHandlers,
-		"import_row_hooks":    importHandlers,
-		"export_row_hooks":    exportHandlers,
-		"composition_steps":   len(report.CompositionSteps),
-		"checkout_steps":      len(report.CheckoutSteps),
-		"sync_jobs":           len(report.SyncJobs),
-		"public_routes":       len(report.PublicRoutes),
-		"admin_routes":        len(report.AdminRoutes),
+		"plugins_active":       active,
+		"plugins_failed":       failed,
+		"pricing_steps":        len(report.PricingSteps),
+		"hooks":                hookHandlers,
+		"import_row_hooks":     importHandlers,
+		"export_row_hooks":     exportHandlers,
+		"composition_steps":    len(report.CompositionSteps),
+		"checkout_steps":       len(report.CheckoutSteps),
+		"sync_jobs":            len(report.SyncJobs),
+		"public_routes":        len(report.PublicRoutes),
+		"admin_routes":         len(report.AdminRoutes),
 		"infrastructure_ports": len(report.Ports),
 	})
 }

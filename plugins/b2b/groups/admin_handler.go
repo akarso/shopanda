@@ -8,9 +8,9 @@ import (
 
 	"github.com/akarso/shopanda/internal/domain/customer"
 	"github.com/akarso/shopanda/internal/domain/customergroup"
+	shophttp "github.com/akarso/shopanda/internal/interfaces/http"
 	"github.com/akarso/shopanda/internal/platform/apperror"
 	"github.com/akarso/shopanda/internal/platform/id"
-	shophttp "github.com/akarso/shopanda/internal/interfaces/http"
 )
 
 // AdminHandler serves B2B customer group admin endpoints.

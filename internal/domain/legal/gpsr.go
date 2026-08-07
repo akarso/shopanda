@@ -8,21 +8,21 @@ import (
 
 // Config keys for GPSR storefront disclosure (store-scoped via ScopedConfigKey).
 const (
-	GpsrEnabledConfigKey              = "legal.gpsr_enabled"
-	GpsrManufacturerNameConfigKey     = "legal.gpsr_manufacturer_name"
-	GpsrManufacturerContactConfigKey  = "legal.gpsr_manufacturer_contact"
+	GpsrEnabledConfigKey             = "legal.gpsr_enabled"
+	GpsrManufacturerNameConfigKey    = "legal.gpsr_manufacturer_name"
+	GpsrManufacturerContactConfigKey = "legal.gpsr_manufacturer_contact"
 )
 
 // Product attribute codes for GPSR safety metadata.
 const (
 	AttrGpsrManufacturerName    = "gpsr_manufacturer_name"
 	AttrGpsrManufacturerContact = "gpsr_manufacturer_contact"
-	AttrGpsrImporterName          = "gpsr_importer_name"
-	AttrGpsrImporterContact       = "gpsr_importer_contact"
+	AttrGpsrImporterName        = "gpsr_importer_name"
+	AttrGpsrImporterContact     = "gpsr_importer_contact"
 	AttrGpsrProductIdentifier   = "gpsr_product_identifier"
-	AttrGpsrSafetyWarnings        = "gpsr_safety_warnings"
-	AttrGpsrAgeRestriction        = "gpsr_age_restriction"
-	AttrGpsrConformityMark        = "gpsr_conformity_mark"
+	AttrGpsrSafetyWarnings      = "gpsr_safety_warnings"
+	AttrGpsrAgeRestriction      = "gpsr_age_restriction"
+	AttrGpsrConformityMark      = "gpsr_conformity_mark"
 )
 
 // AttributeGroupGpsr is the admin attribute group code for GPSR fields.
@@ -37,9 +37,9 @@ var GpsrAgeRestrictionLabels = map[string]string{
 
 // GpsrConformityMarkLabels maps stored select values to customer-facing labels.
 var GpsrConformityMarkLabels = map[string]string{
-	"ce":       "CE marking",
-	"ukca":     "UKCA marking",
-	"ce_ukca":  "CE and UKCA marking",
+	"ce":      "CE marking",
+	"ukca":    "UKCA marking",
+	"ce_ukca": "CE and UKCA marking",
 }
 
 // GpsrAgeRestrictionOptions returns select options for gpsr_age_restriction.
@@ -54,16 +54,16 @@ func GpsrConformityMarkOptions() []string {
 
 // GpsrInfo holds parsed GPSR safety disclosure data for a product page.
 type GpsrInfo struct {
-	ManufacturerName       string
-	ManufacturerContact    string
-	ImporterName           string
-	ImporterContact        string
-	ProductIdentifier      string
-	SafetyWarnings         string
-	AgeRestriction         string
-	AgeRestrictionLabel    string
-	ConformityMark         string
-	ConformityMarkLabel    string
+	ManufacturerName    string
+	ManufacturerContact string
+	ImporterName        string
+	ImporterContact     string
+	ProductIdentifier   string
+	SafetyWarnings      string
+	AgeRestriction      string
+	AgeRestrictionLabel string
+	ConformityMark      string
+	ConformityMarkLabel string
 }
 
 // GpsrEnabled reports whether GPSR safety disclosure should run for a store.
@@ -183,16 +183,16 @@ func (g GpsrInfo) HasDisclosure() bool {
 // BlockData returns composition block payload for gpsr_safety_disclosure.
 func (g GpsrInfo) BlockData() map[string]interface{} {
 	return map[string]interface{}{
-		"manufacturer_name":       g.ManufacturerName,
-		"manufacturer_contact":    g.ManufacturerContact,
-		"importer_name":           g.ImporterName,
-		"importer_contact":        g.ImporterContact,
-		"product_identifier":      g.ProductIdentifier,
-		"safety_warnings":         g.SafetyWarnings,
-		"age_restriction":         g.AgeRestriction,
-		"age_restriction_label":   g.AgeRestrictionLabel,
-		"conformity_mark":         g.ConformityMark,
-		"conformity_mark_label":   g.ConformityMarkLabel,
+		"manufacturer_name":     g.ManufacturerName,
+		"manufacturer_contact":  g.ManufacturerContact,
+		"importer_name":         g.ImporterName,
+		"importer_contact":      g.ImporterContact,
+		"product_identifier":    g.ProductIdentifier,
+		"safety_warnings":       g.SafetyWarnings,
+		"age_restriction":       g.AgeRestriction,
+		"age_restriction_label": g.AgeRestrictionLabel,
+		"conformity_mark":       g.ConformityMark,
+		"conformity_mark_label": g.ConformityMarkLabel,
 	}
 }
 

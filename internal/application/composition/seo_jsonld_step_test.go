@@ -109,7 +109,7 @@ func (m *mockStockRepo) GetStock(ctx context.Context, _ string) (inventory.Stock
 	m.capturedCtx = ctx
 	return m.entry, m.err
 }
-func (m *mockStockRepo) SetStock(_ context.Context, _ *inventory.StockEntry) error { return nil }
+func (m *mockStockRepo) SetStock(_ context.Context, _ *inventory.StockEntry) error   { return nil }
 func (m *mockStockRepo) SetStocks(_ context.Context, _ []inventory.StockEntry) error { return nil }
 func (m *mockStockRepo) ListStock(_ context.Context, _, _ int) ([]inventory.StockEntry, error) {
 	return nil, nil

@@ -3,9 +3,9 @@ package extapi_test
 import (
 	"testing"
 
-	apppricing "github.com/akarso/shopanda/internal/application/pricing"
 	checkoutapp "github.com/akarso/shopanda/internal/application/checkout"
 	hooksapp "github.com/akarso/shopanda/internal/application/hooks"
+	apppricing "github.com/akarso/shopanda/internal/application/pricing"
 	slotsapp "github.com/akarso/shopanda/internal/application/slots"
 	"github.com/akarso/shopanda/pkg/extapi"
 )

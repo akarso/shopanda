@@ -18,37 +18,37 @@ import (
 
 	accountApp "github.com/akarso/shopanda/internal/application/account"
 	adminApp "github.com/akarso/shopanda/internal/application/admin"
-	adminuserApp "github.com/akarso/shopanda/internal/application/adminuser"
 	adminroleApp "github.com/akarso/shopanda/internal/application/adminrole"
+	adminuserApp "github.com/akarso/shopanda/internal/application/adminuser"
+	assetsApp "github.com/akarso/shopanda/internal/application/assets"
 	authApp "github.com/akarso/shopanda/internal/application/auth"
-	mfaApp "github.com/akarso/shopanda/internal/application/mfa"
 	cacheApp "github.com/akarso/shopanda/internal/application/cache"
 	cartApp "github.com/akarso/shopanda/internal/application/cart"
+	checkoutApp "github.com/akarso/shopanda/internal/application/checkout"
+	cmsApp "github.com/akarso/shopanda/internal/application/cms"
+	"github.com/akarso/shopanda/internal/application/composition"
+	exportctxApp "github.com/akarso/shopanda/internal/application/exportctx"
+	"github.com/akarso/shopanda/internal/application/exporter"
+	extensionApp "github.com/akarso/shopanda/internal/application/extension"
 	hooksApp "github.com/akarso/shopanda/internal/application/hooks"
 	importctxApp "github.com/akarso/shopanda/internal/application/importctx"
-	exportctxApp "github.com/akarso/shopanda/internal/application/exportctx"
-	integrationApp "github.com/akarso/shopanda/internal/application/integration"
-	"github.com/akarso/shopanda/internal/application/pluginreport"
-	portsapp "github.com/akarso/shopanda/internal/application/ports"
-	slotsApp "github.com/akarso/shopanda/internal/application/slots"
-	themeapp "github.com/akarso/shopanda/internal/application/theme"
-	assetsApp "github.com/akarso/shopanda/internal/application/assets"
-	cmsApp "github.com/akarso/shopanda/internal/application/cms"
-	checkoutApp "github.com/akarso/shopanda/internal/application/checkout"
-	"github.com/akarso/shopanda/internal/application/composition"
-	extensionApp "github.com/akarso/shopanda/internal/application/extension"
-	"github.com/akarso/shopanda/internal/application/exporter"
 	"github.com/akarso/shopanda/internal/application/importer"
+	integrationApp "github.com/akarso/shopanda/internal/application/integration"
 	mediaApp "github.com/akarso/shopanda/internal/application/media"
+	mfaApp "github.com/akarso/shopanda/internal/application/mfa"
 	"github.com/akarso/shopanda/internal/application/notification"
 	orderApp "github.com/akarso/shopanda/internal/application/order"
+	"github.com/akarso/shopanda/internal/application/pluginreport"
+	portsapp "github.com/akarso/shopanda/internal/application/ports"
 	appPricing "github.com/akarso/shopanda/internal/application/pricing"
 	returnsApp "github.com/akarso/shopanda/internal/application/returns"
 	reviewsApp "github.com/akarso/shopanda/internal/application/reviews"
-	setupApp "github.com/akarso/shopanda/internal/application/setup"
-	storecreditApp "github.com/akarso/shopanda/internal/application/storecredit"
-	webhookApp "github.com/akarso/shopanda/internal/application/webhook"
 	"github.com/akarso/shopanda/internal/application/rewrite"
+	setupApp "github.com/akarso/shopanda/internal/application/setup"
+	slotsApp "github.com/akarso/shopanda/internal/application/slots"
+	storecreditApp "github.com/akarso/shopanda/internal/application/storecredit"
+	themeapp "github.com/akarso/shopanda/internal/application/theme"
+	webhookApp "github.com/akarso/shopanda/internal/application/webhook"
 	"github.com/akarso/shopanda/internal/domain/admin"
 	"github.com/akarso/shopanda/internal/domain/cache"
 	"github.com/akarso/shopanda/internal/domain/catalog"
@@ -2689,15 +2689,15 @@ func setupWorker(conn *sql.DB, cfg *config.Config, log logger.Logger, app *plugi
 	}
 	configRepo := postgres.NewConfigRepo(conn)
 	jobWorker.Register(cartApp.NewRecoveryHandler(cartApp.RecoveryHandlerConfig{
-		Carts:      cartRepo,
-		Customers:  customerRepo,
-		Variants:   variantRepo,
-		Products:   productRepo,
-		Templates:  mailTemplates,
-		Queue:      jobQueue,
-		StoreURL:   cfg.Server.PublicBaseURL,
-		Settings:   configRepo,
-		Log:        log,
+		Carts:     cartRepo,
+		Customers: customerRepo,
+		Variants:  variantRepo,
+		Products:  productRepo,
+		Templates: mailTemplates,
+		Queue:     jobQueue,
+		StoreURL:  cfg.Server.PublicBaseURL,
+		Settings:  configRepo,
+		Log:       log,
 	}))
 
 	auditLogRepo, err := postgres.NewAuditLogRepo(conn)

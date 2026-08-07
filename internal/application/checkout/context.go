@@ -31,11 +31,11 @@ func (a Address) Normalize() Address {
 }
 
 type Input struct {
-	Address            Address
-	ContactEmail       string
-	ShippingMethod     string
-	PaymentMethod      string
-	StoreCreditAmount  int64 // optional minor units to redeem; requires authenticated customer
+	Address           Address
+	ContactEmail      string
+	ShippingMethod    string
+	PaymentMethod     string
+	StoreCreditAmount int64 // optional minor units to redeem; requires authenticated customer
 }
 
 // Context carries data through the checkout workflow.

@@ -20,7 +20,7 @@ func NewExtensionHookAdminHandler(hooks *hooksapp.Registry) *ExtensionHookAdminH
 }
 
 type hookCatalogResponse struct {
-	Name     string                    `json:"name"`
+	Name     string                       `json:"name"`
 	Handlers []hookCatalogHandlerResponse `json:"handlers"`
 }
 

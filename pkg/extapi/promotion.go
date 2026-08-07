@@ -4,11 +4,11 @@ import "context"
 
 // PromotionPricingItem is a stable view of a pricing line item for promotion evaluators.
 type PromotionPricingItem struct {
-	VariantID  string
-	Quantity   int
-	UnitAmount int64
+	VariantID   string
+	Quantity    int
+	UnitAmount  int64
 	TotalAmount int64
-	Currency   string
+	Currency    string
 }
 
 // CatalogConditionHandler evaluates a catalog promotion condition for one line item.

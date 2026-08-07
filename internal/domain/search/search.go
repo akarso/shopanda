@@ -14,8 +14,8 @@ const defaultSearchLimit = 20
 
 // SearchQuery describes a product search request.
 type SearchQuery struct {
-	Text     string
-	Filters  map[string]interface{}
+	Text    string
+	Filters map[string]interface{}
 	// FacetAttributes lists product attribute codes to compute facet counts for.
 	FacetAttributes []string
 	Sort            string

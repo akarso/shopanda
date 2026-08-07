@@ -11,8 +11,8 @@ import (
 	"testing"
 	"time"
 
-	domainInvoice "github.com/akarso/shopanda/internal/domain/invoice"
 	"github.com/akarso/shopanda/internal/domain/identity"
+	domainInvoice "github.com/akarso/shopanda/internal/domain/invoice"
 	"github.com/akarso/shopanda/internal/domain/media"
 	"github.com/akarso/shopanda/internal/domain/order"
 	"github.com/akarso/shopanda/internal/domain/rbac"
@@ -60,8 +60,8 @@ func (r *invoiceHTTPOrderRepo) FindByContactEmail(context.Context, string) ([]or
 func (r *invoiceHTTPOrderRepo) List(context.Context, int, int) ([]order.Order, error) {
 	return nil, nil
 }
-func (r *invoiceHTTPOrderRepo) Save(context.Context, *order.Order) error { return nil }
-func (r *invoiceHTTPOrderRepo) UpdateStatus(context.Context, *order.Order) error { return nil }
+func (r *invoiceHTTPOrderRepo) Save(context.Context, *order.Order) error           { return nil }
+func (r *invoiceHTTPOrderRepo) UpdateStatus(context.Context, *order.Order) error   { return nil }
 func (r *invoiceHTTPOrderRepo) LinkToCustomer(context.Context, *order.Order) error { return nil }
 func (r *invoiceHTTPOrderRepo) LinkToCustomerByContactEmail(context.Context, string, string, time.Time) (int64, error) {
 	return 0, nil
@@ -85,10 +85,10 @@ type stubReadableStorage struct {
 	files map[string][]byte
 }
 
-func (s *stubReadableStorage) Name() string { return "stub-readable" }
+func (s *stubReadableStorage) Name() string                 { return "stub-readable" }
 func (s *stubReadableStorage) Save(string, io.Reader) error { return nil }
-func (s *stubReadableStorage) Delete(string) error             { return nil }
-func (s *stubReadableStorage) URL(string) string               { return "" }
+func (s *stubReadableStorage) Delete(string) error          { return nil }
+func (s *stubReadableStorage) URL(string) string            { return "" }
 func (s *stubReadableStorage) Read(path string) ([]byte, error) {
 	if data, ok := s.files[path]; ok {
 		return data, nil

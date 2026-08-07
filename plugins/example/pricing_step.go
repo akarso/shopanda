@@ -57,8 +57,8 @@ func newOrderCreatedListener(log logger.Logger) event.Handler {
 			return nil
 		}
 		log.Info("example.order.created", map[string]interface{}{
-			"event_id":  evt.ID,
-			"order_id":  data.OrderID,
+			"event_id":   evt.ID,
+			"order_id":   data.OrderID,
 			"item_count": data.ItemCount,
 		})
 		return nil

@@ -4,14 +4,14 @@ package extension
 type TargetType string
 
 const (
-	TargetProduct    TargetType = "product"
-	TargetVariant    TargetType = "variant"
-	TargetCartItem   TargetType = "cart_item"
-	TargetOrderItem  TargetType = "order_item"
-	TargetCustomer   TargetType = "customer"
-	TargetPDP        TargetType = "pdp"
-	TargetPLPItem    TargetType = "plp_item"
-	TargetCartView   TargetType = "cart_view"
+	TargetProduct      TargetType = "product"
+	TargetVariant      TargetType = "variant"
+	TargetCartItem     TargetType = "cart_item"
+	TargetOrderItem    TargetType = "order_item"
+	TargetCustomer     TargetType = "customer"
+	TargetPDP          TargetType = "pdp"
+	TargetPLPItem      TargetType = "plp_item"
+	TargetCartView     TargetType = "cart_view"
 	TargetCheckoutView TargetType = "checkout_view"
 )
 

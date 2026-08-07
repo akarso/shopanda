@@ -3,8 +3,8 @@ package plugin_test
 import (
 	"testing"
 
-	apppricing "github.com/akarso/shopanda/internal/application/pricing"
 	checkoutapp "github.com/akarso/shopanda/internal/application/checkout"
+	apppricing "github.com/akarso/shopanda/internal/application/pricing"
 	"github.com/akarso/shopanda/internal/platform/plugin"
 )
 

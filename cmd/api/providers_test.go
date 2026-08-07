@@ -35,9 +35,9 @@ type facetSearchEngine struct {
 
 type noopSearchEngine struct{}
 
-func (noopSearchEngine) Name() string { return "noop" }
+func (noopSearchEngine) Name() string                                       { return "noop" }
 func (noopSearchEngine) IndexProduct(context.Context, search.Product) error { return nil }
-func (noopSearchEngine) RemoveProduct(context.Context, string) error         { return nil }
+func (noopSearchEngine) RemoveProduct(context.Context, string) error        { return nil }
 func (noopSearchEngine) Search(context.Context, search.SearchQuery) (search.SearchResult, error) {
 	return search.SearchResult{}, nil
 }

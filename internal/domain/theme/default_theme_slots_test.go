@@ -9,8 +9,8 @@ import (
 	"testing"
 
 	"github.com/akarso/shopanda/internal/application/slots"
-	"github.com/akarso/shopanda/internal/domain/theme"
 	themeapp "github.com/akarso/shopanda/internal/application/theme"
+	"github.com/akarso/shopanda/internal/domain/theme"
 )
 
 func defaultThemeDir(t *testing.T) string {
@@ -61,7 +61,7 @@ func TestDefaultTheme_StandardLayoutSlotsRender(t *testing.T) {
 	t.Run("product page anchors", func(t *testing.T) {
 		var buf bytes.Buffer
 		if err := engine.Render(&buf, "product", map[string]interface{}{
-			"Layout": map[string]interface{}{"SiteName": "Shopanda", "Nav": []interface{}{}, "Assets": map[string]interface{}{}},
+			"Layout":  map[string]interface{}{"SiteName": "Shopanda", "Nav": []interface{}{}, "Assets": map[string]interface{}{}},
 			"Product": map[string]interface{}{"Name": "Demo", "Slug": "demo", "Status": "active"},
 			"Blocks":  []interface{}{},
 		}); err != nil {
@@ -117,7 +117,7 @@ func TestDefaultTheme_StandardLayoutSlotsRender(t *testing.T) {
 				data: map[string]interface{}{
 					"Layout": layout, "CSRFToken": "tok",
 					"Progress": []interface{}{map[string]interface{}{"Label": "Address", "Current": true}},
-					"Items": []interface{}{}, "Summary": map[string]interface{}{"TotalQuantity": 0, "SubtotalText": "$0"},
+					"Items":    []interface{}{}, "Summary": map[string]interface{}{"TotalQuantity": 0, "SubtotalText": "$0"},
 					"Countries": []interface{}{}, "Address": address,
 				},
 			},
@@ -126,7 +126,7 @@ func TestDefaultTheme_StandardLayoutSlotsRender(t *testing.T) {
 				data: map[string]interface{}{
 					"Layout": layout, "CSRFToken": "tok", "ContactEmail": "buyer@example.com",
 					"Progress": []interface{}{map[string]interface{}{"Label": "Shipping", "Current": true}},
-					"Address": address,
+					"Address":  address,
 					"Rates": []interface{}{
 						map[string]interface{}{"Method": "flat", "Label": "Standard", "CostText": "$5", "Selected": true},
 					},

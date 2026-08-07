@@ -6,16 +6,16 @@ import (
 	"testing"
 	"time"
 
-	appPricing "github.com/akarso/shopanda/internal/application/pricing"
 	cartApp "github.com/akarso/shopanda/internal/application/cart"
 	"github.com/akarso/shopanda/internal/application/hooks"
+	appPricing "github.com/akarso/shopanda/internal/application/pricing"
 	domainCart "github.com/akarso/shopanda/internal/domain/cart"
 	"github.com/akarso/shopanda/internal/domain/pricing"
 	"github.com/akarso/shopanda/internal/domain/shared"
-	"github.com/akarso/shopanda/internal/testutil"
 	"github.com/akarso/shopanda/internal/platform/event"
 	"github.com/akarso/shopanda/internal/platform/logger"
 	"github.com/akarso/shopanda/internal/platform/plugin"
+	"github.com/akarso/shopanda/internal/testutil"
 )
 
 type stubCartRepo struct {

@@ -11,8 +11,8 @@ import (
 	storecreditApp "github.com/akarso/shopanda/internal/application/storecredit"
 	"github.com/akarso/shopanda/internal/domain/customer"
 	"github.com/akarso/shopanda/internal/domain/rbac"
-	credit "github.com/akarso/shopanda/internal/domain/storecredit"
 	"github.com/akarso/shopanda/internal/domain/shared"
+	credit "github.com/akarso/shopanda/internal/domain/storecredit"
 	shophttp "github.com/akarso/shopanda/internal/interfaces/http"
 	"github.com/akarso/shopanda/internal/platform/auth/testhelper"
 )

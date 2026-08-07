@@ -9,8 +9,8 @@ import (
 	"testing"
 	"time"
 
-	cmsApp "github.com/akarso/shopanda/internal/application/cms"
 	"github.com/akarso/shopanda/internal/application/admin"
+	cmsApp "github.com/akarso/shopanda/internal/application/cms"
 	"github.com/akarso/shopanda/internal/domain/catalog"
 	"github.com/akarso/shopanda/internal/domain/cms"
 	"github.com/akarso/shopanda/internal/platform/logger"
@@ -32,9 +32,9 @@ func (menuTestCategoryRepo) FindByParentID(context.Context, *string) ([]catalog.
 	return nil, nil
 }
 func (menuTestCategoryRepo) FindAll(context.Context) ([]catalog.Category, error) { return nil, nil }
-func (menuTestCategoryRepo) Create(context.Context, *catalog.Category) error      { return nil }
-func (menuTestCategoryRepo) Update(context.Context, *catalog.Category) error      { return nil }
-func (menuTestCategoryRepo) Delete(context.Context, string) error                   { return nil }
+func (menuTestCategoryRepo) Create(context.Context, *catalog.Category) error     { return nil }
+func (menuTestCategoryRepo) Update(context.Context, *catalog.Category) error     { return nil }
+func (menuTestCategoryRepo) Delete(context.Context, string) error                { return nil }
 
 type menuTestPageRepo struct {
 	byID map[string]*cms.Page
@@ -49,8 +49,8 @@ func (menuTestPageRepo) FindActiveBySlug(context.Context, string) (*cms.Page, er
 }
 func (menuTestPageRepo) List(context.Context, int, int) ([]*cms.Page, error) { return nil, nil }
 func (menuTestPageRepo) Create(context.Context, *cms.Page) error             { return nil }
-func (menuTestPageRepo) Update(context.Context, *cms.Page) error               { return nil }
-func (menuTestPageRepo) Delete(context.Context, string) error                  { return nil }
+func (menuTestPageRepo) Update(context.Context, *cms.Page) error             { return nil }
+func (menuTestPageRepo) Delete(context.Context, string) error                { return nil }
 
 type mockMenuRepo struct {
 	listFn       func(ctx context.Context) ([]*cms.Menu, error)

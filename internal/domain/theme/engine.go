@@ -131,4 +131,3 @@ func parsePartialTemplates(root *template.Template, partialFiles map[string]stri
 	}
 	return nil
 }
-

@@ -8,8 +8,8 @@ import (
 	"strings"
 	"time"
 
-	sdkhttp "github.com/akarso/shopanda/pkg/integrationsdk/http"
 	"github.com/akarso/shopanda/pkg/integrationsdk"
+	sdkhttp "github.com/akarso/shopanda/pkg/integrationsdk/http"
 )
 
 const defaultTimeout = 30 * time.Second
