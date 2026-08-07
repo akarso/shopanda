@@ -31,7 +31,7 @@ Evidence summary: ~165k LOC Go, ~400 test files, `go build` green, `go test` fai
 
 | Pillar | Must be true |
 | --- | --- |
-| Process | CI blocks merge on `gofmt`, `go vet`, `go test ./...` (+ Postgres integration job) |
+| Process | CI runs `gofmt` / `go vet` / `go test ./...` (+ Postgres integration job); **required status checks** on `main`/`dev` (admin ruleset) so red checks cannot merge |
 | Hygiene | `api` binary not tracked; `.git` cleaned; gofmt clean |
 | Security | Rate limit on by default + login lockout; JWT secret ≥32 bytes; body size caps; security headers; webhook SSRF guard; no `changeme` / weak compose defaults for prod-shaped layout |
 | Ops | `/readyz` pings DB; image publish on tag; migration prefix uniqueness checked in CI |
@@ -88,10 +88,10 @@ Recommended order:
 | --- | --- | --- |
 | PR-1000 | Unbreak the test suite | Fix non-compiling mocks (`FindBySKUs`, `SetStocks`); fix RBAC permission count; fix extension-port expectation; de-flake integrationdemo HMAC timestamp test; fix mutex-by-value in webhook test |
 | PR-1001 | Repo hygiene | `.gitignore`/`dockerignore` for `api`; `git rm --cached api`; gofmt all; delete unused `internal/infrastructure/postgres/migrations/022_*` (runtime uses root `migrations/`) |
-| PR-1002 | GitHub Actions CI (unit) | Workflow: `gofmt -l`, `go vet ./...`, `go test ./...` (no DSN — skips DB tests) |
+| PR-1002 | GitHub Actions CI (unit) | Workflow reports `CI / unit` (`gofmt`/`vet`/`test`, `-mod=readonly`); admin must require the check to block merges |
 | PR-1003 | CI integration job | Postgres readiness gate + full DSN-gated suite (`postgres`/`migrate`/`b2b`); anti-skip assertion; required for merge |
 
-**Definition of done:** a broken mock or failing assertion cannot merge.
+**Definition of done:** CI fails on broken mocks/assertions, and branch rules require `CI / unit` (and later the integration check) so those failures cannot merge.
 
 ---
 
@@ -187,8 +187,8 @@ Optional history rewrite (`git filter-repo` to purge historical `api` blobs) is 
 
 | PR | Track | Status |
 | --- | --- | --- |
-| 1000–1001 | A | done |
-| 1002–1003 | A | planned |
+| 1000–1002 | A | done |
+| 1003 | A | planned |
 | 1004–1008 | B | planned |
 | 1009–1012 | C | planned |
 | 1013–1019 | D | planned |

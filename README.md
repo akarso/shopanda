@@ -1,5 +1,7 @@
 # Shopanda
 
+[![CI](https://github.com/akarso/shopanda/actions/workflows/ci.yml/badge.svg)](https://github.com/akarso/shopanda/actions/workflows/ci.yml)
+
 Shopanda is a **developer-first ecommerce engine** built with Go and PostgreSQL.
 
 It is designed for teams that want a **lean, self-hosted commerce stack** with strong extensibility, minimal operational overhead, and a clean path for advanced customization.

@@ -1,0 +1,60 @@
+# Unit CI — format, vet, and tests (no Postgres required).
+# Integration job with SHOPANDA_TEST_DSN is PR-1003.
+#
+# This workflow reports the check "CI / unit". Merge blocking requires a
+# repo admin to mark that check required on main/dev (branch protection / ruleset).
+name: CI
+
+on:
+  pull_request:
+    branches:
+      - main
+      - dev
+  push:
+    branches:
+      - main
+      - dev
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  GOFLAGS: -mod=readonly
+
+jobs:
+  unit:
+    name: unit
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+          cache-dependency-path: go.sum
+
+      - name: go mod verify
+        run: go mod verify
+
+      - name: gofmt
+        run: |
+          files="$(gofmt -l .)"
+          if [ -n "$files" ]; then
+            echo "gofmt needed on:"
+            echo "$files"
+            exit 1
+          fi
+
+      - name: go vet
+        run: go vet ./...
+
+      - name: go test
+        run: go test ./...
