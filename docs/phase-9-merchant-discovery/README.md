@@ -2,7 +2,9 @@
 
 **Status:** **In progress** (PR-856+)
 
-Phase 8 (integrator platform) shipped PR-800–855. Phase 9 clears the **unscheduled integrator backlog** and **Phase 7 carryover**, then continues with **merchant-facing discovery** work marked **PRIORITY** below.
+Phase 8 (integrator platform) shipped PR-800–855. Phase 9 cleared the **unscheduled integrator backlog**, **Phase 7 carryover**, and **merchant-facing discovery** (PR-856–908).
+
+Next: [Phase 10 — Platform Excellence](../phase-10-platform-excellence/ROADMAP.md) (quality, security, ops, architecture → A / A+).
 
 ## Roadmap
 
