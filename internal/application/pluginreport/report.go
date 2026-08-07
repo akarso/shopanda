@@ -4,10 +4,10 @@ import (
 	"reflect"
 	"time"
 
+	checkoutapp "github.com/akarso/shopanda/internal/application/checkout"
+	exportctxapp "github.com/akarso/shopanda/internal/application/exportctx"
 	hooksapp "github.com/akarso/shopanda/internal/application/hooks"
 	importctxapp "github.com/akarso/shopanda/internal/application/importctx"
-	exportctxapp "github.com/akarso/shopanda/internal/application/exportctx"
-	checkoutapp "github.com/akarso/shopanda/internal/application/checkout"
 	"github.com/akarso/shopanda/internal/application/ports"
 	apppricing "github.com/akarso/shopanda/internal/application/pricing"
 	"github.com/akarso/shopanda/internal/platform/config"
@@ -16,20 +16,20 @@ import (
 
 // Report is a point-in-time snapshot of plugin registrations and infrastructure ports.
 type Report struct {
-	GeneratedAt       time.Time              `json:"generated_at"`
-	Plugins           []PluginStatus         `json:"plugins"`
-	Ports             []ports.ActivePort     `json:"ports"`
-	CorePricingSteps  []string               `json:"core_pricing_steps"`
-	CoreCheckoutSteps []string               `json:"core_checkout_steps"`
-	PricingSteps      []PricingStep          `json:"pricing_steps"`
-	Hooks             []hooksapp.CatalogEntry `json:"hooks"`
+	GeneratedAt       time.Time                   `json:"generated_at"`
+	Plugins           []PluginStatus              `json:"plugins"`
+	Ports             []ports.ActivePort          `json:"ports"`
+	CorePricingSteps  []string                    `json:"core_pricing_steps"`
+	CoreCheckoutSteps []string                    `json:"core_checkout_steps"`
+	PricingSteps      []PricingStep               `json:"pricing_steps"`
+	Hooks             []hooksapp.CatalogEntry     `json:"hooks"`
 	ImportHooks       []importctxapp.CatalogEntry `json:"import_hooks"`
 	ExportHooks       []exportctxapp.CatalogEntry `json:"export_hooks"`
-	CompositionSteps  []CompositionStep      `json:"composition_steps"`
-	CheckoutSteps     []CheckoutStep         `json:"checkout_steps"`
-	SyncJobs          []SyncJob              `json:"sync_jobs"`
-	PublicRoutes      []Route                `json:"public_routes"`
-	AdminRoutes       []AdminRoute             `json:"admin_routes"`
+	CompositionSteps  []CompositionStep           `json:"composition_steps"`
+	CheckoutSteps     []CheckoutStep              `json:"checkout_steps"`
+	SyncJobs          []SyncJob                   `json:"sync_jobs"`
+	PublicRoutes      []Route                     `json:"public_routes"`
+	AdminRoutes       []AdminRoute                `json:"admin_routes"`
 }
 
 // PluginStatus describes one plugin lifecycle entry.
@@ -89,8 +89,8 @@ func Build(registry *plugin.Registry, app *plugin.App, cfg *config.Config) Repor
 		app = &plugin.App{}
 	}
 	report := Report{
-		GeneratedAt:      time.Now().UTC(),
-		Ports:            ports.BuildSnapshot(app, cfg).Ports,
+		GeneratedAt:       time.Now().UTC(),
+		Ports:             ports.BuildSnapshot(app, cfg).Ports,
 		CorePricingSteps:  append([]string(nil), apppricing.CoreStepCatalog...),
 		CoreCheckoutSteps: append([]string(nil), checkoutapp.CoreStepCatalog...),
 	}

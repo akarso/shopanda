@@ -28,9 +28,9 @@ func (m *ossReportOrderRepo) FindByContactEmail(context.Context, string) ([]orde
 	return nil, nil
 }
 func (m *ossReportOrderRepo) List(context.Context, int, int) ([]order.Order, error) { return nil, nil }
-func (m *ossReportOrderRepo) Save(context.Context, *order.Order) error               { return nil }
-func (m *ossReportOrderRepo) UpdateStatus(context.Context, *order.Order) error       { return nil }
-func (m *ossReportOrderRepo) LinkToCustomer(context.Context, *order.Order) error     { return nil }
+func (m *ossReportOrderRepo) Save(context.Context, *order.Order) error              { return nil }
+func (m *ossReportOrderRepo) UpdateStatus(context.Context, *order.Order) error      { return nil }
+func (m *ossReportOrderRepo) LinkToCustomer(context.Context, *order.Order) error    { return nil }
 func (m *ossReportOrderRepo) LinkToCustomerByContactEmail(context.Context, string, string, time.Time) (int64, error) {
 	return 0, nil
 }

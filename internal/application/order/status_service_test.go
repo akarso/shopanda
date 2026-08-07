@@ -29,8 +29,10 @@ func (s *statusRepoStub) FindByCustomerID(context.Context, string) ([]domainOrde
 func (s *statusRepoStub) FindByContactEmail(context.Context, string) ([]domainOrder.Order, error) {
 	return nil, nil
 }
-func (s *statusRepoStub) List(context.Context, int, int) ([]domainOrder.Order, error) { return nil, nil }
-func (s *statusRepoStub) Save(context.Context, *domainOrder.Order) error             { return nil }
+func (s *statusRepoStub) List(context.Context, int, int) ([]domainOrder.Order, error) {
+	return nil, nil
+}
+func (s *statusRepoStub) Save(context.Context, *domainOrder.Order) error { return nil }
 func (s *statusRepoStub) UpdateStatus(_ context.Context, o *domainOrder.Order) error {
 	*s.order = *o
 	return nil

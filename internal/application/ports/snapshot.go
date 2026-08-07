@@ -15,10 +15,10 @@ import (
 type Status string
 
 const (
-	StatusActive        Status = "active"
-	StatusCoreDefault   Status = "core_default"
-	StatusPlanned       Status = "planned"
-	StatusUnconfigured  Status = "unconfigured"
+	StatusActive       Status = "active"
+	StatusCoreDefault  Status = "core_default"
+	StatusPlanned      Status = "planned"
+	StatusUnconfigured Status = "unconfigured"
 )
 
 // ProviderDetail holds one implementation binding (used for multi-provider ports).

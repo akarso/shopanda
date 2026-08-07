@@ -42,10 +42,10 @@ type IdempotencyStore interface {
 
 // IdempotencyConfig configures idempotency middleware.
 type IdempotencyConfig struct {
-	Store      IdempotencyStore
-	PluginSlug string
-	TTL        time.Duration
-	Now        func() time.Time
+	Store        IdempotencyStore
+	PluginSlug   string
+	TTL          time.Duration
+	Now          func() time.Time
 	MaxBodyBytes int64
 }
 
@@ -141,7 +141,7 @@ func IdempotencyHandler(cfg IdempotencyConfig, next http.Handler) http.Handler {
 
 func replayHeaders(statusCode int) map[string]string {
 	return map[string]string{
-		"Content-Type": "application/json; charset=utf-8",
+		"Content-Type":           "application/json; charset=utf-8",
 		"X-Idempotency-Replayed": "true",
 	}
 }

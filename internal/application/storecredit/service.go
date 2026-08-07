@@ -6,8 +6,8 @@ import (
 	"fmt"
 
 	"github.com/akarso/shopanda/internal/domain/customer"
-	credit "github.com/akarso/shopanda/internal/domain/storecredit"
 	"github.com/akarso/shopanda/internal/domain/shared"
+	credit "github.com/akarso/shopanda/internal/domain/storecredit"
 	"github.com/akarso/shopanda/internal/platform/apperror"
 )
 

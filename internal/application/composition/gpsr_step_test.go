@@ -11,9 +11,9 @@ import (
 
 func TestGpsrStep_AddsBlockWhenEnabled(t *testing.T) {
 	cfg := stubOmnibusConfig{
-		legal.ScopedConfigKey("store-eu", legal.GpsrEnabledConfigKey):              true,
-		legal.ScopedConfigKey("store-eu", legal.GpsrManufacturerNameConfigKey):     "EU Safety Co.",
-		legal.ScopedConfigKey("store-eu", legal.GpsrManufacturerContactConfigKey):  "safety@eu.example",
+		legal.ScopedConfigKey("store-eu", legal.GpsrEnabledConfigKey):             true,
+		legal.ScopedConfigKey("store-eu", legal.GpsrManufacturerNameConfigKey):    "EU Safety Co.",
+		legal.ScopedConfigKey("store-eu", legal.GpsrManufacturerContactConfigKey): "safety@eu.example",
 	}
 	step := composition.NewGpsrStep(cfg)
 	prod := catalog.Product{

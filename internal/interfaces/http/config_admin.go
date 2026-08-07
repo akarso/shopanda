@@ -97,21 +97,21 @@ var secretConfigKeys = map[string]struct{}{
 }
 
 var configKeyScopes = map[string]string{
-	"store.address":           configScopeStore,
-	"store.logo":              configScopeStore,
-	"default_currency":        configScopeStore,
-	"currency.display_format": configScopeStore,
-	"tax.default_class":       configScopeStore,
-	"tax.included":            configScopeStore,
-	"legal.omnibus_enabled":              configScopeStore,
-	"legal.weee_enabled":                   configScopeStore,
-	"legal.weee_producer_registration":     configScopeStore,
-	"legal.epr_enabled":                    configScopeStore,
-	"legal.epr_scheme_registration_id":     configScopeStore,
-	"legal.gpsr_enabled":                   configScopeStore,
-	"legal.gpsr_manufacturer_name":         configScopeStore,
-	"legal.gpsr_manufacturer_contact":      configScopeStore,
-	"legal.oss_enabled":                    configScopeStore,
+	"store.address":                    configScopeStore,
+	"store.logo":                       configScopeStore,
+	"default_currency":                 configScopeStore,
+	"currency.display_format":          configScopeStore,
+	"tax.default_class":                configScopeStore,
+	"tax.included":                     configScopeStore,
+	"legal.omnibus_enabled":            configScopeStore,
+	"legal.weee_enabled":               configScopeStore,
+	"legal.weee_producer_registration": configScopeStore,
+	"legal.epr_enabled":                configScopeStore,
+	"legal.epr_scheme_registration_id": configScopeStore,
+	"legal.gpsr_enabled":               configScopeStore,
+	"legal.gpsr_manufacturer_name":     configScopeStore,
+	"legal.gpsr_manufacturer_contact":  configScopeStore,
+	"legal.oss_enabled":                configScopeStore,
 }
 
 // NewConfigAdminHandler creates a ConfigAdminHandler.

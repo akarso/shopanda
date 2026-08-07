@@ -4,8 +4,8 @@ import (
 	"fmt"
 
 	"github.com/akarso/shopanda/internal/platform/plugin"
-	"github.com/akarso/shopanda/pkg/pluginsdk"
 	sdkhttp "github.com/akarso/shopanda/pkg/integrationsdk/http"
+	"github.com/akarso/shopanda/pkg/pluginsdk"
 )
 
 // Plugin demonstrates outbound warehouse stock sync via RegisterSyncJob.

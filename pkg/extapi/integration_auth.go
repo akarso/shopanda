@@ -2,10 +2,10 @@ package extapi
 
 // Integration auth header names (Phase 8 inbound ERP).
 const (
-	IntegrationHeaderAPIKey     = "X-Integration-Key"
-	IntegrationHeaderTimestamp  = "X-Integration-Timestamp"
-	IntegrationHeaderNonce      = "X-Integration-Nonce"
-	IntegrationHeaderSignature  = "X-Integration-Signature"
+	IntegrationHeaderAPIKey    = "X-Integration-Key"
+	IntegrationHeaderTimestamp = "X-Integration-Timestamp"
+	IntegrationHeaderNonce     = "X-Integration-Nonce"
+	IntegrationHeaderSignature = "X-Integration-Signature"
 )
 
 // Integration auth error codes for structured error responses.
@@ -20,7 +20,7 @@ const (
 
 // Idempotency header and error codes (Phase 8 inbound ERP).
 const (
-	IntegrationHeaderIdempotencyKey      = "Idempotency-Key"
-	IntegrationErrorIdempotencyConflict  = "idempotency.conflict"
+	IntegrationHeaderIdempotencyKey       = "Idempotency-Key"
+	IntegrationErrorIdempotencyConflict   = "idempotency.conflict"
 	IntegrationErrorIdempotencyInProgress = "idempotency.in_progress"
 )

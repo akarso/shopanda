@@ -33,10 +33,10 @@ func TestStoreSchemeRegistrationID_StoreScope(t *testing.T) {
 func TestParseEprPackaging_VariantWeightOverridesProduct(t *testing.T) {
 	info := legal.ParseEprPackaging(
 		map[string]interface{}{
-			legal.AttrEprPackagingMaterial:    "plastic",
-			legal.AttrEprPackagingWeightG:     100,
-			legal.AttrEprRecyclable:           true,
-			legal.AttrEprRecycledContentPct:   30,
+			legal.AttrEprPackagingMaterial:  "plastic",
+			legal.AttrEprPackagingWeightG:   100,
+			legal.AttrEprRecyclable:         true,
+			legal.AttrEprRecycledContentPct: 30,
 		},
 		map[string]interface{}{
 			legal.AttrEprPackagingWeightG: 250,

@@ -14,9 +14,9 @@ const pendingLoginPurpose = "admin_mfa_login"
 
 // PendingLoginClaims identifies an authenticated password step awaiting MFA.
 type PendingLoginClaims struct {
-	CustomerID     string `json:"customer_id"`
+	CustomerID      string `json:"customer_id"`
 	TokenGeneration int64  `json:"token_generation"`
-	ExpiresAt      int64  `json:"expires_at"`
+	ExpiresAt       int64  `json:"expires_at"`
 }
 
 // SignPendingLogin creates a short-lived pending login token.

@@ -128,4 +128,3 @@ func (l *captureLogger) Warn(event string, ctx map[string]interface{}) {
 	}
 }
 func (l *captureLogger) Error(string, error, map[string]interface{}) {}
-

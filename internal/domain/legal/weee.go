@@ -8,16 +8,16 @@ import (
 
 // Config keys for WEEE storefront disclosure (store-scoped via ScopedConfigKey).
 const (
-	WeeeEnabledConfigKey               = "legal.weee_enabled"
-	WeeeProducerRegistrationConfigKey  = "legal.weee_producer_registration"
+	WeeeEnabledConfigKey              = "legal.weee_enabled"
+	WeeeProducerRegistrationConfigKey = "legal.weee_producer_registration"
 )
 
 // Product attribute codes for WEEE compliance metadata.
 const (
-	AttrWeeeCategory              = "weee_category"
-	AttrWeeeProducerRegistration  = "weee_producer_registration"
-	AttrWeeeTakeBackInfo          = "weee_take_back_info"
-	AttrWeeeSymbolVisible         = "weee_symbol_visible"
+	AttrWeeeCategory             = "weee_category"
+	AttrWeeeProducerRegistration = "weee_producer_registration"
+	AttrWeeeTakeBackInfo         = "weee_take_back_info"
+	AttrWeeeSymbolVisible        = "weee_symbol_visible"
 )
 
 // AttributeGroupWeee is the admin attribute group code for WEEE fields.
@@ -25,15 +25,15 @@ const AttributeGroupWeee = "weee"
 
 // WeeeCategoryLabels maps stored select values to customer-facing labels.
 var WeeeCategoryLabels = map[string]string{
-	"large_household":       "Large household appliances",
-	"small_it_telecom":      "Small IT and telecommunications equipment",
-	"consumer_equipment":    "Consumer equipment",
-	"lighting":              "Lighting equipment",
-	"tools":                 "Electrical and electronic tools",
-	"toys_leisure_sports":   "Toys, leisure and sports equipment",
-	"medical_devices":       "Medical devices",
-	"monitoring_control":    "Monitoring and control instruments",
-	"automatic_dispensers":  "Automatic dispensers",
+	"large_household":      "Large household appliances",
+	"small_it_telecom":     "Small IT and telecommunications equipment",
+	"consumer_equipment":   "Consumer equipment",
+	"lighting":             "Lighting equipment",
+	"tools":                "Electrical and electronic tools",
+	"toys_leisure_sports":  "Toys, leisure and sports equipment",
+	"medical_devices":      "Medical devices",
+	"monitoring_control":   "Monitoring and control instruments",
+	"automatic_dispensers": "Automatic dispensers",
 }
 
 // WeeeCategoryOptions returns select options for the weee_category attribute.

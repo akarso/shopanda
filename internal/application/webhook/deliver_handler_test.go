@@ -9,9 +9,9 @@ import (
 	"time"
 
 	webhookApp "github.com/akarso/shopanda/internal/application/webhook"
-	domainwebhook "github.com/akarso/shopanda/internal/domain/webhook"
 	"github.com/akarso/shopanda/internal/domain/jobs"
 	"github.com/akarso/shopanda/internal/domain/order"
+	domainwebhook "github.com/akarso/shopanda/internal/domain/webhook"
 	webhookinfra "github.com/akarso/shopanda/internal/infrastructure/webhook"
 	"github.com/akarso/shopanda/internal/platform/event"
 	"github.com/akarso/shopanda/internal/platform/logger"
@@ -72,8 +72,8 @@ func (q *recordingQueue) snapshot() []jobs.Job {
 }
 
 func (*recordingQueue) Dequeue(context.Context) (*jobs.Job, error) { return nil, nil }
-func (*recordingQueue) Complete(context.Context, string) error      { return nil }
-func (*recordingQueue) Fail(context.Context, string, error) error   { return nil }
+func (*recordingQueue) Complete(context.Context, string) error     { return nil }
+func (*recordingQueue) Fail(context.Context, string, error) error  { return nil }
 
 type stubPoster struct {
 	lastURL     string

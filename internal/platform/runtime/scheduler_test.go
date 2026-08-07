@@ -4,8 +4,8 @@ import (
 	"context"
 	"testing"
 
-	cacheApp "github.com/akarso/shopanda/internal/application/cache"
 	adminApp "github.com/akarso/shopanda/internal/application/admin"
+	cacheApp "github.com/akarso/shopanda/internal/application/cache"
 	"github.com/akarso/shopanda/internal/domain/jobs"
 	"github.com/akarso/shopanda/internal/domain/scheduler"
 	"github.com/akarso/shopanda/internal/platform/logger"

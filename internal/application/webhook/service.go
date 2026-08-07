@@ -46,14 +46,14 @@ type UpdateInput struct {
 
 // EndpointView is the admin-safe endpoint representation.
 type EndpointView struct {
-	ID            string
-	URL           string
-	Events        []string
-	Active        bool
-	Description   string
-	SecretPrefix  string
-	CreatedAt     time.Time
-	UpdatedAt     time.Time
+	ID           string
+	URL          string
+	Events       []string
+	Active       bool
+	Description  string
+	SecretPrefix string
+	CreatedAt    time.Time
+	UpdatedAt    time.Time
 }
 
 // CreateResult includes the plaintext secret returned once on create.

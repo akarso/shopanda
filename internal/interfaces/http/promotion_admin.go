@@ -36,24 +36,24 @@ func NewPromotionAdminHandlerWithAuditor(promotions promotion.PromotionRepositor
 }
 
 type promotionWriteRequest struct {
-	Name             string                   `json:"name"`
-	Type             string                   `json:"type"`
-	Priority         *int                     `json:"priority"`
-	Active           *bool                    `json:"active"`
-	CouponBound      *bool                    `json:"coupon_bound"`
-	StartAt          *string                  `json:"start_at"`
-	EndAt            *string                  `json:"end_at"`
-	ConditionType    string                   `json:"condition_type"`
-	ConditionValue   int                      `json:"condition_value"`
-	ActionType       string                   `json:"action_type"`
-	ActionPercentage int                      `json:"action_percentage"`
-	ActionAmount     int64                    `json:"action_amount"`
+	Name             string                    `json:"name"`
+	Type             string                    `json:"type"`
+	Priority         *int                      `json:"priority"`
+	Active           *bool                     `json:"active"`
+	CouponBound      *bool                     `json:"coupon_bound"`
+	StartAt          *string                   `json:"start_at"`
+	EndAt            *string                   `json:"end_at"`
+	ConditionType    string                    `json:"condition_type"`
+	ConditionValue   int                       `json:"condition_value"`
+	ActionType       string                    `json:"action_type"`
+	ActionPercentage int                       `json:"action_percentage"`
+	ActionAmount     int64                     `json:"action_amount"`
 	ActionTiers      []admin.PromotionTierForm `json:"action_tiers"`
-	ActionBuyQty     int                      `json:"action_buy_qty"`
-	ActionGetQty     int                      `json:"action_get_qty"`
-	RulesMode        string                   `json:"rules_mode"`
-	Conditions       json.RawMessage          `json:"conditions"`
-	Actions          json.RawMessage          `json:"actions"`
+	ActionBuyQty     int                       `json:"action_buy_qty"`
+	ActionGetQty     int                       `json:"action_get_qty"`
+	RulesMode        string                    `json:"rules_mode"`
+	Conditions       json.RawMessage           `json:"conditions"`
+	Actions          json.RawMessage           `json:"actions"`
 }
 
 type adminPromotionTierResponse struct {

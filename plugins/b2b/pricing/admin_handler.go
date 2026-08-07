@@ -8,9 +8,9 @@ import (
 	"github.com/akarso/shopanda/internal/domain/catalog"
 	"github.com/akarso/shopanda/internal/domain/customergroup"
 	"github.com/akarso/shopanda/internal/domain/shared"
+	shophttp "github.com/akarso/shopanda/internal/interfaces/http"
 	"github.com/akarso/shopanda/internal/platform/apperror"
 	"github.com/akarso/shopanda/internal/platform/id"
-	shophttp "github.com/akarso/shopanda/internal/interfaces/http"
 )
 
 // AdminHandler serves group price admin endpoints.

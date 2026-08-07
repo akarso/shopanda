@@ -10,8 +10,8 @@ import (
 type BlockType string
 
 const (
-	BlockTypeHero             BlockType = "hero"
-	BlockTypeRichText         BlockType = "rich_text"
+	BlockTypeHero            BlockType = "hero"
+	BlockTypeRichText        BlockType = "rich_text"
 	BlockTypeProductCarousel BlockType = "product_carousel"
 )
 
@@ -118,15 +118,15 @@ func NewContentBlockFromDB(
 	}
 }
 
-func (b *ContentBlock) ID() string                      { return b.id }
-func (b *ContentBlock) Title() string                   { return b.title }
-func (b *ContentBlock) BlockType() BlockType            { return b.blockType }
+func (b *ContentBlock) ID() string           { return b.id }
+func (b *ContentBlock) Title() string        { return b.title }
+func (b *ContentBlock) BlockType() BlockType { return b.blockType }
 func (b *ContentBlock) Config() map[string]interface{} {
 	return cloneConfigMap(b.config)
 }
-func (b *ContentBlock) IsActive() bool                  { return b.isActive }
-func (b *ContentBlock) CreatedAt() time.Time            { return b.createdAt }
-func (b *ContentBlock) UpdatedAt() time.Time            { return b.updatedAt }
+func (b *ContentBlock) IsActive() bool       { return b.isActive }
+func (b *ContentBlock) CreatedAt() time.Time { return b.createdAt }
+func (b *ContentBlock) UpdatedAt() time.Time { return b.updatedAt }
 
 // SetTitle updates the block title.
 func (b *ContentBlock) SetTitle(title string) error {

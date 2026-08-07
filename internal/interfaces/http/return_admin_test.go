@@ -16,8 +16,8 @@ import (
 	"github.com/akarso/shopanda/internal/domain/inventory"
 	"github.com/akarso/shopanda/internal/domain/order"
 	"github.com/akarso/shopanda/internal/domain/payment"
-	domainReturns "github.com/akarso/shopanda/internal/domain/returns"
 	"github.com/akarso/shopanda/internal/domain/rbac"
+	domainReturns "github.com/akarso/shopanda/internal/domain/returns"
 	"github.com/akarso/shopanda/internal/domain/shared"
 	shophttp "github.com/akarso/shopanda/internal/interfaces/http"
 	"github.com/akarso/shopanda/internal/platform/auth/testhelper"
@@ -135,7 +135,9 @@ func (r *returnHTTPStockRepo) GetInventoryItem(context.Context, string) (invento
 
 type returnHTTPPaymentRepo struct{}
 
-func (r *returnHTTPPaymentRepo) FindByID(context.Context, string) (*payment.Payment, error) { return nil, nil }
+func (r *returnHTTPPaymentRepo) FindByID(context.Context, string) (*payment.Payment, error) {
+	return nil, nil
+}
 func (r *returnHTTPPaymentRepo) FindByOrderID(context.Context, string) (*payment.Payment, error) {
 	return nil, nil
 }

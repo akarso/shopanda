@@ -33,9 +33,9 @@ type createCartRequest struct {
 }
 
 type addItemRequest struct {
-	VariantID  string                     `json:"variant_id"`
-	Quantity   int                        `json:"quantity"`
-	Extensions []cartItemExtensionInput   `json:"extensions,omitempty"`
+	VariantID  string                   `json:"variant_id"`
+	Quantity   int                      `json:"quantity"`
+	Extensions []cartItemExtensionInput `json:"extensions,omitempty"`
 }
 
 type updateItemRequest struct {

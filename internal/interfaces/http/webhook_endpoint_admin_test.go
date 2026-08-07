@@ -9,9 +9,9 @@ import (
 	"testing"
 
 	webhookApp "github.com/akarso/shopanda/internal/application/webhook"
-	domainwebhook "github.com/akarso/shopanda/internal/domain/webhook"
 	"github.com/akarso/shopanda/internal/domain/order"
 	"github.com/akarso/shopanda/internal/domain/rbac"
+	domainwebhook "github.com/akarso/shopanda/internal/domain/webhook"
 	shophttp "github.com/akarso/shopanda/internal/interfaces/http"
 	"github.com/akarso/shopanda/internal/platform/auth/testhelper"
 )

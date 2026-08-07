@@ -3,11 +3,11 @@ package plugin
 import (
 	"sync"
 
-	"github.com/akarso/shopanda/internal/application/extension"
 	assetsapp "github.com/akarso/shopanda/internal/application/assets"
+	exportctxapp "github.com/akarso/shopanda/internal/application/exportctx"
+	"github.com/akarso/shopanda/internal/application/extension"
 	hooksapp "github.com/akarso/shopanda/internal/application/hooks"
 	importctxapp "github.com/akarso/shopanda/internal/application/importctx"
-	exportctxapp "github.com/akarso/shopanda/internal/application/exportctx"
 	slotsapp "github.com/akarso/shopanda/internal/application/slots"
 	"github.com/akarso/shopanda/internal/domain/identity"
 	"github.com/akarso/shopanda/internal/domain/payment"
@@ -46,14 +46,14 @@ type App struct {
 	checkoutSteps    []checkoutStepRegistration
 	compositionSteps map[string][]any
 
-	searchProvider  any
-	cache           any
-	queue           any
-	paymentRegistry *payment.ProviderRegistry
+	searchProvider   any
+	cache            any
+	queue            any
+	paymentRegistry  *payment.ProviderRegistry
 	shippingRegistry *shipping.ProviderRegistry
-	mediaStorage    any
-	taxCalculator   any
-	mailSender      any
+	mediaStorage     any
+	taxCalculator    any
+	mailSender       any
 
 	configRegistry *ConfigRegistry
 

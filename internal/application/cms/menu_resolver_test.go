@@ -25,9 +25,9 @@ func (s stubCategoryRepo) FindByParentID(context.Context, *string) ([]catalog.Ca
 	return nil, nil
 }
 func (s stubCategoryRepo) FindAll(context.Context) ([]catalog.Category, error) { return nil, nil }
-func (s stubCategoryRepo) Create(context.Context, *catalog.Category) error      { return nil }
-func (s stubCategoryRepo) Update(context.Context, *catalog.Category) error      { return nil }
-func (s stubCategoryRepo) Delete(context.Context, string) error                   { return nil }
+func (s stubCategoryRepo) Create(context.Context, *catalog.Category) error     { return nil }
+func (s stubCategoryRepo) Update(context.Context, *catalog.Category) error     { return nil }
+func (s stubCategoryRepo) Delete(context.Context, string) error                { return nil }
 
 type stubPageRepo struct {
 	byID map[string]*cms.Page
@@ -42,8 +42,8 @@ func (s stubPageRepo) FindActiveBySlug(context.Context, string) (*cms.Page, erro
 }
 func (s stubPageRepo) List(context.Context, int, int) ([]*cms.Page, error) { return nil, nil }
 func (s stubPageRepo) Create(context.Context, *cms.Page) error             { return nil }
-func (s stubPageRepo) Update(context.Context, *cms.Page) error               { return nil }
-func (s stubPageRepo) Delete(context.Context, string) error                  { return nil }
+func (s stubPageRepo) Update(context.Context, *cms.Page) error             { return nil }
+func (s stubPageRepo) Delete(context.Context, string) error                { return nil }
 
 func TestMenuResolverResolveTree(t *testing.T) {
 	cat, _ := catalog.NewCategory("cat-1", "Headphones", "headphones")
@@ -124,6 +124,6 @@ func (countingCategoryRepo) FindByParentID(context.Context, *string) ([]catalog.
 	return nil, nil
 }
 func (countingCategoryRepo) FindAll(context.Context) ([]catalog.Category, error) { return nil, nil }
-func (countingCategoryRepo) Create(context.Context, *catalog.Category) error      { return nil }
-func (countingCategoryRepo) Update(context.Context, *catalog.Category) error      { return nil }
-func (countingCategoryRepo) Delete(context.Context, string) error                   { return nil }
+func (countingCategoryRepo) Create(context.Context, *catalog.Category) error     { return nil }
+func (countingCategoryRepo) Update(context.Context, *catalog.Category) error     { return nil }
+func (countingCategoryRepo) Delete(context.Context, string) error                { return nil }

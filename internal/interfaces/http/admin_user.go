@@ -6,8 +6,8 @@ import (
 	"net/http"
 	"time"
 
-	adminuserApp "github.com/akarso/shopanda/internal/application/adminuser"
 	"github.com/akarso/shopanda/internal/application/admin"
+	adminuserApp "github.com/akarso/shopanda/internal/application/adminuser"
 	"github.com/akarso/shopanda/internal/domain/customer"
 	"github.com/akarso/shopanda/internal/platform/apperror"
 )

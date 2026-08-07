@@ -3,7 +3,7 @@
 | PR | Track | Status | Spec |
 | --- | --- | --- | --- |
 | PR-1000 | A | done | [Unbreak the test suite](PR-1000.md) |
-| PR-1001 | A | planned | [Repo hygiene](PR-1001.md) |
+| PR-1001 | A | done | [Repo hygiene](PR-1001.md) |
 | PR-1002 | A | planned | [GitHub Actions CI (unit)](PR-1002.md) |
 | PR-1003 | A | planned | [CI integration job](PR-1003.md) |
 | PR-1004 | B | planned | [Login abuse protection](PR-1004.md) |
@@ -33,3 +33,11 @@
 Roadmap: [`../ROADMAP.md`](../ROADMAP.md)
 
 **Hard rule:** Track A (PR-1000–1003) before D/E. Track B may overlap late A once tests compile.
+
+Planned-spec tightenings (PR-1002–1026 requirements text) are tracked separately in [`../PLAN_CR.md`](../PLAN_CR.md) — **not** part of [PR-1001](PR-1001.md) hygiene.
+
+### Intentionally excluded from this index
+
+| PR | Reason |
+| --- | --- |
+| [PR-383](../../phase-3-testing/prs/PR-383.md) | Phase 3 (testing) work — de-duplicate local ordered category insertion. Not a Phase 10 deliverable; kept in [`docs/phase-3-testing/prs/`](../../phase-3-testing/prs/). |

@@ -7,7 +7,7 @@ import (
 
 // Integration stock sync error codes for structured logging and plugin handling.
 const (
-	IntegrationErrorStockUnknownSKU    = "stock.unknown_sku"
+	IntegrationErrorStockUnknownSKU      = "stock.unknown_sku"
 	IntegrationErrorStockInvalidQuantity = "stock.invalid_quantity"
 )
 

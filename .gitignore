@@ -30,8 +30,10 @@ go.work.sum
 # Binary output
 /bin/
 shopanda
+/api
 
-# Editor/IDE
+# Editor/IDE / OS
+.DS_Store
 # .idea/
 # .vscode/
 

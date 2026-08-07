@@ -44,9 +44,9 @@ type Order struct {
 	// DestinationCountry is the ISO 3166-1 alpha-2 shipping country at checkout.
 	DestinationCountry string
 	// TaxAmount is the VAT total applied at checkout (zero when unset).
-	TaxAmount    shared.Money
-	CreatedAt    time.Time
-	UpdatedAt    time.Time
+	TaxAmount shared.Money
+	CreatedAt time.Time
+	UpdatedAt time.Time
 }
 
 // NewOrder creates an Order in pending status with validation.

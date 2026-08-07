@@ -87,9 +87,9 @@ Recommended order:
 | PR | Title | Short description |
 | --- | --- | --- |
 | PR-1000 | Unbreak the test suite | Fix non-compiling mocks (`FindBySKUs`, `SetStocks`); fix RBAC permission count; fix extension-port expectation; de-flake integrationdemo HMAC timestamp test; fix mutex-by-value in webhook test |
-| PR-1001 | Repo hygiene | `.gitignore`/`dockerignore` for `api`; `git rm --cached api`; gofmt all; drop stale `internal/infrastructure/postgres/migrations/022_*` |
+| PR-1001 | Repo hygiene | `.gitignore`/`dockerignore` for `api`; `git rm --cached api`; gofmt all; delete unused `internal/infrastructure/postgres/migrations/022_*` (runtime uses root `migrations/`) |
 | PR-1002 | GitHub Actions CI (unit) | Workflow: `gofmt -l`, `go vet ./...`, `go test ./...` (no DSN — skips DB tests) |
-| PR-1003 | CI integration job | Same workflow + Postgres 17 service + `SHOPANDA_TEST_DSN`; fail on red |
+| PR-1003 | CI integration job | Postgres readiness gate + full DSN-gated suite (`postgres`/`migrate`/`b2b`); anti-skip assertion; required for merge |
 
 **Definition of done:** a broken mock or failing assertion cannot merge.
 
@@ -101,11 +101,11 @@ Recommended order:
 
 | PR | Title | Short description |
 | --- | --- | --- |
-| PR-1004 | Login abuse protection | Enable rate limiting by default; per-IP + per-account failed-login throttle/lockout for customer and admin login |
-| PR-1005 | JWT secret strength | Reject secrets &lt; 32 bytes at config/JWT construction; update `.env.example` / install.sh messaging |
-| PR-1006 | HTTP boundary hardening | Global body size limit (`MaxBytesReader`); security-headers middleware (`nosniff`, `X-Frame-Options`, `Referrer-Policy`, HSTS when TLS) |
-| PR-1007 | Webhook SSRF guard | Block loopback/link-local/private/metadata IPs before outbound webhook POST; unit tests for URL validation |
-| PR-1008 | Secure-by-default config | Fail fast on `changeme` outside explicit dev mode; tighten `sslmode` guidance/default for non-dev; stop logging reset tokens unless hard-gated dev |
+| PR-1004 | Login abuse protection | Rate limit on by default; shared or single-instance-restricted lockout store; IP+account keys; bounded TTL |
+| PR-1005 | JWT secret strength | Shared parser; ≥32 decoded bytes; accept installer 64-hex; env-named errors |
+| PR-1006 | HTTP boundary hardening | Route-aware body limits; exact security-header tests; HSTS only on TLS/trusted proto |
+| PR-1007 | Webhook SSRF guard | Private-IP block + mandatory DNS-rebinding-safe dial; multi A/AAAA tests |
+| PR-1008 | Secure-by-default config | `changeme`/`shopanda` only if `SHOPANDA_DEV_MODE` truthy; non-local sslmode enforce; explicit reset-token log flag |
 
 ---
 
@@ -115,10 +115,10 @@ Recommended order:
 
 | PR | Title | Short description |
 | --- | --- | --- |
-| PR-1009 | Readiness probe | Add `/readyz` (DB ping); keep `/healthz` liveness; point Docker `HEALTHCHECK` at `/readyz` |
-| PR-1010 | Release to GHCR | On tag: build/push multi-arch (or amd64) image with git SHA labels; document replace-binary-in-git flow |
-| PR-1011 | Migration hygiene CI | CI check: unique numeric prefixes under `migrations/`; document no-rename policy; remove dead postgres/migrations copy |
-| PR-1012 | Supply-chain basics | Dependabot (Go + Actions + Docker digests); `govulncheck ./...` CI job |
+| PR-1009 | Readiness probe | Add `/readyz` (bounded DB ping → 503); keep `/healthz` liveness + Docker `HEALTHCHECK`; `/readyz` for traffic |
+| PR-1010 | Release to GHCR | On tag: push image; deploy pin = full commit SHA tag or digest; version tag is alias only |
+| PR-1011 | Migration hygiene CI | Prefix uniqueness with integer normalize + exact `025_*` allowlist; no rename of applied files |
+| PR-1012 | Supply-chain basics | Dependabot; pinned fail-closed `govulncheck` + baseline/exception process |
 
 ---
 
@@ -131,10 +131,10 @@ Recommended order:
 | PR-1013 | Split serve wiring | Extract repo/service construction from `runServe` into `cmd/api` modules (`wire_repos.go`, `wire_services.go`); no behavior change |
 | PR-1014 | Collapse import/export CLI | Shared helper for open-DB → repos → plugin registry → run; delete ~14 near-clone `runImport*`/`runExport*` bodies |
 | PR-1015 | Typed plugin providers | Replace `RegisterX(provider any)` with typed interfaces; compile-time failures for wrong types |
-| PR-1016 | RBAC registry injection | Remove package-level `RegisterPluginPermission` global map; wire permissions through composition root / plugin `App` |
-| PR-1017 | Plugin boundary honesty | Lint (or `go test` script) forbidding `plugins/**` imports of `internal/infrastructure` and `internal/interfaces`; update `PLUGINS.md` to state in-module plugins + SDK path |
-| PR-1018 | Checkout context | Thread `context.Context` through checkout `Step.Execute`; stop minting `context.Background()` in payment/inventory steps |
-| PR-1019 | Event bus drain | WaitGroup / drain for async handlers in shutdown path so deploys do not drop in-flight webhooks/notifications |
+| PR-1016 | RBAC registry injection | Single app-owned registry; same instance for Init + auth; freeze after Init; duplicate = error |
+| PR-1017 | Plugin boundary honesty | Fixed allowlist (pkg/domain/application/platform); forbid infrastructure+interfaces; CI import walk |
+| PR-1018 | Checkout context | Propagate request `ctx` into all blocking checkout/payment/inventory calls; cancel test |
+| PR-1019 | Event bus drain | Publish barrier; WG before goroutine; cancel-then-wait shutdown policy |
 
 ---
 
@@ -144,13 +144,13 @@ Recommended order:
 
 | PR | Title | Short description |
 | --- | --- | --- |
-| PR-1020 | Prometheus metrics | `/metrics` with request RED, checkout outcomes, queue depth/failures, webhook delivery |
+| PR-1020 | Prometheus metrics | Default off; restricted `/metrics`; bounded route-template labels (no raw URLs/IDs) |
 | PR-1021 | HTTP package split (shared) | Extract shared middleware/response/auth helpers to `interfaces/http/shared` (or equiv.); no route moves yet |
 | PR-1022 | HTTP package split (admin) | Move admin handlers to `interfaces/http/admin`; update wiring |
 | PR-1023 | HTTP package split (storefront) | Move storefront handlers; shrink god `StorefrontHandler` deps where cheap |
 | PR-1024 | OpenTelemetry traces | Optional OTLP export; instrument HTTP + checkout + DB spans behind config |
-| PR-1025 | pgx driver migration | Replace `lib/pq` with `jackc/pgx/v5` stdlib bridge (or native); keep SQL; CI green |
-| PR-1026 | Extension decision guide + runbook | `docs/guides/EXTENSION_POINTS.md` + expand `RUNBOOK.md` (DB down, bad migration, rollback = restore) |
+| PR-1025 | pgx driver migration | Replace maintenance-mode `lib/pq` with `jackc/pgx/v5` stdlib bridge; keep SQL; CI green |
+| PR-1026 | Extension decision guide + runbook | Docs-only (approved): `EXTENSION_POINTS.md` + expand `RUNBOOK.md` |
 
 ---
 
@@ -187,14 +187,16 @@ Optional history rewrite (`git filter-repo` to purge historical `api` blobs) is 
 
 | PR | Track | Status |
 | --- | --- | --- |
-| 1000 | A | done |
-| 1001–1003 | A | planned |
+| 1000–1001 | A | done |
+| 1002–1003 | A | planned |
 | 1004–1008 | B | planned |
 | 1009–1012 | C | planned |
 | 1013–1019 | D | planned |
 | 1020–1026 | E | planned |
 
 PR specs: [`prs/`](prs/).
+
+Planned-spec tightenings from the post-audit plan review are documented separately in [`PLAN_CR.md`](PLAN_CR.md) (not part of PR-1001 hygiene).
 
 ---
 

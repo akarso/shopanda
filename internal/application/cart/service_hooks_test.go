@@ -4,9 +4,9 @@ import (
 	"context"
 	"testing"
 
-	appPricing "github.com/akarso/shopanda/internal/application/pricing"
 	cartApp "github.com/akarso/shopanda/internal/application/cart"
 	"github.com/akarso/shopanda/internal/application/hooks"
+	appPricing "github.com/akarso/shopanda/internal/application/pricing"
 	domainpricing "github.com/akarso/shopanda/internal/domain/pricing"
 	"github.com/akarso/shopanda/internal/domain/shared"
 )

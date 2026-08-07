@@ -5,8 +5,8 @@ import (
 	"encoding/json"
 	"net/http"
 
-	adminroleApp "github.com/akarso/shopanda/internal/application/adminrole"
 	"github.com/akarso/shopanda/internal/application/admin"
+	adminroleApp "github.com/akarso/shopanda/internal/application/adminrole"
 	"github.com/akarso/shopanda/internal/domain/identity"
 	"github.com/akarso/shopanda/internal/domain/rbac"
 	"github.com/akarso/shopanda/internal/platform/apperror"

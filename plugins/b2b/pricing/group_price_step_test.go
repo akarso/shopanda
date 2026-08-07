@@ -58,7 +58,7 @@ func (s *stubGroupPrices) FindByVariantGroupCurrencyAndStore(_ context.Context, 
 }
 
 func (s *stubGroupPrices) Upsert(context.Context, *customergroup.GroupPrice) error { return nil }
-func (s *stubGroupPrices) Delete(context.Context, string) error                     { return nil }
+func (s *stubGroupPrices) Delete(context.Context, string) error                    { return nil }
 
 func TestGroupPriceStep_OverridesBasePrice(t *testing.T) {
 	group, err := customergroup.NewGroup(id.New(), "wholesale", "Wholesale", "")

@@ -4,13 +4,13 @@ import (
 	"io"
 	"testing"
 
-	"github.com/alicebob/miniredis/v2"
 	"github.com/akarso/shopanda/internal/domain/jobs"
 	"github.com/akarso/shopanda/internal/platform/config"
 	"github.com/akarso/shopanda/internal/platform/event"
 	"github.com/akarso/shopanda/internal/platform/logger"
 	"github.com/akarso/shopanda/internal/platform/plugin"
 	credisqueue "github.com/akarso/shopanda/plugins/core/redisqueue"
+	"github.com/alicebob/miniredis/v2"
 )
 
 func testApp(cfg *config.Config) *plugin.App {

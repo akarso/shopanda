@@ -6,8 +6,8 @@ import (
 	"fmt"
 	"time"
 
-	domainwebhook "github.com/akarso/shopanda/internal/domain/webhook"
 	"github.com/akarso/shopanda/internal/domain/jobs"
+	domainwebhook "github.com/akarso/shopanda/internal/domain/webhook"
 	"github.com/akarso/shopanda/internal/platform/event"
 	"github.com/akarso/shopanda/internal/platform/id"
 	"github.com/akarso/shopanda/internal/platform/logger"
@@ -66,12 +66,12 @@ func (d *Dispatcher) handle(ctx context.Context, evt event.Event) error {
 			continue
 		}
 		job, err := jobs.NewJob(id.New(), domainwebhook.DeliverJobType, map[string]interface{}{
-			"endpoint_id":      endpoint.ID,
-			"event_id":         evt.ID,
-			"event_name":       evt.Name,
-			"event_source":     evt.Source,
-			"event_timestamp":  evt.Timestamp.UTC().Format(time.RFC3339),
-			"event_data_json":  string(dataJSON),
+			"endpoint_id":     endpoint.ID,
+			"event_id":        evt.ID,
+			"event_name":      evt.Name,
+			"event_source":    evt.Source,
+			"event_timestamp": evt.Timestamp.UTC().Format(time.RFC3339),
+			"event_data_json": string(dataJSON),
 		})
 		if err != nil {
 			return fmt.Errorf("webhook dispatch: new job: %w", err)

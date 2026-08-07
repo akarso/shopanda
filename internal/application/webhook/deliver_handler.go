@@ -10,8 +10,8 @@ import (
 	"strings"
 	"time"
 
-	domainwebhook "github.com/akarso/shopanda/internal/domain/webhook"
 	"github.com/akarso/shopanda/internal/domain/jobs"
+	domainwebhook "github.com/akarso/shopanda/internal/domain/webhook"
 	webhookinfra "github.com/akarso/shopanda/internal/infrastructure/webhook"
 	"github.com/akarso/shopanda/internal/platform/logger"
 )
@@ -109,9 +109,9 @@ func (h *DeliverHandler) Handle(ctx context.Context, job jobs.Job) error {
 	}
 
 	headers := map[string]string{
-		"Content-Type":        "application/json",
-		"X-Shopanda-Event":    eventName,
-		"X-Shopanda-Delivery": job.ID,
+		"Content-Type":         "application/json",
+		"X-Shopanda-Event":     eventName,
+		"X-Shopanda-Delivery":  job.ID,
 		"X-Shopanda-Signature": webhookinfra.SignBody(endpoint.Secret, body),
 	}
 

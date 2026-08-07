@@ -334,22 +334,22 @@ type RedisQueueConfig struct {
 
 // PluginsConfig holds plugin system settings.
 type PluginsConfig struct {
-	DependsOn map[string][]string `yaml:"depends_on"`
-	Core    CorePluginsConfig   `yaml:"core"`
-	GraphQL GraphQLPluginConfig `yaml:"graphql"`
-	Example   ExamplePluginConfig   `yaml:"example"`
-	SlotsDemo SlotsDemoPluginConfig `yaml:"slotsdemo"`
-	CartDemo   CartDemoPluginConfig   `yaml:"cartdemo"`
-	TaxDemo    TaxDemoPluginConfig    `yaml:"taxdemo"`
-	MailDemo   MailDemoPluginConfig   `yaml:"maildemo"`
-	PromoDemo  PromoDemoPluginConfig  `yaml:"promodemo"`
-	ImportDemo        ImportDemoPluginConfig        `yaml:"importdemo"`
-	ExportDemo        ExportDemoPluginConfig        `yaml:"exportdemo"`
-	CheckoutDemo      CheckoutDemoPluginConfig      `yaml:"checkoutdemo"`
-	IntegrationDemo   IntegrationDemoPluginConfig   `yaml:"integrationdemo"`
-	WarehouseDemo     WarehouseDemoPluginConfig     `yaml:"warehousedemo"`
-	PimDemo           PimDemoPluginConfig           `yaml:"pimdemo"`
-	B2B               B2BPluginConfig               `yaml:"b2b"`
+	DependsOn       map[string][]string         `yaml:"depends_on"`
+	Core            CorePluginsConfig           `yaml:"core"`
+	GraphQL         GraphQLPluginConfig         `yaml:"graphql"`
+	Example         ExamplePluginConfig         `yaml:"example"`
+	SlotsDemo       SlotsDemoPluginConfig       `yaml:"slotsdemo"`
+	CartDemo        CartDemoPluginConfig        `yaml:"cartdemo"`
+	TaxDemo         TaxDemoPluginConfig         `yaml:"taxdemo"`
+	MailDemo        MailDemoPluginConfig        `yaml:"maildemo"`
+	PromoDemo       PromoDemoPluginConfig       `yaml:"promodemo"`
+	ImportDemo      ImportDemoPluginConfig      `yaml:"importdemo"`
+	ExportDemo      ExportDemoPluginConfig      `yaml:"exportdemo"`
+	CheckoutDemo    CheckoutDemoPluginConfig    `yaml:"checkoutdemo"`
+	IntegrationDemo IntegrationDemoPluginConfig `yaml:"integrationdemo"`
+	WarehouseDemo   WarehouseDemoPluginConfig   `yaml:"warehousedemo"`
+	PimDemo         PimDemoPluginConfig         `yaml:"pimdemo"`
+	B2B             B2BPluginConfig             `yaml:"b2b"`
 }
 
 // GraphQLPluginConfig toggles the optional read-only GraphQL API core plugin.

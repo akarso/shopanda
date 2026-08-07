@@ -12,9 +12,9 @@ import (
 	"time"
 
 	cartApp "github.com/akarso/shopanda/internal/application/cart"
+	extensionapp "github.com/akarso/shopanda/internal/application/extension"
 	"github.com/akarso/shopanda/internal/application/hooks"
 	appPricing "github.com/akarso/shopanda/internal/application/pricing"
-	extensionapp "github.com/akarso/shopanda/internal/application/extension"
 	domainCart "github.com/akarso/shopanda/internal/domain/cart"
 	domainext "github.com/akarso/shopanda/internal/domain/extension"
 	"github.com/akarso/shopanda/internal/domain/pricing"

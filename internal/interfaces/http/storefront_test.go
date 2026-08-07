@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/akarso/shopanda/internal/application/composition"
+	themeapp "github.com/akarso/shopanda/internal/application/theme"
 	"github.com/akarso/shopanda/internal/domain/catalog"
 	"github.com/akarso/shopanda/internal/domain/legal"
 	"github.com/akarso/shopanda/internal/domain/pricing"
@@ -21,7 +22,6 @@ import (
 	"github.com/akarso/shopanda/internal/domain/shared"
 	"github.com/akarso/shopanda/internal/domain/store"
 	"github.com/akarso/shopanda/internal/domain/theme"
-	themeapp "github.com/akarso/shopanda/internal/application/theme"
 	"github.com/akarso/shopanda/internal/platform/apperror"
 
 	shophttp "github.com/akarso/shopanda/internal/interfaces/http"
@@ -1092,7 +1092,7 @@ func TestStorefrontHandler_Product_RendersWeeeDisclosure(t *testing.T) {
 	}
 	engine := createTestThemeWithWeeeProduct(t)
 	cfg := stubLegalConfig{
-		legal.ScopedConfigKey("store-eu", legal.WeeeEnabledConfigKey):               true,
+		legal.ScopedConfigKey("store-eu", legal.WeeeEnabledConfigKey):              true,
 		legal.ScopedConfigKey("store-eu", legal.WeeeProducerRegistrationConfigKey): "PL-WEEE-99",
 	}
 	pdp := composition.NewPipeline[composition.ProductContext]()
@@ -1159,9 +1159,9 @@ func TestStorefrontHandler_Product_RendersGpsrDisclosure(t *testing.T) {
 	}
 	engine := createTestThemeWithGpsrProduct(t)
 	cfg := stubLegalConfig{
-		legal.ScopedConfigKey("store-eu", legal.GpsrEnabledConfigKey):              true,
-		legal.ScopedConfigKey("store-eu", legal.GpsrManufacturerNameConfigKey):     "Demo Apparel GmbH",
-		legal.ScopedConfigKey("store-eu", legal.GpsrManufacturerContactConfigKey):  "safety@demo.example",
+		legal.ScopedConfigKey("store-eu", legal.GpsrEnabledConfigKey):             true,
+		legal.ScopedConfigKey("store-eu", legal.GpsrManufacturerNameConfigKey):    "Demo Apparel GmbH",
+		legal.ScopedConfigKey("store-eu", legal.GpsrManufacturerContactConfigKey): "safety@demo.example",
 	}
 	pdp := composition.NewPipeline[composition.ProductContext]()
 	pdp.AddStep(composition.NewGpsrStep(cfg))

@@ -27,17 +27,17 @@ func (s CartStatus) IsValid() bool {
 
 // Cart represents a shopping cart.
 type Cart struct {
-	ID            string
-	CustomerID    string // empty for anonymous/guest carts
-	status        CartStatus
-	Currency      string
-	CouponCode    string // applied coupon code, empty = none
-	MergedGuestID string // last guest cart merged into this cart for retry-safe handoff
-	Version       int    // optimistic lock counter, managed by repository
-	Items                 []Item
-	CreatedAt             time.Time
-	UpdatedAt             time.Time
-	RecoveryEmailSentAt   *time.Time
+	ID                  string
+	CustomerID          string // empty for anonymous/guest carts
+	status              CartStatus
+	Currency            string
+	CouponCode          string // applied coupon code, empty = none
+	MergedGuestID       string // last guest cart merged into this cart for retry-safe handoff
+	Version             int    // optimistic lock counter, managed by repository
+	Items               []Item
+	CreatedAt           time.Time
+	UpdatedAt           time.Time
+	RecoveryEmailSentAt *time.Time
 }
 
 // NewCart creates a Cart with validation. customerID may be empty for guest carts.

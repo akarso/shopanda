@@ -8,17 +8,17 @@ import (
 
 // Config keys for EPR packaging compliance (store-scoped via ScopedConfigKey).
 const (
-	EprEnabledConfigKey              = "legal.epr_enabled"
-	EprSchemeRegistrationConfigKey   = "legal.epr_scheme_registration_id"
+	EprEnabledConfigKey            = "legal.epr_enabled"
+	EprSchemeRegistrationConfigKey = "legal.epr_scheme_registration_id"
 )
 
 // Product attribute codes for EPR packaging metadata.
 const (
-	AttrEprPackagingMaterial      = "epr_packaging_material"
-	AttrEprPackagingWeightG       = "epr_packaging_weight_g"
-	AttrEprRecyclable             = "epr_recyclable"
-	AttrEprRecycledContentPct     = "epr_recycled_content_pct"
-	AttrEprSchemeRegistrationID   = "epr_scheme_registration_id"
+	AttrEprPackagingMaterial    = "epr_packaging_material"
+	AttrEprPackagingWeightG     = "epr_packaging_weight_g"
+	AttrEprRecyclable           = "epr_recyclable"
+	AttrEprRecycledContentPct   = "epr_recycled_content_pct"
+	AttrEprSchemeRegistrationID = "epr_scheme_registration_id"
 )
 
 // AttributeGroupEpr is the admin attribute group code for EPR fields.

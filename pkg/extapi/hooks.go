@@ -33,12 +33,12 @@ func (c *HookContext) Set(key string, value interface{}) {
 }
 
 const (
-	HookCartAddItemBefore      HookPoint = "cart.add_item.before"
-	HookCartAddItemAfter       HookPoint = "cart.add_item.after"
-	HookCartUpdateItemBefore   HookPoint = "cart.update_item.before"
-	HookCartRemoveItemAfter    HookPoint = "cart.remove_item.after"
-	HookCartRecalculateBefore  HookPoint = "cart.recalculate.before"
-	HookCartValidate           HookPoint = "cart.validate"
+	HookCartAddItemBefore     HookPoint = "cart.add_item.before"
+	HookCartAddItemAfter      HookPoint = "cart.add_item.after"
+	HookCartUpdateItemBefore  HookPoint = "cart.update_item.before"
+	HookCartRemoveItemAfter   HookPoint = "cart.remove_item.after"
+	HookCartRecalculateBefore HookPoint = "cart.recalculate.before"
+	HookCartValidate          HookPoint = "cart.validate"
 )
 
 var hookPoints = []HookPoint{

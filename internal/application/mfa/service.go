@@ -84,9 +84,9 @@ func (s *Service) ensureDeployed() error {
 
 // Status describes MFA enrollment for the current user.
 type Status struct {
-	Enrolled        bool `json:"enrolled"`
-	PolicyRequired  bool `json:"policy_required"`
-	DeployEnabled   bool `json:"deploy_enabled"`
+	Enrolled       bool `json:"enrolled"`
+	PolicyRequired bool `json:"policy_required"`
+	DeployEnabled  bool `json:"deploy_enabled"`
 }
 
 // EnrollBeginResult holds enrollment setup data shown once.

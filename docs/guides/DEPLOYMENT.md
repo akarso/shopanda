@@ -63,6 +63,8 @@ go build -o shopanda ./cmd/api
 
 If you already have a compiled binary, skip this step.
 
+Do **not** commit build outputs (`shopanda`, `api`, or other binaries) to git. Ship releases via a local/CI build or a container image (see [Deploy With Docker](#deploy-with-docker)). The root `api` binary is gitignored.
+
 ### 4. Run first-time setup
 
 **Option A — CLI (operators):**
@@ -262,6 +264,8 @@ See `configs/config.example.yaml` for YAML equivalents and other demo plugin fla
 ```bash
 docker build -t shopanda .
 ```
+
+Prefer deploying the image (or a CI-built artifact) over checking a compiled binary into the repository. Container registry publishing (e.g. GHCR) is planned in Phase 10 PR-1010.
 
 The current Dockerfile:
 
