@@ -201,7 +201,8 @@ func TestPlugin_Init_RequiresHMACWhenConfigured(t *testing.T) {
 	}
 	routes := app.PublicRoutes()
 	body := []byte(`{"order_id":"ord-1","status":"CONFIRMED"}`)
-	now := time.Unix(1_700_000_000, 0)
+	// Sign with wall-clock now so the request stays inside the 5m freshness window.
+	now := time.Now()
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/integrations/integrationdemo/order-status", bytes.NewReader(body))
 	integrationhttp.SignRequest(req, body, "erp-secret", "hmac-secret", now.Unix(), "nonce-hmac")
 	rec := httptest.NewRecorder()

@@ -25,6 +25,15 @@ func (m *mockVariantRepoForStock) FindByID(_ context.Context, _ string) (*catalo
 func (m *mockVariantRepoForStock) FindBySKU(_ context.Context, sku string) (*catalog.Variant, error) {
 	return m.variants[sku], nil
 }
+func (m *mockVariantRepoForStock) FindBySKUs(_ context.Context, skus []string) (map[string]*catalog.Variant, error) {
+	out := make(map[string]*catalog.Variant, len(skus))
+	for _, sku := range skus {
+		if v, ok := m.variants[sku]; ok {
+			out[sku] = v
+		}
+	}
+	return out, nil
+}
 func (m *mockVariantRepoForStock) ListByProductID(_ context.Context, _ string, _, _ int) ([]catalog.Variant, error) {
 	return nil, nil
 }
@@ -60,6 +69,15 @@ func (m *mockStockRepo) SetStock(_ context.Context, entry *inventory.StockEntry)
 		return m.setErr
 	}
 	m.entries[entry.VariantID] = entry.Quantity
+	return nil
+}
+
+func (m *mockStockRepo) SetStocks(ctx context.Context, entries []inventory.StockEntry) error {
+	for i := range entries {
+		if err := m.SetStock(ctx, &entries[i]); err != nil {
+			return err
+		}
+	}
 	return nil
 }
 

@@ -33,6 +33,15 @@ func (m *mockVariantRepoForPrice) FindByID(_ context.Context, id string) (*catal
 func (m *mockVariantRepoForPrice) FindBySKU(_ context.Context, sku string) (*catalog.Variant, error) {
 	return m.variants[sku], nil
 }
+func (m *mockVariantRepoForPrice) FindBySKUs(_ context.Context, skus []string) (map[string]*catalog.Variant, error) {
+	out := make(map[string]*catalog.Variant, len(skus))
+	for _, sku := range skus {
+		if v, ok := m.variants[sku]; ok {
+			out[sku] = v
+		}
+	}
+	return out, nil
+}
 func (m *mockVariantRepoForPrice) ListByProductID(_ context.Context, _ string, _, _ int) ([]catalog.Variant, error) {
 	return nil, nil
 }
@@ -362,6 +371,15 @@ func (m *countingVariantRepoForPrice) FindByID(_ context.Context, id string) (*c
 func (m *countingVariantRepoForPrice) FindBySKU(_ context.Context, sku string) (*catalog.Variant, error) {
 	m.findBySKUCalls++
 	return m.variants[sku], nil
+}
+func (m *countingVariantRepoForPrice) FindBySKUs(_ context.Context, skus []string) (map[string]*catalog.Variant, error) {
+	out := make(map[string]*catalog.Variant, len(skus))
+	for _, sku := range skus {
+		if v, ok := m.variants[sku]; ok {
+			out[sku] = v
+		}
+	}
+	return out, nil
 }
 func (m *countingVariantRepoForPrice) ListByProductID(_ context.Context, _ string, _, _ int) ([]catalog.Variant, error) {
 	return nil, nil

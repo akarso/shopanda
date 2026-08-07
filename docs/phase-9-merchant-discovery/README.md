@@ -1,6 +1,6 @@
 # Phase 9 — Integrator Backlog & Merchant Discovery
 
-**Status:** **In progress** (PR-856+)
+**Status:** **Shipped** (PR-856+)
 
 Phase 8 (integrator platform) shipped PR-800–855. Phase 9 cleared the **unscheduled integrator backlog**, **Phase 7 carryover**, and **merchant-facing discovery** (PR-856–908).
 

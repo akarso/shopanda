@@ -2,7 +2,7 @@
 
 | PR | Track | Status | Spec |
 | --- | --- | --- | --- |
-| PR-1000 | A | planned | [Unbreak the test suite](PR-1000.md) |
+| PR-1000 | A | done | [Unbreak the test suite](PR-1000.md) |
 | PR-1001 | A | planned | [Repo hygiene](PR-1001.md) |
 | PR-1002 | A | planned | [GitHub Actions CI (unit)](PR-1002.md) |
 | PR-1003 | A | planned | [CI integration job](PR-1003.md) |

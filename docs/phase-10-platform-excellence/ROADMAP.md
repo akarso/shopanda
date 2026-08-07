@@ -187,7 +187,8 @@ Optional history rewrite (`git filter-repo` to purge historical `api` blobs) is 
 
 | PR | Track | Status |
 | --- | --- | --- |
-| 1000–1003 | A | planned |
+| 1000 | A | done |
+| 1001–1003 | A | planned |
 | 1004–1008 | B | planned |
 | 1009–1012 | C | planned |
 | 1013–1019 | D | planned |

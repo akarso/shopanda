@@ -61,7 +61,7 @@ func TestExtensionPortAdminHandler_ListPorts(t *testing.T) {
 	if tax == nil {
 		t.Fatal("tax port not found")
 	}
-	if tax["status"] != "planned" {
-		t.Fatalf("tax status = %v", tax["status"])
+	if tax["status"] != "core_default" {
+		t.Fatalf("tax status = %v, want core_default", tax["status"])
 	}
 }
