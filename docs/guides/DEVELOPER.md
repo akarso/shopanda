@@ -23,6 +23,7 @@ For deployment and operational setup, see [Deployment Guide](DEPLOYMENT.md). For
 - [Use the API Reference](#use-the-api-reference)
 - [Integrator Platform (Phase 8)](#integrator-platform-phase-8)
 - [Roadmap and Future Work](#roadmap-and-future-work)
+- [Continuous Integration](#continuous-integration)
 - [Practical Advice](#practical-advice)
 
 ## Architecture Overview
@@ -637,6 +638,32 @@ Phases 1–8 are **complete**. **Phase 9 — Integrator Backlog & Merchant Disco
 Full plans: [Phase 5 Roadmap](../phase-5-maturity/ROADMAP.md) · [Phase 6 Roadmap](../phase-6-merchant-complete/ROADMAP.md) · [Phase 7 Roadmap](../phase-7-customization-platform/ROADMAP.md) · [Phase 8 Roadmap](../phase-8-integrator-platform/ROADMAP.md) · [Phase 9 Roadmap](../phase-9-merchant-discovery/ROADMAP.md) · [Integrator Platform spec](../phase-8-integrator-platform/specs/INTEGRATOR_PLATFORM.md). EU mapping: [Compliance Reference](../phase-5-maturity/specs/COMPLIANCE_EU.md). Plugin loading: [Dynamic loading research](../phase-5-maturity/specs/DYNAMIC_PLUGIN_LOADING.md).
 
 When extending the platform, keep hexagonal rules: domain ports first, explicit wiring, plugin only when behavior is optional or author-owned.
+
+## Continuous Integration
+
+PRs targeting `main` / `dev`, and pushes to those branches, run [`.github/workflows/ci.yml`](../../.github/workflows/ci.yml). The Actions check name is **`CI / unit`**.
+
+Steps:
+
+1. `go mod verify` (with `GOFLAGS=-mod=readonly`)
+2. `gofmt -l .` must be empty
+3. `go vet ./...`
+4. `go test ./...` (no `SHOPANDA_TEST_DSN` — Postgres integration tests skip)
+
+The workflow **reports** the check; it does not by itself block merges. A repository admin must require **`CI / unit`** on `main` and `dev` (Settings → Rules / Branch protection → required status checks). Until that is configured, a red or pending check can still be merged.
+
+Before opening a PR, run the same checks locally:
+
+```bash
+export GOFLAGS=-mod=readonly
+go mod verify
+test -z "$(gofmt -l .)"
+go vet ./...
+go test ./...
+go build ./cmd/api/
+```
+
+A Postgres-backed integration job is planned in [PR-1003](../phase-10-platform-excellence/prs/PR-1003.md). To run integration tests locally, set `SHOPANDA_TEST_DSN` (see `.env.example`).
 
 ## Practical Advice
 
