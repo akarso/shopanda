@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -11,23 +12,23 @@ import (
 	"github.com/akarso/shopanda/internal/platform/apperror"
 )
 
-type failingFailuresStore struct {
+type failingIncrementStore struct {
 	auth.AttemptStore
-	failCheck bool
+	failIncrement bool
 }
 
-func (s *failingFailuresStore) Failures(ctx context.Context, key string) (int, error) {
-	if s.failCheck {
+func (s *failingIncrementStore) Increment(ctx context.Context, key string, window time.Duration) (int, error) {
+	if s.failIncrement {
 		return 0, errors.New("cache unavailable")
 	}
-	return s.AttemptStore.Failures(ctx, key)
+	return s.AttemptStore.Increment(ctx, key, window)
 }
 
-func TestLogin_LockoutCheckFailsOpenOnStoreError(t *testing.T) {
+func TestLogin_LockoutReserveFailsOpenOnStoreError(t *testing.T) {
 	repo := newMockRepo()
 	svc := newTestService(repo)
 	inner := auth.NewMemoryAttemptStore(100)
-	store := &failingFailuresStore{AttemptStore: inner, failCheck: true}
+	store := &failingIncrementStore{AttemptStore: inner, failIncrement: true}
 	svc.SetLockout(auth.LockoutSettings{
 		Enabled:     true,
 		MaxFailures: 3,
@@ -45,7 +46,7 @@ func TestLogin_LockoutCheckFailsOpenOnStoreError(t *testing.T) {
 		Email: "open@example.com", Password: "password123", ClientIP: "3.3.3.3",
 	})
 	if err != nil {
-		t.Fatalf("login should fail open on lockout check error, got %v", err)
+		t.Fatalf("login should fail open on lockout reserve error, got %v", err)
 	}
 	if out.Token == "" {
 		t.Fatal("expected token when lockout store is unavailable")
@@ -327,6 +328,73 @@ func TestLogin_LockoutTTLExpiry(t *testing.T) {
 	})
 	if err != nil {
 		t.Fatalf("after TTL: %v", err)
+	}
+}
+
+func TestLogin_LockoutConcurrentBatchRespectsMaxFailures(t *testing.T) {
+	repo := newMockRepo()
+	svc := newTestService(repo)
+	store := auth.NewMemoryAttemptStore(100)
+	const maxFailures = 3
+	svc.SetLockout(auth.LockoutSettings{
+		Enabled:     true,
+		MaxFailures: maxFailures,
+		Window:      time.Minute,
+	}, store)
+
+	_, err := svc.Register(context.Background(), auth.RegisterInput{
+		Email: "race@example.com", Password: "password123",
+	})
+	if err != nil {
+		t.Fatalf("Register: %v", err)
+	}
+
+	const workers = 20
+	type result struct {
+		unauthorized int
+		rateLimited  int
+		other        int
+	}
+	var (
+		mu sync.Mutex
+		wg sync.WaitGroup
+		got result
+	)
+	wg.Add(workers)
+	for i := 0; i < workers; i++ {
+		go func() {
+			defer wg.Done()
+			_, err := svc.Login(context.Background(), auth.LoginInput{
+				Email: "race@example.com", Password: "wrong", ClientIP: "7.7.7.7",
+			})
+			mu.Lock()
+			defer mu.Unlock()
+			switch {
+			case apperror.Is(err, apperror.CodeUnauthorized):
+				got.unauthorized++
+			case apperror.Is(err, apperror.CodeRateLimited):
+				got.rateLimited++
+			default:
+				got.other++
+			}
+		}()
+	}
+	wg.Wait()
+
+	if got.other != 0 {
+		t.Fatalf("unexpected errors: %+v", got)
+	}
+	// Reserve-before-verify: at most maxFailures password guesses (n=1..max).
+	// n < max → unauthorized; n == max → rate_limited after verify; n > max → rate_limited at reserve.
+	if got.unauthorized != maxFailures-1 {
+		t.Fatalf("unauthorized = %d, want %d (only attempts below threshold)", got.unauthorized, maxFailures-1)
+	}
+	if got.rateLimited != workers-(maxFailures-1) {
+		t.Fatalf("rate_limited = %d, want %d", got.rateLimited, workers-(maxFailures-1))
+	}
+	n, err := store.Failures(context.Background(), auth.LockoutKey("7.7.7.7", "race@example.com"))
+	if err != nil || n != workers {
+		t.Fatalf("Failures after batch = (%d, %v), want %d", n, err, workers)
 	}
 }
 

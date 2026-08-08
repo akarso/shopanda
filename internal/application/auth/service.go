@@ -549,7 +549,10 @@ func (s *Service) Login(ctx context.Context, in LoginInput) (LoginOutput, error)
 	}
 
 	lockKey := LockoutKey(in.ClientIP, email)
-	if err := s.checkLockout(ctx, lockKey); err != nil {
+	// Reserve a slot before password work so concurrent guesses for the same
+	// IP+email cannot all pass a pre-check and exceed max_failures.
+	reserved, err := s.reserveLockoutAttempt(ctx, lockKey)
+	if err != nil {
 		return LoginOutput{}, err
 	}
 
@@ -558,19 +561,20 @@ func (s *Service) Login(ctx context.Context, in LoginInput) (LoginOutput, error)
 		return LoginOutput{}, fmt.Errorf("auth service: login: %w", err)
 	}
 	if c == nil {
-		return LoginOutput{}, s.recordLoginFailure(ctx, lockKey)
+		return LoginOutput{}, s.failedLoginAfterReserve(reserved)
 	}
 
 	if c.Status != customer.StatusActive {
-		return LoginOutput{}, s.recordLoginFailure(ctx, lockKey)
+		return LoginOutput{}, s.failedLoginAfterReserve(reserved)
 	}
 
 	if err := password.Compare(c.PasswordHash, in.Password); err != nil {
-		return LoginOutput{}, s.recordLoginFailure(ctx, lockKey)
+		return LoginOutput{}, s.failedLoginAfterReserve(reserved)
 	}
 
 	// Clear lockout best-effort: never block a valid password on cache outage.
-	// Skip Reset entirely when no counter exists (happy path).
+	// Skip Reset entirely when no counter exists (happy path). Includes the
+	// reservation from this attempt.
 	s.clearLockoutBestEffort(ctx, lockKey)
 
 	if s.mfa != nil {
@@ -611,37 +615,35 @@ func (s *Service) Login(ctx context.Context, in LoginInput) (LoginOutput, error)
 	}, nil
 }
 
-func (s *Service) checkLockout(ctx context.Context, key string) error {
+// reserveLockoutAttempt atomically counts this login toward the lockout budget
+// before password verification. Returns the post-increment count (0 if lockout
+// is off or the store failed open). Returns a rate-limited error when the
+// reserved count already exceeds MaxFailures (no password check).
+func (s *Service) reserveLockoutAttempt(ctx context.Context, key string) (int, error) {
 	if !s.lockout.Enabled || s.attempts == nil {
-		return nil
+		return 0, nil
 	}
-	n, err := s.attempts.Failures(ctx, key)
+	n, err := s.attempts.Increment(ctx, key, s.lockout.Window)
 	if err != nil {
 		// Fail open: transient cache/store errors must not take down login.
-		s.log.Warn("auth.login.lockout_check_failed", map[string]interface{}{
+		s.log.Warn("auth.login.lockout_reserve_failed", map[string]interface{}{
 			"error": err.Error(),
 		})
-		return nil
+		return 0, nil
 	}
-	if n >= s.lockout.MaxFailures {
-		return apperror.RateLimited("too many login attempts, try again later")
+	if n > s.lockout.MaxFailures {
+		return 0, apperror.RateLimited("too many login attempts, try again later")
 	}
-	return nil
+	return n, nil
 }
 
-func (s *Service) recordLoginFailure(ctx context.Context, key string) error {
+func (s *Service) failedLoginAfterReserve(reserved int) error {
 	unauthorized := apperror.Unauthorized("invalid email or password")
 	if !s.lockout.Enabled || s.attempts == nil {
 		return unauthorized
 	}
-	n, err := s.attempts.Increment(ctx, key, s.lockout.Window)
-	if err != nil {
-		s.log.Warn("auth.login.lockout_increment_failed", map[string]interface{}{
-			"error": err.Error(),
-		})
-		return unauthorized
-	}
-	if n >= s.lockout.MaxFailures {
+	// reserved == 0 means fail-open (no slot recorded).
+	if reserved >= s.lockout.MaxFailures {
 		return apperror.RateLimited("too many login attempts, try again later")
 	}
 	return unauthorized
