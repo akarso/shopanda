@@ -156,10 +156,12 @@ func TestLogin_LockoutTTLExpiry(t *testing.T) {
 	repo := newMockRepo()
 	svc := newTestService(repo)
 	store := auth.NewMemoryAttemptStore(100)
+	// Window must outlast bcrypt on failed attempts (hundreds of ms each).
+	window := 2 * time.Second
 	svc.SetLockout(auth.LockoutSettings{
 		Enabled:     true,
 		MaxFailures: 2,
-		Window:      40 * time.Millisecond,
+		Window:      window,
 	}, store)
 
 	_, _ = svc.Register(context.Background(), auth.RegisterInput{
@@ -178,7 +180,7 @@ func TestLogin_LockoutTTLExpiry(t *testing.T) {
 		t.Fatalf("want locked, got %v", err)
 	}
 
-	time.Sleep(50 * time.Millisecond)
+	time.Sleep(window + 50*time.Millisecond)
 	_, err = svc.Login(context.Background(), auth.LoginInput{
 		Email: "ttl@example.com", Password: "password123", ClientIP: "2.2.2.2",
 	})
