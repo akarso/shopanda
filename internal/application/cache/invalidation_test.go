@@ -30,6 +30,11 @@ func (m *mockCache) Incr(key string, _ int64, _ time.Duration) (int64, error) {
 	m.entries[key] = true
 	return 1, nil
 }
+func (m *mockCache) CompareAndDelete(key string, _ int64) (bool, error) {
+	_, ok := m.entries[key]
+	delete(m.entries, key)
+	return ok, nil
+}
 func (m *mockCache) Delete(key string) error { delete(m.entries, key); return nil }
 func (m *mockCache) DeleteByPrefix(_ context.Context, prefix string) error {
 	m.deletedPrefix = prefix

@@ -3,7 +3,6 @@ package auth
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"sync"
 	"testing"
 	"time"
@@ -76,6 +75,36 @@ func (c *stubCache) Incr(key string, delta int64, ttl time.Duration) (int64, err
 	return n, nil
 }
 
+func (c *stubCache) CompareAndDelete(key string, expected int64) (bool, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	now := time.Now()
+	e, ok := c.data[key]
+	if !ok || (!e.exp.IsZero() && now.After(e.exp)) {
+		delete(c.data, key)
+		return false, nil
+	}
+	b, err := json.Marshal(e.value)
+	if err != nil {
+		return false, err
+	}
+	var n int64
+	if err := json.Unmarshal(b, &n); err != nil {
+		var obj struct {
+			Count int64 `json:"count"`
+		}
+		if err := json.Unmarshal(b, &obj); err != nil {
+			return false, nil
+		}
+		n = obj.Count
+	}
+	if n != expected {
+		return false, nil
+	}
+	delete(c.data, key)
+	return true, nil
+}
+
 func (c *stubCache) Delete(key string) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -98,12 +127,12 @@ func TestCacheAttemptStore_IncrementAndReset(t *testing.T) {
 	if err != nil || got != 1 {
 		t.Fatalf("Failures = (%d, %v), want (1, nil)", got, err)
 	}
-	if err := store.Reset(ctx, key, time.Minute); err != nil {
-		t.Fatalf("Reset: %v", err)
+	if err := store.ResetIf(ctx, key, 1); err != nil {
+		t.Fatalf("ResetIf: %v", err)
 	}
 	got, err = store.Failures(ctx, key)
 	if err != nil || got != 0 {
-		t.Fatalf("after Reset Failures = (%d, %v), want (0, nil)", got, err)
+		t.Fatalf("after ResetIf Failures = (%d, %v), want (0, nil)", got, err)
 	}
 }
 
@@ -166,35 +195,25 @@ func TestParseLockoutCount_RequiresCountField(t *testing.T) {
 	}
 }
 
-func TestCacheAttemptStore_ResetFallbackUsesPositiveTTL(t *testing.T) {
-	c := &deleteFailCache{stubCache: newStubCache()}
-	store := NewCacheAttemptStore(c, nil)
+func TestCacheAttemptStore_ResetIfPreservesConcurrentIncrement(t *testing.T) {
+	store := NewCacheAttemptStore(newStubCache(), nil)
 	ctx := context.Background()
-	key := "2.2.2.2|tomb@example.com"
-	ck := store.cacheKey(key)
-	window := 30 * time.Second
+	key := "3.3.3.3|cas@example.com"
 
-	if err := store.Reset(ctx, key, window); err != nil {
-		t.Fatalf("Reset: %v", err)
+	if _, err := store.Increment(ctx, key, time.Minute); err != nil {
+		t.Fatalf("Increment: %v", err)
 	}
-	e, ok := c.data[ck]
-	if !ok {
-		t.Fatal("expected zero tombstone after Delete failure")
+	// Simulate concurrent failure after Failures observed 1.
+	if _, err := store.Increment(ctx, key, time.Minute); err != nil {
+		t.Fatalf("Increment #2: %v", err)
 	}
-	if e.exp.IsZero() {
-		t.Fatal("tombstone TTL must be positive (not immortal)")
+	if err := store.ResetIf(ctx, key, 1); err != nil {
+		t.Fatalf("ResetIf: %v", err)
 	}
-	if got, err := store.Failures(ctx, key); err != nil || got != 0 {
-		t.Fatalf("Failures = (%d, %v), want (0, nil)", got, err)
+	got, err := store.Failures(ctx, key)
+	if err != nil || got != 2 {
+		t.Fatalf("Failures after mismatched ResetIf = (%d, %v), want (2, nil)", got, err)
 	}
-}
-
-type deleteFailCache struct {
-	*stubCache
-}
-
-func (c *deleteFailCache) Delete(key string) error {
-	return errors.New("delete unavailable")
 }
 
 // TestCacheAttemptStore_StubConcurrentIncrementsPreserved checks the in-memory

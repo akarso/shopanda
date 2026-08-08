@@ -121,6 +121,34 @@ func (s *CacheStore) Incr(key string, delta int64, ttl time.Duration) (int64, er
 	return newVal, nil
 }
 
+// CompareAndDelete deletes key only if it holds integer counter expected.
+func (s *CacheStore) CompareAndDelete(key string, expected int64) (bool, error) {
+	res, err := s.db.Exec(
+		`DELETE FROM cache WHERE key = $1
+		   AND (expires_at IS NULL OR expires_at >= now())
+		   AND (
+		     (jsonb_typeof(value) = 'number'
+		      AND (value #>> '{}') ~ '^-?[0-9]+$'
+		      AND (value #>> '{}')::bigint = $2)
+		     OR
+		     (jsonb_typeof(value) = 'object'
+		      AND (value ? 'count')
+		      AND jsonb_typeof(value->'count') = 'number'
+		      AND (value->>'count') ~ '^-?[0-9]+$'
+		      AND (value->>'count')::bigint = $2)
+		   )`,
+		key, expected,
+	)
+	if err != nil {
+		return false, fmt.Errorf("cache_store: compare-and-delete %q: %w", key, err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return false, fmt.Errorf("cache_store: compare-and-delete %q: %w", key, err)
+	}
+	return n > 0, nil
+}
+
 // Delete removes the entry for key. A missing key is not an error.
 func (s *CacheStore) Delete(key string) error {
 	_, err := s.db.Exec(`DELETE FROM cache WHERE key = $1`, key)

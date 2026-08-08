@@ -56,7 +56,7 @@ type failingResetStore struct {
 	auth.AttemptStore
 }
 
-func (s *failingResetStore) Reset(ctx context.Context, key string, window time.Duration) error {
+func (s *failingResetStore) ResetIf(ctx context.Context, key string, expected int) error {
 	return errors.New("cache delete failed")
 }
 
@@ -108,12 +108,12 @@ func (s *failingFailuresThenResetStore) Increment(ctx context.Context, key strin
 	return s.inner.Increment(ctx, key, window)
 }
 
-func (s *failingFailuresThenResetStore) Reset(ctx context.Context, key string, window time.Duration) error {
+func (s *failingFailuresThenResetStore) ResetIf(ctx context.Context, key string, expected int) error {
 	s.resetCalls++
-	return s.inner.Reset(ctx, key, window)
+	return s.inner.ResetIf(ctx, key, expected)
 }
 
-func TestLogin_LockoutFailuresReadErrorStillResets(t *testing.T) {
+func TestLogin_LockoutFailuresReadErrorSkipsReset(t *testing.T) {
 	repo := newMockRepo()
 	svc := newTestService(repo)
 	inner := auth.NewMemoryAttemptStore(100)
@@ -141,13 +141,8 @@ func TestLogin_LockoutFailuresReadErrorStillResets(t *testing.T) {
 	if out.Token == "" {
 		t.Fatal("expected token")
 	}
-	if store.resetCalls != 1 {
-		t.Fatalf("Reset calls = %d, want 1 (must clear despite Failures error)", store.resetCalls)
-	}
-	store.failCheck = false
-	got, err := store.Failures(context.Background(), auth.LockoutKey("5.5.5.5", "stale@example.com"))
-	if err != nil || got != 0 {
-		t.Fatalf("Failures after login = (%d, %v), want (0, nil)", got, err)
+	if store.resetCalls != 0 {
+		t.Fatalf("ResetIf calls = %d, want 0 when Failures errors (avoid racing delete)", store.resetCalls)
 	}
 }
 
@@ -191,12 +186,12 @@ func TestMemoryAttemptStore_IncrementTTLAndReset(t *testing.T) {
 	}
 
 	_, _ = store.Increment(ctx, key, time.Minute)
-	if err := store.Reset(ctx, key, time.Minute); err != nil {
-		t.Fatalf("Reset: %v", err)
+	if err := store.ResetIf(ctx, key, 2); err != nil {
+		t.Fatalf("ResetIf: %v", err)
 	}
 	got, err = store.Failures(ctx, key)
 	if err != nil || got != 0 {
-		t.Fatalf("after Reset Failures = (%d, %v), want (0, nil)", got, err)
+		t.Fatalf("after ResetIf Failures = (%d, %v), want (0, nil)", got, err)
 	}
 }
 
@@ -251,7 +246,7 @@ func TestLogin_LockoutAfterFailuresAndResetOnSuccess(t *testing.T) {
 		t.Fatal("expected token for other IP")
 	}
 
-	_ = store.Reset(context.Background(), auth.LockoutKey("9.9.9.9", "lock@example.com"), time.Minute)
+	_ = store.ResetIf(context.Background(), auth.LockoutKey("9.9.9.9", "lock@example.com"), 3)
 	out, err = svc.Login(context.Background(), auth.LoginInput{
 		Email: "lock@example.com", Password: "password123", ClientIP: "9.9.9.9",
 	})

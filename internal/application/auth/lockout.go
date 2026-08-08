@@ -20,9 +20,9 @@ type AttemptStore interface {
 	// Increment records a failure and refreshes the sliding window TTL for key
 	// (each call extends expires-at by a full window from now).
 	Increment(ctx context.Context, key string, window time.Duration) (int, error)
-	// Reset clears the counter. window is used if a Set(0) fallback is needed
-	// after Delete fails (must be > 0 so zero tombstones expire).
-	Reset(ctx context.Context, key string, window time.Duration) error
+	// ResetIf clears the counter only when its current value equals expected,
+	// so a concurrent Increment is not erased by a racing successful login.
+	ResetIf(ctx context.Context, key string, expected int) error
 }
 
 // LockoutSettings configures failed-login lockout on Service.
@@ -131,22 +131,12 @@ func (s *CacheAttemptStore) Increment(_ context.Context, key string, window time
 	return int(n), nil
 }
 
-func (s *CacheAttemptStore) Reset(_ context.Context, key string, window time.Duration) error {
-	ck := s.cacheKey(key)
-	if err := s.cache.Delete(ck); err != nil {
-		ttl := window
-		if ttl <= 0 {
-			ttl = time.Minute
-		}
-		// Overwrite to zero with a positive TTL so tombstones expire (TTL 0 is immortal).
-		if setErr := s.cache.Set(ck, int64(0), ttl); setErr != nil {
-			return fmt.Errorf("auth lockout cache reset: delete: %v; set: %w", err, setErr)
-		}
-		if s.log != nil {
-			s.log.Warn("auth.lockout.reset_delete_failed_used_set_fallback", map[string]interface{}{
-				"error": err.Error(),
-			})
-		}
+func (s *CacheAttemptStore) ResetIf(_ context.Context, key string, expected int) error {
+	if expected <= 0 {
+		return nil
+	}
+	if _, err := s.cache.CompareAndDelete(s.cacheKey(key), int64(expected)); err != nil {
+		return fmt.Errorf("auth lockout cache compare-and-delete: %w", err)
 	}
 	return nil
 }
@@ -232,10 +222,18 @@ func (s *MemoryAttemptStore) Increment(_ context.Context, key string, window tim
 	return e.count, nil
 }
 
-func (s *MemoryAttemptStore) Reset(_ context.Context, key string, _ time.Duration) error {
+func (s *MemoryAttemptStore) ResetIf(_ context.Context, key string, expected int) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	delete(s.entries, key)
+	now := s.now()
+	e, ok := s.entries[key]
+	if !ok || now.After(e.expires) {
+		delete(s.entries, key)
+		return nil
+	}
+	if e.count == expected {
+		delete(s.entries, key)
+	}
 	return nil
 }
 

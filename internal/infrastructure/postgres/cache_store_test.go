@@ -83,6 +83,30 @@ func (s *stubCache) Incr(key string, delta int64, ttl time.Duration) (int64, err
 	return n, nil
 }
 
+func (s *stubCache) CompareAndDelete(key string, expected int64) (bool, error) {
+	now := time.Now()
+	e, ok := s.entries[key]
+	if !ok || (e.expiresAt != nil && e.expiresAt.Before(now)) {
+		delete(s.entries, key)
+		return false, nil
+	}
+	var n int64
+	if err := json.Unmarshal(e.value, &n); err != nil {
+		var obj struct {
+			Count int64 `json:"count"`
+		}
+		if err := json.Unmarshal(e.value, &obj); err != nil {
+			return false, nil
+		}
+		n = obj.Count
+	}
+	if n != expected {
+		return false, nil
+	}
+	delete(s.entries, key)
+	return true, nil
+}
+
 func (s *stubCache) Delete(key string) error {
 	delete(s.entries, key)
 	return nil

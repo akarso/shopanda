@@ -108,6 +108,40 @@ func (s *CacheStore) Incr(key string, delta int64, ttl time.Duration) (int64, er
 	return res, nil
 }
 
+// compareAndDeleteScript deletes KEYS[1] only when its counter equals ARGV[1].
+var compareAndDeleteScript = goredis.NewScript(`
+local raw = redis.call('GET', KEYS[1])
+if not raw then
+  return 0
+end
+local ok, decoded = pcall(cjson.decode, raw)
+local n = nil
+if ok and type(decoded) == 'number' then
+  if decoded == math.floor(decoded) then
+    n = decoded
+  end
+elseif ok and type(decoded) == 'table' and decoded.count ~= nil then
+  local c = tonumber(decoded.count)
+  if c ~= nil and c == math.floor(c) then
+    n = c
+  end
+end
+if n == tonumber(ARGV[1]) then
+  redis.call('DEL', KEYS[1])
+  return 1
+end
+return 0
+`)
+
+// CompareAndDelete deletes key only if it holds integer counter expected.
+func (s *CacheStore) CompareAndDelete(key string, expected int64) (bool, error) {
+	n, err := compareAndDeleteScript.Run(context.Background(), s.client, []string{s.key(key)}, expected).Int64()
+	if err != nil {
+		return false, fmt.Errorf("redis cache: compare-and-delete %q: %w", key, err)
+	}
+	return n == 1, nil
+}
+
 // Delete removes the entry for key. A missing key is not an error.
 func (s *CacheStore) Delete(key string) error {
 	if err := s.client.Del(context.Background(), s.key(key)).Err(); err != nil {
