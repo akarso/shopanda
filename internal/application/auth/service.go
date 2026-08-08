@@ -653,12 +653,12 @@ func (s *Service) clearLockoutBestEffort(ctx context.Context, key string) {
 	}
 	n, err := s.attempts.Failures(ctx, key)
 	if err != nil {
-		s.log.Warn("auth.login.lockout_reset_skipped", map[string]interface{}{
+		// Still attempt Reset: a transient Failures error must not leave a stale
+		// counter that could lock out a later valid login.
+		s.log.Warn("auth.login.lockout_failures_read_failed", map[string]interface{}{
 			"error": err.Error(),
 		})
-		return
-	}
-	if n == 0 {
+	} else if n == 0 {
 		return
 	}
 	if err := s.attempts.Reset(ctx, key, s.lockout.Window); err != nil {

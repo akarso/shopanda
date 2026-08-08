@@ -91,6 +91,66 @@ func TestLogin_LockoutResetFailureFailsOpen(t *testing.T) {
 	}
 }
 
+type failingFailuresThenResetStore struct {
+	inner      *auth.MemoryAttemptStore
+	failCheck  bool
+	resetCalls int
+}
+
+func (s *failingFailuresThenResetStore) Failures(ctx context.Context, key string) (int, error) {
+	if s.failCheck {
+		return 0, errors.New("cache unavailable")
+	}
+	return s.inner.Failures(ctx, key)
+}
+
+func (s *failingFailuresThenResetStore) Increment(ctx context.Context, key string, window time.Duration) (int, error) {
+	return s.inner.Increment(ctx, key, window)
+}
+
+func (s *failingFailuresThenResetStore) Reset(ctx context.Context, key string, window time.Duration) error {
+	s.resetCalls++
+	return s.inner.Reset(ctx, key, window)
+}
+
+func TestLogin_LockoutFailuresReadErrorStillResets(t *testing.T) {
+	repo := newMockRepo()
+	svc := newTestService(repo)
+	inner := auth.NewMemoryAttemptStore(100)
+	store := &failingFailuresThenResetStore{inner: inner, failCheck: true}
+	svc.SetLockout(auth.LockoutSettings{
+		Enabled:     true,
+		MaxFailures: 5,
+		Window:      time.Minute,
+	}, store)
+
+	_, err := svc.Register(context.Background(), auth.RegisterInput{
+		Email: "stale@example.com", Password: "password123",
+	})
+	if err != nil {
+		t.Fatalf("Register: %v", err)
+	}
+	_, _ = inner.Increment(context.Background(), auth.LockoutKey("5.5.5.5", "stale@example.com"), time.Minute)
+
+	out, err := svc.Login(context.Background(), auth.LoginInput{
+		Email: "stale@example.com", Password: "password123", ClientIP: "5.5.5.5",
+	})
+	if err != nil {
+		t.Fatalf("login: %v", err)
+	}
+	if out.Token == "" {
+		t.Fatal("expected token")
+	}
+	if store.resetCalls != 1 {
+		t.Fatalf("Reset calls = %d, want 1 (must clear despite Failures error)", store.resetCalls)
+	}
+	store.failCheck = false
+	got, err := store.Failures(context.Background(), auth.LockoutKey("5.5.5.5", "stale@example.com"))
+	if err != nil || got != 0 {
+		t.Fatalf("Failures after login = (%d, %v), want (0, nil)", got, err)
+	}
+}
+
 
 func TestLockoutKey_IPAndAccount(t *testing.T) {
 	got := auth.LockoutKey("1.2.3.4", "a@example.com")
