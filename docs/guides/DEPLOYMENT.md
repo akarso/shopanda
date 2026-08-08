@@ -147,6 +147,15 @@ Environment variables override YAML values.
 | `SHOPANDA_SERVER_PORT` | No | `8080` | HTTP port |
 | `SHOPANDA_SERVER_PUBLIC_BASE_URL` | Yes for real deployments | none | Public base URL used in generated links and external-facing flows |
 
+### HTTP boundary
+
+| Variable | Required | Default | Purpose |
+| --- | --- | --- | --- |
+| `SHOPANDA_HTTP_MAX_BODY_BYTES` | No | `1048576` (1 MiB) | Default max request body for non-media routes |
+| `SHOPANDA_HTTP_MEDIA_MAX_BODY_BYTES` | No | `10485760` (10 MiB) | Max body for admin media upload routes |
+
+Responses always include `X-Content-Type-Options: nosniff`, `X-Frame-Options: DENY`, and `Referrer-Policy: strict-origin-when-cross-origin`. `Strict-Transport-Security` is sent only when the request is TLS (`r.TLS != nil`) or `X-Forwarded-Proto: https` is honored from a peer in `rate_limit.trusted_proxies` — it is **absent** on plain HTTP without a trusted proxy. Terminate TLS at a reverse proxy and list that proxy under `trusted_proxies` so HSTS applies correctly.
+
 ### Database
 
 | Variable | Required | Default | Purpose |
@@ -170,7 +179,7 @@ Environment variables override YAML values.
 
 | Variable | Required | Default | Purpose |
 | --- | --- | --- | --- |
-| `SHOPANDA_AUTH_JWT_SECRET` | Yes | none | JWT HMAC secret: ≥32 bytes after trim (installer `openssl rand -hex 32` / 64 hex chars accepted as-is). Required; weak/empty values refuse startup |
+| `SHOPANDA_AUTH_JWT_SECRET` | Yes | none | JWT HMAC secret: ≥32 bytes after trailing-whitespace trim (installer `openssl rand -hex 32` / 64 hex chars accepted as-is). Leading bytes preserved. Required; weak/empty values refuse startup |
 | `SHOPANDA_AUTH_JWT_TTL` | No | `24h` | Token lifetime |
 
 ### Mail
@@ -262,7 +271,7 @@ See `configs/config.example.yaml` for YAML equivalents and other demo plugin fla
 
 - never reuse the sample database password in real environments
 - treat `SHOPANDA_AUTH_JWT_SECRET` like a production credential; rotate it if leaked
-- generate with `openssl rand -hex 32` (64 hex chars). The runtime keeps that string as HMAC/MFA key material (same as prior releases); strength checks require ≥32 bytes after trim
+- generate with `openssl rand -hex 32` (64 hex chars). The runtime keeps that string as HMAC/MFA key material (same as prior releases); strength checks require ≥32 bytes after trailing-whitespace trim (leading bytes are preserved)
 - prefer shell- or platform-injected secrets over committing secrets into YAML
 - if you expose Meilisearch to the internet, set a real master key instead of the local-dev default
 

@@ -52,15 +52,28 @@ func normalizeAndValidate(cfg *Config) error {
 	if err := normalizeAuthLockout(&cfg.Auth.Lockout); err != nil {
 		return err
 	}
+	normalizeHTTP(&cfg.HTTP)
 
 	return nil
 }
 
+func normalizeHTTP(h *HTTPConfig) {
+	if h.MaxBodyBytes <= 0 {
+		h.MaxBodyBytes = DefaultHTTPMaxBodyBytes
+	}
+	if h.MediaMaxBodyBytes <= 0 {
+		h.MediaMaxBodyBytes = DefaultHTTPMediaMaxBodyBytes
+	}
+	// Caps stay independent: a high JSON limit must not raise the media upload cap.
+}
+
 func normalizeAuthJWT(a *AuthConfig) error {
-	a.JWTSecret = strings.TrimSpace(a.JWTSecret)
-	if _, err := jwt.ParseSecret(a.JWTSecret); err != nil {
+	key, err := jwt.ParseSecret(a.JWTSecret)
+	if err != nil {
 		return fmt.Errorf("config: %w", err)
 	}
+	// Persist the same normalized material ParseSecret uses (trailing trim only).
+	a.JWTSecret = string(key)
 	return nil
 }
 

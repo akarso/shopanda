@@ -16,7 +16,7 @@ func TestParseSecret_Empty(t *testing.T) {
 	}
 	_, err = jwt.ParseSecret("   \n\t  ")
 	if err == nil || !strings.Contains(err.Error(), jwt.EnvJWTSecret) {
-		t.Fatalf("whitespace: err=%v, want %s named error", err, jwt.EnvJWTSecret)
+		t.Fatalf("whitespace-only: err=%v, want %s named error", err, jwt.EnvJWTSecret)
 	}
 }
 
@@ -53,7 +53,18 @@ func TestParseSecret_Accepts64HexWithNewline(t *testing.T) {
 		t.Fatalf("ParseSecret: %v", err)
 	}
 	if !bytes.Equal(got, []byte(jwttest.TestSecret)) {
-		t.Fatal("newline trim should yield trimmed hex text as key")
+		t.Fatal("trailing newline trim should yield trimmed hex text as key")
+	}
+}
+
+func TestParseSecret_PreservesLeadingWhitespace(t *testing.T) {
+	raw := " " + strings.Repeat("a", 32)
+	got, err := jwt.ParseSecret(raw)
+	if err != nil {
+		t.Fatalf("ParseSecret: %v", err)
+	}
+	if !bytes.Equal(got, []byte(raw)) {
+		t.Fatal("leading whitespace must remain part of key material")
 	}
 }
 

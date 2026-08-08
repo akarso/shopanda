@@ -363,8 +363,9 @@ func (h *StorefrontHandler) WithOrderLinker(linker OrderLinker) *StorefrontHandl
 
 // WithAccountSecurity enables a short-lived step-up verification checkpoint
 // for sensitive storefront account routes.
+// secret is used as-is (no TrimSpace) so it can share JWT secret material that
+// may intentionally include leading whitespace bytes.
 func (h *StorefrontHandler) WithAccountSecurity(secret string, ttl time.Duration) *StorefrontHandler {
-	secret = strings.TrimSpace(secret)
 	switch {
 	case secret == "" && ttl <= 0:
 		panic("storefront account security misconfigured: secret must not be empty and ttl must be positive")

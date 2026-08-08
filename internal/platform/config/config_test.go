@@ -59,6 +59,31 @@ func TestLoad_Defaults(t *testing.T) {
 	if cfg.Auth.Lockout.Window != "15m" {
 		t.Errorf("Auth.Lockout.Window = %q, want 15m", cfg.Auth.Lockout.Window)
 	}
+	if cfg.HTTP.MaxBodyBytes != DefaultHTTPMaxBodyBytes {
+		t.Errorf("HTTP.MaxBodyBytes = %d, want %d", cfg.HTTP.MaxBodyBytes, DefaultHTTPMaxBodyBytes)
+	}
+	if cfg.HTTP.MediaMaxBodyBytes != DefaultHTTPMediaMaxBodyBytes {
+		t.Errorf("HTTP.MediaMaxBodyBytes = %d, want %d", cfg.HTTP.MediaMaxBodyBytes, DefaultHTTPMediaMaxBodyBytes)
+	}
+}
+
+func TestHTTPConfig_MediaCapIndependentOfMaxBody(t *testing.T) {
+	withTestBaseURL(t)
+	path := writeYAML(t, `
+http:
+  max_body_bytes: 52428800
+  media_max_body_bytes: 10485760
+`)
+	cfg, err := loadCfg(t, path)
+	if err != nil {
+		t.Fatalf("Load() error: %v", err)
+	}
+	if cfg.HTTP.MaxBodyBytes != 52428800 {
+		t.Errorf("MaxBodyBytes = %d, want 52428800", cfg.HTTP.MaxBodyBytes)
+	}
+	if cfg.HTTP.MediaMaxBodyBytes != 10485760 {
+		t.Errorf("MediaMaxBodyBytes = %d, want 10485760 (must not be raised to match max_body)", cfg.HTTP.MediaMaxBodyBytes)
+	}
 }
 
 func TestLoad_YAMLOverridesDefaults(t *testing.T) {

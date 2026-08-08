@@ -3,11 +3,12 @@ package jwt
 import (
 	"fmt"
 	"strings"
+	"unicode"
 )
 
 const (
-	// MinSecretBytes is the minimum accepted secret length (byte length of the
-	// trimmed configured string). Installer output from `openssl rand -hex 32`
+	// MinSecretBytes is the minimum accepted secret length (byte length after
+	// trailing-whitespace trim). Installer output from `openssl rand -hex 32`
 	// is 64 characters and therefore satisfies this minimum as-is.
 	MinSecretBytes = 32
 
@@ -15,15 +16,18 @@ const (
 	EnvJWTSecret = "SHOPANDA_AUTH_JWT_SECRET"
 )
 
-// ParseSecret trims whitespace and returns HMAC key material.
+// ParseSecret returns HMAC key material from a configured secret string.
 //
-// The trimmed secret must be at least MinSecretBytes long. Key material is
-// always []byte(trimmedSecret) — the same interpretation used by prior
-// releases (installer 64-hex is kept as ASCII text, never decoded).
+// Only trailing Unicode whitespace is stripped (common .env / paste newlines).
+// Leading whitespace is preserved so existing secrets that happen to start with
+// a whitespace byte keep the same JWT/MFA key material across upgrades.
+//
+// The result must be at least MinSecretBytes long. Key material is always
+// []byte(normalizedSecret) — installer 64-hex is kept as ASCII text, never decoded.
 //
 // Empty/short values are rejected. Errors name SHOPANDA_AUTH_JWT_SECRET.
 func ParseSecret(raw string) ([]byte, error) {
-	s := strings.TrimSpace(raw)
+	s := trimTrailingSpace(raw)
 	if s == "" {
 		return nil, fmt.Errorf("%s: must be set (generate with: openssl rand -hex 32)", EnvJWTSecret)
 	}
@@ -34,4 +38,8 @@ func ParseSecret(raw string) ([]byte, error) {
 		)
 	}
 	return []byte(s), nil
+}
+
+func trimTrailingSpace(s string) string {
+	return strings.TrimRightFunc(s, unicode.IsSpace)
 }
