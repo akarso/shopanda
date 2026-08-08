@@ -22,9 +22,10 @@ type Cache interface {
 	// A zero TTL means the entry never expires automatically.
 	Incr(key string, delta int64, ttl time.Duration) (int64, error)
 
-	// CompareAndDelete deletes key only if it holds integer counter expected
-	// (JSON number or legacy {"count":N}). Returns true if a key was deleted.
-	CompareAndDelete(key string, expected int64) (bool, error)
+	// CompareAndSubtract subtracts expected from an integer counter when
+	// current >= expected (JSON number or legacy {"count":N}). Deletes the key
+	// when the result is 0. Returns the new count (0 if deleted or absent).
+	CompareAndSubtract(key string, expected int64) (int64, error)
 
 	// Delete removes the entry for key. A missing key is not an error.
 	Delete(key string) error

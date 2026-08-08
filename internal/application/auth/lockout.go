@@ -20,8 +20,9 @@ type AttemptStore interface {
 	// Increment records a failure and refreshes the sliding window TTL for key
 	// (each call extends expires-at by a full window from now).
 	Increment(ctx context.Context, key string, window time.Duration) (int, error)
-	// ResetIf clears the counter only when its current value equals expected,
-	// so a concurrent Increment is not erased by a racing successful login.
+	// ResetIf clears expected failures observed before a successful login by
+	// subtracting them from the counter. Concurrent increments after the
+	// observation are preserved (current - expected), not erased.
 	ResetIf(ctx context.Context, key string, expected int) error
 }
 
@@ -135,8 +136,8 @@ func (s *CacheAttemptStore) ResetIf(_ context.Context, key string, expected int)
 	if expected <= 0 {
 		return nil
 	}
-	if _, err := s.cache.CompareAndDelete(s.cacheKey(key), int64(expected)); err != nil {
-		return fmt.Errorf("auth lockout cache compare-and-delete: %w", err)
+	if _, err := s.cache.CompareAndSubtract(s.cacheKey(key), int64(expected)); err != nil {
+		return fmt.Errorf("auth lockout cache compare-and-subtract: %w", err)
 	}
 	return nil
 }
@@ -223,6 +224,9 @@ func (s *MemoryAttemptStore) Increment(_ context.Context, key string, window tim
 }
 
 func (s *MemoryAttemptStore) ResetIf(_ context.Context, key string, expected int) error {
+	if expected <= 0 {
+		return nil
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	now := s.now()
@@ -231,9 +235,15 @@ func (s *MemoryAttemptStore) ResetIf(_ context.Context, key string, expected int
 		delete(s.entries, key)
 		return nil
 	}
-	if e.count == expected {
-		delete(s.entries, key)
+	if e.count < expected {
+		return nil
 	}
+	e.count -= expected
+	if e.count == 0 {
+		delete(s.entries, key)
+		return nil
+	}
+	s.entries[key] = e
 	return nil
 }
 

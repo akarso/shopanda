@@ -108,8 +108,9 @@ func (s *CacheStore) Incr(key string, delta int64, ttl time.Duration) (int64, er
 	return res, nil
 }
 
-// compareAndDeleteScript deletes KEYS[1] only when its counter equals ARGV[1].
-var compareAndDeleteScript = goredis.NewScript(`
+// compareAndSubtractScript subtracts ARGV[1] when current >= ARGV[1].
+// Deletes the key when the result is 0. Returns the new count.
+var compareAndSubtractScript = goredis.NewScript(`
 local raw = redis.call('GET', KEYS[1])
 if not raw then
   return 0
@@ -126,20 +127,36 @@ elseif ok and type(decoded) == 'table' and decoded.count ~= nil then
     n = c
   end
 end
-if n == tonumber(ARGV[1]) then
-  redis.call('DEL', KEYS[1])
-  return 1
+if n == nil then
+  return 0
 end
-return 0
+local expected = tonumber(ARGV[1])
+if n < expected then
+  return n
+end
+n = n - expected
+if n == 0 then
+  redis.call('DEL', KEYS[1])
+  return 0
+end
+local ttl = redis.call('PTTL', KEYS[1])
+redis.call('SET', KEYS[1], cjson.encode(n))
+if ttl > 0 then
+  redis.call('PEXPIRE', KEYS[1], ttl)
+end
+return n
 `)
 
-// CompareAndDelete deletes key only if it holds integer counter expected.
-func (s *CacheStore) CompareAndDelete(key string, expected int64) (bool, error) {
-	n, err := compareAndDeleteScript.Run(context.Background(), s.client, []string{s.key(key)}, expected).Int64()
-	if err != nil {
-		return false, fmt.Errorf("redis cache: compare-and-delete %q: %w", key, err)
+// CompareAndSubtract subtracts expected from the counter when current >= expected.
+func (s *CacheStore) CompareAndSubtract(key string, expected int64) (int64, error) {
+	if expected <= 0 {
+		return 0, nil
 	}
-	return n == 1, nil
+	n, err := compareAndSubtractScript.Run(context.Background(), s.client, []string{s.key(key)}, expected).Int64()
+	if err != nil {
+		return 0, fmt.Errorf("redis cache: compare-and-subtract %q: %w", key, err)
+	}
+	return n, nil
 }
 
 // Delete removes the entry for key. A missing key is not an error.

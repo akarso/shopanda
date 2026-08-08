@@ -653,8 +653,8 @@ func (s *Service) clearLockoutBestEffort(ctx context.Context, key string) {
 	}
 	n, err := s.attempts.Failures(ctx, key)
 	if err != nil {
-		// Do not Reset without a known count: an unconditional delete can erase a
-		// concurrent Increment on the same IP+account key.
+		// Do not ResetIf without a known count: a blind clear can race with
+		// concurrent Increments on the same IP+account key.
 		s.log.Warn("auth.login.lockout_failures_read_failed", map[string]interface{}{
 			"error": err.Error(),
 		})

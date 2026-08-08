@@ -121,32 +121,60 @@ func (s *CacheStore) Incr(key string, delta int64, ttl time.Duration) (int64, er
 	return newVal, nil
 }
 
-// CompareAndDelete deletes key only if it holds integer counter expected.
-func (s *CacheStore) CompareAndDelete(key string, expected int64) (bool, error) {
-	res, err := s.db.Exec(
-		`DELETE FROM cache WHERE key = $1
-		   AND (expires_at IS NULL OR expires_at >= now())
-		   AND (
-		     (jsonb_typeof(value) = 'number'
-		      AND (value #>> '{}') ~ '^-?[0-9]+$'
-		      AND (value #>> '{}')::bigint = $2)
-		     OR
-		     (jsonb_typeof(value) = 'object'
-		      AND (value ? 'count')
-		      AND jsonb_typeof(value->'count') = 'number'
-		      AND (value->>'count') ~ '^-?[0-9]+$'
-		      AND (value->>'count')::bigint = $2)
-		   )`,
+// CompareAndSubtract subtracts expected from the counter when current >= expected.
+func (s *CacheStore) CompareAndSubtract(key string, expected int64) (int64, error) {
+	if expected <= 0 {
+		return 0, nil
+	}
+	var newVal sql.NullInt64
+	err := s.db.QueryRow(
+		`WITH parsed AS (
+		   SELECT
+		     key,
+		     CASE
+		       WHEN expires_at IS NOT NULL AND expires_at < now() THEN NULL
+		       WHEN jsonb_typeof(value) = 'number'
+		            AND (value #>> '{}') ~ '^-?[0-9]+$'
+		         THEN (value #>> '{}')::bigint
+		       WHEN jsonb_typeof(value) = 'object'
+		            AND (value ? 'count')
+		            AND jsonb_typeof(value->'count') = 'number'
+		            AND (value->>'count') ~ '^-?[0-9]+$'
+		         THEN (value->>'count')::bigint
+		       ELSE NULL
+		     END AS n
+		   FROM cache
+		   WHERE key = $1
+		 ),
+		 deleted AS (
+		   DELETE FROM cache c
+		   USING parsed p
+		   WHERE c.key = p.key AND p.n IS NOT NULL AND p.n = $2
+		   RETURNING 0::bigint AS new_n
+		 ),
+		 updated AS (
+		   UPDATE cache c
+		   SET value = to_jsonb(p.n - $2),
+		       created_at = now()
+		   FROM parsed p
+		   WHERE c.key = p.key AND p.n IS NOT NULL AND p.n > $2
+		   RETURNING (p.n - $2) AS new_n
+		 )
+		 SELECT new_n FROM deleted
+		 UNION ALL
+		 SELECT new_n FROM updated`,
 		key, expected,
-	)
-	if err != nil {
-		return false, fmt.Errorf("cache_store: compare-and-delete %q: %w", key, err)
+	).Scan(&newVal)
+	if err == sql.ErrNoRows {
+		return 0, nil
 	}
-	n, err := res.RowsAffected()
 	if err != nil {
-		return false, fmt.Errorf("cache_store: compare-and-delete %q: %w", key, err)
+		return 0, fmt.Errorf("cache_store: compare-and-subtract %q: %w", key, err)
 	}
-	return n > 0, nil
+	if !newVal.Valid {
+		return 0, nil
+	}
+	return newVal.Int64, nil
 }
 
 // Delete removes the entry for key. A missing key is not an error.

@@ -75,18 +75,21 @@ func (c *stubCache) Incr(key string, delta int64, ttl time.Duration) (int64, err
 	return n, nil
 }
 
-func (c *stubCache) CompareAndDelete(key string, expected int64) (bool, error) {
+func (c *stubCache) CompareAndSubtract(key string, expected int64) (int64, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	if expected <= 0 {
+		return 0, nil
+	}
 	now := time.Now()
 	e, ok := c.data[key]
 	if !ok || (!e.exp.IsZero() && now.After(e.exp)) {
 		delete(c.data, key)
-		return false, nil
+		return 0, nil
 	}
 	b, err := json.Marshal(e.value)
 	if err != nil {
-		return false, err
+		return 0, err
 	}
 	var n int64
 	if err := json.Unmarshal(b, &n); err != nil {
@@ -94,15 +97,20 @@ func (c *stubCache) CompareAndDelete(key string, expected int64) (bool, error) {
 			Count int64 `json:"count"`
 		}
 		if err := json.Unmarshal(b, &obj); err != nil {
-			return false, nil
+			return 0, nil
 		}
 		n = obj.Count
 	}
-	if n != expected {
-		return false, nil
+	if n < expected {
+		return n, nil
 	}
-	delete(c.data, key)
-	return true, nil
+	n -= expected
+	if n == 0 {
+		delete(c.data, key)
+		return 0, nil
+	}
+	c.data[key] = stubCached{value: n, exp: e.exp}
+	return n, nil
 }
 
 func (c *stubCache) Delete(key string) error {
@@ -203,16 +211,17 @@ func TestCacheAttemptStore_ResetIfPreservesConcurrentIncrement(t *testing.T) {
 	if _, err := store.Increment(ctx, key, time.Minute); err != nil {
 		t.Fatalf("Increment: %v", err)
 	}
-	// Simulate concurrent failure after Failures observed 1.
+	// Simulate concurrent failure after Failures observed 1 → counter becomes 2.
 	if _, err := store.Increment(ctx, key, time.Minute); err != nil {
 		t.Fatalf("Increment #2: %v", err)
 	}
 	if err := store.ResetIf(ctx, key, 1); err != nil {
 		t.Fatalf("ResetIf: %v", err)
 	}
+	// Subtract observed 1; preserve the concurrent failure → 1 remaining.
 	got, err := store.Failures(ctx, key)
-	if err != nil || got != 2 {
-		t.Fatalf("Failures after mismatched ResetIf = (%d, %v), want (2, nil)", got, err)
+	if err != nil || got != 1 {
+		t.Fatalf("Failures after ResetIf subtract = (%d, %v), want (1, nil)", got, err)
 	}
 }
 
