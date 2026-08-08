@@ -230,6 +230,45 @@ func TestCacheStoreDB_Incr(t *testing.T) {
 	}
 }
 
+func TestCacheStoreDB_IncrRejectsInvalidNumericShapes(t *testing.T) {
+	db, store := setupCacheStore(t)
+
+	// Fractional JSON number must not cast; treat as miss and start at delta.
+	if _, err := db.Exec(
+		`INSERT INTO cache (key, value, expires_at) VALUES ($1, '1.5'::jsonb, NULL)`,
+		"frac",
+	); err != nil {
+		t.Fatalf("insert frac: %v", err)
+	}
+	n, err := store.Incr("frac", 1, time.Minute)
+	if err != nil || n != 1 {
+		t.Fatalf("Incr fractional = (%d, %v), want (1, nil)", n, err)
+	}
+
+	// Legacy object with non-integer count must fall back to delta.
+	if _, err := db.Exec(
+		`INSERT INTO cache (key, value, expires_at) VALUES ($1, '{"count":"abc"}'::jsonb, NULL)`,
+		"bad_legacy",
+	); err != nil {
+		t.Fatalf("insert bad_legacy: %v", err)
+	}
+	n, err = store.Incr("bad_legacy", 3, time.Minute)
+	if err != nil || n != 3 {
+		t.Fatalf("Incr invalid legacy count = (%d, %v), want (3, nil)", n, err)
+	}
+
+	if _, err := db.Exec(
+		`INSERT INTO cache (key, value, expires_at) VALUES ($1, '{"count":2.75}'::jsonb, NULL)`,
+		"frac_legacy",
+	); err != nil {
+		t.Fatalf("insert frac_legacy: %v", err)
+	}
+	n, err = store.Incr("frac_legacy", 1, time.Minute)
+	if err != nil || n != 1 {
+		t.Fatalf("Incr fractional legacy count = (%d, %v), want (1, nil)", n, err)
+	}
+}
+
 func TestCacheStoreDB_IncrConcurrent(t *testing.T) {
 	_, store := setupCacheStore(t)
 	const workers = 40

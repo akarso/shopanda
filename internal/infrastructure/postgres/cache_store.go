@@ -99,9 +99,14 @@ func (s *CacheStore) Incr(key string, delta int64, ttl time.Duration) (int64, er
 		   value = to_jsonb(
 		     CASE
 		       WHEN cache.expires_at IS NOT NULL AND cache.expires_at < now() THEN $2::bigint
-		WHEN jsonb_typeof(cache.value) = 'number' THEN (cache.value #>> '{}')::bigint + $2::bigint
-		       WHEN jsonb_typeof(cache.value) = 'object' AND (cache.value ? 'count')
-		         THEN COALESCE((cache.value->>'count')::bigint, 0) + $2::bigint
+		       WHEN jsonb_typeof(cache.value) = 'number'
+		            AND (cache.value #>> '{}') ~ '^-?[0-9]+$'
+		         THEN (cache.value #>> '{}')::bigint + $2::bigint
+		       WHEN jsonb_typeof(cache.value) = 'object'
+		            AND (cache.value ? 'count')
+		            AND jsonb_typeof(cache.value->'count') = 'number'
+		            AND (cache.value->>'count') ~ '^-?[0-9]+$'
+		         THEN (cache.value->>'count')::bigint + $2::bigint
 		       ELSE $2::bigint
 		     END
 		   ),
