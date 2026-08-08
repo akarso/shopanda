@@ -333,6 +333,8 @@ Use **Store Management → Stores** at `/admin/store` for store entities, plus *
 
 Open **Integrations** at `/admin/integrations` for a summary of email, media, and plugin configuration. Follow the **Webhooks** link to manage outbound webhook endpoints at `/admin/integrations/webhooks`. Use **Inbound Idempotency** at `/admin/integrations/idempotency` to inspect ERP callback dedupe keys and preview stored replay responses ([PR-864](../phase-9-merchant-discovery/prs/PR-864.md)).
 
+Outbound webhook URLs must be public **https** destinations. Private, loopback, and link-local addresses (including cloud metadata) are blocked — see [RUNBOOK.md](../../RUNBOOK.md#outbound-webhooks-ssrf).
+
 ## Day-to-Day Operations
 
 ### Suggested daily routine

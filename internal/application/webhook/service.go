@@ -11,6 +11,7 @@ import (
 	domainwebhook "github.com/akarso/shopanda/internal/domain/webhook"
 	"github.com/akarso/shopanda/internal/platform/apperror"
 	"github.com/akarso/shopanda/internal/platform/id"
+	"github.com/akarso/shopanda/internal/platform/ssrf"
 )
 
 // Service manages merchant webhook endpoint configuration.
@@ -104,6 +105,9 @@ func (s *Service) Create(ctx context.Context, in CreateInput) (*CreateResult, er
 	if err := ep.Validate(domainwebhook.SupportedEventSet()); err != nil {
 		return nil, apperror.Validation(err.Error())
 	}
+	if err := ssrf.ValidateURL(ep.URL); err != nil {
+		return nil, apperror.Validation(err.Error())
+	}
 	if err := s.repo.Create(ctx, ep); err != nil {
 		return nil, fmt.Errorf("webhook: create: %w", err)
 	}
@@ -135,6 +139,9 @@ func (s *Service) Update(ctx context.Context, in UpdateInput) (EndpointView, str
 		ep.Secret = rotatedSecret
 	}
 	if err := ep.Validate(domainwebhook.SupportedEventSet()); err != nil {
+		return EndpointView{}, "", apperror.Validation(err.Error())
+	}
+	if err := ssrf.ValidateURL(ep.URL); err != nil {
 		return EndpointView{}, "", apperror.Validation(err.Error())
 	}
 	if err := s.repo.Update(ctx, ep); err != nil {
