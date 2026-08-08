@@ -223,9 +223,17 @@ Environment variables override YAML values.
 
 | Variable | Required | Default | Purpose |
 | --- | --- | --- | --- |
-| `SHOPANDA_RATE_LIMIT_ENABLED` | No | `false` | Enable request rate limiting |
+| `SHOPANDA_RATE_LIMIT_ENABLED` | No | `true` | Enable request rate limiting |
 | `SHOPANDA_RATE_LIMIT_DEFAULT_RATE` | No | `10` | Default tokens per second |
 | `SHOPANDA_RATE_LIMIT_DEFAULT_BURST` | No | `20` | Default burst size |
+| `SHOPANDA_AUTH_LOCKOUT_ENABLED` | No | `true` | Enable failed-login lockout (IP + account) |
+| `SHOPANDA_AUTH_LOCKOUT_STORE` | No | `cache` | `cache` (shared via cache driver) or `memory` (single-instance only) |
+| `SHOPANDA_AUTH_LOCKOUT_MAX_FAILURES` | No | `10` | Failures before temporary lockout |
+| `SHOPANDA_AUTH_LOCKOUT_WINDOW` | No | `15m` | Lockout counter TTL (Go duration) |
+
+Set `rate_limit.trusted_proxies` in YAML when behind a reverse proxy so both rate limiting and login lockout see the real client IP. Configure it as a list of CIDR (or bare IP) entries — see [`configs/config.example.yaml`](../../configs/config.example.yaml). There is no `SHOPANDA_RATE_LIMIT_TRUSTED_PROXIES` env mapping.
+
+**Multi-instance:** keep `SHOPANDA_AUTH_LOCKOUT_STORE=cache` (default) so counters share the configured `cache.driver` (postgres or redis) via atomic increment. `store=memory` must only be used for single-instance deployments.
 
 ### Seeding
 

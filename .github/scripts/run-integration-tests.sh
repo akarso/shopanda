@@ -35,9 +35,9 @@ if [[ "$status" -ne 0 ]]; then
   exit "$status"
 fi
 
-# Any skipped test under these packages means a DSN-gated test did not run
-# (or an unexpected skip). With DSN set, skip count must be zero.
-skip_count="$(jq -r '[select(.Action=="skip" and .Test != null)] | length' "$json")"
+# go test -json is NDJSON: slurping (-s) is required for aggregate counts.
+# Without -s, each event emits its own length and bash [[ -ne 0 ]] may only see the first 0.
+skip_count="$(jq -sr '[.[] | select(.Action=="skip" and .Test != null)] | length' "$json")"
 if [[ "$skip_count" -ne 0 ]]; then
   echo "ERROR: $skip_count test(s) skipped while SHOPANDA_TEST_DSN is set:" >&2
   jq -r 'select(.Action=="skip" and .Test != null) | "SKIP \(.Package) \(.Test)"' "$json" >&2
@@ -53,12 +53,12 @@ canaries=(
 for c in "${canaries[@]}"; do
   pkg="${c%%|*}"
   test="${c##*|}"
-  if ! jq -e --arg p "$pkg" --arg t "$test" \
-    'select(.Action=="pass" and .Package==$p and .Test==$t)' "$json" >/dev/null; then
+  if ! jq -se --arg p "$pkg" --arg t "$test" \
+    'any(.[]; .Action=="pass" and .Package==$p and .Test==$t)' "$json" >/dev/null; then
     echo "ERROR: canary DSN test did not pass: $pkg $test" >&2
     exit 1
   fi
 done
 
-pass_tests="$(jq -r '[select(.Action=="pass" and .Test != null)] | length' "$json")"
+pass_tests="$(jq -sr '[.[] | select(.Action=="pass" and .Test != null)] | length' "$json")"
 echo "Integration suite OK: $pass_tests test(s) passed, 0 skipped (go test -p 1)."

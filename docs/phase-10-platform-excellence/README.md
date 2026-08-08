@@ -35,4 +35,4 @@ See [`ROADMAP.md`](ROADMAP.md) for track tables, sequencing, and PR specs under 
 | Phase | Focus | Status |
 | --- | --- | --- |
 | Phase 9 | Integrator backlog + merchant discovery | Shipped (PR-856–908) |
-| **Phase 10** | Platform excellence (quality / security / ops / architecture) | **In progress (PR-1000–1002 done; PR-1003 in progress; Track B+ planned)** |
+| **Phase 10** | Platform excellence (quality / security / ops / architecture) | **In progress (PR-1000–1002 done; PR-1003 in progress; PR-1004 done; Track B continues)** |

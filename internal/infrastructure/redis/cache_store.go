@@ -69,6 +69,98 @@ func (s *CacheStore) Set(key string, value any, ttl time.Duration) error {
 	return nil
 }
 
+// incrScript atomically increments a JSON-number counter and refreshes TTL (PX ms).
+// KEYS[1]=key ARGV[1]=delta ARGV[2]=ttl_ms (0 = no expiry).
+var incrScript = goredis.NewScript(`
+local raw = redis.call('GET', KEYS[1])
+local n = 0
+if raw then
+  local ok, decoded = pcall(cjson.decode, raw)
+  if ok and type(decoded) == 'number' then
+    n = decoded
+  elseif ok and type(decoded) == 'table' and decoded.count ~= nil then
+    n = tonumber(decoded.count) or 0
+  end
+end
+n = n + tonumber(ARGV[1])
+local ttl = tonumber(ARGV[2])
+if ttl > 0 then
+  redis.call('SET', KEYS[1], cjson.encode(n), 'PX', ttl)
+else
+  redis.call('SET', KEYS[1], cjson.encode(n))
+end
+return n
+`)
+
+// Incr atomically increments a JSON-number counter and refreshes TTL.
+func (s *CacheStore) Incr(key string, delta int64, ttl time.Duration) (int64, error) {
+	ttlMs := int64(0)
+	if ttl > 0 {
+		ttlMs = ttl.Milliseconds()
+		if ttlMs < 1 {
+			ttlMs = 1
+		}
+	}
+	res, err := incrScript.Run(context.Background(), s.client, []string{s.key(key)}, delta, ttlMs).Int64()
+	if err != nil {
+		return 0, fmt.Errorf("redis cache: incr %q: %w", key, err)
+	}
+	return res, nil
+}
+
+// compareAndSubtractScript subtracts ARGV[1] when current >= ARGV[1].
+// Deletes the key when the result is 0. Returns the new count on success,
+// 0 when absent/unparseable, or the unchanged current when current < expected.
+var compareAndSubtractScript = goredis.NewScript(`
+local raw = redis.call('GET', KEYS[1])
+if not raw then
+  return 0
+end
+local ok, decoded = pcall(cjson.decode, raw)
+local n = nil
+if ok and type(decoded) == 'number' then
+  if decoded == math.floor(decoded) then
+    n = decoded
+  end
+elseif ok and type(decoded) == 'table' and decoded.count ~= nil then
+  local c = tonumber(decoded.count)
+  if c ~= nil and c == math.floor(c) then
+    n = c
+  end
+end
+if n == nil then
+  return 0
+end
+local expected = tonumber(ARGV[1])
+if n < expected then
+  return n
+end
+n = n - expected
+if n == 0 then
+  redis.call('DEL', KEYS[1])
+  return 0
+end
+local ttl = redis.call('PTTL', KEYS[1])
+redis.call('SET', KEYS[1], cjson.encode(n))
+if ttl > 0 then
+  redis.call('PEXPIRE', KEYS[1], ttl)
+end
+return n
+`)
+
+// CompareAndSubtract subtracts expected from the counter when current >= expected.
+// When current < expected, leaves the value unchanged and returns current.
+func (s *CacheStore) CompareAndSubtract(key string, expected int64) (int64, error) {
+	if expected <= 0 {
+		return 0, nil
+	}
+	n, err := compareAndSubtractScript.Run(context.Background(), s.client, []string{s.key(key)}, expected).Int64()
+	if err != nil {
+		return 0, fmt.Errorf("redis cache: compare-and-subtract %q: %w", key, err)
+	}
+	return n, nil
+}
+
 // Delete removes the entry for key. A missing key is not an error.
 func (s *CacheStore) Delete(key string) error {
 	if err := s.client.Del(context.Background(), s.key(key)).Err(); err != nil {

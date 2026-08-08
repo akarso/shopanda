@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"net"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -73,6 +74,7 @@ type StorefrontHandler struct {
 	advancedSearchAttrs AdvancedSearchAttributeLister
 	assets              *assetsApp.Registry
 	cspEnabled          bool
+	trustedProxies      []*net.IPNet
 }
 
 type storefrontCategoryCache struct {
@@ -317,6 +319,12 @@ func (h *StorefrontHandler) WithAccount(authService *appAuth.Service, orders ord
 	h.auth = authService
 	h.orders = orders
 	h.account = account
+	return h
+}
+
+// WithTrustedProxies configures proxy-aware client IP extraction for login lockout.
+func (h *StorefrontHandler) WithTrustedProxies(proxies ...string) *StorefrontHandler {
+	h.trustedProxies = parseTrustedProxies(proxies)
 	return h
 }
 

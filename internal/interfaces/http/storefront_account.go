@@ -179,6 +179,7 @@ func (h *StorefrontHandler) Login() http.HandlerFunc {
 		out, err := h.auth.Login(r.Context(), appAuth.LoginInput{
 			Email:    page.Email,
 			Password: r.FormValue("password"),
+			ClientIP: clientIP(r, h.trustedProxies),
 		})
 		if err != nil {
 			page.ErrorMessage = storefrontAccountErrorMessage(err)

@@ -26,7 +26,16 @@ func newMockCache() *mockCache {
 
 func (m *mockCache) Get(_ string, _ any) (bool, error)            { return false, nil }
 func (m *mockCache) Set(key string, _ any, _ time.Duration) error { m.entries[key] = true; return nil }
-func (m *mockCache) Delete(key string) error                      { delete(m.entries, key); return nil }
+func (m *mockCache) Incr(key string, _ int64, _ time.Duration) (int64, error) {
+	m.entries[key] = true
+	return 1, nil
+}
+func (m *mockCache) CompareAndSubtract(key string, expected int64) (int64, error) {
+	_ = expected
+	delete(m.entries, key)
+	return 0, nil
+}
+func (m *mockCache) Delete(key string) error { delete(m.entries, key); return nil }
 func (m *mockCache) DeleteByPrefix(_ context.Context, prefix string) error {
 	m.deletedPrefix = prefix
 	if m.deleteByPfxErr != nil {

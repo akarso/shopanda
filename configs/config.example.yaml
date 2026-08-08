@@ -58,6 +58,17 @@ auth:
   # Token lifetime (Go duration format).
   jwt_ttl: "24h"
 
+  # Failed-login lockout (IP + normalized email). Applies to API and storefront login.
+  # store=cache uses the configured cache driver (postgres/redis) — preferred for multi-instance
+  # (atomic Incr with sliding TTL).
+  # store=memory is single-instance only (bounded in-process map).
+  # window is a sliding TTL: each failed attempt refreshes the full duration.
+  lockout:
+    enabled: true
+    store: "cache"
+    max_failures: 10
+    window: "15m"
+
 # --- Mail (SMTP) --------------------------------------------------------------
 mail:
   # Driver: smtp (default). Plugins may add others.
@@ -229,7 +240,7 @@ webhooks:
 
 # --- Rate Limiting ------------------------------------------------------------
 rate_limit:
-  enabled: false
+  enabled: true
 
   # Default rate for all routes (tokens per second + burst).
   default:
@@ -237,15 +248,16 @@ rate_limit:
     burst: 20
 
   # Per-route overrides. Longest prefix match wins.
-  # per_route:
-  #   - path_prefix: "/api/v1/auth"
-  #     rate: 5.0
-  #     burst: 10
+  per_route:
+    - path_prefix: "/api/v1/auth"
+      rate: 5.0
+      burst: 10
   #   - path_prefix: "/api/v1/search"
   #     rate: 20.0
   #     burst: 40
 
   # Trusted proxy IPs/CIDRs (X-Forwarded-For extraction).
+  # Also used for login lockout ClientIP when behind a reverse proxy.
   # trusted_proxies:
   #   - "10.0.0.0/8"
   #   - "172.16.0.0/12"

@@ -219,10 +219,31 @@ type LogConfig struct {
 }
 
 type AuthConfig struct {
-	JWTSecret  string `yaml:"jwt_secret"`
-	JWTTTL     string `yaml:"jwt_ttl"`
-	MFAEnabled bool   `yaml:"mfa_enabled"`
+	JWTSecret  string            `yaml:"jwt_secret"`
+	JWTTTL     string            `yaml:"jwt_ttl"`
+	MFAEnabled bool              `yaml:"mfa_enabled"`
+	Lockout    AuthLockoutConfig `yaml:"lockout"`
 }
+
+// AuthLockoutConfig throttles failed password logins (IP + account key).
+// store=cache uses the configured cache driver (postgres/redis) — preferred for multi-instance.
+// store=memory is single-instance only (bounded in-process map).
+//
+// Window is a sliding TTL: each failed attempt refreshes the full duration, so
+// continued failures can extend lockout beyond the original window.
+type AuthLockoutConfig struct {
+	Enabled     bool   `yaml:"enabled"`
+	Store       string `yaml:"store"` // cache | memory
+	MaxFailures int    `yaml:"max_failures"`
+	Window      string `yaml:"window"` // Go duration, e.g. "15m"
+}
+
+// Default auth.lockout values (shared by defaults() and normalizeAuthLockout).
+const (
+	DefaultAuthLockoutStore       = "cache"
+	DefaultAuthLockoutMaxFailures = 10
+	DefaultAuthLockoutWindow      = "15m"
+)
 
 type MailConfig struct {
 	Driver string     `yaml:"driver"`
@@ -585,6 +606,12 @@ func defaults() Config {
 		Auth: AuthConfig{
 			JWTSecret: "",
 			JWTTTL:    "24h",
+			Lockout: AuthLockoutConfig{
+				Enabled:     true,
+				Store:       DefaultAuthLockoutStore,
+				MaxFailures: DefaultAuthLockoutMaxFailures,
+				Window:      DefaultAuthLockoutWindow,
+			},
 		},
 		Mail: MailConfig{
 			Driver: "smtp",
@@ -627,6 +654,10 @@ func defaults() Config {
 		},
 		Dev: DevConfig{
 			EmbedScheduler: true,
+		},
+		RateLimit: RateLimitConfig{
+			Enabled: true,
+			Default: RateLimitRule{Rate: 10, Burst: 20},
 		},
 	}
 }
@@ -716,6 +747,20 @@ func applyEnv(cfg *Config) {
 	}
 	if v := os.Getenv("SHOPANDA_AUTH_MFA_ENABLED"); v != "" {
 		cfg.Auth.MFAEnabled = strings.EqualFold(v, "true") || v == "1"
+	}
+	if v := os.Getenv("SHOPANDA_AUTH_LOCKOUT_ENABLED"); v != "" {
+		cfg.Auth.Lockout.Enabled = strings.EqualFold(v, "true") || v == "1"
+	}
+	if v := os.Getenv("SHOPANDA_AUTH_LOCKOUT_STORE"); v != "" {
+		cfg.Auth.Lockout.Store = v
+	}
+	if v := os.Getenv("SHOPANDA_AUTH_LOCKOUT_MAX_FAILURES"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 {
+			cfg.Auth.Lockout.MaxFailures = n
+		}
+	}
+	if v := os.Getenv("SHOPANDA_AUTH_LOCKOUT_WINDOW"); v != "" {
+		cfg.Auth.Lockout.Window = v
 	}
 	if v := os.Getenv("SHOPANDA_MAIL_DRIVER"); v != "" {
 		cfg.Mail.Driver = v
@@ -1031,6 +1076,10 @@ func flatten(cfg *Config) map[string]string {
 	m["log.level"] = cfg.Log.Level
 	m["log.format"] = cfg.Log.Format
 	m["auth.jwt_ttl"] = cfg.Auth.JWTTTL
+	m["auth.lockout.enabled"] = strconv.FormatBool(cfg.Auth.Lockout.Enabled)
+	m["auth.lockout.store"] = cfg.Auth.Lockout.Store
+	m["auth.lockout.max_failures"] = strconv.Itoa(cfg.Auth.Lockout.MaxFailures)
+	m["auth.lockout.window"] = cfg.Auth.Lockout.Window
 	m["mail.driver"] = cfg.Mail.Driver
 	m["mail.smtp.host"] = cfg.Mail.SMTP.Host
 	m["mail.smtp.port"] = strconv.Itoa(cfg.Mail.SMTP.Port)

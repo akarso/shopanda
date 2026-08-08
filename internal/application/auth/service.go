@@ -25,6 +25,8 @@ type Service struct {
 	log       logger.Logger
 	resetTTL  time.Duration
 	mfa       MFAClient
+	lockout   LockoutSettings
+	attempts  AttemptStore
 }
 
 // NewService creates an auth application service.
@@ -67,6 +69,24 @@ func NewService(
 // SetMFAClient wires optional admin MFA login verification.
 func (s *Service) SetMFAClient(mfa MFAClient) {
 	s.mfa = mfa
+}
+
+// SetLockout wires failed-login lockout. When Enabled, store must be non-nil
+// and MaxFailures/Window must be positive.
+func (s *Service) SetLockout(settings LockoutSettings, store AttemptStore) {
+	if settings.Enabled {
+		if store == nil {
+			panic("auth: lockout store must not be nil when enabled")
+		}
+		if settings.MaxFailures <= 0 {
+			panic("auth: lockout MaxFailures must be > 0")
+		}
+		if settings.Window <= 0 {
+			panic("auth: lockout Window must be > 0")
+		}
+	}
+	s.lockout = settings
+	s.attempts = store
 }
 
 // UpdateProfileInput contains editable customer profile fields.
@@ -505,6 +525,7 @@ func (s *Service) Register(ctx context.Context, in RegisterInput) (RegisterOutpu
 type LoginInput struct {
 	Email    string
 	Password string
+	ClientIP string // optional; used for lockout keying (IP + account)
 }
 
 // LoginOutput is the result of a successful login or MFA challenge.
@@ -527,21 +548,34 @@ func (s *Service) Login(ctx context.Context, in LoginInput) (LoginOutput, error)
 		return LoginOutput{}, apperror.Validation("password is required")
 	}
 
+	lockKey := LockoutKey(in.ClientIP, email)
+	// Reserve a slot before password work so concurrent guesses for the same
+	// IP+email cannot all pass a pre-check and exceed max_failures.
+	reserved, err := s.reserveLockoutAttempt(ctx, lockKey)
+	if err != nil {
+		return LoginOutput{}, err
+	}
+
 	c, err := s.customers.FindByEmail(ctx, email)
 	if err != nil {
 		return LoginOutput{}, fmt.Errorf("auth service: login: %w", err)
 	}
 	if c == nil {
-		return LoginOutput{}, apperror.Unauthorized("invalid email or password")
+		return LoginOutput{}, s.failedLoginAfterReserve(reserved)
 	}
 
 	if c.Status != customer.StatusActive {
-		return LoginOutput{}, apperror.Unauthorized("invalid email or password")
+		return LoginOutput{}, s.failedLoginAfterReserve(reserved)
 	}
 
 	if err := password.Compare(c.PasswordHash, in.Password); err != nil {
-		return LoginOutput{}, apperror.Unauthorized("invalid email or password")
+		return LoginOutput{}, s.failedLoginAfterReserve(reserved)
 	}
+
+	// Clear lockout best-effort: never block a valid password on cache outage.
+	// Skip Reset entirely when no counter exists (happy path). Includes the
+	// reservation from this attempt.
+	s.clearLockoutBestEffort(ctx, lockKey)
 
 	if s.mfa != nil {
 		required, err := s.mfa.RequiredForLogin(ctx, c)
@@ -579,6 +613,63 @@ func (s *Service) Login(ctx context.Context, in LoginInput) (LoginOutput, error)
 		Token:      token,
 		ExpiresAt:  expiresAt,
 	}, nil
+}
+
+// reserveLockoutAttempt atomically counts this login toward the lockout budget
+// before password verification. Returns the post-increment count (0 if lockout
+// is off or the store failed open). Returns a rate-limited error when the
+// reserved count already exceeds MaxFailures (no password check).
+func (s *Service) reserveLockoutAttempt(ctx context.Context, key string) (int, error) {
+	if !s.lockout.Enabled || s.attempts == nil {
+		return 0, nil
+	}
+	n, err := s.attempts.Increment(ctx, key, s.lockout.Window)
+	if err != nil {
+		// Fail open: transient cache/store errors must not take down login.
+		s.log.Warn("auth.login.lockout_reserve_failed", map[string]interface{}{
+			"error": err.Error(),
+		})
+		return 0, nil
+	}
+	if n > s.lockout.MaxFailures {
+		return 0, apperror.RateLimited("too many login attempts, try again later")
+	}
+	return n, nil
+}
+
+func (s *Service) failedLoginAfterReserve(reserved int) error {
+	unauthorized := apperror.Unauthorized("invalid email or password")
+	if !s.lockout.Enabled || s.attempts == nil {
+		return unauthorized
+	}
+	// reserved == 0 means fail-open (no slot recorded).
+	if reserved >= s.lockout.MaxFailures {
+		return apperror.RateLimited("too many login attempts, try again later")
+	}
+	return unauthorized
+}
+
+func (s *Service) clearLockoutBestEffort(ctx context.Context, key string) {
+	if !s.lockout.Enabled || s.attempts == nil {
+		return
+	}
+	n, err := s.attempts.Failures(ctx, key)
+	if err != nil {
+		// Do not ResetIf without a known count: a blind clear can race with
+		// concurrent Increments on the same IP+account key.
+		s.log.Warn("auth.login.lockout_failures_read_failed", map[string]interface{}{
+			"error": err.Error(),
+		})
+		return
+	}
+	if n == 0 {
+		return
+	}
+	if err := s.attempts.ResetIf(ctx, key, n); err != nil {
+		s.log.Warn("auth.login.lockout_reset_failed", map[string]interface{}{
+			"error": err.Error(),
+		})
+	}
 }
 
 // VerifyLoginMFA completes admin login after TOTP or recovery code verification.

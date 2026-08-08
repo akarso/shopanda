@@ -54,6 +54,71 @@ func (s *stubCache) Set(key string, value any, ttl time.Duration) error {
 	return nil
 }
 
+func (s *stubCache) Incr(key string, delta int64, ttl time.Duration) (int64, error) {
+	now := time.Now()
+	var n int64
+	if e, ok := s.entries[key]; ok {
+		if e.expiresAt == nil || !e.expiresAt.Before(now) {
+			if err := json.Unmarshal(e.value, &n); err != nil {
+				var obj struct {
+					Count int64 `json:"count"`
+				}
+				if err := json.Unmarshal(e.value, &obj); err == nil {
+					n = obj.Count
+				}
+			}
+		}
+	}
+	n += delta
+	data, err := json.Marshal(n)
+	if err != nil {
+		return 0, err
+	}
+	e := stubEntry{value: json.RawMessage(data)}
+	if ttl > 0 {
+		t := now.Add(ttl)
+		e.expiresAt = &t
+	}
+	s.entries[key] = e
+	return n, nil
+}
+
+func (s *stubCache) CompareAndSubtract(key string, expected int64) (int64, error) {
+	if expected <= 0 {
+		return 0, nil
+	}
+	now := time.Now()
+	e, ok := s.entries[key]
+	if !ok || (e.expiresAt != nil && e.expiresAt.Before(now)) {
+		delete(s.entries, key)
+		return 0, nil
+	}
+	var n int64
+	if err := json.Unmarshal(e.value, &n); err != nil {
+		var obj struct {
+			Count int64 `json:"count"`
+		}
+		if err := json.Unmarshal(e.value, &obj); err != nil {
+			return 0, nil
+		}
+		n = obj.Count
+	}
+	if n < expected {
+		return n, nil
+	}
+	n -= expected
+	if n == 0 {
+		delete(s.entries, key)
+		return 0, nil
+	}
+	data, err := json.Marshal(n)
+	if err != nil {
+		return 0, err
+	}
+	s.entries[key] = stubEntry{value: json.RawMessage(data), expiresAt: e.expiresAt}
+	return n, nil
+}
+
 func (s *stubCache) Delete(key string) error {
 	delete(s.entries, key)
 	return nil
