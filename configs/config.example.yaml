@@ -50,9 +50,10 @@ log:
 
 # --- Authentication -----------------------------------------------------------
 auth:
-  # REQUIRED — app refuses to start without a JWT secret.
+  # REQUIRED — app refuses to start without a strong JWT secret (≥32 bytes).
   # Set via env: SHOPANDA_AUTH_JWT_SECRET
-  # Generate: openssl rand -hex 32
+  # Generate: openssl rand -hex 32  (64 hex chars used as-is for HMAC/MFA)
+  # Trailing whitespace is trimmed. Key material is never hex-decoded.
   # jwt_secret: ""
 
   # Token lifetime (Go duration format).

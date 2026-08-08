@@ -18,14 +18,35 @@ type Issuer struct {
 }
 
 // NewIssuer creates a JWT issuer with the given HMAC secret and token TTL.
+// Secret strength is enforced via ParseSecret (≥ MinSecretBytes after trim).
 func NewIssuer(secret string, ttl time.Duration) (*Issuer, error) {
-	if secret == "" {
-		return nil, errors.New("jwt: secret must not be empty")
+	key, err := ParseSecret(secret)
+	if err != nil {
+		return nil, err
+	}
+	return NewIssuerFromKey(key, ttl)
+}
+
+// NewIssuerFromKey creates a JWT issuer from key material. The key must be at
+// least MinSecretBytes long (same strength rule as ParseSecret). Prefer this
+// when ParseSecret was already called at the wiring site.
+func NewIssuerFromKey(key []byte, ttl time.Duration) (*Issuer, error) {
+	if len(key) == 0 {
+		return nil, fmt.Errorf("%s: must be set (generate with: openssl rand -hex 32)", EnvJWTSecret)
+	}
+	if len(key) < MinSecretBytes {
+		return nil, fmt.Errorf(
+			"%s: must be at least %d bytes (e.g. openssl rand -hex 32); got %d bytes",
+			EnvJWTSecret, MinSecretBytes, len(key),
+		)
 	}
 	if ttl <= 0 {
 		return nil, errors.New("jwt: ttl must be positive")
 	}
-	return &Issuer{secret: []byte(secret), ttl: ttl}, nil
+	// Copy so callers can reuse/mutate their buffer safely.
+	secret := make([]byte, len(key))
+	copy(secret, key)
+	return &Issuer{secret: secret, ttl: ttl}, nil
 }
 
 // Claims represents the JWT payload.

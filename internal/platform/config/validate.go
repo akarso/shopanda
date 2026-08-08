@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"strings"
 	"time"
+
+	"github.com/akarso/shopanda/internal/platform/jwt"
 )
 
 func normalizeAndValidate(cfg *Config) error {
@@ -44,10 +46,21 @@ func normalizeAndValidate(cfg *Config) error {
 		return fmt.Errorf("config: unsupported media.storage: %q (allowed: local, s3)", cfg.Media.Storage)
 	}
 
+	if err := normalizeAuthJWT(&cfg.Auth); err != nil {
+		return err
+	}
 	if err := normalizeAuthLockout(&cfg.Auth.Lockout); err != nil {
 		return err
 	}
 
+	return nil
+}
+
+func normalizeAuthJWT(a *AuthConfig) error {
+	a.JWTSecret = strings.TrimSpace(a.JWTSecret)
+	if _, err := jwt.ParseSecret(a.JWTSecret); err != nil {
+		return fmt.Errorf("config: %w", err)
+	}
 	return nil
 }
 

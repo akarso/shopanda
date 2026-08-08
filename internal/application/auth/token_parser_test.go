@@ -9,10 +9,11 @@ import (
 	"github.com/akarso/shopanda/internal/domain/customer"
 	"github.com/akarso/shopanda/internal/domain/identity"
 	"github.com/akarso/shopanda/internal/platform/jwt"
+	"github.com/akarso/shopanda/internal/platform/jwt/jwttest"
 )
 
 func TestValidatingTokenParser_Parse(t *testing.T) {
-	issuer, _ := jwt.NewIssuer("test-secret", time.Hour)
+	issuer, _ := jwt.NewIssuer(jwttest.TestSecret, time.Hour)
 	repo := newMockRepo()
 	parser := auth.NewValidatingTokenParser(issuer, repo, 0)
 
@@ -34,7 +35,7 @@ func TestValidatingTokenParser_Parse(t *testing.T) {
 }
 
 func TestValidatingTokenParser_Parse_DisplayName(t *testing.T) {
-	issuer, _ := jwt.NewIssuer("test-secret", time.Hour)
+	issuer, _ := jwt.NewIssuer(jwttest.TestSecret, time.Hour)
 	repo := newMockRepo()
 	parser := auth.NewValidatingTokenParser(issuer, repo, 0)
 
@@ -60,7 +61,7 @@ func TestValidatingTokenParser_Parse_DisplayName(t *testing.T) {
 }
 
 func TestValidatingTokenParser_Parse_InvalidToken(t *testing.T) {
-	issuer, _ := jwt.NewIssuer("test-secret", time.Hour)
+	issuer, _ := jwt.NewIssuer(jwttest.TestSecret, time.Hour)
 	repo := newMockRepo()
 	parser := auth.NewValidatingTokenParser(issuer, repo, 0)
 
@@ -71,7 +72,7 @@ func TestValidatingTokenParser_Parse_InvalidToken(t *testing.T) {
 }
 
 func TestValidatingTokenParser_Parse_CustomerNotFound(t *testing.T) {
-	issuer, _ := jwt.NewIssuer("test-secret", time.Hour)
+	issuer, _ := jwt.NewIssuer(jwttest.TestSecret, time.Hour)
 	repo := newMockRepo()
 	parser := auth.NewValidatingTokenParser(issuer, repo, 0)
 
@@ -83,7 +84,7 @@ func TestValidatingTokenParser_Parse_CustomerNotFound(t *testing.T) {
 }
 
 func TestValidatingTokenParser_Parse_GenerationMismatch(t *testing.T) {
-	issuer, _ := jwt.NewIssuer("test-secret", time.Hour)
+	issuer, _ := jwt.NewIssuer(jwttest.TestSecret, time.Hour)
 	repo := newMockRepo()
 	parser := auth.NewValidatingTokenParser(issuer, repo, 0)
 

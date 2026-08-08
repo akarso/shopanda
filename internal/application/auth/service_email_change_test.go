@@ -11,10 +11,11 @@ import (
 	"github.com/akarso/shopanda/internal/platform/apperror"
 	"github.com/akarso/shopanda/internal/platform/event"
 	"github.com/akarso/shopanda/internal/platform/jwt"
+	"github.com/akarso/shopanda/internal/platform/jwt/jwttest"
 )
 
 func newEmailChangeService(repo *mockCustomerRepo, bus *event.Bus) *auth.Service {
-	issuer, _ := jwt.NewIssuer("test-secret", time.Hour)
+	issuer, _ := jwt.NewIssuer(jwttest.TestSecret, time.Hour)
 	return auth.NewService(repo, newMockResetRepo(), issuer, bus, testLogger{}, time.Hour)
 }
 

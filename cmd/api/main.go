@@ -712,7 +712,11 @@ func runServe(cfg *config.Config, log logger.Logger, embedScheduler bool) error 
 	if err != nil {
 		return fmt.Errorf("invalid auth.jwt_ttl: %w", err)
 	}
-	jwtIssuer, err := jwt.NewIssuer(cfg.Auth.JWTSecret, jwtTTL)
+	jwtKey, err := jwt.ParseSecret(cfg.Auth.JWTSecret)
+	if err != nil {
+		return fmt.Errorf("jwt secret: %w", err)
+	}
+	jwtIssuer, err := jwt.NewIssuerFromKey(jwtKey, jwtTTL)
 	if err != nil {
 		return fmt.Errorf("jwt issuer: %w", err)
 	}
@@ -743,7 +747,9 @@ func runServe(cfg *config.Config, log logger.Logger, embedScheduler bool) error 
 	if err != nil {
 		return err
 	}
-	mfaService := mfaApp.NewService(mfaRepo, customerRepo, configRepo, cfg.Auth.JWTSecret, cfg.Auth.MFAEnabled)
+	// Same trimmed key material as jwt issuer (64-hex kept as ASCII, not decoded).
+	jwtSecretStr := string(jwtKey)
+	mfaService := mfaApp.NewService(mfaRepo, customerRepo, configRepo, jwtSecretStr, cfg.Auth.MFAEnabled)
 	if cfg.Auth.MFAEnabled {
 		authService.SetMFAClient(mfaService)
 	}
@@ -1289,7 +1295,7 @@ func runServe(cfg *config.Config, log logger.Logger, embedScheduler bool) error 
 			WithOrderClaim(claimService).
 			WithOrderClaimEmailer(claimEmailer).
 			WithOrderLinker(linkLinker).
-			WithAccountSecurity(cfg.Auth.JWTSecret, 10*time.Minute).
+			WithAccountSecurity(jwtSecretStr, 10*time.Minute).
 			WithAccountSecurityEmailLinks(cfg.Server.PublicBaseURL, 45*time.Minute).
 			WithAssets(assetRegistry).
 			WithLayeredNavAttributes(attributeStore).

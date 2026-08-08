@@ -12,6 +12,7 @@ import (
 	"github.com/akarso/shopanda/internal/domain/shared"
 	"github.com/akarso/shopanda/internal/platform/id"
 	"github.com/akarso/shopanda/internal/platform/jwt"
+	"github.com/akarso/shopanda/internal/platform/jwt/jwttest"
 )
 
 // mockOrderAuther implements order.OrderAuther for testing.
@@ -45,7 +46,7 @@ func TestLinkOrderService_RegisterAndLink_Success(t *testing.T) {
 			Token:      "jwt-token",
 		},
 	}
-	jwtIssuer, err := jwt.NewIssuer("test-secret", time.Hour)
+	jwtIssuer, err := jwt.NewIssuer(jwttest.TestSecret, time.Hour)
 	if err != nil {
 		t.Fatalf("NewIssuer: %v", err)
 	}
@@ -104,7 +105,7 @@ func TestLinkOrderService_RegisterAndLink_OrderNotFound(t *testing.T) {
 			Token:      "jwt-token",
 		},
 	}
-	jwtIssuer, err := jwt.NewIssuer("test-secret", time.Hour)
+	jwtIssuer, err := jwt.NewIssuer(jwttest.TestSecret, time.Hour)
 	if err != nil {
 		t.Fatalf("NewIssuer: %v", err)
 	}
@@ -139,7 +140,7 @@ func TestLinkOrderService_RegisterAndLink_AlreadyLinked(t *testing.T) {
 			Token:      "jwt-token",
 		},
 	}
-	jwtIssuer, err := jwt.NewIssuer("test-secret", time.Hour)
+	jwtIssuer, err := jwt.NewIssuer(jwttest.TestSecret, time.Hour)
 	if err != nil {
 		t.Fatalf("NewIssuer: %v", err)
 	}
@@ -189,7 +190,7 @@ func TestLinkOrderService_RegisterAndLink_PersistLinkFails_CleansUpCustomer(t *t
 			Token:      "jwt-token",
 		},
 	}
-	jwtIssuer, err := jwt.NewIssuer("test-secret", time.Hour)
+	jwtIssuer, err := jwt.NewIssuer(jwttest.TestSecret, time.Hour)
 	if err != nil {
 		t.Fatalf("NewIssuer: %v", err)
 	}
@@ -229,7 +230,7 @@ func TestLinkOrderService_RegisterAndClaimByEmail_LinksAllGuestOrders(t *testing
 			ExpiresAt:  time.Now().Add(time.Hour),
 		},
 	}
-	jwtIssuer, err := jwt.NewIssuer("test-secret", time.Hour)
+	jwtIssuer, err := jwt.NewIssuer(jwttest.TestSecret, time.Hour)
 	if err != nil {
 		t.Fatalf("NewIssuer: %v", err)
 	}
@@ -284,7 +285,7 @@ func TestLinkOrderService_RegisterAndClaimByEmail_NoOrders(t *testing.T) {
 	mockAuth := &mockOrderAuther{
 		registerOutput: auth.RegisterOutput{CustomerID: "cust-new", Token: "jwt-token"},
 	}
-	jwtIssuer, err := jwt.NewIssuer("test-secret", time.Hour)
+	jwtIssuer, err := jwt.NewIssuer(jwttest.TestSecret, time.Hour)
 	if err != nil {
 		t.Fatalf("NewIssuer: %v", err)
 	}
@@ -308,7 +309,7 @@ func TestLinkOrderService_RegisterAndClaimByEmail_PersistFails_CleansUpCustomer(
 	mockAuth := &mockOrderAuther{
 		registerOutput: auth.RegisterOutput{CustomerID: "cust-new", Token: "jwt-token"},
 	}
-	jwtIssuer, err := jwt.NewIssuer("test-secret", time.Hour)
+	jwtIssuer, err := jwt.NewIssuer(jwttest.TestSecret, time.Hour)
 	if err != nil {
 		t.Fatalf("NewIssuer: %v", err)
 	}
@@ -340,7 +341,7 @@ func TestLinkOrderService_RegisterAndClaimByEmail_DomainValidationFails_CleansUp
 	mockAuth := &mockOrderAuther{
 		registerOutput: auth.RegisterOutput{CustomerID: "cust-new", Token: "jwt-token"},
 	}
-	jwtIssuer, err := jwt.NewIssuer("test-secret", time.Hour)
+	jwtIssuer, err := jwt.NewIssuer(jwttest.TestSecret, time.Hour)
 	if err != nil {
 		t.Fatalf("NewIssuer: %v", err)
 	}
@@ -361,7 +362,7 @@ func TestLinkOrderService_RegisterAndClaimByEmail_DomainValidationFails_CleansUp
 func TestLinkOrderService_RegisterAndLink_EmptyInputs(t *testing.T) {
 	repo := newMockOrderRepository()
 	mockAuth := &mockOrderAuther{}
-	jwtIssuer, err := jwt.NewIssuer("test-secret", time.Hour)
+	jwtIssuer, err := jwt.NewIssuer(jwttest.TestSecret, time.Hour)
 	if err != nil {
 		t.Fatalf("NewIssuer: %v", err)
 	}

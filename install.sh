@@ -134,6 +134,8 @@ prompt_choice() {
   done
 }
 
+# generate_secret emits 64 hex characters (openssl rand -hex 32). The app
+# accepts this form as-is for HMAC/MFA key material (see jwt.ParseSecret).
 generate_secret() {
   if command -v openssl >/dev/null 2>&1; then
     openssl rand -hex 32
