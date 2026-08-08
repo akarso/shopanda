@@ -289,3 +289,57 @@ func TestCacheStoreDB_IncrConcurrent(t *testing.T) {
 		t.Fatalf("Get after concurrent = hit=%v val=%d err=%v, want %d", hit, got, err, workers)
 	}
 }
+
+func TestCacheStoreDB_CompareAndSubtractBasic(t *testing.T) {
+	_, store := setupCacheStore(t)
+	if _, err := store.Incr("sub", 5, time.Minute); err != nil {
+		t.Fatalf("Incr: %v", err)
+	}
+	n, err := store.CompareAndSubtract("sub", 3)
+	if err != nil || n != 2 {
+		t.Fatalf("CompareAndSubtract = (%d, %v), want (2, nil)", n, err)
+	}
+	n, err = store.CompareAndSubtract("sub", 2)
+	if err != nil || n != 0 {
+		t.Fatalf("CompareAndSubtract clear = (%d, %v), want (0, nil)", n, err)
+	}
+	var got int64
+	hit, err := store.Get("sub", &got)
+	if err != nil || hit {
+		t.Fatalf("Get after clear = hit=%v err=%v, want miss", hit, err)
+	}
+}
+
+func TestCacheStoreDB_CompareAndSubtractVsIncrConcurrent(t *testing.T) {
+	_, store := setupCacheStore(t)
+	if _, err := store.Incr("cas", 10, time.Minute); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	const workers = 20
+	var wg sync.WaitGroup
+	wg.Add(workers * 2)
+	for i := 0; i < workers; i++ {
+		go func() {
+			defer wg.Done()
+			if _, err := store.Incr("cas", 1, time.Minute); err != nil {
+				t.Errorf("Incr: %v", err)
+			}
+		}()
+		go func() {
+			defer wg.Done()
+			if _, err := store.CompareAndSubtract("cas", 1); err != nil {
+				t.Errorf("CompareAndSubtract: %v", err)
+			}
+		}()
+	}
+	wg.Wait()
+	var got int64
+	hit, err := store.Get("cas", &got)
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	// Net: +workers Incr and -workers Subtract from base 10 → expect 10 if none lost.
+	if !hit || got != 10 {
+		t.Fatalf("Get after mixed race = hit=%v val=%d, want 10 (lost updates if FOR UPDATE missing)", hit, got)
+	}
+}

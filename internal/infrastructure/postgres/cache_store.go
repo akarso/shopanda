@@ -122,15 +122,16 @@ func (s *CacheStore) Incr(key string, delta int64, ttl time.Duration) (int64, er
 }
 
 // CompareAndSubtract subtracts expected from the counter when current >= expected.
+// The row is locked (FOR UPDATE) so a concurrent Incr cannot be erased by a stale CTE snapshot.
 func (s *CacheStore) CompareAndSubtract(key string, expected int64) (int64, error) {
 	if expected <= 0 {
 		return 0, nil
 	}
 	var newVal sql.NullInt64
 	err := s.db.QueryRow(
-		`WITH parsed AS (
+		`WITH locked AS (
 		   SELECT
-		     key,
+		     ctid,
 		     CASE
 		       WHEN expires_at IS NOT NULL AND expires_at < now() THEN NULL
 		       WHEN jsonb_typeof(value) = 'number'
@@ -145,20 +146,21 @@ func (s *CacheStore) CompareAndSubtract(key string, expected int64) (int64, erro
 		     END AS n
 		   FROM cache
 		   WHERE key = $1
+		   FOR UPDATE
 		 ),
 		 deleted AS (
 		   DELETE FROM cache c
-		   USING parsed p
-		   WHERE c.key = p.key AND p.n IS NOT NULL AND p.n = $2
+		   USING locked l
+		   WHERE c.ctid = l.ctid AND l.n IS NOT NULL AND l.n = $2
 		   RETURNING 0::bigint AS new_n
 		 ),
 		 updated AS (
 		   UPDATE cache c
-		   SET value = to_jsonb(p.n - $2),
+		   SET value = to_jsonb(l.n - $2),
 		       created_at = now()
-		   FROM parsed p
-		   WHERE c.key = p.key AND p.n IS NOT NULL AND p.n > $2
-		   RETURNING (p.n - $2) AS new_n
+		   FROM locked l
+		   WHERE c.ctid = l.ctid AND l.n IS NOT NULL AND l.n > $2
+		   RETURNING (l.n - $2) AS new_n
 		 )
 		 SELECT new_n FROM deleted
 		 UNION ALL
