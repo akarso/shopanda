@@ -619,7 +619,11 @@ func (s *Service) checkLockout(ctx context.Context, key string) error {
 	}
 	n, err := s.attempts.Failures(ctx, key)
 	if err != nil {
-		return fmt.Errorf("auth service: lockout check: %w", err)
+		// Fail open: transient cache/store errors must not take down login.
+		s.log.Warn("auth.login.lockout_check_failed", map[string]interface{}{
+			"error": err.Error(),
+		})
+		return nil
 	}
 	if n >= s.lockout.MaxFailures {
 		return apperror.RateLimited("too many login attempts, try again later")

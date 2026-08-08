@@ -52,23 +52,28 @@ func normalizeAndValidate(cfg *Config) error {
 }
 
 func normalizeAuthLockout(l *AuthLockoutConfig) error {
-	if l.Store == "" {
-		l.Store = "cache"
+	store := strings.ToLower(strings.TrimSpace(l.Store))
+	if store == "" {
+		store = DefaultAuthLockoutStore
 	}
-	switch strings.ToLower(strings.TrimSpace(l.Store)) {
+	switch store {
 	case "cache", "memory":
-		l.Store = strings.ToLower(strings.TrimSpace(l.Store))
+		l.Store = store
 	default:
 		return fmt.Errorf("config: unsupported auth.lockout.store: %q (allowed: cache, memory)", l.Store)
 	}
 	if l.MaxFailures <= 0 {
-		l.MaxFailures = 10
+		l.MaxFailures = DefaultAuthLockoutMaxFailures
 	}
 	if strings.TrimSpace(l.Window) == "" {
-		l.Window = "15m"
+		l.Window = DefaultAuthLockoutWindow
 	}
-	if _, err := time.ParseDuration(l.Window); err != nil {
+	d, err := time.ParseDuration(l.Window)
+	if err != nil {
 		return fmt.Errorf("config: invalid auth.lockout.window %q: %w", l.Window, err)
+	}
+	if d <= 0 {
+		return fmt.Errorf("config: invalid auth.lockout.window %q: must be > 0", l.Window)
 	}
 	return nil
 }

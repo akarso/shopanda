@@ -2,6 +2,7 @@ package auth_test
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"testing"
 	"time"
@@ -9,6 +10,48 @@ import (
 	"github.com/akarso/shopanda/internal/application/auth"
 	"github.com/akarso/shopanda/internal/platform/apperror"
 )
+
+type failingFailuresStore struct {
+	auth.AttemptStore
+	failCheck bool
+}
+
+func (s *failingFailuresStore) Failures(ctx context.Context, key string) (int, error) {
+	if s.failCheck {
+		return 0, errors.New("cache unavailable")
+	}
+	return s.AttemptStore.Failures(ctx, key)
+}
+
+func TestLogin_LockoutCheckFailsOpenOnStoreError(t *testing.T) {
+	repo := newMockRepo()
+	svc := newTestService(repo)
+	inner := auth.NewMemoryAttemptStore(100)
+	store := &failingFailuresStore{AttemptStore: inner, failCheck: true}
+	svc.SetLockout(auth.LockoutSettings{
+		Enabled:     true,
+		MaxFailures: 3,
+		Window:      time.Minute,
+	}, store)
+
+	_, err := svc.Register(context.Background(), auth.RegisterInput{
+		Email: "open@example.com", Password: "password123",
+	})
+	if err != nil {
+		t.Fatalf("Register: %v", err)
+	}
+
+	out, err := svc.Login(context.Background(), auth.LoginInput{
+		Email: "open@example.com", Password: "password123", ClientIP: "3.3.3.3",
+	})
+	if err != nil {
+		t.Fatalf("login should fail open on lockout check error, got %v", err)
+	}
+	if out.Token == "" {
+		t.Fatal("expected token when lockout store is unavailable")
+	}
+}
+
 
 func TestLockoutKey_IPAndAccount(t *testing.T) {
 	got := auth.LockoutKey("1.2.3.4", "a@example.com")
@@ -23,14 +66,17 @@ func TestLockoutKey_IPAndAccount(t *testing.T) {
 
 func TestMemoryAttemptStore_IncrementTTLAndReset(t *testing.T) {
 	store := auth.NewMemoryAttemptStore(100)
+	now := time.Date(2026, 1, 1, 12, 0, 0, 0, time.UTC)
+	store.SetNowFunc(func() time.Time { return now })
 	ctx := context.Background()
 	key := "10.0.0.1|user@example.com"
+	window := 50 * time.Millisecond
 
-	n, err := store.Increment(ctx, key, 50*time.Millisecond)
+	n, err := store.Increment(ctx, key, window)
 	if err != nil || n != 1 {
 		t.Fatalf("Increment #1 = (%d, %v), want (1, nil)", n, err)
 	}
-	n, err = store.Increment(ctx, key, 50*time.Millisecond)
+	n, err = store.Increment(ctx, key, window)
 	if err != nil || n != 2 {
 		t.Fatalf("Increment #2 = (%d, %v), want (2, nil)", n, err)
 	}
@@ -39,7 +85,7 @@ func TestMemoryAttemptStore_IncrementTTLAndReset(t *testing.T) {
 		t.Fatalf("Failures = (%d, %v), want (2, nil)", got, err)
 	}
 
-	time.Sleep(60 * time.Millisecond)
+	now = now.Add(window + time.Millisecond)
 	got, err = store.Failures(ctx, key)
 	if err != nil || got != 0 {
 		t.Fatalf("after TTL Failures = (%d, %v), want (0, nil)", got, err)
@@ -156,10 +202,13 @@ func TestLogin_LockoutTTLExpiry(t *testing.T) {
 	repo := newMockRepo()
 	svc := newTestService(repo)
 	store := auth.NewMemoryAttemptStore(100)
+	now := time.Date(2026, 1, 1, 12, 0, 0, 0, time.UTC)
+	store.SetNowFunc(func() time.Time { return now })
+	window := time.Minute
 	svc.SetLockout(auth.LockoutSettings{
 		Enabled:     true,
 		MaxFailures: 2,
-		Window:      40 * time.Millisecond,
+		Window:      window,
 	}, store)
 
 	_, _ = svc.Register(context.Background(), auth.RegisterInput{
@@ -178,7 +227,7 @@ func TestLogin_LockoutTTLExpiry(t *testing.T) {
 		t.Fatalf("want locked, got %v", err)
 	}
 
-	time.Sleep(50 * time.Millisecond)
+	now = now.Add(window + time.Second)
 	_, err = svc.Login(context.Background(), auth.LoginInput{
 		Email: "ttl@example.com", Password: "password123", ClientIP: "2.2.2.2",
 	})

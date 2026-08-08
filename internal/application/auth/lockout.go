@@ -2,6 +2,8 @@ package auth
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"strings"
 	"sync"
@@ -13,6 +15,8 @@ import (
 // AttemptStore tracks failed password-login attempts for lockout.
 type AttemptStore interface {
 	Failures(ctx context.Context, key string) (int, error)
+	// Increment records a failure and refreshes the sliding window TTL for key
+	// (each call extends expires-at by a full window from now).
 	Increment(ctx context.Context, key string, window time.Duration) (int, error)
 	Reset(ctx context.Context, key string) error
 }
@@ -26,6 +30,9 @@ type LockoutSettings struct {
 
 // DefaultMaxLockoutEntries caps in-memory lockout keys (single-instance store).
 const DefaultMaxLockoutEntries = 100_000
+
+// DefaultMemorySweepInterval amortizes full-map expiry sweeps.
+const DefaultMemorySweepInterval = time.Minute
 
 const lockoutCachePrefix = "auth:lockout:"
 
@@ -61,7 +68,8 @@ type lockoutEntry struct {
 	Count int `json:"count"`
 }
 
-// CacheAttemptStore persists counters in cache.Cache with TTL = lockout window.
+// CacheAttemptStore persists counters in cache.Cache with a sliding TTL equal to
+// the lockout window (each Increment refreshes the full TTL).
 type CacheAttemptStore struct {
 	cache cache.Cache
 }
@@ -72,7 +80,8 @@ func NewCacheAttemptStore(c cache.Cache) *CacheAttemptStore {
 }
 
 func (s *CacheAttemptStore) cacheKey(key string) string {
-	return lockoutCachePrefix + key
+	sum := sha256.Sum256([]byte(key))
+	return lockoutCachePrefix + hex.EncodeToString(sum[:])
 }
 
 func (s *CacheAttemptStore) Failures(_ context.Context, key string) (int, error) {
@@ -97,6 +106,7 @@ func (s *CacheAttemptStore) Increment(_ context.Context, key string, window time
 		entry.Count = 0
 	}
 	entry.Count++
+	// Sliding window: refresh full TTL on every failure.
 	if err := s.cache.Set(s.cacheKey(key), entry, window); err != nil {
 		return 0, fmt.Errorf("auth lockout cache set: %w", err)
 	}
@@ -116,10 +126,14 @@ type memoryEntry struct {
 }
 
 // MemoryAttemptStore is a bounded in-process counter store (single-instance only).
+// Increment uses a sliding window: each failure sets expires = now + window.
 type MemoryAttemptStore struct {
 	mu         sync.Mutex
 	entries    map[string]memoryEntry
 	maxEntries int
+	now        func() time.Time
+	lastSweep  time.Time
+	sweepEvery time.Duration
 }
 
 // NewMemoryAttemptStore creates a TTL-bounded memory store with a max entry cap.
@@ -130,15 +144,32 @@ func NewMemoryAttemptStore(maxEntries int) *MemoryAttemptStore {
 	return &MemoryAttemptStore{
 		entries:    make(map[string]memoryEntry),
 		maxEntries: maxEntries,
+		now:        time.Now,
+		sweepEvery: DefaultMemorySweepInterval,
 	}
+}
+
+// SetNowFunc overrides the clock (tests). Nil restores time.Now.
+func (s *MemoryAttemptStore) SetNowFunc(now func() time.Time) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if now == nil {
+		s.now = time.Now
+		return
+	}
+	s.now = now
 }
 
 func (s *MemoryAttemptStore) Failures(_ context.Context, key string) (int, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.evictExpiredLocked(time.Now())
+	now := s.now()
+	s.maybeSweepLocked(now)
 	e, ok := s.entries[key]
-	if !ok || time.Now().After(e.expires) {
+	if !ok || now.After(e.expires) {
+		if ok {
+			delete(s.entries, key)
+		}
 		return 0, nil
 	}
 	return e.count, nil
@@ -147,11 +178,14 @@ func (s *MemoryAttemptStore) Failures(_ context.Context, key string) (int, error
 func (s *MemoryAttemptStore) Increment(_ context.Context, key string, window time.Duration) (int, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	now := time.Now()
-	s.evictExpiredLocked(now)
+	now := s.now()
+	s.maybeSweepLocked(now)
 
 	e, ok := s.entries[key]
 	if !ok || now.After(e.expires) {
+		if ok {
+			delete(s.entries, key)
+		}
 		if !ok && len(s.entries) >= s.maxEntries {
 			// Evict one arbitrary expired-or-oldest entry to stay bounded.
 			s.evictOneLocked()
@@ -162,7 +196,7 @@ func (s *MemoryAttemptStore) Increment(_ context.Context, key string, window tim
 		e = memoryEntry{}
 	}
 	e.count++
-	e.expires = now.Add(window)
+	e.expires = now.Add(window) // sliding window
 	s.entries[key] = e
 	return e.count, nil
 }
@@ -172,6 +206,14 @@ func (s *MemoryAttemptStore) Reset(_ context.Context, key string) error {
 	defer s.mu.Unlock()
 	delete(s.entries, key)
 	return nil
+}
+
+func (s *MemoryAttemptStore) maybeSweepLocked(now time.Time) {
+	if s.sweepEvery > 0 && !s.lastSweep.IsZero() && now.Sub(s.lastSweep) < s.sweepEvery {
+		return
+	}
+	s.evictExpiredLocked(now)
+	s.lastSweep = now
 }
 
 func (s *MemoryAttemptStore) evictExpiredLocked(now time.Time) {

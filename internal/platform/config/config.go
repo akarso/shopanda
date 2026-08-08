@@ -228,12 +228,22 @@ type AuthConfig struct {
 // AuthLockoutConfig throttles failed password logins (IP + account key).
 // store=cache uses the configured cache driver (postgres/redis) — preferred for multi-instance.
 // store=memory is single-instance only (bounded in-process map).
+//
+// Window is a sliding TTL: each failed attempt refreshes the full duration, so
+// continued failures can extend lockout beyond the original window.
 type AuthLockoutConfig struct {
 	Enabled     bool   `yaml:"enabled"`
 	Store       string `yaml:"store"` // cache | memory
 	MaxFailures int    `yaml:"max_failures"`
 	Window      string `yaml:"window"` // Go duration, e.g. "15m"
 }
+
+// Default auth.lockout values (shared by defaults() and normalizeAuthLockout).
+const (
+	DefaultAuthLockoutStore       = "cache"
+	DefaultAuthLockoutMaxFailures = 10
+	DefaultAuthLockoutWindow      = "15m"
+)
 
 type MailConfig struct {
 	Driver string     `yaml:"driver"`
@@ -598,9 +608,9 @@ func defaults() Config {
 			JWTTTL:    "24h",
 			Lockout: AuthLockoutConfig{
 				Enabled:     true,
-				Store:       "cache",
-				MaxFailures: 10,
-				Window:      "15m",
+				Store:       DefaultAuthLockoutStore,
+				MaxFailures: DefaultAuthLockoutMaxFailures,
+				Window:      DefaultAuthLockoutWindow,
 			},
 		},
 		Mail: MailConfig{

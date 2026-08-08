@@ -59,8 +59,10 @@ auth:
   jwt_ttl: "24h"
 
   # Failed-login lockout (IP + normalized email). Applies to API and storefront login.
-  # store=cache uses the configured cache driver (postgres/redis) — required for multi-instance.
+  # store=cache uses the configured cache driver (postgres/redis) — preferred for multi-instance
+  # (best-effort under concurrent Get/Set; not a strict atomic counter).
   # store=memory is single-instance only (bounded in-process map).
+  # window is a sliding TTL: each failed attempt refreshes the full duration.
   lockout:
     enabled: true
     store: "cache"

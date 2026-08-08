@@ -1,6 +1,7 @@
 package config
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -970,6 +971,21 @@ auth:
 	_, err := loadCfg(t, path)
 	if err == nil {
 		t.Fatal("expected error for unsupported lockout store")
+	}
+}
+
+func TestAuthLockoutConfig_InvalidWindow(t *testing.T) {
+	withTestBaseURL(t)
+	for _, window := range []string{"15x", "0s"} {
+		path := writeYAML(t, fmt.Sprintf(`
+auth:
+  lockout:
+    window: %q
+`, window))
+		_, err := loadCfg(t, path)
+		if err == nil {
+			t.Fatalf("window %q: expected error", window)
+		}
 	}
 }
 

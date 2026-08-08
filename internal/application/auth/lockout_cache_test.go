@@ -77,3 +77,24 @@ func TestCacheAttemptStore_IncrementAndReset(t *testing.T) {
 		t.Fatalf("after Reset Failures = (%d, %v), want (0, nil)", got, err)
 	}
 }
+
+func TestCacheAttemptStore_TTLExpiry(t *testing.T) {
+	store := NewCacheAttemptStore(newStubCache())
+	ctx := context.Background()
+	key := "5.5.5.5|b@example.com"
+	ttl := 20 * time.Millisecond
+
+	if _, err := store.Increment(ctx, key, ttl); err != nil {
+		t.Fatalf("Increment: %v", err)
+	}
+	got, err := store.Failures(ctx, key)
+	if err != nil || got != 1 {
+		t.Fatalf("Failures before expiry = (%d, %v), want (1, nil)", got, err)
+	}
+
+	time.Sleep(ttl + 10*time.Millisecond)
+	got, err = store.Failures(ctx, key)
+	if err != nil || got != 0 {
+		t.Fatalf("Failures after TTL = (%d, %v), want (0, nil)", got, err)
+	}
+}
