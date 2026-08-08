@@ -26,6 +26,7 @@ func TestIsBlockedIP(t *testing.T) {
 		"100.64.1.1",
 		"198.18.0.1",
 		"192.0.2.1",
+		"192.88.99.1",
 		"198.51.100.1",
 		"203.0.113.10",
 		"240.0.0.1",
@@ -119,7 +120,7 @@ func TestSafeDialContext_RejectsRebindingMixedRecords(t *testing.T) {
 	}
 }
 
-func TestNewHTTPClient_DisablesProxy(t *testing.T) {
+func TestNewHTTPClient_DisablesProxyAndDefaultDialTLS(t *testing.T) {
 	c := ssrf.NewHTTPClient(time.Second, nil)
 	tr, ok := c.Transport.(*http.Transport)
 	if !ok {
@@ -127,5 +128,11 @@ func TestNewHTTPClient_DisablesProxy(t *testing.T) {
 	}
 	if tr.Proxy != nil {
 		t.Fatal("Proxy must be nil so HTTP(S)_PROXY cannot bypass destination IP checks")
+	}
+	if tr.DialTLS != nil || tr.DialTLSContext != nil {
+		t.Fatal("DialTLS hooks must be unset so TLS uses DialContext (SafeDialContext)")
+	}
+	if tr.DialContext == nil {
+		t.Fatal("DialContext must be set")
 	}
 }
