@@ -1,64 +1,122 @@
-# # Unit CI — format, vet, and tests (no Postgres required).
-# # Integration job with SHOPANDA_TEST_DSN is PR-1003.
-# #
-# # This workflow reports the check "CI / unit". Merge blocking requires a
-# # repo admin to mark that check required on main/dev (branch protection / ruleset).
-# name: CI
+# Unit + integration CI.
+#
+# Checks reported:
+#   - CI / unit
+#   - CI / integration
+# Merge blocking requires a repo admin to mark those checks required on main/dev
+# (branch protection / ruleset).
+name: CI
 
-# on:
-#   pull_request:
-#     branches:
-#       - main
-#       - dev
-#   push:
-#     branches:
-#       - main
-#       - dev
+on:
+  pull_request:
+    branches:
+      - main
+      - dev
+  push:
+    branches:
+      - main
+      - dev
 
-# concurrency:
-#   group: ${{ github.workflow }}-${{ github.ref }}
-#   cancel-in-progress: true
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
-# permissions:
-#   contents: read
+permissions:
+  contents: read
 
-# env:
-#   GOFLAGS: -mod=readonly
+env:
+  GOFLAGS: -mod=readonly
 
-# jobs:
-#   unit:
-#     name: unit
-#     runs-on: ubuntu-latest
-#     timeout-minutes: 30
-#     steps:
-#       - name: Checkout
-#         # Pin to full SHA (tag v4.4.0) — mutable tags can be retargeted.
-#         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
-#         with:
-#           persist-credentials: false
+jobs:
+  unit:
+    name: unit
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        # Pin to full SHA (tag v4.4.0) — mutable tags can be retargeted.
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
 
-#       - name: Set up Go
-#         # Pin to full SHA (tag v5.6.0) — mutable tags can be retargeted.
-#         uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
-#         with:
-#           go-version-file: go.mod
-#           cache: true
-#           cache-dependency-path: go.sum
+      - name: Set up Go
+        # Pin to full SHA (tag v5.6.0) — mutable tags can be retargeted.
+        uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version-file: go.mod
+          cache: true
+          cache-dependency-path: go.sum
 
-#       - name: go mod verify
-#         run: go mod verify
+      - name: go mod verify
+        run: go mod verify
 
-#       - name: gofmt
-#         run: |
-#           files="$(gofmt -l .)"
-#           if [ -n "$files" ]; then
-#             echo "gofmt needed on:"
-#             echo "$files"
-#             exit 1
-#           fi
+      - name: gofmt
+        run: |
+          files="$(gofmt -l .)"
+          if [ -n "$files" ]; then
+            echo "gofmt needed on:"
+            echo "$files"
+            exit 1
+          fi
 
-#       - name: go vet
-#         run: go vet ./...
+      - name: go vet
+        run: go vet ./...
 
-#       - name: go test
-#         run: go test ./...
+      - name: go test
+        run: go test ./...
+
+  integration:
+    name: integration
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    services:
+      postgres:
+        # Same digest as docker-compose.yml postgres:17-alpine pin.
+        image: postgres:17-alpine@sha256:778d0b486d6daa02b77434d0358ec57a1b21fd8b6d22ac2eef56a33e816928f6
+        env:
+          POSTGRES_USER: shopanda
+          POSTGRES_PASSWORD: shopanda
+          POSTGRES_DB: shopanda_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U shopanda -d shopanda_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 12
+    env:
+      SHOPANDA_TEST_DSN: postgres://shopanda:shopanda@localhost:5432/shopanda_test?sslmode=disable
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+
+      - name: Set up Go
+        uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version-file: go.mod
+          cache: true
+          cache-dependency-path: go.sum
+
+      - name: Install PostgreSQL client
+        run: sudo apt-get update && sudo apt-get install -y postgresql-client
+
+      - name: Wait for Postgres readiness
+        run: |
+          set -euo pipefail
+          echo "Waiting for Postgres at localhost:5432 (max 60s)..."
+          for i in $(seq 1 30); do
+            if pg_isready -h localhost -p 5432 -U shopanda -d shopanda_test; then
+              echo "Postgres is ready (attempt $i)."
+              exit 0
+            fi
+            sleep 2
+          done
+          echo "ERROR: Postgres did not become ready within 60s" >&2
+          exit 1
+
+      - name: DSN-gated integration tests
+        # -json + jq: detect Action=skip (default go test text hides skip reasons).
+        # -p 1: serialize packages so concurrent migrate.Run on one DB cannot race.
+        run: bash .github/scripts/run-integration-tests.sh

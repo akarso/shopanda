@@ -641,18 +641,16 @@ When extending the platform, keep hexagonal rules: domain ports first, explicit 
 
 ## Continuous Integration
 
-PRs targeting `main` / `dev`, and pushes to those branches, run [`.github/workflows/ci.yml`](../../.github/workflows/ci.yml). The Actions check name is **`CI / unit`**.
+PRs targeting `main` / `dev`, and pushes to those branches, run [`.github/workflows/ci.yml`](../../.github/workflows/ci.yml). Checks:
 
-Steps:
+| Check | What it runs |
+| --- | --- |
+| **`CI / unit`** | `go mod verify`, `gofmt`, `go vet`, `go test ./...` (no DSN — Postgres tests skip) |
+| **`CI / integration`** | Postgres 17 service + `SHOPANDA_TEST_DSN`; DSN-gated packages; fails if those tests skip |
 
-1. `go mod verify` (with `GOFLAGS=-mod=readonly`)
-2. `gofmt -l .` must be empty
-3. `go vet ./...`
-4. `go test ./...` (no `SHOPANDA_TEST_DSN` — Postgres integration tests skip)
+The workflow **reports** the checks; it does not by itself block merges. A repository admin must require **`CI / unit`** and **`CI / integration`** on `main` and `dev` (Settings → Rules / Branch protection → required status checks).
 
-The workflow **reports** the check; it does not by itself block merges. A repository admin must require **`CI / unit`** on `main` and `dev` (Settings → Rules / Branch protection → required status checks). Until that is configured, a red or pending check can still be merged.
-
-Before opening a PR, run the same checks locally:
+Before opening a PR, run the unit checks locally:
 
 ```bash
 export GOFLAGS=-mod=readonly
@@ -663,8 +661,26 @@ go test ./...
 go build ./cmd/api/
 ```
 
-A Postgres-backed integration job is planned in [PR-1003](../phase-10-platform-excellence/prs/PR-1003.md). To run integration tests locally, set `SHOPANDA_TEST_DSN` (see `.env.example`).
+### Integration tests (local)
 
+Requires a Postgres 17 instance and `SHOPANDA_TEST_DSN` (see `.env.example`). Example with Docker:
+
+```bash
+docker run --rm -d --name shopanda-test-pg \
+  -e POSTGRES_USER=shopanda \
+  -e POSTGRES_PASSWORD=shopanda \
+  -e POSTGRES_DB=shopanda_test \
+  -p 5432:5432 \
+  postgres:17-alpine
+
+export SHOPANDA_TEST_DSN='postgres://shopanda:shopanda@localhost:5432/shopanda_test?sslmode=disable'
+export GOFLAGS=-mod=readonly
+
+# Same gate as CI (requires jq): fails if DSN empty, any test skips, or canaries miss.
+bash .github/scripts/run-integration-tests.sh
+```
+
+Repo tests apply root `migrations/` themselves. The script runs `go test -p 1` so packages do not race on `migrate.Run`.
 ## Practical Advice
 
 When adding an extension, prefer this order:

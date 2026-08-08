@@ -89,9 +89,9 @@ Recommended order:
 | PR-1000 | Unbreak the test suite | Fix non-compiling mocks (`FindBySKUs`, `SetStocks`); fix RBAC permission count; fix extension-port expectation; de-flake integrationdemo HMAC timestamp test; fix mutex-by-value in webhook test |
 | PR-1001 | Repo hygiene | `.gitignore`/`dockerignore` for `api`; `git rm --cached api`; gofmt all; delete unused `internal/infrastructure/postgres/migrations/022_*` (runtime uses root `migrations/`) |
 | PR-1002 | GitHub Actions CI (unit) | Workflow reports `CI / unit` (`gofmt`/`vet`/`test`, `-mod=readonly`); admin must require the check to block merges |
-| PR-1003 | CI integration job | Postgres readiness gate + full DSN-gated suite (`postgres`/`migrate`/`b2b`); anti-skip assertion; required for merge |
+| PR-1003 | CI integration job | `CI / integration`: Postgres 17 + readiness + `-json` anti-skip + `-p 1` — **in progress** until DSN suite green |
 
-**Definition of done:** CI fails on broken mocks/assertions, and branch rules require `CI / unit` (and later the integration check) so those failures cannot merge.
+**Definition of done:** CI fails on broken mocks/assertions; branch rules require **`CI / unit`** and **`CI / integration`** so those failures cannot merge. Integration job must use `go test -json` anti-skip (not default text) and `-p 1`.
 
 ---
 
@@ -188,7 +188,7 @@ Optional history rewrite (`git filter-repo` to purge historical `api` blobs) is 
 | PR | Track | Status |
 | --- | --- | --- |
 | 1000–1002 | A | done |
-| 1003 | A | planned |
+| 1003 | A | in progress |
 | 1004–1008 | B | planned |
 | 1009–1012 | C | planned |
 | 1013–1019 | D | planned |
