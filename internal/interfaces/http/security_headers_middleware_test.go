@@ -3,6 +3,7 @@ package http_test
 import (
 	"bytes"
 	"crypto/tls"
+	"encoding/json"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -23,14 +24,14 @@ func TestSecurityHeadersMiddleware_ExactValues(t *testing.T) {
 	rec := httptest.NewRecorder()
 	handler.ServeHTTP(rec, req)
 
-	if got := rec.Header().Get("X-Content-Type-Options"); got != shophttp.HeaderContentTypeOptions {
-		t.Fatalf("X-Content-Type-Options = %q, want %q", got, shophttp.HeaderContentTypeOptions)
+	if got := rec.Header().Get("X-Content-Type-Options"); got != "nosniff" {
+		t.Fatalf("X-Content-Type-Options = %q, want %q", got, "nosniff")
 	}
-	if got := rec.Header().Get("X-Frame-Options"); got != shophttp.HeaderFrameOptions {
-		t.Fatalf("X-Frame-Options = %q, want %q", got, shophttp.HeaderFrameOptions)
+	if got := rec.Header().Get("X-Frame-Options"); got != "DENY" {
+		t.Fatalf("X-Frame-Options = %q, want %q", got, "DENY")
 	}
-	if got := rec.Header().Get("Referrer-Policy"); got != shophttp.HeaderReferrerPolicy {
-		t.Fatalf("Referrer-Policy = %q, want %q", got, shophttp.HeaderReferrerPolicy)
+	if got := rec.Header().Get("Referrer-Policy"); got != "strict-origin-when-cross-origin" {
+		t.Fatalf("Referrer-Policy = %q, want %q", got, "strict-origin-when-cross-origin")
 	}
 	if got := rec.Header().Get("Strict-Transport-Security"); got != "" {
 		t.Fatalf("HSTS on plain HTTP = %q, want absent", got)
@@ -174,7 +175,8 @@ func TestBodyLimitMiddleware_MediaPathStillCaps(t *testing.T) {
 }
 
 func TestBodyLimitMiddleware_LoggedAs413(t *testing.T) {
-	log := logger.NewWithWriter(io.Discard, "info")
+	var logBuf bytes.Buffer
+	log := logger.NewWithWriter(&logBuf, "info")
 	// Mirror production order: Logging wraps BodyLimit.
 	chain := shophttp.LoggingMiddleware(log)(shophttp.BodyLimitMiddleware(32, 10<<20)(
 		http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -190,5 +192,19 @@ func TestBodyLimitMiddleware_LoggedAs413(t *testing.T) {
 
 	if rec.Code != http.StatusRequestEntityTooLarge {
 		t.Fatalf("client status = %d, want 413", rec.Code)
+	}
+
+	var entry struct {
+		Event   string                 `json:"event"`
+		Context map[string]interface{} `json:"context"`
+	}
+	if err := json.Unmarshal(logBuf.Bytes(), &entry); err != nil {
+		t.Fatalf("parse access log: %v; raw=%s", err, logBuf.String())
+	}
+	if entry.Event != "http.request" {
+		t.Fatalf("log event = %q, want http.request", entry.Event)
+	}
+	if entry.Context["status"] != float64(http.StatusRequestEntityTooLarge) {
+		t.Fatalf("access log status = %v, want 413; raw=%s", entry.Context["status"], logBuf.String())
 	}
 }

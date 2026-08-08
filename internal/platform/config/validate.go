@@ -68,12 +68,10 @@ func normalizeHTTP(h *HTTPConfig) {
 }
 
 func normalizeAuthJWT(a *AuthConfig) error {
-	key, err := jwt.ParseSecret(a.JWTSecret)
-	if err != nil {
+	a.JWTSecret = strings.TrimSpace(a.JWTSecret)
+	if _, err := jwt.ParseSecret(a.JWTSecret); err != nil {
 		return fmt.Errorf("config: %w", err)
 	}
-	// Persist the same normalized material ParseSecret uses (trailing trim only).
-	a.JWTSecret = string(key)
 	return nil
 }
 

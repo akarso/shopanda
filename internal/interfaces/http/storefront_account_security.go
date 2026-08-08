@@ -87,6 +87,7 @@ type storefrontOrderClaimTokenClaims struct {
 }
 
 func newStorefrontAccountSecurityVerifier(secret string, ttl time.Duration) *storefrontAccountSecurityVerifier {
+	secret = strings.TrimSpace(secret)
 	if secret == "" {
 		return nil
 	}
