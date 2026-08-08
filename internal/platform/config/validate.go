@@ -1,6 +1,10 @@
 package config
 
-import "fmt"
+import (
+	"fmt"
+	"strings"
+	"time"
+)
 
 func normalizeAndValidate(cfg *Config) error {
 	if cfg.Queue.Driver == "" {
@@ -40,5 +44,31 @@ func normalizeAndValidate(cfg *Config) error {
 		return fmt.Errorf("config: unsupported media.storage: %q (allowed: local, s3)", cfg.Media.Storage)
 	}
 
+	if err := normalizeAuthLockout(&cfg.Auth.Lockout); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+func normalizeAuthLockout(l *AuthLockoutConfig) error {
+	if l.Store == "" {
+		l.Store = "cache"
+	}
+	switch strings.ToLower(strings.TrimSpace(l.Store)) {
+	case "cache", "memory":
+		l.Store = strings.ToLower(strings.TrimSpace(l.Store))
+	default:
+		return fmt.Errorf("config: unsupported auth.lockout.store: %q (allowed: cache, memory)", l.Store)
+	}
+	if l.MaxFailures <= 0 {
+		l.MaxFailures = 10
+	}
+	if strings.TrimSpace(l.Window) == "" {
+		l.Window = "15m"
+	}
+	if _, err := time.ParseDuration(l.Window); err != nil {
+		return fmt.Errorf("config: invalid auth.lockout.window %q: %w", l.Window, err)
+	}
 	return nil
 }

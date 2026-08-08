@@ -35,6 +35,24 @@ func TestLoad_Defaults(t *testing.T) {
 	if cfg.Log.Level != "info" {
 		t.Errorf("Log.Level = %q, want %q", cfg.Log.Level, "info")
 	}
+	if !cfg.RateLimit.Enabled {
+		t.Error("RateLimit.Enabled = false, want true by default")
+	}
+	if cfg.RateLimit.Default.Rate != 10 || cfg.RateLimit.Default.Burst != 20 {
+		t.Errorf("RateLimit.Default = {%v,%d}, want {10,20}", cfg.RateLimit.Default.Rate, cfg.RateLimit.Default.Burst)
+	}
+	if !cfg.Auth.Lockout.Enabled {
+		t.Error("Auth.Lockout.Enabled = false, want true by default")
+	}
+	if cfg.Auth.Lockout.Store != "cache" {
+		t.Errorf("Auth.Lockout.Store = %q, want cache", cfg.Auth.Lockout.Store)
+	}
+	if cfg.Auth.Lockout.MaxFailures != 10 {
+		t.Errorf("Auth.Lockout.MaxFailures = %d, want 10", cfg.Auth.Lockout.MaxFailures)
+	}
+	if cfg.Auth.Lockout.Window != "15m" {
+		t.Errorf("Auth.Lockout.Window = %q, want 15m", cfg.Auth.Lockout.Window)
+	}
 }
 
 func TestLoad_YAMLOverridesDefaults(t *testing.T) {
@@ -912,6 +930,46 @@ rate_limit:
 	}
 	if cfg.RateLimit.Default.Burst != 100 {
 		t.Errorf("Default.Burst = %d, want 100 (non-positive env should be ignored)", cfg.RateLimit.Default.Burst)
+	}
+}
+
+func TestAuthLockoutConfig_EnvOverlay(t *testing.T) {
+	withTestBaseURL(t)
+	path := writeYAML(t, "")
+
+	t.Setenv("SHOPANDA_AUTH_LOCKOUT_ENABLED", "false")
+	t.Setenv("SHOPANDA_AUTH_LOCKOUT_STORE", "memory")
+	t.Setenv("SHOPANDA_AUTH_LOCKOUT_MAX_FAILURES", "7")
+	t.Setenv("SHOPANDA_AUTH_LOCKOUT_WINDOW", "30m")
+
+	cfg, err := loadCfg(t, path)
+	if err != nil {
+		t.Fatalf("Load() error: %v", err)
+	}
+	if cfg.Auth.Lockout.Enabled {
+		t.Error("Lockout.Enabled = true, want false from env")
+	}
+	if cfg.Auth.Lockout.Store != "memory" {
+		t.Errorf("Lockout.Store = %q, want memory", cfg.Auth.Lockout.Store)
+	}
+	if cfg.Auth.Lockout.MaxFailures != 7 {
+		t.Errorf("Lockout.MaxFailures = %d, want 7", cfg.Auth.Lockout.MaxFailures)
+	}
+	if cfg.Auth.Lockout.Window != "30m" {
+		t.Errorf("Lockout.Window = %q, want 30m", cfg.Auth.Lockout.Window)
+	}
+}
+
+func TestAuthLockoutConfig_InvalidStore(t *testing.T) {
+	withTestBaseURL(t)
+	path := writeYAML(t, `
+auth:
+  lockout:
+    store: redis
+`)
+	_, err := loadCfg(t, path)
+	if err == nil {
+		t.Fatal("expected error for unsupported lockout store")
 	}
 }
 

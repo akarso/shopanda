@@ -2,6 +2,7 @@ package http
 
 import (
 	"encoding/json"
+	"net"
 	"net/http"
 
 	appAuth "github.com/akarso/shopanda/internal/application/auth"
@@ -11,12 +12,17 @@ import (
 
 // AuthHandler handles authentication endpoints.
 type AuthHandler struct {
-	svc *appAuth.Service
+	svc            *appAuth.Service
+	trustedProxies []*net.IPNet
 }
 
-// NewAuthHandler creates an AuthHandler.
-func NewAuthHandler(svc *appAuth.Service) *AuthHandler {
-	return &AuthHandler{svc: svc}
+// NewAuthHandler creates an AuthHandler. Optional trustedProxies control
+// X-Forwarded-For / X-Real-Ip extraction for login lockout keys.
+func NewAuthHandler(svc *appAuth.Service, trustedProxies ...string) *AuthHandler {
+	return &AuthHandler{
+		svc:            svc,
+		trustedProxies: parseTrustedProxies(trustedProxies),
+	}
 }
 
 type registerRequest struct {
@@ -77,6 +83,7 @@ func (h *AuthHandler) Login() http.HandlerFunc {
 		out, err := h.svc.Login(r.Context(), appAuth.LoginInput{
 			Email:    req.Email,
 			Password: req.Password,
+			ClientIP: clientIP(r, h.trustedProxies),
 		})
 		if err != nil {
 			JSONError(w, err)

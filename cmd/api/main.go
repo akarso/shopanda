@@ -719,6 +719,26 @@ func runServe(cfg *config.Config, log logger.Logger, embedScheduler bool) error 
 	tokenParser := authApp.NewValidatingTokenParser(jwtIssuer, customerRepo, 30*time.Second)
 
 	authService := authApp.NewService(customerRepo, resetTokenRepo, jwtIssuer, bus, log, time.Hour)
+	if cfg.Auth.Lockout.Enabled {
+		lockoutWindow, err := time.ParseDuration(cfg.Auth.Lockout.Window)
+		if err != nil {
+			return fmt.Errorf("invalid auth.lockout.window: %w", err)
+		}
+		attemptStore, err := authApp.NewAttemptStore(cfg.Auth.Lockout.Store, appCache)
+		if err != nil {
+			return fmt.Errorf("auth lockout store: %w", err)
+		}
+		if cfg.Auth.Lockout.Store == "memory" {
+			log.Warn("auth.lockout.store_memory", map[string]interface{}{
+				"message": "auth.lockout.store=memory is single-instance only; use store=cache for multi-instance",
+			})
+		}
+		authService.SetLockout(authApp.LockoutSettings{
+			Enabled:     true,
+			MaxFailures: cfg.Auth.Lockout.MaxFailures,
+			Window:      lockoutWindow,
+		}, attemptStore)
+	}
 	mfaRepo, err := postgres.NewMFARepo(conn)
 	if err != nil {
 		return err
@@ -780,7 +800,7 @@ func runServe(cfg *config.Config, log logger.Logger, embedScheduler bool) error 
 	orderAdmin := shophttp.NewOrderAdminHandlerWithAuditor(orderRepo, sharedAuditor, extensionValueService)
 	invoiceAdmin := shophttp.NewInvoiceAdminHandler(invoiceRepo, orderRepo, invoicePDFRenderer, mediaStorage)
 	statsAdmin := shophttp.NewStatsAdminHandler(statsRepo)
-	authHandler := shophttp.NewAuthHandler(authService)
+	authHandler := shophttp.NewAuthHandler(authService, cfg.RateLimit.TrustedProxies...)
 	adminMFAHandler := shophttp.NewAdminMFAHandler(mfaService)
 	webhookVerifier := webhook.NewHMACVerifier(cfg.Webhooks.Secrets)
 	paymentWebhook := shophttp.NewPaymentWebhookHandler(paymentRepo, bus, webhookVerifier)
@@ -1263,6 +1283,7 @@ func runServe(cfg *config.Config, log logger.Logger, embedScheduler bool) error 
 			WithExtensions(extensionValueService).
 			WithCheckout(shippingReg.Providers(), payRegistry, checkoutService).
 			WithAccount(authService, orderRepo, accountService).
+			WithTrustedProxies(cfg.RateLimit.TrustedProxies...).
 			WithReturns(returnService).
 			WithAccountProfile(customerAddressRepo, consentRepo).
 			WithOrderClaim(claimService).

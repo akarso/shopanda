@@ -25,6 +25,13 @@ Shopanda plugins are **compile-time registered** — there is no `.so` drop-in l
 
 **Check plugin status:** startup logs emit `plugin.status` per registered plugin (`active` / `failed`). Use `app help` to list plugin CLI commands when enabled.
 
+## Rate limiting and login lockout
+
+- HTTP rate limiting is **on by default** (`SHOPANDA_RATE_LIMIT_ENABLED=true`). Rejected requests return `429` / `rate_limited`.
+- Failed password logins are throttled by **IP + normalized email** (`auth.lockout`). After `max_failures` within `window`, login returns `429` (`too many login attempts, try again later`). Wrong-password responses remain uniform `unauthorized` before the threshold.
+- **Multi-instance:** use `auth.lockout.store=cache` (default) so counters live in the shared cache (postgres/redis). `store=memory` is single-instance only; startup logs a warning if selected.
+- Behind a reverse proxy, configure `rate_limit.trusted_proxies` so ClientIP (rate limit + lockout) is not the proxy address.
+
 ## Common references
 
 - [EU compliance fields](docs/phase-5-maturity/specs/COMPLIANCE_EU.md) — Omnibus, WEEE, EPR, GPSR
