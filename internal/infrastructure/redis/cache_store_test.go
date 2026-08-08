@@ -171,6 +171,38 @@ func TestCacheStore_IncrConcurrent(t *testing.T) {
 	}
 }
 
+func TestCacheStore_CompareAndSubtract(t *testing.T) {
+	_, store := setupRedisCache(t, "cas")
+	if _, err := store.Incr("c", 5, time.Minute); err != nil {
+		t.Fatalf("Incr: %v", err)
+	}
+	n, err := store.CompareAndSubtract("c", 3)
+	if err != nil || n != 2 {
+		t.Fatalf("CompareAndSubtract = (%d, %v), want (2, nil)", n, err)
+	}
+	n, err = store.CompareAndSubtract("c", 9)
+	if err != nil || n != 2 {
+		t.Fatalf("current < expected = (%d, %v), want (2, nil)", n, err)
+	}
+	var still int64
+	hit, err := store.Get("c", &still)
+	if err != nil || !hit || still != 2 {
+		t.Fatalf("Get after no-op = hit=%v val=%d err=%v, want 2", hit, still, err)
+	}
+	n, err = store.CompareAndSubtract("c", 2)
+	if err != nil || n != 0 {
+		t.Fatalf("clear = (%d, %v), want (0, nil)", n, err)
+	}
+	hit, err = store.Get("c", &still)
+	if err != nil || hit {
+		t.Fatalf("Get after clear = hit=%v err=%v, want miss", hit, err)
+	}
+	n, err = store.CompareAndSubtract("missing", 1)
+	if err != nil || n != 0 {
+		t.Fatalf("missing = (%d, %v), want (0, nil)", n, err)
+	}
+}
+
 func TestCacheStore_DeleteExpiredNoOp(t *testing.T) {
 	_, store := setupRedisCache(t, "")
 

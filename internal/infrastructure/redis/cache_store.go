@@ -109,7 +109,8 @@ func (s *CacheStore) Incr(key string, delta int64, ttl time.Duration) (int64, er
 }
 
 // compareAndSubtractScript subtracts ARGV[1] when current >= ARGV[1].
-// Deletes the key when the result is 0. Returns the new count.
+// Deletes the key when the result is 0. Returns the new count on success,
+// 0 when absent/unparseable, or the unchanged current when current < expected.
 var compareAndSubtractScript = goredis.NewScript(`
 local raw = redis.call('GET', KEYS[1])
 if not raw then
@@ -148,6 +149,7 @@ return n
 `)
 
 // CompareAndSubtract subtracts expected from the counter when current >= expected.
+// When current < expected, leaves the value unchanged and returns current.
 func (s *CacheStore) CompareAndSubtract(key string, expected int64) (int64, error) {
 	if expected <= 0 {
 		return 0, nil

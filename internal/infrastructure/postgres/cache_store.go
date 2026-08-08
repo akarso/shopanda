@@ -122,61 +122,77 @@ func (s *CacheStore) Incr(key string, delta int64, ttl time.Duration) (int64, er
 }
 
 // CompareAndSubtract subtracts expected from the counter when current >= expected.
-// The row is locked (FOR UPDATE) so a concurrent Incr cannot be erased by a stale CTE snapshot.
+// Uses a single transaction with SELECT … FOR UPDATE on key so the locked row is
+// the one deleted/updated (no ctid matching). When current < expected, returns
+// the unchanged current count.
 func (s *CacheStore) CompareAndSubtract(key string, expected int64) (int64, error) {
 	if expected <= 0 {
 		return 0, nil
 	}
-	var newVal sql.NullInt64
-	err := s.db.QueryRow(
-		`WITH locked AS (
-		   SELECT
-		     ctid,
-		     CASE
-		       WHEN expires_at IS NOT NULL AND expires_at < now() THEN NULL
-		       WHEN jsonb_typeof(value) = 'number'
-		            AND (value #>> '{}') ~ '^-?[0-9]+$'
-		         THEN (value #>> '{}')::bigint
-		       WHEN jsonb_typeof(value) = 'object'
-		            AND (value ? 'count')
-		            AND jsonb_typeof(value->'count') = 'number'
-		            AND (value->>'count') ~ '^-?[0-9]+$'
-		         THEN (value->>'count')::bigint
-		       ELSE NULL
-		     END AS n
-		   FROM cache
-		   WHERE key = $1
-		   FOR UPDATE
-		 ),
-		 deleted AS (
-		   DELETE FROM cache c
-		   USING locked l
-		   WHERE c.ctid = l.ctid AND l.n IS NOT NULL AND l.n = $2
-		   RETURNING 0::bigint AS new_n
-		 ),
-		 updated AS (
-		   UPDATE cache c
-		   SET value = to_jsonb(l.n - $2),
-		       created_at = now()
-		   FROM locked l
-		   WHERE c.ctid = l.ctid AND l.n IS NOT NULL AND l.n > $2
-		   RETURNING (l.n - $2) AS new_n
-		 )
-		 SELECT new_n FROM deleted
-		 UNION ALL
-		 SELECT new_n FROM updated`,
-		key, expected,
-	).Scan(&newVal)
+	tx, err := s.db.Begin()
+	if err != nil {
+		return 0, fmt.Errorf("cache_store: compare-and-subtract %q: begin: %w", key, err)
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	var n sql.NullInt64
+	err = tx.QueryRow(
+		`SELECT CASE
+		   WHEN expires_at IS NOT NULL AND expires_at < now() THEN NULL
+		   WHEN jsonb_typeof(value) = 'number'
+		        AND (value #>> '{}') ~ '^-?[0-9]+$'
+		     THEN (value #>> '{}')::bigint
+		   WHEN jsonb_typeof(value) = 'object'
+		        AND (value ? 'count')
+		        AND jsonb_typeof(value->'count') = 'number'
+		        AND (value->>'count') ~ '^-?[0-9]+$'
+		     THEN (value->>'count')::bigint
+		   ELSE NULL
+		 END
+		 FROM cache
+		 WHERE key = $1
+		 FOR UPDATE`,
+		key,
+	).Scan(&n)
 	if err == sql.ErrNoRows {
 		return 0, nil
 	}
 	if err != nil {
 		return 0, fmt.Errorf("cache_store: compare-and-subtract %q: %w", key, err)
 	}
-	if !newVal.Valid {
+	if !n.Valid {
+		if err := tx.Commit(); err != nil {
+			return 0, fmt.Errorf("cache_store: compare-and-subtract %q: commit: %w", key, err)
+		}
 		return 0, nil
 	}
-	return newVal.Int64, nil
+	cur := n.Int64
+	if cur < expected {
+		if err := tx.Commit(); err != nil {
+			return 0, fmt.Errorf("cache_store: compare-and-subtract %q: commit: %w", key, err)
+		}
+		return cur, nil
+	}
+	if cur == expected {
+		if _, err := tx.Exec(`DELETE FROM cache WHERE key = $1`, key); err != nil {
+			return 0, fmt.Errorf("cache_store: compare-and-subtract %q: delete: %w", key, err)
+		}
+		if err := tx.Commit(); err != nil {
+			return 0, fmt.Errorf("cache_store: compare-and-subtract %q: commit: %w", key, err)
+		}
+		return 0, nil
+	}
+	newVal := cur - expected
+	if _, err := tx.Exec(
+		`UPDATE cache SET value = to_jsonb($2::bigint), created_at = now() WHERE key = $1`,
+		key, newVal,
+	); err != nil {
+		return 0, fmt.Errorf("cache_store: compare-and-subtract %q: update: %w", key, err)
+	}
+	if err := tx.Commit(); err != nil {
+		return 0, fmt.Errorf("cache_store: compare-and-subtract %q: commit: %w", key, err)
+	}
+	return newVal, nil
 }
 
 // Delete removes the entry for key. A missing key is not an error.

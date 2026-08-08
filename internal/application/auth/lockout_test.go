@@ -187,7 +187,7 @@ func TestMemoryAttemptStore_IncrementTTLAndReset(t *testing.T) {
 	}
 
 	_, _ = store.Increment(ctx, key, time.Minute)
-	if err := store.ResetIf(ctx, key, 2); err != nil {
+	if err := store.ResetIf(ctx, key, 1); err != nil {
 		t.Fatalf("ResetIf: %v", err)
 	}
 	got, err = store.Failures(ctx, key)

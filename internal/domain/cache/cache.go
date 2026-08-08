@@ -24,7 +24,10 @@ type Cache interface {
 
 	// CompareAndSubtract subtracts expected from an integer counter when
 	// current >= expected (JSON number or legacy {"count":N}). Deletes the key
-	// when the result is 0. Returns the new count (0 if deleted or absent).
+	// when the result is 0. Returns the new count after a successful subtract
+	// (0 if deleted). When the key is absent, expired, or unparseable, returns 0
+	// and leaves storage unchanged. When current < expected, leaves the value
+	// unchanged and returns the current count (no-op).
 	CompareAndSubtract(key string, expected int64) (int64, error)
 
 	// Delete removes the entry for key. A missing key is not an error.
