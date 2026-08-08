@@ -69,6 +69,45 @@ func (s *CacheStore) Set(key string, value any, ttl time.Duration) error {
 	return nil
 }
 
+// incrScript atomically increments a JSON-number counter and refreshes TTL (PX ms).
+// KEYS[1]=key ARGV[1]=delta ARGV[2]=ttl_ms (0 = no expiry).
+var incrScript = goredis.NewScript(`
+local raw = redis.call('GET', KEYS[1])
+local n = 0
+if raw then
+  local ok, decoded = pcall(cjson.decode, raw)
+  if ok and type(decoded) == 'number' then
+    n = decoded
+  elseif ok and type(decoded) == 'table' and decoded.count ~= nil then
+    n = tonumber(decoded.count) or 0
+  end
+end
+n = n + tonumber(ARGV[1])
+local ttl = tonumber(ARGV[2])
+if ttl > 0 then
+  redis.call('SET', KEYS[1], cjson.encode(n), 'PX', ttl)
+else
+  redis.call('SET', KEYS[1], cjson.encode(n))
+end
+return n
+`)
+
+// Incr atomically increments a JSON-number counter and refreshes TTL.
+func (s *CacheStore) Incr(key string, delta int64, ttl time.Duration) (int64, error) {
+	ttlMs := int64(0)
+	if ttl > 0 {
+		ttlMs = ttl.Milliseconds()
+		if ttlMs < 1 {
+			ttlMs = 1
+		}
+	}
+	res, err := incrScript.Run(context.Background(), s.client, []string{s.key(key)}, delta, ttlMs).Int64()
+	if err != nil {
+		return 0, fmt.Errorf("redis cache: incr %q: %w", key, err)
+	}
+	return res, nil
+}
+
 // Delete removes the entry for key. A missing key is not an error.
 func (s *CacheStore) Delete(key string) error {
 	if err := s.client.Del(context.Background(), s.key(key)).Err(); err != nil {

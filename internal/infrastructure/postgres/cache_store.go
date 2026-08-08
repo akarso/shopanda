@@ -84,6 +84,38 @@ func (s *CacheStore) Set(key string, value any, ttl time.Duration) error {
 	return nil
 }
 
+// Incr atomically increments a JSON-number counter and refreshes TTL.
+func (s *CacheStore) Incr(key string, delta int64, ttl time.Duration) (int64, error) {
+	var expiresAt sql.NullTime
+	if ttl > 0 {
+		expiresAt = sql.NullTime{Time: time.Now().Add(ttl), Valid: true}
+	}
+
+	var newVal int64
+	err := s.db.QueryRow(
+		`INSERT INTO cache (key, value, expires_at)
+		 VALUES ($1, to_jsonb($2::bigint), $3)
+		 ON CONFLICT (key) DO UPDATE SET
+		   value = to_jsonb(
+		     CASE
+		       WHEN cache.expires_at IS NOT NULL AND cache.expires_at < now() THEN $2::bigint
+		WHEN jsonb_typeof(cache.value) = 'number' THEN (cache.value #>> '{}')::bigint + $2::bigint
+		       WHEN jsonb_typeof(cache.value) = 'object' AND (cache.value ? 'count')
+		         THEN COALESCE((cache.value->>'count')::bigint, 0) + $2::bigint
+		       ELSE $2::bigint
+		     END
+		   ),
+		   expires_at = EXCLUDED.expires_at,
+		   created_at = now()
+		 RETURNING (value #>> '{}')::bigint`,
+		key, delta, expiresAt,
+	).Scan(&newVal)
+	if err != nil {
+		return 0, fmt.Errorf("cache_store: incr %q: %w", key, err)
+	}
+	return newVal, nil
+}
+
 // Delete removes the entry for key. A missing key is not an error.
 func (s *CacheStore) Delete(key string) error {
 	_, err := s.db.Exec(`DELETE FROM cache WHERE key = $1`, key)

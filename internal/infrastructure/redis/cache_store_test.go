@@ -2,6 +2,7 @@ package redis_test
 
 import (
 	"context"
+	"sync"
 	"testing"
 	"time"
 
@@ -114,6 +115,59 @@ func TestCacheStore_Expired(t *testing.T) {
 	}
 	if hit {
 		t.Fatal("Get hit = true, want false after TTL expiry")
+	}
+}
+
+func TestCacheStore_Incr(t *testing.T) {
+	mr, store := setupRedisCache(t, "incr")
+
+	n, err := store.Incr("c", 1, time.Minute)
+	if err != nil || n != 1 {
+		t.Fatalf("Incr miss = (%d, %v), want (1, nil)", n, err)
+	}
+	n, err = store.Incr("c", 1, time.Minute)
+	if err != nil || n != 2 {
+		t.Fatalf("Incr accumulate = (%d, %v), want (2, nil)", n, err)
+	}
+
+	// Legacy object shape continues from .count.
+	if err := store.Set("legacy", map[string]any{"count": 5}, time.Minute); err != nil {
+		t.Fatalf("Set legacy: %v", err)
+	}
+	n, err = store.Incr("legacy", 1, time.Minute)
+	if err != nil || n != 6 {
+		t.Fatalf("Incr legacy = (%d, %v), want (6, nil)", n, err)
+	}
+
+	// Expired key resets to delta.
+	if err := store.Set("exp", int64(9), 50*time.Millisecond); err != nil {
+		t.Fatalf("Set exp: %v", err)
+	}
+	mr.FastForward(100 * time.Millisecond)
+	n, err = store.Incr("exp", 1, time.Minute)
+	if err != nil || n != 1 {
+		t.Fatalf("Incr after expiry = (%d, %v), want (1, nil)", n, err)
+	}
+}
+
+func TestCacheStore_IncrConcurrent(t *testing.T) {
+	_, store := setupRedisCache(t, "race")
+	const workers = 40
+	var wg sync.WaitGroup
+	wg.Add(workers)
+	for i := 0; i < workers; i++ {
+		go func() {
+			defer wg.Done()
+			if _, err := store.Incr("k", 1, time.Minute); err != nil {
+				t.Errorf("Incr: %v", err)
+			}
+		}()
+	}
+	wg.Wait()
+	var got int64
+	hit, err := store.Get("k", &got)
+	if err != nil || !hit || got != workers {
+		t.Fatalf("Get after concurrent = hit=%v val=%d err=%v, want %d", hit, got, err, workers)
 	}
 }
 

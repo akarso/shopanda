@@ -4,12 +4,14 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/akarso/shopanda/internal/domain/cache"
+	"github.com/akarso/shopanda/internal/platform/logger"
 )
 
 // AttemptStore tracks failed password-login attempts for lockout.
@@ -18,7 +20,9 @@ type AttemptStore interface {
 	// Increment records a failure and refreshes the sliding window TTL for key
 	// (each call extends expires-at by a full window from now).
 	Increment(ctx context.Context, key string, window time.Duration) (int, error)
-	Reset(ctx context.Context, key string) error
+	// Reset clears the counter. window is used if a Set(0) fallback is needed
+	// after Delete fails (must be > 0 so zero tombstones expire).
+	Reset(ctx context.Context, key string, window time.Duration) error
 }
 
 // LockoutSettings configures failed-login lockout on Service.
@@ -50,13 +54,13 @@ func LockoutKey(clientIP, normalizedEmail string) string {
 // NewAttemptStore returns a lockout store for the configured mode.
 // store=cache requires a non-nil cache.Cache (shared across instances via postgres/redis).
 // store=memory is single-instance only.
-func NewAttemptStore(store string, c cache.Cache) (AttemptStore, error) {
+func NewAttemptStore(store string, c cache.Cache, log logger.Logger) (AttemptStore, error) {
 	switch strings.ToLower(strings.TrimSpace(store)) {
 	case "", "cache":
 		if c == nil {
 			return nil, fmt.Errorf("auth lockout: store=cache requires a cache backend")
 		}
-		return NewCacheAttemptStore(c), nil
+		return NewCacheAttemptStore(c, log), nil
 	case "memory":
 		return NewMemoryAttemptStore(DefaultMaxLockoutEntries), nil
 	default:
@@ -64,19 +68,16 @@ func NewAttemptStore(store string, c cache.Cache) (AttemptStore, error) {
 	}
 }
 
-type lockoutEntry struct {
-	Count int `json:"count"`
-}
-
-// CacheAttemptStore persists counters in cache.Cache with a sliding TTL equal to
+// CacheAttemptStore persists counters via cache.Incr with a sliding TTL equal to
 // the lockout window (each Increment refreshes the full TTL).
 type CacheAttemptStore struct {
 	cache cache.Cache
+	log   logger.Logger
 }
 
 // NewCacheAttemptStore wraps a shared cache for lockout counters.
-func NewCacheAttemptStore(c cache.Cache) *CacheAttemptStore {
-	return &CacheAttemptStore{cache: c}
+func NewCacheAttemptStore(c cache.Cache, log logger.Logger) *CacheAttemptStore {
+	return &CacheAttemptStore{cache: c, log: log}
 }
 
 func (s *CacheAttemptStore) cacheKey(key string) string {
@@ -85,37 +86,67 @@ func (s *CacheAttemptStore) cacheKey(key string) string {
 }
 
 func (s *CacheAttemptStore) Failures(_ context.Context, key string) (int, error) {
-	var entry lockoutEntry
-	hit, err := s.cache.Get(s.cacheKey(key), &entry)
+	var raw json.RawMessage
+	hit, err := s.cache.Get(s.cacheKey(key), &raw)
 	if err != nil {
 		return 0, fmt.Errorf("auth lockout cache get: %w", err)
 	}
 	if !hit {
 		return 0, nil
 	}
-	return entry.Count, nil
-}
-
-func (s *CacheAttemptStore) Increment(_ context.Context, key string, window time.Duration) (int, error) {
-	var entry lockoutEntry
-	hit, err := s.cache.Get(s.cacheKey(key), &entry)
+	n, err := parseLockoutCount(raw)
 	if err != nil {
 		return 0, fmt.Errorf("auth lockout cache get: %w", err)
 	}
-	if !hit {
-		entry.Count = 0
-	}
-	entry.Count++
-	// Sliding window: refresh full TTL on every failure.
-	if err := s.cache.Set(s.cacheKey(key), entry, window); err != nil {
-		return 0, fmt.Errorf("auth lockout cache set: %w", err)
-	}
-	return entry.Count, nil
+	return n, nil
 }
 
-func (s *CacheAttemptStore) Reset(_ context.Context, key string) error {
-	if err := s.cache.Delete(s.cacheKey(key)); err != nil {
-		return fmt.Errorf("auth lockout cache delete: %w", err)
+// parseLockoutCount accepts the current JSON-number wire format and the legacy
+// {"count":N} object used by the initial Get/Set lockout implementation.
+func parseLockoutCount(raw json.RawMessage) (int, error) {
+	var n int64
+	if err := json.Unmarshal(raw, &n); err == nil {
+		return int(n), nil
+	}
+	var obj map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &obj); err != nil {
+		return 0, fmt.Errorf("unsupported lockout counter shape %s", string(raw))
+	}
+	countRaw, ok := obj["count"]
+	if !ok {
+		return 0, fmt.Errorf("unsupported lockout counter shape %s", string(raw))
+	}
+	if err := json.Unmarshal(countRaw, &n); err != nil {
+		return 0, fmt.Errorf("unsupported lockout counter shape %s", string(raw))
+	}
+	return int(n), nil
+}
+
+func (s *CacheAttemptStore) Increment(_ context.Context, key string, window time.Duration) (int, error) {
+	// Sliding window: atomic Incr refreshes the full TTL on every failure.
+	n, err := s.cache.Incr(s.cacheKey(key), 1, window)
+	if err != nil {
+		return 0, fmt.Errorf("auth lockout cache incr: %w", err)
+	}
+	return int(n), nil
+}
+
+func (s *CacheAttemptStore) Reset(_ context.Context, key string, window time.Duration) error {
+	ck := s.cacheKey(key)
+	if err := s.cache.Delete(ck); err != nil {
+		ttl := window
+		if ttl <= 0 {
+			ttl = time.Minute
+		}
+		// Overwrite to zero with a positive TTL so tombstones expire (TTL 0 is immortal).
+		if setErr := s.cache.Set(ck, int64(0), ttl); setErr != nil {
+			return fmt.Errorf("auth lockout cache reset: delete: %v; set: %w", err, setErr)
+		}
+		if s.log != nil {
+			s.log.Warn("auth.lockout.reset_delete_failed_used_set_fallback", map[string]interface{}{
+				"error": err.Error(),
+			})
+		}
 	}
 	return nil
 }
@@ -201,7 +232,7 @@ func (s *MemoryAttemptStore) Increment(_ context.Context, key string, window tim
 	return e.count, nil
 }
 
-func (s *MemoryAttemptStore) Reset(_ context.Context, key string) error {
+func (s *MemoryAttemptStore) Reset(_ context.Context, key string, _ time.Duration) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	delete(s.entries, key)

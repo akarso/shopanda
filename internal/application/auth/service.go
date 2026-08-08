@@ -569,11 +569,9 @@ func (s *Service) Login(ctx context.Context, in LoginInput) (LoginOutput, error)
 		return LoginOutput{}, s.recordLoginFailure(ctx, lockKey)
 	}
 
-	if err := s.clearLockout(ctx, lockKey); err != nil {
-		s.log.Warn("auth.login.lockout_reset_failed", map[string]interface{}{
-			"error": err.Error(),
-		})
-	}
+	// Clear lockout best-effort: never block a valid password on cache outage.
+	// Skip Reset entirely when no counter exists (happy path).
+	s.clearLockoutBestEffort(ctx, lockKey)
 
 	if s.mfa != nil {
 		required, err := s.mfa.RequiredForLogin(ctx, c)
@@ -649,11 +647,25 @@ func (s *Service) recordLoginFailure(ctx context.Context, key string) error {
 	return unauthorized
 }
 
-func (s *Service) clearLockout(ctx context.Context, key string) error {
+func (s *Service) clearLockoutBestEffort(ctx context.Context, key string) {
 	if !s.lockout.Enabled || s.attempts == nil {
-		return nil
+		return
 	}
-	return s.attempts.Reset(ctx, key)
+	n, err := s.attempts.Failures(ctx, key)
+	if err != nil {
+		s.log.Warn("auth.login.lockout_reset_skipped", map[string]interface{}{
+			"error": err.Error(),
+		})
+		return
+	}
+	if n == 0 {
+		return
+	}
+	if err := s.attempts.Reset(ctx, key, s.lockout.Window); err != nil {
+		s.log.Warn("auth.login.lockout_reset_failed", map[string]interface{}{
+			"error": err.Error(),
+		})
+	}
 }
 
 // VerifyLoginMFA completes admin login after TOTP or recovery code verification.

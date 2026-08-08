@@ -52,6 +52,45 @@ func TestLogin_LockoutCheckFailsOpenOnStoreError(t *testing.T) {
 	}
 }
 
+type failingResetStore struct {
+	auth.AttemptStore
+}
+
+func (s *failingResetStore) Reset(ctx context.Context, key string, window time.Duration) error {
+	return errors.New("cache delete failed")
+}
+
+func TestLogin_LockoutResetFailureFailsOpen(t *testing.T) {
+	repo := newMockRepo()
+	svc := newTestService(repo)
+	inner := auth.NewMemoryAttemptStore(100)
+	store := &failingResetStore{AttemptStore: inner}
+	svc.SetLockout(auth.LockoutSettings{
+		Enabled:     true,
+		MaxFailures: 5,
+		Window:      time.Minute,
+	}, store)
+
+	_, err := svc.Register(context.Background(), auth.RegisterInput{
+		Email: "resetfail@example.com", Password: "password123",
+	})
+	if err != nil {
+		t.Fatalf("Register: %v", err)
+	}
+
+	_, _ = inner.Increment(context.Background(), auth.LockoutKey("4.4.4.4", "resetfail@example.com"), time.Minute)
+
+	out, err := svc.Login(context.Background(), auth.LoginInput{
+		Email: "resetfail@example.com", Password: "password123", ClientIP: "4.4.4.4",
+	})
+	if err != nil {
+		t.Fatalf("login should fail open when lockout reset fails, got %v", err)
+	}
+	if out.Token == "" {
+		t.Fatal("expected token despite reset failure")
+	}
+}
+
 
 func TestLockoutKey_IPAndAccount(t *testing.T) {
 	got := auth.LockoutKey("1.2.3.4", "a@example.com")
@@ -92,7 +131,7 @@ func TestMemoryAttemptStore_IncrementTTLAndReset(t *testing.T) {
 	}
 
 	_, _ = store.Increment(ctx, key, time.Minute)
-	if err := store.Reset(ctx, key); err != nil {
+	if err := store.Reset(ctx, key, time.Minute); err != nil {
 		t.Fatalf("Reset: %v", err)
 	}
 	got, err = store.Failures(ctx, key)
@@ -152,7 +191,7 @@ func TestLogin_LockoutAfterFailuresAndResetOnSuccess(t *testing.T) {
 		t.Fatal("expected token for other IP")
 	}
 
-	_ = store.Reset(context.Background(), auth.LockoutKey("9.9.9.9", "lock@example.com"))
+	_ = store.Reset(context.Background(), auth.LockoutKey("9.9.9.9", "lock@example.com"), time.Minute)
 	out, err = svc.Login(context.Background(), auth.LoginInput{
 		Email: "lock@example.com", Password: "password123", ClientIP: "9.9.9.9",
 	})
@@ -237,13 +276,13 @@ func TestLogin_LockoutTTLExpiry(t *testing.T) {
 }
 
 func TestNewAttemptStore_Modes(t *testing.T) {
-	if _, err := auth.NewAttemptStore("memory", nil); err != nil {
+	if _, err := auth.NewAttemptStore("memory", nil, nil); err != nil {
 		t.Fatalf("memory: %v", err)
 	}
-	if _, err := auth.NewAttemptStore("cache", nil); err == nil {
+	if _, err := auth.NewAttemptStore("cache", nil, nil); err == nil {
 		t.Fatal("cache without backend should error")
 	}
-	if _, err := auth.NewAttemptStore("weird", nil); err == nil || !strings.Contains(err.Error(), "unsupported") {
+	if _, err := auth.NewAttemptStore("weird", nil, nil); err == nil || !strings.Contains(err.Error(), "unsupported") {
 		t.Fatalf("want unsupported error, got %v", err)
 	}
 }

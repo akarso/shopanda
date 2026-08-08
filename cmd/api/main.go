@@ -724,7 +724,7 @@ func runServe(cfg *config.Config, log logger.Logger, embedScheduler bool) error 
 		if err != nil {
 			return fmt.Errorf("invalid auth.lockout.window: %w", err)
 		}
-		attemptStore, err := authApp.NewAttemptStore(cfg.Auth.Lockout.Store, appCache)
+		attemptStore, err := authApp.NewAttemptStore(cfg.Auth.Lockout.Store, appCache, log)
 		if err != nil {
 			return fmt.Errorf("auth lockout store: %w", err)
 		}

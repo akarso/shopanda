@@ -2,6 +2,8 @@ package auth
 
 import (
 	"context"
+	"encoding/json"
+	"errors"
 	"sync"
 	"testing"
 	"time"
@@ -28,12 +30,11 @@ func (c *stubCache) Get(key string, dest any) (bool, error) {
 	if !ok || (!e.exp.IsZero() && time.Now().After(e.exp)) {
 		return false, nil
 	}
-	ptr, ok := dest.(*lockoutEntry)
-	if !ok {
-		return false, nil
+	b, err := json.Marshal(e.value)
+	if err != nil {
+		return false, err
 	}
-	*ptr = e.value.(lockoutEntry)
-	return true, nil
+	return true, json.Unmarshal(b, dest)
 }
 
 func (c *stubCache) Set(key string, value any, ttl time.Duration) error {
@@ -47,6 +48,34 @@ func (c *stubCache) Set(key string, value any, ttl time.Duration) error {
 	return nil
 }
 
+func (c *stubCache) Incr(key string, delta int64, ttl time.Duration) (int64, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	now := time.Now()
+	var n int64
+	if e, ok := c.data[key]; ok && (e.exp.IsZero() || !now.After(e.exp)) {
+		b, err := json.Marshal(e.value)
+		if err != nil {
+			return 0, err
+		}
+		if err := json.Unmarshal(b, &n); err != nil {
+			var obj struct {
+				Count int64 `json:"count"`
+			}
+			if err := json.Unmarshal(b, &obj); err == nil {
+				n = obj.Count
+			}
+		}
+	}
+	n += delta
+	var exp time.Time
+	if ttl > 0 {
+		exp = now.Add(ttl)
+	}
+	c.data[key] = stubCached{value: n, exp: exp}
+	return n, nil
+}
+
 func (c *stubCache) Delete(key string) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -57,7 +86,7 @@ func (c *stubCache) Delete(key string) error {
 func (c *stubCache) DeleteByPrefix(_ context.Context, _ string) error { return nil }
 
 func TestCacheAttemptStore_IncrementAndReset(t *testing.T) {
-	store := NewCacheAttemptStore(newStubCache())
+	store := NewCacheAttemptStore(newStubCache(), nil)
 	ctx := context.Background()
 	key := "1.2.3.4|a@example.com"
 
@@ -69,7 +98,7 @@ func TestCacheAttemptStore_IncrementAndReset(t *testing.T) {
 	if err != nil || got != 1 {
 		t.Fatalf("Failures = (%d, %v), want (1, nil)", got, err)
 	}
-	if err := store.Reset(ctx, key); err != nil {
+	if err := store.Reset(ctx, key, time.Minute); err != nil {
 		t.Fatalf("Reset: %v", err)
 	}
 	got, err = store.Failures(ctx, key)
@@ -79,7 +108,7 @@ func TestCacheAttemptStore_IncrementAndReset(t *testing.T) {
 }
 
 func TestCacheAttemptStore_TTLExpiry(t *testing.T) {
-	store := NewCacheAttemptStore(newStubCache())
+	store := NewCacheAttemptStore(newStubCache(), nil)
 	ctx := context.Background()
 	key := "5.5.5.5|b@example.com"
 	ttl := 20 * time.Millisecond
@@ -96,5 +125,103 @@ func TestCacheAttemptStore_TTLExpiry(t *testing.T) {
 	got, err = store.Failures(ctx, key)
 	if err != nil || got != 0 {
 		t.Fatalf("Failures after TTL = (%d, %v), want (0, nil)", got, err)
+	}
+}
+
+func TestCacheAttemptStore_LegacyObjectShape(t *testing.T) {
+	c := newStubCache()
+	store := NewCacheAttemptStore(c, nil)
+	ctx := context.Background()
+	key := "1.1.1.1|legacy@example.com"
+	ck := store.cacheKey(key)
+
+	// Simulate pre-Incr wire format still present in shared cache.
+	if err := c.Set(ck, map[string]any{"count": 7}, time.Minute); err != nil {
+		t.Fatalf("Set legacy: %v", err)
+	}
+	got, err := store.Failures(ctx, key)
+	if err != nil || got != 7 {
+		t.Fatalf("Failures legacy = (%d, %v), want (7, nil)", got, err)
+	}
+	n, err := store.Increment(ctx, key, time.Minute)
+	if err != nil || n != 8 {
+		t.Fatalf("Increment from legacy = (%d, %v), want (8, nil)", n, err)
+	}
+}
+
+func TestParseLockoutCount_RequiresCountField(t *testing.T) {
+	if _, err := parseLockoutCount([]byte(`{}`)); err == nil {
+		t.Fatal("empty object should error")
+	}
+	if _, err := parseLockoutCount([]byte(`{"other":1}`)); err == nil {
+		t.Fatal("object without count should error")
+	}
+	n, err := parseLockoutCount([]byte(`{"count":3}`))
+	if err != nil || n != 3 {
+		t.Fatalf("got (%d, %v), want (3, nil)", n, err)
+	}
+	n, err = parseLockoutCount([]byte(`9`))
+	if err != nil || n != 9 {
+		t.Fatalf("number got (%d, %v), want (9, nil)", n, err)
+	}
+}
+
+func TestCacheAttemptStore_ResetFallbackUsesPositiveTTL(t *testing.T) {
+	c := &deleteFailCache{stubCache: newStubCache()}
+	store := NewCacheAttemptStore(c, nil)
+	ctx := context.Background()
+	key := "2.2.2.2|tomb@example.com"
+	ck := store.cacheKey(key)
+	window := 30 * time.Second
+
+	if err := store.Reset(ctx, key, window); err != nil {
+		t.Fatalf("Reset: %v", err)
+	}
+	e, ok := c.data[ck]
+	if !ok {
+		t.Fatal("expected zero tombstone after Delete failure")
+	}
+	if e.exp.IsZero() {
+		t.Fatal("tombstone TTL must be positive (not immortal)")
+	}
+	if got, err := store.Failures(ctx, key); err != nil || got != 0 {
+		t.Fatalf("Failures = (%d, %v), want (0, nil)", got, err)
+	}
+}
+
+type deleteFailCache struct {
+	*stubCache
+}
+
+func (c *deleteFailCache) Delete(key string) error {
+	return errors.New("delete unavailable")
+}
+
+// TestCacheAttemptStore_StubConcurrentIncrementsPreserved checks the in-memory
+// stub's mutex Incr — not postgres/redis atomicity (see infrastructure tests).
+func TestCacheAttemptStore_StubConcurrentIncrementsPreserved(t *testing.T) {
+	store := NewCacheAttemptStore(newStubCache(), nil)
+	ctx := context.Background()
+	key := "9.9.9.9|race@example.com"
+	const workers = 50
+
+	var wg sync.WaitGroup
+	wg.Add(workers)
+	for i := 0; i < workers; i++ {
+		go func() {
+			defer wg.Done()
+			if _, err := store.Increment(ctx, key, time.Minute); err != nil {
+				t.Errorf("Increment: %v", err)
+			}
+		}()
+	}
+	wg.Wait()
+
+	got, err := store.Failures(ctx, key)
+	if err != nil {
+		t.Fatalf("Failures: %v", err)
+	}
+	if got != workers {
+		t.Fatalf("Failures = %d, want %d (lost increments under concurrency)", got, workers)
 	}
 }

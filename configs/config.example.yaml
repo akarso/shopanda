@@ -60,7 +60,7 @@ auth:
 
   # Failed-login lockout (IP + normalized email). Applies to API and storefront login.
   # store=cache uses the configured cache driver (postgres/redis) — preferred for multi-instance
-  # (best-effort under concurrent Get/Set; not a strict atomic counter).
+  # (atomic Incr with sliding TTL).
   # store=memory is single-instance only (bounded in-process map).
   # window is a sliding TTL: each failed attempt refreshes the full duration.
   lockout:

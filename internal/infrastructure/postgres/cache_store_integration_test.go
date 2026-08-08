@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"sync"
 	"testing"
 	"time"
 
@@ -191,5 +192,61 @@ func TestCacheStoreDB_DeleteExpired(t *testing.T) {
 	}
 	if count != 2 {
 		t.Errorf("remaining rows = %d, want 2", count)
+	}
+}
+
+func TestCacheStoreDB_Incr(t *testing.T) {
+	db, store := setupCacheStore(t)
+
+	n, err := store.Incr("c", 1, time.Minute)
+	if err != nil || n != 1 {
+		t.Fatalf("Incr miss = (%d, %v), want (1, nil)", n, err)
+	}
+	n, err = store.Incr("c", 2, time.Minute)
+	if err != nil || n != 3 {
+		t.Fatalf("Incr accumulate = (%d, %v), want (3, nil)", n, err)
+	}
+
+	if err := store.Set("legacy", map[string]any{"count": 4}, time.Minute); err != nil {
+		t.Fatalf("Set legacy: %v", err)
+	}
+	n, err = store.Incr("legacy", 1, time.Minute)
+	if err != nil || n != 5 {
+		t.Fatalf("Incr legacy = (%d, %v), want (5, nil)", n, err)
+	}
+
+	past := time.Now().Add(-time.Minute)
+	data, _ := json.Marshal(int64(9))
+	if _, err := db.Exec(
+		`INSERT INTO cache (key, value, expires_at) VALUES ($1, $2, $3)
+		 ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, expires_at = EXCLUDED.expires_at`,
+		"expired_c", data, past,
+	); err != nil {
+		t.Fatalf("insert expired: %v", err)
+	}
+	n, err = store.Incr("expired_c", 1, time.Minute)
+	if err != nil || n != 1 {
+		t.Fatalf("Incr expired = (%d, %v), want (1, nil)", n, err)
+	}
+}
+
+func TestCacheStoreDB_IncrConcurrent(t *testing.T) {
+	_, store := setupCacheStore(t)
+	const workers = 40
+	var wg sync.WaitGroup
+	wg.Add(workers)
+	for i := 0; i < workers; i++ {
+		go func() {
+			defer wg.Done()
+			if _, err := store.Incr("race", 1, time.Minute); err != nil {
+				t.Errorf("Incr: %v", err)
+			}
+		}()
+	}
+	wg.Wait()
+	var got int64
+	hit, err := store.Get("race", &got)
+	if err != nil || !hit || got != workers {
+		t.Fatalf("Get after concurrent = hit=%v val=%d err=%v, want %d", hit, got, err, workers)
 	}
 }
