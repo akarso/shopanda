@@ -147,6 +147,15 @@ Environment variables override YAML values.
 | `SHOPANDA_SERVER_PORT` | No | `8080` | HTTP port |
 | `SHOPANDA_SERVER_PUBLIC_BASE_URL` | Yes for real deployments | none | Public base URL used in generated links and external-facing flows |
 
+### HTTP boundary
+
+| Variable | Required | Default | Purpose |
+| --- | --- | --- | --- |
+| `SHOPANDA_HTTP_MAX_BODY_BYTES` | No | `1048576` (1 MiB) | Default max request body for non-media routes |
+| `SHOPANDA_HTTP_MEDIA_MAX_BODY_BYTES` | No | `10485760` (10 MiB) | Max body for admin media upload routes |
+
+Responses always include `X-Content-Type-Options: nosniff`, `X-Frame-Options: DENY`, and `Referrer-Policy: strict-origin-when-cross-origin`. `Strict-Transport-Security` is sent only when the request is TLS (`r.TLS != nil`) or `X-Forwarded-Proto: https` is honored from a peer in `rate_limit.trusted_proxies` — it is **absent** on plain HTTP without a trusted proxy. Terminate TLS at a reverse proxy and list that proxy under `trusted_proxies` so HSTS applies correctly.
+
 ### Database
 
 | Variable | Required | Default | Purpose |

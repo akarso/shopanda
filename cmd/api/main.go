@@ -885,6 +885,7 @@ func runServe(cfg *config.Config, log logger.Logger, embedScheduler bool) error 
 		}
 	}
 	mediaHandler := shophttp.NewMediaHandlerWithAuditor(mediaService, sharedAuditor)
+	mediaHandler.SetMaxUploadBytes(cfg.HTTP.MediaMaxBodyBytes)
 	configAdmin := shophttp.NewConfigAdminHandler(configRepo, cfg, func(ctx context.Context, smtpCfg shophttp.SMTPTestConfig, to string) error {
 		mailer := smtpmail.New(smtpmail.Config{
 			Host:     smtpCfg.Host,
@@ -959,9 +960,12 @@ func runServe(cfg *config.Config, log logger.Logger, embedScheduler bool) error 
 
 	// Middleware: outermost first.
 	router.Use(shophttp.RecoveryMiddleware(log))
+	router.Use(shophttp.SecurityHeadersMiddleware(cfg.RateLimit.TrustedProxies...))
 	router.Use(shophttp.RequestIDMiddleware())
 	router.Use(shophttp.RateLimitMiddleware(cfg.RateLimit, log))
+	// Logging wraps BodyLimit so 413 from MaxBytesReader is captured in access logs.
 	router.Use(shophttp.LoggingMiddleware(log))
+	router.Use(shophttp.BodyLimitMiddleware(cfg.HTTP.MaxBodyBytes, cfg.HTTP.MediaMaxBodyBytes))
 	router.Use(shophttp.AuthMiddleware(tokenParser))
 	router.Use(shophttp.AdminContextMiddleware())
 	router.Use(shophttp.CSRFMiddleware(cfg.RateLimit.TrustedProxies...))

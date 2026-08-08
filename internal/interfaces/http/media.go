@@ -2,21 +2,24 @@ package http
 
 import (
 	"errors"
+	"fmt"
 	"net/http"
 	"path/filepath"
 
 	"github.com/akarso/shopanda/internal/application/admin"
 	mediaApp "github.com/akarso/shopanda/internal/application/media"
 	"github.com/akarso/shopanda/internal/platform/apperror"
+	"github.com/akarso/shopanda/internal/platform/config"
 	"github.com/akarso/shopanda/internal/platform/logger"
 )
 
-const maxUploadSize = 10 << 20 // 10 MB
+const maxUploadSize = config.DefaultHTTPMediaMaxBodyBytes // default; overridable via SetMaxUploadBytes
 
 // MediaHandler handles media endpoints.
 type MediaHandler struct {
-	svc     *mediaApp.Service
-	auditor *admin.Auditor
+	svc            *mediaApp.Service
+	auditor        *admin.Auditor
+	maxUploadBytes int64
 }
 
 // NewMediaHandler creates a MediaHandler with a default auditor.
@@ -29,7 +32,14 @@ func NewMediaHandlerWithAuditor(svc *mediaApp.Service, auditor *admin.Auditor) *
 	if auditor == nil {
 		panic("MediaHandler: auditor must not be nil")
 	}
-	return &MediaHandler{svc: svc, auditor: auditor}
+	return &MediaHandler{svc: svc, auditor: auditor, maxUploadBytes: maxUploadSize}
+}
+
+// SetMaxUploadBytes overrides the multipart upload cap (bytes). Non-positive keeps the default.
+func (h *MediaHandler) SetMaxUploadBytes(n int64) {
+	if n > 0 {
+		h.maxUploadBytes = n
+	}
 }
 
 func (h *MediaHandler) audit(r *http.Request, action admin.AuditAction, resourceID string, details map[string]interface{}, err error) {
@@ -102,13 +112,18 @@ func (h *MediaHandler) List() http.HandlerFunc {
 // Upload returns a handler for POST /api/v1/admin/media/upload.
 func (h *MediaHandler) Upload() http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		r.Body = http.MaxBytesReader(w, r.Body, maxUploadSize)
+		limit := h.maxUploadBytes
+		if limit <= 0 {
+			limit = maxUploadSize
+		}
+		r.Body = http.MaxBytesReader(w, r.Body, limit)
 
 		file, header, err := r.FormFile("file")
 		if err != nil {
 			var maxErr *http.MaxBytesError
 			if errors.As(err, &maxErr) {
-				verr := apperror.Validation("file exceeds maximum upload size of 10MB")
+				msg := fmt.Sprintf("file exceeds maximum upload size of %d bytes", limit)
+				verr := apperror.Validation(msg)
 				h.audit(r, admin.AuditMediaUpload, "", nil, verr)
 				JSONError(w, verr)
 				return

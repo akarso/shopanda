@@ -25,6 +25,7 @@ type LoadResult struct {
 // Config holds all application configuration.
 type Config struct {
 	Server    ServerConfig    `yaml:"server"`
+	HTTP      HTTPConfig      `yaml:"http"`
 	Database  DatabaseConfig  `yaml:"database"`
 	Log       LogConfig       `yaml:"log"`
 	Auth      AuthConfig      `yaml:"auth"`
@@ -83,6 +84,19 @@ type ServerConfig struct {
 	Port          int    `yaml:"port"`
 	PublicBaseURL string `yaml:"public_base_url"`
 }
+
+// HTTPConfig holds HTTP boundary settings (body limits, etc.).
+type HTTPConfig struct {
+	// MaxBodyBytes is the default request body cap for non-media routes (bytes).
+	MaxBodyBytes int64 `yaml:"max_body_bytes"`
+	// MediaMaxBodyBytes is the body cap for admin media upload routes (bytes).
+	MediaMaxBodyBytes int64 `yaml:"media_max_body_bytes"`
+}
+
+const (
+	DefaultHTTPMaxBodyBytes      int64 = 1 << 20  // 1 MiB
+	DefaultHTTPMediaMaxBodyBytes int64 = 10 << 20 // 10 MiB
+)
 
 type DatabaseConfig struct {
 	Host     string `yaml:"host"`
@@ -592,6 +606,10 @@ func defaults() Config {
 			Host: "0.0.0.0",
 			Port: 8080,
 		},
+		HTTP: HTTPConfig{
+			MaxBodyBytes:      DefaultHTTPMaxBodyBytes,
+			MediaMaxBodyBytes: DefaultHTTPMediaMaxBodyBytes,
+		},
 		Database: DatabaseConfig{
 			Host:    "localhost",
 			Port:    5432,
@@ -712,6 +730,16 @@ func applyEnv(cfg *Config) {
 	}
 	if v := os.Getenv("SHOPANDA_SERVER_PUBLIC_BASE_URL"); v != "" {
 		cfg.Server.PublicBaseURL = v
+	}
+	if v := os.Getenv("SHOPANDA_HTTP_MAX_BODY_BYTES"); v != "" {
+		if n, err := strconv.ParseInt(v, 10, 64); err == nil && n > 0 {
+			cfg.HTTP.MaxBodyBytes = n
+		}
+	}
+	if v := os.Getenv("SHOPANDA_HTTP_MEDIA_MAX_BODY_BYTES"); v != "" {
+		if n, err := strconv.ParseInt(v, 10, 64); err == nil && n > 0 {
+			cfg.HTTP.MediaMaxBodyBytes = n
+		}
 	}
 	if v := os.Getenv("SHOPANDA_DATABASE_HOST"); v != "" {
 		cfg.Database.Host = v
@@ -1067,6 +1095,8 @@ func flatten(cfg *Config) map[string]string {
 	m["server.host"] = cfg.Server.Host
 	m["server.port"] = strconv.Itoa(cfg.Server.Port)
 	m["server.public_base_url"] = cfg.Server.PublicBaseURL
+	m["http.max_body_bytes"] = strconv.FormatInt(cfg.HTTP.MaxBodyBytes, 10)
+	m["http.media_max_body_bytes"] = strconv.FormatInt(cfg.HTTP.MediaMaxBodyBytes, 10)
 	m["database.host"] = cfg.Database.Host
 	m["database.port"] = strconv.Itoa(cfg.Database.Port)
 	m["database.user"] = cfg.Database.User
