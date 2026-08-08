@@ -14,6 +14,7 @@ import (
 	domainwebhook "github.com/akarso/shopanda/internal/domain/webhook"
 	webhookinfra "github.com/akarso/shopanda/internal/infrastructure/webhook"
 	"github.com/akarso/shopanda/internal/platform/logger"
+	"github.com/akarso/shopanda/internal/platform/ssrf"
 )
 
 const deliverTimeout = 15 * time.Second
@@ -23,26 +24,30 @@ type HTTPPoster interface {
 	Post(ctx context.Context, url string, headers map[string]string, body []byte) (status int, err error)
 }
 
-// DefaultHTTPPoster posts webhook payloads using net/http.
+// DefaultHTTPPoster posts webhook payloads using an SSRF-safe HTTP client.
 type DefaultHTTPPoster struct {
 	client *http.Client
 }
 
-// NewDefaultHTTPPoster creates an HTTPPoster with a delivery timeout.
+// NewDefaultHTTPPoster creates an HTTPPoster with a delivery timeout and
+// DNS-rebinding-safe dialing (private/link-local destinations rejected).
 func NewDefaultHTTPPoster() *DefaultHTTPPoster {
+	return NewDefaultHTTPPosterWithLookup(ssrf.DefaultLookupIP)
+}
+
+// NewDefaultHTTPPosterWithLookup is like NewDefaultHTTPPoster with an injectable resolver (tests).
+func NewDefaultHTTPPosterWithLookup(lookup ssrf.LookupIPFunc) *DefaultHTTPPoster {
 	return &DefaultHTTPPoster{
-		client: &http.Client{
-			Timeout: deliverTimeout,
-			CheckRedirect: func(*http.Request, []*http.Request) error {
-				return http.ErrUseLastResponse
-			},
-		},
+		client: ssrf.NewHTTPClient(deliverTimeout, lookup),
 	}
 }
 
 // Post sends a POST request with the provided headers and body.
-func (p *DefaultHTTPPoster) Post(ctx context.Context, url string, headers map[string]string, body []byte) (int, error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(body))
+func (p *DefaultHTTPPoster) Post(ctx context.Context, rawURL string, headers map[string]string, body []byte) (int, error) {
+	if err := ssrf.ValidateURL(rawURL); err != nil {
+		return 0, fmt.Errorf("webhook post: %w", err)
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, rawURL, bytes.NewReader(body))
 	if err != nil {
 		return 0, fmt.Errorf("webhook post: new request: %w", err)
 	}

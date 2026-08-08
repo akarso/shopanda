@@ -2,8 +2,9 @@ package webhook_test
 
 import (
 	"context"
+	"net"
 	"net/http"
-	"net/http/httptest"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -128,25 +129,18 @@ func TestDispatcher_EnqueuesMatchingEndpoints(t *testing.T) {
 }
 
 func TestDeliverHandler_PostsSignedPayload(t *testing.T) {
-	var receivedSig string
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		receivedSig = r.Header.Get("X-Shopanda-Signature")
-		w.WriteHeader(http.StatusOK)
-	}))
-	t.Cleanup(srv.Close)
-
+	poster := &stubPoster{status: http.StatusOK}
 	repo := &stubWebhookRepo{
 		byID: map[string]*domainwebhook.Endpoint{
 			"ep-1": {
 				ID:     "ep-1",
-				URL:    srv.URL,
+				URL:    "https://hooks.example.com/hook",
 				Secret: "top-secret",
 				Events: []string{order.EventOrderPaid},
 				Active: true,
 			},
 		},
 	}
-	poster := webhookApp.NewDefaultHTTPPoster()
 	h := webhookApp.NewDeliverHandler(repo, poster, logger.New("error"))
 
 	err := h.Handle(context.Background(), jobs.Job{
@@ -164,8 +158,40 @@ func TestDeliverHandler_PostsSignedPayload(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Handle: %v", err)
 	}
-	if receivedSig == "" {
-		t.Fatal("expected signature header")
+	if poster.lastURL != "https://hooks.example.com/hook" {
+		t.Fatalf("URL = %q", poster.lastURL)
+	}
+	want := webhookinfra.SignBody("top-secret", poster.lastBody)
+	if poster.lastHeaders["X-Shopanda-Signature"] != want {
+		t.Fatalf("signature = %q, want %q", poster.lastHeaders["X-Shopanda-Signature"], want)
+	}
+}
+
+func TestDefaultHTTPPoster_RejectsLoopbackLiteral(t *testing.T) {
+	poster := webhookApp.NewDefaultHTTPPoster()
+	_, err := poster.Post(context.Background(), "https://127.0.0.1/hook", nil, []byte(`{}`))
+	if err == nil || !strings.Contains(err.Error(), "not allowed") {
+		t.Fatalf("err=%v, want loopback rejection", err)
+	}
+}
+
+func TestDefaultHTTPPoster_RejectsPrivateDNS(t *testing.T) {
+	poster := webhookApp.NewDefaultHTTPPosterWithLookup(func(ctx context.Context, host string) ([]net.IP, error) {
+		return []net.IP{net.ParseIP("10.1.2.3")}, nil
+	})
+	_, err := poster.Post(context.Background(), "https://internal.example/hook", map[string]string{
+		"Content-Type": "application/json",
+	}, []byte(`{}`))
+	if err == nil || !strings.Contains(err.Error(), "disallowed") {
+		t.Fatalf("err=%v, want private DNS rejection", err)
+	}
+}
+
+func TestDefaultHTTPPoster_RejectsMetadataIP(t *testing.T) {
+	poster := webhookApp.NewDefaultHTTPPoster()
+	_, err := poster.Post(context.Background(), "https://169.254.169.254/latest/meta-data", nil, []byte(`{}`))
+	if err == nil || !strings.Contains(err.Error(), "not allowed") {
+		t.Fatalf("err=%v, want metadata rejection", err)
 	}
 }
 

@@ -170,6 +170,16 @@ func registerPlugins(registry *plugin.Registry, cfg *config.Config) {
 
 ---
 
+## Core-owned capabilities (no main.go plugin wiring)
+
+These live in core and do not require `register_plugins.go` / route-table changes for authors:
+
+| Capability | Notes |
+| --- | --- |
+| Merchant outbound webhook destinations | Core `application/webhook` + `platform/ssrf` (private/link-local/special-purpose blocked; DNS-rebinding-safe dial; no env proxy) |
+
+---
+
 ## What still requires main.go changes
 
 Honest list of gaps for external authors:
