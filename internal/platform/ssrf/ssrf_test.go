@@ -22,7 +22,13 @@ func TestIsBlockedIP(t *testing.T) {
 		"fe80::1",
 		"fc00::1",
 		"0.0.0.0",
+		"0.1.2.3",
 		"100.64.1.1",
+		"198.18.0.1",
+		"192.0.2.1",
+		"198.51.100.1",
+		"203.0.113.10",
+		"240.0.0.1",
 		"64:ff9b::10.0.0.1",
 		"64:ff9b::8.8.8.8",
 		"::ffff:10.0.0.1",
@@ -48,6 +54,10 @@ func TestValidateURL_LiteralPrivate(t *testing.T) {
 	err = ssrf.ValidateURL("https://169.254.169.254/latest")
 	if err == nil {
 		t.Fatal("expected metadata IP rejection")
+	}
+	err = ssrf.ValidateURL("https://198.18.0.1/hook")
+	if err == nil || !strings.Contains(err.Error(), "not allowed") {
+		t.Fatalf("err=%v, want benchmarking range rejection", err)
 	}
 	if err := ssrf.ValidateURL("https://example.com/hook"); err != nil {
 		t.Fatalf("public hostname: %v", err)
@@ -100,7 +110,7 @@ func TestSafeDialContext_RejectsPrivateResolution(t *testing.T) {
 
 func TestSafeDialContext_RejectsRebindingMixedRecords(t *testing.T) {
 	lookup := func(ctx context.Context, host string) ([]net.IP, error) {
-		return []net.IP{net.ParseIP("203.0.113.10"), net.ParseIP("192.168.0.5")}, nil
+		return []net.IP{net.ParseIP("8.8.8.8"), net.ParseIP("192.168.0.5")}, nil
 	}
 	dial := ssrf.SafeDialContext(lookup)
 	_, err := dial(context.Background(), "tcp", "rebinding.example:443")

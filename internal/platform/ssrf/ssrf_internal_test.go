@@ -13,7 +13,7 @@ func TestSafeDialContext_DialsAllowedResolvedIP(t *testing.T) {
 		if host != "hooks.example" {
 			t.Fatalf("lookup host = %q", host)
 		}
-		return []net.IP{net.ParseIP("203.0.113.10")}, nil
+		return []net.IP{net.ParseIP("8.8.8.8")}, nil
 	}
 	var dialed string
 	dial := safeDialContext(lookup, func(ctx context.Context, network, address string) (net.Conn, error) {
@@ -27,8 +27,8 @@ func TestSafeDialContext_DialsAllowedResolvedIP(t *testing.T) {
 		t.Fatalf("dial: %v", err)
 	}
 	defer conn.Close()
-	if dialed != "203.0.113.10:443" {
-		t.Fatalf("dialed %q, want 203.0.113.10:443", dialed)
+	if dialed != "8.8.8.8:443" {
+		t.Fatalf("dialed %q, want 8.8.8.8:443", dialed)
 	}
 	_, _ = io.Copy(io.Discard, conn)
 }

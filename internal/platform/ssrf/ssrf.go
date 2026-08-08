@@ -15,6 +15,20 @@ import (
 // Well-known NAT64 prefix (RFC 6052). Last 32 bits embed an IPv4 address.
 var nat64WellKnown = netip.MustParsePrefix("64:ff9b::/96")
 
+// IANA special-purpose IPv4 ranges not covered by net.IP IsPrivate/IsLoopback/
+// IsLinkLocal* (CGNAT, documentation/TEST-NET, benchmarking, reserved).
+// See https://www.iana.org/assignments/iana-ipv4-special-registry/
+var specialPurposeIPv4 = []netip.Prefix{
+	netip.MustParsePrefix("0.0.0.0/8"),       // "this" network
+	netip.MustParsePrefix("100.64.0.0/10"),   // CGNAT / shared address space (RFC 6598)
+	netip.MustParsePrefix("192.0.0.0/24"),    // IETF protocol assignments
+	netip.MustParsePrefix("192.0.2.0/24"),    // TEST-NET-1
+	netip.MustParsePrefix("198.18.0.0/15"),   // benchmarking (RFC 2544)
+	netip.MustParsePrefix("198.51.100.0/24"), // TEST-NET-2
+	netip.MustParsePrefix("203.0.113.0/24"),  // TEST-NET-3
+	netip.MustParsePrefix("240.0.0.0/4"),     // reserved / class E
+}
+
 // LookupIPFunc resolves a hostname to IP addresses (injectable for tests).
 type LookupIPFunc func(ctx context.Context, host string) ([]net.IP, error)
 
@@ -35,7 +49,8 @@ func DefaultLookupIP(ctx context.Context, host string) ([]net.IP, error) {
 }
 
 // IsBlockedIP reports whether ip is unsuitable for outbound webhook destinations
-// (loopback, RFC1918, link-local, ULA, unspecified, multicast, CGNAT, NAT64).
+// (loopback, RFC1918, link-local, ULA, unspecified, multicast, IANA special-purpose
+// IPv4 including CGNAT/TEST-NET/benchmarking/reserved, NAT64).
 func IsBlockedIP(ip net.IP) bool {
 	if ip == nil {
 		return true
@@ -48,10 +63,15 @@ func IsBlockedIP(ip net.IP) bool {
 		ip.IsMulticast() || ip.IsUnspecified() {
 		return true
 	}
-	// CGNAT / shared address space (RFC 6598) — often internal in cloud setups.
 	if ip4 := ip.To4(); ip4 != nil {
-		if ip4[0] == 100 && ip4[1] >= 64 && ip4[1] <= 127 {
+		addr, ok := netip.AddrFromSlice(ip4)
+		if !ok {
 			return true
+		}
+		for _, p := range specialPurposeIPv4 {
+			if p.Contains(addr) {
+				return true
+			}
 		}
 		return false
 	}
@@ -61,8 +81,7 @@ func IsBlockedIP(ip net.IP) bool {
 		return true
 	}
 	addr = addr.Unmap()
-	// Well-known NAT64: treat as the embedded IPv4 (block prefix entirely when
-	// embedded is blocked; also block public-embedded NAT64 to avoid translator SSRF).
+	// Well-known NAT64: block the prefix (translator can reach internal IPv4).
 	if nat64WellKnown.Contains(addr) {
 		return true
 	}
