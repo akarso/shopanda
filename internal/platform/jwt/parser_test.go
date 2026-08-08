@@ -7,10 +7,11 @@ import (
 
 	"github.com/akarso/shopanda/internal/domain/identity"
 	"github.com/akarso/shopanda/internal/platform/jwt"
+	"github.com/akarso/shopanda/internal/platform/jwt/jwttest"
 )
 
 func TestTokenParser_Parse(t *testing.T) {
-	issuer, err := jwt.NewIssuer("test-secret", time.Hour)
+	issuer, err := jwt.NewIssuer(jwttest.TestSecret, time.Hour)
 	if err != nil {
 		t.Fatalf("NewIssuer: %v", err)
 	}
@@ -33,7 +34,7 @@ func TestTokenParser_Parse(t *testing.T) {
 }
 
 func TestTokenParser_Parse_InvalidToken(t *testing.T) {
-	issuer, err := jwt.NewIssuer("test-secret", time.Hour)
+	issuer, err := jwt.NewIssuer(jwttest.TestSecret, time.Hour)
 	if err != nil {
 		t.Fatalf("NewIssuer: %v", err)
 	}

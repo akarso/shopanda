@@ -18,6 +18,7 @@ import (
 	shophttp "github.com/akarso/shopanda/internal/interfaces/http"
 	"github.com/akarso/shopanda/internal/platform/event"
 	"github.com/akarso/shopanda/internal/platform/jwt"
+	"github.com/akarso/shopanda/internal/platform/jwt/jwttest"
 	"github.com/akarso/shopanda/internal/platform/password"
 )
 
@@ -52,7 +53,7 @@ func newAdminLoginProductsFlowRouter(t *testing.T, customers *authMockCustomerRe
 }
 
 func TestAdminLoginToProductsFlow_EndToEnd(t *testing.T) {
-	issuer, err := jwt.NewIssuer("test-secret", time.Hour)
+	issuer, err := jwt.NewIssuer(jwttest.TestSecret, time.Hour)
 	if err != nil {
 		t.Fatalf("NewIssuer: %v", err)
 	}

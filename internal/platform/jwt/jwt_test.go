@@ -6,24 +6,36 @@ import (
 	"time"
 
 	"github.com/akarso/shopanda/internal/platform/jwt"
+	"github.com/akarso/shopanda/internal/platform/jwt/jwttest"
 )
 
 func TestNewIssuer_EmptySecret(t *testing.T) {
 	_, err := jwt.NewIssuer("", time.Hour)
-	if err == nil {
-		t.Fatal("expected error for empty secret")
+	if err == nil || !strings.Contains(err.Error(), jwt.EnvJWTSecret) {
+		t.Fatalf("empty secret err=%v, want %s", err, jwt.EnvJWTSecret)
+	}
+	_, err = jwt.NewIssuer("too-short", time.Hour)
+	if err == nil || !strings.Contains(err.Error(), jwt.EnvJWTSecret) {
+		t.Fatalf("short secret err=%v, want %s", err, jwt.EnvJWTSecret)
+	}
+}
+
+func TestNewIssuerFromKey_RejectsShort(t *testing.T) {
+	_, err := jwt.NewIssuerFromKey([]byte("too-short"), time.Hour)
+	if err == nil || !strings.Contains(err.Error(), jwt.EnvJWTSecret) {
+		t.Fatalf("short key err=%v, want %s", err, jwt.EnvJWTSecret)
 	}
 }
 
 func TestNewIssuer_ZeroTTL(t *testing.T) {
-	_, err := jwt.NewIssuer("secret", 0)
+	_, err := jwt.NewIssuer(jwttest.TestSecret, 0)
 	if err == nil {
 		t.Fatal("expected error for zero TTL")
 	}
 }
 
 func TestCreate_And_Parse(t *testing.T) {
-	issuer, err := jwt.NewIssuer("test-secret", time.Hour)
+	issuer, err := jwt.NewIssuer(jwttest.TestSecret, time.Hour)
 	if err != nil {
 		t.Fatalf("NewIssuer: %v", err)
 	}
@@ -58,11 +70,11 @@ func TestCreate_And_Parse(t *testing.T) {
 }
 
 func TestParse_InvalidSignature(t *testing.T) {
-	issuer, err := jwt.NewIssuer("secret-a", time.Hour)
+	issuer, err := jwt.NewIssuer(jwttest.TestSecret, time.Hour)
 	if err != nil {
 		t.Fatalf("NewIssuer(a): %v", err)
 	}
-	other, err := jwt.NewIssuer("secret-b", time.Hour)
+	other, err := jwt.NewIssuer(jwttest.TestSecretOther, time.Hour)
 	if err != nil {
 		t.Fatalf("NewIssuer(b): %v", err)
 	}
@@ -78,7 +90,7 @@ func TestParse_InvalidSignature(t *testing.T) {
 }
 
 func TestParse_Expired(t *testing.T) {
-	issuer, err := jwt.NewIssuer("secret", time.Second)
+	issuer, err := jwt.NewIssuer(jwttest.TestSecret, time.Second)
 	if err != nil {
 		t.Fatalf("NewIssuer: %v", err)
 	}
@@ -94,7 +106,7 @@ func TestParse_Expired(t *testing.T) {
 }
 
 func TestParse_Malformed(t *testing.T) {
-	issuer, err := jwt.NewIssuer("secret", time.Hour)
+	issuer, err := jwt.NewIssuer(jwttest.TestSecret, time.Hour)
 	if err != nil {
 		t.Fatalf("NewIssuer: %v", err)
 	}
@@ -105,7 +117,7 @@ func TestParse_Malformed(t *testing.T) {
 }
 
 func TestCreate_EmptySubject(t *testing.T) {
-	issuer, err := jwt.NewIssuer("secret", time.Hour)
+	issuer, err := jwt.NewIssuer(jwttest.TestSecret, time.Hour)
 	if err != nil {
 		t.Fatalf("NewIssuer: %v", err)
 	}
@@ -116,7 +128,7 @@ func TestCreate_EmptySubject(t *testing.T) {
 }
 
 func TestParse_TamperedPayload(t *testing.T) {
-	issuer, err := jwt.NewIssuer("secret", time.Hour)
+	issuer, err := jwt.NewIssuer(jwttest.TestSecret, time.Hour)
 	if err != nil {
 		t.Fatalf("NewIssuer: %v", err)
 	}
@@ -142,7 +154,7 @@ func TestParse_TamperedPayload(t *testing.T) {
 }
 
 func TestParse_TamperedHeader(t *testing.T) {
-	issuer, err := jwt.NewIssuer("secret", time.Hour)
+	issuer, err := jwt.NewIssuer(jwttest.TestSecret, time.Hour)
 	if err != nil {
 		t.Fatalf("NewIssuer: %v", err)
 	}
@@ -161,7 +173,7 @@ func TestParse_TamperedHeader(t *testing.T) {
 }
 
 func TestParse_EmptyParts(t *testing.T) {
-	issuer, err := jwt.NewIssuer("secret", time.Hour)
+	issuer, err := jwt.NewIssuer(jwttest.TestSecret, time.Hour)
 	if err != nil {
 		t.Fatalf("NewIssuer: %v", err)
 	}
@@ -175,7 +187,7 @@ func TestParse_EmptyParts(t *testing.T) {
 }
 
 func TestCreate_DifferentTokensPerCall(t *testing.T) {
-	issuer, err := jwt.NewIssuer("secret", time.Hour)
+	issuer, err := jwt.NewIssuer(jwttest.TestSecret, time.Hour)
 	if err != nil {
 		t.Fatalf("NewIssuer: %v", err)
 	}
@@ -190,7 +202,7 @@ func TestCreate_DifferentTokensPerCall(t *testing.T) {
 }
 
 func TestCreate_GenClaim(t *testing.T) {
-	issuer, err := jwt.NewIssuer("secret", time.Hour)
+	issuer, err := jwt.NewIssuer(jwttest.TestSecret, time.Hour)
 	if err != nil {
 		t.Fatalf("NewIssuer: %v", err)
 	}
@@ -210,7 +222,7 @@ func TestCreate_GenClaim(t *testing.T) {
 }
 
 func TestTTL(t *testing.T) {
-	issuer, err := jwt.NewIssuer("secret", 2*time.Hour)
+	issuer, err := jwt.NewIssuer(jwttest.TestSecret, 2*time.Hour)
 	if err != nil {
 		t.Fatalf("NewIssuer: %v", err)
 	}

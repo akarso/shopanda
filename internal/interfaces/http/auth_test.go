@@ -18,6 +18,7 @@ import (
 	platformAuth "github.com/akarso/shopanda/internal/platform/auth"
 	"github.com/akarso/shopanda/internal/platform/event"
 	"github.com/akarso/shopanda/internal/platform/jwt"
+	"github.com/akarso/shopanda/internal/platform/jwt/jwttest"
 )
 
 // ── mock logger + repo ───────────────────────────────────────────────────
@@ -129,7 +130,7 @@ func (r *authMockResetRepo) MarkUsed(_ context.Context, id string) error {
 // ── setup ────────────────────────────────────────────────────────────────
 
 func authSetup() (*shophttp.AuthHandler, *jwt.Issuer) {
-	issuer, _ := jwt.NewIssuer("test-secret", time.Hour)
+	issuer, _ := jwt.NewIssuer(jwttest.TestSecret, time.Hour)
 	repo := newAuthMockRepo()
 	bus := event.NewBus(authTestLogger{})
 	svc := appAuth.NewService(repo, newAuthMockResetRepo(), issuer, bus, authTestLogger{}, time.Hour)
@@ -138,7 +139,7 @@ func authSetup() (*shophttp.AuthHandler, *jwt.Issuer) {
 }
 
 func authSetupWithRepo() (*shophttp.AuthHandler, *jwt.Issuer, *authMockCustomerRepo) {
-	issuer, _ := jwt.NewIssuer("test-secret", time.Hour)
+	issuer, _ := jwt.NewIssuer(jwttest.TestSecret, time.Hour)
 	repo := newAuthMockRepo()
 	bus := event.NewBus(authTestLogger{})
 	svc := appAuth.NewService(repo, newAuthMockResetRepo(), issuer, bus, authTestLogger{}, time.Hour)

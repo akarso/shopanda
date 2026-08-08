@@ -23,6 +23,7 @@ import (
 	"github.com/akarso/shopanda/internal/platform/auth"
 	"github.com/akarso/shopanda/internal/platform/event"
 	"github.com/akarso/shopanda/internal/platform/jwt"
+	"github.com/akarso/shopanda/internal/platform/jwt/jwttest"
 	"github.com/akarso/shopanda/internal/platform/logger"
 
 	shophttp "github.com/akarso/shopanda/internal/interfaces/http"
@@ -222,7 +223,7 @@ func newStorefrontAuthService(t *testing.T) (*appAuth.Service, *storefrontAccoun
 func newStorefrontAuthServiceWithBus(t *testing.T, bus *event.Bus) (*appAuth.Service, *storefrontAccountCustomerRepoStub) {
 	t.Helper()
 	repo := newStorefrontAccountCustomerRepoStub()
-	issuer, err := jwt.NewIssuer("test-secret", time.Hour)
+	issuer, err := jwt.NewIssuer(jwttest.TestSecret, time.Hour)
 	if err != nil {
 		t.Fatalf("NewIssuer: %v", err)
 	}

@@ -7,7 +7,7 @@
 | PR-1002 | A | done | [GitHub Actions CI (unit)](PR-1002.md) |
 | PR-1003 | A | in progress | [CI integration job](PR-1003.md) |
 | PR-1004 | B | done | [Login abuse protection](PR-1004.md) |
-| PR-1005 | B | planned | [JWT secret strength](PR-1005.md) |
+| PR-1005 | B | done | [JWT secret strength](PR-1005.md) |
 | PR-1006 | B | planned | [HTTP boundary hardening](PR-1006.md) |
 | PR-1007 | B | planned | [Webhook SSRF guard](PR-1007.md) |
 | PR-1008 | B | planned | [Secure-by-default config](PR-1008.md) |

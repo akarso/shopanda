@@ -170,7 +170,7 @@ Environment variables override YAML values.
 
 | Variable | Required | Default | Purpose |
 | --- | --- | --- | --- |
-| `SHOPANDA_AUTH_JWT_SECRET` | Yes | none | JWT signing secret; application refuses to start without it |
+| `SHOPANDA_AUTH_JWT_SECRET` | Yes | none | JWT HMAC secret: ≥32 bytes after trim (installer `openssl rand -hex 32` / 64 hex chars accepted as-is). Required; weak/empty values refuse startup |
 | `SHOPANDA_AUTH_JWT_TTL` | No | `24h` | Token lifetime |
 
 ### Mail
@@ -262,6 +262,7 @@ See `configs/config.example.yaml` for YAML equivalents and other demo plugin fla
 
 - never reuse the sample database password in real environments
 - treat `SHOPANDA_AUTH_JWT_SECRET` like a production credential; rotate it if leaked
+- generate with `openssl rand -hex 32` (64 hex chars). The runtime keeps that string as HMAC/MFA key material (same as prior releases); strength checks require ≥32 bytes after trim
 - prefer shell- or platform-injected secrets over committing secrets into YAML
 - if you expose Meilisearch to the internet, set a real master key instead of the local-dev default
 

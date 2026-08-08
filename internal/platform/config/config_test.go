@@ -6,13 +6,18 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/akarso/shopanda/internal/platform/jwt"
+	"github.com/akarso/shopanda/internal/platform/jwt/jwttest"
 )
 
 // withTestBaseURL sets a valid PublicBaseURL via env so tests that don't
 // exercise PublicBaseURL logic are not affected by wildcard-host rejection.
+// It also sets a valid JWT secret — config load requires SHOPANDA_AUTH_JWT_SECRET.
 func withTestBaseURL(t *testing.T) {
 	t.Helper()
 	t.Setenv("SHOPANDA_SERVER_PUBLIC_BASE_URL", "http://test.localhost:8080")
+	t.Setenv("SHOPANDA_AUTH_JWT_SECRET", jwttest.TestSecret)
 }
 
 func TestLoad_Defaults(t *testing.T) {
@@ -364,6 +369,7 @@ func writeYAML(t *testing.T, content string) string {
 // It uses t.Chdir so the CWD .env fallback cannot pick up stray files.
 func loadCfg(t *testing.T, path string) (*Config, error) {
 	t.Helper()
+	ensureTestJWTSecret(t)
 	t.Chdir(filepath.Dir(path))
 	res, err := Load(path)
 	if err != nil {
@@ -376,8 +382,15 @@ func loadCfg(t *testing.T, path string) (*Config, error) {
 // reach the developer's checkout. Use this instead of bare Load(path) calls.
 func loadIsolated(t *testing.T, path string) (*LoadResult, error) {
 	t.Helper()
+	ensureTestJWTSecret(t)
 	t.Chdir(filepath.Dir(path))
 	return Load(path)
+}
+
+func ensureTestJWTSecret(t *testing.T) {
+	t.Helper()
+	// Always override — a weak leftover env must not break unrelated Load tests.
+	t.Setenv("SHOPANDA_AUTH_JWT_SECRET", jwttest.TestSecret)
 }
 
 func TestWebhooksConfig_SecretFromYAML(t *testing.T) {
@@ -958,6 +971,36 @@ func TestAuthLockoutConfig_EnvOverlay(t *testing.T) {
 	}
 	if cfg.Auth.Lockout.Window != "30m" {
 		t.Errorf("Lockout.Window = %q, want 30m", cfg.Auth.Lockout.Window)
+	}
+}
+
+func TestAuthJWTSecret_RejectsEmptyAndShort(t *testing.T) {
+	withTestBaseURL(t)
+	path := writeYAML(t, "")
+	t.Chdir(filepath.Dir(path))
+
+	for _, secret := range []string{"", "short", "0123456789abcdef"} {
+		t.Setenv("SHOPANDA_AUTH_JWT_SECRET", secret)
+		_, err := Load(path)
+		if err == nil || !strings.Contains(err.Error(), jwt.EnvJWTSecret) {
+			t.Fatalf("secret=%q: err=%v, want %s", secret, err, jwt.EnvJWTSecret)
+		}
+	}
+}
+
+func TestAuthJWTSecret_AcceptsInstallerHex(t *testing.T) {
+	withTestBaseURL(t)
+	path := writeYAML(t, "")
+	t.Chdir(filepath.Dir(path))
+	// Load directly — loadCfg/ensureTestJWTSecret would overwrite the newline secret.
+	t.Setenv("SHOPANDA_AUTH_JWT_SECRET", jwttest.TestSecret+"\n")
+
+	res, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load() error: %v", err)
+	}
+	if res.Config.Auth.JWTSecret != jwttest.TestSecret {
+		t.Fatalf("JWTSecret = %q, want trimmed installer hex", res.Config.Auth.JWTSecret)
 	}
 }
 

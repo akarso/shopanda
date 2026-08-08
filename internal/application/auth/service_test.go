@@ -13,6 +13,7 @@ import (
 	"github.com/akarso/shopanda/internal/platform/apperror"
 	"github.com/akarso/shopanda/internal/platform/event"
 	"github.com/akarso/shopanda/internal/platform/jwt"
+	"github.com/akarso/shopanda/internal/platform/jwt/jwttest"
 	"github.com/akarso/shopanda/internal/platform/password"
 )
 
@@ -139,7 +140,7 @@ func (r *mockResetRepo) MarkUsed(_ context.Context, id string) error {
 // ── helpers ──────────────────────────────────────────────────────────────
 
 func newTestService(repo *mockCustomerRepo) *auth.Service {
-	issuer, _ := jwt.NewIssuer("test-secret", time.Hour)
+	issuer, _ := jwt.NewIssuer(jwttest.TestSecret, time.Hour)
 	bus := event.NewBus(testLogger{})
 	return auth.NewService(repo, newMockResetRepo(), issuer, bus, testLogger{}, time.Hour)
 }
@@ -199,7 +200,7 @@ func TestRegister_EmptyEmail(t *testing.T) {
 func TestRegister_TokenIncludesDisplayName(t *testing.T) {
 	repo := newMockRepo()
 	svc := newTestService(repo)
-	issuer, _ := jwt.NewIssuer("test-secret", time.Hour)
+	issuer, _ := jwt.NewIssuer(jwttest.TestSecret, time.Hour)
 
 	out, err := svc.Register(context.Background(), auth.RegisterInput{
 		Email:     "alice@example.com",
@@ -345,7 +346,7 @@ func TestLogin_PaddedEmailSucceeds(t *testing.T) {
 func TestRequestPasswordReset_DifferentCaseSucceeds(t *testing.T) {
 	repo := newMockRepo()
 	resetRepo := newMockResetRepo()
-	issuer, _ := jwt.NewIssuer("test-secret", time.Hour)
+	issuer, _ := jwt.NewIssuer(jwttest.TestSecret, time.Hour)
 	bus := event.NewBus(testLogger{})
 	svc := auth.NewService(repo, resetRepo, issuer, bus, testLogger{}, time.Hour)
 
@@ -368,7 +369,7 @@ func TestRequestPasswordReset_DifferentCaseSucceeds(t *testing.T) {
 func TestRequestPasswordReset_PaddedEmailSucceeds(t *testing.T) {
 	repo := newMockRepo()
 	resetRepo := newMockResetRepo()
-	issuer, _ := jwt.NewIssuer("test-secret", time.Hour)
+	issuer, _ := jwt.NewIssuer(jwttest.TestSecret, time.Hour)
 	bus := event.NewBus(testLogger{})
 	svc := auth.NewService(repo, resetRepo, issuer, bus, testLogger{}, time.Hour)
 
@@ -415,7 +416,7 @@ func TestLogin_Success(t *testing.T) {
 func TestLogin_TokenIncludesDisplayNameFallbackEmail(t *testing.T) {
 	repo := newMockRepo()
 	svc := newTestService(repo)
-	issuer, _ := jwt.NewIssuer("test-secret", time.Hour)
+	issuer, _ := jwt.NewIssuer(jwttest.TestSecret, time.Hour)
 
 	_, _ = svc.Register(context.Background(), auth.RegisterInput{
 		Email: "bob@example.com", Password: "password123",
@@ -827,7 +828,7 @@ func TestRequestPasswordReset_EmptyEmail(t *testing.T) {
 
 func TestRequestSecurityVerificationLink_Success(t *testing.T) {
 	repo := newMockRepo()
-	issuer, _ := jwt.NewIssuer("test-secret", time.Hour)
+	issuer, _ := jwt.NewIssuer(jwttest.TestSecret, time.Hour)
 	bus := event.NewBus(testLogger{})
 	var published customer.SecurityVerificationRequestedData
 	bus.On(customer.EventSecurityVerificationRequested, func(_ context.Context, evt event.Event) error {
@@ -910,7 +911,7 @@ func TestRequestSecurityVerificationLink_DisabledAccount(t *testing.T) {
 
 func TestRequestEmailVerificationLink_Success(t *testing.T) {
 	repo := newMockRepo()
-	issuer, _ := jwt.NewIssuer("test-secret", time.Hour)
+	issuer, _ := jwt.NewIssuer(jwttest.TestSecret, time.Hour)
 	bus := event.NewBus(testLogger{})
 	var published customer.EmailVerificationRequestedData
 	bus.On(customer.EventEmailVerificationRequested, func(_ context.Context, evt event.Event) error {
@@ -945,7 +946,7 @@ func TestRequestEmailVerificationLink_Success(t *testing.T) {
 
 func TestRequestEmailVerificationLink_AlreadyVerified_NoEvent(t *testing.T) {
 	repo := newMockRepo()
-	issuer, _ := jwt.NewIssuer("test-secret", time.Hour)
+	issuer, _ := jwt.NewIssuer(jwttest.TestSecret, time.Hour)
 	bus := event.NewBus(testLogger{})
 	published := false
 	bus.On(customer.EventEmailVerificationRequested, func(_ context.Context, evt event.Event) error {
@@ -1031,7 +1032,7 @@ func TestConfirmPasswordReset_InvalidToken(t *testing.T) {
 func TestConfirmPasswordReset_Success(t *testing.T) {
 	repo := newMockRepo()
 	resetRepo := newMockResetRepo()
-	issuer, _ := jwt.NewIssuer("test-secret", time.Hour)
+	issuer, _ := jwt.NewIssuer(jwttest.TestSecret, time.Hour)
 	bus := event.NewBus(testLogger{})
 	svc := auth.NewService(repo, resetRepo, issuer, bus, testLogger{}, time.Hour)
 
