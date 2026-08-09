@@ -2,6 +2,7 @@ package config
 
 import (
 	"fmt"
+	"net"
 	"net/url"
 	"os"
 	"strings"
@@ -164,31 +165,93 @@ func effectiveDatabaseSecurity(cfg *Config) (host, password, sslmode string, err
 func parseDATABASEURLSecurity(raw string) (host, password, sslmode string, err error) {
 	lower := strings.ToLower(strings.TrimSpace(raw))
 	if strings.HasPrefix(lower, "postgres://") || strings.HasPrefix(lower, "postgresql://") {
-		return parsePostgresURLSecurity(raw)
+		keywords, err := databaseURLToLibpqKeywords(raw)
+		if err != nil {
+			return "", "", "", err
+		}
+		return parseLibpqKeywordSecurity(keywords)
 	}
 	return parseLibpqKeywordSecurity(raw)
 }
 
-func parsePostgresURLSecurity(raw string) (host, password, sslmode string, err error) {
+// databaseURLToLibpqKeywords mirrors lib/pq convertURL so validation sees the same
+// keys the driver will apply (including query host=/hostaddr=/sslmode= overrides).
+func databaseURLToLibpqKeywords(raw string) (string, error) {
 	u, err := url.Parse(normalizeDatabaseURL(raw))
-	if err != nil || u == nil {
-		return "", "", "", fmt.Errorf("config: invalid DATABASE_URL: %w", err)
+	if err != nil {
+		return "", fmt.Errorf("config: invalid DATABASE_URL: %w", err)
 	}
-	host = u.Hostname()
+	if u == nil {
+		return "", fmt.Errorf("config: invalid DATABASE_URL")
+	}
+	if u.Scheme != "postgres" && u.Scheme != "postgresql" {
+		return "", fmt.Errorf("config: invalid DATABASE_URL scheme %q", u.Scheme)
+	}
+
+	var parts []string
+	add := func(k, v string) {
+		if v == "" {
+			return
+		}
+		parts = append(parts, k+"="+v)
+	}
 	if u.User != nil {
+		add("user", u.User.Username())
 		if p, ok := u.User.Password(); ok {
-			password = p
+			add("password", p)
 		}
 	}
-	// Do not fall back to YAML sslmode — DatabaseDSN does not merge it into the URL.
-	sslmode = u.Query().Get("sslmode")
-	return host, password, sslmode, nil
+	if host, port, err := net.SplitHostPort(u.Host); err != nil {
+		add("host", u.Host)
+	} else {
+		add("host", host)
+		add("port", port)
+	}
+	if u.Path != "" && u.Path != "/" {
+		add("dbname", strings.TrimPrefix(u.Path, "/"))
+	}
+	// Preserve every query value (not only Get's first) so conflicting sslmode/host
+	// can be detected the same way keyword parsing sees repeated keys after convertURL…
+	// lib/pq convertURL uses Get (first value only). Emit first value per key to match
+	// the driver, then still reject when Values contain conflicting duplicates.
+	q := u.Query()
+	for k, vals := range q {
+		key := strings.ToLower(k)
+		if len(vals) == 0 {
+			continue
+		}
+		if key == "sslmode" && conflictingStrings(vals) {
+			return "", fmt.Errorf("config: DATABASE_URL has conflicting sslmode values %v", vals)
+		}
+		if (key == "host" || key == "hostaddr") && conflictingStrings(vals) {
+			return "", fmt.Errorf("config: DATABASE_URL has conflicting %s values %v", key, vals)
+		}
+		// Match lib/pq convertURL: first value wins for the emitted keyword string.
+		add(k, vals[0])
+	}
+	return strings.Join(parts, " "), nil
+}
+
+func conflictingStrings(vals []string) bool {
+	if len(vals) < 2 {
+		return false
+	}
+	first := strings.ToLower(strings.TrimSpace(vals[0]))
+	for _, v := range vals[1:] {
+		if strings.ToLower(strings.TrimSpace(v)) != first {
+			return true
+		}
+	}
+	return false
 }
 
 func parseLibpqKeywordSecurity(raw string) (host, password, sslmode string, err error) {
-	// libpq keyword/value DSN: "host=... user=... password=... sslmode=..."
+	// libpq keyword/value DSN: last key wins (same as lib/pq's option map assignment).
+	// Quote-aware scan so password='a b' / host values with spaces are preserved.
 	seen := false
-	for _, field := range strings.Fields(raw) {
+	var hostName, hostAddr string
+	var sslmodes []string
+	for _, field := range scanLibpqFields(raw) {
 		key, val, ok := strings.Cut(field, "=")
 		if !ok {
 			continue
@@ -196,20 +259,100 @@ func parseLibpqKeywordSecurity(raw string) (host, password, sslmode string, err 
 		seen = true
 		key = strings.ToLower(strings.TrimSpace(key))
 		val = strings.TrimSpace(val)
-		val = strings.Trim(val, `'"`)
+		if len(val) >= 2 {
+			if (val[0] == '\'' && val[len(val)-1] == '\'') || (val[0] == '"' && val[len(val)-1] == '"') {
+				val = val[1 : len(val)-1]
+			}
+		}
 		switch key {
-		case "host", "hostaddr":
-			host = val
+		case "host":
+			hostName = val
+		case "hostaddr":
+			// Dial target for locality (libpq); kept separate from host name.
+			hostAddr = val
 		case "password":
 			password = val
 		case "sslmode":
-			sslmode = val
+			sslmodes = append(sslmodes, val)
 		}
 	}
 	if !seen {
 		return "", "", "", fmt.Errorf("config: DATABASE_URL must be a postgres URL or libpq keyword/value DSN")
 	}
+	if conflictingStrings(sslmodes) {
+		return "", "", "", fmt.Errorf("config: DATABASE_URL has conflicting sslmode values %v", sslmodes)
+	}
+	if len(sslmodes) > 0 {
+		sslmode = sslmodes[len(sslmodes)-1]
+	}
+	// Dial target is hostaddr when set (libpq); host is only a name for auth/TLS verify.
+	host = hostName
+	if hostAddr != "" {
+		host = hostAddr
+	}
+	// Multi-host lists: any non-local entry makes the destination non-local.
+	if strings.Contains(host, ",") {
+		for _, part := range strings.Split(host, ",") {
+			part = strings.TrimSpace(part)
+			if part == "" {
+				continue
+			}
+			if !isLocalDBHost(part) {
+				host = part
+				break
+			}
+			host = part
+		}
+	}
 	return host, password, sslmode, nil
+}
+
+// scanLibpqFields splits a keyword/value DSN on whitespace while preserving
+// single- or double-quoted values (including spaces), matching lib/pq quoting.
+func scanLibpqFields(raw string) []string {
+	var (
+		fields  []string
+		cur     strings.Builder
+		inQuote rune
+		escape  bool
+	)
+	flush := func() {
+		if cur.Len() == 0 {
+			return
+		}
+		fields = append(fields, cur.String())
+		cur.Reset()
+	}
+	for _, r := range raw {
+		if escape {
+			cur.WriteRune(r)
+			escape = false
+			continue
+		}
+		if inQuote != 0 {
+			if r == '\\' {
+				escape = true
+				cur.WriteRune(r)
+				continue
+			}
+			cur.WriteRune(r)
+			if r == inQuote {
+				inQuote = 0
+			}
+			continue
+		}
+		switch r {
+		case '\'', '"':
+			inQuote = r
+			cur.WriteRune(r)
+		case ' ', '\t', '\n', '\r':
+			flush()
+		default:
+			cur.WriteRune(r)
+		}
+	}
+	flush()
+	return fields
 }
 
 func isForbiddenDevSecret(password string) bool {

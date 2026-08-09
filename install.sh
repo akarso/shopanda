@@ -215,30 +215,117 @@ parse_database_url_security() {
 import sys
 from urllib.parse import urlparse, parse_qs, unquote
 
-raw = sys.argv[1].strip()
-host = password = sslmode = ""
-lower = raw.lower()
-if lower.startswith("postgres://") or lower.startswith("postgresql://"):
-    u = urlparse(raw)
-    host = u.hostname or ""
-    if u.password is not None:
-        password = unquote(u.password)
-    qs = parse_qs(u.query)
-    if "sslmode" in qs and qs["sslmode"]:
-        sslmode = qs["sslmode"][0]
-else:
-    for field in raw.split():
-        if "=" not in field:
+LOCAL = {"localhost", "127.0.0.1", "::1", "postgres"}
+
+def conflict(vals):
+    norm = [v.strip().lower() for v in vals]
+    return len(norm) >= 2 and any(v != norm[0] for v in norm[1:])
+
+def policy_host(raw_host):
+    if not raw_host:
+        return ""
+    if "," not in raw_host:
+        return raw_host
+    chosen = ""
+    for part in raw_host.split(","):
+        part = part.strip()
+        if not part:
             continue
-        k, v = field.split("=", 1)
-        k = k.strip().lower()
-        v = v.strip().strip("\"'")
-        if k in ("host", "hostaddr"):
-            host = v
-        elif k == "password":
-            password = v
-        elif k == "sslmode":
-            sslmode = v
+        chosen = part
+        if part.lower().strip("[]") not in LOCAL:
+            return part
+    return chosen
+
+def scan_fields(s):
+    fields, cur, quote, escape = [], [], None, False
+    for ch in s:
+        if escape:
+            cur.append(ch)
+            escape = False
+            continue
+        if quote:
+            if ch == "\\":
+                escape = True
+                cur.append(ch)
+                continue
+            cur.append(ch)
+            if ch == quote:
+                quote = None
+            continue
+        if ch in ("'", '"'):
+            quote = ch
+            cur.append(ch)
+        elif ch.isspace():
+            if cur:
+                fields.append("".join(cur))
+                cur = []
+        else:
+            cur.append(ch)
+    if cur:
+        fields.append("".join(cur))
+    return fields
+
+def unquote_val(v):
+    v = v.strip()
+    if len(v) >= 2 and v[0] == v[-1] and v[0] in ("'", '"'):
+        return v[1:-1]
+    return v
+
+raw = sys.argv[1].strip()
+password = sslmode = ""
+hostname = hostaddr = ""
+sslmodes = []
+lower = raw.lower()
+try:
+    if lower.startswith("postgres://") or lower.startswith("postgresql://"):
+        u = urlparse(raw)
+        try:
+            hostname = u.hostname or ""
+        except ValueError as e:
+            print(f"invalid DATABASE_URL host: {e}", file=sys.stderr)
+            sys.exit(2)
+        try:
+            if u.password is not None:
+                password = unquote(u.password)
+        except ValueError as e:
+            print(f"invalid DATABASE_URL password: {e}", file=sys.stderr)
+            sys.exit(2)
+        qs = parse_qs(u.query, keep_blank_values=True)
+        for key, label in (("sslmode", "sslmode"), ("host", "host"), ("hostaddr", "hostaddr")):
+            if key in qs and conflict(qs[key]):
+                print(f"conflicting {label}", file=sys.stderr)
+                sys.exit(2)
+        if "sslmode" in qs and qs["sslmode"]:
+            sslmodes = qs["sslmode"]
+        if "hostaddr" in qs and qs["hostaddr"]:
+            hostaddr = qs["hostaddr"][0]
+        if "host" in qs and qs["host"]:
+            hostname = qs["host"][0]
+    else:
+        for field in scan_fields(raw):
+            if "=" not in field:
+                continue
+            k, v = field.split("=", 1)
+            k = k.strip().lower()
+            v = unquote_val(v)
+            if k == "host":
+                hostname = v
+            elif k == "hostaddr":
+                hostaddr = v
+            elif k == "password":
+                password = v
+            elif k == "sslmode":
+                sslmodes.append(v)
+        if conflict(sslmodes):
+            print("conflicting sslmode", file=sys.stderr)
+            sys.exit(2)
+except ValueError as e:
+    print(f"invalid DATABASE_URL: {e}", file=sys.stderr)
+    sys.exit(2)
+
+if sslmodes:
+    sslmode = sslmodes[-1]
+host = policy_host(hostaddr if hostaddr else hostname)
 print(host)
 print(password)
 print(sslmode)
@@ -520,7 +607,14 @@ if [[ -z "$DATABASE_URL" ]]; then
   prompt_value SHOPANDA_DATABASE_USER 'Database user' "$SHOPANDA_DATABASE_USER"
   prompt_value SHOPANDA_DATABASE_PASSWORD 'Database password (leave blank to auto-generate a strong secret)' "$SHOPANDA_DATABASE_PASSWORD" true
   if [[ -z "$SHOPANDA_DATABASE_PASSWORD" ]]; then
-    SHOPANDA_DATABASE_PASSWORD=$(generate_secret)
+    if ! SHOPANDA_DATABASE_PASSWORD=$(generate_secret); then
+      printf '\nError: failed to generate database password (need openssl or python3).\n' >&2
+      exit 1
+    fi
+    if [[ -z "$SHOPANDA_DATABASE_PASSWORD" ]]; then
+      printf '\nError: generate_secret returned an empty database password.\n' >&2
+      exit 1
+    fi
     DB_PASSWORD_GENERATED=true
   fi
   prompt_value SHOPANDA_DATABASE_NAME 'Database name' "$SHOPANDA_DATABASE_NAME"
@@ -575,7 +669,7 @@ if [[ -z "$SHOPANDA_SEED_ADMIN_PASSWORD" ]]; then
   SEED_ADMIN_PASSWORD_GENERATED=true
 fi
 prompt_choice SHOPANDA_DEV_EMBED_SCHEDULER 'Embed scheduler in app dev' "$SHOPANDA_DEV_EMBED_SCHEDULER" true false
-prompt_value SHOPANDA_DEV_MODE 'Development mode (1/true/yes for local changeme + sslmode=disable; leave empty for production)' "$SHOPANDA_DEV_MODE"
+prompt_value SHOPANDA_DEV_MODE 'Development mode (1/true/yes relaxes DB password and sslmode checks on local hosts; leave empty for production)' "$SHOPANDA_DEV_MODE"
 prompt_value SHOPANDA_TEST_DSN 'Test DSN (optional)' "$SHOPANDA_TEST_DSN"
 
 # Refuse to write an env that fails secure-by-default startup (bare metal).

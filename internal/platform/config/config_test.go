@@ -19,9 +19,7 @@ func withTestBaseURL(t *testing.T) {
 	t.Helper()
 	t.Setenv("SHOPANDA_SERVER_PUBLIC_BASE_URL", "http://test.localhost:8080")
 	t.Setenv("SHOPANDA_AUTH_JWT_SECRET", jwttest.TestSecret)
-	if _, set := os.LookupEnv("SHOPANDA_DEV_MODE"); !set {
-		t.Setenv("SHOPANDA_DEV_MODE", "true")
-	}
+	ensureTestDevMode(t)
 }
 
 func TestLoad_Defaults(t *testing.T) {
@@ -421,6 +419,11 @@ func ensureTestJWTSecret(t *testing.T) {
 	t.Helper()
 	// Always override — a weak leftover env must not break unrelated Load tests.
 	t.Setenv("SHOPANDA_AUTH_JWT_SECRET", jwttest.TestSecret)
+	ensureTestDevMode(t)
+}
+
+func ensureTestDevMode(t *testing.T) {
+	t.Helper()
 	// Allow default sslmode=disable on localhost unless the test already set DEV_MODE.
 	if _, set := os.LookupEnv("SHOPANDA_DEV_MODE"); !set {
 		t.Setenv("SHOPANDA_DEV_MODE", "true")

@@ -283,3 +283,59 @@ database:
 		t.Fatalf("Load: %v", err)
 	}
 }
+
+func TestLoad_RejectsDATABASE_URLHostaddrRemoteWithLocalHost(t *testing.T) {
+	withTestBaseURL(t)
+	t.Setenv("SHOPANDA_DEV_MODE", "true")
+	// host=localhost would look local, but hostaddr is the dial target (libpq).
+	t.Setenv("DATABASE_URL", "postgres://u:strong-enough-secret@localhost:5432/shopanda?hostaddr=203.0.113.10&sslmode=disable")
+	path := writeYAML(t, "")
+	_, err := loadCfg(t, path)
+	if err == nil || !strings.Contains(err.Error(), "sslmode") {
+		t.Fatalf("err=%v, want sslmode rejection when hostaddr is remote", err)
+	}
+}
+
+func TestLoad_RejectsDATABASE_URLConflictingSSLMode(t *testing.T) {
+	withTestBaseURL(t)
+	t.Setenv("SHOPANDA_DEV_MODE", "false")
+	t.Setenv("DATABASE_URL", "postgres://u:strong-enough-secret@db.example.com:5432/shopanda?sslmode=require&sslmode=disable")
+	path := writeYAML(t, "")
+	_, err := loadCfg(t, path)
+	if err == nil || !strings.Contains(err.Error(), "conflicting sslmode") {
+		t.Fatalf("err=%v, want conflicting sslmode rejection", err)
+	}
+}
+
+func TestLoad_RejectsLibpqHostaddrRemoteOverride(t *testing.T) {
+	withTestBaseURL(t)
+	t.Setenv("SHOPANDA_DEV_MODE", "true")
+	t.Setenv("DATABASE_URL", "hostaddr=203.0.113.10 host=localhost password=strong-enough-secret dbname=shopanda sslmode=disable")
+	path := writeYAML(t, "")
+	_, err := loadCfg(t, path)
+	if err == nil || !strings.Contains(err.Error(), "sslmode") {
+		t.Fatalf("err=%v, want sslmode rejection for remote hostaddr", err)
+	}
+}
+
+func TestLoad_RejectsInvalidDATABASE_URLForm(t *testing.T) {
+	withTestBaseURL(t)
+	t.Setenv("SHOPANDA_DEV_MODE", "false")
+	t.Setenv("DATABASE_URL", "not-a-dsn")
+	path := writeYAML(t, "")
+	_, err := loadCfg(t, path)
+	if err == nil || !strings.Contains(err.Error(), "must be a postgres URL or libpq keyword/value DSN") {
+		t.Fatalf("err=%v, want invalid DSN form rejection", err)
+	}
+}
+
+func TestLoad_ParsesQuotedLibpqPassword(t *testing.T) {
+	withTestBaseURL(t)
+	t.Setenv("SHOPANDA_DEV_MODE", "false")
+	// Quoted password with space must not break field scanning / weak-secret check.
+	t.Setenv("DATABASE_URL", "host=db.example.com user=u password='strong enough secret' dbname=shopanda sslmode=require")
+	path := writeYAML(t, "")
+	if _, err := loadCfg(t, path); err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+}
