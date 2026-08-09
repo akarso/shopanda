@@ -1,0 +1,285 @@
+package config
+
+import (
+	"strings"
+	"testing"
+)
+
+func TestEnvTruthy(t *testing.T) {
+	cases := []struct {
+		val  string
+		want bool
+	}{
+		{"1", true},
+		{"true", true},
+		{"TRUE", true},
+		{"yes", true},
+		{"Yes", true},
+		{"", false},
+		{"0", false},
+		{"false", false},
+		{"no", false},
+		{"anything", false},
+	}
+	for _, tc := range cases {
+		t.Setenv("SHOPANDA_TEST_TRUTHY", tc.val)
+		if got := EnvTruthy("SHOPANDA_TEST_TRUTHY"); got != tc.want {
+			t.Errorf("EnvTruthy(%q) = %v, want %v", tc.val, got, tc.want)
+		}
+	}
+}
+
+func TestDevModeEnabled(t *testing.T) {
+	t.Setenv("SHOPANDA_DEV_MODE", "true")
+	if !DevModeEnabled() {
+		t.Fatal("want DevModeEnabled true")
+	}
+	t.Setenv("SHOPANDA_DEV_MODE", "0")
+	if DevModeEnabled() {
+		t.Fatal("want DevModeEnabled false for 0")
+	}
+	t.Setenv("SHOPANDA_DEV_MODE", "")
+	if DevModeEnabled() {
+		t.Fatal("want DevModeEnabled false for empty")
+	}
+}
+
+func TestShouldLogPasswordResetTokens(t *testing.T) {
+	t.Setenv("SHOPANDA_DEV_MODE", "true")
+	t.Setenv("SHOPANDA_DEV_LOG_RESET_TOKENS", "1")
+	if !ShouldLogPasswordResetTokens() {
+		t.Fatal("want true when both truthy")
+	}
+	t.Setenv("SHOPANDA_DEV_LOG_RESET_TOKENS", "")
+	if ShouldLogPasswordResetTokens() {
+		t.Fatal("want false when reset-token flag absent")
+	}
+	t.Setenv("SHOPANDA_DEV_MODE", "false")
+	t.Setenv("SHOPANDA_DEV_LOG_RESET_TOKENS", "1")
+	if ShouldLogPasswordResetTokens() {
+		t.Fatal("want false when DEV_MODE falsey")
+	}
+}
+
+func TestLoad_RejectsWeakPasswordWithoutDevMode(t *testing.T) {
+	withTestBaseURL(t)
+	t.Setenv("SHOPANDA_DEV_MODE", "false")
+	t.Setenv("SHOPANDA_DATABASE_PASSWORD", "changeme")
+	path := writeYAML(t, `
+database:
+  host: localhost
+  password: ignored
+  sslmode: disable
+`)
+	_, err := loadCfg(t, path)
+	if err == nil || !strings.Contains(err.Error(), "forbidden default") {
+		t.Fatalf("err=%v, want forbidden default", err)
+	}
+}
+
+func TestLoad_RejectsWeakPasswordWhenDevModeAbsent(t *testing.T) {
+	withTestBaseURL(t)
+	t.Setenv("SHOPANDA_DEV_MODE", "")
+	t.Setenv("SHOPANDA_DATABASE_PASSWORD", "shopanda")
+	path := writeYAML(t, `
+database:
+  host: localhost
+  sslmode: disable
+`)
+	_, err := loadCfg(t, path)
+	if err == nil || !strings.Contains(err.Error(), "forbidden default") {
+		t.Fatalf("err=%v, want forbidden default when DEV_MODE empty", err)
+	}
+}
+
+func TestLoad_AllowsWeakPasswordWithDevMode(t *testing.T) {
+	withTestBaseURL(t)
+	t.Setenv("SHOPANDA_DEV_MODE", "true")
+	t.Setenv("SHOPANDA_DATABASE_PASSWORD", "changeme")
+	path := writeYAML(t, `
+database:
+  host: localhost
+  sslmode: disable
+`)
+	cfg, err := loadCfg(t, path)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.Database.Password != "changeme" {
+		t.Fatalf("password = %q", cfg.Database.Password)
+	}
+}
+
+func TestLoad_RejectsSSLDisableWithoutDevMode(t *testing.T) {
+	withTestBaseURL(t)
+	t.Setenv("SHOPANDA_DEV_MODE", "false")
+	t.Setenv("SHOPANDA_DATABASE_PASSWORD", "strong-enough-secret")
+	path := writeYAML(t, `
+database:
+  host: localhost
+  sslmode: disable
+`)
+	_, err := loadCfg(t, path)
+	if err == nil || !strings.Contains(err.Error(), "sslmode") {
+		t.Fatalf("err=%v, want sslmode rejection", err)
+	}
+}
+
+func TestLoad_RejectsSSLPreferWithoutLocalDev(t *testing.T) {
+	withTestBaseURL(t)
+	t.Setenv("SHOPANDA_DEV_MODE", "false")
+	t.Setenv("SHOPANDA_DATABASE_PASSWORD", "strong-enough-secret")
+	path := writeYAML(t, `
+database:
+  host: db.example.com
+  sslmode: prefer
+`)
+	_, err := loadCfg(t, path)
+	if err == nil || !strings.Contains(err.Error(), "prefer") {
+		t.Fatalf("err=%v, want prefer rejection", err)
+	}
+}
+
+func TestLoad_RejectsSSLAllowWithoutLocalDev(t *testing.T) {
+	withTestBaseURL(t)
+	t.Setenv("SHOPANDA_DEV_MODE", "true") // truthy alone is not enough on remote host
+	t.Setenv("SHOPANDA_DATABASE_PASSWORD", "strong-enough-secret")
+	path := writeYAML(t, `
+database:
+  host: db.example.com
+  sslmode: allow
+`)
+	_, err := loadCfg(t, path)
+	if err == nil || !strings.Contains(err.Error(), "allow") {
+		t.Fatalf("err=%v, want allow rejection", err)
+	}
+}
+
+func TestLoad_RejectsSSLDisableOnRemoteHostEvenWithDevMode(t *testing.T) {
+	withTestBaseURL(t)
+	t.Setenv("SHOPANDA_DEV_MODE", "true")
+	t.Setenv("SHOPANDA_DATABASE_PASSWORD", "strong-enough-secret")
+	path := writeYAML(t, `
+database:
+  host: db.example.com
+  sslmode: disable
+`)
+	_, err := loadCfg(t, path)
+	if err == nil || !strings.Contains(err.Error(), "sslmode") {
+		t.Fatalf("err=%v, want sslmode rejection for remote host", err)
+	}
+}
+
+func TestLoad_AllowsSSLDisableOnComposePostgresWithDevMode(t *testing.T) {
+	withTestBaseURL(t)
+	t.Setenv("SHOPANDA_DEV_MODE", "1")
+	t.Setenv("SHOPANDA_DATABASE_PASSWORD", "strong-enough-secret")
+	path := writeYAML(t, `
+database:
+  host: postgres
+  sslmode: disable
+`)
+	if _, err := loadCfg(t, path); err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+}
+
+func TestLoad_AllowsSSLRequireOnRemoteWithoutDevMode(t *testing.T) {
+	withTestBaseURL(t)
+	t.Setenv("SHOPANDA_DEV_MODE", "false")
+	t.Setenv("SHOPANDA_DATABASE_PASSWORD", "strong-enough-secret")
+	path := writeYAML(t, `
+database:
+  host: db.example.com
+  sslmode: require
+`)
+	if _, err := loadCfg(t, path); err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+}
+
+func TestLoad_RejectsWeakPasswordInDATABASE_URL(t *testing.T) {
+	withTestBaseURL(t)
+	t.Setenv("SHOPANDA_DEV_MODE", "false")
+	t.Setenv("DATABASE_URL", "postgres://shopanda:changeme@db.example.com:5432/shopanda?sslmode=require")
+	path := writeYAML(t, `
+database:
+  host: localhost
+  password: strong-enough-secret
+  sslmode: require
+`)
+	_, err := loadCfg(t, path)
+	if err == nil || !strings.Contains(err.Error(), "forbidden default") {
+		t.Fatalf("err=%v, want forbidden default from DATABASE_URL", err)
+	}
+}
+
+func TestLoad_RejectsDATABASE_URLMissingSSLModeDespiteYAMLRequire(t *testing.T) {
+	withTestBaseURL(t)
+	t.Setenv("SHOPANDA_DEV_MODE", "false")
+	t.Setenv("SHOPANDA_DATABASE_SSLMODE", "require")
+	t.Setenv("SHOPANDA_DATABASE_PASSWORD", "strong-enough-secret")
+	// No sslmode in URL — must not inherit YAML/env require (DatabaseDSN returns raw URL).
+	t.Setenv("DATABASE_URL", "postgres://u:strong-enough-secret@db.example.com:5432/shopanda")
+	path := writeYAML(t, `
+database:
+  host: localhost
+  password: strong-enough-secret
+  sslmode: require
+`)
+	_, err := loadCfg(t, path)
+	if err == nil || !strings.Contains(err.Error(), "sslmode") {
+		t.Fatalf("err=%v, want missing-URL-sslmode treated as insecure", err)
+	}
+}
+
+func TestLoad_RejectsLibpqKeywordDATABASE_URLWeakSecret(t *testing.T) {
+	withTestBaseURL(t)
+	t.Setenv("SHOPANDA_DEV_MODE", "false")
+	t.Setenv("SHOPANDA_DATABASE_PASSWORD", "strong-enough-secret")
+	t.Setenv("SHOPANDA_DATABASE_SSLMODE", "require")
+	t.Setenv("DATABASE_URL", "host=db.example.com user=u password=changeme dbname=shopanda sslmode=disable")
+	path := writeYAML(t, `
+database:
+  host: localhost
+  password: strong-enough-secret
+  sslmode: require
+`)
+	_, err := loadCfg(t, path)
+	if err == nil || !strings.Contains(err.Error(), "forbidden default") {
+		t.Fatalf("err=%v, want forbidden default from libpq DATABASE_URL", err)
+	}
+}
+
+func TestLoad_RejectsLibpqKeywordDATABASE_URLDisableSSL(t *testing.T) {
+	withTestBaseURL(t)
+	t.Setenv("SHOPANDA_DEV_MODE", "false")
+	t.Setenv("SHOPANDA_DATABASE_PASSWORD", "strong-enough-secret")
+	t.Setenv("SHOPANDA_DATABASE_SSLMODE", "require")
+	t.Setenv("DATABASE_URL", "host=db.example.com user=u password=strong-enough-secret dbname=shopanda sslmode=disable")
+	path := writeYAML(t, `
+database:
+  host: localhost
+  password: strong-enough-secret
+  sslmode: require
+`)
+	_, err := loadCfg(t, path)
+	if err == nil || !strings.Contains(err.Error(), "sslmode") {
+		t.Fatalf("err=%v, want sslmode rejection from libpq DATABASE_URL", err)
+	}
+}
+
+func TestLoad_AllowsDATABASE_URLWithRequire(t *testing.T) {
+	withTestBaseURL(t)
+	t.Setenv("SHOPANDA_DEV_MODE", "false")
+	t.Setenv("DATABASE_URL", "postgres://u:strong-enough-secret@db.example.com:5432/shopanda?sslmode=require")
+	path := writeYAML(t, `
+database:
+  host: localhost
+  password: changeme
+  sslmode: disable
+`)
+	if _, err := loadCfg(t, path); err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+}

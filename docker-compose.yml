@@ -7,7 +7,13 @@
 # Queue profile:    adds rabbitmq   (docker compose --profile queue up)
 #
 # Quick start:
-#   cp .env.example .env          # edit values (set real SMTP for production)
+#   cp .env.example .env          # edit values (set real SMTP / JWT for production)
+#   # Compose injects local DX defaults against non-TLS postgres:17-alpine:
+#   #   SHOPANDA_DEV_MODE=true (unset/empty still → true; set false/0/no to override)
+#   #   SHOPANDA_DATABASE_PASSWORD=changeme (if unset)
+#   #   SHOPANDA_DATABASE_SSLMODE=disable (if unset — stock Postgres has no TLS)
+#   # Production-like compose: set SHOPANDA_DEV_MODE=false, a strong password, and
+#   # SHOPANDA_DATABASE_SSLMODE=require|verify-full (and terminate TLS to Postgres).
 #   docker compose up -d
 #   docker compose run --rm app migrate
 #   docker compose run --rm app seed
@@ -31,6 +37,12 @@ x-shopanda-common: &shopanda-common
     SHOPANDA_DATABASE_USER: "${SHOPANDA_DATABASE_USER:-shopanda}"
     SHOPANDA_DATABASE_PASSWORD: "${SHOPANDA_DATABASE_PASSWORD:-changeme}"
     SHOPANDA_DATABASE_NAME: "${SHOPANDA_DATABASE_NAME:-shopanda}"
+    # Stock postgres:17-alpine has no TLS — default disable when .env omits sslmode.
+    # Override in .env with require|verify-full only if Postgres is TLS-terminated.
+    SHOPANDA_DATABASE_SSLMODE: "${SHOPANDA_DATABASE_SSLMODE:-disable}"
+    # Local compose DX: default DEV_MODE=true (unset/empty still → true).
+    # Production-like: set SHOPANDA_DEV_MODE=false (or 0/no) explicitly in .env.
+    SHOPANDA_DEV_MODE: "${SHOPANDA_DEV_MODE:-true}"
   depends_on:
     postgres:
       condition: service_healthy

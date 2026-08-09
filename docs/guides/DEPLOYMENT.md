@@ -160,13 +160,13 @@ Responses always include `X-Content-Type-Options: nosniff`, `X-Frame-Options: DE
 
 | Variable | Required | Default | Purpose |
 | --- | --- | --- | --- |
-| `DATABASE_URL` | Optional alternative | none | Full PostgreSQL DSN; overrides individual DB fields |
+| `DATABASE_URL` | Optional alternative | none | Full PostgreSQL DSN; overrides individual DB fields. Must include `sslmode` (URL query or libpq keyword). Missing `sslmode` is treated as insecure (`disable`). YAML/`SHOPANDA_DATABASE_*` values are **not** merged into this DSN. |
 | `SHOPANDA_DATABASE_HOST` | Yes unless `DATABASE_URL` is set | `localhost` | PostgreSQL host |
 | `SHOPANDA_DATABASE_PORT` | No | `5432` | PostgreSQL port |
 | `SHOPANDA_DATABASE_USER` | Yes unless `DATABASE_URL` is set | `shopanda` | PostgreSQL user |
 | `SHOPANDA_DATABASE_PASSWORD` | Yes unless `DATABASE_URL` is set | empty | PostgreSQL password |
 | `SHOPANDA_DATABASE_NAME` | Yes unless `DATABASE_URL` is set | `shopanda` | PostgreSQL database name |
-| `SHOPANDA_DATABASE_SSLMODE` | No | `disable` | PostgreSQL SSL mode |
+| `SHOPANDA_DATABASE_SSLMODE` | No | `disable` (built-in) / compose `disable` when unset | PostgreSQL SSL mode. Production requires `require`, `verify-ca`, or `verify-full`. `disable` / `prefer` / `allow` (and missing `sslmode` on `DATABASE_URL`) are allowed only when `SHOPANDA_DEV_MODE` is truthy **and** the DB host is local (`localhost`, `127.0.0.1`, `::1`, or compose service `postgres`). **Docker Compose** defaults to `disable` via `${SHOPANDA_DATABASE_SSLMODE:-disable}` because stock `postgres:17-alpine` has no TLS — set `require` in `.env` only when Postgres is TLS-terminated. |
 
 ### Logging
 
@@ -254,8 +254,17 @@ Set `rate_limit.trusted_proxies` in YAML when behind a reverse proxy so both rat
 
 | Variable | Required | Default | Purpose |
 | --- | --- | --- | --- |
-| `SHOPANDA_DEV_MODE` | No | empty | Enables development-only behavior |
+| `SHOPANDA_DEV_MODE` | No | empty | Explicit truthy (`1` / `true` / `yes`) enables local-only relaxations: forbidden DB passwords `changeme`/`shopanda`, and non-enforcing sslmodes on local hosts. Absent/falsey → production-strict startup checks. **Docker Compose** defaults this to `true` via `${SHOPANDA_DEV_MODE:-true}` — omit/empty still enables it; set `false` / `0` / `no` explicitly to override |
+| `SHOPANDA_DEV_LOG_RESET_TOKENS` | No | empty | When truthy **and** `SHOPANDA_DEV_MODE` is truthy, logs plaintext password-reset tokens. Never enable in production |
 | `SHOPANDA_TEST_DSN` | No | empty | PostgreSQL DSN used by integration tests |
+
+### Production checklist (secure-by-default)
+
+- [ ] Strong `SHOPANDA_DATABASE_PASSWORD` (not `changeme` / `shopanda`)
+- [ ] `SHOPANDA_DATABASE_SSLMODE=require`, `verify-ca`, or `verify-full` (not `disable` / `prefer` / `allow`)
+- [ ] `SHOPANDA_DEV_MODE` unset or falsey (bare metal). On **docker compose**, set `SHOPANDA_DEV_MODE=false` (or `0`/`no`) explicitly — omitting it leaves the compose default `true`
+- [ ] `SHOPANDA_DEV_LOG_RESET_TOKENS` unset
+- [ ] Strong `SHOPANDA_AUTH_JWT_SECRET` (≥32 bytes; see auth section)
 
 ### External reference plugins (opt-in)
 
@@ -269,11 +278,12 @@ See `configs/config.example.yaml` for YAML equivalents and other demo plugin fla
 
 ### Security notes
 
-- never reuse the sample database password in real environments
+- never reuse the sample database password (`changeme` / `shopanda`) in real environments — startup rejects them unless `SHOPANDA_DEV_MODE` is truthy
 - treat `SHOPANDA_AUTH_JWT_SECRET` like a production credential; rotate it if leaked
 - generate with `openssl rand -hex 32` (64 hex chars). The runtime keeps that string as HMAC/MFA key material (same as prior releases); strength checks require ≥32 bytes after trim
 - prefer shell- or platform-injected secrets over committing secrets into YAML
 - if you expose Meilisearch to the internet, set a real master key instead of the local-dev default
+- never set `SHOPANDA_DEV_LOG_RESET_TOKENS` outside local debugging
 
 ## Deploy With Docker
 

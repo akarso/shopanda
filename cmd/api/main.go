@@ -340,7 +340,7 @@ func runServe(cfg *config.Config, log logger.Logger, embedScheduler bool) error 
 			slotRegistry.SetThemeMarkers(anchors)
 		}
 	}
-	if os.Getenv("SHOPANDA_DEV_MODE") != "" {
+	if config.DevModeEnabled() {
 		slotRegistry.SetDevMode(true)
 	}
 	assetRegistry := assetsApp.NewRegistry()
@@ -512,8 +512,9 @@ func runServe(cfg *config.Config, log logger.Logger, embedScheduler bool) error 
 		return err
 	}
 
-	// Dev handler: log password reset tokens alongside email delivery.
-	if os.Getenv("SHOPANDA_DEV_MODE") != "" {
+	// Dev-only: log password reset tokens when explicitly opted in.
+	// Requires SHOPANDA_DEV_MODE and SHOPANDA_DEV_LOG_RESET_TOKENS both truthy.
+	if config.ShouldLogPasswordResetTokens() {
 		bus.On(customer.EventPasswordResetRequested, func(_ context.Context, evt event.Event) error {
 			if data, ok := evt.Data.(customer.PasswordResetRequestedData); ok {
 				log.Info("dev.password_reset.token", map[string]interface{}{

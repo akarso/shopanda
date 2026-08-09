@@ -75,7 +75,7 @@ Admin tooling (`GET /api/v1/admin/extensions/hooks`, `GET /api/v1/admin/extensio
 
 ### Dev diagnostics
 
-When `SHOPANDA_DEV_MODE` is set and the storefront theme is enabled, registering a slot renderer for an anchor **not declared in the active theme** logs `slots.registration.unmarked_anchor`. Production behavior is unchanged (renderers for unmarked anchors are no-ops at render time).
+When `SHOPANDA_DEV_MODE` is truthy (`1` / `true` / `yes`) and the storefront theme is enabled, registering a slot renderer for an anchor **not declared in the active theme** logs `slots.registration.unmarked_anchor`. Production behavior is unchanged (renderers for unmarked anchors are no-ops at render time).
 
 ## Theme inheritance (PR-712)
 
