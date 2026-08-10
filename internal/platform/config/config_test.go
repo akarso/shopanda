@@ -13,11 +13,13 @@ import (
 
 // withTestBaseURL sets a valid PublicBaseURL via env so tests that don't
 // exercise PublicBaseURL logic are not affected by wildcard-host rejection.
-// It also sets a valid JWT secret — config load requires SHOPANDA_AUTH_JWT_SECRET.
+// It also sets a valid JWT secret and enables SHOPANDA_DEV_MODE so default
+// sslmode=disable on localhost passes secure-by-default checks.
 func withTestBaseURL(t *testing.T) {
 	t.Helper()
 	t.Setenv("SHOPANDA_SERVER_PUBLIC_BASE_URL", "http://test.localhost:8080")
 	t.Setenv("SHOPANDA_AUTH_JWT_SECRET", jwttest.TestSecret)
+	ensureTestDevMode(t)
 }
 
 func TestLoad_Defaults(t *testing.T) {
@@ -125,6 +127,7 @@ database:
 
 	t.Setenv("SHOPANDA_SERVER_PORT", "7070")
 	t.Setenv("SHOPANDA_DATABASE_HOST", "envhost")
+	t.Setenv("SHOPANDA_DATABASE_SSLMODE", "require")
 
 	cfg, err := loadCfg(t, path)
 	if err != nil {
@@ -416,6 +419,15 @@ func ensureTestJWTSecret(t *testing.T) {
 	t.Helper()
 	// Always override — a weak leftover env must not break unrelated Load tests.
 	t.Setenv("SHOPANDA_AUTH_JWT_SECRET", jwttest.TestSecret)
+	ensureTestDevMode(t)
+}
+
+func ensureTestDevMode(t *testing.T) {
+	t.Helper()
+	// Allow default sslmode=disable on localhost unless the test already set DEV_MODE.
+	if _, set := os.LookupEnv("SHOPANDA_DEV_MODE"); !set {
+		t.Setenv("SHOPANDA_DEV_MODE", "true")
+	}
 }
 
 func TestWebhooksConfig_SecretFromYAML(t *testing.T) {

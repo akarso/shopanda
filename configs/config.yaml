@@ -2,6 +2,13 @@
 #
 # Override any value with environment variables:
 #   SHOPANDA_SERVER_PORT=9090
+#
+# CAUTION (PR-1008):
+# - Passwords "shopanda" / "changeme" require explicitly truthy SHOPANDA_DEV_MODE
+#   (1/true/yes). Local host is not required for that password rule.
+# - Non-enforcing sslmode (disable/prefer/allow/empty) additionally requires a
+#   local DB host: localhost / 127.0.0.1 / ::1 / compose "postgres".
+# Production: strong password and sslmode require|verify-ca|verify-full.
 
 server:
   host: "0.0.0.0"

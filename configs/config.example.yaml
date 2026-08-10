@@ -43,13 +43,16 @@ database:
   port: 5432
   user: "shopanda"
   # Password: set via SHOPANDA_DATABASE_PASSWORD or DATABASE_URL.
-  # password: ""
+  # password: ""   # never use changeme/shopanda without SHOPANDA_DEV_MODE=true
   name: "shopanda"
-  # SSL mode: disable, require, verify-ca, verify-full
+  # SSL mode: disable (local+DEV_MODE only), require, verify-ca, verify-full
+  # Local example (sslmode=disable) also needs a truthy env override, e.g.:
+  #   SHOPANDA_DEV_MODE=true
   sslmode: "disable"
 
   # Alternative: set DATABASE_URL env var for a full DSN (takes precedence).
   # DATABASE_URL=postgres://user:pass@host:5432/shopanda?sslmode=disable
+  # With sslmode=disable (or missing), also set SHOPANDA_DEV_MODE=true on a local host.
 
 # --- Logging ------------------------------------------------------------------
 log:

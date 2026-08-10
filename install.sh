@@ -154,6 +154,209 @@ PY
   return 1
 }
 
+# is_local_db_host matches config.isLocalDBHost (compose postgres + loopback).
+is_local_db_host() {
+  case "$(printf '%s' "$1" | tr '[:upper:]' '[:lower:]' | tr -d '[]')" in
+    localhost|127.0.0.1|::1|postgres) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+# refuse_insecure_db_settings returns 1 if password/sslmode violate secure-by-default
+# (mirrors internal/platform/config validateSecureDefaults).
+refuse_insecure_db_settings() {
+  local host="$1"
+  local password="$2"
+  local sslmode="$3"
+  local dev_mode="$4"
+  local pw_lc ssl_lc dev_lc
+  local is_dev=false
+  local local_dev=false
+
+  dev_lc=$(printf '%s' "$dev_mode" | tr '[:upper:]' '[:lower:]')
+  case "$dev_lc" in
+    1|true|yes) is_dev=true ;;
+  esac
+
+  pw_lc=$(printf '%s' "$password" | tr '[:upper:]' '[:lower:]')
+  if [[ "$is_dev" != "true" && ( "$pw_lc" == "changeme" || "$pw_lc" == "shopanda" ) ]]; then
+    printf '\nError: database password %q is forbidden without SHOPANDA_DEV_MODE=true.\n' "$password" >&2
+    printf 'Choose a strong password, or set development mode to 1/true/yes for local-only DX.\n' >&2
+    return 1
+  fi
+
+  ssl_lc=$(printf '%s' "$sslmode" | tr '[:upper:]' '[:lower:]')
+  [[ -z "$ssl_lc" ]] && ssl_lc=disable
+  if [[ "$is_dev" == "true" ]] && is_local_db_host "$host"; then
+    local_dev=true
+  fi
+  case "$ssl_lc" in
+    require|verify-ca|verify-full) ;;
+    *)
+      if [[ "$local_dev" != "true" ]]; then
+        printf '\nError: database sslmode=%q is not allowed (use require, verify-ca, or verify-full).\n' "$ssl_lc" >&2
+        printf 'disable/prefer/allow only when SHOPANDA_DEV_MODE is truthy and host is local (localhost/127.0.0.1/::1/postgres).\n' >&2
+        return 1
+      fi
+      ;;
+  esac
+  return 0
+}
+
+# parse_database_url_security prints host, password, sslmode (one per line) from a
+# postgres URL or libpq keyword DSN. Requires python3.
+parse_database_url_security() {
+  local raw="$1"
+  if ! command -v python3 >/dev/null 2>&1; then
+    printf 'error: python3 is required to validate DATABASE_URL in the installer\n' >&2
+    return 1
+  fi
+  python3 - "$raw" <<'PY'
+import sys
+from urllib.parse import urlparse, parse_qs, unquote
+
+LOCAL = {"localhost", "127.0.0.1", "::1", "postgres"}
+
+def conflict(vals):
+    norm = [v.strip().lower() for v in vals]
+    return len(norm) >= 2 and any(v != norm[0] for v in norm[1:])
+
+def policy_host(raw_host):
+    if not raw_host:
+        return ""
+    if "," not in raw_host:
+        return raw_host
+    chosen = ""
+    for part in raw_host.split(","):
+        part = part.strip()
+        if not part:
+            continue
+        chosen = part
+        if part.lower().strip("[]") not in LOCAL:
+            return part
+    return chosen
+
+def scan_fields(s):
+    fields, cur, quote, escape = [], [], None, False
+    for ch in s:
+        if escape:
+            cur.append(ch)
+            escape = False
+            continue
+        if quote:
+            if ch == "\\":
+                escape = True
+                cur.append(ch)
+                continue
+            cur.append(ch)
+            if ch == quote:
+                quote = None
+            continue
+        if ch in ("'", '"'):
+            quote = ch
+            cur.append(ch)
+        elif ch.isspace():
+            if cur:
+                fields.append("".join(cur))
+                cur = []
+        else:
+            cur.append(ch)
+    if cur:
+        fields.append("".join(cur))
+    return fields
+
+def unquote_val(v):
+    v = v.strip()
+    if len(v) >= 2 and v[0] == v[-1] and v[0] in ("'", '"'):
+        inner = v[1:-1]
+        out, escape = [], False
+        for ch in inner:
+            if escape:
+                out.append(ch)
+                escape = False
+                continue
+            if ch == "\\":
+                escape = True
+                continue
+            out.append(ch)
+        if escape:
+            out.append("\\")
+        return "".join(out)
+    return v
+
+def reject_newline(label, v):
+    if "\n" in v or "\r" in v:
+        print(f"invalid DATABASE_URL {label}: contains newline", file=sys.stderr)
+        sys.exit(2)
+
+raw = sys.argv[1].strip()
+password = sslmode = ""
+hostname = hostaddr = ""
+sslmodes = []
+lower = raw.lower()
+try:
+    if lower.startswith("postgres://") or lower.startswith("postgresql://"):
+        u = urlparse(raw)
+        try:
+            hostname = u.hostname or ""
+        except ValueError as e:
+            print(f"invalid DATABASE_URL host: {e}", file=sys.stderr)
+            sys.exit(2)
+        try:
+            if u.password is not None:
+                password = unquote(u.password)
+        except ValueError as e:
+            print(f"invalid DATABASE_URL password: {e}", file=sys.stderr)
+            sys.exit(2)
+        qs = parse_qs(u.query, keep_blank_values=True)
+        for key, label in (("sslmode", "sslmode"), ("host", "host"), ("hostaddr", "hostaddr")):
+            if key in qs and conflict(qs[key]):
+                print(f"conflicting {label}", file=sys.stderr)
+                sys.exit(2)
+        if "sslmode" in qs and qs["sslmode"]:
+            sslmodes = qs["sslmode"]
+        if "hostaddr" in qs and qs["hostaddr"]:
+            hostaddr = qs["hostaddr"][0]
+        if "host" in qs and qs["host"]:
+            hostname = qs["host"][0]
+    else:
+        for field in scan_fields(raw):
+            if "=" not in field:
+                continue
+            k, v = field.split("=", 1)
+            k = k.strip().lower()
+            v = unquote_val(v)
+            if k == "host":
+                hostname = v
+            elif k == "hostaddr":
+                hostaddr = v
+            elif k == "password":
+                password = v
+            elif k == "sslmode":
+                sslmodes.append(v)
+        if conflict(sslmodes):
+            print("conflicting sslmode", file=sys.stderr)
+            sys.exit(2)
+except ValueError as e:
+    print(f"invalid DATABASE_URL: {e}", file=sys.stderr)
+    sys.exit(2)
+
+if sslmodes:
+    sslmode = sslmodes[-1]
+host = policy_host(hostaddr if hostaddr else hostname)
+reject_newline("host", host)
+reject_newline("hostname", hostname)
+reject_newline("hostaddr", hostaddr)
+reject_newline("password", password)
+for sm in sslmodes:
+    reject_newline("sslmode", sm)
+reject_newline("sslmode", sslmode)
+print(host)
+print(password)
+print(sslmode)
+PY
+}
+
 is_known_env_key() {
   local candidate="$1"
   local key
@@ -363,6 +566,16 @@ write_env_file() {
 printf 'Shopanda interactive installer\n\n'
 
 load_existing_env "$SCRIPT_DIR/.env.example"
+# .env.example may document local-dev samples (changeme / sslmode=disable). Clear those
+# so installer defaults (empty password → generate, sslmode=require) apply on first run.
+# A real .env loaded next can still restore intentional values.
+case "$(printf '%s' "${SHOPANDA_DATABASE_PASSWORD:-}" | tr '[:upper:]' '[:lower:]')" in
+  changeme|shopanda) SHOPANDA_DATABASE_PASSWORD= ;;
+esac
+case "$(printf '%s' "${SHOPANDA_DATABASE_SSLMODE:-}" | tr '[:upper:]' '[:lower:]')" in
+  disable|prefer|allow|"") SHOPANDA_DATABASE_SSLMODE=require ;;
+esac
+
 load_existing_env "$ENV_FILE"
 
 SHOPANDA_AUTH_JWT_SECRET=${SHOPANDA_AUTH_JWT_SECRET:-$(generate_secret)}
@@ -373,9 +586,12 @@ DATABASE_URL=${DATABASE_URL:-}
 SHOPANDA_DATABASE_HOST=${SHOPANDA_DATABASE_HOST:-localhost}
 SHOPANDA_DATABASE_PORT=${SHOPANDA_DATABASE_PORT:-5432}
 SHOPANDA_DATABASE_USER=${SHOPANDA_DATABASE_USER:-shopanda}
-SHOPANDA_DATABASE_PASSWORD=${SHOPANDA_DATABASE_PASSWORD:-changeme}
+# Empty default — installer generates a strong password if the operator leaves it blank.
+SHOPANDA_DATABASE_PASSWORD=${SHOPANDA_DATABASE_PASSWORD:-}
 SHOPANDA_DATABASE_NAME=${SHOPANDA_DATABASE_NAME:-shopanda}
-SHOPANDA_DATABASE_SSLMODE=${SHOPANDA_DATABASE_SSLMODE:-disable}
+SHOPANDA_DATABASE_SSLMODE=${SHOPANDA_DATABASE_SSLMODE:-require}
+# Production-safe: leave empty unless the operator opts into local relaxations.
+SHOPANDA_DEV_MODE=${SHOPANDA_DEV_MODE:-}
 SHOPANDA_LOG_LEVEL=${SHOPANDA_LOG_LEVEL:-info}
 SHOPANDA_LOG_FORMAT=${SHOPANDA_LOG_FORMAT:-json}
 SHOPANDA_AUTH_JWT_TTL=${SHOPANDA_AUTH_JWT_TTL:-24h}
@@ -400,7 +616,6 @@ SHOPANDA_RATE_LIMIT_DEFAULT_RATE=${SHOPANDA_RATE_LIMIT_DEFAULT_RATE:-10}
 SHOPANDA_RATE_LIMIT_DEFAULT_BURST=${SHOPANDA_RATE_LIMIT_DEFAULT_BURST:-20}
 SHOPANDA_SEED_ADMIN_PASSWORD=${SHOPANDA_SEED_ADMIN_PASSWORD:-}
 SHOPANDA_DEV_EMBED_SCHEDULER=${SHOPANDA_DEV_EMBED_SCHEDULER:-true}
-SHOPANDA_DEV_MODE=${SHOPANDA_DEV_MODE:-}
 SHOPANDA_TEST_DSN=${SHOPANDA_TEST_DSN:-}
 
 printf 'Server configuration\n'
@@ -410,20 +625,34 @@ prompt_value SHOPANDA_SERVER_PUBLIC_BASE_URL 'Public base URL' "$SHOPANDA_SERVER
 
 printf '\nDatabase configuration\n'
 prompt_value DATABASE_URL 'Full DATABASE_URL (leave empty to use individual fields)' "$DATABASE_URL" true
+DB_PASSWORD_GENERATED=false
 if [[ -z "$DATABASE_URL" ]]; then
   prompt_value SHOPANDA_DATABASE_HOST 'Database host' "$SHOPANDA_DATABASE_HOST"
   prompt_value SHOPANDA_DATABASE_PORT 'Database port' "$SHOPANDA_DATABASE_PORT"
   prompt_value SHOPANDA_DATABASE_USER 'Database user' "$SHOPANDA_DATABASE_USER"
-  prompt_value SHOPANDA_DATABASE_PASSWORD 'Database password' "$SHOPANDA_DATABASE_PASSWORD" true
+  prompt_value SHOPANDA_DATABASE_PASSWORD 'Database password (leave blank to auto-generate a strong secret)' "$SHOPANDA_DATABASE_PASSWORD" true
+  if [[ -z "$SHOPANDA_DATABASE_PASSWORD" ]]; then
+    if ! SHOPANDA_DATABASE_PASSWORD=$(generate_secret); then
+      printf '\nError: failed to generate database password (need openssl or python3).\n' >&2
+      exit 1
+    fi
+    if [[ -z "$SHOPANDA_DATABASE_PASSWORD" ]]; then
+      printf '\nError: generate_secret returned an empty database password.\n' >&2
+      exit 1
+    fi
+    DB_PASSWORD_GENERATED=true
+  fi
   prompt_value SHOPANDA_DATABASE_NAME 'Database name' "$SHOPANDA_DATABASE_NAME"
-  prompt_choice SHOPANDA_DATABASE_SSLMODE 'Database sslmode' "$SHOPANDA_DATABASE_SSLMODE" disable require verify-ca verify-full
+  prompt_choice SHOPANDA_DATABASE_SSLMODE 'Database sslmode' "$SHOPANDA_DATABASE_SSLMODE" require verify-ca verify-full disable prefer allow
 else
+  # DATABASE_URL is authoritative at runtime; clear sample individual fields so refuse
+  # checks below do not fail a strong URL because of leftover example password/sslmode.
   SHOPANDA_DATABASE_HOST=${SHOPANDA_DATABASE_HOST:-localhost}
   SHOPANDA_DATABASE_PORT=${SHOPANDA_DATABASE_PORT:-5432}
   SHOPANDA_DATABASE_USER=${SHOPANDA_DATABASE_USER:-shopanda}
-  SHOPANDA_DATABASE_PASSWORD=${SHOPANDA_DATABASE_PASSWORD:-changeme}
+  SHOPANDA_DATABASE_PASSWORD=
   SHOPANDA_DATABASE_NAME=${SHOPANDA_DATABASE_NAME:-shopanda}
-  SHOPANDA_DATABASE_SSLMODE=${SHOPANDA_DATABASE_SSLMODE:-disable}
+  SHOPANDA_DATABASE_SSLMODE=require
 fi
 
 printf '\nAuthentication and logging\n'
@@ -465,8 +694,19 @@ if [[ -z "$SHOPANDA_SEED_ADMIN_PASSWORD" ]]; then
   SEED_ADMIN_PASSWORD_GENERATED=true
 fi
 prompt_choice SHOPANDA_DEV_EMBED_SCHEDULER 'Embed scheduler in app dev' "$SHOPANDA_DEV_EMBED_SCHEDULER" true false
-prompt_value SHOPANDA_DEV_MODE 'Development mode flag (optional)' "$SHOPANDA_DEV_MODE"
+prompt_value SHOPANDA_DEV_MODE 'Development mode (1/true/yes relaxes DB password and sslmode checks on local hosts; leave empty for production)' "$SHOPANDA_DEV_MODE"
 prompt_value SHOPANDA_TEST_DSN 'Test DSN (optional)' "$SHOPANDA_TEST_DSN"
+
+# Refuse to write an env that fails secure-by-default startup (bare metal).
+if [[ -n "$DATABASE_URL" ]]; then
+  _db_url_out=$(parse_database_url_security "$DATABASE_URL") || exit 1
+  _db_url_host=$(printf '%s\n' "$_db_url_out" | sed -n '1p')
+  _db_url_password=$(printf '%s\n' "$_db_url_out" | sed -n '2p')
+  _db_url_sslmode=$(printf '%s\n' "$_db_url_out" | sed -n '3p')
+  refuse_insecure_db_settings "$_db_url_host" "$_db_url_password" "$_db_url_sslmode" "$SHOPANDA_DEV_MODE" || exit 1
+else
+  refuse_insecure_db_settings "$SHOPANDA_DATABASE_HOST" "$SHOPANDA_DATABASE_PASSWORD" "$SHOPANDA_DATABASE_SSLMODE" "$SHOPANDA_DEV_MODE" || exit 1
+fi
 
 if ! write_env_file; then
   printf '\nAborted. Existing %s was left unchanged.\n' "$ENV_FILE"
@@ -474,6 +714,13 @@ if ! write_env_file; then
 fi
 
 printf '\nWrote %s\n' "$ENV_FILE"
+
+if [[ "$DB_PASSWORD_GENERATED" == "true" ]]; then
+  printf '\n'
+  printf 'Generated database password (shown once — store it securely now):\n\n'
+  printf '  %s\n\n' "$SHOPANDA_DATABASE_PASSWORD"
+  printf 'Saved in %s as SHOPANDA_DATABASE_PASSWORD.\n' "$ENV_FILE"
+fi
 
 if [[ "$SEED_ADMIN_PASSWORD_GENERATED" == "true" ]]; then
   printf '\n'
