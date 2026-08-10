@@ -45,8 +45,8 @@ Shopanda plugins are **compile-time registered** — there is no `.so` drop-in l
 
 | Probe | Endpoint | Use |
 | --- | --- | --- |
-| Liveness | `GET /healthz` | Process up (static 200). Docker image `HEALTHCHECK` stays here. |
-| Readiness | `GET /readyz` | DB `PingContext` within ~2s → 200; else **503**. Point load balancers / k8s readiness here. |
+| Liveness | `GET`/`HEAD` `/healthz` | Process up (static 200, `Cache-Control: no-store`). Docker image `HEALTHCHECK` stays here. Served **outside** store/auth middleware. |
+| Readiness | `GET`/`HEAD` `/readyz` | DB `PingContext` within ~2s → 200; else **503**. Dedicated per-IP probe rate limit (defaults match HTTP rate limit). Point load balancers / k8s readiness here. Prefer network policy so probes are not internet-public. |
 
 If `/readyz` returns 503 while `/healthz` is 200, the API process is up but cannot reach Postgres (or the ping timed out).
 

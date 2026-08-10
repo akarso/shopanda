@@ -973,8 +973,6 @@ func runServe(cfg *config.Config, log logger.Logger, embedScheduler bool) error 
 	router.Use(shophttp.StoreMiddleware(storeRepo, log))
 	router.Use(shophttp.LanguageMiddleware())
 	router.Use(shophttp.CacheControlMiddleware([]string{
-		"/healthz",
-		"/readyz",
 		"/setup",
 		"/api/v1/setup",
 		"/api/v1/carts",
@@ -986,9 +984,8 @@ func runServe(cfg *config.Config, log logger.Logger, embedScheduler bool) error 
 		"/api/v1/admin",
 	}))
 
-	// Routes.
-	router.HandleFunc("GET /healthz", shophttp.HealthHandler())
-	router.HandleFunc("GET /readyz", shophttp.ReadyHandler(conn))
+	// Routes. /healthz and /readyz are mounted outside this stack (see MountProbes below)
+	// so StoreMiddleware / auth / rate-limit cannot hang probes on a dead DB.
 	router.HandleFunc("GET /setup", setupHandler.Page())
 	router.HandleFunc("GET /api/v1/setup/status", setupHandler.Status())
 	router.HandleFunc("POST /api/v1/setup/install", setupHandler.Install())
@@ -1375,7 +1372,32 @@ func runServe(cfg *config.Config, log logger.Logger, embedScheduler bool) error 
 		router.HandleFunc("POST /api/v1/orders/claim-register", storefront.ClaimLink())
 	}
 
-	srv := shophttp.NewServer(cfg.Server.Host, cfg.Server.Port, router.Handler(), log)
+	// Probes skip the store/auth stack (hung DB must not block liveness).
+	// Cheap middleware is applied to probe handlers only — not re-wrapped around the app.
+	// /readyz keeps a dedicated per-IP limiter (probes sit outside RateLimitMiddleware).
+	wrapProbe := func(h http.Handler) http.Handler {
+		return shophttp.RecoveryMiddleware(log)(
+			shophttp.RequestIDMiddleware()(
+				shophttp.LoggingMiddleware(log)(h),
+			),
+		)
+	}
+	readyHandler := shophttp.ReadyProbeLimitMiddleware(
+		cfg.RateLimit.TrustedProxies,
+		cfg.RateLimit.Default.Rate,
+		cfg.RateLimit.Default.Burst,
+		log,
+	)(shophttp.ReadyHandler(conn))
+	srv := shophttp.NewServer(
+		cfg.Server.Host,
+		cfg.Server.Port,
+		shophttp.MountProbes(
+			wrapProbe(shophttp.HealthHandler()),
+			wrapProbe(readyHandler),
+			router.Handler(),
+		),
+		log,
+	)
 
 	var sched scheduler.Scheduler
 	var schedulerCancel context.CancelFunc

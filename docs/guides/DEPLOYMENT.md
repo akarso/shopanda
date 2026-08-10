@@ -775,8 +775,8 @@ Distinguish **liveness** from **readiness**:
 
 | Probe | Endpoint | Meaning |
 | --- | --- | --- |
-| Liveness | `GET /healthz` | Process is up (static 200). Docker image `HEALTHCHECK` uses this. |
-| Readiness | `GET /readyz` | Database ping succeeds within ~2s → 200; else **503**. Use for load balancers / k8s readiness so traffic drains when the DB is down. |
+| Liveness | `GET`/`HEAD` `/healthz` | Process is up (static 200, `Cache-Control: no-store`). Docker image `HEALTHCHECK` uses this. Mounted outside store/auth middleware. |
+| Readiness | `GET`/`HEAD` `/readyz` | Database ping succeeds within ~2s → 200; else **503**. Dedicated per-IP rate limit (defaults: same as `rate_limit.default`). Prefer restricting probe exposure via network policy / internal listener — do not leave an unauthenticated DB-ping endpoint fully public without a gateway. |
 
 ```bash
 curl -f http://127.0.0.1:8080/healthz

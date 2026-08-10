@@ -62,10 +62,10 @@ paths:
     get:
       operationId: healthCheck
       tags: [Health]
-      summary: Health check
+      summary: Liveness probe (process up; no DB check)
       responses:
         "200":
-          description: OK
+          description: Process is up
           content:
             application/json:
               schema:
@@ -74,6 +74,40 @@ paths:
                   status:
                     type: string
                     example: ok
+  /readyz:
+    get:
+      operationId: readinessCheck
+      tags: [Health]
+      summary: Readiness probe (bounded database ping)
+      description: |
+        Returns 200 when the database responds to Ping within ~2s.
+        Returns 503 when the DB is unreachable, times out, or is not configured.
+        Served outside store/auth middleware so a hung DB cannot block the probe.
+        Responses always include Cache-Control: no-store.
+        Per-IP rate limited (defaults match rate_limit.default) to protect the DB pool.
+      responses:
+        "200":
+          description: Ready for traffic
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    example: ok
+        "429":
+          description: Ready-probe rate limit exceeded
+        "503":
+          description: Not ready (DB down or ping timeout)
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    example: unavailable
 
   # ── Auth ────────────────────────────────────────────────
   /api/v1/auth/register:
