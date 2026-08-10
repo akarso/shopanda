@@ -193,7 +193,7 @@ func databaseURLToLibpqKeywords(raw string) (string, error) {
 		if v == "" {
 			return
 		}
-		parts = append(parts, k+"="+v)
+		parts = append(parts, k+"="+quoteLibpqValue(v))
 	}
 	if u.User != nil {
 		add("user", u.User.Username())
@@ -232,6 +232,44 @@ func databaseURLToLibpqKeywords(raw string) (string, error) {
 	return strings.Join(parts, " "), nil
 }
 
+// quoteLibpqValue wraps v in single quotes and escapes \ and ' (lib/pq convertURL style).
+func quoteLibpqValue(v string) string {
+	escaper := strings.NewReplacer(`\`, `\\`, `'`, `\'`)
+	return "'" + escaper.Replace(v) + "'"
+}
+
+// unquoteLibpqValue strips matching quotes and unescapes \' and \\.
+func unquoteLibpqValue(val string) string {
+	val = strings.TrimSpace(val)
+	if len(val) < 2 {
+		return val
+	}
+	q := val[0]
+	if (q != '\'' && q != '"') || val[len(val)-1] != byte(q) {
+		return val
+	}
+	inner := val[1 : len(val)-1]
+	var b strings.Builder
+	b.Grow(len(inner))
+	escape := false
+	for _, r := range inner {
+		if escape {
+			b.WriteRune(r)
+			escape = false
+			continue
+		}
+		if r == '\\' {
+			escape = true
+			continue
+		}
+		b.WriteRune(r)
+	}
+	if escape {
+		b.WriteByte('\\')
+	}
+	return b.String()
+}
+
 func conflictingStrings(vals []string) bool {
 	if len(vals) < 2 {
 		return false
@@ -258,12 +296,7 @@ func parseLibpqKeywordSecurity(raw string) (host, password, sslmode string, err 
 		}
 		seen = true
 		key = strings.ToLower(strings.TrimSpace(key))
-		val = strings.TrimSpace(val)
-		if len(val) >= 2 {
-			if (val[0] == '\'' && val[len(val)-1] == '\'') || (val[0] == '"' && val[len(val)-1] == '"') {
-				val = val[1 : len(val)-1]
-			}
-		}
+		val = unquoteLibpqValue(val)
 		switch key {
 		case "host":
 			hostName = val

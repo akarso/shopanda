@@ -268,8 +268,26 @@ def scan_fields(s):
 def unquote_val(v):
     v = v.strip()
     if len(v) >= 2 and v[0] == v[-1] and v[0] in ("'", '"'):
-        return v[1:-1]
+        inner = v[1:-1]
+        out, escape = [], False
+        for ch in inner:
+            if escape:
+                out.append(ch)
+                escape = False
+                continue
+            if ch == "\\":
+                escape = True
+                continue
+            out.append(ch)
+        if escape:
+            out.append("\\")
+        return "".join(out)
     return v
+
+def reject_newline(label, v):
+    if "\n" in v or "\r" in v:
+        print(f"invalid DATABASE_URL {label}: contains newline", file=sys.stderr)
+        sys.exit(2)
 
 raw = sys.argv[1].strip()
 password = sslmode = ""
@@ -326,6 +344,13 @@ except ValueError as e:
 if sslmodes:
     sslmode = sslmodes[-1]
 host = policy_host(hostaddr if hostaddr else hostname)
+reject_newline("host", host)
+reject_newline("hostname", hostname)
+reject_newline("hostaddr", hostaddr)
+reject_newline("password", password)
+for sm in sslmodes:
+    reject_newline("sslmode", sm)
+reject_newline("sslmode", sslmode)
 print(host)
 print(password)
 print(sslmode)

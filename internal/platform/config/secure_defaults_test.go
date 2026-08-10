@@ -339,3 +339,25 @@ func TestLoad_ParsesQuotedLibpqPassword(t *testing.T) {
 		t.Fatalf("Load: %v", err)
 	}
 }
+
+func TestLoad_ParsesURIPasswordWithEncodedSpace(t *testing.T) {
+	withTestBaseURL(t)
+	t.Setenv("SHOPANDA_DEV_MODE", "false")
+	t.Setenv("DATABASE_URL", "postgres://u:strong%20enough@db.example.com:5432/shopanda?sslmode=require")
+	path := writeYAML(t, "")
+	if _, err := loadCfg(t, path); err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+}
+
+func TestLoad_RejectsSSLModeInjectedViaURIPassword(t *testing.T) {
+	withTestBaseURL(t)
+	t.Setenv("SHOPANDA_DEV_MODE", "false")
+	// Password contains the substring sslmode=require; missing query sslmode must still fail.
+	t.Setenv("DATABASE_URL", "postgres://u:evil%20sslmode=require@db.example.com:5432/shopanda")
+	path := writeYAML(t, "")
+	_, err := loadCfg(t, path)
+	if err == nil || !strings.Contains(err.Error(), "sslmode") {
+		t.Fatalf("err=%v, want sslmode rejection (password must not satisfy TLS policy)", err)
+	}
+}
