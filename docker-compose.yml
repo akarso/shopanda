@@ -15,6 +15,7 @@
 #   # Production-like compose: set SHOPANDA_DEV_MODE=false, a strong
 #   # SHOPANDA_DATABASE_PASSWORD (not changeme), and
 #   # SHOPANDA_DATABASE_SSLMODE=require|verify-ca|verify-full (TLS to Postgres).
+#   # Probes: image HEALTHCHECK = /healthz (liveness); traffic control = /readyz.
 #   docker compose up -d
 #   docker compose run --rm app migrate
 #   docker compose run --rm app seed

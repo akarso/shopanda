@@ -115,13 +115,15 @@ Run the scheduler if you depend on recurring jobs:
 
 ```bash
 curl http://localhost:8080/healthz
+curl http://localhost:8080/readyz
 open http://localhost:8080/docs
 open http://localhost:8080/admin
 ```
 
 Live endpoints in the current application:
 
-- health: `/healthz`
+- liveness: `/healthz` (process up; Docker `HEALTHCHECK`)
+- readiness: `/readyz` (bounded DB ping; use for traffic / orchestrator readiness)
 - API docs UI: `/docs`
 - OpenAPI spec: `/docs/openapi.yaml`
 - admin SPA: `/admin`
@@ -305,7 +307,7 @@ The current Dockerfile:
 - runs as non-root user `appuser`
 - exposes port `8080`
 - includes migrations, theme files, config, and OpenAPI assets
-- performs health checks against `/healthz`
+- performs container **liveness** checks against `/healthz` (not `/readyz`)
 
 ### Run a single container
 
@@ -769,13 +771,19 @@ If you use S3-compatible storage, rely on bucket-level lifecycle and backup poli
 
 ### Health checks
 
-Use:
+Distinguish **liveness** from **readiness**:
+
+| Probe | Endpoint | Meaning |
+| --- | --- | --- |
+| Liveness | `GET /healthz` | Process is up (static 200). Docker image `HEALTHCHECK` uses this. |
+| Readiness | `GET /readyz` | Database ping succeeds within ~2s → 200; else **503**. Use for load balancers / k8s readiness so traffic drains when the DB is down. |
 
 ```bash
 curl -f http://127.0.0.1:8080/healthz
+curl -f http://127.0.0.1:8080/readyz
 ```
 
-The Docker image already uses `/healthz` for its built-in container health check.
+Do **not** point the container `HEALTHCHECK` at `/readyz` — a temporary DB blip would restart the process instead of only stopping new traffic.
 
 ### Logs
 
@@ -790,11 +798,12 @@ This makes Shopanda suitable for log aggregation systems such as Loki, Datadog, 
 
 After every deploy, verify:
 
-1. `/healthz` returns success.
-2. `/docs` opens.
-3. `/admin` loads.
-4. a worker is running if you depend on async email or jobs.
-5. a scheduler is running if you depend on recurring tasks.
+1. `/healthz` returns success (liveness).
+2. `/readyz` returns success (DB reachable).
+3. `/docs` opens.
+4. `/admin` loads.
+5. a worker is running if you depend on async email or jobs.
+6. a scheduler is running if you depend on recurring tasks.
 
 ## Related Guides
 

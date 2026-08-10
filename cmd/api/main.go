@@ -974,6 +974,7 @@ func runServe(cfg *config.Config, log logger.Logger, embedScheduler bool) error 
 	router.Use(shophttp.LanguageMiddleware())
 	router.Use(shophttp.CacheControlMiddleware([]string{
 		"/healthz",
+		"/readyz",
 		"/setup",
 		"/api/v1/setup",
 		"/api/v1/carts",
@@ -987,6 +988,7 @@ func runServe(cfg *config.Config, log logger.Logger, embedScheduler bool) error 
 
 	// Routes.
 	router.HandleFunc("GET /healthz", shophttp.HealthHandler())
+	router.HandleFunc("GET /readyz", shophttp.ReadyHandler(conn))
 	router.HandleFunc("GET /setup", setupHandler.Page())
 	router.HandleFunc("GET /api/v1/setup/status", setupHandler.Status())
 	router.HandleFunc("POST /api/v1/setup/install", setupHandler.Install())
