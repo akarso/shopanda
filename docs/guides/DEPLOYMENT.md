@@ -115,7 +115,7 @@ Run the scheduler if you depend on recurring jobs:
 
 ```bash
 curl http://localhost:8080/healthz
-curl http://localhost:8080/readyz
+curl -f http://localhost:8080/readyz
 open http://localhost:8080/docs
 open http://localhost:8080/admin
 ```

@@ -1377,8 +1377,10 @@ func runServe(cfg *config.Config, log logger.Logger, embedScheduler bool) error 
 	// /readyz keeps a dedicated per-IP limiter (probes sit outside RateLimitMiddleware).
 	wrapProbe := func(h http.Handler) http.Handler {
 		return shophttp.RecoveryMiddleware(log)(
-			shophttp.RequestIDMiddleware()(
-				shophttp.LoggingMiddleware(log)(h),
+			shophttp.SecurityHeadersMiddleware(cfg.RateLimit.TrustedProxies...)(
+				shophttp.RequestIDMiddleware()(
+					shophttp.LoggingMiddleware(log)(h),
+				),
 			),
 		)
 	}

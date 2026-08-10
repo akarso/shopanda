@@ -59,7 +59,7 @@ tags:
 paths:
   # ── Health ──────────────────────────────────────────────
   /healthz:
-    get:
+    get: &healthzGet
       operationId: healthCheck
       tags: [Health]
       summary: Liveness probe (process up; no DB check)
@@ -74,8 +74,12 @@ paths:
                   status:
                     type: string
                     example: ok
+    head:
+      <<: *healthzGet
+      operationId: healthCheckHead
+      summary: Liveness probe (HEAD; same contract as GET, empty body)
   /readyz:
-    get:
+    get: &readyzGet
       operationId: readinessCheck
       tags: [Health]
       summary: Readiness probe (bounded database ping)
@@ -108,6 +112,10 @@ paths:
                   status:
                     type: string
                     example: unavailable
+    head:
+      <<: *readyzGet
+      operationId: readinessCheckHead
+      summary: Readiness probe (HEAD; same contract as GET, empty body)
 
   # ── Auth ────────────────────────────────────────────────
   /api/v1/auth/register:

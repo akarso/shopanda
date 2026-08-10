@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
-	"reflect"
 	"time"
 
 	"github.com/akarso/shopanda/internal/platform/logger"
@@ -49,11 +48,14 @@ const (
 )
 
 // ReadyHandler returns GET/HEAD /readyz — 200 if the DB pings within DefaultReadyTimeout, else 503.
+// Callers must not pass a typed-nil DBPinger (e.g. (*sql.DB)(nil)); only a nil interface is treated
+// as unavailable. Production wiring uses db.Open, which returns a non-nil *sql.DB on success.
 func ReadyHandler(db DBPinger) http.HandlerFunc {
 	return ReadyHandlerWithTimeout(db, DefaultReadyTimeout)
 }
 
 // ReadyHandlerWithTimeout is like ReadyHandler with an explicit ping timeout.
+// See ReadyHandler for the nil-DBPinger contract.
 func ReadyHandlerWithTimeout(db DBPinger, timeout time.Duration) http.HandlerFunc {
 	if timeout <= 0 {
 		timeout = DefaultReadyTimeout
@@ -68,7 +70,7 @@ func ReadyHandlerWithTimeout(db DBPinger, timeout time.Duration) http.HandlerFun
 			}
 			_ = json.NewEncoder(w).Encode(HealthResponse{Status: status})
 		}
-		if isNilDBPinger(db) {
+		if db == nil {
 			writeReady(http.StatusServiceUnavailable, "unavailable")
 			return
 		}
@@ -79,20 +81,6 @@ func ReadyHandlerWithTimeout(db DBPinger, timeout time.Duration) http.HandlerFun
 			return
 		}
 		writeReady(http.StatusOK, "ok")
-	}
-}
-
-// isNilDBPinger reports true for a nil interface or a typed nil (e.g. (*sql.DB)(nil)).
-func isNilDBPinger(db DBPinger) bool {
-	if db == nil {
-		return true
-	}
-	v := reflect.ValueOf(db)
-	switch v.Kind() {
-	case reflect.Chan, reflect.Func, reflect.Interface, reflect.Map, reflect.Ptr, reflect.Slice:
-		return v.IsNil()
-	default:
-		return false
 	}
 }
 
@@ -131,7 +119,7 @@ func ReadyProbeLimitMiddleware(trustedProxies []string, rate float64, burst int,
 
 // MountProbes serves GET/HEAD /healthz and /readyz before next, so probes skip
 // store/auth middleware that may touch the database or hang.
-// Apply Recovery/RequestID/Logging (and ReadyProbeLimitMiddleware for /readyz)
+// Apply Recovery/SecurityHeaders/RequestID/Logging (and ReadyProbeLimitMiddleware for /readyz)
 // to the individual probe handlers when wiring — not to the returned root.
 func MountProbes(health, ready http.Handler, next http.Handler) http.Handler {
 	if health == nil {

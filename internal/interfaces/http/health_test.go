@@ -94,6 +94,17 @@ func TestReadyHandler_OK(t *testing.T) {
 	}
 }
 
+func TestReadyHandler_NilInterface(t *testing.T) {
+	var db shophttp.DBPinger
+	handler := shophttp.ReadyHandler(db)
+	req := httptest.NewRequest(http.MethodGet, "/readyz", nil)
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("expected 503, got %d", rec.Code)
+	}
+}
+
 func TestReadyHandler_PingError(t *testing.T) {
 	handler := shophttp.ReadyHandler(stubPinger{err: errors.New("db down")})
 	req := httptest.NewRequest(http.MethodGet, "/readyz", nil)
@@ -130,23 +141,6 @@ func TestReadyHandler_Timeout(t *testing.T) {
 	}
 	if elapsed > 500*time.Millisecond {
 		t.Fatalf("handler hung: elapsed %v", elapsed)
-	}
-}
-
-type typedNilPinger struct{}
-
-func (t *typedNilPinger) PingContext(context.Context) error {
-	panic("typed nil PingContext must not be called")
-}
-
-func TestReadyHandler_TypedNil(t *testing.T) {
-	var db *typedNilPinger
-	handler := shophttp.ReadyHandler(db)
-	req := httptest.NewRequest(http.MethodGet, "/readyz", nil)
-	rec := httptest.NewRecorder()
-	handler.ServeHTTP(rec, req)
-	if rec.Code != http.StatusServiceUnavailable {
-		t.Fatalf("expected 503, got %d", rec.Code)
 	}
 }
 
@@ -234,6 +228,8 @@ func TestMountProbes_WithStoreMiddlewareStack(t *testing.T) {
 type hangingStoreRepo struct {
 	block chan struct{}
 }
+
+var _ store.StoreRepository = (*hangingStoreRepo)(nil)
 
 func (h *hangingStoreRepo) FindByID(context.Context, string) (*store.Store, error) {
 	return nil, nil
