@@ -59,13 +59,18 @@ tags:
 paths:
   # ── Health ──────────────────────────────────────────────
   /healthz:
-    get: &healthzGet
+    get:
       operationId: healthCheck
       tags: [Health]
       summary: Liveness probe (process up; no DB check)
       responses:
         "200":
           description: Process is up
+          headers:
+            Cache-Control:
+              schema:
+                type: string
+                example: no-store
           content:
             application/json:
               schema:
@@ -75,11 +80,19 @@ paths:
                     type: string
                     example: ok
     head:
-      <<: *healthzGet
       operationId: healthCheckHead
-      summary: Liveness probe (HEAD; same contract as GET, empty body)
+      tags: [Health]
+      summary: Liveness probe (HEAD; empty body)
+      responses:
+        "200":
+          description: Process is up
+          headers:
+            Cache-Control:
+              schema:
+                type: string
+                example: no-store
   /readyz:
-    get: &readyzGet
+    get:
       operationId: readinessCheck
       tags: [Health]
       summary: Readiness probe (bounded database ping)
@@ -89,33 +102,74 @@ paths:
         Served outside store/auth middleware so a hung DB cannot block the probe.
         Responses always include Cache-Control: no-store.
         Per-IP rate limited (defaults match rate_limit.default) to protect the DB pool.
+        Body uses the standard API Envelope with HealthResponse in data.
       responses:
         "200":
           description: Ready for traffic
+          headers:
+            Cache-Control:
+              schema:
+                type: string
+                example: no-store
           content:
             application/json:
               schema:
-                type: object
-                properties:
-                  status:
-                    type: string
-                    example: ok
+                $ref: "#/components/schemas/Envelope"
+              example:
+                data:
+                  status: ok
+                error: null
         "429":
           description: Ready-probe rate limit exceeded
+          headers:
+            Cache-Control:
+              schema:
+                type: string
+                example: no-store
         "503":
           description: Not ready (DB down or ping timeout)
+          headers:
+            Cache-Control:
+              schema:
+                type: string
+                example: no-store
           content:
             application/json:
               schema:
-                type: object
-                properties:
-                  status:
-                    type: string
-                    example: unavailable
+                $ref: "#/components/schemas/Envelope"
+              example:
+                data:
+                  status: unavailable
+                error: null
     head:
-      <<: *readyzGet
       operationId: readinessCheckHead
-      summary: Readiness probe (HEAD; same contract as GET, empty body)
+      tags: [Health]
+      summary: Readiness probe (HEAD; empty body)
+      description: |
+        Same status codes as GET /readyz without a response body.
+        Cache-Control: no-store; per-IP rate limited.
+      responses:
+        "200":
+          description: Ready for traffic
+          headers:
+            Cache-Control:
+              schema:
+                type: string
+                example: no-store
+        "429":
+          description: Ready-probe rate limit exceeded
+          headers:
+            Cache-Control:
+              schema:
+                type: string
+                example: no-store
+        "503":
+          description: Not ready (DB down or ping timeout)
+          headers:
+            Cache-Control:
+              schema:
+                type: string
+                example: no-store
 
   # ── Auth ────────────────────────────────────────────────
   /api/v1/auth/register:

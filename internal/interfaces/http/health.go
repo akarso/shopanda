@@ -10,7 +10,7 @@ import (
 	"github.com/akarso/shopanda/internal/platform/ratelimit"
 )
 
-// HealthResponse is the JSON body returned by the health and readiness endpoints.
+// HealthResponse is the probe status payload (liveness: raw JSON; readiness: Envelope.data).
 type HealthResponse struct {
 	Status string `json:"status"`
 }
@@ -62,13 +62,13 @@ func ReadyHandlerWithTimeout(db DBPinger, timeout time.Duration) http.HandlerFun
 	}
 	return func(w http.ResponseWriter, r *http.Request) {
 		setProbeCacheHeaders(w)
-		w.Header().Set("Content-Type", "application/json")
 		writeReady := func(code int, status string) {
-			w.WriteHeader(code)
 			if r.Method == http.MethodHead {
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(code)
 				return
 			}
-			_ = json.NewEncoder(w).Encode(HealthResponse{Status: status})
+			JSON(w, code, HealthResponse{Status: status})
 		}
 		if db == nil {
 			writeReady(http.StatusServiceUnavailable, "unavailable")
@@ -128,12 +128,12 @@ func MountProbes(health, ready http.Handler, next http.Handler) http.Handler {
 	if ready == nil {
 		ready = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			setProbeCacheHeaders(w)
-			w.Header().Set("Content-Type", "application/json")
-			w.WriteHeader(http.StatusServiceUnavailable)
 			if r.Method == http.MethodHead {
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(http.StatusServiceUnavailable)
 				return
 			}
-			_ = json.NewEncoder(w).Encode(HealthResponse{Status: "unavailable"})
+			JSON(w, http.StatusServiceUnavailable, HealthResponse{Status: "unavailable"})
 		})
 	}
 	if next == nil {

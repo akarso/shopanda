@@ -74,6 +74,26 @@ func (s stubPinger) PingContext(ctx context.Context) error {
 	return s.err
 }
 
+func decodeReadyEnvelope(t *testing.T, body io.Reader) shophttp.HealthResponse {
+	t.Helper()
+	var env shophttp.Response
+	if err := json.NewDecoder(body).Decode(&env); err != nil {
+		t.Fatalf("decode envelope: %v", err)
+	}
+	if env.Error != nil {
+		t.Fatalf("unexpected error envelope: %+v", env.Error)
+	}
+	raw, err := json.Marshal(env.Data)
+	if err != nil {
+		t.Fatalf("marshal data: %v", err)
+	}
+	var status shophttp.HealthResponse
+	if err := json.Unmarshal(raw, &status); err != nil {
+		t.Fatalf("decode HealthResponse: %v", err)
+	}
+	return status
+}
+
 func TestReadyHandler_OK(t *testing.T) {
 	handler := shophttp.ReadyHandler(stubPinger{})
 	req := httptest.NewRequest(http.MethodGet, "/readyz", nil)
@@ -85,12 +105,8 @@ func TestReadyHandler_OK(t *testing.T) {
 	if got := rec.Header().Get("Cache-Control"); got != "no-store" {
 		t.Fatalf("Cache-Control = %q, want no-store", got)
 	}
-	var resp shophttp.HealthResponse
-	if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
-		t.Fatalf("decode: %v", err)
-	}
-	if resp.Status != "ok" {
-		t.Fatalf("status = %q", resp.Status)
+	if status := decodeReadyEnvelope(t, rec.Body); status.Status != "ok" {
+		t.Fatalf("status = %q", status.Status)
 	}
 }
 
@@ -113,12 +129,8 @@ func TestReadyHandler_PingError(t *testing.T) {
 	if rec.Code != http.StatusServiceUnavailable {
 		t.Fatalf("expected 503, got %d", rec.Code)
 	}
-	var resp shophttp.HealthResponse
-	if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
-		t.Fatalf("decode: %v", err)
-	}
-	if resp.Status != "unavailable" {
-		t.Fatalf("status = %q", resp.Status)
+	if status := decodeReadyEnvelope(t, rec.Body); status.Status != "unavailable" {
+		t.Fatalf("status = %q", status.Status)
 	}
 }
 
