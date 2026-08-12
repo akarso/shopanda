@@ -11,7 +11,7 @@
 | PR-1006 | B | done | [HTTP boundary hardening](PR-1006.md) |
 | PR-1007 | B | done | [Webhook SSRF guard](PR-1007.md) |
 | PR-1008 | B | done | [Secure-by-default config](PR-1008.md) |
-| PR-1009 | C | planned | [Readiness probe](PR-1009.md) |
+| PR-1009 | C | done | [Readiness probe](PR-1009.md) |
 | PR-1010 | C | planned | [Release to GHCR](PR-1010.md) |
 | PR-1011 | C | planned | [Migration hygiene CI](PR-1011.md) |
 | PR-1012 | C | planned | [Supply-chain basics](PR-1012.md) |
