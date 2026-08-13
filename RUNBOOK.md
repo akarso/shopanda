@@ -56,6 +56,11 @@ Version tags (`v*`) publish `ghcr.io/<owner>/shopanda`. **Pin deploys** to `sha-
 
 The `sha-<commit>` tag is never overwritten: the Release workflow refuses to re-push it if it already exists in GHCR (rebuilding the same commit can still yield different image content, since Alpine packages are installed unpinned at build time). A release re-run for an already-released commit fails fast in the "Guard — sha tag must stay immutable" step — this is expected; cut a new commit/tag if you need to publish a fix.
 
+## Supply chain
+
+- Dependabot: weekly PRs for Go modules, Actions, and Docker digests (`.github/dependabot.yml`).
+- `CI / govuln`: pinned fail-closed `govulncheck`; exceptions only via [`GOVULN_BASELINE.md`](docs/phase-10-platform-excellence/GOVULN_BASELINE.md). Details in [DEVELOPER.md](docs/guides/DEVELOPER.md#supply-chain-dependabot--govulncheck).
+
 ## Outbound webhooks (SSRF)
 
 - Endpoint URLs must be **https**. Loopback, RFC1918, link-local (including cloud metadata `169.254.169.254`), IPv6 ULA, IANA special-purpose IPv4 (CGNAT, TEST-NET, benchmarking `198.18/15`, reserved `240/4`, …), and well-known NAT64 (`64:ff9b::/96`) destinations are rejected at create/update (literal IPs) and again at delivery (DNS resolution). Non-canonical IP hosts (`127.1`, decimal/hex forms) are rejected at create/update.

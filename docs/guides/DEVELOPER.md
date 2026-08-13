@@ -24,6 +24,7 @@ For deployment and operational setup, see [Deployment Guide](DEPLOYMENT.md). For
 - [Integrator Platform (Phase 8)](#integrator-platform-phase-8)
 - [Roadmap and Future Work](#roadmap-and-future-work)
 - [Continuous Integration](#continuous-integration)
+- [Supply chain (Dependabot + govulncheck)](#supply-chain-dependabot--govulncheck)
 - [Practical Advice](#practical-advice)
 
 ## Architecture Overview
@@ -647,8 +648,9 @@ PRs targeting `main` / `dev`, and pushes to those branches, run [`.github/workfl
 | --- | --- |
 | **`CI / unit`** | `go mod verify`, `gofmt`, `go vet`, `go test ./...` (no DSN — Postgres tests skip) |
 | **`CI / integration`** | Postgres 17 service + `SHOPANDA_TEST_DSN`; DSN-gated packages; fails if those tests skip |
+| **`CI / govuln`** | Pinned `govulncheck` (fail-closed + optional baseline) |
 
-The workflow **reports** the checks; it does not by itself block merges. A repository admin must require **`CI / unit`** and **`CI / integration`** on `main` and `dev` (Settings → Rules / Branch protection → required status checks).
+The workflow **reports** the checks; it does not by itself block merges. A repository admin must require **`CI / unit`**, **`CI / integration`**, and **`CI / govuln`** on `main` and `dev` (Settings → Rules / Branch protection → required status checks).
 
 Before opening a PR, run the unit checks locally:
 
@@ -681,6 +683,46 @@ bash .github/scripts/run-integration-tests.sh
 ```
 
 Repo tests apply root `migrations/` themselves. The script runs `go test -p 1` so packages do not race on `migrate.Run`.
+
+## Supply chain (Dependabot + govulncheck)
+
+### Dependabot
+
+[`.github/dependabot.yml`](../../.github/dependabot.yml) opens weekly PRs for:
+
+| Ecosystem | What it updates |
+| --- | --- |
+| `gomod` | Go module versions in `go.mod` / `go.sum` |
+| `github-actions` | Action pins in `.github/workflows/*` |
+| `docker` | Digests / tags in `Dockerfile` (and root dockerfiles Dependabot discovers) |
+
+Review CI on each Dependabot PR before merge. Prefer small, reviewable upgrades over bulk merges.
+
+### govulncheck (fail-closed)
+
+CI job **`CI / govuln`** installs a **pinned** `govulncheck` (`GOVULNCHECK_VERSION` in [`ci.yml`](../../.github/workflows/ci.yml)) and runs [`.github/scripts/run-govulncheck.sh`](../../.github/scripts/run-govulncheck.sh).
+
+Policy:
+
+- Any vulnerability that affects reachable code fails the job (**fail-closed**).
+- Temporary exceptions live in [`GOVULN_BASELINE.md`](../phase-10-platform-excellence/GOVULN_BASELINE.md) with **owner + expiry**; IDs not on that list always fail.
+- Prefer upgrading Go / dependencies over extending the baseline.
+
+Local:
+
+```bash
+go install golang.org/x/vuln/cmd/govulncheck@v1.7.0   # match GOVULNCHECK_VERSION
+bash .github/scripts/run-govulncheck.sh
+```
+
+### Confirm fail-closed (do not merge)
+
+To verify CI would catch a newly introduced vuln (throwaway branch only):
+
+1. Add a temporary `require` of a known-vulnerable module version (or pin Go below a fixed stdlib advisory).
+2. Run `bash .github/scripts/run-govulncheck.sh` — expect a non-zero exit listing an OSV ID not on the baseline.
+3. Discard the change; never merge the fixture.
+
 ## Practical Advice
 
 When adding an extension, prefer this order:
