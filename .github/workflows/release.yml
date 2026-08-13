@@ -102,6 +102,24 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
+      - name: Guard — sha tag must stay immutable
+        if: ${{ steps.meta.outputs.do_push == 'true' }}
+        run: |
+          set -euo pipefail
+          name="${{ steps.meta.outputs.name }}"
+          sha_tag="${{ steps.meta.outputs.sha_tag }}"
+          # Alpine packages (ca-certificates, wget) are installed unpinned at build
+          # time, so rebuilding the same commit is not guaranteed to reproduce the
+          # same image content. Never overwrite an already-published sha-<sha> tag —
+          # it is documented as an immutable deploy pin.
+          if docker buildx imagetools inspect "${name}:${sha_tag}" >/dev/null 2>&1; then
+            echo "ERROR: ${name}:${sha_tag} already exists in GHCR." >&2
+            echo "sha-<commit> tags are immutable deploy pins and must never be overwritten." >&2
+            echo "Re-releasing the same commit is not supported. Cut a new commit (and tag) instead." >&2
+            exit 1
+          fi
+          echo "OK: ${name}:${sha_tag} not yet published — proceeding."
+
       - name: Build and push
         id: build
         # Pin to full SHA (tag v7.3.0).
