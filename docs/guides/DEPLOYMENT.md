@@ -298,7 +298,45 @@ See `configs/config.example.yaml` for YAML equivalents and other demo plugin fla
 docker build -t shopanda .
 ```
 
-Prefer deploying the image (or a CI-built artifact) over checking a compiled binary into the repository. Container registry publishing (e.g. GHCR) is planned in Phase 10 PR-1010.
+Prefer deploying a **CI-built GHCR image** (or a local `docker build`) over checking a compiled binary into the repository.
+
+### Pull from GHCR (releases)
+
+Pushing a git tag matching `v*` (for example `v1.2.3`) runs [`.github/workflows/release.yml`](../../.github/workflows/release.yml), which builds the Dockerfile and pushes to GitHub Container Registry.
+
+Image name: `ghcr.io/<owner>/shopanda` (owner lowercased).
+
+| Tag / reference | Role |
+| --- | --- |
+| `sha-<full40gitsha>` | **Immutable deploy pin** — the commit that built the image |
+| `@sha256:<digest>` | **Immutable deploy pin** — content-addressed digest from the push |
+| `v1.2.3` (version tag) | **Mutable alias only** — convenience for humans; may be retargeted; **do not** use as the production pin |
+
+Examples (replace owner / digests):
+
+```bash
+# Preferred: pin by full commit SHA tag
+docker pull ghcr.io/akarso/shopanda:sha-0123456789abcdef0123456789abcdef01234567
+
+# Preferred: pin by digest (from the Release workflow summary / registry UI)
+docker pull ghcr.io/akarso/shopanda@sha256:…
+
+# Optional alias (not for deploy pins)
+docker pull ghcr.io/akarso/shopanda:v1.2.3
+```
+
+Run a pinned image:
+
+```bash
+docker run --rm \
+  -p 8080:8080 \
+  --env-file .env \
+  ghcr.io/akarso/shopanda:sha-<full40gitsha>
+```
+
+After deploy, verify liveness (`/healthz`) and readiness (`/readyz`) as in [Health checks](#health-checks).
+
+Private packages: authenticate with a GitHub token that can `read:packages` (CI uses `GITHUB_TOKEN` with `packages: write` on push).
 
 The current Dockerfile:
 

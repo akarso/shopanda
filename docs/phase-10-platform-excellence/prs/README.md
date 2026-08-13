@@ -12,7 +12,7 @@
 | PR-1007 | B | done | [Webhook SSRF guard](PR-1007.md) |
 | PR-1008 | B | done | [Secure-by-default config](PR-1008.md) |
 | PR-1009 | C | done | [Readiness probe](PR-1009.md) |
-| PR-1010 | C | planned | [Release to GHCR](PR-1010.md) |
+| PR-1010 | C | done | [Release to GHCR](PR-1010.md) |
 | PR-1011 | C | planned | [Migration hygiene CI](PR-1011.md) |
 | PR-1012 | C | planned | [Supply-chain basics](PR-1012.md) |
 | PR-1013 | D | planned | [Split serve wiring](PR-1013.md) |
