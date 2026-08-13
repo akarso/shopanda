@@ -1,6 +1,7 @@
 # Shopanda
 
 [![CI](https://github.com/akarso/shopanda/actions/workflows/ci.yml/badge.svg)](https://github.com/akarso/shopanda/actions/workflows/ci.yml)
+[![Release](https://github.com/akarso/shopanda/actions/workflows/release.yml/badge.svg)](https://github.com/akarso/shopanda/actions/workflows/release.yml)
 
 Shopanda is a **developer-first ecommerce engine** built with Go and PostgreSQL.
 
@@ -223,7 +224,7 @@ Current guides live in [`docs/guides/`](docs/guides/):
 ### Guides
 
 - [Merchant Guide](docs/guides/MERCHANT.md) — day-to-day store operations, admin UI, orders, and catalog workflows
-- [Deployment Guide](docs/guides/DEPLOYMENT.md) — Docker, bare metal, cloud deployment, TLS, backups, and monitoring
+- [Deployment Guide](docs/guides/DEPLOYMENT.md) — Docker, GHCR releases (`sha-<commit>` / digest pins), bare metal, TLS, backups, and monitoring
 - [Developer Guide](docs/guides/DEVELOPER.md) — three-tier plugin model, extension points, events, pipelines, and API integration
 - [Plugin Authoring Guide](PLUGINS.md) — core vs external boundaries, extension mechanisms, deferred capabilities
 
