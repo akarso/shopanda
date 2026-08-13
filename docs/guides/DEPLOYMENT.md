@@ -812,6 +812,7 @@ Migrations under `migrations/` are plain, forward-only SQL files applied in file
 Naming rule, enforced by a CI unit test (`internal/platform/migrate` — runs in `CI / unit`, no database required):
 
 - every `*.sql` file must match `^([0-9]+)_.*\.sql$` — a numeric prefix, then `_`, then a description
+- every numeric prefix must use the **same digit width** as the rest (currently 3 digits, e.g. `064_`) — migrations are applied in plain lexicographic filename order, so a mismatched width (e.g. `64_` next to `065_`) sorts and runs out of numeric order
 - numeric prefixes are normalized as integers (leading zeros stripped: `007` and `7` collide) and must be **unique** across all files
 - one historical exception is allowlisted by exact filename: `025_add_cart_merged_guest_id.sql` and `025_create_invoices.sql` both predate this check and share prefix `25`
 - **never rename or delete** either of those two files — their filenames are recorded verbatim in every deployed `schema_migrations` table; renaming desyncs tracking and makes Shopanda re-attempt (and fail) an already-applied migration

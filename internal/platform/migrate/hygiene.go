@@ -30,6 +30,10 @@ var allowedPrefixCollisions = map[int][]string{
 // project's naming policy (documented in DEPLOYMENT.md):
 //
 //   - every *.sql file must match ^([0-9]+)_.*\.sql$
+//   - every numeric prefix must have the same digit width as the others
+//     (e.g. all 3 digits) — listMigrations orders migrations by plain
+//     lexicographic filename sort, so a shorter/longer prefix (e.g. "64_"
+//     next to "065_") would sort out of numeric order and can execute early
 //   - normalized numeric prefixes (leading zeros stripped) must be unique
 //     across files, except for the exact historical collision recorded in
 //     allowedPrefixCollisions
@@ -56,6 +60,8 @@ func CheckFilenameHygiene(dir string) error {
 func checkFilenameHygiene(names []string) error {
 	byPrefix := make(map[int][]string)
 	nameSet := make(map[string]struct{}, len(names))
+	prefixWidth := -1
+	widthReference := ""
 	for _, name := range names {
 		if !strings.HasSuffix(name, ".sql") {
 			continue
@@ -65,7 +71,14 @@ func checkFilenameHygiene(names []string) error {
 		if m == nil {
 			return fmt.Errorf("migrate: %q does not match the required migration filename pattern ^([0-9]+)_.*\\.sql$ (a numeric prefix is required so filename sort order matches migration order)", name)
 		}
-		n, err := strconv.Atoi(m[1])
+		digits := m[1]
+		if prefixWidth == -1 {
+			prefixWidth = len(digits)
+			widthReference = name
+		} else if len(digits) != prefixWidth {
+			return fmt.Errorf("migrate: %q has a %d-digit numeric prefix but %q has %d digits — mixed-width prefixes break lexicographic filename sort order (listMigrations sorts filenames as strings, not numbers), so a shorter/longer prefix can execute out of numeric order; zero-pad the prefix to match", name, len(digits), widthReference, prefixWidth)
+		}
+		n, err := strconv.Atoi(digits)
 		if err != nil {
 			return fmt.Errorf("migrate: %q has an unparseable numeric prefix: %w", name, err)
 		}

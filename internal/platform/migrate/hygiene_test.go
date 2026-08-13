@@ -22,6 +22,21 @@ func TestCheckFilenameHygiene_AllowsHistoricalCollision(t *testing.T) {
 	}
 }
 
+func TestCheckFilenameHygiene_RejectsMixedWidthPrefixes(t *testing.T) {
+	// "64_new.sql" and "065_later.sql" have distinct integer values (no
+	// collision), but listMigrations sorts filenames lexicographically, so
+	// "065_later.sql" < "64_new.sql" as strings — it would run before 64,
+	// out of numeric order. Mixed prefix widths must be rejected.
+	names := []string{
+		"001_create_products.sql",
+		"064_new.sql",
+		"65_later.sql",
+	}
+	if err := checkFilenameHygiene(names); err == nil {
+		t.Fatal("expected error for mixed-width numeric prefixes")
+	}
+}
+
 func TestCheckFilenameHygiene_RejectsNewCollision(t *testing.T) {
 	names := []string{
 		"001_create_products.sql",
