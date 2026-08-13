@@ -16,7 +16,10 @@ on:
         default: true
 
 concurrency:
-  group: release-${{ github.ref }}
+  # Keyed on the commit, not the ref: two different tags (or a tag push and a
+  # workflow_dispatch) pointing at the same commit must serialize, otherwise both
+  # can pass the sha-tag "does it exist yet" guard before either has pushed.
+  group: release-${{ github.sha }}
   cancel-in-progress: false
 
 permissions:
