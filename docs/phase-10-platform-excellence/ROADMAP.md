@@ -128,7 +128,7 @@ Recommended order:
 
 | PR | Title | Short description |
 | --- | --- | --- |
-| PR-1013 | Split serve wiring | Extract repo/service construction from `runServe` into `cmd/api` modules (`wire_repos.go`, `wire_services.go`); no behavior change |
+| PR-1013 | Split serve wiring | **Done.** Extract repo/service/route construction from `runServe` into `cmd/api` modules (`wire_repos.go`, `wire_services.go`, `wire_routes.go`); no behavior change |
 | PR-1014 | Collapse import/export CLI | Shared helper for open-DB → repos → plugin registry → run; delete ~14 near-clone `runImport*`/`runExport*` bodies |
 | PR-1015 | Typed plugin providers | Replace `RegisterX(provider any)` with typed interfaces; compile-time failures for wrong types |
 | PR-1016 | RBAC registry injection | Single app-owned registry; same instance for Init + auth; freeze after Init; duplicate = error |
@@ -191,7 +191,8 @@ Optional history rewrite (`git filter-repo` to purge historical `api` blobs) is 
 | 1003 | A | in progress |
 | 1004–1008 | B | done |
 | 1009–1012 | C | done |
-| 1013–1019 | D | planned |
+| 1013 | D | done |
+| 1014–1019 | D | planned |
 | 1020–1026 | E | planned |
 
 PR specs: [`prs/`](prs/).

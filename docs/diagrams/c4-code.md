@@ -643,3 +643,5 @@ classDiagram
     NotificationService --> Templates : renders
     NotificationService --> Queue : enqueues email.send
 ```
+
+**Composition root (PR-1013):** HTTP serve wiring lives in `cmd/api` as `wire_repos.go` (postgres repos), `wire_services.go` (plugins, pipelines, handlers, events), and `wire_routes.go` (middleware + routes + `MountProbes`). `runServe` in `main.go` only opens the DB and starts/stops the server, worker, and optional embedded scheduler.
