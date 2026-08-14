@@ -83,6 +83,15 @@ func requireIOPath(cmd string) (string, error) {
 	return os.Args[2], nil
 }
 
+// ioArgs returns CLI arguments after the subcommand (os.Args[2:]).
+// Used by export:epr / export:oss so parsers can be tested with injected slices.
+func ioArgs() []string {
+	if len(os.Args) < 3 {
+		return nil
+	}
+	return os.Args[2:]
+}
+
 // runIOCommand opens the CSV file and DB, runs hook, logs row errors, and
 // applies atomic rename for exports when configured.
 //
@@ -98,9 +107,10 @@ func runIOCommand(cfg *config.Config, log logger.Logger, opts ioCommandOpts, hoo
 	}
 
 	var (
-		f       *os.File
-		tmpPath string
-		err     error
+		f            *os.File
+		tmpPath      string
+		err          error
+		directExport bool
 	)
 
 	// Import: validate/open CSV before DB (matches pre-PR-1014 runImport* order).
@@ -138,7 +148,13 @@ func runIOCommand(cfg *config.Config, log logger.Logger, opts ioCommandOpts, hoo
 			if err != nil {
 				return fmt.Errorf("create csv: %w", err)
 			}
-			defer f.Close()
+			directExport = true
+			// Best-effort cleanup on early return / panic; success path closes explicitly.
+			defer func() {
+				if f != nil {
+					_ = f.Close()
+				}
+			}()
 		}
 	default:
 		return fmt.Errorf("unknown io kind %q", opts.Kind)
@@ -162,6 +178,11 @@ func runIOCommand(cfg *config.Config, log logger.Logger, opts ioCommandOpts, hoo
 
 	outcome, err := hook(context.Background(), conn, f, regs)
 	if opts.Kind == ioExport && opts.AtomicExport {
+		if syncErr := f.Sync(); syncErr != nil {
+			_ = f.Close()
+			os.Remove(tmpPath)
+			return fmt.Errorf("sync temp file: %w", syncErr)
+		}
 		closeErr := f.Close()
 		if err != nil {
 			os.Remove(tmpPath)
@@ -175,6 +196,15 @@ func runIOCommand(cfg *config.Config, log logger.Logger, opts ioCommandOpts, hoo
 		if renameErr := os.Rename(tmpPath, opts.Path); renameErr != nil {
 			os.Remove(tmpPath)
 			return fmt.Errorf("rename temp file: %w", renameErr)
+		}
+	} else if directExport {
+		closeErr := f.Close()
+		f = nil // defer must not double-close
+		if err != nil {
+			return err
+		}
+		if closeErr != nil {
+			return fmt.Errorf("close csv: %w", closeErr)
 		}
 	} else if err != nil {
 		return err

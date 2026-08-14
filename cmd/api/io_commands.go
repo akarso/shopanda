@@ -494,7 +494,7 @@ func runExportPrices(cfg *config.Config, log logger.Logger) error {
 }
 
 func runExportEpr(cfg *config.Config, log logger.Logger) error {
-	filePath, includeEmpty, err := parseEprExportArgs(os.Args[2:])
+	filePath, includeEmpty, err := parseEprExportArgs(ioArgs())
 	if err != nil {
 		return err
 	}
@@ -548,7 +548,7 @@ func parseEprExportArgs(args []string) (filePath string, includeEmpty bool, err 
 }
 
 func runExportOss(cfg *config.Config, log logger.Logger) error {
-	filePath, summary, from, to, err := parseOssExportArgs(os.Args[2:])
+	filePath, summary, from, to, err := parseOssExportArgs(ioArgs())
 	if err != nil {
 		return err
 	}

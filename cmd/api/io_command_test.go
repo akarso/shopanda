@@ -4,7 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
-	"io"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -57,6 +57,21 @@ func TestRequireIOPath(t *testing.T) {
 				t.Fatalf("path = %q, want %q", got, tt.want)
 			}
 		})
+	}
+}
+
+func TestIOArgs(t *testing.T) {
+	orig := append([]string(nil), os.Args...)
+	t.Cleanup(func() { os.Args = orig })
+
+	os.Args = []string{"app", "export:epr"}
+	if got := ioArgs(); got != nil {
+		t.Fatalf("ioArgs() = %v, want nil", got)
+	}
+	os.Args = []string{"app", "export:epr", "--include-empty", "out.csv"}
+	got := ioArgs()
+	if len(got) != 2 || got[0] != "--include-empty" || got[1] != "out.csv" {
+		t.Fatalf("ioArgs() = %v", got)
 	}
 }
 
@@ -123,7 +138,6 @@ func TestParseOssExportArgs(t *testing.T) {
 			if from.IsZero() || !to.After(from) {
 				t.Fatalf("invalid range from=%v to=%v", from, to)
 			}
-			// Default quarter start should be on the 1st.
 			if from.Day() != 1 {
 				t.Fatalf("default from day = %d, want 1", from.Day())
 			}
@@ -131,29 +145,52 @@ func TestParseOssExportArgs(t *testing.T) {
 	}
 }
 
-func TestRunIOCommand_ImportAndExport(t *testing.T) {
-	cfg := &config.Config{}
-	log := logger.NewWithWriter(io.Discard, "error")
+type memLogger struct {
+	info []string
+	warn []string
+	err  []string
+}
 
-	prevOpen := ioOpenDB
-	t.Cleanup(func() { ioOpenDB = prevOpen })
+func (m *memLogger) Info(event string, _ map[string]interface{}) {
+	m.info = append(m.info, event)
+}
+func (m *memLogger) Warn(event string, _ map[string]interface{}) {
+	m.warn = append(m.warn, event)
+}
+func (m *memLogger) Error(event string, _ error, _ map[string]interface{}) {
+	m.err = append(m.err, event)
+}
+
+func stubIOOpenDB(t *testing.T) {
+	t.Helper()
+	prev := ioOpenDB
+	t.Cleanup(func() { ioOpenDB = prev })
 	ioOpenDB = func(string) (*sql.DB, error) {
-		// Open without Ping so tests do not need a live Postgres.
 		return sql.Open("postgres", "postgres://invalid:invalid@127.0.0.1:1/invalid?sslmode=disable")
 	}
+}
+
+func TestRunIOCommand_ImportAndExport(t *testing.T) {
+	cfg := &config.Config{}
+	stubIOOpenDB(t)
 
 	dir := t.TempDir()
 	inPath := filepath.Join(dir, "in.csv")
 	if err := os.WriteFile(inPath, []byte("a,b\n1,2\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
+	atomicOut := filepath.Join(dir, "out-atomic.csv")
+	atomicFailOut := filepath.Join(dir, "out-atomic-fail.csv")
+	var afterOKRan bool
 
 	tests := []struct {
-		name    string
-		opts    ioCommandOpts
-		hook    ioHook
-		wantErr string
-		check   func(t *testing.T)
+		name     string
+		opts     ioCommandOpts
+		hook     func(t *testing.T) ioHook
+		log      *memLogger
+		wantErr  string
+		wantInfo []string // optional ordered Info events when log != nil
+		check    func(t *testing.T)
 	}{
 		{
 			name: "import success",
@@ -164,11 +201,14 @@ func TestRunIOCommand_ImportAndExport(t *testing.T) {
 				CompleteEvent: "import.test.complete",
 				RowErrorEvent: "import.test.row_error",
 			},
-			hook: func(ctx context.Context, conn *sql.DB, f *os.File, regs ioRegs) (*ioOutcome, error) {
-				if conn == nil || f == nil {
-					t.Fatal("expected conn and file")
+			hook: func(t *testing.T) ioHook {
+				return func(ctx context.Context, conn *sql.DB, f *os.File, regs ioRegs) (*ioOutcome, error) {
+					if conn == nil || f == nil {
+						t.Errorf("expected conn and file")
+						return nil, errors.New("invalid conn or file")
+					}
+					return &ioOutcome{Fields: map[string]interface{}{"rows": 1}}, nil
 				}
-				return &ioOutcome{Fields: map[string]interface{}{"rows": 1}}, nil
 			},
 		},
 		{
@@ -180,11 +220,13 @@ func TestRunIOCommand_ImportAndExport(t *testing.T) {
 				CompleteEvent: "import.test.complete",
 				RowErrorEvent: "import.test.row_error",
 			},
-			hook: func(ctx context.Context, conn *sql.DB, f *os.File, regs ioRegs) (*ioOutcome, error) {
-				return &ioOutcome{
-					Fields: map[string]interface{}{"errors": 1},
-					Errors: []string{"row 2: bad"},
-				}, nil
+			hook: func(t *testing.T) ioHook {
+				return func(ctx context.Context, conn *sql.DB, f *os.File, regs ioRegs) (*ioOutcome, error) {
+					return &ioOutcome{
+						Fields: map[string]interface{}{"errors": 1},
+						Errors: []string{"row 2: bad"},
+					}, nil
+				}
 			},
 			wantErr: "import completed with 1 row-level errors",
 		},
@@ -192,22 +234,24 @@ func TestRunIOCommand_ImportAndExport(t *testing.T) {
 			name: "export atomic writes destination",
 			opts: ioCommandOpts{
 				Kind:          ioExport,
-				Path:          filepath.Join(dir, "out-atomic.csv"),
+				Path:          atomicOut,
 				StartEvent:    "export.test.start",
 				CompleteEvent: "export.test.complete",
 				RowErrorEvent: "export.test.row_error",
 				AtomicExport:  true,
 				TempPrefix:    "test-export-*.csv",
 			},
-			hook: func(ctx context.Context, conn *sql.DB, f *os.File, regs ioRegs) (*ioOutcome, error) {
-				if _, err := f.WriteString("sku,qty\nA,1\n"); err != nil {
-					return nil, err
+			hook: func(t *testing.T) ioHook {
+				return func(ctx context.Context, conn *sql.DB, f *os.File, regs ioRegs) (*ioOutcome, error) {
+					if _, err := f.WriteString("sku,qty\nA,1\n"); err != nil {
+						return nil, err
+					}
+					return &ioOutcome{Fields: map[string]interface{}{"entries": 1}}, nil
 				}
-				return &ioOutcome{Fields: map[string]interface{}{"entries": 1}}, nil
 			},
 			check: func(t *testing.T) {
 				t.Helper()
-				b, err := os.ReadFile(filepath.Join(dir, "out-atomic.csv"))
+				b, err := os.ReadFile(atomicOut)
 				if err != nil {
 					t.Fatal(err)
 				}
@@ -226,11 +270,13 @@ func TestRunIOCommand_ImportAndExport(t *testing.T) {
 				RowErrorEvent: "export.test.row_error",
 				AtomicExport:  false,
 			},
-			hook: func(ctx context.Context, conn *sql.DB, f *os.File, regs ioRegs) (*ioOutcome, error) {
-				if _, err := f.WriteString("ok\n"); err != nil {
-					return nil, err
+			hook: func(t *testing.T) ioHook {
+				return func(ctx context.Context, conn *sql.DB, f *os.File, regs ioRegs) (*ioOutcome, error) {
+					if _, err := f.WriteString("ok\n"); err != nil {
+						return nil, err
+					}
+					return &ioOutcome{Fields: map[string]interface{}{"rows": 1}}, nil
 				}
-				return &ioOutcome{Fields: map[string]interface{}{"rows": 1}}, nil
 			},
 			check: func(t *testing.T) {
 				t.Helper()
@@ -252,25 +298,194 @@ func TestRunIOCommand_ImportAndExport(t *testing.T) {
 				CompleteEvent: "import.test.complete",
 				RowErrorEvent: "import.test.row_error",
 			},
-			hook: func(ctx context.Context, conn *sql.DB, f *os.File, regs ioRegs) (*ioOutcome, error) {
-				t.Fatal("hook should not run")
-				return nil, nil
+			hook: func(t *testing.T) ioHook {
+				return func(ctx context.Context, conn *sql.DB, f *os.File, regs ioRegs) (*ioOutcome, error) {
+					t.Errorf("hook should not run")
+					return nil, errors.New("hook should not run")
+				}
 			},
 			wantErr: "open ",
+		},
+		{
+			name: "complete after errors ordering",
+			log:  &memLogger{},
+			opts: ioCommandOpts{
+				Kind:                ioImport,
+				Path:                inPath,
+				StartEvent:          "import.test.start",
+				CompleteEvent:       "import.test.complete",
+				RowErrorEvent:       "import.test.row_error",
+				CompleteAfterErrors: true,
+			},
+			hook: func(t *testing.T) ioHook {
+				return func(ctx context.Context, conn *sql.DB, f *os.File, regs ioRegs) (*ioOutcome, error) {
+					return &ioOutcome{Fields: map[string]interface{}{"rows": 1}}, nil
+				}
+			},
+			wantInfo: []string{"import.test.start", "import.test.complete"},
+		},
+		{
+			name: "afterOK success runs",
+			opts: ioCommandOpts{
+				Kind:          ioImport,
+				Path:          inPath,
+				StartEvent:    "import.test.start",
+				CompleteEvent: "import.test.complete",
+				RowErrorEvent: "import.test.row_error",
+			},
+			hook: func(t *testing.T) ioHook {
+				afterOKRan = false
+				return func(ctx context.Context, conn *sql.DB, f *os.File, regs ioRegs) (*ioOutcome, error) {
+					return &ioOutcome{
+						Fields: map[string]interface{}{"rows": 1},
+						AfterOK: func() error {
+							afterOKRan = true
+							return nil
+						},
+					}, nil
+				}
+			},
+			check: func(t *testing.T) {
+				t.Helper()
+				if !afterOKRan {
+					t.Fatal("AfterOK was not called")
+				}
+			},
+		},
+		{
+			name: "afterOK failure",
+			opts: ioCommandOpts{
+				Kind:          ioImport,
+				Path:          inPath,
+				StartEvent:    "import.test.start",
+				CompleteEvent: "import.test.complete",
+				RowErrorEvent: "import.test.row_error",
+			},
+			hook: func(t *testing.T) ioHook {
+				return func(ctx context.Context, conn *sql.DB, f *os.File, regs ioRegs) (*ioOutcome, error) {
+					return &ioOutcome{
+						Fields: map[string]interface{}{"rows": 1},
+						AfterOK: func() error {
+							return errors.New("afterok failed")
+						},
+					}, nil
+				}
+			},
+			wantErr: "afterok failed",
+		},
+		{
+			name: "row error warn custom fail message",
+			log:  &memLogger{},
+			opts: ioCommandOpts{
+				Kind:                ioImport,
+				Path:                inPath,
+				StartEvent:          "import.test.start",
+				CompleteEvent:       "import.test.complete",
+				RowErrorEvent:       "import.test.row_error",
+				RowErrorWarn:        true,
+				FailMessage:         "import completed with %d errors",
+				CompleteAfterErrors: true,
+			},
+			hook: func(t *testing.T) ioHook {
+				return func(ctx context.Context, conn *sql.DB, f *os.File, regs ioRegs) (*ioOutcome, error) {
+					return &ioOutcome{Errors: []string{"bad row"}}, nil
+				}
+			},
+			wantErr: "import completed with 1 errors",
+			check: func(t *testing.T) {
+				t.Helper()
+				// captured via outer log pointer — set below in loop
+			},
+		},
+		{
+			name: "atomic export hook failure leaves no destination or temp",
+			opts: ioCommandOpts{
+				Kind:          ioExport,
+				Path:          atomicFailOut,
+				StartEvent:    "export.test.start",
+				CompleteEvent: "export.test.complete",
+				RowErrorEvent: "export.test.row_error",
+				AtomicExport:  true,
+				TempPrefix:    "test-export-fail-*.csv",
+			},
+			hook: func(t *testing.T) ioHook {
+				return func(ctx context.Context, conn *sql.DB, f *os.File, regs ioRegs) (*ioOutcome, error) {
+					if _, err := f.WriteString("partial\n"); err != nil {
+						return nil, err
+					}
+					return nil, fmt.Errorf("export stock: boom")
+				}
+			},
+			wantErr: "export stock: boom",
+			check: func(t *testing.T) {
+				t.Helper()
+				if _, err := os.Stat(atomicFailOut); !os.IsNotExist(err) {
+					t.Fatalf("destination should not exist, stat err=%v", err)
+				}
+				matches, err := filepath.Glob(filepath.Join(dir, "test-export-fail-*.csv"))
+				if err != nil {
+					t.Fatal(err)
+				}
+				if len(matches) != 0 {
+					t.Fatalf("temp files left behind: %v", matches)
+				}
+			},
+		},
+		{
+			name: "unknown io kind",
+			opts: ioCommandOpts{
+				Kind:          ioKind("nope"),
+				Path:          inPath,
+				StartEvent:    "x.start",
+				CompleteEvent: "x.complete",
+				RowErrorEvent: "x.row_error",
+			},
+			hook: func(t *testing.T) ioHook {
+				return func(ctx context.Context, conn *sql.DB, f *os.File, regs ioRegs) (*ioOutcome, error) {
+					t.Errorf("hook should not run for unknown kind")
+					return nil, errors.New("hook should not run")
+				}
+			},
+			wantErr: `unknown io kind "nope"`,
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			err := runIOCommand(cfg, log, tt.opts, tt.hook)
+			log := logger.Logger(&discardLog{})
+			var mem *memLogger
+			if tt.log != nil {
+				mem = tt.log
+				log = mem
+			}
+			// Reset mem logger between subtests when reusing pointer from table.
+			if mem != nil {
+				mem.info, mem.warn, mem.err = nil, nil, nil
+			}
+
+			err := runIOCommand(cfg, log, tt.opts, tt.hook(t))
 			if tt.wantErr != "" {
 				if err == nil || !strings.Contains(err.Error(), tt.wantErr) {
 					t.Fatalf("err = %v, want substr %q", err, tt.wantErr)
 				}
-				return
-			}
-			if err != nil {
+			} else if err != nil {
 				t.Fatalf("runIOCommand: %v", err)
+			}
+			if len(tt.wantInfo) > 0 {
+				if mem == nil {
+					t.Fatal("wantInfo set without mem logger")
+				}
+				if strings.Join(mem.info, ",") != strings.Join(tt.wantInfo, ",") {
+					t.Fatalf("info events = %v, want %v", mem.info, tt.wantInfo)
+				}
+			}
+			if tt.name == "row error warn custom fail message" {
+				if mem == nil || len(mem.warn) == 0 || mem.warn[0] != "import.test.row_error" {
+					t.Fatalf("warn events = %v, want import.test.row_error", mem.warn)
+				}
+				if len(mem.err) != 0 {
+					t.Fatalf("err events = %v, want none (RowErrorWarn)", mem.err)
+				}
 			}
 			if tt.check != nil {
 				tt.check(t)
@@ -279,9 +494,15 @@ func TestRunIOCommand_ImportAndExport(t *testing.T) {
 	}
 }
 
+type discardLog struct{}
+
+func (discardLog) Info(string, map[string]interface{})         {}
+func (discardLog) Warn(string, map[string]interface{})         {}
+func (discardLog) Error(string, error, map[string]interface{}) {}
+
 func TestRunIOCommand_ImportMissingFileDoesNotOpenDB(t *testing.T) {
 	cfg := &config.Config{}
-	log := logger.NewWithWriter(io.Discard, "error")
+	log := discardLog{}
 
 	prevOpen := ioOpenDB
 	t.Cleanup(func() { ioOpenDB = prevOpen })
@@ -300,8 +521,8 @@ func TestRunIOCommand_ImportMissingFileDoesNotOpenDB(t *testing.T) {
 		CompleteEvent: "import.test.complete",
 		RowErrorEvent: "import.test.row_error",
 	}, func(ctx context.Context, conn *sql.DB, f *os.File, regs ioRegs) (*ioOutcome, error) {
-		t.Fatal("hook should not run")
-		return nil, nil
+		t.Errorf("hook should not run")
+		return nil, errors.New("hook should not run")
 	})
 	if openedDB {
 		t.Fatal("ioOpenDB was called before import file open failed")
@@ -313,3 +534,7 @@ func TestRunIOCommand_ImportMissingFileDoesNotOpenDB(t *testing.T) {
 		t.Fatalf("err = %v, must not surface database failure for missing import file", err)
 	}
 }
+
+// Ensure memLogger implements logger.Logger.
+var _ logger.Logger = (*memLogger)(nil)
+var _ logger.Logger = discardLog{}
