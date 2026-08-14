@@ -18,7 +18,7 @@
 | PR-1013 | D | done | [Split serve wiring](PR-1013.md) |
 | PR-1014 | D | done | [Collapse import/export CLI](PR-1014.md) |
 | PR-1015 | D | done | [Typed plugin providers](PR-1015.md) |
-| PR-1016 | D | planned | [RBAC registry injection](PR-1016.md) |
+| PR-1016 | D | done | [RBAC registry injection](PR-1016.md) |
 | PR-1017 | D | planned | [Plugin boundary honesty](PR-1017.md) |
 | PR-1018 | D | planned | [Checkout context](PR-1018.md) |
 | PR-1019 | D | planned | [Event bus drain](PR-1019.md) |

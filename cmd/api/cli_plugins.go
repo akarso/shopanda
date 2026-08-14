@@ -19,7 +19,9 @@ func bootstrapPluginCLIRegistry(cfg *config.Config, log logger.Logger) *plugin.R
 		Logger: log,
 		Config: cfg,
 	}
+	preparePermissionRegistry(app)
 	registry.InitAll(app)
+	freezePermissionRegistry(app) // CLI: freeze only (no BindRuntime; avoid multi-App collisions)
 	return registry
 }
 

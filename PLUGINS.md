@@ -68,7 +68,7 @@ Available today through `plugin.App`:
 | **Checkout workflow** | `RegisterCheckoutStep` | Extra validation or side effects during checkout |
 | **Composition pipelines** | `RegisterCompositionStep("pdp"\|"plp", …)` | Enrich API/storefront product responses |
 | **Events** | `Bus.On` / `Bus.OnAsync` | React to domain changes |
-| **Permissions** | `RegisterPermission` | Admin RBAC strings |
+| **Permissions** | `RegisterPermission` | Admin RBAC strings on the app-owned `rbac.Registry` |
 | **Admin config** | `RegisterConfig` | Simple settings on Integrations page (`GET/PUT /admin/config?group=plugins`) |
 | **CLI commands** | `RegisterCommand` | Operational subcommands (`domain:action`) |
 | **Public HTTP routes** | `RegisterPublicRoute` | Register public HTTP handlers (e.g. an alternative API surface); mounted by `main.go` after `InitAll` |
@@ -90,6 +90,8 @@ Available today through `plugin.App`:
 | Mail | `RegisterMailSender(mail.Mailer)` | `internal/domain/mail` |
 
 Core plugins register these during init; `cmd/api` resolves them after `InitAll` (with core defaults when unset).
+
+**Permission lifecycle (PR-1016):** composition root creates an empty `rbac.Registry` and calls `SetPermissionRegistry` **before** `InitAll` → plugins call `RegisterPermission` only during `Init` → after `InitAll`, freeze the registry. Serve also `BindRuntime` so package-level `HasPermission` / catalog helpers use that same frozen instance. CLI/worker/import/export freeze without binding (avoids multi-App collisions in one process). Duplicate permission codes fail plugin init. There is no package-level mutable plugin permission map.
 
 **Bootstrap requirement (promotion rules):** `cmd/api/main.go` must call `SetPromotionEvaluatorRegistry` with the same registry instance passed to `NewCatalogPromotionStep` / `NewCartPromotionStep` **before** `InitAll`. Calling `PromotionRules()` without prior wiring panics at plugin init so misconfigured bootstraps fail loudly.
 

@@ -65,7 +65,7 @@ func staticHasPermission(role identity.Role, perm Permission) bool {
 			return true
 		}
 	}
-	return hasPluginPermission(role, perm)
+	return Runtime().Has(role, perm)
 }
 
 func staticPermissionsForRole(role identity.Role) []Permission {

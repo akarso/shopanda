@@ -227,7 +227,9 @@ func wireServeRuntime(cfg *config.Config, log logger.Logger, conn *sql.DB, repos
 	orderStatusService := orderApp.NewStatusService(repos.orderRepo)
 	pluginApp.SetIntegrationOrderStatusUpdater(plugin.NewIntegrationOrderStatusUpdater(orderStatusService))
 	wireIntegrationStockSyncer(pluginApp, repos.variantRepo, repos.stockRepo)
+	permReg := preparePermissionRegistry(pluginApp)
 	summary := registry.InitAll(pluginApp)
+	sealPermissionRegistry(pluginApp) // serve: freeze + BindRuntime for HTTP auth/catalog
 	if err := extensionRegistry.LoadPersisted(context.Background(), repos.extensionFieldRepo, log); err != nil {
 		return nil, fmt.Errorf("load extension fields: %w", err)
 	}
@@ -244,7 +246,7 @@ func wireServeRuntime(cfg *config.Config, log logger.Logger, conn *sql.DB, repos
 		"failed":      summary.Failed,
 	})
 
-	adminRoleService := adminroleApp.NewService(repos.rolePermRepo)
+	adminRoleService := adminroleApp.NewService(repos.rolePermRepo, permReg)
 	if err := adminRoleService.SyncPluginDefaults(context.Background()); err != nil {
 		return nil, fmt.Errorf("sync role permissions: %w", err)
 	}

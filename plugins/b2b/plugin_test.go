@@ -23,6 +23,7 @@ func testApp(cfg *config.Config, db *sql.DB) *plugin.App {
 		Bus:    event.NewBus(log),
 		Config: cfg,
 	}
+	app.SetPermissionRegistry(rbac.NewRegistry())
 	if db != nil {
 		app.Bootstrap = &plugin.Bootstrap{DB: db}
 	}
@@ -69,9 +70,6 @@ func TestPlugin_Init_MissingDBReturnsError(t *testing.T) {
 }
 
 func TestPlugin_Init_RegistersPermissionsAndRoutes(t *testing.T) {
-	rbac.ResetPluginPermissions()
-	t.Cleanup(rbac.ResetPluginPermissions)
-
 	dsn := os.Getenv("SHOPANDA_TEST_DSN")
 	if dsn == "" {
 		t.Skip("SHOPANDA_TEST_DSN not set; skipping integration test")
@@ -102,6 +100,9 @@ func TestPlugin_Init_RegistersPermissionsAndRoutes(t *testing.T) {
 	if err := b2b.New().Init(app); err != nil {
 		t.Fatalf("Init() error: %v", err)
 	}
+	app.FreezePermissionRegistry()
+	rbac.BindRuntime(app.PermissionRegistry())
+	t.Cleanup(rbac.UnbindRuntime)
 
 	if !rbac.HasPermission(identity.RoleAdmin, b2b.PermissionGroupsRead) {
 		t.Fatal("expected b2b.groups.read for admin")

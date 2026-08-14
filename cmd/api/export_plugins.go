@@ -17,7 +17,9 @@ func bootstrapExportRegistry(cfg *config.Config, log logger.Logger) *exportctxAp
 		Config: cfg,
 	}
 	app.SetExportRegistry(exportRegistry)
+	preparePermissionRegistry(app)
 	summary := pluginRegistry.InitAll(app)
+	freezePermissionRegistry(app) // export CLI: freeze only (no BindRuntime)
 	if summary.Failed > 0 {
 		log.Warn("export.plugins.init", map[string]interface{}{
 			"registered":  summary.Registered,

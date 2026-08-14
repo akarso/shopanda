@@ -372,9 +372,11 @@ func runScheduler(cfg *config.Config, log logger.Logger) error {
 	if err := wireIntegrationStockSyncerFromDB(conn, pluginApp); err != nil {
 		return err
 	}
+	preparePermissionRegistry(pluginApp)
 	if summary := registry.InitAll(pluginApp); summary.Failed > 0 {
 		return fmt.Errorf("plugin init failed: %d plugin(s) failed to initialize", summary.Failed)
 	}
+	freezePermissionRegistry(pluginApp) // scheduler: freeze only (no BindRuntime; multi-command process)
 
 	jobQueue, err := postgres.NewJobQueue(conn)
 	if err != nil {
@@ -707,7 +709,9 @@ func runWorker(cfg *config.Config, log logger.Logger) error {
 	if err := wireIntegrationStockSyncerFromDB(conn, pluginApp); err != nil {
 		return err
 	}
+	preparePermissionRegistry(pluginApp)
 	registry.InitAll(pluginApp)
+	freezePermissionRegistry(pluginApp) // worker: freeze only (no BindRuntime)
 
 	jobWorker, _, _, err := setupWorker(conn, cfg, log, pluginApp)
 	if err != nil {
@@ -748,7 +752,9 @@ func runSearchReindex(cfg *config.Config, log logger.Logger) error {
 		Bootstrap: &plugin.Bootstrap{DB: conn},
 	}
 	pluginApp.SetExtensionRegistry(extensionApp.NewRegistry())
+	preparePermissionRegistry(pluginApp)
 	registry.InitAll(pluginApp)
+	freezePermissionRegistry(pluginApp) // search-reindex: freeze only (no BindRuntime)
 
 	searchEngine, err := resolveSearchEngine(pluginApp, conn, cfg)
 	if err != nil {
