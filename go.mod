@@ -18,7 +18,7 @@ require (
 	github.com/go-pdf/fpdf v0.9.0
 	github.com/graphql-go/graphql v0.8.1
 	github.com/rabbitmq/amqp091-go v1.12.0
-	github.com/redis/go-redis/v9 v9.20.1
+	github.com/redis/go-redis/v9 v9.22.0
 	github.com/segmentio/kafka-go v0.4.51
 	golang.org/x/crypto v0.49.0
 	golang.org/x/text v0.38.0
@@ -45,4 +45,5 @@ require (
 	github.com/yuin/gopher-lua v1.1.1 // indirect
 	go.uber.org/atomic v1.11.0 // indirect
 	golang.org/x/image v0.43.0 // indirect
+	golang.org/x/sys v0.42.0 // indirect
 )
