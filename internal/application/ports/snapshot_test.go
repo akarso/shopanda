@@ -1,9 +1,12 @@
 package ports_test
 
 import (
+	"context"
 	"testing"
 
 	"github.com/akarso/shopanda/internal/application/ports"
+	"github.com/akarso/shopanda/internal/domain/pricing"
+	"github.com/akarso/shopanda/internal/domain/search"
 	"github.com/akarso/shopanda/internal/infrastructure/manualpay"
 	"github.com/akarso/shopanda/internal/platform/config"
 	"github.com/akarso/shopanda/internal/platform/plugin"
@@ -11,7 +14,23 @@ import (
 
 type stubSearch struct{}
 
+func (stubSearch) Name() string { return "stub" }
+func (stubSearch) IndexProduct(context.Context, search.Product) error {
+	return nil
+}
+func (stubSearch) RemoveProduct(context.Context, string) error { return nil }
+func (stubSearch) Search(context.Context, search.SearchQuery) (search.SearchResult, error) {
+	return search.SearchResult{}, nil
+}
+func (stubSearch) Suggest(context.Context, string, int) ([]search.Suggestion, error) {
+	return nil, nil
+}
+
 type stubTaxCalculator struct{}
+
+func (stubTaxCalculator) Calculate(context.Context, *pricing.PricingContext) error {
+	return nil
+}
 
 func TestBuildSnapshot_PluginTaxCalculator(t *testing.T) {
 	app := &plugin.App{}

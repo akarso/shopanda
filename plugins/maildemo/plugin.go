@@ -3,8 +3,12 @@ package maildemo
 import (
 	"fmt"
 
+	"github.com/akarso/shopanda/internal/domain/mail"
 	"github.com/akarso/shopanda/internal/platform/plugin"
 )
+
+// Compile-time check that the demo mailer satisfies the mail port.
+var _ mail.Mailer = (*LogMailer)(nil)
 
 // Plugin demonstrates integrator mail port replacement via RegisterMailSender.
 type Plugin struct{}

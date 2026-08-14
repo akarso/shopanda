@@ -9,11 +9,17 @@ import (
 	hooksapp "github.com/akarso/shopanda/internal/application/hooks"
 	importctxapp "github.com/akarso/shopanda/internal/application/importctx"
 	slotsapp "github.com/akarso/shopanda/internal/application/slots"
+	"github.com/akarso/shopanda/internal/domain/cache"
 	"github.com/akarso/shopanda/internal/domain/identity"
+	"github.com/akarso/shopanda/internal/domain/jobs"
+	"github.com/akarso/shopanda/internal/domain/mail"
+	"github.com/akarso/shopanda/internal/domain/media"
 	"github.com/akarso/shopanda/internal/domain/payment"
 	"github.com/akarso/shopanda/internal/domain/promotion"
 	"github.com/akarso/shopanda/internal/domain/rbac"
+	"github.com/akarso/shopanda/internal/domain/search"
 	"github.com/akarso/shopanda/internal/domain/shipping"
+	"github.com/akarso/shopanda/internal/domain/tax"
 	"github.com/akarso/shopanda/internal/platform/cli"
 	"github.com/akarso/shopanda/internal/platform/config"
 	"github.com/akarso/shopanda/internal/platform/event"
@@ -46,14 +52,14 @@ type App struct {
 	checkoutSteps    []checkoutStepRegistration
 	compositionSteps map[string][]any
 
-	searchProvider   any
-	cache            any
-	queue            any
+	searchProvider   search.SearchEngine
+	cache            cache.Cache
+	queue            jobs.Queue
 	paymentRegistry  *payment.ProviderRegistry
 	shippingRegistry *shipping.ProviderRegistry
-	mediaStorage     any
-	taxCalculator    any
-	mailSender       any
+	mediaStorage     media.Storage
+	taxCalculator    tax.Calculator
+	mailSender       mail.Mailer
 
 	configRegistry *ConfigRegistry
 
