@@ -11,7 +11,7 @@ must fail CI.
 
 | OSV ID | Module / package | Owner | Expiry (UTC) | Notes |
 | --- | --- | --- | --- | --- |
-| *(none)* | — | — | — | Empty after Go 1.25.12 + `golang.org/x/image@v0.43.0` (PR-1012) |
+| *(none)* | — | — | — | Empty after Go 1.25.13 + `golang.org/x/image@v0.43.0` (PR-1012) |
 
 Rules:
 

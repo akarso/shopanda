@@ -1,7 +1,7 @@
 # ---- Build stage ----
-# Digest-pinned Go 1.25.12+ alpine — keep in lockstep with go.mod (Dependabot refreshes digests).
+# Digest-pinned Go 1.25.13+ alpine — keep in lockstep with go.mod (Dependabot refreshes digests).
 # Do NOT set GOTOOLCHAIN=auto: builds must use only the toolchain in this image.
-FROM golang:1.25.12-alpine@sha256:56961d79ea8129efddcc0b8643fd8a5416b4e6228cfd477e3fd61deb2672c587 AS builder
+FROM golang:1.25.13-alpine@sha256:844b27705f54e73773e0f9bc3c780633b9d7f4b4831bf35cdad02a81a4c80bd0 AS builder
 
 WORKDIR /src
 

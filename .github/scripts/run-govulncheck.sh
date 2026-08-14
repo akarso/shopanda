@@ -93,6 +93,24 @@ else
   exit 1
 fi
 
+# Parse YYYY-MM-DD as a real calendar day (GNU or BSD date). Rejects invalid
+# days such as 2026-02-31 (GNU/BSD often roll those over; we require round-trip).
+normalize_ymd() {
+  local raw="$1"
+  local parsed=""
+  if date -u -d "${raw}" +%Y-%m-%d >/dev/null 2>&1; then
+    parsed="$(date -u -d "${raw}" +%Y-%m-%d)"
+  elif date -u -j -f "%Y-%m-%d" "${raw}" +%Y-%m-%d >/dev/null 2>&1; then
+    parsed="$(date -u -j -f "%Y-%m-%d" "${raw}" +%Y-%m-%d)"
+  else
+    return 1
+  fi
+  if [[ "${parsed}" != "${raw}" ]]; then
+    return 1
+  fi
+  printf '%s\n' "${parsed}"
+}
+
 expired=""
 too_far=""
 missing_owner=""
@@ -111,10 +129,13 @@ while IFS= read -r line; do
   fi
   case "${expiry}" in
     [0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9])
-      if [[ "${expiry}" < "${today}" ]]; then
-        expired="${expired}${osv} (expired ${expiry})"$'\n'
-      elif [[ "${expiry}" > "${max_expiry}" ]]; then
-        too_far="${too_far}${osv} (expiry ${expiry} > max ${max_expiry} / ${MAX_BASELINE_DAYS}d)"$'\n'
+      expiry_norm=""
+      if ! expiry_norm="$(normalize_ymd "${expiry}")"; then
+        bad_expiry="${bad_expiry}${osv} (expiry ${expiry})"$'\n'
+      elif [[ "${expiry_norm}" < "${today}" ]]; then
+        expired="${expired}${osv} (expired ${expiry_norm})"$'\n'
+      elif [[ "${expiry_norm}" > "${max_expiry}" ]]; then
+        too_far="${too_far}${osv} (expiry ${expiry_norm} > max ${max_expiry} / ${MAX_BASELINE_DAYS}d)"$'\n'
       fi
       ;;
     *)
