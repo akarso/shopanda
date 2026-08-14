@@ -3,9 +3,13 @@ package taxdemo
 import (
 	"fmt"
 
+	"github.com/akarso/shopanda/internal/domain/tax"
 	"github.com/akarso/shopanda/internal/platform/plugin"
 	"github.com/akarso/shopanda/pkg/pluginsdk"
 )
+
+// Compile-time check that the demo calculator satisfies the tax port.
+var _ tax.Calculator = (*FlatRateCalculator)(nil)
 
 // Plugin demonstrates integrator tax port replacement and replace-by-name pricing step.
 type Plugin struct{}

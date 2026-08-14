@@ -76,9 +76,22 @@ Available today through `plugin.App`:
 | **Asset manifest** | `Assets().RegisterManifest` | Route-gated CSS/JS in layout head/footer without theme forks |
 | **Promotion rule evaluators** | `PromotionRules(registrant).RegisterCatalogCondition/Action` (+ cart variants) | Custom JSON `"type"` values for catalog/cart promotions (PR-862) |
 
-**Bootstrap requirement (promotion rules):** `cmd/api/main.go` must call `SetPromotionEvaluatorRegistry` with the same registry instance passed to `NewCatalogPromotionStep` / `NewCartPromotionStep` **before** `InitAll`. Calling `PromotionRules()` without prior wiring panics at plugin init so misconfigured bootstraps fail loudly.
+**Infrastructure providers** (typed ports on `plugin.App`; wrong types fail at compile time):
 
-Core plugins additionally expose providers on `plugin.App` during init (search engine, job queue, cache store, media storage, payment registry entries) which `main.go` resolves after `InitAll`.
+| Port | Register | Interface |
+| --- | --- | --- |
+| Search | `RegisterSearchProvider(search.SearchEngine)` | `internal/domain/search` |
+| Cache | `RegisterCache(cache.Cache)` | `internal/domain/cache` |
+| Queue | `RegisterQueue(jobs.Queue)` | `internal/domain/jobs` |
+| Payment | `RegisterPaymentProvider(payment.Provider)` | `internal/domain/payment` (multi by method) |
+| Media | `RegisterMediaStorage(media.Storage)` | `internal/domain/media` |
+| Tax | `RegisterTaxCalculator(tax.Calculator)` | `internal/domain/tax` |
+| Shipping | `RegisterShippingRateProvider(shipping.Provider)` | `internal/domain/shipping` (multi by method) |
+| Mail | `RegisterMailSender(mail.Mailer)` | `internal/domain/mail` |
+
+Core plugins register these during init; `cmd/api` resolves them after `InitAll` (with core defaults when unset).
+
+**Bootstrap requirement (promotion rules):** `cmd/api/main.go` must call `SetPromotionEvaluatorRegistry` with the same registry instance passed to `NewCatalogPromotionStep` / `NewCartPromotionStep` **before** `InitAll`. Calling `PromotionRules()` without prior wiring panics at plugin init so misconfigured bootstraps fail loudly.
 
 ### UI slots (storefront)
 

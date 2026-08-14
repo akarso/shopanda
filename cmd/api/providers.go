@@ -61,11 +61,7 @@ func syncDiscoveryFacetsFromDB(cfg *config.Config, log logger.Logger, conn *sql.
 }
 
 func resolveSearchEngine(app *plugin.App, conn *sql.DB, cfg *config.Config) (search.SearchEngine, error) {
-	if v, ok := app.SearchProvider(); ok {
-		se, ok := v.(search.SearchEngine)
-		if !ok {
-			return nil, fmt.Errorf("plugin search provider: invalid type %T", v)
-		}
+	if se, ok := app.SearchProvider(); ok {
 		return se, nil
 	}
 
@@ -84,11 +80,7 @@ func resolveSearchEngine(app *plugin.App, conn *sql.DB, cfg *config.Config) (sea
 }
 
 func resolveMediaStorage(app *plugin.App, cfg *config.Config) (media.Storage, error) {
-	if v, ok := app.MediaStorage(); ok {
-		st, ok := v.(media.Storage)
-		if !ok {
-			return nil, fmt.Errorf("plugin media storage: invalid type %T", v)
-		}
+	if st, ok := app.MediaStorage(); ok {
 		return st, nil
 	}
 
@@ -103,11 +95,7 @@ func resolveMediaStorage(app *plugin.App, cfg *config.Config) (media.Storage, er
 }
 
 func resolveJobQueue(app *plugin.App, conn *sql.DB, cfg *config.Config) (jobs.Queue, error) {
-	if v, ok := app.Queue(); ok {
-		q, ok := v.(jobs.Queue)
-		if !ok {
-			return nil, fmt.Errorf("plugin queue: invalid type %T", v)
-		}
+	if q, ok := app.Queue(); ok {
 		return q, nil
 	}
 
@@ -122,11 +110,7 @@ func resolveJobQueue(app *plugin.App, conn *sql.DB, cfg *config.Config) (jobs.Qu
 }
 
 func resolveCache(app *plugin.App, conn *sql.DB, cfg *config.Config) (cache.Cache, error) {
-	if v, ok := app.Cache(); ok {
-		c, ok := v.(cache.Cache)
-		if !ok {
-			return nil, fmt.Errorf("plugin cache: invalid type %T", v)
-		}
+	if c, ok := app.Cache(); ok {
 		return c, nil
 	}
 
@@ -150,11 +134,7 @@ func resolvePaymentRegistry(app *plugin.App) (*payment.ProviderRegistry, error) 
 }
 
 func resolveTaxCalculator(app *plugin.App, rates tax.RateRepository) (tax.Calculator, error) {
-	if v, ok := app.TaxCalculator(); ok {
-		calc, ok := v.(tax.Calculator)
-		if !ok {
-			return nil, fmt.Errorf("plugin tax calculator: invalid type %T", v)
-		}
+	if calc, ok := app.TaxCalculator(); ok {
 		return calc, nil
 	}
 	if rates == nil {
@@ -173,11 +153,7 @@ func resolveShippingRegistry(app *plugin.App) (*shipping.ProviderRegistry, error
 }
 
 func resolveMailer(app *plugin.App, cfg *config.Config) (mail.Mailer, error) {
-	if v, ok := app.MailSender(); ok {
-		m, ok := v.(mail.Mailer)
-		if !ok {
-			return nil, fmt.Errorf("plugin mail sender: invalid type %T", v)
-		}
+	if m, ok := app.MailSender(); ok {
 		return m, nil
 	}
 	switch cfg.Mail.Driver {

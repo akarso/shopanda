@@ -613,7 +613,7 @@ Phase 8 adds first-class seams for **commerce behavior** (positioned pricing ste
 
 **Available today (core + Phase 8):**
 
-- Infrastructure ports: search, cache, queue, payment, media, tax (`RegisterSearchProvider`, `RegisterTaxCalculator`, …), mail (`RegisterMailSender`), shipping rates (`RegisterShippingRateProvider`)
+- Infrastructure ports (typed): search, cache, queue, payment, media, tax (`RegisterSearchProvider(search.SearchEngine)`, `RegisterTaxCalculator(tax.Calculator)`, …), mail (`RegisterMailSender(mail.Mailer)`), shipping rates (`RegisterShippingRateProvider(shipping.Provider)`)
 - Behavioral: positioned `RegisterPricingStep`, positioned `RegisterCheckoutStep`, `RegisterCompositionStep`, cart hook chain — see `pkg/extapi`
 - Promotion rules: `app.PromotionRules(registrant).RegisterCatalogCondition/Action` (+ cart variants) for custom JSON rule `"type"` values evaluated in catalog/cart promotion pricing steps (PR-862). Requires `SetPromotionEvaluatorRegistry` in bootstrap before `InitAll`.
 - HTTP: `RegisterPublicRoute`, `RegisterAdminRoute`, `app.Integration(slug).RegisterRoute` / `RegisterSecureRoute`
