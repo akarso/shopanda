@@ -15,7 +15,7 @@
 | PR-1010 | C | done | [Release to GHCR](PR-1010.md) |
 | PR-1011 | C | done | [Migration hygiene CI](PR-1011.md) |
 | PR-1012 | C | done | [Supply-chain basics](PR-1012.md) |
-| PR-1013 | D | planned | [Split serve wiring](PR-1013.md) |
+| PR-1013 | D | done | [Split serve wiring](PR-1013.md) |
 | PR-1014 | D | planned | [Collapse import/export CLI](PR-1014.md) |
 | PR-1015 | D | planned | [Typed plugin providers](PR-1015.md) |
 | PR-1016 | D | planned | [RBAC registry injection](PR-1016.md) |

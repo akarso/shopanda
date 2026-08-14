@@ -292,7 +292,7 @@ Adding a **new** payment provider that is not yet a core plugin still requires:
 1. implementing the adapter (see skeleton below)
 2. registering it — either as a new core plugin in `plugins/core/` or temporarily in `register_plugins.go`
 3. optionally exposing refund support via `payment.Refunder`
-4. adding any provider-specific webhook route and handler in `cmd/api/main.go`
+4. adding any provider-specific webhook handler in `cmd/api/wire_services.go` and route in `cmd/api/wire_routes.go`
 
 ### Handle webhooks
 
@@ -301,7 +301,7 @@ Providers with asynchronous confirmation should expose an HTTP webhook adapter. 
 - exact route: `/api/v1/payments/webhook/stripe`
 - generic route exists for provider-based webhook handling: `/api/v1/payments/webhook/{provider}`
 
-If your provider needs webhooks, implement the HTTP adapter under `internal/interfaces/http` and wire the route in `main.go`.
+If your provider needs webhooks, implement the HTTP adapter under `internal/interfaces/http` and wire the handler in `cmd/api/wire_services.go` / the route in `cmd/api/wire_routes.go`.
 
 ### Test a payment provider
 
