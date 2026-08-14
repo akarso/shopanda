@@ -130,7 +130,7 @@ Recommended order:
 | --- | --- | --- |
 | PR-1013 | Split serve wiring | **Done.** Extract repo/service/route construction from `runServe` into `cmd/api` modules (`wire_repos.go`, `wire_services.go`, `wire_routes.go`); no behavior change |
 | — | Follow-up (Track D) | Split `wireServeRuntime` into focused composition helpers that return smaller structs for its major concern groups (plugin bootstrap, pipelines, handlers, event wiring); leave current monolithic function until scheduled |
-| PR-1014 | Collapse import/export CLI | Shared helper for open-DB → repos → plugin registry → run; delete ~14 near-clone `runImport*`/`runExport*` bodies |
+| PR-1014 | Collapse import/export CLI | **Done.** Shared `runIOCommand` for open-DB → file → optional plugin hooks → run; thin `runImport*`/`runExport*` wrappers; table-driven CLI IO tests |
 | PR-1015 | Typed plugin providers | Replace `RegisterX(provider any)` with typed interfaces; compile-time failures for wrong types |
 | PR-1016 | RBAC registry injection | Single app-owned registry; same instance for Init + auth; freeze after Init; duplicate = error |
 | PR-1017 | Plugin boundary honesty | Fixed allowlist (pkg/domain/application/platform); forbid infrastructure+interfaces; CI import walk |
