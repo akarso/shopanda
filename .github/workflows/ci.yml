@@ -1,8 +1,9 @@
-# Unit + integration CI.
+# Unit + integration + govuln CI.
 #
 # Checks reported:
 #   - CI / unit
 #   - CI / integration
+#   - CI / govuln
 # Merge blocking requires a repo admin to mark those checks required on main/dev
 # (branch protection / ruleset).
 name: CI
@@ -26,6 +27,8 @@ permissions:
 
 env:
   GOFLAGS: -mod=readonly
+  # Pin govulncheck (PR-1012). Bump deliberately with Dependabot/gomod review.
+  GOVULNCHECK_VERSION: v1.7.0
 
 jobs:
   unit:
@@ -120,3 +123,39 @@ jobs:
         # -json + jq: detect Action=skip (default go test text hides skip reasons).
         # -p 1: serialize packages so concurrent migrate.Run on one DB cannot race.
         run: bash .github/scripts/run-integration-tests.sh
+
+  govuln:
+    name: govuln
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+
+      - name: Set up Go
+        uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version-file: go.mod
+          cache: true
+          cache-dependency-path: go.sum
+
+      - name: Cache govulncheck binary
+        # Pin to full SHA (tag v4.3.0).
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: ~/go/bin/govulncheck
+          key: govulncheck-${{ runner.os }}-${{ env.GOVULNCHECK_VERSION }}
+
+      - name: Install pinned govulncheck
+        run: |
+          set -euo pipefail
+          if [[ ! -x "${HOME}/go/bin/govulncheck" ]]; then
+            go install "golang.org/x/vuln/cmd/govulncheck@${GOVULNCHECK_VERSION}"
+          fi
+          echo "${HOME}/go/bin" >> "${GITHUB_PATH}"
+          govulncheck -version
+
+      - name: govulncheck (fail-closed + baseline)
+        run: bash .github/scripts/run-govulncheck.sh
