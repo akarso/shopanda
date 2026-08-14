@@ -645,3 +645,5 @@ classDiagram
 ```
 
 **Composition root (PR-1013):** HTTP serve wiring lives in `cmd/api` as `wire_repos.go` (postgres repos), `wire_services.go` (plugins, pipelines, handlers, events), and `wire_routes.go` (middleware + routes + `MountProbes`). `runServe` in `main.go` only opens the DB and starts/stops the server, worker, and optional embedded scheduler.
+
+**CLI IO composition (PR-1014):** CSV `import:*` / `export:*` commands share `runIOCommand` in `io_command.go` (DB open, file open/atomic write, optional import/export row-hook bootstrap, row-error logging). Per-entity logic stays in thin hooks in `io_commands.go`; `config:import` / `config:export` are separate.
