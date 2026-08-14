@@ -264,8 +264,11 @@ func buildServeHandler(cfg *config.Config, log logger.Logger, rt *serveRuntime, 
 	router.Handle("PUT /api/v1/admin/stores/{id}", requireSettingsWrite(rt.storeAdmin.Update()))
 
 	// Plugin admin routes (permission-guarded; registered during plugin Init).
+	// Use TryHandle so a conflicting or malformed pattern fails startup instead of panicking.
 	for _, route := range rt.pluginApp.AdminRoutes() {
-		router.Handle(route.Pattern, shophttp.RequirePermission(route.Permission)(route.Handler))
+		if err := router.TryHandle(route.Pattern, shophttp.RequirePermission(route.Permission)(route.Handler)); err != nil {
+			return nil, fmt.Errorf("register plugin admin route: %w", err)
+		}
 	}
 
 	// Shipping zone admin routes.

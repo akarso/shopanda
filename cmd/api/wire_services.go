@@ -174,45 +174,6 @@ type serveRuntime struct {
 }
 
 func wireServeRuntime(cfg *config.Config, log logger.Logger, conn *sql.DB, repos *serveRepos) (*serveRuntime, error) {
-	productRepo := repos.productRepo
-	variantRepo := repos.variantRepo
-	cartRepo := repos.cartRepo
-	priceRepo := repos.priceRepo
-	priceHistoryRepo := repos.priceHistoryRepo
-	customerRepo := repos.customerRepo
-	resetTokenRepo := repos.resetTokenRepo
-	reservationRepo := repos.reservationRepo
-	stockRepo := repos.stockRepo
-	orderRepo := repos.orderRepo
-	storeCreditRepo := repos.storeCreditRepo
-	returnRepo := repos.returnRepo
-	reviewRepo := repos.reviewRepo
-	statsRepo := repos.statsRepo
-	paymentRepo := repos.paymentRepo
-	shippingRepo := repos.shippingRepo
-	configRepo := repos.configRepo
-	zoneRepo := repos.zoneRepo
-	categoryRepo := repos.categoryRepo
-	taxRateRepo := repos.taxRateRepo
-	promotionRepo := repos.promotionRepo
-	couponRepo := repos.couponRepo
-	invoiceRepo := repos.invoiceRepo
-	assetRepo := repos.assetRepo
-	rewriteRepo := repos.rewriteRepo
-	pageRepo := repos.pageRepo
-	menuRepo := repos.menuRepo
-	contentBlockRepo := repos.contentBlockRepo
-	storeRepo := repos.storeRepo
-	contentTranslationRepo := repos.contentTranslationRepo
-	consentRepo := repos.consentRepo
-	mfaRepo := repos.mfaRepo
-	auditLogRepo := repos.auditLogRepo
-	webhookEndpointRepo := repos.webhookEndpointRepo
-	integrationIdempotencyRepo := repos.integrationIdempotencyRepo
-	extensionFieldRepo := repos.extensionFieldRepo
-	extensionValueRepo := repos.extensionValueRepo
-	rolePermRepo := repos.rolePermRepo
-
 	// Event bus (created early for plugin init and later handlers).
 	bus := event.NewBus(log)
 
@@ -262,17 +223,17 @@ func wireServeRuntime(cfg *config.Config, log logger.Logger, conn *sql.DB, repos
 	pluginApp.SetPromotionEvaluatorRegistry(promotionEvaluators)
 	pluginApp.SetSlotRegistry(slotRegistry)
 	pluginApp.SetAssetRegistry(assetRegistry)
-	pluginApp.SetIntegrationIdempotencyStore(integrationIdempotencyRepo)
-	orderStatusService := orderApp.NewStatusService(orderRepo)
+	pluginApp.SetIntegrationIdempotencyStore(repos.integrationIdempotencyRepo)
+	orderStatusService := orderApp.NewStatusService(repos.orderRepo)
 	pluginApp.SetIntegrationOrderStatusUpdater(plugin.NewIntegrationOrderStatusUpdater(orderStatusService))
-	wireIntegrationStockSyncer(pluginApp, variantRepo, stockRepo)
+	wireIntegrationStockSyncer(pluginApp, repos.variantRepo, repos.stockRepo)
 	summary := registry.InitAll(pluginApp)
-	if err := extensionRegistry.LoadPersisted(context.Background(), extensionFieldRepo, log); err != nil {
+	if err := extensionRegistry.LoadPersisted(context.Background(), repos.extensionFieldRepo, log); err != nil {
 		return nil, fmt.Errorf("load extension fields: %w", err)
 	}
-	extensionFieldService := extensionApp.NewFieldService(extensionRegistry, extensionFieldRepo)
-	extensionValueService := extensionApp.NewValueService(extensionRegistry, extensionValueRepo)
-	if err := plugin.LoadPersisted(context.Background(), configRepo, cfg, registry.ConfigRegistry()); err != nil {
+	extensionFieldService := extensionApp.NewFieldService(extensionRegistry, repos.extensionFieldRepo)
+	extensionValueService := extensionApp.NewValueService(extensionRegistry, repos.extensionValueRepo)
+	if err := plugin.LoadPersisted(context.Background(), repos.configRepo, cfg, registry.ConfigRegistry()); err != nil {
 		return nil, fmt.Errorf("load plugin config: %w", err)
 	}
 	plugin.LogStartup(log, registry, cfg)
@@ -283,7 +244,7 @@ func wireServeRuntime(cfg *config.Config, log logger.Logger, conn *sql.DB, repos
 		"failed":      summary.Failed,
 	})
 
-	adminRoleService := adminroleApp.NewService(rolePermRepo)
+	adminRoleService := adminroleApp.NewService(repos.rolePermRepo)
 	if err := adminRoleService.SyncPluginDefaults(context.Background()); err != nil {
 		return nil, fmt.Errorf("sync role permissions: %w", err)
 	}
@@ -309,10 +270,10 @@ func wireServeRuntime(cfg *config.Config, log logger.Logger, conn *sql.DB, repos
 
 	invoicePDFRenderer := invoicepdf.NewRenderer()
 
-	notifSvc := notification.New(mailTemplates, customerRepo, orderRepo, jobQueue, log,
+	notifSvc := notification.New(mailTemplates, repos.customerRepo, repos.orderRepo, jobQueue, log,
 		notification.WithStoreURL(cfg.Server.PublicBaseURL),
 		notification.WithResetBaseURL(cfg.Server.PublicBaseURL+"/auth/reset-password"),
-		notification.WithInvoices(invoiceRepo),
+		notification.WithInvoices(repos.invoiceRepo),
 		notification.WithPDFRenderer(invoicePDFRenderer),
 	)
 
@@ -322,11 +283,11 @@ func wireServeRuntime(cfg *config.Config, log logger.Logger, conn *sql.DB, repos
 		return nil, err
 	}
 
-	menuResolver := cmsApp.NewMenuResolver(categoryRepo, pageRepo)
+	menuResolver := cmsApp.NewMenuResolver(repos.categoryRepo, repos.pageRepo)
 
-	blockResolver := cmsApp.NewBlockResolver(productRepo)
+	blockResolver := cmsApp.NewBlockResolver(repos.productRepo)
 
-	contentTranslator := translation.NewContentTranslator(contentTranslationRepo, log)
+	contentTranslator := translation.NewContentTranslator(repos.contentTranslationRepo, log)
 
 	// Providers.
 	shippingReg, err := resolveShippingRegistry(pluginApp)
@@ -374,7 +335,7 @@ func wireServeRuntime(cfg *config.Config, log logger.Logger, conn *sql.DB, repos
 	bus.OnAsync(invoice.EventInvoiceCreated, notifSvc.HandleInvoiceCreated)
 
 	// Wire catalog events → URL rewrites.
-	rewriteSub := rewrite.NewSubscriber(rewriteRepo, log)
+	rewriteSub := rewrite.NewSubscriber(repos.rewriteRepo, log)
 	rewriteSub.Register(bus)
 
 	// Wire product/price changes → cache invalidation.
@@ -387,7 +348,7 @@ func wireServeRuntime(cfg *config.Config, log logger.Logger, conn *sql.DB, repos
 		if !ok {
 			return nil
 		}
-		p, err := productRepo.FindByID(ctx, data.ProductID)
+		p, err := repos.productRepo.FindByID(ctx, data.ProductID)
 		if err != nil {
 			return fmt.Errorf("search sync: load product %s: %w", data.ProductID, err)
 		}
@@ -408,7 +369,7 @@ func wireServeRuntime(cfg *config.Config, log logger.Logger, conn *sql.DB, repos
 		if !ok {
 			return nil
 		}
-		p, err := productRepo.FindByID(ctx, data.ProductID)
+		p, err := repos.productRepo.FindByID(ctx, data.ProductID)
 		if err != nil {
 			return fmt.Errorf("search sync: load product %s: %w", data.ProductID, err)
 		}
@@ -430,19 +391,19 @@ func wireServeRuntime(cfg *config.Config, log logger.Logger, conn *sql.DB, repos
 	baseURL := cfg.Server.PublicBaseURL
 
 	// Composition pipelines (core SEO steps + plugin steps).
-	reviewService := reviewsApp.NewService(reviewRepo, productRepo)
+	reviewService := reviewsApp.NewService(repos.reviewRepo, repos.productRepo)
 	pdp := composition.NewPipeline[composition.ProductContext]()
 	pdp.AddStep(composition.ProductMetaStep{})
-	pdp.AddStep(composition.NewJSONLDProductStep(variantRepo, priceRepo, stockRepo))
+	pdp.AddStep(composition.NewJSONLDProductStep(repos.variantRepo, repos.priceRepo, repos.stockRepo))
 	pdp.AddStep(composition.NewCanonicalURLStep(baseURL))
-	pdp.AddStep(composition.NewPriceIndicationStep(variantRepo, priceRepo, priceHistoryRepo, configRepo))
-	pdp.AddStep(composition.NewWeeeStep(configRepo))
-	pdp.AddStep(composition.NewGpsrStep(configRepo))
+	pdp.AddStep(composition.NewPriceIndicationStep(repos.variantRepo, repos.priceRepo, repos.priceHistoryRepo, repos.configRepo))
+	pdp.AddStep(composition.NewWeeeStep(repos.configRepo))
+	pdp.AddStep(composition.NewGpsrStep(repos.configRepo))
 	pdp.AddStep(composition.NewReviewsStep(reviewService))
 	plp := composition.NewPipeline[composition.ListingContext]()
 	plp.AddStep(composition.ListingMetaStep{})
 	plp.AddStep(composition.NewListingCanonicalURLStep(baseURL))
-	plp.AddStep(composition.NewListingPriceIndicationStep(variantRepo, priceRepo, priceHistoryRepo, configRepo))
+	plp.AddStep(composition.NewListingPriceIndicationStep(repos.variantRepo, repos.priceRepo, repos.priceHistoryRepo, repos.configRepo))
 	for _, s := range pluginApp.CompositionSteps("pdp") {
 		if v, ok := s.(composition.Step[composition.ProductContext]); ok {
 			pdp.AddStep(v)
@@ -463,14 +424,14 @@ func wireServeRuntime(cfg *config.Config, log logger.Logger, conn *sql.DB, repos
 	}
 
 	// Pricing pipeline (core + positioned plugin steps).
-	taxCalculator, err := resolveTaxCalculator(pluginApp, taxRateRepo)
+	taxCalculator, err := resolveTaxCalculator(pluginApp, repos.taxRateRepo)
 	if err != nil {
 		return nil, fmt.Errorf("tax calculator: %w", err)
 	}
 	corePricingSteps := []pricing.PricingStep{
-		appPricing.NewBasePriceStep(priceRepo),
-		appPricing.NewCatalogPromotionStep(promotionRepo, couponRepo, promotionEvaluators),
-		appPricing.NewCartPromotionStep(promotionRepo, couponRepo, promotionEvaluators),
+		appPricing.NewBasePriceStep(repos.priceRepo),
+		appPricing.NewCatalogPromotionStep(repos.promotionRepo, repos.couponRepo, promotionEvaluators),
+		appPricing.NewCartPromotionStep(repos.promotionRepo, repos.couponRepo, promotionEvaluators),
 		appPricing.NewTaxStep(taxCalculator),
 		pricing.NewFinalizeStep(),
 	}
@@ -495,16 +456,16 @@ func wireServeRuntime(cfg *config.Config, log logger.Logger, conn *sql.DB, repos
 	pricingPipeline := pricing.NewPipeline(pricingSteps...)
 
 	// Application services.
-	cartService := cartApp.NewService(cartRepo, priceRepo, promotionRepo, couponRepo, pricingPipeline, log, bus, extensionValueService, hookRegistry)
-	storeCreditService := storecreditApp.NewService(storeCreditRepo, customerRepo)
+	cartService := cartApp.NewService(repos.cartRepo, repos.priceRepo, repos.promotionRepo, repos.couponRepo, pricingPipeline, log, bus, extensionValueService, hookRegistry)
+	storeCreditService := storecreditApp.NewService(repos.storeCreditRepo, repos.customerRepo)
 
 	// Checkout workflow.
-	validateCartStep := checkoutApp.NewValidateCartStep(variantRepo)
+	validateCartStep := checkoutApp.NewValidateCartStep(repos.variantRepo)
 	recalculatePricingStep := checkoutApp.NewRecalculatePricingStep(pricingPipeline)
-	reserveInventoryStep := checkoutApp.NewReserveInventoryStep(reservationRepo)
-	createOrderStep := checkoutApp.NewCreateOrderStep(orderRepo, variantRepo, storeCreditService, extensionValueService)
-	selectShippingStep := checkoutApp.NewSelectShippingStep(shippingReg, shippingRepo)
-	initiatePaymentStep := checkoutApp.NewInitiatePaymentStep(payRegistry, paymentRepo)
+	reserveInventoryStep := checkoutApp.NewReserveInventoryStep(repos.reservationRepo)
+	createOrderStep := checkoutApp.NewCreateOrderStep(repos.orderRepo, repos.variantRepo, storeCreditService, extensionValueService)
+	selectShippingStep := checkoutApp.NewSelectShippingStep(shippingReg, repos.shippingRepo)
+	initiatePaymentStep := checkoutApp.NewInitiatePaymentStep(payRegistry, repos.paymentRepo)
 	checkoutSteps := []checkoutApp.Step{
 		validateCartStep,
 		recalculatePricingStep,
@@ -532,7 +493,7 @@ func wireServeRuntime(cfg *config.Config, log logger.Logger, conn *sql.DB, repos
 		return nil, fmt.Errorf("checkout workflow: %w", err)
 	}
 	checkoutWorkflow := checkoutApp.NewWorkflow(checkoutSteps, bus, log)
-	checkoutService := checkoutApp.NewService(cartRepo, checkoutWorkflow, log)
+	checkoutService := checkoutApp.NewService(repos.cartRepo, checkoutWorkflow, log)
 	checkoutHandler := shophttp.NewCheckoutHandler(checkoutService, extensionValueService)
 
 	// JWT.
@@ -548,9 +509,9 @@ func wireServeRuntime(cfg *config.Config, log logger.Logger, conn *sql.DB, repos
 	if err != nil {
 		return nil, fmt.Errorf("jwt issuer: %w", err)
 	}
-	tokenParser := authApp.NewValidatingTokenParser(jwtIssuer, customerRepo, 30*time.Second)
+	tokenParser := authApp.NewValidatingTokenParser(jwtIssuer, repos.customerRepo, 30*time.Second)
 
-	authService := authApp.NewService(customerRepo, resetTokenRepo, jwtIssuer, bus, log, time.Hour)
+	authService := authApp.NewService(repos.customerRepo, repos.resetTokenRepo, jwtIssuer, bus, log, time.Hour)
 	if cfg.Auth.Lockout.Enabled {
 		lockoutWindow, err := time.ParseDuration(cfg.Auth.Lockout.Window)
 		if err != nil {
@@ -573,7 +534,7 @@ func wireServeRuntime(cfg *config.Config, log logger.Logger, conn *sql.DB, repos
 	}
 	// Same trimmed key material as jwt issuer (64-hex kept as ASCII, not decoded).
 	jwtSecretStr := string(jwtKey)
-	mfaService := mfaApp.NewService(mfaRepo, customerRepo, configRepo, jwtSecretStr, cfg.Auth.MFAEnabled)
+	mfaService := mfaApp.NewService(repos.mfaRepo, repos.customerRepo, repos.configRepo, jwtSecretStr, cfg.Auth.MFAEnabled)
 	if cfg.Auth.MFAEnabled {
 		authService.SetMFAClient(mfaService)
 	}
@@ -583,7 +544,7 @@ func wireServeRuntime(cfg *config.Config, log logger.Logger, conn *sql.DB, repos
 	adminApp.RegisterProductSchemas(adminRegistry)
 	adminApp.RegisterPageSchemas(adminRegistry)
 
-	attributeStore := adminApp.NewAttributeStore(configRepo)
+	attributeStore := adminApp.NewAttributeStore(repos.configRepo)
 
 	discoveryFacetSync := newDiscoveryFacetSyncer(attributeStore, searchEngine)
 	if err := discoveryFacetSync.Sync(context.Background()); err != nil {
@@ -609,23 +570,23 @@ func wireServeRuntime(cfg *config.Config, log logger.Logger, conn *sql.DB, repos
 
 	// Shared admin auditor with optional persistent audit log.
 	sharedAuditor := adminApp.NewAuditor(log)
-	sharedAuditor.SetAuditLogRepository(auditLogRepo)
+	sharedAuditor.SetAuditLogRepository(repos.auditLogRepo)
 
 	// Handlers.
-	productHandler := shophttp.NewProductHandler(productRepo, pdp, plp, contentTranslator)
-	productAdmin := shophttp.NewProductAdminHandlerWithAuditor(productRepo, bus, sharedAuditor, log)
-	productTranslationAdmin := shophttp.NewProductTranslationAdminHandler(productRepo, contentTranslationRepo, sharedAuditor, log)
-	productPriceAdmin := shophttp.NewProductPriceAdminHandler(productRepo, variantRepo, priceRepo, sharedAuditor, log)
-	variantHandler := shophttp.NewVariantHandler(productRepo, variantRepo, bus)
+	productHandler := shophttp.NewProductHandler(repos.productRepo, pdp, plp, contentTranslator)
+	productAdmin := shophttp.NewProductAdminHandlerWithAuditor(repos.productRepo, bus, sharedAuditor, log)
+	productTranslationAdmin := shophttp.NewProductTranslationAdminHandler(repos.productRepo, repos.contentTranslationRepo, sharedAuditor, log)
+	productPriceAdmin := shophttp.NewProductPriceAdminHandler(repos.productRepo, repos.variantRepo, repos.priceRepo, sharedAuditor, log)
+	variantHandler := shophttp.NewVariantHandler(repos.productRepo, repos.variantRepo, bus)
 	cartHandler := shophttp.NewCartHandler(cartService, extensionValueService)
-	orderHandler := shophttp.NewOrderHandler(orderRepo, extensionValueService)
-	orderAdmin := shophttp.NewOrderAdminHandlerWithAuditor(orderRepo, sharedAuditor, extensionValueService)
-	invoiceAdmin := shophttp.NewInvoiceAdminHandler(invoiceRepo, orderRepo, invoicePDFRenderer, mediaStorage)
-	statsAdmin := shophttp.NewStatsAdminHandler(statsRepo)
+	orderHandler := shophttp.NewOrderHandler(repos.orderRepo, extensionValueService)
+	orderAdmin := shophttp.NewOrderAdminHandlerWithAuditor(repos.orderRepo, sharedAuditor, extensionValueService)
+	invoiceAdmin := shophttp.NewInvoiceAdminHandler(repos.invoiceRepo, repos.orderRepo, invoicePDFRenderer, mediaStorage)
+	statsAdmin := shophttp.NewStatsAdminHandler(repos.statsRepo)
 	authHandler := shophttp.NewAuthHandler(authService, cfg.RateLimit.TrustedProxies...)
 	adminMFAHandler := shophttp.NewAdminMFAHandler(mfaService)
 	webhookVerifier := webhook.NewHMACVerifier(cfg.Webhooks.Secrets)
-	paymentWebhook := shophttp.NewPaymentWebhookHandler(paymentRepo, bus, webhookVerifier)
+	paymentWebhook := shophttp.NewPaymentWebhookHandler(repos.paymentRepo, bus, webhookVerifier)
 
 	// Stripe-specific webhook handler: verifies Stripe-Signature and parses
 	// Stripe event types (payment_intent.succeeded / payment_failed).
@@ -639,7 +600,7 @@ func wireServeRuntime(cfg *config.Config, log logger.Logger, conn *sql.DB, repos
 		})
 	}
 	if cfg.Payment.Stripe.Enabled && webhookSecret != "" {
-		stripeWebhook = shophttp.NewStripeWebhookHandler(paymentRepo, bus, webhookSecret)
+		stripeWebhook = shophttp.NewStripeWebhookHandler(repos.paymentRepo, bus, webhookSecret)
 		log.Info("payment.stripe.webhook_handler_enabled", nil)
 	} else if cfg.Payment.Stripe.Enabled {
 		log.Warn("payment.stripe.no_webhook_secret", map[string]interface{}{
@@ -652,28 +613,28 @@ func wireServeRuntime(cfg *config.Config, log logger.Logger, conn *sql.DB, repos
 	var stripeRefunder payment.Refunder
 	if refunder, ok := payRegistry.Refunder(payment.MethodStripe); ok {
 		stripeRefunder = refunder
-		refundHandler = shophttp.NewRefundHandler(paymentRepo, refunder, bus)
+		refundHandler = shophttp.NewRefundHandler(repos.paymentRepo, refunder, bus)
 		log.Info("payment.refund_handler_enabled", nil)
 	}
 
-	returnService := returnsApp.NewService(returnRepo, orderRepo, stockRepo, paymentRepo, stripeRefunder, bus, log)
+	returnService := returnsApp.NewService(repos.returnRepo, repos.orderRepo, repos.stockRepo, repos.paymentRepo, stripeRefunder, bus, log)
 	returnAdmin := shophttp.NewReturnAdminHandler(returnService, sharedAuditor)
 	returnAccount := shophttp.NewReturnAccountHandler(returnService)
 	reviewHandler := shophttp.NewReviewHandler(reviewService)
 	reviewAccount := shophttp.NewReviewAccountHandler(reviewService)
 	reviewAdmin := shophttp.NewReviewAdminHandler(reviewService, sharedAuditor)
-	eprExporter := exporter.NewEprExporter(productRepo, variantRepo, configRepo)
+	eprExporter := exporter.NewEprExporter(repos.productRepo, repos.variantRepo, repos.configRepo)
 	eprReportAdmin := shophttp.NewEprReportHandler(eprExporter)
-	ossExporter := exporter.NewOssExporter(orderRepo, configRepo)
+	ossExporter := exporter.NewOssExporter(repos.orderRepo, repos.configRepo)
 	ossReportAdmin := shophttp.NewOssReportHandler(ossExporter)
-	paymentAdmin := shophttp.NewPaymentAdminHandler(paymentRepo, sharedAuditor)
+	paymentAdmin := shophttp.NewPaymentAdminHandler(repos.paymentRepo, sharedAuditor)
 
 	shippingRates := shophttp.NewShippingRatesHandler(shippingReg.Providers()...)
-	categoryHandler := shophttp.NewCategoryHandler(categoryRepo, productRepo)
-	categoryAdmin := shophttp.NewCategoryAdminHandlerWithAuditor(categoryRepo, bus, sharedAuditor)
-	categoryProductAssignmentAdmin := shophttp.NewCategoryProductAssignmentAdminHandlerWithAuditor(categoryRepo, productRepo, productRepo, sharedAuditor)
+	categoryHandler := shophttp.NewCategoryHandler(repos.categoryRepo, repos.productRepo)
+	categoryAdmin := shophttp.NewCategoryAdminHandlerWithAuditor(repos.categoryRepo, bus, sharedAuditor)
+	categoryProductAssignmentAdmin := shophttp.NewCategoryProductAssignmentAdminHandlerWithAuditor(repos.categoryRepo, repos.productRepo, repos.productRepo, sharedAuditor)
 	searchHandler := shophttp.NewSearchHandler(searchEngine).WithAdvancedSearchAttributes(attributeStore)
-	mediaService := mediaApp.NewService(mediaStorage, assetRepo, bus, log)
+	mediaService := mediaApp.NewService(mediaStorage, repos.assetRepo, bus, log)
 	if thumbCfg := cfg.Media.Thumbnails; len(thumbCfg) > 0 {
 		names := make([]string, 0, len(thumbCfg))
 		for name := range thumbCfg {
@@ -702,7 +663,7 @@ func wireServeRuntime(cfg *config.Config, log logger.Logger, conn *sql.DB, repos
 	}
 	mediaHandler := shophttp.NewMediaHandlerWithAuditor(mediaService, sharedAuditor)
 	mediaHandler.SetMaxUploadBytes(cfg.HTTP.MediaMaxBodyBytes)
-	configAdmin := shophttp.NewConfigAdminHandler(configRepo, cfg, func(ctx context.Context, smtpCfg shophttp.SMTPTestConfig, to string) error {
+	configAdmin := shophttp.NewConfigAdminHandler(repos.configRepo, cfg, func(ctx context.Context, smtpCfg shophttp.SMTPTestConfig, to string) error {
 		mailer := smtpmail.New(smtpmail.Config{
 			Host:     smtpCfg.Host,
 			Port:     smtpCfg.Port,
@@ -717,14 +678,14 @@ func wireServeRuntime(cfg *config.Config, log logger.Logger, conn *sql.DB, repos
 		})
 	}, sharedAuditor, registry.ConfigRegistry())
 	schemaHandler := shophttp.NewSchemaHandler(adminRegistry, attributeStore)
-	pageHandler := shophttp.NewPageHandler(pageRepo, contentTranslator)
-	pageAdmin := shophttp.NewPageAdminHandlerWithAuditor(pageRepo, bus, sharedAuditor)
-	menuHandler := shophttp.NewMenuHandler(menuRepo, menuResolver)
-	menuAdmin := shophttp.NewMenuAdminHandler(menuRepo, sharedAuditor)
-	contentBlockHandler := shophttp.NewContentBlockHandler(contentBlockRepo, pageRepo, blockResolver)
-	contentBlockAdmin := shophttp.NewContentBlockAdminHandler(contentBlockRepo, sharedAuditor)
-	couponAdmin := shophttp.NewCouponAdminHandlerWithAuditor(couponRepo, promotionRepo, sharedAuditor)
-	promotionAdmin := shophttp.NewPromotionAdminHandlerWithAuditor(promotionRepo, sharedAuditor)
+	pageHandler := shophttp.NewPageHandler(repos.pageRepo, contentTranslator)
+	pageAdmin := shophttp.NewPageAdminHandlerWithAuditor(repos.pageRepo, bus, sharedAuditor)
+	menuHandler := shophttp.NewMenuHandler(repos.menuRepo, menuResolver)
+	menuAdmin := shophttp.NewMenuAdminHandler(repos.menuRepo, sharedAuditor)
+	contentBlockHandler := shophttp.NewContentBlockHandler(repos.contentBlockRepo, repos.pageRepo, blockResolver)
+	contentBlockAdmin := shophttp.NewContentBlockAdminHandler(repos.contentBlockRepo, sharedAuditor)
+	couponAdmin := shophttp.NewCouponAdminHandlerWithAuditor(repos.couponRepo, repos.promotionRepo, sharedAuditor)
+	promotionAdmin := shophttp.NewPromotionAdminHandlerWithAuditor(repos.promotionRepo, sharedAuditor)
 	attributeAdmin := shophttp.NewAttributeAdminHandlerWithAuditor(attributeStore, sharedAuditor).
 		WithDiscoveryFacetSync(discoveryFacetSync)
 	extensionFieldAdmin := shophttp.NewExtensionFieldAdminHandlerWithAuditor(extensionFieldService, sharedAuditor)
@@ -733,23 +694,23 @@ func wireServeRuntime(cfg *config.Config, log logger.Logger, conn *sql.DB, repos
 	extensionSlotAdmin := shophttp.NewExtensionSlotAdminHandler(slotRegistry)
 	portSnapshot := portsapp.BuildSnapshot(pluginApp, cfg)
 	extensionPortAdmin := shophttp.NewExtensionPortAdminHandler(portSnapshot)
-	inventoryAdmin := shophttp.NewInventoryAdminHandlerWithAuditor(stockRepo, variantRepo, sharedAuditor)
-	storeAdmin := shophttp.NewStoreAdminHandlerWithAuditor(storeRepo, bus, sharedAuditor)
-	auditLogAdmin := shophttp.NewAuditLogAdminHandler(auditLogRepo, sharedAuditor)
-	webhookService := webhookApp.NewService(webhookEndpointRepo)
+	inventoryAdmin := shophttp.NewInventoryAdminHandlerWithAuditor(repos.stockRepo, repos.variantRepo, sharedAuditor)
+	storeAdmin := shophttp.NewStoreAdminHandlerWithAuditor(repos.storeRepo, bus, sharedAuditor)
+	auditLogAdmin := shophttp.NewAuditLogAdminHandler(repos.auditLogRepo, sharedAuditor)
+	webhookService := webhookApp.NewService(repos.webhookEndpointRepo)
 	webhookEndpointAdmin := shophttp.NewWebhookEndpointAdminHandler(webhookService)
-	integrationIdempotencyAdmin := shophttp.NewIntegrationIdempotencyAdminHandler(integrationIdempotencyRepo)
-	webhookApp.NewDispatcher(webhookEndpointRepo, jobQueue, log).Register(bus)
-	shippingZoneAdmin := shophttp.NewShippingZoneAdminHandler(zoneRepo)
-	accountService := accountApp.NewService(customerRepo, consentRepo, bus, log, conn)
-	customerAdmin := shophttp.NewCustomerAdminHandlerWithAuditorAndDeleter(customerRepo, accountService, sharedAuditor)
-	adminUserService := adminuserApp.NewService(customerRepo)
+	integrationIdempotencyAdmin := shophttp.NewIntegrationIdempotencyAdminHandler(repos.integrationIdempotencyRepo)
+	webhookApp.NewDispatcher(repos.webhookEndpointRepo, jobQueue, log).Register(bus)
+	shippingZoneAdmin := shophttp.NewShippingZoneAdminHandler(repos.zoneRepo)
+	accountService := accountApp.NewService(repos.customerRepo, repos.consentRepo, bus, log, conn)
+	customerAdmin := shophttp.NewCustomerAdminHandlerWithAuditorAndDeleter(repos.customerRepo, accountService, sharedAuditor)
+	adminUserService := adminuserApp.NewService(repos.customerRepo)
 	adminUserHandler := shophttp.NewAdminUserHandler(adminUserService, sharedAuditor)
 	setupService := setupApp.NewService(
 		conn,
 		"migrations",
-		customerRepo,
-		storeRepo,
+		repos.customerRepo,
+		repos.storeRepo,
 		setupAdminUserCreator{svc: adminUserService},
 		func(ctx context.Context, deps seed.Deps) (*seed.Result, error) {
 			reg := seed.NewRegistry()
@@ -762,13 +723,23 @@ func wireServeRuntime(cfg *config.Config, log logger.Logger, conn *sql.DB, repos
 	adminRoleHandler := shophttp.NewAdminRoleHandler(adminRoleService, sharedAuditor)
 	storeCreditAdmin := shophttp.NewStoreCreditAdminHandler(storeCreditService)
 	storeCreditAccount := shophttp.NewStoreCreditAccountHandler(storeCreditService)
-	accountHandler := shophttp.NewAccountHandler(customerRepo, orderRepo, consentRepo, accountService)
-	sitemapHandler := shophttp.NewSitemapHandler(baseURL, productRepo, categoryRepo, pageRepo)
+	accountHandler := shophttp.NewAccountHandler(repos.customerRepo, repos.orderRepo, repos.consentRepo, accountService)
+	sitemapHandler := shophttp.NewSitemapHandler(baseURL, repos.productRepo, repos.categoryRepo, repos.pageRepo)
 	robotsHandler := shophttp.NewRobotsHandler(baseURL)
 
-	specBytes, err := os.ReadFile(filepath.Join(filepath.Dir(config.FindConfigFile()), "openapi.yaml"))
+	specPath := filepath.Join(filepath.Dir(config.FindConfigFile()), "openapi.yaml")
+	specBytes, err := os.ReadFile(specPath)
 	if err != nil {
-		specBytes, _ = os.ReadFile("openapi.yaml")
+		var fallbackErr error
+		specBytes, fallbackErr = os.ReadFile("openapi.yaml")
+		if fallbackErr != nil {
+			log.Warn("openapi.spec.load_failed", map[string]interface{}{
+				"configured_path":  specPath,
+				"configured_error": err.Error(),
+				"fallback_path":    "openapi.yaml",
+				"fallback_error":   fallbackErr.Error(),
+			})
+		}
 	}
 	docsHandler := shophttp.NewDocsHandler(specBytes)
 
