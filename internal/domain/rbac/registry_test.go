@@ -13,6 +13,7 @@ func TestRegistry_Register(t *testing.T) {
 	if err := reg.Register(perm, identity.RoleAdmin, identity.RoleManager); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
+	reg.Freeze()
 	rbac.BindRuntime(reg)
 	t.Cleanup(rbac.UnbindRuntime)
 
@@ -50,6 +51,7 @@ func TestRegistry_RejectsDuplicate(t *testing.T) {
 	if err := reg.Register(perm, identity.RoleManager); err == nil {
 		t.Fatal("expected error for duplicate plugin permission")
 	}
+	reg.Freeze()
 	rbac.BindRuntime(reg)
 	t.Cleanup(rbac.UnbindRuntime)
 	if !rbac.HasPermission(identity.RoleAdmin, perm) {
@@ -77,8 +79,18 @@ func TestBindRuntime_NilPanics(t *testing.T) {
 	rbac.BindRuntime(nil)
 }
 
+func TestBindRuntime_WritablePanics(t *testing.T) {
+	defer func() {
+		if r := recover(); r == nil {
+			t.Fatal("expected panic for writable registry")
+		}
+	}()
+	rbac.BindRuntime(rbac.NewRegistry())
+}
+
 func TestBindRuntime_SameInstanceIdempotent(t *testing.T) {
 	reg := rbac.NewRegistry()
+	reg.Freeze()
 	rbac.BindRuntime(reg)
 	t.Cleanup(rbac.UnbindRuntime)
 	rbac.BindRuntime(reg) // same pointer is allowed
@@ -89,13 +101,16 @@ func TestBindRuntime_SameInstanceIdempotent(t *testing.T) {
 
 func TestBindRuntime_DifferentInstancePanics(t *testing.T) {
 	first := rbac.NewRegistry()
+	first.Freeze()
 	rbac.BindRuntime(first)
 	t.Cleanup(rbac.UnbindRuntime)
 
+	second := rbac.NewRegistry()
+	second.Freeze()
 	defer func() {
 		if r := recover(); r == nil {
 			t.Fatal("expected panic when binding a different registry")
 		}
 	}()
-	rbac.BindRuntime(rbac.NewRegistry())
+	rbac.BindRuntime(second)
 }

@@ -173,7 +173,7 @@ type serveRuntime struct {
 	checkoutHandler                *shophttp.CheckoutHandler
 }
 
-func wireServeRuntime(cfg *config.Config, log logger.Logger, conn *sql.DB, repos *serveRepos) (*serveRuntime, error) {
+func wireServeRuntime(cfg *config.Config, log logger.Logger, conn *sql.DB, repos *serveRepos) (rt *serveRuntime, err error) {
 	// Event bus (created early for plugin init and later handlers).
 	bus := event.NewBus(log)
 
@@ -230,7 +230,12 @@ func wireServeRuntime(cfg *config.Config, log logger.Logger, conn *sql.DB, repos
 	permReg := preparePermissionRegistry(pluginApp)
 	summary := registry.InitAll(pluginApp)
 	sealPermissionRegistry(pluginApp) // serve: freeze + BindRuntime for HTTP auth/catalog
-	if err := extensionRegistry.LoadPersisted(context.Background(), repos.extensionFieldRepo, log); err != nil {
+	defer func() {
+		if err != nil {
+			rbac.UnbindRuntime()
+		}
+	}()
+	if err = extensionRegistry.LoadPersisted(context.Background(), repos.extensionFieldRepo, log); err != nil {
 		return nil, fmt.Errorf("load extension fields: %w", err)
 	}
 	extensionFieldService := extensionApp.NewFieldService(extensionRegistry, repos.extensionFieldRepo)

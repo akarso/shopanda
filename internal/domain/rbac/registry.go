@@ -165,11 +165,17 @@ var (
 )
 
 // BindRuntime installs the frozen registry for package-level auth/catalog helpers.
-// Panics if reg is nil. Replacing a different already-bound instance panics
-// (serve may bind once; callers must UnbindRuntime in tests before rebinding).
+// Panics if reg is nil or not frozen. Replacing a different already-bound instance
+// panics (serve may bind once; callers must UnbindRuntime before rebinding).
 func BindRuntime(reg *Registry) {
 	if reg == nil {
 		panic("rbac: BindRuntime: registry must not be nil")
+	}
+	reg.mu.RLock()
+	frozen := reg.frozen
+	reg.mu.RUnlock()
+	if !frozen {
+		panic("rbac: BindRuntime: registry must be frozen")
 	}
 	runtimeMu.Lock()
 	defer runtimeMu.Unlock()
@@ -179,7 +185,8 @@ func BindRuntime(reg *Registry) {
 	runtimeRegistry = reg
 }
 
-// UnbindRuntime clears the process-bound registry. Tests only.
+// UnbindRuntime clears the process-bound registry.
+// Used by tests and by serve setup failure paths after BindRuntime.
 func UnbindRuntime() {
 	runtimeMu.Lock()
 	runtimeRegistry = nil
