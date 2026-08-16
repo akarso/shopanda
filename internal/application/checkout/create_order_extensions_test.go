@@ -98,7 +98,7 @@ func TestCreateOrderStep_SnapshotsCartItemExtensions(t *testing.T) {
 		t.Fatalf("UpsertBatch: %v", err)
 	}
 
-	if err := step.Execute(cctx); err != nil {
+	if err := step.Execute(context.Background(), cctx); err != nil {
 		t.Fatalf("Execute: %v", err)
 	}
 	if cctx.Order == nil {

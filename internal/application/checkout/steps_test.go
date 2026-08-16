@@ -147,7 +147,7 @@ func TestValidateCartStep_Success(t *testing.T) {
 	cctx := checkout.NewContext("cart-1", "cust-1", "EUR")
 	cctx.Cart = cartWithItems(t, "cust-1", "v1", "v2")
 
-	if err := step.Execute(cctx); err != nil {
+	if err := step.Execute(context.Background(), cctx); err != nil {
 		t.Fatalf("Execute: %v", err)
 	}
 	if v, ok := cctx.GetMeta("validated"); !ok || v != true {
@@ -162,7 +162,7 @@ func TestValidateCartStep_MissingVariant(t *testing.T) {
 	cctx := checkout.NewContext("cart-1", "cust-1", "EUR")
 	cctx.Cart = cartWithItems(t, "cust-1", "v1", "v2")
 
-	err := step.Execute(cctx)
+	err := step.Execute(context.Background(), cctx)
 	if err == nil {
 		t.Fatal("expected error for missing variant")
 	}
@@ -178,7 +178,7 @@ func TestValidateCartStep_RepoError(t *testing.T) {
 	cctx := checkout.NewContext("cart-1", "cust-1", "EUR")
 	cctx.Cart = cartWithItems(t, "cust-1", "v1")
 
-	err := step.Execute(cctx)
+	err := step.Execute(context.Background(), cctx)
 	if err == nil {
 		t.Fatal("expected error from repo")
 	}
@@ -194,7 +194,7 @@ func TestValidateCartStep_NilCart(t *testing.T) {
 	cctx := checkout.NewContext("cart-1", "cust-1", "EUR")
 	// Cart not set
 
-	err := step.Execute(cctx)
+	err := step.Execute(context.Background(), cctx)
 	if err == nil {
 		t.Fatal("expected error for nil cart")
 	}
@@ -207,13 +207,13 @@ func TestValidateCartStep_Idempotent(t *testing.T) {
 	cctx := checkout.NewContext("cart-1", "cust-1", "EUR")
 	cctx.Cart = cartWithItems(t, "cust-1", "v1")
 
-	if err := step.Execute(cctx); err != nil {
+	if err := step.Execute(context.Background(), cctx); err != nil {
 		t.Fatalf("first Execute: %v", err)
 	}
 
 	// Make repo fail — second call should skip via meta
 	repo.err = errors.New("should not be called")
-	if err := step.Execute(cctx); err != nil {
+	if err := step.Execute(context.Background(), cctx); err != nil {
 		t.Fatalf("second Execute should be idempotent: %v", err)
 	}
 }
@@ -234,7 +234,7 @@ func TestValidateCartStep_EmptyCart(t *testing.T) {
 	cctx.Cart = &c
 
 	// Empty cart has no items to validate — should succeed and mark validated
-	if err := step.Execute(cctx); err != nil {
+	if err := step.Execute(context.Background(), cctx); err != nil {
 		t.Fatalf("Execute: %v", err)
 	}
 	if v, ok := cctx.GetMeta("validated"); !ok || v != true {
@@ -262,7 +262,7 @@ func TestRecalculatePricingStep_Success(t *testing.T) {
 	cctx := checkout.NewContext("cart-1", "cust-1", "EUR")
 	cctx.Cart = cartWithItems(t, "cust-1", "v1", "v2")
 
-	if err := step.Execute(cctx); err != nil {
+	if err := step.Execute(context.Background(), cctx); err != nil {
 		t.Fatalf("Execute: %v", err)
 	}
 
@@ -295,7 +295,7 @@ func TestRecalculatePricingStep_NilCart(t *testing.T) {
 
 	cctx := checkout.NewContext("cart-1", "cust-1", "EUR")
 
-	err := step.Execute(cctx)
+	err := step.Execute(context.Background(), cctx)
 	if err == nil {
 		t.Fatal("expected error for nil cart")
 	}
@@ -308,7 +308,7 @@ func TestRecalculatePricingStep_Idempotent(t *testing.T) {
 	cctx := checkout.NewContext("cart-1", "cust-1", "EUR")
 	cctx.Cart = cartWithItems(t, "cust-1", "v1")
 
-	if err := step.Execute(cctx); err != nil {
+	if err := step.Execute(context.Background(), cctx); err != nil {
 		t.Fatalf("first Execute: %v", err)
 	}
 
@@ -317,7 +317,7 @@ func TestRecalculatePricingStep_Idempotent(t *testing.T) {
 	grand1 := pctx1.GrandTotal.Amount()
 
 	// Second call should skip due to meta
-	if err := step.Execute(cctx); err != nil {
+	if err := step.Execute(context.Background(), cctx); err != nil {
 		t.Fatalf("second Execute: %v", err)
 	}
 
@@ -337,7 +337,7 @@ func TestRecalculatePricingStep_PipelineError(t *testing.T) {
 	cctx := checkout.NewContext("cart-1", "cust-1", "EUR")
 	cctx.Cart = cartWithItems(t, "cust-1", "v1")
 
-	err := step.Execute(cctx)
+	err := step.Execute(context.Background(), cctx)
 	if err == nil {
 		t.Fatal("expected error from pipeline")
 	}

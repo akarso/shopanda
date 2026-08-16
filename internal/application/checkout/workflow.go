@@ -2,6 +2,7 @@ package checkout
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
 	"github.com/akarso/shopanda/internal/platform/event"
@@ -92,7 +93,7 @@ func (w *Workflow) Execute(ctx context.Context, cctx *Context) error {
 			return err
 		}
 
-		if err := step.Execute(cctx); err != nil {
+		if err := step.Execute(ctx, cctx); err != nil {
 			cctx.Trace = append(cctx.Trace, TraceEntry{
 				Step:   step.Name(),
 				Status: "error",
@@ -102,6 +103,9 @@ func (w *Workflow) Execute(ctx context.Context, cctx *Context) error {
 				"cart_id": cctx.CartID,
 				"step":    step.Name(),
 			})
+			if isContextError(err) {
+				return err
+			}
 			if pubErr := w.publishEvent(ctx, EventCheckoutFailed, "checkout.workflow", CheckoutFailedData{
 				CartID:   cctx.CartID,
 				StepName: step.Name(),
@@ -143,6 +147,10 @@ func (w *Workflow) Execute(ctx context.Context, cctx *Context) error {
 	}
 
 	return nil
+}
+
+func isContextError(err error) bool {
+	return errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded)
 }
 
 // Steps returns the number of registered steps.

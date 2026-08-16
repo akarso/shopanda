@@ -1,6 +1,7 @@
 package checkoutdemo
 
 import (
+	"context"
 	"fmt"
 
 	checkoutApp "github.com/akarso/shopanda/internal/application/checkout"
@@ -34,7 +35,7 @@ type validateStep struct{}
 
 func (s *validateStep) Name() string { return "checkoutdemo_validate" }
 
-func (s *validateStep) Execute(cctx *checkoutApp.Context) error {
+func (s *validateStep) Execute(ctx context.Context, cctx *checkoutApp.Context) error {
 	if cctx == nil || cctx.Cart == nil {
 		return fmt.Errorf("checkoutdemo: cart not loaded")
 	}

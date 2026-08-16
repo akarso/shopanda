@@ -31,7 +31,7 @@ func NewSelectShippingStep(
 
 func (s *SelectShippingStep) Name() string { return "select_shipping" }
 
-func (s *SelectShippingStep) Execute(cctx *Context) error {
+func (s *SelectShippingStep) Execute(ctx context.Context, cctx *Context) error {
 	if cctx == nil {
 		return fmt.Errorf("select_shipping: checkout context must not be nil")
 	}
@@ -53,7 +53,7 @@ func (s *SelectShippingStep) Execute(cctx *Context) error {
 	}
 
 	rate, err := provider.CalculateRate(
-		context.Background(),
+		ctx,
 		cctx.Order.ID,
 		cctx.Currency,
 		cctx.Cart.TotalQuantity(),
@@ -67,7 +67,7 @@ func (s *SelectShippingStep) Execute(cctx *Context) error {
 		return fmt.Errorf("select_shipping: create shipment: %w", err)
 	}
 
-	if err := s.shipments.Create(context.Background(), &shipment); err != nil {
+	if err := s.shipments.Create(ctx, &shipment); err != nil {
 		return fmt.Errorf("select_shipping: save shipment: %w", err)
 	}
 

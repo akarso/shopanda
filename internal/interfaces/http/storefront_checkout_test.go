@@ -41,7 +41,7 @@ type failingCheckoutStep struct {
 
 func (s failingCheckoutStep) Name() string { return "failing_step" }
 
-func (s failingCheckoutStep) Execute(_ *checkoutApp.Context) error { return s.err }
+func (s failingCheckoutStep) Execute(_ context.Context, _ *checkoutApp.Context) error { return s.err }
 
 type storefrontCheckoutReservationRepoStub struct{}
 

@@ -480,7 +480,7 @@ Contract:
 ```go
 type Step interface {
     Name() string
-    Execute(ctx *checkout.Context) error
+    Execute(ctx context.Context, cctx *checkout.Context) error
 }
 ```
 

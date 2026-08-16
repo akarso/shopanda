@@ -24,7 +24,7 @@ func NewValidateCartStep(variants catalog.VariantRepository) *ValidateCartStep {
 func (s *ValidateCartStep) Name() string { return "validate_cart" }
 
 // Execute checks each cart item's variant exists in the catalog.
-func (s *ValidateCartStep) Execute(cctx *Context) error {
+func (s *ValidateCartStep) Execute(ctx context.Context, cctx *Context) error {
 	if v, ok := cctx.GetMeta("validated"); ok {
 		if b, isBool := v.(bool); isBool && b {
 			return nil // idempotent: already validated
@@ -35,7 +35,6 @@ func (s *ValidateCartStep) Execute(cctx *Context) error {
 		return fmt.Errorf("validate_cart: cart not loaded")
 	}
 
-	ctx := context.Background()
 	for _, item := range cctx.Cart.Items {
 		v, err := s.variants.FindByID(ctx, item.VariantID)
 		if err != nil {

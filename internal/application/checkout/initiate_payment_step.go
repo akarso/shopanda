@@ -32,7 +32,7 @@ func NewInitiatePaymentStep(
 
 func (s *InitiatePaymentStep) Name() string { return "initiate_payment" }
 
-func (s *InitiatePaymentStep) Execute(cctx *Context) error {
+func (s *InitiatePaymentStep) Execute(ctx context.Context, cctx *Context) error {
 	if cctx == nil {
 		return fmt.Errorf("initiate_payment: checkout context must not be nil")
 	}
@@ -73,13 +73,13 @@ func (s *InitiatePaymentStep) Execute(cctx *Context) error {
 		return fmt.Errorf("initiate_payment: create payment: %w", err)
 	}
 
-	if err := s.payments.Create(context.Background(), &py); err != nil {
+	if err := s.payments.Create(ctx, &py); err != nil {
 		return fmt.Errorf("initiate_payment: save payment: %w", err)
 	}
 
 	prevUpdatedAt := py.UpdatedAt
 
-	result, err := provider.Initiate(context.Background(), &py)
+	result, err := provider.Initiate(ctx, &py)
 	if err != nil {
 		return fmt.Errorf("initiate_payment: provider error: %w", err)
 	}
@@ -91,7 +91,11 @@ func (s *InitiatePaymentStep) Execute(cctx *Context) error {
 		}
 		py.ProviderRef = result.ProviderRef
 		py.UpdatedAt = time.Now().UTC()
-		if err := s.payments.UpdateStatus(context.Background(), &py, prevUpdatedAt); err != nil {
+		// Provider already accepted the charge — persist outcome even if request ctx is done.
+		persistCtx, persistCancel := detachedTimeout(ctx, compensateTimeout)
+		err := s.payments.UpdateStatus(persistCtx, &py, prevUpdatedAt)
+		persistCancel()
+		if err != nil {
 			return fmt.Errorf("initiate_payment: update status: %w", err)
 		}
 		cctx.SetMeta("payment", &py)
@@ -112,7 +116,10 @@ func (s *InitiatePaymentStep) Execute(cctx *Context) error {
 		}
 	}
 
-	if err := s.payments.UpdateStatus(context.Background(), &py, prevUpdatedAt); err != nil {
+	persistCtx, persistCancel := detachedTimeout(ctx, compensateTimeout)
+	err = s.payments.UpdateStatus(persistCtx, &py, prevUpdatedAt)
+	persistCancel()
+	if err != nil {
 		return fmt.Errorf("initiate_payment: update status: %w", err)
 	}
 

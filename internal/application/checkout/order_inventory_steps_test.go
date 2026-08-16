@@ -168,7 +168,7 @@ func TestReserveInventoryStep_Success(t *testing.T) {
 	cctx := checkout.NewContext("cart-1", "cust-1", "EUR")
 	cctx.Cart = cartWithItems037(t, "cust-1", "v1", "v2")
 
-	if err := step.Execute(cctx); err != nil {
+	if err := step.Execute(context.Background(), cctx); err != nil {
 		t.Fatalf("Execute: %v", err)
 	}
 
@@ -209,7 +209,7 @@ func TestReserveInventoryStep_InsufficientStock(t *testing.T) {
 	cctx := checkout.NewContext("cart-1", "cust-1", "EUR")
 	cctx.Cart = cartWithItems037(t, "cust-1", "v1")
 
-	err := step.Execute(cctx)
+	err := step.Execute(context.Background(), cctx)
 	if err == nil {
 		t.Fatal("expected error for insufficient stock")
 	}
@@ -223,7 +223,7 @@ func TestReserveInventoryStep_NilCart(t *testing.T) {
 
 	cctx := checkout.NewContext("cart-1", "cust-1", "EUR")
 
-	err := step.Execute(cctx)
+	err := step.Execute(context.Background(), cctx)
 	if err == nil {
 		t.Fatal("expected error for nil cart")
 	}
@@ -236,14 +236,14 @@ func TestReserveInventoryStep_Idempotent(t *testing.T) {
 	cctx := checkout.NewContext("cart-1", "cust-1", "EUR")
 	cctx.Cart = cartWithItems037(t, "cust-1", "v1")
 
-	if err := step.Execute(cctx); err != nil {
+	if err := step.Execute(context.Background(), cctx); err != nil {
 		t.Fatalf("first Execute: %v", err)
 	}
 	count1 := len(repo.reserved)
 
 	// Second call should skip
 	repo.err = errors.New("should not be called")
-	if err := step.Execute(cctx); err != nil {
+	if err := step.Execute(context.Background(), cctx); err != nil {
 		t.Fatalf("second Execute should be idempotent: %v", err)
 	}
 	if len(repo.reserved) != count1 {
@@ -255,7 +255,7 @@ func TestReserveInventoryStep_NilContext(t *testing.T) {
 	repo := &mockReservationRepo{}
 	step := checkout.NewReserveInventoryStep(repo)
 
-	err := step.Execute(nil)
+	err := step.Execute(context.Background(), nil)
 	if err == nil {
 		t.Fatal("expected error for nil context")
 	}
@@ -274,7 +274,7 @@ func TestReserveInventoryStep_PartialFailureRollback(t *testing.T) {
 	cctx := checkout.NewContext("cart-1", "cust-1", "EUR")
 	cctx.Cart = cartWithItems037(t, "cust-1", "v1", "v2")
 
-	err := step.Execute(cctx)
+	err := step.Execute(context.Background(), cctx)
 	if err == nil {
 		t.Fatal("expected error from second Reserve")
 	}
@@ -307,7 +307,7 @@ func TestReserveInventoryStep_EmptyCart(t *testing.T) {
 	cctx := checkout.NewContext("cart-1", "cust-1", "EUR")
 	cctx.Cart = &c
 
-	if err := step.Execute(cctx); err != nil {
+	if err := step.Execute(context.Background(), cctx); err != nil {
 		t.Fatalf("Execute: %v", err)
 	}
 	if len(repo.reserved) != 0 {
@@ -344,7 +344,7 @@ func TestCreateOrderStep_Success(t *testing.T) {
 	cctx.Cart = cartWithItems037(t, "cust-1", "v1", "v2")
 	cctx.SetMeta("pricing", pricingContext037(t, "v1", "v2"))
 
-	if err := step.Execute(cctx); err != nil {
+	if err := step.Execute(context.Background(), cctx); err != nil {
 		t.Fatalf("Execute: %v", err)
 	}
 
@@ -398,7 +398,7 @@ func TestCreateOrderStep_ItemPricesFromPricing(t *testing.T) {
 	pctx.Items = []pricing.PricingItem{pi}
 	cctx.SetMeta("pricing", &pctx)
 
-	if err := step.Execute(cctx); err != nil {
+	if err := step.Execute(context.Background(), cctx); err != nil {
 		t.Fatalf("Execute: %v", err)
 	}
 
@@ -420,7 +420,7 @@ func TestCreateOrderStep_NoPricing(t *testing.T) {
 	cctx.Cart = cartWithItems037(t, "cust-1", "v1")
 	// No pricing in meta
 
-	err := step.Execute(cctx)
+	err := step.Execute(context.Background(), cctx)
 	if err == nil {
 		t.Fatal("expected error for missing pricing")
 	}
@@ -439,7 +439,7 @@ func TestCreateOrderStep_NilCart(t *testing.T) {
 
 	cctx := checkout.NewContext("cart-1", "cust-1", "EUR")
 
-	err := step.Execute(cctx)
+	err := step.Execute(context.Background(), cctx)
 	if err == nil {
 		t.Fatal("expected error for nil cart")
 	}
@@ -455,7 +455,7 @@ func TestCreateOrderStep_SaveError(t *testing.T) {
 	cctx.Cart = cartWithItems037(t, "cust-1", "v1")
 	cctx.SetMeta("pricing", pricingContext037(t, "v1"))
 
-	err := step.Execute(cctx)
+	err := step.Execute(context.Background(), cctx)
 	if err == nil {
 		t.Fatal("expected error from save")
 	}
@@ -474,14 +474,14 @@ func TestCreateOrderStep_Idempotent(t *testing.T) {
 	cctx.Cart = cartWithItems037(t, "cust-1", "v1")
 	cctx.SetMeta("pricing", pricingContext037(t, "v1"))
 
-	if err := step.Execute(cctx); err != nil {
+	if err := step.Execute(context.Background(), cctx); err != nil {
 		t.Fatalf("first Execute: %v", err)
 	}
 	savedFirst := orderRepo.saved
 
 	// Second call should skip
 	orderRepo.err = errors.New("should not be called")
-	if err := step.Execute(cctx); err != nil {
+	if err := step.Execute(context.Background(), cctx); err != nil {
 		t.Fatalf("second Execute should be idempotent: %v", err)
 	}
 	if orderRepo.saved != savedFirst {
@@ -498,7 +498,7 @@ func TestCreateOrderStep_VariantNotFound(t *testing.T) {
 	cctx.Cart = cartWithItems037(t, "cust-1", "v1")
 	cctx.SetMeta("pricing", pricingContext037(t, "v1"))
 
-	err := step.Execute(cctx)
+	err := step.Execute(context.Background(), cctx)
 	if err == nil {
 		t.Fatal("expected error for missing variant")
 	}
@@ -515,7 +515,7 @@ func TestCreateOrderStep_NilContext(t *testing.T) {
 		nil,
 	)
 
-	err := step.Execute(nil)
+	err := step.Execute(context.Background(), nil)
 	if err == nil {
 		t.Fatal("expected error for nil context")
 	}
@@ -555,7 +555,7 @@ func TestCreateOrderStep_ApplyStoreCredit(t *testing.T) {
 	cctx.Cart = cartWithItems037(t, "cust-1", "v1")
 	cctx.SetMeta("pricing", pricingContext037(t, "v1"))
 
-	if err := step.Execute(cctx); err != nil {
+	if err := step.Execute(context.Background(), cctx); err != nil {
 		t.Fatalf("Execute: %v", err)
 	}
 	if cctx.Order.StoreCreditApplied.Amount() != 1000 {
@@ -594,7 +594,7 @@ func TestCreateOrderStep_StoreCreditRequiresCustomer(t *testing.T) {
 	cctx.Cart = &c
 	cctx.SetMeta("pricing", pricingContext037(t, "v1"))
 
-	err = step.Execute(cctx)
+	err = step.Execute(context.Background(), cctx)
 	if err == nil {
 		t.Fatal("expected validation error for guest store credit")
 	}
@@ -612,7 +612,7 @@ func TestCreateOrderStep_SaveErrorRollsBackStoreCredit(t *testing.T) {
 	cctx.Cart = cartWithItems037(t, "cust-1", "v1")
 	cctx.SetMeta("pricing", pricingContext037(t, "v1"))
 
-	err := step.Execute(cctx)
+	err := step.Execute(context.Background(), cctx)
 	if err == nil {
 		t.Fatal("expected error from save")
 	}
