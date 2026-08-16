@@ -4,9 +4,9 @@ import (
 	"fmt"
 	"net/http"
 
+	"github.com/akarso/shopanda/internal/domain/customergroup"
 	"github.com/akarso/shopanda/internal/domain/identity"
 	"github.com/akarso/shopanda/internal/domain/rbac"
-	"github.com/akarso/shopanda/internal/infrastructure/postgres"
 	"github.com/akarso/shopanda/internal/platform/plugin"
 	"github.com/akarso/shopanda/plugins/b2b/groups"
 	b2bpricing "github.com/akarso/shopanda/plugins/b2b/pricing"
@@ -41,6 +41,12 @@ func (p *Plugin) Init(app *plugin.App) error {
 	if app.Bootstrap == nil || app.Bootstrap.DB == nil {
 		return fmt.Errorf("b2b plugin: database bootstrap not configured")
 	}
+	if app.Bootstrap.Customers == nil {
+		return fmt.Errorf("b2b plugin: customer repository not configured")
+	}
+	if app.Bootstrap.Variants == nil {
+		return fmt.Errorf("b2b plugin: variant repository not configured")
+	}
 
 	if err := runPluginMigrations(app.Bootstrap.DB); err != nil {
 		return fmt.Errorf("b2b plugin: %w", err)
@@ -53,18 +59,6 @@ func (p *Plugin) Init(app *plugin.App) error {
 	groupPriceRepo, err := b2bpricing.NewPostgresGroupPriceRepo(app.Bootstrap.DB)
 	if err != nil {
 		return fmt.Errorf("b2b plugin: group price repo: %w", err)
-	}
-	customerRepo, err := postgres.NewCustomerRepo(app.Bootstrap.DB)
-	if err != nil {
-		return fmt.Errorf("b2b plugin: customer repo: %w", err)
-	}
-	productRepo, err := postgres.NewProductRepo(app.Bootstrap.DB)
-	if err != nil {
-		return fmt.Errorf("b2b plugin: product repo: %w", err)
-	}
-	variantRepo, err := postgres.NewVariantRepo(app.Bootstrap.DB)
-	if err != nil {
-		return fmt.Errorf("b2b plugin: variant repo: %w", err)
 	}
 
 	if err := app.RegisterPermission(PermissionGroupsRead, identity.RoleAdmin, identity.RoleManager); err != nil {
@@ -82,8 +76,7 @@ func (p *Plugin) Init(app *plugin.App) error {
 
 	app.RegisterPricingStep(b2bpricing.NewGroupPriceStep(groupRepo, groupPriceRepo))
 
-	groupAdmin := groups.NewAdminHandler(groupRepo, customerRepo)
-	priceAdmin := b2bpricing.NewAdminHandler(groupRepo, groupPriceRepo, productRepo, variantRepo)
+	groupAdmin, priceAdmin := newAdminHandlers(app.Bootstrap, groupRepo, groupPriceRepo)
 
 	routes := []struct {
 		pattern string
@@ -112,4 +105,13 @@ func (p *Plugin) Init(app *plugin.App) error {
 		app.Logger.Info("b2b plugin: customer groups and group pricing registered", nil)
 	}
 	return nil
+}
+
+func newAdminHandlers(
+	boot *plugin.Bootstrap,
+	groupRepo customergroup.Repository,
+	groupPriceRepo customergroup.GroupPriceRepository,
+) (*groups.AdminHandler, *b2bpricing.AdminHandler) {
+	return groups.NewAdminHandler(groupRepo, boot.Customers),
+		b2bpricing.NewAdminHandler(groupRepo, groupPriceRepo, boot.Variants)
 }

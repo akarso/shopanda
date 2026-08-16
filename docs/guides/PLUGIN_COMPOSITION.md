@@ -276,7 +276,7 @@ app.Import("acme/erp").RegisterRowHook(extapi.ImportEntityProduct, 100, func(ctx
 | Route namespace | Prefix `/api/v1/integrations/acme/…` — one plugin owns its tree |
 | Duplicate POST retries | Idempotency store keyed by `Idempotency-Key` |
 | Replay attacks on signed requests | HMAC middleware: timestamp + nonce + replay store |
-| Business logic | Thin handler → application service; no direct `postgres` imports from `plugins/*` |
+| Business logic | Thin handler → application service; no direct `postgres` / `interfaces/http` imports from non-core `plugins/*` (use `Bootstrap` domain ports + `platform/httpx`; see [PLUGINS.md](../../PLUGINS.md#import-allowlist-pr-1017)) |
 
 Multiple ERP plugins each register **disjoint route prefixes** — no shared handler chain. Conflicts on the same pattern fail at startup (duplicate route registration).
 

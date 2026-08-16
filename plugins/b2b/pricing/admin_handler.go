@@ -8,8 +8,8 @@ import (
 	"github.com/akarso/shopanda/internal/domain/catalog"
 	"github.com/akarso/shopanda/internal/domain/customergroup"
 	"github.com/akarso/shopanda/internal/domain/shared"
-	shophttp "github.com/akarso/shopanda/internal/interfaces/http"
 	"github.com/akarso/shopanda/internal/platform/apperror"
+	"github.com/akarso/shopanda/internal/platform/httpx"
 	"github.com/akarso/shopanda/internal/platform/id"
 )
 
@@ -17,7 +17,6 @@ import (
 type AdminHandler struct {
 	groups   customergroup.Repository
 	prices   customergroup.GroupPriceRepository
-	products catalog.ProductRepository
 	variants catalog.VariantRepository
 }
 
@@ -25,13 +24,17 @@ type AdminHandler struct {
 func NewAdminHandler(
 	groups customergroup.Repository,
 	prices customergroup.GroupPriceRepository,
-	products catalog.ProductRepository,
 	variants catalog.VariantRepository,
 ) *AdminHandler {
-	if groups == nil || prices == nil || products == nil || variants == nil {
+	if groups == nil || prices == nil || variants == nil {
 		panic("b2b group price admin: repositories must not be nil")
 	}
-	return &AdminHandler{groups: groups, prices: prices, products: products, variants: variants}
+	return &AdminHandler{groups: groups, prices: prices, variants: variants}
+}
+
+// VariantRepository returns the variants port wired into this handler.
+func (h *AdminHandler) VariantRepository() catalog.VariantRepository {
+	return h.variants
 }
 
 type updateGroupPriceRequest struct {
@@ -43,14 +46,14 @@ func (h *AdminHandler) Get() http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		groupID := strings.TrimSpace(r.PathValue("groupId"))
 		variantID := strings.TrimSpace(r.PathValue("variantId"))
-		currency := shophttp.ResolveCurrencyScopeID(r)
-		storeID := shophttp.ResolveStoreScopeID(r)
+		currency := httpx.ResolveCurrencyScopeID(r)
+		storeID := httpx.ResolveStoreScopeID(r)
 		if groupID == "" || variantID == "" {
-			shophttp.JSONError(w, apperror.Validation("group id and variant id are required"))
+			httpx.JSONError(w, apperror.Validation("group id and variant id are required"))
 			return
 		}
 		if currency == "" {
-			shophttp.JSONError(w, apperror.Validation("currency context is required"))
+			httpx.JSONError(w, apperror.Validation("currency context is required"))
 			return
 		}
 		if err := h.ensureGroupAndVariant(w, r, groupID, variantID); err != nil {
@@ -59,7 +62,7 @@ func (h *AdminHandler) Get() http.HandlerFunc {
 
 		price, err := h.prices.FindExactByVariantGroupCurrencyAndStore(r.Context(), variantID, groupID, currency, storeID)
 		if err != nil {
-			shophttp.JSONError(w, apperror.Wrap(apperror.CodeInternal, "get group price failed", err))
+			httpx.JSONError(w, apperror.Wrap(apperror.CodeInternal, "get group price failed", err))
 			return
 		}
 
@@ -74,13 +77,13 @@ func (h *AdminHandler) Get() http.HandlerFunc {
 		} else if storeID != "" {
 			globalPrice, err := h.prices.FindExactByVariantGroupCurrencyAndStore(r.Context(), variantID, groupID, currency, "")
 			if err != nil {
-				shophttp.JSONError(w, apperror.Wrap(apperror.CodeInternal, "get group price failed", err))
+				httpx.JSONError(w, apperror.Wrap(apperror.CodeInternal, "get group price failed", err))
 				return
 			}
 			globalFallback = groupPricePayload(globalPrice)
 		}
 
-		shophttp.JSON(w, http.StatusOK, map[string]interface{}{
+		httpx.JSON(w, http.StatusOK, map[string]interface{}{
 			"price":           groupPricePayload(price),
 			"global_fallback": globalFallback,
 			"price_scope":     priceScope,
@@ -96,14 +99,14 @@ func (h *AdminHandler) Update() http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		groupID := strings.TrimSpace(r.PathValue("groupId"))
 		variantID := strings.TrimSpace(r.PathValue("variantId"))
-		currency := shophttp.ResolveCurrencyScopeID(r)
-		storeID := shophttp.ResolveStoreScopeID(r)
+		currency := httpx.ResolveCurrencyScopeID(r)
+		storeID := httpx.ResolveStoreScopeID(r)
 		if groupID == "" || variantID == "" {
-			shophttp.JSONError(w, apperror.Validation("group id and variant id are required"))
+			httpx.JSONError(w, apperror.Validation("group id and variant id are required"))
 			return
 		}
 		if currency == "" {
-			shophttp.JSONError(w, apperror.Validation("currency context is required"))
+			httpx.JSONError(w, apperror.Validation("currency context is required"))
 			return
 		}
 
@@ -111,11 +114,11 @@ func (h *AdminHandler) Update() http.HandlerFunc {
 		dec := json.NewDecoder(r.Body)
 		dec.DisallowUnknownFields()
 		if err := dec.Decode(&req); err != nil {
-			shophttp.JSONError(w, apperror.Validation("invalid request body"))
+			httpx.JSONError(w, apperror.Validation("invalid request body"))
 			return
 		}
 		if req.Amount == nil {
-			shophttp.JSONError(w, apperror.Validation("amount is required"))
+			httpx.JSONError(w, apperror.Validation("amount is required"))
 			return
 		}
 
@@ -125,24 +128,24 @@ func (h *AdminHandler) Update() http.HandlerFunc {
 
 		money, err := shared.NewMoney(*req.Amount, currency)
 		if err != nil {
-			shophttp.JSONError(w, apperror.Validation(err.Error()))
+			httpx.JSONError(w, apperror.Validation(err.Error()))
 			return
 		}
 		price, err := customergroup.NewGroupPrice(id.New(), groupID, variantID, storeID, money)
 		if err != nil {
-			shophttp.JSONError(w, apperror.Validation(err.Error()))
+			httpx.JSONError(w, apperror.Validation(err.Error()))
 			return
 		}
 		if err := h.prices.Upsert(r.Context(), &price); err != nil {
 			if strings.Contains(err.Error(), "not found") {
-				shophttp.JSONError(w, apperror.NotFound("group or variant not found"))
+				httpx.JSONError(w, apperror.NotFound("group or variant not found"))
 				return
 			}
-			shophttp.JSONError(w, apperror.Wrap(apperror.CodeInternal, "update group price failed", err))
+			httpx.JSONError(w, apperror.Wrap(apperror.CodeInternal, "update group price failed", err))
 			return
 		}
 
-		shophttp.JSON(w, http.StatusOK, map[string]interface{}{
+		httpx.JSON(w, http.StatusOK, map[string]interface{}{
 			"price":           groupPricePayload(&price),
 			"global_fallback": nil,
 			"price_scope":     groupPriceScopeForStore(storeID),
@@ -158,10 +161,10 @@ func (h *AdminHandler) Delete() http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		groupID := strings.TrimSpace(r.PathValue("groupId"))
 		variantID := strings.TrimSpace(r.PathValue("variantId"))
-		currency := shophttp.ResolveCurrencyScopeID(r)
-		storeID := shophttp.ResolveStoreScopeID(r)
+		currency := httpx.ResolveCurrencyScopeID(r)
+		storeID := httpx.ResolveStoreScopeID(r)
 		if groupID == "" || variantID == "" || currency == "" {
-			shophttp.JSONError(w, apperror.Validation("group id, variant id, and currency are required"))
+			httpx.JSONError(w, apperror.Validation("group id, variant id, and currency are required"))
 			return
 		}
 		if err := h.ensureGroupAndVariant(w, r, groupID, variantID); err != nil {
@@ -170,19 +173,19 @@ func (h *AdminHandler) Delete() http.HandlerFunc {
 
 		price, err := h.prices.FindExactByVariantGroupCurrencyAndStore(r.Context(), variantID, groupID, currency, storeID)
 		if err != nil {
-			shophttp.JSONError(w, apperror.Wrap(apperror.CodeInternal, "delete group price failed", err))
+			httpx.JSONError(w, apperror.Wrap(apperror.CodeInternal, "delete group price failed", err))
 			return
 		}
 		if price == nil {
-			shophttp.JSONError(w, apperror.NotFound("group price not found"))
+			httpx.JSONError(w, apperror.NotFound("group price not found"))
 			return
 		}
 		if err := h.prices.Delete(r.Context(), price.ID); err != nil {
 			if strings.Contains(err.Error(), "not found") {
-				shophttp.JSONError(w, apperror.NotFound("group price not found"))
+				httpx.JSONError(w, apperror.NotFound("group price not found"))
 				return
 			}
-			shophttp.JSONError(w, apperror.Wrap(apperror.CodeInternal, "delete group price failed", err))
+			httpx.JSONError(w, apperror.Wrap(apperror.CodeInternal, "delete group price failed", err))
 			return
 		}
 		w.WriteHeader(http.StatusNoContent)
@@ -192,20 +195,20 @@ func (h *AdminHandler) Delete() http.HandlerFunc {
 func (h *AdminHandler) ensureGroupAndVariant(w http.ResponseWriter, r *http.Request, groupID, variantID string) error {
 	group, err := h.groups.FindByID(r.Context(), groupID)
 	if err != nil {
-		shophttp.JSONError(w, apperror.Wrap(apperror.CodeInternal, "lookup group failed", err))
+		httpx.JSONError(w, apperror.Wrap(apperror.CodeInternal, "lookup group failed", err))
 		return err
 	}
 	if group == nil {
-		shophttp.JSONError(w, apperror.NotFound("customer group not found"))
+		httpx.JSONError(w, apperror.NotFound("customer group not found"))
 		return apperror.NotFound("customer group not found")
 	}
 	variant, err := h.variants.FindByID(r.Context(), variantID)
 	if err != nil {
-		shophttp.JSONError(w, apperror.Wrap(apperror.CodeInternal, "lookup variant failed", err))
+		httpx.JSONError(w, apperror.Wrap(apperror.CodeInternal, "lookup variant failed", err))
 		return err
 	}
 	if variant == nil {
-		shophttp.JSONError(w, apperror.NotFound("variant not found"))
+		httpx.JSONError(w, apperror.NotFound("variant not found"))
 		return apperror.NotFound("variant not found")
 	}
 	return nil

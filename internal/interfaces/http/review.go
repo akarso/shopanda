@@ -29,7 +29,7 @@ func NewReviewHandler(reviews *reviewsApp.Service) *ReviewHandler {
 func (h *ReviewHandler) List() http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		productID := r.PathValue("id")
-		offset, limit, err := parsePagination(r)
+		offset, limit, err := ParsePagination(r)
 		if err != nil {
 			JSONError(w, err)
 			return

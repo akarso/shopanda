@@ -25,7 +25,7 @@ func NewEprReportHandler(exp *exporter.EprExporter) *EprReportHandler {
 func (h *EprReportHandler) Export() http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		includeEmpty := strings.EqualFold(r.URL.Query().Get("include_empty"), "true")
-		storeID := resolveStoreScopeID(r)
+		storeID := ResolveStoreScopeID(r)
 
 		var buf bytes.Buffer
 		if _, err := h.exporter.Export(r.Context(), &buf, exporter.EprExportOptions{

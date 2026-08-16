@@ -4,6 +4,8 @@ import (
 	"database/sql"
 
 	"github.com/akarso/shopanda/internal/domain/cache"
+	"github.com/akarso/shopanda/internal/domain/catalog"
+	"github.com/akarso/shopanda/internal/domain/customer"
 	"github.com/akarso/shopanda/internal/domain/jobs"
 	"github.com/akarso/shopanda/internal/domain/mail"
 	"github.com/akarso/shopanda/internal/domain/media"
@@ -13,10 +15,14 @@ import (
 	"github.com/akarso/shopanda/internal/domain/tax"
 )
 
-// Bootstrap holds infrastructure handles plugins need during Init.
+// Bootstrap holds handles plugins need during Init.
 // Populated by the application before InitAll.
+// Domain repositories are injected by the composition root so plugins do not
+// import internal/infrastructure adapters.
 type Bootstrap struct {
-	DB *sql.DB
+	DB        *sql.DB
+	Customers customer.CustomerRepository
+	Variants  catalog.VariantRepository
 }
 
 // RegisterSearchProvider registers the active search backend implementation.

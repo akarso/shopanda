@@ -38,10 +38,14 @@ func newDiscoveryFacetSyncer(store *adminApp.AttributeStore, engine search.Searc
 func syncDiscoveryFacetsFromDB(cfg *config.Config, log logger.Logger, conn *sql.DB) error {
 	registry := plugin.NewRegistry(log)
 	registerPlugins(registry, cfg)
+	boot, err := newPluginBootstrap(conn)
+	if err != nil {
+		return err
+	}
 	pluginApp := &plugin.App{
 		Logger:    log,
 		Config:    cfg,
-		Bootstrap: &plugin.Bootstrap{DB: conn},
+		Bootstrap: boot,
 	}
 	pluginApp.SetExtensionRegistry(extensionApp.NewRegistry())
 	preparePermissionRegistry(pluginApp)

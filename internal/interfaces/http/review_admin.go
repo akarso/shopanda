@@ -29,7 +29,7 @@ func NewReviewAdminHandler(reviews *reviewsApp.Service, auditor *admin.Auditor) 
 // List handles GET /api/v1/admin/reviews.
 func (h *ReviewAdminHandler) List() http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		offset, limit, err := parsePagination(r)
+		offset, limit, err := ParsePagination(r)
 		if err != nil {
 			JSONError(w, err)
 			return

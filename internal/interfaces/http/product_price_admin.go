@@ -82,8 +82,8 @@ func (h *ProductPriceAdminHandler) Get() http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		pid := strings.TrimSpace(r.PathValue("id"))
 		vid := strings.TrimSpace(r.PathValue("variantId"))
-		currency := resolveCurrencyScopeID(r)
-		storeID := resolveStoreScopeID(r)
+		currency := ResolveCurrencyScopeID(r)
+		storeID := ResolveStoreScopeID(r)
 		if pid == "" || vid == "" {
 			h.audit(r, admin.AuditPriceRead, vid, nil, apperror.Validation("product id and variant id are required"))
 			JSONError(w, apperror.Validation("product id and variant id are required"))
@@ -142,8 +142,8 @@ func (h *ProductPriceAdminHandler) Update() http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		pid := strings.TrimSpace(r.PathValue("id"))
 		vid := strings.TrimSpace(r.PathValue("variantId"))
-		currency := resolveCurrencyScopeID(r)
-		storeID := resolveStoreScopeID(r)
+		currency := ResolveCurrencyScopeID(r)
+		storeID := ResolveStoreScopeID(r)
 		if pid == "" || vid == "" {
 			h.audit(r, admin.AuditPriceUpdate, vid, nil, apperror.Validation("product id and variant id are required"))
 			JSONError(w, apperror.Validation("product id and variant id are required"))

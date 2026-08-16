@@ -47,7 +47,7 @@ type auditLogItemResp struct {
 // List handles GET /api/v1/admin/audit.
 func (h *AuditLogAdminHandler) List() http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		offset, limit, err := parsePagination(r)
+		offset, limit, err := ParsePagination(r)
 		if err != nil {
 			JSONError(w, err)
 			return

@@ -45,7 +45,7 @@ type adminUserResponse struct {
 func (h *AdminUserHandler) List() http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		adminID := adminIDFromRequest(r)
-		offset, limit, err := parsePagination(r)
+		offset, limit, err := ParsePagination(r)
 		if err != nil {
 			JSONError(w, err)
 			return

@@ -72,7 +72,7 @@ func (h *CustomerAdminHandler) List() http.HandlerFunc {
 		adminID := adminIDFromRequest(r)
 		details := fullAdminScopeDetailsFromRequest(r)
 
-		offset, limit, err := parsePagination(r)
+		offset, limit, err := ParsePagination(r)
 		if err != nil {
 			h.auditor.LogAction(r.Context(), admin.AuditEntry{
 				AdminID:      adminID,

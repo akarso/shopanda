@@ -64,7 +64,7 @@ func toPaymentResponses(list []payment.Payment) []paymentResp {
 // List handles GET /api/v1/admin/payments.
 func (h *PaymentAdminHandler) List() http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		offset, limit, err := parsePagination(r)
+		offset, limit, err := ParsePagination(r)
 		if err != nil {
 			JSONError(w, err)
 			return

@@ -66,7 +66,7 @@ func productAdminScopeDetailsFromRequest(r *http.Request) map[string]interface{}
 // List handles GET /api/v1/admin/products.
 func (h *ProductAdminHandler) List() http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		offset, limit, err := parsePagination(r)
+		offset, limit, err := ParsePagination(r)
 		if err != nil {
 			JSONError(w, err)
 			return

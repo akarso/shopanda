@@ -159,7 +159,7 @@ func (h *CouponAdminHandler) ensureUniqueCode(ctx context.Context, code, exclude
 // List handles GET /api/v1/admin/coupons.
 func (h *CouponAdminHandler) List() http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		offset, limit, err := parsePagination(r)
+		offset, limit, err := ParsePagination(r)
 		if err != nil {
 			JSONError(w, err)
 			return

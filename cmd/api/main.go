@@ -366,10 +366,14 @@ func runScheduler(cfg *config.Config, log logger.Logger) error {
 
 	registry := plugin.NewRegistry(log)
 	registerPlugins(registry, cfg)
+	boot, err := newPluginBootstrap(conn)
+	if err != nil {
+		return err
+	}
 	pluginApp := &plugin.App{
 		Logger:    log,
 		Config:    cfg,
-		Bootstrap: &plugin.Bootstrap{DB: conn},
+		Bootstrap: boot,
 	}
 	pluginApp.SetExtensionRegistry(extensionApp.NewRegistry())
 	if err := wireIntegrationStockSyncerFromDB(conn, pluginApp); err != nil {
@@ -703,10 +707,14 @@ func runWorker(cfg *config.Config, log logger.Logger) error {
 
 	registry := plugin.NewRegistry(log)
 	registerPlugins(registry, cfg)
+	boot, err := newPluginBootstrap(conn)
+	if err != nil {
+		return err
+	}
 	pluginApp := &plugin.App{
 		Logger:    log,
 		Config:    cfg,
-		Bootstrap: &plugin.Bootstrap{DB: conn},
+		Bootstrap: boot,
 	}
 	pluginApp.SetExtensionRegistry(extensionApp.NewRegistry())
 	if err := wireIntegrationStockSyncerFromDB(conn, pluginApp); err != nil {
@@ -751,10 +759,14 @@ func runSearchReindex(cfg *config.Config, log logger.Logger) error {
 
 	registry := plugin.NewRegistry(log)
 	registerPlugins(registry, cfg)
+	boot, err := newPluginBootstrap(conn)
+	if err != nil {
+		return err
+	}
 	pluginApp := &plugin.App{
 		Logger:    log,
 		Config:    cfg,
-		Bootstrap: &plugin.Bootstrap{DB: conn},
+		Bootstrap: boot,
 	}
 	pluginApp.SetExtensionRegistry(extensionApp.NewRegistry())
 	preparePermissionRegistry(pluginApp)

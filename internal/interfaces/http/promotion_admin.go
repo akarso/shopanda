@@ -295,7 +295,7 @@ func (h *PromotionAdminHandler) applyWriteRequest(p *promotion.Promotion, req pr
 // List handles GET /api/v1/admin/promotions.
 func (h *PromotionAdminHandler) List() http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		offset, limit, err := parsePagination(r)
+		offset, limit, err := ParsePagination(r)
 		if err != nil {
 			JSONError(w, err)
 			return

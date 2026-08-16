@@ -68,7 +68,7 @@ func adminScopeDetailsFromRequest(r *http.Request) map[string]interface{} {
 // List handles GET /api/v1/admin/orders with Track 3 audit logging.
 func (h *OrderAdminHandler) List() http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		offset, limit, err := parsePagination(r)
+		offset, limit, err := ParsePagination(r)
 		if err != nil {
 			JSONError(w, err)
 			return

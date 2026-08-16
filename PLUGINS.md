@@ -52,9 +52,39 @@ There is no runtime plugin discovery, `.so` loading, or marketplace in the curre
 ### External plugins MUST NOT
 
 - Override core logic or mutate core schema
-- Access the database directly outside domain repositories
+- Access the database directly outside domain repositories (plugin-owned tables via `Bootstrap.DB` are OK when scoped to the plugin)
+- Import `internal/infrastructure` or `internal/interfaces` (enforced by `TestImportBoundary`)
 - Register competing infrastructure backends (use or contribute a core plugin instead)
 - Block request lifecycle — use async events or jobs for slow work
+
+### Import allowlist (PR-1017)
+
+Plugins under `plugins/**` (except `plugins/core/**`) may import:
+
+| Allowed | Examples |
+| --- | --- |
+| `pkg/...` | `pkg/extapi`, `pkg/integrationhttp` |
+| `internal/domain/...` | repositories, value types |
+| `internal/application/...` | hooks, slots, composition ports |
+| `internal/platform/...` | `plugin.App`, `httpx`, config, events |
+| Sibling packages under the **same** top-level plugin | e.g. `plugins/b2b/groups` from `plugins/b2b` — not other plugins, not `plugins/core/*` |
+
+Plugins must **not** import:
+
+- `internal/infrastructure/...` — adapters are wired by the composition root / core plugins
+- `internal/interfaces/...` — HTTP helpers for plugins live in `internal/platform/httpx`
+- `plugins/core/...` — would re-open infrastructure via core driver packages
+- Other top-level plugins (e.g. `b2b` must not import `example`)
+
+**Core plugins** (`plugins/core/*`) are the intentional exception: they wrap infrastructure drivers and may import `internal/infrastructure`. External/B2B plugins receive domain ports via `plugin.Bootstrap` (e.g. `Customers`, `Variants`) instead of constructing postgres repos themselves.
+
+Enforce with:
+
+```bash
+go test ./plugins/ -run ImportBoundary -count=1
+```
+
+This is an **in-module** plugin model (same Go module, compile-time registration). Isolation is import-boundary honesty, not a separate SDK module or `.so` loading.
 
 ---
 
