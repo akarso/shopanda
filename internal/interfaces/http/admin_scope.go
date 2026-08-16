@@ -18,7 +18,9 @@ func resolveLanguageScopeID(r *http.Request) string {
 }
 
 // ResolveCurrencyScopeID returns the active admin currency from context, if any.
-var ResolveCurrencyScopeID = httpx.ResolveCurrencyScopeID
+func ResolveCurrencyScopeID(r *http.Request) string {
+	return httpx.ResolveCurrencyScopeID(r)
+}
 
 func fullAdminScopeDetailsFromRequest(r *http.Request) map[string]interface{} {
 	details := make(map[string]interface{})

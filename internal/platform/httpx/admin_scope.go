@@ -24,9 +24,6 @@ func ResolveStoreScopeID(r *http.Request) string {
 		contextStoreID := strings.TrimSpace(ac.StoreID)
 		if contextStoreID != "" {
 			// Keep tenant boundary deterministic: context scope wins if query conflicts.
-			if explicit != "" && explicit != contextStoreID {
-				return contextStoreID
-			}
 			return contextStoreID
 		}
 	}

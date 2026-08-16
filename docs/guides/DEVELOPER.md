@@ -161,9 +161,9 @@ The plugin app currently exposes:
 - `RegisterCheckoutStep`
 - `RegisterCompositionStep`
 - `RegisterPermission` — writes the app-owned `rbac.Registry` (wired before `InitAll`, frozen after; serve binds it for auth)
-- `Bootstrap` — `DB` plus domain ports (`Customers`, `Variants`, …) injected by the composition root
+- `Bootstrap` — `DB` (restricted to plugin-owned tables; non-core plugins must not query core tables directly) plus domain ports (`Customers`, `Variants`, …) injected by the composition root for accessing core data
 
-Non-core plugins must not import `internal/infrastructure` or `internal/interfaces` (see [PLUGINS.md import allowlist](../../PLUGINS.md#import-allowlist-pr-1017)); use `platform/httpx` for admin JSON helpers.
+Non-core plugins must not import `internal/infrastructure` or `internal/interfaces` (see [PLUGINS.md import allowlist](../../PLUGINS.md#import-allowlist-pr-1017)); use `internal/platform/httpx` for admin JSON helpers.
 
 Minimal example:
 

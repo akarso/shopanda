@@ -6,6 +6,7 @@ import (
 	"go/token"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -138,8 +139,11 @@ func fileImports(path string) ([]string, error) {
 	}
 	out := make([]string, 0, len(f.Imports))
 	for _, imp := range f.Imports {
-		path := strings.Trim(imp.Path.Value, `"`)
-		out = append(out, path)
+		unquoted, err := strconv.Unquote(imp.Path.Value)
+		if err != nil {
+			return nil, fmt.Errorf("%s: unquote import %s: %w", path, imp.Path.Value, err)
+		}
+		out = append(out, unquoted)
 	}
 	return out, nil
 }

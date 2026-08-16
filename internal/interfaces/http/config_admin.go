@@ -291,7 +291,9 @@ func (h *ConfigAdminHandler) resolveScopedValue(ctx context.Context, key, storeI
 }
 
 // ResolveStoreScopeID returns the active admin store scope from context or query.
-var ResolveStoreScopeID = httpx.ResolveStoreScopeID
+func ResolveStoreScopeID(r *http.Request) string {
+	return httpx.ResolveStoreScopeID(r)
+}
 
 func scopePayloadFromRequest(r *http.Request) map[string]interface{} {
 	payload := map[string]interface{}{
