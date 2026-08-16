@@ -8,6 +8,7 @@ import (
 
 	"github.com/akarso/shopanda/internal/domain/identity"
 	"github.com/akarso/shopanda/internal/domain/rbac"
+	"github.com/akarso/shopanda/internal/infrastructure/postgres"
 	"github.com/akarso/shopanda/internal/platform/config"
 	"github.com/akarso/shopanda/internal/platform/event"
 	"github.com/akarso/shopanda/internal/platform/logger"
@@ -25,7 +26,19 @@ func testApp(cfg *config.Config, db *sql.DB) *plugin.App {
 	}
 	app.SetPermissionRegistry(rbac.NewRegistry())
 	if db != nil {
-		app.Bootstrap = &plugin.Bootstrap{DB: db}
+		customers, err := postgres.NewCustomerRepo(db)
+		if err != nil {
+			panic(err)
+		}
+		variants, err := postgres.NewVariantRepo(db)
+		if err != nil {
+			panic(err)
+		}
+		app.Bootstrap = &plugin.Bootstrap{
+			DB:        db,
+			Customers: customers,
+			Variants:  variants,
+		}
 	}
 	return app
 }

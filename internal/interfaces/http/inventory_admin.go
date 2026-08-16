@@ -97,7 +97,7 @@ func toInventoryItemResponse(item inventory.InventoryListItem) adminInventoryIte
 // List handles GET /api/v1/admin/inventory.
 func (h *InventoryAdminHandler) List() http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		offset, limit, err := parsePagination(r)
+		offset, limit, err := ParsePagination(r)
 		if err != nil {
 			h.audit(r, admin.AuditStockRead, "", nil, err)
 			JSONError(w, err)

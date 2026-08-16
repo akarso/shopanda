@@ -34,7 +34,7 @@ func (h *OssReportHandler) Export() http.HandlerFunc {
 			return
 		}
 		summary := strings.EqualFold(r.URL.Query().Get("summary"), "true")
-		storeID := resolveStoreScopeID(r)
+		storeID := ResolveStoreScopeID(r)
 
 		var buf bytes.Buffer
 		if _, err := h.exporter.Export(r.Context(), &buf, exporter.OssExportOptions{

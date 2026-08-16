@@ -32,7 +32,7 @@ func NewProductHandler(
 // List handles GET /api/v1/products.
 func (h *ProductHandler) List() http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		offset, limit, err := parsePagination(r)
+		offset, limit, err := ParsePagination(r)
 		if err != nil {
 			JSONError(w, err)
 			return

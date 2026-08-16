@@ -88,7 +88,7 @@ func toAssetResponse(view mediaApp.AssetView) assetResponse {
 // List returns a handler for GET /api/v1/admin/media.
 func (h *MediaHandler) List() http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		offset, limit, err := parsePagination(r)
+		offset, limit, err := ParsePagination(r)
 		if err != nil {
 			JSONError(w, err)
 			return

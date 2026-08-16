@@ -13,6 +13,7 @@ import (
 	domainCfg "github.com/akarso/shopanda/internal/domain/config"
 	"github.com/akarso/shopanda/internal/platform/apperror"
 	appconfig "github.com/akarso/shopanda/internal/platform/config"
+	"github.com/akarso/shopanda/internal/platform/httpx"
 	"github.com/akarso/shopanda/internal/platform/plugin"
 )
 
@@ -154,7 +155,7 @@ func (h *ConfigAdminHandler) Get() http.HandlerFunc {
 			JSONError(w, apperror.Validation(err.Error()))
 			return
 		}
-		storeID := resolveStoreScopeID(r)
+		storeID := ResolveStoreScopeID(r)
 
 		values := h.defaultEntries(keys)
 		for _, key := range keys {
@@ -218,7 +219,7 @@ func (h *ConfigAdminHandler) Update() http.HandlerFunc {
 			JSONError(w, apperror.Validation(err.Error()))
 			return
 		}
-		storeID := resolveStoreScopeID(r)
+		storeID := ResolveStoreScopeID(r)
 		persisted := make(map[string]interface{}, len(entries))
 		for key, value := range entries {
 			targetKey := key
@@ -290,25 +291,7 @@ func (h *ConfigAdminHandler) resolveScopedValue(ctx context.Context, key, storeI
 }
 
 // ResolveStoreScopeID returns the active admin store scope from context or query.
-func ResolveStoreScopeID(r *http.Request) string {
-	return resolveStoreScopeID(r)
-}
-
-func resolveStoreScopeID(r *http.Request) string {
-	explicit := strings.TrimSpace(r.URL.Query().Get("store_id"))
-	ac, err := admin.FromContext(r.Context())
-	if err == nil && ac != nil {
-		contextStoreID := strings.TrimSpace(ac.StoreID)
-		if contextStoreID != "" {
-			// Keep tenant boundary deterministic: context scope wins if query conflicts.
-			if explicit != "" && explicit != contextStoreID {
-				return contextStoreID
-			}
-			return contextStoreID
-		}
-	}
-	return explicit
-}
+var ResolveStoreScopeID = httpx.ResolveStoreScopeID
 
 func scopePayloadFromRequest(r *http.Request) map[string]interface{} {
 	payload := map[string]interface{}{

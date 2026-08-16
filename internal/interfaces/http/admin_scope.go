@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	"github.com/akarso/shopanda/internal/application/admin"
+	"github.com/akarso/shopanda/internal/platform/httpx"
 )
 
 // resolveLanguageScopeID returns the active admin language from context, if any.
@@ -17,18 +18,7 @@ func resolveLanguageScopeID(r *http.Request) string {
 }
 
 // ResolveCurrencyScopeID returns the active admin currency from context, if any.
-func ResolveCurrencyScopeID(r *http.Request) string {
-	return resolveCurrencyScopeID(r)
-}
-
-// resolveCurrencyScopeID returns the active admin currency from context, if any.
-func resolveCurrencyScopeID(r *http.Request) string {
-	ac, err := admin.FromContext(r.Context())
-	if err != nil || ac == nil {
-		return ""
-	}
-	return strings.TrimSpace(ac.Currency)
-}
+var ResolveCurrencyScopeID = httpx.ResolveCurrencyScopeID
 
 func fullAdminScopeDetailsFromRequest(r *http.Request) map[string]interface{} {
 	details := make(map[string]interface{})

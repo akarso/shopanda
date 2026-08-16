@@ -133,7 +133,7 @@ Recommended order:
 | PR-1014 | Collapse import/export CLI | **Done.** Shared `runIOCommand` for open-DB → file → optional plugin hooks → run; thin `runImport*`/`runExport*` wrappers; table-driven CLI IO tests |
 | PR-1015 | Typed plugin providers | **Done.** Eight infrastructure `Register*` / getters take domain interfaces (`search.SearchEngine`, `cache.Cache`, …); resolvers drop runtime type asserts |
 | PR-1016 | RBAC registry injection | **Done.** App-owned `rbac.Registry`; same instance for Init + auth; freeze after Init; duplicate = error; serve `BindRuntime` |
-| PR-1017 | Plugin boundary honesty | Fixed allowlist (pkg/domain/application/platform); forbid infrastructure+interfaces; CI import walk |
+| PR-1017 | Plugin boundary honesty | **Done.** Fixed allowlist (pkg/domain/application/platform); forbid infrastructure+interfaces for non-core plugins; `TestImportBoundary`; b2b uses Bootstrap + httpx |
 | PR-1018 | Checkout context | Propagate request `ctx` into all blocking checkout/payment/inventory calls; cancel test |
 | PR-1019 | Event bus drain | Publish barrier; WG before goroutine; cancel-then-wait shutdown policy |
 

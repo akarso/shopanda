@@ -98,7 +98,7 @@ func (h *CategoryHandler) Products() http.HandlerFunc {
 			return
 		}
 
-		offset, limit, err := parsePagination(r)
+		offset, limit, err := ParsePagination(r)
 		if err != nil {
 			JSONError(w, err)
 			return

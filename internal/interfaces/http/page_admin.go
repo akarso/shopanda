@@ -102,7 +102,7 @@ func (h *PageAdminHandler) audit(r *http.Request, action admin.AuditAction, reso
 // List handles GET /api/v1/admin/pages.
 func (h *PageAdminHandler) List() http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		offset, limit, err := parsePagination(r)
+		offset, limit, err := ParsePagination(r)
 		if err != nil {
 			JSONError(w, err)
 			return

@@ -214,7 +214,11 @@ func wireServeRuntime(cfg *config.Config, log logger.Logger, conn *sql.DB, repos
 		Logger:    log,
 		Bus:       bus,
 		Config:    cfg,
-		Bootstrap: &plugin.Bootstrap{DB: conn},
+		Bootstrap: &plugin.Bootstrap{
+			DB:        conn,
+			Customers: repos.customerRepo,
+			Variants:  repos.variantRepo,
+		},
 	}
 	pluginApp.SetExtensionRegistry(extensionRegistry)
 	pluginApp.SetHookRegistry(hookRegistry)

@@ -89,7 +89,7 @@ func (h *ContentBlockAdminHandler) audit(r *http.Request, action admin.AuditActi
 // List handles GET /api/v1/admin/content-blocks.
 func (h *ContentBlockAdminHandler) List() http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		offset, limit, err := parsePagination(r)
+		offset, limit, err := ParsePagination(r)
 		if err != nil {
 			JSONError(w, err)
 			return
