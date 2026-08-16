@@ -19,11 +19,13 @@ import (
 
 func testApp(cfg *config.Config) *plugin.App {
 	log := logger.NewWithWriter(io.Discard, "error")
-	return &plugin.App{
+	app := &plugin.App{
 		Logger: log,
 		Bus:    event.NewBus(log),
 		Config: cfg,
 	}
+	app.SetPermissionRegistry(rbac.NewRegistry())
+	return app
 }
 
 func TestPlugin_Name(t *testing.T) {
@@ -44,9 +46,6 @@ func TestPlugin_Init_DisabledConfigReturnsError(t *testing.T) {
 }
 
 func TestPlugin_Init_RegistersPricingStepPermissionAndListener(t *testing.T) {
-	rbac.ResetPluginPermissions()
-	t.Cleanup(rbac.ResetPluginPermissions)
-
 	cfg := &config.Config{
 		Plugins: config.PluginsConfig{
 			Example: config.ExamplePluginConfig{Enabled: true, FeeMinorUnits: 100},
@@ -58,6 +57,9 @@ func TestPlugin_Init_RegistersPricingStepPermissionAndListener(t *testing.T) {
 	if summary := reg.InitAll(app); summary.Failed > 0 || summary.Initialized != 1 {
 		t.Fatalf("InitAll() summary = %+v, want 1 initialized and 0 failed", summary)
 	}
+	app.FreezePermissionRegistry()
+	rbac.BindRuntime(app.PermissionRegistry())
+	t.Cleanup(rbac.UnbindRuntime)
 
 	steps := app.PricingSteps()
 	if len(steps) != 1 {
@@ -81,9 +83,6 @@ func TestPlugin_Init_RegistersPricingStepPermissionAndListener(t *testing.T) {
 }
 
 func TestPlugin_Init_RegistersCLICommand(t *testing.T) {
-	rbac.ResetPluginPermissions()
-	t.Cleanup(rbac.ResetPluginPermissions)
-
 	reg := plugin.NewRegistry(logger.NewWithWriter(io.Discard, "error"))
 	reg.Register(example.New())
 	cfg := &config.Config{
@@ -102,9 +101,6 @@ func TestPlugin_Init_RegistersCLICommand(t *testing.T) {
 }
 
 func TestPlugin_Init_RegistersAdminConfig(t *testing.T) {
-	rbac.ResetPluginPermissions()
-	t.Cleanup(rbac.ResetPluginPermissions)
-
 	reg := plugin.NewRegistry(logger.NewWithWriter(io.Discard, "error"))
 	reg.Register(example.New())
 	cfg := &config.Config{

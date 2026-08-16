@@ -17,7 +17,9 @@ func bootstrapImportRegistry(cfg *config.Config, log logger.Logger) *importctxAp
 		Config: cfg,
 	}
 	app.SetImportRegistry(importRegistry)
+	preparePermissionRegistry(app)
 	summary := pluginRegistry.InitAll(app)
+	freezePermissionRegistry(app) // import CLI: freeze only (no BindRuntime)
 	if summary.Failed > 0 {
 		log.Warn("import.plugins.init", map[string]interface{}{
 			"registered":  summary.Registered,

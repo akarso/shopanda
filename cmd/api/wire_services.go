@@ -173,7 +173,7 @@ type serveRuntime struct {
 	checkoutHandler                *shophttp.CheckoutHandler
 }
 
-func wireServeRuntime(cfg *config.Config, log logger.Logger, conn *sql.DB, repos *serveRepos) (*serveRuntime, error) {
+func wireServeRuntime(cfg *config.Config, log logger.Logger, conn *sql.DB, repos *serveRepos) (rt *serveRuntime, err error) {
 	// Event bus (created early for plugin init and later handlers).
 	bus := event.NewBus(log)
 
@@ -227,8 +227,15 @@ func wireServeRuntime(cfg *config.Config, log logger.Logger, conn *sql.DB, repos
 	orderStatusService := orderApp.NewStatusService(repos.orderRepo)
 	pluginApp.SetIntegrationOrderStatusUpdater(plugin.NewIntegrationOrderStatusUpdater(orderStatusService))
 	wireIntegrationStockSyncer(pluginApp, repos.variantRepo, repos.stockRepo)
+	permReg := preparePermissionRegistry(pluginApp)
 	summary := registry.InitAll(pluginApp)
-	if err := extensionRegistry.LoadPersisted(context.Background(), repos.extensionFieldRepo, log); err != nil {
+	sealPermissionRegistry(pluginApp) // serve: freeze + BindRuntime for HTTP auth/catalog
+	defer func() {
+		if err != nil {
+			rbac.UnbindRuntime()
+		}
+	}()
+	if err = extensionRegistry.LoadPersisted(context.Background(), repos.extensionFieldRepo, log); err != nil {
 		return nil, fmt.Errorf("load extension fields: %w", err)
 	}
 	extensionFieldService := extensionApp.NewFieldService(extensionRegistry, repos.extensionFieldRepo)
@@ -244,7 +251,7 @@ func wireServeRuntime(cfg *config.Config, log logger.Logger, conn *sql.DB, repos
 		"failed":      summary.Failed,
 	})
 
-	adminRoleService := adminroleApp.NewService(repos.rolePermRepo)
+	adminRoleService := adminroleApp.NewService(repos.rolePermRepo, permReg)
 	if err := adminRoleService.SyncPluginDefaults(context.Background()); err != nil {
 		return nil, fmt.Errorf("sync role permissions: %w", err)
 	}

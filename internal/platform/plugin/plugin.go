@@ -1,6 +1,7 @@
 package plugin
 
 import (
+	"fmt"
 	"sync"
 
 	assetsapp "github.com/akarso/shopanda/internal/application/assets"
@@ -62,6 +63,9 @@ type App struct {
 	mailSender       mail.Mailer
 
 	configRegistry *ConfigRegistry
+
+	permissionRegistry   *rbac.Registry
+	permissionRegistryMu sync.Mutex
 
 	adminRoutes  []AdminRoute
 	publicRoutes []PublicRoute
@@ -128,10 +132,41 @@ func (a *App) CompositionSteps(pipeline string) []any {
 	return append([]any(nil), s...)
 }
 
+// SetPermissionRegistry wires the app-owned RBAC permission registry before InitAll.
+func (a *App) SetPermissionRegistry(registry *rbac.Registry) {
+	if registry == nil {
+		panic("plugin: permission registry must not be nil")
+	}
+	a.permissionRegistryMu.Lock()
+	defer a.permissionRegistryMu.Unlock()
+	if a.permissionRegistry != nil && a.permissionRegistry != registry {
+		panic("plugin: permission registry already set")
+	}
+	a.permissionRegistry = registry
+}
+
+// PermissionRegistry returns the app-owned permission registry, if set.
+func (a *App) PermissionRegistry() *rbac.Registry {
+	a.permissionRegistryMu.Lock()
+	defer a.permissionRegistryMu.Unlock()
+	return a.permissionRegistry
+}
+
 // RegisterPermission registers a plugin-defined permission and the roles
-// that are granted it. The permission must not conflict with core permissions.
+// that are granted it. Requires SetPermissionRegistry before Init.
 func (a *App) RegisterPermission(perm rbac.Permission, roles ...identity.Role) error {
-	return rbac.RegisterPluginPermission(perm, roles...)
+	reg := a.PermissionRegistry()
+	if reg == nil {
+		return fmt.Errorf("plugin: permission registry not configured")
+	}
+	return reg.Register(perm, roles...)
+}
+
+// FreezePermissionRegistry seals plugin permission registration after InitAll.
+func (a *App) FreezePermissionRegistry() {
+	if reg := a.PermissionRegistry(); reg != nil {
+		reg.Freeze()
+	}
 }
 
 // RegisterConfig registers admin-editable settings for this plugin.

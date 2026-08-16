@@ -44,6 +44,7 @@ func syncDiscoveryFacetsFromDB(cfg *config.Config, log logger.Logger, conn *sql.
 		Bootstrap: &plugin.Bootstrap{DB: conn},
 	}
 	pluginApp.SetExtensionRegistry(extensionApp.NewRegistry())
+	preparePermissionRegistry(pluginApp)
 	// Do not abort on unrelated plugin init failures; only the search provider is required.
 	if summary := registry.InitAll(pluginApp); summary.Failed > 0 {
 		log.Warn("discovery_facet_sync.plugin_init_partial", map[string]interface{}{
@@ -51,6 +52,7 @@ func syncDiscoveryFacetsFromDB(cfg *config.Config, log logger.Logger, conn *sql.
 			"initialized": summary.Initialized,
 		})
 	}
+	freezePermissionRegistry(pluginApp) // discovery facet sync: freeze only (no BindRuntime)
 	searchEngine, err := resolveSearchEngine(pluginApp, conn, cfg)
 	if err != nil {
 		return err

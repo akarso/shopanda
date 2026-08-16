@@ -26,6 +26,7 @@ import (
 	"github.com/akarso/shopanda/internal/domain/customer"
 	"github.com/akarso/shopanda/internal/domain/jobs"
 	"github.com/akarso/shopanda/internal/domain/mail"
+	"github.com/akarso/shopanda/internal/domain/rbac"
 	"github.com/akarso/shopanda/internal/domain/scheduler"
 	"github.com/akarso/shopanda/internal/domain/search"
 	"github.com/akarso/shopanda/internal/infrastructure/cron"
@@ -174,11 +175,12 @@ func runServe(cfg *config.Config, log logger.Logger, embedScheduler bool) error 
 
 	rt, err := wireServeRuntime(cfg, log, conn, repos)
 	if err != nil {
-		return err
+		return err // UnbindRuntime already run inside wireServeRuntime
 	}
 
 	handler, err := buildServeHandler(cfg, log, rt, conn)
 	if err != nil {
+		rbac.UnbindRuntime()
 		return err
 	}
 
@@ -198,6 +200,7 @@ func runServe(cfg *config.Config, log logger.Logger, embedScheduler bool) error 
 		runtime.RegisterCartRecovery(rt.jobQueue, log, sched)
 		runtime.RegisterAuditRetention(rt.jobQueue, log, sched)
 		if err := integrationApp.RegisterSyncJobCronTriggers(rt.pluginApp, rt.jobQueue, sched, log); err != nil {
+			rbac.UnbindRuntime()
 			return fmt.Errorf("sync job cron triggers: %w", err)
 		}
 		schedulerCtx, cancel := context.WithCancel(context.Background())
@@ -372,9 +375,11 @@ func runScheduler(cfg *config.Config, log logger.Logger) error {
 	if err := wireIntegrationStockSyncerFromDB(conn, pluginApp); err != nil {
 		return err
 	}
+	preparePermissionRegistry(pluginApp)
 	if summary := registry.InitAll(pluginApp); summary.Failed > 0 {
 		return fmt.Errorf("plugin init failed: %d plugin(s) failed to initialize", summary.Failed)
 	}
+	freezePermissionRegistry(pluginApp) // scheduler: freeze only (no BindRuntime; multi-command process)
 
 	jobQueue, err := postgres.NewJobQueue(conn)
 	if err != nil {
@@ -707,7 +712,11 @@ func runWorker(cfg *config.Config, log logger.Logger) error {
 	if err := wireIntegrationStockSyncerFromDB(conn, pluginApp); err != nil {
 		return err
 	}
-	registry.InitAll(pluginApp)
+	preparePermissionRegistry(pluginApp)
+	if summary := registry.InitAll(pluginApp); summary.Failed > 0 {
+		return fmt.Errorf("plugin init failed: %d plugin(s) failed to initialize", summary.Failed)
+	}
+	freezePermissionRegistry(pluginApp) // worker: freeze only (no BindRuntime)
 
 	jobWorker, _, _, err := setupWorker(conn, cfg, log, pluginApp)
 	if err != nil {
@@ -748,7 +757,11 @@ func runSearchReindex(cfg *config.Config, log logger.Logger) error {
 		Bootstrap: &plugin.Bootstrap{DB: conn},
 	}
 	pluginApp.SetExtensionRegistry(extensionApp.NewRegistry())
-	registry.InitAll(pluginApp)
+	preparePermissionRegistry(pluginApp)
+	if summary := registry.InitAll(pluginApp); summary.Failed > 0 {
+		return fmt.Errorf("plugin init failed: %d plugin(s) failed to initialize", summary.Failed)
+	}
+	freezePermissionRegistry(pluginApp) // search-reindex: freeze only (no BindRuntime)
 
 	searchEngine, err := resolveSearchEngine(pluginApp, conn, cfg)
 	if err != nil {

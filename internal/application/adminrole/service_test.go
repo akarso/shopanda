@@ -59,7 +59,7 @@ func TestService_UpdateRole_PersistsAndReloadsEffective(t *testing.T) {
 			identity.RoleManager: {rbac.ProductsRead},
 		},
 	}
-	svc := adminroleApp.NewService(repo)
+	svc := adminroleApp.NewService(repo, rbac.NewRegistry())
 
 	resp, err := svc.UpdateRole(context.Background(), identity.RoleManager, []string{
 		string(rbac.ProductsRead),
@@ -78,7 +78,7 @@ func TestService_UpdateRole_PersistsAndReloadsEffective(t *testing.T) {
 
 func TestService_UpdateRole_RejectsUnknownPermission(t *testing.T) {
 	repo := &stubRolePermRepo{}
-	svc := adminroleApp.NewService(repo)
+	svc := adminroleApp.NewService(repo, rbac.NewRegistry())
 
 	_, err := svc.UpdateRole(context.Background(), identity.RoleEditor, []string{"not.real"})
 	if err == nil {
@@ -87,7 +87,7 @@ func TestService_UpdateRole_RejectsUnknownPermission(t *testing.T) {
 }
 
 func TestService_Catalog_IncludesCorePermissions(t *testing.T) {
-	svc := adminroleApp.NewService(&stubRolePermRepo{})
+	svc := adminroleApp.NewService(&stubRolePermRepo{}, rbac.NewRegistry())
 	catalog := svc.Catalog()
 	if len(catalog) < len(rbac.CorePermissions()) {
 		t.Fatalf("catalog count = %d, want at least %d", len(catalog), len(rbac.CorePermissions()))

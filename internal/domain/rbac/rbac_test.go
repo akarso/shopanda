@@ -135,9 +135,6 @@ func TestHasPermission_Unknown(t *testing.T) {
 }
 
 func TestPermissionsForRole_Admin(t *testing.T) {
-	rbac.ResetPluginPermissions()
-	t.Cleanup(rbac.ResetPluginPermissions)
-
 	perms := rbac.PermissionsForRole(identity.RoleAdmin)
 	// Core admin grants in role_permissions.go (products/orders/categories/customers/
 	// invoices/media/content/settings/shipping/audit/extensions*).
@@ -177,64 +174,6 @@ func TestPermissionsForRole_Unknown(t *testing.T) {
 	perms := rbac.PermissionsForRole("bogus")
 	if perms != nil {
 		t.Errorf("unknown role should return nil, got %v", perms)
-	}
-}
-
-func TestRegisterPluginPermission(t *testing.T) {
-	t.Cleanup(rbac.ResetPluginPermissions)
-
-	perm := rbac.Permission("analytics.read")
-	err := rbac.RegisterPluginPermission(perm, identity.RoleAdmin, identity.RoleManager)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-
-	if !rbac.HasPermission(identity.RoleAdmin, perm) {
-		t.Error("admin should have plugin permission")
-	}
-	if !rbac.HasPermission(identity.RoleManager, perm) {
-		t.Error("manager should have plugin permission")
-	}
-	if rbac.HasPermission(identity.RoleEditor, perm) {
-		t.Error("editor should not have plugin permission")
-	}
-}
-
-func TestRegisterPluginPermission_RejectsCoreOverride(t *testing.T) {
-	t.Cleanup(rbac.ResetPluginPermissions)
-
-	err := rbac.RegisterPluginPermission(rbac.ProductsRead, identity.RoleSupport)
-	if err == nil {
-		t.Fatal("expected error when overriding core permission")
-	}
-}
-
-func TestRegisterPluginPermission_RejectsEmpty(t *testing.T) {
-	t.Cleanup(rbac.ResetPluginPermissions)
-
-	err := rbac.RegisterPluginPermission("", identity.RoleAdmin)
-	if err == nil {
-		t.Fatal("expected error for empty permission")
-	}
-}
-
-func TestRegisterPluginPermission_RejectsDuplicate(t *testing.T) {
-	t.Cleanup(rbac.ResetPluginPermissions)
-
-	perm := rbac.Permission("reports.read")
-	if err := rbac.RegisterPluginPermission(perm, identity.RoleAdmin); err != nil {
-		t.Fatalf("first registration failed: %v", err)
-	}
-	err := rbac.RegisterPluginPermission(perm, identity.RoleManager)
-	if err == nil {
-		t.Fatal("expected error for duplicate plugin permission")
-	}
-	// Original grant should be unchanged — admin still has it.
-	if !rbac.HasPermission(identity.RoleAdmin, perm) {
-		t.Error("original grant should be preserved")
-	}
-	if rbac.HasPermission(identity.RoleManager, perm) {
-		t.Error("duplicate registration should not have taken effect")
 	}
 }
 

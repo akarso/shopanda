@@ -13,16 +13,22 @@ import (
 
 // Service manages editable admin role permission assignments.
 type Service struct {
-	repo rbac.Repository
-	mu   sync.Mutex
+	repo    rbac.Repository
+	permReg *rbac.Registry
+	mu      sync.Mutex
 }
 
 // NewService creates an admin role service.
-func NewService(repo rbac.Repository) *Service {
+// permReg is the same frozen registry used during plugin Init (may be empty).
+func NewService(repo rbac.Repository, permReg *rbac.Registry) *Service {
 	if repo == nil {
 		panic("adminrole.NewService: nil repository")
 	}
-	return &Service{repo: repo}
+	if permReg == nil {
+		permReg = rbac.NewRegistry()
+		permReg.Freeze()
+	}
+	return &Service{repo: repo, permReg: permReg}
 }
 
 // PermissionCatalogEntry describes an assignable permission.
@@ -46,7 +52,7 @@ func (s *Service) Catalog() []PermissionCatalogEntry {
 	}
 
 	pluginDefaults := make(map[rbac.Permission][]string)
-	for _, entry := range rbac.PluginPermissions() {
+	for _, entry := range s.permReg.PluginPermissions() {
 		roles := make([]string, 0, len(entry.DefaultRoles))
 		for _, role := range entry.DefaultRoles {
 			roles = append(roles, string(role))
@@ -55,8 +61,8 @@ func (s *Service) Catalog() []PermissionCatalogEntry {
 		pluginDefaults[entry.Permission] = roles
 	}
 
-	out := make([]PermissionCatalogEntry, 0, len(rbac.CatalogPermissions()))
-	for _, perm := range rbac.CatalogPermissions() {
+	out := make([]PermissionCatalogEntry, 0, len(s.permReg.CatalogPermissions()))
+	for _, perm := range s.permReg.CatalogPermissions() {
 		entry := PermissionCatalogEntry{Permission: string(perm), Source: "core"}
 		if _, ok := coreSet[perm]; !ok {
 			entry.Source = "plugin"
@@ -98,7 +104,7 @@ func (s *Service) UpdateRole(ctx context.Context, role identity.Role, rawPermiss
 	if !rbac.IsAdminRole(role) {
 		return nil, apperror.Validation("invalid admin role")
 	}
-	perms, err := normalizePermissions(rawPermissions)
+	perms, err := s.normalizePermissions(rawPermissions)
 	if err != nil {
 		return nil, err
 	}
@@ -130,7 +136,7 @@ func (s *Service) SyncPluginDefaults(ctx context.Context) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	for _, entry := range rbac.PluginPermissions() {
+	for _, entry := range s.permReg.PluginPermissions() {
 		for _, role := range entry.DefaultRoles {
 			if err := s.repo.EnsurePermissions(ctx, role, []rbac.Permission{entry.Permission}); err != nil {
 				return fmt.Errorf("adminrole: sync plugin defaults: %w", err)
@@ -149,7 +155,7 @@ func (s *Service) loadEffectiveLocked(ctx context.Context) error {
 	return nil
 }
 
-func normalizePermissions(raw []string) ([]rbac.Permission, error) {
+func (s *Service) normalizePermissions(raw []string) ([]rbac.Permission, error) {
 	seen := make(map[rbac.Permission]struct{}, len(raw))
 	out := make([]rbac.Permission, 0, len(raw))
 	for _, item := range raw {
@@ -157,7 +163,7 @@ func normalizePermissions(raw []string) ([]rbac.Permission, error) {
 		if perm == "" {
 			return nil, apperror.Validation("permission must not be empty")
 		}
-		if !rbac.IsCatalogPermission(perm) {
+		if !s.permReg.IsCatalogPermission(perm) {
 			return nil, apperror.Validation("unknown permission: " + item)
 		}
 		if _, ok := seen[perm]; ok {

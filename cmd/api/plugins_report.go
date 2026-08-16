@@ -27,7 +27,9 @@ func bootstrapPluginReport(cfg *config.Config, log logger.Logger) (*plugin.Regis
 	app.SetHookRegistry(hooksapp.NewRegistry(log))
 	app.SetImportRegistry(importctxapp.NewRegistry(log))
 	app.SetExtensionRegistry(extensionApp.NewRegistry())
+	preparePermissionRegistry(app)
 	registry.InitAll(app)
+	freezePermissionRegistry(app) // plugins report: freeze only (no BindRuntime)
 	return registry, app
 }
 

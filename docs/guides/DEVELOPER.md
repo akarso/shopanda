@@ -160,7 +160,7 @@ The plugin app currently exposes:
 - `RegisterPricingStep`
 - `RegisterCheckoutStep`
 - `RegisterCompositionStep`
-- `RegisterPermission`
+- `RegisterPermission` — writes the app-owned `rbac.Registry` (wired before `InitAll`, frozen after; serve binds it for auth)
 
 Minimal example:
 
