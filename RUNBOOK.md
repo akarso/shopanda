@@ -50,6 +50,46 @@ Shopanda plugins are **compile-time registered** — there is no `.so` drop-in l
 
 If `/readyz` returns 503 while `/healthz` is 200, the API process is up but cannot reach Postgres (or the ping timed out).
 
+## Metrics (Prometheus)
+
+- **Disabled by default** (`metrics.enabled: false`). No `/metrics` listener starts at all — enabling nothing costs nothing.
+- When enabled, `/metrics` is served on a **dedicated listener** (`metrics.listen`, default `127.0.0.1:9090`) — not on the main app port. It is never merged into the public API surface or its middleware stack (no rate limit, no auth, no CORS).
+- **This endpoint has no built-in authentication.** The loopback-only default is the safety net: only change `metrics.listen` to a non-loopback address if the scrape path stays on a private network a scraper (e.g. Prometheus) can reach but the public internet cannot (Docker/Kubernetes internal network, VPN, or a reverse-proxy scrape rule with its own auth). Never bind it to a public interface directly.
+- Both `serve`/`dev` and standalone `worker` processes expose `/metrics` when enabled — each process only reports the metrics it can observe (the worker process has no HTTP requests to report; the API process still reports job failures for jobs enqueued from HTTP paths).
+- **Colocated serve + worker:** both default to `127.0.0.1:9090`. Only one process can bind that port — set distinct `metrics.listen` values (e.g. `127.0.0.1:9090` for serve, `127.0.0.1:9091` for worker) when both run on the same host with metrics enabled. Bind failures fail **startup** (not a silent async log).
+- **Production bind policy:** startup rejects `metrics.listen` on all interfaces (`0.0.0.0`, `::`) and on non-loopback addresses unless `SHOPANDA_DEV_MODE` is truthy. Default loopback + local scraper is the supported production path.
+- Env overrides: `SHOPANDA_METRICS_ENABLED`, `SHOPANDA_METRICS_LISTEN`.
+
+**Metrics exposed** (all labels are bounded — fixed enums, route templates, or compile-time job types; never raw URLs, IDs, or emails):
+
+| Metric | Type | Labels | Notes |
+| --- | --- | --- | --- |
+| `shopanda_http_requests_total` | counter | `route`, `method`, `status_class` | `route` is the matched route **template** (e.g. `GET /api/v1/products/{id}`), not the raw path. `status_class` is `2xx`/`3xx`/`4xx`/`5xx`/`other`, not the numeric code. Unmatched requests (404s) use the fixed label `unmatched`. |
+| `shopanda_http_request_duration_seconds` | histogram | `route`, `method` | Same bounded route/method labels. |
+| `shopanda_checkout_result_total` | counter | `outcome` (`success`/`failed`) | One increment per `checkout.Workflow.Execute` call (panics count as `failed`). |
+| `shopanda_job_failures_total` | counter | `job_type` | Incremented on handler error or "handler not found"; not incremented on success. |
+| `shopanda_webhook_deliveries_total` | counter | `outcome` (`success`/`failed`) | Skipped deliveries (inactive/unsubscribed endpoint, malformed job payload) are not counted — they were never attempted. |
+
+**Example Grafana/PromQL queries** (no dashboards ship — build your own from these):
+
+```promql
+# Error rate by route (RED: errors)
+sum(rate(shopanda_http_requests_total{status_class="5xx"}[5m])) by (route)
+  / sum(rate(shopanda_http_requests_total[5m])) by (route)
+
+# p95 latency by route (RED: duration)
+histogram_quantile(0.95, sum(rate(shopanda_http_request_duration_seconds_bucket[5m])) by (le, route))
+
+# Checkout failure rate
+sum(rate(shopanda_checkout_result_total{outcome="failed"}[5m]))
+  / sum(rate(shopanda_checkout_result_total[5m]))
+
+# Job failures by type
+sum(rate(shopanda_job_failures_total[15m])) by (job_type)
+```
+
+**Known limitation:** no OpenTelemetry tracing yet (tracked as a PR-1020 follow-up); metrics are counters/histograms only, no distributed traces.
+
 ## Container releases (GHCR)
 
 Version tags (`v*`) publish `ghcr.io/<owner>/shopanda`. **Pin deploys** to `sha-<full40gitsha>` or `@sha256:…` digest — not the version tag alias. See [DEPLOYMENT.md](docs/guides/DEPLOYMENT.md#pull-from-ghcr-releases).

@@ -9,10 +9,11 @@ C4Container
     Person(customer, "Customer", "Browses catalog, manages cart, places orders")
     Person(admin, "Admin", "Manages products, categories, collections, orders")
     System_Ext(paymentGateway, "Payment Gateway", "External payment processor")
+    System_Ext(prometheus, "Prometheus", "Metrics scraper (optional, metrics.enabled)")
 
     System_Boundary(shopanda, "Shopanda System") {
-        Container(apiServer, "API Server", "Go, net/http", "HTTP server: REST API, admin SPA, optional SSR storefront. Hexagonal layers: domain, application, infrastructure, interfaces.")
-        Container(worker, "Worker", "Go, same binary", "Background job processor (email, cache cleanup, async tasks). Embedded in `app dev`/`serve`; separate service in production.")
+        Container(apiServer, "API Server", "Go, net/http", "HTTP server: REST API, admin SPA, optional SSR storefront. Hexagonal layers: domain, application, infrastructure, interfaces. Optional /metrics on a separate loopback-by-default listener (metrics.enabled, default off).")
+        Container(worker, "Worker", "Go, same binary", "Background job processor (email, cache cleanup, async tasks). Embedded in `app dev`/`serve`; separate service in production. Optional /metrics listener same as API Server.")
         Container(scheduler, "Scheduler", "Go, same binary", "Cron scheduler enqueueing recurring jobs. Embedded in `app dev`; separate service in production.")
         Container(pluginSystem, "Plugin System", "Go interfaces", "Three-tier extensions: core plugins (config-gated), external plugins (compile-time). Events, pipelines, workflows.")
         Container(eventBus, "Event Bus", "Go, in-process", "Publish/subscribe for domain events. Sync and async handlers.")
@@ -22,6 +23,8 @@ C4Container
     Rel(customer, apiServer, "Storefront and REST API", "HTTPS")
     Rel(admin, apiServer, "Admin UI and REST API (authenticated)", "HTTPS")
     Rel(paymentGateway, apiServer, "Webhook callbacks", "HTTPS POST")
+    Rel(prometheus, apiServer, "Scrapes /metrics (optional, private network only)", "HTTP")
+    Rel(prometheus, worker, "Scrapes /metrics (optional, private network only)", "HTTP")
     Rel(apiServer, postgres, "Reads/writes data", "SQL / lib/pq")
     Rel(worker, postgres, "Claims and completes jobs", "SQL / lib/pq")
     Rel(scheduler, postgres, "Enqueues scheduled jobs", "SQL / lib/pq")

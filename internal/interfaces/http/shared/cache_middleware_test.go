@@ -1,4 +1,4 @@
-package http_test
+package shared_test
 
 import (
 	"net/http"
@@ -6,13 +6,13 @@ import (
 	"testing"
 
 	"github.com/akarso/shopanda/internal/domain/identity"
-	shophttp "github.com/akarso/shopanda/internal/interfaces/http"
+	"github.com/akarso/shopanda/internal/interfaces/http/shared"
 	"github.com/akarso/shopanda/internal/platform/auth"
 )
 
 func TestCacheControlMiddleware_CacheableGET(t *testing.T) {
 	noCachePrefixes := []string{"/api/v1/carts", "/api/v1/checkout"}
-	mw := shophttp.CacheControlMiddleware(noCachePrefixes)
+	mw := shared.CacheControlMiddleware(noCachePrefixes)
 	handler := mw(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 	}))
@@ -29,7 +29,7 @@ func TestCacheControlMiddleware_CacheableGET(t *testing.T) {
 
 func TestCacheControlMiddleware_NoCachePrefixGET(t *testing.T) {
 	noCachePrefixes := []string{"/api/v1/carts", "/api/v1/checkout"}
-	mw := shophttp.CacheControlMiddleware(noCachePrefixes)
+	mw := shared.CacheControlMiddleware(noCachePrefixes)
 	handler := mw(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 	}))
@@ -47,7 +47,7 @@ func TestCacheControlMiddleware_NoCachePrefixGET(t *testing.T) {
 }
 
 func TestCacheControlMiddleware_POSTAlwaysNoStore(t *testing.T) {
-	mw := shophttp.CacheControlMiddleware(nil)
+	mw := shared.CacheControlMiddleware(nil)
 	handler := mw(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 	}))
@@ -63,7 +63,7 @@ func TestCacheControlMiddleware_POSTAlwaysNoStore(t *testing.T) {
 }
 
 func TestCacheControlMiddleware_HEADCacheable(t *testing.T) {
-	mw := shophttp.CacheControlMiddleware(nil)
+	mw := shared.CacheControlMiddleware(nil)
 	handler := mw(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 	}))
@@ -79,7 +79,7 @@ func TestCacheControlMiddleware_HEADCacheable(t *testing.T) {
 }
 
 func TestCacheControlMiddleware_WriteMethods(t *testing.T) {
-	mw := shophttp.CacheControlMiddleware(nil)
+	mw := shared.CacheControlMiddleware(nil)
 
 	for _, method := range []string{http.MethodPut, http.MethodDelete, http.MethodPatch} {
 		handler := mw(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -99,7 +99,7 @@ func TestCacheControlMiddleware_WriteMethods(t *testing.T) {
 
 func TestCacheControlMiddleware_StorefrontCacheable(t *testing.T) {
 	noCachePrefixes := []string{"/api/v1/carts"}
-	mw := shophttp.CacheControlMiddleware(noCachePrefixes)
+	mw := shared.CacheControlMiddleware(noCachePrefixes)
 	handler := mw(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 	}))
@@ -115,7 +115,7 @@ func TestCacheControlMiddleware_StorefrontCacheable(t *testing.T) {
 }
 
 func TestCacheControlMiddleware_GETWithAuthorizationNoStore(t *testing.T) {
-	mw := shophttp.CacheControlMiddleware(nil)
+	mw := shared.CacheControlMiddleware(nil)
 	handler := mw(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 	}))
@@ -136,7 +136,7 @@ func TestCacheControlMiddleware_GETWithAuthorizationNoStore(t *testing.T) {
 
 func TestCacheControlMiddleware_PrefixBoundaryNoMatch(t *testing.T) {
 	noCachePrefixes := []string{"/api/v1/carts"}
-	mw := shophttp.CacheControlMiddleware(noCachePrefixes)
+	mw := shared.CacheControlMiddleware(noCachePrefixes)
 	handler := mw(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 	}))

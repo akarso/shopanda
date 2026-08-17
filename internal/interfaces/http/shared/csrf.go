@@ -1,4 +1,4 @@
-package http
+package shared
 
 import (
 	"context"
@@ -15,7 +15,7 @@ const shopandaCSRFCookieName = "shopanda_csrf"
 type shopandaCSRFContextKey struct{}
 
 func CSRFMiddleware(trustedProxies ...string) Middleware {
-	trustedNets := parseTrustedProxies(trustedProxies)
+	trustedNets := ParseTrustedProxies(trustedProxies)
 
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -48,7 +48,10 @@ func CSRFMiddleware(trustedProxies ...string) Middleware {
 	}
 }
 
-func shopandaCSRFToken(r *http.Request) string {
+// CSRFToken returns the CSRF token associated with the request, preferring
+// the value stashed in context by CSRFMiddleware and falling back to the
+// raw cookie (e.g. for handlers that run before the middleware sets context).
+func CSRFToken(r *http.Request) string {
 	if r == nil {
 		return ""
 	}
@@ -77,7 +80,7 @@ func shopandaEnsureCSRFToken(w http.ResponseWriter, r *http.Request, trusted []*
 		Value:    token,
 		Path:     "/",
 		HttpOnly: true,
-		Secure:   isRequestSecure(r, trusted),
+		Secure:   IsRequestSecure(r, trusted),
 		SameSite: http.SameSiteStrictMode,
 	})
 
@@ -105,7 +108,9 @@ func shopandaRequiresCSRFPath(path string) bool {
 	return strings.HasPrefix(path, "/checkout/") || strings.HasPrefix(path, "/account/")
 }
 
-func isRequestSecure(r *http.Request, trusted []*net.IPNet) bool {
+// IsRequestSecure reports whether r arrived over TLS, either directly or via
+// a trusted reverse proxy that forwarded X-Forwarded-Proto: https.
+func IsRequestSecure(r *http.Request, trusted []*net.IPNet) bool {
 	if r == nil {
 		return false
 	}

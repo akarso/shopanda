@@ -1,4 +1,4 @@
-package http_test
+package shared_test
 
 import (
 	"bytes"
@@ -7,7 +7,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	shophttp "github.com/akarso/shopanda/internal/interfaces/http"
+	"github.com/akarso/shopanda/internal/interfaces/http/shared"
 	"github.com/akarso/shopanda/internal/platform/config"
 	"github.com/akarso/shopanda/internal/platform/logger"
 )
@@ -16,7 +16,7 @@ func testLog() logger.Logger { return logger.NewWithWriter(&bytes.Buffer{}, "inf
 
 func TestRateLimitMiddleware_Disabled(t *testing.T) {
 	cfg := config.RateLimitConfig{Enabled: false}
-	mw := shophttp.RateLimitMiddleware(cfg, testLog())
+	mw := shared.RateLimitMiddleware(cfg, testLog())
 	called := false
 	handler := mw(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		called = true
@@ -41,7 +41,7 @@ func TestRateLimitMiddleware_DefaultLimit(t *testing.T) {
 		Enabled: true,
 		Default: config.RateLimitRule{Rate: 1, Burst: 2},
 	}
-	mw := shophttp.RateLimitMiddleware(cfg, testLog())
+	mw := shared.RateLimitMiddleware(cfg, testLog())
 	handler := mw(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 	}))
@@ -71,7 +71,7 @@ func TestRateLimitMiddleware_DefaultLimit(t *testing.T) {
 	}
 
 	// Verify JSON error body.
-	var resp shophttp.Response
+	var resp shared.Response
 	if err := json.Unmarshal(rr.Body.Bytes(), &resp); err != nil {
 		t.Fatalf("unmarshal: %v", err)
 	}
@@ -91,7 +91,7 @@ func TestRateLimitMiddleware_PerRouteOverride(t *testing.T) {
 			{PathPrefix: "/api/v1/auth", Rate: 1, Burst: 1}, // strict per-route
 		},
 	}
-	mw := shophttp.RateLimitMiddleware(cfg, testLog())
+	mw := shared.RateLimitMiddleware(cfg, testLog())
 	handler := mw(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 	}))
@@ -133,7 +133,7 @@ func TestRateLimitMiddleware_OverlappingPrefixes(t *testing.T) {
 			{PathPrefix: "/api/v1/auth", Rate: 1, Burst: 1}, // specific, strict
 		},
 	}
-	mw := shophttp.RateLimitMiddleware(cfg, testLog())
+	mw := shared.RateLimitMiddleware(cfg, testLog())
 	handler := mw(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 	}))
@@ -172,7 +172,7 @@ func TestRateLimitMiddleware_ClientIP_XForwardedFor_TrustedProxy(t *testing.T) {
 		Default:        config.RateLimitRule{Rate: 1, Burst: 1},
 		TrustedProxies: []string{"10.0.0.50"},
 	}
-	mw := shophttp.RateLimitMiddleware(cfg, testLog())
+	mw := shared.RateLimitMiddleware(cfg, testLog())
 	handler := mw(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 	}))
@@ -214,7 +214,7 @@ func TestRateLimitMiddleware_ClientIP_XRealIP_TrustedProxy(t *testing.T) {
 		Default:        config.RateLimitRule{Rate: 1, Burst: 1},
 		TrustedProxies: []string{"10.0.0.50"},
 	}
-	mw := shophttp.RateLimitMiddleware(cfg, testLog())
+	mw := shared.RateLimitMiddleware(cfg, testLog())
 	handler := mw(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 	}))
@@ -244,7 +244,7 @@ func TestRateLimitMiddleware_ClientIP_UntrustedProxyIgnoresHeaders(t *testing.T)
 		Default:        config.RateLimitRule{Rate: 1, Burst: 1},
 		TrustedProxies: []string{"10.0.0.50"}, // only this IP is trusted
 	}
-	mw := shophttp.RateLimitMiddleware(cfg, testLog())
+	mw := shared.RateLimitMiddleware(cfg, testLog())
 	handler := mw(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 	}))

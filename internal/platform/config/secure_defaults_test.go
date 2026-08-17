@@ -110,6 +110,63 @@ database:
 	}
 }
 
+func TestLoad_RejectsMetricsWildcardWithoutDevMode(t *testing.T) {
+	withTestBaseURL(t)
+	t.Setenv("SHOPANDA_DEV_MODE", "false")
+	t.Setenv("SHOPANDA_DATABASE_PASSWORD", "strong-enough-secret")
+	path := writeYAML(t, `
+database:
+  host: localhost
+  sslmode: require
+metrics:
+  enabled: true
+  listen: "0.0.0.0:9090"
+`)
+	_, err := loadCfg(t, path)
+	if err == nil || !strings.Contains(err.Error(), "metrics.listen") {
+		t.Fatalf("err=%v, want metrics.listen rejection", err)
+	}
+}
+
+func TestLoad_RejectsMetricsNonLoopbackWithoutDevMode(t *testing.T) {
+	withTestBaseURL(t)
+	t.Setenv("SHOPANDA_DEV_MODE", "false")
+	t.Setenv("SHOPANDA_DATABASE_PASSWORD", "strong-enough-secret")
+	path := writeYAML(t, `
+database:
+  host: localhost
+  sslmode: require
+metrics:
+  enabled: true
+  listen: "10.0.0.5:9090"
+`)
+	_, err := loadCfg(t, path)
+	if err == nil || !strings.Contains(err.Error(), "metrics.listen") {
+		t.Fatalf("err=%v, want non-loopback metrics.listen rejection", err)
+	}
+}
+
+func TestLoad_AllowsMetricsLoopbackWithoutDevMode(t *testing.T) {
+	withTestBaseURL(t)
+	t.Setenv("SHOPANDA_DEV_MODE", "false")
+	t.Setenv("SHOPANDA_DATABASE_PASSWORD", "strong-enough-secret")
+	path := writeYAML(t, `
+database:
+  host: localhost
+  sslmode: require
+metrics:
+  enabled: true
+  listen: "127.0.0.1:9090"
+`)
+	cfg, err := loadCfg(t, path)
+	if err != nil {
+		t.Fatalf("Load() error: %v", err)
+	}
+	if cfg.Metrics.Listen != "127.0.0.1:9090" {
+		t.Errorf("Metrics.Listen = %q", cfg.Metrics.Listen)
+	}
+}
+
 func TestLoad_RejectsSSLDisableWithoutDevMode(t *testing.T) {
 	withTestBaseURL(t)
 	t.Setenv("SHOPANDA_DEV_MODE", "false")

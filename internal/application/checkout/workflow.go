@@ -7,6 +7,7 @@ import (
 
 	"github.com/akarso/shopanda/internal/platform/event"
 	"github.com/akarso/shopanda/internal/platform/logger"
+	"github.com/akarso/shopanda/internal/platform/metrics"
 )
 
 // Event constants for checkout workflow observability.
@@ -44,9 +45,10 @@ type CheckoutCompletedData struct {
 
 // Workflow executes a sequence of Steps against a Context.
 type Workflow struct {
-	steps []Step
-	bus   *event.Bus
-	log   logger.Logger
+	steps   []Step
+	bus     *event.Bus
+	log     logger.Logger
+	metrics metrics.Recorder
 }
 
 // NewWorkflow creates a Workflow with the given steps.
@@ -58,7 +60,17 @@ func NewWorkflow(steps []Step, bus *event.Bus, log logger.Logger) *Workflow {
 	if log == nil {
 		panic("checkout: logger must not be nil")
 	}
-	return &Workflow{steps: steps, bus: bus, log: log}
+	return &Workflow{steps: steps, bus: bus, log: log, metrics: metrics.Noop()}
+}
+
+// WithMetrics sets the metrics recorder used to record checkout outcomes.
+// Optional; if never called, outcomes are simply not recorded. Returns the
+// Workflow for chaining.
+func (w *Workflow) WithMetrics(m metrics.Recorder) *Workflow {
+	if m != nil {
+		w.metrics = m
+	}
+	return w
 }
 
 // publishEvent publishes an event and logs + returns any error from sync handlers.
@@ -74,7 +86,18 @@ func (w *Workflow) publishEvent(ctx context.Context, name, source string, data i
 
 // Execute runs every step in sequence. It stops on the first error
 // and emits lifecycle events for observability.
-func (w *Workflow) Execute(ctx context.Context, cctx *Context) error {
+func (w *Workflow) Execute(ctx context.Context, cctx *Context) (err error) {
+	defer func() {
+		if r := recover(); r != nil {
+			w.metrics.CheckoutResult(metrics.OutcomeFailed)
+			panic(r)
+		}
+		outcome := metrics.OutcomeSuccess
+		if err != nil {
+			outcome = metrics.OutcomeFailed
+		}
+		w.metrics.CheckoutResult(outcome)
+	}()
 	for _, step := range w.steps {
 		select {
 		case <-ctx.Done():

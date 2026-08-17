@@ -12,11 +12,26 @@ type Logger interface {
 	Error(msg string, err error, fields map[string]interface{})
 }
 
+// MetricsRecorder records job failure counts. For registered handlers,
+// jobType is a fixed compile-time type string. The "handler not found"
+// path passes the dequeued job.Type as-is — still a bounded label in
+// practice because enqueue sites use compile-time constants.
+type MetricsRecorder interface {
+	JobFailure(jobType string)
+}
+
+// noopMetrics discards recordings; the default until WithMetrics is called,
+// so processNext never needs a nil check.
+type noopMetrics struct{}
+
+func (noopMetrics) JobFailure(string) {}
+
 // Worker polls the queue and dispatches jobs to registered handlers.
 type Worker struct {
 	queue    Queue
 	handlers map[string]Handler
 	log      Logger
+	metrics  MetricsRecorder
 	poll     time.Duration
 	mu       sync.RWMutex
 	stop     chan struct{}
@@ -32,9 +47,20 @@ func NewWorker(queue Queue, log Logger, pollInterval time.Duration) *Worker {
 		queue:    queue,
 		handlers: make(map[string]Handler),
 		log:      log,
+		metrics:  noopMetrics{},
 		poll:     pollInterval,
 		stop:     make(chan struct{}),
 	}
+}
+
+// WithMetrics sets the metrics recorder used to count job failures. Optional
+// — if never called, failures are simply not recorded. Returns the Worker
+// for chaining.
+func (w *Worker) WithMetrics(m MetricsRecorder) *Worker {
+	if m != nil {
+		w.metrics = m
+	}
+	return w
 }
 
 // Register adds a handler for a job type. Panics on duplicate registration.
@@ -100,6 +126,7 @@ func (w *Worker) processNext(ctx context.Context) {
 			"job_id":   job.ID,
 			"job_type": job.Type,
 		})
+		w.metrics.JobFailure(job.Type)
 		if failErr := w.queue.Fail(ctx, job.ID, nil); failErr != nil {
 			w.log.Error("worker.fail.error", failErr, map[string]interface{}{"job_id": job.ID})
 		}
@@ -118,6 +145,7 @@ func (w *Worker) processNext(ctx context.Context) {
 			"job_type": job.Type,
 			"attempt":  job.Attempts,
 		})
+		w.metrics.JobFailure(job.Type)
 		if failErr := w.queue.Fail(ctx, job.ID, err); failErr != nil {
 			w.log.Error("worker.fail.error", failErr, map[string]interface{}{"job_id": job.ID})
 		}

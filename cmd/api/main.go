@@ -34,6 +34,7 @@ import (
 	"github.com/akarso/shopanda/internal/platform/config"
 	"github.com/akarso/shopanda/internal/platform/db"
 	"github.com/akarso/shopanda/internal/platform/logger"
+	"github.com/akarso/shopanda/internal/platform/metrics"
 	"github.com/akarso/shopanda/internal/platform/migrate"
 
 	"github.com/akarso/shopanda/internal/platform/plugin"
@@ -173,7 +174,9 @@ func runServe(cfg *config.Config, log logger.Logger, embedScheduler bool) error 
 		return err
 	}
 
-	rt, err := wireServeRuntime(cfg, log, conn, repos)
+	metricsRecorder, metricsHandler := newMetrics(cfg)
+
+	rt, err := wireServeRuntime(cfg, log, conn, repos, metricsRecorder)
 	if err != nil {
 		return err // UnbindRuntime already run inside wireServeRuntime
 	}
@@ -221,6 +224,15 @@ func runServe(cfg *config.Config, log logger.Logger, embedScheduler bool) error 
 		close(workerDone)
 	}()
 
+	// Metrics: dedicated listener, only started when metrics.enabled (see
+	// configs/config.example.yaml). Scrapes are stateless, so an abrupt
+	// Close() on shutdown is sufficient — no drain grace needed.
+	metricsSrv, metricsDone, err := startMetricsServer(cfg, metricsHandler, log)
+	if err != nil {
+		rbac.UnbindRuntime()
+		return fmt.Errorf("metrics: %w", err)
+	}
+
 	// Block until server shuts down (handles SIGINT/SIGTERM internally).
 	err = srv.ListenAndServe()
 
@@ -232,6 +244,10 @@ func runServe(cfg *config.Config, log logger.Logger, embedScheduler bool) error 
 	}
 	cancels = append(cancels, workerCancel)
 	dones = append(dones, workerDone)
+	if metricsSrv != nil {
+		cancels = append(cancels, func() { metricsSrv.Close() })
+		dones = append(dones, metricsDone)
+	}
 
 	const backgroundTimeout = 10 * time.Second
 	// Extra wait so Drain can log event.bus.drain.timeout before process exit.
@@ -636,12 +652,15 @@ func (e storefrontOrderClaimEmailer) SendClaimEmail(contactEmail, claimToken str
 // setupWorker creates a job queue, worker, mail handler, and cache cleanup
 // handler. It returns the configured worker, the job queue (needed by
 // notification services), and the cache instance.
-func setupWorker(conn *sql.DB, cfg *config.Config, log logger.Logger, app *plugin.App) (*jobs.Worker, jobs.Queue, cache.Cache, error) {
+func setupWorker(conn *sql.DB, cfg *config.Config, log logger.Logger, app *plugin.App, metricsRecorder metrics.Recorder) (*jobs.Worker, jobs.Queue, cache.Cache, error) {
+	if metricsRecorder == nil {
+		metricsRecorder = metrics.Noop()
+	}
 	jobQueue, err := resolveJobQueue(app, conn, cfg)
 	if err != nil {
 		return nil, nil, nil, err
 	}
-	jobWorker := jobs.NewWorker(jobQueue, log, time.Second)
+	jobWorker := jobs.NewWorker(jobQueue, log, time.Second).WithMetrics(metricsRecorder)
 
 	mailer, err := resolveMailer(app, cfg)
 	if err != nil {
@@ -700,7 +719,7 @@ func setupWorker(conn *sql.DB, cfg *config.Config, log logger.Logger, app *plugi
 	if err != nil {
 		return nil, nil, nil, err
 	}
-	jobWorker.Register(webhookApp.NewDeliverHandler(merchantWebhookRepo, webhookApp.NewDefaultHTTPPoster(), log))
+	jobWorker.Register(webhookApp.NewDeliverHandler(merchantWebhookRepo, webhookApp.NewDefaultHTTPPoster(), log).WithMetrics(metricsRecorder))
 
 	if err := integrationApp.RegisterSyncJobHandlers(app, jobWorker); err != nil {
 		return nil, nil, nil, fmt.Errorf("sync job handlers: %w", err)
@@ -738,9 +757,18 @@ func runWorker(cfg *config.Config, log logger.Logger) error {
 	}
 	freezePermissionRegistry(pluginApp) // worker: freeze only (no BindRuntime)
 
-	jobWorker, _, _, err := setupWorker(conn, cfg, log, pluginApp)
+	metricsRecorder, metricsHandler := newMetrics(cfg)
+	jobWorker, _, _, err := setupWorker(conn, cfg, log, pluginApp, metricsRecorder)
 	if err != nil {
 		return err
+	}
+
+	metricsSrv, _, err := startMetricsServer(cfg, metricsHandler, log)
+	if err != nil {
+		return fmt.Errorf("metrics: %w", err)
+	}
+	if metricsSrv != nil {
+		defer metricsSrv.Close()
 	}
 
 	log.Info("worker.start", nil)

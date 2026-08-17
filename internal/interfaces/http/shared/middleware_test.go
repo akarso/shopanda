@@ -1,4 +1,4 @@
-package http_test
+package shared_test
 
 import (
 	"io"
@@ -6,12 +6,12 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	shophttp "github.com/akarso/shopanda/internal/interfaces/http"
+	"github.com/akarso/shopanda/internal/interfaces/http/shared"
 	"github.com/akarso/shopanda/internal/platform/logger"
 )
 
 func TestRequestIDMiddleware_SetsHeader(t *testing.T) {
-	mw := shophttp.RequestIDMiddleware()
+	mw := shared.RequestIDMiddleware()
 	handler := mw(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 	}))
@@ -26,7 +26,7 @@ func TestRequestIDMiddleware_SetsHeader(t *testing.T) {
 }
 
 func TestRequestIDMiddleware_EchoesHeader(t *testing.T) {
-	mw := shophttp.RequestIDMiddleware()
+	mw := shared.RequestIDMiddleware()
 	handler := mw(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 	}))
@@ -43,7 +43,7 @@ func TestRequestIDMiddleware_EchoesHeader(t *testing.T) {
 
 func TestLoggingMiddleware_Returns200(t *testing.T) {
 	log := logger.NewWithWriter(io.Discard, "info")
-	mw := shophttp.LoggingMiddleware(log)
+	mw := shared.LoggingMiddleware(log)
 	handler := mw(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 	}))
@@ -59,7 +59,7 @@ func TestLoggingMiddleware_Returns200(t *testing.T) {
 
 func TestRecoveryMiddleware_CatchesPanic(t *testing.T) {
 	log := logger.NewWithWriter(io.Discard, "info")
-	mw := shophttp.RecoveryMiddleware(log)
+	mw := shared.RecoveryMiddleware(log)
 	handler := mw(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		panic("test panic")
 	}))
@@ -74,7 +74,7 @@ func TestRecoveryMiddleware_CatchesPanic(t *testing.T) {
 }
 
 func TestStatusWriter_CapturesCode(t *testing.T) {
-	mw := shophttp.LoggingMiddleware(logger.NewWithWriter(io.Discard, "info"))
+	mw := shared.LoggingMiddleware(logger.NewWithWriter(io.Discard, "info"))
 	handler := mw(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusCreated)
 	}))

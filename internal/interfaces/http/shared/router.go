@@ -1,4 +1,4 @@
-package http
+package shared
 
 import (
 	"fmt"
@@ -48,6 +48,18 @@ func (r *Router) TryHandle(pattern string, handler http.Handler) (err error) {
 	}()
 	r.mux.Handle(pattern, handler)
 	return nil
+}
+
+// RoutePattern returns the registered ServeMux pattern that would handle req
+// (e.g. "GET /api/v1/products/{id}"), without invoking any handler. Returns
+// "" when nothing matches (e.g. a 404 or a mux-internal redirect).
+//
+// This exists so cross-cutting middleware (metrics) can label requests with
+// a bounded route template instead of the raw URL path, which has unbounded
+// cardinality (IDs, slugs, arbitrary 404 paths).
+func (r *Router) RoutePattern(req *http.Request) string {
+	_, pattern := r.mux.Handler(req)
+	return pattern
 }
 
 // Handler returns the final http.Handler with all middleware applied.

@@ -1,4 +1,4 @@
-package http
+package shared
 
 import (
 	"net/http"
@@ -22,14 +22,14 @@ const (
 // Strict-Transport-Security is set only when the request is TLS (r.TLS != nil)
 // or when X-Forwarded-Proto: https is honored from a trusted proxy.
 func SecurityHeadersMiddleware(trustedProxies ...string) Middleware {
-	trusted := parseTrustedProxies(trustedProxies)
+	trusted := ParseTrustedProxies(trustedProxies)
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			h := w.Header()
 			h.Set("X-Content-Type-Options", HeaderContentTypeOptions)
 			h.Set("X-Frame-Options", HeaderFrameOptions)
 			h.Set("Referrer-Policy", HeaderReferrerPolicy)
-			if isRequestSecure(r, trusted) {
+			if IsRequestSecure(r, trusted) {
 				h.Set("Strict-Transport-Security", HeaderHSTS)
 			}
 			next.ServeHTTP(w, r)

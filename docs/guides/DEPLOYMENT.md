@@ -248,6 +248,15 @@ Set `rate_limit.trusted_proxies` in YAML when behind a reverse proxy so both rat
 
 **Multi-instance:** keep `SHOPANDA_AUTH_LOCKOUT_STORE=cache` (default) so counters share the configured `cache.driver` (postgres or redis) via atomic increment. `store=memory` must only be used for single-instance deployments.
 
+### Metrics (Prometheus)
+
+| Variable | Required | Default | Purpose |
+| --- | --- | --- | --- |
+| `SHOPANDA_METRICS_ENABLED` | No | `false` | Expose Prometheus metrics on a dedicated listener |
+| `SHOPANDA_METRICS_LISTEN` | No | `127.0.0.1:9090` | Bind address for the metrics listener (only used when enabled). When **serve and worker** both run on one host with metrics enabled, give each process a **distinct** port (e.g. `9090` / `9091`) — bind failures fail startup. |
+
+Metrics are served on a **separate listener** from the main app port, and are **never** wrapped by the main router's rate limit, auth, or CORS middleware — this endpoint has no auth of its own. The loopback-only default means enabling metrics does not expose anything publicly by itself. Startup **rejects** wildcard binds (`0.0.0.0`, `::`) and non-loopback addresses unless `SHOPANDA_DEV_MODE` is truthy. Only change `metrics.listen` to a non-loopback address in dev, or use loopback + a local/on-host scraper in production. See [RUNBOOK.md](../../RUNBOOK.md#metrics-prometheus) for exposed metric names, label policy, colocated serve/worker ports, and example PromQL queries.
+
 ### Seeding
 
 | Variable | Required | Default | Purpose |

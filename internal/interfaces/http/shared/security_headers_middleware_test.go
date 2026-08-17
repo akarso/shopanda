@@ -1,4 +1,4 @@
-package http_test
+package shared_test
 
 import (
 	"bytes"
@@ -10,12 +10,12 @@ import (
 	"strings"
 	"testing"
 
-	shophttp "github.com/akarso/shopanda/internal/interfaces/http"
+	"github.com/akarso/shopanda/internal/interfaces/http/shared"
 	"github.com/akarso/shopanda/internal/platform/logger"
 )
 
 func TestSecurityHeadersMiddleware_ExactValues(t *testing.T) {
-	mw := shophttp.SecurityHeadersMiddleware()
+	mw := shared.SecurityHeadersMiddleware()
 	handler := mw(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 	}))
@@ -39,7 +39,7 @@ func TestSecurityHeadersMiddleware_ExactValues(t *testing.T) {
 }
 
 func TestSecurityHeadersMiddleware_HSTSOnTLS(t *testing.T) {
-	mw := shophttp.SecurityHeadersMiddleware()
+	mw := shared.SecurityHeadersMiddleware()
 	handler := mw(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 	}))
@@ -49,13 +49,13 @@ func TestSecurityHeadersMiddleware_HSTSOnTLS(t *testing.T) {
 	rec := httptest.NewRecorder()
 	handler.ServeHTTP(rec, req)
 
-	if got := rec.Header().Get("Strict-Transport-Security"); got != shophttp.HeaderHSTS {
-		t.Fatalf("HSTS = %q, want %q", got, shophttp.HeaderHSTS)
+	if got := rec.Header().Get("Strict-Transport-Security"); got != shared.HeaderHSTS {
+		t.Fatalf("HSTS = %q, want %q", got, shared.HeaderHSTS)
 	}
 }
 
 func TestSecurityHeadersMiddleware_HSTSOnTrustedForwardedProto(t *testing.T) {
-	mw := shophttp.SecurityHeadersMiddleware("10.0.0.0/8")
+	mw := shared.SecurityHeadersMiddleware("10.0.0.0/8")
 	handler := mw(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 	}))
@@ -66,13 +66,13 @@ func TestSecurityHeadersMiddleware_HSTSOnTrustedForwardedProto(t *testing.T) {
 	rec := httptest.NewRecorder()
 	handler.ServeHTTP(rec, req)
 
-	if got := rec.Header().Get("Strict-Transport-Security"); got != shophttp.HeaderHSTS {
-		t.Fatalf("HSTS via trusted proto = %q, want %q", got, shophttp.HeaderHSTS)
+	if got := rec.Header().Get("Strict-Transport-Security"); got != shared.HeaderHSTS {
+		t.Fatalf("HSTS via trusted proto = %q, want %q", got, shared.HeaderHSTS)
 	}
 }
 
 func TestSecurityHeadersMiddleware_HSTSAbsentUntrustedForwardedProto(t *testing.T) {
-	mw := shophttp.SecurityHeadersMiddleware("10.0.0.0/8")
+	mw := shared.SecurityHeadersMiddleware("10.0.0.0/8")
 	handler := mw(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 	}))
@@ -90,7 +90,7 @@ func TestSecurityHeadersMiddleware_HSTSAbsentUntrustedForwardedProto(t *testing.
 
 func TestBodyLimitMiddleware_OversizedJSON413(t *testing.T) {
 	const limit = 64
-	mw := shophttp.BodyLimitMiddleware(limit, 10<<20)
+	mw := shared.BodyLimitMiddleware(limit, 10<<20)
 	handler := mw(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		_, _ = io.ReadAll(r.Body)
 		w.WriteHeader(http.StatusOK)
@@ -112,7 +112,7 @@ func TestBodyLimitMiddleware_OversizedJSON413(t *testing.T) {
 func TestBodyLimitMiddleware_MediaPathAllowsAboveDefault(t *testing.T) {
 	const defaultLimit = 64
 	const mediaLimit = 256
-	mw := shophttp.BodyLimitMiddleware(defaultLimit, mediaLimit)
+	mw := shared.BodyLimitMiddleware(defaultLimit, mediaLimit)
 
 	var read int
 	handler := mw(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -141,7 +141,7 @@ func TestBodyLimitMiddleware_MediaPathAllowsAboveDefault(t *testing.T) {
 
 func TestBodyLimitMiddleware_MediaCapBelowDefaultStaysIndependent(t *testing.T) {
 	// Media cap lower than JSON default must not be raised.
-	mw := shophttp.BodyLimitMiddleware(512, 64)
+	mw := shared.BodyLimitMiddleware(512, 64)
 	handler := mw(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		_, _ = io.ReadAll(r.Body)
 		w.WriteHeader(http.StatusOK)
@@ -158,7 +158,7 @@ func TestBodyLimitMiddleware_MediaCapBelowDefaultStaysIndependent(t *testing.T) 
 }
 
 func TestBodyLimitMiddleware_MediaPathStillCaps(t *testing.T) {
-	mw := shophttp.BodyLimitMiddleware(64, 128)
+	mw := shared.BodyLimitMiddleware(64, 128)
 	handler := mw(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		_, _ = io.ReadAll(r.Body)
 		w.WriteHeader(http.StatusOK)
@@ -178,7 +178,7 @@ func TestBodyLimitMiddleware_LoggedAs413(t *testing.T) {
 	var logBuf bytes.Buffer
 	log := logger.NewWithWriter(&logBuf, "info")
 	// Mirror production order: Logging wraps BodyLimit.
-	chain := shophttp.LoggingMiddleware(log)(shophttp.BodyLimitMiddleware(32, 10<<20)(
+	chain := shared.LoggingMiddleware(log)(shared.BodyLimitMiddleware(32, 10<<20)(
 		http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			_, _ = io.ReadAll(r.Body)
 			w.WriteHeader(http.StatusUnprocessableEntity)

@@ -1,4 +1,4 @@
-package http
+package shared
 
 import (
 	"net"
@@ -22,7 +22,7 @@ func RateLimitMiddleware(cfg config.RateLimitConfig, log logger.Logger) Middlewa
 		return func(next http.Handler) http.Handler { return next }
 	}
 
-	trustedNets := parseTrustedProxies(cfg.TrustedProxies)
+	trustedNets := ParseTrustedProxies(cfg.TrustedProxies)
 
 	var defaultLimiter *ratelimit.Limiter
 	if cfg.Default.Rate > 0 && cfg.Default.Burst > 0 {
@@ -45,7 +45,7 @@ func RateLimitMiddleware(cfg config.RateLimitConfig, log logger.Logger) Middlewa
 
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			ip := clientIP(r, trustedNets)
+			ip := ClientIP(r, trustedNets)
 
 			// Find the per-route limiter with the longest matching prefix.
 			var matched *ratelimit.Limiter
@@ -63,7 +63,7 @@ func RateLimitMiddleware(cfg config.RateLimitConfig, log logger.Logger) Middlewa
 						"path":      r.URL.Path,
 						"limiter":   "per_route",
 					})
-					writeRateLimited(w)
+					WriteRateLimited(w)
 					return
 				}
 				next.ServeHTTP(w, r)
@@ -77,7 +77,7 @@ func RateLimitMiddleware(cfg config.RateLimitConfig, log logger.Logger) Middlewa
 					"path":      r.URL.Path,
 					"limiter":   "default",
 				})
-				writeRateLimited(w)
+				WriteRateLimited(w)
 				return
 			}
 
@@ -86,9 +86,9 @@ func RateLimitMiddleware(cfg config.RateLimitConfig, log logger.Logger) Middlewa
 	}
 }
 
-// parseTrustedProxies parses CIDR strings and bare IPs into a list of
+// ParseTrustedProxies parses CIDR strings and bare IPs into a list of
 // *net.IPNet used to decide whether to trust proxy headers.
-func parseTrustedProxies(proxies []string) []*net.IPNet {
+func ParseTrustedProxies(proxies []string) []*net.IPNet {
 	var nets []*net.IPNet
 	for _, p := range proxies {
 		if !strings.Contains(p, "/") {
@@ -126,9 +126,9 @@ func isTrustedProxy(peerIP string, trusted []*net.IPNet) bool {
 	return false
 }
 
-// clientIP extracts the client IP address. Proxy headers (X-Forwarded-For,
+// ClientIP extracts the client IP address. Proxy headers (X-Forwarded-For,
 // X-Real-Ip) are only honoured when the immediate peer is a trusted proxy.
-func clientIP(r *http.Request, trusted []*net.IPNet) string {
+func ClientIP(r *http.Request, trusted []*net.IPNet) string {
 	peer := peerIP(r)
 	if len(trusted) > 0 && isTrustedProxy(peer, trusted) {
 		if xff := r.Header.Get("X-Forwarded-For"); xff != "" {
@@ -153,7 +153,8 @@ func peerIP(r *http.Request) string {
 	return host
 }
 
-func writeRateLimited(w http.ResponseWriter) {
+// WriteRateLimited writes a 429 JSON error response with a Retry-After header.
+func WriteRateLimited(w http.ResponseWriter) {
 	w.Header().Set("Retry-After", strconv.FormatInt(int64(time.Second.Seconds()), 10))
 	JSONError(w, apperror.RateLimited("rate limit exceeded"))
 }

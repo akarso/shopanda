@@ -1,4 +1,4 @@
-package http_test
+package shared_test
 
 import (
 	"net/http"
@@ -8,10 +8,10 @@ import (
 
 	"github.com/akarso/shopanda/internal/domain/store"
 	"github.com/akarso/shopanda/internal/domain/translation"
-	shophttp "github.com/akarso/shopanda/internal/interfaces/http"
+	"github.com/akarso/shopanda/internal/interfaces/http/shared"
 )
 
-func langFromHandler(mw shophttp.Middleware) func(r *http.Request) string {
+func langFromHandler(mw shared.Middleware) func(r *http.Request) string {
 	var lang string
 	handler := mw(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		lang = translation.LanguageFromContext(r.Context())
@@ -26,7 +26,7 @@ func langFromHandler(mw shophttp.Middleware) func(r *http.Request) string {
 }
 
 func TestLanguageMiddleware_QueryParam(t *testing.T) {
-	resolve := langFromHandler(shophttp.LanguageMiddleware())
+	resolve := langFromHandler(shared.LanguageMiddleware())
 	req := httptest.NewRequest("GET", "/products?lang=de", nil)
 	got := resolve(req)
 	if got != "de" {
@@ -35,7 +35,7 @@ func TestLanguageMiddleware_QueryParam(t *testing.T) {
 }
 
 func TestLanguageMiddleware_AcceptLanguageHeader(t *testing.T) {
-	resolve := langFromHandler(shophttp.LanguageMiddleware())
+	resolve := langFromHandler(shared.LanguageMiddleware())
 	req := httptest.NewRequest("GET", "/products", nil)
 	req.Header.Set("Accept-Language", "fr;q=0.9, en;q=0.8")
 	got := resolve(req)
@@ -45,7 +45,7 @@ func TestLanguageMiddleware_AcceptLanguageHeader(t *testing.T) {
 }
 
 func TestLanguageMiddleware_AcceptLanguageBCP47(t *testing.T) {
-	resolve := langFromHandler(shophttp.LanguageMiddleware())
+	resolve := langFromHandler(shared.LanguageMiddleware())
 	req := httptest.NewRequest("GET", "/products", nil)
 	req.Header.Set("Accept-Language", "pt-BR")
 	got := resolve(req)
@@ -58,7 +58,7 @@ func TestLanguageMiddleware_StoreDefault(t *testing.T) {
 	now := time.Now()
 	s := store.NewStoreFromDB("s-1", "de", "Germany", "EUR", "DE", "de", "", false, now, now)
 
-	mw := shophttp.LanguageMiddleware()
+	mw := shared.LanguageMiddleware()
 	var lang string
 	handler := mw(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		lang = translation.LanguageFromContext(r.Context())
@@ -79,7 +79,7 @@ func TestLanguageMiddleware_StoreDefault(t *testing.T) {
 }
 
 func TestLanguageMiddleware_DefaultEN(t *testing.T) {
-	resolve := langFromHandler(shophttp.LanguageMiddleware())
+	resolve := langFromHandler(shared.LanguageMiddleware())
 	req := httptest.NewRequest("GET", "/products", nil)
 	got := resolve(req)
 	if got != "en" {
@@ -88,7 +88,7 @@ func TestLanguageMiddleware_DefaultEN(t *testing.T) {
 }
 
 func TestLanguageMiddleware_QueryParamOverridesHeader(t *testing.T) {
-	resolve := langFromHandler(shophttp.LanguageMiddleware())
+	resolve := langFromHandler(shared.LanguageMiddleware())
 	req := httptest.NewRequest("GET", "/products?lang=es", nil)
 	req.Header.Set("Accept-Language", "de")
 	got := resolve(req)
@@ -98,7 +98,7 @@ func TestLanguageMiddleware_QueryParamOverridesHeader(t *testing.T) {
 }
 
 func TestLanguageMiddleware_InvalidQueryParamFallsThrough(t *testing.T) {
-	resolve := langFromHandler(shophttp.LanguageMiddleware())
+	resolve := langFromHandler(shared.LanguageMiddleware())
 	req := httptest.NewRequest("GET", "/products?lang=abcde", nil)
 	req.Header.Set("Accept-Language", "de")
 	got := resolve(req)
@@ -108,7 +108,7 @@ func TestLanguageMiddleware_InvalidQueryParamFallsThrough(t *testing.T) {
 }
 
 func TestLanguageMiddleware_AcceptLanguageQOrdering(t *testing.T) {
-	resolve := langFromHandler(shophttp.LanguageMiddleware())
+	resolve := langFromHandler(shared.LanguageMiddleware())
 	req := httptest.NewRequest("GET", "/products", nil)
 	req.Header.Set("Accept-Language", "en;q=0.1, fr;q=1.0")
 	got := resolve(req)

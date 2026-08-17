@@ -16,7 +16,19 @@ import (
 	webhookinfra "github.com/akarso/shopanda/internal/infrastructure/webhook"
 	"github.com/akarso/shopanda/internal/platform/event"
 	"github.com/akarso/shopanda/internal/platform/logger"
+	"github.com/akarso/shopanda/internal/platform/metrics"
 )
+
+type recordingMetrics struct {
+	webhookOutcomes []string
+}
+
+func (m *recordingMetrics) HTTPRequest(string, string, string, time.Duration) {}
+func (m *recordingMetrics) CheckoutResult(string)                             {}
+func (m *recordingMetrics) JobFailure(string)                                 {}
+func (m *recordingMetrics) WebhookDelivery(outcome string) {
+	m.webhookOutcomes = append(m.webhookOutcomes, outcome)
+}
 
 type stubWebhookRepo struct {
 	endpoints []domainwebhook.Endpoint
@@ -283,5 +295,106 @@ func TestDeliverHandler_RetriesOnNon2xx(t *testing.T) {
 		},
 	}); err == nil {
 		t.Fatal("expected delivery failure for retry")
+	}
+}
+
+func TestDeliverHandler_WithMetrics_RecordsSuccess(t *testing.T) {
+	poster := &stubPoster{status: http.StatusOK}
+	repo := &stubWebhookRepo{
+		byID: map[string]*domainwebhook.Endpoint{
+			"ep-1": {ID: "ep-1", URL: "https://example.com/hook", Secret: "s", Events: []string{order.EventOrderPaid}, Active: true},
+		},
+	}
+	m := &recordingMetrics{}
+	h := webhookApp.NewDeliverHandler(repo, poster, logger.New("error")).WithMetrics(m)
+	if err := h.Handle(context.Background(), jobs.Job{
+		ID:   "job-1",
+		Type: domainwebhook.DeliverJobType,
+		Payload: map[string]interface{}{
+			"endpoint_id":     "ep-1",
+			"event_name":      order.EventOrderPaid,
+			"event_id":        "evt-1",
+			"event_source":    "test",
+			"event_timestamp": "2026-06-17T12:00:00Z",
+			"event_data_json": `{}`,
+		},
+	}); err != nil {
+		t.Fatalf("Handle: %v", err)
+	}
+	if len(m.webhookOutcomes) != 1 || m.webhookOutcomes[0] != metrics.OutcomeSuccess {
+		t.Errorf("webhookOutcomes = %v, want [success]", m.webhookOutcomes)
+	}
+}
+
+func TestDeliverHandler_WithMetrics_RecordsFailureOnNon2xx(t *testing.T) {
+	poster := &stubPoster{status: http.StatusInternalServerError}
+	repo := &stubWebhookRepo{
+		byID: map[string]*domainwebhook.Endpoint{
+			"ep-1": {ID: "ep-1", URL: "https://example.com/hook", Secret: "s", Events: []string{order.EventOrderPaid}, Active: true},
+		},
+	}
+	m := &recordingMetrics{}
+	h := webhookApp.NewDeliverHandler(repo, poster, logger.New("error")).WithMetrics(m)
+	if err := h.Handle(context.Background(), jobs.Job{
+		ID:   "job-1",
+		Type: domainwebhook.DeliverJobType,
+		Payload: map[string]interface{}{
+			"endpoint_id":     "ep-1",
+			"event_name":      order.EventOrderPaid,
+			"event_id":        "evt-1",
+			"event_source":    "test",
+			"event_timestamp": "2026-06-17T12:00:00Z",
+			"event_data_json": `{}`,
+		},
+	}); err == nil {
+		t.Fatal("expected delivery failure")
+	}
+	if len(m.webhookOutcomes) != 1 || m.webhookOutcomes[0] != metrics.OutcomeFailed {
+		t.Errorf("webhookOutcomes = %v, want [failed]", m.webhookOutcomes)
+	}
+}
+
+func TestDeliverHandler_WithMetrics_SkippedDeliveryNotCounted(t *testing.T) {
+	poster := &stubPoster{status: http.StatusOK}
+	repo := &stubWebhookRepo{
+		byID: map[string]*domainwebhook.Endpoint{
+			"ep-1": {ID: "ep-1", URL: "https://example.com/hook", Secret: "s", Events: []string{"order.created"}, Active: true},
+		},
+	}
+	m := &recordingMetrics{}
+	h := webhookApp.NewDeliverHandler(repo, poster, logger.New("error")).WithMetrics(m)
+	if err := h.Handle(context.Background(), jobs.Job{
+		ID:   "job-1",
+		Type: domainwebhook.DeliverJobType,
+		Payload: map[string]interface{}{
+			"endpoint_id":     "ep-1",
+			"event_name":      order.EventOrderPaid, // unsubscribed -> skipped
+			"event_id":        "evt-1",
+			"event_source":    "test",
+			"event_timestamp": "2026-06-17T12:00:00Z",
+			"event_data_json": `{}`,
+		},
+	}); err != nil {
+		t.Fatalf("Handle: %v", err)
+	}
+	if len(m.webhookOutcomes) != 0 {
+		t.Errorf("webhookOutcomes = %v, want none for a skipped delivery", m.webhookOutcomes)
+	}
+}
+
+func TestDeliverHandler_WithMetrics_MalformedPayloadNotCounted(t *testing.T) {
+	poster := &stubPoster{status: http.StatusOK}
+	m := &recordingMetrics{}
+	h := webhookApp.NewDeliverHandler(&stubWebhookRepo{}, poster, logger.New("error")).WithMetrics(m)
+	err := h.Handle(context.Background(), jobs.Job{
+		ID:      "job-1",
+		Type:    domainwebhook.DeliverJobType,
+		Payload: map[string]interface{}{"endpoint_id": ""},
+	})
+	if err == nil {
+		t.Fatal("expected error for malformed payload")
+	}
+	if len(m.webhookOutcomes) != 0 {
+		t.Errorf("webhookOutcomes = %v, want none for malformed payload (never attempted)", m.webhookOutcomes)
 	}
 }

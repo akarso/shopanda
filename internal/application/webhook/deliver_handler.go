@@ -14,6 +14,7 @@ import (
 	domainwebhook "github.com/akarso/shopanda/internal/domain/webhook"
 	webhookinfra "github.com/akarso/shopanda/internal/infrastructure/webhook"
 	"github.com/akarso/shopanda/internal/platform/logger"
+	"github.com/akarso/shopanda/internal/platform/metrics"
 	"github.com/akarso/shopanda/internal/platform/ssrf"
 )
 
@@ -65,9 +66,10 @@ func (p *DefaultHTTPPoster) Post(ctx context.Context, rawURL string, headers map
 
 // DeliverHandler processes webhook.deliver jobs.
 type DeliverHandler struct {
-	repo   domainwebhook.Repository
-	poster HTTPPoster
-	log    logger.Logger
+	repo    domainwebhook.Repository
+	poster  HTTPPoster
+	log     logger.Logger
+	metrics metrics.Recorder
 }
 
 // NewDeliverHandler creates a handler for webhook.deliver jobs.
@@ -81,17 +83,42 @@ func NewDeliverHandler(repo domainwebhook.Repository, poster HTTPPoster, log log
 	if log == nil {
 		panic("webhook.NewDeliverHandler: nil log")
 	}
-	return &DeliverHandler{repo: repo, poster: poster, log: log}
+	return &DeliverHandler{repo: repo, poster: poster, log: log, metrics: metrics.Noop()}
+}
+
+// WithMetrics sets the metrics recorder used to record delivery outcomes.
+// Optional; if never called, outcomes are simply not recorded. Returns the
+// DeliverHandler for chaining.
+func (h *DeliverHandler) WithMetrics(m metrics.Recorder) *DeliverHandler {
+	if m != nil {
+		h.metrics = m
+	}
+	return h
 }
 
 // Type returns the job type this handler processes.
 func (h *DeliverHandler) Type() string { return domainwebhook.DeliverJobType }
 
 // Handle delivers one signed webhook payload to the configured endpoint URL.
-func (h *DeliverHandler) Handle(ctx context.Context, job jobs.Job) error {
+// Skipped deliveries (inactive/unsubscribed endpoints, malformed payloads)
+// are not counted as either a success or a failure — they were never attempted.
+func (h *DeliverHandler) Handle(ctx context.Context, job jobs.Job) (err error) {
+	skipped := false
+	defer func() {
+		if skipped {
+			return
+		}
+		outcome := metrics.OutcomeSuccess
+		if err != nil {
+			outcome = metrics.OutcomeFailed
+		}
+		h.metrics.WebhookDelivery(outcome)
+	}()
+
 	endpointID, _ := job.Payload["endpoint_id"].(string)
 	eventName, _ := job.Payload["event_name"].(string)
 	if strings.TrimSpace(endpointID) == "" || strings.TrimSpace(eventName) == "" {
+		skipped = true
 		return fmt.Errorf("webhook deliver: missing endpoint_id or event_name")
 	}
 
@@ -100,6 +127,7 @@ func (h *DeliverHandler) Handle(ctx context.Context, job jobs.Job) error {
 		return fmt.Errorf("webhook deliver: find endpoint: %w", err)
 	}
 	if endpoint == nil || !endpoint.Active || !endpoint.Subscribed(eventName) {
+		skipped = true
 		h.log.Info("webhook.deliver.skipped", map[string]interface{}{
 			"endpoint_id": endpointID,
 			"event_name":  eventName,
