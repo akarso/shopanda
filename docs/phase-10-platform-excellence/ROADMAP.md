@@ -135,7 +135,7 @@ Recommended order:
 | PR-1016 | RBAC registry injection | **Done.** App-owned `rbac.Registry`; same instance for Init + auth; freeze after Init; duplicate = error; serve `BindRuntime` |
 | PR-1017 | Plugin boundary honesty | **Done.** Fixed allowlist (pkg/domain/application/platform); forbid infrastructure+interfaces for non-core plugins; `TestImportBoundary`; b2b uses Bootstrap + httpx |
 | PR-1018 | Checkout context | **Done.** `Step.Execute(ctx, cctx)`; request ctx into payment/inventory/DB; cancel tests |
-| PR-1019 | Event bus drain | Publish barrier; WG before goroutine; cancel-then-wait shutdown policy |
+| PR-1019 | Event bus drain | **Done.** Publish barrier; wait-then-cancel `Drain(10s)`; `ShutdownBackground` +1s slack; parallel wait |
 
 ---
 
@@ -192,8 +192,7 @@ Optional history rewrite (`git filter-repo` to purge historical `api` blobs) is 
 | 1003 | A | in progress |
 | 1004–1008 | B | done |
 | 1009–1012 | C | done |
-| 1013 | D | done |
-| 1014–1019 | D | planned |
+| 1013–1019 | D | done |
 | 1020–1026 | E | planned |
 
 PR specs: [`prs/`](prs/).
@@ -207,4 +206,4 @@ Planned-spec tightenings from the post-audit plan review are documented separate
 | Phase | Focus | Status |
 | --- | --- | --- |
 | Phase 9 | Integrator backlog + merchant discovery | Shipped (PR-856–908) |
-| **Phase 10** | Platform excellence | **Planned (PR-1000+)** |
+| **Phase 10** | Platform excellence | **In progress (Tracks B–D done; PR-1003 in progress; next PR-1020)** |

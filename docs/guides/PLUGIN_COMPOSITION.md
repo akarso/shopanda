@@ -472,7 +472,7 @@ Runtime behavior still relies on field codes and hook priorities, not on `depend
 | Override `getCheckoutFields()` | Hook chain mutating shared `Payload["fields"]` |
 | `$this->setData()` for child blocks | `ctx.Meta` / `HookContext.Payload` |
 | Plugin `sequence` / `sortOrder` | Handler priority or `before:`/`after:` |
-| Observer (unordered) | `Bus.OnAsync` — not for synchronous chaining |
+| Observer (unordered) | `Bus.OnAsync` — not for synchronous chaining; keep work short; return on `ctx` cancel (stragglers after drain grace) |
 
 Go favors **composition through shared context**, not class inheritance.
 

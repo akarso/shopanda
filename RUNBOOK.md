@@ -90,6 +90,20 @@ If a shopper closes the tab after the PSP succeeds, you may still see a complete
 
 Plugin authors: [PLUGIN_COMPOSITION.md](docs/guides/PLUGIN_COMPOSITION.md) (forward `ctx` vs detached compensate/persist).
 
+## Event bus drain (SIGTERM)
+
+After HTTP connections drain, `serve` stops the embedded scheduler and job worker and **drains async event handlers**, waited **in parallel**. Handler budget is **10 seconds** (`Drain`); `ShutdownBackground` waits **11 seconds** (10s + 1s slack) so `event.bus.drain.timeout` can be logged before the process exits. Event-bus policy is **wait-then-cancel** (not cancel at t=0):
+
+1. Stop starting new `OnAsync` goroutines. In-flight `Publish` still runs **sync** handlers (errors still abort that publish); it does not fail only because the bus is draining.
+2. Wait for in-flight `OnAsync` handlers with a **live** context for most of the Drain budget (~9s). Core handlers (order confirmation, webhook enqueue) do a DB lookup + queue insert — they should finish here.
+3. Cancel remaining handlers, then wait the last ~1s so they can return. If they still outlive the 10s Drain budget, log `event.bus.drain.timeout` (and `background.shutdown.timeout` if scheduler/worker also overran). The process then exits; remaining handlers are abandoned.
+
+The grace/cancel split is **hardcoded**, not configurable: remainder is `min(DrainTimeout/5, 1s)` (so 10s → 9s grace + 1s after cancel). Plugin authors who need a longer live-context window must keep `OnAsync` bodies short or enqueue a job; there is no env/config override.
+
+`OnAsync` does **not** use the HTTP request context — a shopper abort does not cancel webhooks/notifications already dispatched. Plugin handlers should use the received `ctx` for DB/HTTP/queue calls so a straggler after grace does not block exit.
+
+**Limitation:** there is no outbox/retry. Work that is still in the handler when grace ends is cancelled and not retried (same as a crash). Keep `OnAsync` bodies short (enqueue a job, don’t call the PSP inline). Ignoring `ctx` after cancel can still delay or drop the last second of shutdown.
+
 ## Common references
 
 - [EU compliance fields](docs/phase-5-maturity/specs/COMPLIANCE_EU.md) — Omnibus, WEEE, EPR, GPSR
