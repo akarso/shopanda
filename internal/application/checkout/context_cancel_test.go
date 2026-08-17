@@ -291,3 +291,53 @@ func TestInitiatePaymentStep_PersistIgnoresCanceledRequestContext(t *testing.T) 
 		t.Fatal("UpdateStatus saw a done context; persist must detach from request cancel")
 	}
 }
+
+type cancelAfterSaveOrderRepo struct {
+	mockOrderRepo
+	cancel context.CancelFunc
+}
+
+func (r *cancelAfterSaveOrderRepo) Save(ctx context.Context, o *order.Order) error {
+	err := r.mockOrderRepo.Save(ctx, o)
+	r.cancel()
+	return err
+}
+
+type trackingSnapshotter struct {
+	calls   int
+	sawDone bool
+}
+
+func (s *trackingSnapshotter) SnapshotCartItemToOrderItem(ctx context.Context, _, _, _, _ string) error {
+	s.calls++
+	if ctx.Err() != nil {
+		s.sawDone = true
+		return ctx.Err()
+	}
+	return nil
+}
+
+func TestCreateOrderStep_SnapshotIgnoresCanceledRequestContext(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	orders := &cancelAfterSaveOrderRepo{cancel: cancel}
+	snap := &trackingSnapshotter{}
+	step := checkout.NewCreateOrderStep(orders, &mockVariantRepo037{variants: variantMap037("v1")}, nil, snap)
+
+	cctx := checkout.NewContext("cart-1", "cust-1", "EUR")
+	attachCreateOrderInput(cctx)
+	cctx.Cart = cartWithItems037(t, "cust-1", "v1")
+	cctx.SetMeta("pricing", pricingContext037(t, "v1"))
+
+	if err := step.Execute(ctx, cctx); err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	if orders.saved == nil {
+		t.Fatal("expected order to be saved")
+	}
+	if snap.calls != 1 {
+		t.Fatalf("snapshot calls = %d, want 1", snap.calls)
+	}
+	if snap.sawDone {
+		t.Fatal("snapshot saw a done context; persist must detach from request cancel after order save")
+	}
+}

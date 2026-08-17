@@ -134,8 +134,11 @@ func (s *CreateOrderStep) Execute(ctx context.Context, cctx *Context) error {
 		if updatedBy == "" {
 			updatedBy = "system"
 		}
+		// Order already committed — snapshot even if the request ctx is canceled.
+		snapCtx, snapCancel := detachedTimeout(ctx, compensateTimeout)
+		defer snapCancel()
 		for _, ci := range cctx.Cart.Items {
-			if err := s.extensions.SnapshotCartItemToOrderItem(ctx, cctx.Cart.ID, o.ID, ci.VariantID, updatedBy); err != nil {
+			if err := s.extensions.SnapshotCartItemToOrderItem(snapCtx, cctx.Cart.ID, o.ID, ci.VariantID, updatedBy); err != nil {
 				return fmt.Errorf("create_order: snapshot extensions for variant %s: %w", ci.VariantID, err)
 			}
 		}

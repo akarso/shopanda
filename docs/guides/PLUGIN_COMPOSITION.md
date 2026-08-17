@@ -68,7 +68,7 @@ Plugins register steps during `Init`:
 
 Each step receives a **mutable checkout context** plus the request `context.Context` (`Execute(ctx, cctx)`). Plugin steps use `RegisterPricingStep(step, position...)` with `before:<step>`, `after:<step>`, or `replace:<step>` (aliases: `promotions`, `taxes`). Default position is `after:base`. Checkout steps use `RegisterCheckoutStep(step, position...)` with `start`, `end`, `before:<step>`, or `after:<step>` (aliases: `validate`, `order`, `payment`, …). Default checkout position is `end` (legacy append-only behavior).
 
-**Context rules for checkout steps:** pass request `ctx` into forward-progress blocking calls (DB reads/writes, payment initiate, inventory reserve). Do **not** reuse a possibly-canceled request `ctx` for compensating rollback/cleanup or for durably recording an already-committed external side effect (e.g. PSP accepted the charge) — use a detached bounded context (`context.WithoutCancel(parent)` + timeout, or `context.Background()` + timeout). Prefer `%w` so cancel/deadline remain detectable via `errors.Is`.
+**Context rules for checkout steps:** pass request `ctx` into forward-progress blocking calls (DB reads/writes, payment initiate, inventory reserve). Do **not** reuse a possibly-canceled request `ctx` for compensating rollback/cleanup or for durably recording an already-committed side effect (PSP accepted the charge; order already saved — item extension snapshots) — use a detached bounded context (`context.WithoutCancel(parent)` + timeout, or `context.Background()` + timeout). Prefer `%w` so cancel/deadline remain detectable via `errors.Is`.
 
 ### Hooks (Phase 7)
 
