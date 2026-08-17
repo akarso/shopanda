@@ -160,7 +160,7 @@ func TestSelectShippingStep_Success(t *testing.T) {
 	cctx.Cart = cartWithItems037(t, "cust-1", "v1")
 	cctx.Order = orderForCheckout047(t)
 
-	if err := step.Execute(cctx); err != nil {
+	if err := step.Execute(context.Background(), cctx); err != nil {
 		t.Fatalf("Execute: %v", err)
 	}
 
@@ -200,7 +200,7 @@ func TestSelectShippingStep_CalculateRateError(t *testing.T) {
 	cctx.Cart = cartWithItems037(t, "cust-1", "v1")
 	cctx.Order = orderForCheckout047(t)
 
-	err := step.Execute(cctx)
+	err := step.Execute(context.Background(), cctx)
 	if err == nil {
 		t.Fatal("expected error from calculate rate")
 	}
@@ -222,7 +222,7 @@ func TestSelectShippingStep_SaveError(t *testing.T) {
 	cctx.Cart = cartWithItems037(t, "cust-1", "v1")
 	cctx.Order = orderForCheckout047(t)
 
-	err := step.Execute(cctx)
+	err := step.Execute(context.Background(), cctx)
 	if err == nil {
 		t.Fatal("expected error from save")
 	}
@@ -242,7 +242,7 @@ func TestSelectShippingStep_UsesTotalQuantity(t *testing.T) {
 	cctx.Cart = cartWithItems037(t, "cust-1", "v1", "v2")
 	cctx.Order = orderForCheckout047(t)
 
-	if err := step.Execute(cctx); err != nil {
+	if err := step.Execute(context.Background(), cctx); err != nil {
 		t.Fatalf("Execute: %v", err)
 	}
 	if provider.itemCount != 4 {
@@ -262,7 +262,7 @@ func TestSelectShippingStep_RejectsUnavailableSelectedMethod(t *testing.T) {
 	cctx.Order = orderForCheckout047(t)
 	cctx.Input = checkout.Input{ShippingMethod: "pickup"}
 
-	err := step.Execute(cctx)
+	err := step.Execute(context.Background(), cctx)
 	if err == nil {
 		t.Fatal("expected error for unavailable shipping method")
 	}
@@ -275,7 +275,7 @@ func TestSelectShippingStep_NoOrder(t *testing.T) {
 	cctx := checkout.NewContext("cart-1", "cust-1", "EUR")
 	cctx.Cart = cartWithItems037(t, "cust-1", "v1")
 
-	err := step.Execute(cctx)
+	err := step.Execute(context.Background(), cctx)
 	if err == nil {
 		t.Fatal("expected error for missing order")
 	}
@@ -285,7 +285,7 @@ func TestSelectShippingStep_NilContext(t *testing.T) {
 	provider := &mockShippingProvider047{method: shipping.MethodFlatRate}
 	step := checkout.NewSelectShippingStep(shippingRegistryWith(provider), &mockShipmentRepo047{})
 
-	err := step.Execute(nil)
+	err := step.Execute(context.Background(), nil)
 	if err == nil {
 		t.Fatal("expected error for nil context")
 	}
@@ -304,13 +304,13 @@ func TestSelectShippingStep_Idempotent(t *testing.T) {
 	cctx.Cart = cartWithItems037(t, "cust-1", "v1")
 	cctx.Order = orderForCheckout047(t)
 
-	if err := step.Execute(cctx); err != nil {
+	if err := step.Execute(context.Background(), cctx); err != nil {
 		t.Fatalf("first Execute: %v", err)
 	}
 	first := repo.created
 
 	repo.err = errors.New("should not be called")
-	if err := step.Execute(cctx); err != nil {
+	if err := step.Execute(context.Background(), cctx); err != nil {
 		t.Fatalf("second Execute should be idempotent: %v", err)
 	}
 	if repo.created != first {
@@ -354,7 +354,7 @@ func TestInitiatePaymentStep_Success(t *testing.T) {
 	cctx := checkout.NewContext("cart-1", "cust-1", "EUR")
 	cctx.Order = orderForCheckout047(t)
 
-	if err := step.Execute(cctx); err != nil {
+	if err := step.Execute(context.Background(), cctx); err != nil {
 		t.Fatalf("Execute: %v", err)
 	}
 
@@ -399,7 +399,7 @@ func TestInitiatePaymentStep_RejectsUnavailableSelectedMethod(t *testing.T) {
 	cctx.Order = orderForCheckout047(t)
 	cctx.Input = checkout.Input{PaymentMethod: string(payment.MethodStripe)}
 
-	err := step.Execute(cctx)
+	err := step.Execute(context.Background(), cctx)
 	if err == nil {
 		t.Fatal("expected error for unavailable payment method")
 	}
@@ -424,7 +424,7 @@ func TestInitiatePaymentStep_SelectsProviderByMethod(t *testing.T) {
 	cctx.Order = orderForCheckout047(t)
 	cctx.Input = checkout.Input{PaymentMethod: string(payment.MethodStripe)}
 
-	if err := step.Execute(cctx); err != nil {
+	if err := step.Execute(context.Background(), cctx); err != nil {
 		t.Fatalf("Execute() error: %v", err)
 	}
 	if repo.created == nil || repo.created.Method != payment.MethodStripe {
@@ -445,7 +445,7 @@ func TestInitiatePaymentStep_Declined(t *testing.T) {
 	cctx := checkout.NewContext("cart-1", "cust-1", "EUR")
 	cctx.Order = orderForCheckout047(t)
 
-	err := step.Execute(cctx)
+	err := step.Execute(context.Background(), cctx)
 	if err == nil {
 		t.Fatal("expected error for declined payment")
 	}
@@ -475,7 +475,7 @@ func TestInitiatePaymentStep_ProviderError(t *testing.T) {
 	cctx := checkout.NewContext("cart-1", "cust-1", "EUR")
 	cctx.Order = orderForCheckout047(t)
 
-	err := step.Execute(cctx)
+	err := step.Execute(context.Background(), cctx)
 	if err == nil {
 		t.Fatal("expected error from provider")
 	}
@@ -499,7 +499,7 @@ func TestInitiatePaymentStep_CreateError(t *testing.T) {
 	cctx := checkout.NewContext("cart-1", "cust-1", "EUR")
 	cctx.Order = orderForCheckout047(t)
 
-	err := step.Execute(cctx)
+	err := step.Execute(context.Background(), cctx)
 	if err == nil {
 		t.Fatal("expected error from create")
 	}
@@ -519,7 +519,7 @@ func TestInitiatePaymentStep_UpdateStatusError(t *testing.T) {
 	cctx := checkout.NewContext("cart-1", "cust-1", "EUR")
 	cctx.Order = orderForCheckout047(t)
 
-	err := step.Execute(cctx)
+	err := step.Execute(context.Background(), cctx)
 	if err == nil {
 		t.Fatal("expected error from update status")
 	}
@@ -534,7 +534,7 @@ func TestInitiatePaymentStep_NoOrder(t *testing.T) {
 
 	cctx := checkout.NewContext("cart-1", "cust-1", "EUR")
 
-	err := step.Execute(cctx)
+	err := step.Execute(context.Background(), cctx)
 	if err == nil {
 		t.Fatal("expected error for missing order")
 	}
@@ -544,7 +544,7 @@ func TestInitiatePaymentStep_NilContext(t *testing.T) {
 	provider := &mockPaymentProvider047{method: payment.MethodManual}
 	step := checkout.NewInitiatePaymentStep(paymentRegistryWith(provider), &mockPaymentRepo047{})
 
-	err := step.Execute(nil)
+	err := step.Execute(context.Background(), nil)
 	if err == nil {
 		t.Fatal("expected error for nil context")
 	}
@@ -561,13 +561,13 @@ func TestInitiatePaymentStep_Idempotent(t *testing.T) {
 	cctx := checkout.NewContext("cart-1", "cust-1", "EUR")
 	cctx.Order = orderForCheckout047(t)
 
-	if err := step.Execute(cctx); err != nil {
+	if err := step.Execute(context.Background(), cctx); err != nil {
 		t.Fatalf("first Execute: %v", err)
 	}
 	first := repo.created
 
 	repo.createErr = errors.New("should not be called")
-	if err := step.Execute(cctx); err != nil {
+	if err := step.Execute(context.Background(), cctx); err != nil {
 		t.Fatalf("second Execute should be idempotent: %v", err)
 	}
 	if repo.created != first {
@@ -590,7 +590,7 @@ func TestInitiatePaymentStep_Pending(t *testing.T) {
 	cctx := checkout.NewContext("cart-1", "cust-1", "EUR")
 	cctx.Order = orderForCheckout047(t)
 
-	if err := step.Execute(cctx); err != nil {
+	if err := step.Execute(context.Background(), cctx); err != nil {
 		t.Fatalf("Execute: %v", err)
 	}
 
@@ -642,7 +642,7 @@ func TestInitiatePaymentStep_Pending_NoClientSecret(t *testing.T) {
 	cctx := checkout.NewContext("cart-1", "cust-1", "EUR")
 	cctx.Order = orderForCheckout047(t)
 
-	if err := step.Execute(cctx); err != nil {
+	if err := step.Execute(context.Background(), cctx); err != nil {
 		t.Fatalf("Execute: %v", err)
 	}
 
@@ -668,7 +668,7 @@ func TestInitiatePaymentStep_Pending_EmptyProviderRef(t *testing.T) {
 	cctx := checkout.NewContext("cart-1", "cust-1", "EUR")
 	cctx.Order = orderForCheckout047(t)
 
-	err := step.Execute(cctx)
+	err := step.Execute(context.Background(), cctx)
 	if err == nil {
 		t.Fatal("expected error for pending result with empty ProviderRef")
 	}

@@ -45,7 +45,7 @@ func (s *ReserveInventoryStep) Name() string { return "reserve_inventory" }
 
 // Execute reserves inventory for each cart item.
 // Stores reservation IDs in Meta["reservations"].
-func (s *ReserveInventoryStep) Execute(cctx *Context) error {
+func (s *ReserveInventoryStep) Execute(ctx context.Context, cctx *Context) error {
 	if cctx == nil {
 		return fmt.Errorf("reserve_inventory: checkout context must not be nil")
 	}
@@ -67,13 +67,14 @@ func (s *ReserveInventoryStep) Execute(cctx *Context) error {
 		if err != nil {
 			return fmt.Errorf("reserve_inventory: create reservation: %w", err)
 		}
-		rctx, rcancel := context.WithTimeout(context.Background(), reserveTimeout)
+		rctx, rcancel := context.WithTimeout(ctx, reserveTimeout)
 		rerr := s.reservations.Reserve(rctx, &res)
 		rcancel()
 		if rerr != nil {
-			// Best-effort rollback of prior successful reservations.
+			// Best-effort rollback: must not inherit a canceled request ctx or
+			// prior reservations stay locked for ReservationTTL.
 			for _, rid := range reservationIDs {
-				rlctx, rlcancel := context.WithTimeout(context.Background(), reserveTimeout)
+				rlctx, rlcancel := detachedTimeout(ctx, reserveTimeout)
 				_ = s.reservations.Release(rlctx, rid)
 				rlcancel()
 			}

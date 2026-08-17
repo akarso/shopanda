@@ -46,7 +46,7 @@ func (s *CreateOrderStep) Name() string { return "create_order" }
 
 // Execute creates an order with items sourced from the pricing snapshot.
 // Sets cctx.Order and stores order ID in Meta["created_order_id"].
-func (s *CreateOrderStep) Execute(cctx *Context) error {
+func (s *CreateOrderStep) Execute(ctx context.Context, cctx *Context) error {
 	if cctx == nil {
 		return fmt.Errorf("create_order: checkout context must not be nil")
 	}
@@ -74,7 +74,6 @@ func (s *CreateOrderStep) Execute(cctx *Context) error {
 		priceByVariant[pi.VariantID] = pi
 	}
 
-	ctx := context.Background()
 	items := make([]order.Item, 0, len(cctx.Cart.Items))
 	for _, ci := range cctx.Cart.Items {
 		pi, found := priceByVariant[ci.VariantID]
@@ -117,7 +116,10 @@ func (s *CreateOrderStep) Execute(cctx *Context) error {
 
 	if err := s.orders.Save(ctx, &o); err != nil {
 		if appliedCredit != nil && s.credits != nil {
-			if rollbackErr := s.credits.Issue(ctx, cctx.CustomerID, *appliedCredit, fmt.Sprintf("create_order rollback: order save failed (%s)", o.ID)); rollbackErr != nil {
+			rbctx, rbcancel := detachedTimeout(ctx, compensateTimeout)
+			rollbackErr := s.credits.Issue(rbctx, cctx.CustomerID, *appliedCredit, fmt.Sprintf("create_order rollback: order save failed (%s)", o.ID))
+			rbcancel()
+			if rollbackErr != nil {
 				return fmt.Errorf("create_order: save: %w (store credit rollback failed: %v)", err, rollbackErr)
 			}
 		}
@@ -132,8 +134,11 @@ func (s *CreateOrderStep) Execute(cctx *Context) error {
 		if updatedBy == "" {
 			updatedBy = "system"
 		}
+		// Order already committed — snapshot even if the request ctx is canceled.
+		snapCtx, snapCancel := detachedTimeout(ctx, compensateTimeout)
+		defer snapCancel()
 		for _, ci := range cctx.Cart.Items {
-			if err := s.extensions.SnapshotCartItemToOrderItem(ctx, cctx.Cart.ID, o.ID, ci.VariantID, updatedBy); err != nil {
+			if err := s.extensions.SnapshotCartItemToOrderItem(snapCtx, cctx.Cart.ID, o.ID, ci.VariantID, updatedBy); err != nil {
 				return fmt.Errorf("create_order: snapshot extensions for variant %s: %w", ci.VariantID, err)
 			}
 		}
@@ -178,7 +183,10 @@ func (s *CreateOrderStep) applyStoreCredit(ctx context.Context, cctx *Context, o
 		return nil, fmt.Errorf("create_order: redeem store credit: %w", err)
 	}
 	if err := o.ApplyStoreCredit(creditMoney); err != nil {
-		if rollbackErr := s.credits.Issue(ctx, cctx.CustomerID, creditMoney, fmt.Sprintf("create_order rollback: apply failed (%s)", o.ID)); rollbackErr != nil {
+		rbctx, rbcancel := detachedTimeout(ctx, compensateTimeout)
+		rollbackErr := s.credits.Issue(rbctx, cctx.CustomerID, creditMoney, fmt.Sprintf("create_order rollback: apply failed (%s)", o.ID))
+		rbcancel()
+		if rollbackErr != nil {
 			return nil, fmt.Errorf("create_order: apply store credit: %w (rollback failed: %v)", err, rollbackErr)
 		}
 		return nil, fmt.Errorf("create_order: apply store credit: %w", err)

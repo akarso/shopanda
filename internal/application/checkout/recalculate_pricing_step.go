@@ -22,7 +22,7 @@ func (s *RecalculatePricingStep) Name() string { return "recalculate_pricing" }
 
 // Execute builds a PricingContext from the cart, runs the pipeline,
 // and stores the result in cctx.Meta["pricing"].
-func (s *RecalculatePricingStep) Execute(cctx *Context) error {
+func (s *RecalculatePricingStep) Execute(ctx context.Context, cctx *Context) error {
 	if v, ok := cctx.GetMeta("priced"); ok {
 		if b, isBool := v.(bool); isBool && b {
 			return nil // idempotent: already priced
@@ -60,7 +60,7 @@ func (s *RecalculatePricingStep) Execute(cctx *Context) error {
 		pctx.Meta["customer_id"] = cctx.Cart.CustomerID
 	}
 
-	if err := s.pipeline.Execute(context.Background(), &pctx); err != nil {
+	if err := s.pipeline.Execute(ctx, &pctx); err != nil {
 		return fmt.Errorf("recalculate_pricing: %w", err)
 	}
 

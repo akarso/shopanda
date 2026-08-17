@@ -22,8 +22,8 @@ type mockStep struct {
 	fn   func(ctx *checkout.Context) error
 }
 
-func (s *mockStep) Name() string                        { return s.name }
-func (s *mockStep) Execute(ctx *checkout.Context) error { return s.fn(ctx) }
+func (s *mockStep) Name() string                                           { return s.name }
+func (s *mockStep) Execute(_ context.Context, ctx *checkout.Context) error { return s.fn(ctx) }
 
 // --- Mock cart repository ---
 

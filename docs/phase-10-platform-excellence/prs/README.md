@@ -20,7 +20,7 @@
 | PR-1015 | D | done | [Typed plugin providers](PR-1015.md) |
 | PR-1016 | D | done | [RBAC registry injection](PR-1016.md) |
 | PR-1017 | D | done | [Plugin boundary honesty](PR-1017.md) |
-| PR-1018 | D | planned | [Checkout context](PR-1018.md) |
+| PR-1018 | D | done | [Checkout context](PR-1018.md) |
 | PR-1019 | D | planned | [Event bus drain](PR-1019.md) |
 | PR-1020 | E | planned | [Prometheus metrics](PR-1020.md) |
 | PR-1021 | E | planned | [HTTP package split (shared)](PR-1021.md) |

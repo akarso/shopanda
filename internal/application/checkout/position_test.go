@@ -1,6 +1,7 @@
 package checkout_test
 
 import (
+	"context"
 	"testing"
 
 	checkoutapp "github.com/akarso/shopanda/internal/application/checkout"
@@ -12,7 +13,7 @@ type stubStep struct {
 
 func (s stubStep) Name() string { return s.name }
 
-func (s stubStep) Execute(_ *checkoutapp.Context) error { return nil }
+func (s stubStep) Execute(_ context.Context, _ *checkoutapp.Context) error { return nil }
 
 func coreWorkflow() []checkoutapp.Step {
 	return []checkoutapp.Step{

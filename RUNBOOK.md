@@ -73,6 +73,23 @@ The `sha-<commit>` tag is never overwritten: the Release workflow refuses to re-
 - Admin media uploads (`POST /api/v1/admin/media`, `.../upload`) use **10 MiB** by default (`http.media_max_body_bytes`). The media cap is independent of the JSON default (raising `max_body_bytes` does not raise media).
 - Every response sets `X-Content-Type-Options: nosniff`, `X-Frame-Options: DENY`, `Referrer-Policy: strict-origin-when-cross-origin`. HSTS is added only on TLS or trusted-proxy HTTPS.
 
+## Checkout cancel and timeouts
+
+Checkout uses the HTTP request context. Client disconnects and the server **WriteTimeout** (30s, not configurable — see [DEPLOYMENT.md](docs/guides/DEPLOYMENT.md#http-boundary)) cancel in-flight catalog, pricing, reserve, and PSP **initiate** calls. Logs: `checkout.step.failed` with a context cancel/deadline error.
+
+Compensating work is **detached** (~30s bound) so cancel does not skip it:
+
+| Already committed | Still runs after cancel |
+| --- | --- |
+| Inventory reserved for earlier cart lines | `Release` those reservations |
+| Store credit redeemed, then order save/apply failed | Re-`Issue` the credit |
+| PSP already accepted/captured | Persist payment status (avoids a retry minting a new payment ID / double charge) |
+| Order saved | Copy cart-item extension snapshots onto the order |
+
+If a shopper closes the tab after the PSP succeeds, you may still see a completed payment and a pending/paid order; do not treat a 499/504 at the proxy as “no charge.” Inventory leftover after a failed checkout should expire at reservation TTL (15 minutes) if a detached release itself failed.
+
+Plugin authors: [PLUGIN_COMPOSITION.md](docs/guides/PLUGIN_COMPOSITION.md) (forward `ctx` vs detached compensate/persist).
+
 ## Common references
 
 - [EU compliance fields](docs/phase-5-maturity/specs/COMPLIANCE_EU.md) — Omnibus, WEEE, EPR, GPSR
