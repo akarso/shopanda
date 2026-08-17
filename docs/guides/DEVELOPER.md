@@ -516,6 +516,10 @@ Semantics:
 - `On` runs handlers synchronously in registration order
 - sync handler errors abort the current publish operation
 - `OnAsync` runs handlers in separate goroutines after sync handlers succeed
+- async handlers receive the **bus shutdown context**, not the `Publish` request context (request cancel does not abort them)
+- on process shutdown, that context stays live for a **grace window** (~9s of the 10s drain) so in-flight work can finish; then it is cancelled
+- async handlers should return promptly when `ctx` is cancelled (stragglers after grace — do not block process exit)
+- after shutdown begins, `Publish` still runs sync handlers but does not start new async work
 - async handler errors are logged and do not propagate back to the caller
 
 ### Representative event names

@@ -232,7 +232,19 @@ func runServe(cfg *config.Config, log logger.Logger, embedScheduler bool) error 
 	}
 	cancels = append(cancels, workerCancel)
 	dones = append(dones, workerDone)
-	runtime.ShutdownBackground(log, 10*time.Second, sched, cancels, dones)
+
+	const backgroundTimeout = 10 * time.Second
+	// Extra wait so Drain can log event.bus.drain.timeout before process exit.
+	// Drain's 10s is the handler budget; this slack is not extra handler grace.
+	const drainWaitSlack = time.Second
+	rt.bus.BeginShutdown()
+	busDone := make(chan struct{})
+	go func() {
+		defer close(busDone)
+		rt.bus.Drain(backgroundTimeout)
+	}()
+	dones = append(dones, busDone)
+	runtime.ShutdownBackground(log, backgroundTimeout+drainWaitSlack, sched, cancels, dones)
 
 	return err
 }

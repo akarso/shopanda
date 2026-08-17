@@ -1,15 +1,19 @@
 package event_test
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"io"
+	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/akarso/shopanda/internal/platform/event"
 	"github.com/akarso/shopanda/internal/platform/logger"
+	"github.com/akarso/shopanda/internal/platform/runtime"
 )
 
 func testLogger() logger.Logger {
@@ -360,7 +364,7 @@ func TestBus_EventDataAccess(t *testing.T) {
 	}
 }
 
-func TestBus_AsyncHandler_DetachedContext(t *testing.T) {
+func TestBus_AsyncHandler_IgnoresPublishCancel(t *testing.T) {
 	bus := event.NewBus(testLogger())
 	done := make(chan error, 1)
 
@@ -378,9 +382,248 @@ func TestBus_AsyncHandler_DetachedContext(t *testing.T) {
 	select {
 	case err := <-done:
 		if err != nil {
-			t.Errorf("async handler ctx.Err() = %v, want nil (detached context)", err)
+			t.Errorf("async handler ctx.Err() = %v, want nil (shutdown context, not Publish ctx)", err)
 		}
 	case <-time.After(2 * time.Second):
 		t.Fatal("async handler did not run within timeout")
+	}
+}
+
+func TestBus_Shutdown_HandlerFinishesDuringGrace(t *testing.T) {
+	bus := event.NewBus(testLogger())
+	done := make(chan error, 1)
+
+	bus.OnAsync("test.grace", func(ctx context.Context, _ event.Event) error {
+		select {
+		case <-time.After(20 * time.Millisecond):
+			done <- ctx.Err()
+		case <-ctx.Done():
+			done <- ctx.Err()
+		}
+		return nil
+	})
+	if err := bus.Publish(context.Background(), event.New("test.grace", "test", nil)); err != nil {
+		t.Fatalf("Publish: %v", err)
+	}
+
+	bus.Drain(2 * time.Second)
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Errorf("handler ctx.Err() = %v, want nil during grace", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("handler did not finish")
+	}
+}
+
+func TestBus_Drain_StragglerSeesCancelledContext(t *testing.T) {
+	bus := event.NewBus(testLogger())
+	started := make(chan struct{})
+	sawCancel := make(chan error, 1)
+
+	bus.OnAsync("test.drain", func(ctx context.Context, _ event.Event) error {
+		close(started)
+		<-ctx.Done()
+		sawCancel <- ctx.Err()
+		return nil
+	})
+
+	if err := bus.Publish(context.Background(), event.New("test.drain", "test", nil)); err != nil {
+		t.Fatalf("Publish: %v", err)
+	}
+	select {
+	case <-started:
+	case <-time.After(2 * time.Second):
+		t.Fatal("async handler did not start")
+	}
+
+	start := time.Now()
+	bus.Drain(50 * time.Millisecond)
+	if elapsed := time.Since(start); elapsed > 500*time.Millisecond {
+		t.Fatalf("Drain took %s, want return within timeout after cancel remainder", elapsed)
+	}
+
+	select {
+	case err := <-sawCancel:
+		if !errors.Is(err, context.Canceled) {
+			t.Errorf("handler ctx.Err() = %v, want context.Canceled", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("handler did not observe cancel")
+	}
+}
+
+func TestBus_Drain_ReturnsWithinTimeout(t *testing.T) {
+	var buf bytes.Buffer
+	bus := event.NewBus(logger.NewWithWriter(&buf, "info"))
+	release := make(chan struct{})
+	t.Cleanup(func() { close(release) })
+
+	bus.OnAsync("test.stuck", func(ctx context.Context, _ event.Event) error {
+		<-release
+		return nil
+	})
+	if err := bus.Publish(context.Background(), event.New("test.stuck", "test", nil)); err != nil {
+		t.Fatalf("Publish: %v", err)
+	}
+
+	start := time.Now()
+	bus.Drain(50 * time.Millisecond)
+	elapsed := time.Since(start)
+	if elapsed > 500*time.Millisecond {
+		t.Fatalf("Drain took %s, want return within timeout", elapsed)
+	}
+	if !bytes.Contains(buf.Bytes(), []byte("event.bus.drain.timeout")) {
+		t.Errorf("expected event.bus.drain.timeout log, got %s", buf.String())
+	}
+}
+
+func TestBus_Shutdown_SkipsNewAsync_RunsSync(t *testing.T) {
+	bus := event.NewBus(testLogger())
+	var asyncCalled atomic.Bool
+	var syncCalled atomic.Bool
+
+	bus.On("test.barrier", func(_ context.Context, _ event.Event) error {
+		syncCalled.Store(true)
+		return nil
+	})
+	bus.OnAsync("test.barrier", func(_ context.Context, _ event.Event) error {
+		asyncCalled.Store(true)
+		return nil
+	})
+
+	bus.BeginShutdown()
+	select {
+	case <-bus.Done():
+	case <-time.After(2 * time.Second):
+		t.Fatal("idle drain did not complete")
+	}
+
+	if err := bus.Publish(context.Background(), event.New("test.barrier", "test", nil)); err != nil {
+		t.Fatalf("Publish after shutdown: %v", err)
+	}
+	if !syncCalled.Load() {
+		t.Error("sync handler should still run after BeginShutdown")
+	}
+	time.Sleep(50 * time.Millisecond)
+	if asyncCalled.Load() {
+		t.Error("async handler should not start after BeginShutdown")
+	}
+}
+
+func TestBus_Shutdown_ConcurrentPublish(t *testing.T) {
+	bus := event.NewBus(testLogger())
+	bus.OnAsync("test.race", func(ctx context.Context, _ event.Event) error {
+		select {
+		case <-ctx.Done():
+		case <-time.After(50 * time.Millisecond):
+		}
+		return nil
+	})
+
+	var publishers sync.WaitGroup
+	for i := 0; i < 32; i++ {
+		publishers.Add(1)
+		go func() {
+			defer publishers.Done()
+			_ = bus.Publish(context.Background(), event.New("test.race", "test", nil))
+		}()
+	}
+
+	time.Sleep(5 * time.Millisecond)
+	bus.Drain(2 * time.Second)
+	publishers.Wait()
+}
+
+func TestBus_ServeDrainWiring(t *testing.T) {
+	bus := event.NewBus(testLogger())
+	done := make(chan error, 1)
+	bus.OnAsync("test.runtime", func(ctx context.Context, _ event.Event) error {
+		select {
+		case <-time.After(20 * time.Millisecond):
+			done <- ctx.Err()
+		case <-ctx.Done():
+			done <- ctx.Err()
+		}
+		return nil
+	})
+	if err := bus.Publish(context.Background(), event.New("test.runtime", "test", nil)); err != nil {
+		t.Fatalf("Publish: %v", err)
+	}
+
+	timeout := 2 * time.Second
+	bus.BeginShutdown()
+	busDone := make(chan struct{})
+	go func() {
+		defer close(busDone)
+		bus.Drain(timeout)
+	}()
+	runtime.ShutdownBackground(testLogger(), timeout+time.Second, nil, nil, []<-chan struct{}{busDone})
+
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Errorf("handler ctx.Err() = %v, want nil during grace", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("handler did not finish")
+	}
+}
+
+// syncBuffer is a mutex-protected bytes.Buffer for tests where the logger
+// writer may still be written to by a background goroutine (e.g. a stuck
+// handler's Drain goroutine) concurrently with the test reading captured
+// output; bytes.Buffer itself is not safe for concurrent use.
+type syncBuffer struct {
+	mu  sync.Mutex
+	buf bytes.Buffer
+}
+
+func (b *syncBuffer) Write(p []byte) (int, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.Write(p)
+}
+
+func (b *syncBuffer) String() string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.String()
+}
+
+func TestBus_ServeDrainWiring_StuckHandlerLogsDrainTimeout(t *testing.T) {
+	var buf syncBuffer
+	log := logger.NewWithWriter(&buf, "info")
+	bus := event.NewBus(log)
+	release := make(chan struct{})
+	t.Cleanup(func() { close(release) })
+
+	bus.OnAsync("test.stuck.serve", func(ctx context.Context, _ event.Event) error {
+		<-release
+		return nil
+	})
+	if err := bus.Publish(context.Background(), event.New("test.stuck.serve", "test", nil)); err != nil {
+		t.Fatalf("Publish: %v", err)
+	}
+
+	// Drain starts late relative to ShutdownBackground (scheduling delay).
+	// Outer slack must cover Drain timeout + that delay so the specific
+	// event.bus.drain.timeout line is written before ShutdownBackground returns.
+	const drainTimeout = 50 * time.Millisecond
+	const startDelay = 20 * time.Millisecond
+	const slack = 100 * time.Millisecond
+
+	bus.BeginShutdown()
+	busDone := make(chan struct{})
+	go func() {
+		time.Sleep(startDelay)
+		defer close(busDone)
+		bus.Drain(drainTimeout)
+	}()
+	runtime.ShutdownBackground(log, drainTimeout+slack, nil, nil, []<-chan struct{}{busDone})
+
+	if got := buf.String(); !strings.Contains(got, "event.bus.drain.timeout") {
+		t.Errorf("expected event.bus.drain.timeout before ShutdownBackground returns, got %s", got)
 	}
 }
