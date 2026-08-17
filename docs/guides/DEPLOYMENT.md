@@ -156,6 +156,8 @@ Environment variables override YAML values.
 | `SHOPANDA_HTTP_MAX_BODY_BYTES` | No | `1048576` (1 MiB) | Default max request body for non-media routes |
 | `SHOPANDA_HTTP_MEDIA_MAX_BODY_BYTES` | No | `10485760` (10 MiB) | Max body for admin media upload routes |
 
+HTTP server timeouts are **fixed** (not env-configurable): **Read 10s**, **Write 30s**, **Idle 60s**. Checkout (and other handlers) use the request context, so WriteTimeout and client disconnect cancel in-flight checkout work. Keep reverse-proxy idle/read timeouts **at least 30s** (preferably a few seconds above WriteTimeout) so the proxy does not cut the connection first and hide the API error. Compensating checkout writes after cancel are documented in [RUNBOOK.md](../../RUNBOOK.md#checkout-cancel-and-timeouts).
+
 Responses always include `X-Content-Type-Options: nosniff`, `X-Frame-Options: DENY`, and `Referrer-Policy: strict-origin-when-cross-origin`. `Strict-Transport-Security` is sent only when the request is TLS (`r.TLS != nil`) or `X-Forwarded-Proto: https` is honored from a peer in `rate_limit.trusted_proxies` — it is **absent** on plain HTTP without a trusted proxy. Terminate TLS at a reverse proxy and list that proxy under `trusted_proxies` so HSTS applies correctly.
 
 ### Database
