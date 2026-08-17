@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"io"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -570,8 +571,29 @@ func TestBus_ServeDrainWiring(t *testing.T) {
 	}
 }
 
+// syncBuffer is a mutex-protected bytes.Buffer for tests where the logger
+// writer may still be written to by a background goroutine (e.g. a stuck
+// handler's Drain goroutine) concurrently with the test reading captured
+// output; bytes.Buffer itself is not safe for concurrent use.
+type syncBuffer struct {
+	mu  sync.Mutex
+	buf bytes.Buffer
+}
+
+func (b *syncBuffer) Write(p []byte) (int, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.Write(p)
+}
+
+func (b *syncBuffer) String() string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.String()
+}
+
 func TestBus_ServeDrainWiring_StuckHandlerLogsDrainTimeout(t *testing.T) {
-	var buf bytes.Buffer
+	var buf syncBuffer
 	log := logger.NewWithWriter(&buf, "info")
 	bus := event.NewBus(log)
 	release := make(chan struct{})
@@ -601,7 +623,7 @@ func TestBus_ServeDrainWiring_StuckHandlerLogsDrainTimeout(t *testing.T) {
 	}()
 	runtime.ShutdownBackground(log, drainTimeout+slack, nil, nil, []<-chan struct{}{busDone})
 
-	if !bytes.Contains(buf.Bytes(), []byte("event.bus.drain.timeout")) {
-		t.Errorf("expected event.bus.drain.timeout before ShutdownBackground returns, got %s", buf.String())
+	if got := buf.String(); !strings.Contains(got, "event.bus.drain.timeout") {
+		t.Errorf("expected event.bus.drain.timeout before ShutdownBackground returns, got %s", got)
 	}
 }

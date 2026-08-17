@@ -2,6 +2,7 @@ package runtime_test
 
 import (
 	"bytes"
+	goruntime "runtime"
 	"testing"
 	"time"
 
@@ -39,10 +40,33 @@ func TestShutdownBackground_WaitsAllDones(t *testing.T) {
 	start := time.Now()
 	runtime.ShutdownBackground(logger.NewWithWriter(&bytes.Buffer{}, "error"), 200*time.Millisecond, nil, nil, []<-chan struct{}{a, b})
 	elapsed := time.Since(start)
-	if elapsed < 30*time.Millisecond {
-		t.Fatalf("ShutdownBackground returned in %s, want to wait for both dones", elapsed)
+	if elapsed < 40*time.Millisecond {
+		t.Fatalf("ShutdownBackground returned in %s, want to wait for both dones (slower one closes at ~40ms)", elapsed)
 	}
 	if elapsed > 150*time.Millisecond {
 		t.Fatalf("ShutdownBackground took %s, want ~40ms (parallel wait, not hung)", elapsed)
+	}
+}
+
+// TestShutdownBackground_TimeoutDoesNotLeakGoroutines guards against the
+// per-done waiter goroutines (and the aggregate WaitGroup-waiter goroutine)
+// blocking forever on a done channel that never closes after ShutdownBackground
+// gives up on timeout.
+func TestShutdownBackground_TimeoutDoesNotLeakGoroutines(t *testing.T) {
+	never := make(chan struct{})
+	goruntime.GC()
+	before := goruntime.NumGoroutine()
+
+	runtime.ShutdownBackground(logger.NewWithWriter(&bytes.Buffer{}, "error"), 20*time.Millisecond, nil, nil, []<-chan struct{}{never})
+
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		goruntime.GC()
+		if after := goruntime.NumGoroutine(); after <= before {
+			return
+		} else if time.Now().After(deadline) {
+			t.Fatalf("goroutines did not settle after ShutdownBackground timeout: before=%d after=%d", before, after)
+		}
+		time.Sleep(10 * time.Millisecond)
 	}
 }

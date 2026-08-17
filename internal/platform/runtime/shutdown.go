@@ -21,6 +21,10 @@ func ShutdownBackground(log logger.Logger, timeout time.Duration, sched schedule
 		sched.Stop()
 	}
 
+	// giveUp bounds the waiter goroutines below to timeout: if a done
+	// channel never closes, closing giveUp on timeout lets them exit
+	// instead of leaking for the rest of the process.
+	giveUp := make(chan struct{})
 	var wg sync.WaitGroup
 	for _, done := range dones {
 		if done == nil {
@@ -29,7 +33,10 @@ func ShutdownBackground(log logger.Logger, timeout time.Duration, sched schedule
 		wg.Add(1)
 		go func(d <-chan struct{}) {
 			defer wg.Done()
-			<-d
+			select {
+			case <-d:
+			case <-giveUp:
+			}
 		}(done)
 	}
 	finished := make(chan struct{})
@@ -41,5 +48,6 @@ func ShutdownBackground(log logger.Logger, timeout time.Duration, sched schedule
 	case <-finished:
 	case <-time.After(timeout):
 		log.Info("background.shutdown.timeout", nil)
+		close(giveUp)
 	}
 }
