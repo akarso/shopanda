@@ -2,6 +2,7 @@ package postgres_test
 
 import (
 	"context"
+	"database/sql"
 	"testing"
 
 	"github.com/akarso/shopanda/internal/domain/invoice"
@@ -10,7 +11,7 @@ import (
 	"github.com/akarso/shopanda/internal/platform/id"
 )
 
-func mustNewCreditNote(t *testing.T, invoiceID string) invoice.CreditNote {
+func mustNewCreditNote(t *testing.T, invoiceID, orderID string) invoice.CreditNote {
 	t.Helper()
 	price := shared.MustNewMoney(1000, "USD")
 	tax := shared.MustNewMoney(100, "USD")
@@ -18,12 +19,28 @@ func mustNewCreditNote(t *testing.T, invoiceID string) invoice.CreditNote {
 	if err != nil {
 		t.Fatalf("NewItem: %v", err)
 	}
-	cn, err := invoice.NewCreditNote(id.New(), invoiceID, id.New(), id.New(), "damaged", "USD",
+	cn, err := invoice.NewCreditNote(id.New(), invoiceID, orderID, id.New(), "damaged", "USD",
 		[]invoice.Item{item}, tax)
 	if err != nil {
 		t.Fatalf("NewCreditNote: %v", err)
 	}
 	return cn
+}
+
+// seedInvoiceForCreditNote inserts a real order + invoice chain (credit_notes
+// has a composite FK to invoices(id, order_id)) and returns their IDs.
+func seedInvoiceForCreditNote(t *testing.T, db *sql.DB) (invoiceID, orderID string) {
+	t.Helper()
+	orderID = seedOrderForInvoice(t, db)
+	invoiceRepo, err := postgres.NewInvoiceRepo(db)
+	if err != nil {
+		t.Fatalf("NewInvoiceRepo: %v", err)
+	}
+	inv := mustNewInvoice(t, orderID)
+	if err := invoiceRepo.Save(context.Background(), &inv); err != nil {
+		t.Fatalf("seed invoice: %v", err)
+	}
+	return inv.ID(), orderID
 }
 
 func TestCreditNoteRepo_NilDB(t *testing.T) {
@@ -36,10 +53,7 @@ func TestCreditNoteRepo_NilDB(t *testing.T) {
 func TestCreditNoteRepo_SaveAndFindByID(t *testing.T) {
 	db := testDB(t)
 	ensureProductsTable(t, db)
-	t.Cleanup(func() {
-		db.Exec("DELETE FROM credit_note_items")
-		db.Exec("DELETE FROM credit_notes")
-	})
+	t.Cleanup(func() { cleanupOrderAndInvoiceRows(db) })
 
 	repo, err := postgres.NewCreditNoteRepo(db)
 	if err != nil {
@@ -47,7 +61,8 @@ func TestCreditNoteRepo_SaveAndFindByID(t *testing.T) {
 	}
 	ctx := context.Background()
 
-	cn := mustNewCreditNote(t, id.New())
+	invoiceID, orderID := seedInvoiceForCreditNote(t, db)
+	cn := mustNewCreditNote(t, invoiceID, orderID)
 	if err := repo.Save(ctx, &cn); err != nil {
 		t.Fatalf("Save: %v", err)
 	}
@@ -85,10 +100,7 @@ func TestCreditNoteRepo_SaveAndFindByID(t *testing.T) {
 func TestCreditNoteRepo_FindByInvoiceID(t *testing.T) {
 	db := testDB(t)
 	ensureProductsTable(t, db)
-	t.Cleanup(func() {
-		db.Exec("DELETE FROM credit_note_items")
-		db.Exec("DELETE FROM credit_notes")
-	})
+	t.Cleanup(func() { cleanupOrderAndInvoiceRows(db) })
 
 	repo, err := postgres.NewCreditNoteRepo(db)
 	if err != nil {
@@ -96,9 +108,9 @@ func TestCreditNoteRepo_FindByInvoiceID(t *testing.T) {
 	}
 	ctx := context.Background()
 
-	invoiceID := id.New()
-	cn1 := mustNewCreditNote(t, invoiceID)
-	cn2 := mustNewCreditNote(t, invoiceID)
+	invoiceID, orderID := seedInvoiceForCreditNote(t, db)
+	cn1 := mustNewCreditNote(t, invoiceID, orderID)
+	cn2 := mustNewCreditNote(t, invoiceID, orderID)
 	if err := repo.Save(ctx, &cn1); err != nil {
 		t.Fatalf("Save cn1: %v", err)
 	}

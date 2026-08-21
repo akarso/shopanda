@@ -2,6 +2,7 @@ package postgres_test
 
 import (
 	"context"
+	"database/sql"
 	"testing"
 
 	"github.com/akarso/shopanda/internal/domain/promotion"
@@ -18,6 +19,25 @@ func mustNewCoupon(t *testing.T, code, promoID string) promotion.Coupon {
 	return c
 }
 
+// seedPromotion inserts a minimal promotion (coupons.promotion_id FKs to it)
+// via the domain constructor + repo, and returns its ID.
+func seedPromotion(t *testing.T, db *sql.DB) string {
+	t.Helper()
+	repo, err := postgres.NewPromotionRepo(db)
+	if err != nil {
+		t.Fatalf("NewPromotionRepo: %v", err)
+	}
+	pid := id.New()
+	p, err := promotion.NewPromotion(pid, "Test Promotion "+pid[:8], promotion.TypeCart)
+	if err != nil {
+		t.Fatalf("NewPromotion: %v", err)
+	}
+	if err := repo.Save(context.Background(), &p); err != nil {
+		t.Fatalf("seed promotion: %v", err)
+	}
+	return pid
+}
+
 func TestCouponRepo_NilDB(t *testing.T) {
 	_, err := postgres.NewCouponRepo(nil)
 	if err == nil {
@@ -28,7 +48,10 @@ func TestCouponRepo_NilDB(t *testing.T) {
 func TestCouponRepo_SaveAndFindByID(t *testing.T) {
 	db := testDB(t)
 	ensureProductsTable(t, db)
-	t.Cleanup(func() { db.Exec("DELETE FROM coupons") })
+	t.Cleanup(func() {
+		db.Exec("DELETE FROM coupons")
+		db.Exec("DELETE FROM promotions")
+	})
 
 	repo, err := postgres.NewCouponRepo(db)
 	if err != nil {
@@ -36,7 +59,7 @@ func TestCouponRepo_SaveAndFindByID(t *testing.T) {
 	}
 	ctx := context.Background()
 
-	promoID := id.New()
+	promoID := seedPromotion(t, db)
 	c := mustNewCoupon(t, "SAVE10", promoID)
 	if err := repo.Save(ctx, &c); err != nil {
 		t.Fatalf("Save: %v", err)
@@ -63,7 +86,10 @@ func TestCouponRepo_SaveAndFindByID(t *testing.T) {
 func TestCouponRepo_FindByCode(t *testing.T) {
 	db := testDB(t)
 	ensureProductsTable(t, db)
-	t.Cleanup(func() { db.Exec("DELETE FROM coupons") })
+	t.Cleanup(func() {
+		db.Exec("DELETE FROM coupons")
+		db.Exec("DELETE FROM promotions")
+	})
 
 	repo, err := postgres.NewCouponRepo(db)
 	if err != nil {
@@ -71,7 +97,7 @@ func TestCouponRepo_FindByCode(t *testing.T) {
 	}
 	ctx := context.Background()
 
-	c := mustNewCoupon(t, "DISCOUNT20", id.New())
+	c := mustNewCoupon(t, "DISCOUNT20", seedPromotion(t, db))
 	if err := repo.Save(ctx, &c); err != nil {
 		t.Fatalf("Save: %v", err)
 	}
@@ -110,7 +136,10 @@ func TestCouponRepo_FindByCode_NotFound(t *testing.T) {
 func TestCouponRepo_ListByPromotion(t *testing.T) {
 	db := testDB(t)
 	ensureProductsTable(t, db)
-	t.Cleanup(func() { db.Exec("DELETE FROM coupons") })
+	t.Cleanup(func() {
+		db.Exec("DELETE FROM coupons")
+		db.Exec("DELETE FROM promotions")
+	})
 
 	repo, err := postgres.NewCouponRepo(db)
 	if err != nil {
@@ -118,10 +147,10 @@ func TestCouponRepo_ListByPromotion(t *testing.T) {
 	}
 	ctx := context.Background()
 
-	promoID := id.New()
+	promoID := seedPromotion(t, db)
 	c1 := mustNewCoupon(t, "LISTA", promoID)
 	c2 := mustNewCoupon(t, "LISTB", promoID)
-	otherC := mustNewCoupon(t, "OTHER", id.New())
+	otherC := mustNewCoupon(t, "OTHER", seedPromotion(t, db))
 	for _, c := range []*promotion.Coupon{&c1, &c2, &otherC} {
 		if err := repo.Save(ctx, c); err != nil {
 			t.Fatalf("Save %q: %v", c.Code, err)
@@ -140,7 +169,10 @@ func TestCouponRepo_ListByPromotion(t *testing.T) {
 func TestCouponRepo_SaveUpsert(t *testing.T) {
 	db := testDB(t)
 	ensureProductsTable(t, db)
-	t.Cleanup(func() { db.Exec("DELETE FROM coupons") })
+	t.Cleanup(func() {
+		db.Exec("DELETE FROM coupons")
+		db.Exec("DELETE FROM promotions")
+	})
 
 	repo, err := postgres.NewCouponRepo(db)
 	if err != nil {
@@ -148,7 +180,7 @@ func TestCouponRepo_SaveUpsert(t *testing.T) {
 	}
 	ctx := context.Background()
 
-	c := mustNewCoupon(t, "UPSERT", id.New())
+	c := mustNewCoupon(t, "UPSERT", seedPromotion(t, db))
 	if err := repo.Save(ctx, &c); err != nil {
 		t.Fatalf("Save: %v", err)
 	}
@@ -175,7 +207,10 @@ func TestCouponRepo_SaveUpsert(t *testing.T) {
 func TestCouponRepo_Delete(t *testing.T) {
 	db := testDB(t)
 	ensureProductsTable(t, db)
-	t.Cleanup(func() { db.Exec("DELETE FROM coupons") })
+	t.Cleanup(func() {
+		db.Exec("DELETE FROM coupons")
+		db.Exec("DELETE FROM promotions")
+	})
 
 	repo, err := postgres.NewCouponRepo(db)
 	if err != nil {
@@ -183,7 +218,7 @@ func TestCouponRepo_Delete(t *testing.T) {
 	}
 	ctx := context.Background()
 
-	c := mustNewCoupon(t, "DELME", id.New())
+	c := mustNewCoupon(t, "DELME", seedPromotion(t, db))
 	if err := repo.Save(ctx, &c); err != nil {
 		t.Fatalf("Save: %v", err)
 	}
@@ -204,7 +239,10 @@ func TestCouponRepo_Delete(t *testing.T) {
 func TestCouponRepo_List(t *testing.T) {
 	db := testDB(t)
 	ensureProductsTable(t, db)
-	t.Cleanup(func() { db.Exec("DELETE FROM coupons") })
+	t.Cleanup(func() {
+		db.Exec("DELETE FROM coupons")
+		db.Exec("DELETE FROM promotions")
+	})
 
 	repo, err := postgres.NewCouponRepo(db)
 	if err != nil {
@@ -212,7 +250,7 @@ func TestCouponRepo_List(t *testing.T) {
 	}
 	ctx := context.Background()
 
-	promoID := id.New()
+	promoID := seedPromotion(t, db)
 	first := mustNewCoupon(t, "LIST10", promoID)
 	second := mustNewCoupon(t, "LIST20", promoID)
 	if err := repo.Save(ctx, &first); err != nil {

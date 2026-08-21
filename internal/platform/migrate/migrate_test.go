@@ -69,7 +69,9 @@ func TestListMigrations_MissingDir(t *testing.T) {
 
 func TestPendingCount_NoPending(t *testing.T) {
 	dir := t.TempDir()
-	for _, name := range []string{"001_first.sql", "002_second.sql"} {
+	// schema_migrations tracks applied files by basename across the whole
+	// shared test DB, so filenames must be unique per test, not just per dir.
+	for _, name := range []string{"nopending_001_first.sql", "nopending_002_second.sql"} {
 		if err := os.WriteFile(filepath.Join(dir, name), []byte("SELECT 1;"), 0644); err != nil {
 			t.Fatal(err)
 		}
@@ -96,7 +98,9 @@ func TestPendingCount_NoPending(t *testing.T) {
 
 func TestPendingCount_WithPending(t *testing.T) {
 	dir := t.TempDir()
-	if err := os.WriteFile(filepath.Join(dir, "001_first.sql"), []byte("SELECT 1;"), 0644); err != nil {
+	// Unique basenames (see TestPendingCount_NoPending) — otherwise these
+	// filenames collide with ones already recorded as applied by that test.
+	if err := os.WriteFile(filepath.Join(dir, "withpending_001_first.sql"), []byte("SELECT 1;"), 0644); err != nil {
 		t.Fatal(err)
 	}
 
@@ -110,7 +114,7 @@ func TestPendingCount_WithPending(t *testing.T) {
 		t.Fatalf("run first migration: %v", err)
 	}
 
-	if err := os.WriteFile(filepath.Join(dir, "002_second.sql"), []byte("SELECT 1;"), 0644); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, "withpending_002_second.sql"), []byte("SELECT 1;"), 0644); err != nil {
 		t.Fatal(err)
 	}
 

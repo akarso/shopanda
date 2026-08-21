@@ -2,6 +2,7 @@ package postgres_test
 
 import (
 	"context"
+	"database/sql"
 	"testing"
 
 	"github.com/akarso/shopanda/internal/domain/invoice"
@@ -9,6 +10,35 @@ import (
 	"github.com/akarso/shopanda/internal/infrastructure/postgres"
 	"github.com/akarso/shopanda/internal/platform/id"
 )
+
+// cleanupOrderAndInvoiceRows removes rows left behind by seedOrderForInvoice
+// and seedInvoiceForCreditNote (credit_note_repo_test.go), in FK-safe order
+// (children before parents: credit notes -> invoices -> orders). Shared by
+// invoice_repo_test.go and credit_note_repo_test.go so the two seed helpers
+// and their cleanup can't drift out of sync.
+func cleanupOrderAndInvoiceRows(db *sql.DB) {
+	db.Exec("DELETE FROM credit_note_items")
+	db.Exec("DELETE FROM credit_notes")
+	db.Exec("DELETE FROM invoice_items")
+	db.Exec("DELETE FROM invoices")
+	db.Exec("DELETE FROM order_items")
+	db.Exec("DELETE FROM orders")
+}
+
+// seedOrderForInvoice inserts a minimal order (invoices.order_id FKs to it,
+// UNIQUE) and returns its ID.
+func seedOrderForInvoice(t *testing.T, db *sql.DB) string {
+	t.Helper()
+	repo, err := postgres.NewOrderRepo(db)
+	if err != nil {
+		t.Fatalf("NewOrderRepo: %v", err)
+	}
+	o := mustNewOrder(t, id.New(), "USD")
+	if err := repo.Save(context.Background(), &o); err != nil {
+		t.Fatalf("seed order: %v", err)
+	}
+	return o.ID
+}
 
 func mustNewInvoice(t *testing.T, orderID string) invoice.Invoice {
 	t.Helper()
@@ -35,10 +65,7 @@ func TestInvoiceRepo_NilDB(t *testing.T) {
 func TestInvoiceRepo_SaveAndFindByID(t *testing.T) {
 	db := testDB(t)
 	ensureProductsTable(t, db)
-	t.Cleanup(func() {
-		db.Exec("DELETE FROM invoice_items")
-		db.Exec("DELETE FROM invoices")
-	})
+	t.Cleanup(func() { cleanupOrderAndInvoiceRows(db) })
 
 	repo, err := postgres.NewInvoiceRepo(db)
 	if err != nil {
@@ -46,7 +73,7 @@ func TestInvoiceRepo_SaveAndFindByID(t *testing.T) {
 	}
 	ctx := context.Background()
 
-	inv := mustNewInvoice(t, id.New())
+	inv := mustNewInvoice(t, seedOrderForInvoice(t, db))
 	if err := repo.Save(ctx, &inv); err != nil {
 		t.Fatalf("Save: %v", err)
 	}
@@ -87,10 +114,7 @@ func TestInvoiceRepo_SaveAndFindByID(t *testing.T) {
 func TestInvoiceRepo_FindByOrderID(t *testing.T) {
 	db := testDB(t)
 	ensureProductsTable(t, db)
-	t.Cleanup(func() {
-		db.Exec("DELETE FROM invoice_items")
-		db.Exec("DELETE FROM invoices")
-	})
+	t.Cleanup(func() { cleanupOrderAndInvoiceRows(db) })
 
 	repo, err := postgres.NewInvoiceRepo(db)
 	if err != nil {
@@ -98,7 +122,7 @@ func TestInvoiceRepo_FindByOrderID(t *testing.T) {
 	}
 	ctx := context.Background()
 
-	orderID := id.New()
+	orderID := seedOrderForInvoice(t, db)
 	inv := mustNewInvoice(t, orderID)
 	if err := repo.Save(ctx, &inv); err != nil {
 		t.Fatalf("Save: %v", err)
@@ -188,10 +212,7 @@ func TestInvoiceRepo_Save_Nil(t *testing.T) {
 func TestInvoiceRepo_MultipleItems(t *testing.T) {
 	db := testDB(t)
 	ensureProductsTable(t, db)
-	t.Cleanup(func() {
-		db.Exec("DELETE FROM invoice_items")
-		db.Exec("DELETE FROM invoices")
-	})
+	t.Cleanup(func() { cleanupOrderAndInvoiceRows(db) })
 
 	repo, err := postgres.NewInvoiceRepo(db)
 	if err != nil {
@@ -210,7 +231,7 @@ func TestInvoiceRepo_MultipleItems(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewItem: %v", err)
 	}
-	inv, err := invoice.NewInvoice(id.New(), id.New(), id.New(), "USD",
+	inv, err := invoice.NewInvoice(id.New(), seedOrderForInvoice(t, db), id.New(), "USD",
 		[]invoice.Item{item1, item2}, tax)
 	if err != nil {
 		t.Fatalf("NewInvoice: %v", err)

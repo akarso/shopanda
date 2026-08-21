@@ -35,7 +35,8 @@ func TestCartRepo_SaveAndFindByID(t *testing.T) {
 
 	c := mustNewCart(t, "EUR")
 	price := shared.MustNewMoney(1500, "EUR")
-	if err := c.AddItem("var-1", 2, price); err != nil {
+	variantID := id.New()
+	if err := c.AddItem(variantID, 2, price); err != nil {
 		t.Fatalf("AddItem: %v", err)
 	}
 
@@ -62,8 +63,8 @@ func TestCartRepo_SaveAndFindByID(t *testing.T) {
 	if len(got.Items) != 1 {
 		t.Fatalf("len(Items) = %d, want 1", len(got.Items))
 	}
-	if got.Items[0].VariantID != "var-1" {
-		t.Errorf("Items[0].VariantID = %q, want var-1", got.Items[0].VariantID)
+	if got.Items[0].VariantID != variantID {
+		t.Errorf("Items[0].VariantID = %q, want %q", got.Items[0].VariantID, variantID)
 	}
 	if got.Items[0].Quantity != 2 {
 		t.Errorf("Items[0].Quantity = %d, want 2", got.Items[0].Quantity)
@@ -138,7 +139,8 @@ func TestCartRepo_FindActiveByCustomerID(t *testing.T) {
 	ctx := context.Background()
 
 	c := mustNewCart(t, "USD")
-	if err := c.SetCustomerID("cust-1"); err != nil {
+	customerID := id.New()
+	if err := c.SetCustomerID(customerID); err != nil {
 		t.Fatalf("SetCustomerID: %v", err)
 	}
 
@@ -146,7 +148,7 @@ func TestCartRepo_FindActiveByCustomerID(t *testing.T) {
 		t.Fatalf("Save: %v", err)
 	}
 
-	got, err := repo.FindActiveByCustomerID(ctx, "cust-1")
+	got, err := repo.FindActiveByCustomerID(ctx, customerID)
 	if err != nil {
 		t.Fatalf("FindActiveByCustomerID: %v", err)
 	}
@@ -156,8 +158,8 @@ func TestCartRepo_FindActiveByCustomerID(t *testing.T) {
 	if got.ID != c.ID {
 		t.Errorf("ID = %q, want %q", got.ID, c.ID)
 	}
-	if got.CustomerID != "cust-1" {
-		t.Errorf("CustomerID = %q, want cust-1", got.CustomerID)
+	if got.CustomerID != customerID {
+		t.Errorf("CustomerID = %q, want %q", got.CustomerID, customerID)
 	}
 }
 
@@ -169,7 +171,7 @@ func TestCartRepo_FindActiveByCustomerID_NotFound(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewCartRepo: %v", err)
 	}
-	got, err := repo.FindActiveByCustomerID(context.Background(), "no-customer")
+	got, err := repo.FindActiveByCustomerID(context.Background(), id.New())
 	if err != nil {
 		t.Fatalf("FindActiveByCustomerID: %v", err)
 	}
@@ -194,7 +196,7 @@ func TestCartRepo_Save_UpdateItems(t *testing.T) {
 
 	c := mustNewCart(t, "EUR")
 	price := shared.MustNewMoney(1000, "EUR")
-	if err := c.AddItem("var-1", 1, price); err != nil {
+	if err := c.AddItem(id.New(), 1, price); err != nil {
 		t.Fatalf("AddItem var-1: %v", err)
 	}
 	if err := repo.Save(ctx, &c); err != nil {
@@ -203,7 +205,7 @@ func TestCartRepo_Save_UpdateItems(t *testing.T) {
 
 	// Add another item and re-save.
 	price2 := shared.MustNewMoney(2000, "EUR")
-	if err := c.AddItem("var-2", 3, price2); err != nil {
+	if err := c.AddItem(id.New(), 3, price2); err != nil {
 		t.Fatalf("AddItem var-2: %v", err)
 	}
 	if err := repo.Save(ctx, &c); err != nil {
@@ -266,7 +268,7 @@ func TestCartRepo_Delete(t *testing.T) {
 
 	c := mustNewCart(t, "EUR")
 	price := shared.MustNewMoney(500, "EUR")
-	if err := c.AddItem("var-1", 1, price); err != nil {
+	if err := c.AddItem(id.New(), 1, price); err != nil {
 		t.Fatalf("AddItem: %v", err)
 	}
 	if err := repo.Save(ctx, &c); err != nil {
