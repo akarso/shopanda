@@ -50,7 +50,7 @@ func (h *OrderHandler) Get() http.HandlerFunc {
 			return
 		}
 
-		resp, err := toOrderResponse(r.Context(), h.extensions, o)
+		resp, err := ToOrderResponse(r.Context(), h.extensions, o)
 		if err != nil {
 			JSONError(w, extensionapp.MapValueError(err))
 			return
@@ -73,9 +73,9 @@ func (h *OrderHandler) List() http.HandlerFunc {
 			return
 		}
 
-		out := make([]orderResponse, 0, len(orders))
+		out := make([]OrderResponse, 0, len(orders))
 		for i := range orders {
-			resp, err := toOrderResponse(r.Context(), h.extensions, &orders[i])
+			resp, err := ToOrderResponse(r.Context(), h.extensions, &orders[i])
 			if err != nil {
 				JSONError(w, extensionapp.MapValueError(err))
 				return
@@ -91,7 +91,7 @@ func (h *OrderHandler) List() http.HandlerFunc {
 
 // ── response types ──────────────────────────────────────────────────────
 
-type orderResponse struct {
+type OrderResponse struct {
 	ID          string            `json:"id"`
 	CustomerID  string            `json:"customer_id"`
 	Status      order.OrderStatus `json:"status"`
@@ -102,7 +102,7 @@ type orderResponse struct {
 	UpdatedAt   string            `json:"updated_at"`
 }
 
-func toOrderResponse(ctx context.Context, extensions *extensionapp.ValueService, o *order.Order) (orderResponse, error) {
+func ToOrderResponse(ctx context.Context, extensions *extensionapp.ValueService, o *order.Order) (OrderResponse, error) {
 	orderItems := o.Items()
 	variantIDs := make([]string, len(orderItems))
 	for i, item := range orderItems {
@@ -110,7 +110,7 @@ func toOrderResponse(ctx context.Context, extensions *extensionapp.ValueService,
 	}
 	extByVariant, err := orderItemExtensionsMap(ctx, extensions, o.ID, variantIDs)
 	if err != nil {
-		return orderResponse{}, err
+		return OrderResponse{}, err
 	}
 
 	items := make([]orderItemResp, 0, len(orderItems))
@@ -125,7 +125,7 @@ func toOrderResponse(ctx context.Context, extensions *extensionapp.ValueService,
 			Extensions: orderItemExtensionsFromMap(extByVariant, item.VariantID),
 		})
 	}
-	return orderResponse{
+	return OrderResponse{
 		ID:          o.ID,
 		CustomerID:  o.CustomerID,
 		Status:      o.Status(),

@@ -12,13 +12,19 @@ type Logger interface {
 	Error(msg string, err error, fields map[string]interface{})
 }
 
-// MetricsRecorder records job failure counts. For registered handlers,
-// jobType is a fixed compile-time type string. The "handler not found"
-// path passes the dequeued job.Type as-is — still a bounded label in
-// practice because enqueue sites use compile-time constants.
+// MetricsRecorder records job failure counts. jobType is always one of the
+// registered handlers' compile-time type strings, or the fixed sentinel
+// "unknown" for a dequeued job whose type matches no registered handler —
+// never the raw, unbounded value read off the queue.
 type MetricsRecorder interface {
 	JobFailure(jobType string)
 }
+
+// unknownJobType labels JobFailure for a dequeued job type with no
+// registered handler, instead of passing the raw queue value straight
+// through as a Prometheus label (unbounded cardinality risk: a malformed
+// row or a since-removed job type would otherwise mint a permanent series).
+const unknownJobType = "unknown"
 
 // noopMetrics discards recordings; the default until WithMetrics is called,
 // so processNext never needs a nil check.
@@ -126,7 +132,7 @@ func (w *Worker) processNext(ctx context.Context) {
 			"job_id":   job.ID,
 			"job_type": job.Type,
 		})
-		w.metrics.JobFailure(job.Type)
+		w.metrics.JobFailure(unknownJobType)
 		if failErr := w.queue.Fail(ctx, job.ID, nil); failErr != nil {
 			w.log.Error("worker.fail.error", failErr, map[string]interface{}{"job_id": job.ID})
 		}

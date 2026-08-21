@@ -1,7 +1,6 @@
 package http_test
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"net/http"
@@ -9,11 +8,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/akarso/shopanda/internal/application/admin"
 	cmsApp "github.com/akarso/shopanda/internal/application/cms"
 	"github.com/akarso/shopanda/internal/domain/catalog"
 	"github.com/akarso/shopanda/internal/domain/cms"
-	"github.com/akarso/shopanda/internal/platform/logger"
 
 	shophttp "github.com/akarso/shopanda/internal/interfaces/http"
 )
@@ -136,82 +133,5 @@ func TestMenuHandlerGetByCode(t *testing.T) {
 	resp := envelope.Data
 	if resp.Code != "header" || len(resp.Items) != 1 || resp.Items[0].URL != "/pages/about" {
 		t.Fatalf("unexpected response: %+v", resp)
-	}
-}
-
-func TestMenuAdminHandlerUpdate(t *testing.T) {
-	now := time.Now().UTC()
-	menu := cms.NewMenuFromDB("menu-header", "header", "Header", true, now, now)
-	var saved *cms.MenuWithItems
-
-	repo := &mockMenuRepo{
-		findByIDFn: func(_ context.Context, id string) (*cms.MenuWithItems, error) {
-			if id != menu.ID() {
-				return nil, nil
-			}
-			if saved != nil {
-				return saved, nil
-			}
-			return &cms.MenuWithItems{Menu: menu, Items: nil}, nil
-		},
-		saveFn: func(_ context.Context, data *cms.MenuWithItems) error {
-			saved = data
-			return nil
-		},
-	}
-	auditor := admin.NewAuditor(logger.New("error"))
-	h := shophttp.NewMenuAdminHandler(repo, auditor)
-
-	mux := http.NewServeMux()
-	mux.HandleFunc("PUT /api/v1/admin/menus/{id}", h.Update())
-
-	body := map[string]interface{}{
-		"title":     "Main Header",
-		"is_active": true,
-		"items": []map[string]interface{}{
-			{"label": "Home", "link_type": "url", "link_target": "/", "position": 0},
-		},
-	}
-	raw, _ := json.Marshal(body)
-	req := httptest.NewRequest("PUT", "/api/v1/admin/menus/"+menu.ID(), bytes.NewReader(raw))
-	rec := httptest.NewRecorder()
-	mux.ServeHTTP(rec, req)
-
-	if rec.Code != http.StatusOK {
-		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
-	}
-	if saved == nil || len(saved.Items) != 1 || saved.Items[0].Label() != "Home" {
-		t.Fatalf("unexpected save: %+v", saved)
-	}
-}
-
-func TestMenuAdminHandlerUpdateNotFound(t *testing.T) {
-	repo := &mockMenuRepo{
-		findByIDFn: func(context.Context, string) (*cms.MenuWithItems, error) {
-			return nil, nil
-		},
-	}
-	h := shophttp.NewMenuAdminHandler(repo, admin.NewAuditor(logger.New("error")))
-	mux := http.NewServeMux()
-	mux.HandleFunc("PUT /api/v1/admin/menus/{id}", h.Update())
-
-	body := []byte(`{"title":"Header","items":[]}`)
-	req := httptest.NewRequest("PUT", "/api/v1/admin/menus/missing", bytes.NewReader(body))
-	rec := httptest.NewRecorder()
-	mux.ServeHTTP(rec, req)
-
-	if rec.Code != http.StatusNotFound {
-		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
-	}
-	var envelope struct {
-		Error struct {
-			Code string `json:"code"`
-		} `json:"error"`
-	}
-	if err := json.Unmarshal(rec.Body.Bytes(), &envelope); err != nil {
-		t.Fatal(err)
-	}
-	if envelope.Error.Code != "not_found" {
-		t.Fatalf("unexpected error code: %+v", envelope.Error)
 	}
 }

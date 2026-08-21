@@ -32,7 +32,7 @@ func (h *ReturnAccountHandler) List() http.HandlerFunc {
 			return
 		}
 		JSON(w, http.StatusOK, map[string]interface{}{
-			"returns": toReturnResponses(list),
+			"returns": ToReturnResponses(list),
 		})
 	}
 }
@@ -54,7 +54,7 @@ func (h *ReturnAccountHandler) Get() http.HandlerFunc {
 		}
 
 		JSON(w, http.StatusOK, map[string]interface{}{
-			"return": toReturnResponse(ret),
+			"return": ToReturnResponse(ret),
 		})
 	}
 }
@@ -96,7 +96,7 @@ func (h *ReturnAccountHandler) Request() http.HandlerFunc {
 		}
 
 		JSON(w, http.StatusCreated, map[string]interface{}{
-			"return": toReturnResponse(ret),
+			"return": ToReturnResponse(ret),
 		})
 	}
 }
@@ -124,7 +124,7 @@ func (h *ReturnAccountHandler) Cancel() http.HandlerFunc {
 		}
 
 		JSON(w, http.StatusOK, map[string]interface{}{
-			"return": toReturnResponse(ret),
+			"return": ToReturnResponse(ret),
 		})
 	}
 }
@@ -142,7 +142,7 @@ func (h *ReturnAccountHandler) ListByOrder() http.HandlerFunc {
 		}
 
 		JSON(w, http.StatusOK, map[string]interface{}{
-			"returns": toReturnResponses(list),
+			"returns": ToReturnResponses(list),
 		})
 	}
 }

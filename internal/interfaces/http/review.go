@@ -94,7 +94,7 @@ func (h *ReviewAccountHandler) Submit() http.HandlerFunc {
 		}
 
 		JSON(w, http.StatusCreated, map[string]interface{}{
-			"review": toAdminReviewResponse(rev),
+			"review": ToAdminReviewResponse(rev),
 		})
 	}
 }
@@ -129,7 +129,7 @@ func toPublicReviewResponse(rev *domainReview.Review) reviewResp {
 	}
 }
 
-func toAdminReviewResponse(rev *domainReview.Review) reviewResp {
+func ToAdminReviewResponse(rev *domainReview.Review) reviewResp {
 	resp := toPublicReviewResponse(rev)
 	resp.CustomerID = rev.CustomerID
 	return resp
@@ -143,15 +143,15 @@ func toPublicReviewResponses(list []domainReview.Review) []reviewResp {
 	return out
 }
 
-func toAdminReviewResponses(list []domainReview.Review) []reviewResp {
+func ToAdminReviewResponses(list []domainReview.Review) []reviewResp {
 	out := make([]reviewResp, 0, len(list))
 	for i := range list {
-		out = append(out, toAdminReviewResponse(&list[i]))
+		out = append(out, ToAdminReviewResponse(&list[i]))
 	}
 	return out
 }
 
-func parseReviewStatus(raw string) (domainReview.Status, error) {
+func ParseReviewStatus(raw string) (domainReview.Status, error) {
 	raw = strings.TrimSpace(raw)
 	if raw == "" {
 		return "", nil

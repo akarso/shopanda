@@ -102,7 +102,7 @@ func (h *CheckoutHandler) StartCheckout() http.HandlerFunc {
 			return
 		}
 
-		orderResp, err := toOrderResponse(r.Context(), h.extensions, cctx.Order)
+		orderResp, err := ToOrderResponse(r.Context(), h.extensions, cctx.Order)
 		if err != nil {
 			JSONError(w, extensionapp.MapValueError(err))
 			return

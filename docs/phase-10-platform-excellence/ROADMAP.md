@@ -147,7 +147,7 @@ Recommended order:
 | --- | --- | --- |
 | PR-1020 | Prometheus metrics | **Done.** Default off; `/metrics` on a dedicated loopback-by-default listener (`metrics.listen`); bounded route-template + status-class labels; checkout/job/webhook counters |
 | PR-1021 | HTTP package split (shared) | **Done.** `interfaces/http/shared`: router/middleware/response/pagination/server + generic middleware; compat shim keeps ~170 handler files unchanged; `AuthMiddleware` deferred (storefront cookie coupling) |
-| PR-1022 | HTTP package split (admin) | Move admin handlers to `interfaces/http/admin`; update wiring |
+| PR-1022 | HTTP package split (admin) | **Done.** `interfaces/http/admin`: 38 admin handler files + `media.go`/`schema_handler.go`/admin-prefixed helpers moved beyond the literal `*_admin.go` glob; `store_credit.go` split (admin vs account handler); `AccountDeleter`/`OrderResponse`/`ToReturnResponse(s)`/`ToAdminReviewResponse(s)` exported from `interfaces/http` for cross-package reuse; `cmd/api` wiring updated |
 | PR-1023 | HTTP package split (storefront) | Move storefront handlers; shrink god `StorefrontHandler` deps where cheap |
 | PR-1024 | OpenTelemetry traces | Optional OTLP export; instrument HTTP + checkout + DB spans behind config |
 | PR-1025 | pgx driver migration | Replace maintenance-mode `lib/pq` with `jackc/pgx/v5` stdlib bridge; keep SQL; CI green |
@@ -206,4 +206,4 @@ Planned-spec tightenings from the post-audit plan review are documented separate
 | Phase | Focus | Status |
 | --- | --- | --- |
 | Phase 9 | Integrator backlog + merchant discovery | Shipped (PR-856–908) |
-| **Phase 10** | Platform excellence | **In progress (Tracks B–D done; PR-1003 in progress; PR-1020–1021 done; next PR-1022)** |
+| **Phase 10** | Platform excellence | **In progress (Tracks B–D done; PR-1003 in progress; PR-1020–1022 done; next PR-1023)** |

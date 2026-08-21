@@ -382,6 +382,38 @@ func TestDeliverHandler_WithMetrics_SkippedDeliveryNotCounted(t *testing.T) {
 	}
 }
 
+func TestDeliverHandler_WithMetrics_MalformedEventDataJSONNotCounted(t *testing.T) {
+	poster := &stubPoster{status: http.StatusOK}
+	repo := &stubWebhookRepo{
+		byID: map[string]*domainwebhook.Endpoint{
+			"ep-1": {ID: "ep-1", URL: "https://example.com/hook", Secret: "s", Events: []string{"order.paid"}, Active: true},
+		},
+	}
+	m := &recordingMetrics{}
+	h := webhookApp.NewDeliverHandler(repo, poster, logger.New("error")).WithMetrics(m)
+	err := h.Handle(context.Background(), jobs.Job{
+		ID:   "job-1",
+		Type: domainwebhook.DeliverJobType,
+		Payload: map[string]interface{}{
+			"endpoint_id":     "ep-1",
+			"event_name":      order.EventOrderPaid,
+			"event_id":        "evt-1",
+			"event_source":    "test",
+			"event_timestamp": "2026-06-17T12:00:00Z",
+			"event_data_json": "{not valid json",
+		},
+	})
+	if err == nil {
+		t.Fatal("expected error for malformed event_data_json")
+	}
+	if poster.lastURL != "" {
+		t.Errorf("poster.lastURL = %q, want empty (never attempted)", poster.lastURL)
+	}
+	if len(m.webhookOutcomes) != 0 {
+		t.Errorf("webhookOutcomes = %v, want none for malformed event_data_json (never attempted)", m.webhookOutcomes)
+	}
+}
+
 func TestDeliverHandler_WithMetrics_MalformedPayloadNotCounted(t *testing.T) {
 	poster := &stubPoster{status: http.StatusOK}
 	m := &recordingMetrics{}

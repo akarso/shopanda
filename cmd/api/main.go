@@ -229,6 +229,16 @@ func runServe(cfg *config.Config, log logger.Logger, embedScheduler bool) error 
 	// Close() on shutdown is sufficient — no drain grace needed.
 	metricsSrv, metricsDone, err := startMetricsServer(cfg, metricsHandler, log)
 	if err != nil {
+		// Scheduler/worker are already running goroutines at this point —
+		// cancel and wait for them (bounded) instead of leaking them into a
+		// process that returns an error but doesn't necessarily exit.
+		earlyCancels := []func(){workerCancel}
+		earlyDones := []<-chan struct{}{workerDone}
+		if schedulerCancel != nil {
+			earlyCancels = append(earlyCancels, schedulerCancel)
+			earlyDones = append(earlyDones, schedulerDone)
+		}
+		runtime.ShutdownBackground(log, 10*time.Second, sched, earlyCancels, earlyDones)
 		rbac.UnbindRuntime()
 		return fmt.Errorf("metrics: %w", err)
 	}

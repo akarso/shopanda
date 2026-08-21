@@ -138,6 +138,7 @@ func (h *DeliverHandler) Handle(ctx context.Context, job jobs.Job) (err error) {
 
 	body, err := buildDeliveryBody(job.Payload)
 	if err != nil {
+		skipped = true
 		return err
 	}
 
