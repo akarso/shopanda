@@ -9,6 +9,7 @@ import (
 
 	"github.com/akarso/shopanda/internal/domain/inventory"
 	"github.com/akarso/shopanda/internal/platform/apperror"
+	"github.com/akarso/shopanda/internal/platform/id"
 )
 
 // Compile-time check that ReservationRepo implements inventory.ReservationRepository.
@@ -78,6 +79,9 @@ func (r *ReservationRepo) Release(ctx context.Context, reservationID string) err
 	if reservationID == "" {
 		return fmt.Errorf("reservation_repo: release: empty reservation id")
 	}
+	if !id.IsValid(reservationID) {
+		return apperror.NotFound("reservation not found or not active")
+	}
 
 	tx, err := r.db.BeginTx(ctx, nil)
 	if err != nil {
@@ -118,6 +122,9 @@ func (r *ReservationRepo) Confirm(ctx context.Context, reservationID string) err
 	if reservationID == "" {
 		return fmt.Errorf("reservation_repo: confirm: empty reservation id")
 	}
+	if !id.IsValid(reservationID) {
+		return apperror.NotFound("reservation not found or not active")
+	}
 
 	const q = `UPDATE reservations SET status = 'confirmed'
 		WHERE id = $1 AND status = 'active'`
@@ -136,15 +143,20 @@ func (r *ReservationRepo) Confirm(ctx context.Context, reservationID string) err
 }
 
 // FindByID returns a reservation by its ID.
-func (r *ReservationRepo) FindByID(ctx context.Context, id string) (*inventory.Reservation, error) {
-	if id == "" {
+// Returns (nil, nil) when not found, including when reservationID is not a
+// well-formed UUID (it can never match a row on the uuid column).
+func (r *ReservationRepo) FindByID(ctx context.Context, reservationID string) (*inventory.Reservation, error) {
+	if reservationID == "" {
 		return nil, fmt.Errorf("reservation_repo: find: empty id")
+	}
+	if !id.IsValid(reservationID) {
+		return nil, nil
 	}
 	const q = `SELECT id, variant_id, quantity, status, expires_at, created_at
 		FROM reservations WHERE id = $1`
 	var res inventory.Reservation
 	var status string
-	err := r.db.QueryRowContext(ctx, q, id).Scan(
+	err := r.db.QueryRowContext(ctx, q, reservationID).Scan(
 		&res.ID, &res.VariantID, &res.Quantity, &status, &res.ExpiresAt, &res.CreatedAt,
 	)
 	if errors.Is(err, sql.ErrNoRows) {

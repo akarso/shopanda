@@ -149,6 +149,8 @@ func TestReservationRepo_Release(t *testing.T) {
 	}
 }
 
+// "nonexistent" is not a well-formed UUID, so this exercises the id.IsValid
+// format guard, not a real database lookup.
 func TestReservationRepo_Release_NotFound(t *testing.T) {
 	db := testDB(t)
 	repo, err := postgres.NewReservationRepo(db)
@@ -159,6 +161,24 @@ func TestReservationRepo_Release_NotFound(t *testing.T) {
 	err = repo.Release(context.Background(), "nonexistent")
 	if err == nil {
 		t.Fatal("expected error for nonexistent reservation")
+	}
+	if !apperror.Is(err, apperror.CodeNotFound) {
+		t.Errorf("expected not_found error, got: %v", err)
+	}
+}
+
+// A well-formed but unknown UUID exercises the actual database lookup
+// (0 rows), distinct from the format guard covered above.
+func TestReservationRepo_Release_ValidIDNotFound(t *testing.T) {
+	db := testDB(t)
+	repo, err := postgres.NewReservationRepo(db)
+	if err != nil {
+		t.Fatalf("NewReservationRepo: %v", err)
+	}
+
+	err = repo.Release(context.Background(), id.New())
+	if err == nil {
+		t.Fatal("expected error for unknown reservation")
 	}
 	if !apperror.Is(err, apperror.CodeNotFound) {
 		t.Errorf("expected not_found error, got: %v", err)
@@ -206,6 +226,8 @@ func TestReservationRepo_Confirm(t *testing.T) {
 	}
 }
 
+// "nonexistent" is not a well-formed UUID, so this exercises the id.IsValid
+// format guard, not a real database lookup.
 func TestReservationRepo_Confirm_NotFound(t *testing.T) {
 	db := testDB(t)
 	repo, err := postgres.NewReservationRepo(db)
@@ -216,6 +238,24 @@ func TestReservationRepo_Confirm_NotFound(t *testing.T) {
 	err = repo.Confirm(context.Background(), "nonexistent")
 	if err == nil {
 		t.Fatal("expected error for nonexistent reservation")
+	}
+	if !apperror.Is(err, apperror.CodeNotFound) {
+		t.Errorf("expected not_found error, got: %v", err)
+	}
+}
+
+// A well-formed but unknown UUID exercises the actual database lookup
+// (0 rows), distinct from the format guard covered above.
+func TestReservationRepo_Confirm_ValidIDNotFound(t *testing.T) {
+	db := testDB(t)
+	repo, err := postgres.NewReservationRepo(db)
+	if err != nil {
+		t.Fatalf("NewReservationRepo: %v", err)
+	}
+
+	err = repo.Confirm(context.Background(), id.New())
+	if err == nil {
+		t.Fatal("expected error for unknown reservation")
 	}
 	if !apperror.Is(err, apperror.CodeNotFound) {
 		t.Errorf("expected not_found error, got: %v", err)
@@ -265,6 +305,22 @@ func TestReservationRepo_ListActiveByVariantID(t *testing.T) {
 	}
 	if active[0].ID != r2.ID {
 		t.Errorf("active[0].ID = %q, want %q", active[0].ID, r2.ID)
+	}
+}
+
+func TestReservationRepo_FindByID_MalformedID(t *testing.T) {
+	db := testDB(t)
+	repo, err := postgres.NewReservationRepo(db)
+	if err != nil {
+		t.Fatalf("NewReservationRepo: %v", err)
+	}
+
+	got, err := repo.FindByID(context.Background(), "not-a-uuid")
+	if err != nil {
+		t.Fatalf("FindByID: %v", err)
+	}
+	if got != nil {
+		t.Error("expected nil for malformed id")
 	}
 }
 

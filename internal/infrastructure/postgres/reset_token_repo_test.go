@@ -2,6 +2,7 @@ package postgres_test
 
 import (
 	"context"
+	"database/sql"
 	"testing"
 	"time"
 
@@ -20,6 +21,36 @@ func mustNewResetToken(t *testing.T, customerID string) customer.PasswordResetTo
 	return tok
 }
 
+// seedResetCustomer inserts a customer row (password_reset_tokens.customer_id
+// FKs to it) and returns its ID. Callers must register cleanupResetTokenRows
+// themselves — password_reset_tokens has no ON DELETE CASCADE, so the
+// customer row must not be deleted before its token rows, and t.Cleanup
+// registration order alone can't guarantee that here (see
+// cleanupResetTokenRows).
+func seedResetCustomer(t *testing.T, db *sql.DB) string {
+	t.Helper()
+	repo, err := postgres.NewCustomerRepo(db)
+	if err != nil {
+		t.Fatalf("NewCustomerRepo: %v", err)
+	}
+	c := mustNewCustomer(t, "reset-"+id.New()+"@example.com")
+	if err := repo.Create(context.Background(), &c); err != nil {
+		t.Fatalf("seed customer: %v", err)
+	}
+	return c.ID
+}
+
+// cleanupResetTokenRows deletes a seeded customer's reset tokens before the
+// customer row itself. t.Cleanup runs LIFO, and password_reset_tokens.
+// customer_id has no ON DELETE CASCADE (unlike consents, which does — that's
+// why seedConsentCustomer doesn't need this), so registration order relative
+// to other t.Cleanup calls can't be relied on; this fixes the order
+// explicitly in one place.
+func cleanupResetTokenRows(db *sql.DB, customerID string) {
+	db.Exec("DELETE FROM password_reset_tokens")
+	db.Exec("DELETE FROM customers WHERE id = $1", customerID)
+}
+
 func TestResetTokenRepo_NilDB(t *testing.T) {
 	_, err := postgres.NewResetTokenRepo(nil)
 	if err == nil {
@@ -31,7 +62,6 @@ func TestResetTokenRepo_CreateAndFindByHash(t *testing.T) {
 	db := testDB(t)
 	ensureProductsTable(t, db)
 	mustExec(t, db, "DELETE FROM password_reset_tokens")
-	t.Cleanup(func() { mustExec(t, db, "DELETE FROM password_reset_tokens") })
 
 	repo, err := postgres.NewResetTokenRepo(db)
 	if err != nil {
@@ -39,7 +69,9 @@ func TestResetTokenRepo_CreateAndFindByHash(t *testing.T) {
 	}
 	ctx := context.Background()
 
-	tok := mustNewResetToken(t, id.New())
+	custID := seedResetCustomer(t, db)
+	t.Cleanup(func() { cleanupResetTokenRows(db, custID) })
+	tok := mustNewResetToken(t, custID)
 	if err := repo.Create(ctx, &tok); err != nil {
 		t.Fatalf("Create: %v", err)
 	}
@@ -84,7 +116,6 @@ func TestResetTokenRepo_MarkUsed(t *testing.T) {
 	db := testDB(t)
 	ensureProductsTable(t, db)
 	mustExec(t, db, "DELETE FROM password_reset_tokens")
-	t.Cleanup(func() { mustExec(t, db, "DELETE FROM password_reset_tokens") })
 
 	repo, err := postgres.NewResetTokenRepo(db)
 	if err != nil {
@@ -92,7 +123,9 @@ func TestResetTokenRepo_MarkUsed(t *testing.T) {
 	}
 	ctx := context.Background()
 
-	tok := mustNewResetToken(t, id.New())
+	custID := seedResetCustomer(t, db)
+	t.Cleanup(func() { cleanupResetTokenRows(db, custID) })
+	tok := mustNewResetToken(t, custID)
 	if err := repo.Create(ctx, &tok); err != nil {
 		t.Fatalf("Create: %v", err)
 	}
@@ -117,7 +150,6 @@ func TestResetTokenRepo_MarkUsed_AlreadyUsed(t *testing.T) {
 	db := testDB(t)
 	ensureProductsTable(t, db)
 	mustExec(t, db, "DELETE FROM password_reset_tokens")
-	t.Cleanup(func() { mustExec(t, db, "DELETE FROM password_reset_tokens") })
 
 	repo, err := postgres.NewResetTokenRepo(db)
 	if err != nil {
@@ -125,7 +157,9 @@ func TestResetTokenRepo_MarkUsed_AlreadyUsed(t *testing.T) {
 	}
 	ctx := context.Background()
 
-	tok := mustNewResetToken(t, id.New())
+	custID := seedResetCustomer(t, db)
+	t.Cleanup(func() { cleanupResetTokenRows(db, custID) })
+	tok := mustNewResetToken(t, custID)
 	if err := repo.Create(ctx, &tok); err != nil {
 		t.Fatalf("Create: %v", err)
 	}

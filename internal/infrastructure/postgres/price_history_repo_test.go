@@ -40,7 +40,7 @@ func TestPriceHistoryRepo_RecordAndLowestSince(t *testing.T) {
 	}
 	ctx := context.Background()
 
-	vid := id.New()
+	vid := seedVariant(t, db)
 	s := mustNewPriceSnapshot(t, vid, 1999)
 	if err := repo.Record(ctx, &s); err != nil {
 		t.Fatalf("Record: %v", err)
@@ -70,7 +70,7 @@ func TestPriceHistoryRepo_LowestSince_ReturnsMin(t *testing.T) {
 	}
 	ctx := context.Background()
 
-	vid := id.New()
+	vid := seedVariant(t, db)
 	for _, amt := range []int64{3000, 1500, 2500} {
 		s := mustNewPriceSnapshot(t, vid, amt)
 		if err := repo.Record(ctx, &s); err != nil {
@@ -136,8 +136,8 @@ func TestPriceHistoryRepo_LowestSinceByVariants(t *testing.T) {
 	}
 	ctx := context.Background()
 
-	v1 := id.New()
-	v2 := id.New()
+	v1 := seedVariant(t, db)
+	v2 := seedVariant(t, db)
 	for _, pair := range []struct {
 		variantID string
 		amount    int64

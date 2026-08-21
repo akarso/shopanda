@@ -62,12 +62,14 @@ func NewPromotion(promoID, name string, typ PromotionType) (Promotion, error) {
 	}
 	now := time.Now().UTC()
 	return Promotion{
-		ID:        promoID,
-		Name:      name,
-		Type:      typ,
-		Active:    true,
-		CreatedAt: now,
-		UpdatedAt: now,
+		ID:         promoID,
+		Name:       name,
+		Type:       typ,
+		Active:     true,
+		Conditions: []byte("[]"),
+		Actions:    []byte("[]"),
+		CreatedAt:  now,
+		UpdatedAt:  now,
 	}, nil
 }
 
