@@ -1290,3 +1290,103 @@ func TestLoad_DotEnvUsedFalse(t *testing.T) {
 		t.Error("DotEnvUsed = true, want false when no .env exists")
 	}
 }
+
+func TestMetricsConfig_DefaultsDisabled(t *testing.T) {
+	withTestBaseURL(t)
+	path := writeYAML(t, "")
+
+	cfg, err := loadCfg(t, path)
+	if err != nil {
+		t.Fatalf("Load() error: %v", err)
+	}
+
+	if cfg.Metrics.Enabled {
+		t.Error("Metrics.Enabled = true, want false by default")
+	}
+	if cfg.Metrics.Listen != DefaultMetricsListen {
+		t.Errorf("Metrics.Listen = %q, want %q", cfg.Metrics.Listen, DefaultMetricsListen)
+	}
+}
+
+func TestMetricsConfig_FromYAML(t *testing.T) {
+	withTestBaseURL(t)
+	yaml := `
+metrics:
+  enabled: true
+  listen: "0.0.0.0:9999"
+`
+	path := writeYAML(t, yaml)
+
+	cfg, err := loadCfg(t, path)
+	if err != nil {
+		t.Fatalf("Load() error: %v", err)
+	}
+
+	if !cfg.Metrics.Enabled {
+		t.Error("Metrics.Enabled = false, want true")
+	}
+	if cfg.Metrics.Listen != "0.0.0.0:9999" {
+		t.Errorf("Metrics.Listen = %q, want %q", cfg.Metrics.Listen, "0.0.0.0:9999")
+	}
+}
+
+func TestMetricsConfig_EnabledWithoutListen_DefaultsToLoopback(t *testing.T) {
+	withTestBaseURL(t)
+	yaml := `
+metrics:
+  enabled: true
+  listen: ""
+`
+	path := writeYAML(t, yaml)
+
+	cfg, err := loadCfg(t, path)
+	if err != nil {
+		t.Fatalf("Load() error: %v", err)
+	}
+
+	if cfg.Metrics.Listen != DefaultMetricsListen {
+		t.Errorf("Metrics.Listen = %q, want %q (defensive default when enabled with a blank listen)", cfg.Metrics.Listen, DefaultMetricsListen)
+	}
+}
+
+func TestMetricsConfig_EnvOverlay(t *testing.T) {
+	withTestBaseURL(t)
+	path := writeYAML(t, "")
+
+	t.Setenv("SHOPANDA_METRICS_ENABLED", "true")
+	t.Setenv("SHOPANDA_METRICS_LISTEN", "127.0.0.1:9091")
+
+	cfg, err := loadCfg(t, path)
+	if err != nil {
+		t.Fatalf("Load() error: %v", err)
+	}
+
+	if !cfg.Metrics.Enabled {
+		t.Error("Metrics.Enabled = false, want true from env")
+	}
+	if cfg.Metrics.Listen != "127.0.0.1:9091" {
+		t.Errorf("Metrics.Listen = %q, want %q from env", cfg.Metrics.Listen, "127.0.0.1:9091")
+	}
+}
+
+func TestMetricsConfig_FlattenEntries(t *testing.T) {
+	withTestBaseURL(t)
+	yaml := `
+metrics:
+  enabled: true
+  listen: "127.0.0.1:9090"
+`
+	path := writeYAML(t, yaml)
+
+	_, err := loadIsolated(t, path)
+	if err != nil {
+		t.Fatalf("Load() error: %v", err)
+	}
+
+	if got := Get("metrics.enabled"); got != "true" {
+		t.Errorf("Get(metrics.enabled) = %q, want %q", got, "true")
+	}
+	if got := Get("metrics.listen"); got != "127.0.0.1:9090" {
+		t.Errorf("Get(metrics.listen) = %q, want %q", got, "127.0.0.1:9090")
+	}
+}

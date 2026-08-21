@@ -71,12 +71,72 @@ func normalizeAndValidate(cfg *Config) error {
 		return err
 	}
 	normalizeHTTP(&cfg.HTTP)
+	normalizeMetrics(&cfg.Metrics)
+	if err := validateMetricsListen(cfg); err != nil {
+		return err
+	}
 
 	if err := validateSecureDefaults(cfg); err != nil {
 		return err
 	}
 
 	return nil
+}
+
+// normalizeMetrics defaults a blank listen address so an operator who sets
+// metrics.enabled=true without metrics.listen never accidentally binds to
+// all interfaces (Go's http.Server treats an empty Addr as ":http").
+func normalizeMetrics(m *MetricsConfig) {
+	if m.Enabled && strings.TrimSpace(m.Listen) == "" {
+		m.Listen = DefaultMetricsListen
+	}
+}
+
+// validateMetricsListen rejects metrics binds that would expose unauthenticated
+// /metrics on all interfaces or on a non-loopback address outside dev mode.
+func validateMetricsListen(cfg *Config) error {
+	if !cfg.Metrics.Enabled {
+		return nil
+	}
+	listen := strings.TrimSpace(cfg.Metrics.Listen)
+	if listen == "" {
+		return fmt.Errorf("config: metrics.enabled=true requires metrics.listen")
+	}
+	host, _, err := net.SplitHostPort(listen)
+	if err != nil {
+		return fmt.Errorf("config: invalid metrics.listen %q: %w", listen, err)
+	}
+	host = strings.Trim(strings.ToLower(host), "[]")
+	if isMetricsWildcardBind(host) {
+		if DevModeEnabled() {
+			return nil
+		}
+		return fmt.Errorf("config: metrics.listen=%q binds all interfaces; use a loopback address (default %q) or enable SHOPANDA_DEV_MODE for local development only", listen, DefaultMetricsListen)
+	}
+	if isLoopbackHost(host) {
+		return nil
+	}
+	if DevModeEnabled() {
+		return nil
+	}
+	return fmt.Errorf("config: metrics.listen=%q is not loopback; use %q (default) and scrape via localhost, or enable SHOPANDA_DEV_MODE for local development only — /metrics has no authentication", listen, DefaultMetricsListen)
+}
+
+func isMetricsWildcardBind(host string) bool {
+	switch host {
+	case "", "0.0.0.0", "::":
+		return true
+	default:
+		return false
+	}
+}
+
+func isLoopbackHost(host string) bool {
+	if host == "localhost" {
+		return true
+	}
+	ip := net.ParseIP(host)
+	return ip != nil && ip.IsLoopback()
 }
 
 func normalizeHTTP(h *HTTPConfig) {

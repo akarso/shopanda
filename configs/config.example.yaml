@@ -275,3 +275,22 @@ rate_limit:
   # trusted_proxies:
   #   - "10.0.0.0/8"
   #   - "172.16.0.0/12"
+
+# --- Metrics --------------------------------------------------------------
+metrics:
+  # Disabled by default. When enabled, request/checkout/job/webhook metrics
+  # are exposed in Prometheus text format on a *separate* listener (not the
+  # main app port), so /metrics is never mixed into the public API surface.
+  enabled: false
+
+  # Bind address for the metrics listener. Defaults to loopback-only
+  # (127.0.0.1) so /metrics is never reachable from outside the host by
+  # default. Only change this to a non-loopback address if the scrape
+  # traffic stays on a private network (e.g. a Kubernetes/Docker internal
+  # network) that a scraper like Prometheus can reach but the public
+  # internet cannot — this endpoint has no built-in authentication.
+  # Override with SHOPANDA_METRICS_LISTEN. When serve and worker both run on
+  # the same host with metrics enabled, use distinct ports (e.g. 9090 / 9091).
+  # Startup rejects 0.0.0.0/:: and non-loopback binds unless SHOPANDA_DEV_MODE
+  # is truthy — /metrics has no authentication.
+  listen: "127.0.0.1:9090"

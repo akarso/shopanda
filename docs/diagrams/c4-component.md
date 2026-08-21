@@ -17,7 +17,7 @@ C4Component
 
     Container_Boundary(api, "API Server") {
 
-        Component(middleware, "Middleware Chain", "Go net/http", "Recovery → RequestID → RateLimit → Logging → Auth → Store → Language → CacheControl. Wraps all routes.")
+        Component(middleware, "Middleware Chain", "Go net/http", "Metrics (outermost) → Recovery → RequestID → RateLimit → Logging → Auth → Store → Language → CacheControl. Wraps all routes.")
 
         Boundary(interfaces, "Interfaces Layer (HTTP Handlers)") {
             Component(authHandler, "AuthHandler", "HTTP", "Register, Login, Logout, Me, PasswordReset")
@@ -102,6 +102,7 @@ C4Component
 
         Boundary(platform, "Platform Layer (Cross-Cutting)") {
             Component(eventBus, "EventBus", "Go", "Pub/sub for domain events (sync + async; async drain wait-then-cancel)")
+            Component(metricsRecorder, "MetricsRecorder", "Go, prometheus/client_golang", "RED + business metrics port; PrometheusRecorder impl (default Noop). Bounded labels only. Exposed via a dedicated /metrics listener (metrics.enabled, default off), not the main app port.")
             Component(pluginRegistry, "PluginRegistry", "Go", "Plugin lifecycle: register → init → collect steps and providers")
             Component(jwtPkg, "JWT", "Go, crypto", "Token issuing and verification")
             Component(configPkg, "Config", "Go, yaml.v3", "YAML configuration loading")
@@ -146,6 +147,7 @@ C4Component
     Rel(middleware, storefrontHandler, "Routes requests (when frontend.enabled)")
     Rel(middleware, storeAdmin, "Routes requests")
     Rel(middleware, postgresRepos, "Store resolution (StoreMiddleware)")
+    Rel(middleware, metricsRecorder, "Records HTTP RED metrics (route template, method, status class)")
 
     Rel(authHandler, authService, "Delegates auth logic")
     Rel(cartHandler, cartService, "Delegates cart logic")
@@ -160,6 +162,9 @@ C4Component
     Rel(checkoutWorkflow, manualPay, "Initiates payment")
     Rel(checkoutWorkflow, flatRate, "Selects shipping")
     Rel(checkoutWorkflow, eventBus, "Publishes checkout events")
+    Rel(checkoutWorkflow, metricsRecorder, "Records checkout outcome (success/failed)")
+    Rel(jobWorker, metricsRecorder, "Records job failures by job type")
+    Rel(webhookDeliverHandler, metricsRecorder, "Records delivery outcome (success/failed; skips not counted)")
 
     Rel(eventBus, notifService, "order.paid event")
     Rel(notifService, postgresRepos, "Looks up order + customer")

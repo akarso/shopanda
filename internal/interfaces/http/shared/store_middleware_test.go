@@ -1,4 +1,4 @@
-package http_test
+package shared_test
 
 import (
 	"context"
@@ -10,7 +10,7 @@ import (
 	"time"
 
 	"github.com/akarso/shopanda/internal/domain/store"
-	shophttp "github.com/akarso/shopanda/internal/interfaces/http"
+	"github.com/akarso/shopanda/internal/interfaces/http/shared"
 	"github.com/akarso/shopanda/internal/platform/logger"
 )
 
@@ -71,7 +71,7 @@ func TestStoreMiddleware_ResolvesByDomain(t *testing.T) {
 	de := store.NewStoreFromDB("s-de", "de", "Germany", "EUR", "DE", "de", "shop.de", false, now, now)
 
 	repo := &stubStoreRepo{byDomain: map[string]*store.Store{"shop.de": de}}
-	mw := shophttp.StoreMiddleware(repo, storeTestLogger())
+	mw := shared.StoreMiddleware(repo, storeTestLogger())
 
 	var got *store.Store
 	handler := mw(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -102,7 +102,7 @@ func TestStoreMiddleware_FallsBackToDefault(t *testing.T) {
 		byDomain: map[string]*store.Store{},
 		def:      def,
 	}
-	mw := shophttp.StoreMiddleware(repo, storeTestLogger())
+	mw := shared.StoreMiddleware(repo, storeTestLogger())
 
 	var got *store.Store
 	handler := mw(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -127,7 +127,7 @@ func TestStoreMiddleware_FallsBackToDefault(t *testing.T) {
 
 func TestStoreMiddleware_NoStore(t *testing.T) {
 	repo := &stubStoreRepo{byDomain: map[string]*store.Store{}}
-	mw := shophttp.StoreMiddleware(repo, storeTestLogger())
+	mw := shared.StoreMiddleware(repo, storeTestLogger())
 
 	var got *store.Store
 	handler := mw(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -152,7 +152,7 @@ func TestStoreMiddleware_StripsPort(t *testing.T) {
 	s := store.NewStoreFromDB("s-1", "local", "Local", "EUR", "DE", "de", "localhost", false, now, now)
 
 	repo := &stubStoreRepo{byDomain: map[string]*store.Store{"localhost": s}}
-	mw := shophttp.StoreMiddleware(repo, storeTestLogger())
+	mw := shared.StoreMiddleware(repo, storeTestLogger())
 
 	var got *store.Store
 	handler := mw(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -178,7 +178,7 @@ func TestStoreMiddleware_DomainLookupError_FallsBackToDefault(t *testing.T) {
 
 	// Use a stub where FindByDomain errors but FindDefault succeeds.
 	domainErrRepo := &domainErrorRepo{def: def}
-	mw := shophttp.StoreMiddleware(domainErrRepo, storeTestLogger())
+	mw := shared.StoreMiddleware(domainErrRepo, storeTestLogger())
 
 	var got *store.Store
 	handler := mw(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

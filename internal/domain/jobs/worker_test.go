@@ -82,6 +82,19 @@ func (l *mockLogger) Error(msg string, _ error, _ map[string]interface{}) {
 	l.msgs = append(l.msgs, msg)
 }
 
+// --- mock metrics ---
+
+type mockMetrics struct {
+	mu       sync.Mutex
+	failures []string
+}
+
+func (m *mockMetrics) JobFailure(jobType string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.failures = append(m.failures, jobType)
+}
+
 // --- tests ---
 
 func TestWorker_ProcessesJob(t *testing.T) {
@@ -185,6 +198,101 @@ func TestWorker_StopSignal(t *testing.T) {
 	case <-time.After(time.Second):
 		t.Fatal("worker did not stop within timeout")
 	}
+}
+
+func TestWorker_HandlerError_RecordsMetric(t *testing.T) {
+	q := &mockQueue{}
+	log := &mockLogger{}
+	m := &mockMetrics{}
+
+	handler := &mockHandler{
+		jobType:  "fail_job",
+		handleFn: func(_ context.Context, _ jobs.Job) error { return errors.New("boom") },
+	}
+
+	w := jobs.NewWorker(q, log, 50*time.Millisecond).WithMetrics(m)
+	w.Register(handler)
+
+	job, _ := jobs.NewJob("j1", "fail_job", nil)
+	_ = q.Enqueue(context.Background(), job)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
+	defer cancel()
+	w.Start(ctx)
+
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if len(m.failures) != 1 || m.failures[0] != "fail_job" {
+		t.Errorf("failures = %v, want [fail_job]", m.failures)
+	}
+}
+
+func TestWorker_FailsUnknownType_RecordsMetric(t *testing.T) {
+	q := &mockQueue{}
+	log := &mockLogger{}
+	m := &mockMetrics{}
+
+	w := jobs.NewWorker(q, log, 50*time.Millisecond).WithMetrics(m)
+
+	job, _ := jobs.NewJob("j1", "unknown", nil)
+	_ = q.Enqueue(context.Background(), job)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
+	defer cancel()
+	w.Start(ctx)
+
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if len(m.failures) != 1 || m.failures[0] != "unknown" {
+		t.Errorf("failures = %v, want [unknown]", m.failures)
+	}
+}
+
+func TestWorker_SuccessfulJob_DoesNotRecordFailureMetric(t *testing.T) {
+	q := &mockQueue{}
+	log := &mockLogger{}
+	m := &mockMetrics{}
+
+	handler := &mockHandler{
+		jobType:  "ok_job",
+		handleFn: func(_ context.Context, _ jobs.Job) error { return nil },
+	}
+
+	w := jobs.NewWorker(q, log, 50*time.Millisecond).WithMetrics(m)
+	w.Register(handler)
+
+	job, _ := jobs.NewJob("j1", "ok_job", nil)
+	_ = q.Enqueue(context.Background(), job)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
+	defer cancel()
+	w.Start(ctx)
+
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if len(m.failures) != 0 {
+		t.Errorf("failures = %v, want none for a successful job", m.failures)
+	}
+}
+
+func TestWorker_WithoutMetrics_DoesNotPanicOnFailure(t *testing.T) {
+	q := &mockQueue{}
+	log := &mockLogger{}
+
+	handler := &mockHandler{
+		jobType:  "fail_job",
+		handleFn: func(_ context.Context, _ jobs.Job) error { return errors.New("boom") },
+	}
+
+	w := jobs.NewWorker(q, log, 50*time.Millisecond) // no WithMetrics call
+	w.Register(handler)
+
+	job, _ := jobs.NewJob("j1", "fail_job", nil)
+	_ = q.Enqueue(context.Background(), job)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
+	defer cancel()
+	w.Start(ctx)
 }
 
 func TestWorker_DuplicateHandlerPanics(t *testing.T) {

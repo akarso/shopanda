@@ -1,4 +1,4 @@
-package http_test
+package shared_test
 
 import (
 	"encoding/json"
@@ -7,13 +7,13 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	shophttp "github.com/akarso/shopanda/internal/interfaces/http"
+	"github.com/akarso/shopanda/internal/interfaces/http/shared"
 	"github.com/akarso/shopanda/internal/platform/apperror"
 )
 
 func TestJSON(t *testing.T) {
 	w := httptest.NewRecorder()
-	shophttp.JSON(w, http.StatusOK, map[string]string{"id": "123"})
+	shared.JSON(w, http.StatusOK, map[string]string{"id": "123"})
 
 	if w.Code != http.StatusOK {
 		t.Errorf("status = %d, want %d", w.Code, http.StatusOK)
@@ -22,7 +22,7 @@ func TestJSON(t *testing.T) {
 		t.Errorf("Content-Type = %q, want application/json", ct)
 	}
 
-	var resp shophttp.Response
+	var resp shared.Response
 	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
 		t.Fatalf("unmarshal: %v", err)
 	}
@@ -40,13 +40,13 @@ func TestJSON(t *testing.T) {
 
 func TestJSONError_AppError(t *testing.T) {
 	w := httptest.NewRecorder()
-	shophttp.JSONError(w, apperror.NotFound("product not found"))
+	shared.JSONError(w, apperror.NotFound("product not found"))
 
 	if w.Code != http.StatusNotFound {
 		t.Errorf("status = %d, want %d", w.Code, http.StatusNotFound)
 	}
 
-	var resp shophttp.Response
+	var resp shared.Response
 	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
 		t.Fatalf("unmarshal: %v", err)
 	}
@@ -66,13 +66,13 @@ func TestJSONError_AppError(t *testing.T) {
 
 func TestJSONError_GenericError(t *testing.T) {
 	w := httptest.NewRecorder()
-	shophttp.JSONError(w, fmt.Errorf("something broke"))
+	shared.JSONError(w, fmt.Errorf("something broke"))
 
 	if w.Code != http.StatusInternalServerError {
 		t.Errorf("status = %d, want %d", w.Code, http.StatusInternalServerError)
 	}
 
-	var resp shophttp.Response
+	var resp shared.Response
 	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
 		t.Fatalf("unmarshal: %v", err)
 	}
@@ -89,13 +89,13 @@ func TestJSONError_GenericError(t *testing.T) {
 
 func TestJSONError_InternalRedactsMessage(t *testing.T) {
 	w := httptest.NewRecorder()
-	shophttp.JSONError(w, apperror.Internal("db timeout"))
+	shared.JSONError(w, apperror.Internal("db timeout"))
 
 	if w.Code != http.StatusInternalServerError {
 		t.Errorf("status = %d, want %d", w.Code, http.StatusInternalServerError)
 	}
 
-	var resp shophttp.Response
+	var resp shared.Response
 	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
 		t.Fatalf("unmarshal: %v", err)
 	}
@@ -124,7 +124,7 @@ func TestStatusFromCode(t *testing.T) {
 	}
 	for _, tc := range tests {
 		t.Run(string(tc.code), func(t *testing.T) {
-			if got := shophttp.StatusFromCode(tc.code); got != tc.status {
+			if got := shared.StatusFromCode(tc.code); got != tc.status {
 				t.Errorf("StatusFromCode(%q) = %d, want %d", tc.code, got, tc.status)
 			}
 		})

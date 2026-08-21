@@ -598,6 +598,98 @@ func TestService_StartCheckout_WorkflowError(t *testing.T) {
 	}
 }
 
+// --- Metrics ---
+
+type mockMetricsRecorder struct {
+	checkoutOutcomes []string
+}
+
+func (m *mockMetricsRecorder) HTTPRequest(string, string, string, time.Duration) {}
+func (m *mockMetricsRecorder) CheckoutResult(outcome string) {
+	m.checkoutOutcomes = append(m.checkoutOutcomes, outcome)
+}
+func (m *mockMetricsRecorder) JobFailure(string)      {}
+func (m *mockMetricsRecorder) WebhookDelivery(string) {}
+
+func TestWorkflow_WithMetrics_RecordsSuccess(t *testing.T) {
+	bus := testBus(t)
+	log := testLogger()
+	m := &mockMetricsRecorder{}
+
+	step := &mockStep{name: "ok_step", fn: func(_ *checkout.Context) error { return nil }}
+	wf := checkout.NewWorkflow([]checkout.Step{step}, bus, log).WithMetrics(m)
+
+	ctx := checkout.NewContext("cart-1", "cust-1", "EUR")
+	if err := wf.Execute(context.Background(), ctx); err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	if len(m.checkoutOutcomes) != 1 || m.checkoutOutcomes[0] != "success" {
+		t.Errorf("checkoutOutcomes = %v, want [success]", m.checkoutOutcomes)
+	}
+}
+
+func TestWorkflow_WithMetrics_RecordsFailure(t *testing.T) {
+	bus := testBus(t)
+	log := testLogger()
+	m := &mockMetricsRecorder{}
+
+	step := &mockStep{name: "fail_step", fn: func(_ *checkout.Context) error { return errors.New("boom") }}
+	wf := checkout.NewWorkflow([]checkout.Step{step}, bus, log).WithMetrics(m)
+
+	ctx := checkout.NewContext("cart-1", "cust-1", "EUR")
+	if err := wf.Execute(context.Background(), ctx); err == nil {
+		t.Fatal("expected error from workflow")
+	}
+	if len(m.checkoutOutcomes) != 1 || m.checkoutOutcomes[0] != "failed" {
+		t.Errorf("checkoutOutcomes = %v, want [failed]", m.checkoutOutcomes)
+	}
+}
+
+func TestWorkflow_WithMetrics_RecordsPanicAsFailure(t *testing.T) {
+	bus := testBus(t)
+	log := testLogger()
+	m := &mockMetricsRecorder{}
+
+	step := &panicStep{name: "panic_step"}
+	wf := checkout.NewWorkflow([]checkout.Step{step}, bus, log).WithMetrics(m)
+
+	ctx := checkout.NewContext("cart-1", "cust-1", "EUR")
+	panicked := false
+	func() {
+		defer func() {
+			if r := recover(); r == nil {
+				t.Fatal("expected panic to propagate")
+			}
+			panicked = true
+		}()
+		_ = wf.Execute(context.Background(), ctx)
+	}()
+	if !panicked {
+		t.Fatal("expected panic from step")
+	}
+	if len(m.checkoutOutcomes) != 1 || m.checkoutOutcomes[0] != "failed" {
+		t.Errorf("checkoutOutcomes = %v, want [failed] for panicking step", m.checkoutOutcomes)
+	}
+}
+
+type panicStep struct{ name string }
+
+func (panicStep) Name() string { return "panic_step" }
+func (panicStep) Execute(_ context.Context, _ *checkout.Context) error {
+	panic("checkout step blew up")
+}
+
+func TestWorkflow_WithoutMetrics_DoesNotPanic(t *testing.T) {
+	bus := testBus(t)
+	log := testLogger()
+
+	step := &mockStep{name: "fail_step", fn: func(_ *checkout.Context) error { return errors.New("boom") }}
+	wf := checkout.NewWorkflow([]checkout.Step{step}, bus, log) // no WithMetrics call
+
+	ctx := checkout.NewContext("cart-1", "cust-1", "EUR")
+	_ = wf.Execute(context.Background(), ctx)
+}
+
 // ============================================================
 // Event constant tests
 // ============================================================

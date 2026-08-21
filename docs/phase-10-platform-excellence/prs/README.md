@@ -22,8 +22,8 @@
 | PR-1017 | D | done | [Plugin boundary honesty](PR-1017.md) |
 | PR-1018 | D | done | [Checkout context](PR-1018.md) |
 | PR-1019 | D | done | [Event bus drain](PR-1019.md) |
-| PR-1020 | E | planned | [Prometheus metrics](PR-1020.md) |
-| PR-1021 | E | planned | [HTTP package split (shared)](PR-1021.md) |
+| PR-1020 | E | done | [Prometheus metrics](PR-1020.md) |
+| PR-1021 | E | done | [HTTP package split (shared)](PR-1021.md) |
 | PR-1022 | E | planned | [HTTP package split (admin)](PR-1022.md) |
 | PR-1023 | E | planned | [HTTP package split (storefront)](PR-1023.md) |
 | PR-1024 | E | planned | [OpenTelemetry traces](PR-1024.md) |

@@ -40,7 +40,17 @@ type Config struct {
 	RateLimit RateLimitConfig `yaml:"rate_limit"`
 	Payment   PaymentConfig   `yaml:"payment"`
 	Search    SearchConfig    `yaml:"search"`
+	Metrics   MetricsConfig   `yaml:"metrics"`
 	Dev       DevConfig       `yaml:"dev"`
+}
+
+// MetricsConfig holds optional Prometheus metrics settings. Disabled by
+// default — when Enabled, a dedicated /metrics listener binds to Listen
+// (default loopback-only) so scrapes are never publicly exposed unless an
+// operator explicitly rebinds Listen onto a private scrape network.
+type MetricsConfig struct {
+	Enabled bool   `yaml:"enabled"`
+	Listen  string `yaml:"listen"`
 }
 
 // DevConfig holds development-mode runtime options.
@@ -97,6 +107,11 @@ const (
 	DefaultHTTPMaxBodyBytes      int64 = 1 << 20  // 1 MiB
 	DefaultHTTPMediaMaxBodyBytes int64 = 10 << 20 // 10 MiB
 )
+
+// DefaultMetricsListen binds /metrics to loopback only, so enabling metrics
+// never exposes them beyond the host unless an operator explicitly changes
+// metrics.listen to a private scrape network address.
+const DefaultMetricsListen = "127.0.0.1:9090"
 
 type DatabaseConfig struct {
 	Host     string `yaml:"host"`
@@ -677,6 +692,10 @@ func defaults() Config {
 			Enabled: true,
 			Default: RateLimitRule{Rate: 10, Burst: 20},
 		},
+		Metrics: MetricsConfig{
+			Enabled: false,
+			Listen:  DefaultMetricsListen,
+		},
 	}
 }
 
@@ -1080,6 +1099,14 @@ func applyEnv(cfg *Config) {
 			cfg.Dev.EmbedScheduler = b
 		}
 	}
+	if v := os.Getenv("SHOPANDA_METRICS_ENABLED"); v != "" {
+		if b, err := strconv.ParseBool(v); err == nil {
+			cfg.Metrics.Enabled = b
+		}
+	}
+	if v := os.Getenv("SHOPANDA_METRICS_LISTEN"); v != "" {
+		cfg.Metrics.Listen = v
+	}
 }
 
 func redactSecret(value string) string {
@@ -1187,6 +1214,8 @@ func flatten(cfg *Config) map[string]string {
 	m["rate_limit.enabled"] = strconv.FormatBool(cfg.RateLimit.Enabled)
 	m["rate_limit.default.rate"] = strconv.FormatFloat(cfg.RateLimit.Default.Rate, 'f', -1, 64)
 	m["rate_limit.default.burst"] = strconv.Itoa(cfg.RateLimit.Default.Burst)
+	m["metrics.enabled"] = strconv.FormatBool(cfg.Metrics.Enabled)
+	m["metrics.listen"] = cfg.Metrics.Listen
 	return m
 }
 

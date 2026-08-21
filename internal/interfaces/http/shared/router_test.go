@@ -1,15 +1,15 @@
-package http_test
+package shared_test
 
 import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
 
-	shophttp "github.com/akarso/shopanda/internal/interfaces/http"
+	"github.com/akarso/shopanda/internal/interfaces/http/shared"
 )
 
 func TestRouter_HandleFunc(t *testing.T) {
-	r := shophttp.NewRouter()
+	r := shared.NewRouter()
 	r.HandleFunc("GET /test", func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusOK)
 		w.Write([]byte("ok"))
@@ -29,10 +29,10 @@ func TestRouter_HandleFunc(t *testing.T) {
 }
 
 func TestRouter_MiddlewareOrder(t *testing.T) {
-	r := shophttp.NewRouter()
+	r := shared.NewRouter()
 
 	var order []string
-	mw := func(name string) shophttp.Middleware {
+	mw := func(name string) shared.Middleware {
 		return func(next http.Handler) http.Handler {
 			return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				order = append(order, name+"-before")
@@ -65,7 +65,7 @@ func TestRouter_MiddlewareOrder(t *testing.T) {
 }
 
 func TestRouter_NotFound(t *testing.T) {
-	r := shophttp.NewRouter()
+	r := shared.NewRouter()
 	r.HandleFunc("GET /exists", func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusOK)
 	})

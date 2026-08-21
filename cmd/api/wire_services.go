@@ -65,6 +65,7 @@ import (
 	"github.com/akarso/shopanda/internal/platform/event"
 	"github.com/akarso/shopanda/internal/platform/jwt"
 	"github.com/akarso/shopanda/internal/platform/logger"
+	"github.com/akarso/shopanda/internal/platform/metrics"
 	"github.com/akarso/shopanda/internal/platform/plugin"
 	"github.com/akarso/shopanda/internal/seed"
 
@@ -81,6 +82,8 @@ type serveRuntime struct {
 	jobWorker *jobs.Worker
 	jobQueue  jobs.Queue
 	appCache  cache.Cache
+
+	metricsRecorder metrics.Recorder
 
 	searchEngine search.SearchEngine
 
@@ -173,7 +176,10 @@ type serveRuntime struct {
 	checkoutHandler                *shophttp.CheckoutHandler
 }
 
-func wireServeRuntime(cfg *config.Config, log logger.Logger, conn *sql.DB, repos *serveRepos) (rt *serveRuntime, err error) {
+func wireServeRuntime(cfg *config.Config, log logger.Logger, conn *sql.DB, repos *serveRepos, metricsRecorder metrics.Recorder) (rt *serveRuntime, err error) {
+	if metricsRecorder == nil {
+		metricsRecorder = metrics.Noop()
+	}
 	// Event bus (created early for plugin init and later handlers).
 	bus := event.NewBus(log)
 
@@ -211,9 +217,9 @@ func wireServeRuntime(cfg *config.Config, log logger.Logger, conn *sql.DB, repos
 	}
 	assetRegistry := assetsApp.NewRegistry()
 	pluginApp := &plugin.App{
-		Logger:    log,
-		Bus:       bus,
-		Config:    cfg,
+		Logger: log,
+		Bus:    bus,
+		Config: cfg,
 		Bootstrap: &plugin.Bootstrap{
 			DB:        conn,
 			Customers: repos.customerRepo,
@@ -267,7 +273,7 @@ func wireServeRuntime(cfg *config.Config, log logger.Logger, conn *sql.DB, repos
 	}
 
 	// Job queue, worker, mailer, cache — shared setup.
-	jobWorker, jobQueue, appCache, err := setupWorker(conn, cfg, log, pluginApp)
+	jobWorker, jobQueue, appCache, err := setupWorker(conn, cfg, log, pluginApp, metricsRecorder)
 	if err != nil {
 		return nil, err
 	}
@@ -503,7 +509,7 @@ func wireServeRuntime(cfg *config.Config, log logger.Logger, conn *sql.DB, repos
 	if err != nil {
 		return nil, fmt.Errorf("checkout workflow: %w", err)
 	}
-	checkoutWorkflow := checkoutApp.NewWorkflow(checkoutSteps, bus, log)
+	checkoutWorkflow := checkoutApp.NewWorkflow(checkoutSteps, bus, log).WithMetrics(metricsRecorder)
 	checkoutService := checkoutApp.NewService(repos.cartRepo, checkoutWorkflow, log)
 	checkoutHandler := shophttp.NewCheckoutHandler(checkoutService, extensionValueService)
 
@@ -762,6 +768,7 @@ func wireServeRuntime(cfg *config.Config, log logger.Logger, conn *sql.DB, repos
 		jobWorker:                      jobWorker,
 		jobQueue:                       jobQueue,
 		appCache:                       appCache,
+		metricsRecorder:                metricsRecorder,
 		searchEngine:                   searchEngine,
 		tokenParser:                    tokenParser,
 		jwtIssuer:                      jwtIssuer,
