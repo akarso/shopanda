@@ -7,6 +7,8 @@ import (
 	"path/filepath"
 	"time"
 
+	"github.com/akarso/shopanda/internal/interfaces/http/admin"
+
 	orderApp "github.com/akarso/shopanda/internal/application/order"
 	themeapp "github.com/akarso/shopanda/internal/application/theme"
 	"github.com/akarso/shopanda/internal/domain/rbac"
@@ -325,7 +327,7 @@ func buildServeHandler(cfg *config.Config, log logger.Logger, rt *serveRuntime, 
 	router.HandleFunc("POST /api/v1/payments/webhook/{provider}", rt.paymentWebhook.Handle())
 
 	// Admin SPA — embedded static files served at /admin.
-	adminHandler, adminErr := shophttp.NewAdminHandler()
+	adminHandler, adminErr := admin.NewAdminHandler()
 	if adminErr != nil {
 		return nil, fmt.Errorf("admin handler: %w", adminErr)
 	}

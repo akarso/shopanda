@@ -234,7 +234,10 @@ func TestWorker_FailsUnknownType_RecordsMetric(t *testing.T) {
 
 	w := jobs.NewWorker(q, log, 50*time.Millisecond).WithMetrics(m)
 
-	job, _ := jobs.NewJob("j1", "unknown", nil)
+	// A distinctly bogus type (not literally "unknown") proves JobFailure
+	// gets the fixed sentinel, not the raw unregistered queue value passed
+	// straight through as a Prometheus label.
+	job, _ := jobs.NewJob("j1", "no-such-handler-registered", nil)
 	_ = q.Enqueue(context.Background(), job)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)

@@ -30,7 +30,7 @@ type returnResp struct {
 	UpdatedAt   string           `json:"updated_at"`
 }
 
-func toReturnResponse(ret *domainReturns.Return) returnResp {
+func ToReturnResponse(ret *domainReturns.Return) returnResp {
 	items := make([]returnItemResp, 0, len(ret.Items()))
 	var total int64
 	for _, item := range ret.Items() {
@@ -68,10 +68,10 @@ func toReturnResponse(ret *domainReturns.Return) returnResp {
 	return resp
 }
 
-func toReturnResponses(list []domainReturns.Return) []returnResp {
+func ToReturnResponses(list []domainReturns.Return) []returnResp {
 	out := make([]returnResp, 0, len(list))
 	for i := range list {
-		out = append(out, toReturnResponse(&list[i]))
+		out = append(out, ToReturnResponse(&list[i]))
 	}
 	return out
 }
