@@ -13,6 +13,7 @@ import (
 	"github.com/akarso/shopanda/internal/platform/event"
 	"github.com/akarso/shopanda/internal/platform/id"
 	"github.com/akarso/shopanda/internal/platform/logger"
+	"github.com/akarso/shopanda/internal/platform/metrics"
 )
 
 // --- Mock step ---
@@ -677,6 +678,31 @@ type panicStep struct{ name string }
 func (panicStep) Name() string { return "panic_step" }
 func (panicStep) Execute(_ context.Context, _ *checkout.Context) error {
 	panic("checkout step blew up")
+}
+
+// TestWorkflow_WithMetrics_RecordsSucceededEventFailed pins the distinction
+// between a real checkout failure and every step succeeding but the final
+// EventCheckoutCompleted publish failing — the order/payment side is fine,
+// so it must not show up in the same failure-rate bucket as a broken step.
+func TestWorkflow_WithMetrics_RecordsSucceededEventFailed(t *testing.T) {
+	bus := testBus(t)
+	log := testLogger()
+	m := &mockMetricsRecorder{}
+
+	bus.On(checkout.EventCheckoutCompleted, func(_ context.Context, _ event.Event) error {
+		return errors.New("notification service unreachable")
+	})
+
+	step := &mockStep{name: "ok_step", fn: func(_ *checkout.Context) error { return nil }}
+	wf := checkout.NewWorkflow([]checkout.Step{step}, bus, log).WithMetrics(m)
+
+	ctx := checkout.NewContext("cart-1", "cust-1", "EUR")
+	if err := wf.Execute(context.Background(), ctx); err == nil {
+		t.Fatal("expected the publish error to propagate from Execute")
+	}
+	if len(m.checkoutOutcomes) != 1 || m.checkoutOutcomes[0] != metrics.OutcomeSucceededEventFailed {
+		t.Errorf("checkoutOutcomes = %v, want [%s]", m.checkoutOutcomes, metrics.OutcomeSucceededEventFailed)
+	}
 }
 
 func TestWorkflow_WithoutMetrics_DoesNotPanic(t *testing.T) {

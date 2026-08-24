@@ -5,10 +5,11 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"github.com/akarso/shopanda/internal/interfaces/http/admin"
 	"net/http"
 	"net/http/httptest"
 	"testing"
+
+	"github.com/akarso/shopanda/internal/interfaces/http/admin"
 
 	adminApp "github.com/akarso/shopanda/internal/application/admin"
 	domainAdmin "github.com/akarso/shopanda/internal/domain/admin"
@@ -16,8 +17,6 @@ import (
 	"github.com/akarso/shopanda/internal/domain/config"
 	"github.com/akarso/shopanda/internal/domain/rbac"
 	"github.com/akarso/shopanda/internal/platform/auth/testhelper"
-
-	shophttp "github.com/akarso/shopanda/internal/interfaces/http"
 )
 
 type mockConfigRepoForAttrAdmin struct {
@@ -431,7 +430,7 @@ func TestAttributeAdminHandler_GroupLifecycle(t *testing.T) {
 func TestAttributeAdminHandler_ForbiddenWithoutCategoriesPermission(t *testing.T) {
 	store := adminApp.NewAttributeStore(newMockConfigRepoForAttrAdmin())
 	h := admin.NewAttributeAdminHandler(store)
-	requireCategoriesRead := shophttp.RequirePermission(rbac.CategoriesRead)
+	requireCategoriesRead := admin.RequirePermission(rbac.CategoriesRead)
 	mux := http.NewServeMux()
 	mux.Handle("GET /api/v1/admin/attributes", requireCategoriesRead(h.ListAttributes()))
 

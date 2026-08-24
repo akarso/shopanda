@@ -7,6 +7,8 @@ import (
 	"path/filepath"
 	"time"
 
+	"github.com/akarso/shopanda/internal/interfaces/http/storefront"
+
 	"github.com/akarso/shopanda/internal/interfaces/http/admin"
 
 	orderApp "github.com/akarso/shopanda/internal/application/order"
@@ -26,7 +28,7 @@ func buildServeHandler(cfg *config.Config, log logger.Logger, rt *serveRuntime, 
 	// Middleware: outermost first.
 	// Metrics is outermost so it captures the final status (after Recovery
 	// converts a panic to 500) and total request duration.
-	router.Use(shophttp.MetricsMiddleware(rt.metricsRecorder, router))
+	router.Use(shophttp.MetricsMiddleware(rt.metricsRecorder))
 	router.Use(shophttp.RecoveryMiddleware(log))
 	router.Use(shophttp.SecurityHeadersMiddleware(cfg.RateLimit.TrustedProxies...))
 	router.Use(shophttp.RequestIDMiddleware())
@@ -34,8 +36,8 @@ func buildServeHandler(cfg *config.Config, log logger.Logger, rt *serveRuntime, 
 	// Logging wraps BodyLimit so 413 from MaxBytesReader is captured in access logs.
 	router.Use(shophttp.LoggingMiddleware(log))
 	router.Use(shophttp.BodyLimitMiddleware(cfg.HTTP.MaxBodyBytes, cfg.HTTP.MediaMaxBodyBytes))
-	router.Use(shophttp.AuthMiddleware(rt.tokenParser))
-	router.Use(shophttp.AdminContextMiddleware())
+	router.Use(storefront.AuthMiddleware(rt.tokenParser))
+	router.Use(admin.AdminContextMiddleware())
 	router.Use(shophttp.CSRFMiddleware(cfg.RateLimit.TrustedProxies...))
 	router.Use(shophttp.StoreMiddleware(rt.repos.storeRepo, log))
 	router.Use(shophttp.LanguageMiddleware())
@@ -61,29 +63,30 @@ func buildServeHandler(cfg *config.Config, log logger.Logger, rt *serveRuntime, 
 	router.HandleFunc("GET /docs", rt.docsHandler.UI())
 	router.HandleFunc("GET /docs/openapi.yaml", rt.docsHandler.Spec())
 
-	requireAuth := shophttp.RequireAuth()
+	requireAuth := storefront.RequireAuth()
 
 	// Permission-based middleware for admin routes.
-	requireProductsRead := shophttp.RequirePermission(rbac.ProductsRead)
-	requireProductsWrite := shophttp.RequirePermission(rbac.ProductsWrite)
-	requireCategoriesRead := shophttp.RequirePermission(rbac.CategoriesRead)
-	requireCategoriesWrite := shophttp.RequirePermission(rbac.CategoriesWrite)
-	requireCustomersRead := shophttp.RequirePermission(rbac.CustomersRead)
-	requireCustomersWrite := shophttp.RequirePermission(rbac.CustomersWrite)
-	requireOrdersRead := shophttp.RequirePermission(rbac.OrdersRead)
-	requireOrdersWrite := shophttp.RequirePermission(rbac.OrdersWrite)
-	requireInvoicesRead := shophttp.RequirePermission(rbac.InvoicesRead)
-	requireMediaRead := shophttp.RequirePermission(rbac.MediaRead)
-	requireMediaWrite := shophttp.RequirePermission(rbac.MediaWrite)
-	requireSettingsRead := shophttp.RequirePermission(rbac.SettingsRead)
-	requireSettingsWrite := shophttp.RequirePermission(rbac.SettingsWrite)
-	requireContentRead := shophttp.RequirePermission(rbac.ContentRead)
-	requireContentWrite := shophttp.RequirePermission(rbac.ContentWrite)
-	requireShippingRead := shophttp.RequirePermission(rbac.ShippingRead)
-	requireShippingWrite := shophttp.RequirePermission(rbac.ShippingWrite)
-	requireAuditRead := shophttp.RequirePermission(rbac.AuditRead)
-	requireExtensionsRead := shophttp.RequirePermission(rbac.ExtensionsRead)
-	requireExtensionsWrite := shophttp.RequirePermission(rbac.ExtensionsWrite)
+	requireProductsRead := admin.RequirePermission(rbac.ProductsRead)
+	requireProductsWrite := admin.RequirePermission(rbac.ProductsWrite)
+	requireCategoriesRead := admin.RequirePermission(rbac.CategoriesRead)
+	requireCategoriesWrite := admin.RequirePermission(rbac.CategoriesWrite)
+	requireCustomersRead := admin.RequirePermission(rbac.CustomersRead)
+	requireCustomersWrite := admin.RequirePermission(rbac.CustomersWrite)
+	requireStoreCreditWrite := admin.RequirePermission(rbac.StoreCreditWrite)
+	requireOrdersRead := admin.RequirePermission(rbac.OrdersRead)
+	requireOrdersWrite := admin.RequirePermission(rbac.OrdersWrite)
+	requireInvoicesRead := admin.RequirePermission(rbac.InvoicesRead)
+	requireMediaRead := admin.RequirePermission(rbac.MediaRead)
+	requireMediaWrite := admin.RequirePermission(rbac.MediaWrite)
+	requireSettingsRead := admin.RequirePermission(rbac.SettingsRead)
+	requireSettingsWrite := admin.RequirePermission(rbac.SettingsWrite)
+	requireContentRead := admin.RequirePermission(rbac.ContentRead)
+	requireContentWrite := admin.RequirePermission(rbac.ContentWrite)
+	requireShippingRead := admin.RequirePermission(rbac.ShippingRead)
+	requireShippingWrite := admin.RequirePermission(rbac.ShippingWrite)
+	requireAuditRead := admin.RequirePermission(rbac.AuditRead)
+	requireExtensionsRead := admin.RequirePermission(rbac.ExtensionsRead)
+	requireExtensionsWrite := admin.RequirePermission(rbac.ExtensionsWrite)
 
 	// Auth routes.
 	router.HandleFunc("POST /api/v1/auth/register", rt.authHandler.Register())
@@ -156,7 +159,7 @@ func buildServeHandler(cfg *config.Config, log logger.Logger, rt *serveRuntime, 
 	router.Handle("DELETE /api/v1/admin/customers/{customerId}", requireCustomersWrite(rt.customerAdmin.Delete()))
 	router.Handle("POST /api/v1/admin/customers/{customerId}/revoke-sessions", requireCustomersWrite(rt.customerAdmin.RevokeSessions()))
 	router.Handle("GET /api/v1/admin/customers/{customerId}/store-credit", requireCustomersRead(rt.storeCreditAdmin.Get()))
-	router.Handle("POST /api/v1/admin/customers/{customerId}/store-credit/issue", requireCustomersWrite(rt.storeCreditAdmin.Issue()))
+	router.Handle("POST /api/v1/admin/customers/{customerId}/store-credit/issue", requireStoreCreditWrite(rt.storeCreditAdmin.Issue()))
 	router.Handle("GET /api/v1/admin/orders", requireOrdersRead(rt.orderAdmin.List()))
 	router.Handle("GET /api/v1/admin/orders/{orderId}", requireOrdersRead(rt.orderAdmin.Get()))
 	router.Handle("PUT /api/v1/admin/orders/{orderId}", requireOrdersWrite(rt.orderAdmin.Update()))
@@ -271,7 +274,7 @@ func buildServeHandler(cfg *config.Config, log logger.Logger, rt *serveRuntime, 
 	// Plugin admin routes (permission-guarded; registered during plugin Init).
 	// Use TryHandle so a conflicting or malformed pattern fails startup instead of panicking.
 	for _, route := range rt.pluginApp.AdminRoutes() {
-		if err := router.TryHandle(route.Pattern, shophttp.RequirePermission(route.Permission)(route.Handler)); err != nil {
+		if err := router.TryHandle(route.Pattern, admin.RequirePermission(route.Permission)(route.Handler)); err != nil {
 			return nil, fmt.Errorf("register plugin admin route: %w", err)
 		}
 	}
@@ -353,9 +356,9 @@ func buildServeHandler(cfg *config.Config, log logger.Logger, rt *serveRuntime, 
 			storeBaseURL: cfg.Server.PublicBaseURL,
 		}
 		linkService := orderApp.NewLinkOrderService(rt.repos.orderRepo, rt.authService, rt.jwtIssuer)
-		linkLinker := shophttp.NewStorefrontOrderLinkerAdapter(linkService)
+		linkLinker := storefront.NewStorefrontOrderLinkerAdapter(linkService)
 
-		storefront := shophttp.NewStorefrontHandler(themeEngine, rt.repos.productRepo, rt.repos.categoryRepo, rt.pdp, rt.plp, rt.searchEngine).
+		storefront := storefront.NewStorefrontHandler(themeEngine, rt.repos.productRepo, rt.repos.categoryRepo, rt.pdp, rt.plp, rt.searchEngine).
 			WithLegalConfig(rt.repos.configRepo).
 			WithMenus(rt.repos.menuRepo, rt.menuResolver).
 			WithContentBlocks(rt.repos.contentBlockRepo, rt.blockResolver, rt.repos.pageRepo).
@@ -441,6 +444,15 @@ func buildServeHandler(cfg *config.Config, log logger.Logger, rt *serveRuntime, 
 		router.HandleFunc("POST /api/v1/orders/claim-search", storefront.ClaimOrderSearch())
 		router.HandleFunc("POST /api/v1/orders/claim-register", storefront.ClaimLink())
 	}
+
+	// URL rewrite resolution: least-specific route, only reached when no
+	// route registered above matches. Looks up the raw request path in the
+	// url_rewrites table (kept current by rewrite.Subscriber on product/
+	// category/page create/update/delete) and, on a match, returns the
+	// resolved entity type + ID as JSON — callers (frontend, API composers)
+	// decide how to render or redirect from there, per the original design
+	// in docs/phase-1-core/specs/ROUTING.md and PR-089. On no match, 404.
+	router.Handle("GET /{path...}", shophttp.ResolverMiddleware(rt.repos.rewriteRepo, log)(storefront.NewRewriteHandler().Resolve()))
 
 	// Probes skip the store/auth stack (hung DB must not block liveness).
 	// Cheap middleware is applied to probe handlers only — not re-wrapped around the app.

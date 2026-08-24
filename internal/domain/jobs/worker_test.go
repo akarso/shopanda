@@ -13,10 +13,11 @@ import (
 // --- mock queue ---
 
 type mockQueue struct {
-	mu        sync.Mutex
-	jobs      []*jobs.Job
-	completed []string
-	failed    []string
+	mu         sync.Mutex
+	jobs       []*jobs.Job
+	completed  []string
+	failed     []string
+	completeFn func(id string) error
 }
 
 func (m *mockQueue) Enqueue(_ context.Context, job jobs.Job) error {
@@ -42,6 +43,11 @@ func (m *mockQueue) Dequeue(_ context.Context) (*jobs.Job, error) {
 func (m *mockQueue) Complete(_ context.Context, id string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if m.completeFn != nil {
+		if err := m.completeFn(id); err != nil {
+			return err
+		}
+	}
 	m.completed = append(m.completed, id)
 	return nil
 }
@@ -248,6 +254,39 @@ func TestWorker_FailsUnknownType_RecordsMetric(t *testing.T) {
 	defer m.mu.Unlock()
 	if len(m.failures) != 1 || m.failures[0] != "unknown" {
 		t.Errorf("failures = %v, want [unknown]", m.failures)
+	}
+}
+
+// TestWorker_CompleteFailure_RecordsMetric pins the gap where a handler
+// succeeds but queue.Complete fails: the job may be redelivered (e.g.
+// duplicate webhook sends) while dashboards previously showed zero errors
+// because only the log recorded it.
+func TestWorker_CompleteFailure_RecordsMetric(t *testing.T) {
+	q := &mockQueue{
+		completeFn: func(string) error { return errors.New("complete failed: connection reset") },
+	}
+	log := &mockLogger{}
+	m := &mockMetrics{}
+
+	handler := &mockHandler{
+		jobType:  "ok_job",
+		handleFn: func(_ context.Context, _ jobs.Job) error { return nil },
+	}
+
+	w := jobs.NewWorker(q, log, 50*time.Millisecond).WithMetrics(m)
+	w.Register(handler)
+
+	job, _ := jobs.NewJob("j1", "ok_job", nil)
+	_ = q.Enqueue(context.Background(), job)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
+	defer cancel()
+	w.Start(ctx)
+
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if len(m.failures) != 1 || m.failures[0] != "ok_job" {
+		t.Errorf("failures = %v, want [ok_job] — queue.Complete failing after a successful handler must still be counted", m.failures)
 	}
 }
 

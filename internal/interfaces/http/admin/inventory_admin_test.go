@@ -5,19 +5,18 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
-	"github.com/akarso/shopanda/internal/interfaces/http/admin"
-	"github.com/akarso/shopanda/internal/testutil"
 	"net/http"
 	"net/http/httptest"
 	"testing"
+
+	"github.com/akarso/shopanda/internal/interfaces/http/admin"
+	"github.com/akarso/shopanda/internal/testutil"
 
 	adminapp "github.com/akarso/shopanda/internal/application/admin"
 	"github.com/akarso/shopanda/internal/domain/catalog"
 	"github.com/akarso/shopanda/internal/domain/inventory"
 	"github.com/akarso/shopanda/internal/domain/rbac"
 	"github.com/akarso/shopanda/internal/platform/auth/testhelper"
-
-	shophttp "github.com/akarso/shopanda/internal/interfaces/http"
 )
 
 type mockStockRepo struct {
@@ -263,7 +262,7 @@ func TestInventoryAdminHandler_AdjustMissingQuantityRejected(t *testing.T) {
 
 func TestInventoryAdminHandler_ForbiddenWithoutProductsPermission(t *testing.T) {
 	h := admin.NewInventoryAdminHandler(&mockStockRepo{}, &mockVariantRepoForInventory{})
-	requireProductsRead := shophttp.RequirePermission(rbac.ProductsRead)
+	requireProductsRead := admin.RequirePermission(rbac.ProductsRead)
 	mux := http.NewServeMux()
 	mux.Handle("GET /api/v1/admin/inventory", requireProductsRead(h.List()))
 
@@ -278,7 +277,7 @@ func TestInventoryAdminHandler_ForbiddenWithoutProductsPermission(t *testing.T) 
 
 func TestInventoryAdminHandler_AdjustForbiddenWithoutProductsWrite(t *testing.T) {
 	h := admin.NewInventoryAdminHandler(&mockStockRepo{}, &mockVariantRepoForInventory{})
-	requireProductsWrite := shophttp.RequirePermission(rbac.ProductsWrite)
+	requireProductsWrite := admin.RequirePermission(rbac.ProductsWrite)
 	mux := http.NewServeMux()
 	mux.Handle("PUT /api/v1/admin/inventory/{variantId}", requireProductsWrite(h.Adjust()))
 

@@ -1,8 +1,9 @@
 package admin
 
 import (
-	httpshared "github.com/akarso/shopanda/internal/interfaces/http/shared"
 	"net/http"
+
+	httpshared "github.com/akarso/shopanda/internal/interfaces/http/shared"
 
 	hooksapp "github.com/akarso/shopanda/internal/application/hooks"
 )

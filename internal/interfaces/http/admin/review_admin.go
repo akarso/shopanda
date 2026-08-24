@@ -2,9 +2,10 @@ package admin
 
 import (
 	"context"
-	shophttp "github.com/akarso/shopanda/internal/interfaces/http"
-	httpshared "github.com/akarso/shopanda/internal/interfaces/http/shared"
 	"net/http"
+
+	httpshared "github.com/akarso/shopanda/internal/interfaces/http/shared"
+	storefront "github.com/akarso/shopanda/internal/interfaces/http/storefront"
 
 	"github.com/akarso/shopanda/internal/application/admin"
 	reviewsApp "github.com/akarso/shopanda/internal/application/reviews"
@@ -36,7 +37,7 @@ func (h *ReviewAdminHandler) List() http.HandlerFunc {
 			httpshared.JSONError(w, err)
 			return
 		}
-		status, err := shophttp.ParseReviewStatus(r.URL.Query().Get("status"))
+		status, err := storefront.ParseReviewStatus(r.URL.Query().Get("status"))
 		if err != nil {
 			httpshared.JSONError(w, err)
 			return
@@ -70,7 +71,7 @@ func (h *ReviewAdminHandler) List() http.HandlerFunc {
 		})
 
 		httpshared.JSON(w, http.StatusOK, map[string]interface{}{
-			"reviews": shophttp.ToAdminReviewResponses(list),
+			"reviews": storefront.ToAdminReviewResponses(list),
 			"offset":  offset,
 			"limit":   limit,
 		})
@@ -106,7 +107,7 @@ func (h *ReviewAdminHandler) Get() http.HandlerFunc {
 		})
 
 		httpshared.JSON(w, http.StatusOK, map[string]interface{}{
-			"review": shophttp.ToAdminReviewResponse(rev),
+			"review": storefront.ToAdminReviewResponse(rev),
 		})
 	}
 }
@@ -142,7 +143,7 @@ func (h *ReviewAdminHandler) transition(action admin.AuditAction, fn func(contex
 		})
 
 		httpshared.JSON(w, http.StatusOK, map[string]interface{}{
-			"review": shophttp.ToAdminReviewResponse(rev),
+			"review": storefront.ToAdminReviewResponse(rev),
 		})
 	}
 }

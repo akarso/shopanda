@@ -26,3 +26,12 @@ func DevModeEnabled() bool {
 func ShouldLogPasswordResetTokens() bool {
 	return DevModeEnabled() && EnvTruthy("SHOPANDA_DEV_LOG_RESET_TOKENS")
 }
+
+// MetricsInsecureBindAllowed reports whether a non-loopback metrics.listen
+// bind is permitted independently of SHOPANDA_DEV_MODE. Kept as its own flag
+// (rather than folded into dev mode) so that operators who need external
+// Prometheus scraping are not forced to also disable the DB password/SSL
+// checks that SHOPANDA_DEV_MODE gates — those are unrelated concerns.
+func MetricsInsecureBindAllowed() bool {
+	return DevModeEnabled() || EnvTruthy("SHOPANDA_METRICS_ALLOW_INSECURE_BIND")
+}

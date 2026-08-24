@@ -108,18 +108,18 @@ func validateMetricsListen(cfg *Config) error {
 	}
 	host = strings.Trim(strings.ToLower(host), "[]")
 	if isMetricsWildcardBind(host) {
-		if DevModeEnabled() {
+		if MetricsInsecureBindAllowed() {
 			return nil
 		}
-		return fmt.Errorf("config: metrics.listen=%q binds all interfaces; use a loopback address (default %q) or enable SHOPANDA_DEV_MODE for local development only", listen, DefaultMetricsListen)
+		return fmt.Errorf("config: metrics.listen=%q binds all interfaces; use a loopback address (default %q), enable SHOPANDA_DEV_MODE for local development, or set SHOPANDA_METRICS_ALLOW_INSECURE_BIND=true if you understand /metrics has no authentication", listen, DefaultMetricsListen)
 	}
 	if isLoopbackHost(host) {
 		return nil
 	}
-	if DevModeEnabled() {
+	if MetricsInsecureBindAllowed() {
 		return nil
 	}
-	return fmt.Errorf("config: metrics.listen=%q is not loopback; use %q (default) and scrape via localhost, or enable SHOPANDA_DEV_MODE for local development only — /metrics has no authentication", listen, DefaultMetricsListen)
+	return fmt.Errorf("config: metrics.listen=%q is not loopback; use %q (default) and scrape via localhost, enable SHOPANDA_DEV_MODE for local development, or set SHOPANDA_METRICS_ALLOW_INSECURE_BIND=true if you understand /metrics has no authentication", listen, DefaultMetricsListen)
 }
 
 func isMetricsWildcardBind(host string) bool {
@@ -132,11 +132,34 @@ func isMetricsWildcardBind(host string) bool {
 }
 
 func isLoopbackHost(host string) bool {
-	if host == "localhost" {
+	if ip := net.ParseIP(host); ip != nil {
+		return ip.IsLoopback()
+	}
+	if host != "localhost" {
+		return false
+	}
+	// "localhost" is only trusted as loopback if it actually resolves that
+	// way in this environment — a tampered /etc/hosts or DNS override could
+	// otherwise point it at a non-loopback address while a bare string
+	// comparison still waved it through. Falls back to trusting the literal
+	// if resolution itself fails, so this stays a pure, always-succeeding
+	// config check in environments (e.g. minimal containers) where local
+	// hostname resolution isn't set up, rather than a hard resolver
+	// dependency.
+	addrs, err := net.LookupHost(host)
+	if err != nil {
 		return true
 	}
-	ip := net.ParseIP(host)
-	return ip != nil && ip.IsLoopback()
+	if len(addrs) == 0 {
+		return true
+	}
+	for _, addr := range addrs {
+		resolvedIP := net.ParseIP(addr)
+		if resolvedIP == nil || !resolvedIP.IsLoopback() {
+			return false
+		}
+	}
+	return true
 }
 
 func normalizeHTTP(h *HTTPConfig) {

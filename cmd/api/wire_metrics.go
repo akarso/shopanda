@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"net"
 	"net/http"
+	"time"
 
 	"github.com/akarso/shopanda/internal/platform/config"
 	"github.com/akarso/shopanda/internal/platform/logger"
@@ -35,7 +36,17 @@ func startMetricsServer(cfg *config.Config, handler http.Handler, log logger.Log
 	if err != nil {
 		return nil, nil, fmt.Errorf("metrics listen %s: %w", cfg.Metrics.Listen, err)
 	}
-	srv := &http.Server{Handler: handler}
+	// Same Read/Write/Idle timeouts as the main server (shared/server.go);
+	// ReadHeaderTimeout added on top since this server is otherwise
+	// unauthenticated and, if ever bound off loopback, would be an easy
+	// slowloris target without one.
+	srv := &http.Server{
+		Handler:           handler,
+		ReadTimeout:       10 * time.Second,
+		ReadHeaderTimeout: 5 * time.Second,
+		WriteTimeout:      30 * time.Second,
+		IdleTimeout:       60 * time.Second,
+	}
 	done := make(chan struct{})
 	go func() {
 		defer close(done)

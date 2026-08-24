@@ -5,9 +5,10 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
-	"github.com/akarso/shopanda/internal/testutil"
 	"testing"
 	"time"
+
+	"github.com/akarso/shopanda/internal/testutil"
 
 	"github.com/akarso/shopanda/internal/application/checkout"
 	"github.com/akarso/shopanda/internal/domain/cart"
@@ -537,7 +538,7 @@ func (m *mockStoreCreditService) Redeem(_ context.Context, _, _ string, amount s
 	return nil
 }
 
-func (m *mockStoreCreditService) Issue(_ context.Context, _ string, amount shared.Money, _ string) error {
+func (m *mockStoreCreditService) Issue(_ context.Context, _ string, amount shared.Money, _, _ string) error {
 	m.issued = append(m.issued, amount.Amount())
 	m.balance += amount.Amount()
 	return nil

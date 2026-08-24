@@ -1,0 +1,710 @@
+package storefront
+
+import (
+	"errors"
+	"net/http"
+	"net/url"
+	"strings"
+	"time"
+
+	httpshared "github.com/akarso/shopanda/internal/interfaces/http/shared"
+
+	appAuth "github.com/akarso/shopanda/internal/application/auth"
+	"github.com/akarso/shopanda/internal/domain/customer"
+	"github.com/akarso/shopanda/internal/domain/order"
+	"github.com/akarso/shopanda/internal/domain/theme"
+	"github.com/akarso/shopanda/internal/platform/apperror"
+)
+
+const (
+	storefrontSessionCookieName   = "shopanda_storefront_session"
+	storefrontSessionCookieMaxAge = 60 * 60 * 24 * 14
+)
+
+type StorefrontAccountLoginPageData struct {
+	Layout         StorefrontLayoutData
+	Theme          theme.Theme
+	CSRFToken      string
+	RedirectTo     string
+	Email          string
+	ErrorMessage   string
+	SuccessMessage string
+}
+
+type StorefrontAccountRegisterPageData struct {
+	Layout         StorefrontLayoutData
+	Theme          theme.Theme
+	CSRFToken      string
+	RedirectTo     string
+	FirstName      string
+	LastName       string
+	Email          string
+	ErrorMessage   string
+	SuccessMessage string
+}
+
+type StorefrontAccountEmailVerificationPageData struct {
+	Layout         StorefrontLayoutData
+	Theme          theme.Theme
+	ContinueURL    string
+	SuccessMessage string
+	ErrorMessage   string
+}
+
+type StorefrontAccountOrderRow struct {
+	ID        string
+	DateText  string
+	TotalText string
+	Status    string
+	URL       string
+}
+
+type StorefrontAccountOrdersPageData struct {
+	Layout       StorefrontLayoutData
+	Theme        theme.Theme
+	AccountNav   StorefrontAccountNavData
+	Orders       []StorefrontAccountOrderRow
+	EmptyMessage string
+}
+
+type StorefrontAccountOrderItem struct {
+	Name          string
+	SKU           string
+	Quantity      int
+	UnitPriceText string
+	LineTotalText string
+}
+
+type StorefrontAccountReturnableLine struct {
+	VariantID  string
+	SKU        string
+	Name       string
+	Returnable int
+}
+
+type StorefrontAccountOrderReturnRow struct {
+	ID       string
+	Status   string
+	Reason   string
+	DateText string
+	URL      string
+}
+
+type StorefrontAccountOrderDetailPageData struct {
+	Layout           StorefrontLayoutData
+	Theme            theme.Theme
+	AccountNav       StorefrontAccountNavData
+	CSRFToken        string
+	OrderID          string
+	DateText         string
+	Status           string
+	TotalText        string
+	Items            []StorefrontAccountOrderItem
+	Returns          []StorefrontAccountOrderReturnRow
+	ReturnableLines  []StorefrontAccountReturnableLine
+	CanRequestReturn bool
+	ErrorMessage     string
+	SuccessMessage   string
+	BackURL          string
+	ReturnsURL       string
+}
+
+type StorefrontAccountNavData struct {
+	OrdersURL      string
+	ReturnsURL     string
+	ProfileURL     string
+	AddressesURL   string
+	PreferencesURL string
+	SecurityURL    string
+	Current        string
+}
+
+type StorefrontAccountProfilePageData struct {
+	Layout              StorefrontLayoutData
+	Theme               theme.Theme
+	AccountNav          StorefrontAccountNavData
+	CSRFToken           string
+	Email               string
+	FirstName           string
+	LastName            string
+	ProfileErrorMessage string
+	SuccessMessage      string
+}
+
+type StorefrontAccountSecurityPageData struct {
+	Layout               StorefrontLayoutData
+	Theme                theme.Theme
+	AccountNav           StorefrontAccountNavData
+	CSRFToken            string
+	Email                string
+	PasswordErrorMessage string
+	DeleteErrorMessage   string
+	EmailErrorMessage    string
+	EmailChangeMessage   string
+}
+
+func (h *StorefrontHandler) Login() http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if h.auth == nil || !h.engine.HasTemplate("account_login") {
+			http.Error(w, "Not Found", http.StatusNotFound)
+			return
+		}
+		if storefrontCustomerID(r) != "" {
+			http.Redirect(w, r, "/account/orders", http.StatusSeeOther)
+			return
+		}
+
+		page := StorefrontAccountLoginPageData{
+			Layout:     h.layoutDataBestEffort(r),
+			Theme:      h.engine.Theme(),
+			CSRFToken:  httpshared.CSRFToken(r),
+			RedirectTo: "/account/orders",
+		}
+		if r.Method == http.MethodGet {
+			page.RedirectTo = storefrontSafeRedirectPath(r.URL.Query().Get("redirect_to"), "/account/orders")
+			if r.URL.Query().Get("password_changed") == "1" {
+				page.SuccessMessage = "Password changed. Sign in again to continue."
+			}
+			if r.URL.Query().Get("logged_out") == "1" {
+				page.SuccessMessage = "You have been signed out."
+			}
+			h.renderPage(w, "account_login", page)
+			return
+		}
+
+		if err := r.ParseForm(); err != nil {
+			http.Error(w, "invalid form body", http.StatusBadRequest)
+			return
+		}
+		page.RedirectTo = storefrontSafeRedirectPath(r.FormValue("redirect_to"), "/account/orders")
+		page.Email = strings.TrimSpace(r.FormValue("email"))
+		out, err := h.auth.Login(r.Context(), appAuth.LoginInput{
+			Email:    page.Email,
+			Password: r.FormValue("password"),
+			ClientIP: httpshared.ClientIP(r, h.trustedProxies),
+		})
+		if err != nil {
+			page.ErrorMessage = storefrontAccountErrorMessage(err)
+			h.renderPageStatus(w, "account_login", page, storefrontAccountErrorStatus(err))
+			return
+		}
+		if err := h.syncStorefrontGuestCart(w, r, out.CustomerID); err != nil {
+			h.logStorefrontAccountCartSyncFailure("storefront.account.login.cart_sync_failed", err, r)
+		}
+		storefrontSetSessionCookie(w, r, out.Token, out.ExpiresAt)
+		http.Redirect(w, r, page.RedirectTo, http.StatusSeeOther)
+	}
+}
+
+func (h *StorefrontHandler) Register() http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if h.auth == nil || !h.engine.HasTemplate("account_register") {
+			http.Error(w, "Not Found", http.StatusNotFound)
+			return
+		}
+		if storefrontCustomerID(r) != "" {
+			http.Redirect(w, r, "/account/orders", http.StatusSeeOther)
+			return
+		}
+
+		page := StorefrontAccountRegisterPageData{
+			Layout:     h.layoutDataBestEffort(r),
+			Theme:      h.engine.Theme(),
+			CSRFToken:  httpshared.CSRFToken(r),
+			RedirectTo: "/account/orders",
+		}
+		if r.Method == http.MethodGet {
+			page.RedirectTo = storefrontSafeRedirectPath(r.URL.Query().Get("redirect_to"), "/account/orders")
+			if r.URL.Query().Get("account_deleted") == "1" {
+				page.SuccessMessage = "Account deleted. You can create a new one any time."
+			}
+			h.renderPage(w, "account_register", page)
+			return
+		}
+
+		if err := r.ParseForm(); err != nil {
+			http.Error(w, "invalid form body", http.StatusBadRequest)
+			return
+		}
+		page.RedirectTo = storefrontSafeRedirectPath(r.FormValue("redirect_to"), "/account/orders")
+		page.FirstName = strings.TrimSpace(r.FormValue("first_name"))
+		page.LastName = strings.TrimSpace(r.FormValue("last_name"))
+		page.Email = strings.TrimSpace(r.FormValue("email"))
+		out, err := h.auth.Register(r.Context(), appAuth.RegisterInput{
+			Email:     page.Email,
+			Password:  r.FormValue("password"),
+			FirstName: page.FirstName,
+			LastName:  page.LastName,
+		})
+		if err != nil {
+			page.ErrorMessage = storefrontAccountErrorMessage(err)
+			h.renderPageStatus(w, "account_register", page, storefrontAccountErrorStatus(err))
+			return
+		}
+		if err := h.syncStorefrontGuestCart(w, r, out.CustomerID); err != nil {
+			h.logStorefrontAccountCartSyncFailure("storefront.account.register.cart_sync_failed", err, r)
+		}
+		storefrontSetSessionCookie(w, r, out.Token, out.ExpiresAt)
+		target := page.RedirectTo
+		if redirectToVerification := h.sendStorefrontRegistrationVerification(r, out.CustomerID, page.RedirectTo); redirectToVerification != "" {
+			target = redirectToVerification
+		}
+		http.Redirect(w, r, target, http.StatusSeeOther)
+	}
+}
+
+func (h *StorefrontHandler) sendStorefrontRegistrationVerification(r *http.Request, customerID, redirectTo string) string {
+	if h.auth == nil || h.security == nil || strings.TrimSpace(h.security.storeBaseURL) == "" {
+		return ""
+	}
+	now := time.Now().UTC()
+	token, err := h.security.emailVerificationToken(customerID, redirectTo, now)
+	if err != nil {
+		h.log.Error("storefront.account.register.email_verification_token_failed", err, map[string]interface{}{
+			"customer_id": customerID,
+			"path":        r.URL.Path,
+		})
+		return ""
+	}
+	verifyURL, err := storefrontAbsoluteURL(h.security.storeBaseURL, "/account/verify-email", url.Values{"email_token": {token}})
+	if err != nil {
+		h.log.Error("storefront.account.register.email_verification_url_failed", err, map[string]interface{}{
+			"customer_id": customerID,
+			"path":        r.URL.Path,
+		})
+		return ""
+	}
+	if err := h.auth.RequestEmailVerificationLink(r.Context(), customerID, verifyURL); err != nil {
+		h.log.Error("storefront.account.register.email_verification_request_failed", err, map[string]interface{}{
+			"customer_id": customerID,
+			"path":        r.URL.Path,
+		})
+		return ""
+	}
+	query := url.Values{}
+	query.Set("sent", "1")
+	query.Set("redirect_to", storefrontSafeRedirectPath(redirectTo, "/account/orders"))
+	return "/account/verify-email?" + query.Encode()
+}
+
+func (h *StorefrontHandler) requireStorefrontVerifiedEmail(w http.ResponseWriter, r *http.Request, customerID, redirectTo string) bool {
+	if h.auth == nil || h.security == nil || strings.TrimSpace(h.security.storeBaseURL) == "" {
+		h.log.Warn("storefront.account.email_verification_unavailable", map[string]interface{}{
+			"customer_id":               customerID,
+			"path":                      r.URL.Path,
+			"has_auth":                  h.auth != nil,
+			"has_security":              h.security != nil,
+			"store_base_url_configured": h.security != nil && strings.TrimSpace(h.security.storeBaseURL) != "",
+		})
+		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
+		return false
+	}
+	profile, err := h.auth.Me(r.Context(), customerID)
+	if err != nil {
+		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
+		return false
+	}
+	if profile.EmailVerifiedAt != nil {
+		return true
+	}
+	redirectTarget := storefrontSafeRedirectPath(redirectTo, storefrontEmailVerificationDefaultRedirect)
+	if verificationRedirect := h.sendStorefrontRegistrationVerification(r, customerID, redirectTarget); verificationRedirect != "" {
+		http.Redirect(w, r, verificationRedirect, http.StatusSeeOther)
+		return false
+	}
+	query := url.Values{}
+	query.Set("sent", "1")
+	query.Set("redirect_to", redirectTarget)
+	http.Redirect(w, r, "/account/verify-email?"+query.Encode(), http.StatusSeeOther)
+	return false
+}
+
+func (h *StorefrontHandler) syncStorefrontGuestCart(w http.ResponseWriter, r *http.Request, customerID string) error {
+	if h.carts == nil {
+		return nil
+	}
+	cookie, err := r.Cookie(storefrontCartCookieName)
+	if errors.Is(err, http.ErrNoCookie) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	if _, err := h.carts.ClaimGuestCart(r.Context(), strings.TrimSpace(cookie.Value), customerID); err != nil {
+		return err
+	}
+	// Clear stale or foreign cart cookies even when ClaimGuestCart becomes a no-op.
+	storefrontClearCartCookie(w, r)
+	return nil
+}
+
+func (h *StorefrontHandler) logStorefrontAccountCartSyncFailure(event string, err error, r *http.Request) {
+	h.log.Error(event, err, map[string]interface{}{
+		"path": r.URL.Path,
+	})
+	h.log.Info(event+".count", map[string]interface{}{
+		"value": 1,
+	})
+}
+
+func (h *StorefrontHandler) Logout() http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if h.auth == nil {
+			http.Error(w, "Not Found", http.StatusNotFound)
+			return
+		}
+		if customerID := storefrontCustomerID(r); customerID != "" {
+			if err := h.auth.Logout(r.Context(), customerID); err != nil {
+				h.log.Error("storefront.account.logout_failed", err, map[string]interface{}{
+					"customer_id": customerID,
+					"path":        r.URL.Path,
+				})
+				http.Error(w, "Internal Server Error", http.StatusInternalServerError)
+				return
+			}
+		}
+		storefrontClearSecurityVerifyCookie(w, r)
+		storefrontClearSessionCookie(w, r)
+		http.Redirect(w, r, "/account/login?logged_out=1", http.StatusSeeOther)
+	}
+}
+
+func (h *StorefrontHandler) AccountOrders() http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if h.orders == nil || !h.engine.HasTemplate("account_orders") {
+			http.Error(w, "Not Found", http.StatusNotFound)
+			return
+		}
+		customerID, ok := h.requireStorefrontAccount(w, r)
+		if !ok {
+			return
+		}
+		orders, err := h.orders.FindByCustomerID(r.Context(), customerID)
+		if err != nil {
+			http.Error(w, "Internal Server Error", http.StatusInternalServerError)
+			return
+		}
+		rows := make([]StorefrontAccountOrderRow, 0, len(orders))
+		for i := range orders {
+			rows = append(rows, storefrontAccountOrderRow(&orders[i]))
+		}
+		h.renderPage(w, "account_orders", StorefrontAccountOrdersPageData{
+			Layout:       h.layoutDataBestEffort(r),
+			Theme:        h.engine.Theme(),
+			AccountNav:   storefrontAccountNav("orders"),
+			Orders:       rows,
+			EmptyMessage: "You have not placed any orders yet.",
+		})
+	}
+}
+
+func (h *StorefrontHandler) AccountOrderDetail() http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if h.orders == nil || !h.engine.HasTemplate("account_order_detail") {
+			http.Error(w, "Not Found", http.StatusNotFound)
+			return
+		}
+		customerID, ok := h.requireStorefrontAccount(w, r)
+		if !ok {
+			return
+		}
+		orderID := strings.TrimSpace(r.PathValue("orderId"))
+		if orderID == "" {
+			http.NotFound(w, r)
+			return
+		}
+		o, err := h.orders.FindByID(r.Context(), orderID)
+		if err != nil || o == nil || o.CustomerID != customerID {
+			http.NotFound(w, r)
+			return
+		}
+		page, err := h.buildAccountOrderDetailPage(r, o, customerID)
+		if err != nil {
+			http.Error(w, "Internal Server Error", http.StatusInternalServerError)
+			return
+		}
+		if r.URL.Query().Get("return_requested") == "1" {
+			page.SuccessMessage = "Return request submitted. We will review it shortly."
+		}
+		h.renderPage(w, "account_order_detail", page)
+	}
+}
+
+func (h *StorefrontHandler) AccountProfile() http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if h.auth == nil || !h.engine.HasTemplate("account_profile") {
+			http.Error(w, "Not Found", http.StatusNotFound)
+			return
+		}
+		customerID, ok := h.requireStorefrontAccount(w, r)
+		if !ok {
+			return
+		}
+		profile, err := h.auth.Me(r.Context(), customerID)
+		if err != nil {
+			http.Error(w, "Internal Server Error", http.StatusInternalServerError)
+			return
+		}
+		page := storefrontAccountProfilePage(h, r, profile)
+		if r.Method == http.MethodGet {
+			if r.URL.Query().Get("updated") == "1" {
+				page.SuccessMessage = "Profile updated."
+			}
+			h.renderPage(w, "account_profile", page)
+			return
+		}
+		if err := r.ParseForm(); err != nil {
+			http.Error(w, "invalid form body", http.StatusBadRequest)
+			return
+		}
+		if _, err := h.auth.UpdateProfile(r.Context(), appAuth.UpdateProfileInput{
+			CustomerID: customerID,
+			FirstName:  r.FormValue("first_name"),
+			LastName:   r.FormValue("last_name"),
+		}); err != nil {
+			page.ProfileErrorMessage = storefrontAccountErrorMessage(err)
+			h.renderPageStatus(w, "account_profile", page, storefrontAccountErrorStatus(err))
+			return
+		}
+		http.Redirect(w, r, "/account/profile?updated=1", http.StatusSeeOther)
+	}
+}
+
+func (h *StorefrontHandler) AccountSecurity() http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if h.auth == nil || !h.engine.HasTemplate("account_security") {
+			http.Error(w, "Not Found", http.StatusNotFound)
+			return
+		}
+		customerID, ok := h.requireStorefrontAccount(w, r)
+		if !ok {
+			return
+		}
+		if !h.requireStorefrontVerifiedEmail(w, r, customerID, "/account/security") {
+			return
+		}
+		if !h.requireStorefrontSecurityVerification(w, r, customerID, "/account/security") {
+			return
+		}
+		profile, err := h.auth.Me(r.Context(), customerID)
+		if err != nil {
+			http.Error(w, "Internal Server Error", http.StatusInternalServerError)
+			return
+		}
+		page := storefrontAccountSecurityPage(h, r, profile)
+		if r.URL.Query().Get("email_change") == "sent" {
+			page.EmailChangeMessage = "Check your new email address for a link to confirm the change. Your current email stays active until you confirm."
+		}
+		h.renderPage(w, "account_security", page)
+	}
+}
+
+func (h *StorefrontHandler) AccountPassword() http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if h.auth == nil || !h.engine.HasTemplate("account_security") {
+			http.Error(w, "Not Found", http.StatusNotFound)
+			return
+		}
+		if err := r.ParseForm(); err != nil {
+			http.Error(w, "invalid form body", http.StatusBadRequest)
+			return
+		}
+		customerID, ok := h.requireStorefrontAccount(w, r)
+		if !ok {
+			return
+		}
+		if !h.requireStorefrontVerifiedEmail(w, r, customerID, "/account/security") {
+			return
+		}
+		if !h.requireStorefrontSecurityVerification(w, r, customerID, "/account/security") {
+			return
+		}
+		profile, err := h.auth.Me(r.Context(), customerID)
+		if err != nil {
+			http.Error(w, "Internal Server Error", http.StatusInternalServerError)
+			return
+		}
+		page := storefrontAccountSecurityPage(h, r, profile)
+		err = h.auth.ChangePassword(r.Context(), appAuth.ChangePasswordInput{
+			CustomerID:      customerID,
+			CurrentPassword: r.FormValue("current_password"),
+			NewPassword:     r.FormValue("new_password"),
+		})
+		if err != nil {
+			page.PasswordErrorMessage = storefrontAccountErrorMessage(err)
+			h.renderPageStatus(w, "account_security", page, storefrontAccountErrorStatus(err))
+			return
+		}
+		storefrontClearSecurityVerifyCookie(w, r)
+		storefrontClearSessionCookie(w, r)
+		http.Redirect(w, r, "/account/login?password_changed=1", http.StatusSeeOther)
+	}
+}
+
+func (h *StorefrontHandler) AccountDelete() http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if h.account == nil || h.auth == nil || !h.engine.HasTemplate("account_security") {
+			http.Error(w, "Not Found", http.StatusNotFound)
+			return
+		}
+		customerID, ok := h.requireStorefrontAccount(w, r)
+		if !ok {
+			return
+		}
+		if err := r.ParseForm(); err != nil {
+			http.Error(w, "invalid form body", http.StatusBadRequest)
+			return
+		}
+		if !h.requireStorefrontVerifiedEmail(w, r, customerID, "/account/security") {
+			return
+		}
+		if !h.requireStorefrontSecurityVerification(w, r, customerID, "/account/security") {
+			return
+		}
+		profile, err := h.auth.Me(r.Context(), customerID)
+		if err != nil {
+			http.Error(w, "Internal Server Error", http.StatusInternalServerError)
+			return
+		}
+		page := storefrontAccountSecurityPage(h, r, profile)
+		if !strings.EqualFold(strings.TrimSpace(r.FormValue("confirm_delete")), "delete") {
+			page.DeleteErrorMessage = "Type DELETE to confirm account removal."
+			h.renderPageStatus(w, "account_security", page, http.StatusUnprocessableEntity)
+			return
+		}
+		if err := h.account.DeleteAccount(r.Context(), customerID); err != nil {
+			http.Error(w, "Internal Server Error", http.StatusInternalServerError)
+			return
+		}
+		storefrontClearSecurityVerifyCookie(w, r)
+		storefrontClearSessionCookie(w, r)
+		http.Redirect(w, r, "/account/register?account_deleted=1", http.StatusSeeOther)
+	}
+}
+
+func storefrontSessionToken(r *http.Request) string {
+	if r == nil {
+		return ""
+	}
+	cookie, err := r.Cookie(storefrontSessionCookieName)
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(cookie.Value)
+}
+
+func storefrontSetSessionCookie(w http.ResponseWriter, r *http.Request, token string, expiresAt time.Time) {
+	maxAge := storefrontSessionCookieMaxAge
+	if !expiresAt.IsZero() {
+		seconds := int(time.Until(expiresAt).Seconds())
+		if seconds > 0 {
+			maxAge = seconds
+		}
+	}
+	http.SetCookie(w, &http.Cookie{
+		Name:     storefrontSessionCookieName,
+		Value:    token,
+		Path:     "/",
+		MaxAge:   maxAge,
+		HttpOnly: true,
+		Secure:   httpshared.IsRequestSecure(r, nil),
+		SameSite: http.SameSiteLaxMode,
+	})
+}
+
+func storefrontClearSessionCookie(w http.ResponseWriter, r *http.Request) {
+	http.SetCookie(w, &http.Cookie{
+		Name:     storefrontSessionCookieName,
+		Value:    "",
+		Path:     "/",
+		MaxAge:   -1,
+		Expires:  time.Unix(0, 0),
+		HttpOnly: true,
+		Secure:   httpshared.IsRequestSecure(r, nil),
+		SameSite: http.SameSiteLaxMode,
+	})
+}
+
+func (h *StorefrontHandler) requireStorefrontAccount(w http.ResponseWriter, r *http.Request) (string, bool) {
+	if storefrontCustomerID(r) == "" {
+		redirectTo := storefrontSafeRedirectPath(r.URL.RequestURI(), "/account/orders")
+		http.Redirect(w, r, "/account/login?redirect_to="+url.QueryEscape(redirectTo), http.StatusSeeOther)
+		return "", false
+	}
+	return storefrontCustomerID(r), true
+}
+
+func storefrontAccountNav(current string) StorefrontAccountNavData {
+	return StorefrontAccountNavData{
+		OrdersURL:      "/account/orders",
+		ReturnsURL:     "/account/returns",
+		ProfileURL:     "/account/profile",
+		AddressesURL:   "/account/addresses",
+		PreferencesURL: "/account/preferences",
+		SecurityURL:    "/account/security",
+		Current:        strings.TrimSpace(current),
+	}
+}
+
+func storefrontAccountProfilePage(h *StorefrontHandler, r *http.Request, profile *customer.Customer) StorefrontAccountProfilePageData {
+	return StorefrontAccountProfilePageData{
+		Layout:     h.layoutDataBestEffort(r),
+		Theme:      h.engine.Theme(),
+		AccountNav: storefrontAccountNav("profile"),
+		CSRFToken:  httpshared.CSRFToken(r),
+		Email:      profile.Email,
+		FirstName:  profile.FirstName,
+		LastName:   profile.LastName,
+	}
+}
+
+func storefrontAccountSecurityPage(h *StorefrontHandler, r *http.Request, profile *customer.Customer) StorefrontAccountSecurityPageData {
+	return StorefrontAccountSecurityPageData{
+		Layout:     h.layoutDataBestEffort(r),
+		Theme:      h.engine.Theme(),
+		AccountNav: storefrontAccountNav("security"),
+		CSRFToken:  httpshared.CSRFToken(r),
+		Email:      profile.Email,
+	}
+}
+
+func storefrontAccountOrderRow(o *order.Order) StorefrontAccountOrderRow {
+	return StorefrontAccountOrderRow{
+		ID:        o.ID,
+		DateText:  o.CreatedAt.UTC().Format("2006-01-02"),
+		TotalText: formatStorefrontMoney(o.TotalAmount.Amount(), o.TotalAmount.Currency()),
+		Status:    storefrontAccountOrderStatus(o.Status()),
+		URL:       "/account/orders/" + o.ID,
+	}
+}
+
+func storefrontAccountOrderStatus(status order.OrderStatus) string {
+	if status == "" {
+		return ""
+	}
+	return strings.ToUpper(string(status[0])) + string(status[1:])
+}
+
+func storefrontAccountErrorMessage(err error) string {
+	if apperror.Is(err, apperror.CodeValidation) || apperror.Is(err, apperror.CodeUnauthorized) || apperror.Is(err, apperror.CodeConflict) || apperror.Is(err, apperror.CodeForbidden) || apperror.Is(err, apperror.CodeNotFound) || apperror.Is(err, apperror.CodeRateLimited) {
+		return err.Error()
+	}
+	return "Sorry, something went wrong. Please try again later."
+}
+
+func storefrontAccountErrorStatus(err error) int {
+	switch {
+	case apperror.Is(err, apperror.CodeRateLimited):
+		return http.StatusTooManyRequests
+	case apperror.Is(err, apperror.CodeUnauthorized):
+		return http.StatusUnauthorized
+	case apperror.Is(err, apperror.CodeForbidden):
+		return http.StatusForbidden
+	case apperror.Is(err, apperror.CodeNotFound):
+		return http.StatusNotFound
+	case apperror.Is(err, apperror.CodeConflict), apperror.Is(err, apperror.CodeValidation):
+		return http.StatusUnprocessableEntity
+	default:
+		return http.StatusInternalServerError
+	}
+}

@@ -25,7 +25,7 @@
 | PR-1020 | E | done | [Prometheus metrics](PR-1020.md) |
 | PR-1021 | E | done | [HTTP package split (shared)](PR-1021.md) |
 | PR-1022 | E | done | [HTTP package split (admin)](PR-1022.md) |
-| PR-1023 | E | planned | [HTTP package split (storefront)](PR-1023.md) |
+| PR-1023 | E | done | [HTTP package split (storefront)](PR-1023.md) |
 | PR-1024 | E | planned | [OpenTelemetry traces](PR-1024.md) |
 | PR-1025 | E | planned | [pgx driver migration](PR-1025.md) |
 | PR-1026 | E | planned | [Extension guide + runbook](PR-1026.md) |

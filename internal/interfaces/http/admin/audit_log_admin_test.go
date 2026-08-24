@@ -3,18 +3,18 @@ package admin_test
 import (
 	"context"
 	"encoding/json"
-	"github.com/akarso/shopanda/internal/interfaces/http/admin"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/akarso/shopanda/internal/interfaces/http/admin"
+
 	adminapp "github.com/akarso/shopanda/internal/application/admin"
 	domainadmin "github.com/akarso/shopanda/internal/domain/admin"
 	"github.com/akarso/shopanda/internal/domain/identity"
 	"github.com/akarso/shopanda/internal/domain/rbac"
-	shophttp "github.com/akarso/shopanda/internal/interfaces/http"
 	"github.com/akarso/shopanda/internal/platform/auth/testhelper"
 	"github.com/akarso/shopanda/internal/platform/logger"
 )
@@ -58,7 +58,7 @@ func TestAuditLogAdmin_List_ReturnsEntries(t *testing.T) {
 	h := admin.NewAuditLogAdminHandler(repo, auditor)
 
 	mux := http.NewServeMux()
-	mux.Handle("GET /api/v1/admin/audit", shophttp.RequirePermission(rbac.AuditRead)(h.List()))
+	mux.Handle("GET /api/v1/admin/audit", admin.RequirePermission(rbac.AuditRead)(h.List()))
 
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/admin/audit?offset=0&limit=20&action=product.update", nil)
@@ -105,7 +105,7 @@ func TestAuditLogAdmin_List_DateOnlyToIncludesSameDayEntries(t *testing.T) {
 	h := admin.NewAuditLogAdminHandler(repo, auditor)
 
 	mux := http.NewServeMux()
-	mux.Handle("GET /api/v1/admin/audit", shophttp.RequirePermission(rbac.AuditRead)(h.List()))
+	mux.Handle("GET /api/v1/admin/audit", admin.RequirePermission(rbac.AuditRead)(h.List()))
 
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/admin/audit?to=2026-06-01", nil)
@@ -170,7 +170,7 @@ func TestAuditLogAdmin_List_ForbiddenWithoutPermission(t *testing.T) {
 	h := admin.NewAuditLogAdminHandler(repo, auditor)
 
 	mux := http.NewServeMux()
-	mux.Handle("GET /api/v1/admin/audit", shophttp.RequirePermission(rbac.AuditRead)(h.List()))
+	mux.Handle("GET /api/v1/admin/audit", admin.RequirePermission(rbac.AuditRead)(h.List()))
 
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/admin/audit", nil)
@@ -199,7 +199,7 @@ func TestAuditLogAdmin_Export_CSV(t *testing.T) {
 	h := admin.NewAuditLogAdminHandler(repo, auditor)
 
 	mux := http.NewServeMux()
-	mux.Handle("GET /api/v1/admin/audit/export", shophttp.RequirePermission(rbac.AuditRead)(h.Export()))
+	mux.Handle("GET /api/v1/admin/audit/export", admin.RequirePermission(rbac.AuditRead)(h.Export()))
 
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/admin/audit/export?format=csv", nil)
@@ -230,7 +230,7 @@ func TestAuditLogAdmin_Export_JSON(t *testing.T) {
 	h := admin.NewAuditLogAdminHandler(repo, adminapp.NewAuditor(logger.New("error")))
 
 	mux := http.NewServeMux()
-	mux.Handle("GET /api/v1/admin/audit/export", shophttp.RequirePermission(rbac.AuditRead)(h.Export()))
+	mux.Handle("GET /api/v1/admin/audit/export", admin.RequirePermission(rbac.AuditRead)(h.Export()))
 
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/admin/audit/export?format=json", nil)
@@ -264,7 +264,7 @@ func TestAuditLogAdmin_Export_ForwardsFilters(t *testing.T) {
 	h := admin.NewAuditLogAdminHandler(repo, adminapp.NewAuditor(logger.New("error")))
 
 	mux := http.NewServeMux()
-	mux.Handle("GET /api/v1/admin/audit/export", shophttp.RequirePermission(rbac.AuditRead)(h.Export()))
+	mux.Handle("GET /api/v1/admin/audit/export", admin.RequirePermission(rbac.AuditRead)(h.Export()))
 
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodGet,

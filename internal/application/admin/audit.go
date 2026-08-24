@@ -130,6 +130,10 @@ const (
 	AuditPaymentList AuditAction = "payment.list"
 	AuditPaymentRead AuditAction = "payment.read"
 
+	// Store credit operations
+	AuditStoreCreditRead  AuditAction = "store_credit.read"
+	AuditStoreCreditIssue AuditAction = "store_credit.issue"
+
 	AuditLogList   AuditAction = "audit.list"
 	AuditLogExport AuditAction = "audit.export"
 )
