@@ -44,8 +44,8 @@ func (r *StoreCreditRepo) GetBalance(ctx context.Context, customerID, currency s
 	return shared.NewMoney(balance, currency)
 }
 
-func (r *StoreCreditRepo) Issue(ctx context.Context, customerID string, amount shared.Money, note string) error {
-	entry, err := storecredit.NewIssueEntry(id.New(), customerID, amount, note)
+func (r *StoreCreditRepo) Issue(ctx context.Context, customerID string, amount shared.Money, note, idempotencyKey string) error {
+	entry, err := storecredit.NewIssueEntry(id.New(), customerID, amount, note, idempotencyKey)
 	if err != nil {
 		return err
 	}
@@ -60,12 +60,34 @@ func (r *StoreCreditRepo) Redeem(ctx context.Context, customerID, orderID string
 	return r.applyEntry(ctx, entry, -amount.Amount())
 }
 
+// storeCreditLedgerIdempotencyConstraint is the partial unique index name
+// from migration 064 — used to distinguish an idempotent replay (safe to
+// treat as success) from any other unique violation on this table.
+const storeCreditLedgerIdempotencyConstraint = "idx_store_credit_ledger_idempotency"
+
 func (r *StoreCreditRepo) applyEntry(ctx context.Context, entry storecredit.Entry, delta int64) error {
 	tx, err := r.db.BeginTx(ctx, nil)
 	if err != nil {
 		return fmt.Errorf("store_credit_repo: begin tx: %w", err)
 	}
 	defer tx.Rollback()
+
+	if entry.IdempotencyKey != "" {
+		var exists int
+		err := tx.QueryRowContext(ctx,
+			`SELECT 1 FROM store_credit_ledger WHERE customer_id = $1 AND idempotency_key = $2`,
+			entry.CustomerID, entry.IdempotencyKey,
+		).Scan(&exists)
+		if err == nil {
+			// Already applied by a prior attempt with the same key — return
+			// success without crediting again. No commit needed; the
+			// deferred Rollback on this read-only check is a no-op.
+			return nil
+		}
+		if !errors.Is(err, sql.ErrNoRows) {
+			return fmt.Errorf("store_credit_repo: check idempotency: %w", err)
+		}
+	}
 
 	const ensureAccount = `INSERT INTO store_credit_accounts (customer_id, currency, balance, updated_at)
 		VALUES ($1, $2, 0, now())
@@ -96,19 +118,27 @@ func (r *StoreCreditRepo) applyEntry(ctx context.Context, entry storecredit.Entr
 		return fmt.Errorf("store_credit_repo: upsert account: %w", err)
 	}
 
-	const insertLedger = `INSERT INTO store_credit_ledger (id, customer_id, currency, amount, kind, order_id, note, created_at)
-		VALUES ($1, $2, $3, $4, $5, NULLIF($6, ''), $7, $8)`
+	const insertLedger = `INSERT INTO store_credit_ledger (id, customer_id, currency, amount, kind, order_id, note, idempotency_key, created_at)
+		VALUES ($1, $2, $3, $4, $5, NULLIF($6, ''), $7, NULLIF($8, ''), $9)`
 	var orderID interface{}
 	if entry.OrderID != "" {
 		orderID = entry.OrderID
 	}
 	_, err = tx.ExecContext(ctx, insertLedger,
 		entry.ID, entry.CustomerID, entry.Currency, entry.Amount.Amount(), string(entry.Kind),
-		orderID, entry.Note, entry.CreatedAt,
+		orderID, entry.Note, entry.IdempotencyKey, entry.CreatedAt,
 	)
 	if err != nil {
-		if pqErr, ok := err.(*pq.Error); ok && pqErr.Code == "23503" {
-			return fmt.Errorf("store_credit_repo: customer or order not found")
+		if pqErr, ok := err.(*pq.Error); ok {
+			switch {
+			case pqErr.Code == "23503":
+				return fmt.Errorf("store_credit_repo: customer or order not found")
+			case pqErr.Code == "23505" && pqErr.Constraint == storeCreditLedgerIdempotencyConstraint:
+				// Lost the race with a concurrent identical request: the
+				// other one committed first, so this one is a no-op success
+				// rather than a double-issue.
+				return nil
+			}
 		}
 		return fmt.Errorf("store_credit_repo: insert ledger: %w", err)
 	}

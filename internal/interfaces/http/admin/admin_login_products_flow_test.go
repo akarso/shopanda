@@ -4,11 +4,12 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"github.com/akarso/shopanda/internal/interfaces/http/admin"
 	"net/http"
 	"net/http/httptest"
 	"testing"
 	"time"
+
+	"github.com/akarso/shopanda/internal/interfaces/http/admin"
 
 	adminapp "github.com/akarso/shopanda/internal/application/admin"
 	appAuth "github.com/akarso/shopanda/internal/application/auth"
@@ -16,7 +17,7 @@ import (
 	"github.com/akarso/shopanda/internal/domain/catalog"
 	"github.com/akarso/shopanda/internal/domain/customer"
 	"github.com/akarso/shopanda/internal/domain/rbac"
-	shophttp "github.com/akarso/shopanda/internal/interfaces/http"
+	storefront "github.com/akarso/shopanda/internal/interfaces/http/storefront"
 	"github.com/akarso/shopanda/internal/platform/event"
 	"github.com/akarso/shopanda/internal/platform/jwt"
 	"github.com/akarso/shopanda/internal/platform/jwt/jwttest"
@@ -27,7 +28,7 @@ func newAdminLoginProductsFlowRouter(t *testing.T, customers *authMockCustomerRe
 	t.Helper()
 
 	bus := event.NewBus(authTestLogger{})
-	authHandler := shophttp.NewAuthHandler(appAuth.NewService(customers, newAuthMockResetRepo(), issuer, bus, authTestLogger{}, time.Hour))
+	authHandler := storefront.NewAuthHandler(appAuth.NewService(customers, newAuthMockResetRepo(), issuer, bus, authTestLogger{}, time.Hour))
 	productHandler := admin.NewProductAdminHandler(products, testAdminBus())
 
 	registry := domainadmin.NewRegistry()
@@ -40,8 +41,8 @@ func newAdminLoginProductsFlowRouter(t *testing.T, customers *authMockCustomerRe
 	}
 	schemaHandler := admin.NewSchemaHandler(registry, nil)
 
-	requireAuth := shophttp.RequireAuth()
-	requireProductsRead := shophttp.RequirePermission(rbac.ProductsRead)
+	requireAuth := storefront.RequireAuth()
+	requireProductsRead := admin.RequirePermission(rbac.ProductsRead)
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("POST /api/v1/auth/login", authHandler.Login())
@@ -50,7 +51,7 @@ func newAdminLoginProductsFlowRouter(t *testing.T, customers *authMockCustomerRe
 	mux.Handle("GET /api/v1/admin/products", requireProductsRead(productHandler.List()))
 
 	parser := appAuth.NewValidatingTokenParser(issuer, customers, 0)
-	return shophttp.AuthMiddleware(parser)(shophttp.AdminContextMiddleware()(mux))
+	return storefront.AuthMiddleware(parser)(admin.AdminContextMiddleware()(mux))
 }
 
 func TestAdminLoginToProductsFlow_EndToEnd(t *testing.T) {

@@ -13,7 +13,7 @@ func TestHasPermission_Admin(t *testing.T) {
 		rbac.ProductsRead, rbac.ProductsWrite,
 		rbac.OrdersRead, rbac.OrdersWrite,
 		rbac.CategoriesRead, rbac.CategoriesWrite,
-		rbac.CustomersRead, rbac.CustomersWrite,
+		rbac.CustomersRead, rbac.CustomersWrite, rbac.StoreCreditWrite,
 		rbac.InvoicesRead,
 		rbac.MediaRead, rbac.MediaWrite,
 		rbac.ContentRead, rbac.ContentWrite,
@@ -40,7 +40,7 @@ func TestHasPermission_Manager(t *testing.T) {
 		rbac.ShippingRead, rbac.ShippingWrite,
 	}
 	denied := []rbac.Permission{
-		rbac.CustomersWrite,
+		rbac.CustomersWrite, rbac.StoreCreditWrite,
 		rbac.ContentWrite,
 		rbac.SettingsRead, rbac.SettingsWrite,
 		rbac.AuditRead,
@@ -67,7 +67,7 @@ func TestHasPermission_Editor(t *testing.T) {
 	}
 	denied := []rbac.Permission{
 		rbac.OrdersRead, rbac.OrdersWrite,
-		rbac.CustomersRead, rbac.CustomersWrite,
+		rbac.CustomersRead, rbac.CustomersWrite, rbac.StoreCreditWrite,
 		rbac.InvoicesRead,
 		rbac.SettingsRead, rbac.SettingsWrite,
 		rbac.AuditRead,
@@ -97,7 +97,7 @@ func TestHasPermission_Support(t *testing.T) {
 		rbac.ProductsWrite,
 		rbac.OrdersWrite,
 		rbac.CategoriesRead, rbac.CategoriesWrite,
-		rbac.CustomersWrite,
+		rbac.CustomersWrite, rbac.StoreCreditWrite,
 		rbac.MediaRead, rbac.MediaWrite,
 		rbac.ContentWrite,
 		rbac.SettingsRead, rbac.SettingsWrite,
@@ -137,8 +137,8 @@ func TestHasPermission_Unknown(t *testing.T) {
 func TestPermissionsForRole_Admin(t *testing.T) {
 	perms := rbac.PermissionsForRole(identity.RoleAdmin)
 	// Core admin grants in role_permissions.go (products/orders/categories/customers/
-	// invoices/media/content/settings/shipping/audit/extensions*).
-	const wantCoreAdmin = 21
+	// store_credit/invoices/media/content/settings/shipping/audit/extensions*).
+	const wantCoreAdmin = 22
 	if len(perms) != wantCoreAdmin {
 		t.Errorf("admin permissions count = %d, want %d (%v)", len(perms), wantCoreAdmin, perms)
 	}

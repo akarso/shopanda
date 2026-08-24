@@ -3,9 +3,10 @@ package admin
 import (
 	"encoding/json"
 	"errors"
-	shophttp "github.com/akarso/shopanda/internal/interfaces/http"
-	httpshared "github.com/akarso/shopanda/internal/interfaces/http/shared"
 	"net/http"
+
+	httpshared "github.com/akarso/shopanda/internal/interfaces/http/shared"
+	storefront "github.com/akarso/shopanda/internal/interfaces/http/storefront"
 
 	"github.com/akarso/shopanda/internal/application/admin"
 	extensionapp "github.com/akarso/shopanda/internal/application/extension"
@@ -103,9 +104,9 @@ func (h *OrderAdminHandler) List() http.HandlerFunc {
 		}
 
 		// Log successful list operation for compliance.
-		out := make([]shophttp.OrderResponse, 0, len(orders))
+		out := make([]storefront.OrderResponse, 0, len(orders))
 		for i := range orders {
-			resp, err := shophttp.ToOrderResponse(r.Context(), h.extensions, &orders[i])
+			resp, err := storefront.ToOrderResponse(r.Context(), h.extensions, &orders[i])
 			if err != nil {
 				httpshared.JSONError(w, extensionapp.MapValueError(err))
 				return
@@ -166,7 +167,7 @@ func (h *OrderAdminHandler) Get() http.HandlerFunc {
 			return
 		}
 
-		resp, err := shophttp.ToOrderResponse(r.Context(), h.extensions, o)
+		resp, err := storefront.ToOrderResponse(r.Context(), h.extensions, o)
 		if err != nil {
 			httpshared.JSONError(w, extensionapp.MapValueError(err))
 			return
@@ -292,7 +293,7 @@ func (h *OrderAdminHandler) Update() http.HandlerFunc {
 		}
 
 		if o.Status() == next {
-			resp, err := shophttp.ToOrderResponse(r.Context(), h.extensions, o)
+			resp, err := storefront.ToOrderResponse(r.Context(), h.extensions, o)
 			if err != nil {
 				httpshared.JSONError(w, extensionapp.MapValueError(err))
 				return
@@ -333,7 +334,7 @@ func (h *OrderAdminHandler) Update() http.HandlerFunc {
 			return
 		}
 
-		resp, err := shophttp.ToOrderResponse(r.Context(), h.extensions, o)
+		resp, err := storefront.ToOrderResponse(r.Context(), h.extensions, o)
 		if err != nil {
 			httpshared.JSONError(w, extensionapp.MapValueError(err))
 			return

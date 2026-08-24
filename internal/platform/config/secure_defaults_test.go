@@ -167,6 +167,70 @@ metrics:
 	}
 }
 
+func TestLoad_AllowsMetricsWildcardWithDevMode(t *testing.T) {
+	withTestBaseURL(t)
+	t.Setenv("SHOPANDA_DEV_MODE", "true")
+	t.Setenv("SHOPANDA_DATABASE_PASSWORD", "strong-enough-secret")
+	path := writeYAML(t, `
+database:
+  host: localhost
+  sslmode: require
+metrics:
+  enabled: true
+  listen: "0.0.0.0:9090"
+`)
+	cfg, err := loadCfg(t, path)
+	if err != nil {
+		t.Fatalf("Load() error: %v", err)
+	}
+	if cfg.Metrics.Listen != "0.0.0.0:9090" {
+		t.Errorf("Metrics.Listen = %q", cfg.Metrics.Listen)
+	}
+}
+
+// TestLoad_MetricsInsecureBindFlagIsIndependentOfDevMode pins the fix for the
+// two concerns being coupled: SHOPANDA_METRICS_ALLOW_INSECURE_BIND alone must
+// allow a non-loopback metrics bind without also disabling the (unrelated)
+// DB password/SSL checks that SHOPANDA_DEV_MODE gates.
+func TestLoad_MetricsInsecureBindFlagIsIndependentOfDevMode(t *testing.T) {
+	withTestBaseURL(t)
+	t.Setenv("SHOPANDA_DEV_MODE", "false")
+	t.Setenv("SHOPANDA_METRICS_ALLOW_INSECURE_BIND", "true")
+	t.Setenv("SHOPANDA_DATABASE_PASSWORD", "strong-enough-secret")
+	path := writeYAML(t, `
+database:
+  host: localhost
+  sslmode: require
+metrics:
+  enabled: true
+  listen: "0.0.0.0:9090"
+`)
+	cfg, err := loadCfg(t, path)
+	if err != nil {
+		t.Fatalf("Load() error: %v", err)
+	}
+	if cfg.Metrics.Listen != "0.0.0.0:9090" {
+		t.Errorf("Metrics.Listen = %q", cfg.Metrics.Listen)
+	}
+
+	// The same flag must not weaken the unrelated DB password check.
+	// SHOPANDA_DATABASE_PASSWORD is re-set here (env overrides YAML) so the
+	// forbidden default actually reaches validation instead of being masked
+	// by the "strong-enough-secret" set at the top of this test.
+	t.Setenv("SHOPANDA_DATABASE_PASSWORD", "changeme")
+	path2 := writeYAML(t, `
+database:
+  host: localhost
+  sslmode: require
+metrics:
+  enabled: true
+  listen: "0.0.0.0:9090"
+`)
+	if _, err := loadCfg(t, path2); err == nil {
+		t.Fatal("expected forbidden default DB password to still be rejected with SHOPANDA_METRICS_ALLOW_INSECURE_BIND=true")
+	}
+}
+
 func TestLoad_RejectsSSLDisableWithoutDevMode(t *testing.T) {
 	withTestBaseURL(t)
 	t.Setenv("SHOPANDA_DEV_MODE", "false")
@@ -416,5 +480,38 @@ func TestLoad_RejectsSSLModeInjectedViaURIPassword(t *testing.T) {
 	_, err := loadCfg(t, path)
 	if err == nil || !strings.Contains(err.Error(), "sslmode") {
 		t.Fatalf("err=%v, want sslmode rejection (password must not satisfy TLS policy)", err)
+	}
+}
+
+func TestIsLoopbackHost_LiteralIPs(t *testing.T) {
+	if !isLoopbackHost("127.0.0.1") {
+		t.Error("127.0.0.1 should be loopback")
+	}
+	if !isLoopbackHost("::1") {
+		t.Error("::1 should be loopback")
+	}
+	if isLoopbackHost("10.0.0.1") {
+		t.Error("10.0.0.1 should not be loopback")
+	}
+	if isLoopbackHost("0.0.0.0") {
+		t.Error("0.0.0.0 should not be loopback (wildcard, handled separately)")
+	}
+}
+
+// TestIsLoopbackHost_Localhost pins the fix resolving "localhost" instead of
+// trusting the bare string: on any machine where the resolver is set up
+// normally (the case in CI and virtually all deployment environments),
+// "localhost" must still resolve to a loopback address and pass.
+func TestIsLoopbackHost_Localhost(t *testing.T) {
+	if !isLoopbackHost("localhost") {
+		t.Error(`"localhost" should resolve to a loopback address in a normal environment`)
+	}
+}
+
+func TestIsLoopbackHost_UnresolvableHostnameNotTrusted(t *testing.T) {
+	// Only "localhost" gets the resolve-with-fallback treatment; any other
+	// hostname (resolvable or not) is not a loopback address by this check.
+	if isLoopbackHost("this-host-does-not-exist.invalid") {
+		t.Error("an arbitrary unresolvable hostname must not be treated as loopback")
 	}
 }

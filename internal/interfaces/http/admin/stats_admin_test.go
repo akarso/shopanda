@@ -4,16 +4,16 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"github.com/akarso/shopanda/internal/interfaces/http/admin"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"testing"
 
+	"github.com/akarso/shopanda/internal/interfaces/http/admin"
+
 	adminapp "github.com/akarso/shopanda/internal/application/admin"
 	domainadmin "github.com/akarso/shopanda/internal/domain/admin"
 	"github.com/akarso/shopanda/internal/domain/rbac"
-	shophttp "github.com/akarso/shopanda/internal/interfaces/http"
 	"github.com/akarso/shopanda/internal/platform/auth/testhelper"
 	"github.com/akarso/shopanda/internal/platform/logger"
 )
@@ -30,8 +30,8 @@ func (m *mockStatsRepo) GetDashboardStats(ctx context.Context, lowStockThreshold
 }
 
 func newStatsAdminRouterWithAudit(h *admin.StatsAdminHandler) *http.ServeMux {
-	requireOrdersRead := shophttp.RequirePermission(rbac.OrdersRead)
-	withAdminContext := shophttp.AdminContextMiddleware()
+	requireOrdersRead := admin.RequirePermission(rbac.OrdersRead)
+	withAdminContext := admin.AdminContextMiddleware()
 	mux := http.NewServeMux()
 	mux.Handle("GET /api/v1/admin/stats/overview", withAdminContext(requireOrdersRead(h.Overview())))
 	return mux

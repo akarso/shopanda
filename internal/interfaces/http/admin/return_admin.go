@@ -2,9 +2,10 @@ package admin
 
 import (
 	"context"
-	shophttp "github.com/akarso/shopanda/internal/interfaces/http"
-	httpshared "github.com/akarso/shopanda/internal/interfaces/http/shared"
 	"net/http"
+
+	httpshared "github.com/akarso/shopanda/internal/interfaces/http/shared"
+	storefront "github.com/akarso/shopanda/internal/interfaces/http/storefront"
 
 	"github.com/akarso/shopanda/internal/application/admin"
 	returnsApp "github.com/akarso/shopanda/internal/application/returns"
@@ -64,7 +65,7 @@ func (h *ReturnAdminHandler) List() http.HandlerFunc {
 		})
 
 		httpshared.JSON(w, http.StatusOK, map[string]interface{}{
-			"returns": shophttp.ToReturnResponses(list),
+			"returns": storefront.ToReturnResponses(list),
 			"offset":  offset,
 			"limit":   limit,
 		})
@@ -100,7 +101,7 @@ func (h *ReturnAdminHandler) Get() http.HandlerFunc {
 		})
 
 		httpshared.JSON(w, http.StatusOK, map[string]interface{}{
-			"return": shophttp.ToReturnResponse(ret),
+			"return": storefront.ToReturnResponse(ret),
 		})
 	}
 }
@@ -136,7 +137,7 @@ func (h *ReturnAdminHandler) transition(action admin.AuditAction, fn func(contex
 		})
 
 		httpshared.JSON(w, http.StatusOK, map[string]interface{}{
-			"return": shophttp.ToReturnResponse(ret),
+			"return": storefront.ToReturnResponse(ret),
 		})
 	}
 }

@@ -6,12 +6,13 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
-	"github.com/akarso/shopanda/internal/interfaces/http/admin"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
+
+	"github.com/akarso/shopanda/internal/interfaces/http/admin"
 
 	adminapp "github.com/akarso/shopanda/internal/application/admin"
 	"github.com/akarso/shopanda/internal/domain/catalog"
@@ -22,7 +23,7 @@ import (
 	"github.com/akarso/shopanda/internal/platform/event"
 	"github.com/akarso/shopanda/internal/platform/logger"
 
-	shophttp "github.com/akarso/shopanda/internal/interfaces/http"
+	storefront "github.com/akarso/shopanda/internal/interfaces/http/storefront"
 )
 
 // --- mock for admin tests ---
@@ -120,9 +121,9 @@ func newAdminRouter(h *admin.ProductAdminHandler) *http.ServeMux {
 }
 
 func newAdminRouterWithAudit(h *admin.ProductAdminHandler) *http.ServeMux {
-	requireProductsRead := shophttp.RequirePermission(rbac.ProductsRead)
-	requireProductsWrite := shophttp.RequirePermission(rbac.ProductsWrite)
-	withAdminContext := shophttp.AdminContextMiddleware()
+	requireProductsRead := admin.RequirePermission(rbac.ProductsRead)
+	requireProductsWrite := admin.RequirePermission(rbac.ProductsWrite)
+	withAdminContext := admin.AdminContextMiddleware()
 	mux := http.NewServeMux()
 	mux.Handle("GET /api/v1/admin/products", withAdminContext(requireProductsRead(h.List())))
 	mux.Handle("GET /api/v1/admin/products/{id}", withAdminContext(requireProductsRead(h.Get())))
@@ -131,8 +132,8 @@ func newAdminRouterWithAudit(h *admin.ProductAdminHandler) *http.ServeMux {
 }
 
 func newAdminCreateRouterWithAudit(h *admin.ProductAdminHandler) *http.ServeMux {
-	requireProductsWrite := shophttp.RequirePermission(rbac.ProductsWrite)
-	withAdminContext := shophttp.AdminContextMiddleware()
+	requireProductsWrite := admin.RequirePermission(rbac.ProductsWrite)
+	withAdminContext := admin.AdminContextMiddleware()
 	mux := http.NewServeMux()
 	mux.Handle("POST /api/v1/admin/products", withAdminContext(requireProductsWrite(h.Create())))
 	return mux
@@ -1270,8 +1271,8 @@ func createProductBody(t *testing.T) *bytes.Reader {
 }
 
 func newGuardedAdminRouter(h *admin.ProductAdminHandler) *http.ServeMux {
-	requireProductsRead := shophttp.RequirePermission(rbac.ProductsRead)
-	requireProductsWrite := shophttp.RequirePermission(rbac.ProductsWrite)
+	requireProductsRead := admin.RequirePermission(rbac.ProductsRead)
+	requireProductsWrite := admin.RequirePermission(rbac.ProductsWrite)
 	mux := http.NewServeMux()
 	mux.Handle("GET /api/v1/admin/products", requireProductsRead(h.List()))
 	mux.Handle("POST /api/v1/admin/products", requireProductsWrite(h.Create()))
@@ -1419,13 +1420,13 @@ func (p *stubAdminTokenParser) Parse(_ context.Context, token string) (identity.
 }
 
 func newIntegrationAdminRouter(h *admin.ProductAdminHandler) http.Handler {
-	requireProductsRead := shophttp.RequirePermission(rbac.ProductsRead)
-	requireProductsWrite := shophttp.RequirePermission(rbac.ProductsWrite)
+	requireProductsRead := admin.RequirePermission(rbac.ProductsRead)
+	requireProductsWrite := admin.RequirePermission(rbac.ProductsWrite)
 	mux := http.NewServeMux()
 	mux.Handle("GET /api/v1/admin/products", requireProductsRead(h.List()))
 	mux.Handle("POST /api/v1/admin/products", requireProductsWrite(h.Create()))
 
-	authMW := shophttp.AuthMiddleware(&stubAdminTokenParser{})
+	authMW := storefront.AuthMiddleware(&stubAdminTokenParser{})
 	return authMW(mux)
 }
 

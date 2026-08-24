@@ -52,7 +52,6 @@ type serveRepos struct {
 	rolePermRepo               *postgres.RolePermissionRepo
 }
 
-
 func wrapRepoOpen(name string, err error) error {
 	if err == nil {
 		return nil

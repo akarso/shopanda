@@ -3,18 +3,18 @@ package admin_test
 import (
 	"context"
 	"database/sql"
-	"github.com/akarso/shopanda/internal/interfaces/http/admin"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
+
+	"github.com/akarso/shopanda/internal/interfaces/http/admin"
 
 	adminapp "github.com/akarso/shopanda/internal/application/admin"
 	"github.com/akarso/shopanda/internal/application/exporter"
 	"github.com/akarso/shopanda/internal/domain/catalog"
 	"github.com/akarso/shopanda/internal/domain/legal"
 	"github.com/akarso/shopanda/internal/domain/rbac"
-	shophttp "github.com/akarso/shopanda/internal/interfaces/http"
 )
 
 type eprExportProductRepo struct {
@@ -159,7 +159,7 @@ func TestEprReportHandler_RequiresProductsRead(t *testing.T) {
 	exp := exporter.NewEprExporter(&eprExportProductRepo{}, &eprExportVariantRepo{}, nil)
 	h := admin.NewEprReportHandler(exp)
 	mux := http.NewServeMux()
-	mux.Handle("GET /api/v1/admin/reports/epr", shophttp.RequirePermission(rbac.ProductsRead)(h.Export()))
+	mux.Handle("GET /api/v1/admin/reports/epr", admin.RequirePermission(rbac.ProductsRead)(h.Export()))
 
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/admin/reports/epr", nil)
