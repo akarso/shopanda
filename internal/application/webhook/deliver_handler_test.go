@@ -2,6 +2,7 @@ package webhook_test
 
 import (
 	"context"
+	"fmt"
 	"net"
 	"net/http"
 	"strings"
@@ -89,16 +90,20 @@ func (*recordingQueue) Complete(context.Context, string) error     { return nil 
 func (*recordingQueue) Fail(context.Context, string, error) error  { return nil }
 
 type stubPoster struct {
-	lastURL     string
-	lastHeaders map[string]string
-	lastBody    []byte
-	status      int
+	lastURL      string
+	lastHeaders  map[string]string
+	lastBody     []byte
+	status       int
+	transportErr error
 }
 
 func (p *stubPoster) Post(_ context.Context, url string, headers map[string]string, body []byte) (int, error) {
 	p.lastURL = url
 	p.lastHeaders = headers
 	p.lastBody = body
+	if p.transportErr != nil {
+		return 0, p.transportErr
+	}
 	if p.status == 0 {
 		p.status = http.StatusOK
 	}
@@ -295,6 +300,34 @@ func TestDeliverHandler_RetriesOnNon2xx(t *testing.T) {
 		},
 	}); err == nil {
 		t.Fatal("expected delivery failure for retry")
+	}
+}
+
+func TestDeliverHandler_WithMetrics_RecordsFailureOnTransportError(t *testing.T) {
+	poster := &stubPoster{transportErr: fmt.Errorf("dial tcp: connection refused")}
+	repo := &stubWebhookRepo{
+		byID: map[string]*domainwebhook.Endpoint{
+			"ep-1": {ID: "ep-1", URL: "https://example.com/hook", Secret: "s", Events: []string{order.EventOrderPaid}, Active: true},
+		},
+	}
+	m := &recordingMetrics{}
+	h := webhookApp.NewDeliverHandler(repo, poster, logger.New("error")).WithMetrics(m)
+	if err := h.Handle(context.Background(), jobs.Job{
+		ID:   "job-1",
+		Type: domainwebhook.DeliverJobType,
+		Payload: map[string]interface{}{
+			"endpoint_id":     "ep-1",
+			"event_name":      order.EventOrderPaid,
+			"event_id":        "evt-1",
+			"event_source":    "test",
+			"event_timestamp": "2026-06-17T12:00:00Z",
+			"event_data_json": `{}`,
+		},
+	}); err == nil {
+		t.Fatal("expected delivery failure for transport error")
+	}
+	if len(m.webhookOutcomes) != 1 || m.webhookOutcomes[0] != metrics.OutcomeFailed {
+		t.Errorf("webhookOutcomes = %v, want [failed]", m.webhookOutcomes)
 	}
 }
 

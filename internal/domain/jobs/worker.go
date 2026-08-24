@@ -62,6 +62,10 @@ func NewWorker(queue Queue, log Logger, pollInterval time.Duration) *Worker {
 // WithMetrics sets the metrics recorder used to count job failures. Optional
 // — if never called, failures are simply not recorded. Returns the Worker
 // for chaining.
+//
+// Not safe to call concurrently with Start or with another WithMetrics call:
+// the field it sets is read without synchronization on the processing path.
+// Call it once during wiring, before Start.
 func (w *Worker) WithMetrics(m MetricsRecorder) *Worker {
 	if m != nil {
 		w.metrics = m
@@ -162,6 +166,11 @@ func (w *Worker) processNext(ctx context.Context) {
 		w.log.Error("worker.job.complete_failed", err, map[string]interface{}{
 			"job_id": job.ID,
 		})
+		// The handler itself succeeded, but the job may now be redelivered
+		// (e.g. duplicate webhook sends) since the queue never learned it
+		// finished — record it as a failure so dashboards aren't silent
+		// about a real, actionable problem.
+		w.metrics.JobFailure(job.Type)
 		return
 	}
 

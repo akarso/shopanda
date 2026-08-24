@@ -13,12 +13,15 @@ func TestNewIssueEntry_Success(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewMoney: %v", err)
 	}
-	e, err := storecredit.NewIssueEntry(id.New(), id.New(), amount, "return goodwill")
+	e, err := storecredit.NewIssueEntry(id.New(), id.New(), amount, "return goodwill", "idem-key-1")
 	if err != nil {
 		t.Fatalf("NewIssueEntry: %v", err)
 	}
 	if e.Kind != storecredit.KindIssue {
 		t.Fatalf("Kind = %q", e.Kind)
+	}
+	if e.IdempotencyKey != "idem-key-1" {
+		t.Fatalf("IdempotencyKey = %q, want %q", e.IdempotencyKey, "idem-key-1")
 	}
 }
 

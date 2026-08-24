@@ -31,7 +31,6 @@ import (
 
 type Router = shared.Router
 type Middleware = shared.Middleware
-type RoutePatternResolver = shared.RoutePatternResolver
 
 func NewRouter() *Router { return shared.NewRouter() }
 
@@ -147,6 +146,6 @@ func ResolverMiddleware(repo routing.RewriteRepository, log logger.Logger) Middl
 
 // --- Metrics ---
 
-func MetricsMiddleware(rec metrics.Recorder, routes RoutePatternResolver) Middleware {
-	return shared.MetricsMiddleware(rec, routes)
+func MetricsMiddleware(rec metrics.Recorder) Middleware {
+	return shared.MetricsMiddleware(rec)
 }

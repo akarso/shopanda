@@ -289,8 +289,19 @@ metrics:
   # traffic stays on a private network (e.g. a Kubernetes/Docker internal
   # network) that a scraper like Prometheus can reach but the public
   # internet cannot — this endpoint has no built-in authentication.
-  # Override with SHOPANDA_METRICS_LISTEN. When serve and worker both run on
-  # the same host with metrics enabled, use distinct ports (e.g. 9090 / 9091).
+  # Override with SHOPANDA_METRICS_LISTEN. serve and worker are separate
+  # processes: if both enable metrics and this is left at the default, the
+  # worker process automatically shifts to 127.0.0.1:9091 so they don't
+  # collide on the same host. Set this explicitly on both if you want
+  # different addresses/ports than that.
   # Startup rejects 0.0.0.0/:: and non-loopback binds unless SHOPANDA_DEV_MODE
   # is truthy — /metrics has no authentication.
   listen: "127.0.0.1:9090"
+
+# --- Store credit -----------------------------------------------------------
+store_credit:
+  # Caps a single admin store-credit issuance, in the currency's minor units
+  # (e.g. cents) — a safety net against a fat-fingered or compromised admin
+  # session minting an unbounded amount in one request. Set to 0 to disable
+  # the cap entirely.
+  max_issue_amount: 100000

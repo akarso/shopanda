@@ -24,24 +24,33 @@ type LoadResult struct {
 
 // Config holds all application configuration.
 type Config struct {
-	Server    ServerConfig    `yaml:"server"`
-	HTTP      HTTPConfig      `yaml:"http"`
-	Database  DatabaseConfig  `yaml:"database"`
-	Log       LogConfig       `yaml:"log"`
-	Auth      AuthConfig      `yaml:"auth"`
-	Mail      MailConfig      `yaml:"mail"`
-	Media     MediaConfig     `yaml:"media"`
-	Cache     CacheConfig     `yaml:"cache"`
-	Queue     QueueConfig     `yaml:"queue"`
-	Plugins   PluginsConfig   `yaml:"plugins"`
-	Frontend  FrontendConfig  `yaml:"frontend"`
-	CDN       CDNConfig       `yaml:"cdn"`
-	Webhooks  WebhooksConfig  `yaml:"webhooks"`
-	RateLimit RateLimitConfig `yaml:"rate_limit"`
-	Payment   PaymentConfig   `yaml:"payment"`
-	Search    SearchConfig    `yaml:"search"`
-	Metrics   MetricsConfig   `yaml:"metrics"`
-	Dev       DevConfig       `yaml:"dev"`
+	Server      ServerConfig      `yaml:"server"`
+	HTTP        HTTPConfig        `yaml:"http"`
+	Database    DatabaseConfig    `yaml:"database"`
+	Log         LogConfig         `yaml:"log"`
+	Auth        AuthConfig        `yaml:"auth"`
+	Mail        MailConfig        `yaml:"mail"`
+	Media       MediaConfig       `yaml:"media"`
+	Cache       CacheConfig       `yaml:"cache"`
+	Queue       QueueConfig       `yaml:"queue"`
+	Plugins     PluginsConfig     `yaml:"plugins"`
+	Frontend    FrontendConfig    `yaml:"frontend"`
+	CDN         CDNConfig         `yaml:"cdn"`
+	Webhooks    WebhooksConfig    `yaml:"webhooks"`
+	RateLimit   RateLimitConfig   `yaml:"rate_limit"`
+	Payment     PaymentConfig     `yaml:"payment"`
+	Search      SearchConfig      `yaml:"search"`
+	Metrics     MetricsConfig     `yaml:"metrics"`
+	Dev         DevConfig         `yaml:"dev"`
+	StoreCredit StoreCreditConfig `yaml:"store_credit"`
+}
+
+// StoreCreditConfig bounds how much store credit an admin can issue in a
+// single request. MaxIssueAmount is in the currency's minor units (e.g.
+// cents), matching shared.Money. Zero disables the cap — an explicit
+// operator opt-out, not an oversight.
+type StoreCreditConfig struct {
+	MaxIssueAmount int64 `yaml:"max_issue_amount"`
 }
 
 // MetricsConfig holds optional Prometheus metrics settings. Disabled by
@@ -108,10 +117,24 @@ const (
 	DefaultHTTPMediaMaxBodyBytes int64 = 10 << 20 // 10 MiB
 )
 
+// DefaultStoreCreditMaxIssueAmount caps a single admin store-credit issuance
+// at 100000 minor units (e.g. $1,000.00) absent an explicit operator
+// override — a conservative default against a fat-fingered or compromised
+// admin session minting an unbounded amount in one request.
+const DefaultStoreCreditMaxIssueAmount int64 = 100000
+
 // DefaultMetricsListen binds /metrics to loopback only, so enabling metrics
 // never exposes them beyond the host unless an operator explicitly changes
 // metrics.listen to a private scrape network address.
 const DefaultMetricsListen = "127.0.0.1:9090"
+
+// DefaultWorkerMetricsListen is the port the worker process binds /metrics
+// to when metrics.listen was left at DefaultMetricsListen — serve and
+// worker often run as separate processes on the same host, and both
+// defaulting to the same port would fail one of them at startup with
+// "address already in use". Only applied when the operator hasn't
+// explicitly overridden metrics.listen (see cmd/api's runWorker).
+const DefaultWorkerMetricsListen = "127.0.0.1:9091"
 
 type DatabaseConfig struct {
 	Host     string `yaml:"host"`
@@ -695,6 +718,9 @@ func defaults() Config {
 		Metrics: MetricsConfig{
 			Enabled: false,
 			Listen:  DefaultMetricsListen,
+		},
+		StoreCredit: StoreCreditConfig{
+			MaxIssueAmount: DefaultStoreCreditMaxIssueAmount,
 		},
 	}
 }

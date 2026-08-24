@@ -12,8 +12,8 @@ import (
 	"github.com/akarso/shopanda/internal/domain/catalog"
 	"github.com/akarso/shopanda/internal/domain/identity"
 	"github.com/akarso/shopanda/internal/domain/rbac"
-	shophttp "github.com/akarso/shopanda/internal/interfaces/http"
 	"github.com/akarso/shopanda/internal/interfaces/http/admin"
+	storefront "github.com/akarso/shopanda/internal/interfaces/http/storefront"
 	"github.com/akarso/shopanda/internal/platform/auth/testhelper"
 	"github.com/akarso/shopanda/internal/platform/event"
 	"github.com/akarso/shopanda/internal/platform/logger"
@@ -162,10 +162,10 @@ func (m *mockProductCategoryAssignmentRepo) ListCategoryIDsByProduct(ctx context
 
 // --- router helpers ---
 
-func newAdminCategoryCRUDRouter(read *shophttp.CategoryHandler, adm *admin.CategoryAdminHandler) *http.ServeMux {
-	requireCategoriesRead := shophttp.RequirePermission(rbac.CategoriesRead)
-	requireCategoriesWrite := shophttp.RequirePermission(rbac.CategoriesWrite)
-	withAdminContext := shophttp.AdminContextMiddleware()
+func newAdminCategoryCRUDRouter(read *storefront.CategoryHandler, adm *admin.CategoryAdminHandler) *http.ServeMux {
+	requireCategoriesRead := admin.RequirePermission(rbac.CategoriesRead)
+	requireCategoriesWrite := admin.RequirePermission(rbac.CategoriesWrite)
+	withAdminContext := admin.AdminContextMiddleware()
 	mux := http.NewServeMux()
 	mux.Handle("GET /api/v1/admin/categories", withAdminContext(requireCategoriesRead(read.Tree())))
 	mux.Handle("GET /api/v1/admin/categories/{id}", withAdminContext(requireCategoriesRead(read.Get())))
@@ -175,10 +175,10 @@ func newAdminCategoryCRUDRouter(read *shophttp.CategoryHandler, adm *admin.Categ
 	return mux
 }
 
-func newAdminCategoryAssignmentRouter(read *shophttp.CategoryHandler, assignment *admin.CategoryProductAssignmentAdminHandler) *http.ServeMux {
-	requireCategoriesRead := shophttp.RequirePermission(rbac.CategoriesRead)
-	requireCategoriesWrite := shophttp.RequirePermission(rbac.CategoriesWrite)
-	withAdminContext := shophttp.AdminContextMiddleware()
+func newAdminCategoryAssignmentRouter(read *storefront.CategoryHandler, assignment *admin.CategoryProductAssignmentAdminHandler) *http.ServeMux {
+	requireCategoriesRead := admin.RequirePermission(rbac.CategoriesRead)
+	requireCategoriesWrite := admin.RequirePermission(rbac.CategoriesWrite)
+	withAdminContext := admin.AdminContextMiddleware()
 	mux := http.NewServeMux()
 	mux.Handle("GET /api/v1/admin/categories/{id}/products", withAdminContext(requireCategoriesRead(read.Products())))
 	mux.Handle("POST /api/v1/admin/categories/{id}/products/{productId}", withAdminContext(requireCategoriesWrite(assignment.Assign())))
@@ -211,7 +211,7 @@ func TestCategoryAdminHandler_Create_OK(t *testing.T) {
 			return nil
 		},
 	}
-	read := shophttp.NewCategoryHandler(repo, &mockCatProductRepo{})
+	read := storefront.NewCategoryHandler(repo, &mockCatProductRepo{})
 	adm := admin.NewCategoryAdminHandler(repo, categoryBus())
 	mux := newAdminCategoryCRUDRouter(read, adm)
 
@@ -258,7 +258,7 @@ func TestCategoryAdminHandler_Update_OK(t *testing.T) {
 			return nil
 		},
 	}
-	read := shophttp.NewCategoryHandler(repo, &mockCatProductRepo{})
+	read := storefront.NewCategoryHandler(repo, &mockCatProductRepo{})
 	adm := admin.NewCategoryAdminHandler(repo, categoryBus())
 	mux := newAdminCategoryCRUDRouter(read, adm)
 
@@ -298,7 +298,7 @@ func TestCategoryAdminHandler_Update_RejectsCycle(t *testing.T) {
 			}
 		},
 	}
-	read := shophttp.NewCategoryHandler(repo, &mockCatProductRepo{})
+	read := storefront.NewCategoryHandler(repo, &mockCatProductRepo{})
 	adm := admin.NewCategoryAdminHandler(repo, categoryBus())
 	mux := newAdminCategoryCRUDRouter(read, adm)
 
@@ -330,7 +330,7 @@ func TestCategoryAdminHandler_Update_RejectsRepeatedAncestor(t *testing.T) {
 			}
 		},
 	}
-	read := shophttp.NewCategoryHandler(repo, &mockCatProductRepo{})
+	read := storefront.NewCategoryHandler(repo, &mockCatProductRepo{})
 	adm := admin.NewCategoryAdminHandler(repo, categoryBus())
 	mux := newAdminCategoryCRUDRouter(read, adm)
 
@@ -362,7 +362,7 @@ func TestCategoryAdminHandler_Delete_OK(t *testing.T) {
 			return nil
 		},
 	}
-	read := shophttp.NewCategoryHandler(repo, &mockCatProductRepo{})
+	read := storefront.NewCategoryHandler(repo, &mockCatProductRepo{})
 	adm := admin.NewCategoryAdminHandler(repo, categoryBus())
 	mux := newAdminCategoryCRUDRouter(read, adm)
 
@@ -381,7 +381,7 @@ func TestCategoryAdminHandler_Delete_OK(t *testing.T) {
 
 func TestCategoryAdminHandler_Create_Forbidden(t *testing.T) {
 	repo := &mockCategoryRepo{}
-	read := shophttp.NewCategoryHandler(repo, &mockCatProductRepo{})
+	read := storefront.NewCategoryHandler(repo, &mockCatProductRepo{})
 	adm := admin.NewCategoryAdminHandler(repo, categoryBus())
 	mux := newAdminCategoryCRUDRouter(read, adm)
 
@@ -398,7 +398,7 @@ func TestCategoryAdminHandler_Create_Forbidden(t *testing.T) {
 
 func TestCategoryAdminHandler_Update_Forbidden(t *testing.T) {
 	repo := &mockCategoryRepo{}
-	read := shophttp.NewCategoryHandler(repo, &mockCatProductRepo{})
+	read := storefront.NewCategoryHandler(repo, &mockCatProductRepo{})
 	adm := admin.NewCategoryAdminHandler(repo, categoryBus())
 	mux := newAdminCategoryCRUDRouter(read, adm)
 
@@ -415,7 +415,7 @@ func TestCategoryAdminHandler_Update_Forbidden(t *testing.T) {
 
 func TestCategoryAdminHandler_Delete_Forbidden(t *testing.T) {
 	repo := &mockCategoryRepo{}
-	read := shophttp.NewCategoryHandler(repo, &mockCatProductRepo{})
+	read := storefront.NewCategoryHandler(repo, &mockCatProductRepo{})
 	adm := admin.NewCategoryAdminHandler(repo, categoryBus())
 	mux := newAdminCategoryCRUDRouter(read, adm)
 
@@ -456,7 +456,7 @@ func TestCategoryProductAssignmentAdminHandler_Assign_OK(t *testing.T) {
 			return nil
 		},
 	}
-	read := shophttp.NewCategoryHandler(cats, prods)
+	read := storefront.NewCategoryHandler(cats, prods)
 	h := admin.NewCategoryProductAssignmentAdminHandler(cats, prods, assignments)
 	mux := newAdminCategoryAssignmentRouter(read, h)
 
@@ -512,7 +512,7 @@ func TestCategoryProductAssignmentAdminHandler_Unassign_OK(t *testing.T) {
 			return nil
 		},
 	}
-	read := shophttp.NewCategoryHandler(cats, prods)
+	read := storefront.NewCategoryHandler(cats, prods)
 	h := admin.NewCategoryProductAssignmentAdminHandler(cats, prods, assignments)
 	mux := newAdminCategoryAssignmentRouter(read, h)
 
@@ -544,7 +544,7 @@ func TestCategoryProductAssignmentAdminHandler_Unassign_OK(t *testing.T) {
 func TestCategoryProductAssignmentAdminHandler_Assign_Forbidden(t *testing.T) {
 	cats := &mockCategoryRepo{}
 	prods := &mockCatProductRepo{}
-	read := shophttp.NewCategoryHandler(cats, prods)
+	read := storefront.NewCategoryHandler(cats, prods)
 	h := admin.NewCategoryProductAssignmentAdminHandler(cats, prods, &mockProductCategoryAssignmentRepo{})
 	mux := newAdminCategoryAssignmentRouter(read, h)
 

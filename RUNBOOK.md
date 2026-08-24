@@ -41,6 +41,13 @@ Shopanda plugins are **compile-time registered** — there is no `.so` drop-in l
 - Plaintext password-reset token logging requires **both** `SHOPANDA_DEV_MODE` and `SHOPANDA_DEV_LOG_RESET_TOKENS` truthy. See [DEPLOYMENT.md](docs/guides/DEPLOYMENT.md).
 - Local `docker compose` defaults `SHOPANDA_DEV_MODE=true` and `SHOPANDA_DATABASE_SSLMODE=disable` (stock Postgres image has no TLS) via `${…:-…}` — **omit/empty still applies those defaults**. For production-like compose: set `SHOPANDA_DEV_MODE=false` (or `0`/`no`), override `SHOPANDA_DATABASE_PASSWORD` with a strong non-default value (**do not keep compose `changeme`**), and set `SHOPANDA_DATABASE_SSLMODE=require|verify-ca|verify-full`. `.env.example` leaves sslmode unset so the compose default applies after `cp`.
 
+## Admin store credit issuance
+
+- `POST /api/v1/admin/customers/{customerId}/store-credit/issue` mints store credit; gated by the dedicated `customers.store_credit.write` permission (`RoleAdmin` only by default), not `customers.write`.
+- **Cap:** a single issuance is capped at `store_credit.max_issue_amount` (minor units, default `100000`; `0` disables the cap). Set this to your actual risk tolerance — the default is a conservative placeholder, not a business-approved limit.
+- **Idempotency:** send an `Idempotency-Key` header on issuance requests. A retried request with the same key (e.g. after a client timeout with an ambiguous response) is a no-op instead of crediting twice; requests without the header are unprotected, matching pre-existing behavior. Uniqueness is per-customer, enforced by a DB constraint (migration `064_store_credit_idempotency.sql`), not just an in-process check.
+- Every issuance (success or failure) is written to the admin audit log (`AuditStoreCreditIssue`), same as payments/returns.
+
 ## Liveness vs readiness
 
 | Probe | Endpoint | Use |
@@ -56,9 +63,11 @@ If `/readyz` returns 503 while `/healthz` is 200, the API process is up but cann
 - When enabled, `/metrics` is served on a **dedicated listener** (`metrics.listen`, default `127.0.0.1:9090`) — not on the main app port. It is never merged into the public API surface or its middleware stack (no rate limit, no auth, no CORS).
 - **This endpoint has no built-in authentication.** The loopback-only default is the safety net: only change `metrics.listen` to a non-loopback address if the scrape path stays on a private network a scraper (e.g. Prometheus) can reach but the public internet cannot (Docker/Kubernetes internal network, VPN, or a reverse-proxy scrape rule with its own auth). Never bind it to a public interface directly.
 - Both `serve`/`dev` and standalone `worker` processes expose `/metrics` when enabled — each process only reports the metrics it can observe (the worker process has no HTTP requests to report; the API process still reports job failures for jobs enqueued from HTTP paths).
-- **Colocated serve + worker:** both default to `127.0.0.1:9090`. Only one process can bind that port — set distinct `metrics.listen` values (e.g. `127.0.0.1:9090` for serve, `127.0.0.1:9091` for worker) when both run on the same host with metrics enabled. Bind failures fail **startup** (not a silent async log).
-- **Production bind policy:** startup rejects `metrics.listen` on all interfaces (`0.0.0.0`, `::`) and on non-loopback addresses unless `SHOPANDA_DEV_MODE` is truthy. Default loopback + local scraper is the supported production path.
-- Env overrides: `SHOPANDA_METRICS_ENABLED`, `SHOPANDA_METRICS_LISTEN`.
+- **Colocated serve + worker:** both would otherwise default to `127.0.0.1:9090`. The worker process automatically shifts to `127.0.0.1:9091` when it detects `metrics.listen` is still the unmodified default, so the common case needs no manual configuration. Set `metrics.listen` explicitly on both processes (via `SHOPANDA_METRICS_LISTEN`) if you want different addresses/ports than that. Bind failures fail **startup** (not a silent async log).
+- The metrics `http.Server` sets the same `ReadTimeout`/`WriteTimeout`/`IdleTimeout` as the main server (10s/30s/60s) plus a 5s `ReadHeaderTimeout`, since this listener has no auth of its own.
+- **Production bind policy:** startup rejects `metrics.listen` on all interfaces (`0.0.0.0`, `::`) and on non-loopback addresses unless `SHOPANDA_DEV_MODE` **or** `SHOPANDA_METRICS_ALLOW_INSECURE_BIND` is truthy. The two are independent on purpose — enabling external Prometheus scraping should not also weaken the DB password/SSL checks that `SHOPANDA_DEV_MODE` gates. Default loopback + local scraper is the supported production path.
+- The `method` label on `shopanda_http_requests_total`/`_duration_seconds` is bounded to `GET/HEAD/POST/PUT/PATCH/DELETE/OPTIONS`; anything else (malformed or attacker-supplied) is recorded as `other`.
+- Env overrides: `SHOPANDA_METRICS_ENABLED`, `SHOPANDA_METRICS_LISTEN`, `SHOPANDA_METRICS_ALLOW_INSECURE_BIND`.
 
 **Metrics exposed** (all labels are bounded — fixed enums, route templates, or compile-time job types; never raw URLs, IDs, or emails):
 
@@ -66,7 +75,7 @@ If `/readyz` returns 503 while `/healthz` is 200, the API process is up but cann
 | --- | --- | --- | --- |
 | `shopanda_http_requests_total` | counter | `route`, `method`, `status_class` | `route` is the matched route **template** (e.g. `GET /api/v1/products/{id}`), not the raw path. `status_class` is `2xx`/`3xx`/`4xx`/`5xx`/`other`, not the numeric code. Unmatched requests (404s) use the fixed label `unmatched`. |
 | `shopanda_http_request_duration_seconds` | histogram | `route`, `method` | Same bounded route/method labels. |
-| `shopanda_checkout_result_total` | counter | `outcome` (`success`/`failed`) | One increment per `checkout.Workflow.Execute` call (panics count as `failed`). |
+| `shopanda_checkout_result_total` | counter | `outcome` (`success`/`failed`/`succeeded_event_failed`) | One increment per `checkout.Workflow.Execute` call (panics count as `failed`). `succeeded_event_failed` is every step succeeding but the final `checkout.completed` event publish failing — a downstream/event-bus problem on an otherwise-successful order, not a checkout failure. |
 | `shopanda_job_failures_total` | counter | `job_type` | Incremented on handler error or "handler not found"; not incremented on success. |
 | `shopanda_webhook_deliveries_total` | counter | `outcome` (`success`/`failed`) | Skipped deliveries (inactive/unsubscribed endpoint, malformed job payload) are not counted — they were never attempted. |
 

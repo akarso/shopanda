@@ -1,9 +1,10 @@
 package admin
 
 import (
-	shophttp "github.com/akarso/shopanda/internal/interfaces/http"
-	httpshared "github.com/akarso/shopanda/internal/interfaces/http/shared"
 	"net/http"
+
+	httpshared "github.com/akarso/shopanda/internal/interfaces/http/shared"
+	storefront "github.com/akarso/shopanda/internal/interfaces/http/storefront"
 
 	"github.com/akarso/shopanda/internal/application/admin"
 	"github.com/akarso/shopanda/internal/domain/customer"
@@ -14,7 +15,7 @@ import (
 // CustomerAdminHandler serves admin customer endpoints.
 type CustomerAdminHandler struct {
 	repo    customer.CustomerRepository
-	deleter shophttp.AccountDeleter
+	deleter storefront.AccountDeleter
 	auditor *admin.Auditor
 }
 
@@ -30,7 +31,7 @@ func NewCustomerAdminHandler(repo customer.CustomerRepository, log logger.Logger
 }
 
 // NewCustomerAdminHandlerWithDeleter creates a CustomerAdminHandler with a delete use case.
-func NewCustomerAdminHandlerWithDeleter(repo customer.CustomerRepository, deleter shophttp.AccountDeleter, log logger.Logger) *CustomerAdminHandler {
+func NewCustomerAdminHandlerWithDeleter(repo customer.CustomerRepository, deleter storefront.AccountDeleter, log logger.Logger) *CustomerAdminHandler {
 	if repo == nil {
 		panic("http: customer repository must not be nil")
 	}
@@ -46,7 +47,7 @@ func NewCustomerAdminHandlerWithAuditor(repo customer.CustomerRepository, audito
 }
 
 // NewCustomerAdminHandlerWithAuditorAndDeleter creates a CustomerAdminHandler with custom dependencies.
-func NewCustomerAdminHandlerWithAuditorAndDeleter(repo customer.CustomerRepository, deleter shophttp.AccountDeleter, auditor *admin.Auditor) *CustomerAdminHandler {
+func NewCustomerAdminHandlerWithAuditorAndDeleter(repo customer.CustomerRepository, deleter storefront.AccountDeleter, auditor *admin.Auditor) *CustomerAdminHandler {
 	if repo == nil {
 		panic("http: customer repository must not be nil")
 	}

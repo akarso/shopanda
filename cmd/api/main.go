@@ -767,18 +767,22 @@ func runWorker(cfg *config.Config, log logger.Logger) error {
 	}
 	freezePermissionRegistry(pluginApp) // worker: freeze only (no BindRuntime)
 
+	// serve and worker are separate processes; if both enable metrics and
+	// this one is still on the unmodified default, move it to the
+	// documented worker port so they don't collide on the same host.
+	if cfg.Metrics.Enabled && cfg.Metrics.Listen == config.DefaultMetricsListen {
+		cfg.Metrics.Listen = config.DefaultWorkerMetricsListen
+	}
+
 	metricsRecorder, metricsHandler := newMetrics(cfg)
 	jobWorker, _, _, err := setupWorker(conn, cfg, log, pluginApp, metricsRecorder)
 	if err != nil {
 		return err
 	}
 
-	metricsSrv, _, err := startMetricsServer(cfg, metricsHandler, log)
+	metricsSrv, metricsDone, err := startMetricsServer(cfg, metricsHandler, log)
 	if err != nil {
 		return fmt.Errorf("metrics: %w", err)
-	}
-	if metricsSrv != nil {
-		defer metricsSrv.Close()
 	}
 
 	log.Info("worker.start", nil)
@@ -796,6 +800,13 @@ func runWorker(cfg *config.Config, log logger.Logger) error {
 	}()
 
 	jobWorker.Start(ctx)
+
+	if metricsSrv != nil {
+		// Mirrors runServe's drain: wait (bounded) for the metrics server's
+		// own Serve goroutine to actually return after Close(), instead of
+		// closing and immediately exiting the process out from under it.
+		runtime.ShutdownBackground(log, 10*time.Second, nil, []func(){func() { metricsSrv.Close() }}, []<-chan struct{}{metricsDone})
+	}
 	return nil
 }
 

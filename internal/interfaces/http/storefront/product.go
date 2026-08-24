@@ -1,0 +1,145 @@
+package storefront
+
+import (
+	"context"
+	"net/http"
+
+	httpshared "github.com/akarso/shopanda/internal/interfaces/http/shared"
+
+	"github.com/akarso/shopanda/internal/application/composition"
+	"github.com/akarso/shopanda/internal/domain/catalog"
+	"github.com/akarso/shopanda/internal/domain/store"
+	"github.com/akarso/shopanda/internal/domain/translation"
+	"github.com/akarso/shopanda/internal/platform/apperror"
+)
+
+// ProductHandler serves product read endpoints.
+type ProductHandler struct {
+	repo catalog.ProductRepository
+	pdp  *composition.Pipeline[composition.ProductContext]
+	plp  *composition.Pipeline[composition.ListingContext]
+	ct   *translation.ContentTranslator
+}
+
+// NewProductHandler creates a ProductHandler with the given dependencies.
+func NewProductHandler(
+	repo catalog.ProductRepository,
+	pdp *composition.Pipeline[composition.ProductContext],
+	plp *composition.Pipeline[composition.ListingContext],
+	ct *translation.ContentTranslator,
+) *ProductHandler {
+	return &ProductHandler{repo: repo, pdp: pdp, plp: plp, ct: ct}
+}
+
+// List handles GET /api/v1/products.
+func (h *ProductHandler) List() http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		offset, limit, err := httpshared.ParsePagination(r)
+		if err != nil {
+			httpshared.JSONError(w, err)
+			return
+		}
+
+		products, err := h.repo.List(r.Context(), offset, limit)
+		if err != nil {
+			httpshared.JSONError(w, err)
+			return
+		}
+
+		ptrs := make([]*catalog.Product, len(products))
+		for i := range products {
+			ptrs[i] = &products[i]
+		}
+
+		ctx := composition.NewListingContext(ptrs)
+		ctx.Ctx = r.Context()
+		if err := h.plp.Execute(ctx); err != nil {
+			httpshared.JSONError(w, apperror.Wrap(apperror.CodeInternal, "composition failed", err))
+			return
+		}
+
+		for _, p := range ctx.Products {
+			h.overlayProductTranslation(r.Context(), p)
+		}
+
+		httpshared.JSON(w, http.StatusOK, listingResponse(ctx))
+	}
+}
+
+// Get handles GET /api/v1/products/{id}.
+func (h *ProductHandler) Get() http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		id := r.PathValue("id")
+		if id == "" {
+			httpshared.JSONError(w, apperror.Validation("product id is required"))
+			return
+		}
+
+		product, err := h.repo.FindByID(r.Context(), id)
+		if err != nil {
+			httpshared.JSONError(w, err)
+			return
+		}
+		if product == nil {
+			httpshared.JSONError(w, apperror.NotFound("product not found"))
+			return
+		}
+
+		ctx := composition.NewProductContext(product)
+		ctx.Ctx = r.Context()
+		if s := store.FromContext(r.Context()); s != nil {
+			ctx.StoreID = s.ID
+			if ctx.Currency == "" {
+				ctx.Currency = s.Currency
+			}
+			if ctx.Country == "" {
+				ctx.Country = s.Country
+			}
+		}
+		if err := h.pdp.Execute(ctx); err != nil {
+			httpshared.JSONError(w, apperror.Wrap(apperror.CodeInternal, "composition failed", err))
+			return
+		}
+
+		h.overlayProductTranslation(r.Context(), ctx.Product)
+
+		httpshared.JSON(w, http.StatusOK, productResponse(ctx))
+	}
+}
+
+// productResponse builds the response body for a single product.
+func productResponse(ctx *composition.ProductContext) map[string]interface{} {
+	return map[string]interface{}{
+		"product": ctx.Product,
+		"blocks":  ctx.Blocks,
+		"meta":    ctx.Meta,
+	}
+}
+
+// listingResponse builds the response body for a product listing.
+func listingResponse(ctx *composition.ListingContext) map[string]interface{} {
+	return map[string]interface{}{
+		"products": ctx.Products,
+		"blocks":   ctx.Blocks,
+		"filters":  ctx.Filters,
+		"meta":     ctx.Meta,
+	}
+}
+
+// overlayProductTranslation overwrites translatable product fields when a
+// content translation exists for the request language.
+func (h *ProductHandler) overlayProductTranslation(ctx context.Context, p *catalog.Product) {
+	if h.ct == nil || p == nil {
+		return
+	}
+	fields := h.ct.TranslateFields(ctx, p.ID)
+	if fields == nil {
+		return
+	}
+	if v, ok := fields["name"]; ok {
+		p.Name = v
+	}
+	if v, ok := fields["description"]; ok {
+		p.Description = v
+	}
+}

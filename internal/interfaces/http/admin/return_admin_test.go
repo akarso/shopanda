@@ -4,12 +4,13 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"github.com/akarso/shopanda/internal/interfaces/http/admin"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"testing"
 	"time"
+
+	"github.com/akarso/shopanda/internal/interfaces/http/admin"
 
 	adminapp "github.com/akarso/shopanda/internal/application/admin"
 	returnsApp "github.com/akarso/shopanda/internal/application/returns"
@@ -20,7 +21,7 @@ import (
 	"github.com/akarso/shopanda/internal/domain/rbac"
 	domainReturns "github.com/akarso/shopanda/internal/domain/returns"
 	"github.com/akarso/shopanda/internal/domain/shared"
-	shophttp "github.com/akarso/shopanda/internal/interfaces/http"
+	storefront "github.com/akarso/shopanda/internal/interfaces/http/storefront"
 	"github.com/akarso/shopanda/internal/platform/auth/testhelper"
 	"github.com/akarso/shopanda/internal/platform/event"
 	"github.com/akarso/shopanda/internal/platform/logger"
@@ -193,9 +194,9 @@ func TestReturnAdmin_ListAndApprove(t *testing.T) {
 	auditor := adminapp.NewAuditor(logger.New("error"))
 	h := admin.NewReturnAdminHandler(svc, auditor)
 	mux := http.NewServeMux()
-	mux.Handle("GET /api/v1/admin/returns", shophttp.RequirePermission(rbac.OrdersRead)(h.List()))
-	mux.Handle("GET /api/v1/admin/returns/{returnId}", shophttp.RequirePermission(rbac.OrdersRead)(h.Get()))
-	mux.Handle("POST /api/v1/admin/returns/{returnId}/approve", shophttp.RequirePermission(rbac.OrdersWrite)(h.Approve()))
+	mux.Handle("GET /api/v1/admin/returns", admin.RequirePermission(rbac.OrdersRead)(h.List()))
+	mux.Handle("GET /api/v1/admin/returns/{returnId}", admin.RequirePermission(rbac.OrdersRead)(h.Get()))
+	mux.Handle("POST /api/v1/admin/returns/{returnId}/approve", admin.RequirePermission(rbac.OrdersWrite)(h.Approve()))
 
 	listReq := httptest.NewRequest(http.MethodGet, "/api/v1/admin/returns?offset=0&limit=10", nil)
 	listReq = testhelper.AdminRequest(listReq, "admin-1")
@@ -231,9 +232,9 @@ func TestReturnAdmin_ListAndApprove(t *testing.T) {
 
 func TestReturnAccount_RequestAndList(t *testing.T) {
 	svc := returnAdminTestService(t)
-	h := shophttp.NewReturnAccountHandler(svc)
+	h := storefront.NewReturnAccountHandler(svc)
 	mux := http.NewServeMux()
-	requireAuth := shophttp.RequireAuth()
+	requireAuth := storefront.RequireAuth()
 	mux.Handle("POST /api/v1/orders/{orderId}/returns", requireAuth(h.Request()))
 	mux.Handle("GET /api/v1/account/returns", requireAuth(h.List()))
 
@@ -260,7 +261,7 @@ func TestReturnAdmin_ForbiddenWithoutPermission(t *testing.T) {
 	svc := returnAdminTestService(t)
 	h := admin.NewReturnAdminHandler(svc, adminapp.NewAuditor(logger.New("error")))
 	mux := http.NewServeMux()
-	mux.Handle("GET /api/v1/admin/returns", shophttp.RequirePermission(rbac.OrdersRead)(h.List()))
+	mux.Handle("GET /api/v1/admin/returns", admin.RequirePermission(rbac.OrdersRead)(h.List()))
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/admin/returns", nil)
 	req = testhelper.AuthenticatedRequest(req, "editor-1", identity.RoleEditor)
