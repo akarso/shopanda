@@ -13,7 +13,7 @@ var rolePermissions = map[identity.Role]map[Permission]struct{}{
 		ProductsRead, ProductsWrite,
 		OrdersRead, OrdersWrite,
 		CategoriesRead, CategoriesWrite,
-		CustomersRead, CustomersWrite,
+		CustomersRead, CustomersWrite, StoreCreditWrite,
 		InvoicesRead,
 		MediaRead, MediaWrite,
 		ContentRead, ContentWrite,

@@ -4,10 +4,11 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"github.com/akarso/shopanda/internal/interfaces/http/admin"
 	"net/http"
 	"net/http/httptest"
 	"testing"
+
+	"github.com/akarso/shopanda/internal/interfaces/http/admin"
 
 	adminapp "github.com/akarso/shopanda/internal/application/admin"
 	"github.com/akarso/shopanda/internal/domain/identity"
@@ -15,8 +16,6 @@ import (
 	"github.com/akarso/shopanda/internal/domain/rbac"
 	"github.com/akarso/shopanda/internal/platform/auth/testhelper"
 	"github.com/akarso/shopanda/internal/platform/id"
-
-	shophttp "github.com/akarso/shopanda/internal/interfaces/http"
 )
 
 type mockCouponRepo struct {
@@ -325,8 +324,8 @@ func TestCouponAdminHandler_Delete_NotFound(t *testing.T) {
 
 func TestCouponAdminHandler_Create_ForbiddenWithoutWritePermission(t *testing.T) {
 	h := admin.NewCouponAdminHandler(&mockCouponRepo{}, &mockPromotionRepo{})
-	requireProductsWrite := shophttp.RequirePermission(rbac.ProductsWrite)
-	withAdminContext := shophttp.AdminContextMiddleware()
+	requireProductsWrite := admin.RequirePermission(rbac.ProductsWrite)
+	withAdminContext := admin.AdminContextMiddleware()
 
 	mux := http.NewServeMux()
 	mux.Handle("POST /api/v1/admin/coupons", withAdminContext(requireProductsWrite(h.Create())))

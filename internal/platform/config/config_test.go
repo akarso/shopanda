@@ -67,6 +67,9 @@ func TestLoad_Defaults(t *testing.T) {
 	if cfg.HTTP.MediaMaxBodyBytes != DefaultHTTPMediaMaxBodyBytes {
 		t.Errorf("HTTP.MediaMaxBodyBytes = %d, want %d", cfg.HTTP.MediaMaxBodyBytes, DefaultHTTPMediaMaxBodyBytes)
 	}
+	if cfg.StoreCredit.MaxIssueAmount != DefaultStoreCreditMaxIssueAmount {
+		t.Errorf("StoreCredit.MaxIssueAmount = %d, want %d", cfg.StoreCredit.MaxIssueAmount, DefaultStoreCreditMaxIssueAmount)
+	}
 }
 
 func TestHTTPConfig_MediaCapIndependentOfMaxBody(t *testing.T) {

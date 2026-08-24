@@ -3,7 +3,6 @@ package admin_test
 import (
 	"context"
 	"encoding/json"
-	"github.com/akarso/shopanda/internal/interfaces/http/admin"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -12,13 +11,14 @@ import (
 	"testing"
 	"time"
 
+	"github.com/akarso/shopanda/internal/interfaces/http/admin"
+
 	"github.com/akarso/shopanda/internal/domain/identity"
 	domainInvoice "github.com/akarso/shopanda/internal/domain/invoice"
 	"github.com/akarso/shopanda/internal/domain/media"
 	"github.com/akarso/shopanda/internal/domain/order"
 	"github.com/akarso/shopanda/internal/domain/rbac"
 	"github.com/akarso/shopanda/internal/domain/shared"
-	shophttp "github.com/akarso/shopanda/internal/interfaces/http"
 	"github.com/akarso/shopanda/internal/platform/auth/testhelper"
 )
 
@@ -136,8 +136,8 @@ func sampleHTTPOrder(orderID string) *order.Order {
 func invoiceAdminMux(t *testing.T, invRepo *invoiceHTTPRepo, ordRepo *invoiceHTTPOrderRepo, renderer *stubInvoicePDFRenderer, storage media.Storage) *http.ServeMux {
 	t.Helper()
 	h := admin.NewInvoiceAdminHandler(invRepo, ordRepo, renderer, storage)
-	withAdminContext := shophttp.AdminContextMiddleware()
-	requireInvoicesRead := shophttp.RequirePermission(rbac.InvoicesRead)
+	withAdminContext := admin.AdminContextMiddleware()
+	requireInvoicesRead := admin.RequirePermission(rbac.InvoicesRead)
 	mux := http.NewServeMux()
 	mux.Handle("GET /api/v1/admin/orders/{orderId}/invoices", withAdminContext(requireInvoicesRead(h.ListByOrder())))
 	mux.Handle("GET /api/v1/admin/invoices/{invoiceId}/pdf", withAdminContext(requireInvoicesRead(h.DownloadPDF())))

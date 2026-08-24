@@ -3,17 +3,17 @@ package admin_test
 import (
 	"context"
 	"encoding/json"
-	"github.com/akarso/shopanda/internal/interfaces/http/admin"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
 
+	"github.com/akarso/shopanda/internal/interfaces/http/admin"
+
 	webhookApp "github.com/akarso/shopanda/internal/application/webhook"
 	"github.com/akarso/shopanda/internal/domain/order"
 	"github.com/akarso/shopanda/internal/domain/rbac"
 	domainwebhook "github.com/akarso/shopanda/internal/domain/webhook"
-	shophttp "github.com/akarso/shopanda/internal/interfaces/http"
 	"github.com/akarso/shopanda/internal/platform/auth/testhelper"
 )
 
@@ -81,7 +81,7 @@ func TestWebhookEndpointAdmin_CreateReturnsSecret(t *testing.T) {
 	h := admin.NewWebhookEndpointAdminHandler(webhookApp.NewService(repo))
 
 	mux := http.NewServeMux()
-	mux.Handle("POST /api/v1/admin/webhooks", shophttp.RequirePermission(rbac.SettingsWrite)(h.Create()))
+	mux.Handle("POST /api/v1/admin/webhooks", admin.RequirePermission(rbac.SettingsWrite)(h.Create()))
 
 	body := `{"url":"https://example.com/hook","events":["order.paid"],"active":true}`
 	rec := httptest.NewRecorder()
@@ -111,7 +111,7 @@ func TestWebhookEndpointAdmin_CreateReturnsSecret(t *testing.T) {
 func TestWebhookEndpointAdmin_Catalog(t *testing.T) {
 	h := admin.NewWebhookEndpointAdminHandler(webhookApp.NewService(&memoryWebhookRepo{}))
 	mux := http.NewServeMux()
-	mux.Handle("GET /api/v1/admin/webhooks/events", shophttp.RequirePermission(rbac.SettingsRead)(h.Catalog()))
+	mux.Handle("GET /api/v1/admin/webhooks/events", admin.RequirePermission(rbac.SettingsRead)(h.Catalog()))
 
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/admin/webhooks/events", nil)

@@ -9,6 +9,8 @@ import (
 	"sort"
 	"time"
 
+	"github.com/akarso/shopanda/internal/interfaces/http/storefront"
+
 	"github.com/akarso/shopanda/internal/interfaces/http/admin"
 
 	accountApp "github.com/akarso/shopanda/internal/application/account"
@@ -114,42 +116,42 @@ type serveRuntime struct {
 
 	log logger.Logger
 
-	productHandler                 *shophttp.ProductHandler
+	productHandler                 *storefront.ProductHandler
 	productAdmin                   *admin.ProductAdminHandler
 	productTranslationAdmin        *admin.ProductTranslationAdminHandler
 	productPriceAdmin              *admin.ProductPriceAdminHandler
-	variantHandler                 *shophttp.VariantHandler
-	cartHandler                    *shophttp.CartHandler
-	orderHandler                   *shophttp.OrderHandler
+	variantHandler                 *storefront.VariantHandler
+	cartHandler                    *storefront.CartHandler
+	orderHandler                   *storefront.OrderHandler
 	orderAdmin                     *admin.OrderAdminHandler
 	invoiceAdmin                   *admin.InvoiceAdminHandler
 	statsAdmin                     *admin.StatsAdminHandler
-	authHandler                    *shophttp.AuthHandler
+	authHandler                    *storefront.AuthHandler
 	adminMFAHandler                *admin.AdminMFAHandler
 	paymentWebhook                 *shophttp.PaymentWebhookHandler
 	stripeWebhook                  *shophttp.StripeWebhookHandler
-	refundHandler                  *shophttp.RefundHandler
+	refundHandler                  *admin.RefundHandler
 	returnAdmin                    *admin.ReturnAdminHandler
-	returnAccount                  *shophttp.ReturnAccountHandler
-	reviewHandler                  *shophttp.ReviewHandler
-	reviewAccount                  *shophttp.ReviewAccountHandler
+	returnAccount                  *storefront.ReturnAccountHandler
+	reviewHandler                  *storefront.ReviewHandler
+	reviewAccount                  *storefront.ReviewAccountHandler
 	reviewAdmin                    *admin.ReviewAdminHandler
 	eprReportAdmin                 *admin.EprReportHandler
 	ossReportAdmin                 *admin.OssReportHandler
 	paymentAdmin                   *admin.PaymentAdminHandler
-	shippingRates                  *shophttp.ShippingRatesHandler
-	categoryHandler                *shophttp.CategoryHandler
+	shippingRates                  *storefront.ShippingRatesHandler
+	categoryHandler                *storefront.CategoryHandler
 	categoryAdmin                  *admin.CategoryAdminHandler
 	categoryProductAssignmentAdmin *admin.CategoryProductAssignmentAdminHandler
-	searchHandler                  *shophttp.SearchHandler
+	searchHandler                  *storefront.SearchHandler
 	mediaHandler                   *admin.MediaHandler
 	configAdmin                    *admin.ConfigAdminHandler
 	schemaHandler                  *admin.SchemaHandler
-	pageHandler                    *shophttp.PageHandler
+	pageHandler                    *storefront.PageHandler
 	pageAdmin                      *admin.PageAdminHandler
-	menuHandler                    *shophttp.MenuHandler
+	menuHandler                    *storefront.MenuHandler
 	menuAdmin                      *admin.MenuAdminHandler
-	contentBlockHandler            *shophttp.ContentBlockHandler
+	contentBlockHandler            *storefront.ContentBlockHandler
 	contentBlockAdmin              *admin.ContentBlockAdminHandler
 	couponAdmin                    *admin.CouponAdminHandler
 	promotionAdmin                 *admin.PromotionAdminHandler
@@ -170,12 +172,12 @@ type serveRuntime struct {
 	setupHandler                   *shophttp.SetupHandler
 	adminRoleHandler               *admin.AdminRoleHandler
 	storeCreditAdmin               *admin.StoreCreditAdminHandler
-	storeCreditAccount             *shophttp.StoreCreditAccountHandler
-	accountHandler                 *shophttp.AccountHandler
-	sitemapHandler                 *shophttp.SitemapHandler
-	robotsHandler                  *shophttp.RobotsHandler
+	storeCreditAccount             *storefront.StoreCreditAccountHandler
+	accountHandler                 *storefront.AccountHandler
+	sitemapHandler                 *storefront.SitemapHandler
+	robotsHandler                  *storefront.RobotsHandler
 	docsHandler                    *shophttp.DocsHandler
-	checkoutHandler                *shophttp.CheckoutHandler
+	checkoutHandler                *storefront.CheckoutHandler
 }
 
 func wireServeRuntime(cfg *config.Config, log logger.Logger, conn *sql.DB, repos *serveRepos, metricsRecorder metrics.Recorder) (rt *serveRuntime, err error) {
@@ -476,7 +478,8 @@ func wireServeRuntime(cfg *config.Config, log logger.Logger, conn *sql.DB, repos
 
 	// Application services.
 	cartService := cartApp.NewService(repos.cartRepo, repos.priceRepo, repos.promotionRepo, repos.couponRepo, pricingPipeline, log, bus, extensionValueService, hookRegistry)
-	storeCreditService := storecreditApp.NewService(repos.storeCreditRepo, repos.customerRepo)
+	storeCreditService := storecreditApp.NewService(repos.storeCreditRepo, repos.customerRepo).
+		WithMaxIssueAmount(cfg.StoreCredit.MaxIssueAmount)
 
 	// Checkout workflow.
 	validateCartStep := checkoutApp.NewValidateCartStep(repos.variantRepo)
@@ -513,7 +516,7 @@ func wireServeRuntime(cfg *config.Config, log logger.Logger, conn *sql.DB, repos
 	}
 	checkoutWorkflow := checkoutApp.NewWorkflow(checkoutSteps, bus, log).WithMetrics(metricsRecorder)
 	checkoutService := checkoutApp.NewService(repos.cartRepo, checkoutWorkflow, log)
-	checkoutHandler := shophttp.NewCheckoutHandler(checkoutService, extensionValueService)
+	checkoutHandler := storefront.NewCheckoutHandler(checkoutService, extensionValueService)
 
 	// JWT.
 	jwtTTL, err := time.ParseDuration(cfg.Auth.JWTTTL)
@@ -592,17 +595,17 @@ func wireServeRuntime(cfg *config.Config, log logger.Logger, conn *sql.DB, repos
 	sharedAuditor.SetAuditLogRepository(repos.auditLogRepo)
 
 	// Handlers.
-	productHandler := shophttp.NewProductHandler(repos.productRepo, pdp, plp, contentTranslator)
+	productHandler := storefront.NewProductHandler(repos.productRepo, pdp, plp, contentTranslator)
 	productAdmin := admin.NewProductAdminHandlerWithAuditor(repos.productRepo, bus, sharedAuditor, log)
 	productTranslationAdmin := admin.NewProductTranslationAdminHandler(repos.productRepo, repos.contentTranslationRepo, sharedAuditor, log)
 	productPriceAdmin := admin.NewProductPriceAdminHandler(repos.productRepo, repos.variantRepo, repos.priceRepo, sharedAuditor, log)
-	variantHandler := shophttp.NewVariantHandler(repos.productRepo, repos.variantRepo, bus)
-	cartHandler := shophttp.NewCartHandler(cartService, extensionValueService)
-	orderHandler := shophttp.NewOrderHandler(repos.orderRepo, extensionValueService)
+	variantHandler := storefront.NewVariantHandler(repos.productRepo, repos.variantRepo, bus)
+	cartHandler := storefront.NewCartHandler(cartService, extensionValueService)
+	orderHandler := storefront.NewOrderHandler(repos.orderRepo, extensionValueService)
 	orderAdmin := admin.NewOrderAdminHandlerWithAuditor(repos.orderRepo, sharedAuditor, extensionValueService)
 	invoiceAdmin := admin.NewInvoiceAdminHandler(repos.invoiceRepo, repos.orderRepo, invoicePDFRenderer, mediaStorage)
 	statsAdmin := admin.NewStatsAdminHandler(repos.statsRepo)
-	authHandler := shophttp.NewAuthHandler(authService, cfg.RateLimit.TrustedProxies...)
+	authHandler := storefront.NewAuthHandler(authService, cfg.RateLimit.TrustedProxies...)
 	adminMFAHandler := admin.NewAdminMFAHandler(mfaService)
 	webhookVerifier := webhook.NewHMACVerifier(cfg.Webhooks.Secrets)
 	paymentWebhook := shophttp.NewPaymentWebhookHandler(repos.paymentRepo, bus, webhookVerifier)
@@ -628,19 +631,19 @@ func wireServeRuntime(cfg *config.Config, log logger.Logger, conn *sql.DB, repos
 	}
 
 	// Refund handler: only available when the payment provider supports refunds.
-	var refundHandler *shophttp.RefundHandler
+	var refundHandler *admin.RefundHandler
 	var stripeRefunder payment.Refunder
 	if refunder, ok := payRegistry.Refunder(payment.MethodStripe); ok {
 		stripeRefunder = refunder
-		refundHandler = shophttp.NewRefundHandler(repos.paymentRepo, refunder, bus)
+		refundHandler = admin.NewRefundHandler(repos.paymentRepo, refunder, bus)
 		log.Info("payment.refund_handler_enabled", nil)
 	}
 
 	returnService := returnsApp.NewService(repos.returnRepo, repos.orderRepo, repos.stockRepo, repos.paymentRepo, stripeRefunder, bus, log)
 	returnAdmin := admin.NewReturnAdminHandler(returnService, sharedAuditor)
-	returnAccount := shophttp.NewReturnAccountHandler(returnService)
-	reviewHandler := shophttp.NewReviewHandler(reviewService)
-	reviewAccount := shophttp.NewReviewAccountHandler(reviewService)
+	returnAccount := storefront.NewReturnAccountHandler(returnService)
+	reviewHandler := storefront.NewReviewHandler(reviewService)
+	reviewAccount := storefront.NewReviewAccountHandler(reviewService)
 	reviewAdmin := admin.NewReviewAdminHandler(reviewService, sharedAuditor)
 	eprExporter := exporter.NewEprExporter(repos.productRepo, repos.variantRepo, repos.configRepo)
 	eprReportAdmin := admin.NewEprReportHandler(eprExporter)
@@ -648,11 +651,11 @@ func wireServeRuntime(cfg *config.Config, log logger.Logger, conn *sql.DB, repos
 	ossReportAdmin := admin.NewOssReportHandler(ossExporter)
 	paymentAdmin := admin.NewPaymentAdminHandler(repos.paymentRepo, sharedAuditor)
 
-	shippingRates := shophttp.NewShippingRatesHandler(shippingReg.Providers()...)
-	categoryHandler := shophttp.NewCategoryHandler(repos.categoryRepo, repos.productRepo)
+	shippingRates := storefront.NewShippingRatesHandler(shippingReg.Providers()...)
+	categoryHandler := storefront.NewCategoryHandler(repos.categoryRepo, repos.productRepo)
 	categoryAdmin := admin.NewCategoryAdminHandlerWithAuditor(repos.categoryRepo, bus, sharedAuditor)
 	categoryProductAssignmentAdmin := admin.NewCategoryProductAssignmentAdminHandlerWithAuditor(repos.categoryRepo, repos.productRepo, repos.productRepo, sharedAuditor)
-	searchHandler := shophttp.NewSearchHandler(searchEngine).WithAdvancedSearchAttributes(attributeStore)
+	searchHandler := storefront.NewSearchHandler(searchEngine).WithAdvancedSearchAttributes(attributeStore)
 	mediaService := mediaApp.NewService(mediaStorage, repos.assetRepo, bus, log)
 	if thumbCfg := cfg.Media.Thumbnails; len(thumbCfg) > 0 {
 		names := make([]string, 0, len(thumbCfg))
@@ -697,11 +700,11 @@ func wireServeRuntime(cfg *config.Config, log logger.Logger, conn *sql.DB, repos
 		})
 	}, sharedAuditor, registry.ConfigRegistry())
 	schemaHandler := admin.NewSchemaHandler(adminRegistry, attributeStore)
-	pageHandler := shophttp.NewPageHandler(repos.pageRepo, contentTranslator)
+	pageHandler := storefront.NewPageHandler(repos.pageRepo, contentTranslator)
 	pageAdmin := admin.NewPageAdminHandlerWithAuditor(repos.pageRepo, bus, sharedAuditor)
-	menuHandler := shophttp.NewMenuHandler(repos.menuRepo, menuResolver)
+	menuHandler := storefront.NewMenuHandler(repos.menuRepo, menuResolver)
 	menuAdmin := admin.NewMenuAdminHandler(repos.menuRepo, sharedAuditor)
-	contentBlockHandler := shophttp.NewContentBlockHandler(repos.contentBlockRepo, repos.pageRepo, blockResolver)
+	contentBlockHandler := storefront.NewContentBlockHandler(repos.contentBlockRepo, repos.pageRepo, blockResolver)
 	contentBlockAdmin := admin.NewContentBlockAdminHandler(repos.contentBlockRepo, sharedAuditor)
 	couponAdmin := admin.NewCouponAdminHandlerWithAuditor(repos.couponRepo, repos.promotionRepo, sharedAuditor)
 	promotionAdmin := admin.NewPromotionAdminHandlerWithAuditor(repos.promotionRepo, sharedAuditor)
@@ -740,11 +743,11 @@ func wireServeRuntime(cfg *config.Config, log logger.Logger, conn *sql.DB, repos
 	)
 	setupHandler := shophttp.NewSetupHandler(setupService, log)
 	adminRoleHandler := admin.NewAdminRoleHandler(adminRoleService, sharedAuditor)
-	storeCreditAdmin := admin.NewStoreCreditAdminHandler(storeCreditService)
-	storeCreditAccount := shophttp.NewStoreCreditAccountHandler(storeCreditService)
-	accountHandler := shophttp.NewAccountHandler(repos.customerRepo, repos.orderRepo, repos.consentRepo, accountService)
-	sitemapHandler := shophttp.NewSitemapHandler(baseURL, repos.productRepo, repos.categoryRepo, repos.pageRepo)
-	robotsHandler := shophttp.NewRobotsHandler(baseURL)
+	storeCreditAdmin := admin.NewStoreCreditAdminHandler(storeCreditService, sharedAuditor)
+	storeCreditAccount := storefront.NewStoreCreditAccountHandler(storeCreditService)
+	accountHandler := storefront.NewAccountHandler(repos.customerRepo, repos.orderRepo, repos.consentRepo, accountService)
+	sitemapHandler := storefront.NewSitemapHandler(baseURL, repos.productRepo, repos.categoryRepo, repos.pageRepo)
+	robotsHandler := storefront.NewRobotsHandler(baseURL)
 
 	specPath := filepath.Join(filepath.Dir(config.FindConfigFile()), "openapi.yaml")
 	specBytes, err := os.ReadFile(specPath)

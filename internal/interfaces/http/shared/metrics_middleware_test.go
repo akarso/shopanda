@@ -1,6 +1,7 @@
 package shared_test
 
 import (
+	"context"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -37,7 +38,7 @@ func TestMetricsMiddleware_UsesRouteTemplateAndStatusClass(t *testing.T) {
 	})
 
 	rec := &fakeRecorder{}
-	router.Use(shared.MetricsMiddleware(rec, router))
+	router.Use(shared.MetricsMiddleware(rec))
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/products/abc-123", nil)
 	w := httptest.NewRecorder()
@@ -58,6 +59,29 @@ func TestMetricsMiddleware_UsesRouteTemplateAndStatusClass(t *testing.T) {
 	}
 }
 
+func TestMetricsMiddleware_UnrecognizedMethodUsesBoundedLabel(t *testing.T) {
+	router := shared.NewRouter()
+	router.HandleFunc("GET /api/v1/products/{id}", func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	})
+
+	rec := &fakeRecorder{}
+	router.Use(shared.MetricsMiddleware(rec))
+
+	// The HTTP method is an arbitrary token (RFC 7230); an unrecognized one
+	// must not flow into the label unbounded.
+	req := httptest.NewRequest("TRACK-ME-A1B2C3", "/api/v1/products/abc-123", nil)
+	w := httptest.NewRecorder()
+	router.Handler().ServeHTTP(w, req)
+
+	if len(rec.calls) != 1 {
+		t.Fatalf("expected 1 recorded call, got %d", len(rec.calls))
+	}
+	if call := rec.calls[0]; call.method != "other" {
+		t.Errorf("method = %q, want bounded label %q for an unrecognized method", call.method, "other")
+	}
+}
+
 func TestMetricsMiddleware_UnmatchedRouteUsesBoundedLabel(t *testing.T) {
 	router := shared.NewRouter()
 	router.HandleFunc("GET /api/v1/products/{id}", func(w http.ResponseWriter, r *http.Request) {
@@ -65,7 +89,7 @@ func TestMetricsMiddleware_UnmatchedRouteUsesBoundedLabel(t *testing.T) {
 	})
 
 	rec := &fakeRecorder{}
-	router.Use(shared.MetricsMiddleware(rec, router))
+	router.Use(shared.MetricsMiddleware(rec))
 
 	req := httptest.NewRequest(http.MethodGet, "/no/such/route/exists", nil)
 	w := httptest.NewRecorder()
@@ -89,7 +113,7 @@ func TestMetricsMiddleware_RecordsServerErrorStatusClass(t *testing.T) {
 	})
 
 	rec := &fakeRecorder{}
-	router.Use(shared.MetricsMiddleware(rec, router))
+	router.Use(shared.MetricsMiddleware(rec))
 
 	req := httptest.NewRequest(http.MethodGet, "/boom", nil)
 	w := httptest.NewRecorder()
@@ -105,7 +129,7 @@ func TestMetricsMiddleware_NilRecorderDoesNotPanic(t *testing.T) {
 	router.HandleFunc("GET /ok", func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 	})
-	router.Use(shared.MetricsMiddleware(nil, router))
+	router.Use(shared.MetricsMiddleware(nil))
 
 	req := httptest.NewRequest(http.MethodGet, "/ok", nil)
 	w := httptest.NewRecorder()
@@ -133,5 +157,45 @@ func TestRouter_RoutePattern_EmptyForNoMatch(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, "/unknown/path/here", nil)
 	if got := router.RoutePattern(req); got != "" {
 		t.Errorf("RoutePattern = %q, want empty for unmatched request", got)
+	}
+}
+
+// TestMetricsMiddleware_SurvivesRequestSwapBetweenMetricsAndDispatch pins the
+// correctness of capturing the route pattern via a shared mutable box
+// (internal/interfaces/http/shared/router.go's routeMatch) rather than
+// re-deriving it independently in MetricsMiddleware. Real middleware between
+// Metrics and the mux (auth, store resolution, language, CSRF, ...) all call
+// r.WithContext(...), which allocates a NEW *http.Request — the one net/http
+// ServeMux eventually populates .Pattern on is not the same pointer
+// MetricsMiddleware holds. This test simulates that swap explicitly to
+// confirm the pattern still reaches MetricsMiddleware afterward.
+func TestMetricsMiddleware_SurvivesRequestSwapBetweenMetricsAndDispatch(t *testing.T) {
+	router := shared.NewRouter()
+	router.HandleFunc("GET /api/v1/widgets/{id}", func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	})
+
+	rec := &fakeRecorder{}
+	router.Use(shared.MetricsMiddleware(rec))
+	// Simulates any real middleware (auth, store resolution, ...) that
+	// injects a context value via r.WithContext, replacing the *http.Request
+	// pointer before the mux ever sees it.
+	router.Use(func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			type unrelatedKey struct{}
+			swapped := r.WithContext(context.WithValue(r.Context(), unrelatedKey{}, "unrelated-value"))
+			next.ServeHTTP(w, swapped)
+		})
+	})
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/widgets/42", nil)
+	w := httptest.NewRecorder()
+	router.Handler().ServeHTTP(w, req)
+
+	if len(rec.calls) != 1 {
+		t.Fatalf("expected 1 recorded call, got %d", len(rec.calls))
+	}
+	if got := rec.calls[0].route; got != "GET /api/v1/widgets/{id}" {
+		t.Errorf("route = %q, want the matched template to survive the request swap", got)
 	}
 }

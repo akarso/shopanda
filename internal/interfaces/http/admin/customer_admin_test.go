@@ -4,16 +4,16 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"github.com/akarso/shopanda/internal/interfaces/http/admin"
 	"net/http"
 	"net/http/httptest"
 	"testing"
 	"time"
 
+	"github.com/akarso/shopanda/internal/interfaces/http/admin"
+
 	adminapp "github.com/akarso/shopanda/internal/application/admin"
 	"github.com/akarso/shopanda/internal/domain/customer"
 	"github.com/akarso/shopanda/internal/domain/rbac"
-	shophttp "github.com/akarso/shopanda/internal/interfaces/http"
 	"github.com/akarso/shopanda/internal/platform/apperror"
 	"github.com/akarso/shopanda/internal/platform/auth/testhelper"
 	"github.com/akarso/shopanda/internal/platform/logger"
@@ -75,9 +75,9 @@ func (m *mockAdminCustomerRepo) DeleteAccount(ctx context.Context, customerID st
 }
 
 func newCustomerAdminRouterWithAudit(h *admin.CustomerAdminHandler) *http.ServeMux {
-	requireCustomersRead := shophttp.RequirePermission(rbac.CustomersRead)
-	requireCustomersWrite := shophttp.RequirePermission(rbac.CustomersWrite)
-	withAdminContext := shophttp.AdminContextMiddleware()
+	requireCustomersRead := admin.RequirePermission(rbac.CustomersRead)
+	requireCustomersWrite := admin.RequirePermission(rbac.CustomersWrite)
+	withAdminContext := admin.AdminContextMiddleware()
 	mux := http.NewServeMux()
 	mux.Handle("GET /api/v1/admin/customers", withAdminContext(requireCustomersRead(h.List())))
 	mux.Handle("GET /api/v1/admin/customers/{customerId}", withAdminContext(requireCustomersRead(h.Get())))

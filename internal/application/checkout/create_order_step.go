@@ -16,7 +16,7 @@ import (
 type storeCreditService interface {
 	GetBalance(ctx context.Context, customerID, currency string) (shared.Money, error)
 	Redeem(ctx context.Context, customerID, orderID string, amount shared.Money) error
-	Issue(ctx context.Context, customerID string, amount shared.Money, note string) error
+	Issue(ctx context.Context, customerID string, amount shared.Money, note, idempotencyKey string) error
 }
 
 type extensionSnapshotter interface {
@@ -117,7 +117,7 @@ func (s *CreateOrderStep) Execute(ctx context.Context, cctx *Context) error {
 	if err := s.orders.Save(ctx, &o); err != nil {
 		if appliedCredit != nil && s.credits != nil {
 			rbctx, rbcancel := detachedTimeout(ctx, compensateTimeout)
-			rollbackErr := s.credits.Issue(rbctx, cctx.CustomerID, *appliedCredit, fmt.Sprintf("create_order rollback: order save failed (%s)", o.ID))
+			rollbackErr := s.credits.Issue(rbctx, cctx.CustomerID, *appliedCredit, fmt.Sprintf("create_order rollback: order save failed (%s)", o.ID), "rollback:save:"+o.ID)
 			rbcancel()
 			if rollbackErr != nil {
 				return fmt.Errorf("create_order: save: %w (store credit rollback failed: %v)", err, rollbackErr)
@@ -184,7 +184,7 @@ func (s *CreateOrderStep) applyStoreCredit(ctx context.Context, cctx *Context, o
 	}
 	if err := o.ApplyStoreCredit(creditMoney); err != nil {
 		rbctx, rbcancel := detachedTimeout(ctx, compensateTimeout)
-		rollbackErr := s.credits.Issue(rbctx, cctx.CustomerID, creditMoney, fmt.Sprintf("create_order rollback: apply failed (%s)", o.ID))
+		rollbackErr := s.credits.Issue(rbctx, cctx.CustomerID, creditMoney, fmt.Sprintf("create_order rollback: apply failed (%s)", o.ID), "rollback:apply:"+o.ID)
 		rbcancel()
 		if rollbackErr != nil {
 			return nil, fmt.Errorf("create_order: apply store credit: %w (rollback failed: %v)", err, rollbackErr)

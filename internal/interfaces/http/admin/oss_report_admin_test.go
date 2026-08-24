@@ -2,18 +2,18 @@ package admin_test
 
 import (
 	"context"
-	"github.com/akarso/shopanda/internal/interfaces/http/admin"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/akarso/shopanda/internal/interfaces/http/admin"
+
 	"github.com/akarso/shopanda/internal/application/exporter"
 	"github.com/akarso/shopanda/internal/domain/legal"
 	"github.com/akarso/shopanda/internal/domain/order"
 	"github.com/akarso/shopanda/internal/domain/rbac"
-	shophttp "github.com/akarso/shopanda/internal/interfaces/http"
 	"github.com/akarso/shopanda/internal/platform/auth/testhelper"
 )
 
@@ -81,7 +81,7 @@ func TestOssReportHandler_GuestUnauthorized(t *testing.T) {
 	exp := exporter.NewOssExporter(&ossReportOrderRepo{}, stubOssReportConfig{legal.OssEnabledConfigKey: true})
 	h := admin.NewOssReportHandler(exp)
 	mux := http.NewServeMux()
-	mux.Handle("GET /api/v1/admin/reports/oss", shophttp.RequirePermission(rbac.OrdersRead)(h.Export()))
+	mux.Handle("GET /api/v1/admin/reports/oss", admin.RequirePermission(rbac.OrdersRead)(h.Export()))
 
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/admin/reports/oss", nil)
@@ -95,7 +95,7 @@ func TestOssReportHandler_CustomerForbidden(t *testing.T) {
 	exp := exporter.NewOssExporter(&ossReportOrderRepo{}, stubOssReportConfig{legal.OssEnabledConfigKey: true})
 	h := admin.NewOssReportHandler(exp)
 	mux := http.NewServeMux()
-	mux.Handle("GET /api/v1/admin/reports/oss", shophttp.RequirePermission(rbac.OrdersRead)(h.Export()))
+	mux.Handle("GET /api/v1/admin/reports/oss", admin.RequirePermission(rbac.OrdersRead)(h.Export()))
 
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/admin/reports/oss", nil)

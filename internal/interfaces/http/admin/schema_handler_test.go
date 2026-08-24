@@ -2,15 +2,16 @@ package admin_test
 
 import (
 	"encoding/json"
-	"github.com/akarso/shopanda/internal/interfaces/http/admin"
 	"net/http"
 	"net/http/httptest"
 	"testing"
 
+	"github.com/akarso/shopanda/internal/interfaces/http/admin"
+
 	domainadmin "github.com/akarso/shopanda/internal/domain/admin"
 	"github.com/akarso/shopanda/internal/domain/identity"
 	"github.com/akarso/shopanda/internal/domain/rbac"
-	shophttp "github.com/akarso/shopanda/internal/interfaces/http"
+	storefront "github.com/akarso/shopanda/internal/interfaces/http/storefront"
 	"github.com/akarso/shopanda/internal/platform/auth"
 	"github.com/akarso/shopanda/internal/platform/auth/testhelper"
 )
@@ -34,7 +35,7 @@ func schemaSetup() (*domainadmin.Registry, *http.ServeMux) {
 	})
 
 	handler := admin.NewSchemaHandler(reg, nil)
-	requireAdmin := shophttp.RequireRole(identity.RoleAdmin)
+	requireAdmin := admin.RequireRole(identity.RoleAdmin)
 	mux := http.NewServeMux()
 	mux.Handle("GET /api/v1/admin/forms/{name}", requireAdmin(handler.GetForm()))
 	mux.Handle("GET /api/v1/admin/grids/{name}", requireAdmin(handler.GetGrid()))
@@ -204,7 +205,7 @@ func schemaPermSetup() (*domainadmin.Registry, *http.ServeMux) {
 	_ = reg.SetGridPermission("product.grid", rbac.ProductsRead)
 
 	handler := admin.NewSchemaHandler(reg, nil)
-	requireAuth := shophttp.RequireAuth()
+	requireAuth := storefront.RequireAuth()
 	mux := http.NewServeMux()
 	mux.Handle("GET /api/v1/admin/forms/{name}", requireAuth(handler.GetForm()))
 	mux.Handle("GET /api/v1/admin/grids/{name}", requireAuth(handler.GetGrid()))
