@@ -6,6 +6,7 @@ import (
 	"strings"
 	"time"
 
+	adminapp "github.com/akarso/shopanda/internal/application/admin"
 	storecreditApp "github.com/akarso/shopanda/internal/application/storecredit"
 	"github.com/akarso/shopanda/internal/domain/shared"
 	"github.com/akarso/shopanda/internal/domain/storecredit"
@@ -15,15 +16,38 @@ import (
 
 // StoreCreditAdminHandler serves admin store credit endpoints.
 type StoreCreditAdminHandler struct {
-	svc *storecreditApp.Service
+	svc     *storecreditApp.Service
+	auditor *adminapp.Auditor
 }
 
 // NewStoreCreditAdminHandler creates a StoreCreditAdminHandler.
-func NewStoreCreditAdminHandler(svc *storecreditApp.Service) *StoreCreditAdminHandler {
+func NewStoreCreditAdminHandler(svc *storecreditApp.Service, auditor *adminapp.Auditor) *StoreCreditAdminHandler {
 	if svc == nil {
 		panic("http: store credit admin service must not be nil")
 	}
-	return &StoreCreditAdminHandler{svc: svc}
+	if auditor == nil {
+		panic("http: auditor must not be nil")
+	}
+	return &StoreCreditAdminHandler{svc: svc, auditor: auditor}
+}
+
+func (h *StoreCreditAdminHandler) audit(r *http.Request, action adminapp.AuditAction, customerID string, details map[string]interface{}, err error) {
+	merged := mergeAuditDetails(details, fullAdminScopeDetailsFromRequest(r))
+	result := "success"
+	errMsg := ""
+	if err != nil {
+		result = "error"
+		errMsg = err.Error()
+	}
+	h.auditor.LogAction(r.Context(), adminapp.AuditEntry{
+		AdminID:      adminIDFromRequest(r),
+		Action:       action,
+		ResourceType: "store_credit",
+		ResourceID:   customerID,
+		Details:      merged,
+		Result:       result,
+		Error:        errMsg,
+	})
 }
 
 type issueStoreCreditRequest struct {
@@ -47,6 +71,7 @@ func (h *StoreCreditAdminHandler) Get() http.HandlerFunc {
 
 		balance, err := h.svc.GetBalance(r.Context(), customerID, currency)
 		if err != nil {
+			h.audit(r, adminapp.AuditStoreCreditRead, customerID, nil, err)
 			httpshared.JSONError(w, apperror.Wrap(apperror.CodeInternal, "get store credit failed", err))
 			return
 		}
@@ -58,10 +83,15 @@ func (h *StoreCreditAdminHandler) Get() http.HandlerFunc {
 		}
 		entries, err := h.svc.ListLedger(r.Context(), customerID, currency, offset, limit)
 		if err != nil {
+			h.audit(r, adminapp.AuditStoreCreditRead, customerID, nil, err)
 			httpshared.JSONError(w, apperror.Wrap(apperror.CodeInternal, "list store credit ledger failed", err))
 			return
 		}
 
+		h.audit(r, adminapp.AuditStoreCreditRead, customerID, map[string]interface{}{
+			"currency": currency,
+			"count":    len(entries),
+		}, nil)
 		httpshared.JSON(w, http.StatusOK, map[string]interface{}{
 			"balance": map[string]interface{}{
 				"amount":   balance.Amount(),
@@ -103,12 +133,25 @@ func (h *StoreCreditAdminHandler) Issue() http.HandlerFunc {
 			httpshared.JSONError(w, apperror.Validation(err.Error()))
 			return
 		}
-		if err := h.svc.Issue(r.Context(), customerID, amount, req.Note); err != nil {
-			if apperror.Is(err, apperror.CodeNotFound) {
-				httpshared.JSONError(w, err)
-				return
-			}
-			httpshared.JSONError(w, apperror.Wrap(apperror.CodeInternal, "issue store credit failed", err))
+		// Idempotency-Key follows the same header convention used for
+		// outbound provider calls (internal/infrastructure/stripepay) and
+		// inbound plugin requests (internal/platform/plugin/integration.go):
+		// optional, but when a client retries a request with the same key
+		// (e.g. after a timeout with an ambiguous response) the service
+		// treats it as a no-op instead of issuing credit twice.
+		idempotencyKey := strings.TrimSpace(r.Header.Get("Idempotency-Key"))
+		if err := h.svc.Issue(r.Context(), customerID, amount, req.Note, idempotencyKey); err != nil {
+			// JSONError unwraps to the underlying *apperror.Error (via
+			// errors.As) and maps its code to the right status — e.g.
+			// apperror.Validation from domain-level ledger checks becomes
+			// 422, not a blanket 500. Only errors with no apperror code at
+			// all fall through to Internal, which is the correct default
+			// for those.
+			h.audit(r, adminapp.AuditStoreCreditIssue, customerID, map[string]interface{}{
+				"currency": currency,
+				"amount":   req.Amount,
+			}, err)
+			httpshared.JSONError(w, err)
 			return
 		}
 
@@ -117,6 +160,10 @@ func (h *StoreCreditAdminHandler) Issue() http.HandlerFunc {
 			httpshared.JSONError(w, apperror.Wrap(apperror.CodeInternal, "get store credit failed", err))
 			return
 		}
+		h.audit(r, adminapp.AuditStoreCreditIssue, customerID, map[string]interface{}{
+			"currency": currency,
+			"amount":   req.Amount,
+		}, nil)
 		httpshared.JSON(w, http.StatusCreated, map[string]interface{}{
 			"balance": map[string]interface{}{
 				"amount":   balance.Amount(),

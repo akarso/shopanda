@@ -1,6 +1,7 @@
 package shared
 
 import (
+	"context"
 	"fmt"
 	"net/http"
 )
@@ -28,12 +29,12 @@ func (r *Router) Use(mw ...Middleware) {
 
 // Handle registers a handler for the given pattern.
 func (r *Router) Handle(pattern string, handler http.Handler) {
-	r.mux.Handle(pattern, handler)
+	r.mux.Handle(pattern, r.captureRoute(handler))
 }
 
 // HandleFunc registers a handler function for the given pattern.
 func (r *Router) HandleFunc(pattern string, handler http.HandlerFunc) {
-	r.mux.HandleFunc(pattern, handler)
+	r.mux.Handle(pattern, r.captureRoute(handler))
 }
 
 // TryHandle registers a handler, returning an error instead of panicking when
@@ -46,8 +47,24 @@ func (r *Router) TryHandle(pattern string, handler http.Handler) (err error) {
 			err = fmt.Errorf("router: cannot register %q: %v", pattern, rec)
 		}
 	}()
-	r.mux.Handle(pattern, handler)
+	r.mux.Handle(pattern, r.captureRoute(handler))
 	return nil
+}
+
+// captureRoute wraps handler so that, once net/http.ServeMux has matched a
+// request and populated Request.Pattern on it, the matched pattern is
+// copied into the *routeMatch box threaded through this request's
+// middleware chain (see Handler) — letting MetricsMiddleware read the
+// matched route afterward without running a second, redundant routing pass
+// (calling ServeMux.Handler(req) again just to learn what pattern the mux
+// already dispatched through).
+func (r *Router) captureRoute(handler http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		if m, ok := req.Context().Value(routeMatchKey{}).(*routeMatch); ok {
+			m.pattern = req.Pattern
+		}
+		handler.ServeHTTP(w, req)
+	})
 }
 
 // RoutePattern returns the registered ServeMux pattern that would handle req
@@ -62,6 +79,38 @@ func (r *Router) RoutePattern(req *http.Request) string {
 	return pattern
 }
 
+// routeMatchKey is the context key for the *routeMatch box threaded through
+// a single request's middleware chain (see Handler).
+type routeMatchKey struct{}
+
+// routeMatch is a mutable box carrying the route pattern resolved by the
+// mux's own dispatch. It must be a pointer stashed in the context once, at
+// the very outside of the middleware chain: net/http.ServeMux populates
+// Request.Pattern (and PathValue) on a shallow copy of the request it
+// passes to the matched handler, a copy that outer middleware (which called
+// next.ServeHTTP with the pre-dispatch request) never observes directly.
+// Sharing one mutable box by pointer, rather than by context value, lets a
+// write made deep in the chain (in captureRoute, from inside the matched
+// handler where Request.Pattern is already populated) be visible to a read
+// made by outer middleware (MetricsMiddleware) after next.ServeHTTP returns
+// — context.Value lookups walk up the parent chain regardless of how many
+// intermediate WithContext calls happened, but the box's address doesn't
+// change, so the mutation is visible through any of those copies.
+type routeMatch struct {
+	pattern string
+}
+
+// routeMatchFromContext returns the pattern captured for this request by
+// Handler's dispatch, or "" if the request never reached the mux (e.g. a
+// middleware short-circuited before it) or nothing matched.
+func routeMatchFromContext(ctx context.Context) string {
+	m, _ := ctx.Value(routeMatchKey{}).(*routeMatch)
+	if m == nil {
+		return ""
+	}
+	return m.pattern
+}
+
 // Handler returns the final http.Handler with all middleware applied.
 func (r *Router) Handler() http.Handler {
 	var h http.Handler = r.mux
@@ -69,5 +118,9 @@ func (r *Router) Handler() http.Handler {
 	for i := len(r.middleware) - 1; i >= 0; i-- {
 		h = r.middleware[i](h)
 	}
-	return h
+
+	return http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		req = req.WithContext(context.WithValue(req.Context(), routeMatchKey{}, &routeMatch{}))
+		h.ServeHTTP(w, req)
+	})
 }

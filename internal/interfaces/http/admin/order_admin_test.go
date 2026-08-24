@@ -4,16 +4,16 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"github.com/akarso/shopanda/internal/interfaces/http/admin"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
 
+	"github.com/akarso/shopanda/internal/interfaces/http/admin"
+
 	adminapp "github.com/akarso/shopanda/internal/application/admin"
 	"github.com/akarso/shopanda/internal/domain/identity"
 	"github.com/akarso/shopanda/internal/domain/order"
-	shophttp "github.com/akarso/shopanda/internal/interfaces/http"
 	"github.com/akarso/shopanda/internal/platform/auth/testhelper"
 	"github.com/akarso/shopanda/internal/platform/logger"
 )
@@ -24,7 +24,7 @@ func orderAdminSetup() (*stubOrderRepo, *http.ServeMux) {
 	repo := newStubOrderRepo()
 	handler := admin.NewOrderAdminHandler(repo, logger.New("error"), nil)
 
-	requireAdmin := shophttp.RequireRole(identity.RoleAdmin)
+	requireAdmin := admin.RequireRole(identity.RoleAdmin)
 	mux := http.NewServeMux()
 	mux.Handle("GET /api/v1/admin/orders", requireAdmin(handler.List()))
 	mux.Handle("GET /api/v1/admin/orders/{orderId}", requireAdmin(handler.Get()))
@@ -78,8 +78,8 @@ func cloneAuditContext(ctx map[string]interface{}) map[string]interface{} {
 
 func orderAdminSetupWithAudit(repo order.OrderRepository, sink logger.Logger) *http.ServeMux {
 	handler := admin.NewOrderAdminHandlerWithAuditor(repo, adminapp.NewAuditor(sink), nil)
-	requireAdmin := shophttp.RequireRole(identity.RoleAdmin)
-	withAdminContext := shophttp.AdminContextMiddleware()
+	requireAdmin := admin.RequireRole(identity.RoleAdmin)
+	withAdminContext := admin.AdminContextMiddleware()
 	mux := http.NewServeMux()
 	mux.Handle("GET /api/v1/admin/orders", withAdminContext(requireAdmin(handler.List())))
 	mux.Handle("GET /api/v1/admin/orders/{orderId}", withAdminContext(requireAdmin(handler.Get())))

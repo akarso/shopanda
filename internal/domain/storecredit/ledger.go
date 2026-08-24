@@ -30,12 +30,23 @@ type Entry struct {
 	Kind       Kind
 	OrderID    string
 	Note       string
-	CreatedAt  time.Time
+	// IdempotencyKey, when non-empty, is unique per customer (enforced by
+	// the repository). Only Issue entries set this — Redeem entries are
+	// already keyed by OrderID, which serves the same purpose.
+	IdempotencyKey string
+	CreatedAt      time.Time
 }
 
-// NewIssueEntry validates an issue ledger entry.
-func NewIssueEntry(id, customerID string, amount shared.Money, note string) (Entry, error) {
-	return newEntry(id, customerID, amount, KindIssue, "", note)
+// NewIssueEntry validates an issue ledger entry. idempotencyKey is optional;
+// when set, the repository rejects a second Issue with the same
+// (customerID, idempotencyKey) pair instead of crediting twice.
+func NewIssueEntry(id, customerID string, amount shared.Money, note, idempotencyKey string) (Entry, error) {
+	e, err := newEntry(id, customerID, amount, KindIssue, "", note)
+	if err != nil {
+		return Entry{}, err
+	}
+	e.IdempotencyKey = strings.TrimSpace(idempotencyKey)
+	return e, nil
 }
 
 // NewRedeemEntry validates a redeem ledger entry.

@@ -89,6 +89,11 @@ func NewDeliverHandler(repo domainwebhook.Repository, poster HTTPPoster, log log
 // WithMetrics sets the metrics recorder used to record delivery outcomes.
 // Optional; if never called, outcomes are simply not recorded. Returns the
 // DeliverHandler for chaining.
+//
+// Not safe to call concurrently with Handle or with another WithMetrics
+// call: the field it sets is read without synchronization on the delivery
+// path. Call it once during wiring, before the handler is registered with
+// the worker.
 func (h *DeliverHandler) WithMetrics(m metrics.Recorder) *DeliverHandler {
 	if m != nil {
 		h.metrics = m
@@ -124,6 +129,11 @@ func (h *DeliverHandler) Handle(ctx context.Context, job jobs.Job) (err error) {
 
 	endpoint, err := h.repo.FindByID(ctx, endpointID)
 	if err != nil {
+		// Recorded as failed, not skipped: unlike a malformed payload or an
+		// inactive/unsubscribed endpoint, a repo error means we don't know
+		// whether the endpoint should have received this delivery — that's
+		// an operational problem (e.g. DB connectivity) worth surfacing in
+		// the failure rate, not silently excluded from it.
 		return fmt.Errorf("webhook deliver: find endpoint: %w", err)
 	}
 	if endpoint == nil || !endpoint.Active || !endpoint.Subscribed(eventName) {

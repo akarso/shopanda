@@ -66,6 +66,11 @@ func NewWorkflow(steps []Step, bus *event.Bus, log logger.Logger) *Workflow {
 // WithMetrics sets the metrics recorder used to record checkout outcomes.
 // Optional; if never called, outcomes are simply not recorded. Returns the
 // Workflow for chaining.
+//
+// Not safe to call concurrently with Execute or with another WithMetrics
+// call: the field it sets is read without synchronization on the checkout
+// path. Call it once during wiring, before the Workflow is used to process
+// requests.
 func (w *Workflow) WithMetrics(m metrics.Recorder) *Workflow {
 	if m != nil {
 		w.metrics = m
@@ -87,20 +92,32 @@ func (w *Workflow) publishEvent(ctx context.Context, name, source string, data i
 // Execute runs every step in sequence. It stops on the first error
 // and emits lifecycle events for observability.
 func (w *Workflow) Execute(ctx context.Context, cctx *Context) (err error) {
+	// succeededEventFailed is set only when every step succeeded and the
+	// sole remaining error is the final EventCheckoutCompleted publish —
+	// distinct from a real checkout failure for metrics purposes (see
+	// metrics.OutcomeSucceededEventFailed).
+	succeededEventFailed := false
 	defer func() {
 		if r := recover(); r != nil {
 			w.metrics.CheckoutResult(metrics.OutcomeFailed)
 			panic(r)
 		}
-		outcome := metrics.OutcomeSuccess
-		if err != nil {
-			outcome = metrics.OutcomeFailed
+		switch {
+		case succeededEventFailed:
+			w.metrics.CheckoutResult(metrics.OutcomeSucceededEventFailed)
+		case err != nil:
+			w.metrics.CheckoutResult(metrics.OutcomeFailed)
+		default:
+			w.metrics.CheckoutResult(metrics.OutcomeSuccess)
 		}
-		w.metrics.CheckoutResult(outcome)
 	}()
 	for _, step := range w.steps {
 		select {
 		case <-ctx.Done():
+			// Intentionally counted as OutcomeFailed, not a separate
+			// "cancelled" outcome: the customer did not get a completed
+			// order either way, and client-cancel/timeout should still
+			// surface in the failure rate an operator watches.
 			return ctx.Err()
 		default:
 		}
@@ -162,11 +179,12 @@ func (w *Workflow) Execute(ctx context.Context, cctx *Context) (err error) {
 	if cctx.Order != nil {
 		orderID = cctx.Order.ID
 	}
-	if err := w.publishEvent(ctx, EventCheckoutCompleted, "checkout.workflow", CheckoutCompletedData{
+	if pubErr := w.publishEvent(ctx, EventCheckoutCompleted, "checkout.workflow", CheckoutCompletedData{
 		CartID:  cctx.CartID,
 		OrderID: orderID,
-	}); err != nil {
-		return err
+	}); pubErr != nil {
+		succeededEventFailed = true
+		return pubErr
 	}
 
 	return nil

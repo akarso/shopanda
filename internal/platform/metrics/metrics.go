@@ -11,10 +11,17 @@ package metrics
 
 import "time"
 
-// Outcome labels are a fixed two-value enum, bounded by construction.
+// Outcome labels are a fixed, small enum, bounded by construction.
 const (
 	OutcomeSuccess = "success"
 	OutcomeFailed  = "failed"
+
+	// OutcomeSucceededEventFailed is for CheckoutResult only: every checkout
+	// step succeeded (order created, payment captured, etc.) but the final
+	// EventCheckoutCompleted publish failed. Recording that as OutcomeFailed
+	// would conflate a real checkout failure with a downstream
+	// notification/event-bus problem on an otherwise-successful order.
+	OutcomeSucceededEventFailed = "succeeded_event_failed"
 )
 
 // Recorder records RED and business metrics. Implementations must be safe
@@ -27,7 +34,7 @@ type Recorder interface {
 	HTTPRequest(routePattern, method, statusClass string, duration time.Duration)
 
 	// CheckoutResult records one completed checkout attempt. outcome must
-	// be OutcomeSuccess or OutcomeFailed.
+	// be OutcomeSuccess, OutcomeFailed, or OutcomeSucceededEventFailed.
 	CheckoutResult(outcome string)
 
 	// JobFailure records one failed background job execution. jobType must

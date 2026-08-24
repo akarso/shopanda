@@ -1,9 +1,10 @@
 package admin
 
 import (
-	httpshared "github.com/akarso/shopanda/internal/interfaces/http/shared"
 	"net/http"
 	"sort"
+
+	httpshared "github.com/akarso/shopanda/internal/interfaces/http/shared"
 
 	slotsapp "github.com/akarso/shopanda/internal/application/slots"
 )

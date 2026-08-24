@@ -13,8 +13,9 @@ import (
 
 // Service orchestrates store credit use cases.
 type Service struct {
-	credits   credit.Repository
-	customers customer.CustomerRepository
+	credits        credit.Repository
+	customers      customer.CustomerRepository
+	maxIssueAmount int64
 }
 
 // NewService creates a store credit service.
@@ -28,12 +29,24 @@ func NewService(credits credit.Repository, customers customer.CustomerRepository
 	return &Service{credits: credits, customers: customers}
 }
 
-// Issue credits a customer account.
-func (s *Service) Issue(ctx context.Context, customerID string, amount shared.Money, note string) error {
+// WithMaxIssueAmount caps a single Issue call at max minor units. A
+// non-positive max disables the cap. Optional; if never called, Issue is
+// unbounded. Returns the Service for chaining.
+func (s *Service) WithMaxIssueAmount(max int64) *Service {
+	s.maxIssueAmount = max
+	return s
+}
+
+// Issue credits a customer account. idempotencyKey is optional; when set, a
+// retried call with the same key is a no-op rather than crediting twice.
+func (s *Service) Issue(ctx context.Context, customerID string, amount shared.Money, note, idempotencyKey string) error {
+	if s.maxIssueAmount > 0 && amount.Amount() > s.maxIssueAmount {
+		return apperror.Validation(fmt.Sprintf("amount exceeds maximum single issuance of %d", s.maxIssueAmount))
+	}
 	if err := s.ensureCustomer(ctx, customerID); err != nil {
 		return err
 	}
-	if err := s.credits.Issue(ctx, customerID, amount, note); err != nil {
+	if err := s.credits.Issue(ctx, customerID, amount, note, idempotencyKey); err != nil {
 		return fmt.Errorf("storecredit: issue: %w", err)
 	}
 	return nil

@@ -1,0 +1,125 @@
+package storecredit_test
+
+import (
+	"context"
+	"testing"
+
+	storecreditApp "github.com/akarso/shopanda/internal/application/storecredit"
+	"github.com/akarso/shopanda/internal/domain/customer"
+	"github.com/akarso/shopanda/internal/domain/shared"
+	credit "github.com/akarso/shopanda/internal/domain/storecredit"
+	"github.com/akarso/shopanda/internal/platform/apperror"
+	"github.com/akarso/shopanda/internal/platform/id"
+)
+
+type fakeCustomerRepo struct {
+	found *customer.Customer
+}
+
+func (f *fakeCustomerRepo) FindByID(_ context.Context, _ string) (*customer.Customer, error) {
+	return f.found, nil
+}
+func (f *fakeCustomerRepo) FindByEmail(_ context.Context, _ string) (*customer.Customer, error) {
+	return nil, nil
+}
+func (f *fakeCustomerRepo) Create(_ context.Context, _ *customer.Customer) error { return nil }
+func (f *fakeCustomerRepo) Update(_ context.Context, _ *customer.Customer) error { return nil }
+func (f *fakeCustomerRepo) ListCustomers(_ context.Context, _, _ int) ([]customer.Customer, error) {
+	return nil, nil
+}
+func (f *fakeCustomerRepo) BumpTokenGeneration(_ context.Context, _ string) error { return nil }
+func (f *fakeCustomerRepo) ChangePasswordAndBumpTokenGeneration(_ context.Context, _, _ string) error {
+	return nil
+}
+func (f *fakeCustomerRepo) Delete(_ context.Context, _ string) error { return nil }
+
+type fakeCreditRepo struct {
+	issued []struct {
+		amount shared.Money
+		key    string
+	}
+}
+
+func (f *fakeCreditRepo) GetBalance(_ context.Context, _, currency string) (shared.Money, error) {
+	return shared.Zero(currency)
+}
+func (f *fakeCreditRepo) Issue(_ context.Context, _ string, amount shared.Money, _, idempotencyKey string) error {
+	f.issued = append(f.issued, struct {
+		amount shared.Money
+		key    string
+	}{amount, idempotencyKey})
+	return nil
+}
+func (f *fakeCreditRepo) Redeem(_ context.Context, _, _ string, _ shared.Money) error { return nil }
+func (f *fakeCreditRepo) ListLedger(_ context.Context, _, _ string, _, _ int) ([]credit.Entry, error) {
+	return nil, nil
+}
+
+func newTestCustomer(t *testing.T) *customer.Customer {
+	t.Helper()
+	c, err := customer.NewCustomer(id.New(), "cust@example.com")
+	if err != nil {
+		t.Fatalf("NewCustomer: %v", err)
+	}
+	return &c
+}
+
+func TestService_Issue_PassesIdempotencyKeyThrough(t *testing.T) {
+	repo := &fakeCreditRepo{}
+	svc := storecreditApp.NewService(repo, &fakeCustomerRepo{found: newTestCustomer(t)})
+	amount, _ := shared.NewMoney(500, "EUR")
+
+	if err := svc.Issue(context.Background(), "cust-1", amount, "note", "key-123"); err != nil {
+		t.Fatalf("Issue: %v", err)
+	}
+	if len(repo.issued) != 1 || repo.issued[0].key != "key-123" {
+		t.Fatalf("issued = %+v, want key-123 passed through", repo.issued)
+	}
+}
+
+func TestService_Issue_NoMaxConfiguredAllowsAnyAmount(t *testing.T) {
+	repo := &fakeCreditRepo{}
+	svc := storecreditApp.NewService(repo, &fakeCustomerRepo{found: newTestCustomer(t)})
+	amount, _ := shared.NewMoney(1_000_000, "EUR")
+
+	if err := svc.Issue(context.Background(), "cust-1", amount, "note", ""); err != nil {
+		t.Fatalf("Issue: %v, want no cap when WithMaxIssueAmount was never called", err)
+	}
+}
+
+func TestService_Issue_RejectsAboveMax(t *testing.T) {
+	repo := &fakeCreditRepo{}
+	svc := storecreditApp.NewService(repo, &fakeCustomerRepo{found: newTestCustomer(t)}).WithMaxIssueAmount(1000)
+	amount, _ := shared.NewMoney(1001, "EUR")
+
+	err := svc.Issue(context.Background(), "cust-1", amount, "note", "")
+	if err == nil {
+		t.Fatal("expected error for amount above configured max")
+	}
+	if !apperror.Is(err, apperror.CodeValidation) {
+		t.Fatalf("err = %v, want a validation apperror", err)
+	}
+	if len(repo.issued) != 0 {
+		t.Fatalf("issued = %+v, want none — cap must reject before touching the repo", repo.issued)
+	}
+}
+
+func TestService_Issue_AllowsExactlyMax(t *testing.T) {
+	repo := &fakeCreditRepo{}
+	svc := storecreditApp.NewService(repo, &fakeCustomerRepo{found: newTestCustomer(t)}).WithMaxIssueAmount(1000)
+	amount, _ := shared.NewMoney(1000, "EUR")
+
+	if err := svc.Issue(context.Background(), "cust-1", amount, "note", ""); err != nil {
+		t.Fatalf("Issue at exactly max: %v, want success (cap is inclusive)", err)
+	}
+}
+
+func TestService_Issue_ZeroMaxDisablesCap(t *testing.T) {
+	repo := &fakeCreditRepo{}
+	svc := storecreditApp.NewService(repo, &fakeCustomerRepo{found: newTestCustomer(t)}).WithMaxIssueAmount(0)
+	amount, _ := shared.NewMoney(1_000_000, "EUR")
+
+	if err := svc.Issue(context.Background(), "cust-1", amount, "note", ""); err != nil {
+		t.Fatalf("Issue: %v, want zero max to mean unbounded (explicit opt-out)", err)
+	}
+}

@@ -3,17 +3,17 @@ package admin_test
 import (
 	"context"
 	"encoding/json"
-	"github.com/akarso/shopanda/internal/interfaces/http/admin"
 	"net/http"
 	"net/http/httptest"
 	"testing"
 	"time"
 
+	"github.com/akarso/shopanda/internal/interfaces/http/admin"
+
 	adminapp "github.com/akarso/shopanda/internal/application/admin"
 	"github.com/akarso/shopanda/internal/domain/payment"
 	"github.com/akarso/shopanda/internal/domain/rbac"
 	"github.com/akarso/shopanda/internal/domain/shared"
-	shophttp "github.com/akarso/shopanda/internal/interfaces/http"
 	"github.com/akarso/shopanda/internal/platform/auth/testhelper"
 	"github.com/akarso/shopanda/internal/platform/logger"
 )
@@ -49,7 +49,7 @@ func TestPaymentAdmin_List_ReturnsPayments(t *testing.T) {
 	repo := &mockPaymentListRepo{list: []payment.Payment{*pay}}
 	h := admin.NewPaymentAdminHandler(repo, adminapp.NewAuditor(logger.New("error")))
 	mux := http.NewServeMux()
-	mux.Handle("GET /api/v1/admin/payments", shophttp.RequirePermission(rbac.OrdersRead)(h.List()))
+	mux.Handle("GET /api/v1/admin/payments", admin.RequirePermission(rbac.OrdersRead)(h.List()))
 
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/admin/payments?offset=0&limit=20&status=completed", nil)
@@ -83,7 +83,7 @@ func TestPaymentAdmin_List_InvalidStatus(t *testing.T) {
 	repo := &mockPaymentListRepo{}
 	h := admin.NewPaymentAdminHandler(repo, adminapp.NewAuditor(logger.New("error")))
 	mux := http.NewServeMux()
-	mux.Handle("GET /api/v1/admin/payments", shophttp.RequirePermission(rbac.OrdersRead)(h.List()))
+	mux.Handle("GET /api/v1/admin/payments", admin.RequirePermission(rbac.OrdersRead)(h.List()))
 
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/admin/payments?status=bogus", nil)

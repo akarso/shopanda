@@ -18,6 +18,11 @@ const (
 	CustomersRead  Permission = "customers.read"
 	CustomersWrite Permission = "customers.write"
 
+	// StoreCreditWrite gates issuing store credit — kept distinct from
+	// CustomersWrite so a role granted customer-profile editing for CRM
+	// purposes does not implicitly gain the ability to mint store credit.
+	StoreCreditWrite Permission = "customers.store_credit.write"
+
 	InvoicesRead Permission = "invoices.read"
 
 	MediaRead  Permission = "media.read"

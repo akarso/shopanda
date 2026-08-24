@@ -1,0 +1,75 @@
+package storefront
+
+import (
+	"net/http"
+
+	httpshared "github.com/akarso/shopanda/internal/interfaces/http/shared"
+
+	"github.com/akarso/shopanda/internal/domain/cms"
+	"github.com/akarso/shopanda/internal/domain/translation"
+	"github.com/akarso/shopanda/internal/platform/apperror"
+)
+
+// PageHandler serves public page read endpoints.
+type PageHandler struct {
+	pages cms.PageRepository
+	ct    *translation.ContentTranslator
+}
+
+// NewPageHandler creates a PageHandler.
+func NewPageHandler(pages cms.PageRepository, ct *translation.ContentTranslator) *PageHandler {
+	if pages == nil {
+		panic("PageHandler: pages repository must not be nil")
+	}
+	return &PageHandler{pages: pages, ct: ct}
+}
+
+// pageResponse is the JSON shape for a public page.
+type pageResponse struct {
+	ID      string `json:"id"`
+	Slug    string `json:"slug"`
+	Title   string `json:"title"`
+	Content string `json:"content"`
+}
+
+// Get handles GET /api/v1/pages/{slug}.
+func (h *PageHandler) Get() http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		slug := r.PathValue("slug")
+		if slug == "" {
+			httpshared.JSONError(w, apperror.Validation("page slug is required"))
+			return
+		}
+
+		p, err := h.pages.FindActiveBySlug(r.Context(), slug)
+		if err != nil {
+			httpshared.JSONError(w, err)
+			return
+		}
+		if p == nil {
+			httpshared.JSONError(w, apperror.NotFound("page not found"))
+			return
+		}
+
+		resp := pageResponse{
+			ID:      p.ID(),
+			Slug:    p.Slug(),
+			Title:   p.Title(),
+			Content: p.Content(),
+		}
+		if h.ct != nil {
+			if fields := h.ct.TranslateFields(r.Context(), p.ID()); fields != nil {
+				if v, ok := fields["title"]; ok {
+					resp.Title = v
+				}
+				if v, ok := fields["content"]; ok {
+					resp.Content = v
+				}
+			}
+		}
+
+		httpshared.JSON(w, http.StatusOK, map[string]interface{}{
+			"page": resp,
+		})
+	}
+}

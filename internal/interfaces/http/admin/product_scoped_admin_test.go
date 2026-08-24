@@ -3,11 +3,12 @@ package admin_test
 import (
 	"context"
 	"encoding/json"
-	"github.com/akarso/shopanda/internal/testutil"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"testing"
+
+	"github.com/akarso/shopanda/internal/testutil"
 
 	adminapp "github.com/akarso/shopanda/internal/application/admin"
 	"github.com/akarso/shopanda/internal/domain/catalog"

@@ -3,16 +3,16 @@ package admin_test
 import (
 	"context"
 	"encoding/json"
-	"github.com/akarso/shopanda/internal/interfaces/http/admin"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/akarso/shopanda/internal/interfaces/http/admin"
+
 	domainintegration "github.com/akarso/shopanda/internal/domain/integration"
 	"github.com/akarso/shopanda/internal/domain/rbac"
-	shophttp "github.com/akarso/shopanda/internal/interfaces/http"
 	"github.com/akarso/shopanda/internal/platform/auth/testhelper"
 )
 
@@ -51,7 +51,7 @@ func TestIntegrationIdempotencyAdmin_List(t *testing.T) {
 	}}}
 	h := admin.NewIntegrationIdempotencyAdminHandler(repo)
 	mux := http.NewServeMux()
-	mux.Handle("GET /api/v1/admin/integrations/idempotency", shophttp.RequirePermission(rbac.SettingsRead)(h.List()))
+	mux.Handle("GET /api/v1/admin/integrations/idempotency", admin.RequirePermission(rbac.SettingsRead)(h.List()))
 
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/admin/integrations/idempotency?offset=0&limit=20&plugin=integrationdemo&completed=true", nil)
@@ -89,7 +89,7 @@ func TestIntegrationIdempotencyAdmin_ReplayRequiresCompleted(t *testing.T) {
 	}}}
 	h := admin.NewIntegrationIdempotencyAdminHandler(repo)
 	mux := http.NewServeMux()
-	mux.Handle("POST /api/v1/admin/integrations/idempotency/{plugin}/{key}/replay", shophttp.RequirePermission(rbac.SettingsRead)(h.Replay()))
+	mux.Handle("POST /api/v1/admin/integrations/idempotency/{plugin}/{key}/replay", admin.RequirePermission(rbac.SettingsRead)(h.Replay()))
 
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/admin/integrations/idempotency/integrationdemo/key-1/replay", nil)
@@ -113,7 +113,7 @@ func TestIntegrationIdempotencyAdmin_ReplayReturnsStoredResponse(t *testing.T) {
 	}}}
 	h := admin.NewIntegrationIdempotencyAdminHandler(repo)
 	mux := http.NewServeMux()
-	mux.Handle("POST /api/v1/admin/integrations/idempotency/{plugin}/{key}/replay", shophttp.RequirePermission(rbac.SettingsRead)(h.Replay()))
+	mux.Handle("POST /api/v1/admin/integrations/idempotency/{plugin}/{key}/replay", admin.RequirePermission(rbac.SettingsRead)(h.Replay()))
 
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/admin/integrations/idempotency/integrationdemo/key-1/replay", nil)
@@ -150,7 +150,7 @@ func TestIntegrationIdempotencyAdmin_ReplayNonUTF8Body(t *testing.T) {
 	}}}
 	h := admin.NewIntegrationIdempotencyAdminHandler(repo)
 	mux := http.NewServeMux()
-	mux.Handle("POST /api/v1/admin/integrations/idempotency/{plugin}/{key}/replay", shophttp.RequirePermission(rbac.SettingsRead)(h.Replay()))
+	mux.Handle("POST /api/v1/admin/integrations/idempotency/{plugin}/{key}/replay", admin.RequirePermission(rbac.SettingsRead)(h.Replay()))
 
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/admin/integrations/idempotency/integrationdemo/key-1/replay", nil)
