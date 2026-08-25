@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -733,6 +734,18 @@ func (panicStep) Execute(_ context.Context, _ *checkout.Context) error {
 	panic("checkout step blew up")
 }
 
+// panicValueStep panics with an arbitrary caller-supplied value, used to
+// pin that the span recording of a panic doesn't leak that value.
+type panicValueStep struct {
+	name  string
+	value any
+}
+
+func (s panicValueStep) Name() string { return s.name }
+func (s panicValueStep) Execute(_ context.Context, _ *checkout.Context) error {
+	panic(s.value)
+}
+
 // TestWorkflow_WithMetrics_RecordsSucceededEventFailed pins the distinction
 // between a real checkout failure and every step succeeding but the final
 // EventCheckoutCompleted publish failing — the order/payment side is fine,
@@ -917,6 +930,50 @@ func TestWorkflow_Execute_PanicInStepStillClosesStepSpan(t *testing.T) {
 	}
 }
 
+// TestWorkflow_Execute_PanicSpanRedactsPanicValue pins the fix for
+// recording a recovered panic's raw value (fmt.Errorf("panic: %v", r)) on
+// the step span: a panic value is caller-controlled and may carry
+// customer or payment-processor detail, the same risk spanSafeError
+// already guards against for normal errors. The span must record a fixed
+// "panic" message instead, while the original value still propagates via
+// the re-panic (verified via recover() below).
+func TestWorkflow_Execute_PanicSpanRedactsPanicValue(t *testing.T) {
+	exporter := withTestTracerProvider(t)
+	bus := testBus(t)
+	log := testLogger()
+
+	const sensitive = "customer jane.doe@example.com has an invalid card"
+	step := panicValueStep{name: "reserve", value: sensitive}
+	wf := checkout.NewWorkflow([]checkout.Step{step}, bus, log)
+
+	cctx := checkout.NewContext("cart-1", "cust-1", "EUR")
+	func() {
+		defer func() {
+			r := recover()
+			if r == nil {
+				t.Fatal("expected the panic to propagate out of Execute")
+			}
+			if r != sensitive {
+				t.Errorf("recovered panic value = %v, want the original value %q to still propagate", r, sensitive)
+			}
+		}()
+		_ = wf.Execute(context.Background(), cctx)
+	}()
+
+	for _, s := range exporter.GetSpans() {
+		if strings.Contains(s.Status.Description, sensitive) {
+			t.Fatalf("span %q status description leaked the raw panic value: %q", s.Name, s.Status.Description)
+		}
+		for _, ev := range s.Events {
+			for _, attr := range ev.Attributes {
+				if strings.Contains(attr.Value.AsString(), sensitive) {
+					t.Fatalf("span %q event attribute %q leaked the raw panic value", s.Name, attr.Key)
+				}
+			}
+		}
+	}
+}
+
 // TestWorkflow_Execute_SpanRedactsErrorMessage pins the fix for recording
 // raw err.Error() strings on checkout spans: an error message is not
 // guaranteed free of customer or payment-processor detail, and these
@@ -991,6 +1048,45 @@ func TestWorkflow_Execute_SpanPreservesContextErrorMessage(t *testing.T) {
 	}
 	if rootStatusDesc != context.Canceled.Error() {
 		t.Errorf("root span status description = %q, want the unredacted context.Canceled message %q", rootStatusDesc, context.Canceled.Error())
+	}
+}
+
+// TestWorkflow_Execute_SpanRedactsWrappedContextErrorPrefix pins the fix
+// for a step that wraps context.Canceled/DeadlineExceeded with its own
+// message (e.g. "apply payment for customer ...: %w", ctx.Err()):
+// errors.Is still matches through the wrapping, but the previous code
+// returned the wrapped error as-is, letting whatever the step's prefix
+// said reach the span unbounded. The fix returns the bare sentinel.
+func TestWorkflow_Execute_SpanRedactsWrappedContextErrorPrefix(t *testing.T) {
+	exporter := withTestTracerProvider(t)
+	bus := testBus(t)
+	log := testLogger()
+
+	const sensitive = "customer jane.doe@example.com"
+	step := &mockStep{name: "pay", fn: func(_ *checkout.Context) error {
+		return fmt.Errorf("apply payment for %s: %w", sensitive, context.Canceled)
+	}}
+	wf := checkout.NewWorkflow([]checkout.Step{step}, bus, log)
+
+	cctx := checkout.NewContext("cart-1", "cust-1", "EUR")
+	if err := wf.Execute(context.Background(), cctx); err == nil {
+		t.Fatal("expected an error from the failing step")
+	}
+
+	for _, s := range exporter.GetSpans() {
+		if strings.Contains(s.Status.Description, sensitive) {
+			t.Fatalf("span %q status description leaked the wrapping prefix: %q", s.Name, s.Status.Description)
+		}
+	}
+
+	var stepStatusDesc string
+	for _, s := range exporter.GetSpans() {
+		if s.Name == "checkout.step.pay" {
+			stepStatusDesc = s.Status.Description
+		}
+	}
+	if stepStatusDesc != context.Canceled.Error() {
+		t.Errorf("step span status description = %q, want the bare sentinel %q", stepStatusDesc, context.Canceled.Error())
 	}
 }
 

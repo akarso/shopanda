@@ -113,7 +113,14 @@ func (w *Workflow) runStep(ctx context.Context, step Step, cctx *Context) (err e
 	stepCtx, stepSpan := w.tracer.Start(ctx, "checkout.step."+step.Name())
 	defer func() {
 		if r := recover(); r != nil {
-			stepSpan.RecordError(fmt.Errorf("panic: %v", r))
+			// Fixed, non-sensitive text, not fmt.Errorf("panic: %v", r):
+			// a recovered panic value can be anything a step's business
+			// logic constructed, including customer or payment-processor
+			// detail — the same reasoning spanSafeError already applies
+			// to normal errors. The original value still propagates via
+			// panic(r) below for logging/recovery elsewhere; only the
+			// span recording is bounded.
+			stepSpan.RecordError(errors.New("panic"))
 			stepSpan.SetStatus(codes.Error, "panic")
 			stepSpan.End()
 			panic(r)
@@ -158,7 +165,10 @@ func (w *Workflow) Execute(ctx context.Context, cctx *Context) (err error) {
 		if r := recover(); r != nil {
 			w.metrics.CheckoutResult(metrics.OutcomeFailed)
 			if span != nil {
-				span.RecordError(fmt.Errorf("panic: %v", r))
+				// See runStep's identical recover branch: fixed text,
+				// not the raw panic value, which may carry sensitive
+				// detail. panic(r) below still propagates it unbounded.
+				span.RecordError(errors.New("panic"))
 				span.SetStatus(codes.Error, "panic")
 				span.End()
 			}
@@ -295,9 +305,11 @@ func isContextError(err error) bool {
 // third-party OTLP collector, the same reasoning
 // shared.TracingMiddleware already applies to raw URL paths.
 //
-//   - A context error (isContextError) is always exactly "context
-//     canceled" or "context deadline exceeded" — fixed, safe strings —
-//     and passes through unchanged.
+//   - A context error (isContextError) returns the bare context.Canceled
+//     or context.DeadlineExceeded sentinel — fixed, safe strings — not
+//     the original error, which errors.Is would still match through an
+//     arbitrary wrapping prefix a caller might have added (e.g. a step
+//     wrapping ctx.Err() with customer or cart detail in its message).
 //   - An *apperror.Error's bounded Code (e.g. "validation", "not_found")
 //     is used in place of its free-text Message/wrapped error.
 //   - Anything else becomes a fixed generic message.
@@ -309,8 +321,11 @@ func spanSafeError(err error) error {
 	if err == nil {
 		return nil
 	}
-	if isContextError(err) {
-		return err
+	if errors.Is(err, context.Canceled) {
+		return context.Canceled
+	}
+	if errors.Is(err, context.DeadlineExceeded) {
+		return context.DeadlineExceeded
 	}
 	var appErr *apperror.Error
 	if errors.As(err, &appErr) {

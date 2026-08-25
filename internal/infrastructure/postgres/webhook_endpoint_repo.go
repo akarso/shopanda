@@ -138,7 +138,7 @@ func (r *WebhookEndpointRepo) queryEndpoints(ctx context.Context, q string, args
 	for rows.Next() {
 		var ep domainwebhook.Endpoint
 		if err := rows.Scan(
-			&ep.ID, &ep.URL, &ep.Secret, pgTypeMap.SQLScanner(&ep.Events), &ep.Active,
+			&ep.ID, &ep.URL, &ep.Secret, pgTypeScanner(&ep.Events), &ep.Active,
 			&ep.Description, &ep.CreatedAt, &ep.UpdatedAt,
 		); err != nil {
 			return nil, fmt.Errorf("webhook_endpoint_repo: scan: %w", err)

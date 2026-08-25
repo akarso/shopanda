@@ -1217,7 +1217,10 @@ func applyEnv(cfg *Config) {
 		}
 	}
 	if v := os.Getenv("SHOPANDA_STORE_CREDIT_MAX_ISSUE_AMOUNT"); v != "" {
-		if n, err := strconv.ParseInt(v, 10, 64); err == nil && n >= 0 {
+		// No n >= 0 guard: a negative override should hit the same
+		// validateStoreCredit error as a negative YAML value, not be
+		// silently dropped in favor of whatever was already configured.
+		if n, err := strconv.ParseInt(v, 10, 64); err == nil {
 			cfg.StoreCredit.MaxIssueAmount = n
 		}
 	}

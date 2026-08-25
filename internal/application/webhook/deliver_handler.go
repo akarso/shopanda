@@ -172,7 +172,7 @@ func (h *DeliverHandler) Handle(ctx context.Context, job jobs.Job) (err error) {
 	if postErr != nil {
 		return fmt.Errorf("webhook deliver: post: %w", postErr)
 	}
-	if status >= 400 && status < 500 {
+	if status >= 400 && status < 500 && !isRetryable4xx(status) {
 		// Permanent failure: the receiver rejected this exact request as a
 		// client error, so an identical retry would too. Logged as an
 		// error (still worth an operator's attention — commonly a
@@ -197,6 +197,19 @@ func (h *DeliverHandler) Handle(ctx context.Context, job jobs.Job) (err error) {
 		"status":      status,
 	})
 	return nil
+}
+
+// isRetryable4xx reports whether a 4xx status signals a transient
+// condition rather than a permanent rejection of this request: 408
+// (Request Timeout), 425 (Too Early), and 429 (Too Many Requests) are all
+// cases where an identical retry can succeed, unlike e.g. 400 or 404.
+func isRetryable4xx(status int) bool {
+	switch status {
+	case http.StatusRequestTimeout, http.StatusTooEarly, http.StatusTooManyRequests:
+		return true
+	default:
+		return false
+	}
 }
 
 func buildDeliveryBody(payload map[string]interface{}) ([]byte, error) {

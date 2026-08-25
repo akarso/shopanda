@@ -1829,6 +1829,24 @@ func TestStoreCreditConfig_EnvOverlay(t *testing.T) {
 	}
 }
 
+// TestStoreCreditConfig_NegativeEnvOverlayRejected pins the fix for the
+// env path silently dropping a negative override (n >= 0 guard) instead
+// of surfacing the same validateStoreCredit error the YAML path already
+// gets — a negative value from either source has no sensible
+// interpretation and should fail loudly, not fall back to whatever was
+// already configured.
+func TestStoreCreditConfig_NegativeEnvOverlayRejected(t *testing.T) {
+	withTestBaseURL(t)
+	path := writeYAML(t, "")
+
+	t.Setenv("SHOPANDA_STORE_CREDIT_MAX_ISSUE_AMOUNT", "-100")
+
+	_, err := loadCfg(t, path)
+	if err == nil || !strings.Contains(err.Error(), "max_issue_amount") {
+		t.Fatalf("err = %v, want a store_credit.max_issue_amount validation error from the env override", err)
+	}
+}
+
 func TestStripeConfig_EnabledWithoutSecretKeyRejected(t *testing.T) {
 	withTestBaseURL(t)
 	yaml := `

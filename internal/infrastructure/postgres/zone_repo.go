@@ -13,25 +13,21 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
-// pgTypeMap decodes PostgreSQL array columns into Go slices when scanning.
+// pgTypeScanner decodes a PostgreSQL array column into dest when scanning.
 // pgx's stdlib driver returns array columns as their raw text-literal wire
 // form for any type it doesn't recognize as a scalar, so scanning into a
 // []string field needs this wrapper; binding a Go slice as a query argument
 // needs no such wrapper, since pgx encodes it directly.
 //
-// Shared mutably across the package, which is only safe because nothing
-// calls RegisterType/RegisterDefaultPgType on it after init — SQLScanner's
-// first call into (*pgtype.Map).TypeForValue lazily builds and caches an
-// internal reflect-type index with no locking, so concurrent first use
-// from multiple goroutines is a real data race (confirmed with
-// `go test -race`), not just a hypothetical one. init() below forces that
-// build once, single-threaded, before any request can reach it
-// concurrently; every call after that only reads the cache.
-var pgTypeMap = pgtype.NewMap()
-
-func init() {
-	var warm []string
-	_ = pgTypeMap.SQLScanner(&warm).Scan("{}")
+// A fresh *pgtype.Map per call, not a shared package-level one: Map's
+// first-use TypeForValue lazily builds and caches an internal reflect-type
+// index with no locking, so a Map shared across concurrent requests would
+// race on that first build (confirmed with `go test -race`). An unshared,
+// call-local Map never has more than one goroutine touching it, so there's
+// nothing to race — at the cost of one small allocation per scan, which is
+// negligible next to the query itself.
+func pgTypeScanner(dest any) sql.Scanner {
+	return pgtype.NewMap().SQLScanner(dest)
 }
 
 // Compile-time check.
@@ -67,7 +63,7 @@ func (r *ZoneRepo) ListZones(ctx context.Context) ([]shipping.Zone, error) {
 		var z shipping.Zone
 		var thresholdAmount int64
 		var thresholdCurrency string
-		if err := rows.Scan(&z.ID, &z.Name, pgTypeMap.SQLScanner(&z.Countries),
+		if err := rows.Scan(&z.ID, &z.Name, pgTypeScanner(&z.Countries),
 			&z.Priority, &z.Active, &thresholdAmount, &thresholdCurrency, &z.CreatedAt, &z.UpdatedAt); err != nil {
 			return nil, fmt.Errorf("zone_repo: list scan: %w", err)
 		}
@@ -97,7 +93,7 @@ func (r *ZoneRepo) FindZoneByID(ctx context.Context, id string) (*shipping.Zone,
 	var thresholdAmount int64
 	var thresholdCurrency string
 	err := r.db.QueryRowContext(ctx, q, id).Scan(&z.ID, &z.Name,
-		pgTypeMap.SQLScanner(&z.Countries), &z.Priority, &z.Active, &thresholdAmount, &thresholdCurrency, &z.CreatedAt, &z.UpdatedAt)
+		pgTypeScanner(&z.Countries), &z.Priority, &z.Active, &thresholdAmount, &thresholdCurrency, &z.CreatedAt, &z.UpdatedAt)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
 	}
