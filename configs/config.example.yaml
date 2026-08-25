@@ -298,6 +298,39 @@ metrics:
   # is truthy — /metrics has no authentication.
   listen: "127.0.0.1:9090"
 
+# --- Tracing ----------------------------------------------------------------
+tracing:
+  # Disabled by default. No exporter, no background export goroutine, no
+  # cost — enabling nothing costs nothing.
+  enabled: false
+
+  # OTLP/HTTP collector address as host:port — no scheme (rejected at
+  # startup if you include http:// or https://). Examples:
+  #   "localhost:4318"                          — local Jaeger/collector
+  #   "otlp-gateway-prod-eu-west-0.grafana.net:443" — Grafana Cloud
+  endpoint: ""
+
+  # Disables TLS on the exporter connection. Startup rejects insecure=true
+  # against anything that isn't a loopback endpoint unless SHOPANDA_DEV_MODE
+  # is truthy — trace data can carry the same sensitive info a raw URL
+  # would, and this would otherwise cross the network in cleartext.
+  insecure: false
+
+  # Fraction of traces to sample, 0.0-1.0. Left unset (as here), defaults to
+  # 1.0 (sample everything) — trace volume is bounded by request volume, so
+  # this is safe to default high. An explicit 0 means "instrument the code,
+  # export nothing" — a real value, not treated the same as leaving this
+  # commented out. Values above 1 are clamped to 1; negative values are
+  # rejected at startup.
+  # sample_ratio: 1.0
+
+  # Sent with every OTLP export request — e.g. an API key some SaaS
+  # collectors (Grafana Cloud, Honeycomb) require. Redacted wherever config
+  # values are surfaced through Get()/GetOrDefault(). No env var mapping
+  # for this (a map) — set it here if needed.
+  # headers:
+  #   Authorization: "Basic <base64 instance-id:api-key>"
+
 # --- Store credit -----------------------------------------------------------
 store_credit:
   # Caps a single admin store-credit issuance, in the currency's minor units

@@ -26,9 +26,11 @@ func buildServeHandler(cfg *config.Config, log logger.Logger, rt *serveRuntime, 
 	router := shophttp.NewRouter()
 
 	// Middleware: outermost first.
-	// Metrics is outermost so it captures the final status (after Recovery
-	// converts a panic to 500) and total request duration.
+	// Metrics and Tracing are outermost so they capture the final status
+	// (after Recovery converts a panic to 500) and the full request
+	// duration/span, including every other middleware.
 	router.Use(shophttp.MetricsMiddleware(rt.metricsRecorder))
+	router.Use(shophttp.TracingMiddleware())
 	router.Use(shophttp.RecoveryMiddleware(log))
 	router.Use(shophttp.SecurityHeadersMiddleware(cfg.RateLimit.TrustedProxies...))
 	router.Use(shophttp.RequestIDMiddleware())

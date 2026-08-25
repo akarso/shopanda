@@ -1393,3 +1393,283 @@ metrics:
 		t.Errorf("Get(metrics.listen) = %q, want %q", got, "127.0.0.1:9090")
 	}
 }
+
+func TestTracingConfig_DefaultsDisabled(t *testing.T) {
+	withTestBaseURL(t)
+	path := writeYAML(t, "")
+
+	cfg, err := loadCfg(t, path)
+	if err != nil {
+		t.Fatalf("Load() error: %v", err)
+	}
+
+	if cfg.Tracing.Enabled {
+		t.Error("Tracing.Enabled = true, want false by default")
+	}
+}
+
+func TestTracingConfig_FromYAML(t *testing.T) {
+	withTestBaseURL(t)
+	yaml := `
+tracing:
+  enabled: true
+  endpoint: "collector.example.com:4318"
+  insecure: false
+  sample_ratio: 0.25
+  headers:
+    x-api-key: "secret"
+`
+	path := writeYAML(t, yaml)
+
+	cfg, err := loadCfg(t, path)
+	if err != nil {
+		t.Fatalf("Load() error: %v", err)
+	}
+
+	if !cfg.Tracing.Enabled {
+		t.Error("Tracing.Enabled = false, want true")
+	}
+	if cfg.Tracing.Endpoint != "collector.example.com:4318" {
+		t.Errorf("Tracing.Endpoint = %q, want %q", cfg.Tracing.Endpoint, "collector.example.com:4318")
+	}
+	if cfg.Tracing.SampleRatio != 0.25 {
+		t.Errorf("Tracing.SampleRatio = %v, want 0.25", cfg.Tracing.SampleRatio)
+	}
+	if cfg.Tracing.Headers["x-api-key"] != "secret" {
+		t.Errorf("Tracing.Headers[x-api-key] = %q, want %q", cfg.Tracing.Headers["x-api-key"], "secret")
+	}
+}
+
+func TestTracingConfig_EnabledWithoutEndpoint_Rejected(t *testing.T) {
+	withTestBaseURL(t)
+	yaml := `
+tracing:
+  enabled: true
+`
+	path := writeYAML(t, yaml)
+
+	_, err := loadCfg(t, path)
+	if err == nil || !strings.Contains(err.Error(), "tracing.endpoint") {
+		t.Fatalf("err = %v, want a tracing.endpoint validation error", err)
+	}
+}
+
+func TestTracingConfig_SampleRatioDefaultsTo1WhenEnabled(t *testing.T) {
+	withTestBaseURL(t)
+	yaml := `
+tracing:
+  enabled: true
+  endpoint: "collector.example.com:4318"
+`
+	path := writeYAML(t, yaml)
+
+	cfg, err := loadCfg(t, path)
+	if err != nil {
+		t.Fatalf("Load() error: %v", err)
+	}
+	if cfg.Tracing.SampleRatio != 1.0 {
+		t.Errorf("Tracing.SampleRatio = %v, want 1.0 default", cfg.Tracing.SampleRatio)
+	}
+}
+
+func TestTracingConfig_SampleRatioClampedAboveOne(t *testing.T) {
+	withTestBaseURL(t)
+	yaml := `
+tracing:
+  enabled: true
+  endpoint: "collector.example.com:4318"
+  sample_ratio: 150
+`
+	path := writeYAML(t, yaml)
+
+	cfg, err := loadCfg(t, path)
+	if err != nil {
+		t.Fatalf("Load() error: %v", err)
+	}
+	if cfg.Tracing.SampleRatio != 1.0 {
+		t.Errorf("Tracing.SampleRatio = %v, want clamped to 1.0", cfg.Tracing.SampleRatio)
+	}
+}
+
+func TestTracingConfig_DisabledSkipsEndpointValidation(t *testing.T) {
+	withTestBaseURL(t)
+	path := writeYAML(t, "") // tracing.enabled defaults false, no endpoint set
+
+	if _, err := loadCfg(t, path); err != nil {
+		t.Fatalf("Load() error: %v, want disabled tracing to skip endpoint validation", err)
+	}
+}
+
+func TestTracingConfig_EnvOverlay(t *testing.T) {
+	withTestBaseURL(t)
+	path := writeYAML(t, "")
+
+	t.Setenv("SHOPANDA_TRACING_ENABLED", "true")
+	t.Setenv("SHOPANDA_TRACING_ENDPOINT", "otel.example.com:4318")
+	t.Setenv("SHOPANDA_TRACING_INSECURE", "true")
+	t.Setenv("SHOPANDA_TRACING_SAMPLE_RATIO", "0.5")
+
+	cfg, err := loadCfg(t, path)
+	if err != nil {
+		t.Fatalf("Load() error: %v", err)
+	}
+	if !cfg.Tracing.Enabled {
+		t.Error("Tracing.Enabled = false, want true from env")
+	}
+	if cfg.Tracing.Endpoint != "otel.example.com:4318" {
+		t.Errorf("Tracing.Endpoint = %q, want env value", cfg.Tracing.Endpoint)
+	}
+	if !cfg.Tracing.Insecure {
+		t.Error("Tracing.Insecure = false, want true from env")
+	}
+	if cfg.Tracing.SampleRatio != 0.5 {
+		t.Errorf("Tracing.SampleRatio = %v, want 0.5 from env", cfg.Tracing.SampleRatio)
+	}
+}
+
+// TestTracingConfig_ExplicitZeroSampleRatioIsPreserved pins the fix
+// distinguishing "operator never mentioned sample_ratio" (defaults to 1.0,
+// see TestTracingConfig_SampleRatioDefaultsTo1WhenEnabled) from "operator
+// wrote sample_ratio: 0" (a deliberate sample-nothing signal). Before the
+// fix, both cases were indistinguishable float64 zero values and the
+// normalizer forced either one up to 1.0 — silently sampling everything
+// for an operator who explicitly asked for the opposite.
+func TestTracingConfig_ExplicitZeroSampleRatioIsPreserved(t *testing.T) {
+	withTestBaseURL(t)
+	yaml := `
+tracing:
+  enabled: true
+  endpoint: "collector.example.com:4318"
+  sample_ratio: 0
+`
+	path := writeYAML(t, yaml)
+
+	cfg, err := loadCfg(t, path)
+	if err != nil {
+		t.Fatalf("Load() error: %v", err)
+	}
+	if cfg.Tracing.SampleRatio != 0 {
+		t.Errorf("Tracing.SampleRatio = %v, want 0 preserved, not forced to 1.0", cfg.Tracing.SampleRatio)
+	}
+}
+
+func TestTracingConfig_NegativeSampleRatioRejected(t *testing.T) {
+	withTestBaseURL(t)
+	yaml := `
+tracing:
+  enabled: true
+  endpoint: "collector.example.com:4318"
+  sample_ratio: -0.5
+`
+	path := writeYAML(t, yaml)
+
+	_, err := loadCfg(t, path)
+	if err == nil || !strings.Contains(err.Error(), "sample_ratio") {
+		t.Fatalf("err = %v, want a sample_ratio validation error", err)
+	}
+}
+
+func TestTracingConfig_EndpointWithSchemeRejected(t *testing.T) {
+	withTestBaseURL(t)
+	yaml := `
+tracing:
+  enabled: true
+  endpoint: "https://collector.example.com:4318"
+`
+	path := writeYAML(t, yaml)
+
+	_, err := loadCfg(t, path)
+	if err == nil || !strings.Contains(err.Error(), "tracing.endpoint") {
+		t.Fatalf("err = %v, want a tracing.endpoint scheme-rejection error", err)
+	}
+}
+
+func TestTracingConfig_InsecureAgainstRemoteHostRejectedWithoutDevMode(t *testing.T) {
+	withTestBaseURL(t)
+	t.Setenv("SHOPANDA_DEV_MODE", "false")
+	t.Setenv("SHOPANDA_DATABASE_PASSWORD", "strong-enough-secret")
+	yaml := `
+database:
+  host: localhost
+  sslmode: require
+tracing:
+  enabled: true
+  endpoint: "collector.example.com:4318"
+  insecure: true
+`
+	path := writeYAML(t, yaml)
+
+	_, err := loadCfg(t, path)
+	if err == nil || !strings.Contains(err.Error(), "insecure") {
+		t.Fatalf("err = %v, want an insecure-export validation error", err)
+	}
+}
+
+func TestTracingConfig_InsecureAgainstRemoteHostAllowedWithDevMode(t *testing.T) {
+	withTestBaseURL(t)
+	t.Setenv("SHOPANDA_DEV_MODE", "true")
+	yaml := `
+tracing:
+  enabled: true
+  endpoint: "collector.example.com:4318"
+  insecure: true
+`
+	path := writeYAML(t, yaml)
+
+	if _, err := loadCfg(t, path); err != nil {
+		t.Fatalf("Load() error: %v, want SHOPANDA_DEV_MODE to permit insecure export against a remote host", err)
+	}
+}
+
+func TestTracingConfig_InsecureAgainstLocalhostAllowedWithoutDevMode(t *testing.T) {
+	withTestBaseURL(t)
+	t.Setenv("SHOPANDA_DEV_MODE", "false")
+	t.Setenv("SHOPANDA_DATABASE_PASSWORD", "strong-enough-secret")
+	yaml := `
+database:
+  host: localhost
+  sslmode: require
+tracing:
+  enabled: true
+  endpoint: "localhost:4318"
+  insecure: true
+`
+	path := writeYAML(t, yaml)
+
+	if _, err := loadCfg(t, path); err != nil {
+		t.Fatalf("Load() error: %v, want a local collector endpoint to permit insecure export without dev mode", err)
+	}
+}
+
+func TestTracingConfig_FlattenEntries(t *testing.T) {
+	withTestBaseURL(t)
+	yaml := `
+tracing:
+  enabled: true
+  endpoint: "collector.example.com:4318"
+  sample_ratio: 0.5
+  headers:
+    x-api-key: "top-secret"
+`
+	path := writeYAML(t, yaml)
+
+	_, err := loadIsolated(t, path)
+	if err != nil {
+		t.Fatalf("Load() error: %v", err)
+	}
+
+	if got := Get("tracing.enabled"); got != "true" {
+		t.Errorf("Get(tracing.enabled) = %q, want %q", got, "true")
+	}
+	if got := Get("tracing.endpoint"); got != "collector.example.com:4318" {
+		t.Errorf("Get(tracing.endpoint) = %q, want %q", got, "collector.example.com:4318")
+	}
+	if got := Get("tracing.sample_ratio"); got != "0.5" {
+		t.Errorf("Get(tracing.sample_ratio) = %q, want %q", got, "0.5")
+	}
+	// Must never surface the raw header value through Get()/GetOrDefault()
+	// — it commonly carries a collector API key.
+	if got := Get("tracing.headers.x-api-key"); got != "***" {
+		t.Errorf("Get(tracing.headers.x-api-key) = %q, want redacted %q", got, "***")
+	}
+}

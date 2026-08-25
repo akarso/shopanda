@@ -97,7 +97,26 @@ sum(rate(shopanda_checkout_result_total{outcome="failed"}[5m]))
 sum(rate(shopanda_job_failures_total[15m])) by (job_type)
 ```
 
-**Known limitation:** no OpenTelemetry tracing yet (tracked as a PR-1020 follow-up); metrics are counters/histograms only, no distributed traces.
+**Historical note:** the OpenTelemetry tracing gap noted here through PR-1023 is closed by PR-1024 — see the next section.
+
+## Tracing (OpenTelemetry)
+
+- **Disabled by default** (`tracing.enabled: false`). No exporter, no background export goroutine, no cost — the same "enabling nothing costs nothing" posture as metrics.
+- When enabled, spans export via **OTLP/HTTP** to `tracing.endpoint` (host:port, no scheme — e.g. `localhost:4318`, not `http://localhost:4318`; a scheme prefix is rejected at startup, not left to fail at first export).
+- **Two spans per checkout, one per HTTP request:** every HTTP request gets a span named `HTTP {method}` with `http.route` (the matched template, e.g. `/products/{id}` — never the raw URL) and `http.response.status_code` attributes. Every `checkout.Workflow.Execute` call gets a root span `checkout.execute` plus one child span per step (`checkout.step.<name>`), each with its own error status on failure.
+- **No raw URLs or path segments in span attributes** — same reasoning as the metrics label policy above, applied to what leaves the process via OTLP instead of via `/metrics`. A customer ID, order ID, or reset token embedded in a path never gets exported.
+- **`tracing.insecure: true` (cleartext OTLP export) is validated, not just discouraged in a comment.** Startup rejects it unless `SHOPANDA_DEV_MODE` is truthy or the endpoint resolves to a loopback host — same posture as `database.sslmode=disable`. Use TLS (the default) against anything that isn't a same-host/local collector.
+- **Sampling:** `tracing.sample_ratio` (0.0–1.0) defaults to `1.0` (sample everything) when left unset. Setting it to `0` is a deliberate "instrument the code, export nothing" state, not the same as leaving it unset — both survive distinctly through config loading. Values above `1` are clamped down to `1` (typo defense — `150` is far more likely to mean "150%, i.e. everything" than a real attempt to oversample); negative values are rejected at startup.
+- **Headers** (`tracing.headers`, a map) are sent with every OTLP export request — use this for a collector API key (Grafana Cloud, Honeycomb, etc. commonly require one). Redacted (`***`) wherever config values are surfaced through `Get()`/`GetOrDefault()`.
+- Both `serve` and standalone `worker` processes call the same `tracing.Setup`, tagged with a distinct `service.name` resource attribute (`shopanda-api` / `shopanda-worker`) so a collector can tell them apart. The worker process doesn't currently instrument any job handler — `Setup` is wired for parity and future use, not because job spans exist yet.
+- Env overrides: `SHOPANDA_TRACING_ENABLED`, `SHOPANDA_TRACING_ENDPOINT`, `SHOPANDA_TRACING_INSECURE`, `SHOPANDA_TRACING_SAMPLE_RATIO`. No env mapping for `headers` (a map) — set it in YAML.
+- **Local collector (Jaeger):**
+  ```bash
+  docker run -d --name jaeger -p 16686:16686 -p 4318:4318 jaegertracing/all-in-one:latest
+  ```
+  Then set `tracing.enabled: true`, `tracing.endpoint: "localhost:4318"`, `tracing.insecure: true` (loopback, so this is allowed without `SHOPANDA_DEV_MODE`) — traces appear at `http://localhost:16686`.
+- **Grafana Cloud (or any TLS OTLP/HTTP collector requiring an API key):** `tracing.endpoint: "otlp-gateway-<region>.grafana.net:443"`, `tracing.insecure: false` (the default), `tracing.headers: {Authorization: "Basic <base64 instance-id:api-key>"}`. Consult your collector's OTLP/HTTP ingest docs for the exact header format — this varies by vendor.
+- **Known limitation:** DB query spans are not implemented (see PR-1024's "Scope decisions" — no shared `*sql.DB` access wrapper exists yet to hang them on) and no job/worker-level span exists yet.
 
 ## Container releases (GHCR)
 

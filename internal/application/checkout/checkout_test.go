@@ -7,6 +7,11 @@ import (
 	"testing"
 	"time"
 
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/codes"
+	sdktrace "go.opentelemetry.io/otel/sdk/trace"
+	"go.opentelemetry.io/otel/sdk/trace/tracetest"
+
 	"github.com/akarso/shopanda/internal/application/checkout"
 	"github.com/akarso/shopanda/internal/domain/cart"
 	"github.com/akarso/shopanda/internal/domain/shared"
@@ -673,6 +678,52 @@ func TestWorkflow_WithMetrics_RecordsPanicAsFailure(t *testing.T) {
 	}
 }
 
+// TestWorkflow_Execute_NilContextPanicIsCaughtByRecover pins a bug where the
+// tracing span's start (reading cctx.CartID) ran ahead of the recover
+// defer's registration. A nil *checkout.Context still panics inside the
+// loop body (cctx.CartID is read unconditionally for logging before any
+// Step runs — pre-existing, not itself the bug), but that panic must be
+// caught by the SAME recover every other panic source in this function
+// goes through: metrics recorded, span closed with an error status, then
+// re-panicked. Before the fix, the span-start's own cctx.CartID access
+// panicked before the recover defer was even registered — an unrecovered
+// crash with no metrics or span cleanup at all, unlike this one.
+func TestWorkflow_Execute_NilContextPanicIsCaughtByRecover(t *testing.T) {
+	exporter := withTestTracerProvider(t)
+	bus := testBus(t)
+	log := testLogger()
+	m := &mockMetricsRecorder{}
+
+	step := &mockStep{name: "unreached_step", fn: func(_ *checkout.Context) error { return nil }}
+	wf := checkout.NewWorkflow([]checkout.Step{step}, bus, log).WithMetrics(m)
+
+	panicked := false
+	func() {
+		defer func() {
+			if r := recover(); r == nil {
+				t.Fatal("expected a nil *checkout.Context to panic (cctx.CartID access predates any step)")
+			}
+			panicked = true
+		}()
+		_ = wf.Execute(context.Background(), nil)
+	}()
+	if !panicked {
+		t.Fatal("expected panic")
+	}
+
+	if len(m.checkoutOutcomes) != 1 || m.checkoutOutcomes[0] != metrics.OutcomeFailed {
+		t.Errorf("checkoutOutcomes = %v, want [%s] — the recover must still run metrics before re-panicking", m.checkoutOutcomes, metrics.OutcomeFailed)
+	}
+
+	spans := exporter.GetSpans()
+	if len(spans) != 1 || spans[0].Name != "checkout.execute" {
+		t.Fatalf("expected exactly one closed checkout.execute span, got %+v", spans)
+	}
+	if spans[0].Status.Code != codes.Error {
+		t.Errorf("span status = %v, want Error — the recover must close the span before re-panicking", spans[0].Status.Code)
+	}
+}
+
 type panicStep struct{ name string }
 
 func (panicStep) Name() string { return "panic_step" }
@@ -714,6 +765,104 @@ func TestWorkflow_WithoutMetrics_DoesNotPanic(t *testing.T) {
 
 	ctx := checkout.NewContext("cart-1", "cust-1", "EUR")
 	_ = wf.Execute(context.Background(), ctx)
+}
+
+// ============================================================
+// Tracing tests
+// ============================================================
+
+// withTestTracerProvider installs an SDK provider backed by an in-memory
+// exporter for the duration of the test, restoring the previous global
+// provider on cleanup. checkout.NewWorkflow resolves its tracer via
+// otel.Tracer(...) at construction time, so the provider must be installed
+// before NewWorkflow is called in each test below, not after.
+func withTestTracerProvider(t *testing.T) *tracetest.InMemoryExporter {
+	t.Helper()
+	exporter := tracetest.NewInMemoryExporter()
+	provider := sdktrace.NewTracerProvider(sdktrace.WithSyncer(exporter))
+	prev := otel.GetTracerProvider()
+	otel.SetTracerProvider(provider)
+	t.Cleanup(func() { otel.SetTracerProvider(prev) })
+	return exporter
+}
+
+func TestWorkflow_Execute_RecordsSpansPerStepUnderRootSpan(t *testing.T) {
+	exporter := withTestTracerProvider(t)
+	bus := testBus(t)
+	log := testLogger()
+
+	step1 := &mockStep{name: "validate", fn: func(_ *checkout.Context) error { return nil }}
+	step2 := &mockStep{name: "reserve", fn: func(_ *checkout.Context) error { return nil }}
+	wf := checkout.NewWorkflow([]checkout.Step{step1, step2}, bus, log)
+
+	cctx := checkout.NewContext("cart-1", "cust-1", "EUR")
+	if err := wf.Execute(context.Background(), cctx); err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+
+	spans := exporter.GetSpans()
+	byName := map[string]tracetest.SpanStub{}
+	for _, s := range spans {
+		byName[s.Name] = s
+	}
+	if _, ok := byName["checkout.execute"]; !ok {
+		t.Fatalf("expected a checkout.execute root span, got %+v", byName)
+	}
+	if _, ok := byName["checkout.step.validate"]; !ok {
+		t.Errorf("expected a checkout.step.validate span, got %+v", byName)
+	}
+	if _, ok := byName["checkout.step.reserve"]; !ok {
+		t.Errorf("expected a checkout.step.reserve span, got %+v", byName)
+	}
+
+	root := byName["checkout.execute"]
+	for name, s := range byName {
+		if name == "checkout.execute" {
+			continue
+		}
+		if s.Parent.SpanID() != root.SpanContext.SpanID() {
+			t.Errorf("span %q parent = %v, want root span %v", name, s.Parent.SpanID(), root.SpanContext.SpanID())
+		}
+	}
+	if root.Status.Code != codes.Ok {
+		t.Errorf("root span status = %v, want Ok for a successful checkout", root.Status.Code)
+	}
+}
+
+func TestWorkflow_Execute_RecordsErrorStatusOnStepFailure(t *testing.T) {
+	exporter := withTestTracerProvider(t)
+	bus := testBus(t)
+	log := testLogger()
+
+	step := &mockStep{name: "reserve", fn: func(_ *checkout.Context) error { return errors.New("out of stock") }}
+	wf := checkout.NewWorkflow([]checkout.Step{step}, bus, log)
+
+	cctx := checkout.NewContext("cart-1", "cust-1", "EUR")
+	if err := wf.Execute(context.Background(), cctx); err == nil {
+		t.Fatal("expected an error from the failing step")
+	}
+
+	var rootStatus, stepStatus codes.Code
+	found := 0
+	for _, s := range exporter.GetSpans() {
+		switch s.Name {
+		case "checkout.execute":
+			rootStatus = s.Status.Code
+			found++
+		case "checkout.step.reserve":
+			stepStatus = s.Status.Code
+			found++
+		}
+	}
+	if found != 2 {
+		t.Fatalf("expected both root and step spans, found %d", found)
+	}
+	if rootStatus != codes.Error {
+		t.Errorf("root span status = %v, want Error", rootStatus)
+	}
+	if stepStatus != codes.Error {
+		t.Errorf("step span status = %v, want Error", stepStatus)
+	}
 }
 
 // ============================================================

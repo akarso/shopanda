@@ -34,6 +34,8 @@ shopanda
 
 # Editor/IDE / OS
 .DS_Store
+*.swp
+*.swo
 # .idea/
 # .vscode/
 
