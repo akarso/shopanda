@@ -1,10 +1,14 @@
 // Package tracing wires an optional OpenTelemetry trace pipeline. Nothing
 // in this package needs to be threaded through call sites: instrumentation
-// elsewhere in the codebase calls otel.Tracer(...) directly, which is safe
-// and effectively free (OpenTelemetry's documented no-op behavior) unless
-// Setup has installed a real SDK provider. This mirrors how the metrics
-// package uses metrics.Noop() as the always-safe default, except here the
-// no-op is OTel's own, not one this codebase has to implement.
+// elsewhere in the codebase calls otel.Tracer(...) directly, which is
+// always safe (OpenTelemetry's documented no-op behavior) unless Setup has
+// installed a real SDK provider — cheap even then, since building a span's
+// start options is unavoidable Go argument evaluation regardless of
+// whether the tracer behind it is real, but never expensive: nothing is
+// batched, serialized, or sent over the network unless Setup ran. This
+// mirrors how the metrics package uses metrics.Noop() as the always-safe
+// default, except here the no-op is OTel's own, not one this codebase has
+// to implement.
 package tracing
 
 import (
@@ -74,17 +78,19 @@ func Setup(ctx context.Context, cfg config.TracingConfig, serviceName string) (S
 		return noopShutdown, fmt.Errorf("tracing: create OTLP exporter: %w", err)
 	}
 
-	ratio := cfg.SampleRatio
-	if ratio <= 0 || ratio > 1 {
-		// config.normalizeTracing already clamps this when loaded through
-		// config.Load; defensive fallback for hand-built configs.
-		ratio = 1
-	}
-
+	// No clamping here: sdktrace.TraceIDRatioBased already treats fraction
+	// >= 1 as "always sample" and fraction <= 0 as "never sample" (see its
+	// own doc comment), so 0 — a deliberate "record spans, export none"
+	// signal (config.DefaultTracingSampleRatio) — passes through correctly
+	// on its own. A prior version of this line re-clamped ratio <= 0 up to
+	// 1, silently turning an explicit SampleRatio: 0 into "sample
+	// everything" — exactly the bug config.normalizeTracing was fixed to
+	// avoid at the config layer, reintroduced here by a redundant
+	// defensive fallback that used the wrong comparison.
 	provider := sdktrace.NewTracerProvider(
 		sdktrace.WithBatcher(exporter),
 		sdktrace.WithResource(res),
-		sdktrace.WithSampler(sdktrace.ParentBased(sdktrace.TraceIDRatioBased(ratio))),
+		sdktrace.WithSampler(sdktrace.ParentBased(sdktrace.TraceIDRatioBased(cfg.SampleRatio))),
 	)
 	otel.SetTracerProvider(provider)
 

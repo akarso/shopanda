@@ -21,7 +21,7 @@ func LoggingMiddleware(log logger.Logger) Middleware {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			start := time.Now()
-			sw := &statusWriter{ResponseWriter: w, status: http.StatusOK}
+			sw := wrapStatus(w)
 			next.ServeHTTP(sw, r)
 			log.Info("http.request", map[string]interface{}{
 				"method":      r.Method,
@@ -64,6 +64,21 @@ type statusWriter struct {
 func (sw *statusWriter) WriteHeader(code int) {
 	sw.status = code
 	sw.ResponseWriter.WriteHeader(code)
+}
+
+// wrapStatus returns w as a *statusWriter, reusing one already present
+// from an outer middleware in the same chain instead of allocating and
+// layering a new wrapper around it. Metrics, Tracing, and Logging
+// middleware each only need the response's final status code — when more
+// than one of them wraps the same request (the normal case: Metrics and
+// Tracing are both outermost, Logging sits further in), each inner call
+// would otherwise allocate its own wrapper around the outer one's,
+// tripling the allocations for the exact same piece of information.
+func wrapStatus(w http.ResponseWriter) *statusWriter {
+	if sw, ok := w.(*statusWriter); ok {
+		return sw
+	}
+	return &statusWriter{ResponseWriter: w, status: http.StatusOK}
 }
 
 // Unwrap exposes the underlying ResponseWriter for http.MaxBytesReader /

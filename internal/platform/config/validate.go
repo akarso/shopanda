@@ -79,11 +79,48 @@ func normalizeAndValidate(cfg *Config) error {
 	if err := validateTracing(&cfg.Tracing); err != nil {
 		return err
 	}
+	if err := validateStripe(&cfg.Payment.Stripe); err != nil {
+		return err
+	}
+	if err := validateStoreCredit(&cfg.StoreCredit); err != nil {
+		return err
+	}
 
 	if err := validateSecureDefaults(cfg); err != nil {
 		return err
 	}
 
+	return nil
+}
+
+// validateStoreCredit rejects a negative max_issue_amount — unlike 0
+// (an explicit, documented opt-out of the cap), a negative value has no
+// sensible interpretation and would otherwise reach
+// storecredit.Service.Issue's `amount.Amount() > s.maxIssueAmount` check,
+// where it would make the cap tighter than intended (any positive amount
+// exceeds a negative max) rather than doing whatever the operator
+// actually meant.
+func validateStoreCredit(s *StoreCreditConfig) error {
+	if s.MaxIssueAmount < 0 {
+		return fmt.Errorf("config: store_credit.max_issue_amount=%d must not be negative (0 disables the cap)", s.MaxIssueAmount)
+	}
+	return nil
+}
+
+// validateStripe rejects an enabled Stripe config missing either secret —
+// without both, every checkout payment and every incoming webhook would
+// fail at the first real request instead of at startup, where the mistake
+// is far cheaper to catch.
+func validateStripe(s *StripeConfig) error {
+	if !s.Enabled {
+		return nil
+	}
+	if strings.TrimSpace(s.SecretKey) == "" {
+		return fmt.Errorf("config: payment.stripe.enabled=true requires payment.stripe.secret_key")
+	}
+	if strings.TrimSpace(s.WebhookSecret) == "" {
+		return fmt.Errorf("config: payment.stripe.enabled=true requires payment.stripe.webhook_secret")
+	}
 	return nil
 }
 
@@ -234,6 +271,18 @@ func normalizeAuthJWT(a *AuthConfig) error {
 	a.JWTSecret = strings.TrimSpace(a.JWTSecret)
 	if _, err := jwt.ParseSecret(a.JWTSecret); err != nil {
 		return fmt.Errorf("config: %w", err)
+	}
+	// Mirrors normalizeAuthLockout's validation of auth.lockout.window
+	// below: previously auth.jwt_ttl was only parsed in cmd/api's wiring
+	// code, well after config.Load() succeeded, so a typo here (e.g.
+	// "24hh") surfaced as a different error shape from every other config
+	// mistake, at a later point in startup than it needed to.
+	d, err := time.ParseDuration(a.JWTTTL)
+	if err != nil {
+		return fmt.Errorf("config: invalid auth.jwt_ttl %q: %w", a.JWTTTL, err)
+	}
+	if d <= 0 {
+		return fmt.Errorf("config: invalid auth.jwt_ttl %q: must be > 0", a.JWTTTL)
 	}
 	return nil
 }

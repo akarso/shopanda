@@ -68,7 +68,7 @@ func MetricsMiddleware(rec metrics.Recorder) Middleware {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			start := time.Now()
-			sw := &statusWriter{ResponseWriter: w, status: http.StatusOK}
+			sw := wrapStatus(w)
 			next.ServeHTTP(sw, r)
 			pattern := routeMatchFromContext(r.Context())
 			if pattern == "" {

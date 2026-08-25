@@ -109,12 +109,21 @@ func (h *DeliverHandler) Type() string { return domainwebhook.DeliverJobType }
 // are not counted as either a success or a failure — they were never attempted.
 func (h *DeliverHandler) Handle(ctx context.Context, job jobs.Job) (err error) {
 	skipped := false
+	// permanentFailure is set when the endpoint returned a 4xx: retrying an
+	// identical request against a receiver that already rejected it as a
+	// client error (bad payload, wrong auth, endpoint moved) burns retry
+	// budget for no chance of a different outcome, unlike a 5xx or
+	// transport error, which may well succeed on retry. Handle still
+	// returns nil in that case — a job the worker should mark Complete,
+	// not retry via Fail — but permanentFailure keeps it out of
+	// OutcomeSuccess in the metric below.
+	permanentFailure := false
 	defer func() {
 		if skipped {
 			return
 		}
 		outcome := metrics.OutcomeSuccess
-		if err != nil {
+		if err != nil || permanentFailure {
 			outcome = metrics.OutcomeFailed
 		}
 		h.metrics.WebhookDelivery(outcome)
@@ -159,9 +168,24 @@ func (h *DeliverHandler) Handle(ctx context.Context, job jobs.Job) (err error) {
 		"X-Shopanda-Signature": webhookinfra.SignBody(endpoint.Secret, body),
 	}
 
-	status, err := h.poster.Post(ctx, endpoint.URL, headers, body)
-	if err != nil {
-		return err
+	status, postErr := h.poster.Post(ctx, endpoint.URL, headers, body)
+	if postErr != nil {
+		return fmt.Errorf("webhook deliver: post: %w", postErr)
+	}
+	if status >= 400 && status < 500 {
+		// Permanent failure: the receiver rejected this exact request as a
+		// client error, so an identical retry would too. Logged as an
+		// error (still worth an operator's attention — commonly a
+		// misconfigured endpoint, wrong secret, or a payload shape the
+		// receiver doesn't accept) but not returned, so the worker marks
+		// this job Complete instead of retrying it via Fail.
+		permanentFailure = true
+		h.log.Error("webhook.deliver.permanent_failure", fmt.Errorf("endpoint returned status %d", status), map[string]interface{}{
+			"endpoint_id": endpointID,
+			"event_name":  eventName,
+			"status":      status,
+		})
+		return nil
 	}
 	if status < 200 || status >= 300 {
 		return fmt.Errorf("webhook deliver: endpoint returned status %d", status)

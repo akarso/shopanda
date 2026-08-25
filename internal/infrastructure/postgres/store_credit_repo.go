@@ -5,10 +5,12 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"math"
 	"strings"
 
 	"github.com/akarso/shopanda/internal/domain/shared"
 	"github.com/akarso/shopanda/internal/domain/storecredit"
+	"github.com/akarso/shopanda/internal/platform/apperror"
 	"github.com/akarso/shopanda/internal/platform/id"
 	"github.com/lib/pq"
 )
@@ -73,15 +75,28 @@ func (r *StoreCreditRepo) applyEntry(ctx context.Context, entry storecredit.Entr
 	defer tx.Rollback()
 
 	if entry.IdempotencyKey != "" {
-		var exists int
+		var existingAmount int64
+		var existingCurrency, existingNote string
 		err := tx.QueryRowContext(ctx,
-			`SELECT 1 FROM store_credit_ledger WHERE customer_id = $1 AND idempotency_key = $2`,
+			`SELECT amount, currency, note FROM store_credit_ledger WHERE customer_id = $1 AND idempotency_key = $2`,
 			entry.CustomerID, entry.IdempotencyKey,
-		).Scan(&exists)
+		).Scan(&existingAmount, &existingCurrency, &existingNote)
 		if err == nil {
-			// Already applied by a prior attempt with the same key — return
-			// success without crediting again. No commit needed; the
-			// deferred Rollback on this read-only check is a no-op.
+			// A genuine replay (same key, same amount/currency/note) is a
+			// no-op success — this is what makes a retried request safe.
+			// A key reused for a DIFFERENT amount, currency, or note is
+			// not a retry, it's a collision that would otherwise silently
+			// apply the wrong value (or none at all) instead of the one
+			// the caller actually asked for — surfaced as a conflict
+			// rather than masked as success. No commit needed either
+			// way; the deferred Rollback on this read-only check is a
+			// no-op.
+			if existingAmount != entry.Amount.Amount() || existingCurrency != entry.Currency || existingNote != entry.Note {
+				return apperror.Conflict(fmt.Sprintf(
+					"store credit: idempotency key %q already used for %d %s (note %q), not %d %s (note %q)",
+					entry.IdempotencyKey, existingAmount, existingCurrency, existingNote, entry.Amount.Amount(), entry.Currency, entry.Note,
+				))
+			}
 			return nil
 		}
 		if !errors.Is(err, sql.ErrNoRows) {
@@ -103,6 +118,15 @@ func (r *StoreCreditRepo) applyEntry(ctx context.Context, entry storecredit.Entr
 	).Scan(&balance)
 	if err != nil {
 		return fmt.Errorf("store_credit_repo: lock account: %w", err)
+	}
+	// Checked before computing the sum, not after: balance+delta on two
+	// int64s can wrap around silently, which would either let an
+	// overflowing issue through with a corrupted (possibly negative, then
+	// "insufficient balance"-rejected, then wrapped positive again on a
+	// retry) balance, or mask a real overflow as a false insufficient-
+	// balance error.
+	if delta > 0 && balance > math.MaxInt64-delta {
+		return fmt.Errorf("store_credit_repo: balance overflow: %d + %d exceeds int64 range", balance, delta)
 	}
 	if balance+delta < 0 {
 		return fmt.Errorf("%w", storecredit.ErrInsufficientBalance)
@@ -132,11 +156,36 @@ func (r *StoreCreditRepo) applyEntry(ctx context.Context, entry storecredit.Entr
 		if pqErr, ok := err.(*pq.Error); ok {
 			switch {
 			case pqErr.Code == "23503":
-				return fmt.Errorf("store_credit_repo: customer or order not found")
+				// Foreign key violation (unknown customer or order) is a
+				// caller mistake, not a server fault — map to a 4xx-mapped
+				// apperror instead of a bare error that JSONError would
+				// otherwise default to 500 for.
+				return apperror.NotFound("store credit: customer or order not found")
 			case pqErr.Code == "23505" && pqErr.Constraint == storeCreditLedgerIdempotencyConstraint:
-				// Lost the race with a concurrent identical request: the
-				// other one committed first, so this one is a no-op success
-				// rather than a double-issue.
+				// Lost the race with a concurrent identical request. Check
+				// the winner's amount/currency before treating this as a
+				// no-op success, same as the pre-check above — a race is
+				// not exempt from the same-key-different-value conflict
+				// that check exists to catch. Postgres aborts the rest of
+				// a transaction after a statement error, so this must
+				// query via r.db (a fresh connection), not tx — the
+				// winner's row is already committed by the other
+				// transaction, which is exactly why this one just failed.
+				var winnerAmount int64
+				var winnerCurrency, winnerNote string
+				scanErr := r.db.QueryRowContext(ctx,
+					`SELECT amount, currency, note FROM store_credit_ledger WHERE customer_id = $1 AND idempotency_key = $2`,
+					entry.CustomerID, entry.IdempotencyKey,
+				).Scan(&winnerAmount, &winnerCurrency, &winnerNote)
+				if scanErr != nil {
+					return fmt.Errorf("store_credit_repo: check idempotency race winner: %w", scanErr)
+				}
+				if winnerAmount != entry.Amount.Amount() || winnerCurrency != entry.Currency || winnerNote != entry.Note {
+					return apperror.Conflict(fmt.Sprintf(
+						"store credit: idempotency key %q already used for %d %s (note %q), not %d %s (note %q)",
+						entry.IdempotencyKey, winnerAmount, winnerCurrency, winnerNote, entry.Amount.Amount(), entry.Currency, entry.Note,
+					))
+				}
 				return nil
 			}
 		}

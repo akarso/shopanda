@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -15,6 +16,7 @@ import (
 	"github.com/akarso/shopanda/internal/application/checkout"
 	"github.com/akarso/shopanda/internal/domain/cart"
 	"github.com/akarso/shopanda/internal/domain/shared"
+	"github.com/akarso/shopanda/internal/platform/apperror"
 	"github.com/akarso/shopanda/internal/platform/event"
 	"github.com/akarso/shopanda/internal/platform/id"
 	"github.com/akarso/shopanda/internal/platform/logger"
@@ -735,6 +737,15 @@ func (panicStep) Execute(_ context.Context, _ *checkout.Context) error {
 // between a real checkout failure and every step succeeding but the final
 // EventCheckoutCompleted publish failing — the order/payment side is fine,
 // so it must not show up in the same failure-rate bucket as a broken step.
+//
+// Execute must also NOT return an error in this case (fixed in review):
+// checkout.Service.Checkout propagates Execute's error as-is to its
+// caller, which would otherwise report a fully successful checkout (order
+// created, payment captured) as a failure — the HTTP layer would tell the
+// customer to retry, risking a genuine duplicate order, over what is
+// actually just a downstream notification/event-bus problem.
+// succeededEventFailed (and the distinct metrics outcome below) is what
+// keeps this visible to operators instead.
 func TestWorkflow_WithMetrics_RecordsSucceededEventFailed(t *testing.T) {
 	bus := testBus(t)
 	log := testLogger()
@@ -748,8 +759,8 @@ func TestWorkflow_WithMetrics_RecordsSucceededEventFailed(t *testing.T) {
 	wf := checkout.NewWorkflow([]checkout.Step{step}, bus, log).WithMetrics(m)
 
 	ctx := checkout.NewContext("cart-1", "cust-1", "EUR")
-	if err := wf.Execute(context.Background(), ctx); err == nil {
-		t.Fatal("expected the publish error to propagate from Execute")
+	if err := wf.Execute(context.Background(), ctx); err != nil {
+		t.Fatalf("Execute returned %v, want nil — the order/payment succeeded, only the completion notification failed", err)
 	}
 	if len(m.checkoutOutcomes) != 1 || m.checkoutOutcomes[0] != metrics.OutcomeSucceededEventFailed {
 		t.Errorf("checkoutOutcomes = %v, want [%s]", m.checkoutOutcomes, metrics.OutcomeSucceededEventFailed)
@@ -862,6 +873,124 @@ func TestWorkflow_Execute_RecordsErrorStatusOnStepFailure(t *testing.T) {
 	}
 	if stepStatus != codes.Error {
 		t.Errorf("step span status = %v, want Error", stepStatus)
+	}
+}
+
+// TestWorkflow_Execute_PanicInStepStillClosesStepSpan pins a leak where a
+// panicking step never reached the straight-line stepSpan.End() call that
+// used to sit after step.Execute — only the root span (via Execute's own
+// recover) got closed, and the step's own span stayed open forever. The
+// fix runs the step through a helper that ends the span via defer, so it
+// closes (with an error status reflecting the panic) no matter how
+// step.Execute exits.
+func TestWorkflow_Execute_PanicInStepStillClosesStepSpan(t *testing.T) {
+	exporter := withTestTracerProvider(t)
+	bus := testBus(t)
+	log := testLogger()
+
+	step := &panicStep{name: "reserve"}
+	wf := checkout.NewWorkflow([]checkout.Step{step}, bus, log)
+
+	cctx := checkout.NewContext("cart-1", "cust-1", "EUR")
+	func() {
+		defer func() {
+			if r := recover(); r == nil {
+				t.Fatal("expected the panic to propagate out of Execute")
+			}
+		}()
+		_ = wf.Execute(context.Background(), cctx)
+	}()
+
+	var stepSpanFound bool
+	var stepStatus codes.Code
+	for _, s := range exporter.GetSpans() {
+		if s.Name == "checkout.step.panic_step" {
+			stepSpanFound = true
+			stepStatus = s.Status.Code
+		}
+	}
+	if !stepSpanFound {
+		t.Fatal("checkout.step.panic_step span was never recorded — it leaked without ever being ended")
+	}
+	if stepStatus != codes.Error {
+		t.Errorf("step span status = %v, want Error for a panicking step", stepStatus)
+	}
+}
+
+// TestWorkflow_Execute_SpanRedactsErrorMessage pins the fix for recording
+// raw err.Error() strings on checkout spans: an error message is not
+// guaranteed free of customer or payment-processor detail, and these
+// spans may export to a third-party OTLP collector. An *apperror.Error's
+// bounded Code must appear on the span instead of its free-text message.
+func TestWorkflow_Execute_SpanRedactsErrorMessage(t *testing.T) {
+	exporter := withTestTracerProvider(t)
+	bus := testBus(t)
+	log := testLogger()
+
+	const sensitive = "card ending 4242 declined for customer jane.doe@example.com"
+	step := &mockStep{name: "pay", fn: func(_ *checkout.Context) error {
+		return apperror.Wrap(apperror.CodeValidation, sensitive, errors.New(sensitive))
+	}}
+	wf := checkout.NewWorkflow([]checkout.Step{step}, bus, log)
+
+	cctx := checkout.NewContext("cart-1", "cust-1", "EUR")
+	if err := wf.Execute(context.Background(), cctx); err == nil {
+		t.Fatal("expected an error from the failing step")
+	}
+
+	for _, s := range exporter.GetSpans() {
+		if s.Status.Description == "" {
+			continue
+		}
+		if strings.Contains(s.Status.Description, sensitive) {
+			t.Fatalf("span %q status description leaked the raw error message: %q", s.Name, s.Status.Description)
+		}
+		for _, ev := range s.Events {
+			for _, attr := range ev.Attributes {
+				if strings.Contains(attr.Value.AsString(), sensitive) {
+					t.Fatalf("span %q event attribute %q leaked the raw error message", s.Name, attr.Key)
+				}
+			}
+		}
+	}
+
+	var stepStatusDesc string
+	for _, s := range exporter.GetSpans() {
+		if s.Name == "checkout.step.pay" {
+			stepStatusDesc = s.Status.Description
+		}
+	}
+	if stepStatusDesc != string(apperror.CodeValidation) {
+		t.Errorf("step span status description = %q, want the bounded apperror code %q", stepStatusDesc, apperror.CodeValidation)
+	}
+}
+
+// TestWorkflow_Execute_SpanPreservesContextErrorMessage confirms the
+// redaction above doesn't over-apply: context.Canceled/DeadlineExceeded
+// are fixed, safe strings with no PII risk, and stay legible on the span.
+func TestWorkflow_Execute_SpanPreservesContextErrorMessage(t *testing.T) {
+	exporter := withTestTracerProvider(t)
+	bus := testBus(t)
+	log := testLogger()
+
+	step := &mockStep{name: "slow", fn: func(_ *checkout.Context) error { return nil }}
+	wf := checkout.NewWorkflow([]checkout.Step{step}, bus, log)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	cctx := checkout.NewContext("cart-1", "cust-1", "EUR")
+	if err := wf.Execute(ctx, cctx); err == nil {
+		t.Fatal("expected a context-cancellation error")
+	}
+
+	var rootStatusDesc string
+	for _, s := range exporter.GetSpans() {
+		if s.Name == "checkout.execute" {
+			rootStatusDesc = s.Status.Description
+		}
+	}
+	if rootStatusDesc != context.Canceled.Error() {
+		t.Errorf("root span status description = %q, want the unredacted context.Canceled message %q", rootStatusDesc, context.Canceled.Error())
 	}
 }
 

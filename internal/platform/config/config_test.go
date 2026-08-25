@@ -514,8 +514,12 @@ webhooks:
 		t.Fatalf("Load() error: %v", err)
 	}
 
-	if got := Get("webhooks.secrets.stripe"); got != "whsec_flat" {
-		t.Errorf("Get(webhooks.secrets.stripe) = %q, want %q", got, "whsec_flat")
+	// Redacted, like every other secret-bearing field in flatten() —
+	// cfg.Webhooks.Secret("stripe") (see TestWebhooksConfig_SecretFromYAML)
+	// is the accessor that returns the raw value for webhook signing; this
+	// dot-notation path must never expose it.
+	if got := Get("webhooks.secrets.stripe"); got != "***" {
+		t.Errorf("Get(webhooks.secrets.stripe) = %q, want redacted %q", got, "***")
 	}
 }
 
@@ -1671,5 +1675,213 @@ tracing:
 	// — it commonly carries a collector API key.
 	if got := Get("tracing.headers.x-api-key"); got != "***" {
 		t.Errorf("Get(tracing.headers.x-api-key) = %q, want redacted %q", got, "***")
+	}
+}
+
+// TestFlatten_RedactsAllKnownSecrets pins database.password and the
+// integrationdemo plugin secrets going through redactSecret() in
+// flatten(), same as every other secret-bearing field there
+// (webhooks.secrets.*, plugins.warehousedemo.warehouse_api_key,
+// plugins.pimdemo.pim_api_key, tracing.headers.*) — these two were
+// previously exposed raw through Get()/GetOrDefault().
+func TestFlatten_RedactsAllKnownSecrets(t *testing.T) {
+	withTestBaseURL(t)
+	yaml := `
+database:
+  host: localhost
+  password: "super-secret-db-password"
+  sslmode: disable
+plugins:
+  integrationdemo:
+    enabled: true
+    integration_api_key: "demo-api-key"
+    integration_hmac_secret: "demo-hmac-secret"
+`
+	path := writeYAML(t, yaml)
+
+	_, err := loadIsolated(t, path)
+	if err != nil {
+		t.Fatalf("Load() error: %v", err)
+	}
+
+	if got := Get("database.password"); got != "***" {
+		t.Errorf("Get(database.password) = %q, want redacted %q", got, "***")
+	}
+	if got := Get("plugins.integrationdemo.integration_api_key"); got != "***" {
+		t.Errorf("Get(plugins.integrationdemo.integration_api_key) = %q, want redacted %q", got, "***")
+	}
+	if got := Get("plugins.integrationdemo.integration_hmac_secret"); got != "***" {
+		t.Errorf("Get(plugins.integrationdemo.integration_hmac_secret) = %q, want redacted %q", got, "***")
+	}
+}
+
+// TestApplyEnv_CaseVariantBooleansEnableSecurityFlags pins a fix for
+// applyEnv's boolean env vars: each used to have its own inline
+// v == "true" || v == "1" (or, for two of these four, a
+// strings.EqualFold(v, "true") || v == "1") comparison, so "True" or
+// "TRUE" silently failed to enable the flag for some of them depending on
+// which copy-pasted variant a given flag happened to get, with no error or
+// log — every flag now goes through the single parseEnvBool helper
+// (mirroring EnvTruthy's 1/true/yes, case-insensitive convention).
+func TestApplyEnv_CaseVariantBooleansEnableSecurityFlags(t *testing.T) {
+	withTestBaseURL(t)
+	path := writeYAML(t, "")
+
+	t.Setenv("SHOPANDA_AUTH_MFA_ENABLED", "True")
+	t.Setenv("SHOPANDA_AUTH_LOCKOUT_ENABLED", "TRUE")
+	t.Setenv("SHOPANDA_FRONTEND_CSP_ENABLED", "True")
+	t.Setenv("SHOPANDA_RATE_LIMIT_ENABLED", "yes")
+
+	cfg, err := loadCfg(t, path)
+	if err != nil {
+		t.Fatalf("Load() error: %v", err)
+	}
+	if !cfg.Auth.MFAEnabled {
+		t.Error(`Auth.MFAEnabled = false, want true from "True"`)
+	}
+	if !cfg.Auth.Lockout.Enabled {
+		t.Error(`Auth.Lockout.Enabled = false, want true from "TRUE"`)
+	}
+	if !cfg.Frontend.CSPEnabled {
+		t.Error(`Frontend.CSPEnabled = false, want true from "True"`)
+	}
+	if !cfg.RateLimit.Enabled {
+		t.Error(`RateLimit.Enabled = false, want true from "yes"`)
+	}
+}
+
+// TestAuthConfig_InvalidJWTTTLRejectedAtLoad pins auth.jwt_ttl validation
+// moving into config.Load() (normalizeAuthJWT) instead of surfacing only
+// later, from cmd/api's own duration parse at wiring time — an
+// inconsistent error surface compared to every other config mistake,
+// which fails at Load() with a "config: ..." error.
+func TestAuthConfig_InvalidJWTTTLRejectedAtLoad(t *testing.T) {
+	withTestBaseURL(t)
+	yaml := `
+auth:
+  jwt_ttl: "24hh"
+`
+	path := writeYAML(t, yaml)
+
+	_, err := loadCfg(t, path)
+	if err == nil || !strings.Contains(err.Error(), "jwt_ttl") {
+		t.Fatalf("err = %v, want an auth.jwt_ttl validation error", err)
+	}
+}
+
+func TestAuthConfig_ZeroJWTTTLRejected(t *testing.T) {
+	withTestBaseURL(t)
+	yaml := `
+auth:
+  jwt_ttl: "0s"
+`
+	path := writeYAML(t, yaml)
+
+	_, err := loadCfg(t, path)
+	if err == nil || !strings.Contains(err.Error(), "jwt_ttl") {
+		t.Fatalf("err = %v, want an auth.jwt_ttl validation error for a non-positive duration", err)
+	}
+}
+
+func TestStoreCreditConfig_NegativeMaxIssueAmountRejected(t *testing.T) {
+	withTestBaseURL(t)
+	yaml := `
+store_credit:
+  max_issue_amount: -100
+`
+	path := writeYAML(t, yaml)
+
+	_, err := loadCfg(t, path)
+	if err == nil || !strings.Contains(err.Error(), "max_issue_amount") {
+		t.Fatalf("err = %v, want a store_credit.max_issue_amount validation error", err)
+	}
+}
+
+func TestStoreCreditConfig_ZeroMaxIssueAmountAllowed(t *testing.T) {
+	withTestBaseURL(t)
+	yaml := `
+store_credit:
+  max_issue_amount: 0
+`
+	path := writeYAML(t, yaml)
+
+	cfg, err := loadCfg(t, path)
+	if err != nil {
+		t.Fatalf("Load() error: %v, want 0 to be a valid explicit cap-disable", err)
+	}
+	if cfg.StoreCredit.MaxIssueAmount != 0 {
+		t.Errorf("StoreCredit.MaxIssueAmount = %d, want 0 preserved", cfg.StoreCredit.MaxIssueAmount)
+	}
+}
+
+func TestStoreCreditConfig_EnvOverlay(t *testing.T) {
+	withTestBaseURL(t)
+	path := writeYAML(t, "")
+
+	t.Setenv("SHOPANDA_STORE_CREDIT_MAX_ISSUE_AMOUNT", "50000")
+
+	cfg, err := loadCfg(t, path)
+	if err != nil {
+		t.Fatalf("Load() error: %v", err)
+	}
+	if cfg.StoreCredit.MaxIssueAmount != 50000 {
+		t.Errorf("StoreCredit.MaxIssueAmount = %d, want 50000 from env", cfg.StoreCredit.MaxIssueAmount)
+	}
+}
+
+func TestStripeConfig_EnabledWithoutSecretKeyRejected(t *testing.T) {
+	withTestBaseURL(t)
+	yaml := `
+payment:
+  stripe:
+    enabled: true
+    webhook_secret: "whsec_x"
+`
+	path := writeYAML(t, yaml)
+
+	_, err := loadCfg(t, path)
+	if err == nil || !strings.Contains(err.Error(), "secret_key") {
+		t.Fatalf("err = %v, want a payment.stripe.secret_key validation error", err)
+	}
+}
+
+func TestStripeConfig_EnabledWithoutWebhookSecretRejected(t *testing.T) {
+	withTestBaseURL(t)
+	yaml := `
+payment:
+  stripe:
+    enabled: true
+    secret_key: "sk_test_x"
+`
+	path := writeYAML(t, yaml)
+
+	_, err := loadCfg(t, path)
+	if err == nil || !strings.Contains(err.Error(), "webhook_secret") {
+		t.Fatalf("err = %v, want a payment.stripe.webhook_secret validation error", err)
+	}
+}
+
+func TestStripeConfig_EnabledWithBothSecretsAllowed(t *testing.T) {
+	withTestBaseURL(t)
+	yaml := `
+payment:
+  stripe:
+    enabled: true
+    secret_key: "sk_test_x"
+    webhook_secret: "whsec_x"
+`
+	path := writeYAML(t, yaml)
+
+	if _, err := loadCfg(t, path); err != nil {
+		t.Fatalf("Load() error: %v", err)
+	}
+}
+
+func TestStripeConfig_DisabledSkipsSecretValidation(t *testing.T) {
+	withTestBaseURL(t)
+	path := writeYAML(t, "") // payment.stripe.enabled defaults false
+
+	if _, err := loadCfg(t, path); err != nil {
+		t.Fatalf("Load() error: %v, want disabled Stripe to skip secret validation", err)
 	}
 }

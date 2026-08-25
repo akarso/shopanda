@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	adminapp "github.com/akarso/shopanda/internal/application/admin"
@@ -397,5 +398,30 @@ func TestStoreCreditAdminHandler_Issue_AtMaxAmountAllowed(t *testing.T) {
 
 	if rec.Code != http.StatusCreated {
 		t.Fatalf("status = %d, want %d; body=%s", rec.Code, http.StatusCreated, rec.Body.String())
+	}
+}
+
+// TestStoreCreditAdminHandler_Issue_OversizedIdempotencyKeyRejected pins a
+// clear 422 for an Idempotency-Key over store_credit_ledger.idempotency_key's
+// VARCHAR(255) bound (migration 064), instead of letting it reach the DB
+// and surface as a generic constraint-violation 500.
+func TestStoreCreditAdminHandler_Issue_OversizedIdempotencyKeyRejected(t *testing.T) {
+	repo := &stubStoreCreditRepo{}
+	svc := storecreditApp.NewService(repo, adminCustomerRepoFor("cust-1"))
+	h := admin.NewStoreCreditAdminHandler(svc, adminapp.NewAuditor(logger.New("error")))
+	mux := newStoreCreditAdminRouter(h)
+
+	req := issueRequest(t, map[string]interface{}{"amount": 1000})
+	req.Header.Set("Idempotency-Key", strings.Repeat("a", 256))
+	req = testhelper.AdminRequest(req, "admin-1")
+
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("status = %d, want %d; body=%s", rec.Code, http.StatusUnprocessableEntity, rec.Body.String())
+	}
+	if len(repo.issued) != 0 {
+		t.Errorf("issued = %+v, want none", repo.issued)
 	}
 }

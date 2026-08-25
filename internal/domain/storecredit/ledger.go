@@ -30,9 +30,16 @@ type Entry struct {
 	Kind       Kind
 	OrderID    string
 	Note       string
-	// IdempotencyKey, when non-empty, is unique per customer (enforced by
-	// the repository). Only Issue entries set this — Redeem entries are
-	// already keyed by OrderID, which serves the same purpose.
+	// IdempotencyKey, when non-empty, is unique per (customer, key)
+	// (enforced by the repository — see migration 064's partial unique
+	// index). Only Issue entries set this. Redeem entries are NOT
+	// deduplicated by OrderID: there is no unique constraint on it, and a
+	// checkout retry generates a fresh order ID each attempt, so OrderID
+	// changes on every retry rather than staying stable — it cannot serve
+	// as a replay-detection key. See CreateOrderStep's rollback-key
+	// comments (internal/application/checkout/create_order_step.go) for
+	// why a naive stable key (e.g. cart ID) is not a safe substitute
+	// either, and what a correct fix would require.
 	IdempotencyKey string
 	CreatedAt      time.Time
 }

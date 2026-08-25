@@ -11,6 +11,18 @@ import (
 	"github.com/akarso/shopanda/internal/platform/apperror"
 )
 
+// defaultMaxIssueAmount is the cap NewService applies before
+// WithMaxIssueAmount is ever called — 100000 minor units (e.g.
+// $1,000.00), matching config.DefaultStoreCreditMaxIssueAmount. A
+// money-minting cap defaulting to "unbounded until someone remembers to
+// configure it" is the wrong failure mode: unlike WithMetrics/WithTracer,
+// where "never called" safely means "not observed," here it would mean
+// "not limited." cmd/api's wiring always calls WithMaxIssueAmount with an
+// operator-configured (or this same default) value regardless, but a
+// Service built directly — in a test, or by a future caller that doesn't
+// go through that wiring path — now gets the safe default too, not zero.
+const defaultMaxIssueAmount = 100000
+
 // Service orchestrates store credit use cases.
 type Service struct {
 	credits        credit.Repository
@@ -26,13 +38,19 @@ func NewService(credits credit.Repository, customers customer.CustomerRepository
 	if customers == nil {
 		panic("storecredit: nil customers repository")
 	}
-	return &Service{credits: credits, customers: customers}
+	return &Service{credits: credits, customers: customers, maxIssueAmount: defaultMaxIssueAmount}
 }
 
-// WithMaxIssueAmount caps a single Issue call at max minor units. A
-// non-positive max disables the cap. Optional; if never called, Issue is
-// unbounded. Returns the Service for chaining.
+// WithMaxIssueAmount caps a single Issue call at max minor units, in place
+// of the conservative default NewService already applies. A zero max is
+// honored as an explicit, deliberate cap-disable (matching
+// config.StoreCreditConfig's own "0 disables the cap" convention) —
+// distinct from never calling WithMaxIssueAmount at all, which leaves the
+// default in effect. Returns the Service for chaining.
 func (s *Service) WithMaxIssueAmount(max int64) *Service {
+	if max < 0 {
+		return s
+	}
 	s.maxIssueAmount = max
 	return s
 }

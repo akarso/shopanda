@@ -77,13 +77,53 @@ func TestService_Issue_PassesIdempotencyKeyThrough(t *testing.T) {
 	}
 }
 
-func TestService_Issue_NoMaxConfiguredAllowsAnyAmount(t *testing.T) {
+// TestService_Issue_DefaultCapAppliesWithoutWithMaxIssueAmount pins the
+// fix for a money-minting cap that used to default to unbounded until
+// someone remembered to call WithMaxIssueAmount: unlike WithMetrics/
+// WithTracer (where "never called" safely means "not observed"), a
+// Service built directly — without going through cmd/api's wiring, which
+// always calls WithMaxIssueAmount anyway — must not silently allow an
+// arbitrary amount just because nothing configured a cap explicitly.
+func TestService_Issue_DefaultCapAppliesWithoutWithMaxIssueAmount(t *testing.T) {
 	repo := &fakeCreditRepo{}
 	svc := storecreditApp.NewService(repo, &fakeCustomerRepo{found: newTestCustomer(t)})
+	amount, _ := shared.NewMoney(1_000_000, "EUR") // above the 100000 default
+
+	err := svc.Issue(context.Background(), "cust-1", amount, "note", "")
+	if err == nil {
+		t.Fatal("expected the default cap to reject an amount above it")
+	}
+	if !apperror.Is(err, apperror.CodeValidation) {
+		t.Fatalf("err = %v, want a validation apperror", err)
+	}
+}
+
+// TestService_Issue_ExplicitMaxOverridesDefault confirms
+// WithMaxIssueAmount still overrides the default in both directions: a
+// higher explicit max allows an amount the default would have rejected.
+func TestService_Issue_ExplicitMaxOverridesDefault(t *testing.T) {
+	repo := &fakeCreditRepo{}
+	svc := storecreditApp.NewService(repo, &fakeCustomerRepo{found: newTestCustomer(t)}).WithMaxIssueAmount(1_000_000)
 	amount, _ := shared.NewMoney(1_000_000, "EUR")
 
 	if err := svc.Issue(context.Background(), "cust-1", amount, "note", ""); err != nil {
-		t.Fatalf("Issue: %v, want no cap when WithMaxIssueAmount was never called", err)
+		t.Fatalf("Issue: %v, want the explicit higher max to allow this amount", err)
+	}
+}
+
+// TestService_Issue_NegativeMaxIssueAmountIgnored is a defensive check
+// mirroring config.validateStoreCredit's rejection of a negative
+// max_issue_amount at config-load time — belt-and-suspenders for a
+// Service built by hand (e.g. bypassing config.Load) rather than through
+// cmd/api's normal wiring.
+func TestService_Issue_NegativeMaxIssueAmountIgnored(t *testing.T) {
+	repo := &fakeCreditRepo{}
+	svc := storecreditApp.NewService(repo, &fakeCustomerRepo{found: newTestCustomer(t)}).WithMaxIssueAmount(-1)
+	amount, _ := shared.NewMoney(1_000_000, "EUR") // above the default cap this should have left in place
+
+	err := svc.Issue(context.Background(), "cust-1", amount, "note", "")
+	if err == nil {
+		t.Fatal("expected the default cap to still apply — a negative WithMaxIssueAmount call must be ignored, not treated as unbounded")
 	}
 }
 
