@@ -41,6 +41,7 @@ type Config struct {
 	Payment     PaymentConfig     `yaml:"payment"`
 	Search      SearchConfig      `yaml:"search"`
 	Metrics     MetricsConfig     `yaml:"metrics"`
+	Tracing     TracingConfig     `yaml:"tracing"`
 	Dev         DevConfig         `yaml:"dev"`
 	StoreCredit StoreCreditConfig `yaml:"store_credit"`
 }
@@ -51,6 +52,32 @@ type Config struct {
 // operator opt-out, not an oversight.
 type StoreCreditConfig struct {
 	MaxIssueAmount int64 `yaml:"max_issue_amount"`
+}
+
+// TracingConfig holds optional OpenTelemetry trace export settings.
+// Disabled by default — when Enabled, spans for HTTP requests and the
+// checkout workflow are exported via OTLP/HTTP to Endpoint. Unlike Metrics,
+// there is no separate listener: this is an outbound exporter, not a
+// server.
+type TracingConfig struct {
+	Enabled bool `yaml:"enabled"`
+	// Endpoint is the OTLP/HTTP collector address as host:port (e.g.
+	// "localhost:4318" for a local collector, or a cloud vendor's OTLP
+	// ingest host) — no scheme, matching otlptracehttp.WithEndpoint.
+	Endpoint string `yaml:"endpoint"`
+	// Insecure disables TLS for the exporter connection — for a local/
+	// same-host collector only; never set true against a remote endpoint.
+	Insecure bool `yaml:"insecure"`
+	// SampleRatio is the fraction of traces to sample, 0.0–1.0. Left
+	// unmentioned in YAML, it defaults to 1.0 (sample everything) — trace
+	// volume is naturally bounded by request volume, so unlike a
+	// public-facing choice this is safe to default high; operators scale
+	// it down under load. An explicit 0 is a real "record spans but export
+	// none" signal, not treated as unset — see DefaultTracingSampleRatio.
+	SampleRatio float64 `yaml:"sample_ratio"`
+	// Headers are sent with every OTLP export request — e.g. an API key
+	// header some SaaS collectors (Grafana Cloud, Honeycomb) require.
+	Headers map[string]string `yaml:"headers"`
 }
 
 // MetricsConfig holds optional Prometheus metrics settings. Disabled by
@@ -122,6 +149,13 @@ const (
 // override — a conservative default against a fat-fingered or compromised
 // admin session minting an unbounded amount in one request.
 const DefaultStoreCreditMaxIssueAmount int64 = 100000
+
+// DefaultTracingSampleRatio samples every trace absent an explicit
+// operator override. Seeded in defaults() rather than applied as a
+// post-parse fallback so an explicit tracing.sample_ratio: 0 in YAML
+// (yaml.Unmarshal overwrites this default) is distinguishable from the
+// operator never mentioning the field at all.
+const DefaultTracingSampleRatio = 1.0
 
 // DefaultMetricsListen binds /metrics to loopback only, so enabling metrics
 // never exposes them beyond the host unless an operator explicitly changes
@@ -719,6 +753,15 @@ func defaults() Config {
 			Enabled: false,
 			Listen:  DefaultMetricsListen,
 		},
+		Tracing: TracingConfig{
+			Enabled: false,
+			// Seeded here (not applied as a post-parse fallback) so YAML's
+			// zero-value semantics distinguish "operator never mentioned
+			// sample_ratio" (this default survives) from "operator wrote
+			// sample_ratio: 0" (yaml.Unmarshal overwrites it to 0, a real
+			// disable-sampling signal, not a value to helpfully "fix").
+			SampleRatio: DefaultTracingSampleRatio,
+		},
 		StoreCredit: StoreCreditConfig{
 			MaxIssueAmount: DefaultStoreCreditMaxIssueAmount,
 		},
@@ -1133,6 +1176,28 @@ func applyEnv(cfg *Config) {
 	if v := os.Getenv("SHOPANDA_METRICS_LISTEN"); v != "" {
 		cfg.Metrics.Listen = v
 	}
+	if v := os.Getenv("SHOPANDA_TRACING_ENABLED"); v != "" {
+		if b, err := strconv.ParseBool(v); err == nil {
+			cfg.Tracing.Enabled = b
+		}
+	}
+	if v := os.Getenv("SHOPANDA_TRACING_ENDPOINT"); v != "" {
+		cfg.Tracing.Endpoint = v
+	}
+	if v := os.Getenv("SHOPANDA_TRACING_INSECURE"); v != "" {
+		if b, err := strconv.ParseBool(v); err == nil {
+			cfg.Tracing.Insecure = b
+		}
+	}
+	if v := os.Getenv("SHOPANDA_TRACING_SAMPLE_RATIO"); v != "" {
+		// f >= 0, not f > 0: 0 is a deliberate "sample nothing" value here
+		// too, same as the YAML path (see DefaultTracingSampleRatio) —
+		// silently dropping it would apply this override inconsistently
+		// depending on whether it came from YAML or the environment.
+		if f, err := strconv.ParseFloat(v, 64); err == nil && f >= 0 {
+			cfg.Tracing.SampleRatio = f
+		}
+	}
 }
 
 func redactSecret(value string) string {
@@ -1242,6 +1307,17 @@ func flatten(cfg *Config) map[string]string {
 	m["rate_limit.default.burst"] = strconv.Itoa(cfg.RateLimit.Default.Burst)
 	m["metrics.enabled"] = strconv.FormatBool(cfg.Metrics.Enabled)
 	m["metrics.listen"] = cfg.Metrics.Listen
+	m["tracing.enabled"] = strconv.FormatBool(cfg.Tracing.Enabled)
+	m["tracing.endpoint"] = cfg.Tracing.Endpoint
+	m["tracing.insecure"] = strconv.FormatBool(cfg.Tracing.Insecure)
+	m["tracing.sample_ratio"] = strconv.FormatFloat(cfg.Tracing.SampleRatio, 'f', -1, 64)
+	// Redacted, unlike webhooks.secrets.* above: those are pre-existing and
+	// out of scope here, but tracing.headers is new in this change and
+	// commonly carries a collector API key (Grafana Cloud, Honeycomb) — no
+	// reason to expose it raw through Get()/GetOrDefault() from day one.
+	for k, v := range cfg.Tracing.Headers {
+		m["tracing.headers."+k] = redactSecret(v)
+	}
 	return m
 }
 

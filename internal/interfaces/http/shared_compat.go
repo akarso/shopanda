@@ -149,3 +149,9 @@ func ResolverMiddleware(repo routing.RewriteRepository, log logger.Logger) Middl
 func MetricsMiddleware(rec metrics.Recorder) Middleware {
 	return shared.MetricsMiddleware(rec)
 }
+
+// --- Tracing ---
+
+func TracingMiddleware() Middleware {
+	return shared.TracingMiddleware()
+}

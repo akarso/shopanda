@@ -75,12 +75,70 @@ func normalizeAndValidate(cfg *Config) error {
 	if err := validateMetricsListen(cfg); err != nil {
 		return err
 	}
+	normalizeTracing(&cfg.Tracing)
+	if err := validateTracing(&cfg.Tracing); err != nil {
+		return err
+	}
 
 	if err := validateSecureDefaults(cfg); err != nil {
 		return err
 	}
 
 	return nil
+}
+
+// normalizeTracing clamps an out-of-range SampleRatio above 1 down to 1 — a
+// typo like 150 (meant as a percentage) is far more likely than a
+// deliberate attempt to oversample. It deliberately leaves 0 and negative
+// values untouched: 0 is a real "record spans, export none" signal (see
+// DefaultTracingSampleRatio, seeded in defaults() so it's distinguishable
+// from an operator never mentioning sample_ratio at all), and a negative
+// value is rejected outright by validateTracing rather than silently
+// reinterpreted as something the operator didn't ask for.
+func normalizeTracing(t *TracingConfig) {
+	if !t.Enabled {
+		return
+	}
+	if t.SampleRatio > 1 {
+		t.SampleRatio = 1.0
+	}
+}
+
+// validateTracing rejects an enabled tracing config that can't safely
+// export: no destination, a scheme-prefixed endpoint (otlptracehttp.
+// WithEndpoint expects host:port and would otherwise only fail at dial
+// time with a confusing error), a negative sample ratio, or a cleartext
+// (insecure) export target that isn't local or explicitly dev-mode.
+func validateTracing(t *TracingConfig) error {
+	if !t.Enabled {
+		return nil
+	}
+	endpoint := strings.TrimSpace(t.Endpoint)
+	if endpoint == "" {
+		return fmt.Errorf("config: tracing.enabled=true requires tracing.endpoint")
+	}
+	if strings.Contains(endpoint, "://") {
+		return fmt.Errorf("config: tracing.endpoint=%q must be host:port, not a URL (e.g. %q — no scheme)", endpoint, "localhost:4318")
+	}
+	if t.SampleRatio < 0 {
+		return fmt.Errorf("config: tracing.sample_ratio=%v must not be negative", t.SampleRatio)
+	}
+	if t.Insecure && !DevModeEnabled() && !isLoopbackHost(tracingEndpointHost(endpoint)) {
+		return fmt.Errorf("config: tracing.insecure=true would send spans in cleartext to %q; only allowed against a local collector (localhost, 127.0.0.1, ::1) or with SHOPANDA_DEV_MODE=true", endpoint)
+	}
+	return nil
+}
+
+// tracingEndpointHost extracts the host portion of a host:port tracing
+// endpoint for the loopback check above. Falls back to the endpoint as a
+// whole when it has no port (SplitHostPort's error case) — isLoopbackHost
+// simply won't match a non-host string, failing closed rather than open.
+func tracingEndpointHost(endpoint string) string {
+	host, _, err := net.SplitHostPort(endpoint)
+	if err != nil {
+		return endpoint
+	}
+	return host
 }
 
 // normalizeMetrics defaults a blank listen address so an operator who sets

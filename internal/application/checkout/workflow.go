@@ -5,6 +5,11 @@ import (
 	"errors"
 	"fmt"
 
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/codes"
+	"go.opentelemetry.io/otel/trace"
+
 	"github.com/akarso/shopanda/internal/platform/event"
 	"github.com/akarso/shopanda/internal/platform/logger"
 	"github.com/akarso/shopanda/internal/platform/metrics"
@@ -49,10 +54,21 @@ type Workflow struct {
 	bus     *event.Bus
 	log     logger.Logger
 	metrics metrics.Recorder
+	tracer  trace.Tracer
 }
 
 // NewWorkflow creates a Workflow with the given steps.
 // Steps execute in the order provided.
+//
+// The tracer is resolved via otel.Tracer(...) here, at construction time
+// (once per process, when cmd/api wires the checkout workflow) rather than
+// cached in a package variable — see the equivalent note on
+// shared.TracingMiddleware for why: a Tracer handle obtained before
+// tracing.Setup installs a real SDK provider only migrates to it once
+// (OTel's internal sync.Once delegation) and would otherwise stay bound to
+// whatever was global at that first call. Constructing Workflow after
+// Setup has run avoids that pitfall entirely. Before Setup runs (or when
+// tracing is disabled), this is OTel's documented no-op tracer.
 func NewWorkflow(steps []Step, bus *event.Bus, log logger.Logger) *Workflow {
 	if bus == nil {
 		panic("checkout: bus must not be nil")
@@ -60,7 +76,13 @@ func NewWorkflow(steps []Step, bus *event.Bus, log logger.Logger) *Workflow {
 	if log == nil {
 		panic("checkout: logger must not be nil")
 	}
-	return &Workflow{steps: steps, bus: bus, log: log, metrics: metrics.Noop()}
+	return &Workflow{
+		steps:   steps,
+		bus:     bus,
+		log:     log,
+		metrics: metrics.Noop(),
+		tracer:  otel.Tracer("github.com/akarso/shopanda/internal/application/checkout"),
+	}
 }
 
 // WithMetrics sets the metrics recorder used to record checkout outcomes.
@@ -97,20 +119,48 @@ func (w *Workflow) Execute(ctx context.Context, cctx *Context) (err error) {
 	// distinct from a real checkout failure for metrics purposes (see
 	// metrics.OutcomeSucceededEventFailed).
 	succeededEventFailed := false
+	// span is assigned below, after this defer is registered but before
+	// anything that could legitimately panic — it must be declared here
+	// (not via := at Start) so the recover branch can safely check it even
+	// if a panic somehow occurred before assignment.
+	var span trace.Span
 	defer func() {
 		if r := recover(); r != nil {
 			w.metrics.CheckoutResult(metrics.OutcomeFailed)
+			if span != nil {
+				span.RecordError(fmt.Errorf("panic: %v", r))
+				span.SetStatus(codes.Error, "panic")
+				span.End()
+			}
 			panic(r)
 		}
 		switch {
 		case succeededEventFailed:
 			w.metrics.CheckoutResult(metrics.OutcomeSucceededEventFailed)
+			span.SetAttributes(attribute.Bool("checkout.event_publish_failed", true))
+			span.SetStatus(codes.Ok, "")
 		case err != nil:
 			w.metrics.CheckoutResult(metrics.OutcomeFailed)
+			span.RecordError(err)
+			span.SetStatus(codes.Error, err.Error())
 		default:
 			w.metrics.CheckoutResult(metrics.OutcomeSuccess)
+			span.SetStatus(codes.Ok, "")
 		}
+		span.End()
 	}()
+
+	// cctx == nil is a contract case every Step already guards against
+	// (returning a normal error, not panicking) — this must not dereference
+	// cctx.CartID ahead of that, or the recover above would never run.
+	cartID := ""
+	if cctx != nil {
+		cartID = cctx.CartID
+	}
+	ctx, span = w.tracer.Start(ctx, "checkout.execute", trace.WithAttributes(
+		attribute.String("checkout.cart_id", cartID),
+	))
+
 	for _, step := range w.steps {
 		select {
 		case <-ctx.Done():
@@ -133,27 +183,37 @@ func (w *Workflow) Execute(ctx context.Context, cctx *Context) (err error) {
 			return err
 		}
 
-		if err := step.Execute(ctx, cctx); err != nil {
+		stepCtx, stepSpan := w.tracer.Start(ctx, "checkout.step."+step.Name())
+		stepErr := step.Execute(stepCtx, cctx)
+		if stepErr != nil {
+			stepSpan.RecordError(stepErr)
+			stepSpan.SetStatus(codes.Error, stepErr.Error())
+		} else {
+			stepSpan.SetStatus(codes.Ok, "")
+		}
+		stepSpan.End()
+
+		if stepErr != nil {
 			cctx.Trace = append(cctx.Trace, TraceEntry{
 				Step:   step.Name(),
 				Status: "error",
-				Err:    err.Error(),
+				Err:    stepErr.Error(),
 			})
-			w.log.Error("checkout.step.failed", err, map[string]interface{}{
+			w.log.Error("checkout.step.failed", stepErr, map[string]interface{}{
 				"cart_id": cctx.CartID,
 				"step":    step.Name(),
 			})
-			if isContextError(err) {
-				return err
+			if isContextError(stepErr) {
+				return stepErr
 			}
 			if pubErr := w.publishEvent(ctx, EventCheckoutFailed, "checkout.workflow", CheckoutFailedData{
 				CartID:   cctx.CartID,
 				StepName: step.Name(),
-				Error:    err.Error(),
+				Error:    stepErr.Error(),
 			}); pubErr != nil {
-				return fmt.Errorf("checkout: step %q failed: %w (publish: %v)", step.Name(), err, pubErr)
+				return fmt.Errorf("checkout: step %q failed: %w (publish: %v)", step.Name(), stepErr, pubErr)
 			}
-			return fmt.Errorf("checkout: step %q failed: %w", step.Name(), err)
+			return fmt.Errorf("checkout: step %q failed: %w", step.Name(), stepErr)
 		}
 
 		cctx.Trace = append(cctx.Trace, TraceEntry{

@@ -39,6 +39,7 @@ import (
 
 	"github.com/akarso/shopanda/internal/platform/plugin"
 	"github.com/akarso/shopanda/internal/platform/runtime"
+	"github.com/akarso/shopanda/internal/platform/tracing"
 	"github.com/akarso/shopanda/internal/seed"
 
 	shophttp "github.com/akarso/shopanda/internal/interfaces/http"
@@ -174,6 +175,18 @@ func runServe(cfg *config.Config, log logger.Logger, embedScheduler bool) error 
 		return err
 	}
 
+	// Tracing must be set up before wireServeRuntime (which constructs the
+	// checkout Workflow) and buildServeHandler (which constructs
+	// TracingMiddleware): both resolve their otel.Tracer(...) handle once,
+	// at construction time, and only get a real exporter if the global SDK
+	// provider is already installed by then (see workflow.go's NewWorkflow
+	// / shared.TracingMiddleware for why a handle obtained before Setup
+	// runs would otherwise stay bound to the no-op default forever).
+	tracingShutdown, err := tracing.Setup(context.Background(), cfg.Tracing, "shopanda-api")
+	if err != nil {
+		return fmt.Errorf("tracing: %w", err)
+	}
+
 	metricsRecorder, metricsHandler := newMetrics(cfg)
 
 	rt, err := wireServeRuntime(cfg, log, conn, repos, metricsRecorder)
@@ -271,6 +284,16 @@ func runServe(cfg *config.Config, log logger.Logger, embedScheduler bool) error 
 	}()
 	dones = append(dones, busDone)
 	runtime.ShutdownBackground(log, backgroundTimeout+drainWaitSlack, sched, cancels, dones)
+
+	// Flush any spans still buffered by the batch processor, after
+	// everything else has stopped so shutdown-path spans (if any future
+	// instrumentation adds them) aren't dropped. Bounded — a slow/dead
+	// collector must not hang process exit.
+	tracingCtx, tracingCancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer tracingCancel()
+	if shutdownErr := tracingShutdown(tracingCtx); shutdownErr != nil {
+		log.Error("tracing.shutdown.failed", shutdownErr, nil)
+	}
 
 	return err
 }
@@ -774,6 +797,14 @@ func runWorker(cfg *config.Config, log logger.Logger) error {
 		cfg.Metrics.Listen = config.DefaultWorkerMetricsListen
 	}
 
+	// Set up before setupWorker for the same reason as runServe: any future
+	// job-handler instrumentation that resolves otel.Tracer(...) at
+	// construction time needs the real SDK provider installed first.
+	tracingShutdown, err := tracing.Setup(context.Background(), cfg.Tracing, "shopanda-worker")
+	if err != nil {
+		return fmt.Errorf("tracing: %w", err)
+	}
+
 	metricsRecorder, metricsHandler := newMetrics(cfg)
 	jobWorker, _, _, err := setupWorker(conn, cfg, log, pluginApp, metricsRecorder)
 	if err != nil {
@@ -806,6 +837,12 @@ func runWorker(cfg *config.Config, log logger.Logger) error {
 		// own Serve goroutine to actually return after Close(), instead of
 		// closing and immediately exiting the process out from under it.
 		runtime.ShutdownBackground(log, 10*time.Second, nil, []func(){func() { metricsSrv.Close() }}, []<-chan struct{}{metricsDone})
+	}
+
+	tracingCtx, tracingCancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer tracingCancel()
+	if shutdownErr := tracingShutdown(tracingCtx); shutdownErr != nil {
+		log.Error("tracing.shutdown.failed", shutdownErr, nil)
 	}
 	return nil
 }
