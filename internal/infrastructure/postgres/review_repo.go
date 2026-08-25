@@ -8,7 +8,7 @@ import (
 
 	domainReview "github.com/akarso/shopanda/internal/domain/review"
 	"github.com/akarso/shopanda/internal/platform/apperror"
-	"github.com/lib/pq"
+	"github.com/jackc/pgx/v5/pgconn"
 )
 
 var _ domainReview.Repository = (*ReviewRepo)(nil)
@@ -77,9 +77,9 @@ func (r *ReviewRepo) Save(ctx context.Context, rev *domainReview.Review) error {
 		string(rev.Status()), rev.CreatedAt, rev.UpdatedAt,
 	)
 	if err != nil {
-		var pqErr *pq.Error
-		if errors.As(err, &pqErr) && pqErr.Code == "23505" &&
-			pqErr.Constraint == "product_reviews_product_id_customer_id_key" {
+		var pgErr *pgconn.PgError
+		if errors.As(err, &pgErr) && pgErr.Code == "23505" &&
+			pgErr.ConstraintName == "product_reviews_product_id_customer_id_key" {
 			return fmt.Errorf("review_repo: duplicate review: %w", err)
 		}
 		return fmt.Errorf("review_repo: save: %w", err)

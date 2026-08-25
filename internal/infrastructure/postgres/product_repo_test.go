@@ -14,7 +14,7 @@ import (
 	"github.com/akarso/shopanda/internal/platform/id"
 	"github.com/akarso/shopanda/internal/platform/migrate"
 
-	_ "github.com/lib/pq"
+	_ "github.com/jackc/pgx/v5/stdlib"
 )
 
 // testDB opens a connection to the test database.
@@ -26,7 +26,7 @@ func testDB(t *testing.T) *sql.DB {
 	if dsn == "" {
 		t.Skip("SHOPANDA_TEST_DSN not set; skipping integration test")
 	}
-	db, err := sql.Open("postgres", dsn)
+	db, err := sql.Open("pgx", dsn)
 	if err != nil {
 		t.Fatalf("open db: %v", err)
 	}

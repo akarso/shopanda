@@ -10,7 +10,7 @@ import (
 
 	"github.com/akarso/shopanda/internal/domain/catalog"
 	"github.com/akarso/shopanda/internal/platform/apperror"
-	"github.com/lib/pq"
+	"github.com/jackc/pgx/v5/pgconn"
 )
 
 // Compile-time check that VariantRepo implements catalog.VariantRepository.
@@ -100,7 +100,7 @@ func (r *VariantRepo) FindBySKUs(ctx context.Context, skus []string) (map[string
 		querier = r.db
 	}
 
-	rows, err := querier.QueryContext(ctx, q, pq.Array(skus))
+	rows, err := querier.QueryContext(ctx, q, skus)
 	if err != nil {
 		return nil, fmt.Errorf("variant_repo: find by skus: %w", err)
 	}
@@ -188,9 +188,9 @@ func (r *VariantRepo) ListByProductIDs(ctx context.Context, productIDs []string,
 	var rows *sql.Rows
 	var err error
 	if r.tx != nil {
-		rows, err = r.tx.QueryContext(ctx, q, pq.Array(productIDs), limitPerProduct)
+		rows, err = r.tx.QueryContext(ctx, q, productIDs, limitPerProduct)
 	} else {
-		rows, err = r.db.QueryContext(ctx, q, pq.Array(productIDs), limitPerProduct)
+		rows, err = r.db.QueryContext(ctx, q, productIDs, limitPerProduct)
 	}
 	if err != nil {
 		return nil, fmt.Errorf("variant_repo: list by products: %w", err)
@@ -214,8 +214,8 @@ func (r *VariantRepo) ListByProductIDs(ctx context.Context, productIDs []string,
 // skuConflict returns an apperror.Conflict when err is a unique-constraint
 // violation on the variants_sku_key index; otherwise it returns nil.
 func skuConflict(err error) error {
-	var pqErr *pq.Error
-	if errors.As(err, &pqErr) && pqErr.Code == "23505" && pqErr.Constraint == "variants_sku_key" {
+	var pgErr *pgconn.PgError
+	if errors.As(err, &pgErr) && pgErr.Code == "23505" && pgErr.ConstraintName == "variants_sku_key" {
 		return apperror.Conflict("variant with this sku already exists")
 	}
 	return nil

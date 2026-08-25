@@ -177,12 +177,27 @@ type DatabaseConfig struct {
 	Password string `yaml:"password"`
 	Name     string `yaml:"name"`
 	SSLMode  string `yaml:"sslmode"`
+
+	// QueryExecMode overrides pgx's default query execution mode
+	// (server-side prepared statement caching). Leave empty for a direct
+	// connection to PostgreSQL. Set to "exec" when a transaction-pooling
+	// proxy (e.g. PgBouncer in transaction mode, as DEPLOYMENT.md
+	// recommends for larger deployments) sits in front of PostgreSQL —
+	// server-side prepared statements do not survive that pooling mode,
+	// surfacing as "prepared statement ... already exists/does not exist"
+	// errors under load. See pgx's QueryExecMode docs for the other
+	// allowed values (cache_statement, cache_describe, describe_exec,
+	// exec, simple_protocol).
+	QueryExecMode string `yaml:"query_exec_mode"`
 }
 
 func (d DatabaseConfig) DSN() string {
 	query := url.Values{}
 	if d.SSLMode != "" {
 		query.Set("sslmode", d.SSLMode)
+	}
+	if d.QueryExecMode != "" {
+		query.Set("default_query_exec_mode", d.QueryExecMode)
 	}
 
 	u := &url.URL{
@@ -849,6 +864,9 @@ func applyEnv(cfg *Config) {
 	if v := os.Getenv("SHOPANDA_DATABASE_SSLMODE"); v != "" {
 		cfg.Database.SSLMode = v
 	}
+	if v := os.Getenv("SHOPANDA_DATABASE_QUERY_EXEC_MODE"); v != "" {
+		cfg.Database.QueryExecMode = v
+	}
 	if v := os.Getenv("SHOPANDA_LOG_LEVEL"); v != "" {
 		cfg.Log.Level = v
 	}
@@ -1226,6 +1244,7 @@ func flatten(cfg *Config) map[string]string {
 	m["database.password"] = redactSecret(cfg.Database.Password)
 	m["database.name"] = cfg.Database.Name
 	m["database.sslmode"] = cfg.Database.SSLMode
+	m["database.query_exec_mode"] = cfg.Database.QueryExecMode
 	m["log.level"] = cfg.Log.Level
 	m["log.format"] = cfg.Log.Format
 	m["auth.jwt_ttl"] = cfg.Auth.JWTTTL

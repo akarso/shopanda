@@ -10,7 +10,7 @@ import (
 
 	"github.com/akarso/shopanda/internal/domain/catalog"
 	"github.com/akarso/shopanda/internal/platform/apperror"
-	"github.com/lib/pq"
+	"github.com/jackc/pgx/v5/pgconn"
 )
 
 const maxListLimit = 100
@@ -150,8 +150,8 @@ func (r *ProductRepo) Create(ctx context.Context, p *catalog.Product) error {
 		attrs, p.CreatedAt, p.UpdatedAt,
 	)
 	if err != nil {
-		var pqErr *pq.Error
-		if errors.As(err, &pqErr) && pqErr.Code == "23505" {
+		var pgErr *pgconn.PgError
+		if errors.As(err, &pgErr) && pgErr.Code == "23505" {
 			return apperror.Conflict("product with this slug already exists")
 		}
 		return fmt.Errorf("product_repo: create: %w", err)

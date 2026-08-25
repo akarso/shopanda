@@ -12,7 +12,7 @@ import (
 	"github.com/akarso/shopanda/internal/domain/storecredit"
 	"github.com/akarso/shopanda/internal/platform/apperror"
 	"github.com/akarso/shopanda/internal/platform/id"
-	"github.com/lib/pq"
+	"github.com/jackc/pgx/v5/pgconn"
 )
 
 // StoreCreditRepo implements storecredit.Repository.
@@ -153,15 +153,16 @@ func (r *StoreCreditRepo) applyEntry(ctx context.Context, entry storecredit.Entr
 		orderID, entry.Note, entry.IdempotencyKey, entry.CreatedAt,
 	)
 	if err != nil {
-		if pqErr, ok := err.(*pq.Error); ok {
+		var pgErr *pgconn.PgError
+		if errors.As(err, &pgErr) {
 			switch {
-			case pqErr.Code == "23503":
+			case pgErr.Code == "23503":
 				// Foreign key violation (unknown customer or order) is a
 				// caller mistake, not a server fault — map to a 4xx-mapped
 				// apperror instead of a bare error that JSONError would
 				// otherwise default to 500 for.
 				return apperror.NotFound("store credit: customer or order not found")
-			case pqErr.Code == "23505" && pqErr.Constraint == storeCreditLedgerIdempotencyConstraint:
+			case pgErr.Code == "23505" && pgErr.ConstraintName == storeCreditLedgerIdempotencyConstraint:
 				// Lost the race with a concurrent identical request. Check
 				// the winner's amount/currency before treating this as a
 				// no-op success, same as the pre-check above — a race is

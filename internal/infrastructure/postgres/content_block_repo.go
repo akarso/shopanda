@@ -11,7 +11,7 @@ import (
 	"github.com/akarso/shopanda/internal/domain/cms"
 	"github.com/akarso/shopanda/internal/platform/apperror"
 	"github.com/akarso/shopanda/internal/platform/id"
-	"github.com/lib/pq"
+	"github.com/jackc/pgx/v5/pgconn"
 )
 
 var _ cms.ContentBlockRepository = (*ContentBlockRepo)(nil)
@@ -110,7 +110,8 @@ func (r *ContentBlockRepo) Create(ctx context.Context, block *cms.ContentBlock) 
 		block.IsActive(), block.CreatedAt(), block.UpdatedAt(),
 	)
 	if err != nil {
-		if pqErr, ok := err.(*pq.Error); ok && pqErr.Code == "23505" {
+		var pgErr *pgconn.PgError
+		if errors.As(err, &pgErr) && pgErr.Code == "23505" {
 			return apperror.Conflict("content block already exists")
 		}
 		return fmt.Errorf("content_block_repo: create: %w", err)
@@ -282,7 +283,8 @@ func (r *ContentBlockRepo) SaveTargetPlacements(ctx context.Context, targetType 
 			) VALUES ($1, $2, $3, $4, $5, true, now(), now())`,
 			placementID, blockID, string(targetType), targetKey, position,
 		); err != nil {
-			if pqErr, ok := err.(*pq.Error); ok && pqErr.Code == "23505" {
+			var pgErr *pgconn.PgError
+			if errors.As(err, &pgErr) && pgErr.Code == "23505" {
 				return apperror.Conflict("content block placements conflict for target")
 			}
 			return fmt.Errorf("content_block_repo: save placements insert: %w", err)

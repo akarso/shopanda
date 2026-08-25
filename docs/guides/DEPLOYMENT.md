@@ -793,6 +793,8 @@ Use either individual DB environment variables or `DATABASE_URL`.
 
 For larger deployments, place PgBouncer between Shopanda and PostgreSQL, especially when running multiple web and worker instances.
 
+If PgBouncer runs in transaction-pooling mode (the common mode for this topology), set `database.query_exec_mode: exec` (or `SHOPANDA_DATABASE_QUERY_EXEC_MODE=exec`). Shopanda's driver (pgx) otherwise defaults to server-side prepared statement caching, which does not survive transaction pooling and surfaces as `prepared statement "..." already exists` / `does not exist` errors under load. Leave this unset for a direct connection to PostgreSQL — it disables a real performance optimization and should only be set when a transaction-pooling proxy is actually in front of the database.
+
 ### Back up the database
 
 Simple logical backup:

@@ -9,7 +9,7 @@ import (
 
 	"github.com/akarso/shopanda/internal/domain/customergroup"
 	"github.com/akarso/shopanda/internal/domain/shared"
-	"github.com/lib/pq"
+	"github.com/jackc/pgx/v5/pgconn"
 )
 
 // PostgresGroupPriceRepo implements customergroup.GroupPriceRepository.
@@ -38,7 +38,7 @@ func (r *PostgresGroupPriceRepo) FindByVariantsGroupCurrencyAndStore(ctx context
 	const q = `SELECT id, group_id, variant_id, store_id, currency, amount, created_at
 		FROM customer_group_prices
 		WHERE variant_id = ANY($1) AND group_id = $2 AND currency = $3 AND store_id = $4`
-	rows, err := r.db.QueryContext(ctx, q, pq.Array(variantIDs), groupID, currency, storeID)
+	rows, err := r.db.QueryContext(ctx, q, variantIDs, groupID, currency, storeID)
 	if err != nil {
 		return nil, fmt.Errorf("b2b group price repo: find batch: %w", err)
 	}
@@ -111,7 +111,8 @@ func (r *PostgresGroupPriceRepo) Upsert(ctx context.Context, price *customergrou
 		price.Amount.Currency(), price.Amount.Amount(), price.CreatedAt,
 	)
 	if err != nil {
-		if pqErr, ok := err.(*pq.Error); ok && pqErr.Code == "23503" {
+		var pgErr *pgconn.PgError
+		if errors.As(err, &pgErr) && pgErr.Code == "23503" {
 			return fmt.Errorf("b2b group price repo: group or variant not found")
 		}
 		return fmt.Errorf("b2b group price repo: upsert: %w", err)

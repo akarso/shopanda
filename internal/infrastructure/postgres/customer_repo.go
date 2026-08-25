@@ -11,7 +11,7 @@ import (
 	"github.com/akarso/shopanda/internal/domain/adminuser"
 	"github.com/akarso/shopanda/internal/domain/customer"
 	"github.com/akarso/shopanda/internal/platform/apperror"
-	"github.com/lib/pq"
+	"github.com/jackc/pgx/v5/pgconn"
 )
 
 // Compile-time check that CustomerRepo implements customer and adminuser repositories.
@@ -91,9 +91,9 @@ func (r *CustomerRepo) Create(ctx context.Context, c *customer.Customer) error {
 		c.CreatedAt, c.UpdatedAt,
 	)
 	if err != nil {
-		var pqErr *pq.Error
-		if errors.As(err, &pqErr) && pqErr.Code == "23505" {
-			if pqErr.Constraint == "customers_email_key" {
+		var pgErr *pgconn.PgError
+		if errors.As(err, &pgErr) && pgErr.Code == "23505" {
+			if pgErr.ConstraintName == "customers_email_key" {
 				return apperror.Conflict("customer with this email already exists")
 			}
 			return apperror.Conflict("customer with this id already exists")
@@ -121,8 +121,8 @@ func (r *CustomerRepo) Update(ctx context.Context, c *customer.Customer) error {
 		updatedAt, c.ID,
 	)
 	if err != nil {
-		var pqErr *pq.Error
-		if errors.As(err, &pqErr) && pqErr.Code == "23505" {
+		var pgErr *pgconn.PgError
+		if errors.As(err, &pgErr) && pgErr.Code == "23505" {
 			return apperror.Conflict("customer with this email already exists")
 		}
 		return fmt.Errorf("customer_repo: update: %w", err)

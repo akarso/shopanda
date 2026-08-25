@@ -8,7 +8,7 @@ import (
 	"strings"
 
 	"github.com/akarso/shopanda/internal/domain/customergroup"
-	"github.com/lib/pq"
+	"github.com/jackc/pgx/v5/pgconn"
 )
 
 // PostgresRepo implements customergroup.Repository.
@@ -88,7 +88,8 @@ func (r *PostgresRepo) Save(ctx context.Context, group *customergroup.Group) err
 		group.ID, group.Code, group.Name, group.Description, group.CreatedAt, group.UpdatedAt,
 	)
 	if err != nil {
-		if pqErr, ok := err.(*pq.Error); ok && pqErr.Code == "23505" {
+		var pgErr *pgconn.PgError
+		if errors.As(err, &pgErr) && pgErr.Code == "23505" {
 			return fmt.Errorf("b2b groups repo: code already exists")
 		}
 		return fmt.Errorf("b2b groups repo: save: %w", err)
@@ -126,7 +127,8 @@ func (r *PostgresRepo) AssignCustomer(ctx context.Context, customerID, groupID s
 		ON CONFLICT (customer_id) DO UPDATE SET group_id = EXCLUDED.group_id`
 	_, err := r.db.ExecContext(ctx, q, customerID, groupID)
 	if err != nil {
-		if pqErr, ok := err.(*pq.Error); ok && pqErr.Code == "23503" {
+		var pgErr *pgconn.PgError
+		if errors.As(err, &pgErr) && pgErr.Code == "23503" {
 			return fmt.Errorf("b2b groups repo: customer or group not found")
 		}
 		return fmt.Errorf("b2b groups repo: assign customer: %w", err)

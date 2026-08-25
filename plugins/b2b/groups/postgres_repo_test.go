@@ -12,7 +12,7 @@ import (
 	"github.com/akarso/shopanda/plugins/b2b"
 	"github.com/akarso/shopanda/plugins/b2b/groups"
 
-	_ "github.com/lib/pq"
+	_ "github.com/jackc/pgx/v5/stdlib"
 )
 
 func testDB(t *testing.T) *sql.DB {
@@ -21,7 +21,7 @@ func testDB(t *testing.T) *sql.DB {
 	if dsn == "" {
 		t.Skip("SHOPANDA_TEST_DSN not set; skipping integration test")
 	}
-	db, err := sql.Open("postgres", dsn)
+	db, err := sql.Open("pgx", dsn)
 	if err != nil {
 		t.Fatalf("open db: %v", err)
 	}

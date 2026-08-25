@@ -7,7 +7,7 @@ import (
 	"sort"
 	"testing"
 
-	_ "github.com/lib/pq"
+	_ "github.com/jackc/pgx/v5/stdlib"
 )
 
 func TestListMigrations_SortsFiles(t *testing.T) {
@@ -133,5 +133,5 @@ func openPendingTestDB(t *testing.T) (*sql.DB, error) {
 	if dsn == "" {
 		t.Skip("SHOPANDA_TEST_DSN not set")
 	}
-	return sql.Open("postgres", dsn)
+	return sql.Open("pgx", dsn)
 }

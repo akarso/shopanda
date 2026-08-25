@@ -8,7 +8,7 @@ import (
 
 	"github.com/akarso/shopanda/internal/domain/routing"
 	"github.com/akarso/shopanda/internal/platform/apperror"
-	"github.com/lib/pq"
+	"github.com/jackc/pgx/v5/pgconn"
 )
 
 // Compile-time check that RewriteRepo implements routing.RewriteRepository.
@@ -62,8 +62,8 @@ func (r *RewriteRepo) Save(ctx context.Context, rw *routing.URLRewrite) error {
 	      ON CONFLICT (path) DO UPDATE SET type = $2, entity_id = $3, updated_at = now()`
 	_, err := r.db.ExecContext(ctx, q, rw.Path(), rw.Type(), rw.EntityID())
 	if err != nil {
-		var pqErr *pq.Error
-		if errors.As(err, &pqErr) && pqErr.Code == "23505" {
+		var pgErr *pgconn.PgError
+		if errors.As(err, &pgErr) && pgErr.Code == "23505" {
 			return apperror.Conflict("url rewrite for this path already exists")
 		}
 		return fmt.Errorf("rewrite_repo: save: %w", err)

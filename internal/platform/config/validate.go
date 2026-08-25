@@ -85,6 +85,9 @@ func normalizeAndValidate(cfg *Config) error {
 	if err := validateStoreCredit(&cfg.StoreCredit); err != nil {
 		return err
 	}
+	if err := validateDatabase(&cfg.Database); err != nil {
+		return err
+	}
 
 	if err := validateSecureDefaults(cfg); err != nil {
 		return err
@@ -105,6 +108,19 @@ func validateStoreCredit(s *StoreCreditConfig) error {
 		return fmt.Errorf("config: store_credit.max_issue_amount=%d must not be negative (0 disables the cap)", s.MaxIssueAmount)
 	}
 	return nil
+}
+
+// validateDatabase rejects a query_exec_mode pgx itself would reject at
+// connect time (pgx.ParseConfig only recognizes these five strings) —
+// caught at Load rather than surfacing as an opaque dial-time DSN parse
+// error on first use.
+func validateDatabase(d *DatabaseConfig) error {
+	switch d.QueryExecMode {
+	case "", "cache_statement", "cache_describe", "describe_exec", "exec", "simple_protocol":
+		return nil
+	default:
+		return fmt.Errorf("config: unsupported database.query_exec_mode: %q (allowed: cache_statement, cache_describe, describe_exec, exec, simple_protocol)", d.QueryExecMode)
+	}
 }
 
 // validateStripe rejects an enabled Stripe config missing either secret —
