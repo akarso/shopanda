@@ -7,6 +7,7 @@ Status: design guide (Phase 7 hooks/slots/extensions shipped; Phase 8 integrator
 
 Related:
 
+- [Extension Points](EXTENSION_POINTS.md) — pick a mechanism first (events vs hooks vs pricing pipeline vs checkout workflow vs composition steps); this guide covers coordinating *multiple* plugins on the same seam
 - [Plugin Authoring Guide](../../PLUGINS.md)
 - [Developer Extension Guide](DEVELOPER.md)
 - [Integrator Platform spec](../phase-8-integrator-platform/specs/INTEGRATOR_PLATFORM.md) — architecture, port catalog, acceptance criteria
@@ -89,7 +90,7 @@ Use hooks when the extension point is not already a first-class pipeline (e.g. r
 
 - **Extension fields** — `app.Extensions().RegisterField(...)`; values via REST/GraphQL; cart → order snapshot at checkout
 - **Slots** — `app.Slots("<registrant>").RegisterRenderer(anchor, placement, priority, fn)`
-- **Assets** — `app.Assets().RegisterManifest(...)` for route-gated CSS/JS
+- **Assets** — `app.Assets(registrant).Register(manifest)` for route-gated CSS/JS
 
 Catalog endpoints: `GET /api/v1/admin/extensions/fields`, `/hooks`, `/slots`. Infrastructure ports: `GET /api/v1/admin/extensions/ports` (PR-801).
 

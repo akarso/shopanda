@@ -4,7 +4,77 @@ The operational guides live in [`docs/guides/`](docs/guides/):
 
 - [**Deployment Guide**](docs/guides/DEPLOYMENT.md) — install, configure, run, scale, back up, and troubleshoot Shopanda
 - [**Developer Guide**](docs/guides/DEVELOPER.md) — extend the platform via plugins, events, pipelines, and workflows
+- [**Extension Points**](docs/guides/EXTENSION_POINTS.md) — which mechanism (events, hooks, pricing pipeline, checkout workflow, composition steps, registries) to reach for
 - [**Merchant Guide**](docs/guides/MERCHANT.md) — manage products, orders, and day-to-day store operations
+
+## Incident response
+
+Symptom → check → fix, for the scenarios most likely to page someone. Each links back to the fuller reference section below it for detail this summary skips.
+
+### Database unreachable
+
+**Symptom:**
+- At startup: `serve`/`worker` exits immediately, stderr `error: database: db: ping: <driver error>`. Both processes behave identically — neither retries, neither starts in a degraded mode.
+- Mid-run: `GET /readyz` returns `503 {"status":"unavailable"}` while `GET /healthz` stays `200` — the process is alive but can't reach Postgres. Regular API requests on DB-backed routes return `5xx` with no single unifying log line; check `http.request` log entries for `status >= 500` on the affected routes.
+- Worker process: repeating `worker.dequeue.failed` log lines, one per poll tick — the worker does **not** crash, it keeps polling indefinitely.
+
+**Check:**
+```bash
+curl -s -o /dev/null -w '%{http_code}\n' localhost:PORT/healthz   # expect 200 — rules out a crashed process
+curl -s -o /dev/null -w '%{http_code}\n' localhost:PORT/readyz    # 503 confirms DB unreachable from this process
+pg_isready -h <host> -p <port>                                    # or: psql "$DATABASE_URL" -c 'select 1'
+```
+
+**Fix:** restore Postgres connectivity (network/credentials/DB itself). If the DB was down at process **start**, the process already exited and needs a manual/orchestrator restart once connectivity is confirmed. If it dropped **mid-run**, both `/readyz` and the worker self-heal on the next successful ping/dequeue — no restart needed. See ["Liveness vs readiness"](#liveness-vs-readiness) below for the full probe contract.
+
+### Bad migration
+
+**Symptom:** `./shopanda migrate` exits non-zero: `migrate <file>: exec: <pg error>` or `migrate <file>: record version: <pg error>`.
+
+**Check:**
+```bash
+psql "$DATABASE_URL" -c "select version from schema_migrations order by version desc limit 5;"
+```
+The failing file is **not** in this table — each migration runs inside one transaction (`BEGIN` … exec … record version … `COMMIT`), so a failure rolls back cleanly and leaves the schema exactly as it was before that file ran.
+
+**Fix:** fix the `.sql` file (or author a new corrective migration with the next numeric prefix — never renumber or edit an already-shipped one), then re-run `./shopanda migrate`. It only (re)attempts files not yet recorded, so retrying is safe. Exception: a statement that cannot run inside a transaction block (e.g. `CREATE INDEX CONCURRENTLY`) fails differently — Postgres may leave a partial object behind; inspect manually (`\d <table>`, `pg_stat_progress_create_index`) rather than assuming the same clean rollback applies.
+
+There is **no down-migration mechanism** in this codebase. "Rollback" for a schema change means restoring from backup, not reversing a migration file — see [DEPLOYMENT.md's backup/restore commands](docs/guides/DEPLOYMENT.md) (`pg_dump` / `psql`).
+
+### Rollback (deploy / migration / plugin config)
+
+What actually exists today, so you don't go looking for tooling that isn't there:
+
+| What broke | Rollback path | What does **not** exist |
+| --- | --- | --- |
+| Bad container image / deploy | Manually redeploy the previous known-good `sha-<commit>` / digest pin | No scripted rollback command anywhere in this repo — **keep a record of the last-known-good tag before every deploy**, nothing here tracks deploy history for you |
+| Bad migration | Restore from backup (`pg_dump`/`psql`, see [DEPLOYMENT.md](docs/guides/DEPLOYMENT.md)) | No down-migrations, no `migrate down` |
+| Bad plugin config | Revert the config flag/env var, then restart | No runtime plugin disable/enable API. `serve` degrades and keeps running (`plugin.init.failed` logged, other plugins unaffected); `worker`/`scheduler`/`search:reindex` instead **exit non-zero** on the same failure — either way, a restart is required after fixing the config |
+
+### Webhook SSRF rejects
+
+**Symptom:** admin create/update of a webhook endpoint returns a validation error `ssrf: destination address ... is not allowed` (or `ssrf: non-canonical IP host is not allowed`); or a delivery job repeatedly fails with `worker.job.failed` whose error contains `ssrf: destination resolves to disallowed address ...` — the domain looks fine but its DNS record currently resolves into a blocked range.
+
+**Check:**
+```bash
+dig +short <endpoint-host>   # what does it resolve to right now?
+```
+Compare against the blocked ranges in ["Outbound webhooks (SSRF)"](#outbound-webhooks-ssrf) below (private/link-local/reserved/NAT64). Also confirm the endpoint is `https://` — a plain `http://` URL is rejected regardless of IP and can look like an SSRF false positive at a glance.
+
+**Fix:** if the destination is genuinely private/reserved, this is the control working as intended — no fix needed. If it's a legitimate public endpoint that happens to resolve into a blocked range, **there is currently no allowlist or override** — onboarding it requires a code change to `internal/platform/ssrf`, not a config flag. Do not attempt to route around this check; escalate to engineering.
+
+### Rate-limit / login lockouts
+
+**Symptom:** a specific user gets `429` / `too many login attempts, try again later` on login; or general API clients get `429` / `rate_limited`.
+
+**Check:** these are two different limiters — distinguish which one fired. Login lockout is keyed by **IP + normalized email** (`auth.lockout`); a single user locked out on login while their other API calls succeed is lockout, not the general HTTP rate limit. Confirm configured thresholds: `auth.lockout.max_failures` (default 10), `auth.lockout.window` (default 15m), `auth.lockout.store` (`cache` default, shared across instances; `memory` is single-instance only — logs `auth.lockout.store_memory` at startup if selected).
+
+**Fix:** **there is no admin unlock endpoint or CLI command today.** The remediation paths that actually exist:
+- Wait it out — lockout self-clears after one full quiet window (default 15 minutes) with no further failed attempts.
+- `store=memory` only: restarting the affected instance clears lockout state — but for **every** locked-out key on that instance, not just the one you meant to clear.
+- `store=cache`: technically clearable by deleting the backend cache key directly (`auth:lockout:` + SHA-256 of `"<ip>|<lowercased, trimmed email>"` — the email **must** be lowercased and trimmed exactly as the app does before hashing, or the deletion silently targets the wrong key: no error, key just isn't found, and the user stays locked out with no indication anything went wrong). This needs direct cache access and manually computing the hash — no supported tool does this for you, and this is not a safe first move under incident pressure. Prefer waiting it out (default 15 minutes) unless the situation genuinely can't wait.
+
+For general `429`/`rate_limited` (not login-specific): this is per-process and not shared across instances. If a shared NAT/proxy is causing false positives across unrelated clients, set `rate_limit.trusted_proxies` so `ClientIP` reflects the real client — see ["Rate limiting and login lockout"](#rate-limiting-and-login-lockout) below.
 
 ## Planning
 

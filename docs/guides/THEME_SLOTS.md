@@ -274,7 +274,7 @@ If you rename `pdp.info` → `product.sidebar`, plugins registering on `pdp.info
 
 | Need | Use |
 | --- | --- |
-| Plugin-owned global assets | `app.Assets().RegisterManifest()` — route-gated CSS/JS in layout head/footer |
+| Plugin-owned global assets | `app.Assets(name).Register(manifest)` — route-gated CSS/JS in layout head/footer |
 | Small HTML fragment | Slot renderer |
 | Theme-owned styling | `static/css/` in your theme |
 
