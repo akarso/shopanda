@@ -90,20 +90,25 @@ This is an **in-module** plugin model (same Go module, compile-time registration
 
 ## Extension mechanisms
 
+Not sure which mechanism fits your task? [EXTENSION_POINTS.md](docs/guides/EXTENSION_POINTS.md) is a decision guide with a picker, real code snippets, and the full registry catalog. This section is the flat API reference once you already know what you're looking for.
+
 Available today through `plugin.App`:
 
 | Mechanism | API | Use for |
 | --- | --- | --- |
-| **Pricing pipeline** | `RegisterPricingStep(step, position...)` | Fees, discounts; `before:`/`after:` core steps (`pkg/extapi`) |
+| **Hooks** | `Hooks(registrant).Register(hook, priority, handler)` | Synchronous, priority-ordered, payload-mutating cart-lifecycle handlers; can veto by returning an error |
+| **Pricing pipeline** | `RegisterPricingStep(step, position...)` | Fees, discounts; `before:`/`after:`/`replace:` core steps (`pkg/extapi`) |
 | **Checkout workflow** | `RegisterCheckoutStep` | Extra validation or side effects during checkout |
 | **Composition pipelines** | `RegisterCompositionStep("pdp"\|"plp", …)` | Enrich API/storefront product responses |
 | **Events** | `Bus.On` / `Bus.OnAsync` | React to domain changes |
+| **Extension fields** | `Extensions().RegisterField(...)` | Custom fields on entities; values via REST/GraphQL; cart → order snapshot at checkout |
+| **Import/export row hooks** | `Import(registrant).RegisterRowHook(...)` / `Export(registrant).RegisterRowHook(...)` | Remap/validate CSV columns per entity, in priority order |
 | **Permissions** | `RegisterPermission` | Admin RBAC strings on the app-owned `rbac.Registry` |
 | **Admin config** | `RegisterConfig` | Simple settings on Integrations page (`GET/PUT /admin/config?group=plugins`) |
 | **CLI commands** | `RegisterCommand` | Operational subcommands (`domain:action`) |
 | **Public HTTP routes** | `RegisterPublicRoute` | Register public HTTP handlers (e.g. an alternative API surface); mounted by `main.go` after `InitAll` |
 | **UI slots** | `Slots(registrant).RegisterRenderer` | Inject HTML at named theme anchors (see below) |
-| **Asset manifest** | `Assets().RegisterManifest` | Route-gated CSS/JS in layout head/footer without theme forks |
+| **Asset manifest** | `Assets(registrant).Register(manifest)` | Route-gated CSS/JS in layout head/footer without theme forks |
 | **Promotion rule evaluators** | `PromotionRules(registrant).RegisterCatalogCondition/Action` (+ cart variants) | Custom JSON `"type"` values for catalog/cart promotions (PR-862) |
 
 **Infrastructure providers** (typed ports on `plugin.App`; wrong types fail at compile time):

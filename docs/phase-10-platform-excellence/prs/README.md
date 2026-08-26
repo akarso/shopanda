@@ -28,7 +28,7 @@
 | PR-1023 | E | done | [HTTP package split (storefront)](PR-1023.md) |
 | PR-1024 | E | done | [OpenTelemetry traces](PR-1024.md) |
 | PR-1025 | E | done | [pgx driver migration](PR-1025.md) |
-| PR-1026 | E | planned | [Extension guide + runbook](PR-1026.md) |
+| PR-1026 | E | done | [Extension guide + runbook](PR-1026.md) |
 
 Roadmap: [`../ROADMAP.md`](../ROADMAP.md)
 

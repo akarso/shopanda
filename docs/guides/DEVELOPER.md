@@ -6,6 +6,8 @@ It documents the extension points that exist in the current codebase, including 
 
 For deployment and operational setup, see [Deployment Guide](DEPLOYMENT.md). For merchant-facing operations, see [Merchant Guide](MERCHANT.md).
 
+Deciding *which* extension mechanism fits your task (events vs hooks vs pricing pipeline vs checkout workflow vs composition steps, plus the full registry catalog)? Start with [Extension Points](EXTENSION_POINTS.md) — this guide is the tutorial walkthrough once you've picked one.
+
 ## Table of Contents
 
 - [Architecture Overview](#architecture-overview)
@@ -17,6 +19,7 @@ For deployment and operational setup, see [Deployment Guide](DEPLOYMENT.md). For
 - [Add a Storage Backend](#add-a-storage-backend)
 - [Add Custom Pipeline Steps](#add-custom-pipeline-steps)
 - [Add Custom Event Listeners](#add-custom-event-listeners)
+- [Extension Points](EXTENSION_POINTS.md)
 - [Multi-Plugin Composition](PLUGIN_COMPOSITION.md)
 - [Theme Slots & Inheritance](THEME_SLOTS.md)
 - [Add Custom CLI Commands](#add-custom-cli-commands)
@@ -421,7 +424,7 @@ Storage selection is config-driven via `storage.driver`. Core plugins register t
 
 ## Add Custom Pipeline Steps
 
-Shopanda has three relevant extension pipelines today.
+Shopanda has three relevant extension pipelines today. Unsure which one (or whether you actually want a hook instead)? [Extension Points](EXTENSION_POINTS.md) has the decision tree and contrasts all three against hooks and composition steps.
 
 ### Pricing pipeline
 
@@ -498,7 +501,7 @@ Plugin step registration methods accept `any`, but `main.go` later type-asserts 
 
 ## Add Custom Event Listeners
 
-Shopanda uses an in-process event bus with synchronous and asynchronous registration.
+Shopanda uses an in-process event bus with synchronous and asynchronous registration. Events are for reacting to something that already happened — for same-request sequencing, use one of the pipelines above or a hook instead (see [Extension Points](EXTENSION_POINTS.md#pick-a-mechanism)).
 
 ```go
 type Handler func(ctx context.Context, evt event.Event) error

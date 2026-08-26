@@ -151,7 +151,7 @@ Recommended order:
 | PR-1023 | HTTP package split (storefront) | **Done.** `interfaces/http/storefront`: ~70 files moved; finished the `auth_middleware.go` split PR-1021/1022 deferred (customer JWT → storefront, admin RBAC → admin); `refund.go` moved to admin (PR-1022 gap); `StorefrontHandler` struct-split deferred as a follow-up |
 | PR-1024 | OpenTelemetry traces | **Done.** Optional OTLP/HTTP export (default off); one span per HTTP request + one root/child span pair per checkout `Execute`/step; DB spans deferred (no shared `*sql.DB` wrapper to hang them on yet) |
 | PR-1025 | pgx driver migration | **Done.** Replaced maintenance-mode `lib/pq` with `jackc/pgx/v5` via the `pgx/v5/stdlib` bridge; SQL/repo behavior unchanged; array scan sites use `pgtype.Map.SQLScanner` |
-| PR-1026 | Extension decision guide + runbook | Docs-only (approved): `EXTENSION_POINTS.md` + expand `RUNBOOK.md` |
+| PR-1026 | Extension decision guide + runbook | **Done.** Docs-only (approved): new `docs/guides/EXTENSION_POINTS.md` (events vs hooks vs pricing pipeline vs checkout workflow vs composition steps, plus the 13-registry catalog); `RUNBOOK.md` gains an "Incident response" section (DB down, bad migration, rollback, webhook SSRF rejects, rate-limit lockouts); linked from `PLUGINS.md`/`DEVELOPER.md` |
 
 ---
 
@@ -193,7 +193,7 @@ Optional history rewrite (`git filter-repo` to purge historical `api` blobs) is 
 | 1004–1008 | B | done |
 | 1009–1012 | C | done |
 | 1013–1019 | D | done |
-| 1020–1026 | E | in progress (1025 done; next 1026) |
+| 1020–1026 | E | done — all A+ exit-criteria pillars addressed. **Phase 10 overall is not done: PR-1003 above is still open.** |
 
 PR specs: [`prs/`](prs/).
 
@@ -206,4 +206,4 @@ Planned-spec tightenings from the post-audit plan review are documented separate
 | Phase | Focus | Status |
 | --- | --- | --- |
 | Phase 9 | Integrator backlog + merchant discovery | Shipped (PR-856–908) |
-| **Phase 10** | Platform excellence | **In progress (Tracks B–D done; PR-1003 in progress; PR-1020–1025 done; next PR-1026)** |
+| **Phase 10** | Platform excellence | **In progress (Tracks B–E done; PR-1003 the only open item, Track A)** |
