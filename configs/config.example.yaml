@@ -59,6 +59,7 @@ database:
   # transaction-pooling mode — pgx's default server-side prepared
   # statement caching does not survive that pooling mode. See
   # docs/guides/DEPLOYMENT.md ("Consider connection pooling").
+  # Env override: SHOPANDA_DATABASE_QUERY_EXEC_MODE=exec
   # query_exec_mode: "exec"
 
 # --- Logging ------------------------------------------------------------------
