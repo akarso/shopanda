@@ -87,3 +87,32 @@ func TestStatusWriter_CapturesCode(t *testing.T) {
 		t.Fatalf("expected 201, got %d", rec.Code)
 	}
 }
+
+// TestStackedStatusMiddleware_AgreeOnFinalStatus pins the correctness side
+// of sharing one statusWriter across Metrics, Tracing, and Logging
+// (unexported wrapStatus helper) instead of each layering its own wrapper
+// around the same request: all three must still observe the exact same
+// final status code as the ResponseRecorder itself.
+func TestStackedStatusMiddleware_AgreeOnFinalStatus(t *testing.T) {
+	rec := &fakeRecorder{}
+	log := logger.NewWithWriter(io.Discard, "info")
+
+	router := shared.NewRouter()
+	router.HandleFunc("GET /boom", func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusTeapot)
+	})
+	router.Use(shared.LoggingMiddleware(log))
+	router.Use(shared.TracingMiddleware())
+	router.Use(shared.MetricsMiddleware(rec))
+
+	req := httptest.NewRequest(http.MethodGet, "/boom", nil)
+	w := httptest.NewRecorder()
+	router.Handler().ServeHTTP(w, req)
+
+	if w.Code != http.StatusTeapot {
+		t.Fatalf("recorder status = %d, want %d", w.Code, http.StatusTeapot)
+	}
+	if len(rec.calls) != 1 || rec.calls[0].statusClass != "4xx" {
+		t.Fatalf("metrics saw statusClass = %v, want a single 4xx call — Metrics must observe the same final status as the recorder", rec.calls)
+	}
+}

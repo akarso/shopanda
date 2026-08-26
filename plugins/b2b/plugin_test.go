@@ -6,6 +6,8 @@ import (
 	"os"
 	"testing"
 
+	_ "github.com/jackc/pgx/v5/stdlib"
+
 	"github.com/akarso/shopanda/internal/domain/identity"
 	"github.com/akarso/shopanda/internal/domain/rbac"
 	"github.com/akarso/shopanda/internal/infrastructure/postgres"
@@ -87,7 +89,7 @@ func TestPlugin_Init_RegistersPermissionsAndRoutes(t *testing.T) {
 	if dsn == "" {
 		t.Skip("SHOPANDA_TEST_DSN not set; skipping integration test")
 	}
-	db, err := sql.Open("postgres", dsn)
+	db, err := sql.Open("pgx", dsn)
 	if err != nil {
 		t.Fatalf("open db: %v", err)
 	}

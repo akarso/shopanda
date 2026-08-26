@@ -10,7 +10,6 @@ import (
 	domainwebhook "github.com/akarso/shopanda/internal/domain/webhook"
 	"github.com/akarso/shopanda/internal/platform/apperror"
 	"github.com/akarso/shopanda/internal/platform/id"
-	"github.com/lib/pq"
 )
 
 var _ domainwebhook.Repository = (*WebhookEndpointRepo)(nil)
@@ -74,7 +73,7 @@ func (r *WebhookEndpointRepo) Create(ctx context.Context, endpoint *domainwebhoo
 	const q = `INSERT INTO webhook_endpoints (id, url, secret, events, active, description, created_at, updated_at)
 		VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`
 	_, err := r.db.ExecContext(ctx, q,
-		endpointID, endpoint.URL, endpoint.Secret, pq.Array(endpoint.Events),
+		endpointID, endpoint.URL, endpoint.Secret, endpoint.Events,
 		endpoint.Active, endpoint.Description, endpoint.CreatedAt, endpoint.UpdatedAt,
 	)
 	if err != nil {
@@ -93,7 +92,7 @@ func (r *WebhookEndpointRepo) Update(ctx context.Context, endpoint *domainwebhoo
 		SET url = $1, secret = $2, events = $3, active = $4, description = $5, updated_at = $6
 		WHERE id = $7`
 	res, err := r.db.ExecContext(ctx, q,
-		endpoint.URL, endpoint.Secret, pq.Array(endpoint.Events),
+		endpoint.URL, endpoint.Secret, endpoint.Events,
 		endpoint.Active, endpoint.Description, endpoint.UpdatedAt, endpoint.ID,
 	)
 	if err != nil {
@@ -139,7 +138,7 @@ func (r *WebhookEndpointRepo) queryEndpoints(ctx context.Context, q string, args
 	for rows.Next() {
 		var ep domainwebhook.Endpoint
 		if err := rows.Scan(
-			&ep.ID, &ep.URL, &ep.Secret, pq.Array(&ep.Events), &ep.Active,
+			&ep.ID, &ep.URL, &ep.Secret, pgTypeScanner(&ep.Events), &ep.Active,
 			&ep.Description, &ep.CreatedAt, &ep.UpdatedAt,
 		); err != nil {
 			return nil, fmt.Errorf("webhook_endpoint_repo: scan: %w", err)

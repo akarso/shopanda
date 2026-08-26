@@ -9,7 +9,6 @@ import (
 
 	domainext "github.com/akarso/shopanda/internal/domain/extension"
 	"github.com/akarso/shopanda/internal/platform/apperror"
-	"github.com/lib/pq"
 )
 
 // ExtensionValueRepo persists extension field values in Postgres.
@@ -60,7 +59,7 @@ func (r *ExtensionValueRepo) ListByTargets(ctx context.Context, targetType domai
 		FROM extension_values
 		WHERE target_type = $1 AND target_id = ANY($2)
 		ORDER BY target_id ASC, field_code ASC`
-	rows, err := r.db.QueryContext(ctx, q, string(targetType), pq.Array(targetIDs))
+	rows, err := r.db.QueryContext(ctx, q, string(targetType), targetIDs)
 	if err != nil {
 		return nil, fmt.Errorf("extension_value_repo: list targets: %w", err)
 	}

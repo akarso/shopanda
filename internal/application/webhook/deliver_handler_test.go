@@ -331,6 +331,115 @@ func TestDeliverHandler_WithMetrics_RecordsFailureOnTransportError(t *testing.T)
 	}
 }
 
+// TestDeliverHandler_4xxDoesNotRetry pins the fix classifying a 4xx
+// response as a permanent failure: retrying an identical request against
+// a receiver that already rejected it as a client error burns retry
+// budget for no chance of a different outcome. Handle must return nil
+// (the worker marks the job Complete, not retried via Fail) while still
+// counting it as a failed delivery in metrics — a 4xx is not the same as
+// a skipped delivery (inactive/unsubscribed endpoint), which is never
+// attempted at all.
+func TestDeliverHandler_4xxDoesNotRetry(t *testing.T) {
+	poster := &stubPoster{status: http.StatusBadRequest}
+	repo := &stubWebhookRepo{
+		byID: map[string]*domainwebhook.Endpoint{
+			"ep-1": {ID: "ep-1", URL: "https://example.com/hook", Secret: "s", Events: []string{order.EventOrderPaid}, Active: true},
+		},
+	}
+	m := &recordingMetrics{}
+	h := webhookApp.NewDeliverHandler(repo, poster, logger.New("error")).WithMetrics(m)
+	err := h.Handle(context.Background(), jobs.Job{
+		ID:   "job-1",
+		Type: domainwebhook.DeliverJobType,
+		Payload: map[string]interface{}{
+			"endpoint_id":     "ep-1",
+			"event_name":      order.EventOrderPaid,
+			"event_id":        "evt-1",
+			"event_source":    "test",
+			"event_timestamp": "2026-06-17T12:00:00Z",
+			"event_data_json": `{}`,
+		},
+	})
+	if err != nil {
+		t.Fatalf("Handle: %v, want nil — a 4xx must not trigger a worker retry", err)
+	}
+	if len(m.webhookOutcomes) != 1 || m.webhookOutcomes[0] != metrics.OutcomeFailed {
+		t.Errorf("webhookOutcomes = %v, want [failed] — still a real failed delivery for observability, even though it doesn't retry", m.webhookOutcomes)
+	}
+}
+
+// TestDeliverHandler_5xxStillRetries is the retryable-error sibling of the
+// 4xx test above — confirms the new classification didn't accidentally
+// stop retrying transient server errors, which is exactly what
+// TestDeliverHandler_RetriesOnNon2xx already pins; this only adds the
+// metrics-outcome check that test doesn't make.
+func TestDeliverHandler_5xxStillRetries(t *testing.T) {
+	poster := &stubPoster{status: http.StatusServiceUnavailable}
+	repo := &stubWebhookRepo{
+		byID: map[string]*domainwebhook.Endpoint{
+			"ep-1": {ID: "ep-1", URL: "https://example.com/hook", Secret: "s", Events: []string{order.EventOrderPaid}, Active: true},
+		},
+	}
+	m := &recordingMetrics{}
+	h := webhookApp.NewDeliverHandler(repo, poster, logger.New("error")).WithMetrics(m)
+	err := h.Handle(context.Background(), jobs.Job{
+		ID:   "job-1",
+		Type: domainwebhook.DeliverJobType,
+		Payload: map[string]interface{}{
+			"endpoint_id":     "ep-1",
+			"event_name":      order.EventOrderPaid,
+			"event_id":        "evt-1",
+			"event_source":    "test",
+			"event_timestamp": "2026-06-17T12:00:00Z",
+			"event_data_json": `{}`,
+		},
+	})
+	if err == nil {
+		t.Fatal("Handle: nil, want an error — a 5xx must still trigger a worker retry")
+	}
+	if len(m.webhookOutcomes) != 1 || m.webhookOutcomes[0] != metrics.OutcomeFailed {
+		t.Errorf("webhookOutcomes = %v, want [failed]", m.webhookOutcomes)
+	}
+}
+
+// TestDeliverHandler_TransientStatusesStillRetry pins the fix that not
+// every 4xx is a permanent failure: 408 (Request Timeout), 425 (Too
+// Early), and 429 (Too Many Requests) all signal a transient condition
+// where an identical retry can succeed, unlike a genuine client error
+// such as 400 or 404 (see TestDeliverHandler_4xxDoesNotRetry).
+func TestDeliverHandler_TransientStatusesStillRetry(t *testing.T) {
+	for _, status := range []int{http.StatusRequestTimeout, http.StatusTooEarly, http.StatusTooManyRequests} {
+		t.Run(http.StatusText(status), func(t *testing.T) {
+			poster := &stubPoster{status: status}
+			repo := &stubWebhookRepo{
+				byID: map[string]*domainwebhook.Endpoint{
+					"ep-1": {ID: "ep-1", URL: "https://example.com/hook", Secret: "s", Events: []string{order.EventOrderPaid}, Active: true},
+				},
+			}
+			m := &recordingMetrics{}
+			h := webhookApp.NewDeliverHandler(repo, poster, logger.New("error")).WithMetrics(m)
+			err := h.Handle(context.Background(), jobs.Job{
+				ID:   "job-1",
+				Type: domainwebhook.DeliverJobType,
+				Payload: map[string]interface{}{
+					"endpoint_id":     "ep-1",
+					"event_name":      order.EventOrderPaid,
+					"event_id":        "evt-1",
+					"event_source":    "test",
+					"event_timestamp": "2026-06-17T12:00:00Z",
+					"event_data_json": `{}`,
+				},
+			})
+			if err == nil {
+				t.Fatalf("Handle: nil, want an error — status %d must still trigger a worker retry", status)
+			}
+			if len(m.webhookOutcomes) != 1 || m.webhookOutcomes[0] != metrics.OutcomeFailed {
+				t.Errorf("webhookOutcomes = %v, want [failed]", m.webhookOutcomes)
+			}
+		})
+	}
+}
+
 func TestDeliverHandler_WithMetrics_RecordsSuccess(t *testing.T) {
 	poster := &stubPoster{status: http.StatusOK}
 	repo := &stubWebhookRepo{

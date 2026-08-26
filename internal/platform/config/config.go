@@ -177,12 +177,27 @@ type DatabaseConfig struct {
 	Password string `yaml:"password"`
 	Name     string `yaml:"name"`
 	SSLMode  string `yaml:"sslmode"`
+
+	// QueryExecMode overrides pgx's default query execution mode
+	// (server-side prepared statement caching). Leave empty for a direct
+	// connection to PostgreSQL. Set to "exec" when a transaction-pooling
+	// proxy (e.g. PgBouncer in transaction mode, as DEPLOYMENT.md
+	// recommends for larger deployments) sits in front of PostgreSQL —
+	// server-side prepared statements do not survive that pooling mode,
+	// surfacing as "prepared statement ... already exists/does not exist"
+	// errors under load. See pgx's QueryExecMode docs for the other
+	// allowed values (cache_statement, cache_describe, describe_exec,
+	// exec, simple_protocol).
+	QueryExecMode string `yaml:"query_exec_mode"`
 }
 
 func (d DatabaseConfig) DSN() string {
 	query := url.Values{}
 	if d.SSLMode != "" {
 		query.Set("sslmode", d.SSLMode)
+	}
+	if d.QueryExecMode != "" {
+		query.Set("default_query_exec_mode", d.QueryExecMode)
 	}
 
 	u := &url.URL{
@@ -849,6 +864,9 @@ func applyEnv(cfg *Config) {
 	if v := os.Getenv("SHOPANDA_DATABASE_SSLMODE"); v != "" {
 		cfg.Database.SSLMode = v
 	}
+	if v := os.Getenv("SHOPANDA_DATABASE_QUERY_EXEC_MODE"); v != "" {
+		cfg.Database.QueryExecMode = v
+	}
 	if v := os.Getenv("SHOPANDA_LOG_LEVEL"); v != "" {
 		cfg.Log.Level = v
 	}
@@ -862,10 +880,10 @@ func applyEnv(cfg *Config) {
 		cfg.Auth.JWTTTL = v
 	}
 	if v := os.Getenv("SHOPANDA_AUTH_MFA_ENABLED"); v != "" {
-		cfg.Auth.MFAEnabled = strings.EqualFold(v, "true") || v == "1"
+		cfg.Auth.MFAEnabled = parseEnvBool(v)
 	}
 	if v := os.Getenv("SHOPANDA_AUTH_LOCKOUT_ENABLED"); v != "" {
-		cfg.Auth.Lockout.Enabled = strings.EqualFold(v, "true") || v == "1"
+		cfg.Auth.Lockout.Enabled = parseEnvBool(v)
 	}
 	if v := os.Getenv("SHOPANDA_AUTH_LOCKOUT_STORE"); v != "" {
 		cfg.Auth.Lockout.Store = v
@@ -926,7 +944,7 @@ func applyEnv(cfg *Config) {
 		cfg.Media.S3.BaseURL = v
 	}
 	if v := os.Getenv("SHOPANDA_MEDIA_S3_PUBLIC_ACL"); v != "" {
-		cfg.Media.S3.PublicACL = v == "true" || v == "1"
+		cfg.Media.S3.PublicACL = parseEnvBool(v)
 	}
 	if v := os.Getenv("SHOPANDA_SEARCH_ENGINE"); v != "" {
 		cfg.Search.Engine = v
@@ -1016,7 +1034,7 @@ func applyEnv(cfg *Config) {
 		}
 	}
 	if v := os.Getenv("SHOPANDA_PLUGINS_EXAMPLE_ENABLED"); v != "" {
-		cfg.Plugins.Example.Enabled = v == "true" || v == "1"
+		cfg.Plugins.Example.Enabled = parseEnvBool(v)
 	}
 	if v := os.Getenv("SHOPANDA_PLUGINS_EXAMPLE_FEE_MINOR_UNITS"); v != "" {
 		if n, err := strconv.ParseInt(v, 10, 64); err == nil {
@@ -1024,10 +1042,10 @@ func applyEnv(cfg *Config) {
 		}
 	}
 	if v := os.Getenv("SHOPANDA_PLUGINS_SLOTSDEMO_ENABLED"); v != "" {
-		cfg.Plugins.SlotsDemo.Enabled = v == "true" || v == "1"
+		cfg.Plugins.SlotsDemo.Enabled = parseEnvBool(v)
 	}
 	if v := os.Getenv("SHOPANDA_PLUGINS_CARTDEMO_ENABLED"); v != "" {
-		cfg.Plugins.CartDemo.Enabled = v == "true" || v == "1"
+		cfg.Plugins.CartDemo.Enabled = parseEnvBool(v)
 	}
 	if v := os.Getenv("SHOPANDA_PLUGINS_CARTDEMO_MIN_QUANTITY"); v != "" {
 		if n, err := strconv.Atoi(v); err == nil {
@@ -1040,7 +1058,7 @@ func applyEnv(cfg *Config) {
 		}
 	}
 	if v := os.Getenv("SHOPANDA_PLUGINS_TAXDEMO_ENABLED"); v != "" {
-		cfg.Plugins.TaxDemo.Enabled = v == "true" || v == "1"
+		cfg.Plugins.TaxDemo.Enabled = parseEnvBool(v)
 	}
 	if v := os.Getenv("SHOPANDA_PLUGINS_TAXDEMO_FLAT_RATE_BPS"); v != "" {
 		if n, err := strconv.Atoi(v); err == nil {
@@ -1048,25 +1066,25 @@ func applyEnv(cfg *Config) {
 		}
 	}
 	if v := os.Getenv("SHOPANDA_PLUGINS_MAILDEMO_ENABLED"); v != "" {
-		cfg.Plugins.MailDemo.Enabled = v == "true" || v == "1"
+		cfg.Plugins.MailDemo.Enabled = parseEnvBool(v)
 	}
 	if v := os.Getenv("SHOPANDA_PLUGINS_MAILDEMO_SUBJECT_PREFIX"); v != "" {
 		cfg.Plugins.MailDemo.SubjectPrefix = v
 	}
 	if v := os.Getenv("SHOPANDA_PLUGINS_PROMODEMO_ENABLED"); v != "" {
-		cfg.Plugins.PromoDemo.Enabled = v == "true" || v == "1"
+		cfg.Plugins.PromoDemo.Enabled = parseEnvBool(v)
 	}
 	if v := os.Getenv("SHOPANDA_PLUGINS_IMPORTDEMO_ENABLED"); v != "" {
-		cfg.Plugins.ImportDemo.Enabled = v == "true" || v == "1"
+		cfg.Plugins.ImportDemo.Enabled = parseEnvBool(v)
 	}
 	if v := os.Getenv("SHOPANDA_PLUGINS_EXPORTDEMO_ENABLED"); v != "" {
-		cfg.Plugins.ExportDemo.Enabled = v == "true" || v == "1"
+		cfg.Plugins.ExportDemo.Enabled = parseEnvBool(v)
 	}
 	if v := os.Getenv("SHOPANDA_PLUGINS_CHECKOUTDEMO_ENABLED"); v != "" {
-		cfg.Plugins.CheckoutDemo.Enabled = v == "true" || v == "1"
+		cfg.Plugins.CheckoutDemo.Enabled = parseEnvBool(v)
 	}
 	if v := os.Getenv("SHOPANDA_PLUGINS_INTEGRATIONDEMO_ENABLED"); v != "" {
-		cfg.Plugins.IntegrationDemo.Enabled = v == "true" || v == "1"
+		cfg.Plugins.IntegrationDemo.Enabled = parseEnvBool(v)
 	}
 	if v := os.Getenv("SHOPANDA_PLUGINS_INTEGRATIONDEMO_INTEGRATION_API_KEY"); v != "" {
 		cfg.Plugins.IntegrationDemo.IntegrationAPIKey = v
@@ -1075,7 +1093,7 @@ func applyEnv(cfg *Config) {
 		cfg.Plugins.IntegrationDemo.IntegrationHMACSecret = v
 	}
 	if v := os.Getenv("SHOPANDA_PLUGINS_WAREHOUSEDEMO_ENABLED"); v != "" {
-		cfg.Plugins.WarehouseDemo.Enabled = v == "true" || v == "1"
+		cfg.Plugins.WarehouseDemo.Enabled = parseEnvBool(v)
 	}
 	if v := os.Getenv("SHOPANDA_PLUGINS_WAREHOUSEDEMO_WAREHOUSE_BASE_URL"); v != "" {
 		cfg.Plugins.WarehouseDemo.WarehouseBaseURL = v
@@ -1087,7 +1105,7 @@ func applyEnv(cfg *Config) {
 		cfg.Plugins.WarehouseDemo.SyncCron = v
 	}
 	if v := os.Getenv("SHOPANDA_PLUGINS_PIMDEMO_ENABLED"); v != "" {
-		cfg.Plugins.PimDemo.Enabled = v == "true" || v == "1"
+		cfg.Plugins.PimDemo.Enabled = parseEnvBool(v)
 	}
 	if v := os.Getenv("SHOPANDA_PLUGINS_PIMDEMO_PIM_GRAPHQL_ENDPOINT"); v != "" {
 		cfg.Plugins.PimDemo.PimGraphQLEndpoint = v
@@ -1099,13 +1117,13 @@ func applyEnv(cfg *Config) {
 		cfg.Plugins.PimDemo.CacheTTL = v
 	}
 	if v := os.Getenv("SHOPANDA_PLUGINS_B2B_ENABLED"); v != "" {
-		cfg.Plugins.B2B.Enabled = v == "true" || v == "1"
+		cfg.Plugins.B2B.Enabled = parseEnvBool(v)
 	}
 	if v := os.Getenv("SHOPANDA_PLUGINS_B2B_LICENSE_KEY"); v != "" {
 		cfg.Plugins.B2B.LicenseKey = v
 	}
 	if v := os.Getenv("SHOPANDA_FRONTEND_ENABLED"); v != "" {
-		cfg.Frontend.Enabled = v == "true" || v == "1"
+		cfg.Frontend.Enabled = parseEnvBool(v)
 	}
 	if v := os.Getenv("SHOPANDA_FRONTEND_MODE"); v != "" {
 		cfg.Frontend.Mode = v
@@ -1114,10 +1132,10 @@ func applyEnv(cfg *Config) {
 		cfg.Frontend.ThemePath = v
 	}
 	if v := os.Getenv("SHOPANDA_FRONTEND_CSP_ENABLED"); v != "" {
-		cfg.Frontend.CSPEnabled = v == "true" || v == "1"
+		cfg.Frontend.CSPEnabled = parseEnvBool(v)
 	}
 	if v := os.Getenv("SHOPANDA_FRONTEND_STRICT_SLOT_MARKERS"); v != "" {
-		cfg.Frontend.StrictSlotMarkers = v == "true" || v == "1"
+		cfg.Frontend.StrictSlotMarkers = parseEnvBool(v)
 	}
 	if v := os.Getenv("SHOPANDA_CDN_BASE_URL"); v != "" {
 		cfg.CDN.BaseURL = v
@@ -1151,7 +1169,7 @@ func applyEnv(cfg *Config) {
 		cfg.Webhooks.Secrets[provider] = kv[1]
 	}
 	if v := os.Getenv("SHOPANDA_RATE_LIMIT_ENABLED"); v != "" {
-		cfg.RateLimit.Enabled = v == "true" || v == "1"
+		cfg.RateLimit.Enabled = parseEnvBool(v)
 	}
 	if v := os.Getenv("SHOPANDA_RATE_LIMIT_DEFAULT_RATE"); v != "" {
 		if f, err := strconv.ParseFloat(v, 64); err == nil && f > 0 {
@@ -1198,6 +1216,14 @@ func applyEnv(cfg *Config) {
 			cfg.Tracing.SampleRatio = f
 		}
 	}
+	if v := os.Getenv("SHOPANDA_STORE_CREDIT_MAX_ISSUE_AMOUNT"); v != "" {
+		// No n >= 0 guard: a negative override should hit the same
+		// validateStoreCredit error as a negative YAML value, not be
+		// silently dropped in favor of whatever was already configured.
+		if n, err := strconv.ParseInt(v, 10, 64); err == nil {
+			cfg.StoreCredit.MaxIssueAmount = n
+		}
+	}
 }
 
 func redactSecret(value string) string {
@@ -1218,9 +1244,10 @@ func flatten(cfg *Config) map[string]string {
 	m["database.host"] = cfg.Database.Host
 	m["database.port"] = strconv.Itoa(cfg.Database.Port)
 	m["database.user"] = cfg.Database.User
-	m["database.password"] = cfg.Database.Password
+	m["database.password"] = redactSecret(cfg.Database.Password)
 	m["database.name"] = cfg.Database.Name
 	m["database.sslmode"] = cfg.Database.SSLMode
+	m["database.query_exec_mode"] = cfg.Database.QueryExecMode
 	m["log.level"] = cfg.Log.Level
 	m["log.format"] = cfg.Log.Format
 	m["auth.jwt_ttl"] = cfg.Auth.JWTTTL
@@ -1281,8 +1308,8 @@ func flatten(cfg *Config) map[string]string {
 	m["plugins.exportdemo.enabled"] = strconv.FormatBool(cfg.Plugins.ExportDemo.Enabled)
 	m["plugins.checkoutdemo.enabled"] = strconv.FormatBool(cfg.Plugins.CheckoutDemo.Enabled)
 	m["plugins.integrationdemo.enabled"] = strconv.FormatBool(cfg.Plugins.IntegrationDemo.Enabled)
-	m["plugins.integrationdemo.integration_api_key"] = cfg.Plugins.IntegrationDemo.IntegrationAPIKey
-	m["plugins.integrationdemo.integration_hmac_secret"] = cfg.Plugins.IntegrationDemo.IntegrationHMACSecret
+	m["plugins.integrationdemo.integration_api_key"] = redactSecret(cfg.Plugins.IntegrationDemo.IntegrationAPIKey)
+	m["plugins.integrationdemo.integration_hmac_secret"] = redactSecret(cfg.Plugins.IntegrationDemo.IntegrationHMACSecret)
 	m["plugins.warehousedemo.enabled"] = strconv.FormatBool(cfg.Plugins.WarehouseDemo.Enabled)
 	m["plugins.warehousedemo.warehouse_base_url"] = cfg.Plugins.WarehouseDemo.WarehouseBaseURL
 	m["plugins.warehousedemo.warehouse_api_key"] = redactSecret(cfg.Plugins.WarehouseDemo.WarehouseAPIKey)
@@ -1300,7 +1327,7 @@ func flatten(cfg *Config) map[string]string {
 	m["cdn.base_url"] = cfg.CDN.BaseURL
 	m["payment.stripe.enabled"] = strconv.FormatBool(cfg.Payment.Stripe.Enabled)
 	for k, v := range cfg.Webhooks.Secrets {
-		m["webhooks.secrets."+k] = v
+		m["webhooks.secrets."+k] = redactSecret(v)
 	}
 	m["rate_limit.enabled"] = strconv.FormatBool(cfg.RateLimit.Enabled)
 	m["rate_limit.default.rate"] = strconv.FormatFloat(cfg.RateLimit.Default.Rate, 'f', -1, 64)
@@ -1311,10 +1338,8 @@ func flatten(cfg *Config) map[string]string {
 	m["tracing.endpoint"] = cfg.Tracing.Endpoint
 	m["tracing.insecure"] = strconv.FormatBool(cfg.Tracing.Insecure)
 	m["tracing.sample_ratio"] = strconv.FormatFloat(cfg.Tracing.SampleRatio, 'f', -1, 64)
-	// Redacted, unlike webhooks.secrets.* above: those are pre-existing and
-	// out of scope here, but tracing.headers is new in this change and
-	// commonly carries a collector API key (Grafana Cloud, Honeycomb) — no
-	// reason to expose it raw through Get()/GetOrDefault() from day one.
+	// Redacted, same as webhooks.secrets.* above — tracing.headers commonly
+	// carries a collector API key (Grafana Cloud, Honeycomb).
 	for k, v := range cfg.Tracing.Headers {
 		m["tracing.headers."+k] = redactSecret(v)
 	}

@@ -117,7 +117,12 @@ func (s *CreateOrderStep) Execute(ctx context.Context, cctx *Context) error {
 	if err := s.orders.Save(ctx, &o); err != nil {
 		if appliedCredit != nil && s.credits != nil {
 			rbctx, rbcancel := detachedTimeout(ctx, compensateTimeout)
-			rollbackErr := s.credits.Issue(rbctx, cctx.CustomerID, *appliedCredit, fmt.Sprintf("create_order rollback: order save failed (%s)", o.ID), "rollback:save:"+o.ID)
+			// No idempotency key here — see the package-level comment
+			// above applyStoreCredit for why neither o.ID (changes every
+			// attempt, so it can never collide) nor cctx.CartID (stable,
+			// but unsafe: see that comment) is a correct choice without a
+			// bigger fix this rollback call alone can't provide.
+			rollbackErr := s.credits.Issue(rbctx, cctx.CustomerID, *appliedCredit, fmt.Sprintf("create_order rollback: order save failed (%s)", o.ID), "")
 			rbcancel()
 			if rollbackErr != nil {
 				return fmt.Errorf("create_order: save: %w (store credit rollback failed: %v)", err, rollbackErr)
@@ -147,6 +152,37 @@ func (s *CreateOrderStep) Execute(ctx context.Context, cctx *Context) error {
 	return nil
 }
 
+// applyStoreCredit redeems store credit toward o's total, with a
+// compensating Issue if applying it to the order subsequently fails (see
+// Execute's own rollback on Save failure, above).
+//
+// Neither Redeem nor these compensating Issue calls carry idempotency
+// protection against a process crash between Redeem committing and the
+// compensating/final step completing — a retried checkout after such a
+// crash can double-debit the customer. This was flagged in review; a naive
+// fix (key Redeem/the rollback Issue by a stable identifier like
+// cctx.CartID, since a cart is single-use and its ID doesn't change across
+// retries the way a freshly generated order ID does) is NOT safe, and
+// actively introduces a worse bug: once ANY key is reused across two
+// GENUINELY DIFFERENT attempts on the same cart (e.g. attempt 1 redeems,
+// Save fails, rollback correctly refunds — then the customer retries and
+// attempt 2 redeems again), the second Redeem would be deduplicated
+// against the first (now-already-refunded) one and silently skip debiting
+// the balance at all, while the order still records the store credit as
+// applied — the customer gets a real discount that was never actually
+// paid for, on every legitimate retry-after-failure, not just crashes.
+//
+// A correct fix needs to distinguish "retry of the exact same in-flight
+// attempt" (same key must dedupe) from "a new attempt after the previous
+// one was fully resolved, successfully or via rollback" (must NOT dedupe)
+// — which requires state that survives a crash and is explicitly
+// invalidated when an attempt resolves, e.g. a pending-order-id persisted
+// on the cart record itself, set before Redeem and cleared after Save
+// succeeds or a rollback completes. That's a real feature (schema change
+// + repo changes + careful ordering), not a one-line idempotency key, so
+// it's deliberately not implemented here — see the follow-up task this
+// review generated instead of guessing at that design under review
+// pressure.
 func (s *CreateOrderStep) applyStoreCredit(ctx context.Context, cctx *Context, o *order.Order) (*shared.Money, error) {
 	requested := cctx.Input.StoreCreditAmount
 	if requested <= 0 {
@@ -184,7 +220,8 @@ func (s *CreateOrderStep) applyStoreCredit(ctx context.Context, cctx *Context, o
 	}
 	if err := o.ApplyStoreCredit(creditMoney); err != nil {
 		rbctx, rbcancel := detachedTimeout(ctx, compensateTimeout)
-		rollbackErr := s.credits.Issue(rbctx, cctx.CustomerID, creditMoney, fmt.Sprintf("create_order rollback: apply failed (%s)", o.ID), "rollback:apply:"+o.ID)
+		// No idempotency key — see this function's doc comment above.
+		rollbackErr := s.credits.Issue(rbctx, cctx.CustomerID, creditMoney, fmt.Sprintf("create_order rollback: apply failed (%s)", o.ID), "")
 		rbcancel()
 		if rollbackErr != nil {
 			return nil, fmt.Errorf("create_order: apply store credit: %w (rollback failed: %v)", err, rollbackErr)

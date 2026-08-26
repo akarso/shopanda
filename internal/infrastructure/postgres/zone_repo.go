@@ -9,8 +9,26 @@ import (
 	"github.com/akarso/shopanda/internal/domain/shared"
 	"github.com/akarso/shopanda/internal/domain/shipping"
 	"github.com/akarso/shopanda/internal/platform/apperror"
-	"github.com/lib/pq"
+	"github.com/jackc/pgx/v5/pgconn"
+	"github.com/jackc/pgx/v5/pgtype"
 )
+
+// pgTypeScanner decodes a PostgreSQL array column into dest when scanning.
+// pgx's stdlib driver returns array columns as their raw text-literal wire
+// form for any type it doesn't recognize as a scalar, so scanning into a
+// []string field needs this wrapper; binding a Go slice as a query argument
+// needs no such wrapper, since pgx encodes it directly.
+//
+// A fresh *pgtype.Map per call, not a shared package-level one: Map's
+// first-use TypeForValue lazily builds and caches an internal reflect-type
+// index with no locking, so a Map shared across concurrent requests would
+// race on that first build (confirmed with `go test -race`). An unshared,
+// call-local Map never has more than one goroutine touching it, so there's
+// nothing to race — at the cost of one small allocation per scan, which is
+// negligible next to the query itself.
+func pgTypeScanner(dest any) sql.Scanner {
+	return pgtype.NewMap().SQLScanner(dest)
+}
 
 // Compile-time check.
 var _ shipping.ZoneRepository = (*ZoneRepo)(nil)
@@ -45,7 +63,7 @@ func (r *ZoneRepo) ListZones(ctx context.Context) ([]shipping.Zone, error) {
 		var z shipping.Zone
 		var thresholdAmount int64
 		var thresholdCurrency string
-		if err := rows.Scan(&z.ID, &z.Name, pq.Array(&z.Countries),
+		if err := rows.Scan(&z.ID, &z.Name, pgTypeScanner(&z.Countries),
 			&z.Priority, &z.Active, &thresholdAmount, &thresholdCurrency, &z.CreatedAt, &z.UpdatedAt); err != nil {
 			return nil, fmt.Errorf("zone_repo: list scan: %w", err)
 		}
@@ -75,7 +93,7 @@ func (r *ZoneRepo) FindZoneByID(ctx context.Context, id string) (*shipping.Zone,
 	var thresholdAmount int64
 	var thresholdCurrency string
 	err := r.db.QueryRowContext(ctx, q, id).Scan(&z.ID, &z.Name,
-		pq.Array(&z.Countries), &z.Priority, &z.Active, &thresholdAmount, &thresholdCurrency, &z.CreatedAt, &z.UpdatedAt)
+		pgTypeScanner(&z.Countries), &z.Priority, &z.Active, &thresholdAmount, &thresholdCurrency, &z.CreatedAt, &z.UpdatedAt)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
 	}
@@ -99,12 +117,12 @@ func (r *ZoneRepo) CreateZone(ctx context.Context, z *shipping.Zone) error {
 	}
 	const q = `INSERT INTO shipping_zones (id, name, countries, priority, active, free_shipping_threshold, free_shipping_currency, created_at, updated_at)
 		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`
-	_, err := r.db.ExecContext(ctx, q, z.ID, z.Name, pq.Array(z.Countries),
+	_, err := r.db.ExecContext(ctx, q, z.ID, z.Name, z.Countries,
 		z.Priority, z.Active, z.FreeShippingThreshold.Amount(), z.FreeShippingThreshold.Currency(),
 		z.CreatedAt, z.UpdatedAt)
 	if err != nil {
-		var pqErr *pq.Error
-		if errors.As(err, &pqErr) && pqErr.Code == "23505" {
+		var pgErr *pgconn.PgError
+		if errors.As(err, &pgErr) && pgErr.Code == "23505" {
 			return apperror.Conflict("shipping zone already exists")
 		}
 		return fmt.Errorf("zone_repo: create: %w", err)
@@ -120,7 +138,7 @@ func (r *ZoneRepo) UpdateZone(ctx context.Context, z *shipping.Zone) error {
 	const q = `UPDATE shipping_zones SET name = $1, countries = $2, priority = $3, active = $4,
 		free_shipping_threshold = $5, free_shipping_currency = $6, updated_at = $7
 		WHERE id = $8`
-	result, err := r.db.ExecContext(ctx, q, z.Name, pq.Array(z.Countries),
+	result, err := r.db.ExecContext(ctx, q, z.Name, z.Countries,
 		z.Priority, z.Active, z.FreeShippingThreshold.Amount(), z.FreeShippingThreshold.Currency(),
 		z.UpdatedAt, z.ID)
 	if err != nil {
@@ -203,11 +221,11 @@ func (r *ZoneRepo) CreateRateTier(ctx context.Context, rt *shipping.RateTier) er
 	_, err := r.db.ExecContext(ctx, q, rt.ID, rt.ZoneID, rt.MinWeight, rt.MaxWeight,
 		rt.Price.Amount(), rt.Price.Currency())
 	if err != nil {
-		var pqErr *pq.Error
-		if errors.As(err, &pqErr) && pqErr.Code == "23505" {
+		var pgErr *pgconn.PgError
+		if errors.As(err, &pgErr) && pgErr.Code == "23505" {
 			return apperror.Conflict("rate tier already exists")
 		}
-		if errors.As(err, &pqErr) && pqErr.Code == "23503" {
+		if errors.As(err, &pgErr) && pgErr.Code == "23503" {
 			return apperror.Validation("shipping zone not found")
 		}
 		return fmt.Errorf("zone_repo: create rate: %w", err)

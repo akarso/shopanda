@@ -13,11 +13,13 @@ import (
 // --- mock queue ---
 
 type mockQueue struct {
-	mu         sync.Mutex
-	jobs       []*jobs.Job
-	completed  []string
-	failed     []string
-	completeFn func(id string) error
+	mu              sync.Mutex
+	jobs            []*jobs.Job
+	completed       []string
+	failed          []string
+	completeFn      func(id string) error
+	failCtxErrs     []error // ctx.Err() as observed by each Fail call, in order
+	completeCtxErrs []error
 }
 
 func (m *mockQueue) Enqueue(_ context.Context, job jobs.Job) error {
@@ -40,9 +42,10 @@ func (m *mockQueue) Dequeue(_ context.Context) (*jobs.Job, error) {
 	return j, nil
 }
 
-func (m *mockQueue) Complete(_ context.Context, id string) error {
+func (m *mockQueue) Complete(ctx context.Context, id string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	m.completeCtxErrs = append(m.completeCtxErrs, ctx.Err())
 	if m.completeFn != nil {
 		if err := m.completeFn(id); err != nil {
 			return err
@@ -52,9 +55,10 @@ func (m *mockQueue) Complete(_ context.Context, id string) error {
 	return nil
 }
 
-func (m *mockQueue) Fail(_ context.Context, id string, _ error) error {
+func (m *mockQueue) Fail(ctx context.Context, id string, _ error) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	m.failCtxErrs = append(m.failCtxErrs, ctx.Err())
 	m.failed = append(m.failed, id)
 	return nil
 }
@@ -370,5 +374,92 @@ func TestWorker_EmptyQueueNoOp(t *testing.T) {
 	}
 	if len(q.failed) != 0 {
 		t.Errorf("expected no failed jobs, got %d", len(q.failed))
+	}
+}
+
+// TestWorker_HandlerPanic_DoesNotCrashWorker pins the fix for a missing
+// recover() around a handler's Handle call: before the fix, a panicking
+// handler propagated out of processNext and killed the worker's entire
+// polling loop (every other queued job, not just the one that panicked).
+// The fix converts the panic into a normal error on the same path a
+// handler-returned error already takes.
+func TestWorker_HandlerPanic_DoesNotCrashWorker(t *testing.T) {
+	q := &mockQueue{}
+	log := &mockLogger{}
+
+	handler := &mockHandler{
+		jobType:  "panic_job",
+		handleFn: func(_ context.Context, _ jobs.Job) error { panic("job handler blew up") },
+	}
+
+	w := jobs.NewWorker(q, log, 50*time.Millisecond)
+	w.Register(handler)
+
+	job, _ := jobs.NewJob("j1", "panic_job", nil)
+	_ = q.Enqueue(context.Background(), job)
+
+	// A second, ordinary job enqueued after the panicking one — if the
+	// panic actually killed the worker loop, this would never get
+	// processed at all.
+	job2, _ := jobs.NewJob("j2", "panic_job", nil)
+	_ = q.Enqueue(context.Background(), job2)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 300*time.Millisecond)
+	defer cancel()
+
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		w.Start(ctx) // must return normally when ctx expires, not panic out
+	}()
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("Start did not return — the panic likely escaped processNext")
+	}
+
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	if len(q.failed) != 2 {
+		t.Errorf("failed = %v, want both j1 and j2 marked failed (worker kept processing after the panic)", q.failed)
+	}
+}
+
+// TestWorker_OutcomeRecording_SurvivesContextCancellation pins the fix for
+// Fail/Complete reusing the worker's poll-loop context: that context is
+// exactly what shutdown cancels, so recording a job's outcome on it meant
+// a shutdown racing with an in-flight handler could abort the Fail/
+// Complete call, leaving the job neither completed nor properly failed.
+// The handler below cancels the outer context itself (simulating shutdown
+// firing mid-handle) before returning — the resulting Fail/Complete call
+// must still see a live (non-cancelled) context.
+func TestWorker_OutcomeRecording_SurvivesContextCancellation(t *testing.T) {
+	q := &mockQueue{}
+	log := &mockLogger{}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	handler := &mockHandler{
+		jobType: "shutdown_job",
+		handleFn: func(_ context.Context, _ jobs.Job) error {
+			cancel() // simulate SIGTERM arriving while this job is mid-handle
+			return errors.New("boom")
+		},
+	}
+
+	w := jobs.NewWorker(q, log, 20*time.Millisecond)
+	w.Register(handler)
+
+	job, _ := jobs.NewJob("j1", "shutdown_job", nil)
+	_ = q.Enqueue(context.Background(), job)
+
+	w.Start(ctx) // returns promptly: ctx is already cancelled by the handler
+
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	if len(q.failed) != 1 {
+		t.Fatalf("failed = %v, want [j1]", q.failed)
+	}
+	if len(q.failCtxErrs) != 1 || q.failCtxErrs[0] != nil {
+		t.Errorf("Fail's ctx.Err() = %v, want nil — the outcome-recording context must not inherit the poll-loop context's cancellation", q.failCtxErrs)
 	}
 }

@@ -58,3 +58,66 @@ func TestSetup_Enabled_InstallsProviderAndShutdownSucceeds(t *testing.T) {
 		t.Errorf("shutdown: %v", err)
 	}
 }
+
+// TestSetup_SampleRatioZero_NeverSamples pins the fix for a clamp that used
+// to live in Setup itself (ratio <= 0 was forced up to 1) and would have
+// silently turned an explicit "export nothing" config into "export
+// everything" even though config.normalizeTracing was already fixed to
+// preserve 0 at the config layer — the bug was reintroduced one level
+// down, in Setup's own defensive fallback. This exercises Setup end to
+// end: install the provider, start a span, and check whether the SDK
+// actually decided to sample it.
+func TestSetup_SampleRatioZero_NeverSamples(t *testing.T) {
+	prevProvider := otel.GetTracerProvider()
+	t.Cleanup(func() { otel.SetTracerProvider(prevProvider) })
+
+	shutdown, err := tracing.Setup(context.Background(), config.TracingConfig{
+		Enabled:     true,
+		Endpoint:    "127.0.0.1:1",
+		Insecure:    true,
+		SampleRatio: 0,
+	}, "test-service")
+	if err != nil {
+		t.Fatalf("Setup: %v", err)
+	}
+	t.Cleanup(func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		_ = shutdown(ctx)
+	})
+
+	_, span := otel.Tracer("test").Start(context.Background(), "should-not-sample")
+	defer span.End()
+	if span.SpanContext().IsSampled() {
+		t.Error("SampleRatio: 0 must never sample a span, got sampled")
+	}
+}
+
+// TestSetup_SampleRatioOne_AlwaysSamples is the positive-case sibling of
+// the test above — confirms the fix didn't just make 0 a no-op sampler by
+// accident while breaking the normal "sample everything" default.
+func TestSetup_SampleRatioOne_AlwaysSamples(t *testing.T) {
+	prevProvider := otel.GetTracerProvider()
+	t.Cleanup(func() { otel.SetTracerProvider(prevProvider) })
+
+	shutdown, err := tracing.Setup(context.Background(), config.TracingConfig{
+		Enabled:     true,
+		Endpoint:    "127.0.0.1:1",
+		Insecure:    true,
+		SampleRatio: 1,
+	}, "test-service")
+	if err != nil {
+		t.Fatalf("Setup: %v", err)
+	}
+	t.Cleanup(func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		_ = shutdown(ctx)
+	})
+
+	_, span := otel.Tracer("test").Start(context.Background(), "should-sample")
+	defer span.End()
+	if !span.SpanContext().IsSampled() {
+		t.Error("SampleRatio: 1 must always sample a span, got not sampled")
+	}
+}

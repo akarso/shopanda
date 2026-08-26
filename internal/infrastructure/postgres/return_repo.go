@@ -9,7 +9,6 @@ import (
 
 	domainReturns "github.com/akarso/shopanda/internal/domain/returns"
 	"github.com/akarso/shopanda/internal/domain/shared"
-	"github.com/lib/pq"
 )
 
 var _ domainReturns.Repository = (*ReturnRepo)(nil)
@@ -226,7 +225,7 @@ func (r *ReturnRepo) loadItemsBatch(ctx context.Context, returnIDs []string) (ma
 	const q = `SELECT return_id, variant_id, sku, name, quantity, unit_price, currency, created_at
 		FROM order_return_items WHERE return_id = ANY($1)
 		ORDER BY return_id, variant_id`
-	rows, err := r.db.QueryContext(ctx, q, pq.Array(returnIDs))
+	rows, err := r.db.QueryContext(ctx, q, returnIDs)
 	if err != nil {
 		return nil, fmt.Errorf("return_repo: load items: %w", err)
 	}

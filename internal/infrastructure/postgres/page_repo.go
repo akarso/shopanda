@@ -9,7 +9,7 @@ import (
 
 	"github.com/akarso/shopanda/internal/domain/cms"
 	"github.com/akarso/shopanda/internal/platform/apperror"
-	"github.com/lib/pq"
+	"github.com/jackc/pgx/v5/pgconn"
 )
 
 // Compile-time check that PageRepo implements cms.PageRepository.
@@ -135,9 +135,9 @@ func (r *PageRepo) Create(ctx context.Context, p *cms.Page) error {
 	      VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`
 	_, err := r.db.ExecContext(ctx, q, p.ID(), p.Slug(), p.Title(), p.Content(), p.Language(), p.IsActive(), p.CreatedAt(), p.UpdatedAt())
 	if err != nil {
-		var pqErr *pq.Error
-		if errors.As(err, &pqErr) && pqErr.Code == "23505" {
-			if pqErr.Constraint == "pages_slug_key" {
+		var pgErr *pgconn.PgError
+		if errors.As(err, &pgErr) && pgErr.Code == "23505" {
+			if pgErr.ConstraintName == "pages_slug_key" {
 				return apperror.Conflict("page with this slug already exists")
 			}
 			return apperror.Conflict("page with this id already exists")
@@ -156,8 +156,8 @@ func (r *PageRepo) Update(ctx context.Context, p *cms.Page) error {
 	      WHERE id = $1`
 	result, err := r.db.ExecContext(ctx, q, p.ID(), p.Slug(), p.Title(), p.Content(), p.Language(), p.IsActive(), p.UpdatedAt())
 	if err != nil {
-		var pqErr *pq.Error
-		if errors.As(err, &pqErr) && pqErr.Code == "23505" {
+		var pgErr *pgconn.PgError
+		if errors.As(err, &pgErr) && pgErr.Code == "23505" {
 			return apperror.Conflict("page with this slug already exists")
 		}
 		return fmt.Errorf("page_repo: update: %w", err)

@@ -10,7 +10,7 @@ import (
 
 	"github.com/akarso/shopanda/internal/domain/catalog"
 	"github.com/akarso/shopanda/internal/platform/apperror"
-	"github.com/lib/pq"
+	"github.com/jackc/pgx/v5/pgconn"
 )
 
 // Compile-time check that CollectionRepo implements catalog.CollectionRepository.
@@ -135,9 +135,9 @@ func (r *CollectionRepo) Create(ctx context.Context, c *catalog.Collection) erro
 		c.CreatedAt, c.UpdatedAt,
 	)
 	if err != nil {
-		var pqErr *pq.Error
-		if errors.As(err, &pqErr) && pqErr.Code == "23505" {
-			switch pqErr.Constraint {
+		var pgErr *pgconn.PgError
+		if errors.As(err, &pgErr) && pgErr.Code == "23505" {
+			switch pgErr.ConstraintName {
 			case "collections_slug_key":
 				return apperror.Conflict("collection with this slug already exists")
 			case "collections_pkey":
@@ -192,10 +192,10 @@ func (r *CollectionRepo) Update(ctx context.Context, c *catalog.Collection) erro
 		newUpdatedAt, c.ID,
 	)
 	if err != nil {
-		var pqErr *pq.Error
-		if errors.As(err, &pqErr) {
-			if pqErr.Code == "23505" {
-				switch pqErr.Constraint {
+		var pgErr *pgconn.PgError
+		if errors.As(err, &pgErr) {
+			if pgErr.Code == "23505" {
+				switch pgErr.ConstraintName {
 				case "collections_slug_key":
 					return apperror.Conflict("collection with this slug already exists")
 				default:
@@ -231,12 +231,12 @@ func (r *CollectionRepo) AddProduct(ctx context.Context, collectionID, productID
 		SELECT $1, $2 FROM collections WHERE id = $1 AND type = 'manual'`
 	res, err := r.db.ExecContext(ctx, q, collectionID, productID)
 	if err != nil {
-		var pqErr *pq.Error
-		if errors.As(err, &pqErr) {
-			if pqErr.Code == "23505" {
+		var pgErr *pgconn.PgError
+		if errors.As(err, &pgErr) {
+			if pgErr.Code == "23505" {
 				return apperror.Conflict("product already in collection")
 			}
-			if pqErr.Code == "23503" {
+			if pgErr.Code == "23503" {
 				return apperror.NotFound("product not found")
 			}
 		}

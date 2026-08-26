@@ -78,18 +78,18 @@ C4Component
         }
 
         Boundary(infrastructure, "Infrastructure Layer (Adapters)") {
-            Component(postgresRepos, "PostgreSQL Repositories", "Go, lib/pq", "Catalog, cart, order, customer, payment, shipping, CMS, config, and related repos")
-            Component(auditLogRepo, "AuditLogRepo", "Go, lib/pq", "Insert, list, export, and retention delete for admin_audit_log")
-            Component(webhookEndpointRepo, "WebhookEndpointRepo", "Go, lib/pq", "Merchant outbound webhook endpoint CRUD")
+            Component(postgresRepos, "PostgreSQL Repositories", "Go, pgx", "Catalog, cart, order, customer, payment, shipping, CMS, config, and related repos")
+            Component(auditLogRepo, "AuditLogRepo", "Go, pgx", "Insert, list, export, and retention delete for admin_audit_log")
+            Component(webhookEndpointRepo, "WebhookEndpointRepo", "Go, pgx", "Merchant outbound webhook endpoint CRUD")
             Component(postgresSearch, "PostgresSearchEngine", "Go, tsvector", "Full-text search via PostgreSQL tsvector, filters, facets")
-            Component(postgresJobQueue, "PostgresJobQueue", "Go, lib/pq", "Job queue with FOR UPDATE SKIP LOCKED dequeue, retry logic")
+            Component(postgresJobQueue, "PostgresJobQueue", "Go, pgx", "Job queue with FOR UPDATE SKIP LOCKED dequeue, retry logic")
             Component(manualPay, "ManualPayProvider", "Go", "Offline payment processing")
             Component(flatRate, "FlatRateShipProvider", "Go", "Fixed-cost shipping calculation")
             Component(cronScheduler, "CronScheduler", "Go", "In-process cron scheduler: implements Scheduler port, fires registered tasks on schedule, enqueues jobs into Queue")
             Component(smtpMailer, "SMTPMailer", "Go, net/smtp", "Sends email via SMTP: implements Mailer port")
             Component(localFSStorage, "LocalStorage", "Go, os", "Saves/deletes files on local disk: implements Storage port")
             Component(pgCacheStore, "PostgresCacheStore", "Go, UNLOGGED table", "Key-value cache with TTL: implements Cache port")
-            Component(pgConfigRepo, "PostgresConfigRepo", "Go, lib/pq", "DB-backed config storage: implements config.Repository port")
+            Component(pgConfigRepo, "PostgresConfigRepo", "Go, pgx", "DB-backed config storage: implements config.Repository port")
         }
 
         Boundary(domain, "Domain Layer") {
@@ -212,11 +212,11 @@ C4Component
     Rel(storeAdmin, postgresRepos, "Store CRUD")
     Rel(storeAdmin, eventBus, "Publishes store.created, store.updated")
 
-    Rel(postgresRepos, postgres, "SQL queries", "lib/pq")
-    Rel(postgresSearch, postgres, "Full-text search queries", "lib/pq")
-    Rel(postgresJobQueue, postgres, "Job queue queries", "lib/pq")
-    Rel(pgCacheStore, postgres, "Key-value cache queries", "lib/pq")
-    Rel(pgConfigRepo, postgres, "Config key-value queries", "lib/pq")
+    Rel(postgresRepos, postgres, "SQL queries", "pgx")
+    Rel(postgresSearch, postgres, "Full-text search queries", "pgx")
+    Rel(postgresJobQueue, postgres, "Job queue queries", "pgx")
+    Rel(pgCacheStore, postgres, "Key-value cache queries", "pgx")
+    Rel(pgConfigRepo, postgres, "Config key-value queries", "pgx")
     Rel(jobWorker, postgresJobQueue, "Polls and claims jobs")
     Rel(cronScheduler, postgresJobQueue, "Enqueues scheduled jobs")
     Rel(webhookHandler, paymentGateway, "Receives callbacks")

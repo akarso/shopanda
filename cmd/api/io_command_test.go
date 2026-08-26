@@ -10,7 +10,7 @@ import (
 	"strings"
 	"testing"
 
-	_ "github.com/lib/pq"
+	_ "github.com/jackc/pgx/v5/stdlib"
 
 	"github.com/akarso/shopanda/internal/platform/config"
 	"github.com/akarso/shopanda/internal/platform/logger"
@@ -166,7 +166,7 @@ func stubIOOpenDB(t *testing.T) {
 	prev := ioOpenDB
 	t.Cleanup(func() { ioOpenDB = prev })
 	ioOpenDB = func(string) (*sql.DB, error) {
-		return sql.Open("postgres", "postgres://invalid:invalid@127.0.0.1:1/invalid?sslmode=disable")
+		return sql.Open("pgx", "postgres://invalid:invalid@127.0.0.1:1/invalid?sslmode=disable")
 	}
 }
 

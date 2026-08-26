@@ -10,7 +10,7 @@ import (
 	"github.com/akarso/shopanda/internal/domain/payment"
 	"github.com/akarso/shopanda/internal/domain/shared"
 	"github.com/akarso/shopanda/internal/platform/apperror"
-	"github.com/lib/pq"
+	"github.com/jackc/pgx/v5/pgconn"
 )
 
 // Compile-time check that PaymentRepo implements payment.PaymentRepository.
@@ -113,8 +113,8 @@ func (r *PaymentRepo) Create(ctx context.Context, p *payment.Payment) error {
 		p.CreatedAt, p.UpdatedAt,
 	)
 	if err != nil {
-		var pqErr *pq.Error
-		if errors.As(err, &pqErr) && pqErr.Code == "23505" {
+		var pgErr *pgconn.PgError
+		if errors.As(err, &pgErr) && pgErr.Code == "23505" {
 			return apperror.Conflict("payment for this order already exists")
 		}
 		return fmt.Errorf("payment_repo: create: %w", err)

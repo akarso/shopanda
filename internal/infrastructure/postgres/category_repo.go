@@ -10,7 +10,7 @@ import (
 
 	"github.com/akarso/shopanda/internal/domain/catalog"
 	"github.com/akarso/shopanda/internal/platform/apperror"
-	"github.com/lib/pq"
+	"github.com/jackc/pgx/v5/pgconn"
 )
 
 // Compile-time check that CategoryRepo implements catalog.CategoryRepository.
@@ -145,9 +145,9 @@ func (r *CategoryRepo) Create(ctx context.Context, c *catalog.Category) error {
 		c.CreatedAt, c.UpdatedAt,
 	)
 	if err != nil {
-		var pqErr *pq.Error
-		if errors.As(err, &pqErr) && pqErr.Code == "23505" {
-			switch pqErr.Constraint {
+		var pgErr *pgconn.PgError
+		if errors.As(err, &pgErr) && pgErr.Code == "23505" {
+			switch pgErr.ConstraintName {
 			case "categories_slug_key":
 				return apperror.Conflict("category with this slug already exists")
 			case "categories_pkey":
@@ -181,9 +181,9 @@ func (r *CategoryRepo) Update(ctx context.Context, c *catalog.Category) error {
 		newUpdatedAt, c.ID,
 	)
 	if err != nil {
-		var pqErr *pq.Error
-		if errors.As(err, &pqErr) && pqErr.Code == "23505" {
-			switch pqErr.Constraint {
+		var pgErr *pgconn.PgError
+		if errors.As(err, &pgErr) && pgErr.Code == "23505" {
+			switch pgErr.ConstraintName {
 			case "categories_slug_key":
 				return apperror.Conflict("category with this slug already exists")
 			default:
@@ -211,9 +211,9 @@ func (r *CategoryRepo) Delete(ctx context.Context, id string) error {
 	const q = `DELETE FROM categories WHERE id = $1`
 	res, err := r.db.ExecContext(ctx, q, id)
 	if err != nil {
-		var pqErr *pq.Error
-		if errors.As(err, &pqErr) && pqErr.Code == "23503" {
-			switch pqErr.Constraint {
+		var pgErr *pgconn.PgError
+		if errors.As(err, &pgErr) && pgErr.Code == "23503" {
+			switch pgErr.ConstraintName {
 			case "categories_parent_id_fkey":
 				return apperror.Conflict("category has child categories")
 			default:

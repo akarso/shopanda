@@ -9,7 +9,7 @@ import (
 
 	"github.com/akarso/shopanda/internal/domain/store"
 	"github.com/akarso/shopanda/internal/platform/apperror"
-	"github.com/lib/pq"
+	"github.com/jackc/pgx/v5/pgconn"
 )
 
 // Compile-time check that StoreRepo implements store.StoreRepository.
@@ -139,9 +139,9 @@ func (r *StoreRepo) Create(ctx context.Context, s *store.Store) error {
 		s.CreatedAt, s.UpdatedAt,
 	)
 	if err != nil {
-		var pqErr *pq.Error
-		if errors.As(err, &pqErr) && pqErr.Code == "23505" {
-			switch pqErr.Constraint {
+		var pgErr *pgconn.PgError
+		if errors.As(err, &pgErr) && pgErr.Code == "23505" {
+			switch pgErr.ConstraintName {
 			case "stores_code_key":
 				return apperror.Conflict("store with this code already exists")
 			case "stores_pkey":
@@ -171,9 +171,9 @@ func (r *StoreRepo) Update(ctx context.Context, s *store.Store) error {
 		newUpdatedAt, s.ID,
 	)
 	if err != nil {
-		var pqErr *pq.Error
-		if errors.As(err, &pqErr) && pqErr.Code == "23505" {
-			switch pqErr.Constraint {
+		var pgErr *pgconn.PgError
+		if errors.As(err, &pgErr) && pgErr.Code == "23505" {
+			switch pgErr.ConstraintName {
 			case "stores_code_key":
 				return apperror.Conflict("store with this code already exists")
 			case "idx_stores_domain":

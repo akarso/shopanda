@@ -10,6 +10,7 @@ import (
 	"go.opentelemetry.io/otel/codes"
 	"go.opentelemetry.io/otel/trace"
 
+	"github.com/akarso/shopanda/internal/platform/apperror"
 	"github.com/akarso/shopanda/internal/platform/event"
 	"github.com/akarso/shopanda/internal/platform/logger"
 	"github.com/akarso/shopanda/internal/platform/metrics"
@@ -100,6 +101,42 @@ func (w *Workflow) WithMetrics(m metrics.Recorder) *Workflow {
 	return w
 }
 
+// runStep executes step inside its own child span, guaranteeing the span
+// is always ended — including when step.Execute panics. A straight-line
+// "Start, call, End" sequence (the previous shape of this code) leaks the
+// span on panic: End() sits after the call, so a panic skips it entirely,
+// and only the outer root span (Execute's own recover) ever closes. This
+// re-panics after recording the panic on the step's own span, so the
+// panic still propagates to Execute's recover exactly as before — the
+// step span now just correctly reflects the panic before that happens.
+func (w *Workflow) runStep(ctx context.Context, step Step, cctx *Context) (err error) {
+	stepCtx, stepSpan := w.tracer.Start(ctx, "checkout.step."+step.Name())
+	defer func() {
+		if r := recover(); r != nil {
+			// Fixed, non-sensitive text, not fmt.Errorf("panic: %v", r):
+			// a recovered panic value can be anything a step's business
+			// logic constructed, including customer or payment-processor
+			// detail — the same reasoning spanSafeError already applies
+			// to normal errors. The original value still propagates via
+			// panic(r) below for logging/recovery elsewhere; only the
+			// span recording is bounded.
+			stepSpan.RecordError(errors.New("panic"))
+			stepSpan.SetStatus(codes.Error, "panic")
+			stepSpan.End()
+			panic(r)
+		}
+		if err != nil {
+			safeErr := spanSafeError(err)
+			stepSpan.RecordError(safeErr)
+			stepSpan.SetStatus(codes.Error, safeErr.Error())
+		} else {
+			stepSpan.SetStatus(codes.Ok, "")
+		}
+		stepSpan.End()
+	}()
+	return step.Execute(stepCtx, cctx)
+}
+
 // publishEvent publishes an event and logs + returns any error from sync handlers.
 func (w *Workflow) publishEvent(ctx context.Context, name, source string, data interface{}) error {
 	if err := w.bus.Publish(ctx, event.New(name, source, data)); err != nil {
@@ -128,7 +165,10 @@ func (w *Workflow) Execute(ctx context.Context, cctx *Context) (err error) {
 		if r := recover(); r != nil {
 			w.metrics.CheckoutResult(metrics.OutcomeFailed)
 			if span != nil {
-				span.RecordError(fmt.Errorf("panic: %v", r))
+				// See runStep's identical recover branch: fixed text,
+				// not the raw panic value, which may carry sensitive
+				// detail. panic(r) below still propagates it unbounded.
+				span.RecordError(errors.New("panic"))
 				span.SetStatus(codes.Error, "panic")
 				span.End()
 			}
@@ -141,8 +181,9 @@ func (w *Workflow) Execute(ctx context.Context, cctx *Context) (err error) {
 			span.SetStatus(codes.Ok, "")
 		case err != nil:
 			w.metrics.CheckoutResult(metrics.OutcomeFailed)
-			span.RecordError(err)
-			span.SetStatus(codes.Error, err.Error())
+			safeErr := spanSafeError(err)
+			span.RecordError(safeErr)
+			span.SetStatus(codes.Error, safeErr.Error())
 		default:
 			w.metrics.CheckoutResult(metrics.OutcomeSuccess)
 			span.SetStatus(codes.Ok, "")
@@ -183,16 +224,7 @@ func (w *Workflow) Execute(ctx context.Context, cctx *Context) (err error) {
 			return err
 		}
 
-		stepCtx, stepSpan := w.tracer.Start(ctx, "checkout.step."+step.Name())
-		stepErr := step.Execute(stepCtx, cctx)
-		if stepErr != nil {
-			stepSpan.RecordError(stepErr)
-			stepSpan.SetStatus(codes.Error, stepErr.Error())
-		} else {
-			stepSpan.SetStatus(codes.Ok, "")
-		}
-		stepSpan.End()
-
+		stepErr := w.runStep(ctx, step, cctx)
 		if stepErr != nil {
 			cctx.Trace = append(cctx.Trace, TraceEntry{
 				Step:   step.Name(),
@@ -243,8 +275,20 @@ func (w *Workflow) Execute(ctx context.Context, cctx *Context) (err error) {
 		CartID:  cctx.CartID,
 		OrderID: orderID,
 	}); pubErr != nil {
+		// Deliberately not returned: the order was created and payment
+		// captured by this point (every step above already succeeded) —
+		// only a downstream notification/event-bus subscriber failed to
+		// receive the completion event. Returning pubErr here would make
+		// checkout.Service.Checkout (which propagates this error as-is)
+		// report the checkout as FAILED to its caller, even though the
+		// customer's order is real — the HTTP layer would then tell the
+		// customer to retry, risking a genuine duplicate order, to work
+		// around what is actually a notification-delivery problem.
+		// publishEvent already logged this failure, and
+		// succeededEventFailed (set below) keeps it visible as its own
+		// metrics outcome distinct from both success and a real failure.
 		succeededEventFailed = true
-		return pubErr
+		return nil
 	}
 
 	return nil
@@ -252,6 +296,42 @@ func (w *Workflow) Execute(ctx context.Context, cctx *Context) (err error) {
 
 func isContextError(err error) bool {
 	return errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded)
+}
+
+// spanSafeError returns a bounded, span-safe substitute for err. err.Error()
+// is not guaranteed free of customer or payment-processor detail — any
+// wrapped validation or provider error can carry whatever the underlying
+// library put in its message — and checkout spans may export to a
+// third-party OTLP collector, the same reasoning
+// shared.TracingMiddleware already applies to raw URL paths.
+//
+//   - A context error (isContextError) returns the bare context.Canceled
+//     or context.DeadlineExceeded sentinel — fixed, safe strings — not
+//     the original error, which errors.Is would still match through an
+//     arbitrary wrapping prefix a caller might have added (e.g. a step
+//     wrapping ctx.Err() with customer or cart detail in its message).
+//   - An *apperror.Error's bounded Code (e.g. "validation", "not_found")
+//     is used in place of its free-text Message/wrapped error.
+//   - Anything else becomes a fixed generic message.
+//
+// The exact original text is not lost: publishEvent and every step
+// failure path already log the full error via w.log — this only bounds
+// what additionally leaves the process through the span exporter.
+func spanSafeError(err error) error {
+	if err == nil {
+		return nil
+	}
+	if errors.Is(err, context.Canceled) {
+		return context.Canceled
+	}
+	if errors.Is(err, context.DeadlineExceeded) {
+		return context.DeadlineExceeded
+	}
+	var appErr *apperror.Error
+	if errors.As(err, &appErr) {
+		return fmt.Errorf("%s", appErr.Code)
+	}
+	return errors.New("error")
 }
 
 // Steps returns the number of registered steps.

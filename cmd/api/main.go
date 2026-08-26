@@ -186,16 +186,33 @@ func runServe(cfg *config.Config, log logger.Logger, embedScheduler bool) error 
 	if err != nil {
 		return fmt.Errorf("tracing: %w", err)
 	}
+	// Bounded best-effort flush for every early-return path below, once
+	// Setup has installed a real provider — without this, a startup
+	// failure after that point would leak the batch exporter's background
+	// goroutine and drop any spans already buffered (unlikely to be more
+	// than a handful this early, but not zero: process exit via
+	// os.Exit(1) in main() doesn't run this either way, so it's cheap
+	// insurance against that assumption ever changing rather than a fix
+	// for an observed problem).
+	shutdownTracing := func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		if err := tracingShutdown(ctx); err != nil {
+			log.Error("tracing.shutdown.failed", err, nil)
+		}
+	}
 
 	metricsRecorder, metricsHandler := newMetrics(cfg)
 
 	rt, err := wireServeRuntime(cfg, log, conn, repos, metricsRecorder)
 	if err != nil {
+		shutdownTracing()
 		return err // UnbindRuntime already run inside wireServeRuntime
 	}
 
 	handler, err := buildServeHandler(cfg, log, rt, conn)
 	if err != nil {
+		shutdownTracing()
 		rbac.UnbindRuntime()
 		return err
 	}
@@ -216,6 +233,7 @@ func runServe(cfg *config.Config, log logger.Logger, embedScheduler bool) error 
 		runtime.RegisterCartRecovery(rt.jobQueue, log, sched)
 		runtime.RegisterAuditRetention(rt.jobQueue, log, sched)
 		if err := integrationApp.RegisterSyncJobCronTriggers(rt.pluginApp, rt.jobQueue, sched, log); err != nil {
+			shutdownTracing()
 			rbac.UnbindRuntime()
 			return fmt.Errorf("sync job cron triggers: %w", err)
 		}
@@ -252,6 +270,7 @@ func runServe(cfg *config.Config, log logger.Logger, embedScheduler bool) error 
 			earlyDones = append(earlyDones, schedulerDone)
 		}
 		runtime.ShutdownBackground(log, 10*time.Second, sched, earlyCancels, earlyDones)
+		shutdownTracing()
 		rbac.UnbindRuntime()
 		return fmt.Errorf("metrics: %w", err)
 	}
@@ -287,13 +306,8 @@ func runServe(cfg *config.Config, log logger.Logger, embedScheduler bool) error 
 
 	// Flush any spans still buffered by the batch processor, after
 	// everything else has stopped so shutdown-path spans (if any future
-	// instrumentation adds them) aren't dropped. Bounded — a slow/dead
-	// collector must not hang process exit.
-	tracingCtx, tracingCancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer tracingCancel()
-	if shutdownErr := tracingShutdown(tracingCtx); shutdownErr != nil {
-		log.Error("tracing.shutdown.failed", shutdownErr, nil)
-	}
+	// instrumentation adds them) aren't dropped.
+	shutdownTracing()
 
 	return err
 }
@@ -804,15 +818,24 @@ func runWorker(cfg *config.Config, log logger.Logger) error {
 	if err != nil {
 		return fmt.Errorf("tracing: %w", err)
 	}
+	shutdownTracing := func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		if err := tracingShutdown(ctx); err != nil {
+			log.Error("tracing.shutdown.failed", err, nil)
+		}
+	}
 
 	metricsRecorder, metricsHandler := newMetrics(cfg)
 	jobWorker, _, _, err := setupWorker(conn, cfg, log, pluginApp, metricsRecorder)
 	if err != nil {
+		shutdownTracing()
 		return err
 	}
 
 	metricsSrv, metricsDone, err := startMetricsServer(cfg, metricsHandler, log)
 	if err != nil {
+		shutdownTracing()
 		return fmt.Errorf("metrics: %w", err)
 	}
 
@@ -839,11 +862,7 @@ func runWorker(cfg *config.Config, log logger.Logger) error {
 		runtime.ShutdownBackground(log, 10*time.Second, nil, []func(){func() { metricsSrv.Close() }}, []<-chan struct{}{metricsDone})
 	}
 
-	tracingCtx, tracingCancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer tracingCancel()
-	if shutdownErr := tracingShutdown(tracingCtx); shutdownErr != nil {
-		log.Error("tracing.shutdown.failed", shutdownErr, nil)
-	}
+	shutdownTracing()
 	return nil
 }
 

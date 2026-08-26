@@ -8,7 +8,6 @@ import (
 
 	"github.com/akarso/shopanda/internal/domain/pricing"
 	"github.com/akarso/shopanda/internal/domain/shared"
-	"github.com/lib/pq"
 )
 
 // Compile-time check that PriceRepo implements pricing.PriceRepository.
@@ -69,7 +68,7 @@ func (r *PriceRepo) FindByVariantsCurrencyAndStore(ctx context.Context, variantI
 	const q = `SELECT id, variant_id, store_id, currency, amount, created_at
 		FROM prices WHERE variant_id = ANY($1) AND currency = $2 AND store_id = $3`
 
-	rows, err := r.query(ctx, q, pq.Array(variantIDs), currency, storeID)
+	rows, err := r.query(ctx, q, variantIDs, currency, storeID)
 	if err != nil {
 		return nil, fmt.Errorf("price_repo: find by variants currency and store: %w", err)
 	}

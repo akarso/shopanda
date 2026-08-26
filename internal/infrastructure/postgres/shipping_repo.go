@@ -10,7 +10,7 @@ import (
 	"github.com/akarso/shopanda/internal/domain/shared"
 	"github.com/akarso/shopanda/internal/domain/shipping"
 	"github.com/akarso/shopanda/internal/platform/apperror"
-	"github.com/lib/pq"
+	"github.com/jackc/pgx/v5/pgconn"
 )
 
 // Compile-time check that ShippingRepo implements shipping.ShipmentRepository.
@@ -114,8 +114,8 @@ func (r *ShippingRepo) Create(ctx context.Context, s *shipping.Shipment) error {
 		s.CreatedAt, s.UpdatedAt,
 	)
 	if err != nil {
-		var pqErr *pq.Error
-		if errors.As(err, &pqErr) && pqErr.Code == "23505" {
+		var pgErr *pgconn.PgError
+		if errors.As(err, &pgErr) && pgErr.Code == "23505" {
 			return apperror.Conflict("shipment for this order already exists")
 		}
 		return fmt.Errorf("shipping_repo: create: %w", err)

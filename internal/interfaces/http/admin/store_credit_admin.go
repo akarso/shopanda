@@ -140,6 +140,14 @@ func (h *StoreCreditAdminHandler) Issue() http.HandlerFunc {
 		// (e.g. after a timeout with an ambiguous response) the service
 		// treats it as a no-op instead of issuing credit twice.
 		idempotencyKey := strings.TrimSpace(r.Header.Get("Idempotency-Key"))
+		if len(idempotencyKey) > 255 {
+			// Matches store_credit_ledger.idempotency_key's VARCHAR(255)
+			// bound (migration 064) — reject here with a clear 422 rather
+			// than let an oversized header reach the DB and surface as a
+			// generic constraint-violation 500.
+			httpshared.JSONError(w, apperror.Validation("Idempotency-Key must not exceed 255 characters"))
+			return
+		}
 		if err := h.svc.Issue(r.Context(), customerID, amount, req.Note, idempotencyKey); err != nil {
 			// JSONError unwraps to the underlying *apperror.Error (via
 			// errors.As) and maps its code to the right status — e.g.

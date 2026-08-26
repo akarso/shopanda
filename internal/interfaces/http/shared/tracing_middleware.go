@@ -30,8 +30,18 @@ import (
 // process, when wire_routes.go builds the router — well after Setup has
 // run) sidesteps that entirely: it always resolves the current provider
 // directly, no delegation involved. Before Setup runs (or when tracing is
-// disabled), this is OTel's documented no-op tracer — safe and effectively
-// free — so this middleware can be registered unconditionally.
+// disabled), this is OTel's documented no-op tracer, so this middleware
+// can be registered unconditionally — safe, and cheap enough not to
+// bother gating behind cfg.Tracing.Enabled. "Cheap", not literally free:
+// Go evaluates a call's arguments before the call happens, so the
+// WithSpanKind/WithAttributes option values and the "HTTP "+r.Method
+// concatenation below are still built on every request whether or not
+// tracing is enabled — there's no way for this middleware to skip
+// constructing them without its own enabled-check, which OTel's Tracer
+// interface doesn't expose a supported way to ask for. What the no-op
+// tracer does skip is the actually expensive part: no span object
+// materializes past that call, and nothing gets batched, serialized, or
+// sent over the network.
 func TracingMiddleware() Middleware {
 	tracer := otel.Tracer("github.com/akarso/shopanda/internal/interfaces/http")
 	return func(next http.Handler) http.Handler {
@@ -59,7 +69,7 @@ func TracingMiddleware() Middleware {
 			)
 			defer span.End()
 
-			sw := &statusWriter{ResponseWriter: w, status: http.StatusOK}
+			sw := wrapStatus(w)
 			next.ServeHTTP(sw, r.WithContext(ctx))
 
 			pattern := routeMatchFromContext(r.Context())

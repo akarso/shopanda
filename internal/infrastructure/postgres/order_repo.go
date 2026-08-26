@@ -10,7 +10,6 @@ import (
 
 	"github.com/akarso/shopanda/internal/domain/order"
 	"github.com/akarso/shopanda/internal/domain/shared"
-	"github.com/lib/pq"
 )
 
 // Compile-time check that OrderRepo implements order.OrderRepository.
@@ -425,7 +424,7 @@ func (r *OrderRepo) loadItemsBatch(ctx context.Context, orderIDs []string) (map[
 	const q = `SELECT order_id, variant_id, sku, name, quantity, unit_price, currency, created_at
 		FROM order_items WHERE order_id = ANY($1)
 		ORDER BY order_id, created_at`
-	rows, err := r.db.QueryContext(ctx, q, pq.Array(orderIDs))
+	rows, err := r.db.QueryContext(ctx, q, orderIDs)
 	if err != nil {
 		return nil, fmt.Errorf("order_repo: load items batch: %w", err)
 	}

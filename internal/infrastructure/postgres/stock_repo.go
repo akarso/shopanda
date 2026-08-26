@@ -9,7 +9,6 @@ import (
 	"time"
 
 	"github.com/akarso/shopanda/internal/domain/inventory"
-	"github.com/lib/pq"
 )
 
 // Compile-time check that StockRepo implements inventory.StockRepository.
@@ -100,7 +99,7 @@ func (r *StockRepo) SetStocks(ctx context.Context, entries []inventory.StockEntr
 		SET quantity = EXCLUDED.quantity,
 		    updated_at = EXCLUDED.updated_at`
 
-	_, err := r.db.ExecContext(ctx, q, pq.Array(variantIDs), pq.Array(quantities), pq.Array(updatedAts))
+	_, err := r.db.ExecContext(ctx, q, variantIDs, quantities, updatedAts)
 	if err != nil {
 		return fmt.Errorf("stock_repo: set stocks: %w", err)
 	}

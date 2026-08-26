@@ -9,7 +9,6 @@ import (
 
 	"github.com/akarso/shopanda/internal/domain/pricing"
 	"github.com/akarso/shopanda/internal/domain/shared"
-	"github.com/lib/pq"
 )
 
 // Compile-time check that PriceHistoryRepo implements pricing.PriceHistoryRepository.
@@ -93,7 +92,7 @@ func (r *PriceHistoryRepo) LowestSinceByVariants(ctx context.Context, variantIDs
 		ORDER BY variant_id, amount ASC, recorded_at ASC`
 	// Uses idx_price_history_lookup (variant_id, currency, store_id, amount, recorded_at).
 
-	rows, err := r.query(ctx, q, pq.Array(variantIDs), currency, storeID, since)
+	rows, err := r.query(ctx, q, variantIDs, currency, storeID, since)
 	if err != nil {
 		return nil, fmt.Errorf("price_history_repo: lowest since by variants: %w", err)
 	}
