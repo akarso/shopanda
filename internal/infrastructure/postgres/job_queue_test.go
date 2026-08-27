@@ -353,6 +353,83 @@ func TestJobQueue_List(t *testing.T) {
 	}
 }
 
+// TestJobQueue_List_StableOrderOnEqualCreatedAt pins the fix for unstable
+// offset pagination: ORDER BY created_at DESC alone leaves ties undefined
+// across separate queries, which can duplicate or omit rows across pages.
+// Seeds several jobs sharing one created_at (bypassing NewJob's per-call
+// time.Now(), which would make a real collision unlikely in a fast test)
+// and confirms paging through them one at a time visits every job exactly
+// once, with a stable, repeatable order — the id DESC tie-breaker.
+func TestJobQueue_List_StableOrderOnEqualCreatedAt(t *testing.T) {
+	db := testDB(t)
+	if _, err := migrate.Run(db, "../../../migrations"); err != nil {
+		t.Fatalf("run migrations: %v", err)
+	}
+	t.Cleanup(func() { db.Exec("DELETE FROM jobs") })
+
+	q, err := postgres.NewJobQueue(db)
+	if err != nil {
+		t.Fatalf("NewJobQueue: %v", err)
+	}
+	ctx := context.Background()
+
+	const n = 5
+	same := time.Now().UTC()
+	ids := make([]string, n)
+	for i := 0; i < n; i++ {
+		job, _ := jobs.NewJob(id.New(), "test", nil)
+		job.CreatedAt = same
+		job.UpdatedAt = same
+		job.RunAt = same
+		if err := q.Enqueue(ctx, job); err != nil {
+			t.Fatalf("Enqueue %d: %v", i, err)
+		}
+		ids[i] = job.ID
+	}
+	// Enqueue writes created_at as given (not server-assigned), so every
+	// row above genuinely shares the same timestamp — confirm that before
+	// trusting the rest of this test.
+	var distinctCreatedAt int
+	if err := db.QueryRow("SELECT count(DISTINCT created_at) FROM jobs").Scan(&distinctCreatedAt); err != nil {
+		t.Fatalf("count distinct created_at: %v", err)
+	}
+	if distinctCreatedAt != 1 {
+		t.Fatalf("distinct created_at = %d, want 1 (test setup didn't produce a real tie)", distinctCreatedAt)
+	}
+
+	seen := make(map[string]int) // id -> how many times it was returned
+	var order []string
+	for offset := 0; offset < n; offset++ {
+		page, err := q.List(ctx, jobs.ListFilter{Limit: 1, Offset: offset})
+		if err != nil {
+			t.Fatalf("List offset=%d: %v", offset, err)
+		}
+		if len(page) != 1 {
+			t.Fatalf("List offset=%d: len = %d, want 1", offset, len(page))
+		}
+		seen[page[0].ID]++
+		order = append(order, page[0].ID)
+	}
+
+	for _, jobID := range ids {
+		if seen[jobID] != 1 {
+			t.Errorf("job %s appeared %d times across pages, want exactly 1", jobID, seen[jobID])
+		}
+	}
+
+	// Re-run the same pages and confirm the order repeats exactly —
+	// without a deterministic tie-breaker this could vary run to run.
+	for offset := 0; offset < n; offset++ {
+		page, err := q.List(ctx, jobs.ListFilter{Limit: 1, Offset: offset})
+		if err != nil {
+			t.Fatalf("List (repeat) offset=%d: %v", offset, err)
+		}
+		if page[0].ID != order[offset] {
+			t.Errorf("offset=%d: got %s on repeat, want %s (order not stable)", offset, page[0].ID, order[offset])
+		}
+	}
+}
+
 func TestJobQueue_Get_NotFound(t *testing.T) {
 	db := testDB(t)
 	if _, err := migrate.Run(db, "../../../migrations"); err != nil {

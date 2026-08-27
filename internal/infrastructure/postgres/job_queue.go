@@ -210,7 +210,7 @@ func (q *JobQueue) List(ctx context.Context, filter jobs.ListFilter) ([]jobs.Sum
 	const query = `SELECT id, type, status, attempts, max_retries, run_at, created_at, updated_at
 		FROM jobs
 		WHERE ($1 = '' OR type = $1) AND ($2 = '' OR status = $2)
-		ORDER BY created_at DESC
+		ORDER BY created_at DESC, id DESC
 		LIMIT $3 OFFSET $4`
 
 	rows, err := q.db.QueryContext(ctx, query, filter.Type, string(filter.Status), filter.Limit, filter.Offset)
