@@ -23,7 +23,7 @@ See [`ROADMAP.md`](ROADMAP.md) for the full track breakdown, sequencing, and PR 
 
 ## Status
 
-**In progress.** PR-1027 (reservation expiry gap) is done — the first slice, standalone and ahead of any track. Tracks A–D (PR-1028–1047) are still planned; implementation starts track-by-track from here.
+**In progress.** PR-1027 (reservation expiry gap) and PR-1028 (job introspection, the foundation of Track A) are done. The rest of Track A (PR-1029–1032) and Tracks B–D (PR-1033–1047) are still planned.
 
 ## Relationship
 
