@@ -18,6 +18,7 @@ import (
 	cartApp "github.com/akarso/shopanda/internal/application/cart"
 	extensionApp "github.com/akarso/shopanda/internal/application/extension"
 	integrationApp "github.com/akarso/shopanda/internal/application/integration"
+	inventoryApp "github.com/akarso/shopanda/internal/application/inventory"
 	"github.com/akarso/shopanda/internal/application/notification"
 	setupApp "github.com/akarso/shopanda/internal/application/setup"
 	slotsApp "github.com/akarso/shopanda/internal/application/slots"
@@ -232,6 +233,7 @@ func runServe(cfg *config.Config, log logger.Logger, embedScheduler bool) error 
 		runtime.RegisterCacheCleanup(rt.jobQueue, cacheApp.JobType, log, sched)
 		runtime.RegisterCartRecovery(rt.jobQueue, log, sched)
 		runtime.RegisterAuditRetention(rt.jobQueue, log, sched)
+		runtime.RegisterReservationExpiry(rt.jobQueue, log, sched)
 		if err := integrationApp.RegisterSyncJobCronTriggers(rt.pluginApp, rt.jobQueue, sched, log); err != nil {
 			shutdownTracing()
 			rbac.UnbindRuntime()
@@ -468,6 +470,7 @@ func runScheduler(cfg *config.Config, log logger.Logger) error {
 	runtime.RegisterCacheCleanup(jobQueue, cacheApp.JobType, log, sched)
 	runtime.RegisterCartRecovery(jobQueue, log, sched)
 	runtime.RegisterAuditRetention(jobQueue, log, sched)
+	runtime.RegisterReservationExpiry(jobQueue, log, sched)
 	if err := integrationApp.RegisterSyncJobCronTriggers(pluginApp, jobQueue, sched, log); err != nil {
 		return fmt.Errorf("sync job cron triggers: %w", err)
 	}
@@ -761,6 +764,12 @@ func setupWorker(conn *sql.DB, cfg *config.Config, log logger.Logger, app *plugi
 		return nil, nil, nil, err
 	}
 	jobWorker.Register(adminApp.NewRetentionHandler(auditLogRepo, configRepo, log))
+
+	reservationRepo, err := postgres.NewReservationRepo(conn)
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	jobWorker.Register(inventoryApp.NewReservationExpiryHandler(reservationRepo, log))
 
 	merchantWebhookRepo, err := postgres.NewWebhookEndpointRepo(conn)
 	if err != nil {

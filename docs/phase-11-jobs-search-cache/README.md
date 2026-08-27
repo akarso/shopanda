@@ -23,7 +23,7 @@ See [`ROADMAP.md`](ROADMAP.md) for the full track breakdown, sequencing, and PR 
 
 ## Status
 
-**Planned.** This phase is docs-only as of its initial commit — specs exist so implementation can start track-by-track; no code from this phase has shipped yet.
+**In progress.** PR-1027 (reservation expiry gap) is done — the first slice, standalone and ahead of any track. Tracks A–D (PR-1028–1047) are still planned; implementation starts track-by-track from here.
 
 ## Relationship
 

@@ -6,6 +6,7 @@ import (
 
 	adminApp "github.com/akarso/shopanda/internal/application/admin"
 	cacheApp "github.com/akarso/shopanda/internal/application/cache"
+	inventoryApp "github.com/akarso/shopanda/internal/application/inventory"
 	"github.com/akarso/shopanda/internal/domain/jobs"
 	"github.com/akarso/shopanda/internal/domain/scheduler"
 	"github.com/akarso/shopanda/internal/platform/logger"
@@ -96,6 +97,30 @@ func TestRegisterAuditRetention(t *testing.T) {
 	}
 	if queue.enqueued[0].Type != adminApp.RetentionJobType {
 		t.Fatalf("job type = %q, want %q", queue.enqueued[0].Type, adminApp.RetentionJobType)
+	}
+}
+
+func TestRegisterReservationExpiry(t *testing.T) {
+	sched := &stubScheduler{}
+	queue := &recordingQueue{}
+	runtime.RegisterReservationExpiry(queue, logger.New("error"), sched)
+
+	if len(sched.tasks) != 1 {
+		t.Fatalf("tasks len = %d, want 1", len(sched.tasks))
+	}
+	task := sched.tasks[0]
+	if task.name != "inventory.reservation_expiry" {
+		t.Fatalf("task name = %q, want inventory.reservation_expiry", task.name)
+	}
+	if task.schedule != "*/15 * * * *" {
+		t.Fatalf("task schedule = %q, want */15 * * * *", task.schedule)
+	}
+	task.fn()
+	if len(queue.enqueued) != 1 {
+		t.Fatalf("enqueued len = %d, want 1", len(queue.enqueued))
+	}
+	if queue.enqueued[0].Type != inventoryApp.ReservationExpiryJobType {
+		t.Fatalf("job type = %q, want %q", queue.enqueued[0].Type, inventoryApp.ReservationExpiryJobType)
 	}
 }
 
