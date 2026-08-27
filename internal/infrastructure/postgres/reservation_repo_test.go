@@ -471,7 +471,6 @@ func TestReservationRepo_ReleaseExpiredBefore_MultipleBatches(t *testing.T) {
 		db.Exec("DELETE FROM reservations")
 		db.Exec("DELETE FROM stock")
 	})
-	defer postgres.SetReservationExpiryBatchSizeForTest(3)()
 
 	vid := seedVariant(t, db)
 	stockRepo, err := postgres.NewStockRepo(db)
@@ -484,6 +483,9 @@ func TestReservationRepo_ReleaseExpiredBefore_MultipleBatches(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewReservationRepo: %v", err)
 	}
+	// Scoped to this repo instance only — no shared/global state, so this
+	// can never leak into or be stomped by another test.
+	repo.SetReservationExpiryBatchSizeForTest(3)
 
 	const seeded = 7 // 3 + 3 + 1: exercises a full batch, another full batch, and a partial final batch
 	ids := make([]string, seeded)

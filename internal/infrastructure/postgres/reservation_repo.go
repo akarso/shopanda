@@ -15,9 +15,27 @@ import (
 // Compile-time check that ReservationRepo implements inventory.ReservationRepository.
 var _ inventory.ReservationRepository = (*ReservationRepo)(nil)
 
+// defaultReservationExpiryBatchSize is ReservationRepo's default
+// reservationExpiryBatchSize (see that field's doc comment).
+const defaultReservationExpiryBatchSize = 500
+
 // ReservationRepo implements inventory.ReservationRepository using PostgreSQL.
 type ReservationRepo struct {
 	db *sql.DB
+
+	// reservationExpiryBatchSize bounds how many reservations
+	// ReleaseExpiredBefore processes per transaction. See its doc comment
+	// for why an unbounded single transaction is unsafe here. An
+	// instance field, not a package-level var: a package-level var mutated
+	// by a test-only setter is shared, unsynchronized state that any test
+	// touching it — including a future one added with t.Parallel(), a
+	// common way to speed up this package's DB-integration suite — could
+	// race on or silently stomp another test's expectations. Each test
+	// already constructs its own *ReservationRepo, so scoping the override
+	// to one instance makes cross-test interference structurally
+	// impossible instead of merely unlikely under today's sequential
+	// execution. See SetReservationExpiryBatchSizeForTest.
+	reservationExpiryBatchSize int
 }
 
 // NewReservationRepo returns a new ReservationRepo backed by db.
@@ -25,7 +43,16 @@ func NewReservationRepo(db *sql.DB) (*ReservationRepo, error) {
 	if db == nil {
 		return nil, fmt.Errorf("NewReservationRepo: nil *sql.DB")
 	}
-	return &ReservationRepo{db: db}, nil
+	return &ReservationRepo{db: db, reservationExpiryBatchSize: defaultReservationExpiryBatchSize}, nil
+}
+
+// SetReservationExpiryBatchSizeForTest overrides the batch size this repo
+// instance uses for ReleaseExpiredBefore, for tests only — lets a test
+// exercise the multi-batch loop at a manageable scale instead of seeding
+// 500+ rows, without any shared state across tests (see the field's doc
+// comment).
+func (r *ReservationRepo) SetReservationExpiryBatchSizeForTest(n int) {
+	r.reservationExpiryBatchSize = n
 }
 
 // Reserve atomically decrements stock and creates a reservation within a transaction.
@@ -200,22 +227,6 @@ func (r *ReservationRepo) ListActiveByVariantID(ctx context.Context, variantID s
 	return reservations, nil
 }
 
-// reservationExpiryBatchSize bounds how many reservations
-// ReleaseExpiredBefore processes per transaction. See its doc comment for
-// why an unbounded single transaction is unsafe here. A var, not a const,
-// so tests can exercise the multi-batch loop at a manageable scale instead
-// of seeding 500+ rows — see SetReservationExpiryBatchSizeForTest.
-var reservationExpiryBatchSize = 500
-
-// SetReservationExpiryBatchSizeForTest overrides the batch size
-// ReleaseExpiredBefore uses, for tests only. Returns a func that restores
-// the previous value — callers should defer it.
-func SetReservationExpiryBatchSizeForTest(n int) (restore func()) {
-	old := reservationExpiryBatchSize
-	reservationExpiryBatchSize = n
-	return func() { reservationExpiryBatchSize = old }
-}
-
 // reservationExpiryStatementTimeout is a per-batch-transaction backstop
 // (via SET LOCAL, scoped to just that transaction) against a single batch
 // running away — e.g. a missing index turning the bounded LIMIT query into
@@ -267,7 +278,7 @@ func (r *ReservationRepo) ReleaseExpiredBefore(ctx context.Context, cutoff time.
 		if ctx.Err() != nil {
 			break
 		}
-		n, batchOrphaned, err := r.releaseExpiredBatch(ctx, cutoff, reservationExpiryBatchSize)
+		n, batchOrphaned, err := r.releaseExpiredBatch(ctx, cutoff, r.reservationExpiryBatchSize)
 		if err != nil {
 			if errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled) {
 				break
@@ -276,7 +287,7 @@ func (r *ReservationRepo) ReleaseExpiredBefore(ctx context.Context, cutoff time.
 		}
 		total += n
 		orphaned = append(orphaned, batchOrphaned...)
-		if n < reservationExpiryBatchSize {
+		if n < r.reservationExpiryBatchSize {
 			break
 		}
 	}

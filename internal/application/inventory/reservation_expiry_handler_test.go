@@ -77,6 +77,9 @@ func TestReservationExpiryHandler_Handle_Success(t *testing.T) {
 	} else if got != 7 {
 		t.Errorf("log.fields[released] = %v, want 7", got)
 	}
+	if got := log.fields["more_remaining"]; got != false {
+		t.Errorf("log.fields[more_remaining] = %v, want false — an uncancelled, undeadlined context completed normally", got)
+	}
 }
 
 func TestReservationExpiryHandler_Handle_Error(t *testing.T) {
