@@ -54,7 +54,7 @@ Each PR is tagged **`[oss]`** unless noted.
 
 | PR | Title | Short description |
 | --- | --- | --- |
-| PR-1027 | Fix reservation expiry gap | Wire the already-existing `ReleaseExpiredBefore` into a job handler + cron registration (`*/15 * * * *`, matching the 15-minute reservation TTL already documented in RUNBOOK.md). Standalone; ships value with zero dependency on the rest of this phase. |
+| PR-1027 | Fix reservation expiry gap | **Done.** Wired the already-existing `ReleaseExpiredBefore` into a job handler + cron registration (`*/15 * * * *`, matching the 15-minute reservation TTL already documented in RUNBOOK.md). Standalone; shipped with zero dependency on the rest of this phase. |
 | PR-1028 | Job introspection | Read-only application service over the `jobs` table: list (filter by type/status), get by ID, status counts. No HTTP yet — this is the shared foundation Track B and Track D's progress/purge tracking build on. |
 | PR-1029 | Jobs admin API | `GET /admin/jobs`, `GET /admin/jobs/{id}`, `POST /admin/jobs/{id}/retry` (requeue a `failed` job, resets `attempts`), `POST /admin/jobs/{id}/cancel` (only `pending`, not `processing` — no in-flight cancellation). New `jobs.read`/`jobs.write` permissions. Audit log entries for retry/cancel. |
 | PR-1030 | Scheduler admin | Expose the `cron.Scheduler`'s registered specs (name, cron expression, next run time) via a catalog, mirroring the existing hooks/slots catalog pattern. `GET /admin/schedules`, `POST /admin/schedules/{name}/trigger` (fires the registered fn immediately, same as a real tick). Enable/disable requires a small persisted flag (new `scheduler_overrides` table, checked before `Scheduler.run` fires a task) — schedules are code-registered today with no runtime toggle. |
@@ -144,7 +144,7 @@ Beyond products and categories (PR-1037), two more entities exist in the domain 
 
 | PR | Track | Status |
 | --- | --- | --- |
-| 1027 | — | planned |
+| 1027 | — | done |
 | 1028–1032 | A | planned |
 | 1033–1038 | B | planned |
 | 1039–1043 | C | planned |

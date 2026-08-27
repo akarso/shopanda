@@ -2,7 +2,7 @@
 
 | PR | Track | Status | Spec |
 | --- | --- | --- | --- |
-| PR-1027 | — | planned | [Fix reservation expiry gap](PR-1027.md) |
+| PR-1027 | — | done | [Fix reservation expiry gap](PR-1027.md) |
 | PR-1028 | A | planned | [Job introspection](PR-1028.md) |
 | PR-1029 | A | planned | [Jobs admin API](PR-1029.md) |
 | PR-1030 | A | planned | [Scheduler admin](PR-1030.md) |

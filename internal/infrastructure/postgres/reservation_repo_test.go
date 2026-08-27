@@ -2,6 +2,7 @@ package postgres_test
 
 import (
 	"context"
+	"errors"
 	"testing"
 	"time"
 
@@ -455,5 +456,154 @@ func TestReservationRepo_ReleaseExpiredBefore(t *testing.T) {
 	found, _ = repo.FindByID(context.Background(), active.ID)
 	if found.Status != inventory.ReservationActive {
 		t.Errorf("active status = %q, want %q", found.Status, inventory.ReservationActive)
+	}
+}
+
+// TestReservationRepo_ReleaseExpiredBefore_MultipleBatches pins the fix for
+// an unbounded single-transaction sweep: ReleaseExpiredBefore now processes
+// in bounded batches and loops until the backlog is drained. Seeds more
+// expired reservations than one (overridden, small) batch, and confirms
+// every one still gets released across multiple batch transactions.
+func TestReservationRepo_ReleaseExpiredBefore_MultipleBatches(t *testing.T) {
+	db := testDB(t)
+	ensureProductsTable(t, db)
+	t.Cleanup(func() {
+		db.Exec("DELETE FROM reservations")
+		db.Exec("DELETE FROM stock")
+	})
+
+	vid := seedVariant(t, db)
+	stockRepo, err := postgres.NewStockRepo(db)
+	if err != nil {
+		t.Fatalf("NewStockRepo: %v", err)
+	}
+	seedStock(t, stockRepo, vid, 100)
+
+	repo, err := postgres.NewReservationRepo(db)
+	if err != nil {
+		t.Fatalf("NewReservationRepo: %v", err)
+	}
+	// Scoped to this repo instance only — no shared/global state, so this
+	// can never leak into or be stomped by another test.
+	repo.SetReservationExpiryBatchSizeForTest(3)
+
+	const seeded = 7 // 3 + 3 + 1: exercises a full batch, another full batch, and a partial final batch
+	ids := make([]string, seeded)
+	for i := 0; i < seeded; i++ {
+		res, _ := inventory.NewReservation(id.New(), vid, 1, time.Now().Add(-time.Minute))
+		if err := repo.Reserve(context.Background(), &res); err != nil {
+			t.Fatalf("Reserve %d: %v", i, err)
+		}
+		ids[i] = res.ID
+	}
+
+	n, err := repo.ReleaseExpiredBefore(context.Background(), time.Now())
+	if err != nil {
+		t.Fatalf("ReleaseExpiredBefore: %v", err)
+	}
+	if n != seeded {
+		t.Errorf("released count = %d, want %d", n, seeded)
+	}
+
+	stock, _ := stockRepo.GetStock(context.Background(), vid)
+	if stock.Quantity != 100 {
+		t.Errorf("stock after sweep: got %d, want 100 (fully restored)", stock.Quantity)
+	}
+
+	for _, resID := range ids {
+		found, _ := repo.FindByID(context.Background(), resID)
+		if found == nil || found.Status != inventory.ReservationReleased {
+			t.Errorf("reservation %s status = %v, want released", resID, found)
+		}
+	}
+}
+
+// TestReservationRepo_ReleaseExpiredBefore_OrphanedStockRestore pins the
+// fix for a silently-dropped stock restore: when a reservation's variant no
+// longer has a stock row (e.g. deleted after the reservation was created),
+// the release still commits (the reservation's hold is gone either way),
+// but ReleaseExpiredBefore now reports it via a non-nil
+// *inventory.OrphanedStockRestoreError instead of silently losing the
+// quantity with no trail.
+func TestReservationRepo_ReleaseExpiredBefore_OrphanedStockRestore(t *testing.T) {
+	db := testDB(t)
+	ensureProductsTable(t, db)
+	t.Cleanup(func() {
+		db.Exec("DELETE FROM reservations")
+		db.Exec("DELETE FROM stock")
+	})
+
+	vid := seedVariant(t, db)
+	stockRepo, err := postgres.NewStockRepo(db)
+	if err != nil {
+		t.Fatalf("NewStockRepo: %v", err)
+	}
+	seedStock(t, stockRepo, vid, 10)
+
+	repo, err := postgres.NewReservationRepo(db)
+	if err != nil {
+		t.Fatalf("NewReservationRepo: %v", err)
+	}
+
+	res, _ := inventory.NewReservation(id.New(), vid, 3, time.Now().Add(-time.Minute))
+	if err := repo.Reserve(context.Background(), &res); err != nil {
+		t.Fatalf("Reserve: %v", err)
+	}
+
+	// Simulate the variant's stock row disappearing after the reservation
+	// was created (e.g. a hard variant delete elsewhere in the system).
+	if _, err := db.Exec("DELETE FROM stock WHERE variant_id = $1", vid); err != nil {
+		t.Fatalf("delete stock row: %v", err)
+	}
+
+	n, err := repo.ReleaseExpiredBefore(context.Background(), time.Now())
+	if n != 1 {
+		t.Errorf("released count = %d, want 1 (release still succeeds)", n)
+	}
+	var orphanErr *inventory.OrphanedStockRestoreError
+	if !errors.As(err, &orphanErr) {
+		t.Fatalf("err = %v, want *inventory.OrphanedStockRestoreError", err)
+	}
+	if orphanErr.Count != 1 {
+		t.Errorf("orphanErr.Count = %d, want 1", orphanErr.Count)
+	}
+	if len(orphanErr.ReservationIDs) != 1 || orphanErr.ReservationIDs[0] != res.ID {
+		t.Errorf("orphanErr.ReservationIDs = %v, want [%s]", orphanErr.ReservationIDs, res.ID)
+	}
+
+	found, _ := repo.FindByID(context.Background(), res.ID)
+	if found == nil || found.Status != inventory.ReservationReleased {
+		t.Errorf("reservation status = %v, want released despite the orphaned stock row", found)
+	}
+}
+
+// TestReservationRepo_ReleaseExpiredBefore_StopsGracefullyOnCancelledContext
+// pins the fix for an all-or-nothing sweep having no bounded execution
+// window: a cancelled/expired ctx makes ReleaseExpiredBefore stop and
+// return what it released so far with a nil error, not propagate the
+// cancellation as a failure — the caller's next invocation (a fresh cutoff)
+// picks up any remaining backlog.
+func TestReservationRepo_ReleaseExpiredBefore_StopsGracefullyOnCancelledContext(t *testing.T) {
+	db := testDB(t)
+	ensureProductsTable(t, db)
+	t.Cleanup(func() {
+		db.Exec("DELETE FROM reservations")
+		db.Exec("DELETE FROM stock")
+	})
+
+	repo, err := postgres.NewReservationRepo(db)
+	if err != nil {
+		t.Fatalf("NewReservationRepo: %v", err)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	n, err := repo.ReleaseExpiredBefore(ctx, time.Now())
+	if err != nil {
+		t.Fatalf("ReleaseExpiredBefore: %v, want nil error on a cancelled context", err)
+	}
+	if n != 0 {
+		t.Errorf("released count = %d, want 0 (no batch should have run)", n)
 	}
 }
