@@ -6,6 +6,16 @@
 -- existing idx_jobs_dequeue index only covers the dequeue hot path
 -- (status = 'pending'), so none of these read queries had any index
 -- support before this migration.
-CREATE INDEX idx_jobs_created_at ON jobs (created_at DESC, id DESC);
-CREATE INDEX idx_jobs_type ON jobs (type);
-CREATE INDEX idx_jobs_status ON jobs (status);
+--
+-- NOTE: shopanda migrations run inside a transaction (see
+-- migrate.applyMigrationContent), so CREATE INDEX CONCURRENTLY is not
+-- available here — same constraint documented in
+-- 050_payments_admin_list_indexes.sql. These builds take a ShareLock on
+-- jobs during creation, blocking INSERT/UPDATE/DELETE (i.e. Enqueue,
+-- Dequeue, Complete, Fail) for that duration. Run as part of normal
+-- deploy when brief index-build locking is acceptable; for a large/hot
+-- production jobs table, apply equivalent indexes manually with
+-- CONCURRENTLY during a maintenance window instead.
+CREATE INDEX IF NOT EXISTS idx_jobs_created_at ON jobs (created_at DESC, id DESC);
+CREATE INDEX IF NOT EXISTS idx_jobs_type ON jobs (type);
+CREATE INDEX IF NOT EXISTS idx_jobs_status ON jobs (status);

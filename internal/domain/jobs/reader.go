@@ -7,8 +7,13 @@ import (
 
 // ListFilter selects jobs for admin listing. Type and Status are optional
 // (empty = no filter on that dimension). Status is the typed Status, not a
-// bare string, so a caller passing an invalid value fails at compile time
-// instead of silently matching zero rows at query time.
+// bare string — this keeps it distinct from Type and from any other
+// string-based type a caller might otherwise mix up, and documents that
+// the field holds one of the Status constants. It does not validate enum
+// membership: Go freely assigns an untyped string constant (including a
+// typo'd one) to a Status field, and an explicit conversion
+// (Status("bogus")) compiles too — either still reaches the query and
+// simply matches zero rows, the same as today.
 type ListFilter struct {
 	Type   string
 	Status Status
