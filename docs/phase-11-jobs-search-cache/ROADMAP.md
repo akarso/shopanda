@@ -146,7 +146,8 @@ Beyond products and categories (PR-1037), two more entities exist in the domain 
 | --- | --- | --- |
 | 1027 | — | done |
 | 1028 | A | done |
-| 1029–1032 | A | planned |
+| 1029 | A | done |
+| 1030–1032 | A | planned |
 | 1033–1038 | B | planned |
 | 1039–1043 | C | planned |
 | 1044–1047 | D | planned |

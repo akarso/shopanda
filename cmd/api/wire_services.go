@@ -30,6 +30,7 @@ import (
 	hooksApp "github.com/akarso/shopanda/internal/application/hooks"
 	importctxApp "github.com/akarso/shopanda/internal/application/importctx"
 	integrationApp "github.com/akarso/shopanda/internal/application/integration"
+	jobsApp "github.com/akarso/shopanda/internal/application/jobs"
 	mediaApp "github.com/akarso/shopanda/internal/application/media"
 	mfaApp "github.com/akarso/shopanda/internal/application/mfa"
 	"github.com/akarso/shopanda/internal/application/notification"
@@ -173,6 +174,7 @@ type serveRuntime struct {
 	adminRoleHandler               *admin.AdminRoleHandler
 	storeCreditAdmin               *admin.StoreCreditAdminHandler
 	storeCreditAccount             *storefront.StoreCreditAccountHandler
+	jobAdmin                       *admin.JobAdminHandler
 	accountHandler                 *storefront.AccountHandler
 	sitemapHandler                 *storefront.SitemapHandler
 	robotsHandler                  *storefront.RobotsHandler
@@ -283,6 +285,23 @@ func wireServeRuntime(cfg *config.Config, log logger.Logger, conn *sql.DB, repos
 	}
 	if err := integrationApp.RegisterSyncJobEventTriggers(pluginApp, bus, jobQueue, log); err != nil {
 		return nil, fmt.Errorf("sync job event triggers: %w", err)
+	}
+
+	// Job admin introspection/retry/cancel (PR-1028/PR-1029) — Postgres-queue-
+	// only, same constraint as resolveCache's ExpiredDeleter assertion above:
+	// a broker-backed Queue driver has no queryable/updatable job table, so
+	// fail startup clearly rather than silently omitting the admin routes.
+	jobsReader, ok := jobQueue.(jobs.Reader)
+	if !ok {
+		return nil, fmt.Errorf("queue driver %q does not support job admin introspection", cfg.Queue.Driver)
+	}
+	jobsAdminPort, ok := jobQueue.(jobs.Admin)
+	if !ok {
+		return nil, fmt.Errorf("queue driver %q does not support job admin actions", cfg.Queue.Driver)
+	}
+	jobsService, err := jobsApp.NewService(jobsReader, jobsAdminPort)
+	if err != nil {
+		return nil, fmt.Errorf("jobs service: %w", err)
 	}
 
 	// Email notifications (needs jobQueue from setupWorker).
@@ -745,6 +764,7 @@ func wireServeRuntime(cfg *config.Config, log logger.Logger, conn *sql.DB, repos
 	adminRoleHandler := admin.NewAdminRoleHandler(adminRoleService, sharedAuditor)
 	storeCreditAdmin := admin.NewStoreCreditAdminHandler(storeCreditService, sharedAuditor)
 	storeCreditAccount := storefront.NewStoreCreditAccountHandler(storeCreditService)
+	jobAdmin := admin.NewJobAdminHandler(jobsService, sharedAuditor)
 	accountHandler := storefront.NewAccountHandler(repos.customerRepo, repos.orderRepo, repos.consentRepo, accountService)
 	sitemapHandler := storefront.NewSitemapHandler(baseURL, repos.productRepo, repos.categoryRepo, repos.pageRepo)
 	robotsHandler := storefront.NewRobotsHandler(baseURL)
@@ -852,6 +872,7 @@ func wireServeRuntime(cfg *config.Config, log logger.Logger, conn *sql.DB, repos
 		adminRoleHandler:               adminRoleHandler,
 		storeCreditAdmin:               storeCreditAdmin,
 		storeCreditAccount:             storeCreditAccount,
+		jobAdmin:                       jobAdmin,
 		accountHandler:                 accountHandler,
 		sitemapHandler:                 sitemapHandler,
 		robotsHandler:                  robotsHandler,

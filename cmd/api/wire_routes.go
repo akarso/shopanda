@@ -89,6 +89,8 @@ func buildServeHandler(cfg *config.Config, log logger.Logger, rt *serveRuntime, 
 	requireAuditRead := admin.RequirePermission(rbac.AuditRead)
 	requireExtensionsRead := admin.RequirePermission(rbac.ExtensionsRead)
 	requireExtensionsWrite := admin.RequirePermission(rbac.ExtensionsWrite)
+	requireJobsRead := admin.RequirePermission(rbac.JobsRead)
+	requireJobsWrite := admin.RequirePermission(rbac.JobsWrite)
 
 	// Auth routes.
 	router.HandleFunc("POST /api/v1/auth/register", rt.authHandler.Register())
@@ -162,6 +164,10 @@ func buildServeHandler(cfg *config.Config, log logger.Logger, rt *serveRuntime, 
 	router.Handle("POST /api/v1/admin/customers/{customerId}/revoke-sessions", requireCustomersWrite(rt.customerAdmin.RevokeSessions()))
 	router.Handle("GET /api/v1/admin/customers/{customerId}/store-credit", requireCustomersRead(rt.storeCreditAdmin.Get()))
 	router.Handle("POST /api/v1/admin/customers/{customerId}/store-credit/issue", requireStoreCreditWrite(rt.storeCreditAdmin.Issue()))
+	router.Handle("GET /api/v1/admin/jobs", requireJobsRead(rt.jobAdmin.List()))
+	router.Handle("GET /api/v1/admin/jobs/{id}", requireJobsRead(rt.jobAdmin.Get()))
+	router.Handle("POST /api/v1/admin/jobs/{id}/retry", requireJobsWrite(rt.jobAdmin.Retry()))
+	router.Handle("POST /api/v1/admin/jobs/{id}/cancel", requireJobsWrite(rt.jobAdmin.Cancel()))
 	router.Handle("GET /api/v1/admin/orders", requireOrdersRead(rt.orderAdmin.List()))
 	router.Handle("GET /api/v1/admin/orders/{orderId}", requireOrdersRead(rt.orderAdmin.Get()))
 	router.Handle("PUT /api/v1/admin/orders/{orderId}", requireOrdersWrite(rt.orderAdmin.Update()))

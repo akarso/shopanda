@@ -36,16 +36,41 @@ func (f *fakeReader) CountsByStatus(context.Context) (map[domainjobs.Status]int,
 	return f.countsResult, f.countsErr
 }
 
+type fakeAdmin struct {
+	retryID  string
+	retryErr error
+
+	cancelID  string
+	cancelErr error
+}
+
+func (f *fakeAdmin) Retry(_ context.Context, id string) error {
+	f.retryID = id
+	return f.retryErr
+}
+
+func (f *fakeAdmin) Cancel(_ context.Context, id string) error {
+	f.cancelID = id
+	return f.cancelErr
+}
+
 func TestNewService_NilReaderErrors(t *testing.T) {
-	_, err := jobsApp.NewService(nil)
+	_, err := jobsApp.NewService(nil, &fakeAdmin{})
 	if err == nil {
 		t.Fatal("expected error for nil reader")
 	}
 }
 
+func TestNewService_NilAdminErrors(t *testing.T) {
+	_, err := jobsApp.NewService(&fakeReader{}, nil)
+	if err == nil {
+		t.Fatal("expected error for nil admin")
+	}
+}
+
 func TestService_List_DefaultsLimitWhenUnset(t *testing.T) {
 	r := &fakeReader{}
-	svc, err := jobsApp.NewService(r)
+	svc, err := jobsApp.NewService(r, &fakeAdmin{})
 	if err != nil {
 		t.Fatalf("NewService: %v", err)
 	}
@@ -60,7 +85,7 @@ func TestService_List_DefaultsLimitWhenUnset(t *testing.T) {
 
 func TestService_List_CapsLimitAboveMax(t *testing.T) {
 	r := &fakeReader{}
-	svc, _ := jobsApp.NewService(r)
+	svc, _ := jobsApp.NewService(r, &fakeAdmin{})
 
 	if _, err := svc.List(context.Background(), domainjobs.ListFilter{Limit: 500}); err != nil {
 		t.Fatalf("List: %v", err)
@@ -72,7 +97,7 @@ func TestService_List_CapsLimitAboveMax(t *testing.T) {
 
 func TestService_List_PassesThroughValidLimit(t *testing.T) {
 	r := &fakeReader{}
-	svc, _ := jobsApp.NewService(r)
+	svc, _ := jobsApp.NewService(r, &fakeAdmin{})
 
 	if _, err := svc.List(context.Background(), domainjobs.ListFilter{Limit: 50}); err != nil {
 		t.Fatalf("List: %v", err)
@@ -84,7 +109,7 @@ func TestService_List_PassesThroughValidLimit(t *testing.T) {
 
 func TestService_List_FloorsNegativeOffset(t *testing.T) {
 	r := &fakeReader{}
-	svc, _ := jobsApp.NewService(r)
+	svc, _ := jobsApp.NewService(r, &fakeAdmin{})
 
 	if _, err := svc.List(context.Background(), domainjobs.ListFilter{Offset: -5}); err != nil {
 		t.Fatalf("List: %v", err)
@@ -100,7 +125,7 @@ func TestService_List_FloorsNegativeOffset(t *testing.T) {
 // paging depth.
 func TestService_List_CapsExcessiveOffset(t *testing.T) {
 	r := &fakeReader{}
-	svc, _ := jobsApp.NewService(r)
+	svc, _ := jobsApp.NewService(r, &fakeAdmin{})
 
 	if _, err := svc.List(context.Background(), domainjobs.ListFilter{Offset: 10_000_000}); err != nil {
 		t.Fatalf("List: %v", err)
@@ -112,7 +137,7 @@ func TestService_List_CapsExcessiveOffset(t *testing.T) {
 
 func TestService_List_PassesThroughValidOffset(t *testing.T) {
 	r := &fakeReader{}
-	svc, _ := jobsApp.NewService(r)
+	svc, _ := jobsApp.NewService(r, &fakeAdmin{})
 
 	if _, err := svc.List(context.Background(), domainjobs.ListFilter{Offset: 40}); err != nil {
 		t.Fatalf("List: %v", err)
@@ -124,7 +149,7 @@ func TestService_List_PassesThroughValidOffset(t *testing.T) {
 
 func TestService_List_PassesThroughTypeAndStatus(t *testing.T) {
 	r := &fakeReader{}
-	svc, _ := jobsApp.NewService(r)
+	svc, _ := jobsApp.NewService(r, &fakeAdmin{})
 
 	if _, err := svc.List(context.Background(), domainjobs.ListFilter{Type: "webhook.deliver", Status: "failed"}); err != nil {
 		t.Fatalf("List: %v", err)
@@ -136,7 +161,7 @@ func TestService_List_PassesThroughTypeAndStatus(t *testing.T) {
 
 func TestService_List_PropagatesReaderError(t *testing.T) {
 	r := &fakeReader{listErr: errors.New("db down")}
-	svc, _ := jobsApp.NewService(r)
+	svc, _ := jobsApp.NewService(r, &fakeAdmin{})
 
 	_, err := svc.List(context.Background(), domainjobs.ListFilter{})
 	if err == nil {
@@ -145,7 +170,7 @@ func TestService_List_PropagatesReaderError(t *testing.T) {
 }
 
 func TestService_Get_EmptyIDErrors(t *testing.T) {
-	svc, _ := jobsApp.NewService(&fakeReader{})
+	svc, _ := jobsApp.NewService(&fakeReader{}, &fakeAdmin{})
 	_, err := svc.Get(context.Background(), "")
 	if err == nil {
 		t.Fatal("expected error for empty id")
@@ -154,7 +179,7 @@ func TestService_Get_EmptyIDErrors(t *testing.T) {
 
 func TestService_Get_PassesThroughID(t *testing.T) {
 	r := &fakeReader{getResult: &domainjobs.Detail{}}
-	svc, _ := jobsApp.NewService(r)
+	svc, _ := jobsApp.NewService(r, &fakeAdmin{})
 
 	if _, err := svc.Get(context.Background(), "job-1"); err != nil {
 		t.Fatalf("Get: %v", err)
@@ -165,7 +190,7 @@ func TestService_Get_PassesThroughID(t *testing.T) {
 }
 
 func TestService_Get_NotFoundReturnsNilNil(t *testing.T) {
-	svc, _ := jobsApp.NewService(&fakeReader{getResult: nil})
+	svc, _ := jobsApp.NewService(&fakeReader{getResult: nil}, &fakeAdmin{})
 
 	got, err := svc.Get(context.Background(), "missing")
 	if err != nil {
@@ -178,7 +203,7 @@ func TestService_Get_NotFoundReturnsNilNil(t *testing.T) {
 
 func TestService_CountsByStatus(t *testing.T) {
 	want := map[domainjobs.Status]int{domainjobs.StatusPending: 3, domainjobs.StatusFailed: 1}
-	svc, _ := jobsApp.NewService(&fakeReader{countsResult: want})
+	svc, _ := jobsApp.NewService(&fakeReader{countsResult: want}, &fakeAdmin{})
 
 	got, err := svc.CountsByStatus(context.Background())
 	if err != nil {
@@ -186,5 +211,61 @@ func TestService_CountsByStatus(t *testing.T) {
 	}
 	if got[domainjobs.StatusPending] != 3 || got[domainjobs.StatusFailed] != 1 {
 		t.Errorf("got = %v, want %v", got, want)
+	}
+}
+
+func TestService_Retry_EmptyIDErrors(t *testing.T) {
+	svc, _ := jobsApp.NewService(&fakeReader{}, &fakeAdmin{})
+	if err := svc.Retry(context.Background(), ""); err == nil {
+		t.Fatal("expected error for empty id")
+	}
+}
+
+func TestService_Retry_PassesThroughID(t *testing.T) {
+	a := &fakeAdmin{}
+	svc, _ := jobsApp.NewService(&fakeReader{}, a)
+
+	if err := svc.Retry(context.Background(), "job-1"); err != nil {
+		t.Fatalf("Retry: %v", err)
+	}
+	if a.retryID != "job-1" {
+		t.Errorf("retryID = %q, want job-1", a.retryID)
+	}
+}
+
+func TestService_Retry_PropagatesAdminError(t *testing.T) {
+	a := &fakeAdmin{retryErr: errors.New("conflict")}
+	svc, _ := jobsApp.NewService(&fakeReader{}, a)
+
+	if err := svc.Retry(context.Background(), "job-1"); err == nil {
+		t.Fatal("expected error to propagate from admin")
+	}
+}
+
+func TestService_Cancel_EmptyIDErrors(t *testing.T) {
+	svc, _ := jobsApp.NewService(&fakeReader{}, &fakeAdmin{})
+	if err := svc.Cancel(context.Background(), ""); err == nil {
+		t.Fatal("expected error for empty id")
+	}
+}
+
+func TestService_Cancel_PassesThroughID(t *testing.T) {
+	a := &fakeAdmin{}
+	svc, _ := jobsApp.NewService(&fakeReader{}, a)
+
+	if err := svc.Cancel(context.Background(), "job-1"); err != nil {
+		t.Fatalf("Cancel: %v", err)
+	}
+	if a.cancelID != "job-1" {
+		t.Errorf("cancelID = %q, want job-1", a.cancelID)
+	}
+}
+
+func TestService_Cancel_PropagatesAdminError(t *testing.T) {
+	a := &fakeAdmin{cancelErr: errors.New("conflict")}
+	svc, _ := jobsApp.NewService(&fakeReader{}, a)
+
+	if err := svc.Cancel(context.Background(), "job-1"); err == nil {
+		t.Fatal("expected error to propagate from admin")
 	}
 }

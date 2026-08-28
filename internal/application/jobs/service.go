@@ -28,20 +28,26 @@ const defaultListLimit = 20
 // caller can set Offset at all.
 const maxListOffset = 100_000
 
-// Service is a read-only application service over job state. It exists to
-// apply pagination policy (default/max page size) once, centrally, rather
-// than trusting every future domainjobs.Reader implementation to enforce
-// it consistently — the reader itself trusts filter.Limit/Offset as given.
+// Service is the application service over job state: read-only
+// introspection (List/Get/CountsByStatus, PR-1028) plus admin-triggered
+// lifecycle corrections (Retry/Cancel, PR-1029). It exists to apply
+// pagination policy (default/max page size) once, centrally, rather than
+// trusting every future domainjobs.Reader implementation to enforce it
+// consistently — the reader itself trusts filter.Limit/Offset as given.
 type Service struct {
 	reader domainjobs.Reader
+	admin  domainjobs.Admin
 }
 
-// NewService creates a Service backed by reader.
-func NewService(reader domainjobs.Reader) (*Service, error) {
+// NewService creates a Service backed by reader and admin.
+func NewService(reader domainjobs.Reader, admin domainjobs.Admin) (*Service, error) {
 	if reader == nil {
 		return nil, fmt.Errorf("jobs.NewService: nil reader")
 	}
-	return &Service{reader: reader}, nil
+	if admin == nil {
+		return nil, fmt.Errorf("jobs.NewService: nil admin")
+	}
+	return &Service{reader: reader, admin: admin}, nil
 }
 
 // List returns a page of jobs matching filter, most recently created
@@ -75,4 +81,22 @@ func (s *Service) Get(ctx context.Context, id string) (*domainjobs.Detail, error
 // CountsByStatus returns the number of jobs currently in each status.
 func (s *Service) CountsByStatus(ctx context.Context) (map[domainjobs.Status]int, error) {
 	return s.reader.CountsByStatus(ctx)
+}
+
+// Retry resets a failed job back to pending. See domainjobs.Admin for the
+// full error contract (not-found vs. wrong-status).
+func (s *Service) Retry(ctx context.Context, id string) error {
+	if id == "" {
+		return fmt.Errorf("jobs: retry: empty id")
+	}
+	return s.admin.Retry(ctx, id)
+}
+
+// Cancel marks a pending job cancelled. See domainjobs.Admin for the full
+// error contract, including why a processing job cannot be cancelled.
+func (s *Service) Cancel(ctx context.Context, id string) error {
+	if id == "" {
+		return fmt.Errorf("jobs: cancel: empty id")
+	}
+	return s.admin.Cancel(ctx, id)
 }

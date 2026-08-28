@@ -136,6 +136,12 @@ const (
 
 	AuditLogList   AuditAction = "audit.list"
 	AuditLogExport AuditAction = "audit.export"
+
+	// Job admin operations (PR-1029)
+	AuditJobList   AuditAction = "job.list"
+	AuditJobRead   AuditAction = "job.read"
+	AuditJobRetry  AuditAction = "job.retry"
+	AuditJobCancel AuditAction = "job.cancel"
 )
 
 // AuditEntry represents a single admin audit log entry.

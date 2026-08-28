@@ -137,8 +137,8 @@ func TestHasPermission_Unknown(t *testing.T) {
 func TestPermissionsForRole_Admin(t *testing.T) {
 	perms := rbac.PermissionsForRole(identity.RoleAdmin)
 	// Core admin grants in role_permissions.go (products/orders/categories/customers/
-	// store_credit/invoices/media/content/settings/shipping/audit/extensions*).
-	const wantCoreAdmin = 22
+	// store_credit/invoices/media/content/settings/shipping/audit/extensions*/jobs*).
+	const wantCoreAdmin = 24
 	if len(perms) != wantCoreAdmin {
 		t.Errorf("admin permissions count = %d, want %d (%v)", len(perms), wantCoreAdmin, perms)
 	}
