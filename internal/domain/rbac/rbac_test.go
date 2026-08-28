@@ -20,6 +20,7 @@ func TestHasPermission_Admin(t *testing.T) {
 		rbac.SettingsRead, rbac.SettingsWrite,
 		rbac.ShippingRead, rbac.ShippingWrite,
 		rbac.AuditRead,
+		rbac.JobsRead, rbac.JobsWrite,
 	} {
 		if !rbac.HasPermission(identity.RoleAdmin, perm) {
 			t.Errorf("admin should have %q", perm)
@@ -102,6 +103,7 @@ func TestHasPermission_Support(t *testing.T) {
 		rbac.ContentWrite,
 		rbac.SettingsRead, rbac.SettingsWrite,
 		rbac.AuditRead,
+		rbac.JobsRead, rbac.JobsWrite,
 	}
 
 	for _, perm := range allowed {

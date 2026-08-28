@@ -2193,7 +2193,7 @@ components:
             data: null
             error:
               code: conflict
-              message: job is pending, not failed — only a failed job can be retried
+              message: the resource's current status does not allow this action
     RateLimited:
       description: Rate limit exceeded
       headers:
