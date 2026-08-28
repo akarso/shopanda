@@ -144,7 +144,11 @@ func (w *Worker) processNext(ctx context.Context) {
 			"job_type": job.Type,
 		})
 		w.metrics.JobFailure(unknownJobType)
-		w.recordFail(ctx, job.ID, nil)
+		// A real error, not nil: this is exactly the failure an operator
+		// most needs last_error for — a misconfigured or typo'd job type —
+		// and Fail's COALESCE-based persistence (see job_queue.go) only
+		// records something when jobErr is non-nil.
+		w.recordFail(ctx, job.ID, fmt.Errorf("no handler registered for job type %q", job.Type))
 		return
 	}
 

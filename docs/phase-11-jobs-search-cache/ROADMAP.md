@@ -55,7 +55,7 @@ Each PR is tagged **`[oss]`** unless noted.
 | PR | Title | Short description |
 | --- | --- | --- |
 | PR-1027 | Fix reservation expiry gap | **Done.** Wired the already-existing `ReleaseExpiredBefore` into a job handler + cron registration (`*/15 * * * *`, matching the 15-minute reservation TTL already documented in RUNBOOK.md). Standalone; shipped with zero dependency on the rest of this phase. |
-| PR-1028 | Job introspection | Read-only application service over the `jobs` table: list (filter by type/status), get by ID, status counts. No HTTP yet — this is the shared foundation Track B and Track D's progress/purge tracking build on. |
+| PR-1028 | Job introspection | **Done.** Read-only application service over the `jobs` table: list (filter by type/status), get by ID, status counts. No HTTP yet — this is the shared foundation Track B and Track D's progress/purge tracking build on. Also closed a gap the original spec didn't know was there: a failed job's error message was never persisted anywhere at all (not even "the last one") — added a `last_error` column so `Get` has something real to show. |
 | PR-1029 | Jobs admin API | `GET /admin/jobs`, `GET /admin/jobs/{id}`, `POST /admin/jobs/{id}/retry` (requeue a `failed` job, resets `attempts`), `POST /admin/jobs/{id}/cancel` (only `pending`, not `processing` — no in-flight cancellation). New `jobs.read`/`jobs.write` permissions. Audit log entries for retry/cancel. |
 | PR-1030 | Scheduler admin | Expose the `cron.Scheduler`'s registered specs (name, cron expression, next run time) via a catalog, mirroring the existing hooks/slots catalog pattern. `GET /admin/schedules`, `POST /admin/schedules/{name}/trigger` (fires the registered fn immediately, same as a real tick). Enable/disable requires a small persisted flag (new `scheduler_overrides` table, checked before `Scheduler.run` fires a task) — schedules are code-registered today with no runtime toggle. |
 | PR-1031 | Jobs + scheduler admin GUI | New screens in the existing bundled admin SPA (`internal/interfaces/http/admin/dist`): job list/detail/retry/cancel, schedule list/trigger-now. Same schema-driven forms-and-grids pattern as the rest of the admin panel — no new frontend framework. |
@@ -145,7 +145,8 @@ Beyond products and categories (PR-1037), two more entities exist in the domain 
 | PR | Track | Status |
 | --- | --- | --- |
 | 1027 | — | done |
-| 1028–1032 | A | planned |
+| 1028 | A | done |
+| 1029–1032 | A | planned |
 | 1033–1038 | B | planned |
 | 1039–1043 | C | planned |
 | 1044–1047 | D | planned |

@@ -2,6 +2,7 @@ package postgres_test
 
 import (
 	"context"
+	"errors"
 	"testing"
 	"time"
 
@@ -227,5 +228,287 @@ func TestJobQueue_Complete_NotFound(t *testing.T) {
 	err = q.Complete(ctx, id.New())
 	if err == nil {
 		t.Fatal("expected error for non-existent job")
+	}
+}
+
+// TestJobQueue_Fail_RecordsLastError pins the fix for a failed job's
+// reason never being persisted anywhere: Fail(ctx, id, jobErr) now stores
+// jobErr.Error() as last_error, retrievable via Get — both on the
+// re-queued-for-retry path and the permanently-failed path.
+func TestJobQueue_Fail_RecordsLastError(t *testing.T) {
+	db := testDB(t)
+	if _, err := migrate.Run(db, "../../../migrations"); err != nil {
+		t.Fatalf("run migrations: %v", err)
+	}
+	t.Cleanup(func() { db.Exec("DELETE FROM jobs") })
+
+	q, err := postgres.NewJobQueue(db)
+	if err != nil {
+		t.Fatalf("NewJobQueue: %v", err)
+	}
+	ctx := context.Background()
+
+	job, _ := jobs.NewJob(id.New(), "test", nil)
+	_ = q.Enqueue(ctx, job)
+	got, _ := q.Dequeue(ctx)
+
+	if err := q.Fail(ctx, got.ID, errors.New("boom: upstream timed out")); err != nil {
+		t.Fatalf("Fail: %v", err)
+	}
+
+	detail, err := q.Get(ctx, got.ID)
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if detail == nil {
+		t.Fatal("Get returned nil")
+	}
+	if detail.LastError != "boom: upstream timed out" {
+		t.Errorf("LastError = %q, want %q", detail.LastError, "boom: upstream timed out")
+	}
+}
+
+// TestJobQueue_Fail_NilErrorLeavesLastErrorUnchanged pins Fail's documented
+// behavior for the "no handler registered" path (worker.go calls Fail with
+// a nil jobErr there): it must not invent a message, and must not clobber
+// whatever was already recorded from a prior failure.
+func TestJobQueue_Fail_NilErrorLeavesLastErrorUnchanged(t *testing.T) {
+	db := testDB(t)
+	if _, err := migrate.Run(db, "../../../migrations"); err != nil {
+		t.Fatalf("run migrations: %v", err)
+	}
+	t.Cleanup(func() { db.Exec("DELETE FROM jobs") })
+
+	q, err := postgres.NewJobQueue(db)
+	if err != nil {
+		t.Fatalf("NewJobQueue: %v", err)
+	}
+	ctx := context.Background()
+
+	job, _ := jobs.NewJob(id.New(), "test", nil)
+	_ = q.Enqueue(ctx, job)
+	got, _ := q.Dequeue(ctx)
+
+	if err := q.Fail(ctx, got.ID, nil); err != nil {
+		t.Fatalf("Fail: %v", err)
+	}
+
+	detail, err := q.Get(ctx, got.ID)
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if detail.LastError != "" {
+		t.Errorf("LastError = %q, want empty (nil jobErr must not invent a message)", detail.LastError)
+	}
+}
+
+func TestJobQueue_List(t *testing.T) {
+	db := testDB(t)
+	if _, err := migrate.Run(db, "../../../migrations"); err != nil {
+		t.Fatalf("run migrations: %v", err)
+	}
+	t.Cleanup(func() { db.Exec("DELETE FROM jobs") })
+
+	q, err := postgres.NewJobQueue(db)
+	if err != nil {
+		t.Fatalf("NewJobQueue: %v", err)
+	}
+	ctx := context.Background()
+
+	a, _ := jobs.NewJob(id.New(), "type_a", nil)
+	b, _ := jobs.NewJob(id.New(), "type_b", nil)
+	_ = q.Enqueue(ctx, a)
+	_ = q.Enqueue(ctx, b)
+
+	all, err := q.List(ctx, jobs.ListFilter{Limit: 10})
+	if err != nil {
+		t.Fatalf("List: %v", err)
+	}
+	if len(all) != 2 {
+		t.Fatalf("List (unfiltered) len = %d, want 2", len(all))
+	}
+
+	filtered, err := q.List(ctx, jobs.ListFilter{Type: "type_a", Limit: 10})
+	if err != nil {
+		t.Fatalf("List (filtered): %v", err)
+	}
+	if len(filtered) != 1 || filtered[0].ID != a.ID {
+		t.Fatalf("List (type_a) = %+v, want just %s", filtered, a.ID)
+	}
+
+	byStatus, err := q.List(ctx, jobs.ListFilter{Status: jobs.StatusPending, Limit: 10})
+	if err != nil {
+		t.Fatalf("List (by status): %v", err)
+	}
+	if len(byStatus) != 2 {
+		t.Fatalf("List (pending) len = %d, want 2", len(byStatus))
+	}
+
+	paged, err := q.List(ctx, jobs.ListFilter{Limit: 1, Offset: 1})
+	if err != nil {
+		t.Fatalf("List (paged): %v", err)
+	}
+	if len(paged) != 1 {
+		t.Fatalf("List (limit=1 offset=1) len = %d, want 1", len(paged))
+	}
+}
+
+// TestJobQueue_List_StableOrderOnEqualCreatedAt pins the fix for unstable
+// offset pagination: ORDER BY created_at DESC alone leaves ties undefined
+// across separate queries, which can duplicate or omit rows across pages.
+// Seeds several jobs sharing one created_at (bypassing NewJob's per-call
+// time.Now(), which would make a real collision unlikely in a fast test)
+// and confirms paging through them one at a time visits every job exactly
+// once, with a stable, repeatable order — the id DESC tie-breaker.
+func TestJobQueue_List_StableOrderOnEqualCreatedAt(t *testing.T) {
+	db := testDB(t)
+	if _, err := migrate.Run(db, "../../../migrations"); err != nil {
+		t.Fatalf("run migrations: %v", err)
+	}
+	t.Cleanup(func() { db.Exec("DELETE FROM jobs") })
+
+	q, err := postgres.NewJobQueue(db)
+	if err != nil {
+		t.Fatalf("NewJobQueue: %v", err)
+	}
+	ctx := context.Background()
+
+	const n = 5
+	same := time.Now().UTC()
+	ids := make([]string, n)
+	for i := 0; i < n; i++ {
+		job, _ := jobs.NewJob(id.New(), "test", nil)
+		job.CreatedAt = same
+		job.UpdatedAt = same
+		job.RunAt = same
+		if err := q.Enqueue(ctx, job); err != nil {
+			t.Fatalf("Enqueue %d: %v", i, err)
+		}
+		ids[i] = job.ID
+	}
+	// Enqueue writes created_at as given (not server-assigned), so every
+	// row above genuinely shares the same timestamp — confirm that before
+	// trusting the rest of this test.
+	var distinctCreatedAt int
+	if err := db.QueryRow("SELECT count(DISTINCT created_at) FROM jobs").Scan(&distinctCreatedAt); err != nil {
+		t.Fatalf("count distinct created_at: %v", err)
+	}
+	if distinctCreatedAt != 1 {
+		t.Fatalf("distinct created_at = %d, want 1 (test setup didn't produce a real tie)", distinctCreatedAt)
+	}
+
+	seen := make(map[string]int) // id -> how many times it was returned
+	var order []string
+	for offset := 0; offset < n; offset++ {
+		page, err := q.List(ctx, jobs.ListFilter{Limit: 1, Offset: offset})
+		if err != nil {
+			t.Fatalf("List offset=%d: %v", offset, err)
+		}
+		if len(page) != 1 {
+			t.Fatalf("List offset=%d: len = %d, want 1", offset, len(page))
+		}
+		seen[page[0].ID]++
+		order = append(order, page[0].ID)
+	}
+
+	for _, jobID := range ids {
+		if seen[jobID] != 1 {
+			t.Errorf("job %s appeared %d times across pages, want exactly 1", jobID, seen[jobID])
+		}
+	}
+
+	// Re-run the same pages and confirm the order repeats exactly —
+	// without a deterministic tie-breaker this could vary run to run.
+	for offset := 0; offset < n; offset++ {
+		page, err := q.List(ctx, jobs.ListFilter{Limit: 1, Offset: offset})
+		if err != nil {
+			t.Fatalf("List (repeat) offset=%d: %v", offset, err)
+		}
+		if page[0].ID != order[offset] {
+			t.Errorf("offset=%d: got %s on repeat, want %s (order not stable)", offset, page[0].ID, order[offset])
+		}
+	}
+}
+
+func TestJobQueue_Get_NotFound(t *testing.T) {
+	db := testDB(t)
+	if _, err := migrate.Run(db, "../../../migrations"); err != nil {
+		t.Fatalf("run migrations: %v", err)
+	}
+	t.Cleanup(func() { db.Exec("DELETE FROM jobs") })
+
+	q, err := postgres.NewJobQueue(db)
+	if err != nil {
+		t.Fatalf("NewJobQueue: %v", err)
+	}
+
+	got, err := q.Get(context.Background(), id.New())
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if got != nil {
+		t.Fatalf("Get: got %+v, want nil for a non-existent job", got)
+	}
+}
+
+func TestJobQueue_Get_IncludesPayload(t *testing.T) {
+	db := testDB(t)
+	if _, err := migrate.Run(db, "../../../migrations"); err != nil {
+		t.Fatalf("run migrations: %v", err)
+	}
+	t.Cleanup(func() { db.Exec("DELETE FROM jobs") })
+
+	q, err := postgres.NewJobQueue(db)
+	if err != nil {
+		t.Fatalf("NewJobQueue: %v", err)
+	}
+	ctx := context.Background()
+
+	job, _ := jobs.NewJob(id.New(), "test", map[string]interface{}{"order_id": "o-1"})
+	_ = q.Enqueue(ctx, job)
+
+	got, err := q.Get(ctx, job.ID)
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if got == nil {
+		t.Fatal("Get returned nil")
+	}
+	if got.Payload["order_id"] != "o-1" {
+		t.Errorf("Payload[order_id] = %v, want o-1", got.Payload["order_id"])
+	}
+}
+
+func TestJobQueue_CountsByStatus(t *testing.T) {
+	db := testDB(t)
+	if _, err := migrate.Run(db, "../../../migrations"); err != nil {
+		t.Fatalf("run migrations: %v", err)
+	}
+	t.Cleanup(func() { db.Exec("DELETE FROM jobs") })
+
+	q, err := postgres.NewJobQueue(db)
+	if err != nil {
+		t.Fatalf("NewJobQueue: %v", err)
+	}
+	ctx := context.Background()
+
+	a, _ := jobs.NewJob(id.New(), "test", nil)
+	b, _ := jobs.NewJob(id.New(), "test", nil)
+	_ = q.Enqueue(ctx, a)
+	_ = q.Enqueue(ctx, b)
+	_, _ = q.Dequeue(ctx) // one becomes processing
+
+	counts, err := q.CountsByStatus(ctx)
+	if err != nil {
+		t.Fatalf("CountsByStatus: %v", err)
+	}
+	if counts[jobs.StatusPending] != 1 {
+		t.Errorf("counts[pending] = %d, want 1", counts[jobs.StatusPending])
+	}
+	if counts[jobs.StatusProcessing] != 1 {
+		t.Errorf("counts[processing] = %d, want 1", counts[jobs.StatusProcessing])
+	}
+	if _, ok := counts[jobs.StatusFailed]; ok {
+		t.Errorf("counts[failed] present with no failed jobs, want absent")
 	}
 }

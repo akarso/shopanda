@@ -17,6 +17,7 @@ type mockQueue struct {
 	jobs            []*jobs.Job
 	completed       []string
 	failed          []string
+	failErrs        []error // jobErr as observed by each Fail call, in order
 	completeFn      func(id string) error
 	failCtxErrs     []error // ctx.Err() as observed by each Fail call, in order
 	completeCtxErrs []error
@@ -55,10 +56,11 @@ func (m *mockQueue) Complete(ctx context.Context, id string) error {
 	return nil
 }
 
-func (m *mockQueue) Fail(ctx context.Context, id string, _ error) error {
+func (m *mockQueue) Fail(ctx context.Context, id string, jobErr error) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.failCtxErrs = append(m.failCtxErrs, ctx.Err())
+	m.failErrs = append(m.failErrs, jobErr)
 	m.failed = append(m.failed, id)
 	return nil
 }
@@ -158,6 +160,16 @@ func TestWorker_FailsUnknownType(t *testing.T) {
 	defer q.mu.Unlock()
 	if len(q.failed) != 1 || q.failed[0] != "j1" {
 		t.Errorf("failed = %v, want [j1]", q.failed)
+	}
+	// Pins the fix for the diagnostically most important case having no
+	// last_error at all: an unregistered job type is exactly the kind of
+	// misconfiguration an operator needs a reason for, and Fail only
+	// persists last_error when jobErr is non-nil (see job_queue.go).
+	if len(q.failErrs) != 1 || q.failErrs[0] == nil {
+		t.Fatalf("failErrs = %v, want a single non-nil error", q.failErrs)
+	}
+	if got := q.failErrs[0].Error(); got != `no handler registered for job type "unknown"` {
+		t.Errorf("failErrs[0] = %q, want a message naming the unregistered job type", got)
 	}
 }
 
