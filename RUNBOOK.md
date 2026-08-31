@@ -132,6 +132,18 @@ Shopanda plugins are **compile-time registered** — there is no `.so` drop-in l
 - Every list/get/retry/cancel call is written to the admin audit log (`job.list`, `job.read`, `job.retry`, `job.cancel`; `ResourceType: "job"`), same as payments/returns/store credit.
 - No bulk operations yet (e.g. "retry all failed of type X") — single-job actions only.
 
+## Admin schedules (list/trigger/enable/disable)
+
+- `GET /api/v1/admin/schedules` is gated by `jobs.read`; `POST /api/v1/admin/schedules/{name}/trigger`, `.../enable`, `.../disable` are gated by `jobs.write` — same permissions as job admin (schedules and jobs are the same operational surface).
+- **The scheduler runs as a separate OS process from the API server in production** (`./app scheduler`, not embedded in `./app serve` — see "Runtime Modes" in the Developer Guide). Because of that, this admin surface is Postgres-backed, not read from this server's own memory:
+  - **List** always reflects reality — whichever process is actually running (the standalone `scheduler` command in production, or `serve` with an embedded scheduler in dev) upserts its registered task names/specs into `scheduler_tasks` every time it starts.
+  - **Enable/disable** always works and takes effect in the real running scheduler without it needing a restart — its tick loop checks the same `scheduler_tasks.enabled` column on every tick before firing a task.
+  - **Trigger is the one operation that needs a live scheduler in *this* process.** In a standard production deployment (`serve` without an embedded scheduler), triggering returns **409 conflict** — `"this server process has no embedded scheduler to trigger from"` — because there is no in-process function to call. It works immediately in `dev` mode (`./app dev`, which embeds the scheduler by default) or any `serve` deployment that explicitly opts into embedding.
+  - If you *do* see `409` with a different message — `"is registered but not part of this process's local scheduler"` — that means more than one process is embedding a scheduler with different task sets (e.g. two `serve --embed-scheduler` instances with different plugin configs). Running more than one embedded scheduler is unsupported: each one independently fires its own tick, so more than one active at a time double-fires every scheduled task. Fix by running exactly one embedded scheduler, or none (standalone `./app scheduler`, the recommended production setup).
+- A disabled task can still be triggered manually — disabling only stops the *automatic* tick from firing it, exactly like a paused-but-manually-runnable job.
+- Unknown task name: **404**, on any of the four endpoints.
+- Every list/trigger/enable/disable call is written to the admin audit log (`schedule.list`, `schedule.trigger`, `schedule.enable`, `schedule.disable`; `ResourceType: "schedule"`).
+
 ## Liveness vs readiness
 
 | Probe | Endpoint | Use |

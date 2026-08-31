@@ -83,6 +83,16 @@ Beyond products and categories (PR-1037), two more entities exist in the domain 
 - **CMS pages/content blocks** (`internal/domain/cms`) — searchable storefront content exists, but there's no evidence of a storefront "search everything" UI today (search is product-scoped); indexing CMS content without a consumer is speculative. Revisit if/when a unified storefront search box ships.
 - **Customer/order search** (admin-side lookup) — currently served by direct Postgres queries in the admin API, which is adequate at expected admin-panel query volumes; moving it onto `SearchEngine` would only pay off at a scale this platform isn't targeting yet.
 
+### Forward compatibility: Phase 12 (product types & composition)
+
+Phase 12 (planned, not started — see [`../phase-12-product-composition/ROADMAP.md`](../phase-12-product-composition/ROADMAP.md)) adds a product `Type` field, a four-axis visibility/purchasability model, and composite/linked product relationships. None of that exists yet, so Track B below ships exactly as scoped — but two things are worth keeping in mind while implementing it, so Phase 12 is an additive schema change later, not a rework:
+
+- **Keep `search.Product` narrow and additive-friendly.** Phase 12 will add `Type` and visibility-axis fields to what gets indexed. PR-1037's `CategoryIDs` fix is the only structural change Track B makes to the indexed shape — avoid hardcoding assumptions elsewhere (e.g. "every indexed product is simple/purchasable") that a later field addition would have to fight.
+- **Keep PR-1036's on-save subscriber list easy to extend.** It reacts to product/price/stock/category-assignment events today. Phase 12 will need the same reindex-on-change mechanism to also fire on visibility-affecting changes (a linked child getting assigned to a parent, a bundle's stock rollup changing) — the event-subscriber shape already generalizes to this, just don't wire the subscriber list in a way that assumes exactly four event types forever.
+- **Today's only index filter is implicit** (nothing filters on product status at index time beyond what already exists in `search_engine.go`). Phase 12 will need to add `AND purchasable = true`-equivalent filtering once that flag exists (e.g. so an unassigned linked-child ticket never appears in search). No action needed now — just don't add index-time filtering logic in Track B that would need to be torn out rather than extended.
+
+Phase 12's own Track F (index/CSV/GraphQL/GUI closeout) explicitly depends on this phase's Track B having shipped first — it extends the same index schema rather than reworking it twice.
+
 ---
 
 ## Track C — Caching foundation (PR-1039–1043)
@@ -147,7 +157,8 @@ Beyond products and categories (PR-1037), two more entities exist in the domain 
 | 1027 | — | done |
 | 1028 | A | done |
 | 1029 | A | done |
-| 1030–1032 | A | planned |
+| 1030 | A | done |
+| 1031–1032 | A | planned |
 | 1033–1038 | B | planned |
 | 1039–1043 | C | planned |
 | 1044–1047 | D | planned |

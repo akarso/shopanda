@@ -9,10 +9,14 @@ import (
 	"time"
 
 	"github.com/akarso/shopanda/internal/domain/scheduler"
+	"github.com/akarso/shopanda/internal/platform/apperror"
 )
 
-// Compile-time check.
-var _ scheduler.Scheduler = (*Scheduler)(nil)
+// Compile-time checks.
+var (
+	_ scheduler.Scheduler    = (*Scheduler)(nil)
+	_ scheduler.LocalTrigger = (*Scheduler)(nil)
+)
 
 // Logger is the logging interface used by the scheduler.
 type Logger interface {
@@ -23,6 +27,7 @@ type Logger interface {
 // entry is a registered scheduled task.
 type entry struct {
 	name string
+	spec string
 	expr *cronExpr
 	fn   func()
 }
@@ -31,17 +36,51 @@ type entry struct {
 type Scheduler struct {
 	entries  []entry
 	log      Logger
+	store    scheduler.Store
 	stop     chan struct{}
 	stopOnce sync.Once
+	stopMu   sync.RWMutex // guards stopped, closing the wg.Add/Wait race (see tryAdd)
+	stopped  bool
 	wg       sync.WaitGroup
 }
 
+// isEnabledTimeout bounds each tick's override-check round-trip. The tick
+// loop is single-threaded (one Start goroutine evaluates every entry in
+// sequence), so a hung Store call would otherwise block all scheduled
+// tasks — including ones with no override at all — indefinitely.
+const isEnabledTimeout = 500 * time.Millisecond
+
+// startRegistrationUpsertTimeout bounds Start's one-time
+// UpsertRegistrations call. The alignment timer and tick loop below don't
+// even begin until this call returns, so a hung/unreachable Postgres would
+// otherwise delay this process's actual scheduling indefinitely — the
+// same reasoning as isEnabledTimeout, just a longer allowance since this
+// happens once at startup rather than every minute. A var, not a const,
+// so tests can shrink it instead of waiting out the real duration.
+var startRegistrationUpsertTimeout = 2 * time.Second
+
+// Option configures optional Scheduler dependencies.
+type Option func(*Scheduler)
+
+// WithStore attaches a Store for cross-process admin introspection and
+// control (PR-1030) — registrations are upserted once at Start, and every
+// tick checks the store for a per-task disable override before firing.
+// Optional; omitting it preserves pre-PR-1030 behavior exactly (always
+// enabled, not introspectable from another process).
+func WithStore(store scheduler.Store) Option {
+	return func(s *Scheduler) { s.store = store }
+}
+
 // New creates a Scheduler.
-func New(log Logger) *Scheduler {
-	return &Scheduler{
+func New(log Logger, opts ...Option) *Scheduler {
+	s := &Scheduler{
 		log:  log,
 		stop: make(chan struct{}),
 	}
+	for _, opt := range opts {
+		opt(s)
+	}
+	return s
 }
 
 // Register adds a named task with a 5-field cron spec.
@@ -62,7 +101,7 @@ func (s *Scheduler) Register(name string, spec string, fn func()) {
 	if err != nil {
 		panic(fmt.Sprintf("cron: invalid spec %q for task %q: %v", spec, name, err))
 	}
-	s.entries = append(s.entries, entry{name: name, expr: expr, fn: fn})
+	s.entries = append(s.entries, entry{name: name, spec: spec, expr: expr, fn: fn})
 }
 
 // Start evaluates registered schedules every minute. Blocks until ctx is
@@ -71,6 +110,24 @@ func (s *Scheduler) Start(ctx context.Context) {
 	s.log.Info("scheduler.started", map[string]interface{}{
 		"tasks": len(s.entries),
 	})
+
+	if s.store != nil {
+		regs := make([]scheduler.RegistrationEntry, len(s.entries))
+		for i, e := range s.entries {
+			regs[i] = scheduler.RegistrationEntry{Name: e.name, Spec: e.spec}
+		}
+		// Best-effort: a registration-persistence hiccup must not block
+		// this process's actual scheduling — admin introspection just
+		// shows stale data until the next successful Start. Bounded (and
+		// derived from ctx, so an early shutdown cancels it immediately
+		// too) so a hung Postgres call can't delay Start indefinitely.
+		upsertCtx, cancel := context.WithTimeout(ctx, startRegistrationUpsertTimeout)
+		err := s.store.UpsertRegistrations(upsertCtx, regs)
+		cancel()
+		if err != nil {
+			s.log.Error("scheduler.registrations.upsert_failed", err, nil)
+		}
+	}
 
 	// Align to the start of the next minute.
 	now := time.Now()
@@ -110,23 +167,110 @@ func (s *Scheduler) Start(ctx context.Context) {
 // Stop signals the scheduler to shut down and waits for in-flight tasks.
 // Safe to call multiple times.
 func (s *Scheduler) Stop() {
-	s.stopOnce.Do(func() { close(s.stop) })
+	s.stopOnce.Do(func() {
+		// Mark stopped before closing stop/waiting: tryAdd checks this
+		// under the same mutex, so any wg.Add that hasn't already
+		// happened by the time this Lock is acquired will never happen —
+		// closing the window where Add could race with the Wait below
+		// (sync.WaitGroup panics on "Add called concurrently with Wait").
+		s.stopMu.Lock()
+		s.stopped = true
+		s.stopMu.Unlock()
+		close(s.stop)
+	})
 	s.wg.Wait()
 }
 
+// tryAdd increments wg only if the scheduler hasn't been stopped yet. See
+// the stopMu field comment for why this is required to avoid a
+// wg.Add/wg.Wait race between a task firing (tick or TriggerLocal) and
+// Stop().
+func (s *Scheduler) tryAdd() bool {
+	s.stopMu.RLock()
+	defer s.stopMu.RUnlock()
+	if s.stopped {
+		return false
+	}
+	s.wg.Add(1)
+	return true
+}
+
 func (s *Scheduler) tick(t time.Time) {
+	var matched []entry
 	for _, e := range s.entries {
 		if e.expr.matches(t) {
-			s.log.Info("scheduler.task.fire", map[string]interface{}{
+			matched = append(matched, e)
+		}
+	}
+	if len(matched) == 0 {
+		return
+	}
+
+	enabled := map[string]bool{}
+	if s.store != nil {
+		names := make([]string, len(matched))
+		for i, e := range matched {
+			names[i] = e.name
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), isEnabledTimeout)
+		result, err := s.store.IsEnabledBatch(ctx, names)
+		cancel()
+		if err != nil {
+			// Fail open: a transient override-check failure (including a
+			// timeout) must not silently stop scheduled work (e.g.
+			// reservation-expiry cleanup) — that failure mode is worse
+			// than occasionally firing a task an admin meant to keep
+			// disabled. Leaving `enabled` empty means every matched task
+			// is treated as enabled below.
+			s.log.Error("scheduler.override.check_failed", err, map[string]interface{}{
+				"tasks": names,
+			})
+		} else {
+			enabled = result
+		}
+	}
+
+	for _, e := range matched {
+		if v, ok := enabled[e.name]; ok && !v {
+			s.log.Info("scheduler.task.skipped_disabled", map[string]interface{}{
 				"task": e.name,
 			})
-			s.wg.Add(1)
+			continue
+		}
+		if !s.tryAdd() {
+			s.log.Info("scheduler.task.skipped_stopping", map[string]interface{}{
+				"task": e.name,
+			})
+			continue
+		}
+		s.log.Info("scheduler.task.fire", map[string]interface{}{
+			"task": e.name,
+		})
+		go func(e entry) {
+			defer s.wg.Done()
+			s.run(e)
+		}(e)
+	}
+}
+
+// TriggerLocal invokes a registered task's fn immediately, out-of-band from
+// the normal tick — the same function, so a manual trigger and a real tick
+// firing are indistinguishable to the task itself. Fires regardless of a
+// disabled override (see domain/scheduler.Catalog.Trigger's doc comment).
+func (s *Scheduler) TriggerLocal(name string) error {
+	for _, e := range s.entries {
+		if e.name == name {
+			if !s.tryAdd() {
+				return apperror.Conflict("scheduler is shutting down; task not triggered")
+			}
 			go func(e entry) {
 				defer s.wg.Done()
 				s.run(e)
 			}(e)
+			return nil
 		}
 	}
+	return apperror.NotFound(fmt.Sprintf("no scheduled task named %q", name))
 }
 
 func (s *Scheduler) run(e entry) {
@@ -167,6 +311,36 @@ func (c *cronExpr) matches(t time.Time) bool {
 		return domMatch || dowMatch
 	}
 	return domMatch && dowMatch
+}
+
+// next returns the earliest minute-resolution time strictly after `after`
+// at which the expression matches — the same resolution the scheduler's
+// own tick loop uses. Bounded to avoid an infinite loop for a
+// syntactically valid but practically impossible spec; returns the zero
+// Time if no match is found within the bound.
+func (c *cronExpr) next(after time.Time) time.Time {
+	t := after.Truncate(time.Minute).Add(time.Minute)
+	const maxLookahead = 4 * 366 * 24 * 60 // ~4 years of minutes
+	for i := 0; i < maxLookahead; i++ {
+		if c.matches(t) {
+			return t
+		}
+		t = t.Add(time.Minute)
+	}
+	return time.Time{}
+}
+
+// NextRun returns the earliest minute-resolution time strictly after
+// `after` at which spec matches, or the zero Time if none is found within
+// a bounded lookahead. Exported for admin catalog display (see
+// domain/scheduler.Catalog) — spec is parsed fresh on every call,
+// independent of any running Scheduler instance.
+func NextRun(spec string, after time.Time) (time.Time, error) {
+	expr, err := parse(spec)
+	if err != nil {
+		return time.Time{}, err
+	}
+	return expr.next(after), nil
 }
 
 // set is a sorted slice of allowed values for a cron field.
