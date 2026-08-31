@@ -76,7 +76,9 @@ func (h *ScheduleAdminHandler) Trigger() http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		name := strings.TrimSpace(r.PathValue("name"))
 		if name == "" {
-			httpshared.JSONError(w, apperror.Validation("schedule name is required"))
+			err := apperror.Validation("schedule name is required")
+			h.audit(r, adminapp.AuditScheduleTrigger, name, nil, err)
+			httpshared.JSONError(w, err)
 			return
 		}
 
@@ -105,7 +107,9 @@ func (h *ScheduleAdminHandler) setEnabled(enabled bool, action adminapp.AuditAct
 	return func(w http.ResponseWriter, r *http.Request) {
 		name := strings.TrimSpace(r.PathValue("name"))
 		if name == "" {
-			httpshared.JSONError(w, apperror.Validation("schedule name is required"))
+			err := apperror.Validation("schedule name is required")
+			h.audit(r, action, name, nil, err)
+			httpshared.JSONError(w, err)
 			return
 		}
 

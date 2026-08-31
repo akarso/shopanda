@@ -11,6 +11,7 @@ import (
 
 	adminapp "github.com/akarso/shopanda/internal/application/admin"
 	schedulerApp "github.com/akarso/shopanda/internal/application/scheduler"
+	domainadmin "github.com/akarso/shopanda/internal/domain/admin"
 	"github.com/akarso/shopanda/internal/domain/identity"
 	"github.com/akarso/shopanda/internal/domain/rbac"
 	domainscheduler "github.com/akarso/shopanda/internal/domain/scheduler"
@@ -19,6 +20,26 @@ import (
 	"github.com/akarso/shopanda/internal/platform/auth/testhelper"
 	"github.com/akarso/shopanda/internal/platform/logger"
 )
+
+// spyAuditLogRepo records every inserted audit entry, for asserting that a
+// handler path actually audits (as opposed to just returning the right
+// HTTP status).
+type spyAuditLogRepo struct {
+	inserted []domainadmin.AuditLogRecord
+}
+
+func (s *spyAuditLogRepo) Insert(_ context.Context, record domainadmin.AuditLogRecord) error {
+	s.inserted = append(s.inserted, record)
+	return nil
+}
+
+func (s *spyAuditLogRepo) List(context.Context, domainadmin.AuditLogFilter) ([]domainadmin.AuditLogRecord, error) {
+	return nil, nil
+}
+
+func (s *spyAuditLogRepo) DeleteBefore(context.Context, time.Time) (int64, error) {
+	return 0, nil
+}
 
 type fakeScheduleCatalog struct {
 	listResult []domainscheduler.CatalogEntry
@@ -216,6 +237,74 @@ func TestScheduleAdminHandler_Trigger_EmptyName(t *testing.T) {
 
 	if rec.Code != http.StatusUnprocessableEntity {
 		t.Fatalf("status = %d, want %d; body=%s", rec.Code, http.StatusUnprocessableEntity, rec.Body.String())
+	}
+}
+
+// TestScheduleAdminHandler_Trigger_EmptyName_IsAudited pins the fix for a
+// validation failure silently bypassing the audit trail: an admin's
+// attempted (even if malformed) trigger request must still leave a record,
+// same as any other error path in this handler.
+func TestScheduleAdminHandler_Trigger_EmptyName_IsAudited(t *testing.T) {
+	svc, err := schedulerApp.NewService(&fakeScheduleCatalog{})
+	if err != nil {
+		t.Fatalf("NewService: %v", err)
+	}
+	repo := &spyAuditLogRepo{}
+	auditor := adminapp.NewAuditor(logger.New("error"))
+	auditor.SetAuditLogRepository(repo)
+	h := admin.NewScheduleAdminHandler(svc, auditor)
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/admin/schedules//trigger", nil)
+	req.SetPathValue("name", "")
+	req = testhelper.AdminRequest(req, "admin-1")
+
+	rec := httptest.NewRecorder()
+	h.Trigger()(rec, req)
+
+	if rec.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("status = %d, want %d; body=%s", rec.Code, http.StatusUnprocessableEntity, rec.Body.String())
+	}
+	if len(repo.inserted) != 1 {
+		t.Fatalf("audit inserts = %d, want 1", len(repo.inserted))
+	}
+	if repo.inserted[0].Action != string(adminapp.AuditScheduleTrigger) {
+		t.Errorf("Action = %q, want %q", repo.inserted[0].Action, adminapp.AuditScheduleTrigger)
+	}
+	if repo.inserted[0].Result != "error" {
+		t.Errorf("Result = %q, want %q", repo.inserted[0].Result, "error")
+	}
+}
+
+// TestScheduleAdminHandler_Enable_EmptyName_IsAudited is the same pin for
+// the enable/disable path, which shares the setEnabled helper.
+func TestScheduleAdminHandler_Enable_EmptyName_IsAudited(t *testing.T) {
+	svc, err := schedulerApp.NewService(&fakeScheduleCatalog{})
+	if err != nil {
+		t.Fatalf("NewService: %v", err)
+	}
+	repo := &spyAuditLogRepo{}
+	auditor := adminapp.NewAuditor(logger.New("error"))
+	auditor.SetAuditLogRepository(repo)
+	h := admin.NewScheduleAdminHandler(svc, auditor)
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/admin/schedules//enable", nil)
+	req.SetPathValue("name", "")
+	req = testhelper.AdminRequest(req, "admin-1")
+
+	rec := httptest.NewRecorder()
+	h.Enable()(rec, req)
+
+	if rec.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("status = %d, want %d; body=%s", rec.Code, http.StatusUnprocessableEntity, rec.Body.String())
+	}
+	if len(repo.inserted) != 1 {
+		t.Fatalf("audit inserts = %d, want 1", len(repo.inserted))
+	}
+	if repo.inserted[0].Action != string(adminapp.AuditScheduleEnable) {
+		t.Errorf("Action = %q, want %q", repo.inserted[0].Action, adminapp.AuditScheduleEnable)
+	}
+	if repo.inserted[0].Result != "error" {
+		t.Errorf("Result = %q, want %q", repo.inserted[0].Result, "error")
 	}
 }
 

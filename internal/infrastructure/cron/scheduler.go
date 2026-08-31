@@ -50,6 +50,15 @@ type Scheduler struct {
 // tasks — including ones with no override at all — indefinitely.
 const isEnabledTimeout = 500 * time.Millisecond
 
+// startRegistrationUpsertTimeout bounds Start's one-time
+// UpsertRegistrations call. The alignment timer and tick loop below don't
+// even begin until this call returns, so a hung/unreachable Postgres would
+// otherwise delay this process's actual scheduling indefinitely — the
+// same reasoning as isEnabledTimeout, just a longer allowance since this
+// happens once at startup rather than every minute. A var, not a const,
+// so tests can shrink it instead of waiting out the real duration.
+var startRegistrationUpsertTimeout = 2 * time.Second
+
 // Option configures optional Scheduler dependencies.
 type Option func(*Scheduler)
 
@@ -109,8 +118,13 @@ func (s *Scheduler) Start(ctx context.Context) {
 		}
 		// Best-effort: a registration-persistence hiccup must not block
 		// this process's actual scheduling — admin introspection just
-		// shows stale data until the next successful Start.
-		if err := s.store.UpsertRegistrations(ctx, regs); err != nil {
+		// shows stale data until the next successful Start. Bounded (and
+		// derived from ctx, so an early shutdown cancels it immediately
+		// too) so a hung Postgres call can't delay Start indefinitely.
+		upsertCtx, cancel := context.WithTimeout(ctx, startRegistrationUpsertTimeout)
+		err := s.store.UpsertRegistrations(upsertCtx, regs)
+		cancel()
+		if err != nil {
 			s.log.Error("scheduler.registrations.upsert_failed", err, nil)
 		}
 	}

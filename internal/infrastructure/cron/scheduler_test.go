@@ -24,9 +24,17 @@ type fakeStore struct {
 	registrations []scheduler.RegistrationEntry
 	enabled       map[string]bool // absence means enabled, matching Store's documented default
 	isEnabledErr  error
+	upsertBlock   chan struct{} // if non-nil, UpsertRegistrations blocks until closed or ctx is done — simulates a hung Postgres call
 }
 
-func (f *fakeStore) UpsertRegistrations(_ context.Context, entries []scheduler.RegistrationEntry) error {
+func (f *fakeStore) UpsertRegistrations(ctx context.Context, entries []scheduler.RegistrationEntry) error {
+	if f.upsertBlock != nil {
+		select {
+		case <-f.upsertBlock:
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.registrations = append([]scheduler.RegistrationEntry(nil), entries...)
@@ -229,6 +237,47 @@ func TestScheduler_Start_UpsertsRegistrations(t *testing.T) {
 	}
 	if byName["task-a"] != "* * * * *" || byName["task-b"] != "0 3 * * *" {
 		t.Errorf("registrations = %+v, want task-a/task-b with their specs", byName)
+	}
+}
+
+// TestScheduler_Start_UpsertRegistrations_BoundedByTimeout pins the fix
+// for Start's one-time UpsertRegistrations call blocking indefinitely: the
+// alignment timer and tick loop never begin until that call returns, so a
+// hung Postgres call would otherwise stall this process's actual
+// scheduling forever. Shrinks startRegistrationUpsertTimeout so the test
+// doesn't have to wait out the real production duration.
+func TestScheduler_Start_UpsertRegistrations_BoundedByTimeout(t *testing.T) {
+	orig := startRegistrationUpsertTimeout
+	startRegistrationUpsertTimeout = 50 * time.Millisecond
+	defer func() { startRegistrationUpsertTimeout = orig }()
+
+	store := &fakeStore{upsertBlock: make(chan struct{})} // never closed: simulates a hung Postgres call
+	s := New(testLogger{}, WithStore(store))
+	s.Register("task", "* * * * *", func() {})
+
+	// A long-lived context, never cancelled during the test — matches
+	// Start's real usage (cancelled only at process shutdown). If
+	// UpsertRegistrations weren't independently bounded, this context
+	// alone would let it block forever.
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	done := make(chan struct{})
+	go func() {
+		s.Start(ctx)
+		close(done)
+	}()
+
+	// Give the (shrunk) upsert timeout time to fire, then Stop — this only
+	// unblocks Start if it already got past the blocked upsert call and
+	// reached the normal stop-select loop below it.
+	time.Sleep(startRegistrationUpsertTimeout + 100*time.Millisecond)
+	s.Stop()
+
+	select {
+	case <-done:
+	case <-time.After(3 * time.Second):
+		t.Fatal("Start did not return after Stop — UpsertRegistrations may still be blocked past its timeout")
 	}
 }
 
