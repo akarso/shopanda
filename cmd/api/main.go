@@ -229,7 +229,17 @@ func runServe(cfg *config.Config, log logger.Logger, embedScheduler bool) error 
 	var schedulerCancel context.CancelFunc
 	var schedulerDone chan struct{}
 	if embedScheduler {
-		sched = cron.New(log)
+		// PR-1030: attach the Postgres-backed scheduler store (already
+		// constructed in wireServeRuntime for the admin API's List/
+		// SetEnabled, which must work regardless of whether a scheduler is
+		// embedded here) so this process's registrations/overrides are
+		// visible admin-side, and hand the store a LocalTrigger reference
+		// so the admin API's Trigger action actually works from this
+		// process — it stays a no-op-returning-conflict in a `serve`
+		// process that doesn't embed a scheduler (production default).
+		cronSched := cron.New(log, cron.WithStore(rt.schedulerStore))
+		rt.schedulerStore.SetLocalTrigger(cronSched)
+		sched = cronSched
 		runtime.RegisterCacheCleanup(rt.jobQueue, cacheApp.JobType, log, sched)
 		runtime.RegisterCartRecovery(rt.jobQueue, log, sched)
 		runtime.RegisterAuditRetention(rt.jobQueue, log, sched)
@@ -466,7 +476,17 @@ func runScheduler(cfg *config.Config, log logger.Logger) error {
 	if err != nil {
 		return fmt.Errorf("job queue: %w", err)
 	}
-	var sched scheduler.Scheduler = cron.New(log)
+	// PR-1030: the standalone scheduler process is the one that's actually
+	// running in production (RUNTIME_MODES.md), so it's the one that must
+	// write its registrations and read enable/disable overrides through
+	// the same Postgres table the admin API (hosted by `serve`, a
+	// different process) reads/writes — no LocalTrigger attached here,
+	// since there's no HTTP surface in this process for it to serve.
+	schedulerStore, err := postgres.NewSchedulerStore(conn)
+	if err != nil {
+		return fmt.Errorf("scheduler store: %w", err)
+	}
+	var sched scheduler.Scheduler = cron.New(log, cron.WithStore(schedulerStore))
 	runtime.RegisterCacheCleanup(jobQueue, cacheApp.JobType, log, sched)
 	runtime.RegisterCartRecovery(jobQueue, log, sched)
 	runtime.RegisterAuditRetention(jobQueue, log, sched)

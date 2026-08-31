@@ -5,7 +5,7 @@
 | PR-1027 | — | done | [Fix reservation expiry gap](PR-1027.md) |
 | PR-1028 | A | done | [Job introspection](PR-1028.md) |
 | PR-1029 | A | done | [Jobs admin API](PR-1029.md) |
-| PR-1030 | A | planned | [Scheduler admin](PR-1030.md) |
+| PR-1030 | A | done | [Scheduler admin](PR-1030.md) |
 | PR-1031 | A | planned | [Jobs + scheduler admin GUI](PR-1031.md) |
 | PR-1032 | A | planned | [Jobs/scheduler CLI](PR-1032.md) |
 | PR-1033 | B | planned | [Reindex as a job](PR-1033.md) |

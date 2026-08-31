@@ -142,6 +142,12 @@ const (
 	AuditJobRead   AuditAction = "job.read"
 	AuditJobRetry  AuditAction = "job.retry"
 	AuditJobCancel AuditAction = "job.cancel"
+
+	// Scheduler admin operations (PR-1030)
+	AuditScheduleList    AuditAction = "schedule.list"
+	AuditScheduleTrigger AuditAction = "schedule.trigger"
+	AuditScheduleEnable  AuditAction = "schedule.enable"
+	AuditScheduleDisable AuditAction = "schedule.disable"
 )
 
 // AuditEntry represents a single admin audit log entry.

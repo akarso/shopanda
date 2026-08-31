@@ -1829,6 +1829,148 @@ paths:
         "409":
           $ref: "#/components/responses/Conflict"
 
+  # ── Admin: Schedules ───────────────────────────────────
+  /api/v1/admin/schedules:
+    get:
+      operationId: adminListSchedules
+      tags: ["Admin: Schedules"]
+      summary: List registered scheduled tasks (admin)
+      description: >-
+        Reflects every task any process (the standalone `scheduler` command
+        or `serve` with an embedded scheduler) has registered, regardless of
+        which process is currently running — the catalog is Postgres-backed,
+        not read from this server's own memory.
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Envelope"
+              example:
+                data:
+                  schedules:
+                    - name: cache.cleanup
+                      spec: "*/5 * * * *"
+                      next_run: "2026-01-01T00:05:00Z"
+                      enabled: true
+                error: null
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  /api/v1/admin/schedules/{name}/trigger:
+    post:
+      operationId: adminTriggerSchedule
+      tags: ["Admin: Schedules"]
+      summary: Trigger a scheduled task immediately
+      description: >-
+        Invokes the task's function out-of-band from its normal tick,
+        regardless of a disabled override. Only works when this server
+        process has a scheduler embedded (dev mode, or a `serve` deployment
+        that opts into embedding) — in a standard production deployment,
+        where the scheduler runs as a separate process, this returns `409`
+        since there is nothing in this process to invoke.
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: name
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Envelope"
+              example:
+                data:
+                  status: triggered
+                error: null
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+
+  /api/v1/admin/schedules/{name}/enable:
+    post:
+      operationId: adminEnableSchedule
+      tags: ["Admin: Schedules"]
+      summary: Re-enable a scheduled task
+      description: >-
+        Clears a disable override so the task's normal tick fires again.
+        Takes effect in whichever process is actually running the
+        scheduler, without that process needing a restart.
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: name
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Envelope"
+              example:
+                data:
+                  enabled: true
+                error: null
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /api/v1/admin/schedules/{name}/disable:
+    post:
+      operationId: adminDisableSchedule
+      tags: ["Admin: Schedules"]
+      summary: Disable a scheduled task
+      description: >-
+        The task's normal tick will no longer fire it. Does not affect a
+        manual trigger (`/trigger` fires regardless of this override).
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: name
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Envelope"
+              example:
+                data:
+                  enabled: false
+                error: null
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
   # ── SEO ────────────────────────────────────────────────
   /sitemap.xml:
     get:

@@ -41,6 +41,7 @@ import (
 	returnsApp "github.com/akarso/shopanda/internal/application/returns"
 	reviewsApp "github.com/akarso/shopanda/internal/application/reviews"
 	"github.com/akarso/shopanda/internal/application/rewrite"
+	schedulerApp "github.com/akarso/shopanda/internal/application/scheduler"
 	setupApp "github.com/akarso/shopanda/internal/application/setup"
 	slotsApp "github.com/akarso/shopanda/internal/application/slots"
 	storecreditApp "github.com/akarso/shopanda/internal/application/storecredit"
@@ -64,6 +65,7 @@ import (
 	"github.com/akarso/shopanda/internal/domain/translation"
 	"github.com/akarso/shopanda/internal/infrastructure/imaging"
 	"github.com/akarso/shopanda/internal/infrastructure/invoicepdf"
+	"github.com/akarso/shopanda/internal/infrastructure/postgres"
 	smtpmail "github.com/akarso/shopanda/internal/infrastructure/smtp"
 	"github.com/akarso/shopanda/internal/infrastructure/webhook"
 	"github.com/akarso/shopanda/internal/platform/config"
@@ -175,6 +177,8 @@ type serveRuntime struct {
 	storeCreditAdmin               *admin.StoreCreditAdminHandler
 	storeCreditAccount             *storefront.StoreCreditAccountHandler
 	jobAdmin                       *admin.JobAdminHandler
+	scheduleAdmin                  *admin.ScheduleAdminHandler
+	schedulerStore                 *postgres.SchedulerStore
 	accountHandler                 *storefront.AccountHandler
 	sitemapHandler                 *storefront.SitemapHandler
 	robotsHandler                  *storefront.RobotsHandler
@@ -302,6 +306,23 @@ func wireServeRuntime(cfg *config.Config, log logger.Logger, conn *sql.DB, repos
 	jobsService, err := jobsApp.NewService(jobsReader, jobsAdminPort)
 	if err != nil {
 		return nil, fmt.Errorf("jobs service: %w", err)
+	}
+
+	// Scheduler admin (PR-1030) — always Postgres-backed (List/SetEnabled
+	// work regardless of which process registered/runs the scheduler; see
+	// domainscheduler.Catalog's doc comment for why). Trigger additionally
+	// needs a live embedded scheduler, attached via SetLocalTrigger from
+	// runServe's embedScheduler wiring in main.go when applicable — nil
+	// here in a process with no embedded scheduler (production default),
+	// where Trigger correctly returns a conflict rather than silently
+	// no-op'ing.
+	schedulerStore, err := postgres.NewSchedulerStore(conn)
+	if err != nil {
+		return nil, fmt.Errorf("scheduler store: %w", err)
+	}
+	schedulerService, err := schedulerApp.NewService(schedulerStore)
+	if err != nil {
+		return nil, fmt.Errorf("scheduler service: %w", err)
 	}
 
 	// Email notifications (needs jobQueue from setupWorker).
@@ -765,6 +786,7 @@ func wireServeRuntime(cfg *config.Config, log logger.Logger, conn *sql.DB, repos
 	storeCreditAdmin := admin.NewStoreCreditAdminHandler(storeCreditService, sharedAuditor)
 	storeCreditAccount := storefront.NewStoreCreditAccountHandler(storeCreditService)
 	jobAdmin := admin.NewJobAdminHandler(jobsService, sharedAuditor)
+	scheduleAdmin := admin.NewScheduleAdminHandler(schedulerService, sharedAuditor)
 	accountHandler := storefront.NewAccountHandler(repos.customerRepo, repos.orderRepo, repos.consentRepo, accountService)
 	sitemapHandler := storefront.NewSitemapHandler(baseURL, repos.productRepo, repos.categoryRepo, repos.pageRepo)
 	robotsHandler := storefront.NewRobotsHandler(baseURL)
@@ -873,6 +895,8 @@ func wireServeRuntime(cfg *config.Config, log logger.Logger, conn *sql.DB, repos
 		storeCreditAdmin:               storeCreditAdmin,
 		storeCreditAccount:             storeCreditAccount,
 		jobAdmin:                       jobAdmin,
+		scheduleAdmin:                  scheduleAdmin,
+		schedulerStore:                 schedulerStore,
 		accountHandler:                 accountHandler,
 		sitemapHandler:                 sitemapHandler,
 		robotsHandler:                  robotsHandler,
