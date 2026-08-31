@@ -123,6 +123,15 @@ Shopanda plugins are **compile-time registered** — there is no `.so` drop-in l
 - **Idempotency:** send an `Idempotency-Key` header on issuance requests. A retried request with the same key (e.g. after a client timeout with an ambiguous response) is a no-op instead of crediting twice; requests without the header are unprotected, matching pre-existing behavior. Uniqueness is per-customer, enforced by a DB constraint (migration `064_store_credit_idempotency.sql`), not just an in-process check.
 - Every issuance (success or failure) is written to the admin audit log (`AuditStoreCreditIssue`), same as payments/returns.
 
+## Admin jobs (retry/cancel)
+
+- `GET /api/v1/admin/jobs` (list, filter by `type`/`status`, paginated) and `GET /api/v1/admin/jobs/{id}` (detail, incl. `payload` and `last_error`) are gated by `jobs.read`; `POST /api/v1/admin/jobs/{id}/retry` and `POST /api/v1/admin/jobs/{id}/cancel` are gated by `jobs.write`. Both are admin-only (`RoleAdmin`), same as `audit.read` — no other role has them by default.
+- **Retry** only works on a job currently `failed`: transitions its status from `failed` back to `pending`, and resets `attempts` to `0` and `run_at` to now so the worker picks it up again on its next poll. Any other status (`pending`, `processing`, `done`, `cancelled`) returns **409 conflict** naming the job's actual status — retry is never a silent no-op.
+- **Cancel** only works on a job currently `pending`: flips it to the terminal `cancelled` status so it is never dequeued. **There is no in-flight cancellation** — a `processing` job cannot be cancelled; the 409 response says so explicitly (`"job is currently processing and cannot be cancelled — ... wait for it to complete or fail, then retry if needed"`), since this is the most likely point of operator confusion.
+- **Postgres-only.** Both the read endpoints and retry/cancel require the configured job queue driver to satisfy the `jobs.Reader`/`jobs.Admin` ports — true for the built-in Postgres queue, not for a broker-backed driver (Redis, RabbitMQ, Kafka, SQS). If a non-Postgres driver is configured, `serve` fails at startup with a clear error rather than silently omitting these routes.
+- Every list/get/retry/cancel call is written to the admin audit log (`job.list`, `job.read`, `job.retry`, `job.cancel`; `ResourceType: "job"`), same as payments/returns/store credit.
+- No bulk operations yet (e.g. "retry all failed of type X") — single-job actions only.
+
 ## Liveness vs readiness
 
 | Probe | Endpoint | Use |

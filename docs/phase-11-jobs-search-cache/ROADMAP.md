@@ -146,7 +146,8 @@ Beyond products and categories (PR-1037), two more entities exist in the domain 
 | --- | --- | --- |
 | 1027 | — | done |
 | 1028 | A | done |
-| 1029–1032 | A | planned |
+| 1029 | A | done |
+| 1030–1032 | A | planned |
 | 1033–1038 | B | planned |
 | 1039–1043 | C | planned |
 | 1044–1047 | D | planned |
@@ -161,4 +162,4 @@ PR specs: [`prs/`](prs/).
 | --- | --- | --- |
 | Phase 9 | Integrator backlog + merchant discovery | Shipped (PR-856–908) |
 | Phase 10 | Platform excellence (quality / security / ops / architecture) | Shipped (PR-1000–1026; PR-1003 the only open item, unrelated to this phase) |
-| **Phase 11** | Jobs, search & cache — admin reachability + full-page cache | **Planned** |
+| **Phase 11** | Jobs, search & cache — admin reachability + full-page cache | **In progress** |

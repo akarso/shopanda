@@ -24,6 +24,7 @@ Deciding *which* extension mechanism fits your task (events vs hooks vs pricing 
 - [Theme Slots & Inheritance](THEME_SLOTS.md)
 - [Add Custom CLI Commands](#add-custom-cli-commands)
 - [Use the API Reference](#use-the-api-reference)
+- [Jobs admin API](#jobs-admin-api)
 - [Integrator Platform (Phase 8)](#integrator-platform-phase-8)
 - [Roadmap and Future Work](#roadmap-and-future-work)
 - [Continuous Integration](#continuous-integration)
@@ -609,6 +610,17 @@ curl http://localhost:8080/api/v1/admin/orders \
 ### Admin UI note
 
 The embedded admin SPA stores its JWT in browser local storage and sends it as a bearer token on API requests. Extension work against admin APIs should continue to use the same bearer-token model rather than inventing a separate admin auth flow.
+
+## Jobs admin API
+
+`GET /api/v1/admin/jobs` (filter by `type`/`status`, paginated) and `GET /api/v1/admin/jobs/{id}` (full detail, including payload and `last_error`) give operators visibility into the background job queue without a direct SQL connection — gated by `jobs.read`. There is no admin UI for this yet (planned as a follow-up); use the API directly or `curl`.
+
+`POST /api/v1/admin/jobs/{id}/retry` and `POST /api/v1/admin/jobs/{id}/cancel` — gated by `jobs.write` — apply the one correction each state supports:
+
+- **Retry** only works on a `failed` job: resets `attempts` to 0 and `run_at` to now so the worker picks it up again. Any other status returns `409 conflict`.
+- **Cancel** only works on a `pending` job: flips it to the terminal `cancelled` status so it's never dequeued. There is no in-flight cancellation — a `processing` job cannot be cancelled, and the `409` response explains this explicitly rather than returning a generic conflict message.
+
+Both endpoints are Postgres-queue-only, the same limitation as the read endpoints above: a broker-backed queue driver (Redis, RabbitMQ, etc.) has no queryable/updatable job table, so `serve` fails startup with a clear error if the configured queue driver doesn't support this rather than silently omitting the routes.
 
 ## Integrator Platform (Phase 8)
 

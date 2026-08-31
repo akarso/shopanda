@@ -14,6 +14,12 @@ const (
 	StatusProcessing Status = "processing"
 	StatusDone       Status = "done"
 	StatusFailed     Status = "failed"
+	// StatusCancelled is a terminal state reached only via an admin-triggered
+	// Cancel (see jobs.Admin) on a still-pending job — never set by the
+	// worker itself. A processing job cannot be cancelled (no in-flight
+	// cancellation), so this status never interrupts a handler already
+	// running.
+	StatusCancelled Status = "cancelled"
 )
 
 // DefaultMaxRetries is the default number of retry attempts for a job.

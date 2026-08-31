@@ -3,11 +3,13 @@ package postgres_test
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/akarso/shopanda/internal/domain/jobs"
 	"github.com/akarso/shopanda/internal/infrastructure/postgres"
+	"github.com/akarso/shopanda/internal/platform/apperror"
 	"github.com/akarso/shopanda/internal/platform/id"
 	"github.com/akarso/shopanda/internal/platform/migrate"
 )
@@ -510,5 +512,235 @@ func TestJobQueue_CountsByStatus(t *testing.T) {
 	}
 	if _, ok := counts[jobs.StatusFailed]; ok {
 		t.Errorf("counts[failed] present with no failed jobs, want absent")
+	}
+}
+
+func TestJobQueue_Retry_ResetsFailedJobToPending(t *testing.T) {
+	db := testDB(t)
+	if _, err := migrate.Run(db, "../../../migrations"); err != nil {
+		t.Fatalf("run migrations: %v", err)
+	}
+	t.Cleanup(func() { db.Exec("DELETE FROM jobs") })
+
+	q, err := postgres.NewJobQueue(db)
+	if err != nil {
+		t.Fatalf("NewJobQueue: %v", err)
+	}
+	ctx := context.Background()
+
+	job, _ := jobs.NewJob(id.New(), "test", nil)
+	job.MaxRetries = 1
+	_ = q.Enqueue(ctx, job)
+	got, _ := q.Dequeue(ctx) // attempts becomes 1
+	if err := q.Fail(ctx, got.ID, errors.New("boom")); err != nil {
+		t.Fatalf("Fail: %v", err)
+	}
+
+	var status string
+	if err := db.QueryRow("SELECT status FROM jobs WHERE id = $1", got.ID).Scan(&status); err != nil {
+		t.Fatalf("query status: %v", err)
+	}
+	if status != "failed" {
+		t.Fatalf("status = %q, want failed (test setup precondition)", status)
+	}
+
+	if err := q.Retry(ctx, got.ID); err != nil {
+		t.Fatalf("Retry: %v", err)
+	}
+
+	var attempts int
+	if err := db.QueryRow("SELECT status, attempts FROM jobs WHERE id = $1", got.ID).Scan(&status, &attempts); err != nil {
+		t.Fatalf("query after retry: %v", err)
+	}
+	if status != "pending" {
+		t.Errorf("status = %q, want pending", status)
+	}
+	if attempts != 0 {
+		t.Errorf("attempts = %d, want 0", attempts)
+	}
+
+	// Retried job is dequeue-able again.
+	next, err := q.Dequeue(ctx)
+	if err != nil {
+		t.Fatalf("Dequeue after retry: %v", err)
+	}
+	if next == nil || next.ID != got.ID {
+		t.Fatalf("Dequeue after retry = %+v, want the retried job", next)
+	}
+}
+
+func TestJobQueue_Retry_ConflictOnNonFailedJob(t *testing.T) {
+	db := testDB(t)
+	if _, err := migrate.Run(db, "../../../migrations"); err != nil {
+		t.Fatalf("run migrations: %v", err)
+	}
+	t.Cleanup(func() { db.Exec("DELETE FROM jobs") })
+
+	q, err := postgres.NewJobQueue(db)
+	if err != nil {
+		t.Fatalf("NewJobQueue: %v", err)
+	}
+	ctx := context.Background()
+
+	job, _ := jobs.NewJob(id.New(), "test", nil)
+	_ = q.Enqueue(ctx, job) // stays pending
+
+	err = q.Retry(ctx, job.ID)
+	if err == nil {
+		t.Fatal("expected error retrying a pending job")
+	}
+	var appErr *apperror.Error
+	if !errors.As(err, &appErr) || appErr.Code != apperror.CodeConflict {
+		t.Fatalf("err = %v, want *apperror.Error{Code: conflict}", err)
+	}
+}
+
+func TestJobQueue_Retry_NotFound(t *testing.T) {
+	db := testDB(t)
+	if _, err := migrate.Run(db, "../../../migrations"); err != nil {
+		t.Fatalf("run migrations: %v", err)
+	}
+	t.Cleanup(func() { db.Exec("DELETE FROM jobs") })
+
+	q, err := postgres.NewJobQueue(db)
+	if err != nil {
+		t.Fatalf("NewJobQueue: %v", err)
+	}
+
+	err = q.Retry(context.Background(), id.New())
+	if err == nil {
+		t.Fatal("expected error for non-existent job")
+	}
+	var appErr *apperror.Error
+	if !errors.As(err, &appErr) || appErr.Code != apperror.CodeNotFound {
+		t.Fatalf("err = %v, want *apperror.Error{Code: not_found}", err)
+	}
+}
+
+func TestJobQueue_Cancel_MarksPendingJobCancelled(t *testing.T) {
+	db := testDB(t)
+	if _, err := migrate.Run(db, "../../../migrations"); err != nil {
+		t.Fatalf("run migrations: %v", err)
+	}
+	t.Cleanup(func() { db.Exec("DELETE FROM jobs") })
+
+	q, err := postgres.NewJobQueue(db)
+	if err != nil {
+		t.Fatalf("NewJobQueue: %v", err)
+	}
+	ctx := context.Background()
+
+	job, _ := jobs.NewJob(id.New(), "test", nil)
+	_ = q.Enqueue(ctx, job)
+
+	if err := q.Cancel(ctx, job.ID); err != nil {
+		t.Fatalf("Cancel: %v", err)
+	}
+
+	var status string
+	if err := db.QueryRow("SELECT status FROM jobs WHERE id = $1", job.ID).Scan(&status); err != nil {
+		t.Fatalf("query status: %v", err)
+	}
+	if status != "cancelled" {
+		t.Errorf("status = %q, want cancelled", status)
+	}
+
+	// A cancelled job is never dequeued.
+	next, err := q.Dequeue(ctx)
+	if err != nil {
+		t.Fatalf("Dequeue after cancel: %v", err)
+	}
+	if next != nil {
+		t.Fatalf("Dequeue after cancel = %+v, want nil", next)
+	}
+}
+
+// TestJobQueue_Cancel_ConflictOnProcessingJob pins the "no in-flight
+// cancellation" contract: a processing job cannot be cancelled, and the
+// conflict message must name that specific reason (not a generic
+// wrong-status message) since it's the most likely point of operator
+// confusion.
+func TestJobQueue_Cancel_ConflictOnProcessingJob(t *testing.T) {
+	db := testDB(t)
+	if _, err := migrate.Run(db, "../../../migrations"); err != nil {
+		t.Fatalf("run migrations: %v", err)
+	}
+	t.Cleanup(func() { db.Exec("DELETE FROM jobs") })
+
+	q, err := postgres.NewJobQueue(db)
+	if err != nil {
+		t.Fatalf("NewJobQueue: %v", err)
+	}
+	ctx := context.Background()
+
+	job, _ := jobs.NewJob(id.New(), "test", nil)
+	_ = q.Enqueue(ctx, job)
+	if _, err := q.Dequeue(ctx); err != nil { // now processing
+		t.Fatalf("Dequeue: %v", err)
+	}
+
+	err = q.Cancel(ctx, job.ID)
+	if err == nil {
+		t.Fatal("expected error cancelling a processing job")
+	}
+	var appErr *apperror.Error
+	if !errors.As(err, &appErr) || appErr.Code != apperror.CodeConflict {
+		t.Fatalf("err = %v, want *apperror.Error{Code: conflict}", err)
+	}
+	if !strings.Contains(appErr.Message, "processing") {
+		t.Errorf("message = %q, want it to explain the job is processing", appErr.Message)
+	}
+}
+
+func TestJobQueue_Cancel_ConflictOnFailedJob(t *testing.T) {
+	db := testDB(t)
+	if _, err := migrate.Run(db, "../../../migrations"); err != nil {
+		t.Fatalf("run migrations: %v", err)
+	}
+	t.Cleanup(func() { db.Exec("DELETE FROM jobs") })
+
+	q, err := postgres.NewJobQueue(db)
+	if err != nil {
+		t.Fatalf("NewJobQueue: %v", err)
+	}
+	ctx := context.Background()
+
+	job, _ := jobs.NewJob(id.New(), "test", nil)
+	job.MaxRetries = 1
+	_ = q.Enqueue(ctx, job)
+	got, _ := q.Dequeue(ctx)
+	if err := q.Fail(ctx, got.ID, errors.New("boom")); err != nil {
+		t.Fatalf("Fail: %v", err)
+	}
+
+	err = q.Cancel(ctx, job.ID)
+	if err == nil {
+		t.Fatal("expected error cancelling a failed job")
+	}
+	var appErr *apperror.Error
+	if !errors.As(err, &appErr) || appErr.Code != apperror.CodeConflict {
+		t.Fatalf("err = %v, want *apperror.Error{Code: conflict}", err)
+	}
+}
+
+func TestJobQueue_Cancel_NotFound(t *testing.T) {
+	db := testDB(t)
+	if _, err := migrate.Run(db, "../../../migrations"); err != nil {
+		t.Fatalf("run migrations: %v", err)
+	}
+	t.Cleanup(func() { db.Exec("DELETE FROM jobs") })
+
+	q, err := postgres.NewJobQueue(db)
+	if err != nil {
+		t.Fatalf("NewJobQueue: %v", err)
+	}
+
+	err = q.Cancel(context.Background(), id.New())
+	if err == nil {
+		t.Fatal("expected error for non-existent job")
+	}
+	var appErr *apperror.Error
+	if !errors.As(err, &appErr) || appErr.Code != apperror.CodeNotFound {
+		t.Fatalf("err = %v, want *apperror.Error{Code: not_found}", err)
 	}
 }

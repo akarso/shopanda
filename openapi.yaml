@@ -1680,6 +1680,155 @@ paths:
         "404":
           $ref: "#/components/responses/NotFound"
 
+  # ── Admin: Jobs ────────────────────────────────────────
+  /api/v1/admin/jobs:
+    get:
+      operationId: adminListJobs
+      tags: ["Admin: Jobs"]
+      summary: List background jobs (admin)
+      description: Filter by type/status; paginated most-recently-created first.
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/Offset"
+        - $ref: "#/components/parameters/Limit"
+        - name: type
+          in: query
+          required: false
+          schema:
+            type: string
+        - name: status
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: [pending, processing, done, failed, cancelled]
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Envelope"
+              example:
+                data:
+                  jobs:
+                    - id: "job-1"
+                      type: webhook.deliver
+                      status: failed
+                      attempts: 3
+                      max_retries: 5
+                      run_at: "2026-01-01T00:00:00Z"
+                      created_at: "2026-01-01T00:00:00Z"
+                      updated_at: "2026-01-01T00:00:00Z"
+                error: null
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  /api/v1/admin/jobs/{id}:
+    get:
+      operationId: adminGetJob
+      tags: ["Admin: Jobs"]
+      summary: Get a job's full detail (admin)
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/GenericId"
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Envelope"
+              example:
+                data:
+                  id: "job-1"
+                  type: webhook.deliver
+                  status: failed
+                  attempts: 3
+                  max_retries: 5
+                  run_at: "2026-01-01T00:00:00Z"
+                  created_at: "2026-01-01T00:00:00Z"
+                  updated_at: "2026-01-01T00:00:00Z"
+                  payload: {}
+                  last_error: "connection refused"
+                error: null
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /api/v1/admin/jobs/{id}/retry:
+    post:
+      operationId: adminRetryJob
+      tags: ["Admin: Jobs"]
+      summary: Retry a failed job
+      description: >-
+        Resets a failed job back to pending (attempts reset to 0, run_at set
+        to now) so the worker picks it up again. Only valid on a job
+        currently in the `failed` status.
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/GenericId"
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Envelope"
+              example:
+                data:
+                  status: pending
+                error: null
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+
+  /api/v1/admin/jobs/{id}/cancel:
+    post:
+      operationId: adminCancelJob
+      tags: ["Admin: Jobs"]
+      summary: Cancel a pending job
+      description: >-
+        Marks a pending job cancelled so it will never be dequeued. There is
+        no in-flight cancellation: a job currently `processing` cannot be
+        cancelled.
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/GenericId"
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Envelope"
+              example:
+                data:
+                  status: cancelled
+                error: null
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+
   # ── SEO ────────────────────────────────────────────────
   /sitemap.xml:
     get:
@@ -2034,6 +2183,17 @@ components:
             error:
               code: validation
               message: invalid input
+    Conflict:
+      description: Request conflicts with the resource's current state
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Envelope"
+          example:
+            data: null
+            error:
+              code: conflict
+              message: the resource's current status does not allow this action
     RateLimited:
       description: Rate limit exceeded
       headers:

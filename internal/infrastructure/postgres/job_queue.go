@@ -11,16 +11,19 @@ import (
 	"time"
 
 	"github.com/akarso/shopanda/internal/domain/jobs"
+	"github.com/akarso/shopanda/internal/platform/apperror"
 )
 
-// Compile-time check that JobQueue implements jobs.Queue and jobs.Reader —
-// the same Postgres-backed type satisfies both the write-oriented queue
-// port and the read-only introspection port, since it's one table either
-// way. A future broker-backed Queue implementation is not expected to
-// implement jobs.Reader; see that interface's doc comment.
+// Compile-time check that JobQueue implements jobs.Queue, jobs.Reader, and
+// jobs.Admin — the same Postgres-backed type satisfies the write-oriented
+// queue port, the read-only introspection port, and the admin
+// retry/cancel port, since it's one table either way. A future
+// broker-backed Queue implementation is not expected to implement
+// jobs.Reader or jobs.Admin; see those interfaces' doc comments.
 var (
 	_ jobs.Queue  = (*JobQueue)(nil)
 	_ jobs.Reader = (*JobQueue)(nil)
+	_ jobs.Admin  = (*JobQueue)(nil)
 )
 
 // Backoff parameters for retry delay calculation.
@@ -290,4 +293,66 @@ func (q *JobQueue) CountsByStatus(ctx context.Context) (map[jobs.Status]int, err
 		return nil, fmt.Errorf("job_queue: counts by status rows: %w", err)
 	}
 	return out, nil
+}
+
+// Retry resets a failed job back to pending so the worker picks it up
+// again. See jobs.Admin for the full contract.
+func (q *JobQueue) Retry(ctx context.Context, id string) error {
+	return q.transitionStatus(ctx, id, jobs.StatusFailed,
+		`UPDATE jobs SET status = 'pending', attempts = 0, run_at = NOW(), updated_at = NOW()
+			WHERE id = $1 AND status = 'failed'`,
+		func(current jobs.Status) string {
+			return fmt.Sprintf("job is %s, not failed — only a failed job can be retried", current)
+		})
+}
+
+// Cancel marks a pending job cancelled — it will never be dequeued. See
+// jobs.Admin for the full contract, including why a processing job cannot
+// be cancelled.
+func (q *JobQueue) Cancel(ctx context.Context, id string) error {
+	return q.transitionStatus(ctx, id, jobs.StatusPending,
+		`UPDATE jobs SET status = 'cancelled', updated_at = NOW()
+			WHERE id = $1 AND status = 'pending'`,
+		func(current jobs.Status) string {
+			if current == jobs.StatusProcessing {
+				return "job is currently processing and cannot be cancelled — there is no in-flight cancellation; wait for it to complete or fail, then retry if needed"
+			}
+			return fmt.Sprintf("job is %s, not pending — only a pending job can be cancelled", current)
+		})
+}
+
+// transitionStatus is the shared shape behind Retry and Cancel: look up
+// the job's current status first (so a wrong-status request gets a 409
+// naming the actual status, not a blanket "not found or wrong state"),
+// then apply the same conditional UPDATE the worker's own Complete/Fail
+// already use to avoid a read-then-write race — if the row no longer
+// matches the expected fromStatus by the time the UPDATE runs (status
+// changed concurrently between the lookup and here), that race loses
+// cleanly as a conflict rather than silently applying to the wrong state.
+func (q *JobQueue) transitionStatus(ctx context.Context, id string, fromStatus jobs.Status, updateQuery string, conflictMessage func(current jobs.Status) string) error {
+	var current string
+	err := q.db.QueryRowContext(ctx, `SELECT status FROM jobs WHERE id = $1`, id).Scan(&current)
+	if errors.Is(err, sql.ErrNoRows) {
+		return apperror.NotFound("job not found")
+	}
+	if err != nil {
+		return fmt.Errorf("job_queue: transition lookup: %w", err)
+	}
+	if current != string(fromStatus) {
+		return apperror.Conflict(conflictMessage(jobs.Status(current)))
+	}
+
+	result, err := q.db.ExecContext(ctx, updateQuery, id)
+	if err != nil {
+		return fmt.Errorf("job_queue: transition update: %w", err)
+	}
+	rows, err := result.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("job_queue: transition rows: %w", err)
+	}
+	if rows == 0 {
+		// Status changed between the lookup above and this UPDATE.
+		return apperror.Conflict("job status changed concurrently; please retry")
+	}
+	return nil
 }

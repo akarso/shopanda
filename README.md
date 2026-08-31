@@ -63,18 +63,25 @@ Shopanda aims to provide a broad commerce foundation out of the box:
 | Promotions | Catalog rules, cart rules, coupons |
 | Cart & Orders | Mutable cart flow with immutable order creation and inventory reservations |
 | Inventory | Stock tracking per SKU and reservation handling |
+| Returns (RMA) | Approve/reject/receive/refund workflow, tied to order and invoice state |
+| Reviews | Customer product reviews with moderation |
 | Customers & Auth | Email/password and token-based auth with plugin extension points |
-| Payments | Provider-agnostic payments with a manual default flow |
+| B2B / Wholesale | Customer groups, group pricing, quotes (commercial module) |
+| Payments | Provider-agnostic payments with a manual default flow, Stripe core plugin |
 | Shipping | Flat rate default with pluggable shipping providers |
 | Invoicing | Immutable invoices, credit notes, PDF export |
-| Search | PostgreSQL full-text search by default, with optional search engine plugins |
+| Search | PostgreSQL full-text search by default, with optional search engine plugins; advanced filters and attribute-driven facets |
+| Navigation | Layered/mega-menu category navigation for storefront discovery |
 | CMS | Simple content pages with routing |
 | Media | Local storage by default, CDN-ready design |
+| Custom Attributes | Extension field registry for attaching typed custom data to core entities without forking core |
+| Background Jobs | PostgreSQL-backed job queue and cron scheduler, with an admin API for introspection, retry, and cancel |
+| Integrations | Inbound REST + GraphQL for integrators, outbound webhooks, CSV import/export hooks, plugin SDK |
 | Admin | Schema-driven forms and grids |
 | SEO | Structured data, sitemap generation, canonical URLs |
 | Multi-Store | Store contexts with scoped pricing and tax rules |
 | Localization | Translations for system and content, multi-language support |
-| Legal | GDPR consent, data export/delete, Omnibus price indication (PR-530), WEEE/EPR/GPSR product fields (Phase 5) |
+| Legal | GDPR consent, data export/delete, Omnibus price indication, WEEE/EPR/GPSR product fields |
 | Mailer | Async email delivery with pluggable providers |
 
 ## Architecture
@@ -138,7 +145,7 @@ See [Developer Guide](docs/guides/DEVELOPER.md) for how to enable core plugins a
 
 **Not yet supported:** `.so` dynamic loading ([research](docs/phase-5-maturity/specs/DYNAMIC_PLUGIN_LOADING.md)), plugin marketplace, hot reload.
 
-Full Phase 4 plan: [Phase 4 Roadmap](docs/phase-4-refactoring/ROADMAP.md) (shipped). Phase 5 ([Mature Commerce](docs/phase-5-maturity/ROADMAP.md)) is shipped. Next: [Phase 6 — Merchant-Complete Admin](docs/phase-6-merchant-complete/ROADMAP.md).
+Phases 1–10 (core engine through platform hardening) are shipped. Active development: [Phase 11 — Jobs, Search & Cache](docs/phase-11-jobs-search-cache/ROADMAP.md). See [Development history](#development-history) below for the full phase-by-phase breakdown.
 
 ## Default stack
 
@@ -160,9 +167,25 @@ Shopanda uses a minimal default stack (Tier 1 only — no optional services requ
 
 Enable optional backends via YAML or environment variables — see [Deployment Guide](docs/guides/DEPLOYMENT.md) and `configs/config.example.yaml`.
 
-## Early-stage note
+## Project status
 
-Phases 1–5 are **complete**: merchant admin, returns, EU compliance, webhooks, platform plugins (Kafka/SQS, GraphQL, plugin CLI), and dynamic-loading research (compile-time plugins remain the model). **Phase 6** ([roadmap](docs/phase-6-merchant-complete/ROADMAP.md)) closes admin UI debt.
+Shopanda has shipped **10 completed development phases** (PR-1 through PR-1026) and is actively working through an 11th. The commerce core, merchant admin, EU compliance, a three-tier plugin/extension platform, an integrator platform (REST + GraphQL + webhooks + import/export hooks), and a merchant-discovery pass (navigation, advanced search, attribute properties) are all built and in use. Phase 10 was a dedicated hardening pass — CI, security defaults, ops safety net, and an architecture cleanup — run against an external tech audit rather than added by the team building the features.
+
+| Phase | Focus | Status |
+| --- | --- | --- |
+| 1 | Core commerce engine | Shipped |
+| 2 | Merchant-ready surfaces | Shipped |
+| 3 | Hardening & guest checkout | Shipped |
+| 4 | Product-complete | Shipped |
+| 5 | Mature commerce (returns, EU compliance, webhooks, platform plugins) | Shipped |
+| 6 | Merchant-complete admin | Shipped |
+| 7 | Customization platform (extension fields, hooks/slots, assets, GraphQL) | Shipped |
+| 8 | Integrator platform (ports, import pipelines, inbound/outbound integration, plugin SDK) | Shipped |
+| 9 | Integrator backlog cleanup + merchant discovery (navigation, advanced search) | Shipped |
+| 10 | Platform excellence (CI, security hardening, ops, architecture refactor) | Shipped — one integration-test item open, gated on CI running against real Postgres |
+| 11 | Jobs, search & cache admin reachability + full-page cache | **In progress** |
+
+Full breakdown with PR-level detail: [Development history](#development-history).
 
 The long-term goal remains a commerce engine that is:
 
@@ -231,25 +254,36 @@ Current guides live in [`docs/guides/`](docs/guides/):
 ### Planning & Reference
 
 - [Commercial Licensing](docs/COMMERCIAL.md) — open core (GPL) vs paid B2B module
-- [Phase 6 Roadmap](docs/phase-6-merchant-complete/ROADMAP.md) — **active** merchant-complete admin (navigation, blocks, webhooks, store credit, bulk prices)
-- [Phase 5 Roadmap](docs/phase-5-maturity/ROADMAP.md) — mature commerce milestones (**complete**)
-- [Phase 5 — Dynamic plugin loading research](docs/phase-5-maturity/specs/DYNAMIC_PLUGIN_LOADING.md) — PR-544 verdict (`.so` deferred)
 - [EU Compliance Reference](docs/phase-5-maturity/specs/COMPLIANCE_EU.md) — Omnibus, WEEE, EPR, GPSR mapping
-- [Phase 4 Roadmap](docs/phase-4-refactoring/ROADMAP.md) — product-complete milestones (shipped)
 - [Runtime Modes](docs/phase-4-refactoring/specs/RUNTIME_MODES.md) — dev vs production process layout (`serve`, `worker`, `scheduler`, `app dev`)
-- [Phase 1 Roadmap](docs/phase-1-core/ROADMAP.md) — core platform milestones and archived planning context
-- [Phase 2 Roadmap](docs/phase-2-merchant-ready/ROADMAP.md) — merchant-ready milestones and implementation history
-- [Phase 3 Roadmap](docs/phase-3-testing/ROADMAP.md) — runtime refactor tracks (guest checkout, admin hardening, account UX); archived
 - [C4 Context Diagram](docs/diagrams/c4-context.md) — system context
 - [C4 Container Diagram](docs/diagrams/c4-container.md) — runtime containers
 - [C4 Component Diagram](docs/diagrams/c4-component.md) — major component boundaries
 - [C4 Code Diagram](docs/diagrams/c4-code.md) — code-level structure
 
-Historical phase specs and implementation notes remain under:
+### Development history
 
-- [`docs/phase-1-core/specs/`](docs/phase-1-core/specs/) for core design specs
-- [`docs/phase-2-merchant-ready/specs/`](docs/phase-2-merchant-ready/specs/) for merchant-ready specs
-- [`docs/phase-1-core/prs/`](docs/phase-1-core/prs/) and [`docs/phase-2-merchant-ready/prs/`](docs/phase-2-merchant-ready/prs/) for implementation notes
+Shopanda has been built in numbered phases, each with its own roadmap and per-PR implementation notes under `docs/phase-N-*/prs/`:
+
+| Phase | Roadmap | Status |
+| --- | --- | --- |
+| 1 — Core engine | [phase-1-core/ROADMAP.md](docs/phase-1-core/ROADMAP.md) | Shipped |
+| 2 — Merchant-ready | [phase-2-merchant-ready/ROADMAP.md](docs/phase-2-merchant-ready/ROADMAP.md) | Shipped |
+| 3 — Hardening & guest checkout | [phase-3-testing/ROADMAP.md](docs/phase-3-testing/ROADMAP.md) | Shipped |
+| 4 — Product-complete | [phase-4-refactoring/ROADMAP.md](docs/phase-4-refactoring/ROADMAP.md) | Shipped |
+| 5 — Mature commerce | [phase-5-maturity/ROADMAP.md](docs/phase-5-maturity/ROADMAP.md) | Shipped |
+| 6 — Merchant-complete admin | [phase-6-merchant-complete/ROADMAP.md](docs/phase-6-merchant-complete/ROADMAP.md) | Shipped |
+| 7 — Customization platform | [phase-7-customization-platform/ROADMAP.md](docs/phase-7-customization-platform/ROADMAP.md) | Shipped |
+| 8 — Integrator platform | [phase-8-integrator-platform/ROADMAP.md](docs/phase-8-integrator-platform/ROADMAP.md) | Shipped |
+| 9 — Integrator backlog + merchant discovery | [phase-9-merchant-discovery/README.md](docs/phase-9-merchant-discovery/README.md) | Shipped |
+| 10 — Platform excellence | [phase-10-platform-excellence/README.md](docs/phase-10-platform-excellence/README.md) | Shipped (one open integration-test item) |
+| 11 — Jobs, search & cache | [phase-11-jobs-search-cache/README.md](docs/phase-11-jobs-search-cache/README.md) | **In progress** |
+
+Additional historical specs:
+
+- [Phase 5 — Dynamic plugin loading research](docs/phase-5-maturity/specs/DYNAMIC_PLUGIN_LOADING.md) — PR-544 verdict (`.so` deferred)
+- [`docs/phase-1-core/specs/`](docs/phase-1-core/specs/) — core design specs
+- [`docs/phase-2-merchant-ready/specs/`](docs/phase-2-merchant-ready/specs/) — merchant-ready specs
 
 ## License
 

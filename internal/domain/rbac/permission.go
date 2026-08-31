@@ -42,4 +42,11 @@ const (
 	ExtensionsRead        Permission = "extensions.read"
 	ExtensionsWrite       Permission = "extensions.write"
 	ExtensionsPrivateRead Permission = "extensions.private.read"
+
+	// JobsRead/JobsWrite gate background-job introspection and admin
+	// corrections (list/detail vs. retry/cancel) — operational visibility
+	// into the job queue, not a merchant-facing resource, so these are
+	// admin-only (see rolePermissions) the same way AuditRead is.
+	JobsRead  Permission = "jobs.read"
+	JobsWrite Permission = "jobs.write"
 )
