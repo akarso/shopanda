@@ -184,6 +184,8 @@
         "/admin/operations/inventory": { title: "Inventory", render: renderInventoryGrid, auth: true },
         "/admin/operations/shipping": { title: "Shipping", render: renderShippingSettingsPage, auth: true },
         "/admin/operations/payments": { title: "Payments", render: renderPaymentSettingsPage, auth: true },
+        "/admin/operations/jobs": { title: "Jobs", render: renderJobsGrid, auth: true },
+        "/admin/operations/schedules": { title: "Schedules", render: renderSchedulesGrid, auth: true },
         // Settings
         "/admin/settings": { title: "Settings", render: renderSettingsPage, auth: true },
         "/admin/settings/localization": { title: "Localization", render: renderLocalizationSettingsPage, auth: true },
@@ -383,6 +385,15 @@
                 title: "Customer Detail",
                 auth: true,
                 render: function (container) { renderCustomerDetail(container, customerID); }
+            };
+        }
+        var jobMatch = path.match(/^\/admin\/operations\/jobs\/([^/]+)$/);
+        if (jobMatch) {
+            var jobID = decodeURIComponent(jobMatch[1]);
+            return {
+                title: "Job Detail",
+                auth: true,
+                render: function (container) { renderJobDetail(container, jobID); }
             };
         }
         return routes["/admin/dashboard"];
@@ -3491,7 +3502,8 @@
                     'settings.read', 'settings.write',
                     'audit.read',
                     'shipping.read', 'shipping.write',
-                    'extensions.read', 'extensions.write'
+                    'extensions.read', 'extensions.write',
+                    'jobs.read', 'jobs.write'
                 ]
             },
             {
@@ -3870,6 +3882,23 @@
         return probeCustomerGroupsApi().then(function (result) {
             link.parentElement.style.display = result.available ? "" : "none";
         });
+    }
+
+    // refreshJobsNavVisibility hides the Jobs/Schedules nav links for a
+    // role without jobs.read (every role except admin — see
+    // role_permissions.go) rather than always showing a link that only
+    // ever renders "Your account does not have jobs access." Unlike
+    // refreshCustomerGroupsNavVisibility this is a pure client-side role
+    // check (no license/feature probe needed), so it's synchronous.
+    function refreshJobsNavVisibility() {
+        var visible = userHasPermission("jobs.read");
+        var paths = ["/admin/operations/jobs", "/admin/operations/schedules"];
+        for (var i = 0; i < paths.length; i++) {
+            var link = document.querySelector('.admin-sidebar a[href="' + paths[i] + '"]');
+            if (link && link.parentElement) {
+                link.parentElement.style.display = visible ? "" : "none";
+            }
+        }
     }
 
     function renderCustomerGroupsUnavailable(container, message) {
@@ -9816,6 +9845,424 @@
         return d.innerHTML;
     }
 
+    // --- Jobs ---
+
+    var JOB_STATUS_OPTIONS = ["pending", "processing", "done", "failed", "cancelled"];
+    var JOBS_PAGE_SIZE = 50;
+
+    // withButtonBusy disables btn and swaps its label for the duration of
+    // startAction()'s promise, guarding against a fast double-click firing
+    // the same POST twice — the backend's status guard would reject a
+    // second retry/cancel/trigger as a conflict, which would otherwise
+    // show as a spurious error banner for what was actually a successful
+    // first click. Re-enables regardless of outcome: on success the
+    // caller typically reloads/replaces the surrounding DOM anyway, so
+    // restoring the (about to be discarded) button is harmless.
+    function withButtonBusy(btn, busyLabel, startAction) {
+        if (btn.disabled) {
+            return;
+        }
+        var originalLabel = btn.textContent;
+        btn.disabled = true;
+        btn.textContent = busyLabel;
+        var restore = function () {
+            btn.disabled = false;
+            btn.textContent = originalLabel;
+        };
+        startAction().then(restore, restore);
+    }
+
+    function renderJobsGrid(container) {
+        if (!userHasPermission("jobs.read")) {
+            container.innerHTML = '<h2>Jobs</h2><p role="alert">Your account does not have jobs access.</p>';
+            return;
+        }
+
+        var statusOptions = '<option value="">All</option>';
+        for (var s = 0; s < JOB_STATUS_OPTIONS.length; s++) {
+            statusOptions += '<option value="' + JOB_STATUS_OPTIONS[s] + '">' + JOB_STATUS_OPTIONS[s] + '</option>';
+        }
+
+        container.innerHTML =
+            '<h2>Jobs</h2>' +
+            '<form id="jobs-filter-form" style="margin-bottom:1rem">' +
+            '<label>Type <input type="text" name="type" placeholder="e.g. email.send"></label> ' +
+            '<label>Status <select name="status">' + statusOptions + '</select></label> ' +
+            '<button type="submit">Filter</button>' +
+            '</form>' +
+            '<div id="jobs-grid-msg"></div>' +
+            '<div id="jobs-grid"></div>' +
+            '<p id="jobs-grid-more"></p>';
+
+        var grid = document.getElementById("jobs-grid");
+        var msg = document.getElementById("jobs-grid-msg");
+        var moreBox = document.getElementById("jobs-grid-more");
+        var filterForm = document.getElementById("jobs-filter-form");
+        var canWrite = userHasPermission("jobs.write");
+        var currentType = "";
+        var currentStatus = "";
+        var allJobs = [];
+
+        function buildQuery(offset) {
+            var query = "/admin/jobs?offset=" + offset + "&limit=" + JOBS_PAGE_SIZE;
+            if (currentType) {
+                query += "&type=" + encodeURIComponent(currentType);
+            }
+            if (currentStatus) {
+                query += "&status=" + encodeURIComponent(currentStatus);
+            }
+            return query;
+        }
+
+        // loadRows resets to the first page (used on initial load and on
+        // filter change); loadMore appends the next page to what's already
+        // shown. Neither replaces jobs-grid-msg's content unless it's a
+        // fresh load-failure — action results write there separately (see
+        // renderJobsTable), so a filter/reload never clobbers a still-
+        // relevant action message and vice versa.
+        function loadRows() {
+            allJobs = [];
+            moreBox.innerHTML = "";
+            grid.innerHTML = "<p>Loading…</p>";
+            api(buildQuery(0)).then(function (body) {
+                if (body && body.error && body.error.code === "forbidden") {
+                    grid.innerHTML = '<p role="alert">Your account does not have jobs access.</p>';
+                    return;
+                }
+                var jobList = body && body.data && body.data.jobs;
+                if (!Array.isArray(jobList)) {
+                    grid.innerHTML = '<p role="alert">' + esc(extractErrorMessage(body, "Failed to load jobs.")) + "</p>";
+                    return;
+                }
+                allJobs = jobList;
+                renderJobsTable(grid, msg, allJobs, canWrite, loadRows);
+                renderJobsMoreControl(moreBox, jobList.length, loadMore);
+            }).catch(function (err) {
+                grid.innerHTML = '<p role="alert">' + esc(extractErrorMessage(err, "Failed to load jobs.")) + "</p>";
+            });
+        }
+
+        function loadMore() {
+            moreBox.innerHTML = "<p>Loading…</p>";
+            api(buildQuery(allJobs.length)).then(function (body) {
+                var jobList = body && body.data && body.data.jobs;
+                if (!Array.isArray(jobList)) {
+                    moreBox.innerHTML = '<p role="alert">' + esc(extractErrorMessage(body, "Failed to load more jobs.")) + "</p>";
+                    return;
+                }
+                allJobs = allJobs.concat(jobList);
+                renderJobsTable(grid, msg, allJobs, canWrite, loadRows);
+                renderJobsMoreControl(moreBox, jobList.length, loadMore);
+            }).catch(function (err) {
+                moreBox.innerHTML = '<p role="alert">' + esc(extractErrorMessage(err, "Failed to load more jobs.")) + "</p>";
+            });
+        }
+
+        filterForm.addEventListener("submit", function (e) {
+            e.preventDefault();
+            currentType = filterForm.elements.type.value.trim();
+            currentStatus = filterForm.elements.status.value;
+            loadRows();
+        });
+        loadRows();
+    }
+
+    // renderJobsMoreControl shows a "Load more" button only when the most
+    // recently fetched page came back full — a short page means there's
+    // nothing further to fetch. This is a minimal offset-based control
+    // (append-only, no page numbers); no pagination pattern exists
+    // elsewhere in this file to match instead.
+    function renderJobsMoreControl(moreBox, lastPageLength, loadMore) {
+        if (lastPageLength < JOBS_PAGE_SIZE) {
+            moreBox.innerHTML = "";
+            return;
+        }
+        moreBox.innerHTML = '<button type="button" id="jobs-load-more">Load more</button>';
+        document.getElementById("jobs-load-more").addEventListener("click", loadMore);
+    }
+
+    function renderJobsTable(grid, msg, jobList, canWrite, reload) {
+        var html = "<table><thead><tr>" +
+            "<th>ID</th><th>Type</th><th>Status</th><th>Attempts</th><th>Run at</th><th>Action</th>" +
+            "</tr></thead><tbody>";
+        if (jobList.length === 0) {
+            html += '<tr><td colspan="6">No jobs found.</td></tr>';
+        } else {
+            for (var i = 0; i < jobList.length; i++) {
+                var job = jobList[i];
+                var actions = '<a href="/admin/operations/jobs/' + esc(job.id) + '" data-link>View</a>';
+                if (canWrite && job.status === "failed") {
+                    actions += ' <button type="button" class="chip job-row-action" data-id="' + esc(job.id) + '" data-action="retry">Retry</button>';
+                } else if (canWrite && job.status === "pending") {
+                    actions += ' <button type="button" class="chip job-row-action" data-id="' + esc(job.id) + '" data-action="cancel">Cancel</button>';
+                }
+                html += "<tr>" +
+                    "<td>" + esc(job.id || "") + "</td>" +
+                    "<td>" + esc(job.type || "") + "</td>" +
+                    '<td><span class="badge badge-' + esc(job.status || "") + '">' + esc(job.status || "") + "</span></td>" +
+                    "<td>" + esc(String(job.attempts != null ? job.attempts : 0)) + "</td>" +
+                    "<td>" + esc(formatJobTimestamp(job.run_at)) + "</td>" +
+                    "<td>" + actions + "</td>" +
+                    "</tr>";
+            }
+        }
+        html += "</tbody></table>";
+        grid.innerHTML = html;
+
+        var buttons = grid.querySelectorAll(".job-row-action");
+        for (var k = 0; k < buttons.length; k++) {
+            buttons[k].addEventListener("click", function () {
+                var btn = this;
+                var id = btn.getAttribute("data-id");
+                var action = btn.getAttribute("data-action");
+                var busyLabel = action === "retry" ? "Retrying…" : "Cancelling…";
+                withButtonBusy(btn, busyLabel, function () {
+                    return api("/admin/jobs/" + encodeURIComponent(id) + "/" + action, { method: "POST" }).then(function (res) {
+                        if (res && res.error) {
+                            msg.innerHTML = '<p role="alert">' + esc(extractErrorMessage(res, action + " failed.")) + "</p>";
+                            return;
+                        }
+                        msg.innerHTML = "";
+                        reload();
+                    }).catch(function () {
+                        msg.innerHTML = '<p role="alert">' + esc(action) + " failed.</p>";
+                    });
+                });
+            });
+        }
+    }
+
+    function formatJobTimestamp(value) {
+        if (!value) {
+            return "";
+        }
+        return String(value).replace("T", " ").replace("Z", " UTC").substring(0, 19 + 4);
+    }
+
+    function renderJobDetail(container, jobID) {
+        container.innerHTML =
+            "<h2>Job Detail</h2>" +
+            '<p><a href="/admin/operations/jobs" data-link>Back to jobs</a></p>' +
+            '<div id="job-detail-msg"></div>' +
+            '<div id="job-detail"></div>';
+        var panel = document.getElementById("job-detail");
+        var msg = document.getElementById("job-detail-msg");
+        var canWrite = userHasPermission("jobs.write");
+
+        function load() {
+            api("/admin/jobs/" + encodeURIComponent(jobID)).then(function (body) {
+                if (body && body.error) {
+                    panel.innerHTML = '<p role="alert">' + esc(extractErrorMessage(body, "Job not found.")) + "</p>";
+                    return;
+                }
+                var job = body && body.data;
+                if (!job) {
+                    panel.innerHTML = '<p role="alert">Job not found.</p>';
+                    return;
+                }
+                renderJobDetailPanel(panel, job, canWrite, load, msg);
+            }).catch(function () {
+                panel.innerHTML = '<p role="alert">Failed to load job.</p>';
+            });
+        }
+        load();
+    }
+
+    function renderJobDetailPanel(panel, job, canWrite, reload, msg) {
+        var html = "<dl>" +
+            "<dt>ID</dt><dd>" + esc(job.id || "") + "</dd>" +
+            "<dt>Type</dt><dd>" + esc(job.type || "") + "</dd>" +
+            '<dt>Status</dt><dd><span class="badge badge-' + esc(job.status || "") + '">' + esc(job.status || "") + "</span></dd>" +
+            "<dt>Attempts</dt><dd>" + esc(String(job.attempts != null ? job.attempts : 0)) +
+            " / " + esc(String(job.max_retries != null ? job.max_retries : 0)) + "</dd>" +
+            "<dt>Run at</dt><dd>" + esc(formatJobTimestamp(job.run_at)) + "</dd>" +
+            "<dt>Created</dt><dd>" + esc(formatJobTimestamp(job.created_at)) + "</dd>" +
+            "<dt>Updated</dt><dd>" + esc(formatJobTimestamp(job.updated_at)) + "</dd>" +
+            "</dl>";
+        if (job.last_error) {
+            html += "<h3>Last error</h3><pre class=\"code-block\">" + esc(job.last_error) + "</pre>";
+        }
+        html += "<h3>Payload</h3><pre class=\"code-block\">" + esc(JSON.stringify(job.payload || {}, null, 2)) + "</pre>";
+
+        if (canWrite && job.status === "failed") {
+            html += '<p><button type="button" id="job-detail-retry">Retry</button></p>';
+        } else if (canWrite && job.status === "pending") {
+            html += '<p><button type="button" id="job-detail-cancel">Cancel</button></p>';
+        }
+        panel.innerHTML = html;
+
+        var retryBtn = document.getElementById("job-detail-retry");
+        if (retryBtn) {
+            retryBtn.addEventListener("click", function () {
+                withButtonBusy(retryBtn, "Retrying…", function () {
+                    return api("/admin/jobs/" + encodeURIComponent(job.id) + "/retry", { method: "POST" }).then(function (res) {
+                        if (res && res.error) {
+                            msg.innerHTML = '<p role="alert">' + esc(extractErrorMessage(res, "Retry failed.")) + "</p>";
+                            return;
+                        }
+                        msg.innerHTML = "<p>Job queued for retry.</p>";
+                        reload();
+                    }).catch(function () {
+                        msg.innerHTML = '<p role="alert">Retry failed.</p>';
+                    });
+                });
+            });
+        }
+        var cancelBtn = document.getElementById("job-detail-cancel");
+        if (cancelBtn) {
+            cancelBtn.addEventListener("click", function () {
+                withButtonBusy(cancelBtn, "Cancelling…", function () {
+                    return api("/admin/jobs/" + encodeURIComponent(job.id) + "/cancel", { method: "POST" }).then(function (res) {
+                        if (res && res.error) {
+                            msg.innerHTML = '<p role="alert">' + esc(extractErrorMessage(res, "Cancel failed.")) + "</p>";
+                            return;
+                        }
+                        msg.innerHTML = "<p>Job cancelled.</p>";
+                        reload();
+                    }).catch(function () {
+                        msg.innerHTML = '<p role="alert">Cancel failed.</p>';
+                    });
+                });
+            });
+        }
+    }
+
+    // --- Schedules ---
+
+    // describeCronSpec best-effort translates the handful of cron shapes
+    // actually used by this codebase's registered tasks into plain
+    // English; anything else falls back to the raw spec string rather
+    // than guessing.
+    function describeCronSpec(spec) {
+        if (!spec) {
+            return "";
+        }
+        var everyMinutesMatch = spec.match(/^\*\/(\d+) \* \* \* \*$/);
+        if (everyMinutesMatch) {
+            return "every " + everyMinutesMatch[1] + " minutes";
+        }
+        var dailyAtMatch = spec.match(/^(\d+) (\d+) \* \* \*$/);
+        if (dailyAtMatch) {
+            var hh = ("0" + dailyAtMatch[2]).slice(-2);
+            var mm = ("0" + dailyAtMatch[1]).slice(-2);
+            return "daily at " + hh + ":" + mm;
+        }
+        var hourlyAtMatch = spec.match(/^(\d+) \* \* \* \*$/);
+        if (hourlyAtMatch) {
+            return "hourly at :" + ("0" + hourlyAtMatch[1]).slice(-2);
+        }
+        if (spec === "* * * * *") {
+            return "every minute";
+        }
+        return spec;
+    }
+
+    function renderSchedulesGrid(container) {
+        if (!userHasPermission("jobs.read")) {
+            container.innerHTML = '<h2>Schedules</h2><p role="alert">Your account does not have jobs access.</p>';
+            return;
+        }
+
+        container.innerHTML = "<h2>Schedules</h2>" +
+            '<div id="schedules-msg"></div>' +
+            '<div id="schedules-grid"></div>';
+        var grid = document.getElementById("schedules-grid");
+        var msg = document.getElementById("schedules-msg");
+        var canWrite = userHasPermission("jobs.write");
+
+        function loadRows() {
+            grid.innerHTML = "<p>Loading…</p>";
+            api("/admin/schedules").then(function (body) {
+                if (body && body.error && body.error.code === "forbidden") {
+                    grid.innerHTML = '<p role="alert">Your account does not have jobs access.</p>';
+                    return;
+                }
+                var scheduleList = body && body.data && body.data.schedules;
+                if (!Array.isArray(scheduleList)) {
+                    grid.innerHTML = '<p role="alert">' + esc(extractErrorMessage(body, "Failed to load schedules.")) + "</p>";
+                    return;
+                }
+                renderSchedulesTable(grid, msg, scheduleList, canWrite, loadRows);
+            }).catch(function (err) {
+                grid.innerHTML = '<p role="alert">' + esc(extractErrorMessage(err, "Failed to load schedules.")) + "</p>";
+            });
+        }
+        loadRows();
+    }
+
+    function renderSchedulesTable(grid, msg, scheduleList, canWrite, reload) {
+        var html = "<table><thead><tr>" +
+            "<th>Name</th><th>Spec</th><th>Next run</th><th>Enabled</th><th>Actions</th>" +
+            "</tr></thead><tbody>";
+        if (scheduleList.length === 0) {
+            html += '<tr><td colspan="5">No scheduled tasks registered.</td></tr>';
+        } else {
+            for (var i = 0; i < scheduleList.length; i++) {
+                var sched = scheduleList[i];
+                var actions = "";
+                if (canWrite) {
+                    actions = '<button type="button" class="chip schedule-trigger" data-name="' + esc(sched.name) + '">Trigger now</button> ' +
+                        '<button type="button" class="chip schedule-toggle" data-name="' + esc(sched.name) + '" data-enabled="' + (sched.enabled ? "1" : "0") + '">' +
+                        (sched.enabled ? "Disable" : "Enable") + "</button>";
+                }
+                html += "<tr>" +
+                    "<td>" + esc(sched.name || "") + "</td>" +
+                    "<td title=\"" + esc(sched.spec || "") + "\">" + esc(describeCronSpec(sched.spec)) + "</td>" +
+                    "<td>" + esc(formatJobTimestamp(sched.next_run)) + "</td>" +
+                    '<td><span class="badge badge-' + (sched.enabled ? "done" : "cancelled") + '">' + (sched.enabled ? "enabled" : "disabled") + "</span></td>" +
+                    "<td>" + actions + "</td>" +
+                    "</tr>";
+            }
+        }
+        html += "</tbody></table>";
+        grid.innerHTML = html;
+
+        var triggerButtons = grid.querySelectorAll(".schedule-trigger");
+        for (var t = 0; t < triggerButtons.length; t++) {
+            triggerButtons[t].addEventListener("click", function () {
+                var btn = this;
+                var name = btn.getAttribute("data-name");
+                if (!window.confirm('Trigger schedule "' + name + '" now? This runs its task immediately.')) {
+                    return;
+                }
+                withButtonBusy(btn, "Triggering…", function () {
+                    return api("/admin/schedules/" + encodeURIComponent(name) + "/trigger", { method: "POST" }).then(function (res) {
+                        if (res && res.error) {
+                            msg.innerHTML = '<p role="alert">' + esc(extractErrorMessage(res, "Trigger failed.")) + "</p>";
+                            return;
+                        }
+                        msg.innerHTML = "<p>Triggered.</p>";
+                        reload();
+                    }).catch(function () {
+                        msg.innerHTML = '<p role="alert">Trigger failed.</p>';
+                    });
+                });
+            });
+        }
+        var toggleButtons = grid.querySelectorAll(".schedule-toggle");
+        for (var g = 0; g < toggleButtons.length; g++) {
+            toggleButtons[g].addEventListener("click", function () {
+                var btn = this;
+                var name = btn.getAttribute("data-name");
+                var currentlyEnabled = btn.getAttribute("data-enabled") === "1";
+                var action = currentlyEnabled ? "disable" : "enable";
+                var busyLabel = currentlyEnabled ? "Disabling…" : "Enabling…";
+                withButtonBusy(btn, busyLabel, function () {
+                    return api("/admin/schedules/" + encodeURIComponent(name) + "/" + action, { method: "POST" }).then(function (res) {
+                        if (res && res.error) {
+                            msg.innerHTML = '<p role="alert">' + esc(extractErrorMessage(res, action + " failed.")) + "</p>";
+                            return;
+                        }
+                        msg.innerHTML = "";
+                        reload();
+                    }).catch(function () {
+                        msg.innerHTML = '<p role="alert">' + esc(action) + " failed.</p>";
+                    });
+                });
+            });
+        }
+    }
+
     // --- Logout ---
 
     function handleLogout(e) {
@@ -9860,6 +10307,7 @@
             return loadContextSwitcherData();
         }).then(function () {
             refreshCustomerGroupsNavVisibility();
+            refreshJobsNavVisibility();
             handleRoute();
         });
     }
