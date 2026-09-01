@@ -60,6 +60,8 @@ Every major screen in the embedded admin SPA is listed below. Use the **Route** 
 | Operations | Inventory | `/admin/operations/inventory` | Stock levels |
 | Operations | Shipping | `/admin/operations/shipping` | Zones, rates, EU compliance toggles ([PR-524](../phase-5-maturity/prs/PR-524.md)) |
 | Operations | Payments | `/admin/operations/payments` | Currency display defaults |
+| Operations | Jobs | `/admin/operations/jobs` | Background job list, retry/cancel ([PR-1031](../phase-11-jobs-search-cache/prs/PR-1031.md)) |
+| Operations | Schedules | `/admin/operations/schedules` | Recurring task list, trigger/enable/disable ([PR-1031](../phase-11-jobs-search-cache/prs/PR-1031.md)) |
 | Settings | General | `/admin/settings` | Store info, email, media |
 | Settings | Localization | `/admin/settings/localization` | Currency + store languages |
 | Settings | Users & Roles | `/admin/settings/users` | Admin users ([PR-520](../phase-5-maturity/prs/PR-520.md)) |
@@ -304,6 +306,14 @@ Open **Operations → Shipping** at `/admin/operations/shipping` to configure:
 ### Payments display
 
 Open **Operations → Payments** at `/admin/operations/payments` for currency display format. Payment **provider credentials** (Stripe keys, etc.) remain deployment-level configuration—coordinate with your technical operator.
+
+### Jobs
+
+Open **Operations → Jobs** at `/admin/operations/jobs` to see every background job (order emails, cache cleanup, reservation expiry, and similar) — filter by type or status. A `failed` job has a **Retry** action; a `pending` job has a **Cancel** action. Open a job's **View** link for its full detail, including the last error message if it failed.
+
+### Schedules
+
+Open **Operations → Schedules** at `/admin/operations/schedules` to see every recurring background task — its schedule, next run time, and whether it's currently enabled. **Trigger now** runs a task immediately (asks for confirmation, since this is real work, not a preview) — useful for testing without waiting for the next tick. **Enable**/**Disable** toggles whether a task keeps firing on its own schedule; disabling doesn't affect a manual trigger.
 
 ## Configure the Store
 
