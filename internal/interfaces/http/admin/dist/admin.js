@@ -3601,6 +3601,7 @@
                             return;
                         }
                         loadContextSwitcherData().then(function () {
+                            refreshJobsNavVisibility();
                             navigateTo("/admin/dashboard");
                         });
                     }).catch(function () {
