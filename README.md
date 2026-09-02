@@ -237,6 +237,14 @@ For a complete operator-focused setup, including Docker, health checks, and envi
 | `export:categories <file.csv>` | Export category tree to CSV |
 | `import:prices <file.csv>` | Import prices from CSV |
 | `export:prices <file.csv>` | Export prices to CSV |
+| `jobs:list` | List background jobs (`--type=X`, `--status=Y`, `--limit=N`, `--offset=N`, `--json`) |
+| `jobs:show <id>` | Show a job's full detail (`--json`) |
+| `jobs:retry <id>` | Retry a failed job |
+| `jobs:cancel <id>` | Cancel a pending job |
+| `schedule:list` | List registered scheduled tasks (`--json`) |
+| `schedule:trigger <name>` | Trigger a scheduled task immediately |
+| `schedule:enable <name>` | Re-enable a scheduled task |
+| `schedule:disable <name>` | Disable a scheduled task |
 
 Run `./app help` for the live command list from the current binary.
 
