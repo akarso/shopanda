@@ -23,7 +23,7 @@ See [`ROADMAP.md`](ROADMAP.md) for the full track breakdown, sequencing, and PR 
 
 ## Status
 
-**In progress.** PR-1027 (reservation expiry gap), PR-1028 (job introspection), PR-1029 (jobs admin API), PR-1030 (scheduler admin), and PR-1031 (jobs + scheduler admin GUI) are done. The rest of Track A (PR-1032) and Tracks B–D (PR-1033–1047) are still planned.
+**In progress.** Track A (jobs & scheduling admin, PR-1027–1032) is done. Tracks B–D (PR-1033–1047) are still planned.
 
 ## Relationship
 

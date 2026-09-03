@@ -257,31 +257,56 @@ func (s *Scheduler) tick(t time.Time) {
 // the normal tick — the same function, so a manual trigger and a real tick
 // firing are indistinguishable to the task itself. Fires regardless of a
 // disabled override (see domain/scheduler.Catalog.Trigger's doc comment).
+// TriggerLocal runs synchronously and surfaces a panic as a returned
+// error — unlike tick's fire path (run, below), which fires
+// asynchronously with no caller waiting on the outcome, a manual trigger
+// (from the HTTP admin API or the CLI) is an explicit "do this now"
+// request whose caller reasonably expects to know whether it actually
+// happened, not just that it started.
+//
+// This can only ever detect a panic. entry.fn is a bare func() with no
+// error return — a limitation shared by every registered task, not
+// specific to Trigger — so a task that logs-and-swallows its own
+// internal failure (e.g. a failed Enqueue call inside the closure) still
+// reports success here. Fixing that fully would mean threading an error
+// return through Register/entry.fn and every existing Register* call
+// site and plugin registration; out of scope for this fix, which closes
+// the panic-shaped half of "task failures are reported successful."
 func (s *Scheduler) TriggerLocal(name string) error {
 	for _, e := range s.entries {
 		if e.name == name {
 			if !s.tryAdd() {
 				return apperror.Conflict("scheduler is shutting down; task not triggered")
 			}
-			go func(e entry) {
-				defer s.wg.Done()
-				s.run(e)
-			}(e)
-			return nil
+			defer s.wg.Done()
+			return s.runCapturingPanic(e)
 		}
 	}
 	return apperror.NotFound(fmt.Sprintf("no scheduled task named %q", name))
 }
 
+// run fires e.fn, recovering (and only logging) a panic — used by tick's
+// async fire path, where no caller is synchronously waiting on the
+// outcome, so there is nothing to return a panic-derived error to.
 func (s *Scheduler) run(e entry) {
+	_ = s.runCapturingPanic(e)
+}
+
+// runCapturingPanic runs e.fn, converting a panic into both a log entry
+// (matching run's existing behavior) and a returned error (which run, the
+// fire-and-forget async path, discards, and TriggerLocal, the
+// synchronous manual-trigger path, propagates to its own caller).
+func (s *Scheduler) runCapturingPanic(e entry) (err error) {
 	defer func() {
 		if r := recover(); r != nil {
 			s.log.Error("scheduler.task.panic", fmt.Errorf("%v", r), map[string]interface{}{
 				"task": e.name,
 			})
+			err = fmt.Errorf("task %q panicked: %v", e.name, r)
 		}
 	}()
 	e.fn()
+	return nil
 }
 
 // --- Cron expression parsing ---

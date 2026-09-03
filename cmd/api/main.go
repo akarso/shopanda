@@ -138,6 +138,22 @@ func run() error {
 			return runExportEpr(cfg, log)
 		case "export:oss":
 			return runExportOss(cfg, log)
+		case "jobs:list":
+			return runJobsList(os.Stdout, cfg, log, os.Args[2:])
+		case "jobs:show":
+			return runJobsShow(os.Stdout, cfg, log, os.Args[2:])
+		case "jobs:retry":
+			return runJobsRetry(os.Stdout, cfg, log, os.Args[2:])
+		case "jobs:cancel":
+			return runJobsCancel(os.Stdout, cfg, log, os.Args[2:])
+		case "schedule:list":
+			return runScheduleList(os.Stdout, cfg, log, os.Args[2:])
+		case "schedule:trigger":
+			return runScheduleTrigger(os.Stdout, cfg, log, os.Args[2:])
+		case "schedule:enable":
+			return runScheduleEnable(os.Stdout, cfg, log, os.Args[2:])
+		case "schedule:disable":
+			return runScheduleDisable(os.Stdout, cfg, log, os.Args[2:])
 		case "plugins":
 			if len(os.Args) < 3 {
 				return fmt.Errorf("usage: app plugins report [--json]")
@@ -487,12 +503,8 @@ func runScheduler(cfg *config.Config, log logger.Logger) error {
 		return fmt.Errorf("scheduler store: %w", err)
 	}
 	var sched scheduler.Scheduler = cron.New(log, cron.WithStore(schedulerStore))
-	runtime.RegisterCacheCleanup(jobQueue, cacheApp.JobType, log, sched)
-	runtime.RegisterCartRecovery(jobQueue, log, sched)
-	runtime.RegisterAuditRetention(jobQueue, log, sched)
-	runtime.RegisterReservationExpiry(jobQueue, log, sched)
-	if err := integrationApp.RegisterSyncJobCronTriggers(pluginApp, jobQueue, sched, log); err != nil {
-		return fmt.Errorf("sync job cron triggers: %w", err)
+	if err := registerSchedulerTasks(pluginApp, jobQueue, log, sched); err != nil {
+		return err
 	}
 
 	// Block until interrupted (context cancelled via signal).
@@ -686,6 +698,14 @@ Commands:
   export:prices <f>    Export prices to a CSV file
   export:epr <f>       Export EPR packaging metadata ([--include-empty] <file.csv>)
   export:oss <f>       Export OSS/IOSS tax report ([--summary] [--from=YYYY-MM-DD] [--to=YYYY-MM-DD] <file.csv>)
+  jobs:list            List background jobs ([--type=X] [--status=Y] [--limit=N] [--offset=N] [--json])
+  jobs:show <id>       Show a job's full detail ([--json])
+  jobs:retry <id>      Retry a failed job
+  jobs:cancel <id>     Cancel a pending job
+  schedule:list        List registered scheduled tasks ([--json])
+  schedule:trigger <n> Trigger a scheduled task immediately
+  schedule:enable <n>  Re-enable a scheduled task
+  schedule:disable <n> Disable a scheduled task
   plugins report       Print registered extension points and ports ([--json])
   help                 Show this help message
 `))

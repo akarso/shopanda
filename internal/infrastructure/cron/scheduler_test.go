@@ -3,6 +3,7 @@ package cron
 import (
 	"context"
 	"errors"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -369,6 +370,41 @@ func TestScheduler_TriggerLocal_NotFound(t *testing.T) {
 	var appErr *apperror.Error
 	if !errors.As(err, &appErr) || appErr.Code != apperror.CodeNotFound {
 		t.Fatalf("err = %v, want *apperror.Error{Code: not_found}", err)
+	}
+}
+
+// TestScheduler_TriggerLocal_PropagatesPanicAsError pins the fix for a
+// panicking task being reported as a successful trigger: TriggerLocal now
+// runs synchronously and converts a recovered panic into a returned
+// error, instead of firing async (via run, still used by tick) where
+// nothing waits on or observes the outcome.
+func TestScheduler_TriggerLocal_PropagatesPanicAsError(t *testing.T) {
+	s := New(testLogger{})
+	s.Register("panics", "0 0 1 1 1", func() { panic("boom") }) // spec never matches a real tick
+
+	err := s.TriggerLocal("panics")
+	if err == nil {
+		t.Fatal("expected an error when the triggered task panics")
+	}
+	if !strings.Contains(err.Error(), "boom") {
+		t.Fatalf("err = %v, want it to mention the panic value", err)
+	}
+}
+
+// TestScheduler_TriggerLocal_RunsSynchronously confirms the task's fn has
+// already completed by the time TriggerLocal returns — no need to
+// separately wg.Wait() to observe its effects, unlike the pre-fix async
+// behavior.
+func TestScheduler_TriggerLocal_RunsSynchronously(t *testing.T) {
+	var fired atomic.Bool
+	s := New(testLogger{})
+	s.Register("task", "0 0 1 1 1", func() { fired.Store(true) })
+
+	if err := s.TriggerLocal("task"); err != nil {
+		t.Fatalf("TriggerLocal: %v", err)
+	}
+	if !fired.Load() {
+		t.Error("task should have already run by the time TriggerLocal returned")
 	}
 }
 
