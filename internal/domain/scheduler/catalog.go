@@ -33,13 +33,17 @@ type Catalog interface {
 	// process can't appear here.
 	List(ctx context.Context) ([]CatalogEntry, error)
 
-	// Trigger invokes a registered task's fn immediately, out-of-band from
-	// its normal tick, regardless of a disabled override — the override
-	// gates the scheduler's own automatic tick, not an explicit manual
-	// trigger. Returns a *apperror.Error with CodeNotFound if no task with
-	// that name has ever registered, or CodeConflict if the task is known
-	// but this process has no live scheduler embedded to actually invoke
-	// it from (see LocalTrigger).
+	// Trigger invokes a registered task's fn immediately and synchronously
+	// (returning only once it has run), out-of-band from its normal tick,
+	// regardless of a disabled override — the override gates the
+	// scheduler's own automatic tick, not an explicit manual trigger.
+	// Returns a *apperror.Error with CodeNotFound if no task with that
+	// name has ever registered, CodeConflict if the task is known but
+	// this process has no live scheduler embedded to actually invoke it
+	// from (see LocalTrigger), or a plain error if the task's fn
+	// panicked. See LocalTrigger's doc comment for what this can't
+	// detect: a non-panicking internal failure the task's own fn logs and
+	// swallows still reports as a successful trigger.
 	Trigger(ctx context.Context, name string) error
 
 	// SetEnabled persists an enable/disable override for a registered

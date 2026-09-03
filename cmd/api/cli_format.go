@@ -15,6 +15,39 @@ import (
 	"github.com/akarso/shopanda/internal/platform/logger"
 )
 
+// errWriter accumulates the first write error across a sequence of
+// Fprintf calls, so a multi-line command output (e.g. formatJobDetail's
+// field-by-field dump) can check one error at the end instead of after
+// every single fmt.Fprintf — while still actually checking it, unlike
+// discarding each call's return value. A stdout write essentially never
+// fails in normal use, but a broken pipe (e.g. piping into `head`) is a
+// real, if rare, case where it does — and a CLI command whose output
+// silently stopped partway through should not still exit 0. Once an
+// error occurs, subsequent printf calls become no-ops (matches the
+// standard "errWriter" idiom for this exact situation).
+type errWriter struct {
+	w   io.Writer
+	err error
+}
+
+func (ew *errWriter) printf(format string, args ...interface{}) {
+	if ew.err != nil {
+		return
+	}
+	_, ew.err = fmt.Fprintf(ew.w, format, args...)
+}
+
+// writeSuccessLinef writes a single confirmation line (the "Job X queued
+// for retry."/"Schedule Y enabled."/... messages every mutating command
+// prints on success) and returns any write error, instead of discarding
+// it — a shared, directly-testable primitive so runJobsRetry/
+// runJobsCancel/runScheduleSetEnabled/runScheduleTrigger don't each
+// duplicate (and each risk re-discarding) the same one-line check.
+func writeSuccessLinef(w io.Writer, format string, args ...interface{}) error {
+	_, err := fmt.Fprintf(w, format, args...)
+	return err
+}
+
 // cliActor identifies who ran a CLI-initiated admin action, for the audit
 // log's AdminID field. There's no authenticated admin session in a CLI
 // invocation (unlike the HTTP admin API, which always has one by the time
@@ -110,24 +143,33 @@ func formatCLITimestampJSON(t time.Time) string {
 
 // parseSingleIDArg requires exactly one positional argument (an id/name),
 // no flags — used by action commands (retry/cancel/enable/disable/trigger)
-// that take no other options.
+// that take no other options. Rejects anything that looks like an option
+// (starts with "--") rather than silently treating it as the id/name —
+// matching --status='s own typo-fails-loudly precedent, so `app
+// jobs:retry --tpyo` doesn't attempt to retry a job literally named
+// "--tpyo".
 func parseSingleIDArg(command string, args []string) (string, error) {
-	if len(args) != 1 || strings.TrimSpace(args[0]) == "" {
+	if len(args) != 1 || strings.HasPrefix(args[0], "--") || strings.TrimSpace(args[0]) == "" {
 		return "", fmt.Errorf("usage: app %s <id>", command)
 	}
 	return args[0], nil
 }
 
 // parseSingleIDArgs requires one positional argument plus an optional
-// --json flag — used by show-style commands.
+// --json flag — used by show-style commands. Any other "--"-prefixed
+// token is rejected as an unrecognized option instead of silently being
+// treated as the positional id/name (see parseSingleIDArg's comment).
 func parseSingleIDArgs(command string, args []string) (id string, jsonOut bool, err error) {
 	var positional []string
 	for _, arg := range args {
-		if arg == "--json" {
+		switch {
+		case arg == "--json":
 			jsonOut = true
-			continue
+		case strings.HasPrefix(arg, "--"):
+			return "", false, fmt.Errorf("usage: app %s <id> [--json]: unrecognized option %q", command, arg)
+		default:
+			positional = append(positional, arg)
 		}
-		positional = append(positional, arg)
 	}
 	if len(positional) != 1 || strings.TrimSpace(positional[0]) == "" {
 		return "", false, fmt.Errorf("usage: app %s <id> [--json]", command)

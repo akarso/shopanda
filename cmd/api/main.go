@@ -698,7 +698,7 @@ Commands:
   export:prices <f>    Export prices to a CSV file
   export:epr <f>       Export EPR packaging metadata ([--include-empty] <file.csv>)
   export:oss <f>       Export OSS/IOSS tax report ([--summary] [--from=YYYY-MM-DD] [--to=YYYY-MM-DD] <file.csv>)
-  jobs:list            List background jobs ([--type=X] [--status=Y] [--json])
+  jobs:list            List background jobs ([--type=X] [--status=Y] [--limit=N] [--offset=N] [--json])
   jobs:show <id>       Show a job's full detail ([--json])
   jobs:retry <id>      Retry a failed job
   jobs:cancel <id>     Cancel a pending job

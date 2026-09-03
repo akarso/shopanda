@@ -34,10 +34,18 @@ type Store interface {
 }
 
 // LocalTrigger is implemented by a live, in-process Scheduler — invokes a
-// registered task's fn directly, bypassing Postgres entirely. Only
+// registered task's fn directly and synchronously, bypassing Postgres
+// entirely, returning only once the task's fn has actually run. Only
 // meaningful from the same process that called Register for that task;
 // Catalog.Trigger uses this when available and returns a clear conflict
 // error when it isn't (this process has no embedded scheduler).
+//
+// A non-nil error means the task's fn panicked — that's the only failure
+// mode this can detect. fn is a bare func() with no error return, so a
+// task that logs-and-swallows its own internal failure (e.g. a failed
+// enqueue) still reports as triggered successfully; callers relying on
+// this to mean "the underlying work was actually produced," not just
+// "didn't panic," should know that distinction doesn't hold today.
 type LocalTrigger interface {
 	TriggerLocal(name string) error
 }

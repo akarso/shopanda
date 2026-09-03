@@ -19,6 +19,24 @@ import (
 // the same jobsApp.Service — this file doesn't re-test that, only the
 // CLI-specific plumbing (arg parsing, output formatting).
 
+// TestNewJobsService_NonPostgresDriverFailsFast pins the fix for jobs:*
+// commands silently querying an unrelated Postgres jobs table when a
+// broker queue driver (redis/rabbitmq/kafka/sqs) is actually configured:
+// newJobsService must fail clearly, before even opening a DB connection,
+// rather than construct a Postgres queue nothing else is using.
+func TestNewJobsService_NonPostgresDriverFailsFast(t *testing.T) {
+	cfg := &config.Config{}
+	cfg.Queue.Driver = "redis"
+
+	_, _, err := newJobsService(cfg)
+	if err == nil {
+		t.Fatal("expected an error for a non-postgres queue driver")
+	}
+	if !strings.Contains(err.Error(), "queue.driver=postgres") {
+		t.Fatalf("err = %v, want it to name the postgres-only requirement", err)
+	}
+}
+
 func TestRunJobsList_UnknownArgument(t *testing.T) {
 	err := runJobsList(io.Discard, &config.Config{}, logger.New("error"), []string{"--nope"})
 	if err == nil || !strings.Contains(err.Error(), "unknown argument") {

@@ -159,8 +159,7 @@ func runScheduleSetEnabled(w io.Writer, cfg *config.Config, log logger.Logger, a
 	if !enabled {
 		state = "disabled"
 	}
-	fmt.Fprintf(w, "Schedule %q %s.\n", name, state)
-	return nil
+	return writeSuccessLinef(w, "Schedule %q %s.\n", name, state)
 }
 
 // runScheduleTrigger handles `app schedule:trigger <name>`.
@@ -240,7 +239,14 @@ func runScheduleTrigger(w io.Writer, cfg *config.Config, log logger.Logger, args
 	}
 	freezePermissionRegistry(pluginApp)
 
-	jobQueue, err := postgres.NewJobQueue(conn)
+	// resolveJobQueue (not postgres.NewJobQueue directly): if a
+	// Redis/RabbitMQ/Kafka/SQS core plugin is registered and configured
+	// via queue.driver, registerSchedulerTasks's Enqueue calls must go
+	// through that queue, the same one the real worker consumes — a
+	// hardcoded Postgres queue here would enqueue into a table no worker
+	// is polling, and this command would report "triggered" for work
+	// that silently never runs.
+	jobQueue, err := resolveJobQueue(pluginApp, conn, cfg)
 	if err != nil {
 		return fmt.Errorf("job queue: %w", err)
 	}
@@ -253,14 +259,20 @@ func runScheduleTrigger(w io.Writer, cfg *config.Config, log logger.Logger, args
 		return err
 	}
 
+	// TriggerLocal now runs the task synchronously and surfaces a panic as
+	// a returned error (see its doc comment for the — real, remaining —
+	// limitation: a non-panicking internal failure the task's own fn logs
+	// and swallows still can't be detected, since entry.fn is a bare
+	// func() with no error return). Stop() still needs to be called for
+	// clean shutdown signaling even though TriggerLocal no longer leaves
+	// anything in flight for it to wait on.
 	triggerErr := sched.TriggerLocal(name)
-	sched.Stop() // waits for the fired task's fn to actually complete before this process exits
+	sched.Stop()
 
 	ctx := context.Background()
 	auditCLIAction(ctx, conn, log, adminApp.AuditScheduleTrigger, "schedule", name, triggerErr)
 	if triggerErr != nil {
 		return fmt.Errorf("schedule:trigger: %w", triggerErr)
 	}
-	fmt.Fprintf(w, "Schedule %q triggered.\n", name)
-	return nil
+	return writeSuccessLinef(w, "Schedule %q triggered.\n", name)
 }

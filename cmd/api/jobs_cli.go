@@ -45,15 +45,28 @@ func validJobStatusesList() string {
 
 // newJobsService opens a standalone DB connection and constructs the same
 // jobsApp.Service the HTTP admin API (job_admin.go) calls — CLI and API
-// never diverge in retry/cancel/list decision logic. Postgres-queue-only,
-// matching runScheduler's existing standalone construction (postgres.NewJobQueue
-// directly, not the plugin-override-aware resolveJobQueue used by
-// wireServeRuntime/setupWorker) — a CLI invocation is a short-lived,
-// single-purpose process, not the long-running server that needs to
-// respect a configured broker-backed queue plugin. Returns the open conn
-// too (not just a closer) so mutating commands can build an audit-log
-// repository off the same connection.
+// never diverge in retry/cancel/list decision logic.
+//
+// Postgres-queue-only, by construction: job introspection (jobs.Reader/
+// jobs.Admin) has no equivalent on a broker-backed queue (Redis/RabbitMQ/
+// Kafka/SQS) at all — see internal/domain/jobs/reader.go's own doc
+// comment — the same reason wireServeRuntime hard-fails serve's startup
+// if the configured queue driver doesn't implement those ports. This
+// function can't call the plugin-override-aware resolveJobQueue used
+// there (would require a full plugin bootstrap this command doesn't
+// otherwise need), so instead it checks cfg.Queue.Driver directly and
+// fails clearly when it isn't "postgres" — rather than silently
+// constructing a fresh Postgres job queue that has nothing to do with
+// whatever the real worker is actually configured to consume, which
+// would let jobs:list/show/retry/cancel appear to work while inspecting
+// or mutating a completely unrelated, unused jobs table.
+//
+// Returns the open conn too (not just a closer) so mutating commands can
+// build an audit-log repository off the same connection.
 func newJobsService(cfg *config.Config) (svc *jobsApp.Service, conn *sql.DB, err error) {
+	if cfg.Queue.Driver != "postgres" {
+		return nil, nil, fmt.Errorf("jobs:* commands require queue.driver=postgres — job introspection/retry/cancel has no equivalent for %q (Postgres-queue-only; see internal/domain/jobs/reader.go)", cfg.Queue.Driver)
+	}
 	dsn := config.DatabaseDSN(cfg)
 	conn, err = db.Open(dsn)
 	if err != nil {
@@ -200,22 +213,24 @@ func formatJobDetail(w io.Writer, job *domainjobs.Detail, jsonOut bool) error {
 		out["last_error"] = job.LastError
 		return writeJSON(w, out)
 	}
-	fmt.Fprintf(w, "ID:          %s\n", job.ID)
-	fmt.Fprintf(w, "Type:        %s\n", job.Type)
-	fmt.Fprintf(w, "Status:      %s\n", job.Status)
-	fmt.Fprintf(w, "Attempts:    %d/%d\n", job.Attempts, job.MaxRetries)
-	fmt.Fprintf(w, "Run at:      %s\n", formatCLITimestamp(job.RunAt))
-	fmt.Fprintf(w, "Created at:  %s\n", formatCLITimestamp(job.CreatedAt))
-	fmt.Fprintf(w, "Updated at:  %s\n", formatCLITimestamp(job.UpdatedAt))
-	if job.LastError != "" {
-		fmt.Fprintf(w, "Last error:  %s\n", job.LastError)
-	}
 	payload, err := json.MarshalIndent(job.Payload, "", "  ")
 	if err != nil {
 		return fmt.Errorf("jobs:show: marshal payload: %w", err)
 	}
-	fmt.Fprintf(w, "Payload:\n%s\n", payload)
-	return nil
+
+	ew := &errWriter{w: w}
+	ew.printf("ID:          %s\n", job.ID)
+	ew.printf("Type:        %s\n", job.Type)
+	ew.printf("Status:      %s\n", job.Status)
+	ew.printf("Attempts:    %d/%d\n", job.Attempts, job.MaxRetries)
+	ew.printf("Run at:      %s\n", formatCLITimestamp(job.RunAt))
+	ew.printf("Created at:  %s\n", formatCLITimestamp(job.CreatedAt))
+	ew.printf("Updated at:  %s\n", formatCLITimestamp(job.UpdatedAt))
+	if job.LastError != "" {
+		ew.printf("Last error:  %s\n", job.LastError)
+	}
+	ew.printf("Payload:\n%s\n", payload)
+	return ew.err
 }
 
 // runJobsRetry handles `app jobs:retry <id>`.
@@ -237,8 +252,7 @@ func runJobsRetry(w io.Writer, cfg *config.Config, log logger.Logger, args []str
 	if retryErr != nil {
 		return fmt.Errorf("jobs:retry: %w", retryErr)
 	}
-	fmt.Fprintf(w, "Job %s queued for retry.\n", id)
-	return nil
+	return writeSuccessLinef(w, "Job %s queued for retry.\n", id)
 }
 
 // runJobsCancel handles `app jobs:cancel <id>`.
@@ -260,6 +274,5 @@ func runJobsCancel(w io.Writer, cfg *config.Config, log logger.Logger, args []st
 	if cancelErr != nil {
 		return fmt.Errorf("jobs:cancel: %w", cancelErr)
 	}
-	fmt.Fprintf(w, "Job %s cancelled.\n", id)
-	return nil
+	return writeSuccessLinef(w, "Job %s cancelled.\n", id)
 }
