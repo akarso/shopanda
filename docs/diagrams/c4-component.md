@@ -77,6 +77,8 @@ C4Component
             Component(reservationExpiryHandler, "ReservationExpiryHandler", "Go", "Handles inventory.reservation_expiry jobs: releases expired reservations in bounded batches, restores stock")
             Component(webhookDispatcher, "WebhookDispatcher", "Go", "Enqueues outbound webhook deliveries on domain events")
             Component(webhookDeliverHandler, "WebhookDeliverHandler", "Go", "Handles webhook.deliver jobs: POST signed payloads")
+            Component(reindexHandler, "ReindexHandler", "Go", "Handles search.reindex jobs: scans ProductSource in batches, indexes via SearchEngine, updates search_index_runs progress incrementally")
+            Component(reindexReconcileHandler, "ReconcileHandler", "Go", "Handles search.reindex.reconcile jobs: sweeps search_index_runs stuck processing past a staleness threshold, corrects any whose underlying job already reached a terminal status")
             Component(productSchemaRegistration, "ProductSchemaRegistration", "Go", "Registers product form and grid schemas with admin registry")
         }
 
@@ -86,6 +88,9 @@ C4Component
             Component(webhookEndpointRepo, "WebhookEndpointRepo", "Go, pgx", "Merchant outbound webhook endpoint CRUD")
             Component(postgresSearch, "PostgresSearchEngine", "Go, tsvector", "Full-text search via PostgreSQL tsvector, filters, facets")
             Component(postgresJobQueue, "PostgresJobQueue", "Go, pgx", "Job queue with FOR UPDATE SKIP LOCKED dequeue, retry logic")
+            Component(searchIndexRunRepo, "SearchIndexRunRepo", "Go, pgx", "Persists search_index_runs: create, get, incremental progress update, finish (completed/failed)")
+            Component(searchProductSource, "SearchProductSource", "Go, pgx", "Reads products directly (deliberately not via the PostgreSQL Repositories/catalog.ProductRepository) for reindex scanning: CountAll, paginated ListAll")
+            Component(reindexJobFinder, "ReindexJobFinder", "Go, pgx", "Looks up the search.reindex job carrying a given run_id in its payload, for the reconciliation sweep")
             Component(manualPay, "ManualPayProvider", "Go", "Offline payment processing")
             Component(flatRate, "FlatRateShipProvider", "Go", "Fixed-cost shipping calculation")
             Component(cronScheduler, "CronScheduler", "Go", "In-process cron scheduler: implements Scheduler port, fires registered tasks on schedule, enqueues jobs into Queue")
@@ -185,6 +190,13 @@ C4Component
     Rel(webhookDispatcher, postgresJobQueue, "Enqueues webhook.deliver jobs")
     Rel(jobWorker, webhookDeliverHandler, "Dispatches webhook.deliver jobs")
     Rel(webhookDeliverHandler, webhookEndpointRepo, "Load endpoint secret/url")
+    Rel(jobWorker, reindexHandler, "Dispatches search.reindex jobs")
+    Rel(reindexHandler, searchProductSource, "Scans products in batches via ProductSource")
+    Rel(reindexHandler, postgresSearch, "IndexProduct for each scanned product")
+    Rel(reindexHandler, searchIndexRunRepo, "Updates run progress; marks completed/failed")
+    Rel(jobWorker, reindexReconcileHandler, "Dispatches search.reindex.reconcile jobs")
+    Rel(reindexReconcileHandler, searchIndexRunRepo, "FindStaleProcessing; Finish(failed) on a confirmed-orphaned run")
+    Rel(reindexReconcileHandler, reindexJobFinder, "FindReindexJobByRunID: checks whether the job is terminal")
 
     Rel(authService, postgresRepos, "Customer + token queries")
     Rel(cartService, postgresRepos, "Cart persistence")

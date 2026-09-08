@@ -76,6 +76,10 @@ Each PR is tagged **`[oss]`** unless noted.
 | PR-1037 | Category indexing + relationship fix | Add `IndexCategory`/`RemoveCategory` to the `SearchEngine` port (both implementations); index categories as their own searchable/filterable entity. Fix `search.Product.CategoryID` (singular) → `CategoryIDs []string` — the catalog domain already supports many-to-many product↔category assignment (`product_categories` junction table, `AssignCategory`/`RemoveCategory`/`ListCategoryIDsByProduct`); the search index has silently been unable to represent a product in more than one category since day one. Category-assignment changes feed PR-1036's subscribers. |
 | PR-1038 | Search admin GUI | Reindex trigger with a scope picker (all / products / categories / since-date), progress bar reusing Track A's job-status UI, run history table, and a per-row "reindex now" action on the product/category admin grids. |
 
+### Standalone fix: PR-1048
+
+PR-1033 shipped with a documented, deliberate gap: a `search_index_runs` row can be left `processing` forever (worker crash before `Finish` runs, or the terminal `Finish` write itself exhausting its retries) with no automatic reconciliation and no admin/CLI mutation — only a RUNBOOK.md caveat pointing at manual SQL. **PR-1048** (done, ships standalone — same shape as PR-1027's fix, no dependency on PR-1034/1035) closes it: a scheduled `search.reindex.reconcile` sweep corrects a stuck run once its underlying job has reached a real terminal status, plus `app search:reindex-runs:reconcile <run-id> --reason=<text>` for the ambiguous case (job also still `processing`, or a crashed job the queue itself has no reaper for) that the sweep deliberately leaves for an operator to judge.
+
 ### Design notes: what else is worth indexing
 
 Beyond products and categories (PR-1037), two more entities exist in the domain and are plausible future search/filter targets, but are **out of scope for this phase** — call them out now so they're a deliberate decision, not an oversight:
@@ -160,7 +164,8 @@ Phase 12's own Track F (index/CSV/GraphQL/GUI closeout) explicitly depends on th
 | 1030 | A | done |
 | 1031 | A | done |
 | 1032 | A | done |
-| 1033–1038 | B | planned |
+| 1033 | B | done |
+| 1034–1038 | B | planned |
 | 1039–1043 | C | planned |
 | 1044–1047 | D | planned |
 
