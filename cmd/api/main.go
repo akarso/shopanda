@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"io"
 	"net/url"
 	"os"
 	"os/signal"
@@ -20,6 +21,7 @@ import (
 	integrationApp "github.com/akarso/shopanda/internal/application/integration"
 	inventoryApp "github.com/akarso/shopanda/internal/application/inventory"
 	"github.com/akarso/shopanda/internal/application/notification"
+	searchApp "github.com/akarso/shopanda/internal/application/search"
 	setupApp "github.com/akarso/shopanda/internal/application/setup"
 	slotsApp "github.com/akarso/shopanda/internal/application/slots"
 	webhookApp "github.com/akarso/shopanda/internal/application/webhook"
@@ -105,7 +107,7 @@ func run() error {
 		case "seed":
 			return runSeed(cfg, log)
 		case "search:reindex":
-			return runSearchReindex(cfg, log)
+			return runSearchReindex(os.Stdout, cfg, log, os.Args[2:])
 		case "config:export":
 			return runConfigExport(cfg, log)
 		case "config:import":
@@ -681,7 +683,7 @@ Commands:
   scheduler            Start the cron scheduler
   migrate              Run database migrations
   seed                 Seed the database with initial data
-  search:reindex       Re-index all products in the search engine
+  search:reindex       Re-index all products in the search engine ([--wait])
   config:export        Export configuration to stdout (YAML)
   config:import <file> Import configuration from a YAML file
   import:products <f>  Import products from a CSV file
@@ -821,6 +823,20 @@ func setupWorker(conn *sql.DB, cfg *config.Config, log logger.Logger, app *plugi
 		return nil, nil, nil, fmt.Errorf("sync job handlers: %w", err)
 	}
 
+	searchEngine, err := resolveSearchEngine(app, conn, cfg)
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	searchIndexRunRepo, err := postgres.NewSearchIndexRunRepo(conn)
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	searchProductSource, err := postgres.NewSearchProductSource(conn)
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	jobWorker.Register(searchApp.NewReindexHandler(searchIndexRunRepo, searchProductSource, searchEngine, log))
+
 	return jobWorker, jobQueue, appCache, nil
 }
 
@@ -915,19 +931,33 @@ func runWorker(cfg *config.Config, log logger.Logger) error {
 	return nil
 }
 
-func runSearchReindex(cfg *config.Config, log logger.Logger) error {
+// searchReindexPollInterval is how often `search:reindex --wait` polls the
+// run row for a terminal status. The actual indexing happens in the
+// worker process (ReindexHandler, registered in setupWorker) — this CLI
+// invocation only enqueues the job and, if asked, watches the row that
+// worker updates.
+const searchReindexPollInterval = 500 * time.Millisecond
+
+// newSearchReindexService opens a standalone DB connection and constructs
+// a search.ReindexService plus the RunStore needed to poll a run's
+// progress. Goes through the same plugin-bootstrap-then-resolveJobQueue
+// path as runScheduleTrigger (not the Postgres-only shortcut jobs_cli.go
+// and schedule_cli.go's read/admin paths use) because Trigger only needs
+// Enqueue, which every queue driver supports — unlike job introspection,
+// there's no reason to fail fast on a non-Postgres queue.driver here.
+func newSearchReindexService(cfg *config.Config, log logger.Logger) (svc *searchApp.ReindexService, runs *postgres.SearchIndexRunRepo, conn *sql.DB, err error) {
 	dsn := config.DatabaseDSN(cfg)
-	conn, err := db.Open(dsn)
+	conn, err = db.Open(dsn)
 	if err != nil {
-		return fmt.Errorf("database: %w", err)
+		return nil, nil, nil, fmt.Errorf("database: %w", err)
 	}
-	defer conn.Close()
 
 	registry := plugin.NewRegistry(log)
 	registerPlugins(registry, cfg)
 	boot, err := newPluginBootstrap(conn)
 	if err != nil {
-		return err
+		conn.Close()
+		return nil, nil, nil, err
 	}
 	pluginApp := &plugin.App{
 		Logger:    log,
@@ -937,22 +967,53 @@ func runSearchReindex(cfg *config.Config, log logger.Logger) error {
 	pluginApp.SetExtensionRegistry(extensionApp.NewRegistry())
 	preparePermissionRegistry(pluginApp)
 	if summary := registry.InitAll(pluginApp); summary.Failed > 0 {
-		return fmt.Errorf("plugin init failed: %d plugin(s) failed to initialize", summary.Failed)
+		conn.Close()
+		return nil, nil, nil, fmt.Errorf("plugin init failed: %d plugin(s) failed to initialize", summary.Failed)
 	}
 	freezePermissionRegistry(pluginApp) // search-reindex: freeze only (no BindRuntime)
 
-	searchEngine, err := resolveSearchEngine(pluginApp, conn, cfg)
+	jobQueue, err := resolveJobQueue(pluginApp, conn, cfg)
+	if err != nil {
+		conn.Close()
+		return nil, nil, nil, fmt.Errorf("job queue: %w", err)
+	}
+	runs, err = postgres.NewSearchIndexRunRepo(conn)
+	if err != nil {
+		conn.Close()
+		return nil, nil, nil, fmt.Errorf("search index run store: %w", err)
+	}
+	svc, err = searchApp.NewReindexService(runs, jobQueue, log)
+	if err != nil {
+		conn.Close()
+		return nil, nil, nil, fmt.Errorf("reindex service: %w", err)
+	}
+	return svc, runs, conn, nil
+}
+
+// runSearchReindex handles `app search:reindex [--wait]`. It enqueues a
+// search.reindex job (PR-1033) instead of scanning and indexing inline —
+// the actual work happens in whichever process runs the worker (`worker`,
+// or `serve`'s embedded worker). Without --wait it returns as soon as the
+// job is enqueued; with --wait it polls the run row until the worker
+// marks it completed or failed, so scripts/CI can still get synchronous
+// behavior.
+func runSearchReindex(w io.Writer, cfg *config.Config, log logger.Logger, args []string) error {
+	wait := false
+	for _, arg := range args {
+		if arg != "--wait" {
+			return fmt.Errorf("search:reindex: unknown argument %q (usage: search:reindex [--wait])", arg)
+		}
+		wait = true
+	}
+
+	svc, runs, conn, err := newSearchReindexService(cfg, log)
 	if err != nil {
 		return err
 	}
-
-	log.Info("search.reindex.start", map[string]interface{}{
-		"engine": searchEngine.Name(),
-	})
+	defer conn.Close()
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-
 	go func() {
 		sigCh := make(chan os.Signal, 1)
 		signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
@@ -960,77 +1021,38 @@ func runSearchReindex(cfg *config.Config, log logger.Logger) error {
 		cancel()
 	}()
 
-	// Use a repeatable-read transaction so offset-based pagination sees a
-	// stable snapshot even if products are inserted/deleted concurrently.
-	tx, err := conn.BeginTx(ctx, &sql.TxOptions{
-		Isolation: sql.LevelRepeatableRead,
-		ReadOnly:  true,
-	})
+	runID, err := svc.Trigger(ctx, search.ReindexScope{Name: "all"})
 	if err != nil {
-		return fmt.Errorf("search reindex: begin tx: %w", err)
+		return fmt.Errorf("search:reindex: %w", err)
 	}
-	defer tx.Rollback() //nolint:errcheck // rollback after commit is a no-op
+	log.Info("search.reindex.triggered", map[string]interface{}{"run_id": runID})
 
-	tmpProductRepo, err := postgres.NewProductRepo(conn)
-	if err != nil {
-		return fmt.Errorf("product repo: %w", err)
+	if !wait {
+		return writeSuccessLinef(w, "Reindex triggered (run %s). Check jobs:show or re-run with --wait to track progress.\n", runID)
 	}
-	productRepo := tmpProductRepo.WithTx(tx)
 
-	const batchSize = 100
-	var offset, indexed int
-
+	ticker := time.NewTicker(searchReindexPollInterval)
+	defer ticker.Stop()
 	for {
-		if err := ctx.Err(); err != nil {
-			log.Info("search.reindex.interrupted", map[string]interface{}{
-				"indexed": indexed,
-			})
-			return ctx.Err()
-		}
-
-		products, err := productRepo.List(ctx, offset, batchSize)
-		if err != nil {
-			if ctx.Err() != nil {
-				log.Info("search.reindex.interrupted", map[string]interface{}{
-					"indexed": indexed,
-				})
-				return ctx.Err()
+		select {
+		case <-ctx.Done():
+			return fmt.Errorf("search:reindex: interrupted while waiting for run %s (it continues in the background)", runID)
+		case <-ticker.C:
+			run, err := runs.Get(ctx, runID)
+			if err != nil {
+				return fmt.Errorf("search:reindex: poll run %s: %w", runID, err)
 			}
-			return fmt.Errorf("search reindex: list products (offset=%d): %w", offset, err)
-		}
-		if len(products) == 0 {
-			break
-		}
-
-		for _, p := range products {
-			sp := search.Product{
-				ID:          p.ID,
-				Name:        p.Name,
-				Slug:        p.Slug,
-				Description: p.Description,
-				CreatedAt:   p.CreatedAt,
-				Attributes:  p.Attributes,
+			if run == nil {
+				return fmt.Errorf("search:reindex: run %s vanished while waiting", runID)
 			}
-			if err := searchEngine.IndexProduct(ctx, sp); err != nil {
-				if ctx.Err() != nil {
-					log.Info("search.reindex.interrupted", map[string]interface{}{
-						"indexed": indexed,
-					})
-					return ctx.Err()
-				}
-				return fmt.Errorf("search reindex: index product %s: %w", p.ID, err)
+			switch run.Status {
+			case search.RunStatusCompleted:
+				return writeSuccessLinef(w, "Reindex completed: %d/%d products indexed.\n", run.ProcessedCount, run.TotalCount)
+			case search.RunStatusFailed:
+				return fmt.Errorf("search:reindex: run %s failed: %s", runID, run.LastError)
 			}
-			indexed++
 		}
-
-		offset += len(products)
 	}
-
-	log.Info("search.reindex.complete", map[string]interface{}{
-		"indexed": indexed,
-	})
-
-	return nil
 }
 
 type setupAdminUserCreator struct {

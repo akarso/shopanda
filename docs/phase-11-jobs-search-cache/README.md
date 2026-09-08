@@ -23,7 +23,7 @@ See [`ROADMAP.md`](ROADMAP.md) for the full track breakdown, sequencing, and PR 
 
 ## Status
 
-**In progress.** Track A (jobs & scheduling admin, PR-1027–1032) is done. Tracks B–D (PR-1033–1047) are still planned.
+**In progress.** Track A (jobs & scheduling admin, PR-1027–1032) is done. Track B (search indexing) has started: PR-1033 (reindex as a job) is done; PR-1034–1038 and Tracks C–D (PR-1039–1047) are still planned.
 
 ## Relationship
 
