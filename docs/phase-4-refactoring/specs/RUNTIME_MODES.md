@@ -144,7 +144,7 @@ Management UI: http://localhost:15672 (default user/pass match compose env).
 | --- | --- |
 | Orders complete but no emails | `worker` not running or SMTP misconfigured |
 | Cache grows without bound | `scheduler` + `worker` not running |
-| Meilisearch index empty | `search.engine=meilisearch` but engine not up; run `app search:reindex` after engine is ready |
+| Meilisearch index empty | `search.engine=meilisearch` but engine not up; run `app search:reindex` after engine is ready. Since PR-1033, this only enqueues a job — a `worker` process (standalone or `serve`'s embedded one) must actually be running to pick it up; use `--wait` or `jobs:list --type=search.reindex` to confirm it ran |
 | Stripe payments stuck | Webhook not reaching `serve` or secret mismatch |
 
 ---

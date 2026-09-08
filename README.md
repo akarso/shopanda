@@ -222,7 +222,7 @@ For a complete operator-focused setup, including Docker, health checks, and envi
 | `worker` | Start the background job worker |
 | `scheduler` | Start the cron scheduler |
 | `seed` | Run seed data framework |
-| `search:reindex` | Re-index all products in the search engine |
+| `search:reindex` | Re-index all products in the search engine — enqueues a `search.reindex` job and returns immediately; add `--wait` to block until the worker finishes it |
 | `config:export` | Export configuration to stdout as YAML |
 | `config:import <file.yaml>` | Import configuration from YAML |
 | `import:products <file.csv>` | Bulk import products from CSV |
