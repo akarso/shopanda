@@ -1028,7 +1028,7 @@ func runSearchReindex(w io.Writer, cfg *config.Config, log logger.Logger, args [
 	log.Info("search.reindex.triggered", map[string]interface{}{"run_id": runID})
 
 	if !wait {
-		return writeSuccessLinef(w, "Reindex triggered (run %s). Check jobs:show or re-run with --wait to track progress.\n", runID)
+		return writeSuccessLinef(w, "Reindex triggered (run %s). Check jobs:list --type=search.reindex or re-run with --wait to track progress.\n", runID)
 	}
 
 	ticker := time.NewTicker(searchReindexPollInterval)

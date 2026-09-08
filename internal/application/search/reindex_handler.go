@@ -3,6 +3,7 @@ package search
 import (
 	"context"
 	"fmt"
+	"time"
 
 	domainjobs "github.com/akarso/shopanda/internal/domain/jobs"
 	domainsearch "github.com/akarso/shopanda/internal/domain/search"
@@ -12,6 +13,18 @@ import (
 // this PR (cmd/api's old runSearchReindex) — same behavior, now running
 // inside a job handler instead of the CLI process.
 const reindexBatchSize = 100
+
+// finishRetries/finishRetryDelay bound a small in-process retry for a
+// Finish call that itself fails to persist — see finishWithRetry. A
+// transient DB blip on the one write that actually finalizes a run's
+// status is worth a few quick retries: on the completed path there's no
+// other chance to correct it without redoing the whole scan, and on the
+// terminal-failure path (job.Attempts already exhausted) there is no
+// queue-level retry left to fall back on either.
+const (
+	finishRetries    = 3
+	finishRetryDelay = 50 * time.Millisecond
+)
 
 // Logger is the logging interface used by ReindexHandler.
 type Logger interface {
@@ -89,14 +102,45 @@ func (h *ReindexHandler) Handle(ctx context.Context, job domainjobs.Job) error {
 		}
 	}
 
-	if err := h.runs.Finish(ctx, runID, domainsearch.RunStatusCompleted, ""); err != nil {
-		h.log.Error("search.reindex.finish_failed", err, map[string]interface{}{"run_id": runID})
+	if err := h.finishWithRetry(ctx, runID, domainsearch.RunStatusCompleted, ""); err != nil {
+		// Indexing itself succeeded, but we could not persist that fact —
+		// completing the job here regardless would leave the run row
+		// stuck at "processing" forever (nothing else will ever call
+		// Finish for it once the job is done). Return an error instead:
+		// the worker fails/retries the job like any other operation
+		// failure, giving this run another attempt at persisting a
+		// terminal status (failIfTerminal marks it failed outright once
+		// attempts are exhausted, rather than leaving it processing
+		// forever either).
+		wrapped := fmt.Errorf("finish run as completed: %w", err)
+		h.failIfTerminal(ctx, runID, job, wrapped)
+		return wrapped
 	}
 	h.log.Info("search.reindex.complete", map[string]interface{}{
 		"run_id":  runID,
 		"indexed": processed,
 	})
 	return nil
+}
+
+// finishWithRetry calls RunStore.Finish, retrying a handful of times with
+// a short delay on failure — see finishRetries/finishRetryDelay. Returns
+// the last error if every attempt fails.
+func (h *ReindexHandler) finishWithRetry(ctx context.Context, runID string, status domainsearch.RunStatus, lastErr string) error {
+	var err error
+	for attempt := 0; attempt < finishRetries; attempt++ {
+		if attempt > 0 {
+			select {
+			case <-ctx.Done():
+				return ctx.Err()
+			case <-time.After(finishRetryDelay):
+			}
+		}
+		if err = h.runs.Finish(ctx, runID, status, lastErr); err == nil {
+			return nil
+		}
+	}
+	return err
 }
 
 // failIfTerminal marks the run failed only when job is on its last allowed
@@ -122,7 +166,7 @@ func (h *ReindexHandler) failIfTerminal(ctx context.Context, runID string, job d
 		})
 		return
 	}
-	if err := h.runs.Finish(ctx, runID, domainsearch.RunStatusFailed, cause.Error()); err != nil {
+	if err := h.finishWithRetry(ctx, runID, domainsearch.RunStatusFailed, cause.Error()); err != nil {
 		h.log.Error("search.reindex.finish_failed", err, map[string]interface{}{"run_id": runID})
 	}
 }

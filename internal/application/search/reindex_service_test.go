@@ -16,6 +16,15 @@ type fakeRunStore struct {
 	createErr error
 
 	runs map[string]*domainsearch.Run
+
+	// finishErr, when set, is returned by Finish. finishFailTimes, when >
+	// 0, limits that to only the first N calls (after which Finish
+	// succeeds) — models a transient persistence blip that a bounded
+	// in-process retry (ReindexHandler.finishWithRetry) recovers from.
+	// Zero (the default) means finishErr, if set, fails every call.
+	finishErr       error
+	finishFailTimes int
+	finishCalls     int
 }
 
 func (f *fakeRunStore) Create(_ context.Context, run domainsearch.Run) error {
@@ -45,6 +54,10 @@ func (f *fakeRunStore) UpdateProgress(_ context.Context, id string, total, proce
 }
 
 func (f *fakeRunStore) Finish(_ context.Context, id string, status domainsearch.RunStatus, lastErr string) error {
+	f.finishCalls++
+	if f.finishErr != nil && (f.finishFailTimes <= 0 || f.finishCalls <= f.finishFailTimes) {
+		return f.finishErr
+	}
 	r := f.runs[id]
 	if r == nil {
 		return errors.New("no such run")

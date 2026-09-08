@@ -246,3 +246,88 @@ func TestReindexHandler_Handle_TransientFailureThenRetrySucceeds(t *testing.T) {
 		t.Errorf("run status after a successful retry = %q, want completed", store.runs["run-1"].Status)
 	}
 }
+
+// TestReindexHandler_Handle_FinishCompletedRetriesThenSucceeds pins
+// finishWithRetry's actual retry behavior: a Finish(completed) call that
+// fails transiently (fewer times than the retry budget) must still
+// persist "completed" within the same Handle call, rather than treating
+// the first failure as final.
+func TestReindexHandler_Handle_FinishCompletedRetriesThenSucceeds(t *testing.T) {
+	store := &fakeRunStore{finishErr: errors.New("deadlock detected"), finishFailTimes: 2}
+	newTestRun(store, "run-1")
+	source := &fakeProductSource{products: []domainsearch.Product{{ID: "p1"}}}
+	h := searchApp.NewReindexHandler(store, source, &fakeSearchEngine{}, logger.New("error"))
+
+	job := domainjobs.Job{ID: "job-1", Type: searchApp.JobType, Payload: map[string]interface{}{"run_id": "run-1"}, Attempts: 1, MaxRetries: 3}
+	if err := h.Handle(context.Background(), job); err != nil {
+		t.Fatalf("Handle: %v (want the retry to recover before the budget runs out)", err)
+	}
+	if store.runs["run-1"].Status != domainsearch.RunStatusCompleted {
+		t.Errorf("run status = %q, want completed", store.runs["run-1"].Status)
+	}
+	if store.finishCalls < 3 {
+		t.Errorf("Finish called %d times, want at least 3 (2 failures + 1 success)", store.finishCalls)
+	}
+}
+
+// TestReindexHandler_Handle_FinishCompletedFailsPermanently_NonTerminalAttempt
+// pins the Blocker fix: if Finish(completed) can't be persisted at all
+// (every retry fails) on a non-final attempt, Handle must return an error
+// — completing the job here regardless would leave the run stuck
+// "processing" forever with nothing left to retry it.
+func TestReindexHandler_Handle_FinishCompletedFailsPermanently_NonTerminalAttempt(t *testing.T) {
+	store := &fakeRunStore{finishErr: errors.New("db down")}
+	newTestRun(store, "run-1")
+	source := &fakeProductSource{products: []domainsearch.Product{{ID: "p1"}}}
+	h := searchApp.NewReindexHandler(store, source, &fakeSearchEngine{}, logger.New("error"))
+
+	job := domainjobs.Job{ID: "job-1", Type: searchApp.JobType, Payload: map[string]interface{}{"run_id": "run-1"}, Attempts: 1, MaxRetries: 3}
+	if err := h.Handle(context.Background(), job); err == nil {
+		t.Fatal("expected Handle to return an error when Finish(completed) can't be persisted, so the job is retried instead of completed")
+	}
+	if store.runs["run-1"].Status != domainsearch.RunStatusProcessing {
+		t.Errorf("run status = %q, want still processing (a retry is still available)", store.runs["run-1"].Status)
+	}
+}
+
+// TestReindexHandler_Handle_FinishCompletedFailsPermanently_TerminalAttempt
+// covers the worst case both terminal Finish call sites share: the store
+// is down entirely, so even failIfTerminal's own compensating
+// Finish(failed) call fails. Handle must still return an error (so the
+// job itself is correctly marked failed by the queue) rather than panic
+// or silently report success — the run row is left processing, which is
+// an honest reflection of "we could not persist anything," not a crash.
+func TestReindexHandler_Handle_FinishCompletedFailsPermanently_TerminalAttempt(t *testing.T) {
+	store := &fakeRunStore{finishErr: errors.New("db down")}
+	newTestRun(store, "run-1")
+	source := &fakeProductSource{products: []domainsearch.Product{{ID: "p1"}}}
+	h := searchApp.NewReindexHandler(store, source, &fakeSearchEngine{}, logger.New("error"))
+
+	job := domainjobs.Job{ID: "job-1", Type: searchApp.JobType, Payload: map[string]interface{}{"run_id": "run-1"}, Attempts: 3, MaxRetries: 3}
+	if err := h.Handle(context.Background(), job); err == nil {
+		t.Fatal("expected Handle to return an error")
+	}
+	if store.runs["run-1"].Status != domainsearch.RunStatusProcessing {
+		t.Errorf("run status = %q, want still processing (every Finish attempt failed — nothing could be persisted)", store.runs["run-1"].Status)
+	}
+}
+
+// TestReindexHandler_Handle_FailIfTerminalFinishRetriesThenSucceeds pins
+// finishWithRetry's retry behavior on the failIfTerminal path too (not
+// just the completed path): a terminal-attempt Finish(failed) call that
+// fails transiently must still end up persisted as failed.
+func TestReindexHandler_Handle_FailIfTerminalFinishRetriesThenSucceeds(t *testing.T) {
+	store := &fakeRunStore{finishErr: errors.New("deadlock detected"), finishFailTimes: 2}
+	newTestRun(store, "run-1")
+	source := &fakeProductSource{products: []domainsearch.Product{{ID: "p1"}, {ID: "p2"}}}
+	engine := &fakeSearchEngine{failID: "p2", failErr: errors.New("index down")}
+	h := searchApp.NewReindexHandler(store, source, engine, logger.New("error"))
+
+	err := h.Handle(context.Background(), finalAttemptJob("run-1"))
+	if err == nil {
+		t.Fatal("expected the indexing error to propagate")
+	}
+	if store.runs["run-1"].Status != domainsearch.RunStatusFailed {
+		t.Errorf("run status = %q, want failed (Finish should have recovered within its retry budget)", store.runs["run-1"].Status)
+	}
+}
