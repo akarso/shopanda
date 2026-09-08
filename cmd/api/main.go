@@ -108,6 +108,8 @@ func run() error {
 			return runSeed(cfg, log)
 		case "search:reindex":
 			return runSearchReindex(os.Stdout, cfg, log, os.Args[2:])
+		case "search:reindex-runs:reconcile":
+			return runSearchReindexRunsReconcile(os.Stdout, cfg, log, os.Args[2:])
 		case "config:export":
 			return runConfigExport(cfg, log)
 		case "config:import":
@@ -262,6 +264,13 @@ func runServe(cfg *config.Config, log logger.Logger, embedScheduler bool) error 
 		runtime.RegisterCartRecovery(rt.jobQueue, log, sched)
 		runtime.RegisterAuditRetention(rt.jobQueue, log, sched)
 		runtime.RegisterReservationExpiry(rt.jobQueue, log, sched)
+		if cfg.Queue.Driver == "postgres" {
+			// setupWorker only registers a handler for this job type under
+			// queue.driver=postgres (see its own comment) — skip enqueueing
+			// it here too, or a broker-backed deployment's worker would
+			// just log "no handler registered" and fail the job every tick.
+			runtime.RegisterReindexReconcile(rt.jobQueue, log, sched)
+		}
 		if err := integrationApp.RegisterSyncJobCronTriggers(rt.pluginApp, rt.jobQueue, sched, log); err != nil {
 			shutdownTracing()
 			rbac.UnbindRuntime()
@@ -684,6 +693,8 @@ Commands:
   migrate              Run database migrations
   seed                 Seed the database with initial data
   search:reindex       Re-index all products in the search engine ([--wait])
+  search:reindex-runs:reconcile <run-id> --reason=<text>
+                       Manually flip a stuck "processing" reindex run to "failed"
   config:export        Export configuration to stdout (YAML)
   config:import <file> Import configuration from a YAML file
   import:products <f>  Import products from a CSV file
@@ -836,6 +847,32 @@ func setupWorker(conn *sql.DB, cfg *config.Config, log logger.Logger, app *plugi
 		return nil, nil, nil, err
 	}
 	jobWorker.Register(searchApp.NewReindexHandler(searchIndexRunRepo, searchProductSource, searchEngine, log))
+
+	// ReconcileHandler's ReindexJobFinder queries the "jobs" table directly
+	// (not through the jobs.Queue port) — meaningful only when that table
+	// is actually the queue's source of truth, i.e. queue.driver=postgres.
+	// A broker-backed queue (redis/rabbitmq/kafka/sqs) leaves this table
+	// empty regardless of what jobs are really running, which would make
+	// FindReindexJobByRunID report "no job found" for every live job and
+	// the sweep would then incorrectly mark still-running runs failed —
+	// the same Postgres-queue-only constraint jobs.Reader/jobs.Admin
+	// already have (see jobs_cli.go's newJobsService). Registering the
+	// handler only under queue.driver=postgres avoids that false positive
+	// outright; RegisterReindexReconcile is skipped to match (no point
+	// enqueueing a job type no handler in this process can run) — see its
+	// call sites. search:reindex-runs:reconcile (the manual CLI) is
+	// unaffected: it only touches search_index_runs, never the jobs table.
+	if cfg.Queue.Driver == "postgres" {
+		reindexJobFinder, err := postgres.NewReindexJobFinder(conn)
+		if err != nil {
+			return nil, nil, nil, err
+		}
+		jobWorker.Register(searchApp.NewReconcileHandler(searchIndexRunRepo, reindexJobFinder, log))
+	} else {
+		log.Info("search.reindex.reconcile.disabled", map[string]interface{}{
+			"reason": fmt.Sprintf("queue.driver=%q, not postgres — job introspection has no equivalent for a broker-backed queue", cfg.Queue.Driver),
+		})
+	}
 
 	return jobWorker, jobQueue, appCache, nil
 }

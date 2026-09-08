@@ -223,6 +223,7 @@ For a complete operator-focused setup, including Docker, health checks, and envi
 | `scheduler` | Start the cron scheduler |
 | `seed` | Run seed data framework |
 | `search:reindex` | Re-index all products in the search engine — enqueues a `search.reindex` job and returns immediately; add `--wait` to block until the worker finishes it |
+| `search:reindex-runs:reconcile <run-id> --reason=<text>` | Manually flip a reindex run stuck `processing` to `failed`, for a run the automatic reconciliation sweep can't safely judge on its own |
 | `config:export` | Export configuration to stdout as YAML |
 | `config:import <file.yaml>` | Import configuration from YAML |
 | `import:products <file.csv>` | Bulk import products from CSV |

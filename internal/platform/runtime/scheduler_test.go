@@ -7,6 +7,7 @@ import (
 	adminApp "github.com/akarso/shopanda/internal/application/admin"
 	cacheApp "github.com/akarso/shopanda/internal/application/cache"
 	inventoryApp "github.com/akarso/shopanda/internal/application/inventory"
+	searchApp "github.com/akarso/shopanda/internal/application/search"
 	"github.com/akarso/shopanda/internal/domain/jobs"
 	"github.com/akarso/shopanda/internal/domain/scheduler"
 	"github.com/akarso/shopanda/internal/platform/logger"
@@ -121,6 +122,30 @@ func TestRegisterReservationExpiry(t *testing.T) {
 	}
 	if queue.enqueued[0].Type != inventoryApp.ReservationExpiryJobType {
 		t.Fatalf("job type = %q, want %q", queue.enqueued[0].Type, inventoryApp.ReservationExpiryJobType)
+	}
+}
+
+func TestRegisterReindexReconcile(t *testing.T) {
+	sched := &stubScheduler{}
+	queue := &recordingQueue{}
+	runtime.RegisterReindexReconcile(queue, logger.New("error"), sched)
+
+	if len(sched.tasks) != 1 {
+		t.Fatalf("tasks len = %d, want 1", len(sched.tasks))
+	}
+	task := sched.tasks[0]
+	if task.name != "search.reindex.reconcile" {
+		t.Fatalf("task name = %q, want search.reindex.reconcile", task.name)
+	}
+	if task.schedule != "*/30 * * * *" {
+		t.Fatalf("task schedule = %q, want */30 * * * *", task.schedule)
+	}
+	task.fn()
+	if len(queue.enqueued) != 1 {
+		t.Fatalf("enqueued len = %d, want 1", len(queue.enqueued))
+	}
+	if queue.enqueued[0].Type != searchApp.ReconcileJobType {
+		t.Fatalf("job type = %q, want %q", queue.enqueued[0].Type, searchApp.ReconcileJobType)
 	}
 }
 
