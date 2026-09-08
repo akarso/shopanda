@@ -23,7 +23,8 @@ import (
 )
 
 // registerSchedulerTasks registers every core scheduled task (cache
-// cleanup, cart recovery, audit retention, reservation expiry) plus any
+// cleanup, cart recovery, audit retention, reservation expiry, search
+// reindex-run reconciliation) plus any
 // plugin-registered cron-triggered sync jobs onto sched. This is the
 // single source of truth both runScheduler (the long-running standalone
 // process, main.go) and runScheduleTrigger (the one-shot CLI invocation
@@ -39,6 +40,7 @@ func registerSchedulerTasks(pluginApp *plugin.App, jobQueue domainjobs.Queue, lo
 	runtime.RegisterCartRecovery(jobQueue, log, sched)
 	runtime.RegisterAuditRetention(jobQueue, log, sched)
 	runtime.RegisterReservationExpiry(jobQueue, log, sched)
+	runtime.RegisterReindexReconcile(jobQueue, log, sched)
 	if err := integrationApp.RegisterSyncJobCronTriggers(pluginApp, jobQueue, sched, log); err != nil {
 		return fmt.Errorf("sync job cron triggers: %w", err)
 	}

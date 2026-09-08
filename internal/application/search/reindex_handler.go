@@ -2,6 +2,7 @@ package search
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"time"
 
@@ -126,6 +127,15 @@ func (h *ReindexHandler) Handle(ctx context.Context, job domainjobs.Job) error {
 // finishWithRetry calls RunStore.Finish, retrying a handful of times with
 // a short delay on failure — see finishRetries/finishRetryDelay. Returns
 // the last error if every attempt fails.
+//
+// domainsearch.ErrRunNotProcessing is treated as success, not a failure to
+// retry: Finish is a conditional update guarded on the run still being
+// "processing" (see its doc comment), so this specific error means some
+// other caller — most likely the reconciliation sweep — already finished
+// the run while this handler was still working. Retrying wouldn't change
+// that outcome, and from this handler's own perspective the run already
+// has a terminal status, which is the invariant it cares about; it's
+// simply not necessarily the status *this* attempt wanted to set.
 func (h *ReindexHandler) finishWithRetry(ctx context.Context, runID string, status domainsearch.RunStatus, lastErr string) error {
 	var err error
 	for attempt := 0; attempt < finishRetries; attempt++ {
@@ -136,7 +146,15 @@ func (h *ReindexHandler) finishWithRetry(ctx context.Context, runID string, stat
 			case <-time.After(finishRetryDelay):
 			}
 		}
-		if err = h.runs.Finish(ctx, runID, status, lastErr); err == nil {
+		err = h.runs.Finish(ctx, runID, status, lastErr)
+		if err == nil {
+			return nil
+		}
+		if errors.Is(err, domainsearch.ErrRunNotProcessing) {
+			h.log.Info("search.reindex.finish_skipped_already_terminal", map[string]interface{}{
+				"run_id":           runID,
+				"attempted_status": string(status),
+			})
 			return nil
 		}
 	}

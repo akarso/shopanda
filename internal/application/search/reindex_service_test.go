@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"testing"
+	"time"
 
 	searchApp "github.com/akarso/shopanda/internal/application/search"
 	domainjobs "github.com/akarso/shopanda/internal/domain/jobs"
@@ -25,6 +26,24 @@ type fakeRunStore struct {
 	finishErr       error
 	finishFailTimes int
 	finishCalls     int
+
+	// staleRuns/staleErr back FindStaleProcessing directly — the fake
+	// doesn't derive staleness from runs/started_at itself, tests set up
+	// exactly what a "stale" query should return.
+	staleRuns      []domainsearch.Run
+	staleErr       error
+	findStaleLimit int
+}
+
+// findStaleLimit records the limit passed to the most recent
+// FindStaleProcessing call, so tests can assert the sweep bounds its own
+// query rather than reading unboundedly.
+func (f *fakeRunStore) FindStaleProcessing(_ context.Context, _ time.Time, limit int) ([]domainsearch.Run, error) {
+	f.findStaleLimit = limit
+	if f.staleErr != nil {
+		return nil, f.staleErr
+	}
+	return f.staleRuns, nil
 }
 
 func (f *fakeRunStore) Create(_ context.Context, run domainsearch.Run) error {
@@ -53,6 +72,10 @@ func (f *fakeRunStore) UpdateProgress(_ context.Context, id string, total, proce
 	return nil
 }
 
+// Finish mirrors SearchIndexRunRepo.Finish's conditional-update contract:
+// it only actually transitions a run currently "processing", returning
+// domainsearch.ErrRunNotProcessing otherwise (found but not processing) so
+// tests can exercise the same race-guard behavior callers depend on.
 func (f *fakeRunStore) Finish(_ context.Context, id string, status domainsearch.RunStatus, lastErr string) error {
 	f.finishCalls++
 	if f.finishErr != nil && (f.finishFailTimes <= 0 || f.finishCalls <= f.finishFailTimes) {
@@ -61,6 +84,9 @@ func (f *fakeRunStore) Finish(_ context.Context, id string, status domainsearch.
 	r := f.runs[id]
 	if r == nil {
 		return errors.New("no such run")
+	}
+	if r.Status != domainsearch.RunStatusProcessing {
+		return domainsearch.ErrRunNotProcessing
 	}
 	r.Status = status
 	r.LastError = lastErr

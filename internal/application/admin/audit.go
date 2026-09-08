@@ -148,6 +148,9 @@ const (
 	AuditScheduleTrigger AuditAction = "schedule.trigger"
 	AuditScheduleEnable  AuditAction = "schedule.enable"
 	AuditScheduleDisable AuditAction = "schedule.disable"
+
+	// Search reindex run reconciliation (PR-1048)
+	AuditSearchReindexRunReconcile AuditAction = "search_reindex_run.reconcile"
 )
 
 // AuditEntry represents a single admin audit log entry.

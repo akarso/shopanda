@@ -108,6 +108,8 @@ func run() error {
 			return runSeed(cfg, log)
 		case "search:reindex":
 			return runSearchReindex(os.Stdout, cfg, log, os.Args[2:])
+		case "search:reindex-runs:reconcile":
+			return runSearchReindexRunsReconcile(os.Stdout, cfg, log, os.Args[2:])
 		case "config:export":
 			return runConfigExport(cfg, log)
 		case "config:import":
@@ -262,6 +264,7 @@ func runServe(cfg *config.Config, log logger.Logger, embedScheduler bool) error 
 		runtime.RegisterCartRecovery(rt.jobQueue, log, sched)
 		runtime.RegisterAuditRetention(rt.jobQueue, log, sched)
 		runtime.RegisterReservationExpiry(rt.jobQueue, log, sched)
+		runtime.RegisterReindexReconcile(rt.jobQueue, log, sched)
 		if err := integrationApp.RegisterSyncJobCronTriggers(rt.pluginApp, rt.jobQueue, sched, log); err != nil {
 			shutdownTracing()
 			rbac.UnbindRuntime()
@@ -684,6 +687,8 @@ Commands:
   migrate              Run database migrations
   seed                 Seed the database with initial data
   search:reindex       Re-index all products in the search engine ([--wait])
+  search:reindex-runs:reconcile <run-id> --reason=<text>
+                       Manually flip a stuck "processing" reindex run to "failed"
   config:export        Export configuration to stdout (YAML)
   config:import <file> Import configuration from a YAML file
   import:products <f>  Import products from a CSV file
@@ -836,6 +841,12 @@ func setupWorker(conn *sql.DB, cfg *config.Config, log logger.Logger, app *plugi
 		return nil, nil, nil, err
 	}
 	jobWorker.Register(searchApp.NewReindexHandler(searchIndexRunRepo, searchProductSource, searchEngine, log))
+
+	reindexJobFinder, err := postgres.NewReindexJobFinder(conn)
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	jobWorker.Register(searchApp.NewReconcileHandler(searchIndexRunRepo, reindexJobFinder, log))
 
 	return jobWorker, jobQueue, appCache, nil
 }
