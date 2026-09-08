@@ -312,6 +312,34 @@ func TestReindexHandler_Handle_FinishCompletedFailsPermanently_TerminalAttempt(t
 	}
 }
 
+// TestReindexHandler_Handle_CompletedRecoversWithinTerminalBudget pins the
+// fix for a case the dual retry budgets (finishRetries vs. the longer
+// finishTerminalRetries) could otherwise get wrong: if every attempt
+// within the short finishRetries budget fails to persist "completed" but
+// the store recovers within the longer finishTerminalRetries budget on
+// the job's last allowed attempt, the run must end up "completed" — the
+// reindex genuinely succeeded — not "failed". Reusing failIfTerminal for
+// this retry (which always writes RunStatusFailed) would have let the
+// longer-budget write succeed at persisting the wrong status.
+func TestReindexHandler_Handle_CompletedRecoversWithinTerminalBudget(t *testing.T) {
+	store := &fakeRunStore{finishErr: errors.New("deadlock detected"), finishFailTimes: 4}
+	newTestRun(store, "run-1")
+	source := &fakeProductSource{products: []domainsearch.Product{{ID: "p1"}}}
+	h := searchApp.NewReindexHandler(store, source, &fakeSearchEngine{}, logger.New("error"))
+
+	err := h.Handle(context.Background(), finalAttemptJob("run-1"))
+	if err != nil {
+		t.Fatalf("Handle: %v (want the terminal-budget retry to recover and report success)", err)
+	}
+	run := store.runs["run-1"]
+	if run.Status != domainsearch.RunStatusCompleted {
+		t.Errorf("run status = %q, want completed — the reindex succeeded, only persisting that fact was briefly delayed", run.Status)
+	}
+	if run.LastError != "" {
+		t.Errorf("LastError = %q, want empty for a completed run", run.LastError)
+	}
+}
+
 // TestReindexHandler_Handle_FailIfTerminalFinishRetriesThenSucceeds pins
 // finishWithRetry's retry behavior on the failIfTerminal path too (not
 // just the completed path): a terminal-attempt Finish(failed) call that
