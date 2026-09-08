@@ -17,13 +17,28 @@ const reindexBatchSize = 100
 // finishRetries/finishRetryDelay bound a small in-process retry for a
 // Finish call that itself fails to persist — see finishWithRetry. A
 // transient DB blip on the one write that actually finalizes a run's
-// status is worth a few quick retries: on the completed path there's no
-// other chance to correct it without redoing the whole scan, and on the
-// terminal-failure path (job.Attempts already exhausted) there is no
-// queue-level retry left to fall back on either.
+// status is worth a few quick retries: on the completed path a failure
+// still gets another chance via the job's own retry (failIfTerminal
+// leaves the run "processing" for the next attempt), so this budget only
+// needs to cover a brief blip, not a real outage.
+//
+// finishTerminalRetries/finishTerminalRetryDelay is the larger budget used
+// only in failIfTerminal's terminal branch (job.Attempts >= job.MaxRetries)
+// — there is no next job attempt to fall back on there: once this write
+// gives up, the run row has nothing left that will ever call Finish for it
+// again (the job itself is about to be marked permanently done by the
+// queue regardless of whether this write ever succeeds). It's worth
+// trying noticeably harder before accepting that outcome. This reduces,
+// but cannot fully eliminate, the residual case where RunStore is
+// unavailable for the entire terminal window — see failIfTerminal's doc
+// comment and RUNBOOK.md's "Search reindex" section for what's left to do
+// if it happens anyway.
 const (
 	finishRetries    = 3
 	finishRetryDelay = 50 * time.Millisecond
+
+	finishTerminalRetries    = 5
+	finishTerminalRetryDelay = 200 * time.Millisecond
 )
 
 // Logger is the logging interface used by ReindexHandler.
@@ -102,7 +117,7 @@ func (h *ReindexHandler) Handle(ctx context.Context, job domainjobs.Job) error {
 		}
 	}
 
-	if err := h.finishWithRetry(ctx, runID, domainsearch.RunStatusCompleted, ""); err != nil {
+	if err := h.finishWithRetry(ctx, runID, domainsearch.RunStatusCompleted, "", finishRetries, finishRetryDelay); err != nil {
 		// Indexing itself succeeded, but we could not persist that fact —
 		// completing the job here regardless would leave the run row
 		// stuck at "processing" forever (nothing else will ever call
@@ -123,17 +138,16 @@ func (h *ReindexHandler) Handle(ctx context.Context, job domainjobs.Job) error {
 	return nil
 }
 
-// finishWithRetry calls RunStore.Finish, retrying a handful of times with
-// a short delay on failure — see finishRetries/finishRetryDelay. Returns
-// the last error if every attempt fails.
-func (h *ReindexHandler) finishWithRetry(ctx context.Context, runID string, status domainsearch.RunStatus, lastErr string) error {
+// finishWithRetry calls RunStore.Finish, retrying up to retries times
+// (delay apart) on failure. Returns the last error if every attempt fails.
+func (h *ReindexHandler) finishWithRetry(ctx context.Context, runID string, status domainsearch.RunStatus, lastErr string, retries int, delay time.Duration) error {
 	var err error
-	for attempt := 0; attempt < finishRetries; attempt++ {
+	for attempt := 0; attempt < retries; attempt++ {
 		if attempt > 0 {
 			select {
 			case <-ctx.Done():
 				return ctx.Err()
-			case <-time.After(finishRetryDelay):
+			case <-time.After(delay):
 			}
 		}
 		if err = h.runs.Finish(ctx, runID, status, lastErr); err == nil {
@@ -155,6 +169,19 @@ func (h *ReindexHandler) finishWithRetry(ctx context.Context, runID string, stat
 // eager version of this method did exactly that. A non-terminal failure
 // is only logged here; the run stays "processing" for the next attempt
 // to either complete or, on the final attempt, fail for real.
+//
+// Residual gap on the terminal branch: if finishWithRetry's larger
+// finishTerminalRetries/finishTerminalRetryDelay budget is still
+// exhausted (RunStore unavailable for that whole window), the job is
+// about to be marked permanently failed by the queue regardless, and
+// nothing will ever call Finish for this run again — it's left
+// "processing" with no automatic path back to a terminal status. This is
+// the same class of gap this PR's spec already accepts for a worker
+// process crashing mid-run (see RUNBOOK.md's "Search reindex" section):
+// rare, requires direct DB reconciliation (no CLI mutation exists for a
+// run's status yet), and not solved here — an automatic reconciliation
+// sweep is a real follow-up, not something to build inline in this
+// already-best-effort method.
 func (h *ReindexHandler) failIfTerminal(ctx context.Context, runID string, job domainjobs.Job, cause error) {
 	if job.Attempts < job.MaxRetries {
 		h.log.Info("search.reindex.attempt_failed_will_retry", map[string]interface{}{
@@ -166,7 +193,7 @@ func (h *ReindexHandler) failIfTerminal(ctx context.Context, runID string, job d
 		})
 		return
 	}
-	if err := h.finishWithRetry(ctx, runID, domainsearch.RunStatusFailed, cause.Error()); err != nil {
+	if err := h.finishWithRetry(ctx, runID, domainsearch.RunStatusFailed, cause.Error(), finishTerminalRetries, finishTerminalRetryDelay); err != nil {
 		h.log.Error("search.reindex.finish_failed", err, map[string]interface{}{"run_id": runID})
 	}
 }
