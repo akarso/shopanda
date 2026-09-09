@@ -450,6 +450,41 @@ func TestReindexHandler_Handle_ScopedRun_IndexesOnlyGivenProductIDs(t *testing.T
 	}
 }
 
+// TestReindexHandler_Handle_ScopedRun_DeletedProductShrinksTotal pins the
+// fix for a mismatched-progress bug: total was set once, upfront, to the
+// requested ID count — if a product was deleted between
+// ReindexService.Trigger resolving the scope and this batch actually
+// running, ListByIDs simply omits it (not an error, per its own doc
+// comment), leaving a genuinely successful "completed" run permanently
+// reporting e.g. "1/2" instead of the honest "1/1". total must shrink to
+// match what was actually found, so processed == total once the run
+// completes.
+func TestReindexHandler_Handle_ScopedRun_DeletedProductShrinksTotal(t *testing.T) {
+	store := &fakeRunStore{}
+	newTestRun(store, "run-1")
+	source := &fakeProductSource{
+		// Only "p1" actually exists — "p2" is requested but was deleted
+		// before this batch ran.
+		byID: map[string]domainsearch.Product{
+			"p1": {ID: "p1"},
+		},
+	}
+	engine := &fakeSearchEngine{}
+	h := searchApp.NewReindexHandler(store, source, engine, logger.New("error"))
+
+	if err := h.Handle(context.Background(), scopedJob("run-1", []string{"p1", "p2"})); err != nil {
+		t.Fatalf("Handle: %v", err)
+	}
+
+	run := store.runs["run-1"]
+	if run.Status != domainsearch.RunStatusCompleted {
+		t.Errorf("run status = %q, want completed", run.Status)
+	}
+	if run.ProcessedCount != 1 || run.TotalCount != 1 {
+		t.Errorf("run counts = processed=%d total=%d, want 1/1 (total shrunk to match what was actually found, not a permanent 1/2)", run.ProcessedCount, run.TotalCount)
+	}
+}
+
 // TestReindexHandler_Handle_ScopedRun_MissingProductIDsPayloadErrors pins
 // scopedProductIDs' defensive check: a "products" scope with no
 // "product_ids" array at all (a malformed or hand-built payload) is a

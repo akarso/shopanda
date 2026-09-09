@@ -165,7 +165,8 @@ Phase 12's own Track F (index/CSV/GraphQL/GUI closeout) explicitly depends on th
 | 1031 | A | done |
 | 1032 | A | done |
 | 1033 | B | done |
-| 1034–1038 | B | planned |
+| 1034 | B | done |
+| 1035–1038 | B | planned |
 | 1039–1043 | C | planned |
 | 1044–1047 | D | planned |
 

@@ -2,6 +2,7 @@ package config
 
 import (
 	"fmt"
+	"math"
 	"net"
 	"net/url"
 	"os"
@@ -122,6 +123,17 @@ func validateStoreCredit(s *StoreCreditConfig) error {
 // this is caught at startup rather than surfacing as "partial reindex
 // scoping doesn't behave as documented" with no error anywhere.
 func validateSearch(s *SearchConfig) error {
+	// NaN checked explicitly, not folded into the range comparison below:
+	// every comparison with NaN (<, >, ==) is false per IEEE 754, so
+	// "NaN < 0 || NaN > 1" would silently pass a NaN threshold straight
+	// through — which would then make applyThreshold's own
+	// "ratio > fullScanThreshold" comparison always false too, silently
+	// disabling the threshold heuristic entirely with no error anywhere.
+	// YAML's `.nan` literal (or an env var of "nan") is a real way to
+	// reach this, not just a theoretical edge case.
+	if math.IsNaN(s.ReindexFullScanThreshold) {
+		return fmt.Errorf("config: search.reindex_full_scan_threshold must not be NaN")
+	}
 	if s.ReindexFullScanThreshold < 0 || s.ReindexFullScanThreshold > 1 {
 		return fmt.Errorf("config: search.reindex_full_scan_threshold=%v must be between 0 and 1", s.ReindexFullScanThreshold)
 	}

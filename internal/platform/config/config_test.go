@@ -1929,6 +1929,47 @@ func TestSearchConfig_ReindexFullScanThresholdEnvOverlay(t *testing.T) {
 	}
 }
 
+// TestSearchConfig_ReindexFullScanThresholdNegativeEnvOverlayRejected
+// mirrors TestStoreCreditConfig_NegativeEnvOverlayRejected: a negative
+// override from the environment must hit the same validateSearch error a
+// negative YAML value gets, not be silently dropped in favor of whatever
+// was already configured — every successfully parsed env value is
+// assigned, and validateSearch (run after applyEnv) is what actually
+// enforces the [0, 1] range, identically regardless of source.
+func TestSearchConfig_ReindexFullScanThresholdNegativeEnvOverlayRejected(t *testing.T) {
+	withTestBaseURL(t)
+	path := writeYAML(t, "")
+
+	t.Setenv("SHOPANDA_SEARCH_REINDEX_FULL_SCAN_THRESHOLD", "-0.5")
+
+	_, err := loadCfg(t, path)
+	if err == nil || !strings.Contains(err.Error(), "reindex_full_scan_threshold") {
+		t.Fatalf("err = %v, want a search.reindex_full_scan_threshold validation error from the env override", err)
+	}
+}
+
+// TestSearchConfig_ReindexFullScanThresholdNaNRejected pins the fix for a
+// gap every comparison-based range check has: NaN < 0 and NaN > 1 are
+// both false (IEEE 754), so a plain range check alone would silently let
+// a NaN threshold through — which would then make applyThreshold's own
+// "ratio > threshold" comparison always false too, disabling the
+// threshold heuristic entirely with no error anywhere. YAML's `.nan`
+// literal is a real way to reach this from configuration, not just a
+// theoretical value.
+func TestSearchConfig_ReindexFullScanThresholdNaNRejected(t *testing.T) {
+	withTestBaseURL(t)
+	yaml := `
+search:
+  reindex_full_scan_threshold: .nan
+`
+	path := writeYAML(t, yaml)
+
+	_, err := loadCfg(t, path)
+	if err == nil || !strings.Contains(err.Error(), "reindex_full_scan_threshold") {
+		t.Fatalf("err = %v, want a search.reindex_full_scan_threshold validation error for a NaN value", err)
+	}
+}
+
 func TestStripeConfig_EnabledWithoutSecretKeyRejected(t *testing.T) {
 	withTestBaseURL(t)
 	yaml := `

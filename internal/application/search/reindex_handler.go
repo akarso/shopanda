@@ -138,6 +138,19 @@ func (h *ReindexHandler) Handle(ctx context.Context, job domainjobs.Job) error {
 				h.failIfTerminal(ctx, runID, job, wrapped)
 				return wrapped
 			}
+			if missing := (end - offset) - len(products); missing > 0 {
+				// Some of this batch's requested IDs no longer matched
+				// any product — deleted between ReindexService.Trigger
+				// resolving the scope and this batch actually running
+				// (see ListByIDs' own doc comment: a missing ID is
+				// dropped from the result, not an error). Shrink total to
+				// match — indexBatch's own trailing UpdateProgress call
+				// below picks up the corrected value — so a run that
+				// finds fewer products than originally requested still
+				// reports processed == total on completion, instead of a
+				// permanently-short "11/12".
+				total -= missing
+			}
 			if err := indexBatch(products); err != nil {
 				h.failIfTerminal(ctx, runID, job, err)
 				return err

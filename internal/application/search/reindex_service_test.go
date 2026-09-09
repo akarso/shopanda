@@ -2,6 +2,7 @@ package search_test
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"testing"
 	"time"
@@ -373,6 +374,44 @@ func TestReindexService_Trigger_EmptyResolutionSkipsCountAll(t *testing.T) {
 
 	if _, err := svc.Trigger(context.Background(), searchApp.ScopeCategories{IDs: []string{"cat-1"}}); err != nil {
 		t.Fatalf("Trigger: %v (CountAll should not have been consulted for an empty resolved scope)", err)
+	}
+}
+
+// TestReindexService_Trigger_EmptyResolvedScope_ProductIDsSurvivesJSONRoundTrip
+// pins the fix for a bug fakeQueue's in-memory Enqueue can't otherwise
+// catch: a nil []string (Go's zero value, easy to produce from an empty
+// resolution) marshals to JSON `null`, and decoding `null` back into a
+// job payload's generic map[string]interface{} gives an untyped nil, not
+// an empty []interface{} — so scopedProductIDs' own
+// `.([]interface{})` type assertion would fail and the job would error
+// with "requires a product_ids array" instead of completing a
+// legitimate, if trivial, 0/0 run. Proven here by actually round-tripping
+// the enqueued payload through encoding/json, the same transformation a
+// real Postgres JSONB column applies.
+func TestReindexService_Trigger_EmptyResolvedScope_ProductIDsSurvivesJSONRoundTrip(t *testing.T) {
+	queue := &fakeQueue{}
+	products := &fakeProductSource{categoryProductIDs: nil} // resolves to zero matches
+	svc, _ := searchApp.NewReindexService(&fakeRunStore{}, products, queue, logger.New("error"), defaultThreshold)
+
+	if _, err := svc.Trigger(context.Background(), searchApp.ScopeCategories{IDs: []string{"cat-1"}}); err != nil {
+		t.Fatalf("Trigger: %v", err)
+	}
+
+	raw, err := json.Marshal(queue.enqueued[0].Payload)
+	if err != nil {
+		t.Fatalf("marshal payload: %v", err)
+	}
+	var decoded map[string]interface{}
+	if err := json.Unmarshal(raw, &decoded); err != nil {
+		t.Fatalf("unmarshal payload: %v", err)
+	}
+
+	ids, ok := decoded["product_ids"].([]interface{})
+	if !ok {
+		t.Fatalf("product_ids decoded as %T (%v), want []interface{} (an empty JSON array, not null)", decoded["product_ids"], decoded["product_ids"])
+	}
+	if len(ids) != 0 {
+		t.Errorf("product_ids = %v, want empty", ids)
 	}
 }
 

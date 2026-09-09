@@ -213,7 +213,17 @@ func (s *ReindexService) applyThreshold(ctx context.Context, requestedParams map
 		// Nothing matched — still a valid, if empty, scoped run (the
 		// handler's total_count will just be 0); no need to consult the
 		// catalog size for a threshold comparison against zero.
-		return reindexScopeProducts, requestedParams, resolvedIDs, nil
+		//
+		// Returns an allocated empty slice, not resolvedIDs itself (which
+		// can be a nil []string here — e.g. ProductIDsByCategory found no
+		// matches): a nil slice marshals to JSON `null`, and
+		// scopedProductIDs' own `.([]interface{})` type assertion on a
+		// decoded `null` fails (a JSON null decodes to an untyped nil
+		// interface, not an empty slice) — which would make the job fail
+		// with "requires a product_ids array" instead of completing a
+		// legitimate, if trivial, 0/0 run. `[]string{}` marshals to `[]`
+		// and round-trips correctly.
+		return reindexScopeProducts, requestedParams, []string{}, nil
 	}
 	if len(resolvedIDs) > maxScopedReindexProductIDs {
 		return reindexScopeAll, requestedParams, nil, nil

@@ -1231,14 +1231,15 @@ func applyEnv(cfg *Config) {
 		}
 	}
 	if v := os.Getenv("SHOPANDA_SEARCH_REINDEX_FULL_SCAN_THRESHOLD"); v != "" {
-		// f >= 0, not f > 0: 0 is a deliberate "always substitute a full
-		// scan" value (see validateSearch), same reasoning as
-		// SHOPANDA_TRACING_SAMPLE_RATIO above. A value above 1 still
-		// passes this guard and reaches validateSearch, which rejects it
-		// by name; a negative value is simply ignored here (leaving
-		// whatever YAML/default was already set), matching
-		// SAMPLE_RATIO's own precedent for a negative override.
-		if f, err := strconv.ParseFloat(v, 64); err == nil && f >= 0 {
+		// No range guard here, unlike SHOPANDA_TRACING_SAMPLE_RATIO above:
+		// every successfully parsed value is assigned, including a
+		// negative one, matching SHOPANDA_STORE_CREDIT_MAX_ISSUE_AMOUNT's
+		// own precedent ("a negative override should hit the same
+		// validate error as a negative YAML value, not be silently
+		// dropped in favor of whatever was already configured").
+		// validateSearch (run after applyEnv) is what actually rejects an
+		// out-of-[0,1]-range value, from either source, identically.
+		if f, err := strconv.ParseFloat(v, 64); err == nil {
 			cfg.Search.ReindexFullScanThreshold = f
 		}
 	}
