@@ -8,6 +8,7 @@ import (
 
 	domainjobs "github.com/akarso/shopanda/internal/domain/jobs"
 	domainsearch "github.com/akarso/shopanda/internal/domain/search"
+	"github.com/akarso/shopanda/internal/platform/apperror"
 	"github.com/akarso/shopanda/internal/platform/id"
 )
 
@@ -157,7 +158,7 @@ func (s *ReindexService) resolveScope(ctx context.Context, scope Scope) (runScop
 			return "", nil, nil, fmt.Errorf("scope: products: %w", err)
 		}
 		if len(ids) == 0 {
-			return "", nil, nil, fmt.Errorf("scope: products: at least one product id is required")
+			return "", nil, nil, fmt.Errorf("scope: products: %w", apperror.Validation("at least one product id is required"))
 		}
 		requested := map[string]interface{}{"requested_scope": "products", "product_ids": ids}
 		return s.applyThreshold(ctx, requested, ids)
@@ -168,7 +169,7 @@ func (s *ReindexService) resolveScope(ctx context.Context, scope Scope) (runScop
 			return "", nil, nil, fmt.Errorf("scope: categories: %w", err)
 		}
 		if len(catIDs) == 0 {
-			return "", nil, nil, fmt.Errorf("scope: categories: at least one category id is required")
+			return "", nil, nil, fmt.Errorf("scope: categories: %w", apperror.Validation("at least one category id is required"))
 		}
 		ids, err := s.products.ProductIDsByCategory(ctx, catIDs)
 		if err != nil {
@@ -179,7 +180,7 @@ func (s *ReindexService) resolveScope(ctx context.Context, scope Scope) (runScop
 
 	case ScopeSince:
 		if sc.Since.IsZero() {
-			return "", nil, nil, fmt.Errorf("scope: since: a non-zero timestamp is required")
+			return "", nil, nil, fmt.Errorf("scope: since: %w", apperror.Validation("a non-zero timestamp is required"))
 		}
 		ids, err := s.products.ProductIDsUpdatedSince(ctx, sc.Since)
 		if err != nil {
@@ -256,10 +257,10 @@ func normalizeProductIDs(ids []string) ([]string, error) {
 	for _, raw := range ids {
 		v := strings.TrimSpace(raw)
 		if v == "" {
-			return nil, fmt.Errorf("product id must not be blank")
+			return nil, apperror.Validation("product id must not be blank")
 		}
 		if !id.IsValid(v) {
-			return nil, fmt.Errorf("product id %q is not a valid UUID", v)
+			return nil, apperror.Validation(fmt.Sprintf("product id %q is not a valid UUID", v))
 		}
 		if _, dup := seen[v]; dup {
 			continue
@@ -280,7 +281,7 @@ func normalizeCategoryIDs(ids []string) ([]string, error) {
 	for _, raw := range ids {
 		v := strings.TrimSpace(raw)
 		if v == "" {
-			return nil, fmt.Errorf("category id must not be blank")
+			return nil, apperror.Validation("category id must not be blank")
 		}
 		if _, dup := seen[v]; dup {
 			continue

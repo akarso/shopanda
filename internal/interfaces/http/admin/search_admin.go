@@ -65,6 +65,17 @@ func (h *SearchAdminHandler) audit(r *http.Request, action adminapp.AuditAction,
 	})
 }
 
+// maxReindexRequestIDs bounds the "ids" array on an incoming request,
+// rejected before cleanIDs' loop (let alone ReindexService's own
+// normalization) ever runs over it — defense in depth against a
+// pathologically large array within the global body-size limit
+// (cmd/api/wire_routes.go's BodyLimitMiddleware, which already bounds the
+// request generally). Mirrors application/search's own
+// maxScopedReindexProductIDs (10,000) — that constant is unexported in
+// that package and applies later, after resolution/dedup; this is the
+// same number applied as an earlier, cheaper input guard.
+const maxReindexRequestIDs = 10_000
+
 type reindexTriggerRequest struct {
 	Scope string   `json:"scope"`
 	IDs   []string `json:"ids"`
@@ -183,12 +194,21 @@ func (h *SearchAdminHandler) triggerSingleProduct(w http.ResponseWriter, r *http
 
 // triggerBulk enqueues scope via ReindexService.Trigger and returns 202
 // with the run ID to poll.
+//
+// Trigger's error can be either a caller mistake (apperror.Validation —
+// e.g. a malformed product ID in a multi-ID list, only checked this deep
+// since the single-ID synchronous path's own id.IsValid check doesn't run
+// here) or a genuine internal failure (DB/queue error); passed straight to
+// JSONError, not force-wrapped as apperror.CodeInternal, so JSONError's own
+// errors.As unwrapping can tell the two apart — the same pattern
+// JobAdminHandler.Retry/Cancel already use for a service that can return
+// either kind of error.
 func (h *SearchAdminHandler) triggerBulk(w http.ResponseWriter, r *http.Request, scope searchApp.Scope, auditDetails map[string]interface{}) {
 	auditDetails["mode"] = "queued"
 	runID, err := h.reindex.Trigger(r.Context(), scope)
 	if err != nil {
 		h.audit(r, adminapp.AuditSearchReindexTrigger, "", auditDetails, err)
-		httpshared.JSONError(w, apperror.Wrap(apperror.CodeInternal, "trigger reindex failed", err))
+		httpshared.JSONError(w, err)
 		return
 	}
 
@@ -231,6 +251,9 @@ func (h *SearchAdminHandler) Get() http.HandlerFunc {
 // normalizeProductIDs/normalizeCategoryIDs, PR-1034) or dedupe (same
 // reason).
 func cleanIDs(ids []string) ([]string, error) {
+	if len(ids) > maxReindexRequestIDs {
+		return nil, fmt.Errorf("ids must not exceed %d entries", maxReindexRequestIDs)
+	}
 	out := make([]string, 0, len(ids))
 	for _, raw := range ids {
 		v := strings.TrimSpace(raw)

@@ -271,6 +271,72 @@ func TestSearchAdminHandler_Trigger_ScopeProducts_SingleID_InvalidUUID(t *testin
 	}
 }
 
+// TestSearchAdminHandler_Trigger_ScopeProducts_MultipleIDs_InvalidUUID_Rejected
+// pins a fixed bug: the multi-ID path used to skip id.IsValid entirely and
+// let the malformed ID reach ReindexService.Trigger, whose plain
+// fmt.Errorf validation error triggerBulk then force-wrapped as
+// apperror.CodeInternal — a client input mistake surfacing as a generic
+// 500 "internal server error" instead of 422. ReindexService's
+// normalizeProductIDs now returns apperror.Validation, and triggerBulk
+// forwards Trigger's error to JSONError unwrapped, so this must be 422.
+func TestSearchAdminHandler_Trigger_ScopeProducts_MultipleIDs_InvalidUUID_Rejected(t *testing.T) {
+	deps := newDefaultDeps()
+	mux := newSearchAdminRouter(newSearchAdminHandler(t, deps))
+
+	rec := triggerRequest(t, mux, `{"scope":"products","ids":["not-a-uuid","also-bad"]}`)
+
+	if rec.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("status = %d, want 422; body=%s", rec.Code, rec.Body.String())
+	}
+	if len(deps.queue.enqueued) != 0 {
+		t.Error("expected no job enqueued for a rejected malformed multi-ID request")
+	}
+}
+
+// TestSearchAdminHandler_Trigger_ScopeProducts_TooManyIDs_Rejected pins the
+// defense-in-depth cap (maxReindexRequestIDs) rejecting an oversized ids
+// array before any per-ID validation work runs.
+func TestSearchAdminHandler_Trigger_ScopeProducts_TooManyIDs_Rejected(t *testing.T) {
+	deps := newDefaultDeps()
+	mux := newSearchAdminRouter(newSearchAdminHandler(t, deps))
+
+	ids := make([]string, 10_001)
+	for i := range ids {
+		ids[i] = id.New()
+	}
+	body, err := json.Marshal(map[string]interface{}{"scope": "products", "ids": ids})
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+
+	rec := triggerRequest(t, mux, string(body))
+
+	if rec.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("status = %d, want 422; body=%s", rec.Code, rec.Body.String())
+	}
+	if len(deps.queue.enqueued) != 0 {
+		t.Error("expected no job enqueued for a rejected oversized ids array")
+	}
+}
+
+// TestSearchAdminHandler_Trigger_ScopeProducts_SingleID_ListByIDsError
+// exercises triggerSingleProduct's DB-failure branch (distinct from the
+// not-found and invalid-UUID cases already covered above).
+func TestSearchAdminHandler_Trigger_ScopeProducts_SingleID_ListByIDsError(t *testing.T) {
+	deps := newDefaultDeps()
+	deps.products.listByIDsErr = errors.New("db down")
+	mux := newSearchAdminRouter(newSearchAdminHandler(t, deps))
+
+	rec := triggerRequest(t, mux, `{"scope":"products","ids":["`+id.New()+`"]}`)
+
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("status = %d, want 500; body=%s", rec.Code, rec.Body.String())
+	}
+	if len(deps.engine.indexed) != 0 {
+		t.Error("expected no engine call when the product lookup itself fails")
+	}
+}
+
 func TestSearchAdminHandler_Trigger_ScopeProducts_EmptyIDs(t *testing.T) {
 	deps := newDefaultDeps()
 	mux := newSearchAdminRouter(newSearchAdminHandler(t, deps))
