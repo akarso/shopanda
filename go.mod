@@ -5,7 +5,7 @@ go 1.26.0
 require gopkg.in/yaml.v3 v3.0.1
 
 require (
-	github.com/alicebob/miniredis/v2 v2.38.0
+	github.com/alicebob/miniredis/v2 v2.39.0
 	github.com/aws/aws-sdk-go-v2 v1.45.1
 	github.com/aws/aws-sdk-go-v2/config v1.33.2
 	github.com/aws/aws-sdk-go-v2/credentials v1.20.2
