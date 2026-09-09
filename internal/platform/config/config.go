@@ -162,6 +162,11 @@ const DefaultTracingSampleRatio = 1.0
 // metrics.listen to a private scrape network address.
 const DefaultMetricsListen = "127.0.0.1:9090"
 
+// DefaultSearchReindexFullScanThreshold is PR-1034's documented starting
+// point for search.reindex_full_scan_threshold — see SearchConfig's own
+// doc comment. Not empirically tuned against production traffic yet.
+const DefaultSearchReindexFullScanThreshold = 0.2
+
 // DefaultWorkerMetricsListen is the port the worker process binds /metrics
 // to when metrics.listen was left at DefaultMetricsListen — serve and
 // worker often run as separate processes on the same host, and both
@@ -400,6 +405,14 @@ type S3StorageConfig struct {
 type SearchConfig struct {
 	Engine      string            `yaml:"engine"`
 	Meilisearch MeilisearchConfig `yaml:"meilisearch"`
+	// ReindexFullScanThreshold is the fraction (0.0-1.0) of the catalog a
+	// partial reindex scope (products/categories/since) may resolve to
+	// before ReindexService.Trigger substitutes a full scan instead — see
+	// docs/phase-11-jobs-search-cache/prs/PR-1034.md's "Why": past this
+	// fraction, N individual index writes cost more than one full-scan
+	// pass, so a naive partial reindex could end up slower than
+	// reindexing everything. See DefaultSearchReindexFullScanThreshold.
+	ReindexFullScanThreshold float64 `yaml:"reindex_full_scan_threshold"`
 }
 
 // MeilisearchConfig holds Meilisearch connection settings.
@@ -745,6 +758,7 @@ func defaults() Config {
 				Host:  "http://localhost:7700",
 				Index: "products",
 			},
+			ReindexFullScanThreshold: DefaultSearchReindexFullScanThreshold,
 		},
 		Cache: CacheConfig{
 			Driver: "postgres",
@@ -1216,6 +1230,19 @@ func applyEnv(cfg *Config) {
 			cfg.Tracing.SampleRatio = f
 		}
 	}
+	if v := os.Getenv("SHOPANDA_SEARCH_REINDEX_FULL_SCAN_THRESHOLD"); v != "" {
+		// No range guard here, unlike SHOPANDA_TRACING_SAMPLE_RATIO above:
+		// every successfully parsed value is assigned, including a
+		// negative one, matching SHOPANDA_STORE_CREDIT_MAX_ISSUE_AMOUNT's
+		// own precedent ("a negative override should hit the same
+		// validate error as a negative YAML value, not be silently
+		// dropped in favor of whatever was already configured").
+		// validateSearch (run after applyEnv) is what actually rejects an
+		// out-of-[0,1]-range value, from either source, identically.
+		if f, err := strconv.ParseFloat(v, 64); err == nil {
+			cfg.Search.ReindexFullScanThreshold = f
+		}
+	}
 	if v := os.Getenv("SHOPANDA_STORE_CREDIT_MAX_ISSUE_AMOUNT"); v != "" {
 		// No n >= 0 guard: a negative override should hit the same
 		// validateStoreCredit error as a negative YAML value, not be
@@ -1279,6 +1306,7 @@ func flatten(cfg *Config) map[string]string {
 	m["search.engine"] = cfg.Search.Engine
 	m["search.meilisearch.host"] = cfg.Search.Meilisearch.Host
 	m["search.meilisearch.index"] = cfg.Search.Meilisearch.Index
+	m["search.reindex_full_scan_threshold"] = strconv.FormatFloat(cfg.Search.ReindexFullScanThreshold, 'f', -1, 64)
 	m["cache.driver"] = cfg.Cache.Driver
 	m["cache.redis.url"] = cfg.Cache.Redis.URL
 	m["cache.redis.key_prefix"] = cfg.Cache.Redis.KeyPrefix

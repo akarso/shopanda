@@ -1019,7 +1019,12 @@ func newSearchReindexService(cfg *config.Config, log logger.Logger) (svc *search
 		conn.Close()
 		return nil, nil, nil, fmt.Errorf("search index run store: %w", err)
 	}
-	svc, err = searchApp.NewReindexService(runs, jobQueue, log)
+	products, err := postgres.NewSearchProductSource(conn)
+	if err != nil {
+		conn.Close()
+		return nil, nil, nil, fmt.Errorf("search product source: %w", err)
+	}
+	svc, err = searchApp.NewReindexService(runs, products, jobQueue, log, cfg.Search.ReindexFullScanThreshold)
 	if err != nil {
 		conn.Close()
 		return nil, nil, nil, fmt.Errorf("reindex service: %w", err)
@@ -1058,7 +1063,7 @@ func runSearchReindex(w io.Writer, cfg *config.Config, log logger.Logger, args [
 		cancel()
 	}()
 
-	runID, err := svc.Trigger(ctx, search.ReindexScope{Name: "all"})
+	runID, err := svc.Trigger(ctx, searchApp.ScopeAll{})
 	if err != nil {
 		return fmt.Errorf("search:reindex: %w", err)
 	}

@@ -26,15 +26,6 @@ const (
 	RunStatusFailed     RunStatus = "failed"
 )
 
-// ReindexScope describes what a reindex run should cover. This PR ships
-// full-scope reindex only (Name is always "all"); Params exists so
-// PR-1034's partial/scoped values (explicit product/category IDs, or a
-// "changed since" timestamp) don't need a schema or port change here.
-type ReindexScope struct {
-	Name   string
-	Params map[string]interface{}
-}
-
 // Run is a single reindex run's persisted state.
 type Run struct {
 	ID             string
@@ -129,11 +120,34 @@ type ReindexJobLookup interface {
 // avoids importing the catalog package (see Product's doc comment) so the
 // reindex handler doesn't need to know about the wider catalog domain.
 type ProductSource interface {
-	// CountAll returns the total number of products to index, for the
-	// run's total_count.
+	// CountAll returns the total number of products in the catalog — used
+	// for a full-scan run's total_count, and by
+	// application/search.ReindexService.Trigger's full-scan-threshold
+	// comparison (PR-1034: a partial scope covering more of the catalog
+	// than the threshold is run as a full scan instead).
 	CountAll(ctx context.Context) (int, error)
 
 	// ListAll returns a page of products ordered consistently across
 	// calls (so paging by offset doesn't skip or repeat rows).
 	ListAll(ctx context.Context, offset, limit int) ([]Product, error)
+
+	// ListByIDs returns the products matching any of the given IDs — the
+	// scoped-reindex (PR-1034) equivalent of ListAll's offset paging.
+	// ReindexHandler chunks an already-resolved product ID list into
+	// batches and calls this once per batch. Order is unspecified. An ID
+	// with no matching product (deleted between
+	// ReindexService.Trigger resolving the scope and the job actually
+	// running) is simply absent from the result, not an error.
+	ListByIDs(ctx context.Context, ids []string) ([]Product, error)
+
+	// ProductIDsByCategory returns the distinct product IDs assigned to
+	// any of the given category IDs — resolves a ScopeCategories request
+	// (PR-1034) into the concrete ID list ReindexService.Trigger's
+	// full-scan-threshold check and the job payload both need.
+	ProductIDsByCategory(ctx context.Context, categoryIDs []string) ([]string, error)
+
+	// ProductIDsUpdatedSince returns the IDs of products whose updated_at
+	// is at or after since — resolves a ScopeSince request (PR-1034) the
+	// same way ProductIDsByCategory resolves ScopeCategories.
+	ProductIDsUpdatedSince(ctx context.Context, since time.Time) ([]string, error)
 }

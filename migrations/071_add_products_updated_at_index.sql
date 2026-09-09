@@ -1,0 +1,13 @@
+-- Supports ProductIDsUpdatedSince (PR-1034): "WHERE updated_at >= $1",
+-- the ScopeSince resolution query. Without this, that query is a full
+-- sequential scan of products — the exact scenario a scoped "changed
+-- since" reindex exists to make cheap becomes the most expensive
+-- resolution path on a large catalog.
+--
+-- Same CONCURRENTLY caveat as 066_add_jobs_introspection_indexes.sql and
+-- 070_add_jobs_reindex_run_id_index.sql: migrations run inside a
+-- transaction here, so this takes a ShareLock on products during
+-- creation, blocking writes for that duration. Apply manually with
+-- CONCURRENTLY during a maintenance window instead, for a large/hot
+-- production products table.
+CREATE INDEX IF NOT EXISTS idx_products_updated_at ON products (updated_at);

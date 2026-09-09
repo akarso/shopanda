@@ -2,6 +2,7 @@ package config
 
 import (
 	"fmt"
+	"math"
 	"net"
 	"net/url"
 	"os"
@@ -53,6 +54,9 @@ func normalizeAndValidate(cfg *Config) error {
 	case "postgres", "meilisearch":
 	default:
 		return fmt.Errorf("config: unsupported search.engine: %q (allowed: postgres, meilisearch)", cfg.Search.Engine)
+	}
+	if err := validateSearch(&cfg.Search); err != nil {
+		return err
 	}
 
 	if cfg.Media.Storage == "" {
@@ -106,6 +110,32 @@ func normalizeAndValidate(cfg *Config) error {
 func validateStoreCredit(s *StoreCreditConfig) error {
 	if s.MaxIssueAmount < 0 {
 		return fmt.Errorf("config: store_credit.max_issue_amount=%d must not be negative (0 disables the cap)", s.MaxIssueAmount)
+	}
+	return nil
+}
+
+// validateSearch rejects a reindex_full_scan_threshold outside [0, 1] — a
+// negative fraction has no sensible interpretation, and above 1 no
+// resolved scope could ever exceed it, silently disabling PR-1034's
+// threshold heuristic entirely (a partial reindex would never be
+// substituted with a full scan, no matter how much of the catalog it
+// covers). Both are far more likely a typo than an intentional value, so
+// this is caught at startup rather than surfacing as "partial reindex
+// scoping doesn't behave as documented" with no error anywhere.
+func validateSearch(s *SearchConfig) error {
+	// NaN checked explicitly, not folded into the range comparison below:
+	// every comparison with NaN (<, >, ==) is false per IEEE 754, so
+	// "NaN < 0 || NaN > 1" would silently pass a NaN threshold straight
+	// through — which would then make applyThreshold's own
+	// "ratio > fullScanThreshold" comparison always false too, silently
+	// disabling the threshold heuristic entirely with no error anywhere.
+	// YAML's `.nan` literal (or an env var of "nan") is a real way to
+	// reach this, not just a theoretical edge case.
+	if math.IsNaN(s.ReindexFullScanThreshold) {
+		return fmt.Errorf("config: search.reindex_full_scan_threshold must not be NaN")
+	}
+	if s.ReindexFullScanThreshold < 0 || s.ReindexFullScanThreshold > 1 {
+		return fmt.Errorf("config: search.reindex_full_scan_threshold=%v must be between 0 and 1", s.ReindexFullScanThreshold)
 	}
 	return nil
 }

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"testing"
+	"time"
 
 	searchApp "github.com/akarso/shopanda/internal/application/search"
 	domainjobs "github.com/akarso/shopanda/internal/domain/jobs"
@@ -16,6 +17,21 @@ type fakeProductSource struct {
 	countErr        error
 	listErr         error
 	listErrAtOffset int // -1 (default) means never
+
+	// byID backs ListByIDs directly, independent of products/offset
+	// pagination above — a scoped-run test seeds exactly the products a
+	// resolved ID list should return.
+	byID         map[string]domainsearch.Product
+	listByIDsErr error
+
+	// categoryProductIDs/categoryErr back ProductIDsByCategory;
+	// updatedSinceIDs/updatedSinceErr back ProductIDsUpdatedSince — both
+	// resolution-only fakes (ReindexService.Trigger tests), not consulted
+	// by ReindexHandler.
+	categoryProductIDs []string
+	categoryErr        error
+	updatedSinceIDs    []string
+	updatedSinceErr    error
 }
 
 func (f *fakeProductSource) CountAll(context.Context) (int, error) {
@@ -34,6 +50,27 @@ func (f *fakeProductSource) ListAll(_ context.Context, offset, limit int) ([]dom
 		end = len(f.products)
 	}
 	return f.products[offset:end], nil
+}
+
+func (f *fakeProductSource) ListByIDs(_ context.Context, ids []string) ([]domainsearch.Product, error) {
+	if f.listByIDsErr != nil {
+		return nil, f.listByIDsErr
+	}
+	out := make([]domainsearch.Product, 0, len(ids))
+	for _, id := range ids {
+		if p, ok := f.byID[id]; ok {
+			out = append(out, p)
+		}
+	}
+	return out, nil
+}
+
+func (f *fakeProductSource) ProductIDsByCategory(context.Context, []string) ([]string, error) {
+	return f.categoryProductIDs, f.categoryErr
+}
+
+func (f *fakeProductSource) ProductIDsUpdatedSince(context.Context, time.Time) ([]string, error) {
+	return f.updatedSinceIDs, f.updatedSinceErr
 }
 
 type fakeSearchEngine struct {
@@ -357,5 +394,175 @@ func TestReindexHandler_Handle_FailIfTerminalFinishRetriesThenSucceeds(t *testin
 	}
 	if store.runs["run-1"].Status != domainsearch.RunStatusFailed {
 		t.Errorf("run status = %q, want failed (Finish should have recovered within its retry budget)", store.runs["run-1"].Status)
+	}
+}
+
+// scopedJob builds a search.reindex job payload the same shape a real
+// JSON round-trip through the queue produces for a scoped (PR-1034) run —
+// product_ids as []interface{} of strings, not []string — so tests
+// exercise scopedProductIDs' actual decoding path, not a shortcut.
+func scopedJob(runID string, ids []string) domainjobs.Job {
+	raw := make([]interface{}, len(ids))
+	for i, id := range ids {
+		raw[i] = id
+	}
+	return domainjobs.Job{
+		ID:      "job-1",
+		Type:    searchApp.JobType,
+		Payload: map[string]interface{}{"run_id": runID, "scope": "products", "product_ids": raw},
+	}
+}
+
+// TestReindexHandler_Handle_ScopedRun_IndexesOnlyGivenProductIDs pins the
+// PR-1034 scoped-scan path: a "products" scope indexes exactly the given
+// IDs via ListByIDs, never touching ListAll or CountAll.
+func TestReindexHandler_Handle_ScopedRun_IndexesOnlyGivenProductIDs(t *testing.T) {
+	store := &fakeRunStore{}
+	newTestRun(store, "run-1")
+	source := &fakeProductSource{
+		// products/countErr back ListAll/CountAll — left unset (a nil
+		// products slice, no error) so a call to either would either
+		// panic-free-but-wrongly return zero results or, for CountAll,
+		// return 0 — either way distinguishable from this test's
+		// expected total of 2, catching an accidental fall-through to
+		// the full-scan path.
+		byID: map[string]domainsearch.Product{
+			"p1": {ID: "p1"},
+			"p2": {ID: "p2"},
+		},
+	}
+	engine := &fakeSearchEngine{}
+	h := searchApp.NewReindexHandler(store, source, engine, logger.New("error"))
+
+	if err := h.Handle(context.Background(), scopedJob("run-1", []string{"p1", "p2"})); err != nil {
+		t.Fatalf("Handle: %v", err)
+	}
+
+	if len(engine.indexed) != 2 {
+		t.Errorf("indexed %d products, want 2", len(engine.indexed))
+	}
+	run := store.runs["run-1"]
+	if run.Status != domainsearch.RunStatusCompleted {
+		t.Errorf("run status = %q, want completed", run.Status)
+	}
+	if run.ProcessedCount != 2 || run.TotalCount != 2 {
+		t.Errorf("run counts = processed=%d total=%d, want 2/2", run.ProcessedCount, run.TotalCount)
+	}
+}
+
+// TestReindexHandler_Handle_ScopedRun_DeletedProductShrinksTotal pins the
+// fix for a mismatched-progress bug: total was set once, upfront, to the
+// requested ID count — if a product was deleted between
+// ReindexService.Trigger resolving the scope and this batch actually
+// running, ListByIDs simply omits it (not an error, per its own doc
+// comment), leaving a genuinely successful "completed" run permanently
+// reporting e.g. "1/2" instead of the honest "1/1". total must shrink to
+// match what was actually found, so processed == total once the run
+// completes.
+func TestReindexHandler_Handle_ScopedRun_DeletedProductShrinksTotal(t *testing.T) {
+	store := &fakeRunStore{}
+	newTestRun(store, "run-1")
+	source := &fakeProductSource{
+		// Only "p1" actually exists — "p2" is requested but was deleted
+		// before this batch ran.
+		byID: map[string]domainsearch.Product{
+			"p1": {ID: "p1"},
+		},
+	}
+	engine := &fakeSearchEngine{}
+	h := searchApp.NewReindexHandler(store, source, engine, logger.New("error"))
+
+	if err := h.Handle(context.Background(), scopedJob("run-1", []string{"p1", "p2"})); err != nil {
+		t.Fatalf("Handle: %v", err)
+	}
+
+	run := store.runs["run-1"]
+	if run.Status != domainsearch.RunStatusCompleted {
+		t.Errorf("run status = %q, want completed", run.Status)
+	}
+	if run.ProcessedCount != 1 || run.TotalCount != 1 {
+		t.Errorf("run counts = processed=%d total=%d, want 1/1 (total shrunk to match what was actually found, not a permanent 1/2)", run.ProcessedCount, run.TotalCount)
+	}
+}
+
+// TestReindexHandler_Handle_ScopedRun_MissingProductIDsPayloadErrors pins
+// scopedProductIDs' defensive check: a "products" scope with no
+// "product_ids" array at all (a malformed or hand-built payload) is a
+// real error, not silently treated as a full scan or an empty scope.
+func TestReindexHandler_Handle_ScopedRun_MissingProductIDsPayloadErrors(t *testing.T) {
+	store := &fakeRunStore{}
+	newTestRun(store, "run-1")
+	h := searchApp.NewReindexHandler(store, &fakeProductSource{}, &fakeSearchEngine{}, logger.New("error"))
+
+	job := domainjobs.Job{ID: "job-1", Type: searchApp.JobType, Payload: map[string]interface{}{"run_id": "run-1", "scope": "products"}}
+	if err := h.Handle(context.Background(), job); err == nil {
+		t.Fatal("expected an error for a \"products\" scope with no product_ids in the payload")
+	}
+}
+
+// TestReindexHandler_Handle_ScopedRun_EmptyProductIDsCompletesImmediately
+// pins the edge case where every resolved product was deleted before the
+// job ran (or a category/since scope simply matched nothing): a valid,
+// if trivial, 0/0 completed run — not an error and not treated as a full
+// scan.
+func TestReindexHandler_Handle_ScopedRun_EmptyProductIDsCompletesImmediately(t *testing.T) {
+	store := &fakeRunStore{}
+	newTestRun(store, "run-1")
+	engine := &fakeSearchEngine{}
+	h := searchApp.NewReindexHandler(store, &fakeProductSource{}, engine, logger.New("error"))
+
+	if err := h.Handle(context.Background(), scopedJob("run-1", nil)); err != nil {
+		t.Fatalf("Handle: %v", err)
+	}
+	run := store.runs["run-1"]
+	if run.Status != domainsearch.RunStatusCompleted {
+		t.Errorf("run status = %q, want completed", run.Status)
+	}
+	if run.ProcessedCount != 0 || run.TotalCount != 0 {
+		t.Errorf("run counts = processed=%d total=%d, want 0/0", run.ProcessedCount, run.TotalCount)
+	}
+	if len(engine.indexed) != 0 {
+		t.Errorf("indexed %d products, want 0", len(engine.indexed))
+	}
+}
+
+// TestReindexHandler_Handle_ScopedRun_ListByIDsErrorFailsRun mirrors
+// TestReindexHandler_Handle_ListErrorFailsRun for the scoped-scan path.
+func TestReindexHandler_Handle_ScopedRun_ListByIDsErrorFailsRun(t *testing.T) {
+	store := &fakeRunStore{}
+	newTestRun(store, "run-1")
+	source := &fakeProductSource{listByIDsErr: errors.New("connection reset")}
+	h := searchApp.NewReindexHandler(store, source, &fakeSearchEngine{}, logger.New("error"))
+
+	job := scopedJob("run-1", []string{"p1"})
+	job.Attempts, job.MaxRetries = 3, 3 // terminal attempt, per finalAttemptJob's convention
+	if err := h.Handle(context.Background(), job); err == nil {
+		t.Fatal("expected the ListByIDs error to propagate")
+	}
+	if store.runs["run-1"].Status != domainsearch.RunStatusFailed {
+		t.Errorf("run status = %q, want failed", store.runs["run-1"].Status)
+	}
+}
+
+// TestReindexHandler_Handle_UnrecognizedScopeErrors pins the fix for a
+// silent-full-scan bug: only "", "all", and "products" are recognized
+// scope values — a typo, a future scope kind added without updating
+// scopedProductIDs, or payload corruption must fail the job loudly
+// instead of silently rescanning the entire catalog (which a fall-through
+// default used to do, since only an exact "products" match previously
+// triggered the scoped path).
+func TestReindexHandler_Handle_UnrecognizedScopeErrors(t *testing.T) {
+	store := &fakeRunStore{}
+	newTestRun(store, "run-1")
+	engine := &fakeSearchEngine{}
+	source := &fakeProductSource{products: []domainsearch.Product{{ID: "p1"}}}
+	h := searchApp.NewReindexHandler(store, source, engine, logger.New("error"))
+
+	job := domainjobs.Job{ID: "job-1", Type: searchApp.JobType, Payload: map[string]interface{}{"run_id": "run-1", "scope": "bogus"}}
+	if err := h.Handle(context.Background(), job); err == nil {
+		t.Fatal("expected an error for an unrecognized scope value")
+	}
+	if len(engine.indexed) != 0 {
+		t.Error("expected no products indexed for an unrecognized scope — the error must surface before any scan begins")
 	}
 }

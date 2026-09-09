@@ -70,7 +70,7 @@ Each PR is tagged **`[oss]`** unless noted.
 | PR | Title | Short description |
 | --- | --- | --- |
 | PR-1033 | Reindex as a job | Model `search:reindex` as a queued `search.reindex` job (reusing Track A's `Queue`/`Worker`), with a persisted `search_index_runs` row (scope, started/finished, counts, error) updated as the worker processes it. The CLI command becomes a thin enqueue-and-optionally-wait wrapper instead of doing the work inline. |
-| PR-1034 | Partial & scoped reindex | Scope a reindex run to explicit product IDs, explicit category IDs, or "changed since &lt;timestamp&gt;" (using `updated_at`, already present on `products`). Document the threshold heuristic: below ~20% of the catalog changed, scoped reindex is cheaper; above that, per-document overhead (index round-trips) exceeds the cost of one full scan — the reindex service picks full-scan automatically past the threshold rather than trusting the caller's guess. See "Design notes" below. |
+| PR-1034 | Partial & scoped reindex | **Done.** `ReindexService.Trigger` now accepts `search.ScopeAll`/`ScopeProducts`/`ScopeCategories`/`ScopeSince`, resolving a partial scope to concrete product IDs and comparing against catalog size: past `search.reindex_full_scan_threshold` (default 20%, config-overridable), a full scan runs instead — visibly, since the run's `scope_params` still records what was requested. `search:reindex` itself still only ever triggers `ScopeAll`; PR-1035 wires an external caller (CLI flag or admin API) to the new scope types. See "Design notes" below. |
 | PR-1035 | Reindex admin API + progress | `POST /admin/search/reindex` (`{"scope": "all"}` \| `{"scope": "products", "ids": [...]}` \| `{"scope": "categories", "ids": [...]}` \| `{"scope": "since", "since": "<RFC3339>"}`), `GET /admin/search/reindex/{runID}` for progress (reuses Track A's job-status shape — a reindex run *is* a job). A single explicit product/category ID list of size 1 ("reindex this one now") skips the queue and calls `IndexProduct`/`IndexCategory` synchronously, returning immediately — genuinely "now," not "queued, poll for it." |
 | PR-1036 | On-save incremental indexing | Event bus subscribers (same shape as `internal/application/cache/invalidation.go`) on product/price/stock/category-assignment change events → enqueue a single-item (or small-batch, debounced over a short window) `search.reindex` job scoped to the affected product/category IDs. This is the "on save" mode; PR-1030's schedule-trigger and PR-1035's manual trigger are the other two. |
 | PR-1037 | Category indexing + relationship fix | Add `IndexCategory`/`RemoveCategory` to the `SearchEngine` port (both implementations); index categories as their own searchable/filterable entity. Fix `search.Product.CategoryID` (singular) → `CategoryIDs []string` — the catalog domain already supports many-to-many product↔category assignment (`product_categories` junction table, `AssignCategory`/`RemoveCategory`/`ListCategoryIDsByProduct`); the search index has silently been unable to represent a product in more than one category since day one. Category-assignment changes feed PR-1036's subscribers. |
@@ -165,7 +165,8 @@ Phase 12's own Track F (index/CSV/GraphQL/GUI closeout) explicitly depends on th
 | 1031 | A | done |
 | 1032 | A | done |
 | 1033 | B | done |
-| 1034–1038 | B | planned |
+| 1034 | B | done |
+| 1035–1038 | B | planned |
 | 1039–1043 | C | planned |
 | 1044–1047 | D | planned |
 
