@@ -160,6 +160,15 @@ search:
     # api_key: ""
     index: "products"                # Meilisearch index UID
 
+  # Partial reindex full-scan threshold: past this fraction (0.0-1.0) of
+  # the catalog, a partial reindex (explicit product/category IDs, or
+  # "changed since") is enqueued as a full scan instead — see PR-1034 for
+  # why (past some fraction, per-product index round-trips cost more than
+  # one full-scan pass). Not empirically tuned against production traffic
+  # yet; adjust if it doesn't hold for your catalog size.
+  # Env override: SHOPANDA_SEARCH_REINDEX_FULL_SCAN_THRESHOLD=0.2
+  # reindex_full_scan_threshold: 0.2
+
 # --- Cache --------------------------------------------------------------------
 cache:
   # Driver: postgres (default, uses UNLOGGED table), redis (PR-414).

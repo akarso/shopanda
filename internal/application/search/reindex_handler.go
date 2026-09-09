@@ -52,10 +52,13 @@ type Logger interface {
 
 // ReindexHandler is the jobs.Handler for JobType ("search.reindex"): scans
 // ProductSource in batches and indexes every product via SearchEngine,
-// updating the run row's progress as it goes. Full-scope reindex covers
+// updating the run row's progress as it goes. A full-scope run covers
 // exactly what the old inline CLI loop covered — the same products, same
-// fields — running through the queue instead of the CLI process
-// (partial/scoped reindex is PR-1034). Any single indexing error still
+// fields — running through the queue instead of the CLI process. A scoped
+// run (PR-1034 — explicit product/category IDs, or "changed since",
+// resolved by ReindexService.Trigger into a concrete product ID list
+// carried on the job payload) scans exactly that list instead of the
+// whole table — see scopedProductIDs. Any single indexing error still
 // stops the current attempt (no skip-and-continue), but per-attempt
 // retries mean the run row is only marked failed once the job has
 // exhausted its retries — see failIfTerminal.
@@ -81,11 +84,28 @@ func (h *ReindexHandler) Handle(ctx context.Context, job domainjobs.Job) error {
 		return fmt.Errorf("search.reindex: job %s: missing run_id in payload", job.ID)
 	}
 
-	total, err := h.products.CountAll(ctx)
+	// productIDs is nil for a full-scan run (scope "all", or an unset/
+	// legacy payload — see scopedProductIDs) and non-nil (possibly empty)
+	// for a scoped one (PR-1034): ReindexService.Trigger already resolved
+	// exactly which products to cover, so the handler scans that fixed
+	// list instead of the whole table.
+	productIDs, err := scopedProductIDs(job)
 	if err != nil {
-		wrapped := fmt.Errorf("count products: %w", err)
+		wrapped := fmt.Errorf("search.reindex: job %s: %w", job.ID, err)
 		h.failIfTerminal(ctx, runID, job, wrapped)
 		return wrapped
+	}
+
+	var total int
+	if productIDs != nil {
+		total = len(productIDs)
+	} else {
+		total, err = h.products.CountAll(ctx)
+		if err != nil {
+			wrapped := fmt.Errorf("count products: %w", err)
+			h.failIfTerminal(ctx, runID, job, wrapped)
+			return wrapped
+		}
 	}
 
 	var processed int
@@ -93,30 +113,53 @@ func (h *ReindexHandler) Handle(ctx context.Context, job domainjobs.Job) error {
 		h.log.Error("search.reindex.progress_update_failed", err, map[string]interface{}{"run_id": runID})
 	}
 
-	var offset int
-	for {
-		products, err := h.products.ListAll(ctx, offset, reindexBatchSize)
-		if err != nil {
-			wrapped := fmt.Errorf("list products (offset=%d): %w", offset, err)
-			h.failIfTerminal(ctx, runID, job, wrapped)
-			return wrapped
-		}
-		if len(products) == 0 {
-			break
-		}
-
+	indexBatch := func(products []domainsearch.Product) error {
 		for _, p := range products {
 			if err := h.engine.IndexProduct(ctx, p); err != nil {
-				wrapped := fmt.Errorf("index product %s: %w", p.ID, err)
-				h.failIfTerminal(ctx, runID, job, wrapped)
-				return wrapped
+				return fmt.Errorf("index product %s: %w", p.ID, err)
 			}
 			processed++
 		}
-		offset += len(products)
-
 		if err := h.runs.UpdateProgress(ctx, runID, total, processed, 0); err != nil {
 			h.log.Error("search.reindex.progress_update_failed", err, map[string]interface{}{"run_id": runID})
+		}
+		return nil
+	}
+
+	if productIDs != nil {
+		for offset := 0; offset < len(productIDs); offset += reindexBatchSize {
+			end := offset + reindexBatchSize
+			if end > len(productIDs) {
+				end = len(productIDs)
+			}
+			products, err := h.products.ListByIDs(ctx, productIDs[offset:end])
+			if err != nil {
+				wrapped := fmt.Errorf("list products by id (offset=%d): %w", offset, err)
+				h.failIfTerminal(ctx, runID, job, wrapped)
+				return wrapped
+			}
+			if err := indexBatch(products); err != nil {
+				h.failIfTerminal(ctx, runID, job, err)
+				return err
+			}
+		}
+	} else {
+		var offset int
+		for {
+			products, err := h.products.ListAll(ctx, offset, reindexBatchSize)
+			if err != nil {
+				wrapped := fmt.Errorf("list products (offset=%d): %w", offset, err)
+				h.failIfTerminal(ctx, runID, job, wrapped)
+				return wrapped
+			}
+			if len(products) == 0 {
+				break
+			}
+			if err := indexBatch(products); err != nil {
+				h.failIfTerminal(ctx, runID, job, err)
+				return err
+			}
+			offset += len(products)
 		}
 	}
 
@@ -137,6 +180,37 @@ func (h *ReindexHandler) Handle(ctx context.Context, job domainjobs.Job) error {
 		"indexed": processed,
 	})
 	return nil
+}
+
+// scopedProductIDs reads the job's scope from its payload and, for a
+// "products" scope, the concrete product ID list ReindexService.Trigger
+// already resolved (see its own doc comment on why resolution happens
+// once, at trigger time — re-resolving a category/since scope here could
+// give a different answer than what Trigger's full-scan-threshold check
+// actually decided against). Returns (nil, nil) for a full-scan job:
+// scope "all", or an unset/wrong-type scope field (every payload built
+// before PR-1034 shipped, and any hand-constructed job with no "scope"
+// key) — nil is the sentinel Handle uses to pick the ListAll loop instead
+// of the ListByIDs one, so this keeps existing full-scan jobs behaving
+// exactly as before.
+func scopedProductIDs(job domainjobs.Job) ([]string, error) {
+	scope, _ := job.Payload["scope"].(string)
+	if scope != reindexScopeProducts {
+		return nil, nil
+	}
+	raw, ok := job.Payload["product_ids"].([]interface{})
+	if !ok {
+		return nil, fmt.Errorf("scope %q requires a \"product_ids\" array in the job payload", scope)
+	}
+	ids := make([]string, 0, len(raw))
+	for _, v := range raw {
+		s, ok := v.(string)
+		if !ok {
+			return nil, fmt.Errorf("scope %q: non-string entry in \"product_ids\"", scope)
+		}
+		ids = append(ids, s)
+	}
+	return ids, nil
 }
 
 // finishWithRetry calls RunStore.Finish, retrying up to retries times

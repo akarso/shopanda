@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"time"
 
 	domainsearch "github.com/akarso/shopanda/internal/domain/search"
 )
@@ -76,13 +77,95 @@ func (s *SearchProductSource) ListAll(ctx context.Context, offset, limit int) ([
 		return nil, fmt.Errorf("search_product_source: list: %w", err)
 	}
 	defer rows.Close()
+	return scanSearchProducts(rows, "list")
+}
 
+// ListByIDs implements domainsearch.ProductSource. Same field set as
+// ListAll (this is a scoped equivalent of it, not a different kind of
+// read) and the same no-shared-snapshot trade-off applies, though it
+// matters less here: the caller already has a fixed ID list in hand
+// rather than paging live over the table, so the only anomaly left is a
+// product deleted between resolving the scope and this call, which
+// simply drops out of the result (see the port's own doc comment).
+func (s *SearchProductSource) ListByIDs(ctx context.Context, ids []string) ([]domainsearch.Product, error) {
+	if len(ids) == 0 {
+		return nil, nil
+	}
+
+	const q = `SELECT id, name, slug, description, attributes, created_at
+		FROM products WHERE id = ANY($1)`
+
+	rows, err := s.db.QueryContext(ctx, q, ids)
+	if err != nil {
+		return nil, fmt.Errorf("search_product_source: list by ids: %w", err)
+	}
+	defer rows.Close()
+	return scanSearchProducts(rows, "list by ids")
+}
+
+// ProductIDsByCategory implements domainsearch.ProductSource.
+func (s *SearchProductSource) ProductIDsByCategory(ctx context.Context, categoryIDs []string) ([]string, error) {
+	if len(categoryIDs) == 0 {
+		return nil, fmt.Errorf("search_product_source: at least one category id is required")
+	}
+
+	const q = `SELECT DISTINCT product_id FROM product_categories WHERE category_id = ANY($1)`
+
+	rows, err := s.db.QueryContext(ctx, q, categoryIDs)
+	if err != nil {
+		return nil, fmt.Errorf("search_product_source: product ids by category: %w", err)
+	}
+	defer rows.Close()
+
+	var ids []string
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, fmt.Errorf("search_product_source: product ids by category scan: %w", err)
+		}
+		ids = append(ids, id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("search_product_source: product ids by category rows: %w", err)
+	}
+	return ids, nil
+}
+
+// ProductIDsUpdatedSince implements domainsearch.ProductSource.
+func (s *SearchProductSource) ProductIDsUpdatedSince(ctx context.Context, since time.Time) ([]string, error) {
+	const q = `SELECT id FROM products WHERE updated_at >= $1`
+
+	rows, err := s.db.QueryContext(ctx, q, since)
+	if err != nil {
+		return nil, fmt.Errorf("search_product_source: product ids updated since: %w", err)
+	}
+	defer rows.Close()
+
+	var ids []string
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, fmt.Errorf("search_product_source: product ids updated since scan: %w", err)
+		}
+		ids = append(ids, id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("search_product_source: product ids updated since rows: %w", err)
+	}
+	return ids, nil
+}
+
+// scanSearchProducts scans the shared (id, name, slug, description,
+// attributes, created_at) row shape ListAll and ListByIDs both select —
+// op names the caller in a wrapped error, so a scan failure is still
+// traceable to which query produced it.
+func scanSearchProducts(rows *sql.Rows, op string) ([]domainsearch.Product, error) {
 	var products []domainsearch.Product
 	for rows.Next() {
 		var p domainsearch.Product
 		var attrsJSON []byte
 		if err := rows.Scan(&p.ID, &p.Name, &p.Slug, &p.Description, &attrsJSON, &p.CreatedAt); err != nil {
-			return nil, fmt.Errorf("search_product_source: list scan: %w", err)
+			return nil, fmt.Errorf("search_product_source: %s scan: %w", op, err)
 		}
 		if len(attrsJSON) > 0 {
 			if err := json.Unmarshal(attrsJSON, &p.Attributes); err != nil {
@@ -92,7 +175,7 @@ func (s *SearchProductSource) ListAll(ctx context.Context, offset, limit int) ([
 		products = append(products, p)
 	}
 	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("search_product_source: list rows: %w", err)
+		return nil, fmt.Errorf("search_product_source: %s rows: %w", op, err)
 	}
 	return products, nil
 }
