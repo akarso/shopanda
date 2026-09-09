@@ -151,6 +151,10 @@ const (
 
 	// Search reindex run reconciliation (PR-1048)
 	AuditSearchReindexRunReconcile AuditAction = "search_reindex_run.reconcile"
+
+	// Search reindex admin API (PR-1035)
+	AuditSearchReindexTrigger AuditAction = "search_reindex.trigger"
+	AuditSearchReindexRead    AuditAction = "search_reindex.read"
 )
 
 // AuditEntry represents a single admin audit log entry.

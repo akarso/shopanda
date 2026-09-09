@@ -91,6 +91,7 @@ func buildServeHandler(cfg *config.Config, log logger.Logger, rt *serveRuntime, 
 	requireExtensionsWrite := admin.RequirePermission(rbac.ExtensionsWrite)
 	requireJobsRead := admin.RequirePermission(rbac.JobsRead)
 	requireJobsWrite := admin.RequirePermission(rbac.JobsWrite)
+	requireSearchReindex := admin.RequirePermission(rbac.SearchReindex)
 
 	// Auth routes.
 	router.HandleFunc("POST /api/v1/auth/register", rt.authHandler.Register())
@@ -168,6 +169,8 @@ func buildServeHandler(cfg *config.Config, log logger.Logger, rt *serveRuntime, 
 	router.Handle("GET /api/v1/admin/jobs/{id}", requireJobsRead(rt.jobAdmin.Get()))
 	router.Handle("POST /api/v1/admin/jobs/{id}/retry", requireJobsWrite(rt.jobAdmin.Retry()))
 	router.Handle("POST /api/v1/admin/jobs/{id}/cancel", requireJobsWrite(rt.jobAdmin.Cancel()))
+	router.Handle("POST /api/v1/admin/search/reindex", requireSearchReindex(rt.searchAdmin.Trigger()))
+	router.Handle("GET /api/v1/admin/search/reindex/{runID}", requireSearchReindex(rt.searchAdmin.Get()))
 	router.Handle("GET /api/v1/admin/schedules", requireJobsRead(rt.scheduleAdmin.List()))
 	router.Handle("POST /api/v1/admin/schedules/{name}/trigger", requireJobsWrite(rt.scheduleAdmin.Trigger()))
 	router.Handle("POST /api/v1/admin/schedules/{name}/enable", requireJobsWrite(rt.scheduleAdmin.Enable()))

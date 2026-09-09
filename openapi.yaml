@@ -1829,6 +1829,127 @@ paths:
         "409":
           $ref: "#/components/responses/Conflict"
 
+  # ── Admin: Search ──────────────────────────────────────
+  /api/v1/admin/search/reindex:
+    post:
+      operationId: adminTriggerSearchReindex
+      tags: ["Admin: Search"]
+      summary: Trigger a search reindex
+      description: >-
+        Triggers a full, category-scoped, product-scoped, or
+        since-timestamp reindex. A single product ID under
+        `scope: "products"` is indexed synchronously and returns `200`
+        immediately, instead of being queued — every other request
+        (`scope: "all"`, multiple IDs, `scope: "since"`, or any
+        `scope: "categories"` request) is enqueued as a background run and
+        returns `202` with a run ID to poll via
+        `GET /api/v1/admin/search/reindex/{runID}`.
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [scope]
+              properties:
+                scope:
+                  type: string
+                  enum: [all, products, categories, since]
+                ids:
+                  type: array
+                  items:
+                    type: string
+                  description: Required for scope=products and scope=categories.
+                since:
+                  type: string
+                  format: date-time
+                  description: Required for scope=since. Must not be in the future.
+            examples:
+              full:
+                value:
+                  scope: all
+              singleProduct:
+                summary: Synchronous single-item path
+                value:
+                  scope: products
+                  ids: ["9f3e2b1a-2222-4c3e-8b1a-000000000001"]
+              since:
+                value:
+                  scope: since
+                  since: "2026-01-01T00:00:00Z"
+      responses:
+        "200":
+          description: >-
+            OK — the synchronous single-product path (scope=products with
+            exactly one ID).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Envelope"
+              example:
+                data:
+                  status: indexed
+                  product_id: "9f3e2b1a-2222-4c3e-8b1a-000000000001"
+                error: null
+        "202":
+          description: Accepted — enqueued as a background run.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Envelope"
+              example:
+                data:
+                  run_id: "b6e2b1a2-3333-4c3e-8b1a-000000000002"
+                error: null
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "422":
+          $ref: "#/components/responses/Validation"
+
+  /api/v1/admin/search/reindex/{runID}:
+    get:
+      operationId: adminGetSearchReindexRun
+      tags: ["Admin: Search"]
+      summary: Get a reindex run's progress
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: runID
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Envelope"
+              example:
+                data:
+                  id: "b6e2b1a2-3333-4c3e-8b1a-000000000002"
+                  scope: products
+                  scope_params: { requested_scope: products, product_ids: [] }
+                  status: processing
+                  total_count: 120
+                  processed_count: 45
+                  error_count: 0
+                  started_at: "2026-01-01T00:00:00Z"
+                error: null
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
   # ── Admin: Schedules ───────────────────────────────────
   /api/v1/admin/schedules:
     get:

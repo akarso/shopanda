@@ -35,6 +35,7 @@ func CorePermissions() []Permission {
 		AuditRead,
 		ExtensionsRead, ExtensionsWrite, ExtensionsPrivateRead,
 		JobsRead, JobsWrite,
+		SearchReindex,
 	}
 }
 

@@ -22,6 +22,7 @@ var rolePermissions = map[identity.Role]map[Permission]struct{}{
 		AuditRead,
 		ExtensionsRead, ExtensionsWrite, ExtensionsPrivateRead,
 		JobsRead, JobsWrite,
+		SearchReindex,
 	),
 	identity.RoleManager: toSet(
 		ProductsRead, ProductsWrite,

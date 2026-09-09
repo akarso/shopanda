@@ -315,6 +315,19 @@ Open **Operations → Jobs** at `/admin/operations/jobs` to see every background
 
 Open **Operations → Schedules** at `/admin/operations/schedules` to see every recurring background task — its schedule, next run time, and whether it's currently enabled. **Trigger now** runs a task immediately (asks for confirmation, since this is real work, not a preview) — useful for testing without waiting for the next tick. **Enable**/**Disable** toggles whether a task keeps firing on its own schedule; disabling doesn't affect a manual trigger.
 
+### Reindexing the catalog
+
+There's no admin GUI for this yet — a technical operator triggers it via `POST /api/v1/admin/search/reindex`. Which shape to use depends on what changed:
+
+- **One product just changed** (`{"scope": "products", "ids": ["<product-id>"]}`) — indexed immediately, synchronously; the response (`200`) confirms it's done, there's nothing to poll.
+- **A batch of products or an entire category** (`{"scope": "products", "ids": [...]}` with more than one ID, or `{"scope": "categories", "ids": [...]}`) — queued as a background run; the response (`202`) carries a `run_id`.
+- **Everything changed since a point in time** (`{"scope": "since", "since": "<RFC3339 timestamp>"}`) — same queued behavior, resolved to whichever products actually changed.
+- **The whole catalog** (`{"scope": "all"}`) — same queued behavior; also what nightly/manual full reindexes use.
+
+A large partial request (more of the catalog than the configured threshold, or over 10,000 IDs) is silently upgraded to a full scan for efficiency — the run's recorded scope reflects what actually ran, not just what was requested.
+
+Poll `GET /api/v1/admin/search/reindex/{runID}` for a queued run's progress: `status` (`processing`/`completed`/`failed`), `total_count`/`processed_count` (how far along it is), and `last_error` if it failed.
+
 ## Configure the Store
 
 ### General settings

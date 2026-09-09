@@ -49,4 +49,10 @@ const (
 	// admin-only (see rolePermissions) the same way AuditRead is.
 	JobsRead  Permission = "jobs.read"
 	JobsWrite Permission = "jobs.write"
+
+	// SearchReindex gates triggering a reindex and reading its progress
+	// (PR-1035). Deliberately not JobsWrite: reindexing is a
+	// catalog-adjacent operation an operator might grant separately from
+	// general job control (retry/cancel of arbitrary job types).
+	SearchReindex Permission = "search.reindex"
 )
