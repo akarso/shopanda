@@ -193,11 +193,25 @@ func (h *ReindexHandler) Handle(ctx context.Context, job domainjobs.Job) error {
 // key) — nil is the sentinel Handle uses to pick the ListAll loop instead
 // of the ListByIDs one, so this keeps existing full-scan jobs behaving
 // exactly as before.
+//
+// Any scope value other than "", "all", or "products" is a real error,
+// not a fall-through to a full scan: resolveScope's own default case
+// already rejects an unrecognized Scope type symmetrically on the trigger
+// side, and silently rescanning the entire catalog for a typo'd scope
+// string, a future scope kind added here without updating this switch, or
+// outright payload corruption would be a far more surprising outcome than
+// failing the job loudly.
 func scopedProductIDs(job domainjobs.Job) ([]string, error) {
 	scope, _ := job.Payload["scope"].(string)
-	if scope != reindexScopeProducts {
+	switch scope {
+	case "", reindexScopeAll:
 		return nil, nil
+	case reindexScopeProducts:
+		// Handled below.
+	default:
+		return nil, fmt.Errorf("unrecognized scope %q in job payload", scope)
 	}
+
 	raw, ok := job.Payload["product_ids"].([]interface{})
 	if !ok {
 		return nil, fmt.Errorf("scope %q requires a \"product_ids\" array in the job payload", scope)

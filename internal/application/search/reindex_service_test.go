@@ -9,6 +9,7 @@ import (
 	searchApp "github.com/akarso/shopanda/internal/application/search"
 	domainjobs "github.com/akarso/shopanda/internal/domain/jobs"
 	domainsearch "github.com/akarso/shopanda/internal/domain/search"
+	"github.com/akarso/shopanda/internal/platform/id"
 	"github.com/akarso/shopanda/internal/platform/logger"
 )
 
@@ -211,7 +212,7 @@ func TestReindexService_Trigger_ScopeProducts_RunsScoped(t *testing.T) {
 	products := &fakeProductSource{products: make([]domainsearch.Product, 100)} // total catalog = 100
 	svc, _ := searchApp.NewReindexService(store, products, queue, logger.New("error"), defaultThreshold)
 
-	ids := []string{"p1", "p2"} // 2/100 = 2%, well under the 20% threshold
+	ids := []string{id.New(), id.New()} // 2/100 = 2%, well under the 20% threshold
 	runID, err := svc.Trigger(context.Background(), searchApp.ScopeProducts{IDs: ids})
 	if err != nil {
 		t.Fatalf("Trigger: %v", err)
@@ -231,7 +232,39 @@ func TestReindexService_Trigger_ScopeProducts_RunsScoped(t *testing.T) {
 	}
 	got, ok := job.Payload["product_ids"].([]string)
 	if !ok || len(got) != 2 {
-		t.Errorf("job payload product_ids = %v, want [p1 p2]", job.Payload["product_ids"])
+		t.Errorf("job payload product_ids = %v, want %v", job.Payload["product_ids"], ids)
+	}
+}
+
+// TestReindexService_Trigger_ScopeProducts_DeduplicatesAndValidatesIDs pins
+// the fix for a duplicate-ID bug: without deduplication, a repeated ID
+// would inflate the ratio fed to applyThreshold and the run's total_count
+// beyond what ListByIDs' own `= ANY($1)` (which naturally deduplicates on
+// the read side) could ever report back as processed_count — a
+// "completed" run permanently showing e.g. 1/2 instead of 1/1. Also pins
+// that a blank or non-UUID entry is rejected synchronously here, not
+// surfaced later as a Postgres error after the job is already enqueued.
+func TestReindexService_Trigger_ScopeProducts_DeduplicatesAndValidatesIDs(t *testing.T) {
+	store := &fakeRunStore{}
+	queue := &fakeQueue{}
+	products := &fakeProductSource{products: make([]domainsearch.Product, 100)}
+	svc, _ := searchApp.NewReindexService(store, products, queue, logger.New("error"), defaultThreshold)
+
+	dupID := id.New()
+	if _, err := svc.Trigger(context.Background(), searchApp.ScopeProducts{IDs: []string{dupID, dupID}}); err != nil {
+		t.Fatalf("Trigger: %v", err)
+	}
+	job := queue.enqueued[0]
+	got, ok := job.Payload["product_ids"].([]string)
+	if !ok || len(got) != 1 {
+		t.Fatalf("job payload product_ids = %v, want exactly 1 deduplicated id", job.Payload["product_ids"])
+	}
+
+	if _, err := svc.Trigger(context.Background(), searchApp.ScopeProducts{IDs: []string{""}}); err == nil {
+		t.Error("expected an error for a blank product id")
+	}
+	if _, err := svc.Trigger(context.Background(), searchApp.ScopeProducts{IDs: []string{"not-a-uuid"}}); err == nil {
+		t.Error("expected an error for a non-UUID product id")
 	}
 }
 
@@ -346,7 +379,7 @@ func TestReindexService_Trigger_EmptyResolutionSkipsCountAll(t *testing.T) {
 func TestReindexService_Trigger_CountAllErrorPropagates(t *testing.T) {
 	products := &fakeProductSource{countErr: errors.New("db down")}
 	svc, _ := searchApp.NewReindexService(&fakeRunStore{}, products, &fakeQueue{}, logger.New("error"), defaultThreshold)
-	if _, err := svc.Trigger(context.Background(), searchApp.ScopeProducts{IDs: []string{"p1"}}); err == nil {
+	if _, err := svc.Trigger(context.Background(), searchApp.ScopeProducts{IDs: []string{id.New()}}); err == nil {
 		t.Fatal("expected the catalog count error to propagate")
 	}
 }
@@ -359,9 +392,13 @@ func TestReindexService_Trigger_ScopeThreshold_SubstitutesFullScanAboveThreshold
 	store := &fakeRunStore{}
 	queue := &fakeQueue{}
 	// 21 of 100 products requested = 21% > the 20% default threshold.
+	// Distinct real UUIDs, not repeated placeholders: a duplicate would
+	// be deduplicated before the ratio is computed (see
+	// TestReindexService_Trigger_ScopeProducts_DeduplicatesAndValidatesIDs),
+	// silently shrinking this test's intended 21% below the threshold.
 	ids := make([]string, 21)
 	for i := range ids {
-		ids[i] = "p"
+		ids[i] = id.New()
 	}
 	products := &fakeProductSource{products: make([]domainsearch.Product, 100)}
 	svc, _ := searchApp.NewReindexService(store, products, queue, logger.New("error"), defaultThreshold)
@@ -394,10 +431,12 @@ func TestReindexService_Trigger_ScopeThreshold_SubstitutesFullScanAboveThreshold
 func TestReindexService_Trigger_ScopeThreshold_KeepsScopedAtThreshold(t *testing.T) {
 	store := &fakeRunStore{}
 	queue := &fakeQueue{}
-	// 20 of 100 products requested = exactly 20%, not above it.
+	// 20 of 100 products requested = exactly 20%, not above it. Distinct
+	// real UUIDs — see the same note in
+	// ScopeThreshold_SubstitutesFullScanAboveThreshold above.
 	ids := make([]string, 20)
 	for i := range ids {
-		ids[i] = "p"
+		ids[i] = id.New()
 	}
 	products := &fakeProductSource{products: make([]domainsearch.Product, 100)}
 	svc, _ := searchApp.NewReindexService(store, products, queue, logger.New("error"), defaultThreshold)
@@ -408,5 +447,38 @@ func TestReindexService_Trigger_ScopeThreshold_KeepsScopedAtThreshold(t *testing
 	}
 	if store.runs[runID].Scope != "products" {
 		t.Errorf("run.Scope = %q, want products (exactly at the threshold, not above it)", store.runs[runID].Scope)
+	}
+}
+
+// TestReindexService_Trigger_ScopeThreshold_HardCapSubstitutesFullScan
+// pins the absolute cap (maxScopedReindexProductIDs) that applies
+// independent of the percentage threshold: an ID count over the cap
+// substitutes a full scan without ever consulting the catalog size at
+// all — proven, as in TestReindexService_Trigger_EmptyResolutionSkipsCountAll,
+// by making CountAll itself fail and asserting Trigger still succeeds.
+// On a real catalog this matters most exactly when it looks harmless by
+// percentage (a huge catalog where even 10,001 ids is a small fraction) —
+// the byte size of the job payload doesn't care about the fraction.
+func TestReindexService_Trigger_ScopeThreshold_HardCapSubstitutesFullScan(t *testing.T) {
+	store := &fakeRunStore{}
+	queue := &fakeQueue{}
+	const over = 10_001 // one past maxScopedReindexProductIDs
+	ids := make([]string, over)
+	for i := range ids {
+		ids[i] = id.New()
+	}
+	products := &fakeProductSource{countErr: errors.New("CountAll must not be called once the hard cap alone decides the outcome")}
+	svc, _ := searchApp.NewReindexService(store, products, queue, logger.New("error"), defaultThreshold)
+
+	runID, err := svc.Trigger(context.Background(), searchApp.ScopeProducts{IDs: ids})
+	if err != nil {
+		t.Fatalf("Trigger: %v (CountAll should not have been consulted once the hard cap tripped)", err)
+	}
+	if store.runs[runID].Scope != "all" {
+		t.Errorf("run.Scope = %q, want all (hard cap exceeded)", store.runs[runID].Scope)
+	}
+	job := queue.enqueued[0]
+	if _, ok := job.Payload["product_ids"]; ok {
+		t.Error("job payload should not carry product_ids once substituted to a full scan")
 	}
 }

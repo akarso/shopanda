@@ -508,3 +508,26 @@ func TestReindexHandler_Handle_ScopedRun_ListByIDsErrorFailsRun(t *testing.T) {
 		t.Errorf("run status = %q, want failed", store.runs["run-1"].Status)
 	}
 }
+
+// TestReindexHandler_Handle_UnrecognizedScopeErrors pins the fix for a
+// silent-full-scan bug: only "", "all", and "products" are recognized
+// scope values — a typo, a future scope kind added without updating
+// scopedProductIDs, or payload corruption must fail the job loudly
+// instead of silently rescanning the entire catalog (which a fall-through
+// default used to do, since only an exact "products" match previously
+// triggered the scoped path).
+func TestReindexHandler_Handle_UnrecognizedScopeErrors(t *testing.T) {
+	store := &fakeRunStore{}
+	newTestRun(store, "run-1")
+	engine := &fakeSearchEngine{}
+	source := &fakeProductSource{products: []domainsearch.Product{{ID: "p1"}}}
+	h := searchApp.NewReindexHandler(store, source, engine, logger.New("error"))
+
+	job := domainjobs.Job{ID: "job-1", Type: searchApp.JobType, Payload: map[string]interface{}{"run_id": "run-1", "scope": "bogus"}}
+	if err := h.Handle(context.Background(), job); err == nil {
+		t.Fatal("expected an error for an unrecognized scope value")
+	}
+	if len(engine.indexed) != 0 {
+		t.Error("expected no products indexed for an unrecognized scope — the error must surface before any scan begins")
+	}
+}
