@@ -19,6 +19,10 @@ func (stubSearch) IndexProduct(context.Context, search.Product) error {
 	return nil
 }
 func (stubSearch) RemoveProduct(context.Context, string) error { return nil }
+func (stubSearch) IndexCategory(context.Context, search.Category) error {
+	return nil
+}
+func (stubSearch) RemoveCategory(context.Context, string) error { return nil }
 func (stubSearch) Search(context.Context, search.SearchQuery) (search.SearchResult, error) {
 	return search.SearchResult{}, nil
 }

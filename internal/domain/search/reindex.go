@@ -151,3 +151,38 @@ type ProductSource interface {
 	// same way ProductIDsByCategory resolves ScopeCategories.
 	ProductIDsUpdatedSince(ctx context.Context, since time.Time) ([]string, error)
 }
+
+// CategorySource is the read-only category source used to build a fresh
+// Category document for indexing. Like ProductSource, it is deliberately
+// narrow and decoupled from catalog.CategoryRepository /
+// catalog.ProductCategoryAssignmentRepository — a subscriber reacting to a
+// catalog category event shouldn't need to know about the wider catalog
+// domain (see Product's and Category's own doc comments).
+type CategorySource interface {
+	// GetByID returns the current state of categoryID, including a freshly
+	// computed ProductCount, or (Category{}, false, nil) if no such
+	// category exists (e.g. deleted between the event firing and this
+	// call — the caller should treat that as nothing to index, not an
+	// error).
+	GetByID(ctx context.Context, categoryID string) (Category, bool, error)
+}
+
+// CategoryLock provides mutual exclusion over category-document engine
+// calls (IndexCategory/RemoveCategory) for a given key (a category ID),
+// across API server instances — not just goroutines within one process.
+// An in-process-only lock (e.g. a plain sync.Mutex map) is not enough
+// here: in a horizontally-scaled deployment, an Update event for a
+// category can be handled by one instance while a Delete for the same
+// category is handled by another, each with its own independent
+// in-memory lock providing no mutual exclusion between them — letting
+// the Update's IndexCategory call land *after* the Delete's
+// RemoveCategory, permanently resurrecting a deleted category as
+// searchable (nothing else will ever remove it again). CategoryLock must
+// be backed by storage shared across every instance (e.g. a Postgres
+// advisory lock) to actually prevent that.
+type CategoryLock interface {
+	// Lock blocks until it acquires the lock for key or ctx is done,
+	// returning an error in the latter case. On success, the returned
+	// unlock releases the lock; callers must defer it immediately.
+	Lock(ctx context.Context, key string) (unlock func() error, err error)
+}

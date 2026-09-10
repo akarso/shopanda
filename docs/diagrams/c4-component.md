@@ -265,7 +265,7 @@ C4Component
     Rel(corePostgresPlugins, postgresSearch, "Provides default search engine")
     Rel(corePostgresPlugins, pgCacheStore, "Provides default cache store")
     Rel(corePostgresPlugins, postgresJobQueue, "Provides default job queue")
-    Rel(coreMeilisearch, meilisearch, "Indexes and queries products", "HTTP")
+    Rel(coreMeilisearch, meilisearch, "Indexes/queries products; indexes categories in a second index", "HTTP")
     Rel(coreRedisCache, redis, "Key-value cache with TTL", "Redis protocol")
     Rel(coreRedisQueue, redis, "Job enqueue/dequeue", "Redis protocol")
     Rel(coreRabbitMQ, rabbitmq, "AMQP job dispatch", "AMQP")

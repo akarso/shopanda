@@ -1125,7 +1125,7 @@ func storefrontInteractiveFilters(r *http.Request, params storefrontListingParam
 
 func storefrontCategoryFilterGroup(r *http.Request, params storefrontListingParams, facets map[string][]search.FacetValue, allCategories []catalog.Category, activeCategory *catalog.Category) *StorefrontFilterGroup {
 	values := append([]search.FacetValue(nil), facets["category"]...)
-	if extra, ok := facets["category_id"]; ok {
+	if extra, ok := facets["category_ids"]; ok {
 		values = append(values, extra...)
 	}
 	if len(values) == 0 {

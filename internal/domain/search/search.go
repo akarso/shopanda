@@ -61,11 +61,36 @@ type Product struct {
 	Name        string
 	Slug        string
 	Description string
-	CategoryID  string
+	// CategoryIDs lists every category the product is assigned to. Was a
+	// single CategoryID string before PR-1037 — that silently dropped every
+	// category past the first for a multi-category product in engines that
+	// store category data on the product document (Meilisearch). The
+	// Postgres engine never stored category data on the document at all
+	// (Search resolves category filters via a live join against
+	// product_categories), so it was unaffected by that bug and this field
+	// is currently write-only there too.
+	CategoryIDs []string
 	Price       int64 // cents
 	InStock     bool
 	CreatedAt   time.Time
 	Attributes  map[string]interface{}
+}
+
+// Category is a lightweight search-index representation of a catalog
+// category. Like Product, it intentionally avoids importing the catalog
+// package. Description is always empty today — catalog.Category has no
+// description field — but is kept here since a search index document is a
+// natural place to surface one once the catalog domain gains it.
+type Category struct {
+	ID          string
+	Name        string
+	Slug        string
+	Description string
+	ParentID    string
+	// ProductCount is the number of products assigned directly to this
+	// category — it does not aggregate descendant categories' products
+	// (see CategorySource.GetByID implementations for the reasoning).
+	ProductCount int
 }
 
 // SearchResult holds the outcome of a search query.
@@ -100,6 +125,12 @@ type SearchEngine interface {
 
 	// RemoveProduct removes a product from the search index.
 	RemoveProduct(ctx context.Context, productID string) error
+
+	// IndexCategory adds or updates a category document in the search index.
+	IndexCategory(ctx context.Context, c Category) error
+
+	// RemoveCategory removes a category document from the search index.
+	RemoveCategory(ctx context.Context, categoryID string) error
 
 	// Search executes the given query and returns matching products.
 	Search(ctx context.Context, query SearchQuery) (SearchResult, error)

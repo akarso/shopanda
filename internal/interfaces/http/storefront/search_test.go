@@ -38,6 +38,10 @@ func (m *mockSearchEngine) IndexProduct(_ context.Context, _ search.Product) err
 
 func (m *mockSearchEngine) RemoveProduct(_ context.Context, _ string) error { return nil }
 
+func (m *mockSearchEngine) IndexCategory(_ context.Context, _ search.Category) error { return nil }
+
+func (m *mockSearchEngine) RemoveCategory(_ context.Context, _ string) error { return nil }
+
 func (m *mockSearchEngine) Search(ctx context.Context, query search.SearchQuery) (search.SearchResult, error) {
 	return m.searchFn(ctx, query)
 }

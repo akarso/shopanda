@@ -2,12 +2,16 @@ package search
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"sync"
 	"testing"
 	"time"
 
+	"github.com/akarso/shopanda/internal/domain/catalog"
 	domainjobs "github.com/akarso/shopanda/internal/domain/jobs"
 	domainsearch "github.com/akarso/shopanda/internal/domain/search"
+	"github.com/akarso/shopanda/internal/platform/event"
 	"github.com/akarso/shopanda/internal/platform/id"
 )
 
@@ -79,6 +83,72 @@ func (f *fakeInternalQueue) Count() int {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	return f.count
+}
+
+type fakeInternalSearchEngine struct{}
+
+func (f *fakeInternalSearchEngine) Name() string { return "fake" }
+func (f *fakeInternalSearchEngine) IndexProduct(context.Context, domainsearch.Product) error {
+	return nil
+}
+func (f *fakeInternalSearchEngine) RemoveProduct(context.Context, string) error { return nil }
+func (f *fakeInternalSearchEngine) IndexCategory(context.Context, domainsearch.Category) error {
+	return nil
+}
+func (f *fakeInternalSearchEngine) RemoveCategory(context.Context, string) error { return nil }
+func (f *fakeInternalSearchEngine) Search(context.Context, domainsearch.SearchQuery) (domainsearch.SearchResult, error) {
+	return domainsearch.SearchResult{}, nil
+}
+func (f *fakeInternalSearchEngine) Suggest(context.Context, string, int) ([]domainsearch.Suggestion, error) {
+	return nil, nil
+}
+
+type fakeInternalCategorySource struct {
+	category domainsearch.Category
+	found    bool
+}
+
+func (f *fakeInternalCategorySource) GetByID(context.Context, string) (domainsearch.Category, bool, error) {
+	return f.category, f.found, nil
+}
+
+// fakeInternalCategoryLock is an in-process domainsearch.CategoryLock fake
+// — real per-key mutual exclusion (same shape as the sync.Map-based lock
+// this type replaced), enough to verify IndexUpdateSubscriber holds the
+// lock for the right duration; it does not itself prove cross-instance
+// behavior (that's AdvisoryLock's own integration test), only that the
+// subscriber uses the CategoryLock port correctly.
+type fakeInternalCategoryLock struct {
+	locks sync.Map // map[string]*sync.Mutex
+}
+
+func (f *fakeInternalCategoryLock) Lock(_ context.Context, key string) (func() error, error) {
+	muIface, _ := f.locks.LoadOrStore(key, &sync.Mutex{})
+	mu := muIface.(*sync.Mutex)
+	mu.Lock()
+	return func() error {
+		mu.Unlock()
+		return nil
+	}, nil
+}
+
+// fakeInternalRetryEngine wraps fakeInternalSearchEngine to fail
+// IndexCategory a configurable number of times before succeeding, for
+// TestIndexUpdateSubscriber_HandleCategoryCreated_RetriesTransientFailure.
+type fakeInternalRetryEngine struct {
+	fakeInternalSearchEngine
+	failAttempts      int
+	calls             int
+	indexedCategories []domainsearch.Category
+}
+
+func (f *fakeInternalRetryEngine) IndexCategory(_ context.Context, c domainsearch.Category) error {
+	f.calls++
+	if f.calls <= f.failAttempts {
+		return fmt.Errorf("transient failure (attempt %d)", f.calls)
+	}
+	f.indexedCategories = append(f.indexedCategories, c)
+	return nil
 }
 
 // TestIndexUpdateSubscriber_Allow_DebounceWindow exercises allow directly
@@ -159,7 +229,7 @@ func TestIndexUpdateSubscriber_TrailingFlush_CatchesLaterMutationAfterEarlyCompl
 	if err != nil {
 		t.Fatalf("NewReindexService: %v", err)
 	}
-	sub := NewIndexUpdateSubscriber(svc, noopLogger{})
+	sub := NewIndexUpdateSubscriber(svc, &fakeInternalSearchEngine{}, &fakeInternalCategorySource{}, &fakeInternalCategoryLock{}, noopLogger{})
 	sub.window = 40 * time.Millisecond
 
 	productID := id.New()
@@ -189,5 +259,224 @@ func TestIndexUpdateSubscriber_TrailingFlush_CatchesLaterMutationAfterEarlyCompl
 	}
 	if got := queue.Count(); got != 2 {
 		t.Fatalf("enqueued %d jobs after waiting past the window, want 2 (leading-edge + trailing flush) — the second mutation's effect must not be lost", got)
+	}
+}
+
+// TestIndexUpdateSubscriber_RetryCategoryEngineCall_SucceedsAfterTransientFailures
+// pins the CR fix for PR-1037: category-document indexing runs as a bare
+// async event handler with no queue/retry behind it (unlike product
+// reindexing), so without an in-process retry, a single transient engine
+// error (a brief Meilisearch blip) would permanently drop that update —
+// event.Bus.Publish only logs and drops async handler errors, it never
+// retries them itself. retryCategoryEngineCall must succeed once the
+// underlying call stops failing, without exhausting its attempt budget.
+func TestIndexUpdateSubscriber_RetryCategoryEngineCall_SucceedsAfterTransientFailures(t *testing.T) {
+	s := &IndexUpdateSubscriber{retryDelay: time.Millisecond}
+	calls := 0
+	err := s.retryCategoryEngineCall(context.Background(), func() error {
+		calls++
+		if calls < categoryIndexMaxAttempts {
+			return errors.New("transient failure")
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("retryCategoryEngineCall: %v", err)
+	}
+	if calls != categoryIndexMaxAttempts {
+		t.Fatalf("calls = %d, want %d (succeeds on the last allowed attempt)", calls, categoryIndexMaxAttempts)
+	}
+}
+
+// TestIndexUpdateSubscriber_RetryCategoryEngineCall_GivesUpAfterMaxAttempts
+// pins the other half: a persistent failure must not retry forever — it
+// gives up after categoryIndexMaxAttempts and returns the last error, same
+// as today's (pre-fix) single-attempt behavior for a truly broken engine.
+func TestIndexUpdateSubscriber_RetryCategoryEngineCall_GivesUpAfterMaxAttempts(t *testing.T) {
+	s := &IndexUpdateSubscriber{retryDelay: time.Millisecond}
+	calls := 0
+	wantErr := errors.New("permanent failure")
+	err := s.retryCategoryEngineCall(context.Background(), func() error {
+		calls++
+		return wantErr
+	})
+	if !errors.Is(err, wantErr) {
+		t.Fatalf("err = %v, want %v", err, wantErr)
+	}
+	if calls != categoryIndexMaxAttempts {
+		t.Fatalf("calls = %d, want exactly %d (no more, no fewer)", calls, categoryIndexMaxAttempts)
+	}
+}
+
+// TestIndexUpdateSubscriber_RetryCategoryEngineCall_AbortsOnContextCancel
+// pins that a retry loop doesn't outlive the bus's shutdown context —
+// OnAsync handlers run with shutdownCtx, which Drain cancels after its
+// grace window, and a retry loop that ignored cancellation could hold up
+// process shutdown.
+func TestIndexUpdateSubscriber_RetryCategoryEngineCall_AbortsOnContextCancel(t *testing.T) {
+	s := &IndexUpdateSubscriber{retryDelay: time.Hour} // long enough that only cancellation ends the wait
+	ctx, cancel := context.WithCancel(context.Background())
+	calls := 0
+	done := make(chan error, 1)
+	go func() {
+		done <- s.retryCategoryEngineCall(ctx, func() error {
+			calls++
+			return errors.New("still failing")
+		})
+	}()
+	// Let the first attempt run and enter its post-failure wait, then cancel.
+	time.Sleep(20 * time.Millisecond)
+	cancel()
+
+	select {
+	case err := <-done:
+		if err == nil {
+			t.Fatal("expected the last attempt's error, not nil")
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("retryCategoryEngineCall did not return after context cancellation")
+	}
+	if calls != 1 {
+		t.Fatalf("calls = %d, want 1 (cancelled during the wait before a second attempt)", calls)
+	}
+}
+
+// TestIndexUpdateSubscriber_HandleCategoryCreated_RetriesTransientFailure
+// exercises the retry wiring end-to-end through the public handler (not
+// just retryCategoryEngineCall in isolation): HandleCategoryCreated must
+// still report success once the engine's transient failures clear within
+// the attempt budget, proving indexCategory actually routes IndexCategory
+// calls through the retry helper rather than calling the engine directly.
+func TestIndexUpdateSubscriber_HandleCategoryCreated_RetriesTransientFailure(t *testing.T) {
+	engine := &fakeInternalRetryEngine{failAttempts: categoryIndexMaxAttempts - 1}
+	categoryID := id.New()
+	categories := &fakeInternalCategorySource{
+		category: domainsearch.Category{ID: categoryID, Name: "Shoes", Slug: "shoes"},
+		found:    true,
+	}
+	s := &IndexUpdateSubscriber{
+		engine:       engine,
+		categories:   categories,
+		categoryLock: &fakeInternalCategoryLock{},
+		log:          noopLogger{},
+		retryDelay:   time.Millisecond,
+	}
+
+	evt := event.New(catalog.EventCategoryCreated, "test", catalog.CategoryCreatedData{CategoryID: categoryID, Name: "Shoes", Slug: "shoes"})
+	if err := s.HandleCategoryCreated(context.Background(), evt); err != nil {
+		t.Fatalf("HandleCategoryCreated: %v", err)
+	}
+	if engine.calls != categoryIndexMaxAttempts {
+		t.Fatalf("engine.calls = %d, want %d (retried through the transient failures)", engine.calls, categoryIndexMaxAttempts)
+	}
+	if len(engine.indexedCategories) != 1 || engine.indexedCategories[0].ID != categoryID {
+		t.Fatalf("indexedCategories = %+v, want one entry for %s", engine.indexedCategories, categoryID)
+	}
+}
+
+// fakeInternalBlockingEngine lets a test pause IndexCategory mid-flight
+// (after it starts, before it returns) to deterministically force the
+// Update/Delete race lockCategory guards against — see
+// TestIndexUpdateSubscriber_HandleCategoryUpdatedAndDeleted_SerializedNoResurrection.
+type fakeInternalBlockingEngine struct {
+	fakeInternalSearchEngine
+	indexStarted chan struct{}
+	proceedIndex chan struct{}
+
+	mu                sync.Mutex
+	indexedCategories []domainsearch.Category
+	removedCategories []string
+	callOrder         []string
+}
+
+func (f *fakeInternalBlockingEngine) IndexCategory(_ context.Context, c domainsearch.Category) error {
+	close(f.indexStarted)
+	<-f.proceedIndex
+	f.mu.Lock()
+	f.indexedCategories = append(f.indexedCategories, c)
+	f.callOrder = append(f.callOrder, "index")
+	f.mu.Unlock()
+	return nil
+}
+
+func (f *fakeInternalBlockingEngine) RemoveCategory(_ context.Context, categoryID string) error {
+	f.mu.Lock()
+	f.removedCategories = append(f.removedCategories, categoryID)
+	f.callOrder = append(f.callOrder, "remove")
+	f.mu.Unlock()
+	return nil
+}
+
+// TestIndexUpdateSubscriber_HandleCategoryUpdatedAndDeleted_SerializedNoResurrection
+// pins the CR fix: an Update and a Delete for the same category are
+// published from two independent HTTP requests, each dispatched to its
+// own async goroutine with no ordering guarantee between them. Before the
+// fix, an Update handler whose GetByID read ran before a concurrent
+// Delete actually removed the category could still push that now-stale
+// data to IndexCategory *after* the Delete handler's RemoveCategory
+// already ran — resurrecting a deleted category as searchable,
+// permanently (nothing else would ever remove it again). This forces
+// Update to start first and pauses it mid-IndexCategory (still holding
+// categoryID's lock), starts Delete concurrently, and asserts Delete
+// cannot complete until Update's IndexCategory finishes and releases the
+// lock — so the two engine calls are always fully serialized, and
+// RemoveCategory (Delete) never lands before IndexCategory (Update) for
+// this pair, only after.
+func TestIndexUpdateSubscriber_HandleCategoryUpdatedAndDeleted_SerializedNoResurrection(t *testing.T) {
+	categoryID := id.New()
+	engine := &fakeInternalBlockingEngine{
+		indexStarted: make(chan struct{}),
+		proceedIndex: make(chan struct{}),
+	}
+	categories := &fakeInternalCategorySource{
+		category: domainsearch.Category{ID: categoryID, Name: "Shoes", Slug: "shoes"},
+		found:    true,
+	}
+	s := &IndexUpdateSubscriber{engine: engine, categories: categories, categoryLock: &fakeInternalCategoryLock{}, log: noopLogger{}, retryDelay: time.Millisecond}
+
+	updateEvt := event.New(catalog.EventCategoryUpdated, "test", catalog.CategoryUpdatedData{CategoryID: categoryID, Name: "Shoes", Slug: "shoes"})
+	deleteEvt := event.New(catalog.EventCategoryDeleted, "test", catalog.CategoryDeletedData{CategoryID: categoryID, Slug: "shoes"})
+
+	updateDone := make(chan error, 1)
+	go func() {
+		updateDone <- s.HandleCategoryUpdated(context.Background(), updateEvt)
+	}()
+
+	select {
+	case <-engine.indexStarted:
+	case <-time.After(2 * time.Second):
+		t.Fatal("HandleCategoryUpdated did not reach IndexCategory in time")
+	}
+
+	deleteDone := make(chan error, 1)
+	go func() {
+		deleteDone <- s.HandleCategoryDeleted(context.Background(), deleteEvt)
+	}()
+
+	select {
+	case <-deleteDone:
+		t.Fatal("HandleCategoryDeleted completed before HandleCategoryUpdated released the category lock — the two must be serialized, not run concurrently")
+	case <-time.After(100 * time.Millisecond):
+		// Expected: still blocked waiting for the lock.
+	}
+
+	close(engine.proceedIndex)
+
+	if err := <-updateDone; err != nil {
+		t.Fatalf("HandleCategoryUpdated: %v", err)
+	}
+	select {
+	case err := <-deleteDone:
+		if err != nil {
+			t.Fatalf("HandleCategoryDeleted: %v", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("HandleCategoryDeleted did not complete after the lock was released")
+	}
+
+	engine.mu.Lock()
+	defer engine.mu.Unlock()
+	if len(engine.callOrder) != 2 || engine.callOrder[0] != "index" || engine.callOrder[1] != "remove" {
+		t.Fatalf("callOrder = %v, want [index remove] — RemoveCategory must never land before IndexCategory for this racing pair, or the deleted category would end up resurrected as searchable", engine.callOrder)
 	}
 }

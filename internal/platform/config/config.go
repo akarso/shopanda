@@ -420,6 +420,8 @@ type MeilisearchConfig struct {
 	Host   string `yaml:"host"`
 	APIKey string `yaml:"api_key"`
 	Index  string `yaml:"index"`
+	// CategoriesIndex is the index UID for category documents (PR-1037).
+	CategoriesIndex string `yaml:"categories_index"`
 }
 
 type CacheConfig struct {
@@ -755,8 +757,9 @@ func defaults() Config {
 		Search: SearchConfig{
 			Engine: "postgres",
 			Meilisearch: MeilisearchConfig{
-				Host:  "http://localhost:7700",
-				Index: "products",
+				Host:            "http://localhost:7700",
+				Index:           "products",
+				CategoriesIndex: "categories",
 			},
 			ReindexFullScanThreshold: DefaultSearchReindexFullScanThreshold,
 		},
@@ -971,6 +974,9 @@ func applyEnv(cfg *Config) {
 	}
 	if v := os.Getenv("SHOPANDA_SEARCH_MEILI_INDEX"); v != "" {
 		cfg.Search.Meilisearch.Index = v
+	}
+	if v := os.Getenv("SHOPANDA_SEARCH_MEILI_CATEGORIES_INDEX"); v != "" {
+		cfg.Search.Meilisearch.CategoriesIndex = v
 	}
 	if v := os.Getenv("SHOPANDA_CACHE_DRIVER"); v != "" {
 		cfg.Cache.Driver = v
@@ -1306,6 +1312,7 @@ func flatten(cfg *Config) map[string]string {
 	m["search.engine"] = cfg.Search.Engine
 	m["search.meilisearch.host"] = cfg.Search.Meilisearch.Host
 	m["search.meilisearch.index"] = cfg.Search.Meilisearch.Index
+	m["search.meilisearch.categories_index"] = cfg.Search.Meilisearch.CategoriesIndex
 	m["search.reindex_full_scan_threshold"] = strconv.FormatFloat(cfg.Search.ReindexFullScanThreshold, 'f', -1, 64)
 	m["cache.driver"] = cfg.Cache.Driver
 	m["cache.redis.url"] = cfg.Cache.Redis.URL

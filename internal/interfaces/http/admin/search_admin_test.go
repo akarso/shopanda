@@ -110,6 +110,12 @@ func (f *fakeSearchEngine) IndexProduct(ctx context.Context, p domainsearch.Prod
 
 func (f *fakeSearchEngine) RemoveProduct(context.Context, string) error { return nil }
 
+func (f *fakeSearchEngine) IndexCategory(context.Context, domainsearch.Category) error {
+	return nil
+}
+
+func (f *fakeSearchEngine) RemoveCategory(context.Context, string) error { return nil }
+
 func (f *fakeSearchEngine) Search(context.Context, domainsearch.SearchQuery) (domainsearch.SearchResult, error) {
 	return domainsearch.SearchResult{}, nil
 }

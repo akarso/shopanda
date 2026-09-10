@@ -9,6 +9,7 @@ import (
 	"github.com/akarso/shopanda/internal/domain/catalog"
 	"github.com/akarso/shopanda/internal/domain/inventory"
 	"github.com/akarso/shopanda/internal/domain/pricing"
+	domainsearch "github.com/akarso/shopanda/internal/domain/search"
 	"github.com/akarso/shopanda/internal/platform/event"
 )
 
@@ -29,6 +30,26 @@ import (
 // complexity for this.
 const productReindexDebounceWindow = 5 * time.Second
 
+// categoryIndexMaxAttempts bounds how many times a category-document
+// engine call (IndexCategory/RemoveCategory) is retried before giving up.
+// Unlike product reindexing — a queued, durable job via ReindexService
+// with its own retry/backoff — category-document indexing runs as a bare
+// async event handler (see HandleCategoryCreated/Updated/Deleted's own
+// doc comments for why there's no existing job-queue path to reuse for
+// it), and per event.Bus.Publish, an async handler's error is only logged,
+// never retried by the bus itself. A short bounded in-process retry
+// absorbs a transient failure (a brief Meilisearch blip, a momentary
+// connection error) without needing job-queue infrastructure; a truly
+// persistent failure still ultimately drops the update, same as before —
+// recoverable only by the category's next edit or a manual/full reindex
+// (see ROADMAP.md's "Design notes: PR-1037" and this PR's own CR
+// retrospective).
+const categoryIndexMaxAttempts = 3
+
+// categoryIndexRetryBaseDelay is the delay before the first retry,
+// doubled after each subsequent failed attempt.
+const categoryIndexRetryBaseDelay = 200 * time.Millisecond
+
 // IndexUpdateSubscriber listens for catalog/pricing/inventory change events
 // and enqueues a scoped reindex for the affected product — the "on save"
 // mode neither PR-1030's schedule trigger nor PR-1035's manual admin
@@ -36,29 +57,59 @@ const productReindexDebounceWindow = 5 * time.Second
 // (same package-level pattern, same event sources for the catalog/pricing
 // events the two subscribers share).
 type IndexUpdateSubscriber struct {
-	reindex *ReindexService
-	log     Logger
-	window  time.Duration // productReindexDebounceWindow; a field (not just the const) so a whitebox test can shrink it for a fast, deterministic trailing-flush test.
+	reindex    *ReindexService
+	engine     domainsearch.SearchEngine
+	categories domainsearch.CategorySource
+	log        Logger
+	window     time.Duration // productReindexDebounceWindow; a field (not just the const) so a whitebox test can shrink it for a fast, deterministic trailing-flush test.
+	retryDelay time.Duration // categoryIndexRetryBaseDelay; a field for the same reason — a whitebox test shrinks it for a fast retry test.
 
 	mu       sync.Mutex
 	lastFire map[string]time.Time
 	trailing map[string]*time.Timer
+
+	// categoryLock serializes indexCategory and HandleCategoryDeleted for
+	// the same category ID — see domainsearch.CategoryLock's own doc
+	// comment for the cross-instance race this prevents. Must be backed
+	// by storage shared across every API server instance, not an
+	// in-process-only mutex.
+	categoryLock domainsearch.CategoryLock
 }
 
-// NewIndexUpdateSubscriber creates an IndexUpdateSubscriber.
-func NewIndexUpdateSubscriber(reindex *ReindexService, log Logger) *IndexUpdateSubscriber {
+// NewIndexUpdateSubscriber creates an IndexUpdateSubscriber. engine and
+// categories back the category-document handlers added in PR-1037
+// (HandleCategoryCreated/Updated/Deleted) — a category *document* is
+// indexed directly via SearchEngine.IndexCategory/RemoveCategory, not
+// through ReindexService/the job queue: ScopeCategories only ever resolves
+// to the category's member *products*, never to the category document
+// itself (see ReindexService's own scope-resolution logic), so there is no
+// existing path this could reuse.
+func NewIndexUpdateSubscriber(reindex *ReindexService, engine domainsearch.SearchEngine, categories domainsearch.CategorySource, categoryLock domainsearch.CategoryLock, log Logger) *IndexUpdateSubscriber {
 	if reindex == nil {
 		panic("search.NewIndexUpdateSubscriber: nil reindex service")
+	}
+	if engine == nil {
+		panic("search.NewIndexUpdateSubscriber: nil search engine")
+	}
+	if categories == nil {
+		panic("search.NewIndexUpdateSubscriber: nil category source")
+	}
+	if categoryLock == nil {
+		panic("search.NewIndexUpdateSubscriber: nil category lock")
 	}
 	if log == nil {
 		panic("search.NewIndexUpdateSubscriber: nil logger")
 	}
 	return &IndexUpdateSubscriber{
-		reindex:  reindex,
-		log:      log,
-		window:   productReindexDebounceWindow,
-		lastFire: make(map[string]time.Time),
-		trailing: make(map[string]*time.Timer),
+		reindex:      reindex,
+		engine:       engine,
+		categories:   categories,
+		categoryLock: categoryLock,
+		log:          log,
+		window:       productReindexDebounceWindow,
+		retryDelay:   categoryIndexRetryBaseDelay,
+		lastFire:     make(map[string]time.Time),
+		trailing:     make(map[string]*time.Timer),
 	}
 }
 
@@ -78,6 +129,9 @@ func (s *IndexUpdateSubscriber) Register(bus *event.Bus) {
 	bus.OnAsync(catalog.EventProductUpdated, s.HandleProductUpdated)
 	bus.OnAsync(pricing.EventPriceUpserted, s.HandlePriceUpserted)
 	bus.OnAsync(inventory.EventStockUpdated, s.HandleStockUpdated)
+	bus.OnAsync(catalog.EventCategoryCreated, s.HandleCategoryCreated)
+	bus.OnAsync(catalog.EventCategoryUpdated, s.HandleCategoryUpdated)
+	bus.OnAsync(catalog.EventCategoryDeleted, s.HandleCategoryDeleted)
 }
 
 // HandleProductCreated schedules a reindex for a newly created product.
@@ -118,6 +172,132 @@ func (s *IndexUpdateSubscriber) HandleStockUpdated(ctx context.Context, evt even
 		return fmt.Errorf("search.invalidation: unexpected event data type %T", evt.Data)
 	}
 	return s.scheduleReindex(ctx, data.ProductID)
+}
+
+// HandleCategoryCreated indexes a newly created category document.
+func (s *IndexUpdateSubscriber) HandleCategoryCreated(ctx context.Context, evt event.Event) error {
+	data, ok := evt.Data.(catalog.CategoryCreatedData)
+	if !ok {
+		return fmt.Errorf("search.invalidation: unexpected event data type %T", evt.Data)
+	}
+	return s.indexCategory(ctx, data.CategoryID)
+}
+
+// HandleCategoryUpdated re-indexes an updated category document.
+func (s *IndexUpdateSubscriber) HandleCategoryUpdated(ctx context.Context, evt event.Event) error {
+	data, ok := evt.Data.(catalog.CategoryUpdatedData)
+	if !ok {
+		return fmt.Errorf("search.invalidation: unexpected event data type %T", evt.Data)
+	}
+	return s.indexCategory(ctx, data.CategoryID)
+}
+
+// HandleCategoryDeleted removes a deleted category's document from the
+// index. Unlike the create/update path, this needs no fresh read: there
+// is nothing left to fetch, so it calls RemoveCategory directly.
+func (s *IndexUpdateSubscriber) HandleCategoryDeleted(ctx context.Context, evt event.Event) error {
+	data, ok := evt.Data.(catalog.CategoryDeletedData)
+	if !ok {
+		return fmt.Errorf("search.invalidation: unexpected event data type %T", evt.Data)
+	}
+	unlock, err := s.categoryLock.Lock(ctx, data.CategoryID)
+	if err != nil {
+		return fmt.Errorf("search.invalidation: lock category %s: %w", data.CategoryID, err)
+	}
+	defer s.unlockCategory(data.CategoryID, unlock)
+	if err := s.retryCategoryEngineCall(ctx, func() error { return s.engine.RemoveCategory(ctx, data.CategoryID) }); err != nil {
+		s.log.Error("search.invalidation.category_remove_failed", err, map[string]interface{}{"category_id": data.CategoryID})
+		return fmt.Errorf("search.invalidation: remove category %s: %w", data.CategoryID, err)
+	}
+	return nil
+}
+
+// indexCategory re-reads categoryID's current state (not a snapshot from
+// event time, so a burst of quick successive edits still ends up with the
+// latest state indexed) and pushes it to the search engine. No debounce:
+// unlike product edits, category writes go through a single synchronous
+// admin request each, not a bulk-import path — see PR-1036's debounce,
+// which exists specifically for that bulk case.
+//
+// Holds categoryID's lock (s.categoryLock) across both the GetByID read
+// and the engine call: an Update and a Delete for the same category are
+// published from two independent HTTP requests — possibly handled by two
+// different API server instances — each dispatched to its own async
+// goroutine with no ordering guarantee between them. Without serializing
+// here, an Update handler whose GetByID ran before a concurrent Delete
+// actually removed the row could still push that now-stale category to
+// IndexCategory *after* the Delete handler's RemoveCategory already ran
+// — resurrecting a deleted category as searchable, permanently (nothing
+// else will ever remove it again). With the lock, whichever handler runs
+// second does its GetByID read (still live, still inside the lock) after
+// the first has fully finished: if Delete ran first, the second GetByID
+// correctly observes found=false and no-ops; if Update ran first,
+// Delete's subsequent RemoveCategory still correctly clears whatever
+// Update just indexed. s.categoryLock must be shared across every
+// instance (not a plain in-process mutex) for this guarantee to actually
+// hold in a multi-instance deployment — see domainsearch.CategoryLock's
+// own doc comment.
+func (s *IndexUpdateSubscriber) indexCategory(ctx context.Context, categoryID string) error {
+	unlock, err := s.categoryLock.Lock(ctx, categoryID)
+	if err != nil {
+		return fmt.Errorf("search.invalidation: lock category %s: %w", categoryID, err)
+	}
+	defer s.unlockCategory(categoryID, unlock)
+
+	c, found, err := s.categories.GetByID(ctx, categoryID)
+	if err != nil {
+		return fmt.Errorf("search.invalidation: get category %s: %w", categoryID, err)
+	}
+	if !found {
+		// Deleted between the event firing and this handler running;
+		// nothing to index. Not an error — see CategorySource.GetByID's
+		// own doc comment.
+		return nil
+	}
+	if err := s.retryCategoryEngineCall(ctx, func() error { return s.engine.IndexCategory(ctx, c) }); err != nil {
+		s.log.Error("search.invalidation.category_index_failed", err, map[string]interface{}{"category_id": categoryID})
+		return fmt.Errorf("search.invalidation: index category %s: %w", categoryID, err)
+	}
+	s.log.Info("search.invalidation.category_indexed", map[string]interface{}{"category_id": categoryID})
+	return nil
+}
+
+// unlockCategory runs unlock (the func returned by a successful
+// s.categoryLock.Lock call) and logs, rather than propagates, any error —
+// this is always called from a defer, where returning an error isn't an
+// option, but a release failure (e.g. a dropped connection mid-commit)
+// still deserves visibility rather than silent loss.
+func (s *IndexUpdateSubscriber) unlockCategory(categoryID string, unlock func() error) {
+	if err := unlock(); err != nil {
+		s.log.Error("search.invalidation.category_unlock_failed", err, map[string]interface{}{"category_id": categoryID})
+	}
+}
+
+// retryCategoryEngineCall runs fn up to categoryIndexMaxAttempts times,
+// waiting s.retryDelay (doubling after each failed attempt) in between,
+// and returns the last error if every attempt fails. A wait aborts early
+// (returning the error from the most recent attempt) if ctx is cancelled
+// — the async handler's ctx is the bus's shutdownCtx, live during Drain's
+// grace window and then cancelled, so a stuck retry loop doesn't hang
+// process shutdown indefinitely.
+func (s *IndexUpdateSubscriber) retryCategoryEngineCall(ctx context.Context, fn func() error) error {
+	var err error
+	delay := s.retryDelay
+	for attempt := 1; attempt <= categoryIndexMaxAttempts; attempt++ {
+		if err = fn(); err == nil {
+			return nil
+		}
+		if attempt == categoryIndexMaxAttempts {
+			break
+		}
+		select {
+		case <-ctx.Done():
+			return err
+		case <-time.After(delay):
+		}
+		delay *= 2
+	}
+	return err
 }
 
 // scheduleReindex enqueues a scoped reindex for productID, unless a
