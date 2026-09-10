@@ -57,7 +57,16 @@ func NewSearchAdminHandler(reindex *searchApp.ReindexService, runs domainsearch.
 	return &SearchAdminHandler{reindex: reindex, runs: runs, products: products, engine: engine, auditor: auditor}
 }
 
-func (h *SearchAdminHandler) audit(r *http.Request, action adminapp.AuditAction, resourceID string, details map[string]interface{}, err error) {
+// audit records one audit entry. ctx governs LogAction's own synchronous
+// persistence call (Auditor.persistEntry's DB insert) — deliberately a
+// separate parameter from r, not always r.Context(): triggerSingleProduct
+// passes its own singleProductIndexTimeout-bounded context so a slow
+// audit-log write can't hold that path's "supposedly bounded" request open
+// past its deadline the same way an unbounded ListByIDs/IndexProduct call
+// used to (see that function's own doc comment). Every other call site
+// still passes r.Context(), unchanged, since only the synchronous path
+// makes a bounded-latency promise.
+func (h *SearchAdminHandler) audit(ctx context.Context, r *http.Request, action adminapp.AuditAction, resourceID string, details map[string]interface{}, err error) {
 	merged := mergeAuditDetails(details, fullAdminScopeDetailsFromRequest(r))
 	result := "success"
 	errMsg := ""
@@ -65,7 +74,7 @@ func (h *SearchAdminHandler) audit(r *http.Request, action adminapp.AuditAction,
 		result = "error"
 		errMsg = err.Error()
 	}
-	h.auditor.LogAction(r.Context(), adminapp.AuditEntry{
+	h.auditor.LogAction(ctx, adminapp.AuditEntry{
 		AdminID:      adminIDFromRequest(r),
 		Action:       action,
 		ResourceType: "search_reindex",
@@ -114,7 +123,7 @@ type reindexTriggerRequest struct {
 func (h *SearchAdminHandler) Trigger() http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		reject := func(err error, details map[string]interface{}) {
-			h.audit(r, adminapp.AuditSearchReindexTrigger, "", details, err)
+			h.audit(r.Context(), r, adminapp.AuditSearchReindexTrigger, "", details, err)
 			httpshared.JSONError(w, err)
 		}
 
@@ -213,23 +222,23 @@ func (h *SearchAdminHandler) triggerSingleProduct(w http.ResponseWriter, r *http
 
 	products, err := h.products.ListByIDs(ctx, []string{productID})
 	if err != nil {
-		h.audit(r, adminapp.AuditSearchReindexTrigger, productID, map[string]interface{}{"scope": "products", "ids": []string{productID}, "mode": "sync"}, err)
+		h.audit(ctx, r, adminapp.AuditSearchReindexTrigger, productID, map[string]interface{}{"scope": "products", "ids": []string{productID}, "mode": "sync"}, err)
 		httpshared.JSONError(w, apperror.Wrap(apperror.CodeInternal, "look up product failed", err))
 		return
 	}
 	if len(products) == 0 {
 		err := apperror.NotFound("product not found")
-		h.audit(r, adminapp.AuditSearchReindexTrigger, productID, map[string]interface{}{"scope": "products", "ids": []string{productID}, "mode": "sync"}, err)
+		h.audit(ctx, r, adminapp.AuditSearchReindexTrigger, productID, map[string]interface{}{"scope": "products", "ids": []string{productID}, "mode": "sync"}, err)
 		httpshared.JSONError(w, err)
 		return
 	}
 	if err := h.engine.IndexProduct(ctx, products[0]); err != nil {
-		h.audit(r, adminapp.AuditSearchReindexTrigger, productID, map[string]interface{}{"scope": "products", "ids": []string{productID}, "mode": "sync"}, err)
+		h.audit(ctx, r, adminapp.AuditSearchReindexTrigger, productID, map[string]interface{}{"scope": "products", "ids": []string{productID}, "mode": "sync"}, err)
 		httpshared.JSONError(w, apperror.Wrap(apperror.CodeInternal, "index product failed", err))
 		return
 	}
 
-	h.audit(r, adminapp.AuditSearchReindexTrigger, productID, map[string]interface{}{"scope": "products", "ids": []string{productID}, "mode": "sync"}, nil)
+	h.audit(ctx, r, adminapp.AuditSearchReindexTrigger, productID, map[string]interface{}{"scope": "products", "ids": []string{productID}, "mode": "sync"}, nil)
 	httpshared.JSON(w, http.StatusOK, map[string]interface{}{
 		"status":     "indexed",
 		"product_id": productID,
@@ -251,12 +260,12 @@ func (h *SearchAdminHandler) triggerBulk(w http.ResponseWriter, r *http.Request,
 	auditDetails["mode"] = "queued"
 	runID, err := h.reindex.Trigger(r.Context(), scope)
 	if err != nil {
-		h.audit(r, adminapp.AuditSearchReindexTrigger, "", auditDetails, err)
+		h.audit(r.Context(), r, adminapp.AuditSearchReindexTrigger, "", auditDetails, err)
 		httpshared.JSONError(w, err)
 		return
 	}
 
-	h.audit(r, adminapp.AuditSearchReindexTrigger, runID, auditDetails, nil)
+	h.audit(r.Context(), r, adminapp.AuditSearchReindexTrigger, runID, auditDetails, nil)
 	httpshared.JSON(w, http.StatusAccepted, map[string]interface{}{"run_id": runID})
 }
 
@@ -271,18 +280,18 @@ func (h *SearchAdminHandler) Get() http.HandlerFunc {
 
 		run, err := h.runs.Get(r.Context(), runID)
 		if err != nil {
-			h.audit(r, adminapp.AuditSearchReindexRead, runID, nil, err)
+			h.audit(r.Context(), r, adminapp.AuditSearchReindexRead, runID, nil, err)
 			httpshared.JSONError(w, apperror.Wrap(apperror.CodeInternal, "get reindex run failed", err))
 			return
 		}
 		if run == nil {
 			err := apperror.NotFound("reindex run not found")
-			h.audit(r, adminapp.AuditSearchReindexRead, runID, nil, err)
+			h.audit(r.Context(), r, adminapp.AuditSearchReindexRead, runID, nil, err)
 			httpshared.JSONError(w, err)
 			return
 		}
 
-		h.audit(r, adminapp.AuditSearchReindexRead, runID, nil, nil)
+		h.audit(r.Context(), r, adminapp.AuditSearchReindexRead, runID, nil, nil)
 		httpshared.JSON(w, http.StatusOK, toReindexRunResponse(*run))
 	}
 }

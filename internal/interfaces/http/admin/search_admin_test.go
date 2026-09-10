@@ -151,9 +151,11 @@ func newSearchAdminHandler(t *testing.T, deps searchAdminDeps) *admin.SearchAdmi
 // request that never reaches triggerBulk/triggerSingleProduct.
 type fakeAuditLogRepository struct {
 	records []domainadmin.AuditLogRecord
+	lastCtx context.Context
 }
 
-func (f *fakeAuditLogRepository) Insert(_ context.Context, record domainadmin.AuditLogRecord) error {
+func (f *fakeAuditLogRepository) Insert(ctx context.Context, record domainadmin.AuditLogRecord) error {
+	f.lastCtx = ctx
 	f.records = append(f.records, record)
 	return nil
 }
@@ -309,6 +311,35 @@ func TestSearchAdminHandler_Trigger_ScopeProducts_SingleID_BoundedContext(t *tes
 	}
 	if _, ok := deps.engine.lastCtx.Deadline(); !ok {
 		t.Error("IndexProduct received a context with no deadline")
+	}
+}
+
+// TestSearchAdminHandler_Trigger_ScopeProducts_SingleID_AuditUsesBoundedContext
+// pins a fixed bug: audit's own synchronous persistence call
+// (Auditor.LogAction -> persistEntry -> AuditLogRepository.Insert) used
+// r.Context() unconditionally, even from triggerSingleProduct — so a slow
+// audit-log insert could hold the "supposedly bounded" single-product
+// request open past singleProductIndexTimeout, past the point where
+// ListByIDs/IndexProduct's own bounded context had already protected the
+// rest of the path. The repository's Insert must now receive a context
+// with a deadline, the same bounded one those two calls get.
+func TestSearchAdminHandler_Trigger_ScopeProducts_SingleID_AuditUsesBoundedContext(t *testing.T) {
+	deps := newDefaultDeps()
+	productID := id.New()
+	deps.products.products[productID] = domainsearch.Product{ID: productID, Name: "Widget"}
+	h, repo := newSearchAdminHandlerWithAuditRepo(t, deps)
+	mux := newSearchAdminRouter(h)
+
+	rec := triggerRequest(t, mux, `{"scope":"products","ids":["`+productID+`"]}`)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body=%s", rec.Code, rec.Body.String())
+	}
+	if repo.lastCtx == nil {
+		t.Fatal("audit repository Insert was not called")
+	}
+	if _, ok := repo.lastCtx.Deadline(); !ok {
+		t.Error("audit's Insert received a context with no deadline — a slow audit write could still block this 'bounded' request indefinitely")
 	}
 }
 
