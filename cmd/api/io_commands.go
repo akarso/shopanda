@@ -436,6 +436,14 @@ func runImportPrices(cfg *config.Config, log logger.Logger) error {
 		if err != nil {
 			return nil, fmt.Errorf("price history repo: %w", err)
 		}
+		// bus is deliberately nil: PriceImporter publishes pricing.EventPriceUpserted
+		// once per imported row, and since PR-1036 that event also triggers a
+		// scoped search reindex (IndexUpdateSubscriber, debounced per product ID,
+		// not per event) — wiring a real bus here would mean one search_index_runs
+		// row and one queued job per distinct product in the CSV, potentially
+		// thousands for one import. If this ever needs eventing (e.g. for cache
+		// invalidation), batch the search-index side first rather than just
+		// passing a real bus through.
 		result, err := importer.NewPriceImporter(variantRepo, priceRepo, priceHistoryRepo, conn, nil).
 			WithRowHooks(regs.Import).
 			Import(ctx, f)

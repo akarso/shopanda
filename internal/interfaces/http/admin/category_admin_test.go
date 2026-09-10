@@ -4,11 +4,14 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
+	adminapp "github.com/akarso/shopanda/internal/application/admin"
 	"github.com/akarso/shopanda/internal/domain/catalog"
 	"github.com/akarso/shopanda/internal/domain/identity"
 	"github.com/akarso/shopanda/internal/domain/rbac"
@@ -482,6 +485,210 @@ func TestCategoryProductAssignmentAdminHandler_Assign_OK(t *testing.T) {
 	}
 	if !assignBody.Data.Assigned {
 		t.Fatalf("assigned = %v, want true", assignBody.Data.Assigned)
+	}
+}
+
+// TestCategoryProductAssignmentAdminHandler_Assign_EmitsProductUpdatedEvent
+// pins PR-1036's wiring: a successful Assign must publish
+// catalog.EventProductUpdated (reused, not a new event — see
+// PR-1036.md's "Design decisions") so the search index's on-save
+// subscriber refreshes the product's indexed category membership. It must
+// carry the real Name/Slug/Status, not just ProductID — rewrite.Subscriber
+// also listens to this event synchronously and builds a URL rewrite
+// straight from data.Slug with no fallback lookup; an empty Slug would
+// register "/" itself as this product's rewrite (or hit a path conflict),
+// aborting the publish before the async cache/search handlers even ran.
+func TestCategoryProductAssignmentAdminHandler_Assign_EmitsProductUpdatedEvent(t *testing.T) {
+	cats := &mockCategoryRepo{
+		findByIDFn: func(_ context.Context, id string) (*catalog.Category, error) {
+			return &catalog.Category{ID: "cat-1", Name: "Accessories", Slug: "accessories"}, nil
+		},
+	}
+	prods := &mockCatProductRepo{
+		findByIDFn: func(_ context.Context, id string) (*catalog.Product, error) {
+			return &catalog.Product{ID: "prod-1", Name: "Hat", Slug: "hat", Status: catalog.StatusActive}, nil
+		},
+	}
+	assignments := &mockProductCategoryAssignmentRepo{
+		assignFn: func(_ context.Context, productID, categoryID string) error { return nil },
+	}
+	read := storefront.NewCategoryHandler(cats, prods)
+	h := admin.NewCategoryProductAssignmentAdminHandler(cats, prods, assignments)
+	bus := event.NewBus(logger.NewWithWriter(io.Discard, "error"))
+	h.SetBus(bus)
+
+	var captured event.Event
+	bus.On(catalog.EventProductUpdated, func(_ context.Context, evt event.Event) error {
+		captured = evt
+		return nil
+	})
+
+	mux := newAdminCategoryAssignmentRouter(read, h)
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/admin/categories/cat-1/products/prod-1", nil)
+	req = testhelper.AuthenticatedRequest(req, "editor-1", identity.RoleEditor)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d", rec.Code, http.StatusOK)
+	}
+	if captured.Name != catalog.EventProductUpdated {
+		t.Fatalf("event name = %q, want %q", captured.Name, catalog.EventProductUpdated)
+	}
+	data, ok := captured.Data.(catalog.ProductUpdatedData)
+	if !ok {
+		t.Fatalf("event data type = %T, want ProductUpdatedData", captured.Data)
+	}
+	if data.ProductID != "prod-1" || data.Name != "Hat" || data.Slug != "hat" || data.Status != catalog.StatusActive {
+		t.Fatalf("data = %+v, want product_id=prod-1 name=Hat slug=hat status=active", data)
+	}
+}
+
+// TestCategoryProductAssignmentAdminHandler_Unassign_EmitsProductUpdatedEvent
+// is Assign's counterpart for Unassign — same event, same payload
+// requirement (real Slug, not empty).
+func TestCategoryProductAssignmentAdminHandler_Unassign_EmitsProductUpdatedEvent(t *testing.T) {
+	cats := &mockCategoryRepo{
+		findByIDFn: func(_ context.Context, id string) (*catalog.Category, error) {
+			return &catalog.Category{ID: "cat-1", Name: "Accessories", Slug: "accessories"}, nil
+		},
+	}
+	prods := &mockCatProductRepo{
+		findByIDFn: func(_ context.Context, id string) (*catalog.Product, error) {
+			return &catalog.Product{ID: "prod-1", Name: "Hat", Slug: "hat", Status: catalog.StatusActive}, nil
+		},
+	}
+	assignments := &mockProductCategoryAssignmentRepo{
+		removeFn: func(_ context.Context, productID, categoryID string) error { return nil },
+	}
+	read := storefront.NewCategoryHandler(cats, prods)
+	h := admin.NewCategoryProductAssignmentAdminHandler(cats, prods, assignments)
+	bus := event.NewBus(logger.NewWithWriter(io.Discard, "error"))
+	h.SetBus(bus)
+
+	var captured event.Event
+	bus.On(catalog.EventProductUpdated, func(_ context.Context, evt event.Event) error {
+		captured = evt
+		return nil
+	})
+
+	mux := newAdminCategoryAssignmentRouter(read, h)
+	req := httptest.NewRequest(http.MethodDelete, "/api/v1/admin/categories/cat-1/products/prod-1", nil)
+	req = testhelper.AuthenticatedRequest(req, "editor-1", identity.RoleEditor)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d", rec.Code, http.StatusOK)
+	}
+	if captured.Name != catalog.EventProductUpdated {
+		t.Fatalf("event name = %q, want %q", captured.Name, catalog.EventProductUpdated)
+	}
+	data, ok := captured.Data.(catalog.ProductUpdatedData)
+	if !ok {
+		t.Fatalf("event data type = %T, want ProductUpdatedData", captured.Data)
+	}
+	if data.ProductID != "prod-1" || data.Name != "Hat" || data.Slug != "hat" || data.Status != catalog.StatusActive {
+		t.Fatalf("data = %+v, want product_id=prod-1 name=Hat slug=hat status=active", data)
+	}
+}
+
+// TestCategoryProductAssignmentAdminHandler_Assign_PublishFailure_StillSucceedsButAudited
+// pins two fixes together: event.Bus.Publish aborts before dispatching any
+// async handler (cache invalidation, search reindex) if a synchronous
+// handler on the same event — rewrite.Subscriber, here simulated directly
+// on the bus — returns an error (a genuine path conflict, or a repository
+// failure; not just the empty-Slug case Round 2 already fixed). The
+// assignment write itself already succeeded by that point, so Assign must
+// still report success (this codebase's own convention: a side effect's
+// own failure never fails the response — see product_admin.go's own
+// Publish call). Two things must both be true when the sync handler
+// fails: (1) the async handlers still actually run — via
+// publishAssignmentChanged's PublishAsync fallback (Round 4) — so the
+// index/cache don't go stale over an unrelated rewrite problem, and (2)
+// the sync failure is still recorded in a separate audit entry (Round 3),
+// so it's visible to whoever reviews the audit log even though nothing
+// about it blocked the request or the index update.
+func TestCategoryProductAssignmentAdminHandler_Assign_PublishFailure_StillSucceedsButAudited(t *testing.T) {
+	cats := &mockCategoryRepo{
+		findByIDFn: func(_ context.Context, id string) (*catalog.Category, error) {
+			return &catalog.Category{ID: "cat-1", Name: "Accessories", Slug: "accessories"}, nil
+		},
+	}
+	prods := &mockCatProductRepo{
+		findByIDFn: func(_ context.Context, id string) (*catalog.Product, error) {
+			return &catalog.Product{ID: "prod-1", Name: "Hat", Slug: "hat", Status: catalog.StatusActive}, nil
+		},
+	}
+	assignments := &mockProductCategoryAssignmentRepo{
+		assignFn: func(_ context.Context, productID, categoryID string) error { return nil },
+	}
+	read := storefront.NewCategoryHandler(cats, prods)
+
+	sink := &auditSink{}
+	h := admin.NewCategoryProductAssignmentAdminHandlerWithAuditor(cats, prods, assignments, adminapp.NewAuditor(sink))
+	bus := event.NewBus(logger.NewWithWriter(io.Discard, "error"))
+	// Simulates rewrite.Subscriber (or any other synchronous handler on
+	// this event) failing — e.g. a real path conflict — independent of
+	// whether the payload itself is correct.
+	bus.On(catalog.EventProductUpdated, func(context.Context, event.Event) error {
+		return fmt.Errorf("rewrite: path %q already claimed by page/some-other-page", "/hat")
+	})
+	// Stands in for cache invalidation / the search-index subscriber: this
+	// must still fire even though the sync handler above fails.
+	asyncRan := make(chan struct{})
+	bus.OnAsync(catalog.EventProductUpdated, func(_ context.Context, evt event.Event) error {
+		data, ok := evt.Data.(catalog.ProductUpdatedData)
+		if !ok || data.ProductID != "prod-1" {
+			t.Errorf("async handler got unexpected event data: %+v", evt.Data)
+		}
+		close(asyncRan)
+		return nil
+	})
+	h.SetBus(bus)
+
+	mux := newAdminCategoryAssignmentRouter(read, h)
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/admin/categories/cat-1/products/prod-1", nil)
+	req = testhelper.AuthenticatedRequest(req, "editor-1", identity.RoleEditor)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d; body=%s", rec.Code, http.StatusOK, rec.Body.String())
+	}
+	var body struct {
+		Data struct {
+			Assigned bool `json:"assigned"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if !body.Data.Assigned {
+		t.Fatal("expected assigned=true — the assignment itself succeeded, a downstream event-publish failure must not flip this")
+	}
+
+	select {
+	case <-asyncRan:
+		// success — cache invalidation / search reindex still ran despite
+		// the synchronous rewrite handler's failure.
+	case <-time.After(2 * time.Second):
+		t.Fatal("async handler (cache invalidation / search reindex stand-in) did not run — the sync handler's failure must not leave it stale")
+	}
+
+	if len(sink.records) != 2 {
+		t.Fatalf("audit records = %d, want 2 (assignment success + publish failure); records=%+v", len(sink.records), sink.records)
+	}
+	last := sink.Last(t)
+	if last.event != "admin.action.failed" {
+		t.Fatalf("last audit event = %q, want admin.action.failed", last.event)
+	}
+	if last.context["result"] != "error" {
+		t.Errorf("last audit result = %v, want error", last.context["result"])
+	}
+	errMsg, _ := last.context["error"].(string)
+	if errMsg == "" {
+		t.Error("expected the last audit record to carry a non-empty error message about the publish failure")
 	}
 }
 

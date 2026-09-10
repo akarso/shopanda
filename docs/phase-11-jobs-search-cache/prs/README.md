@@ -11,7 +11,7 @@
 | PR-1033 | B | done | [Reindex as a job](PR-1033.md) |
 | PR-1034 | B | done | [Partial & scoped reindex](PR-1034.md) |
 | PR-1035 | B | done | [Reindex admin API + progress](PR-1035.md) |
-| PR-1036 | B | planned | [On-save incremental indexing](PR-1036.md) |
+| PR-1036 | B | done | [On-save incremental indexing](PR-1036.md) |
 | PR-1037 | B | planned | [Category indexing + relationship fix](PR-1037.md) |
 | PR-1038 | B | planned | [Search admin GUI](PR-1038.md) |
 | PR-1039 | C | planned | [Tag-based invalidation](PR-1039.md) |
@@ -24,6 +24,7 @@
 | PR-1046 | D | planned | [Invalidation wiring + stampede guard](PR-1046.md) |
 | PR-1047 | D | planned | [Observability + rollup](PR-1047.md) |
 | PR-1048 | — | done | [Fix search reindex stuck-run gap](PR-1048.md) |
+| PR-1049 | — | planned | [Stock-change event coverage for on-save indexing](PR-1049.md) |
 
 Roadmap: [`../ROADMAP.md`](../ROADMAP.md)
 

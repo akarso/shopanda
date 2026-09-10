@@ -231,6 +231,73 @@ func TestBus_SyncError_SkipsAsync(t *testing.T) {
 	}
 }
 
+// TestBus_PublishAsync_SkipsSyncRunsAsync pins PublishAsync's contract: it
+// dispatches straight to async handlers without ever invoking a
+// registered sync handler for the same event name — the point of the
+// method is to run async side effects even when Publish's own sync phase
+// already failed (or the caller otherwise wants to bypass it).
+func TestBus_PublishAsync_SkipsSyncRunsAsync(t *testing.T) {
+	bus := event.NewBus(testLogger())
+	done := make(chan struct{})
+	var syncCalled atomic.Bool
+
+	bus.On("test.publish_async", func(_ context.Context, _ event.Event) error {
+		syncCalled.Store(true)
+		return nil
+	})
+	bus.OnAsync("test.publish_async", func(_ context.Context, evt event.Event) error {
+		if evt.Name != "test.publish_async" {
+			t.Errorf("event name = %q", evt.Name)
+		}
+		close(done)
+		return nil
+	})
+
+	bus.PublishAsync(event.New("test.publish_async", "test", nil))
+
+	select {
+	case <-done:
+		// success
+	case <-time.After(2 * time.Second):
+		t.Fatal("async handler did not run within timeout")
+	}
+	if syncCalled.Load() {
+		t.Error("PublishAsync must not invoke registered sync handlers")
+	}
+}
+
+// TestBus_PublishAsync_AfterFailedPublish_StillRunsAsyncHandlers is the
+// scenario PublishAsync exists for: a Publish call whose sync handler
+// fails skips async dispatch entirely (TestBus_SyncError_SkipsAsync); a
+// caller that still wants this event's async side effects to run (e.g.
+// cache invalidation, search reindex — unrelated to why the sync handler
+// failed) calls PublishAsync as a fallback.
+func TestBus_PublishAsync_AfterFailedPublish_StillRunsAsyncHandlers(t *testing.T) {
+	bus := event.NewBus(testLogger())
+	done := make(chan struct{})
+
+	bus.On("test.fallback", func(_ context.Context, _ event.Event) error {
+		return errors.New("sync handler boom")
+	})
+	bus.OnAsync("test.fallback", func(_ context.Context, _ event.Event) error {
+		close(done)
+		return nil
+	})
+
+	evt := event.New("test.fallback", "test", nil)
+	if err := bus.Publish(context.Background(), evt); err == nil {
+		t.Fatal("expected Publish to return the sync handler's error")
+	}
+	bus.PublishAsync(evt)
+
+	select {
+	case <-done:
+		// success — the async handler ran via the fallback call
+	case <-time.After(2 * time.Second):
+		t.Fatal("async handler did not run within timeout after PublishAsync fallback")
+	}
+}
+
 func TestBus_AsyncHandler(t *testing.T) {
 	bus := event.NewBus(testLogger())
 	done := make(chan struct{})

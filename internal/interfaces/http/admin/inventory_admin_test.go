@@ -17,6 +17,7 @@ import (
 	"github.com/akarso/shopanda/internal/domain/inventory"
 	"github.com/akarso/shopanda/internal/domain/rbac"
 	"github.com/akarso/shopanda/internal/platform/auth/testhelper"
+	"github.com/akarso/shopanda/internal/platform/event"
 )
 
 type mockStockRepo struct {
@@ -199,6 +200,83 @@ func TestInventoryAdminHandler_Adjust(t *testing.T) {
 	}
 	if adjustResp.Data.Item.ProductName != "Shirt" || adjustResp.Data.Item.Reserved != 1 || adjustResp.Data.Item.Available != 11 {
 		t.Fatalf("item = %+v", adjustResp.Data.Item)
+	}
+}
+
+// TestInventoryAdminHandler_Adjust_EmitsStockUpdatedEvent pins PR-1036's
+// wiring: a successful Adjust must publish inventory.EventStockUpdated so
+// the search index's on-save subscriber can pick it up.
+func TestInventoryAdminHandler_Adjust_EmitsStockUpdatedEvent(t *testing.T) {
+	stock := &mockStockRepo{
+		getStockFn: func(_ context.Context, variantID string) (inventory.StockEntry, error) {
+			return inventory.StockEntry{VariantID: variantID, Quantity: 3}, nil
+		},
+		getInventoryItemFn: func(_ context.Context, variantID string) (inventory.InventoryListItem, error) {
+			return inventory.InventoryListItem{VariantID: variantID, ProductID: "p1", SKU: "SKU-1"}, nil
+		},
+	}
+	variants := &mockVariantRepoForInventory{
+		findByIDFn: func(_ context.Context, id string) (*catalog.Variant, error) {
+			return &catalog.Variant{ID: id, ProductID: "p1", SKU: "SKU-1", Name: "Red"}, nil
+		},
+	}
+	h := admin.NewInventoryAdminHandler(stock, variants)
+	bus := testAdminBus()
+	h.SetBus(bus)
+
+	var captured event.Event
+	bus.On(inventory.EventStockUpdated, func(_ context.Context, evt event.Event) error {
+		captured = evt
+		return nil
+	})
+
+	body, _ := json.Marshal(map[string]interface{}{"quantity": 12})
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("PUT", "/api/v1/admin/inventory/v1", bytes.NewReader(body))
+	newInventoryAdminRouter(h).ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d; body: %s", rec.Code, http.StatusOK, rec.Body.String())
+	}
+	if captured.Name != inventory.EventStockUpdated {
+		t.Fatalf("event name = %q, want %q", captured.Name, inventory.EventStockUpdated)
+	}
+	data, ok := captured.Data.(inventory.StockUpdatedData)
+	if !ok {
+		t.Fatalf("event data type = %T, want StockUpdatedData", captured.Data)
+	}
+	if data.ProductID != "p1" || data.VariantID != "v1" || data.SKU != "SKU-1" || data.Quantity != 12 {
+		t.Fatalf("data = %+v, want product_id=p1 variant_id=v1 sku=SKU-1 quantity=12", data)
+	}
+}
+
+// TestInventoryAdminHandler_Adjust_NoBusNoEvent pins that Adjust still
+// works, unchanged, when SetBus was never called (nil bus skips
+// publishing rather than panicking) — the default for every existing
+// caller/test that doesn't need eventing.
+func TestInventoryAdminHandler_Adjust_NoBusNoEvent(t *testing.T) {
+	stock := &mockStockRepo{
+		getStockFn: func(_ context.Context, variantID string) (inventory.StockEntry, error) {
+			return inventory.StockEntry{VariantID: variantID, Quantity: 3}, nil
+		},
+		getInventoryItemFn: func(_ context.Context, variantID string) (inventory.InventoryListItem, error) {
+			return inventory.InventoryListItem{VariantID: variantID, ProductID: "p1", SKU: "SKU-1"}, nil
+		},
+	}
+	variants := &mockVariantRepoForInventory{
+		findByIDFn: func(_ context.Context, id string) (*catalog.Variant, error) {
+			return &catalog.Variant{ID: id, ProductID: "p1", SKU: "SKU-1", Name: "Red"}, nil
+		},
+	}
+	h := admin.NewInventoryAdminHandler(stock, variants)
+
+	body, _ := json.Marshal(map[string]interface{}{"quantity": 12})
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("PUT", "/api/v1/admin/inventory/v1", bytes.NewReader(body))
+	newInventoryAdminRouter(h).ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d; body: %s", rec.Code, http.StatusOK, rec.Body.String())
 	}
 }
 
