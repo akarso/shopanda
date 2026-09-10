@@ -489,7 +489,12 @@ func TestCategoryProductAssignmentAdminHandler_Assign_OK(t *testing.T) {
 // pins PR-1036's wiring: a successful Assign must publish
 // catalog.EventProductUpdated (reused, not a new event — see
 // PR-1036.md's "Design decisions") so the search index's on-save
-// subscriber refreshes the product's indexed category membership.
+// subscriber refreshes the product's indexed category membership. It must
+// carry the real Name/Slug/Status, not just ProductID — rewrite.Subscriber
+// also listens to this event synchronously and builds a URL rewrite
+// straight from data.Slug with no fallback lookup; an empty Slug would
+// register "/" itself as this product's rewrite (or hit a path conflict),
+// aborting the publish before the async cache/search handlers even ran.
 func TestCategoryProductAssignmentAdminHandler_Assign_EmitsProductUpdatedEvent(t *testing.T) {
 	cats := &mockCategoryRepo{
 		findByIDFn: func(_ context.Context, id string) (*catalog.Category, error) {
@@ -498,7 +503,7 @@ func TestCategoryProductAssignmentAdminHandler_Assign_EmitsProductUpdatedEvent(t
 	}
 	prods := &mockCatProductRepo{
 		findByIDFn: func(_ context.Context, id string) (*catalog.Product, error) {
-			return &catalog.Product{ID: "prod-1", Name: "Hat", Slug: "hat"}, nil
+			return &catalog.Product{ID: "prod-1", Name: "Hat", Slug: "hat", Status: catalog.StatusActive}, nil
 		},
 	}
 	assignments := &mockProductCategoryAssignmentRepo{
@@ -531,8 +536,57 @@ func TestCategoryProductAssignmentAdminHandler_Assign_EmitsProductUpdatedEvent(t
 	if !ok {
 		t.Fatalf("event data type = %T, want ProductUpdatedData", captured.Data)
 	}
-	if data.ProductID != "prod-1" {
-		t.Fatalf("data.ProductID = %q, want prod-1", data.ProductID)
+	if data.ProductID != "prod-1" || data.Name != "Hat" || data.Slug != "hat" || data.Status != catalog.StatusActive {
+		t.Fatalf("data = %+v, want product_id=prod-1 name=Hat slug=hat status=active", data)
+	}
+}
+
+// TestCategoryProductAssignmentAdminHandler_Unassign_EmitsProductUpdatedEvent
+// is Assign's counterpart for Unassign — same event, same payload
+// requirement (real Slug, not empty).
+func TestCategoryProductAssignmentAdminHandler_Unassign_EmitsProductUpdatedEvent(t *testing.T) {
+	cats := &mockCategoryRepo{
+		findByIDFn: func(_ context.Context, id string) (*catalog.Category, error) {
+			return &catalog.Category{ID: "cat-1", Name: "Accessories", Slug: "accessories"}, nil
+		},
+	}
+	prods := &mockCatProductRepo{
+		findByIDFn: func(_ context.Context, id string) (*catalog.Product, error) {
+			return &catalog.Product{ID: "prod-1", Name: "Hat", Slug: "hat", Status: catalog.StatusActive}, nil
+		},
+	}
+	assignments := &mockProductCategoryAssignmentRepo{
+		removeFn: func(_ context.Context, productID, categoryID string) error { return nil },
+	}
+	read := storefront.NewCategoryHandler(cats, prods)
+	h := admin.NewCategoryProductAssignmentAdminHandler(cats, prods, assignments)
+	bus := event.NewBus(logger.NewWithWriter(io.Discard, "error"))
+	h.SetBus(bus)
+
+	var captured event.Event
+	bus.On(catalog.EventProductUpdated, func(_ context.Context, evt event.Event) error {
+		captured = evt
+		return nil
+	})
+
+	mux := newAdminCategoryAssignmentRouter(read, h)
+	req := httptest.NewRequest(http.MethodDelete, "/api/v1/admin/categories/cat-1/products/prod-1", nil)
+	req = testhelper.AuthenticatedRequest(req, "editor-1", identity.RoleEditor)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d", rec.Code, http.StatusOK)
+	}
+	if captured.Name != catalog.EventProductUpdated {
+		t.Fatalf("event name = %q, want %q", captured.Name, catalog.EventProductUpdated)
+	}
+	data, ok := captured.Data.(catalog.ProductUpdatedData)
+	if !ok {
+		t.Fatalf("event data type = %T, want ProductUpdatedData", captured.Data)
+	}
+	if data.ProductID != "prod-1" || data.Name != "Hat" || data.Slug != "hat" || data.Status != catalog.StatusActive {
+		t.Fatalf("data = %+v, want product_id=prod-1 name=Hat slug=hat status=active", data)
 	}
 }
 

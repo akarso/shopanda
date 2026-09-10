@@ -15,9 +15,10 @@ import (
 // productReindexDebounceWindow bounds how often the same product ID may
 // re-trigger a reindex from event-driven changes. A burst of edits to one
 // product (e.g. a bulk price import repeatedly touching one SKU) enqueues
-// at most one reindex per window, not one per event — the next save after
-// a debounced-away event still triggers reindexing, so at most one
-// window's worth of freshness is ever delayed, never lost.
+// at most one reindex per window on the leading edge, plus — see
+// scheduleTrailingFlush — exactly one more at the end of the window if
+// any event arrived while debounced, so the product's actual latest state
+// always gets reindexed within one window, never silently dropped.
 //
 // This debounce is per-process, not distributed: each server instance
 // tracks its own last-fired times independently, so a multi-instance
@@ -37,9 +38,11 @@ const productReindexDebounceWindow = 5 * time.Second
 type IndexUpdateSubscriber struct {
 	reindex *ReindexService
 	log     Logger
+	window  time.Duration // productReindexDebounceWindow; a field (not just the const) so a whitebox test can shrink it for a fast, deterministic trailing-flush test.
 
 	mu       sync.Mutex
 	lastFire map[string]time.Time
+	trailing map[string]*time.Timer
 }
 
 // NewIndexUpdateSubscriber creates an IndexUpdateSubscriber.
@@ -50,7 +53,13 @@ func NewIndexUpdateSubscriber(reindex *ReindexService, log Logger) *IndexUpdateS
 	if log == nil {
 		panic("search.NewIndexUpdateSubscriber: nil logger")
 	}
-	return &IndexUpdateSubscriber{reindex: reindex, log: log, lastFire: make(map[string]time.Time)}
+	return &IndexUpdateSubscriber{
+		reindex:  reindex,
+		log:      log,
+		window:   productReindexDebounceWindow,
+		lastFire: make(map[string]time.Time),
+		trailing: make(map[string]*time.Timer),
+	}
 }
 
 // Register wires event handlers on the given bus.
@@ -113,7 +122,12 @@ func (s *IndexUpdateSubscriber) HandleStockUpdated(ctx context.Context, evt even
 
 // scheduleReindex enqueues a scoped reindex for productID, unless a
 // reindex for the same product was already triggered within
-// productReindexDebounceWindow.
+// s.window — in which case it instead ensures a trailing reindex fires
+// once that window ends (scheduleTrailingFlush), so the product's actual
+// latest state is never silently dropped just because the leading-edge
+// job for it happened to finish before the window did (a real risk: a
+// single-product reindex is fast, easily faster than the multi-second
+// debounce window meant to coalesce a burst of edits to it).
 //
 // allow reserves the debounce slot before Trigger runs (so two events for
 // the same product arriving concurrently can't both slip past it), but if
@@ -128,35 +142,91 @@ func (s *IndexUpdateSubscriber) scheduleReindex(ctx context.Context, productID s
 		return nil
 	}
 	if !s.allow(productID, time.Now()) {
+		s.scheduleTrailingFlush(ctx, productID)
 		return nil
 	}
+	if err := s.trigger(ctx, productID); err != nil {
+		return fmt.Errorf("search.invalidation: trigger reindex for product %s: %w", productID, err)
+	}
+	return nil
+}
+
+// trigger calls ReindexService.Trigger for productID, evicting its
+// debounce reservation on failure (see scheduleReindex's own doc comment
+// for why) and logging either outcome. Shared by the immediate
+// (leading-edge) path and the trailing flush below.
+func (s *IndexUpdateSubscriber) trigger(ctx context.Context, productID string) error {
 	if _, err := s.reindex.Trigger(ctx, ScopeProducts{IDs: []string{productID}}); err != nil {
 		s.evict(productID)
 		s.log.Error("search.invalidation.trigger_failed", err, map[string]interface{}{"product_id": productID})
-		return fmt.Errorf("search.invalidation: trigger reindex for product %s: %w", productID, err)
+		return err
 	}
 	s.log.Info("search.invalidation.triggered", map[string]interface{}{"product_id": productID})
 	return nil
 }
 
+// scheduleTrailingFlush guarantees one more Trigger call for productID
+// once the current debounce window elapses, unless one is already
+// scheduled. Without this, an event debounced away is only ever
+// reflected if some *later* event happens to arrive and itself lands
+// outside the window — if nothing else touches this product again, the
+// index would silently keep showing whatever state the leading-edge job
+// indexed, forever (until an unrelated future edit or the next scheduled
+// full reindex), even though a real edit was debounced in the meantime.
+// The trailing flush removes that dependency on a next event ever
+// arriving: it fires unconditionally at window-end and picks up
+// whatever the product's state is *then* (ReindexHandler reads live
+// data, not a snapshot from event time), so the latest state is always
+// caught within one window of the last edit, not just the first.
+func (s *IndexUpdateSubscriber) scheduleTrailingFlush(ctx context.Context, productID string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if _, pending := s.trailing[productID]; pending {
+		return
+	}
+	delay := s.window
+	if last, ok := s.lastFire[productID]; ok {
+		if remaining := s.window - time.Since(last); remaining > 0 {
+			delay = remaining
+		} else {
+			delay = 0
+		}
+	}
+	s.trailing[productID] = time.AfterFunc(delay, func() { s.flushTrailing(ctx, productID) })
+}
+
+// flushTrailing is the trailing timer's callback: it resets the debounce
+// window from now (so a further burst right after this flush is itself
+// coalesced, not fired immediately) and performs the guaranteed reindex.
+func (s *IndexUpdateSubscriber) flushTrailing(ctx context.Context, productID string) {
+	s.mu.Lock()
+	delete(s.trailing, productID)
+	s.lastFire[productID] = time.Now()
+	s.mu.Unlock()
+
+	if err := s.trigger(ctx, productID); err != nil {
+		s.log.Error("search.invalidation.trailing_trigger_failed", err, map[string]interface{}{"product_id": productID})
+	}
+}
+
 // allow reports whether productID may fire now — false if it already
-// fired within the last productReindexDebounceWindow. Opportunistically
-// prunes every entry older than the window on each call, rather than
-// running a background sweep goroutine with its own shutdown/leak
-// concerns, so lastFire only ever holds recently-active product IDs
-// instead of growing unboundedly over the process's lifetime. On a
-// restart, lastFire starts empty — at most one debounce window's worth of
-// coalescing is lost, not any data (the next save still triggers a
-// reindex; see productReindexDebounceWindow's own doc comment).
+// fired within the last s.window. Opportunistically prunes every entry
+// older than the window on each call, rather than running a background
+// sweep goroutine with its own shutdown/leak concerns, so lastFire only
+// ever holds recently-active product IDs instead of growing unboundedly
+// over the process's lifetime. On a restart, lastFire starts empty — at
+// most one debounce window's worth of coalescing is lost, not any data
+// (a trailing flush is scheduled again on the next event, same as
+// before a restart; see scheduleTrailingFlush's own doc comment).
 func (s *IndexUpdateSubscriber) allow(productID string, now time.Time) bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	for pid, last := range s.lastFire {
-		if now.Sub(last) > productReindexDebounceWindow {
+		if now.Sub(last) > s.window {
 			delete(s.lastFire, pid)
 		}
 	}
-	if last, ok := s.lastFire[productID]; ok && now.Sub(last) < productReindexDebounceWindow {
+	if last, ok := s.lastFire[productID]; ok && now.Sub(last) < s.window {
 		return false
 	}
 	s.lastFire[productID] = now

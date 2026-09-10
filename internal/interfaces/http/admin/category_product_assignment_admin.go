@@ -63,20 +63,30 @@ func NewCategoryProductAssignmentAdminHandlerWithAuditor(
 // for it, refreshing the product's indexed category membership; reusing
 // this event rather than adding a new one also means the existing cache
 // invalidation subscriber now correctly invalidates on a category
-// assignment change too, not just a product field edit). Only ProductID is
-// populated on the published event — no consumer reads
-// ProductUpdatedData's other fields today (each re-fetches fresh product
-// data by ID instead), so a full product lookup here isn't needed. Left
-// unset (nil), Assign/Unassign work exactly as before.
+// assignment change too, not just a product field edit). The full product
+// (Name/Slug/Status), not just its ID, must be populated on the published
+// event: rewrite.Subscriber also listens to this event synchronously
+// (bus.On, not OnAsync) and builds a URL rewrite from data.Slug directly,
+// with no fallback lookup — an empty Slug here would register "/" itself
+// as this product's rewrite (or fail with a path conflict if "/" is
+// already claimed by something else), and either way would abort the
+// publish before the async cache-invalidation/search-reindex handlers
+// even ran (sync handler errors short-circuit Publish). Left unset (nil),
+// Assign/Unassign work exactly as before.
 func (h *CategoryProductAssignmentAdminHandler) SetBus(bus *event.Bus) {
 	h.bus = bus
 }
 
-func (h *CategoryProductAssignmentAdminHandler) publishAssignmentChanged(ctx context.Context, productID string) {
+func (h *CategoryProductAssignmentAdminHandler) publishAssignmentChanged(ctx context.Context, product *catalog.Product) {
 	if h.bus == nil {
 		return
 	}
-	_ = h.bus.Publish(ctx, event.New(catalog.EventProductUpdated, "category.assignment", catalog.ProductUpdatedData{ProductID: productID}))
+	_ = h.bus.Publish(ctx, event.New(catalog.EventProductUpdated, "category.assignment", catalog.ProductUpdatedData{
+		ProductID: product.ID,
+		Name:      product.Name,
+		Slug:      product.Slug,
+		Status:    product.Status,
+	}))
 }
 
 func (h *CategoryProductAssignmentAdminHandler) audit(r *http.Request, action admin.AuditAction, categoryID, productID string, err error) {
@@ -98,48 +108,52 @@ func (h *CategoryProductAssignmentAdminHandler) audit(r *http.Request, action ad
 	})
 }
 
-func (h *CategoryProductAssignmentAdminHandler) validateAssignmentTargets(r *http.Request) (string, string, error) {
+// validateAssignmentTargets also returns the fetched product (not just its
+// ID): Assign/Unassign need its Name/Slug/Status to publish an accurate
+// catalog.EventProductUpdated afterward — see publishAssignmentChanged.
+func (h *CategoryProductAssignmentAdminHandler) validateAssignmentTargets(r *http.Request) (string, *catalog.Product, error) {
 	categoryID := r.PathValue("id")
 	if categoryID == "" {
-		return "", "", apperror.Validation("category id is required")
+		return "", nil, apperror.Validation("category id is required")
 	}
 	productID := r.PathValue("productId")
 	if productID == "" {
-		return "", "", apperror.Validation("product id is required")
+		return "", nil, apperror.Validation("product id is required")
 	}
 	category, err := h.categories.FindByID(r.Context(), categoryID)
 	if err != nil {
-		return "", "", err
+		return "", nil, err
 	}
 	if category == nil {
-		return "", "", apperror.NotFound("category not found")
+		return "", nil, apperror.NotFound("category not found")
 	}
 	product, err := h.products.FindByID(r.Context(), productID)
 	if err != nil {
-		return "", "", err
+		return "", nil, err
 	}
 	if product == nil {
-		return "", "", apperror.NotFound("product not found")
+		return "", nil, apperror.NotFound("product not found")
 	}
-	return categoryID, productID, nil
+	return categoryID, product, nil
 }
 
 // Assign handles POST /api/v1/admin/categories/{id}/products/{productId}.
 func (h *CategoryProductAssignmentAdminHandler) Assign() http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		categoryID, productID, err := h.validateAssignmentTargets(r)
+		categoryID, product, err := h.validateAssignmentTargets(r)
 		if err != nil {
 			h.audit(r, admin.AuditCategoryProductAssign, r.PathValue("id"), r.PathValue("productId"), err)
 			httpshared.JSONError(w, err)
 			return
 		}
+		productID := product.ID
 		if err := h.assignments.AssignCategory(r.Context(), productID, categoryID); err != nil {
 			h.audit(r, admin.AuditCategoryProductAssign, categoryID, productID, err)
 			httpshared.JSONError(w, err)
 			return
 		}
 		h.audit(r, admin.AuditCategoryProductAssign, categoryID, productID, nil)
-		h.publishAssignmentChanged(r.Context(), productID)
+		h.publishAssignmentChanged(r.Context(), product)
 		httpshared.JSON(w, http.StatusOK, map[string]interface{}{"assigned": true})
 	}
 }
@@ -147,19 +161,20 @@ func (h *CategoryProductAssignmentAdminHandler) Assign() http.HandlerFunc {
 // Unassign handles DELETE /api/v1/admin/categories/{id}/products/{productId}.
 func (h *CategoryProductAssignmentAdminHandler) Unassign() http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		categoryID, productID, err := h.validateAssignmentTargets(r)
+		categoryID, product, err := h.validateAssignmentTargets(r)
 		if err != nil {
 			h.audit(r, admin.AuditCategoryProductUnassign, r.PathValue("id"), r.PathValue("productId"), err)
 			httpshared.JSONError(w, err)
 			return
 		}
+		productID := product.ID
 		if err := h.assignments.RemoveCategory(r.Context(), productID, categoryID); err != nil {
 			h.audit(r, admin.AuditCategoryProductUnassign, categoryID, productID, err)
 			httpshared.JSONError(w, err)
 			return
 		}
 		h.audit(r, admin.AuditCategoryProductUnassign, categoryID, productID, nil)
-		h.publishAssignmentChanged(r.Context(), productID)
+		h.publishAssignmentChanged(r.Context(), product)
 		httpshared.JSON(w, http.StatusOK, map[string]interface{}{"assigned": false})
 	}
 }
