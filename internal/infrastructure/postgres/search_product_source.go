@@ -17,10 +17,12 @@ var _ domainsearch.ProductSource = (*SearchProductSource)(nil)
 // directly from the products table — deliberately not routed through
 // catalog.ProductRepository (search.Product avoids importing the catalog
 // package; see its own doc comment), and deliberately not scanning
-// status/category/price/stock: this PR's full reindex indexes exactly the
-// fields the CLI's inline loop indexed before it (id, name, slug,
-// description, created_at, attributes) — a mechanism change, not a
-// behavior change.
+// status/price/stock: this PR's full reindex indexes exactly the fields
+// the CLI's inline loop indexed before it (id, name, slug, description,
+// created_at, attributes) — a mechanism change, not a behavior change.
+// CategoryIDs is the one exception (PR-1037): it's populated via a
+// separate batched query against product_categories rather than added to
+// the row scan, since it's a one-to-many relationship.
 type SearchProductSource struct {
 	db *sql.DB
 }
@@ -77,7 +79,14 @@ func (s *SearchProductSource) ListAll(ctx context.Context, offset, limit int) ([
 		return nil, fmt.Errorf("search_product_source: list: %w", err)
 	}
 	defer rows.Close()
-	return scanSearchProducts(rows, "list")
+	products, err := scanSearchProducts(rows, "list")
+	if err != nil {
+		return nil, err
+	}
+	if err := s.populateCategoryIDs(ctx, products); err != nil {
+		return nil, err
+	}
+	return products, nil
 }
 
 // ListByIDs implements domainsearch.ProductSource. Same field set as
@@ -100,7 +109,50 @@ func (s *SearchProductSource) ListByIDs(ctx context.Context, ids []string) ([]do
 		return nil, fmt.Errorf("search_product_source: list by ids: %w", err)
 	}
 	defer rows.Close()
-	return scanSearchProducts(rows, "list by ids")
+	products, err := scanSearchProducts(rows, "list by ids")
+	if err != nil {
+		return nil, err
+	}
+	if err := s.populateCategoryIDs(ctx, products); err != nil {
+		return nil, err
+	}
+	return products, nil
+}
+
+// populateCategoryIDs fills in each product's CategoryIDs via one batched
+// query against product_categories, rather than a per-product round trip
+// (this runs once per ListAll/ListByIDs page, potentially hundreds of
+// products during a full reindex).
+func (s *SearchProductSource) populateCategoryIDs(ctx context.Context, products []domainsearch.Product) error {
+	if len(products) == 0 {
+		return nil
+	}
+	ids := make([]string, len(products))
+	idx := make(map[string]int, len(products))
+	for i, p := range products {
+		ids[i] = p.ID
+		idx[p.ID] = i
+	}
+
+	const q = `SELECT product_id, category_id FROM product_categories WHERE product_id = ANY($1) ORDER BY product_id, category_id`
+	rows, err := s.db.QueryContext(ctx, q, ids)
+	if err != nil {
+		return fmt.Errorf("search_product_source: category ids: %w", err)
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var productID, categoryID string
+		if err := rows.Scan(&productID, &categoryID); err != nil {
+			return fmt.Errorf("search_product_source: category ids scan: %w", err)
+		}
+		i := idx[productID]
+		products[i].CategoryIDs = append(products[i].CategoryIDs, categoryID)
+	}
+	if err := rows.Err(); err != nil {
+		return fmt.Errorf("search_product_source: category ids rows: %w", err)
+	}
+	return nil
 }
 
 // ProductIDsByCategory implements domainsearch.ProductSource.

@@ -25,7 +25,10 @@ const taskPollInterval = 100 * time.Millisecond
 type Config struct {
 	Host   string // e.g. "http://localhost:7700"
 	APIKey string // master or search key
-	Index  string // index UID, e.g. "products"
+	Index  string // product index UID, e.g. "products"
+	// CategoriesIndex is the index UID for category documents (PR-1037),
+	// e.g. "categories". Required, like Index — validated by New.
+	CategoriesIndex string
 }
 
 // taskInfo represents a Meilisearch async task response.
@@ -46,17 +49,23 @@ type meiliAPI interface {
 
 // Engine implements search.SearchEngine backed by Meilisearch.
 type Engine struct {
-	api   meiliAPI
-	index string
+	api             meiliAPI
+	index           string
+	categoriesAPI   meiliAPI
+	categoriesIndex string
 }
 
-// New creates an Engine and configures the Meilisearch index settings.
+// New creates an Engine and configures the Meilisearch index settings for
+// both the product and category indexes.
 func New(cfg Config) (*Engine, error) {
 	if cfg.Host == "" {
 		return nil, fmt.Errorf("meili: empty host")
 	}
 	if cfg.Index == "" {
 		return nil, fmt.Errorf("meili: empty index")
+	}
+	if cfg.CategoriesIndex == "" {
+		return nil, fmt.Errorf("meili: empty categories index")
 	}
 
 	host := strings.TrimRight(cfg.Host, "/")
@@ -66,8 +75,14 @@ func New(cfg Config) (*Engine, error) {
 		index:  cfg.Index,
 		http:   &http.Client{Timeout: httpTimeout},
 	}
+	categoriesClient := &httpClient{
+		base:   host,
+		apiKey: cfg.APIKey,
+		index:  cfg.CategoriesIndex,
+		http:   &http.Client{Timeout: httpTimeout},
+	}
 
-	e := &Engine{api: client, index: cfg.Index}
+	e := &Engine{api: client, index: cfg.Index, categoriesAPI: categoriesClient, categoriesIndex: cfg.CategoriesIndex}
 
 	ctx, cancel := context.WithTimeout(context.Background(), httpTimeout)
 	defer cancel()
@@ -79,12 +94,26 @@ func New(cfg Config) (*Engine, error) {
 		return nil, fmt.Errorf("meili: configure index %q: %w", cfg.Index, err)
 	}
 
+	catTaskUID, err := categoriesClient.updateSettings(ctx, categoriesDefaultSettings())
+	if err != nil {
+		return nil, fmt.Errorf("meili: configure index %q: %w", cfg.CategoriesIndex, err)
+	}
+	if err := e.waitForTask(ctx, catTaskUID); err != nil {
+		return nil, fmt.Errorf("meili: configure index %q: %w", cfg.CategoriesIndex, err)
+	}
+
 	return e, nil
 }
 
 // newWithAPI is a test-only constructor.
 func newWithAPI(api meiliAPI, index string) *Engine {
 	return &Engine{api: api, index: index}
+}
+
+// newWithAPIAndCategories is a test-only constructor for tests exercising
+// category indexing.
+func newWithAPIAndCategories(api meiliAPI, index string, categoriesAPI meiliAPI, categoriesIndex string) *Engine {
+	return &Engine{api: api, index: index, categoriesAPI: categoriesAPI, categoriesIndex: categoriesIndex}
 }
 
 // Name returns "meilisearch".
@@ -124,6 +153,23 @@ func (e *Engine) IndexProduct(ctx context.Context, p search.Product) error {
 func (e *Engine) RemoveProduct(ctx context.Context, productID string) error {
 	if _, err := e.api.deleteDocument(ctx, productID); err != nil {
 		return fmt.Errorf("meili: remove product %s: %w", productID, err)
+	}
+	return nil
+}
+
+// IndexCategory adds or updates a category document in the categories index.
+func (e *Engine) IndexCategory(ctx context.Context, c search.Category) error {
+	doc := categoryToDocMap(c)
+	if _, err := e.categoriesAPI.addDocuments(ctx, []map[string]interface{}{doc}); err != nil {
+		return fmt.Errorf("meili: index category %s: %w", c.ID, err)
+	}
+	return nil
+}
+
+// RemoveCategory removes a category from the categories index.
+func (e *Engine) RemoveCategory(ctx context.Context, categoryID string) error {
+	if _, err := e.categoriesAPI.deleteDocument(ctx, categoryID); err != nil {
+		return fmt.Errorf("meili: remove category %s: %w", categoryID, err)
 	}
 	return nil
 }
@@ -219,11 +265,35 @@ type document struct {
 	Name        string                 `json:"name"`
 	Description string                 `json:"description"`
 	Slug        string                 `json:"slug"`
-	CategoryID  string                 `json:"category_id,omitempty"`
+	CategoryIDs []string               `json:"category_ids,omitempty"`
 	Price       int64                  `json:"price"`
 	InStock     bool                   `json:"in_stock"`
 	CreatedAt   int64                  `json:"created_at"`
 	Attributes  map[string]interface{} `json:"attributes,omitempty"`
+}
+
+// categoryDocument is the document shape for the categories index.
+type categoryDocument struct {
+	ID           string `json:"id"`
+	Name         string `json:"name"`
+	Slug         string `json:"slug"`
+	Description  string `json:"description,omitempty"`
+	ParentID     string `json:"parent_id,omitempty"`
+	ProductCount int    `json:"product_count"`
+}
+
+func categoryToDocMap(c search.Category) map[string]interface{} {
+	doc := map[string]interface{}{
+		"id":            c.ID,
+		"name":          c.Name,
+		"slug":          c.Slug,
+		"description":   c.Description,
+		"product_count": c.ProductCount,
+	}
+	if c.ParentID != "" {
+		doc["parent_id"] = c.ParentID
+	}
+	return doc
 }
 
 func productToDocMap(p search.Product) map[string]interface{} {
@@ -236,8 +306,8 @@ func productToDocMap(p search.Product) map[string]interface{} {
 		"in_stock":    p.InStock,
 		"created_at":  p.CreatedAt.Unix(),
 	}
-	if p.CategoryID != "" {
-		doc["category_id"] = p.CategoryID
+	if len(p.CategoryIDs) > 0 {
+		doc["category_ids"] = p.CategoryIDs
 	}
 	if len(p.Attributes) > 0 {
 		doc["attributes"] = p.Attributes
@@ -294,14 +364,14 @@ func buildSearchRequest(q search.SearchQuery) searchRequest {
 		Q:      q.Text,
 		Limit:  q.EffectiveLimit(),
 		Offset: q.Offset,
-		Facets: []string{"category_id"},
+		Facets: []string{"category_ids"},
 	}
 
 	var filters []string
 	for k, v := range q.Filters {
 		switch k {
 		case "category":
-			filters = append(filters, fmt.Sprintf("category_id = %q", v))
+			filters = append(filters, fmt.Sprintf("category_ids = %q", v))
 		case "price_min":
 			filters = append(filters, fmt.Sprintf("price >= %v", v))
 		case "price_max":
@@ -356,7 +426,7 @@ func mapSearchResponse(resp searchResponse) search.SearchResult {
 				Name:        doc.Name,
 				Slug:        doc.Slug,
 				Description: doc.Description,
-				CategoryID:  doc.CategoryID,
+				CategoryIDs: doc.CategoryIDs,
 				Price:       doc.Price,
 				InStock:     doc.InStock,
 				CreatedAt:   time.Unix(doc.CreatedAt, 0).UTC(),
@@ -397,8 +467,21 @@ type indexSettings struct {
 func defaultSettings() indexSettings {
 	return indexSettings{
 		SearchableAttributes: []string{"name", "description", "slug"},
-		FilterableAttributes: []string{"category_id", "price", "in_stock"},
+		FilterableAttributes: []string{"category_ids", "price", "in_stock"},
 		SortableAttributes:   []string{"price", "name", "created_at"},
+		DisplayedAttributes:  []string{"*"},
+	}
+}
+
+// categoriesDefaultSettings configures the categories index: searchable on
+// name/slug/description, filterable/sortable on parent_id/product_count
+// for a future category browsing/admin UI (out of scope for PR-1037
+// itself, which only wires the write side).
+func categoriesDefaultSettings() indexSettings {
+	return indexSettings{
+		SearchableAttributes: []string{"name", "slug", "description"},
+		FilterableAttributes: []string{"parent_id"},
+		SortableAttributes:   []string{"name", "product_count"},
 		DisplayedAttributes:  []string{"*"},
 	}
 }

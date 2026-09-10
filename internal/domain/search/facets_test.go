@@ -9,7 +9,7 @@ import (
 func TestReservedFacetKey(t *testing.T) {
 	t.Parallel()
 
-	for _, code := range []string{"category", "category_id"} {
+	for _, code := range []string{"category", "category_ids"} {
 		if !search.ReservedFacetKey(code) {
 			t.Fatalf("ReservedFacetKey(%q) = false, want true", code)
 		}

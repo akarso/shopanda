@@ -81,6 +81,30 @@ func (f *fakeInternalQueue) Count() int {
 	return f.count
 }
 
+type fakeInternalSearchEngine struct{}
+
+func (f *fakeInternalSearchEngine) Name() string { return "fake" }
+func (f *fakeInternalSearchEngine) IndexProduct(context.Context, domainsearch.Product) error {
+	return nil
+}
+func (f *fakeInternalSearchEngine) RemoveProduct(context.Context, string) error { return nil }
+func (f *fakeInternalSearchEngine) IndexCategory(context.Context, domainsearch.Category) error {
+	return nil
+}
+func (f *fakeInternalSearchEngine) RemoveCategory(context.Context, string) error { return nil }
+func (f *fakeInternalSearchEngine) Search(context.Context, domainsearch.SearchQuery) (domainsearch.SearchResult, error) {
+	return domainsearch.SearchResult{}, nil
+}
+func (f *fakeInternalSearchEngine) Suggest(context.Context, string, int) ([]domainsearch.Suggestion, error) {
+	return nil, nil
+}
+
+type fakeInternalCategorySource struct{}
+
+func (f *fakeInternalCategorySource) GetByID(context.Context, string) (domainsearch.Category, bool, error) {
+	return domainsearch.Category{}, false, nil
+}
+
 // TestIndexUpdateSubscriber_Allow_DebounceWindow exercises allow directly
 // (package-internal test) with fabricated timestamps instead of real
 // sleeps, so the debounce window's exact boundary behavior is verified
@@ -159,7 +183,7 @@ func TestIndexUpdateSubscriber_TrailingFlush_CatchesLaterMutationAfterEarlyCompl
 	if err != nil {
 		t.Fatalf("NewReindexService: %v", err)
 	}
-	sub := NewIndexUpdateSubscriber(svc, noopLogger{})
+	sub := NewIndexUpdateSubscriber(svc, &fakeInternalSearchEngine{}, &fakeInternalCategorySource{}, noopLogger{})
 	sub.window = 40 * time.Millisecond
 
 	productID := id.New()

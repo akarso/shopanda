@@ -29,11 +29,15 @@ func (p *SearchPlugin) Init(app *plugin.App) error {
 	if cfg.Index == "" {
 		return fmt.Errorf("meilisearch search: empty index")
 	}
+	if cfg.CategoriesIndex == "" {
+		return fmt.Errorf("meilisearch search: empty categories index")
+	}
 
 	se, err := meili.New(meili.Config{
-		Host:   cfg.Host,
-		APIKey: cfg.APIKey,
-		Index:  cfg.Index,
+		Host:            cfg.Host,
+		APIKey:          cfg.APIKey,
+		Index:           cfg.Index,
+		CategoriesIndex: cfg.CategoriesIndex,
 	})
 	if err != nil {
 		return fmt.Errorf("meilisearch search: init client: %w", err)

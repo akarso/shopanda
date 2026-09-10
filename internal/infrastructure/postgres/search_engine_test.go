@@ -87,6 +87,79 @@ func TestSearchEngine_IndexProduct_NotFound(t *testing.T) {
 	}
 }
 
+// TestSearchEngine_IndexCategory_UpdatesSearchVector pins that
+// IndexCategory (the trigger's explicit-reindex counterpart, see
+// migrations/072) actually populates categories.search_vector from
+// name/slug, mirroring IndexProduct's own trigger-vs-explicit-call split.
+func TestSearchEngine_IndexCategory_UpdatesSearchVector(t *testing.T) {
+	db := testDB(t)
+	ensureProductsTable(t, db)
+	t.Cleanup(func() { mustExec(t, db, "DELETE FROM categories") })
+	engine, err := postgres.NewSearchEngine(db)
+	if err != nil {
+		t.Fatalf("NewSearchEngine: %v", err)
+	}
+	ctx := context.Background()
+
+	c := mustNewCategory(t, "Vintage Cameras", "vintage-cameras-"+id.New()[:8])
+	mustExec(t, db, "INSERT INTO categories (id, parent_id, name, slug, position, meta, created_at, updated_at) VALUES ($1, NULL, $2, $3, 0, '{}'::jsonb, now(), now())", c.ID, c.Name, c.Slug)
+	// Clear the vector the insert trigger already populated, so a passing
+	// assertion below is actually exercising IndexCategory, not the trigger.
+	mustExec(t, db, "UPDATE categories SET search_vector = NULL WHERE id = $1", c.ID)
+
+	if err := engine.IndexCategory(ctx, search.Category{ID: c.ID, Name: c.Name, Slug: c.Slug}); err != nil {
+		t.Fatalf("IndexCategory: %v", err)
+	}
+
+	var isNull bool
+	if err := db.QueryRowContext(ctx, "SELECT search_vector IS NULL FROM categories WHERE id = $1", c.ID).Scan(&isNull); err != nil {
+		t.Fatalf("query search_vector: %v", err)
+	}
+	if isNull {
+		t.Fatal("search_vector is NULL after IndexCategory, want populated")
+	}
+}
+
+func TestSearchEngine_IndexCategory_NotFound(t *testing.T) {
+	db := testDB(t)
+	ensureProductsTable(t, db)
+	engine, err := postgres.NewSearchEngine(db)
+	if err != nil {
+		t.Fatalf("NewSearchEngine: %v", err)
+	}
+
+	err = engine.IndexCategory(context.Background(), search.Category{ID: id.New(), Name: "Ghost"})
+	if err == nil {
+		t.Fatal("expected error for non-existent category")
+	}
+}
+
+func TestSearchEngine_RemoveCategory(t *testing.T) {
+	db := testDB(t)
+	ensureProductsTable(t, db)
+	t.Cleanup(func() { mustExec(t, db, "DELETE FROM categories") })
+	engine, err := postgres.NewSearchEngine(db)
+	if err != nil {
+		t.Fatalf("NewSearchEngine: %v", err)
+	}
+	ctx := context.Background()
+
+	c := mustNewCategory(t, "Removable Category", "removable-category-"+id.New()[:8])
+	mustExec(t, db, "INSERT INTO categories (id, parent_id, name, slug, position, meta, created_at, updated_at) VALUES ($1, NULL, $2, $3, 0, '{}'::jsonb, now(), now())", c.ID, c.Name, c.Slug)
+
+	if err := engine.RemoveCategory(ctx, c.ID); err != nil {
+		t.Fatalf("RemoveCategory: %v", err)
+	}
+
+	var isNull bool
+	if err := db.QueryRowContext(ctx, "SELECT search_vector IS NULL FROM categories WHERE id = $1", c.ID).Scan(&isNull); err != nil {
+		t.Fatalf("query search_vector: %v", err)
+	}
+	if !isNull {
+		t.Fatal("search_vector is not NULL after RemoveCategory, want NULL")
+	}
+}
+
 func TestSearchEngine_RemoveProduct(t *testing.T) {
 	db := testDB(t)
 	ensureProductsTable(t, db)

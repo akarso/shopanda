@@ -193,6 +193,81 @@ func TestSearchProductSource_ProductIDsByCategory(t *testing.T) {
 	}
 }
 
+// TestSearchProductSource_ListAll_PopulatesCategoryIDs is the regression
+// test for PR-1037: search.Product.CategoryID (singular) silently dropped
+// every category past the first for a multi-category product. ListAll
+// must return every assigned category, not just one, and a product with
+// no assignments must get an empty (not nil-vs-empty-ambiguous) slice.
+func TestSearchProductSource_ListAll_PopulatesCategoryIDs(t *testing.T) {
+	db := testDB(t)
+	ensureProductsTable(t, db)
+	t.Cleanup(func() {
+		mustExec(t, db, "DELETE FROM product_categories")
+		mustExec(t, db, "DELETE FROM categories")
+	})
+
+	productRepo, err := postgres.NewProductRepo(db)
+	if err != nil {
+		t.Fatalf("NewProductRepo: %v", err)
+	}
+	ctx := context.Background()
+
+	multi := mustNewProduct(t, "Multi Category", "multi-category-ids")
+	none := mustNewProduct(t, "No Category", "no-category-ids")
+	for _, p := range []*catalog.Product{&multi, &none} {
+		if err := productRepo.Create(ctx, p); err != nil {
+			t.Fatalf("Create(%s): %v", p.Name, err)
+		}
+	}
+
+	cat1 := mustNewCategory(t, "Cat1", "cat1-product-source")
+	cat2 := mustNewCategory(t, "Cat2", "cat2-product-source")
+	for _, c := range []catalog.Category{cat1, cat2} {
+		mustExec(t, db, "INSERT INTO categories (id, parent_id, name, slug, position, meta, created_at, updated_at) VALUES ($1, NULL, $2, $3, 0, '{}'::jsonb, now(), now())", c.ID, c.Name, c.Slug)
+	}
+	if err := productRepo.AssignCategory(ctx, multi.ID, cat1.ID); err != nil {
+		t.Fatalf("AssignCategory(multi, cat1): %v", err)
+	}
+	if err := productRepo.AssignCategory(ctx, multi.ID, cat2.ID); err != nil {
+		t.Fatalf("AssignCategory(multi, cat2): %v", err)
+	}
+
+	source, _ := postgres.NewSearchProductSource(db)
+
+	all, err := source.ListAll(ctx, 0, 100)
+	if err != nil {
+		t.Fatalf("ListAll: %v", err)
+	}
+	byID := make(map[string][]string, len(all))
+	for _, p := range all {
+		byID[p.ID] = p.CategoryIDs
+	}
+	gotMulti := append([]string(nil), byID[multi.ID]...)
+	sort.Strings(gotMulti)
+	wantMulti := []string{cat1.ID, cat2.ID}
+	sort.Strings(wantMulti)
+	if len(gotMulti) != 2 || gotMulti[0] != wantMulti[0] || gotMulti[1] != wantMulti[1] {
+		t.Fatalf("ListAll CategoryIDs for multi-category product = %v, want %v", gotMulti, wantMulti)
+	}
+	if len(byID[none.ID]) != 0 {
+		t.Fatalf("ListAll CategoryIDs for unassigned product = %v, want empty", byID[none.ID])
+	}
+
+	// ListByIDs must populate the same way.
+	byIDs, err := source.ListByIDs(ctx, []string{multi.ID})
+	if err != nil {
+		t.Fatalf("ListByIDs: %v", err)
+	}
+	if len(byIDs) != 1 {
+		t.Fatalf("ListByIDs returned %d products, want 1", len(byIDs))
+	}
+	got := append([]string(nil), byIDs[0].CategoryIDs...)
+	sort.Strings(got)
+	if len(got) != 2 || got[0] != wantMulti[0] || got[1] != wantMulti[1] {
+		t.Fatalf("ListByIDs CategoryIDs = %v, want %v", got, wantMulti)
+	}
+}
+
 func TestSearchProductSource_ProductIDsByCategory_RequiresAtLeastOneID(t *testing.T) {
 	db := testDB(t)
 	ensureProductsTable(t, db)

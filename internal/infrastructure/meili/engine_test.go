@@ -135,6 +135,67 @@ func TestRemoveProduct_Error(t *testing.T) {
 	}
 }
 
+func TestIndexCategory(t *testing.T) {
+	catMock := &mockAPI{}
+	e := newWithAPIAndCategories(&mockAPI{}, "products", catMock, "categories")
+
+	c := search.Category{ID: "cat-1", Name: "Shoes", Slug: "shoes", ParentID: "cat-root", ProductCount: 3}
+	if err := e.IndexCategory(context.Background(), c); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(catMock.addDocs) != 1 || len(catMock.addDocs[0]) != 1 {
+		t.Fatalf("expected 1 doc batch on categories index, got %d", len(catMock.addDocs))
+	}
+	doc := catMock.addDocs[0][0]
+	if doc["id"] != "cat-1" || doc["name"] != "Shoes" || doc["slug"] != "shoes" {
+		t.Errorf("doc = %+v, want id=cat-1 name=Shoes slug=shoes", doc)
+	}
+	if doc["parent_id"] != "cat-root" {
+		t.Errorf("parent_id = %v, want cat-root", doc["parent_id"])
+	}
+	if doc["product_count"] != 3 {
+		t.Errorf("product_count = %v, want 3", doc["product_count"])
+	}
+}
+
+func TestIndexCategory_Error(t *testing.T) {
+	catMock := &mockAPI{addErr: errors.New("connection refused")}
+	e := newWithAPIAndCategories(&mockAPI{}, "products", catMock, "categories")
+
+	err := e.IndexCategory(context.Background(), search.Category{ID: "cat-1"})
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	if !strings.Contains(err.Error(), "connection refused") {
+		t.Errorf("error = %q, want 'connection refused'", err.Error())
+	}
+}
+
+func TestRemoveCategory(t *testing.T) {
+	catMock := &mockAPI{}
+	e := newWithAPIAndCategories(&mockAPI{}, "products", catMock, "categories")
+
+	if err := e.RemoveCategory(context.Background(), "cat-42"); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(catMock.deleteIDs) != 1 || catMock.deleteIDs[0] != "cat-42" {
+		t.Errorf("deleteIDs = %v, want [cat-42]", catMock.deleteIDs)
+	}
+}
+
+func TestRemoveCategory_Error(t *testing.T) {
+	catMock := &mockAPI{deleteErr: errors.New("not found")}
+	e := newWithAPIAndCategories(&mockAPI{}, "products", catMock, "categories")
+
+	err := e.RemoveCategory(context.Background(), "cat-1")
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	if !strings.Contains(err.Error(), "not found") {
+		t.Errorf("error = %q, want 'not found'", err.Error())
+	}
+}
+
 func TestSearch(t *testing.T) {
 	hit, _ := json.Marshal(document{ID: "p-1", Name: "Sneakers", Slug: "sneakers", Description: "White sneakers"})
 	mock := &mockAPI{
@@ -142,7 +203,7 @@ func TestSearch(t *testing.T) {
 			Hits:               []json.RawMessage{hit},
 			EstimatedTotalHits: 42,
 			FacetDistribution: map[string]map[string]int{
-				"category_id": {"cat-1": 10, "cat-2": 5},
+				"category_ids": {"cat-1": 10, "cat-2": 5},
 			},
 		},
 	}
@@ -168,8 +229,8 @@ func TestSearch(t *testing.T) {
 	if len(result.Products) != 1 || result.Products[0].ID != "p-1" {
 		t.Errorf("Products = %+v, want 1 product with id=p-1", result.Products)
 	}
-	if len(result.Facets["category_id"]) != 2 {
-		t.Errorf("Facets[category_id] = %+v, want 2 values", result.Facets["category_id"])
+	if len(result.Facets["category_ids"]) != 2 {
+		t.Errorf("Facets[category_ids] = %+v, want 2 values", result.Facets["category_ids"])
 	}
 }
 
@@ -213,7 +274,7 @@ func TestBuildSearchRequest_Filters(t *testing.T) {
 	if req.Q != "shoes" {
 		t.Errorf("Q = %q, want shoes", req.Q)
 	}
-	if !strings.Contains(req.Filter, "category_id = ") {
+	if !strings.Contains(req.Filter, "category_ids = ") {
 		t.Errorf("Filter = %q, want category filter", req.Filter)
 	}
 	if !strings.Contains(req.Filter, "price >= 2000") {
@@ -271,7 +332,7 @@ func TestBuildSearchRequest_AttributeFilter(t *testing.T) {
 		t.Errorf("Filter = %q, want attr_color filter", req.Filter)
 	}
 	if len(req.Facets) != 3 {
-		t.Fatalf("Facets = %v, want [category_id attr_color attr_brand]", req.Facets)
+		t.Fatalf("Facets = %v, want [category_ids attr_color attr_brand]", req.Facets)
 	}
 	if req.Facets[1] != "attr_color" || req.Facets[2] != "attr_brand" {
 		t.Errorf("Facets = %v, want attr_color and attr_brand", req.Facets)
@@ -297,7 +358,7 @@ func TestConfigureAttributeFacets(t *testing.T) {
 	if err := e.ConfigureAttributeFacets(context.Background(), []string{"color", "brand"}); err != nil {
 		t.Fatalf("ConfigureAttributeFacets: %v", err)
 	}
-	want := []string{"category_id", "price", "in_stock", "attr_color", "attr_brand"}
+	want := []string{"category_ids", "price", "in_stock", "attr_color", "attr_brand"}
 	if len(mock.settingsReq.FilterableAttributes) != len(want) {
 		t.Fatalf("FilterableAttributes = %v, want %v", mock.settingsReq.FilterableAttributes, want)
 	}
@@ -328,7 +389,7 @@ func TestProductToDoc(t *testing.T) {
 		Name:        "Hat",
 		Slug:        "hat",
 		Description: "A nice hat",
-		CategoryID:  "cat-5",
+		CategoryIDs: []string{"cat-5"},
 		Price:       1999,
 		InStock:     true,
 		Attributes:  map[string]interface{}{"color": "red"},
@@ -337,8 +398,8 @@ func TestProductToDoc(t *testing.T) {
 	if doc["id"] != "p-99" || doc["name"] != "Hat" || doc["slug"] != "hat" {
 		t.Errorf("doc = %+v", doc)
 	}
-	if doc["category_id"] != "cat-5" {
-		t.Errorf("CategoryID = %v, want cat-5", doc["category_id"])
+	if v, ok := doc["category_ids"].([]string); !ok || len(v) != 1 || v[0] != "cat-5" {
+		t.Errorf("CategoryIDs = %v, want [cat-5]", doc["category_ids"])
 	}
 	if doc["price"] != int64(1999) {
 		t.Errorf("Price = %v, want 1999", doc["price"])

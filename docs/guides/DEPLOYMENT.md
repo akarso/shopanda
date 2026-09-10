@@ -832,6 +832,36 @@ Naming rule, enforced by a CI unit test (`internal/platform/migrate` — runs in
 - **never rename or delete** either of those two files — their filenames are recorded verbatim in every deployed `schema_migrations` table; renaming desyncs tracking and makes Shopanda re-attempt (and fail) an already-applied migration
 - do **not** add new allowlist entries to resolve a new collision — renumber the new migration file instead; the check fails the build if a new file reuses an existing prefix, if an allowlisted filename is renamed/removed, or if a third file is added at an allowlisted prefix
 
+## Search Index Maintenance
+
+### Meilisearch: full reindex required after upgrading past PR-1037
+
+PR-1037 changed the indexed product document's category field from a
+single `category_id` to a `category_ids` array, and added a second
+Meilisearch index (`search.meilisearch.categories_index`, default
+`categories`) for category documents. Deployments using
+`search.engine: postgres` are unaffected — the Postgres backend never
+stored category data on the product document (category filtering is a
+live join), so there is nothing to migrate there.
+
+Deployments using `search.engine: meilisearch` must, after upgrading:
+
+1. Set `search.meilisearch.categories_index` (or
+   `SHOPANDA_SEARCH_MEILI_CATEGORIES_INDEX`) — it defaults to `categories`
+   if unset, but the index still needs the app to start once with the new
+   version so its settings get configured.
+2. Run a full product reindex (`search:reindex` with a full scan, or the
+   admin API's "reindex all" action) so every product document is
+   rewritten with `category_ids` instead of the now-unused `category_id` —
+   existing documents keep their stale `category_id` field until
+   re-indexed; Meilisearch does not migrate a changed document shape on
+   its own.
+3. Existing categories are not automatically indexed — trigger indexing
+   for each one (e.g. by saving it once through the admin API, which
+   publishes the category event this PR wires up) if you want existing
+   categories searchable immediately, rather than waiting for the next
+   edit.
+
 ## Monitor The Deployment
 
 ### Health checks

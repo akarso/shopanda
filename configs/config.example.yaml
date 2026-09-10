@@ -158,7 +158,8 @@ search:
     host: "http://localhost:7700"    # Meilisearch server URL
     # API key: set via SHOPANDA_SEARCH_MEILI_KEY environment variable (recommended).
     # api_key: ""
-    index: "products"                # Meilisearch index UID
+    index: "products"                # Meilisearch product index UID
+    categories_index: "categories"   # Meilisearch category index UID (PR-1037)
 
   # Partial reindex full-scan threshold: past this fraction (0.0-1.0) of
   # the catalog, a partial reindex (explicit product/category IDs, or

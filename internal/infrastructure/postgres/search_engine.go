@@ -60,6 +60,39 @@ func (e *SearchEngine) RemoveProduct(ctx context.Context, productID string) erro
 	return nil
 }
 
+// IndexCategory updates the search vector for a category.
+// The search_vector trigger on the categories table handles normal
+// INSERT/UPDATE, so this method is primarily useful for explicit
+// reindexing. Only name and slug feed the vector, matching the trigger —
+// catalog.Category has no description field yet.
+func (e *SearchEngine) IndexCategory(ctx context.Context, c search.Category) error {
+	const q = `UPDATE categories
+		SET search_vector = to_tsvector('english', coalesce($2, '') || ' ' || coalesce($3, ''))
+		WHERE id = $1`
+	result, err := e.db.ExecContext(ctx, q, c.ID, c.Name, c.Slug)
+	if err != nil {
+		return fmt.Errorf("search_engine: index category: %w", err)
+	}
+	rows, err := result.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("search_engine: index category rows: %w", err)
+	}
+	if rows == 0 {
+		return fmt.Errorf("search_engine: category %s not found", c.ID)
+	}
+	return nil
+}
+
+// RemoveCategory clears the search vector for a category, making it unsearchable.
+func (e *SearchEngine) RemoveCategory(ctx context.Context, categoryID string) error {
+	const q = `UPDATE categories SET search_vector = NULL WHERE id = $1`
+	_, err := e.db.ExecContext(ctx, q, categoryID)
+	if err != nil {
+		return fmt.Errorf("search_engine: remove category: %w", err)
+	}
+	return nil
+}
+
 // Suggest returns autocomplete suggestions using prefix matching on product names.
 func (e *SearchEngine) Suggest(ctx context.Context, prefix string, limit int) ([]search.Suggestion, error) {
 	if prefix == "" {

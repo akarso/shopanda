@@ -31,6 +31,10 @@ func (s *stubSearchProvider) IndexProduct(context.Context, search.Product) error
 	return nil
 }
 func (s *stubSearchProvider) RemoveProduct(context.Context, string) error { return nil }
+func (s *stubSearchProvider) IndexCategory(context.Context, search.Category) error {
+	return nil
+}
+func (s *stubSearchProvider) RemoveCategory(context.Context, string) error { return nil }
 func (s *stubSearchProvider) Search(context.Context, search.SearchQuery) (search.SearchResult, error) {
 	return search.SearchResult{}, nil
 }
