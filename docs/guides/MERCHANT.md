@@ -324,7 +324,7 @@ There's no admin GUI for this yet — a technical operator triggers it via `POST
 - **Everything changed since a point in time** (`{"scope": "since", "since": "<RFC3339 timestamp>"}`) — same queued behavior, resolved to whichever products actually changed.
 - **The whole catalog** (`{"scope": "all"}`) — same queued behavior; also what nightly/manual full reindexes use.
 
-A large partial request (more of the catalog than the configured threshold, or over 10,000 IDs) is silently upgraded to a full scan for efficiency — the run's recorded scope reflects what actually ran, not just what was requested.
+A request with more than 10,000 IDs in `ids` is rejected outright (`422`) — that's a request-shape limit, not the efficiency heuristic below. Separately, a large *resolved* partial request (more of the catalog than the configured threshold once category/since scopes are resolved to concrete product IDs) is silently upgraded to a full scan for efficiency — the run's recorded scope reflects what actually ran, not just what was requested.
 
 Poll `GET /api/v1/admin/search/reindex/{runID}` for a queued run's progress: `status` (`processing`/`completed`/`failed`), `total_count`/`processed_count` (how far along it is), and `last_error` if it failed.
 

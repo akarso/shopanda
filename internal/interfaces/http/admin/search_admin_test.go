@@ -12,6 +12,7 @@ import (
 
 	adminapp "github.com/akarso/shopanda/internal/application/admin"
 	searchApp "github.com/akarso/shopanda/internal/application/search"
+	domainadmin "github.com/akarso/shopanda/internal/domain/admin"
 	"github.com/akarso/shopanda/internal/domain/identity"
 	domainjobs "github.com/akarso/shopanda/internal/domain/jobs"
 	"github.com/akarso/shopanda/internal/domain/rbac"
@@ -59,6 +60,7 @@ type fakeSearchProductSource struct {
 	products     map[string]domainsearch.Product
 	listByIDsErr error
 	countAll     int
+	lastCtx      context.Context
 }
 
 func (f *fakeSearchProductSource) CountAll(context.Context) (int, error) { return f.countAll, nil }
@@ -67,7 +69,8 @@ func (f *fakeSearchProductSource) ListAll(context.Context, int, int) ([]domainse
 	return nil, nil
 }
 
-func (f *fakeSearchProductSource) ListByIDs(_ context.Context, ids []string) ([]domainsearch.Product, error) {
+func (f *fakeSearchProductSource) ListByIDs(ctx context.Context, ids []string) ([]domainsearch.Product, error) {
+	f.lastCtx = ctx
 	if f.listByIDsErr != nil {
 		return nil, f.listByIDsErr
 	}
@@ -91,11 +94,13 @@ func (f *fakeSearchProductSource) ProductIDsUpdatedSince(context.Context, time.T
 type fakeSearchEngine struct {
 	indexed  []domainsearch.Product
 	indexErr error
+	lastCtx  context.Context
 }
 
 func (f *fakeSearchEngine) Name() string { return "fake" }
 
-func (f *fakeSearchEngine) IndexProduct(_ context.Context, p domainsearch.Product) error {
+func (f *fakeSearchEngine) IndexProduct(ctx context.Context, p domainsearch.Product) error {
+	f.lastCtx = ctx
 	if f.indexErr != nil {
 		return f.indexErr
 	}
@@ -139,6 +144,36 @@ func newSearchAdminHandler(t *testing.T, deps searchAdminDeps) *admin.SearchAdmi
 		t.Fatalf("NewReindexService: %v", err)
 	}
 	return admin.NewSearchAdminHandler(svc, deps.runs, deps.products, deps.engine, adminapp.NewAuditor(logger.New("error")))
+}
+
+// fakeAuditLogRepository captures persisted audit records so a test can
+// assert on what Trigger actually audited, including for a rejected
+// request that never reaches triggerBulk/triggerSingleProduct.
+type fakeAuditLogRepository struct {
+	records []domainadmin.AuditLogRecord
+}
+
+func (f *fakeAuditLogRepository) Insert(_ context.Context, record domainadmin.AuditLogRecord) error {
+	f.records = append(f.records, record)
+	return nil
+}
+func (f *fakeAuditLogRepository) List(context.Context, domainadmin.AuditLogFilter) ([]domainadmin.AuditLogRecord, error) {
+	return nil, nil
+}
+func (f *fakeAuditLogRepository) DeleteBefore(context.Context, time.Time) (int64, error) {
+	return 0, nil
+}
+
+func newSearchAdminHandlerWithAuditRepo(t *testing.T, deps searchAdminDeps) (*admin.SearchAdminHandler, *fakeAuditLogRepository) {
+	t.Helper()
+	svc, err := searchApp.NewReindexService(deps.runs, deps.products, deps.queue, logger.New("error"), 1.0)
+	if err != nil {
+		t.Fatalf("NewReindexService: %v", err)
+	}
+	auditor := adminapp.NewAuditor(logger.New("error"))
+	repo := &fakeAuditLogRepository{}
+	auditor.SetAuditLogRepository(repo)
+	return admin.NewSearchAdminHandler(svc, deps.runs, deps.products, deps.engine, auditor), repo
 }
 
 // newSearchAdminRouter mirrors cmd/api/wire_routes.go's wiring: both
@@ -243,6 +278,82 @@ func TestSearchAdminHandler_Trigger_ScopeProducts_SingleID_IndexesSynchronously(
 	}
 	if resp.Data.Status != "indexed" || resp.Data.ProductID != productID {
 		t.Errorf("data = %+v, want status=indexed product_id=%s", resp.Data, productID)
+	}
+}
+
+// TestSearchAdminHandler_Trigger_ScopeProducts_SingleID_BoundedContext pins
+// the fix for a request that would otherwise stay blocked (holding a DB
+// connection) for as long as a slow ListByIDs/IndexProduct call takes:
+// r.Context() alone has no deadline of its own, so triggerSingleProduct
+// must derive a bounded one rather than passing r.Context() straight
+// through to either call.
+func TestSearchAdminHandler_Trigger_ScopeProducts_SingleID_BoundedContext(t *testing.T) {
+	deps := newDefaultDeps()
+	productID := id.New()
+	deps.products.products[productID] = domainsearch.Product{ID: productID, Name: "Widget"}
+	mux := newSearchAdminRouter(newSearchAdminHandler(t, deps))
+
+	rec := triggerRequest(t, mux, `{"scope":"products","ids":["`+productID+`"]}`)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body=%s", rec.Code, rec.Body.String())
+	}
+	if deps.products.lastCtx == nil {
+		t.Fatal("ListByIDs was not called")
+	}
+	if _, ok := deps.products.lastCtx.Deadline(); !ok {
+		t.Error("ListByIDs received a context with no deadline")
+	}
+	if deps.engine.lastCtx == nil {
+		t.Fatal("IndexProduct was not called")
+	}
+	if _, ok := deps.engine.lastCtx.Deadline(); !ok {
+		t.Error("IndexProduct received a context with no deadline")
+	}
+}
+
+// TestSearchAdminHandler_Trigger_TrailingJSONValue_Rejected pins a fixed
+// bug: json.Decoder.Decode only reads a single JSON value and silently
+// leaves the rest of the body unread, so a request body carrying a valid
+// object followed by a second value used to decode the first object
+// successfully and go on to trigger a real reindex — silently discarding,
+// rather than rejecting, the malformed remainder.
+func TestSearchAdminHandler_Trigger_TrailingJSONValue_Rejected(t *testing.T) {
+	deps := newDefaultDeps()
+	mux := newSearchAdminRouter(newSearchAdminHandler(t, deps))
+
+	rec := triggerRequest(t, mux, `{"scope":"all"}{"scope":"products"}`)
+
+	if rec.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("status = %d, want 422; body=%s", rec.Code, rec.Body.String())
+	}
+	if len(deps.queue.enqueued) != 0 {
+		t.Error("expected no job enqueued for a rejected multi-value body")
+	}
+}
+
+// TestSearchAdminHandler_Trigger_RejectedRequest_IsAudited pins a fixed
+// gap: previously, a request rejected before reaching
+// triggerBulk/triggerSingleProduct (malformed JSON, unknown scope, a bad
+// since timestamp, etc.) produced no audit trail at all — only requests
+// that passed every front-end check ever got audited. Trigger now audits
+// every outcome, success or rejection, exactly once.
+func TestSearchAdminHandler_Trigger_RejectedRequest_IsAudited(t *testing.T) {
+	deps := newDefaultDeps()
+	h, repo := newSearchAdminHandlerWithAuditRepo(t, deps)
+	mux := newSearchAdminRouter(h)
+
+	rec := triggerRequest(t, mux, `{"scope":"bogus"}`)
+
+	if rec.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("status = %d, want 422; body=%s", rec.Code, rec.Body.String())
+	}
+	if len(repo.records) != 1 {
+		t.Fatalf("audit records = %d, want exactly 1: %+v", len(repo.records), repo.records)
+	}
+	rec0 := repo.records[0]
+	if rec0.Action != "search_reindex.trigger" || rec0.Result != "error" || rec0.ResourceType != "search_reindex" {
+		t.Errorf("audit record = %+v, want action=search_reindex.trigger result=error resource_type=search_reindex", rec0)
 	}
 }
 

@@ -1,8 +1,10 @@
 package admin
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"strings"
 	"time"
@@ -14,6 +16,15 @@ import (
 	"github.com/akarso/shopanda/internal/platform/apperror"
 	"github.com/akarso/shopanda/internal/platform/id"
 )
+
+// singleProductIndexTimeout bounds triggerSingleProduct's DB lookup and
+// engine index call — the whole point of the synchronous path is that
+// "reindex this one now" feels instant, not that it blocks the request
+// (and holds a DB connection) for however long a slow query or a stalled
+// search engine takes. r.Context() alone doesn't provide this: it's only
+// cancelled by client disconnect or server shutdown, neither of which
+// bounds a slow-but-still-connected caller to "a few seconds."
+const singleProductIndexTimeout = 5 * time.Second
 
 // SearchAdminHandler serves the admin reindex-trigger and progress
 // endpoints (PR-1035) on top of application/search's ReindexService (bulk,
@@ -95,13 +106,27 @@ type reindexTriggerRequest struct {
 // which does not exist yet (PR-1037, still "planned" as of this PR) — see
 // PR-1035.md's Round 1 notes. A single category ID is enqueued the same
 // as multiple.
+//
+// Every rejection below is audited here, via reject — decode/shape
+// failures never reach triggerBulk/triggerSingleProduct, which own
+// auditing their own (mutually exclusive) success/failure outcomes, so
+// this never produces two audit entries for one request.
 func (h *SearchAdminHandler) Trigger() http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		reject := func(err error, details map[string]interface{}) {
+			h.audit(r, adminapp.AuditSearchReindexTrigger, "", details, err)
+			httpshared.JSONError(w, err)
+		}
+
 		var req reindexTriggerRequest
 		dec := json.NewDecoder(r.Body)
 		dec.DisallowUnknownFields()
 		if err := dec.Decode(&req); err != nil {
-			httpshared.JSONError(w, apperror.Validation("invalid request body"))
+			reject(apperror.Validation("invalid request body"), map[string]interface{}{})
+			return
+		}
+		if err := requireSingleJSONValue(dec); err != nil {
+			reject(apperror.Validation(err.Error()), map[string]interface{}{"scope": req.Scope})
 			return
 		}
 
@@ -112,16 +137,16 @@ func (h *SearchAdminHandler) Trigger() http.HandlerFunc {
 		case "products":
 			ids, err := cleanIDs(req.IDs)
 			if err != nil {
-				httpshared.JSONError(w, apperror.Validation(err.Error()))
+				reject(apperror.Validation(err.Error()), map[string]interface{}{"scope": "products"})
 				return
 			}
 			if len(ids) == 0 {
-				httpshared.JSONError(w, apperror.Validation("ids must not be empty for scope=products"))
+				reject(apperror.Validation("ids must not be empty for scope=products"), map[string]interface{}{"scope": "products"})
 				return
 			}
 			if len(ids) == 1 {
 				if !id.IsValid(ids[0]) {
-					httpshared.JSONError(w, apperror.Validation("product id is not a valid UUID"))
+					reject(apperror.Validation("product id is not a valid UUID"), map[string]interface{}{"scope": "products", "ids": ids})
 					return
 				}
 				h.triggerSingleProduct(w, r, ids[0])
@@ -132,11 +157,11 @@ func (h *SearchAdminHandler) Trigger() http.HandlerFunc {
 		case "categories":
 			ids, err := cleanIDs(req.IDs)
 			if err != nil {
-				httpshared.JSONError(w, apperror.Validation(err.Error()))
+				reject(apperror.Validation(err.Error()), map[string]interface{}{"scope": "categories"})
 				return
 			}
 			if len(ids) == 0 {
-				httpshared.JSONError(w, apperror.Validation("ids must not be empty for scope=categories"))
+				reject(apperror.Validation("ids must not be empty for scope=categories"), map[string]interface{}{"scope": "categories"})
 				return
 			}
 			h.triggerBulk(w, r, searchApp.ScopeCategories{IDs: ids}, map[string]interface{}{"scope": "categories", "ids": ids})
@@ -144,30 +169,49 @@ func (h *SearchAdminHandler) Trigger() http.HandlerFunc {
 		case "since":
 			since := strings.TrimSpace(req.Since)
 			if since == "" {
-				httpshared.JSONError(w, apperror.Validation("since is required for scope=since"))
+				reject(apperror.Validation("since is required for scope=since"), map[string]interface{}{"scope": "since"})
 				return
 			}
 			t, err := time.Parse(time.RFC3339, since)
 			if err != nil {
-				httpshared.JSONError(w, apperror.Validation("since must be an RFC3339 timestamp"))
+				reject(apperror.Validation("since must be an RFC3339 timestamp"), map[string]interface{}{"scope": "since", "since": since})
 				return
 			}
 			if t.After(time.Now().UTC()) {
-				httpshared.JSONError(w, apperror.Validation("since must not be in the future"))
+				reject(apperror.Validation("since must not be in the future"), map[string]interface{}{"scope": "since", "since": since})
 				return
 			}
 			h.triggerBulk(w, r, searchApp.ScopeSince{Since: t}, map[string]interface{}{"scope": "since", "since": since})
 
 		default:
-			httpshared.JSONError(w, apperror.Validation(`scope must be one of "all", "products", "categories", "since"`))
+			reject(apperror.Validation(`scope must be one of "all", "products", "categories", "since"`), map[string]interface{}{"scope": req.Scope})
 		}
 	}
 }
 
+// requireSingleJSONValue reports an error if dec has another JSON value
+// queued up after the one already decoded. json.Decoder.Decode only reads
+// a single value and silently leaves the rest of the stream unread, so a
+// body like `{"scope":"all"}{"scope":"products"}` would otherwise decode
+// the first object successfully and go on to trigger a real reindex,
+// silently ignoring (and losing any record of) whatever followed it.
+func requireSingleJSONValue(dec *json.Decoder) error {
+	if err := dec.Decode(new(json.RawMessage)); err != io.EOF {
+		return fmt.Errorf("request body must contain exactly one JSON value")
+	}
+	return nil
+}
+
 // triggerSingleProduct indexes exactly one product synchronously, skipping
-// the queue entirely — see Trigger's doc comment.
+// the queue entirely — see Trigger's doc comment. ctx is bounded by
+// singleProductIndexTimeout, not r.Context() directly: this path exists to
+// feel instant, and mustn't hold the request (and a DB connection) open
+// indefinitely if Postgres or the search engine stalls.
 func (h *SearchAdminHandler) triggerSingleProduct(w http.ResponseWriter, r *http.Request, productID string) {
-	products, err := h.products.ListByIDs(r.Context(), []string{productID})
+	ctx, cancel := context.WithTimeout(r.Context(), singleProductIndexTimeout)
+	defer cancel()
+
+	products, err := h.products.ListByIDs(ctx, []string{productID})
 	if err != nil {
 		h.audit(r, adminapp.AuditSearchReindexTrigger, productID, map[string]interface{}{"scope": "products", "ids": []string{productID}, "mode": "sync"}, err)
 		httpshared.JSONError(w, apperror.Wrap(apperror.CodeInternal, "look up product failed", err))
@@ -179,7 +223,7 @@ func (h *SearchAdminHandler) triggerSingleProduct(w http.ResponseWriter, r *http
 		httpshared.JSONError(w, err)
 		return
 	}
-	if err := h.engine.IndexProduct(r.Context(), products[0]); err != nil {
+	if err := h.engine.IndexProduct(ctx, products[0]); err != nil {
 		h.audit(r, adminapp.AuditSearchReindexTrigger, productID, map[string]interface{}{"scope": "products", "ids": []string{productID}, "mode": "sync"}, err)
 		httpshared.JSONError(w, apperror.Wrap(apperror.CodeInternal, "index product failed", err))
 		return

@@ -1861,7 +1861,12 @@ paths:
                   type: array
                   items:
                     type: string
-                  description: Required for scope=products and scope=categories.
+                  maxItems: 10000
+                  description: >-
+                    Required for scope=products and scope=categories. More
+                    than 10,000 entries is rejected outright (422), separate
+                    from the resolved-scope full-scan substitution described
+                    in the merchant guide.
                 since:
                   type: string
                   format: date-time
