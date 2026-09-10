@@ -71,7 +71,7 @@ Each PR is tagged **`[oss]`** unless noted.
 | --- | --- | --- |
 | PR-1033 | Reindex as a job | Model `search:reindex` as a queued `search.reindex` job (reusing Track A's `Queue`/`Worker`), with a persisted `search_index_runs` row (scope, started/finished, counts, error) updated as the worker processes it. The CLI command becomes a thin enqueue-and-optionally-wait wrapper instead of doing the work inline. |
 | PR-1034 | Partial & scoped reindex | **Done.** `ReindexService.Trigger` now accepts `search.ScopeAll`/`ScopeProducts`/`ScopeCategories`/`ScopeSince`, resolving a partial scope to concrete product IDs and comparing against catalog size: past `search.reindex_full_scan_threshold` (default 20%, config-overridable), a full scan runs instead — visibly, since the run's `scope_params` still records what was requested. `search:reindex` itself still only ever triggers `ScopeAll`; PR-1035 wires an external caller (CLI flag or admin API) to the new scope types. See "Design notes" below. |
-| PR-1035 | Reindex admin API + progress | `POST /admin/search/reindex` (`{"scope": "all"}` \| `{"scope": "products", "ids": [...]}` \| `{"scope": "categories", "ids": [...]}` \| `{"scope": "since", "since": "<RFC3339>"}`), `GET /admin/search/reindex/{runID}` for progress (reuses Track A's job-status shape — a reindex run *is* a job). A single explicit product/category ID list of size 1 ("reindex this one now") skips the queue and calls `IndexProduct`/`IndexCategory` synchronously, returning immediately — genuinely "now," not "queued, poll for it." |
+| PR-1035 | Reindex admin API + progress | **Done.** `POST /admin/search/reindex` (`{"scope": "all"}` \| `{"scope": "products", "ids": [...]}` \| `{"scope": "categories", "ids": [...]}` \| `{"scope": "since", "since": "<RFC3339>"}`), `GET /admin/search/reindex/{runID}` for progress. A single explicit *product* ID skips the queue and calls `IndexProduct` synchronously, returning immediately. A single *category* ID does not get this treatment — `IndexCategory` doesn't exist yet (PR-1037 is still planned) — and is enqueued the same as multiple IDs; see "Design notes" below. |
 | PR-1036 | On-save incremental indexing | Event bus subscribers (same shape as `internal/application/cache/invalidation.go`) on product/price/stock/category-assignment change events → enqueue a single-item (or small-batch, debounced over a short window) `search.reindex` job scoped to the affected product/category IDs. This is the "on save" mode; PR-1030's schedule-trigger and PR-1035's manual trigger are the other two. |
 | PR-1037 | Category indexing + relationship fix | Add `IndexCategory`/`RemoveCategory` to the `SearchEngine` port (both implementations); index categories as their own searchable/filterable entity. Fix `search.Product.CategoryID` (singular) → `CategoryIDs []string` — the catalog domain already supports many-to-many product↔category assignment (`product_categories` junction table, `AssignCategory`/`RemoveCategory`/`ListCategoryIDsByProduct`); the search index has silently been unable to represent a product in more than one category since day one. Category-assignment changes feed PR-1036's subscribers. |
 | PR-1038 | Search admin GUI | Reindex trigger with a scope picker (all / products / categories / since-date), progress bar reusing Track A's job-status UI, run history table, and a per-row "reindex now" action on the product/category admin grids. |
@@ -79,6 +79,10 @@ Each PR is tagged **`[oss]`** unless noted.
 ### Standalone fix: PR-1048
 
 PR-1033 shipped with a documented, deliberate gap: a `search_index_runs` row can be left `processing` forever (worker crash before `Finish` runs, or the terminal `Finish` write itself exhausting its retries) with no automatic reconciliation and no admin/CLI mutation — only a RUNBOOK.md caveat pointing at manual SQL. **PR-1048** (done, ships standalone — same shape as PR-1027's fix, no dependency on PR-1034/1035) closes it: a scheduled `search.reindex.reconcile` sweep corrects a stuck run once its underlying job has reached a real terminal status, plus `app search:reindex-runs:reconcile <run-id> --reason=<text>` for the ambiguous case (job also still `processing`, or a crashed job the queue itself has no reaper for) that the sweep deliberately leaves for an operator to judge.
+
+### Design notes: PR-1035 shipped ahead of PR-1037
+
+PR-1035's original scope described the single-item synchronous path as calling `IndexProduct`/`IndexCategory` symmetrically for `scope=products`/`scope=categories`. `IndexCategory` doesn't exist — it's PR-1037, still planned, tracked separately (and non-trivial: it also fixes `Product.CategoryID` → `CategoryIDs`, a real behavior change, not just an added method). Rather than block the admin API and progress endpoint — the actual deliverable this phase set out to build — on a category-indexing PR with its own independent scope, PR-1035 shipped with `scope=categories` always going through the queued/bulk path (`ReindexService.Trigger`, which already resolves category scope to product IDs via `ProductIDsByCategory` and indexes those products — this works today, no dependency on PR-1037), regardless of ID count. Only `scope=products` with exactly one ID gets the synchronous "reindex this now" treatment. Revisit this once PR-1037 ships `IndexCategory`.
 
 ### Design notes: what else is worth indexing
 
@@ -166,7 +170,8 @@ Phase 12's own Track F (index/CSV/GraphQL/GUI closeout) explicitly depends on th
 | 1032 | A | done |
 | 1033 | B | done |
 | 1034 | B | done |
-| 1035–1038 | B | planned |
+| 1035 | B | done |
+| 1036–1038 | B | planned |
 | 1039–1043 | C | planned |
 | 1044–1047 | D | planned |
 

@@ -10,7 +10,7 @@
 | PR-1032 | A | done | [Jobs/scheduler CLI](PR-1032.md) |
 | PR-1033 | B | done | [Reindex as a job](PR-1033.md) |
 | PR-1034 | B | done | [Partial & scoped reindex](PR-1034.md) |
-| PR-1035 | B | planned | [Reindex admin API + progress](PR-1035.md) |
+| PR-1035 | B | done | [Reindex admin API + progress](PR-1035.md) |
 | PR-1036 | B | planned | [On-save incremental indexing](PR-1036.md) |
 | PR-1037 | B | planned | [Category indexing + relationship fix](PR-1037.md) |
 | PR-1038 | B | planned | [Search admin GUI](PR-1038.md) |

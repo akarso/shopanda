@@ -42,6 +42,7 @@ import (
 	reviewsApp "github.com/akarso/shopanda/internal/application/reviews"
 	"github.com/akarso/shopanda/internal/application/rewrite"
 	schedulerApp "github.com/akarso/shopanda/internal/application/scheduler"
+	searchApp "github.com/akarso/shopanda/internal/application/search"
 	setupApp "github.com/akarso/shopanda/internal/application/setup"
 	slotsApp "github.com/akarso/shopanda/internal/application/slots"
 	storecreditApp "github.com/akarso/shopanda/internal/application/storecredit"
@@ -177,6 +178,7 @@ type serveRuntime struct {
 	storeCreditAdmin               *admin.StoreCreditAdminHandler
 	storeCreditAccount             *storefront.StoreCreditAccountHandler
 	jobAdmin                       *admin.JobAdminHandler
+	searchAdmin                    *admin.SearchAdminHandler
 	scheduleAdmin                  *admin.ScheduleAdminHandler
 	schedulerStore                 *postgres.SchedulerStore
 	accountHandler                 *storefront.AccountHandler
@@ -289,6 +291,23 @@ func wireServeRuntime(cfg *config.Config, log logger.Logger, conn *sql.DB, repos
 	}
 	if err := integrationApp.RegisterSyncJobEventTriggers(pluginApp, bus, jobQueue, log); err != nil {
 		return nil, fmt.Errorf("sync job event triggers: %w", err)
+	}
+
+	// Search reindex admin API (PR-1035) — same RunStore/ProductSource
+	// implementations setupWorker gives the ReindexHandler that actually
+	// processes the queued job; this ReindexService only ever calls
+	// Enqueue, so it doesn't need setupWorker's own instance.
+	searchIndexRunRepo, err := postgres.NewSearchIndexRunRepo(conn)
+	if err != nil {
+		return nil, err
+	}
+	searchProductSource, err := postgres.NewSearchProductSource(conn)
+	if err != nil {
+		return nil, err
+	}
+	reindexService, err := searchApp.NewReindexService(searchIndexRunRepo, searchProductSource, jobQueue, log, cfg.Search.ReindexFullScanThreshold)
+	if err != nil {
+		return nil, err
 	}
 
 	// Job admin introspection/retry/cancel (PR-1028/PR-1029) — Postgres-queue-
@@ -786,6 +805,7 @@ func wireServeRuntime(cfg *config.Config, log logger.Logger, conn *sql.DB, repos
 	storeCreditAdmin := admin.NewStoreCreditAdminHandler(storeCreditService, sharedAuditor)
 	storeCreditAccount := storefront.NewStoreCreditAccountHandler(storeCreditService)
 	jobAdmin := admin.NewJobAdminHandler(jobsService, sharedAuditor)
+	searchAdmin := admin.NewSearchAdminHandler(reindexService, searchIndexRunRepo, searchProductSource, searchEngine, sharedAuditor)
 	scheduleAdmin := admin.NewScheduleAdminHandler(schedulerService, sharedAuditor)
 	accountHandler := storefront.NewAccountHandler(repos.customerRepo, repos.orderRepo, repos.consentRepo, accountService)
 	sitemapHandler := storefront.NewSitemapHandler(baseURL, repos.productRepo, repos.categoryRepo, repos.pageRepo)
@@ -895,6 +915,7 @@ func wireServeRuntime(cfg *config.Config, log logger.Logger, conn *sql.DB, repos
 		storeCreditAdmin:               storeCreditAdmin,
 		storeCreditAccount:             storeCreditAccount,
 		jobAdmin:                       jobAdmin,
+		searchAdmin:                    searchAdmin,
 		scheduleAdmin:                  scheduleAdmin,
 		schedulerStore:                 schedulerStore,
 		accountHandler:                 accountHandler,
