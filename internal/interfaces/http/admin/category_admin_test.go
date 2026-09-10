@@ -4,11 +4,13 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"testing"
 
+	adminapp "github.com/akarso/shopanda/internal/application/admin"
 	"github.com/akarso/shopanda/internal/domain/catalog"
 	"github.com/akarso/shopanda/internal/domain/identity"
 	"github.com/akarso/shopanda/internal/domain/rbac"
@@ -587,6 +589,83 @@ func TestCategoryProductAssignmentAdminHandler_Unassign_EmitsProductUpdatedEvent
 	}
 	if data.ProductID != "prod-1" || data.Name != "Hat" || data.Slug != "hat" || data.Status != catalog.StatusActive {
 		t.Fatalf("data = %+v, want product_id=prod-1 name=Hat slug=hat status=active", data)
+	}
+}
+
+// TestCategoryProductAssignmentAdminHandler_Assign_PublishFailure_StillSucceedsButAudited
+// pins a fixed gap: event.Bus.Publish aborts before dispatching any async
+// handler (cache invalidation, search reindex) if a synchronous handler on
+// the same event — rewrite.Subscriber, here simulated directly on the
+// bus — returns an error (a genuine path conflict, or a repository
+// failure; not just the empty-Slug case Round 2 already fixed). The
+// assignment write itself already succeeded by that point, so Assign must
+// still report success (this codebase's own convention: a side effect's
+// own failure never fails the response — see product_admin.go's own
+// Publish call), but the failure must not be silently discarded either:
+// it needs a separate audit record so it's visible to whoever reviews the
+// audit log, instead of the index/cache silently going stale with no
+// trace anywhere.
+func TestCategoryProductAssignmentAdminHandler_Assign_PublishFailure_StillSucceedsButAudited(t *testing.T) {
+	cats := &mockCategoryRepo{
+		findByIDFn: func(_ context.Context, id string) (*catalog.Category, error) {
+			return &catalog.Category{ID: "cat-1", Name: "Accessories", Slug: "accessories"}, nil
+		},
+	}
+	prods := &mockCatProductRepo{
+		findByIDFn: func(_ context.Context, id string) (*catalog.Product, error) {
+			return &catalog.Product{ID: "prod-1", Name: "Hat", Slug: "hat", Status: catalog.StatusActive}, nil
+		},
+	}
+	assignments := &mockProductCategoryAssignmentRepo{
+		assignFn: func(_ context.Context, productID, categoryID string) error { return nil },
+	}
+	read := storefront.NewCategoryHandler(cats, prods)
+
+	sink := &auditSink{}
+	h := admin.NewCategoryProductAssignmentAdminHandlerWithAuditor(cats, prods, assignments, adminapp.NewAuditor(sink))
+	bus := event.NewBus(logger.NewWithWriter(io.Discard, "error"))
+	// Simulates rewrite.Subscriber (or any other synchronous handler on
+	// this event) failing — e.g. a real path conflict — independent of
+	// whether the payload itself is correct.
+	bus.On(catalog.EventProductUpdated, func(context.Context, event.Event) error {
+		return fmt.Errorf("rewrite: path %q already claimed by page/some-other-page", "/hat")
+	})
+	h.SetBus(bus)
+
+	mux := newAdminCategoryAssignmentRouter(read, h)
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/admin/categories/cat-1/products/prod-1", nil)
+	req = testhelper.AuthenticatedRequest(req, "editor-1", identity.RoleEditor)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d; body=%s", rec.Code, http.StatusOK, rec.Body.String())
+	}
+	var body struct {
+		Data struct {
+			Assigned bool `json:"assigned"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if !body.Data.Assigned {
+		t.Fatal("expected assigned=true — the assignment itself succeeded, a downstream event-publish failure must not flip this")
+	}
+
+	if len(sink.records) != 2 {
+		t.Fatalf("audit records = %d, want 2 (assignment success + publish failure); records=%+v", len(sink.records), sink.records)
+	}
+	last := sink.Last(t)
+	if last.event != "admin.action.failed" {
+		t.Fatalf("last audit event = %q, want admin.action.failed", last.event)
+	}
+	if last.context["result"] != "error" {
+		t.Errorf("last audit result = %v, want error", last.context["result"])
+	}
+	errMsg, _ := last.context["error"].(string)
+	if errMsg == "" {
+		t.Error("expected the last audit record to carry a non-empty error message about the publish failure")
 	}
 }
 

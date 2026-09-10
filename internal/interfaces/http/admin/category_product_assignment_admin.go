@@ -2,6 +2,7 @@ package admin
 
 import (
 	"context"
+	"fmt"
 	"net/http"
 
 	httpshared "github.com/akarso/shopanda/internal/interfaces/http/shared"
@@ -77,11 +78,23 @@ func (h *CategoryProductAssignmentAdminHandler) SetBus(bus *event.Bus) {
 	h.bus = bus
 }
 
-func (h *CategoryProductAssignmentAdminHandler) publishAssignmentChanged(ctx context.Context, product *catalog.Product) {
+// publishAssignmentChanged returns Publish's error (if any) rather than
+// discarding it: a synchronous handler on this event (rewrite.Subscriber)
+// can genuinely fail even with an accurate payload — a real path
+// conflict with an existing rewrite, or a repository error — and per
+// event.Bus's own contract, a failed sync handler aborts the whole
+// Publish call, so the async cache-invalidation/search-reindex handlers
+// never run either. The caller doesn't fail the request over this (the
+// assignment write itself already succeeded, and this codebase's own
+// convention — see product_admin.go's own Publish call — never blocks an
+// admin response on a side-effect's own success) but does audit it
+// separately, so a stale index/cache from this is visible to whoever
+// reviews the audit log instead of silently invisible.
+func (h *CategoryProductAssignmentAdminHandler) publishAssignmentChanged(ctx context.Context, product *catalog.Product) error {
 	if h.bus == nil {
-		return
+		return nil
 	}
-	_ = h.bus.Publish(ctx, event.New(catalog.EventProductUpdated, "category.assignment", catalog.ProductUpdatedData{
+	return h.bus.Publish(ctx, event.New(catalog.EventProductUpdated, "category.assignment", catalog.ProductUpdatedData{
 		ProductID: product.ID,
 		Name:      product.Name,
 		Slug:      product.Slug,
@@ -153,7 +166,10 @@ func (h *CategoryProductAssignmentAdminHandler) Assign() http.HandlerFunc {
 			return
 		}
 		h.audit(r, admin.AuditCategoryProductAssign, categoryID, productID, nil)
-		h.publishAssignmentChanged(r.Context(), product)
+		if pubErr := h.publishAssignmentChanged(r.Context(), product); pubErr != nil {
+			h.audit(r, admin.AuditCategoryProductAssign, categoryID, productID,
+				fmt.Errorf("category assigned, but event publish failed — search index/cache may be stale until the next update or manual reindex: %w", pubErr))
+		}
 		httpshared.JSON(w, http.StatusOK, map[string]interface{}{"assigned": true})
 	}
 }
@@ -174,7 +190,10 @@ func (h *CategoryProductAssignmentAdminHandler) Unassign() http.HandlerFunc {
 			return
 		}
 		h.audit(r, admin.AuditCategoryProductUnassign, categoryID, productID, nil)
-		h.publishAssignmentChanged(r.Context(), product)
+		if pubErr := h.publishAssignmentChanged(r.Context(), product); pubErr != nil {
+			h.audit(r, admin.AuditCategoryProductUnassign, categoryID, productID,
+				fmt.Errorf("category unassigned, but event publish failed — search index/cache may be stale until the next update or manual reindex: %w", pubErr))
+		}
 		httpshared.JSON(w, http.StatusOK, map[string]interface{}{"assigned": false})
 	}
 }
