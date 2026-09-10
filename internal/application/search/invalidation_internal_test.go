@@ -2,12 +2,16 @@ package search
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"sync"
 	"testing"
 	"time"
 
+	"github.com/akarso/shopanda/internal/domain/catalog"
 	domainjobs "github.com/akarso/shopanda/internal/domain/jobs"
 	domainsearch "github.com/akarso/shopanda/internal/domain/search"
+	"github.com/akarso/shopanda/internal/platform/event"
 	"github.com/akarso/shopanda/internal/platform/id"
 )
 
@@ -99,10 +103,32 @@ func (f *fakeInternalSearchEngine) Suggest(context.Context, string, int) ([]doma
 	return nil, nil
 }
 
-type fakeInternalCategorySource struct{}
+type fakeInternalCategorySource struct {
+	category domainsearch.Category
+	found    bool
+}
 
 func (f *fakeInternalCategorySource) GetByID(context.Context, string) (domainsearch.Category, bool, error) {
-	return domainsearch.Category{}, false, nil
+	return f.category, f.found, nil
+}
+
+// fakeInternalRetryEngine wraps fakeInternalSearchEngine to fail
+// IndexCategory a configurable number of times before succeeding, for
+// TestIndexUpdateSubscriber_HandleCategoryCreated_RetriesTransientFailure.
+type fakeInternalRetryEngine struct {
+	fakeInternalSearchEngine
+	failAttempts      int
+	calls             int
+	indexedCategories []domainsearch.Category
+}
+
+func (f *fakeInternalRetryEngine) IndexCategory(_ context.Context, c domainsearch.Category) error {
+	f.calls++
+	if f.calls <= f.failAttempts {
+		return fmt.Errorf("transient failure (attempt %d)", f.calls)
+	}
+	f.indexedCategories = append(f.indexedCategories, c)
+	return nil
 }
 
 // TestIndexUpdateSubscriber_Allow_DebounceWindow exercises allow directly
@@ -213,5 +239,116 @@ func TestIndexUpdateSubscriber_TrailingFlush_CatchesLaterMutationAfterEarlyCompl
 	}
 	if got := queue.Count(); got != 2 {
 		t.Fatalf("enqueued %d jobs after waiting past the window, want 2 (leading-edge + trailing flush) — the second mutation's effect must not be lost", got)
+	}
+}
+
+// TestIndexUpdateSubscriber_RetryCategoryEngineCall_SucceedsAfterTransientFailures
+// pins the CR fix for PR-1037: category-document indexing runs as a bare
+// async event handler with no queue/retry behind it (unlike product
+// reindexing), so without an in-process retry, a single transient engine
+// error (a brief Meilisearch blip) would permanently drop that update —
+// event.Bus.Publish only logs and drops async handler errors, it never
+// retries them itself. retryCategoryEngineCall must succeed once the
+// underlying call stops failing, without exhausting its attempt budget.
+func TestIndexUpdateSubscriber_RetryCategoryEngineCall_SucceedsAfterTransientFailures(t *testing.T) {
+	s := &IndexUpdateSubscriber{retryDelay: time.Millisecond}
+	calls := 0
+	err := s.retryCategoryEngineCall(context.Background(), func() error {
+		calls++
+		if calls < categoryIndexMaxAttempts {
+			return errors.New("transient failure")
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("retryCategoryEngineCall: %v", err)
+	}
+	if calls != categoryIndexMaxAttempts {
+		t.Fatalf("calls = %d, want %d (succeeds on the last allowed attempt)", calls, categoryIndexMaxAttempts)
+	}
+}
+
+// TestIndexUpdateSubscriber_RetryCategoryEngineCall_GivesUpAfterMaxAttempts
+// pins the other half: a persistent failure must not retry forever — it
+// gives up after categoryIndexMaxAttempts and returns the last error, same
+// as today's (pre-fix) single-attempt behavior for a truly broken engine.
+func TestIndexUpdateSubscriber_RetryCategoryEngineCall_GivesUpAfterMaxAttempts(t *testing.T) {
+	s := &IndexUpdateSubscriber{retryDelay: time.Millisecond}
+	calls := 0
+	wantErr := errors.New("permanent failure")
+	err := s.retryCategoryEngineCall(context.Background(), func() error {
+		calls++
+		return wantErr
+	})
+	if !errors.Is(err, wantErr) {
+		t.Fatalf("err = %v, want %v", err, wantErr)
+	}
+	if calls != categoryIndexMaxAttempts {
+		t.Fatalf("calls = %d, want exactly %d (no more, no fewer)", calls, categoryIndexMaxAttempts)
+	}
+}
+
+// TestIndexUpdateSubscriber_RetryCategoryEngineCall_AbortsOnContextCancel
+// pins that a retry loop doesn't outlive the bus's shutdown context —
+// OnAsync handlers run with shutdownCtx, which Drain cancels after its
+// grace window, and a retry loop that ignored cancellation could hold up
+// process shutdown.
+func TestIndexUpdateSubscriber_RetryCategoryEngineCall_AbortsOnContextCancel(t *testing.T) {
+	s := &IndexUpdateSubscriber{retryDelay: time.Hour} // long enough that only cancellation ends the wait
+	ctx, cancel := context.WithCancel(context.Background())
+	calls := 0
+	done := make(chan error, 1)
+	go func() {
+		done <- s.retryCategoryEngineCall(ctx, func() error {
+			calls++
+			return errors.New("still failing")
+		})
+	}()
+	// Let the first attempt run and enter its post-failure wait, then cancel.
+	time.Sleep(20 * time.Millisecond)
+	cancel()
+
+	select {
+	case err := <-done:
+		if err == nil {
+			t.Fatal("expected the last attempt's error, not nil")
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("retryCategoryEngineCall did not return after context cancellation")
+	}
+	if calls != 1 {
+		t.Fatalf("calls = %d, want 1 (cancelled during the wait before a second attempt)", calls)
+	}
+}
+
+// TestIndexUpdateSubscriber_HandleCategoryCreated_RetriesTransientFailure
+// exercises the retry wiring end-to-end through the public handler (not
+// just retryCategoryEngineCall in isolation): HandleCategoryCreated must
+// still report success once the engine's transient failures clear within
+// the attempt budget, proving indexCategory actually routes IndexCategory
+// calls through the retry helper rather than calling the engine directly.
+func TestIndexUpdateSubscriber_HandleCategoryCreated_RetriesTransientFailure(t *testing.T) {
+	engine := &fakeInternalRetryEngine{failAttempts: categoryIndexMaxAttempts - 1}
+	categoryID := id.New()
+	categories := &fakeInternalCategorySource{
+		category: domainsearch.Category{ID: categoryID, Name: "Shoes", Slug: "shoes"},
+		found:    true,
+	}
+	s := &IndexUpdateSubscriber{
+		engine:     engine,
+		categories: categories,
+		log:        noopLogger{},
+		retryDelay: time.Millisecond,
+	}
+
+	evt := event.New(catalog.EventCategoryCreated, "test", catalog.CategoryCreatedData{CategoryID: categoryID, Name: "Shoes", Slug: "shoes"})
+	if err := s.HandleCategoryCreated(context.Background(), evt); err != nil {
+		t.Fatalf("HandleCategoryCreated: %v", err)
+	}
+	if engine.calls != categoryIndexMaxAttempts {
+		t.Fatalf("engine.calls = %d, want %d (retried through the transient failures)", engine.calls, categoryIndexMaxAttempts)
+	}
+	if len(engine.indexedCategories) != 1 || engine.indexedCategories[0].ID != categoryID {
+		t.Fatalf("indexedCategories = %+v, want one entry for %s", engine.indexedCategories, categoryID)
 	}
 }

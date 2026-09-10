@@ -30,6 +30,26 @@ import (
 // complexity for this.
 const productReindexDebounceWindow = 5 * time.Second
 
+// categoryIndexMaxAttempts bounds how many times a category-document
+// engine call (IndexCategory/RemoveCategory) is retried before giving up.
+// Unlike product reindexing — a queued, durable job via ReindexService
+// with its own retry/backoff — category-document indexing runs as a bare
+// async event handler (see HandleCategoryCreated/Updated/Deleted's own
+// doc comments for why there's no existing job-queue path to reuse for
+// it), and per event.Bus.Publish, an async handler's error is only logged,
+// never retried by the bus itself. A short bounded in-process retry
+// absorbs a transient failure (a brief Meilisearch blip, a momentary
+// connection error) without needing job-queue infrastructure; a truly
+// persistent failure still ultimately drops the update, same as before —
+// recoverable only by the category's next edit or a manual/full reindex
+// (see ROADMAP.md's "Design notes: PR-1037" and this PR's own CR
+// retrospective).
+const categoryIndexMaxAttempts = 3
+
+// categoryIndexRetryBaseDelay is the delay before the first retry,
+// doubled after each subsequent failed attempt.
+const categoryIndexRetryBaseDelay = 200 * time.Millisecond
+
 // IndexUpdateSubscriber listens for catalog/pricing/inventory change events
 // and enqueues a scoped reindex for the affected product — the "on save"
 // mode neither PR-1030's schedule trigger nor PR-1035's manual admin
@@ -42,6 +62,7 @@ type IndexUpdateSubscriber struct {
 	categories domainsearch.CategorySource
 	log        Logger
 	window     time.Duration // productReindexDebounceWindow; a field (not just the const) so a whitebox test can shrink it for a fast, deterministic trailing-flush test.
+	retryDelay time.Duration // categoryIndexRetryBaseDelay; a field for the same reason — a whitebox test shrinks it for a fast retry test.
 
 	mu       sync.Mutex
 	lastFire map[string]time.Time
@@ -75,6 +96,7 @@ func NewIndexUpdateSubscriber(reindex *ReindexService, engine domainsearch.Searc
 		categories: categories,
 		log:        log,
 		window:     productReindexDebounceWindow,
+		retryDelay: categoryIndexRetryBaseDelay,
 		lastFire:   make(map[string]time.Time),
 		trailing:   make(map[string]*time.Timer),
 	}
@@ -167,7 +189,7 @@ func (s *IndexUpdateSubscriber) HandleCategoryDeleted(ctx context.Context, evt e
 	if !ok {
 		return fmt.Errorf("search.invalidation: unexpected event data type %T", evt.Data)
 	}
-	if err := s.engine.RemoveCategory(ctx, data.CategoryID); err != nil {
+	if err := s.retryCategoryEngineCall(ctx, func() error { return s.engine.RemoveCategory(ctx, data.CategoryID) }); err != nil {
 		s.log.Error("search.invalidation.category_remove_failed", err, map[string]interface{}{"category_id": data.CategoryID})
 		return fmt.Errorf("search.invalidation: remove category %s: %w", data.CategoryID, err)
 	}
@@ -191,12 +213,39 @@ func (s *IndexUpdateSubscriber) indexCategory(ctx context.Context, categoryID st
 		// own doc comment.
 		return nil
 	}
-	if err := s.engine.IndexCategory(ctx, c); err != nil {
+	if err := s.retryCategoryEngineCall(ctx, func() error { return s.engine.IndexCategory(ctx, c) }); err != nil {
 		s.log.Error("search.invalidation.category_index_failed", err, map[string]interface{}{"category_id": categoryID})
 		return fmt.Errorf("search.invalidation: index category %s: %w", categoryID, err)
 	}
 	s.log.Info("search.invalidation.category_indexed", map[string]interface{}{"category_id": categoryID})
 	return nil
+}
+
+// retryCategoryEngineCall runs fn up to categoryIndexMaxAttempts times,
+// waiting s.retryDelay (doubling after each failed attempt) in between,
+// and returns the last error if every attempt fails. A wait aborts early
+// (returning the error from the most recent attempt) if ctx is cancelled
+// — the async handler's ctx is the bus's shutdownCtx, live during Drain's
+// grace window and then cancelled, so a stuck retry loop doesn't hang
+// process shutdown indefinitely.
+func (s *IndexUpdateSubscriber) retryCategoryEngineCall(ctx context.Context, fn func() error) error {
+	var err error
+	delay := s.retryDelay
+	for attempt := 1; attempt <= categoryIndexMaxAttempts; attempt++ {
+		if err = fn(); err == nil {
+			return nil
+		}
+		if attempt == categoryIndexMaxAttempts {
+			break
+		}
+		select {
+		case <-ctx.Done():
+			return err
+		case <-time.After(delay):
+		}
+		delay *= 2
+	}
+	return err
 }
 
 // scheduleReindex enqueues a scoped reindex for productID, unless a

@@ -28,7 +28,16 @@ func NewSearchCategorySource(db *sql.DB) (*SearchCategorySource, error) {
 	return &SearchCategorySource{db: db}, nil
 }
 
-// GetByID implements domainsearch.CategorySource.
+// GetByID implements domainsearch.CategorySource. ProductCount counts only
+// products assigned directly to categoryID — it deliberately does not
+// aggregate descendant categories' products. A parent category with
+// products only under its children therefore reports 0, not the rolled-up
+// total. This matches how `product_categories` assignment already works
+// (a product's membership in a subcategory implies nothing about its
+// parent categories) and keeps the count a simple, literal reflection of
+// direct assignments; a "browse this category and its children" UX would
+// need to aggregate explicitly at query time, not by changing what gets
+// indexed here.
 func (s *SearchCategorySource) GetByID(ctx context.Context, categoryID string) (domainsearch.Category, bool, error) {
 	const q = `SELECT c.name, c.slug, c.parent_id,
 		(SELECT COUNT(DISTINCT product_id) FROM product_categories WHERE category_id = c.id)

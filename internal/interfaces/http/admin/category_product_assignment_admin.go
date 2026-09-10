@@ -59,58 +59,82 @@ func NewCategoryProductAssignmentAdminHandlerWithAuditor(
 	}
 }
 
-// SetBus enables publishing catalog.EventProductUpdated on every successful
-// Assign/Unassign (PR-1036: the search index's on-save subscriber listens
-// for it, refreshing the product's indexed category membership; reusing
-// this event rather than adding a new one also means the existing cache
-// invalidation subscriber now correctly invalidates on a category
-// assignment change too, not just a product field edit). The full product
-// (Name/Slug/Status), not just its ID, must be populated on the published
-// event: rewrite.Subscriber also listens to this event synchronously
-// (bus.On, not OnAsync) and builds a URL rewrite from data.Slug directly,
-// with no fallback lookup — an empty Slug here would register "/" itself
-// as this product's rewrite (or fail with a path conflict if "/" is
-// already claimed by something else). Either failure mode would normally
-// also abort dispatch to the async cache-invalidation/search-reindex
-// handlers (a failed sync handler aborts the whole Publish call) —
-// publishAssignmentChanged's own PublishAsync fallback exists precisely
-// so those two don't go stale over a rewrite-specific problem. Left
+// SetBus enables publishing catalog.EventProductUpdated and
+// catalog.EventCategoryUpdated on every successful Assign/Unassign
+// (PR-1036: the search index's on-save subscriber listens for the product
+// event, refreshing the product's indexed CategoryIDs; reusing it rather
+// than adding a new one also means the existing cache invalidation
+// subscriber now correctly invalidates on a category assignment change
+// too, not just a product field edit). PR-1037 added the category event:
+// without it, a category's indexed ProductCount only ever gets refreshed
+// on that category's own next create/update, never on a membership change
+// via this handler — see publishAssignmentChanged. The full product
+// (Name/Slug/Status) and category (Name/Slug), not just their IDs, must
+// be populated on the published events: rewrite.Subscriber also listens
+// to both synchronously (bus.On, not OnAsync) and builds a URL rewrite
+// from data.Slug directly, with no fallback lookup — an empty Slug here
+// would register "/" itself as the rewrite (or fail with a path conflict
+// if "/" is already claimed by something else). Either failure mode would
+// normally also abort dispatch to the async cache-invalidation/
+// search-reindex handlers (a failed sync handler aborts the whole Publish
+// call) — publishAssignmentChanged's own PublishAsync fallback exists
+// precisely so those don't go stale over a rewrite-specific problem. Left
 // unset (nil), Assign/Unassign work exactly as before.
 func (h *CategoryProductAssignmentAdminHandler) SetBus(bus *event.Bus) {
 	h.bus = bus
 }
 
-// publishAssignmentChanged returns Publish's error (if any) rather than
-// discarding it: a synchronous handler on this event (rewrite.Subscriber)
-// can genuinely fail even with an accurate payload — a real path
-// conflict with an existing rewrite, or a repository error — and per
-// event.Bus's own contract, a failed sync handler aborts the whole
-// Publish call, so the async cache-invalidation/search-reindex handlers
-// would never run either. That coupling is exactly what's undesirable
-// here: this category assignment already succeeded, and an unrelated
-// rewrite failure must not also leave the search index/cache stale. So
-// on a Publish failure, this falls back to PublishAsync, dispatching the
-// event straight to the async handlers regardless of why the sync phase
-// failed — the index/cache side effects still happen even though the
-// rewrite one didn't. The caller doesn't fail the request over any of
-// this either way (the assignment write itself already succeeded, and
-// this codebase's own convention — see product_admin.go's own Publish
-// call — never blocks an admin response on a side-effect's own success),
-// but does audit a Publish failure separately, so it's visible to
+// publishAssignmentChanged publishes both the product-side and
+// category-side events for an assignment change and returns the first
+// error (if any) rather than discarding it: a synchronous handler on
+// either event (rewrite.Subscriber) can genuinely fail even with an
+// accurate payload — a real path conflict with an existing rewrite, or a
+// repository error — and per event.Bus's own contract, a failed sync
+// handler aborts the whole Publish call, so the async cache-invalidation/
+// search-reindex handlers would never run either. That coupling is
+// exactly what's undesirable here: this assignment already succeeded, and
+// an unrelated rewrite failure must not also leave the search index/cache
+// stale. So each Publish that fails falls back to PublishAsync,
+// dispatching that event straight to its async handlers regardless of
+// why the sync phase failed — the index/cache side effects still happen
+// even though the rewrite one didn't. The caller doesn't fail the request
+// over any of this either way (the assignment write itself already
+// succeeded, and this codebase's own convention — see product_admin.go's
+// own Publish call — never blocks an admin response on a side-effect's
+// own success), but does audit a failure separately, so it's visible to
 // whoever reviews the audit log instead of silently invisible.
-func (h *CategoryProductAssignmentAdminHandler) publishAssignmentChanged(ctx context.Context, product *catalog.Product) error {
+func (h *CategoryProductAssignmentAdminHandler) publishAssignmentChanged(ctx context.Context, product *catalog.Product, category *catalog.Category) error {
 	if h.bus == nil {
 		return nil
 	}
-	evt := event.New(catalog.EventProductUpdated, "category.assignment", catalog.ProductUpdatedData{
+	productEvt := event.New(catalog.EventProductUpdated, "category.assignment", catalog.ProductUpdatedData{
 		ProductID: product.ID,
 		Name:      product.Name,
 		Slug:      product.Slug,
 		Status:    product.Status,
 	})
-	err := h.bus.Publish(ctx, evt)
+	err := h.bus.Publish(ctx, productEvt)
 	if err != nil {
-		h.bus.PublishAsync(evt)
+		h.bus.PublishAsync(productEvt)
+	}
+
+	// Reuses EventCategoryUpdated (as the product side reuses
+	// EventProductUpdated) with the category's own current Name/Slug —
+	// unchanged by this handler, so OldSlug is left empty and
+	// rewrite.Subscriber's HandleCategoryUpdated re-saves the existing
+	// rewrite (a harmless idempotent write), while
+	// search.IndexUpdateSubscriber.HandleCategoryUpdated re-reads the
+	// category's current ProductCount and re-indexes it.
+	categoryEvt := event.New(catalog.EventCategoryUpdated, "category.assignment", catalog.CategoryUpdatedData{
+		CategoryID: category.ID,
+		Name:       category.Name,
+		Slug:       category.Slug,
+	})
+	if catErr := h.bus.Publish(ctx, categoryEvt); catErr != nil {
+		h.bus.PublishAsync(categoryEvt)
+		if err == nil {
+			err = catErr
+		}
 	}
 	return err
 }
@@ -134,52 +158,54 @@ func (h *CategoryProductAssignmentAdminHandler) audit(r *http.Request, action ad
 	})
 }
 
-// validateAssignmentTargets also returns the fetched product (not just its
-// ID): Assign/Unassign need its Name/Slug/Status to publish an accurate
-// catalog.EventProductUpdated afterward — see publishAssignmentChanged.
-func (h *CategoryProductAssignmentAdminHandler) validateAssignmentTargets(r *http.Request) (string, *catalog.Product, error) {
+// validateAssignmentTargets also returns the fetched category and product
+// (not just the category's ID): Assign/Unassign need the product's
+// Name/Slug/Status and the category's Name/Slug to publish accurate
+// catalog.EventProductUpdated/EventCategoryUpdated events afterward — see
+// publishAssignmentChanged.
+func (h *CategoryProductAssignmentAdminHandler) validateAssignmentTargets(r *http.Request) (*catalog.Category, *catalog.Product, error) {
 	categoryID := r.PathValue("id")
 	if categoryID == "" {
-		return "", nil, apperror.Validation("category id is required")
+		return nil, nil, apperror.Validation("category id is required")
 	}
 	productID := r.PathValue("productId")
 	if productID == "" {
-		return "", nil, apperror.Validation("product id is required")
+		return nil, nil, apperror.Validation("product id is required")
 	}
 	category, err := h.categories.FindByID(r.Context(), categoryID)
 	if err != nil {
-		return "", nil, err
+		return nil, nil, err
 	}
 	if category == nil {
-		return "", nil, apperror.NotFound("category not found")
+		return nil, nil, apperror.NotFound("category not found")
 	}
 	product, err := h.products.FindByID(r.Context(), productID)
 	if err != nil {
-		return "", nil, err
+		return nil, nil, err
 	}
 	if product == nil {
-		return "", nil, apperror.NotFound("product not found")
+		return nil, nil, apperror.NotFound("product not found")
 	}
-	return categoryID, product, nil
+	return category, product, nil
 }
 
 // Assign handles POST /api/v1/admin/categories/{id}/products/{productId}.
 func (h *CategoryProductAssignmentAdminHandler) Assign() http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		categoryID, product, err := h.validateAssignmentTargets(r)
+		category, product, err := h.validateAssignmentTargets(r)
 		if err != nil {
 			h.audit(r, admin.AuditCategoryProductAssign, r.PathValue("id"), r.PathValue("productId"), err)
 			httpshared.JSONError(w, err)
 			return
 		}
-		productID := product.ID
+		categoryID, productID := category.ID, product.ID
 		if err := h.assignments.AssignCategory(r.Context(), productID, categoryID); err != nil {
 			h.audit(r, admin.AuditCategoryProductAssign, categoryID, productID, err)
 			httpshared.JSONError(w, err)
 			return
 		}
 		h.audit(r, admin.AuditCategoryProductAssign, categoryID, productID, nil)
-		if pubErr := h.publishAssignmentChanged(r.Context(), product); pubErr != nil {
+		if pubErr := h.publishAssignmentChanged(r.Context(), product, category); pubErr != nil {
 			h.audit(r, admin.AuditCategoryProductAssign, categoryID, productID,
 				fmt.Errorf("category assigned, and search index/cache were still updated, but a synchronous event handler (e.g. URL rewrite) failed: %w", pubErr))
 		}
@@ -190,20 +216,20 @@ func (h *CategoryProductAssignmentAdminHandler) Assign() http.HandlerFunc {
 // Unassign handles DELETE /api/v1/admin/categories/{id}/products/{productId}.
 func (h *CategoryProductAssignmentAdminHandler) Unassign() http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		categoryID, product, err := h.validateAssignmentTargets(r)
+		category, product, err := h.validateAssignmentTargets(r)
 		if err != nil {
 			h.audit(r, admin.AuditCategoryProductUnassign, r.PathValue("id"), r.PathValue("productId"), err)
 			httpshared.JSONError(w, err)
 			return
 		}
-		productID := product.ID
+		categoryID, productID := category.ID, product.ID
 		if err := h.assignments.RemoveCategory(r.Context(), productID, categoryID); err != nil {
 			h.audit(r, admin.AuditCategoryProductUnassign, categoryID, productID, err)
 			httpshared.JSONError(w, err)
 			return
 		}
 		h.audit(r, admin.AuditCategoryProductUnassign, categoryID, productID, nil)
-		if pubErr := h.publishAssignmentChanged(r.Context(), product); pubErr != nil {
+		if pubErr := h.publishAssignmentChanged(r.Context(), product, category); pubErr != nil {
 			h.audit(r, admin.AuditCategoryProductUnassign, categoryID, productID,
 				fmt.Errorf("category unassigned, and search index/cache were still updated, but a synchronous event handler (e.g. URL rewrite) failed: %w", pubErr))
 		}

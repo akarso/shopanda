@@ -82,11 +82,14 @@ type Product struct {
 // description field — but is kept here since a search index document is a
 // natural place to surface one once the catalog domain gains it.
 type Category struct {
-	ID           string
-	Name         string
-	Slug         string
-	Description  string
-	ParentID     string
+	ID          string
+	Name        string
+	Slug        string
+	Description string
+	ParentID    string
+	// ProductCount is the number of products assigned directly to this
+	// category — it does not aggregate descendant categories' products
+	// (see CategorySource.GetByID implementations for the reasoning).
 	ProductCount int
 }
 
