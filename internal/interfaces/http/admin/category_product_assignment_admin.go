@@ -1,6 +1,7 @@
 package admin
 
 import (
+	"context"
 	"net/http"
 
 	httpshared "github.com/akarso/shopanda/internal/interfaces/http/shared"
@@ -8,6 +9,7 @@ import (
 	"github.com/akarso/shopanda/internal/application/admin"
 	"github.com/akarso/shopanda/internal/domain/catalog"
 	"github.com/akarso/shopanda/internal/platform/apperror"
+	"github.com/akarso/shopanda/internal/platform/event"
 	"github.com/akarso/shopanda/internal/platform/logger"
 )
 
@@ -17,6 +19,7 @@ type CategoryProductAssignmentAdminHandler struct {
 	products    catalog.ProductRepository
 	assignments catalog.ProductCategoryAssignmentRepository
 	auditor     *admin.Auditor
+	bus         *event.Bus // optional; nil (the default) skips publishing — see SetBus.
 }
 
 // NewCategoryProductAssignmentAdminHandler creates a CategoryProductAssignmentAdminHandler with a default auditor.
@@ -53,6 +56,27 @@ func NewCategoryProductAssignmentAdminHandlerWithAuditor(
 		assignments: assignments,
 		auditor:     auditor,
 	}
+}
+
+// SetBus enables publishing catalog.EventProductUpdated on every successful
+// Assign/Unassign (PR-1036: the search index's on-save subscriber listens
+// for it, refreshing the product's indexed category membership; reusing
+// this event rather than adding a new one also means the existing cache
+// invalidation subscriber now correctly invalidates on a category
+// assignment change too, not just a product field edit). Only ProductID is
+// populated on the published event — no consumer reads
+// ProductUpdatedData's other fields today (each re-fetches fresh product
+// data by ID instead), so a full product lookup here isn't needed. Left
+// unset (nil), Assign/Unassign work exactly as before.
+func (h *CategoryProductAssignmentAdminHandler) SetBus(bus *event.Bus) {
+	h.bus = bus
+}
+
+func (h *CategoryProductAssignmentAdminHandler) publishAssignmentChanged(ctx context.Context, productID string) {
+	if h.bus == nil {
+		return
+	}
+	_ = h.bus.Publish(ctx, event.New(catalog.EventProductUpdated, "category.assignment", catalog.ProductUpdatedData{ProductID: productID}))
 }
 
 func (h *CategoryProductAssignmentAdminHandler) audit(r *http.Request, action admin.AuditAction, categoryID, productID string, err error) {
@@ -115,6 +139,7 @@ func (h *CategoryProductAssignmentAdminHandler) Assign() http.HandlerFunc {
 			return
 		}
 		h.audit(r, admin.AuditCategoryProductAssign, categoryID, productID, nil)
+		h.publishAssignmentChanged(r.Context(), productID)
 		httpshared.JSON(w, http.StatusOK, map[string]interface{}{"assigned": true})
 	}
 }
@@ -134,6 +159,7 @@ func (h *CategoryProductAssignmentAdminHandler) Unassign() http.HandlerFunc {
 			return
 		}
 		h.audit(r, admin.AuditCategoryProductUnassign, categoryID, productID, nil)
+		h.publishAssignmentChanged(r.Context(), productID)
 		httpshared.JSON(w, http.StatusOK, map[string]interface{}{"assigned": false})
 	}
 }

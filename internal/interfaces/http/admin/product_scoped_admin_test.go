@@ -16,6 +16,7 @@ import (
 	"github.com/akarso/shopanda/internal/domain/shared"
 	"github.com/akarso/shopanda/internal/domain/translation"
 	"github.com/akarso/shopanda/internal/interfaces/http/admin"
+	"github.com/akarso/shopanda/internal/platform/event"
 	"github.com/akarso/shopanda/internal/platform/logger"
 )
 
@@ -459,6 +460,42 @@ func TestProductPriceAdmin_Update_WritesOnlyActiveStoreScope(t *testing.T) {
 		t.Fatalf("global price amount = %d, want 1000 (untouched)", got.Amount.Amount())
 	}
 	assertScopeTriad(t, sink.Last(t).context, "store-eu", "en", "EUR")
+}
+
+// TestProductPriceAdmin_Update_EmitsPriceUpsertedEvent pins PR-1036's
+// wiring: a successful interactive price Update must publish
+// pricing.EventPriceUpserted so the search index's on-save subscriber
+// picks it up — previously only the bulk price importer published this
+// event, so editing a price through the admin UI never reached the index.
+func TestProductPriceAdmin_Update_EmitsPriceUpsertedEvent(t *testing.T) {
+	h := admin.NewProductPriceAdminHandler(productExistsRepo("p1"), seededVariantRepo(), newScopedPriceRepo(), adminapp.NewAuditor(&auditSink{}), logger.NewWithWriter(io.Discard, "info"))
+	bus := event.NewBus(logger.NewWithWriter(io.Discard, "error"))
+	h.SetBus(bus)
+
+	var captured event.Event
+	bus.On(pricing.EventPriceUpserted, func(_ context.Context, evt event.Event) error {
+		captured = evt
+		return nil
+	})
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("PUT", "/api/v1/admin/products/p1/variants/v1/price", jsonBody(t, map[string]interface{}{"amount": 2500}))
+	req = withAdminFullScope(req, "admin-1", "store-eu", "en", "EUR")
+	newPriceAdminMux(h).ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d; body: %s", rec.Code, http.StatusOK, rec.Body.String())
+	}
+	if captured.Name != pricing.EventPriceUpserted {
+		t.Fatalf("event name = %q, want %q", captured.Name, pricing.EventPriceUpserted)
+	}
+	data, ok := captured.Data.(pricing.PriceUpsertedData)
+	if !ok {
+		t.Fatalf("event data type = %T, want PriceUpsertedData", captured.Data)
+	}
+	if data.ProductID != "p1" || data.VariantID != "v1" || data.StoreID != "store-eu" || data.Currency != "EUR" || data.Amount != 2500 {
+		t.Fatalf("data = %+v, want product_id=p1 variant_id=v1 store_id=store-eu currency=EUR amount=2500", data)
+	}
 }
 
 func TestProductPriceAdmin_Update_AmountRequired(t *testing.T) {

@@ -12,6 +12,7 @@ import (
 	"github.com/akarso/shopanda/internal/domain/catalog"
 	"github.com/akarso/shopanda/internal/domain/inventory"
 	"github.com/akarso/shopanda/internal/platform/apperror"
+	"github.com/akarso/shopanda/internal/platform/event"
 	"github.com/akarso/shopanda/internal/platform/logger"
 )
 
@@ -20,6 +21,7 @@ type InventoryAdminHandler struct {
 	stock    inventory.StockRepository
 	variants catalog.VariantRepository
 	auditor  *admin.Auditor
+	bus      *event.Bus // optional; nil (the default) skips publishing — see SetBus.
 }
 
 // NewInventoryAdminHandler creates an InventoryAdminHandler with a default auditor.
@@ -39,6 +41,16 @@ func NewInventoryAdminHandlerWithAuditor(stock inventory.StockRepository, varian
 		panic("InventoryAdminHandler: auditor must not be nil")
 	}
 	return &InventoryAdminHandler{stock: stock, variants: variants, auditor: auditor}
+}
+
+// SetBus enables publishing inventory.EventStockUpdated on every successful
+// Adjust (PR-1036: the search index's on-save subscriber listens for it).
+// Left unset (nil), Adjust works exactly as before — no event, no error —
+// matching how NewAuditor's own optional wiring (SetAuditLogRepository)
+// behaves, and keeping every existing constructor/test call site working
+// unchanged.
+func (h *InventoryAdminHandler) SetBus(bus *event.Bus) {
+	h.bus = bus
 }
 
 type adjustStockRequest struct {
@@ -205,6 +217,15 @@ func (h *InventoryAdminHandler) Adjust() http.HandlerFunc {
 			"quantity_before": before.Quantity,
 			"quantity_after":  entry.Quantity,
 		}, nil)
+
+		if h.bus != nil {
+			_ = h.bus.Publish(r.Context(), event.New(inventory.EventStockUpdated, "inventory.admin", inventory.StockUpdatedData{
+				ProductID: variant.ProductID,
+				VariantID: variant.ID,
+				SKU:       variant.SKU,
+				Quantity:  entry.Quantity,
+			}))
+		}
 
 		item, err := h.stock.GetInventoryItem(r.Context(), variantID)
 		if err != nil {

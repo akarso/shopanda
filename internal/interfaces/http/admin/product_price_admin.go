@@ -12,6 +12,7 @@ import (
 	"github.com/akarso/shopanda/internal/domain/pricing"
 	"github.com/akarso/shopanda/internal/domain/shared"
 	"github.com/akarso/shopanda/internal/platform/apperror"
+	"github.com/akarso/shopanda/internal/platform/event"
 	"github.com/akarso/shopanda/internal/platform/id"
 	"github.com/akarso/shopanda/internal/platform/logger"
 )
@@ -25,6 +26,7 @@ type ProductPriceAdminHandler struct {
 	prices   pricing.PriceRepository
 	auditor  *admin.Auditor
 	log      logger.Logger
+	bus      *event.Bus // optional; nil (the default) skips publishing — see SetBus.
 }
 
 // NewProductPriceAdminHandler creates a ProductPriceAdminHandler.
@@ -45,6 +47,15 @@ func NewProductPriceAdminHandler(products catalog.ProductRepository, variants ca
 		log = logger.New("warn")
 	}
 	return &ProductPriceAdminHandler{products: products, variants: variants, prices: prices, auditor: auditor, log: log}
+}
+
+// SetBus enables publishing pricing.EventPriceUpserted on every successful
+// Update (PR-1036: the search index's on-save subscriber listens for it —
+// previously only the bulk price importer published this event, so an
+// interactive admin price edit never reached the search index at all).
+// Left unset (nil), Update works exactly as before.
+func (h *ProductPriceAdminHandler) SetBus(bus *event.Bus) {
+	h.bus = bus
 }
 
 type updateProductPriceRequest struct {
@@ -197,6 +208,17 @@ func (h *ProductPriceAdminHandler) Update() http.HandlerFunc {
 		}
 
 		h.audit(r, admin.AuditPriceUpdate, vid, map[string]interface{}{"amount": *req.Amount, "price_store_id": storeID}, nil)
+
+		if h.bus != nil {
+			_ = h.bus.Publish(r.Context(), event.New(pricing.EventPriceUpserted, "price.admin", pricing.PriceUpsertedData{
+				PriceID:   price.ID,
+				VariantID: price.VariantID,
+				ProductID: pid,
+				StoreID:   price.StoreID,
+				Currency:  price.Amount.Currency(),
+				Amount:    price.Amount.Amount(),
+			}))
+		}
 
 		httpshared.JSON(w, http.StatusOK, map[string]interface{}{
 			"price":           pricePayload(&price),

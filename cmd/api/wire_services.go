@@ -50,7 +50,6 @@ import (
 	webhookApp "github.com/akarso/shopanda/internal/application/webhook"
 	domainadmin "github.com/akarso/shopanda/internal/domain/admin"
 	"github.com/akarso/shopanda/internal/domain/cache"
-	"github.com/akarso/shopanda/internal/domain/catalog"
 	"github.com/akarso/shopanda/internal/domain/customer"
 	"github.com/akarso/shopanda/internal/domain/invoice"
 	"github.com/akarso/shopanda/internal/domain/jobs"
@@ -422,49 +421,15 @@ func wireServeRuntime(cfg *config.Config, log logger.Logger, conn *sql.DB, repos
 	cacheInvalidation := cacheApp.NewInvalidationSubscriber(appCache, log)
 	cacheInvalidation.Register(bus)
 
-	// Wire catalog events → search index sync.
-	bus.OnAsync(catalog.EventProductCreated, func(ctx context.Context, evt event.Event) error {
-		data, ok := evt.Data.(catalog.ProductCreatedData)
-		if !ok {
-			return nil
-		}
-		p, err := repos.productRepo.FindByID(ctx, data.ProductID)
-		if err != nil {
-			return fmt.Errorf("search sync: load product %s: %w", data.ProductID, err)
-		}
-		if p == nil {
-			return nil
-		}
-		return searchEngine.IndexProduct(ctx, search.Product{
-			ID:          p.ID,
-			Name:        p.Name,
-			Slug:        p.Slug,
-			Description: p.Description,
-			CreatedAt:   p.CreatedAt,
-			Attributes:  p.Attributes,
-		})
-	})
-	bus.OnAsync(catalog.EventProductUpdated, func(ctx context.Context, evt event.Event) error {
-		data, ok := evt.Data.(catalog.ProductUpdatedData)
-		if !ok {
-			return nil
-		}
-		p, err := repos.productRepo.FindByID(ctx, data.ProductID)
-		if err != nil {
-			return fmt.Errorf("search sync: load product %s: %w", data.ProductID, err)
-		}
-		if p == nil {
-			return nil
-		}
-		return searchEngine.IndexProduct(ctx, search.Product{
-			ID:          p.ID,
-			Name:        p.Name,
-			Slug:        p.Slug,
-			Description: p.Description,
-			CreatedAt:   p.CreatedAt,
-			Attributes:  p.Attributes,
-		})
-	})
+	// Wire product/price/stock/category-assignment changes → search index
+	// updates (PR-1036), queued and debounced via reindexService.Trigger —
+	// replaces the previous inline bus.OnAsync(catalog.EventProduct*, ...)
+	// handlers that called searchEngine.IndexProduct directly: those bypassed
+	// the job queue entirely (no retry, no search_index_runs record), and ran
+	// once per event with no debouncing. See PR-1036.md's "Design decisions"
+	// for why this replacement, not an addition alongside the old handlers.
+	indexUpdateSubscriber := searchApp.NewIndexUpdateSubscriber(reindexService, log)
+	indexUpdateSubscriber.Register(bus)
 
 	// Base URL for SEO (sitemap, canonical, robots).
 	// Normalized at config load time (scheme defaulted, trailing slash stripped).
@@ -658,6 +623,7 @@ func wireServeRuntime(cfg *config.Config, log logger.Logger, conn *sql.DB, repos
 	productAdmin := admin.NewProductAdminHandlerWithAuditor(repos.productRepo, bus, sharedAuditor, log)
 	productTranslationAdmin := admin.NewProductTranslationAdminHandler(repos.productRepo, repos.contentTranslationRepo, sharedAuditor, log)
 	productPriceAdmin := admin.NewProductPriceAdminHandler(repos.productRepo, repos.variantRepo, repos.priceRepo, sharedAuditor, log)
+	productPriceAdmin.SetBus(bus) // PR-1036: price edits → search index update
 	variantHandler := storefront.NewVariantHandler(repos.productRepo, repos.variantRepo, bus)
 	cartHandler := storefront.NewCartHandler(cartService, extensionValueService)
 	orderHandler := storefront.NewOrderHandler(repos.orderRepo, extensionValueService)
@@ -714,6 +680,7 @@ func wireServeRuntime(cfg *config.Config, log logger.Logger, conn *sql.DB, repos
 	categoryHandler := storefront.NewCategoryHandler(repos.categoryRepo, repos.productRepo)
 	categoryAdmin := admin.NewCategoryAdminHandlerWithAuditor(repos.categoryRepo, bus, sharedAuditor)
 	categoryProductAssignmentAdmin := admin.NewCategoryProductAssignmentAdminHandlerWithAuditor(repos.categoryRepo, repos.productRepo, repos.productRepo, sharedAuditor)
+	categoryProductAssignmentAdmin.SetBus(bus) // PR-1036: category assignment change → search index update
 	searchHandler := storefront.NewSearchHandler(searchEngine).WithAdvancedSearchAttributes(attributeStore)
 	mediaService := mediaApp.NewService(mediaStorage, repos.assetRepo, bus, log)
 	if thumbCfg := cfg.Media.Thumbnails; len(thumbCfg) > 0 {
@@ -776,6 +743,7 @@ func wireServeRuntime(cfg *config.Config, log logger.Logger, conn *sql.DB, repos
 	portSnapshot := portsapp.BuildSnapshot(pluginApp, cfg)
 	extensionPortAdmin := admin.NewExtensionPortAdminHandler(portSnapshot)
 	inventoryAdmin := admin.NewInventoryAdminHandlerWithAuditor(repos.stockRepo, repos.variantRepo, sharedAuditor)
+	inventoryAdmin.SetBus(bus) // PR-1036: stock adjustment → search index update
 	storeAdmin := admin.NewStoreAdminHandlerWithAuditor(repos.storeRepo, bus, sharedAuditor)
 	auditLogAdmin := admin.NewAuditLogAdminHandler(repos.auditLogRepo, sharedAuditor)
 	webhookService := webhookApp.NewService(repos.webhookEndpointRepo)

@@ -540,6 +540,10 @@ Examples already shipped in the codebase:
 
 For the current full set, inspect `internal/domain/**/events.go` and `internal/application/checkout/workflow.go`.
 
+### Search indexing depends on these events (PR-1036)
+
+The search index updates itself automatically when a product, its price, its stock, or its category assignment changes — but only because the core admin handlers publish `catalog.EventProductUpdated`/`catalog.EventProductCreated`, `pricing.EventPriceUpserted`, and `inventory.EventStockUpdated` after every successful write, and `internal/application/search.IndexUpdateSubscriber` listens for them. If a plugin (or any other code path) mutates product, price, stock, or category-assignment data outside those normal save paths — writing directly to the database, or through a bulk import that doesn't go through the same handlers — it must publish the same event with the same payload shape, or its changes won't reach the search index until the next manual/scheduled `search:reindex`.
+
 ### Example listener
 
 ```go
