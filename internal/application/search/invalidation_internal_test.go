@@ -112,6 +112,26 @@ func (f *fakeInternalCategorySource) GetByID(context.Context, string) (domainsea
 	return f.category, f.found, nil
 }
 
+// fakeInternalCategoryLock is an in-process domainsearch.CategoryLock fake
+// — real per-key mutual exclusion (same shape as the sync.Map-based lock
+// this type replaced), enough to verify IndexUpdateSubscriber holds the
+// lock for the right duration; it does not itself prove cross-instance
+// behavior (that's AdvisoryLock's own integration test), only that the
+// subscriber uses the CategoryLock port correctly.
+type fakeInternalCategoryLock struct {
+	locks sync.Map // map[string]*sync.Mutex
+}
+
+func (f *fakeInternalCategoryLock) Lock(_ context.Context, key string) (func() error, error) {
+	muIface, _ := f.locks.LoadOrStore(key, &sync.Mutex{})
+	mu := muIface.(*sync.Mutex)
+	mu.Lock()
+	return func() error {
+		mu.Unlock()
+		return nil
+	}, nil
+}
+
 // fakeInternalRetryEngine wraps fakeInternalSearchEngine to fail
 // IndexCategory a configurable number of times before succeeding, for
 // TestIndexUpdateSubscriber_HandleCategoryCreated_RetriesTransientFailure.
@@ -209,7 +229,7 @@ func TestIndexUpdateSubscriber_TrailingFlush_CatchesLaterMutationAfterEarlyCompl
 	if err != nil {
 		t.Fatalf("NewReindexService: %v", err)
 	}
-	sub := NewIndexUpdateSubscriber(svc, &fakeInternalSearchEngine{}, &fakeInternalCategorySource{}, noopLogger{})
+	sub := NewIndexUpdateSubscriber(svc, &fakeInternalSearchEngine{}, &fakeInternalCategorySource{}, &fakeInternalCategoryLock{}, noopLogger{})
 	sub.window = 40 * time.Millisecond
 
 	productID := id.New()
@@ -335,10 +355,11 @@ func TestIndexUpdateSubscriber_HandleCategoryCreated_RetriesTransientFailure(t *
 		found:    true,
 	}
 	s := &IndexUpdateSubscriber{
-		engine:     engine,
-		categories: categories,
-		log:        noopLogger{},
-		retryDelay: time.Millisecond,
+		engine:       engine,
+		categories:   categories,
+		categoryLock: &fakeInternalCategoryLock{},
+		log:          noopLogger{},
+		retryDelay:   time.Millisecond,
 	}
 
 	evt := event.New(catalog.EventCategoryCreated, "test", catalog.CategoryCreatedData{CategoryID: categoryID, Name: "Shoes", Slug: "shoes"})
@@ -411,7 +432,7 @@ func TestIndexUpdateSubscriber_HandleCategoryUpdatedAndDeleted_SerializedNoResur
 		category: domainsearch.Category{ID: categoryID, Name: "Shoes", Slug: "shoes"},
 		found:    true,
 	}
-	s := &IndexUpdateSubscriber{engine: engine, categories: categories, log: noopLogger{}, retryDelay: time.Millisecond}
+	s := &IndexUpdateSubscriber{engine: engine, categories: categories, categoryLock: &fakeInternalCategoryLock{}, log: noopLogger{}, retryDelay: time.Millisecond}
 
 	updateEvt := event.New(catalog.EventCategoryUpdated, "test", catalog.CategoryUpdatedData{CategoryID: categoryID, Name: "Shoes", Slug: "shoes"})
 	deleteEvt := event.New(catalog.EventCategoryDeleted, "test", catalog.CategoryDeletedData{CategoryID: categoryID, Slug: "shoes"})

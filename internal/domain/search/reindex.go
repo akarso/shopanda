@@ -166,3 +166,23 @@ type CategorySource interface {
 	// error).
 	GetByID(ctx context.Context, categoryID string) (Category, bool, error)
 }
+
+// CategoryLock provides mutual exclusion over category-document engine
+// calls (IndexCategory/RemoveCategory) for a given key (a category ID),
+// across API server instances — not just goroutines within one process.
+// An in-process-only lock (e.g. a plain sync.Mutex map) is not enough
+// here: in a horizontally-scaled deployment, an Update event for a
+// category can be handled by one instance while a Delete for the same
+// category is handled by another, each with its own independent
+// in-memory lock providing no mutual exclusion between them — letting
+// the Update's IndexCategory call land *after* the Delete's
+// RemoveCategory, permanently resurrecting a deleted category as
+// searchable (nothing else will ever remove it again). CategoryLock must
+// be backed by storage shared across every instance (e.g. a Postgres
+// advisory lock) to actually prevent that.
+type CategoryLock interface {
+	// Lock blocks until it acquires the lock for key or ctx is done,
+	// returning an error in the latter case. On success, the returned
+	// unlock releases the lock; callers must defer it immediately.
+	Lock(ctx context.Context, key string) (unlock func() error, err error)
+}

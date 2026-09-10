@@ -68,14 +68,12 @@ type IndexUpdateSubscriber struct {
 	lastFire map[string]time.Time
 	trailing map[string]*time.Timer
 
-	// categoryLocks holds a *sync.Mutex per category ID (map[string]*sync.Mutex),
-	// serializing indexCategory and HandleCategoryDeleted for the same
-	// category — see lockCategory's own doc comment for the race this
-	// prevents. Lazily populated via LoadOrStore; entries are never
-	// removed, but the key space is bounded by the number of distinct
-	// categories ever touched (a small catalog dimension, unlike
-	// products), so this doesn't grow unboundedly in practice.
-	categoryLocks sync.Map
+	// categoryLock serializes indexCategory and HandleCategoryDeleted for
+	// the same category ID — see domainsearch.CategoryLock's own doc
+	// comment for the cross-instance race this prevents. Must be backed
+	// by storage shared across every API server instance, not an
+	// in-process-only mutex.
+	categoryLock domainsearch.CategoryLock
 }
 
 // NewIndexUpdateSubscriber creates an IndexUpdateSubscriber. engine and
@@ -86,7 +84,7 @@ type IndexUpdateSubscriber struct {
 // to the category's member *products*, never to the category document
 // itself (see ReindexService's own scope-resolution logic), so there is no
 // existing path this could reuse.
-func NewIndexUpdateSubscriber(reindex *ReindexService, engine domainsearch.SearchEngine, categories domainsearch.CategorySource, log Logger) *IndexUpdateSubscriber {
+func NewIndexUpdateSubscriber(reindex *ReindexService, engine domainsearch.SearchEngine, categories domainsearch.CategorySource, categoryLock domainsearch.CategoryLock, log Logger) *IndexUpdateSubscriber {
 	if reindex == nil {
 		panic("search.NewIndexUpdateSubscriber: nil reindex service")
 	}
@@ -96,18 +94,22 @@ func NewIndexUpdateSubscriber(reindex *ReindexService, engine domainsearch.Searc
 	if categories == nil {
 		panic("search.NewIndexUpdateSubscriber: nil category source")
 	}
+	if categoryLock == nil {
+		panic("search.NewIndexUpdateSubscriber: nil category lock")
+	}
 	if log == nil {
 		panic("search.NewIndexUpdateSubscriber: nil logger")
 	}
 	return &IndexUpdateSubscriber{
-		reindex:    reindex,
-		engine:     engine,
-		categories: categories,
-		log:        log,
-		window:     productReindexDebounceWindow,
-		retryDelay: categoryIndexRetryBaseDelay,
-		lastFire:   make(map[string]time.Time),
-		trailing:   make(map[string]*time.Timer),
+		reindex:      reindex,
+		engine:       engine,
+		categories:   categories,
+		categoryLock: categoryLock,
+		log:          log,
+		window:       productReindexDebounceWindow,
+		retryDelay:   categoryIndexRetryBaseDelay,
+		lastFire:     make(map[string]time.Time),
+		trailing:     make(map[string]*time.Timer),
 	}
 }
 
@@ -198,8 +200,11 @@ func (s *IndexUpdateSubscriber) HandleCategoryDeleted(ctx context.Context, evt e
 	if !ok {
 		return fmt.Errorf("search.invalidation: unexpected event data type %T", evt.Data)
 	}
-	unlock := s.lockCategory(data.CategoryID)
-	defer unlock()
+	unlock, err := s.categoryLock.Lock(ctx, data.CategoryID)
+	if err != nil {
+		return fmt.Errorf("search.invalidation: lock category %s: %w", data.CategoryID, err)
+	}
+	defer s.unlockCategory(data.CategoryID, unlock)
 	if err := s.retryCategoryEngineCall(ctx, func() error { return s.engine.RemoveCategory(ctx, data.CategoryID) }); err != nil {
 		s.log.Error("search.invalidation.category_remove_failed", err, map[string]interface{}{"category_id": data.CategoryID})
 		return fmt.Errorf("search.invalidation: remove category %s: %w", data.CategoryID, err)
@@ -214,23 +219,30 @@ func (s *IndexUpdateSubscriber) HandleCategoryDeleted(ctx context.Context, evt e
 // admin request each, not a bulk-import path — see PR-1036's debounce,
 // which exists specifically for that bulk case.
 //
-// Holds categoryID's lock (see lockCategory) across both the GetByID read
+// Holds categoryID's lock (s.categoryLock) across both the GetByID read
 // and the engine call: an Update and a Delete for the same category are
-// published from two independent HTTP requests, each dispatched to its
-// own async goroutine with no ordering guarantee between them. Without
-// serializing here, an Update handler whose GetByID ran before a
-// concurrent Delete actually removed the row could still push that
-// now-stale category to IndexCategory *after* the Delete handler's
-// RemoveCategory already ran — resurrecting a deleted category as
-// searchable, permanently (nothing else will ever remove it again). With
-// the lock, whichever handler runs second does its GetByID read (still
-// live, still inside the lock) after the first has fully finished: if
-// Delete ran first, the second GetByID correctly observes found=false and
-// no-ops; if Update ran first, Delete's subsequent RemoveCategory still
-// correctly clears whatever Update just indexed.
+// published from two independent HTTP requests — possibly handled by two
+// different API server instances — each dispatched to its own async
+// goroutine with no ordering guarantee between them. Without serializing
+// here, an Update handler whose GetByID ran before a concurrent Delete
+// actually removed the row could still push that now-stale category to
+// IndexCategory *after* the Delete handler's RemoveCategory already ran
+// — resurrecting a deleted category as searchable, permanently (nothing
+// else will ever remove it again). With the lock, whichever handler runs
+// second does its GetByID read (still live, still inside the lock) after
+// the first has fully finished: if Delete ran first, the second GetByID
+// correctly observes found=false and no-ops; if Update ran first,
+// Delete's subsequent RemoveCategory still correctly clears whatever
+// Update just indexed. s.categoryLock must be shared across every
+// instance (not a plain in-process mutex) for this guarantee to actually
+// hold in a multi-instance deployment — see domainsearch.CategoryLock's
+// own doc comment.
 func (s *IndexUpdateSubscriber) indexCategory(ctx context.Context, categoryID string) error {
-	unlock := s.lockCategory(categoryID)
-	defer unlock()
+	unlock, err := s.categoryLock.Lock(ctx, categoryID)
+	if err != nil {
+		return fmt.Errorf("search.invalidation: lock category %s: %w", categoryID, err)
+	}
+	defer s.unlockCategory(categoryID, unlock)
 
 	c, found, err := s.categories.GetByID(ctx, categoryID)
 	if err != nil {
@@ -250,16 +262,15 @@ func (s *IndexUpdateSubscriber) indexCategory(ctx context.Context, categoryID st
 	return nil
 }
 
-// lockCategory locks categoryID's per-category mutex (creating it on first
-// use) and returns the matching Unlock func. Callers must defer the
-// returned func. See indexCategory's own doc comment for the race this
-// serialization prevents between an Update and a Delete for the same
-// category racing across two independent async event handlers.
-func (s *IndexUpdateSubscriber) lockCategory(categoryID string) func() {
-	muIface, _ := s.categoryLocks.LoadOrStore(categoryID, &sync.Mutex{})
-	mu := muIface.(*sync.Mutex)
-	mu.Lock()
-	return mu.Unlock
+// unlockCategory runs unlock (the func returned by a successful
+// s.categoryLock.Lock call) and logs, rather than propagates, any error —
+// this is always called from a defer, where returning an error isn't an
+// option, but a release failure (e.g. a dropped connection mid-commit)
+// still deserves visibility rather than silent loss.
+func (s *IndexUpdateSubscriber) unlockCategory(categoryID string, unlock func() error) {
+	if err := unlock(); err != nil {
+		s.log.Error("search.invalidation.category_unlock_failed", err, map[string]interface{}{"category_id": categoryID})
+	}
 }
 
 // retryCategoryEngineCall runs fn up to categoryIndexMaxAttempts times,

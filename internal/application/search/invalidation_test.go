@@ -3,6 +3,7 @@ package search_test
 import (
 	"context"
 	"errors"
+	"sync"
 	"testing"
 
 	searchApp "github.com/akarso/shopanda/internal/application/search"
@@ -57,6 +58,23 @@ func (f *fakeCategoryIndexEngine) RemoveCategory(_ context.Context, categoryID s
 	return nil
 }
 
+// fakeCategoryLock is an in-process domainsearch.CategoryLock fake — real
+// per-key mutual exclusion, standing in for the actual cross-instance
+// AdvisoryLock implementation (see its own dedicated integration test).
+type fakeCategoryLock struct {
+	locks sync.Map // map[string]*sync.Mutex
+}
+
+func (f *fakeCategoryLock) Lock(_ context.Context, key string) (func() error, error) {
+	muIface, _ := f.locks.LoadOrStore(key, &sync.Mutex{})
+	mu := muIface.(*sync.Mutex)
+	mu.Lock()
+	return func() error {
+		mu.Unlock()
+		return nil
+	}, nil
+}
+
 func newIndexUpdateSubscriber(t *testing.T) (*searchApp.IndexUpdateSubscriber, *fakeQueue) {
 	t.Helper()
 	store := &fakeRunStore{}
@@ -66,7 +84,7 @@ func newIndexUpdateSubscriber(t *testing.T) (*searchApp.IndexUpdateSubscriber, *
 	if err != nil {
 		t.Fatalf("NewReindexService: %v", err)
 	}
-	return searchApp.NewIndexUpdateSubscriber(svc, &fakeSearchEngine{}, &fakeCategorySource{}, logger.New("error")), queue
+	return searchApp.NewIndexUpdateSubscriber(svc, &fakeSearchEngine{}, &fakeCategorySource{}, &fakeCategoryLock{}, logger.New("error")), queue
 }
 
 func TestIndexUpdateSubscriber_HandleProductCreated_TriggersReindex(t *testing.T) {
@@ -211,7 +229,7 @@ func TestIndexUpdateSubscriber_TriggerFailure_EvictsDebounceEntry(t *testing.T) 
 	if err != nil {
 		t.Fatalf("NewReindexService: %v", err)
 	}
-	sub := searchApp.NewIndexUpdateSubscriber(svc, &fakeSearchEngine{}, &fakeCategorySource{}, logger.New("error"))
+	sub := searchApp.NewIndexUpdateSubscriber(svc, &fakeSearchEngine{}, &fakeCategorySource{}, &fakeCategoryLock{}, logger.New("error"))
 
 	productID := id.New()
 	evt := event.New(catalog.EventProductUpdated, "test", catalog.ProductUpdatedData{ProductID: productID})
@@ -260,7 +278,7 @@ func TestNewIndexUpdateSubscriber_NilDeps(t *testing.T) {
 			t.Fatal("expected NewIndexUpdateSubscriber(nil, ...) to panic")
 		}
 	}()
-	searchApp.NewIndexUpdateSubscriber(nil, &fakeSearchEngine{}, &fakeCategorySource{}, logger.New("error"))
+	searchApp.NewIndexUpdateSubscriber(nil, &fakeSearchEngine{}, &fakeCategorySource{}, &fakeCategoryLock{}, logger.New("error"))
 	_ = svc
 }
 
@@ -278,7 +296,7 @@ func TestNewIndexUpdateSubscriber_NilEnginePanics(t *testing.T) {
 			t.Fatal("expected NewIndexUpdateSubscriber(svc, nil, ...) to panic")
 		}
 	}()
-	searchApp.NewIndexUpdateSubscriber(svc, nil, &fakeCategorySource{}, logger.New("error"))
+	searchApp.NewIndexUpdateSubscriber(svc, nil, &fakeCategorySource{}, &fakeCategoryLock{}, logger.New("error"))
 }
 
 func TestNewIndexUpdateSubscriber_NilCategorySourcePanics(t *testing.T) {
@@ -295,7 +313,24 @@ func TestNewIndexUpdateSubscriber_NilCategorySourcePanics(t *testing.T) {
 			t.Fatal("expected NewIndexUpdateSubscriber(svc, engine, nil, ...) to panic")
 		}
 	}()
-	searchApp.NewIndexUpdateSubscriber(svc, &fakeSearchEngine{}, nil, logger.New("error"))
+	searchApp.NewIndexUpdateSubscriber(svc, &fakeSearchEngine{}, nil, &fakeCategoryLock{}, logger.New("error"))
+}
+
+func TestNewIndexUpdateSubscriber_NilCategoryLockPanics(t *testing.T) {
+	store := &fakeRunStore{}
+	products := &fakeProductSource{}
+	queue := &fakeQueue{}
+	svc, err := searchApp.NewReindexService(store, products, queue, logger.New("error"), defaultThreshold)
+	if err != nil {
+		t.Fatalf("NewReindexService: %v", err)
+	}
+
+	defer func() {
+		if recover() == nil {
+			t.Fatal("expected NewIndexUpdateSubscriber(svc, engine, categories, nil, ...) to panic")
+		}
+	}()
+	searchApp.NewIndexUpdateSubscriber(svc, &fakeSearchEngine{}, &fakeCategorySource{}, nil, logger.New("error"))
 }
 
 func TestIndexUpdateSubscriber_HandleCategoryCreated_IndexesCategory(t *testing.T) {
@@ -311,7 +346,7 @@ func TestIndexUpdateSubscriber_HandleCategoryCreated_IndexesCategory(t *testing.
 	if err != nil {
 		t.Fatalf("NewReindexService: %v", err)
 	}
-	sub := searchApp.NewIndexUpdateSubscriber(svc, engine, categories, logger.New("error"))
+	sub := searchApp.NewIndexUpdateSubscriber(svc, engine, categories, &fakeCategoryLock{}, logger.New("error"))
 
 	evt := event.New(catalog.EventCategoryCreated, "test", catalog.CategoryCreatedData{CategoryID: categoryID, Name: "Shoes", Slug: "shoes"})
 	if err := sub.HandleCategoryCreated(context.Background(), evt); err != nil {
@@ -335,7 +370,7 @@ func TestIndexUpdateSubscriber_HandleCategoryUpdated_IndexesCategory(t *testing.
 	if err != nil {
 		t.Fatalf("NewReindexService: %v", err)
 	}
-	sub := searchApp.NewIndexUpdateSubscriber(svc, engine, categories, logger.New("error"))
+	sub := searchApp.NewIndexUpdateSubscriber(svc, engine, categories, &fakeCategoryLock{}, logger.New("error"))
 
 	evt := event.New(catalog.EventCategoryUpdated, "test", catalog.CategoryUpdatedData{CategoryID: categoryID, Name: "Shoes v2", Slug: "shoes-v2"})
 	if err := sub.HandleCategoryUpdated(context.Background(), evt); err != nil {
@@ -360,7 +395,7 @@ func TestIndexUpdateSubscriber_HandleCategoryUpdated_DeletedCategory_NoOp(t *tes
 	if err != nil {
 		t.Fatalf("NewReindexService: %v", err)
 	}
-	sub := searchApp.NewIndexUpdateSubscriber(svc, engine, categories, logger.New("error"))
+	sub := searchApp.NewIndexUpdateSubscriber(svc, engine, categories, &fakeCategoryLock{}, logger.New("error"))
 
 	evt := event.New(catalog.EventCategoryUpdated, "test", catalog.CategoryUpdatedData{CategoryID: categoryID})
 	if err := sub.HandleCategoryUpdated(context.Background(), evt); err != nil {
@@ -381,7 +416,7 @@ func TestIndexUpdateSubscriber_HandleCategoryDeleted_RemovesCategory(t *testing.
 	if err != nil {
 		t.Fatalf("NewReindexService: %v", err)
 	}
-	sub := searchApp.NewIndexUpdateSubscriber(svc, engine, &fakeCategorySource{}, logger.New("error"))
+	sub := searchApp.NewIndexUpdateSubscriber(svc, engine, &fakeCategorySource{}, &fakeCategoryLock{}, logger.New("error"))
 
 	evt := event.New(catalog.EventCategoryDeleted, "test", catalog.CategoryDeletedData{CategoryID: categoryID})
 	if err := sub.HandleCategoryDeleted(context.Background(), evt); err != nil {

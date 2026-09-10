@@ -308,6 +308,10 @@ func wireServeRuntime(cfg *config.Config, log logger.Logger, conn *sql.DB, repos
 	if err != nil {
 		return nil, err
 	}
+	categoryLock, err := postgres.NewAdvisoryLock(conn)
+	if err != nil {
+		return nil, err
+	}
 	reindexService, err := searchApp.NewReindexService(searchIndexRunRepo, searchProductSource, jobQueue, log, cfg.Search.ReindexFullScanThreshold)
 	if err != nil {
 		return nil, err
@@ -432,7 +436,7 @@ func wireServeRuntime(cfg *config.Config, log logger.Logger, conn *sql.DB, repos
 	// the job queue entirely (no retry, no search_index_runs record), and ran
 	// once per event with no debouncing. See PR-1036.md's "Design decisions"
 	// for why this replacement, not an addition alongside the old handlers.
-	indexUpdateSubscriber := searchApp.NewIndexUpdateSubscriber(reindexService, searchEngine, searchCategorySource, log)
+	indexUpdateSubscriber := searchApp.NewIndexUpdateSubscriber(reindexService, searchEngine, searchCategorySource, categoryLock, log)
 	indexUpdateSubscriber.Register(bus)
 
 	// Base URL for SEO (sitemap, canonical, robots).
