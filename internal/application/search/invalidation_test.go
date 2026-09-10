@@ -2,6 +2,7 @@ package search_test
 
 import (
 	"context"
+	"errors"
 	"testing"
 
 	searchApp "github.com/akarso/shopanda/internal/application/search"
@@ -146,6 +147,49 @@ func TestIndexUpdateSubscriber_Debounce_DifferentProductsNotCoalesced(t *testing
 	}
 	if len(queue.enqueued) != 2 {
 		t.Fatalf("enqueued %d jobs for two distinct products, want 2", len(queue.enqueued))
+	}
+}
+
+// TestIndexUpdateSubscriber_TriggerFailure_EvictsDebounceEntry pins a
+// fixed bug: allow() reserved the debounce slot before Trigger ran, so a
+// failed Trigger (queue full, DB blip) left the slot reserved anyway —
+// the next same-product event within the window was silently swallowed
+// (scheduleReindex returns nil for a debounced call) even though no
+// reindex had actually succeeded, leaving the index stale with no
+// recovery path except an unrelated future edit or the next scheduled
+// full reindex. A failed Trigger must instead release its reservation so
+// the very next event for that product is genuinely retried, not
+// falsely debounced.
+func TestIndexUpdateSubscriber_TriggerFailure_EvictsDebounceEntry(t *testing.T) {
+	store := &fakeRunStore{}
+	products := &fakeProductSource{}
+	queue := &fakeQueue{enqueueErr: errors.New("queue unavailable")}
+	svc, err := searchApp.NewReindexService(store, products, queue, logger.New("error"), defaultThreshold)
+	if err != nil {
+		t.Fatalf("NewReindexService: %v", err)
+	}
+	sub := searchApp.NewIndexUpdateSubscriber(svc, logger.New("error"))
+
+	productID := id.New()
+	evt := event.New(catalog.EventProductUpdated, "test", catalog.ProductUpdatedData{ProductID: productID})
+
+	if err := sub.HandleProductUpdated(context.Background(), evt); err == nil {
+		t.Fatal("expected the first (failing) Trigger to return an error")
+	}
+	if len(queue.enqueued) != 1 {
+		t.Fatalf("enqueued %d jobs after the first attempt, want 1 (attempted, even though it failed)", len(queue.enqueued))
+	}
+
+	// A second event for the same product, still well within the debounce
+	// window (no real time has passed) — pre-fix, this would be silently
+	// debounced (nil error, no attempt); post-fix, the failed reservation
+	// was evicted, so this must be genuinely retried (and fail again,
+	// since the queue is still broken) rather than silently swallowed.
+	if err := sub.HandleProductUpdated(context.Background(), evt); err == nil {
+		t.Fatal("expected the second Trigger to be genuinely retried (and fail again), not silently debounced")
+	}
+	if len(queue.enqueued) != 2 {
+		t.Fatalf("enqueued %d jobs after the second attempt, want 2 (genuinely retried, not debounced away)", len(queue.enqueued))
 	}
 }
 

@@ -114,6 +114,15 @@ func (s *IndexUpdateSubscriber) HandleStockUpdated(ctx context.Context, evt even
 // scheduleReindex enqueues a scoped reindex for productID, unless a
 // reindex for the same product was already triggered within
 // productReindexDebounceWindow.
+//
+// allow reserves the debounce slot before Trigger runs (so two events for
+// the same product arriving concurrently can't both slip past it), but if
+// Trigger then fails, that reservation is released again (evict, not
+// left standing) — otherwise a transient failure (queue full, a DB blip)
+// would silently swallow every subsequent same-product event for the rest
+// of the window even though no reindex ever actually ran, leaving the
+// index stale with no recovery path except an unrelated future edit or
+// the next scheduled full reindex.
 func (s *IndexUpdateSubscriber) scheduleReindex(ctx context.Context, productID string) error {
 	if productID == "" {
 		return nil
@@ -122,6 +131,7 @@ func (s *IndexUpdateSubscriber) scheduleReindex(ctx context.Context, productID s
 		return nil
 	}
 	if _, err := s.reindex.Trigger(ctx, ScopeProducts{IDs: []string{productID}}); err != nil {
+		s.evict(productID)
 		s.log.Error("search.invalidation.trigger_failed", err, map[string]interface{}{"product_id": productID})
 		return fmt.Errorf("search.invalidation: trigger reindex for product %s: %w", productID, err)
 	}
@@ -151,4 +161,15 @@ func (s *IndexUpdateSubscriber) allow(productID string, now time.Time) bool {
 	}
 	s.lastFire[productID] = now
 	return true
+}
+
+// evict releases productID's debounce reservation — used when Trigger
+// fails after allow already reserved the slot, so the failed attempt
+// doesn't count against the window and the next event for this product
+// (whether a retry-worthy follow-up save, or the same one redelivered)
+// isn't falsely debounced away.
+func (s *IndexUpdateSubscriber) evict(productID string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	delete(s.lastFire, productID)
 }
