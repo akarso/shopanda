@@ -352,3 +352,110 @@ func TestIndexUpdateSubscriber_HandleCategoryCreated_RetriesTransientFailure(t *
 		t.Fatalf("indexedCategories = %+v, want one entry for %s", engine.indexedCategories, categoryID)
 	}
 }
+
+// fakeInternalBlockingEngine lets a test pause IndexCategory mid-flight
+// (after it starts, before it returns) to deterministically force the
+// Update/Delete race lockCategory guards against — see
+// TestIndexUpdateSubscriber_HandleCategoryUpdatedAndDeleted_SerializedNoResurrection.
+type fakeInternalBlockingEngine struct {
+	fakeInternalSearchEngine
+	indexStarted chan struct{}
+	proceedIndex chan struct{}
+
+	mu                sync.Mutex
+	indexedCategories []domainsearch.Category
+	removedCategories []string
+	callOrder         []string
+}
+
+func (f *fakeInternalBlockingEngine) IndexCategory(_ context.Context, c domainsearch.Category) error {
+	close(f.indexStarted)
+	<-f.proceedIndex
+	f.mu.Lock()
+	f.indexedCategories = append(f.indexedCategories, c)
+	f.callOrder = append(f.callOrder, "index")
+	f.mu.Unlock()
+	return nil
+}
+
+func (f *fakeInternalBlockingEngine) RemoveCategory(_ context.Context, categoryID string) error {
+	f.mu.Lock()
+	f.removedCategories = append(f.removedCategories, categoryID)
+	f.callOrder = append(f.callOrder, "remove")
+	f.mu.Unlock()
+	return nil
+}
+
+// TestIndexUpdateSubscriber_HandleCategoryUpdatedAndDeleted_SerializedNoResurrection
+// pins the CR fix: an Update and a Delete for the same category are
+// published from two independent HTTP requests, each dispatched to its
+// own async goroutine with no ordering guarantee between them. Before the
+// fix, an Update handler whose GetByID read ran before a concurrent
+// Delete actually removed the category could still push that now-stale
+// data to IndexCategory *after* the Delete handler's RemoveCategory
+// already ran — resurrecting a deleted category as searchable,
+// permanently (nothing else would ever remove it again). This forces
+// Update to start first and pauses it mid-IndexCategory (still holding
+// categoryID's lock), starts Delete concurrently, and asserts Delete
+// cannot complete until Update's IndexCategory finishes and releases the
+// lock — so the two engine calls are always fully serialized, and
+// RemoveCategory (Delete) never lands before IndexCategory (Update) for
+// this pair, only after.
+func TestIndexUpdateSubscriber_HandleCategoryUpdatedAndDeleted_SerializedNoResurrection(t *testing.T) {
+	categoryID := id.New()
+	engine := &fakeInternalBlockingEngine{
+		indexStarted: make(chan struct{}),
+		proceedIndex: make(chan struct{}),
+	}
+	categories := &fakeInternalCategorySource{
+		category: domainsearch.Category{ID: categoryID, Name: "Shoes", Slug: "shoes"},
+		found:    true,
+	}
+	s := &IndexUpdateSubscriber{engine: engine, categories: categories, log: noopLogger{}, retryDelay: time.Millisecond}
+
+	updateEvt := event.New(catalog.EventCategoryUpdated, "test", catalog.CategoryUpdatedData{CategoryID: categoryID, Name: "Shoes", Slug: "shoes"})
+	deleteEvt := event.New(catalog.EventCategoryDeleted, "test", catalog.CategoryDeletedData{CategoryID: categoryID, Slug: "shoes"})
+
+	updateDone := make(chan error, 1)
+	go func() {
+		updateDone <- s.HandleCategoryUpdated(context.Background(), updateEvt)
+	}()
+
+	select {
+	case <-engine.indexStarted:
+	case <-time.After(2 * time.Second):
+		t.Fatal("HandleCategoryUpdated did not reach IndexCategory in time")
+	}
+
+	deleteDone := make(chan error, 1)
+	go func() {
+		deleteDone <- s.HandleCategoryDeleted(context.Background(), deleteEvt)
+	}()
+
+	select {
+	case <-deleteDone:
+		t.Fatal("HandleCategoryDeleted completed before HandleCategoryUpdated released the category lock — the two must be serialized, not run concurrently")
+	case <-time.After(100 * time.Millisecond):
+		// Expected: still blocked waiting for the lock.
+	}
+
+	close(engine.proceedIndex)
+
+	if err := <-updateDone; err != nil {
+		t.Fatalf("HandleCategoryUpdated: %v", err)
+	}
+	select {
+	case err := <-deleteDone:
+		if err != nil {
+			t.Fatalf("HandleCategoryDeleted: %v", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("HandleCategoryDeleted did not complete after the lock was released")
+	}
+
+	engine.mu.Lock()
+	defer engine.mu.Unlock()
+	if len(engine.callOrder) != 2 || engine.callOrder[0] != "index" || engine.callOrder[1] != "remove" {
+		t.Fatalf("callOrder = %v, want [index remove] — RemoveCategory must never land before IndexCategory for this racing pair, or the deleted category would end up resurrected as searchable", engine.callOrder)
+	}
+}

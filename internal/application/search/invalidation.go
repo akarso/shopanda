@@ -67,6 +67,15 @@ type IndexUpdateSubscriber struct {
 	mu       sync.Mutex
 	lastFire map[string]time.Time
 	trailing map[string]*time.Timer
+
+	// categoryLocks holds a *sync.Mutex per category ID (map[string]*sync.Mutex),
+	// serializing indexCategory and HandleCategoryDeleted for the same
+	// category — see lockCategory's own doc comment for the race this
+	// prevents. Lazily populated via LoadOrStore; entries are never
+	// removed, but the key space is bounded by the number of distinct
+	// categories ever touched (a small catalog dimension, unlike
+	// products), so this doesn't grow unboundedly in practice.
+	categoryLocks sync.Map
 }
 
 // NewIndexUpdateSubscriber creates an IndexUpdateSubscriber. engine and
@@ -189,6 +198,8 @@ func (s *IndexUpdateSubscriber) HandleCategoryDeleted(ctx context.Context, evt e
 	if !ok {
 		return fmt.Errorf("search.invalidation: unexpected event data type %T", evt.Data)
 	}
+	unlock := s.lockCategory(data.CategoryID)
+	defer unlock()
 	if err := s.retryCategoryEngineCall(ctx, func() error { return s.engine.RemoveCategory(ctx, data.CategoryID) }); err != nil {
 		s.log.Error("search.invalidation.category_remove_failed", err, map[string]interface{}{"category_id": data.CategoryID})
 		return fmt.Errorf("search.invalidation: remove category %s: %w", data.CategoryID, err)
@@ -202,7 +213,25 @@ func (s *IndexUpdateSubscriber) HandleCategoryDeleted(ctx context.Context, evt e
 // unlike product edits, category writes go through a single synchronous
 // admin request each, not a bulk-import path — see PR-1036's debounce,
 // which exists specifically for that bulk case.
+//
+// Holds categoryID's lock (see lockCategory) across both the GetByID read
+// and the engine call: an Update and a Delete for the same category are
+// published from two independent HTTP requests, each dispatched to its
+// own async goroutine with no ordering guarantee between them. Without
+// serializing here, an Update handler whose GetByID ran before a
+// concurrent Delete actually removed the row could still push that
+// now-stale category to IndexCategory *after* the Delete handler's
+// RemoveCategory already ran — resurrecting a deleted category as
+// searchable, permanently (nothing else will ever remove it again). With
+// the lock, whichever handler runs second does its GetByID read (still
+// live, still inside the lock) after the first has fully finished: if
+// Delete ran first, the second GetByID correctly observes found=false and
+// no-ops; if Update ran first, Delete's subsequent RemoveCategory still
+// correctly clears whatever Update just indexed.
 func (s *IndexUpdateSubscriber) indexCategory(ctx context.Context, categoryID string) error {
+	unlock := s.lockCategory(categoryID)
+	defer unlock()
+
 	c, found, err := s.categories.GetByID(ctx, categoryID)
 	if err != nil {
 		return fmt.Errorf("search.invalidation: get category %s: %w", categoryID, err)
@@ -219,6 +248,18 @@ func (s *IndexUpdateSubscriber) indexCategory(ctx context.Context, categoryID st
 	}
 	s.log.Info("search.invalidation.category_indexed", map[string]interface{}{"category_id": categoryID})
 	return nil
+}
+
+// lockCategory locks categoryID's per-category mutex (creating it on first
+// use) and returns the matching Unlock func. Callers must defer the
+// returned func. See indexCategory's own doc comment for the race this
+// serialization prevents between an Update and a Delete for the same
+// category racing across two independent async event handlers.
+func (s *IndexUpdateSubscriber) lockCategory(categoryID string) func() {
+	muIface, _ := s.categoryLocks.LoadOrStore(categoryID, &sync.Mutex{})
+	mu := muIface.(*sync.Mutex)
+	mu.Lock()
+	return mu.Unlock
 }
 
 // retryCategoryEngineCall runs fn up to categoryIndexMaxAttempts times,
