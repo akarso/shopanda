@@ -67,6 +67,9 @@ func New(cfg Config) (*Engine, error) {
 	if cfg.CategoriesIndex == "" {
 		return nil, fmt.Errorf("meili: empty categories index")
 	}
+	if cfg.CategoriesIndex == cfg.Index {
+		return nil, fmt.Errorf("meili: categories index %q must differ from the product index", cfg.CategoriesIndex)
+	}
 
 	host := strings.TrimRight(cfg.Host, "/")
 	client := &httpClient{
@@ -94,11 +97,20 @@ func New(cfg Config) (*Engine, error) {
 		return nil, fmt.Errorf("meili: configure index %q: %w", cfg.Index, err)
 	}
 
-	catTaskUID, err := categoriesClient.updateSettings(ctx, categoriesDefaultSettings())
+	// A fresh timeout, not the ctx above: that budget can already be
+	// mostly spent by the product index's own updateSettings+waitForTask
+	// round trip, which would silently shrink the categories index's
+	// effective configure timeout depending on how long the product step
+	// happened to take — httpTimeout is meant as a per-operation budget
+	// (same as httpClient's own http.Client{Timeout: httpTimeout}), not
+	// one shared across two sequential setup steps.
+	catCtx, catCancel := context.WithTimeout(context.Background(), httpTimeout)
+	defer catCancel()
+	catTaskUID, err := categoriesClient.updateSettings(catCtx, categoriesDefaultSettings())
 	if err != nil {
 		return nil, fmt.Errorf("meili: configure index %q: %w", cfg.CategoriesIndex, err)
 	}
-	if err := e.waitForTask(ctx, catTaskUID); err != nil {
+	if err := e.waitForTask(catCtx, catTaskUID); err != nil {
 		return nil, fmt.Errorf("meili: configure index %q: %w", cfg.CategoriesIndex, err)
 	}
 

@@ -840,9 +840,15 @@ PR-1037 changed the indexed product document's category field from a
 single `category_id` to a `category_ids` array, and added a second
 Meilisearch index (`search.meilisearch.categories_index`, default
 `categories`) for category documents. Deployments using
-`search.engine: postgres` are unaffected — the Postgres backend never
-stored category data on the product document (category filtering is a
-live join), so there is nothing to migrate there.
+`search.engine: postgres` need **no product-document backfill and no full
+product reindex** — the Postgres backend never stored category data on
+the product document (category filtering is a live join), so the
+`category_id` → `category_ids` rename has nothing to migrate there.
+Standard database migrations still apply to every deployment regardless
+of `search.engine`, including `072_add_categories_search_vector.sql`
+(adds `categories.search_vector` + trigger, needed before Postgres can
+index category documents at all) — these run automatically as part of
+the normal `shopanda migrate` / setup step, not as a separate action.
 
 Deployments using `search.engine: meilisearch` must, after upgrading:
 

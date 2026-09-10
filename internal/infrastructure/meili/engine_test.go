@@ -73,6 +73,38 @@ func (m *mockAPI) getTask(_ context.Context, _ int64) (taskInfo, error) {
 
 // --- tests ---
 
+// TestNew_Validation covers New's config checks that fail before any HTTP
+// call is made (empty Host/Index/CategoriesIndex, and CategoriesIndex ==
+// Index) — the only part of New testable without a real Meilisearch
+// server, since everything past validation makes live HTTP calls.
+func TestNew_Validation(t *testing.T) {
+	tests := []struct {
+		name    string
+		cfg     Config
+		wantErr string
+	}{
+		{"empty host", Config{Index: "products", CategoriesIndex: "categories"}, "empty host"},
+		{"empty index", Config{Host: "http://localhost:7700", CategoriesIndex: "categories"}, "empty index"},
+		{"empty categories index", Config{Host: "http://localhost:7700", Index: "products"}, "empty categories index"},
+		{
+			"categories index equals product index",
+			Config{Host: "http://localhost:7700", Index: "products", CategoriesIndex: "products"},
+			"must differ from the product index",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := New(tt.cfg)
+			if err == nil {
+				t.Fatal("expected an error")
+			}
+			if !strings.Contains(err.Error(), tt.wantErr) {
+				t.Errorf("error = %q, want it to contain %q", err.Error(), tt.wantErr)
+			}
+		})
+	}
+}
+
 func TestName(t *testing.T) {
 	e := newWithAPI(&mockAPI{}, "products")
 	if e.Name() != "meilisearch" {
