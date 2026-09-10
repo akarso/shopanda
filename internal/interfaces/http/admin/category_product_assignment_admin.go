@@ -70,10 +70,12 @@ func NewCategoryProductAssignmentAdminHandlerWithAuditor(
 // (bus.On, not OnAsync) and builds a URL rewrite from data.Slug directly,
 // with no fallback lookup — an empty Slug here would register "/" itself
 // as this product's rewrite (or fail with a path conflict if "/" is
-// already claimed by something else), and either way would abort the
-// publish before the async cache-invalidation/search-reindex handlers
-// even ran (sync handler errors short-circuit Publish). Left unset (nil),
-// Assign/Unassign work exactly as before.
+// already claimed by something else). Either failure mode would normally
+// also abort dispatch to the async cache-invalidation/search-reindex
+// handlers (a failed sync handler aborts the whole Publish call) —
+// publishAssignmentChanged's own PublishAsync fallback exists precisely
+// so those two don't go stale over a rewrite-specific problem. Left
+// unset (nil), Assign/Unassign work exactly as before.
 func (h *CategoryProductAssignmentAdminHandler) SetBus(bus *event.Bus) {
 	h.bus = bus
 }
@@ -84,22 +86,33 @@ func (h *CategoryProductAssignmentAdminHandler) SetBus(bus *event.Bus) {
 // conflict with an existing rewrite, or a repository error — and per
 // event.Bus's own contract, a failed sync handler aborts the whole
 // Publish call, so the async cache-invalidation/search-reindex handlers
-// never run either. The caller doesn't fail the request over this (the
-// assignment write itself already succeeded, and this codebase's own
-// convention — see product_admin.go's own Publish call — never blocks an
-// admin response on a side-effect's own success) but does audit it
-// separately, so a stale index/cache from this is visible to whoever
-// reviews the audit log instead of silently invisible.
+// would never run either. That coupling is exactly what's undesirable
+// here: this category assignment already succeeded, and an unrelated
+// rewrite failure must not also leave the search index/cache stale. So
+// on a Publish failure, this falls back to PublishAsync, dispatching the
+// event straight to the async handlers regardless of why the sync phase
+// failed — the index/cache side effects still happen even though the
+// rewrite one didn't. The caller doesn't fail the request over any of
+// this either way (the assignment write itself already succeeded, and
+// this codebase's own convention — see product_admin.go's own Publish
+// call — never blocks an admin response on a side-effect's own success),
+// but does audit a Publish failure separately, so it's visible to
+// whoever reviews the audit log instead of silently invisible.
 func (h *CategoryProductAssignmentAdminHandler) publishAssignmentChanged(ctx context.Context, product *catalog.Product) error {
 	if h.bus == nil {
 		return nil
 	}
-	return h.bus.Publish(ctx, event.New(catalog.EventProductUpdated, "category.assignment", catalog.ProductUpdatedData{
+	evt := event.New(catalog.EventProductUpdated, "category.assignment", catalog.ProductUpdatedData{
 		ProductID: product.ID,
 		Name:      product.Name,
 		Slug:      product.Slug,
 		Status:    product.Status,
-	}))
+	})
+	err := h.bus.Publish(ctx, evt)
+	if err != nil {
+		h.bus.PublishAsync(evt)
+	}
+	return err
 }
 
 func (h *CategoryProductAssignmentAdminHandler) audit(r *http.Request, action admin.AuditAction, categoryID, productID string, err error) {
@@ -168,7 +181,7 @@ func (h *CategoryProductAssignmentAdminHandler) Assign() http.HandlerFunc {
 		h.audit(r, admin.AuditCategoryProductAssign, categoryID, productID, nil)
 		if pubErr := h.publishAssignmentChanged(r.Context(), product); pubErr != nil {
 			h.audit(r, admin.AuditCategoryProductAssign, categoryID, productID,
-				fmt.Errorf("category assigned, but event publish failed — search index/cache may be stale until the next update or manual reindex: %w", pubErr))
+				fmt.Errorf("category assigned, and search index/cache were still updated, but a synchronous event handler (e.g. URL rewrite) failed: %w", pubErr))
 		}
 		httpshared.JSON(w, http.StatusOK, map[string]interface{}{"assigned": true})
 	}
@@ -192,7 +205,7 @@ func (h *CategoryProductAssignmentAdminHandler) Unassign() http.HandlerFunc {
 		h.audit(r, admin.AuditCategoryProductUnassign, categoryID, productID, nil)
 		if pubErr := h.publishAssignmentChanged(r.Context(), product); pubErr != nil {
 			h.audit(r, admin.AuditCategoryProductUnassign, categoryID, productID,
-				fmt.Errorf("category unassigned, but event publish failed — search index/cache may be stale until the next update or manual reindex: %w", pubErr))
+				fmt.Errorf("category unassigned, and search index/cache were still updated, but a synchronous event handler (e.g. URL rewrite) failed: %w", pubErr))
 		}
 		httpshared.JSON(w, http.StatusOK, map[string]interface{}{"assigned": false})
 	}

@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	adminapp "github.com/akarso/shopanda/internal/application/admin"
 	"github.com/akarso/shopanda/internal/domain/catalog"
@@ -593,18 +594,21 @@ func TestCategoryProductAssignmentAdminHandler_Unassign_EmitsProductUpdatedEvent
 }
 
 // TestCategoryProductAssignmentAdminHandler_Assign_PublishFailure_StillSucceedsButAudited
-// pins a fixed gap: event.Bus.Publish aborts before dispatching any async
-// handler (cache invalidation, search reindex) if a synchronous handler on
-// the same event — rewrite.Subscriber, here simulated directly on the
-// bus — returns an error (a genuine path conflict, or a repository
+// pins two fixes together: event.Bus.Publish aborts before dispatching any
+// async handler (cache invalidation, search reindex) if a synchronous
+// handler on the same event — rewrite.Subscriber, here simulated directly
+// on the bus — returns an error (a genuine path conflict, or a repository
 // failure; not just the empty-Slug case Round 2 already fixed). The
 // assignment write itself already succeeded by that point, so Assign must
 // still report success (this codebase's own convention: a side effect's
 // own failure never fails the response — see product_admin.go's own
-// Publish call), but the failure must not be silently discarded either:
-// it needs a separate audit record so it's visible to whoever reviews the
-// audit log, instead of the index/cache silently going stale with no
-// trace anywhere.
+// Publish call). Two things must both be true when the sync handler
+// fails: (1) the async handlers still actually run — via
+// publishAssignmentChanged's PublishAsync fallback (Round 4) — so the
+// index/cache don't go stale over an unrelated rewrite problem, and (2)
+// the sync failure is still recorded in a separate audit entry (Round 3),
+// so it's visible to whoever reviews the audit log even though nothing
+// about it blocked the request or the index update.
 func TestCategoryProductAssignmentAdminHandler_Assign_PublishFailure_StillSucceedsButAudited(t *testing.T) {
 	cats := &mockCategoryRepo{
 		findByIDFn: func(_ context.Context, id string) (*catalog.Category, error) {
@@ -630,6 +634,17 @@ func TestCategoryProductAssignmentAdminHandler_Assign_PublishFailure_StillSuccee
 	bus.On(catalog.EventProductUpdated, func(context.Context, event.Event) error {
 		return fmt.Errorf("rewrite: path %q already claimed by page/some-other-page", "/hat")
 	})
+	// Stands in for cache invalidation / the search-index subscriber: this
+	// must still fire even though the sync handler above fails.
+	asyncRan := make(chan struct{})
+	bus.OnAsync(catalog.EventProductUpdated, func(_ context.Context, evt event.Event) error {
+		data, ok := evt.Data.(catalog.ProductUpdatedData)
+		if !ok || data.ProductID != "prod-1" {
+			t.Errorf("async handler got unexpected event data: %+v", evt.Data)
+		}
+		close(asyncRan)
+		return nil
+	})
 	h.SetBus(bus)
 
 	mux := newAdminCategoryAssignmentRouter(read, h)
@@ -651,6 +666,14 @@ func TestCategoryProductAssignmentAdminHandler_Assign_PublishFailure_StillSuccee
 	}
 	if !body.Data.Assigned {
 		t.Fatal("expected assigned=true — the assignment itself succeeded, a downstream event-publish failure must not flip this")
+	}
+
+	select {
+	case <-asyncRan:
+		// success — cache invalidation / search reindex still ran despite
+		// the synchronous rewrite handler's failure.
+	case <-time.After(2 * time.Second):
+		t.Fatal("async handler (cache invalidation / search reindex stand-in) did not run — the sync handler's failure must not leave it stale")
 	}
 
 	if len(sink.records) != 2 {

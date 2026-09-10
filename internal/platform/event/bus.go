@@ -109,14 +109,36 @@ func (b *Bus) Publish(ctx context.Context, evt Event) error {
 		}
 	}
 
-	// Phase 2: asynchronous handlers. Admission + WaitGroup add run under
-	// RLock so concurrent Publish calls stay parallel. BeginShutdown takes
-	// Lock(), which waits for these readers before setting shuttingDown and
-	// starting Wait — so Add cannot race with Wait.
+	b.dispatchAsync(evt)
+	return nil
+}
+
+// PublishAsync dispatches evt directly to registered async handlers,
+// skipping sync handlers (and their gating) entirely — no sync handler
+// runs, and unlike Publish, this never returns an error (matching
+// OnAsync's own contract: async handler failures are logged, not
+// propagated). Use it after a Publish call has already failed for a
+// reason specific to its sync phase, when the caller still wants this
+// event's async side effects (cache invalidation, search reindex, ...)
+// to run rather than staying silently skipped just because an unrelated
+// sync handler failed — see
+// internal/interfaces/http/admin/category_product_assignment_admin.go
+// for a concrete case. Calling both Publish (on success) and PublishAsync
+// for the same evt would double-dispatch to async handlers; only call
+// this as a fallback when Publish itself returned a non-nil error.
+func (b *Bus) PublishAsync(evt Event) {
+	b.dispatchAsync(evt)
+}
+
+// dispatchAsync is Publish's own "Phase 2": admission + WaitGroup add run
+// under RLock so concurrent Publish/PublishAsync calls stay parallel.
+// BeginShutdown takes Lock(), which waits for these readers before
+// setting shuttingDown and starting Wait — so Add cannot race with Wait.
+func (b *Bus) dispatchAsync(evt Event) {
 	b.mu.RLock()
 	if b.shuttingDown {
 		b.mu.RUnlock()
-		return nil
+		return
 	}
 	asyncH := append([]Handler(nil), b.async[evt.Name]...)
 	if n := len(asyncH); n > 0 {
@@ -136,8 +158,6 @@ func (b *Bus) Publish(ctx context.Context, evt Event) error {
 			}
 		}(h)
 	}
-
-	return nil
 }
 
 // BeginShutdown stops admitting new async publishes and starts waiting for
