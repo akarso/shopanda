@@ -3,7 +3,6 @@ package search_test
 import (
 	"context"
 	"errors"
-	"fmt"
 	"testing"
 
 	searchApp "github.com/akarso/shopanda/internal/application/search"
@@ -40,35 +39,19 @@ type fakeCategoryIndexEngine struct {
 	removedCategories []string
 	indexCategoryErr  error
 	removeCategoryErr error
-	// failIndexAttempts/failRemoveAttempts, when > 0, fail exactly that
-	// many calls (regardless of indexCategoryErr/removeCategoryErr, which
-	// take priority if set) before succeeding — models a transient error
-	// retryCategoryEngineCall goes on to recover from.
-	failIndexAttempts  int
-	failRemoveAttempts int
-	indexCalls         int
-	removeCalls        int
 }
 
 func (f *fakeCategoryIndexEngine) IndexCategory(_ context.Context, c domainsearch.Category) error {
-	f.indexCalls++
 	if f.indexCategoryErr != nil {
 		return f.indexCategoryErr
-	}
-	if f.failIndexAttempts > 0 && f.indexCalls <= f.failIndexAttempts {
-		return fmt.Errorf("transient index failure (attempt %d)", f.indexCalls)
 	}
 	f.indexedCategories = append(f.indexedCategories, c)
 	return nil
 }
 
 func (f *fakeCategoryIndexEngine) RemoveCategory(_ context.Context, categoryID string) error {
-	f.removeCalls++
 	if f.removeCategoryErr != nil {
 		return f.removeCategoryErr
-	}
-	if f.failRemoveAttempts > 0 && f.removeCalls <= f.failRemoveAttempts {
-		return fmt.Errorf("transient remove failure (attempt %d)", f.removeCalls)
 	}
 	f.removedCategories = append(f.removedCategories, categoryID)
 	return nil
