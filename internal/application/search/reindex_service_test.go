@@ -54,6 +54,10 @@ func (f *fakeRunStore) FindStaleProcessing(_ context.Context, _ time.Time, limit
 	return f.staleRuns, nil
 }
 
+func (f *fakeRunStore) List(context.Context, int, int) ([]domainsearch.Run, error) {
+	return nil, nil
+}
+
 func (f *fakeRunStore) Create(_ context.Context, run domainsearch.Run) error {
 	f.created = run
 	if f.createErr != nil {

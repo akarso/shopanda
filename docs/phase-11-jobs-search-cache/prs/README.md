@@ -13,7 +13,7 @@
 | PR-1035 | B | done | [Reindex admin API + progress](PR-1035.md) |
 | PR-1036 | B | done | [On-save incremental indexing](PR-1036.md) |
 | PR-1037 | B | done | [Category indexing + relationship fix](PR-1037.md) |
-| PR-1038 | B | planned | [Search admin GUI](PR-1038.md) |
+| PR-1038 | B | done | [Search admin GUI](PR-1038.md) |
 | PR-1039 | C | planned | [Tag-based invalidation](PR-1039.md) |
 | PR-1040 | C | planned | [In-memory (L1) cache tier](PR-1040.md) |
 | PR-1041 | C | planned | [Rate limiting hardening](PR-1041.md) |

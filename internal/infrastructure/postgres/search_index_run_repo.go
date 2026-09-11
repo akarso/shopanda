@@ -154,6 +154,52 @@ func (r *SearchIndexRunRepo) FindStaleProcessing(ctx context.Context, olderThan 
 	return out, nil
 }
 
+// List implements domainsearch.RunStore.
+func (r *SearchIndexRunRepo) List(ctx context.Context, limit, offset int) ([]domainsearch.Run, error) {
+	const q = `SELECT id, scope, scope_params, status, total_count, processed_count, error_count,
+		started_at, finished_at, last_error
+		FROM search_index_runs
+		ORDER BY started_at DESC
+		LIMIT $1 OFFSET $2`
+
+	rows, err := r.db.QueryContext(ctx, q, limit, offset)
+	if err != nil {
+		return nil, fmt.Errorf("search_index_run_repo: list: %w", err)
+	}
+	defer rows.Close()
+
+	out := make([]domainsearch.Run, 0)
+	for rows.Next() {
+		var run domainsearch.Run
+		var paramsJSON []byte
+		var finishedAt sql.NullTime
+		var lastError sql.NullString
+
+		if err := rows.Scan(
+			&run.ID, &run.Scope, &paramsJSON, &run.Status, &run.TotalCount, &run.ProcessedCount, &run.ErrorCount,
+			&run.StartedAt, &finishedAt, &lastError,
+		); err != nil {
+			return nil, fmt.Errorf("search_index_run_repo: list scan: %w", err)
+		}
+		if len(paramsJSON) > 0 {
+			if err := json.Unmarshal(paramsJSON, &run.ScopeParams); err != nil {
+				return nil, fmt.Errorf("search_index_run_repo: list unmarshal scope_params: %w", err)
+			}
+		}
+		if finishedAt.Valid {
+			run.FinishedAt = finishedAt.Time
+		}
+		if lastError.Valid {
+			run.LastError = lastError.String
+		}
+		out = append(out, run)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("search_index_run_repo: list rows: %w", err)
+	}
+	return out, nil
+}
+
 // Finish implements domainsearch.RunStore. It is a conditional update
 // (`WHERE status = 'processing'`) rather than an unconditional write by
 // id: two independent callers can each decide, from an earlier read, that

@@ -1917,6 +1917,43 @@ paths:
         "422":
           $ref: "#/components/responses/Validation"
 
+    get:
+      operationId: adminListSearchReindexRuns
+      tags: ["Admin: Search"]
+      summary: List reindex runs (admin)
+      description: >-
+        PR-1038's run-history read model — paginated, most recently
+        started first, unfiltered by scope/status.
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/Offset"
+        - $ref: "#/components/parameters/Limit"
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Envelope"
+              example:
+                data:
+                  runs:
+                    - id: "b6e2b1a2-3333-4c3e-8b1a-000000000002"
+                      scope: products
+                      scope_params: { requested_scope: products, product_ids: [] }
+                      status: completed
+                      total_count: 120
+                      processed_count: 120
+                      error_count: 0
+                      started_at: "2026-01-01T00:00:00Z"
+                      finished_at: "2026-01-01T00:02:00Z"
+                error: null
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
   /api/v1/admin/search/reindex/{runID}:
     get:
       operationId: adminGetSearchReindexRun

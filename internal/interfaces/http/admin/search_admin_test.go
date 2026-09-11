@@ -25,6 +25,11 @@ import (
 
 type fakeSearchRunStore struct {
 	runs map[string]*domainsearch.Run
+
+	listRuns       []domainsearch.Run
+	listErr        error
+	lastListLimit  int
+	lastListOffset int
 }
 
 func (f *fakeSearchRunStore) Create(_ context.Context, run domainsearch.Run) error {
@@ -54,6 +59,18 @@ func (f *fakeSearchRunStore) Finish(_ context.Context, id string, status domains
 
 func (f *fakeSearchRunStore) FindStaleProcessing(context.Context, time.Time, int) ([]domainsearch.Run, error) {
 	return nil, nil
+}
+
+// listRuns/listErr let a test control List's result directly, ordered as
+// given — the fake doesn't need to replicate the real repo's own
+// "most-recently-started-first" ordering/paging logic, only to prove the
+// handler forwards limit/offset and shapes the response correctly.
+func (f *fakeSearchRunStore) List(ctx context.Context, limit, offset int) ([]domainsearch.Run, error) {
+	f.lastListLimit, f.lastListOffset = limit, offset
+	if f.listErr != nil {
+		return nil, f.listErr
+	}
+	return f.listRuns, nil
 }
 
 type fakeSearchProductSource struct {
@@ -91,10 +108,29 @@ func (f *fakeSearchProductSource) ProductIDsUpdatedSince(context.Context, time.T
 	return []string{"resolved-product-1"}, nil
 }
 
+type fakeSearchCategorySource struct {
+	categories map[string]domainsearch.Category
+	getByIDErr error
+	lastCtx    context.Context
+}
+
+func (f *fakeSearchCategorySource) GetByID(ctx context.Context, categoryID string) (domainsearch.Category, bool, error) {
+	f.lastCtx = ctx
+	if f.getByIDErr != nil {
+		return domainsearch.Category{}, false, f.getByIDErr
+	}
+	c, ok := f.categories[categoryID]
+	return c, ok, nil
+}
+
 type fakeSearchEngine struct {
 	indexed  []domainsearch.Product
 	indexErr error
 	lastCtx  context.Context
+
+	indexedCategories []domainsearch.Category
+	indexCategoryErr  error
+	lastCategoryCtx   context.Context
 }
 
 func (f *fakeSearchEngine) Name() string { return "fake" }
@@ -110,7 +146,12 @@ func (f *fakeSearchEngine) IndexProduct(ctx context.Context, p domainsearch.Prod
 
 func (f *fakeSearchEngine) RemoveProduct(context.Context, string) error { return nil }
 
-func (f *fakeSearchEngine) IndexCategory(context.Context, domainsearch.Category) error {
+func (f *fakeSearchEngine) IndexCategory(ctx context.Context, c domainsearch.Category) error {
+	f.lastCategoryCtx = ctx
+	if f.indexCategoryErr != nil {
+		return f.indexCategoryErr
+	}
+	f.indexedCategories = append(f.indexedCategories, c)
 	return nil
 }
 
@@ -137,10 +178,11 @@ func (f *fakeSearchQueue) Complete(context.Context, string) error           { re
 func (f *fakeSearchQueue) Fail(context.Context, string, error) error        { return nil }
 
 type searchAdminDeps struct {
-	runs     *fakeSearchRunStore
-	products *fakeSearchProductSource
-	engine   *fakeSearchEngine
-	queue    *fakeSearchQueue
+	runs       *fakeSearchRunStore
+	products   *fakeSearchProductSource
+	categories *fakeSearchCategorySource
+	engine     *fakeSearchEngine
+	queue      *fakeSearchQueue
 }
 
 func newSearchAdminHandler(t *testing.T, deps searchAdminDeps) *admin.SearchAdminHandler {
@@ -149,7 +191,7 @@ func newSearchAdminHandler(t *testing.T, deps searchAdminDeps) *admin.SearchAdmi
 	if err != nil {
 		t.Fatalf("NewReindexService: %v", err)
 	}
-	return admin.NewSearchAdminHandler(svc, deps.runs, deps.products, deps.engine, adminapp.NewAuditor(logger.New("error")))
+	return admin.NewSearchAdminHandler(svc, deps.runs, deps.products, deps.categories, deps.engine, adminapp.NewAuditor(logger.New("error")))
 }
 
 // fakeAuditLogRepository captures persisted audit records so a test can
@@ -181,7 +223,7 @@ func newSearchAdminHandlerWithAuditRepo(t *testing.T, deps searchAdminDeps) (*ad
 	auditor := adminapp.NewAuditor(logger.New("error"))
 	repo := &fakeAuditLogRepository{}
 	auditor.SetAuditLogRepository(repo)
-	return admin.NewSearchAdminHandler(svc, deps.runs, deps.products, deps.engine, auditor), repo
+	return admin.NewSearchAdminHandler(svc, deps.runs, deps.products, deps.categories, deps.engine, auditor), repo
 }
 
 // newSearchAdminRouter mirrors cmd/api/wire_routes.go's wiring: both
@@ -191,16 +233,18 @@ func newSearchAdminRouter(h *admin.SearchAdminHandler) *http.ServeMux {
 	withAdminContext := admin.AdminContextMiddleware()
 	mux := http.NewServeMux()
 	mux.Handle("POST /api/v1/admin/search/reindex", withAdminContext(requireSearchReindex(h.Trigger())))
+	mux.Handle("GET /api/v1/admin/search/reindex", withAdminContext(requireSearchReindex(h.List())))
 	mux.Handle("GET /api/v1/admin/search/reindex/{runID}", withAdminContext(requireSearchReindex(h.Get())))
 	return mux
 }
 
 func newDefaultDeps() searchAdminDeps {
 	return searchAdminDeps{
-		runs:     &fakeSearchRunStore{},
-		products: &fakeSearchProductSource{products: map[string]domainsearch.Product{}},
-		engine:   &fakeSearchEngine{},
-		queue:    &fakeSearchQueue{},
+		runs:       &fakeSearchRunStore{},
+		products:   &fakeSearchProductSource{products: map[string]domainsearch.Product{}},
+		categories: &fakeSearchCategorySource{categories: map[string]domainsearch.Category{}},
+		engine:     &fakeSearchEngine{},
+		queue:      &fakeSearchQueue{},
 	}
 }
 
@@ -496,22 +540,108 @@ func TestSearchAdminHandler_Trigger_ScopeProducts_EmptyIDs(t *testing.T) {
 	}
 }
 
-// TestSearchAdminHandler_Trigger_ScopeCategories_SingleID_StillEnqueues
-// pins a deliberate deviation from PR-1035.md's original spec: a single
-// category ID does NOT get the synchronous path, because that would
-// require SearchEngine.IndexCategory, which doesn't exist yet (PR-1037 is
-// still "planned"). See PR-1035.md's Round 1 notes.
-func TestSearchAdminHandler_Trigger_ScopeCategories_SingleID_StillEnqueues(t *testing.T) {
+// TestSearchAdminHandler_Trigger_ScopeCategories_SingleID_IndexesSynchronously
+// pins PR-1038's fix: a single category ID now gets the same synchronous
+// treatment as a single product ID, since SearchEngine.IndexCategory
+// exists (PR-1037) — this replaces the pre-PR-1038 deliberate deviation
+// (see search_admin.go's Trigger doc comment for that history).
+func TestSearchAdminHandler_Trigger_ScopeCategories_SingleID_IndexesSynchronously(t *testing.T) {
 	deps := newDefaultDeps()
+	deps.categories.categories["cat-1"] = domainsearch.Category{ID: "cat-1", Name: "Shoes"}
 	mux := newSearchAdminRouter(newSearchAdminHandler(t, deps))
 
 	rec := triggerRequest(t, mux, `{"scope":"categories","ids":["cat-1"]}`)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body=%s", rec.Code, rec.Body.String())
+	}
+	if len(deps.queue.enqueued) != 0 {
+		t.Errorf("enqueued %d jobs, want 0 (single-ID category path must be synchronous)", len(deps.queue.enqueued))
+	}
+	if len(deps.engine.indexedCategories) != 1 || deps.engine.indexedCategories[0].ID != "cat-1" {
+		t.Fatalf("engine.indexedCategories = %+v, want exactly [cat-1]", deps.engine.indexedCategories)
+	}
+	var resp struct {
+		Data struct {
+			Status     string `json:"status"`
+			CategoryID string `json:"category_id"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if resp.Data.Status != "indexed" || resp.Data.CategoryID != "cat-1" {
+		t.Errorf("data = %+v, want status=indexed category_id=cat-1", resp.Data)
+	}
+}
+
+// TestSearchAdminHandler_Trigger_ScopeCategories_SingleID_BoundedContext
+// mirrors the product equivalent: the category sync path must also bound
+// its GetByID/IndexCategory calls, not rely on r.Context() alone.
+func TestSearchAdminHandler_Trigger_ScopeCategories_SingleID_BoundedContext(t *testing.T) {
+	deps := newDefaultDeps()
+	deps.categories.categories["cat-1"] = domainsearch.Category{ID: "cat-1", Name: "Shoes"}
+	mux := newSearchAdminRouter(newSearchAdminHandler(t, deps))
+
+	rec := triggerRequest(t, mux, `{"scope":"categories","ids":["cat-1"]}`)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body=%s", rec.Code, rec.Body.String())
+	}
+	if deps.categories.lastCtx == nil {
+		t.Fatal("GetByID was not called")
+	}
+	if _, ok := deps.categories.lastCtx.Deadline(); !ok {
+		t.Error("GetByID received a context with no deadline")
+	}
+	if deps.engine.lastCategoryCtx == nil {
+		t.Fatal("IndexCategory was not called")
+	}
+	if _, ok := deps.engine.lastCategoryCtx.Deadline(); !ok {
+		t.Error("IndexCategory received a context with no deadline")
+	}
+}
+
+func TestSearchAdminHandler_Trigger_ScopeCategories_SingleID_NotFound(t *testing.T) {
+	deps := newDefaultDeps()
+	mux := newSearchAdminRouter(newSearchAdminHandler(t, deps))
+
+	rec := triggerRequest(t, mux, `{"scope":"categories","ids":["missing-cat"]}`)
+
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("status = %d, want 404; body=%s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestSearchAdminHandler_Trigger_ScopeCategories_SingleID_GetByIDError(t *testing.T) {
+	deps := newDefaultDeps()
+	deps.categories.getByIDErr = errors.New("db down")
+	mux := newSearchAdminRouter(newSearchAdminHandler(t, deps))
+
+	rec := triggerRequest(t, mux, `{"scope":"categories","ids":["cat-1"]}`)
+
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("status = %d, want 500; body=%s", rec.Code, rec.Body.String())
+	}
+	if len(deps.engine.indexedCategories) != 0 {
+		t.Error("expected no engine call when the category lookup itself fails")
+	}
+}
+
+func TestSearchAdminHandler_Trigger_ScopeCategories_MultipleIDs_Enqueues202(t *testing.T) {
+	deps := newDefaultDeps()
+	mux := newSearchAdminRouter(newSearchAdminHandler(t, deps))
+
+	rec := triggerRequest(t, mux, `{"scope":"categories","ids":["cat-1","cat-2"]}`)
 
 	if rec.Code != http.StatusAccepted {
 		t.Fatalf("status = %d, want 202; body=%s", rec.Code, rec.Body.String())
 	}
 	if len(deps.queue.enqueued) != 1 {
 		t.Fatalf("enqueued %d jobs, want 1", len(deps.queue.enqueued))
+	}
+	if len(deps.engine.indexedCategories) != 0 {
+		t.Errorf("engine.indexedCategories = %d, want 0 (multi-ID must not take the synchronous path)", len(deps.engine.indexedCategories))
 	}
 }
 
@@ -657,5 +787,120 @@ func TestSearchAdminHandler_Get_EmptyRunID(t *testing.T) {
 
 	if rec.Code != http.StatusUnprocessableEntity {
 		t.Fatalf("status = %d, want 422; body=%s", rec.Code, rec.Body.String())
+	}
+}
+
+// TestSearchAdminHandler_List_ReturnsRuns pins PR-1038's run-history
+// endpoint: a page of runs comes back shaped like Get's own single-run
+// response, not a different ad-hoc shape.
+func TestSearchAdminHandler_List_ReturnsRuns(t *testing.T) {
+	deps := newDefaultDeps()
+	started := time.Now().Add(-time.Hour).UTC()
+	deps.runs.listRuns = []domainsearch.Run{
+		{ID: "run-1", Scope: "all", Status: domainsearch.RunStatusCompleted, TotalCount: 50, ProcessedCount: 50, StartedAt: started, FinishedAt: started.Add(time.Minute)},
+		{ID: "run-2", Scope: "products", Status: domainsearch.RunStatusProcessing, TotalCount: 10, ProcessedCount: 3, StartedAt: started.Add(2 * time.Hour)},
+	}
+	mux := newSearchAdminRouter(newSearchAdminHandler(t, deps))
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/admin/search/reindex", nil)
+	req = testhelper.AdminRequest(req, "admin-1")
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body=%s", rec.Code, rec.Body.String())
+	}
+	var resp struct {
+		Data struct {
+			Runs []map[string]interface{} `json:"runs"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if len(resp.Data.Runs) != 2 {
+		t.Fatalf("runs = %+v, want 2 entries", resp.Data.Runs)
+	}
+	if resp.Data.Runs[0]["id"] != "run-1" || resp.Data.Runs[0]["status"] != "completed" {
+		t.Errorf("runs[0] = %+v, want id=run-1 status=completed", resp.Data.Runs[0])
+	}
+	if resp.Data.Runs[1]["id"] != "run-2" || resp.Data.Runs[1]["status"] != "processing" {
+		t.Errorf("runs[1] = %+v, want id=run-2 status=processing", resp.Data.Runs[1])
+	}
+	if _, present := resp.Data.Runs[1]["finished_at"]; present {
+		t.Errorf("runs[1] finished_at present for a still-processing run: %+v", resp.Data.Runs[1])
+	}
+}
+
+func TestSearchAdminHandler_List_Empty(t *testing.T) {
+	deps := newDefaultDeps()
+	mux := newSearchAdminRouter(newSearchAdminHandler(t, deps))
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/admin/search/reindex", nil)
+	req = testhelper.AdminRequest(req, "admin-1")
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body=%s", rec.Code, rec.Body.String())
+	}
+	var resp struct {
+		Data struct {
+			Runs []map[string]interface{} `json:"runs"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if len(resp.Data.Runs) != 0 {
+		t.Errorf("runs = %+v, want empty", resp.Data.Runs)
+	}
+}
+
+// TestSearchAdminHandler_List_ForwardsPagination pins that List actually
+// uses the query-string offset/limit, not just accepts and ignores them.
+func TestSearchAdminHandler_List_ForwardsPagination(t *testing.T) {
+	deps := newDefaultDeps()
+	mux := newSearchAdminRouter(newSearchAdminHandler(t, deps))
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/admin/search/reindex?offset=20&limit=10", nil)
+	req = testhelper.AdminRequest(req, "admin-1")
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body=%s", rec.Code, rec.Body.String())
+	}
+	if deps.runs.lastListOffset != 20 || deps.runs.lastListLimit != 10 {
+		t.Errorf("List called with offset=%d limit=%d, want offset=20 limit=10", deps.runs.lastListOffset, deps.runs.lastListLimit)
+	}
+}
+
+func TestSearchAdminHandler_List_StoreError(t *testing.T) {
+	deps := newDefaultDeps()
+	deps.runs.listErr = errors.New("db down")
+	mux := newSearchAdminRouter(newSearchAdminHandler(t, deps))
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/admin/search/reindex", nil)
+	req = testhelper.AdminRequest(req, "admin-1")
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("status = %d, want 500; body=%s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestSearchAdminHandler_List_Forbidden(t *testing.T) {
+	deps := newDefaultDeps()
+	mux := newSearchAdminRouter(newSearchAdminHandler(t, deps))
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/admin/search/reindex", nil)
+	req = testhelper.AuthenticatedRequest(req, "support-1", identity.RoleSupport)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("status = %d, want 403; body=%s", rec.Code, rec.Body.String())
 	}
 }
