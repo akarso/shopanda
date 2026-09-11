@@ -186,6 +186,7 @@
         "/admin/operations/payments": { title: "Payments", render: renderPaymentSettingsPage, auth: true },
         "/admin/operations/jobs": { title: "Jobs", render: renderJobsGrid, auth: true },
         "/admin/operations/schedules": { title: "Schedules", render: renderSchedulesGrid, auth: true },
+        "/admin/operations/search": { title: "Search", render: renderSearchReindexPage, auth: true },
         // Settings
         "/admin/settings": { title: "Settings", render: renderSettingsPage, auth: true },
         "/admin/settings/localization": { title: "Localization", render: renderLocalizationSettingsPage, auth: true },
@@ -400,8 +401,10 @@
     }
     // --- Product Grid ---
     function renderProductsGrid(container) {
-        container.innerHTML = '<h2>Products</h2><div id="products-grid"></div>';
+        container.innerHTML = '<h2>Products</h2><div id="products-grid-msg"></div><div id="products-grid"></div>';
         var gridBox = document.getElementById("products-grid");
+        var gridMsg = document.getElementById("products-grid-msg");
+        var canReindex = userHasPermission("search.reindex");
         Promise.all([
             api("/admin/grids/product.grid"),
             api("/admin/products?page=1&per_page=20&sort=created_at&order=desc")
@@ -444,7 +447,11 @@
                         }
                         html += '<td>' + esc(val == null ? '' : val) + '</td>';
                     }
-                    html += '<td><a href="/admin/products/' + esc(p.id) + '" data-link>Edit</a></td>';
+                    var rowActions = '<a href="/admin/products/' + esc(p.id) + '" data-link>Edit</a>';
+                    if (canReindex) {
+                        rowActions += ' <button type="button" class="chip product-row-reindex" data-id="' + esc(p.id) + '">Reindex now</button>';
+                    }
+                    html += '<td>' + rowActions + '</td>';
                     html += '</tr>';
                 }
             }
@@ -452,9 +459,42 @@
             gridBox.innerHTML = html;
             var newBtn = document.getElementById("new-product-btn");
             if (newBtn) newBtn.addEventListener("click", function() { navigateTo("/admin/products/new"); });
+            bindReindexRowActions(gridBox, "product-row-reindex", "products", gridMsg);
         }).catch(function (err) {
             gridBox.innerHTML = '<p role="alert">' + esc(extractErrorMessage(err, 'Failed to load products.')) + '</p>';
         });
+    }
+
+    // bindReindexRowActions wires the product grid's per-row "Reindex now"
+    // button to the synchronous single-item path (POST /admin/search/
+    // reindex, scope="products", exactly one id) — PR-1038. The category
+    // tree's own "Reindex now" button is wired separately, in
+    // bindCategoryTreeActions, using scope="category_document" instead:
+    // scope="categories" always means "reindex this category's member
+    // products" (queued, not synchronous), a different, non-interchangeable
+    // scope — see search_admin.go's Trigger doc comment.
+    function bindReindexRowActions(container, buttonClass, scope, msgBox) {
+        var buttons = container.querySelectorAll("." + buttonClass);
+        for (var i = 0; i < buttons.length; i++) {
+            buttons[i].addEventListener("click", function () {
+                var btn = this;
+                var itemID = btn.getAttribute("data-id");
+                withButtonBusy(btn, "Reindexing…", function () {
+                    return api("/admin/search/reindex", {
+                        method: "POST",
+                        body: JSON.stringify({ scope: scope, ids: [itemID] })
+                    }).then(function (res) {
+                        if (res && res.error) {
+                            msgBox.innerHTML = '<p role="alert">' + esc(extractErrorMessage(res, "Reindex failed.")) + "</p>";
+                            return;
+                        }
+                        msgBox.innerHTML = '<p role="status" aria-live="polite">Reindexed ' + esc(itemID) + ".</p>";
+                    }).catch(function () {
+                        msgBox.innerHTML = '<p role="alert">Reindex failed.</p>';
+                    });
+                });
+            });
+        }
     }
 
     function renderCategoriesPage(container) {
@@ -514,6 +554,9 @@
             var node = nodes[i] || {};
             var children = Array.isArray(node.children) ? node.children : [];
             var categoryLabel = esc((node.name || node.slug || node.id || 'Category'));
+            var reindexControl = userHasPermission('search.reindex')
+                ? ' <button type="button" class="chip category-row-reindex" data-id="' + esc(String(node.id || '')) + '">Reindex now</button>'
+                : '';
             var orderingControls = '';
             if (i > 0) {
                 orderingControls += ' <button type="button" aria-label="Move category ' + categoryLabel + ' up" data-category-move="up" data-category-id="' + esc(String(node.id || '')) + '">Move up</button>';
@@ -529,6 +572,7 @@
                 orderingControls +
                 ' <a href="/admin/categories/' + encodeURIComponent(String(node.id || '')) + '" data-link>Edit</a>' +
                 ' <button type="button" aria-label="Delete category ' + categoryLabel + '" data-category-delete="' + esc(String(node.id || '')) + '" data-category-name="' + esc(String(node.name || node.slug || node.id || '')) + '">Delete</button>' +
+                reindexControl +
                 '</div>' +
                 renderCategoryTreeNodes(children) +
                 '</li>';
@@ -565,6 +609,31 @@
                 var categoryID = this.getAttribute('data-category-id');
                 var direction = this.getAttribute('data-category-move');
                 moveCategoryOrdering(categories, categoryID, direction, setMessage, reload);
+            });
+        }
+
+        // Reindex now (PR-1038): synchronous single-item path, no reload
+        // needed — the category's own data didn't change, only its search
+        // index entry.
+        var reindexButtons = container.querySelectorAll('.category-row-reindex');
+        for (var k = 0; k < reindexButtons.length; k++) {
+            reindexButtons[k].addEventListener('click', function () {
+                var btn = this;
+                var categoryID = btn.getAttribute('data-id');
+                withButtonBusy(btn, 'Reindexing…', function () {
+                    return api('/admin/search/reindex', {
+                        method: 'POST',
+                        body: JSON.stringify({ scope: 'category_document', ids: [categoryID] })
+                    }).then(function (res) {
+                        if (res && res.error) {
+                            setMessage(extractErrorMessage(res, 'Reindex failed.'), true);
+                            return;
+                        }
+                        setMessage('Reindexed ' + categoryID + '.', false);
+                    }).catch(function () {
+                        setMessage('Reindex failed.', true);
+                    });
+                });
             });
         }
     }
@@ -3503,7 +3572,8 @@
                     'audit.read',
                     'shipping.read', 'shipping.write',
                     'extensions.read', 'extensions.write',
-                    'jobs.read', 'jobs.write'
+                    'jobs.read', 'jobs.write',
+                    'search.reindex'
                 ]
             },
             {
@@ -3899,6 +3969,19 @@
             if (link && link.parentElement) {
                 link.parentElement.style.display = visible ? "" : "none";
             }
+        }
+    }
+
+    // refreshSearchNavVisibility mirrors refreshJobsNavVisibility, gated on
+    // search.reindex (currently admin-role-only — see role_permissions.go)
+    // rather than jobs.read: the Search screen and jobs/schedules screens
+    // are separate permissions even though they're visually grouped
+    // together under "Operations."
+    function refreshSearchNavVisibility() {
+        var visible = userHasPermission("search.reindex");
+        var link = document.querySelector('.admin-sidebar a[href="/admin/operations/search"]');
+        if (link && link.parentElement) {
+            link.parentElement.style.display = visible ? "" : "none";
         }
     }
 
@@ -10264,6 +10347,256 @@
         }
     }
 
+    // --- Search reindex (PR-1038) ---
+
+    var REINDEX_HISTORY_PAGE_SIZE = 20;
+    // reindexPollDelayMS is fixed, not backoff — a run's total_count is
+    // usually small enough (single-digit thousands) that a run finishes
+    // within seconds to low minutes; unlike categoryIndexRetryBaseDelay's
+    // server-side retry (a different concern — recovering from a transient
+    // engine failure), this is just "how often to refresh a progress bar."
+    var reindexPollDelayMS = 2000;
+    // searchReindexGeneration is bumped once per renderSearchReindexPage
+    // call; see that function's own myGeneration doc comment for why a
+    // poll loop compares against it instead of relying on location.pathname.
+    var searchReindexGeneration = 0;
+
+    function parseReindexIDs(raw) {
+        if (!raw) {
+            return [];
+        }
+        return raw.split(",").map(function (part) { return part.trim(); }).filter(function (part) { return part !== ""; });
+    }
+
+    function renderSearchReindexPage(container) {
+        if (!userHasPermission("search.reindex")) {
+            container.innerHTML = '<h2>Search</h2><p role="alert">Your account does not have search reindex access.</p>';
+            return;
+        }
+
+        container.innerHTML =
+            '<h2>Search</h2>' +
+            '<form id="reindex-trigger-form" style="margin-bottom:1rem">' +
+            '<label>Scope <select name="scope" id="reindex-scope-select">' +
+            '<option value="all">All</option>' +
+            '<option value="products">Products</option>' +
+            '<option value="categories">Categories</option>' +
+            '<option value="since">Changed since</option>' +
+            '</select></label> ' +
+            '<span id="reindex-ids-field"><label>IDs (comma-separated) <input type="text" name="ids" placeholder="id-1, id-2"></label></span> ' +
+            '<span id="reindex-since-field"><label>Since <input type="datetime-local" name="since"></label></span> ' +
+            '<button type="submit">Trigger reindex</button>' +
+            '</form>' +
+            '<div id="reindex-trigger-msg"></div>' +
+            '<div id="reindex-progress"></div>' +
+            '<h3>Run history</h3>' +
+            '<div id="reindex-history-msg"></div>' +
+            '<div id="reindex-history"></div>' +
+            '<div id="reindex-history-more"></div>';
+
+        var form = document.getElementById("reindex-trigger-form");
+        var scopeSelect = document.getElementById("reindex-scope-select");
+        var idsField = document.getElementById("reindex-ids-field");
+        var sinceField = document.getElementById("reindex-since-field");
+        var triggerMsg = document.getElementById("reindex-trigger-msg");
+        var progressBox = document.getElementById("reindex-progress");
+        var historyMsg = document.getElementById("reindex-history-msg");
+        var historyBox = document.getElementById("reindex-history");
+        var historyMoreBox = document.getElementById("reindex-history-more");
+        var allRuns = [];
+        var ownPath = "/admin/operations/search";
+        // myGeneration pins this call's own render to searchReindexGeneration
+        // at the moment it ran. pollRun checks both this and location.pathname
+        // — neither alone is enough: location.pathname stops a poll as soon
+        // as the admin leaves this screen and never returns, but a return
+        // visit before a pending setTimeout fires makes the pathname check
+        // pass again even though this render's DOM is long gone (handleRoute
+        // never tears down the previous screen, so nothing else invalidates
+        // the old closure) — that's what myGeneration catches, since a fresh
+        // render bumps the shared counter. Dropping either check reopens the
+        // other's failure mode: pathname-only lets a stale re-render's poll
+        // resume; generation-only never stops a poll if the admin simply
+        // never comes back (searchReindexGeneration only changes on a new
+        // render of this same screen).
+        var myGeneration = ++searchReindexGeneration;
+
+        function updateFieldVisibility() {
+            var scope = scopeSelect.value;
+            idsField.style.display = (scope === "products" || scope === "categories") ? "" : "none";
+            sinceField.style.display = (scope === "since") ? "" : "none";
+        }
+        scopeSelect.addEventListener("change", updateFieldVisibility);
+        updateFieldVisibility();
+
+        function loadHistory() {
+            allRuns = [];
+            historyMoreBox.innerHTML = "";
+            historyMsg.innerHTML = "";
+            historyBox.innerHTML = "<p>Loading…</p>";
+            api("/admin/search/reindex?offset=0&limit=" + REINDEX_HISTORY_PAGE_SIZE).then(function (body) {
+                if (body && body.error) {
+                    historyBox.innerHTML = '<p role="alert">' + esc(extractErrorMessage(body, "Failed to load run history.")) + "</p>";
+                    return;
+                }
+                var runList = body && body.data && body.data.runs;
+                if (!Array.isArray(runList)) {
+                    historyBox.innerHTML = '<p role="alert">' + esc(extractErrorMessage(body, "Failed to load run history.")) + "</p>";
+                    return;
+                }
+                allRuns = runList;
+                renderReindexHistoryTable(historyBox, allRuns);
+                renderReindexHistoryMoreControl(historyMoreBox, runList.length, loadMoreHistory);
+            }).catch(function (err) {
+                historyBox.innerHTML = '<p role="alert">' + esc(extractErrorMessage(err, "Failed to load run history.")) + "</p>";
+            });
+        }
+
+        function loadMoreHistory() {
+            historyMoreBox.innerHTML = "<p>Loading…</p>";
+            api("/admin/search/reindex?offset=" + allRuns.length + "&limit=" + REINDEX_HISTORY_PAGE_SIZE).then(function (body) {
+                var runList = body && body.data && body.data.runs;
+                if (!Array.isArray(runList)) {
+                    historyMoreBox.innerHTML = '<p role="alert">' + esc(extractErrorMessage(body, "Failed to load more runs.")) + "</p>";
+                    return;
+                }
+                allRuns = allRuns.concat(runList);
+                renderReindexHistoryTable(historyBox, allRuns);
+                renderReindexHistoryMoreControl(historyMoreBox, runList.length, loadMoreHistory);
+            }).catch(function (err) {
+                historyMoreBox.innerHTML = '<p role="alert">' + esc(extractErrorMessage(err, "Failed to load more runs.")) + "</p>";
+            });
+        }
+
+        function renderProgress(run) {
+            var total = run.total_count || 0;
+            var processed = run.processed_count || 0;
+            var pct = total > 0 ? Math.round((processed / total) * 100) : (run.status === "processing" ? 0 : 100);
+            progressBox.innerHTML =
+                '<p>Run <code>' + esc(run.id) + '</code> — <span class="badge badge-' + esc(run.status) + '">' + esc(run.status) + '</span></p>' +
+                '<div class="reindex-progress-track" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="' + pct + '" aria-live="polite" aria-label="Reindex progress">' +
+                '<div class="reindex-progress-fill" style="width:' + pct + '%"></div></div>' +
+                '<p>' + esc(String(processed)) + ' / ' + esc(String(total)) + ' processed</p>' +
+                (run.status === "failed" && run.last_error ? '<p role="alert">' + esc(run.last_error) + '</p>' : '');
+        }
+
+        // pollRun stops itself once the run reaches a terminal status, or
+        // if either guard trips (see myGeneration's own doc comment for why
+        // both are needed, not just one).
+        function stopPolling() {
+            return location.pathname !== ownPath || myGeneration !== searchReindexGeneration;
+        }
+        function pollRun(runID) {
+            if (stopPolling()) {
+                return;
+            }
+            api("/admin/search/reindex/" + encodeURIComponent(runID)).then(function (body) {
+                if (stopPolling()) {
+                    return;
+                }
+                if (body && body.error) {
+                    progressBox.innerHTML = '<p role="alert">' + esc(extractErrorMessage(body, "Failed to load run progress.")) + "</p>";
+                    return;
+                }
+                var run = body && body.data;
+                if (!run) {
+                    return;
+                }
+                renderProgress(run);
+                if (run.status === "processing") {
+                    setTimeout(function () { pollRun(runID); }, reindexPollDelayMS);
+                } else {
+                    loadHistory();
+                }
+            }).catch(function () {
+                progressBox.innerHTML = '<p role="alert">Failed to load run progress.</p>';
+            });
+        }
+
+        form.addEventListener("submit", function (e) {
+            e.preventDefault();
+            var scope = scopeSelect.value;
+            var payload = { scope: scope };
+            if (scope === "products" || scope === "categories") {
+                var ids = parseReindexIDs(form.elements.ids.value);
+                if (ids.length === 0) {
+                    triggerMsg.innerHTML = '<p role="alert">Enter at least one ID.</p>';
+                    return;
+                }
+                payload.ids = ids;
+            } else if (scope === "since") {
+                var sinceRaw = form.elements.since.value;
+                if (!sinceRaw) {
+                    triggerMsg.innerHTML = '<p role="alert">Choose a "since" date/time.</p>';
+                    return;
+                }
+                payload.since = new Date(sinceRaw).toISOString();
+            }
+
+            var submitBtn = form.querySelector('button[type="submit"]');
+            triggerMsg.innerHTML = "";
+            progressBox.innerHTML = "";
+            withButtonBusy(submitBtn, "Triggering…", function () {
+                return api("/admin/search/reindex", { method: "POST", body: JSON.stringify(payload) }).then(function (body) {
+                    if (body && body.error) {
+                        triggerMsg.innerHTML = '<p role="alert">' + esc(extractErrorMessage(body, "Trigger failed.")) + "</p>";
+                        return;
+                    }
+                    var data = body && body.data;
+                    if (data && data.run_id) {
+                        triggerMsg.innerHTML = "<p>Queued — tracking progress below.</p>";
+                        pollRun(data.run_id);
+                    } else if (data && data.status === "indexed") {
+                        var label = data.product_id ? ("product " + data.product_id) : ("category " + data.category_id);
+                        triggerMsg.innerHTML = "<p>Indexed " + esc(label) + " immediately.</p>";
+                        loadHistory();
+                    } else {
+                        triggerMsg.innerHTML = "<p>Done.</p>";
+                        loadHistory();
+                    }
+                }).catch(function () {
+                    triggerMsg.innerHTML = '<p role="alert">Trigger failed.</p>';
+                });
+            });
+        });
+
+        loadHistory();
+    }
+
+    // renderReindexHistoryMoreControl mirrors renderJobsMoreControl: shows
+    // a "Load more" button only when the most recently fetched page came
+    // back full — a short page means there's nothing further to fetch.
+    function renderReindexHistoryMoreControl(moreBox, lastPageLength, loadMore) {
+        if (lastPageLength < REINDEX_HISTORY_PAGE_SIZE) {
+            moreBox.innerHTML = "";
+            return;
+        }
+        moreBox.innerHTML = '<button type="button" id="reindex-history-load-more">Load more</button>';
+        document.getElementById("reindex-history-load-more").addEventListener("click", loadMore);
+    }
+
+    function renderReindexHistoryTable(container, runList) {
+        var html = "<table><thead><tr>" +
+            "<th>ID</th><th>Scope</th><th>Status</th><th>Progress</th><th>Started</th><th>Finished</th>" +
+            "</tr></thead><tbody>";
+        if (runList.length === 0) {
+            html += '<tr><td colspan="6">No reindex runs yet.</td></tr>';
+        } else {
+            for (var i = 0; i < runList.length; i++) {
+                var run = runList[i];
+                html += "<tr>" +
+                    "<td>" + esc(run.id || "") + "</td>" +
+                    "<td>" + esc(run.scope || "") + "</td>" +
+                    '<td><span class="badge badge-' + esc(run.status || "") + '">' + esc(run.status || "") + "</span></td>" +
+                    "<td>" + esc(String(run.processed_count != null ? run.processed_count : 0)) + " / " + esc(String(run.total_count != null ? run.total_count : 0)) + "</td>" +
+                    "<td>" + esc(formatJobTimestamp(run.started_at)) + "</td>" +
+                    "<td>" + esc(formatJobTimestamp(run.finished_at)) + "</td>" +
+                    "</tr>";
+            }
+        }
+        html += "</tbody></table>";
+        container.innerHTML = html;
+    }
+
     // --- Logout ---
 
     function handleLogout(e) {
@@ -10309,6 +10642,7 @@
         }).then(function () {
             refreshCustomerGroupsNavVisibility();
             refreshJobsNavVisibility();
+            refreshSearchNavVisibility();
             handleRoute();
         });
     }

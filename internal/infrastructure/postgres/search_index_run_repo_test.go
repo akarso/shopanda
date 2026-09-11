@@ -3,6 +3,7 @@ package postgres_test
 import (
 	"context"
 	"errors"
+	"sort"
 	"testing"
 	"time"
 
@@ -247,6 +248,157 @@ func TestSearchIndexRunRepo_FindStaleProcessing_RespectsLimit(t *testing.T) {
 	}
 	if len(stale) != 2 {
 		t.Fatalf("FindStaleProcessing returned %d runs, want exactly 2 (the limit)", len(stale))
+	}
+}
+
+// TestSearchIndexRunRepo_List_MostRecentlyStartedFirst pins PR-1038's
+// run-history read model: runs come back ordered by started_at DESC, not
+// insertion order — a history table should show the newest activity
+// first regardless of how the rows happen to be stored.
+func TestSearchIndexRunRepo_List_MostRecentlyStartedFirst(t *testing.T) {
+	db := testDB(t)
+	if _, err := migrate.Run(db, "../../../migrations"); err != nil {
+		t.Fatalf("run migrations: %v", err)
+	}
+	t.Cleanup(func() { db.Exec("DELETE FROM search_index_runs") })
+
+	repo, _ := postgres.NewSearchIndexRunRepo(db)
+	ctx := context.Background()
+	now := time.Now().UTC()
+
+	oldestID, middleID, newestID := id.New(), id.New(), id.New()
+	seed := func(runID string, startedAt time.Time) {
+		if _, err := db.ExecContext(ctx,
+			`INSERT INTO search_index_runs (id, scope, scope_params, status, started_at) VALUES ($1, 'all', '{}', 'completed', $2)`,
+			runID, startedAt,
+		); err != nil {
+			t.Fatalf("seed %s: %v", runID, err)
+		}
+	}
+	// Seeded out of chronological order, to prove List sorts by
+	// started_at rather than insertion/id order.
+	seed(middleID, now.Add(-1*time.Hour))
+	seed(oldestID, now.Add(-2*time.Hour))
+	seed(newestID, now)
+
+	got, err := repo.List(ctx, 10, 0)
+	if err != nil {
+		t.Fatalf("List: %v", err)
+	}
+	if len(got) != 3 {
+		t.Fatalf("List returned %d runs, want 3", len(got))
+	}
+	wantOrder := []string{newestID, middleID, oldestID}
+	for i, want := range wantOrder {
+		if got[i].ID != want {
+			t.Fatalf("List[%d].ID = %s, want %s (order = %v)", i, got[i].ID, want, got)
+		}
+	}
+}
+
+// TestSearchIndexRunRepo_List_RespectsLimitAndOffset pins the pagination
+// contract: limit bounds the page size, offset skips the first N
+// (newest-first) rows — the combination a "next page" click needs.
+func TestSearchIndexRunRepo_List_RespectsLimitAndOffset(t *testing.T) {
+	db := testDB(t)
+	if _, err := migrate.Run(db, "../../../migrations"); err != nil {
+		t.Fatalf("run migrations: %v", err)
+	}
+	t.Cleanup(func() { db.Exec("DELETE FROM search_index_runs") })
+
+	repo, _ := postgres.NewSearchIndexRunRepo(db)
+	ctx := context.Background()
+	now := time.Now().UTC()
+
+	ids := make([]string, 5)
+	for i := range ids {
+		ids[i] = id.New()
+		// ids[0] is newest (started_at closest to now), ids[4] is oldest.
+		if _, err := db.ExecContext(ctx,
+			`INSERT INTO search_index_runs (id, scope, scope_params, status, started_at) VALUES ($1, 'all', '{}', 'completed', $2)`,
+			ids[i], now.Add(-time.Duration(i)*time.Minute),
+		); err != nil {
+			t.Fatalf("seed: %v", err)
+		}
+	}
+
+	page, err := repo.List(ctx, 2, 1)
+	if err != nil {
+		t.Fatalf("List: %v", err)
+	}
+	if len(page) != 2 {
+		t.Fatalf("List returned %d runs, want 2 (limit)", len(page))
+	}
+	if page[0].ID != ids[1] || page[1].ID != ids[2] {
+		t.Fatalf("List(limit=2, offset=1) = [%s %s], want [%s %s]", page[0].ID, page[1].ID, ids[1], ids[2])
+	}
+}
+
+// TestSearchIndexRunRepo_List_TiesBrokenByID pins the code-review fix:
+// runs sharing an identical started_at (concurrent triggers can share the
+// same microsecond-resolution timestamp) must still sort deterministically
+// via an id DESC tiebreaker, so that adjacent offset pages neither skip
+// nor repeat a run — matching JobQueue.List's own
+// "created_at DESC, id DESC" precedent.
+func TestSearchIndexRunRepo_List_TiesBrokenByID(t *testing.T) {
+	db := testDB(t)
+	if _, err := migrate.Run(db, "../../../migrations"); err != nil {
+		t.Fatalf("run migrations: %v", err)
+	}
+	t.Cleanup(func() { db.Exec("DELETE FROM search_index_runs") })
+
+	repo, _ := postgres.NewSearchIndexRunRepo(db)
+	ctx := context.Background()
+	same := time.Now().UTC()
+
+	ids := make([]string, 4)
+	for i := range ids {
+		ids[i] = id.New()
+		if _, err := db.ExecContext(ctx,
+			`INSERT INTO search_index_runs (id, scope, scope_params, status, started_at) VALUES ($1, 'all', '{}', 'completed', $2)`,
+			ids[i], same,
+		); err != nil {
+			t.Fatalf("seed: %v", err)
+		}
+	}
+	sort.Sort(sort.Reverse(sort.StringSlice(ids)))
+
+	page1, err := repo.List(ctx, 2, 0)
+	if err != nil {
+		t.Fatalf("List page1: %v", err)
+	}
+	page2, err := repo.List(ctx, 2, 2)
+	if err != nil {
+		t.Fatalf("List page2: %v", err)
+	}
+	if len(page1) != 2 || len(page2) != 2 {
+		t.Fatalf("page1=%d page2=%d runs, want 2 each", len(page1), len(page2))
+	}
+
+	got := []string{page1[0].ID, page1[1].ID, page2[0].ID, page2[1].ID}
+	for i, want := range ids {
+		if got[i] != want {
+			t.Fatalf("run %d = %s, want %s (id DESC tiebreaker) — got %v, want %v", i, got[i], want, got, ids)
+		}
+	}
+}
+
+// TestSearchIndexRunRepo_List_Empty pins that an empty table returns an
+// empty (not nil-vs-empty-ambiguous) slice, no error.
+func TestSearchIndexRunRepo_List_Empty(t *testing.T) {
+	db := testDB(t)
+	if _, err := migrate.Run(db, "../../../migrations"); err != nil {
+		t.Fatalf("run migrations: %v", err)
+	}
+	t.Cleanup(func() { db.Exec("DELETE FROM search_index_runs") })
+
+	repo, _ := postgres.NewSearchIndexRunRepo(db)
+	got, err := repo.List(context.Background(), 10, 0)
+	if err != nil {
+		t.Fatalf("List: %v", err)
+	}
+	if len(got) != 0 {
+		t.Fatalf("List = %+v, want empty", got)
 	}
 }
 

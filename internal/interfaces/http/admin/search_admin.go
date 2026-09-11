@@ -17,28 +17,31 @@ import (
 	"github.com/akarso/shopanda/internal/platform/id"
 )
 
-// singleProductIndexTimeout bounds triggerSingleProduct's DB lookup and
-// engine index call — the whole point of the synchronous path is that
-// "reindex this one now" feels instant, not that it blocks the request
-// (and holds a DB connection) for however long a slow query or a stalled
-// search engine takes. r.Context() alone doesn't provide this: it's only
-// cancelled by client disconnect or server shutdown, neither of which
-// bounds a slow-but-still-connected caller to "a few seconds."
-const singleProductIndexTimeout = 5 * time.Second
+// singleItemIndexTimeout bounds triggerSingleProduct's/triggerSingleCategory's
+// DB lookup and engine index call — the whole point of the synchronous
+// path is that "reindex this one now" feels instant, not that it blocks
+// the request (and holds a DB connection) for however long a slow query
+// or a stalled search engine takes. r.Context() alone doesn't provide
+// this: it's only cancelled by client disconnect or server shutdown,
+// neither of which bounds a slow-but-still-connected caller to "a few
+// seconds."
+const singleItemIndexTimeout = 5 * time.Second
 
-// SearchAdminHandler serves the admin reindex-trigger and progress
-// endpoints (PR-1035) on top of application/search's ReindexService (bulk,
-// queued path) and SearchEngine (synchronous single-item path).
+// SearchAdminHandler serves the admin reindex-trigger, progress, and
+// history-listing endpoints (PR-1035, PR-1038) on top of
+// application/search's ReindexService (bulk, queued path) and
+// SearchEngine (synchronous single-item path).
 type SearchAdminHandler struct {
-	reindex  *searchApp.ReindexService
-	runs     domainsearch.RunStore
-	products domainsearch.ProductSource
-	engine   domainsearch.SearchEngine
-	auditor  *adminapp.Auditor
+	reindex    *searchApp.ReindexService
+	runs       domainsearch.RunStore
+	products   domainsearch.ProductSource
+	categories domainsearch.CategorySource
+	engine     domainsearch.SearchEngine
+	auditor    *adminapp.Auditor
 }
 
 // NewSearchAdminHandler creates a SearchAdminHandler.
-func NewSearchAdminHandler(reindex *searchApp.ReindexService, runs domainsearch.RunStore, products domainsearch.ProductSource, engine domainsearch.SearchEngine, auditor *adminapp.Auditor) *SearchAdminHandler {
+func NewSearchAdminHandler(reindex *searchApp.ReindexService, runs domainsearch.RunStore, products domainsearch.ProductSource, categories domainsearch.CategorySource, engine domainsearch.SearchEngine, auditor *adminapp.Auditor) *SearchAdminHandler {
 	if reindex == nil {
 		panic("http: search admin reindex service must not be nil")
 	}
@@ -48,13 +51,16 @@ func NewSearchAdminHandler(reindex *searchApp.ReindexService, runs domainsearch.
 	if products == nil {
 		panic("http: search admin product source must not be nil")
 	}
+	if categories == nil {
+		panic("http: search admin category source must not be nil")
+	}
 	if engine == nil {
 		panic("http: search admin engine must not be nil")
 	}
 	if auditor == nil {
 		panic("http: auditor must not be nil")
 	}
-	return &SearchAdminHandler{reindex: reindex, runs: runs, products: products, engine: engine, auditor: auditor}
+	return &SearchAdminHandler{reindex: reindex, runs: runs, products: products, categories: categories, engine: engine, auditor: auditor}
 }
 
 // audit records one audit entry. ctx governs LogAction's own synchronous
@@ -106,15 +112,25 @@ type reindexTriggerRequest struct {
 //
 // A single product ID under scope="products" is indexed synchronously
 // (SearchEngine.IndexProduct) and returns 200 with the result inline —
-// everything else (scope="all", multiple IDs, scope="since", or any
-// scope="categories" request) is enqueued via ReindexService.Trigger and
+// everything else under scope="products" (multiple IDs), all of
+// scope="categories" (any ID count, including exactly one), scope=
+// "since", and scope="all" is enqueued via ReindexService.Trigger and
 // returns 202 with a run ID to poll.
 //
-// scope="categories" does not get the synchronous single-item path even
-// for exactly one ID: that would require SearchEngine.IndexCategory,
-// which does not exist yet (PR-1037, still "planned" as of this PR) — see
-// PR-1035.md's Round 1 notes. A single category ID is enqueued the same
-// as multiple.
+// scope="categories" resolves to that category's *member products*
+// (ProductSource.ProductIDsByCategory, then IndexProduct for each) — it
+// has meant this since PR-1034, well before category documents
+// (SearchEngine.IndexCategory, PR-1037) existed at all, and existing
+// callers depend on that meaning regardless of how many IDs they send.
+// PR-1038 briefly made a single category ID take a synchronous path that
+// called IndexCategory instead — updating only the category's own
+// document (name/slug/product_count) while silently leaving its member
+// products' search entries unrefreshed, changing scope="categories"'
+// established meaning for exactly the ID-count-1 case. Reverted: a
+// category *document*'s own synchronous reindex is scope=
+// "category_document" instead, a distinct, additive scope requiring
+// exactly one ID (see triggerSingleCategory) — never scope="categories",
+// no matter the ID count.
 //
 // Every rejection below is audited here, via reject — decode/shape
 // failures never reach triggerBulk/triggerSingleProduct, which own
@@ -175,6 +191,18 @@ func (h *SearchAdminHandler) Trigger() http.HandlerFunc {
 			}
 			h.triggerBulk(w, r, searchApp.ScopeCategories{IDs: ids}, map[string]interface{}{"scope": "categories", "ids": ids})
 
+		case "category_document":
+			ids, err := cleanIDs(req.IDs)
+			if err != nil {
+				reject(apperror.Validation(err.Error()), map[string]interface{}{"scope": "category_document"})
+				return
+			}
+			if len(ids) != 1 {
+				reject(apperror.Validation("category_document requires exactly one id"), map[string]interface{}{"scope": "category_document", "ids": ids})
+				return
+			}
+			h.triggerSingleCategory(w, r, ids[0])
+
 		case "since":
 			since := strings.TrimSpace(req.Since)
 			if since == "" {
@@ -193,7 +221,7 @@ func (h *SearchAdminHandler) Trigger() http.HandlerFunc {
 			h.triggerBulk(w, r, searchApp.ScopeSince{Since: t}, map[string]interface{}{"scope": "since", "since": since})
 
 		default:
-			reject(apperror.Validation(`scope must be one of "all", "products", "categories", "since"`), map[string]interface{}{"scope": req.Scope})
+			reject(apperror.Validation(`scope must be one of "all", "products", "categories", "category_document", "since"`), map[string]interface{}{"scope": req.Scope})
 		}
 	}
 }
@@ -213,11 +241,11 @@ func requireSingleJSONValue(dec *json.Decoder) error {
 
 // triggerSingleProduct indexes exactly one product synchronously, skipping
 // the queue entirely — see Trigger's doc comment. ctx is bounded by
-// singleProductIndexTimeout, not r.Context() directly: this path exists to
+// singleItemIndexTimeout, not r.Context() directly: this path exists to
 // feel instant, and mustn't hold the request (and a DB connection) open
 // indefinitely if Postgres or the search engine stalls.
 func (h *SearchAdminHandler) triggerSingleProduct(w http.ResponseWriter, r *http.Request, productID string) {
-	ctx, cancel := context.WithTimeout(r.Context(), singleProductIndexTimeout)
+	ctx, cancel := context.WithTimeout(r.Context(), singleItemIndexTimeout)
 	defer cancel()
 
 	products, err := h.products.ListByIDs(ctx, []string{productID})
@@ -242,6 +270,43 @@ func (h *SearchAdminHandler) triggerSingleProduct(w http.ResponseWriter, r *http
 	httpshared.JSON(w, http.StatusOK, map[string]interface{}{
 		"status":     "indexed",
 		"product_id": productID,
+	})
+}
+
+// triggerSingleCategory indexes exactly one category's own search
+// document synchronously (SearchEngine.IndexCategory) — name/slug/
+// product_count, not its member products, which is what scope=
+// "categories" reindexes instead (see Trigger's own doc comment on why
+// these are deliberately separate scopes, not the same one). Category
+// IDs aren't UUIDs (see cleanIDs' own doc comment), so there's no format
+// check before the lookup — a malformed ID here simply won't be found,
+// same as a well-formed but nonexistent one.
+func (h *SearchAdminHandler) triggerSingleCategory(w http.ResponseWriter, r *http.Request, categoryID string) {
+	ctx, cancel := context.WithTimeout(r.Context(), singleItemIndexTimeout)
+	defer cancel()
+
+	category, found, err := h.categories.GetByID(ctx, categoryID)
+	if err != nil {
+		h.audit(ctx, r, adminapp.AuditSearchReindexTrigger, categoryID, map[string]interface{}{"scope": "category_document", "ids": []string{categoryID}, "mode": "sync"}, err)
+		httpshared.JSONError(w, apperror.Wrap(apperror.CodeInternal, "look up category failed", err))
+		return
+	}
+	if !found {
+		err := apperror.NotFound("category not found")
+		h.audit(ctx, r, adminapp.AuditSearchReindexTrigger, categoryID, map[string]interface{}{"scope": "category_document", "ids": []string{categoryID}, "mode": "sync"}, err)
+		httpshared.JSONError(w, err)
+		return
+	}
+	if err := h.engine.IndexCategory(ctx, category); err != nil {
+		h.audit(ctx, r, adminapp.AuditSearchReindexTrigger, categoryID, map[string]interface{}{"scope": "category_document", "ids": []string{categoryID}, "mode": "sync"}, err)
+		httpshared.JSONError(w, apperror.Wrap(apperror.CodeInternal, "index category failed", err))
+		return
+	}
+
+	h.audit(ctx, r, adminapp.AuditSearchReindexTrigger, categoryID, map[string]interface{}{"scope": "category_document", "ids": []string{categoryID}, "mode": "sync"}, nil)
+	httpshared.JSON(w, http.StatusOK, map[string]interface{}{
+		"status":      "indexed",
+		"category_id": categoryID,
 	})
 }
 
@@ -296,6 +361,32 @@ func (h *SearchAdminHandler) Get() http.HandlerFunc {
 	}
 }
 
+// List handles GET /api/v1/admin/search/reindex — PR-1038's run-history
+// read model. Distinct from Get: List returns a page of runs (most
+// recently started first, unfiltered by scope/status — the history table
+// this backs has no filter UI), Get returns one run's full detail by ID.
+func (h *SearchAdminHandler) List() http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		offset, limit, err := httpshared.ParsePagination(r)
+		if err != nil {
+			httpshared.JSONError(w, apperror.Validation(err.Error()))
+			return
+		}
+
+		runs, err := h.runs.List(r.Context(), limit, offset)
+		if err != nil {
+			h.audit(r.Context(), r, adminapp.AuditSearchReindexList, "", nil, err)
+			httpshared.JSONError(w, apperror.Wrap(apperror.CodeInternal, "list reindex runs failed", err))
+			return
+		}
+
+		h.audit(r.Context(), r, adminapp.AuditSearchReindexList, "", map[string]interface{}{"count": len(runs)}, nil)
+		httpshared.JSON(w, http.StatusOK, map[string]interface{}{
+			"runs": toReindexRunListResponse(runs),
+		})
+	}
+}
+
 // cleanIDs trims and rejects blank entries from a caller-supplied ID list.
 // It intentionally doesn't check UUID shape here (categories.id is plain
 // TEXT, unlike products.id — the "products" case checks UUID shape
@@ -316,6 +407,14 @@ func cleanIDs(ids []string) ([]string, error) {
 		out = append(out, v)
 	}
 	return out, nil
+}
+
+func toReindexRunListResponse(runs []domainsearch.Run) []map[string]interface{} {
+	out := make([]map[string]interface{}, len(runs))
+	for i, run := range runs {
+		out[i] = toReindexRunResponse(run)
+	}
+	return out
 }
 
 func toReindexRunResponse(run domainsearch.Run) map[string]interface{} {

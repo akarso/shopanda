@@ -79,6 +79,13 @@ type RunStore interface {
 	// picked up by the next tick, since a run this call doesn't reach
 	// stays "processing" and so stays a match for the next call.
 	FindStaleProcessing(ctx context.Context, olderThan time.Time, limit int) ([]Run, error)
+
+	// List returns a page of runs, most recently started first — the
+	// read model for PR-1038's admin "run history" table. Mirrors
+	// domain/jobs.Reader.List's shape (limit/offset, no separate total
+	// count): a history table doesn't need exact totals to be useful, and
+	// omitting one avoids a second COUNT(*) query per page.
+	List(ctx context.Context, limit, offset int) ([]Run, error)
 }
 
 // ReindexJobStatus is the minimal read model the reconciliation sweep

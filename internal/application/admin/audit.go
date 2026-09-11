@@ -155,6 +155,7 @@ const (
 	// Search reindex admin API (PR-1035)
 	AuditSearchReindexTrigger AuditAction = "search_reindex.trigger"
 	AuditSearchReindexRead    AuditAction = "search_reindex.read"
+	AuditSearchReindexList    AuditAction = "search_reindex.list"
 )
 
 // AuditEntry represents a single admin audit log entry.

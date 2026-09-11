@@ -170,6 +170,7 @@ func buildServeHandler(cfg *config.Config, log logger.Logger, rt *serveRuntime, 
 	router.Handle("POST /api/v1/admin/jobs/{id}/retry", requireJobsWrite(rt.jobAdmin.Retry()))
 	router.Handle("POST /api/v1/admin/jobs/{id}/cancel", requireJobsWrite(rt.jobAdmin.Cancel()))
 	router.Handle("POST /api/v1/admin/search/reindex", requireSearchReindex(rt.searchAdmin.Trigger()))
+	router.Handle("GET /api/v1/admin/search/reindex", requireSearchReindex(rt.searchAdmin.List()))
 	router.Handle("GET /api/v1/admin/search/reindex/{runID}", requireSearchReindex(rt.searchAdmin.Get()))
 	router.Handle("GET /api/v1/admin/schedules", requireJobsRead(rt.scheduleAdmin.List()))
 	router.Handle("POST /api/v1/admin/schedules/{name}/trigger", requireJobsWrite(rt.scheduleAdmin.Trigger()))

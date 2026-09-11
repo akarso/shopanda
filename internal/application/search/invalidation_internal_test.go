@@ -32,6 +32,9 @@ func (noopLogger) Error(string, error, map[string]interface{}) {}
 type fakeInternalRunStore struct{}
 
 func (f *fakeInternalRunStore) Create(context.Context, domainsearch.Run) error { return nil }
+func (f *fakeInternalRunStore) List(context.Context, int, int) ([]domainsearch.Run, error) {
+	return nil, nil
+}
 func (f *fakeInternalRunStore) Get(context.Context, string) (*domainsearch.Run, error) {
 	return nil, nil
 }

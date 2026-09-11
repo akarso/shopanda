@@ -62,6 +62,7 @@ Every major screen in the embedded admin SPA is listed below. Use the **Route** 
 | Operations | Payments | `/admin/operations/payments` | Currency display defaults |
 | Operations | Jobs | `/admin/operations/jobs` | Background job list, retry/cancel ([PR-1031](../phase-11-jobs-search-cache/prs/PR-1031.md)) |
 | Operations | Schedules | `/admin/operations/schedules` | Recurring task list, trigger/enable/disable ([PR-1031](../phase-11-jobs-search-cache/prs/PR-1031.md)) |
+| Operations | Search | `/admin/operations/search` | Trigger/track search reindexing, run history ([PR-1038](../phase-11-jobs-search-cache/prs/PR-1038.md)) |
 | Settings | General | `/admin/settings` | Store info, email, media |
 | Settings | Localization | `/admin/settings/localization` | Currency + store languages |
 | Settings | Users & Roles | `/admin/settings/users` | Admin users ([PR-520](../phase-5-maturity/prs/PR-520.md)) |
@@ -317,16 +318,22 @@ Open **Operations → Schedules** at `/admin/operations/schedules` to see every 
 
 ### Reindexing the catalog
 
-There's no admin GUI for this yet — a technical operator triggers it via `POST /api/v1/admin/search/reindex`. Which shape to use depends on what changed:
+Open **Operations → Search** at `/admin/operations/search` to trigger and track search reindexing without any API calls.
 
-- **One product just changed** (`{"scope": "products", "ids": ["<product-id>"]}`) — indexed immediately, synchronously; the response (`200`) confirms it's done, there's nothing to poll.
-- **A batch of products or an entire category** (`{"scope": "products", "ids": [...]}` with more than one ID, or `{"scope": "categories", "ids": [...]}`) — queued as a background run; the response (`202`) carries a `run_id`.
-- **Everything changed since a point in time** (`{"scope": "since", "since": "<RFC3339 timestamp>"}`) — same queued behavior, resolved to whichever products actually changed.
-- **The whole catalog** (`{"scope": "all"}`) — same queued behavior; also what nightly/manual full reindexes use.
+Pick a **Scope**:
 
-A request with more than 10,000 IDs in `ids` is rejected outright (`422`) — that's a request-shape limit, not the efficiency heuristic below. Separately, a large *resolved* partial request (more of the catalog than the configured threshold once category/since scopes are resolved to concrete product IDs) is silently upgraded to a full scan for efficiency — the run's recorded scope reflects what actually ran, not just what was requested.
+- **All** — reindexes the whole catalog; also what nightly/manual full reindexes use.
+- **Products** — enter one or more product IDs (comma-separated). A single ID indexes immediately — the result appears inline, nothing to wait for. More than one ID queues a background run instead.
+- **Categories** — same shape as Products, one category ID indexes immediately, more than one queues a run.
+- **Changed since** — pick a date/time; reindexes whatever changed at or after it. Always queued.
 
-Poll `GET /api/v1/admin/search/reindex/{runID}` for a queued run's progress: `status` (`processing`/`completed`/`failed`), `total_count`/`processed_count` (how far along it is), and `last_error` if it failed.
+A queued run (**Products**/**Categories** with multiple IDs, **Changed since**, or **All**) shows a live progress bar — updated automatically until it reaches **Completed** or **Failed**, no page refresh needed. A large *resolved* partial request (more of the catalog than a configured efficiency threshold, once a category/since scope is resolved to concrete product IDs) is silently upgraded to a full scan — the **Run history** table below the progress bar shows what actually ran, not just what was requested, so this is visible after the fact even if you picked a narrower scope.
+
+**Run history** lists past reindex runs (scope, status, progress, start/finish time) — read-only, for checking what's already run without triggering anything new.
+
+For a single product or category you're actively editing, skip the Search screen entirely: both the **Products** grid and the **Categories** page have a per-row **Reindex now** action that does the same immediate, synchronous reindex with one click.
+
+This screen requires the `search.reindex` permission — by default, only the **Administrator** role has it (see [Admin users and audit](#admin-users-and-audit)).
 
 ## Configure the Store
 
