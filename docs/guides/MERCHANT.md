@@ -62,6 +62,7 @@ Every major screen in the embedded admin SPA is listed below. Use the **Route** 
 | Operations | Payments | `/admin/operations/payments` | Currency display defaults |
 | Operations | Jobs | `/admin/operations/jobs` | Background job list, retry/cancel ([PR-1031](../phase-11-jobs-search-cache/prs/PR-1031.md)) |
 | Operations | Schedules | `/admin/operations/schedules` | Recurring task list, trigger/enable/disable ([PR-1031](../phase-11-jobs-search-cache/prs/PR-1031.md)) |
+| Operations | Search | `/admin/operations/search` | Trigger/track search reindexing, run history ([PR-1038](../phase-11-jobs-search-cache/prs/PR-1038.md)) |
 | Settings | General | `/admin/settings` | Store info, email, media |
 | Settings | Localization | `/admin/settings/localization` | Currency + store languages |
 | Settings | Users & Roles | `/admin/settings/users` | Admin users ([PR-520](../phase-5-maturity/prs/PR-520.md)) |
