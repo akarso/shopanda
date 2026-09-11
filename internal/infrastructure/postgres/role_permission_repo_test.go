@@ -128,11 +128,19 @@ func TestMigration076_LeavesBackfillAlone_WhenAdminNeverCustomized(t *testing.T)
 	}
 }
 
-// TestMigration076_RevertsBackfill_WhenAdminWasCustomizedBeforeIt pins the
-// code review fix itself: an operator explicitly configured the admin
-// role (audit entry recorded) *before* 075 ran, so 075's insert silently
-// overrode that choice. 076 must undo it for exactly the 7 permissions
-// 075 added, since nothing has touched the role since.
+// TestMigration076_RevertsBackfill_WhenAdminWasCustomizedBeforeIt pins
+// 076's own logic in isolation: an operator explicitly configured the
+// admin role (audit entry recorded) *before* 075 ran, so 075's insert
+// silently overrode that choice, and 076 deletes all 7 backfilled
+// permissions in response. This is 076's actual behavior, and it is
+// itself a bug — 076 cannot tell "the operator's update omitted all 7"
+// apart from "omitted some, deliberately retained others" (the audit
+// trail only ever records a permission count, never which permissions
+// were granted), so it deletes indiscriminately. A real deployment never
+// observes this in isolation, though: 077 always runs immediately after
+// and reverses it under the identical guard — see
+// TestMigration077_RestoresBackfill_WhenAdminWasCustomizedBeforeIt for
+// the actual net, end-to-end outcome.
 func TestMigration076_RevertsBackfill_WhenAdminWasCustomizedBeforeIt(t *testing.T) {
 	db := testDB(t)
 	if _, err := migrate.Run(db, "../../../migrations"); err != nil {
@@ -243,6 +251,107 @@ func rerunMigration076(t *testing.T, db *sql.DB) error {
 	}
 	_, err = db.Exec(string(content))
 	return err
+}
+
+func rerunMigration077(t *testing.T, db *sql.DB) error {
+	t.Helper()
+	content, err := os.ReadFile("../../../migrations/077_undo_076_role_permission_blanket_revoke.sql")
+	if err != nil {
+		return err
+	}
+	_, err = db.Exec(string(content))
+	return err
+}
+
+// TestMigration077_RestoresBackfill_WhenAdminWasCustomizedBeforeIt is the
+// code review fix for 076 itself: 076's own guard could not tell "the
+// operator's pre-075 update omitted all 7 permissions" apart from
+// "omitted some, deliberately retained others" — adminrole.Service.
+// UpdateRole's audit entry only ever records a permission *count*, never
+// which permissions were granted. So 076 deleted all 7 whenever its
+// guard fired, which would have silently revoked any of the 7 a real
+// update had actually kept. 077 corrects this by reversing 076's
+// deletion under the exact same guard conditions, since that historical
+// ambiguity can never be resolved precisely (no other table records
+// role_permissions history, and a pre-075 update — by definition —
+// predates any possible audit enrichment). This test exercises the same
+// "customized only before 075" scenario as
+// TestMigration076_RevertsBackfill_WhenAdminWasCustomizedBeforeIt, but
+// carries it through 077 too, and asserts the net, real-world outcome:
+// all 7 permissions present, i.e. 076's deletion never actually took
+// effect once 077 also runs.
+func TestMigration077_RestoresBackfill_WhenAdminWasCustomizedBeforeIt(t *testing.T) {
+	db := testDB(t)
+	if _, err := migrate.Run(db, "../../../migrations"); err != nil {
+		t.Fatalf("run migrations: %v", err)
+	}
+	resetRoleBackfillState(t, db)
+
+	var appliedAt time.Time
+	if err := db.QueryRow(`SELECT applied_at FROM schema_migrations WHERE version = $1`, migration075Name).Scan(&appliedAt); err != nil {
+		t.Fatalf("read 075 applied_at: %v", err)
+	}
+	insertRoleUpdateAudit(t, db, appliedAt.Add(-1*time.Hour))
+
+	if err := rerunMigration076(t, db); err != nil {
+		t.Fatalf("re-run 076: %v", err)
+	}
+	if err := rerunMigration077(t, db); err != nil {
+		t.Fatalf("re-run 077: %v", err)
+	}
+
+	got := adminPermissions(t, db)
+	for _, perm := range backfilledAdminPermissions {
+		if !contains(got, perm) {
+			t.Errorf("admin permissions = %v, want %q present (077 must restore whatever 076 deleted under ambiguous pre-075-only history)", got, perm)
+		}
+	}
+}
+
+// TestMigration077_LeavesLaterCustomizationAlone_WhenAdminWasCustomizedAfterIt
+// pins that 077 does not reopen the case 076 already handled correctly:
+// when the admin role was explicitly saved *after* 075 ran, that save is
+// authoritative and untouched by either 076 or 077, no matter what it
+// contains.
+func TestMigration077_LeavesLaterCustomizationAlone_WhenAdminWasCustomizedAfterIt(t *testing.T) {
+	db := testDB(t)
+	if _, err := migrate.Run(db, "../../../migrations"); err != nil {
+		t.Fatalf("run migrations: %v", err)
+	}
+	resetRoleBackfillState(t, db)
+
+	var appliedAt time.Time
+	if err := db.QueryRow(`SELECT applied_at FROM schema_migrations WHERE version = $1`, migration075Name).Scan(&appliedAt); err != nil {
+		t.Fatalf("read 075 applied_at: %v", err)
+	}
+
+	if _, err := db.Exec(`DELETE FROM role_permissions WHERE role = 'admin' AND permission = ANY($1::text[])`, toPQArray(backfilledAdminPermissions)); err != nil {
+		t.Fatalf("simulate replace: %v", err)
+	}
+	if _, err := db.Exec(`INSERT INTO role_permissions (role, permission) VALUES ('admin', 'search.reindex')`); err != nil {
+		t.Fatalf("simulate replace insert: %v", err)
+	}
+	insertRoleUpdateAudit(t, db, appliedAt.Add(1*time.Hour))
+
+	if err := rerunMigration076(t, db); err != nil {
+		t.Fatalf("re-run 076: %v", err)
+	}
+	if err := rerunMigration077(t, db); err != nil {
+		t.Fatalf("re-run 077: %v", err)
+	}
+
+	got := adminPermissions(t, db)
+	if !contains(got, "search.reindex") {
+		t.Fatalf("admin permissions = %v, want search.reindex kept (operator's post-075 save is authoritative)", got)
+	}
+	for _, perm := range backfilledAdminPermissions {
+		if perm == "search.reindex" {
+			continue
+		}
+		if contains(got, perm) {
+			t.Errorf("admin permissions = %v, want %q absent (077 must not restore what the operator's post-075 save dropped)", got, perm)
+		}
+	}
 }
 
 func toPQArray(ss []string) string {
