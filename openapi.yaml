@@ -1841,9 +1841,16 @@ paths:
         `scope: "products"` is indexed synchronously and returns `200`
         immediately, instead of being queued — every other request
         (`scope: "all"`, multiple IDs, `scope: "since"`, or any
-        `scope: "categories"` request) is enqueued as a background run and
-        returns `202` with a run ID to poll via
-        `GET /api/v1/admin/search/reindex/{runID}`.
+        `scope: "categories"` request, including exactly one ID) is
+        enqueued as a background run and returns `202` with a run ID to
+        poll via `GET /api/v1/admin/search/reindex/{runID}`.
+        `scope: "categories"` reindexes that category's *member products*,
+        not the category's own search document — for the latter, use
+        `scope: "category_document"` instead (exactly one ID, always
+        synchronous, returns `200` with `category_id`). These are
+        deliberately separate, non-interchangeable scopes: a category and
+        its member products are distinct indexed entities, unlike a
+        product where "the product" and "the thing indexed" are the same.
       security:
         - bearerAuth: []
       requestBody:
@@ -1856,17 +1863,19 @@ paths:
               properties:
                 scope:
                   type: string
-                  enum: [all, products, categories, since]
+                  enum: [all, products, categories, category_document, since]
                 ids:
                   type: array
                   items:
                     type: string
                   maxItems: 10000
                   description: >-
-                    Required for scope=products and scope=categories. More
-                    than 10,000 entries is rejected outright (422), separate
-                    from the resolved-scope full-scan substitution described
-                    in the merchant guide.
+                    Required for scope=products and scope=categories (any
+                    count); required, and capped at exactly one entry, for
+                    scope=category_document. More than 10,000 entries is
+                    rejected outright (422) for scope=products/categories,
+                    separate from the resolved-scope full-scan substitution
+                    described in the merchant guide.
                 since:
                   type: string
                   format: date-time
@@ -1876,10 +1885,20 @@ paths:
                 value:
                   scope: all
               singleProduct:
-                summary: Synchronous single-item path
+                summary: Synchronous single-item path (product)
                 value:
                   scope: products
                   ids: ["9f3e2b1a-2222-4c3e-8b1a-000000000001"]
+              categoryDocument:
+                summary: Synchronous single-item path (category document)
+                value:
+                  scope: category_document
+                  ids: ["c1a2b3d4-4444-4c3e-8b1a-000000000003"]
+              categories:
+                summary: Always queued, regardless of ID count
+                value:
+                  scope: categories
+                  ids: ["c1a2b3d4-4444-4c3e-8b1a-000000000003"]
               since:
                 value:
                   scope: since
@@ -1887,8 +1906,9 @@ paths:
       responses:
         "200":
           description: >-
-            OK — the synchronous single-product path (scope=products with
-            exactly one ID).
+            OK — a synchronous single-item path: scope=products (exactly
+            one ID) returns `product_id`; scope=category_document (always
+            exactly one ID) returns `category_id`.
           content:
             application/json:
               schema:

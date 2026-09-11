@@ -110,20 +110,27 @@ type reindexTriggerRequest struct {
 
 // Trigger handles POST /api/v1/admin/search/reindex.
 //
-// A single product ID under scope="products", or a single category ID
-// under scope="categories", is indexed synchronously (SearchEngine.
-// IndexProduct/IndexCategory respectively) and returns 200 with the
-// result inline — everything else (scope="all", multiple IDs, scope=
-// "since") is enqueued via ReindexService.Trigger and returns 202 with a
-// run ID to poll.
+// A single product ID under scope="products" is indexed synchronously
+// (SearchEngine.IndexProduct) and returns 200 with the result inline —
+// everything else under scope="products" (multiple IDs), all of
+// scope="categories" (any ID count, including exactly one), scope=
+// "since", and scope="all" is enqueued via ReindexService.Trigger and
+// returns 202 with a run ID to poll.
 //
-// The category single-item shortcut was added in PR-1038, mirroring the
-// product one PR-1035 shipped — PR-1035's own original spec described
-// them symmetrically, but PR-1037 (which added SearchEngine.IndexCategory
-// in the first place) deliberately left this wiring for later since it
-// wasn't in that PR's own listed Scope; see PR-1035.md's Round 1 notes and
-// ROADMAP.md's "Design notes: PR-1035 shipped ahead of PR-1037" for that
-// history.
+// scope="categories" resolves to that category's *member products*
+// (ProductSource.ProductIDsByCategory, then IndexProduct for each) — it
+// has meant this since PR-1034, well before category documents
+// (SearchEngine.IndexCategory, PR-1037) existed at all, and existing
+// callers depend on that meaning regardless of how many IDs they send.
+// PR-1038 briefly made a single category ID take a synchronous path that
+// called IndexCategory instead — updating only the category's own
+// document (name/slug/product_count) while silently leaving its member
+// products' search entries unrefreshed, changing scope="categories"'
+// established meaning for exactly the ID-count-1 case. Reverted: a
+// category *document*'s own synchronous reindex is scope=
+// "category_document" instead, a distinct, additive scope requiring
+// exactly one ID (see triggerSingleCategory) — never scope="categories",
+// no matter the ID count.
 //
 // Every rejection below is audited here, via reject — decode/shape
 // failures never reach triggerBulk/triggerSingleProduct, which own
@@ -182,11 +189,19 @@ func (h *SearchAdminHandler) Trigger() http.HandlerFunc {
 				reject(apperror.Validation("ids must not be empty for scope=categories"), map[string]interface{}{"scope": "categories"})
 				return
 			}
-			if len(ids) == 1 {
-				h.triggerSingleCategory(w, r, ids[0])
+			h.triggerBulk(w, r, searchApp.ScopeCategories{IDs: ids}, map[string]interface{}{"scope": "categories", "ids": ids})
+
+		case "category_document":
+			ids, err := cleanIDs(req.IDs)
+			if err != nil {
+				reject(apperror.Validation(err.Error()), map[string]interface{}{"scope": "category_document"})
 				return
 			}
-			h.triggerBulk(w, r, searchApp.ScopeCategories{IDs: ids}, map[string]interface{}{"scope": "categories", "ids": ids})
+			if len(ids) != 1 {
+				reject(apperror.Validation("category_document requires exactly one id"), map[string]interface{}{"scope": "category_document", "ids": ids})
+				return
+			}
+			h.triggerSingleCategory(w, r, ids[0])
 
 		case "since":
 			since := strings.TrimSpace(req.Since)
@@ -206,7 +221,7 @@ func (h *SearchAdminHandler) Trigger() http.HandlerFunc {
 			h.triggerBulk(w, r, searchApp.ScopeSince{Since: t}, map[string]interface{}{"scope": "since", "since": since})
 
 		default:
-			reject(apperror.Validation(`scope must be one of "all", "products", "categories", "since"`), map[string]interface{}{"scope": req.Scope})
+			reject(apperror.Validation(`scope must be one of "all", "products", "categories", "category_document", "since"`), map[string]interface{}{"scope": req.Scope})
 		}
 	}
 }
@@ -258,36 +273,37 @@ func (h *SearchAdminHandler) triggerSingleProduct(w http.ResponseWriter, r *http
 	})
 }
 
-// triggerSingleCategory indexes exactly one category synchronously,
-// skipping the queue entirely — the category-side counterpart to
-// triggerSingleProduct, added in PR-1038 (see Trigger's own doc comment
-// for the history of why this didn't exist from PR-1035). Unlike products,
-// category IDs aren't UUIDs (see cleanIDs' own doc comment), so there's no
-// format check before the lookup — a malformed ID here simply won't be
-// found, same as a well-formed but nonexistent one.
+// triggerSingleCategory indexes exactly one category's own search
+// document synchronously (SearchEngine.IndexCategory) — name/slug/
+// product_count, not its member products, which is what scope=
+// "categories" reindexes instead (see Trigger's own doc comment on why
+// these are deliberately separate scopes, not the same one). Category
+// IDs aren't UUIDs (see cleanIDs' own doc comment), so there's no format
+// check before the lookup — a malformed ID here simply won't be found,
+// same as a well-formed but nonexistent one.
 func (h *SearchAdminHandler) triggerSingleCategory(w http.ResponseWriter, r *http.Request, categoryID string) {
 	ctx, cancel := context.WithTimeout(r.Context(), singleItemIndexTimeout)
 	defer cancel()
 
 	category, found, err := h.categories.GetByID(ctx, categoryID)
 	if err != nil {
-		h.audit(ctx, r, adminapp.AuditSearchReindexTrigger, categoryID, map[string]interface{}{"scope": "categories", "ids": []string{categoryID}, "mode": "sync"}, err)
+		h.audit(ctx, r, adminapp.AuditSearchReindexTrigger, categoryID, map[string]interface{}{"scope": "category_document", "ids": []string{categoryID}, "mode": "sync"}, err)
 		httpshared.JSONError(w, apperror.Wrap(apperror.CodeInternal, "look up category failed", err))
 		return
 	}
 	if !found {
 		err := apperror.NotFound("category not found")
-		h.audit(ctx, r, adminapp.AuditSearchReindexTrigger, categoryID, map[string]interface{}{"scope": "categories", "ids": []string{categoryID}, "mode": "sync"}, err)
+		h.audit(ctx, r, adminapp.AuditSearchReindexTrigger, categoryID, map[string]interface{}{"scope": "category_document", "ids": []string{categoryID}, "mode": "sync"}, err)
 		httpshared.JSONError(w, err)
 		return
 	}
 	if err := h.engine.IndexCategory(ctx, category); err != nil {
-		h.audit(ctx, r, adminapp.AuditSearchReindexTrigger, categoryID, map[string]interface{}{"scope": "categories", "ids": []string{categoryID}, "mode": "sync"}, err)
+		h.audit(ctx, r, adminapp.AuditSearchReindexTrigger, categoryID, map[string]interface{}{"scope": "category_document", "ids": []string{categoryID}, "mode": "sync"}, err)
 		httpshared.JSONError(w, apperror.Wrap(apperror.CodeInternal, "index category failed", err))
 		return
 	}
 
-	h.audit(ctx, r, adminapp.AuditSearchReindexTrigger, categoryID, map[string]interface{}{"scope": "categories", "ids": []string{categoryID}, "mode": "sync"}, nil)
+	h.audit(ctx, r, adminapp.AuditSearchReindexTrigger, categoryID, map[string]interface{}{"scope": "category_document", "ids": []string{categoryID}, "mode": "sync"}, nil)
 	httpshared.JSON(w, http.StatusOK, map[string]interface{}{
 		"status":      "indexed",
 		"category_id": categoryID,

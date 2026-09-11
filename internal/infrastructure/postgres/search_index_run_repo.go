@@ -155,11 +155,18 @@ func (r *SearchIndexRunRepo) FindStaleProcessing(ctx context.Context, olderThan 
 }
 
 // List implements domainsearch.RunStore.
+//
+// Ordered by started_at DESC, id DESC — id is a tiebreaker, not a
+// secondary sort key of interest: concurrent triggers can share the same
+// microsecond-resolution started_at, and without a stable tiebreaker their
+// relative order is undefined, letting an offset-based caller skip or
+// duplicate rows between pages (matching JobQueue.List's own
+// "created_at DESC, id DESC" precedent for the same reason).
 func (r *SearchIndexRunRepo) List(ctx context.Context, limit, offset int) ([]domainsearch.Run, error) {
 	const q = `SELECT id, scope, scope_params, status, total_count, processed_count, error_count,
 		started_at, finished_at, last_error
 		FROM search_index_runs
-		ORDER BY started_at DESC
+		ORDER BY started_at DESC, id DESC
 		LIMIT $1 OFFSET $2`
 
 	rows, err := r.db.QueryContext(ctx, q, limit, offset)

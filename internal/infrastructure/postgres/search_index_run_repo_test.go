@@ -3,6 +3,7 @@ package postgres_test
 import (
 	"context"
 	"errors"
+	"sort"
 	"testing"
 	"time"
 
@@ -330,6 +331,55 @@ func TestSearchIndexRunRepo_List_RespectsLimitAndOffset(t *testing.T) {
 	}
 	if page[0].ID != ids[1] || page[1].ID != ids[2] {
 		t.Fatalf("List(limit=2, offset=1) = [%s %s], want [%s %s]", page[0].ID, page[1].ID, ids[1], ids[2])
+	}
+}
+
+// TestSearchIndexRunRepo_List_TiesBrokenByID pins the code-review fix:
+// runs sharing an identical started_at (concurrent triggers can share the
+// same microsecond-resolution timestamp) must still sort deterministically
+// via an id DESC tiebreaker, so that adjacent offset pages neither skip
+// nor repeat a run — matching JobQueue.List's own
+// "created_at DESC, id DESC" precedent.
+func TestSearchIndexRunRepo_List_TiesBrokenByID(t *testing.T) {
+	db := testDB(t)
+	if _, err := migrate.Run(db, "../../../migrations"); err != nil {
+		t.Fatalf("run migrations: %v", err)
+	}
+	t.Cleanup(func() { db.Exec("DELETE FROM search_index_runs") })
+
+	repo, _ := postgres.NewSearchIndexRunRepo(db)
+	ctx := context.Background()
+	same := time.Now().UTC()
+
+	ids := make([]string, 4)
+	for i := range ids {
+		ids[i] = id.New()
+		if _, err := db.ExecContext(ctx,
+			`INSERT INTO search_index_runs (id, scope, scope_params, status, started_at) VALUES ($1, 'all', '{}', 'completed', $2)`,
+			ids[i], same,
+		); err != nil {
+			t.Fatalf("seed: %v", err)
+		}
+	}
+	sort.Sort(sort.Reverse(sort.StringSlice(ids)))
+
+	page1, err := repo.List(ctx, 2, 0)
+	if err != nil {
+		t.Fatalf("List page1: %v", err)
+	}
+	page2, err := repo.List(ctx, 2, 2)
+	if err != nil {
+		t.Fatalf("List page2: %v", err)
+	}
+	if len(page1) != 2 || len(page2) != 2 {
+		t.Fatalf("page1=%d page2=%d runs, want 2 each", len(page1), len(page2))
+	}
+
+	got := []string{page1[0].ID, page1[1].ID, page2[0].ID, page2[1].ID}
+	for i, want := range ids {
+		if got[i] != want {
+			t.Fatalf("run %d = %s, want %s (id DESC tiebreaker) — got %v, want %v", i, got[i], want, got, ids)
+		}
 	}
 }
 
