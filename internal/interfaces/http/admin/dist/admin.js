@@ -10400,17 +10400,20 @@
         var progressBox = document.getElementById("reindex-progress");
         var historyMsg = document.getElementById("reindex-history-msg");
         var historyBox = document.getElementById("reindex-history");
+        var ownPath = "/admin/operations/search";
         // myGeneration pins this call's own render to searchReindexGeneration
-        // at the moment it ran. pollRun compares the two later (in its own
-        // closure, at poll time) rather than checking location.pathname:
-        // leaving this screen and coming back before a pending setTimeout
-        // fires would make location.pathname true again even though this
-        // render's DOM is long gone, letting a stale poll resume and hit
-        // the API in the background (invisibly, since it writes into a
-        // detached progressBox) until that old run reaches a terminal
-        // status. Bumping the shared counter on every render of this
-        // screen — including a fresh visit after leaving — invalidates any
-        // poll loop started by an earlier render.
+        // at the moment it ran. pollRun checks both this and location.pathname
+        // — neither alone is enough: location.pathname stops a poll as soon
+        // as the admin leaves this screen and never returns, but a return
+        // visit before a pending setTimeout fires makes the pathname check
+        // pass again even though this render's DOM is long gone (handleRoute
+        // never tears down the previous screen, so nothing else invalidates
+        // the old closure) — that's what myGeneration catches, since a fresh
+        // render bumps the shared counter. Dropping either check reopens the
+        // other's failure mode: pathname-only lets a stale re-render's poll
+        // resume; generation-only never stops a poll if the admin simply
+        // never comes back (searchReindexGeneration only changes on a new
+        // render of this same screen).
         var myGeneration = ++searchReindexGeneration;
 
         function updateFieldVisibility() {
@@ -10452,18 +10455,18 @@
                 (run.status === "failed" && run.last_error ? '<p role="alert">' + esc(run.last_error) + '</p>' : '');
         }
 
-        // pollRun stops itself once the run reaches a terminal status, and
-        // also if this render is no longer the current one — admin.js has
-        // no route-teardown hook (no screen here polled before this one),
-        // so this compares myGeneration against searchReindexGeneration
-        // (see its own doc comment) rather than continuing to hit the API
-        // for a screen instance nobody's looking at anymore.
+        // pollRun stops itself once the run reaches a terminal status, or
+        // if either guard trips (see myGeneration's own doc comment for why
+        // both are needed, not just one).
+        function stopPolling() {
+            return location.pathname !== ownPath || myGeneration !== searchReindexGeneration;
+        }
         function pollRun(runID) {
-            if (myGeneration !== searchReindexGeneration) {
+            if (stopPolling()) {
                 return;
             }
             api("/admin/search/reindex/" + encodeURIComponent(runID)).then(function (body) {
-                if (myGeneration !== searchReindexGeneration) {
+                if (stopPolling()) {
                     return;
                 }
                 if (body && body.error) {
