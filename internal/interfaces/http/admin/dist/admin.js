@@ -10355,6 +10355,10 @@
     // server-side retry (a different concern — recovering from a transient
     // engine failure), this is just "how often to refresh a progress bar."
     var reindexPollDelayMS = 2000;
+    // searchReindexGeneration is bumped once per renderSearchReindexPage
+    // call; see that function's own myGeneration doc comment for why a
+    // poll loop compares against it instead of relying on location.pathname.
+    var searchReindexGeneration = 0;
 
     function parseReindexIDs(raw) {
         if (!raw) {
@@ -10396,7 +10400,18 @@
         var progressBox = document.getElementById("reindex-progress");
         var historyMsg = document.getElementById("reindex-history-msg");
         var historyBox = document.getElementById("reindex-history");
-        var ownPath = "/admin/operations/search";
+        // myGeneration pins this call's own render to searchReindexGeneration
+        // at the moment it ran. pollRun compares the two later (in its own
+        // closure, at poll time) rather than checking location.pathname:
+        // leaving this screen and coming back before a pending setTimeout
+        // fires would make location.pathname true again even though this
+        // render's DOM is long gone, letting a stale poll resume and hit
+        // the API in the background (invisibly, since it writes into a
+        // detached progressBox) until that old run reaches a terminal
+        // status. Bumping the shared counter on every render of this
+        // screen — including a fresh visit after leaving — invalidates any
+        // poll loop started by an earlier render.
+        var myGeneration = ++searchReindexGeneration;
 
         function updateFieldVisibility() {
             var scope = scopeSelect.value;
@@ -10431,22 +10446,24 @@
             var pct = total > 0 ? Math.round((processed / total) * 100) : (run.status === "processing" ? 0 : 100);
             progressBox.innerHTML =
                 '<p>Run <code>' + esc(run.id) + '</code> — <span class="badge badge-' + esc(run.status) + '">' + esc(run.status) + '</span></p>' +
-                '<div class="reindex-progress-track"><div class="reindex-progress-fill" style="width:' + pct + '%"></div></div>' +
+                '<div class="reindex-progress-track" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="' + pct + '" aria-live="polite" aria-label="Reindex progress">' +
+                '<div class="reindex-progress-fill" style="width:' + pct + '%"></div></div>' +
                 '<p>' + esc(String(processed)) + ' / ' + esc(String(total)) + ' processed</p>' +
                 (run.status === "failed" && run.last_error ? '<p role="alert">' + esc(run.last_error) + '</p>' : '');
         }
 
         // pollRun stops itself once the run reaches a terminal status, and
-        // also if the user has navigated away from this screen in the
-        // meantime — admin.js has no route-teardown hook (no screen here
-        // polls today), so this checks location.pathname itself rather
-        // than continuing to hit the API for a page nobody's looking at.
+        // also if this render is no longer the current one — admin.js has
+        // no route-teardown hook (no screen here polled before this one),
+        // so this compares myGeneration against searchReindexGeneration
+        // (see its own doc comment) rather than continuing to hit the API
+        // for a screen instance nobody's looking at anymore.
         function pollRun(runID) {
-            if (location.pathname !== ownPath) {
+            if (myGeneration !== searchReindexGeneration) {
                 return;
             }
             api("/admin/search/reindex/" + encodeURIComponent(runID)).then(function (body) {
-                if (location.pathname !== ownPath) {
+                if (myGeneration !== searchReindexGeneration) {
                     return;
                 }
                 if (body && body.error) {

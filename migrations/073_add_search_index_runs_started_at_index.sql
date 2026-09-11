@@ -1,0 +1,17 @@
+-- Supports SearchIndexRunRepo.List (PR-1038): "ORDER BY started_at DESC
+-- LIMIT $1 OFFSET $2", the run-history table's read query, unfiltered by
+-- scope/status so a plain index on started_at (not a composite with
+-- status, which FindStaleProcessing's own narrower query would prefer)
+-- is what actually serves it. Without this, every open of the admin
+-- Search screen and every history refresh after a run finishes is a full
+-- table scan + sort — fine at today's volume, worse as search_index_runs
+-- grows (one row per triggered reindex, indefinitely retained).
+--
+-- Same CONCURRENTLY caveat as 066_add_jobs_introspection_indexes.sql,
+-- 070_add_jobs_reindex_run_id_index.sql, and
+-- 071_add_products_updated_at_index.sql: migrations run inside a
+-- transaction here, so this takes a ShareLock on search_index_runs during
+-- creation, blocking writes for that duration. Apply manually with
+-- CONCURRENTLY during a maintenance window instead, for a large/hot
+-- production table.
+CREATE INDEX IF NOT EXISTS idx_search_index_runs_started_at ON search_index_runs (started_at);

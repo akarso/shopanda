@@ -529,6 +529,49 @@ func TestSearchAdminHandler_Trigger_ScopeProducts_SingleID_ListByIDsError(t *tes
 	}
 }
 
+// TestSearchAdminHandler_Trigger_ScopeProducts_SingleID_IndexProductError
+// exercises triggerSingleProduct's engine-failure branch — distinct from
+// ListByIDsError (the lookup itself failing): here the lookup succeeds
+// but SearchEngine.IndexProduct itself errors (search engine down/
+// unreachable), the real-world case behind the "Reindex now" row action.
+// fakeSearchEngine already had an indexErr field for this since the
+// original PR-1038 round, but nothing set it — this was a dead test hook.
+func TestSearchAdminHandler_Trigger_ScopeProducts_SingleID_IndexProductError(t *testing.T) {
+	deps := newDefaultDeps()
+	productID := id.New()
+	deps.products.products[productID] = domainsearch.Product{ID: productID, Name: "Widget"}
+	deps.engine.indexErr = errors.New("search engine unreachable")
+	mux := newSearchAdminRouter(newSearchAdminHandler(t, deps))
+
+	rec := triggerRequest(t, mux, `{"scope":"products","ids":["`+productID+`"]}`)
+
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("status = %d, want 500; body=%s", rec.Code, rec.Body.String())
+	}
+	if len(deps.engine.indexed) != 0 {
+		t.Error("expected no successful index recorded when IndexProduct itself fails")
+	}
+}
+
+// TestSearchAdminHandler_Trigger_ScopeCategories_SingleID_IndexCategoryError
+// is the category-side counterpart — see
+// TestSearchAdminHandler_Trigger_ScopeProducts_SingleID_IndexProductError.
+func TestSearchAdminHandler_Trigger_ScopeCategories_SingleID_IndexCategoryError(t *testing.T) {
+	deps := newDefaultDeps()
+	deps.categories.categories["cat-1"] = domainsearch.Category{ID: "cat-1", Name: "Shoes"}
+	deps.engine.indexCategoryErr = errors.New("search engine unreachable")
+	mux := newSearchAdminRouter(newSearchAdminHandler(t, deps))
+
+	rec := triggerRequest(t, mux, `{"scope":"categories","ids":["cat-1"]}`)
+
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("status = %d, want 500; body=%s", rec.Code, rec.Body.String())
+	}
+	if len(deps.engine.indexedCategories) != 0 {
+		t.Error("expected no successful index recorded when IndexCategory itself fails")
+	}
+}
+
 func TestSearchAdminHandler_Trigger_ScopeProducts_EmptyIDs(t *testing.T) {
 	deps := newDefaultDeps()
 	mux := newSearchAdminRouter(newSearchAdminHandler(t, deps))
