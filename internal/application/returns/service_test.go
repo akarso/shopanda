@@ -7,6 +7,7 @@ import (
 	"time"
 
 	returnsApp "github.com/akarso/shopanda/internal/application/returns"
+	"github.com/akarso/shopanda/internal/domain/catalog"
 	"github.com/akarso/shopanda/internal/domain/inventory"
 	"github.com/akarso/shopanda/internal/domain/order"
 	"github.com/akarso/shopanda/internal/domain/payment"
@@ -179,9 +180,32 @@ func paidOrder(t *testing.T) *order.Order {
 	return &ord
 }
 
+// memVariantRepo is a minimal catalog.VariantRepository fake — every
+// variant ID resolves to a variant on product "p1", matching paidOrder's
+// own "v1"/"SKU-1" item. Tests that care about the specific product/SKU a
+// restock event carries construct their own returnsApp.Service directly
+// instead of going through newService.
+type memVariantRepo struct{}
+
+func (memVariantRepo) FindByID(_ context.Context, id string) (*catalog.Variant, error) {
+	return &catalog.Variant{ID: id, ProductID: "p1", SKU: "SKU-1"}, nil
+}
+func (memVariantRepo) FindBySKU(context.Context, string) (*catalog.Variant, error) { return nil, nil }
+func (memVariantRepo) FindBySKUs(context.Context, []string) (map[string]*catalog.Variant, error) {
+	return nil, nil
+}
+func (memVariantRepo) ListByProductID(context.Context, string, int, int) ([]catalog.Variant, error) {
+	return nil, nil
+}
+func (memVariantRepo) ListByProductIDs(context.Context, []string, int) (map[string][]catalog.Variant, error) {
+	return nil, nil
+}
+func (memVariantRepo) Create(context.Context, *catalog.Variant) error { return nil }
+func (memVariantRepo) Update(context.Context, *catalog.Variant) error { return nil }
+
 func newService(t *testing.T, orders *memOrderRepo, returns *memReturnRepo, stock *memStockRepo, payments *memPaymentRepo, refunder payment.Refunder) *returnsApp.Service {
 	t.Helper()
-	return returnsApp.NewService(returns, orders, stock, payments, refunder, event.NewBus(logger.NewWithWriter(io.Discard, "info")), logger.NewWithWriter(io.Discard, "info"))
+	return returnsApp.NewService(returns, orders, stock, memVariantRepo{}, payments, refunder, event.NewBus(logger.NewWithWriter(io.Discard, "info")), logger.NewWithWriter(io.Discard, "info"))
 }
 
 func TestService_RequestReturnAndWorkflow(t *testing.T) {
@@ -285,6 +309,50 @@ func TestService_Receive_RetryDoesNotDoubleRestock(t *testing.T) {
 	}
 	if ret.RestockedAt == nil {
 		t.Fatal("expected restocked_at after receive")
+	}
+}
+
+// TestService_Receive_PublishesStockUpdatedEvent pins PR-1049's returns
+// fix: a successful restock must publish inventory.EventStockUpdated per
+// item, alongside the existing EventReturnReceived — restocking is a real
+// stock change the search index's on-save subscriber previously never
+// heard about.
+func TestService_Receive_PublishesStockUpdatedEvent(t *testing.T) {
+	orders := &memOrderRepo{order: paidOrder(t)}
+	returns := newMemReturnRepo()
+	stock := &memStockRepo{qty: map[string]int{"v1": 5}}
+	bus := event.NewBus(logger.NewWithWriter(io.Discard, "info"))
+	svc := returnsApp.NewService(returns, orders, stock, memVariantRepo{}, &memPaymentRepo{}, nil, bus, logger.NewWithWriter(io.Discard, "info"))
+
+	var captured []event.Event
+	bus.On(inventory.EventStockUpdated, func(_ context.Context, evt event.Event) error {
+		captured = append(captured, evt)
+		return nil
+	})
+
+	ret, err := svc.RequestReturn(context.Background(), "o1", "c1", "damaged", []returnsApp.RequestLine{
+		{VariantID: "v1", Quantity: 1},
+	})
+	if err != nil {
+		t.Fatalf("RequestReturn: %v", err)
+	}
+	ret, err = svc.Approve(context.Background(), ret.ID)
+	if err != nil {
+		t.Fatalf("Approve: %v", err)
+	}
+	if _, err := svc.Receive(context.Background(), ret.ID); err != nil {
+		t.Fatalf("Receive: %v", err)
+	}
+
+	if len(captured) != 1 {
+		t.Fatalf("published %d inventory.EventStockUpdated events, want 1", len(captured))
+	}
+	data, ok := captured[0].Data.(inventory.StockUpdatedData)
+	if !ok {
+		t.Fatalf("event data type = %T, want StockUpdatedData", captured[0].Data)
+	}
+	if data.VariantID != "v1" || data.ProductID != "p1" || data.SKU != "SKU-1" || data.Quantity != 6 {
+		t.Errorf("data = %+v, want variant_id=v1 product_id=p1 sku=SKU-1 quantity=6 (5 + 1 restocked)", data)
 	}
 }
 

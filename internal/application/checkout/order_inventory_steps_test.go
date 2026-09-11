@@ -17,7 +17,9 @@ import (
 	"github.com/akarso/shopanda/internal/domain/order"
 	"github.com/akarso/shopanda/internal/domain/pricing"
 	"github.com/akarso/shopanda/internal/domain/shared"
+	"github.com/akarso/shopanda/internal/platform/event"
 	"github.com/akarso/shopanda/internal/platform/id"
+	"github.com/akarso/shopanda/internal/platform/logger"
 )
 
 func attachCreateOrderInput(cctx *checkout.Context) {
@@ -62,8 +64,8 @@ func (r *mockReservationRepo) FindByID(_ context.Context, _ string) (*inventory.
 func (r *mockReservationRepo) ListActiveByVariantID(_ context.Context, _ string) ([]inventory.Reservation, error) {
 	return nil, nil
 }
-func (r *mockReservationRepo) ReleaseExpiredBefore(_ context.Context, _ time.Time) (int, error) {
-	return 0, nil
+func (r *mockReservationRepo) ReleaseExpiredBefore(_ context.Context, _ time.Time) ([]inventory.ReleasedReservation, error) {
+	return nil, nil
 }
 
 // ============================================================
@@ -316,6 +318,104 @@ func TestReserveInventoryStep_EmptyCart(t *testing.T) {
 	}
 	if v, ok := cctx.GetMeta("reserved"); !ok || v != true {
 		t.Error("expected reserved=true even for empty cart")
+	}
+}
+
+// TestReserveInventoryStep_EmitsStockUpdatedEvent pins PR-1049's checkout
+// fix: WithStockEventPublishing must publish inventory.EventStockUpdated
+// for every successful Reserve, mirroring InventoryAdminHandler.Adjust's
+// own event (PR-1036) — checkout is the highest-frequency stock-changing
+// path, and was the one PR-1036 left completely uncovered.
+func TestReserveInventoryStep_EmitsStockUpdatedEvent(t *testing.T) {
+	repo := &mockReservationRepo{}
+	variants := &mockVariantRepo037{variants: variantMap037("v1", "v2")}
+	bus := event.NewBus(logger.New("error"))
+	step := checkout.NewReserveInventoryStep(repo, checkout.WithStockEventPublishing(variants, bus))
+
+	var captured []event.Event
+	bus.On(inventory.EventStockUpdated, func(_ context.Context, evt event.Event) error {
+		captured = append(captured, evt)
+		return nil
+	})
+
+	cctx := checkout.NewContext("cart-1", "cust-1", "EUR")
+	cctx.Cart = cartWithItems037(t, "cust-1", "v1", "v2")
+
+	if err := step.Execute(context.Background(), cctx); err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+
+	if len(captured) != 2 {
+		t.Fatalf("published %d events, want 2 (one per reserved item)", len(captured))
+	}
+	for i, want := range []string{"v1", "v2"} {
+		data, ok := captured[i].Data.(inventory.StockUpdatedData)
+		if !ok {
+			t.Fatalf("event[%d] data type = %T, want StockUpdatedData", i, captured[i].Data)
+		}
+		if data.VariantID != want || data.ProductID != "prod-1" || data.SKU != fmt.Sprintf("SKU-%s", want) || data.Quantity != 2 {
+			t.Errorf("event[%d] data = %+v, want variant_id=%s product_id=prod-1 sku=SKU-%s quantity=2", i, data, want, want)
+		}
+	}
+}
+
+// TestReserveInventoryStep_NoBusNoEvent pins that Execute works exactly
+// as before when WithStockEventPublishing was never used — the default
+// for every existing caller/test that doesn't need eventing, matching
+// InventoryAdminHandler's own SetBus-optional convention.
+func TestReserveInventoryStep_NoBusNoEvent(t *testing.T) {
+	repo := &mockReservationRepo{}
+	step := checkout.NewReserveInventoryStep(repo)
+
+	cctx := checkout.NewContext("cart-1", "cust-1", "EUR")
+	cctx.Cart = cartWithItems037(t, "cust-1", "v1")
+
+	if err := step.Execute(context.Background(), cctx); err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	if len(repo.reserved) != 1 {
+		t.Fatalf("reserved count = %d, want 1", len(repo.reserved))
+	}
+}
+
+// TestReserveInventoryStep_RollbackEmitsStockUpdatedEvent pins that a
+// rollback Release (triggered by a later item's Reserve failing) also
+// publishes inventory.EventStockUpdated for the released reservation —
+// its restore is a real stock change too, and the search index would
+// otherwise keep showing the item as reserved/unavailable after checkout
+// actually released it back.
+func TestReserveInventoryStep_RollbackEmitsStockUpdatedEvent(t *testing.T) {
+	repo := &mockReservationRepo{
+		err:        errors.New("insufficient stock"),
+		failAfterN: 1, // first Reserve succeeds, second fails
+	}
+	variants := &mockVariantRepo037{variants: variantMap037("v1", "v2")}
+	bus := event.NewBus(logger.New("error"))
+	step := checkout.NewReserveInventoryStep(repo, checkout.WithStockEventPublishing(variants, bus))
+
+	var captured []event.Event
+	bus.On(inventory.EventStockUpdated, func(_ context.Context, evt event.Event) error {
+		captured = append(captured, evt)
+		return nil
+	})
+
+	cctx := checkout.NewContext("cart-1", "cust-1", "EUR")
+	cctx.Cart = cartWithItems037(t, "cust-1", "v1", "v2")
+
+	if err := step.Execute(context.Background(), cctx); err == nil {
+		t.Fatal("expected error from second Reserve")
+	}
+
+	// One publish for v1's own successful Reserve, one more for its
+	// rollback Release once v2's Reserve failed.
+	if len(captured) != 2 {
+		t.Fatalf("published %d events, want 2 (v1 reserve + v1 rollback release)", len(captured))
+	}
+	for i, evt := range captured {
+		data, ok := evt.Data.(inventory.StockUpdatedData)
+		if !ok || data.VariantID != "v1" {
+			t.Errorf("event[%d] = %+v, want VariantID=v1", i, evt.Data)
+		}
 	}
 }
 

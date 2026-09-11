@@ -239,7 +239,12 @@ func runScheduleTrigger(w io.Writer, cfg *config.Config, log logger.Logger, args
 		Bootstrap: boot,
 	}
 	pluginApp.SetExtensionRegistry(extensionApp.NewRegistry())
-	if err := wireIntegrationStockSyncerFromDB(conn, pluginApp); err != nil {
+	// PR-1049's batched-reindex wiring is deliberately not added here: this
+	// command fires one named schedule (any plugin-registered cron task,
+	// not specifically ERP stock sync) and its own construction sequence
+	// doesn't build a ReindexService anywhere else either — not worth
+	// adding just for this low-frequency, manual-trigger path.
+	if _, err := wireIntegrationStockSyncerFromDB(conn, pluginApp); err != nil {
 		return err
 	}
 	preparePermissionRegistry(pluginApp)

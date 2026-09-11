@@ -115,9 +115,23 @@ func runImportStock(cfg *config.Config, log logger.Logger) error {
 		if err != nil {
 			return nil, fmt.Errorf("stock repo: %w", err)
 		}
-		result, err := importer.NewStockImporter(variantRepo, stockRepo).
-			WithRowHooks(regs.Import).
-			Import(ctx, f)
+		imp := importer.NewStockImporter(variantRepo, stockRepo).WithRowHooks(regs.Import)
+		// PR-1049: batch-trigger a scoped reindex for every product this
+		// import touches (see StockImporter.WithReindex's own doc comment
+		// for why this is one call after the whole import, not one per
+		// row). newSearchReindexService opens its own connection and
+		// plugin bootstrap — a real, but accepted, extra cost for a CLI
+		// command that already reads and processes a whole file; a failure
+		// here only means the import proceeds without reindex triggering
+		// (the existing manual/scheduled search:reindex remains the
+		// fallback), not that the import itself fails.
+		if reindexSvc, _, reindexConn, err := newSearchReindexService(cfg, log); err == nil {
+			defer reindexConn.Close()
+			imp = imp.WithReindex(reindexSvc)
+		} else {
+			log.Warn("import.stock.reindex_service_unavailable", map[string]interface{}{"error": err.Error()})
+		}
+		result, err := imp.Import(ctx, f)
 		if err != nil {
 			return nil, fmt.Errorf("import stock: %w", err)
 		}

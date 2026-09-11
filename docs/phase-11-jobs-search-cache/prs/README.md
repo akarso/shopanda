@@ -24,7 +24,7 @@
 | PR-1046 | D | planned | [Invalidation wiring + stampede guard](PR-1046.md) |
 | PR-1047 | D | planned | [Observability + rollup](PR-1047.md) |
 | PR-1048 | — | done | [Fix search reindex stuck-run gap](PR-1048.md) |
-| PR-1049 | — | planned | [Stock-change event coverage for on-save indexing](PR-1049.md) |
+| PR-1049 | — | done | [Stock-change event coverage for on-save indexing](PR-1049.md) |
 
 Roadmap: [`../ROADMAP.md`](../ROADMAP.md)
 

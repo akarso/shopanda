@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/akarso/shopanda/internal/domain/catalog"
 	"github.com/akarso/shopanda/internal/domain/inventory"
 	"github.com/akarso/shopanda/internal/domain/order"
 	"github.com/akarso/shopanda/internal/domain/payment"
@@ -21,6 +22,7 @@ type Service struct {
 	returns  domainReturns.Repository
 	orders   order.OrderRepository
 	stock    inventory.StockRepository
+	variants catalog.VariantRepository
 	payments payment.PaymentRepository
 	refunder payment.Refunder
 	bus      *event.Bus
@@ -33,6 +35,7 @@ func NewService(
 	returns domainReturns.Repository,
 	orders order.OrderRepository,
 	stock inventory.StockRepository,
+	variants catalog.VariantRepository,
 	payments payment.PaymentRepository,
 	refunder payment.Refunder,
 	bus *event.Bus,
@@ -47,6 +50,9 @@ func NewService(
 	if stock == nil {
 		panic("returns.NewService: nil stock repository")
 	}
+	if variants == nil {
+		panic("returns.NewService: nil variants repository")
+	}
 	if payments == nil {
 		panic("returns.NewService: nil payments repository")
 	}
@@ -60,6 +66,7 @@ func NewService(
 		returns:  returns,
 		orders:   orders,
 		stock:    stock,
+		variants: variants,
 		payments: payments,
 		refunder: refunder,
 		bus:      bus,
@@ -199,6 +206,7 @@ func (s *Service) Receive(ctx context.Context, returnID string) (*domainReturns.
 		if err := s.stock.SetStock(ctx, &entry); err != nil {
 			return nil, fmt.Errorf("returns: restock: %w", err)
 		}
+		s.publishStockUpdated(ctx, item.VariantID, entry.Quantity)
 	}
 	if err := ret.RecordRestocked(now); err != nil {
 		return nil, apperror.Validation(err.Error())
@@ -465,6 +473,40 @@ func (s *Service) publish(ctx context.Context, name string, ret domainReturns.Re
 			"event":     name,
 			"return_id": ret.ID,
 			"error":     err.Error(),
+		})
+	}
+}
+
+// publishStockUpdated publishes inventory.EventStockUpdated for one
+// restocked item (PR-1049: returns restocking was another stock-changing
+// path PR-1036's on-save search subscriber never heard about). Unlike
+// publish above, a failed variant lookup or Publish error here is logged
+// but never returned — Receive has already durably recorded the restock
+// and the return's own state transition by this point; a stale search
+// index entry is not worth turning a successful restock into a reported
+// failure over.
+func (s *Service) publishStockUpdated(ctx context.Context, variantID string, quantity int) {
+	variant, err := s.variants.FindByID(ctx, variantID)
+	if err != nil {
+		s.log.Warn("returns: variant lookup failed for stock event", map[string]interface{}{
+			"variant_id": variantID,
+			"error":      err.Error(),
+		})
+		return
+	}
+	if variant == nil {
+		return
+	}
+	data := inventory.StockUpdatedData{
+		ProductID: variant.ProductID,
+		VariantID: variant.ID,
+		SKU:       variant.SKU,
+		Quantity:  quantity,
+	}
+	if err := s.bus.Publish(ctx, event.New(inventory.EventStockUpdated, "returns.service", data)); err != nil {
+		s.log.Warn("returns: publish stock event failed", map[string]interface{}{
+			"variant_id": variantID,
+			"error":      err.Error(),
 		})
 	}
 }

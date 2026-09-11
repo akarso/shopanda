@@ -5,8 +5,10 @@ import (
 	"errors"
 	"time"
 
+	"github.com/akarso/shopanda/internal/domain/catalog"
 	"github.com/akarso/shopanda/internal/domain/inventory"
 	"github.com/akarso/shopanda/internal/domain/jobs"
+	"github.com/akarso/shopanda/internal/platform/event"
 )
 
 // ReservationExpiryJobType is the job type string for the reservation
@@ -26,7 +28,7 @@ const sweepTimeout = 10 * time.Minute
 // ExpiredReservationReleaser releases active reservations that expired
 // before a cutoff, restoring their reserved quantity to stock.
 type ExpiredReservationReleaser interface {
-	ReleaseExpiredBefore(ctx context.Context, cutoff time.Time) (int, error)
+	ReleaseExpiredBefore(ctx context.Context, cutoff time.Time) ([]inventory.ReleasedReservation, error)
 }
 
 // Logger is the logging interface used by inventory application services.
@@ -44,6 +46,12 @@ type Logger interface {
 type ReservationExpiryHandler struct {
 	releaser ExpiredReservationReleaser
 	log      Logger
+
+	// variants and bus are both set together, only by SetEventPublishing —
+	// see its own doc comment for why publishing inventory.EventStockUpdated
+	// is optional here rather than a required constructor dependency.
+	variants catalog.VariantRepository
+	bus      *event.Bus
 }
 
 // NewReservationExpiryHandler creates a handler for
@@ -56,6 +64,19 @@ func NewReservationExpiryHandler(releaser ExpiredReservationReleaser, log Logger
 		panic("inventory.NewReservationExpiryHandler: nil logger")
 	}
 	return &ReservationExpiryHandler{releaser: releaser, log: log}
+}
+
+// SetEventPublishing enables publishing inventory.EventStockUpdated for
+// every reservation this handler releases (PR-1049: a reservation-expiry
+// release restores real stock the search index's on-save subscriber
+// should know about, same as any other stock change). variants resolves
+// each released VariantID to the ProductID/SKU the event payload needs;
+// bus publishes it. Left unset (the default), Handle works exactly as
+// before — no event, no error — matching InventoryAdminHandler.SetBus's
+// existing optional-wiring convention.
+func (h *ReservationExpiryHandler) SetEventPublishing(variants catalog.VariantRepository, bus *event.Bus) {
+	h.variants = variants
+	h.bus = bus
 }
 
 // Type returns the job type this handler processes.
@@ -83,6 +104,16 @@ func (h *ReservationExpiryHandler) Handle(ctx context.Context, _ jobs.Job) error
 		})
 	}
 
+	// Publish for every released reservation regardless of the orphan
+	// warning above — the releases themselves committed successfully (see
+	// that warning's own doc comment), and this is a best-effort side
+	// channel: a failed lookup/publish for one variant must not lose the
+	// others or fail this job (releasing reservations already succeeded;
+	// a stale search index entry is not worth retrying a sweep over).
+	for _, rr := range released {
+		h.publishStockUpdated(sweepCtx, rr.VariantID, rr.Quantity)
+	}
+
 	// sweepCtx.Err() is checked, not ctx.Err(): any non-nil error here
 	// (DeadlineExceeded from sweepTimeout, or Canceled propagated from the
 	// caller's own ctx — e.g. worker shutdown) means ReleaseExpiredBefore
@@ -94,9 +125,33 @@ func (h *ReservationExpiryHandler) Handle(ctx context.Context, _ jobs.Job) error
 	// cutoff — is the same, and errors.Is(..., DeadlineExceeded) alone
 	// would have missed the shutdown case.
 	h.log.Info("job.reservation_expiry.released", map[string]interface{}{
-		"released":       released,
+		"released":       len(released),
 		"duration":       time.Since(start).String(),
 		"more_remaining": sweepCtx.Err() != nil,
 	})
 	return nil
+}
+
+// publishStockUpdated is a best-effort side channel — see
+// SetEventPublishing's own doc comment. quantity is the reservation's own
+// quantity (the size of the restore), not the variant's resulting on-hand
+// total: ReleaseExpiredBefore's batched SQL doesn't read that back (see
+// ReleasedReservation's own doc comment), and fetching it separately per
+// released variant would cost an extra query this sweep's only real
+// consumer (the search index's HandleStockUpdated) doesn't need — it
+// reindexes by ProductID alone.
+func (h *ReservationExpiryHandler) publishStockUpdated(ctx context.Context, variantID string, quantity int) {
+	if h.bus == nil {
+		return
+	}
+	variant, err := h.variants.FindByID(ctx, variantID)
+	if err != nil || variant == nil {
+		return
+	}
+	_ = h.bus.Publish(ctx, event.New(inventory.EventStockUpdated, "inventory.reservation_expiry", inventory.StockUpdatedData{
+		ProductID: variant.ProductID,
+		VariantID: variant.ID,
+		SKU:       variant.SKU,
+		Quantity:  quantity,
+	}))
 }

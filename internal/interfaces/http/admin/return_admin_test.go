@@ -14,6 +14,7 @@ import (
 
 	adminapp "github.com/akarso/shopanda/internal/application/admin"
 	returnsApp "github.com/akarso/shopanda/internal/application/returns"
+	"github.com/akarso/shopanda/internal/domain/catalog"
 	"github.com/akarso/shopanda/internal/domain/identity"
 	"github.com/akarso/shopanda/internal/domain/inventory"
 	"github.com/akarso/shopanda/internal/domain/order"
@@ -170,12 +171,36 @@ func returnHTTPPaidOrder(t *testing.T) *order.Order {
 	return &ord
 }
 
+// returnHTTPVariantRepo is a minimal catalog.VariantRepository fake —
+// every variant ID resolves to a variant on product "p1", matching
+// returnHTTPPaidOrder's own "v1"/"SKU-1" item.
+type returnHTTPVariantRepo struct{}
+
+func (returnHTTPVariantRepo) FindByID(_ context.Context, id string) (*catalog.Variant, error) {
+	return &catalog.Variant{ID: id, ProductID: "p1", SKU: "SKU-1"}, nil
+}
+func (returnHTTPVariantRepo) FindBySKU(context.Context, string) (*catalog.Variant, error) {
+	return nil, nil
+}
+func (returnHTTPVariantRepo) FindBySKUs(context.Context, []string) (map[string]*catalog.Variant, error) {
+	return nil, nil
+}
+func (returnHTTPVariantRepo) ListByProductID(context.Context, string, int, int) ([]catalog.Variant, error) {
+	return nil, nil
+}
+func (returnHTTPVariantRepo) ListByProductIDs(context.Context, []string, int) (map[string][]catalog.Variant, error) {
+	return nil, nil
+}
+func (returnHTTPVariantRepo) Create(context.Context, *catalog.Variant) error { return nil }
+func (returnHTTPVariantRepo) Update(context.Context, *catalog.Variant) error { return nil }
+
 func returnAdminTestService(t *testing.T) *returnsApp.Service {
 	t.Helper()
 	return returnsApp.NewService(
 		&returnHTTPReturnRepo{byID: make(map[string]*domainReturns.Return)},
 		&returnHTTPOrderRepo{order: returnHTTPPaidOrder(t)},
 		&returnHTTPStockRepo{qty: map[string]int{"v1": 5}},
+		returnHTTPVariantRepo{},
 		&returnHTTPPaymentRepo{},
 		nil,
 		event.NewBus(logger.NewWithWriter(io.Discard, "info")),

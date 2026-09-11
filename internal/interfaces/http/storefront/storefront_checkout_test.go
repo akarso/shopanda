@@ -61,8 +61,8 @@ func (r *storefrontCheckoutReservationRepoStub) FindByID(_ context.Context, _ st
 func (r *storefrontCheckoutReservationRepoStub) ListActiveByVariantID(_ context.Context, _ string) ([]inventory.Reservation, error) {
 	return nil, nil
 }
-func (r *storefrontCheckoutReservationRepoStub) ReleaseExpiredBefore(_ context.Context, _ time.Time) (int, error) {
-	return 0, nil
+func (r *storefrontCheckoutReservationRepoStub) ReleaseExpiredBefore(_ context.Context, _ time.Time) ([]inventory.ReleasedReservation, error) {
+	return nil, nil
 }
 
 type storefrontCheckoutOrderRepoStub struct {

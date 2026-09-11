@@ -27,8 +27,20 @@ type ReservationRepository interface {
 	// ListActiveByVariantID returns all active reservations for a variant.
 	ListActiveByVariantID(ctx context.Context, variantID string) ([]Reservation, error)
 
-	// ReleaseExpiredBefore atomically releases all active reservations that expired
-	// before cutoff, restoring their quantities to stock. Returns the number of
-	// reservations released.
-	ReleaseExpiredBefore(ctx context.Context, cutoff time.Time) (int, error)
+	// ReleaseExpiredBefore atomically releases all active reservations that
+	// expired before cutoff, restoring their quantities to stock. Returns
+	// one ReleasedReservation per reservation released (PR-1049: callers
+	// need per-variant detail — e.g. to publish inventory.EventStockUpdated
+	// for each — not just a count).
+	ReleaseExpiredBefore(ctx context.Context, cutoff time.Time) ([]ReleasedReservation, error)
+}
+
+// ReleasedReservation describes one reservation ReleaseExpiredBefore
+// released: the variant whose stock was restored, and by how much (the
+// reservation's own quantity — the size of the restore — not the
+// variant's resulting on-hand total, which ReleaseExpiredBefore's batched
+// SQL doesn't read back).
+type ReleasedReservation struct {
+	VariantID string
+	Quantity  int
 }

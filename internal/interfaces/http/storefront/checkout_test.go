@@ -131,8 +131,8 @@ func (r *stubCheckoutReservationRepo) FindByID(_ context.Context, _ string) (*in
 func (r *stubCheckoutReservationRepo) ListActiveByVariantID(_ context.Context, _ string) ([]inventory.Reservation, error) {
 	return nil, nil
 }
-func (r *stubCheckoutReservationRepo) ReleaseExpiredBefore(_ context.Context, _ time.Time) (int, error) {
-	return 0, nil
+func (r *stubCheckoutReservationRepo) ReleaseExpiredBefore(_ context.Context, _ time.Time) ([]inventory.ReleasedReservation, error) {
+	return nil, nil
 }
 
 // stubCheckoutOrderRepo ─────────────────────────────────────────────────
