@@ -155,8 +155,12 @@ func Run(t *testing.T, c cache.Cache) {
 		if err := c.Delete("tagtest:gone"); err != nil {
 			t.Fatalf("Delete: %v", err)
 		}
-		if _, err := c.DeleteByTag(ctx, "gone-tag"); err != nil {
+		n, err := c.DeleteByTag(ctx, "gone-tag")
+		if err != nil {
 			t.Fatalf("DeleteByTag after Delete: %v", err)
+		}
+		if n != 0 {
+			t.Fatalf("DeleteByTag after Delete count = %d, want 0", n)
 		}
 		assertMiss(t, c, "tagtest:gone")
 	})
@@ -187,15 +191,22 @@ func Run(t *testing.T, c cache.Cache) {
 			}
 			var wg sync.WaitGroup
 			wg.Add(2)
+			var delErr, setErr error
 			go func() {
 				defer wg.Done()
-				_, _ = c.DeleteByTag(ctx, tag)
+				_, delErr = c.DeleteByTag(ctx, tag)
 			}()
 			go func() {
 				defer wg.Done()
-				_ = c.SetWithTags(ctx, newKey, "fresh", time.Hour, tag)
+				setErr = c.SetWithTags(ctx, newKey, "fresh", time.Hour, tag)
 			}()
 			wg.Wait()
+			if delErr != nil {
+				t.Fatalf("concurrent DeleteByTag: %v", delErr)
+			}
+			if setErr != nil {
+				t.Fatalf("concurrent SetWithTags: %v", setErr)
+			}
 			if _, err := c.DeleteByTag(ctx, tag); err != nil {
 				t.Fatalf("follow-up DeleteByTag: %v", err)
 			}

@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/akarso/shopanda/internal/domain/cache"
@@ -29,6 +30,19 @@ if redis.call('SCARD', KEYS[1]) == 0 then
   return redis.call('DEL', KEYS[1])
 end
 return 0
+`)
+
+// deleteUntagScript deletes the value key and removes it from every tag set
+// listed in the reverse index, then drops the reverse set.
+// KEYS[1]=value key KEYS[2]=reverse set ARGV[1]=store prefix ARGV[2]=logical key
+var deleteUntagScript = goredis.NewScript(`
+local tags = redis.call('SMEMBERS', KEYS[2])
+redis.call('DEL', KEYS[1])
+for i = 1, #tags do
+  redis.call('SREM', ARGV[1] .. 'tag:' .. tags[i], ARGV[2])
+end
+redis.call('DEL', KEYS[2])
+return 1
 `)
 
 // Logger is the optional structured logger used for recoverable cache errors
@@ -82,6 +96,16 @@ func (s *CacheStore) key(k string) string {
 // for these membership sets (spec: tag:<name>).
 func (s *CacheStore) tagKey(tag string) string {
 	return s.key("tag:" + tag)
+}
+
+// keyTagsKey is the reverse index (tag names) for a logical cache key.
+// Reserved, like tag: — application keys should not use the __keytags: prefix.
+func (s *CacheStore) keyTagsKey(key string) string {
+	return s.prefix + "__keytags:" + key
+}
+
+func (s *CacheStore) tagNameFromKey(tagKey string) string {
+	return strings.TrimPrefix(tagKey, s.prefix+"tag:")
 }
 
 // Get retrieves the cached value for key and unmarshals it into dest.
@@ -208,8 +232,15 @@ func (s *CacheStore) CompareAndSubtract(key string, expected int64) (int64, erro
 }
 
 // Delete removes the entry for key. A missing key is not an error.
+// Tag membership is dropped in the same step so a follow-up DeleteByTag
+// does not count this key.
 func (s *CacheStore) Delete(key string) error {
-	if err := s.client.Del(context.Background(), s.key(key)).Err(); err != nil {
+	if err := deleteUntagScript.Run(
+		context.Background(),
+		s.client,
+		[]string{s.key(key), s.keyTagsKey(key)},
+		s.prefix, key,
+	).Err(); err != nil {
 		return fmt.Errorf("redis cache: delete %q: %w", key, err)
 	}
 	return nil
@@ -255,8 +286,10 @@ func (s *CacheStore) SetWithTags(ctx context.Context, key string, value any, ttl
 	}
 	pipe := s.client.TxPipeline()
 	pipe.Set(ctx, s.key(key), data, ttl)
+	rev := s.keyTagsKey(key)
 	for _, tag := range tags {
 		pipe.SAdd(ctx, s.tagKey(tag), key)
+		pipe.SAdd(ctx, rev, tag)
 	}
 	if _, err := pipe.Exec(ctx); err != nil {
 		return fmt.Errorf("redis cache: set with tags %q: %w", key, err)
@@ -313,7 +346,8 @@ func (s *CacheStore) DeleteByTag(ctx context.Context, tag string) (n int64, err 
 	}
 	iter := s.client.SScan(ctx, tmpKey, 0, "", tagScanCount).Iterator()
 	for iter.Next(ctx) {
-		keys = append(keys, s.key(iter.Val()))
+		member := iter.Val()
+		keys = append(keys, s.key(member), s.keyTagsKey(member))
 		n++
 		if len(keys) >= deleteByPrefixBatchSize {
 			if err := flush(); err != nil {
@@ -426,7 +460,7 @@ func (s *CacheStore) pruneTagSet(ctx context.Context, tagKey string) (int64, err
 	var pruned int64
 	batch := make([]string, 0, tagScanCount)
 	flush := func() error {
-		n, err := s.pruneStaleBatch(ctx, tagKey, batch)
+		n, err := s.pruneStaleBatch(ctx, tagKey, s.tagNameFromKey(tagKey), batch)
 		batch = batch[:0]
 		pruned += n
 		return err
@@ -455,28 +489,35 @@ func (s *CacheStore) pruneTagSet(ctx context.Context, tagKey string) (int64, err
 // sremIfMissingScript SREMs members whose value key is gone, atomically
 // with the EXISTS check so a concurrent SetWithTags cannot have its
 // fresh membership stripped by a stale miss.
-// KEYS[1]=tag set ARGV[1]=key prefix ARGV[2..]=logical members
+// KEYS[1]=tag set ARGV[1]=key prefix ARGV[2]=logical tag name ARGV[3..]=members
 var sremIfMissingScript = goredis.NewScript(`
 local tag = KEYS[1]
 local prefix = ARGV[1]
+local tagName = ARGV[2]
 local pruned = 0
-for i = 2, #ARGV do
+for i = 3, #ARGV do
   local member = ARGV[i]
   if redis.call('EXISTS', prefix .. member) == 0 then
     pruned = pruned + redis.call('SREM', tag, member)
+    local rev = prefix .. '__keytags:' .. member
+    redis.call('SREM', rev, tagName)
+    if redis.call('SCARD', rev) == 0 then
+      redis.call('DEL', rev)
+    end
   end
 end
 return pruned
 `)
 
-func (s *CacheStore) pruneStaleBatch(ctx context.Context, tagKey string, members []string) (int64, error) {
+func (s *CacheStore) pruneStaleBatch(ctx context.Context, tagKey, tagName string, members []string) (int64, error) {
 	if len(members) == 0 {
 		return 0, nil
 	}
-	args := make([]any, 1+len(members))
+	args := make([]any, 2+len(members))
 	args[0] = s.prefix
+	args[1] = tagName
 	for i, member := range members {
-		args[i+1] = member
+		args[i+2] = member
 	}
 	n, err := sremIfMissingScript.Run(ctx, s.client, []string{tagKey}, args...).Int64()
 	if err != nil {

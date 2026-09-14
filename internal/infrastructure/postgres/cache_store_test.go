@@ -142,6 +142,12 @@ func (s *stubCache) Delete(key string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	delete(s.entries, key)
+	for tag, keys := range s.tags {
+		delete(keys, key)
+		if len(keys) == 0 {
+			delete(s.tags, tag)
+		}
+	}
 	return nil
 }
 

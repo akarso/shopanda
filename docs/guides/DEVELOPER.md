@@ -149,7 +149,7 @@ Rules:
 - Write with `SetWithTags` only when some later `DeleteByTag` needs to find the key. Tags are additive across re-saves of the same key (`SetWithTags(k, v1, "A")` then `SetWithTags(k, v2, "B")` leaves the key reachable via both tags).
 - `SetWithTags(ctx, key, value, ttl, tags...)` takes a context (unlike `Set`) so a caller can bound the write, including when UniqueTags leaves no tags. Empty/whitespace tags are dropped; duplicates are stored once (`cache.UniqueTags`). Tags are case-sensitive opaque strings (`"CMS:7"` ≠ `"cms:7"`).
 - `DeleteByTag(ctx, tag)` trims the same way (`cache.NormalizeTag`); empty/whitespace-only is a no-op. It returns the **snapshot size** (how many keys were associated with the tag, including members whose value is already gone). A missing tag is a no-op (count 0). Concurrent `SetWithTags` for the same tag that commit after the snapshot keep their association — a follow-up `DeleteByTag` still finds them.
-- A later plain `Set` of a tagged key does **not** drop tag membership (over-invalidation, not staleness). Postgres `Delete`/`DeleteByPrefix` drop tag rows for the removed keys; Redis prunes members whose value key is already gone inside `DeleteExpired` (`cache.cleanup`).
+- A later plain `Set` of a tagged key does **not** drop tag membership (over-invalidation, not staleness). `Delete` drops tag membership on both backends (Postgres `cache_tags` rows; Redis a per-key `__keytags:` reverse set). Redis TTL-evicted members are pruned by `DeleteExpired` (`cache.cleanup`).
 - Do not switch the product-cache subscriber onto tags without a reason — prefix already matches that key layout. Track D (full-page cache) is the first in-tree consumer that needs tags.
 
 ### Startup behavior

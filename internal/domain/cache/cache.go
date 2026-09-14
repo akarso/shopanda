@@ -55,7 +55,8 @@ type Cache interface {
 	// their association — a later DeleteByTag will still find them. A
 	// missing tag is not an error. The returned count is the snapshot
 	// size: how many keys were associated with the tag at snapshot time,
-	// including members whose value is already gone (TTL eviction, a
-	// prior Delete).
+	// including members whose value is already gone (TTL eviction). An
+	// explicit Delete drops that key's tag membership, so a follow-up
+	// DeleteByTag does not count it.
 	DeleteByTag(ctx context.Context, tag string) (int64, error)
 }

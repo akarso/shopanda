@@ -447,7 +447,7 @@ classDiagram
         +Set(key, value, ttl) error
         +Delete(key) error
         +SetWithTags(ctx, key, value, ttl, tags) error
-        +DeleteByTag(ctx, tag) ~int64, error~
+        +DeleteByTag(ctx, tag) ~int64_error~
     }
     class PostgresCacheStore {
         -db *sql.DB
