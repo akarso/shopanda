@@ -121,6 +121,11 @@ func (c *stubCache) Delete(key string) error {
 }
 
 func (c *stubCache) DeleteByPrefix(_ context.Context, _ string) error { return nil }
+func (c *stubCache) SetWithTags(_ context.Context, key string, value any, ttl time.Duration, tags ...string) error {
+	_ = tags
+	return c.Set(key, value, ttl)
+}
+func (c *stubCache) DeleteByTag(_ context.Context, _ string) (int64, error) { return 0, nil }
 
 func TestCacheAttemptStore_IncrementAndReset(t *testing.T) {
 	store := NewCacheAttemptStore(newStubCache(), nil)

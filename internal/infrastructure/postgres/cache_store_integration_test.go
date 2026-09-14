@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/akarso/shopanda/internal/domain/cache/tagtest"
 	"github.com/akarso/shopanda/internal/infrastructure/postgres"
 	"github.com/akarso/shopanda/internal/platform/migrate"
 )
@@ -19,7 +20,10 @@ func setupCacheStore(t *testing.T) (*sql.DB, *postgres.CacheStore) {
 	if _, err := migrate.Run(db, "../../../migrations"); err != nil {
 		t.Fatalf("migrate: %v", err)
 	}
-	t.Cleanup(func() { db.Exec("DELETE FROM cache") })
+	t.Cleanup(func() {
+		db.Exec("DELETE FROM cache_tags")
+		db.Exec("DELETE FROM cache")
+	})
 	store, err := postgres.NewCacheStore(db)
 	if err != nil {
 		t.Fatalf("NewCacheStore: %v", err)
@@ -350,5 +354,133 @@ func TestCacheStoreDB_CompareAndSubtractVsIncrConcurrent(t *testing.T) {
 	// Net: +workers Incr and -workers Subtract from base 10 → expect 10 if none lost.
 	if !hit || got != 10 {
 		t.Fatalf("Get after mixed race = hit=%v val=%d, want 10 (lost updates if FOR UPDATE missing)", hit, got)
+	}
+}
+
+func TestCacheStoreDB_TagInvalidation(t *testing.T) {
+	_, store := setupCacheStore(t)
+	tagtest.Run(t, store)
+}
+
+func TestCacheStoreDB_TagDeleteAfterExpiry(t *testing.T) {
+	db, store := setupCacheStore(t)
+	past := time.Now().Add(-time.Minute)
+	data, err := json.Marshal("stale")
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	if _, err := db.Exec(
+		`INSERT INTO cache (key, value, expires_at) VALUES ($1, $2, $3)`,
+		"expired_tagged", data, past,
+	); err != nil {
+		t.Fatalf("insert expired: %v", err)
+	}
+	if _, err := db.Exec(
+		`INSERT INTO cache_tags (tag, key) VALUES ($1, $2)`,
+		"exp-tag", "expired_tagged",
+	); err != nil {
+		t.Fatalf("insert tag: %v", err)
+	}
+
+	var got string
+	ok, err := store.Get("expired_tagged", &got)
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if ok {
+		t.Fatal("expected miss for expired tagged entry")
+	}
+	if _, err := store.DeleteByTag(context.Background(), "exp-tag"); err != nil {
+		t.Fatalf("DeleteByTag after expiry: %v", err)
+	}
+	ok, err = store.Get("expired_tagged", &got)
+	if err != nil || ok {
+		t.Fatalf("Get after DeleteByTag = hit=%v err=%v, want miss", ok, err)
+	}
+}
+
+func TestCacheStoreDB_TagDeleteExpiredSweepsOrphans(t *testing.T) {
+	db, store := setupCacheStore(t)
+	if err := store.SetWithTags(context.Background(), "alive", "v", time.Hour, "keep"); err != nil {
+		t.Fatalf("SetWithTags: %v", err)
+	}
+	if err := store.SetWithTags(context.Background(), "to-delete", "v", 0, "orphan"); err != nil {
+		t.Fatalf("SetWithTags: %v", err)
+	}
+	if err := store.Delete("to-delete"); err != nil {
+		t.Fatalf("Delete: %v", err)
+	}
+
+	past := time.Now().Add(-time.Minute)
+	data, err := json.Marshal("x")
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	if _, err := db.Exec(
+		`INSERT INTO cache (key, value, expires_at) VALUES ($1, $2, $3)`,
+		"expired", data, past,
+	); err != nil {
+		t.Fatalf("insert expired: %v", err)
+	}
+	if _, err := db.Exec(
+		`INSERT INTO cache_tags (tag, key) VALUES ($1, $2)`,
+		"expired-tag", "expired",
+	); err != nil {
+		t.Fatalf("insert expired tag: %v", err)
+	}
+
+	n, err := store.DeleteExpired(context.Background())
+	if err != nil {
+		t.Fatalf("DeleteExpired: %v", err)
+	}
+	if n != 1 {
+		t.Errorf("deleted cache rows = %d, want 1", n)
+	}
+
+	var orphanCount int
+	if err := db.QueryRow(`SELECT count(*) FROM cache_tags WHERE tag IN ('orphan', 'expired-tag')`).Scan(&orphanCount); err != nil {
+		t.Fatalf("count orphans: %v", err)
+	}
+	if orphanCount != 0 {
+		t.Errorf("orphaned tag rows = %d, want 0", orphanCount)
+	}
+	var keepCount int
+	if err := db.QueryRow(`SELECT count(*) FROM cache_tags WHERE tag = 'keep'`).Scan(&keepCount); err != nil {
+		t.Fatalf("count keep: %v", err)
+	}
+	if keepCount != 1 {
+		t.Errorf("keep tag rows = %d, want 1", keepCount)
+	}
+}
+
+func TestCacheStoreDB_TagDeleteByTagCountIncludesOrphans(t *testing.T) {
+	db, store := setupCacheStore(t)
+	ctx := context.Background()
+	if err := store.SetWithTags(ctx, "live", "v", time.Hour, "mix-tag"); err != nil {
+		t.Fatalf("SetWithTags: %v", err)
+	}
+	if _, err := db.Exec(`INSERT INTO cache_tags (tag, key) VALUES ($1, $2)`, "mix-tag", "already-gone"); err != nil {
+		t.Fatalf("insert orphan tag: %v", err)
+	}
+
+	n, err := store.DeleteByTag(ctx, "mix-tag")
+	if err != nil {
+		t.Fatalf("DeleteByTag: %v", err)
+	}
+	if n != 2 {
+		t.Fatalf("DeleteByTag count = %d, want 2 (snapshot includes the orphaned tag row)", n)
+	}
+
+	var got string
+	ok, err := store.Get("live", &got)
+	if err != nil || ok {
+		t.Fatalf("Get live = hit=%v err=%v, want miss", ok, err)
+	}
+	var tagRows int
+	if err := db.QueryRow(`SELECT count(*) FROM cache_tags WHERE tag = 'mix-tag'`).Scan(&tagRows); err != nil {
+		t.Fatalf("count tags: %v", err)
+	}
+	if tagRows != 0 {
+		t.Fatalf("mix-tag rows = %d, want 0", tagRows)
 	}
 }

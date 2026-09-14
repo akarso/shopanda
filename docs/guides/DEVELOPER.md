@@ -135,6 +135,23 @@ payment:
 
 Environment overlays use the `SHOPANDA_` prefix (e.g. `SHOPANDA_SEARCH_ENGINE=meilisearch`, `SHOPANDA_QUEUE_DRIVER=redis`).
 
+### Cache invalidation: prefix vs tags
+
+`cache.Cache` (Postgres UNLOGGED table or Redis) supports two invalidation styles. Pick based on how the keys were written, not which backend is configured — both implement the same port.
+
+| When | Method | Example |
+| --- | --- | --- |
+| Related keys share a prefix **by construction** | `DeleteByPrefix` | Product cache: every store/language/currency variant lives under `product:<id>:`. The existing `InvalidationSubscriber` keeps using this. |
+| Related keys do **not** share a prefix — they happen to mention the same entity | `SetWithTags` + `DeleteByTag` | A full-page cache entry for a home page, a CMS page, and a PLP that all rendered CMS block #7. Prefix cannot express that set. |
+
+Rules:
+
+- Write with `SetWithTags` only when some later `DeleteByTag` needs to find the key. Tags are additive across re-saves of the same key (`SetWithTags(k, v1, "A")` then `SetWithTags(k, v2, "B")` leaves the key reachable via both tags).
+- `SetWithTags(ctx, key, value, ttl, tags...)` takes a context (unlike `Set`) so a caller can bound the write. Empty/whitespace tags are dropped; duplicates are stored once (`cache.UniqueTags`). Tags are case-sensitive opaque strings (`"CMS:7"` ≠ `"cms:7"`).
+- `DeleteByTag(ctx, tag)` returns the **snapshot size** (how many keys were associated with the tag, including members whose value is already gone). A missing tag is a no-op (count 0). Concurrent `SetWithTags` for the same tag that commit after the snapshot keep their association — a follow-up `DeleteByTag` still finds them.
+- A later plain `Set` of a tagged key does **not** drop tag membership (over-invalidation, not staleness). Postgres `Delete`/`DeleteByPrefix` drop tag rows for the removed keys; Redis prunes members whose value key is already gone inside `DeleteExpired` (`cache.cleanup`).
+- Do not switch the product-cache subscriber onto tags without a reason — prefix already matches that key layout. Track D (full-page cache) is the first in-tree consumer that needs tags.
+
 ### Startup behavior
 
 - Core plugins register only when their driver switch matches.
@@ -650,6 +667,7 @@ Phase 8 adds first-class seams for **commerce behavior** (positioned pricing ste
 
 - Infrastructure ports (typed): search, cache, queue, payment, media, tax (`RegisterSearchProvider(search.SearchEngine)`, `RegisterTaxCalculator(tax.Calculator)`, …), mail (`RegisterMailSender(mail.Mailer)`), shipping rates (`RegisterShippingRateProvider(shipping.Provider)`)
   - `search.SearchEngine` (PR-1037): `search.Product.CategoryIDs []string` replaces the old single `CategoryID string` — a product can belong to more than one category, and the index must represent all of them, not just the first. `SearchEngine` also gained `IndexCategory(ctx, search.Category) error` / `RemoveCategory(ctx, categoryID string) error` for indexing category documents (name/slug/description/parent/product count) as their own searchable entity, alongside products. A custom `SearchEngine` implementation must implement both new methods.
+  - `cache.Cache` (PR-1039): `SetWithTags(ctx, key, value, ttl, tags ...string)` / `DeleteByTag(ctx, tag) (int64, error)` for many-to-many invalidation (keys that mention the same entity but do not share a prefix). `DeleteByPrefix` stays for keys that share a prefix by construction (`product:<id>:`). A custom `Cache` implementation must implement both new methods. See [Cache invalidation: prefix vs tags](#cache-invalidation-prefix-vs-tags).
 - Behavioral: positioned `RegisterPricingStep`, positioned `RegisterCheckoutStep`, `RegisterCompositionStep`, cart hook chain — see `pkg/extapi`
 - Promotion rules: `app.PromotionRules(registrant).RegisterCatalogCondition/Action` (+ cart variants) for custom JSON rule `"type"` values evaluated in catalog/cart promotion pricing steps (PR-862). Requires `SetPromotionEvaluatorRegistry` in bootstrap before `InitAll`.
 - HTTP: `RegisterPublicRoute`, `RegisterAdminRoute`, `app.Integration(slug).RegisterRoute` / `RegisterSecureRoute`

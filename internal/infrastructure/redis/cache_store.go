@@ -2,7 +2,10 @@ package redis
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"time"
 
@@ -12,18 +15,43 @@ import (
 
 var _ cache.Cache = (*CacheStore)(nil)
 
-const deleteByPrefixBatchSize = 1000
+const (
+	deleteByPrefixBatchSize = 1000
+	tagScanCount            = 100
+	purgeSetTTL             = time.Hour
+	purgeRecoverTimeout     = 5 * time.Second
+)
+
+// delEmptySetScript deletes KEYS[1] only when it is an empty set, so a
+// concurrent SADD cannot have its new member wiped by a delayed DEL.
+var delEmptySetScript = goredis.NewScript(`
+if redis.call('SCARD', KEYS[1]) == 0 then
+  return redis.call('DEL', KEYS[1])
+end
+return 0
+`)
+
+// Logger is the optional structured logger used for recoverable cache errors
+// (per-tag prune skips, purge-key EXPIRE/restore failures). Nil is a no-op.
+type Logger interface {
+	Error(event string, err error, fields map[string]interface{})
+}
 
 // CacheStore implements cache.Cache using Redis.
 type CacheStore struct {
 	client *goredis.Client
 	prefix string
+	log    Logger
+	// afterTagRename is a test-only hook, scoped to this instance so
+	// parallel tests cannot leak into another store's DeleteByTag.
+	afterTagRename func()
 }
 
 // Config holds Redis cache connection settings.
 type Config struct {
 	URL       string
 	KeyPrefix string
+	Logger    Logger
 }
 
 // New creates a CacheStore and verifies the Redis connection with PING.
@@ -35,11 +63,25 @@ func New(cfg Config) (*CacheStore, error) {
 	if err != nil {
 		return nil, fmt.Errorf("redis cache: init client: %w", err)
 	}
-	return &CacheStore{client: client, prefix: NormalizeKeyPrefix(cfg.KeyPrefix)}, nil
+	return &CacheStore{client: client, prefix: NormalizeKeyPrefix(cfg.KeyPrefix), log: cfg.Logger}, nil
+}
+
+func (s *CacheStore) logError(event string, err error, fields map[string]interface{}) {
+	if s.log == nil {
+		return
+	}
+	s.log.Error(event, err, fields)
 }
 
 func (s *CacheStore) key(k string) string {
 	return s.prefix + k
+}
+
+// tagKey is the Redis SET that holds cache keys associated with tag.
+// Application cache keys should not use the "tag:" prefix — it is reserved
+// for these membership sets (spec: tag:<name>).
+func (s *CacheStore) tagKey(tag string) string {
+	return s.key("tag:" + tag)
 }
 
 // Get retrieves the cached value for key and unmarshals it into dest.
@@ -194,8 +236,241 @@ func (s *CacheStore) DeleteByPrefix(ctx context.Context, prefix string) error {
 	return nil
 }
 
-// DeleteExpired is a no-op for Redis; TTL keys are evicted by the server.
+// SetWithTags stores value under key and SADD's the key onto each tag set.
+func (s *CacheStore) SetWithTags(ctx context.Context, key string, value any, ttl time.Duration, tags ...string) error {
+	tags = cache.UniqueTags(tags)
+	if len(tags) == 0 {
+		return s.Set(key, value, ttl)
+	}
+	data, err := json.Marshal(value)
+	if err != nil {
+		return fmt.Errorf("redis cache: marshal %q: %w", key, err)
+	}
+	pipe := s.client.TxPipeline()
+	pipe.Set(ctx, s.key(key), data, ttl)
+	for _, tag := range tags {
+		pipe.SAdd(ctx, s.tagKey(tag), key)
+	}
+	if _, err := pipe.Exec(ctx); err != nil {
+		return fmt.Errorf("redis cache: set with tags %q: %w", key, err)
+	}
+	return nil
+}
+
+// DeleteByTag snapshot-isolates the tag set with RENAME, then SSCAN+DEL
+// members so a concurrent SADD creates a new set at the original key
+// instead of having its membership destroyed. SSCAN avoids blocking Redis
+// with a single O(N) SMEMBERS of a large tag. The purge key is given a
+// TTL immediately; any failure after RENAME merges remaining members back
+// onto the live tag key (independent of the caller's context) so a retry
+// can still invalidate them.
+func (s *CacheStore) DeleteByTag(ctx context.Context, tag string) (n int64, err error) {
+	if tag == "" {
+		return 0, nil
+	}
+	tagKey := s.tagKey(tag)
+	tmpKey, err := s.purgeKey(tag)
+	if err != nil {
+		return 0, fmt.Errorf("redis cache: delete by tag %q: %w", tag, err)
+	}
+	if err := s.client.Rename(ctx, tagKey, tmpKey).Err(); err != nil {
+		if isNoSuchKey(err) {
+			return 0, nil
+		}
+		return 0, fmt.Errorf("redis cache: rename tag %q: %w", tag, err)
+	}
+	s.expirePurge(tmpKey)
+	defer func() {
+		if err != nil {
+			s.restorePurge(tagKey, tmpKey)
+		}
+	}()
+	if s.afterTagRename != nil {
+		s.afterTagRename()
+	}
+	if err = ctx.Err(); err != nil {
+		return n, fmt.Errorf("redis cache: delete by tag %q: %w", tag, err)
+	}
+
+	keys := make([]string, 0, deleteByPrefixBatchSize)
+	flush := func() error {
+		if len(keys) == 0 {
+			return nil
+		}
+		if err := s.client.Del(ctx, keys...).Err(); err != nil {
+			return fmt.Errorf("redis cache: delete by tag %q: %w", tag, err)
+		}
+		keys = keys[:0]
+		return nil
+	}
+	iter := s.client.SScan(ctx, tmpKey, 0, "", tagScanCount).Iterator()
+	for iter.Next(ctx) {
+		keys = append(keys, s.key(iter.Val()))
+		n++
+		if len(keys) >= deleteByPrefixBatchSize {
+			if err := flush(); err != nil {
+				return n, err
+			}
+		}
+	}
+	if err := iter.Err(); err != nil {
+		return n, fmt.Errorf("redis cache: sscan tag %q: %w", tag, err)
+	}
+	if err := flush(); err != nil {
+		return n, err
+	}
+	if err := s.client.Del(ctx, tmpKey).Err(); err != nil {
+		return n, fmt.Errorf("redis cache: delete by tag %q: purge set: %w", tag, err)
+	}
+	return n, nil
+}
+
+func (s *CacheStore) expirePurge(tmpKey string) {
+	ctx, cancel := context.WithTimeout(context.Background(), purgeRecoverTimeout)
+	defer cancel()
+	if err := s.client.Expire(ctx, tmpKey, purgeSetTTL).Err(); err != nil {
+		s.logError("redis.cache.purge_expire_failed", err, map[string]interface{}{
+			"key": tmpKey,
+			"ttl": purgeSetTTL.String(),
+		})
+	}
+}
+
+func (s *CacheStore) restorePurge(tagKey, tmpKey string) {
+	ctx, cancel := context.WithTimeout(context.Background(), purgeRecoverTimeout)
+	defer cancel()
+	if err := s.client.SUnionStore(ctx, tagKey, tagKey, tmpKey).Err(); err != nil {
+		// Leave tmpKey in place (it has a TTL) so a later retry or expiry
+		// sweep can still recover membership.
+		s.logError("redis.cache.purge_restore_failed", err, map[string]interface{}{
+			"tag_key":   tagKey,
+			"purge_key": tmpKey,
+		})
+		return
+	}
+	if err := s.client.Del(ctx, tmpKey).Err(); err != nil {
+		s.logError("redis.cache.purge_restore_cleanup_failed", err, map[string]interface{}{
+			"purge_key": tmpKey,
+		})
+	}
+}
+
+func (s *CacheStore) purgeKey(tag string) (string, error) {
+	var nonce [8]byte
+	if _, err := rand.Read(nonce[:]); err != nil {
+		return "", fmt.Errorf("purge nonce: %w", err)
+	}
+	return s.prefix + "__purge:tag:" + tag + ":" + hex.EncodeToString(nonce[:]), nil
+}
+
+func isNoSuchKey(err error) bool {
+	if err == nil {
+		return false
+	}
+	if errors.Is(err, goredis.Nil) {
+		return true
+	}
+	return goredis.HasErrorPrefix(err, "no such key")
+}
+
+// DeleteExpired prunes tag-set members whose value key is already gone
+// (TTL eviction or Delete). Value keys themselves are expired by Redis.
+// Cost is proportional to total tag-set membership (pipelined EXISTS
+// batches, not one round trip per member).
 func (s *CacheStore) DeleteExpired(ctx context.Context) (int64, error) {
-	_ = ctx
-	return 0, nil
+	iter := s.client.Scan(ctx, 0, s.prefix+"tag:*", tagScanCount).Iterator()
+	var pruned int64
+	for iter.Next(ctx) {
+		tagKey := iter.Val()
+		n, err := s.pruneTagSet(ctx, tagKey)
+		if err != nil {
+			if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+				return pruned, err
+			}
+			// One bad or flaky tag key must not abort the rest of this tick —
+			// a reserved-prefix collision would otherwise permanently stall
+			// pruning of every subsequent tag until someone deleted that key.
+			s.logError("redis.cache.prune_tag_skipped", err, map[string]interface{}{
+				"key": tagKey,
+			})
+			continue
+		}
+		pruned += n
+	}
+	if err := iter.Err(); err != nil {
+		return pruned, fmt.Errorf("redis cache: scan tag sets: %w", err)
+	}
+	return pruned, nil
+}
+
+func (s *CacheStore) pruneTagSet(ctx context.Context, tagKey string) (int64, error) {
+	typ, err := s.client.Type(ctx, tagKey).Result()
+	if err != nil {
+		return 0, fmt.Errorf("redis cache: type %q: %w", tagKey, err)
+	}
+	if typ == "none" {
+		return 0, nil
+	}
+	if typ != "set" {
+		return 0, fmt.Errorf("redis cache: prune %q: expected set, got %s (cache keys must not use the reserved tag: prefix)", tagKey, typ)
+	}
+
+	var pruned int64
+	batch := make([]string, 0, tagScanCount)
+	flush := func() error {
+		n, err := s.pruneStaleBatch(ctx, tagKey, batch)
+		batch = batch[:0]
+		pruned += n
+		return err
+	}
+	iter := s.client.SScan(ctx, tagKey, 0, "", tagScanCount).Iterator()
+	for iter.Next(ctx) {
+		batch = append(batch, iter.Val())
+		if len(batch) >= tagScanCount {
+			if err := flush(); err != nil {
+				return pruned, err
+			}
+		}
+	}
+	if err := iter.Err(); err != nil {
+		return pruned, fmt.Errorf("redis cache: sscan %q: %w", tagKey, err)
+	}
+	if err := flush(); err != nil {
+		return pruned, err
+	}
+	if _, err := delEmptySetScript.Run(ctx, s.client, []string{tagKey}).Result(); err != nil {
+		return pruned, fmt.Errorf("redis cache: del empty tag set %q: %w", tagKey, err)
+	}
+	return pruned, nil
+}
+
+func (s *CacheStore) pruneStaleBatch(ctx context.Context, tagKey string, members []string) (int64, error) {
+	if len(members) == 0 {
+		return 0, nil
+	}
+	pipe := s.client.Pipeline()
+	cmds := make([]*goredis.IntCmd, len(members))
+	for i, member := range members {
+		cmds[i] = pipe.Exists(ctx, s.key(member))
+	}
+	if _, err := pipe.Exec(ctx); err != nil {
+		return 0, fmt.Errorf("redis cache: exists batch: %w", err)
+	}
+	stale := make([]any, 0, len(members))
+	for i, cmd := range cmds {
+		exists, err := cmd.Result()
+		if err != nil {
+			return 0, fmt.Errorf("redis cache: exists %q: %w", members[i], err)
+		}
+		if exists == 0 {
+			stale = append(stale, members[i])
+		}
+	}
+	if len(stale) == 0 {
+		return 0, nil
+	}
+	if err := s.client.SRem(ctx, tagKey, stale...).Err(); err != nil {
+		return 0, fmt.Errorf("redis cache: srem stale members: %w", err)
+	}
+	return int64(len(stale)), nil
 }

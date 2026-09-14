@@ -2,16 +2,17 @@ package redis_test
 
 import (
 	"context"
+	"strings"
 	"sync"
 	"testing"
 	"time"
 
-	"github.com/akarso/shopanda/internal/domain/cache"
+	"github.com/akarso/shopanda/internal/domain/cache/tagtest"
 	inredis "github.com/akarso/shopanda/internal/infrastructure/redis"
 	"github.com/alicebob/miniredis/v2"
 )
 
-func setupRedisCache(t *testing.T, keyPrefix string) (*miniredis.Miniredis, cache.Cache) {
+func setupRedisCache(t *testing.T, keyPrefix string) (*miniredis.Miniredis, *inredis.CacheStore) {
 	t.Helper()
 	mr, err := miniredis.Run()
 	if err != nil {
@@ -206,9 +207,7 @@ func TestCacheStore_CompareAndSubtract(t *testing.T) {
 func TestCacheStore_DeleteExpiredNoOp(t *testing.T) {
 	_, store := setupRedisCache(t, "")
 
-	deleted, err := store.(interface {
-		DeleteExpired(context.Context) (int64, error)
-	}).DeleteExpired(context.Background())
+	deleted, err := store.DeleteExpired(context.Background())
 	if err != nil {
 		t.Fatalf("DeleteExpired: %v", err)
 	}
@@ -226,5 +225,195 @@ func TestNew_EmptyURL(t *testing.T) {
 func TestNew_UnreachableRedis(t *testing.T) {
 	if _, err := inredis.New(inredis.Config{URL: "redis://127.0.0.1:1"}); err == nil {
 		t.Fatal("New() expected error when Redis is unreachable")
+	}
+}
+
+func TestCacheStore_TagInvalidation(t *testing.T) {
+	_, store := setupRedisCache(t, "shopanda")
+	tagtest.Run(t, store)
+}
+
+func TestCacheStore_TagDeleteAfterExpiry(t *testing.T) {
+	mr, store := setupRedisCache(t, "p")
+	ctx := context.Background()
+
+	if err := store.SetWithTags(ctx, "ttl-tagged", "v", 50*time.Millisecond, "exp-tag"); err != nil {
+		t.Fatalf("SetWithTags: %v", err)
+	}
+	mr.FastForward(100 * time.Millisecond)
+
+	var got string
+	hit, err := store.Get("ttl-tagged", &got)
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if hit {
+		t.Fatal("Get hit = true, want false after TTL expiry")
+	}
+	if _, err := store.DeleteByTag(ctx, "exp-tag"); err != nil {
+		t.Fatalf("DeleteByTag after expiry: %v", err)
+	}
+}
+
+func TestCacheStore_TagDeleteExpiredPrunesStaleMembers(t *testing.T) {
+	mr, store := setupRedisCache(t, "p")
+	ctx := context.Background()
+	if err := store.SetWithTags(ctx, "ttl-tagged", "v", 50*time.Millisecond, "exp-tag"); err != nil {
+		t.Fatalf("SetWithTags: %v", err)
+	}
+	if err := store.SetWithTags(ctx, "keep", "v", time.Hour, "exp-tag"); err != nil {
+		t.Fatalf("SetWithTags keep: %v", err)
+	}
+	mr.FastForward(100 * time.Millisecond)
+
+	deleted, err := store.DeleteExpired(ctx)
+	if err != nil {
+		t.Fatalf("DeleteExpired: %v", err)
+	}
+	if deleted != 1 {
+		t.Fatalf("DeleteExpired pruned = %d, want 1", deleted)
+	}
+
+	if _, err := store.DeleteByTag(ctx, "exp-tag"); err != nil {
+		t.Fatalf("DeleteByTag: %v", err)
+	}
+	var got string
+	hit, err := store.Get("keep", &got)
+	if err != nil || hit {
+		t.Fatalf("keep should be deleted by tag, hit=%v err=%v", hit, err)
+	}
+}
+
+type captureLog struct {
+	mu     sync.Mutex
+	events []string
+}
+
+func (c *captureLog) Error(event string, _ error, _ map[string]interface{}) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.events = append(c.events, event)
+}
+
+func TestCacheStore_TagDeleteExpiredSkipsBadKey(t *testing.T) {
+	mr, err := miniredis.Run()
+	if err != nil {
+		t.Fatalf("miniredis.Run: %v", err)
+	}
+	t.Cleanup(mr.Close)
+	log := &captureLog{}
+	store, err := inredis.New(inredis.Config{
+		URL:       "redis://" + mr.Addr(),
+		KeyPrefix: "p",
+		Logger:    log,
+	})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	ctx := context.Background()
+	if err := store.SetWithTags(ctx, "ttl-tagged", "v", 50*time.Millisecond, "good-tag"); err != nil {
+		t.Fatalf("SetWithTags: %v", err)
+	}
+	if err := store.SetWithTags(ctx, "keep", "v", time.Hour, "good-tag"); err != nil {
+		t.Fatalf("SetWithTags keep: %v", err)
+	}
+	mr.FastForward(100 * time.Millisecond)
+	if err := mr.Set("p:tag:poison", "not-a-set"); err != nil {
+		t.Fatalf("seed poison key: %v", err)
+	}
+
+	deleted, err := store.DeleteExpired(ctx)
+	if err != nil {
+		t.Fatalf("DeleteExpired: %v", err)
+	}
+	if deleted != 1 {
+		t.Fatalf("DeleteExpired pruned = %d, want 1 (poison key must not abort the scan)", deleted)
+	}
+	log.mu.Lock()
+	events := append([]string(nil), log.events...)
+	log.mu.Unlock()
+	found := false
+	for _, e := range events {
+		if e == "redis.cache.prune_tag_skipped" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("logged events = %v, want redis.cache.prune_tag_skipped", events)
+	}
+
+	if _, err := store.DeleteByTag(ctx, "good-tag"); err != nil {
+		t.Fatalf("DeleteByTag: %v", err)
+	}
+	var got string
+	hit, err := store.Get("keep", &got)
+	if err != nil || hit {
+		t.Fatalf("keep should be deleted by tag, hit=%v err=%v", hit, err)
+	}
+}
+
+func TestCacheStore_TagDeleteByTagCountIncludesDeletedValues(t *testing.T) {
+	_, store := setupRedisCache(t, "p")
+	ctx := context.Background()
+	if err := store.SetWithTags(ctx, "live", "v", time.Hour, "mix-tag"); err != nil {
+		t.Fatalf("SetWithTags live: %v", err)
+	}
+	if err := store.SetWithTags(ctx, "gone", "v", time.Hour, "mix-tag"); err != nil {
+		t.Fatalf("SetWithTags gone: %v", err)
+	}
+	if err := store.Delete("gone"); err != nil {
+		t.Fatalf("Delete: %v", err)
+	}
+	n, err := store.DeleteByTag(ctx, "mix-tag")
+	if err != nil {
+		t.Fatalf("DeleteByTag: %v", err)
+	}
+	if n != 2 {
+		t.Fatalf("DeleteByTag count = %d, want 2 (snapshot includes the already-deleted member)", n)
+	}
+}
+
+func TestCacheStore_TagDeleteByTagRestoresOnFailureAfterRename(t *testing.T) {
+	mr, store := setupRedisCache(t, "p")
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	t.Cleanup(func() { inredis.SetAfterTagRename(store, nil) })
+
+	if err := store.SetWithTags(ctx, "keep-me", "v", time.Hour, "restore-tag"); err != nil {
+		t.Fatalf("SetWithTags: %v", err)
+	}
+	inredis.SetAfterTagRename(store, func() { cancel() })
+
+	_, err := store.DeleteByTag(ctx, "restore-tag")
+	if err == nil {
+		t.Fatal("DeleteByTag expected error after cancelled context")
+	}
+
+	for _, k := range mr.Keys() {
+		if strings.Contains(k, "__purge:tag:") {
+			t.Fatalf("leaked purge key %q after failed DeleteByTag", k)
+		}
+	}
+
+	var got string
+	hit, err := store.Get("keep-me", &got)
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if !hit {
+		t.Fatal("value should survive a failed DeleteByTag after restore")
+	}
+
+	n, err := store.DeleteByTag(context.Background(), "restore-tag")
+	if err != nil {
+		t.Fatalf("retry DeleteByTag: %v", err)
+	}
+	if n != 1 {
+		t.Fatalf("retry DeleteByTag count = %d, want 1", n)
+	}
+	hit, err = store.Get("keep-me", &got)
+	if err != nil || hit {
+		t.Fatalf("retry should invalidate, hit=%v err=%v", hit, err)
 	}
 }
