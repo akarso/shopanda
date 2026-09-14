@@ -432,12 +432,15 @@ func TestReservationRepo_ReleaseExpiredBefore(t *testing.T) {
 		t.Fatalf("stock before sweep: got %d, want 15", stock.Quantity)
 	}
 
-	n, err := repo.ReleaseExpiredBefore(context.Background(), time.Now())
+	released, err := repo.ReleaseExpiredBefore(context.Background(), time.Now())
 	if err != nil {
 		t.Fatalf("ReleaseExpiredBefore: %v", err)
 	}
-	if n != 1 {
-		t.Errorf("released count = %d, want 1", n)
+	if len(released) != 1 {
+		t.Fatalf("released count = %d, want 1", len(released))
+	}
+	if released[0].VariantID != vid || released[0].Quantity != 3 {
+		t.Errorf("released[0] = %+v, want variant=%s quantity=3", released[0], vid)
 	}
 
 	// Stock should be restored for expired only: 15 + 3 = 18.
@@ -497,12 +500,12 @@ func TestReservationRepo_ReleaseExpiredBefore_MultipleBatches(t *testing.T) {
 		ids[i] = res.ID
 	}
 
-	n, err := repo.ReleaseExpiredBefore(context.Background(), time.Now())
+	released, err := repo.ReleaseExpiredBefore(context.Background(), time.Now())
 	if err != nil {
 		t.Fatalf("ReleaseExpiredBefore: %v", err)
 	}
-	if n != seeded {
-		t.Errorf("released count = %d, want %d", n, seeded)
+	if len(released) != seeded {
+		t.Errorf("released count = %d, want %d", len(released), seeded)
 	}
 
 	stock, _ := stockRepo.GetStock(context.Background(), vid)
@@ -556,9 +559,9 @@ func TestReservationRepo_ReleaseExpiredBefore_OrphanedStockRestore(t *testing.T)
 		t.Fatalf("delete stock row: %v", err)
 	}
 
-	n, err := repo.ReleaseExpiredBefore(context.Background(), time.Now())
-	if n != 1 {
-		t.Errorf("released count = %d, want 1 (release still succeeds)", n)
+	released, err := repo.ReleaseExpiredBefore(context.Background(), time.Now())
+	if len(released) != 1 {
+		t.Errorf("released count = %d, want 1 (release still succeeds)", len(released))
 	}
 	var orphanErr *inventory.OrphanedStockRestoreError
 	if !errors.As(err, &orphanErr) {
@@ -599,11 +602,11 @@ func TestReservationRepo_ReleaseExpiredBefore_StopsGracefullyOnCancelledContext(
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 
-	n, err := repo.ReleaseExpiredBefore(ctx, time.Now())
+	released, err := repo.ReleaseExpiredBefore(ctx, time.Now())
 	if err != nil {
 		t.Fatalf("ReleaseExpiredBefore: %v, want nil error on a cancelled context", err)
 	}
-	if n != 0 {
-		t.Errorf("released count = %d, want 0 (no batch should have run)", n)
+	if len(released) != 0 {
+		t.Errorf("released count = %d, want 0 (no batch should have run)", len(released))
 	}
 }

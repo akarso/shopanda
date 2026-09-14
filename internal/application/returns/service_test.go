@@ -1,12 +1,16 @@
 package returns_test
 
 import (
+	"bytes"
 	"context"
+	"errors"
 	"io"
+	"strings"
 	"testing"
 	"time"
 
 	returnsApp "github.com/akarso/shopanda/internal/application/returns"
+	"github.com/akarso/shopanda/internal/domain/catalog"
 	"github.com/akarso/shopanda/internal/domain/inventory"
 	"github.com/akarso/shopanda/internal/domain/order"
 	"github.com/akarso/shopanda/internal/domain/payment"
@@ -179,9 +183,32 @@ func paidOrder(t *testing.T) *order.Order {
 	return &ord
 }
 
+// memVariantRepo is a minimal catalog.VariantRepository fake — every
+// variant ID resolves to a variant on product "p1", matching paidOrder's
+// own "v1"/"SKU-1" item. Tests that care about the specific product/SKU a
+// restock event carries construct their own returnsApp.Service directly
+// instead of going through newService.
+type memVariantRepo struct{}
+
+func (memVariantRepo) FindByID(_ context.Context, id string) (*catalog.Variant, error) {
+	return &catalog.Variant{ID: id, ProductID: "p1", SKU: "SKU-1"}, nil
+}
+func (memVariantRepo) FindBySKU(context.Context, string) (*catalog.Variant, error) { return nil, nil }
+func (memVariantRepo) FindBySKUs(context.Context, []string) (map[string]*catalog.Variant, error) {
+	return nil, nil
+}
+func (memVariantRepo) ListByProductID(context.Context, string, int, int) ([]catalog.Variant, error) {
+	return nil, nil
+}
+func (memVariantRepo) ListByProductIDs(context.Context, []string, int) (map[string][]catalog.Variant, error) {
+	return nil, nil
+}
+func (memVariantRepo) Create(context.Context, *catalog.Variant) error { return nil }
+func (memVariantRepo) Update(context.Context, *catalog.Variant) error { return nil }
+
 func newService(t *testing.T, orders *memOrderRepo, returns *memReturnRepo, stock *memStockRepo, payments *memPaymentRepo, refunder payment.Refunder) *returnsApp.Service {
 	t.Helper()
-	return returnsApp.NewService(returns, orders, stock, payments, refunder, event.NewBus(logger.NewWithWriter(io.Discard, "info")), logger.NewWithWriter(io.Discard, "info"))
+	return returnsApp.NewService(returns, orders, stock, memVariantRepo{}, payments, refunder, event.NewBus(logger.NewWithWriter(io.Discard, "info")), logger.NewWithWriter(io.Discard, "info"))
 }
 
 func TestService_RequestReturnAndWorkflow(t *testing.T) {
@@ -285,6 +312,143 @@ func TestService_Receive_RetryDoesNotDoubleRestock(t *testing.T) {
 	}
 	if ret.RestockedAt == nil {
 		t.Fatal("expected restocked_at after receive")
+	}
+}
+
+// TestService_Receive_PublishesStockUpdatedEvent pins PR-1049's returns
+// fix: a successful restock must publish inventory.EventStockUpdated per
+// item, alongside the existing EventReturnReceived — restocking is a real
+// stock change the search index's on-save subscriber previously never
+// heard about.
+func TestService_Receive_PublishesStockUpdatedEvent(t *testing.T) {
+	orders := &memOrderRepo{order: paidOrder(t)}
+	returns := newMemReturnRepo()
+	stock := &memStockRepo{qty: map[string]int{"v1": 5}}
+	bus := event.NewBus(logger.NewWithWriter(io.Discard, "info"))
+	svc := returnsApp.NewService(returns, orders, stock, memVariantRepo{}, &memPaymentRepo{}, nil, bus, logger.NewWithWriter(io.Discard, "info"))
+
+	var captured []event.Event
+	bus.On(inventory.EventStockUpdated, func(_ context.Context, evt event.Event) error {
+		captured = append(captured, evt)
+		return nil
+	})
+
+	ret, err := svc.RequestReturn(context.Background(), "o1", "c1", "damaged", []returnsApp.RequestLine{
+		{VariantID: "v1", Quantity: 1},
+	})
+	if err != nil {
+		t.Fatalf("RequestReturn: %v", err)
+	}
+	ret, err = svc.Approve(context.Background(), ret.ID)
+	if err != nil {
+		t.Fatalf("Approve: %v", err)
+	}
+	if _, err := svc.Receive(context.Background(), ret.ID); err != nil {
+		t.Fatalf("Receive: %v", err)
+	}
+
+	if len(captured) != 1 {
+		t.Fatalf("published %d inventory.EventStockUpdated events, want 1", len(captured))
+	}
+	data, ok := captured[0].Data.(inventory.StockUpdatedData)
+	if !ok {
+		t.Fatalf("event data type = %T, want StockUpdatedData", captured[0].Data)
+	}
+	if data.VariantID != "v1" || data.ProductID != "p1" || data.SKU != "SKU-1" || data.OnHand == nil || *data.OnHand != 6 || data.Delta == nil || *data.Delta != 1 {
+		t.Errorf("data = %+v, want variant_id=v1 product_id=p1 sku=SKU-1 on_hand=6 delta=1 (5 + 1 restocked)", data)
+	}
+}
+
+// erroringVariantRepo is memVariantRepo's error-injecting counterpart —
+// used by the two tests below to exercise publishStockUpdated's own
+// swallowed-error paths, which nothing previously covered.
+type erroringVariantRepo struct{ err error }
+
+func (r erroringVariantRepo) FindByID(context.Context, string) (*catalog.Variant, error) {
+	return nil, r.err
+}
+func (erroringVariantRepo) FindBySKU(context.Context, string) (*catalog.Variant, error) {
+	return nil, nil
+}
+func (erroringVariantRepo) FindBySKUs(context.Context, []string) (map[string]*catalog.Variant, error) {
+	return nil, nil
+}
+func (erroringVariantRepo) ListByProductID(context.Context, string, int, int) ([]catalog.Variant, error) {
+	return nil, nil
+}
+func (erroringVariantRepo) ListByProductIDs(context.Context, []string, int) (map[string][]catalog.Variant, error) {
+	return nil, nil
+}
+func (erroringVariantRepo) Create(context.Context, *catalog.Variant) error { return nil }
+func (erroringVariantRepo) Update(context.Context, *catalog.Variant) error { return nil }
+
+// TestService_Receive_SwallowsVariantLookupFailure pins that a failed
+// variant lookup during publishStockUpdated is logged, not returned —
+// Receive has already durably recorded the restock and the return's own
+// state transition by that point, so a stale search index entry is not
+// worth reporting a successful restock as a failure.
+func TestService_Receive_SwallowsVariantLookupFailure(t *testing.T) {
+	orders := &memOrderRepo{order: paidOrder(t)}
+	returns := newMemReturnRepo()
+	stock := &memStockRepo{qty: map[string]int{"v1": 5}}
+	var logBuf bytes.Buffer
+	svc := returnsApp.NewService(returns, orders, stock, erroringVariantRepo{err: errors.New("db down")}, &memPaymentRepo{}, nil,
+		event.NewBus(logger.NewWithWriter(io.Discard, "info")), logger.NewWithWriter(&logBuf, "info"))
+
+	ret, err := svc.RequestReturn(context.Background(), "o1", "c1", "damaged", []returnsApp.RequestLine{
+		{VariantID: "v1", Quantity: 1},
+	})
+	if err != nil {
+		t.Fatalf("RequestReturn: %v", err)
+	}
+	ret, err = svc.Approve(context.Background(), ret.ID)
+	if err != nil {
+		t.Fatalf("Approve: %v", err)
+	}
+	if _, err := svc.Receive(context.Background(), ret.ID); err != nil {
+		t.Fatalf("Receive: %v, want nil despite the variant lookup failing", err)
+	}
+	if stock.qty["v1"] != 6 {
+		t.Fatalf("stock = %d, want 6 (restock itself must still succeed)", stock.qty["v1"])
+	}
+	if !strings.Contains(logBuf.String(), "returns: variant lookup failed for stock event") {
+		t.Errorf("log output = %q, want it to contain the variant-lookup-failed warning", logBuf.String())
+	}
+}
+
+// TestService_Receive_SwallowsStockEventPublishFailure pins the other
+// swallowed-error path in publishStockUpdated: a failing bus.Publish call
+// (a sync handler erroring) is logged, not returned — same reasoning as
+// the variant-lookup case above.
+func TestService_Receive_SwallowsStockEventPublishFailure(t *testing.T) {
+	orders := &memOrderRepo{order: paidOrder(t)}
+	returns := newMemReturnRepo()
+	stock := &memStockRepo{qty: map[string]int{"v1": 5}}
+	var logBuf bytes.Buffer
+	bus := event.NewBus(logger.NewWithWriter(io.Discard, "info"))
+	bus.On(inventory.EventStockUpdated, func(context.Context, event.Event) error {
+		return errors.New("sync handler exploded")
+	})
+	svc := returnsApp.NewService(returns, orders, stock, memVariantRepo{}, &memPaymentRepo{}, nil, bus, logger.NewWithWriter(&logBuf, "info"))
+
+	ret, err := svc.RequestReturn(context.Background(), "o1", "c1", "damaged", []returnsApp.RequestLine{
+		{VariantID: "v1", Quantity: 1},
+	})
+	if err != nil {
+		t.Fatalf("RequestReturn: %v", err)
+	}
+	ret, err = svc.Approve(context.Background(), ret.ID)
+	if err != nil {
+		t.Fatalf("Approve: %v", err)
+	}
+	if _, err := svc.Receive(context.Background(), ret.ID); err != nil {
+		t.Fatalf("Receive: %v, want nil despite the stock event publish failing", err)
+	}
+	if stock.qty["v1"] != 6 {
+		t.Fatalf("stock = %d, want 6 (restock itself must still succeed)", stock.qty["v1"])
+	}
+	if !strings.Contains(logBuf.String(), "returns: publish stock event failed") {
+		t.Errorf("log output = %q, want it to contain the publish-failed warning", logBuf.String())
 	}
 }
 

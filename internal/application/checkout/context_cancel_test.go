@@ -62,8 +62,8 @@ func (r *blockingReservationRepo) FindByID(context.Context, string) (*inventory.
 func (r *blockingReservationRepo) ListActiveByVariantID(context.Context, string) ([]inventory.Reservation, error) {
 	return nil, nil
 }
-func (r *blockingReservationRepo) ReleaseExpiredBefore(context.Context, time.Time) (int, error) {
-	return 0, nil
+func (r *blockingReservationRepo) ReleaseExpiredBefore(context.Context, time.Time) ([]inventory.ReleasedReservation, error) {
+	return nil, nil
 }
 
 func canceledCheckoutCart(t *testing.T) *cart.Cart {
@@ -187,8 +187,8 @@ func (r *cancelAfterFirstReserveRepo) FindByID(context.Context, string) (*invent
 func (r *cancelAfterFirstReserveRepo) ListActiveByVariantID(context.Context, string) ([]inventory.Reservation, error) {
 	return nil, nil
 }
-func (r *cancelAfterFirstReserveRepo) ReleaseExpiredBefore(context.Context, time.Time) (int, error) {
-	return 0, nil
+func (r *cancelAfterFirstReserveRepo) ReleaseExpiredBefore(context.Context, time.Time) ([]inventory.ReleasedReservation, error) {
+	return nil, nil
 }
 
 func TestReserveInventoryStep_RollbackIgnoresCanceledRequestContext(t *testing.T) {

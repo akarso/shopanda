@@ -2,13 +2,45 @@ package inventory_test
 
 import (
 	"context"
+	"errors"
 	"testing"
 	"time"
 
 	inventoryApp "github.com/akarso/shopanda/internal/application/inventory"
+	"github.com/akarso/shopanda/internal/domain/catalog"
 	"github.com/akarso/shopanda/internal/domain/inventory"
 	"github.com/akarso/shopanda/internal/domain/jobs"
+	"github.com/akarso/shopanda/internal/platform/event"
+	"github.com/akarso/shopanda/internal/platform/logger"
 )
+
+type stubVariantRepo struct {
+	variants map[string]*catalog.Variant
+	err      error
+	gotCtx   context.Context
+}
+
+func (r *stubVariantRepo) FindByID(ctx context.Context, id string) (*catalog.Variant, error) {
+	r.gotCtx = ctx
+	if r.err != nil {
+		return nil, r.err
+	}
+	return r.variants[id], nil
+}
+func (r *stubVariantRepo) FindBySKU(_ context.Context, _ string) (*catalog.Variant, error) {
+	return nil, nil
+}
+func (r *stubVariantRepo) FindBySKUs(_ context.Context, _ []string) (map[string]*catalog.Variant, error) {
+	return nil, nil
+}
+func (r *stubVariantRepo) ListByProductID(_ context.Context, _ string, _, _ int) ([]catalog.Variant, error) {
+	return nil, nil
+}
+func (r *stubVariantRepo) ListByProductIDs(_ context.Context, _ []string, _ int) (map[string][]catalog.Variant, error) {
+	return nil, nil
+}
+func (r *stubVariantRepo) Create(_ context.Context, _ *catalog.Variant) error { return nil }
+func (r *stubVariantRepo) Update(_ context.Context, _ *catalog.Variant) error { return nil }
 
 type stubReleaser struct {
 	released int
@@ -18,11 +50,18 @@ type stubReleaser struct {
 	gotCtx   context.Context
 }
 
-func (s *stubReleaser) ReleaseExpiredBefore(ctx context.Context, cutoff time.Time) (int, error) {
+func (s *stubReleaser) ReleaseExpiredBefore(ctx context.Context, cutoff time.Time) ([]inventory.ReleasedReservation, error) {
 	s.called = true
 	s.cutoff = cutoff
 	s.gotCtx = ctx
-	return s.released, s.err
+	if s.released == 0 {
+		return nil, s.err
+	}
+	released := make([]inventory.ReleasedReservation, s.released)
+	for i := range released {
+		released[i] = inventory.ReleasedReservation{VariantID: "v1", Quantity: 1}
+	}
+	return released, s.err
 }
 
 type errorCall struct {
@@ -201,4 +240,155 @@ func TestReservationExpiryHandler_PanicsOnNilLogger(t *testing.T) {
 		}
 	}()
 	inventoryApp.NewReservationExpiryHandler(&stubReleaser{}, nil)
+}
+
+// TestReservationExpiryHandler_Handle_PublishesStockUpdatedEvents pins
+// PR-1049's reservation-expiry fix: SetEventPublishing must publish
+// inventory.EventStockUpdated for every reservation ReleaseExpiredBefore
+// released — the search index's on-save subscriber was previously never
+// notified when a reservation expired and its stock was restored.
+func TestReservationExpiryHandler_Handle_PublishesStockUpdatedEvents(t *testing.T) {
+	r := &stubReleaser{released: 2}
+	log := &stubLogger{}
+	h := inventoryApp.NewReservationExpiryHandler(r, log)
+	variants := &stubVariantRepo{variants: map[string]*catalog.Variant{
+		"v1": {ID: "v1", ProductID: "p1", SKU: "SKU-1"},
+	}}
+	bus := event.NewBus(logger.New("error"))
+	h.SetEventPublishing(variants, bus)
+
+	var captured []event.Event
+	bus.On(inventory.EventStockUpdated, func(_ context.Context, evt event.Event) error {
+		captured = append(captured, evt)
+		return nil
+	})
+
+	job := jobs.Job{ID: "j6", Type: inventoryApp.ReservationExpiryJobType}
+	if err := h.Handle(context.Background(), job); err != nil {
+		t.Fatalf("Handle: %v", err)
+	}
+
+	if len(captured) != 2 {
+		t.Fatalf("published %d events, want 2 (one per released reservation)", len(captured))
+	}
+	for i, evt := range captured {
+		data, ok := evt.Data.(inventory.StockUpdatedData)
+		if !ok {
+			t.Fatalf("event[%d] data type = %T, want StockUpdatedData", i, evt.Data)
+		}
+		if data.VariantID != "v1" || data.ProductID != "p1" || data.SKU != "SKU-1" || data.Delta == nil || *data.Delta != 1 {
+			t.Errorf("event[%d] data = %+v, want variant_id=v1 product_id=p1 sku=SKU-1 delta=1", i, data)
+		}
+	}
+}
+
+// TestReservationExpiryHandler_Handle_NoEventPublishingByDefault pins
+// that Handle works exactly as before when SetEventPublishing was never
+// called — the default for every existing caller/test that doesn't need
+// eventing, matching InventoryAdminHandler.SetBus's own convention.
+func TestReservationExpiryHandler_Handle_NoEventPublishingByDefault(t *testing.T) {
+	r := &stubReleaser{released: 2}
+	log := &stubLogger{}
+	h := inventoryApp.NewReservationExpiryHandler(r, log)
+
+	job := jobs.Job{ID: "j7", Type: inventoryApp.ReservationExpiryJobType}
+	if err := h.Handle(context.Background(), job); err != nil {
+		t.Fatalf("Handle: %v", err)
+	}
+	if len(log.infos) != 1 || log.infos[0] != "job.reservation_expiry.released" {
+		t.Fatalf("infos = %v, want [job.reservation_expiry.released]", log.infos)
+	}
+}
+
+// TestReservationExpiryHandler_Handle_SkipsPublishOnVariantLookupError
+// pins that a failed variant lookup for one released reservation is
+// swallowed, not surfaced as a job failure — the release itself already
+// succeeded, so a stale search index entry for that one variant is not
+// worth retrying (and re-releasing nothing) the whole sweep over.
+func TestReservationExpiryHandler_Handle_SkipsPublishOnVariantLookupError(t *testing.T) {
+	r := &stubReleaser{released: 1}
+	log := &stubLogger{}
+	h := inventoryApp.NewReservationExpiryHandler(r, log)
+	variants := &stubVariantRepo{err: errors.New("db down")}
+	bus := event.NewBus(logger.New("error"))
+	h.SetEventPublishing(variants, bus)
+
+	var captured []event.Event
+	bus.On(inventory.EventStockUpdated, func(_ context.Context, evt event.Event) error {
+		captured = append(captured, evt)
+		return nil
+	})
+
+	job := jobs.Job{ID: "j8", Type: inventoryApp.ReservationExpiryJobType}
+	if err := h.Handle(context.Background(), job); err != nil {
+		t.Fatalf("Handle: %v, want nil despite the variant lookup failing", err)
+	}
+	if len(captured) != 0 {
+		t.Errorf("published %d events, want 0 (variant lookup failed)", len(captured))
+	}
+}
+
+// TestReservationExpiryHandler_Handle_PublishesCommittedReleasesBeforeNonOrphanError
+// pins that ReleaseExpiredBefore may return committed releases alongside a
+// later batch error, and Handle must publish those before propagating the
+// error — otherwise stock restored in the committed batch is never reindexed
+// and later sweeps cannot select the already-released rows.
+func TestReservationExpiryHandler_Handle_PublishesCommittedReleasesBeforeNonOrphanError(t *testing.T) {
+	batchErr := errors.New("later batch failed")
+	r := &stubReleaser{released: 1, err: batchErr}
+	log := &stubLogger{}
+	h := inventoryApp.NewReservationExpiryHandler(r, log)
+	variants := &stubVariantRepo{variants: map[string]*catalog.Variant{
+		"v1": {ID: "v1", ProductID: "p1", SKU: "SKU-1"},
+	}}
+	bus := event.NewBus(logger.New("error"))
+	h.SetEventPublishing(variants, bus)
+
+	var captured []event.Event
+	bus.On(inventory.EventStockUpdated, func(_ context.Context, evt event.Event) error {
+		captured = append(captured, evt)
+		return nil
+	})
+
+	job := jobs.Job{ID: "j9", Type: inventoryApp.ReservationExpiryJobType}
+	err := h.Handle(context.Background(), job)
+	if !errors.Is(err, batchErr) {
+		t.Fatalf("err = %v, want later batch failed", err)
+	}
+	if len(captured) != 1 {
+		t.Fatalf("published %d events, want 1 (committed release must publish before the error is returned)", len(captured))
+	}
+	if len(log.infos) != 0 {
+		t.Errorf("expected no success log on a genuine failure, got %v", log.infos)
+	}
+}
+
+// TestReservationExpiryHandler_Handle_PublishDeadlineMatchesSweepBudget
+// pins that the shared publish context is not a short whole-pass cliff:
+// a sweep can return an unbounded committed batch, each needing a
+// variant lookup, and Handle still reports success — so leftover
+// unpublished rows would stay stale in search with no retry.
+func TestReservationExpiryHandler_Handle_PublishDeadlineMatchesSweepBudget(t *testing.T) {
+	r := &stubReleaser{released: 1}
+	h := inventoryApp.NewReservationExpiryHandler(r, &stubLogger{})
+	variants := &stubVariantRepo{variants: map[string]*catalog.Variant{
+		"v1": {ID: "v1", ProductID: "p1", SKU: "SKU-1"},
+	}}
+	bus := event.NewBus(logger.New("error"))
+	h.SetEventPublishing(variants, bus)
+	bus.On(inventory.EventStockUpdated, func(context.Context, event.Event) error { return nil })
+
+	if err := h.Handle(context.Background(), jobs.Job{ID: "j10", Type: inventoryApp.ReservationExpiryJobType}); err != nil {
+		t.Fatalf("Handle: %v", err)
+	}
+	if variants.gotCtx == nil {
+		t.Fatal("expected FindByID to receive a publish context")
+	}
+	deadline, ok := variants.gotCtx.Deadline()
+	if !ok {
+		t.Fatal("publish context has no deadline")
+	}
+	if until := time.Until(deadline); until < 9*time.Minute {
+		t.Errorf("publish deadline is %v from now, want ~10m (the sweep budget), not a 5s whole-pass cliff", until)
+	}
 }

@@ -27,8 +27,40 @@ type ReservationRepository interface {
 	// ListActiveByVariantID returns all active reservations for a variant.
 	ListActiveByVariantID(ctx context.Context, variantID string) ([]Reservation, error)
 
-	// ReleaseExpiredBefore atomically releases all active reservations that expired
-	// before cutoff, restoring their quantities to stock. Returns the number of
-	// reservations released.
-	ReleaseExpiredBefore(ctx context.Context, cutoff time.Time) (int, error)
+	// ReleaseExpiredBefore atomically releases all active reservations that
+	// expired before cutoff, restoring their quantities to stock. Returns
+	// one ReleasedReservation per reservation released (PR-1049: callers
+	// need per-variant detail — e.g. to publish inventory.EventStockUpdated
+	// for each — not just a count). The returned slice is not filtered for
+	// orphaned variants — see ReleasedReservation's own doc comment.
+	//
+	// The slice may be non-empty even when the error is non-nil: each
+	// batch commits independently, so a later batch's failure (or an
+	// OrphanedStockRestoreError covering some of the released rows) still
+	// leaves earlier committed releases in the result. Callers that act
+	// on the result must process every returned element before
+	// propagating a non-orphan error. A canceled or deadline-exceeded
+	// ctx stops further batches and returns whatever committed so far
+	// with a nil error (not the context error).
+	ReleaseExpiredBefore(ctx context.Context, cutoff time.Time) ([]ReleasedReservation, error)
+}
+
+// ReleasedReservation describes one reservation ReleaseExpiredBefore
+// released: the variant whose stock was restored, and by how much (the
+// reservation's own quantity — the size of the restore — not the
+// variant's resulting on-hand total, which ReleaseExpiredBefore's batched
+// SQL doesn't read back).
+//
+// VariantID is not guaranteed to still identify a variant that exists:
+// releasing a reservation whose variant was deleted after the reservation
+// was created still appears here (its release is real regardless of
+// whether its quantity had anywhere to go back to — see
+// OrphanedStockRestoreError, returned alongside this slice, not instead
+// of an entry in it). Any caller resolving VariantID to a variant (e.g.
+// to publish inventory.EventStockUpdated) must itself handle a "not
+// found" result the normal way for that lookup — this type does not
+// encode or filter that condition for you.
+type ReleasedReservation struct {
+	VariantID string
+	Quantity  int
 }

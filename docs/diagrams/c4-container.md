@@ -13,7 +13,7 @@ C4Container
 
     System_Boundary(shopanda, "Shopanda System") {
         Container(apiServer, "API Server", "Go, net/http", "HTTP server: REST API, admin SPA, optional SSR storefront. Hexagonal layers: domain, application, infrastructure, interfaces. Optional /metrics on a separate loopback-by-default listener (metrics.enabled, default off).")
-        Container(worker, "Worker", "Go, same binary", "Background job processor (email, cache cleanup, async tasks). Embedded in `app dev`/`serve`; separate service in production. Optional /metrics listener same as API Server.")
+        Container(worker, "Worker", "Go, same binary", "Background job processor (email, cache cleanup, reservation expiry, search reindex). Embedded in `app dev`/`serve`; separate service in production. Standalone process owns its own in-process event bus so reservation-expiry stock restores enqueue a scoped reindex. Optional /metrics listener same as API Server.")
         Container(scheduler, "Scheduler", "Go, same binary", "Cron scheduler enqueueing recurring jobs. Embedded in `app dev`; separate service in production.")
         Container(pluginSystem, "Plugin System", "Go interfaces", "Three-tier extensions: core plugins (config-gated), external plugins (compile-time). Events, pipelines, workflows.")
         Container(eventBus, "Event Bus", "Go, in-process", "Publish/subscribe for domain events. Sync and async handlers.")
@@ -29,6 +29,7 @@ C4Container
     Rel(worker, postgres, "Claims and completes jobs", "SQL / pgx")
     Rel(scheduler, postgres, "Enqueues scheduled jobs", "SQL / pgx")
     Rel(apiServer, eventBus, "Publishes domain events", "In-process")
+    Rel(worker, eventBus, "Own in-process bus: reservation-expiry stock events → IndexUpdateSubscriber → search.reindex", "In-process")
     Rel(eventBus, pluginSystem, "Delivers events to plugin handlers", "In-process")
     Rel(pluginSystem, apiServer, "Registers pricing, checkout, composition steps", "In-process")
 
@@ -36,4 +37,4 @@ C4Container
     UpdateRelStyle(admin, apiServer, $offsetY="40")
 ```
 
-> **Runtime layout:** Development uses `app dev` (single process with embedded worker + scheduler). Production runs `serve`, `worker`, and `scheduler` as separate services from the same image. See [Runtime Modes](../phase-4-refactoring/specs/RUNTIME_MODES.md).
+> **Runtime layout:** Development uses `app dev` (single process with embedded worker + scheduler). Production runs `serve`, `worker`, and `scheduler` as separate services from the same image. The Event Bus container is **in-process per runtime**, not a shared bus between `serve` and standalone `worker` — each process that publishes domain events (API server, and the standalone worker for reservation-expiry stock restores) has its own. See [Runtime Modes](../phase-4-refactoring/specs/RUNTIME_MODES.md).

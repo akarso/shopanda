@@ -82,7 +82,7 @@ PR-1033 shipped with a documented, deliberate gap: a `search_index_runs` row can
 
 ### Standalone fix: PR-1049
 
-PR-1036's own code review surfaced that `inventory.EventStockUpdated` — the event its on-save search subscriber listens for — is only ever published from the interactive admin single-variant "Adjust" endpoint. Checkout reservation/release (the actual highest-frequency stock-changing path — every customer purchase), reservation-expiry release, and returns restocking all mutate stock without publishing it; the two bulk stock-mutation paths (CLI/CSV import, ERP sync) were deliberately left unwired rather than reproduce the per-row job/run fan-out risk PR-1036 caught and avoided for bulk price import. **PR-1049** (planned) closes all of it: wires the missing publish sites (checkout first), and gives the bulk paths a batch-once `ReindexService.Trigger` call instead of one event per row.
+PR-1036's own code review surfaced that `inventory.EventStockUpdated` — the event its on-save search subscriber listens for — is only ever published from the interactive admin single-variant "Adjust" endpoint. Checkout reservation/release (the actual highest-frequency stock-changing path — every customer purchase), reservation-expiry release, and returns restocking all mutate stock without publishing it; the two bulk stock-mutation paths (CLI/CSV import, ERP sync) were deliberately left unwired rather than reproduce the per-row job/run fan-out risk PR-1036 caught and avoided for bulk price import. **PR-1049** (done) closes all of it: wires the missing publish sites (checkout first), and gives the bulk paths a batch-once `ReindexService.Trigger` call instead of one event per row.
 
 ### Design notes: PR-1035 shipped ahead of PR-1037
 

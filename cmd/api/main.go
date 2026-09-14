@@ -36,6 +36,7 @@ import (
 	"github.com/akarso/shopanda/internal/infrastructure/postgres"
 	"github.com/akarso/shopanda/internal/platform/config"
 	"github.com/akarso/shopanda/internal/platform/db"
+	"github.com/akarso/shopanda/internal/platform/event"
 	"github.com/akarso/shopanda/internal/platform/logger"
 	"github.com/akarso/shopanda/internal/platform/metrics"
 	"github.com/akarso/shopanda/internal/platform/migrate"
@@ -490,7 +491,7 @@ func runScheduler(cfg *config.Config, log logger.Logger) error {
 		Bootstrap: boot,
 	}
 	pluginApp.SetExtensionRegistry(extensionApp.NewRegistry())
-	if err := wireIntegrationStockSyncerFromDB(conn, pluginApp); err != nil {
+	if _, err := wireIntegrationStockSyncerFromDB(conn, pluginApp); err != nil {
 		return err
 	}
 	preparePermissionRegistry(pluginApp)
@@ -822,7 +823,14 @@ func setupWorker(conn *sql.DB, cfg *config.Config, log logger.Logger, app *plugi
 	if err != nil {
 		return nil, nil, nil, err
 	}
-	jobWorker.Register(inventoryApp.NewReservationExpiryHandler(reservationRepo, log))
+	reservationExpiryHandler := inventoryApp.NewReservationExpiryHandler(reservationRepo, log)
+	// app.Bus is nil for a process that never wired one (see runWorker's own
+	// comment on why it now does) — SetEventPublishing is skipped rather
+	// than called with a nil bus, matching its own documented default.
+	if app.Bus != nil {
+		reservationExpiryHandler.SetEventPublishing(variantRepo, app.Bus)
+	}
+	jobWorker.Register(reservationExpiryHandler)
 
 	merchantWebhookRepo, err := postgres.NewWebhookEndpointRepo(conn)
 	if err != nil {
@@ -891,13 +899,21 @@ func runWorker(cfg *config.Config, log logger.Logger) error {
 	if err != nil {
 		return err
 	}
+	// PR-1049: the reservation-expiry sweep registered below via
+	// setupWorker runs in this process — it needs a real bus to publish
+	// inventory.EventStockUpdated (see ReservationExpiryHandler.
+	// SetEventPublishing), which wireServeRuntime's own bus (serve's
+	// embedded worker) can't reach since this is a separate process.
+	bus := event.NewBus(log)
 	pluginApp := &plugin.App{
 		Logger:    log,
+		Bus:       bus,
 		Config:    cfg,
 		Bootstrap: boot,
 	}
 	pluginApp.SetExtensionRegistry(extensionApp.NewRegistry())
-	if err := wireIntegrationStockSyncerFromDB(conn, pluginApp); err != nil {
+	stockSyncSvc, err := wireIntegrationStockSyncerFromDB(conn, pluginApp)
+	if err != nil {
 		return err
 	}
 	preparePermissionRegistry(pluginApp)
@@ -929,10 +945,35 @@ func runWorker(cfg *config.Config, log logger.Logger) error {
 	}
 
 	metricsRecorder, metricsHandler := newMetrics(cfg)
-	jobWorker, _, _, err := setupWorker(conn, cfg, log, pluginApp, metricsRecorder)
+	jobWorker, jobQueue, _, err := setupWorker(conn, cfg, log, pluginApp, metricsRecorder)
 	if err != nil {
 		shutdownTracing()
 		return err
+	}
+
+	// PR-1049: wire the ERP stock syncer's batched reindex trigger now
+	// that jobQueue exists — wireIntegrationStockSyncerFromDB ran earlier,
+	// before setupWorker, because the plugin app needs the syncer wired
+	// before registry.InitAll (plugins consume it during their own Init);
+	// ReindexService needs the queue setupWorker constructs, so this is
+	// necessarily a two-step wiring, same as wireServeRuntime's own
+	// (see its call site for the analogous reasoning). Best-effort: a
+	// failure here just means this worker's own ERP syncs won't trigger a
+	// reindex (the existing manual/scheduled search:reindex remains the
+	// fallback), not that the worker fails to start.
+	//
+	// IndexUpdateSubscriber is registered on this process's bus for the
+	// same reason: setupWorker publishes reservation-expiry
+	// inventory.EventStockUpdated here, and without a subscriber on this
+	// bus (wireServeRuntime's copy lives in the serve process) those
+	// restores would never enqueue a reindex.
+	if reindexService, err := newWorkerReindexService(conn, cfg, log, jobQueue); err != nil {
+		log.Warn("worker.stock_sync_reindex_unavailable", map[string]interface{}{"error": err.Error()})
+	} else {
+		stockSyncSvc.SetReindexService(reindexService)
+		if err := registerWorkerIndexUpdateSubscriber(conn, cfg, log, pluginApp, bus, reindexService); err != nil {
+			log.Warn("worker.index_update_subscriber_unavailable", map[string]interface{}{"error": err.Error()})
+		}
 	}
 
 	metricsSrv, metricsDone, err := startMetricsServer(cfg, metricsHandler, log)
@@ -957,11 +998,18 @@ func runWorker(cfg *config.Config, log logger.Logger) error {
 
 	jobWorker.Start(ctx)
 
+	// IndexUpdateSubscriber (and any other OnAsync handlers on this bus)
+	// must be allowed to finish enqueueing a reindex after the last
+	// reservation-expiry publish; exiting immediately would drop them.
+	const backgroundTimeout = 10 * time.Second
+	bus.BeginShutdown()
+	bus.Drain(backgroundTimeout)
+
 	if metricsSrv != nil {
 		// Mirrors runServe's drain: wait (bounded) for the metrics server's
 		// own Serve goroutine to actually return after Close(), instead of
 		// closing and immediately exiting the process out from under it.
-		runtime.ShutdownBackground(log, 10*time.Second, nil, []func(){func() { metricsSrv.Close() }}, []<-chan struct{}{metricsDone})
+		runtime.ShutdownBackground(log, backgroundTimeout, nil, []func(){func() { metricsSrv.Close() }}, []<-chan struct{}{metricsDone})
 	}
 
 	shutdownTracing()
@@ -1030,6 +1078,49 @@ func newSearchReindexService(cfg *config.Config, log logger.Logger) (svc *search
 		return nil, nil, nil, fmt.Errorf("reindex service: %w", err)
 	}
 	return svc, runs, conn, nil
+}
+
+// registerWorkerIndexUpdateSubscriber wires search's on-save subscriber
+// onto the standalone worker's bus, matching wireServeRuntime, so
+// reservation-expiry EventStockUpdated publishes in this process enqueue
+// a reindex. Best-effort: a construction failure is returned for the
+// caller to log, not a worker start failure.
+func registerWorkerIndexUpdateSubscriber(conn *sql.DB, cfg *config.Config, log logger.Logger, pluginApp *plugin.App, bus *event.Bus, reindexService *searchApp.ReindexService) error {
+	searchEngine, err := resolveSearchEngine(pluginApp, conn, cfg)
+	if err != nil {
+		return fmt.Errorf("search engine: %w", err)
+	}
+	searchCategorySource, err := postgres.NewSearchCategorySource(conn)
+	if err != nil {
+		return fmt.Errorf("search category source: %w", err)
+	}
+	categoryLock, err := postgres.NewAdvisoryLock(conn)
+	if err != nil {
+		return fmt.Errorf("category lock: %w", err)
+	}
+	searchApp.NewIndexUpdateSubscriber(reindexService, searchEngine, searchCategorySource, categoryLock, log).Register(bus)
+	return nil
+}
+
+// newWorkerReindexService builds a search.ReindexService reusing an
+// already-open conn and jobQueue — unlike newSearchReindexService (which
+// opens its own connection and does a full plugin bootstrap for a
+// standalone CLI invocation), this is for runWorker's PR-1049 stock-sync
+// wiring, where both already exist by the time it's needed.
+func newWorkerReindexService(conn *sql.DB, cfg *config.Config, log logger.Logger, jobQueue jobs.Queue) (*searchApp.ReindexService, error) {
+	runs, err := postgres.NewSearchIndexRunRepo(conn)
+	if err != nil {
+		return nil, fmt.Errorf("search index run store: %w", err)
+	}
+	products, err := postgres.NewSearchProductSource(conn)
+	if err != nil {
+		return nil, fmt.Errorf("search product source: %w", err)
+	}
+	svc, err := searchApp.NewReindexService(runs, products, jobQueue, log, cfg.Search.ReindexFullScanThreshold)
+	if err != nil {
+		return nil, fmt.Errorf("reindex service: %w", err)
+	}
+	return svc, nil
 }
 
 // runSearchReindex handles `app search:reindex [--wait]`. It enqueues a

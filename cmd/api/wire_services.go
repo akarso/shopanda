@@ -247,7 +247,7 @@ func wireServeRuntime(cfg *config.Config, log logger.Logger, conn *sql.DB, repos
 	pluginApp.SetIntegrationIdempotencyStore(repos.integrationIdempotencyRepo)
 	orderStatusService := orderApp.NewStatusService(repos.orderRepo)
 	pluginApp.SetIntegrationOrderStatusUpdater(plugin.NewIntegrationOrderStatusUpdater(orderStatusService))
-	wireIntegrationStockSyncer(pluginApp, repos.variantRepo, repos.stockRepo)
+	stockSyncSvc := wireIntegrationStockSyncer(pluginApp, repos.variantRepo, repos.stockRepo)
 	permReg := preparePermissionRegistry(pluginApp)
 	summary := registry.InitAll(pluginApp)
 	sealPermissionRegistry(pluginApp) // serve: freeze + BindRuntime for HTTP auth/catalog
@@ -316,6 +316,13 @@ func wireServeRuntime(cfg *config.Config, log logger.Logger, conn *sql.DB, repos
 	if err != nil {
 		return nil, err
 	}
+	// PR-1049: wire the ERP stock syncer's batched reindex trigger now
+	// that reindexService exists — wireIntegrationStockSyncer ran earlier,
+	// before registry.InitAll (plugins consume the syncer during their own
+	// Init), well before reindexService's own dependencies (jobQueue) are
+	// even constructed. See runWorker's own PR-1049 wiring for the same
+	// two-step reasoning applied to the standalone worker process.
+	stockSyncSvc.SetReindexService(reindexService)
 
 	// Job admin introspection/retry/cancel (PR-1028/PR-1029) — Postgres-queue-
 	// only, same constraint as resolveCache's ExpiredDeleter assertion above:
@@ -516,7 +523,8 @@ func wireServeRuntime(cfg *config.Config, log logger.Logger, conn *sql.DB, repos
 	// Checkout workflow.
 	validateCartStep := checkoutApp.NewValidateCartStep(repos.variantRepo)
 	recalculatePricingStep := checkoutApp.NewRecalculatePricingStep(pricingPipeline)
-	reserveInventoryStep := checkoutApp.NewReserveInventoryStep(repos.reservationRepo)
+	reserveInventoryStep := checkoutApp.NewReserveInventoryStep(repos.reservationRepo,
+		checkoutApp.WithStockEventPublishing(repos.variantRepo, bus))
 	createOrderStep := checkoutApp.NewCreateOrderStep(repos.orderRepo, repos.variantRepo, storeCreditService, extensionValueService)
 	selectShippingStep := checkoutApp.NewSelectShippingStep(shippingReg, repos.shippingRepo)
 	initiatePaymentStep := checkoutApp.NewInitiatePaymentStep(payRegistry, repos.paymentRepo)
@@ -672,7 +680,7 @@ func wireServeRuntime(cfg *config.Config, log logger.Logger, conn *sql.DB, repos
 		log.Info("payment.refund_handler_enabled", nil)
 	}
 
-	returnService := returnsApp.NewService(repos.returnRepo, repos.orderRepo, repos.stockRepo, repos.paymentRepo, stripeRefunder, bus, log)
+	returnService := returnsApp.NewService(repos.returnRepo, repos.orderRepo, repos.stockRepo, repos.variantRepo, repos.paymentRepo, stripeRefunder, bus, log)
 	returnAdmin := admin.NewReturnAdminHandler(returnService, sharedAuditor)
 	returnAccount := storefront.NewReturnAccountHandler(returnService)
 	reviewHandler := storefront.NewReviewHandler(reviewService)

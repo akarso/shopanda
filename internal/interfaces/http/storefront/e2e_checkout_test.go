@@ -127,8 +127,8 @@ func (r *e2eReservationRepo) FindByID(context.Context, string) (*inventory.Reser
 func (r *e2eReservationRepo) ListActiveByVariantID(context.Context, string) ([]inventory.Reservation, error) {
 	return nil, nil
 }
-func (r *e2eReservationRepo) ReleaseExpiredBefore(context.Context, time.Time) (int, error) {
-	return 0, nil
+func (r *e2eReservationRepo) ReleaseExpiredBefore(context.Context, time.Time) ([]inventory.ReleasedReservation, error) {
+	return nil, nil
 }
 
 type e2eOrderRepo struct {
