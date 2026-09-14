@@ -61,9 +61,13 @@ func (stockSyncFakeProductSource) ProductIDsUpdatedSince(context.Context, time.T
 // exactly how many jobs a run produced, and inspect each one's payload.
 type stockSyncFakeQueue struct {
 	enqueued []domainjobs.Job
+	err      error
 }
 
 func (q *stockSyncFakeQueue) Enqueue(_ context.Context, job domainjobs.Job) error {
+	if q.err != nil {
+		return q.err
+	}
 	q.enqueued = append(q.enqueued, job)
 	return nil
 }
@@ -281,12 +285,16 @@ func TestStockSyncService_UpsertBySKU_NilReindexServiceIsNoop(t *testing.T) {
 // reintroduced it for any multi-chunk run with a late failure.
 func TestStockSyncService_UpsertBySKU_ReindexesProductsCommittedBeforeALaterChunkFails(t *testing.T) {
 	const total = stockSyncChunkSize + 50 // forces a second SetStocks chunk
-	p1 := id.New()
+	p1, p2 := id.New(), id.New()
 	bySKU := make(map[string]*catalog.Variant, total)
 	updates := make([]extapi.StockLevelUpdate, 0, total)
 	for i := 0; i < total; i++ {
 		sku := fmt.Sprintf("SKU-%03d", i)
-		bySKU[sku] = &catalog.Variant{ID: fmt.Sprintf("v%03d", i), SKU: sku, ProductID: p1}
+		productID := p1
+		if i >= stockSyncChunkSize {
+			productID = p2
+		}
+		bySKU[sku] = &catalog.Variant{ID: fmt.Sprintf("v%03d", i), SKU: sku, ProductID: productID}
 		updates = append(updates, extapi.StockLevelUpdate{SKU: sku, Quantity: 5})
 	}
 	variants := &stockSyncVariantRepo{bySKU: bySKU}
@@ -295,9 +303,12 @@ func TestStockSyncService_UpsertBySKU_ReindexesProductsCommittedBeforeALaterChun
 	queue := &stockSyncFakeQueue{}
 	svc.SetReindexService(newTestReindexService(t, queue))
 
-	_, err := svc.UpsertBySKU(context.Background(), updates)
+	result, err := svc.UpsertBySKU(context.Background(), updates)
 	if err == nil {
 		t.Fatal("expected an error from the second (simulated-failure) SetStocks chunk")
+	}
+	if result.Updated != stockSyncChunkSize {
+		t.Fatalf("Updated = %d, want %d (only the successful first chunk)", result.Updated, stockSyncChunkSize)
 	}
 
 	if len(queue.enqueued) != 1 {
@@ -307,13 +318,26 @@ func TestStockSyncService_UpsertBySKU_ReindexesProductsCommittedBeforeALaterChun
 	if !ok {
 		t.Fatalf("payload product_ids type = %T, want []string", queue.enqueued[0].Payload["product_ids"])
 	}
-	found := false
-	for _, got := range ids {
-		if got == p1 {
-			found = true
-		}
+	if len(ids) != 1 || ids[0] != p1 {
+		t.Errorf("product_ids = %v, want exactly [%s] — chunk 1 committed p1; p2's chunk failed and must not be reindexed", ids, p1)
 	}
-	if !found {
-		t.Errorf("product_ids = %v, want to include %s — chunk 1 committed 100 rows for it before chunk 2 failed, so it must not be silently left unindexed", ids, p1)
+}
+
+func TestStockSyncService_UpsertBySKU_TriggerErrorIsReturned(t *testing.T) {
+	p1 := id.New()
+	variants := &stockSyncVariantRepo{bySKU: map[string]*catalog.Variant{
+		"SKU-1": {ID: "var-1", SKU: "SKU-1", ProductID: p1},
+	}}
+	stock := &stockSyncStockRepo{entries: make(map[string]inventory.StockEntry)}
+	svc := NewStockSyncService(variants, stock)
+	queueErr := errors.New("queue down")
+	queue := &stockSyncFakeQueue{err: queueErr}
+	svc.SetReindexService(newTestReindexService(t, queue))
+
+	_, err := svc.UpsertBySKU(context.Background(), []extapi.StockLevelUpdate{
+		{SKU: "SKU-1", Quantity: 10},
+	})
+	if !errors.Is(err, queueErr) {
+		t.Fatalf("err = %v, want queue down wrapped from Trigger", err)
 	}
 }

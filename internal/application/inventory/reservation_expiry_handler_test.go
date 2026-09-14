@@ -274,8 +274,8 @@ func TestReservationExpiryHandler_Handle_PublishesStockUpdatedEvents(t *testing.
 		if !ok {
 			t.Fatalf("event[%d] data type = %T, want StockUpdatedData", i, evt.Data)
 		}
-		if data.VariantID != "v1" || data.ProductID != "p1" || data.SKU != "SKU-1" || data.Quantity != 1 {
-			t.Errorf("event[%d] data = %+v, want variant_id=v1 product_id=p1 sku=SKU-1 quantity=1", i, data)
+		if data.VariantID != "v1" || data.ProductID != "p1" || data.SKU != "SKU-1" || data.Delta == nil || *data.Delta != 1 {
+			t.Errorf("event[%d] data = %+v, want variant_id=v1 product_id=p1 sku=SKU-1 delta=1", i, data)
 		}
 	}
 }
@@ -323,5 +323,40 @@ func TestReservationExpiryHandler_Handle_SkipsPublishOnVariantLookupError(t *tes
 	}
 	if len(captured) != 0 {
 		t.Errorf("published %d events, want 0 (variant lookup failed)", len(captured))
+	}
+}
+
+// TestReservationExpiryHandler_Handle_PublishesCommittedReleasesBeforeNonOrphanError
+// pins that ReleaseExpiredBefore may return committed releases alongside a
+// later batch error, and Handle must publish those before propagating the
+// error — otherwise stock restored in the committed batch is never reindexed
+// and later sweeps cannot select the already-released rows.
+func TestReservationExpiryHandler_Handle_PublishesCommittedReleasesBeforeNonOrphanError(t *testing.T) {
+	batchErr := errors.New("later batch failed")
+	r := &stubReleaser{released: 1, err: batchErr}
+	log := &stubLogger{}
+	h := inventoryApp.NewReservationExpiryHandler(r, log)
+	variants := &stubVariantRepo{variants: map[string]*catalog.Variant{
+		"v1": {ID: "v1", ProductID: "p1", SKU: "SKU-1"},
+	}}
+	bus := event.NewBus(logger.New("error"))
+	h.SetEventPublishing(variants, bus)
+
+	var captured []event.Event
+	bus.On(inventory.EventStockUpdated, func(_ context.Context, evt event.Event) error {
+		captured = append(captured, evt)
+		return nil
+	})
+
+	job := jobs.Job{ID: "j9", Type: inventoryApp.ReservationExpiryJobType}
+	err := h.Handle(context.Background(), job)
+	if !errors.Is(err, batchErr) {
+		t.Fatalf("err = %v, want later batch failed", err)
+	}
+	if len(captured) != 1 {
+		t.Fatalf("published %d events, want 1 (committed release must publish before the error is returned)", len(captured))
+	}
+	if len(log.infos) != 0 {
+		t.Errorf("expected no success log on a genuine failure, got %v", log.infos)
 	}
 }

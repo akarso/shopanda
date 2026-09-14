@@ -7,12 +7,17 @@ import (
 	"io"
 	"strconv"
 	"strings"
+	"time"
 
 	importctx "github.com/akarso/shopanda/internal/application/importctx"
 	searchApp "github.com/akarso/shopanda/internal/application/search"
 	"github.com/akarso/shopanda/internal/domain/catalog"
 	"github.com/akarso/shopanda/internal/domain/inventory"
 )
+
+// reindexTriggerTimeout bounds the post-commit ReindexService.Trigger call
+// so it does not inherit a canceled operation context.
+const reindexTriggerTimeout = 30 * time.Second
 
 // StockResult holds the summary of a stock import run.
 type StockResult struct {
@@ -67,10 +72,16 @@ func (imp *StockImporter) WithReindex(reindex *searchApp.ReindexService) *StockI
 // success path: a row partway through the file failing (e.g. SetStock
 // erroring on row N) must not leave every already-committed row before it
 // permanently unindexed — see StockSyncService.UpsertBySKU's identical
-// reasoning for its own chunked writes.
-func (imp *StockImporter) Import(ctx context.Context, r io.Reader) (*StockResult, error) {
+// reasoning for its own chunked writes. Trigger runs on a bounded
+// independent context; its error is returned when the import itself
+// otherwise succeeded.
+func (imp *StockImporter) Import(ctx context.Context, r io.Reader) (result *StockResult, err error) {
 	touchedProductIDs := make(map[string]struct{})
-	defer imp.triggerReindex(ctx, touchedProductIDs)
+	defer func() {
+		if terr := imp.triggerReindex(touchedProductIDs); terr != nil && err == nil {
+			err = terr
+		}
+	}()
 
 	reader := csv.NewReader(r)
 	reader.TrimLeadingSpace = true
@@ -91,7 +102,7 @@ func (imp *StockImporter) Import(ctx context.Context, r io.Reader) (*StockResult
 		return nil, fmt.Errorf("stock import: CSV must have 'sku' and 'quantity' columns")
 	}
 
-	result := &StockResult{}
+	result = &StockResult{}
 	lineNum := 1 // header is line 1
 
 	for {
@@ -163,17 +174,20 @@ func (imp *StockImporter) Import(ctx context.Context, r io.Reader) (*StockResult
 // this import run touched (deferred by Import — see its own doc comment
 // on why this can't just be a plain call at the end) — see WithReindex's
 // own doc comment for why this is one batched call, not one per row.
-// Best-effort either way: a reindex failure is not worth turning an
-// otherwise-successful import into a reported error over (the existing
-// manual/scheduled search:reindex remains the fallback, same as any other
-// on-save indexing gap in this codebase).
-func (imp *StockImporter) triggerReindex(ctx context.Context, touchedProductIDs map[string]struct{}) {
+// A Trigger failure is returned so a queue, scope-resolution, or database
+// error is actionable rather than leaving search silently stale.
+func (imp *StockImporter) triggerReindex(touchedProductIDs map[string]struct{}) error {
 	if imp.reindex == nil || len(touchedProductIDs) == 0 {
-		return
+		return nil
 	}
 	ids := make([]string, 0, len(touchedProductIDs))
 	for id := range touchedProductIDs {
 		ids = append(ids, id)
 	}
-	_, _ = imp.reindex.Trigger(ctx, searchApp.ScopeProducts{IDs: ids})
+	ctx, cancel := context.WithTimeout(context.Background(), reindexTriggerTimeout)
+	defer cancel()
+	if _, err := imp.reindex.Trigger(ctx, searchApp.ScopeProducts{IDs: ids}); err != nil {
+		return fmt.Errorf("stock import: reindex: %w", err)
+	}
+	return nil
 }

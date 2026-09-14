@@ -3,7 +3,9 @@ package inventory
 import (
 	"context"
 	"fmt"
+	"sort"
 	"strings"
+	"time"
 
 	searchApp "github.com/akarso/shopanda/internal/application/search"
 	"github.com/akarso/shopanda/internal/domain/catalog"
@@ -13,6 +15,11 @@ import (
 )
 
 const stockSyncChunkSize = 100
+
+// reindexTriggerTimeout bounds the post-commit ReindexService.Trigger call
+// so it does not inherit a canceled operation context (worker shutdown or
+// a deadline that already expired after earlier chunks committed).
+const reindexTriggerTimeout = 30 * time.Second
 
 // StockSyncService upserts warehouse stock levels by variant SKU.
 type StockSyncService struct {
@@ -53,18 +60,19 @@ func (s *StockSyncService) SetReindexService(reindex *searchApp.ReindexService) 
 // UpsertBySKU sets absolute stock quantities for known variant SKUs.
 // Unknown SKUs are skipped and listed in the result; invalid rows increment Skipped.
 //
-// touchedProductIDs is reindex-triggered via defer, not only on the
-// success path: SetStocks below writes in chunks, and a later chunk
-// failing must not leave an earlier, already-committed chunk's products
-// permanently unindexed (the whole point of this PR is closing exactly
-// that class of gap). The deferred call may end up covering a few
-// products whose own chunk was never reached — harmless over-inclusion,
-// not a correctness problem, and simpler than tracking exactly which
-// chunk committed before the failure.
-func (s *StockSyncService) UpsertBySKU(ctx context.Context, updates []extapi.StockLevelUpdate) (extapi.StockSyncResult, error) {
-	result := extapi.StockSyncResult{}
+// Updated and touchedProductIDs are recorded only after each SetStocks
+// chunk succeeds, so a later chunk failing cannot inflate the result or
+// reindex products whose write never committed. Reindex is triggered via
+// defer so an early-return error path still covers whatever did commit;
+// Trigger runs on a bounded independent context and its error is returned
+// when the sync itself otherwise succeeded.
+func (s *StockSyncService) UpsertBySKU(ctx context.Context, updates []extapi.StockLevelUpdate) (result extapi.StockSyncResult, err error) {
 	touchedProductIDs := make(map[string]struct{}, len(updates))
-	defer s.triggerReindex(ctx, touchedProductIDs)
+	defer func() {
+		if terr := s.triggerReindex(touchedProductIDs); terr != nil && err == nil {
+			err = terr
+		}
+	}()
 
 	validBySKU := make(map[string]int, len(updates))
 
@@ -85,6 +93,7 @@ func (s *StockSyncService) UpsertBySKU(ctx context.Context, updates []extapi.Sto
 	for sku := range validBySKU {
 		uniqueSKUs = append(uniqueSKUs, sku)
 	}
+	sort.Strings(uniqueSKUs)
 
 	variantsBySKU := make(map[string]*catalog.Variant, len(uniqueSKUs))
 	for i := 0; i < len(uniqueSKUs); i += stockSyncChunkSize {
@@ -92,9 +101,9 @@ func (s *StockSyncService) UpsertBySKU(ctx context.Context, updates []extapi.Sto
 		if end > len(uniqueSKUs) {
 			end = len(uniqueSKUs)
 		}
-		found, err := s.variants.FindBySKUs(ctx, uniqueSKUs[i:end])
-		if err != nil {
-			return result, fmt.Errorf("stock sync: find variants by sku: %w", err)
+		found, findErr := s.variants.FindBySKUs(ctx, uniqueSKUs[i:end])
+		if findErr != nil {
+			return result, fmt.Errorf("stock sync: find variants by sku: %w", findErr)
 		}
 		for sku, variant := range found {
 			variantsBySKU[sku] = variant
@@ -102,6 +111,7 @@ func (s *StockSyncService) UpsertBySKU(ctx context.Context, updates []extapi.Sto
 	}
 
 	entries := make([]inventory.StockEntry, 0, len(validBySKU))
+	entryProductIDs := make([]string, 0, len(validBySKU))
 	for _, sku := range uniqueSKUs {
 		variant := variantsBySKU[sku]
 		if variant == nil {
@@ -110,13 +120,12 @@ func (s *StockSyncService) UpsertBySKU(ctx context.Context, updates []extapi.Sto
 			continue
 		}
 
-		entry, err := inventory.NewStockEntry(variant.ID, validBySKU[sku])
-		if err != nil {
-			return result, apperror.Validation(err.Error())
+		entry, entryErr := inventory.NewStockEntry(variant.ID, validBySKU[sku])
+		if entryErr != nil {
+			return result, apperror.Validation(entryErr.Error())
 		}
 		entries = append(entries, entry)
-		touchedProductIDs[variant.ProductID] = struct{}{}
-		result.Updated++
+		entryProductIDs = append(entryProductIDs, variant.ProductID)
 	}
 
 	for i := 0; i < len(entries); i += stockSyncChunkSize {
@@ -124,29 +133,36 @@ func (s *StockSyncService) UpsertBySKU(ctx context.Context, updates []extapi.Sto
 		if end > len(entries) {
 			end = len(entries)
 		}
-		if err := s.stock.SetStocks(ctx, entries[i:end]); err != nil {
-			return result, fmt.Errorf("stock sync: set stock batch: %w", err)
+		if setErr := s.stock.SetStocks(ctx, entries[i:end]); setErr != nil {
+			return result, fmt.Errorf("stock sync: set stock batch: %w", setErr)
 		}
+		for _, productID := range entryProductIDs[i:end] {
+			touchedProductIDs[productID] = struct{}{}
+		}
+		result.Updated += end - i
 	}
 
 	return result, nil
 }
 
 // triggerReindex fires a single scoped reindex covering every product this
-// sync run touched (or attempted to — see UpsertBySKU's own doc comment
-// on why it's deferred, not just called on success) — see
-// SetReindexService's own doc comment for why this is one batched call,
-// not one per row. Best-effort either way: a reindex failure is not worth
-// turning an otherwise-successful sync into a reported error over (the
-// existing manual/scheduled search:reindex remains the fallback, same as
-// any other on-save indexing gap in this codebase).
-func (s *StockSyncService) triggerReindex(ctx context.Context, touchedProductIDs map[string]struct{}) {
+// sync run actually committed — see SetReindexService's own doc comment
+// for why this is one batched call, not one per row. A Trigger failure is
+// returned to the caller (via UpsertBySKU's named result) so a queue,
+// scope-resolution, or database error is actionable rather than leaving
+// search silently stale.
+func (s *StockSyncService) triggerReindex(touchedProductIDs map[string]struct{}) error {
 	if s.reindex == nil || len(touchedProductIDs) == 0 {
-		return
+		return nil
 	}
 	ids := make([]string, 0, len(touchedProductIDs))
 	for id := range touchedProductIDs {
 		ids = append(ids, id)
 	}
-	_, _ = s.reindex.Trigger(ctx, searchApp.ScopeProducts{IDs: ids})
+	ctx, cancel := context.WithTimeout(context.Background(), reindexTriggerTimeout)
+	defer cancel()
+	if _, err := s.reindex.Trigger(ctx, searchApp.ScopeProducts{IDs: ids}); err != nil {
+		return fmt.Errorf("stock sync: reindex: %w", err)
+	}
+	return nil
 }

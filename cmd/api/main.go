@@ -961,10 +961,19 @@ func runWorker(cfg *config.Config, log logger.Logger) error {
 	// failure here just means this worker's own ERP syncs won't trigger a
 	// reindex (the existing manual/scheduled search:reindex remains the
 	// fallback), not that the worker fails to start.
+	//
+	// IndexUpdateSubscriber is registered on this process's bus for the
+	// same reason: setupWorker publishes reservation-expiry
+	// inventory.EventStockUpdated here, and without a subscriber on this
+	// bus (wireServeRuntime's copy lives in the serve process) those
+	// restores would never enqueue a reindex.
 	if reindexService, err := newWorkerReindexService(conn, cfg, log, jobQueue); err != nil {
 		log.Warn("worker.stock_sync_reindex_unavailable", map[string]interface{}{"error": err.Error()})
 	} else {
 		stockSyncSvc.SetReindexService(reindexService)
+		if err := registerWorkerIndexUpdateSubscriber(conn, cfg, log, pluginApp, bus, reindexService); err != nil {
+			log.Warn("worker.index_update_subscriber_unavailable", map[string]interface{}{"error": err.Error()})
+		}
 	}
 
 	metricsSrv, metricsDone, err := startMetricsServer(cfg, metricsHandler, log)
@@ -989,11 +998,18 @@ func runWorker(cfg *config.Config, log logger.Logger) error {
 
 	jobWorker.Start(ctx)
 
+	// IndexUpdateSubscriber (and any other OnAsync handlers on this bus)
+	// must be allowed to finish enqueueing a reindex after the last
+	// reservation-expiry publish; exiting immediately would drop them.
+	const backgroundTimeout = 10 * time.Second
+	bus.BeginShutdown()
+	bus.Drain(backgroundTimeout)
+
 	if metricsSrv != nil {
 		// Mirrors runServe's drain: wait (bounded) for the metrics server's
 		// own Serve goroutine to actually return after Close(), instead of
 		// closing and immediately exiting the process out from under it.
-		runtime.ShutdownBackground(log, 10*time.Second, nil, []func(){func() { metricsSrv.Close() }}, []<-chan struct{}{metricsDone})
+		runtime.ShutdownBackground(log, backgroundTimeout, nil, []func(){func() { metricsSrv.Close() }}, []<-chan struct{}{metricsDone})
 	}
 
 	shutdownTracing()
@@ -1062,6 +1078,28 @@ func newSearchReindexService(cfg *config.Config, log logger.Logger) (svc *search
 		return nil, nil, nil, fmt.Errorf("reindex service: %w", err)
 	}
 	return svc, runs, conn, nil
+}
+
+// registerWorkerIndexUpdateSubscriber wires search's on-save subscriber
+// onto the standalone worker's bus, matching wireServeRuntime, so
+// reservation-expiry EventStockUpdated publishes in this process enqueue
+// a reindex. Best-effort: a construction failure is returned for the
+// caller to log, not a worker start failure.
+func registerWorkerIndexUpdateSubscriber(conn *sql.DB, cfg *config.Config, log logger.Logger, pluginApp *plugin.App, bus *event.Bus, reindexService *searchApp.ReindexService) error {
+	searchEngine, err := resolveSearchEngine(pluginApp, conn, cfg)
+	if err != nil {
+		return fmt.Errorf("search engine: %w", err)
+	}
+	searchCategorySource, err := postgres.NewSearchCategorySource(conn)
+	if err != nil {
+		return fmt.Errorf("search category source: %w", err)
+	}
+	categoryLock, err := postgres.NewAdvisoryLock(conn)
+	if err != nil {
+		return fmt.Errorf("category lock: %w", err)
+	}
+	searchApp.NewIndexUpdateSubscriber(reindexService, searchEngine, searchCategorySource, categoryLock, log).Register(bus)
+	return nil
 }
 
 // newWorkerReindexService builds a search.ReindexService reusing an

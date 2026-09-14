@@ -206,7 +206,7 @@ func (s *Service) Receive(ctx context.Context, returnID string) (*domainReturns.
 		if err := s.stock.SetStock(ctx, &entry); err != nil {
 			return nil, fmt.Errorf("returns: restock: %w", err)
 		}
-		s.publishStockUpdated(ctx, item.VariantID, entry.Quantity)
+		s.publishStockUpdated(ctx, item.VariantID, entry.Quantity, item.Quantity)
 	}
 	if err := ret.RecordRestocked(now); err != nil {
 		return nil, apperror.Validation(err.Error())
@@ -485,7 +485,7 @@ func (s *Service) publish(ctx context.Context, name string, ret domainReturns.Re
 // and the return's own state transition by this point; a stale search
 // index entry is not worth turning a successful restock into a reported
 // failure over.
-func (s *Service) publishStockUpdated(ctx context.Context, variantID string, quantity int) {
+func (s *Service) publishStockUpdated(ctx context.Context, variantID string, onHand, delta int) {
 	variant, err := s.variants.FindByID(ctx, variantID)
 	if err != nil {
 		s.log.Warn("returns: variant lookup failed for stock event", map[string]interface{}{
@@ -501,7 +501,8 @@ func (s *Service) publishStockUpdated(ctx context.Context, variantID string, qua
 		ProductID: variant.ProductID,
 		VariantID: variant.ID,
 		SKU:       variant.SKU,
-		Quantity:  quantity,
+		OnHand:    inventory.Qty(onHand),
+		Delta:     inventory.Qty(delta),
 	}
 	if err := s.bus.Publish(ctx, event.New(inventory.EventStockUpdated, "returns.service", data)); err != nil {
 		s.log.Warn("returns: publish stock event failed", map[string]interface{}{

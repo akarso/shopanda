@@ -142,7 +142,7 @@ func TestIndexUpdateSubscriber_HandlePriceUpserted_TriggersReindex(t *testing.T)
 
 func TestIndexUpdateSubscriber_HandleStockUpdated_TriggersReindex(t *testing.T) {
 	sub, queue := newIndexUpdateSubscriber(t)
-	evt := event.New(inventory.EventStockUpdated, "test", inventory.StockUpdatedData{ProductID: id.New(), VariantID: "v1", SKU: "sku-1", Quantity: 5})
+	evt := event.New(inventory.EventStockUpdated, "test", inventory.StockUpdatedData{ProductID: id.New(), VariantID: "v1", SKU: "sku-1", Delta: inventory.Qty(5)})
 
 	if err := sub.HandleStockUpdated(context.Background(), evt); err != nil {
 		t.Fatalf("HandleStockUpdated: %v", err)

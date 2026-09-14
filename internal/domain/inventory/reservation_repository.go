@@ -33,6 +33,15 @@ type ReservationRepository interface {
 	// need per-variant detail — e.g. to publish inventory.EventStockUpdated
 	// for each — not just a count). The returned slice is not filtered for
 	// orphaned variants — see ReleasedReservation's own doc comment.
+	//
+	// The slice may be non-empty even when the error is non-nil: each
+	// batch commits independently, so a later batch's failure (or an
+	// OrphanedStockRestoreError covering some of the released rows) still
+	// leaves earlier committed releases in the result. Callers that act
+	// on the result must process every returned element before
+	// propagating a non-orphan error. A canceled or deadline-exceeded
+	// ctx stops further batches and returns whatever committed so far
+	// with a nil error (not the context error).
 	ReleaseExpiredBefore(ctx context.Context, cutoff time.Time) ([]ReleasedReservation, error)
 }
 

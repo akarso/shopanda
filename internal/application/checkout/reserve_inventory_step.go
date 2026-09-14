@@ -47,11 +47,17 @@ func WithTTL(ttl time.Duration) ReserveOption {
 // event payload needs; bus publishes it. Left unset (the default), this
 // step works exactly as before — no event, no error, no new dependency —
 // matching the optional-wiring pattern InventoryAdminHandler.SetBus
-// already established. Both are set together, never independently: one
-// without the other can't publish anything, so there is no partial state
-// to guard against at publish time.
+// already established. Both must be non-nil: a nil variants repository
+// (or bus) panics rather than leaving incomplete stock-event
+// configuration that would only fail later at publish time.
 func WithStockEventPublishing(variants catalog.VariantRepository, bus *event.Bus) ReserveOption {
 	return func(s *ReserveInventoryStep) {
+		if variants == nil {
+			panic("checkout.WithStockEventPublishing: variants repository must not be nil")
+		}
+		if bus == nil {
+			panic("checkout.WithStockEventPublishing: bus must not be nil")
+		}
 		s.variants = variants
 		s.bus = bus
 	}
@@ -113,7 +119,7 @@ func (s *ReserveInventoryStep) Execute(ctx context.Context, cctx *Context) error
 		}
 		reservationIDs = append(reservationIDs, res.ID)
 		reserved = append(reserved, res)
-		s.publishStockUpdated(ctx, cctx, res.VariantID, res.Quantity)
+		s.publishStockUpdated(ctx, cctx, res.VariantID, -res.Quantity)
 	}
 
 	cctx.SetMeta("reservations", reservationIDs)
@@ -138,15 +144,13 @@ func (s *ReserveInventoryStep) Execute(ctx context.Context, cctx *Context) error
 // caller wiring this step without ValidateCartStep ahead of it, as some
 // tests do) — never a correctness dependency, just an optimization.
 //
-// quantity is the reservation's own quantity — the size of the change
-// (reserved or restored), not GetStock's resulting on-hand total (unlike
-// InventoryAdminHandler.Adjust's own publish site, which already has that
-// value in hand). Fetching the post-change total here would cost an extra
-// query per cart item purely for a field HandleStockUpdated (this event's
-// only current consumer) doesn't read — it schedules a reindex by
-// ProductID alone, which re-fetches the product's real current stock
-// independently.
-func (s *ReserveInventoryStep) publishStockUpdated(ctx context.Context, cctx *Context, variantID string, quantity int) {
+// delta is the signed size of the change (negative for Reserve, positive
+// for a rollback Release), not GetStock's resulting on-hand total.
+// Fetching the post-change total here would cost an extra query per cart
+// item purely for a field HandleStockUpdated (this event's only current
+// consumer) doesn't read — it schedules a reindex by ProductID alone,
+// which re-fetches the product's real current stock independently.
+func (s *ReserveInventoryStep) publishStockUpdated(ctx context.Context, cctx *Context, variantID string, delta int) {
 	if s.bus == nil {
 		return
 	}
@@ -162,6 +166,6 @@ func (s *ReserveInventoryStep) publishStockUpdated(ctx context.Context, cctx *Co
 		ProductID: variant.ProductID,
 		VariantID: variant.ID,
 		SKU:       variant.SKU,
-		Quantity:  quantity,
+		Delta:     inventory.Qty(delta),
 	}))
 }

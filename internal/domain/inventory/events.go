@@ -11,16 +11,18 @@ type StockUpdatedData struct {
 	VariantID string `json:"variant_id"`
 	SKU       string `json:"sku"`
 
-	// Quantity's meaning is NOT consistent across publish sites — it is
-	// either the resulting on-hand total after the change (admin Adjust,
-	// returns restocking, both of which already have that value in hand)
-	// or the size of the change itself (checkout reserve/release, the
-	// reservation-expiry sweep — an absolute total there would cost an
-	// extra query neither site otherwise needs). This is only harmless
-	// today because the sole consumer (search's HandleStockUpdated) reads
-	// only ProductID and ignores Quantity entirely. A future consumer
-	// that needs a precise, consistently-shaped quantity must query
-	// current stock itself — do not trust this field's shape without
-	// checking the specific publish site it came from.
-	Quantity int `json:"quantity"`
+	// OnHand is the resulting on-hand quantity after the change, when the
+	// producer already has that total (admin Adjust, returns restocking).
+	// Nil means this producer did not supply an absolute — do not treat a
+	// missing OnHand as zero stock.
+	OnHand *int `json:"on_hand,omitempty"`
+
+	// Delta is the signed size of the change (negative = reserved /
+	// decremented, positive = restored / incremented), when the producer
+	// knows the change size (checkout reserve/release, reservation-expiry
+	// restore). Nil means this producer did not supply a delta.
+	Delta *int `json:"delta,omitempty"`
 }
+
+// Qty returns a pointer to n for optional StockUpdatedData.OnHand / Delta.
+func Qty(n int) *int { return &n }

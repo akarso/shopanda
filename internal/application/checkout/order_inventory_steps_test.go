@@ -353,8 +353,8 @@ func TestReserveInventoryStep_EmitsStockUpdatedEvent(t *testing.T) {
 		if !ok {
 			t.Fatalf("event[%d] data type = %T, want StockUpdatedData", i, captured[i].Data)
 		}
-		if data.VariantID != want || data.ProductID != "prod-1" || data.SKU != fmt.Sprintf("SKU-%s", want) || data.Quantity != 2 {
-			t.Errorf("event[%d] data = %+v, want variant_id=%s product_id=prod-1 sku=SKU-%s quantity=2", i, data, want, want)
+		if data.VariantID != want || data.ProductID != "prod-1" || data.SKU != fmt.Sprintf("SKU-%s", want) || data.Delta == nil || *data.Delta != -2 {
+			t.Errorf("event[%d] data = %+v, want variant_id=%s product_id=prod-1 sku=SKU-%s delta=-2", i, data, want, want)
 		}
 	}
 }
@@ -376,6 +376,15 @@ func TestReserveInventoryStep_NoBusNoEvent(t *testing.T) {
 	if len(repo.reserved) != 1 {
 		t.Fatalf("reserved count = %d, want 1", len(repo.reserved))
 	}
+}
+
+func TestWithStockEventPublishing_NilVariantsPanics(t *testing.T) {
+	defer func() {
+		if recover() == nil {
+			t.Fatal("expected panic for nil variants repository")
+		}
+	}()
+	checkout.NewReserveInventoryStep(&mockReservationRepo{}, checkout.WithStockEventPublishing(nil, event.NewBus(logger.New("error"))))
 }
 
 // TestReserveInventoryStep_RollbackEmitsStockUpdatedEvent pins that a

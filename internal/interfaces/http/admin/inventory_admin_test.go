@@ -245,8 +245,8 @@ func TestInventoryAdminHandler_Adjust_EmitsStockUpdatedEvent(t *testing.T) {
 	if !ok {
 		t.Fatalf("event data type = %T, want StockUpdatedData", captured.Data)
 	}
-	if data.ProductID != "p1" || data.VariantID != "v1" || data.SKU != "SKU-1" || data.Quantity != 12 {
-		t.Fatalf("data = %+v, want product_id=p1 variant_id=v1 sku=SKU-1 quantity=12", data)
+	if data.ProductID != "p1" || data.VariantID != "v1" || data.SKU != "SKU-1" || data.OnHand == nil || *data.OnHand != 12 || data.Delta == nil || *data.Delta != 9 {
+		t.Fatalf("data = %+v, want product_id=p1 variant_id=v1 sku=SKU-1 on_hand=12 delta=9", data)
 	}
 }
 

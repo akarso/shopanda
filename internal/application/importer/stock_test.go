@@ -64,9 +64,13 @@ func (stockImportFakeProductSource) ProductIDsUpdatedSince(context.Context, time
 
 type stockImportFakeQueue struct {
 	enqueued []domainjobs.Job
+	err      error
 }
 
 func (q *stockImportFakeQueue) Enqueue(_ context.Context, job domainjobs.Job) error {
+	if q.err != nil {
+		return q.err
+	}
 	q.enqueued = append(q.enqueued, job)
 	return nil
 }
@@ -464,5 +468,24 @@ func TestStockImport_ReindexesRowsCommittedBeforeALaterRowFails(t *testing.T) {
 	}
 	if len(ids) != 1 || ids[0] != p1 {
 		t.Errorf("product_ids = %v, want exactly [%s] (row 1's product only — row 2 never committed)", ids, p1)
+	}
+}
+
+func TestStockImport_TriggerErrorIsReturned(t *testing.T) {
+	p1 := id.New()
+	varRepo := &mockVariantRepoForStock{
+		variants: map[string]*catalog.Variant{
+			"SKU-001": {ID: "v1", SKU: "SKU-001", ProductID: p1},
+		},
+	}
+	stockRepo := newMockStockRepo()
+	queueErr := errors.New("queue down")
+	queue := &stockImportFakeQueue{err: queueErr}
+	imp := importer.NewStockImporter(varRepo, stockRepo).WithReindex(newTestReindexService(t, queue))
+
+	csv := "sku,quantity\nSKU-001,10\n"
+	_, err := imp.Import(context.Background(), strings.NewReader(csv))
+	if !errors.Is(err, queueErr) {
+		t.Fatalf("err = %v, want queue down wrapped from Trigger", err)
 	}
 }

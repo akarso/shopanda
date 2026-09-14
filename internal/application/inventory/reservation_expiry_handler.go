@@ -25,6 +25,13 @@ const ReservationExpiryJobType = "inventory.reservation_expiry"
 // tick, not a failure.
 const sweepTimeout = 10 * time.Minute
 
+// stockEventPublishTimeout bounds one FindByID + Publish after a release
+// already committed. Kept short and independent of sweepTimeout so a
+// deadline-limited sweep can still notify search; the parent job ctx is
+// still the parent, so a caller cancel (worker shutdown) cancels these
+// too.
+const stockEventPublishTimeout = 5 * time.Second
+
 // ExpiredReservationReleaser releases active reservations that expired
 // before a cutoff, restoring their reserved quantity to stock.
 type ExpiredReservationReleaser interface {
@@ -89,13 +96,21 @@ func (h *ReservationExpiryHandler) Handle(ctx context.Context, _ jobs.Job) error
 	defer cancel()
 
 	released, err := h.releaser.ReleaseExpiredBefore(sweepCtx, time.Now())
+	var orphanErr *inventory.OrphanedStockRestoreError
 	if err != nil {
 		// An orphaned-stock-restore warning means the releases themselves
-		// still committed successfully — log it and continue to the
-		// success log below, rather than failing (and retrying) a job that
-		// actually did its job. Anything else is a genuine failure.
-		var orphanErr *inventory.OrphanedStockRestoreError
+		// still committed successfully — log it and continue to publish /
+		// the success log below, rather than failing (and retrying) a job
+		// that actually did its job. A context error is the existing
+		// "this invocation was canceled / hit its deadline before any
+		// useful result" path and is returned as-is. Any other error is a
+		// genuine failure, but ReleaseExpiredBefore may still have
+		// committed earlier batches — publish those first, then return.
 		if !errors.As(err, &orphanErr) {
+			if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+				return err
+			}
+			h.publishReleased(ctx, released)
 			return err
 		}
 		h.log.Error("job.reservation_expiry.orphaned_stock_restore", orphanErr, map[string]interface{}{
@@ -104,15 +119,7 @@ func (h *ReservationExpiryHandler) Handle(ctx context.Context, _ jobs.Job) error
 		})
 	}
 
-	// Publish for every released reservation regardless of the orphan
-	// warning above — the releases themselves committed successfully (see
-	// that warning's own doc comment), and this is a best-effort side
-	// channel: a failed lookup/publish for one variant must not lose the
-	// others or fail this job (releasing reservations already succeeded;
-	// a stale search index entry is not worth retrying a sweep over).
-	for _, rr := range released {
-		h.publishStockUpdated(sweepCtx, rr.VariantID, rr.Quantity)
-	}
+	h.publishReleased(ctx, released)
 
 	// sweepCtx.Err() is checked, not ctx.Err(): any non-nil error here
 	// (DeadlineExceeded from sweepTimeout, or Canceled propagated from the
@@ -132,8 +139,16 @@ func (h *ReservationExpiryHandler) Handle(ctx context.Context, _ jobs.Job) error
 	return nil
 }
 
+func (h *ReservationExpiryHandler) publishReleased(ctx context.Context, released []inventory.ReleasedReservation) {
+	for _, rr := range released {
+		pctx, pcancel := context.WithTimeout(ctx, stockEventPublishTimeout)
+		h.publishStockUpdated(pctx, rr.VariantID, rr.Quantity)
+		pcancel()
+	}
+}
+
 // publishStockUpdated is a best-effort side channel — see
-// SetEventPublishing's own doc comment. quantity is the reservation's own
+// SetEventPublishing's own doc comment. Delta is the reservation's own
 // quantity (the size of the restore), not the variant's resulting on-hand
 // total: ReleaseExpiredBefore's batched SQL doesn't read that back (see
 // ReleasedReservation's own doc comment), and fetching it separately per
@@ -152,6 +167,6 @@ func (h *ReservationExpiryHandler) publishStockUpdated(ctx context.Context, vari
 		ProductID: variant.ProductID,
 		VariantID: variant.ID,
 		SKU:       variant.SKU,
-		Quantity:  quantity,
+		Delta:     inventory.Qty(quantity),
 	}))
 }

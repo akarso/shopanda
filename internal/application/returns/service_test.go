@@ -354,8 +354,8 @@ func TestService_Receive_PublishesStockUpdatedEvent(t *testing.T) {
 	if !ok {
 		t.Fatalf("event data type = %T, want StockUpdatedData", captured[0].Data)
 	}
-	if data.VariantID != "v1" || data.ProductID != "p1" || data.SKU != "SKU-1" || data.Quantity != 6 {
-		t.Errorf("data = %+v, want variant_id=v1 product_id=p1 sku=SKU-1 quantity=6 (5 + 1 restocked)", data)
+	if data.VariantID != "v1" || data.ProductID != "p1" || data.SKU != "SKU-1" || data.OnHand == nil || *data.OnHand != 6 || data.Delta == nil || *data.Delta != 1 {
+		t.Errorf("data = %+v, want variant_id=v1 product_id=p1 sku=SKU-1 on_hand=6 delta=1 (5 + 1 restocked)", data)
 	}
 }
 
