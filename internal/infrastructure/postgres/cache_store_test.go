@@ -5,16 +5,20 @@ import (
 	"database/sql"
 	"encoding/json"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
 	"github.com/akarso/shopanda/internal/domain/cache"
+	"github.com/akarso/shopanda/internal/domain/cache/tagtest"
 )
 
 // --- in-memory stub that mirrors CacheStore behaviour ---
 
 type stubCache struct {
+	mu      sync.Mutex
 	entries map[string]stubEntry
+	tags    map[string]map[string]struct{}
 }
 
 type stubEntry struct {
@@ -23,13 +27,18 @@ type stubEntry struct {
 }
 
 func newStubCache() *stubCache {
-	return &stubCache{entries: make(map[string]stubEntry)}
+	return &stubCache{
+		entries: make(map[string]stubEntry),
+		tags:    make(map[string]map[string]struct{}),
+	}
 }
 
 // Compile-time check.
 var _ cache.Cache = (*stubCache)(nil)
 
 func (s *stubCache) Get(key string, dest any) (bool, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	e, ok := s.entries[key]
 	if !ok {
 		return false, nil
@@ -41,6 +50,12 @@ func (s *stubCache) Get(key string, dest any) (bool, error) {
 }
 
 func (s *stubCache) Set(key string, value any, ttl time.Duration) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.setLocked(key, value, ttl)
+}
+
+func (s *stubCache) setLocked(key string, value any, ttl time.Duration) error {
 	data, err := json.Marshal(value)
 	if err != nil {
 		return err
@@ -55,6 +70,8 @@ func (s *stubCache) Set(key string, value any, ttl time.Duration) error {
 }
 
 func (s *stubCache) Incr(key string, delta int64, ttl time.Duration) (int64, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	now := time.Now()
 	var n int64
 	if e, ok := s.entries[key]; ok {
@@ -84,6 +101,8 @@ func (s *stubCache) Incr(key string, delta int64, ttl time.Duration) (int64, err
 }
 
 func (s *stubCache) CompareAndSubtract(key string, expected int64) (int64, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	if expected <= 0 {
 		return 0, nil
 	}
@@ -120,17 +139,67 @@ func (s *stubCache) CompareAndSubtract(key string, expected int64) (int64, error
 }
 
 func (s *stubCache) Delete(key string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	delete(s.entries, key)
+	for tag, keys := range s.tags {
+		delete(keys, key)
+		if len(keys) == 0 {
+			delete(s.tags, tag)
+		}
+	}
 	return nil
 }
 
 func (s *stubCache) DeleteByPrefix(_ context.Context, prefix string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	for k := range s.entries {
 		if strings.HasPrefix(k, prefix) {
 			delete(s.entries, k)
 		}
 	}
 	return nil
+}
+
+func (s *stubCache) SetWithTags(ctx context.Context, key string, value any, ttl time.Duration, tags ...string) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if err := s.setLocked(key, value, ttl); err != nil {
+		return err
+	}
+	if s.tags == nil {
+		s.tags = make(map[string]map[string]struct{})
+	}
+	for _, tag := range cache.UniqueTags(tags) {
+		keys, ok := s.tags[tag]
+		if !ok {
+			keys = make(map[string]struct{})
+			s.tags[tag] = keys
+		}
+		keys[key] = struct{}{}
+	}
+	return nil
+}
+
+func (s *stubCache) DeleteByTag(_ context.Context, tag string) (int64, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	tag = cache.NormalizeTag(tag)
+	if tag == "" {
+		return 0, nil
+	}
+	keys := s.tags[tag]
+	delete(s.tags, tag)
+	var n int64
+	for key := range keys {
+		delete(s.entries, key)
+		n++
+	}
+	return n, nil
 }
 
 // --- tests run against the stub to verify behaviour expectations ---
@@ -308,4 +377,8 @@ func TestStubCache_DeleteByPrefix(t *testing.T) {
 			t.Errorf("%q should remain", key)
 		}
 	}
+}
+
+func TestStubCache_TagInvalidation(t *testing.T) {
+	tagtest.Run(t, newStubCache())
 }
