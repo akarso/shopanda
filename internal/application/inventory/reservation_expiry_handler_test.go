@@ -17,9 +17,11 @@ import (
 type stubVariantRepo struct {
 	variants map[string]*catalog.Variant
 	err      error
+	gotCtx   context.Context
 }
 
-func (r *stubVariantRepo) FindByID(_ context.Context, id string) (*catalog.Variant, error) {
+func (r *stubVariantRepo) FindByID(ctx context.Context, id string) (*catalog.Variant, error) {
+	r.gotCtx = ctx
 	if r.err != nil {
 		return nil, r.err
 	}
@@ -358,5 +360,35 @@ func TestReservationExpiryHandler_Handle_PublishesCommittedReleasesBeforeNonOrph
 	}
 	if len(log.infos) != 0 {
 		t.Errorf("expected no success log on a genuine failure, got %v", log.infos)
+	}
+}
+
+// TestReservationExpiryHandler_Handle_PublishDeadlineMatchesSweepBudget
+// pins that the shared publish context is not a short whole-pass cliff:
+// a sweep can return an unbounded committed batch, each needing a
+// variant lookup, and Handle still reports success — so leftover
+// unpublished rows would stay stale in search with no retry.
+func TestReservationExpiryHandler_Handle_PublishDeadlineMatchesSweepBudget(t *testing.T) {
+	r := &stubReleaser{released: 1}
+	h := inventoryApp.NewReservationExpiryHandler(r, &stubLogger{})
+	variants := &stubVariantRepo{variants: map[string]*catalog.Variant{
+		"v1": {ID: "v1", ProductID: "p1", SKU: "SKU-1"},
+	}}
+	bus := event.NewBus(logger.New("error"))
+	h.SetEventPublishing(variants, bus)
+	bus.On(inventory.EventStockUpdated, func(context.Context, event.Event) error { return nil })
+
+	if err := h.Handle(context.Background(), jobs.Job{ID: "j10", Type: inventoryApp.ReservationExpiryJobType}); err != nil {
+		t.Fatalf("Handle: %v", err)
+	}
+	if variants.gotCtx == nil {
+		t.Fatal("expected FindByID to receive a publish context")
+	}
+	deadline, ok := variants.gotCtx.Deadline()
+	if !ok {
+		t.Fatal("publish context has no deadline")
+	}
+	if until := time.Until(deadline); until < 9*time.Minute {
+		t.Errorf("publish deadline is %v from now, want ~10m (the sweep budget), not a 5s whole-pass cliff", until)
 	}
 }

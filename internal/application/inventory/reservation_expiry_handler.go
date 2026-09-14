@@ -23,14 +23,13 @@ const ReservationExpiryJobType = "inventory.reservation_expiry"
 // far — the next scheduled invocation picks up the remainder (cutoff is
 // recomputed fresh each time), so this is a normal "still catching up"
 // tick, not a failure.
+//
+// The post-release publish pass uses the same bound on a fresh context
+// derived from the job parent (not the possibly-already-expired sweep
+// ctx). A much shorter whole-pass deadline would drop events for a large
+// committed batch; Handle still returns success, and later sweeps cannot
+// re-select those rows, so search would stay stale with no retry.
 const sweepTimeout = 10 * time.Minute
-
-// stockEventPublishTimeout bounds the whole post-release publish pass
-// (FindByID + Publish for every committed release), not one item. Kept
-// independent of sweepTimeout so a deadline-limited sweep can still
-// notify search; the parent job ctx is still the parent, so a caller
-// cancel (worker shutdown) cancels this too.
-const stockEventPublishTimeout = 5 * time.Second
 
 // ExpiredReservationReleaser releases active reservations that expired
 // before a cutoff, restoring their reserved quantity to stock.
@@ -140,7 +139,11 @@ func (h *ReservationExpiryHandler) Handle(ctx context.Context, _ jobs.Job) error
 }
 
 func (h *ReservationExpiryHandler) publishReleased(ctx context.Context, released []inventory.ReleasedReservation) {
-	pctx, pcancel := context.WithTimeout(ctx, stockEventPublishTimeout)
+	// Fresh timeout from the job parent, not sweepCtx: the sweep may
+	// already have hit its deadline and still returned committed
+	// releases. Same bound as the sweep so a large batch can still
+	// publish; caller cancel (shutdown) still cancels this context.
+	pctx, pcancel := context.WithTimeout(ctx, sweepTimeout)
 	defer pcancel()
 	for _, rr := range released {
 		if pctx.Err() != nil {
