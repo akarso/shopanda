@@ -2,6 +2,8 @@ package inventory
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"sort"
 	"testing"
 	"time"
@@ -113,6 +115,12 @@ func (r *stockSyncVariantRepo) Update(context.Context, *catalog.Variant) error {
 
 type stockSyncStockRepo struct {
 	entries map[string]inventory.StockEntry
+
+	// failOnSetStocksCall, when > 0, makes the Nth call to SetStocks
+	// (1-indexed) return an error instead of writing — simulates a later
+	// chunk failing after earlier chunks already committed.
+	failOnSetStocksCall int
+	setStocksCalls      int
 }
 
 func (r *stockSyncStockRepo) GetStock(_ context.Context, variantID string) (inventory.StockEntry, error) {
@@ -129,6 +137,10 @@ func (r *stockSyncStockRepo) SetStock(_ context.Context, entry *inventory.StockE
 	return nil
 }
 func (r *stockSyncStockRepo) SetStocks(_ context.Context, entries []inventory.StockEntry) error {
+	r.setStocksCalls++
+	if r.failOnSetStocksCall > 0 && r.setStocksCalls == r.failOnSetStocksCall {
+		return errors.New("stockSyncStockRepo: simulated batch failure")
+	}
 	for i := range entries {
 		if err := r.SetStock(context.Background(), &entries[i]); err != nil {
 			return err
@@ -256,5 +268,52 @@ func TestStockSyncService_UpsertBySKU_NilReindexServiceIsNoop(t *testing.T) {
 	}
 	if result.Updated != 1 {
 		t.Fatalf("result = %+v, want Updated=1", result)
+	}
+}
+
+// TestStockSyncService_UpsertBySKU_ReindexesProductsCommittedBeforeALaterChunkFails
+// pins the code review fix: SetStocks writes in chunks of
+// stockSyncChunkSize (100) rows, so a run with more than one chunk whose
+// second chunk fails must still trigger a reindex covering whatever the
+// first chunk already committed — the whole point of this PR is closing
+// exactly this class of "written but never reindexed" gap, and the
+// original implementation (reindex only on the success path) silently
+// reintroduced it for any multi-chunk run with a late failure.
+func TestStockSyncService_UpsertBySKU_ReindexesProductsCommittedBeforeALaterChunkFails(t *testing.T) {
+	const total = stockSyncChunkSize + 50 // forces a second SetStocks chunk
+	p1 := id.New()
+	bySKU := make(map[string]*catalog.Variant, total)
+	updates := make([]extapi.StockLevelUpdate, 0, total)
+	for i := 0; i < total; i++ {
+		sku := fmt.Sprintf("SKU-%03d", i)
+		bySKU[sku] = &catalog.Variant{ID: fmt.Sprintf("v%03d", i), SKU: sku, ProductID: p1}
+		updates = append(updates, extapi.StockLevelUpdate{SKU: sku, Quantity: 5})
+	}
+	variants := &stockSyncVariantRepo{bySKU: bySKU}
+	stock := &stockSyncStockRepo{entries: make(map[string]inventory.StockEntry), failOnSetStocksCall: 2}
+	svc := NewStockSyncService(variants, stock)
+	queue := &stockSyncFakeQueue{}
+	svc.SetReindexService(newTestReindexService(t, queue))
+
+	_, err := svc.UpsertBySKU(context.Background(), updates)
+	if err == nil {
+		t.Fatal("expected an error from the second (simulated-failure) SetStocks chunk")
+	}
+
+	if len(queue.enqueued) != 1 {
+		t.Fatalf("enqueued %d jobs, want exactly 1 (reindex must still fire despite the later chunk's failure)", len(queue.enqueued))
+	}
+	ids, ok := queue.enqueued[0].Payload["product_ids"].([]string)
+	if !ok {
+		t.Fatalf("payload product_ids type = %T, want []string", queue.enqueued[0].Payload["product_ids"])
+	}
+	found := false
+	for _, got := range ids {
+		if got == p1 {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("product_ids = %v, want to include %s — chunk 1 committed 100 rows for it before chunk 2 failed, so it must not be silently left unindexed", ids, p1)
 	}
 }

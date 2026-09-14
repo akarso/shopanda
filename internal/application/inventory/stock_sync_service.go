@@ -52,8 +52,20 @@ func (s *StockSyncService) SetReindexService(reindex *searchApp.ReindexService) 
 
 // UpsertBySKU sets absolute stock quantities for known variant SKUs.
 // Unknown SKUs are skipped and listed in the result; invalid rows increment Skipped.
+//
+// touchedProductIDs is reindex-triggered via defer, not only on the
+// success path: SetStocks below writes in chunks, and a later chunk
+// failing must not leave an earlier, already-committed chunk's products
+// permanently unindexed (the whole point of this PR is closing exactly
+// that class of gap). The deferred call may end up covering a few
+// products whose own chunk was never reached — harmless over-inclusion,
+// not a correctness problem, and simpler than tracking exactly which
+// chunk committed before the failure.
 func (s *StockSyncService) UpsertBySKU(ctx context.Context, updates []extapi.StockLevelUpdate) (extapi.StockSyncResult, error) {
 	result := extapi.StockSyncResult{}
+	touchedProductIDs := make(map[string]struct{}, len(updates))
+	defer s.triggerReindex(ctx, touchedProductIDs)
+
 	validBySKU := make(map[string]int, len(updates))
 
 	for _, update := range updates {
@@ -90,7 +102,6 @@ func (s *StockSyncService) UpsertBySKU(ctx context.Context, updates []extapi.Sto
 	}
 
 	entries := make([]inventory.StockEntry, 0, len(validBySKU))
-	touchedProductIDs := make(map[string]struct{}, len(validBySKU))
 	for _, sku := range uniqueSKUs {
 		variant := variantsBySKU[sku]
 		if variant == nil {
@@ -118,17 +129,17 @@ func (s *StockSyncService) UpsertBySKU(ctx context.Context, updates []extapi.Sto
 		}
 	}
 
-	s.triggerReindex(ctx, touchedProductIDs)
 	return result, nil
 }
 
 // triggerReindex fires a single scoped reindex covering every product this
-// sync run touched — see SetReindexService's own doc comment for why this
-// is one batched call, not one per row. Best-effort: the stock sync
-// itself already committed successfully by this point, so a reindex
-// failure is not worth turning a successful sync into a reported error
-// over (the existing manual/scheduled search:reindex remains the
-// fallback, same as any other on-save indexing gap in this codebase).
+// sync run touched (or attempted to — see UpsertBySKU's own doc comment
+// on why it's deferred, not just called on success) — see
+// SetReindexService's own doc comment for why this is one batched call,
+// not one per row. Best-effort either way: a reindex failure is not worth
+// turning an otherwise-successful sync into a reported error over (the
+// existing manual/scheduled search:reindex remains the fallback, same as
+// any other on-save indexing gap in this codebase).
 func (s *StockSyncService) triggerReindex(ctx context.Context, touchedProductIDs map[string]struct{}) {
 	if s.reindex == nil || len(touchedProductIDs) == 0 {
 		return

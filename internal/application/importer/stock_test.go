@@ -3,6 +3,7 @@ package importer_test
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"github.com/akarso/shopanda/internal/testutil"
 	"sort"
@@ -119,6 +120,12 @@ func (m *mockVariantRepoForStock) WithTx(_ *sql.Tx) catalog.VariantRepository {
 type mockStockRepo struct {
 	entries map[string]int // variantID → quantity
 	setErr  error
+
+	// failAfterN, when > 0, makes SetStock succeed for the first N calls
+	// then fail every call after — simulates a row partway through an
+	// import failing after earlier rows already committed.
+	failAfterN int
+	setCalls   int
 }
 
 func newMockStockRepo() *mockStockRepo {
@@ -136,6 +143,10 @@ func (m *mockStockRepo) GetStock(_ context.Context, variantID string) (inventory
 func (m *mockStockRepo) SetStock(_ context.Context, entry *inventory.StockEntry) error {
 	if m.setErr != nil {
 		return m.setErr
+	}
+	m.setCalls++
+	if m.failAfterN > 0 && m.setCalls > m.failAfterN {
+		return errors.New("mockStockRepo: simulated failure")
 	}
 	m.entries[entry.VariantID] = entry.Quantity
 	return nil
@@ -416,5 +427,42 @@ func TestStockImport_NilReindexServiceIsNoop(t *testing.T) {
 	}
 	if result.Updated != 1 {
 		t.Fatalf("Updated = %d, want 1", result.Updated)
+	}
+}
+
+// TestStockImport_ReindexesRowsCommittedBeforeALaterRowFails pins the
+// code review fix: a row partway through the file failing (SetStock
+// erroring on row 2 of 3) must still trigger a reindex covering row 1's
+// product, which already committed — the original implementation
+// (reindex only on the success path) silently left it unindexed whenever
+// any later row failed.
+func TestStockImport_ReindexesRowsCommittedBeforeALaterRowFails(t *testing.T) {
+	p1 := id.New()
+	varRepo := &mockVariantRepoForStock{
+		variants: map[string]*catalog.Variant{
+			"SKU-001": {ID: "v1", SKU: "SKU-001", ProductID: p1},
+			"SKU-002": {ID: "v2", SKU: "SKU-002", ProductID: id.New()},
+		},
+	}
+	stockRepo := newMockStockRepo()
+	stockRepo.failAfterN = 1 // row 1 (SKU-001) succeeds, row 2 (SKU-002) fails
+	queue := &stockImportFakeQueue{}
+	imp := importer.NewStockImporter(varRepo, stockRepo).WithReindex(newTestReindexService(t, queue))
+
+	csv := "sku,quantity\nSKU-001,10\nSKU-002,20\n"
+	_, err := imp.Import(context.Background(), strings.NewReader(csv))
+	if err == nil {
+		t.Fatal("expected an error from row 2's simulated SetStock failure")
+	}
+
+	if len(queue.enqueued) != 1 {
+		t.Fatalf("enqueued %d jobs, want exactly 1 (reindex must still fire for row 1's already-committed product)", len(queue.enqueued))
+	}
+	ids, ok := queue.enqueued[0].Payload["product_ids"].([]string)
+	if !ok {
+		t.Fatalf("payload product_ids type = %T, want []string", queue.enqueued[0].Payload["product_ids"])
+	}
+	if len(ids) != 1 || ids[0] != p1 {
+		t.Errorf("product_ids = %v, want exactly [%s] (row 1's product only — row 2 never committed)", ids, p1)
 	}
 }

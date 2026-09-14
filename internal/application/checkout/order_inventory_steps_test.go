@@ -419,6 +419,53 @@ func TestReserveInventoryStep_RollbackEmitsStockUpdatedEvent(t *testing.T) {
 	}
 }
 
+// TestReserveInventoryStep_ReusesValidateCartStepResolvedVariant pins the
+// code review fix: ReserveInventoryStep's stock-event publishing must
+// reuse the variant ValidateCartStep already resolved (via cctx's
+// cart_variants meta) rather than re-querying VariantRepository per
+// item — checkout is the highest-frequency stock-changing path in the
+// system, and both steps run in the same pipeline a few steps apart. The
+// variant repo is sabotaged (forced to error) after ValidateCartStep runs
+// but before ReserveInventoryStep runs — if reserve fell back to its own
+// FindByID instead of the cached value, it would hit that error and
+// silently skip publishing (its own documented best-effort behavior),
+// so a captured event here is only possible via the cache.
+func TestReserveInventoryStep_ReusesValidateCartStepResolvedVariant(t *testing.T) {
+	repo := &mockReservationRepo{}
+	variants := &mockVariantRepo037{variants: variantMap037("v1")}
+	validateStep := checkout.NewValidateCartStep(variants)
+	bus := event.NewBus(logger.New("error"))
+	reserveStep := checkout.NewReserveInventoryStep(repo, checkout.WithStockEventPublishing(variants, bus))
+
+	var captured []event.Event
+	bus.On(inventory.EventStockUpdated, func(_ context.Context, evt event.Event) error {
+		captured = append(captured, evt)
+		return nil
+	})
+
+	cctx := checkout.NewContext("cart-1", "cust-1", "EUR")
+	cctx.Cart = cartWithItems037(t, "cust-1", "v1")
+
+	if err := validateStep.Execute(context.Background(), cctx); err != nil {
+		t.Fatalf("ValidateCartStep.Execute: %v", err)
+	}
+
+	// Sabotage: any further lookup on this shared repo now fails.
+	variants.err = errors.New("must not be called again")
+
+	if err := reserveStep.Execute(context.Background(), cctx); err != nil {
+		t.Fatalf("ReserveInventoryStep.Execute: %v", err)
+	}
+
+	if len(captured) != 1 {
+		t.Fatalf("published %d events, want 1 (must have used the cached variant, not re-queried)", len(captured))
+	}
+	data, ok := captured[0].Data.(inventory.StockUpdatedData)
+	if !ok || data.VariantID != "v1" || data.ProductID != "prod-1" {
+		t.Fatalf("event data = %+v, want variant_id=v1 product_id=prod-1", captured[0].Data)
+	}
+}
+
 // ============================================================
 // CreateOrderStep tests
 // ============================================================

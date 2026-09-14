@@ -62,7 +62,16 @@ func (imp *StockImporter) WithReindex(reindex *searchApp.ReindexService) *StockI
 //
 // Required columns: sku, quantity.
 // Each row looks up the variant by SKU, then sets the stock quantity.
+//
+// touchedProductIDs is reindex-triggered via defer, not only on the
+// success path: a row partway through the file failing (e.g. SetStock
+// erroring on row N) must not leave every already-committed row before it
+// permanently unindexed — see StockSyncService.UpsertBySKU's identical
+// reasoning for its own chunked writes.
 func (imp *StockImporter) Import(ctx context.Context, r io.Reader) (*StockResult, error) {
+	touchedProductIDs := make(map[string]struct{})
+	defer imp.triggerReindex(ctx, touchedProductIDs)
+
 	reader := csv.NewReader(r)
 	reader.TrimLeadingSpace = true
 
@@ -83,7 +92,6 @@ func (imp *StockImporter) Import(ctx context.Context, r io.Reader) (*StockResult
 	}
 
 	result := &StockResult{}
-	touchedProductIDs := make(map[string]struct{})
 	lineNum := 1 // header is line 1
 
 	for {
@@ -148,17 +156,17 @@ func (imp *StockImporter) Import(ctx context.Context, r io.Reader) (*StockResult
 		touchedProductIDs[variant.ProductID] = struct{}{}
 	}
 
-	imp.triggerReindex(ctx, touchedProductIDs)
 	return result, nil
 }
 
 // triggerReindex fires a single scoped reindex covering every product
-// this import run touched — see WithReindex's own doc comment for why
-// this is one batched call, not one per row. Best-effort: the import
-// itself already committed successfully by this point, so a reindex
-// failure is not worth turning a successful import into a reported error
-// over (the existing manual/scheduled search:reindex remains the
-// fallback, same as any other on-save indexing gap in this codebase).
+// this import run touched (deferred by Import — see its own doc comment
+// on why this can't just be a plain call at the end) — see WithReindex's
+// own doc comment for why this is one batched call, not one per row.
+// Best-effort either way: a reindex failure is not worth turning an
+// otherwise-successful import into a reported error over (the existing
+// manual/scheduled search:reindex remains the fallback, same as any other
+// on-save indexing gap in this codebase).
 func (imp *StockImporter) triggerReindex(ctx context.Context, touchedProductIDs map[string]struct{}) {
 	if imp.reindex == nil || len(touchedProductIDs) == 0 {
 		return

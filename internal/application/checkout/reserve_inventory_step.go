@@ -105,7 +105,7 @@ func (s *ReserveInventoryStep) Execute(ctx context.Context, cctx *Context) error
 			for _, r := range reserved {
 				rlctx, rlcancel := detachedTimeout(ctx, reserveTimeout)
 				if releaseErr := s.reservations.Release(rlctx, r.ID); releaseErr == nil {
-					s.publishStockUpdated(rlctx, r.VariantID, r.Quantity)
+					s.publishStockUpdated(rlctx, cctx, r.VariantID, r.Quantity)
 				}
 				rlcancel()
 			}
@@ -113,7 +113,7 @@ func (s *ReserveInventoryStep) Execute(ctx context.Context, cctx *Context) error
 		}
 		reservationIDs = append(reservationIDs, res.ID)
 		reserved = append(reserved, res)
-		s.publishStockUpdated(ctx, res.VariantID, res.Quantity)
+		s.publishStockUpdated(ctx, cctx, res.VariantID, res.Quantity)
 	}
 
 	cctx.SetMeta("reservations", reservationIDs)
@@ -129,6 +129,15 @@ func (s *ReserveInventoryStep) Execute(ctx context.Context, cctx *Context) error
 // Release calls, and this step has no logger of its own to at least
 // record the swallowed error (unlike, e.g., returns.Service).
 //
+// Checkout is the highest-frequency stock-changing path in the system, so
+// this reuses the variant ValidateCartStep already resolved (via cctx's
+// cart_variants meta) instead of re-querying VariantRepository per item —
+// a step or two earlier in the same pipeline, ValidateCartStep already
+// paid for exactly this lookup to confirm the variant still exists.
+// Falls back to a direct FindByID only if that metadata is absent (e.g. a
+// caller wiring this step without ValidateCartStep ahead of it, as some
+// tests do) — never a correctness dependency, just an optimization.
+//
 // quantity is the reservation's own quantity — the size of the change
 // (reserved or restored), not GetStock's resulting on-hand total (unlike
 // InventoryAdminHandler.Adjust's own publish site, which already has that
@@ -137,13 +146,17 @@ func (s *ReserveInventoryStep) Execute(ctx context.Context, cctx *Context) error
 // only current consumer) doesn't read — it schedules a reindex by
 // ProductID alone, which re-fetches the product's real current stock
 // independently.
-func (s *ReserveInventoryStep) publishStockUpdated(ctx context.Context, variantID string, quantity int) {
+func (s *ReserveInventoryStep) publishStockUpdated(ctx context.Context, cctx *Context, variantID string, quantity int) {
 	if s.bus == nil {
 		return
 	}
-	variant, err := s.variants.FindByID(ctx, variantID)
-	if err != nil || variant == nil {
-		return
+	variant := cartVariantFromMeta(cctx, variantID)
+	if variant == nil {
+		var err error
+		variant, err = s.variants.FindByID(ctx, variantID)
+		if err != nil || variant == nil {
+			return
+		}
 	}
 	_ = s.bus.Publish(ctx, event.New(inventory.EventStockUpdated, "checkout.reserve_inventory", inventory.StockUpdatedData{
 		ProductID: variant.ProductID,
