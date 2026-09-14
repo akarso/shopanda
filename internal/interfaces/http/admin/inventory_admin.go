@@ -224,7 +224,6 @@ func (h *InventoryAdminHandler) Adjust() http.HandlerFunc {
 				VariantID: variant.ID,
 				SKU:       variant.SKU,
 				OnHand:    inventory.Qty(entry.Quantity),
-				Delta:     inventory.Qty(entry.Quantity - before.Quantity),
 			}))
 		}
 

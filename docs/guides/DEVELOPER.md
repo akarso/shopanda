@@ -542,7 +542,16 @@ For the current full set, inspect `internal/domain/**/events.go` and `internal/a
 
 ### Search indexing depends on these events (PR-1036)
 
-The search index updates itself automatically when a product, its price, its stock, or its category assignment changes — but only because the core admin handlers publish `catalog.EventProductUpdated`/`catalog.EventProductCreated`, `pricing.EventPriceUpserted`, and `inventory.EventStockUpdated` after every successful write, and `internal/application/search.IndexUpdateSubscriber` listens for them. If a plugin (or any other code path) mutates product, price, stock, or category-assignment data outside those normal save paths — writing directly to the database, or through a bulk import that doesn't go through the same handlers — it must publish the same event with the same payload shape, or its changes won't reach the search index until the next manual/scheduled `search:reindex`. `inventory.StockUpdatedData` carries optional `OnHand` (resulting absolute) and `Delta` (signed change); producers set whichever they already have, and must not stuff a delta into `OnHand` or an absolute into `Delta`. The search subscriber only reads `ProductID`.
+The search index updates itself automatically when a product, its price, its stock, or its category assignment changes — but only because the core admin handlers publish `catalog.EventProductUpdated`/`catalog.EventProductCreated`, `pricing.EventPriceUpserted`, and `inventory.EventStockUpdated` after every successful write, and `internal/application/search.IndexUpdateSubscriber` listens for them.
+
+If a plugin (or any other code path) mutates that data outside those save paths — writing directly to the database, or through a bulk import that doesn't go through the same handlers — it must keep the index fresh in one of two supported ways:
+
+1. **Per-write events** — after each successful write, publish the same event with the same payload shape. `IndexUpdateSubscriber` debounces and enqueues a scoped reindex.
+2. **Batched reindex** — collect the affected product IDs during the run and, after the batch has committed, call `ReindexService.Trigger` once with `ScopeProducts{IDs: ...}` (the pattern `import:stock` and ERP `StockSyncService.UpsertBySKU` use). Do not publish one event per row on a bulk path; that fans out one job/run per product.
+
+If neither happens, changes won't reach the search index until the next manual/scheduled `search:reindex`.
+
+`inventory.StockUpdatedData` carries optional `OnHand` (resulting absolute) and `Delta` (signed change); producers set whichever they already have, and must not stuff a delta into `OnHand` or an absolute into `Delta`. The search subscriber only reads `ProductID`.
 
 ### Example listener
 

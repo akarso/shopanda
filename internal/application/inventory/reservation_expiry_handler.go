@@ -25,11 +25,11 @@ const ReservationExpiryJobType = "inventory.reservation_expiry"
 // tick, not a failure.
 const sweepTimeout = 10 * time.Minute
 
-// stockEventPublishTimeout bounds one FindByID + Publish after a release
-// already committed. Kept short and independent of sweepTimeout so a
-// deadline-limited sweep can still notify search; the parent job ctx is
-// still the parent, so a caller cancel (worker shutdown) cancels these
-// too.
+// stockEventPublishTimeout bounds the whole post-release publish pass
+// (FindByID + Publish for every committed release), not one item. Kept
+// independent of sweepTimeout so a deadline-limited sweep can still
+// notify search; the parent job ctx is still the parent, so a caller
+// cancel (worker shutdown) cancels this too.
 const stockEventPublishTimeout = 5 * time.Second
 
 // ExpiredReservationReleaser releases active reservations that expired
@@ -140,10 +140,13 @@ func (h *ReservationExpiryHandler) Handle(ctx context.Context, _ jobs.Job) error
 }
 
 func (h *ReservationExpiryHandler) publishReleased(ctx context.Context, released []inventory.ReleasedReservation) {
+	pctx, pcancel := context.WithTimeout(ctx, stockEventPublishTimeout)
+	defer pcancel()
 	for _, rr := range released {
-		pctx, pcancel := context.WithTimeout(ctx, stockEventPublishTimeout)
+		if pctx.Err() != nil {
+			return
+		}
 		h.publishStockUpdated(pctx, rr.VariantID, rr.Quantity)
-		pcancel()
 	}
 }
 
