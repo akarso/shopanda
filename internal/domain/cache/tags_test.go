@@ -29,3 +29,20 @@ func TestUniqueTags(t *testing.T) {
 		})
 	}
 }
+
+func TestNormalizeTag(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		in, want string
+	}{
+		{"", ""},
+		{"  ", ""},
+		{"\tcms:7\n", "cms:7"},
+		{"cms:7", "cms:7"},
+	}
+	for _, tc := range cases {
+		if got := NormalizeTag(tc.in); got != tc.want {
+			t.Fatalf("NormalizeTag(%q) = %q, want %q", tc.in, got, tc.want)
+		}
+	}
+}

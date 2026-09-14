@@ -156,7 +156,10 @@ func (s *stubCache) DeleteByPrefix(_ context.Context, prefix string) error {
 	return nil
 }
 
-func (s *stubCache) SetWithTags(_ context.Context, key string, value any, ttl time.Duration, tags ...string) error {
+func (s *stubCache) SetWithTags(ctx context.Context, key string, value any, ttl time.Duration, tags ...string) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if err := s.setLocked(key, value, ttl); err != nil {
@@ -179,6 +182,7 @@ func (s *stubCache) SetWithTags(_ context.Context, key string, value any, ttl ti
 func (s *stubCache) DeleteByTag(_ context.Context, tag string) (int64, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	tag = cache.NormalizeTag(tag)
 	if tag == "" {
 		return 0, nil
 	}

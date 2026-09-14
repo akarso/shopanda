@@ -101,11 +101,15 @@ func (s *CacheStore) Get(key string, dest any) (bool, error) {
 
 // Set stores value under key with the given TTL.
 func (s *CacheStore) Set(key string, value any, ttl time.Duration) error {
+	return s.set(context.Background(), key, value, ttl)
+}
+
+func (s *CacheStore) set(ctx context.Context, key string, value any, ttl time.Duration) error {
 	data, err := json.Marshal(value)
 	if err != nil {
 		return fmt.Errorf("redis cache: marshal %q: %w", key, err)
 	}
-	if err := s.client.Set(context.Background(), s.key(key), data, ttl).Err(); err != nil {
+	if err := s.client.Set(ctx, s.key(key), data, ttl).Err(); err != nil {
 		return fmt.Errorf("redis cache: set %q: %w", key, err)
 	}
 	return nil
@@ -238,9 +242,12 @@ func (s *CacheStore) DeleteByPrefix(ctx context.Context, prefix string) error {
 
 // SetWithTags stores value under key and SADD's the key onto each tag set.
 func (s *CacheStore) SetWithTags(ctx context.Context, key string, value any, ttl time.Duration, tags ...string) error {
+	if err := ctx.Err(); err != nil {
+		return fmt.Errorf("redis cache: set with tags %q: %w", key, err)
+	}
 	tags = cache.UniqueTags(tags)
 	if len(tags) == 0 {
-		return s.Set(key, value, ttl)
+		return s.set(ctx, key, value, ttl)
 	}
 	data, err := json.Marshal(value)
 	if err != nil {
@@ -265,6 +272,7 @@ func (s *CacheStore) SetWithTags(ctx context.Context, key string, value any, ttl
 // onto the live tag key (independent of the caller's context) so a retry
 // can still invalidate them.
 func (s *CacheStore) DeleteByTag(ctx context.Context, tag string) (n int64, err error) {
+	tag = cache.NormalizeTag(tag)
 	if tag == "" {
 		return 0, nil
 	}
@@ -375,8 +383,8 @@ func isNoSuchKey(err error) bool {
 
 // DeleteExpired prunes tag-set members whose value key is already gone
 // (TTL eviction or Delete). Value keys themselves are expired by Redis.
-// Cost is proportional to total tag-set membership (pipelined EXISTS
-// batches, not one round trip per member).
+// Cost is proportional to total tag-set membership (Lua EXISTS+SREM
+// batches, not a TOCTOU pair of round trips per member).
 func (s *CacheStore) DeleteExpired(ctx context.Context) (int64, error) {
 	iter := s.client.Scan(ctx, 0, s.prefix+"tag:*", tagScanCount).Iterator()
 	var pruned int64
@@ -444,33 +452,35 @@ func (s *CacheStore) pruneTagSet(ctx context.Context, tagKey string) (int64, err
 	return pruned, nil
 }
 
+// sremIfMissingScript SREMs members whose value key is gone, atomically
+// with the EXISTS check so a concurrent SetWithTags cannot have its
+// fresh membership stripped by a stale miss.
+// KEYS[1]=tag set ARGV[1]=key prefix ARGV[2..]=logical members
+var sremIfMissingScript = goredis.NewScript(`
+local tag = KEYS[1]
+local prefix = ARGV[1]
+local pruned = 0
+for i = 2, #ARGV do
+  local member = ARGV[i]
+  if redis.call('EXISTS', prefix .. member) == 0 then
+    pruned = pruned + redis.call('SREM', tag, member)
+  end
+end
+return pruned
+`)
+
 func (s *CacheStore) pruneStaleBatch(ctx context.Context, tagKey string, members []string) (int64, error) {
 	if len(members) == 0 {
 		return 0, nil
 	}
-	pipe := s.client.Pipeline()
-	cmds := make([]*goredis.IntCmd, len(members))
+	args := make([]any, 1+len(members))
+	args[0] = s.prefix
 	for i, member := range members {
-		cmds[i] = pipe.Exists(ctx, s.key(member))
+		args[i+1] = member
 	}
-	if _, err := pipe.Exec(ctx); err != nil {
-		return 0, fmt.Errorf("redis cache: exists batch: %w", err)
+	n, err := sremIfMissingScript.Run(ctx, s.client, []string{tagKey}, args...).Int64()
+	if err != nil {
+		return 0, fmt.Errorf("redis cache: srem if missing: %w", err)
 	}
-	stale := make([]any, 0, len(members))
-	for i, cmd := range cmds {
-		exists, err := cmd.Result()
-		if err != nil {
-			return 0, fmt.Errorf("redis cache: exists %q: %w", members[i], err)
-		}
-		if exists == 0 {
-			stale = append(stale, members[i])
-		}
-	}
-	if len(stale) == 0 {
-		return 0, nil
-	}
-	if err := s.client.SRem(ctx, tagKey, stale...).Err(); err != nil {
-		return 0, fmt.Errorf("redis cache: srem stale members: %w", err)
-	}
-	return int64(len(stale)), nil
+	return n, nil
 }

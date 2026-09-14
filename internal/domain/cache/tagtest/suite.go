@@ -103,7 +103,49 @@ func Run(t *testing.T, c cache.Cache) {
 		if _, err := c.DeleteByTag(ctx, ""); err != nil {
 			t.Fatalf("DeleteByTag empty: %v", err)
 		}
+		if _, err := c.DeleteByTag(ctx, "  "); err != nil {
+			t.Fatalf("DeleteByTag whitespace: %v", err)
+		}
 		assertHit(t, c, "tagtest:keep", "v")
+	})
+
+	t.Run("DeleteByTagTrimsLikeSetWithTags", func(t *testing.T) {
+		if err := c.SetWithTags(ctx, "tagtest:padded", "v", time.Hour, "  pad-tag  "); err != nil {
+			t.Fatalf("SetWithTags: %v", err)
+		}
+		n, err := c.DeleteByTag(ctx, "  pad-tag  ")
+		if err != nil {
+			t.Fatalf("DeleteByTag padded: %v", err)
+		}
+		if n != 1 {
+			t.Fatalf("DeleteByTag padded count = %d, want 1", n)
+		}
+		assertMiss(t, c, "tagtest:padded")
+
+		if err := c.SetWithTags(ctx, "tagtest:unpadded", "v", time.Hour, "pad-tag"); err != nil {
+			t.Fatalf("SetWithTags unpadded: %v", err)
+		}
+		n, err = c.DeleteByTag(ctx, "  pad-tag  ")
+		if err != nil {
+			t.Fatalf("DeleteByTag trim of unpadded write: %v", err)
+		}
+		if n != 1 {
+			t.Fatalf("DeleteByTag trim count = %d, want 1", n)
+		}
+		assertMiss(t, c, "tagtest:unpadded")
+	})
+
+	t.Run("SetWithTagsHonorsCancelledContext", func(t *testing.T) {
+		cancelled, cancel := context.WithCancel(context.Background())
+		cancel()
+		if err := c.SetWithTags(cancelled, "tagtest:cancelled-empty", "v", time.Hour); err == nil {
+			t.Fatal("SetWithTags with cancelled ctx (no tags) expected error")
+		}
+		if err := c.SetWithTags(cancelled, "tagtest:cancelled-ws", "v", time.Hour, "  "); err == nil {
+			t.Fatal("SetWithTags with cancelled ctx (whitespace tags) expected error")
+		}
+		assertMiss(t, c, "tagtest:cancelled-empty")
+		assertMiss(t, c, "tagtest:cancelled-ws")
 	})
 
 	t.Run("DeleteByTagAfterDeleteIsNoop", func(t *testing.T) {

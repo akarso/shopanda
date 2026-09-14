@@ -2,6 +2,7 @@ package redis_test
 
 import (
 	"context"
+	"fmt"
 	"strings"
 	"sync"
 	"testing"
@@ -281,6 +282,41 @@ func TestCacheStore_TagDeleteExpiredPrunesStaleMembers(t *testing.T) {
 	hit, err := store.Get("keep", &got)
 	if err != nil || hit {
 		t.Fatalf("keep should be deleted by tag, hit=%v err=%v", hit, err)
+	}
+}
+
+func TestCacheStore_TagPruneDoesNotDropRecreatedMembership(t *testing.T) {
+	mr, store := setupRedisCache(t, "p")
+	ctx := context.Background()
+	for i := 0; i < 40; i++ {
+		key := fmt.Sprintf("recreate:%d", i)
+		tag := fmt.Sprintf("recreate-tag:%d", i)
+		if err := store.SetWithTags(ctx, key, "old", 50*time.Millisecond, tag); err != nil {
+			t.Fatalf("seed %s: %v", key, err)
+		}
+		mr.FastForward(100 * time.Millisecond)
+		var wg sync.WaitGroup
+		wg.Add(2)
+		go func() {
+			defer wg.Done()
+			_, _ = store.DeleteExpired(ctx)
+		}()
+		go func() {
+			defer wg.Done()
+			_ = store.SetWithTags(ctx, key, "fresh", time.Hour, tag)
+		}()
+		wg.Wait()
+		if _, err := store.DeleteByTag(ctx, tag); err != nil {
+			t.Fatalf("follow-up DeleteByTag: %v", err)
+		}
+		var got string
+		hit, err := store.Get(key, &got)
+		if err != nil {
+			t.Fatalf("Get(%q): %v", key, err)
+		}
+		if hit {
+			t.Fatalf("Get(%q): hit %q, want miss (prune dropped a recreated membership)", key, got)
+		}
 	}
 }
 

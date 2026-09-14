@@ -59,6 +59,10 @@ func (s *CacheStore) Get(key string, dest any) (bool, error) {
 // Set stores value under key with the given TTL.
 // A zero TTL means the entry never expires automatically.
 func (s *CacheStore) Set(key string, value any, ttl time.Duration) error {
+	return s.set(context.Background(), key, value, ttl)
+}
+
+func (s *CacheStore) set(ctx context.Context, key string, value any, ttl time.Duration) error {
 	data, err := json.Marshal(value)
 	if err != nil {
 		return fmt.Errorf("cache_store: marshal %q: %w", key, err)
@@ -69,7 +73,7 @@ func (s *CacheStore) Set(key string, value any, ttl time.Duration) error {
 		expiresAt = sql.NullTime{Time: time.Now().Add(ttl), Valid: true}
 	}
 
-	_, err = s.db.Exec(
+	_, err = s.db.ExecContext(ctx,
 		`INSERT INTO cache (key, value, expires_at)
 		 VALUES ($1, $2, $3)
 		 ON CONFLICT (key)
@@ -237,9 +241,12 @@ func (s *CacheStore) DeleteByPrefix(ctx context.Context, prefix string) error {
 
 // SetWithTags stores value under key and associates it with tags in one transaction.
 func (s *CacheStore) SetWithTags(ctx context.Context, key string, value any, ttl time.Duration, tags ...string) error {
+	if err := ctx.Err(); err != nil {
+		return fmt.Errorf("cache_store: set with tags %q: %w", key, err)
+	}
 	tags = cache.UniqueTags(tags)
 	if len(tags) == 0 {
-		return s.Set(key, value, ttl)
+		return s.set(ctx, key, value, ttl)
 	}
 
 	data, err := json.Marshal(value)
@@ -290,6 +297,7 @@ func (s *CacheStore) SetWithTags(ctx context.Context, key string, value any, ttl
 // key) so a concurrent SetWithTags that commits after the snapshot keeps
 // its association instead of having it stripped while the value survives.
 func (s *CacheStore) DeleteByTag(ctx context.Context, tag string) (int64, error) {
+	tag = cache.NormalizeTag(tag)
 	if tag == "" {
 		return 0, nil
 	}
