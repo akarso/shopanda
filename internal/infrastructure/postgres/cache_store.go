@@ -59,6 +59,10 @@ func (s *CacheStore) Get(key string, dest any) (bool, error) {
 // Set stores value under key with the given TTL.
 // A zero TTL means the entry never expires automatically.
 func (s *CacheStore) Set(key string, value any, ttl time.Duration) error {
+	return s.set(context.Background(), key, value, ttl)
+}
+
+func (s *CacheStore) set(ctx context.Context, key string, value any, ttl time.Duration) error {
 	data, err := json.Marshal(value)
 	if err != nil {
 		return fmt.Errorf("cache_store: marshal %q: %w", key, err)
@@ -69,7 +73,7 @@ func (s *CacheStore) Set(key string, value any, ttl time.Duration) error {
 		expiresAt = sql.NullTime{Time: time.Now().Add(ttl), Valid: true}
 	}
 
-	_, err = s.db.Exec(
+	_, err = s.db.ExecContext(ctx,
 		`INSERT INTO cache (key, value, expires_at)
 		 VALUES ($1, $2, $3)
 		 ON CONFLICT (key)
@@ -177,6 +181,9 @@ func (s *CacheStore) CompareAndSubtract(key string, expected int64) (int64, erro
 		if _, err := tx.Exec(`DELETE FROM cache WHERE key = $1`, key); err != nil {
 			return 0, fmt.Errorf("cache_store: compare-and-subtract %q: delete: %w", key, err)
 		}
+		if _, err := tx.Exec(`DELETE FROM cache_tags WHERE key = $1`, key); err != nil {
+			return 0, fmt.Errorf("cache_store: compare-and-subtract %q: delete tags: %w", key, err)
+		}
 		if err := tx.Commit(); err != nil {
 			return 0, fmt.Errorf("cache_store: compare-and-subtract %q: commit: %w", key, err)
 		}
@@ -196,21 +203,34 @@ func (s *CacheStore) CompareAndSubtract(key string, expected int64) (int64, erro
 }
 
 // Delete removes the entry for key. A missing key is not an error.
+// Matching cache_tags rows are removed in the same statement.
 func (s *CacheStore) Delete(key string) error {
-	_, err := s.db.Exec(`DELETE FROM cache WHERE key = $1`, key)
+	// gone is intentionally unreferenced. Postgres still executes
+	// data-modifying CTEs to completion even when the outer statement
+	// does not read them; dropping gone would leave the cache row in place.
+	_, err := s.db.Exec(
+		`WITH gone AS (
+		     DELETE FROM cache WHERE key = $1
+		 )
+		 DELETE FROM cache_tags WHERE key = $1`,
+		key,
+	)
 	if err != nil {
 		return fmt.Errorf("cache_store: delete %q: %w", key, err)
 	}
 	return nil
 }
 
-// DeleteByPrefix removes all entries whose key starts with prefix.
-// LIKE metacharacters (%, _, \) in prefix are escaped so only true
-// prefix matches are deleted.
+// DeleteByPrefix removes all entries whose key starts with prefix, and any
+// tag rows for those keys. LIKE metacharacters (%, _, \) in prefix are
+// escaped so only true prefix matches are deleted.
 func (s *CacheStore) DeleteByPrefix(ctx context.Context, prefix string) error {
 	escaped := escapeLike(prefix)
 	_, err := s.db.ExecContext(ctx,
-		`DELETE FROM cache WHERE key LIKE $1 ESCAPE '\'`,
+		`WITH doomed AS (
+		     DELETE FROM cache WHERE key LIKE $1 ESCAPE '\' RETURNING key
+		 )
+		 DELETE FROM cache_tags WHERE key IN (SELECT key FROM doomed)`,
 		escaped+"%",
 	)
 	if err != nil {
@@ -219,18 +239,128 @@ func (s *CacheStore) DeleteByPrefix(ctx context.Context, prefix string) error {
 	return nil
 }
 
+// SetWithTags stores value under key and associates it with tags in one transaction.
+func (s *CacheStore) SetWithTags(ctx context.Context, key string, value any, ttl time.Duration, tags ...string) error {
+	if err := ctx.Err(); err != nil {
+		return fmt.Errorf("cache_store: set with tags %q: %w", key, err)
+	}
+	tags = cache.UniqueTags(tags)
+	if len(tags) == 0 {
+		return s.set(ctx, key, value, ttl)
+	}
+
+	data, err := json.Marshal(value)
+	if err != nil {
+		return fmt.Errorf("cache_store: marshal %q: %w", key, err)
+	}
+
+	var expiresAt sql.NullTime
+	if ttl > 0 {
+		expiresAt = sql.NullTime{Time: time.Now().Add(ttl), Valid: true}
+	}
+
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("cache_store: set with tags %q: begin: %w", key, err)
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	_, err = tx.ExecContext(ctx,
+		`INSERT INTO cache (key, value, expires_at)
+		 VALUES ($1, $2, $3)
+		 ON CONFLICT (key)
+		 DO UPDATE SET value = EXCLUDED.value,
+		               expires_at = EXCLUDED.expires_at,
+		               created_at = now()`,
+		key, data, expiresAt,
+	)
+	if err != nil {
+		return fmt.Errorf("cache_store: set with tags %q: %w", key, err)
+	}
+	_, err = tx.ExecContext(ctx,
+		`INSERT INTO cache_tags (tag, key)
+		 SELECT t, $2 FROM unnest($1::text[]) AS t
+		 ON CONFLICT (tag, key) DO NOTHING`,
+		tags, key,
+	)
+	if err != nil {
+		return fmt.Errorf("cache_store: set with tags %q: tags: %w", key, err)
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("cache_store: set with tags %q: commit: %w", key, err)
+	}
+	return nil
+}
+
+// DeleteByTag removes every cache row currently associated with tag.
+// Tag membership is snapshotted by deleting the tag rows first (RETURNING
+// key) so a concurrent SetWithTags that commits after the snapshot keeps
+// its association instead of having it stripped while the value survives.
+func (s *CacheStore) DeleteByTag(ctx context.Context, tag string) (int64, error) {
+	tag = cache.NormalizeTag(tag)
+	if tag == "" {
+		return 0, nil
+	}
+	var n int64
+	// gone is intentionally unreferenced. Postgres still executes
+	// data-modifying CTEs to completion even when the outer SELECT only
+	// reads doomed; dropping it would count tags without deleting values.
+	//
+	// doomed only deletes cache_tags rows for $1 itself, not every tag a
+	// doomed key happens to have: a prior version deleted cache_tags for
+	// ALL of a doomed key's tags (closing the "other tags left orphaned"
+	// gap), but that reached past $1's own snapshot into tag rows a
+	// concurrent SetWithTags could commit for a DIFFERENT tag after this
+	// statement's own snapshot — additive tagging never removes old
+	// tags, so a key already doomed here can legitimately gain a new one
+	// mid-flight, and deleting it anyway would destroy an association
+	// the documented contract says must survive. A resulting orphan (the
+	// old cache row this call deletes below no longer backs that other
+	// tag's own membership row) is left for DeleteExpired's sweep, the
+	// same accepted, already-tested eventual-consistency path as any
+	// other orphan.
+	err := s.db.QueryRowContext(ctx,
+		`WITH doomed AS (
+		     DELETE FROM cache_tags WHERE tag = $1 RETURNING key
+		 ), gone AS (
+		     DELETE FROM cache WHERE key IN (SELECT key FROM doomed)
+		 )
+		 SELECT count(*) FROM doomed`,
+		tag,
+	).Scan(&n)
+	if err != nil {
+		return 0, fmt.Errorf("cache_store: delete by tag %q: %w", tag, err)
+	}
+	return n, nil
+}
+
 // escapeLike escapes LIKE metacharacters so they match literally.
 func escapeLike(s string) string {
 	r := strings.NewReplacer(`\`, `\\`, `%`, `\%`, `_`, `\_`)
 	return r.Replace(s)
 }
 
-// DeleteExpired removes all entries whose TTL has elapsed.
-// Called by the cache cleanup scheduled job.
+// DeleteExpired removes all entries whose TTL has elapsed, then sweeps
+// cache_tags rows whose key no longer exists in cache.
+// Called by the cache cleanup scheduled job. The two statements are
+// separate transactions so a large orphan sweep does not extend the
+// TTL-delete lock.
 func (s *CacheStore) DeleteExpired(ctx context.Context) (int64, error) {
 	res, err := s.db.ExecContext(ctx, `DELETE FROM cache WHERE expires_at < now()`)
 	if err != nil {
 		return 0, fmt.Errorf("cache_store: delete expired: %w", err)
 	}
-	return res.RowsAffected()
+	n, err := res.RowsAffected()
+	if err != nil {
+		return 0, fmt.Errorf("cache_store: delete expired: rows: %w", err)
+	}
+	_, err = s.db.ExecContext(ctx,
+		`DELETE FROM cache_tags t WHERE NOT EXISTS (
+		     SELECT 1 FROM cache c WHERE c.key = t.key
+		 )`,
+	)
+	if err != nil {
+		return 0, fmt.Errorf("cache_store: delete expired tags: %w", err)
+	}
+	return n, nil
 }

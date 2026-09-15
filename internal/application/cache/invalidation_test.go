@@ -48,6 +48,11 @@ func (m *mockCache) DeleteByPrefix(_ context.Context, prefix string) error {
 	}
 	return nil
 }
+func (m *mockCache) SetWithTags(_ context.Context, key string, value any, ttl time.Duration, tags ...string) error {
+	_ = tags
+	return m.Set(key, value, ttl)
+}
+func (m *mockCache) DeleteByTag(_ context.Context, _ string) (int64, error) { return 0, nil }
 
 // --- mock logger ---
 

@@ -153,6 +153,10 @@ func (stubCache) Incr(string, int64, time.Duration) (int64, error) { return 0, n
 func (stubCache) CompareAndSubtract(string, int64) (int64, error)  { return 0, nil }
 func (stubCache) Delete(string) error                              { return nil }
 func (stubCache) DeleteByPrefix(context.Context, string) error     { return nil }
+func (stubCache) SetWithTags(context.Context, string, any, time.Duration, ...string) error {
+	return nil
+}
+func (stubCache) DeleteByTag(context.Context, string) (int64, error) { return 0, nil }
 
 var _ cache.Cache = stubCache{}
 

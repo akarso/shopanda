@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/akarso/shopanda/internal/domain/cache/tagtest"
 	"github.com/akarso/shopanda/internal/infrastructure/postgres"
 	"github.com/akarso/shopanda/internal/platform/migrate"
 )
@@ -19,7 +20,14 @@ func setupCacheStore(t *testing.T) (*sql.DB, *postgres.CacheStore) {
 	if _, err := migrate.Run(db, "../../../migrations"); err != nil {
 		t.Fatalf("migrate: %v", err)
 	}
-	t.Cleanup(func() { db.Exec("DELETE FROM cache") })
+	t.Cleanup(func() {
+		if _, err := db.Exec("DELETE FROM cache_tags"); err != nil {
+			t.Errorf("cleanup: delete cache_tags: %v", err)
+		}
+		if _, err := db.Exec("DELETE FROM cache"); err != nil {
+			t.Errorf("cleanup: delete cache: %v", err)
+		}
+	})
 	store, err := postgres.NewCacheStore(db)
 	if err != nil {
 		t.Fatalf("NewCacheStore: %v", err)
@@ -350,5 +358,187 @@ func TestCacheStoreDB_CompareAndSubtractVsIncrConcurrent(t *testing.T) {
 	// Net: +workers Incr and -workers Subtract from base 10 → expect 10 if none lost.
 	if !hit || got != 10 {
 		t.Fatalf("Get after mixed race = hit=%v val=%d, want 10 (lost updates if FOR UPDATE missing)", hit, got)
+	}
+}
+
+func TestCacheStoreDB_TagInvalidation(t *testing.T) {
+	_, store := setupCacheStore(t)
+	tagtest.Run(t, store)
+}
+
+func TestCacheStoreDB_TagDeleteAfterExpiry(t *testing.T) {
+	db, store := setupCacheStore(t)
+	past := time.Now().Add(-time.Minute)
+	data, err := json.Marshal("stale")
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	if _, err := db.Exec(
+		`INSERT INTO cache (key, value, expires_at) VALUES ($1, $2, $3)`,
+		"expired_tagged", data, past,
+	); err != nil {
+		t.Fatalf("insert expired: %v", err)
+	}
+	if _, err := db.Exec(
+		`INSERT INTO cache_tags (tag, key) VALUES ($1, $2)`,
+		"exp-tag", "expired_tagged",
+	); err != nil {
+		t.Fatalf("insert tag: %v", err)
+	}
+
+	var got string
+	ok, err := store.Get("expired_tagged", &got)
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if ok {
+		t.Fatal("expected miss for expired tagged entry")
+	}
+	n, err := store.DeleteByTag(context.Background(), "exp-tag")
+	if err != nil {
+		t.Fatalf("DeleteByTag after expiry: %v", err)
+	}
+	if n != 1 {
+		t.Errorf("DeleteByTag count = %d, want 1 (the tag row exists regardless of the value's own expiry)", n)
+	}
+	ok, err = store.Get("expired_tagged", &got)
+	if err != nil || ok {
+		t.Fatalf("Get after DeleteByTag = hit=%v err=%v, want miss", ok, err)
+	}
+	var tagCount int
+	if err := db.QueryRow(`SELECT count(*) FROM cache_tags WHERE tag = 'exp-tag'`).Scan(&tagCount); err != nil {
+		t.Fatalf("count exp-tag: %v", err)
+	}
+	if tagCount != 0 {
+		t.Errorf("cache_tags rows for exp-tag = %d, want 0", tagCount)
+	}
+}
+
+func TestCacheStoreDB_TagDeleteExpiredSweepsOrphans(t *testing.T) {
+	db, store := setupCacheStore(t)
+	if err := store.SetWithTags(context.Background(), "alive", "v", time.Hour, "keep"); err != nil {
+		t.Fatalf("SetWithTags: %v", err)
+	}
+	if err := store.SetWithTags(context.Background(), "to-delete", "v", 0, "orphan"); err != nil {
+		t.Fatalf("SetWithTags: %v", err)
+	}
+	// store.Delete removes the matching cache_tags row itself (see its own
+	// doc comment), so it can't be used here — it would leave nothing for
+	// DeleteExpired's orphan sweep to actually clean up, and this test
+	// would pass without exercising that sweep at all. Deleting the cache
+	// row directly via SQL bypasses that cleanup, leaving the "orphan" tag
+	// row behind for DeleteExpired to sweep.
+	if _, err := db.Exec(`DELETE FROM cache WHERE key = $1`, "to-delete"); err != nil {
+		t.Fatalf("delete to-delete: %v", err)
+	}
+
+	past := time.Now().Add(-time.Minute)
+	data, err := json.Marshal("x")
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	if _, err := db.Exec(
+		`INSERT INTO cache (key, value, expires_at) VALUES ($1, $2, $3)`,
+		"expired", data, past,
+	); err != nil {
+		t.Fatalf("insert expired: %v", err)
+	}
+	if _, err := db.Exec(
+		`INSERT INTO cache_tags (tag, key) VALUES ($1, $2)`,
+		"expired-tag", "expired",
+	); err != nil {
+		t.Fatalf("insert expired tag: %v", err)
+	}
+
+	n, err := store.DeleteExpired(context.Background())
+	if err != nil {
+		t.Fatalf("DeleteExpired: %v", err)
+	}
+	if n != 1 {
+		t.Errorf("deleted cache rows = %d, want 1", n)
+	}
+
+	var orphanCount int
+	if err := db.QueryRow(`SELECT count(*) FROM cache_tags WHERE tag IN ('orphan', 'expired-tag')`).Scan(&orphanCount); err != nil {
+		t.Fatalf("count orphans: %v", err)
+	}
+	if orphanCount != 0 {
+		t.Errorf("orphaned tag rows = %d, want 0", orphanCount)
+	}
+	var keepCount int
+	if err := db.QueryRow(`SELECT count(*) FROM cache_tags WHERE tag = 'keep'`).Scan(&keepCount); err != nil {
+		t.Fatalf("count keep: %v", err)
+	}
+	if keepCount != 1 {
+		t.Errorf("keep tag rows = %d, want 1", keepCount)
+	}
+}
+
+func TestCacheStoreDB_TagDeleteByTagCountIncludesOrphans(t *testing.T) {
+	db, store := setupCacheStore(t)
+	ctx := context.Background()
+	if err := store.SetWithTags(ctx, "live", "v", time.Hour, "mix-tag"); err != nil {
+		t.Fatalf("SetWithTags: %v", err)
+	}
+	if _, err := db.Exec(`INSERT INTO cache_tags (tag, key) VALUES ($1, $2)`, "mix-tag", "already-gone"); err != nil {
+		t.Fatalf("insert orphan tag: %v", err)
+	}
+
+	n, err := store.DeleteByTag(ctx, "mix-tag")
+	if err != nil {
+		t.Fatalf("DeleteByTag: %v", err)
+	}
+	if n != 2 {
+		t.Fatalf("DeleteByTag count = %d, want 2 (snapshot includes the orphaned tag row)", n)
+	}
+
+	var got string
+	ok, err := store.Get("live", &got)
+	if err != nil || ok {
+		t.Fatalf("Get live = hit=%v err=%v, want miss", ok, err)
+	}
+	var tagRows int
+	if err := db.QueryRow(`SELECT count(*) FROM cache_tags WHERE tag = 'mix-tag'`).Scan(&tagRows); err != nil {
+		t.Fatalf("count tags: %v", err)
+	}
+	if tagRows != 0 {
+		t.Fatalf("mix-tag rows = %d, want 0", tagRows)
+	}
+}
+
+// TestCacheStoreDB_TagDeleteByTagOnlyTouchesOwnTagRows pins the code
+// review fix: DeleteByTag's doomed CTE must only DELETE cache_tags rows
+// for the requested tag itself, not every tag a doomed key happens to
+// have. A prior version additionally deleted cache_tags for ALL of a
+// doomed key's tags (via a second "tags_gone" CTE keyed on the same
+// snapshotted key list) — closing the "other tags left orphaned" gap,
+// but reaching past $1's own snapshot into a DIFFERENT tag's row that a
+// concurrent SetWithTags could commit (additively, without removing the
+// key's existing tag) after this statement's own snapshot but before it
+// finished — destroying an association the documented contract says
+// must survive. This test doesn't need real concurrency to demonstrate
+// the fix: it directly confirms the SQL no longer touches other-tag rows
+// for a doomed key at all, regardless of timing.
+func TestCacheStoreDB_TagDeleteByTagOnlyTouchesOwnTagRows(t *testing.T) {
+	db, store := setupCacheStore(t)
+	ctx := context.Background()
+	if err := store.SetWithTags(ctx, "racy-key", "v1", time.Hour, "old-tag", "new-tag"); err != nil {
+		t.Fatalf("SetWithTags: %v", err)
+	}
+
+	n, err := store.DeleteByTag(ctx, "old-tag")
+	if err != nil {
+		t.Fatalf("DeleteByTag old-tag: %v", err)
+	}
+	if n != 1 {
+		t.Fatalf("DeleteByTag old-tag count = %d, want 1", n)
+	}
+
+	var newTagRows int
+	if err := db.QueryRow(`SELECT count(*) FROM cache_tags WHERE tag = 'new-tag' AND key = 'racy-key'`).Scan(&newTagRows); err != nil {
+		t.Fatalf("count new-tag rows: %v", err)
+	}
+	if newTagRows != 1 {
+		t.Fatalf("new-tag rows for racy-key = %d, want 1 (must survive a DeleteByTag for a different tag on the same key)", newTagRows)
 	}
 }
