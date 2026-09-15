@@ -45,6 +45,27 @@ redis.call('DEL', KEYS[2])
 return 1
 `)
 
+// deleteUntagBatchScript is deleteUntagScript for many keys in one round
+// trip, used by DeleteByPrefix. KEYS alternates valueKey1, revKey1,
+// valueKey2, revKey2, ... ; ARGV[1]=store prefix, ARGV[2..]=each key's
+// logical name (same order as the KEYS pairs).
+var deleteUntagBatchScript = goredis.NewScript(`
+local prefix = ARGV[1]
+for i = 2, #ARGV do
+  local base = (i - 2) * 2
+  local valueKey = KEYS[base + 1]
+  local revKey = KEYS[base + 2]
+  local logicalKey = ARGV[i]
+  local tags = redis.call('SMEMBERS', revKey)
+  redis.call('DEL', valueKey)
+  for j = 1, #tags do
+    redis.call('SREM', prefix .. 'tag:' .. tags[j], logicalKey)
+  end
+  redis.call('DEL', revKey)
+end
+return 1
+`)
+
 // Logger is the optional structured logger used for recoverable cache errors
 // (per-tag prune skips, purge-key EXPIRE/restore failures). Nil is a no-op.
 type Logger interface {
@@ -246,27 +267,52 @@ func (s *CacheStore) Delete(key string) error {
 	return nil
 }
 
-// DeleteByPrefix removes all entries whose key starts with prefix.
+// DeleteByPrefix removes all entries whose key starts with prefix, along
+// with their tag memberships (forward tag: sets and the reverse
+// __keytags: set) — the same cleanup Delete does for a single key, so a
+// key later repopulated by a plain Set doesn't retain a stale tag
+// association that a later DeleteByTag would wrongly act on.
 func (s *CacheStore) DeleteByPrefix(ctx context.Context, prefix string) error {
 	match := s.key(prefix) + "*"
 	iter := s.client.Scan(ctx, 0, match, 100).Iterator()
-	keys := make([]string, 0, deleteByPrefixBatchSize)
+	fullKeys := make([]string, 0, deleteByPrefixBatchSize)
+	flush := func() error {
+		if len(fullKeys) == 0 {
+			return nil
+		}
+		if err := s.deleteUntagBatch(ctx, fullKeys); err != nil {
+			return fmt.Errorf("redis cache: delete by prefix %q: %w", prefix, err)
+		}
+		fullKeys = fullKeys[:0]
+		return nil
+	}
 	for iter.Next(ctx) {
-		keys = append(keys, iter.Val())
-		if len(keys) >= deleteByPrefixBatchSize {
-			if err := s.client.Del(ctx, keys...).Err(); err != nil {
-				return fmt.Errorf("redis cache: delete by prefix %q: %w", prefix, err)
+		fullKeys = append(fullKeys, iter.Val())
+		if len(fullKeys) >= deleteByPrefixBatchSize {
+			if err := flush(); err != nil {
+				return err
 			}
-			keys = keys[:0]
 		}
 	}
 	if err := iter.Err(); err != nil {
 		return fmt.Errorf("redis cache: scan prefix %q: %w", prefix, err)
 	}
-	if len(keys) > 0 {
-		if err := s.client.Del(ctx, keys...).Err(); err != nil {
-			return fmt.Errorf("redis cache: delete by prefix %q: %w", prefix, err)
-		}
+	return flush()
+}
+
+// deleteUntagBatch deletes each already-prefixed key in fullKeys and
+// removes its tag memberships, via deleteUntagBatchScript.
+func (s *CacheStore) deleteUntagBatch(ctx context.Context, fullKeys []string) error {
+	keys := make([]string, 0, len(fullKeys)*2)
+	args := make([]any, 1, len(fullKeys)+1)
+	args[0] = s.prefix
+	for _, full := range fullKeys {
+		logicalKey := strings.TrimPrefix(full, s.prefix)
+		keys = append(keys, full, s.keyTagsKey(logicalKey))
+		args = append(args, logicalKey)
+	}
+	if err := deleteUntagBatchScript.Run(ctx, s.client, keys, args...).Err(); err != nil {
+		return fmt.Errorf("delete untag batch: %w", err)
 	}
 	return nil
 }
@@ -320,12 +366,19 @@ func (s *CacheStore) DeleteByTag(ctx context.Context, tag string) (n int64, err 
 		}
 		return 0, fmt.Errorf("redis cache: rename tag %q: %w", tag, err)
 	}
-	s.expirePurge(tmpKey)
+	// Registered before expirePurge (not after) so a failure to set the
+	// TTL is itself covered: without a TTL and without being restored, a
+	// purge key that outlives this call (a later step here fails, or the
+	// process dies) would sit forever with its members permanently
+	// unreachable through the live tag key.
 	defer func() {
 		if err != nil {
 			s.restorePurge(tagKey, tmpKey)
 		}
 	}()
+	if err = s.expirePurge(tmpKey); err != nil {
+		return n, fmt.Errorf("redis cache: delete by tag %q: %w", tag, err)
+	}
 	if s.afterTagRename != nil {
 		s.afterTagRename()
 	}
@@ -333,12 +386,19 @@ func (s *CacheStore) DeleteByTag(ctx context.Context, tag string) (n int64, err 
 		return n, fmt.Errorf("redis cache: delete by tag %q: %w", tag, err)
 	}
 
+	// deleteUntagBatch (not a plain Del of the value+reverse keys) so a
+	// member tagged with more than just tag also has its OTHER tag
+	// memberships cleared here — otherwise those other forward tag sets
+	// would keep a member whose value and reverse index are already gone,
+	// an orphan left for DeleteExpired's sweep to eventually catch instead
+	// of being cleaned up immediately (same class of gap as DeleteByPrefix
+	// and the PostgreSQL backend's own DeleteByTag fix).
 	keys := make([]string, 0, deleteByPrefixBatchSize)
 	flush := func() error {
 		if len(keys) == 0 {
 			return nil
 		}
-		if err := s.client.Del(ctx, keys...).Err(); err != nil {
+		if err := s.deleteUntagBatch(ctx, keys); err != nil {
 			return fmt.Errorf("redis cache: delete by tag %q: %w", tag, err)
 		}
 		keys = keys[:0]
@@ -347,7 +407,7 @@ func (s *CacheStore) DeleteByTag(ctx context.Context, tag string) (n int64, err 
 	iter := s.client.SScan(ctx, tmpKey, 0, "", tagScanCount).Iterator()
 	for iter.Next(ctx) {
 		member := iter.Val()
-		keys = append(keys, s.key(member), s.keyTagsKey(member))
+		keys = append(keys, s.key(member))
 		n++
 		if len(keys) >= deleteByPrefixBatchSize {
 			if err := flush(); err != nil {
@@ -367,7 +427,12 @@ func (s *CacheStore) DeleteByTag(ctx context.Context, tag string) (n int64, err 
 	return n, nil
 }
 
-func (s *CacheStore) expirePurge(tmpKey string) {
+// expirePurge sets tmpKey's TTL and, on failure, both logs and returns the
+// error — the caller (DeleteByTag) treats this as fatal for the call and
+// restores membership rather than continuing with an unbounded purge key
+// (see DeleteByTag's own comment on why the restore defer is registered
+// before this call, not after).
+func (s *CacheStore) expirePurge(tmpKey string) error {
 	ctx, cancel := context.WithTimeout(context.Background(), purgeRecoverTimeout)
 	defer cancel()
 	if err := s.client.Expire(ctx, tmpKey, purgeSetTTL).Err(); err != nil {
@@ -375,9 +440,17 @@ func (s *CacheStore) expirePurge(tmpKey string) {
 			"key": tmpKey,
 			"ttl": purgeSetTTL.String(),
 		})
+		return err
 	}
+	return nil
 }
 
+// restorePurge merges tmpKey's remaining members back onto tagKey and
+// removes tmpKey. Used on any DeleteByTag failure after the rename, since
+// expiry sweeps only scan the live tag: prefix (s.prefix+"tag:*") — a
+// __purge: key is never picked up by DeleteExpired's own membership sweep,
+// so tmpKey's TTL (set by expirePurge) is the only thing that would ever
+// reclaim it if this restore itself fails.
 func (s *CacheStore) restorePurge(tagKey, tmpKey string) {
 	ctx, cancel := context.WithTimeout(context.Background(), purgeRecoverTimeout)
 	defer cancel()

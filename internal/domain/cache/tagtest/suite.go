@@ -53,6 +53,32 @@ func Run(t *testing.T, c cache.Cache) {
 		assertHit(t, c, "tagtest:page:c", "c")
 	})
 
+	t.Run("DeleteByOneTagClearsKeyFromOtherTags", func(t *testing.T) {
+		// A key deleted via one of its tags must have ALL its tag
+		// memberships cleared, not just the requested tag's — otherwise a
+		// later DeleteByTag for one of its other tags would count (and
+		// act on) a key whose value is already gone, an orphan left
+		// behind instead of cleaned up immediately.
+		if err := c.SetWithTags(ctx, "tagtest:multi:a", "a", time.Hour, "multi-x", "multi-y"); err != nil {
+			t.Fatalf("SetWithTags a: %v", err)
+		}
+		if err := c.SetWithTags(ctx, "tagtest:multi:b", "b", time.Hour, "multi-y"); err != nil {
+			t.Fatalf("SetWithTags b: %v", err)
+		}
+		if _, err := c.DeleteByTag(ctx, "multi-x"); err != nil {
+			t.Fatalf("DeleteByTag multi-x: %v", err)
+		}
+		assertMiss(t, c, "tagtest:multi:a")
+		n, err := c.DeleteByTag(ctx, "multi-y")
+		if err != nil {
+			t.Fatalf("DeleteByTag multi-y: %v", err)
+		}
+		if n != 1 {
+			t.Fatalf("DeleteByTag multi-y count = %d, want 1 (tagtest:multi:a's multi-y membership should already be gone, not an orphan counted here)", n)
+		}
+		assertMiss(t, c, "tagtest:multi:b")
+	})
+
 	t.Run("AdditiveAcrossSeparateSetWithTags", func(t *testing.T) {
 		const key = "tagtest:additive"
 		if err := c.SetWithTags(ctx, key, "v1", time.Hour, "add-a"); err != nil {
@@ -163,6 +189,29 @@ func Run(t *testing.T, c cache.Cache) {
 			t.Fatalf("DeleteByTag after Delete count = %d, want 0", n)
 		}
 		assertMiss(t, c, "tagtest:gone")
+	})
+
+	t.Run("DeleteByPrefixClearsTagMembership", func(t *testing.T) {
+		// DeleteByPrefix must drop tag membership the same way Delete does
+		// (see Delete's own doc comment) — otherwise a key repopulated by a
+		// plain Set (no tags) after DeleteByPrefix keeps its old tag
+		// association, and a later DeleteByTag for that stale tag wrongly
+		// evicts the new, unrelated value.
+		const key = "tagtest:prefix:evict:a"
+		if err := c.SetWithTags(ctx, key, "old", time.Hour, "prefix-tag"); err != nil {
+			t.Fatalf("SetWithTags: %v", err)
+		}
+		if err := c.DeleteByPrefix(ctx, "tagtest:prefix:evict:"); err != nil {
+			t.Fatalf("DeleteByPrefix: %v", err)
+		}
+		assertMiss(t, c, key)
+		if err := c.Set(key, "new", time.Hour); err != nil {
+			t.Fatalf("Set: %v", err)
+		}
+		if _, err := c.DeleteByTag(ctx, "prefix-tag"); err != nil {
+			t.Fatalf("DeleteByTag: %v", err)
+		}
+		assertHit(t, c, key, "new")
 	})
 
 	t.Run("DuplicateTagsAreIdempotent", func(t *testing.T) {

@@ -302,14 +302,22 @@ func (s *CacheStore) DeleteByTag(ctx context.Context, tag string) (int64, error)
 		return 0, nil
 	}
 	var n int64
-	// gone is intentionally unreferenced. Postgres still executes
-	// data-modifying CTEs to completion even when the outer SELECT only
-	// reads doomed; dropping gone would count tags without deleting values.
+	// gone and tags_gone are intentionally unreferenced. Postgres still
+	// executes data-modifying CTEs to completion even when the outer
+	// SELECT only reads doomed; dropping either would leave rows behind.
+	// tags_gone removes cache_tags for every doomed key across ALL of
+	// that key's tags, not just $1 — a multi-tagged key invalidated via
+	// one tag would otherwise leave its other tags' membership rows
+	// pointing at a cache row that no longer exists, an orphan that would
+	// sit there (inflating a later DeleteByTag's snapshot count for that
+	// other tag) until the next DeleteExpired sweep happened to catch it.
 	err := s.db.QueryRowContext(ctx,
 		`WITH doomed AS (
-		     DELETE FROM cache_tags WHERE tag = $1 RETURNING key
+		     SELECT key FROM cache_tags WHERE tag = $1
 		 ), gone AS (
 		     DELETE FROM cache WHERE key IN (SELECT key FROM doomed)
+		 ), tags_gone AS (
+		     DELETE FROM cache_tags WHERE key IN (SELECT key FROM doomed)
 		 )
 		 SELECT count(*) FROM doomed`,
 		tag,

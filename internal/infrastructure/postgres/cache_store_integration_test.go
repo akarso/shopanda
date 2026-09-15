@@ -21,8 +21,12 @@ func setupCacheStore(t *testing.T) (*sql.DB, *postgres.CacheStore) {
 		t.Fatalf("migrate: %v", err)
 	}
 	t.Cleanup(func() {
-		db.Exec("DELETE FROM cache_tags")
-		db.Exec("DELETE FROM cache")
+		if _, err := db.Exec("DELETE FROM cache_tags"); err != nil {
+			t.Errorf("cleanup: delete cache_tags: %v", err)
+		}
+		if _, err := db.Exec("DELETE FROM cache"); err != nil {
+			t.Errorf("cleanup: delete cache: %v", err)
+		}
 	})
 	store, err := postgres.NewCacheStore(db)
 	if err != nil {
@@ -390,12 +394,23 @@ func TestCacheStoreDB_TagDeleteAfterExpiry(t *testing.T) {
 	if ok {
 		t.Fatal("expected miss for expired tagged entry")
 	}
-	if _, err := store.DeleteByTag(context.Background(), "exp-tag"); err != nil {
+	n, err := store.DeleteByTag(context.Background(), "exp-tag")
+	if err != nil {
 		t.Fatalf("DeleteByTag after expiry: %v", err)
+	}
+	if n != 1 {
+		t.Errorf("DeleteByTag count = %d, want 1 (the tag row exists regardless of the value's own expiry)", n)
 	}
 	ok, err = store.Get("expired_tagged", &got)
 	if err != nil || ok {
 		t.Fatalf("Get after DeleteByTag = hit=%v err=%v, want miss", ok, err)
+	}
+	var tagCount int
+	if err := db.QueryRow(`SELECT count(*) FROM cache_tags WHERE tag = 'exp-tag'`).Scan(&tagCount); err != nil {
+		t.Fatalf("count exp-tag: %v", err)
+	}
+	if tagCount != 0 {
+		t.Errorf("cache_tags rows for exp-tag = %d, want 0", tagCount)
 	}
 }
 
@@ -407,8 +422,14 @@ func TestCacheStoreDB_TagDeleteExpiredSweepsOrphans(t *testing.T) {
 	if err := store.SetWithTags(context.Background(), "to-delete", "v", 0, "orphan"); err != nil {
 		t.Fatalf("SetWithTags: %v", err)
 	}
-	if err := store.Delete("to-delete"); err != nil {
-		t.Fatalf("Delete: %v", err)
+	// store.Delete removes the matching cache_tags row itself (see its own
+	// doc comment), so it can't be used here — it would leave nothing for
+	// DeleteExpired's orphan sweep to actually clean up, and this test
+	// would pass without exercising that sweep at all. Deleting the cache
+	// row directly via SQL bypasses that cleanup, leaving the "orphan" tag
+	// row behind for DeleteExpired to sweep.
+	if _, err := db.Exec(`DELETE FROM cache WHERE key = $1`, "to-delete"); err != nil {
+		t.Fatalf("delete to-delete: %v", err)
 	}
 
 	past := time.Now().Add(-time.Minute)

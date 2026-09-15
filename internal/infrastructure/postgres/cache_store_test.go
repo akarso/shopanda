@@ -138,16 +138,22 @@ func (s *stubCache) CompareAndSubtract(key string, expected int64) (int64, error
 	return n, nil
 }
 
-func (s *stubCache) Delete(key string) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	delete(s.entries, key)
+// untagLocked removes key from every tag's membership set, dropping a tag
+// entirely once it has no members left. Callers must hold s.mu.
+func (s *stubCache) untagLocked(key string) {
 	for tag, keys := range s.tags {
 		delete(keys, key)
 		if len(keys) == 0 {
 			delete(s.tags, tag)
 		}
 	}
+}
+
+func (s *stubCache) Delete(key string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	delete(s.entries, key)
+	s.untagLocked(key)
 	return nil
 }
 
@@ -157,6 +163,7 @@ func (s *stubCache) DeleteByPrefix(_ context.Context, prefix string) error {
 	for k := range s.entries {
 		if strings.HasPrefix(k, prefix) {
 			delete(s.entries, k)
+			s.untagLocked(k)
 		}
 	}
 	return nil
@@ -197,6 +204,7 @@ func (s *stubCache) DeleteByTag(_ context.Context, tag string) (int64, error) {
 	var n int64
 	for key := range keys {
 		delete(s.entries, key)
+		s.untagLocked(key)
 		n++
 	}
 	return n, nil
