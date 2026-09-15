@@ -302,22 +302,28 @@ func (s *CacheStore) DeleteByTag(ctx context.Context, tag string) (int64, error)
 		return 0, nil
 	}
 	var n int64
-	// gone and tags_gone are intentionally unreferenced. Postgres still
-	// executes data-modifying CTEs to completion even when the outer
-	// SELECT only reads doomed; dropping either would leave rows behind.
-	// tags_gone removes cache_tags for every doomed key across ALL of
-	// that key's tags, not just $1 — a multi-tagged key invalidated via
-	// one tag would otherwise leave its other tags' membership rows
-	// pointing at a cache row that no longer exists, an orphan that would
-	// sit there (inflating a later DeleteByTag's snapshot count for that
-	// other tag) until the next DeleteExpired sweep happened to catch it.
+	// gone is intentionally unreferenced. Postgres still executes
+	// data-modifying CTEs to completion even when the outer SELECT only
+	// reads doomed; dropping it would count tags without deleting values.
+	//
+	// doomed only deletes cache_tags rows for $1 itself, not every tag a
+	// doomed key happens to have: a prior version deleted cache_tags for
+	// ALL of a doomed key's tags (closing the "other tags left orphaned"
+	// gap), but that reached past $1's own snapshot into tag rows a
+	// concurrent SetWithTags could commit for a DIFFERENT tag after this
+	// statement's own snapshot — additive tagging never removes old
+	// tags, so a key already doomed here can legitimately gain a new one
+	// mid-flight, and deleting it anyway would destroy an association
+	// the documented contract says must survive. A resulting orphan (the
+	// old cache row this call deletes below no longer backs that other
+	// tag's own membership row) is left for DeleteExpired's sweep, the
+	// same accepted, already-tested eventual-consistency path as any
+	// other orphan.
 	err := s.db.QueryRowContext(ctx,
 		`WITH doomed AS (
-		     SELECT key FROM cache_tags WHERE tag = $1
+		     DELETE FROM cache_tags WHERE tag = $1 RETURNING key
 		 ), gone AS (
 		     DELETE FROM cache WHERE key IN (SELECT key FROM doomed)
-		 ), tags_gone AS (
-		     DELETE FROM cache_tags WHERE key IN (SELECT key FROM doomed)
 		 )
 		 SELECT count(*) FROM doomed`,
 		tag,

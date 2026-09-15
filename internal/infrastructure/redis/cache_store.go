@@ -386,19 +386,26 @@ func (s *CacheStore) DeleteByTag(ctx context.Context, tag string) (n int64, err 
 		return n, fmt.Errorf("redis cache: delete by tag %q: %w", tag, err)
 	}
 
-	// deleteUntagBatch (not a plain Del of the value+reverse keys) so a
-	// member tagged with more than just tag also has its OTHER tag
-	// memberships cleared here — otherwise those other forward tag sets
-	// would keep a member whose value and reverse index are already gone,
-	// an orphan left for DeleteExpired's sweep to eventually catch instead
-	// of being cleaned up immediately (same class of gap as DeleteByPrefix
-	// and the PostgreSQL backend's own DeleteByTag fix).
+	// Deliberately a plain Del of the value+reverse keys, NOT
+	// deleteUntagBatch: deleteUntagBatch reads each member's CURRENT
+	// (live) reverse index to SREM it from every OTHER tag it's in too —
+	// but by the time this loop reaches a member, a concurrent
+	// SetWithTags may have already re-tagged it (additive — old tags
+	// never get removed) with a tag added AFTER this call's own RENAME
+	// snapshot. Reaching into that live reverse index would then SREM the
+	// member from a tag set it was just, freshly, legitimately added to —
+	// destroying an association the documented contract says must
+	// survive (a concurrent SetWithTags commit after the snapshot). A
+	// leftover forward-set entry for that other tag, pointing at a value
+	// key this call is about to delete, is instead left for DeleteExpired
+	// to sweep — the same accepted, already-tested eventual-consistency
+	// path as any other orphan (see its own doc comment).
 	keys := make([]string, 0, deleteByPrefixBatchSize)
 	flush := func() error {
 		if len(keys) == 0 {
 			return nil
 		}
-		if err := s.deleteUntagBatch(ctx, keys); err != nil {
+		if err := s.client.Del(ctx, keys...).Err(); err != nil {
 			return fmt.Errorf("redis cache: delete by tag %q: %w", tag, err)
 		}
 		keys = keys[:0]
@@ -407,7 +414,7 @@ func (s *CacheStore) DeleteByTag(ctx context.Context, tag string) (n int64, err 
 	iter := s.client.SScan(ctx, tmpKey, 0, "", tagScanCount).Iterator()
 	for iter.Next(ctx) {
 		member := iter.Val()
-		keys = append(keys, s.key(member))
+		keys = append(keys, s.key(member), s.keyTagsKey(member))
 		n++
 		if len(keys) >= deleteByPrefixBatchSize {
 			if err := flush(); err != nil {

@@ -505,3 +505,40 @@ func TestCacheStoreDB_TagDeleteByTagCountIncludesOrphans(t *testing.T) {
 		t.Fatalf("mix-tag rows = %d, want 0", tagRows)
 	}
 }
+
+// TestCacheStoreDB_TagDeleteByTagOnlyTouchesOwnTagRows pins the code
+// review fix: DeleteByTag's doomed CTE must only DELETE cache_tags rows
+// for the requested tag itself, not every tag a doomed key happens to
+// have. A prior version additionally deleted cache_tags for ALL of a
+// doomed key's tags (via a second "tags_gone" CTE keyed on the same
+// snapshotted key list) — closing the "other tags left orphaned" gap,
+// but reaching past $1's own snapshot into a DIFFERENT tag's row that a
+// concurrent SetWithTags could commit (additively, without removing the
+// key's existing tag) after this statement's own snapshot but before it
+// finished — destroying an association the documented contract says
+// must survive. This test doesn't need real concurrency to demonstrate
+// the fix: it directly confirms the SQL no longer touches other-tag rows
+// for a doomed key at all, regardless of timing.
+func TestCacheStoreDB_TagDeleteByTagOnlyTouchesOwnTagRows(t *testing.T) {
+	db, store := setupCacheStore(t)
+	ctx := context.Background()
+	if err := store.SetWithTags(ctx, "racy-key", "v1", time.Hour, "old-tag", "new-tag"); err != nil {
+		t.Fatalf("SetWithTags: %v", err)
+	}
+
+	n, err := store.DeleteByTag(ctx, "old-tag")
+	if err != nil {
+		t.Fatalf("DeleteByTag old-tag: %v", err)
+	}
+	if n != 1 {
+		t.Fatalf("DeleteByTag old-tag count = %d, want 1", n)
+	}
+
+	var newTagRows int
+	if err := db.QueryRow(`SELECT count(*) FROM cache_tags WHERE tag = 'new-tag' AND key = 'racy-key'`).Scan(&newTagRows); err != nil {
+		t.Fatalf("count new-tag rows: %v", err)
+	}
+	if newTagRows != 1 {
+		t.Fatalf("new-tag rows for racy-key = %d, want 1 (must survive a DeleteByTag for a different tag on the same key)", newTagRows)
+	}
+}

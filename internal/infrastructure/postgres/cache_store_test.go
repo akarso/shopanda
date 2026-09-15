@@ -199,12 +199,17 @@ func (s *stubCache) DeleteByTag(_ context.Context, tag string) (int64, error) {
 	if tag == "" {
 		return 0, nil
 	}
+	// Deliberately does not untagLocked each key: that would drop a key's
+	// OTHER tag memberships too, but this stub only mirrors the
+	// documented, cross-backend-safe contract (see the Postgres and
+	// Redis CacheStore.DeleteByTag comments) — Postgres/Redis can't
+	// safely reach into a key's other tags here without risking deleting
+	// an association a concurrent SetWithTags just legitimately added.
 	keys := s.tags[tag]
 	delete(s.tags, tag)
 	var n int64
 	for key := range keys {
 		delete(s.entries, key)
-		s.untagLocked(key)
 		n++
 	}
 	return n, nil

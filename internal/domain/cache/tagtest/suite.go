@@ -53,31 +53,22 @@ func Run(t *testing.T, c cache.Cache) {
 		assertHit(t, c, "tagtest:page:c", "c")
 	})
 
-	t.Run("DeleteByOneTagClearsKeyFromOtherTags", func(t *testing.T) {
-		// A key deleted via one of its tags must have ALL its tag
-		// memberships cleared, not just the requested tag's — otherwise a
-		// later DeleteByTag for one of its other tags would count (and
-		// act on) a key whose value is already gone, an orphan left
-		// behind instead of cleaned up immediately.
-		if err := c.SetWithTags(ctx, "tagtest:multi:a", "a", time.Hour, "multi-x", "multi-y"); err != nil {
-			t.Fatalf("SetWithTags a: %v", err)
-		}
-		if err := c.SetWithTags(ctx, "tagtest:multi:b", "b", time.Hour, "multi-y"); err != nil {
-			t.Fatalf("SetWithTags b: %v", err)
-		}
-		if _, err := c.DeleteByTag(ctx, "multi-x"); err != nil {
-			t.Fatalf("DeleteByTag multi-x: %v", err)
-		}
-		assertMiss(t, c, "tagtest:multi:a")
-		n, err := c.DeleteByTag(ctx, "multi-y")
-		if err != nil {
-			t.Fatalf("DeleteByTag multi-y: %v", err)
-		}
-		if n != 1 {
-			t.Fatalf("DeleteByTag multi-y count = %d, want 1 (tagtest:multi:a's multi-y membership should already be gone, not an orphan counted here)", n)
-		}
-		assertMiss(t, c, "tagtest:multi:b")
-	})
+	// A prior version of this suite asserted that DeleteByTag immediately
+	// clears a deleted key's OTHER tag memberships too (not just the
+	// requested tag's). That was reverted (code review): doing so means
+	// reading a key's live reverse index during the delete, which can
+	// already include a DIFFERENT tag a concurrent SetWithTags legitimately
+	// added after this call's own snapshot (tagging is additive — old
+	// tags are never removed, so a key already snapshotted for deletion
+	// can still legitimately gain a new tag mid-flight) — destroying that
+	// association would violate the documented "a concurrent SetWithTags
+	// that commits after the snapshot keeps its association" guarantee.
+	// Any resulting orphan (a leftover forward-set entry for the other
+	// tag, pointing at a key whose value this call just deleted) is left
+	// for each backend's own DeleteExpired-equivalent sweep, the same
+	// already-tested eventual-consistency path as any other orphan — see
+	// TestCacheStoreDB_TagDeleteExpiredSweepsOrphans and its Redis
+	// equivalent.
 
 	t.Run("AdditiveAcrossSeparateSetWithTags", func(t *testing.T) {
 		const key = "tagtest:additive"

@@ -451,3 +451,50 @@ func TestCacheStore_TagDeleteByTagRestoresOnFailureAfterRename(t *testing.T) {
 		t.Fatalf("retry should invalidate, hit=%v err=%v", hit, err)
 	}
 }
+
+// TestCacheStore_TagDeleteByTagDoesNotDestroyConcurrentReTag pins the code
+// review fix: DeleteByTag must not reach into a member's live reverse
+// index and SREM it from a DIFFERENT tag a concurrent SetWithTags just
+// added (tagging is additive — old tags are never removed, so a member
+// already snapshotted for one tag's deletion can still legitimately gain
+// a new one mid-flight). The old, reverted behavior used deleteUntagBatch
+// here, which read each member's current reverse index and stripped it
+// from every tag listed there — including one just added after this
+// call's own RENAME snapshot.
+func TestCacheStore_TagDeleteByTagDoesNotDestroyConcurrentReTag(t *testing.T) {
+	_, store := setupRedisCache(t, "p")
+	ctx := context.Background()
+	t.Cleanup(func() { inredis.SetAfterTagRename(store, nil) })
+
+	if err := store.SetWithTags(ctx, "racy-key", "v1", time.Hour, "old-tag"); err != nil {
+		t.Fatalf("SetWithTags: %v", err)
+	}
+
+	inredis.SetAfterTagRename(store, func() {
+		// Simulate a concurrent SetWithTags landing after old-tag's
+		// RENAME snapshot (which already captured racy-key) but before
+		// this call scans and deletes it.
+		if err := store.SetWithTags(context.Background(), "racy-key", "v2", time.Hour, "new-tag"); err != nil {
+			t.Fatalf("concurrent SetWithTags: %v", err)
+		}
+	})
+
+	n, err := store.DeleteByTag(ctx, "old-tag")
+	if err != nil {
+		t.Fatalf("DeleteByTag old-tag: %v", err)
+	}
+	if n != 1 {
+		t.Fatalf("DeleteByTag old-tag count = %d, want 1", n)
+	}
+
+	// new-tag's own membership for racy-key must have survived — the
+	// racing old-tag delete must not have SREM'd it out from under the
+	// concurrent write.
+	m, err := store.DeleteByTag(context.Background(), "new-tag")
+	if err != nil {
+		t.Fatalf("DeleteByTag new-tag: %v", err)
+	}
+	if m != 1 {
+		t.Fatalf("DeleteByTag new-tag count = %d, want 1 (racy-key's new-tag membership must survive a racing old-tag delete)", m)
+	}
+}
