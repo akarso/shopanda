@@ -8,8 +8,11 @@ import (
 	"testing"
 	"time"
 
+	"github.com/akarso/shopanda/internal/domain/cache"
 	"github.com/akarso/shopanda/internal/domain/cache/tagtest"
 	inredis "github.com/akarso/shopanda/internal/infrastructure/redis"
+	"github.com/akarso/shopanda/internal/platform/event"
+	"github.com/akarso/shopanda/internal/platform/logger"
 	"github.com/alicebob/miniredis/v2"
 )
 
@@ -497,4 +500,127 @@ func TestCacheStore_TagDeleteByTagDoesNotDestroyConcurrentReTag(t *testing.T) {
 	if m != 1 {
 		t.Fatalf("DeleteByTag new-tag count = %d, want 1 (racy-key's new-tag membership must survive a racing old-tag delete)", m)
 	}
+}
+
+// TestCacheStore_SetBus_PublishesOnDeleteByTag pins PR-1040's L1
+// broadcast: once SetBus is wired, a successful DeleteByTag publishes
+// cache.EventInvalidated with the tag, so an in-process L1 cache tier
+// can evict its own copy immediately.
+func TestCacheStore_SetBus_PublishesOnDeleteByTag(t *testing.T) {
+	_, store := setupRedisCache(t, "p")
+	ctx := context.Background()
+	if err := store.SetWithTags(ctx, "tagged", "v", time.Hour, "bus-tag"); err != nil {
+		t.Fatalf("SetWithTags: %v", err)
+	}
+
+	bus := event.NewBus(logger.New("error"))
+	store.SetBus(bus)
+
+	captured := newEventCollector()
+	bus.OnAsync(cache.EventInvalidated, captured.handle)
+
+	if _, err := store.DeleteByTag(ctx, "bus-tag"); err != nil {
+		t.Fatalf("DeleteByTag: %v", err)
+	}
+
+	evts := waitForCaptured(t, captured, 1)
+	data, ok := evts[0].Data.(cache.InvalidatedData)
+	if !ok {
+		t.Fatalf("event data type = %T, want cache.InvalidatedData", evts[0].Data)
+	}
+	if data.Tag != "bus-tag" || data.Prefix != "" {
+		t.Errorf("data = %+v, want Tag=bus-tag Prefix=\"\"", data)
+	}
+}
+
+// TestCacheStore_SetBus_PublishesOnDeleteByPrefix mirrors the above for
+// DeleteByPrefix.
+func TestCacheStore_SetBus_PublishesOnDeleteByPrefix(t *testing.T) {
+	_, store := setupRedisCache(t, "p")
+	ctx := context.Background()
+	if err := store.Set("product:123:en", "v", time.Hour); err != nil {
+		t.Fatalf("Set: %v", err)
+	}
+
+	bus := event.NewBus(logger.New("error"))
+	store.SetBus(bus)
+
+	captured := newEventCollector()
+	bus.OnAsync(cache.EventInvalidated, captured.handle)
+
+	if err := store.DeleteByPrefix(ctx, "product:123:"); err != nil {
+		t.Fatalf("DeleteByPrefix: %v", err)
+	}
+
+	evts := waitForCaptured(t, captured, 1)
+	data, ok := evts[0].Data.(cache.InvalidatedData)
+	if !ok {
+		t.Fatalf("event data type = %T, want cache.InvalidatedData", evts[0].Data)
+	}
+	if data.Prefix != "product:123:" || data.Tag != "" {
+		t.Errorf("data = %+v, want Prefix=product:123: Tag=\"\"", data)
+	}
+}
+
+// TestCacheStore_NoBusNoEvent pins that DeleteByTag/DeleteByPrefix work
+// exactly as before when SetBus was never called — the default for
+// every existing caller/test that doesn't need the broadcast.
+func TestCacheStore_NoBusNoEvent(t *testing.T) {
+	_, store := setupRedisCache(t, "p")
+	ctx := context.Background()
+	if err := store.SetWithTags(ctx, "tagged", "v", time.Hour, "no-bus-tag"); err != nil {
+		t.Fatalf("SetWithTags: %v", err)
+	}
+	if _, err := store.DeleteByTag(ctx, "no-bus-tag"); err != nil {
+		t.Fatalf("DeleteByTag: %v", err)
+	}
+	if err := store.DeleteByPrefix(ctx, "anything:"); err != nil {
+		t.Fatalf("DeleteByPrefix: %v", err)
+	}
+}
+
+// eventCollector records events from an async bus handler under a mutex —
+// bus.OnAsync dispatches in its own goroutine (see Bus.Publish/PublishAsync's
+// own doc comments), so a test observing that side effect from its own
+// goroutine (e.g. polling in waitForCaptured) must synchronize the shared
+// slice, not read/write it directly as a bare `var captured []event.Event`.
+type eventCollector struct {
+	mu     sync.Mutex
+	events []event.Event
+}
+
+func newEventCollector() *eventCollector {
+	return &eventCollector{}
+}
+
+func (c *eventCollector) handle(_ context.Context, evt event.Event) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.events = append(c.events, evt)
+	return nil
+}
+
+func (c *eventCollector) snapshot() []event.Event {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return append([]event.Event(nil), c.events...)
+}
+
+// waitForCaptured polls captured for up to one second and returns its
+// contents once at least want events have arrived, failing the test if
+// that deadline passes first.
+func waitForCaptured(t *testing.T, captured *eventCollector, want int) []event.Event {
+	t.Helper()
+	deadline := time.Now().Add(time.Second)
+	for time.Now().Before(deadline) {
+		if evts := captured.snapshot(); len(evts) >= want {
+			return evts
+		}
+		time.Sleep(time.Millisecond)
+	}
+	evts := captured.snapshot()
+	if len(evts) < want {
+		t.Fatalf("captured %d events, want at least %d", len(evts), want)
+	}
+	return evts
 }

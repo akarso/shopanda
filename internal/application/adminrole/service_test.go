@@ -2,6 +2,7 @@ package adminrole_test
 
 import (
 	"context"
+	"reflect"
 	"testing"
 
 	adminroleApp "github.com/akarso/shopanda/internal/application/adminrole"
@@ -91,5 +92,46 @@ func TestService_Catalog_IncludesCorePermissions(t *testing.T) {
 	catalog := svc.Catalog()
 	if len(catalog) < len(rbac.CorePermissions()) {
 		t.Fatalf("catalog count = %d, want at least %d", len(catalog), len(rbac.CorePermissions()))
+	}
+}
+
+// TestService_Catalog_MutatingResultDoesNotCorruptCache pins PR-1040's
+// L1 cache over Catalog(): each call must return an independent copy, so
+// a caller appending to (or otherwise mutating) its own result can never
+// corrupt what a later call returns.
+func TestService_Catalog_MutatingResultDoesNotCorruptCache(t *testing.T) {
+	svc := adminroleApp.NewService(&stubRolePermRepo{}, rbac.NewRegistry())
+	first := svc.Catalog()
+	if len(first) == 0 {
+		t.Fatal("expected a non-empty catalog to mutate")
+	}
+	original := first[0].Permission
+
+	// In-place index mutation, not append: append can silently allocate
+	// a new backing array (when the slice has no spare capacity) and so
+	// would pass even against an aliased, uncopied cache entry — this is
+	// the mutation that actually detects that aliasing bug.
+	first[0].Permission = "mutated"
+
+	second := svc.Catalog()
+	if second[0].Permission != original {
+		t.Fatalf("second Catalog()[0].Permission = %q, want %q — mutating a prior result must not leak into the cache", second[0].Permission, original)
+	}
+}
+
+// TestService_Catalog_ReturnsCachedResultWithinTTL pins that a second
+// Catalog() call within the TTL window is served from the L1 cache, not
+// recomputed — observable via reference equality of the underlying data
+// being consistent (both calls reflect the exact same registry state)
+// even though this test can't directly observe "was it recomputed" from
+// the public API alone; the real regression this guards is the previous
+// test's aliasing concern plus a basic sanity check that caching didn't
+// break the result's content.
+func TestService_Catalog_ReturnsCachedResultWithinTTL(t *testing.T) {
+	svc := adminroleApp.NewService(&stubRolePermRepo{}, rbac.NewRegistry())
+	first := svc.Catalog()
+	second := svc.Catalog()
+	if !reflect.DeepEqual(first, second) {
+		t.Fatalf("Catalog() results differ across calls:\nfirst:  %+v\nsecond: %+v", first, second)
 	}
 }

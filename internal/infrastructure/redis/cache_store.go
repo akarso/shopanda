@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/akarso/shopanda/internal/domain/cache"
+	"github.com/akarso/shopanda/internal/platform/event"
 	goredis "github.com/redis/go-redis/v9"
 )
 
@@ -77,6 +78,8 @@ type CacheStore struct {
 	client *goredis.Client
 	prefix string
 	log    Logger
+	// bus is optional — see SetBus.
+	bus *event.Bus
 	// afterTagRename is a test-only hook, scoped to this instance so
 	// parallel tests cannot leak into another store's DeleteByTag.
 	afterTagRename func()
@@ -101,11 +104,32 @@ func New(cfg Config) (*CacheStore, error) {
 	return &CacheStore{client: client, prefix: NormalizeKeyPrefix(cfg.KeyPrefix), log: cfg.Logger}, nil
 }
 
-func (s *CacheStore) logError(event string, err error, fields map[string]interface{}) {
+func (s *CacheStore) logError(evtName string, err error, fields map[string]interface{}) {
 	if s.log == nil {
 		return
 	}
-	s.log.Error(event, err, fields)
+	s.log.Error(evtName, err, fields)
+}
+
+// SetBus enables publishing cache.EventInvalidated whenever DeleteByTag or
+// DeleteByPrefix removes entries (PR-1040), so an in-process L1 cache
+// tier can evict its own copies without waiting out its own TTL — see
+// cache.EventInvalidated's own doc comment for what this does and does
+// not reach. Left unset (the default), Delete/DeleteByTag/DeleteByPrefix
+// work exactly as before — no event, no error.
+func (s *CacheStore) SetBus(bus *event.Bus) {
+	s.bus = bus
+}
+
+// publishInvalidated is a fire-and-forget coherence signal for an
+// in-process L1 tier, not a domain event meant to have request-blocking
+// listeners — PublishAsync, not Publish, so a future misbehaving
+// subscriber can never make a cache deletion itself fail.
+func (s *CacheStore) publishInvalidated(data cache.InvalidatedData) {
+	if s.bus == nil {
+		return
+	}
+	s.bus.PublishAsync(event.New(cache.EventInvalidated, "cache_store.redis", data))
 }
 
 func (s *CacheStore) key(k string) string {
@@ -297,7 +321,11 @@ func (s *CacheStore) DeleteByPrefix(ctx context.Context, prefix string) error {
 	if err := iter.Err(); err != nil {
 		return fmt.Errorf("redis cache: scan prefix %q: %w", prefix, err)
 	}
-	return flush()
+	if err := flush(); err != nil {
+		return err
+	}
+	s.publishInvalidated(cache.InvalidatedData{Prefix: prefix})
+	return nil
 }
 
 // deleteUntagBatch deletes each already-prefixed key in fullKeys and
@@ -431,6 +459,7 @@ func (s *CacheStore) DeleteByTag(ctx context.Context, tag string) (n int64, err 
 	if err := s.client.Del(ctx, tmpKey).Err(); err != nil {
 		return n, fmt.Errorf("redis cache: delete by tag %q: purge set: %w", tag, err)
 	}
+	s.publishInvalidated(cache.InvalidatedData{Tag: tag})
 	return n, nil
 }
 

@@ -781,6 +781,12 @@ func setupWorker(conn *sql.DB, cfg *config.Config, log logger.Logger, app *plugi
 		return nil, nil, nil, fmt.Errorf("cache driver %q does not support expired entry cleanup", cfg.Cache.Driver)
 	}
 	jobWorker.Register(cacheApp.NewCleanupHandler(ed, log))
+	// PR-1040: wire the cache.EventInvalidated broadcast (see its own
+	// doc comment for why this only reaches L1 consumers within THIS
+	// process) if this backend supports it and this process has a bus.
+	if bs, ok := appCache.(cacheApp.BusSetter); ok && app.Bus != nil {
+		bs.SetBus(app.Bus)
+	}
 
 	mailTemplates := mail.NewTemplates()
 	notification.RegisterTemplates(mailTemplates)

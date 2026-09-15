@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/akarso/shopanda/internal/domain/cache"
+	"github.com/akarso/shopanda/internal/platform/event"
 )
 
 // Compile-time check.
@@ -17,6 +18,8 @@ var _ cache.Cache = (*CacheStore)(nil)
 // CacheStore implements cache.Cache using a PostgreSQL UNLOGGED table.
 type CacheStore struct {
 	db *sql.DB
+	// bus is optional — see SetBus.
+	bus *event.Bus
 }
 
 // NewCacheStore returns a CacheStore backed by db.
@@ -25,6 +28,27 @@ func NewCacheStore(db *sql.DB) (*CacheStore, error) {
 		return nil, fmt.Errorf("NewCacheStore: nil *sql.DB")
 	}
 	return &CacheStore{db: db}, nil
+}
+
+// SetBus enables publishing cache.EventInvalidated whenever DeleteByTag or
+// DeleteByPrefix removes entries (PR-1040), so an in-process L1 cache
+// tier can evict its own copies without waiting out its own TTL — see
+// cache.EventInvalidated's own doc comment for what this does and does
+// not reach. Left unset (the default), Delete/DeleteByTag/DeleteByPrefix
+// work exactly as before — no event, no error.
+func (s *CacheStore) SetBus(bus *event.Bus) {
+	s.bus = bus
+}
+
+// publishInvalidated is a fire-and-forget coherence signal for an
+// in-process L1 tier, not a domain event meant to have request-blocking
+// listeners — PublishAsync, not Publish, so a future misbehaving
+// subscriber can never make a cache deletion itself fail.
+func (s *CacheStore) publishInvalidated(data cache.InvalidatedData) {
+	if s.bus == nil {
+		return
+	}
+	s.bus.PublishAsync(event.New(cache.EventInvalidated, "cache_store.postgres", data))
 }
 
 // Get retrieves the cached value for key and unmarshals it into dest.
@@ -236,6 +260,7 @@ func (s *CacheStore) DeleteByPrefix(ctx context.Context, prefix string) error {
 	if err != nil {
 		return fmt.Errorf("cache_store: delete by prefix %q: %w", prefix, err)
 	}
+	s.publishInvalidated(cache.InvalidatedData{Prefix: prefix})
 	return nil
 }
 
@@ -331,6 +356,7 @@ func (s *CacheStore) DeleteByTag(ctx context.Context, tag string) (int64, error)
 	if err != nil {
 		return 0, fmt.Errorf("cache_store: delete by tag %q: %w", tag, err)
 	}
+	s.publishInvalidated(cache.InvalidatedData{Tag: tag})
 	return n, nil
 }
 

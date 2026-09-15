@@ -11,7 +11,6 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
-	"sync"
 	"time"
 
 	httpshared "github.com/akarso/shopanda/internal/interfaces/http/shared"
@@ -35,8 +34,10 @@ import (
 	"github.com/akarso/shopanda/internal/domain/shipping"
 	"github.com/akarso/shopanda/internal/domain/store"
 	"github.com/akarso/shopanda/internal/domain/theme"
+	"github.com/akarso/shopanda/internal/infrastructure/localcache"
 	"github.com/akarso/shopanda/internal/platform/apperror"
 	platformAuth "github.com/akarso/shopanda/internal/platform/auth"
+	"github.com/akarso/shopanda/internal/platform/event"
 	"github.com/akarso/shopanda/internal/platform/logger"
 )
 
@@ -71,7 +72,7 @@ type StorefrontHandler struct {
 	contentBlocks       cms.ContentBlockRepository
 	blockResolver       *cmsApp.BlockResolver
 	log                 logger.Logger
-	catNav              storefrontCategoryCache
+	catNav              *localcache.Store[[]catalog.Category]
 	layeredNavAttrs     LayeredNavAttributeLister
 	advancedSearchAttrs AdvancedSearchAttributeLister
 	assets              *assetsApp.Registry
@@ -79,12 +80,9 @@ type StorefrontHandler struct {
 	trustedProxies      []*net.IPNet
 }
 
-type storefrontCategoryCache struct {
-	mu        sync.RWMutex
-	data      []catalog.Category
-	expiresAt time.Time
-	ttl       time.Duration
-}
+// categoryCacheKey is the sole entry catNav ever holds — one category
+// tree per process, not one per caller.
+const categoryCacheKey = "all"
 
 type StorefrontNavLink struct {
 	Label    string
@@ -267,7 +265,7 @@ func NewStorefrontHandler(
 		plp:    plp,
 		search: searchEngine,
 		log:    logger.New("warn"),
-		catNav: storefrontCategoryCache{ttl: storefrontCategoryCacheTTL},
+		catNav: localcache.New[[]catalog.Category](1, storefrontCategoryCacheTTL),
 	}
 }
 
@@ -295,6 +293,26 @@ func (h *StorefrontHandler) WithLegalConfig(cfg legal.ConfigGetter) *StorefrontH
 func (h *StorefrontHandler) WithMenus(menus cms.MenuRepository, resolver *cmsApp.MenuResolver) *StorefrontHandler {
 	h.menus = menus
 	h.menuResolver = resolver
+	return h
+}
+
+// WithBus wires the category-tree L1 cache (PR-1040) to evict
+// immediately on any category create/update/delete published in THIS
+// process — see localcache.InvalidateOnEvent's own doc comment for why
+// that eviction is synchronous, and cache.EventInvalidated's own doc
+// comment for why this does not reach other server replicas (the
+// unchanged storefrontCategoryCacheTTL above remains the actual
+// cross-replica staleness bound — same 45s window this cache already
+// had before PR-1040). Left unset (the default), cachedCategories still
+// works, relying solely on that TTL — this call is optional, not
+// required for correctness, only for freshness in this one process.
+func (h *StorefrontHandler) WithBus(bus *event.Bus) *StorefrontHandler {
+	if bus == nil {
+		return h
+	}
+	localcache.InvalidateOnEvent(bus, h.catNav, catalog.EventCategoryCreated)
+	localcache.InvalidateOnEvent(bus, h.catNav, catalog.EventCategoryUpdated)
+	localcache.InvalidateOnEvent(bus, h.catNav, catalog.EventCategoryDeleted)
 	return h
 }
 
@@ -826,26 +844,19 @@ func (h *StorefrontHandler) storefrontAccountDisplayName(customerID, displayName
 	return "Signed in"
 }
 
+// cachedCategories returns the full category tree, served from an L1
+// cache (PR-1040) bounded by storefrontCategoryCacheTTL — see WithBus's
+// own doc comment for how (and how immediately) that cache gets
+// invalidated on a category write. Always returns a copy independent of
+// both the cache's own storage and of any other caller's copy.
 func (h *StorefrontHandler) cachedCategories(ctx context.Context) ([]catalog.Category, error) {
-	now := time.Now().UTC()
-	h.catNav.mu.RLock()
-	if h.catNav.ttl > 0 && now.Before(h.catNav.expiresAt) {
-		cached := append([]catalog.Category(nil), h.catNav.data...)
-		h.catNav.mu.RUnlock()
-		return cached, nil
-	}
-	h.catNav.mu.RUnlock()
-
-	categories, err := h.cats.FindAll(ctx)
+	categories, err := h.catNav.GetOrLoad(categoryCacheKey, func() ([]catalog.Category, error) {
+		return h.cats.FindAll(ctx)
+	})
 	if err != nil {
 		return nil, err
 	}
-	cloned := append([]catalog.Category(nil), categories...)
-	h.catNav.mu.Lock()
-	h.catNav.data = cloned
-	h.catNav.expiresAt = now.Add(h.catNav.ttl)
-	h.catNav.mu.Unlock()
-	return append([]catalog.Category(nil), cloned...), nil
+	return append([]catalog.Category(nil), categories...), nil
 }
 
 func (h *StorefrontHandler) buildListingPageData(r *http.Request, layout StorefrontLayoutData, ctx *composition.ListingContext, result search.SearchResult, params storefrontListingParams, searchMode bool, allCategories []catalog.Category, activeCategory *catalog.Category, layeredNavAttrs []catalog.Attribute, advancedSearchAttrs []catalog.Attribute) StorefrontListingPageData {

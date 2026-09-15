@@ -375,6 +375,7 @@ func buildServeHandler(cfg *config.Config, log logger.Logger, rt *serveRuntime, 
 		linkLinker := storefront.NewStorefrontOrderLinkerAdapter(linkService)
 
 		storefront := storefront.NewStorefrontHandler(themeEngine, rt.repos.productRepo, rt.repos.categoryRepo, rt.pdp, rt.plp, rt.searchEngine).
+			WithBus(rt.bus).
 			WithLegalConfig(rt.repos.configRepo).
 			WithMenus(rt.repos.menuRepo, rt.menuResolver).
 			WithContentBlocks(rt.repos.contentBlockRepo, rt.blockResolver, rt.repos.pageRepo).

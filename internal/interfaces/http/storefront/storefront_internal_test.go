@@ -1,16 +1,123 @@
 package storefront
 
 import (
+	"context"
 	"encoding/base64"
 	"errors"
 	"net/http/httptest"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/akarso/shopanda/internal/domain/catalog"
+	"github.com/akarso/shopanda/internal/infrastructure/localcache"
 	"github.com/akarso/shopanda/internal/platform/apperror"
+	"github.com/akarso/shopanda/internal/platform/event"
+	"github.com/akarso/shopanda/internal/platform/logger"
 )
+
+type countingCategoryRepo struct {
+	catalog.CategoryRepository // nil embed: only FindAll is exercised below
+	calls                      atomic.Int64
+	categories                 []catalog.Category
+}
+
+func (r *countingCategoryRepo) FindAll(context.Context) ([]catalog.Category, error) {
+	r.calls.Add(1)
+	return append([]catalog.Category(nil), r.categories...), nil
+}
+
+// TestCachedCategories_CachesWithinTTL pins PR-1040's L1 cache over
+// cachedCategories: a second call within the TTL window must not hit
+// the repository again.
+func TestCachedCategories_CachesWithinTTL(t *testing.T) {
+	repo := &countingCategoryRepo{categories: []catalog.Category{{ID: "c1", Name: "Electronics"}}}
+	h := &StorefrontHandler{cats: repo, catNav: localcache.New[[]catalog.Category](1, time.Minute)}
+
+	if _, err := h.cachedCategories(context.Background()); err != nil {
+		t.Fatalf("first cachedCategories: %v", err)
+	}
+	if _, err := h.cachedCategories(context.Background()); err != nil {
+		t.Fatalf("second cachedCategories: %v", err)
+	}
+	if got := repo.calls.Load(); got != 1 {
+		t.Fatalf("FindAll called %d times, want 1 (second call must be served from L1)", got)
+	}
+}
+
+// TestCachedCategories_ReturnsIndependentCopies pins that mutating one
+// caller's result can never corrupt what a later call returns — the
+// same aliasing concern the pre-PR-1040 ad-hoc cache already guarded
+// against (see cachedCategories's own doc comment).
+func TestCachedCategories_ReturnsIndependentCopies(t *testing.T) {
+	repo := &countingCategoryRepo{categories: []catalog.Category{{ID: "c1", Name: "Electronics"}}}
+	h := &StorefrontHandler{cats: repo, catNav: localcache.New[[]catalog.Category](1, time.Minute)}
+
+	first, err := h.cachedCategories(context.Background())
+	if err != nil {
+		t.Fatalf("cachedCategories: %v", err)
+	}
+	first[0].Name = "mutated"
+
+	second, err := h.cachedCategories(context.Background())
+	if err != nil {
+		t.Fatalf("cachedCategories: %v", err)
+	}
+	if second[0].Name != "Electronics" {
+		t.Fatalf("second[0].Name = %q, want %q — mutating a prior result must not leak into the cache", second[0].Name, "Electronics")
+	}
+}
+
+// TestCachedCategories_TTLExpiryRefetches pins that the cache does not
+// serve stale data forever without WithBus wired — the TTL alone must
+// eventually force a refetch.
+func TestCachedCategories_TTLExpiryRefetches(t *testing.T) {
+	repo := &countingCategoryRepo{categories: []catalog.Category{{ID: "c1"}}}
+	h := &StorefrontHandler{cats: repo, catNav: localcache.New[[]catalog.Category](1, 20*time.Millisecond)}
+
+	if _, err := h.cachedCategories(context.Background()); err != nil {
+		t.Fatalf("cachedCategories: %v", err)
+	}
+	time.Sleep(40 * time.Millisecond)
+	if _, err := h.cachedCategories(context.Background()); err != nil {
+		t.Fatalf("cachedCategories: %v", err)
+	}
+	if got := repo.calls.Load(); got != 2 {
+		t.Fatalf("FindAll called %d times, want 2 (TTL must force a refetch)", got)
+	}
+}
+
+// TestWithBus_EvictsOnCategoryEvents pins that WithBus makes a category
+// create/update/delete evict the L1 cache immediately in this process,
+// rather than relying solely on the TTL.
+func TestWithBus_EvictsOnCategoryEvents(t *testing.T) {
+	for _, evtName := range []string{
+		catalog.EventCategoryCreated,
+		catalog.EventCategoryUpdated,
+		catalog.EventCategoryDeleted,
+	} {
+		t.Run(evtName, func(t *testing.T) {
+			repo := &countingCategoryRepo{categories: []catalog.Category{{ID: "c1"}}}
+			h := &StorefrontHandler{cats: repo, catNav: localcache.New[[]catalog.Category](1, time.Minute)}
+			bus := event.NewBus(logger.New("error"))
+			h.WithBus(bus)
+
+			if _, err := h.cachedCategories(context.Background()); err != nil {
+				t.Fatalf("first cachedCategories: %v", err)
+			}
+			if err := bus.Publish(context.Background(), event.New(evtName, "test", nil)); err != nil {
+				t.Fatalf("Publish: %v", err)
+			}
+			if _, err := h.cachedCategories(context.Background()); err != nil {
+				t.Fatalf("second cachedCategories: %v", err)
+			}
+			if got := repo.calls.Load(); got != 2 {
+				t.Fatalf("FindAll called %d times, want 2 (%s must evict the L1 cache)", got, evtName)
+			}
+		})
+	}
+}
 
 func TestStorefrontCategoryTree_PreservesDescendants(t *testing.T) {
 	parentID := "cat-root"
