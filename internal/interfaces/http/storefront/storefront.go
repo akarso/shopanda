@@ -310,9 +310,20 @@ func (h *StorefrontHandler) WithBus(bus *event.Bus) *StorefrontHandler {
 	if bus == nil {
 		return h
 	}
-	localcache.InvalidateOnEvent(bus, h.catNav, catalog.EventCategoryCreated)
-	localcache.InvalidateOnEvent(bus, h.catNav, catalog.EventCategoryUpdated)
-	localcache.InvalidateOnEvent(bus, h.catNav, catalog.EventCategoryDeleted)
+	// notAssignmentSource excludes catalog.EventCategoryUpdated publishes
+	// from category_product_assignment_admin.go (source
+	// "category.assignment"): that handler republishes the event on
+	// every single product↔category Assign/Unassign call, not on an
+	// actual category edit, and the nav tree doesn't depend on product
+	// membership at all — clearing on it would mean a bulk assignment
+	// operation (or just ordinary catalog management) repeatedly forces
+	// a full DB refetch of the category tree for no reason, exactly the
+	// "tag that changes more than a few times a minute" case this
+	// package's own denylist rule exists to keep out of L1.
+	notAssignmentSource := localcache.NotSourcedBy("category.assignment")
+	localcache.InvalidateOnEvent(bus, h.catNav, catalog.EventCategoryCreated, notAssignmentSource)
+	localcache.InvalidateOnEvent(bus, h.catNav, catalog.EventCategoryUpdated, notAssignmentSource)
+	localcache.InvalidateOnEvent(bus, h.catNav, catalog.EventCategoryDeleted, notAssignmentSource)
 	return h
 }
 

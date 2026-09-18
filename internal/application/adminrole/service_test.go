@@ -119,6 +119,41 @@ func TestService_Catalog_MutatingResultDoesNotCorruptCache(t *testing.T) {
 	}
 }
 
+// TestService_Catalog_MutatingDefaultsElementDoesNotCorruptCache pins the
+// code review fix: a plain top-level append([]PermissionCatalogEntry(nil),
+// cached...) copies each entry's struct fields but not the slice a
+// Defaults field points to — every copy still aliases the same backing
+// array. A caller mutating an element of Defaults in place (not
+// reassigning the whole field) must still not corrupt the cache.
+func TestService_Catalog_MutatingDefaultsElementDoesNotCorruptCache(t *testing.T) {
+	reg := rbac.NewRegistry()
+	if err := reg.Register("plugin.test.permission", identity.RoleManager); err != nil {
+		t.Fatalf("Register: %v", err)
+	}
+	reg.Freeze()
+	svc := adminroleApp.NewService(&stubRolePermRepo{}, reg)
+
+	first := svc.Catalog()
+	idx := -1
+	for i, e := range first {
+		if e.Permission == "plugin.test.permission" {
+			idx = i
+			break
+		}
+	}
+	if idx == -1 || len(first[idx].Defaults) == 0 {
+		t.Fatalf("expected a plugin entry with a non-empty Defaults, got %+v", first)
+	}
+	original := first[idx].Defaults[0]
+
+	first[idx].Defaults[0] = "mutated"
+
+	second := svc.Catalog()
+	if second[idx].Defaults[0] != original {
+		t.Fatalf("second Catalog()[%d].Defaults[0] = %q, want %q — mutating a Defaults element must not leak into the cache", idx, second[idx].Defaults[0], original)
+	}
+}
+
 // TestService_Catalog_ReturnsCachedResultWithinTTL pins that a second
 // Catalog() call within the TTL window is served from the L1 cache, not
 // recomputed — observable via reference equality of the underlying data

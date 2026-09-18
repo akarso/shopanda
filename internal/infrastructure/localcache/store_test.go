@@ -194,6 +194,88 @@ func TestStore_ConcurrentAccessIsRaceFree(t *testing.T) {
 	wg.Wait()
 }
 
+// TestStore_GetOrLoad_DiscardsStaleWriteAfterConcurrentClear pins the
+// code review fix: a Clear racing an in-flight GetOrLoad must not have
+// its eviction silently undone when that load finishes and writes back.
+// Deterministic (channel-synchronized, no sleep) so it can't pass by
+// accident on a machine/CI run where the race window is too narrow to
+// hit — the ordering is enforced explicitly: the load's own loader only
+// returns AFTER Clear has already completed.
+func TestStore_GetOrLoad_DiscardsStaleWriteAfterConcurrentClear(t *testing.T) {
+	s := localcache.New[string](10, time.Minute)
+
+	loaderStarted := make(chan struct{})
+	clearDone := make(chan struct{})
+	resultCh := make(chan string, 1)
+	errCh := make(chan error, 1)
+
+	go func() {
+		v, err := s.GetOrLoad("k", func() (string, error) {
+			close(loaderStarted)
+			<-clearDone // block until the concurrent Clear below has finished
+			return "stale", nil
+		})
+		resultCh <- v
+		errCh <- err
+	}()
+
+	<-loaderStarted
+	s.Clear() // invalidation races the in-flight load above
+	close(clearDone)
+
+	v := <-resultCh
+	if err := <-errCh; err != nil {
+		t.Fatalf("GetOrLoad: %v", err)
+	}
+	if v != "stale" {
+		t.Fatalf("GetOrLoad returned %q, want %q — the caller's own in-flight load must still see its own result", v, "stale")
+	}
+
+	if cached, ok := s.Get("k"); ok {
+		t.Fatalf("cache contains %q after a concurrent Clear raced the load that produced it — the stale write was not discarded", cached)
+	}
+}
+
+// TestStore_GetOrLoad_DiscardsStaleWriteAfterConcurrentDelete mirrors the
+// above for Delete instead of Clear.
+func TestStore_GetOrLoad_DiscardsStaleWriteAfterConcurrentDelete(t *testing.T) {
+	s := localcache.New[string](10, time.Minute)
+	s.Set("k", "will-be-deleted") // Delete only bumps the generation when it actually removes something
+
+	loaderStarted := make(chan struct{})
+	deleteDone := make(chan struct{})
+	resultCh := make(chan string, 1)
+	errCh := make(chan error, 1)
+
+	s.Delete("k") // start from a miss so GetOrLoad's loader actually runs
+	go func() {
+		v, err := s.GetOrLoad("k", func() (string, error) {
+			close(loaderStarted)
+			<-deleteDone
+			return "stale", nil
+		})
+		resultCh <- v
+		errCh <- err
+	}()
+
+	<-loaderStarted
+	s.Set("k", "fresh") // a write for a DIFFERENT reason, then...
+	s.Delete("k")       // ...an invalidation, racing the in-flight load above
+	close(deleteDone)
+
+	v := <-resultCh
+	if err := <-errCh; err != nil {
+		t.Fatalf("GetOrLoad: %v", err)
+	}
+	if v != "stale" {
+		t.Fatalf("GetOrLoad returned %q, want %q", v, "stale")
+	}
+
+	if cached, ok := s.Get("k"); ok {
+		t.Fatalf("cache contains %q after a concurrent Delete raced the load that produced it — the stale write was not discarded", cached)
+	}
+}
+
 func TestNew_PanicsOnNonPositiveMaxEntries(t *testing.T) {
 	defer func() {
 		if r := recover(); r == nil {

@@ -35,6 +35,9 @@ type Store[T any] struct {
 	ttl        time.Duration
 	items      map[string]*list.Element
 	order      *list.List // front = most recently used
+	// generation counts invalidations (Clear/Delete) — see GetOrLoad's
+	// own comment for why it needs one.
+	generation uint64
 }
 
 // New returns an empty Store bounded to maxEntries, with every entry
@@ -84,6 +87,12 @@ func (s *Store[T]) Get(key string) (T, bool) {
 func (s *Store[T]) Set(key string, value T) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	s.setLocked(key, value)
+}
+
+// setLocked is Set's own body, factored out so GetOrLoad can skip the
+// write conditionally (see its own comment). Callers must hold s.mu.
+func (s *Store[T]) setLocked(key string, value T) {
 	now := time.Now()
 	if el, ok := s.items[key]; ok {
 		e := el.Value.(*entry[T])
@@ -103,7 +112,19 @@ func (s *Store[T]) Set(key string, value T) {
 }
 
 // GetOrLoad returns the cached value for key if present and unexpired;
-// otherwise it calls loader, caches a successful result, and returns it.
+// otherwise it calls loader and returns its result, caching it only if
+// no Clear/Delete happened anywhere in the store while loader was
+// running. Without that check, a Clear (e.g. from a concurrent broadcast
+// eviction — see broadcast.go) racing an in-flight load could otherwise
+// be immediately undone: the load, having started before the Clear and
+// so still reflecting pre-invalidation state, would write itself back
+// into the store right after the Clear completed, silently defeating the
+// eviction for every reader until the next TTL expiry. loader's return
+// value is still returned to THIS caller either way — its own read
+// genuinely started before the concurrent invalidation, so there's no
+// way to make it observe the new state; the fix only prevents that stale
+// read from being handed to every OTHER reader too via the cache.
+//
 // A loader error is returned as-is and never cached. Concurrent misses
 // for the same key are not deduplicated (no singleflight) — acceptable
 // for this package's low-frequency, admin/nav-scale call sites; a
@@ -113,12 +134,21 @@ func (s *Store[T]) GetOrLoad(key string, loader func() (T, error)) (T, error) {
 	if v, ok := s.Get(key); ok {
 		return v, nil
 	}
+	s.mu.Lock()
+	gen := s.generation
+	s.mu.Unlock()
+
 	v, err := loader()
 	if err != nil {
 		var zero T
 		return zero, err
 	}
-	s.Set(key, v)
+
+	s.mu.Lock()
+	if s.generation == gen {
+		s.setLocked(key, v)
+	}
+	s.mu.Unlock()
 	return v, nil
 }
 
@@ -126,9 +156,12 @@ func (s *Store[T]) GetOrLoad(key string, loader func() (T, error)) (T, error) {
 func (s *Store[T]) Delete(key string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if el, ok := s.items[key]; ok {
-		s.removeElementLocked(el)
+	el, ok := s.items[key]
+	if !ok {
+		return
 	}
+	s.removeElementLocked(el)
+	s.generation++
 }
 
 // Clear removes every entry. Used as the broadcast-eviction response
@@ -141,6 +174,7 @@ func (s *Store[T]) Clear() {
 	defer s.mu.Unlock()
 	s.items = make(map[string]*list.Element)
 	s.order.Init()
+	s.generation++
 }
 
 // Len returns the current number of entries, including any not yet

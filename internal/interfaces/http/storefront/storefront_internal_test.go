@@ -119,6 +119,35 @@ func TestWithBus_EvictsOnCategoryEvents(t *testing.T) {
 	}
 }
 
+// TestWithBus_IgnoresCategoryAssignmentSource pins the code review fix:
+// catalog.EventCategoryUpdated republished by
+// category_product_assignment_admin.go on every single product↔category
+// Assign/Unassign call (source "category.assignment") must NOT clear the
+// nav cache — it fires far more often than an actual category edit, and
+// the nav tree doesn't depend on product membership at all. Without this
+// filter, this event would clear L1 on every catalog assignment op,
+// which is exactly the "tag that changes more than a few times a
+// minute" case the package's own denylist rule exists to keep out.
+func TestWithBus_IgnoresCategoryAssignmentSource(t *testing.T) {
+	repo := &countingCategoryRepo{categories: []catalog.Category{{ID: "c1"}}}
+	h := &StorefrontHandler{cats: repo, catNav: localcache.New[[]catalog.Category](1, time.Minute)}
+	bus := event.NewBus(logger.New("error"))
+	h.WithBus(bus)
+
+	if _, err := h.cachedCategories(context.Background()); err != nil {
+		t.Fatalf("first cachedCategories: %v", err)
+	}
+	if err := bus.Publish(context.Background(), event.New(catalog.EventCategoryUpdated, "category.assignment", nil)); err != nil {
+		t.Fatalf("Publish: %v", err)
+	}
+	if _, err := h.cachedCategories(context.Background()); err != nil {
+		t.Fatalf("second cachedCategories: %v", err)
+	}
+	if got := repo.calls.Load(); got != 1 {
+		t.Fatalf("FindAll called %d times, want 1 (a category-assignment-sourced event must not evict the L1 cache)", got)
+	}
+}
+
 func TestStorefrontCategoryTree_PreservesDescendants(t *testing.T) {
 	parentID := "cat-root"
 	childID := "cat-child"
