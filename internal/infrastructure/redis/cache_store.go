@@ -18,11 +18,16 @@ import (
 var _ cache.Cache = (*CacheStore)(nil)
 
 const (
-	deleteByPrefixBatchSize = 1000
-	tagScanCount            = 100
-	purgeSetTTL             = time.Hour
-	purgeRecoverTimeout     = 5 * time.Second
+	tagScanCount        = 100
+	purgeSetTTL         = time.Hour
+	purgeRecoverTimeout = 5 * time.Second
 )
+
+// deleteByPrefixBatchSize is the flush threshold shared by DeleteByPrefix
+// and DeleteByTag's own member-batching loop. A var, not a const, purely
+// so tests can shrink it (see export_test.go) to force multiple flush
+// calls without needing thousands of keys.
+var deleteByPrefixBatchSize = 1000
 
 // delEmptySetScript deletes KEYS[1] only when it is an empty set, so a
 // concurrent SADD cannot have its new member wiped by a delayed DEL.
@@ -83,6 +88,14 @@ type CacheStore struct {
 	// afterTagRename is a test-only hook, scoped to this instance so
 	// parallel tests cannot leak into another store's DeleteByTag.
 	afterTagRename func()
+	// afterPrefixBatchFlushed/afterTagMembersFlushed are test-only hooks
+	// fired right after a successful DeleteByPrefix/DeleteByTag batch
+	// flush — used to deterministically force a LATER batch/step to fail
+	// (e.g. by cancelling the context) so the "publish on partial
+	// success" path is actually exercised without needing thousands of
+	// real keys to trigger a second batch.
+	afterPrefixBatchFlushed func()
+	afterTagMembersFlushed  func()
 }
 
 // Config holds Redis cache connection settings.
@@ -296,7 +309,19 @@ func (s *CacheStore) Delete(key string) error {
 // __keytags: set) — the same cleanup Delete does for a single key, so a
 // key later repopulated by a plain Set doesn't retain a stale tag
 // association that a later DeleteByTag would wrongly act on.
-func (s *CacheStore) DeleteByPrefix(ctx context.Context, prefix string) error {
+func (s *CacheStore) DeleteByPrefix(ctx context.Context, prefix string) (err error) {
+	// deletedAny tracks whether any batch was actually, successfully
+	// flushed — not just scanned — so a later scan/flush error still
+	// publishes the coherence signal for the entries that DID get deleted
+	// before the failure, instead of silently leaving L1 consumers to
+	// serve those now-gone entries until their own TTL expires.
+	deletedAny := false
+	defer func() {
+		if err == nil || deletedAny {
+			s.publishInvalidated(cache.InvalidatedData{Prefix: prefix})
+		}
+	}()
+
 	match := s.key(prefix) + "*"
 	iter := s.client.Scan(ctx, 0, match, 100).Iterator()
 	fullKeys := make([]string, 0, deleteByPrefixBatchSize)
@@ -307,24 +332,27 @@ func (s *CacheStore) DeleteByPrefix(ctx context.Context, prefix string) error {
 		if err := s.deleteUntagBatch(ctx, fullKeys); err != nil {
 			return fmt.Errorf("redis cache: delete by prefix %q: %w", prefix, err)
 		}
+		deletedAny = true
 		fullKeys = fullKeys[:0]
+		if s.afterPrefixBatchFlushed != nil {
+			s.afterPrefixBatchFlushed()
+		}
 		return nil
 	}
 	for iter.Next(ctx) {
 		fullKeys = append(fullKeys, iter.Val())
 		if len(fullKeys) >= deleteByPrefixBatchSize {
-			if err := flush(); err != nil {
+			if err = flush(); err != nil {
 				return err
 			}
 		}
 	}
-	if err := iter.Err(); err != nil {
+	if err = iter.Err(); err != nil {
 		return fmt.Errorf("redis cache: scan prefix %q: %w", prefix, err)
 	}
-	if err := flush(); err != nil {
+	if err = flush(); err != nil {
 		return err
 	}
-	s.publishInvalidated(cache.InvalidatedData{Prefix: prefix})
 	return nil
 }
 
@@ -404,6 +432,19 @@ func (s *CacheStore) DeleteByTag(ctx context.Context, tag string) (n int64, err 
 			s.restorePurge(tagKey, tmpKey)
 		}
 	}()
+	// deletedAny tracks whether any batch of members was actually,
+	// successfully deleted — not n, which counts members scanned into a
+	// batch before that batch's Del even runs, so it can be nonzero even
+	// when nothing was actually deleted yet. A later SSCAN/Del error still
+	// publishes the coherence signal for whatever DID get deleted before
+	// the failure, instead of silently leaving L1 consumers to serve
+	// those now-gone entries until their own TTL expires.
+	deletedAny := false
+	defer func() {
+		if err == nil || deletedAny {
+			s.publishInvalidated(cache.InvalidatedData{Tag: tag})
+		}
+	}()
 	if err = s.expirePurge(tmpKey); err != nil {
 		return n, fmt.Errorf("redis cache: delete by tag %q: %w", tag, err)
 	}
@@ -436,7 +477,11 @@ func (s *CacheStore) DeleteByTag(ctx context.Context, tag string) (n int64, err 
 		if err := s.client.Del(ctx, keys...).Err(); err != nil {
 			return fmt.Errorf("redis cache: delete by tag %q: %w", tag, err)
 		}
+		deletedAny = true
 		keys = keys[:0]
+		if s.afterTagMembersFlushed != nil {
+			s.afterTagMembersFlushed()
+		}
 		return nil
 	}
 	iter := s.client.SScan(ctx, tmpKey, 0, "", tagScanCount).Iterator()
@@ -445,21 +490,20 @@ func (s *CacheStore) DeleteByTag(ctx context.Context, tag string) (n int64, err 
 		keys = append(keys, s.key(member), s.keyTagsKey(member))
 		n++
 		if len(keys) >= deleteByPrefixBatchSize {
-			if err := flush(); err != nil {
+			if err = flush(); err != nil {
 				return n, err
 			}
 		}
 	}
-	if err := iter.Err(); err != nil {
+	if err = iter.Err(); err != nil {
 		return n, fmt.Errorf("redis cache: sscan tag %q: %w", tag, err)
 	}
-	if err := flush(); err != nil {
+	if err = flush(); err != nil {
 		return n, err
 	}
-	if err := s.client.Del(ctx, tmpKey).Err(); err != nil {
+	if err = s.client.Del(ctx, tmpKey).Err(); err != nil {
 		return n, fmt.Errorf("redis cache: delete by tag %q: purge set: %w", tag, err)
 	}
-	s.publishInvalidated(cache.InvalidatedData{Tag: tag})
 	return n, nil
 }
 

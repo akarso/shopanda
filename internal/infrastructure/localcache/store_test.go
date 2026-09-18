@@ -317,6 +317,45 @@ func TestStore_GetOrLoad_DiscardsStaleWriteAfterConcurrentDeleteOfAbsentKey(t *t
 	}
 }
 
+// TestStore_GetOrLoad_DiscardsStaleWriteAfterConcurrentSet pins that a
+// direct Set (an authoritative push, not GetOrLoad's own write-back) also
+// advances the generation: a load already in flight for that key must not
+// overwrite the freshly-Set value with its own now-stale result.
+func TestStore_GetOrLoad_DiscardsStaleWriteAfterConcurrentSet(t *testing.T) {
+	s := localcache.New[string](10, time.Minute)
+
+	loaderStarted := make(chan struct{})
+	setDone := make(chan struct{})
+	resultCh := make(chan string, 1)
+	errCh := make(chan error, 1)
+
+	go func() {
+		v, err := s.GetOrLoad("k", func() (string, error) {
+			close(loaderStarted)
+			<-setDone
+			return "stale", nil
+		})
+		resultCh <- v
+		errCh <- err
+	}()
+
+	<-loaderStarted
+	s.Set("k", "fresh") // authoritative push, racing the in-flight load above
+	close(setDone)
+
+	v := <-resultCh
+	if err := <-errCh; err != nil {
+		t.Fatalf("GetOrLoad: %v", err)
+	}
+	if v != "stale" {
+		t.Fatalf("GetOrLoad returned %q, want %q", v, "stale")
+	}
+
+	if cached, ok := s.Get("k"); !ok || cached != "fresh" {
+		t.Fatalf("Get(%q) = (%q, %v), want (\"fresh\", true) — a concurrent Set raced by the load that produced \"stale\" must win", "k", cached, ok)
+	}
+}
+
 func TestNew_PanicsOnNonPositiveMaxEntries(t *testing.T) {
 	defer func() {
 		if r := recover(); r == nil {

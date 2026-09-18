@@ -867,7 +867,32 @@ func (h *StorefrontHandler) cachedCategories(ctx context.Context) ([]catalog.Cat
 	if err != nil {
 		return nil, err
 	}
-	return append([]catalog.Category(nil), categories...), nil
+	return cloneCategories(categories), nil
+}
+
+// cloneCategories deep-copies each Category, not just the top-level
+// slice — a plain append([]catalog.Category(nil), categories...) copies
+// each struct's ParentID *string and Meta map by reference, so a caller
+// mutating *result[i].ParentID or writing into result[i].Meta in place
+// would still corrupt the cached entry, the same aliasing bug already
+// fixed for adminrole.Service.Catalog()'s Defaults slice.
+func cloneCategories(categories []catalog.Category) []catalog.Category {
+	out := make([]catalog.Category, len(categories))
+	for i, c := range categories {
+		out[i] = c
+		if c.ParentID != nil {
+			parentID := *c.ParentID
+			out[i].ParentID = &parentID
+		}
+		if c.Meta != nil {
+			meta := make(map[string]interface{}, len(c.Meta))
+			for k, v := range c.Meta {
+				meta[k] = v
+			}
+			out[i].Meta = meta
+		}
+	}
+	return out
 }
 
 func (h *StorefrontHandler) buildListingPageData(r *http.Request, layout StorefrontLayoutData, ctx *composition.ListingContext, result search.SearchResult, params storefrontListingParams, searchMode bool, allCategories []catalog.Category, activeCategory *catalog.Category, layeredNavAttrs []catalog.Attribute, advancedSearchAttrs []catalog.Attribute) StorefrontListingPageData {

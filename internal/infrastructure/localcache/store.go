@@ -83,11 +83,17 @@ func (s *Store[T]) Get(key string) (T, bool) {
 
 // Set stores value under key, resetting its TTL, and evicts the
 // least-recently-used entry if this write pushes the store past
-// maxEntries.
+// maxEntries. Advances the generation like Delete/Clear do: Set is a
+// caller pushing an authoritative value into the store from outside any
+// GetOrLoad call, so a GetOrLoad load already in flight for the same key
+// must not be allowed to overwrite it with what is now stale data (see
+// GetOrLoad's own comment). GetOrLoad's own write-back bypasses this via
+// setLocked directly, so it can never invalidate itself.
 func (s *Store[T]) Set(key string, value T) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.setLocked(key, value)
+	s.generation++
 }
 
 // setLocked is Set's own body, factored out so GetOrLoad can skip the
@@ -113,7 +119,7 @@ func (s *Store[T]) setLocked(key string, value T) {
 
 // GetOrLoad returns the cached value for key if present and unexpired;
 // otherwise it calls loader and returns its result, caching it only if
-// no Clear/Delete happened anywhere in the store while loader was
+// no Set/Clear/Delete happened anywhere in the store while loader was
 // running. Without that check, a Clear (e.g. from a concurrent broadcast
 // eviction — see broadcast.go) racing an in-flight load could otherwise
 // be immediately undone: the load, having started before the Clear and

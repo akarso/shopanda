@@ -69,6 +69,45 @@ func TestCachedCategories_ReturnsIndependentCopies(t *testing.T) {
 	}
 }
 
+// TestCachedCategories_MutatingMetaOrParentIDDoesNotCorruptCache pins the
+// code review fix: cachedCategories's independent-copy guarantee must
+// hold for a Category's own reference-typed fields too, not just its
+// top-level struct fields. A plain append([]catalog.Category(nil), ...)
+// copies each Category struct (including its ParentID *string and Meta
+// map by reference), so writing into result[i].Meta or through
+// *result[i].ParentID in place would still corrupt the cached entry —
+// the same aliasing bug already fixed for adminrole.Service.Catalog()'s
+// Defaults slice.
+func TestCachedCategories_MutatingMetaOrParentIDDoesNotCorruptCache(t *testing.T) {
+	parentID := "root"
+	repo := &countingCategoryRepo{categories: []catalog.Category{
+		{ID: "c1", Name: "Electronics", ParentID: &parentID, Meta: map[string]interface{}{"nav_order": 1}},
+	}}
+	h := &StorefrontHandler{cats: repo, catNav: localcache.New[[]catalog.Category](1, time.Minute)}
+
+	first, err := h.cachedCategories(context.Background())
+	if err != nil {
+		t.Fatalf("cachedCategories: %v", err)
+	}
+
+	first[0].Meta["nav_order"] = "mutated"
+	*first[0].ParentID = "mutated"
+
+	second, err := h.cachedCategories(context.Background())
+	if err != nil {
+		t.Fatalf("cachedCategories: %v", err)
+	}
+	if second[0].Meta["nav_order"] != 1 {
+		t.Fatalf("second[0].Meta[\"nav_order\"] = %v, want 1 — mutating a Meta entry in place must not leak into the cache", second[0].Meta["nav_order"])
+	}
+	if second[0].ParentID == first[0].ParentID {
+		t.Fatal("second[0].ParentID aliases first[0].ParentID — must be an independent pointer")
+	}
+	if *second[0].ParentID != "root" {
+		t.Fatalf("*second[0].ParentID = %q, want %q — mutating through a prior result's ParentID must not leak into the cache", *second[0].ParentID, "root")
+	}
+}
+
 // TestCachedCategories_TTLExpiryRefetches pins that the cache does not
 // serve stale data forever without WithBus wired — the TTL alone must
 // eventually force a refetch.

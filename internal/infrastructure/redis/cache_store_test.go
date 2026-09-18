@@ -579,6 +579,118 @@ func TestCacheStore_NoBusNoEvent(t *testing.T) {
 	}
 }
 
+// TestCacheStore_SetBus_PublishesOnDeleteByPrefixPartialFailure pins the
+// code review fix: if DeleteByPrefix deletes some keys successfully and
+// THEN fails (here, its second batch's context is already cancelled),
+// it must still publish cache.EventInvalidated for the batch that really
+// did get deleted — an L1 consumer must not be left to serve now-gone
+// entries until its own TTL, just because a later, unrelated batch in
+// the same call failed.
+func TestCacheStore_SetBus_PublishesOnDeleteByPrefixPartialFailure(t *testing.T) {
+	_, store := setupRedisCache(t, "p")
+	defer inredis.SetDeleteByPrefixBatchSize(1)() // force a flush per key
+	t.Cleanup(func() { inredis.SetAfterPrefixBatchFlushed(store, nil) })
+
+	if err := store.Set("product:123:en", "v", time.Hour); err != nil {
+		t.Fatalf("Set: %v", err)
+	}
+	if err := store.Set("product:123:de", "v", time.Hour); err != nil {
+		t.Fatalf("Set: %v", err)
+	}
+
+	bus := event.NewBus(logger.New("error"))
+	store.SetBus(bus)
+	captured := newEventCollector()
+	bus.OnAsync(cache.EventInvalidated, captured.handle)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	inredis.SetAfterPrefixBatchFlushed(store, cancel) // cancel right after the first batch succeeds
+
+	if err := store.DeleteByPrefix(ctx, "product:123:"); err == nil {
+		t.Fatal("DeleteByPrefix expected an error from the second, cancelled-context batch")
+	}
+
+	evts := waitForCaptured(t, captured, 1)
+	data, ok := evts[0].Data.(cache.InvalidatedData)
+	if !ok {
+		t.Fatalf("event data type = %T, want cache.InvalidatedData", evts[0].Data)
+	}
+	if data.Prefix != "product:123:" || data.Tag != "" {
+		t.Errorf("data = %+v, want Prefix=product:123: Tag=\"\"", data)
+	}
+
+	remaining := 0
+	for _, key := range []string{"product:123:en", "product:123:de"} {
+		var v string
+		hit, err := store.Get(key, &v)
+		if err != nil {
+			t.Fatalf("Get(%q): %v", key, err)
+		}
+		if hit {
+			remaining++
+		}
+	}
+	if remaining != 1 {
+		t.Fatalf("remaining keys = %d, want exactly 1 (one batch deleted before the second failed)", remaining)
+	}
+}
+
+// TestCacheStore_SetBus_PublishesOnDeleteByTagPartialFailure mirrors the
+// above for DeleteByTag: a second, cancelled-context member batch fails,
+// but the members deleted before that must still trigger the coherence
+// signal.
+func TestCacheStore_SetBus_PublishesOnDeleteByTagPartialFailure(t *testing.T) {
+	_, store := setupRedisCache(t, "p")
+	defer inredis.SetDeleteByPrefixBatchSize(1)() // force a flush per member
+	t.Cleanup(func() { inredis.SetAfterTagMembersFlushed(store, nil) })
+
+	ctx := context.Background()
+	if err := store.SetWithTags(ctx, "member-a", "v", time.Hour, "bulk-tag"); err != nil {
+		t.Fatalf("SetWithTags: %v", err)
+	}
+	if err := store.SetWithTags(ctx, "member-b", "v", time.Hour, "bulk-tag"); err != nil {
+		t.Fatalf("SetWithTags: %v", err)
+	}
+
+	bus := event.NewBus(logger.New("error"))
+	store.SetBus(bus)
+	captured := newEventCollector()
+	bus.OnAsync(cache.EventInvalidated, captured.handle)
+
+	deleteCtx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	inredis.SetAfterTagMembersFlushed(store, cancel) // cancel right after the first batch succeeds
+
+	if _, err := store.DeleteByTag(deleteCtx, "bulk-tag"); err == nil {
+		t.Fatal("DeleteByTag expected an error from the second, cancelled-context batch")
+	}
+
+	evts := waitForCaptured(t, captured, 1)
+	data, ok := evts[0].Data.(cache.InvalidatedData)
+	if !ok {
+		t.Fatalf("event data type = %T, want cache.InvalidatedData", evts[0].Data)
+	}
+	if data.Tag != "bulk-tag" || data.Prefix != "" {
+		t.Errorf("data = %+v, want Tag=bulk-tag Prefix=\"\"", data)
+	}
+
+	remaining := 0
+	for _, key := range []string{"member-a", "member-b"} {
+		var v string
+		hit, err := store.Get(key, &v)
+		if err != nil {
+			t.Fatalf("Get(%q): %v", key, err)
+		}
+		if hit {
+			remaining++
+		}
+	}
+	if remaining != 1 {
+		t.Fatalf("remaining members = %d, want exactly 1 (one batch deleted before the second failed)", remaining)
+	}
+}
+
 // eventCollector records events from an async bus handler under a mutex —
 // bus.OnAsync dispatches in its own goroutine (see Bus.Publish/PublishAsync's
 // own doc comments), so a test observing that side effect from its own
