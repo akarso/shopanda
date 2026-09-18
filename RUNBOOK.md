@@ -76,6 +76,19 @@ Compare against the blocked ranges in ["Outbound webhooks (SSRF)"](#outbound-web
 
 For general `429`/`rate_limited` (not login-specific): this is per-process and not shared across instances. If a shared NAT/proxy is causing false positives across unrelated clients, set `rate_limit.trusted_proxies` so `ClientIP` reflects the real client — see ["Rate limiting and login lockout"](#rate-limiting-and-login-lockout) below.
 
+### A permission-catalog or category-nav change isn't taking effect on some instances
+
+**Symptom:** the admin roles editor's list of *assignable permissions* (not a role's actual grants — see below), or the storefront nav, shows the OLD data on some requests but not others. The category-nav case never lasts longer than about 45 seconds (its TTL). The permission-catalog case is different — see its own bullet below, it can persist well past 30 seconds if the cause is a plugin upgrade.
+
+**Check:** this is PR-1040's L1 (in-process) cache, not a write failure — a write that actually failed would show the old data forever, not for a bounded window. This does **not** apply to granting/revoking a role's permissions: `UpdateRole`/`GetRole`/`ListRoles` read straight from the DB, uncached, so a grant/revoke is visible on the very next request everywhere — if that looks stale, it's a different bug, not this one. Confirm which L1 use site is actually involved:
+- Permission catalog (`adminrole.Service.Catalog()`, the roles editor's "assignable permissions" list — the permission *definitions*, not any role's assignments) — 30s TTL, but that TTL is **not** the actual staleness bound here: `rbac.Registry` (what it caches) is frozen after plugin `Init()` and never mutates again, so a stale catalog means a **new plugin version** shipped a permission and the OLD process just hasn't restarted yet — every TTL expiry just recomputes the SAME stale, pre-upgrade catalog. The real fix is restarting/redeploying that instance, not waiting; check `plugin.init.summary` in that instance's own startup logs to confirm.
+- Category tree (`storefront.StorefrontHandler`'s nav) — 45s TTL, same as before PR-1040, and this one genuinely does bound the staleness (the underlying data actually changes at runtime). A category create/update/delete evicts this **immediately, but only in the process that handled that admin request** — see below for why.
+
+**Fix:** there is no manual per-instance L1-flush endpoint or CLI command today. Two things are true simultaneously, and neither is a bug:
+- **Within the process that made the change**, the category tree cache evicts immediately (subscribed directly to the category create/update/delete events) — if you're still seeing stale nav from that SAME instance past the eviction, it's not L1; look elsewhere.
+- **On every OTHER instance/replica**, only the TTL above bounds the staleness — `internal/platform/event.Bus` is in-process only (no Redis pub/sub, no network I/O; every replica runs its own independent instance), so the eviction signal from one instance's write never reaches another instance's memory. Waiting out the TTL (worst case ~45s) is the only remediation; there is nothing to "flush" remotely. See `docs/guides/DEVELOPER.md`'s "When it's safe to use the L1 (in-process) cache" for the full design reasoning.
+- The permission catalog case above is different: there is no write to wait out, so don't wait — restart/redeploy the stale instance.
+
 ## Planning
 
 | Phase | Status | Doc |

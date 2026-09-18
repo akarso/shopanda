@@ -101,11 +101,11 @@ func New(cfg Config) (*CacheStore, error) {
 	return &CacheStore{client: client, prefix: NormalizeKeyPrefix(cfg.KeyPrefix), log: cfg.Logger}, nil
 }
 
-func (s *CacheStore) logError(event string, err error, fields map[string]interface{}) {
+func (s *CacheStore) logError(evtName string, err error, fields map[string]interface{}) {
 	if s.log == nil {
 		return
 	}
-	s.log.Error(event, err, fields)
+	s.log.Error(evtName, err, fields)
 }
 
 func (s *CacheStore) key(k string) string {
@@ -297,7 +297,10 @@ func (s *CacheStore) DeleteByPrefix(ctx context.Context, prefix string) error {
 	if err := iter.Err(); err != nil {
 		return fmt.Errorf("redis cache: scan prefix %q: %w", prefix, err)
 	}
-	return flush()
+	if err := flush(); err != nil {
+		return err
+	}
+	return nil
 }
 
 // deleteUntagBatch deletes each already-prefixed key in fullKeys and
@@ -417,18 +420,18 @@ func (s *CacheStore) DeleteByTag(ctx context.Context, tag string) (n int64, err 
 		keys = append(keys, s.key(member), s.keyTagsKey(member))
 		n++
 		if len(keys) >= deleteByPrefixBatchSize {
-			if err := flush(); err != nil {
+			if err = flush(); err != nil {
 				return n, err
 			}
 		}
 	}
-	if err := iter.Err(); err != nil {
+	if err = iter.Err(); err != nil {
 		return n, fmt.Errorf("redis cache: sscan tag %q: %w", tag, err)
 	}
-	if err := flush(); err != nil {
+	if err = flush(); err != nil {
 		return n, err
 	}
-	if err := s.client.Del(ctx, tmpKey).Err(); err != nil {
+	if err = s.client.Del(ctx, tmpKey).Err(); err != nil {
 		return n, fmt.Errorf("redis cache: delete by tag %q: purge set: %w", tag, err)
 	}
 	return n, nil

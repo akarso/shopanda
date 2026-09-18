@@ -152,6 +152,36 @@ Rules:
 - A later plain `Set` of a tagged key does **not** drop tag membership (over-invalidation, not staleness). `Delete` drops tag membership on both backends (Postgres `cache_tags` rows; Redis a per-key `__keytags:` reverse set). Redis TTL-evicted members are pruned by `DeleteExpired` (`cache.cleanup`).
 - Do not switch the product-cache subscriber onto tags without a reason — prefix already matches that key layout. Track D (full-page cache) is the first in-tree consumer that needs tags.
 
+### When it's safe to use the L1 (in-process) cache
+
+`internal/infrastructure/localcache` (PR-1040) is a bounded, TTL+LRU cache that lives in the process's own memory, in front of the `cache.Cache` backend ("L2"). It is **not** a `cache.Cache` implementation and never will be — that would make it too easy to put invalidation-sensitive data in a tier that only propagates invalidation on a best-effort, same-process basis.
+
+| Property | L1 (`localcache.Store[T]`) | L2 (`cache.Cache`) |
+| --- | --- | --- |
+| Storage | This process's own memory | Shared Postgres/Redis |
+| Visible to | This process only | Every process/replica |
+| Invalidation reach | Same process only (see below) | Every replica (it's the same shared store) |
+| Use for | A handful of coarse-grained, rarely-changing values | Anything else |
+
+**Allowlist — the only things that may use L1 today**, each already wired this way:
+
+- The RBAC permission catalog (`adminrole.Service.Catalog()`) — safe because the underlying `rbac.Registry` is frozen after plugin `Init()` and never mutates again for the life of the process; the cache here is a formalization of that existing immutability, not a new staleness risk.
+- The storefront category tree (`storefront.StorefrontHandler.cachedCategories`) — was already an ad-hoc single-entry TTL cache before PR-1040; this just moved it onto the shared `localcache.Store` implementation.
+
+**Denylist — a code-review checklist, not a suggestion.** Before adding a new L1 use site, its own comment must justify it against every one of these:
+
+- Nothing gated by per-request RBAC context (a permission decision for user A must never be served to user B from L1).
+- Nothing whose underlying tag/value changes more than a few times a minute.
+- Nothing containing customer/session/cart data — that's full-page-cache/fragment territory (Track D), never L1.
+- A TTL of seconds, not minutes, regardless of how rarely the data actually changes — uniform policy across every L1 use site, so nobody has to remember which one is the exception.
+
+**Invalidation propagation — and its real limit.** Neither allowlisted use site above goes through `cache.Cache`'s own tag/prefix mechanism at all, so each wires its `Store` directly to whatever domain event already fires on the actual mutation (e.g. `catalog.EventCategoryCreated/Updated/Deleted`) via `localcache.InvalidateOnEvent`, synchronous within this process. `internal/platform/event.Bus` is a plain in-process pub/sub — no Redis pub/sub, no network I/O, and every server process (`serve`, `worker`, and each scaled-out replica of either) constructs its own independent `*event.Bus` — so this **does NOT reach other replicas**:
+
+- For data that actually mutates while the process runs (the category tree), the Store's own TTL is the real, only bound on cross-replica staleness.
+- The permission catalog is the exception: `rbac.Registry` is frozen after plugin `Init()` and never mutates again, so the ONLY way its L1 entry can go stale is a new plugin version shipping a new/changed permission — and an old, un-restarted replica's TTL just keeps re-populating the SAME stale, pre-upgrade registry snapshot forever; waiting out the TTL there does not converge to the new value. Deployment/restart, not the TTL, is the actual bound for that case.
+
+(A generic `cache.Cache`-level broadcast — a `Store` subscribing directly to any `DeleteByTag`/`DeleteByPrefix` on the shared L2 backend, rather than to the specific domain event that caused it — was considered and deliberately not built: neither current L1 consumer needs it, and this repo does not pre-build for a hypothetical future consumer. Add it if and when an actual L1-over-L2 use site needs it.)
+
 ### Startup behavior
 
 - Core plugins register only when their driver switch matches.

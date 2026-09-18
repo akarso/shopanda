@@ -5,17 +5,33 @@ import (
 	"fmt"
 	"sort"
 	"sync"
+	"time"
 
 	"github.com/akarso/shopanda/internal/domain/identity"
 	"github.com/akarso/shopanda/internal/domain/rbac"
+	"github.com/akarso/shopanda/internal/infrastructure/localcache"
 	"github.com/akarso/shopanda/internal/platform/apperror"
 )
+
+// catalogCacheTTL bounds how long a computed Catalog() result is reused
+// (PR-1040's L1 tier). permReg is already frozen by the time a Service
+// exists (see NewService) and never mutates again for the life of the
+// process, so this cache never actually needs invalidating — the TTL
+// here is uniform L1 policy ("seconds, not minutes" everywhere L1 is
+// used), not a correctness requirement for this specific site.
+const catalogCacheTTL = 30 * time.Second
+
+// catalogCacheKey is the sole entry Catalog()'s L1 cache ever holds —
+// there is exactly one catalog per process, not one per caller/role.
+const catalogCacheKey = "catalog"
 
 // Service manages editable admin role permission assignments.
 type Service struct {
 	repo    rbac.Repository
 	permReg *rbac.Registry
 	mu      sync.Mutex
+
+	catalogCache *localcache.Store[[]PermissionCatalogEntry]
 }
 
 // NewService creates an admin role service.
@@ -28,7 +44,11 @@ func NewService(repo rbac.Repository, permReg *rbac.Registry) *Service {
 		permReg = rbac.NewRegistry()
 		permReg.Freeze()
 	}
-	return &Service{repo: repo, permReg: permReg}
+	return &Service{
+		repo:         repo,
+		permReg:      permReg,
+		catalogCache: localcache.New[[]PermissionCatalogEntry](1, catalogCacheTTL),
+	}
 }
 
 // PermissionCatalogEntry describes an assignable permission.
@@ -44,8 +64,38 @@ type RolePermissions struct {
 	Permissions []string `json:"permissions"`
 }
 
-// Catalog returns assignable permissions grouped for the roles editor.
+// Catalog returns assignable permissions grouped for the roles editor,
+// served from an L1 cache (PR-1040) — see catalogCacheTTL's own doc
+// comment for why this is safe. Returns a fresh, deep copy each call so
+// a caller mutating any part of its result — not just a top-level field,
+// but an element of one entry's own Defaults slice too — can never
+// corrupt the cached entry or another caller's own copy.
 func (s *Service) Catalog() []PermissionCatalogEntry {
+	if cached, ok := s.catalogCache.Get(catalogCacheKey); ok {
+		return cloneCatalog(cached)
+	}
+	computed := s.computeCatalog()
+	s.catalogCache.Set(catalogCacheKey, computed)
+	return cloneCatalog(computed)
+}
+
+// cloneCatalog deep-copies entries, including each entry's own Defaults
+// slice — a plain top-level append([]PermissionCatalogEntry(nil), ...)
+// would still leave every entry's Defaults aliased to the cached
+// original, since a struct copy doesn't copy the slice it points to.
+func cloneCatalog(entries []PermissionCatalogEntry) []PermissionCatalogEntry {
+	out := make([]PermissionCatalogEntry, len(entries))
+	for i, e := range entries {
+		out[i] = e
+		if e.Defaults != nil {
+			out[i].Defaults = append([]string(nil), e.Defaults...)
+		}
+	}
+	return out
+}
+
+// computeCatalog is Catalog's own, uncached computation.
+func (s *Service) computeCatalog() []PermissionCatalogEntry {
 	coreSet := make(map[rbac.Permission]struct{}, len(rbac.CorePermissions()))
 	for _, p := range rbac.CorePermissions() {
 		coreSet[p] = struct{}{}
