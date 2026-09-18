@@ -11,23 +11,17 @@ import (
 	"time"
 
 	"github.com/akarso/shopanda/internal/domain/cache"
-	"github.com/akarso/shopanda/internal/platform/event"
 	goredis "github.com/redis/go-redis/v9"
 )
 
 var _ cache.Cache = (*CacheStore)(nil)
 
 const (
-	tagScanCount        = 100
-	purgeSetTTL         = time.Hour
-	purgeRecoverTimeout = 5 * time.Second
+	deleteByPrefixBatchSize = 1000
+	tagScanCount            = 100
+	purgeSetTTL             = time.Hour
+	purgeRecoverTimeout     = 5 * time.Second
 )
-
-// deleteByPrefixBatchSize is the flush threshold shared by DeleteByPrefix
-// and DeleteByTag's own member-batching loop. A var, not a const, purely
-// so tests can shrink it (see export_test.go) to force multiple flush
-// calls without needing thousands of keys.
-var deleteByPrefixBatchSize = 1000
 
 // delEmptySetScript deletes KEYS[1] only when it is an empty set, so a
 // concurrent SADD cannot have its new member wiped by a delayed DEL.
@@ -83,19 +77,9 @@ type CacheStore struct {
 	client *goredis.Client
 	prefix string
 	log    Logger
-	// bus is optional — see SetBus.
-	bus *event.Bus
 	// afterTagRename is a test-only hook, scoped to this instance so
 	// parallel tests cannot leak into another store's DeleteByTag.
 	afterTagRename func()
-	// afterPrefixBatchFlushed/afterTagMembersFlushed are test-only hooks
-	// fired right after a successful DeleteByPrefix/DeleteByTag batch
-	// flush — used to deterministically force a LATER batch/step to fail
-	// (e.g. by cancelling the context) so the "publish on partial
-	// success" path is actually exercised without needing thousands of
-	// real keys to trigger a second batch.
-	afterPrefixBatchFlushed func()
-	afterTagMembersFlushed  func()
 }
 
 // Config holds Redis cache connection settings.
@@ -122,27 +106,6 @@ func (s *CacheStore) logError(evtName string, err error, fields map[string]inter
 		return
 	}
 	s.log.Error(evtName, err, fields)
-}
-
-// SetBus enables publishing cache.EventInvalidated whenever DeleteByTag or
-// DeleteByPrefix removes entries (PR-1040), so an in-process L1 cache
-// tier can evict its own copies without waiting out its own TTL — see
-// cache.EventInvalidated's own doc comment for what this does and does
-// not reach. Left unset (the default), Delete/DeleteByTag/DeleteByPrefix
-// work exactly as before — no event, no error.
-func (s *CacheStore) SetBus(bus *event.Bus) {
-	s.bus = bus
-}
-
-// publishInvalidated is a fire-and-forget coherence signal for an
-// in-process L1 tier, not a domain event meant to have request-blocking
-// listeners — PublishAsync, not Publish, so a future misbehaving
-// subscriber can never make a cache deletion itself fail.
-func (s *CacheStore) publishInvalidated(data cache.InvalidatedData) {
-	if s.bus == nil {
-		return
-	}
-	s.bus.PublishAsync(event.New(cache.EventInvalidated, "cache_store.redis", data))
 }
 
 func (s *CacheStore) key(k string) string {
@@ -309,19 +272,7 @@ func (s *CacheStore) Delete(key string) error {
 // __keytags: set) — the same cleanup Delete does for a single key, so a
 // key later repopulated by a plain Set doesn't retain a stale tag
 // association that a later DeleteByTag would wrongly act on.
-func (s *CacheStore) DeleteByPrefix(ctx context.Context, prefix string) (err error) {
-	// deletedAny tracks whether any batch was actually, successfully
-	// flushed — not just scanned — so a later scan/flush error still
-	// publishes the coherence signal for the entries that DID get deleted
-	// before the failure, instead of silently leaving L1 consumers to
-	// serve those now-gone entries until their own TTL expires.
-	deletedAny := false
-	defer func() {
-		if err == nil || deletedAny {
-			s.publishInvalidated(cache.InvalidatedData{Prefix: prefix})
-		}
-	}()
-
+func (s *CacheStore) DeleteByPrefix(ctx context.Context, prefix string) error {
 	match := s.key(prefix) + "*"
 	iter := s.client.Scan(ctx, 0, match, 100).Iterator()
 	fullKeys := make([]string, 0, deleteByPrefixBatchSize)
@@ -332,25 +283,21 @@ func (s *CacheStore) DeleteByPrefix(ctx context.Context, prefix string) (err err
 		if err := s.deleteUntagBatch(ctx, fullKeys); err != nil {
 			return fmt.Errorf("redis cache: delete by prefix %q: %w", prefix, err)
 		}
-		deletedAny = true
 		fullKeys = fullKeys[:0]
-		if s.afterPrefixBatchFlushed != nil {
-			s.afterPrefixBatchFlushed()
-		}
 		return nil
 	}
 	for iter.Next(ctx) {
 		fullKeys = append(fullKeys, iter.Val())
 		if len(fullKeys) >= deleteByPrefixBatchSize {
-			if err = flush(); err != nil {
+			if err := flush(); err != nil {
 				return err
 			}
 		}
 	}
-	if err = iter.Err(); err != nil {
+	if err := iter.Err(); err != nil {
 		return fmt.Errorf("redis cache: scan prefix %q: %w", prefix, err)
 	}
-	if err = flush(); err != nil {
+	if err := flush(); err != nil {
 		return err
 	}
 	return nil
@@ -432,19 +379,6 @@ func (s *CacheStore) DeleteByTag(ctx context.Context, tag string) (n int64, err 
 			s.restorePurge(tagKey, tmpKey)
 		}
 	}()
-	// deletedAny tracks whether any batch of members was actually,
-	// successfully deleted — not n, which counts members scanned into a
-	// batch before that batch's Del even runs, so it can be nonzero even
-	// when nothing was actually deleted yet. A later SSCAN/Del error still
-	// publishes the coherence signal for whatever DID get deleted before
-	// the failure, instead of silently leaving L1 consumers to serve
-	// those now-gone entries until their own TTL expires.
-	deletedAny := false
-	defer func() {
-		if err == nil || deletedAny {
-			s.publishInvalidated(cache.InvalidatedData{Tag: tag})
-		}
-	}()
 	if err = s.expirePurge(tmpKey); err != nil {
 		return n, fmt.Errorf("redis cache: delete by tag %q: %w", tag, err)
 	}
@@ -477,11 +411,7 @@ func (s *CacheStore) DeleteByTag(ctx context.Context, tag string) (n int64, err 
 		if err := s.client.Del(ctx, keys...).Err(); err != nil {
 			return fmt.Errorf("redis cache: delete by tag %q: %w", tag, err)
 		}
-		deletedAny = true
 		keys = keys[:0]
-		if s.afterTagMembersFlushed != nil {
-			s.afterTagMembersFlushed()
-		}
 		return nil
 	}
 	iter := s.client.SScan(ctx, tmpKey, 0, "", tagScanCount).Iterator()
