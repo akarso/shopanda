@@ -276,6 +276,47 @@ func TestStore_GetOrLoad_DiscardsStaleWriteAfterConcurrentDelete(t *testing.T) {
 	}
 }
 
+// TestStore_GetOrLoad_DiscardsStaleWriteAfterConcurrentDeleteOfAbsentKey pins
+// the code review fix: Delete on a key that isn't present is a no-op for
+// the map itself, but must still advance the generation. Without that, a
+// Delete racing an in-flight GetOrLoad for a key that was never cached (or
+// already evicted) would silently do nothing to stop that load from
+// writing back the exact value the Delete meant to invalidate.
+func TestStore_GetOrLoad_DiscardsStaleWriteAfterConcurrentDeleteOfAbsentKey(t *testing.T) {
+	s := localcache.New[string](10, time.Minute)
+
+	loaderStarted := make(chan struct{})
+	deleteDone := make(chan struct{})
+	resultCh := make(chan string, 1)
+	errCh := make(chan error, 1)
+
+	go func() {
+		v, err := s.GetOrLoad("k", func() (string, error) {
+			close(loaderStarted)
+			<-deleteDone
+			return "stale", nil
+		})
+		resultCh <- v
+		errCh <- err
+	}()
+
+	<-loaderStarted
+	s.Delete("k") // key was never present — must still bump generation
+	close(deleteDone)
+
+	v := <-resultCh
+	if err := <-errCh; err != nil {
+		t.Fatalf("GetOrLoad: %v", err)
+	}
+	if v != "stale" {
+		t.Fatalf("GetOrLoad returned %q, want %q", v, "stale")
+	}
+
+	if cached, ok := s.Get("k"); ok {
+		t.Fatalf("cache contains %q after a concurrent Delete of an absent key raced the load that produced it — the stale write was not discarded", cached)
+	}
+}
+
 func TestNew_PanicsOnNonPositiveMaxEntries(t *testing.T) {
 	defer func() {
 		if r := recover(); r == nil {

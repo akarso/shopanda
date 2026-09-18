@@ -152,12 +152,17 @@ func (s *Store[T]) GetOrLoad(key string, loader func() (T, error)) (T, error) {
 	return v, nil
 }
 
-// Delete removes key, if present. A missing key is not an error.
+// Delete removes key, if present. A missing key is not an error, but the
+// generation still advances either way — a GetOrLoad racing this call for
+// the same key must be invalidated regardless of whether key happened to
+// be present yet, or it can write back the exact value this Delete meant
+// to prevent from ever being cached.
 func (s *Store[T]) Delete(key string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	el, ok := s.items[key]
 	if !ok {
+		s.generation++
 		return
 	}
 	s.removeElementLocked(el)

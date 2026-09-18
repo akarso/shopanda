@@ -99,6 +99,7 @@ C4Component
             Component(smtpMailer, "SMTPMailer", "Go, net/smtp", "Sends email via SMTP: implements Mailer port")
             Component(localFSStorage, "LocalStorage", "Go, os", "Saves/deletes files on local disk: implements Storage port")
             Component(pgCacheStore, "PostgresCacheStore", "Go, UNLOGGED table", "Key-value cache with TTL and tag invalidation (cache_tags): implements Cache port")
+            Component(localCacheStore, "LocalCache Store[T]", "Go, generics", "Bounded, TTL+LRU, process-local (L1) cache sitting in front of Cache (L2); NOT a Cache implementation. Used by AdminRole's permission catalog (30s TTL) and StorefrontHandler's category tree (45s TTL). Evicted via a same-process EventBus broadcast (cache.EventInvalidated from DeleteByTag/DeleteByPrefix, or direct domain events like catalog.EventCategoryUpdated) — the TTL, not the broadcast, is the actual cross-replica staleness bound")
             Component(pgConfigRepo, "PostgresConfigRepo", "Go, pgx", "DB-backed config storage: implements config.Repository port")
         }
 
@@ -225,6 +226,9 @@ C4Component
     Rel(catalogSeeder, seedRegistry, "Registered as seeder")
     Rel(productSchemaRegistration, adminRegistry, "Registers product form + grid")
     Rel(categoryHandler, postgresRepos, "Category + product queries")
+    Rel(storefrontHandler, localCacheStore, "Caches category tree (L1, 45s TTL); evicts on catalog.EventCategory{Created,Updated,Deleted} not sourced from category-assignment changes")
+    Rel(pgCacheStore, eventBus, "Publishes cache.EventInvalidated on DeleteByTag/DeleteByPrefix (once SetBus is wired)")
+    Rel(eventBus, localCacheStore, "Broadcast eviction: cache.EventInvalidated (tag/prefix) or a subscribed domain event")
     Rel(searchHandler, postgresSearch, "Delegates search queries")
     Rel(mediaHandler, mediaService, "Delegates upload logic")
     Rel(schemaHandler, adminRegistry, "Reads form and grid schemas")

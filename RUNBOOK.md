@@ -76,12 +76,12 @@ Compare against the blocked ranges in ["Outbound webhooks (SSRF)"](#outbound-web
 
 For general `429`/`rate_limited` (not login-specific): this is per-process and not shared across instances. If a shared NAT/proxy is causing false positives across unrelated clients, set `rate_limit.trusted_proxies` so `ClientIP` reflects the real client — see ["Rate limiting and login lockout"](#rate-limiting-and-login-lockout) below.
 
-### A permission/category-nav change isn't taking effect on some instances
+### A permission-catalog or category-nav change isn't taking effect on some instances
 
-**Symptom:** after granting/revoking a permission or editing a category, the admin roles editor or storefront nav shows the OLD data — but only on some requests, or only for a while, not consistently, and never for longer than about 30–45 seconds.
+**Symptom:** the admin roles editor's list of *assignable permissions* (not a role's actual grants — see below), or the storefront nav, shows the OLD data — but only on some requests, or only for a while, not consistently, and never for longer than about 30–45 seconds.
 
-**Check:** this is PR-1040's L1 (in-process) cache, not a write failure — a write that actually failed would show the old data forever, not for a bounded window. Confirm which L1 use site is involved:
-- Permission catalog (`adminrole.Service.Catalog()`, the roles editor's "assignable permissions" list) — 30s TTL. This one almost never needs a change mid-process: `rbac.Registry` (what it caches) is frozen after plugin `Init()` and never mutates again, so a stale catalog usually means a **new plugin version** shipped a permission and the OLD process just hasn't restarted yet — check `plugin.init.summary` in that instance's own startup logs, not the cache.
+**Check:** this is PR-1040's L1 (in-process) cache, not a write failure — a write that actually failed would show the old data forever, not for a bounded window. This does **not** apply to granting/revoking a role's permissions: `UpdateRole`/`GetRole`/`ListRoles` read straight from the DB, uncached, so a grant/revoke is visible on the very next request everywhere — if that looks stale, it's a different bug, not this one. Confirm which L1 use site is actually involved:
+- Permission catalog (`adminrole.Service.Catalog()`, the roles editor's "assignable permissions" list — the permission *definitions*, not any role's assignments) — 30s TTL. This one almost never needs a change mid-process: `rbac.Registry` (what it caches) is frozen after plugin `Init()` and never mutates again, so a stale catalog usually means a **new plugin version** shipped a permission and the OLD process just hasn't restarted yet — check `plugin.init.summary` in that instance's own startup logs, not the cache.
 - Category tree (`storefront.StorefrontHandler`'s nav) — 45s TTL, same as before PR-1040. A category create/update/delete evicts this **immediately, but only in the process that handled that admin request** — see below for why.
 
 **Fix:** there is no manual per-instance L1-flush endpoint or CLI command today. Two things are true simultaneously, and neither is a bug:
