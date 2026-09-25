@@ -142,6 +142,47 @@ func TestRateLimiter_ConcurrentRequestsNearLimitDoNotOverAdmit(t *testing.T) {
 	}
 }
 
+// TestRateLimiter_CrossReplicaMembersDoNotCollide pins the code review
+// fix: two independently-constructed RateLimiter instances (standing in
+// for two real replicas, each with its own process, each starting its
+// own seq counter at 0) sharing ONE Redis backend, the SAME scope, and
+// the SAME client key must still enforce a combined limit — not double
+// it. Without a per-instance random component in the ZSET member, both
+// instances' first call at an identical millisecond produce the exact
+// same member string ("<ms>-1"), so the second ZADD overwrites the
+// first entry's score instead of adding a new one: only one ZSET entry
+// would exist for two real admitted requests, silently undercounting
+// traffic and letting more through than the shared burst allows. Forcing
+// an identical clock on both instances (via SetRateLimiterClock)
+// reproduces the worst case deterministically instead of depending on
+// two real goroutines happening to race within the same millisecond.
+func TestRateLimiter_CrossReplicaMembersDoNotCollide(t *testing.T) {
+	const burst = 2
+	_, client, replicaA := setupRateLimiter(t, "default", 1000, burst)
+	replicaB, err := inredis.NewRateLimiter(client, "test", "default", 1000, burst, nil)
+	if err != nil {
+		t.Fatalf("NewRateLimiter: %v", err)
+	}
+
+	frozen := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	clock := func() time.Time { return frozen }
+	inredis.SetRateLimiterClock(replicaA, clock)
+	inredis.SetRateLimiterClock(replicaB, clock)
+
+	admitted := 0
+	for i := 0; i < burst+1; i++ {
+		if replicaA.Allow("shared-key") {
+			admitted++
+		}
+		if replicaB.Allow("shared-key") {
+			admitted++
+		}
+	}
+	if admitted != burst {
+		t.Fatalf("admitted across both replicas = %d, want exactly %d (burst shared across replicas, not doubled by member collisions)", admitted, burst)
+	}
+}
+
 func TestRateLimiter_FailsOpenOnRedisError(t *testing.T) {
 	mr, client, lim := setupRateLimiter(t, "default", 10, 1)
 	// Exhaust the real budget once to prove the limiter is otherwise wired

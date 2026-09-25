@@ -2,12 +2,23 @@ package redis
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"fmt"
 	"sync/atomic"
 	"time"
 
 	goredis "github.com/redis/go-redis/v9"
 )
+
+// checkTimeout bounds a single Allow call's Redis round trip explicitly,
+// rather than relying solely on the go-redis client's own implicit
+// default read/write timeouts (unlike ConnectURL's explicit 5s ping
+// timeout) — those defaults can be overridden via the connection URL, at
+// which point Allow's "fail open on error" guarantee would stop covering
+// a hang (only explicit errors), leaving the request path blocked for as
+// long as whatever timeout the URL configured, or indefinitely with none.
+const checkTimeout = 250 * time.Millisecond
 
 // slidingWindowScript admits a request iff fewer than ARGV[3] entries remain
 // in the window after pruning anything older than ARGV[2] — a sliding
@@ -59,11 +70,18 @@ type RateLimiter struct {
 	prefix string // full key prefix: NormalizeKeyPrefix(keyPrefix) + "ratelimit:" + scope + ":"
 	limit  int64
 	window time.Duration
-	// seq disambiguates same-millisecond ZADD members within this
-	// process; two different processes never share a member string
-	// (both include this process's own counter state), so cross-process
-	// collisions are not a concern — only same-key overwrites are, and
-	// those only happen for identical members.
+	// instanceID is a random value generated once per RateLimiter (i.e.
+	// per process, per scope — see NewRateLimiter) so ZSET members are
+	// unique across REPLICAS, not just within one process. seq alone is
+	// not enough: every replica's own counter starts at 0, so two
+	// replicas' Nth call to the same scope at the same millisecond would
+	// otherwise produce the identical member string, and the second
+	// ZADD would silently overwrite the first entry's score instead of
+	// adding a new one — undercounting real admitted traffic and
+	// defeating the whole point of a shared, cross-replica limit.
+	instanceID string
+	// seq disambiguates same-millisecond members within this instanceID;
+	// see instanceID's own comment for why it alone is not sufficient.
 	seq int64
 	// now is a test-only clock override (see export_test.go); nil uses
 	// time.Now.
@@ -90,13 +108,31 @@ func NewRateLimiter(client *goredis.Client, keyPrefix, scope string, rate float6
 	if window <= 0 {
 		window = time.Millisecond
 	}
+	instanceID, err := randomInstanceID()
+	if err != nil {
+		return nil, fmt.Errorf("redis ratelimit: generate instance id: %w", err)
+	}
 	return &RateLimiter{
-		client: client,
-		log:    log,
-		prefix: NormalizeKeyPrefix(keyPrefix) + "ratelimit:" + scope + ":",
-		limit:  int64(burst),
-		window: window,
+		client:     client,
+		log:        log,
+		prefix:     NormalizeKeyPrefix(keyPrefix) + "ratelimit:" + scope + ":",
+		limit:      int64(burst),
+		window:     window,
+		instanceID: instanceID,
 	}, nil
+}
+
+// randomInstanceID returns 16 random hex characters (8 bytes,
+// crypto/rand) — enough entropy that two RateLimiter instances (i.e. two
+// replicas, or two independently-constructed limiters within one
+// process) collide with negligible probability, unlike a counter that
+// deterministically starts at the same value everywhere.
+func randomInstanceID() (string, error) {
+	var b [8]byte
+	if _, err := rand.Read(b[:]); err != nil {
+		return "", err
+	}
+	return hex.EncodeToString(b[:]), nil
 }
 
 // Allow reports whether a request for key should be permitted. On any
@@ -119,9 +155,11 @@ func (l *RateLimiter) Allow(key string) bool {
 		windowMs = 1
 	}
 	seq := atomic.AddInt64(&l.seq, 1)
-	member := fmt.Sprintf("%d-%d", nowMs, seq)
+	member := fmt.Sprintf("%d-%s-%d", nowMs, l.instanceID, seq)
 
-	res, err := slidingWindowScript.Run(context.Background(), l.client,
+	ctx, cancel := context.WithTimeout(context.Background(), checkTimeout)
+	defer cancel()
+	res, err := slidingWindowScript.Run(ctx, l.client,
 		[]string{l.prefix + key},
 		nowMs, windowStartMs, l.limit, member, windowMs,
 	).Result()
