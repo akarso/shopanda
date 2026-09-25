@@ -128,8 +128,21 @@ func NewRateLimiter(client *goredis.Client, keyPrefix, scope string, rate float6
 		return nil, fmt.Errorf("redis ratelimit: rate and burst must be positive (got rate=%v burst=%d)", rate, burst)
 	}
 	window := time.Duration(float64(burst) / rate * float64(time.Second))
-	if window <= 0 {
-		window = time.Millisecond
+	// windowMs, not window itself, is what the script actually uses (it
+	// only understands millisecond scores/TTLs) — clamp THAT to at least
+	// 1, not window to at least 1ns. A window under 1ms (e.g. rate=2000,
+	// burst=1: 0.5ms) is already positive in nanoseconds, so the old
+	// "window <= 0" check never caught it, but Duration.Milliseconds()
+	// truncates it to 0 regardless. Passed to the script, ARGV[1]=0
+	// makes windowStartMs == nowMs, so ZREMRANGEBYSCORE prunes every
+	// entry (including ones just added this millisecond), ZCARD always
+	// reads back 0, every check is admitted, and PEXPIRE with a 0 TTL
+	// deletes the key immediately — the limiter silently stops enforcing
+	// anything for that rate/burst combination instead of erroring or
+	// degrading gracefully.
+	windowMs := window.Milliseconds()
+	if windowMs < 1 {
+		windowMs = 1
 	}
 	instanceID, err := randomInstanceID()
 	if err != nil {
@@ -140,7 +153,7 @@ func NewRateLimiter(client *goredis.Client, keyPrefix, scope string, rate float6
 		log:        log,
 		prefix:     NormalizeKeyPrefix(keyPrefix) + "ratelimit:" + scope + ":",
 		limit:      int64(burst),
-		windowMs:   window.Milliseconds(),
+		windowMs:   windowMs,
 		instanceID: instanceID,
 	}, nil
 }

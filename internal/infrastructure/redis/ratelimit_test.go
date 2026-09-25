@@ -244,6 +244,33 @@ func TestRateLimiter_FailsOpenOnRedisError(t *testing.T) {
 	}
 }
 
+// TestRateLimiter_SubMillisecondWindowStillEnforcesBurst pins the code
+// review fix: rate=2000/burst=1 computes a window of burst/rate=0.5ms —
+// positive in nanoseconds (so the old "window <= 0" guard never caught
+// it), but time.Duration.Milliseconds() truncates it to 0 regardless. A
+// windowMs of 0 passed to the script makes windowStartMs == nowMs, so
+// ZREMRANGEBYSCORE prunes every entry (including ones just added this
+// same millisecond), ZCARD always reads back 0, every check is admitted,
+// and PEXPIRE with a 0 TTL deletes the key immediately — the limiter
+// silently stops enforcing anything for that rate/burst combination
+// instead of erroring or degrading to a coarser (but still real) limit.
+func TestRateLimiter_SubMillisecondWindowStillEnforcesBurst(t *testing.T) {
+	mr, _, lim := setupRateLimiter(t, "default", 2000, 1) // window = 1/2000s = 0.5ms
+	// Freeze the clock: the effective window here is clamped to 1ms (see
+	// NewRateLimiter), tiny enough that real elapsed time between two
+	// sequential Allow calls (each a real round trip, how ever fast) can
+	// exceed it and legitimately expire the first entry before the
+	// second call runs — a false pass for what this test means to prove.
+	mr.SetTime(time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC))
+
+	if !lim.Allow("k") {
+		t.Fatal("first request should be allowed")
+	}
+	if lim.Allow("k") {
+		t.Error("second immediate request should be rejected (burst=1) — a sub-millisecond window must not silently disable the limit")
+	}
+}
+
 func TestNewRateLimiter_RejectsInvalidArgs(t *testing.T) {
 	_, client, _ := setupRateLimiter(t, "default", 10, 1)
 
