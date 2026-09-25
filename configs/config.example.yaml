@@ -274,16 +274,32 @@ webhooks:
 rate_limit:
   enabled: true
 
+  # Driver: memory (default) — in-process token bucket, independent per
+  # instance (correct for one instance, or behind a gateway/WAF that
+  # already enforces a global ceiling). redis (PR-1041) — sliding-window
+  # counter shared by every instance; choose this for multi-instance
+  # deployments with no gateway-level limiter in front.
+  driver: "memory"
+  # Redis settings (used when driver=redis):
+  # redis:
+  #   url: "redis://localhost:6379/0"
+  #   key_prefix: "shopanda:ratelimit"
+  # Or set REDIS_URL / SHOPANDA_RATE_LIMIT_REDIS_URL / SHOPANDA_RATE_LIMIT_REDIS_KEY_PREFIX environment variables.
+
   # Default rate for all routes (tokens per second + burst).
   default:
     rate: 10.0
     burst: 20
 
   # Per-route overrides. Longest prefix match wins.
+  # Auth routes: a documented recommendation, not a new enforced mechanism
+  # (PR-1041) — roughly 1/10th the default rate/burst, the same tighter
+  # budget the dedicated login-lockout mechanism already gives failed
+  # password attempts specifically.
   per_route:
     - path_prefix: "/api/v1/auth"
-      rate: 5.0
-      burst: 10
+      rate: 1.0
+      burst: 2
   #   - path_prefix: "/api/v1/search"
   #     rate: 20.0
   #     burst: 40

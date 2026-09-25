@@ -16,7 +16,7 @@
 | PR-1038 | B | done | [Search admin GUI](PR-1038.md) |
 | PR-1039 | C | done | [Tag-based invalidation](PR-1039.md) |
 | PR-1040 | C | done | [In-memory (L1) cache tier](PR-1040.md) |
-| PR-1041 | C | planned | [Rate limiting hardening](PR-1041.md) |
+| PR-1041 | C | done | [Rate limiting hardening](PR-1041.md) |
 | PR-1042 | C | planned | [Cache admin API + CLI](PR-1042.md) |
 | PR-1043 | C | planned | [Cache admin GUI](PR-1043.md) |
 | PR-1044 | D | planned | [Full-page cache core + cacheability policy](PR-1044.md) |

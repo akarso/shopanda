@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/akarso/shopanda/internal/interfaces/http/storefront"
@@ -15,6 +16,7 @@ import (
 	themeapp "github.com/akarso/shopanda/internal/application/theme"
 	"github.com/akarso/shopanda/internal/domain/rbac"
 	domtheme "github.com/akarso/shopanda/internal/domain/theme"
+	inredis "github.com/akarso/shopanda/internal/infrastructure/redis"
 	smtpmail "github.com/akarso/shopanda/internal/infrastructure/smtp"
 	"github.com/akarso/shopanda/internal/platform/config"
 	"github.com/akarso/shopanda/internal/platform/logger"
@@ -25,6 +27,15 @@ import (
 func buildServeHandler(cfg *config.Config, log logger.Logger, rt *serveRuntime, conn *sql.DB) (http.Handler, error) {
 	router := shophttp.NewRouter()
 
+	rateLimiterFactory, err := resolveRateLimiterFactory(cfg, log)
+	if err != nil {
+		return nil, err
+	}
+	rateLimitMiddleware, err := shophttp.RateLimitMiddleware(cfg.RateLimit, log, rateLimiterFactory)
+	if err != nil {
+		return nil, err
+	}
+
 	// Middleware: outermost first.
 	// Metrics and Tracing are outermost so they capture the final status
 	// (after Recovery converts a panic to 500) and the full request
@@ -34,7 +45,7 @@ func buildServeHandler(cfg *config.Config, log logger.Logger, rt *serveRuntime, 
 	router.Use(shophttp.RecoveryMiddleware(log))
 	router.Use(shophttp.SecurityHeadersMiddleware(cfg.RateLimit.TrustedProxies...))
 	router.Use(shophttp.RequestIDMiddleware())
-	router.Use(shophttp.RateLimitMiddleware(cfg.RateLimit, log))
+	router.Use(rateLimitMiddleware)
 	// Logging wraps BodyLimit so 413 from MaxBytesReader is captured in access logs.
 	router.Use(shophttp.LoggingMiddleware(log))
 	router.Use(shophttp.BodyLimitMiddleware(cfg.HTTP.MaxBodyBytes, cfg.HTTP.MediaMaxBodyBytes))
@@ -495,4 +506,32 @@ func buildServeHandler(cfg *config.Config, log logger.Logger, rt *serveRuntime, 
 		wrapProbe(readyHandler),
 		router.Handler(),
 	), nil
+}
+
+// resolveRateLimiterFactory selects the RateLimitMiddleware backend for
+// rate_limit.driver (PR-1041): nil (memory, the default) keeps the
+// existing in-process token bucket — correct for one instance, silently
+// wrong for more than one, since each replica gets its own independent
+// budget; redis shares one sliding-window counter across every replica
+// connected to the same backend. See RUNBOOK.md's "Rate limiting and
+// login lockout" section for the operational tradeoff.
+func resolveRateLimiterFactory(cfg *config.Config, log logger.Logger) (shophttp.LimiterFactory, error) {
+	switch strings.ToLower(strings.TrimSpace(cfg.RateLimit.Driver)) {
+	case "", "memory":
+		return nil, nil
+	case "redis":
+		if cfg.RateLimit.Redis.URL == "" {
+			return nil, fmt.Errorf("rate_limit.driver=redis requires rate_limit.redis.url or REDIS_URL")
+		}
+		client, err := inredis.ConnectURL(cfg.RateLimit.Redis.URL)
+		if err != nil {
+			return nil, fmt.Errorf("rate limit: connect redis: %w", err)
+		}
+		keyPrefix := cfg.RateLimit.Redis.KeyPrefix
+		return func(scope string, rate float64, burst int) (shophttp.RateLimiter, error) {
+			return inredis.NewRateLimiter(client, keyPrefix, scope, rate, burst, log)
+		}, nil
+	default:
+		return nil, fmt.Errorf("unsupported rate_limit.driver: %q", cfg.RateLimit.Driver)
+	}
 }
