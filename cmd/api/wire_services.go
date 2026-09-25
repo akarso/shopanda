@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"sort"
@@ -89,6 +90,11 @@ type serveRuntime struct {
 	jobWorker *jobs.Worker
 	jobQueue  jobs.Queue
 	appCache  cache.Cache
+
+	// rateLimiterRedisClient is set by buildServeHandler when
+	// rate_limit.driver=redis (nil otherwise) — see resolveRateLimiterFactory.
+	// Closed on shutdown in runServe alongside the other runtime resources.
+	rateLimiterRedisClient io.Closer
 
 	metricsRecorder metrics.Recorder
 

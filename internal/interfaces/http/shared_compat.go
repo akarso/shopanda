@@ -98,8 +98,11 @@ func CacheControlMiddleware(noCachePrefixes []string) Middleware {
 
 // --- Rate limiting ---
 
-func RateLimitMiddleware(cfg config.RateLimitConfig, log logger.Logger) Middleware {
-	return shared.RateLimitMiddleware(cfg, log)
+type RateLimiter = shared.RateLimiter
+type LimiterFactory = shared.LimiterFactory
+
+func RateLimitMiddleware(cfg config.RateLimitConfig, log logger.Logger, newLimiter LimiterFactory) (Middleware, error) {
+	return shared.RateLimitMiddleware(cfg, log, newLimiter)
 }
 
 // parseTrustedProxies, clientIP, writeRateLimited are used directly by
