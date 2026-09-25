@@ -3,6 +3,7 @@ package main
 import (
 	"database/sql"
 	"fmt"
+	"io"
 	"net/http"
 	"path/filepath"
 	"strings"
@@ -27,10 +28,11 @@ import (
 func buildServeHandler(cfg *config.Config, log logger.Logger, rt *serveRuntime, conn *sql.DB) (http.Handler, error) {
 	router := shophttp.NewRouter()
 
-	rateLimiterFactory, err := resolveRateLimiterFactory(cfg, log)
+	rateLimiterFactory, rateLimiterCloser, err := resolveRateLimiterFactory(cfg, log)
 	if err != nil {
 		return nil, err
 	}
+	rt.rateLimiterRedisClient = rateLimiterCloser
 	rateLimitMiddleware, err := shophttp.RateLimitMiddleware(cfg.RateLimit, log, rateLimiterFactory)
 	if err != nil {
 		return nil, err
@@ -515,23 +517,44 @@ func buildServeHandler(cfg *config.Config, log logger.Logger, rt *serveRuntime, 
 // budget; redis shares one sliding-window counter across every replica
 // connected to the same backend. See RUNBOOK.md's "Rate limiting and
 // login lockout" section for the operational tradeoff.
-func resolveRateLimiterFactory(cfg *config.Config, log logger.Logger) (shophttp.LimiterFactory, error) {
+// resolveRateLimiterFactory also returns an io.Closer for the redis
+// client it opens (nil for every other case) — the caller is
+// responsible for closing it on shutdown; see buildServeHandler.
+//
+// Two things this deliberately does NOT do, both to keep an unavailable
+// Redis from taking down the whole API when the runtime check (Allow)
+// already fails open on exactly that:
+//   - Skips connecting at all when rate_limit.enabled=false. RateLimitMiddleware
+//     never calls the factory in that case (it short-circuits to a
+//     passthrough before touching newLimiter), so connecting here first
+//     would mean an unreachable Redis blocks startup for a disabled
+//     limiter that would otherwise be a complete no-op.
+//   - Uses NewLazyClient, not ConnectURL: a malformed rate_limit.redis.url
+//     still fails startup immediately (a real config error), but Redis
+//     merely being unreachable right now (e.g. mid-restart during a
+//     rolling deploy) does not — the lazy client connects on first real
+//     use, and Allow already fails open on that error.
+func resolveRateLimiterFactory(cfg *config.Config, log logger.Logger) (shophttp.LimiterFactory, io.Closer, error) {
+	if !cfg.RateLimit.Enabled {
+		return nil, nil, nil
+	}
 	switch strings.ToLower(strings.TrimSpace(cfg.RateLimit.Driver)) {
 	case "", "memory":
-		return nil, nil
+		return nil, nil, nil
 	case "redis":
 		if cfg.RateLimit.Redis.URL == "" {
-			return nil, fmt.Errorf("rate_limit.driver=redis requires rate_limit.redis.url or REDIS_URL")
+			return nil, nil, fmt.Errorf("rate_limit.driver=redis requires rate_limit.redis.url or REDIS_URL")
 		}
-		client, err := inredis.ConnectURL(cfg.RateLimit.Redis.URL)
+		client, err := inredis.NewLazyClient(cfg.RateLimit.Redis.URL)
 		if err != nil {
-			return nil, fmt.Errorf("rate limit: connect redis: %w", err)
+			return nil, nil, fmt.Errorf("rate limit: redis: %w", err)
 		}
 		keyPrefix := cfg.RateLimit.Redis.KeyPrefix
-		return func(scope string, rate float64, burst int) (shophttp.RateLimiter, error) {
+		factory := func(scope string, rate float64, burst int) (shophttp.RateLimiter, error) {
 			return inredis.NewRateLimiter(client, keyPrefix, scope, rate, burst, log)
-		}, nil
+		}
+		return factory, client, nil
 	default:
-		return nil, fmt.Errorf("unsupported rate_limit.driver: %q", cfg.RateLimit.Driver)
+		return nil, nil, fmt.Errorf("unsupported rate_limit.driver: %q", cfg.RateLimit.Driver)
 	}
 }

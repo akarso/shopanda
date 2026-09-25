@@ -20,34 +20,48 @@ import (
 // long as whatever timeout the URL configured, or indefinitely with none.
 const checkTimeout = 250 * time.Millisecond
 
-// slidingWindowScript admits a request iff fewer than ARGV[3] entries remain
-// in the window after pruning anything older than ARGV[2] — a sliding
-// window LOG (per-request timestamps in a ZSET), not a fixed-window
-// counter, so a client can never get 2x the limit by timing requests
-// around a window boundary the way a naive INCR+EXPIRE counter allows.
-// One round trip, atomic: two concurrent Allow calls racing the same key
-// always see a consistent ZCARD relative to each other.
+// slidingWindowScript admits a request iff fewer than ARGV[2] entries
+// remain in the window after pruning anything older than "now - ARGV[1]"
+// — a sliding window LOG (per-request timestamps in a ZSET), not a
+// fixed-window counter, so a client can never get 2x the limit by
+// timing requests around a window boundary the way a naive INCR+EXPIRE
+// counter allows. One round trip, atomic: two concurrent Allow calls
+// racing the same key always see a consistent ZCARD relative to each
+// other.
+//
+// Time comes from the Redis server itself (redis.call('TIME')), not
+// from the calling process's own clock. Every replica calling this
+// script — potentially with a different, skewed wall clock — must
+// agree on ONE timeline for scoring and pruning; if each replica used
+// its own local time instead, a replica whose clock runs ahead could
+// prune another replica's still-valid entries before they've actually
+// aged out from that replica's perspective, undercounting real admitted
+// traffic and letting more through than the configured shared burst —
+// exactly the failure mode a shared limiter exists to prevent. TIME
+// inside a script is Redis's own documented idiom for this; scripts
+// are replicated by effect (not by re-executing the script), so this
+// doesn't introduce nondeterminism between primary and replicas either.
 //
 // KEYS[1] = the per-(scope,client-key) ZSET.
-// ARGV[1] = now, ARGV[2] = window start (now - window), both unix ms
+// ARGV[1] = window duration in ms — used both to compute the window
 //
-//	scores — ms fits exactly in a float64 (2^53 ints) for centuries past
-//	the epoch, unlike nanoseconds, which would silently lose precision.
+//	start (now - ARGV[1]) and as the key's own PEXPIRE TTL, so an
+//	abandoned key (no further requests) doesn't outlive its own
+//	window's worth of inactivity.
 //
-// ARGV[3] = limit (burst). ARGV[4] = this request's unique member.
-// ARGV[5] = window duration in ms, used as the key's own TTL so an
-//
-//	abandoned key (no further requests) doesn't outlive its own window's
-//	worth of inactivity.
+// ARGV[2] = limit (burst). ARGV[3] = this request's unique member.
 var slidingWindowScript = goredis.NewScript(`
-redis.call('ZREMRANGEBYSCORE', KEYS[1], '-inf', ARGV[2])
+local now = redis.call('TIME')
+local nowMs = math.floor(tonumber(now[1]) * 1000 + tonumber(now[2]) / 1000)
+local windowStartMs = nowMs - tonumber(ARGV[1])
+redis.call('ZREMRANGEBYSCORE', KEYS[1], '-inf', windowStartMs)
 local count = redis.call('ZCARD', KEYS[1])
-if count < tonumber(ARGV[3]) then
-  redis.call('ZADD', KEYS[1], ARGV[1], ARGV[4])
-  redis.call('PEXPIRE', KEYS[1], ARGV[5])
+if count < tonumber(ARGV[2]) then
+  redis.call('ZADD', KEYS[1], nowMs, ARGV[3])
+  redis.call('PEXPIRE', KEYS[1], ARGV[1])
   return 1
 end
-redis.call('PEXPIRE', KEYS[1], ARGV[5])
+redis.call('PEXPIRE', KEYS[1], ARGV[1])
 return 0
 `)
 
@@ -63,13 +77,25 @@ return 0
 // this algorithm as: allow up to Burst requests in any Burst/Rate-second
 // sliding window — the same peak burst size a token bucket of that
 // capacity allows, and the same long-run average rate (Burst requests /
-// (Burst/Rate) seconds = Rate requests/sec).
+// (Burst/Rate) seconds = Rate requests/sec). One real behavioral
+// difference switching drivers with unchanged config does NOT preserve:
+// how soon a client can send one more request right after fully
+// consuming a burst. A token bucket refills continuously — e.g. the
+// default rate=10/burst=20 admits one more request ~100ms after
+// exhausting the burst. This sliding-window LOG instead requires the
+// OLDEST of the burst's entries to age out of the (here, 2-second)
+// window before admitting a new one — for a true simultaneous burst,
+// that's a ~2-second wait, not ~100ms, before the next admission. Both
+// converge to the same steady-state average rate; only burst-recovery
+// timing differs. See RUNBOOK.md's "Rate limiting and login lockout"
+// section before switching an existing deployment's driver with config
+// tuned around the memory driver's recovery behavior.
 type RateLimiter struct {
-	client *goredis.Client
-	log    Logger
-	prefix string // full key prefix: NormalizeKeyPrefix(keyPrefix) + "ratelimit:" + scope + ":"
-	limit  int64
-	window time.Duration
+	client   *goredis.Client
+	log      Logger
+	prefix   string // full key prefix: NormalizeKeyPrefix(keyPrefix) + "ratelimit:" + scope + ":"
+	limit    int64
+	windowMs int64
 	// instanceID is a random value generated once per RateLimiter (i.e.
 	// per process, per scope — see NewRateLimiter) so ZSET members are
 	// unique across REPLICAS, not just within one process. seq alone is
@@ -83,9 +109,6 @@ type RateLimiter struct {
 	// seq disambiguates same-millisecond members within this instanceID;
 	// see instanceID's own comment for why it alone is not sufficient.
 	seq int64
-	// now is a test-only clock override (see export_test.go); nil uses
-	// time.Now.
-	now func() time.Time
 }
 
 // NewRateLimiter returns a RateLimiter enforcing rate requests/sec with a
@@ -93,7 +116,7 @@ type RateLimiter struct {
 // scope must be unique per configured limit (e.g. "default", or
 // "route:"+pathPrefix for a per-route rule) so independent limits sharing
 // one Redis backend never collide on the same client key. client must be
-// non-nil and already connected (see ConnectURL); log may be nil (no-op).
+// non-nil (see ConnectURL/NewLazyClient); log may be nil (no-op).
 func NewRateLimiter(client *goredis.Client, keyPrefix, scope string, rate float64, burst int, log Logger) (*RateLimiter, error) {
 	if client == nil {
 		return nil, fmt.Errorf("redis ratelimit: nil client")
@@ -117,7 +140,7 @@ func NewRateLimiter(client *goredis.Client, keyPrefix, scope string, rate float6
 		log:        log,
 		prefix:     NormalizeKeyPrefix(keyPrefix) + "ratelimit:" + scope + ":",
 		limit:      int64(burst),
-		window:     window,
+		windowMs:   window.Milliseconds(),
 		instanceID: instanceID,
 	}, nil
 }
@@ -143,25 +166,14 @@ func randomInstanceID() (string, error) {
 // full outage, which is a strictly worse availability failure than the
 // theoretical abuse window an open-fail leaves.
 func (l *RateLimiter) Allow(key string) bool {
-	nowFn := l.now
-	if nowFn == nil {
-		nowFn = time.Now
-	}
-	now := nowFn()
-	nowMs := now.UnixMilli()
-	windowStartMs := now.Add(-l.window).UnixMilli()
-	windowMs := l.window.Milliseconds()
-	if windowMs <= 0 {
-		windowMs = 1
-	}
 	seq := atomic.AddInt64(&l.seq, 1)
-	member := fmt.Sprintf("%d-%s-%d", nowMs, l.instanceID, seq)
+	member := fmt.Sprintf("%s-%d", l.instanceID, seq)
 
 	ctx, cancel := context.WithTimeout(context.Background(), checkTimeout)
 	defer cancel()
 	res, err := slidingWindowScript.Run(ctx, l.client,
 		[]string{l.prefix + key},
-		nowMs, windowStartMs, l.limit, member, windowMs,
+		l.windowMs, l.limit, member,
 	).Result()
 	if err != nil {
 		if l.log != nil {

@@ -87,28 +87,26 @@ func TestRateLimiter_IndependentScopesShareNoBudget(t *testing.T) {
 // get 2x the limit by timing requests around a boundary edge.
 func TestRateLimiter_SlidingWindowAdmitsAsOldEntriesExpire(t *testing.T) {
 	// window = burst/rate = 2/2 = 1 second.
-	_, _, lim := setupRateLimiter(t, "default", 2, 2)
+	mr, _, lim := setupRateLimiter(t, "default", 2, 2)
 
 	base := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
-	current := base
-	clock := func() time.Time { return current }
-	inredis.SetRateLimiterClock(lim, clock)
+	mr.SetTime(base)
 
 	if !lim.Allow("k") { // t=0ms, count=1
 		t.Fatal("request 1 should be allowed")
 	}
-	current = base.Add(400 * time.Millisecond)
+	mr.SetTime(base.Add(400 * time.Millisecond))
 	if !lim.Allow("k") { // t=400ms, count=2 (burst reached)
 		t.Fatal("request 2 should be allowed (burst=2)")
 	}
-	current = base.Add(700 * time.Millisecond)
+	mr.SetTime(base.Add(700 * time.Millisecond))
 	if lim.Allow("k") { // t=700ms: both prior entries (0ms, 400ms) still within the 1s window
 		t.Error("request 3 should be rejected — burst exhausted within the window")
 	}
 	// The FIRST entry (t=0ms) ages out of the window once we're past
 	// t=1000ms, freeing exactly one slot — a fixed-window counter would
 	// instead wait for the whole window to reset before admitting again.
-	current = base.Add(1001 * time.Millisecond)
+	mr.SetTime(base.Add(1001 * time.Millisecond))
 	if !lim.Allow("k") {
 		t.Error("request at t=1001ms should be allowed — the t=0ms entry has aged out of the 1s window")
 	}
@@ -121,7 +119,20 @@ func TestRateLimiter_SlidingWindowAdmitsAsOldEntriesExpire(t *testing.T) {
 
 func TestRateLimiter_ConcurrentRequestsNearLimitDoNotOverAdmit(t *testing.T) {
 	const burst = 20
-	_, _, lim := setupRateLimiter(t, "default", 1000, burst)
+	mr, _, lim := setupRateLimiter(t, "default", 1000, burst)
+	// Freeze the shared backend's own clock (see TestRateLimiter_TimeComesFromRedisNotCallerClock
+	// for why Allow's timing now comes from Redis, not a per-caller Go
+	// clock) so this test isolates the atomicity guarantee — concurrent
+	// racing Allow calls at a SINGLE point in time must not over-admit —
+	// from real wall-clock window sliding. rate=1000/burst=20 gives only
+	// a 20ms window; with 100 goroutines racing a real, unfrozen clock,
+	// genuine scheduling/lock-contention delay across that many
+	// concurrent script executions can let early entries legitimately
+	// age out before later ones run, admitting MORE than 20 over the
+	// test's own (longer than 20ms) real execution time — a correct
+	// sliding window doing its job, not an atomicity bug, but it would
+	// make this specific test flaky/wrong for what it's meant to prove.
+	mr.SetTime(time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC))
 
 	const workers = 100
 	var admitted int64
@@ -153,21 +164,20 @@ func TestRateLimiter_ConcurrentRequestsNearLimitDoNotOverAdmit(t *testing.T) {
 // first entry's score instead of adding a new one: only one ZSET entry
 // would exist for two real admitted requests, silently undercounting
 // traffic and letting more through than the shared burst allows. Forcing
-// an identical clock on both instances (via SetRateLimiterClock)
-// reproduces the worst case deterministically instead of depending on
-// two real goroutines happening to race within the same millisecond.
+// an identical time on the shared miniredis backend (mr.SetTime, which
+// also drives what redis.call('TIME') returns inside the script — see
+// TestRateLimiter_TimeComesFromRedisNotCallerClock) reproduces the worst
+// case deterministically instead of depending on two real goroutines
+// happening to race within the same millisecond.
 func TestRateLimiter_CrossReplicaMembersDoNotCollide(t *testing.T) {
 	const burst = 2
-	_, client, replicaA := setupRateLimiter(t, "default", 1000, burst)
+	mr, client, replicaA := setupRateLimiter(t, "default", 1000, burst)
 	replicaB, err := inredis.NewRateLimiter(client, "test", "default", 1000, burst, nil)
 	if err != nil {
 		t.Fatalf("NewRateLimiter: %v", err)
 	}
 
-	frozen := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
-	clock := func() time.Time { return frozen }
-	inredis.SetRateLimiterClock(replicaA, clock)
-	inredis.SetRateLimiterClock(replicaB, clock)
+	mr.SetTime(time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC))
 
 	admitted := 0
 	for i := 0; i < burst+1; i++ {
@@ -180,6 +190,42 @@ func TestRateLimiter_CrossReplicaMembersDoNotCollide(t *testing.T) {
 	}
 	if admitted != burst {
 		t.Fatalf("admitted across both replicas = %d, want exactly %d (burst shared across replicas, not doubled by member collisions)", admitted, burst)
+	}
+}
+
+// TestRateLimiter_TimeComesFromRedisNotCallerClock pins the code review
+// fix: scoring and pruning must use ONE authoritative clock (the Redis
+// server's own, via redis.call('TIME') inside the script), not each
+// caller's local wall clock. Without this, a "fast" replica (its own
+// clock running ahead of a "slow" replica's) computes its own window
+// start further into the future than the slow replica intended, and can
+// prune the slow replica's still-valid entries before they've actually
+// aged out from the slow replica's own perspective — undercounting real
+// admitted traffic and admitting more than the configured shared burst.
+// This test cannot directly simulate two different client-side clocks
+// any more (there's no client-side clock left to skew — that's the
+// point of the fix), so it instead proves the mechanism the fix relies
+// on: advancing ONLY the shared Redis backend's own clock (mr.SetTime)
+// changes Allow's sliding-window behavior exactly as documented, with no
+// client-side clock involved in the decision at all.
+func TestRateLimiter_TimeComesFromRedisNotCallerClock(t *testing.T) {
+	// window = burst/rate = 1/1 = 1 second.
+	mr, _, lim := setupRateLimiter(t, "default", 1, 1)
+
+	mr.SetTime(time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC))
+	if !lim.Allow("k") {
+		t.Fatal("first request should be allowed")
+	}
+	if lim.Allow("k") {
+		t.Error("second request should be rejected — burst=1 exhausted, Redis clock unchanged")
+	}
+
+	// Advance ONLY the shared Redis backend's clock (never the caller's
+	// own time.Now) past the window — Allow must observe this and admit
+	// again, proving the decision is driven by the server's clock.
+	mr.SetTime(time.Date(2026, 1, 1, 0, 0, 1, 1e6, time.UTC)) // +1.001s
+	if !lim.Allow("k") {
+		t.Error("request after the Redis backend's own clock advanced past the window should be allowed")
 	}
 }
 
