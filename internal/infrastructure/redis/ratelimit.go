@@ -42,26 +42,48 @@ const checkTimeout = 250 * time.Millisecond
 // are replicated by effect (not by re-executing the script), so this
 // doesn't introduce nondeterminism between primary and replicas either.
 //
-// KEYS[1] = the per-(scope,client-key) ZSET.
-// ARGV[1] = window duration in ms — used both to compute the window
+// Scores are microseconds, not milliseconds: TIME's own resolution, and
+// fine enough to preserve the configured rate exactly for realistic
+// sub-millisecond windows (e.g. rate=2000/burst=1 needs a 500us window —
+// rounding that up to 1ms, this package's earlier approach, would have
+// silently halved the effective rate a client configured for exactly
+// that combination expected). Microsecond epoch timestamps (~1.79e15 as
+// of 2026) still fit a float64's exact-integer range (2^53 ≈ 9.007e15)
+// with more than two centuries of margin (until ~2255) — the same
+// reasoning that justified millisecond scores over nanosecond ones
+// originally, just one resolution step finer. PEXPIRE only accepts
+// millisecond TTLs (Redis has no finer-grained expiry command); that's
+// fine, because PEXPIRE here is purely a garbage-collection safety net
+// for an abandoned key, not part of the actual enforcement
+// (ZREMRANGEBYSCORE against exact microsecond scores does that) —
+// rounding its TTL UP to the next whole millisecond (never down: a TTL
+// shorter than the real window could reap the key, silently resetting
+// an in-progress window, before entries would otherwise have aged out
+// on their own merits) never affects correctness, only how promptly a
+// truly abandoned key gets reclaimed.
 //
-//	start (now - ARGV[1]) and as the key's own PEXPIRE TTL, so an
-//	abandoned key (no further requests) doesn't outlive its own
-//	window's worth of inactivity.
+// KEYS[1] = the per-(scope,client-key) ZSET.
+// ARGV[1] = window duration in microseconds — the window start is
+//
+//	now - ARGV[1].
 //
 // ARGV[2] = limit (burst). ARGV[3] = this request's unique member.
+// ARGV[4] = the key's own PEXPIRE TTL in milliseconds — ceil(ARGV[1]/1000),
+//
+//	so an abandoned key doesn't outlive its own window's worth of
+//	inactivity.
 var slidingWindowScript = goredis.NewScript(`
 local now = redis.call('TIME')
-local nowMs = math.floor(tonumber(now[1]) * 1000 + tonumber(now[2]) / 1000)
-local windowStartMs = nowMs - tonumber(ARGV[1])
-redis.call('ZREMRANGEBYSCORE', KEYS[1], '-inf', windowStartMs)
+local nowUs = math.floor(tonumber(now[1]) * 1000000 + tonumber(now[2]))
+local windowStartUs = nowUs - tonumber(ARGV[1])
+redis.call('ZREMRANGEBYSCORE', KEYS[1], '-inf', windowStartUs)
 local count = redis.call('ZCARD', KEYS[1])
 if count < tonumber(ARGV[2]) then
-  redis.call('ZADD', KEYS[1], nowMs, ARGV[3])
-  redis.call('PEXPIRE', KEYS[1], ARGV[1])
+  redis.call('ZADD', KEYS[1], nowUs, ARGV[3])
+  redis.call('PEXPIRE', KEYS[1], ARGV[4])
   return 1
 end
-redis.call('PEXPIRE', KEYS[1], ARGV[1])
+redis.call('PEXPIRE', KEYS[1], ARGV[4])
 return 0
 `)
 
@@ -91,22 +113,26 @@ return 0
 // section before switching an existing deployment's driver with config
 // tuned around the memory driver's recovery behavior.
 type RateLimiter struct {
-	client   *goredis.Client
-	log      Logger
-	prefix   string // full key prefix: NormalizeKeyPrefix(keyPrefix) + "ratelimit:" + scope + ":"
-	limit    int64
-	windowMs int64
+	client *goredis.Client
+	log    Logger
+	prefix string // full key prefix: NormalizeKeyPrefix(keyPrefix) + "ratelimit:" + scope + ":"
+	limit  int64
+	// windowUs/pexpireMs — see slidingWindowScript's own doc comment for
+	// why the window is tracked in microseconds but the key's own TTL
+	// stays in milliseconds.
+	windowUs  int64
+	pexpireMs int64
 	// instanceID is a random value generated once per RateLimiter (i.e.
 	// per process, per scope — see NewRateLimiter) so ZSET members are
 	// unique across REPLICAS, not just within one process. seq alone is
 	// not enough: every replica's own counter starts at 0, so two
-	// replicas' Nth call to the same scope at the same millisecond would
+	// replicas' Nth call to the same scope at the same microsecond would
 	// otherwise produce the identical member string, and the second
 	// ZADD would silently overwrite the first entry's score instead of
 	// adding a new one — undercounting real admitted traffic and
 	// defeating the whole point of a shared, cross-replica limit.
 	instanceID string
-	// seq disambiguates same-millisecond members within this instanceID;
+	// seq disambiguates same-microsecond members within this instanceID;
 	// see instanceID's own comment for why it alone is not sufficient.
 	seq int64
 }
@@ -128,21 +154,29 @@ func NewRateLimiter(client *goredis.Client, keyPrefix, scope string, rate float6
 		return nil, fmt.Errorf("redis ratelimit: rate and burst must be positive (got rate=%v burst=%d)", rate, burst)
 	}
 	window := time.Duration(float64(burst) / rate * float64(time.Second))
-	// windowMs, not window itself, is what the script actually uses (it
-	// only understands millisecond scores/TTLs) — clamp THAT to at least
-	// 1, not window to at least 1ns. A window under 1ms (e.g. rate=2000,
-	// burst=1: 0.5ms) is already positive in nanoseconds, so the old
-	// "window <= 0" check never caught it, but Duration.Milliseconds()
-	// truncates it to 0 regardless. Passed to the script, ARGV[1]=0
-	// makes windowStartMs == nowMs, so ZREMRANGEBYSCORE prunes every
-	// entry (including ones just added this millisecond), ZCARD always
-	// reads back 0, every check is admitted, and PEXPIRE with a 0 TTL
-	// deletes the key immediately — the limiter silently stops enforcing
-	// anything for that rate/burst combination instead of erroring or
-	// degrading gracefully.
-	windowMs := window.Milliseconds()
-	if windowMs < 1 {
-		windowMs = 1
+	// windowUs, not window itself, is what the script actually uses —
+	// clamp THAT to at least 1, not window to at least 1ns. Only a
+	// window under 1 MICROSECOND (burst/rate ratios no realistic HTTP
+	// rate limit config approaches, e.g. rate=1,000,000/burst=1) can
+	// still truncate to 0 here. See slidingWindowScript's own doc
+	// comment for why microsecond, not millisecond, resolution: at
+	// millisecond resolution this same clamp previously turned a
+	// perfectly ordinary rate=2000/burst=1 config (a real 500us window)
+	// into an effective 1ms window — silently HALVING the configured
+	// rate instead of enforcing it, the opposite failure from the one
+	// this clamp exists to prevent (a window that truncates all the way
+	// to 0, silently disabling the limit entirely).
+	windowUs := window.Microseconds()
+	if windowUs < 1 {
+		windowUs = 1
+	}
+	// pexpireMs is windowUs rounded UP to whole milliseconds (ceiling,
+	// never floor — see slidingWindowScript's own doc comment for why a
+	// short TTL would be an actual correctness bug, not just a garbage
+	// collection nicety).
+	pexpireMs := (windowUs + 999) / 1000
+	if pexpireMs < 1 {
+		pexpireMs = 1
 	}
 	instanceID, err := randomInstanceID()
 	if err != nil {
@@ -153,7 +187,8 @@ func NewRateLimiter(client *goredis.Client, keyPrefix, scope string, rate float6
 		log:        log,
 		prefix:     NormalizeKeyPrefix(keyPrefix) + "ratelimit:" + scope + ":",
 		limit:      int64(burst),
-		windowMs:   windowMs,
+		windowUs:   windowUs,
+		pexpireMs:  pexpireMs,
 		instanceID: instanceID,
 	}, nil
 }
@@ -186,7 +221,7 @@ func (l *RateLimiter) Allow(key string) bool {
 	defer cancel()
 	res, err := slidingWindowScript.Run(ctx, l.client,
 		[]string{l.prefix + key},
-		l.windowMs, l.limit, member,
+		l.windowUs, l.limit, member, l.pexpireMs,
 	).Result()
 	if err != nil {
 		if l.log != nil {

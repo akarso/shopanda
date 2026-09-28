@@ -255,11 +255,11 @@ func TestRateLimiter_FailsOpenOnRedisError(t *testing.T) {
 // silently stops enforcing anything for that rate/burst combination
 // instead of erroring or degrading to a coarser (but still real) limit.
 func TestRateLimiter_SubMillisecondWindowStillEnforcesBurst(t *testing.T) {
-	mr, _, lim := setupRateLimiter(t, "default", 2000, 1) // window = 1/2000s = 0.5ms
-	// Freeze the clock: the effective window here is clamped to 1ms (see
-	// NewRateLimiter), tiny enough that real elapsed time between two
-	// sequential Allow calls (each a real round trip, how ever fast) can
-	// exceed it and legitimately expire the first entry before the
+	mr, _, lim := setupRateLimiter(t, "default", 2000, 1) // window = 1/2000s = 500us
+	// Freeze the clock: the effective window here is microseconds-scale
+	// (see NewRateLimiter), tiny enough that real elapsed time between
+	// two sequential Allow calls (each a real round trip, how ever fast)
+	// can exceed it and legitimately expire the first entry before the
 	// second call runs — a false pass for what this test means to prove.
 	mr.SetTime(time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC))
 
@@ -268,6 +268,34 @@ func TestRateLimiter_SubMillisecondWindowStillEnforcesBurst(t *testing.T) {
 	}
 	if lim.Allow("k") {
 		t.Error("second immediate request should be rejected (burst=1) — a sub-millisecond window must not silently disable the limit")
+	}
+}
+
+// TestRateLimiter_SubMillisecondWindowPreservesConfiguredRate pins the
+// code review fix: rate=2000/burst=1 needs a real 500us window, and the
+// configured rate must actually be honored at that resolution — not
+// silently rounded up to a coarser one. An earlier version of this fix
+// tracked the window in whole milliseconds only, so a 500us window got
+// clamped up to 1ms; that made the FIRST entry (still valid for another
+// ~500us on the real, configured window) look like it hadn't aged out
+// until a full millisecond had passed, silently halving the effective
+// admitted rate from 2000/sec to ~1000/sec for anyone using this exact
+// config. Microsecond-resolution scoring (see slidingWindowScript's own
+// doc comment) closes that gap: a request 600us after the first — past
+// the true 500us window, but still within a naive 1ms one — must be
+// admitted.
+func TestRateLimiter_SubMillisecondWindowPreservesConfiguredRate(t *testing.T) {
+	mr, _, lim := setupRateLimiter(t, "default", 2000, 1) // window = 1/2000s = 500us
+	base := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	mr.SetTime(base)
+
+	if !lim.Allow("k") {
+		t.Fatal("first request should be allowed")
+	}
+
+	mr.SetTime(base.Add(600 * time.Microsecond))
+	if !lim.Allow("k") {
+		t.Error("request 600us after the first should be allowed — the real 500us window must be honored, not rounded up to 1ms (which would silently halve the configured rate)")
 	}
 }
 
