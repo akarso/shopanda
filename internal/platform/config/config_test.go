@@ -991,6 +991,137 @@ rate_limit:
 	}
 }
 
+func TestRateLimitConfig_Driver_FromYAML(t *testing.T) {
+	withTestBaseURL(t)
+	yaml := `
+rate_limit:
+  enabled: true
+  driver: redis
+  redis:
+    url: "redis://localhost:6379"
+    key_prefix: "shopanda"
+`
+	path := writeYAML(t, yaml)
+
+	cfg, err := loadCfg(t, path)
+	if err != nil {
+		t.Fatalf("Load() error: %v", err)
+	}
+
+	if cfg.RateLimit.Driver != "redis" {
+		t.Errorf("Driver = %q, want %q", cfg.RateLimit.Driver, "redis")
+	}
+	if cfg.RateLimit.Redis.URL != "redis://localhost:6379" {
+		t.Errorf("Redis.URL = %q, want %q", cfg.RateLimit.Redis.URL, "redis://localhost:6379")
+	}
+	if cfg.RateLimit.Redis.KeyPrefix != "shopanda" {
+		t.Errorf("Redis.KeyPrefix = %q, want %q", cfg.RateLimit.Redis.KeyPrefix, "shopanda")
+	}
+}
+
+func TestRateLimitConfig_Driver_DefaultsToMemory(t *testing.T) {
+	withTestBaseURL(t)
+	path := writeYAML(t, "")
+
+	cfg, err := loadCfg(t, path)
+	if err != nil {
+		t.Fatalf("Load() error: %v", err)
+	}
+
+	if cfg.RateLimit.Driver != "memory" {
+		t.Errorf("Driver = %q, want %q (default)", cfg.RateLimit.Driver, "memory")
+	}
+}
+
+func TestRateLimitConfig_Driver_EnvOverlay(t *testing.T) {
+	withTestBaseURL(t)
+	path := writeYAML(t, "")
+
+	t.Setenv("SHOPANDA_RATE_LIMIT_DRIVER", "redis")
+	t.Setenv("SHOPANDA_RATE_LIMIT_REDIS_URL", "redis://env-host:6379")
+	t.Setenv("SHOPANDA_RATE_LIMIT_REDIS_KEY_PREFIX", "envprefix")
+
+	cfg, err := loadCfg(t, path)
+	if err != nil {
+		t.Fatalf("Load() error: %v", err)
+	}
+
+	if cfg.RateLimit.Driver != "redis" {
+		t.Errorf("Driver = %q, want %q from env", cfg.RateLimit.Driver, "redis")
+	}
+	if cfg.RateLimit.Redis.URL != "redis://env-host:6379" {
+		t.Errorf("Redis.URL = %q, want %q from env", cfg.RateLimit.Redis.URL, "redis://env-host:6379")
+	}
+	if cfg.RateLimit.Redis.KeyPrefix != "envprefix" {
+		t.Errorf("Redis.KeyPrefix = %q, want %q from env", cfg.RateLimit.Redis.KeyPrefix, "envprefix")
+	}
+}
+
+// TestRateLimitConfig_Redis_FallsBackToGenericRedisURL pins that a general
+// REDIS_URL applies to rate_limit.redis.url the same way it already does
+// for cache.redis.url and queue.redis.url, but only when rate_limit.redis.url
+// wasn't set explicitly (YAML or its own dedicated env var).
+func TestRateLimitConfig_Redis_FallsBackToGenericRedisURL(t *testing.T) {
+	withTestBaseURL(t)
+	path := writeYAML(t, "")
+
+	t.Setenv("REDIS_URL", "redis://generic-host:6379")
+
+	cfg, err := loadCfg(t, path)
+	if err != nil {
+		t.Fatalf("Load() error: %v", err)
+	}
+
+	if cfg.RateLimit.Redis.URL != "redis://generic-host:6379" {
+		t.Errorf("Redis.URL = %q, want %q from generic REDIS_URL fallback", cfg.RateLimit.Redis.URL, "redis://generic-host:6379")
+	}
+}
+
+func TestRateLimitConfig_Redis_DedicatedEnvWinsOverGenericRedisURL(t *testing.T) {
+	withTestBaseURL(t)
+	path := writeYAML(t, "")
+
+	t.Setenv("REDIS_URL", "redis://generic-host:6379")
+	t.Setenv("SHOPANDA_RATE_LIMIT_REDIS_URL", "redis://dedicated-host:6379")
+
+	cfg, err := loadCfg(t, path)
+	if err != nil {
+		t.Fatalf("Load() error: %v", err)
+	}
+
+	if cfg.RateLimit.Redis.URL != "redis://dedicated-host:6379" {
+		t.Errorf("Redis.URL = %q, want %q (dedicated env must win)", cfg.RateLimit.Redis.URL, "redis://dedicated-host:6379")
+	}
+}
+
+func TestRateLimitConfig_Driver_FlattenEntries(t *testing.T) {
+	withTestBaseURL(t)
+	yaml := `
+rate_limit:
+  enabled: true
+  driver: redis
+  redis:
+    url: "redis://localhost:6379"
+    key_prefix: "shopanda"
+`
+	path := writeYAML(t, yaml)
+
+	_, err := loadIsolated(t, path)
+	if err != nil {
+		t.Fatalf("Load() error: %v", err)
+	}
+
+	if got := Get("rate_limit.driver"); got != "redis" {
+		t.Errorf("Get(rate_limit.driver) = %q, want %q", got, "redis")
+	}
+	if got := Get("rate_limit.redis.url"); got != "redis://localhost:6379" {
+		t.Errorf("Get(rate_limit.redis.url) = %q, want %q", got, "redis://localhost:6379")
+	}
+	if got := Get("rate_limit.redis.key_prefix"); got != "shopanda" {
+		t.Errorf("Get(rate_limit.redis.key_prefix) = %q, want %q", got, "shopanda")
+	}
+}
+
 func TestAuthLockoutConfig_EnvOverlay(t *testing.T) {
 	withTestBaseURL(t)
 	path := writeYAML(t, "")

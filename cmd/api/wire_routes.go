@@ -3,8 +3,10 @@ package main
 import (
 	"database/sql"
 	"fmt"
+	"io"
 	"net/http"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/akarso/shopanda/internal/interfaces/http/storefront"
@@ -15,6 +17,7 @@ import (
 	themeapp "github.com/akarso/shopanda/internal/application/theme"
 	"github.com/akarso/shopanda/internal/domain/rbac"
 	domtheme "github.com/akarso/shopanda/internal/domain/theme"
+	inredis "github.com/akarso/shopanda/internal/infrastructure/redis"
 	smtpmail "github.com/akarso/shopanda/internal/infrastructure/smtp"
 	"github.com/akarso/shopanda/internal/platform/config"
 	"github.com/akarso/shopanda/internal/platform/logger"
@@ -25,6 +28,16 @@ import (
 func buildServeHandler(cfg *config.Config, log logger.Logger, rt *serveRuntime, conn *sql.DB) (http.Handler, error) {
 	router := shophttp.NewRouter()
 
+	rateLimiterFactory, rateLimiterCloser, err := resolveRateLimiterFactory(cfg, log)
+	if err != nil {
+		return nil, err
+	}
+	rt.rateLimiterRedisClient = rateLimiterCloser
+	rateLimitMiddleware, err := shophttp.RateLimitMiddleware(cfg.RateLimit, log, rateLimiterFactory)
+	if err != nil {
+		return nil, err
+	}
+
 	// Middleware: outermost first.
 	// Metrics and Tracing are outermost so they capture the final status
 	// (after Recovery converts a panic to 500) and the full request
@@ -34,7 +47,7 @@ func buildServeHandler(cfg *config.Config, log logger.Logger, rt *serveRuntime, 
 	router.Use(shophttp.RecoveryMiddleware(log))
 	router.Use(shophttp.SecurityHeadersMiddleware(cfg.RateLimit.TrustedProxies...))
 	router.Use(shophttp.RequestIDMiddleware())
-	router.Use(shophttp.RateLimitMiddleware(cfg.RateLimit, log))
+	router.Use(rateLimitMiddleware)
 	// Logging wraps BodyLimit so 413 from MaxBytesReader is captured in access logs.
 	router.Use(shophttp.LoggingMiddleware(log))
 	router.Use(shophttp.BodyLimitMiddleware(cfg.HTTP.MaxBodyBytes, cfg.HTTP.MediaMaxBodyBytes))
@@ -495,4 +508,53 @@ func buildServeHandler(cfg *config.Config, log logger.Logger, rt *serveRuntime, 
 		wrapProbe(readyHandler),
 		router.Handler(),
 	), nil
+}
+
+// resolveRateLimiterFactory selects the RateLimitMiddleware backend for
+// rate_limit.driver (PR-1041): nil (memory, the default) keeps the
+// existing in-process token bucket — correct for one instance, silently
+// wrong for more than one, since each replica gets its own independent
+// budget; redis shares one sliding-window counter across every replica
+// connected to the same backend. See RUNBOOK.md's "Rate limiting and
+// login lockout" section for the operational tradeoff.
+// resolveRateLimiterFactory also returns an io.Closer for the redis
+// client it opens (nil for every other case) — the caller is
+// responsible for closing it on shutdown; see buildServeHandler.
+//
+// Two things this deliberately does NOT do, both to keep an unavailable
+// Redis from taking down the whole API when the runtime check (Allow)
+// already fails open on exactly that:
+//   - Skips connecting at all when rate_limit.enabled=false. RateLimitMiddleware
+//     never calls the factory in that case (it short-circuits to a
+//     passthrough before touching newLimiter), so connecting here first
+//     would mean an unreachable Redis blocks startup for a disabled
+//     limiter that would otherwise be a complete no-op.
+//   - Uses NewLazyClient, not ConnectURL: a malformed rate_limit.redis.url
+//     still fails startup immediately (a real config error), but Redis
+//     merely being unreachable right now (e.g. mid-restart during a
+//     rolling deploy) does not — the lazy client connects on first real
+//     use, and Allow already fails open on that error.
+func resolveRateLimiterFactory(cfg *config.Config, log logger.Logger) (shophttp.LimiterFactory, io.Closer, error) {
+	if !cfg.RateLimit.Enabled {
+		return nil, nil, nil
+	}
+	switch strings.ToLower(strings.TrimSpace(cfg.RateLimit.Driver)) {
+	case "", "memory":
+		return nil, nil, nil
+	case "redis":
+		if cfg.RateLimit.Redis.URL == "" {
+			return nil, nil, fmt.Errorf("rate_limit.driver=redis requires rate_limit.redis.url or REDIS_URL")
+		}
+		client, err := inredis.NewLazyClient(cfg.RateLimit.Redis.URL)
+		if err != nil {
+			return nil, nil, fmt.Errorf("rate limit: redis: %w", err)
+		}
+		keyPrefix := cfg.RateLimit.Redis.KeyPrefix
+		factory := func(scope string, rate float64, burst int) (shophttp.RateLimiter, error) {
+			return inredis.NewRateLimiter(client, keyPrefix, scope, rate, burst, log)
+		}
+		return factory, client, nil
+	default:
+		return nil, nil, fmt.Errorf("unsupported rate_limit.driver: %q", cfg.RateLimit.Driver)
+	}
 }

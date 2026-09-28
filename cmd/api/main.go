@@ -231,6 +231,16 @@ func runServe(cfg *config.Config, log logger.Logger, embedScheduler bool) error 
 		shutdownTracing()
 		return err // UnbindRuntime already run inside wireServeRuntime
 	}
+	// buildServeHandler may open rt.rateLimiterRedisClient (rate_limit.driver=
+	// redis) even on a path that ultimately still returns an error (e.g. a
+	// later middleware fails to construct) — registered here, right after rt
+	// exists, so every return below closes it, not just the normal-shutdown
+	// path after ListenAndServe.
+	defer func() {
+		if rt.rateLimiterRedisClient != nil {
+			_ = rt.rateLimiterRedisClient.Close()
+		}
+	}()
 
 	handler, err := buildServeHandler(cfg, log, rt, conn)
 	if err != nil {

@@ -106,10 +106,24 @@ func (w WebhooksConfig) Secret(provider string) string {
 
 // RateLimitConfig holds rate limiting settings.
 type RateLimitConfig struct {
-	Enabled        bool                 `yaml:"enabled"`
+	Enabled bool `yaml:"enabled"`
+	// Driver selects the limiter backend: "memory" (default) — the
+	// existing in-process token bucket, correct for one instance but
+	// independent per replica — or "redis" — a shared sliding-window
+	// counter (PR-1041), correct across every replica. See RUNBOOK.md's
+	// "Rate limiting and login lockout" section.
+	Driver         string               `yaml:"driver"`
+	Redis          RedisRateLimitConfig `yaml:"redis"`
 	Default        RateLimitRule        `yaml:"default"`
 	PerRoute       []RouteRateLimitRule `yaml:"per_route"`
 	TrustedProxies []string             `yaml:"trusted_proxies"`
+}
+
+// RedisRateLimitConfig holds Redis connection settings for
+// rate_limit.driver=redis.
+type RedisRateLimitConfig struct {
+	URL       string `yaml:"url"`
+	KeyPrefix string `yaml:"key_prefix"`
 }
 
 // RateLimitRule defines a token-bucket rate: Rate tokens per second, Burst max.
@@ -779,6 +793,7 @@ func defaults() Config {
 		},
 		RateLimit: RateLimitConfig{
 			Enabled: true,
+			Driver:  "memory",
 			Default: RateLimitRule{Rate: 10, Burst: 20},
 		},
 		Metrics: MetricsConfig{
@@ -997,6 +1012,9 @@ func applyEnv(cfg *Config) {
 		if cfg.Queue.Redis.URL == "" {
 			cfg.Queue.Redis.URL = v
 		}
+		if cfg.RateLimit.Redis.URL == "" {
+			cfg.RateLimit.Redis.URL = v
+		}
 	}
 	if v := os.Getenv("SHOPANDA_QUEUE_REDIS_URL"); v != "" {
 		cfg.Queue.Redis.URL = v
@@ -1201,6 +1219,15 @@ func applyEnv(cfg *Config) {
 			cfg.RateLimit.Default.Burst = b
 		}
 	}
+	if v := os.Getenv("SHOPANDA_RATE_LIMIT_DRIVER"); v != "" {
+		cfg.RateLimit.Driver = v
+	}
+	if v := os.Getenv("SHOPANDA_RATE_LIMIT_REDIS_URL"); v != "" {
+		cfg.RateLimit.Redis.URL = v
+	}
+	if v := os.Getenv("SHOPANDA_RATE_LIMIT_REDIS_KEY_PREFIX"); v != "" {
+		cfg.RateLimit.Redis.KeyPrefix = v
+	}
 	if v := os.Getenv("SHOPANDA_DEV_EMBED_SCHEDULER"); v != "" {
 		if b, err := strconv.ParseBool(v); err == nil {
 			cfg.Dev.EmbedScheduler = b
@@ -1365,6 +1392,9 @@ func flatten(cfg *Config) map[string]string {
 		m["webhooks.secrets."+k] = redactSecret(v)
 	}
 	m["rate_limit.enabled"] = strconv.FormatBool(cfg.RateLimit.Enabled)
+	m["rate_limit.driver"] = cfg.RateLimit.Driver
+	m["rate_limit.redis.url"] = cfg.RateLimit.Redis.URL
+	m["rate_limit.redis.key_prefix"] = cfg.RateLimit.Redis.KeyPrefix
 	m["rate_limit.default.rate"] = strconv.FormatFloat(cfg.RateLimit.Default.Rate, 'f', -1, 64)
 	m["rate_limit.default.burst"] = strconv.Itoa(cfg.RateLimit.Default.Burst)
 	m["metrics.enabled"] = strconv.FormatBool(cfg.Metrics.Enabled)
