@@ -3,6 +3,7 @@ package shared_test
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -16,7 +17,10 @@ func testLog() logger.Logger { return logger.NewWithWriter(&bytes.Buffer{}, "inf
 
 func TestRateLimitMiddleware_Disabled(t *testing.T) {
 	cfg := config.RateLimitConfig{Enabled: false}
-	mw := shared.RateLimitMiddleware(cfg, testLog())
+	mw, err := shared.RateLimitMiddleware(cfg, testLog(), nil)
+	if err != nil {
+		t.Fatalf("RateLimitMiddleware: %v", err)
+	}
 	called := false
 	handler := mw(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		called = true
@@ -41,7 +45,10 @@ func TestRateLimitMiddleware_DefaultLimit(t *testing.T) {
 		Enabled: true,
 		Default: config.RateLimitRule{Rate: 1, Burst: 2},
 	}
-	mw := shared.RateLimitMiddleware(cfg, testLog())
+	mw, err := shared.RateLimitMiddleware(cfg, testLog(), nil)
+	if err != nil {
+		t.Fatalf("RateLimitMiddleware: %v", err)
+	}
 	handler := mw(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 	}))
@@ -91,7 +98,10 @@ func TestRateLimitMiddleware_PerRouteOverride(t *testing.T) {
 			{PathPrefix: "/api/v1/auth", Rate: 1, Burst: 1}, // strict per-route
 		},
 	}
-	mw := shared.RateLimitMiddleware(cfg, testLog())
+	mw, err := shared.RateLimitMiddleware(cfg, testLog(), nil)
+	if err != nil {
+		t.Fatalf("RateLimitMiddleware: %v", err)
+	}
 	handler := mw(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 	}))
@@ -133,7 +143,10 @@ func TestRateLimitMiddleware_OverlappingPrefixes(t *testing.T) {
 			{PathPrefix: "/api/v1/auth", Rate: 1, Burst: 1}, // specific, strict
 		},
 	}
-	mw := shared.RateLimitMiddleware(cfg, testLog())
+	mw, err := shared.RateLimitMiddleware(cfg, testLog(), nil)
+	if err != nil {
+		t.Fatalf("RateLimitMiddleware: %v", err)
+	}
 	handler := mw(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 	}))
@@ -172,7 +185,10 @@ func TestRateLimitMiddleware_ClientIP_XForwardedFor_TrustedProxy(t *testing.T) {
 		Default:        config.RateLimitRule{Rate: 1, Burst: 1},
 		TrustedProxies: []string{"10.0.0.50"},
 	}
-	mw := shared.RateLimitMiddleware(cfg, testLog())
+	mw, err := shared.RateLimitMiddleware(cfg, testLog(), nil)
+	if err != nil {
+		t.Fatalf("RateLimitMiddleware: %v", err)
+	}
 	handler := mw(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 	}))
@@ -214,7 +230,10 @@ func TestRateLimitMiddleware_ClientIP_XRealIP_TrustedProxy(t *testing.T) {
 		Default:        config.RateLimitRule{Rate: 1, Burst: 1},
 		TrustedProxies: []string{"10.0.0.50"},
 	}
-	mw := shared.RateLimitMiddleware(cfg, testLog())
+	mw, err := shared.RateLimitMiddleware(cfg, testLog(), nil)
+	if err != nil {
+		t.Fatalf("RateLimitMiddleware: %v", err)
+	}
 	handler := mw(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 	}))
@@ -244,7 +263,10 @@ func TestRateLimitMiddleware_ClientIP_UntrustedProxyIgnoresHeaders(t *testing.T)
 		Default:        config.RateLimitRule{Rate: 1, Burst: 1},
 		TrustedProxies: []string{"10.0.0.50"}, // only this IP is trusted
 	}
-	mw := shared.RateLimitMiddleware(cfg, testLog())
+	mw, err := shared.RateLimitMiddleware(cfg, testLog(), nil)
+	if err != nil {
+		t.Fatalf("RateLimitMiddleware: %v", err)
+	}
 	handler := mw(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 	}))
@@ -269,5 +291,135 @@ func TestRateLimitMiddleware_ClientIP_UntrustedProxyIgnoresHeaders(t *testing.T)
 	handler.ServeHTTP(rr, req)
 	if rr.Code != http.StatusTooManyRequests {
 		t.Errorf("second request: status = %d, want 429 (untrusted proxy, same peer IP)", rr.Code)
+	}
+}
+
+func TestRateLimitMiddleware_PropagatesFactoryError(t *testing.T) {
+	cfg := config.RateLimitConfig{
+		Enabled: true,
+		Default: config.RateLimitRule{Rate: 1, Burst: 1},
+	}
+	boom := errors.New("boom")
+	factory := func(string, float64, int) (shared.RateLimiter, error) { return nil, boom }
+
+	if _, err := shared.RateLimitMiddleware(cfg, testLog(), factory); !errors.Is(err, boom) {
+		t.Fatalf("RateLimitMiddleware error = %v, want wrapping %v", err, boom)
+	}
+}
+
+// fakeScopedLimiter is a minimal RateLimiter that shares one budget per
+// (scope, key) pair — standing in for a driver like redis.RateLimiter
+// that namespaces by scope on a shared backend, without needing a real
+// Redis connection in this package (which must not import
+// internal/infrastructure/redis — see RateLimiter's own doc comment).
+type fakeScopedLimiter struct {
+	scope  string
+	shared map[string]*int // shared across all limiter instances built by one factory
+	limit  int
+}
+
+func newFakeLimiterFactory() (shared.LimiterFactory, *[]string) {
+	var built []string
+	sharedBudgets := make(map[string]*int)
+	factory := func(scope string, _ float64, burst int) (shared.RateLimiter, error) {
+		built = append(built, scope)
+		return &fakeScopedLimiter{scope: scope, shared: sharedBudgets, limit: burst}, nil
+	}
+	return factory, &built
+}
+
+func (f *fakeScopedLimiter) Allow(key string) bool {
+	budgetKey := f.scope + "|" + key
+	n, ok := f.shared[budgetKey]
+	if !ok {
+		zero := 0
+		n = &zero
+		f.shared[budgetKey] = n
+	}
+	if *n >= f.limit {
+		return false
+	}
+	*n++
+	return true
+}
+
+func TestRateLimitMiddleware_UsesProvidedFactory(t *testing.T) {
+	cfg := config.RateLimitConfig{
+		Enabled: true,
+		Default: config.RateLimitRule{Rate: 1, Burst: 1},
+	}
+	factory, built := newFakeLimiterFactory()
+	mw, err := shared.RateLimitMiddleware(cfg, testLog(), factory)
+	if err != nil {
+		t.Fatalf("RateLimitMiddleware: %v", err)
+	}
+	if len(*built) != 1 || (*built)[0] != "default" {
+		t.Fatalf("factory scopes built = %v, want [\"default\"]", *built)
+	}
+	handler := mw(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+
+	rr := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	req.RemoteAddr = "10.0.0.9:1"
+	handler.ServeHTTP(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("first request via custom factory: status = %d", rr.Code)
+	}
+
+	rr = httptest.NewRecorder()
+	req = httptest.NewRequest(http.MethodGet, "/", nil)
+	req.RemoteAddr = "10.0.0.9:1"
+	handler.ServeHTTP(rr, req)
+	if rr.Code != http.StatusTooManyRequests {
+		t.Errorf("second request via custom factory: status = %d, want 429 (burst=1 exhausted)", rr.Code)
+	}
+}
+
+// TestRateLimitMiddleware_SharedFactoryBudgetActsLikeMultiInstance stands
+// in for the "memory vs redis across two simulated instances" comparison
+// the PR spec calls for: two independent RateLimitMiddleware instances
+// (standing in for two server replicas) built from factories sharing ONE
+// underlying budget map (standing in for one shared Redis backend) must
+// enforce a combined limit across both — the actual fix a per-process
+// memory limiter cannot provide, since each instance would otherwise get
+// its own independent budget and the effective limit would scale with
+// instance count.
+func TestRateLimitMiddleware_SharedFactoryBudgetActsLikeMultiInstance(t *testing.T) {
+	cfg := config.RateLimitConfig{
+		Enabled: true,
+		Default: config.RateLimitRule{Rate: 1, Burst: 2},
+	}
+	sharedBudgets := make(map[string]*int)
+	newInstance := func() shared.Middleware {
+		factory := func(scope string, _ float64, burst int) (shared.RateLimiter, error) {
+			return &fakeScopedLimiter{scope: scope, shared: sharedBudgets, limit: burst}, nil
+		}
+		mw, err := shared.RateLimitMiddleware(cfg, testLog(), factory)
+		if err != nil {
+			t.Fatalf("RateLimitMiddleware: %v", err)
+		}
+		return mw
+	}
+	handlerA := newInstance()(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(http.StatusOK) }))
+	handlerB := newInstance()(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(http.StatusOK) }))
+
+	ok := 0
+	for i := 0; i < 4; i++ {
+		h := handlerA
+		if i%2 == 1 {
+			h = handlerB
+		}
+		rr := httptest.NewRecorder()
+		req := httptest.NewRequest(http.MethodGet, "/", nil)
+		req.RemoteAddr = "10.0.0.5:1"
+		h.ServeHTTP(rr, req)
+		if rr.Code == http.StatusOK {
+			ok++
+		}
+	}
+	if ok != 2 {
+		t.Fatalf("admitted across both simulated instances = %d, want exactly 2 (burst=2 shared, not 2 per instance)", ok)
 	}
 }

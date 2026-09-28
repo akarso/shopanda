@@ -237,6 +237,9 @@ Responses always include `X-Content-Type-Options: nosniff`, `X-Frame-Options: DE
 | Variable | Required | Default | Purpose |
 | --- | --- | --- | --- |
 | `SHOPANDA_RATE_LIMIT_ENABLED` | No | `true` | Enable request rate limiting |
+| `SHOPANDA_RATE_LIMIT_DRIVER` | No | `memory` | `memory` (in-process, per-instance) or `redis` (PR-1041, shared sliding-window counter across instances) |
+| `SHOPANDA_RATE_LIMIT_REDIS_URL` | No (required if `driver=redis`) | empty | Redis URL for the shared limiter; falls back to `REDIS_URL` |
+| `SHOPANDA_RATE_LIMIT_REDIS_KEY_PREFIX` | No | empty | Redis key prefix for the shared limiter |
 | `SHOPANDA_RATE_LIMIT_DEFAULT_RATE` | No | `10` | Default tokens per second |
 | `SHOPANDA_RATE_LIMIT_DEFAULT_BURST` | No | `20` | Default burst size |
 | `SHOPANDA_AUTH_LOCKOUT_ENABLED` | No | `true` | Enable failed-login lockout (IP + account) |
@@ -245,6 +248,8 @@ Responses always include `X-Content-Type-Options: nosniff`, `X-Frame-Options: DE
 | `SHOPANDA_AUTH_LOCKOUT_WINDOW` | No | `15m` | Lockout counter TTL (Go duration) |
 
 Set `rate_limit.trusted_proxies` in YAML when behind a reverse proxy so both rate limiting and login lockout see the real client IP. Configure it as a list of CIDR (or bare IP) entries — see [`configs/config.example.yaml`](../../configs/config.example.yaml). There is no `SHOPANDA_RATE_LIMIT_TRUSTED_PROXIES` env mapping.
+
+**When to choose `rate_limit.driver: redis` over `memory`:** running more than one `serve` instance, with no gateway/WAF in front that already enforces a global HTTP ceiling. On `memory` (the default), each instance's token bucket is independent — the *effective* limit scales with instance count instead of staying fixed. `redis` shares one sliding-window counter across every instance pointed at the same backend, so the configured rate/burst is the actual ceiling regardless of instance count. Single-instance deployments, or any deployment already rate-limited at a gateway/WAF layer, have no reason to pay for the extra Redis round trip — stay on `memory`.
 
 **Multi-instance:** keep `SHOPANDA_AUTH_LOCKOUT_STORE=cache` (default) so counters share the configured `cache.driver` (postgres or redis) via atomic increment. `store=memory` must only be used for single-instance deployments.
 
