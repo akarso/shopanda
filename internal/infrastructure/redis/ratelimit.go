@@ -4,233 +4,433 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
+	"errors"
 	"fmt"
+	"runtime"
+	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 
+	"github.com/akarso/shopanda/internal/platform/ratelimit"
 	goredis "github.com/redis/go-redis/v9"
 )
 
-// checkTimeout bounds a single Allow call's Redis round trip explicitly,
-// rather than relying solely on the go-redis client's own implicit
-// default read/write timeouts (unlike ConnectURL's explicit 5s ping
-// timeout) — those defaults can be overridden via the connection URL, at
-// which point Allow's "fail open on error" guarantee would stop covering
-// a hang (only explicit errors), leaving the request path blocked for as
-// long as whatever timeout the URL configured, or indefinitely with none.
-const checkTimeout = 250 * time.Millisecond
-
-// slidingWindowScript admits a request iff fewer than ARGV[2] entries
-// remain in the window after pruning anything older than "now - ARGV[1]"
-// — a sliding window LOG (per-request timestamps in a ZSET), not a
-// fixed-window counter, so a client can never get 2x the limit by
-// timing requests around a window boundary the way a naive INCR+EXPIRE
-// counter allows. One round trip, atomic: two concurrent Allow calls
-// racing the same key always see a consistent ZCARD relative to each
-// other.
-//
-// Time comes from the Redis server itself (redis.call('TIME')), not
-// from the calling process's own clock. Every replica calling this
-// script — potentially with a different, skewed wall clock — must
-// agree on ONE timeline for scoring and pruning; if each replica used
-// its own local time instead, a replica whose clock runs ahead could
-// prune another replica's still-valid entries before they've actually
-// aged out from that replica's perspective, undercounting real admitted
-// traffic and letting more through than the configured shared burst —
-// exactly the failure mode a shared limiter exists to prevent. TIME
-// inside a script is Redis's own documented idiom for this; scripts
-// are replicated by effect (not by re-executing the script), so this
-// doesn't introduce nondeterminism between primary and replicas either.
-//
-// Scores are microseconds, not milliseconds: TIME's own resolution, and
-// fine enough to preserve the configured rate exactly for realistic
-// sub-millisecond windows (e.g. rate=2000/burst=1 needs a 500us window —
-// rounding that up to 1ms, this package's earlier approach, would have
-// silently halved the effective rate a client configured for exactly
-// that combination expected). Microsecond epoch timestamps (~1.79e15 as
-// of 2026) still fit a float64's exact-integer range (2^53 ≈ 9.007e15)
-// with more than two centuries of margin (until ~2255) — the same
-// reasoning that justified millisecond scores over nanosecond ones
-// originally, just one resolution step finer. PEXPIRE only accepts
-// millisecond TTLs (Redis has no finer-grained expiry command); that's
-// fine, because PEXPIRE here is purely a garbage-collection safety net
-// for an abandoned key, not part of the actual enforcement
-// (ZREMRANGEBYSCORE against exact microsecond scores does that) —
-// rounding its TTL UP to the next whole millisecond (never down: a TTL
-// shorter than the real window could reap the key, silently resetting
-// an in-progress window, before entries would otherwise have aged out
-// on their own merits) never affects correctness, only how promptly a
-// truly abandoned key gets reclaimed.
-//
-// KEYS[1] = the per-(scope,client-key) ZSET.
-// ARGV[1] = window duration in microseconds — the window start is
-//
-//	now - ARGV[1].
-//
-// ARGV[2] = limit (burst). ARGV[3] = this request's unique member.
-// ARGV[4] = the key's own PEXPIRE TTL in milliseconds — ceil(ARGV[1]/1000),
-//
-//	so an abandoned key doesn't outlive its own window's worth of
-//	inactivity.
+// slidingWindowScript uses Redis TIME so every instance shares one clock.
+// Scores are microseconds so sub-millisecond windows keep the configured
+// rate (e.g. 2000/s burst 1 → 500µs, not a rounded-up 1ms that halves it).
+// PEXPIRE is millisecond-only and is only GC for abandoned keys; it is
+// rounded up so a short TTL cannot reap an in-progress window.
+// Members are supplied by the caller and must be unique per process.
+// KEYS[1]=zset ARGV: window_us, limit, member, ttl_ms. Returns 1 or 0.
+// Requires Redis 5+ (effect replication is the default for scripts that
+// call TIME and then write).
 var slidingWindowScript = goredis.NewScript(`
-local now = redis.call('TIME')
-local nowUs = math.floor(tonumber(now[1]) * 1000000 + tonumber(now[2]))
-local windowStartUs = nowUs - tonumber(ARGV[1])
-redis.call('ZREMRANGEBYSCORE', KEYS[1], '-inf', windowStartUs)
-local count = redis.call('ZCARD', KEYS[1])
-if count < tonumber(ARGV[2]) then
-  redis.call('ZADD', KEYS[1], nowUs, ARGV[3])
-  redis.call('PEXPIRE', KEYS[1], ARGV[4])
-  return 1
+local key = KEYS[1]
+local t = redis.call('TIME')
+local now = math.floor(tonumber(t[1]) * 1000000 + tonumber(t[2]))
+local window = tonumber(ARGV[1])
+local limit = tonumber(ARGV[2])
+local member = ARGV[3]
+local ttl = tonumber(ARGV[4])
+redis.call('ZREMRANGEBYSCORE', key, '-inf', now - window)
+local count = redis.call('ZCARD', key)
+if count >= limit then
+  redis.call('PEXPIRE', key, ttl)
+  return 0
 end
-redis.call('PEXPIRE', KEYS[1], ARGV[4])
-return 0
+redis.call('ZADD', key, now, member)
+redis.call('PEXPIRE', key, ttl)
+return 1
 `)
 
-// RateLimiter is a Redis-backed sliding-window rate limiter (PR-1041):
-// unlike internal/platform/ratelimit.Limiter (in-process, independent per
-// replica), every replica sharing the same Redis backend enforces the
-// SAME limit — the actual fix for the gap RUNBOOK.md's "Rate limiting and
-// login lockout" section discloses: "limits are not shared across
-// instances" no longer holds once rate_limit.driver=redis.
-//
-// Rate/Burst (the existing token-bucket config shape, unchanged so a
-// deployment can switch drivers without redefining its limits) map onto
-// this algorithm as: allow up to Burst requests in any Burst/Rate-second
-// sliding window — the same peak burst size a token bucket of that
-// capacity allows, and the same long-run average rate (Burst requests /
-// (Burst/Rate) seconds = Rate requests/sec). One real behavioral
-// difference switching drivers with unchanged config does NOT preserve:
-// how soon a client can send one more request right after fully
-// consuming a burst. A token bucket refills continuously — e.g. the
-// default rate=10/burst=20 admits one more request ~100ms after
-// exhausting the burst. This sliding-window LOG instead requires the
-// OLDEST of the burst's entries to age out of the (here, 2-second)
-// window before admitting a new one — for a true simultaneous burst,
-// that's a ~2-second wait, not ~100ms, before the next admission. Both
-// converge to the same steady-state average rate; only burst-recovery
-// timing differs. See RUNBOOK.md's "Rate limiting and login lockout"
-// section before switching an existing deployment's driver with config
-// tuned around the memory driver's recovery behavior.
-type RateLimiter struct {
-	client *goredis.Client
-	log    Logger
-	prefix string // full key prefix: NormalizeKeyPrefix(keyPrefix) + "ratelimit:" + scope + ":"
-	limit  int64
-	// windowUs/pexpireMs — see slidingWindowScript's own doc comment for
-	// why the window is tracked in microseconds but the key's own TTL
-	// stays in milliseconds.
-	windowUs  int64
-	pexpireMs int64
-	// instanceID is a random value generated once per RateLimiter (i.e.
-	// per process, per scope — see NewRateLimiter) so ZSET members are
-	// unique across REPLICAS, not just within one process. seq alone is
-	// not enough: every replica's own counter starts at 0, so two
-	// replicas' Nth call to the same scope at the same microsecond would
-	// otherwise produce the identical member string, and the second
-	// ZADD would silently overwrite the first entry's score instead of
-	// adding a new one — undercounting real admitted traffic and
-	// defeating the whole point of a shared, cross-replica limit.
-	instanceID string
-	// seq disambiguates same-microsecond members within this instanceID;
-	// see instanceID's own comment for why it alone is not sufficient.
-	seq int64
+const (
+	slidingWindowAllow   = 200 * time.Millisecond
+	circuitMinRequests   = 20
+	circuitLowErrors     = 5
+	circuitBucketCount   = 20
+	circuitBucket        = 100 * time.Millisecond
+	limiterPoolCap       = 64
+	rateLimitKeyInfix    = "-rl:"
+	errReasonError       = "error"
+	errReasonCircuit     = "circuit_open"
+	errReasonPoolTimeout = "pool_timeout"
+)
+
+var (
+	circuitHold = 5 * time.Second
+
+	_ ratelimit.Factory = (*LimiterFactory)(nil)
+	_ ratelimit.Allow   = (*SlidingWindowLimiter)(nil)
+)
+
+// DefaultLimiterPoolSize is min(10*GOMAXPROCS, 64), at least 8.
+func DefaultLimiterPoolSize() int {
+	return limiterPoolSize(runtime.GOMAXPROCS(0))
 }
 
-// NewRateLimiter returns a RateLimiter enforcing rate requests/sec with a
-// burst capacity of burst, scoped under keyPrefix+"ratelimit:"+scope+":" —
-// scope must be unique per configured limit (e.g. "default", or
-// "route:"+pathPrefix for a per-route rule) so independent limits sharing
-// one Redis backend never collide on the same client key. client must be
-// non-nil (see ConnectURL/NewLazyClient); log may be nil (no-op).
-func NewRateLimiter(client *goredis.Client, keyPrefix, scope string, rate float64, burst int, log Logger) (*RateLimiter, error) {
-	if client == nil {
-		return nil, fmt.Errorf("redis ratelimit: nil client")
+func limiterPoolSize(gomaxprocs int) int {
+	n := 10 * gomaxprocs
+	if n < 8 {
+		return 8
 	}
-	if scope == "" {
-		return nil, fmt.Errorf("redis ratelimit: empty scope")
+	if n > limiterPoolCap {
+		return limiterPoolCap
 	}
-	if rate <= 0 || burst <= 0 {
-		return nil, fmt.Errorf("redis ratelimit: rate and burst must be positive (got rate=%v burst=%d)", rate, burst)
+	return n
+}
+
+// RateLimitPrefix turns a key prefix into a sibling rate-limit prefix.
+// "shopanda" / "shopanda:" → "shopanda-rl:". Empty becomes "shopanda-rl:".
+func RateLimitPrefix(cachePrefix string) string {
+	p := strings.TrimSuffix(NormalizeKeyPrefix(cachePrefix), ":")
+	if p == "" {
+		p = "shopanda"
 	}
-	window := time.Duration(float64(burst) / rate * float64(time.Second))
-	// windowUs, not window itself, is what the script actually uses —
-	// clamp THAT to at least 1, not window to at least 1ns. Only a
-	// window under 1 MICROSECOND (burst/rate ratios no realistic HTTP
-	// rate limit config approaches, e.g. rate=1,000,000/burst=1) can
-	// still truncate to 0 here. See slidingWindowScript's own doc
-	// comment for why microsecond, not millisecond, resolution: at
-	// millisecond resolution this same clamp previously turned a
-	// perfectly ordinary rate=2000/burst=1 config (a real 500us window)
-	// into an effective 1ms window — silently HALVING the configured
-	// rate instead of enforcing it, the opposite failure from the one
-	// this clamp exists to prevent (a window that truncates all the way
-	// to 0, silently disabling the limit entirely).
-	windowUs := window.Microseconds()
+	return p + rateLimitKeyInfix
+}
+
+// rateBucket is one 100ms slot in the 2s error-rate window.
+// Counters are atomic; the mutex is only taken when the slot rolls to a new period.
+type rateBucket struct {
+	mu   sync.Mutex
+	gen  atomic.Uint64
+	reqs atomic.Int64
+	errs atomic.Int64
+}
+
+func (b *rateBucket) add(period uint64, isErr bool) {
+	if b.gen.Load() != period {
+		b.roll(period)
+	}
+	b.reqs.Add(1)
+	if isErr {
+		b.errs.Add(1)
+	}
+}
+
+func (b *rateBucket) roll(period uint64) {
+	b.mu.Lock()
+	if b.gen.Load() != period {
+		b.reqs.Store(0)
+		b.errs.Store(0)
+		b.gen.Store(period)
+	}
+	b.mu.Unlock()
+}
+
+func (b *rateBucket) snapshot(nowPeriod uint64) (reqs, errs int64) {
+	// Three independent atomic loads: a rollover between them can mix
+	// gen/reqs/errs from adjacent periods. Close enough for a breaker
+	// threshold — do not add a mutex here; this is on the error path
+	// and a one-sample skew does not change the trip decision.
+	gen := b.gen.Load()
+	if gen == 0 || nowPeriod < gen || nowPeriod-gen >= circuitBucketCount {
+		return 0, 0
+	}
+	return b.reqs.Load(), b.errs.Load()
+}
+
+func (b *rateBucket) reset() {
+	b.mu.Lock()
+	b.gen.Store(0)
+	b.reqs.Store(0)
+	b.errs.Store(0)
+	b.mu.Unlock()
+}
+
+// LimiterFactory builds Redis sliding-window limiters that share one client.
+type LimiterFactory struct {
+	client     *goredis.Client
+	prefix     string
+	log        Logger
+	owns       bool
+	instanceID string
+	seq        atomic.Uint64
+	lastErrLog atomic.Int64
+	openUntil  atomic.Int64
+	probing    atomic.Int32
+	observeErr func(name, reason string)
+	buckets    [circuitBucketCount]rateBucket
+
+	localMu sync.Mutex
+	locals  []*ratelimit.Limiter
+}
+
+// NewLimiterFactory uses client as-is. prefix is rewritten to the sibling
+// rate-limit namespace. The caller owns client lifetime.
+func NewLimiterFactory(client *goredis.Client, cachePrefix string, log Logger) *LimiterFactory {
+	return &LimiterFactory{
+		client:     client,
+		prefix:     RateLimitPrefix(cachePrefix),
+		log:        log,
+		instanceID: newInstanceID(),
+	}
+}
+
+// NewOwnedLimiterFactory is NewLimiterFactory; Close() closes client.
+func NewOwnedLimiterFactory(client *goredis.Client, cachePrefix string, log Logger) *LimiterFactory {
+	f := NewLimiterFactory(client, cachePrefix, log)
+	f.owns = true
+	return f
+}
+
+// SetErrorObserver records backend failures. reason is error, circuit_open, or pool_timeout.
+func (f *LimiterFactory) SetErrorObserver(fn func(name, reason string)) {
+	f.observeErr = fn
+}
+
+// OpenCircuit starts the factory in the open state so requests use the
+// on_error fallback until a half-open probe succeeds. Used when Redis is
+// unreachable at process start and on_error is not closed.
+func (f *LimiterFactory) OpenCircuit() {
+	f.openUntil.Store(time.Now().Add(circuitHold).UnixNano())
+}
+
+func newInstanceID() string {
+	var b [8]byte
+	if _, err := rand.Read(b[:]); err != nil {
+		return fmt.Sprintf("t-%d", time.Now().UnixNano())
+	}
+	return hex.EncodeToString(b[:])
+}
+
+// New returns a sliding-window limiter. Window is burst/rate seconds
+// (microsecond scores in Redis) with capacity burst.
+func (f *LimiterFactory) New(spec ratelimit.Spec) ratelimit.Allow {
+	limit := spec.Burst
+	if limit <= 0 {
+		limit = 1
+	}
+	name := spec.Name
+	if name == "" {
+		name = "default"
+	}
+	window := ratelimit.Window(spec.Rate, spec.Burst)
+	useLocal := ratelimit.UseLocalFallback(spec.OnError)
+	var local *ratelimit.Limiter
+	if useLocal {
+		local = ratelimit.NewLimiter(spec.Rate, spec.Burst)
+		f.localMu.Lock()
+		f.locals = append(f.locals, local)
+		f.localMu.Unlock()
+	}
+	return &SlidingWindowLimiter{
+		factory:   f,
+		name:      name,
+		limit:     limit,
+		window:    window,
+		retry:     time.Duration(ratelimit.RetryAfterSeconds(window)) * time.Second,
+		local:     local,
+		failClose: ratelimit.FailClosed(spec.OnError),
+		useLocal:  useLocal,
+	}
+}
+
+// Client returns the Redis client this factory uses.
+func (f *LimiterFactory) Client() *goredis.Client { return f.client }
+
+// Close stops local fallback limiters and closes the Redis client when owned.
+func (f *LimiterFactory) Close() error {
+	f.localMu.Lock()
+	locals := f.locals
+	f.locals = nil
+	f.localMu.Unlock()
+	for _, l := range locals {
+		l.Close()
+	}
+	if f.owns && f.client != nil {
+		return f.client.Close()
+	}
+	return nil
+}
+
+// admitRedis reports whether this call should skip Redis. When the hold
+// has expired, exactly one caller probes (isProbe=true).
+func (f *LimiterFactory) admitRedis() (skip, isProbe bool) {
+	until := f.openUntil.Load()
+	if until == 0 {
+		return false, false
+	}
+	if time.Now().UnixNano() < until {
+		return true, false
+	}
+	if f.probing.CompareAndSwap(0, 1) {
+		return false, true
+	}
+	return true, false
+}
+
+func (f *LimiterFactory) releaseProbe() {
+	f.probing.Store(0)
+}
+
+func bucketPeriod(now time.Time) uint64 {
+	return uint64(now.UnixNano() / int64(circuitBucket))
+}
+
+func (f *LimiterFactory) note(isErr bool) {
+	period := bucketPeriod(time.Now())
+	f.buckets[period%circuitBucketCount].add(period, isErr)
+}
+
+func (f *LimiterFactory) windowCounts(nowPeriod uint64) (reqs, errs int64) {
+	for i := range f.buckets {
+		r, e := f.buckets[i].snapshot(nowPeriod)
+		reqs += r
+		errs += e
+	}
+	return reqs, errs
+}
+
+func (f *LimiterFactory) resetWindow() {
+	for i := range f.buckets {
+		f.buckets[i].reset()
+	}
+}
+
+func tripOnWindow(reqs, errs int64) bool {
+	if reqs >= circuitMinRequests {
+		return errs*2 >= reqs
+	}
+	// Quiet instances never fill 20 samples in 2s. Five errors and
+	// nothing else in the window is a total outage, not a BGSAVE blip
+	// (those have successes in the same window, so errs != reqs).
+	return errs >= circuitLowErrors && errs == reqs
+}
+
+func (f *LimiterFactory) recordSuccess(isProbe bool) {
+	if isProbe {
+		f.openUntil.Store(0)
+		f.resetWindow()
+		return
+	}
+	f.note(false)
+}
+
+func (f *LimiterFactory) recordError(name string, err error, reason string, isProbe bool) {
+	f.note(true)
+	reqs, errs := f.windowCounts(bucketPeriod(time.Now()))
+	if isProbe || tripOnWindow(reqs, errs) {
+		f.openUntil.Store(time.Now().Add(circuitHold).UnixNano())
+	}
+	if reason == "" {
+		reason = errReasonError
+	}
+	f.observe(name, reason)
+	if f.log == nil {
+		return
+	}
+	now := time.Now().UnixNano()
+	last := f.lastErrLog.Load()
+	if last != 0 && now-last < (10*time.Second).Nanoseconds() {
+		return
+	}
+	if !f.lastErrLog.CompareAndSwap(last, now) {
+		return
+	}
+	f.log.Error("ratelimit.redis.error", err, map[string]interface{}{
+		"limiter": name,
+		"reason":  reason,
+	})
+}
+
+func (f *LimiterFactory) recordCircuitOpen(name string) {
+	f.observe(name, errReasonCircuit)
+}
+
+func (f *LimiterFactory) observe(name, reason string) {
+	if f.observeErr != nil {
+		f.observeErr(name, reason)
+	}
+}
+
+func backendReason(err error) string {
+	if errors.Is(err, goredis.ErrPoolTimeout) {
+		return errReasonPoolTimeout
+	}
+	return errReasonError
+}
+
+// SlidingWindowLimiter admits at most limit requests per rolling window for
+// each key, using a Redis ZSET scored by Redis TIME.
+type SlidingWindowLimiter struct {
+	factory   *LimiterFactory
+	name      string
+	limit     int
+	window    time.Duration
+	retry     time.Duration
+	local     *ratelimit.Limiter
+	failClose bool
+	useLocal  bool
+}
+
+func (l *SlidingWindowLimiter) fallback(ctx context.Context, key string) ratelimit.Decision {
+	if l.useLocal && l.local != nil {
+		d := l.local.Allow(ctx, key)
+		d.BackendError = true
+		d.LocalFallback = true
+		return d
+	}
+	return ratelimit.Decision{
+		Allowed:      !l.failClose,
+		RetryAfter:   l.retry,
+		BackendError: true,
+	}
+}
+
+// Allow reports whether a request for key should be permitted.
+func (l *SlidingWindowLimiter) Allow(ctx context.Context, key string) ratelimit.Decision {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if ctx.Err() != nil {
+		// Client is gone. Deny without recording so a RST_STREAM cannot
+		// skip the limiter or drain a local fallback budget. Canceled
+		// tells middleware not to log or write a 429.
+		return ratelimit.Decision{RetryAfter: l.retry, Canceled: true}
+	}
+	skip, isProbe := l.factory.admitRedis()
+	if skip {
+		l.factory.recordCircuitOpen(l.name)
+		return l.fallback(ctx, key)
+	}
+	if isProbe {
+		defer l.factory.releaseProbe()
+	}
+	windowUs := l.window.Microseconds()
 	if windowUs < 1 {
 		windowUs = 1
 	}
-	// pexpireMs is windowUs rounded UP to whole milliseconds (ceiling,
-	// never floor — see slidingWindowScript's own doc comment for why a
-	// short TTL would be an actual correctness bug, not just a garbage
-	// collection nicety).
-	pexpireMs := (windowUs + 999) / 1000
-	if pexpireMs < 1 {
-		pexpireMs = 1
+	// PEXPIRE is millisecond-only; round up so TTL is never shorter than
+	// the real window.
+	ttlMs := (windowUs + 999) / 1000
+	if ttlMs < 1 {
+		ttlMs = 1
 	}
-	instanceID, err := randomInstanceID()
-	if err != nil {
-		return nil, fmt.Errorf("redis ratelimit: generate instance id: %w", err)
-	}
-	return &RateLimiter{
-		client:     client,
-		log:        log,
-		prefix:     NormalizeKeyPrefix(keyPrefix) + "ratelimit:" + scope + ":",
-		limit:      int64(burst),
-		windowUs:   windowUs,
-		pexpireMs:  pexpireMs,
-		instanceID: instanceID,
-	}, nil
-}
+	member := fmt.Sprintf("%s-%d", l.factory.instanceID, l.factory.seq.Add(1))
+	redisKey := l.factory.prefix + l.name + ":" + key
 
-// randomInstanceID returns 16 random hex characters (8 bytes,
-// crypto/rand) — enough entropy that two RateLimiter instances (i.e. two
-// replicas, or two independently-constructed limiters within one
-// process) collide with negligible probability, unlike a counter that
-// deterministically starts at the same value everywhere.
-func randomInstanceID() (string, error) {
-	var b [8]byte
-	if _, err := rand.Read(b[:]); err != nil {
-		return "", err
-	}
-	return hex.EncodeToString(b[:]), nil
-}
-
-// Allow reports whether a request for key should be permitted. On any
-// Redis error, Allow fails OPEN — logs a warning and returns true — the
-// same "transient store errors must not take down the request path"
-// reasoning auth.Service.reserveLockoutAttempt already applies to login
-// lockout: a rate limiter that fails closed turns a Redis blip into a
-// full outage, which is a strictly worse availability failure than the
-// theoretical abuse window an open-fail leaves.
-func (l *RateLimiter) Allow(key string) bool {
-	seq := atomic.AddInt64(&l.seq, 1)
-	member := fmt.Sprintf("%s-%d", l.instanceID, seq)
-
-	ctx, cancel := context.WithTimeout(context.Background(), checkTimeout)
+	// Detach from the request context so a client disconnect cannot abort
+	// the Redis call or look like a backend failure.
+	runCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), slidingWindowAllow)
 	defer cancel()
-	res, err := slidingWindowScript.Run(ctx, l.client,
-		[]string{l.prefix + key},
-		l.windowUs, l.limit, member, l.pexpireMs,
-	).Result()
+	n, err := slidingWindowScript.Run(runCtx, l.factory.client, []string{redisKey},
+		windowUs, l.limit, member, ttlMs).Int()
 	if err != nil {
-		if l.log != nil {
-			l.log.Error("redis.ratelimit.check_failed", err, map[string]interface{}{
-				"key": key,
-			})
+		// Timeout after RST_STREAM: do not trip the circuit or increment
+		// backend-error metrics. Redis itself did not succeed.
+		if ctx.Err() != nil {
+			return ratelimit.Decision{RetryAfter: l.retry, Canceled: true}
 		}
-		return true
+		l.factory.recordError(l.name, err, backendReason(err), isProbe)
+		return l.fallback(ctx, key)
 	}
-	n, _ := res.(int64)
-	return n == 1
+	// Redis succeeded: close a half-open probe even if the client is
+	// gone, so live traffic does not stay on the outage fallback.
+	l.factory.recordSuccess(isProbe)
+	if ctx.Err() != nil {
+		return ratelimit.Decision{RetryAfter: l.retry, Canceled: true}
+	}
+	return ratelimit.Decision{Allowed: n == 1, RetryAfter: l.retry}
 }

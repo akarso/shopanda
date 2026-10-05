@@ -17,6 +17,7 @@ type PrometheusRecorder struct {
 	checkoutResult *prometheus.CounterVec
 	jobFailures    *prometheus.CounterVec
 	webhookResult  *prometheus.CounterVec
+	rateLimitErr   *prometheus.CounterVec
 }
 
 // NewPrometheusRecorder creates a PrometheusRecorder and the registry its
@@ -45,6 +46,10 @@ func NewPrometheusRecorder() (*PrometheusRecorder, *prometheus.Registry) {
 			Name: "shopanda_webhook_deliveries_total",
 			Help: "Total outbound webhook delivery attempts, labelled by outcome (success/failed).",
 		}, []string{"outcome"}),
+		rateLimitErr: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: "shopanda_ratelimit_backend_errors_total",
+			Help: "Total remote rate-limit backend errors, labelled by limiter name and reason (error, circuit_open, or pool_timeout).",
+		}, []string{"limiter", "reason"}),
 	}
 	reg.MustRegister(
 		r.httpRequests,
@@ -52,6 +57,7 @@ func NewPrometheusRecorder() (*PrometheusRecorder, *prometheus.Registry) {
 		r.checkoutResult,
 		r.jobFailures,
 		r.webhookResult,
+		r.rateLimitErr,
 	)
 	return r, reg
 }
@@ -71,6 +77,13 @@ func (r *PrometheusRecorder) JobFailure(jobType string) {
 
 func (r *PrometheusRecorder) WebhookDelivery(outcome string) {
 	r.webhookResult.WithLabelValues(outcome).Inc()
+}
+
+func (r *PrometheusRecorder) RateLimitBackendError(limiter, reason string) {
+	if reason == "" {
+		reason = "error"
+	}
+	r.rateLimitErr.WithLabelValues(limiter, reason).Inc()
 }
 
 // Handler returns the Prometheus text-exposition scrape endpoint for reg.

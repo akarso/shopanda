@@ -617,8 +617,9 @@ func (m *mockMetricsRecorder) HTTPRequest(string, string, string, time.Duration)
 func (m *mockMetricsRecorder) CheckoutResult(outcome string) {
 	m.checkoutOutcomes = append(m.checkoutOutcomes, outcome)
 }
-func (m *mockMetricsRecorder) JobFailure(string)      {}
-func (m *mockMetricsRecorder) WebhookDelivery(string) {}
+func (m *mockMetricsRecorder) JobFailure(string)                    {}
+func (m *mockMetricsRecorder) WebhookDelivery(string)               {}
+func (m *mockMetricsRecorder) RateLimitBackendError(string, string) {}
 
 func TestWorkflow_WithMetrics_RecordsSuccess(t *testing.T) {
 	bus := testBus(t)

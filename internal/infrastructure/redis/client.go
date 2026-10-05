@@ -40,16 +40,29 @@ func ConnectURL(url string) (*goredis.Client, error) {
 	return client, nil
 }
 
-// NewLazyClient parses url and constructs a client WITHOUT an eager PING
-// — unlike ConnectURL, a malformed url still fails immediately (a real
-// config error), but a Redis server that's merely unreachable right now
-// does not. go-redis's own client already connects (and reconnects)
-// lazily on first real use, so this only changes when connectivity is
-// actually verified, not whether it eventually is. Use this for a
-// feature where "briefly can't reach Redis" should degrade at request
-// time (e.g. a caller that already fails open on a command error) rather
-// than block the whole process from starting.
-func NewLazyClient(url string) (*goredis.Client, error) {
+// ApplyLimiterClientOptions sets short I/O timeouts and disables retries so
+// a hung Redis cannot stall HTTP requests. poolSize 0 uses DefaultLimiterPoolSize.
+// Only redis:// and rediss:// single-node URLs are supported (not Cluster/Sentinel).
+func ApplyLimiterClientOptions(opts *goredis.Options, poolSize int) {
+	if opts == nil {
+		return
+	}
+	opts.ContextTimeoutEnabled = true
+	opts.DialTimeout = slidingWindowAllow
+	opts.ReadTimeout = slidingWindowAllow
+	opts.WriteTimeout = slidingWindowAllow
+	opts.PoolTimeout = slidingWindowAllow
+	// -1 disables retries; 0 is interpreted as the library default (3).
+	opts.MaxRetries = -1
+	if poolSize <= 0 {
+		poolSize = DefaultLimiterPoolSize()
+	}
+	opts.PoolSize = poolSize
+}
+
+// NewLimiterClient parses url and returns a client with limiter I/O options.
+// It does not ping. Only single-node redis:// / rediss:// URLs are accepted.
+func NewLimiterClient(url string, poolSize int) (*goredis.Client, error) {
 	if url == "" {
 		return nil, fmt.Errorf("redis: empty url")
 	}
@@ -57,5 +70,22 @@ func NewLazyClient(url string) (*goredis.Client, error) {
 	if err != nil {
 		return nil, fmt.Errorf("redis: parse url: %w", err)
 	}
+	ApplyLimiterClientOptions(opts, poolSize)
 	return goredis.NewClient(opts), nil
+}
+
+// PingLimiter PING the client with timeout.
+func PingLimiter(client *goredis.Client, timeout time.Duration) error {
+	if client == nil {
+		return fmt.Errorf("redis: nil client")
+	}
+	if timeout <= 0 {
+		timeout = 2 * time.Second
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
+	if err := client.Ping(ctx).Err(); err != nil {
+		return fmt.Errorf("redis: ping: %w", err)
+	}
+	return nil
 }

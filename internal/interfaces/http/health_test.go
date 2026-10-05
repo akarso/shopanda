@@ -295,6 +295,40 @@ func TestReadyProbeLimitMiddleware(t *testing.T) {
 	}
 }
 
+func TestReadyProbeLimitMiddleware_ClientIPRightmostUntrusted(t *testing.T) {
+	pingCount := 0
+	ready := shophttp.ReadyProbeLimitMiddleware([]string{"10.0.0.50"}, 1, 1, logger.NewWithWriter(io.Discard, "error"))(
+		http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			pingCount++
+			w.WriteHeader(http.StatusOK)
+		}),
+	)
+	root := shophttp.MountProbes(shophttp.HealthHandler(), ready, http.NotFoundHandler())
+
+	req := httptest.NewRequest(http.MethodGet, "/readyz", nil)
+	req.RemoteAddr = "10.0.0.50:8080"
+	req.Header.Add("X-Forwarded-For", "203.0.113.1")
+	req.Header.Add("X-Forwarded-For", "192.168.1.1, 10.0.0.50")
+	rec := httptest.NewRecorder()
+	root.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK || pingCount != 1 {
+		t.Fatalf("first: code=%d pings=%d", rec.Code, pingCount)
+	}
+
+	req2 := httptest.NewRequest(http.MethodGet, "/readyz", nil)
+	req2.RemoteAddr = "10.0.0.50:8080"
+	req2.Header.Add("X-Forwarded-For", "198.51.100.9")
+	req2.Header.Add("X-Forwarded-For", "192.168.1.1, 10.0.0.50")
+	rec = httptest.NewRecorder()
+	root.ServeHTTP(rec, req2)
+	if rec.Code != http.StatusTooManyRequests {
+		t.Fatalf("spoofed first line should still share the 192.168.1.1 bucket, got %d", rec.Code)
+	}
+	if pingCount != 1 {
+		t.Fatalf("rate-limited probe still pinged: %d", pingCount)
+	}
+}
+
 func TestMountProbes_HEADReadyz(t *testing.T) {
 	root := shophttp.MountProbes(
 		shophttp.HealthHandler(),

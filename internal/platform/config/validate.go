@@ -50,6 +50,10 @@ func normalizeAndValidate(cfg *Config) error {
 		return fmt.Errorf("config: unsupported cache.driver: %q (allowed: postgres, redis)", cfg.Cache.Driver)
 	}
 
+	if err := validateRateLimit(cfg); err != nil {
+		return err
+	}
+
 	switch cfg.Search.Engine {
 	case "postgres", "meilisearch":
 	default:
@@ -97,6 +101,53 @@ func normalizeAndValidate(cfg *Config) error {
 		return err
 	}
 
+	return nil
+}
+
+func validateRateLimit(cfg *Config) error {
+	cfg.RateLimit.Driver = strings.ToLower(strings.TrimSpace(cfg.RateLimit.Driver))
+	if cfg.RateLimit.Driver == "" {
+		cfg.RateLimit.Driver = "memory"
+	}
+	switch cfg.RateLimit.Driver {
+	case "memory", "redis":
+	default:
+		return fmt.Errorf("config: unsupported rate_limit.driver: %q (allowed: memory, redis)", cfg.RateLimit.Driver)
+	}
+
+	cfg.RateLimit.OnError = strings.ToLower(strings.TrimSpace(cfg.RateLimit.OnError))
+	if cfg.RateLimit.OnError == "" {
+		cfg.RateLimit.OnError = "open"
+	}
+	switch cfg.RateLimit.OnError {
+	case "open", "closed", "local":
+	default:
+		return fmt.Errorf("config: unsupported rate_limit.on_error: %q (allowed: open, closed, local)", cfg.RateLimit.OnError)
+	}
+	for i := range cfg.RateLimit.PerRoute {
+		r := &cfg.RateLimit.PerRoute[i]
+		r.OnError = strings.ToLower(strings.TrimSpace(r.OnError))
+		if r.OnError == "" {
+			continue
+		}
+		switch r.OnError {
+		case "open", "closed", "local":
+		default:
+			return fmt.Errorf("config: unsupported rate_limit.per_route[%d].on_error: %q (allowed: open, closed, local)", i, r.OnError)
+		}
+	}
+
+	if cfg.RateLimit.Enabled && cfg.RateLimit.Driver == "redis" {
+		if cfg.RateLimit.RedisURL(cfg.Cache.Redis.URL) == "" {
+			return fmt.Errorf("config: rate_limit.driver=redis requires rate_limit.redis.url or cache.redis.url (or SHOPANDA_RATE_LIMIT_REDIS_URL / REDIS_URL / SHOPANDA_CACHE_REDIS_URL)")
+		}
+		if cfg.RateLimit.Redis.PoolSize < 0 {
+			return fmt.Errorf("config: rate_limit.redis.pool_size must be >= 0 (0 uses min(10*GOMAXPROCS, 64))")
+		}
+		if cfg.Cache.Driver == "redis" && strings.TrimSpace(cfg.Cache.Redis.KeyPrefix) == "" {
+			return fmt.Errorf("config: cache.redis.key_prefix must be non-empty when cache.driver=redis and rate_limit.driver=redis (empty prefix makes cache SCAN * delete limiter keys)")
+		}
+	}
 	return nil
 }
 

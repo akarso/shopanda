@@ -237,21 +237,27 @@ Responses always include `X-Content-Type-Options: nosniff`, `X-Frame-Options: DE
 | Variable | Required | Default | Purpose |
 | --- | --- | --- | --- |
 | `SHOPANDA_RATE_LIMIT_ENABLED` | No | `true` | Enable request rate limiting |
-| `SHOPANDA_RATE_LIMIT_DRIVER` | No | `memory` | `memory` (in-process, per-instance) or `redis` (PR-1041, shared sliding-window counter across instances) |
-| `SHOPANDA_RATE_LIMIT_REDIS_URL` | No (required if `driver=redis`) | empty | Redis URL for the shared limiter; falls back to `REDIS_URL` |
-| `SHOPANDA_RATE_LIMIT_REDIS_KEY_PREFIX` | No | empty | Redis key prefix for the shared limiter |
-| `SHOPANDA_RATE_LIMIT_DEFAULT_RATE` | No | `10` | Default tokens per second |
-| `SHOPANDA_RATE_LIMIT_DEFAULT_BURST` | No | `20` | Default burst size |
+| `SHOPANDA_RATE_LIMIT_DRIVER` | No | `memory` | `memory` (per-process token bucket) or `redis` (shared sliding window). Trimmed/lowercased. |
+| `SHOPANDA_RATE_LIMIT_ON_ERROR` | No | `open` | `open` (admit), `closed` (deny), or `local` (in-process fallback). `/readyz` is always in-process. |
+| `SHOPANDA_RATE_LIMIT_DEFAULT_RATE` | No | `10` | Default tokens per second (both drivers). |
+| `SHOPANDA_RATE_LIMIT_DEFAULT_BURST` | No | `20` | Default burst size (redis window = burst/rate seconds) |
+| `SHOPANDA_RATE_LIMIT_REDIS_URL` | No | cache Redis URL | Dedicated limiter Redis URL. Overrides `rate_limit.redis.url`. If both this and YAML url are empty, `cache.redis.url` is used. `REDIS_URL` fills cache (not the limiter) when cache URL is also empty. |
+| `SHOPANDA_RATE_LIMIT_REDIS_KEY_PREFIX` | No | cache prefix or `shopanda` | Limiter key prefix (`-rl:` is appended). Independent of `cache.redis.key_prefix`. |
+| `SHOPANDA_RATE_LIMIT_REDIS_POOL_SIZE` | No | `min(10*GOMAXPROCS, 64)` | Dedicated limiter pool size. `0` in YAML uses the default (at least 8, cap 64). |
 | `SHOPANDA_AUTH_LOCKOUT_ENABLED` | No | `true` | Enable failed-login lockout (IP + account) |
 | `SHOPANDA_AUTH_LOCKOUT_STORE` | No | `cache` | `cache` (shared via cache driver) or `memory` (single-instance only) |
 | `SHOPANDA_AUTH_LOCKOUT_MAX_FAILURES` | No | `10` | Failures before temporary lockout |
 | `SHOPANDA_AUTH_LOCKOUT_WINDOW` | No | `15m` | Lockout counter TTL (Go duration) |
 
-Set `rate_limit.trusted_proxies` in YAML when behind a reverse proxy so both rate limiting and login lockout see the real client IP. Configure it as a list of CIDR (or bare IP) entries — see [`configs/config.example.yaml`](../../configs/config.example.yaml). There is no `SHOPANDA_RATE_LIMIT_TRUSTED_PROXIES` env mapping.
+Set `rate_limit.trusted_proxies` in YAML when behind a reverse proxy so both rate limiting and login lockout see the real client IP. **List every hop** (load balancer and CDN/edge ranges). ClientIP is the rightmost untrusted `X-Forwarded-For` hop across all header lines; omitting the CDN makes every shopper behind that edge share one rate-limit **and** one auth-lockout key. Hops may include a port (`1.2.3.4:5678`, `[2001:db8::1]:443`) — Azure Application Gateway and some other proxies append one. Configure it as a list of CIDR (or bare IP) entries — see [`configs/config.example.yaml`](../../configs/config.example.yaml). There is no `SHOPANDA_RATE_LIMIT_TRUSTED_PROXIES` env mapping.
 
-**When to choose `rate_limit.driver: redis` over `memory`:** running more than one `serve` instance, with no gateway/WAF in front that already enforces a global HTTP ceiling. On `memory` (the default), each instance's token bucket is independent — the *effective* limit scales with instance count instead of staying fixed. `redis` shares one sliding-window counter across every instance pointed at the same backend, so the configured rate/burst is the actual ceiling regardless of instance count. Single-instance deployments, or any deployment already rate-limited at a gateway/WAF layer, have no reason to pay for the extra Redis round trip — stay on `memory`.
+**When to choose `redis` over `memory`:** use `SHOPANDA_RATE_LIMIT_DRIVER=redis` when more than one `serve` instance is reachable without a gateway/WAF that already enforces a global HTTP ceiling. `memory` is correct for a single instance or when the edge already rate-limits. Requires Redis 5+ and `rate_limit.redis.url` or `cache.redis.url` (single-node `redis://` / `rediss://` only — Cluster and Sentinel are not supported). Serve opens a **dedicated** limiter client (200ms I/O, no retries, pool `min(10*GOMAXPROCS, 64)` unless `rate_limit.redis.pool_size` is set) — it does not share the cache pool. The dedicated URL (`rate_limit.redis.url` / `SHOPANDA_RATE_LIMIT_REDIS_URL`) wins over cache Redis so an existing limiter backend is not silently retargeted. Set `rate_limit.redis.key_prefix` (or `SHOPANDA_RATE_LIMIT_REDIS_KEY_PREFIX`) to name limiter keys; otherwise the cache prefix or `shopanda` is used. When `cache.driver=redis`, `cache.redis.key_prefix` must be non-empty. Same rate/burst on redis is not the same as the memory token bucket: after a simultaneous burst, redis waits for the oldest entry to age out of the window (~2s at the default 10/20) instead of refilling ~100ms. `enabled: false` does not dial Redis. If Redis is unreachable at startup and **global** `on_error` is not `closed`, serve logs `ratelimit.redis.unavailable` (and `fail_closed_routes` when a `per_route` is `closed`) and starts with the circuit open instead of exiting. Per-route `closed` still 429s for the 5s hold. This does **not** skip cache startup: `cache.driver=redis` still PINGs via `ConnectURL` and fails the process if Redis is down. Plan fleet connections as limiter pool + cache pool per instance (see RUNBOOK).
 
-**Multi-instance:** keep `SHOPANDA_AUTH_LOCKOUT_STORE=cache` (default) so counters share the configured `cache.driver` (postgres or redis) via atomic increment. `store=memory` must only be used for single-instance deployments.
+**Auth vs general vs probes:** the example used to cap `/api/v1/auth` at 5/s burst 10. It now tightens login (burst 2), `/login/mfa` (burst 5), register, and password-reset with `on_error: local`, and leaves `/auth/me` and `/logout` on the default 10/s burst 20. Those prefixes are not in `defaults()`. Regenerating from the example is a real policy change (tighter login, looser me/logout). `/readyz` always uses an in-process limiter. `/healthz` is unmetered. Do not put payment webhooks on a tighter `per_route`. During a Redis outage, `local` is per-process — N instances admit N× the configured budget.
+
+**Redis errors:** default `on_error=open`. Each Redis check is bounded at 200ms by the dedicated client. An already-cancelled request writes status 499 (no 429 body, no `ratelimit.rejected` log, no local-fallback consume, no circuit trip) so HTTP metrics record 4xx instead of 2xx. Redis I/O is detached from the request context. The circuit trips when ≥20 requests in 2s have ≥50% errors, **or** when ≥5 errors land within 2s with no successes (slower than that just pays 200ms each). Then it holds 5s and one request probes. A failed probe starts a new 5s hold. At ~3–9 req/s a 300ms stall with no successes in the same 2s can trip; at high RPS successes in the window keep a `BGSAVE` stall from tripping. Watch `shopanda_ratelimit_backend_errors_total` (`reason=error`, `circuit_open`, or `pool_timeout`) — sum over `limiter` for a factory-wide outage. The memory driver ignores request cancellation (HTTP/1.1 half-close is counted); redis does not.
+
+**Multi-instance lockout:** keep `SHOPANDA_AUTH_LOCKOUT_STORE=cache` (default) so counters share the configured `cache.driver` (postgres or redis) via atomic increment. `store=memory` must only be used for single-instance deployments.
 
 ### Metrics (Prometheus)
 
@@ -882,7 +888,7 @@ Distinguish **liveness** from **readiness**:
 | Probe | Endpoint | Meaning |
 | --- | --- | --- |
 | Liveness | `GET`/`HEAD` `/healthz` | Process is up (static 200, `Cache-Control: no-store`). Docker image `HEALTHCHECK` uses this. Mounted outside store/auth middleware. |
-| Readiness | `GET`/`HEAD` `/readyz` | Database ping succeeds within ~2s → 200; else **503**. Dedicated per-IP rate limit (defaults: same as `rate_limit.default`). Prefer restricting probe exposure via network policy / internal listener — do not leave an unauthenticated DB-ping endpoint fully public without a gateway. |
+| Readiness | `GET`/`HEAD` `/readyz` | Database ping succeeds within ~2s → 200; else **503**. Dedicated **in-process** per-IP rate limit (defaults: same as `rate_limit.default`; never Redis — protects this instance's DB pool). Prefer restricting probe exposure via network policy / internal listener — do not leave an unauthenticated DB-ping endpoint fully public without a gateway. |
 
 ```bash
 curl -f http://127.0.0.1:8080/healthz

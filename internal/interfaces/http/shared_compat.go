@@ -25,6 +25,7 @@ import (
 	"github.com/akarso/shopanda/internal/platform/config"
 	"github.com/akarso/shopanda/internal/platform/logger"
 	"github.com/akarso/shopanda/internal/platform/metrics"
+	"github.com/akarso/shopanda/internal/platform/ratelimit"
 )
 
 // --- Router ---
@@ -98,11 +99,12 @@ func CacheControlMiddleware(noCachePrefixes []string) Middleware {
 
 // --- Rate limiting ---
 
-type RateLimiter = shared.RateLimiter
-type LimiterFactory = shared.LimiterFactory
+func RateLimitMiddleware(cfg config.RateLimitConfig, log logger.Logger) Middleware {
+	return shared.RateLimitMiddleware(cfg, log)
+}
 
-func RateLimitMiddleware(cfg config.RateLimitConfig, log logger.Logger, newLimiter LimiterFactory) (Middleware, error) {
-	return shared.RateLimitMiddleware(cfg, log, newLimiter)
+func RateLimitMiddlewareWithFactory(cfg config.RateLimitConfig, log logger.Logger, factory ratelimit.Factory) Middleware {
+	return shared.RateLimitMiddlewareWithFactory(cfg, log, factory)
 }
 
 // parseTrustedProxies, clientIP, writeRateLimited are used directly by
@@ -114,6 +116,10 @@ func parseTrustedProxies(proxies []string) []*net.IPNet { return shared.ParseTru
 func clientIP(r *http.Request, trusted []*net.IPNet) string { return shared.ClientIP(r, trusted) }
 
 func writeRateLimited(w http.ResponseWriter) { shared.WriteRateLimited(w) }
+
+func writeRateLimitedAfter(w http.ResponseWriter, seconds int) {
+	shared.WriteRateLimitedAfter(w, seconds)
+}
 
 // --- CSRF ---
 

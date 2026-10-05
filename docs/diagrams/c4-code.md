@@ -564,9 +564,13 @@ classDiagram
     }
     class RateLimitMiddleware {
         <<middleware>>
-        -defaultLimiter *Limiter
+        -defaultLimiter Allow
         -routeLimiters []routeLimiter
         +ServeHTTP(w, r)
+    }
+    class Allow {
+        <<interface>>
+        +Allow(ctx, key) Decision
     }
     class Limiter {
         -mu sync.Mutex
@@ -574,7 +578,14 @@ classDiagram
         -rate float64
         -burst int
         +NewLimiter(rate, burst) *Limiter
-        +Allow(key) bool
+        +Allow(ctx, key) Decision
+    }
+    class SlidingWindowLimiter {
+        -factory *LimiterFactory
+        -name string
+        -limit int
+        -window Duration
+        +Allow(ctx, key) Decision
     }
 
     class SearchHandler {
@@ -622,7 +633,9 @@ classDiagram
     StoreAdminHandler --> StoreRepository : uses
     StoreMiddleware --> StoreRepository : resolves store by domain
     StoreMiddleware --> StoreAdminHandler : passes resolved store context
-    RateLimitMiddleware --> Limiter : checks per-IP token buckets
+    Allow <|.. Limiter : memory driver
+    Allow <|.. SlidingWindowLimiter : redis driver
+    RateLimitMiddleware --> Allow : checks per-IP budget
     ConfigRepository <|.. PostgresConfigRepo : implements
     Templates --> Message : produces
     PricingStep <|.. BasePriceStep : implements

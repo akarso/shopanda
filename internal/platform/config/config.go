@@ -106,27 +106,47 @@ func (w WebhooksConfig) Secret(provider string) string {
 
 // RateLimitConfig holds rate limiting settings.
 type RateLimitConfig struct {
-	Enabled bool `yaml:"enabled"`
-	// Driver selects the limiter backend: "memory" (default) — the
-	// existing in-process token bucket, correct for one instance but
-	// independent per replica — or "redis" — a shared sliding-window
-	// counter (PR-1041), correct across every replica. See RUNBOOK.md's
-	// "Rate limiting and login lockout" section.
+	Enabled        bool                 `yaml:"enabled"`
 	Driver         string               `yaml:"driver"`
-	Redis          RedisRateLimitConfig `yaml:"redis"`
+	OnError        string               `yaml:"on_error"`
 	Default        RateLimitRule        `yaml:"default"`
 	PerRoute       []RouteRateLimitRule `yaml:"per_route"`
 	TrustedProxies []string             `yaml:"trusted_proxies"`
+	Redis          RateLimitRedisConfig `yaml:"redis"`
 }
 
-// RedisRateLimitConfig holds Redis connection settings for
-// rate_limit.driver=redis.
-type RedisRateLimitConfig struct {
+// RateLimitRedisConfig names limiter keys and the dedicated Redis pool
+// when driver=redis. Independent of cache.redis.key_prefix so postgres-
+// cache deployments do not have to set a cache prefix just to enable
+// the limiter. Only single-node redis:// URLs are supported.
+type RateLimitRedisConfig struct {
 	URL       string `yaml:"url"`
 	KeyPrefix string `yaml:"key_prefix"`
+	PoolSize  int    `yaml:"pool_size"`
 }
 
-// RateLimitRule defines a token-bucket rate: Rate tokens per second, Burst max.
+// RedisURL is rate_limit.redis.url, else cacheRedisURL. Empty if neither is set.
+func (c RateLimitConfig) RedisURL(cacheRedisURL string) string {
+	if u := strings.TrimSpace(c.Redis.URL); u != "" {
+		return u
+	}
+	return strings.TrimSpace(cacheRedisURL)
+}
+
+// RedisKeyPrefix is rate_limit.redis.key_prefix, else cachePrefix, else "shopanda".
+func (c RateLimitConfig) RedisKeyPrefix(cachePrefix string) string {
+	if p := strings.TrimSpace(c.Redis.KeyPrefix); p != "" {
+		return p
+	}
+	if p := strings.TrimSpace(cachePrefix); p != "" {
+		return p
+	}
+	return "shopanda"
+}
+
+// RateLimitRule defines a rate/burst pair. Both drivers use Rate tokens
+// per second and Burst as the cap. The redis driver maps this to a sliding
+// window of burst/rate seconds (microsecond scores) with capacity burst.
 type RateLimitRule struct {
 	Rate  float64 `yaml:"rate"`
 	Burst int     `yaml:"burst"`
@@ -137,6 +157,7 @@ type RouteRateLimitRule struct {
 	PathPrefix string  `yaml:"path_prefix"`
 	Rate       float64 `yaml:"rate"`
 	Burst      int     `yaml:"burst"`
+	OnError    string  `yaml:"on_error"`
 }
 
 type ServerConfig struct {
@@ -794,6 +815,7 @@ func defaults() Config {
 		RateLimit: RateLimitConfig{
 			Enabled: true,
 			Driver:  "memory",
+			OnError: "open",
 			Default: RateLimitRule{Rate: 10, Burst: 20},
 		},
 		Metrics: MetricsConfig{
@@ -1012,9 +1034,6 @@ func applyEnv(cfg *Config) {
 		if cfg.Queue.Redis.URL == "" {
 			cfg.Queue.Redis.URL = v
 		}
-		if cfg.RateLimit.Redis.URL == "" {
-			cfg.RateLimit.Redis.URL = v
-		}
 	}
 	if v := os.Getenv("SHOPANDA_QUEUE_REDIS_URL"); v != "" {
 		cfg.Queue.Redis.URL = v
@@ -1209,6 +1228,12 @@ func applyEnv(cfg *Config) {
 	if v := os.Getenv("SHOPANDA_RATE_LIMIT_ENABLED"); v != "" {
 		cfg.RateLimit.Enabled = parseEnvBool(v)
 	}
+	if v := os.Getenv("SHOPANDA_RATE_LIMIT_DRIVER"); v != "" {
+		cfg.RateLimit.Driver = v
+	}
+	if v := os.Getenv("SHOPANDA_RATE_LIMIT_ON_ERROR"); v != "" {
+		cfg.RateLimit.OnError = v
+	}
 	if v := os.Getenv("SHOPANDA_RATE_LIMIT_DEFAULT_RATE"); v != "" {
 		if f, err := strconv.ParseFloat(v, 64); err == nil && f > 0 {
 			cfg.RateLimit.Default.Rate = f
@@ -1219,14 +1244,16 @@ func applyEnv(cfg *Config) {
 			cfg.RateLimit.Default.Burst = b
 		}
 	}
-	if v := os.Getenv("SHOPANDA_RATE_LIMIT_DRIVER"); v != "" {
-		cfg.RateLimit.Driver = v
-	}
 	if v := os.Getenv("SHOPANDA_RATE_LIMIT_REDIS_URL"); v != "" {
 		cfg.RateLimit.Redis.URL = v
 	}
 	if v := os.Getenv("SHOPANDA_RATE_LIMIT_REDIS_KEY_PREFIX"); v != "" {
 		cfg.RateLimit.Redis.KeyPrefix = v
+	}
+	if v := os.Getenv("SHOPANDA_RATE_LIMIT_REDIS_POOL_SIZE"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 {
+			cfg.RateLimit.Redis.PoolSize = n
+		}
 	}
 	if v := os.Getenv("SHOPANDA_DEV_EMBED_SCHEDULER"); v != "" {
 		if b, err := strconv.ParseBool(v); err == nil {
@@ -1393,10 +1420,12 @@ func flatten(cfg *Config) map[string]string {
 	}
 	m["rate_limit.enabled"] = strconv.FormatBool(cfg.RateLimit.Enabled)
 	m["rate_limit.driver"] = cfg.RateLimit.Driver
-	m["rate_limit.redis.url"] = cfg.RateLimit.Redis.URL
-	m["rate_limit.redis.key_prefix"] = cfg.RateLimit.Redis.KeyPrefix
+	m["rate_limit.on_error"] = cfg.RateLimit.OnError
 	m["rate_limit.default.rate"] = strconv.FormatFloat(cfg.RateLimit.Default.Rate, 'f', -1, 64)
 	m["rate_limit.default.burst"] = strconv.Itoa(cfg.RateLimit.Default.Burst)
+	m["rate_limit.redis.url"] = cfg.RateLimit.Redis.URL
+	m["rate_limit.redis.key_prefix"] = cfg.RateLimit.Redis.KeyPrefix
+	m["rate_limit.redis.pool_size"] = strconv.Itoa(cfg.RateLimit.Redis.PoolSize)
 	m["metrics.enabled"] = strconv.FormatBool(cfg.Metrics.Enabled)
 	m["metrics.listen"] = cfg.Metrics.Listen
 	m["tracing.enabled"] = strconv.FormatBool(cfg.Tracing.Enabled)

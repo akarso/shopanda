@@ -46,6 +46,12 @@ func TestLoad_Defaults(t *testing.T) {
 	if !cfg.RateLimit.Enabled {
 		t.Error("RateLimit.Enabled = false, want true by default")
 	}
+	if cfg.RateLimit.Driver != "memory" {
+		t.Errorf("RateLimit.Driver = %q, want memory by default", cfg.RateLimit.Driver)
+	}
+	if cfg.RateLimit.OnError != "open" {
+		t.Errorf("RateLimit.OnError = %q, want open by default", cfg.RateLimit.OnError)
+	}
 	if cfg.RateLimit.Default.Rate != 10 || cfg.RateLimit.Default.Burst != 20 {
 		t.Errorf("RateLimit.Default = {%v,%d}, want {10,20}", cfg.RateLimit.Default.Rate, cfg.RateLimit.Default.Burst)
 	}
@@ -871,15 +877,22 @@ server:
 func TestRateLimitConfig_FromYAML(t *testing.T) {
 	withTestBaseURL(t)
 	yaml := `
+cache:
+  redis:
+    url: redis://127.0.0.1:6379
+    key_prefix: shopanda
 rate_limit:
   enabled: true
+  driver: redis
+  on_error: closed
   default:
     rate: 50
     burst: 100
   per_route:
-    - path_prefix: "/api/v1/auth"
+    - path_prefix: "/api/v1/auth/login"
       rate: 5
       burst: 10
+      on_error: closed
 `
 	path := writeYAML(t, yaml)
 
@@ -891,6 +904,12 @@ rate_limit:
 	if !cfg.RateLimit.Enabled {
 		t.Error("RateLimit.Enabled = false, want true")
 	}
+	if cfg.RateLimit.Driver != "redis" {
+		t.Errorf("Driver = %q, want redis", cfg.RateLimit.Driver)
+	}
+	if cfg.RateLimit.OnError != "closed" {
+		t.Errorf("OnError = %q, want closed", cfg.RateLimit.OnError)
+	}
 	if cfg.RateLimit.Default.Rate != 50 {
 		t.Errorf("Default.Rate = %v, want 50", cfg.RateLimit.Default.Rate)
 	}
@@ -901,8 +920,8 @@ rate_limit:
 		t.Fatalf("PerRoute len = %d, want 1", len(cfg.RateLimit.PerRoute))
 	}
 	pr := cfg.RateLimit.PerRoute[0]
-	if pr.PathPrefix != "/api/v1/auth" {
-		t.Errorf("PerRoute[0].PathPrefix = %q, want %q", pr.PathPrefix, "/api/v1/auth")
+	if pr.PathPrefix != "/api/v1/auth/login" {
+		t.Errorf("PerRoute[0].PathPrefix = %q, want %q", pr.PathPrefix, "/api/v1/auth/login")
 	}
 	if pr.Rate != 5 {
 		t.Errorf("PerRoute[0].Rate = %v, want 5", pr.Rate)
@@ -917,8 +936,15 @@ func TestRateLimitConfig_EnvOverlay(t *testing.T) {
 	path := writeYAML(t, "")
 
 	t.Setenv("SHOPANDA_RATE_LIMIT_ENABLED", "true")
+	t.Setenv("SHOPANDA_RATE_LIMIT_DRIVER", "redis")
+	t.Setenv("SHOPANDA_RATE_LIMIT_ON_ERROR", "closed")
+	t.Setenv("SHOPANDA_CACHE_REDIS_URL", "redis://127.0.0.1:6379")
+	t.Setenv("SHOPANDA_CACHE_REDIS_KEY_PREFIX", "shopanda")
 	t.Setenv("SHOPANDA_RATE_LIMIT_DEFAULT_RATE", "25")
 	t.Setenv("SHOPANDA_RATE_LIMIT_DEFAULT_BURST", "50")
+	t.Setenv("SHOPANDA_RATE_LIMIT_REDIS_KEY_PREFIX", "limiter")
+	t.Setenv("SHOPANDA_RATE_LIMIT_REDIS_POOL_SIZE", "32")
+	t.Setenv("SHOPANDA_RATE_LIMIT_REDIS_URL", "redis://limiter:6379")
 
 	cfg, err := loadCfg(t, path)
 	if err != nil {
@@ -928,11 +954,26 @@ func TestRateLimitConfig_EnvOverlay(t *testing.T) {
 	if !cfg.RateLimit.Enabled {
 		t.Error("RateLimit.Enabled = false, want true from env")
 	}
+	if cfg.RateLimit.Driver != "redis" {
+		t.Errorf("Driver = %q, want redis from env", cfg.RateLimit.Driver)
+	}
+	if cfg.RateLimit.OnError != "closed" {
+		t.Errorf("OnError = %q, want closed from env", cfg.RateLimit.OnError)
+	}
 	if cfg.RateLimit.Default.Rate != 25 {
 		t.Errorf("Default.Rate = %v, want 25 from env", cfg.RateLimit.Default.Rate)
 	}
 	if cfg.RateLimit.Default.Burst != 50 {
 		t.Errorf("Default.Burst = %d, want 50 from env", cfg.RateLimit.Default.Burst)
+	}
+	if cfg.RateLimit.Redis.KeyPrefix != "limiter" {
+		t.Errorf("Redis.KeyPrefix = %q, want limiter from env", cfg.RateLimit.Redis.KeyPrefix)
+	}
+	if cfg.RateLimit.Redis.PoolSize != 32 {
+		t.Errorf("Redis.PoolSize = %d, want 32 from env", cfg.RateLimit.Redis.PoolSize)
+	}
+	if cfg.RateLimit.Redis.URL != "redis://limiter:6379" {
+		t.Errorf("Redis.URL = %q, want redis://limiter:6379 from env", cfg.RateLimit.Redis.URL)
 	}
 }
 
@@ -955,11 +996,26 @@ rate_limit:
 	if got := Get("rate_limit.enabled"); got != "true" {
 		t.Errorf("Get(rate_limit.enabled) = %q, want %q", got, "true")
 	}
+	if got := Get("rate_limit.driver"); got != "memory" {
+		t.Errorf("Get(rate_limit.driver) = %q, want %q", got, "memory")
+	}
+	if got := Get("rate_limit.on_error"); got != "open" {
+		t.Errorf("Get(rate_limit.on_error) = %q, want %q", got, "open")
+	}
 	if got := Get("rate_limit.default.rate"); got != "10" {
 		t.Errorf("Get(rate_limit.default.rate) = %q, want %q", got, "10")
 	}
 	if got := Get("rate_limit.default.burst"); got != "20" {
 		t.Errorf("Get(rate_limit.default.burst) = %q, want %q", got, "20")
+	}
+	if got := Get("rate_limit.redis.key_prefix"); got != "" {
+		t.Errorf("Get(rate_limit.redis.key_prefix) = %q, want empty", got)
+	}
+	if got := Get("rate_limit.redis.url"); got != "" {
+		t.Errorf("Get(rate_limit.redis.url) = %q, want empty", got)
+	}
+	if got := Get("rate_limit.redis.pool_size"); got != "0" {
+		t.Errorf("Get(rate_limit.redis.pool_size) = %q, want 0", got)
 	}
 }
 
@@ -991,134 +1047,255 @@ rate_limit:
 	}
 }
 
-func TestRateLimitConfig_Driver_FromYAML(t *testing.T) {
+func TestRateLimitConfig_DisabledRedisSkipsURLCheck(t *testing.T) {
 	withTestBaseURL(t)
-	yaml := `
+	path := writeYAML(t, `
 rate_limit:
-  enabled: true
+  enabled: false
+  driver: redis
+`)
+	cfg, err := loadCfg(t, path)
+	if err != nil {
+		t.Fatalf("disabled redis driver should not require a URL: %v", err)
+	}
+	if cfg.RateLimit.Driver != "redis" {
+		t.Errorf("Driver = %q, want redis", cfg.RateLimit.Driver)
+	}
+}
+
+func TestRateLimitConfig_BothRedisRequireCachePrefix(t *testing.T) {
+	withTestBaseURL(t)
+	path := writeYAML(t, `
+cache:
   driver: redis
   redis:
-    url: "redis://localhost:6379"
-    key_prefix: "shopanda"
-`
-	path := writeYAML(t, yaml)
-
-	cfg, err := loadCfg(t, path)
-	if err != nil {
-		t.Fatalf("Load() error: %v", err)
-	}
-
-	if cfg.RateLimit.Driver != "redis" {
-		t.Errorf("Driver = %q, want %q", cfg.RateLimit.Driver, "redis")
-	}
-	if cfg.RateLimit.Redis.URL != "redis://localhost:6379" {
-		t.Errorf("Redis.URL = %q, want %q", cfg.RateLimit.Redis.URL, "redis://localhost:6379")
-	}
-	if cfg.RateLimit.Redis.KeyPrefix != "shopanda" {
-		t.Errorf("Redis.KeyPrefix = %q, want %q", cfg.RateLimit.Redis.KeyPrefix, "shopanda")
-	}
-}
-
-func TestRateLimitConfig_Driver_DefaultsToMemory(t *testing.T) {
-	withTestBaseURL(t)
-	path := writeYAML(t, "")
-
-	cfg, err := loadCfg(t, path)
-	if err != nil {
-		t.Fatalf("Load() error: %v", err)
-	}
-
-	if cfg.RateLimit.Driver != "memory" {
-		t.Errorf("Driver = %q, want %q (default)", cfg.RateLimit.Driver, "memory")
-	}
-}
-
-func TestRateLimitConfig_Driver_EnvOverlay(t *testing.T) {
-	withTestBaseURL(t)
-	path := writeYAML(t, "")
-
-	t.Setenv("SHOPANDA_RATE_LIMIT_DRIVER", "redis")
-	t.Setenv("SHOPANDA_RATE_LIMIT_REDIS_URL", "redis://env-host:6379")
-	t.Setenv("SHOPANDA_RATE_LIMIT_REDIS_KEY_PREFIX", "envprefix")
-
-	cfg, err := loadCfg(t, path)
-	if err != nil {
-		t.Fatalf("Load() error: %v", err)
-	}
-
-	if cfg.RateLimit.Driver != "redis" {
-		t.Errorf("Driver = %q, want %q from env", cfg.RateLimit.Driver, "redis")
-	}
-	if cfg.RateLimit.Redis.URL != "redis://env-host:6379" {
-		t.Errorf("Redis.URL = %q, want %q from env", cfg.RateLimit.Redis.URL, "redis://env-host:6379")
-	}
-	if cfg.RateLimit.Redis.KeyPrefix != "envprefix" {
-		t.Errorf("Redis.KeyPrefix = %q, want %q from env", cfg.RateLimit.Redis.KeyPrefix, "envprefix")
-	}
-}
-
-// TestRateLimitConfig_Redis_FallsBackToGenericRedisURL pins that a general
-// REDIS_URL applies to rate_limit.redis.url the same way it already does
-// for cache.redis.url and queue.redis.url, but only when rate_limit.redis.url
-// wasn't set explicitly (YAML or its own dedicated env var).
-func TestRateLimitConfig_Redis_FallsBackToGenericRedisURL(t *testing.T) {
-	withTestBaseURL(t)
-	path := writeYAML(t, "")
-
-	t.Setenv("REDIS_URL", "redis://generic-host:6379")
-
-	cfg, err := loadCfg(t, path)
-	if err != nil {
-		t.Fatalf("Load() error: %v", err)
-	}
-
-	if cfg.RateLimit.Redis.URL != "redis://generic-host:6379" {
-		t.Errorf("Redis.URL = %q, want %q from generic REDIS_URL fallback", cfg.RateLimit.Redis.URL, "redis://generic-host:6379")
-	}
-}
-
-func TestRateLimitConfig_Redis_DedicatedEnvWinsOverGenericRedisURL(t *testing.T) {
-	withTestBaseURL(t)
-	path := writeYAML(t, "")
-
-	t.Setenv("REDIS_URL", "redis://generic-host:6379")
-	t.Setenv("SHOPANDA_RATE_LIMIT_REDIS_URL", "redis://dedicated-host:6379")
-
-	cfg, err := loadCfg(t, path)
-	if err != nil {
-		t.Fatalf("Load() error: %v", err)
-	}
-
-	if cfg.RateLimit.Redis.URL != "redis://dedicated-host:6379" {
-		t.Errorf("Redis.URL = %q, want %q (dedicated env must win)", cfg.RateLimit.Redis.URL, "redis://dedicated-host:6379")
-	}
-}
-
-func TestRateLimitConfig_Driver_FlattenEntries(t *testing.T) {
-	withTestBaseURL(t)
-	yaml := `
+    url: redis://127.0.0.1:6379
 rate_limit:
-  enabled: true
+  driver: redis
+`)
+	_, err := loadCfg(t, path)
+	if err == nil {
+		t.Fatal("expected error when cache and limiter share Redis with empty cache prefix")
+	}
+	if !strings.Contains(err.Error(), "key_prefix") {
+		t.Errorf("error = %q, want key_prefix", err)
+	}
+}
+
+func TestRateLimitConfig_NegativePoolSize(t *testing.T) {
+	withTestBaseURL(t)
+	path := writeYAML(t, `
+cache:
+  redis:
+    url: redis://127.0.0.1:6379
+rate_limit:
   driver: redis
   redis:
-    url: "redis://localhost:6379"
-    key_prefix: "shopanda"
-`
-	path := writeYAML(t, yaml)
+    pool_size: -1
+`)
+	_, err := loadCfg(t, path)
+	if err == nil {
+		t.Fatal("expected error for negative pool_size")
+	}
+	if !strings.Contains(err.Error(), "pool_size") {
+		t.Errorf("error = %q, want pool_size", err)
+	}
+}
 
-	_, err := loadIsolated(t, path)
+func TestRateLimitConfig_RedisAllowsEmptyCachePrefix(t *testing.T) {
+	withTestBaseURL(t)
+	path := writeYAML(t, `
+cache:
+  redis:
+    url: redis://127.0.0.1:6379
+rate_limit:
+  driver: redis
+`)
+	cfg, err := loadCfg(t, path)
 	if err != nil {
-		t.Fatalf("Load() error: %v", err)
+		t.Fatalf("empty cache prefix should be allowed: %v", err)
 	}
+	if got := cfg.RateLimit.RedisKeyPrefix(cfg.Cache.Redis.KeyPrefix); got != "shopanda" {
+		t.Fatalf("RedisKeyPrefix = %q, want shopanda", got)
+	}
+}
 
-	if got := Get("rate_limit.driver"); got != "redis" {
-		t.Errorf("Get(rate_limit.driver) = %q, want %q", got, "redis")
+func TestRateLimitConfig_RedisKeyPrefixOwnSetting(t *testing.T) {
+	withTestBaseURL(t)
+	path := writeYAML(t, `
+cache:
+  redis:
+    url: redis://127.0.0.1:6379
+    key_prefix: cachekeys
+rate_limit:
+  driver: redis
+  redis:
+    key_prefix: limiter
+`)
+	cfg, err := loadCfg(t, path)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
 	}
-	if got := Get("rate_limit.redis.url"); got != "redis://localhost:6379" {
-		t.Errorf("Get(rate_limit.redis.url) = %q, want %q", got, "redis://localhost:6379")
+	if cfg.RateLimit.Redis.KeyPrefix != "limiter" {
+		t.Fatalf("Redis.KeyPrefix = %q, want limiter", cfg.RateLimit.Redis.KeyPrefix)
 	}
-	if got := Get("rate_limit.redis.key_prefix"); got != "shopanda" {
-		t.Errorf("Get(rate_limit.redis.key_prefix) = %q, want %q", got, "shopanda")
+	if got := cfg.RateLimit.RedisKeyPrefix(cfg.Cache.Redis.KeyPrefix); got != "limiter" {
+		t.Fatalf("RedisKeyPrefix = %q, want limiter", got)
+	}
+}
+
+func TestRateLimitConfig_RedisAllowsRateAboveBurst(t *testing.T) {
+	withTestBaseURL(t)
+	path := writeYAML(t, `
+cache:
+  redis:
+    url: redis://127.0.0.1:6379
+    key_prefix: shopanda
+rate_limit:
+  driver: redis
+  default:
+    rate: 100
+    burst: 20
+`)
+	cfg, err := loadCfg(t, path)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.RateLimit.Default.Rate != 100 || cfg.RateLimit.Default.Burst != 20 {
+		t.Fatalf("default = %+v, want rate 100 burst 20", cfg.RateLimit.Default)
+	}
+}
+
+func TestRateLimitConfig_RedisRequiresURLWhenCacheNotRedis(t *testing.T) {
+	withTestBaseURL(t)
+	t.Setenv("REDIS_URL", "")
+	t.Setenv("SHOPANDA_CACHE_REDIS_URL", "")
+	t.Setenv("SHOPANDA_RATE_LIMIT_REDIS_URL", "")
+	path := writeYAML(t, `
+cache:
+  redis:
+    key_prefix: shopanda
+rate_limit:
+  driver: redis
+`)
+	_, err := loadCfg(t, path)
+	if err == nil {
+		t.Fatal("Load() expected error for redis driver without a Redis URL")
+	}
+	if !strings.Contains(err.Error(), "rate_limit.redis.url") {
+		t.Errorf("error = %q, want mention of rate_limit.redis.url", err)
+	}
+}
+
+func TestRateLimitConfig_RedisAcceptsDedicatedURLWithoutCacheURL(t *testing.T) {
+	withTestBaseURL(t)
+	path := writeYAML(t, `
+rate_limit:
+  driver: redis
+  redis:
+    url: redis://127.0.0.1:6379
+`)
+	cfg, err := loadCfg(t, path)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if got := cfg.RateLimit.RedisURL(cfg.Cache.Redis.URL); got != "redis://127.0.0.1:6379" {
+		t.Fatalf("RedisURL = %q, want dedicated url", got)
+	}
+}
+
+func TestRateLimitConfig_DedicatedURLBeatsCacheURL(t *testing.T) {
+	withTestBaseURL(t)
+	path := writeYAML(t, `
+cache:
+  redis:
+    url: redis://cache:6379
+rate_limit:
+  driver: redis
+  redis:
+    url: redis://limiter:6379
+`)
+	cfg, err := loadCfg(t, path)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if got := cfg.RateLimit.RedisURL(cfg.Cache.Redis.URL); got != "redis://limiter:6379" {
+		t.Fatalf("RedisURL = %q, want dedicated limiter url", got)
+	}
+}
+
+func TestRateLimitConfig_REDIS_URLDoesNotOverrideCacheURL(t *testing.T) {
+	withTestBaseURL(t)
+	t.Setenv("SHOPANDA_RATE_LIMIT_REDIS_URL", "")
+	t.Setenv("SHOPANDA_CACHE_REDIS_URL", "redis://cache:6379")
+	t.Setenv("REDIS_URL", "redis://generic:6379")
+	path := writeYAML(t, `
+rate_limit:
+  driver: redis
+`)
+	cfg, err := loadCfg(t, path)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.RateLimit.Redis.URL != "" {
+		t.Fatalf("RateLimit.Redis.URL = %q, want empty (REDIS_URL must not look like a dedicated limiter URL)", cfg.RateLimit.Redis.URL)
+	}
+	if got := cfg.RateLimit.RedisURL(cfg.Cache.Redis.URL); got != "redis://cache:6379" {
+		t.Fatalf("RedisURL = %q, want cache URL", got)
+	}
+}
+
+func TestRateLimitConfig_REDIS_URLFillsLimiterViaCacheWhenCacheURLEmpty(t *testing.T) {
+	withTestBaseURL(t)
+	t.Setenv("SHOPANDA_RATE_LIMIT_REDIS_URL", "")
+	t.Setenv("SHOPANDA_CACHE_REDIS_URL", "")
+	t.Setenv("REDIS_URL", "redis://generic:6379")
+	path := writeYAML(t, `
+rate_limit:
+  driver: redis
+`)
+	cfg, err := loadCfg(t, path)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.Cache.Redis.URL != "redis://generic:6379" {
+		t.Fatalf("Cache.Redis.URL = %q, want REDIS_URL", cfg.Cache.Redis.URL)
+	}
+	if cfg.RateLimit.Redis.URL != "" {
+		t.Fatalf("RateLimit.Redis.URL = %q, want empty", cfg.RateLimit.Redis.URL)
+	}
+	if got := cfg.RateLimit.RedisURL(cfg.Cache.Redis.URL); got != "redis://generic:6379" {
+		t.Fatalf("RedisURL = %q, want REDIS_URL via cache fallback", got)
+	}
+}
+
+func TestRateLimitConfig_UnsupportedOnError(t *testing.T) {
+	withTestBaseURL(t)
+	path := writeYAML(t, `
+rate_limit:
+  on_error: panic
+`)
+	_, err := loadCfg(t, path)
+	if err == nil {
+		t.Fatal("Load() expected error for unsupported rate_limit.on_error")
+	}
+	if !strings.Contains(err.Error(), "on_error") {
+		t.Errorf("error = %q, want mention of on_error", err)
+	}
+}
+
+func TestRateLimitConfig_UnsupportedDriver(t *testing.T) {
+	withTestBaseURL(t)
+	path := writeYAML(t, `
+rate_limit:
+  driver: memcached
+`)
+	_, err := loadCfg(t, path)
+	if err == nil {
+		t.Fatal("Load() expected error for unsupported rate_limit.driver")
+	}
+	if !strings.Contains(err.Error(), "rate_limit.driver") {
+		t.Errorf("error = %q, want mention of rate_limit.driver", err)
 	}
 }
 

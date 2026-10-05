@@ -47,6 +47,12 @@ type Recorder interface {
 	// (inactive/unsubscribed endpoints) are not delivery attempts and must
 	// not be recorded.
 	WebhookDelivery(outcome string)
+
+	// RateLimitBackendError records one Redis (or other remote) limiter
+	// failure. limiter is the configured name ("default" or "route:<prefix>"),
+	// never a client IP. reason is a bounded enum: "error", "circuit_open",
+	// or "pool_timeout".
+	RateLimitBackendError(limiter, reason string)
 }
 
 // noopRecorder discards every recording. Used when metrics are disabled so
@@ -60,3 +66,4 @@ func (noopRecorder) HTTPRequest(string, string, string, time.Duration) {}
 func (noopRecorder) CheckoutResult(string)                             {}
 func (noopRecorder) JobFailure(string)                                 {}
 func (noopRecorder) WebhookDelivery(string)                            {}
+func (noopRecorder) RateLimitBackendError(string, string)              {}
