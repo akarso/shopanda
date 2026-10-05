@@ -74,6 +74,7 @@ import (
 	"github.com/akarso/shopanda/internal/platform/logger"
 	"github.com/akarso/shopanda/internal/platform/metrics"
 	"github.com/akarso/shopanda/internal/platform/plugin"
+	"github.com/akarso/shopanda/internal/platform/ratelimit"
 	"github.com/akarso/shopanda/internal/seed"
 
 	shophttp "github.com/akarso/shopanda/internal/interfaces/http"
@@ -89,6 +90,9 @@ type serveRuntime struct {
 	jobWorker *jobs.Worker
 	jobQueue  jobs.Queue
 	appCache  cache.Cache
+
+	rateLimitFactory ratelimit.Factory
+	rateLimitClose   func()
 
 	metricsRecorder metrics.Recorder
 
@@ -288,6 +292,15 @@ func wireServeRuntime(cfg *config.Config, log logger.Logger, conn *sql.DB, repos
 	if err != nil {
 		return nil, err
 	}
+	rateLimitFactory, rateLimitClose, err := resolveRateLimitFactory(cfg, log, metricsRecorder)
+	if err != nil {
+		return nil, err
+	}
+	defer func() {
+		if err != nil && rateLimitClose != nil {
+			rateLimitClose()
+		}
+	}()
 	if err := integrationApp.RegisterSyncJobEventTriggers(pluginApp, bus, jobQueue, log); err != nil {
 		return nil, fmt.Errorf("sync job event triggers: %w", err)
 	}
@@ -819,6 +832,8 @@ func wireServeRuntime(cfg *config.Config, log logger.Logger, conn *sql.DB, repos
 		jobWorker:                      jobWorker,
 		jobQueue:                       jobQueue,
 		appCache:                       appCache,
+		rateLimitFactory:               rateLimitFactory,
+		rateLimitClose:                 rateLimitClose,
 		metricsRecorder:                metricsRecorder,
 		searchEngine:                   searchEngine,
 		tokenParser:                    tokenParser,

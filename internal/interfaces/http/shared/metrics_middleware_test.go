@@ -25,9 +25,10 @@ type fakeRecorder struct {
 func (f *fakeRecorder) HTTPRequest(route, method, statusClass string, d time.Duration) {
 	f.calls = append(f.calls, recordedCall{route: route, method: method, statusClass: statusClass, duration: d})
 }
-func (f *fakeRecorder) CheckoutResult(string)  {}
-func (f *fakeRecorder) JobFailure(string)      {}
-func (f *fakeRecorder) WebhookDelivery(string) {}
+func (f *fakeRecorder) CheckoutResult(string)                {}
+func (f *fakeRecorder) JobFailure(string)                    {}
+func (f *fakeRecorder) WebhookDelivery(string)               {}
+func (f *fakeRecorder) RateLimitBackendError(string, string) {}
 
 var _ metrics.Recorder = (*fakeRecorder)(nil)
 

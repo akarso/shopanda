@@ -95,12 +95,15 @@ func ReadyProbeLimitMiddleware(trustedProxies []string, rate float64, burst int,
 	if burst <= 0 {
 		burst = DefaultReadyProbeBurst
 	}
+	// Always in-process: this limiter protects *this* instance's DB pool.
+	// A shared Redis window would let N replicas consume one probe budget
+	// and 429 healthy pods as the fleet scales.
 	limiter := ratelimit.NewLimiter(rate, burst)
 	trusted := parseTrustedProxies(trustedProxies)
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			ip := clientIP(r, trusted)
-			if !limiter.Allow(ip) {
+			if d := limiter.Allow(r.Context(), ip); !d.Allowed {
 				if log != nil {
 					log.Warn("ratelimit.rejected", map[string]interface{}{
 						"client_ip": ip,
@@ -109,7 +112,7 @@ func ReadyProbeLimitMiddleware(trustedProxies []string, rate float64, burst int,
 					})
 				}
 				setProbeCacheHeaders(w)
-				writeRateLimited(w)
+				writeRateLimitedAfter(w, ratelimit.RetryAfterSeconds(d.RetryAfter))
 				return
 			}
 			next.ServeHTTP(w, r)

@@ -100,6 +100,7 @@ C4Component
             Component(localFSStorage, "LocalStorage", "Go, os", "Saves/deletes files on local disk: implements Storage port")
             Component(pgCacheStore, "PostgresCacheStore", "Go, UNLOGGED table", "Key-value cache with TTL and tag invalidation (cache_tags): implements Cache port")
             Component(localCacheStore, "LocalCache Store[T]", "Go, generics", "Bounded, TTL+LRU, process-local (L1) cache sitting in front of Cache (L2); NOT a Cache implementation. Used by AdminRole's permission catalog (30s TTL) and StorefrontHandler's category tree (45s TTL). Evicted synchronously via direct domain events (e.g. catalog.EventCategoryUpdated) over the same-process EventBus — the TTL, not the broadcast, is the actual cross-replica staleness bound")
+            Component(redisRateLimiter, "Redis Sliding-Window Limiter", "Go, Redis ZSET", "Opt-in HTTP rate-limit backend when rate_limit.driver=redis. Dedicated Redis client (200ms I/O, pool min(10*GOMAXPROCS, 64)). Shared window ceil(burst/rate*1000)ms via Redis TIME + Lua. Rate-based circuit (20×100ms buckets). Fail-open by default. Not used for /readyz (in-process only).")
             Component(pgConfigRepo, "PostgresConfigRepo", "Go, pgx", "DB-backed config storage: implements config.Repository port")
         }
 
@@ -273,6 +274,8 @@ C4Component
     Rel(corePostgresPlugins, pgCacheStore, "Provides default cache store")
     Rel(corePostgresPlugins, postgresJobQueue, "Provides default job queue")
     Rel(coreMeilisearch, meilisearch, "Indexes/queries products; indexes categories in a second index", "HTTP")
+    Rel(middleware, redisRateLimiter, "Uses when rate_limit.driver=redis")
+    Rel(redisRateLimiter, redis, "Sliding-window ZSET counters (shared HTTP ceiling)", "Redis protocol")
     Rel(coreRedisCache, redis, "Key-value cache with TTL and per-tag Redis SETs", "Redis protocol")
     Rel(coreRedisQueue, redis, "Job enqueue/dequeue", "Redis protocol")
     Rel(coreRabbitMQ, rabbitmq, "AMQP job dispatch", "AMQP")

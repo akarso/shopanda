@@ -5,7 +5,6 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
-	"time"
 
 	"github.com/akarso/shopanda/internal/platform/apperror"
 	"github.com/akarso/shopanda/internal/platform/config"
@@ -13,32 +12,66 @@ import (
 	"github.com/akarso/shopanda/internal/platform/ratelimit"
 )
 
-// RateLimitMiddleware enforces per-IP token-bucket rate limits.
-// It supports a default limiter for all routes and optional per-route
+// statusClientClosed is nginx's 499 (client closed request). Used when the
+// limiter sees an already-cancelled context so HTTP metrics record 4xx
+// rather than the default 2xx. The client is gone; the body is unused.
+const statusClientClosed = 499
+
+// RateLimitMiddleware enforces per-IP rate limits with the in-process
+// token-bucket backend. Prefer RateLimitMiddlewareWithFactory when the
+// serve path has resolved rate_limit.driver.
+func RateLimitMiddleware(cfg config.RateLimitConfig, log logger.Logger) Middleware {
+	return RateLimitMiddlewareWithFactory(cfg, log, nil)
+}
+
+// RateLimitMiddlewareWithFactory is RateLimitMiddleware with an injectable
+// backend factory. A nil factory uses the in-process token bucket. It
+// supports a default limiter for all routes and optional per-route
 // limiters for path prefixes configured in RateLimitConfig.PerRoute.
 // Returns 429 with Retry-After header when the limit is exceeded.
-func RateLimitMiddleware(cfg config.RateLimitConfig, log logger.Logger) Middleware {
+func RateLimitMiddlewareWithFactory(cfg config.RateLimitConfig, log logger.Logger, factory ratelimit.Factory) Middleware {
 	if !cfg.Enabled {
 		return func(next http.Handler) http.Handler { return next }
 	}
+	if factory == nil {
+		factory = ratelimit.MemoryFactory()
+	}
 
 	trustedNets := ParseTrustedProxies(cfg.TrustedProxies)
+	backend := cfg.Driver
+	if backend == "" {
+		backend = "memory"
+	}
 
-	var defaultLimiter *ratelimit.Limiter
+	var defaultLimiter ratelimit.Allow
 	if cfg.Default.Rate > 0 && cfg.Default.Burst > 0 {
-		defaultLimiter = ratelimit.NewLimiter(cfg.Default.Rate, cfg.Default.Burst)
+		defaultLimiter = factory.New(ratelimit.Spec{
+			Name:    "default",
+			Rate:    cfg.Default.Rate,
+			Burst:   cfg.Default.Burst,
+			OnError: cfg.OnError,
+		})
 	}
 
 	type routeLimiter struct {
 		prefix  string
-		limiter *ratelimit.Limiter
+		limiter ratelimit.Allow
 	}
 	var routeLimiters []routeLimiter
 	for _, r := range cfg.PerRoute {
 		if r.Rate > 0 && r.Burst > 0 && r.PathPrefix != "" {
+			onErr := r.OnError
+			if onErr == "" {
+				onErr = cfg.OnError
+			}
 			routeLimiters = append(routeLimiters, routeLimiter{
-				prefix:  r.PathPrefix,
-				limiter: ratelimit.NewLimiter(r.Rate, r.Burst),
+				prefix: r.PathPrefix,
+				limiter: factory.New(ratelimit.Spec{
+					Name:    "route:" + r.PathPrefix,
+					Rate:    r.Rate,
+					Burst:   r.Burst,
+					OnError: onErr,
+				}),
 			})
 		}
 	}
@@ -48,22 +81,19 @@ func RateLimitMiddleware(cfg config.RateLimitConfig, log logger.Logger) Middlewa
 			ip := ClientIP(r, trustedNets)
 
 			// Find the per-route limiter with the longest matching prefix.
-			var matched *ratelimit.Limiter
+			var matched ratelimit.Allow
 			matchLen := 0
+			limiterName := "default"
 			for _, rl := range routeLimiters {
 				if strings.HasPrefix(r.URL.Path, rl.prefix) && len(rl.prefix) > matchLen {
 					matched = rl.limiter
 					matchLen = len(rl.prefix)
+					limiterName = "per_route"
 				}
 			}
 			if matched != nil {
-				if !matched.Allow(ip) {
-					log.Warn("ratelimit.rejected", map[string]interface{}{
-						"client_ip": ip,
-						"path":      r.URL.Path,
-						"limiter":   "per_route",
-					})
-					WriteRateLimited(w)
+				d := matched.Allow(r.Context(), ip)
+				if finishLimiter(w, log, d, ip, r.URL.Path, limiterName, backend) {
 					return
 				}
 				next.ServeHTTP(w, r)
@@ -71,14 +101,11 @@ func RateLimitMiddleware(cfg config.RateLimitConfig, log logger.Logger) Middlewa
 			}
 
 			// Fall back to default limiter.
-			if defaultLimiter != nil && !defaultLimiter.Allow(ip) {
-				log.Warn("ratelimit.rejected", map[string]interface{}{
-					"client_ip": ip,
-					"path":      r.URL.Path,
-					"limiter":   "default",
-				})
-				WriteRateLimited(w)
-				return
+			if defaultLimiter != nil {
+				d := defaultLimiter.Allow(r.Context(), ip)
+				if finishLimiter(w, log, d, ip, r.URL.Path, "default", backend) {
+					return
+				}
 			}
 
 			next.ServeHTTP(w, r)
@@ -126,22 +153,103 @@ func isTrustedProxy(peerIP string, trusted []*net.IPNet) bool {
 	return false
 }
 
-// ClientIP extracts the client IP address. Proxy headers (X-Forwarded-For,
-// X-Real-Ip) are only honoured when the immediate peer is a trusted proxy.
+// ClientIP extracts the client IP address. Proxy headers are only honoured
+// when the immediate peer is a trusted proxy. All X-Forwarded-For lines are
+// joined (proxies such as HAProxy option forwardfor add a second line
+// instead of appending) and walked from the right, skipping trusted hops.
+// The first invalid entry stops the walk and falls back to the peer — never
+// to X-Real-Ip (the client can set that when the proxy only adds XFF).
+// X-Real-Ip is used only when X-Forwarded-For is absent. The result is
+// net.ParseIP-canonicalized.
 func ClientIP(r *http.Request, trusted []*net.IPNet) string {
-	peer := peerIP(r)
-	if len(trusted) > 0 && isTrustedProxy(peer, trusted) {
-		if xff := r.Header.Get("X-Forwarded-For"); xff != "" {
-			if i := strings.IndexByte(xff, ','); i > 0 {
-				return strings.TrimSpace(xff[:i])
-			}
-			return strings.TrimSpace(xff)
-		}
-		if xri := r.Header.Get("X-Real-Ip"); xri != "" {
-			return strings.TrimSpace(xri)
+	peer := canonicalizeIP(peerIP(r))
+	if peer == "" {
+		peer = peerIP(r)
+	}
+	if len(trusted) == 0 || !isTrustedProxy(peer, trusted) {
+		return peer
+	}
+	if lines := r.Header.Values("X-Forwarded-For"); len(lines) > 0 {
+		if ip, invalid := clientIPFromXFF(strings.Join(lines, ","), trusted); invalid || ip == "" {
+			return peer
+		} else {
+			return ip
 		}
 	}
+	if realIP := canonicalizeIP(r.Header.Get("X-Real-Ip")); realIP != "" {
+		return realIP
+	}
 	return peer
+}
+
+func canonicalizeIP(s string) string {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return ""
+	}
+	if ip := net.ParseIP(s); ip != nil {
+		return ip.String()
+	}
+	host, _, err := net.SplitHostPort(s)
+	if err != nil {
+		return ""
+	}
+	ip := net.ParseIP(host)
+	if ip == nil {
+		return ""
+	}
+	return ip.String()
+}
+
+func clientIPFromXFF(xff string, trusted []*net.IPNet) (ip string, invalid bool) {
+	parts := strings.Split(xff, ",")
+	for i := len(parts) - 1; i >= 0; i-- {
+		raw := strings.TrimSpace(parts[i])
+		if raw == "" {
+			continue
+		}
+		parsed := canonicalizeIP(raw)
+		if parsed == "" {
+			return "", true
+		}
+		if isTrustedProxy(parsed, trusted) {
+			continue
+		}
+		return parsed, false
+	}
+	return "", false
+}
+
+func finishLimiter(w http.ResponseWriter, log logger.Logger, d ratelimit.Decision, ip, path, limiter, backend string) bool {
+	if d.Canceled {
+		// nginx 499: client closed the request. Nobody will read it, but
+		// MetricsMiddleware would otherwise record the default 2xx.
+		w.WriteHeader(statusClientClosed)
+		return true
+	}
+	if !d.Allowed {
+		logReject(log, d, ip, path, limiter, backend)
+		WriteRateLimitedAfter(w, ratelimit.RetryAfterSeconds(d.RetryAfter))
+		return true
+	}
+	return false
+}
+
+func logReject(log logger.Logger, d ratelimit.Decision, ip, path, limiter, backend string) {
+	fields := map[string]interface{}{
+		"path":    path,
+		"limiter": limiter,
+		"backend": backend,
+	}
+	if d.BackendError {
+		fields["backend_error"] = true
+	}
+	// Fail-closed outage 429s omit client_ip (PII, high cardinality).
+	// Local-fallback denials keep it so an abuser is still traceable.
+	if !d.BackendError || d.LocalFallback {
+		fields["client_ip"] = ip
+	}
+	log.Warn("ratelimit.rejected", fields)
 }
 
 // peerIP extracts the IP of the direct connection peer from RemoteAddr.
@@ -153,8 +261,16 @@ func peerIP(r *http.Request) string {
 	return host
 }
 
-// WriteRateLimited writes a 429 JSON error response with a Retry-After header.
+// WriteRateLimited writes a 429 JSON error response with Retry-After: 1.
 func WriteRateLimited(w http.ResponseWriter) {
-	w.Header().Set("Retry-After", strconv.FormatInt(int64(time.Second.Seconds()), 10))
+	WriteRateLimitedAfter(w, 1)
+}
+
+// WriteRateLimitedAfter is WriteRateLimited with an explicit Retry-After.
+func WriteRateLimitedAfter(w http.ResponseWriter, seconds int) {
+	if seconds < 1 {
+		seconds = 1
+	}
+	w.Header().Set("Retry-After", strconv.Itoa(seconds))
 	JSONError(w, apperror.RateLimited("rate limit exceeded"))
 }

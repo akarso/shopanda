@@ -182,6 +182,21 @@ Rules:
 
 (A generic `cache.Cache`-level broadcast — a `Store` subscribing directly to any `DeleteByTag`/`DeleteByPrefix` on the shared L2 backend, rather than to the specific domain event that caused it — was considered and deliberately not built: neither current L1 consumer needs it, and this repo does not pre-build for a hypothetical future consumer. Add it if and when an actual L1-over-L2 use site needs it.)
 
+### HTTP rate-limit backends
+
+`rate_limit.driver` swaps the HTTP limiter backend without changing middleware:
+
+| Driver | Implementation | Shared across instances? |
+| --- | --- | --- |
+| `memory` (default) | `ratelimit.Limiter` token bucket | No — each process has its own buckets |
+| `redis` | Redis ZSET sliding window (`TIME` + Lua; Redis 5+) | Yes — window `ceil(burst/rate*1000)` ms, capacity burst; `rate` ≤ `burst` |
+
+Both satisfy `ratelimit.Allow` (`Allow(ctx, key) Decision`) / `ratelimit.Factory`. Serve always opens a dedicated Redis client (200ms I/O, retries disabled, pool `min(10*GOMAXPROCS, 64)`) from `cache.redis.url` (single-node only). Keys use `<prefix>-rl:` (`rate_limit.redis.key_prefix`, else `cache.redis.key_prefix`, else `shopanda`). When `cache.driver=redis`, the cache prefix must be non-empty. Redis errors follow `on_error` (`open`/`closed`/`local`) after ≥20 requests at ≥50% errors in 2s, or ≥5 all-error requests within those 2s, with a single-probe half-open (failed probes re-arm the 5s hold). An already-cancelled request sets `Decision.Canceled`; middleware writes 499 (no 429) so metrics record 4xx. Redis I/O uses `WithoutCancel`. The memory driver ignores `ctx`. `/readyz` is always in-process. `/healthz` is unmetered. Limiter fail-open at boot does not cover `cache.driver=redis` (`ConnectURL` still PINGs).
+
+`ClientIP` joins every `X-Forwarded-For` line, walks from the right, accepts `ip:port` / `[v6]:port`, and stops at the first invalid hop. `trusted_proxies` must include CDN/edge ranges — this also keys auth lockout. There is no auth `per_route` in `defaults()`.
+
+Adding `RateLimitBackendError(limiter, reason string)` to `metrics.Recorder` is a breaking change for any out-of-repo recorder implementation (none in this repository). `reason` is `error`, `circuit_open`, or `pool_timeout`. `limiter` is `default` or `route:<path_prefix>` (not the CR1 `per_route` umbrella).
+
 ### Startup behavior
 
 - Core plugins register only when their driver switch matches.

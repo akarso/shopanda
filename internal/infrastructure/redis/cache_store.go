@@ -101,6 +101,12 @@ func New(cfg Config) (*CacheStore, error) {
 	return &CacheStore{client: client, prefix: NormalizeKeyPrefix(cfg.KeyPrefix), log: cfg.Logger}, nil
 }
 
+// Client returns the underlying Redis client.
+func (s *CacheStore) Client() *goredis.Client { return s.client }
+
+// Prefix returns the store's normalized key prefix (empty or trailing ":").
+func (s *CacheStore) Prefix() string { return s.prefix }
+
 func (s *CacheStore) logError(evtName string, err error, fields map[string]interface{}) {
 	if s.log == nil {
 		return

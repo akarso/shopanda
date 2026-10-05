@@ -231,6 +231,9 @@ func runServe(cfg *config.Config, log logger.Logger, embedScheduler bool) error 
 		shutdownTracing()
 		return err // UnbindRuntime already run inside wireServeRuntime
 	}
+	if rt.rateLimitClose != nil {
+		defer rt.rateLimitClose()
+	}
 
 	handler, err := buildServeHandler(cfg, log, rt, conn)
 	if err != nil {

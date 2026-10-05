@@ -274,22 +274,82 @@ webhooks:
 rate_limit:
   enabled: true
 
-  # Default rate for all routes (tokens per second + burst).
+  # Backend: memory (default, in-process token bucket) or redis (shared
+  # sliding window). Use redis when running more than one instance without
+  # a gateway-level limiter in front. Redis always opens a dedicated client
+  # (200ms I/O, no retries) from cache.redis.url — it does not share the
+  # cache connection pool. Driver is lowercased/trimmed.
+  # Env override: SHOPANDA_RATE_LIMIT_DRIVER=redis
+  driver: memory
+
+  # What to do when the redis backend errors (timeout, outage, or the
+  # circuit breaker is open). open (default) admits the request.
+  # closed denies with 429. local uses an in-process token bucket with
+  # the same rate/burst (recommended for auth). Per-route on_error
+  # overrides this. /readyz is always in-process and ignores this setting.
+  # Env override: SHOPANDA_RATE_LIMIT_ON_ERROR=local
+  on_error: open
+
+  # Rate tokens/s, Burst cap. Both drivers honor both values. redis uses a
+  # sliding window of ceil(burst/rate*1000) milliseconds with capacity
+  # burst (10/20 → 20 requests / 2s; 15/20 → 20 / 1334ms). Rate must not
+  # exceed burst when driver=redis. Rate and Burst must both be > 0 or
+  # the limiter is not built (rate: 0 disables, it is not ignored).
+  # Redis 5+ required (TIME + write in one script).
   default:
     rate: 10.0
     burst: 20
 
   # Per-route overrides. Longest prefix match wins.
+  # These prefixes are NOT in defaults() — a config without this block
+  # has no auth-specific HTTP ceiling (login lockout still applies).
+  # /auth/login/mfa needs its own entry so it does not share login's burst.
+  # /auth/me and /logout stay on the default limiter.
+  # Do not add a tighter per_route for /api/v1/payments/webhook — provider
+  # source IPs are shared across merchants, so a dedicated budget false-
+  # positives on legitimate delivery bursts. Put a webhook ceiling on the
+  # gateway if you need one.
   per_route:
-    - path_prefix: "/api/v1/auth"
-      rate: 5.0
-      burst: 10
+    - path_prefix: "/api/v1/auth/login/mfa"
+      rate: 1.0
+      burst: 5
+      on_error: local
+    - path_prefix: "/api/v1/auth/login"
+      rate: 1.0
+      burst: 2
+      on_error: local
+    - path_prefix: "/api/v1/auth/register"
+      rate: 1.0
+      burst: 2
+      on_error: local
+    - path_prefix: "/api/v1/auth/password-reset"
+      rate: 1.0
+      burst: 2
+      on_error: local
   #   - path_prefix: "/api/v1/search"
   #     rate: 20.0
   #     burst: 40
 
+  # Limiter Redis settings (driver=redis only). Single-node redis:// or
+  # rediss:// URLs — Cluster and Sentinel are not supported (same as cache).
+  # key_prefix: sibling `-rl:` is appended. Defaults to cache.redis.key_prefix
+  # or "shopanda". When cache.driver=redis, cache.redis.key_prefix must be
+  # non-empty so cache SCAN cannot delete limiter keys.
+  # pool_size: 0 uses min(10*GOMAXPROCS, 64) (minimum 8). Override to raise
+  # the cap; count limiter pool + cache pool per instance against Redis
+  # maxclients (see RUNBOOK).
+  # Env: SHOPANDA_RATE_LIMIT_REDIS_KEY_PREFIX, SHOPANDA_RATE_LIMIT_REDIS_POOL_SIZE
+  # redis:
+  #   key_prefix: shopanda
+  #   pool_size: 0
+
   # Trusted proxy IPs/CIDRs (X-Forwarded-For extraction).
-  # Also used for login lockout ClientIP when behind a reverse proxy.
+  # List every hop that appends to X-Forwarded-For — load balancer AND
+  # CDN/edge ranges. ClientIP is the rightmost untrusted hop; if the CDN
+  # is omitted, every shopper behind that edge shares one rate-limit and
+  # login-lockout key. Host:port and [v6]:port hops (Azure Application
+  # Gateway and some others) are accepted. Also used for HSTS via
+  # X-Forwarded-Proto.
   # trusted_proxies:
   #   - "10.0.0.0/8"
   #   - "172.16.0.0/12"

@@ -27,6 +27,7 @@ type recordingMetrics struct {
 func (m *recordingMetrics) HTTPRequest(string, string, string, time.Duration) {}
 func (m *recordingMetrics) CheckoutResult(string)                             {}
 func (m *recordingMetrics) JobFailure(string)                                 {}
+func (m *recordingMetrics) RateLimitBackendError(string, string)              {}
 func (m *recordingMetrics) WebhookDelivery(outcome string) {
 	m.webhookOutcomes = append(m.webhookOutcomes, outcome)
 }

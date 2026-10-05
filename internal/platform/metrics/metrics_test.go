@@ -15,6 +15,7 @@ func TestNoop_DoesNotPanic(t *testing.T) {
 	rec.CheckoutResult(metrics.OutcomeSuccess)
 	rec.JobFailure("webhook.deliver")
 	rec.WebhookDelivery(metrics.OutcomeFailed)
+	rec.RateLimitBackendError("default", "error")
 }
 
 func TestPrometheusRecorder_ExposesExpectedMetrics(t *testing.T) {
@@ -26,6 +27,7 @@ func TestPrometheusRecorder_ExposesExpectedMetrics(t *testing.T) {
 	rec.CheckoutResult(metrics.OutcomeFailed)
 	rec.JobFailure("webhook.deliver")
 	rec.WebhookDelivery(metrics.OutcomeSuccess)
+	rec.RateLimitBackendError("default", "error")
 
 	req := httptest.NewRequest("GET", "/metrics", nil)
 	w := httptest.NewRecorder()
@@ -43,6 +45,7 @@ func TestPrometheusRecorder_ExposesExpectedMetrics(t *testing.T) {
 		`shopanda_checkout_result_total{outcome="failed"} 1`,
 		`shopanda_job_failures_total{job_type="webhook.deliver"} 1`,
 		`shopanda_webhook_deliveries_total{outcome="success"} 1`,
+		`shopanda_ratelimit_backend_errors_total{limiter="default",reason="error"} 1`,
 		"shopanda_http_request_duration_seconds",
 	} {
 		if !strings.Contains(body, want) {
