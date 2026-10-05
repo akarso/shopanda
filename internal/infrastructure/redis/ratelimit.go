@@ -417,16 +417,20 @@ func (l *SlidingWindowLimiter) Allow(ctx context.Context, key string) ratelimit.
 	defer cancel()
 	n, err := slidingWindowScript.Run(runCtx, l.factory.client, []string{redisKey},
 		windowUs, l.limit, member, ttlMs).Int()
-	// Client gone: drop uncounted. Do not recordError/recordSuccess — a
-	// timeout that lands after RST_STREAM must not trip the circuit or
-	// increment backend-error metrics for other requests.
-	if ctx.Err() != nil {
-		return ratelimit.Decision{RetryAfter: l.retry, Canceled: true}
-	}
 	if err != nil {
+		// Timeout after RST_STREAM: do not trip the circuit or increment
+		// backend-error metrics. Redis itself did not succeed.
+		if ctx.Err() != nil {
+			return ratelimit.Decision{RetryAfter: l.retry, Canceled: true}
+		}
 		l.factory.recordError(l.name, err, backendReason(err), isProbe)
 		return l.fallback(ctx, key)
 	}
+	// Redis succeeded: close a half-open probe even if the client is
+	// gone, so live traffic does not stay on the outage fallback.
 	l.factory.recordSuccess(isProbe)
+	if ctx.Err() != nil {
+		return ratelimit.Decision{RetryAfter: l.retry, Canceled: true}
+	}
 	return ratelimit.Decision{Allowed: n == 1, RetryAfter: l.retry}
 }

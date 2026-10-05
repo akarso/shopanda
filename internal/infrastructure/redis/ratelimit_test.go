@@ -108,6 +108,63 @@ func TestSlidingWindow_SubMillisecondRate(t *testing.T) {
 	}
 }
 
+func TestSlidingWindow_CanceledSuccessfulProbeClosesCircuit(t *testing.T) {
+	old := circuitHold
+	circuitHold = 40 * time.Millisecond
+	t.Cleanup(func() { circuitHold = old })
+
+	mr, err := miniredis.Run()
+	if err != nil {
+		t.Fatalf("miniredis.Run: %v", err)
+	}
+	t.Cleanup(mr.Close)
+	client := goredis.NewClient(&goredis.Options{Addr: mr.Addr()})
+	t.Cleanup(func() { _ = client.Close() })
+	client.AddHook(delayHook{60 * time.Millisecond})
+	factory := NewLimiterFactory(client, "shopanda", nil)
+	t.Cleanup(func() { _ = factory.Close() })
+	lim := factory.New(spec("default", 10, 10))
+	factory.OpenCircuit()
+	time.Sleep(50 * time.Millisecond)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	go func() {
+		time.Sleep(20 * time.Millisecond)
+		cancel()
+	}()
+	d := lim.Allow(ctx, "probe")
+	if !d.Canceled || d.BackendError {
+		t.Fatalf("canceled successful probe = %+v, want Canceled without BackendError", d)
+	}
+
+	start := time.Now()
+	live := lim.Allow(context.Background(), "live")
+	if live.BackendError {
+		t.Fatal("circuit must close after a successful probe even if that client disconnected")
+	}
+	if !live.Allowed {
+		t.Fatal("live request should hit healthy Redis")
+	}
+	if time.Since(start) < 40*time.Millisecond {
+		t.Fatal("live request skipped Redis; circuit was still treating Redis as down")
+	}
+}
+
+type delayHook struct{ d time.Duration }
+
+func (h delayHook) DialHook(next goredis.DialHook) goredis.DialHook { return next }
+
+func (h delayHook) ProcessHook(next goredis.ProcessHook) goredis.ProcessHook {
+	return func(ctx context.Context, cmd goredis.Cmder) error {
+		time.Sleep(h.d)
+		return next(ctx, cmd)
+	}
+}
+
+func (h delayHook) ProcessPipelineHook(next goredis.ProcessPipelineHook) goredis.ProcessPipelineHook {
+	return next
+}
+
 func TestSlidingWindow_HonorsRateViaWindow(t *testing.T) {
 	mr, _, factory := setupLimiterFactory(t)
 	start := time.Date(2026, 10, 5, 12, 0, 0, 0, time.UTC)

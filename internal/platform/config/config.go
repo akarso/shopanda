@@ -1034,9 +1034,6 @@ func applyEnv(cfg *Config) {
 		if cfg.Queue.Redis.URL == "" {
 			cfg.Queue.Redis.URL = v
 		}
-		if cfg.RateLimit.Redis.URL == "" {
-			cfg.RateLimit.Redis.URL = v
-		}
 	}
 	if v := os.Getenv("SHOPANDA_QUEUE_REDIS_URL"); v != "" {
 		cfg.Queue.Redis.URL = v

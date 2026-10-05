@@ -241,7 +241,7 @@ Responses always include `X-Content-Type-Options: nosniff`, `X-Frame-Options: DE
 | `SHOPANDA_RATE_LIMIT_ON_ERROR` | No | `open` | `open` (admit), `closed` (deny), or `local` (in-process fallback). `/readyz` is always in-process. |
 | `SHOPANDA_RATE_LIMIT_DEFAULT_RATE` | No | `10` | Default tokens per second (both drivers). |
 | `SHOPANDA_RATE_LIMIT_DEFAULT_BURST` | No | `20` | Default burst size (redis window = burst/rate seconds) |
-| `SHOPANDA_RATE_LIMIT_REDIS_URL` | No | cache Redis URL | Dedicated limiter Redis URL. Overrides `rate_limit.redis.url`. If both this and YAML url are empty, `cache.redis.url` / `REDIS_URL` is used. |
+| `SHOPANDA_RATE_LIMIT_REDIS_URL` | No | cache Redis URL | Dedicated limiter Redis URL. Overrides `rate_limit.redis.url`. If both this and YAML url are empty, `cache.redis.url` is used. `REDIS_URL` fills cache (not the limiter) when cache URL is also empty. |
 | `SHOPANDA_RATE_LIMIT_REDIS_KEY_PREFIX` | No | cache prefix or `shopanda` | Limiter key prefix (`-rl:` is appended). Independent of `cache.redis.key_prefix`. |
 | `SHOPANDA_RATE_LIMIT_REDIS_POOL_SIZE` | No | `min(10*GOMAXPROCS, 64)` | Dedicated limiter pool size. `0` in YAML uses the default (at least 8, cap 64). |
 | `SHOPANDA_AUTH_LOCKOUT_ENABLED` | No | `true` | Enable failed-login lockout (IP + account) |
