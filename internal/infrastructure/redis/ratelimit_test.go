@@ -85,6 +85,29 @@ func TestSlidingWindow_BurstAndReject(t *testing.T) {
 	}
 }
 
+func TestSlidingWindow_SubMillisecondRate(t *testing.T) {
+	mr, _, factory := setupLimiterFactory(t)
+	start := time.Date(2026, 10, 5, 12, 0, 0, 0, time.UTC)
+	mr.SetTime(start)
+	// 2000/1 → 500µs. A millisecond-rounded window would be 1ms and would
+	// still reject at 600µs.
+	lim := factory.New(spec("fast", 2000, 1))
+	if !allow(lim, "ip") {
+		t.Fatal("first request should be allowed")
+	}
+	if allow(lim, "ip") {
+		t.Fatal("second request should be rejected immediately")
+	}
+	mr.SetTime(start.Add(400 * time.Microsecond))
+	if allow(lim, "ip") {
+		t.Fatal("400µs later should still be rejected")
+	}
+	mr.SetTime(start.Add(600 * time.Microsecond))
+	if !allow(lim, "ip") {
+		t.Fatal("after the 500µs window the next request should be allowed")
+	}
+}
+
 func TestSlidingWindow_HonorsRateViaWindow(t *testing.T) {
 	mr, _, factory := setupLimiterFactory(t)
 	start := time.Date(2026, 10, 5, 12, 0, 0, 0, time.UTC)
@@ -258,6 +281,24 @@ func TestSlidingWindow_CancelledContextDoesNotConsumeLocal(t *testing.T) {
 	}
 }
 
+func TestSlidingWindow_DisconnectDuringRedisIsCanceled(t *testing.T) {
+	factory := NewLimiterFactory(hangingLimiterClient(t), "shopanda", nil)
+	t.Cleanup(func() { _ = factory.Close() })
+	lim := factory.New(spec("default", 10, 10))
+	ctx, cancel := context.WithCancel(context.Background())
+	go func() {
+		time.Sleep(50 * time.Millisecond)
+		cancel()
+	}()
+	d := lim.Allow(ctx, "ip")
+	if !d.Canceled || d.Allowed {
+		t.Fatalf("disconnect during Redis must be Canceled, got %+v", d)
+	}
+	if d.BackendError {
+		t.Fatal("gone client is not a backend error / fail-open admit")
+	}
+}
+
 func TestSlidingWindow_ConcurrentDoesNotOverAdmit(t *testing.T) {
 	_, _, factory := setupLimiterFactory(t)
 	lim := factory.New(spec("race", 10, 10))
@@ -312,8 +353,9 @@ func TestSlidingWindow_FractionalRateMatchesAverage(t *testing.T) {
 	mr, _, factory := setupLimiterFactory(t)
 	start := time.Date(2026, 10, 5, 12, 0, 0, 0, time.UTC)
 	mr.SetTime(start)
-	// 15/20 → 1334ms window, capacity 20 ≈ 15/s
+	// 15/20 → 4/3s window (1333333µs), capacity 20 ≈ 15/s
 	lim := factory.New(spec("default", 15, 20))
+	window := ratelimit.Window(15, 20)
 	for i := 0; i < 20; i++ {
 		if !allow(lim, "ip") {
 			t.Fatalf("request %d should be allowed", i+1)
@@ -322,13 +364,13 @@ func TestSlidingWindow_FractionalRateMatchesAverage(t *testing.T) {
 	if allow(lim, "ip") {
 		t.Fatal("request 21 should be rejected")
 	}
-	mr.SetTime(start.Add(1333 * time.Millisecond))
+	mr.SetTime(start.Add(window - time.Microsecond))
 	if allow(lim, "ip") {
-		t.Fatal("1333ms later should still be rejected")
+		t.Fatal("just inside the window should still be rejected")
 	}
-	mr.SetTime(start.Add(1335 * time.Millisecond))
+	mr.SetTime(start.Add(window + time.Microsecond))
 	if !allow(lim, "ip") {
-		t.Fatal("after 1334ms window the next request should be allowed")
+		t.Fatal("after the window the next request should be allowed")
 	}
 }
 

@@ -147,24 +147,6 @@ func validateRateLimit(cfg *Config) error {
 		if cfg.Cache.Driver == "redis" && strings.TrimSpace(cfg.Cache.Redis.KeyPrefix) == "" {
 			return fmt.Errorf("config: cache.redis.key_prefix must be non-empty when cache.driver=redis and rate_limit.driver=redis (empty prefix makes cache SCAN * delete limiter keys)")
 		}
-		if err := rejectRedisRateAboveBurst("rate_limit.default", cfg.RateLimit.Default.Rate, cfg.RateLimit.Default.Burst); err != nil {
-			return err
-		}
-		for i, r := range cfg.RateLimit.PerRoute {
-			if err := rejectRedisRateAboveBurst(fmt.Sprintf("rate_limit.per_route[%d]", i), r.Rate, r.Burst); err != nil {
-				return err
-			}
-		}
-	}
-	return nil
-}
-
-func rejectRedisRateAboveBurst(field string, rate float64, burst int) error {
-	if rate <= 0 || burst <= 0 {
-		return nil
-	}
-	if rate > float64(burst) {
-		return fmt.Errorf("config: %s rate (%v) must not exceed burst (%d) when rate_limit.driver=redis (sliding window cannot express rate > burst)", field, rate, burst)
 	}
 	return nil
 }

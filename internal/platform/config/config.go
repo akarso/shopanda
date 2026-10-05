@@ -137,7 +137,7 @@ func (c RateLimitConfig) RedisKeyPrefix(cachePrefix string) string {
 
 // RateLimitRule defines a rate/burst pair. Both drivers use Rate tokens
 // per second and Burst as the cap. The redis driver maps this to a sliding
-// window of ceil(burst/rate*1000) milliseconds with capacity burst.
+// window of burst/rate seconds (microsecond scores) with capacity burst.
 type RateLimitRule struct {
 	Rate  float64 `yaml:"rate"`
 	Burst int     `yaml:"burst"`

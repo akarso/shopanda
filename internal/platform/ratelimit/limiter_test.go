@@ -114,11 +114,14 @@ func TestWindow(t *testing.T) {
 	if got := Window(0.1, 1); got != 10*time.Second {
 		t.Fatalf("0.1/1 window = %v, want 10s", got)
 	}
-	if got := Window(15, 20); got != 1334*time.Millisecond {
-		t.Fatalf("15/20 window = %v, want 1334ms", got)
+	if got := Window(15, 20); got != 4*time.Second/3 {
+		t.Fatalf("15/20 window = %v, want 4s/3", got)
 	}
-	if got := Window(3, 10); got != 3334*time.Millisecond {
-		t.Fatalf("3/10 window = %v, want 3334ms", got)
+	if got := Window(3, 10); got != 10*time.Second/3 {
+		t.Fatalf("3/10 window = %v, want 10s/3", got)
+	}
+	if got := Window(2000, 1); got != 500*time.Microsecond {
+		t.Fatalf("2000/1 window = %v, want 500µs", got)
 	}
 }
 

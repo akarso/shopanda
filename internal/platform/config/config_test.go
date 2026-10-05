@@ -1137,7 +1137,7 @@ rate_limit:
 	}
 }
 
-func TestRateLimitConfig_RedisRejectsRateAboveBurst(t *testing.T) {
+func TestRateLimitConfig_RedisAllowsRateAboveBurst(t *testing.T) {
 	withTestBaseURL(t)
 	path := writeYAML(t, `
 cache:
@@ -1150,12 +1150,12 @@ rate_limit:
     rate: 100
     burst: 20
 `)
-	_, err := loadCfg(t, path)
-	if err == nil {
-		t.Fatal("Load() expected error when redis rate > burst")
+	cfg, err := loadCfg(t, path)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
 	}
-	if !strings.Contains(err.Error(), "must not exceed burst") {
-		t.Errorf("error = %q, want rate>burst message", err)
+	if cfg.RateLimit.Default.Rate != 100 || cfg.RateLimit.Default.Burst != 20 {
+		t.Fatalf("default = %+v, want rate 100 burst 20", cfg.RateLimit.Default)
 	}
 }
 

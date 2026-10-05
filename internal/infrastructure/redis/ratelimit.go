@@ -17,14 +17,18 @@ import (
 )
 
 // slidingWindowScript uses Redis TIME so every instance shares one clock.
+// Scores are microseconds so sub-millisecond windows keep the configured
+// rate (e.g. 2000/s burst 1 → 500µs, not a rounded-up 1ms that halves it).
+// PEXPIRE is millisecond-only and is only GC for abandoned keys; it is
+// rounded up so a short TTL cannot reap an in-progress window.
 // Members are supplied by the caller and must be unique per process.
-// KEYS[1]=zset ARGV: window_ms, limit, member, ttl_ms. Returns 1 or 0.
+// KEYS[1]=zset ARGV: window_us, limit, member, ttl_ms. Returns 1 or 0.
 // Requires Redis 5+ (effect replication is the default for scripts that
 // call TIME and then write).
 var slidingWindowScript = goredis.NewScript(`
 local key = KEYS[1]
 local t = redis.call('TIME')
-local now = tonumber(t[1]) * 1000 + math.floor(tonumber(t[2]) / 1000)
+local now = math.floor(tonumber(t[1]) * 1000000 + tonumber(t[2]))
 local window = tonumber(ARGV[1])
 local limit = tonumber(ARGV[2])
 local member = ARGV[3]
@@ -32,6 +36,7 @@ local ttl = tonumber(ARGV[4])
 redis.call('ZREMRANGEBYSCORE', key, '-inf', now - window)
 local count = redis.call('ZCARD', key)
 if count >= limit then
+  redis.call('PEXPIRE', key, ttl)
   return 0
 end
 redis.call('ZADD', key, now, member)
@@ -190,8 +195,8 @@ func newInstanceID() string {
 	return hex.EncodeToString(b[:])
 }
 
-// New returns a sliding-window limiter. Window is ceil(burst/rate*1000)
-// milliseconds with capacity burst.
+// New returns a sliding-window limiter. Window is burst/rate seconds
+// (microsecond scores in Redis) with capacity burst.
 func (f *LimiterFactory) New(spec ratelimit.Spec) ratelimit.Allow {
 	limit := spec.Burst
 	if limit <= 0 {
@@ -393,11 +398,16 @@ func (l *SlidingWindowLimiter) Allow(ctx context.Context, key string) ratelimit.
 	if isProbe {
 		defer l.factory.releaseProbe()
 	}
-	windowMs := l.window.Milliseconds()
-	if windowMs < 1 {
-		windowMs = 1000
+	windowUs := l.window.Microseconds()
+	if windowUs < 1 {
+		windowUs = 1
 	}
-	ttlMs := windowMs + 1000
+	// PEXPIRE is millisecond-only; round up so TTL is never shorter than
+	// the real window.
+	ttlMs := (windowUs + 999) / 1000
+	if ttlMs < 1 {
+		ttlMs = 1
+	}
 	member := fmt.Sprintf("%s-%d", l.factory.instanceID, l.factory.seq.Add(1))
 	redisKey := l.factory.prefix + l.name + ":" + key
 
@@ -406,11 +416,17 @@ func (l *SlidingWindowLimiter) Allow(ctx context.Context, key string) ratelimit.
 	runCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), slidingWindowAllow)
 	defer cancel()
 	n, err := slidingWindowScript.Run(runCtx, l.factory.client, []string{redisKey},
-		windowMs, l.limit, member, ttlMs).Int()
+		windowUs, l.limit, member, ttlMs).Int()
 	if err != nil {
 		l.factory.recordError(l.name, err, backendReason(err), isProbe)
+		if ctx.Err() != nil {
+			return ratelimit.Decision{RetryAfter: l.retry, Canceled: true}
+		}
 		return l.fallback(ctx, key)
 	}
 	l.factory.recordSuccess(isProbe)
+	if ctx.Err() != nil {
+		return ratelimit.Decision{RetryAfter: l.retry, Canceled: true}
+	}
 	return ratelimit.Decision{Allowed: n == 1, RetryAfter: l.retry}
 }

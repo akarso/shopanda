@@ -291,9 +291,9 @@ rate_limit:
   on_error: open
 
   # Rate tokens/s, Burst cap. Both drivers honor both values. redis uses a
-  # sliding window of ceil(burst/rate*1000) milliseconds with capacity
-  # burst (10/20 → 20 requests / 2s; 15/20 → 20 / 1334ms). Rate must not
-  # exceed burst when driver=redis. Rate and Burst must both be > 0 or
+  # sliding window of burst/rate seconds (microsecond scores) with capacity
+  # burst (10/20 → 20 requests / 2s; 15/20 → 20 / ~1.333s). Rate may exceed
+  # burst (2000/s burst 1 → 500µs window). Rate and Burst must both be > 0 or
   # the limiter is not built (rate: 0 disables, it is not ignored).
   # Redis 5+ required (TIME + write in one script).
   default:
@@ -303,8 +303,15 @@ rate_limit:
   # Per-route overrides. Longest prefix match wins.
   # These prefixes are NOT in defaults() — a config without this block
   # has no auth-specific HTTP ceiling (login lockout still applies).
-  # /auth/login/mfa needs its own entry so it does not share login's burst.
-  # /auth/me and /logout stay on the default limiter.
+  # This is a deliberate change from the previous example, which used a
+  # single "/api/v1/auth" prefix at 5/s burst 10. That prefix was too
+  # wide: MFA shared login's budget, and /auth/me + /logout were capped
+  # with login. Login at 1/s burst 2 is intentional — two quick attempts
+  # then a 429 (failed-password lockout is separate). /login/mfa has its
+  # own burst 5 so a 2FA prompt is not starved by login's burst of 2.
+  # /auth/me and /logout stay on the default 10/s burst 20 (looser than
+  # the old auth-wide cap). Copying this block into an existing deploy
+  # tightens login and loosens me/logout; tune before regenerating.
   # Do not add a tighter per_route for /api/v1/payments/webhook — provider
   # source IPs are shared across merchants, so a dedicated budget false-
   # positives on legitimate delivery bursts. Put a webhook ceiling on the

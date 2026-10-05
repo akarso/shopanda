@@ -189,7 +189,7 @@ Rules:
 | Driver | Implementation | Shared across instances? |
 | --- | --- | --- |
 | `memory` (default) | `ratelimit.Limiter` token bucket | No — each process has its own buckets |
-| `redis` | Redis ZSET sliding window (`TIME` + Lua; Redis 5+) | Yes — window `ceil(burst/rate*1000)` ms, capacity burst; `rate` ≤ `burst` |
+| `redis` | Redis ZSET sliding window (`TIME` + Lua; Redis 5+) | Yes — window `burst/rate` seconds (µs scores), capacity burst |
 
 Both satisfy `ratelimit.Allow` (`Allow(ctx, key) Decision`) / `ratelimit.Factory`. Serve always opens a dedicated Redis client (200ms I/O, retries disabled, pool `min(10*GOMAXPROCS, 64)`) from `cache.redis.url` (single-node only). Keys use `<prefix>-rl:` (`rate_limit.redis.key_prefix`, else `cache.redis.key_prefix`, else `shopanda`). When `cache.driver=redis`, the cache prefix must be non-empty. Redis errors follow `on_error` (`open`/`closed`/`local`) after ≥20 requests at ≥50% errors in 2s, or ≥5 all-error requests within those 2s, with a single-probe half-open (failed probes re-arm the 5s hold). An already-cancelled request sets `Decision.Canceled`; middleware writes 499 (no 429) so metrics record 4xx. Redis I/O uses `WithoutCancel`. The memory driver ignores `ctx`. `/readyz` is always in-process. `/healthz` is unmetered. Limiter fail-open at boot does not cover `cache.driver=redis` (`ConnectURL` still PINGs).
 

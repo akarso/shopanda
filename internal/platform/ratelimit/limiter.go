@@ -55,18 +55,17 @@ func (memoryFactory) New(spec Spec) Allow {
 }
 
 // Window is the Redis sliding-window length that matches a token-bucket
-// (rate, burst) pair: ceil(burst/rate * 1000) milliseconds. Average
+// (rate, burst) pair: burst/rate seconds, at least 1µs. Average
 // throughput is burst/window ≈ rate. Unused by the memory driver.
-// Callers must reject rate > burst when using the redis driver.
 func Window(rate float64, burst int) time.Duration {
 	if rate <= 0 || burst <= 0 {
 		return time.Second
 	}
-	ms := int(math.Ceil(float64(burst) / rate * 1000))
-	if ms < 1 {
-		ms = 1
+	d := time.Duration(float64(burst) / rate * float64(time.Second))
+	if d < time.Microsecond {
+		return time.Microsecond
 	}
-	return time.Duration(ms) * time.Millisecond
+	return d
 }
 
 // MemoryRetryAfter is how long a memory-driver client should wait: ceil(1/rate) seconds.
