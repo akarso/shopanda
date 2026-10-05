@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"strings"
 	"time"
 
 	adminApp "github.com/akarso/shopanda/internal/application/admin"
@@ -140,9 +141,9 @@ func resolveRateLimitFactory(cfg *config.Config, log logger.Logger, rec metrics.
 				rec.RateLimitBackendError(limiterMetricLabel(name), reason)
 			})
 		}
-		url := cfg.Cache.Redis.URL
+		url := cfg.RateLimit.RedisURL(cfg.Cache.Redis.URL)
 		if url == "" {
-			return nil, nil, fmt.Errorf("rate_limit.driver=redis requires cache.redis.url (or REDIS_URL / SHOPANDA_CACHE_REDIS_URL)")
+			return nil, nil, fmt.Errorf("rate_limit.driver=redis requires rate_limit.redis.url or cache.redis.url (or SHOPANDA_RATE_LIMIT_REDIS_URL / REDIS_URL / SHOPANDA_CACHE_REDIS_URL)")
 		}
 		client, err := inredis.NewLimiterClient(url, cfg.RateLimit.Redis.PoolSize)
 		if err != nil {
@@ -174,6 +175,7 @@ func resolveRateLimitFactory(cfg *config.Config, log logger.Logger, rec metrics.
 			"dedicated":     true,
 			"allow_timeout": "200ms",
 			"pool_size":     client.Options().PoolSize,
+			"url_source":    limiterURLSource(cfg),
 		})
 		observe(factory)
 		return factory, func() { _ = factory.Close() }, nil
@@ -187,6 +189,13 @@ func limiterMetricLabel(name string) string {
 		return "default"
 	}
 	return name
+}
+
+func limiterURLSource(cfg *config.Config) string {
+	if strings.TrimSpace(cfg.RateLimit.Redis.URL) != "" {
+		return "rate_limit.redis.url"
+	}
+	return "cache.redis.url"
 }
 
 func resolveCache(app *plugin.App, conn *sql.DB, cfg *config.Config) (cache.Cache, error) {

@@ -120,8 +120,17 @@ type RateLimitConfig struct {
 // cache deployments do not have to set a cache prefix just to enable
 // the limiter. Only single-node redis:// URLs are supported.
 type RateLimitRedisConfig struct {
+	URL       string `yaml:"url"`
 	KeyPrefix string `yaml:"key_prefix"`
 	PoolSize  int    `yaml:"pool_size"`
+}
+
+// RedisURL is rate_limit.redis.url, else cacheRedisURL. Empty if neither is set.
+func (c RateLimitConfig) RedisURL(cacheRedisURL string) string {
+	if u := strings.TrimSpace(c.Redis.URL); u != "" {
+		return u
+	}
+	return strings.TrimSpace(cacheRedisURL)
 }
 
 // RedisKeyPrefix is rate_limit.redis.key_prefix, else cachePrefix, else "shopanda".
@@ -1025,6 +1034,9 @@ func applyEnv(cfg *Config) {
 		if cfg.Queue.Redis.URL == "" {
 			cfg.Queue.Redis.URL = v
 		}
+		if cfg.RateLimit.Redis.URL == "" {
+			cfg.RateLimit.Redis.URL = v
+		}
 	}
 	if v := os.Getenv("SHOPANDA_QUEUE_REDIS_URL"); v != "" {
 		cfg.Queue.Redis.URL = v
@@ -1235,6 +1247,9 @@ func applyEnv(cfg *Config) {
 			cfg.RateLimit.Default.Burst = b
 		}
 	}
+	if v := os.Getenv("SHOPANDA_RATE_LIMIT_REDIS_URL"); v != "" {
+		cfg.RateLimit.Redis.URL = v
+	}
 	if v := os.Getenv("SHOPANDA_RATE_LIMIT_REDIS_KEY_PREFIX"); v != "" {
 		cfg.RateLimit.Redis.KeyPrefix = v
 	}
@@ -1411,6 +1426,7 @@ func flatten(cfg *Config) map[string]string {
 	m["rate_limit.on_error"] = cfg.RateLimit.OnError
 	m["rate_limit.default.rate"] = strconv.FormatFloat(cfg.RateLimit.Default.Rate, 'f', -1, 64)
 	m["rate_limit.default.burst"] = strconv.Itoa(cfg.RateLimit.Default.Burst)
+	m["rate_limit.redis.url"] = cfg.RateLimit.Redis.URL
 	m["rate_limit.redis.key_prefix"] = cfg.RateLimit.Redis.KeyPrefix
 	m["rate_limit.redis.pool_size"] = strconv.Itoa(cfg.RateLimit.Redis.PoolSize)
 	m["metrics.enabled"] = strconv.FormatBool(cfg.Metrics.Enabled)

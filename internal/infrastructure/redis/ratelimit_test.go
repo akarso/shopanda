@@ -284,6 +284,8 @@ func TestSlidingWindow_CancelledContextDoesNotConsumeLocal(t *testing.T) {
 func TestSlidingWindow_DisconnectDuringRedisIsCanceled(t *testing.T) {
 	factory := NewLimiterFactory(hangingLimiterClient(t), "shopanda", nil)
 	t.Cleanup(func() { _ = factory.Close() })
+	var backendHits atomic.Int64
+	factory.SetErrorObserver(func(_, _ string) { backendHits.Add(1) })
 	lim := factory.New(spec("default", 10, 10))
 	ctx, cancel := context.WithCancel(context.Background())
 	go func() {
@@ -296,6 +298,45 @@ func TestSlidingWindow_DisconnectDuringRedisIsCanceled(t *testing.T) {
 	}
 	if d.BackendError {
 		t.Fatal("gone client is not a backend error / fail-open admit")
+	}
+	if backendHits.Load() != 0 {
+		t.Fatal("disconnect during a Redis timeout must not record a backend error")
+	}
+}
+
+func TestSlidingWindow_DisconnectDuringRedisDoesNotTripCircuit(t *testing.T) {
+	factory := NewLimiterFactory(hangingLimiterClient(t), "shopanda", nil)
+	t.Cleanup(func() { _ = factory.Close() })
+	var backendHits atomic.Int64
+	factory.SetErrorObserver(func(_, _ string) { backendHits.Add(1) })
+	lim := factory.New(spec("default", 10, 10))
+	var wg sync.WaitGroup
+	wg.Add(circuitLowErrors)
+	for i := 0; i < circuitLowErrors; i++ {
+		go func() {
+			defer wg.Done()
+			ctx, cancel := context.WithCancel(context.Background())
+			go func() {
+				time.Sleep(50 * time.Millisecond)
+				cancel()
+			}()
+			d := lim.Allow(ctx, "ip")
+			if !d.Canceled || d.BackendError {
+				t.Errorf("disconnect during Redis = %+v, want Canceled", d)
+			}
+		}()
+	}
+	wg.Wait()
+	if backendHits.Load() != 0 {
+		t.Fatalf("disconnects recorded %d backend errors", backendHits.Load())
+	}
+	start := time.Now()
+	d := lim.Allow(context.Background(), "ip")
+	if time.Since(start) < 150*time.Millisecond {
+		t.Fatal("circuit must still talk to Redis after disconnect-timeouts")
+	}
+	if !d.Allowed || !d.BackendError {
+		t.Fatalf("live timeout = %+v, want fail-open (circuit still closed)", d)
 	}
 }
 

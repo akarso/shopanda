@@ -277,8 +277,8 @@ rate_limit:
   # Backend: memory (default, in-process token bucket) or redis (shared
   # sliding window). Use redis when running more than one instance without
   # a gateway-level limiter in front. Redis always opens a dedicated client
-  # (200ms I/O, no retries) from cache.redis.url — it does not share the
-  # cache connection pool. Driver is lowercased/trimmed.
+  # (200ms I/O, no retries) from rate_limit.redis.url, else cache.redis.url
+  # — it does not share the cache connection pool. Driver is lowercased/trimmed.
   # Env override: SHOPANDA_RATE_LIMIT_DRIVER=redis
   driver: memory
 
@@ -339,14 +339,19 @@ rate_limit:
 
   # Limiter Redis settings (driver=redis only). Single-node redis:// or
   # rediss:// URLs — Cluster and Sentinel are not supported (same as cache).
+  # url: dedicated limiter Redis. If unset, cache.redis.url (or REDIS_URL)
+  # is used. Set this when the limiter must not share the cache Redis
+  # (or when cache.driver is not redis). Env: SHOPANDA_RATE_LIMIT_REDIS_URL.
   # key_prefix: sibling `-rl:` is appended. Defaults to cache.redis.key_prefix
   # or "shopanda". When cache.driver=redis, cache.redis.key_prefix must be
   # non-empty so cache SCAN cannot delete limiter keys.
   # pool_size: 0 uses min(10*GOMAXPROCS, 64) (minimum 8). Override to raise
   # the cap; count limiter pool + cache pool per instance against Redis
   # maxclients (see RUNBOOK).
-  # Env: SHOPANDA_RATE_LIMIT_REDIS_KEY_PREFIX, SHOPANDA_RATE_LIMIT_REDIS_POOL_SIZE
+  # Env: SHOPANDA_RATE_LIMIT_REDIS_URL, SHOPANDA_RATE_LIMIT_REDIS_KEY_PREFIX,
+  # SHOPANDA_RATE_LIMIT_REDIS_POOL_SIZE
   # redis:
+  #   url: redis://127.0.0.1:6379
   #   key_prefix: shopanda
   #   pool_size: 0
 

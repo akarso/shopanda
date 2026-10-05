@@ -138,8 +138,8 @@ func validateRateLimit(cfg *Config) error {
 	}
 
 	if cfg.RateLimit.Enabled && cfg.RateLimit.Driver == "redis" {
-		if strings.TrimSpace(cfg.Cache.Redis.URL) == "" {
-			return fmt.Errorf("config: rate_limit.driver=redis requires cache.redis.url (or REDIS_URL / SHOPANDA_CACHE_REDIS_URL)")
+		if cfg.RateLimit.RedisURL(cfg.Cache.Redis.URL) == "" {
+			return fmt.Errorf("config: rate_limit.driver=redis requires rate_limit.redis.url or cache.redis.url (or SHOPANDA_RATE_LIMIT_REDIS_URL / REDIS_URL / SHOPANDA_CACHE_REDIS_URL)")
 		}
 		if cfg.RateLimit.Redis.PoolSize < 0 {
 			return fmt.Errorf("config: rate_limit.redis.pool_size must be >= 0 (0 uses min(10*GOMAXPROCS, 64))")

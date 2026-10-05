@@ -272,6 +272,66 @@ func TestResolveRateLimitFactory_RedisMissingURL(t *testing.T) {
 	}
 }
 
+func TestResolveRateLimitFactory_DedicatedURLBeatsCacheURL(t *testing.T) {
+	cacheMR, err := miniredis.Run()
+	if err != nil {
+		t.Fatalf("cache miniredis: %v", err)
+	}
+	t.Cleanup(cacheMR.Close)
+	limMR, err := miniredis.Run()
+	if err != nil {
+		t.Fatalf("limiter miniredis: %v", err)
+	}
+	t.Cleanup(limMR.Close)
+	cfg := &config.Config{
+		RateLimit: config.RateLimitConfig{
+			Enabled: true,
+			Driver:  "redis",
+			Redis:   config.RateLimitRedisConfig{URL: "redis://" + limMR.Addr()},
+		},
+		Cache: config.CacheConfig{Redis: config.RedisCacheConfig{URL: "redis://" + cacheMR.Addr(), KeyPrefix: "shopanda"}},
+	}
+	f, closeFn, err := resolveRateLimitFactory(cfg, logger.NewWithWriter(io.Discard, "error"), metrics.Noop())
+	if err != nil {
+		t.Fatalf("resolve: %v", err)
+	}
+	t.Cleanup(closeFn)
+	owned, ok := f.(*inredis.LimiterFactory)
+	if !ok {
+		t.Fatalf("factory type %T", f)
+	}
+	if got := owned.Client().Options().Addr; got != limMR.Addr() {
+		t.Fatalf("limiter Addr = %q, want dedicated %q (not cache %q)", got, limMR.Addr(), cacheMR.Addr())
+	}
+}
+
+func TestResolveRateLimitFactory_DedicatedURLWithoutCacheURL(t *testing.T) {
+	mr, err := miniredis.Run()
+	if err != nil {
+		t.Fatalf("miniredis: %v", err)
+	}
+	t.Cleanup(mr.Close)
+	cfg := &config.Config{
+		RateLimit: config.RateLimitConfig{
+			Enabled: true,
+			Driver:  "redis",
+			Redis:   config.RateLimitRedisConfig{URL: "redis://" + mr.Addr()},
+		},
+	}
+	f, closeFn, err := resolveRateLimitFactory(cfg, logger.NewWithWriter(io.Discard, "error"), metrics.Noop())
+	if err != nil {
+		t.Fatalf("resolve: %v", err)
+	}
+	t.Cleanup(closeFn)
+	owned, ok := f.(*inredis.LimiterFactory)
+	if !ok {
+		t.Fatalf("factory type %T", f)
+	}
+	if got := owned.Client().Options().Addr; got != mr.Addr() {
+		t.Fatalf("limiter Addr = %q, want %q", got, mr.Addr())
+	}
+}
+
 func TestResolveRateLimitFactory_DedicatedClientDoesNotCloseCache(t *testing.T) {
 	mr, err := miniredis.Run()
 	if err != nil {
