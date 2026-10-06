@@ -73,6 +73,10 @@ func cliActor() string {
 // must not be how an operator finds out their retry/cancel/trigger
 // didn't go through).
 func auditCLIAction(ctx context.Context, conn *sql.DB, log logger.Logger, action adminApp.AuditAction, resourceType, resourceID string, cmdErr error) {
+	auditCLIActionDetails(ctx, conn, log, action, resourceType, resourceID, nil, cmdErr)
+}
+
+func auditCLIActionDetails(ctx context.Context, conn *sql.DB, log logger.Logger, action adminApp.AuditAction, resourceType, resourceID string, details map[string]interface{}, cmdErr error) {
 	repo, err := postgres.NewAuditLogRepo(conn)
 	if err != nil {
 		log.Error("cli.audit.repo_failed", err, map[string]interface{}{"action": string(action)})
@@ -92,6 +96,7 @@ func auditCLIAction(ctx context.Context, conn *sql.DB, log logger.Logger, action
 		Action:       action,
 		ResourceType: resourceType,
 		ResourceID:   resourceID,
+		Details:      details,
 		Result:       result,
 		Error:        errMsg,
 	})

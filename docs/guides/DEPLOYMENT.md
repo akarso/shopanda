@@ -210,6 +210,7 @@ Responses always include `X-Content-Type-Options: nosniff`, `X-Frame-Options: DE
 | Variable | Required | Default | Purpose |
 | --- | --- | --- | --- |
 | `SHOPANDA_CACHE_DRIVER` | No | `postgres` | Cache backend |
+| `SHOPANDA_CACHE_REDIS_KEY_PREFIX` | When `SHOPANDA_CACHE_DRIVER=redis` | empty | Redis key prefix. Required (non-empty) when the cache driver is redis — empty prefix would make SCAN/FlushAll match the whole Redis DB. |
 
 ### Frontend
 

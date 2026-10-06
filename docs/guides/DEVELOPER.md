@@ -697,6 +697,14 @@ The embedded admin SPA stores its JWT in browser local storage and sends it as a
 
 Both endpoints are Postgres-queue-only, the same limitation as the read endpoints above: a broker-backed queue driver (Redis, RabbitMQ, etc.) has no queryable/updatable job table, so `serve` fails startup with a clear error if the configured queue driver doesn't support this rather than silently omitting the routes.
 
+## Cache admin API
+
+`GET /api/v1/admin/cache/stats` — gated by `cache.read` — returns approximate L2 occupancy (Postgres `COUNT(*)` of `cache`/`cache_tags` with a 1.5s cap, then `pg_class.reltuples` with `l2.approximate: true`; Redis `DBSIZE` + `INFO memory`) plus this process's L1 stores (RBAC catalog, storefront category nav) with hit/miss counters. L2 hit/miss is not tracked here (see PR-1042 out of scope / PR-1047). There is no admin UI yet (PR-1043); use the API, `curl`, or `app cache:stats`. Successful HTTP stats are not audit-logged (polled); failures are.
+
+`POST /api/v1/admin/cache/clear` — body exactly one of `{"prefix":"..."}` / `{"tag":"..."}` / `{"key":"..."}` / `{"all": true}`. Empty/whitespace selectors are omitted. Targeted clears require `cache.write`; `all` requires the distinct `cache.clear_all` permission. Prefix is literal (Redis glob characters are escaped). Redis `all` scan-and-deletes under the store prefix, never `FLUSHDB`, and refuses an empty prefix; `deleted` is value keys only. SCAN is best-effort (not a snapshot). Every clear is audit-logged. CLI: `app cache:clear --prefix=<p> | --tag=<t> | --key=<k> | --all` — the CLI has **no RBAC** (ops trust boundary, same as jobs CLI).
+
+A custom `Cache` implementation must implement `Stats` and `FlushAll` in addition to the PR-1039 tag methods.
+
 ## Integrator Platform (Phase 8)
 
 **Audience:** agencies and integrators connecting ERP, warehouse, PIM, or custom price/cart rules.
@@ -712,7 +720,7 @@ Phase 8 adds first-class seams for **commerce behavior** (positioned pricing ste
 
 - Infrastructure ports (typed): search, cache, queue, payment, media, tax (`RegisterSearchProvider(search.SearchEngine)`, `RegisterTaxCalculator(tax.Calculator)`, …), mail (`RegisterMailSender(mail.Mailer)`), shipping rates (`RegisterShippingRateProvider(shipping.Provider)`)
   - `search.SearchEngine` (PR-1037): `search.Product.CategoryIDs []string` replaces the old single `CategoryID string` — a product can belong to more than one category, and the index must represent all of them, not just the first. `SearchEngine` also gained `IndexCategory(ctx, search.Category) error` / `RemoveCategory(ctx, categoryID string) error` for indexing category documents (name/slug/description/parent/product count) as their own searchable entity, alongside products. A custom `SearchEngine` implementation must implement both new methods.
-  - `cache.Cache` (PR-1039): `SetWithTags(ctx, key, value, ttl, tags ...string)` / `DeleteByTag(ctx, tag) (int64, error)` for many-to-many invalidation (keys that mention the same entity but do not share a prefix). `DeleteByPrefix` stays for keys that share a prefix by construction (`product:<id>:`). A custom `Cache` implementation must implement both new methods. See [Cache invalidation: prefix vs tags](#cache-invalidation-prefix-vs-tags).
+  - `cache.Cache` (PR-1039/PR-1042): `SetWithTags` / `DeleteByTag` for many-to-many invalidation; `Stats(ctx) (Stats, error)` / `FlushAll(ctx) (int64, error)` for the cache admin API. Redis `FlushAll` must scan-and-delete under a non-empty store prefix, never `FLUSHDB`, and return value-key deletions only. See [Cache invalidation: prefix vs tags](#cache-invalidation-prefix-vs-tags).
 - Behavioral: positioned `RegisterPricingStep`, positioned `RegisterCheckoutStep`, `RegisterCompositionStep`, cart hook chain — see `pkg/extapi`
 - Promotion rules: `app.PromotionRules(registrant).RegisterCatalogCondition/Action` (+ cart variants) for custom JSON rule `"type"` values evaluated in catalog/cart promotion pricing steps (PR-862). Requires `SetPromotionEvaluatorRegistry` in bootstrap before `InitAll`.
 - HTTP: `RegisterPublicRoute`, `RegisterAdminRoute`, `app.Integration(slug).RegisterRoute` / `RegisterSecureRoute`

@@ -49,6 +49,9 @@ func normalizeAndValidate(cfg *Config) error {
 	default:
 		return fmt.Errorf("config: unsupported cache.driver: %q (allowed: postgres, redis)", cfg.Cache.Driver)
 	}
+	if cfg.Cache.Driver == "redis" && strings.TrimSpace(cfg.Cache.Redis.KeyPrefix) == "" {
+		return fmt.Errorf("config: cache.redis.key_prefix must be non-empty when cache.driver=redis (empty prefix makes SCAN/FlushAll match the whole Redis DB)")
+	}
 
 	if err := validateRateLimit(cfg); err != nil {
 		return err
@@ -143,9 +146,6 @@ func validateRateLimit(cfg *Config) error {
 		}
 		if cfg.RateLimit.Redis.PoolSize < 0 {
 			return fmt.Errorf("config: rate_limit.redis.pool_size must be >= 0 (0 uses min(10*GOMAXPROCS, 64))")
-		}
-		if cfg.Cache.Driver == "redis" && strings.TrimSpace(cfg.Cache.Redis.KeyPrefix) == "" {
-			return fmt.Errorf("config: cache.redis.key_prefix must be non-empty when cache.driver=redis and rate_limit.driver=redis (empty prefix makes cache SCAN * delete limiter keys)")
 		}
 	}
 	return nil

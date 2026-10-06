@@ -79,6 +79,19 @@ func (s *Service) Catalog() []PermissionCatalogEntry {
 	return cloneCatalog(computed)
 }
 
+// CatalogCacheSnapshot returns L1 occupancy and hit/miss counters for
+// the permission catalog store (PR-1042 cache admin).
+func (s *Service) CatalogCacheSnapshot() localcache.Snapshot {
+	return s.catalogCache.Snapshot()
+}
+
+// ClearCatalogCache drops the permission catalog L1 entry. Used by
+// cache-admin FlushAll in this process; the catalog is recomputed on
+// the next Catalog() call.
+func (s *Service) ClearCatalogCache() {
+	s.catalogCache.Clear()
+}
+
 // cloneCatalog deep-copies entries, including each entry's own Defaults
 // slice — a plain top-level append([]PermissionCatalogEntry(nil), ...)
 // would still leave every entry's Defaults aliased to the cached

@@ -157,6 +157,10 @@ func (stubCache) SetWithTags(context.Context, string, any, time.Duration, ...str
 	return nil
 }
 func (stubCache) DeleteByTag(context.Context, string) (int64, error) { return 0, nil }
+func (stubCache) Stats(context.Context) (cache.Stats, error) {
+	return cache.Stats{Backend: "stub"}, nil
+}
+func (stubCache) FlushAll(context.Context) (int64, error) { return 0, nil }
 
 var _ cache.Cache = stubCache{}
 

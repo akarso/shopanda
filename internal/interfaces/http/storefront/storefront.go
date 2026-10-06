@@ -269,6 +269,24 @@ func NewStorefrontHandler(
 	}
 }
 
+// CategoryNavCacheSnapshot returns L1 occupancy and hit/miss counters
+// for the storefront category-tree store (PR-1042 cache admin).
+func (h *StorefrontHandler) CategoryNavCacheSnapshot() localcache.Snapshot {
+	if h == nil || h.catNav == nil {
+		return localcache.Snapshot{}
+	}
+	return h.catNav.Snapshot()
+}
+
+// ClearCategoryNavCache drops the storefront category-tree L1 entry.
+// Used by cache-admin FlushAll in this process.
+func (h *StorefrontHandler) ClearCategoryNavCache() {
+	if h == nil || h.catNav == nil {
+		return
+	}
+	h.catNav.Clear()
+}
+
 // WithCart enables storefront cart rendering and mutations using the provided
 // variant repository and cart application service.
 func (h *StorefrontHandler) WithCart(variants catalog.VariantRepository, carts *cartApp.Service) *StorefrontHandler {
