@@ -187,6 +187,7 @@
         "/admin/operations/jobs": { title: "Jobs", render: renderJobsGrid, auth: true },
         "/admin/operations/schedules": { title: "Schedules", render: renderSchedulesGrid, auth: true },
         "/admin/operations/search": { title: "Search", render: renderSearchReindexPage, auth: true },
+        "/admin/operations/cache": { title: "Cache", render: renderCacheAdminPage, auth: true },
         // Settings
         "/admin/settings": { title: "Settings", render: renderSettingsPage, auth: true },
         "/admin/settings/localization": { title: "Localization", render: renderLocalizationSettingsPage, auth: true },
@@ -3673,6 +3674,8 @@
                         }
                         loadContextSwitcherData().then(function () {
                             refreshJobsNavVisibility();
+                            refreshSearchNavVisibility();
+                            refreshCacheNavVisibility();
                             navigateTo("/admin/dashboard");
                         });
                     }).catch(function () {
@@ -3981,6 +3984,16 @@
     function refreshSearchNavVisibility() {
         var visible = userHasPermission("search.reindex");
         var link = document.querySelector('.admin-sidebar a[href="/admin/operations/search"]');
+        if (link && link.parentElement) {
+            link.parentElement.style.display = visible ? "" : "none";
+        }
+    }
+
+    // refreshCacheNavVisibility mirrors refreshSearchNavVisibility, gated
+    // on cache.read (admin-role-only by default — see role_permissions.go).
+    function refreshCacheNavVisibility() {
+        var visible = userHasPermission("cache.read");
+        var link = document.querySelector('.admin-sidebar a[href="/admin/operations/cache"]');
         if (link && link.parentElement) {
             link.parentElement.style.display = visible ? "" : "none";
         }
@@ -9940,10 +9953,10 @@
     // the same POST twice — the backend's status guard would reject a
     // second retry/cancel/trigger as a conflict, which would otherwise
     // show as a spurious error banner for what was actually a successful
-    // first click. Re-enables regardless of outcome: on success the
-    // caller typically reloads/replaces the surrounding DOM anyway, so
-    // restoring the (about to be discarded) button is harmless.
-    function withButtonBusy(btn, busyLabel, startAction) {
+    // first click. Re-enables regardless of outcome, then runs optional
+    // afterRestore so a caller that owns disabled state (cache all-clear
+    // type-to-confirm) can re-apply it after this helper's restore.
+    function withButtonBusy(btn, busyLabel, startAction, afterRestore) {
         if (btn.disabled) {
             return;
         }
@@ -9953,6 +9966,9 @@
         var restore = function () {
             btn.disabled = false;
             btn.textContent = originalLabel;
+            if (typeof afterRestore === "function") {
+                afterRestore();
+            }
         };
         startAction().then(restore, restore);
     }
@@ -10598,6 +10614,187 @@
         container.innerHTML = html;
     }
 
+    function formatCacheCount(n) {
+        if (n == null) {
+            return "—";
+        }
+        return String(n);
+    }
+
+    function formatCacheBytes(n) {
+        if (n == null) {
+            return "—";
+        }
+        var units = ["B", "KiB", "MiB", "GiB"];
+        var v = Number(n);
+        if (!isFinite(v) || v < 0) {
+            return "—";
+        }
+        var i = 0;
+        while (v >= 1024 && i < units.length - 1) {
+            v = v / 1024;
+            i++;
+        }
+        var shown = i === 0 ? String(Math.round(v)) : v.toFixed(1);
+        return shown + " " + units[i];
+    }
+
+    function renderCacheAdminPage(container) {
+        if (!userHasPermission("cache.read")) {
+            container.innerHTML = '<h2>Cache</h2><p role="alert">Your account does not have cache access.</p>';
+            return;
+        }
+
+        var cacheUI = window.ShopandaCacheAdminUI;
+        if (!cacheUI) {
+            container.innerHTML = '<h2>Cache</h2><p role="alert">Cache admin UI failed to load.</p>';
+            return;
+        }
+        var canWrite = userHasPermission("cache.write");
+        var canClearAll = userHasPermission("cache.clear_all");
+        var modes = cacheUI.modeOptions(canWrite, canClearAll);
+        var modeLabels = { prefix: "Prefix", tag: "Tag", key: "Key", all: "All (full flush)" };
+        var modeOptionsHtml = "";
+        for (var mi = 0; mi < modes.length; mi++) {
+            modeOptionsHtml += '<option value="' + modes[mi] + '">' + modeLabels[modes[mi]] + "</option>";
+        }
+
+        var clearForm = "";
+        if (modes.length > 0) {
+            clearForm =
+                "<h3>Clear cache</h3>" +
+                '<form id="cache-clear-form">' +
+                '<label>Mode <select name="mode" id="cache-clear-mode">' + modeOptionsHtml + "</select></label> " +
+                '<span id="cache-clear-value-field" class="cache-clear-value-field"><label>Value <input type="text" name="value" id="cache-clear-value" autocomplete="off"></label></span>' +
+                '<div id="cache-clear-all-confirm" class="cache-confirm-all" hidden>' +
+                '<p id="cache-clear-all-help">This flushes the entire L2 store and this API process\'s L1. Other replicas keep their L1 until TTL. Type <strong>CLEAR ALL</strong> to enable the button — a single click is not enough.</p>' +
+                '<label>Confirmation <input type="text" name="confirm" id="cache-clear-confirm" autocomplete="off" placeholder="CLEAR ALL" aria-describedby="cache-clear-all-help"></label>' +
+                "</div> " +
+                '<button type="submit" id="cache-clear-submit">Clear</button>' +
+                "</form>" +
+                '<div id="cache-clear-msg"></div>';
+        }
+
+        container.innerHTML =
+            "<h2>Cache</h2>" +
+            '<p class="settings-scope-note">L2 occupancy is not a live hit rate. Postgres may mark the count approximate. A full flush clears L1 only in this API process; other replicas keep their L1 until invalidation or TTL. The CLI cannot clear this process\'s L1. This screen follows compiled role defaults, not database grants or revokes of cache permissions.</p>' +
+            '<div id="cache-stats-msg"></div>' +
+            '<div id="cache-stats-cards" class="stats-cards"><p>Loading…</p></div>' +
+            "<h3>L1 stores (this process)</h3>" +
+            '<div id="cache-l1"></div>' +
+            '<p><button type="button" id="cache-stats-refresh">Refresh stats</button></p>' +
+            clearForm;
+
+        var statsMsg = document.getElementById("cache-stats-msg");
+        var statsCards = document.getElementById("cache-stats-cards");
+        var l1Box = document.getElementById("cache-l1");
+        var refreshBtn = document.getElementById("cache-stats-refresh");
+
+        function renderStats(snap) {
+            var l2 = (snap && snap.l2) || {};
+            var approx = l2.approximate ? ' <span class="badge badge-approximate">approximate</span>' : "";
+            statsCards.innerHTML =
+                '<article class="stat-card"><header>L2 backend</header><p>' + esc(l2.backend || "—") + "</p></article>" +
+                '<article class="stat-card"><header>L2 keys</header><p>' + esc(formatCacheCount(l2.keys)) + approx + "</p></article>" +
+                '<article class="stat-card"><header>L2 tag rows</header><p>' + esc(formatCacheCount(l2.tag_rows)) + "</p></article>" +
+                '<article class="stat-card"><header>L2 memory</header><p>' + esc(formatCacheBytes(l2.memory_used_bytes)) + "</p></article>";
+
+            var l1 = cacheUI.normalizeL1(snap && snap.l1);
+            if (l1 == null) {
+                l1Box.innerHTML = '<p role="alert">Failed to load L1 stats.</p>';
+                return;
+            }
+            var html = "<table><thead><tr><th>Name</th><th>Entries</th><th>Hits</th><th>Misses</th></tr></thead><tbody>";
+            if (l1.length === 0) {
+                html += '<tr><td colspan="4">No L1 stores registered in this process.</td></tr>';
+            } else {
+                for (var i = 0; i < l1.length; i++) {
+                    var row = l1[i];
+                    html += "<tr>" +
+                        "<td>" + esc(row.name || "") + "</td>" +
+                        "<td>" + esc(formatCacheCount(row.entries)) + "</td>" +
+                        "<td>" + esc(formatCacheCount(row.hits)) + "</td>" +
+                        "<td>" + esc(formatCacheCount(row.misses)) + "</td>" +
+                        "</tr>";
+                }
+            }
+            html += "</tbody></table>";
+            l1Box.innerHTML = html;
+        }
+
+        function loadStats() {
+            statsMsg.innerHTML = "";
+            return api("/admin/cache/stats").then(function (body) {
+                if (body && body.error) {
+                    statsCards.innerHTML = "";
+                    l1Box.innerHTML = "";
+                    statsMsg.innerHTML = '<p role="alert">' + esc(extractErrorMessage(body, "Failed to load cache stats.")) + "</p>";
+                    return;
+                }
+                var snap = body && body.data;
+                if (!snap) {
+                    statsCards.innerHTML = "";
+                    l1Box.innerHTML = "";
+                    statsMsg.innerHTML = '<p role="alert">Failed to load cache stats.</p>';
+                    return;
+                }
+                renderStats(snap);
+            }).catch(function (err) {
+                statsCards.innerHTML = "";
+                l1Box.innerHTML = "";
+                statsMsg.innerHTML = '<p role="alert">' + esc(extractErrorMessage(err, "Failed to load cache stats.")) + "</p>";
+            });
+        }
+
+        refreshBtn.addEventListener("click", function () {
+            withButtonBusy(refreshBtn, "Refreshing…", function () {
+                return loadStats();
+            });
+        });
+
+        var form = document.getElementById("cache-clear-form");
+        if (form) {
+            var clearMsg = document.getElementById("cache-clear-msg");
+            cacheUI.bindClearForm({
+                form: form,
+                modeSelect: document.getElementById("cache-clear-mode"),
+                valueField: document.getElementById("cache-clear-value-field"),
+                valueInput: document.getElementById("cache-clear-value"),
+                confirmBox: document.getElementById("cache-clear-all-confirm"),
+                confirmInput: document.getElementById("cache-clear-confirm"),
+                submitBtn: document.getElementById("cache-clear-submit")
+            }, {
+                withBusy: withButtonBusy,
+                loadStats: loadStats,
+                onMessage: function (kind, text) {
+                    if (kind === "error") {
+                        clearMsg.innerHTML = '<p role="alert">' + esc(text || "Clear failed.") + "</p>";
+                    } else {
+                        clearMsg.innerHTML = "<p>" + esc(text || "") + "</p>";
+                    }
+                },
+                clear: function (payload) {
+                    return api("/admin/cache/clear", { method: "POST", body: JSON.stringify(payload) }).then(function (body) {
+                        if (body && body.error) {
+                            return { error: extractErrorMessage(body, "Clear failed.") };
+                        }
+                        var data = body && body.data;
+                        var bits = ["Cleared " + ((data && data.mode) || "cache")];
+                        if (data && data.target) {
+                            bits.push("(" + data.target + ")");
+                        }
+                        if (data && data.deleted != null) {
+                            bits.push("— deleted " + data.deleted);
+                        }
+                        return { message: bits.join(" ") };
+                    });
+                }
+            });
+        }
+
+        loadStats();
+    }
+
     // --- Logout ---
 
     function handleLogout(e) {
@@ -10644,6 +10841,7 @@
             refreshCustomerGroupsNavVisibility();
             refreshJobsNavVisibility();
             refreshSearchNavVisibility();
+            refreshCacheNavVisibility();
             handleRoute();
         });
     }

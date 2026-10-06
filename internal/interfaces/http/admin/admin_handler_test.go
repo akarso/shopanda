@@ -788,6 +788,26 @@ func TestAdminHandler_StaticJS(t *testing.T) {
 	if !strings.Contains(normalizedBody, "Operational configuration has moved") {
 		t.Fatalf("expected settings relocation guidance in JS")
 	}
+	expectedCacheAdminWiring := []string{
+		"renderCacheAdminPage",
+		"refreshCacheNavVisibility",
+		"ShopandaCacheAdminUI",
+		"bindClearForm",
+		"/admin/operations/cache",
+		"/admin/cache/stats",
+		"/admin/cache/clear",
+		"CLEAR ALL",
+		"Your account does not have cache access.",
+		"Cache admin UI failed to load.",
+		`userHasPermission("cache.read")`,
+		`userHasPermission("cache.write")`,
+		`userHasPermission("cache.clear_all")`,
+	}
+	for _, expected := range expectedCacheAdminWiring {
+		if !strings.Contains(normalizedBody, expected) {
+			t.Fatalf("expected cache admin wiring %q in JS", expected)
+		}
+	}
 }
 
 func TestAdminHandler_SPAFallback(t *testing.T) {

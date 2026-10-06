@@ -63,6 +63,7 @@ Every major screen in the embedded admin SPA is listed below. Use the **Route** 
 | Operations | Jobs | `/admin/operations/jobs` | Background job list, retry/cancel ([PR-1031](../phase-11-jobs-search-cache/prs/PR-1031.md)) |
 | Operations | Schedules | `/admin/operations/schedules` | Recurring task list, trigger/enable/disable ([PR-1031](../phase-11-jobs-search-cache/prs/PR-1031.md)) |
 | Operations | Search | `/admin/operations/search` | Trigger/track search reindexing, run history ([PR-1038](../phase-11-jobs-search-cache/prs/PR-1038.md)) |
+| Operations | Cache | `/admin/operations/cache` | Cache stats and clear (prefix/tag/key/all) ([PR-1043](../phase-11-jobs-search-cache/prs/PR-1043.md)) |
 | Settings | General | `/admin/settings` | Store info, email, media |
 | Settings | Localization | `/admin/settings/localization` | Currency + store languages |
 | Settings | Users & Roles | `/admin/settings/users` | Admin users ([PR-520](../phase-5-maturity/prs/PR-520.md)) |
@@ -334,6 +335,19 @@ A queued run (**Products**/**Categories** with multiple IDs, **Changed since**, 
 For a single product or category you're actively editing, skip the Search screen entirely: both the **Products** grid and the **Categories** page have a per-row **Reindex now** action that does the same immediate, synchronous reindex with one click.
 
 This screen requires the `search.reindex` permission — by default, only the **Administrator** role has it (see [Admin users and audit](#admin-users-and-audit)).
+
+### Cache
+
+Open **Operations → Cache** at `/admin/operations/cache` to see occupancy and to clear entries without using the API or CLI.
+
+**Stats** show this API process's L2 backend (key count, tag rows, memory when the backend reports it) and its L1 stores (permission catalog, storefront category nav) with hit/miss counters. Counts are occupancy, not a live hit rate. A successful clear refreshes these numbers automatically. Use **Refresh stats** if a Postgres count is still marked **approximate**, or to re-check other replicas that this process cannot flush.
+
+**Clear cache** offers four modes:
+
+- **Prefix**, **Tag**, or **Key** — enter the selector and click **Clear**. These require `cache.write`.
+- **All (full flush)** — the whole L2 store plus this process's L1. This requires `cache.clear_all`. The **Clear** button stays disabled until you type `CLEAR ALL` in the confirmation field — a single click is not enough. Other API replicas keep their own L1 until invalidation or TTL; this screen cannot flush them. The CLI cannot clear an API process's L1 either.
+
+This screen requires `cache.read` to open. The SPA shows or hides Cache (and Clear All) from **compiled role defaults**, not from grants or revokes stored in the database — a custom role given `cache.*` in the DB still will not see this screen, and an Administrator who lost those permissions in the DB still will. The API enforces the real grants; until the admin shell reads effective permissions from `/auth/me`, treat the UI as a compiled-role map. By default only **Administrator** has the cache permissions.
 
 ## Configure the Store
 
