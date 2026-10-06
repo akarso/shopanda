@@ -203,8 +203,19 @@ func TestAdminService_Clear_PrefixTagKeyAll(t *testing.T) {
 	if res.Mode != cacheapp.ClearAll || len(backend.keys) != 0 {
 		t.Fatalf("all result = %+v keys=%v", res, backend.keys)
 	}
+	if res.Deleted == nil || *res.Deleted != 1 {
+		t.Fatalf("all deleted = %v, want 1", res.Deleted)
+	}
 	if l1Cleared != 1 {
 		t.Fatalf("all must clear L1, got %d", l1Cleared)
+	}
+
+	res, err = svc.Clear(ctx, cacheapp.ClearRequest{All: true})
+	if err != nil {
+		t.Fatalf("empty all: %v", err)
+	}
+	if res.Deleted == nil || *res.Deleted != 0 {
+		t.Fatalf("empty all deleted = %v, want 0", res.Deleted)
 	}
 }
 
@@ -228,6 +239,9 @@ func TestAdminService_Clear_BackendErrorKeepsSelector(t *testing.T) {
 	}
 	if res.Mode != cacheapp.ClearAll {
 		t.Fatalf("flush error result = %+v, want mode=all", res)
+	}
+	if res.Deleted != nil {
+		t.Fatalf("flush error deleted = %v, want omitted when count is unknown", res.Deleted)
 	}
 }
 

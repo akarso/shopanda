@@ -145,13 +145,14 @@ func (s *AdminService) Clear(ctx context.Context, req ClearRequest) (ClearResult
 	case ClearAll:
 		n, err := s.backend.FlushAll(ctx)
 		res := ClearResult{Mode: mode}
-		if n != 0 {
-			res.Deleted = int64Ptr(n)
-		}
 		if err != nil {
+			if n != 0 {
+				res.Deleted = int64Ptr(n)
+			}
 			return res, err
 		}
 		s.clearL1()
+		res.Deleted = int64Ptr(n)
 		return res, nil
 	default:
 		return ClearResult{}, apperror.Validation("exactly one of prefix, tag, key, or all is required")
