@@ -82,13 +82,32 @@ func (m *memCache) FlushAll(context.Context) (int64, error) {
 var _ cache.Cache = (*memCache)(nil)
 
 func newCacheAdminRouter(h *admin.CacheAdminHandler) *http.ServeMux {
-	requireRead := admin.RequirePermission(rbac.CacheRead)
-	requireClear := admin.RequireAnyPermission(rbac.CacheWrite, rbac.CacheClearAll)
+	return newCacheAdminRouterWithCheck(h, rbac.HasPermission)
+}
+
+func newCacheAdminRouterWithCheck(h *admin.CacheAdminHandler, has func(identity.Role, rbac.Permission) bool) *http.ServeMux {
+	admin.SetCacheAdminPermissionCheck(h, has)
+	requireRead := admin.RequirePermissionUsing(has, rbac.CacheRead)
+	requireClear := admin.RequireAnyPermissionUsing(has, rbac.CacheWrite, rbac.CacheClearAll)
 	withAdminContext := admin.AdminContextMiddleware()
 	mux := http.NewServeMux()
 	mux.Handle("GET /api/v1/admin/cache/stats", withAdminContext(requireRead(h.Stats())))
 	mux.Handle("POST /api/v1/admin/cache/clear", withAdminContext(requireClear(h.Clear())))
 	return mux
+}
+
+func allowRole(role identity.Role, perms ...rbac.Permission) func(identity.Role, rbac.Permission) bool {
+	granted := make(map[rbac.Permission]struct{}, len(perms))
+	for _, p := range perms {
+		granted[p] = struct{}{}
+	}
+	return func(r identity.Role, p rbac.Permission) bool {
+		if r != role {
+			return false
+		}
+		_, ok := granted[p]
+		return ok
+	}
 }
 
 func newCacheAdminHandler(t *testing.T, backend cache.Cache, l1 []cacheapp.L1Source) *admin.CacheAdminHandler {
@@ -236,13 +255,8 @@ func TestCacheAdminHandler_Clear_All(t *testing.T) {
 }
 
 func TestCacheAdminHandler_Clear_AllRequiresDistinctPermission(t *testing.T) {
-	t.Cleanup(rbac.ResetEffectivePermissions)
-	rbac.InitEffectivePermissions(map[identity.Role][]rbac.Permission{
-		identity.RoleManager: {rbac.CacheWrite},
-	})
-
 	h := newCacheAdminHandler(t, newMemCache(), nil)
-	mux := newCacheAdminRouter(h)
+	mux := newCacheAdminRouterWithCheck(h, allowRole(identity.RoleManager, rbac.CacheWrite))
 
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/admin/cache/clear", bytes.NewBufferString(`{"all":true}`))
 	req.Header.Set("Content-Type", "application/json")
@@ -264,13 +278,8 @@ func TestCacheAdminHandler_Clear_AllRequiresDistinctPermission(t *testing.T) {
 }
 
 func TestCacheAdminHandler_Clear_WriteRequiredForTargeted(t *testing.T) {
-	t.Cleanup(rbac.ResetEffectivePermissions)
-	rbac.InitEffectivePermissions(map[identity.Role][]rbac.Permission{
-		identity.RoleManager: {rbac.CacheClearAll},
-	})
-
 	h := newCacheAdminHandler(t, newMemCache(), nil)
-	mux := newCacheAdminRouter(h)
+	mux := newCacheAdminRouterWithCheck(h, allowRole(identity.RoleManager, rbac.CacheClearAll))
 
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/admin/cache/clear", bytes.NewBufferString(`{"prefix":"p:"}`))
 	req.Header.Set("Content-Type", "application/json")
@@ -314,12 +323,8 @@ func TestCacheAdminHandler_Clear_WhitespaceAndFalseAllAreOmitted(t *testing.T) {
 }
 
 func TestCacheAdminHandler_Clear_InvalidSelectorBeforePermission(t *testing.T) {
-	t.Cleanup(rbac.ResetEffectivePermissions)
-	rbac.InitEffectivePermissions(map[identity.Role][]rbac.Permission{
-		identity.RoleManager: {rbac.CacheClearAll},
-	})
 	h := newCacheAdminHandler(t, newMemCache(), nil)
-	mux := newCacheAdminRouter(h)
+	mux := newCacheAdminRouterWithCheck(h, allowRole(identity.RoleManager, rbac.CacheClearAll))
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/admin/cache/clear", bytes.NewBufferString(`{}`))
 	req.Header.Set("Content-Type", "application/json")
 	req = testhelper.AuthenticatedRequest(req, "mgr-1", identity.RoleManager)
@@ -331,15 +336,11 @@ func TestCacheAdminHandler_Clear_InvalidSelectorBeforePermission(t *testing.T) {
 }
 
 func TestCacheAdminHandler_Clear_GlobPrefixIsLiteral(t *testing.T) {
-	t.Cleanup(rbac.ResetEffectivePermissions)
-	rbac.InitEffectivePermissions(map[identity.Role][]rbac.Permission{
-		identity.RoleManager: {rbac.CacheWrite},
-	})
 	backend := newMemCache()
 	_ = backend.Set("normal", "1", 0)
 	_ = backend.Set("*glob", "2", 0)
 	h := newCacheAdminHandler(t, backend, nil)
-	mux := newCacheAdminRouter(h)
+	mux := newCacheAdminRouterWithCheck(h, allowRole(identity.RoleManager, rbac.CacheWrite))
 
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/admin/cache/clear", bytes.NewBufferString(`{"prefix":"*"}`))
 	req.Header.Set("Content-Type", "application/json")
@@ -397,12 +398,8 @@ func TestCacheAdminHandler_Clear_BackendErrorAuditsTarget(t *testing.T) {
 }
 
 func TestCacheAdminHandler_Clear_DeniedTargetAuditsTarget(t *testing.T) {
-	t.Cleanup(rbac.ResetEffectivePermissions)
-	rbac.InitEffectivePermissions(map[identity.Role][]rbac.Permission{
-		identity.RoleManager: {rbac.CacheClearAll},
-	})
 	h, audits := newCacheAdminHandlerWithAudit(t, newMemCache(), nil)
-	mux := newCacheAdminRouter(h)
+	mux := newCacheAdminRouterWithCheck(h, allowRole(identity.RoleManager, rbac.CacheClearAll))
 
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/admin/cache/clear", bytes.NewBufferString(`{"prefix":"p:"}`))
 	req.Header.Set("Content-Type", "application/json")

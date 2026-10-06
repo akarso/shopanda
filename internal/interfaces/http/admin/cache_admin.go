@@ -6,6 +6,7 @@ import (
 
 	adminapp "github.com/akarso/shopanda/internal/application/admin"
 	cacheapp "github.com/akarso/shopanda/internal/application/cache"
+	"github.com/akarso/shopanda/internal/domain/identity"
 	"github.com/akarso/shopanda/internal/domain/rbac"
 	httpshared "github.com/akarso/shopanda/internal/interfaces/http/shared"
 	"github.com/akarso/shopanda/internal/platform/apperror"
@@ -18,6 +19,7 @@ import (
 type CacheAdminHandler struct {
 	svc     *cacheapp.AdminService
 	auditor *adminapp.Auditor
+	hasPerm func(identity.Role, rbac.Permission) bool
 }
 
 // NewCacheAdminHandler creates a CacheAdminHandler.
@@ -28,7 +30,15 @@ func NewCacheAdminHandler(svc *cacheapp.AdminService, auditor *adminapp.Auditor)
 	if auditor == nil {
 		panic("http: auditor must not be nil")
 	}
-	return &CacheAdminHandler{svc: svc, auditor: auditor}
+	return &CacheAdminHandler{svc: svc, auditor: auditor, hasPerm: rbac.HasPermission}
+}
+
+func (h *CacheAdminHandler) checkPermission(role identity.Role, perm rbac.Permission) bool {
+	fn := h.hasPerm
+	if fn == nil {
+		fn = rbac.HasPermission
+	}
+	return fn(role, perm)
 }
 
 func (h *CacheAdminHandler) audit(r *http.Request, action adminapp.AuditAction, resourceID string, details map[string]interface{}, err error) {
@@ -107,13 +117,13 @@ func (h *CacheAdminHandler) Clear() http.HandlerFunc {
 
 		role := auth.IdentityFrom(r.Context()).Role
 		if mode == cacheapp.ClearAll {
-			if !rbac.HasPermission(role, rbac.CacheClearAll) {
+			if !h.checkPermission(role, rbac.CacheClearAll) {
 				err := apperror.Forbidden("cache.clear_all permission required")
 				h.audit(r, adminapp.AuditCacheClear, "all", map[string]interface{}{"mode": "all"}, err)
 				httpshared.JSONError(w, err)
 				return
 			}
-		} else if !rbac.HasPermission(role, rbac.CacheWrite) {
+		} else if !h.checkPermission(role, rbac.CacheWrite) {
 			err := apperror.Forbidden("cache.write permission required")
 			details := map[string]interface{}{"mode": string(mode)}
 			if target != "" {
