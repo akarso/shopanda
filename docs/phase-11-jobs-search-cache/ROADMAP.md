@@ -141,7 +141,7 @@ Phase 12's own Track F (index/CSV/GraphQL/GUI closeout) explicitly depends on th
 | PR-1039 | Tag-based invalidation | Extend `cache.Cache`: `SetWithTags(ctx, key, value, ttl, tags ...string) error`, `DeleteByTag(ctx, tag) (int64, error)` (count = snapshot size, including members whose value is already gone). Postgres: `cache_tags(tag, key)` plus one-statement CTE deletes. Redis: a `SET` per tag (`tag:<name>` → member keys), `RENAME` snapshot + `SSCAN`, recoverable purge key with TTL. `DeleteByPrefix` stays for prefix-keyed entries; tags cover cross-cutting invalidation (Track D's "this CMS block appears on 40 cached pages" case) that prefix can't express. |
 | PR-1040 | In-memory (L1) cache tier | **Done.** `internal/infrastructure/localcache.Store[T]`: a bounded, TTL+LRU process-local cache in front of the existing backend (now L2), wired to the two candidates that turned out to have real cost to cache — the RBAC permission catalog and the storefront category tree (replacing its own pre-existing ad-hoc cache); "active plugin config snapshot" was investigated and skipped — it's already an O(1) struct-field read, nothing to cache. Neither consumer goes through `cache.Cache` at all, so each subscribes directly to the domain event that fires on its real mutation (`localcache.InvalidateOnEvent`) — a generic `cache.Cache`-level broadcast was considered and deliberately not built, since neither consumer needs it. See PR-1040.md's own "Design decisions" for why "propagates across instances" doesn't literally hold — `event.Bus` is in-process only, so the short TTL is the real cross-replica staleness bound. |
 | PR-1041 | Rate limiting hardening | **Done.** Opt-in Redis sliding-window limiter on a dedicated 200ms client (pool capped at 64). Microsecond window (`burst/rate` seconds). Fail-open + half-open circuit (≥50% of ≥20 req in 2s, or ≥5 all-error reqs when quieter; failed probes re-arm 5s). Cancelled requests are dropped uncounted (no 429). Auth example uses `on_error: local`. `/readyz` in-process. ClientIP joins all XFF lines and accepts `host:port`. MFA has its own `per_route`. |
-| PR-1042 | Cache admin API + CLI | `GET /admin/cache/stats` (per cache-type key counts/hit-miss where the backend can report it — Postgres backend gets an approximate count via `SELECT count(*)`, Redis gets `INFO`/`DBSIZE`), `POST /admin/cache/clear` (`{"prefix": "..."}` \| `{"tag": "..."}` \| `{"key": "..."}` \| `{"all": true}`, the last one gated behind a distinct, more sensitive permission and always audit-logged). CLI: `app cache:stats`, `cache:clear --prefix|--tag|--key|--all`. |
+| PR-1042 | Cache admin API + CLI | **Done.** `GET /admin/cache/stats` (per cache-type key counts/hit-miss where the backend can report it — Postgres backend gets an approximate count via `SELECT count(*)`, Redis gets `INFO`/`DBSIZE`), `POST /admin/cache/clear` (`{"prefix": "..."}` / `{"tag": "..."}` / `{"key": "..."}` / `{"all": true}`, the last one gated behind a distinct, more sensitive permission and always audit-logged). CLI: `app cache:stats`, `cache:clear --prefix`, `--tag`, `--key`, or `--all`. |
 | PR-1043 | Cache admin GUI | Stats dashboard (per cache type), manual clear form (prefix/tag/key/all) with a confirmation step before `--all`. |
 
 ---
@@ -205,8 +205,12 @@ Phase 12's own Track F (index/CSV/GraphQL/GUI closeout) explicitly depends on th
 | 1038 | B | done |
 | 1039 | C | done |
 | 1040 | C | done |
-| 1041–1043 | C | planned |
+| 1041 | C | done |
+| 1042 | C | done |
+| 1043 | C | planned |
 | 1044–1047 | D | planned |
+| 1048 | — | done |
+| 1049 | — | done |
 
 PR specs: [`prs/`](prs/).
 

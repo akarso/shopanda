@@ -174,7 +174,9 @@ search:
 cache:
   # Driver: postgres (default, uses UNLOGGED table), redis (PR-414).
   driver: "postgres"
-  # Redis settings (used when driver=redis):
+  # Redis settings (used when driver=redis). key_prefix is required when
+  # driver=redis — an empty prefix would make SCAN/FlushAll match the
+  # whole Redis DB (queues, limiter keys, other apps).
   # redis:
   #   url: "redis://localhost:6379/0"
   #   key_prefix: "shopanda"
@@ -344,7 +346,7 @@ rate_limit:
   # (or when cache.driver is not redis). Env: SHOPANDA_RATE_LIMIT_REDIS_URL.
   # key_prefix: sibling `-rl:` is appended. Defaults to cache.redis.key_prefix
   # or "shopanda". When cache.driver=redis, cache.redis.key_prefix must be
-  # non-empty so cache SCAN cannot delete limiter keys.
+  # non-empty so cache SCAN/FlushAll cannot match the whole Redis DB.
   # pool_size: 0 uses min(10*GOMAXPROCS, 64) (minimum 8). Override to raise
   # the cap; count limiter pool + cache pool per instance against Redis
   # maxclients (see RUNBOOK).

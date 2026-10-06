@@ -548,6 +548,7 @@ func TestLoad_CacheDriverEnvOverlay(t *testing.T) {
 	path := writeYAML(t, "")
 
 	t.Setenv("SHOPANDA_CACHE_DRIVER", "redis")
+	t.Setenv("SHOPANDA_CACHE_REDIS_KEY_PREFIX", "shopanda")
 
 	cfg, err := loadCfg(t, path)
 	if err != nil {
@@ -557,9 +558,15 @@ func TestLoad_CacheDriverEnvOverlay(t *testing.T) {
 	if cfg.Cache.Driver != "redis" {
 		t.Errorf("Cache.Driver = %q, want %q", cfg.Cache.Driver, "redis")
 	}
+	if cfg.Cache.Redis.KeyPrefix != "shopanda" {
+		t.Errorf("Cache.Redis.KeyPrefix = %q, want shopanda", cfg.Cache.Redis.KeyPrefix)
+	}
 
 	if v := Get("cache.driver"); v != "redis" {
 		t.Errorf("Get(\"cache.driver\") = %q, want %q", v, "redis")
+	}
+	if v := Get("cache.redis.key_prefix"); v != "shopanda" {
+		t.Errorf("Get(\"cache.redis.key_prefix\") = %q, want shopanda", v)
 	}
 }
 
@@ -1075,10 +1082,45 @@ rate_limit:
 `)
 	_, err := loadCfg(t, path)
 	if err == nil {
-		t.Fatal("expected error when cache and limiter share Redis with empty cache prefix")
+		t.Fatal("expected error when cache.driver=redis with empty cache prefix")
 	}
 	if !strings.Contains(err.Error(), "key_prefix") {
 		t.Errorf("error = %q, want key_prefix", err)
+	}
+}
+
+func TestCacheConfig_RedisRequiresKeyPrefix(t *testing.T) {
+	withTestBaseURL(t)
+	path := writeYAML(t, `
+cache:
+  driver: redis
+  redis:
+    url: redis://127.0.0.1:6379
+`)
+	_, err := loadCfg(t, path)
+	if err == nil {
+		t.Fatal("expected error when cache.driver=redis with empty key_prefix")
+	}
+	if !strings.Contains(err.Error(), "key_prefix") {
+		t.Errorf("error = %q, want key_prefix", err)
+	}
+}
+
+func TestCacheConfig_RedisAcceptsNonEmptyKeyPrefix(t *testing.T) {
+	withTestBaseURL(t)
+	path := writeYAML(t, `
+cache:
+  driver: redis
+  redis:
+    url: redis://127.0.0.1:6379
+    key_prefix: shopanda
+`)
+	cfg, err := loadCfg(t, path)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.Cache.Redis.KeyPrefix != "shopanda" {
+		t.Fatalf("KeyPrefix = %q, want shopanda", cfg.Cache.Redis.KeyPrefix)
 	}
 }
 

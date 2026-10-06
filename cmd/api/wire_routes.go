@@ -11,6 +11,7 @@ import (
 
 	"github.com/akarso/shopanda/internal/interfaces/http/admin"
 
+	cacheApp "github.com/akarso/shopanda/internal/application/cache"
 	orderApp "github.com/akarso/shopanda/internal/application/order"
 	themeapp "github.com/akarso/shopanda/internal/application/theme"
 	"github.com/akarso/shopanda/internal/domain/rbac"
@@ -92,6 +93,8 @@ func buildServeHandler(cfg *config.Config, log logger.Logger, rt *serveRuntime, 
 	requireJobsRead := admin.RequirePermission(rbac.JobsRead)
 	requireJobsWrite := admin.RequirePermission(rbac.JobsWrite)
 	requireSearchReindex := admin.RequirePermission(rbac.SearchReindex)
+	requireCacheRead := admin.RequirePermission(rbac.CacheRead)
+	requireCacheClear := admin.RequireAnyPermission(rbac.CacheWrite, rbac.CacheClearAll)
 
 	// Auth routes.
 	router.HandleFunc("POST /api/v1/auth/register", rt.authHandler.Register())
@@ -169,6 +172,8 @@ func buildServeHandler(cfg *config.Config, log logger.Logger, rt *serveRuntime, 
 	router.Handle("GET /api/v1/admin/jobs/{id}", requireJobsRead(rt.jobAdmin.Get()))
 	router.Handle("POST /api/v1/admin/jobs/{id}/retry", requireJobsWrite(rt.jobAdmin.Retry()))
 	router.Handle("POST /api/v1/admin/jobs/{id}/cancel", requireJobsWrite(rt.jobAdmin.Cancel()))
+	router.Handle("GET /api/v1/admin/cache/stats", requireCacheRead(rt.cacheAdmin.Stats()))
+	router.Handle("POST /api/v1/admin/cache/clear", requireCacheClear(rt.cacheAdmin.Clear()))
 	router.Handle("POST /api/v1/admin/search/reindex", requireSearchReindex(rt.searchAdmin.Trigger()))
 	router.Handle("GET /api/v1/admin/search/reindex", requireSearchReindex(rt.searchAdmin.List()))
 	router.Handle("GET /api/v1/admin/search/reindex/{runID}", requireSearchReindex(rt.searchAdmin.Get()))
@@ -374,7 +379,7 @@ func buildServeHandler(cfg *config.Config, log logger.Logger, rt *serveRuntime, 
 		linkService := orderApp.NewLinkOrderService(rt.repos.orderRepo, rt.authService, rt.jwtIssuer)
 		linkLinker := storefront.NewStorefrontOrderLinkerAdapter(linkService)
 
-		storefront := storefront.NewStorefrontHandler(themeEngine, rt.repos.productRepo, rt.repos.categoryRepo, rt.pdp, rt.plp, rt.searchEngine).
+		sfHandler := storefront.NewStorefrontHandler(themeEngine, rt.repos.productRepo, rt.repos.categoryRepo, rt.pdp, rt.plp, rt.searchEngine).
 			WithBus(rt.bus).
 			WithLegalConfig(rt.repos.configRepo).
 			WithMenus(rt.repos.menuRepo, rt.menuResolver).
@@ -395,71 +400,81 @@ func buildServeHandler(cfg *config.Config, log logger.Logger, rt *serveRuntime, 
 			WithLayeredNavAttributes(rt.attributeStore).
 			WithAdvancedSearchAttributes(rt.attributeStore).
 			WithCSPEnabled(cfg.Frontend.CSPEnabled)
+		if rt.cacheAdminService != nil {
+			rt.cacheAdminService.RegisterL1(cacheApp.L1Source{
+				Name: "storefront.category_nav",
+				Snap: func() (int, int64, int64) {
+					s := sfHandler.CategoryNavCacheSnapshot()
+					return s.Entries, s.Hits, s.Misses
+				},
+				Clear: sfHandler.ClearCategoryNavCache,
+			})
+		}
 		staticDir := filepath.Join(cfg.Frontend.ThemePath, "static")
 		staticHandler := http.StripPrefix("/static/", http.FileServer(http.Dir(staticDir)))
 		router.Handle("GET /static/{path...}", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			w.Header().Set("Cache-Control", "public, max-age=31536000")
 			staticHandler.ServeHTTP(w, r)
 		}))
-		router.HandleFunc("GET /cart", storefront.Cart())
-		router.HandleFunc("GET /account/login", storefront.Login())
-		router.HandleFunc("POST /account/login", storefront.Login())
-		router.HandleFunc("GET /account/register", storefront.Register())
-		router.HandleFunc("POST /account/register", storefront.Register())
-		router.HandleFunc("GET /account/verify-email", storefront.AccountVerifyEmail())
-		router.HandleFunc("POST /account/logout", storefront.Logout())
-		router.HandleFunc("GET /account/orders", storefront.AccountOrders())
-		router.HandleFunc("GET /account/orders/claim", storefront.AccountOrdersClaim())
-		router.HandleFunc("POST /account/orders/claim", storefront.AccountOrdersClaim())
-		router.HandleFunc("GET /account/orders/{orderId}", storefront.AccountOrderDetail())
-		router.HandleFunc("POST /account/orders/{orderId}/returns", storefront.AccountOrderReturnRequest())
-		router.HandleFunc("GET /account/returns", storefront.AccountReturns())
-		router.HandleFunc("POST /account/returns/{returnId}/cancel", storefront.AccountReturnCancel())
-		router.HandleFunc("GET /account/profile", storefront.AccountProfile())
-		router.HandleFunc("POST /account/profile", storefront.AccountProfile())
-		router.HandleFunc("GET /account/addresses", storefront.AccountAddresses())
-		router.HandleFunc("POST /account/addresses", storefront.AccountAddressCreate())
-		router.HandleFunc("POST /account/addresses/{addressId}", storefront.AccountAddressUpdate())
-		router.HandleFunc("POST /account/addresses/{addressId}/default", storefront.AccountAddressSetDefault())
-		router.HandleFunc("POST /account/addresses/{addressId}/delete", storefront.AccountAddressDelete())
-		router.HandleFunc("GET /account/preferences", storefront.AccountPreferences())
-		router.HandleFunc("POST /account/preferences", storefront.AccountPreferences())
-		router.HandleFunc("GET /account/security", storefront.AccountSecurity())
-		router.HandleFunc("GET /account/security/verify", storefront.AccountSecurityVerify())
-		router.HandleFunc("POST /account/security/verify", storefront.AccountSecurityVerify())
-		router.HandleFunc("POST /account/security/password", storefront.AccountPassword())
-		router.HandleFunc("POST /account/security/email", storefront.AccountEmailChange())
-		router.HandleFunc("GET /account/security/email/confirm", storefront.AccountEmailChangeConfirm())
-		router.HandleFunc("POST /account/security/delete", storefront.AccountDelete())
-		router.HandleFunc("POST /account/profile/password", storefront.AccountPassword())
-		router.HandleFunc("POST /account/profile/delete", storefront.AccountDelete())
-		router.HandleFunc("GET /checkout/address", storefront.CheckoutAddress())
-		router.HandleFunc("GET /checkout/shipping", storefront.CheckoutShipping())
-		router.HandleFunc("POST /checkout/shipping", storefront.CheckoutShipping())
-		router.HandleFunc("GET /checkout/payment", storefront.CheckoutPayment())
-		router.HandleFunc("POST /checkout/payment", storefront.CheckoutPayment())
-		router.HandleFunc("GET /checkout/confirm", storefront.CheckoutConfirm())
-		router.HandleFunc("POST /checkout/confirm", storefront.CheckoutConfirm())
-		router.HandleFunc("GET /fragments/cart-count", storefront.CartCountFragment())
-		router.HandleFunc("GET /fragments/mini-cart", storefront.MiniCartFragment())
-		router.HandleFunc("GET /fragments/search-suggest", storefront.SearchSuggestFragment())
-		router.HandleFunc("GET /{$}", storefront.Home())
-		router.HandleFunc("GET /pages/{slug}", storefront.CMSPage())
-		router.HandleFunc("GET /categories", storefront.Categories())
-		router.HandleFunc("GET /categories/{slug}", storefront.Category())
-		router.HandleFunc("POST /cart/add", storefront.AddToCart())
-		router.HandleFunc("POST /cart/update", storefront.UpdateCart())
-		router.HandleFunc("POST /cart/remove", storefront.RemoveCartItem())
-		router.HandleFunc("POST /fragments/cart/add", storefront.AddToCart())
-		router.HandleFunc("POST /fragments/cart/update", storefront.UpdateCart())
-		router.HandleFunc("POST /fragments/cart/remove", storefront.RemoveCartItem())
-		router.HandleFunc("GET /products", storefront.Products())
-		router.HandleFunc("GET /products/{slug}", storefront.Product())
-		router.HandleFunc("GET /search", storefront.Search())
+		router.HandleFunc("GET /cart", sfHandler.Cart())
+		router.HandleFunc("GET /account/login", sfHandler.Login())
+		router.HandleFunc("POST /account/login", sfHandler.Login())
+		router.HandleFunc("GET /account/register", sfHandler.Register())
+		router.HandleFunc("POST /account/register", sfHandler.Register())
+		router.HandleFunc("GET /account/verify-email", sfHandler.AccountVerifyEmail())
+		router.HandleFunc("POST /account/logout", sfHandler.Logout())
+		router.HandleFunc("GET /account/orders", sfHandler.AccountOrders())
+		router.HandleFunc("GET /account/orders/claim", sfHandler.AccountOrdersClaim())
+		router.HandleFunc("POST /account/orders/claim", sfHandler.AccountOrdersClaim())
+		router.HandleFunc("GET /account/orders/{orderId}", sfHandler.AccountOrderDetail())
+		router.HandleFunc("POST /account/orders/{orderId}/returns", sfHandler.AccountOrderReturnRequest())
+		router.HandleFunc("GET /account/returns", sfHandler.AccountReturns())
+		router.HandleFunc("POST /account/returns/{returnId}/cancel", sfHandler.AccountReturnCancel())
+		router.HandleFunc("GET /account/profile", sfHandler.AccountProfile())
+		router.HandleFunc("POST /account/profile", sfHandler.AccountProfile())
+		router.HandleFunc("GET /account/addresses", sfHandler.AccountAddresses())
+		router.HandleFunc("POST /account/addresses", sfHandler.AccountAddressCreate())
+		router.HandleFunc("POST /account/addresses/{addressId}", sfHandler.AccountAddressUpdate())
+		router.HandleFunc("POST /account/addresses/{addressId}/default", sfHandler.AccountAddressSetDefault())
+		router.HandleFunc("POST /account/addresses/{addressId}/delete", sfHandler.AccountAddressDelete())
+		router.HandleFunc("GET /account/preferences", sfHandler.AccountPreferences())
+		router.HandleFunc("POST /account/preferences", sfHandler.AccountPreferences())
+		router.HandleFunc("GET /account/security", sfHandler.AccountSecurity())
+		router.HandleFunc("GET /account/security/verify", sfHandler.AccountSecurityVerify())
+		router.HandleFunc("POST /account/security/verify", sfHandler.AccountSecurityVerify())
+		router.HandleFunc("POST /account/security/password", sfHandler.AccountPassword())
+		router.HandleFunc("POST /account/security/email", sfHandler.AccountEmailChange())
+		router.HandleFunc("GET /account/security/email/confirm", sfHandler.AccountEmailChangeConfirm())
+		router.HandleFunc("POST /account/security/delete", sfHandler.AccountDelete())
+		router.HandleFunc("POST /account/profile/password", sfHandler.AccountPassword())
+		router.HandleFunc("POST /account/profile/delete", sfHandler.AccountDelete())
+		router.HandleFunc("GET /checkout/address", sfHandler.CheckoutAddress())
+		router.HandleFunc("GET /checkout/shipping", sfHandler.CheckoutShipping())
+		router.HandleFunc("POST /checkout/shipping", sfHandler.CheckoutShipping())
+		router.HandleFunc("GET /checkout/payment", sfHandler.CheckoutPayment())
+		router.HandleFunc("POST /checkout/payment", sfHandler.CheckoutPayment())
+		router.HandleFunc("GET /checkout/confirm", sfHandler.CheckoutConfirm())
+		router.HandleFunc("POST /checkout/confirm", sfHandler.CheckoutConfirm())
+		router.HandleFunc("GET /fragments/cart-count", sfHandler.CartCountFragment())
+		router.HandleFunc("GET /fragments/mini-cart", sfHandler.MiniCartFragment())
+		router.HandleFunc("GET /fragments/search-suggest", sfHandler.SearchSuggestFragment())
+		router.HandleFunc("GET /{$}", sfHandler.Home())
+		router.HandleFunc("GET /pages/{slug}", sfHandler.CMSPage())
+		router.HandleFunc("GET /categories", sfHandler.Categories())
+		router.HandleFunc("GET /categories/{slug}", sfHandler.Category())
+		router.HandleFunc("POST /cart/add", sfHandler.AddToCart())
+		router.HandleFunc("POST /cart/update", sfHandler.UpdateCart())
+		router.HandleFunc("POST /cart/remove", sfHandler.RemoveCartItem())
+		router.HandleFunc("POST /fragments/cart/add", sfHandler.AddToCart())
+		router.HandleFunc("POST /fragments/cart/update", sfHandler.UpdateCart())
+		router.HandleFunc("POST /fragments/cart/remove", sfHandler.RemoveCartItem())
+		router.HandleFunc("GET /products", sfHandler.Products())
+		router.HandleFunc("GET /products/{slug}", sfHandler.Product())
+		router.HandleFunc("GET /search", sfHandler.Search())
 
 		// Guest order claim routes (public, no auth required).
-		router.HandleFunc("POST /api/v1/orders/claim-search", storefront.ClaimOrderSearch())
-		router.HandleFunc("POST /api/v1/orders/claim-register", storefront.ClaimLink())
+		router.HandleFunc("POST /api/v1/orders/claim-search", sfHandler.ClaimOrderSearch())
+		router.HandleFunc("POST /api/v1/orders/claim-register", sfHandler.ClaimLink())
 	}
 
 	// URL rewrite resolution: least-specific route, only reached when no

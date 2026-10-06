@@ -11,12 +11,15 @@ import (
 	"github.com/akarso/shopanda/internal/domain/cache"
 )
 
+const defaultStatsCountTimeout = 1500 * time.Millisecond
+
 // Compile-time check.
 var _ cache.Cache = (*CacheStore)(nil)
 
 // CacheStore implements cache.Cache using a PostgreSQL UNLOGGED table.
 type CacheStore struct {
-	db *sql.DB
+	db                *sql.DB
+	statsCountTimeout *time.Duration
 }
 
 // NewCacheStore returns a CacheStore backed by db.
@@ -25,6 +28,13 @@ func NewCacheStore(db *sql.DB) (*CacheStore, error) {
 		return nil, fmt.Errorf("NewCacheStore: nil *sql.DB")
 	}
 	return &CacheStore{db: db}, nil
+}
+
+func (s *CacheStore) countTimeout() time.Duration {
+	if s != nil && s.statsCountTimeout != nil {
+		return *s.statsCountTimeout
+	}
+	return defaultStatsCountTimeout
 }
 
 // Get retrieves the cached value for key and unmarshals it into dest.
@@ -330,6 +340,93 @@ func (s *CacheStore) DeleteByTag(ctx context.Context, tag string) (int64, error)
 	).Scan(&n)
 	if err != nil {
 		return 0, fmt.Errorf("cache_store: delete by tag %q: %w", tag, err)
+	}
+	return n, nil
+}
+
+// Stats returns occupancy of cache rows and cache_tags rows. COUNT(*)
+// runs with a 1.5s cap; on timeout it falls back to pg_class.reltuples
+// (planner estimate, can lag ANALYZE) and sets Stats.Approximate.
+// Expired rows the cleanup job has not swept yet are included — not a
+// live TTL-aware count (PR-1042).
+func (s *CacheStore) Stats(ctx context.Context) (cache.Stats, error) {
+	keys, keysEst, err := s.countOrEstimate(ctx, "cache")
+	if err != nil {
+		return cache.Stats{}, err
+	}
+	tags, tagsEst, err := s.countOrEstimate(ctx, "cache_tags")
+	if err != nil {
+		return cache.Stats{}, err
+	}
+	return cache.Stats{
+		Backend:     "postgres",
+		Keys:        keys,
+		TagRows:     &tags,
+		Approximate: keysEst || tagsEst,
+	}, nil
+}
+
+func (s *CacheStore) countOrEstimate(ctx context.Context, table string) (int64, bool, error) {
+	var countSQL string
+	switch table {
+	case "cache":
+		countSQL = `SELECT count(*) FROM cache`
+	case "cache_tags":
+		countSQL = `SELECT count(*) FROM cache_tags`
+	default:
+		return 0, false, fmt.Errorf("cache_store: stats: unknown table %q", table)
+	}
+	qctx, cancel := context.WithTimeout(ctx, s.countTimeout())
+	defer cancel()
+	var n int64
+	err := s.db.QueryRowContext(qctx, countSQL).Scan(&n)
+	if err == nil {
+		return n, false, nil
+	}
+	if ctx.Err() != nil {
+		return 0, false, ctx.Err()
+	}
+	if qctx.Err() != nil {
+		est, estErr := s.reltuples(ctx, table)
+		if estErr != nil {
+			return 0, false, fmt.Errorf("cache_store: stats %s: count timed out and estimate: %w", table, estErr)
+		}
+		return est, true, nil
+	}
+	return 0, false, fmt.Errorf("cache_store: stats %s: %w", table, err)
+}
+
+func (s *CacheStore) reltuples(ctx context.Context, table string) (int64, error) {
+	var n float64
+	err := s.db.QueryRowContext(ctx,
+		`SELECT GREATEST(reltuples, 0) FROM pg_class WHERE oid = $1::regclass`,
+		table,
+	).Scan(&n)
+	if err != nil {
+		return 0, fmt.Errorf("pg_class.reltuples %s: %w", table, err)
+	}
+	return int64(n), nil
+}
+
+// FlushAll deletes every cache row and every cache_tags row in one
+// statement (exact COUNT of value keys). This can stall the admin
+// request and contend with writers on a large UNLOGGED cache — it is
+// an operator full-flush, not a stats path. gone is read so the outer
+// SELECT has a source; dropped is a data-modifying CTE Postgres still
+// runs to completion even though the outer statement does not read it
+// (same as Delete).
+func (s *CacheStore) FlushAll(ctx context.Context) (int64, error) {
+	var n int64
+	err := s.db.QueryRowContext(ctx,
+		`WITH gone AS (
+		     DELETE FROM cache RETURNING key
+		 ), dropped AS (
+		     DELETE FROM cache_tags
+		 )
+		 SELECT count(*) FROM gone`,
+	).Scan(&n)
+	if err != nil {
+		return 0, fmt.Errorf("cache_store: flush all: %w", err)
 	}
 	return n, nil
 }

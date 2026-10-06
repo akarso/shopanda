@@ -59,4 +59,39 @@ type Cache interface {
 	// explicit Delete drops that key's tag membership, so a follow-up
 	// DeleteByTag does not count it.
 	DeleteByTag(ctx context.Context, tag string) (int64, error)
+
+	// Stats returns an approximate occupancy snapshot for operators
+	// (PR-1042). Keys is the backend's notion of stored entries:
+	// Postgres COUNT(*) of cache rows (1.5s cap, then pg_class.reltuples;
+	// including not-yet-swept TTL expiry); Redis DBSIZE of the configured
+	// database (not prefix-scoped — see the Redis adapter). A custom
+	// Cache implementation must implement Stats.
+	Stats(ctx context.Context) (Stats, error)
+
+	// FlushAll removes every entry this store owns and returns how
+	// many value keys were deleted (not tag-index rows / Redis tag:,
+	// __keytags:, or __purge: keys). Redis implementations MUST
+	// scan-and-delete keys under the store prefix; they must not call
+	// FLUSHDB/FLUSHALL (those wipe the whole Redis database, including
+	// keys this process does not own — rate-limit ZSETs, queues, other
+	// apps). An empty store prefix MUST error rather than SCAN *. Redis
+	// SCAN is not a point-in-time snapshot: concurrent SetWithTags
+	// during a flush can leave tag-index orphans that DeleteExpired
+	// later reclaims. A custom Cache implementation must implement
+	// FlushAll.
+	FlushAll(ctx context.Context) (int64, error)
+}
+
+// Stats is an approximate snapshot of a cache.Cache backend's occupancy
+// (PR-1042). Optional pointer fields are omitted when the backend has
+// nothing to report for them.
+type Stats struct {
+	Backend         string `json:"backend"`
+	Keys            int64  `json:"keys"`
+	TagRows         *int64 `json:"tag_rows,omitempty"`
+	MemoryUsedBytes *int64 `json:"memory_used_bytes,omitempty"`
+	// Approximate is true when Keys/TagRows came from a planner
+	// estimate (Postgres pg_class.reltuples after COUNT(*) timed
+	// out), not an exact count. Omitted when the count is exact.
+	Approximate bool `json:"approximate,omitempty"`
 }

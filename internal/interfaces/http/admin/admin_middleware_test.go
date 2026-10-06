@@ -159,6 +159,83 @@ func TestRequirePermission_Guest(t *testing.T) {
 	}
 }
 
+func TestRequireAnyPermission_Granted(t *testing.T) {
+	id, err := identity.NewIdentity("user-1", identity.RoleManager)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	mw := admin.RequireAnyPermission(rbac.SettingsWrite, rbac.ProductsRead)
+
+	called := false
+	handler := mw(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		called = true
+		w.WriteHeader(http.StatusOK)
+	}))
+
+	req := httptest.NewRequest("GET", "/", nil)
+	ctx := auth.WithIdentity(req.Context(), id)
+	req = req.WithContext(ctx)
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d", rec.Code, http.StatusOK)
+	}
+	if !called {
+		t.Error("expected handler to be called")
+	}
+}
+
+func TestRequireAnyPermission_Denied(t *testing.T) {
+	id, err := identity.NewIdentity("user-1", identity.RoleSupport)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	mw := admin.RequireAnyPermission(rbac.SettingsWrite, rbac.CacheClearAll)
+
+	called := false
+	handler := mw(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		called = true
+		w.WriteHeader(http.StatusOK)
+	}))
+
+	req := httptest.NewRequest("GET", "/", nil)
+	ctx := auth.WithIdentity(req.Context(), id)
+	req = req.WithContext(ctx)
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("status = %d, want %d", rec.Code, http.StatusForbidden)
+	}
+	if called {
+		t.Error("expected handler not to be called")
+	}
+}
+
+func TestRequireAnyPermission_Guest(t *testing.T) {
+	mw := admin.RequireAnyPermission(rbac.CacheWrite, rbac.CacheClearAll)
+
+	called := false
+	handler := mw(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		called = true
+		w.WriteHeader(http.StatusOK)
+	}))
+
+	req := httptest.NewRequest("GET", "/", nil)
+	ctx := auth.WithIdentity(req.Context(), identity.Guest())
+	req = req.WithContext(ctx)
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("status = %d, want %d", rec.Code, http.StatusUnauthorized)
+	}
+	if called {
+		t.Error("expected handler not to be called")
+	}
+}
+
 func TestAdminContextMiddleware_Authenticated(t *testing.T) {
 	id, err := identity.NewIdentity("admin-1", identity.RoleAdmin)
 	if err != nil {

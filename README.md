@@ -242,6 +242,8 @@ For a complete operator-focused setup, including Docker, health checks, and envi
 | `jobs:show <id>` | Show a job's full detail (`--json`) |
 | `jobs:retry <id>` | Retry a failed job |
 | `jobs:cancel <id>` | Cancel a pending job |
+| `cache:stats` | Show cache occupancy (`--json`) |
+| `cache:clear` | Clear cache (`--prefix=<p>`, `--tag=<t>`, `--key=<k>`, or `--all`) |
 | `schedule:list` | List registered scheduled tasks (`--json`) |
 | `schedule:trigger <name>` | Trigger a scheduled task immediately |
 | `schedule:enable <name>` | Re-enable a scheduled task |

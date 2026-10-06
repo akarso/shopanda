@@ -181,6 +181,8 @@ type serveRuntime struct {
 	storeCreditAdmin               *admin.StoreCreditAdminHandler
 	storeCreditAccount             *storefront.StoreCreditAccountHandler
 	jobAdmin                       *admin.JobAdminHandler
+	cacheAdmin                     *admin.CacheAdminHandler
+	cacheAdminService              *cacheApp.AdminService
 	searchAdmin                    *admin.SearchAdminHandler
 	scheduleAdmin                  *admin.ScheduleAdminHandler
 	schedulerStore                 *postgres.SchedulerStore
@@ -802,6 +804,15 @@ func wireServeRuntime(cfg *config.Config, log logger.Logger, conn *sql.DB, repos
 	storeCreditAdmin := admin.NewStoreCreditAdminHandler(storeCreditService, sharedAuditor)
 	storeCreditAccount := storefront.NewStoreCreditAccountHandler(storeCreditService)
 	jobAdmin := admin.NewJobAdminHandler(jobsService, sharedAuditor)
+	cacheAdminService := cacheApp.NewAdminService(appCache, []cacheApp.L1Source{{
+		Name: "rbac.catalog",
+		Snap: func() (int, int64, int64) {
+			s := adminRoleService.CatalogCacheSnapshot()
+			return s.Entries, s.Hits, s.Misses
+		},
+		Clear: adminRoleService.ClearCatalogCache,
+	}})
+	cacheAdmin := admin.NewCacheAdminHandler(cacheAdminService, sharedAuditor)
 	searchAdmin := admin.NewSearchAdminHandler(reindexService, searchIndexRunRepo, searchProductSource, searchCategorySource, searchEngine, sharedAuditor)
 	scheduleAdmin := admin.NewScheduleAdminHandler(schedulerService, sharedAuditor)
 	accountHandler := storefront.NewAccountHandler(repos.customerRepo, repos.orderRepo, repos.consentRepo, accountService)
@@ -914,6 +925,8 @@ func wireServeRuntime(cfg *config.Config, log logger.Logger, conn *sql.DB, repos
 		storeCreditAdmin:               storeCreditAdmin,
 		storeCreditAccount:             storeCreditAccount,
 		jobAdmin:                       jobAdmin,
+		cacheAdmin:                     cacheAdmin,
+		cacheAdminService:              cacheAdminService,
 		searchAdmin:                    searchAdmin,
 		scheduleAdmin:                  scheduleAdmin,
 		schedulerStore:                 schedulerStore,

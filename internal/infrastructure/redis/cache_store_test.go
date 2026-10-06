@@ -102,6 +102,49 @@ func TestCacheStore_DeleteByPrefix(t *testing.T) {
 	}
 }
 
+func TestCacheStore_DeleteByPrefix_GlobIsLiteral(t *testing.T) {
+	_, store := setupRedisCache(t, "shopanda")
+	ctx := context.Background()
+	for _, key := range []string{"normal", "*glob", "?q", "[a-z]x"} {
+		if err := store.Set(key, key, time.Minute); err != nil {
+			t.Fatalf("Set %q: %v", key, err)
+		}
+	}
+	if err := store.DeleteByPrefix(ctx, "*"); err != nil {
+		t.Fatalf("DeleteByPrefix *: %v", err)
+	}
+	var v string
+	if hit, _ := store.Get("*glob", &v); hit {
+		t.Fatal("key starting with * must be deleted")
+	}
+	if hit, _ := store.Get("normal", &v); !hit {
+		t.Fatal("normal must survive prefix \"*\" (glob must not match the whole store)")
+	}
+	if hit, _ := store.Get("?q", &v); !hit {
+		t.Fatal("?q must survive prefix \"*\"")
+	}
+
+	if err := store.DeleteByPrefix(ctx, "?"); err != nil {
+		t.Fatalf("DeleteByPrefix ?: %v", err)
+	}
+	if hit, _ := store.Get("?q", &v); hit {
+		t.Fatal("key starting with ? must be deleted")
+	}
+	if hit, _ := store.Get("normal", &v); !hit {
+		t.Fatal("normal must survive prefix \"?\"")
+	}
+
+	if err := store.DeleteByPrefix(ctx, "[a-z]"); err != nil {
+		t.Fatalf("DeleteByPrefix [a-z]: %v", err)
+	}
+	if hit, _ := store.Get("[a-z]x", &v); hit {
+		t.Fatal("key starting with [a-z] must be deleted")
+	}
+	if hit, _ := store.Get("normal", &v); !hit {
+		t.Fatal("normal must survive prefix \"[a-z]\"")
+	}
+}
+
 func TestCacheStore_Expired(t *testing.T) {
 	mr, store := setupRedisCache(t, "")
 
@@ -496,5 +539,139 @@ func TestCacheStore_TagDeleteByTagDoesNotDestroyConcurrentReTag(t *testing.T) {
 	}
 	if m != 1 {
 		t.Fatalf("DeleteByTag new-tag count = %d, want 1 (racy-key's new-tag membership must survive a racing old-tag delete)", m)
+	}
+}
+
+func TestCacheStore_StatsAndFlushAll_PrefixScoped(t *testing.T) {
+	mr, store := setupRedisCache(t, "shopanda")
+	ctx := context.Background()
+
+	if err := store.Set("a", "1", time.Minute); err != nil {
+		t.Fatalf("Set a: %v", err)
+	}
+	if err := store.SetWithTags(ctx, "b", "2", time.Minute, "t1"); err != nil {
+		t.Fatalf("SetWithTags b: %v", err)
+	}
+	// A key this store does not own — FlushAll must not FLUSHDB it.
+	if err := mr.Set("other:x", "leave-me"); err != nil {
+		t.Fatalf("mr.Set: %v", err)
+	}
+
+	st, err := store.Stats(ctx)
+	if err != nil {
+		t.Fatalf("Stats: %v", err)
+	}
+	if st.Backend != "redis" {
+		t.Fatalf("backend = %q, want redis", st.Backend)
+	}
+	if st.Keys < 1 {
+		t.Fatalf("keys = %d, want at least this store's entries (DBSIZE)", st.Keys)
+	}
+
+	n, err := store.FlushAll(ctx)
+	if err != nil {
+		t.Fatalf("FlushAll: %v", err)
+	}
+	if n != 2 {
+		t.Fatalf("FlushAll deleted %d, want 2 value keys (not tag/__keytags indexes)", n)
+	}
+	var dest string
+	hit, err := store.Get("a", &dest)
+	if err != nil || hit {
+		t.Fatalf("Get a after FlushAll hit=%v err=%v, want miss", hit, err)
+	}
+	if mr.Exists("shopanda:tag:t1") {
+		t.Fatal("FlushAll left tag set shopanda:tag:t1")
+	}
+	if mr.Exists("shopanda:__keytags:b") {
+		t.Fatal("FlushAll left reverse index shopanda:__keytags:b")
+	}
+	if !mr.Exists("other:x") {
+		t.Fatal("FlushAll deleted a key outside the store prefix (must not FLUSHDB)")
+	}
+}
+
+func TestCacheStore_FlushAll_EmptyPrefixRefused(t *testing.T) {
+	mr, store := setupRedisCache(t, "")
+	ctx := context.Background()
+	if err := store.Set("a", "1", time.Minute); err != nil {
+		t.Fatalf("Set a: %v", err)
+	}
+	if err := mr.Set("other:x", "leave-me"); err != nil {
+		t.Fatalf("mr.Set: %v", err)
+	}
+
+	n, err := store.FlushAll(ctx)
+	if err == nil {
+		t.Fatal("FlushAll with empty prefix must error")
+	}
+	if n != 0 {
+		t.Fatalf("FlushAll deleted %d, want 0 on refuse", n)
+	}
+	if !mr.Exists("a") {
+		t.Fatal("FlushAll with empty prefix must not delete store keys")
+	}
+	if !mr.Exists("other:x") {
+		t.Fatal("FlushAll with empty prefix must not delete foreign keys")
+	}
+}
+
+func TestCacheStore_DeleteByPrefix_EmptyStorePrefixRefused(t *testing.T) {
+	mr, store := setupRedisCache(t, "")
+	ctx := context.Background()
+	if err := store.Set("a", "1", time.Minute); err != nil {
+		t.Fatalf("Set a: %v", err)
+	}
+	if err := mr.Set("other:x", "leave-me"); err != nil {
+		t.Fatalf("mr.Set: %v", err)
+	}
+
+	if err := store.DeleteByPrefix(ctx, ""); err == nil {
+		t.Fatal("DeleteByPrefix(\"\") with empty store prefix must error")
+	}
+	if !mr.Exists("a") {
+		t.Fatal("refused DeleteByPrefix must not delete store keys")
+	}
+	if !mr.Exists("other:x") {
+		t.Fatal("refused DeleteByPrefix must not delete foreign keys")
+	}
+
+	if err := store.DeleteByPrefix(ctx, "a"); err != nil {
+		t.Fatalf("DeleteByPrefix targeted: %v", err)
+	}
+	if mr.Exists("a") {
+		t.Fatal("targeted DeleteByPrefix should still delete matching keys")
+	}
+	if !mr.Exists("other:x") {
+		t.Fatal("targeted DeleteByPrefix must not delete foreign keys")
+	}
+}
+
+func TestCacheStore_FlushAll_DoesNotCountExpiredBetweenScanAndDel(t *testing.T) {
+	mr, store := setupRedisCache(t, "shopanda")
+	ctx := context.Background()
+	if err := store.Set("ttl", "1", 50*time.Millisecond); err != nil {
+		t.Fatalf("Set ttl: %v", err)
+	}
+	if err := store.Set("keep", "2", time.Minute); err != nil {
+		t.Fatalf("Set keep: %v", err)
+	}
+	t.Cleanup(func() { inredis.SetBeforeFlushDel(store, nil) })
+	inredis.SetBeforeFlushDel(store, func() {
+		mr.FastForward(time.Second)
+	})
+
+	n, err := store.FlushAll(ctx)
+	if err != nil {
+		t.Fatalf("FlushAll: %v", err)
+	}
+	if n != 1 {
+		t.Fatalf("FlushAll deleted %d, want 1 (expired ttl key must not count)", n)
+	}
+	if mr.Exists("shopanda:ttl") {
+		t.Fatal("ttl key should be gone")
+	}
+	if mr.Exists("shopanda:keep") {
+		t.Fatal("keep key should be deleted by FlushAll")
 	}
 }

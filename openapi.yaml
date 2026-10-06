@@ -1829,6 +1829,115 @@ paths:
         "409":
           $ref: "#/components/responses/Conflict"
 
+  # ── Admin: Cache ───────────────────────────────────────
+  /api/v1/admin/cache/stats:
+    get:
+      operationId: adminCacheStats
+      tags: ["Admin: Cache"]
+      summary: Cache occupancy stats (admin)
+      description: >-
+        Approximate per-tier occupancy. L2 is the configured cache.Cache
+        backend (Postgres `COUNT(*)` of `cache` / `cache_tags` with a
+        1.5s cap, then `pg_class.reltuples`; Redis `DBSIZE` of the
+        configured database plus `INFO memory` when available). When
+        Postgres used the `reltuples` fallback, `l2.approximate` is
+        true. L1 is this process's in-memory stores (permission
+        catalog, storefront category nav) with hit/miss counters. L2
+        hit/miss is not tracked here. Successful HTTP stats calls are
+        not audit-logged (the endpoint is polled); failures are.
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Envelope"
+              example:
+                data:
+                  l2:
+                    backend: postgres
+                    keys: 42
+                    tag_rows: 10
+                    approximate: true
+                  l1:
+                    - name: rbac.catalog
+                      entries: 1
+                      hits: 100
+                      misses: 2
+                    - name: storefront.category_nav
+                      entries: 1
+                      hits: 50
+                      misses: 1
+                error: null
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  /api/v1/admin/cache/clear:
+    post:
+      operationId: adminCacheClear
+      tags: ["Admin: Cache"]
+      summary: Clear cache entries (admin)
+      description: >-
+        Exactly one selector: `prefix`, `tag`, `key`, or `all: true`.
+        Empty/whitespace selectors and `all: false` are omitted (422 if
+        that leaves no selector). Targeted clears require `cache.write`.
+        A full flush (`all: true`) requires the distinct `cache.clear_all`
+        permission. Redis flush scan-and-deletes keys under the store
+        prefix (never `FLUSHDB`); `deleted` is value-key count only.
+        Prefix is a literal string (Redis glob metacharacters are
+        escaped). This process's L1 stores are cleared only on `all`.
+        Every clear is audit-logged. 403 is a well-formed body the
+        caller is not permitted to run; 422 is an invalid selector.
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                prefix:
+                  type: string
+                tag:
+                  type: string
+                key:
+                  type: string
+                all:
+                  type: boolean
+            examples:
+              prefix:
+                value: { prefix: "product:123:" }
+              tag:
+                value: { tag: "cms:7" }
+              key:
+                value: { key: "product:123:en:EUR" }
+              all:
+                value: { all: true }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Envelope"
+              example:
+                data:
+                  mode: tag
+                  target: "cms:7"
+                  deleted: 12
+                error: null
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "422":
+          $ref: "#/components/responses/Validation"
+
   # ── Admin: Search ──────────────────────────────────────
   /api/v1/admin/search/reindex:
     post:

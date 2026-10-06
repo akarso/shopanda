@@ -42,6 +42,13 @@ func RequireRole(role identity.Role) httpshared.Middleware {
 // grant the specified permission.
 // Returns 401 for guests and 403 for authenticated users lacking the permission.
 func RequirePermission(perm rbac.Permission) httpshared.Middleware {
+	return requirePermission(rbac.HasPermission, perm)
+}
+
+func requirePermission(has func(identity.Role, rbac.Permission) bool, perm rbac.Permission) httpshared.Middleware {
+	if has == nil {
+		has = rbac.HasPermission
+	}
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			id := auth.IdentityFrom(r.Context())
@@ -49,11 +56,42 @@ func RequirePermission(perm rbac.Permission) httpshared.Middleware {
 				httpshared.JSONError(w, apperror.Unauthorized("authentication required"))
 				return
 			}
-			if !rbac.HasPermission(id.Role, perm) {
+			if !has(id.Role, perm) {
 				httpshared.JSONError(w, apperror.Forbidden("insufficient permissions"))
 				return
 			}
 			next.ServeHTTP(w, r)
+		})
+	}
+}
+
+// RequireAnyPermission rejects requests where the caller's role grants
+// none of the listed permissions. Used when a single route serves
+// operations gated by different permissions (PR-1042 cache clear:
+// cache.write vs cache.clear_all) and the handler decides which after
+// parsing the body.
+func RequireAnyPermission(perms ...rbac.Permission) httpshared.Middleware {
+	return requireAnyPermission(rbac.HasPermission, perms...)
+}
+
+func requireAnyPermission(has func(identity.Role, rbac.Permission) bool, perms ...rbac.Permission) httpshared.Middleware {
+	if has == nil {
+		has = rbac.HasPermission
+	}
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			id := auth.IdentityFrom(r.Context())
+			if id.IsGuest() {
+				httpshared.JSONError(w, apperror.Unauthorized("authentication required"))
+				return
+			}
+			for _, perm := range perms {
+				if has(id.Role, perm) {
+					next.ServeHTTP(w, r)
+					return
+				}
+			}
+			httpshared.JSONError(w, apperror.Forbidden("insufficient permissions"))
 		})
 	}
 }

@@ -3573,7 +3573,8 @@
                     'shipping.read', 'shipping.write',
                     'extensions.read', 'extensions.write',
                     'jobs.read', 'jobs.write',
-                    'search.reindex'
+                    'search.reindex',
+                    'cache.read', 'cache.write', 'cache.clear_all'
                 ]
             },
             {

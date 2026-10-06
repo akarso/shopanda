@@ -151,6 +151,10 @@ func run() error {
 			return runJobsRetry(os.Stdout, cfg, log, os.Args[2:])
 		case "jobs:cancel":
 			return runJobsCancel(os.Stdout, cfg, log, os.Args[2:])
+		case "cache:stats":
+			return runCacheStats(os.Stdout, cfg, log, os.Args[2:])
+		case "cache:clear":
+			return runCacheClear(os.Stdout, cfg, log, os.Args[2:])
 		case "schedule:list":
 			return runScheduleList(os.Stdout, cfg, log, os.Args[2:])
 		case "schedule:trigger":
@@ -719,6 +723,8 @@ Commands:
   jobs:show <id>       Show a job's full detail ([--json])
   jobs:retry <id>      Retry a failed job
   jobs:cancel <id>     Cancel a pending job
+  cache:stats          Show cache occupancy ([--json])
+  cache:clear          Clear cache (--prefix=<p> | --tag=<t> | --key=<k> | --all)
   schedule:list        List registered scheduled tasks ([--json])
   schedule:trigger <n> Trigger a scheduled task immediately
   schedule:enable <n>  Re-enable a scheduled task

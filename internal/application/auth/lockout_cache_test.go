@@ -6,6 +6,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/akarso/shopanda/internal/domain/cache"
 )
 
 type stubCache struct {
@@ -126,6 +128,18 @@ func (c *stubCache) SetWithTags(_ context.Context, key string, value any, ttl ti
 	return c.Set(key, value, ttl)
 }
 func (c *stubCache) DeleteByTag(_ context.Context, _ string) (int64, error) { return 0, nil }
+func (c *stubCache) Stats(context.Context) (cache.Stats, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return cache.Stats{Backend: "stub", Keys: int64(len(c.data))}, nil
+}
+func (c *stubCache) FlushAll(context.Context) (int64, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	n := int64(len(c.data))
+	c.data = make(map[string]stubCached)
+	return n, nil
+}
 
 func TestCacheAttemptStore_IncrementAndReset(t *testing.T) {
 	store := NewCacheAttemptStore(newStubCache(), nil)
