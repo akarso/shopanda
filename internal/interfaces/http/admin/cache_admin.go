@@ -98,7 +98,7 @@ func (h *CacheAdminHandler) Clear() http.HandlerFunc {
 			Key:    derefString(body.Key),
 			All:    body.All != nil && *body.All,
 		}
-		mode, _, err := req.Normalize()
+		mode, target, err := req.Normalize()
 		if err != nil {
 			h.audit(r, adminapp.AuditCacheClear, "", nil, err)
 			httpshared.JSONError(w, err)
@@ -115,7 +115,11 @@ func (h *CacheAdminHandler) Clear() http.HandlerFunc {
 			}
 		} else if !rbac.HasPermission(role, rbac.CacheWrite) {
 			err := apperror.Forbidden("cache.write permission required")
-			h.audit(r, adminapp.AuditCacheClear, "", map[string]interface{}{"mode": string(mode)}, err)
+			details := map[string]interface{}{"mode": string(mode)}
+			if target != "" {
+				details["target"] = target
+			}
+			h.audit(r, adminapp.AuditCacheClear, target, details, err)
 			httpshared.JSONError(w, err)
 			return
 		}
@@ -129,7 +133,7 @@ func (h *CacheAdminHandler) Clear() http.HandlerFunc {
 			details["deleted"] = *result.Deleted
 		}
 		resourceID := result.Target
-		if req.All {
+		if mode == cacheapp.ClearAll {
 			resourceID = "all"
 		}
 		if err != nil {

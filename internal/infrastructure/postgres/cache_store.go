@@ -11,16 +11,15 @@ import (
 	"github.com/akarso/shopanda/internal/domain/cache"
 )
 
-// statsCountTimeout caps COUNT(*) in Stats. Tests override it via
-// SetStatsCountTimeout to force the reltuples fallback.
-var statsCountTimeout = 1500 * time.Millisecond
+const defaultStatsCountTimeout = 1500 * time.Millisecond
 
 // Compile-time check.
 var _ cache.Cache = (*CacheStore)(nil)
 
 // CacheStore implements cache.Cache using a PostgreSQL UNLOGGED table.
 type CacheStore struct {
-	db *sql.DB
+	db                *sql.DB
+	statsCountTimeout *time.Duration
 }
 
 // NewCacheStore returns a CacheStore backed by db.
@@ -29,6 +28,13 @@ func NewCacheStore(db *sql.DB) (*CacheStore, error) {
 		return nil, fmt.Errorf("NewCacheStore: nil *sql.DB")
 	}
 	return &CacheStore{db: db}, nil
+}
+
+func (s *CacheStore) countTimeout() time.Duration {
+	if s != nil && s.statsCountTimeout != nil {
+		return *s.statsCountTimeout
+	}
+	return defaultStatsCountTimeout
 }
 
 // Get retrieves the cached value for key and unmarshals it into dest.
@@ -370,7 +376,7 @@ func (s *CacheStore) countOrEstimate(ctx context.Context, table string) (int64, 
 	default:
 		return 0, false, fmt.Errorf("cache_store: stats: unknown table %q", table)
 	}
-	qctx, cancel := context.WithTimeout(ctx, statsCountTimeout)
+	qctx, cancel := context.WithTimeout(ctx, s.countTimeout())
 	defer cancel()
 	var n int64
 	err := s.db.QueryRowContext(qctx, countSQL).Scan(&n)

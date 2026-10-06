@@ -44,9 +44,12 @@ const (
 	ClearAll    ClearMode = "all"
 )
 
-// ClearRequest is exactly one of Prefix, Tag, Key, or All. Empty/whitespace
+// ClearRequest is exactly one of Prefix, Tag, Key, or All. Whitespace-only
 // selectors are treated as omitted so `{"prefix":"  "}` cannot sneak a
 // full-table DeleteByPrefix past the distinct cache.clear_all permission.
+// Non-blank prefix and key are passed through unchanged — backends store
+// keys literally, including leading/trailing spaces. Tags are trimmed to
+// match NormalizeTag / SetWithTags.
 type ClearRequest struct {
 	Prefix string
 	Tag    string
@@ -125,27 +128,31 @@ func (s *AdminService) Clear(ctx context.Context, req ClearRequest) (ClearResult
 	switch mode {
 	case ClearPrefix:
 		if err := s.backend.DeleteByPrefix(ctx, target); err != nil {
-			return ClearResult{}, err
+			return ClearResult{Mode: mode, Target: target}, err
 		}
 		return ClearResult{Mode: mode, Target: target}, nil
 	case ClearTag:
 		n, err := s.backend.DeleteByTag(ctx, target)
 		if err != nil {
-			return ClearResult{}, err
+			return ClearResult{Mode: mode, Target: target}, err
 		}
 		return ClearResult{Mode: mode, Target: target, Deleted: int64Ptr(n)}, nil
 	case ClearKey:
 		if err := s.backend.Delete(target); err != nil {
-			return ClearResult{}, err
+			return ClearResult{Mode: mode, Target: target}, err
 		}
 		return ClearResult{Mode: mode, Target: target}, nil
 	case ClearAll:
 		n, err := s.backend.FlushAll(ctx)
+		res := ClearResult{Mode: mode}
+		if n != 0 {
+			res.Deleted = int64Ptr(n)
+		}
 		if err != nil {
-			return ClearResult{}, err
+			return res, err
 		}
 		s.clearL1()
-		return ClearResult{Mode: mode, Deleted: int64Ptr(n)}, nil
+		return res, nil
 	default:
 		return ClearResult{}, apperror.Validation("exactly one of prefix, tag, key, or all is required")
 	}
@@ -163,24 +170,24 @@ func (s *AdminService) clearL1() {
 }
 
 func (req ClearRequest) Normalize() (ClearMode, string, error) {
-	prefix := strings.TrimSpace(req.Prefix)
-	tag := strings.TrimSpace(req.Tag)
-	key := strings.TrimSpace(req.Key)
+	prefixOK := strings.TrimSpace(req.Prefix) != ""
+	tag := cache.NormalizeTag(req.Tag)
+	keyOK := strings.TrimSpace(req.Key) != ""
 
 	n := 0
 	var mode ClearMode
 	var target string
-	if prefix != "" {
+	if prefixOK {
 		n++
-		mode, target = ClearPrefix, prefix
+		mode, target = ClearPrefix, req.Prefix
 	}
 	if tag != "" {
 		n++
 		mode, target = ClearTag, tag
 	}
-	if key != "" {
+	if keyOK {
 		n++
-		mode, target = ClearKey, key
+		mode, target = ClearKey, req.Key
 	}
 	if req.All {
 		n++

@@ -2,10 +2,10 @@ package postgres
 
 import "time"
 
-// SetStatsCountTimeout overrides the COUNT(*) cap used by Stats so tests
-// can force the pg_class.reltuples fallback without waiting 1.5s.
-func SetStatsCountTimeout(d time.Duration) (restore func()) {
-	old := statsCountTimeout
-	statsCountTimeout = d
-	return func() { statsCountTimeout = old }
+// SetStatsCountTimeout sets this store's COUNT(*) cap so a test can
+// force the pg_class.reltuples fallback without waiting 1.5s and
+// without mutating other stores.
+func SetStatsCountTimeout(s *CacheStore, d time.Duration) {
+	s.statsCountTimeout = new(time.Duration)
+	*s.statsCountTimeout = d
 }

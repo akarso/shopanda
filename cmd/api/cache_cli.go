@@ -38,10 +38,12 @@ func newCacheAdminService(cfg *config.Config, log logger.Logger) (svc *cacheApp.
 		Config:    cfg,
 		Bootstrap: boot,
 	}
+	preparePermissionRegistry(pluginApp)
 	if summary := registry.InitAll(pluginApp); summary.Failed > 0 {
 		conn.Close()
 		return nil, nil, fmt.Errorf("plugin init failed: %d plugin(s) failed to initialize", summary.Failed)
 	}
+	freezePermissionRegistry(pluginApp)
 
 	c, err := resolveCache(pluginApp, conn, cfg)
 	if err != nil {

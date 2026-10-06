@@ -646,3 +646,32 @@ func TestCacheStore_DeleteByPrefix_EmptyStorePrefixRefused(t *testing.T) {
 		t.Fatal("targeted DeleteByPrefix must not delete foreign keys")
 	}
 }
+
+func TestCacheStore_FlushAll_DoesNotCountExpiredBetweenScanAndDel(t *testing.T) {
+	mr, store := setupRedisCache(t, "shopanda")
+	ctx := context.Background()
+	if err := store.Set("ttl", "1", 50*time.Millisecond); err != nil {
+		t.Fatalf("Set ttl: %v", err)
+	}
+	if err := store.Set("keep", "2", time.Minute); err != nil {
+		t.Fatalf("Set keep: %v", err)
+	}
+	t.Cleanup(func() { inredis.SetBeforeFlushDel(store, nil) })
+	inredis.SetBeforeFlushDel(store, func() {
+		mr.FastForward(time.Second)
+	})
+
+	n, err := store.FlushAll(ctx)
+	if err != nil {
+		t.Fatalf("FlushAll: %v", err)
+	}
+	if n != 1 {
+		t.Fatalf("FlushAll deleted %d, want 1 (expired ttl key must not count)", n)
+	}
+	if mr.Exists("shopanda:ttl") {
+		t.Fatal("ttl key should be gone")
+	}
+	if mr.Exists("shopanda:keep") {
+		t.Fatal("keep key should be deleted by FlushAll")
+	}
+}

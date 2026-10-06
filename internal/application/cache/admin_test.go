@@ -2,6 +2,7 @@ package cache_test
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"testing"
 	"time"
@@ -11,12 +12,15 @@ import (
 )
 
 type fakeAdminCache struct {
-	keys     map[string]string
-	tags     map[string]map[string]struct{}
-	stats    cache.Stats
-	statsErr error
-	flushN   int64
-	flushErr error
+	keys      map[string]string
+	tags      map[string]map[string]struct{}
+	stats     cache.Stats
+	statsErr  error
+	flushN    int64
+	flushErr  error
+	prefixErr error
+	deleteErr error
+	tagErr    error
 }
 
 func newFakeAdminCache() *fakeAdminCache {
@@ -33,11 +37,17 @@ func (f *fakeAdminCache) Incr(string, int64, time.Duration) (int64, error) { ret
 func (f *fakeAdminCache) CompareAndSubtract(string, int64) (int64, error)  { return 0, nil }
 
 func (f *fakeAdminCache) Delete(key string) error {
+	if f.deleteErr != nil {
+		return f.deleteErr
+	}
 	delete(f.keys, key)
 	return nil
 }
 
 func (f *fakeAdminCache) DeleteByPrefix(_ context.Context, prefix string) error {
+	if f.prefixErr != nil {
+		return f.prefixErr
+	}
 	for k := range f.keys {
 		if strings.HasPrefix(k, prefix) {
 			delete(f.keys, k)
@@ -59,6 +69,9 @@ func (f *fakeAdminCache) SetWithTags(_ context.Context, key string, value any, _
 }
 
 func (f *fakeAdminCache) DeleteByTag(_ context.Context, tag string) (int64, error) {
+	if f.tagErr != nil {
+		return 0, f.tagErr
+	}
 	keys := f.tags[tag]
 	delete(f.tags, tag)
 	var n int64
@@ -192,5 +205,66 @@ func TestAdminService_Clear_PrefixTagKeyAll(t *testing.T) {
 	}
 	if l1Cleared != 1 {
 		t.Fatalf("all must clear L1, got %d", l1Cleared)
+	}
+}
+
+func TestAdminService_Clear_BackendErrorKeepsSelector(t *testing.T) {
+	backend := newFakeAdminCache()
+	backend.prefixErr = errors.New("redis scan failed")
+	svc := cacheapp.NewAdminService(backend, nil)
+	res, err := svc.Clear(context.Background(), cacheapp.ClearRequest{Prefix: "product:1:"})
+	if err == nil {
+		t.Fatal("want backend error")
+	}
+	if res.Mode != cacheapp.ClearPrefix || res.Target != "product:1:" {
+		t.Fatalf("error result = %+v, want mode=prefix target=product:1:", res)
+	}
+
+	backend.prefixErr = nil
+	backend.flushErr = errors.New("flush failed")
+	res, err = svc.Clear(context.Background(), cacheapp.ClearRequest{All: true})
+	if err == nil {
+		t.Fatal("want flush error")
+	}
+	if res.Mode != cacheapp.ClearAll {
+		t.Fatalf("flush error result = %+v, want mode=all", res)
+	}
+}
+
+func TestAdminService_Clear_PreservesKeyAndPrefixWhitespace(t *testing.T) {
+	ctx := context.Background()
+	backend := newFakeAdminCache()
+	_ = backend.SetWithTags(ctx, " item ", "spaced", 0)
+	_ = backend.SetWithTags(ctx, "item", "trimmed", 0)
+	_ = backend.SetWithTags(ctx, "p: keep", "a", 0)
+	_ = backend.SetWithTags(ctx, "p:x", "b", 0)
+
+	svc := cacheapp.NewAdminService(backend, nil)
+	res, err := svc.Clear(ctx, cacheapp.ClearRequest{Key: " item "})
+	if err != nil {
+		t.Fatalf("key: %v", err)
+	}
+	if res.Target != " item " {
+		t.Fatalf("target = %q, want literal padded key", res.Target)
+	}
+	if _, ok := backend.keys[" item "]; ok {
+		t.Fatal("padded key should be deleted")
+	}
+	if _, ok := backend.keys["item"]; !ok {
+		t.Fatal("unpadded key must survive")
+	}
+
+	res, err = svc.Clear(ctx, cacheapp.ClearRequest{Prefix: "p: "})
+	if err != nil {
+		t.Fatalf("prefix: %v", err)
+	}
+	if res.Target != "p: " {
+		t.Fatalf("prefix target = %q, want literal padded prefix", res.Target)
+	}
+	if _, ok := backend.keys["p: keep"]; ok {
+		t.Fatal("prefix \"p: \" should delete p: keep")
+	}
+	if _, ok := backend.keys["p:x"]; !ok {
+		t.Fatal("prefix \"p: \" must not delete p:x")
 	}
 }

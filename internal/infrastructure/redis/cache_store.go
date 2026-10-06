@@ -67,6 +67,26 @@ end
 return 1
 `)
 
+// flushAllDelScript DELs every KEY and returns how many of those keys
+// were value keys that actually existed (not tag:/__keytags:/__purge:).
+// ARGV[1] is the store prefix. Counting after DEL avoids counting a
+// value that expired between SCAN and this call.
+var flushAllDelScript = goredis.NewScript(`
+local prefix = ARGV[1]
+local n = 0
+for i = 1, #KEYS do
+  local full = KEYS[i]
+  local logical = string.sub(full, #prefix + 1)
+  local isIndex = string.sub(logical, 1, 4) == 'tag:'
+    or string.sub(logical, 1, 10) == '__keytags:'
+    or string.sub(logical, 1, 8) == '__purge:'
+  if redis.call('DEL', full) == 1 and not isIndex then
+    n = n + 1
+  end
+end
+return n
+`)
+
 // Logger is the optional structured logger used for recoverable cache errors
 // (per-tag prune skips, purge-key EXPIRE/restore failures). Nil is a no-op.
 type Logger interface {
@@ -81,6 +101,9 @@ type CacheStore struct {
 	// afterTagRename is a test-only hook, scoped to this instance so
 	// parallel tests cannot leak into another store's DeleteByTag.
 	afterTagRename func()
+	// beforeFlushDel is a test-only hook, scoped to this instance, run
+	// immediately before each FlushAll DEL batch.
+	beforeFlushDel func()
 }
 
 // Config holds Redis cache connection settings.
@@ -136,15 +159,6 @@ func escapeRedisScanGlob(s string) string {
 
 func scanMatchLiteralPrefix(literal string) string {
 	return escapeRedisScanGlob(literal) + "*"
-}
-
-// isIndexKey reports whether a fully prefixed Redis key is a tag index
-// (tag: / __keytags: / __purge:), not a value key FlushAll should count.
-func (s *CacheStore) isIndexKey(full string) bool {
-	logical := strings.TrimPrefix(full, s.prefix)
-	return strings.HasPrefix(logical, "tag:") ||
-		strings.HasPrefix(logical, "__keytags:") ||
-		strings.HasPrefix(logical, "__purge:")
 }
 
 // tagKey is the Redis SET that holds cache keys associated with tag.
@@ -695,12 +709,12 @@ func parseRedisUsedMemory(info string) (int64, bool) {
 
 // FlushAll scan-and-deletes every key under this store's prefix,
 // including tag:/__keytags:/__purge: indexes. It never calls FLUSHDB or
-// FLUSHALL. The returned count is value keys only (same as Postgres
-// FlushAll), not index keys, and is incremented only after a successful
-// DEL batch. SCAN is cursor-based, not a point-in-time snapshot: a
-// concurrent SetWithTags can leave tag-index orphans that DeleteExpired
-// later reclaims. An empty prefix is refused — MATCH * would delete
-// every key in the configured Redis DB.
+// FLUSHALL. The returned count is value keys actually removed by DEL
+// (not index keys, and not keys that expired between SCAN and DEL).
+// SCAN is cursor-based, not a point-in-time snapshot: a concurrent
+// SetWithTags can leave tag-index orphans that DeleteExpired later
+// reclaims. An empty prefix is refused — MATCH * would delete every
+// key in the configured Redis DB.
 func (s *CacheStore) FlushAll(ctx context.Context) (int64, error) {
 	if s.prefix == "" {
 		return 0, fmt.Errorf("redis cache: flush all refused: empty key prefix would SCAN the whole Redis DB")
@@ -712,16 +726,14 @@ func (s *CacheStore) FlushAll(ctx context.Context) (int64, error) {
 		if len(batch) == 0 {
 			return nil
 		}
-		var values int64
-		for _, full := range batch {
-			if !s.isIndexKey(full) {
-				values++
-			}
+		if s.beforeFlushDel != nil {
+			s.beforeFlushDel()
 		}
-		if _, err := s.client.Del(ctx, batch...).Result(); err != nil {
+		deleted, err := flushAllDelScript.Run(ctx, s.client, batch, s.prefix).Int64()
+		if err != nil {
 			return fmt.Errorf("redis cache: flush all: %w", err)
 		}
-		n += values
+		n += deleted
 		batch = batch[:0]
 		return nil
 	}

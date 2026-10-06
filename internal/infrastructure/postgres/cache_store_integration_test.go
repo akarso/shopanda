@@ -600,7 +600,7 @@ func TestCacheStoreDB_StatsAndFlushAll(t *testing.T) {
 
 func TestCacheStoreDB_StatsApproximateOnCountTimeout(t *testing.T) {
 	_, store := setupCacheStore(t)
-	t.Cleanup(postgres.SetStatsCountTimeout(0))
+	postgres.SetStatsCountTimeout(store, 0)
 	if err := store.Set("a", "1", time.Minute); err != nil {
 		t.Fatalf("Set: %v", err)
 	}

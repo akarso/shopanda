@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -21,8 +22,9 @@ import (
 )
 
 type memCache struct {
-	keys map[string]string
-	tags map[string]map[string]struct{}
+	keys      map[string]string
+	tags      map[string]map[string]struct{}
+	prefixErr error
 }
 
 func newMemCache() *memCache {
@@ -35,6 +37,9 @@ func (m *memCache) Incr(string, int64, time.Duration) (int64, error) { return 0,
 func (m *memCache) CompareAndSubtract(string, int64) (int64, error)  { return 0, nil }
 func (m *memCache) Delete(key string) error                          { delete(m.keys, key); return nil }
 func (m *memCache) DeleteByPrefix(_ context.Context, prefix string) error {
+	if m.prefixErr != nil {
+		return m.prefixErr
+	}
 	for k := range m.keys {
 		if strings.HasPrefix(k, prefix) {
 			delete(m.keys, k)
@@ -89,6 +94,14 @@ func newCacheAdminRouter(h *admin.CacheAdminHandler) *http.ServeMux {
 func newCacheAdminHandler(t *testing.T, backend cache.Cache, l1 []cacheapp.L1Source) *admin.CacheAdminHandler {
 	t.Helper()
 	return admin.NewCacheAdminHandler(cacheapp.NewAdminService(backend, l1), adminapp.NewAuditor(logger.New("error")))
+}
+
+func newCacheAdminHandlerWithAudit(t *testing.T, backend cache.Cache, l1 []cacheapp.L1Source) (*admin.CacheAdminHandler, *fakeAuditLogRepository) {
+	t.Helper()
+	auditor := adminapp.NewAuditor(logger.New("error"))
+	repo := &fakeAuditLogRepository{}
+	auditor.SetAuditLogRepository(repo)
+	return admin.NewCacheAdminHandler(cacheapp.NewAdminService(backend, l1), auditor), repo
 }
 
 func TestCacheAdminHandler_Stats(t *testing.T) {
@@ -354,5 +367,59 @@ func TestCacheAdminHandler_Clear_Forbidden(t *testing.T) {
 	mux.ServeHTTP(rec, req)
 	if rec.Code != http.StatusForbidden {
 		t.Fatalf("status = %d, want 403; body=%s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestCacheAdminHandler_Clear_BackendErrorAuditsTarget(t *testing.T) {
+	backend := newMemCache()
+	backend.prefixErr = errors.New("scan failed")
+	h, audits := newCacheAdminHandlerWithAudit(t, backend, nil)
+	mux := newCacheAdminRouter(h)
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/admin/cache/clear", bytes.NewBufferString(`{"prefix":"product:1:"}`))
+	req.Header.Set("Content-Type", "application/json")
+	req = testhelper.AdminRequest(req, "admin-1")
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code < 500 {
+		t.Fatalf("status = %d, want 5xx; body=%s", rec.Code, rec.Body.String())
+	}
+	if len(audits.records) != 1 {
+		t.Fatalf("audits = %d, want 1", len(audits.records))
+	}
+	got := audits.records[0]
+	if got.Result != "error" || got.ResourceID != "product:1:" {
+		t.Fatalf("audit = %+v, want error resource product:1:", got)
+	}
+	if got.Metadata["mode"] != string(cacheapp.ClearPrefix) || got.Metadata["target"] != "product:1:" {
+		t.Fatalf("audit metadata = %+v", got.Metadata)
+	}
+}
+
+func TestCacheAdminHandler_Clear_DeniedTargetAuditsTarget(t *testing.T) {
+	t.Cleanup(rbac.ResetEffectivePermissions)
+	rbac.InitEffectivePermissions(map[identity.Role][]rbac.Permission{
+		identity.RoleManager: {rbac.CacheClearAll},
+	})
+	h, audits := newCacheAdminHandlerWithAudit(t, newMemCache(), nil)
+	mux := newCacheAdminRouter(h)
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/admin/cache/clear", bytes.NewBufferString(`{"prefix":"p:"}`))
+	req.Header.Set("Content-Type", "application/json")
+	req = testhelper.AuthenticatedRequest(req, "mgr-1", identity.RoleManager)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("status = %d, want 403; body=%s", rec.Code, rec.Body.String())
+	}
+	if len(audits.records) != 1 {
+		t.Fatalf("audits = %d, want 1", len(audits.records))
+	}
+	got := audits.records[0]
+	if got.Result != "error" || got.ResourceID != "p:" {
+		t.Fatalf("audit = %+v, want error resource p:", got)
+	}
+	if got.Metadata["mode"] != string(cacheapp.ClearPrefix) || got.Metadata["target"] != "p:" {
+		t.Fatalf("audit metadata = %+v", got.Metadata)
 	}
 }
