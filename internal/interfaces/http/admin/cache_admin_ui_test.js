@@ -91,8 +91,10 @@ test("submitDisabledForMode is the type-to-confirm gate", function () {
     assert.equal(ui.submitDisabledForMode("all", "CLEAR ALL "), false);
 });
 
-test("buildPayload trims targeted selectors", function () {
+test("buildPayload trims prefix and tag, keeps key whitespace", function () {
     assert.deepEqual(ui.buildPayload("prefix", "  product:1:  "), { ok: true, payload: { prefix: "product:1:" } });
+    assert.deepEqual(ui.buildPayload("tag", "  cms:7  "), { ok: true, payload: { tag: "cms:7" } });
+    assert.deepEqual(ui.buildPayload("key", "  mykey  "), { ok: true, payload: { key: "  mykey  " } });
     assert.deepEqual(ui.buildPayload("key", "   "), { ok: false, error: "empty" });
     assert.deepEqual(ui.buildPayload("all", "ignored"), { ok: true, payload: { all: true } });
 });

@@ -1,11 +1,13 @@
 package admin_test
 
 import (
+	"context"
 	"net/http"
 	"net/http/httptest"
 	"os/exec"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestAdminHandler_CacheAdminUIScript(t *testing.T) {
@@ -47,7 +49,9 @@ func TestCacheAdminUI_Node(t *testing.T) {
 	if err != nil {
 		t.Fatalf("node is required for cache confirm-UX tests (Node 22+; see docs/guides/DEVELOPER.md): %v", err)
 	}
-	cmd := exec.Command(node, "--test", "cache_admin_ui_test.js")
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, node, "--test", "cache_admin_ui_test.js")
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		t.Fatalf("node --test cache_admin_ui_test.js: %v\n%s", err, out)

@@ -340,12 +340,12 @@ This screen requires the `search.reindex` permission — by default, only the **
 
 Open **Operations → Cache** at `/admin/operations/cache` to see occupancy and to clear entries without using the API or CLI.
 
-**Stats** show this API process's L2 backend (key count, tag rows, memory when the backend reports it) and its L1 stores (permission catalog, storefront category nav) with hit/miss counters. Counts are occupancy, not a live hit rate. A successful clear refreshes these numbers automatically. Use **Refresh stats** if a Postgres count is still marked **approximate**, or to re-check other replicas that this process cannot flush.
+**Stats** show this API process's L2 backend (key count, tag rows, memory when the backend reports it) and its L1 stores (permission catalog, storefront category nav) with hit/miss counters. Counts are occupancy, not a live hit rate. A successful clear refreshes these numbers automatically. **Refresh stats** re-reads only this process's stats endpoint — it cannot inspect another replica's L1. Use it if a Postgres count is still marked **approximate**. L1 invalidation is in-process; TTL is the bound on how long other replicas can keep stale L1.
 
 **Clear cache** offers four modes:
 
 - **Prefix**, **Tag**, or **Key** — enter the selector and click **Clear**. These require `cache.write`.
-- **All (full flush)** — the whole L2 store plus this process's L1. This requires `cache.clear_all`. The **Clear** button stays disabled until you type `CLEAR ALL` in the confirmation field — a single click is not enough. Other API replicas keep their own L1 until invalidation or TTL; this screen cannot flush them. The CLI cannot clear an API process's L1 either.
+- **All (full flush)** — the whole L2 store plus this process's L1. This requires `cache.clear_all`. The **Clear** button stays disabled until you type `CLEAR ALL` in the confirmation field — a single click is not enough. Other API replicas keep their own L1: invalidation is in-process, so TTL is the bound on cross-replica staleness, and this screen cannot flush them. The CLI cannot clear an API process's L1 either.
 
 This screen requires `cache.read` to open. The SPA shows or hides Cache (and Clear All) from **compiled role defaults**, not from grants or revokes stored in the database — a custom role given `cache.*` in the DB still will not see this screen, and an Administrator who lost those permissions in the DB still will. The API enforces the real grants; until the admin shell reads effective permissions from `/auth/me`, treat the UI as a compiled-role map. By default only **Administrator** has the cache permissions.
 

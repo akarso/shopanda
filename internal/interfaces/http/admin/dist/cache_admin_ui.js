@@ -26,12 +26,14 @@
         if (mode === "all") {
             return { ok: true, payload: { all: true } };
         }
-        var trimmed = String(value || "").trim();
+        var raw = String(value || "");
+        var trimmed = raw.trim();
         if (!trimmed) {
             return { ok: false, error: "empty" };
         }
         var payload = {};
-        payload[mode] = trimmed;
+        // Keys are stored literally (including boundary whitespace); prefix/tag trim.
+        payload[mode] = mode === "key" ? raw : trimmed;
         return { ok: true, payload: payload };
     }
 
