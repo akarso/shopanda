@@ -22,6 +22,7 @@ func fragmentRouter(t *testing.T, h *storefront.StorefrontHandler) http.Handler 
 	mux.HandleFunc("GET /fragments/cart-count", h.CartCountFragment())
 	mux.HandleFunc("GET /fragments/mini-cart", h.MiniCartFragment())
 	mux.HandleFunc("GET /fragments/recently-viewed", h.RecentlyViewedFragment())
+	mux.HandleFunc("GET /fragments/search-suggest", h.SearchSuggestFragment())
 	return mux
 }
 
@@ -169,14 +170,14 @@ func TestFragment_RecentlyViewedUsesCookieHistory(t *testing.T) {
 	}
 }
 
-func TestFragment_CartAndMiniCartNoStore(t *testing.T) {
+func TestFragment_CartMiniCartAndSuggestNoStore(t *testing.T) {
 	h := storefront.NewStorefrontHandler(createTestTheme(t), &mockStorefrontRepo{}, newStorefrontCategoryMock(),
 		composition.NewPipeline[composition.ProductContext](),
 		composition.NewPipeline[composition.ListingContext](),
 		newStorefrontSearchMock(),
 	)
 	router := fragmentRouter(t, h)
-	for _, path := range []string{"/fragments/cart-count", "/fragments/mini-cart"} {
+	for _, path := range []string{"/fragments/cart-count", "/fragments/mini-cart", "/fragments/search-suggest"} {
 		rec := httptest.NewRecorder()
 		router.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, path, nil))
 		if rec.Header().Get("Cache-Control") != "no-store" {

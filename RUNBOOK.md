@@ -101,6 +101,15 @@ For general `429`/`rate_limited` (not login-specific): with `rate_limit.driver=m
 
 **Fix:** disable immediately with `SHOPANDA_CACHE_FULL_PAGE_ENABLED=false` (or `cache.full_page.enabled: false`) and restart `serve` (FPC is off by default). Flush stored pages: `POST /api/v1/admin/cache/clear` `{"prefix":"fpc:"}` or `{"all": true}` (the latter also clears this process's L1). Do not re-enable until the leaked field is moved to a fragment (`{{fragment "…"}}` / `/fragments/…`) or the route is removed from the allowlist. See `docs/guides/DEVELOPER.md` "Full-page cache" and "Fragments (ESI-equivalent)".
 
+### Signed-in logout returns 403 with full-page cache on
+
+Cached shells ship an empty `csrf_token` until htmx loads `GET /fragments/csrf` (which also mints `shopanda_csrf` when missing). A 403 on logout usually means the fragment never ran or the cookie was blocked.
+
+**Check:**
+- Browser network: `/fragments/csrf` is 200 and sets/refreshes `shopanda_csrf`; the logout form’s hidden input is non-empty before submit.
+- Theme includes a real hole (`hx-get="/fragments/csrf"` or `data-shopanda-fragment="csrf"`), not only the path in copy — FPC refuses logout forms without that marker.
+- JS/htmx is available for authenticated FPC chrome; without it, logout stays empty and POSTs 403.
+
 ## Planning
 
 | Phase | Status | Doc |

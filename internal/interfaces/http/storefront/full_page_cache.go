@@ -301,12 +301,11 @@ func fpcHTMLUnsafe(html string, r *http.Request) bool {
 		return true
 	}
 	// Empty csrf_token skeletons + logout forms are OK when the shell includes
-	// the /fragments/csrf hole. A logout form without that hole (custom theme
-	// still using {{.Layout.CSRFToken}}) would store a permanently empty token.
+	// a real htmx CSRF hole (hx-get), not merely the path string in copy.
 	if fpcFilledCSRFInput(html) {
 		return true
 	}
-	if logoutFormAction.MatchString(html) && !strings.Contains(html, "/fragments/csrf") {
+	if logoutFormAction.MatchString(html) && !fpcHasCSRFFragmentHole(html) {
 		return true
 	}
 	id := platformAuth.IdentityFrom(r.Context())
@@ -334,6 +333,14 @@ func fpcFilledCSRFInput(html string) bool {
 		}
 	}
 	return false
+}
+
+// fpcHasCSRFFragmentHole reports a real fragment placeholder, not incidental
+// merchandising copy that mentions /fragments/csrf.
+func fpcHasCSRFFragmentHole(html string) bool {
+	return strings.Contains(html, `hx-get="/fragments/csrf"`) ||
+		strings.Contains(html, `hx-get='/fragments/csrf'`) ||
+		strings.Contains(html, `data-shopanda-fragment="csrf"`)
 }
 
 func containsFold(s, substr string) bool {
