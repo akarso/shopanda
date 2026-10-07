@@ -77,7 +77,7 @@ func TestLoad_Defaults(t *testing.T) {
 		t.Errorf("StoreCredit.MaxIssueAmount = %d, want %d", cfg.StoreCredit.MaxIssueAmount, DefaultStoreCreditMaxIssueAmount)
 	}
 	if cfg.Cache.FullPage.Enabled {
-		t.Error("Cache.FullPage.Enabled = true, want false by default until PR-1045")
+		t.Error("Cache.FullPage.Enabled = true, want false by default")
 	}
 }
 
@@ -545,7 +545,7 @@ func TestLoad_CacheDriverDefault(t *testing.T) {
 		t.Errorf("Cache.Driver = %q, want %q", cfg.Cache.Driver, "postgres")
 	}
 	if cfg.Cache.FullPage.Enabled {
-		t.Error("Cache.FullPage.Enabled = true, want false by default until PR-1045")
+		t.Error("Cache.FullPage.Enabled = true, want false by default")
 	}
 }
 

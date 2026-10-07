@@ -721,8 +721,8 @@ The storefront (when `frontend.enabled`) can store fully rendered HTML in `cache
 
 **Reviewer checklist before allowlisting a route:**
 
-- No CSRF token in the cached body. Cacheable layouts omit the header logout form (`AccountLogoutURL` empty) and clear `Layout.CSRFToken`. Store is refused if the request token appears, a **filled** `csrf_token` input is present, or a logout `<form action="…/account/logout">` remains. Merchandising copy that mentions “csrf_token” is fine. Custom themes must honor `AccountLogoutURL` (empty ⇒ no logout form) or authenticated shells will BYPASS. PR-1045 will fetch the real token as a fragment.
-- No session, cart contents, customer ID, or display name in the body. Cart count/mini-cart are already fragments. Authenticated chrome may differ from guest (`auth_state` is in the vary key) but must stay generic ("Account", not "Alice"). Store is refused if the HTML contains the current customer ID or display name (case-insensitive for the name).
+- No **filled** CSRF token in the cached body. Cacheable layouts set `Layout.UseFragments` (and clear `Layout.CSRFToken`) so themes can switch to `{{fragment "csrf"}}` / `{{fragment "greeting"}}`. Store is refused if the request token appears or a filled `csrf_token` input is present. Merchandising copy that mentions “csrf_token” is fine. Logout forms may remain in the shell with an empty token field.
+- No session, cart contents, customer ID, or display name in the body. Use fragments (`cart-count`, `mini-cart`, `greeting`, …). Authenticated chrome may differ from guest (`auth_state` is in the vary key) but must stay generic ("Account", not "Alice") until the greeting fragment swaps in. Store is refused if the HTML contains the current customer ID or display name (case-insensitive for the name).
 - Do not enable FPC on a storefront that SSR-bakes B2B/group prices or other customer-scoped composition into the page — two authenticated customers share one entry. Keep those bits in fragments.
 - Vary key is `{store, language, currency, auth_state}` plus path + **filtered** query (`q`, `page`, `per_page`, `sort`, `view`, `category`, and only `attr_*` codes in the active layered-nav / advanced-search set). Home/PDP/CMS drop query entirely. Tracking params and unknown `attr_*` are dropped. Repeated values keep the **original first** value (`page=2&page=1` keys and renders as page 2 — matching `url.Values.Get`). **Handlers under FPC see this scrubbed `RawQuery`** — a future PDP/CMS query that changes HTML (`?variant=`, preview flags) needs an explicit FilterQuery hook, not an ad-hoc `r.URL.Query()` read. If the attr allowlist cannot be loaded, FPC **BYPASS**es (does not treat “no attrs” as authoritative, which would HIT an unfiltered shell while the URL still shows filters). The loaded attr set is stashed on the request so the listing handler does not fetch it twice on MISS. HIT still reads the allowlist once to build the key (process-level cache is a PR-1046/perf follow-up).
 - Tag every cached entry (`SetWithTags`) with the product/category/CMS/page IDs it rendered so PR-1046 can purge precisely. Include **every category ID in the layout tree** (nav / breadcrumbs / subcategory links), not only the viewed category — otherwise `/categories` can omit tags for empty categories shown in chrome. PDPs also tag assigned category IDs via `ListCategoryIDsByProduct` (skipped when FPC is off / no tag bag; a repo that does not implement it logs `storefront.fpc.pdp_category_tags_unavailable` once).
@@ -730,7 +730,39 @@ The storefront (when `frontend.enabled`) can store fully rendered HTML in `cache
 - When CSP nonces are enabled, HIT responses **rotate** the stored nonce in both HTML and `Content-Security-Policy` so a shared entry never replays a reusable nonce.
 - Authenticated FPC responses keep `Cache-Control: no-store` (Phase 10 middleware). Only guest hits/misses set `public, max-age=<remaining TTL>`.
 
-**Config:** `cache.full_page.enabled` defaults **false** (omitting the YAML block keeps that default). Opt in with `cache.full_page.enabled: true` / `SHOPANDA_CACHE_FULL_PAGE_ENABLED=true` after accepting that header logout is a link-to-account-page until PR-1045. `ttl` (default `5m`), optional `route_ttl` map, `expose_header` (or `SHOPANDA_DEV_MODE`) for `X-Shopanda-Cache`. When disabled, allowlisted pages render normally (live cart label, display name, CSRF in logout).
+**Config:** `cache.full_page.enabled` defaults **false** (omitting the YAML block keeps that default). With PR-1045 fragments in the default theme, opt in safely via `cache.full_page.enabled: true` / `SHOPANDA_CACHE_FULL_PAGE_ENABLED=true`. Custom themes must use `{{fragment "csrf"}}` (and greeting/cart helpers as needed) or keep personalized bits off allowlisted routes. `ttl` (default `5m`), optional `route_ttl` map, `expose_header` (or `SHOPANDA_DEV_MODE`) for `X-Shopanda-Cache`. When disabled, allowlisted pages render normally (live cart label, display name, CSRF in logout).
+
+## Fragments (ESI-equivalent)
+
+Shopanda has no edge/CDN ESI resolver. PR-1045 provides the same effect at the app level: the cached shell contains an htmx placeholder; the browser fetches a small always-fresh HTML snippet.
+
+**Template helper:** `{{fragment "name"}}` (optional second arg = element id). Storefront registers it via `theme.WithFragment(storefront.FragmentTemplateFunc(…))` alongside slots. Every placeholder **must** ship a skeleton (loading state) — empty holes that pop in after load are not acceptable.
+
+| Name | Endpoint | Skeleton / notes |
+| --- | --- | --- |
+| `csrf` | `GET /fragments/csrf` | Empty `<input name="csrf_token">`; swaps to the real token |
+| `greeting` | `GET /fragments/greeting` | Generic "Account"; signed-in name for authenticated requests |
+| `cart-count` | `GET /fragments/cart-count` | `Cart (0)`; also refreshes on `cart-updated` |
+| `mini-cart` / `minicart` | `GET /fragments/mini-cart` | "Loading cart…"; `innerHTML` into `.mini-cart-shell` |
+| `recently-viewed` | `GET /fragments/recently-viewed` | Loading copy; cookie history written on PDP view |
+
+All fragment handlers set `Cache-Control: no-store` (and `/fragments` is on the Phase 10 `CacheControlMiddleware` denylist). Never cache fragment responses.
+
+**CSRF fragment is authoritative:** `GET /fragments/csrf` mints a `shopanda_csrf` cookie when missing (same as account/checkout middleware), so logout on allowlisted pages works without first visiting `/account/*`. Authenticated FPC shells still require JavaScript/htmx so the empty skeleton is replaced before logout POST — treat JS as required for signed-in cached chrome.
+
+**Custom themes + FPC:** each logout `<form>` must contain a working htmx hole (`hx-get="/fragments/csrf"`) inside that form. A path string (or hole) elsewhere on the page is not enough — FPC `BYPASS`es. Prefer `Layout.UseFragments` + `{{fragment "csrf"}}` (default theme pattern).
+
+**Wishlist:** the default theme has no wishlist UI — no fragment shipped. Add one the same way as recently-viewed when the theme gains the surface.
+
+### Adding a fragment (worked example: recently viewed)
+
+1. **Data source** — cookie `shopanda_recently_viewed` (URL-escaped product IDs, max 8). Prefer cookies/session for shopper-private lists; do not put this into the FPC body.
+2. **Endpoint** — `RecentlyViewedFragment` in `fragment.go`, wrapped with `withFragmentCacheControl`. Optional `?add=<productID>` records a view on the fragment request (so FPC HIT PDPs still update history).
+3. **Helper registration** — add the name to `fragmentPaths` / `fragmentSkeletons` in `internal/interfaces/http/storefront/fragment_helper.go` (HTTP adapter owns routes/htmx markup; wire via `theme.WithFragment(storefront.FragmentTemplateFunc(…))`). PDP uses an explicit `hx-get="…?add={{ .Product.ID }}"` so the product id is available on HIT.
+4. **Theme placement** — skeleton must be non-empty (see `themes/default/templates/product.html`).
+5. **Tests** — assert `Cache-Control: no-store` and that two cookies/sessions produce different HTML when state differs.
+
+**Fragments vs slots:** slots inject plugin HTML at render time into the (possibly cached) page; fragments are always-live per-request holes. See [THEME_SLOTS.md](THEME_SLOTS.md).
 
 ## Integrator Platform (Phase 8)
 

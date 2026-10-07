@@ -182,9 +182,10 @@ cache:
   #   key_prefix: "shopanda"
   # Or set REDIS_URL / SHOPANDA_CACHE_REDIS_URL environment variables.
   # Full-page cache (PR-1044): allowlisted storefront HTML in the cache
-  # backend. Default false until PR-1045 (CSRF fragment) — enabling today
-  # omits the header logout form on cached shells. New routes stay
-  # uncached until added to the allowlist.
+  # backend. Default false; safe to enable with the default theme's
+  # PR-1045 fragments (csrf / greeting / cart / recently-viewed).
+  # Custom themes must use {{fragment}} for personalized holes.
+  # New routes stay uncached until added to the allowlist.
   # Env: SHOPANDA_CACHE_FULL_PAGE_ENABLED / SHOPANDA_CACHE_FULL_PAGE_TTL
   # / SHOPANDA_CACHE_FULL_PAGE_EXPOSE_HEADER
   full_page:

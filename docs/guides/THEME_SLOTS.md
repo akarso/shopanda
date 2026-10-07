@@ -275,8 +275,11 @@ If you rename `pdp.info` → `product.sidebar`, plugins registering on `pdp.info
 | Need | Use |
 | --- | --- |
 | Plugin-owned global assets | `app.Assets(name).Register(manifest)` — route-gated CSS/JS in layout head/footer |
-| Small HTML fragment | Slot renderer |
+| Small HTML fragment (static per render) | Slot renderer |
+| Always-live per-request HTML (cart, CSRF, greeting) | `{{fragment "name"}}` — see [DEVELOPER.md — Fragments (ESI-equivalent)](DEVELOPER.md#fragments-esi-equivalent) |
 | Theme-owned styling | `static/css/` in your theme |
+
+**Slots vs fragments:** slots are resolved when the page (or FPC miss) renders — plugin output can be stored inside a full-page cache entry. Fragments are htmx holes that always hit `/fragments/…` with `Cache-Control: no-store` after the shell loads. Use slots for catalog/plugin chrome; use fragments for session, cart, CSRF, or other shopper-private bits.
 
 ### Verify during development
 

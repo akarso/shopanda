@@ -46,6 +46,7 @@ func buildServeHandler(cfg *config.Config, log logger.Logger, rt *serveRuntime, 
 	router.Use(shophttp.LanguageMiddleware())
 	router.Use(shophttp.CacheControlMiddleware([]string{
 		"/setup",
+		"/fragments",
 		"/api/v1/setup",
 		"/api/v1/carts",
 		"/api/v1/checkout",
@@ -361,7 +362,12 @@ func buildServeHandler(cfg *config.Config, log logger.Logger, rt *serveRuntime, 
 
 	// Storefront SSR routes (optional, gated by frontend.enabled).
 	if cfg.Frontend.Enabled {
-		themeEngine, thErr := themeapp.Load(cfg.Frontend.ThemePath, domtheme.WithSlotSource(slotRegistryThemeSource{reg: rt.slotRegistry}))
+		themeOpts := []domtheme.Option{
+			domtheme.WithSlotSource(slotRegistryThemeSource{reg: rt.slotRegistry}),
+			// Fragment paths / htmx markup live in the storefront adapter, not domain.
+			domtheme.WithFragment(storefront.FragmentTemplateFunc(config.DevModeEnabled())),
+		}
+		themeEngine, thErr := themeapp.Load(cfg.Frontend.ThemePath, themeOpts...)
 		if thErr != nil {
 			return nil, fmt.Errorf("theme load: %w", thErr)
 		}
@@ -479,6 +485,9 @@ func buildServeHandler(cfg *config.Config, log logger.Logger, rt *serveRuntime, 
 		router.HandleFunc("POST /checkout/confirm", sfHandler.CheckoutConfirm())
 		router.HandleFunc("GET /fragments/cart-count", sfHandler.CartCountFragment())
 		router.HandleFunc("GET /fragments/mini-cart", sfHandler.MiniCartFragment())
+		router.HandleFunc("GET /fragments/csrf", sfHandler.CSRFFragment())
+		router.HandleFunc("GET /fragments/greeting", sfHandler.GreetingFragment())
+		router.HandleFunc("GET /fragments/recently-viewed", sfHandler.RecentlyViewedFragment())
 		router.HandleFunc("GET /fragments/search-suggest", sfHandler.SearchSuggestFragment())
 		router.HandleFunc("GET /{$}", sfHandler.Home())
 		router.HandleFunc("GET /pages/{slug}", sfHandler.CMSPage())

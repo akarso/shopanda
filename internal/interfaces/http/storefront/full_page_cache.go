@@ -23,6 +23,10 @@ const fpcHeader = "X-Shopanda-Cache"
 var filledCSRFValue = regexp.MustCompile(`(?i)name=["']csrf_token["'][^>]*value=["']([^"']+)["']|value=["']([^"']+)["'][^>]*name=["']csrf_token["']`)
 var logoutFormAction = regexp.MustCompile(`(?i)<form\b[^>]*\baction\s*=\s*(?:"[^"]*/account/logout"|'[^']*/account/logout'|/account/logout)(?:[\s>]|$)`)
 
+// logoutFormBlock captures each logout <form>…</form> so the CSRF hole must
+// sit inside that form, not elsewhere on the page.
+var logoutFormBlock = regexp.MustCompile(`(?is)<form\b[^>]*\baction\s*=\s*(?:"[^"]*/account/logout"|'[^']*/account/logout'|/account/logout)[^>]*>(.*?)</form>`)
+
 type fpcConfig struct {
 	backend      domaincache.Cache
 	ttl          time.Duration
@@ -300,7 +304,13 @@ func fpcHTMLUnsafe(html string, r *http.Request) bool {
 	if token != "" && strings.Contains(html, token) {
 		return true
 	}
-	if fpcFilledCSRFInput(html) || logoutFormAction.MatchString(html) {
+	// Empty csrf_token skeletons + logout forms are OK only when each logout
+	// form contains a working htmx CSRF placeholder (hx-get). A matching
+	// string elsewhere on the page, or a non-functional marker, does not pass.
+	if fpcFilledCSRFInput(html) {
+		return true
+	}
+	if fpcLogoutFormMissingCSRFHole(html) {
 		return true
 	}
 	id := platformAuth.IdentityFrom(r.Context())
@@ -328,6 +338,27 @@ func fpcFilledCSRFInput(html string) bool {
 		}
 	}
 	return false
+}
+
+func fpcLogoutFormMissingCSRFHole(html string) bool {
+	actions := logoutFormAction.FindAllStringIndex(html, -1)
+	blocks := logoutFormBlock.FindAllStringSubmatch(html, -1)
+	// Unclosed/malformed logout forms match the action scan but not the
+	// complete <form>…</form> block — treat the mismatch as unsafe.
+	if len(actions) != len(blocks) {
+		return true
+	}
+	for _, m := range blocks {
+		if !fpcFormHasCSRFFragmentHole(m[1]) {
+			return true
+		}
+	}
+	return false
+}
+
+func fpcFormHasCSRFFragmentHole(formInnerHTML string) bool {
+	return strings.Contains(formInnerHTML, `hx-get="/fragments/csrf"`) ||
+		strings.Contains(formInnerHTML, `hx-get='/fragments/csrf'`)
 }
 
 func containsFold(s, substr string) bool {

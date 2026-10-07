@@ -128,14 +128,14 @@ func (h *StorefrontHandler) Cart() http.HandlerFunc {
 }
 
 func (h *StorefrontHandler) CartCountFragment() http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
+	return withFragmentCacheControl(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		_, _ = w.Write([]byte(h.cartLabelBestEffort(r, "Cart (0)")))
-	}
+	})
 }
 
 func (h *StorefrontHandler) MiniCartFragment() http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
+	return withFragmentCacheControl(func(w http.ResponseWriter, r *http.Request) {
 		page, err := h.buildCartPageResponse(r)
 		if err != nil {
 			h.log.Error("storefront.mini_cart.build_failed", err, map[string]interface{}{"path": r.URL.Path})
@@ -154,7 +154,7 @@ func (h *StorefrontHandler) MiniCartFragment() http.HandlerFunc {
 		}
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		_, _ = w.Write(buf.Bytes())
-	}
+	})
 }
 
 func (h *StorefrontHandler) AddToCart() http.HandlerFunc {
