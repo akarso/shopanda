@@ -78,6 +78,9 @@ func TestFPC_FilterQueryDropsTrackingParams(t *testing.T) {
 	if cacheapp.Key(cacheapp.RoutePLP, "/products", "page=2&page=1", v) != cacheapp.Key(cacheapp.RoutePLP, "/products", "page=2", v) {
 		t.Fatal("repeated page values must key as the first value")
 	}
+	if got := cacheapp.FilterQuery(cacheapp.RoutePLP, "page=2&bad=%zz", nil); got != "page=2" {
+		t.Fatalf("FilterQuery must keep valid pairs when ParseQuery also errors, got %q", got)
+	}
 }
 
 func TestFPC_PageTagsBag(t *testing.T) {

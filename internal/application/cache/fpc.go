@@ -132,8 +132,10 @@ func Key(routeTemplate, path, rawQuery string, v Vary, extraQueryKeys ...string)
 // the storefront; unknown attr_* codes are dropped (cache-fill).
 // Repeated values keep the original first value (url.Values.Get).
 func FilterQuery(routeTemplate, raw string, extraQueryKeys []string) string {
-	values, err := url.ParseQuery(raw)
-	if err != nil || len(values) == 0 {
+	// ParseQuery may return both values and an error (invalid escapes).
+	// Keep any successfully parsed pairs; only empty results drop the query.
+	values, _ := url.ParseQuery(raw)
+	if len(values) == 0 {
 		return ""
 	}
 	extra := make(map[string]struct{}, len(extraQueryKeys))
