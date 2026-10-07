@@ -116,13 +116,16 @@ func TestFragment_GreetingReflectsIdentity(t *testing.T) {
 func TestFragment_RecentlyViewedUsesCookieHistory(t *testing.T) {
 	repo := &mockStorefrontRepo{
 		findByIDFn: func(_ context.Context, id string) (*catalog.Product, error) {
-			if id == "p1" {
-				return &catalog.Product{ID: "p1", Name: "Oak Desk", Slug: "oak-desk"}, nil
+			switch id {
+			case "p1":
+				return &catalog.Product{ID: "p1", Name: "Oak Desk", Slug: "oak-desk", Status: catalog.StatusActive}, nil
+			case "archived":
+				return &catalog.Product{ID: "archived", Name: "Gone", Slug: "gone", Status: catalog.StatusArchived}, nil
 			}
 			return nil, nil
 		},
 		findBySlugFn: func(_ context.Context, slug string) (*catalog.Product, error) {
-			return &catalog.Product{ID: "p1", Name: "Oak Desk", Slug: slug}, nil
+			return &catalog.Product{ID: "p1", Name: "Oak Desk", Slug: slug, Status: catalog.StatusActive}, nil
 		},
 	}
 	h := storefront.NewStorefrontHandler(createTestTheme(t), repo, newStorefrontCategoryMock(),
@@ -167,6 +170,28 @@ func TestFragment_RecentlyViewedUsesCookieHistory(t *testing.T) {
 	}
 	if !strings.Contains(junk.Body.String(), "Oak Desk") {
 		t.Fatalf("existing history should still render after junk add: %q", junk.Body.String())
+	}
+
+	archived := httptest.NewRecorder()
+	router.ServeHTTP(archived, httptest.NewRequest(http.MethodGet, "/fragments/recently-viewed?add=archived", nil))
+	for _, c := range archived.Result().Cookies() {
+		if c.Name == "shopanda_recently_viewed" && strings.Contains(c.Value, "archived") {
+			t.Fatal("archived products must not be recorded in recently-viewed cookie")
+		}
+	}
+	if strings.Contains(archived.Body.String(), "Gone") {
+		t.Fatalf("archived products must not render in recently viewed: %q", archived.Body.String())
+	}
+
+	stale := httptest.NewRecorder()
+	staleReq := httptest.NewRequest(http.MethodGet, "/fragments/recently-viewed", nil)
+	staleReq.AddCookie(&http.Cookie{Name: "shopanda_recently_viewed", Value: "archived,p1"})
+	router.ServeHTTP(stale, staleReq)
+	if strings.Contains(stale.Body.String(), "Gone") {
+		t.Fatalf("stale archived IDs in cookie must not render: %q", stale.Body.String())
+	}
+	if !strings.Contains(stale.Body.String(), "Oak Desk") {
+		t.Fatalf("active history IDs should still render: %q", stale.Body.String())
 	}
 }
 

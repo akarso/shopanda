@@ -750,7 +750,7 @@ All fragment handlers set `Cache-Control: no-store` (and `/fragments` is on the 
 
 **CSRF fragment is authoritative:** `GET /fragments/csrf` mints a `shopanda_csrf` cookie when missing (same as account/checkout middleware), so logout on allowlisted pages works without first visiting `/account/*`. Authenticated FPC shells still require JavaScript/htmx so the empty skeleton is replaced before logout POST — treat JS as required for signed-in cached chrome.
 
-**Custom themes + FPC:** a logout form without a real CSRF hole (`hx-get="/fragments/csrf"` or `data-shopanda-fragment="csrf"`) is refused at store time (`BYPASS`). Merchandising copy that merely mentions the path is not enough. Prefer `Layout.UseFragments` + `{{fragment "csrf"}}` (default theme pattern).
+**Custom themes + FPC:** each logout `<form>` must contain a working htmx hole (`hx-get="/fragments/csrf"`) inside that form. A path string (or hole) elsewhere on the page is not enough — FPC `BYPASS`es. Prefer `Layout.UseFragments` + `{{fragment "csrf"}}` (default theme pattern).
 
 **Wishlist:** the default theme has no wishlist UI — no fragment shipped. Add one the same way as recently-viewed when the theme gains the surface.
 

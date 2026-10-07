@@ -7,18 +7,7 @@ import (
 	"log"
 	"strings"
 	"sync"
-	"sync/atomic"
 )
-
-var (
-	fragmentDevMode atomic.Bool
-	fragmentUnknown sync.Map // name → struct{} for once-per-name warn
-)
-
-// SetFragmentDevMode enables once-per-name warnings for unknown {{fragment}} names.
-func SetFragmentDevMode(enabled bool) {
-	fragmentDevMode.Store(enabled)
-}
 
 // Known fragment names for the ESI-equivalent helper (PR-1045).
 // Themes call {{fragment "csrf"}} etc.; unknown names render an empty comment.
@@ -56,15 +45,22 @@ var fragmentSkeletons = map[string]string{
 	"account-greeting":     `<strong class="account-greeting">Account</strong>`,
 }
 
-func fragmentFuncMap() template.FuncMap {
+// fragmentHelper is per-engine so unknown-name warning state is not process-global.
+type fragmentHelper struct {
+	devWarn bool
+	unknown sync.Map // name → struct{}
+}
+
+func fragmentFuncMap(devWarn bool) template.FuncMap {
+	h := &fragmentHelper{devWarn: devWarn}
 	return template.FuncMap{
-		"fragment": renderFragmentPlaceholder,
+		"fragment": h.render,
 	}
 }
 
-// renderFragmentPlaceholder emits an htmx hole for a named fragment.
+// render emits an htmx hole for a named fragment.
 // Optional second arg is a CSS id for the wrapper (defaults to fragment-{name}).
-func renderFragmentPlaceholder(args ...interface{}) template.HTML {
+func (h *fragmentHelper) render(args ...interface{}) template.HTML {
 	if len(args) == 0 {
 		return template.HTML("<!-- fragment: missing name -->")
 	}
@@ -74,8 +70,8 @@ func renderFragmentPlaceholder(args ...interface{}) template.HTML {
 	}
 	path, ok := fragmentPaths[name]
 	if !ok {
-		if fragmentDevMode.Load() {
-			if _, seen := fragmentUnknown.LoadOrStore(name, struct{}{}); !seen {
+		if h != nil && h.devWarn {
+			if _, seen := h.unknown.LoadOrStore(name, struct{}{}); !seen {
 				log.Printf("theme.fragment.unknown name=%q", name)
 			}
 		}

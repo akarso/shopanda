@@ -23,6 +23,10 @@ const fpcHeader = "X-Shopanda-Cache"
 var filledCSRFValue = regexp.MustCompile(`(?i)name=["']csrf_token["'][^>]*value=["']([^"']+)["']|value=["']([^"']+)["'][^>]*name=["']csrf_token["']`)
 var logoutFormAction = regexp.MustCompile(`(?i)<form\b[^>]*\baction\s*=\s*(?:"[^"]*/account/logout"|'[^']*/account/logout'|/account/logout)(?:[\s>]|$)`)
 
+// logoutFormBlock captures each logout <form>…</form> so the CSRF hole must
+// sit inside that form, not elsewhere on the page.
+var logoutFormBlock = regexp.MustCompile(`(?is)<form\b[^>]*\baction\s*=\s*(?:"[^"]*/account/logout"|'[^']*/account/logout'|/account/logout)[^>]*>(.*?)</form>`)
+
 type fpcConfig struct {
 	backend      domaincache.Cache
 	ttl          time.Duration
@@ -300,12 +304,13 @@ func fpcHTMLUnsafe(html string, r *http.Request) bool {
 	if token != "" && strings.Contains(html, token) {
 		return true
 	}
-	// Empty csrf_token skeletons + logout forms are OK when the shell includes
-	// a real htmx CSRF hole (hx-get), not merely the path string in copy.
+	// Empty csrf_token skeletons + logout forms are OK only when each logout
+	// form contains a working htmx CSRF placeholder (hx-get). A matching
+	// string elsewhere on the page, or a non-functional marker, does not pass.
 	if fpcFilledCSRFInput(html) {
 		return true
 	}
-	if logoutFormAction.MatchString(html) && !fpcHasCSRFFragmentHole(html) {
+	if fpcLogoutFormMissingCSRFHole(html) {
 		return true
 	}
 	id := platformAuth.IdentityFrom(r.Context())
@@ -335,12 +340,24 @@ func fpcFilledCSRFInput(html string) bool {
 	return false
 }
 
-// fpcHasCSRFFragmentHole reports a real fragment placeholder, not incidental
-// merchandising copy that mentions /fragments/csrf.
-func fpcHasCSRFFragmentHole(html string) bool {
-	return strings.Contains(html, `hx-get="/fragments/csrf"`) ||
-		strings.Contains(html, `hx-get='/fragments/csrf'`) ||
-		strings.Contains(html, `data-shopanda-fragment="csrf"`)
+func fpcLogoutFormMissingCSRFHole(html string) bool {
+	matches := logoutFormBlock.FindAllStringSubmatch(html, -1)
+	if len(matches) == 0 {
+		// Malformed/open logout form still matched by action scan — treat as unsafe.
+		return logoutFormAction.MatchString(html)
+	}
+	for _, m := range matches {
+		body := m[1]
+		if !fpcFormHasCSRFFragmentHole(body) {
+			return true
+		}
+	}
+	return false
+}
+
+func fpcFormHasCSRFFragmentHole(formInnerHTML string) bool {
+	return strings.Contains(formInnerHTML, `hx-get="/fragments/csrf"`) ||
+		strings.Contains(formInnerHTML, `hx-get='/fragments/csrf'`)
 }
 
 func containsFold(s, substr string) bool {

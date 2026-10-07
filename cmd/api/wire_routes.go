@@ -362,10 +362,11 @@ func buildServeHandler(cfg *config.Config, log logger.Logger, rt *serveRuntime, 
 
 	// Storefront SSR routes (optional, gated by frontend.enabled).
 	if cfg.Frontend.Enabled {
+		themeOpts := []domtheme.Option{domtheme.WithSlotSource(slotRegistryThemeSource{reg: rt.slotRegistry})}
 		if config.DevModeEnabled() {
-			domtheme.SetFragmentDevMode(true)
+			themeOpts = append(themeOpts, domtheme.WithFragmentDevMode(true))
 		}
-		themeEngine, thErr := themeapp.Load(cfg.Frontend.ThemePath, domtheme.WithSlotSource(slotRegistryThemeSource{reg: rt.slotRegistry}))
+		themeEngine, thErr := themeapp.Load(cfg.Frontend.ThemePath, themeOpts...)
 		if thErr != nil {
 			return nil, fmt.Errorf("theme load: %w", thErr)
 		}

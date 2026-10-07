@@ -392,7 +392,7 @@ func TestFullPageCache_LogoutWithPathInCopyStillBypasses(t *testing.T) {
 		t.Fatal(err)
 	}
 	mustWrite("templates/layout.html", `<!DOCTYPE html><html><body>{{ template "content" . }}</body></html>`)
-	// Path appears in copy only — no hx-get hole.
+	// Path appears in copy only — no hx-get hole inside the form.
 	mustWrite("templates/product.html", `{{ define "title" }}p{{ end }}{{ define "content" }}`+
 		`<p>See /fragments/csrf docs</p>`+
 		`<form action="/account/logout" method="post"><input type="hidden" name="csrf_token" value=""></form>`+
@@ -421,6 +421,51 @@ func TestFullPageCache_LogoutWithPathInCopyStillBypasses(t *testing.T) {
 	newStorefrontRouter(h).ServeHTTP(rec, req)
 	if rec.Header().Get("X-Shopanda-Cache") != "BYPASS" {
 		t.Fatalf("path-in-copy must not satisfy CSRF hole gate, got %q", rec.Header().Get("X-Shopanda-Cache"))
+	}
+}
+
+func TestFullPageCache_LogoutHoleOutsideFormStillBypasses(t *testing.T) {
+	backend := newFPCMemCache()
+	dir := t.TempDir()
+	mustWrite := func(name, body string) {
+		t.Helper()
+		if err := os.WriteFile(filepath.Join(dir, name), []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	mustWrite("theme.yaml", "name: bare\nversion: \"0.1.0\"\n")
+	if err := os.MkdirAll(filepath.Join(dir, "templates"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	mustWrite("templates/layout.html", `<!DOCTYPE html><html><body>{{ template "content" . }}</body></html>`)
+	mustWrite("templates/product.html", `{{ define "title" }}p{{ end }}{{ define "content" }}`+
+		`<span hx-get="/fragments/csrf" hx-trigger="load" hx-swap="outerHTML"><input type="hidden" name="csrf_token" value=""></span>`+
+		`<form action="/account/logout" method="post"><input type="hidden" name="csrf_token" value=""></form>`+
+		`<h1>{{ .Product.Name }}</h1>{{ end }}{{ template "layout.html" . }}`)
+	engine, err := themeapp.Load(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	repo := &fpcProductRepo{mockStorefrontRepo: mockStorefrontRepo{
+		findBySlugFn: func(_ context.Context, slug string) (*catalog.Product, error) {
+			return &catalog.Product{ID: "p1", Name: "Widget", Slug: slug}, nil
+		},
+	}}
+	h := storefront.NewStorefrontHandler(engine, repo, newStorefrontCategoryMock(),
+		composition.NewPipeline[composition.ProductContext](),
+		composition.NewPipeline[composition.ListingContext](),
+		newStorefrontSearchMock(),
+	).WithFullPageCache(backend, time.Minute, true, nil)
+	id, err := identity.NewIdentity("cust-1", identity.RoleCustomer)
+	if err != nil {
+		t.Fatal(err)
+	}
+	req := httptest.NewRequest(http.MethodGet, "/products/widget", nil)
+	req = req.WithContext(auth.WithIdentity(req.Context(), id))
+	rec := httptest.NewRecorder()
+	newStorefrontRouter(h).ServeHTTP(rec, req)
+	if rec.Header().Get("X-Shopanda-Cache") != "BYPASS" {
+		t.Fatalf("CSRF hole outside the logout form must not pass, got %q", rec.Header().Get("X-Shopanda-Cache"))
 	}
 }
 

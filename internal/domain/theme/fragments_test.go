@@ -6,7 +6,8 @@ import (
 )
 
 func TestFragmentHelper_RendersSkeletonAndEndpoint(t *testing.T) {
-	html := string(renderFragmentPlaceholder("csrf"))
+	h := &fragmentHelper{}
+	html := string(h.render("csrf"))
 	if !strings.Contains(html, `hx-get="/fragments/csrf"`) {
 		t.Fatalf("csrf fragment = %q", html)
 	}
@@ -14,7 +15,7 @@ func TestFragmentHelper_RendersSkeletonAndEndpoint(t *testing.T) {
 		t.Fatalf("csrf skeleton must be empty token field: %q", html)
 	}
 
-	mini := string(renderFragmentPlaceholder("mini-cart"))
+	mini := string(h.render("mini-cart"))
 	if !strings.Contains(mini, `hx-get="/fragments/mini-cart"`) {
 		t.Fatalf("mini-cart = %q", mini)
 	}
@@ -22,7 +23,7 @@ func TestFragmentHelper_RendersSkeletonAndEndpoint(t *testing.T) {
 		t.Fatalf("mini-cart must keep cart-updated trigger and shell class: %q", mini)
 	}
 
-	unknown := string(renderFragmentPlaceholder("nope"))
+	unknown := string(h.render("nope"))
 	if !strings.Contains(unknown, "unknown") {
 		t.Fatalf("unknown fragment = %q", unknown)
 	}

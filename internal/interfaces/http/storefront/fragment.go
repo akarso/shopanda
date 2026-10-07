@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/akarso/shopanda/internal/domain/catalog"
 	httpshared "github.com/akarso/shopanda/internal/interfaces/http/shared"
 	platformAuth "github.com/akarso/shopanda/internal/platform/auth"
 )
@@ -115,14 +116,10 @@ func (h *StorefrontHandler) RecentlyViewedFragment() http.HandlerFunc {
 		resolved := map[string]recentlyViewedItem{}
 		if add := strings.TrimSpace(r.URL.Query().Get("add")); add != "" && len(add) <= recentlyViewedMaxIDLen && h.repo != nil {
 			p, err := h.repo.FindByID(r.Context(), add)
-			if err == nil && p != nil && strings.TrimSpace(p.Slug) != "" {
+			if err == nil && recentlyViewedProductOK(p) {
 				h.recordRecentlyViewedID(w, r, p.ID)
 				ids = prependRecentlyViewedID(ids, p.ID)
-				name := strings.TrimSpace(p.Name)
-				if name == "" {
-					name = p.Slug
-				}
-				resolved[p.ID] = recentlyViewedItem{Name: name, Slug: p.Slug}
+				resolved[p.ID] = recentlyViewedItemFromProduct(p)
 			}
 		}
 		data := recentlyViewedData{EmptyMessage: "No recently viewed products yet."}
@@ -134,14 +131,10 @@ func (h *StorefrontHandler) RecentlyViewedFragment() http.HandlerFunc {
 					continue
 				}
 				p, err := h.repo.FindByID(r.Context(), id)
-				if err != nil || p == nil || strings.TrimSpace(p.Slug) == "" {
+				if err != nil || !recentlyViewedProductOK(p) {
 					continue
 				}
-				name := strings.TrimSpace(p.Name)
-				if name == "" {
-					name = p.Slug
-				}
-				items = append(items, recentlyViewedItem{Name: name, Slug: p.Slug})
+				items = append(items, recentlyViewedItemFromProduct(p))
 			}
 			data.Items = items
 			if len(items) == 0 {
@@ -155,6 +148,18 @@ func (h *StorefrontHandler) RecentlyViewedFragment() http.HandlerFunc {
 		}
 		_, _ = w.Write(buf.Bytes())
 	})
+}
+
+func recentlyViewedProductOK(p *catalog.Product) bool {
+	return p != nil && p.Status == catalog.StatusActive && strings.TrimSpace(p.Slug) != ""
+}
+
+func recentlyViewedItemFromProduct(p *catalog.Product) recentlyViewedItem {
+	name := strings.TrimSpace(p.Name)
+	if name == "" {
+		name = p.Slug
+	}
+	return recentlyViewedItem{Name: name, Slug: p.Slug}
 }
 
 func (h *StorefrontHandler) recordRecentlyViewedID(w http.ResponseWriter, r *http.Request, productID string) {

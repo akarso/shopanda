@@ -107,7 +107,7 @@ Cached shells ship an empty `csrf_token` until htmx loads `GET /fragments/csrf` 
 
 **Check:**
 - Browser network: `/fragments/csrf` is 200 and sets/refreshes `shopanda_csrf`; the logout form’s hidden input is non-empty before submit.
-- Theme includes a real hole (`hx-get="/fragments/csrf"` or `data-shopanda-fragment="csrf"`), not only the path in copy — FPC refuses logout forms without that marker.
+- Theme includes `hx-get="/fragments/csrf"` **inside** the logout form — a path mention elsewhere on the page is not enough; FPC refuses logout forms without that in-form hole.
 - JS/htmx is available for authenticated FPC chrome; without it, logout stays empty and POSTs 403.
 
 ## Planning
