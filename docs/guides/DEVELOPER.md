@@ -25,6 +25,7 @@ Deciding *which* extension mechanism fits your task (events vs hooks vs pricing 
 - [Add Custom CLI Commands](#add-custom-cli-commands)
 - [Use the API Reference](#use-the-api-reference)
 - [Jobs admin API](#jobs-admin-api)
+- [Cache admin API](#cache-admin-api)
 - [Integrator Platform (Phase 8)](#integrator-platform-phase-8)
 - [Roadmap and Future Work](#roadmap-and-future-work)
 - [Continuous Integration](#continuous-integration)
@@ -699,7 +700,11 @@ Both endpoints are Postgres-queue-only, the same limitation as the read endpoint
 
 ## Cache admin API
 
-`GET /api/v1/admin/cache/stats` — gated by `cache.read` — returns approximate L2 occupancy (Postgres `COUNT(*)` of `cache`/`cache_tags` with a 1.5s cap, then `pg_class.reltuples` with `l2.approximate: true`; Redis `DBSIZE` + `INFO memory`) plus this process's L1 stores (RBAC catalog, storefront category nav) with hit/miss counters. L2 hit/miss is not tracked here (see PR-1042 out of scope / PR-1047). There is no admin UI yet (PR-1043); use the API, `curl`, or `app cache:stats`. Successful HTTP stats are not audit-logged (polled); failures are.
+`GET /api/v1/admin/cache/stats` — gated by `cache.read` — returns approximate L2 occupancy (Postgres `COUNT(*)` of `cache`/`cache_tags` with a 1.5s cap, then `pg_class.reltuples` with `l2.approximate: true`; Redis `DBSIZE` + `INFO memory`) plus this process's L1 stores (RBAC catalog, storefront category nav) with hit/miss counters. L2 hit/miss is not tracked here (see PR-1042 out of scope / PR-1047). The admin UI is **Operations → Cache** (`/admin/operations/cache`); `curl` and `app cache:stats` remain available. Successful HTTP stats are not audit-logged (polled); failures are.
+
+The Cache screen (like Jobs/Search) gates nav and form modes with the SPA's compiled `adminRoleDefinitions()`, not DB-effective permissions. A role granted `cache.*` only in `role_permissions` still has no Cache UI; an admin whose DB grants were revoked still sees it and is rejected at the API. That is a panel-wide limitation until `/auth/me` returns the effective permission list.
+
+Confirm-UX for the GUI lives in `internal/interfaces/http/admin/cache_admin_ui_test.js` and is invoked from `TestCacheAdminUI_Node`. That requires Node 22 on `PATH` (same major as the CI unit job). See [Continuous Integration](#continuous-integration).
 
 `POST /api/v1/admin/cache/clear` — body exactly one of `{"prefix":"..."}` / `{"tag":"..."}` / `{"key":"..."}` / `{"all": true}`. Empty/whitespace selectors are omitted. Targeted clears require `cache.write`; `all` requires the distinct `cache.clear_all` permission. Prefix is literal (Redis glob characters are escaped). Redis `all` scan-and-deletes under the store prefix, never `FLUSHDB`, and refuses an empty prefix; `deleted` is value keys only. SCAN is best-effort (not a snapshot). Every clear is audit-logged. CLI: `app cache:clear --prefix=<p> | --tag=<t> | --key=<k> | --all` — the CLI has **no RBAC** (ops trust boundary, same as jobs CLI).
 
@@ -753,13 +758,13 @@ PRs targeting `main` / `dev`, and pushes to those branches, run [`.github/workfl
 
 | Check | What it runs |
 | --- | --- |
-| **`CI / unit`** | `go mod verify`, `gofmt`, `go vet`, `go test ./...` (no DSN — Postgres tests skip) |
+| **`CI / unit`** | `go mod verify`, `gofmt`, `go vet`, `go test ./...` (no DSN — Postgres tests skip). Installs **Node 22** because `TestCacheAdminUI_Node` runs `node --test` on the cache admin confirm-UX suite. |
 | **`CI / integration`** | Postgres 17 service + `SHOPANDA_TEST_DSN`; DSN-gated packages; fails if those tests skip |
 | **`CI / govuln`** | Pinned `govulncheck` (fail-closed + optional baseline) |
 
 The workflow **reports** the checks; it does not by itself block merges. A repository admin must require **`CI / unit`**, **`CI / integration`**, and **`CI / govuln`** on `main` and `dev` (Settings → Rules / Branch protection → required status checks).
 
-Before opening a PR, run the unit checks locally:
+Before opening a PR, run the unit checks locally. `go test ./...` includes `TestCacheAdminUI_Node`, which execs `node --test` (`node:test`, Node 18+). Match CI: **Node 22** on `PATH` (`node --version`). Without it the admin package fails instead of skipping.
 
 ```bash
 export GOFLAGS=-mod=readonly
