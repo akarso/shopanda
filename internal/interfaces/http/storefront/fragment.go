@@ -2,7 +2,6 @@ package storefront
 
 import (
 	"bytes"
-	"html"
 	"html/template"
 	"net/http"
 	"net/url"
@@ -232,11 +231,6 @@ func decodeRecentlyViewedIDs(raw string) []string {
 			id = part
 		}
 		id = strings.TrimSpace(id)
-		if id == "" || len(id) > recentlyViewedMaxIDLen {
-			continue
-		}
-		// Defense: cookie is not a place for HTML.
-		id = html.UnescapeString(id)
 		if id == "" || len(id) > recentlyViewedMaxIDLen {
 			continue
 		}

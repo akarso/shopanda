@@ -341,14 +341,15 @@ func fpcFilledCSRFInput(html string) bool {
 }
 
 func fpcLogoutFormMissingCSRFHole(html string) bool {
-	matches := logoutFormBlock.FindAllStringSubmatch(html, -1)
-	if len(matches) == 0 {
-		// Malformed/open logout form still matched by action scan — treat as unsafe.
-		return logoutFormAction.MatchString(html)
+	actions := logoutFormAction.FindAllStringIndex(html, -1)
+	blocks := logoutFormBlock.FindAllStringSubmatch(html, -1)
+	// Unclosed/malformed logout forms match the action scan but not the
+	// complete <form>…</form> block — treat the mismatch as unsafe.
+	if len(actions) != len(blocks) {
+		return true
 	}
-	for _, m := range matches {
-		body := m[1]
-		if !fpcFormHasCSRFFragmentHole(body) {
+	for _, m := range blocks {
+		if !fpcFormHasCSRFFragmentHole(m[1]) {
 			return true
 		}
 	}
