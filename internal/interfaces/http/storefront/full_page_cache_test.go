@@ -11,11 +11,13 @@ import (
 	"time"
 
 	cacheapp "github.com/akarso/shopanda/internal/application/cache"
+	cmsApp "github.com/akarso/shopanda/internal/application/cms"
 	"github.com/akarso/shopanda/internal/application/composition"
 	"github.com/akarso/shopanda/internal/domain/cache"
 	"github.com/akarso/shopanda/internal/domain/catalog"
 	"github.com/akarso/shopanda/internal/domain/cms"
 	"github.com/akarso/shopanda/internal/domain/identity"
+	"github.com/akarso/shopanda/internal/domain/search"
 	"github.com/akarso/shopanda/internal/domain/store"
 	httpshared "github.com/akarso/shopanda/internal/interfaces/http/shared"
 	storefront "github.com/akarso/shopanda/internal/interfaces/http/storefront"
@@ -76,9 +78,11 @@ func (m *fpcMemCache) FlushAll(context.Context) (int64, error) {
 type fpcProductRepo struct {
 	mockStorefrontRepo
 	catsByProduct map[string][]string
+	listCalls     int
 }
 
 func (r *fpcProductRepo) ListCategoryIDsByProduct(_ context.Context, productID string) ([]string, error) {
+	r.listCalls++
 	if r.catsByProduct == nil {
 		return nil, nil
 	}
@@ -686,5 +690,183 @@ func TestFullPageCache_CSRFMentionInCopyStillCached(t *testing.T) {
 	router.ServeHTTP(rec2, httptest.NewRequest(http.MethodGet, "/pages/about", nil))
 	if rec2.Header().Get("X-Shopanda-Cache") != "HIT" {
 		t.Fatalf("second = %q", rec2.Header().Get("X-Shopanda-Cache"))
+	}
+}
+
+func TestFullPageCache_CategoryTreeTagsOnCategoriesIndex(t *testing.T) {
+	backend := newFPCMemCache()
+	h := storefront.NewStorefrontHandler(createTestTheme(t), &fpcProductRepo{}, &mockStorefrontCategoryRepo{
+		findAllFn: func(_ context.Context) ([]catalog.Category, error) {
+			return []catalog.Category{
+				{ID: "empty-cat", Name: "Empty", Slug: "empty"},
+				{ID: "nav-cat", Name: "Nav", Slug: "nav"},
+			}, nil
+		},
+	}, composition.NewPipeline[composition.ProductContext](),
+		composition.NewPipeline[composition.ListingContext](),
+		newStorefrontSearchMock(),
+	).WithFullPageCache(backend, time.Minute, true, nil)
+	router := newStorefrontRouter(h)
+
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/categories", nil))
+	if rec.Code != http.StatusOK || rec.Header().Get("X-Shopanda-Cache") != "MISS" {
+		t.Fatalf("status=%d header=%q", rec.Code, rec.Header().Get("X-Shopanda-Cache"))
+	}
+	want := map[string]bool{"category:empty-cat": false, "category:nav-cat": false}
+	for _, tags := range backend.tags {
+		for _, tag := range tags {
+			if _, ok := want[tag]; ok {
+				want[tag] = true
+			}
+		}
+	}
+	for tag, found := range want {
+		if !found {
+			t.Fatalf("missing %s in %#v", tag, backend.tags)
+		}
+	}
+}
+
+func TestFullPageCache_DegradedContentNotStored(t *testing.T) {
+	backend := newFPCMemCache()
+	blocks := &mockContentBlockRepo{
+		findByTargetFn: func(_ context.Context, _ cms.TargetType, _ string) ([]*cms.ContentBlock, error) {
+			return nil, errors.New("blocks down")
+		},
+	}
+	h := fpcHandler(t, backend).WithContentBlocks(blocks, cmsApp.NewBlockResolver(nil), nil)
+	router := newStorefrontRouter(h)
+
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("home should still render best-effort, status=%d", rec.Code)
+	}
+	if rec.Header().Get("X-Shopanda-Cache") != "BYPASS" {
+		t.Fatalf("header = %q, want BYPASS", rec.Header().Get("X-Shopanda-Cache"))
+	}
+	if len(backend.entries) != 0 {
+		t.Fatalf("degraded home must not be stored, got %d", len(backend.entries))
+	}
+
+	backend2 := newFPCMemCache()
+	h2 := storefront.NewStorefrontHandler(createTestTheme(t), &fpcProductRepo{
+		mockStorefrontRepo: mockStorefrontRepo{
+			findBySlugFn: func(_ context.Context, slug string) (*catalog.Product, error) {
+				return &catalog.Product{ID: "p1", Name: "Widget", Slug: slug, Description: "A fine widget"}, nil
+			},
+		},
+	}, &mockStorefrontCategoryRepo{
+		findAllFn: func(_ context.Context) ([]catalog.Category, error) {
+			return nil, errors.New("cats down")
+		},
+	}, composition.NewPipeline[composition.ProductContext](),
+		composition.NewPipeline[composition.ListingContext](),
+		newStorefrontSearchMock(),
+	).WithFullPageCache(backend2, time.Minute, true, nil)
+	rec2 := httptest.NewRecorder()
+	newStorefrontRouter(h2).ServeHTTP(rec2, httptest.NewRequest(http.MethodGet, "/products/widget", nil))
+	if rec2.Code != http.StatusOK {
+		t.Fatalf("PDP should still render, status=%d", rec2.Code)
+	}
+	if rec2.Header().Get("X-Shopanda-Cache") != "BYPASS" {
+		t.Fatalf("nav-load failure header = %q, want BYPASS", rec2.Header().Get("X-Shopanda-Cache"))
+	}
+	if len(backend2.entries) != 0 {
+		t.Fatal("empty-nav PDP must not be stored")
+	}
+}
+
+func TestFullPageCache_ListCategoryIDsSkippedWithoutTagBag(t *testing.T) {
+	repo := &fpcProductRepo{
+		mockStorefrontRepo: mockStorefrontRepo{
+			findBySlugFn: func(_ context.Context, slug string) (*catalog.Product, error) {
+				return &catalog.Product{ID: "p1", Name: "Widget", Slug: slug, Description: "A fine widget"}, nil
+			},
+		},
+		catsByProduct: map[string][]string{"p1": {"c1"}},
+	}
+	h := storefront.NewStorefrontHandler(createTestTheme(t), repo, newStorefrontCategoryMock(),
+		composition.NewPipeline[composition.ProductContext](),
+		composition.NewPipeline[composition.ListingContext](),
+		newStorefrontSearchMock(),
+	)
+	rec := httptest.NewRecorder()
+	newStorefrontRouter(h).ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/products/widget", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d", rec.Code)
+	}
+	if repo.listCalls != 0 {
+		t.Fatalf("ListCategoryIDsByProduct calls = %d, want 0 when FPC is off", repo.listCalls)
+	}
+}
+
+func TestFullPageCache_RepeatedPageKeepsFirstValue(t *testing.T) {
+	backend := newFPCMemCache()
+	var seenOffset int
+	search := &mockSearchEngine{searchFn: func(_ context.Context, q search.SearchQuery) (search.SearchResult, error) {
+		seenOffset = q.Offset
+		return search.SearchResult{Products: []search.Product{}, Facets: map[string][]search.FacetValue{}, Total: 0}, nil
+	}}
+	h := storefront.NewStorefrontHandler(createTestTheme(t), &fpcProductRepo{}, newStorefrontCategoryMock(),
+		composition.NewPipeline[composition.ProductContext](),
+		composition.NewPipeline[composition.ListingContext](),
+		search,
+	).WithFullPageCache(backend, time.Minute, true, nil)
+	rec := httptest.NewRecorder()
+	newStorefrontRouter(h).ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/products?page=2&page=1", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d", rec.Code)
+	}
+	if seenOffset != 12 {
+		t.Fatalf("Offset = %d, want 12 (page 2 with per_page 12)", seenOffset)
+	}
+	if rec.Header().Get("X-Shopanda-Cache") != "MISS" {
+		t.Fatalf("header = %q", rec.Header().Get("X-Shopanda-Cache"))
+	}
+}
+
+func TestFullPageCache_CSPNonceRotatedOnHit(t *testing.T) {
+	backend := newFPCMemCache()
+	h := fpcHandler(t, backend).WithCSPEnabled(true)
+	router := newStorefrontRouter(h)
+
+	rec1 := httptest.NewRecorder()
+	router.ServeHTTP(rec1, httptest.NewRequest(http.MethodGet, "/products/widget", nil))
+	if rec1.Header().Get("X-Shopanda-Cache") != "MISS" {
+		t.Fatalf("miss header = %q", rec1.Header().Get("X-Shopanda-Cache"))
+	}
+	csp1 := rec1.Header().Get("Content-Security-Policy")
+	if !strings.Contains(csp1, "nonce-") {
+		t.Fatalf("miss CSP missing nonce: %q", csp1)
+	}
+	nonce1Start := strings.Index(csp1, "nonce-") + len("nonce-")
+	nonce1End := strings.Index(csp1[nonce1Start:], "'")
+	nonce1 := csp1[nonce1Start : nonce1Start+nonce1End]
+	if nonce1 == "" || !strings.Contains(rec1.Body.String(), nonce1) {
+		t.Fatalf("miss HTML must embed nonce %q", nonce1)
+	}
+
+	rec2 := httptest.NewRecorder()
+	router.ServeHTTP(rec2, httptest.NewRequest(http.MethodGet, "/products/widget", nil))
+	if rec2.Header().Get("X-Shopanda-Cache") != "HIT" {
+		t.Fatalf("hit header = %q", rec2.Header().Get("X-Shopanda-Cache"))
+	}
+	csp2 := rec2.Header().Get("Content-Security-Policy")
+	nonce2Start := strings.Index(csp2, "nonce-") + len("nonce-")
+	nonce2End := strings.Index(csp2[nonce2Start:], "'")
+	nonce2 := csp2[nonce2Start : nonce2Start+nonce2End]
+	if nonce2 == "" || nonce2 == nonce1 {
+		t.Fatalf("HIT must rotate nonce; miss=%q hit=%q", nonce1, nonce2)
+	}
+	if strings.Contains(rec2.Body.String(), nonce1) {
+		t.Fatal("HIT HTML still contains the miss nonce")
+	}
+	if !strings.Contains(rec2.Body.String(), nonce2) {
+		t.Fatal("HIT HTML must contain the rotated nonce")
+	}
+	if !strings.Contains(csp2, "nonce-"+nonce2) {
+		t.Fatalf("HIT CSP must use rotated nonce: %q", csp2)
 	}
 }

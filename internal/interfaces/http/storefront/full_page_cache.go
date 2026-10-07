@@ -86,8 +86,9 @@ func (h *StorefrontHandler) withFullPageCache(routeTemplate string, inner http.H
 		} else if hit {
 			left := cacheapp.RemainingTTL(entry, time.Now().UTC())
 			if left > 0 && !fpcHTMLUnsafe(entry.HTML, r) {
-				h.writeFPCHit(w, r, entry, left)
-				return
+				if h.writeFPCHit(w, r, entry, left) {
+					return
+				}
 			}
 		}
 
@@ -98,17 +99,21 @@ func (h *StorefrontHandler) withFullPageCache(routeTemplate string, inner http.H
 			buf.code = http.StatusOK
 		}
 
+		csp := buf.header.Get("Content-Security-Policy")
+		nonce := cspNonceFromHeader(csp)
 		storeOK := buf.code == http.StatusOK &&
 			strings.Contains(strings.ToLower(buf.header.Get("Content-Type")), "text/html") &&
 			len(html) > 0 &&
 			len(html) <= cacheapp.MaxPageBytes &&
-			!fpcHTMLUnsafe(string(html), r)
+			!fpcHTMLUnsafe(string(html), r) &&
+			!cacheapp.StoreSkipped(r.Context()) &&
+			fpcCSPNonceStorable(csp, nonce)
 		if storeOK {
-			csp := buf.header.Get("Content-Security-Policy")
 			now := time.Now().UTC()
 			stored := cacheapp.PageEntry{
 				HTML:     string(html),
 				CSP:      csp,
+				Nonce:    nonce,
 				StoredAt: now,
 				TTLNanos: int64(ttl),
 			}
@@ -135,17 +140,25 @@ func (h *StorefrontHandler) withFullPageCache(routeTemplate string, inner http.H
 	}
 }
 
-func (h *StorefrontHandler) writeFPCHit(w http.ResponseWriter, r *http.Request, entry cacheapp.PageEntry, left time.Duration) {
+func (h *StorefrontHandler) writeFPCHit(w http.ResponseWriter, r *http.Request, entry cacheapp.PageEntry, left time.Duration) bool {
+	html, csp, ok := rotateStoredCSPNonce(entry)
+	if !ok {
+		h.log.Warn("storefront.fpc.nonce_rotate_failed", map[string]interface{}{
+			"path": r.URL.Path,
+		})
+		return false
+	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	h.applyFPCCacheControl(w, r, left, true)
-	if entry.CSP != "" {
-		w.Header().Set("Content-Security-Policy", entry.CSP)
+	if csp != "" {
+		w.Header().Set("Content-Security-Policy", csp)
 	}
 	if h.fpc.exposeHeader {
 		w.Header().Set(fpcHeader, "HIT")
 	}
 	w.WriteHeader(http.StatusOK)
-	_, _ = w.Write([]byte(entry.HTML))
+	_, _ = w.Write([]byte(html))
+	return true
 }
 
 // applyFPCCacheControl refines guest max-age and never emits public for
@@ -270,10 +283,12 @@ func (h *StorefrontHandler) layoutForCacheablePage(r *http.Request, categories [
 				"path":  r.URL.Path,
 				"error": err.Error(),
 			})
+			cacheapp.SkipStore(r.Context())
 		} else {
 			categories = cats
 		}
 	}
+	addCategoryTreeTags(r.Context(), categories)
 	return h.buildLayoutData(r, categories, true)
 }
 
@@ -347,4 +362,41 @@ func copyHeader(dst, src http.Header) {
 	for k, vs := range src {
 		dst[k] = append([]string(nil), vs...)
 	}
+}
+
+func cspNonceFromHeader(csp string) string {
+	const prefix = "'nonce-"
+	i := strings.Index(csp, prefix)
+	if i < 0 {
+		return ""
+	}
+	rest := csp[i+len(prefix):]
+	end := strings.IndexByte(rest, '\'')
+	if end <= 0 {
+		return ""
+	}
+	return rest[:end]
+}
+
+func fpcCSPNonceStorable(csp, nonce string) bool {
+	if !strings.Contains(csp, "'nonce-") {
+		return true
+	}
+	return nonce != ""
+}
+
+func rotateStoredCSPNonce(entry cacheapp.PageEntry) (html, csp string, ok bool) {
+	html, csp = entry.HTML, entry.CSP
+	old := strings.TrimSpace(entry.Nonce)
+	if old == "" {
+		old = cspNonceFromHeader(csp)
+	}
+	if old == "" {
+		return html, csp, true
+	}
+	n := generateCSPNonce()
+	if n == "" {
+		return html, csp, false
+	}
+	return strings.ReplaceAll(html, old, n), strings.ReplaceAll(csp, old, n), true
 }

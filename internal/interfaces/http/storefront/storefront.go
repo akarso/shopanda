@@ -465,6 +465,7 @@ func (h *StorefrontHandler) Home() http.HandlerFunc {
 				"path":  r.URL.Path,
 				"error": err.Error(),
 			})
+			cacheapp.SkipStore(r.Context())
 		} else {
 			page.Blocks = blocks
 			cacheapp.AddPageTags(r.Context(), tags...)
@@ -712,16 +713,23 @@ type productCategoryIDReader interface {
 	ListCategoryIDsByProduct(ctx context.Context, productID string) ([]string, error)
 }
 
+func addCategoryTreeTags(ctx context.Context, categories []catalog.Category) {
+	for i := range categories {
+		cacheapp.AddPageTags(ctx, cacheapp.CategoryTag(categories[i].ID))
+	}
+}
+
 func (h *StorefrontHandler) addProductCategoryTags(ctx context.Context, productID string) {
+	if !cacheapp.HasPageTagBag(ctx) {
+		return
+	}
 	reader, ok := h.repo.(productCategoryIDReader)
 	if !ok {
-		if h.fpc != nil {
-			h.fpcMissingCatTags.Do(func() {
-				h.log.Warn("storefront.fpc.pdp_category_tags_unavailable", map[string]interface{}{
-					"message": "product repository does not implement ListCategoryIDsByProduct; PDP full-page entries will lack category: tags",
-				})
+		h.fpcMissingCatTags.Do(func() {
+			h.log.Warn("storefront.fpc.pdp_category_tags_unavailable", map[string]interface{}{
+				"message": "product repository does not implement ListCategoryIDsByProduct; PDP full-page entries will lack category: tags",
 			})
-		}
+		})
 		return
 	}
 	ids, err := reader.ListCategoryIDsByProduct(ctx, productID)

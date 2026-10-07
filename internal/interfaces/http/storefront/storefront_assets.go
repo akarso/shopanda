@@ -61,6 +61,10 @@ func (h *StorefrontHandler) newCSPNonce() string {
 	if !h.cspEnabled {
 		return ""
 	}
+	return generateCSPNonce()
+}
+
+func generateCSPNonce() string {
 	buf := make([]byte, 16)
 	if _, err := rand.Read(buf); err != nil {
 		return ""

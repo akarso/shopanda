@@ -70,6 +70,7 @@ func (h *StorefrontHandler) CMSPage() http.HandlerFunc {
 				"path":  r.URL.Path,
 				"error": err.Error(),
 			})
+			cacheapp.SkipStore(r.Context())
 		}
 		cacheapp.AddPageTags(r.Context(), cacheapp.PageTag(page.ID()))
 		cacheapp.AddPageTags(r.Context(), tags...)

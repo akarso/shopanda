@@ -75,6 +75,7 @@ type Vary struct {
 type PageEntry struct {
 	HTML     string    `json:"html"`
 	CSP      string    `json:"csp,omitempty"`
+	Nonce    string    `json:"nonce,omitempty"`
 	StoredAt time.Time `json:"stored_at"`
 	TTLNanos int64     `json:"ttl_nanos"`
 }
@@ -129,6 +130,7 @@ func Key(routeTemplate, path, rawQuery string, v Vary, extraQueryKeys ...string)
 // allowlist hook, not an ad-hoc RawQuery read in the handler.
 // extraQueryKeys is the layered-nav / advanced-search attr_* set from
 // the storefront; unknown attr_* codes are dropped (cache-fill).
+// Repeated values keep the original first value (url.Values.Get).
 func FilterQuery(routeTemplate, raw string, extraQueryKeys []string) string {
 	values, err := url.ParseQuery(raw)
 	if err != nil || len(values) == 0 {
@@ -151,17 +153,22 @@ func FilterQuery(routeTemplate, raw string, extraQueryKeys []string) string {
 	}
 	sort.Strings(keys)
 	var b strings.Builder
-	for i, k := range keys {
+	first := true
+	for _, k := range keys {
 		vs := values[k]
-		sort.Strings(vs)
-		for j, v := range vs {
-			if i > 0 || j > 0 {
-				b.WriteByte('&')
-			}
-			b.WriteString(url.QueryEscape(k))
-			b.WriteByte('=')
-			b.WriteString(url.QueryEscape(v))
+		if len(vs) == 0 {
+			continue
 		}
+		// Keep the original first value. Listing fields (page, sort, …)
+		// use url.Values.Get, so sorting repeats would change the page
+		// the handler renders (page=2&page=1 must stay page 2).
+		if !first {
+			b.WriteByte('&')
+		}
+		first = false
+		b.WriteString(url.QueryEscape(k))
+		b.WriteByte('=')
+		b.WriteString(url.QueryEscape(vs[0]))
 	}
 	return b.String()
 }
@@ -197,6 +204,7 @@ type pageTagBagKey struct{}
 
 type pageTagBag struct {
 	tags []string
+	skip bool
 }
 
 // ContextWithPageTagBag installs a bag handlers append tags into.
@@ -204,19 +212,47 @@ func ContextWithPageTagBag(ctx context.Context) context.Context {
 	return context.WithValue(ctx, pageTagBagKey{}, &pageTagBag{})
 }
 
+func pageTagBagFrom(ctx context.Context) *pageTagBag {
+	bag, ok := ctx.Value(pageTagBagKey{}).(*pageTagBag)
+	if !ok {
+		return nil
+	}
+	return bag
+}
+
+// HasPageTagBag reports whether ctx is collecting tags for an FPC miss.
+func HasPageTagBag(ctx context.Context) bool {
+	return pageTagBagFrom(ctx) != nil
+}
+
 // AddPageTags records entity tags for the in-flight cacheable render.
 func AddPageTags(ctx context.Context, tags ...string) {
-	bag, ok := ctx.Value(pageTagBagKey{}).(*pageTagBag)
-	if !ok || bag == nil {
+	bag := pageTagBagFrom(ctx)
+	if bag == nil {
 		return
 	}
 	bag.tags = append(bag.tags, tags...)
 }
 
+// SkipStore marks a best-effort 200 as uncacheable (incomplete content).
+func SkipStore(ctx context.Context) {
+	bag := pageTagBagFrom(ctx)
+	if bag == nil {
+		return
+	}
+	bag.skip = true
+}
+
+// StoreSkipped reports whether SkipStore was called on ctx.
+func StoreSkipped(ctx context.Context) bool {
+	bag := pageTagBagFrom(ctx)
+	return bag != nil && bag.skip
+}
+
 // PageTags returns tags recorded on ctx (may be empty).
 func PageTags(ctx context.Context) []string {
-	bag, ok := ctx.Value(pageTagBagKey{}).(*pageTagBag)
-	if !ok || bag == nil {
+	bag := pageTagBagFrom(ctx)
+	if bag == nil {
 		return nil
 	}
 	return bag.tags

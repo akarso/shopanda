@@ -72,6 +72,12 @@ func TestFPC_FilterQueryDropsTrackingParams(t *testing.T) {
 	if got := cacheapp.FilterQuery(cacheapp.RoutePDP, "variant=abc&preview=1", nil); got != "" {
 		t.Fatalf("PDP query must be dropped until an explicit hook exists, got %q", got)
 	}
+	if got := cacheapp.FilterQuery(cacheapp.RoutePLP, "page=2&page=1", nil); got != "page=2" {
+		t.Fatalf("FilterQuery must keep the original first page value, got %q", got)
+	}
+	if cacheapp.Key(cacheapp.RoutePLP, "/products", "page=2&page=1", v) != cacheapp.Key(cacheapp.RoutePLP, "/products", "page=2", v) {
+		t.Fatal("repeated page values must key as the first value")
+	}
 }
 
 func TestFPC_PageTagsBag(t *testing.T) {
@@ -83,6 +89,23 @@ func TestFPC_PageTagsBag(t *testing.T) {
 	}
 	if cacheapp.PageTags(context.Background()) != nil {
 		t.Fatal("missing bag should not panic")
+	}
+	if !cacheapp.HasPageTagBag(ctx) {
+		t.Fatal("bag context should report HasPageTagBag")
+	}
+	if cacheapp.HasPageTagBag(context.Background()) {
+		t.Fatal("empty context must not have a tag bag")
+	}
+	if cacheapp.StoreSkipped(ctx) {
+		t.Fatal("fresh bag must not skip store")
+	}
+	cacheapp.SkipStore(ctx)
+	if !cacheapp.StoreSkipped(ctx) {
+		t.Fatal("SkipStore should mark the bag")
+	}
+	cacheapp.SkipStore(context.Background())
+	if cacheapp.StoreSkipped(context.Background()) {
+		t.Fatal("SkipStore without a bag must be a no-op")
 	}
 }
 
