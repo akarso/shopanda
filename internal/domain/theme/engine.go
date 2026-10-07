@@ -13,22 +13,14 @@ import (
 type Option func(*loadOptions)
 
 type loadOptions struct {
-	slots       SlotSource
-	fragmentDev bool
+	slots    SlotSource
+	fragment FragmentFunc
 }
 
 // WithSlotSource enables slot template markers backed by source.
 func WithSlotSource(source SlotSource) Option {
 	return func(o *loadOptions) {
 		o.slots = source
-	}
-}
-
-// WithFragmentDevMode enables once-per-name warnings for unknown {{fragment}}
-// names on this engine only (not process-global).
-func WithFragmentDevMode(enabled bool) Option {
-	return func(o *loadOptions) {
-		o.fragmentDev = enabled
 	}
 }
 
@@ -52,7 +44,7 @@ func NewEngine(resolved ResolvedTemplates, meta Theme, opts ...Option) (*Engine,
 	layoutFile := resolved.LayoutFile
 
 	funcMap := slotFuncMap(cfg.slots)
-	for k, v := range fragmentFuncMap(cfg.fragmentDev) {
+	for k, v := range fragmentFuncMap(cfg.fragment) {
 		funcMap[k] = v
 	}
 	pages := make(map[string]*template.Template, len(resolved.PageFiles))

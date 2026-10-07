@@ -736,7 +736,7 @@ The storefront (when `frontend.enabled`) can store fully rendered HTML in `cache
 
 Shopanda has no edge/CDN ESI resolver. PR-1045 provides the same effect at the app level: the cached shell contains an htmx placeholder; the browser fetches a small always-fresh HTML snippet.
 
-**Template helper:** `{{fragment "name"}}` (optional second arg = element id). Wired into every theme `FuncMap` alongside slots. Every placeholder **must** ship a skeleton (loading state) — empty holes that pop in after load are not acceptable.
+**Template helper:** `{{fragment "name"}}` (optional second arg = element id). Storefront registers it via `theme.WithFragment(storefront.FragmentTemplateFunc(…))` alongside slots. Every placeholder **must** ship a skeleton (loading state) — empty holes that pop in after load are not acceptable.
 
 | Name | Endpoint | Skeleton / notes |
 | --- | --- | --- |
@@ -758,7 +758,7 @@ All fragment handlers set `Cache-Control: no-store` (and `/fragments` is on the 
 
 1. **Data source** — cookie `shopanda_recently_viewed` (URL-escaped product IDs, max 8). Prefer cookies/session for shopper-private lists; do not put this into the FPC body.
 2. **Endpoint** — `RecentlyViewedFragment` in `fragment.go`, wrapped with `withFragmentCacheControl`. Optional `?add=<productID>` records a view on the fragment request (so FPC HIT PDPs still update history).
-3. **Helper registration** — add the name to `fragmentPaths` / `fragmentSkeletons` in `internal/domain/theme/fragments.go` when the hole needs no request-specific query. PDP uses an explicit `hx-get="…?add={{ .Product.ID }}"` so the product id is available on HIT.
+3. **Helper registration** — add the name to `fragmentPaths` / `fragmentSkeletons` in `internal/interfaces/http/storefront/fragment_helper.go` (HTTP adapter owns routes/htmx markup; wire via `theme.WithFragment(storefront.FragmentTemplateFunc(…))`). PDP uses an explicit `hx-get="…?add={{ .Product.ID }}"` so the product id is available on HIT.
 4. **Theme placement** — skeleton must be non-empty (see `themes/default/templates/product.html`).
 5. **Tests** — assert `Cache-Control: no-store` and that two cookies/sessions produce different HTML when state differs.
 

@@ -232,7 +232,7 @@ func createTestTheme(t *testing.T) *theme.Engine {
 		t.Fatal(err)
 	}
 
-	engine, err := themeapp.Load(dir)
+	engine, err := themeapp.Load(dir, theme.WithFragment(storefront.FragmentTemplateFunc(false)))
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -362,9 +362,10 @@ func buildServeHandler(cfg *config.Config, log logger.Logger, rt *serveRuntime, 
 
 	// Storefront SSR routes (optional, gated by frontend.enabled).
 	if cfg.Frontend.Enabled {
-		themeOpts := []domtheme.Option{domtheme.WithSlotSource(slotRegistryThemeSource{reg: rt.slotRegistry})}
-		if config.DevModeEnabled() {
-			themeOpts = append(themeOpts, domtheme.WithFragmentDevMode(true))
+		themeOpts := []domtheme.Option{
+			domtheme.WithSlotSource(slotRegistryThemeSource{reg: rt.slotRegistry}),
+			// Fragment paths / htmx markup live in the storefront adapter, not domain.
+			domtheme.WithFragment(storefront.FragmentTemplateFunc(config.DevModeEnabled())),
 		}
 		themeEngine, thErr := themeapp.Load(cfg.Frontend.ThemePath, themeOpts...)
 		if thErr != nil {

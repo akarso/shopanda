@@ -1,30 +1,30 @@
 package theme
 
 import (
+	"html/template"
 	"strings"
 	"testing"
 )
 
-func TestFragmentHelper_RendersSkeletonAndEndpoint(t *testing.T) {
-	h := &fragmentHelper{}
-	html := string(h.render("csrf"))
-	if !strings.Contains(html, `hx-get="/fragments/csrf"`) {
-		t.Fatalf("csrf fragment = %q", html)
+func TestFragmentFuncMap_StubWhenNotConfigured(t *testing.T) {
+	fn := fragmentFuncMap(nil)["fragment"].(FragmentFunc)
+	got := string(fn("csrf"))
+	if !strings.Contains(got, "not configured") {
+		t.Fatalf("nil fragment helper = %q", got)
 	}
-	if !strings.Contains(html, `name="csrf_token"`) || !strings.Contains(html, `value=""`) {
-		t.Fatalf("csrf skeleton must be empty token field: %q", html)
-	}
+}
 
-	mini := string(h.render("mini-cart"))
-	if !strings.Contains(mini, `hx-get="/fragments/mini-cart"`) {
-		t.Fatalf("mini-cart = %q", mini)
+func TestFragmentFuncMap_UsesInjectedHelper(t *testing.T) {
+	var called string
+	fn := fragmentFuncMap(func(args ...interface{}) template.HTML {
+		called = args[0].(string)
+		return template.HTML(`<span hx-get="/fragments/csrf"></span>`)
+	})["fragment"].(FragmentFunc)
+	got := string(fn("csrf"))
+	if called != "csrf" {
+		t.Fatalf("called with %q", called)
 	}
-	if !strings.Contains(mini, "cart-updated from:body") || !strings.Contains(mini, "mini-cart-shell") {
-		t.Fatalf("mini-cart must keep cart-updated trigger and shell class: %q", mini)
-	}
-
-	unknown := string(h.render("nope"))
-	if !strings.Contains(unknown, "unknown") {
-		t.Fatalf("unknown fragment = %q", unknown)
+	if !strings.Contains(got, `hx-get="/fragments/csrf"`) {
+		t.Fatalf("injected helper = %q", got)
 	}
 }
