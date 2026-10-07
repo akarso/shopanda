@@ -43,6 +43,9 @@ func NewEngine(resolved ResolvedTemplates, meta Theme, opts ...Option) (*Engine,
 	layoutFile := resolved.LayoutFile
 
 	funcMap := slotFuncMap(cfg.slots)
+	for k, v := range fragmentFuncMap() {
+		funcMap[k] = v
+	}
 	pages := make(map[string]*template.Template, len(resolved.PageFiles))
 	for name, pf := range resolved.PageFiles {
 		t, err := parsePageTemplate(layoutFile, resolved.PartialFiles, pf, resolved.Layout, funcMap)

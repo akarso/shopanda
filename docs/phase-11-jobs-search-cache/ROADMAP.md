@@ -153,7 +153,7 @@ Phase 12's own Track F (index/CSV/GraphQL/GUI closeout) explicitly depends on th
 | PR | Title | Short description |
 | --- | --- | --- |
 | PR-1044 | Full-page cache core + cacheability policy | **Done.** Off by default (`cache.full_page.enabled=false`) until PR-1045 ships a CSRF fragment. Cache rendered HTML (post-`html/template` execution, pre-write) in the `cache.Cache` backend, keyed by `route template + vary key` where vary = `{store, language, currency, auth-state}` — `auth-state` is a **coarse** `guest`/`authenticated` flag, never a session or customer ID (that would explode the key space and defeat the cache; personalized content is a fragment, see PR-1045). Every cached page is written with `SetWithTags` (PR-1039) tagged by the product/category/CMS-block IDs it rendered. **Cacheable:** PDP, PLP/category listing, CMS pages, home. **Never cached, enforced twice (allowlist of cacheable route templates AND a denylist check that fails closed on anything not explicitly allowlisted):** cart, mini-cart, checkout (all steps), account/order pages, admin — anything auth-scoped or containing a CSRF token, session state, or per-customer data. CSRF tokens specifically must never be baked into cached HTML — they need to already be a fragment (PR-1045) or client-fetched, or every visitor gets served the same stale token. |
-| PR-1045 | Fragment mechanism (ESI-equivalent) | Shopanda has no edge/CDN/Varnish layer, so this is an **app-level** hole mechanism, not literal ESI: a template helper renders a placeholder (`<div hx-get="/fragment/minicart" hx-trigger="load">`) in an otherwise-cacheable page; the fragment endpoint itself is always `Cache-Control: no-store`, reads real session/cart state, and returns a small HTML snippet that htmx swaps in after the cached shell loads — same effect as Varnish resolving an ESI include, minus the edge-layer round trip savings (a fair tradeoff: no infra dependency, one extra client-side request for a handful of small always-fresh regions per page). Covers: mini-cart count, "recently viewed," personalized greeting, wishlist indicator, CSRF token. |
+| PR-1045 | Fragment mechanism (ESI-equivalent) | **Done.** App-level hole (`{{fragment}}` + `/fragments/…`, always `no-store`): CSRF, greeting, cart-count, mini-cart, recently-viewed. Wishlist N/A (no theme UI). FPC still defaults off; safe to enable with the default theme. |
 | PR-1046 | Invalidation wiring + stampede guard | Event subscribers (product/category/price/stock/CMS change events) call `DeleteByTag` (PR-1039) with the changed entity's ID — every cached page that rendered that product/category/block is purged, not just the entity's own record. Admin/CLI purge-by-URL escape hatch for anything a tag missed. Cache-stampede guard on miss: a per-key in-flight lock (`singleflight`-style, backed by the L1 tier from PR-1040 or a lightweight Postgres advisory lock) so a popular page invalidated under load gets rendered once, not once per concurrent request. |
 | PR-1047 | Observability + rollup | Hit/miss/bypass counters (Prometheus, matching Phase 10's existing metrics conventions), RUNBOOK.md entries ("full-page cache serving stale content" / "a page that should be cached isn't" — symptom → check → fix, same style as Phase 10's incident-response section), cache admin GUI page for FPC-specific stats (hit rate by route template, current cached-page count). |
 
@@ -209,7 +209,8 @@ Phase 12's own Track F (index/CSV/GraphQL/GUI closeout) explicitly depends on th
 | 1042 | C | done |
 | 1043 | C | done |
 | 1044 | D | done |
-| 1045–1047 | D | planned |
+| 1045 | D | done |
+| 1046–1047 | D | planned |
 | 1048 | — | done |
 | 1049 | — | done |
 

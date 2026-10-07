@@ -469,7 +469,7 @@ type CacheConfig struct {
 }
 
 // FullPageCacheConfig is the storefront HTML cache (PR-1044).
-// Enabled defaults false until PR-1045 ships a CSRF fragment for logout.
+// Enabled defaults false; enable once the active theme uses PR-1045 fragments.
 type FullPageCacheConfig struct {
 	Enabled      bool              `yaml:"enabled"`
 	TTL          string            `yaml:"ttl"`

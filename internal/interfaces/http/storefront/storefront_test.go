@@ -122,7 +122,7 @@ func createTestTheme(t *testing.T) *theme.Engine {
 		t.Fatal(err)
 	}
 
-	layout := `<!DOCTYPE html><html><head><title>{{ template "title" . }}</title>{{ if .Layout.CSPEnabled }}<meta name="csp-nonce" content="{{ .Layout.CSPNonce }}">{{ end }}</head><body><nav>{{ range .Layout.Nav }}<a href="{{ .URL }}">{{ .Label }}</a>{{ end }}</nav><form action="{{ .Layout.SearchAction }}"></form><div class="account-widget"><a href="{{ .Layout.AccountURL }}">{{ .Layout.AccountLabel }}</a>{{ if .Layout.AccountSignedIn }}<strong>{{ .Layout.AccountName }}</strong><a href="{{ .Layout.AccountProfileURL }}">Profile</a><a href="{{ .Layout.AccountOrdersURL }}">Orders</a><a href="{{ .Layout.AccountSecurityURL }}">Security</a>{{ if .Layout.AccountLogoutURL }}<form action="{{ .Layout.AccountLogoutURL }}" method="post"><input type="hidden" name="csrf_token" value="{{ .Layout.CSRFToken }}"><button type="submit">Log out</button></form>{{ end }}{{ else }}<span>Sign in to view orders and profile.</span>{{ end }}</div><a href="{{ .Layout.CartURL }}">{{ if .Layout.EnableCart }}<span hx-get="/fragments/cart-count" hx-trigger="cart-updated from:body" hx-swap="innerHTML">{{ .Layout.CartLabel }}</span>{{ else }}{{ .Layout.CartLabel }}{{ end }}</a>{{ if .Layout.EnableCart }}<div id="mini-cart" hx-get="/fragments/mini-cart" hx-trigger="load, cart-updated from:body"></div>{{ end }}{{ template "content" . }}</body></html>`
+	layout := `<!DOCTYPE html><html><head><title>{{ template "title" . }}</title>{{ if .Layout.CSPEnabled }}<meta name="csp-nonce" content="{{ .Layout.CSPNonce }}">{{ end }}</head><body><nav>{{ range .Layout.Nav }}<a href="{{ .URL }}">{{ .Label }}</a>{{ end }}</nav><form action="{{ .Layout.SearchAction }}"></form><div class="account-widget"><a href="{{ .Layout.AccountURL }}">{{ .Layout.AccountLabel }}</a>{{ if .Layout.AccountSignedIn }}{{ if .Layout.UseFragments }}{{ fragment "greeting" }}{{ else }}<strong>{{ .Layout.AccountName }}</strong>{{ end }}<a href="{{ .Layout.AccountProfileURL }}">Profile</a><a href="{{ .Layout.AccountOrdersURL }}">Orders</a><a href="{{ .Layout.AccountSecurityURL }}">Security</a>{{ if .Layout.AccountLogoutURL }}<form action="{{ .Layout.AccountLogoutURL }}" method="post">{{ if .Layout.UseFragments }}{{ fragment "csrf" }}{{ else }}<input type="hidden" name="csrf_token" value="{{ .Layout.CSRFToken }}">{{ end }}<button type="submit">Log out</button></form>{{ end }}{{ else }}<span>Sign in to view orders and profile.</span>{{ end }}</div><a href="{{ .Layout.CartURL }}">{{ if .Layout.EnableCart }}<span hx-get="/fragments/cart-count" hx-trigger="cart-updated from:body" hx-swap="innerHTML">{{ .Layout.CartLabel }}</span>{{ else }}{{ .Layout.CartLabel }}{{ end }}</a>{{ if .Layout.EnableCart }}<div id="mini-cart" hx-get="/fragments/mini-cart" hx-trigger="load, cart-updated from:body"></div>{{ end }}{{ template "content" . }}</body></html>`
 	if err := os.WriteFile(filepath.Join(tplDir, "layout.html"), []byte(layout), 0644); err != nil {
 		t.Fatal(err)
 	}
@@ -313,6 +313,9 @@ func newStorefrontRouter(h *storefront.StorefrontHandler) http.Handler {
 	router.HandleFunc("GET /categories/{slug}", h.Category())
 	router.HandleFunc("GET /fragments/cart-count", h.CartCountFragment())
 	router.HandleFunc("GET /fragments/mini-cart", h.MiniCartFragment())
+	router.HandleFunc("GET /fragments/csrf", h.CSRFFragment())
+	router.HandleFunc("GET /fragments/greeting", h.GreetingFragment())
+	router.HandleFunc("GET /fragments/recently-viewed", h.RecentlyViewedFragment())
 	router.HandleFunc("GET /fragments/search-suggest", h.SearchSuggestFragment())
 	router.HandleFunc("GET /products", h.Products())
 	router.HandleFunc("GET /products/{slug}", h.Product())

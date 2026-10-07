@@ -120,6 +120,7 @@ type StorefrontLayoutData struct {
 	CartLabel           string
 	EnableCart          bool
 	CSRFToken           string
+	UseFragments        bool // PR-1045: cacheable chrome holes (csrf/greeting/cart)
 	AccountURL          string
 	AccountLabel        string
 	AccountName         string
@@ -811,8 +812,9 @@ func (h *StorefrontHandler) buildLayoutData(r *http.Request, categories []catalo
 	accountLogoutURL := "/account/logout"
 	csrfToken := httpshared.CSRFToken(r)
 	if cacheable {
+		// Token and display name load via PR-1045 fragments; logout form stays
+		// in the shell with an empty csrf_token skeleton so FPC can store it.
 		csrfToken = ""
-		accountLogoutURL = ""
 	}
 	accountSignedIn := customerID != ""
 	accountURL := accountLoginURL
@@ -825,6 +827,8 @@ func (h *StorefrontHandler) buildLayoutData(r *http.Request, categories []catalo
 		} else {
 			accountName = h.storefrontAccountDisplayName(customerID, identity.DisplayName)
 		}
+	} else if cacheable {
+		accountLogoutURL = ""
 	}
 	nav := h.buildPrimaryNav(r, themeCfg, accountURL)
 	storeID := ""
@@ -841,6 +845,7 @@ func (h *StorefrontHandler) buildLayoutData(r *http.Request, categories []catalo
 		CartLabel:           cartLabel,
 		EnableCart:          h.carts != nil,
 		CSRFToken:           csrfToken,
+		UseFragments:        cacheable,
 		AccountURL:          accountURL,
 		AccountLabel:        accountLabel,
 		AccountName:         accountName,

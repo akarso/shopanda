@@ -99,7 +99,7 @@ For general `429`/`rate_limited` (not login-specific): with `rate_limit.driver=m
 - Dump the cached body (or a HIT response) and search for `csrf_token` values, customer IDs, and display names. Cached shells must be generic: guest vs authenticated chrome only, no per-customer data. Personal bits belong in fragments (PR-1045).
 - Confirm vary is only store/language/currency/`guest|authenticated` — a key that includes a session or customer ID is a bug (and also destroys hit rate).
 
-**Fix:** disable immediately with `SHOPANDA_CACHE_FULL_PAGE_ENABLED=false` (or `cache.full_page.enabled: false`) and restart `serve` (FPC is off by default). Flush stored pages: `POST /api/v1/admin/cache/clear` `{"prefix":"fpc:"}` or `{"all": true}` (the latter also clears this process's L1). Do not re-enable until the leaked field is removed from the allowlisted render (keep the route off the allowlist, or wait for the PR-1045 fragment). See `docs/guides/DEVELOPER.md` "Full-page cache".
+**Fix:** disable immediately with `SHOPANDA_CACHE_FULL_PAGE_ENABLED=false` (or `cache.full_page.enabled: false`) and restart `serve` (FPC is off by default). Flush stored pages: `POST /api/v1/admin/cache/clear` `{"prefix":"fpc:"}` or `{"all": true}` (the latter also clears this process's L1). Do not re-enable until the leaked field is moved to a fragment (`{{fragment "…"}}` / `/fragments/…`) or the route is removed from the allowlist. See `docs/guides/DEVELOPER.md` "Full-page cache" and "Fragments (ESI-equivalent)".
 
 ## Planning
 

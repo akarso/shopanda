@@ -129,5 +129,10 @@
     </div>
     {{/slot_container}}
 </section>
+{{ if .Layout.UseFragments }}
+<div id="fragment-recently-viewed" class="storefront-fragment" hx-get="/fragments/recently-viewed?add={{ .Product.ID }}" hx-trigger="load" hx-swap="outerHTML">
+    <section class="recently-viewed" aria-busy="true"><p class="muted-note">Loading recently viewed…</p></section>
+</div>
+{{ end }}
 {{ end }}
 {{ template "layout.html" . }}

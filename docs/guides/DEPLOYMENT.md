@@ -211,7 +211,7 @@ Responses always include `X-Content-Type-Options: nosniff`, `X-Frame-Options: DE
 | --- | --- | --- | --- |
 | `SHOPANDA_CACHE_DRIVER` | No | `postgres` | Cache backend |
 | `SHOPANDA_CACHE_REDIS_KEY_PREFIX` | When `SHOPANDA_CACHE_DRIVER=redis` | empty | Redis key prefix. Required (non-empty) when the cache driver is redis — empty prefix would make SCAN/FlushAll match the whole Redis DB. |
-| `SHOPANDA_CACHE_FULL_PAGE_ENABLED` | No | `false` | Storefront full-page HTML cache (allowlist; off until PR-1045 CSRF fragment; the storefront itself is still `SHOPANDA_FRONTEND_ENABLED`) |
+| `SHOPANDA_CACHE_FULL_PAGE_ENABLED` | No | `false` | Storefront full-page HTML cache (allowlist; safe with default-theme PR-1045 fragments; storefront itself is still `SHOPANDA_FRONTEND_ENABLED`) |
 | `SHOPANDA_CACHE_FULL_PAGE_TTL` | No | `5m` | Safety-net TTL for cached storefront pages |
 | `SHOPANDA_CACHE_FULL_PAGE_EXPOSE_HEADER` | No | `false` | Send `X-Shopanda-Cache: HIT\|MISS` (also on when `SHOPANDA_DEV_MODE=true`) |
 

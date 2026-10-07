@@ -300,7 +300,13 @@ func fpcHTMLUnsafe(html string, r *http.Request) bool {
 	if token != "" && strings.Contains(html, token) {
 		return true
 	}
-	if fpcFilledCSRFInput(html) || logoutFormAction.MatchString(html) {
+	// Empty csrf_token skeletons + logout forms are OK when the shell includes
+	// the /fragments/csrf hole. A logout form without that hole (custom theme
+	// still using {{.Layout.CSRFToken}}) would store a permanently empty token.
+	if fpcFilledCSRFInput(html) {
+		return true
+	}
+	if logoutFormAction.MatchString(html) && !strings.Contains(html, "/fragments/csrf") {
 		return true
 	}
 	id := platformAuth.IdentityFrom(r.Context())

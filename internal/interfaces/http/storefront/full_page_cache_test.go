@@ -6,6 +6,8 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -13,6 +15,7 @@ import (
 	cacheapp "github.com/akarso/shopanda/internal/application/cache"
 	cmsApp "github.com/akarso/shopanda/internal/application/cms"
 	"github.com/akarso/shopanda/internal/application/composition"
+	themeapp "github.com/akarso/shopanda/internal/application/theme"
 	"github.com/akarso/shopanda/internal/domain/cache"
 	"github.com/akarso/shopanda/internal/domain/catalog"
 	"github.com/akarso/shopanda/internal/domain/cms"
@@ -305,16 +308,73 @@ func TestFullPageCache_CSRFTokenNeverStored(t *testing.T) {
 	if strings.Contains(body, "super-secret-csrf-token") {
 		t.Fatal("request CSRF token leaked into cached HTML")
 	}
-	if strings.Contains(strings.ToLower(body), "csrf_token") {
-		t.Fatal("cacheable page must omit csrf_token until the PR-1045 fragment")
+	if !strings.Contains(body, `action="/account/logout"`) {
+		t.Fatal("cacheable chrome should keep logout form; CSRF loads via fragment")
 	}
-	if strings.Contains(body, `action="/account/logout"`) {
-		t.Fatal("logout form must be omitted from cacheable chrome")
+	if !strings.Contains(body, `/fragments/csrf`) {
+		t.Fatal("cacheable logout must include /fragments/csrf hole")
+	}
+	if !strings.Contains(body, `name="csrf_token"`) || !strings.Contains(body, `value=""`) {
+		t.Fatal("cacheable logout must use empty csrf_token skeleton / fragment placeholder")
+	}
+	if strings.Contains(body, `value="super-secret-csrf-token"`) {
+		t.Fatal("filled csrf_token must not appear in cacheable HTML")
+	}
+	if rec.Header().Get("X-Shopanda-Cache") != "MISS" {
+		t.Fatalf("header = %q, want MISS (storeable with fragment hole)", rec.Header().Get("X-Shopanda-Cache"))
 	}
 	for _, raw := range backend.entries {
-		if strings.Contains(string(raw), "super-secret-csrf-token") || strings.Contains(strings.ToLower(string(raw)), "csrf_token") {
-			t.Fatal("stored FPC payload contains CSRF token")
+		if strings.Contains(string(raw), "super-secret-csrf-token") {
+			t.Fatal("stored FPC payload contains request CSRF token")
 		}
+	}
+}
+
+func TestFullPageCache_LogoutWithoutCSRFFragmentBypasses(t *testing.T) {
+	backend := newFPCMemCache()
+	// Theme that keeps logout + empty CSRF without the fragment hole (custom-theme footgun).
+	dir := t.TempDir()
+	mustWrite := func(name, body string) {
+		t.Helper()
+		if err := os.WriteFile(filepath.Join(dir, name), []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	mustWrite("theme.yaml", "name: bare\nversion: \"0.1.0\"\n")
+	if err := os.MkdirAll(filepath.Join(dir, "templates"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	mustWrite("templates/layout.html", `<!DOCTYPE html><html><body>{{ template "content" . }}</body></html>`)
+	mustWrite("templates/product.html", `{{ define "title" }}p{{ end }}{{ define "content" }}`+
+		`<form action="/account/logout" method="post"><input type="hidden" name="csrf_token" value="{{ .Layout.CSRFToken }}"></form>`+
+		`<h1>{{ .Product.Name }}</h1>{{ end }}{{ template "layout.html" . }}`)
+	engine, err := themeapp.Load(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	repo := &fpcProductRepo{mockStorefrontRepo: mockStorefrontRepo{
+		findBySlugFn: func(_ context.Context, slug string) (*catalog.Product, error) {
+			return &catalog.Product{ID: "p1", Name: "Widget", Slug: slug}, nil
+		},
+	}}
+	h := storefront.NewStorefrontHandler(engine, repo, newStorefrontCategoryMock(),
+		composition.NewPipeline[composition.ProductContext](),
+		composition.NewPipeline[composition.ListingContext](),
+		newStorefrontSearchMock(),
+	).WithFullPageCache(backend, time.Minute, true, nil)
+	id, err := identity.NewIdentity("cust-1", identity.RoleCustomer)
+	if err != nil {
+		t.Fatal(err)
+	}
+	req := httptest.NewRequest(http.MethodGet, "/products/widget", nil)
+	req = req.WithContext(auth.WithIdentity(req.Context(), id))
+	rec := httptest.NewRecorder()
+	newStorefrontRouter(h).ServeHTTP(rec, req)
+	if rec.Header().Get("X-Shopanda-Cache") != "BYPASS" {
+		t.Fatalf("header = %q, want BYPASS for logout without /fragments/csrf", rec.Header().Get("X-Shopanda-Cache"))
+	}
+	if len(backend.entries) != 0 {
+		t.Fatal("must not store logout form without CSRF fragment hole")
 	}
 }
 
