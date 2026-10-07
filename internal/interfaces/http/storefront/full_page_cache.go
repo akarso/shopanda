@@ -398,5 +398,22 @@ func rotateStoredCSPNonce(entry cacheapp.PageEntry) (html, csp string, ok bool) 
 	if n == "" {
 		return html, csp, false
 	}
-	return strings.ReplaceAll(html, old, n), strings.ReplaceAll(csp, old, n), true
+	html, csp = applyCSPNonceRotation(html, csp, old, n)
+	return html, csp, true
+}
+
+// applyCSPNonceRotation swaps old→new in the CSP header (raw) and in HTML
+// using html/template's attribute escaping (+ → &#43;). A raw HTML replace
+// covers themes that embed the nonce without that escaping.
+func applyCSPNonceRotation(html, csp, old, n string) (string, string) {
+	html = strings.ReplaceAll(html, cspNonceHTMLForm(old), cspNonceHTMLForm(n))
+	html = strings.ReplaceAll(html, old, n)
+	csp = strings.ReplaceAll(csp, old, n)
+	return html, csp
+}
+
+// cspNonceHTMLForm matches how html/template embeds a Base64 nonce in
+// text/attribute contexts (only '+' among the Base64 alphabet is escaped).
+func cspNonceHTMLForm(nonce string) string {
+	return strings.ReplaceAll(nonce, "+", "&#43;")
 }

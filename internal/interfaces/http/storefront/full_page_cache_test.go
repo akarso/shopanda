@@ -844,8 +844,9 @@ func TestFullPageCache_CSPNonceRotatedOnHit(t *testing.T) {
 	nonce1Start := strings.Index(csp1, "nonce-") + len("nonce-")
 	nonce1End := strings.Index(csp1[nonce1Start:], "'")
 	nonce1 := csp1[nonce1Start : nonce1Start+nonce1End]
-	if nonce1 == "" || !strings.Contains(rec1.Body.String(), nonce1) {
-		t.Fatalf("miss HTML must embed nonce %q", nonce1)
+	nonce1HTML := strings.ReplaceAll(nonce1, "+", "&#43;")
+	if nonce1 == "" || !strings.Contains(rec1.Body.String(), nonce1HTML) {
+		t.Fatalf("miss HTML must embed nonce %q (escaped %q)", nonce1, nonce1HTML)
 	}
 
 	rec2 := httptest.NewRecorder()
@@ -857,14 +858,15 @@ func TestFullPageCache_CSPNonceRotatedOnHit(t *testing.T) {
 	nonce2Start := strings.Index(csp2, "nonce-") + len("nonce-")
 	nonce2End := strings.Index(csp2[nonce2Start:], "'")
 	nonce2 := csp2[nonce2Start : nonce2Start+nonce2End]
+	nonce2HTML := strings.ReplaceAll(nonce2, "+", "&#43;")
 	if nonce2 == "" || nonce2 == nonce1 {
 		t.Fatalf("HIT must rotate nonce; miss=%q hit=%q", nonce1, nonce2)
 	}
-	if strings.Contains(rec2.Body.String(), nonce1) {
+	if strings.Contains(rec2.Body.String(), nonce1HTML) || strings.Contains(rec2.Body.String(), nonce1) {
 		t.Fatal("HIT HTML still contains the miss nonce")
 	}
-	if !strings.Contains(rec2.Body.String(), nonce2) {
-		t.Fatal("HIT HTML must contain the rotated nonce")
+	if !strings.Contains(rec2.Body.String(), nonce2HTML) {
+		t.Fatal("HIT HTML must contain the rotated nonce (HTML-escaped)")
 	}
 	if !strings.Contains(csp2, "nonce-"+nonce2) {
 		t.Fatalf("HIT CSP must use rotated nonce: %q", csp2)
