@@ -3575,7 +3575,7 @@
                     'extensions.read', 'extensions.write',
                     'jobs.read', 'jobs.write',
                     'search.reindex',
-                    'cache.read', 'cache.write', 'cache.clear_all'
+                    'cache.read', 'cache.write', 'cache.clear_all', 'cache.purge_url'
                 ]
             },
             {

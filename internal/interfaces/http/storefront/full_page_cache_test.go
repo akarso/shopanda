@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -28,6 +29,7 @@ import (
 )
 
 type fpcMemCache struct {
+	mu      sync.Mutex
 	entries map[string][]byte
 	tags    map[string][]string
 }
@@ -37,7 +39,9 @@ func newFPCMemCache() *fpcMemCache {
 }
 
 func (m *fpcMemCache) Get(key string, dest any) (bool, error) {
+	m.mu.Lock()
 	raw, ok := m.entries[key]
+	m.mu.Unlock()
 	if !ok {
 		return false, nil
 	}
@@ -52,26 +56,39 @@ func (m *fpcMemCache) Set(key string, value any, _ time.Duration) error {
 	if err != nil {
 		return err
 	}
+	m.mu.Lock()
 	m.entries[key] = b
+	m.mu.Unlock()
 	return nil
 }
 func (m *fpcMemCache) Incr(string, int64, time.Duration) (int64, error) { return 0, nil }
 func (m *fpcMemCache) CompareAndSubtract(string, int64) (int64, error)  { return 0, nil }
-func (m *fpcMemCache) Delete(key string) error                          { delete(m.entries, key); return nil }
-func (m *fpcMemCache) DeleteByPrefix(context.Context, string) error     { return nil }
+func (m *fpcMemCache) Delete(key string) error {
+	m.mu.Lock()
+	delete(m.entries, key)
+	m.mu.Unlock()
+	return nil
+}
+func (m *fpcMemCache) DeleteByPrefix(context.Context, string) error { return nil }
 func (m *fpcMemCache) SetWithTags(_ context.Context, key string, value any, ttl time.Duration, tags ...string) error {
 	_ = ttl
 	if err := m.Set(key, value, 0); err != nil {
 		return err
 	}
+	m.mu.Lock()
 	m.tags[key] = append([]string(nil), tags...)
+	m.mu.Unlock()
 	return nil
 }
 func (m *fpcMemCache) DeleteByTag(context.Context, string) (int64, error) { return 0, nil }
 func (m *fpcMemCache) Stats(context.Context) (cache.Stats, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
 	return cache.Stats{Backend: "memory", Keys: int64(len(m.entries))}, nil
 }
 func (m *fpcMemCache) FlushAll(context.Context) (int64, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
 	n := int64(len(m.entries))
 	m.entries = make(map[string][]byte)
 	m.tags = make(map[string][]string)

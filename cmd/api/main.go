@@ -155,6 +155,8 @@ func run() error {
 			return runCacheStats(os.Stdout, cfg, log, os.Args[2:])
 		case "cache:clear":
 			return runCacheClear(os.Stdout, cfg, log, os.Args[2:])
+		case "cache:purge-url":
+			return runCachePurgeURL(os.Stdout, cfg, log, os.Args[2:])
 		case "schedule:list":
 			return runScheduleList(os.Stdout, cfg, log, os.Args[2:])
 		case "schedule:trigger":
@@ -725,6 +727,7 @@ Commands:
   jobs:cancel <id>     Cancel a pending job
   cache:stats          Show cache occupancy ([--json])
   cache:clear          Clear cache (--prefix=<p> | --tag=<t> | --key=<k> | --all)
+  cache:purge-url <p>  Purge full-page cache keys for a storefront path
   schedule:list        List registered scheduled tasks ([--json])
   schedule:trigger <n> Trigger a scheduled task immediately
   schedule:enable <n>  Re-enable a scheduled task
@@ -954,7 +957,7 @@ func runWorker(cfg *config.Config, log logger.Logger) error {
 	}
 
 	metricsRecorder, metricsHandler := newMetrics(cfg)
-	jobWorker, jobQueue, _, err := setupWorker(conn, cfg, log, pluginApp, metricsRecorder)
+	jobWorker, jobQueue, appCache, err := setupWorker(conn, cfg, log, pluginApp, metricsRecorder)
 	if err != nil {
 		shutdownTracing()
 		return err
@@ -976,6 +979,11 @@ func runWorker(cfg *config.Config, log logger.Logger) error {
 	// inventory.EventStockUpdated here, and without a subscriber on this
 	// bus (wireServeRuntime's copy lives in the serve process) those
 	// restores would never enqueue a reindex.
+	//
+	// FPCInvalidationSubscriber likewise must live on this bus (PR-1046):
+	// stock restores would otherwise leave tagged full-page entries stale
+	// until TTL while only serve's bus ran DeleteByTag.
+	cacheApp.NewFPCInvalidationSubscriber(appCache, log).Register(bus)
 	if reindexService, err := newWorkerReindexService(conn, cfg, log, jobQueue); err != nil {
 		log.Warn("worker.stock_sync_reindex_unavailable", map[string]interface{}{"error": err.Error()})
 	} else {

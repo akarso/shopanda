@@ -32,11 +32,22 @@ type fpcConfig struct {
 	ttl          time.Duration
 	routeTTL     map[string]time.Duration
 	exposeHeader bool
+	stampede     *cacheapp.MissCoalescer
+	stampedeWait time.Duration
+}
+
+type fpcMissResult struct {
+	code    int
+	header  http.Header
+	html    []byte
+	storeOK bool
+	ttl     time.Duration
 }
 
 // WithFullPageCache stores allowlisted storefront HTML in backend (PR-1044).
 // ttl is the safety-net default; routeTTL overrides per template. A nil
 // backend disables the cache. exposeHeader adds X-Shopanda-Cache (dev).
+// Concurrent misses for the same key are coalesced (PR-1046 stampede guard).
 func (h *StorefrontHandler) WithFullPageCache(backend domaincache.Cache, ttl time.Duration, exposeHeader bool, routeTTL map[string]time.Duration) *StorefrontHandler {
 	if backend == nil {
 		h.fpc = nil
@@ -50,6 +61,8 @@ func (h *StorefrontHandler) WithFullPageCache(backend domaincache.Cache, ttl tim
 		ttl:          ttl,
 		routeTTL:     routeTTL,
 		exposeHeader: exposeHeader,
+		stampede:     cacheapp.NewMissCoalescer(),
+		stampedeWait: cacheapp.DefaultStampedeWait,
 	}
 	return h
 }
@@ -96,51 +109,109 @@ func (h *StorefrontHandler) withFullPageCache(routeTemplate string, inner http.H
 			}
 		}
 
-		buf := &fpcBuffer{header: make(http.Header)}
-		inner.ServeHTTP(buf, r)
-		html := buf.body.Bytes()
-		if buf.code == 0 {
-			buf.code = http.StatusOK
+		raw, err, shared := h.fpc.stampede.Do(key, h.fpc.stampedeWait, func() (any, error) {
+			return h.renderFPCMiss(routeTemplate, key, ttl, r, inner), nil
+		})
+		if err != nil {
+			h.log.Warn("storefront.fpc.stampede_failed", map[string]interface{}{
+				"path":  r.URL.Path,
+				"error": err.Error(),
+			})
+			inner.ServeHTTP(w, r)
+			return
+		}
+		miss, ok := raw.(fpcMissResult)
+		if !ok {
+			inner.ServeHTTP(w, r)
+			return
 		}
 
-		csp := buf.header.Get("Content-Security-Policy")
-		nonce := cspNonceFromHeader(csp)
-		storeOK := buf.code == http.StatusOK &&
-			strings.Contains(strings.ToLower(buf.header.Get("Content-Type")), "text/html") &&
-			len(html) > 0 &&
-			len(html) <= cacheapp.MaxPageBytes &&
-			!fpcHTMLUnsafe(string(html), r) &&
-			!cacheapp.StoreSkipped(r.Context()) &&
-			fpcCSPNonceStorable(csp, nonce)
-		if storeOK {
-			now := time.Now().UTC()
-			stored := cacheapp.PageEntry{
-				HTML:     string(html),
-				CSP:      csp,
-				Nonce:    nonce,
-				StoredAt: now,
-				TTLNanos: int64(ttl),
+		// Waiters never replay the leader's raw HTML/CSP (nonce reuse /
+		// BYPASS fan-out). Prefer a rotated HIT from the entry the leader
+		// stored; otherwise render this request locally.
+		if shared {
+			if miss.storeOK {
+				var stored cacheapp.PageEntry
+				if ok, getErr := h.fpc.backend.Get(key, &stored); getErr == nil && ok {
+					left := cacheapp.RemainingTTL(stored, time.Now().UTC())
+					if left > 0 && !fpcHTMLUnsafe(stored.HTML, r) {
+						if h.writeFPCHit(w, r, stored, left) {
+							return
+						}
+					}
+				}
+				// Set raced away or HIT unsafe for this r — try rotating
+				// the leader's stored-shaped body the same way HIT does.
+				entry := cacheapp.PageEntry{
+					HTML:  string(miss.html),
+					CSP:   miss.header.Get("Content-Security-Policy"),
+					Nonce: cspNonceFromHeader(miss.header.Get("Content-Security-Policy")),
+				}
+				if !fpcHTMLUnsafe(entry.HTML, r) {
+					if h.writeFPCHit(w, r, entry, miss.ttl) {
+						return
+					}
+				}
 			}
-			tags := domaincache.UniqueTags(cacheapp.PageTags(r.Context()))
-			if err := h.fpc.backend.SetWithTags(r.Context(), key, stored, ttl, tags...); err != nil {
-				h.log.Warn("storefront.fpc.set_failed", map[string]interface{}{
-					"path":  r.URL.Path,
-					"error": err.Error(),
-				})
-			}
+			miss = h.renderFPCMiss(routeTemplate, key, ttl, r, inner)
 		}
 
-		copyHeader(w.Header(), buf.header)
+		copyHeader(w.Header(), miss.header)
 		if h.fpc.exposeHeader {
-			if storeOK {
+			if miss.storeOK {
 				w.Header().Set(fpcHeader, "MISS")
 			} else {
 				w.Header().Set(fpcHeader, "BYPASS")
 			}
 		}
-		h.applyFPCCacheControl(w, r, ttl, storeOK)
-		w.WriteHeader(buf.code)
-		_, _ = w.Write(html)
+		h.applyFPCCacheControl(w, r, miss.ttl, miss.storeOK)
+		w.WriteHeader(miss.code)
+		_, _ = w.Write(miss.html)
+	}
+}
+
+func (h *StorefrontHandler) renderFPCMiss(routeTemplate, key string, ttl time.Duration, r *http.Request, inner http.HandlerFunc) fpcMissResult {
+	buf := &fpcBuffer{header: make(http.Header)}
+	inner.ServeHTTP(buf, r)
+	html := buf.body.Bytes()
+	if buf.code == 0 {
+		buf.code = http.StatusOK
+	}
+
+	csp := buf.header.Get("Content-Security-Policy")
+	nonce := cspNonceFromHeader(csp)
+	storeOK := buf.code == http.StatusOK &&
+		strings.Contains(strings.ToLower(buf.header.Get("Content-Type")), "text/html") &&
+		len(html) > 0 &&
+		len(html) <= cacheapp.MaxPageBytes &&
+		!fpcHTMLUnsafe(string(html), r) &&
+		!cacheapp.StoreSkipped(r.Context()) &&
+		fpcCSPNonceStorable(csp, nonce)
+	if storeOK {
+		now := time.Now().UTC()
+		stored := cacheapp.PageEntry{
+			HTML:     string(html),
+			CSP:      csp,
+			Nonce:    nonce,
+			StoredAt: now,
+			TTLNanos: int64(ttl),
+		}
+		tags := domaincache.UniqueTags(cacheapp.PageTags(r.Context()))
+		if err := h.fpc.backend.SetWithTags(r.Context(), key, stored, ttl, tags...); err != nil {
+			h.log.Warn("storefront.fpc.set_failed", map[string]interface{}{
+				"path":  r.URL.Path,
+				"error": err.Error(),
+			})
+			storeOK = false
+		}
+	}
+
+	return fpcMissResult{
+		code:    buf.code,
+		header:  buf.header,
+		html:    append([]byte(nil), html...),
+		storeOK: storeOK,
+		ttl:     ttl,
 	}
 }
 

@@ -43,7 +43,7 @@ C4Component
             Component(customerAdmin, "CustomerAdminHandler", "HTTP", "Customer list, detail, delete (admin)")
             Component(auditLogAdmin, "AuditLogAdminHandler", "HTTP", "Audit log list + CSV/JSON export (admin, audit.read)")
             Component(jobAdmin, "JobAdminHandler", "HTTP", "List, Get, Retry, Cancel background jobs (admin, jobs.read/jobs.write)")
-            Component(cacheAdmin, "CacheAdminHandler", "HTTP", "Stats and clear (prefix/tag/key/all) for L1+L2 cache (admin, cache.read/cache.write/cache.clear_all)")
+            Component(cacheAdmin, "CacheAdminHandler", "HTTP", "Stats, clear (prefix/tag/key/all), and FPC purge-url (admin, cache.read/cache.write/cache.clear_all/cache.purge_url)")
             Component(scheduleAdmin, "ScheduleAdminHandler", "HTTP", "List, Trigger, Enable, Disable scheduled tasks (admin, jobs.read/jobs.write)")
             Component(accountHandler, "AccountHandler", "HTTP", "Profile, consent, GDPR export/delete (customer)")
             Component(shippingHandler, "ShippingRatesHandler", "HTTP", "List shipping rates")

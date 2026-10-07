@@ -62,7 +62,11 @@ const (
 	// (every cache consumer pays a cold-cache penalty at once) than a
 	// targeted clear, so it is a distinct permission. Admin-only, same
 	// as AuditRead / JobsRead.
+	// CachePurgeURL (PR-1046) is the full-page-cache escape hatch that
+	// deletes concrete vary keys for one storefront path — distinct from
+	// general cache.write so FPC ops can be granted without broad clears.
 	CacheRead     Permission = "cache.read"
 	CacheWrite    Permission = "cache.write"
 	CacheClearAll Permission = "cache.clear_all"
+	CachePurgeURL Permission = "cache.purge_url"
 )

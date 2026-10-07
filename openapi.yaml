@@ -1938,6 +1938,64 @@ paths:
         "422":
           $ref: "#/components/responses/Validation"
 
+  /api/v1/admin/cache/purge-url:
+    post:
+      operationId: adminCachePurgeURL
+      tags: ["Admin: Cache"]
+      summary: Purge full-page cache keys for a storefront path (admin)
+      description: >-
+        Escape hatch when tag invalidation missed a page (PR-1046). Deletes
+        the concrete FPC keys for `path` across every store's
+        store/language/currency vary dimension × guest and authenticated
+        auth-state — a handful of keys, not a wildcard scan. Requires
+        `cache.purge_url` (distinct from `cache.write`). Path must be an
+        allowlisted storefront route (`/`, `/products/{slug}`, …). Optional
+        query string is filtered like FPC storage (listing params plus any
+        `attr_*` keys present in the URL). Bare `/products` does not clear
+        paginated/sorted variants — pass the exact query or prefer
+        `POST /admin/cache/clear` with `tag`. `deleted` counts keys that
+        actually existed before delete (not the expand-list length); a
+        mid-loop backend error may leave other vary keys live. Always
+        audit-logged.
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [path]
+              properties:
+                path:
+                  type: string
+                  example: /products/widget
+            examples:
+              pdp:
+                value: { path: "/products/widget" }
+              listing:
+                value: { path: "/products?page=2&sort=name" }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Envelope"
+              example:
+                data:
+                  path: /products/widget
+                  keys:
+                    - "fpc:v1:…"
+                  deleted: 2
+                error: null
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "422":
+          $ref: "#/components/responses/Validation"
+
   # ── Admin: Search ──────────────────────────────────────
   /api/v1/admin/search/reindex:
     post:

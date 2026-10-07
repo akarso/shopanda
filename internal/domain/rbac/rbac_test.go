@@ -21,7 +21,7 @@ func TestHasPermission_Admin(t *testing.T) {
 		rbac.ShippingRead, rbac.ShippingWrite,
 		rbac.AuditRead,
 		rbac.JobsRead, rbac.JobsWrite,
-		rbac.CacheRead, rbac.CacheWrite, rbac.CacheClearAll,
+		rbac.CacheRead, rbac.CacheWrite, rbac.CacheClearAll, rbac.CachePurgeURL,
 	} {
 		if !rbac.HasPermission(identity.RoleAdmin, perm) {
 			t.Errorf("admin should have %q", perm)
@@ -105,7 +105,7 @@ func TestHasPermission_Support(t *testing.T) {
 		rbac.SettingsRead, rbac.SettingsWrite,
 		rbac.AuditRead,
 		rbac.JobsRead, rbac.JobsWrite,
-		rbac.CacheRead, rbac.CacheWrite, rbac.CacheClearAll,
+		rbac.CacheRead, rbac.CacheWrite, rbac.CacheClearAll, rbac.CachePurgeURL,
 	}
 
 	for _, perm := range allowed {
@@ -143,7 +143,7 @@ func TestPermissionsForRole_Admin(t *testing.T) {
 	// Core admin grants in role_permissions.go (products/orders/categories/customers/
 	// store_credit/invoices/media/content/settings/shipping/audit/extensions*/jobs*/
 	// search.reindex/cache*).
-	const wantCoreAdmin = 28
+	const wantCoreAdmin = 29
 	if len(perms) != wantCoreAdmin {
 		t.Errorf("admin permissions count = %d, want %d (%v)", len(perms), wantCoreAdmin, perms)
 	}
