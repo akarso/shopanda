@@ -52,6 +52,9 @@ func normalizeAndValidate(cfg *Config) error {
 	if cfg.Cache.Driver == "redis" && strings.TrimSpace(cfg.Cache.Redis.KeyPrefix) == "" {
 		return fmt.Errorf("config: cache.redis.key_prefix must be non-empty when cache.driver=redis (empty prefix makes SCAN/FlushAll match the whole Redis DB)")
 	}
+	if err := validateFullPageCache(&cfg.Cache.FullPage); err != nil {
+		return err
+	}
 
 	if err := validateRateLimit(cfg); err != nil {
 		return err
@@ -673,6 +676,29 @@ func scanLibpqFields(raw string) []string {
 	}
 	flush()
 	return fields
+}
+
+func validateFullPageCache(c *FullPageCacheConfig) error {
+	if strings.TrimSpace(c.TTL) == "" {
+		c.TTL = DefaultFullPageCacheTTL
+	}
+	d, err := time.ParseDuration(c.TTL)
+	if err != nil {
+		return fmt.Errorf("config: invalid cache.full_page.ttl %q: %w", c.TTL, err)
+	}
+	if d <= 0 {
+		return fmt.Errorf("config: invalid cache.full_page.ttl %q: must be > 0", c.TTL)
+	}
+	for route, raw := range c.RouteTTL {
+		rd, err := time.ParseDuration(raw)
+		if err != nil {
+			return fmt.Errorf("config: invalid cache.full_page.route_ttl[%q] %q: %w", route, raw, err)
+		}
+		if rd <= 0 {
+			return fmt.Errorf("config: invalid cache.full_page.route_ttl[%q] %q: must be > 0", route, raw)
+		}
+	}
+	return nil
 }
 
 func isForbiddenDevSecret(password string) bool {

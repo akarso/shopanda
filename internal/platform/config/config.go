@@ -9,6 +9,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 
@@ -459,9 +460,21 @@ type MeilisearchConfig struct {
 	CategoriesIndex string `yaml:"categories_index"`
 }
 
+const DefaultFullPageCacheTTL = "5m"
+
 type CacheConfig struct {
-	Driver string           `yaml:"driver"`
-	Redis  RedisCacheConfig `yaml:"redis"`
+	Driver   string              `yaml:"driver"`
+	Redis    RedisCacheConfig    `yaml:"redis"`
+	FullPage FullPageCacheConfig `yaml:"full_page"`
+}
+
+// FullPageCacheConfig is the storefront HTML cache (PR-1044).
+// Enabled defaults false until PR-1045 ships a CSRF fragment for logout.
+type FullPageCacheConfig struct {
+	Enabled      bool              `yaml:"enabled"`
+	TTL          string            `yaml:"ttl"`
+	ExposeHeader bool              `yaml:"expose_header"`
+	RouteTTL     map[string]string `yaml:"route_ttl"`
 }
 
 // RedisCacheConfig holds Redis cache connection settings.
@@ -800,6 +813,10 @@ func defaults() Config {
 		},
 		Cache: CacheConfig{
 			Driver: "postgres",
+			FullPage: FullPageCacheConfig{
+				Enabled: false,
+				TTL:     DefaultFullPageCacheTTL,
+			},
 		},
 		Queue: QueueConfig{
 			Driver: "postgres",
@@ -1023,6 +1040,15 @@ func applyEnv(cfg *Config) {
 	}
 	if v := os.Getenv("SHOPANDA_CACHE_REDIS_KEY_PREFIX"); v != "" {
 		cfg.Cache.Redis.KeyPrefix = v
+	}
+	if v := os.Getenv("SHOPANDA_CACHE_FULL_PAGE_ENABLED"); v != "" {
+		cfg.Cache.FullPage.Enabled = parseEnvBool(v)
+	}
+	if v := os.Getenv("SHOPANDA_CACHE_FULL_PAGE_TTL"); v != "" {
+		cfg.Cache.FullPage.TTL = v
+	}
+	if v := os.Getenv("SHOPANDA_CACHE_FULL_PAGE_EXPOSE_HEADER"); v != "" {
+		cfg.Cache.FullPage.ExposeHeader = parseEnvBool(v)
 	}
 	if v := os.Getenv("SHOPANDA_QUEUE_DRIVER"); v != "" {
 		cfg.Queue.Driver = v
@@ -1371,6 +1397,21 @@ func flatten(cfg *Config) map[string]string {
 	m["cache.driver"] = cfg.Cache.Driver
 	m["cache.redis.url"] = cfg.Cache.Redis.URL
 	m["cache.redis.key_prefix"] = cfg.Cache.Redis.KeyPrefix
+	m["cache.full_page.enabled"] = strconv.FormatBool(cfg.Cache.FullPage.Enabled)
+	m["cache.full_page.ttl"] = cfg.Cache.FullPage.TTL
+	m["cache.full_page.expose_header"] = strconv.FormatBool(cfg.Cache.FullPage.ExposeHeader)
+	if len(cfg.Cache.FullPage.RouteTTL) > 0 {
+		keys := make([]string, 0, len(cfg.Cache.FullPage.RouteTTL))
+		for k := range cfg.Cache.FullPage.RouteTTL {
+			keys = append(keys, k)
+		}
+		sort.Strings(keys)
+		parts := make([]string, 0, len(keys))
+		for _, k := range keys {
+			parts = append(parts, k+"="+cfg.Cache.FullPage.RouteTTL[k])
+		}
+		m["cache.full_page.route_ttl"] = strings.Join(parts, ",")
+	}
 	m["queue.driver"] = cfg.Queue.Driver
 	m["queue.redis.url"] = cfg.Queue.Redis.URL
 	m["queue.redis.key_prefix"] = cfg.Queue.Redis.KeyPrefix
@@ -1478,7 +1519,7 @@ func (c *Config) String() string {
 		fmt.Sprintf("auth.jwt_ttl=%s", c.Auth.JWTTTL),
 		fmt.Sprintf("media.storage=%s media.local.base_path=%s media.local.base_url=%s media.s3.bucket=%s media.s3.region=%s", c.Media.Storage, c.Media.Local.BasePath, c.Media.Local.BaseURL, c.Media.S3.Bucket, c.Media.S3.Region),
 		fmt.Sprintf("search.engine=%s", c.Search.Engine),
-		fmt.Sprintf("cache.driver=%s", c.Cache.Driver),
+		fmt.Sprintf("cache.driver=%s cache.full_page.enabled=%t cache.full_page.ttl=%s cache.full_page.expose_header=%t", c.Cache.Driver, c.Cache.FullPage.Enabled, c.Cache.FullPage.TTL, c.Cache.FullPage.ExposeHeader),
 		fmt.Sprintf("queue.driver=%s", c.Queue.Driver),
 		fmt.Sprintf("frontend.enabled=%t frontend.mode=%s frontend.theme_path=%s", c.Frontend.Enabled, c.Frontend.Mode, c.Frontend.ThemePath),
 	}, " ")

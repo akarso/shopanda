@@ -5,6 +5,7 @@ import (
 	"html/template"
 	"net/http"
 
+	cacheapp "github.com/akarso/shopanda/internal/application/cache"
 	cmsApp "github.com/akarso/shopanda/internal/application/cms"
 	"github.com/akarso/shopanda/internal/domain/cms"
 	"github.com/akarso/shopanda/internal/domain/theme"
@@ -43,7 +44,7 @@ func (h *StorefrontHandler) WithContentBlocks(blocks cms.ContentBlockRepository,
 
 // CMSPage handles GET /pages/{slug} and renders a CMS page with assigned blocks.
 func (h *StorefrontHandler) CMSPage() http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
+	return h.withFullPageCache(cacheapp.RouteCMS, func(w http.ResponseWriter, r *http.Request) {
 		slug := r.PathValue("slug")
 		if slug == "" || h.pages == nil {
 			http.Error(w, "Not Found", http.StatusNotFound)
@@ -63,42 +64,49 @@ func (h *StorefrontHandler) CMSPage() http.HandlerFunc {
 			return
 		}
 
-		blocks, err := h.loadStorefrontBlocks(r.Context(), cms.TargetTypePage, page.ID())
+		blocks, tags, err := h.loadStorefrontBlocks(r.Context(), cms.TargetTypePage, page.ID())
 		if err != nil {
 			h.log.Warn("storefront.content_blocks.load_failed", map[string]interface{}{
 				"path":  r.URL.Path,
 				"error": err.Error(),
 			})
 		}
+		cacheapp.AddPageTags(r.Context(), cacheapp.PageTag(page.ID()))
+		cacheapp.AddPageTags(r.Context(), tags...)
 		data := StorefrontCMSPageData{
-			Layout:  h.layoutDataBestEffort(r),
+			Layout:  h.layoutForCacheablePage(r, nil),
 			Theme:   h.engine.Theme(),
 			Title:   page.Title(),
 			Content: cms.SanitizeHTML(page.Content()),
 			Blocks:  blocks,
 		}
 		h.renderPage(w, "page", data)
-	}
+	})
 }
 
-func (h *StorefrontHandler) loadStorefrontBlocks(ctx context.Context, targetType cms.TargetType, targetKey string) ([]StorefrontContentBlock, error) {
+func (h *StorefrontHandler) loadStorefrontBlocks(ctx context.Context, targetType cms.TargetType, targetKey string) ([]StorefrontContentBlock, []string, error) {
 	if h.contentBlocks == nil || h.blockResolver == nil {
-		return nil, nil
+		return nil, nil, nil
 	}
 	blocks, err := h.contentBlocks.FindActiveBlocksByTarget(ctx, targetType, targetKey)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	resolved, err := h.blockResolver.ResolveBlocks(ctx, blocks)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
-	return storefrontBlocksFromResolved(resolved), nil
+	out, tags := storefrontBlocksFromResolved(resolved)
+	return out, tags, nil
 }
 
-func storefrontBlocksFromResolved(blocks []cmsApp.ResolvedContentBlock) []StorefrontContentBlock {
+func storefrontBlocksFromResolved(blocks []cmsApp.ResolvedContentBlock) ([]StorefrontContentBlock, []string) {
 	out := make([]StorefrontContentBlock, 0, len(blocks))
+	tags := make([]string, 0)
 	for _, block := range blocks {
+		if t := cacheapp.CMSTag(block.ID); t != "" {
+			tags = append(tags, t)
+		}
 		item := StorefrontContentBlock{
 			Type:  block.Type,
 			Title: block.Title,
@@ -115,8 +123,23 @@ func storefrontBlocksFromResolved(blocks []cmsApp.ResolvedContentBlock) []Storef
 		case string(cms.BlockTypeProductCarousel):
 			item.CarouselTitle = stringValue(block.Data, "title")
 			item.Products = storefrontCarouselProducts(block.Data["products"])
+			tags = append(tags, carouselProductTags(block.Data["products"])...)
 		}
 		out = append(out, item)
+	}
+	return out, tags
+}
+
+func carouselProductTags(raw interface{}) []string {
+	items, ok := raw.([]map[string]interface{})
+	if !ok {
+		return nil
+	}
+	out := make([]string, 0)
+	for _, item := range items {
+		if t := cacheapp.ProductTag(stringValue(item, "id")); t != "" {
+			out = append(out, t)
+		}
 	}
 	return out
 }

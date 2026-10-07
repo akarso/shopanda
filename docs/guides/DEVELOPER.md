@@ -26,6 +26,7 @@ Deciding *which* extension mechanism fits your task (events vs hooks vs pricing 
 - [Use the API Reference](#use-the-api-reference)
 - [Jobs admin API](#jobs-admin-api)
 - [Cache admin API](#cache-admin-api)
+- [Full-page cache](#full-page-cache)
 - [Integrator Platform (Phase 8)](#integrator-platform-phase-8)
 - [Roadmap and Future Work](#roadmap-and-future-work)
 - [Continuous Integration](#continuous-integration)
@@ -709,6 +710,25 @@ Confirm-UX for the GUI lives in `internal/interfaces/http/admin/cache_admin_ui_t
 `POST /api/v1/admin/cache/clear` — body exactly one of `{"prefix":"..."}` / `{"tag":"..."}` / `{"key":"..."}` / `{"all": true}`. Empty/whitespace selectors are omitted. Targeted clears require `cache.write`; `all` requires the distinct `cache.clear_all` permission. Prefix is literal (Redis glob characters are escaped). Redis `all` scan-and-deletes under the store prefix, never `FLUSHDB`, and refuses an empty prefix; `deleted` is value keys only. SCAN is best-effort (not a snapshot). Every clear is audit-logged. CLI: `app cache:clear --prefix=<p> | --tag=<t> | --key=<k> | --all` — the CLI has **no RBAC** (ops trust boundary, same as jobs CLI).
 
 A custom `Cache` implementation must implement `Stats` and `FlushAll` in addition to the PR-1039 tag methods.
+
+## Full-page cache
+
+The storefront (when `frontend.enabled`) can store fully rendered HTML in `cache.Cache` after `html/template` execution (PR-1044). This is **opt-in per route template**, not opt-out per path.
+
+**Allowlist** (anything else is never stored): `/` (home), `/products`, `/products/{slug}`, `/categories`, `/categories/{slug}`, `/search`, `/pages/{slug}`. Defined in `internal/application/cache` (`Allowlisted`). Adding a new storefront route does **not** cache it until that template is added to the allowlist.
+
+**Denylist** (independent second check): `/cart`, `/checkout`, `/account`, `/admin`, `/fragments`, `/api`, `/setup`. A template on the allowlist still will not cache if the request path matches a denylist prefix (`Cacheable` requires both).
+
+**Reviewer checklist before allowlisting a route:**
+
+- No CSRF token in the cached body. Cacheable layouts omit the header logout form (`AccountLogoutURL` empty) and clear `Layout.CSRFToken`. Store is refused if the request token appears, a **filled** `csrf_token` input is present, or a logout `<form action="…/account/logout">` remains. Merchandising copy that mentions “csrf_token” is fine. Custom themes must honor `AccountLogoutURL` (empty ⇒ no logout form) or authenticated shells will BYPASS. PR-1045 will fetch the real token as a fragment.
+- No session, cart contents, customer ID, or display name in the body. Cart count/mini-cart are already fragments. Authenticated chrome may differ from guest (`auth_state` is in the vary key) but must stay generic ("Account", not "Alice"). Store is refused if the HTML contains the current customer ID or display name (case-insensitive for the name).
+- Do not enable FPC on a storefront that SSR-bakes B2B/group prices or other customer-scoped composition into the page — two authenticated customers share one entry. Keep those bits in fragments.
+- Vary key is `{store, language, currency, auth_state}` plus path + **filtered** query (`q`, `page`, `per_page`, `sort`, `view`, `category`, and only `attr_*` codes in the active layered-nav / advanced-search set). Home/PDP/CMS drop query entirely. Tracking params and unknown `attr_*` are dropped. **Handlers under FPC see this scrubbed `RawQuery`** — a future PDP/CMS query that changes HTML (`?variant=`, preview flags) needs an explicit FilterQuery hook, not an ad-hoc `r.URL.Query()` read. If the attr allowlist cannot be loaded, FPC **BYPASS**es (does not treat “no attrs” as authoritative, which would HIT an unfiltered shell while the URL still shows filters). The loaded attr set is stashed on the request so the listing handler does not fetch it twice on MISS. HIT still reads the allowlist once to build the key (process-level cache is a PR-1046/perf follow-up).
+- Tag every cached entry (`SetWithTags`) with the product/category/CMS/page IDs it rendered so PR-1046 can purge precisely. PDPs tag assigned category IDs via `ListCategoryIDsByProduct` (Postgres implements it; a repo that does not logs `storefront.fpc.pdp_category_tags_unavailable` once).
+- Authenticated FPC responses keep `Cache-Control: no-store` (Phase 10 middleware). Only guest hits/misses set `public, max-age=<remaining TTL>`.
+
+**Config:** `cache.full_page.enabled` defaults **false** (omitting the YAML block keeps that default). Opt in with `cache.full_page.enabled: true` / `SHOPANDA_CACHE_FULL_PAGE_ENABLED=true` after accepting that header logout is a link-to-account-page until PR-1045. `ttl` (default `5m`), optional `route_ttl` map, `expose_header` (or `SHOPANDA_DEV_MODE`) for `X-Shopanda-Cache`. When disabled, allowlisted pages render normally (live cart label, display name, CSRF in logout).
 
 ## Integrator Platform (Phase 8)
 

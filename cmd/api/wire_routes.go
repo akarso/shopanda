@@ -400,6 +400,28 @@ func buildServeHandler(cfg *config.Config, log logger.Logger, rt *serveRuntime, 
 			WithLayeredNavAttributes(rt.attributeStore).
 			WithAdvancedSearchAttributes(rt.attributeStore).
 			WithCSPEnabled(cfg.Frontend.CSPEnabled)
+		if cfg.Cache.FullPage.Enabled && rt.appCache != nil {
+			ttl, err := time.ParseDuration(cfg.Cache.FullPage.TTL)
+			if err != nil || ttl <= 0 {
+				return nil, fmt.Errorf("cache.full_page.ttl: %q", cfg.Cache.FullPage.TTL)
+			}
+			var routeTTL map[string]time.Duration
+			if len(cfg.Cache.FullPage.RouteTTL) > 0 {
+				routeTTL = make(map[string]time.Duration, len(cfg.Cache.FullPage.RouteTTL))
+				for k, raw := range cfg.Cache.FullPage.RouteTTL {
+					d, err := time.ParseDuration(raw)
+					if err != nil {
+						return nil, fmt.Errorf("cache.full_page.route_ttl[%q]: %w", k, err)
+					}
+					if d <= 0 {
+						return nil, fmt.Errorf("cache.full_page.route_ttl[%q]: must be > 0", k)
+					}
+					routeTTL[k] = d
+				}
+			}
+			expose := cfg.Cache.FullPage.ExposeHeader || config.DevModeEnabled()
+			sfHandler.WithFullPageCache(rt.appCache, ttl, expose, routeTTL)
+		}
 		if rt.cacheAdminService != nil {
 			rt.cacheAdminService.RegisterL1(cacheApp.L1Source{
 				Name: "storefront.category_nav",
