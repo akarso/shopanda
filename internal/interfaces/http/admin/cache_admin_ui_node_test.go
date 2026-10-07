@@ -32,6 +32,7 @@ func TestAdminHandler_CacheAdminUIScript(t *testing.T) {
 	for _, expected := range []string{
 		"ShopandaCacheAdminUI",
 		"bindClearForm",
+		"newStatsLoadGate",
 		"CLEAR ALL",
 		"Type CLEAR ALL to confirm a full flush.",
 	} {
@@ -44,7 +45,7 @@ func TestAdminHandler_CacheAdminUIScript(t *testing.T) {
 func TestCacheAdminUI_Node(t *testing.T) {
 	node, err := exec.LookPath("node")
 	if err != nil {
-		t.Fatalf("node is required for cache confirm-UX tests: %v", err)
+		t.Fatalf("node is required for cache confirm-UX tests (Node 22+; see docs/guides/DEVELOPER.md): %v", err)
 	}
 	cmd := exec.Command(node, "--test", "cache_admin_ui_test.js")
 	out, err := cmd.CombinedOutput()

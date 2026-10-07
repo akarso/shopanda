@@ -191,3 +191,28 @@ test("form fields are locked for the duration of clear", async function () {
     assert.equal(els.modeSelect.disabled, false);
     assert.equal(els.valueInput.value, "", "targeted value is cleared after success");
 });
+
+test("older stats response does not overwrite a newer one", async function () {
+    var gate = ui.newStatsLoadGate();
+    var shown = [];
+    function load(p) {
+        var req = gate.start();
+        return p.then(function (v) {
+            if (!req.isCurrent()) {
+                return;
+            }
+            shown.push(v);
+        });
+    }
+    var resolveOld;
+    var resolveNew;
+    var oldP = new Promise(function (resolve) { resolveOld = resolve; });
+    var newP = new Promise(function (resolve) { resolveNew = resolve; });
+    var pOld = load(oldP);
+    var pNew = load(newP);
+    resolveNew("after-clear");
+    await pNew;
+    resolveOld("before-clear");
+    await pOld;
+    assert.deepEqual(shown, ["after-clear"]);
+});

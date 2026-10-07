@@ -78,6 +78,23 @@
         setAriaDisabled(els.confirmInput, locked);
     }
 
+    // newStatsLoadGate ignores a stats response once a newer load has
+    // started, so an in-flight refresh cannot overwrite post-clear counts.
+    function newStatsLoadGate() {
+        var seq = 0;
+        return {
+            start: function () {
+                seq += 1;
+                var id = seq;
+                return {
+                    isCurrent: function () {
+                        return id === seq;
+                    }
+                };
+            }
+        };
+    }
+
     // bindClearForm wires a duck-typed form. deps.withBusy matches
     // withButtonBusy(btn, label, startAction, afterRestore).
     function bindClearForm(els, deps) {
@@ -146,7 +163,8 @@
         normalizeL1: normalizeL1,
         applyModeVisibility: applyModeVisibility,
         setFormLocked: setFormLocked,
-        bindClearForm: bindClearForm
+        bindClearForm: bindClearForm,
+        newStatsLoadGate: newStatsLoadGate
     };
 
     root.ShopandaCacheAdminUI = api;

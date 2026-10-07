@@ -10689,6 +10689,7 @@
         var statsCards = document.getElementById("cache-stats-cards");
         var l1Box = document.getElementById("cache-l1");
         var refreshBtn = document.getElementById("cache-stats-refresh");
+        var statsGate = cacheUI.newStatsLoadGate();
 
         function renderStats(snap) {
             var l2 = (snap && snap.l2) || {};
@@ -10723,8 +10724,12 @@
         }
 
         function loadStats() {
+            var req = statsGate.start();
             statsMsg.innerHTML = "";
             return api("/admin/cache/stats").then(function (body) {
+                if (!req.isCurrent()) {
+                    return;
+                }
                 if (body && body.error) {
                     statsCards.innerHTML = "";
                     l1Box.innerHTML = "";
@@ -10740,6 +10745,9 @@
                 }
                 renderStats(snap);
             }).catch(function (err) {
+                if (!req.isCurrent()) {
+                    return;
+                }
                 statsCards.innerHTML = "";
                 l1Box.innerHTML = "";
                 statsMsg.innerHTML = '<p role="alert">' + esc(extractErrorMessage(err, "Failed to load cache stats.")) + "</p>";
