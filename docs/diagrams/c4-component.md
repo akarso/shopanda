@@ -48,7 +48,7 @@ C4Component
             Component(accountHandler, "AccountHandler", "HTTP", "Profile, consent, GDPR export/delete (customer)")
             Component(shippingHandler, "ShippingRatesHandler", "HTTP", "List shipping rates")
             Component(webhookHandler, "PaymentWebhookHandler", "HTTP", "Handle payment callbacks (public)")
-            Component(storefrontHandler, "StorefrontHandler", "HTTP", "SSR storefront: catalog/PDP/PLP, cart, checkout (prefilled from default saved address), profile-side account pages incl. saved addresses + marketing preferences, and step-up-gated account email change with re-verification (optional, gated by frontend.enabled)")
+            Component(storefrontHandler, "StorefrontHandler", "HTTP", "SSR storefront: catalog/PDP/PLP, cart, checkout (prefilled from default saved address), profile-side account pages incl. saved addresses + marketing preferences, and step-up-gated account email change with re-verification (optional, gated by frontend.enabled). Allowlisted catalog/CMS/home HTML is stored in cache.Cache (PR-1044 full-page cache); cart/account/checkout/admin are denylisted.")
             Component(storeAdmin, "StoreAdminHandler", "HTTP", "List, Create, Update stores (admin)")
         }
 
@@ -247,6 +247,7 @@ C4Component
     Rel(jobWorker, postgresJobQueue, "Polls and claims jobs")
     Rel(jobAdmin, postgresJobQueue, "List/Get/Retry/Cancel via jobs.Reader and jobs.Admin ports")
     Rel(cacheAdmin, pgCacheStore, "Stats/Clear via cache.Cache (Stats, FlushAll, Delete, DeleteByPrefix, DeleteByTag)")
+    Rel(storefrontHandler, pgCacheStore, "Full-page cache: Get/SetWithTags of allowlisted rendered HTML (route template + store/language/currency/auth_state)")
     Rel(cacheAdmin, localCacheStore, "Reports L1 occupancy/hit-miss; FlushAll clears this process's L1 stores")
     Rel(cronScheduler, postgresJobQueue, "Enqueues scheduled jobs")
     Rel(cronScheduler, postgresSchedulerStore, "Upserts registrations at Start; checks enable override every tick")

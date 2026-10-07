@@ -122,7 +122,7 @@ func createTestTheme(t *testing.T) *theme.Engine {
 		t.Fatal(err)
 	}
 
-	layout := `<!DOCTYPE html><html><head><title>{{ template "title" . }}</title></head><body><nav>{{ range .Layout.Nav }}<a href="{{ .URL }}">{{ .Label }}</a>{{ end }}</nav><form action="{{ .Layout.SearchAction }}"></form><div class="account-widget"><a href="{{ .Layout.AccountURL }}">{{ .Layout.AccountLabel }}</a>{{ if .Layout.AccountSignedIn }}<strong>{{ .Layout.AccountName }}</strong><a href="{{ .Layout.AccountProfileURL }}">Profile</a><a href="{{ .Layout.AccountOrdersURL }}">Orders</a><a href="{{ .Layout.AccountSecurityURL }}">Security</a><form action="{{ .Layout.AccountLogoutURL }}" method="post"><input type="hidden" name="csrf_token" value="{{ .Layout.CSRFToken }}"><button type="submit">Log out</button></form>{{ else }}<span>Sign in to view orders and profile.</span>{{ end }}</div><a href="{{ .Layout.CartURL }}">{{ if .Layout.EnableCart }}<span hx-get="/fragments/cart-count" hx-trigger="cart-updated from:body" hx-swap="innerHTML">{{ .Layout.CartLabel }}</span>{{ else }}{{ .Layout.CartLabel }}{{ end }}</a>{{ if .Layout.EnableCart }}<div id="mini-cart" hx-get="/fragments/mini-cart" hx-trigger="load, cart-updated from:body"></div>{{ end }}{{ template "content" . }}</body></html>`
+	layout := `<!DOCTYPE html><html><head><title>{{ template "title" . }}</title>{{ if .Layout.CSPEnabled }}<meta name="csp-nonce" content="{{ .Layout.CSPNonce }}">{{ end }}</head><body><nav>{{ range .Layout.Nav }}<a href="{{ .URL }}">{{ .Label }}</a>{{ end }}</nav><form action="{{ .Layout.SearchAction }}"></form><div class="account-widget"><a href="{{ .Layout.AccountURL }}">{{ .Layout.AccountLabel }}</a>{{ if .Layout.AccountSignedIn }}<strong>{{ .Layout.AccountName }}</strong><a href="{{ .Layout.AccountProfileURL }}">Profile</a><a href="{{ .Layout.AccountOrdersURL }}">Orders</a><a href="{{ .Layout.AccountSecurityURL }}">Security</a>{{ if .Layout.AccountLogoutURL }}<form action="{{ .Layout.AccountLogoutURL }}" method="post"><input type="hidden" name="csrf_token" value="{{ .Layout.CSRFToken }}"><button type="submit">Log out</button></form>{{ end }}{{ else }}<span>Sign in to view orders and profile.</span>{{ end }}</div><a href="{{ .Layout.CartURL }}">{{ if .Layout.EnableCart }}<span hx-get="/fragments/cart-count" hx-trigger="cart-updated from:body" hx-swap="innerHTML">{{ .Layout.CartLabel }}</span>{{ else }}{{ .Layout.CartLabel }}{{ end }}</a>{{ if .Layout.EnableCart }}<div id="mini-cart" hx-get="/fragments/mini-cart" hx-trigger="load, cart-updated from:body"></div>{{ end }}{{ template "content" . }}</body></html>`
 	if err := os.WriteFile(filepath.Join(tplDir, "layout.html"), []byte(layout), 0644); err != nil {
 		t.Fatal(err)
 	}
@@ -144,6 +144,11 @@ func createTestTheme(t *testing.T) *theme.Engine {
 
 	category := `{{ define "title" }}{{ .Category.Name }}{{ end }}{{ define "content" }}<h1>{{ .Category.Name }}</h1><p>{{ .Category.Description }}</p><nav>{{ range .Breadcrumbs }}<a href="{{ .URL }}">{{ .Label }}</a>{{ end }}</nav><section>{{ range .Subcategories }}<a href="{{ .URL }}">{{ .Name }}</a>{{ end }}</section>{{ if .Filters }}<aside>{{ range .Filters }}{{ range .Values }}<a href="{{ .URL }}"{{ if .Selected }} data-selected="true"{{ end }}>{{ .Label }}</a>{{ end }}{{ end }}</aside>{{ end }}<div>{{ range .Products }}<article>{{ .Name }}</article>{{ else }}<p>{{ .EmptyMessage }}</p>{{ end }}</div>{{ end }}{{ template "layout.html" . }}`
 	if err := os.WriteFile(filepath.Join(tplDir, "category.html"), []byte(category), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	cmsPage := `{{ define "title" }}{{ .Title }}{{ end }}{{ define "content" }}<h1>{{ .Title }}</h1><div>{{ .Content }}</div>{{ end }}{{ template "layout.html" . }}`
+	if err := os.WriteFile(filepath.Join(tplDir, "page.html"), []byte(cmsPage), 0644); err != nil {
 		t.Fatal(err)
 	}
 
@@ -318,6 +323,7 @@ func newStorefrontRouter(h *storefront.StorefrontHandler) http.Handler {
 	router.HandleFunc("POST /fragments/cart/update", h.UpdateCart())
 	router.HandleFunc("POST /fragments/cart/remove", h.RemoveCartItem())
 	router.HandleFunc("GET /search", h.Search())
+	router.HandleFunc("GET /pages/{slug}", h.CMSPage())
 	return router.Handler()
 }
 

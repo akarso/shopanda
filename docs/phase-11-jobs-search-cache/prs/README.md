@@ -19,7 +19,7 @@
 | PR-1041 | C | done | [Rate limiting hardening](PR-1041.md) |
 | PR-1042 | C | done | [Cache admin API + CLI](PR-1042.md) |
 | PR-1043 | C | done | [Cache admin GUI](PR-1043.md) |
-| PR-1044 | D | planned | [Full-page cache core + cacheability policy](PR-1044.md) |
+| PR-1044 | D | done | [Full-page cache core + cacheability policy](PR-1044.md) |
 | PR-1045 | D | planned | [Fragment mechanism (ESI-equivalent)](PR-1045.md) |
 | PR-1046 | D | planned | [Invalidation wiring + stampede guard](PR-1046.md) |
 | PR-1047 | D | planned | [Observability + rollup](PR-1047.md) |

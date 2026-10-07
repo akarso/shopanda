@@ -30,10 +30,12 @@
                         <a href="{{ .Layout.AccountProfileURL }}">Profile</a>
                         <a href="{{ .Layout.AccountOrdersURL }}">Orders</a>
                         <a href="{{ .Layout.AccountSecurityURL }}">Security</a>
+                        {{ if .Layout.AccountLogoutURL }}
                         <form action="{{ .Layout.AccountLogoutURL }}" method="post">
                             <input type="hidden" name="csrf_token" value="{{ .Layout.CSRFToken }}">
                             <button type="submit">Log out</button>
                         </form>
+                        {{ end }}
                     </div>
                 </div>
                 {{ else }}
