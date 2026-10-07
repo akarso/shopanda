@@ -64,13 +64,7 @@ func (h *StorefrontHandler) newCSPNonce() string {
 	return generateCSPNonce()
 }
 
-// cspNonceTestHook overrides generateCSPNonce in tests (fixed + in Base64).
-var cspNonceTestHook func() string
-
 func generateCSPNonce() string {
-	if cspNonceTestHook != nil {
-		return cspNonceTestHook()
-	}
 	buf := make([]byte, 16)
 	if _, err := rand.Read(buf); err != nil {
 		return ""

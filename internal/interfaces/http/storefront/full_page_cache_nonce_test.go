@@ -33,16 +33,13 @@ func TestApplyCSPNonceRotation_HTMLEscapedPlus(t *testing.T) {
 func TestRotateStoredCSPNonce_FixedPlusNonce(t *testing.T) {
 	old := "fixed+nonce/value"
 	next := "rotated+nonce/value"
-	prev := cspNonceTestHook
-	cspNonceTestHook = func() string { return next }
-	t.Cleanup(func() { cspNonceTestHook = prev })
 
 	entry := cacheapp.PageEntry{
 		HTML:  `<meta content="` + cspNonceHTMLForm(old) + `"><script nonce="` + cspNonceHTMLForm(old) + `"></script>`,
 		CSP:   storefrontCSPHeader(old),
 		Nonce: old,
 	}
-	html, csp, ok := rotateStoredCSPNonce(entry)
+	html, csp, ok := rotateStoredCSPNonce(entry, func() string { return next })
 	if !ok {
 		t.Fatal("rotate should succeed")
 	}

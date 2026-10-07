@@ -141,7 +141,7 @@ func (h *StorefrontHandler) withFullPageCache(routeTemplate string, inner http.H
 }
 
 func (h *StorefrontHandler) writeFPCHit(w http.ResponseWriter, r *http.Request, entry cacheapp.PageEntry, left time.Duration) bool {
-	html, csp, ok := rotateStoredCSPNonce(entry)
+	html, csp, ok := rotateStoredCSPNonce(entry, generateCSPNonce)
 	if !ok {
 		h.log.Warn("storefront.fpc.nonce_rotate_failed", map[string]interface{}{
 			"path": r.URL.Path,
@@ -385,7 +385,7 @@ func fpcCSPNonceStorable(csp, nonce string) bool {
 	return nonce != ""
 }
 
-func rotateStoredCSPNonce(entry cacheapp.PageEntry) (html, csp string, ok bool) {
+func rotateStoredCSPNonce(entry cacheapp.PageEntry, newNonce func() string) (html, csp string, ok bool) {
 	html, csp = entry.HTML, entry.CSP
 	old := strings.TrimSpace(entry.Nonce)
 	if old == "" {
@@ -394,7 +394,10 @@ func rotateStoredCSPNonce(entry cacheapp.PageEntry) (html, csp string, ok bool) 
 	if old == "" {
 		return html, csp, true
 	}
-	n := generateCSPNonce()
+	if newNonce == nil {
+		return html, csp, false
+	}
+	n := newNonce()
 	if n == "" {
 		return html, csp, false
 	}
