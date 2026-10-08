@@ -20,17 +20,6 @@ import (
 
 const fpcHeader = "X-Shopanda-Cache"
 
-// fpcAfterCacheMiss is invoked after an outer Get miss and before
-// stampede.Do. Tests set it via SetFPCAfterCacheMissForTest to force the
-// "miss, then another request fills the key" ordering; production leaves it nil.
-var fpcAfterCacheMiss func()
-
-// SetFPCAfterCacheMissForTest sets the miss→Do hook used by stampede tests.
-// Pass nil to clear. Not for production use.
-func SetFPCAfterCacheMissForTest(fn func()) {
-	fpcAfterCacheMiss = fn
-}
-
 var filledCSRFValue = regexp.MustCompile(`(?i)name=["']csrf_token["'][^>]*value=["']([^"']+)["']|value=["']([^"']+)["'][^>]*name=["']csrf_token["']`)
 var logoutFormAction = regexp.MustCompile(`(?i)<form\b[^>]*\baction\s*=\s*(?:"[^"]*/account/logout"|'[^']*/account/logout'|/account/logout)(?:[\s>]|$)`)
 
@@ -39,12 +28,13 @@ var logoutFormAction = regexp.MustCompile(`(?i)<form\b[^>]*\baction\s*=\s*(?:"[^
 var logoutFormBlock = regexp.MustCompile(`(?is)<form\b[^>]*\baction\s*=\s*(?:"[^"]*/account/logout"|'[^']*/account/logout'|/account/logout)[^>]*>(.*?)</form>`)
 
 type fpcConfig struct {
-	backend      domaincache.Cache
-	ttl          time.Duration
-	routeTTL     map[string]time.Duration
-	exposeHeader bool
-	stampede     *cacheapp.MissCoalescer
-	stampedeWait time.Duration
+	backend        domaincache.Cache
+	ttl            time.Duration
+	routeTTL       map[string]time.Duration
+	exposeHeader   bool
+	stampede       *cacheapp.MissCoalescer
+	stampedeWait   time.Duration
+	afterCacheMiss func() // test-only: pause between miss and Do
 }
 
 type fpcMissResult struct {
@@ -74,6 +64,17 @@ func (h *StorefrontHandler) WithFullPageCache(backend domaincache.Cache, ttl tim
 		exposeHeader: exposeHeader,
 		stampede:     cacheapp.NewMissCoalescer(),
 		stampedeWait: cacheapp.DefaultStampedeWait,
+	}
+	return h
+}
+
+// WithFPCAfterCacheMissForTest sets a per-handler hook invoked after an outer
+// Get miss and before stampede.Do. Used by stampede tests to force the
+// "miss, then another request fills the key" ordering. Pass nil to clear.
+// Not for production use.
+func (h *StorefrontHandler) WithFPCAfterCacheMissForTest(fn func()) *StorefrontHandler {
+	if h != nil && h.fpc != nil {
+		h.fpc.afterCacheMiss = fn
 	}
 	return h
 }
@@ -118,10 +119,10 @@ func (h *StorefrontHandler) withFullPageCache(routeTemplate string, inner http.H
 					return
 				}
 			}
-		} else if fpcAfterCacheMiss != nil {
+		} else if h.fpc.afterCacheMiss != nil {
 			// Test-only: pause between miss and Do so another request can
 			// fill the key and clear the in-flight entry first (Issue 6).
-			fpcAfterCacheMiss()
+			h.fpc.afterCacheMiss()
 		}
 
 		raw, err, shared := h.fpc.stampede.Do(key, h.fpc.stampedeWait, func() (any, error) {

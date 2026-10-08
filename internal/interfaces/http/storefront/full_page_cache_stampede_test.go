@@ -93,13 +93,13 @@ func TestFullPageCache_StampedeLeaderRechecksWarmCache(t *testing.T) {
 	release := make(chan struct{})
 	var blockFirst atomic.Bool
 	blockFirst.Store(true)
-	storefront.SetFPCAfterCacheMissForTest(func() {
+	h.WithFPCAfterCacheMissForTest(func() {
 		if blockFirst.CompareAndSwap(true, false) {
 			close(missSeen)
 			<-release
 		}
 	})
-	t.Cleanup(func() { storefront.SetFPCAfterCacheMissForTest(nil) })
+	t.Cleanup(func() { h.WithFPCAfterCacheMissForTest(nil) })
 
 	var slowRec *httptest.ResponseRecorder
 	var wg sync.WaitGroup
