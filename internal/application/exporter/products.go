@@ -7,10 +7,25 @@ import (
 	"io"
 	"sort"
 	"strconv"
+	"strings"
 
 	exportctx "github.com/akarso/shopanda/internal/application/exportctx"
 	"github.com/akarso/shopanda/internal/domain/catalog"
 )
+
+// productCSVBaseHeader is the fixed product/variant identity columns. Attribute
+// keys that collide with these names (case-insensitive, trimmed — matching
+// import header normalization) are omitted from the CSV (PR-1052).
+var productCSVBaseHeader = []string{"name", "slug", "sku", "description", "type", "variant_name"}
+
+func productCSVHeaderKey(s string) string {
+	return strings.TrimSpace(strings.ToLower(s))
+}
+
+func isReservedProductCSVColumn(baseColumns map[string]struct{}, key string) bool {
+	_, ok := baseColumns[productCSVHeaderKey(key)]
+	return ok
+}
 
 // Result holds the summary of an export run.
 type Result struct {
@@ -18,6 +33,7 @@ type Result struct {
 	Variants  int
 	Skipped   int
 	Errors    []string
+	Warnings  []string
 	RowErrors []exportctx.ExportError
 }
 
@@ -44,8 +60,9 @@ const pageSize = 100
 
 // Export writes all products and their variants to w in CSV format.
 //
-// CSV columns: name, slug, sku, description, variant_name, plus any attribute
-// keys found across all variants. Attribute columns are sorted alphabetically.
+// CSV columns: name, slug, sku, description, type, variant_name, plus any
+// attribute keys found across all variants. Attribute columns are sorted
+// alphabetically.
 func (exp *ProductExporter) Export(ctx context.Context, w io.Writer) (*Result, error) {
 	// 1. Collect all products and variants.
 	type row struct {
@@ -90,15 +107,25 @@ func (exp *ProductExporter) Export(ctx context.Context, w io.Writer) (*Result, e
 	}
 
 	// 2. Sort attribute keys for deterministic column order.
+	// Keys that collide with productCSVBaseHeader are omitted so they cannot
+	// overwrite taxonomy/identity cells or duplicate header names (PR-1052).
+	baseColumns := make(map[string]struct{}, len(productCSVBaseHeader))
+	for _, col := range productCSVBaseHeader {
+		baseColumns[productCSVHeaderKey(col)] = struct{}{}
+	}
+	var omittedReserved []string
 	sortedAttrs := make([]string, 0, len(attrKeys))
 	for k := range attrKeys {
+		if isReservedProductCSVColumn(baseColumns, k) {
+			omittedReserved = append(omittedReserved, k) // original spelling for operators
+			continue
+		}
 		sortedAttrs = append(sortedAttrs, k)
 	}
 	sort.Strings(sortedAttrs)
+	sort.Strings(omittedReserved)
 
-	sort.Strings(sortedAttrs)
-
-	baseHeader := []string{"name", "slug", "sku", "description", "variant_name"}
+	baseHeader := append([]string{}, productCSVBaseHeader...)
 	baseHeader = append(baseHeader, sortedAttrs...)
 
 	// 3. Run row hooks and collect processed rows.
@@ -108,16 +135,33 @@ func (exp *ProductExporter) Export(ctx context.Context, w io.Writer) (*Result, e
 	}
 	processed := make([]exportRow, 0, len(rows))
 	result := &Result{}
+	if len(omittedReserved) > 0 {
+		// Non-fatal: CSV was written; operators must rename attrs to round-trip them.
+		result.Warnings = append(result.Warnings, fmt.Sprintf(
+			"omitted reserved attribute keys from CSV (rename attributes to export them): %s",
+			strings.Join(omittedReserved, ", "),
+		))
+	}
 	rowIndex := 0
 	for _, r := range rows {
+		productType := string(r.product.Type)
+		if productType == "" {
+			productType = string(catalog.TypeSimple)
+		}
+		// Invalid Type is emitted as-is so re-import fails closed rather than
+		// silently rewriting unexpected values to simple.
 		rowMap := map[string]string{
 			"name":         r.product.Name,
 			"slug":         r.product.Slug,
 			"sku":          r.variant.SKU,
 			"description":  r.product.Description,
+			"type":         productType,
 			"variant_name": r.variant.Name,
 		}
 		for k := range attrKeys {
+			if isReservedProductCSVColumn(baseColumns, k) {
+				continue
+			}
 			rowMap[k] = formatAttrValue(r.variant.Attributes[k])
 		}
 		rowIndex++
