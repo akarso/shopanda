@@ -214,23 +214,39 @@ func TestPriceImport_NegativeAmount(t *testing.T) {
 	if result.Skipped != 1 {
 		t.Errorf("Skipped = %d, want 1", result.Skipped)
 	}
-	if !strings.Contains(result.Errors[0], "must be positive") {
-		t.Errorf("error = %q, want mention of positive", result.Errors[0])
+	if !strings.Contains(result.Errors[0], "must be non-negative") {
+		t.Errorf("error = %q, want mention of non-negative", result.Errors[0])
 	}
 }
 
 func TestPriceImport_ZeroAmount(t *testing.T) {
 	variants := priceVariants()
 	prices := newMockPriceRepoForImport()
-	imp := importer.NewPriceImporter(variants, prices, nil, nil, nil)
+	history := &mockPriceHistoryRepoForImport{}
+	// Production always wires history (cmd/api/io_commands.go); nil history
+	// would skip NewPriceSnapshot and hide DB/domain failures.
+	imp := importer.NewPriceImporter(variants, prices, history, nil, nil)
 
 	input := "sku,currency,amount\nSKU-001,EUR,0\n"
 	result, err := imp.Import(context.Background(), strings.NewReader(input))
 	if err != nil {
 		t.Fatalf("Import() error = %v", err)
 	}
-	if result.Skipped != 1 {
-		t.Errorf("Skipped = %d, want 1", result.Skipped)
+	if result.Created != 1 || result.Skipped != 0 {
+		t.Fatalf("Created=%d Skipped=%d, want 1/0; errors=%v", result.Created, result.Skipped, result.Errors)
+	}
+	p, err := prices.FindByVariantCurrencyAndStore(context.Background(), "v1", "EUR", "")
+	if err != nil || p == nil {
+		t.Fatalf("FindByVariantCurrencyAndStore: %v price=%v", err, p)
+	}
+	if !p.Amount.IsZero() {
+		t.Fatalf("amount = %d, want 0", p.Amount.Amount())
+	}
+	if len(history.recorded) != 1 {
+		t.Fatalf("history snapshots = %d, want 1", len(history.recorded))
+	}
+	if !history.recorded[0].Amount.IsZero() {
+		t.Fatalf("history amount = %d, want 0", history.recorded[0].Amount.Amount())
 	}
 }
 

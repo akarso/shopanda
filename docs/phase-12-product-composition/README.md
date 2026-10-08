@@ -25,11 +25,11 @@ See [`ROADMAP.md`](ROADMAP.md) for the full track breakdown, sequencing, and PR 
 
 ## Status
 
-**Planned.** Not started — picked up after Phase 11 finishes. Track F (search/GraphQL closeout) has a hard dependency on Phase 11 Track B (search indexing) having shipped first.
+**In progress.** Standalone PR-1048 (allow zero-price products) is done. Track A (`Type` foundation) is next. Track F (search/GraphQL closeout) has a hard dependency on Phase 11 Track B (search indexing), which has already shipped.
 
 ## Relationship
 
 | Phase | Focus | Status |
 | --- | --- | --- |
-| Phase 11 | Jobs, search & cache — admin reachability + full-page cache | In progress |
-| **Phase 12** | Product types & composition — type model, visibility, bundle/grouped, linked products & assignment, downloadable | **Planned** |
+| Phase 11 | Jobs, search & cache — admin reachability + full-page cache | Shipped (PR-1027–1049) |
+| **Phase 12** | Product types & composition — type model, visibility, bundle/grouped, linked products & assignment, downloadable | **In progress** (PR-1048 done) |

@@ -181,6 +181,42 @@ func TestCatalogPromotionStep_PercentageDiscount(t *testing.T) {
 	}
 }
 
+func TestCatalogPromotionStep_PercentageDiscountOnZeroPrice(t *testing.T) {
+	promos := &stubPromotionRepo{promos: []promotion.Promotion{
+		makePromo("p1", "10% off", true, false,
+			map[string]string{"type": "always"},
+			map[string]interface{}{"type": "percentage", "percentage": 10}),
+	}}
+	step := appPricing.NewCatalogPromotionStep(promos, &stubCouponRepo{}, nil)
+	pctx := makePricingCtx(t, "USD", makeItem(t, "v1", 1, 0, "USD"))
+
+	if err := step.Apply(context.Background(), pctx); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	// Zero base → zero discount; step skips IsZero adjustments.
+	if len(pctx.Items[0].Adjustments) != 0 {
+		t.Fatalf("expected no adjustments on zero-priced line, got %d", len(pctx.Items[0].Adjustments))
+	}
+}
+
+func TestCatalogPromotionStep_FixedDiscountOnZeroPrice(t *testing.T) {
+	promos := &stubPromotionRepo{promos: []promotion.Promotion{
+		makePromo("p2", "$2 off", true, false,
+			map[string]string{"type": "always"},
+			map[string]interface{}{"type": "fixed", "amount": 200}),
+	}}
+	step := appPricing.NewCatalogPromotionStep(promos, &stubCouponRepo{}, nil)
+	pctx := makePricingCtx(t, "USD", makeItem(t, "v1", 1, 0, "USD"))
+
+	if err := step.Apply(context.Background(), pctx); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	// Fixed discount caps to line total (0) and is skipped.
+	if len(pctx.Items[0].Adjustments) != 0 {
+		t.Fatalf("expected no adjustments on zero-priced line, got %d", len(pctx.Items[0].Adjustments))
+	}
+}
+
 func TestCatalogPromotionStep_FixedDiscount(t *testing.T) {
 	promos := &stubPromotionRepo{promos: []promotion.Promotion{
 		makePromo("p2", "$2 off each", true, false,

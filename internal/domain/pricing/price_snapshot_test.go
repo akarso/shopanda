@@ -42,9 +42,12 @@ func TestNewPriceSnapshotEmptyVariantID(t *testing.T) {
 
 func TestNewPriceSnapshotZeroAmount(t *testing.T) {
 	amount := shared.MustNewMoney(0, "EUR")
-	_, err := NewPriceSnapshot(id.New(), "v1", "", amount)
-	if err == nil {
-		t.Fatal("expected error for zero amount")
+	s, err := NewPriceSnapshot(id.New(), "v1", "", amount)
+	if err != nil {
+		t.Fatalf("zero amount must be allowed: %v", err)
+	}
+	if !s.Amount.IsZero() {
+		t.Fatalf("amount = %v, want zero", s.Amount)
 	}
 }
 

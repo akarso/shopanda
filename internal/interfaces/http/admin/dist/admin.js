@@ -1857,7 +1857,7 @@
             html += '<td><input data-field="name" value="' + esc(v.name || '') + '"></td>';
             html += '<td><input data-field="weight" type="number" step="0.01" min="0" value="' + esc(v.weight == null ? '' : String(v.weight)) + '"></td>';
             if (currency) {
-                html += '<td><input data-field="price" type="number" step="1" min="1" aria-label="Store price for ' + variantLabel + '"><span class="variant-price-scope-hint settings-scope-note"></span> <button type="button" aria-label="Save price ' + variantLabel + '" class="variant-price-save-btn">Save Price</button></td>';
+                html += '<td><input data-field="price" type="number" step="1" min="0" aria-label="Store price for ' + variantLabel + '"><span class="variant-price-scope-hint settings-scope-note"></span> <button type="button" aria-label="Save price ' + variantLabel + '" class="variant-price-save-btn">Save Price</button></td>';
             } else {
                 html += '<td><span class="settings-scope-note">Select a currency context to edit price.</span></td>';
             }
@@ -6205,7 +6205,7 @@
                             "<td>" + esc(item.sku || "") + "</td>" +
                             "<td>" + esc(item.product_name || "") + "</td>" +
                             "<td>" + esc(item.variant_name || "") + "</td>" +
-                            '<td><input data-field="price" type="number" step="1" min="1" aria-label="Price for ' + esc(item.sku || item.variant_id || "variant") + '" style="width:7rem"' +
+                            '<td><input data-field="price" type="number" step="1" min="0" aria-label="Price for ' + esc(item.sku || item.variant_id || "variant") + '" style="width:7rem"' +
                             (canWrite ? "" : " disabled") + "></td>" +
                             '<td class="bulk-price-scope"><span class="settings-scope-note">Loading…</span></td>';
                         if (canWrite) {
