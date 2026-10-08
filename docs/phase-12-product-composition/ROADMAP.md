@@ -203,7 +203,8 @@ Each PR is tagged **`[oss]`** unless noted.
 | --- | --- | --- |
 | 1048 | — | done |
 | 1049 | A | done |
-| 1050–1053 | A | planned |
+| 1050 | A | done |
+| 1051–1053 | A | planned |
 | 1054–1059 | B | planned |
 | 1060–1066 | C | planned |
 | 1067–1073 | D | planned |
@@ -220,4 +221,4 @@ PR specs: [`prs/`](prs/).
 | --- | --- | --- |
 | Phase 10 | Platform excellence (quality / security / ops / architecture) | Shipped (PR-1000–1026; PR-1003 the only open item, unrelated to this phase) |
 | Phase 11 | Jobs, search & cache — admin reachability + full-page cache | Shipped (PR-1027–1049 under phase-11 docs — not the same as Phase 12 PR-1048/1049) |
-| **Phase 12** | Product types & composition | **In progress** (PR-1048–1049 done; numbering collides with Phase 11 — disambiguate by phase folder) |
+| **Phase 12** | Product types & composition | **In progress** (PR-1048–1050 done; numbering collides with Phase 11 — disambiguate by phase folder) |

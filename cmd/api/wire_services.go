@@ -543,7 +543,7 @@ func wireServeRuntime(cfg *config.Config, log logger.Logger, conn *sql.DB, repos
 		WithMaxIssueAmount(cfg.StoreCredit.MaxIssueAmount)
 
 	// Checkout workflow.
-	validateCartStep := checkoutApp.NewValidateCartStep(repos.variantRepo)
+	validateCartStep := checkoutApp.NewValidateCartStep(repos.variantRepo, repos.productRepo)
 	recalculatePricingStep := checkoutApp.NewRecalculatePricingStep(pricingPipeline)
 	reserveInventoryStep := checkoutApp.NewReserveInventoryStep(repos.reservationRepo,
 		checkoutApp.WithStockEventPublishing(repos.variantRepo, bus))

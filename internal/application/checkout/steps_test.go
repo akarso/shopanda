@@ -134,7 +134,7 @@ func variantMap(ids ...string) map[string]*catalog.Variant {
 // ============================================================
 
 func TestValidateCartStep_Name(t *testing.T) {
-	step := checkout.NewValidateCartStep(&mockVariantRepo{})
+	step := checkout.NewValidateCartStep(&mockVariantRepo{}, &mockProductRepo047{})
 	if step.Name() != "validate_cart" {
 		t.Errorf("Name() = %q, want validate_cart", step.Name())
 	}
@@ -142,7 +142,7 @@ func TestValidateCartStep_Name(t *testing.T) {
 
 func TestValidateCartStep_Success(t *testing.T) {
 	repo := &mockVariantRepo{variants: variantMap("v1", "v2")}
-	step := checkout.NewValidateCartStep(repo)
+	step := checkout.NewValidateCartStep(repo, &mockProductRepo047{})
 
 	cctx := checkout.NewContext("cart-1", "cust-1", "EUR")
 	cctx.Cart = cartWithItems(t, "cust-1", "v1", "v2")
@@ -153,11 +153,29 @@ func TestValidateCartStep_Success(t *testing.T) {
 	if v, ok := cctx.GetMeta("validated"); !ok || v != true {
 		t.Error("expected validated=true in meta")
 	}
+	if v, ok := cctx.GetMeta(checkout.ShippingRequiredMetaKey); !ok || v != true {
+		t.Errorf("shipping_required = %#v, want true for simple products", v)
+	}
+}
+
+func TestValidateCartStep_SetsDigitalShippingNotRequired(t *testing.T) {
+	repo := &mockVariantRepo{variants: variantMap("v1")}
+	step := checkout.NewValidateCartStep(repo, &mockProductRepo047{defaultType: catalog.TypeVirtual})
+
+	cctx := checkout.NewContext("cart-1", "cust-1", "EUR")
+	cctx.Cart = cartWithItems(t, "cust-1", "v1")
+
+	if err := step.Execute(context.Background(), cctx); err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	if v, ok := cctx.GetMeta(checkout.ShippingRequiredMetaKey); !ok || v != false {
+		t.Errorf("shipping_required = %#v, want false for virtual products", v)
+	}
 }
 
 func TestValidateCartStep_MissingVariant(t *testing.T) {
 	repo := &mockVariantRepo{variants: variantMap("v1")} // v2 missing
-	step := checkout.NewValidateCartStep(repo)
+	step := checkout.NewValidateCartStep(repo, &mockProductRepo047{})
 
 	cctx := checkout.NewContext("cart-1", "cust-1", "EUR")
 	cctx.Cart = cartWithItems(t, "cust-1", "v1", "v2")
@@ -173,7 +191,7 @@ func TestValidateCartStep_MissingVariant(t *testing.T) {
 
 func TestValidateCartStep_RepoError(t *testing.T) {
 	repo := &mockVariantRepo{err: errors.New("db down")}
-	step := checkout.NewValidateCartStep(repo)
+	step := checkout.NewValidateCartStep(repo, &mockProductRepo047{})
 
 	cctx := checkout.NewContext("cart-1", "cust-1", "EUR")
 	cctx.Cart = cartWithItems(t, "cust-1", "v1")
@@ -189,7 +207,7 @@ func TestValidateCartStep_RepoError(t *testing.T) {
 
 func TestValidateCartStep_NilCart(t *testing.T) {
 	repo := &mockVariantRepo{variants: variantMap("v1")}
-	step := checkout.NewValidateCartStep(repo)
+	step := checkout.NewValidateCartStep(repo, &mockProductRepo047{})
 
 	cctx := checkout.NewContext("cart-1", "cust-1", "EUR")
 	// Cart not set
@@ -202,7 +220,7 @@ func TestValidateCartStep_NilCart(t *testing.T) {
 
 func TestValidateCartStep_Idempotent(t *testing.T) {
 	repo := &mockVariantRepo{variants: variantMap("v1")}
-	step := checkout.NewValidateCartStep(repo)
+	step := checkout.NewValidateCartStep(repo, &mockProductRepo047{})
 
 	cctx := checkout.NewContext("cart-1", "cust-1", "EUR")
 	cctx.Cart = cartWithItems(t, "cust-1", "v1")
@@ -220,7 +238,7 @@ func TestValidateCartStep_Idempotent(t *testing.T) {
 
 func TestValidateCartStep_EmptyCart(t *testing.T) {
 	repo := &mockVariantRepo{variants: variantMap()}
-	step := checkout.NewValidateCartStep(repo)
+	step := checkout.NewValidateCartStep(repo, &mockProductRepo047{})
 
 	c, err := cart.NewCart(id.New(), "EUR")
 	if err != nil {

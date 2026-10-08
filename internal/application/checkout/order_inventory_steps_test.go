@@ -442,7 +442,7 @@ func TestReserveInventoryStep_RollbackEmitsStockUpdatedEvent(t *testing.T) {
 func TestReserveInventoryStep_ReusesValidateCartStepResolvedVariant(t *testing.T) {
 	repo := &mockReservationRepo{}
 	variants := &mockVariantRepo037{variants: variantMap037("v1")}
-	validateStep := checkout.NewValidateCartStep(variants)
+	validateStep := checkout.NewValidateCartStep(variants, &mockProductRepo047{})
 	bus := event.NewBus(logger.New("error"))
 	reserveStep := checkout.NewReserveInventoryStep(repo, checkout.WithStockEventPublishing(variants, bus))
 

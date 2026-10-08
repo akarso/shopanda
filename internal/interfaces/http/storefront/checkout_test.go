@@ -383,7 +383,7 @@ func checkoutBuild(creditRepo *stubCheckoutStoreCreditRepo, withPayment bool) (*
 		pricing.NewFinalizeStep(),
 	)
 
-	validateStep := checkoutApp.NewValidateCartStep(variants)
+	validateStep := checkoutApp.NewValidateCartStep(variants, &mockStorefrontRepo{})
 	pricingStep := checkoutApp.NewRecalculatePricingStep(pipeline)
 	reserveStep := checkoutApp.NewReserveInventoryStep(reservations)
 	createOrderStep := checkoutApp.NewCreateOrderStep(orders, variants, creditSvc, nil)

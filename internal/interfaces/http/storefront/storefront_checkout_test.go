@@ -201,7 +201,7 @@ func testPaymentRegistry(providers ...payment.Provider) *payment.ProviderRegistr
 	return reg
 }
 
-func newStorefrontCheckoutService(carts *storefrontCartRepoStub, prices *storefrontPriceRepoStub, variants catalog.VariantRepository) (*checkoutApp.Service, shipping.Provider, *payment.ProviderRegistry, *storefrontCheckoutOrderRepoStub) {
+func newStorefrontCheckoutService(carts *storefrontCartRepoStub, prices *storefrontPriceRepoStub, products catalog.ProductRepository, variants catalog.VariantRepository) (*checkoutApp.Service, shipping.Provider, *payment.ProviderRegistry, *storefrontCheckoutOrderRepoStub, *storefrontCheckoutShipmentRepoStub) {
 	log := logger.NewWithWriter(io.Discard, "error")
 	bus := event.NewBus(log)
 	pipeline := pricing.NewPipeline(appPricing.NewBasePriceStep(prices), pricing.NewFinalizeStep())
@@ -212,15 +212,18 @@ func newStorefrontCheckoutService(carts *storefrontCartRepoStub, prices *storefr
 	shippingReg := shipping.NewProviderRegistry()
 	shippingReg.Register(shippingProvider)
 	payRegistry := testPaymentRegistry(manualpay.NewProvider())
+	if products == nil {
+		products = &mockStorefrontRepo{}
+	}
 	workflow := checkoutApp.NewWorkflow([]checkoutApp.Step{
-		checkoutApp.NewValidateCartStep(variants),
+		checkoutApp.NewValidateCartStep(variants, products),
 		checkoutApp.NewRecalculatePricingStep(pipeline),
 		checkoutApp.NewReserveInventoryStep(&storefrontCheckoutReservationRepoStub{}),
 		checkoutApp.NewCreateOrderStep(orders, variants, nil, nil),
 		checkoutApp.NewSelectShippingStep(shippingReg, shipments),
 		checkoutApp.NewInitiatePaymentStep(payRegistry, payments),
 	}, bus, log)
-	return checkoutApp.NewService(carts, workflow, log), shippingProvider, payRegistry, orders
+	return checkoutApp.NewService(carts, workflow, log), shippingProvider, payRegistry, orders, shipments
 }
 
 func TestStorefrontHandler_CheckoutAddress_GuestCanAccessAddressForm(t *testing.T) {
@@ -239,8 +242,9 @@ func TestStorefrontHandler_CheckoutAddress_GuestCanAccessAddressForm(t *testing.
 	variants := &mockStorefrontVariantRepo{findByIDFn: func(_ context.Context, id string) (*catalog.Variant, error) {
 		return &catalog.Variant{ID: id, ProductID: "prod-1", SKU: "SKU-1", Name: "Widget Default"}, nil
 	}}
-	checkoutSvc, shippingProvider, payRegistry, _ := newStorefrontCheckoutService(carts, prices, variants)
-	h := storefront.NewStorefrontHandler(engine, &mockStorefrontRepo{}, newStorefrontCategoryMock(), pdp, plp, newStorefrontSearchMock()).WithCart(variants, cartSvc).WithCheckout([]shipping.Provider{shippingProvider}, payRegistry, checkoutSvc)
+	products := &mockStorefrontRepo{}
+	checkoutSvc, shippingProvider, payRegistry, _, _ := newStorefrontCheckoutService(carts, prices, products, variants)
+	h := storefront.NewStorefrontHandler(engine, products, newStorefrontCategoryMock(), pdp, plp, newStorefrontSearchMock()).WithCart(variants, cartSvc).WithCheckout([]shipping.Provider{shippingProvider}, payRegistry, checkoutSvc)
 
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest("GET", "/checkout/address", nil)
@@ -271,8 +275,9 @@ func TestStorefrontHandler_CheckoutShipping_GuestRequiresContactEmail(t *testing
 	variants := &mockStorefrontVariantRepo{findByIDFn: func(_ context.Context, id string) (*catalog.Variant, error) {
 		return &catalog.Variant{ID: id, ProductID: "prod-1", SKU: "SKU-1", Name: "Widget Default"}, nil
 	}}
-	checkoutSvc, shippingProvider, payRegistry, _ := newStorefrontCheckoutService(carts, prices, variants)
-	h := storefront.NewStorefrontHandler(engine, &mockStorefrontRepo{}, newStorefrontCategoryMock(), pdp, plp, newStorefrontSearchMock()).WithCart(variants, cartSvc).WithCheckout([]shipping.Provider{shippingProvider}, payRegistry, checkoutSvc)
+	products := &mockStorefrontRepo{}
+	checkoutSvc, shippingProvider, payRegistry, _, _ := newStorefrontCheckoutService(carts, prices, products, variants)
+	h := storefront.NewStorefrontHandler(engine, products, newStorefrontCategoryMock(), pdp, plp, newStorefrontSearchMock()).WithCart(variants, cartSvc).WithCheckout([]shipping.Provider{shippingProvider}, payRegistry, checkoutSvc)
 	router := newStorefrontRouter(h)
 
 	addressRec := httptest.NewRecorder()
@@ -328,7 +333,7 @@ func TestStorefrontHandler_CheckoutFlow_Manual_GuestOK(t *testing.T) {
 	plp := composition.NewPipeline[composition.ListingContext]()
 	cartSvc, carts, prices := newStorefrontCartService()
 	prices.set("var-1", "EUR", 1500)
-	checkoutSvc, shippingProvider, payRegistry, orders := newStorefrontCheckoutService(carts, prices, variants)
+	checkoutSvc, shippingProvider, payRegistry, orders, _ := newStorefrontCheckoutService(carts, prices, products, variants)
 	h := storefront.NewStorefrontHandler(engine, products, newStorefrontCategoryMock(), pdp, plp, newStorefrontSearchMock()).WithCart(variants, cartSvc).WithCheckout([]shipping.Provider{shippingProvider}, payRegistry, checkoutSvc)
 	router := newStorefrontRouter(h)
 
@@ -447,6 +452,106 @@ func TestStorefrontHandler_CheckoutFlow_Manual_GuestOK(t *testing.T) {
 	}
 }
 
+func TestStorefrontHandler_CheckoutFlow_DigitalOnly_SkipsShipping(t *testing.T) {
+	products := &mockStorefrontRepo{findByIDFn: func(_ context.Context, id string) (*catalog.Product, error) {
+		return &catalog.Product{ID: id, Name: "Virtual Card", Slug: "card", Status: catalog.StatusActive, Type: catalog.TypeVirtual}, nil
+	}}
+	variants := &mockStorefrontVariantRepo{findByIDFn: func(_ context.Context, id string) (*catalog.Variant, error) {
+		return &catalog.Variant{ID: id, ProductID: "prod-1", SKU: "VIRT-1", Name: "Default"}, nil
+	}}
+	engine := createTestTheme(t)
+	pdp := composition.NewPipeline[composition.ProductContext]()
+	plp := composition.NewPipeline[composition.ListingContext]()
+	cartSvc, carts, prices := newStorefrontCartService()
+	prices.set("var-1", "EUR", 1500)
+	checkoutSvc, shippingProvider, payRegistry, orders, shipments := newStorefrontCheckoutService(carts, prices, products, variants)
+	h := storefront.NewStorefrontHandler(engine, products, newStorefrontCategoryMock(), pdp, plp, newStorefrontSearchMock()).WithCart(variants, cartSvc).WithCheckout([]shipping.Provider{shippingProvider}, payRegistry, checkoutSvc)
+	router := newStorefrontRouter(h)
+
+	currentCart, err := cartSvc.CreateCart(context.Background(), "", "EUR")
+	if err != nil {
+		t.Fatalf("CreateCart: %v", err)
+	}
+	if _, err := cartSvc.AddItem(context.Background(), currentCart.ID, "", "var-1", 1, cartApp.AddItemOptions{}); err != nil {
+		t.Fatalf("AddItem: %v", err)
+	}
+
+	addressRec := httptest.NewRecorder()
+	addressReq := httptest.NewRequest("GET", "/checkout/address", nil)
+	addressReq.AddCookie(&http.Cookie{Name: "shopanda_storefront_cart", Value: currentCart.ID})
+	router.ServeHTTP(addressRec, addressReq)
+	if addressRec.Code != http.StatusOK {
+		t.Fatalf("address status = %d, want %d; body: %s", addressRec.Code, http.StatusOK, addressRec.Body.String())
+	}
+	body := addressRec.Body.String()
+	if !strings.Contains(body, "Continue to Payment") {
+		t.Fatalf("digital address page should continue to payment: %s", body)
+	}
+	if !strings.Contains(body, `action="/checkout/payment"`) {
+		t.Fatalf("digital address form should post to payment: %s", body)
+	}
+	if strings.Contains(body, `data-progress="Shipping"`) {
+		t.Fatalf("digital progress should omit Shipping: %s", body)
+	}
+	var csrfCookie *http.Cookie
+	for _, cookie := range addressRec.Result().Cookies() {
+		if cookie.Name == "shopanda_csrf" {
+			csrfCookie = cookie
+			break
+		}
+	}
+	if csrfCookie == nil {
+		t.Fatal("expected checkout CSRF cookie")
+	}
+
+	addressForm := url.Values{
+		"csrf_token":    {csrfCookie.Value},
+		"contact_email": {"digital@example.com"},
+		"first_name":    {"Ada"},
+		"last_name":     {"Lovelace"},
+		"street":        {"1 Logic Lane"},
+		"city":          {"Berlin"},
+		"postcode":      {"10115"},
+		"country":       {"DE"},
+	}
+	paymentRec := httptest.NewRecorder()
+	paymentReq := httptest.NewRequest("POST", "/checkout/payment", strings.NewReader(addressForm.Encode()))
+	paymentReq.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	paymentReq.AddCookie(csrfCookie)
+	paymentReq.AddCookie(&http.Cookie{Name: "shopanda_storefront_cart", Value: currentCart.ID})
+	router.ServeHTTP(paymentRec, paymentReq)
+	if paymentRec.Code != http.StatusOK {
+		t.Fatalf("payment status = %d, want %d; body: %s", paymentRec.Code, http.StatusOK, paymentRec.Body.String())
+	}
+
+	confirmForm := url.Values{
+		"csrf_token":     {csrfCookie.Value},
+		"contact_email":  {"digital@example.com"},
+		"first_name":     {"Ada"},
+		"last_name":      {"Lovelace"},
+		"street":         {"1 Logic Lane"},
+		"city":           {"Berlin"},
+		"postcode":       {"10115"},
+		"country":        {"DE"},
+		"payment_method": {"manual"},
+	}
+	confirmRec := httptest.NewRecorder()
+	confirmReq := httptest.NewRequest("POST", "/checkout/confirm", strings.NewReader(confirmForm.Encode()))
+	confirmReq.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	confirmReq.AddCookie(csrfCookie)
+	confirmReq.AddCookie(&http.Cookie{Name: "shopanda_storefront_cart", Value: currentCart.ID})
+	router.ServeHTTP(confirmRec, confirmReq)
+	if confirmRec.Code != http.StatusOK {
+		t.Fatalf("confirm status = %d, want %d; body: %s", confirmRec.Code, http.StatusOK, confirmRec.Body.String())
+	}
+	if orders.saved == nil {
+		t.Fatal("expected digital checkout to save an order")
+	}
+	if shipments.created != nil {
+		t.Fatal("digital checkout must not create a shipment")
+	}
+}
+
 func TestStorefrontHandler_CheckoutAddress_AllowsAuthenticatedCustomerWithoutAccountSecurityWiring(t *testing.T) {
 	products := &mockStorefrontRepo{findByIDFn: func(_ context.Context, id string) (*catalog.Product, error) {
 		return &catalog.Product{ID: id, Name: "Widget", Slug: "widget"}, nil
@@ -459,7 +564,7 @@ func TestStorefrontHandler_CheckoutAddress_AllowsAuthenticatedCustomerWithoutAcc
 	plp := composition.NewPipeline[composition.ListingContext]()
 	cartSvc, carts, prices := newStorefrontCartService()
 	prices.set("var-1", "EUR", 1500)
-	checkoutSvc, shippingProvider, payRegistry, _ := newStorefrontCheckoutService(carts, prices, variants)
+	checkoutSvc, shippingProvider, payRegistry, _, _ := newStorefrontCheckoutService(carts, prices, products, variants)
 	h := storefront.NewStorefrontHandler(engine, products, newStorefrontCategoryMock(), pdp, plp, newStorefrontSearchMock()).WithCart(variants, cartSvc).WithCheckout([]shipping.Provider{shippingProvider}, payRegistry, checkoutSvc)
 	router := newStorefrontRouter(h)
 
@@ -495,7 +600,7 @@ func TestStorefrontHandler_CheckoutAddress_RedirectsToEmailVerification_WhenEmai
 	plp := composition.NewPipeline[composition.ListingContext]()
 	cartSvc, carts, prices := newStorefrontCartService()
 	prices.set("var-1", "EUR", 1500)
-	checkoutSvc, shippingProvider, payRegistry, _ := newStorefrontCheckoutService(carts, prices, variants)
+	checkoutSvc, shippingProvider, payRegistry, _, _ := newStorefrontCheckoutService(carts, prices, products, variants)
 	bus := event.NewBus(logger.New("error"))
 	var published []customer.EmailVerificationRequestedData
 	bus.On(customer.EventEmailVerificationRequested, func(_ context.Context, evt event.Event) error {
@@ -547,7 +652,7 @@ func TestStorefrontHandler_CheckoutFlow_Manual_OK(t *testing.T) {
 	plp := composition.NewPipeline[composition.ListingContext]()
 	cartSvc, carts, prices := newStorefrontCartService()
 	prices.set("var-1", "EUR", 1500)
-	checkoutSvc, shippingProvider, payRegistry, orders := newStorefrontCheckoutService(carts, prices, variants)
+	checkoutSvc, shippingProvider, payRegistry, orders, _ := newStorefrontCheckoutService(carts, prices, products, variants)
 	authSvc, repo := newStorefrontAuthService(t)
 	out, err := authSvc.Register(context.Background(), appAuth.RegisterInput{Email: "ada@example.com", Password: "password123", FirstName: "Ada", LastName: "Lovelace"})
 	if err != nil {
@@ -680,7 +785,7 @@ func TestStorefrontHandler_CheckoutConfirm_RedirectsToEmailVerification_WhenEmai
 	plp := composition.NewPipeline[composition.ListingContext]()
 	cartSvc, carts, prices := newStorefrontCartService()
 	prices.set("var-1", "EUR", 1500)
-	checkoutSvc, shippingProvider, payRegistry, orders := newStorefrontCheckoutService(carts, prices, variants)
+	checkoutSvc, shippingProvider, payRegistry, orders, _ := newStorefrontCheckoutService(carts, prices, products, variants)
 	bus := event.NewBus(logger.New("error"))
 	var published []customer.EmailVerificationRequestedData
 	bus.On(customer.EventEmailVerificationRequested, func(_ context.Context, evt event.Event) error {
@@ -762,7 +867,7 @@ func TestStorefrontHandler_CheckoutConfirm_ResumesPaymentAfterEmailVerification(
 	plp := composition.NewPipeline[composition.ListingContext]()
 	cartSvc, carts, prices := newStorefrontCartService()
 	prices.set("var-1", "EUR", 1500)
-	checkoutSvc, shippingProvider, payRegistry, orders := newStorefrontCheckoutService(carts, prices, variants)
+	checkoutSvc, shippingProvider, payRegistry, orders, _ := newStorefrontCheckoutService(carts, prices, products, variants)
 	bus := event.NewBus(logger.New("error"))
 	var published []customer.EmailVerificationRequestedData
 	bus.On(customer.EventEmailVerificationRequested, func(_ context.Context, evt event.Event) error {
@@ -863,7 +968,7 @@ func TestStorefrontHandler_CheckoutAddress_FallsBackToAddressFormOnInvalidResume
 	plp := composition.NewPipeline[composition.ListingContext]()
 	cartSvc, carts, prices := newStorefrontCartService()
 	prices.set("var-1", "EUR", 1500)
-	checkoutSvc, shippingProvider, payRegistry, orders := newStorefrontCheckoutService(carts, prices, variants)
+	checkoutSvc, shippingProvider, payRegistry, orders, _ := newStorefrontCheckoutService(carts, prices, products, variants)
 	authSvc, repo := newStorefrontAuthService(t)
 	out, err := authSvc.Register(context.Background(), appAuth.RegisterInput{Email: "ada@example.com", Password: "password123", FirstName: "Ada", LastName: "Lovelace"})
 	if err != nil {
@@ -981,8 +1086,9 @@ func TestStorefrontHandler_CheckoutShipping_RejectsMissingCSRF(t *testing.T) {
 	variants := &mockStorefrontVariantRepo{findByIDFn: func(_ context.Context, id string) (*catalog.Variant, error) {
 		return &catalog.Variant{ID: id, ProductID: "prod-1", SKU: "SKU-1", Name: "Widget Default"}, nil
 	}}
-	checkoutSvc, shippingProvider, payRegistry, _ := newStorefrontCheckoutService(carts, prices, variants)
-	h := storefront.NewStorefrontHandler(engine, &mockStorefrontRepo{}, newStorefrontCategoryMock(), pdp, plp, newStorefrontSearchMock()).WithCart(variants, cartSvc).WithCheckout([]shipping.Provider{shippingProvider}, payRegistry, checkoutSvc)
+	products := &mockStorefrontRepo{}
+	checkoutSvc, shippingProvider, payRegistry, _, _ := newStorefrontCheckoutService(carts, prices, products, variants)
+	h := storefront.NewStorefrontHandler(engine, products, newStorefrontCategoryMock(), pdp, plp, newStorefrontSearchMock()).WithCart(variants, cartSvc).WithCheckout([]shipping.Provider{shippingProvider}, payRegistry, checkoutSvc)
 
 	currentCart, err := cartSvc.CreateCart(context.Background(), "cust-1", "EUR")
 	if err != nil {

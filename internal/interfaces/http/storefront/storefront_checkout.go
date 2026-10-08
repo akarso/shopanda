@@ -1,6 +1,7 @@
 package storefront
 
 import (
+	"context"
 	"fmt"
 	"net/http"
 	"net/mail"
@@ -82,6 +83,7 @@ type StorefrontCheckoutPageData struct {
 	CSRFToken      string
 	ErrorMessage   string
 	StripePending  bool
+	NeedsShipping  bool
 	PrimaryAction  string
 	SecondaryURL   string
 	SecondaryLabel string
@@ -133,7 +135,11 @@ func (h *StorefrontHandler) CheckoutAddress() http.HandlerFunc {
 			}
 			h.prefillCheckoutFromDefaultAddress(r, customerID, &page)
 		}
-		page.PrimaryAction = "/checkout/shipping"
+		if page.NeedsShipping {
+			page.PrimaryAction = "/checkout/shipping"
+		} else {
+			page.PrimaryAction = "/checkout/payment"
+		}
 		page.SecondaryURL = "/cart"
 		page.SecondaryLabel = "Back to cart"
 		h.renderPage(w, "checkout_address", page)
@@ -154,13 +160,25 @@ func (h *StorefrontHandler) CheckoutShipping() http.HandlerFunc {
 		if !ok {
 			return
 		}
+		if !page.NeedsShipping {
+			page.Progress = storefrontCheckoutProgress("payment", false)
+			page.PaymentMethods = storefrontCheckoutPaymentMethods(h.payments)
+			if len(page.PaymentMethods) == 1 {
+				page.Payment = page.PaymentMethods[0]
+			}
+			page.PrimaryAction = "/checkout/confirm"
+			page.SecondaryURL = "/checkout/address"
+			page.SecondaryLabel = "Start over"
+			h.renderPage(w, "checkout_payment", page)
+			return
+		}
 		rates, err := h.checkoutRates(r, currentCart)
 		if err != nil {
 			page.ErrorMessage = "No shipping rates are available for this cart right now."
 			h.renderPageStatus(w, "checkout_address", page, http.StatusUnprocessableEntity)
 			return
 		}
-		page.Progress = storefrontCheckoutProgress("shipping")
+		page.Progress = storefrontCheckoutProgress("shipping", true)
 		page.Rates = rates
 		page.SelectedRate = storefrontFindCheckoutRate(rates, strings.TrimSpace(r.FormValue("shipping_method")))
 		page.PrimaryAction = "/checkout/payment"
@@ -184,24 +202,30 @@ func (h *StorefrontHandler) CheckoutPayment() http.HandlerFunc {
 		if !ok {
 			return
 		}
-		rates, err := h.checkoutRates(r, currentCart)
-		if err != nil {
-			page.ErrorMessage = "No shipping rates are available for this cart right now."
-			h.renderPageStatus(w, "checkout_address", page, http.StatusUnprocessableEntity)
-			return
+		needsShipping := page.NeedsShipping
+		var rates []StorefrontCheckoutRate
+		var selected *StorefrontCheckoutRate
+		if needsShipping {
+			var err error
+			rates, err = h.checkoutRates(r, currentCart)
+			if err != nil {
+				page.ErrorMessage = "No shipping rates are available for this cart right now."
+				h.renderPageStatus(w, "checkout_address", page, http.StatusUnprocessableEntity)
+				return
+			}
+			selected = storefrontFindCheckoutRate(rates, strings.TrimSpace(r.FormValue("shipping_method")))
+			if selected == nil {
+				page.Progress = storefrontCheckoutProgress("shipping", true)
+				page.Rates = rates
+				page.ErrorMessage = "Select a shipping method to continue."
+				page.PrimaryAction = "/checkout/payment"
+				page.SecondaryURL = "/checkout/address"
+				page.SecondaryLabel = "Edit address"
+				h.renderPageStatus(w, "checkout_shipping", page, http.StatusUnprocessableEntity)
+				return
+			}
 		}
-		selected := storefrontFindCheckoutRate(rates, strings.TrimSpace(r.FormValue("shipping_method")))
-		if selected == nil {
-			page.Progress = storefrontCheckoutProgress("shipping")
-			page.Rates = rates
-			page.ErrorMessage = "Select a shipping method to continue."
-			page.PrimaryAction = "/checkout/payment"
-			page.SecondaryURL = "/checkout/address"
-			page.SecondaryLabel = "Edit address"
-			h.renderPageStatus(w, "checkout_shipping", page, http.StatusUnprocessableEntity)
-			return
-		}
-		page.Progress = storefrontCheckoutProgress("payment")
+		page.Progress = storefrontCheckoutProgress("payment", needsShipping)
 		page.Rates = rates
 		page.SelectedRate = selected
 		page.PaymentMethods = storefrontCheckoutPaymentMethods(h.payments)
@@ -229,24 +253,30 @@ func (h *StorefrontHandler) CheckoutConfirm() http.HandlerFunc {
 		if !ok {
 			return
 		}
-		rates, err := h.checkoutRates(r, currentCart)
-		if err != nil {
-			page.ErrorMessage = "No shipping rates are available for this cart right now."
-			h.renderPageStatus(w, "checkout_address", page, http.StatusUnprocessableEntity)
-			return
+		needsShipping := page.NeedsShipping
+		var rates []StorefrontCheckoutRate
+		var selectedRate *StorefrontCheckoutRate
+		if needsShipping {
+			var err error
+			rates, err = h.checkoutRates(r, currentCart)
+			if err != nil {
+				page.ErrorMessage = "No shipping rates are available for this cart right now."
+				h.renderPageStatus(w, "checkout_address", page, http.StatusUnprocessableEntity)
+				return
+			}
+			selectedRate = storefrontFindCheckoutRate(rates, strings.TrimSpace(r.FormValue("shipping_method")))
+			if selectedRate == nil {
+				page.Progress = storefrontCheckoutProgress("shipping", true)
+				page.Rates = rates
+				page.ErrorMessage = "Select a shipping method to continue."
+				page.PrimaryAction = "/checkout/payment"
+				page.SecondaryURL = "/checkout/address"
+				page.SecondaryLabel = "Edit address"
+				h.renderPageStatus(w, "checkout_shipping", page, http.StatusUnprocessableEntity)
+				return
+			}
 		}
-		selectedRate := storefrontFindCheckoutRate(rates, strings.TrimSpace(r.FormValue("shipping_method")))
-		if selectedRate == nil {
-			page.Progress = storefrontCheckoutProgress("shipping")
-			page.Rates = rates
-			page.ErrorMessage = "Select a shipping method to continue."
-			page.PrimaryAction = "/checkout/payment"
-			page.SecondaryURL = "/checkout/address"
-			page.SecondaryLabel = "Edit address"
-			h.renderPageStatus(w, "checkout_shipping", page, http.StatusUnprocessableEntity)
-			return
-		}
-		page.Progress = storefrontCheckoutProgress("payment")
+		page.Progress = storefrontCheckoutProgress("payment", needsShipping)
 		page.Rates = rates
 		page.SelectedRate = selectedRate
 		page.PaymentMethods = storefrontCheckoutPaymentMethods(h.payments)
@@ -271,6 +301,10 @@ func (h *StorefrontHandler) CheckoutConfirm() http.HandlerFunc {
 			http.Error(w, "Not Found", http.StatusNotFound)
 			return
 		}
+		shippingMethod := ""
+		if selectedRate != nil {
+			shippingMethod = selectedRate.Method
+		}
 		customerID := storefrontCustomerID(r)
 		cctx, err := h.checkout.StartCheckout(r.Context(), currentCart.ID, customerID, checkoutApp.Input{
 			Address: checkoutApp.Address{
@@ -282,7 +316,7 @@ func (h *StorefrontHandler) CheckoutConfirm() http.HandlerFunc {
 				Country:   page.Address.Country,
 			},
 			ContactEmail:   page.ContactEmail,
-			ShippingMethod: selectedRate.Method,
+			ShippingMethod: shippingMethod,
 			PaymentMethod:  paymentMethod,
 		})
 		if err != nil {
@@ -293,11 +327,11 @@ func (h *StorefrontHandler) CheckoutConfirm() http.HandlerFunc {
 			h.renderPageStatus(w, "checkout_payment", page, storefrontCheckoutErrorStatus(err))
 			return
 		}
-		page.Progress = storefrontCheckoutProgress("confirm")
+		page.Progress = storefrontCheckoutProgress("confirm", needsShipping)
 		page.Confirmation = &StorefrontCheckoutConfirmation{
 			OrderID:     cctx.Order.ID,
 			Status:      string(cctx.Order.Status()),
-			TotalText:   storefrontCheckoutDisplayTotal(cctx, selectedRate.CostText),
+			TotalText:   storefrontCheckoutDisplayTotal(cctx, storefrontSelectedRateCostText(selectedRate)),
 			Notice:      storefrontCheckoutConfirmationNotice(payment.PaymentMethod(paymentMethod)),
 			ContinueURL: "/products",
 		}
@@ -333,7 +367,6 @@ func (h *StorefrontHandler) checkoutAddressPageFromPost(w http.ResponseWriter, r
 	page.Countries = storefrontCheckoutCountryOptions(page.Address.Country)
 	if err := page.Address.Validate(); err != nil {
 		page.ErrorMessage = err.Error()
-		page.PrimaryAction = "/checkout/shipping"
 		page.SecondaryURL = "/cart"
 		page.SecondaryLabel = "Back to cart"
 		h.renderPageStatus(w, "checkout_address", page, http.StatusUnprocessableEntity)
@@ -342,7 +375,6 @@ func (h *StorefrontHandler) checkoutAddressPageFromPost(w http.ResponseWriter, r
 	if strings.TrimSpace(customerID) == "" {
 		if err := storefrontCheckoutContactEmailValidate(page.ContactEmail); err != nil {
 			page.ErrorMessage = err.Error()
-			page.PrimaryAction = "/checkout/shipping"
 			page.SecondaryURL = "/cart"
 			page.SecondaryLabel = "Back to cart"
 			h.renderPageStatus(w, "checkout_address", page, http.StatusUnprocessableEntity)
@@ -465,13 +497,30 @@ func (h *StorefrontHandler) renderCheckoutResume(w http.ResponseWriter, r *http.
 	if err := page.Address.Validate(); err != nil {
 		return false
 	}
-	rates, err := h.checkoutRates(r, currentCart)
-	if err != nil {
-		return false
+	needsShipping := page.NeedsShipping
+	var rates []StorefrontCheckoutRate
+	if needsShipping {
+		var err error
+		rates, err = h.checkoutRates(r, currentCart)
+		if err != nil {
+			return false
+		}
 	}
 	switch storefrontCheckoutResumeStep(state.Step) {
 	case "shipping":
-		page.Progress = storefrontCheckoutProgress("shipping")
+		if !needsShipping {
+			page.Progress = storefrontCheckoutProgress("payment", false)
+			page.PaymentMethods = storefrontCheckoutPaymentMethods(h.payments)
+			if len(page.PaymentMethods) == 1 {
+				page.Payment = page.PaymentMethods[0]
+			}
+			page.PrimaryAction = "/checkout/confirm"
+			page.SecondaryURL = "/checkout/address"
+			page.SecondaryLabel = "Start over"
+			h.renderPage(w, "checkout_payment", page)
+			return true
+		}
+		page.Progress = storefrontCheckoutProgress("shipping", true)
 		page.Rates = rates
 		page.SelectedRate = storefrontFindCheckoutRate(rates, state.ShippingMethod)
 		page.PrimaryAction = "/checkout/payment"
@@ -480,11 +529,14 @@ func (h *StorefrontHandler) renderCheckoutResume(w http.ResponseWriter, r *http.
 		h.renderPage(w, "checkout_shipping", page)
 		return true
 	case "payment":
-		selectedRate := storefrontFindCheckoutRate(rates, state.ShippingMethod)
-		if selectedRate == nil {
-			return false
+		var selectedRate *StorefrontCheckoutRate
+		if needsShipping {
+			selectedRate = storefrontFindCheckoutRate(rates, state.ShippingMethod)
+			if selectedRate == nil {
+				return false
+			}
 		}
-		page.Progress = storefrontCheckoutProgress("payment")
+		page.Progress = storefrontCheckoutProgress("payment", needsShipping)
 		page.Rates = rates
 		page.SelectedRate = selectedRate
 		page.PaymentMethods = storefrontCheckoutPaymentMethods(h.payments)
@@ -514,15 +566,21 @@ func (h *StorefrontHandler) buildCheckoutPageData(r *http.Request, currentCart *
 	if err != nil {
 		return StorefrontCheckoutPageData{}, err
 	}
+	needsShipping := h.cartRequiresPhysicalShipping(r.Context(), currentCart)
+	primary := "/checkout/shipping"
+	if !needsShipping {
+		primary = "/checkout/payment"
+	}
 	return StorefrontCheckoutPageData{
 		Layout:         layout,
 		Theme:          h.engine.Theme(),
-		Progress:       storefrontCheckoutProgress(step),
+		Progress:       storefrontCheckoutProgress(step, needsShipping),
 		Items:          cartPage.Items,
 		Summary:        cartPage.Summary,
 		Countries:      storefrontCheckoutCountryOptions(""),
 		CSRFToken:      httpshared.CSRFToken(r),
-		PrimaryAction:  "/checkout/shipping",
+		NeedsShipping:  needsShipping,
+		PrimaryAction:  primary,
 		SecondaryURL:   "/cart",
 		SecondaryLabel: "Back to cart",
 	}, nil
@@ -537,6 +595,16 @@ func (h *StorefrontHandler) requireCheckoutCart(r *http.Request) (*cart.Cart, er
 		return nil, fmt.Errorf("checkout cart is empty")
 	}
 	return currentCart, nil
+}
+
+// cartRequiresPhysicalShipping delegates to checkout.CartRequiresPhysicalShipping
+// so storefront UX and SelectShippingStep share one fail-closed rule (PR-1050).
+func (h *StorefrontHandler) cartRequiresPhysicalShipping(ctx context.Context, currentCart *cart.Cart) bool {
+	needs, err := checkoutApp.CartRequiresPhysicalShipping(ctx, currentCart, h.repo, h.variants, nil)
+	if err != nil {
+		return true
+	}
+	return needs
 }
 
 func (h *StorefrontHandler) checkoutRates(r *http.Request, currentCart *cart.Cart) ([]StorefrontCheckoutRate, error) {
@@ -608,15 +676,26 @@ func (a StorefrontCheckoutAddress) Validate() error {
 	}
 }
 
-func storefrontCheckoutProgress(step string) []StorefrontCheckoutProgressStep {
+func storefrontCheckoutProgress(step string, needsShipping bool) []StorefrontCheckoutProgressStep {
 	steps := []StorefrontCheckoutProgressStep{
 		{Label: "Address", URL: "/checkout/address"},
-		{Label: "Shipping", URL: "/checkout/shipping"},
-		{Label: "Payment", URL: "/checkout/payment"},
-		{Label: "Confirm", URL: "/checkout/confirm"},
+	}
+	stepNames := []string{"address"}
+	if needsShipping {
+		steps = append(steps, StorefrontCheckoutProgressStep{Label: "Shipping", URL: "/checkout/shipping"})
+		stepNames = append(stepNames, "shipping")
+	}
+	steps = append(steps,
+		StorefrontCheckoutProgressStep{Label: "Payment", URL: "/checkout/payment"},
+		StorefrontCheckoutProgressStep{Label: "Confirm", URL: "/checkout/confirm"},
+	)
+	stepNames = append(stepNames, "payment", "confirm")
+	// Digital carts skip shipping; treat a stale "shipping" step as payment.
+	if !needsShipping && step == "shipping" {
+		step = "payment"
 	}
 	current := 0
-	for i, candidate := range []string{"address", "shipping", "payment", "confirm"} {
+	for i, candidate := range stepNames {
 		if candidate == step {
 			current = i
 			break
@@ -627,6 +706,13 @@ func storefrontCheckoutProgress(step string) []StorefrontCheckoutProgressStep {
 		steps[i].Complete = i < current
 	}
 	return steps
+}
+
+func storefrontSelectedRateCostText(rate *StorefrontCheckoutRate) string {
+	if rate == nil {
+		return ""
+	}
+	return rate.CostText
 }
 
 func storefrontCheckoutCountryOptions(selected string) []StorefrontCheckoutOption {
