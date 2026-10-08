@@ -269,6 +269,18 @@ func (h *ProductAdminHandler) Create() http.HandlerFunc {
 		if req.Attributes != nil {
 			product.Attributes = req.Attributes
 		}
+		if err := product.Validate(); err != nil {
+			h.auditor.LogAction(r.Context(), admin.AuditEntry{
+				AdminID:      adminID,
+				Action:       admin.AuditProductCreate,
+				ResourceType: "product",
+				Result:       "error",
+				Error:        err.Error(),
+				Details:      details,
+			})
+			httpshared.JSONError(w, apperror.Validation(err.Error()))
+			return
+		}
 
 		if err := h.repo.Create(r.Context(), &product); err != nil {
 			h.auditor.LogAction(r.Context(), admin.AuditEntry{
@@ -421,6 +433,19 @@ func (h *ProductAdminHandler) Update() http.HandlerFunc {
 		}
 		if req.Attributes != nil {
 			product.Attributes = req.Attributes
+		}
+		if err := product.Validate(); err != nil {
+			h.auditor.LogAction(r.Context(), admin.AuditEntry{
+				AdminID:      adminID,
+				Action:       admin.AuditProductUpdate,
+				ResourceType: "product",
+				ResourceID:   pid,
+				Result:       "error",
+				Error:        err.Error(),
+				Details:      productAdminScopeDetailsFromRequest(r),
+			})
+			httpshared.JSONError(w, apperror.Validation(err.Error()))
+			return
 		}
 
 		if err := h.repo.Update(r.Context(), product); err != nil {
