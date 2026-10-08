@@ -116,15 +116,13 @@ func (r *mockVariantForShipping047) WithTx(*sql.Tx) catalog.VariantRepository   
 func newSelectShippingStep047(
 	provider shipping.Provider,
 	shipments shipping.ShipmentRepository,
-	products catalog.ProductRepository,
 ) *checkout.SelectShippingStep {
-	if products == nil {
-		products = &mockProductRepo047{}
-	}
 	return checkout.NewSelectShippingStep(
 		shippingRegistryWith(provider),
 		shipments,
-		products,
-		&mockVariantForShipping047{},
 	)
+}
+
+func setShippingRequired047(cctx *checkout.Context, needs bool) {
+	cctx.SetMeta(checkout.ShippingRequiredMetaKey, needs)
 }

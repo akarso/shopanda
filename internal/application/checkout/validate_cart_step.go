@@ -8,17 +8,23 @@ import (
 )
 
 // ValidateCartStep verifies that every cart item references a variant
-// that still exists in the catalog.
+// that still exists in the catalog, and records whether the cart needs
+// physical shipping (before reserve/create-order so a later lookup failure
+// cannot orphan an order — PR-1050).
 type ValidateCartStep struct {
 	variants catalog.VariantRepository
+	products catalog.ProductRepository
 }
 
 // NewValidateCartStep creates a ValidateCartStep.
-func NewValidateCartStep(variants catalog.VariantRepository) *ValidateCartStep {
+func NewValidateCartStep(variants catalog.VariantRepository, products catalog.ProductRepository) *ValidateCartStep {
 	if variants == nil {
 		panic("checkout: variants must not be nil")
 	}
-	return &ValidateCartStep{variants: variants}
+	if products == nil {
+		panic("checkout: products must not be nil")
+	}
+	return &ValidateCartStep{variants: variants, products: products}
 }
 
 func (s *ValidateCartStep) Name() string { return "validate_cart" }
@@ -48,7 +54,8 @@ func cartVariantFromMeta(cctx *Context, variantID string) *catalog.Variant {
 	return variants[variantID]
 }
 
-// Execute checks each cart item's variant exists in the catalog.
+// Execute checks each cart item's variant exists in the catalog and stores
+// ShippingRequiredMetaKey for SelectShippingStep.
 func (s *ValidateCartStep) Execute(ctx context.Context, cctx *Context) error {
 	if v, ok := cctx.GetMeta("validated"); ok {
 		if b, isBool := v.(bool); isBool && b {
@@ -73,6 +80,15 @@ func (s *ValidateCartStep) Execute(ctx context.Context, cctx *Context) error {
 	}
 
 	cctx.SetMeta(cartVariantsMetaKey, variants)
+
+	needsShipping, err := CartRequiresPhysicalShipping(ctx, cctx.Cart, s.products, s.variants, func(variantID string) *catalog.Variant {
+		return variants[variantID]
+	})
+	if err != nil {
+		return fmt.Errorf("validate_cart: shipping requirement: %w", err)
+	}
+	cctx.SetMeta(ShippingRequiredMetaKey, needsShipping)
+
 	cctx.SetMeta("validated", true)
 	return nil
 }

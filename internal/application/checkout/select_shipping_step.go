@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/akarso/shopanda/internal/domain/catalog"
 	"github.com/akarso/shopanda/internal/domain/shipping"
 	"github.com/akarso/shopanda/internal/platform/apperror"
 	"github.com/akarso/shopanda/internal/platform/id"
@@ -12,22 +11,17 @@ import (
 
 // SelectShippingStep calculates a shipping rate and creates a pending shipment.
 // Carts whose products are all virtual/downloadable skip the shipping method
-// requirement entirely (PR-1050).
+// requirement entirely (PR-1050). The requirement must already be stored under
+// ShippingRequiredMetaKey by ValidateCartStep.
 type SelectShippingStep struct {
 	providers *shipping.ProviderRegistry
 	shipments shipping.ShipmentRepository
-	products  catalog.ProductRepository
-	variants  catalog.VariantRepository
 }
 
 // NewSelectShippingStep creates a SelectShippingStep.
-// products and variants resolve each cart line to a product Type so digital-only
-// carts can skip shipping; both are required.
 func NewSelectShippingStep(
 	providers *shipping.ProviderRegistry,
 	shipments shipping.ShipmentRepository,
-	products catalog.ProductRepository,
-	variants catalog.VariantRepository,
 ) *SelectShippingStep {
 	if providers == nil || providers.Len() == 0 {
 		panic("checkout: shipping registry must not be empty")
@@ -35,17 +29,9 @@ func NewSelectShippingStep(
 	if shipments == nil {
 		panic("checkout: shipment repository must not be nil")
 	}
-	if products == nil {
-		panic("checkout: product repository must not be nil")
-	}
-	if variants == nil {
-		panic("checkout: variant repository must not be nil")
-	}
 	return &SelectShippingStep{
 		providers: providers,
 		shipments: shipments,
-		products:  products,
-		variants:  variants,
 	}
 }
 
@@ -68,9 +54,7 @@ func (s *SelectShippingStep) Execute(ctx context.Context, cctx *Context) error {
 		return fmt.Errorf("select_shipping: cart not loaded")
 	}
 
-	needsShipping, err := CartRequiresPhysicalShipping(ctx, cctx.Cart, s.products, s.variants, func(variantID string) *catalog.Variant {
-		return cartVariantFromMeta(cctx, variantID)
-	})
+	needsShipping, err := shippingRequiredFromMeta(cctx)
 	if err != nil {
 		return err
 	}
@@ -107,4 +91,16 @@ func (s *SelectShippingStep) Execute(ctx context.Context, cctx *Context) error {
 	cctx.SetMeta("shipment", &shipment)
 	cctx.SetMeta("shipment_selected", true)
 	return nil
+}
+
+func shippingRequiredFromMeta(cctx *Context) (bool, error) {
+	raw, ok := cctx.GetMeta(ShippingRequiredMetaKey)
+	if !ok {
+		return true, fmt.Errorf("select_shipping: shipping requirement not resolved (validate_cart must run first)")
+	}
+	needs, ok := raw.(bool)
+	if !ok {
+		return true, fmt.Errorf("select_shipping: shipping requirement meta has unexpected type %T", raw)
+	}
+	return needs, nil
 }

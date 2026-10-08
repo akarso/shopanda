@@ -83,6 +83,7 @@ type StorefrontCheckoutPageData struct {
 	CSRFToken      string
 	ErrorMessage   string
 	StripePending  bool
+	NeedsShipping  bool
 	PrimaryAction  string
 	SecondaryURL   string
 	SecondaryLabel string
@@ -134,7 +135,7 @@ func (h *StorefrontHandler) CheckoutAddress() http.HandlerFunc {
 			}
 			h.prefillCheckoutFromDefaultAddress(r, customerID, &page)
 		}
-		if h.cartRequiresPhysicalShipping(r.Context(), currentCart) {
+		if page.NeedsShipping {
 			page.PrimaryAction = "/checkout/shipping"
 		} else {
 			page.PrimaryAction = "/checkout/payment"
@@ -159,7 +160,7 @@ func (h *StorefrontHandler) CheckoutShipping() http.HandlerFunc {
 		if !ok {
 			return
 		}
-		if !h.cartRequiresPhysicalShipping(r.Context(), currentCart) {
+		if !page.NeedsShipping {
 			page.Progress = storefrontCheckoutProgress("payment", false)
 			page.PaymentMethods = storefrontCheckoutPaymentMethods(h.payments)
 			if len(page.PaymentMethods) == 1 {
@@ -201,7 +202,7 @@ func (h *StorefrontHandler) CheckoutPayment() http.HandlerFunc {
 		if !ok {
 			return
 		}
-		needsShipping := h.cartRequiresPhysicalShipping(r.Context(), currentCart)
+		needsShipping := page.NeedsShipping
 		var rates []StorefrontCheckoutRate
 		var selected *StorefrontCheckoutRate
 		if needsShipping {
@@ -252,7 +253,7 @@ func (h *StorefrontHandler) CheckoutConfirm() http.HandlerFunc {
 		if !ok {
 			return
 		}
-		needsShipping := h.cartRequiresPhysicalShipping(r.Context(), currentCart)
+		needsShipping := page.NeedsShipping
 		var rates []StorefrontCheckoutRate
 		var selectedRate *StorefrontCheckoutRate
 		if needsShipping {
@@ -496,7 +497,7 @@ func (h *StorefrontHandler) renderCheckoutResume(w http.ResponseWriter, r *http.
 	if err := page.Address.Validate(); err != nil {
 		return false
 	}
-	needsShipping := h.cartRequiresPhysicalShipping(r.Context(), currentCart)
+	needsShipping := page.NeedsShipping
 	var rates []StorefrontCheckoutRate
 	if needsShipping {
 		var err error
@@ -578,6 +579,7 @@ func (h *StorefrontHandler) buildCheckoutPageData(r *http.Request, currentCart *
 		Summary:        cartPage.Summary,
 		Countries:      storefrontCheckoutCountryOptions(""),
 		CSRFToken:      httpshared.CSRFToken(r),
+		NeedsShipping:  needsShipping,
 		PrimaryAction:  primary,
 		SecondaryURL:   "/cart",
 		SecondaryLabel: "Back to cart",

@@ -8,7 +8,6 @@ import (
 
 	"github.com/akarso/shopanda/internal/application/checkout"
 	"github.com/akarso/shopanda/internal/domain/cart"
-	"github.com/akarso/shopanda/internal/domain/catalog"
 	"github.com/akarso/shopanda/internal/domain/order"
 	"github.com/akarso/shopanda/internal/domain/payment"
 	"github.com/akarso/shopanda/internal/domain/shared"
@@ -137,10 +136,7 @@ func orderForCheckout047(t *testing.T) *order.Order {
 
 func TestSelectShippingStep_Name(t *testing.T) {
 	step := newSelectShippingStep047(
-		&mockShippingProvider047{method: shipping.MethodFlatRate},
-		&mockShipmentRepo047{},
-		nil,
-	)
+		&mockShippingProvider047{method: shipping.MethodFlatRate}, &mockShipmentRepo047{})
 	if step.Name() != "select_shipping" {
 		t.Errorf("Name() = %q, want select_shipping", step.Name())
 	}
@@ -157,11 +153,12 @@ func TestSelectShippingStep_Success(t *testing.T) {
 		},
 	}
 	repo := &mockShipmentRepo047{}
-	step := newSelectShippingStep047(provider, repo, nil)
+	step := newSelectShippingStep047(provider, repo)
 
 	cctx := checkout.NewContext("cart-1", "cust-1", "EUR")
 	cctx.Cart = cartWithItems037(t, "cust-1", "v1")
 	cctx.Order = orderForCheckout047(t)
+	setShippingRequired047(cctx, true)
 
 	if err := step.Execute(context.Background(), cctx); err != nil {
 		t.Fatalf("Execute: %v", err)
@@ -197,11 +194,12 @@ func TestSelectShippingStep_CalculateRateError(t *testing.T) {
 		method: shipping.MethodFlatRate,
 		err:    errors.New("unsupported currency"),
 	}
-	step := newSelectShippingStep047(provider, &mockShipmentRepo047{}, nil)
+	step := newSelectShippingStep047(provider, &mockShipmentRepo047{})
 
 	cctx := checkout.NewContext("cart-1", "cust-1", "EUR")
 	cctx.Cart = cartWithItems037(t, "cust-1", "v1")
 	cctx.Order = orderForCheckout047(t)
+	setShippingRequired047(cctx, true)
 
 	err := step.Execute(context.Background(), cctx)
 	if err == nil {
@@ -219,11 +217,12 @@ func TestSelectShippingStep_SaveError(t *testing.T) {
 		rate:   shipping.ShippingRate{Cost: cost},
 	}
 	repo := &mockShipmentRepo047{err: errors.New("db down")}
-	step := newSelectShippingStep047(provider, repo, nil)
+	step := newSelectShippingStep047(provider, repo)
 
 	cctx := checkout.NewContext("cart-1", "cust-1", "EUR")
 	cctx.Cart = cartWithItems037(t, "cust-1", "v1")
 	cctx.Order = orderForCheckout047(t)
+	setShippingRequired047(cctx, true)
 
 	err := step.Execute(context.Background(), cctx)
 	if err == nil {
@@ -239,11 +238,12 @@ func TestSelectShippingStep_UsesTotalQuantity(t *testing.T) {
 		method: shipping.MethodFlatRate,
 		rate:   shipping.ShippingRate{Cost: shared.MustNewMoney(500, "EUR")},
 	}
-	step := newSelectShippingStep047(provider, &mockShipmentRepo047{}, nil)
+	step := newSelectShippingStep047(provider, &mockShipmentRepo047{})
 
 	cctx := checkout.NewContext("cart-1", "cust-1", "EUR")
 	cctx.Cart = cartWithItems037(t, "cust-1", "v1", "v2")
 	cctx.Order = orderForCheckout047(t)
+	setShippingRequired047(cctx, true)
 
 	if err := step.Execute(context.Background(), cctx); err != nil {
 		t.Fatalf("Execute: %v", err)
@@ -258,11 +258,12 @@ func TestSelectShippingStep_RejectsUnavailableSelectedMethod(t *testing.T) {
 		method: shipping.MethodFlatRate,
 		rate:   shipping.ShippingRate{Cost: shared.MustNewMoney(500, "EUR")},
 	}
-	step := newSelectShippingStep047(provider, &mockShipmentRepo047{}, nil)
+	step := newSelectShippingStep047(provider, &mockShipmentRepo047{})
 
 	cctx := checkout.NewContext("cart-1", "cust-1", "EUR")
 	cctx.Cart = cartWithItems037(t, "cust-1", "v1")
 	cctx.Order = orderForCheckout047(t)
+	setShippingRequired047(cctx, true)
 	cctx.Input = checkout.Input{ShippingMethod: "pickup"}
 
 	err := step.Execute(context.Background(), cctx)
@@ -273,7 +274,7 @@ func TestSelectShippingStep_RejectsUnavailableSelectedMethod(t *testing.T) {
 
 func TestSelectShippingStep_NoOrder(t *testing.T) {
 	provider := &mockShippingProvider047{method: shipping.MethodFlatRate}
-	step := newSelectShippingStep047(provider, &mockShipmentRepo047{}, nil)
+	step := newSelectShippingStep047(provider, &mockShipmentRepo047{})
 
 	cctx := checkout.NewContext("cart-1", "cust-1", "EUR")
 	cctx.Cart = cartWithItems037(t, "cust-1", "v1")
@@ -286,7 +287,7 @@ func TestSelectShippingStep_NoOrder(t *testing.T) {
 
 func TestSelectShippingStep_NilContext(t *testing.T) {
 	provider := &mockShippingProvider047{method: shipping.MethodFlatRate}
-	step := newSelectShippingStep047(provider, &mockShipmentRepo047{}, nil)
+	step := newSelectShippingStep047(provider, &mockShipmentRepo047{})
 
 	err := step.Execute(context.Background(), nil)
 	if err == nil {
@@ -301,11 +302,12 @@ func TestSelectShippingStep_Idempotent(t *testing.T) {
 		rate:   shipping.ShippingRate{Cost: cost},
 	}
 	repo := &mockShipmentRepo047{}
-	step := newSelectShippingStep047(provider, repo, nil)
+	step := newSelectShippingStep047(provider, repo)
 
 	cctx := checkout.NewContext("cart-1", "cust-1", "EUR")
 	cctx.Cart = cartWithItems037(t, "cust-1", "v1")
 	cctx.Order = orderForCheckout047(t)
+	setShippingRequired047(cctx, true)
 
 	if err := step.Execute(context.Background(), cctx); err != nil {
 		t.Fatalf("first Execute: %v", err)
@@ -327,14 +329,12 @@ func TestSelectShippingStep_SkipsDigitalOnlyCart(t *testing.T) {
 		rate:   shipping.ShippingRate{Cost: shared.MustNewMoney(500, "EUR")},
 	}
 	repo := &mockShipmentRepo047{err: errors.New("should not create shipment")}
-	products := &mockProductRepo047{
-		defaultType: catalog.TypeVirtual,
-	}
-	step := newSelectShippingStep047(provider, repo, products)
+	step := newSelectShippingStep047(provider, repo)
 
 	cctx := checkout.NewContext("cart-1", "cust-1", "EUR")
 	cctx.Cart = cartWithItems037(t, "cust-1", "v1", "v2")
 	cctx.Order = orderForCheckout047(t)
+	setShippingRequired047(cctx, false)
 	cctx.Input = checkout.Input{ShippingMethod: ""}
 
 	if err := step.Execute(context.Background(), cctx); err != nil {
@@ -357,12 +357,12 @@ func TestSelectShippingStep_SkipsDownloadableOnlyCart(t *testing.T) {
 		rate:   shipping.ShippingRate{Cost: shared.MustNewMoney(500, "EUR")},
 	}
 	repo := &mockShipmentRepo047{err: errors.New("should not create shipment")}
-	products := &mockProductRepo047{defaultType: catalog.TypeDownloadable}
-	step := newSelectShippingStep047(provider, repo, products)
+	step := newSelectShippingStep047(provider, repo)
 
 	cctx := checkout.NewContext("cart-1", "cust-1", "EUR")
 	cctx.Cart = cartWithItems037(t, "cust-1", "v1")
 	cctx.Order = orderForCheckout047(t)
+	setShippingRequired047(cctx, false)
 
 	if err := step.Execute(context.Background(), cctx); err != nil {
 		t.Fatalf("Execute: %v", err)
@@ -375,46 +375,46 @@ func TestSelectShippingStep_SkipsDownloadableOnlyCart(t *testing.T) {
 	}
 }
 
-func TestSelectShippingStep_MissingProductFailsClosed(t *testing.T) {
+func TestSelectShippingStep_RequiresMetaTrueCreatesShipment(t *testing.T) {
 	cost := shared.MustNewMoney(500, "EUR")
 	provider := &mockShippingProvider047{
 		method: shipping.MethodFlatRate,
 		rate:   shipping.ShippingRate{Cost: cost},
 	}
 	repo := &mockShipmentRepo047{}
-	step := newSelectShippingStep047(provider, repo, &nilProductRepo047{})
+	step := newSelectShippingStep047(provider, repo)
 
 	cctx := checkout.NewContext("cart-1", "cust-1", "EUR")
 	cctx.Cart = cartWithItems037(t, "cust-1", "v1")
 	cctx.Order = orderForCheckout047(t)
+	setShippingRequired047(cctx, true)
 
 	if err := step.Execute(context.Background(), cctx); err != nil {
 		t.Fatalf("Execute: %v", err)
 	}
 	if repo.created == nil {
-		t.Fatal("expected shipment when product is missing (fail closed)")
+		t.Fatal("expected shipment when shipping_required meta is true")
 	}
 }
 
-func TestSelectShippingStep_VariantLookupErrorDoesNotSkip(t *testing.T) {
+func TestSelectShippingStep_MissingShippingRequiredMeta(t *testing.T) {
 	provider := &mockShippingProvider047{method: shipping.MethodFlatRate}
-	step := checkout.NewSelectShippingStep(
-		shippingRegistryWith(provider),
-		&mockShipmentRepo047{},
-		&mockProductRepo047{},
-		&errVariantRepo047{err: errors.New("db down")},
-	)
+	step := newSelectShippingStep047(provider, &mockShipmentRepo047{})
 
 	cctx := checkout.NewContext("cart-1", "cust-1", "EUR")
 	cctx.Cart = cartWithItems037(t, "cust-1", "v1")
 	cctx.Order = orderForCheckout047(t)
+	// deliberately omit ShippingRequiredMetaKey
 
 	err := step.Execute(context.Background(), cctx)
 	if err == nil {
-		t.Fatal("expected error from variant lookup")
+		t.Fatal("expected error when shipping requirement meta is missing")
 	}
 	if _, ok := cctx.GetMeta("shipping_not_required"); ok {
-		t.Fatal("must not skip shipping on variant lookup error")
+		t.Fatal("must not skip shipping when meta is missing")
+	}
+	if _, ok := cctx.GetMeta("shipment_selected"); ok {
+		t.Fatal("shipment_selected must not be set when meta is missing")
 	}
 }
 
@@ -425,7 +425,7 @@ func TestSelectShippingStep_EmptyCartFailsClosed(t *testing.T) {
 		rate:   shipping.ShippingRate{Cost: cost},
 	}
 	repo := &mockShipmentRepo047{}
-	step := newSelectShippingStep047(provider, repo, &mockProductRepo047{defaultType: catalog.TypeVirtual})
+	step := newSelectShippingStep047(provider, repo)
 
 	cctx := checkout.NewContext("cart-1", "cust-1", "EUR")
 	c, err := cart.NewCart("cart-1", "EUR")
@@ -435,6 +435,7 @@ func TestSelectShippingStep_EmptyCartFailsClosed(t *testing.T) {
 	c.CustomerID = "cust-1"
 	cctx.Cart = &c
 	cctx.Order = orderForCheckout047(t)
+	setShippingRequired047(cctx, true)
 
 	if err := step.Execute(context.Background(), cctx); err != nil {
 		t.Fatalf("Execute: %v", err)
@@ -451,17 +452,12 @@ func TestSelectShippingStep_MixedCartStillRequiresShipping(t *testing.T) {
 		rate:   shipping.ShippingRate{Cost: cost},
 	}
 	repo := &mockShipmentRepo047{}
-	products := &mockProductRepo047{
-		products: map[string]*catalog.Product{
-			"prod-v1": {ID: "prod-v1", Name: "Virtual", Slug: "v", Status: catalog.StatusActive, Type: catalog.TypeVirtual},
-			"prod-v2": {ID: "prod-v2", Name: "Physical", Slug: "p", Status: catalog.StatusActive, Type: catalog.TypeSimple},
-		},
-	}
-	step := newSelectShippingStep047(provider, repo, products)
+	step := newSelectShippingStep047(provider, repo)
 
 	cctx := checkout.NewContext("cart-1", "cust-1", "EUR")
 	cctx.Cart = cartWithItems037(t, "cust-1", "v1", "v2")
 	cctx.Order = orderForCheckout047(t)
+	setShippingRequired047(cctx, true)
 
 	if err := step.Execute(context.Background(), cctx); err != nil {
 		t.Fatalf("Execute: %v", err)
@@ -509,6 +505,7 @@ func TestInitiatePaymentStep_Success(t *testing.T) {
 
 	cctx := checkout.NewContext("cart-1", "cust-1", "EUR")
 	cctx.Order = orderForCheckout047(t)
+	setShippingRequired047(cctx, true)
 
 	if err := step.Execute(context.Background(), cctx); err != nil {
 		t.Fatalf("Execute: %v", err)
@@ -553,6 +550,7 @@ func TestInitiatePaymentStep_RejectsUnavailableSelectedMethod(t *testing.T) {
 
 	cctx := checkout.NewContext("cart-1", "cust-1", "EUR")
 	cctx.Order = orderForCheckout047(t)
+	setShippingRequired047(cctx, true)
 	cctx.Input = checkout.Input{PaymentMethod: string(payment.MethodStripe)}
 
 	err := step.Execute(context.Background(), cctx)
@@ -578,6 +576,7 @@ func TestInitiatePaymentStep_SelectsProviderByMethod(t *testing.T) {
 
 	cctx := checkout.NewContext("cart-1", "cust-1", "EUR")
 	cctx.Order = orderForCheckout047(t)
+	setShippingRequired047(cctx, true)
 	cctx.Input = checkout.Input{PaymentMethod: string(payment.MethodStripe)}
 
 	if err := step.Execute(context.Background(), cctx); err != nil {
@@ -600,6 +599,7 @@ func TestInitiatePaymentStep_Declined(t *testing.T) {
 
 	cctx := checkout.NewContext("cart-1", "cust-1", "EUR")
 	cctx.Order = orderForCheckout047(t)
+	setShippingRequired047(cctx, true)
 
 	err := step.Execute(context.Background(), cctx)
 	if err == nil {
@@ -630,6 +630,7 @@ func TestInitiatePaymentStep_ProviderError(t *testing.T) {
 
 	cctx := checkout.NewContext("cart-1", "cust-1", "EUR")
 	cctx.Order = orderForCheckout047(t)
+	setShippingRequired047(cctx, true)
 
 	err := step.Execute(context.Background(), cctx)
 	if err == nil {
@@ -654,6 +655,7 @@ func TestInitiatePaymentStep_CreateError(t *testing.T) {
 
 	cctx := checkout.NewContext("cart-1", "cust-1", "EUR")
 	cctx.Order = orderForCheckout047(t)
+	setShippingRequired047(cctx, true)
 
 	err := step.Execute(context.Background(), cctx)
 	if err == nil {
@@ -674,6 +676,7 @@ func TestInitiatePaymentStep_UpdateStatusError(t *testing.T) {
 
 	cctx := checkout.NewContext("cart-1", "cust-1", "EUR")
 	cctx.Order = orderForCheckout047(t)
+	setShippingRequired047(cctx, true)
 
 	err := step.Execute(context.Background(), cctx)
 	if err == nil {
@@ -716,6 +719,7 @@ func TestInitiatePaymentStep_Idempotent(t *testing.T) {
 
 	cctx := checkout.NewContext("cart-1", "cust-1", "EUR")
 	cctx.Order = orderForCheckout047(t)
+	setShippingRequired047(cctx, true)
 
 	if err := step.Execute(context.Background(), cctx); err != nil {
 		t.Fatalf("first Execute: %v", err)
@@ -745,6 +749,7 @@ func TestInitiatePaymentStep_Pending(t *testing.T) {
 
 	cctx := checkout.NewContext("cart-1", "cust-1", "EUR")
 	cctx.Order = orderForCheckout047(t)
+	setShippingRequired047(cctx, true)
 
 	if err := step.Execute(context.Background(), cctx); err != nil {
 		t.Fatalf("Execute: %v", err)
@@ -797,6 +802,7 @@ func TestInitiatePaymentStep_Pending_NoClientSecret(t *testing.T) {
 
 	cctx := checkout.NewContext("cart-1", "cust-1", "EUR")
 	cctx.Order = orderForCheckout047(t)
+	setShippingRequired047(cctx, true)
 
 	if err := step.Execute(context.Background(), cctx); err != nil {
 		t.Fatalf("Execute: %v", err)
@@ -823,6 +829,7 @@ func TestInitiatePaymentStep_Pending_EmptyProviderRef(t *testing.T) {
 
 	cctx := checkout.NewContext("cart-1", "cust-1", "EUR")
 	cctx.Order = orderForCheckout047(t)
+	setShippingRequired047(cctx, true)
 
 	err := step.Execute(context.Background(), cctx)
 	if err == nil {

@@ -8,6 +8,11 @@ import (
 	"github.com/akarso/shopanda/internal/domain/catalog"
 )
 
+// ShippingRequiredMetaKey holds a bool in checkout.Context.Meta set by
+// ValidateCartStep before reserve/create-order. SelectShippingStep reads it
+// and must not re-query the catalog (avoids orphaning an order on lookup failure).
+const ShippingRequiredMetaKey = "shipping_required"
+
 // CartRequiresPhysicalShipping reports whether checkout must collect a shipping
 // method for the given cart lines (PR-1050).
 //
