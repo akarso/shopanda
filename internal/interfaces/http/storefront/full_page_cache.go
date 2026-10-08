@@ -20,6 +20,17 @@ import (
 
 const fpcHeader = "X-Shopanda-Cache"
 
+// fpcAfterCacheMiss is invoked after an outer Get miss and before
+// stampede.Do. Tests set it via SetFPCAfterCacheMissForTest to force the
+// "miss, then another request fills the key" ordering; production leaves it nil.
+var fpcAfterCacheMiss func()
+
+// SetFPCAfterCacheMissForTest sets the miss→Do hook used by stampede tests.
+// Pass nil to clear. Not for production use.
+func SetFPCAfterCacheMissForTest(fn func()) {
+	fpcAfterCacheMiss = fn
+}
+
 var filledCSRFValue = regexp.MustCompile(`(?i)name=["']csrf_token["'][^>]*value=["']([^"']+)["']|value=["']([^"']+)["'][^>]*name=["']csrf_token["']`)
 var logoutFormAction = regexp.MustCompile(`(?i)<form\b[^>]*\baction\s*=\s*(?:"[^"]*/account/logout"|'[^']*/account/logout'|/account/logout)(?:[\s>]|$)`)
 
@@ -107,9 +118,22 @@ func (h *StorefrontHandler) withFullPageCache(routeTemplate string, inner http.H
 					return
 				}
 			}
+		} else if fpcAfterCacheMiss != nil {
+			// Test-only: pause between miss and Do so another request can
+			// fill the key and clear the in-flight entry first (Issue 6).
+			fpcAfterCacheMiss()
 		}
 
 		raw, err, shared := h.fpc.stampede.Do(key, h.fpc.stampedeWait, func() (any, error) {
+			// Another request may have populated the key between our miss
+			// and becoming leader — serve HIT instead of re-rendering.
+			var warmed cacheapp.PageEntry
+			if ok, getErr := h.fpc.backend.Get(key, &warmed); getErr == nil && ok {
+				left := cacheapp.RemainingTTL(warmed, time.Now().UTC())
+				if left > 0 && !fpcHTMLUnsafe(warmed.HTML, r) {
+					return fpcCoalescedHit{entry: warmed, left: left}, nil
+				}
+			}
 			return h.renderFPCMiss(routeTemplate, key, ttl, r, inner), nil
 		})
 		if err != nil {
@@ -120,6 +144,13 @@ func (h *StorefrontHandler) withFullPageCache(routeTemplate string, inner http.H
 			inner.ServeHTTP(w, r)
 			return
 		}
+		if hit, ok := raw.(fpcCoalescedHit); ok {
+			if h.writeFPCHit(w, r, hit.entry, hit.left) {
+				return
+			}
+			inner.ServeHTTP(w, r)
+			return
+		}
 		miss, ok := raw.(fpcMissResult)
 		if !ok {
 			inner.ServeHTTP(w, r)
@@ -127,8 +158,8 @@ func (h *StorefrontHandler) withFullPageCache(routeTemplate string, inner http.H
 		}
 
 		// Waiters never replay the leader's raw HTML/CSP (nonce reuse /
-		// BYPASS fan-out). Prefer a rotated HIT from the entry the leader
-		// stored; otherwise render this request locally.
+		// BYPASS fan-out / purged-entry revival). Prefer a rotated HIT
+		// from the live cache entry; otherwise render this request locally.
 		if shared {
 			if miss.storeOK {
 				var stored cacheapp.PageEntry
@@ -138,18 +169,6 @@ func (h *StorefrontHandler) withFullPageCache(routeTemplate string, inner http.H
 						if h.writeFPCHit(w, r, stored, left) {
 							return
 						}
-					}
-				}
-				// Set raced away or HIT unsafe for this r — try rotating
-				// the leader's stored-shaped body the same way HIT does.
-				entry := cacheapp.PageEntry{
-					HTML:  string(miss.html),
-					CSP:   miss.header.Get("Content-Security-Policy"),
-					Nonce: cspNonceFromHeader(miss.header.Get("Content-Security-Policy")),
-				}
-				if !fpcHTMLUnsafe(entry.HTML, r) {
-					if h.writeFPCHit(w, r, entry, miss.ttl) {
-						return
 					}
 				}
 			}
@@ -168,6 +187,13 @@ func (h *StorefrontHandler) withFullPageCache(routeTemplate string, inner http.H
 		w.WriteHeader(miss.code)
 		_, _ = w.Write(miss.html)
 	}
+}
+
+// fpcCoalescedHit is returned when a stampede leader finds the key was
+// populated while it waited to run.
+type fpcCoalescedHit struct {
+	entry cacheapp.PageEntry
+	left  time.Duration
 }
 
 func (h *StorefrontHandler) renderFPCMiss(routeTemplate, key string, ttl time.Duration, r *http.Request, inner http.HandlerFunc) fpcMissResult {

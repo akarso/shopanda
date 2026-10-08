@@ -866,7 +866,9 @@ func setupWorker(conn *sql.DB, cfg *config.Config, log logger.Logger, app *plugi
 	if err != nil {
 		return nil, nil, nil, err
 	}
-	jobWorker.Register(searchApp.NewReindexHandler(searchIndexRunRepo, searchProductSource, searchEngine, log))
+	fpcInvalidation := cacheApp.NewFPCInvalidationSubscriber(appCache, log)
+	jobWorker.Register(searchApp.NewReindexHandler(searchIndexRunRepo, searchProductSource, searchEngine, log).
+		WithListingCacheInvalidator(fpcInvalidation))
 
 	// ReconcileHandler's ReindexJobFinder queries the "jobs" table directly
 	// (not through the jobs.Queue port) — meaningful only when that table

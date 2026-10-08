@@ -50,6 +50,13 @@ type Logger interface {
 	Error(event string, err error, ctx map[string]interface{})
 }
 
+// ListingCacheInvalidator clears full-page cache entries after search
+// index updates are visible (PR-1046). productIDs is nil for a full-scan
+// reindex and the concrete scoped ID list otherwise.
+type ListingCacheInvalidator interface {
+	AfterProductsIndexed(ctx context.Context, productIDs []string) error
+}
+
 // ReindexHandler is the jobs.Handler for JobType ("search.reindex"): scans
 // ProductSource in batches and indexes every product via SearchEngine,
 // updating the run row's progress as it goes. A full-scope run covers
@@ -67,11 +74,20 @@ type ReindexHandler struct {
 	products domainsearch.ProductSource
 	engine   domainsearch.SearchEngine
 	log      Logger
+	fpc      ListingCacheInvalidator
 }
 
 // NewReindexHandler creates a ReindexHandler.
 func NewReindexHandler(runs domainsearch.RunStore, products domainsearch.ProductSource, engine domainsearch.SearchEngine, log Logger) *ReindexHandler {
 	return &ReindexHandler{runs: runs, products: products, engine: engine, log: log}
+}
+
+// WithListingCacheInvalidator registers a post-index FPC purge hook.
+func (h *ReindexHandler) WithListingCacheInvalidator(inv ListingCacheInvalidator) *ReindexHandler {
+	if h != nil {
+		h.fpc = inv
+	}
+	return h
 }
 
 // Type implements jobs.Handler.
@@ -186,6 +202,16 @@ func (h *ReindexHandler) Handle(ctx context.Context, job domainjobs.Job) error {
 		// matters) before giving up.
 		if err := h.retryCompletedOnTerminalAttempt(ctx, runID, job, err); err != nil {
 			return err
+		}
+	}
+	// Purge FPC after the index is current so a mid-job refill from stale
+	// search results cannot stick for another TTL (PR-1046). Failure here
+	// must not fail the reindex — the index write already succeeded.
+	if h.fpc != nil {
+		if err := h.fpc.AfterProductsIndexed(ctx, productIDs); err != nil {
+			h.log.Error("search.reindex.fpc_invalidation_failed", err, map[string]interface{}{
+				"run_id": runID,
+			})
 		}
 	}
 	h.log.Info("search.reindex.complete", map[string]interface{}{

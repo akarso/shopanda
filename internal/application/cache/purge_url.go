@@ -82,11 +82,50 @@ func attrQueryKeysFromRaw(raw string) []string {
 	return keys
 }
 
-// PurgeURLKeys builds concrete FPC keys for path across stores × auth states.
-// Listing query params (including attr_* present in the operator URL) are
-// kept via FilterQuery. Bare /products does not expand every page/sort
-// variant — pass the exact query, or use DeleteByTag / prefix clear for a
-// whole PLP.
+func langFromRawQuery(raw string) string {
+	values, _ := url.ParseQuery(raw)
+	lang := strings.TrimSpace(values.Get("lang"))
+	if lang == "" {
+		return ""
+	}
+	return lang
+}
+
+// purgeLanguages collects languages that appear in real FPC vary keys:
+// every store default, optional ?lang= from the operator path, and "en"
+// (LanguageFromContext fallback). Accept-Language-only variants still need
+// an explicit ?lang= on the purge path.
+func purgeLanguages(stores []StoreVary, queryLang string) []string {
+	seen := make(map[string]struct{})
+	var out []string
+	add := func(lang string) {
+		lang = strings.TrimSpace(lang)
+		if lang == "" {
+			return
+		}
+		if _, ok := seen[lang]; ok {
+			return
+		}
+		seen[lang] = struct{}{}
+		out = append(out, lang)
+	}
+	for _, st := range stores {
+		add(st.Language)
+	}
+	add(queryLang)
+	add("en")
+	if len(out) == 0 {
+		add("en")
+	}
+	return out
+}
+
+// PurgeURLKeys builds concrete FPC keys for path across stores × languages ×
+// auth states. Listing query params (including attr_* present in the
+// operator URL) are kept via FilterQuery and passed through Key's extras so
+// attribute filters are not dropped on the second filter pass. Bare
+// /products does not expand every page/sort variant — pass the exact query,
+// or use DeleteByTag / prefix clear for a whole PLP.
 func PurgeURLKeys(rawPath string, stores []StoreVary) (path string, keys []string, err error) {
 	rawPath = strings.TrimSpace(rawPath)
 	if rawPath == "" {
@@ -115,7 +154,8 @@ func PurgeURLKeys(rawPath string, stores []StoreVary) (path string, keys []strin
 		return "", nil, apperror.Validation("path is not a cacheable storefront route")
 	}
 	rawQuery := u.RawQuery
-	filtered := FilterQuery(route, rawQuery, attrQueryKeysFromRaw(rawQuery))
+	attrExtras := attrQueryKeysFromRaw(rawQuery)
+	filtered := FilterQuery(route, rawQuery, attrExtras)
 
 	if len(stores) == 0 {
 		// Still purge guest+auth with empty store vary — matches a single
@@ -123,21 +163,24 @@ func PurgeURLKeys(rawPath string, stores []StoreVary) (path string, keys []strin
 		stores = []StoreVary{{}}
 	}
 
-	keys = make([]string, 0, len(stores)*2)
-	seen := make(map[string]struct{}, len(stores)*2)
+	languages := purgeLanguages(stores, langFromRawQuery(rawQuery))
+	keys = make([]string, 0, len(stores)*len(languages)*2)
+	seen := make(map[string]struct{}, len(stores)*len(languages)*2)
 	for _, st := range stores {
-		for _, auth := range []string{AuthGuest, AuthAuthenticated} {
-			k := Key(route, path, filtered, Vary{
-				Store:     st.ID,
-				Language:  st.Language,
-				Currency:  st.Currency,
-				AuthState: auth,
-			})
-			if _, ok := seen[k]; ok {
-				continue
+		for _, lang := range languages {
+			for _, auth := range []string{AuthGuest, AuthAuthenticated} {
+				k := Key(route, path, filtered, Vary{
+					Store:     st.ID,
+					Language:  lang,
+					Currency:  st.Currency,
+					AuthState: auth,
+				}, attrExtras...)
+				if _, ok := seen[k]; ok {
+					continue
+				}
+				seen[k] = struct{}{}
+				keys = append(keys, k)
 			}
-			seen[k] = struct{}{}
-			keys = append(keys, k)
 		}
 	}
 	return path, keys, nil

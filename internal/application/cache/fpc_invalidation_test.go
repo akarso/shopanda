@@ -197,9 +197,9 @@ func TestPurgeURLKeys_KeepsAttrQuery(t *testing.T) {
 	if len(keys) != 2 {
 		t.Fatalf("keys = %d, want 2", len(keys))
 	}
-	want := cacheApp.Key(cacheApp.RoutePLP, "/products", "attr_color=red&page=2", cacheApp.Vary{
+	want := cacheApp.Key(cacheApp.RoutePLP, "/products", "page=2&attr_color=red&utm_source=x", cacheApp.Vary{
 		Store: "s1", Language: "en", Currency: "EUR", AuthState: cacheApp.AuthGuest,
-	})
+	}, "attr_color")
 	found := false
 	for _, k := range keys {
 		if k == want {
@@ -210,6 +210,81 @@ func TestPurgeURLKeys_KeepsAttrQuery(t *testing.T) {
 		}
 	}
 	if !found {
-		t.Fatalf("missing attr_/page key among %#v", keys)
+		t.Fatalf("missing attr_/page key among %#v (want %q)", keys, want)
+	}
+}
+
+func TestPurgeURLKeys_ExpandsQueryLang(t *testing.T) {
+	_, keys, err := cacheApp.PurgeURLKeys("/products/widget?lang=de", []cacheApp.StoreVary{{ID: "s1", Language: "en", Currency: "EUR"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantDE := cacheApp.Key(cacheApp.RoutePDP, "/products/widget", "", cacheApp.Vary{
+		Store: "s1", Language: "de", Currency: "EUR", AuthState: cacheApp.AuthGuest,
+	})
+	wantEN := cacheApp.Key(cacheApp.RoutePDP, "/products/widget", "", cacheApp.Vary{
+		Store: "s1", Language: "en", Currency: "EUR", AuthState: cacheApp.AuthGuest,
+	})
+	var haveDE, haveEN bool
+	for _, k := range keys {
+		if k == wantDE {
+			haveDE = true
+		}
+		if k == wantEN {
+			haveEN = true
+		}
+	}
+	if !haveDE || !haveEN {
+		t.Fatalf("want both en and de guest keys among %#v", keys)
+	}
+}
+
+func TestFPCInvalidation_ProductCreatedPurgesListingTag(t *testing.T) {
+	backend := newTagMemCache()
+	ctx := context.Background()
+	plp := cacheApp.Key(cacheApp.RoutePLP, "/products", "", cacheApp.Vary{AuthState: cacheApp.AuthGuest})
+	_ = backend.SetWithTags(ctx, plp, cacheApp.PageEntry{HTML: "plp"}, time.Minute, cacheApp.ListingTag())
+
+	sub := cacheApp.NewFPCInvalidationSubscriber(backend, &mockLogger{})
+	if err := sub.HandleProductCreated(ctx, event.New(catalog.EventProductCreated, "test", catalog.ProductCreatedData{ProductID: "brand-new"})); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := backend.entries[plp]; ok {
+		t.Fatal("listing shell must be purged on product create")
+	}
+}
+
+func TestFPCInvalidation_CategoryCreatedPurgesNavigationTag(t *testing.T) {
+	backend := newTagMemCache()
+	ctx := context.Background()
+	home := cacheApp.Key(cacheApp.RouteHome, "/", "", cacheApp.Vary{AuthState: cacheApp.AuthGuest})
+	_ = backend.SetWithTags(ctx, home, cacheApp.PageEntry{HTML: "home"}, time.Minute, cacheApp.NavigationTag())
+
+	sub := cacheApp.NewFPCInvalidationSubscriber(backend, &mockLogger{})
+	if err := sub.HandleCategoryCreated(ctx, event.New(catalog.EventCategoryCreated, "test", catalog.CategoryCreatedData{CategoryID: "new-cat"})); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := backend.entries[home]; ok {
+		t.Fatal("navigation shell must be purged on category create")
+	}
+}
+
+func TestFPCInvalidation_AfterProductsIndexed(t *testing.T) {
+	backend := newTagMemCache()
+	ctx := context.Background()
+	plp := cacheApp.Key(cacheApp.RoutePLP, "/products", "", cacheApp.Vary{AuthState: cacheApp.AuthGuest})
+	pdp := cacheApp.Key(cacheApp.RoutePDP, "/products/widget", "", cacheApp.Vary{AuthState: cacheApp.AuthGuest})
+	_ = backend.SetWithTags(ctx, plp, cacheApp.PageEntry{HTML: "plp"}, time.Minute, cacheApp.ListingTag())
+	_ = backend.SetWithTags(ctx, pdp, cacheApp.PageEntry{HTML: "pdp"}, time.Minute, cacheApp.ProductTag("p1"))
+
+	sub := cacheApp.NewFPCInvalidationSubscriber(backend, &mockLogger{})
+	if err := sub.AfterProductsIndexed(ctx, []string{"p1"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := backend.entries[plp]; ok {
+		t.Fatal("listing must be purged after index")
+	}
+	if _, ok := backend.entries[pdp]; ok {
+		t.Fatal("product page must be purged after index")
 	}
 }

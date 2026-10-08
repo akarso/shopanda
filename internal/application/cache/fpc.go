@@ -188,11 +188,20 @@ func queryKeyAllowed(routeTemplate, key string, extra map[string]struct{}) bool 
 }
 
 // ProductTag / CategoryTag / CMSTag / PageTag are DeleteByTag names
-// PR-1046 will fire. Written now so invalidation can be precise later.
+// PR-1046 fires. ListingTag / NavigationTag are shared shells: a newly
+// created product/category cannot appear under product:/category: tags
+// that no cached page has yet, so listings and nav trees carry these
+// shared tags and creation (and membership-changing updates) purge them.
 func ProductTag(id string) string  { return tagged("product", id) }
 func CategoryTag(id string) string { return tagged("category", id) }
 func CMSTag(id string) string      { return tagged("cms", id) }
 func PageTag(id string) string     { return tagged("page", id) }
+
+// ListingTag marks PLP / search / category listing HTML.
+func ListingTag() string { return "fpc:listing" }
+
+// NavigationTag marks pages whose chrome rendered the category tree.
+func NavigationTag() string { return "fpc:navigation" }
 
 func tagged(kind, id string) string {
 	id = strings.TrimSpace(id)

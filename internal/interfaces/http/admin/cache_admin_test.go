@@ -545,8 +545,8 @@ func TestCacheAdminHandler_PurgeURL_DeletedZeroWhenAbsent(t *testing.T) {
 	if resp.Data.Deleted != 0 {
 		t.Fatalf("deleted = %d, want 0 for absent keys", resp.Data.Deleted)
 	}
-	if len(resp.Data.Keys) != 2 {
-		t.Fatalf("keys = %d, want 2 (guest+auth expand)", len(resp.Data.Keys))
+	if len(resp.Data.Keys) < 2 {
+		t.Fatalf("keys = %d, want at least guest+auth", len(resp.Data.Keys))
 	}
 }
 
@@ -587,8 +587,11 @@ func TestCacheAdminHandler_PurgeURL_MultiStoreExpand(t *testing.T) {
 	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
 		t.Fatal(err)
 	}
-	if resp.Data.Deleted != 4 || len(resp.Data.Keys) != 4 {
-		t.Fatalf("deleted=%d keys=%d, want 4/4; body=%s", resp.Data.Deleted, len(resp.Data.Keys), rec.Body.String())
+	if resp.Data.Deleted != 4 {
+		t.Fatalf("deleted=%d, want 4 existing keys; body=%s", resp.Data.Deleted, rec.Body.String())
+	}
+	if len(resp.Data.Keys) < 4 {
+		t.Fatalf("keys=%d, want expand covering both stores; body=%s", len(resp.Data.Keys), rec.Body.String())
 	}
 	for _, k := range keys {
 		if _, ok := backend.keys[k]; ok {
