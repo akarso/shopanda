@@ -6,6 +6,7 @@ import (
 	"encoding/csv"
 	"fmt"
 	"io"
+	"sort"
 	"strconv"
 	"strings"
 
@@ -77,8 +78,12 @@ var requiredColumns = []string{"name", "slug", "sku"}
 
 // knownColumns are CSV headers handled by the core import logic.
 // Any other header is treated as an attribute column.
+//
+// "type" is reserved for product taxonomy (PR-1052). A CSV that previously
+// used a free-form attribute column named "type" must rename that attribute;
+// values in the type column are never stored in variant.Attributes.
 var knownColumns = map[string]struct{}{
-	"name": {}, "slug": {}, "sku": {}, "description": {}, "variant_name": {},
+	"name": {}, "slug": {}, "sku": {}, "description": {}, "variant_name": {}, "type": {},
 }
 
 // Import reads CSV rows from r and persists them as products and variants.
@@ -88,6 +93,7 @@ var knownColumns = map[string]struct{}{
 //	name         — product name (required)
 //	slug         — product slug (required, used to group variants)
 //	description  — product description (optional)
+//	type         — product type (optional; empty → simple on create; case-sensitive like admin API)
 //	sku          — variant SKU (required)
 //	variant_name — variant display name (optional)
 //
@@ -98,6 +104,9 @@ var knownColumns = map[string]struct{}{
 //
 // Rows sharing the same slug are treated as variants of the same product.
 // The first occurrence of a slug defines the product; subsequent rows add variants.
+// Type consensus: all-empty → simple on create (and no type check on existing);
+// when any cell is set, blanks count as simple so empty+virtual conflicts.
+// Type updates on existing products are rejected (create-only for this field).
 func (imp *ProductImporter) Import(ctx context.Context, r io.Reader) (*Result, error) {
 	reader := csv.NewReader(r)
 	reader.TrimLeadingSpace = true
@@ -130,19 +139,9 @@ func (imp *ProductImporter) Import(ctx context.Context, r io.Reader) (*Result, e
 		}
 	}
 
-	type parsedRow struct {
-		lineNum     int
-		name        string
-		slug        string
-		sku         string
-		desc        string
-		variantName string
-		rawAttrs    map[string]string
-	}
-
 	// 1. Parse all rows, group by slug
-	groups := make(map[string][]parsedRow)
-	var allRows []parsedRow
+	groups := make(map[string][]productImportRow)
+	var allRows []productImportRow
 	result := &Result{}
 	lineNum := 1
 	for {
@@ -153,7 +152,7 @@ func (imp *ProductImporter) Import(ctx context.Context, r io.Reader) (*Result, e
 		}
 		if err != nil {
 			// Can't parse row, skip
-			allRows = append(allRows, parsedRow{lineNum: lineNum})
+			allRows = append(allRows, productImportRow{lineNum: lineNum})
 			continue
 		}
 		rowMap := RecordToRow(record, colIndex)
@@ -164,12 +163,13 @@ func (imp *ProductImporter) Import(ctx context.Context, r io.Reader) (*Result, e
 				continue
 			}
 		}
-		row := parsedRow{
+		row := productImportRow{
 			lineNum:     lineNum,
 			name:        colValRow(rowMap, "name"),
 			slug:        colValRow(rowMap, "slug"),
 			sku:         colValRow(rowMap, "sku"),
 			desc:        colValRow(rowMap, "description"),
+			productType: colValRow(rowMap, "type"), // case-sensitive; matches admin API
 			variantName: colValRow(rowMap, "variant_name"),
 		}
 		if len(attrColumns) > 0 {
@@ -188,25 +188,42 @@ func (imp *ProductImporter) Import(ctx context.Context, r io.Reader) (*Result, e
 		groups[row.slug] = append(groups[row.slug], row)
 	}
 
-	// 2. Validate all rows (required fields, duplicates, etc)
+	// 2. Validate all rows (required fields, type)
+	failedLines := make(map[int]struct{})
 	for _, row := range allRows {
 		if row.name == "" || row.slug == "" || row.sku == "" {
 			result.Errors = append(result.Errors, fmt.Sprintf("line %d: name, slug, and sku are required", row.lineNum))
 			result.Skipped++
+			failedLines[row.lineNum] = struct{}{}
+			continue
+		}
+		if row.productType != "" {
+			typ := catalog.Type(row.productType)
+			if !typ.IsValid() {
+				result.Errors = append(result.Errors, fmt.Sprintf("line %d: %s", row.lineNum, catalog.InvalidTypeMessage(typ)))
+				result.Skipped++
+				failedLines[row.lineNum] = struct{}{}
+			}
 		}
 	}
 
 	// 3. For each group, validate and write in a transaction
 	for slug, rows := range groups {
-		// Skip group if any row in group failed required fields
-		skip := false
-		for _, row := range rows {
-			if row.name == "" || row.slug == "" || row.sku == "" {
-				skip = true
-				break
-			}
+		if skipSlugGroupSiblings(slug, rows, failedLines, result) {
+			continue
 		}
-		if skip {
+
+		groupType, conflict, seenTypes := slugGroupType(rows)
+		if conflict {
+			seenMsg := strings.Join(seenTypes, ", ")
+			for _, row := range rows {
+				result.Errors = append(result.Errors, fmt.Sprintf(
+					"line %d: conflicting type values for slug %q: %s (empty cells count as simple when any type is set)",
+					row.lineNum, slug, seenMsg,
+				))
+				result.Skipped++
+				failedLines[row.lineNum] = struct{}{}
+			}
 			continue
 		}
 
@@ -216,6 +233,7 @@ func (imp *ProductImporter) Import(ctx context.Context, r io.Reader) (*Result, e
 			for _, row := range rows {
 				result.Errors = append(result.Errors, fmt.Sprintf("line %d: find product: %v", row.lineNum, err))
 				result.Skipped++
+				failedLines[row.lineNum] = struct{}{}
 			}
 			continue
 		}
@@ -223,6 +241,21 @@ func (imp *ProductImporter) Import(ctx context.Context, r io.Reader) (*Result, e
 		// Prepare product and variants
 		var product *catalog.Product
 		if existing != nil {
+			stored := existing.Type
+			if stored == "" {
+				stored = catalog.TypeSimple
+			}
+			if groupType != "" && catalog.Type(groupType) != stored {
+				for _, row := range rows {
+					result.Errors = append(result.Errors, fmt.Sprintf(
+						"line %d: type updates via CSV are not supported (product %q has type %q, CSV has %q)",
+						row.lineNum, slug, stored, groupType,
+					))
+					result.Skipped++
+					failedLines[row.lineNum] = struct{}{}
+				}
+				continue
+			}
 			product = existing
 		} else {
 			p, err := catalog.NewProduct(id.New(), rows[0].name, slug)
@@ -230,10 +263,24 @@ func (imp *ProductImporter) Import(ctx context.Context, r io.Reader) (*Result, e
 				for _, row := range rows {
 					result.Errors = append(result.Errors, fmt.Sprintf("line %d: new product: %v", row.lineNum, err))
 					result.Skipped++
+					failedLines[row.lineNum] = struct{}{}
 				}
 				continue
 			}
 			p.Description = rows[0].desc
+			if groupType == "" {
+				p.Type = catalog.TypeSimple
+			} else {
+				p.Type = catalog.Type(groupType)
+			}
+			if err := p.Validate(); err != nil {
+				for _, row := range rows {
+					result.Errors = append(result.Errors, fmt.Sprintf("line %d: %v", row.lineNum, err))
+					result.Skipped++
+					failedLines[row.lineNum] = struct{}{}
+				}
+				continue
+			}
 			product = &p
 		}
 
@@ -243,6 +290,7 @@ func (imp *ProductImporter) Import(ctx context.Context, r io.Reader) (*Result, e
 			lineNum int
 		}
 		var pvs []preparedVariant
+		skip := false
 		for _, row := range rows {
 			v, err := catalog.NewVariant(id.New(), product.ID, row.sku)
 			if err != nil {
@@ -402,6 +450,80 @@ func (imp *ProductImporter) Import(ctx context.Context, r io.Reader) (*Result, e
 	}
 
 	return result, nil
+}
+
+// productImportRow is one CSV data row after header mapping.
+type productImportRow struct {
+	lineNum     int
+	name        string
+	slug        string
+	sku         string
+	desc        string
+	productType string
+	variantName string
+	rawAttrs    map[string]string
+}
+
+// skipSlugGroupSiblings marks remaining rows in a slug group when at least one
+// row already failed validation, so Skipped/Errors reflect every dropped line.
+// Returns true when the group must be skipped.
+func skipSlugGroupSiblings(slug string, rows []productImportRow, failedLines map[int]struct{}, result *Result) bool {
+	anyFailed := false
+	for _, row := range rows {
+		if _, ok := failedLines[row.lineNum]; ok {
+			anyFailed = true
+			break
+		}
+	}
+	if !anyFailed {
+		return false
+	}
+	for _, row := range rows {
+		if _, ok := failedLines[row.lineNum]; ok {
+			continue
+		}
+		result.Errors = append(result.Errors, fmt.Sprintf(
+			"line %d: skipped because another row for slug %q failed validation",
+			row.lineNum, slug,
+		))
+		result.Skipped++
+		failedLines[row.lineNum] = struct{}{}
+	}
+	return true
+}
+
+// slugGroupType returns the agreed type for a slug group.
+// All-empty → ("", false, nil) so create defaults to simple and existing products
+// can gain variants without a type column. When any cell is non-empty, blanks are
+// normalized to simple for consensus; more than one distinct value → conflict.
+func slugGroupType(rows []productImportRow) (groupType string, conflict bool, seenSorted []string) {
+	anyNonEmpty := false
+	for _, row := range rows {
+		if row.productType != "" {
+			anyNonEmpty = true
+			break
+		}
+	}
+	if !anyNonEmpty {
+		return "", false, nil
+	}
+	seen := make(map[string]struct{}, len(rows))
+	for _, row := range rows {
+		t := row.productType
+		if t == "" {
+			t = string(catalog.TypeSimple)
+		}
+		seen[t] = struct{}{}
+	}
+	seenSorted = make([]string, 0, len(seen))
+	for t := range seen {
+		seenSorted = append(seenSorted, t)
+	}
+	sort.Strings(seenSorted)
+	if len(seen) == 1 {
+		return seenSorted[0], false, seenSorted
+	}
+	return "", true, seenSorted
 }
 
 // colVal returns the trimmed value for a column name, or "" if absent.

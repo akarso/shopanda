@@ -89,7 +89,9 @@ func runExportProducts(cfg *config.Config, log logger.Logger) error {
 				"skipped":  result.Skipped,
 				"errors":   len(result.Errors),
 			},
-			Errors: result.Errors,
+			Errors:       result.Errors,
+			Warnings:     result.Warnings,
+			WarningEvent: "export.products.warning",
 		}, nil
 	})
 }
