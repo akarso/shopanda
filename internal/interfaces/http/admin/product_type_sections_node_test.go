@@ -36,7 +36,10 @@ func TestAdminHandler_ProductTypeSectionsScript(t *testing.T) {
 		"sectionVisible",
 		"syncSections",
 		"selectNeedsUnknownOption",
-		"not a duplicated map",
+		"resolveTypeChange",
+		"assignProductField",
+		"labelsFromForm",
+		"applyTypeCellLabels",
 	} {
 		if !strings.Contains(body, expected) {
 			t.Fatalf("expected %q in product_type_sections.js", expected)

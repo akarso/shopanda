@@ -406,15 +406,14 @@
         var gridBox = document.getElementById("products-grid");
         var gridMsg = document.getElementById("products-grid-msg");
         var canReindex = userHasPermission("search.reindex");
+        // Required path: grid + products only. Type labels load after render so a
+        // slow/failed forms request cannot block rows that are already available.
         Promise.all([
             api("/admin/grids/product.grid"),
-            api("/admin/products?page=1&per_page=20&sort=created_at&order=desc"),
-            // Labels are optional — never fail the products page if forms is down/forbidden.
-            api("/admin/forms/product.form").catch(function () { return {}; })
+            api("/admin/products?page=1&per_page=20&sort=created_at&order=desc")
         ]).then(function (results) {
             var gridResponse = results[0] || {};
             var productsResponse = results[1] || {};
-            var formResponse = results[2] || {};
             if ((gridResponse.error && gridResponse.error.code === "forbidden") ||
                 (productsResponse.error && productsResponse.error.code === "forbidden")) {
                 gridBox.innerHTML = '<p role="alert">Your account does not have products access.</p>';
@@ -430,7 +429,6 @@
                 gridBox.innerHTML = '<p role="alert">' + esc(extractErrorMessage(productsResponse, 'Failed to load products.')) + '</p>';
                 return;
             }
-            var typeLabels = productTypeLabelsFromForm(formResponse.data && formResponse.data.form);
             var products = normalizeProducts(productsRaw);
             var html = '<div style="margin-bottom:1rem"><button id="new-product-btn">New Product</button></div>';
             html += '<table class="admin-table"><thead><tr>';
@@ -451,7 +449,9 @@
                             val = String(val).substring(0, 10);
                         }
                         if (col.name === "type") {
-                            val = productTypeDisplayLabel(val, typeLabels);
+                            var typeRaw = val == null ? "" : String(val);
+                            html += '<td data-product-type-cell="' + esc(typeRaw) + '">' + esc(typeRaw) + '</td>';
+                            continue;
                         }
                         html += '<td>' + esc(val == null ? '' : val) + '</td>';
                     }
@@ -468,8 +468,26 @@
             var newBtn = document.getElementById("new-product-btn");
             if (newBtn) newBtn.addEventListener("click", function() { navigateTo("/admin/products/new"); });
             bindReindexRowActions(gridBox, "product-row-reindex", "products", gridMsg);
+            loadProductTypeGridLabels(gridBox);
         }).catch(function (err) {
             gridBox.innerHTML = '<p role="alert">' + esc(extractErrorMessage(err, 'Failed to load products.')) + '</p>';
+        });
+    }
+
+    function loadProductTypeGridLabels(gridBox) {
+        api("/admin/forms/product.form").then(function (formResponse) {
+            var apiHelpers = productTypeSectionsAPI();
+            var form = formResponse && formResponse.data && formResponse.data.form;
+            var labels = apiHelpers && apiHelpers.labelsFromForm
+                ? apiHelpers.labelsFromForm(form)
+                : productTypeLabelsFromFormFallback(form);
+            if (apiHelpers && apiHelpers.applyTypeCellLabels) {
+                apiHelpers.applyTypeCellLabels(gridBox, labels);
+            } else {
+                applyProductTypeCellLabelsFallback(gridBox, labels);
+            }
+        }).catch(function () {
+            // Labels optional — leave raw type slugs rendered with the grid.
         });
     }
 
@@ -1350,11 +1368,15 @@
         if (typeof console !== "undefined" && console.warn) {
             console.warn("ShopandaProductTypeSections missing; using inline section visibility fallback");
         }
-        if (!target || typeof target.querySelectorAll !== "function") {
+        syncProductTypeSectionsFallback(target, selectedType);
+    }
+
+    function syncProductTypeSectionsFallback(root, selectedType) {
+        if (!root || typeof root.querySelectorAll !== "function") {
             return;
         }
         var selected = String(selectedType || "simple");
-        var nodes = target.querySelectorAll("[data-product-type-section]");
+        var nodes = root.querySelectorAll("[data-product-type-section]");
         for (var i = 0; i < nodes.length; i++) {
             var raw = nodes[i].getAttribute("data-product-type-section") || "";
             var types = String(raw).split(",").map(function (s) {
@@ -1392,7 +1414,7 @@
             return;
         }
         opts = opts || {};
-        var originalType = opts.originalType ? String(opts.originalType) : "simple";
+        var previousType = opts.originalType ? String(opts.originalType) : "simple";
         function currentType() {
             var el = form.elements.type;
             return el && el.value ? el.value : "simple";
@@ -1402,23 +1424,47 @@
         if (typeEl && !typeEl.getAttribute("data-product-type-switch-bound")) {
             typeEl.setAttribute("data-product-type-switch-bound", "1");
             typeEl.addEventListener("change", function () {
-                if (opts.confirmOnChange && typeEl.value !== originalType) {
-                    var msg = "Changing type can alter shipping (virtual/downloadable skip physical shipping) and which type-specific panels apply. Continue?";
-                    if (!window.confirm(msg)) {
-                        typeEl.value = originalType;
-                        syncProductTypeSections(root || document, currentType());
-                        return;
-                    }
-                    originalType = typeEl.value;
+                var api = productTypeSectionsAPI();
+                var resolved;
+                if (api && api.resolveTypeChange) {
+                    resolved = api.resolveTypeChange({
+                        confirmOnChange: !!opts.confirmOnChange,
+                        previousType: previousType,
+                        nextType: typeEl.value,
+                        confirmFn: function (message) { return window.confirm(message); }
+                    });
+                } else {
+                    resolved = resolveTypeChangeFallback({
+                        confirmOnChange: !!opts.confirmOnChange,
+                        previousType: previousType,
+                        nextType: typeEl.value,
+                        confirmFn: function (message) { return window.confirm(message); }
+                    });
                 }
+                typeEl.value = resolved.type;
+                previousType = resolved.previousType;
                 syncProductTypeSections(root || document, currentType());
             });
         }
     }
 
-    // Labels come from product.form type field options (Go ProductTypeLabel),
-    // not a duplicated client map — avoids drift when AllTypes grows.
-    function productTypeLabelsFromForm(form) {
+    function resolveTypeChangeFallback(opts) {
+        opts = opts || {};
+        var previous = String(opts.previousType || "simple");
+        var next = String(opts.nextType || "simple");
+        if (opts.confirmOnChange && next !== previous) {
+            var ok = typeof opts.confirmFn === "function" ? opts.confirmFn(
+                "Changing type can alter shipping (virtual/downloadable skip physical shipping) and which type-specific panels apply. Continue?"
+            ) : true;
+            if (!ok) {
+                return { type: previous, previousType: previous, cancelled: true };
+            }
+            return { type: next, previousType: next, cancelled: false };
+        }
+        return { type: next, previousType: previous, cancelled: false };
+    }
+
+    function productTypeLabelsFromFormFallback(form) {
         var map = {};
         if (!form || !Array.isArray(form.fields)) {
             return map;
@@ -1440,16 +1486,19 @@
         return map;
     }
 
-    function productTypeDisplayLabel(value, labels) {
-        var key = value == null ? "" : String(value);
-        if (labels && Object.prototype.hasOwnProperty.call(labels, key)) {
-            return labels[key];
+    function applyProductTypeCellLabelsFallback(root, labels) {
+        if (!root || typeof root.querySelectorAll !== "function") {
+            return;
         }
-        return key;
+        var cells = root.querySelectorAll("[data-product-type-cell]");
+        for (var i = 0; i < cells.length; i++) {
+            var raw = cells[i].getAttribute("data-product-type-cell");
+            var key = raw == null ? "" : String(raw);
+            cells[i].textContent = (labels && Object.prototype.hasOwnProperty.call(labels, key)) ? labels[key] : key;
+        }
     }
 
-    // Mirrors ShopandaProductTypeSections.selectNeedsUnknownOption with an
-    // inline fallback when product_type_sections.js failed to load.
+    // Inline fallback when product_type_sections.js failed to load.
     function productTypeSelectNeedsUnknownOption(options, selectedValue) {
         var api = productTypeSectionsAPI();
         if (api && api.selectNeedsUnknownOption) {
@@ -1459,15 +1508,13 @@
         if (!selected) {
             return false;
         }
-        var known = false;
         var list = options || [];
         for (var i = 0; i < list.length; i++) {
             if (String(list[i].value) === selected) {
-                known = true;
-                break;
+                return false;
             }
         }
-        return !known;
+        return true;
     }
 
     function saveProductTranslations(productID, activeScope, fields, form, msg) {
@@ -1842,7 +1889,10 @@
                 v = el.value;
             }
 
-            if (f.name === "name" || f.name === "slug" || f.name === "description" || f.name === "status" || f.name === "type") {
+            var api = productTypeSectionsAPI();
+            if (api && api.assignProductField) {
+                api.assignProductField(payload, f.name, v);
+            } else if (f.name === "name" || f.name === "slug" || f.name === "description" || f.name === "status" || f.name === "type") {
                 payload[f.name] = v;
             } else {
                 payload.attributes[f.name] = v;
