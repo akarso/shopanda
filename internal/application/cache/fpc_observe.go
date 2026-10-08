@@ -13,16 +13,24 @@ import (
 // Prometheus (via Recorder) and the cache admin GUI (process-local snapshot).
 // Safe for concurrent use. A nil observer is a no-op at every call site.
 //
-// Purge counters count keys deleted (not mere observations). Soft-TTL
-// expiry is not a purge — it surfaces as miss after the entry is deleted.
+// Purge counters count confirmed value deletions (not mere observations or
+// tag-membership snapshot size). Soft-TTL expiry is not a purge — it
+// surfaces as miss after the entry is deleted.
 // Backend Get failures use NoteBackendGetError (scrapable series), not a
 // request outcome label.
+//
+// PagesStored is derived from keys this process has stored, each with an
+// expiry deadline: hard TTL refill of the same key does not inflate the
+// count; Snapshot prunes past-deadline entries so Redis/Postgres expiry
+// that never hit PageGone does not grow forever. Tag purges that only
+// report a deletion count do not remove map entries — those keys drop
+// out at their tracked expiry (best-effort until then).
 type FPCObserver struct {
 	rec metrics.Recorder
 
 	routes sync.Map // string → *fpcRouteAccum
+	pages  sync.Map // string → time.Time (expiresAt; zero = no auto-expiry)
 
-	pagesStored      atomic.Int64
 	purgeTag         atomic.Int64
 	purgeURL         atomic.Int64
 	backendGetErrors atomic.Int64
@@ -51,10 +59,9 @@ type FPCPurgeSnapshot struct {
 
 // FPCSnapshot is the admin-GUI / stats payload for full-page cache (PR-1047).
 // Counters are lifetime for this process. PagesStored is a best-effort
-// estimate (+1 only when storing a previously absent key; −n on key
-// deletes this process knows about, including soft-TTL eviction without
-// a purge series bump; reset on FlushAll). BackendGetErrors mirrors
-// shopanda_fpc_backend_get_errors_total for this process.
+// count of tracked keys whose expiry has not elapsed (reset on FlushAll).
+// BackendGetErrors mirrors shopanda_fpc_backend_get_errors_total for this
+// process.
 type FPCSnapshot struct {
 	Routes           []FPCRouteSnapshot `json:"routes"`
 	PagesStored      int64              `json:"pages_stored"`
@@ -119,8 +126,10 @@ func (o *FPCObserver) Render(route string, d time.Duration) {
 	o.rec.FPCRenderDuration(route, d)
 }
 
-// Purge records keys deleted for a known trigger. n is how many keys were
-// removed; n <= 0 is a no-op (failed or empty purges do not inflate series).
+// Purge records confirmed value deletions for a known trigger. n is how
+// many value keys were removed; n <= 0 is a no-op. Does not adjust
+// pages_stored — callers that know the keys should PageGone them; tag
+// purges without key lists rely on tracked expiry.
 // Unknown triggers use metrics.FPCPurgeUnknown rather than aliasing to tag.
 func (o *FPCObserver) Purge(trigger string, n int64) {
 	if o == nil || n <= 0 {
@@ -138,26 +147,25 @@ func (o *FPCObserver) Purge(trigger string, n int64) {
 	case metrics.FPCPurgeManualURL:
 		o.purgeURL.Add(n)
 	}
-	o.removePages(n)
 }
 
-// PageStoredIfNew increments pages_stored only when the key was absent
-// before the store (overwrite of the same key must not double-count).
-func (o *FPCObserver) PageStoredIfNew(wasAbsent bool) {
-	if o == nil || !wasAbsent {
+// PageStored records that key is cached until expiresAt (zero = no
+// auto-expiry). Re-storing the same key only refreshes expiry — hard TTL
+// refill must not inflate pages_stored.
+func (o *FPCObserver) PageStored(key string, expiresAt time.Time) {
+	if o == nil || key == "" {
 		return
 	}
-	o.pagesStored.Add(1)
+	o.pages.Store(key, expiresAt)
 }
 
-// PageEvicted decrements pages_stored for keys this process removed
-// without a purge trigger (soft-TTL eviction). Does not touch
-// shopanda_fpc_purge_total.
-func (o *FPCObserver) PageEvicted(n int64) {
-	if o == nil {
+// PageGone removes key from the pages_stored estimate (soft-TTL eviction,
+// confirmed manual delete). Does not touch shopanda_fpc_purge_total.
+func (o *FPCObserver) PageGone(key string) {
+	if o == nil || key == "" {
 		return
 	}
-	o.removePages(n)
+	o.pages.Delete(key)
 }
 
 // NoteBackendGetError records a cache backend Get failure on the FPC path
@@ -176,23 +184,24 @@ func (o *FPCObserver) ResetPagesStored() {
 	if o == nil {
 		return
 	}
-	o.pagesStored.Store(0)
+	o.pages.Range(func(key, _ any) bool {
+		o.pages.Delete(key)
+		return true
+	})
 }
 
-func (o *FPCObserver) removePages(n int64) {
-	if n <= 0 {
-		return
-	}
-	for {
-		cur := o.pagesStored.Load()
-		next := cur - n
-		if next < 0 {
-			next = 0
+func (o *FPCObserver) livePages(now time.Time) int64 {
+	var n int64
+	o.pages.Range(func(key, value any) bool {
+		exp, _ := value.(time.Time)
+		if !exp.IsZero() && !exp.After(now) {
+			o.pages.Delete(key)
+			return true
 		}
-		if o.pagesStored.CompareAndSwap(cur, next) {
-			return
-		}
-	}
+		n++
+		return true
+	})
+	return n
 }
 
 // Snapshot returns process-local FPC counters for the admin GUI.
@@ -224,7 +233,7 @@ func (o *FPCObserver) Snapshot() FPCSnapshot {
 	sort.Slice(routes, func(i, j int) bool { return routes[i].Route < routes[j].Route })
 	return FPCSnapshot{
 		Routes:           routes,
-		PagesStored:      o.pagesStored.Load(),
+		PagesStored:      o.livePages(time.Now().UTC()),
 		BackendGetErrors: o.backendGetErrors.Load(),
 		Purges: FPCPurgeSnapshot{
 			TagInvalidation: o.purgeTag.Load(),

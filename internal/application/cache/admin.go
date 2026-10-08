@@ -170,20 +170,27 @@ func (s *AdminService) Clear(ctx context.Context, req ClearRequest) (ClearResult
 			var probe PageEntry
 			hit, getErr := s.backend.Get(target, &probe)
 			if getErr != nil {
-				// Corrupt value may still exist — delete and count if Delete ok.
+				// Corrupt/unreadable value may still exist — delete for
+				// hygiene. Delete success on a missing key is not a
+				// confirmed value deletion, so do not bump purge metrics.
 				if err := s.backend.Delete(target); err != nil {
 					return ClearResult{Mode: mode, Target: target}, err
 				}
-				s.fpcObs.Purge(metrics.FPCPurgeManualURL, 1)
+				s.fpcObs.PageGone(target)
 				return ClearResult{Mode: mode, Target: target}, nil
 			}
 			if !hit {
-				_ = s.backend.Delete(target) // no-op / idempotent
+				// Postgres can miss on TTL while the row still exists.
+				if err := s.backend.Delete(target); err != nil {
+					return ClearResult{Mode: mode, Target: target}, err
+				}
+				s.fpcObs.PageGone(target)
 				return ClearResult{Mode: mode, Target: target}, nil
 			}
 			if err := s.backend.Delete(target); err != nil {
 				return ClearResult{Mode: mode, Target: target}, err
 			}
+			s.fpcObs.PageGone(target)
 			s.fpcObs.Purge(metrics.FPCPurgeManualURL, 1)
 			return ClearResult{Mode: mode, Target: target}, nil
 		}

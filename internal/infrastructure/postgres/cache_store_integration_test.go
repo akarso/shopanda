@@ -398,8 +398,9 @@ func TestCacheStoreDB_TagDeleteAfterExpiry(t *testing.T) {
 	if err != nil {
 		t.Fatalf("DeleteByTag after expiry: %v", err)
 	}
+	// Expired row is still in cache until swept; DeleteByTag removes it.
 	if n != 1 {
-		t.Errorf("DeleteByTag count = %d, want 1 (the tag row exists regardless of the value's own expiry)", n)
+		t.Errorf("DeleteByTag count = %d, want 1 (expired cache row still deleted)", n)
 	}
 	ok, err = store.Get("expired_tagged", &got)
 	if err != nil || ok {
@@ -474,7 +475,7 @@ func TestCacheStoreDB_TagDeleteExpiredSweepsOrphans(t *testing.T) {
 	}
 }
 
-func TestCacheStoreDB_TagDeleteByTagCountIncludesOrphans(t *testing.T) {
+func TestCacheStoreDB_TagDeleteByTagCountExcludesOrphans(t *testing.T) {
 	db, store := setupCacheStore(t)
 	ctx := context.Background()
 	if err := store.SetWithTags(ctx, "live", "v", time.Hour, "mix-tag"); err != nil {
@@ -488,8 +489,8 @@ func TestCacheStoreDB_TagDeleteByTagCountIncludesOrphans(t *testing.T) {
 	if err != nil {
 		t.Fatalf("DeleteByTag: %v", err)
 	}
-	if n != 2 {
-		t.Fatalf("DeleteByTag count = %d, want 2 (snapshot includes the orphaned tag row)", n)
+	if n != 1 {
+		t.Fatalf("DeleteByTag count = %d, want 1 (orphaned tag row has no value to delete)", n)
 	}
 
 	var got string

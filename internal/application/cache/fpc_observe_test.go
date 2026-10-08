@@ -81,19 +81,20 @@ func TestFPCObserver_NoteBackendGetErrorForwards(t *testing.T) {
 	}
 }
 
-func TestFPCObserver_PurgeOnlyWhenKeysDeleted(t *testing.T) {
+func TestFPCObserver_PageStoredTracksKeyExpiry(t *testing.T) {
 	rec := &recordingFPCMetrics{}
 	obs := cacheApp.NewFPCObserver(rec)
-	obs.PageStoredIfNew(true)
-	obs.PageStoredIfNew(true)
-	obs.PageStoredIfNew(false) // overwrite — no increment
+	exp := time.Now().UTC().Add(time.Hour)
+	obs.PageStored("k1", exp)
+	obs.PageStored("k2", exp)
+	obs.PageStored("k1", exp) // refill same key — no inflate
 	obs.Purge(metrics.FPCPurgeTagInvalidation, 0)
 	obs.Purge(metrics.FPCPurgeManualURL, 0)
 	obs.Purge("bogus-trigger", 2)
 
 	snap := obs.Snapshot()
-	if snap.PagesStored != 0 {
-		t.Fatalf("pages_stored = %d, want 0", snap.PagesStored)
+	if snap.PagesStored != 2 {
+		t.Fatalf("pages_stored = %d, want 2", snap.PagesStored)
 	}
 	if snap.Purges.TagInvalidation != 0 || snap.Purges.ManualURL != 0 {
 		t.Fatalf("known purges = %+v, want zeros", snap.Purges)
@@ -105,9 +106,18 @@ func TestFPCObserver_PurgeOnlyWhenKeysDeleted(t *testing.T) {
 	}
 }
 
+func TestFPCObserver_PageStoredPrunesExpired(t *testing.T) {
+	obs := cacheApp.NewFPCObserver(metrics.Noop())
+	obs.PageStored("live", time.Now().UTC().Add(time.Hour))
+	obs.PageStored("gone", time.Now().UTC().Add(-time.Second))
+	if got := obs.Snapshot().PagesStored; got != 1 {
+		t.Fatalf("pages_stored = %d, want 1 (expired pruned)", got)
+	}
+}
+
 func TestFPCObserver_ResetPagesStored(t *testing.T) {
 	obs := cacheApp.NewFPCObserver(metrics.Noop())
-	obs.PageStoredIfNew(true)
+	obs.PageStored("k", time.Now().UTC().Add(time.Hour))
 	obs.ResetPagesStored()
 	if obs.Snapshot().PagesStored != 0 {
 		t.Fatal("expected reset")
@@ -126,6 +136,15 @@ func TestFPCObserver_ForwardsToRecorder(t *testing.T) {
 	}
 	if len(rec.purges) != 1 || rec.purges[0].n != 4 {
 		t.Fatalf("purges = %#v", rec.purges)
+	}
+}
+
+func TestFPCObserver_PurgeDoesNotTouchPagesStored(t *testing.T) {
+	obs := cacheApp.NewFPCObserver(metrics.Noop())
+	obs.PageStored("k", time.Now().UTC().Add(time.Hour))
+	obs.Purge(metrics.FPCPurgeTagInvalidation, 4)
+	if obs.Snapshot().PagesStored != 1 {
+		t.Fatal("tag purge count must not blindly subtract pages_stored")
 	}
 }
 
@@ -157,7 +176,8 @@ func TestFPCObserver_NilSafe(t *testing.T) {
 	obs.Request(cacheApp.RouteHome, metrics.FPCOutcomeHit)
 	obs.Render(cacheApp.RouteHome, time.Millisecond)
 	obs.Purge(metrics.FPCPurgeManualURL, 1)
-	obs.PageStoredIfNew(true)
+	obs.PageStored("k", time.Now().UTC().Add(time.Hour))
+	obs.PageGone("k")
 	obs.ResetPagesStored()
 	_ = obs.Snapshot()
 }
@@ -165,8 +185,8 @@ func TestFPCObserver_NilSafe(t *testing.T) {
 func TestAdminClear_ResetsPagesStored(t *testing.T) {
 	backend := newTagMemCache()
 	obs := cacheApp.NewFPCObserver(metrics.Noop())
-	obs.PageStoredIfNew(true)
-	obs.PageStoredIfNew(true)
+	obs.PageStored("a", time.Now().UTC().Add(time.Hour))
+	obs.PageStored("b", time.Now().UTC().Add(time.Hour))
 	svc := cacheApp.NewAdminService(backend, nil).WithFPCObserver(obs)
 	if _, err := svc.Clear(context.Background(), cacheApp.ClearRequest{All: true}); err != nil {
 		t.Fatal(err)
@@ -179,7 +199,7 @@ func TestAdminClear_ResetsPagesStored(t *testing.T) {
 func TestAdminClear_NonFPCTagDoesNotFeedObserver(t *testing.T) {
 	backend := newTagMemCache()
 	obs := cacheApp.NewFPCObserver(metrics.Noop())
-	obs.PageStoredIfNew(true)
+	obs.PageStored("k", time.Now().UTC().Add(time.Hour))
 	ctx := context.Background()
 	_ = backend.SetWithTags(ctx, "other:1", cacheApp.PageEntry{HTML: "x"}, time.Minute, "ratelimit:bucket")
 	svc := cacheApp.NewAdminService(backend, nil).WithFPCObserver(obs)
@@ -194,7 +214,22 @@ func TestAdminClear_NonFPCTagDoesNotFeedObserver(t *testing.T) {
 		t.Fatal("non-FPC tag must not increment FPC tag purge")
 	}
 	if obs.Snapshot().PagesStored != 1 {
-		t.Fatal("non-FPC tag clear must not decrement pages_stored")
+		t.Fatal("non-FPC tag clear must not remove tracked FPC pages")
+	}
+}
+
+func TestAdminClear_KeyMissPropagatesDeleteError(t *testing.T) {
+	backend := newTagMemCache()
+	backend.deleteErr = errors.New("delete failed")
+	obs := cacheApp.NewFPCObserver(metrics.Noop())
+	svc := cacheApp.NewAdminService(backend, nil).WithFPCObserver(obs)
+	key := cacheApp.Key(cacheApp.RoutePDP, "/products/x", "", cacheApp.Vary{AuthState: cacheApp.AuthGuest})
+	_, err := svc.Clear(context.Background(), cacheApp.ClearRequest{Key: key})
+	if err == nil {
+		t.Fatal("want delete error on FPC key miss")
+	}
+	if obs.Snapshot().Purges.ManualURL != 0 {
+		t.Fatal("failed clear must not bump purge metrics")
 	}
 }
 
@@ -209,18 +244,18 @@ func TestIsFPCTag(t *testing.T) {
 	}
 }
 
-func TestFPCObserver_PageEvictedDoesNotPurge(t *testing.T) {
+func TestFPCObserver_PageGoneDoesNotPurge(t *testing.T) {
 	rec := &recordingFPCMetrics{}
 	obs := cacheApp.NewFPCObserver(rec)
-	obs.PageStoredIfNew(true)
-	obs.PageEvicted(1)
+	obs.PageStored("k", time.Now().UTC().Add(time.Hour))
+	obs.PageGone("k")
 	if obs.Snapshot().PagesStored != 0 {
-		t.Fatal("PageEvicted must decrement pages_stored")
+		t.Fatal("PageGone must drop pages_stored")
 	}
 	rec.mu.Lock()
 	defer rec.mu.Unlock()
 	if len(rec.purges) != 0 {
-		t.Fatalf("PageEvicted must not emit purge metrics: %#v", rec.purges)
+		t.Fatalf("PageGone must not emit purge metrics: %#v", rec.purges)
 	}
 }
 
@@ -238,7 +273,7 @@ func TestAdminStats_IncludesFPC(t *testing.T) {
 	}
 }
 
-func TestPurgeURL_ObserverCountsRemovedIncludingCorrupt(t *testing.T) {
+func TestPurgeURL_ObserverCountsConfirmedHitsOnly(t *testing.T) {
 	inner := newTagMemCache()
 	stores := []cacheApp.StoreVary{{ID: "s1", Language: "en", Currency: "EUR"}}
 	path := "/products/widget"
@@ -249,8 +284,9 @@ func TestPurgeURL_ObserverCountsRemovedIncludingCorrupt(t *testing.T) {
 
 	rec := &recordingFPCMetrics{}
 	obs := cacheApp.NewFPCObserver(rec)
-	obs.PageStoredIfNew(true)
-	obs.PageStoredIfNew(true)
+	exp := time.Now().UTC().Add(time.Hour)
+	obs.PageStored(guest, exp)
+	obs.PageStored(auth, exp)
 	backend := &decodeErrCache{tagMemCache: inner, errKeys: map[string]error{guest: errors.New("corrupt")}}
 	svc := cacheApp.NewAdminService(backend, nil).WithFPCObserver(obs)
 	res, err := svc.PurgeURL(context.Background(), path, stores)
@@ -261,12 +297,12 @@ func TestPurgeURL_ObserverCountsRemovedIncludingCorrupt(t *testing.T) {
 		t.Fatalf("deleted = %d, want 1 (auth hit only)", res.Deleted)
 	}
 	if obs.Snapshot().PagesStored != 0 {
-		t.Fatalf("pages_stored = %d, want 0 (both keys removed)", obs.Snapshot().PagesStored)
+		t.Fatalf("pages_stored = %d, want 0 (PageGone on hit + corrupt delete)", obs.Snapshot().PagesStored)
 	}
 	rec.mu.Lock()
 	defer rec.mu.Unlock()
-	if len(rec.purges) != 1 || rec.purges[0].n != 2 {
-		t.Fatalf("purges = %#v, want n=2", rec.purges)
+	if len(rec.purges) != 1 || rec.purges[0].n != 1 {
+		t.Fatalf("purges = %#v, want n=1 (confirmed hit only)", rec.purges)
 	}
 }
 
@@ -277,7 +313,7 @@ func TestFPCInvalidation_ObserverOnTagDelete(t *testing.T) {
 	ctx := context.Background()
 	key := cacheApp.Key(cacheApp.RoutePDP, "/products/widget", "", cacheApp.Vary{AuthState: cacheApp.AuthGuest})
 	_ = backend.SetWithTags(ctx, key, cacheApp.PageEntry{HTML: "x"}, time.Minute, cacheApp.ProductTag("p1"))
-	obs.PageStoredIfNew(true)
+	obs.PageStored(key, time.Now().UTC().Add(time.Hour))
 
 	sub := cacheApp.NewFPCInvalidationSubscriber(backend, &mockLogger{}).WithObserver(obs)
 	if err := sub.HandleProductUpdated(ctx, event.New(catalog.EventProductUpdated, "test", catalog.ProductUpdatedData{ProductID: "p1"})); err != nil {

@@ -132,7 +132,7 @@ func (h *StorefrontHandler) evictSoftExpired(key string, noteGetErr func()) {
 		if err := h.fpc.backend.Delete(key); err != nil {
 			return
 		}
-		h.fpc.obs.PageEvicted(1)
+		h.fpc.obs.PageGone(key)
 	})
 }
 
@@ -218,7 +218,7 @@ func (h *StorefrontHandler) withFullPageCache(routeTemplate string, inner http.H
 			} else if getErr != nil {
 				noteGetErr()
 			}
-			return h.renderFPCMiss(routeTemplate, key, ttl, r, inner, noteGetErr), nil
+			return h.renderFPCMiss(routeTemplate, key, ttl, r, inner), nil
 		})
 		if err != nil {
 			h.log.Warn("storefront.fpc.stampede_failed", map[string]interface{}{
@@ -261,7 +261,7 @@ func (h *StorefrontHandler) withFullPageCache(routeTemplate string, inner http.H
 					noteGetErr()
 				}
 			}
-			miss = h.renderFPCMiss(routeTemplate, key, ttl, r, inner, noteGetErr)
+			miss = h.renderFPCMiss(routeTemplate, key, ttl, r, inner)
 		}
 
 		copyHeader(w.Header(), miss.header)
@@ -292,7 +292,7 @@ type fpcCoalescedHit struct {
 	left  time.Duration
 }
 
-func (h *StorefrontHandler) renderFPCMiss(routeTemplate, key string, ttl time.Duration, r *http.Request, inner http.HandlerFunc, noteGetErr func()) fpcMissResult {
+func (h *StorefrontHandler) renderFPCMiss(routeTemplate, key string, ttl time.Duration, r *http.Request, inner http.HandlerFunc) fpcMissResult {
 	buf := &fpcBuffer{header: make(http.Header)}
 	started := time.Now()
 	inner.ServeHTTP(buf, r)
@@ -323,18 +323,6 @@ func (h *StorefrontHandler) renderFPCMiss(routeTemplate, key string, ttl time.Du
 			TTLNanos: int64(ttl),
 		}
 		tags := domaincache.UniqueTags(cacheapp.PageTags(r.Context()))
-		var probe cacheapp.PageEntry
-		wasAbsent := true
-		ok, getErr := h.fpc.backend.Get(key, &probe)
-		if getErr != nil {
-			if noteGetErr != nil {
-				noteGetErr()
-			}
-			// Fail closed: key may still exist — do not treat as new.
-			wasAbsent = false
-		} else if ok {
-			wasAbsent = false
-		}
 		if err := h.fpc.backend.SetWithTags(r.Context(), key, stored, ttl, tags...); err != nil {
 			h.log.Warn("storefront.fpc.set_failed", map[string]interface{}{
 				"path":  r.URL.Path,
@@ -342,7 +330,13 @@ func (h *StorefrontHandler) renderFPCMiss(routeTemplate, key string, ttl time.Du
 			})
 			storeOK = false
 		} else if h.fpc != nil {
-			h.fpc.obs.PageStoredIfNew(wasAbsent)
+			// Track by key+expiry so hard TTL refill does not inflate
+			// pages_stored when the backend already dropped the row.
+			var expiresAt time.Time
+			if ttl > 0 {
+				expiresAt = now.Add(ttl)
+			}
+			h.fpc.obs.PageStored(key, expiresAt)
 		}
 	}
 

@@ -409,10 +409,12 @@ func (s *CacheStore) SetWithTags(ctx context.Context, key string, value any, ttl
 // DeleteByTag snapshot-isolates the tag set with RENAME, then SSCAN+DEL
 // members so a concurrent SADD creates a new set at the original key
 // instead of having its membership destroyed. SSCAN avoids blocking Redis
-// with a single O(N) SMEMBERS of a large tag. The purge key is given a
-// TTL immediately; any failure after RENAME merges remaining members back
-// onto the live tag key (independent of the caller's context) so a retry
-// can still invalidate them.
+// with a single O(N) SMEMBERS of a large tag. The returned count is how
+// many value keys Del actually removed (TTL-evicted members are not
+// counted). The purge key is given a TTL immediately; any failure after
+// RENAME merges remaining members back onto the live tag key
+// (independent of the caller's context) so a retry can still invalidate
+// them.
 func (s *CacheStore) DeleteByTag(ctx context.Context, tag string) (n int64, err error) {
 	tag = cache.NormalizeTag(tag)
 	if tag == "" {
@@ -463,23 +465,31 @@ func (s *CacheStore) DeleteByTag(ctx context.Context, tag string) (n int64, err 
 	// key this call is about to delete, is instead left for DeleteExpired
 	// to sweep — the same accepted, already-tested eventual-consistency
 	// path as any other orphan (see its own doc comment).
-	keys := make([]string, 0, deleteByPrefixBatchSize)
+	valueKeys := make([]string, 0, deleteByPrefixBatchSize)
+	metaKeys := make([]string, 0, deleteByPrefixBatchSize)
 	flush := func() error {
-		if len(keys) == 0 {
-			return nil
+		if len(valueKeys) > 0 {
+			deleted, delErr := s.client.Del(ctx, valueKeys...).Result()
+			if delErr != nil {
+				return fmt.Errorf("redis cache: delete by tag %q: %w", tag, delErr)
+			}
+			n += deleted
+			valueKeys = valueKeys[:0]
 		}
-		if err := s.client.Del(ctx, keys...).Err(); err != nil {
-			return fmt.Errorf("redis cache: delete by tag %q: %w", tag, err)
+		if len(metaKeys) > 0 {
+			if err := s.client.Del(ctx, metaKeys...).Err(); err != nil {
+				return fmt.Errorf("redis cache: delete by tag %q: keytags: %w", tag, err)
+			}
+			metaKeys = metaKeys[:0]
 		}
-		keys = keys[:0]
 		return nil
 	}
 	iter := s.client.SScan(ctx, tmpKey, 0, "", tagScanCount).Iterator()
 	for iter.Next(ctx) {
 		member := iter.Val()
-		keys = append(keys, s.key(member), s.keyTagsKey(member))
-		n++
-		if len(keys) >= deleteByPrefixBatchSize {
+		valueKeys = append(valueKeys, s.key(member))
+		metaKeys = append(metaKeys, s.keyTagsKey(member))
+		if len(valueKeys) >= deleteByPrefixBatchSize {
 			if err = flush(); err != nil {
 				return n, err
 			}

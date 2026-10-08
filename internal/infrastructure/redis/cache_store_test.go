@@ -432,7 +432,7 @@ func TestCacheStore_TagDeleteExpiredSkipsBadKey(t *testing.T) {
 	}
 }
 
-func TestCacheStore_TagDeleteByTagCountIncludesTTLEvictedMembers(t *testing.T) {
+func TestCacheStore_TagDeleteByTagCountExcludesTTLEvictedMembers(t *testing.T) {
 	mr, store := setupRedisCache(t, "p")
 	ctx := context.Background()
 	if err := store.SetWithTags(ctx, "live", "v", time.Hour, "mix-tag"); err != nil {
@@ -446,8 +446,8 @@ func TestCacheStore_TagDeleteByTagCountIncludesTTLEvictedMembers(t *testing.T) {
 	if err != nil {
 		t.Fatalf("DeleteByTag: %v", err)
 	}
-	if n != 2 {
-		t.Fatalf("DeleteByTag count = %d, want 2 (snapshot includes the TTL-evicted member)", n)
+	if n != 1 {
+		t.Fatalf("DeleteByTag count = %d, want 1 (TTL-evicted member has no value to delete)", n)
 	}
 }
 

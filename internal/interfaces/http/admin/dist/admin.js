@@ -10683,7 +10683,7 @@
             "<h3>L1 stores (this process)</h3>" +
             '<div id="cache-l1"></div>' +
             "<h3>Full-page cache (this process)</h3>" +
-            '<p class="settings-scope-note">Hit rate is hits/(hits+misses); bypasses are separate. Backend Get errors are <code>shopanda_fpc_backend_get_errors_total</code> (and this process&rsquo;s <code>backend_get_errors</code>), not a request outcome. Counters and pages_stored are lifetime for this API process only. Tag-invalidation totals here exclude purges that ran on a worker process — scrape <code>shopanda_fpc_purge_total</code> on both serve and worker for the full picture. Prefer Prometheus for historical rates.</p>' +
+            '<p class="settings-scope-note">Hit rate is hits/(hits+misses); bypasses are separate. Backend Get errors are <code>shopanda_fpc_backend_get_errors_total</code> (and this process&rsquo;s <code>backend_get_errors</code>), not a request outcome. <code>pages_stored</code> tracks keys this process stored with their expiry (hard TTL refill of the same key does not inflate it). Counters are lifetime for this API process only. Tag-invalidation totals here exclude purges that ran on a worker process — scrape <code>shopanda_fpc_purge_total</code> on both serve and worker for the full picture. Prefer Prometheus for historical rates.</p>' +
             '<div id="cache-fpc"></div>' +
             '<p><button type="button" id="cache-stats-refresh">Refresh stats</button></p>' +
             clearForm;

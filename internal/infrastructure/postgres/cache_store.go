@@ -312,9 +312,8 @@ func (s *CacheStore) DeleteByTag(ctx context.Context, tag string) (int64, error)
 		return 0, nil
 	}
 	var n int64
-	// gone is intentionally unreferenced. Postgres still executes
-	// data-modifying CTEs to completion even when the outer SELECT only
-	// reads doomed; dropping it would count tags without deleting values.
+	// Count value rows deleted (gone), not tag-membership snapshot size
+	// (doomed): FPC purge metrics need confirmed value deletions.
 	//
 	// doomed only deletes cache_tags rows for $1 itself, not every tag a
 	// doomed key happens to have: a prior version deleted cache_tags for
@@ -333,9 +332,9 @@ func (s *CacheStore) DeleteByTag(ctx context.Context, tag string) (int64, error)
 		`WITH doomed AS (
 		     DELETE FROM cache_tags WHERE tag = $1 RETURNING key
 		 ), gone AS (
-		     DELETE FROM cache WHERE key IN (SELECT key FROM doomed)
+		     DELETE FROM cache WHERE key IN (SELECT key FROM doomed) RETURNING 1
 		 )
-		 SELECT count(*) FROM doomed`,
+		 SELECT count(*) FROM gone`,
 		tag,
 	).Scan(&n)
 	if err != nil {

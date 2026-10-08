@@ -134,9 +134,53 @@ func TestFullPageCache_SoftTTLStablePagesStoredAndNoPurge(t *testing.T) {
 	}
 }
 
+func TestFullPageCache_HardTTLRefillStablePagesStored(t *testing.T) {
+	backend := newFPCMemCache()
+	obs := cacheApp.NewFPCObserver(metrics.Noop())
+	repo := &fpcProductRepo{
+		mockStorefrontRepo: mockStorefrontRepo{
+			findBySlugFn: func(_ context.Context, slug string) (*catalog.Product, error) {
+				return &catalog.Product{
+					ID: "p1", Name: "Widget", Slug: slug, Description: "A fine widget", Status: catalog.StatusActive,
+				}, nil
+			},
+		},
+		catsByProduct: map[string][]string{"p1": {"c1"}},
+	}
+	h := storefront.NewStorefrontHandler(createTestTheme(t), repo, newStorefrontCategoryMock(),
+		composition.NewPipeline[composition.ProductContext](),
+		composition.NewPipeline[composition.ListingContext](),
+		newStorefrontSearchMock(),
+	).WithFPCObserver(obs).WithFullPageCache(backend, time.Minute, true, nil)
+	router := newStorefrontRouter(h)
+
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/products/widget", nil))
+	if rec.Header().Get("X-Shopanda-Cache") != "MISS" {
+		t.Fatalf("warm = %q", rec.Header().Get("X-Shopanda-Cache"))
+	}
+	if got := obs.Snapshot().PagesStored; got != 1 {
+		t.Fatalf("after warm pages_stored = %d, want 1", got)
+	}
+
+	// Simulate Redis/Postgres hard TTL: value gone without PageGone.
+	for k := range backend.entries {
+		_ = backend.Delete(k)
+	}
+
+	rec = httptest.NewRecorder()
+	router.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/products/widget", nil))
+	if rec.Header().Get("X-Shopanda-Cache") != "MISS" {
+		t.Fatalf("refill = %q", rec.Header().Get("X-Shopanda-Cache"))
+	}
+	if got := obs.Snapshot().PagesStored; got != 1 {
+		t.Fatalf("pages_stored = %d after hard-TTL refill, want 1", got)
+	}
+}
+
 // getFailCache wraps a working store but makes every Get fail — models a Redis
-// blip where Set still works. Outer Get, stampede warm Get, and store probe
-// Get can all fail on one miss; backend_get_errors must still be 1.
+// blip where Set still works. Outer Get and stampede warm Get can both fail
+// on one miss; backend_get_errors must still be 1.
 type getFailCache struct {
 	*fpcMemCache
 }
@@ -174,9 +218,8 @@ func TestFullPageCache_BackendGetErrorOncePerRequest(t *testing.T) {
 	if snap.BackendGetErrors != 1 {
 		t.Fatalf("backend_get_errors = %d, want 1 (once per request despite multiple Get failures)", snap.BackendGetErrors)
 	}
-	// Probe Get failed → fail-closed wasAbsent=false → pages_stored stays 0
-	// even though Set succeeded (key may have already existed).
-	if snap.PagesStored != 0 {
-		t.Fatalf("pages_stored = %d, want 0 when probe Get errors", snap.PagesStored)
+	// Set still succeeds under a Get-only blip; key is tracked by expiry.
+	if snap.PagesStored != 1 {
+		t.Fatalf("pages_stored = %d, want 1 after successful Set", snap.PagesStored)
 	}
 }
