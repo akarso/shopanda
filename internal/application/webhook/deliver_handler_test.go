@@ -28,6 +28,10 @@ func (m *recordingMetrics) HTTPRequest(string, string, string, time.Duration) {}
 func (m *recordingMetrics) CheckoutResult(string)                             {}
 func (m *recordingMetrics) JobFailure(string)                                 {}
 func (m *recordingMetrics) RateLimitBackendError(string, string)              {}
+func (m *recordingMetrics) FPCRequest(string, string)                         {}
+func (m *recordingMetrics) FPCRenderDuration(string, time.Duration)           {}
+func (m *recordingMetrics) FPCPurgeKeys(string, int64)                        {}
+func (m *recordingMetrics) FPCBackendGetError()                               {}
 func (m *recordingMetrics) WebhookDelivery(outcome string) {
 	m.webhookOutcomes = append(m.webhookOutcomes, outcome)
 }

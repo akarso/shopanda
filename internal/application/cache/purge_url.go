@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/akarso/shopanda/internal/platform/apperror"
+	"github.com/akarso/shopanda/internal/platform/metrics"
 )
 
 // StoreVary is one store's contribution to the FPC vary key.
@@ -191,7 +192,8 @@ func PurgeURLKeys(rawPath string, stores []StoreVary) (path string, keys []strin
 // Continues after a per-key Get/Delete failure so other vary keys still
 // clear; the returned error is the first failure (partial results possible).
 // A Get decode/backend error still attempts Delete so corrupt entries do not
-// survive; Deleted only counts keys where Get hit and Delete succeeded.
+// survive; Deleted and purge metrics only count keys where Get hit and
+// Delete succeeded (Delete of a missing key is not a confirmed removal).
 func (s *AdminService) PurgeURL(ctx context.Context, rawPath string, stores []StoreVary) (PurgeURLResult, error) {
 	if s == nil {
 		return PurgeURLResult{}, apperror.Internal("cache admin service not configured")
@@ -200,7 +202,7 @@ func (s *AdminService) PurgeURL(ctx context.Context, rawPath string, stores []St
 	if err != nil {
 		return PurgeURLResult{}, err
 	}
-	deleted := 0
+	deleted := 0 // Get-hit + Delete success (API Deleted field + purge metric)
 	var firstErr error
 	for _, key := range keys {
 		if err := ctx.Err(); err != nil {
@@ -215,10 +217,15 @@ func (s *AdminService) PurgeURL(ctx context.Context, rawPath string, stores []St
 			if firstErr == nil {
 				firstErr = getErr
 			}
-			// Key may still exist (corrupt value) — purge it anyway.
-			if err := s.backend.Delete(key); err != nil && firstErr == nil {
-				firstErr = err
+			// Key may still exist (corrupt value) — purge for hygiene.
+			// Delete success alone is not a confirmed value deletion.
+			if err := s.backend.Delete(key); err != nil {
+				if firstErr == nil {
+					firstErr = err
+				}
+				continue
 			}
+			s.fpcObs.PageGone(key)
 			continue
 		}
 		if !hit {
@@ -231,7 +238,10 @@ func (s *AdminService) PurgeURL(ctx context.Context, rawPath string, stores []St
 			continue
 		}
 		deleted++
+		s.fpcObs.PageGone(key)
 	}
+	// Keys-deleted contract: only confirmed Get-hit + Delete success.
+	s.fpcObs.Purge(metrics.FPCPurgeManualURL, int64(deleted))
 	res := PurgeURLResult{Path: path, Keys: keys, Deleted: deleted}
 	if firstErr != nil {
 		return res, firstErr

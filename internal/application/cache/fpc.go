@@ -6,6 +6,8 @@ import (
 	"sort"
 	"strings"
 	"time"
+
+	domaincache "github.com/akarso/shopanda/internal/domain/cache"
 )
 
 // Full-page cache route templates (PR-1044). A template must be on this
@@ -202,6 +204,25 @@ func ListingTag() string { return "fpc:listing" }
 
 // NavigationTag marks pages whose chrome rendered the category tree.
 func NavigationTag() string { return "fpc:navigation" }
+
+// IsFPCTag reports whether tag is one the storefront FPC writes (or the
+// shared listing/navigation shells). Used so admin Clear-by-tag does not
+// treat unrelated L2 consumers as FPC purges.
+func IsFPCTag(tag string) bool {
+	tag = domaincache.NormalizeTag(tag)
+	if tag == "" {
+		return false
+	}
+	if tag == ListingTag() || tag == NavigationTag() {
+		return true
+	}
+	for _, prefix := range []string{"product:", "category:", "page:", "cms:", "fpc:"} {
+		if strings.HasPrefix(tag, prefix) {
+			return true
+		}
+	}
+	return false
+}
 
 func tagged(kind, id string) string {
 	id = strings.TrimSpace(id)

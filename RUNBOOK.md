@@ -125,6 +125,43 @@ Cached shells ship an empty `csrf_token` until htmx loads `GET /fragments/csrf` 
 
 **Fix:** restore event publishing / tag wiring on the write path if a tag was never written or an event never fired. Purge-by-URL is a path-scoped escape hatch, not a whole-PLP broom; do not leave a known miss permanently on TTL alone.
 
+### Full-page cache hit rate unexpectedly low
+
+**Symptom:** `shopanda_fpc_requests_total` hit rate (`hit / (hit+miss)`) looks poor for allowlisted routes, or **Operations → Cache → Full-page cache** hit rates look poor after traffic.
+
+**Check:**
+- Use the hit/(hit+miss) definition — do **not** treat rising `bypass` (logged-in SkipStore, unsafe HTML, attr-allowlist errors) as an FPC regression.
+- Vary-key cardinality: keys include store × language × currency × auth. Unexpected `?lang=` / `Accept-Language` values or many stores multiply keys and lower per-key hit rate.
+- TTL too short (`cache.full_page.ttl` / per-route `route_ttl`) — pages expire before reuse (soft expiry becomes miss after delete).
+- Allowlist coverage: only templates in the FPC allowlist are cached; everything else never appears in these counters.
+- Rising `shopanda_fpc_backend_get_errors_total` (or process-local `backend_get_errors` / Get-failure logs): cache backend issues — fix Redis/Postgres, not TTL. Request outcomes stay hit/miss/bypass when a page was still served.
+
+**Fix:** tighten language/store vary inputs, raise TTL if product freshness allows, add missing templates to the allowlist deliberately, and fix bypass causes (logs: `storefront.fpc.*`).
+
+### A cacheable-looking page never gets cached
+
+**Symptom:** a public GET storefront page always shows `X-Shopanda-Cache: BYPASS` (when exposed) or never appears as an FPC key under `fpc:v1:`.
+
+**Check:**
+- Is the route on the allowlist (`/`, `/products`, `/products/{slug}`, `/categories`, `/categories/{slug}`, `/search`, `/pages/{slug}`)? Fail-closed: forgotten == deliberately excluded from the outside.
+- Deny prefixes (`/cart`, `/checkout`, `/account`, `/fragments`, …) win even if someone adds the template.
+- FPC enabled? `cache.full_page.enabled`.
+- Response actually storable (200 HTML, under size cap, no CSRF/PII holes, CSP nonce storable)?
+
+**Fix:** add the template only if it is safe to share; otherwise keep it uncached. Do not lower safety checks to force a HIT.
+
+### Stale content despite tag invalidation
+
+**Symptom:** same as “Cache appears stale…” but logs show `cache.fpc_invalidation.done` and/or `shopanda_fpc_purge_total{trigger="tag_invalidation"}` is rising on **serve and/or worker** scrapes (keys deleted — not soft-TTL).
+
+**Check:**
+- Did the **entity's tag** attach when the page was stored? A render that omits `product:` / `category:` / `page:` / `fpc:listing` / `fpc:navigation` leaves a page that purge-by-tag cannot find — confirm tags on write (storefront `AddPageTags`).
+- Search lag: event-time purge can refill from a still-stale index before reindex finishes; post-index purge (`AfterProductsIndexed`) should clear again — check reindex job completion.
+- Wrong vary key still serving (other language/auth) — purge-url language expand or tag clear.
+- Serve admin “Keys purged (tag)” can stay near zero while the worker scrape shows healthy tag deletes — always check both processes.
+
+**Fix:** fix tag attachment on the render path; wait for / trigger reindex; use tag clear or purge-url for the exact vary.
+
 ## Planning
 
 | Phase | Status | Doc |
@@ -270,6 +307,10 @@ If `/readyz` returns 503 while `/healthz` is 200, the API process is up but cann
 | `shopanda_job_failures_total` | counter | `job_type` | Incremented on handler error or "handler not found"; not incremented on success. |
 | `shopanda_webhook_deliveries_total` | counter | `outcome` (`success`/`failed`) | Skipped deliveries (inactive/unsubscribed endpoint, malformed job payload) are not counted — they were never attempted. |
 | `shopanda_ratelimit_backend_errors_total` | counter | `limiter` (`default` or `route:<path_prefix>`), `reason` (`error`, `circuit_open`, or `pool_timeout`) | Incremented on a Redis limiter error, a pool wait timeout, and on each request while the circuit is open (`reason=circuit_open`). One factory-wide outage is spread across limiter names — **sum over `limiter`**. Not incremented on a normal 429 or on a client disconnect. |
+| `shopanda_fpc_requests_total` | counter | `route`, `outcome` (`hit`/`miss`/`bypass`) | `route` is an FPC allowlist template (e.g. `/products/{slug}`), never a raw path. Counted only for requests that enter the FPC wrapper. Terminal disposition only — backend Get failures use `shopanda_fpc_backend_get_errors_total`, not an outcome label. |
+| `shopanda_fpc_render_duration_seconds` | histogram | `route` | Miss-path render time (what a hit avoids). |
+| `shopanda_fpc_purge_total` | counter | `trigger` (`tag_invalidation`/`manual_url`/`unknown`) | **Keys deleted**, not soft-TTL observations. Soft expiry deletes the key and surfaces as a miss. Scrape serve **and** worker — tag invalidation often runs on the worker bus. |
+| `shopanda_fpc_backend_get_errors_total` | counter | _(none)_ | FPC requests that observed a cache backend Get failure (at most one increment per request). Prefer this over the process-local admin `backend_get_errors` for historical/cluster rates. |
 
 **Example Grafana/PromQL queries** (no dashboards ship — build your own from these):
 
@@ -287,6 +328,19 @@ sum(rate(shopanda_checkout_result_total{outcome="failed"}[5m]))
 
 # Job failures by type
 sum(rate(shopanda_job_failures_total[15m])) by (job_type)
+
+# FPC hit rate by route template (exclude bypass from denominator)
+sum(rate(shopanda_fpc_requests_total{outcome="hit"}[5m])) by (route)
+  / sum(rate(shopanda_fpc_requests_total{outcome=~"hit|miss"}[5m])) by (route)
+
+# FPC miss render p95
+histogram_quantile(0.95, sum(rate(shopanda_fpc_render_duration_seconds_bucket[5m])) by (le, route))
+
+# FPC keys deleted by trigger (sum across serve+worker scrapes)
+sum(rate(shopanda_fpc_purge_total[15m])) by (trigger)
+
+# FPC backend Get failures (sum across serve scrapes)
+sum(rate(shopanda_fpc_backend_get_errors_total[5m]))
 ```
 
 **Historical note:** the OpenTelemetry tracing gap noted here through PR-1023 is closed by PR-1024 — see the next section.

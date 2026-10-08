@@ -183,6 +183,7 @@ type serveRuntime struct {
 	jobAdmin                       *admin.JobAdminHandler
 	cacheAdmin                     *admin.CacheAdminHandler
 	cacheAdminService              *cacheApp.AdminService
+	fpcObs                         *cacheApp.FPCObserver
 	searchAdmin                    *admin.SearchAdminHandler
 	scheduleAdmin                  *admin.ScheduleAdminHandler
 	schedulerStore                 *postgres.SchedulerStore
@@ -290,7 +291,7 @@ func wireServeRuntime(cfg *config.Config, log logger.Logger, conn *sql.DB, repos
 	}
 
 	// Job queue, worker, mailer, cache — shared setup.
-	jobWorker, jobQueue, appCache, err := setupWorker(conn, cfg, log, pluginApp, metricsRecorder)
+	jobWorker, jobQueue, appCache, fpcObs, err := setupWorker(conn, cfg, log, pluginApp, metricsRecorder)
 	if err != nil {
 		return nil, err
 	}
@@ -452,7 +453,9 @@ func wireServeRuntime(cfg *config.Config, log logger.Logger, conn *sql.DB, repos
 	cacheInvalidation.Register(bus)
 
 	// Wire product/price/stock/category/CMS changes → full-page cache tag purge (PR-1046).
-	fpcInvalidation := cacheApp.NewFPCInvalidationSubscriber(appCache, log)
+	// Reuse setupWorker's FPCObserver so reindex listing invalidation, this
+	// bus subscriber, storefront, and admin stats share one process mirror (PR-1047).
+	fpcInvalidation := cacheApp.NewFPCInvalidationSubscriber(appCache, log).WithObserver(fpcObs)
 	fpcInvalidation.Register(bus)
 
 	// Wire product/price/stock/category-assignment changes → search index
@@ -815,7 +818,7 @@ func wireServeRuntime(cfg *config.Config, log logger.Logger, conn *sql.DB, repos
 			return s.Entries, s.Hits, s.Misses
 		},
 		Clear: adminRoleService.ClearCatalogCache,
-	}})
+	}}).WithFPCObserver(fpcObs)
 	cacheAdmin := admin.NewCacheAdminHandler(cacheAdminService, sharedAuditor).WithStores(repos.storeRepo)
 	searchAdmin := admin.NewSearchAdminHandler(reindexService, searchIndexRunRepo, searchProductSource, searchCategorySource, searchEngine, sharedAuditor)
 	scheduleAdmin := admin.NewScheduleAdminHandler(schedulerService, sharedAuditor)
@@ -931,6 +934,7 @@ func wireServeRuntime(cfg *config.Config, log logger.Logger, conn *sql.DB, repos
 		jobAdmin:                       jobAdmin,
 		cacheAdmin:                     cacheAdmin,
 		cacheAdminService:              cacheAdminService,
+		fpcObs:                         fpcObs,
 		searchAdmin:                    searchAdmin,
 		scheduleAdmin:                  scheduleAdmin,
 		schedulerStore:                 schedulerStore,

@@ -7,6 +7,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	cacheapp "github.com/akarso/shopanda/internal/application/cache"
@@ -16,6 +17,7 @@ import (
 	"github.com/akarso/shopanda/internal/domain/translation"
 	httpshared "github.com/akarso/shopanda/internal/interfaces/http/shared"
 	platformAuth "github.com/akarso/shopanda/internal/platform/auth"
+	"github.com/akarso/shopanda/internal/platform/metrics"
 )
 
 const fpcHeader = "X-Shopanda-Cache"
@@ -34,7 +36,9 @@ type fpcConfig struct {
 	exposeHeader   bool
 	stampede       *cacheapp.MissCoalescer
 	stampedeWait   time.Duration
-	afterCacheMiss func() // test-only: pause between miss and Do
+	obs            *cacheapp.FPCObserver
+	softTTLEvict   sync.Map // key → *sync.Once; one pages_stored decrement per soft-TTL
+	afterCacheMiss func()   // test-only: pause between miss and Do
 }
 
 type fpcMissResult struct {
@@ -64,6 +68,20 @@ func (h *StorefrontHandler) WithFullPageCache(backend domaincache.Cache, ttl tim
 		exposeHeader: exposeHeader,
 		stampede:     cacheapp.NewMissCoalescer(),
 		stampedeWait: cacheapp.DefaultStampedeWait,
+		obs:          h.fpcObs,
+	}
+	return h
+}
+
+// WithFPCObserver attaches hit/miss/bypass, backend-get-error, and purge metrics (PR-1047).
+// Safe to call before or after WithFullPageCache.
+func (h *StorefrontHandler) WithFPCObserver(obs *cacheapp.FPCObserver) *StorefrontHandler {
+	if h == nil {
+		return h
+	}
+	h.fpcObs = obs
+	if h.fpc != nil {
+		h.fpc.obs = obs
 	}
 	return h
 }
@@ -79,9 +97,56 @@ func (h *StorefrontHandler) WithFPCAfterCacheMissForTest(fn func()) *StorefrontH
 	return h
 }
 
+func (h *StorefrontHandler) fpcObserveRequest(route, outcome string) {
+	if h == nil || h.fpc == nil {
+		return
+	}
+	h.fpc.obs.Request(route, outcome)
+}
+
+// evictSoftExpired deletes a soft-TTL-expired key at most once per key
+// generation and decrements pages_stored without emitting a purge metric.
+// noteGetErr (may be nil) records a backend Get failure on the request.
+func (h *StorefrontHandler) evictSoftExpired(key string, noteGetErr func()) {
+	if h == nil || h.fpc == nil {
+		return
+	}
+	onceVal, _ := h.fpc.softTTLEvict.LoadOrStore(key, &sync.Once{})
+	once := onceVal.(*sync.Once)
+	once.Do(func() {
+		defer h.fpc.softTTLEvict.Delete(key)
+		var pe cacheapp.PageEntry
+		ok, err := h.fpc.backend.Get(key, &pe)
+		if err != nil {
+			if noteGetErr != nil {
+				noteGetErr()
+			}
+			return
+		}
+		if !ok {
+			return
+		}
+		if cacheapp.RemainingTTL(pe, time.Now().UTC()) > 0 {
+			return
+		}
+		if err := h.fpc.backend.Delete(key); err != nil {
+			return
+		}
+		h.fpc.obs.PageGone(key)
+	})
+}
+
 func (h *StorefrontHandler) withFullPageCache(routeTemplate string, inner http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		if h.fpc == nil || r.Method != http.MethodGet || !cacheapp.Cacheable(routeTemplate, r.URL.Path) {
+		if h.fpc == nil {
+			inner.ServeHTTP(w, r)
+			return
+		}
+		if r.Method != http.MethodGet || !cacheapp.Cacheable(routeTemplate, r.URL.Path) {
+			if h.fpc.exposeHeader {
+				w.Header().Set(fpcHeader, "BYPASS")
+			}
+			h.fpcObserveRequest(routeTemplate, metrics.FPCOutcomeBypass)
 			inner.ServeHTTP(w, r)
 			return
 		}
@@ -95,6 +160,7 @@ func (h *StorefrontHandler) withFullPageCache(routeTemplate string, inner http.H
 			if h.fpc.exposeHeader {
 				w.Header().Set(fpcHeader, "BYPASS")
 			}
+			h.fpcObserveRequest(routeTemplate, metrics.FPCOutcomeBypass)
 			inner.ServeHTTP(w, r)
 			return
 		}
@@ -105,6 +171,15 @@ func (h *StorefrontHandler) withFullPageCache(routeTemplate string, inner http.H
 		key := h.fpcKey(routeTemplate, r, extra)
 		ttl := cacheapp.TTLForRoute(routeTemplate, h.fpc.ttl, h.fpc.routeTTL)
 
+		var notedGetErr bool
+		noteGetErr := func() {
+			if notedGetErr {
+				return
+			}
+			notedGetErr = true
+			h.fpc.obs.NoteBackendGetError()
+		}
+
 		var entry cacheapp.PageEntry
 		hit, err := h.fpc.backend.Get(key, &entry)
 		if err != nil {
@@ -112,10 +187,14 @@ func (h *StorefrontHandler) withFullPageCache(routeTemplate string, inner http.H
 				"path":  r.URL.Path,
 				"error": err.Error(),
 			})
+			noteGetErr()
 		} else if hit {
 			left := cacheapp.RemainingTTL(entry, time.Now().UTC())
-			if left > 0 && !fpcHTMLUnsafe(entry.HTML, r) {
-				if h.writeFPCHit(w, r, entry, left) {
+			if left <= 0 {
+				// Soft-TTL: fall through to stampede; leader deletes once.
+				h.evictSoftExpired(key, noteGetErr)
+			} else if !fpcHTMLUnsafe(entry.HTML, r) {
+				if h.writeFPCHit(w, r, routeTemplate, entry, left) {
 					return
 				}
 			}
@@ -131,9 +210,13 @@ func (h *StorefrontHandler) withFullPageCache(routeTemplate string, inner http.H
 			var warmed cacheapp.PageEntry
 			if ok, getErr := h.fpc.backend.Get(key, &warmed); getErr == nil && ok {
 				left := cacheapp.RemainingTTL(warmed, time.Now().UTC())
-				if left > 0 && !fpcHTMLUnsafe(warmed.HTML, r) {
+				if left <= 0 {
+					h.evictSoftExpired(key, noteGetErr)
+				} else if !fpcHTMLUnsafe(warmed.HTML, r) {
 					return fpcCoalescedHit{entry: warmed, left: left}, nil
 				}
+			} else if getErr != nil {
+				noteGetErr()
 			}
 			return h.renderFPCMiss(routeTemplate, key, ttl, r, inner), nil
 		})
@@ -142,18 +225,21 @@ func (h *StorefrontHandler) withFullPageCache(routeTemplate string, inner http.H
 				"path":  r.URL.Path,
 				"error": err.Error(),
 			})
+			h.fpcObserveRequest(routeTemplate, metrics.FPCOutcomeBypass)
 			inner.ServeHTTP(w, r)
 			return
 		}
-		if hit, ok := raw.(fpcCoalescedHit); ok {
-			if h.writeFPCHit(w, r, hit.entry, hit.left) {
+		if coalesced, ok := raw.(fpcCoalescedHit); ok {
+			if h.writeFPCHit(w, r, routeTemplate, coalesced.entry, coalesced.left) {
 				return
 			}
+			h.fpcObserveRequest(routeTemplate, metrics.FPCOutcomeBypass)
 			inner.ServeHTTP(w, r)
 			return
 		}
 		miss, ok := raw.(fpcMissResult)
 		if !ok {
+			h.fpcObserveRequest(routeTemplate, metrics.FPCOutcomeBypass)
 			inner.ServeHTTP(w, r)
 			return
 		}
@@ -167,10 +253,12 @@ func (h *StorefrontHandler) withFullPageCache(routeTemplate string, inner http.H
 				if ok, getErr := h.fpc.backend.Get(key, &stored); getErr == nil && ok {
 					left := cacheapp.RemainingTTL(stored, time.Now().UTC())
 					if left > 0 && !fpcHTMLUnsafe(stored.HTML, r) {
-						if h.writeFPCHit(w, r, stored, left) {
+						if h.writeFPCHit(w, r, routeTemplate, stored, left) {
 							return
 						}
 					}
+				} else if getErr != nil {
+					noteGetErr()
 				}
 			}
 			miss = h.renderFPCMiss(routeTemplate, key, ttl, r, inner)
@@ -183,6 +271,13 @@ func (h *StorefrontHandler) withFullPageCache(routeTemplate string, inner http.H
 			} else {
 				w.Header().Set(fpcHeader, "BYPASS")
 			}
+		}
+		// Terminal disposition only — transient Get errors that still
+		// miss/bypass must not be labeled outcome=error.
+		if miss.storeOK {
+			h.fpcObserveRequest(routeTemplate, metrics.FPCOutcomeMiss)
+		} else {
+			h.fpcObserveRequest(routeTemplate, metrics.FPCOutcomeBypass)
 		}
 		h.applyFPCCacheControl(w, r, miss.ttl, miss.storeOK)
 		w.WriteHeader(miss.code)
@@ -199,7 +294,11 @@ type fpcCoalescedHit struct {
 
 func (h *StorefrontHandler) renderFPCMiss(routeTemplate, key string, ttl time.Duration, r *http.Request, inner http.HandlerFunc) fpcMissResult {
 	buf := &fpcBuffer{header: make(http.Header)}
+	started := time.Now()
 	inner.ServeHTTP(buf, r)
+	if h.fpc != nil {
+		h.fpc.obs.Render(routeTemplate, time.Since(started))
+	}
 	html := buf.body.Bytes()
 	if buf.code == 0 {
 		buf.code = http.StatusOK
@@ -230,6 +329,14 @@ func (h *StorefrontHandler) renderFPCMiss(routeTemplate, key string, ttl time.Du
 				"error": err.Error(),
 			})
 			storeOK = false
+		} else if h.fpc != nil {
+			// Track by key+expiry so hard TTL refill does not inflate
+			// pages_stored when the backend already dropped the row.
+			var expiresAt time.Time
+			if ttl > 0 {
+				expiresAt = now.Add(ttl)
+			}
+			h.fpc.obs.PageStored(key, expiresAt)
 		}
 	}
 
@@ -242,7 +349,7 @@ func (h *StorefrontHandler) renderFPCMiss(routeTemplate, key string, ttl time.Du
 	}
 }
 
-func (h *StorefrontHandler) writeFPCHit(w http.ResponseWriter, r *http.Request, entry cacheapp.PageEntry, left time.Duration) bool {
+func (h *StorefrontHandler) writeFPCHit(w http.ResponseWriter, r *http.Request, routeTemplate string, entry cacheapp.PageEntry, left time.Duration) bool {
 	html, csp, ok := rotateStoredCSPNonce(entry, generateCSPNonce)
 	if !ok {
 		h.log.Warn("storefront.fpc.nonce_rotate_failed", map[string]interface{}{
@@ -258,6 +365,7 @@ func (h *StorefrontHandler) writeFPCHit(w http.ResponseWriter, r *http.Request, 
 	if h.fpc.exposeHeader {
 		w.Header().Set(fpcHeader, "HIT")
 	}
+	h.fpcObserveRequest(routeTemplate, metrics.FPCOutcomeHit)
 	w.WriteHeader(http.StatusOK)
 	_, _ = w.Write([]byte(html))
 	return true

@@ -18,9 +18,10 @@ import (
 )
 
 type tagMemCache struct {
-	mu      sync.Mutex
-	entries map[string]any
-	tags    map[string]map[string]struct{} // tag → keys
+	mu        sync.Mutex
+	entries   map[string]any
+	tags      map[string]map[string]struct{} // tag → keys
+	deleteErr error
 }
 
 func newTagMemCache() *tagMemCache {
@@ -56,6 +57,9 @@ func (m *tagMemCache) CompareAndSubtract(string, int64) (int64, error)  { return
 func (m *tagMemCache) Delete(key string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if m.deleteErr != nil {
+		return m.deleteErr
+	}
 	delete(m.entries, key)
 	return nil
 }
