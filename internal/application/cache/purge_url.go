@@ -17,10 +17,11 @@ type StoreVary struct {
 }
 
 // PurgeURLResult is the POST /admin/cache/purge-url / cache:purge-url payload.
-// Deleted is how many of Keys actually existed (Get hit) before Delete —
-// not the expand-list length. On a mid-loop Delete error, Keys lists the
-// full expand set and Deleted is how many removals succeeded before/after
-// other keys in the same call (remaining keys may still be live).
+// Deleted is how many of Keys Get reported as a hit and Delete then
+// removed — not the expand-list length. Get decode errors still trigger
+// Delete (corrupt values) but are not counted here. On a mid-loop
+// Get/Delete error, Keys lists the full expand set and Deleted is how
+// many confirmed hit+delete pairs succeeded (remaining keys may still be live).
 type PurgeURLResult struct {
 	Path    string   `json:"path"`
 	Keys    []string `json:"keys"`
@@ -187,8 +188,10 @@ func PurgeURLKeys(rawPath string, stores []StoreVary) (path string, keys []strin
 }
 
 // PurgeURL deletes FPC keys for path across the given store vary dimensions.
-// Continues after a per-key Delete failure so other vary keys still clear;
-// the returned error is the first failure (partial results possible).
+// Continues after a per-key Get/Delete failure so other vary keys still
+// clear; the returned error is the first failure (partial results possible).
+// A Get decode/backend error still attempts Delete so corrupt entries do not
+// survive; Deleted only counts keys where Get hit and Delete succeeded.
 func (s *AdminService) PurgeURL(ctx context.Context, rawPath string, stores []StoreVary) (PurgeURLResult, error) {
 	if s == nil {
 		return PurgeURLResult{}, apperror.Internal("cache admin service not configured")
@@ -211,6 +214,10 @@ func (s *AdminService) PurgeURL(ctx context.Context, rawPath string, stores []St
 		if getErr != nil {
 			if firstErr == nil {
 				firstErr = getErr
+			}
+			// Key may still exist (corrupt value) — purge it anyway.
+			if err := s.backend.Delete(key); err != nil && firstErr == nil {
+				firstErr = err
 			}
 			continue
 		}

@@ -2,6 +2,7 @@ package cache_test
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"sync"
 	"testing"
@@ -152,6 +153,48 @@ func TestFPCInvalidation_CategoryAndPageAndStock(t *testing.T) {
 	}
 	if len(backend.entries) != 0 {
 		t.Fatalf("expected empty cache, got %#v", backend.entries)
+	}
+}
+
+// decodeErrCache returns a Get error for configured keys while still
+// storing them so Delete can clear corrupt entries.
+type decodeErrCache struct {
+	*tagMemCache
+	errKeys map[string]error
+}
+
+func (c *decodeErrCache) Get(key string, dest any) (bool, error) {
+	if err, ok := c.errKeys[key]; ok {
+		return false, err
+	}
+	return c.tagMemCache.Get(key, dest)
+}
+
+func TestPurgeURL_DeletesDespiteGetDecodeError(t *testing.T) {
+	inner := newTagMemCache()
+	stores := []cacheApp.StoreVary{{ID: "s1", Language: "en", Currency: "EUR"}}
+	path := "/products/widget"
+	guest := cacheApp.Key(cacheApp.RoutePDP, path, "", cacheApp.Vary{Store: "s1", Language: "en", Currency: "EUR", AuthState: cacheApp.AuthGuest})
+	auth := cacheApp.Key(cacheApp.RoutePDP, path, "", cacheApp.Vary{Store: "s1", Language: "en", Currency: "EUR", AuthState: cacheApp.AuthAuthenticated})
+	_ = inner.Set(guest, cacheApp.PageEntry{HTML: "g"}, time.Minute)
+	_ = inner.Set(auth, cacheApp.PageEntry{HTML: "a"}, time.Minute)
+
+	decodeErr := errors.New("corrupt page entry")
+	backend := &decodeErrCache{tagMemCache: inner, errKeys: map[string]error{guest: decodeErr}}
+	svc := cacheApp.NewAdminService(backend, nil)
+
+	res, err := svc.PurgeURL(context.Background(), path, stores)
+	if !errors.Is(err, decodeErr) {
+		t.Fatalf("err = %v, want decode error", err)
+	}
+	if res.Deleted != 1 {
+		t.Fatalf("deleted = %d, want 1 (auth hit only; corrupt guest not counted)", res.Deleted)
+	}
+	if _, ok := inner.entries[guest]; ok {
+		t.Fatal("corrupt guest key must still be deleted")
+	}
+	if _, ok := inner.entries[auth]; ok {
+		t.Fatal("auth key must be deleted")
 	}
 }
 
