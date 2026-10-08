@@ -41,7 +41,7 @@ func (r *ProductRepo) WithTx(tx *sql.Tx) catalog.ProductRepository {
 // FindByID returns a product by its ID.
 // Returns (nil, nil) when the product does not exist.
 func (r *ProductRepo) FindByID(ctx context.Context, id string) (*catalog.Product, error) {
-	const q = `SELECT id, name, slug, description, status, attributes, created_at, updated_at
+	const q = `SELECT id, name, slug, description, status, type, attributes, created_at, updated_at
 		FROM products WHERE id = $1`
 
 	var querier interface {
@@ -65,7 +65,7 @@ func (r *ProductRepo) FindByID(ctx context.Context, id string) (*catalog.Product
 // FindBySlug returns a product by its slug.
 // Returns (nil, nil) when no product matches the slug.
 func (r *ProductRepo) FindBySlug(ctx context.Context, slug string) (*catalog.Product, error) {
-	const q = `SELECT id, name, slug, description, status, attributes, created_at, updated_at
+	const q = `SELECT id, name, slug, description, status, type, attributes, created_at, updated_at
 		FROM products WHERE slug = $1`
 
 	var querier interface {
@@ -98,7 +98,7 @@ func (r *ProductRepo) List(ctx context.Context, offset, limit int) ([]catalog.Pr
 		limit = maxListLimit
 	}
 
-	const q = `SELECT id, name, slug, description, status, attributes, created_at, updated_at
+	const q = `SELECT id, name, slug, description, status, type, attributes, created_at, updated_at
 		FROM products ORDER BY created_at DESC LIMIT $1 OFFSET $2`
 
 	var rows *sql.Rows
@@ -129,13 +129,16 @@ func (r *ProductRepo) List(ctx context.Context, offset, limit int) ([]catalog.Pr
 
 // Create persists a new product.
 func (r *ProductRepo) Create(ctx context.Context, p *catalog.Product) error {
+	if err := validateProduct(p); err != nil {
+		return err
+	}
 	attrs, err := json.Marshal(p.Attributes)
 	if err != nil {
 		return fmt.Errorf("product_repo: marshal attributes: %w", err)
 	}
 
-	const q = `INSERT INTO products (id, name, slug, description, status, attributes, created_at, updated_at)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`
+	const q = `INSERT INTO products (id, name, slug, description, status, type, attributes, created_at, updated_at)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`
 
 	var execer interface {
 		ExecContext(context.Context, string, ...interface{}) (sql.Result, error)
@@ -146,13 +149,18 @@ func (r *ProductRepo) Create(ctx context.Context, p *catalog.Product) error {
 		execer = r.db
 	}
 	_, err = execer.ExecContext(ctx, q,
-		p.ID, p.Name, p.Slug, p.Description, string(p.Status),
+		p.ID, p.Name, p.Slug, p.Description, string(p.Status), string(p.Type),
 		attrs, p.CreatedAt, p.UpdatedAt,
 	)
 	if err != nil {
 		var pgErr *pgconn.PgError
-		if errors.As(err, &pgErr) && pgErr.Code == "23505" {
-			return apperror.Conflict("product with this slug already exists")
+		if errors.As(err, &pgErr) {
+			switch {
+			case pgErr.Code == "23505":
+				return apperror.Conflict("product with this slug already exists")
+			case pgErr.Code == "23514" && pgErr.ConstraintName == "products_type_check":
+				return apperror.Validation(fmt.Sprintf("invalid product type %q", p.Type))
+			}
 		}
 		return fmt.Errorf("product_repo: create: %w", err)
 	}
@@ -161,6 +169,9 @@ func (r *ProductRepo) Create(ctx context.Context, p *catalog.Product) error {
 
 // Update persists changes to an existing product.
 func (r *ProductRepo) Update(ctx context.Context, p *catalog.Product) error {
+	if err := validateProduct(p); err != nil {
+		return err
+	}
 	attrs, err := json.Marshal(p.Attributes)
 	if err != nil {
 		return fmt.Errorf("product_repo: marshal attributes: %w", err)
@@ -169,8 +180,8 @@ func (r *ProductRepo) Update(ctx context.Context, p *catalog.Product) error {
 	updatedAt := time.Now().UTC()
 
 	const q = `UPDATE products
-		SET name = $1, slug = $2, description = $3, status = $4, attributes = $5, updated_at = $6
-		WHERE id = $7`
+		SET name = $1, slug = $2, description = $3, status = $4, type = $5, attributes = $6, updated_at = $7
+		WHERE id = $8`
 
 	var execer interface {
 		ExecContext(context.Context, string, ...interface{}) (sql.Result, error)
@@ -181,10 +192,14 @@ func (r *ProductRepo) Update(ctx context.Context, p *catalog.Product) error {
 		execer = r.db
 	}
 	result, err := execer.ExecContext(ctx, q,
-		p.Name, p.Slug, p.Description, string(p.Status),
+		p.Name, p.Slug, p.Description, string(p.Status), string(p.Type),
 		attrs, updatedAt, p.ID,
 	)
 	if err != nil {
+		var pgErr *pgconn.PgError
+		if errors.As(err, &pgErr) && pgErr.Code == "23514" && pgErr.ConstraintName == "products_type_check" {
+			return apperror.Validation(fmt.Sprintf("invalid product type %q", p.Type))
+		}
 		return fmt.Errorf("product_repo: update: %w", err)
 	}
 
@@ -199,6 +214,13 @@ func (r *ProductRepo) Update(ctx context.Context, p *catalog.Product) error {
 	return nil
 }
 
+func validateProduct(p *catalog.Product) error {
+	if err := p.Validate(); err != nil {
+		return apperror.Validation(err.Error())
+	}
+	return nil
+}
+
 // scanner is satisfied by both *sql.Row and *sql.Rows.
 type scanner interface {
 	Scan(dest ...interface{}) error
@@ -208,17 +230,19 @@ type scanner interface {
 func (r *ProductRepo) scanProduct(s scanner) (*catalog.Product, error) {
 	var p catalog.Product
 	var status string
+	var productType string
 	var attrsJSON []byte
 
 	err := s.Scan(
 		&p.ID, &p.Name, &p.Slug, &p.Description,
-		&status, &attrsJSON, &p.CreatedAt, &p.UpdatedAt,
+		&status, &productType, &attrsJSON, &p.CreatedAt, &p.UpdatedAt,
 	)
 	if err != nil {
 		return nil, err
 	}
 
 	p.Status = catalog.Status(status)
+	p.Type = catalog.Type(productType)
 
 	if len(attrsJSON) > 0 {
 		if err := json.Unmarshal(attrsJSON, &p.Attributes); err != nil {
@@ -248,7 +272,7 @@ func (r *ProductRepo) FindByCategoryID(ctx context.Context, categoryID string, o
 		limit = maxListLimit
 	}
 
-	const q = `SELECT p.id, p.name, p.slug, p.description, p.status, p.attributes, p.created_at, p.updated_at
+	const q = `SELECT p.id, p.name, p.slug, p.description, p.status, p.type, p.attributes, p.created_at, p.updated_at
 		FROM products p
 		INNER JOIN product_categories pc ON p.id = pc.product_id
 		WHERE pc.category_id = $1

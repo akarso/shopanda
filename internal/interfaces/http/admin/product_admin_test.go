@@ -160,7 +160,7 @@ func TestProductAdminHandler_Get_OK(t *testing.T) {
 			if id != "p1" {
 				t.Fatalf("id = %q, want %q", id, "p1")
 			}
-			return &catalog.Product{ID: "p1", Name: "Widget", Slug: "widget", Status: catalog.StatusActive}, nil
+			return &catalog.Product{ID: "p1", Name: "Widget", Slug: "widget", Status: catalog.StatusActive, Type: catalog.TypeSimple}, nil
 		},
 		listCategoryIDsByProductFn: func(_ context.Context, productID string) ([]string, error) {
 			if productID != "p1" {
@@ -219,7 +219,7 @@ func TestProductAdminHandler_Get_NotFound(t *testing.T) {
 func TestProductAdminHandler_Get_MissingCategoryLookupCapability(t *testing.T) {
 	repo := &mockAdminProductRepoWithoutCategoryLookup{
 		findByIDFn: func(_ context.Context, id string) (*catalog.Product, error) {
-			return &catalog.Product{ID: id, Name: "Widget", Slug: "widget", Status: catalog.StatusActive}, nil
+			return &catalog.Product{ID: id, Name: "Widget", Slug: "widget", Status: catalog.StatusActive, Type: catalog.TypeSimple}, nil
 		},
 	}
 	sink := &auditSink{}
@@ -783,6 +783,7 @@ func TestProductAdminHandler_Update_OK(t *testing.T) {
 		Slug:        "widget",
 		Description: "old",
 		Status:      catalog.StatusDraft,
+		Type:        catalog.TypeSimple,
 		Attributes:  map[string]interface{}{},
 	}
 	var updated *catalog.Product
@@ -845,7 +846,7 @@ func TestProductAdminHandler_Update_NotFound(t *testing.T) {
 func TestProductAdminHandler_Update_InvalidStatus(t *testing.T) {
 	repo := &mockAdminProductRepo{
 		findByIDFn: func(_ context.Context, id string) (*catalog.Product, error) {
-			return &catalog.Product{ID: id, Name: "W", Slug: "w"}, nil
+			return &catalog.Product{ID: id, Name: "W", Slug: "w", Type: catalog.TypeSimple}, nil
 		},
 	}
 	h := admin.NewProductAdminHandler(repo, testAdminBus())
@@ -860,10 +861,43 @@ func TestProductAdminHandler_Update_InvalidStatus(t *testing.T) {
 	}
 }
 
+func TestProductAdminHandler_Update_InvalidType(t *testing.T) {
+	sink := &auditSink{}
+	repo := &mockAdminProductRepo{
+		findByIDFn: func(_ context.Context, id string) (*catalog.Product, error) {
+			return &catalog.Product{
+				ID: id, Name: "W", Slug: "w", Status: catalog.StatusDraft, Type: catalog.Type("kit"),
+			}, nil
+		},
+	}
+	h := admin.NewProductAdminHandlerWithAuditor(repo, testAdminBus(), adminapp.NewAuditor(sink), logger.NewWithWriter(io.Discard, "info"))
+
+	body := jsonBody(t, map[string]interface{}{"description": "x"})
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("PUT", "/api/v1/admin/products/p1", body)
+	req = testhelper.AdminRequest(req, "admin-1")
+	newAdminRouter(h).ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("status = %d, want %d; body: %s", rec.Code, http.StatusUnprocessableEntity, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), `invalid product type \"kit\"`) {
+		t.Fatalf("body = %s, want invalid product type kit", rec.Body.String())
+	}
+	last := sink.Last(t)
+	if last.context["result"] != "error" {
+		t.Errorf("audit result = %v, want error", last.context["result"])
+	}
+	errMsg, _ := last.context["error"].(string)
+	if !strings.Contains(errMsg, `"kit"`) {
+		t.Errorf("audit error = %q, want quoted kit", errMsg)
+	}
+}
+
 func TestProductAdminHandler_Update_EmptyName(t *testing.T) {
 	repo := &mockAdminProductRepo{
 		findByIDFn: func(_ context.Context, id string) (*catalog.Product, error) {
-			return &catalog.Product{ID: id, Name: "W", Slug: "w"}, nil
+			return &catalog.Product{ID: id, Name: "W", Slug: "w", Type: catalog.TypeSimple}, nil
 		},
 	}
 	h := admin.NewProductAdminHandler(repo, testAdminBus())
@@ -882,7 +916,7 @@ func TestProductAdminHandler_Update_EmptyName(t *testing.T) {
 func TestProductAdminHandler_Update_EmptySlug(t *testing.T) {
 	repo := &mockAdminProductRepo{
 		findByIDFn: func(_ context.Context, id string) (*catalog.Product, error) {
-			return &catalog.Product{ID: id, Name: "W", Slug: "w"}, nil
+			return &catalog.Product{ID: id, Name: "W", Slug: "w", Type: catalog.TypeSimple}, nil
 		},
 	}
 	h := admin.NewProductAdminHandler(repo, testAdminBus())
@@ -901,7 +935,7 @@ func TestProductAdminHandler_Update_EmptySlug(t *testing.T) {
 func TestProductAdminHandler_Update_InvalidBody(t *testing.T) {
 	repo := &mockAdminProductRepo{
 		findByIDFn: func(_ context.Context, id string) (*catalog.Product, error) {
-			return &catalog.Product{ID: id, Name: "W", Slug: "w"}, nil
+			return &catalog.Product{ID: id, Name: "W", Slug: "w", Type: catalog.TypeSimple}, nil
 		},
 	}
 	h := admin.NewProductAdminHandler(repo, testAdminBus())
@@ -922,6 +956,7 @@ func TestProductAdminHandler_Update_PartialUpdate(t *testing.T) {
 		Slug:        "widget",
 		Description: "desc",
 		Status:      catalog.StatusDraft,
+		Type:        catalog.TypeSimple,
 		Attributes:  map[string]interface{}{},
 	}
 	var updated *catalog.Product
@@ -963,7 +998,7 @@ func TestProductAdminHandler_Update_PartialUpdate(t *testing.T) {
 func TestProductAdminHandler_Update_RepoError(t *testing.T) {
 	repo := &mockAdminProductRepo{
 		findByIDFn: func(_ context.Context, id string) (*catalog.Product, error) {
-			return &catalog.Product{ID: id, Name: "W", Slug: "w"}, nil
+			return &catalog.Product{ID: id, Name: "W", Slug: "w", Type: catalog.TypeSimple}, nil
 		},
 		updateFn: func(_ context.Context, p *catalog.Product) error {
 			return apperror.Internal("db down")
@@ -984,7 +1019,7 @@ func TestProductAdminHandler_Update_RepoError(t *testing.T) {
 func TestProductAdminHandler_Update_AuditIncludesScopeContext(t *testing.T) {
 	repo := &mockAdminProductRepo{
 		findByIDFn: func(_ context.Context, id string) (*catalog.Product, error) {
-			return &catalog.Product{ID: id, Name: "Widget", Slug: "widget", Status: catalog.StatusDraft}, nil
+			return &catalog.Product{ID: id, Name: "Widget", Slug: "widget", Status: catalog.StatusDraft, Type: catalog.TypeSimple}, nil
 		},
 		updateFn: func(_ context.Context, p *catalog.Product) error {
 			return nil
@@ -1033,7 +1068,7 @@ func TestProductAdminHandler_Update_AuditIncludesScopeContext(t *testing.T) {
 func TestProductAdminHandler_Update_AuditFailureIncludesError(t *testing.T) {
 	repo := &mockAdminProductRepo{
 		findByIDFn: func(_ context.Context, id string) (*catalog.Product, error) {
-			return &catalog.Product{ID: id, Name: "Widget", Slug: "widget", Status: catalog.StatusDraft}, nil
+			return &catalog.Product{ID: id, Name: "Widget", Slug: "widget", Status: catalog.StatusDraft, Type: catalog.TypeSimple}, nil
 		},
 	}
 	sink := &auditSink{}
@@ -1081,7 +1116,7 @@ func TestProductAdminHandler_Update_AuditFailureIncludesError(t *testing.T) {
 func TestProductAdminHandler_Update_AuditOmitsPartialScopeContext(t *testing.T) {
 	repo := &mockAdminProductRepo{
 		findByIDFn: func(_ context.Context, id string) (*catalog.Product, error) {
-			return &catalog.Product{ID: id, Name: "Widget", Slug: "widget", Status: catalog.StatusDraft}, nil
+			return &catalog.Product{ID: id, Name: "Widget", Slug: "widget", Status: catalog.StatusDraft, Type: catalog.TypeSimple}, nil
 		},
 		updateFn: func(_ context.Context, p *catalog.Product) error {
 			return nil
@@ -1138,7 +1173,7 @@ func TestProductAdminHandler_Update_AuditOmitsPartialScopeContext(t *testing.T) 
 func TestProductAdminHandler_Update_AuditFailureOmitsPartialScopeContext(t *testing.T) {
 	repo := &mockAdminProductRepo{
 		findByIDFn: func(_ context.Context, id string) (*catalog.Product, error) {
-			return &catalog.Product{ID: id, Name: "Widget", Slug: "widget", Status: catalog.StatusDraft}, nil
+			return &catalog.Product{ID: id, Name: "Widget", Slug: "widget", Status: catalog.StatusDraft, Type: catalog.TypeSimple}, nil
 		},
 	}
 	sink := &auditSink{}
@@ -1230,7 +1265,7 @@ func TestProductAdminHandler_Create_EmitsEvent(t *testing.T) {
 func TestProductAdminHandler_Update_EmitsEvent(t *testing.T) {
 	repo := &mockAdminProductRepo{
 		findByIDFn: func(_ context.Context, id string) (*catalog.Product, error) {
-			return &catalog.Product{ID: id, Name: "Old", Slug: "old", Status: catalog.StatusDraft}, nil
+			return &catalog.Product{ID: id, Name: "Old", Slug: "old", Status: catalog.StatusDraft, Type: catalog.TypeSimple}, nil
 		},
 		updateFn: func(_ context.Context, _ *catalog.Product) error { return nil },
 	}
@@ -1361,7 +1396,7 @@ func TestAdminGuardWithAudit_ProductGetForbidden(t *testing.T) {
 func TestAdminGuardWithAudit_ProductGetAllowed(t *testing.T) {
 	repo := &mockAdminProductRepo{
 		findByIDFn: func(_ context.Context, id string) (*catalog.Product, error) {
-			return &catalog.Product{ID: id, Name: "Widget", Slug: "widget", Status: catalog.StatusActive}, nil
+			return &catalog.Product{ID: id, Name: "Widget", Slug: "widget", Status: catalog.StatusActive, Type: catalog.TypeSimple}, nil
 		},
 		listCategoryIDsByProductFn: func(_ context.Context, productID string) ([]string, error) {
 			return []string{"cat-1"}, nil

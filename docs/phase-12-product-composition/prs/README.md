@@ -3,7 +3,7 @@
 | PR | Track | Status | Spec |
 | --- | --- | --- | --- |
 | PR-1048 | — | done | [Allow zero-price products](PR-1048.md) |
-| PR-1049 | A | planned | [`Type` field + migration](PR-1049.md) |
+| PR-1049 | A | done | [`Type` field + migration](PR-1049.md) |
 | PR-1050 | A | planned | [Type-driven shipping/tax requirements](PR-1050.md) |
 | PR-1051 | A | planned | [Admin API type field support](PR-1051.md) |
 | PR-1052 | A | planned | [CSV import/export: type field](PR-1052.md) |

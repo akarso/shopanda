@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"fmt"
 	"os"
+	"strings"
 	"testing"
 	"time"
 
@@ -97,6 +98,9 @@ func TestProductRepo_CreateAndFindByID(t *testing.T) {
 	if got.Status != catalog.StatusDraft {
 		t.Errorf("Status = %q, want draft", got.Status)
 	}
+	if got.Type != catalog.TypeSimple {
+		t.Errorf("Type = %q, want simple", got.Type)
+	}
 }
 
 func TestProductRepo_FindByID_NotFound(t *testing.T) {
@@ -140,6 +144,9 @@ func TestProductRepo_FindBySlug(t *testing.T) {
 	}
 	if got.ID != p.ID {
 		t.Errorf("ID = %q, want %q", got.ID, p.ID)
+	}
+	if got.Type != catalog.TypeSimple {
+		t.Errorf("Type = %q, want simple", got.Type)
 	}
 }
 
@@ -186,6 +193,11 @@ func TestProductRepo_List(t *testing.T) {
 	}
 	if len(products) != 2 {
 		t.Errorf("len = %d, want 2", len(products))
+	}
+	for _, got := range products {
+		if got.Type != catalog.TypeSimple {
+			t.Errorf("List Type = %q, want simple", got.Type)
+		}
 	}
 
 	// Page 2: offset 2, limit 2
@@ -239,6 +251,7 @@ func TestProductRepo_Update(t *testing.T) {
 
 	p.Name = "New Name"
 	p.Status = catalog.StatusActive
+	p.Type = catalog.TypeVirtual
 	if err := repo.Update(ctx, &p); err != nil {
 		t.Fatalf("Update: %v", err)
 	}
@@ -252,6 +265,104 @@ func TestProductRepo_Update(t *testing.T) {
 	}
 	if got.Status != catalog.StatusActive {
 		t.Errorf("Status = %q, want active", got.Status)
+	}
+	if got.Type != catalog.TypeVirtual {
+		t.Errorf("Type = %q, want virtual", got.Type)
+	}
+}
+
+func TestProductRepo_Create_AllTypes(t *testing.T) {
+	db := testDB(t)
+	ensureProductsTable(t, db)
+	repo, err := postgres.NewProductRepo(db)
+	if err != nil {
+		t.Fatalf("NewProductRepo: %v", err)
+	}
+	ctx := context.Background()
+
+	for _, typ := range catalog.AllTypes() {
+		p := mustNewProduct(t, string(typ), "type-"+string(typ))
+		p.Type = typ
+		if err := repo.Create(ctx, &p); err != nil {
+			t.Fatalf("Create type %q: %v", typ, err)
+		}
+		got, err := repo.FindByID(ctx, p.ID)
+		if err != nil {
+			t.Fatalf("FindByID type %q: %v", typ, err)
+		}
+		if got == nil || got.Type != typ {
+			t.Fatalf("FindByID type = %v, want %q", got, typ)
+		}
+	}
+}
+
+func TestProductRepo_Create_InvalidType(t *testing.T) {
+	db := testDB(t)
+	ensureProductsTable(t, db)
+	repo, err := postgres.NewProductRepo(db)
+	if err != nil {
+		t.Fatalf("NewProductRepo: %v", err)
+	}
+	ctx := context.Background()
+
+	p := mustNewProduct(t, "Bad Type", "bad-type")
+	p.Type = catalog.Type("kit")
+	err = repo.Create(ctx, &p)
+	if !apperror.Is(err, apperror.CodeValidation) {
+		t.Fatalf("Create invalid type: got %v, want validation error", err)
+	}
+	if err == nil || !strings.Contains(err.Error(), `"kit"`) {
+		t.Fatalf("Create invalid type error = %v, want quoted value", err)
+	}
+}
+
+func TestProductRepo_Create_EmptyType(t *testing.T) {
+	db := testDB(t)
+	ensureProductsTable(t, db)
+	repo, err := postgres.NewProductRepo(db)
+	if err != nil {
+		t.Fatalf("NewProductRepo: %v", err)
+	}
+	ctx := context.Background()
+
+	p := mustNewProduct(t, "Empty Type", "empty-type")
+	p.Type = ""
+	err = repo.Create(ctx, &p)
+	if !apperror.Is(err, apperror.CodeValidation) {
+		t.Fatalf("Create empty type: got %v, want validation error", err)
+	}
+}
+
+func TestProductRepo_Create_NilProduct(t *testing.T) {
+	db := testDB(t)
+	ensureProductsTable(t, db)
+	repo, err := postgres.NewProductRepo(db)
+	if err != nil {
+		t.Fatalf("NewProductRepo: %v", err)
+	}
+	err = repo.Create(context.Background(), nil)
+	if !apperror.Is(err, apperror.CodeValidation) {
+		t.Fatalf("Create nil: got %v, want validation error", err)
+	}
+}
+
+func TestProductRepo_Update_InvalidType(t *testing.T) {
+	db := testDB(t)
+	ensureProductsTable(t, db)
+	repo, err := postgres.NewProductRepo(db)
+	if err != nil {
+		t.Fatalf("NewProductRepo: %v", err)
+	}
+	ctx := context.Background()
+
+	p := mustNewProduct(t, "Typed", "typed-product")
+	if err := repo.Create(ctx, &p); err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	p.Type = catalog.Type("kit")
+	err = repo.Update(ctx, &p)
+	if !apperror.Is(err, apperror.CodeValidation) {
+		t.Fatalf("Update invalid type: got %v, want validation error", err)
 	}
 }
 
@@ -368,6 +479,9 @@ func TestProductRepo_AssignAndRemoveCategory(t *testing.T) {
 	}
 	if len(products) != 1 || products[0].ID != p.ID {
 		t.Fatalf("products = %+v, want assigned product %q", products, p.ID)
+	}
+	if products[0].Type != catalog.TypeSimple {
+		t.Fatalf("FindByCategoryID Type = %q, want simple", products[0].Type)
 	}
 
 	if err := repo.RemoveCategory(ctx, p.ID, c.ID); err != nil {
