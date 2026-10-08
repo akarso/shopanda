@@ -81,6 +81,7 @@ type StorefrontHandler struct {
 	cspEnabled          bool
 	trustedProxies      []*net.IPNet
 	fpc                 *fpcConfig
+	fpcObs              *cacheapp.FPCObserver // set before or after WithFullPageCache
 	fpcMissingCatTags   sync.Once
 }
 

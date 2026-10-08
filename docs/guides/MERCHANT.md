@@ -63,7 +63,7 @@ Every major screen in the embedded admin SPA is listed below. Use the **Route** 
 | Operations | Jobs | `/admin/operations/jobs` | Background job list, retry/cancel ([PR-1031](../phase-11-jobs-search-cache/prs/PR-1031.md)) |
 | Operations | Schedules | `/admin/operations/schedules` | Recurring task list, trigger/enable/disable ([PR-1031](../phase-11-jobs-search-cache/prs/PR-1031.md)) |
 | Operations | Search | `/admin/operations/search` | Trigger/track search reindexing, run history ([PR-1038](../phase-11-jobs-search-cache/prs/PR-1038.md)) |
-| Operations | Cache | `/admin/operations/cache` | Cache stats and clear (prefix/tag/key/all) ([PR-1043](../phase-11-jobs-search-cache/prs/PR-1043.md)) |
+| Operations | Cache | `/admin/operations/cache` | Cache stats, FPC hit rates, and clear (prefix/tag/key/all) ([PR-1043](../phase-11-jobs-search-cache/prs/PR-1043.md), [PR-1047](../phase-11-jobs-search-cache/prs/PR-1047.md)) |
 | Settings | General | `/admin/settings` | Store info, email, media |
 | Settings | Localization | `/admin/settings/localization` | Currency + store languages |
 | Settings | Users & Roles | `/admin/settings/users` | Admin users ([PR-520](../phase-5-maturity/prs/PR-520.md)) |
@@ -340,7 +340,7 @@ This screen requires the `search.reindex` permission — by default, only the **
 
 Open **Operations → Cache** at `/admin/operations/cache` to see occupancy and to clear entries without using the API or CLI.
 
-**Stats** show this API process's L2 backend (key count, tag rows, memory when the backend reports it) and its L1 stores (permission catalog, storefront category nav) with hit/miss counters. Counts are occupancy, not a live hit rate. A successful clear refreshes these numbers automatically. **Refresh stats** re-reads only this process's stats endpoint — it cannot inspect another replica's L1. Use it if a Postgres count is still marked **approximate**. L1 invalidation is in-process; TTL is the bound on how long other replicas can keep stale L1.
+**Stats** show this API process's L2 backend (key count, tag rows, memory when the backend reports it) and its L1 stores (permission catalog, storefront category nav) with hit/miss counters. Counts are occupancy, not a live hit rate. The **Full-page cache** section shows per-route hit/miss/bypass rates, backend Get errors, and an estimated pages-stored count for this process only (Prometheus is the source for historical/cluster rates — scrape `shopanda_fpc_*` including `shopanda_fpc_backend_get_errors_total`). A successful clear refreshes these numbers automatically. **Refresh stats** re-reads only this process's stats endpoint — it cannot inspect another replica's L1. Use it if a Postgres count is still marked **approximate**. L1 invalidation is in-process; TTL is the bound on how long other replicas can keep stale L1.
 
 **Clear cache** offers four modes:
 

@@ -10682,14 +10682,25 @@
             '<div id="cache-stats-cards" class="stats-cards"><p>Loading…</p></div>' +
             "<h3>L1 stores (this process)</h3>" +
             '<div id="cache-l1"></div>' +
+            "<h3>Full-page cache (this process)</h3>" +
+            '<p class="settings-scope-note">Hit rate is hits/(hits+misses); bypasses are separate. Backend Get errors are <code>shopanda_fpc_backend_get_errors_total</code> (and this process&rsquo;s <code>backend_get_errors</code>), not a request outcome. Counters and pages_stored are lifetime for this API process only. Tag-invalidation totals here exclude purges that ran on a worker process — scrape <code>shopanda_fpc_purge_total</code> on both serve and worker for the full picture. Prefer Prometheus for historical rates.</p>' +
+            '<div id="cache-fpc"></div>' +
             '<p><button type="button" id="cache-stats-refresh">Refresh stats</button></p>' +
             clearForm;
 
         var statsMsg = document.getElementById("cache-stats-msg");
         var statsCards = document.getElementById("cache-stats-cards");
         var l1Box = document.getElementById("cache-l1");
+        var fpcBox = document.getElementById("cache-fpc");
         var refreshBtn = document.getElementById("cache-stats-refresh");
         var statsGate = cacheUI.newStatsLoadGate();
+
+        function formatHitRate(rate) {
+            if (rate == null || !isFinite(Number(rate))) {
+                return "—";
+            }
+            return (Number(rate) * 100).toFixed(1) + "%";
+        }
 
         function renderStats(snap) {
             var l2 = (snap && snap.l2) || {};
@@ -10703,24 +10714,56 @@
             var l1 = cacheUI.normalizeL1(snap && snap.l1);
             if (l1 == null) {
                 l1Box.innerHTML = '<p role="alert">Failed to load L1 stats.</p>';
+            } else {
+                var html = "<table><thead><tr><th>Name</th><th>Entries</th><th>Hits</th><th>Misses</th></tr></thead><tbody>";
+                if (l1.length === 0) {
+                    html += '<tr><td colspan="4">No L1 stores registered in this process.</td></tr>';
+                } else {
+                    for (var i = 0; i < l1.length; i++) {
+                        var row = l1[i];
+                        html += "<tr>" +
+                            "<td>" + esc(row.name || "") + "</td>" +
+                            "<td>" + esc(formatCacheCount(row.entries)) + "</td>" +
+                            "<td>" + esc(formatCacheCount(row.hits)) + "</td>" +
+                            "<td>" + esc(formatCacheCount(row.misses)) + "</td>" +
+                            "</tr>";
+                    }
+                }
+                html += "</tbody></table>";
+                l1Box.innerHTML = html;
+            }
+
+            var fpc = snap && snap.fpc;
+            if (!fpc) {
+                fpcBox.innerHTML = "<p>Full-page cache metrics are not wired in this process (FPC disabled or observer not attached).</p>";
                 return;
             }
-            var html = "<table><thead><tr><th>Name</th><th>Entries</th><th>Hits</th><th>Misses</th></tr></thead><tbody>";
-            if (l1.length === 0) {
-                html += '<tr><td colspan="4">No L1 stores registered in this process.</td></tr>';
+            var purges = fpc.purges || {};
+            var fpcHtml =
+                '<div class="stats-cards">' +
+                '<article class="stat-card"><header>Pages stored (est.)</header><p>' + esc(formatCacheCount(fpc.pages_stored)) + "</p></article>" +
+                '<article class="stat-card"><header>Backend Get errors</header><p>' + esc(formatCacheCount(fpc.backend_get_errors)) + "</p></article>" +
+                '<article class="stat-card"><header>Keys purged (tag)</header><p>' + esc(formatCacheCount(purges.tag_invalidation)) + "</p></article>" +
+                '<article class="stat-card"><header>Keys purged (URL)</header><p>' + esc(formatCacheCount(purges.manual_url)) + "</p></article>" +
+                "</div>" +
+                "<table><thead><tr><th>Route</th><th>Hits</th><th>Misses</th><th>Bypasses</th><th>Hit rate</th></tr></thead><tbody>";
+            var routes = Array.isArray(fpc.routes) ? fpc.routes : [];
+            if (routes.length === 0) {
+                fpcHtml += '<tr><td colspan="5">No FPC requests recorded yet in this process.</td></tr>';
             } else {
-                for (var i = 0; i < l1.length; i++) {
-                    var row = l1[i];
-                    html += "<tr>" +
-                        "<td>" + esc(row.name || "") + "</td>" +
-                        "<td>" + esc(formatCacheCount(row.entries)) + "</td>" +
-                        "<td>" + esc(formatCacheCount(row.hits)) + "</td>" +
-                        "<td>" + esc(formatCacheCount(row.misses)) + "</td>" +
+                for (var ri = 0; ri < routes.length; ri++) {
+                    var rr = routes[ri] || {};
+                    fpcHtml += "<tr>" +
+                        "<td>" + esc(rr.route || "") + "</td>" +
+                        "<td>" + esc(formatCacheCount(rr.hits)) + "</td>" +
+                        "<td>" + esc(formatCacheCount(rr.misses)) + "</td>" +
+                        "<td>" + esc(formatCacheCount(rr.bypasses)) + "</td>" +
+                        "<td>" + esc(formatHitRate(rr.hit_rate)) + "</td>" +
                         "</tr>";
                 }
             }
-            html += "</tbody></table>";
-            l1Box.innerHTML = html;
+            fpcHtml += "</tbody></table>";
+            fpcBox.innerHTML = fpcHtml;
         }
 
         function loadStats() {
@@ -10733,6 +10776,7 @@
                 if (body && body.error) {
                     statsCards.innerHTML = "";
                     l1Box.innerHTML = "";
+                    fpcBox.innerHTML = "";
                     statsMsg.innerHTML = '<p role="alert">' + esc(extractErrorMessage(body, "Failed to load cache stats.")) + "</p>";
                     return;
                 }
@@ -10740,6 +10784,7 @@
                 if (!snap) {
                     statsCards.innerHTML = "";
                     l1Box.innerHTML = "";
+                    fpcBox.innerHTML = "";
                     statsMsg.innerHTML = '<p role="alert">Failed to load cache stats.</p>';
                     return;
                 }
@@ -10750,6 +10795,7 @@
                 }
                 statsCards.innerHTML = "";
                 l1Box.innerHTML = "";
+                fpcBox.innerHTML = "";
                 statsMsg.innerHTML = '<p role="alert">' + esc(extractErrorMessage(err, "Failed to load cache stats.")) + "</p>";
             });
         }

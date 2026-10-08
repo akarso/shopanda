@@ -16,6 +16,10 @@ func TestNoop_DoesNotPanic(t *testing.T) {
 	rec.JobFailure("webhook.deliver")
 	rec.WebhookDelivery(metrics.OutcomeFailed)
 	rec.RateLimitBackendError("default", "error")
+	rec.FPCRequest("/products/{slug}", metrics.FPCOutcomeHit)
+	rec.FPCRenderDuration("/products/{slug}", time.Millisecond)
+	rec.FPCPurgeKeys(metrics.FPCPurgeManualURL, 2)
+	rec.FPCBackendGetError()
 }
 
 func TestPrometheusRecorder_ExposesExpectedMetrics(t *testing.T) {
@@ -28,6 +32,11 @@ func TestPrometheusRecorder_ExposesExpectedMetrics(t *testing.T) {
 	rec.JobFailure("webhook.deliver")
 	rec.WebhookDelivery(metrics.OutcomeSuccess)
 	rec.RateLimitBackendError("default", "error")
+	rec.FPCRequest("/products/{slug}", metrics.FPCOutcomeHit)
+	rec.FPCRequest("/products/{slug}", metrics.FPCOutcomeMiss)
+	rec.FPCRenderDuration("/products/{slug}", 10*time.Millisecond)
+	rec.FPCPurgeKeys(metrics.FPCPurgeTagInvalidation, 3)
+	rec.FPCBackendGetError()
 
 	req := httptest.NewRequest("GET", "/metrics", nil)
 	w := httptest.NewRecorder()
@@ -46,7 +55,12 @@ func TestPrometheusRecorder_ExposesExpectedMetrics(t *testing.T) {
 		`shopanda_job_failures_total{job_type="webhook.deliver"} 1`,
 		`shopanda_webhook_deliveries_total{outcome="success"} 1`,
 		`shopanda_ratelimit_backend_errors_total{limiter="default",reason="error"} 1`,
+		`shopanda_fpc_requests_total{outcome="hit",route="/products/{slug}"} 1`,
+		`shopanda_fpc_requests_total{outcome="miss",route="/products/{slug}"} 1`,
+		`shopanda_fpc_purge_total{trigger="tag_invalidation"} 3`,
+		`shopanda_fpc_backend_get_errors_total 1`,
 		"shopanda_http_request_duration_seconds",
+		"shopanda_fpc_render_duration_seconds",
 	} {
 		if !strings.Contains(body, want) {
 			t.Errorf("expected metrics output to contain %q, got:\n%s", want, body)

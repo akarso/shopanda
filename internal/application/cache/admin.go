@@ -7,6 +7,7 @@ import (
 
 	"github.com/akarso/shopanda/internal/domain/cache"
 	"github.com/akarso/shopanda/internal/platform/apperror"
+	"github.com/akarso/shopanda/internal/platform/metrics"
 )
 
 // L1Snapshot is one process-local cache's occupancy and hit/miss counters
@@ -28,10 +29,12 @@ type L1Source struct {
 }
 
 // Snapshot is the GET /admin/cache/stats payload: L2 backend occupancy
-// plus every registered L1 store in this process.
+// plus every registered L1 store in this process, plus optional FPC
+// process-local counters (PR-1047).
 type Snapshot struct {
-	L2 cache.Stats  `json:"l2"`
-	L1 []L1Snapshot `json:"l1"`
+	L2  cache.Stats  `json:"l2"`
+	L1  []L1Snapshot `json:"l1"`
+	FPC *FPCSnapshot `json:"fpc,omitempty"`
 }
 
 // ClearMode names which selector a Clear call used.
@@ -70,6 +73,7 @@ type AdminService struct {
 	backend cache.Cache
 	mu      sync.Mutex
 	l1      []L1Source
+	fpcObs  *FPCObserver
 }
 
 // NewAdminService constructs an AdminService over backend. backend must
@@ -95,7 +99,17 @@ func (s *AdminService) RegisterL1(stores ...L1Source) {
 	s.l1 = append(s.l1, stores...)
 }
 
-// Stats returns L2 occupancy plus a snapshot of every registered L1 store.
+// WithFPCObserver attaches process-local FPC counters for Stats and
+// purge-url metrics (PR-1047).
+func (s *AdminService) WithFPCObserver(obs *FPCObserver) *AdminService {
+	if s != nil {
+		s.fpcObs = obs
+	}
+	return s
+}
+
+// Stats returns L2 occupancy plus a snapshot of every registered L1 store
+// and, when wired, this process's FPC hit/miss/bypass counters.
 func (s *AdminService) Stats(ctx context.Context) (Snapshot, error) {
 	l2, err := s.backend.Stats(ctx)
 	if err != nil {
@@ -103,6 +117,7 @@ func (s *AdminService) Stats(ctx context.Context) (Snapshot, error) {
 	}
 	s.mu.Lock()
 	sources := append([]L1Source(nil), s.l1...)
+	obs := s.fpcObs
 	s.mu.Unlock()
 
 	l1 := make([]L1Snapshot, 0, len(sources))
@@ -113,7 +128,12 @@ func (s *AdminService) Stats(ctx context.Context) (Snapshot, error) {
 		}
 		l1 = append(l1, snap)
 	}
-	return Snapshot{L2: l2, L1: l1}, nil
+	out := Snapshot{L2: l2, L1: l1}
+	if obs != nil {
+		snap := obs.Snapshot()
+		out.FPC = &snap
+	}
+	return out, nil
 }
 
 // Clear applies exactly one selector against L2. All also clears every
@@ -130,14 +150,43 @@ func (s *AdminService) Clear(ctx context.Context, req ClearRequest) (ClearResult
 		if err := s.backend.DeleteByPrefix(ctx, target); err != nil {
 			return ClearResult{Mode: mode, Target: target}, err
 		}
+		// Prefix clears can remove many FPC keys; reset the estimate rather
+		// than guess how many were FPC vs other consumers.
+		if strings.HasPrefix(target, fpcKeyPrefix) || target == "fpc:" || target == "fpc:v1:" {
+			s.fpcObs.ResetPagesStored()
+		}
 		return ClearResult{Mode: mode, Target: target}, nil
 	case ClearTag:
 		n, err := s.backend.DeleteByTag(ctx, target)
 		if err != nil {
 			return ClearResult{Mode: mode, Target: target}, err
 		}
+		if IsFPCTag(target) {
+			s.fpcObs.Purge(metrics.FPCPurgeTagInvalidation, n)
+		}
 		return ClearResult{Mode: mode, Target: target, Deleted: int64Ptr(n)}, nil
 	case ClearKey:
+		if strings.HasPrefix(target, fpcKeyPrefix) {
+			var probe PageEntry
+			hit, getErr := s.backend.Get(target, &probe)
+			if getErr != nil {
+				// Corrupt value may still exist — delete and count if Delete ok.
+				if err := s.backend.Delete(target); err != nil {
+					return ClearResult{Mode: mode, Target: target}, err
+				}
+				s.fpcObs.Purge(metrics.FPCPurgeManualURL, 1)
+				return ClearResult{Mode: mode, Target: target}, nil
+			}
+			if !hit {
+				_ = s.backend.Delete(target) // no-op / idempotent
+				return ClearResult{Mode: mode, Target: target}, nil
+			}
+			if err := s.backend.Delete(target); err != nil {
+				return ClearResult{Mode: mode, Target: target}, err
+			}
+			s.fpcObs.Purge(metrics.FPCPurgeManualURL, 1)
+			return ClearResult{Mode: mode, Target: target}, nil
+		}
 		if err := s.backend.Delete(target); err != nil {
 			return ClearResult{Mode: mode, Target: target}, err
 		}
@@ -152,6 +201,7 @@ func (s *AdminService) Clear(ctx context.Context, req ClearRequest) (ClearResult
 			return res, err
 		}
 		s.clearL1()
+		s.fpcObs.ResetPagesStored()
 		res.Deleted = int64Ptr(n)
 		return res, nil
 	default:

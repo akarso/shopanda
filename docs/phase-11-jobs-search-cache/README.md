@@ -23,7 +23,7 @@ See [`ROADMAP.md`](ROADMAP.md) for the full track breakdown, sequencing, and PR 
 
 ## Status
 
-**In progress.** Tracks A (jobs & scheduling admin, PR-1027–1032), B (search indexing, PR-1033–1038), and C (caching foundation, PR-1039–1043) are done, as are standalone PR-1027 / PR-1048 / PR-1049. Track D (full-page cache) has PR-1044–1046 done; PR-1047 (observability) is still planned.
+**Complete.** Tracks A (jobs & scheduling admin, PR-1027–1032), B (search indexing, PR-1033–1038), C (caching foundation, PR-1039–1043), and D (full-page cache, PR-1044–1047) are done, as are standalone PR-1027 / PR-1048 / PR-1049.
 
 ## Relationship
 

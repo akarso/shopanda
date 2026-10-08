@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/akarso/shopanda/internal/platform/apperror"
+	"github.com/akarso/shopanda/internal/platform/metrics"
 )
 
 // StoreVary is one store's contribution to the FPC vary key.
@@ -200,7 +201,8 @@ func (s *AdminService) PurgeURL(ctx context.Context, rawPath string, stores []St
 	if err != nil {
 		return PurgeURLResult{}, err
 	}
-	deleted := 0
+	deleted := 0 // Get-hit + Delete success (API Deleted field)
+	removed := 0 // keys actually removed, including corrupt-Get deletes
 	var firstErr error
 	for _, key := range keys {
 		if err := ctx.Err(); err != nil {
@@ -216,9 +218,13 @@ func (s *AdminService) PurgeURL(ctx context.Context, rawPath string, stores []St
 				firstErr = getErr
 			}
 			// Key may still exist (corrupt value) — purge it anyway.
-			if err := s.backend.Delete(key); err != nil && firstErr == nil {
-				firstErr = err
+			if err := s.backend.Delete(key); err != nil {
+				if firstErr == nil {
+					firstErr = err
+				}
+				continue
 			}
+			removed++
 			continue
 		}
 		if !hit {
@@ -231,7 +237,10 @@ func (s *AdminService) PurgeURL(ctx context.Context, rawPath string, stores []St
 			continue
 		}
 		deleted++
+		removed++
 	}
+	// Keys-deleted contract: only record when something was removed.
+	s.fpcObs.Purge(metrics.FPCPurgeManualURL, int64(removed))
 	res := PurgeURLResult{Path: path, Keys: keys, Deleted: deleted}
 	if firstErr != nil {
 		return res, firstErr

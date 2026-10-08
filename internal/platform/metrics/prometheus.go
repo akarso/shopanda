@@ -18,6 +18,10 @@ type PrometheusRecorder struct {
 	jobFailures    *prometheus.CounterVec
 	webhookResult  *prometheus.CounterVec
 	rateLimitErr   *prometheus.CounterVec
+	fpcRequests    *prometheus.CounterVec
+	fpcRender      *prometheus.HistogramVec
+	fpcPurge       *prometheus.CounterVec
+	fpcBackendGet  prometheus.Counter
 }
 
 // NewPrometheusRecorder creates a PrometheusRecorder and the registry its
@@ -50,6 +54,23 @@ func NewPrometheusRecorder() (*PrometheusRecorder, *prometheus.Registry) {
 			Name: "shopanda_ratelimit_backend_errors_total",
 			Help: "Total remote rate-limit backend errors, labelled by limiter name and reason (error, circuit_open, or pool_timeout).",
 		}, []string{"limiter", "reason"}),
+		fpcRequests: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: "shopanda_fpc_requests_total",
+			Help: "Full-page cache decisions, labelled by route template and outcome (hit/miss/bypass).",
+		}, []string{"route", "outcome"}),
+		fpcRender: prometheus.NewHistogramVec(prometheus.HistogramOpts{
+			Name:    "shopanda_fpc_render_duration_seconds",
+			Help:    "Full-page cache miss render duration in seconds, labelled by route template.",
+			Buckets: prometheus.DefBuckets,
+		}, []string{"route"}),
+		fpcPurge: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: "shopanda_fpc_purge_total",
+			Help: "Full-page cache keys deleted by purge, labelled by trigger (tag_invalidation/manual_url/unknown).",
+		}, []string{"trigger"}),
+		fpcBackendGet: prometheus.NewCounter(prometheus.CounterOpts{
+			Name: "shopanda_fpc_backend_get_errors_total",
+			Help: "Full-page cache requests that observed a cache backend Get failure (at most one increment per request).",
+		}),
 	}
 	reg.MustRegister(
 		r.httpRequests,
@@ -58,6 +79,10 @@ func NewPrometheusRecorder() (*PrometheusRecorder, *prometheus.Registry) {
 		r.jobFailures,
 		r.webhookResult,
 		r.rateLimitErr,
+		r.fpcRequests,
+		r.fpcRender,
+		r.fpcPurge,
+		r.fpcBackendGet,
 	)
 	return r, reg
 }
@@ -84,6 +109,25 @@ func (r *PrometheusRecorder) RateLimitBackendError(limiter, reason string) {
 		reason = "error"
 	}
 	r.rateLimitErr.WithLabelValues(limiter, reason).Inc()
+}
+
+func (r *PrometheusRecorder) FPCRequest(route, outcome string) {
+	r.fpcRequests.WithLabelValues(route, outcome).Inc()
+}
+
+func (r *PrometheusRecorder) FPCRenderDuration(route string, duration time.Duration) {
+	r.fpcRender.WithLabelValues(route).Observe(duration.Seconds())
+}
+
+func (r *PrometheusRecorder) FPCPurgeKeys(trigger string, keysDeleted int64) {
+	if keysDeleted <= 0 {
+		return
+	}
+	r.fpcPurge.WithLabelValues(trigger).Add(float64(keysDeleted))
+}
+
+func (r *PrometheusRecorder) FPCBackendGetError() {
+	r.fpcBackendGet.Inc()
 }
 
 // Handler returns the Prometheus text-exposition scrape endpoint for reg.

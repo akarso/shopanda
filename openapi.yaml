@@ -1843,8 +1843,12 @@ paths:
         Postgres used the `reltuples` fallback, `l2.approximate` is
         true. L1 is this process's in-memory stores (permission
         catalog, storefront category nav) with hit/miss counters. L2
-        hit/miss is not tracked here. Successful HTTP stats calls are
-        not audit-logged (the endpoint is polled); failures are.
+        hit/miss is not tracked here. When full-page cache observability
+        is wired, `fpc` carries this process's hit/miss/bypass-by-route
+        counters (hit_rate = hits/(hits+misses)), pages_stored estimate,
+        backend_get_errors, and keys-deleted purge counts (PR-1047).
+        Successful HTTP stats calls are not audit-logged (the endpoint
+        is polled); failures are.
       security:
         - bearerAuth: []
       responses:
@@ -1870,6 +1874,18 @@ paths:
                       entries: 1
                       hits: 50
                       misses: 1
+                  fpc:
+                    pages_stored: 12
+                    backend_get_errors: 0
+                    purges:
+                      tag_invalidation: 3
+                      manual_url: 1
+                    routes:
+                      - route: /products/{slug}
+                        hits: 80
+                        misses: 20
+                        bypasses: 2
+                        hit_rate: 0.8
                 error: null
         "401":
           $ref: "#/components/responses/Unauthorized"

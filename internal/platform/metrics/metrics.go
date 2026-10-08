@@ -22,6 +22,19 @@ const (
 	// would conflate a real checkout failure with a downstream
 	// notification/event-bus problem on an otherwise-successful order.
 	OutcomeSucceededEventFailed = "succeeded_event_failed"
+
+	// Full-page cache outcomes (PR-1047). Bounded enum — never raw paths.
+	// Terminal dispositions only: hit / miss / bypass. Backend Get failures
+	// use FPCBackendGetError, not an outcome label.
+	FPCOutcomeHit    = "hit"
+	FPCOutcomeMiss   = "miss"
+	FPCOutcomeBypass = "bypass"
+
+	// Full-page cache purge triggers (PR-1047). Values count keys deleted,
+	// not soft-TTL observations. Unknown triggers use FPCPurgeUnknown.
+	FPCPurgeTagInvalidation = "tag_invalidation"
+	FPCPurgeManualURL       = "manual_url"
+	FPCPurgeUnknown         = "unknown"
 )
 
 // Recorder records RED and business metrics. Implementations must be safe
@@ -53,6 +66,25 @@ type Recorder interface {
 	// never a client IP. reason is a bounded enum: "error", "circuit_open",
 	// or "pool_timeout".
 	RateLimitBackendError(limiter, reason string)
+
+	// FPCRequest records one full-page-cache decision. route is an FPC
+	// allowlist template (e.g. "/products/{slug}"), never a raw path.
+	// outcome is FPCOutcomeHit, FPCOutcomeMiss, or FPCOutcomeBypass.
+	FPCRequest(route, outcome string)
+
+	// FPCRenderDuration records miss-path render time for an FPC route
+	// template (what a hit avoids).
+	FPCRenderDuration(route string, duration time.Duration)
+
+	// FPCPurgeKeys records keys removed by a purge. trigger is
+	// FPCPurgeTagInvalidation, FPCPurgeManualURL, or FPCPurgeUnknown —
+	// never a tag name or URL. keysDeleted must be > 0.
+	FPCPurgeKeys(trigger string, keysDeleted int64)
+
+	// FPCBackendGetError records one FPC request that observed a cache
+	// backend Get failure (at most once per request at the call site).
+	// No labels — bounded by construction.
+	FPCBackendGetError()
 }
 
 // noopRecorder discards every recording. Used when metrics are disabled so
@@ -67,3 +99,7 @@ func (noopRecorder) CheckoutResult(string)                             {}
 func (noopRecorder) JobFailure(string)                                 {}
 func (noopRecorder) WebhookDelivery(string)                            {}
 func (noopRecorder) RateLimitBackendError(string, string)              {}
+func (noopRecorder) FPCRequest(string, string)                         {}
+func (noopRecorder) FPCRenderDuration(string, time.Duration)           {}
+func (noopRecorder) FPCPurgeKeys(string, int64)                        {}
+func (noopRecorder) FPCBackendGetError()                               {}

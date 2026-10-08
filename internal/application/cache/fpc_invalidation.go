@@ -10,6 +10,7 @@ import (
 	"github.com/akarso/shopanda/internal/domain/inventory"
 	"github.com/akarso/shopanda/internal/domain/pricing"
 	"github.com/akarso/shopanda/internal/platform/event"
+	"github.com/akarso/shopanda/internal/platform/metrics"
 )
 
 // FPCInvalidationSubscriber deletes full-page cache entries by tag when
@@ -22,6 +23,7 @@ import (
 type FPCInvalidationSubscriber struct {
 	cache cache.Cache
 	log   Logger
+	obs   *FPCObserver
 }
 
 // NewFPCInvalidationSubscriber creates an FPCInvalidationSubscriber.
@@ -33,6 +35,14 @@ func NewFPCInvalidationSubscriber(c cache.Cache, log Logger) *FPCInvalidationSub
 		panic("cache.NewFPCInvalidationSubscriber: nil logger")
 	}
 	return &FPCInvalidationSubscriber{cache: c, log: log}
+}
+
+// WithObserver attaches FPC purge metrics (PR-1047).
+func (s *FPCInvalidationSubscriber) WithObserver(obs *FPCObserver) *FPCInvalidationSubscriber {
+	if s != nil {
+		s.obs = obs
+	}
+	return s
 }
 
 // Register wires async handlers on the given bus.
@@ -184,6 +194,7 @@ func (s *FPCInvalidationSubscriber) deleteTag(ctx context.Context, tag, idKey, i
 		return fmt.Errorf("cache.fpc_invalidation: delete tag %q: %w", tag, err)
 	}
 	if n > 0 {
+		s.obs.Purge(metrics.FPCPurgeTagInvalidation, n)
 		s.log.Info("cache.fpc_invalidation.done", map[string]interface{}{
 			idKey:     id,
 			"tag":     tag,

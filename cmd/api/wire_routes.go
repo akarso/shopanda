@@ -429,6 +429,9 @@ func buildServeHandler(cfg *config.Config, log logger.Logger, rt *serveRuntime, 
 			}
 			expose := cfg.Cache.FullPage.ExposeHeader || config.DevModeEnabled()
 			sfHandler.WithFullPageCache(rt.appCache, ttl, expose, routeTTL)
+			if rt.fpcObs != nil {
+				sfHandler.WithFPCObserver(rt.fpcObs)
+			}
 		}
 		if rt.cacheAdminService != nil {
 			rt.cacheAdminService.RegisterL1(cacheApp.L1Source{
