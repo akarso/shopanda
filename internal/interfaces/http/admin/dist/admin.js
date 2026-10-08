@@ -408,10 +408,13 @@
         var canReindex = userHasPermission("search.reindex");
         Promise.all([
             api("/admin/grids/product.grid"),
-            api("/admin/products?page=1&per_page=20&sort=created_at&order=desc")
+            api("/admin/products?page=1&per_page=20&sort=created_at&order=desc"),
+            // Labels are optional — never fail the products page if forms is down/forbidden.
+            api("/admin/forms/product.form").catch(function () { return {}; })
         ]).then(function (results) {
             var gridResponse = results[0] || {};
             var productsResponse = results[1] || {};
+            var formResponse = results[2] || {};
             if ((gridResponse.error && gridResponse.error.code === "forbidden") ||
                 (productsResponse.error && productsResponse.error.code === "forbidden")) {
                 gridBox.innerHTML = '<p role="alert">Your account does not have products access.</p>';
@@ -427,6 +430,7 @@
                 gridBox.innerHTML = '<p role="alert">' + esc(extractErrorMessage(productsResponse, 'Failed to load products.')) + '</p>';
                 return;
             }
+            var typeLabels = productTypeLabelsFromForm(formResponse.data && formResponse.data.form);
             var products = normalizeProducts(productsRaw);
             var html = '<div style="margin-bottom:1rem"><button id="new-product-btn">New Product</button></div>';
             html += '<table class="admin-table"><thead><tr>';
@@ -445,6 +449,9 @@
                         var val = p[col.name];
                         if ((col.name === "created_at" || col.name === "updated_at") && val) {
                             val = String(val).substring(0, 10);
+                        }
+                        if (col.name === "type") {
+                            val = productTypeDisplayLabel(val, typeLabels);
                         }
                         html += '<td>' + esc(val == null ? '' : val) + '</td>';
                     }
@@ -1234,10 +1241,14 @@
             '<h3>Reviews</h3>' +
             '<div id="product-reviews-msg"></div>' +
             '<div id="product-reviews-body"></div>' +
-            '</section>';
+            '</section>' +
+            // Type-scoped sections from product.form schema (PR-1053). Later tracks
+            // register via RegisterProductFormSection; visibility follows the type selector.
+            '<div id="product-type-sections-host"></div>';
 
         var msg = document.getElementById("product-form-msg");
         var form = document.getElementById("product-form");
+        var typeSectionsHost = document.getElementById("product-type-sections-host");
         var activeScope = {
             storeID: adminScope.store_id || '',
             language: adminScope.language || '',
@@ -1276,6 +1287,14 @@
             html += '<button type="submit">' + (productID ? 'Save Product' : 'Create Product') + '</button>';
             form.innerHTML = html;
 
+            if (typeSectionsHost) {
+                typeSectionsHost.innerHTML = renderProductTypeSections(schema.sections || []);
+            }
+            setupProductTypeSectionSwitch(form, container, {
+                confirmOnChange: !!productID,
+                originalType: product && product.type ? String(product.type) : "simple"
+            });
+
             setupProductMediaPicker(form, product);
 
             form.addEventListener("submit", function (e) {
@@ -1310,6 +1329,145 @@
         }).catch(function () {
             msg.innerHTML = '<p role="alert">Failed to load product form.</p>';
         });
+    }
+
+    // Product type section visibility (PR-1053) — helpers in product_type_sections.js.
+    // Sections render into #product-type-sections-host (outside #product-form).
+    // Body content must use its own save APIs; it is not part of collectProductPayload.
+    function productTypeSectionsAPI() {
+        return (typeof ShopandaProductTypeSections !== "undefined") ? ShopandaProductTypeSections : null;
+    }
+
+    function syncProductTypeSections(root, selectedType) {
+        var target = root || document;
+        var api = productTypeSectionsAPI();
+        if (api && api.syncSections) {
+            api.syncSections(target, selectedType);
+            return;
+        }
+        // Fallback if product_type_sections.js failed to load — do not leave
+        // sections stuck at display:none (PR-1053 CR).
+        if (typeof console !== "undefined" && console.warn) {
+            console.warn("ShopandaProductTypeSections missing; using inline section visibility fallback");
+        }
+        if (!target || typeof target.querySelectorAll !== "function") {
+            return;
+        }
+        var selected = String(selectedType || "simple");
+        var nodes = target.querySelectorAll("[data-product-type-section]");
+        for (var i = 0; i < nodes.length; i++) {
+            var raw = nodes[i].getAttribute("data-product-type-section") || "";
+            var types = String(raw).split(",").map(function (s) {
+                return String(s || "").trim();
+            }).filter(function (s) {
+                return s.length > 0;
+            });
+            var show = types.length === 0 || types.indexOf(selected) !== -1;
+            nodes[i].style.display = show ? "" : "none";
+        }
+    }
+
+    function renderProductTypeSections(sections) {
+        if (!sections || !sections.length) {
+            return "";
+        }
+        var html = "";
+        for (var i = 0; i < sections.length; i++) {
+            var s = sections[i] || {};
+            var id = String(s.id || "");
+            if (!id) {
+                continue;
+            }
+            var types = Array.isArray(s.types) ? s.types.join(",") : "";
+            html += '<section id="product-section-' + esc(id) + '" data-product-type-section="' + esc(types) + '" data-product-type-section-id="' + esc(id) + '" style="display:none; margin-top:2rem;">' +
+                "<h3>" + esc(s.title || id) + "</h3>" +
+                '<div data-product-type-section-body="' + esc(id) + '"></div>' +
+                "</section>";
+        }
+        return html;
+    }
+
+    function setupProductTypeSectionSwitch(form, root, opts) {
+        if (!form) {
+            return;
+        }
+        opts = opts || {};
+        var originalType = opts.originalType ? String(opts.originalType) : "simple";
+        function currentType() {
+            var el = form.elements.type;
+            return el && el.value ? el.value : "simple";
+        }
+        syncProductTypeSections(root || document, currentType());
+        var typeEl = form.elements.type;
+        if (typeEl && !typeEl.getAttribute("data-product-type-switch-bound")) {
+            typeEl.setAttribute("data-product-type-switch-bound", "1");
+            typeEl.addEventListener("change", function () {
+                if (opts.confirmOnChange && typeEl.value !== originalType) {
+                    var msg = "Changing type can alter shipping (virtual/downloadable skip physical shipping) and which type-specific panels apply. Continue?";
+                    if (!window.confirm(msg)) {
+                        typeEl.value = originalType;
+                        syncProductTypeSections(root || document, currentType());
+                        return;
+                    }
+                    originalType = typeEl.value;
+                }
+                syncProductTypeSections(root || document, currentType());
+            });
+        }
+    }
+
+    // Labels come from product.form type field options (Go ProductTypeLabel),
+    // not a duplicated client map — avoids drift when AllTypes grows.
+    function productTypeLabelsFromForm(form) {
+        var map = {};
+        if (!form || !Array.isArray(form.fields)) {
+            return map;
+        }
+        for (var i = 0; i < form.fields.length; i++) {
+            var field = form.fields[i];
+            if (!field || field.name !== "type") {
+                continue;
+            }
+            var options = field.options || [];
+            for (var j = 0; j < options.length; j++) {
+                var o = options[j] || {};
+                var key = String(o.value == null ? "" : o.value);
+                if (key) {
+                    map[key] = o.label != null && o.label !== "" ? String(o.label) : key;
+                }
+            }
+        }
+        return map;
+    }
+
+    function productTypeDisplayLabel(value, labels) {
+        var key = value == null ? "" : String(value);
+        if (labels && Object.prototype.hasOwnProperty.call(labels, key)) {
+            return labels[key];
+        }
+        return key;
+    }
+
+    // Mirrors ShopandaProductTypeSections.selectNeedsUnknownOption with an
+    // inline fallback when product_type_sections.js failed to load.
+    function productTypeSelectNeedsUnknownOption(options, selectedValue) {
+        var api = productTypeSectionsAPI();
+        if (api && api.selectNeedsUnknownOption) {
+            return api.selectNeedsUnknownOption(options, selectedValue);
+        }
+        var selected = String(selectedValue || "");
+        if (!selected) {
+            return false;
+        }
+        var known = false;
+        var list = options || [];
+        for (var i = 0; i < list.length; i++) {
+            if (String(list[i].value) === selected) {
+                known = true;
+                break;
+            }
+        }
+        return !known;
     }
 
     function saveProductTranslations(productID, activeScope, fields, form, msg) {
@@ -1644,9 +1802,13 @@
             return '<label><input type="checkbox" name="' + esc(name) + '" ' + checked + '> ' + label + '</label>';
         }
         if (field.type === "select") {
-            var opts = '<label>' + label + '<select name="' + esc(name) + '">';
+            var opts = '<label>' + label + '<select name="' + esc(name) + '"' + (field.required ? ' required' : '') + '>';
             var selected = String(value);
             var options = field.options || [];
+            if (name === "type" && productTypeSelectNeedsUnknownOption(options, selected)) {
+                // Preserve corrupt/legacy type on save instead of coercing to first option.
+                opts += '<option value="' + esc(selected) + '" selected>' + esc(selected) + ' (unknown)</option>';
+            }
             for (var i = 0; i < options.length; i++) {
                 var o = options[i];
                 var isSel = String(o.value) === selected ? ' selected' : '';
@@ -1680,7 +1842,7 @@
                 v = el.value;
             }
 
-            if (f.name === "name" || f.name === "slug" || f.name === "description" || f.name === "status") {
+            if (f.name === "name" || f.name === "slug" || f.name === "description" || f.name === "status" || f.name === "type") {
                 payload[f.name] = v;
             } else {
                 payload.attributes[f.name] = v;
@@ -2145,6 +2307,7 @@
             name: pick(raw, "name", "Name"),
             slug: pick(raw, "slug", "Slug"),
             description: pick(raw, "description", "Description"),
+            type: pick(raw, "type", "Type") || "simple",
             status: pick(raw, "status", "Status"),
             attributes: pick(raw, "attributes", "Attributes") || {},
             created_at: pick(raw, "created_at", "CreatedAt"),

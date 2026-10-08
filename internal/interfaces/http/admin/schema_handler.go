@@ -43,9 +43,17 @@ type fieldDTO struct {
 	Meta     map[string]interface{} `json:"meta,omitempty"`
 }
 
+type formSectionDTO struct {
+	ID    string                 `json:"id"`
+	Title string                 `json:"title"`
+	Types []string               `json:"types"` // always present; empty array = always visible
+	Meta  map[string]interface{} `json:"meta,omitempty"`
+}
+
 type formDTO struct {
-	Name   string     `json:"name"`
-	Fields []fieldDTO `json:"fields"`
+	Name     string           `json:"name"`
+	Fields   []fieldDTO       `json:"fields"`
+	Sections []formSectionDTO `json:"sections,omitempty"`
 }
 
 type columnDTO struct {
@@ -160,7 +168,24 @@ func toFormDTO(f admin.Form) formDTO {
 			Meta:     fld.Meta,
 		}
 	}
-	return formDTO{Name: f.Name, Fields: fields}
+	var sections []formSectionDTO
+	if len(f.Sections) > 0 {
+		sections = make([]formSectionDTO, len(f.Sections))
+		for i, s := range f.Sections {
+			types := []string{}
+			if len(s.Types) > 0 {
+				types = make([]string, len(s.Types))
+				copy(types, s.Types)
+			}
+			sections[i] = formSectionDTO{
+				ID:    s.ID,
+				Title: s.Title,
+				Types: types, // always [] so clients see empty = always visible
+				Meta:  s.Meta,
+			}
+		}
+	}
+	return formDTO{Name: f.Name, Fields: fields, Sections: sections}
 }
 
 func toGridDTO(g admin.Grid) gridDTO {
