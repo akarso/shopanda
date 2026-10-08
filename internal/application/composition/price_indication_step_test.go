@@ -162,6 +162,86 @@ func TestPriceIndicationStep_SamePrice(t *testing.T) {
 	}
 }
 
+func TestPriceIndicationStep_ZeroCurrentPrice(t *testing.T) {
+	prod := catalog.Product{ID: "p1", Name: "Free card"}
+	currentPrice := &pricing.Price{ID: "pr1", VariantID: "v1", Amount: shared.MustNewMoney(0, "EUR")}
+	snap := &pricing.PriceSnapshot{
+		ID:         "snap1",
+		VariantID:  "v1",
+		Amount:     shared.MustNewMoney(0, "EUR"),
+		RecordedAt: time.Now().UTC().AddDate(0, 0, -5),
+	}
+	s := composition.NewPriceIndicationStep(
+		&mockVariantRepo{variants: []catalog.Variant{{ID: "v1", ProductID: "p1"}}},
+		&mockPriceRepo{price: currentPrice},
+		&mockPriceHistoryRepo{snapshot: snap},
+		nil,
+	)
+	ctx := composition.NewProductContext(&prod)
+	ctx.Currency = "EUR"
+	if err := s.Apply(ctx); err != nil {
+		t.Fatalf("Apply: %v", err)
+	}
+	if len(ctx.Blocks) != 0 {
+		t.Error("expected no omnibus block when current and lowest are both zero")
+	}
+}
+
+func TestPriceIndicationStep_ZeroCurrentWithPositiveHistory(t *testing.T) {
+	// Free now, higher historical — not a "discount vs prior low" case;
+	// lowest >= current suppresses the block.
+	prod := catalog.Product{ID: "p1", Name: "Now free"}
+	currentPrice := &pricing.Price{ID: "pr1", VariantID: "v1", Amount: shared.MustNewMoney(0, "EUR")}
+	snap := &pricing.PriceSnapshot{
+		ID:         "snap1",
+		VariantID:  "v1",
+		Amount:     shared.MustNewMoney(1999, "EUR"),
+		RecordedAt: time.Now().UTC().AddDate(0, 0, -5),
+	}
+	s := composition.NewPriceIndicationStep(
+		&mockVariantRepo{variants: []catalog.Variant{{ID: "v1", ProductID: "p1"}}},
+		&mockPriceRepo{price: currentPrice},
+		&mockPriceHistoryRepo{snapshot: snap},
+		nil,
+	)
+	ctx := composition.NewProductContext(&prod)
+	ctx.Currency = "EUR"
+	if err := s.Apply(ctx); err != nil {
+		t.Fatalf("Apply: %v", err)
+	}
+	if len(ctx.Blocks) != 0 {
+		t.Error("expected no omnibus block when current is free and history is higher")
+	}
+}
+
+func TestPriceIndicationStep_PositiveCurrentWithZeroHistory(t *testing.T) {
+	prod := catalog.Product{ID: "p1", Name: "Was free"}
+	currentPrice := &pricing.Price{ID: "pr1", VariantID: "v1", Amount: shared.MustNewMoney(1999, "EUR")}
+	snap := &pricing.PriceSnapshot{
+		ID:         "snap1",
+		VariantID:  "v1",
+		Amount:     shared.MustNewMoney(0, "EUR"),
+		RecordedAt: time.Now().UTC().AddDate(0, 0, -5),
+	}
+	s := composition.NewPriceIndicationStep(
+		&mockVariantRepo{variants: []catalog.Variant{{ID: "v1", ProductID: "p1"}}},
+		&mockPriceRepo{price: currentPrice},
+		&mockPriceHistoryRepo{snapshot: snap},
+		nil,
+	)
+	ctx := composition.NewProductContext(&prod)
+	ctx.Currency = "EUR"
+	if err := s.Apply(ctx); err != nil {
+		t.Fatalf("Apply: %v", err)
+	}
+	if len(ctx.Blocks) != 1 {
+		t.Fatalf("blocks = %d, want 1 (disclose prior free price)", len(ctx.Blocks))
+	}
+	if ctx.Blocks[0].Data["lowest_30d_price"] != "0.00" {
+		t.Errorf("lowest_30d_price = %v, want 0.00", ctx.Blocks[0].Data["lowest_30d_price"])
+	}
+}
+
 func TestPriceIndicationStep_HigherHistorical(t *testing.T) {
 	prod := catalog.Product{ID: "p1", Name: "Widget"}
 	currentAmount := shared.MustNewMoney(1999, "EUR")

@@ -462,6 +462,26 @@ func TestProductPriceAdmin_Update_WritesOnlyActiveStoreScope(t *testing.T) {
 	assertScopeTriad(t, sink.Last(t).context, "store-eu", "en", "EUR")
 }
 
+func TestProductPriceAdmin_Update_AllowsZeroAmount(t *testing.T) {
+	priceRepo := newScopedPriceRepo()
+	h := admin.NewProductPriceAdminHandler(productExistsRepo("p1"), seededVariantRepo(), priceRepo, adminapp.NewAuditor(&auditSink{}), logger.NewWithWriter(io.Discard, "info"))
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("PUT", "/api/v1/admin/products/p1/variants/v1/price", jsonBody(t, map[string]interface{}{"amount": 0}))
+	req = withAdminFullScope(req, "admin-1", "store-eu", "en", "EUR")
+	newPriceAdminMux(h).ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d; body: %s", rec.Code, http.StatusOK, rec.Body.String())
+	}
+	if len(priceRepo.upserts) != 1 {
+		t.Fatalf("upserts = %d, want 1", len(priceRepo.upserts))
+	}
+	if !priceRepo.upserts[0].Amount.IsZero() {
+		t.Fatalf("upsert amount = %d, want 0", priceRepo.upserts[0].Amount.Amount())
+	}
+}
+
 // TestProductPriceAdmin_Update_EmitsPriceUpsertedEvent pins PR-1036's
 // wiring: a successful interactive price Update must publish
 // pricing.EventPriceUpserted so the search index's on-save subscriber

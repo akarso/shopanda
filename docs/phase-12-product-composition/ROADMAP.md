@@ -7,7 +7,7 @@ Phase 11 made background subsystems (jobs, search, cache) reachable by an operat
 - **Foundation before features.** `Type` (Track A) and the visibility/purchasability model (Track B) are prerequisites for bundle, grouped, linked, and downloadable — every later track's salability rules are built on `Purchasable`, not a bespoke flag per feature.
 - **One PR = one responsibility**, reviewable in ~10–20 minutes, same discipline as Phases 10–11.
 - **A single standalone fix ships first** (PR-1048, zero-price products), same pattern as Phase 11's PR-1027 — it's a real, independent bug, not something that should wait on the rest of this phase.
-- PR specs live under `prs/` (**PR-1048+**, continuing Phase 11's numbering).
+- PR specs live under `prs/` (**PR-1048+** as drafted). Phase 11 later claimed PR-1048/1049 for unrelated work — keep phase-folder disambiguation until a renumber pass.
 - Individual PR specs at this stage carry Summary/Why/Scope/Out-of-scope/Follow-up only — no `Validation (planned)` or `Documentation updates` sections yet. Those get written when a PR is actually implemented (see PR-1029's Round 4 review in Phase 11 for why a pre-filled "planned validation" section left in a *done* PR is worse than not having one).
 
 Each PR is tagged **`[oss]`** unless noted.
@@ -65,7 +65,7 @@ Each PR is tagged **`[oss]`** unless noted.
 
 | PR | Title | Short description |
 | --- | --- | --- |
-| PR-1048 | Allow zero-price products | `pricing.NewPrice` and `pricing.NewPriceSnapshot` both reject any amount that isn't strictly positive (`internal/domain/pricing/price.go`, `price_snapshot.go`). Relax both to non-negative (mirrors `cart.Item.NewItem`, which already only rejects negative). Audit every consumer that assumes a positive price for arithmetic safety — discount percentage math, Omnibus lowest-price comparisons, any divide-by-price calculation — and add explicit zero-handling where an implicit "price > 0" assumption was silently relied on. This is a real, independent bug fix (a merchant cannot price anything at 0 today, free products or not); it ships standalone because nothing else in this phase needs to be a prerequisite for it. |
+| PR-1048 | Allow zero-price products | Relax `NewPrice` / `NewPriceSnapshot` / `NewGroupPrice` and the CSV price importer to non-negative amounts; align `price_history`, `prices`, and B2B `customer_group_prices` CHECKs (`amount >= 0`); admin price inputs `min="0"`. Audit promo math and Omnibus comparisons at 0. (Phase 11 used PR-1048 for a different change — see phase-folder specs.) |
 
 ---
 
@@ -201,7 +201,7 @@ Each PR is tagged **`[oss]`** unless noted.
 
 | PR | Track | Status |
 | --- | --- | --- |
-| 1048 | — | planned |
+| 1048 | — | done |
 | 1049–1053 | A | planned |
 | 1054–1059 | B | planned |
 | 1060–1066 | C | planned |
@@ -218,5 +218,5 @@ PR specs: [`prs/`](prs/).
 | Phase | Focus | Status |
 | --- | --- | --- |
 | Phase 10 | Platform excellence (quality / security / ops / architecture) | Shipped (PR-1000–1026; PR-1003 the only open item, unrelated to this phase) |
-| Phase 11 | Jobs, search & cache — admin reachability + full-page cache | In progress |
-| **Phase 12** | Product types & composition | **Planned** |
+| Phase 11 | Jobs, search & cache — admin reachability + full-page cache | Shipped (PR-1027–1049) |
+| **Phase 12** | Product types & composition | **In progress** (PR-1048 done) |

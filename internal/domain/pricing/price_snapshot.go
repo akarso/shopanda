@@ -28,8 +28,8 @@ func NewPriceSnapshot(id, variantID, storeID string, amount shared.Money) (Price
 	if amount.Currency() == "" {
 		return PriceSnapshot{}, errors.New("price snapshot amount must have a valid currency")
 	}
-	if !amount.IsPositive() {
-		return PriceSnapshot{}, errors.New("price snapshot amount must be positive")
+	if amount.IsNegative() {
+		return PriceSnapshot{}, errors.New("price snapshot amount must be non-negative")
 	}
 	return PriceSnapshot{
 		ID:         id,

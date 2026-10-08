@@ -32,8 +32,8 @@ func NewGroupPrice(id, groupID, variantID, storeID string, amount shared.Money) 
 	if amount.Currency() == "" {
 		return GroupPrice{}, errors.New("group price: amount must have a valid currency")
 	}
-	if !amount.IsPositive() {
-		return GroupPrice{}, errors.New("group price: amount must be positive")
+	if amount.IsNegative() {
+		return GroupPrice{}, errors.New("group price: amount must be non-negative")
 	}
 	return GroupPrice{
 		ID:        id,

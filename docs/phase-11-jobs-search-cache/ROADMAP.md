@@ -225,4 +225,4 @@ PR specs: [`prs/`](prs/).
 | --- | --- | --- |
 | Phase 9 | Integrator backlog + merchant discovery | Shipped (PR-856–908) |
 | Phase 10 | Platform excellence (quality / security / ops / architecture) | Shipped (PR-1000–1026; PR-1003 the only open item, unrelated to this phase) |
-| **Phase 11** | Jobs, search & cache — admin reachability + full-page cache | **In progress** |
+| **Phase 11** | Jobs, search & cache — admin reachability + full-page cache | **Shipped** (PR-1027–1049) |

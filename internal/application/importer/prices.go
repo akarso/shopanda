@@ -140,8 +140,8 @@ func (imp *PriceImporter) Import(ctx context.Context, r io.Reader) (*PriceResult
 			result.Skipped++
 			continue
 		}
-		if amount <= 0 {
-			result.Errors = append(result.Errors, fmt.Sprintf("line %d: amount must be positive, got %d", lineNum, amount))
+		if amount < 0 {
+			result.Errors = append(result.Errors, fmt.Sprintf("line %d: amount must be non-negative, got %d", lineNum, amount))
 			result.Skipped++
 			continue
 		}

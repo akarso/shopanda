@@ -2,7 +2,7 @@
 
 | PR | Track | Status | Spec |
 | --- | --- | --- | --- |
-| PR-1048 | — | planned | [Allow zero-price products](PR-1048.md) |
+| PR-1048 | — | done | [Allow zero-price products](PR-1048.md) |
 | PR-1049 | A | planned | [`Type` field + migration](PR-1049.md) |
 | PR-1050 | A | planned | [Type-driven shipping/tax requirements](PR-1050.md) |
 | PR-1051 | A | planned | [Admin API type field support](PR-1051.md) |
@@ -43,4 +43,4 @@ Roadmap: [`../ROADMAP.md`](../ROADMAP.md)
 
 **Ordering rule:** PR-1048 ships standalone, first. Track A (PR-1049–1053) before everything else — `Type` is referenced by every later track. Track B (PR-1054–1059) before Tracks C/D/E — bundle, linked-child, and downloadable salability rules are all built on `Purchasable`. Tracks C, D, and E have no dependency on each other. Track F (PR-1079–1083) depends on C/D/E being substantially complete and on Phase 11 Track B (search indexing) already having shipped.
 
-Continues Phase 11's PR numbering (highest prior: PR-1047).
+Continues Phase 11's PR numbering as originally planned (highest prior at draft time: PR-1047). **Collision:** Phase 11 later shipped its own PR-1048 / PR-1049 under `docs/phase-11-jobs-search-cache/prs/` for different work. Phase 12 roadmap ids stay as written; disambiguate by phase folder. Consider renumbering Track A+ before implementing PR-1049.
