@@ -19,7 +19,7 @@ func (r blockResolverProductRepo) FindByID(_ context.Context, id string) (*catal
 func (blockResolverProductRepo) FindBySlug(context.Context, string) (*catalog.Product, error) {
 	return nil, nil
 }
-func (blockResolverProductRepo) List(context.Context, int, int) ([]catalog.Product, error) {
+func (blockResolverProductRepo) List(context.Context, catalog.ListFilter) ([]catalog.Product, error) {
 	return nil, nil
 }
 func (blockResolverProductRepo) FindByCategoryID(context.Context, string, int, int) ([]catalog.Product, error) {

@@ -75,7 +75,7 @@ func (r *Resolver) products(ctx context.Context, offset, limit int) ([]catalog.P
 	if offset < 0 {
 		return nil, fmt.Errorf("offset must be >= 0")
 	}
-	return r.productRepo.List(ctx, offset, normalizeLimit(limit))
+	return r.productRepo.List(ctx, catalog.ListFilter{Offset: offset, Limit: normalizeLimit(limit)})
 }
 
 func (r *Resolver) categoryByID(ctx context.Context, id string) (*catalog.Category, error) {

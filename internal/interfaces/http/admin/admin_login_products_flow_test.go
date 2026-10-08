@@ -80,12 +80,12 @@ func TestAdminLoginToProductsFlow_EndToEnd(t *testing.T) {
 	}
 
 	products := &mockAdminProductRepo{
-		listFn: func(_ context.Context, offset, limit int) ([]catalog.Product, error) {
-			if offset != 0 {
-				t.Errorf("offset = %d, want 0", offset)
+		listFn: func(_ context.Context, filter catalog.ListFilter) ([]catalog.Product, error) {
+			if filter.Offset != 0 {
+				t.Errorf("offset = %d, want 0", filter.Offset)
 			}
-			if limit != 20 {
-				t.Errorf("limit = %d, want 20", limit)
+			if filter.Limit != 20 {
+				t.Errorf("limit = %d, want 20", filter.Limit)
 			}
 			return []catalog.Product{{ID: "prod-1", Name: "Widget", Slug: "widget", Status: catalog.StatusActive}}, nil
 		},

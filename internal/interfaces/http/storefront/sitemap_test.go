@@ -27,7 +27,7 @@ func (m *stubSitemapProductRepo) FindByID(_ context.Context, _ string) (*catalog
 func (m *stubSitemapProductRepo) FindBySlug(_ context.Context, _ string) (*catalog.Product, error) {
 	return nil, nil
 }
-func (m *stubSitemapProductRepo) List(_ context.Context, _, _ int) ([]catalog.Product, error) {
+func (m *stubSitemapProductRepo) List(_ context.Context, _ catalog.ListFilter) ([]catalog.Product, error) {
 	return m.products, m.err
 }
 func (m *stubSitemapProductRepo) FindByCategoryID(_ context.Context, _ string, _, _ int) ([]catalog.Product, error) {

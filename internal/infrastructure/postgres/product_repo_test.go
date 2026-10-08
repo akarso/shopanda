@@ -187,7 +187,7 @@ func TestProductRepo_List(t *testing.T) {
 	}
 
 	// Page 1: limit 2
-	products, err := repo.List(ctx, 0, 2)
+	products, err := repo.List(ctx, catalog.ListFilter{Offset: 0, Limit: 2})
 	if err != nil {
 		t.Fatalf("List: %v", err)
 	}
@@ -201,12 +201,73 @@ func TestProductRepo_List(t *testing.T) {
 	}
 
 	// Page 2: offset 2, limit 2
-	products, err = repo.List(ctx, 2, 2)
+	products, err = repo.List(ctx, catalog.ListFilter{Offset: 2, Limit: 2})
 	if err != nil {
 		t.Fatalf("List page 2: %v", err)
 	}
 	if len(products) != 1 {
 		t.Errorf("len = %d, want 1", len(products))
+	}
+}
+
+func TestProductRepo_List_FilterByType(t *testing.T) {
+	db := testDB(t)
+	ensureProductsTable(t, db)
+	mustExec(t, db, "DELETE FROM products")
+	repo, err := postgres.NewProductRepo(db)
+	if err != nil {
+		t.Fatalf("NewProductRepo: %v", err)
+	}
+	ctx := context.Background()
+
+	simple := mustNewProduct(t, "Simple", "simple-list-type")
+	simple.Type = catalog.TypeSimple
+	if err := repo.Create(ctx, &simple); err != nil {
+		t.Fatalf("Create simple: %v", err)
+	}
+	virtual := mustNewProduct(t, "Virtual", "virtual-list-type")
+	virtual.Type = catalog.TypeVirtual
+	if err := repo.Create(ctx, &virtual); err != nil {
+		t.Fatalf("Create virtual: %v", err)
+	}
+
+	products, err := repo.List(ctx, catalog.ListFilter{Type: catalog.TypeVirtual, Offset: 0, Limit: 20})
+	if err != nil {
+		t.Fatalf("List by type: %v", err)
+	}
+	found := false
+	for _, got := range products {
+		if got.Type != catalog.TypeVirtual {
+			t.Fatalf("List row Type = %q, want virtual", got.Type)
+		}
+		if got.ID == virtual.ID {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("expected virtual product %s in filtered list, got %#v", virtual.ID, products)
+	}
+	for _, got := range products {
+		if got.ID == simple.ID {
+			t.Fatal("simple product must not appear in virtual filter")
+		}
+	}
+}
+
+func TestProductRepo_List_InvalidType(t *testing.T) {
+	db := testDB(t)
+	ensureProductsTable(t, db)
+	repo, err := postgres.NewProductRepo(db)
+	if err != nil {
+		t.Fatalf("NewProductRepo: %v", err)
+	}
+
+	_, err = repo.List(context.Background(), catalog.ListFilter{Type: catalog.Type("kit"), Offset: 0, Limit: 10})
+	if !apperror.Is(err, apperror.CodeValidation) {
+		t.Fatalf("got %v, want validation error", err)
+	}
+	if err == nil || !strings.Contains(err.Error(), `"kit"`) {
+		t.Fatalf("error = %v, want quoted kit", err)
 	}
 }
 
@@ -219,17 +280,17 @@ func TestProductRepo_List_ValidationErrors(t *testing.T) {
 	}
 	ctx := context.Background()
 
-	_, err = repo.List(ctx, -1, 10)
+	_, err = repo.List(ctx, catalog.ListFilter{Offset: -1, Limit: 10})
 	if !apperror.Is(err, apperror.CodeValidation) {
 		t.Errorf("negative offset: got %v, want validation error", err)
 	}
 
-	_, err = repo.List(ctx, 0, 0)
+	_, err = repo.List(ctx, catalog.ListFilter{Offset: 0, Limit: 0})
 	if !apperror.Is(err, apperror.CodeValidation) {
 		t.Errorf("zero limit: got %v, want validation error", err)
 	}
 
-	_, err = repo.List(ctx, 0, -5)
+	_, err = repo.List(ctx, catalog.ListFilter{Offset: 0, Limit: -5})
 	if !apperror.Is(err, apperror.CodeValidation) {
 		t.Errorf("negative limit: got %v, want validation error", err)
 	}

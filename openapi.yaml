@@ -1170,6 +1170,7 @@ paths:
       parameters:
         - $ref: "#/components/parameters/Offset"
         - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/ProductType"
       responses:
         "200":
           description: OK
@@ -1185,6 +1186,7 @@ paths:
                       slug: widget
                       description: A fine widget
                       status: active
+                      Type: simple
                       attributes: {}
                       created_at: "2026-01-01T00:00:00Z"
                       updated_at: "2026-01-01T00:00:00Z"
@@ -1193,10 +1195,15 @@ paths:
           $ref: "#/components/responses/Unauthorized"
         "403":
           $ref: "#/components/responses/Forbidden"
+        "422":
+          $ref: "#/components/responses/Validation"
     post:
       operationId: adminCreateProduct
       tags: ["Admin: Products"]
       summary: Create a product
+      description: >-
+        Optional `type` defaults to `simple`. Product responses already include
+        exported field `Type` (Go JSON name) from PR-1049.
       security:
         - bearerAuth: []
       requestBody:
@@ -1220,6 +1227,7 @@ paths:
                     slug: widget
                     description: A fine widget
                     status: draft
+                    Type: simple
                     attributes: {}
                     created_at: "2026-01-01T00:00:00Z"
                     updated_at: "2026-01-01T00:00:00Z"
@@ -1259,6 +1267,8 @@ paths:
           $ref: "#/components/responses/Forbidden"
         "404":
           $ref: "#/components/responses/NotFound"
+        "422":
+          $ref: "#/components/responses/Validation"
 
   # ── Admin: Variants ────────────────────────────────────
   /api/v1/admin/products/{id}/variants:
@@ -2388,6 +2398,13 @@ components:
         type: integer
         default: 20
         maximum: 100
+    ProductType:
+      name: type
+      in: query
+      description: Optional product type filter (admin list).
+      schema:
+        type: string
+        enum: [simple, virtual, bundle, grouped, configurable, downloadable]
     ProductId:
       name: id
       in: path
@@ -2487,6 +2504,10 @@ components:
           type: string
         description:
           type: string
+        type:
+          type: string
+          description: Product taxonomy; omit to default to simple.
+          enum: [simple, virtual, bundle, grouped, configurable, downloadable]
         attributes:
           type: object
           additionalProperties: true
@@ -2503,6 +2524,9 @@ components:
         status:
           type: string
           enum: [active, draft, archived]
+        type:
+          type: string
+          enum: [simple, virtual, bundle, grouped, configurable, downloadable]
         attributes:
           type: object
           additionalProperties: true

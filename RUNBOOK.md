@@ -209,6 +209,12 @@ Shopanda plugins are **compile-time registered** — there is no `.so` drop-in l
 - If PgBouncer (or similar) sits in front of PostgreSQL in **transaction-pooling mode**, set `database.query_exec_mode: exec` (or `SHOPANDA_DATABASE_QUERY_EXEC_MODE=exec`). Otherwise pgx defaults to server-side prepared statement caching, which does not survive that pooling mode — symptom: `prepared statement "..." already exists` / `does not exist` errors under load.
 - Leave unset for a direct connection to PostgreSQL — it trades away a real performance optimization and should only be set when a transaction-pooling proxy is actually in front of the database. See [DEPLOYMENT.md](docs/guides/DEPLOYMENT.md) ("Consider connection pooling").
 
+## Admin product type
+
+- Product `type` is **mutable** via admin create/update (`simple` \| `virtual` \| `bundle` \| `grouped` \| `configurable` \| `downloadable`). Create may omit `type` (defaults to `simple`); update must omit the field to leave type unchanged — an explicit empty/whitespace `type` is rejected.
+- Changing a live SKU between physical and `virtual`/`downloadable` changes whether **new** checkouts require a shipping method (derived in cart validation). Carts already mid-checkout keep the shipping requirement cached from when they last validated.
+- `bundle` / `grouped` / `configurable` / `downloadable` can be stored before their Phase 12 tracks fully ship; expect incomplete storefront/admin behavior until those PRs land.
+
 ## Admin store credit issuance
 
 - `POST /api/v1/admin/customers/{customerId}/store-credit/issue` mints store credit; gated by the dedicated `customers.store_credit.write` permission (`RoleAdmin` only by default), not `customers.write`.

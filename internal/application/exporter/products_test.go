@@ -27,18 +27,18 @@ func (m *mockProductRepo) FindByID(_ context.Context, _ string) (*catalog.Produc
 func (m *mockProductRepo) FindBySlug(_ context.Context, _ string) (*catalog.Product, error) {
 	return nil, nil
 }
-func (m *mockProductRepo) List(_ context.Context, offset, limit int) ([]catalog.Product, error) {
+func (m *mockProductRepo) List(_ context.Context, filter catalog.ListFilter) ([]catalog.Product, error) {
 	if m.listErr != nil {
 		return nil, m.listErr
 	}
-	if offset >= len(m.products) {
+	if filter.Offset >= len(m.products) {
 		return nil, nil
 	}
-	end := offset + limit
+	end := filter.Offset + filter.Limit
 	if end > len(m.products) {
 		end = len(m.products)
 	}
-	return m.products[offset:end], nil
+	return m.products[filter.Offset:end], nil
 }
 func (m *mockProductRepo) FindByCategoryID(_ context.Context, _ string, _, _ int) ([]catalog.Product, error) {
 	return nil, nil

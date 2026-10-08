@@ -2,6 +2,14 @@ package catalog
 
 import "context"
 
+// ListFilter controls paginated product listing. Empty Type means all types
+// (PR-1051 admin ?type= filter; other callers leave Type unset).
+type ListFilter struct {
+	Type   Type
+	Offset int
+	Limit  int
+}
+
 // ProductRepository defines persistence operations for products.
 type ProductRepository interface {
 	// FindByID returns a product by its ID.
@@ -13,10 +21,12 @@ type ProductRepository interface {
 	FindBySlug(ctx context.Context, slug string) (*Product, error)
 
 	// List returns a page of products ordered by created_at desc.
-	// offset must be >= 0; implementations must return an error for negative values.
-	// limit must be > 0; implementations must return an error for non-positive values.
-	// Implementations should cap limit to a reasonable maximum (e.g. 100).
-	List(ctx context.Context, offset, limit int) ([]Product, error)
+	// filter.Offset must be >= 0; implementations must return an error for negative values.
+	// filter.Limit must be > 0; implementations must return an error for non-positive values.
+	// Implementations should cap Limit to a reasonable maximum (e.g. 100).
+	// When filter.Type is non-empty, implementations must reject invalid values
+	// (same InvalidTypeMessage as Product.Validate); empty Type means all types.
+	List(ctx context.Context, filter ListFilter) ([]Product, error)
 
 	// FindByCategoryID returns products belonging to the given category,
 	// ordered by created_at desc.

@@ -65,6 +65,12 @@ func (t Type) IsValid() bool {
 	return false
 }
 
+// InvalidTypeMessage is the canonical validation text for an unknown type.
+// Used by Product.Validate, admin handlers, and ProductRepo.List so messages stay in sync.
+func InvalidTypeMessage(t Type) string {
+	return fmt.Sprintf("invalid product type %q", t)
+}
+
 // RequiresPhysicalShipping reports whether a product of this type needs a
 // shipping method at checkout. virtual and downloadable never do; every
 // other value (including unknown/empty) does — composites stay true until
@@ -143,13 +149,13 @@ func (p Product) RequiresPhysicalShipping() bool {
 // Validate checks fields that must be valid before persist.
 // Currently only nil and Type (not Status/Name/Slug — those stay at NewProduct
 // / admin request validation). Adapter-agnostic: call from handlers and every
-// ProductRepository. When request Type is accepted (PR-1051), set it before Validate.
+// ProductRepository. Admin create/update set Type from the request before Validate.
 func (p *Product) Validate() error {
 	if p == nil {
 		return errors.New("product must not be nil")
 	}
 	if !p.Type.IsValid() {
-		return fmt.Errorf("invalid product type %q", p.Type)
+		return errors.New(InvalidTypeMessage(p.Type))
 	}
 	return nil
 }

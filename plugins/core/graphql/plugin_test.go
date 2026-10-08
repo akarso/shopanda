@@ -62,7 +62,7 @@ func TestPlugin_Init_RegistersPublicRoute(t *testing.T) {
 	plugin.NewResolver = func(_ *sql.DB, _ *extensionapp.Registry) (*cgraphql.Resolver, error) {
 		return cgraphql.NewResolver(
 			&stubProductRepo{
-				listFn: func(_ context.Context, _, _ int) ([]catalog.Product, error) {
+				listFn: func(_ context.Context, _ catalog.ListFilter) ([]catalog.Product, error) {
 					return []catalog.Product{product}, nil
 				},
 			},

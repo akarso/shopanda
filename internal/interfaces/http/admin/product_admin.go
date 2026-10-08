@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
+	"strings"
 
 	httpshared "github.com/akarso/shopanda/internal/interfaces/http/shared"
 
@@ -75,12 +76,39 @@ func (h *ProductAdminHandler) List() http.HandlerFunc {
 		}
 
 		adminID := h.getAdminID(r)
+		filter := catalog.ListFilter{Offset: offset, Limit: limit}
 
-		products, err := h.repo.List(r.Context(), offset, limit)
+		rawType := strings.TrimSpace(r.URL.Query().Get("type"))
+		if rawType != "" {
+			typ := catalog.Type(rawType)
+			if !typ.IsValid() {
+				msg := catalog.InvalidTypeMessage(typ)
+				details := productAdminScopeDetailsFromRequest(r)
+				details["offset"] = offset
+				details["limit"] = limit
+				details["type"] = rawType
+				h.auditor.LogAction(r.Context(), admin.AuditEntry{
+					AdminID:      adminID,
+					Action:       admin.AuditProductRead,
+					ResourceType: "products",
+					Details:      details,
+					Result:       "error",
+					Error:        msg,
+				})
+				httpshared.JSONError(w, apperror.Validation(msg))
+				return
+			}
+			filter.Type = typ
+		}
+
+		products, err := h.repo.List(r.Context(), filter)
 		if err != nil {
 			details := productAdminScopeDetailsFromRequest(r)
 			details["offset"] = offset
 			details["limit"] = limit
+			if filter.Type != "" {
+				details["type"] = string(filter.Type)
+			}
 			h.auditor.LogAction(r.Context(), admin.AuditEntry{
 				AdminID:      adminID,
 				Action:       admin.AuditProductRead,
@@ -99,6 +127,9 @@ func (h *ProductAdminHandler) List() http.HandlerFunc {
 		details := productAdminScopeDetailsFromRequest(r)
 		details["offset"] = offset
 		details["limit"] = limit
+		if filter.Type != "" {
+			details["type"] = string(filter.Type)
+		}
 		h.auditor.LogAction(r.Context(), admin.AuditEntry{
 			AdminID:      adminID,
 			Action:       admin.AuditProductRead,
@@ -220,6 +251,7 @@ type createProductRequest struct {
 	Name        string                 `json:"name"`
 	Slug        string                 `json:"slug"`
 	Description string                 `json:"description"`
+	Type        string                 `json:"type"`
 	Attributes  map[string]interface{} `json:"attributes"`
 }
 
@@ -229,6 +261,7 @@ type updateProductRequest struct {
 	Slug        *string                `json:"slug"`
 	Description *string                `json:"description"`
 	Status      *string                `json:"status"`
+	Type        *string                `json:"type"`
 	Attributes  map[string]interface{} `json:"attributes"`
 }
 
@@ -266,6 +299,9 @@ func (h *ProductAdminHandler) Create() http.HandlerFunc {
 			return
 		}
 		product.Description = req.Description
+		if rawType := strings.TrimSpace(req.Type); rawType != "" {
+			product.Type = catalog.Type(rawType)
+		}
 		if req.Attributes != nil {
 			product.Attributes = req.Attributes
 		}
@@ -430,6 +466,23 @@ func (h *ProductAdminHandler) Update() http.HandlerFunc {
 				return
 			}
 			product.Status = s
+		}
+		if req.Type != nil {
+			rawType := strings.TrimSpace(*req.Type)
+			if rawType == "" {
+				h.auditor.LogAction(r.Context(), admin.AuditEntry{
+					AdminID:      adminID,
+					Action:       admin.AuditProductUpdate,
+					ResourceType: "product",
+					ResourceID:   pid,
+					Result:       "error",
+					Error:        "type must not be empty",
+					Details:      productAdminScopeDetailsFromRequest(r),
+				})
+				httpshared.JSONError(w, apperror.Validation("type must not be empty"))
+				return
+			}
+			product.Type = catalog.Type(rawType)
 		}
 		if req.Attributes != nil {
 			product.Attributes = req.Attributes

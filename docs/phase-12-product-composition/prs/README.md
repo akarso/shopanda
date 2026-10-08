@@ -5,7 +5,7 @@
 | PR-1048 | — | done | [Allow zero-price products](PR-1048.md) |
 | PR-1049 | A | done | [`Type` field + migration](PR-1049.md) |
 | PR-1050 | A | done | [Type-driven shipping/tax requirements](PR-1050.md) |
-| PR-1051 | A | planned | [Admin API type field support](PR-1051.md) |
+| PR-1051 | A | done | [Admin API type field support](PR-1051.md) |
 | PR-1052 | A | planned | [CSV import/export: type field](PR-1052.md) |
 | PR-1053 | A | planned | [Admin GUI: type selector + type-specific sections](PR-1053.md) |
 | PR-1054 | B | planned | [Enforce `Status = active` in core read paths](PR-1054.md) |

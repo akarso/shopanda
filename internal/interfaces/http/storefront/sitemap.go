@@ -53,7 +53,7 @@ func (h *SitemapHandler) Serve() http.HandlerFunc {
 		// Products (paginated, active only).
 		offset := 0
 		for {
-			products, err := h.products.List(ctx, offset, sitemapPageSize)
+			products, err := h.products.List(ctx, catalog.ListFilter{Offset: offset, Limit: sitemapPageSize})
 			if err != nil {
 				http.Error(w, "Internal Server Error", http.StatusInternalServerError)
 				return
