@@ -244,6 +244,7 @@ For a complete operator-focused setup, including Docker, health checks, and envi
 | `jobs:cancel <id>` | Cancel a pending job |
 | `cache:stats` | Show cache occupancy (`--json`) |
 | `cache:clear` | Clear cache (`--prefix=<p>`, `--tag=<t>`, `--key=<k>`, or `--all`) |
+| `cache:purge-url` | Purge full-page cache keys for a storefront path |
 | `schedule:list` | List registered scheduled tasks (`--json`) |
 | `schedule:trigger <name>` | Trigger a scheduled task immediately |
 | `schedule:enable <name>` | Re-enable a scheduled task |

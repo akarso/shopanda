@@ -715,6 +715,9 @@ type productCategoryIDReader interface {
 }
 
 func addCategoryTreeTags(ctx context.Context, categories []catalog.Category) {
+	if cacheapp.HasPageTagBag(ctx) {
+		cacheapp.AddPageTags(ctx, cacheapp.NavigationTag())
+	}
 	for i := range categories {
 		cacheapp.AddPageTags(ctx, cacheapp.CategoryTag(categories[i].ID))
 	}
@@ -747,6 +750,9 @@ func (h *StorefrontHandler) addProductCategoryTags(ctx context.Context, productI
 }
 
 func (h *StorefrontHandler) addSearchResultTags(ctx context.Context, result search.SearchResult) {
+	if cacheapp.HasPageTagBag(ctx) {
+		cacheapp.AddPageTags(ctx, cacheapp.ListingTag())
+	}
 	for i := range result.Products {
 		cacheapp.AddPageTags(ctx, cacheapp.ProductTag(result.Products[i].ID))
 		for _, catID := range result.Products[i].CategoryIDs {

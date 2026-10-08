@@ -9,6 +9,7 @@ import (
 
 	adminApp "github.com/akarso/shopanda/internal/application/admin"
 	cacheApp "github.com/akarso/shopanda/internal/application/cache"
+	"github.com/akarso/shopanda/internal/infrastructure/postgres"
 	"github.com/akarso/shopanda/internal/platform/config"
 	"github.com/akarso/shopanda/internal/platform/db"
 	"github.com/akarso/shopanda/internal/platform/logger"
@@ -199,4 +200,57 @@ func formatCacheClear(w io.Writer, result cacheApp.ClearResult) error {
 	default:
 		return writeSuccessLinef(w, "Cache clear completed.\n")
 	}
+}
+
+const cachePurgeURLUsage = "usage: cache:purge-url <path>"
+
+// runCachePurgeURL handles `app cache:purge-url <path>` (PR-1046).
+func runCachePurgeURL(w io.Writer, cfg *config.Config, log logger.Logger, args []string) error {
+	if len(args) != 1 || strings.TrimSpace(args[0]) == "" || strings.HasPrefix(args[0], "-") {
+		return fmt.Errorf("cache:purge-url: %s", cachePurgeURLUsage)
+	}
+	path := args[0]
+
+	svc, conn, err := newCacheAdminService(cfg, log)
+	if err != nil {
+		return err
+	}
+	defer conn.Close()
+
+	ctx := context.Background()
+	varies, err := loadCachePurgeStoreVaries(ctx, conn)
+	if err != nil {
+		return fmt.Errorf("cache:purge-url: %w", err)
+	}
+	result, purgeErr := svc.PurgeURL(ctx, path, varies)
+	details := map[string]interface{}{
+		"path":    result.Path,
+		"deleted": result.Deleted,
+		"keys":    len(result.Keys),
+	}
+	auditCLIActionDetails(ctx, conn, log, adminApp.AuditCachePurgeURL, "cache", result.Path, details, purgeErr)
+	if purgeErr != nil {
+		return fmt.Errorf("cache:purge-url: %w", purgeErr)
+	}
+	return writeSuccessLinef(w, "Purged %d FPC key(s) for %s.\n", result.Deleted, result.Path)
+}
+
+func loadCachePurgeStoreVaries(ctx context.Context, conn *sql.DB) ([]cacheApp.StoreVary, error) {
+	repo, err := postgres.NewStoreRepo(conn)
+	if err != nil {
+		return nil, err
+	}
+	all, err := repo.FindAll(ctx)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]cacheApp.StoreVary, 0, len(all))
+	for _, st := range all {
+		out = append(out, cacheApp.StoreVary{
+			ID:       st.ID,
+			Language: st.Language,
+			Currency: st.Currency,
+		})
+	}
+	return out, nil
 }

@@ -96,6 +96,7 @@ func buildServeHandler(cfg *config.Config, log logger.Logger, rt *serveRuntime, 
 	requireSearchReindex := admin.RequirePermission(rbac.SearchReindex)
 	requireCacheRead := admin.RequirePermission(rbac.CacheRead)
 	requireCacheClear := admin.RequireAnyPermission(rbac.CacheWrite, rbac.CacheClearAll)
+	requireCachePurgeURL := admin.RequirePermission(rbac.CachePurgeURL)
 
 	// Auth routes.
 	router.HandleFunc("POST /api/v1/auth/register", rt.authHandler.Register())
@@ -175,6 +176,7 @@ func buildServeHandler(cfg *config.Config, log logger.Logger, rt *serveRuntime, 
 	router.Handle("POST /api/v1/admin/jobs/{id}/cancel", requireJobsWrite(rt.jobAdmin.Cancel()))
 	router.Handle("GET /api/v1/admin/cache/stats", requireCacheRead(rt.cacheAdmin.Stats()))
 	router.Handle("POST /api/v1/admin/cache/clear", requireCacheClear(rt.cacheAdmin.Clear()))
+	router.Handle("POST /api/v1/admin/cache/purge-url", requireCachePurgeURL(rt.cacheAdmin.PurgeURL()))
 	router.Handle("POST /api/v1/admin/search/reindex", requireSearchReindex(rt.searchAdmin.Trigger()))
 	router.Handle("GET /api/v1/admin/search/reindex", requireSearchReindex(rt.searchAdmin.List()))
 	router.Handle("GET /api/v1/admin/search/reindex/{runID}", requireSearchReindex(rt.searchAdmin.Get()))

@@ -802,6 +802,7 @@ func TestAdminHandler_StaticJS(t *testing.T) {
 		`userHasPermission("cache.read")`,
 		`userHasPermission("cache.write")`,
 		`userHasPermission("cache.clear_all")`,
+		`'cache.purge_url'`,
 	}
 	for _, expected := range expectedCacheAdminWiring {
 		if !strings.Contains(normalizedBody, expected) {

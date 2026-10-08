@@ -110,6 +110,21 @@ Cached shells ship an empty `csrf_token` until htmx loads `GET /fragments/csrf` 
 - Theme includes `hx-get="/fragments/csrf"` **inside** the logout form — a path mention elsewhere on the page is not enough; FPC refuses logout forms without that in-form hole.
 - JS/htmx is available for authenticated FPC chrome; without it, logout stays empty and POSTs 403.
 
+### Cache appears stale after a product/price/content change
+
+**Symptom:** storefront PDP/PLP/CMS/home still shows old price, name, or copy after an admin save, even though the DB is correct. Full-page cache (PR-1044) is serving a HIT; tag invalidation (PR-1046) should have purged it.
+
+**Check:**
+- Confirm FPC is enabled (`cache.full_page.enabled` / `SHOPANDA_CACHE_FULL_PAGE_ENABLED`). If off, the stale page is not FPC.
+- Confirm the change path publishes an event the FPC subscriber listens to: product create/update, price upsert, stock update, category create/update/delete, CMS page create/update/delete. Content-block-only edits have **no** domain event today — tag purge will not fire for those.
+- Logs: look for `cache.fpc_invalidation.done` (or `.error`) with the expected `product:` / `category:` / `page:` / `fpc:listing` / `fpc:navigation` tag around the save time. Missing log ⇒ event not published or subscriber not registered. Product/category create also purges the shared listing/navigation shells so new entities are not stuck behind an old PLP/nav HIT until TTL.
+- Immediate remediation while investigating:
+  - Prefer tag clear for “everything that rendered this entity”: `POST /api/v1/admin/cache/clear` `{"tag":"product:<id>"}` / `category:` / `page:` / `fpc:listing` / `fpc:navigation` (`cache.write`).
+  - `purge-url` deletes the **exact** path (+ filtered query) × store × language × guest/auth keys (store defaults, `?lang=` if present, and `en`). Bare `/products` does **not** clear `?page=2`, `?sort=…`, or other listing variants — pass the full query (including `attr_*` codes that were on the allowlist when cached), or use tag/prefix clear. Accept-Language-only variants still need an explicit `?lang=` on the purge path. API: `POST /api/v1/admin/cache/purge-url` `{"path":"/products/the-slug"}` (`cache.purge_url`); CLI: `app cache:purge-url /products/the-slug`.
+  - Nuclear: `{"prefix":"fpc:"}` or `{"all": true}`.
+
+**Fix:** restore event publishing / tag wiring on the write path if a tag was never written or an event never fired. Purge-by-URL is a path-scoped escape hatch, not a whole-PLP broom; do not leave a known miss permanently on TTL alone.
+
 ## Planning
 
 | Phase | Status | Doc |
@@ -176,9 +191,9 @@ Shopanda plugins are **compile-time registered** — there is no `.so` drop-in l
 
 ## Admin cache (stats / clear)
 
-There is no admin GUI for cache yet (PR-1043). Use the API, `curl`, or the CLI.
+Cache occupancy/clear also has an admin GUI under **Operations → Cache** (PR-1043). Purge-by-URL is API/CLI only today (`POST /api/v1/admin/cache/purge-url`, `app cache:purge-url`).
 
-- `GET /api/v1/admin/cache/stats` is gated by `cache.read`. `POST /api/v1/admin/cache/clear` targeted clears (`{"prefix":"..."}` / `{"tag":"..."}` / `{"key":"..."}`) are gated by `cache.write`; `{"all": true}` requires the distinct `cache.clear_all` permission — a full flush is a bigger blast radius (every cache consumer pays a cold-cache penalty at once, including the storefront full-page cache) than a targeted clear. All three permissions are admin-only (`RoleAdmin`) by default, same as `jobs.read`. 403 is a well-formed selector the caller is not allowed to run; 422 is an invalid body (missing/empty/whitespace selector, `{"all": false}`, more than one selector).
+- `GET /api/v1/admin/cache/stats` is gated by `cache.read`. `POST /api/v1/admin/cache/clear` targeted clears (`{"prefix":"..."}` / `{"tag":"..."}` / `{"key":"..."}`) are gated by `cache.write`; `{"all": true}` requires the distinct `cache.clear_all` permission — a full flush is a bigger blast radius (every cache consumer pays a cold-cache penalty at once, including the storefront full-page cache) than a targeted clear. `POST /api/v1/admin/cache/purge-url` requires `cache.purge_url` (FPC path escape hatch). All four permissions are admin-only (`RoleAdmin`) by default, same as `jobs.read`. 403 is a well-formed selector the caller is not allowed to run; 422 is an invalid body (missing/empty/whitespace selector, `{"all": false}`, more than one selector, or a non-cacheable purge path).
 - **Stats** are approximate occupancy, not a live hit/miss rate for L2. Postgres runs `COUNT(*)` with a 1.5s statement cap, then falls back to `pg_class.reltuples` (planner estimate; can lag `ANALYZE`). When that fallback is used, the payload sets `l2.approximate: true` — treat `keys`/`tag_rows` as a stale estimate, not an exact count. Expired rows the cleanup job has not swept yet are included. Redis reports `DBSIZE` of the configured database (the whole DB, not just this store's key prefix) and `used_memory` from `INFO memory` when present. L1 (this process's permission catalog and, when the storefront is enabled, category-nav tree) reports entry count plus process-lifetime hit/miss counters — no backend round trip. Successful HTTP `cache.stats` calls are **not** audit-logged (the endpoint is polled); failures still are. CLI `cache:stats` is not audited.
 - **Clear by prefix/tag/key** calls the same `DeleteByPrefix` / `DeleteByTag` / `Delete` the rest of the app uses. An empty/whitespace selector is rejected so `{"prefix":""}` cannot sneak a full-table wipe past `cache.clear_all`. Prefix is a **literal** string — Redis glob metacharacters (`*`, `?`, `[`, `\`) are escaped, so `{"prefix":"*"}` with only `cache.write` deletes keys that literally start with `*`, not the whole store. Exactly one selector is required. Targeted prefix/key clears do not return a `deleted` count (tag/`all` do).
 - **Clear all** scan-and-deletes L2, then clears this process's L1 stores. On Redis it **never** calls `FLUSHDB`/`FLUSHALL` — only keys under `cache.redis.key_prefix` are removed, so rate-limit ZSETs and queues sharing the instance are left alone. Empty prefix is refused at FlushAll (and rejected at config load). Redis SCAN is not a point-in-time snapshot: a concurrent `SetWithTags` during a flush can leave tag-index orphans that `cache.cleanup` (`DeleteExpired`) later reclaims. `deleted` is **value keys** only (Postgres `cache` rows; Redis keys that are not `tag:` / `__keytags:` / `__purge:`). Postgres FlushAll is an exact delete of both tables in one statement — on a large UNLOGGED cache it can stall the admin request and contend with writers. Other API replicas keep their own L1 until TTL (seconds) or their own in-process invalidation events; the CLI process has no L1 at all.

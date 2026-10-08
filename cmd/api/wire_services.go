@@ -451,6 +451,10 @@ func wireServeRuntime(cfg *config.Config, log logger.Logger, conn *sql.DB, repos
 	cacheInvalidation := cacheApp.NewInvalidationSubscriber(appCache, log)
 	cacheInvalidation.Register(bus)
 
+	// Wire product/price/stock/category/CMS changes → full-page cache tag purge (PR-1046).
+	fpcInvalidation := cacheApp.NewFPCInvalidationSubscriber(appCache, log)
+	fpcInvalidation.Register(bus)
+
 	// Wire product/price/stock/category-assignment changes → search index
 	// updates (PR-1036), queued and debounced via reindexService.Trigger —
 	// replaces the previous inline bus.OnAsync(catalog.EventProduct*, ...)
@@ -812,7 +816,7 @@ func wireServeRuntime(cfg *config.Config, log logger.Logger, conn *sql.DB, repos
 		},
 		Clear: adminRoleService.ClearCatalogCache,
 	}})
-	cacheAdmin := admin.NewCacheAdminHandler(cacheAdminService, sharedAuditor)
+	cacheAdmin := admin.NewCacheAdminHandler(cacheAdminService, sharedAuditor).WithStores(repos.storeRepo)
 	searchAdmin := admin.NewSearchAdminHandler(reindexService, searchIndexRunRepo, searchProductSource, searchCategorySource, searchEngine, sharedAuditor)
 	scheduleAdmin := admin.NewScheduleAdminHandler(schedulerService, sharedAuditor)
 	accountHandler := storefront.NewAccountHandler(repos.customerRepo, repos.orderRepo, repos.consentRepo, accountService)

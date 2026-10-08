@@ -8,17 +8,19 @@ import (
 	cacheapp "github.com/akarso/shopanda/internal/application/cache"
 	"github.com/akarso/shopanda/internal/domain/identity"
 	"github.com/akarso/shopanda/internal/domain/rbac"
+	"github.com/akarso/shopanda/internal/domain/store"
 	httpshared "github.com/akarso/shopanda/internal/interfaces/http/shared"
 	"github.com/akarso/shopanda/internal/platform/apperror"
 	"github.com/akarso/shopanda/internal/platform/auth"
 )
 
-// CacheAdminHandler serves GET /admin/cache/stats and POST /admin/cache/clear
-// on top of application/cache.AdminService (PR-1042). CLI uses the same
-// service methods — no separate logic path.
+// CacheAdminHandler serves GET /admin/cache/stats, POST /admin/cache/clear,
+// and POST /admin/cache/purge-url on top of application/cache.AdminService
+// (PR-1042 / PR-1046). CLI uses the same service methods — no separate logic path.
 type CacheAdminHandler struct {
 	svc     *cacheapp.AdminService
 	auditor *adminapp.Auditor
+	stores  store.StoreRepository
 	hasPerm func(identity.Role, rbac.Permission) bool
 }
 
@@ -31,6 +33,14 @@ func NewCacheAdminHandler(svc *cacheapp.AdminService, auditor *adminapp.Auditor)
 		panic("http: auditor must not be nil")
 	}
 	return &CacheAdminHandler{svc: svc, auditor: auditor, hasPerm: rbac.HasPermission}
+}
+
+// WithStores enables purge-url vary expansion across every configured store.
+func (h *CacheAdminHandler) WithStores(stores store.StoreRepository) *CacheAdminHandler {
+	if h != nil {
+		h.stores = stores
+	}
+	return h
 }
 
 func (h *CacheAdminHandler) checkPermission(role identity.Role, perm rbac.Permission) bool {
@@ -152,6 +162,73 @@ func (h *CacheAdminHandler) Clear() http.HandlerFunc {
 			return
 		}
 		h.audit(r, adminapp.AuditCacheClear, resourceID, details, nil)
+		httpshared.JSON(w, http.StatusOK, result)
+	}
+}
+
+type cachePurgeURLBody struct {
+	Path string `json:"path"`
+}
+
+// PurgeURL handles POST /api/v1/admin/cache/purge-url (PR-1046).
+// Requires cache.purge_url. Deletes concrete FPC keys for path × store × auth.
+func (h *CacheAdminHandler) PurgeURL() http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		var body cachePurgeURLBody
+		dec := json.NewDecoder(r.Body)
+		dec.DisallowUnknownFields()
+		if err := dec.Decode(&body); err != nil {
+			err := apperror.Validation("invalid request body")
+			h.audit(r, adminapp.AuditCachePurgeURL, "", nil, err)
+			httpshared.JSONError(w, err)
+			return
+		}
+		if err := requireSingleJSONValue(dec); err != nil {
+			err := apperror.Validation(err.Error())
+			h.audit(r, adminapp.AuditCachePurgeURL, "", nil, err)
+			httpshared.JSONError(w, err)
+			return
+		}
+
+		role := auth.IdentityFrom(r.Context()).Role
+		if !h.checkPermission(role, rbac.CachePurgeURL) {
+			err := apperror.Forbidden("cache.purge_url permission required")
+			h.audit(r, adminapp.AuditCachePurgeURL, body.Path, map[string]interface{}{"path": body.Path}, err)
+			httpshared.JSONError(w, err)
+			return
+		}
+
+		var varies []cacheapp.StoreVary
+		if h.stores != nil {
+			all, err := h.stores.FindAll(r.Context())
+			if err != nil {
+				err := apperror.Wrap(apperror.CodeInternal, "list stores for purge-url failed", err)
+				h.audit(r, adminapp.AuditCachePurgeURL, body.Path, map[string]interface{}{"path": body.Path}, err)
+				httpshared.JSONError(w, err)
+				return
+			}
+			varies = make([]cacheapp.StoreVary, 0, len(all))
+			for _, st := range all {
+				varies = append(varies, cacheapp.StoreVary{
+					ID:       st.ID,
+					Language: st.Language,
+					Currency: st.Currency,
+				})
+			}
+		}
+
+		result, err := h.svc.PurgeURL(r.Context(), body.Path, varies)
+		details := map[string]interface{}{
+			"path":    result.Path,
+			"deleted": result.Deleted,
+			"keys":    len(result.Keys),
+		}
+		if err != nil {
+			h.audit(r, adminapp.AuditCachePurgeURL, body.Path, details, err)
+			httpshared.JSONError(w, err)
+			return
+		}
+		h.audit(r, adminapp.AuditCachePurgeURL, result.Path, details, nil)
 		httpshared.JSON(w, http.StatusOK, result)
 	}
 }
