@@ -96,6 +96,42 @@ func TestType_IsValid(t *testing.T) {
 	}
 }
 
+func TestType_RequiresPhysicalShipping(t *testing.T) {
+	tests := []struct {
+		productType catalog.Type
+		want        bool
+	}{
+		{catalog.TypeSimple, true},
+		{catalog.TypeVirtual, false},
+		{catalog.TypeBundle, true},
+		{catalog.TypeGrouped, true},
+		{catalog.TypeConfigurable, true},
+		{catalog.TypeDownloadable, false},
+		{catalog.Type(""), true},
+		{catalog.Type("kit"), true},
+	}
+	for _, tc := range tests {
+		name := string(tc.productType)
+		if name == "" {
+			name = "(empty)"
+		}
+		t.Run(name, func(t *testing.T) {
+			if got := tc.productType.RequiresPhysicalShipping(); got != tc.want {
+				t.Errorf("RequiresPhysicalShipping() = %v, want %v", got, tc.want)
+			}
+		})
+	}
+	if !catalog.AnyRequiresPhysicalShipping(nil) {
+		t.Error("AnyRequiresPhysicalShipping(nil) = false, want true (fail closed)")
+	}
+	if catalog.AnyRequiresPhysicalShipping([]catalog.Type{catalog.TypeVirtual, catalog.TypeDownloadable}) {
+		t.Error("digital-only AnyRequiresPhysicalShipping = true, want false")
+	}
+	if !catalog.AnyRequiresPhysicalShipping([]catalog.Type{catalog.TypeVirtual, catalog.TypeSimple}) {
+		t.Error("mixed AnyRequiresPhysicalShipping = false, want true")
+	}
+}
+
 func TestNewProduct_DefaultDescription(t *testing.T) {
 	p, err := catalog.NewProduct("id-1", "Shoes", "shoes")
 	if err != nil {

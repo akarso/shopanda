@@ -28,8 +28,9 @@ func (s Status) IsValid() bool {
 // It is a typed string for package separation, not compile-time enum
 // exhaustiveness — callers must reject unknown values via IsValid /
 // Product.Validate (application and persistence layers), matching Status.
-// Type-specific runtime behavior (shipping, composition, …) lands in later
-// Phase 12 PRs; until then a persisted non-simple Type is catalog metadata only.
+// Shipping requirement is derived via RequiresPhysicalShipping (PR-1050);
+// other type-specific behavior (composition, downloadable fulfillment, …)
+// lands in later Phase 12 PRs.
 type Type string
 
 const (
@@ -58,6 +59,34 @@ func AllTypes() []Type {
 func (t Type) IsValid() bool {
 	for _, allowed := range AllTypes() {
 		if t == allowed {
+			return true
+		}
+	}
+	return false
+}
+
+// RequiresPhysicalShipping reports whether a product of this type needs a
+// shipping method at checkout. virtual and downloadable never do; every
+// other value (including unknown/empty) does — composites stay true until
+// Track C adds child rollup. Unknown/empty defaults to true as a fail-safe.
+func (t Type) RequiresPhysicalShipping() bool {
+	switch t {
+	case TypeVirtual, TypeDownloadable:
+		return false
+	default:
+		return true
+	}
+}
+
+// AnyRequiresPhysicalShipping is true when at least one type in types needs
+// a shipping method. An empty slice returns true (fail closed — nothing was
+// resolved yet; callers must not treat "no types" as digital-only).
+func AnyRequiresPhysicalShipping(types []Type) bool {
+	if len(types) == 0 {
+		return true
+	}
+	for _, t := range types {
+		if t.RequiresPhysicalShipping() {
 			return true
 		}
 	}
@@ -103,6 +132,12 @@ func NewProduct(id, name, slug string) (Product, error) {
 		CreatedAt:  now,
 		UpdatedAt:  now,
 	}, nil
+}
+
+// RequiresPhysicalShipping reports whether this product needs a shipping
+// method at checkout. See Type.RequiresPhysicalShipping.
+func (p Product) RequiresPhysicalShipping() bool {
+	return p.Type.RequiresPhysicalShipping()
 }
 
 // Validate checks fields that must be valid before persist.

@@ -548,7 +548,7 @@ func wireServeRuntime(cfg *config.Config, log logger.Logger, conn *sql.DB, repos
 	reserveInventoryStep := checkoutApp.NewReserveInventoryStep(repos.reservationRepo,
 		checkoutApp.WithStockEventPublishing(repos.variantRepo, bus))
 	createOrderStep := checkoutApp.NewCreateOrderStep(repos.orderRepo, repos.variantRepo, storeCreditService, extensionValueService)
-	selectShippingStep := checkoutApp.NewSelectShippingStep(shippingReg, repos.shippingRepo)
+	selectShippingStep := checkoutApp.NewSelectShippingStep(shippingReg, repos.shippingRepo, repos.productRepo, repos.variantRepo)
 	initiatePaymentStep := checkoutApp.NewInitiatePaymentStep(payRegistry, repos.paymentRepo)
 	checkoutSteps := []checkoutApp.Step{
 		validateCartStep,

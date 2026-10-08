@@ -1,0 +1,76 @@
+package checkout
+
+import (
+	"context"
+	"fmt"
+
+	"github.com/akarso/shopanda/internal/domain/cart"
+	"github.com/akarso/shopanda/internal/domain/catalog"
+)
+
+// CartRequiresPhysicalShipping reports whether checkout must collect a shipping
+// method for the given cart lines (PR-1050).
+//
+// Fail-closed rules (require shipping = true):
+//   - empty cart / no items
+//   - nil products or variants repository
+//   - variant or product lookup error
+//   - missing variant
+//   - missing product (treated as physical / TypeSimple)
+//
+// Only when every resolved line is virtual or downloadable does this return false.
+// variantLookup is optional: when non-nil it is tried before variants.FindByID
+// (ValidateCartStep meta reuse).
+func CartRequiresPhysicalShipping(
+	ctx context.Context,
+	c *cart.Cart,
+	products catalog.ProductRepository,
+	variants catalog.VariantRepository,
+	variantLookup func(variantID string) *catalog.Variant,
+) (bool, error) {
+	if c == nil || len(c.Items) == 0 {
+		return true, nil
+	}
+	if products == nil || variants == nil {
+		return true, nil
+	}
+
+	types := make([]catalog.Type, 0, len(c.Items))
+	seenProducts := make(map[string]catalog.Type, len(c.Items))
+
+	for _, item := range c.Items {
+		variant := (*catalog.Variant)(nil)
+		if variantLookup != nil {
+			variant = variantLookup(item.VariantID)
+		}
+		if variant == nil {
+			v, err := variants.FindByID(ctx, item.VariantID)
+			if err != nil {
+				return true, fmt.Errorf("shipping requirement: lookup variant %s: %w", item.VariantID, err)
+			}
+			if v == nil {
+				return true, fmt.Errorf("shipping requirement: variant %s no longer exists", item.VariantID)
+			}
+			variant = v
+		}
+
+		if typ, ok := seenProducts[variant.ProductID]; ok {
+			types = append(types, typ)
+			continue
+		}
+
+		product, err := products.FindByID(ctx, variant.ProductID)
+		if err != nil {
+			return true, fmt.Errorf("shipping requirement: lookup product %s: %w", variant.ProductID, err)
+		}
+		if product == nil {
+			seenProducts[variant.ProductID] = catalog.TypeSimple
+			types = append(types, catalog.TypeSimple)
+			continue
+		}
+		seenProducts[variant.ProductID] = product.Type
+		types = append(types, product.Type)
+	}
+
+	return catalog.AnyRequiresPhysicalShipping(types), nil
+}
