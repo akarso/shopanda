@@ -14,8 +14,18 @@ import (
 )
 
 // productCSVBaseHeader is the fixed product/variant identity columns. Attribute
-// keys that collide with these names are omitted from the CSV (PR-1052).
+// keys that collide with these names (case-insensitive, trimmed — matching
+// import header normalization) are omitted from the CSV (PR-1052).
 var productCSVBaseHeader = []string{"name", "slug", "sku", "description", "type", "variant_name"}
+
+func productCSVHeaderKey(s string) string {
+	return strings.TrimSpace(strings.ToLower(s))
+}
+
+func isReservedProductCSVColumn(baseColumns map[string]struct{}, key string) bool {
+	_, ok := baseColumns[productCSVHeaderKey(key)]
+	return ok
+}
 
 // Result holds the summary of an export run.
 type Result struct {
@@ -101,13 +111,13 @@ func (exp *ProductExporter) Export(ctx context.Context, w io.Writer) (*Result, e
 	// overwrite taxonomy/identity cells or duplicate header names (PR-1052).
 	baseColumns := make(map[string]struct{}, len(productCSVBaseHeader))
 	for _, col := range productCSVBaseHeader {
-		baseColumns[col] = struct{}{}
+		baseColumns[productCSVHeaderKey(col)] = struct{}{}
 	}
 	var omittedReserved []string
 	sortedAttrs := make([]string, 0, len(attrKeys))
 	for k := range attrKeys {
-		if _, reserved := baseColumns[k]; reserved {
-			omittedReserved = append(omittedReserved, k)
+		if isReservedProductCSVColumn(baseColumns, k) {
+			omittedReserved = append(omittedReserved, k) // original spelling for operators
 			continue
 		}
 		sortedAttrs = append(sortedAttrs, k)
@@ -149,7 +159,7 @@ func (exp *ProductExporter) Export(ctx context.Context, w io.Writer) (*Result, e
 			"variant_name": r.variant.Name,
 		}
 		for k := range attrKeys {
-			if _, reserved := baseColumns[k]; reserved {
+			if isReservedProductCSVColumn(baseColumns, k) {
 				continue
 			}
 			rowMap[k] = formatAttrValue(r.variant.Attributes[k])

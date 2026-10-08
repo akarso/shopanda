@@ -11,6 +11,7 @@ import (
 	"testing"
 
 	"github.com/akarso/shopanda/internal/application/exporter"
+	"github.com/akarso/shopanda/internal/application/importer"
 	"github.com/akarso/shopanda/internal/domain/catalog"
 )
 
@@ -324,6 +325,115 @@ func TestExport_AttributeNamedTypeDoesNotOverwriteProductType(t *testing.T) {
 		t.Fatalf("Warnings = %v, want reserved-key omission note for type", result.Warnings)
 	}
 }
+
+func TestExport_AttributeNamedTypeCaseVariantOmittedRoundTrip(t *testing.T) {
+	// Import lowercases/trims headers, so a CSV column "Type" would replace product
+	// type. Export must omit case/whitespace variants of reserved keys.
+	prodRepo := &mockProductRepo{
+		products: []catalog.Product{
+			{ID: "p1", Name: "E-book", Slug: "e-book", Type: catalog.TypeVirtual},
+		},
+	}
+	varRepo := &mockVariantRepo{
+		variants: map[string][]catalog.Variant{
+			"p1": {{
+				ID: "v1", ProductID: "p1", SKU: "SKU-EB",
+				Attributes: map[string]interface{}{"Type": "kit", "color": "red"},
+			}},
+		},
+	}
+
+	exp := exporter.NewProductExporter(prodRepo, varRepo)
+	var buf bytes.Buffer
+	result, err := exp.Export(context.Background(), &buf)
+	if err != nil {
+		t.Fatalf("Export: %v", err)
+	}
+	csvBytes := buf.Bytes()
+	records := parseCSV(t, bytes.NewBuffer(csvBytes))
+	for _, h := range records[0] {
+		if strings.EqualFold(strings.TrimSpace(h), "type") && h != "type" {
+			t.Fatalf("header still has reserved case variant %q; header=%v", h, records[0])
+		}
+	}
+	colIdx := make(map[string]int)
+	for i, h := range records[0] {
+		colIdx[h] = i
+	}
+	if records[1][colIdx["type"]] != "virtual" {
+		t.Fatalf("type cell = %q, want virtual", records[1][colIdx["type"]])
+	}
+	warned := false
+	for _, w := range result.Warnings {
+		if strings.Contains(w, "omitted reserved attribute keys") && strings.Contains(w, "Type") {
+			warned = true
+			break
+		}
+	}
+	if !warned {
+		t.Fatalf("Warnings = %v, want original key Type in omission note", result.Warnings)
+	}
+	if len(result.Errors) != 0 {
+		t.Fatalf("Errors = %v, want empty", result.Errors)
+	}
+
+	importProd := &roundTripProductRepo{}
+	importVar := &roundTripVariantRepo{}
+	impResult, err := importer.NewProductImporter(importProd, importVar, nil).Import(context.Background(), bytes.NewReader(csvBytes))
+	if err != nil {
+		t.Fatalf("Import: %v", err)
+	}
+	if impResult.Products != 1 || len(importProd.products) != 1 {
+		t.Fatalf("import result=%+v products=%d", impResult, len(importProd.products))
+	}
+	if importProd.products[0].Type != catalog.TypeVirtual {
+		t.Fatalf("imported type = %q, want virtual (attribute Type must not become product type)", importProd.products[0].Type)
+	}
+}
+
+type roundTripProductRepo struct {
+	products []*catalog.Product
+}
+
+func (m *roundTripProductRepo) FindByID(context.Context, string) (*catalog.Product, error) {
+	return nil, nil
+}
+func (m *roundTripProductRepo) FindBySlug(context.Context, string) (*catalog.Product, error) {
+	return nil, nil
+}
+func (m *roundTripProductRepo) List(context.Context, catalog.ListFilter) ([]catalog.Product, error) {
+	return nil, nil
+}
+func (m *roundTripProductRepo) FindByCategoryID(context.Context, string, int, int) ([]catalog.Product, error) {
+	return nil, nil
+}
+func (m *roundTripProductRepo) Create(_ context.Context, p *catalog.Product) error {
+	m.products = append(m.products, p)
+	return nil
+}
+func (m *roundTripProductRepo) Update(context.Context, *catalog.Product) error { return nil }
+func (m *roundTripProductRepo) WithTx(*sql.Tx) catalog.ProductRepository       { return m }
+
+type roundTripVariantRepo struct{}
+
+func (m *roundTripVariantRepo) FindByID(context.Context, string) (*catalog.Variant, error) {
+	return nil, nil
+}
+func (m *roundTripVariantRepo) FindBySKU(context.Context, string) (*catalog.Variant, error) {
+	return nil, nil
+}
+func (m *roundTripVariantRepo) FindBySKUs(context.Context, []string) (map[string]*catalog.Variant, error) {
+	return map[string]*catalog.Variant{}, nil
+}
+func (m *roundTripVariantRepo) ListByProductID(context.Context, string, int, int) ([]catalog.Variant, error) {
+	return nil, nil
+}
+func (m *roundTripVariantRepo) ListByProductIDs(ctx context.Context, productIDs []string, limitPerProduct int) (map[string][]catalog.Variant, error) {
+	return testutil.ListByProductIDsFromList(ctx, m.ListByProductID, productIDs, limitPerProduct)
+}
+func (m *roundTripVariantRepo) Create(context.Context, *catalog.Variant) error { return nil }
+func (m *roundTripVariantRepo) Update(context.Context, *catalog.Variant) error { return nil }
+func (m *roundTripVariantRepo) WithTx(*sql.Tx) catalog.VariantRepository       { return m }
 
 func TestExport_InvalidTypeEmittedAsIs(t *testing.T) {
 	prodRepo := &mockProductRepo{
