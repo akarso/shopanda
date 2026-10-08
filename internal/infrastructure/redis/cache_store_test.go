@@ -505,7 +505,7 @@ func TestCacheStore_TagDeleteByTagRestoresOnFailureAfterRename(t *testing.T) {
 // from every tag listed there — including one just added after this
 // call's own RENAME snapshot.
 func TestCacheStore_TagDeleteByTagDoesNotDestroyConcurrentReTag(t *testing.T) {
-	_, store := setupRedisCache(t, "p")
+	mr, store := setupRedisCache(t, "p")
 	ctx := context.Background()
 	t.Cleanup(func() { inredis.SetAfterTagRename(store, nil) })
 
@@ -529,16 +529,43 @@ func TestCacheStore_TagDeleteByTagDoesNotDestroyConcurrentReTag(t *testing.T) {
 	if n != 1 {
 		t.Fatalf("DeleteByTag old-tag count = %d, want 1", n)
 	}
+	inredis.SetAfterTagRename(store, nil)
 
-	// new-tag's own membership for racy-key must have survived — the
-	// racing old-tag delete must not have SREM'd it out from under the
-	// concurrent write.
+	// Value was removed by the old-tag purge (including the raced v2).
+	var probe string
+	hit, err := store.Get("racy-key", &probe)
+	if err != nil {
+		t.Fatalf("Get after old-tag: %v", err)
+	}
+	if hit {
+		t.Fatal("value should be gone after old-tag purge")
+	}
+
+	// new-tag's forward membership for racy-key must have survived — the
+	// racing old-tag delete must not have SREM'd it (deleteUntagBatch
+	// would). Follow-up DeleteByTag therefore finds the orphan membership
+	// but deletes zero values.
+	members, err := mr.SMembers("p:tag:new-tag")
+	if err != nil {
+		t.Fatalf("SMembers new-tag: %v", err)
+	}
+	found := false
+	for _, m := range members {
+		if m == "racy-key" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("new-tag members = %v, want racy-key preserved", members)
+	}
+
 	m, err := store.DeleteByTag(context.Background(), "new-tag")
 	if err != nil {
 		t.Fatalf("DeleteByTag new-tag: %v", err)
 	}
-	if m != 1 {
-		t.Fatalf("DeleteByTag new-tag count = %d, want 1 (racy-key's new-tag membership must survive a racing old-tag delete)", m)
+	if m != 0 {
+		t.Fatalf("DeleteByTag new-tag count = %d, want 0 (value already removed by old-tag purge)", m)
 	}
 }
 

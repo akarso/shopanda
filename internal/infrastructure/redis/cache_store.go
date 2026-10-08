@@ -87,6 +87,20 @@ end
 return n
 `)
 
+// deleteByTagMembersScript DELs value+__keytags pairs atomically and
+// returns how many value keys were removed. Separate DEL commands would
+// let a concurrent SetWithTags recreate value+reverse between them, then
+// lose the new reverse index to the second DEL. KEYS alternate
+// valueKey, revKey, valueKey, revKey, ...
+var deleteByTagMembersScript = goredis.NewScript(`
+local n = 0
+for i = 1, #KEYS, 2 do
+  n = n + redis.call('DEL', KEYS[i])
+  redis.call('DEL', KEYS[i + 1])
+end
+return n
+`)
+
 // Logger is the optional structured logger used for recoverable cache errors
 // (per-tag prune skips, purge-key EXPIRE/restore failures). Nil is a no-op.
 type Logger interface {
@@ -465,31 +479,25 @@ func (s *CacheStore) DeleteByTag(ctx context.Context, tag string) (n int64, err 
 	// key this call is about to delete, is instead left for DeleteExpired
 	// to sweep — the same accepted, already-tested eventual-consistency
 	// path as any other orphan (see its own doc comment).
-	valueKeys := make([]string, 0, deleteByPrefixBatchSize)
-	metaKeys := make([]string, 0, deleteByPrefixBatchSize)
+	// Pairs of valueKey, revKey for deleteByTagMembersScript.
+	keys := make([]string, 0, deleteByPrefixBatchSize*2)
 	flush := func() error {
-		if len(valueKeys) > 0 {
-			deleted, delErr := s.client.Del(ctx, valueKeys...).Result()
-			if delErr != nil {
-				return fmt.Errorf("redis cache: delete by tag %q: %w", tag, delErr)
-			}
-			n += deleted
-			valueKeys = valueKeys[:0]
+		if len(keys) == 0 {
+			return nil
 		}
-		if len(metaKeys) > 0 {
-			if err := s.client.Del(ctx, metaKeys...).Err(); err != nil {
-				return fmt.Errorf("redis cache: delete by tag %q: keytags: %w", tag, err)
-			}
-			metaKeys = metaKeys[:0]
+		deleted, delErr := deleteByTagMembersScript.Run(ctx, s.client, keys).Int64()
+		if delErr != nil {
+			return fmt.Errorf("redis cache: delete by tag %q: %w", tag, delErr)
 		}
+		n += deleted
+		keys = keys[:0]
 		return nil
 	}
 	iter := s.client.SScan(ctx, tmpKey, 0, "", tagScanCount).Iterator()
 	for iter.Next(ctx) {
 		member := iter.Val()
-		valueKeys = append(valueKeys, s.key(member))
-		metaKeys = append(metaKeys, s.keyTagsKey(member))
-		if len(valueKeys) >= deleteByPrefixBatchSize {
+		keys = append(keys, s.key(member), s.keyTagsKey(member))
+		if len(keys) >= deleteByPrefixBatchSize*2 {
 			if err = flush(); err != nil {
 				return n, err
 			}

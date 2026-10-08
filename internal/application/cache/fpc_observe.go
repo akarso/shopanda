@@ -21,20 +21,27 @@ import (
 //
 // PagesStored is derived from keys this process has stored, each with an
 // expiry deadline: hard TTL refill of the same key does not inflate the
-// count; Snapshot prunes past-deadline entries so Redis/Postgres expiry
-// that never hit PageGone does not grow forever. Tag purges that only
-// report a deletion count do not remove map entries — those keys drop
-// out at their tracked expiry (best-effort until then).
+// count. Past-deadline entries are pruned on PageStored/Request (throttled)
+// and on Snapshot so the map does not grow unboundedly when nobody opens
+// cache stats. Tag purges that only report a deletion count do not remove
+// map entries — those keys drop out at their tracked expiry (best-effort
+// until then).
 type FPCObserver struct {
 	rec metrics.Recorder
 
 	routes sync.Map // string → *fpcRouteAccum
 	pages  sync.Map // string → time.Time (expiresAt; zero = no auto-expiry)
 
+	lastPrune atomic.Int64 // unix nano of last expired-key sweep
+
 	purgeTag         atomic.Int64
 	purgeURL         atomic.Int64
 	backendGetErrors atomic.Int64
 }
+
+// pagesPruneInterval bounds how often PageStored/Request scan pages for
+// expired entries. Snapshot always prunes.
+const pagesPruneInterval = time.Second
 
 type fpcRouteAccum struct {
 	hits, misses, bypasses atomic.Int64
@@ -101,6 +108,7 @@ func (o *FPCObserver) Request(route, outcome string) {
 	default:
 		acc.bypasses.Add(1)
 	}
+	o.maybePruneExpired()
 }
 
 func (o *FPCObserver) routeAccum(route string) *fpcRouteAccum {
@@ -157,6 +165,7 @@ func (o *FPCObserver) PageStored(key string, expiresAt time.Time) {
 		return
 	}
 	o.pages.Store(key, expiresAt)
+	o.maybePruneExpired()
 }
 
 // PageGone removes key from the pages_stored estimate (soft-TTL eviction,
@@ -190,12 +199,39 @@ func (o *FPCObserver) ResetPagesStored() {
 	})
 }
 
+// maybePruneExpired drops past-deadline page keys at most once per
+// pagesPruneInterval so traffic (not only admin Snapshot) reclaims memory.
+func (o *FPCObserver) maybePruneExpired() {
+	now := time.Now().UTC()
+	last := o.lastPrune.Load()
+	if last != 0 && now.UnixNano()-last < int64(pagesPruneInterval) {
+		return
+	}
+	if !o.lastPrune.CompareAndSwap(last, now.UnixNano()) {
+		return
+	}
+	o.pruneExpired(now)
+}
+
+func (o *FPCObserver) pruneExpired(now time.Time) {
+	o.pages.Range(func(key, value any) bool {
+		exp, _ := value.(time.Time)
+		if !exp.IsZero() && !exp.After(now) {
+			// CompareAndDelete: a concurrent PageStored may have refreshed
+			// expiry after this Range read — do not drop the new deadline.
+			o.pages.CompareAndDelete(key, value)
+		}
+		return true
+	})
+}
+
 func (o *FPCObserver) livePages(now time.Time) int64 {
+	o.lastPrune.Store(now.UnixNano())
 	var n int64
 	o.pages.Range(func(key, value any) bool {
 		exp, _ := value.(time.Time)
 		if !exp.IsZero() && !exp.After(now) {
-			o.pages.Delete(key)
+			o.pages.CompareAndDelete(key, value)
 			return true
 		}
 		n++
