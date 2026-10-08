@@ -35,7 +35,7 @@ func (m *mockVariantProductRepo) FindByID(ctx context.Context, id string) (*cata
 func (m *mockVariantProductRepo) FindBySlug(ctx context.Context, slug string) (*catalog.Product, error) {
 	return nil, nil
 }
-func (m *mockVariantProductRepo) List(ctx context.Context, offset, limit int) ([]catalog.Product, error) {
+func (m *mockVariantProductRepo) List(ctx context.Context, filter catalog.ListFilter) ([]catalog.Product, error) {
 	return nil, nil
 }
 func (m *mockVariantProductRepo) Create(ctx context.Context, p *catalog.Product) error {

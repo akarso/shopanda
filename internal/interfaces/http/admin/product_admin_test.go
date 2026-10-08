@@ -30,7 +30,7 @@ import (
 
 type mockAdminProductRepo struct {
 	findByIDFn                 func(ctx context.Context, id string) (*catalog.Product, error)
-	listFn                     func(ctx context.Context, offset, limit int) ([]catalog.Product, error)
+	listFn func(ctx context.Context, filter catalog.ListFilter) ([]catalog.Product, error)
 	createFn                   func(ctx context.Context, p *catalog.Product) error
 	updateFn                   func(ctx context.Context, p *catalog.Product) error
 	listCategoryIDsByProductFn func(ctx context.Context, productID string) ([]string, error)
@@ -51,9 +51,9 @@ func (m *mockAdminProductRepo) FindBySlug(ctx context.Context, slug string) (*ca
 	return nil, nil
 }
 
-func (m *mockAdminProductRepo) List(ctx context.Context, offset, limit int) ([]catalog.Product, error) {
+func (m *mockAdminProductRepo) List(ctx context.Context, filter catalog.ListFilter) ([]catalog.Product, error) {
 	if m.listFn != nil {
-		return m.listFn(ctx, offset, limit)
+		return m.listFn(ctx, filter)
 	}
 	return nil, nil
 }
@@ -93,7 +93,7 @@ func (m *mockAdminProductRepoWithoutCategoryLookup) FindBySlug(_ context.Context
 	return nil, nil
 }
 
-func (m *mockAdminProductRepoWithoutCategoryLookup) List(_ context.Context, _, _ int) ([]catalog.Product, error) {
+func (m *mockAdminProductRepoWithoutCategoryLookup) List(_ context.Context, _ catalog.ListFilter) ([]catalog.Product, error) {
 	return nil, nil
 }
 
@@ -254,12 +254,12 @@ func TestProductAdminHandler_Get_MissingCategoryLookupCapability(t *testing.T) {
 
 func TestProductAdminHandler_List_OK(t *testing.T) {
 	repo := &mockAdminProductRepo{
-		listFn: func(_ context.Context, offset, limit int) ([]catalog.Product, error) {
-			if offset != 0 {
-				t.Errorf("offset = %d, want 0", offset)
+		listFn: func(_ context.Context, filter catalog.ListFilter) ([]catalog.Product, error) {
+			if filter.Offset != 0 {
+				t.Errorf("offset = %d, want 0", filter.Offset)
 			}
-			if limit != 20 {
-				t.Errorf("limit = %d, want 20", limit)
+			if filter.Limit != 20 {
+				t.Errorf("limit = %d, want 20", filter.Limit)
 			}
 			return []catalog.Product{
 				{ID: "p1", Name: "Widget", Slug: "widget", Status: catalog.StatusActive},
@@ -296,7 +296,7 @@ func TestProductAdminHandler_List_OK(t *testing.T) {
 
 func TestProductAdminHandler_List_Empty(t *testing.T) {
 	repo := &mockAdminProductRepo{
-		listFn: func(_ context.Context, _, _ int) ([]catalog.Product, error) {
+		listFn: func(_ context.Context, _ catalog.ListFilter) ([]catalog.Product, error) {
 			return nil, nil
 		},
 	}
@@ -311,14 +311,124 @@ func TestProductAdminHandler_List_Empty(t *testing.T) {
 	}
 }
 
+func TestProductAdminHandler_List_FilterByType(t *testing.T) {
+	repo := &mockAdminProductRepo{
+		listFn: func(_ context.Context, filter catalog.ListFilter) ([]catalog.Product, error) {
+			if filter.Type != catalog.TypeBundle {
+				t.Errorf("type = %q, want bundle", filter.Type)
+			}
+			return []catalog.Product{{ID: "b1", Name: "Bundle", Slug: "bundle", Type: catalog.TypeBundle}}, nil
+		},
+	}
+	h := admin.NewProductAdminHandler(repo, testAdminBus())
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("GET", "/api/v1/admin/products?type=bundle", nil)
+	newAdminRouter(h).ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d; body: %s", rec.Code, http.StatusOK, rec.Body.String())
+	}
+}
+
+func TestProductAdminHandler_List_FilterByTypeWithPagination(t *testing.T) {
+	repo := &mockAdminProductRepo{
+		listFn: func(_ context.Context, filter catalog.ListFilter) ([]catalog.Product, error) {
+			if filter.Type != catalog.TypeVirtual {
+				t.Errorf("type = %q, want virtual", filter.Type)
+			}
+			if filter.Offset != 5 {
+				t.Errorf("offset = %d, want 5", filter.Offset)
+			}
+			if filter.Limit != 3 {
+				t.Errorf("limit = %d, want 3", filter.Limit)
+			}
+			return nil, nil
+		},
+	}
+	h := admin.NewProductAdminHandler(repo, testAdminBus())
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("GET", "/api/v1/admin/products?type=virtual&offset=5&limit=3", nil)
+	newAdminRouter(h).ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d; body: %s", rec.Code, http.StatusOK, rec.Body.String())
+	}
+}
+
+func TestProductAdminHandler_List_FilterByType_AuditDetails(t *testing.T) {
+	sink := &auditSink{}
+	repo := &mockAdminProductRepo{
+		listFn: func(_ context.Context, filter catalog.ListFilter) ([]catalog.Product, error) {
+			return []catalog.Product{}, nil
+		},
+	}
+	h := admin.NewProductAdminHandlerWithAuditor(repo, testAdminBus(), adminapp.NewAuditor(sink), logger.NewWithWriter(io.Discard, "info"))
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("GET", "/api/v1/admin/products?type=simple", nil)
+	req = testhelper.AdminRequest(req, "admin-1")
+	newAdminRouterWithAudit(h).ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d; body: %s", rec.Code, http.StatusOK, rec.Body.String())
+	}
+	entry := sink.Last(t)
+	if got := entry.context["detail_type"]; got != "simple" {
+		t.Errorf("detail_type = %v, want simple", got)
+	}
+}
+
+func TestProductAdminHandler_List_InvalidTypeFilter(t *testing.T) {
+	repo := &mockAdminProductRepo{
+		listFn: func(_ context.Context, _ catalog.ListFilter) ([]catalog.Product, error) {
+			t.Fatal("List must not be called for invalid type filter")
+			return nil, nil
+		},
+	}
+	h := admin.NewProductAdminHandler(repo, testAdminBus())
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("GET", "/api/v1/admin/products?type=kit", nil)
+	newAdminRouter(h).ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("status = %d, want %d; body: %s", rec.Code, http.StatusUnprocessableEntity, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), `invalid product type \"kit\"`) {
+		t.Fatalf("body = %s, want invalid product type kit", rec.Body.String())
+	}
+}
+
+func TestProductAdminHandler_List_EmptyTypeQueryIgnored(t *testing.T) {
+	repo := &mockAdminProductRepo{
+		listFn: func(_ context.Context, filter catalog.ListFilter) ([]catalog.Product, error) {
+			if filter.Type != "" {
+				t.Errorf("type = %q, want empty (whitespace query ignored)", filter.Type)
+			}
+			return nil, nil
+		},
+	}
+	h := admin.NewProductAdminHandler(repo, testAdminBus())
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("GET", "/api/v1/admin/products?type=%20%20", nil)
+	newAdminRouter(h).ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d; body: %s", rec.Code, http.StatusOK, rec.Body.String())
+	}
+}
+
 func TestProductAdminHandler_List_Pagination(t *testing.T) {
 	repo := &mockAdminProductRepo{
-		listFn: func(_ context.Context, offset, limit int) ([]catalog.Product, error) {
-			if offset != 10 {
-				t.Errorf("offset = %d, want 10", offset)
+		listFn: func(_ context.Context, filter catalog.ListFilter) ([]catalog.Product, error) {
+			if filter.Offset != 10 {
+				t.Errorf("offset = %d, want 10", filter.Offset)
 			}
-			if limit != 5 {
-				t.Errorf("limit = %d, want 5", limit)
+			if filter.Limit != 5 {
+				t.Errorf("limit = %d, want 5", filter.Limit)
 			}
 			return nil, nil
 		},
@@ -336,7 +446,7 @@ func TestProductAdminHandler_List_Pagination(t *testing.T) {
 
 func TestProductAdminHandler_List_AuditIncludesScopeContext(t *testing.T) {
 	repo := &mockAdminProductRepo{
-		listFn: func(_ context.Context, offset, limit int) ([]catalog.Product, error) {
+		listFn: func(_ context.Context, filter catalog.ListFilter) ([]catalog.Product, error) {
 			return []catalog.Product{{ID: "p1", Name: "Widget", Slug: "widget", Status: catalog.StatusActive}}, nil
 		},
 	}
@@ -390,7 +500,7 @@ func TestProductAdminHandler_List_AuditIncludesScopeContext(t *testing.T) {
 
 func TestProductAdminHandler_List_AuditOmitsPartialScopeContext(t *testing.T) {
 	repo := &mockAdminProductRepo{
-		listFn: func(_ context.Context, offset, limit int) ([]catalog.Product, error) {
+		listFn: func(_ context.Context, filter catalog.ListFilter) ([]catalog.Product, error) {
 			return []catalog.Product{{ID: "p1", Name: "Widget", Slug: "widget", Status: catalog.StatusActive}}, nil
 		},
 	}
@@ -480,8 +590,91 @@ func TestProductAdminHandler_Create_OK(t *testing.T) {
 	if created.Status != catalog.StatusDraft {
 		t.Errorf("status = %q, want draft", created.Status)
 	}
+	if created.Type != catalog.TypeSimple {
+		t.Errorf("type = %q, want simple (default)", created.Type)
+	}
 	if created.ID == "" {
 		t.Error("product ID should be generated")
+	}
+}
+
+func TestProductAdminHandler_Create_WithType(t *testing.T) {
+	var created *catalog.Product
+	repo := &mockAdminProductRepo{
+		createFn: func(_ context.Context, p *catalog.Product) error {
+			created = p
+			return nil
+		},
+	}
+	h := admin.NewProductAdminHandler(repo, testAdminBus())
+
+	body := jsonBody(t, map[string]interface{}{
+		"name": "E-book",
+		"slug": "e-book",
+		"type": "virtual",
+	})
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("POST", "/api/v1/admin/products", body)
+	newAdminRouter(h).ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("status = %d, want %d; body: %s", rec.Code, http.StatusCreated, rec.Body.String())
+	}
+	if created == nil || created.Type != catalog.TypeVirtual {
+		t.Fatalf("type = %#v, want virtual", created)
+	}
+}
+
+func TestProductAdminHandler_Create_WhitespaceTypeDefaultsSimple(t *testing.T) {
+	var created *catalog.Product
+	repo := &mockAdminProductRepo{
+		createFn: func(_ context.Context, p *catalog.Product) error {
+			created = p
+			return nil
+		},
+	}
+	h := admin.NewProductAdminHandler(repo, testAdminBus())
+
+	body := jsonBody(t, map[string]interface{}{
+		"name": "Plain",
+		"slug": "plain",
+		"type": "   ",
+	})
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("POST", "/api/v1/admin/products", body)
+	newAdminRouter(h).ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("status = %d, want %d; body: %s", rec.Code, http.StatusCreated, rec.Body.String())
+	}
+	if created == nil || created.Type != catalog.TypeSimple {
+		t.Fatalf("type = %#v, want simple (whitespace treated as omit)", created)
+	}
+}
+
+func TestProductAdminHandler_Create_InvalidType(t *testing.T) {
+	repo := &mockAdminProductRepo{
+		createFn: func(_ context.Context, _ *catalog.Product) error {
+			t.Fatal("Create must not be called for invalid type")
+			return nil
+		},
+	}
+	h := admin.NewProductAdminHandler(repo, testAdminBus())
+
+	body := jsonBody(t, map[string]interface{}{
+		"name": "Bad",
+		"slug": "bad",
+		"type": "kit",
+	})
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("POST", "/api/v1/admin/products", body)
+	newAdminRouter(h).ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("status = %d, want %d; body: %s", rec.Code, http.StatusUnprocessableEntity, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), `invalid product type \"kit\"`) {
+		t.Fatalf("body = %s, want invalid product type kit", rec.Body.String())
 	}
 }
 
@@ -822,6 +1015,116 @@ func TestProductAdminHandler_Update_OK(t *testing.T) {
 	}
 	if updated.Status != catalog.StatusActive {
 		t.Errorf("status = %q, want active", updated.Status)
+	}
+}
+
+func TestProductAdminHandler_Update_Type(t *testing.T) {
+	existing := &catalog.Product{
+		ID: "p1", Name: "Widget", Slug: "widget", Status: catalog.StatusDraft, Type: catalog.TypeSimple,
+	}
+	var updated *catalog.Product
+	repo := &mockAdminProductRepo{
+		findByIDFn: func(_ context.Context, id string) (*catalog.Product, error) {
+			cp := *existing
+			return &cp, nil
+		},
+		updateFn: func(_ context.Context, p *catalog.Product) error {
+			updated = p
+			return nil
+		},
+	}
+	h := admin.NewProductAdminHandler(repo, testAdminBus())
+
+	body := jsonBody(t, map[string]interface{}{"type": "downloadable"})
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("PUT", "/api/v1/admin/products/p1", body)
+	newAdminRouter(h).ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d; body: %s", rec.Code, http.StatusOK, rec.Body.String())
+	}
+	if updated == nil || updated.Type != catalog.TypeDownloadable {
+		t.Fatalf("type = %#v, want downloadable", updated)
+	}
+}
+
+func TestProductAdminHandler_Update_OmitTypePreserves(t *testing.T) {
+	existing := &catalog.Product{
+		ID: "p1", Name: "Widget", Slug: "widget", Status: catalog.StatusDraft, Type: catalog.TypeVirtual,
+	}
+	var updated *catalog.Product
+	repo := &mockAdminProductRepo{
+		findByIDFn: func(_ context.Context, id string) (*catalog.Product, error) {
+			cp := *existing
+			return &cp, nil
+		},
+		updateFn: func(_ context.Context, p *catalog.Product) error {
+			updated = p
+			return nil
+		},
+	}
+	h := admin.NewProductAdminHandler(repo, testAdminBus())
+
+	body := jsonBody(t, map[string]interface{}{"name": "Renamed"})
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("PUT", "/api/v1/admin/products/p1", body)
+	newAdminRouter(h).ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d; body: %s", rec.Code, http.StatusOK, rec.Body.String())
+	}
+	if updated == nil || updated.Type != catalog.TypeVirtual {
+		t.Fatalf("type = %#v, want virtual preserved", updated)
+	}
+}
+
+func TestProductAdminHandler_Update_EmptyTypeRejected(t *testing.T) {
+	repo := &mockAdminProductRepo{
+		findByIDFn: func(_ context.Context, id string) (*catalog.Product, error) {
+			return &catalog.Product{ID: id, Name: "W", Slug: "w", Status: catalog.StatusDraft, Type: catalog.TypeSimple}, nil
+		},
+		updateFn: func(_ context.Context, _ *catalog.Product) error {
+			t.Fatal("Update must not be called for empty type")
+			return nil
+		},
+	}
+	h := admin.NewProductAdminHandler(repo, testAdminBus())
+
+	body := jsonBody(t, map[string]interface{}{"type": "  "})
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("PUT", "/api/v1/admin/products/p1", body)
+	newAdminRouter(h).ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("status = %d, want %d; body: %s", rec.Code, http.StatusUnprocessableEntity, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "type must not be empty") {
+		t.Fatalf("body = %s, want type must not be empty", rec.Body.String())
+	}
+}
+
+func TestProductAdminHandler_Update_RequestInvalidType(t *testing.T) {
+	repo := &mockAdminProductRepo{
+		findByIDFn: func(_ context.Context, id string) (*catalog.Product, error) {
+			return &catalog.Product{ID: id, Name: "W", Slug: "w", Status: catalog.StatusDraft, Type: catalog.TypeSimple}, nil
+		},
+		updateFn: func(_ context.Context, _ *catalog.Product) error {
+			t.Fatal("Update must not be called for invalid type")
+			return nil
+		},
+	}
+	h := admin.NewProductAdminHandler(repo, testAdminBus())
+
+	body := jsonBody(t, map[string]interface{}{"type": "kit"})
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("PUT", "/api/v1/admin/products/p1", body)
+	newAdminRouter(h).ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("status = %d, want %d; body: %s", rec.Code, http.StatusUnprocessableEntity, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), `invalid product type \"kit\"`) {
+		t.Fatalf("body = %s, want invalid product type kit", rec.Body.String())
 	}
 }
 
@@ -1344,12 +1647,12 @@ func TestAdminGuard_GuestUnauthorized(t *testing.T) {
 
 func TestAdminGuard_SupportListAllowed(t *testing.T) {
 	repo := &mockAdminProductRepo{
-		listFn: func(_ context.Context, offset, limit int) ([]catalog.Product, error) {
-			if offset != 0 {
-				t.Errorf("offset = %d, want 0", offset)
+		listFn: func(_ context.Context, filter catalog.ListFilter) ([]catalog.Product, error) {
+			if filter.Offset != 0 {
+				t.Errorf("offset = %d, want 0", filter.Offset)
 			}
-			if limit != 20 {
-				t.Errorf("limit = %d, want 20", limit)
+			if filter.Limit != 20 {
+				t.Errorf("limit = %d, want 20", filter.Limit)
 			}
 			return []catalog.Product{{ID: "p1", Name: "Widget", Slug: "widget", Status: catalog.StatusActive}}, nil
 		},
@@ -1494,12 +1797,12 @@ func TestAdminGuard_Integration_CustomerToken(t *testing.T) {
 
 func TestAdminGuard_Integration_SupportTokenListAllowed(t *testing.T) {
 	repo := &mockAdminProductRepo{
-		listFn: func(_ context.Context, offset, limit int) ([]catalog.Product, error) {
-			if offset != 0 {
-				t.Errorf("offset = %d, want 0", offset)
+		listFn: func(_ context.Context, filter catalog.ListFilter) ([]catalog.Product, error) {
+			if filter.Offset != 0 {
+				t.Errorf("offset = %d, want 0", filter.Offset)
 			}
-			if limit != 20 {
-				t.Errorf("limit = %d, want 20", limit)
+			if filter.Limit != 20 {
+				t.Errorf("limit = %d, want 20", filter.Limit)
 			}
 			return []catalog.Product{{ID: "p1", Name: "Widget", Slug: "widget", Status: catalog.StatusActive}}, nil
 		},

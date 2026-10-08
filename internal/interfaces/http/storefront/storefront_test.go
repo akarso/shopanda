@@ -67,7 +67,7 @@ func (m *mockStorefrontRepo) FindByID(ctx context.Context, id string) (*catalog.
 	}
 	return nil, nil
 }
-func (m *mockStorefrontRepo) List(_ context.Context, _, _ int) ([]catalog.Product, error) {
+func (m *mockStorefrontRepo) List(_ context.Context, _ catalog.ListFilter) ([]catalog.Product, error) {
 	return nil, nil
 }
 func (m *mockStorefrontRepo) Create(_ context.Context, _ *catalog.Product) error { return nil }

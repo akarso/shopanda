@@ -40,7 +40,7 @@ func (h *ProductHandler) List() http.HandlerFunc {
 			return
 		}
 
-		products, err := h.repo.List(r.Context(), offset, limit)
+		products, err := h.repo.List(r.Context(), catalog.ListFilter{Offset: offset, Limit: limit})
 		if err != nil {
 			httpshared.JSONError(w, err)
 			return

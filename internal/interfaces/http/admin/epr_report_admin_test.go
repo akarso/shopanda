@@ -27,15 +27,15 @@ func (m *eprExportProductRepo) FindByID(context.Context, string) (*catalog.Produ
 func (m *eprExportProductRepo) FindBySlug(context.Context, string) (*catalog.Product, error) {
 	return nil, nil
 }
-func (m *eprExportProductRepo) List(_ context.Context, offset, limit int) ([]catalog.Product, error) {
-	if offset >= len(m.products) {
+func (m *eprExportProductRepo) List(_ context.Context, filter catalog.ListFilter) ([]catalog.Product, error) {
+	if filter.Offset >= len(m.products) {
 		return nil, nil
 	}
-	end := offset + limit
+	end := filter.Offset + filter.Limit
 	if end > len(m.products) {
 		end = len(m.products)
 	}
-	return m.products[offset:end], nil
+	return m.products[filter.Offset:end], nil
 }
 func (m *eprExportProductRepo) FindByCategoryID(context.Context, string, int, int) ([]catalog.Product, error) {
 	return nil, nil

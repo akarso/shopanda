@@ -17,7 +17,7 @@ func (r *nilProductRepo047) FindByID(context.Context, string) (*catalog.Product,
 func (r *nilProductRepo047) FindBySlug(context.Context, string) (*catalog.Product, error) {
 	return nil, nil
 }
-func (r *nilProductRepo047) List(context.Context, int, int) ([]catalog.Product, error) {
+func (r *nilProductRepo047) List(context.Context, catalog.ListFilter) ([]catalog.Product, error) {
 	return nil, nil
 }
 func (r *nilProductRepo047) FindByCategoryID(context.Context, string, int, int) ([]catalog.Product, error) {
@@ -74,7 +74,7 @@ func (r *mockProductRepo047) FindByID(_ context.Context, id string) (*catalog.Pr
 func (r *mockProductRepo047) FindBySlug(context.Context, string) (*catalog.Product, error) {
 	return nil, nil
 }
-func (r *mockProductRepo047) List(context.Context, int, int) ([]catalog.Product, error) {
+func (r *mockProductRepo047) List(context.Context, catalog.ListFilter) ([]catalog.Product, error) {
 	return nil, nil
 }
 func (r *mockProductRepo047) FindByCategoryID(context.Context, string, int, int) ([]catalog.Product, error) {

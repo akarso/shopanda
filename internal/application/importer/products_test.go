@@ -29,7 +29,7 @@ func (m *mockProductRepo) FindBySlug(ctx context.Context, slug string) (*catalog
 	}
 	return nil, nil
 }
-func (m *mockProductRepo) List(_ context.Context, _, _ int) ([]catalog.Product, error) {
+func (m *mockProductRepo) List(_ context.Context, _ catalog.ListFilter) ([]catalog.Product, error) {
 	return nil, nil
 }
 func (m *mockProductRepo) Create(ctx context.Context, p *catalog.Product) error {

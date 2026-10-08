@@ -87,26 +87,37 @@ func (r *ProductRepo) FindBySlug(ctx context.Context, slug string) (*catalog.Pro
 }
 
 // List returns a page of products ordered by created_at desc.
-func (r *ProductRepo) List(ctx context.Context, offset, limit int) ([]catalog.Product, error) {
-	if offset < 0 {
+func (r *ProductRepo) List(ctx context.Context, filter catalog.ListFilter) ([]catalog.Product, error) {
+	if filter.Offset < 0 {
 		return nil, apperror.Validation("offset must be >= 0")
 	}
-	if limit <= 0 {
+	if filter.Limit <= 0 {
 		return nil, apperror.Validation("limit must be > 0")
 	}
+	limit := filter.Limit
 	if limit > maxListLimit {
 		limit = maxListLimit
 	}
 
-	const q = `SELECT id, name, slug, description, status, type, attributes, created_at, updated_at
-		FROM products ORDER BY created_at DESC LIMIT $1 OFFSET $2`
+	if filter.Type != "" && !filter.Type.IsValid() {
+		return nil, apperror.Validation(catalog.InvalidTypeMessage(filter.Type))
+	}
+
+	args := []interface{}{limit, filter.Offset}
+	q := `SELECT id, name, slug, description, status, type, attributes, created_at, updated_at
+		FROM products`
+	if filter.Type != "" {
+		q += ` WHERE type = $3`
+		args = append(args, string(filter.Type))
+	}
+	q += ` ORDER BY created_at DESC LIMIT $1 OFFSET $2`
 
 	var rows *sql.Rows
 	var err error
 	if r.tx != nil {
-		rows, err = r.tx.QueryContext(ctx, q, limit, offset)
+		rows, err = r.tx.QueryContext(ctx, q, args...)
 	} else {
-		rows, err = r.db.QueryContext(ctx, q, limit, offset)
+		rows, err = r.db.QueryContext(ctx, q, args...)
 	}
 	if err != nil {
 		return nil, fmt.Errorf("product_repo: list: %w", err)
@@ -159,7 +170,7 @@ func (r *ProductRepo) Create(ctx context.Context, p *catalog.Product) error {
 			case pgErr.Code == "23505":
 				return apperror.Conflict("product with this slug already exists")
 			case pgErr.Code == "23514" && pgErr.ConstraintName == "products_type_check":
-				return apperror.Validation(fmt.Sprintf("invalid product type %q", p.Type))
+				return apperror.Validation(catalog.InvalidTypeMessage(p.Type))
 			}
 		}
 		return fmt.Errorf("product_repo: create: %w", err)
@@ -198,7 +209,7 @@ func (r *ProductRepo) Update(ctx context.Context, p *catalog.Product) error {
 	if err != nil {
 		var pgErr *pgconn.PgError
 		if errors.As(err, &pgErr) && pgErr.Code == "23514" && pgErr.ConstraintName == "products_type_check" {
-			return apperror.Validation(fmt.Sprintf("invalid product type %q", p.Type))
+			return apperror.Validation(catalog.InvalidTypeMessage(p.Type))
 		}
 		return fmt.Errorf("product_repo: update: %w", err)
 	}

@@ -57,7 +57,7 @@ func (exp *ProductExporter) Export(ctx context.Context, w io.Writer) (*Result, e
 
 	offset := 0
 	for {
-		products, err := exp.products.List(ctx, offset, pageSize)
+		products, err := exp.products.List(ctx, catalog.ListFilter{Offset: offset, Limit: pageSize})
 		if err != nil {
 			return nil, fmt.Errorf("export: list products: %w", err)
 		}
