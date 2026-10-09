@@ -30,6 +30,7 @@ func TestPublicProductVisibilityRoutes_Contract(t *testing.T) {
 		{Method: "GET", Path: "/products", Surface: catalog.VisibilitySurfaceCatalog, EnforceIn: "PR-1057"},
 		{Method: "GET", Path: "/products/{slug}", Surface: catalog.VisibilitySurfaceIndividually, EnforceIn: "PR-1057"},
 		{Method: "GET", Path: "/search", Surface: catalog.VisibilitySurfaceSearch, EnforceIn: "PR-1057"},
+		{Method: "GET", Path: "/categories", Surface: catalog.VisibilitySurfaceCatalog, EnforceIn: "PR-1057"},
 		{Method: "GET", Path: "/categories/{slug}", Surface: catalog.VisibilitySurfaceCatalog, EnforceIn: "PR-1057"},
 		{Method: "GET", Path: "/fragments/search-suggest", Surface: catalog.VisibilitySurfaceSearch, EnforceIn: "PR-1057"},
 		{Method: "GET", Path: "/fragments/recently-viewed", Surface: catalog.VisibilitySurfaceIndividually, EnforceIn: "PR-1057"},
@@ -99,7 +100,6 @@ func TestPublicProductVisibilityRoutes_Contract(t *testing.T) {
 var productVisibilityWireExclusions = map[string]string{
 	"GET /api/v1/categories":           "category tree only — no product payloads",
 	"GET /api/v1/categories/{id}":      "category entity only",
-	"GET /categories":                  "HTML category index — no product listing",
 	"GET /api/v1/pages/{slug}":         "CMS page JSON without carousel hydration (blocks are separate)",
 	"POST /api/v1/carts":               "create empty cart — no product payload",
 	"POST /cart/remove":                "line removal — no purchasability discovery",

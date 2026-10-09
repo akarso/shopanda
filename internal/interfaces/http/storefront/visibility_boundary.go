@@ -50,6 +50,7 @@ func PublicProductVisibilityRoutes() []ProductVisibilityRoute {
 		{Method: "GET", Path: "/products", Surface: catalog.VisibilitySurfaceCatalog, EnforceIn: pr1057, Note: "HTML PLP"},
 		{Method: "GET", Path: "/products/{slug}", Surface: catalog.VisibilitySurfaceIndividually, EnforceIn: pr1057, Note: "HTML PDP"},
 		{Method: "GET", Path: "/search", Surface: catalog.VisibilitySurfaceSearch, EnforceIn: pr1057, Note: "HTML search"},
+		{Method: "GET", Path: "/categories", Surface: catalog.VisibilitySurfaceCatalog, EnforceIn: pr1057, Note: "HTML category index — searches catalog and renders products"},
 		{Method: "GET", Path: "/categories/{slug}", Surface: catalog.VisibilitySurfaceCatalog, EnforceIn: pr1057, Note: "HTML category PLP"},
 		{Method: "GET", Path: "/fragments/search-suggest", Surface: catalog.VisibilitySurfaceSearch, EnforceIn: pr1057, Note: "HTML search suggest fragment"},
 		{Method: "GET", Path: "/fragments/recently-viewed", Surface: catalog.VisibilitySurfaceIndividually, EnforceIn: pr1057, Note: "recently viewed cards"},
