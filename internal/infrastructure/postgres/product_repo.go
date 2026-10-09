@@ -16,6 +16,15 @@ import (
 
 const maxListLimit = 100
 
+// productSelectColumns is the column list for product scans (keep in sync with scanProduct).
+const productSelectColumns = `id, name, slug, description, status, type,
+		visibility_catalog_mode, visibility_search_mode, visibility_individually_mode, visibility_purchasable_mode,
+		attributes, created_at, updated_at`
+
+const productSelectColumnsPrefixed = `p.id, p.name, p.slug, p.description, p.status, p.type,
+		p.visibility_catalog_mode, p.visibility_search_mode, p.visibility_individually_mode, p.visibility_purchasable_mode,
+		p.attributes, p.created_at, p.updated_at`
+
 // Compile-time check that ProductRepo implements catalog.ProductRepository.
 var _ catalog.ProductRepository = (*ProductRepo)(nil)
 var _ catalog.ProductCategoryAssignmentRepository = (*ProductRepo)(nil)
@@ -46,7 +55,7 @@ func productReadIncludeNonActive(ctx context.Context, filter catalog.ListFilter)
 // FindByID returns a product by its ID.
 // Returns (nil, nil) when the product does not exist or is not active under the read scope.
 func (r *ProductRepo) FindByID(ctx context.Context, id string) (*catalog.Product, error) {
-	q := `SELECT id, name, slug, description, status, type, attributes, created_at, updated_at
+	q := `SELECT ` + productSelectColumns + `
 		FROM products WHERE id = $1`
 	args := []interface{}{id}
 	if !catalog.IncludeNonActiveProducts(ctx) {
@@ -75,7 +84,7 @@ func (r *ProductRepo) FindByID(ctx context.Context, id string) (*catalog.Product
 // FindBySlug returns a product by its slug.
 // Returns (nil, nil) when no product matches the slug.
 func (r *ProductRepo) FindBySlug(ctx context.Context, slug string) (*catalog.Product, error) {
-	q := `SELECT id, name, slug, description, status, type, attributes, created_at, updated_at
+	q := `SELECT ` + productSelectColumns + `
 		FROM products WHERE slug = $1`
 	args := []interface{}{slug}
 	if !catalog.IncludeNonActiveProducts(ctx) {
@@ -133,7 +142,7 @@ func (r *ProductRepo) List(ctx context.Context, filter catalog.ListFilter) ([]ca
 	offsetArg := len(args) + 2
 	args = append(args, limit, filter.Offset)
 
-	q := `SELECT id, name, slug, description, status, type, attributes, created_at, updated_at
+	q := `SELECT ` + productSelectColumns + `
 		FROM products`
 	if len(where) > 0 {
 		q += ` WHERE ` + strings.Join(where, " AND ")
@@ -176,8 +185,11 @@ func (r *ProductRepo) Create(ctx context.Context, p *catalog.Product) error {
 		return fmt.Errorf("product_repo: marshal attributes: %w", err)
 	}
 
-	const q = `INSERT INTO products (id, name, slug, description, status, type, attributes, created_at, updated_at)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`
+	const q = `INSERT INTO products (
+		id, name, slug, description, status, type,
+		visibility_catalog_mode, visibility_search_mode, visibility_individually_mode, visibility_purchasable_mode,
+		attributes, created_at, updated_at
+	) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)`
 
 	var execer interface {
 		ExecContext(context.Context, string, ...interface{}) (sql.Result, error)
@@ -189,6 +201,8 @@ func (r *ProductRepo) Create(ctx context.Context, p *catalog.Product) error {
 	}
 	_, err = execer.ExecContext(ctx, q,
 		p.ID, p.Name, p.Slug, p.Description, string(p.Status), string(p.Type),
+		string(p.VisibilityModes.Catalog), string(p.VisibilityModes.Search),
+		string(p.VisibilityModes.Individually), string(p.VisibilityModes.Purchasable),
 		attrs, p.CreatedAt, p.UpdatedAt,
 	)
 	if err != nil {
@@ -199,6 +213,8 @@ func (r *ProductRepo) Create(ctx context.Context, p *catalog.Product) error {
 				return apperror.Conflict("product with this slug already exists")
 			case pgErr.Code == "23514" && pgErr.ConstraintName == "products_type_check":
 				return apperror.Validation(catalog.InvalidTypeMessage(p.Type))
+			case pgErr.Code == "23514" && pgErr.ConstraintName == "products_visibility_modes_check":
+				return apperror.Validation(visibilityModesValidationMessage(p.VisibilityModes))
 			}
 		}
 		return fmt.Errorf("product_repo: create: %w", err)
@@ -219,8 +235,11 @@ func (r *ProductRepo) Update(ctx context.Context, p *catalog.Product) error {
 	updatedAt := time.Now().UTC()
 
 	const q = `UPDATE products
-		SET name = $1, slug = $2, description = $3, status = $4, type = $5, attributes = $6, updated_at = $7
-		WHERE id = $8`
+		SET name = $1, slug = $2, description = $3, status = $4, type = $5,
+			visibility_catalog_mode = $6, visibility_search_mode = $7,
+			visibility_individually_mode = $8, visibility_purchasable_mode = $9,
+			attributes = $10, updated_at = $11
+		WHERE id = $12`
 
 	var execer interface {
 		ExecContext(context.Context, string, ...interface{}) (sql.Result, error)
@@ -232,12 +251,19 @@ func (r *ProductRepo) Update(ctx context.Context, p *catalog.Product) error {
 	}
 	result, err := execer.ExecContext(ctx, q,
 		p.Name, p.Slug, p.Description, string(p.Status), string(p.Type),
+		string(p.VisibilityModes.Catalog), string(p.VisibilityModes.Search),
+		string(p.VisibilityModes.Individually), string(p.VisibilityModes.Purchasable),
 		attrs, updatedAt, p.ID,
 	)
 	if err != nil {
 		var pgErr *pgconn.PgError
-		if errors.As(err, &pgErr) && pgErr.Code == "23514" && pgErr.ConstraintName == "products_type_check" {
-			return apperror.Validation(catalog.InvalidTypeMessage(p.Type))
+		if errors.As(err, &pgErr) && pgErr.Code == "23514" {
+			switch pgErr.ConstraintName {
+			case "products_type_check":
+				return apperror.Validation(catalog.InvalidTypeMessage(p.Type))
+			case "products_visibility_modes_check":
+				return apperror.Validation(visibilityModesValidationMessage(p.VisibilityModes))
+			}
 		}
 		return fmt.Errorf("product_repo: update: %w", err)
 	}
@@ -260,6 +286,18 @@ func validateProduct(p *catalog.Product) error {
 	return nil
 }
 
+// visibilityModesValidationMessage maps a DB CHECK (23514) failure to a
+// validation string. Domain Validate normally runs first; this is defense when
+// CHECK and domain diverge or Validate was bypassed.
+func visibilityModesValidationMessage(axes catalog.VisibilityAxes) string {
+	for _, m := range []catalog.VisibilityMode{axes.Catalog, axes.Search, axes.Individually, axes.Purchasable} {
+		if !m.IsValid() {
+			return catalog.InvalidVisibilityModeMessage(m)
+		}
+	}
+	return "visibility mode rejected by database constraint"
+}
+
 // scanner is satisfied by both *sql.Row and *sql.Rows.
 type scanner interface {
 	Scan(dest ...interface{}) error
@@ -270,11 +308,14 @@ func (r *ProductRepo) scanProduct(s scanner) (*catalog.Product, error) {
 	var p catalog.Product
 	var status string
 	var productType string
+	var catalogMode, searchMode, individuallyMode, purchasableMode string
 	var attrsJSON []byte
 
 	err := s.Scan(
 		&p.ID, &p.Name, &p.Slug, &p.Description,
-		&status, &productType, &attrsJSON, &p.CreatedAt, &p.UpdatedAt,
+		&status, &productType,
+		&catalogMode, &searchMode, &individuallyMode, &purchasableMode,
+		&attrsJSON, &p.CreatedAt, &p.UpdatedAt,
 	)
 	if err != nil {
 		return nil, err
@@ -282,6 +323,12 @@ func (r *ProductRepo) scanProduct(s scanner) (*catalog.Product, error) {
 
 	p.Status = catalog.Status(status)
 	p.Type = catalog.Type(productType)
+	p.VisibilityModes = catalog.VisibilityAxes{
+		Catalog:      catalog.VisibilityMode(catalogMode),
+		Search:       catalog.VisibilityMode(searchMode),
+		Individually: catalog.VisibilityMode(individuallyMode),
+		Purchasable:  catalog.VisibilityMode(purchasableMode),
+	}
 
 	if len(attrsJSON) > 0 {
 		if err := json.Unmarshal(attrsJSON, &p.Attributes); err != nil {
@@ -311,7 +358,7 @@ func (r *ProductRepo) FindByCategoryID(ctx context.Context, categoryID string, o
 		limit = maxListLimit
 	}
 
-	q := `SELECT p.id, p.name, p.slug, p.description, p.status, p.type, p.attributes, p.created_at, p.updated_at
+	q := `SELECT ` + productSelectColumnsPrefixed + `
 		FROM products p
 		INNER JOIN product_categories pc ON p.id = pc.product_id
 		WHERE pc.category_id = $1`

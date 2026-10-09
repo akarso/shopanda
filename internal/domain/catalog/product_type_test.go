@@ -44,6 +44,16 @@ func TestProduct_Validate(t *testing.T) {
 		t.Fatal("Validate() empty type: expected error")
 	}
 
+	p.Type = catalog.TypeSimple
+	p.VisibilityModes.Catalog = catalog.VisibilityMode("forced")
+	err = p.Validate()
+	if err == nil {
+		t.Fatal("Validate() invalid visibility mode: expected error")
+	}
+	if !strings.Contains(err.Error(), `"forced"`) {
+		t.Errorf("Validate() error = %q, want rejected mode quoted", err)
+	}
+
 	var nilProduct *catalog.Product
 	if err := nilProduct.Validate(); err == nil {
 		t.Fatal("Validate() nil: expected error")

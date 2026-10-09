@@ -105,6 +105,9 @@ func TestProductRepo_CreateAndFindByID(t *testing.T) {
 	if got.Type != catalog.TypeSimple {
 		t.Errorf("Type = %q, want simple", got.Type)
 	}
+	if got.VisibilityModes != catalog.DefaultVisibilityAxes() {
+		t.Errorf("VisibilityModes = %+v, want defaults", got.VisibilityModes)
+	}
 }
 
 func TestProductRepo_FindByID_NotFound(t *testing.T) {
@@ -653,5 +656,95 @@ func TestProductRepo_StorefrontScope_ActiveOnly(t *testing.T) {
 	}
 	if len(all) != 2 {
 		t.Fatalf("List admin len = %d, want 2", len(all))
+	}
+}
+
+func TestProductRepo_VisibilityModes_RoundTrip(t *testing.T) {
+	db := testDB(t)
+	ensureProductsTable(t, db)
+	repo, err := postgres.NewProductRepo(db)
+	if err != nil {
+		t.Fatalf("NewProductRepo: %v", err)
+	}
+	ctx := productRepoAdminCtx()
+
+	p := mustNewProduct(t, "Vis", "vis-modes")
+	p.VisibilityModes = catalog.VisibilityAxes{
+		Catalog:      catalog.VisibilityModeHidden,
+		Search:       catalog.VisibilityModeVisible,
+		Individually: catalog.VisibilityModeAuto,
+		Purchasable:  catalog.VisibilityModeHidden,
+	}
+	if err := repo.Create(ctx, &p); err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	got, err := repo.FindByID(ctx, p.ID)
+	if err != nil || got == nil {
+		t.Fatalf("FindByID: got=%v err=%v", got, err)
+	}
+	if got.VisibilityModes != p.VisibilityModes {
+		t.Fatalf("after create = %+v, want %+v", got.VisibilityModes, p.VisibilityModes)
+	}
+
+	got.VisibilityModes.Catalog = catalog.VisibilityModeVisible
+	got.VisibilityModes.Purchasable = catalog.VisibilityModeAuto
+	if err := repo.Update(ctx, got); err != nil {
+		t.Fatalf("Update: %v", err)
+	}
+	again, err := repo.FindByID(ctx, p.ID)
+	if err != nil || again == nil {
+		t.Fatalf("FindByID after update: got=%v err=%v", again, err)
+	}
+	want := catalog.VisibilityAxes{
+		Catalog:      catalog.VisibilityModeVisible,
+		Search:       catalog.VisibilityModeVisible,
+		Individually: catalog.VisibilityModeAuto,
+		Purchasable:  catalog.VisibilityModeAuto,
+	}
+	if again.VisibilityModes != want {
+		t.Fatalf("after update = %+v, want %+v", again.VisibilityModes, want)
+	}
+}
+
+func TestProductRepo_Create_InvalidVisibilityMode(t *testing.T) {
+	db := testDB(t)
+	ensureProductsTable(t, db)
+	repo, err := postgres.NewProductRepo(db)
+	if err != nil {
+		t.Fatalf("NewProductRepo: %v", err)
+	}
+	ctx := productRepoAdminCtx()
+
+	p := mustNewProduct(t, "Bad Vis", "bad-vis")
+	p.VisibilityModes.Catalog = catalog.VisibilityMode("forced")
+	err = repo.Create(ctx, &p)
+	if !apperror.Is(err, apperror.CodeValidation) {
+		t.Fatalf("Create invalid mode: got %v, want validation error", err)
+	}
+	if err == nil || !strings.Contains(err.Error(), `"forced"`) {
+		t.Fatalf("Create invalid mode error = %v, want quoted value", err)
+	}
+}
+
+func TestProductRepo_Update_InvalidVisibilityMode(t *testing.T) {
+	db := testDB(t)
+	ensureProductsTable(t, db)
+	repo, err := postgres.NewProductRepo(db)
+	if err != nil {
+		t.Fatalf("NewProductRepo: %v", err)
+	}
+	ctx := productRepoAdminCtx()
+
+	p := mustNewProduct(t, "Vis Upd", "vis-upd")
+	if err := repo.Create(ctx, &p); err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	p.VisibilityModes.Purchasable = catalog.VisibilityMode("nope")
+	err = repo.Update(ctx, &p)
+	if !apperror.Is(err, apperror.CodeValidation) {
+		t.Fatalf("Update invalid mode: got %v, want validation error", err)
+	}
+	if err == nil || !strings.Contains(err.Error(), `"nope"`) {
+		t.Fatalf("Update invalid mode error = %v, want quoted value", err)
 	}
 }
