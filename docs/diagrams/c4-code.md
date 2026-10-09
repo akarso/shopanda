@@ -502,6 +502,7 @@ classDiagram
         -grids map~string, *Grid~
         +RegisterForm(name, form)
         +RegisterFormField(formName, field) error
+        +RegisterFormSection(formName, section) error
         +RegisterGrid(name, grid)
         +RegisterGridColumn(gridName, column) error
         +RegisterAction(gridName, action) error
@@ -511,6 +512,18 @@ classDiagram
     class Form {
         +string Name
         +[]Field Fields
+        +[]FormSection Sections
+    }
+    class FormSection {
+        +string ID
+        +string Title
+        +[]string Types
+        +map Meta
+    }
+    class ProductSchemaRegistrar {
+        +RegisterProductSchemas(r)
+        +RegisterProductFormSection(r, section) error
+        +ProductTypeLabel(t) string
     }
     class Field {
         +string Name
@@ -652,7 +665,9 @@ classDiagram
     AdminRegistry --> Form : manages
     AdminRegistry --> Grid : manages
     Form --> Field : contains
+    Form --> FormSection : contains
     Grid --> Column : contains
+    ProductSchemaRegistrar --> AdminRegistry : RegisterProductFormSection validates catalog.Type then RegisterFormSection
     Grid --> Action : contains
     EmailSendHandler --> Mailer : sends via
     NotificationService --> Templates : renders

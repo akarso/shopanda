@@ -86,8 +86,8 @@ Use the **Store / Language / Currency** switcher in the admin header when a scre
 
 1. Open `/admin/products`.
 2. Select **New Product**.
-3. Fill in the product form fields shown on screen.
-4. Save the product.
+3. Fill in the product form fields shown on screen, including **Type** (Simple, Virtual, Bundle, Grouped, Configurable, Downloadable). Virtual and downloadable products do not require physical shipping. Type-specific panels (bundle components, linked children, downloadable files, and similar) appear on this form only after those catalog features ship — choosing Bundle/Grouped/etc. today stores the type for later use.
+4. Save the product. On edit, changing **Type** asks for confirmation: it can alter shipping behavior and which type-specific panels apply.
 
 The product form is schema-driven, so the exact fields can vary by deployment. Use the fields your store exposes rather than assuming every catalog uses the same product structure.
 

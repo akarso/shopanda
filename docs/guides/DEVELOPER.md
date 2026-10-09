@@ -905,6 +905,20 @@ When adding an extension, prefer this order:
 
 Shopanda already has real extension points for plugins, events, pipelines, workflows, infrastructure ports, and plugin CLI commands. Core and external plugins register at compile time through `register_plugins.go`; there is no dynamic plugin discovery.
 
+### Product form type sections (PR-1053)
+
+The product edit form includes a **Type** selector (`product.form` field `type`). Type-specific panels (bundle components, grouped members, linked children, downloadable files) register with:
+
+```go
+adminApp.RegisterProductFormSection(registry, admin.FormSection{
+    ID: "bundle-components", Title: "Bundle components", Types: []string{"bundle"},
+})
+```
+
+`RegisterProductFormSection` validates `Types` against `catalog.Type`. Prefer it over raw `RegisterFormSection` for product panels. `RegisterFormSection` still rejects empty/duplicate IDs.
+
+`GET /api/v1/admin/forms/product.form` returns `sections` with `types` always present (`[]` = always visible). The SPA (`product_type_sections.js`) shows a section when the type selector matches. Section hosts sit **outside** `#product-form` — use dedicated save APIs for section body inputs; do not expect `collectProductPayload` to pick them up. Fill bodies via `[data-product-type-section-body="<id>"]`. See `docs/phase-1-core/specs/ADMIN_SCHEMA.md`.
+
 ### Admin SPA navigation policy
 
 The embedded admin SPA (`internal/interfaces/http/admin/dist/`) must not expose sidebar links that render generic “coming soon” placeholders for shipped backend APIs.
