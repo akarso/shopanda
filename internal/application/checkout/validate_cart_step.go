@@ -5,6 +5,7 @@ import (
 	"fmt"
 
 	"github.com/akarso/shopanda/internal/domain/catalog"
+	"github.com/akarso/shopanda/internal/platform/apperror"
 )
 
 // ValidateCartStep verifies that every cart item references a variant
@@ -86,7 +87,9 @@ func (s *ValidateCartStep) Execute(ctx context.Context, cctx *Context) error {
 			productsByID[v.ProductID] = p
 		}
 		if !catalog.ActiveForPurchase(p) {
-			return fmt.Errorf("validate_cart: product for variant %s is not available for purchase", item.VariantID)
+			return apperror.Validation(fmt.Sprintf(
+				"validate_cart: product for variant %s is not available for purchase", item.VariantID,
+			))
 		}
 		variants[item.VariantID] = v
 	}

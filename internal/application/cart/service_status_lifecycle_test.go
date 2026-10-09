@@ -119,7 +119,7 @@ func seedActiveLine(t *testing.T, cat *mutableCatalog, variantID, productID stri
 	cat.setVariant(&catalog.Variant{ID: variantID, ProductID: productID})
 }
 
-func TestService_UpdateItemQuantity_RejectsAfterArchive(t *testing.T) {
+func TestService_UpdateItemQuantity_RejectsIncreaseAfterArchive(t *testing.T) {
 	cat := newMutableCatalog()
 	seedActiveLine(t, cat, "var-1", "prod-1")
 	carts := newStubCartRepo()
@@ -132,18 +132,26 @@ func TestService_UpdateItemQuantity_RejectsAfterArchive(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateCart: %v", err)
 	}
-	if _, err := svc.AddItem(ctx, c.ID, "cust-1", "var-1", 1, cartApp.AddItemOptions{}); err != nil {
+	if _, err := svc.AddItem(ctx, c.ID, "cust-1", "var-1", 2, cartApp.AddItemOptions{}); err != nil {
 		t.Fatalf("AddItem: %v", err)
 	}
 	cat.archive("prod-1")
 
-	_, err = svc.UpdateItemQuantity(ctx, c.ID, "cust-1", "var-1", 2)
+	_, err = svc.UpdateItemQuantity(ctx, c.ID, "cust-1", "var-1", 3)
 	if err == nil {
-		t.Fatal("UpdateItemQuantity: expected error after archive")
+		t.Fatal("UpdateItemQuantity increase: expected error after archive")
 	}
 	var appErr *apperror.Error
 	if !errors.As(err, &appErr) || appErr.Code != apperror.CodeValidation {
 		t.Fatalf("err = %v, want validation", err)
+	}
+
+	got, err := svc.UpdateItemQuantity(ctx, c.ID, "cust-1", "var-1", 1)
+	if err != nil {
+		t.Fatalf("UpdateItemQuantity decrease after archive: %v", err)
+	}
+	if len(got.Items) != 1 || got.Items[0].Quantity != 1 {
+		t.Fatalf("items = %+v, want qty 1", got.Items)
 	}
 }
 

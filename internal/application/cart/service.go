@@ -373,7 +373,14 @@ func (s *Service) UpdateItemQuantity(ctx context.Context, cartID, customerID, va
 		return nil, err
 	}
 
-	if quantity > 0 {
+	currentQty := 0
+	for _, item := range c.Items {
+		if item.VariantID == variantID {
+			currentQty = item.Quantity
+			break
+		}
+	}
+	if quantity > currentQty {
 		if err := s.ensureVariantPurchasable(ctx, variantID); err != nil {
 			return nil, err
 		}

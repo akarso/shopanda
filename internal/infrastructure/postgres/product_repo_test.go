@@ -622,6 +622,9 @@ func TestProductRepo_StorefrontScope_ActiveOnly(t *testing.T) {
 		t.Fatalf("NewCategory: %v", err)
 	}
 	mustExec(t, db, "INSERT INTO categories (id, parent_id, name, slug, position, meta, created_at, updated_at) VALUES ($1, NULL, $2, $3, 0, '{}'::jsonb, $4, $5)", c.ID, c.Name, c.Slug, c.CreatedAt, c.UpdatedAt)
+	t.Cleanup(func() {
+		mustExec(t, db, "DELETE FROM categories WHERE id = $1", c.ID)
+	})
 	if err := repo.AssignCategory(adminCtx, draft.ID, c.ID); err != nil {
 		t.Fatalf("AssignCategory draft: %v", err)
 	}

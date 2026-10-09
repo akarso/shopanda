@@ -15,6 +15,7 @@ import (
 	"github.com/akarso/shopanda/internal/domain/catalog"
 	"github.com/akarso/shopanda/internal/domain/pricing"
 	"github.com/akarso/shopanda/internal/domain/shared"
+	"github.com/akarso/shopanda/internal/platform/apperror"
 	"github.com/akarso/shopanda/internal/platform/id"
 )
 
@@ -193,6 +194,10 @@ func TestValidateCartStep_NonActiveProduct(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "not available for purchase") {
 		t.Fatalf("err = %v", err)
+	}
+	var appErr *apperror.Error
+	if !errors.As(err, &appErr) || appErr.Code != apperror.CodeValidation {
+		t.Fatalf("err = %v, want validation apperror", err)
 	}
 }
 
