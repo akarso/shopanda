@@ -82,6 +82,50 @@ func (m *mockVariantRepo) WithTx(_ *sql.Tx) catalog.VariantRepository { return m
 
 // --- tests ---
 
+func TestImport_ResolvesExistingDraftBySlug(t *testing.T) {
+	draft := &catalog.Product{
+		ID:     "prod-draft",
+		Name:   "Widget",
+		Slug:   "widget",
+		Status: catalog.StatusDraft,
+		Type:   catalog.TypeSimple,
+	}
+	createCalls := 0
+	prodRepo := &mockProductRepo{
+		findBySlugFn: func(ctx context.Context, slug string) (*catalog.Product, error) {
+			if slug != "widget" {
+				return nil, nil
+			}
+			if !catalog.IncludeNonActiveProducts(ctx) {
+				t.Fatal("Import must opt into IncludeNonActiveProducts for slug lookup")
+			}
+			return draft, nil
+		},
+		createFn: func(context.Context, *catalog.Product) error {
+			createCalls++
+			return nil
+		},
+	}
+	varRepo := &mockVariantRepo{}
+	csv := `name,slug,sku,description,variant_name
+Widget,widget,SKU-NEW,,Default
+`
+	imp := importer.NewProductImporter(prodRepo, varRepo, nil)
+	result, err := imp.Import(context.Background(), strings.NewReader(csv))
+	if err != nil {
+		t.Fatalf("Import: %v", err)
+	}
+	if createCalls != 0 {
+		t.Fatalf("Create products = %d, want 0 (existing draft slug)", createCalls)
+	}
+	if result.Variants != 1 {
+		t.Fatalf("Variants = %d, want 1", result.Variants)
+	}
+	if len(varRepo.variants) != 1 || varRepo.variants[0].ProductID != draft.ID {
+		t.Fatalf("variants = %+v, want one variant on draft product", varRepo.variants)
+	}
+}
+
 func TestImport_BasicCSV(t *testing.T) {
 	csv := `name,slug,sku,description,variant_name
 Widget,widget,SKU-001,A fine widget,Size S

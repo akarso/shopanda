@@ -59,9 +59,6 @@ func (h *SitemapHandler) Serve() http.HandlerFunc {
 				return
 			}
 			for _, p := range products {
-				if p.Status != catalog.StatusActive {
-					continue
-				}
 				urls = append(urls, sitemapURL{
 					Loc:     h.baseURL + "/products/" + p.Slug,
 					LastMod: p.UpdatedAt.Format("2006-01-02"),

@@ -25,7 +25,7 @@ See [`ROADMAP.md`](ROADMAP.md) for the full track breakdown, sequencing, and PR 
 
 ## Status
 
-**In progress.** Standalone PR-1048 and Track A (PR-1049–1053, product type foundation including admin GUI selector) are done. Next: Track B PR-1054 (enforce `Status = active` in core read paths). Track F (search/GraphQL closeout) has a hard dependency on Phase 11 Track B (search indexing), which has already shipped.
+**In progress.** PR-1048, Track A (PR-1049–1053), and Track B PR-1054 (active-only product reads + cart gate) are done. Next: PR-1055 (four-axis visibility model). Track F (search/GraphQL closeout) has a hard dependency on Phase 11 Track B (search indexing), which has already shipped.
 
 ## Relationship
 

@@ -76,6 +76,13 @@ func (s *ValidateCartStep) Execute(ctx context.Context, cctx *Context) error {
 		if v == nil {
 			return fmt.Errorf("validate_cart: variant %s no longer exists", item.VariantID)
 		}
+		p, err := s.products.FindByID(ctx, v.ProductID)
+		if err != nil {
+			return fmt.Errorf("validate_cart: lookup product %s: %w", v.ProductID, err)
+		}
+		if !catalog.ActiveForPurchase(p) {
+			return fmt.Errorf("validate_cart: product for variant %s is not available for purchase", item.VariantID)
+		}
 		variants[item.VariantID] = v
 	}
 

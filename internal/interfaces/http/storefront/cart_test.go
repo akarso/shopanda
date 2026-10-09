@@ -17,6 +17,7 @@ import (
 	"github.com/akarso/shopanda/internal/application/hooks"
 	appPricing "github.com/akarso/shopanda/internal/application/pricing"
 	domainCart "github.com/akarso/shopanda/internal/domain/cart"
+	"github.com/akarso/shopanda/internal/domain/catalog"
 	domainext "github.com/akarso/shopanda/internal/domain/extension"
 	"github.com/akarso/shopanda/internal/domain/pricing"
 	"github.com/akarso/shopanda/internal/domain/shared"
@@ -142,7 +143,8 @@ func cartSetup() (*stubCartRepo, *stubPriceRepo, *storefront.CartHandler, *http.
 	carts := newStubCartRepo()
 	prices := newStubPriceRepo()
 	bus := event.NewBus(cartTestLogger())
-	svc := cartApp.NewService(carts, prices, nil, nil, cartTestPipeline(prices), cartTestLogger(), bus, nil, nil)
+	vr, pr := cartApp.PermissiveCatalogRepos()
+	svc := cartApp.NewService(carts, prices, nil, nil, vr, pr, cartTestPipeline(prices), cartTestLogger(), bus, nil, nil)
 	h := storefront.NewCartHandler(svc, nil)
 	return carts, prices, h, newCartRouter(h)
 }
@@ -220,7 +222,8 @@ func cartExtensionSetup(t *testing.T) (*stubCartRepo, *stubPriceRepo, *storefron
 	}
 	values := extensionapp.NewValueService(reg, newCartTestExtensionValueRepo())
 	bus := event.NewBus(cartTestLogger())
-	svc := cartApp.NewService(carts, prices, nil, nil, cartTestPipeline(prices), cartTestLogger(), bus, values, nil)
+	vr, pr := cartApp.PermissiveCatalogRepos()
+	svc := cartApp.NewService(carts, prices, nil, nil, vr, pr, cartTestPipeline(prices), cartTestLogger(), bus, values, nil)
 	h := storefront.NewCartHandler(svc, values)
 	return carts, prices, h, newCartRouter(h)
 }
@@ -337,6 +340,83 @@ func TestCartHandler_Get_NotFound(t *testing.T) {
 		t.Fatalf("status = %d, want %d", rec.Code, http.StatusNotFound)
 	}
 }
+
+func cartSetupWithCatalog(vr catalog.VariantRepository, pr catalog.ProductRepository) (*stubCartRepo, *stubPriceRepo, *http.ServeMux) {
+	carts := newStubCartRepo()
+	prices := newStubPriceRepo()
+	bus := event.NewBus(cartTestLogger())
+	svc := cartApp.NewService(carts, prices, nil, nil, vr, pr, cartTestPipeline(prices), cartTestLogger(), bus, nil, nil)
+	h := storefront.NewCartHandler(svc, nil)
+	return carts, prices, newCartRouter(h)
+}
+
+func TestCartHandler_AddItem_DraftProductRejected(t *testing.T) {
+	vr := cartTestVariantRepo{variant: &catalog.Variant{ID: "var-1", ProductID: "prod-draft"}}
+	pr := cartTestProductRepo{product: &catalog.Product{ID: "prod-draft", Status: catalog.StatusDraft}}
+	carts, prices, mux := cartSetupWithCatalog(vr, pr)
+	prices.set("var-1", "EUR", 1500)
+
+	c, _ := domainCart.NewCart("cart-1", "EUR")
+	c.SetCustomerID("cust-1")
+	carts.Save(context.Background(), &c)
+
+	rec := httptest.NewRecorder()
+	body := `{"variant_id":"var-1","quantity":1}`
+	req := httptest.NewRequest("POST", "/api/v1/carts/cart-1/items", strings.NewReader(body))
+	req = testhelper.CustomerRequest(req, "cust-1")
+	mux.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("status = %d, want 422; body: %s", rec.Code, rec.Body.String())
+	}
+}
+
+type cartTestVariantRepo struct {
+	variant *catalog.Variant
+}
+
+func (r cartTestVariantRepo) FindByID(_ context.Context, id string) (*catalog.Variant, error) {
+	if r.variant != nil {
+		return r.variant, nil
+	}
+	return &catalog.Variant{ID: id, ProductID: "p1"}, nil
+}
+func (cartTestVariantRepo) FindBySKU(context.Context, string) (*catalog.Variant, error) {
+	return nil, nil
+}
+func (cartTestVariantRepo) FindBySKUs(context.Context, []string) (map[string]*catalog.Variant, error) {
+	return nil, nil
+}
+func (cartTestVariantRepo) ListByProductID(context.Context, string, int, int) ([]catalog.Variant, error) {
+	return nil, nil
+}
+func (cartTestVariantRepo) ListByProductIDs(context.Context, []string, int) (map[string][]catalog.Variant, error) {
+	return nil, nil
+}
+func (cartTestVariantRepo) Create(context.Context, *catalog.Variant) error { return nil }
+func (cartTestVariantRepo) Update(context.Context, *catalog.Variant) error { return nil }
+
+type cartTestProductRepo struct {
+	product *catalog.Product
+}
+
+func (r cartTestProductRepo) FindByID(_ context.Context, id string) (*catalog.Product, error) {
+	if r.product != nil {
+		return r.product, nil
+	}
+	return nil, nil
+}
+func (cartTestProductRepo) FindBySlug(context.Context, string) (*catalog.Product, error) {
+	return nil, nil
+}
+func (cartTestProductRepo) List(context.Context, catalog.ListFilter) ([]catalog.Product, error) {
+	return nil, nil
+}
+func (cartTestProductRepo) FindByCategoryID(context.Context, string, int, int) ([]catalog.Product, error) {
+	return nil, nil
+}
+func (cartTestProductRepo) Create(context.Context, *catalog.Product) error { return nil }
+func (cartTestProductRepo) Update(context.Context, *catalog.Product) error { return nil }
 
 func TestCartHandler_AddItem_OK(t *testing.T) {
 	carts, prices, _, mux := cartSetup()
@@ -692,7 +772,8 @@ func cartSetupWithHooks(reg *hooks.Registry) (*stubCartRepo, *stubPriceRepo, *st
 	carts := newStubCartRepo()
 	prices := newStubPriceRepo()
 	bus := event.NewBus(cartTestLogger())
-	svc := cartApp.NewService(carts, prices, nil, nil, cartTestPipeline(prices), cartTestLogger(), bus, nil, reg)
+	vr, pr := cartApp.PermissiveCatalogRepos()
+	svc := cartApp.NewService(carts, prices, nil, nil, vr, pr, cartTestPipeline(prices), cartTestLogger(), bus, nil, reg)
 	h := storefront.NewCartHandler(svc, nil)
 	return carts, prices, h, newCartRouter(h)
 }

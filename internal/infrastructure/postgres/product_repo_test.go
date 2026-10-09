@@ -65,6 +65,10 @@ func mustNewProduct(t *testing.T, name, slug string) catalog.Product {
 	return p
 }
 
+func productRepoAdminCtx() context.Context {
+	return catalog.WithIncludeNonActiveProducts(context.Background())
+}
+
 func TestProductRepo_CreateAndFindByID(t *testing.T) {
 	db := testDB(t)
 	ensureProductsTable(t, db)
@@ -72,7 +76,7 @@ func TestProductRepo_CreateAndFindByID(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewProductRepo: %v", err)
 	}
-	ctx := context.Background()
+	ctx := productRepoAdminCtx()
 
 	p := mustNewProduct(t, "Widget", "widget")
 	if err := repo.Create(ctx, &p); err != nil {
@@ -110,7 +114,7 @@ func TestProductRepo_FindByID_NotFound(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewProductRepo: %v", err)
 	}
-	ctx := context.Background()
+	ctx := productRepoAdminCtx()
 
 	got, err := repo.FindByID(ctx, id.New())
 	if err != nil {
@@ -128,7 +132,7 @@ func TestProductRepo_FindBySlug(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewProductRepo: %v", err)
 	}
-	ctx := context.Background()
+	ctx := productRepoAdminCtx()
 
 	p := mustNewProduct(t, "Gizmo", "gizmo")
 	if err := repo.Create(ctx, &p); err != nil {
@@ -157,7 +161,7 @@ func TestProductRepo_FindBySlug_NotFound(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewProductRepo: %v", err)
 	}
-	ctx := context.Background()
+	ctx := productRepoAdminCtx()
 
 	got, err := repo.FindBySlug(ctx, "no-such-slug")
 	if err != nil {
@@ -175,7 +179,7 @@ func TestProductRepo_List(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewProductRepo: %v", err)
 	}
-	ctx := context.Background()
+	ctx := productRepoAdminCtx()
 
 	for i := 0; i < 3; i++ {
 		p := mustNewProduct(t, fmt.Sprintf("Product %d", i), fmt.Sprintf("product-%d", i))
@@ -218,7 +222,7 @@ func TestProductRepo_List_FilterByType(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewProductRepo: %v", err)
 	}
-	ctx := context.Background()
+	ctx := productRepoAdminCtx()
 
 	simple := mustNewProduct(t, "Simple", "simple-list-type")
 	simple.Type = catalog.TypeSimple
@@ -278,7 +282,7 @@ func TestProductRepo_List_ValidationErrors(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewProductRepo: %v", err)
 	}
-	ctx := context.Background()
+	ctx := productRepoAdminCtx()
 
 	_, err = repo.List(ctx, catalog.ListFilter{Offset: -1, Limit: 10})
 	if !apperror.Is(err, apperror.CodeValidation) {
@@ -303,7 +307,7 @@ func TestProductRepo_Update(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewProductRepo: %v", err)
 	}
-	ctx := context.Background()
+	ctx := productRepoAdminCtx()
 
 	p := mustNewProduct(t, "Old Name", "old-name")
 	if err := repo.Create(ctx, &p); err != nil {
@@ -339,7 +343,7 @@ func TestProductRepo_Create_AllTypes(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewProductRepo: %v", err)
 	}
-	ctx := context.Background()
+	ctx := productRepoAdminCtx()
 
 	for _, typ := range catalog.AllTypes() {
 		p := mustNewProduct(t, string(typ), "type-"+string(typ))
@@ -364,7 +368,7 @@ func TestProductRepo_Create_InvalidType(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewProductRepo: %v", err)
 	}
-	ctx := context.Background()
+	ctx := productRepoAdminCtx()
 
 	p := mustNewProduct(t, "Bad Type", "bad-type")
 	p.Type = catalog.Type("kit")
@@ -384,7 +388,7 @@ func TestProductRepo_Create_EmptyType(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewProductRepo: %v", err)
 	}
-	ctx := context.Background()
+	ctx := productRepoAdminCtx()
 
 	p := mustNewProduct(t, "Empty Type", "empty-type")
 	p.Type = ""
@@ -414,7 +418,7 @@ func TestProductRepo_Update_InvalidType(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewProductRepo: %v", err)
 	}
-	ctx := context.Background()
+	ctx := productRepoAdminCtx()
 
 	p := mustNewProduct(t, "Typed", "typed-product")
 	if err := repo.Create(ctx, &p); err != nil {
@@ -434,7 +438,7 @@ func TestProductRepo_Update_NotFound(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewProductRepo: %v", err)
 	}
-	ctx := context.Background()
+	ctx := productRepoAdminCtx()
 
 	p := mustNewProduct(t, "Ghost", "ghost")
 	err = repo.Update(ctx, &p)
@@ -450,7 +454,7 @@ func TestProductRepo_Create_DuplicateSlug(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewProductRepo: %v", err)
 	}
-	ctx := context.Background()
+	ctx := productRepoAdminCtx()
 
 	p1 := mustNewProduct(t, "First", "same-slug")
 	if err := repo.Create(ctx, &p1); err != nil {
@@ -471,7 +475,7 @@ func TestProductRepo_Attributes(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewProductRepo: %v", err)
 	}
-	ctx := context.Background()
+	ctx := productRepoAdminCtx()
 
 	p := mustNewProduct(t, "Fancy", "fancy")
 	p.Attributes["color"] = "red"
@@ -507,7 +511,7 @@ func TestProductRepo_AssignAndRemoveCategory(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewProductRepo: %v", err)
 	}
-	ctx := context.Background()
+	ctx := productRepoAdminCtx()
 
 	p := mustNewProduct(t, "Assigned", "assigned")
 	if err := repo.Create(ctx, &p); err != nil {
@@ -566,5 +570,85 @@ func TestProductRepo_AssignAndRemoveCategory(t *testing.T) {
 	}
 	if len(products) != 0 {
 		t.Fatalf("products len = %d, want 0", len(products))
+	}
+}
+
+func TestProductRepo_StorefrontScope_ActiveOnly(t *testing.T) {
+	db := testDB(t)
+	ensureProductsTable(t, db)
+	repo, err := postgres.NewProductRepo(db)
+	if err != nil {
+		t.Fatalf("NewProductRepo: %v", err)
+	}
+	storefrontCtx := context.Background()
+	adminCtx := productRepoAdminCtx()
+
+	draft := mustNewProduct(t, "Draft", "draft-only")
+	if err := repo.Create(adminCtx, &draft); err != nil {
+		t.Fatalf("Create draft: %v", err)
+	}
+	active := mustNewProduct(t, "Live", "live-product")
+	active.Status = catalog.StatusActive
+	if err := repo.Create(adminCtx, &active); err != nil {
+		t.Fatalf("Create active: %v", err)
+	}
+
+	got, err := repo.FindByID(storefrontCtx, draft.ID)
+	if err != nil {
+		t.Fatalf("FindByID draft storefront: %v", err)
+	}
+	if got != nil {
+		t.Fatal("storefront FindByID draft: want nil")
+	}
+	got, err = repo.FindByID(storefrontCtx, active.ID)
+	if err != nil || got == nil {
+		t.Fatalf("FindByID active storefront: got=%v err=%v", got, err)
+	}
+
+	bySlug, err := repo.FindBySlug(storefrontCtx, draft.Slug)
+	if err != nil {
+		t.Fatalf("FindBySlug draft storefront: %v", err)
+	}
+	if bySlug != nil {
+		t.Fatal("storefront FindBySlug draft: want nil")
+	}
+	bySlug, err = repo.FindBySlug(storefrontCtx, active.Slug)
+	if err != nil || bySlug == nil {
+		t.Fatalf("FindBySlug active storefront: got=%v err=%v", bySlug, err)
+	}
+
+	c, err := catalog.NewCategory(id.New(), "Cat", "cat-active-filter")
+	if err != nil {
+		t.Fatalf("NewCategory: %v", err)
+	}
+	mustExec(t, db, "INSERT INTO categories (id, parent_id, name, slug, position, meta, created_at, updated_at) VALUES ($1, NULL, $2, $3, 0, '{}'::jsonb, $4, $5)", c.ID, c.Name, c.Slug, c.CreatedAt, c.UpdatedAt)
+	if err := repo.AssignCategory(adminCtx, draft.ID, c.ID); err != nil {
+		t.Fatalf("AssignCategory draft: %v", err)
+	}
+	if err := repo.AssignCategory(adminCtx, active.ID, c.ID); err != nil {
+		t.Fatalf("AssignCategory active: %v", err)
+	}
+	inCat, err := repo.FindByCategoryID(storefrontCtx, c.ID, 0, 20)
+	if err != nil {
+		t.Fatalf("FindByCategoryID storefront: %v", err)
+	}
+	if len(inCat) != 1 || inCat[0].ID != active.ID {
+		t.Fatalf("FindByCategoryID storefront = %+v, want only active", inCat)
+	}
+
+	list, err := repo.List(storefrontCtx, catalog.ListFilter{Offset: 0, Limit: 20})
+	if err != nil {
+		t.Fatalf("List storefront: %v", err)
+	}
+	if len(list) != 1 || list[0].ID != active.ID {
+		t.Fatalf("List storefront = %+v, want only active product", list)
+	}
+
+	all, err := repo.List(adminCtx, catalog.ListFilter{Offset: 0, Limit: 20})
+	if err != nil {
+		t.Fatalf("List admin: %v", err)
+	}
+	if len(all) != 2 {
+		t.Fatalf("List admin len = %d, want 2", len(all))
 	}
 }

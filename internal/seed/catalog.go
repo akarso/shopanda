@@ -73,6 +73,7 @@ type CatalogSeeder struct{}
 func (s *CatalogSeeder) Name() string { return "catalog" }
 
 func (s *CatalogSeeder) Seed(ctx context.Context, deps Deps) error {
+	ctx = catalog.WithIncludeNonActiveProducts(ctx)
 	catRepo, err := postgres.NewCategoryRepo(deps.DB)
 	if err != nil {
 		return err

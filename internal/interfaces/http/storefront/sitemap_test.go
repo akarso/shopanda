@@ -27,8 +27,18 @@ func (m *stubSitemapProductRepo) FindByID(_ context.Context, _ string) (*catalog
 func (m *stubSitemapProductRepo) FindBySlug(_ context.Context, _ string) (*catalog.Product, error) {
 	return nil, nil
 }
-func (m *stubSitemapProductRepo) List(_ context.Context, _ catalog.ListFilter) ([]catalog.Product, error) {
-	return m.products, m.err
+func (m *stubSitemapProductRepo) List(ctx context.Context, filter catalog.ListFilter) ([]catalog.Product, error) {
+	if m.err != nil {
+		return nil, m.err
+	}
+	includeNonActive := filter.IncludeNonActive || catalog.IncludeNonActiveProducts(ctx)
+	out := make([]catalog.Product, 0, len(m.products))
+	for _, p := range m.products {
+		if includeNonActive || p.Status == catalog.StatusActive {
+			out = append(out, p)
+		}
+	}
+	return out, nil
 }
 func (m *stubSitemapProductRepo) FindByCategoryID(_ context.Context, _ string, _, _ int) ([]catalog.Product, error) {
 	return nil, nil
