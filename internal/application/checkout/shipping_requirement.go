@@ -24,14 +24,15 @@ const ShippingRequiredMetaKey = "shipping_required"
 //   - missing product (treated as physical / TypeSimple)
 //
 // Only when every resolved line is virtual or downloadable does this return false.
-// variantLookup is optional: when non-nil it is tried before variants.FindByID
-// (ValidateCartStep meta reuse).
+// variantLookup / productLookup are optional: when non-nil they are tried before
+// repository reads (ValidateCartStep meta reuse — PR-1050 / PR-1054).
 func CartRequiresPhysicalShipping(
 	ctx context.Context,
 	c *cart.Cart,
 	products catalog.ProductRepository,
 	variants catalog.VariantRepository,
 	variantLookup func(variantID string) *catalog.Variant,
+	productLookup func(productID string) *catalog.Product,
 ) (bool, error) {
 	if c == nil || len(c.Items) == 0 {
 		return true, nil
@@ -64,9 +65,16 @@ func CartRequiresPhysicalShipping(
 			continue
 		}
 
-		product, err := products.FindByID(ctx, variant.ProductID)
-		if err != nil {
-			return true, fmt.Errorf("shipping requirement: lookup product %s: %w", variant.ProductID, err)
+		product := (*catalog.Product)(nil)
+		if productLookup != nil {
+			product = productLookup(variant.ProductID)
+		}
+		if product == nil {
+			p, err := products.FindByID(ctx, variant.ProductID)
+			if err != nil {
+				return true, fmt.Errorf("shipping requirement: lookup product %s: %w", variant.ProductID, err)
+			}
+			product = p
 		}
 		if product == nil {
 			seenProducts[variant.ProductID] = catalog.TypeSimple

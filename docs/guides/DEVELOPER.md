@@ -905,6 +905,16 @@ When adding an extension, prefer this order:
 
 Shopanda already has real extension points for plugins, events, pipelines, workflows, infrastructure ports, and plugin CLI commands. Core and external plugins register at compile time through `register_plugins.go`; there is no dynamic plugin discovery.
 
+### Product read scope (PR-1054)
+
+`catalog.ProductRepository` returns **active** products only unless the caller opts in:
+
+- **Storefront / cart / GraphQL** — default context; draft/archived rows are omitted (`FindBy*` returns `(nil, nil)`; `List` excludes them).
+- **Admin REST** — `AdminContextMiddleware` sets `catalog.WithIncludeNonActiveProducts` on `/api/v1/admin/*` paths so operators still see drafts.
+- **Import / export / seed / jobs** — call `catalog.WithIncludeNonActiveProducts(ctx)` (or `ListFilter.IncludeNonActive`) before reads that must see drafts or archived rows. Product CSV import and the seed registry set this at entry; new CLI/worker paths must do the same.
+
+`cart.Service.AddItem` rejects non-active products with a validation error regardless of scope.
+
 ### Product form type sections (PR-1053)
 
 The product edit form includes a **Type** selector (`product.form` field `type`). Type-specific panels (bundle components, grouped members, linked children, downloadable files) register with:

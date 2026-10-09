@@ -85,7 +85,8 @@ func setupCartExtensionService(t *testing.T) (*cartApp.Service, *memCartExtensio
 	carts := newStubCartRepo()
 	prices := newStubPriceRepo()
 	prices.set("var-1", "EUR", 1000)
-	svc := cartApp.NewService(carts, prices, nil, nil, testPipeline(prices), testLogger(), testBus(), values, nil)
+	vr, pr := cartApp.PermissiveCatalogRepos()
+	svc := cartApp.NewService(carts, prices, nil, nil, vr, pr, testPipeline(prices), testLogger(), testBus(), values, nil)
 	return svc, repo
 }
 

@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	"github.com/akarso/shopanda/internal/application/admin"
+	"github.com/akarso/shopanda/internal/domain/catalog"
 	"github.com/akarso/shopanda/internal/domain/identity"
 	"github.com/akarso/shopanda/internal/domain/rbac"
 	httpshared "github.com/akarso/shopanda/internal/interfaces/http/shared"
@@ -123,6 +124,9 @@ func AdminContextMiddleware() httpshared.Middleware {
 				Language:    sanitizeAdminScopeValue(r.Header.Get(adminLanguageHeader)),
 				Currency:    sanitizeAdminScopeValue(r.Header.Get(adminCurrencyHeader)),
 			}).WithContext(r.Context())
+			if strings.HasPrefix(r.URL.Path, "/api/v1/admin") {
+				ctx = catalog.WithIncludeNonActiveProducts(ctx)
+			}
 
 			next.ServeHTTP(w, r.WithContext(ctx))
 		})

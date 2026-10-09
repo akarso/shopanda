@@ -62,10 +62,25 @@ func (m *mockStorefrontRepo) FindBySlug(ctx context.Context, slug string) (*cata
 }
 
 func (m *mockStorefrontRepo) FindByID(ctx context.Context, id string) (*catalog.Product, error) {
+	var p *catalog.Product
+	var err error
 	if m.findByIDFn != nil {
-		return m.findByIDFn(ctx, id)
+		p, err = m.findByIDFn(ctx, id)
+	} else {
+		p = &catalog.Product{ID: id, Status: catalog.StatusActive, Type: catalog.TypeSimple}
 	}
-	return nil, nil
+	if err != nil || p == nil {
+		return p, err
+	}
+	if p.Status == "" {
+		cp := *p
+		cp.Status = catalog.StatusActive
+		if cp.Type == "" {
+			cp.Type = catalog.TypeSimple
+		}
+		return &cp, nil
+	}
+	return p, nil
 }
 func (m *mockStorefrontRepo) List(_ context.Context, _ catalog.ListFilter) ([]catalog.Product, error) {
 	return nil, nil

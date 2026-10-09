@@ -274,7 +274,8 @@ func newCartServiceWithHooksAndPipeline(reg *hooks.Registry, pipeline domainpric
 	carts := newStubCartRepo()
 	prices := newStubPriceRepo()
 	prices.set("var-1", "EUR", 1000)
-	return cartApp.NewService(carts, prices, nil, nil, pipeline, testLogger(), testBus(), nil, reg)
+	vr, pr := cartApp.PermissiveCatalogRepos()
+	return cartApp.NewService(carts, prices, nil, nil, vr, pr, pipeline, testLogger(), testBus(), nil, reg)
 }
 
 func newCartServiceWithHooks(reg *hooks.Registry) *cartApp.Service {

@@ -35,7 +35,7 @@ func TestCartRequiresPhysicalShipping(t *testing.T) {
 
 	t.Run("empty cart fails closed", func(t *testing.T) {
 		c := mustCart(t)
-		got, err := checkout.CartRequiresPhysicalShipping(context.Background(), c, simpleProducts, variants, nil)
+		got, err := checkout.CartRequiresPhysicalShipping(context.Background(), c, simpleProducts, variants, nil, nil)
 		if err != nil {
 			t.Fatalf("err = %v", err)
 		}
@@ -45,7 +45,7 @@ func TestCartRequiresPhysicalShipping(t *testing.T) {
 	})
 
 	t.Run("nil cart fails closed", func(t *testing.T) {
-		got, err := checkout.CartRequiresPhysicalShipping(context.Background(), nil, simpleProducts, variants, nil)
+		got, err := checkout.CartRequiresPhysicalShipping(context.Background(), nil, simpleProducts, variants, nil, nil)
 		if err != nil {
 			t.Fatalf("err = %v", err)
 		}
@@ -56,14 +56,14 @@ func TestCartRequiresPhysicalShipping(t *testing.T) {
 
 	t.Run("nil repos fail closed", func(t *testing.T) {
 		c := mustCart(t, "v1")
-		got, err := checkout.CartRequiresPhysicalShipping(context.Background(), c, nil, variants, nil)
+		got, err := checkout.CartRequiresPhysicalShipping(context.Background(), c, nil, variants, nil, nil)
 		if err != nil {
 			t.Fatalf("err = %v", err)
 		}
 		if !got {
 			t.Fatal("want true when products repo is nil")
 		}
-		got, err = checkout.CartRequiresPhysicalShipping(context.Background(), c, simpleProducts, nil, nil)
+		got, err = checkout.CartRequiresPhysicalShipping(context.Background(), c, simpleProducts, nil, nil, nil)
 		if err != nil {
 			t.Fatalf("err = %v", err)
 		}
@@ -74,7 +74,7 @@ func TestCartRequiresPhysicalShipping(t *testing.T) {
 
 	t.Run("digital only virtual", func(t *testing.T) {
 		c := mustCart(t, "v1", "v2")
-		got, err := checkout.CartRequiresPhysicalShipping(context.Background(), c, virtualProducts, variants, nil)
+		got, err := checkout.CartRequiresPhysicalShipping(context.Background(), c, virtualProducts, variants, nil, nil)
 		if err != nil {
 			t.Fatalf("err = %v", err)
 		}
@@ -85,7 +85,7 @@ func TestCartRequiresPhysicalShipping(t *testing.T) {
 
 	t.Run("digital only downloadable", func(t *testing.T) {
 		c := mustCart(t, "v1")
-		got, err := checkout.CartRequiresPhysicalShipping(context.Background(), c, &mockProductRepo047{defaultType: catalog.TypeDownloadable}, variants, nil)
+		got, err := checkout.CartRequiresPhysicalShipping(context.Background(), c, &mockProductRepo047{defaultType: catalog.TypeDownloadable}, variants, nil, nil)
 		if err != nil {
 			t.Fatalf("err = %v", err)
 		}
@@ -102,7 +102,7 @@ func TestCartRequiresPhysicalShipping(t *testing.T) {
 				"prod-v2": {ID: "prod-v2", Type: catalog.TypeSimple, Status: catalog.StatusActive, Name: "S", Slug: "s"},
 			},
 		}
-		got, err := checkout.CartRequiresPhysicalShipping(context.Background(), c, products, variants, nil)
+		got, err := checkout.CartRequiresPhysicalShipping(context.Background(), c, products, variants, nil, nil)
 		if err != nil {
 			t.Fatalf("err = %v", err)
 		}
@@ -113,7 +113,7 @@ func TestCartRequiresPhysicalShipping(t *testing.T) {
 
 	t.Run("missing product fails closed", func(t *testing.T) {
 		c := mustCart(t, "v1")
-		got, err := checkout.CartRequiresPhysicalShipping(context.Background(), c, &nilProductRepo047{}, variants, nil)
+		got, err := checkout.CartRequiresPhysicalShipping(context.Background(), c, &nilProductRepo047{}, variants, nil, nil)
 		if err != nil {
 			t.Fatalf("err = %v", err)
 		}
@@ -124,7 +124,7 @@ func TestCartRequiresPhysicalShipping(t *testing.T) {
 
 	t.Run("variant lookup error", func(t *testing.T) {
 		c := mustCart(t, "v1")
-		got, err := checkout.CartRequiresPhysicalShipping(context.Background(), c, simpleProducts, &errVariantRepo047{err: errors.New("db down")}, nil)
+		got, err := checkout.CartRequiresPhysicalShipping(context.Background(), c, simpleProducts, &errVariantRepo047{err: errors.New("db down")}, nil, nil)
 		if err == nil {
 			t.Fatal("expected lookup error")
 		}

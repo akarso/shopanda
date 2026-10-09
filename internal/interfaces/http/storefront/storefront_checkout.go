@@ -600,7 +600,7 @@ func (h *StorefrontHandler) requireCheckoutCart(r *http.Request) (*cart.Cart, er
 // cartRequiresPhysicalShipping delegates to checkout.CartRequiresPhysicalShipping
 // so storefront UX and SelectShippingStep share one fail-closed rule (PR-1050).
 func (h *StorefrontHandler) cartRequiresPhysicalShipping(ctx context.Context, currentCart *cart.Cart) bool {
-	needs, err := checkoutApp.CartRequiresPhysicalShipping(ctx, currentCart, h.repo, h.variants, nil)
+	needs, err := checkoutApp.CartRequiresPhysicalShipping(ctx, currentCart, h.repo, h.variants, nil, nil)
 	if err != nil {
 		return true
 	}

@@ -185,7 +185,8 @@ func setupE2ECheckout(t *testing.T, seed func(variants *e2eVariantRepo, prices *
 		pricing.NewFinalizeStep(),
 	)
 
-	cartSvc := cartApp.NewService(carts, prices, nil, nil, pipeline, log, bus, nil, nil)
+	cartVR, cartPR := cartApp.PermissiveCatalogRepos()
+	cartSvc := cartApp.NewService(carts, prices, nil, nil, cartVR, cartPR, pipeline, log, bus, nil, nil)
 	cartHandler := storefront.NewCartHandler(cartSvc, nil)
 
 	validateStep := checkoutApp.NewValidateCartStep(variants, &mockStorefrontRepo{})

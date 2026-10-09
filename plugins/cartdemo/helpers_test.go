@@ -158,7 +158,8 @@ func newCartServiceWithHooks(t *testing.T, hookReg *hooks.Registry) (*cartApp.Se
 	t.Helper()
 	carts := newStubCartRepo()
 	prices := newStubPriceRepo()
-	svc := cartApp.NewService(carts, prices, nil, nil, testPipeline(prices), testLogger(), testBus(), nil, hookReg)
+	vr, pr := cartApp.PermissiveCatalogRepos()
+	svc := cartApp.NewService(carts, prices, nil, nil, vr, pr, testPipeline(prices), testLogger(), testBus(), nil, hookReg)
 	return svc, prices
 }
 
@@ -167,6 +168,7 @@ func newCartServiceWithHooksAndPluginSteps(t *testing.T, hookReg *hooks.Registry
 	carts := newStubCartRepo()
 	prices := newStubPriceRepo()
 	pipeline := buildCartDemoPipeline(prices, app)
-	svc := cartApp.NewService(carts, prices, nil, nil, pipeline, testLogger(), testBus(), nil, hookReg)
+	vr, pr := cartApp.PermissiveCatalogRepos()
+	svc := cartApp.NewService(carts, prices, nil, nil, vr, pr, pipeline, testLogger(), testBus(), nil, hookReg)
 	return svc, prices
 }

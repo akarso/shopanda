@@ -5,14 +5,17 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
-	"github.com/akarso/shopanda/internal/testutil"
+	"strings"
 	"testing"
+
+	"github.com/akarso/shopanda/internal/testutil"
 
 	"github.com/akarso/shopanda/internal/application/checkout"
 	"github.com/akarso/shopanda/internal/domain/cart"
 	"github.com/akarso/shopanda/internal/domain/catalog"
 	"github.com/akarso/shopanda/internal/domain/pricing"
 	"github.com/akarso/shopanda/internal/domain/shared"
+	"github.com/akarso/shopanda/internal/platform/apperror"
 	"github.com/akarso/shopanda/internal/platform/id"
 )
 
@@ -170,6 +173,31 @@ func TestValidateCartStep_SetsDigitalShippingNotRequired(t *testing.T) {
 	}
 	if v, ok := cctx.GetMeta(checkout.ShippingRequiredMetaKey); !ok || v != false {
 		t.Errorf("shipping_required = %#v, want false for virtual products", v)
+	}
+}
+
+func TestValidateCartStep_NonActiveProduct(t *testing.T) {
+	repo := &mockVariantRepo{variants: variantMap("v1")}
+	products := &mockProductRepo047{
+		products: map[string]*catalog.Product{
+			"prod-1": {ID: "prod-1", Status: catalog.StatusDraft, Type: catalog.TypeSimple},
+		},
+	}
+	step := checkout.NewValidateCartStep(repo, products)
+
+	cctx := checkout.NewContext("cart-1", "cust-1", "EUR")
+	cctx.Cart = cartWithItems(t, "cust-1", "v1")
+
+	err := step.Execute(context.Background(), cctx)
+	if err == nil {
+		t.Fatal("expected error for non-active product")
+	}
+	if !strings.Contains(err.Error(), "not available for purchase") {
+		t.Fatalf("err = %v", err)
+	}
+	var appErr *apperror.Error
+	if !errors.As(err, &appErr) || appErr.Code != apperror.CodeValidation {
+		t.Fatalf("err = %v, want validation apperror", err)
 	}
 }
 

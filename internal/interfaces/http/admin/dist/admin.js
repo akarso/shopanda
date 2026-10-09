@@ -1993,7 +1993,7 @@
 
         function loadVariants() {
             var list = document.getElementById("variant-list");
-            var variantsPromise = api("/products/" + encodeURIComponent(productID) + "/variants");
+            var variantsPromise = api("/admin/products/" + encodeURIComponent(productID) + "/variants");
             var fieldsPromise = userHasPermission("extensions.read")
                 ? api("/admin/extensions/fields?target_type=variant")
                 : Promise.resolve(null);

@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/akarso/shopanda/internal/application/hooks"
+	"github.com/akarso/shopanda/internal/domain/catalog"
 	domainCart "github.com/akarso/shopanda/internal/domain/cart"
 	domainext "github.com/akarso/shopanda/internal/domain/extension"
 	"github.com/akarso/shopanda/internal/domain/pricing"
@@ -32,6 +33,8 @@ type Service struct {
 	prices     pricing.PriceRepository
 	promotions promotion.PromotionRepository
 	coupons    promotion.CouponRepository
+	variants   catalog.VariantRepository
+	products   catalog.ProductRepository
 	pipeline   pricing.Pipeline
 	extensions extensionValueWriter
 	hooks      *hooks.Registry
@@ -52,17 +55,27 @@ func NewService(
 	prices pricing.PriceRepository,
 	promotions promotion.PromotionRepository,
 	coupons promotion.CouponRepository,
+	variants catalog.VariantRepository,
+	products catalog.ProductRepository,
 	pipeline pricing.Pipeline,
 	log logger.Logger,
 	bus *event.Bus,
 	extensions extensionValueWriter,
 	hookRegistry *hooks.Registry,
 ) *Service {
+	if variants == nil {
+		panic("cart: variants must not be nil")
+	}
+	if products == nil {
+		panic("cart: products must not be nil")
+	}
 	return &Service{
 		carts:      carts,
 		prices:     prices,
 		promotions: promotions,
 		coupons:    coupons,
+		variants:   variants,
+		products:   products,
 		pipeline:   pipeline,
 		extensions: extensions,
 		hooks:      hookRegistry,
@@ -176,6 +189,11 @@ func (s *Service) ClaimGuestCart(ctx context.Context, guestCartID, customerID st
 }
 
 func (s *Service) assignGuestCart(ctx context.Context, guestCart *domainCart.Cart, customerID string) (*domainCart.Cart, error) {
+	for _, item := range guestCart.Items {
+		if err := s.ensureVariantPurchasable(ctx, item.VariantID); err != nil {
+			return nil, err
+		}
+	}
 	if err := guestCart.SetCustomerID(customerID); err != nil {
 		return nil, apperror.Wrap(apperror.CodeValidation, "cannot assign guest cart", err)
 	}
@@ -193,6 +211,13 @@ func (s *Service) assignGuestCart(ctx context.Context, guestCart *domainCart.Car
 }
 
 func (s *Service) mergeIntoCustomerCart(ctx context.Context, guestCart, customerCart *domainCart.Cart) (*domainCart.Cart, error) {
+	// Validate every guest line before copying/deleting extensions so a late
+	// failure cannot leave earlier guest targets half-migrated (PR-1054).
+	for _, item := range guestCart.Items {
+		if err := s.ensureVariantPurchasable(ctx, item.VariantID); err != nil {
+			return nil, err
+		}
+	}
 	for _, item := range guestCart.Items {
 		if err := customerCart.AddItem(item.VariantID, item.Quantity, item.UnitPrice); err != nil {
 			return nil, apperror.Wrap(apperror.CodeValidation, "cannot merge guest cart item", err)
@@ -276,6 +301,10 @@ func (s *Service) AddItem(ctx context.Context, cartID, customerID, variantID str
 		}
 	}
 
+	if err := s.ensureVariantPurchasable(ctx, variantID); err != nil {
+		return nil, err
+	}
+
 	price, err := s.lookupPrice(ctx, variantID, c.Currency)
 	if err != nil {
 		return nil, err
@@ -342,6 +371,19 @@ func (s *Service) UpdateItemQuantity(ctx context.Context, cartID, customerID, va
 
 	if err := s.invokeCartItemHook(ctx, hooks.HookCartUpdateItemBefore, cartID, customerID, variantID, quantity, c); err != nil {
 		return nil, err
+	}
+
+	currentQty := 0
+	for _, item := range c.Items {
+		if item.VariantID == variantID {
+			currentQty = item.Quantity
+			break
+		}
+	}
+	if quantity > currentQty {
+		if err := s.ensureVariantPurchasable(ctx, variantID); err != nil {
+			return nil, err
+		}
 	}
 
 	if err := c.UpdateItemQuantity(variantID, quantity); err != nil {
@@ -496,6 +538,24 @@ func (s *Service) recalculate(ctx context.Context, c *domainCart.Cart) error {
 		}
 	}
 
+	return nil
+}
+
+func (s *Service) ensureVariantPurchasable(ctx context.Context, variantID string) error {
+	v, err := s.variants.FindByID(ctx, variantID)
+	if err != nil {
+		return fmt.Errorf("cart service: add item: lookup variant: %w", err)
+	}
+	if v == nil {
+		return apperror.NotFound("variant not found")
+	}
+	p, err := s.products.FindByID(ctx, v.ProductID)
+	if err != nil {
+		return fmt.Errorf("cart service: add item: lookup product: %w", err)
+	}
+	if !catalog.ActiveForPurchase(p) {
+		return apperror.Validation("product is not available for purchase")
+	}
 	return nil
 }
 

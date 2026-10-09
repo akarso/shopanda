@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/akarso/shopanda/internal/domain/catalog"
@@ -38,11 +39,20 @@ func (r *ProductRepo) WithTx(tx *sql.Tx) catalog.ProductRepository {
 	return &ProductRepo{db: r.db, tx: tx}
 }
 
+func productReadIncludeNonActive(ctx context.Context, filter catalog.ListFilter) bool {
+	return filter.IncludeNonActive || catalog.IncludeNonActiveProducts(ctx)
+}
+
 // FindByID returns a product by its ID.
-// Returns (nil, nil) when the product does not exist.
+// Returns (nil, nil) when the product does not exist or is not active under the read scope.
 func (r *ProductRepo) FindByID(ctx context.Context, id string) (*catalog.Product, error) {
-	const q = `SELECT id, name, slug, description, status, type, attributes, created_at, updated_at
+	q := `SELECT id, name, slug, description, status, type, attributes, created_at, updated_at
 		FROM products WHERE id = $1`
+	args := []interface{}{id}
+	if !catalog.IncludeNonActiveProducts(ctx) {
+		q += ` AND status = $2`
+		args = append(args, string(catalog.StatusActive))
+	}
 
 	var querier interface {
 		QueryRowContext(context.Context, string, ...interface{}) *sql.Row
@@ -52,7 +62,7 @@ func (r *ProductRepo) FindByID(ctx context.Context, id string) (*catalog.Product
 	} else {
 		querier = r.db
 	}
-	p, err := r.scanProduct(querier.QueryRowContext(ctx, q, id))
+	p, err := r.scanProduct(querier.QueryRowContext(ctx, q, args...))
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
 	}
@@ -65,8 +75,13 @@ func (r *ProductRepo) FindByID(ctx context.Context, id string) (*catalog.Product
 // FindBySlug returns a product by its slug.
 // Returns (nil, nil) when no product matches the slug.
 func (r *ProductRepo) FindBySlug(ctx context.Context, slug string) (*catalog.Product, error) {
-	const q = `SELECT id, name, slug, description, status, type, attributes, created_at, updated_at
+	q := `SELECT id, name, slug, description, status, type, attributes, created_at, updated_at
 		FROM products WHERE slug = $1`
+	args := []interface{}{slug}
+	if !catalog.IncludeNonActiveProducts(ctx) {
+		q += ` AND status = $2`
+		args = append(args, string(catalog.StatusActive))
+	}
 
 	var querier interface {
 		QueryRowContext(context.Context, string, ...interface{}) *sql.Row
@@ -76,7 +91,7 @@ func (r *ProductRepo) FindBySlug(ctx context.Context, slug string) (*catalog.Pro
 	} else {
 		querier = r.db
 	}
-	p, err := r.scanProduct(querier.QueryRowContext(ctx, q, slug))
+	p, err := r.scanProduct(querier.QueryRowContext(ctx, q, args...))
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
 	}
@@ -103,14 +118,27 @@ func (r *ProductRepo) List(ctx context.Context, filter catalog.ListFilter) ([]ca
 		return nil, apperror.Validation(catalog.InvalidTypeMessage(filter.Type))
 	}
 
-	args := []interface{}{limit, filter.Offset}
-	q := `SELECT id, name, slug, description, status, type, attributes, created_at, updated_at
-		FROM products`
+	includeNonActive := productReadIncludeNonActive(ctx, filter)
+	var where []string
+	args := make([]interface{}, 0, 4)
+	if !includeNonActive {
+		where = append(where, fmt.Sprintf("status = $%d", len(args)+1))
+		args = append(args, string(catalog.StatusActive))
+	}
 	if filter.Type != "" {
-		q += ` WHERE type = $3`
+		where = append(where, fmt.Sprintf("type = $%d", len(args)+1))
 		args = append(args, string(filter.Type))
 	}
-	q += ` ORDER BY created_at DESC LIMIT $1 OFFSET $2`
+	limitArg := len(args) + 1
+	offsetArg := len(args) + 2
+	args = append(args, limit, filter.Offset)
+
+	q := `SELECT id, name, slug, description, status, type, attributes, created_at, updated_at
+		FROM products`
+	if len(where) > 0 {
+		q += ` WHERE ` + strings.Join(where, " AND ")
+	}
+	q += fmt.Sprintf(` ORDER BY created_at DESC LIMIT $%d OFFSET $%d`, limitArg, offsetArg)
 
 	var rows *sql.Rows
 	var err error
@@ -283,19 +311,27 @@ func (r *ProductRepo) FindByCategoryID(ctx context.Context, categoryID string, o
 		limit = maxListLimit
 	}
 
-	const q = `SELECT p.id, p.name, p.slug, p.description, p.status, p.type, p.attributes, p.created_at, p.updated_at
+	q := `SELECT p.id, p.name, p.slug, p.description, p.status, p.type, p.attributes, p.created_at, p.updated_at
 		FROM products p
 		INNER JOIN product_categories pc ON p.id = pc.product_id
-		WHERE pc.category_id = $1
-		ORDER BY p.created_at DESC, p.id DESC
-		LIMIT $2 OFFSET $3`
+		WHERE pc.category_id = $1`
+	args := []interface{}{categoryID}
+	if !catalog.IncludeNonActiveProducts(ctx) {
+		q += ` AND p.status = $2`
+		args = append(args, string(catalog.StatusActive))
+	}
+	q += ` ORDER BY p.created_at DESC, p.id DESC`
+	limitArg := len(args) + 1
+	offsetArg := len(args) + 2
+	q += fmt.Sprintf(` LIMIT $%d OFFSET $%d`, limitArg, offsetArg)
+	args = append(args, limit, offset)
 
 	var rows *sql.Rows
 	var err error
 	if r.tx != nil {
-		rows, err = r.tx.QueryContext(ctx, q, categoryID, limit, offset)
+		rows, err = r.tx.QueryContext(ctx, q, args...)
 	} else {
-		rows, err = r.db.QueryContext(ctx, q, categoryID, limit, offset)
+		rows, err = r.db.QueryContext(ctx, q, args...)
 	}
 	if err != nil {
 		return nil, fmt.Errorf("product_repo: find by category: %w", err)
