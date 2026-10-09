@@ -66,7 +66,7 @@ func mustNewProduct(t *testing.T, name, slug string) catalog.Product {
 }
 
 func productRepoAdminCtx() context.Context {
-	return catalog.WithIncludeNonActiveProducts(context.Background())
+	return catalog.WithOperatorProductReadScope(context.Background())
 }
 
 func TestProductRepo_CreateAndFindByID(t *testing.T) {

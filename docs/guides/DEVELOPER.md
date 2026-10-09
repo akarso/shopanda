@@ -915,15 +915,35 @@ Each product stores four **visibility modes** (`auto` | `visible` | `hidden`): c
 
 All four axes share one `AutoBasis` when in `auto`. To list OOS/unpriced products while blocking sale, force display axes to `visible` and leave `Purchasable` as `auto` or `hidden`.
 
-Admin product JSON already includes `VisibilityModes` (read-only until PR-1059). Enforcement on storefront/admin paths is PR-1056/1057.
+Admin product JSON already includes `VisibilityModes` (read-only until PR-1059).
+
+### Admin vs public visibility boundary (PR-1056)
+
+Public product exposure uses **two gates**, not one:
+
+1. **Status scope (PR-1054)** — repository reads are active-only by default; cart uses `ActiveForPurchase`. `AllowProduct` does **not** replace this. Forced `VisibilityModeVisible` still resolves true for draft/archived on the axis gate alone.
+2. **Axis gate (PR-1056)** — `catalog.AllowProduct` / `catalog.FilterProducts` keyed by `VisibilitySurface`.
+
+| Surface | Axis | Typical routes |
+| --- | --- | --- |
+| `catalog` | `VisibleInCatalog` | REST/HTML PLP, category products, sitemap product URLs |
+| `search` | `VisibleInSearch` | REST/HTML search + suggest fragments |
+| `individually` | `VisibleIndividually` | REST/HTML PDP, variants, reviews (GET+POST), recently-viewed |
+| `purchasable` | `Purchasable` | cart add/update + checkout (enforced in PR-1058) |
+
+The full audited map (REST + HTML/SSR + fragments, with `EnforceIn` PR-1057 vs PR-1058) is `storefront.PublicProductVisibilityRoutes()`.
+
+`FilterProducts` is **in-memory post-fetch only**. Do not apply it after SQL `LIMIT`/`OFFSET` without a query-level predicate and recount plan in PR-1057 — page size and totals will be wrong.
+
+Admin REST (`/api/v1/admin` and `/api/v1/admin/…`) and operator paths (import/export/seed) use `catalog.WithOperatorProductReadScope` (include-non-active + bypass axis gates) so shared helpers that call `AllowProduct` stay consistent with the admin UI.
 
 ### Product read scope (PR-1054)
 
 `catalog.ProductRepository` returns **active** products only unless the caller opts in:
 
 - **Storefront / cart / GraphQL** — default context; draft/archived rows are omitted (`FindBy*` returns `(nil, nil)`; `List` excludes them).
-- **Admin REST** — `AdminContextMiddleware` sets `catalog.WithIncludeNonActiveProducts` on `/api/v1/admin/*` paths so operators still see drafts.
-- **Import / export / seed / jobs** — call `catalog.WithIncludeNonActiveProducts(ctx)` (or `ListFilter.IncludeNonActive`) before reads that must see drafts or archived rows. Product CSV import and the seed registry set this at entry; new CLI/worker paths must do the same.
+- **Admin REST** — `AdminContextMiddleware` sets `catalog.WithOperatorProductReadScope` on `/api/v1/admin` paths so operators still see drafts and bypass axis gates.
+- **Import / export / seed / jobs** — call `catalog.WithOperatorProductReadScope(ctx)` (or set include-non-active + bypass explicitly) before reads that must see the full catalog. Product CSV import and the seed registry set this at entry; new CLI/worker paths must do the same.
 
 `cart.Service.AddItem` rejects non-active products with a validation error regardless of scope.
 

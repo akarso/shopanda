@@ -108,7 +108,7 @@ var knownColumns = map[string]struct{}{
 // when any cell is set, blanks count as simple so empty+virtual conflicts.
 // Type updates on existing products are rejected (create-only for this field).
 func (imp *ProductImporter) Import(ctx context.Context, r io.Reader) (*Result, error) {
-	ctx = catalog.WithIncludeNonActiveProducts(ctx)
+	ctx = catalog.WithOperatorProductReadScope(ctx)
 	reader := csv.NewReader(r)
 	reader.TrimLeadingSpace = true
 
