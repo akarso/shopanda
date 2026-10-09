@@ -5,7 +5,9 @@ import "context"
 // ListFilter controls paginated product listing. Empty Type means all types
 // (PR-1051 admin ?type= filter; other callers leave Type unset).
 // By default only StatusActive rows are returned; set IncludeNonActive or use
-// WithIncludeNonActiveProducts on ctx for admin/export (PR-1054).
+// WithOperatorProductReadScope on ctx for admin/export/import/seed (PR-1054 +
+// PR-1056: include non-active and bypass axis gates). Prefer the operator
+// helper over setting IncludeNonActive alone when callers also use AllowProduct.
 type ListFilter struct {
 	Type             Type
 	Offset           int
@@ -35,7 +37,9 @@ type ProductRepository interface {
 
 	// FindByCategoryID returns products belonging to the given category,
 	// ordered by created_at desc. Non-active products are omitted unless ctx
-	// opts in via WithIncludeNonActiveProducts (PR-1054).
+	// opts in via WithOperatorProductReadScope / WithIncludeNonActiveProducts
+	// (PR-1054). Axis visibility is a separate gate (PR-1056); operator paths
+	// that call AllowProduct should use WithOperatorProductReadScope.
 	// offset must be >= 0; implementations must return an error for negative values.
 	// limit must be > 0; implementations must return an error for non-positive values.
 	// Implementations should cap limit to a reasonable maximum (e.g. 100).

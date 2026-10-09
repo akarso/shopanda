@@ -124,8 +124,10 @@ func AdminContextMiddleware() httpshared.Middleware {
 				Language:    sanitizeAdminScopeValue(r.Header.Get(adminLanguageHeader)),
 				Currency:    sanitizeAdminScopeValue(r.Header.Get(adminCurrencyHeader)),
 			}).WithContext(r.Context())
-			if strings.HasPrefix(r.URL.Path, "/api/v1/admin") {
-				ctx = catalog.WithIncludeNonActiveProducts(ctx)
+			if isAdminAPIPath(r.URL.Path) {
+				// Admin REST sees every product regardless of Status (PR-1054)
+				// and of four-axis visibility (PR-1056). Storefront paths omit both.
+				ctx = catalog.WithOperatorProductReadScope(ctx)
 			}
 
 			next.ServeHTTP(w, r.WithContext(ctx))
@@ -142,4 +144,10 @@ func sanitizeAdminScopeValue(raw string) string {
 		return value[:maxAdminScopeLength]
 	}
 	return value
+}
+
+// isAdminAPIPath matches /api/v1/admin and /api/v1/admin/… only (not
+// /api/v1/administrator…).
+func isAdminAPIPath(path string) bool {
+	return path == "/api/v1/admin" || strings.HasPrefix(path, "/api/v1/admin/")
 }

@@ -99,6 +99,9 @@ func TestImport_ResolvesExistingDraftBySlug(t *testing.T) {
 			if !catalog.IncludeNonActiveProducts(ctx) {
 				t.Fatal("Import must opt into IncludeNonActiveProducts for slug lookup")
 			}
+			if !catalog.BypassProductVisibility(ctx) {
+				t.Fatal("Import must set BypassProductVisibility (WithOperatorProductReadScope)")
+			}
 			return draft, nil
 		},
 		createFn: func(context.Context, *catalog.Product) error {

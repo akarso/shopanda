@@ -397,6 +397,9 @@ func TestAdminContextMiddleware_StorefrontPath_NoIncludeNonActive(t *testing.T) 
 		if catalog.IncludeNonActiveProducts(r.Context()) {
 			t.Fatal("storefront path must not set IncludeNonActiveProducts")
 		}
+		if catalog.BypassProductVisibility(r.Context()) {
+			t.Fatal("storefront path must not set BypassProductVisibility")
+		}
 		w.WriteHeader(http.StatusOK)
 	}))
 	req := httptest.NewRequest("GET", "/api/v1/products/widget", nil)
@@ -418,9 +421,33 @@ func TestAdminContextMiddleware_AdminAPI_IncludesNonActiveProducts(t *testing.T)
 		if !catalog.IncludeNonActiveProducts(r.Context()) {
 			t.Fatal("expected IncludeNonActiveProducts on /api/v1/admin paths")
 		}
+		if !catalog.BypassProductVisibility(r.Context()) {
+			t.Fatal("expected BypassProductVisibility on /api/v1/admin paths")
+		}
 		w.WriteHeader(http.StatusOK)
 	}))
 	req := httptest.NewRequest("GET", "/api/v1/admin/products", nil)
+	req = req.WithContext(auth.WithIdentity(req.Context(), id))
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d", rec.Code, http.StatusOK)
+	}
+}
+
+func TestAdminContextMiddleware_AdministratorPrefix_NoOperatorScope(t *testing.T) {
+	id, err := identity.NewIdentity("admin-1", identity.RoleAdmin)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	mw := admin.AdminContextMiddleware()
+	handler := mw(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if catalog.IncludeNonActiveProducts(r.Context()) || catalog.BypassProductVisibility(r.Context()) {
+			t.Fatal("/api/v1/administrator must not inherit admin product scope")
+		}
+		w.WriteHeader(http.StatusOK)
+	}))
+	req := httptest.NewRequest("GET", "/api/v1/administrator/products", nil)
 	req = req.WithContext(auth.WithIdentity(req.Context(), id))
 	rec := httptest.NewRecorder()
 	handler.ServeHTTP(rec, req)

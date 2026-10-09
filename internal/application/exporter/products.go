@@ -64,7 +64,7 @@ const pageSize = 100
 // attribute keys found across all variants. Attribute columns are sorted
 // alphabetically.
 func (exp *ProductExporter) Export(ctx context.Context, w io.Writer) (*Result, error) {
-	ctx = catalog.WithIncludeNonActiveProducts(ctx)
+	ctx = catalog.WithOperatorProductReadScope(ctx)
 	// 1. Collect all products and variants.
 	type row struct {
 		product catalog.Product

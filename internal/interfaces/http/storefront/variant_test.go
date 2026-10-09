@@ -195,7 +195,7 @@ func TestVariantHandler_AdminList_IncludesDraftProduct(t *testing.T) {
 
 	adminRec := httptest.NewRecorder()
 	adminReq := httptest.NewRequest("GET", "/api/v1/admin/products/prod-draft/variants", nil)
-	adminReq = adminReq.WithContext(catalog.WithIncludeNonActiveProducts(adminReq.Context()))
+	adminReq = adminReq.WithContext(catalog.WithOperatorProductReadScope(adminReq.Context()))
 	newVariantRouter(h).ServeHTTP(adminRec, adminReq)
 	if adminRec.Code != http.StatusOK {
 		t.Fatalf("admin status = %d, want %d; body: %s", adminRec.Code, http.StatusOK, adminRec.Body.String())

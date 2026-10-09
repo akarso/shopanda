@@ -60,7 +60,7 @@ func (r *Registry) Register(s Seeder) {
 // Run executes all registered seeders in order.
 // A failing seeder stops execution and returns the error.
 func (r *Registry) Run(ctx context.Context, deps Deps) (*Result, error) {
-	ctx = catalog.WithIncludeNonActiveProducts(ctx)
+	ctx = catalog.WithOperatorProductReadScope(ctx)
 	result := &Result{}
 	for _, s := range r.seeders {
 		deps.Logger.Info("seed.run", map[string]interface{}{
