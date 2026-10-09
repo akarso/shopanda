@@ -68,6 +68,7 @@ func (s *ValidateCartStep) Execute(ctx context.Context, cctx *Context) error {
 	}
 
 	variants := make(map[string]*catalog.Variant, len(cctx.Cart.Items))
+	productsByID := make(map[string]*catalog.Product, len(cctx.Cart.Items))
 	for _, item := range cctx.Cart.Items {
 		v, err := s.variants.FindByID(ctx, item.VariantID)
 		if err != nil {
@@ -76,9 +77,13 @@ func (s *ValidateCartStep) Execute(ctx context.Context, cctx *Context) error {
 		if v == nil {
 			return fmt.Errorf("validate_cart: variant %s no longer exists", item.VariantID)
 		}
-		p, err := s.products.FindByID(ctx, v.ProductID)
-		if err != nil {
-			return fmt.Errorf("validate_cart: lookup product %s: %w", v.ProductID, err)
+		p, ok := productsByID[v.ProductID]
+		if !ok {
+			p, err = s.products.FindByID(ctx, v.ProductID)
+			if err != nil {
+				return fmt.Errorf("validate_cart: lookup product %s: %w", v.ProductID, err)
+			}
+			productsByID[v.ProductID] = p
 		}
 		if !catalog.ActiveForPurchase(p) {
 			return fmt.Errorf("validate_cart: product for variant %s is not available for purchase", item.VariantID)
@@ -88,9 +93,10 @@ func (s *ValidateCartStep) Execute(ctx context.Context, cctx *Context) error {
 
 	cctx.SetMeta(cartVariantsMetaKey, variants)
 
-	needsShipping, err := CartRequiresPhysicalShipping(ctx, cctx.Cart, s.products, s.variants, func(variantID string) *catalog.Variant {
-		return variants[variantID]
-	})
+	needsShipping, err := CartRequiresPhysicalShipping(ctx, cctx.Cart, s.products, s.variants,
+		func(variantID string) *catalog.Variant { return variants[variantID] },
+		func(productID string) *catalog.Product { return productsByID[productID] },
+	)
 	if err != nil {
 		return fmt.Errorf("validate_cart: shipping requirement: %w", err)
 	}

@@ -119,6 +119,8 @@ func newVariantRouter(h *storefront.VariantHandler) *http.ServeMux {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /api/v1/products/{id}/variants", h.List())
 	mux.HandleFunc("GET /api/v1/products/{id}/variants/{variantId}", h.Get())
+	mux.HandleFunc("GET /api/v1/admin/products/{id}/variants", h.List())
+	mux.HandleFunc("GET /api/v1/admin/products/{id}/variants/{variantId}", h.Get())
 	mux.HandleFunc("POST /api/v1/admin/products/{id}/variants", h.Create())
 	mux.HandleFunc("PUT /api/v1/admin/products/{id}/variants/{variantId}", h.Update())
 	return mux
@@ -165,6 +167,49 @@ func TestVariantHandler_List_OK(t *testing.T) {
 	}
 	if len(resp.Data.Variants) != 2 {
 		t.Errorf("len(variants) = %d, want 2", len(resp.Data.Variants))
+	}
+}
+
+func TestVariantHandler_AdminList_IncludesDraftProduct(t *testing.T) {
+	draft := &catalog.Product{ID: "prod-draft", Name: "Draft", Slug: "draft", Status: catalog.StatusDraft}
+	prodRepo := &mockVariantProductRepo{findByIDFn: func(ctx context.Context, id string) (*catalog.Product, error) {
+		if id != draft.ID {
+			return nil, nil
+		}
+		if !catalog.IncludeNonActiveProducts(ctx) {
+			return nil, nil
+		}
+		return draft, nil
+	}}
+	varRepo := &mockVariantRepo{listByProductFn: func(_ context.Context, productID string, _, _ int) ([]catalog.Variant, error) {
+		return []catalog.Variant{{ID: "v1", ProductID: productID, SKU: "DRAFT-1"}}, nil
+	}}
+	h := storefront.NewVariantHandler(prodRepo, varRepo, testVariantBus())
+
+	publicRec := httptest.NewRecorder()
+	publicReq := httptest.NewRequest("GET", "/api/v1/products/prod-draft/variants", nil)
+	newVariantRouter(h).ServeHTTP(publicRec, publicReq)
+	if publicRec.Code != http.StatusNotFound {
+		t.Fatalf("public status = %d, want %d", publicRec.Code, http.StatusNotFound)
+	}
+
+	adminRec := httptest.NewRecorder()
+	adminReq := httptest.NewRequest("GET", "/api/v1/admin/products/prod-draft/variants", nil)
+	adminReq = adminReq.WithContext(catalog.WithIncludeNonActiveProducts(adminReq.Context()))
+	newVariantRouter(h).ServeHTTP(adminRec, adminReq)
+	if adminRec.Code != http.StatusOK {
+		t.Fatalf("admin status = %d, want %d; body: %s", adminRec.Code, http.StatusOK, adminRec.Body.String())
+	}
+	var resp struct {
+		Data struct {
+			Variants []catalog.Variant `json:"variants"`
+		} `json:"data"`
+	}
+	if err := json.NewDecoder(adminRec.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if len(resp.Data.Variants) != 1 {
+		t.Fatalf("len(variants) = %d, want 1", len(resp.Data.Variants))
 	}
 }
 

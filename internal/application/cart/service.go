@@ -211,10 +211,14 @@ func (s *Service) assignGuestCart(ctx context.Context, guestCart *domainCart.Car
 }
 
 func (s *Service) mergeIntoCustomerCart(ctx context.Context, guestCart, customerCart *domainCart.Cart) (*domainCart.Cart, error) {
+	// Validate every guest line before copying/deleting extensions so a late
+	// failure cannot leave earlier guest targets half-migrated (PR-1054).
 	for _, item := range guestCart.Items {
 		if err := s.ensureVariantPurchasable(ctx, item.VariantID); err != nil {
 			return nil, err
 		}
+	}
+	for _, item := range guestCart.Items {
 		if err := customerCart.AddItem(item.VariantID, item.Quantity, item.UnitPrice); err != nil {
 			return nil, apperror.Wrap(apperror.CodeValidation, "cannot merge guest cart item", err)
 		}

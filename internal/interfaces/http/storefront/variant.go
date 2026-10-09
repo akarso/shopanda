@@ -50,7 +50,8 @@ const (
 	variantMaxLimit     = 100
 )
 
-// List handles GET /api/v1/products/{id}/variants.
+// List handles GET /api/v1/products/{id}/variants and
+// GET /api/v1/admin/products/{id}/variants (admin path includes non-active products via read scope).
 func (h *VariantHandler) List() http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		p := h.requireProduct(w, r)
@@ -105,7 +106,8 @@ func parseVariantPagination(r *http.Request) (int, int, error) {
 	return offset, limit, nil
 }
 
-// Get handles GET /api/v1/products/{id}/variants/{variantId}.
+// Get handles GET /api/v1/products/{id}/variants/{variantId} and
+// GET /api/v1/admin/products/{id}/variants/{variantId}.
 func (h *VariantHandler) Get() http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		p := h.requireProduct(w, r)

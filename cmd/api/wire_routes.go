@@ -159,6 +159,8 @@ func buildServeHandler(cfg *config.Config, log logger.Logger, rt *serveRuntime, 
 	router.Handle("DELETE /api/v1/admin/categories/{id}/products/{productId}", requireCategoriesWrite(rt.categoryProductAssignmentAdmin.Unassign()))
 	router.Handle("GET /api/v1/admin/products/{id}/translations", requireProductsRead(rt.productTranslationAdmin.Get()))
 	router.Handle("PUT /api/v1/admin/products/{id}/translations", requireProductsWrite(rt.productTranslationAdmin.Update()))
+	router.Handle("GET /api/v1/admin/products/{id}/variants", requireProductsRead(rt.variantHandler.List()))
+	router.Handle("GET /api/v1/admin/products/{id}/variants/{variantId}", requireProductsRead(rt.variantHandler.Get()))
 	router.Handle("POST /api/v1/admin/products/{id}/variants", requireProductsWrite(rt.variantHandler.Create()))
 	router.Handle("PUT /api/v1/admin/products/{id}/variants/{variantId}", requireProductsWrite(rt.variantHandler.Update()))
 	router.Handle("GET /api/v1/admin/products/{id}/variants/{variantId}/price", requireProductsRead(rt.productPriceAdmin.Get()))
