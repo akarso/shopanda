@@ -118,7 +118,7 @@
     }
 
     function isCoreProductField(name) {
-        return !!CORE_PRODUCT_FIELDS[name];
+        return Object.prototype.hasOwnProperty.call(CORE_PRODUCT_FIELDS, name);
     }
 
     // Mirrors collectProductPayload field routing for the type selector path.

@@ -127,6 +127,15 @@ test("assignProductField puts type on payload root not attributes", () => {
     assert.equal(ui.isCoreProductField("color"), false);
 });
 
+test("isCoreProductField ignores Object.prototype names like constructor", () => {
+    assert.equal(ui.isCoreProductField("constructor"), false);
+    assert.equal(ui.isCoreProductField("toString"), false);
+    const payload = { attributes: {} };
+    ui.assignProductField(payload, "constructor", true);
+    assert.equal(Object.prototype.hasOwnProperty.call(payload, "constructor"), false);
+    assert.equal(payload.attributes.constructor, true);
+});
+
 test("inline-fallback parity: unknown option and section sync helpers stay consistent", () => {
     // Documents the admin.js inline fallback contract: same predicates as the module.
     function selectNeedsUnknownOptionFallback(options, selectedValue) {
