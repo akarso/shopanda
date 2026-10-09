@@ -38,4 +38,12 @@ func TestValidateProduct_MapsDomainErrors(t *testing.T) {
 	if !apperror.Is(err, apperror.CodeValidation) {
 		t.Fatalf("nil: got %v, want validation", err)
 	}
+
+	p.Type = catalog.TypeSimple
+	p.VisibilityModes = catalog.DefaultVisibilityAxes()
+	p.VisibilityModes.Purchasable = catalog.VisibilityMode("nope")
+	err = validateProduct(&p)
+	if !apperror.Is(err, apperror.CodeValidation) {
+		t.Fatalf("invalid visibility mode: got %v, want validation", err)
+	}
 }

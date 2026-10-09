@@ -971,13 +971,14 @@ func TestProductAdminHandler_Create_AuditFailureOmitsPartialScopeContext(t *test
 
 func TestProductAdminHandler_Update_OK(t *testing.T) {
 	existing := &catalog.Product{
-		ID:          "p1",
-		Name:        "Widget",
-		Slug:        "widget",
-		Description: "old",
-		Status:      catalog.StatusDraft,
-		Type:        catalog.TypeSimple,
-		Attributes:  map[string]interface{}{},
+		ID:              "p1",
+		Name:            "Widget",
+		Slug:            "widget",
+		Description:     "old",
+		Status:          catalog.StatusDraft,
+		Type:            catalog.TypeSimple,
+		VisibilityModes: catalog.DefaultVisibilityAxes(),
+		Attributes:      map[string]interface{}{},
 	}
 	var updated *catalog.Product
 	repo := &mockAdminProductRepo{
@@ -1021,6 +1022,7 @@ func TestProductAdminHandler_Update_OK(t *testing.T) {
 func TestProductAdminHandler_Update_Type(t *testing.T) {
 	existing := &catalog.Product{
 		ID: "p1", Name: "Widget", Slug: "widget", Status: catalog.StatusDraft, Type: catalog.TypeSimple,
+		VisibilityModes: catalog.DefaultVisibilityAxes(),
 	}
 	var updated *catalog.Product
 	repo := &mockAdminProductRepo{
@@ -1051,6 +1053,7 @@ func TestProductAdminHandler_Update_Type(t *testing.T) {
 func TestProductAdminHandler_Update_OmitTypePreserves(t *testing.T) {
 	existing := &catalog.Product{
 		ID: "p1", Name: "Widget", Slug: "widget", Status: catalog.StatusDraft, Type: catalog.TypeVirtual,
+		VisibilityModes: catalog.DefaultVisibilityAxes(),
 	}
 	var updated *catalog.Product
 	repo := &mockAdminProductRepo{
@@ -1254,13 +1257,14 @@ func TestProductAdminHandler_Update_InvalidBody(t *testing.T) {
 
 func TestProductAdminHandler_Update_PartialUpdate(t *testing.T) {
 	existing := &catalog.Product{
-		ID:          "p1",
-		Name:        "Widget",
-		Slug:        "widget",
-		Description: "desc",
-		Status:      catalog.StatusDraft,
-		Type:        catalog.TypeSimple,
-		Attributes:  map[string]interface{}{},
+		ID:              "p1",
+		Name:            "Widget",
+		Slug:            "widget",
+		Description:     "desc",
+		Status:          catalog.StatusDraft,
+		Type:            catalog.TypeSimple,
+		VisibilityModes: catalog.DefaultVisibilityAxes(),
+		Attributes:      map[string]interface{}{},
 	}
 	var updated *catalog.Product
 	repo := &mockAdminProductRepo{
@@ -1301,7 +1305,10 @@ func TestProductAdminHandler_Update_PartialUpdate(t *testing.T) {
 func TestProductAdminHandler_Update_RepoError(t *testing.T) {
 	repo := &mockAdminProductRepo{
 		findByIDFn: func(_ context.Context, id string) (*catalog.Product, error) {
-			return &catalog.Product{ID: id, Name: "W", Slug: "w", Type: catalog.TypeSimple}, nil
+			return &catalog.Product{
+				ID: id, Name: "W", Slug: "w", Type: catalog.TypeSimple,
+				VisibilityModes: catalog.DefaultVisibilityAxes(),
+			}, nil
 		},
 		updateFn: func(_ context.Context, p *catalog.Product) error {
 			return apperror.Internal("db down")
@@ -1322,7 +1329,10 @@ func TestProductAdminHandler_Update_RepoError(t *testing.T) {
 func TestProductAdminHandler_Update_AuditIncludesScopeContext(t *testing.T) {
 	repo := &mockAdminProductRepo{
 		findByIDFn: func(_ context.Context, id string) (*catalog.Product, error) {
-			return &catalog.Product{ID: id, Name: "Widget", Slug: "widget", Status: catalog.StatusDraft, Type: catalog.TypeSimple}, nil
+			return &catalog.Product{
+				ID: id, Name: "Widget", Slug: "widget", Status: catalog.StatusDraft, Type: catalog.TypeSimple,
+				VisibilityModes: catalog.DefaultVisibilityAxes(),
+			}, nil
 		},
 		updateFn: func(_ context.Context, p *catalog.Product) error {
 			return nil
@@ -1419,7 +1429,10 @@ func TestProductAdminHandler_Update_AuditFailureIncludesError(t *testing.T) {
 func TestProductAdminHandler_Update_AuditOmitsPartialScopeContext(t *testing.T) {
 	repo := &mockAdminProductRepo{
 		findByIDFn: func(_ context.Context, id string) (*catalog.Product, error) {
-			return &catalog.Product{ID: id, Name: "Widget", Slug: "widget", Status: catalog.StatusDraft, Type: catalog.TypeSimple}, nil
+			return &catalog.Product{
+				ID: id, Name: "Widget", Slug: "widget", Status: catalog.StatusDraft, Type: catalog.TypeSimple,
+				VisibilityModes: catalog.DefaultVisibilityAxes(),
+			}, nil
 		},
 		updateFn: func(_ context.Context, p *catalog.Product) error {
 			return nil
@@ -1568,7 +1581,10 @@ func TestProductAdminHandler_Create_EmitsEvent(t *testing.T) {
 func TestProductAdminHandler_Update_EmitsEvent(t *testing.T) {
 	repo := &mockAdminProductRepo{
 		findByIDFn: func(_ context.Context, id string) (*catalog.Product, error) {
-			return &catalog.Product{ID: id, Name: "Old", Slug: "old", Status: catalog.StatusDraft, Type: catalog.TypeSimple}, nil
+			return &catalog.Product{
+				ID: id, Name: "Old", Slug: "old", Status: catalog.StatusDraft, Type: catalog.TypeSimple,
+				VisibilityModes: catalog.DefaultVisibilityAxes(),
+			}, nil
 		},
 		updateFn: func(_ context.Context, _ *catalog.Product) error { return nil },
 	}

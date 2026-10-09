@@ -31,6 +31,10 @@ func TestNewProduct(t *testing.T) {
 	if p.Type != catalog.TypeSimple {
 		t.Errorf("Type = %q, want simple", p.Type)
 	}
+	wantModes := catalog.DefaultVisibilityAxes()
+	if p.VisibilityModes != wantModes {
+		t.Errorf("VisibilityModes = %+v, want %+v", p.VisibilityModes, wantModes)
+	}
 	if p.Attributes == nil {
 		t.Error("Attributes should be initialised")
 	}

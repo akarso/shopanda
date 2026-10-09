@@ -9,7 +9,7 @@
 | PR-1052 | A | done | [CSV import/export: type field](PR-1052.md) |
 | PR-1053 | A | done | [Admin GUI: type selector + type-specific sections](PR-1053.md) |
 | PR-1054 | B | done | [Enforce `Status = active` in core read paths](PR-1054.md) |
-| PR-1055 | B | planned | [Four-axis visibility model](PR-1055.md) |
+| PR-1055 | B | done | [Four-axis visibility model](PR-1055.md) |
 | PR-1056 | B | planned | [Admin vs. public/storefront API split](PR-1056.md) |
 | PR-1057 | B | planned | [Enforce visibility in storefront read paths](PR-1057.md) |
 | PR-1058 | B | planned | [Cart/checkout purchasability gate + hook point](PR-1058.md) |

@@ -905,6 +905,18 @@ When adding an extension, prefer this order:
 
 Shopanda already has real extension points for plugins, events, pipelines, workflows, infrastructure ports, and plugin CLI commands. Core and external plugins register at compile time through `register_plugins.go`; there is no dynamic plugin discovery.
 
+### Product visibility axes (PR-1055)
+
+Each product stores four **visibility modes** (`auto` | `visible` | `hidden`): catalog, search, individually (PDP), and purchasable. Effective booleans come from `product.Visibility(inputs, opts)`:
+
+- **`auto`** — `AutoBasis` using the product’s `Status` plus facts: quantity &gt; 0, a price row exists (including amount 0), and assigned to ≥ 1 store/view (any assignment, not request-scoped). Category is opt-in via `VisibilityOptions.RequireCategory` (default off).
+- **`visible` / `hidden`** — force that axis. `Purchasable=visible` is a sellability override, not display-only.
+- Unknown/empty modes fail closed (treat as not visible / not purchasable).
+
+All four axes share one `AutoBasis` when in `auto`. To list OOS/unpriced products while blocking sale, force display axes to `visible` and leave `Purchasable` as `auto` or `hidden`.
+
+Admin product JSON already includes `VisibilityModes` (read-only until PR-1059). Enforcement on storefront/admin paths is PR-1056/1057.
+
 ### Product read scope (PR-1054)
 
 `catalog.ProductRepository` returns **active** products only unless the caller opts in:
