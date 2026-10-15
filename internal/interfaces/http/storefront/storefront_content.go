@@ -124,6 +124,9 @@ func storefrontBlocksFromResolved(blocks []cmsApp.ResolvedContentBlock) ([]Store
 		case string(cms.BlockTypeProductCarousel):
 			item.CarouselTitle = stringValue(block.Data, "title")
 			item.Products = storefrontCarouselProducts(block.Data["products"])
+			// Tag every configured carousel product (not only visible ones)
+			// so restock / first-price purges refresh home and CMS pages.
+			tags = append(tags, carouselConfiguredProductTags(block.Data["product_ids"])...)
 			tags = append(tags, carouselProductTags(block.Data["products"])...)
 		}
 		out = append(out, item)
@@ -139,6 +142,20 @@ func carouselProductTags(raw interface{}) []string {
 	out := make([]string, 0)
 	for _, item := range items {
 		if t := cacheapp.ProductTag(stringValue(item, "id")); t != "" {
+			out = append(out, t)
+		}
+	}
+	return out
+}
+
+func carouselConfiguredProductTags(raw interface{}) []string {
+	ids, ok := raw.([]string)
+	if !ok {
+		return nil
+	}
+	out := make([]string, 0, len(ids))
+	for _, id := range ids {
+		if t := cacheapp.ProductTag(id); t != "" {
 			out = append(out, t)
 		}
 	}

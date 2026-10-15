@@ -101,4 +101,8 @@ func TestBlockResolver_FiltersHiddenCarouselProducts(t *testing.T) {
 	if products[0]["id"] != "prod-v" {
 		t.Fatalf("id = %v, want prod-v", products[0]["id"])
 	}
+	ids, ok := resolved[0].Data["product_ids"].([]string)
+	if !ok || len(ids) != 2 {
+		t.Fatalf("product_ids must keep configured IDs for FPC tags, got %+v", resolved[0].Data["product_ids"])
+	}
 }

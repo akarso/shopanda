@@ -281,8 +281,9 @@ func TestPurgeURLKeys_KeepsAttrQuery(t *testing.T) {
 	if path != "/products" {
 		t.Fatalf("path = %q", path)
 	}
-	if len(keys) != 2 {
-		t.Fatalf("keys = %d, want 2", len(keys))
+	// guest+auth × enforce off/on
+	if len(keys) != 4 {
+		t.Fatalf("keys = %d, want 4", len(keys))
 	}
 	want := cacheApp.Key(cacheApp.RoutePLP, "/products", "page=2&attr_color=red&utm_source=x", cacheApp.Vary{
 		Store: "s1", Language: "en", Currency: "EUR", AuthState: cacheApp.AuthGuest,

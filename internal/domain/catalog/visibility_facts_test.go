@@ -391,6 +391,45 @@ func deepListFn(modes catalog.VisibilityAxes) func(context.Context, int, int) ([
 	}
 }
 
+func TestListVisiblePage_RepoCapsBatchAt100(t *testing.T) {
+	modes := catalog.DefaultVisibilityAxes()
+	hidden := modes
+	hidden.Catalog = catalog.VisibilityModeHidden
+	// 100 hidden, then visibles — mirrors postgres maxListLimit=100 with a
+	// ListVisiblePage that used to request 200 and treat the capped 100 as EOF.
+	all := make([]catalog.Product, 0, 120)
+	facts := mapFacts{}
+	for i := 0; i < 100; i++ {
+		id := "h" + itoa(i)
+		all = append(all, catalog.Product{ID: id, Status: catalog.StatusActive, VisibilityModes: hidden})
+		facts[id] = sellableSnap(catalog.StatusActive, hidden)
+	}
+	for i := 0; i < 5; i++ {
+		id := "v" + itoa(i)
+		all = append(all, catalog.Product{ID: id, Status: catalog.StatusActive, VisibilityModes: modes})
+		facts[id] = sellableSnap(catalog.StatusActive, modes)
+	}
+	const repoCap = 100
+	listFn := func(ctx context.Context, dbOffset, dbLimit int) ([]catalog.Product, error) {
+		if dbLimit > repoCap {
+			dbLimit = repoCap
+		}
+		return listSlice(all)(ctx, dbOffset, dbLimit)
+	}
+	page, err := catalog.ListVisiblePage(context.Background(), listFn, catalog.VisibilitySurfaceCatalog, facts, catalog.VisibilityOptions{}, catalog.ListVisiblePageParams{
+		Limit: 3,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(page.Products) != 3 {
+		t.Fatalf("len=%d want 3 (must walk past repo-capped hidden batch)", len(page.Products))
+	}
+	if page.Products[0].ID != "v0" {
+		t.Fatalf("first=%s want v0", page.Products[0].ID)
+	}
+}
+
 func TestListVisiblePage_DepthCapStopsCursor(t *testing.T) {
 	modes := catalog.DefaultVisibilityAxes()
 	listFn := deepListFn(modes)

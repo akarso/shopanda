@@ -71,6 +71,9 @@ func (r *BlockResolver) resolveBlock(block *domaincms.ContentBlock, products map
 		data["body"] = config["body"]
 	case domaincms.BlockTypeProductCarousel:
 		data["title"] = config["title"]
+		// Keep configured IDs for FPC product tags even when visibility
+		// filters omit them from the rendered carousel (PR-1057).
+		data["product_ids"] = stringSliceFromAny(config["product_ids"])
 		data["products"] = r.carouselProducts(config["product_ids"], products)
 	default:
 		return ResolvedContentBlock{}, fmt.Errorf("block resolver: unsupported type %q", block.BlockType())

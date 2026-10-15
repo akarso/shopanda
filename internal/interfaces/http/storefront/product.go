@@ -42,12 +42,7 @@ func (h *ProductHandler) WithVisibilityFacts(facts catalog.VisibilityFactsSource
 // List handles GET /api/v1/products.
 func (h *ProductHandler) List() http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		offset, limit, err := httpshared.ParsePagination(r)
-		if err != nil {
-			httpshared.JSONError(w, err)
-			return
-		}
-		afterOff, afterSkip, afterSet, err := parseVisibilityAfter(r)
+		offset, limit, afterOff, afterSkip, afterSet, err := parseListingPagination(r)
 		if err != nil {
 			httpshared.JSONError(w, err)
 			return

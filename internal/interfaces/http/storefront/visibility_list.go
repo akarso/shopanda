@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	"github.com/akarso/shopanda/internal/domain/catalog"
+	httpshared "github.com/akarso/shopanda/internal/interfaces/http/shared"
 	"github.com/akarso/shopanda/internal/platform/apperror"
 )
 
@@ -21,6 +22,28 @@ func parseVisibilityAfter(r *http.Request) (offset, skip int, set bool, err erro
 		return 0, 0, false, apperror.Validation(err.Error())
 	}
 	return o, s, true, nil
+}
+
+// parseListingPagination decodes after first. When a cursor is present,
+// offset is ignored (including invalid offset values) and only limit is
+// parsed. Matches the OpenAPI contract that after supersedes offset.
+func parseListingPagination(r *http.Request) (offset, limit, afterOff, afterSkip int, afterSet bool, err error) {
+	afterOff, afterSkip, afterSet, err = parseVisibilityAfter(r)
+	if err != nil {
+		return 0, 0, 0, 0, false, err
+	}
+	if afterSet {
+		limit, err = httpshared.ParseLimit(r)
+		if err != nil {
+			return 0, 0, 0, 0, false, err
+		}
+		return 0, limit, afterOff, afterSkip, true, nil
+	}
+	offset, limit, err = httpshared.ParsePagination(r)
+	if err != nil {
+		return 0, 0, 0, 0, false, err
+	}
+	return offset, limit, 0, 0, false, nil
 }
 
 func visibilityListMeta(page catalog.VisiblePage) map[string]interface{} {

@@ -305,6 +305,38 @@ func TestProductHandler_List_AfterWithEnforceOff(t *testing.T) {
 	}
 }
 
+func TestProductHandler_List_AfterIgnoresBadOffset(t *testing.T) {
+	modes := catalog.DefaultVisibilityAxes()
+	all := make([]catalog.Product, 0, 10)
+	for i := 0; i < 10; i++ {
+		all = append(all, catalog.Product{ID: "p" + itoaEnforce(i), Status: catalog.StatusActive, VisibilityModes: modes})
+	}
+	repo := &mockProductRepo{
+		listFn: func(_ context.Context, filter catalog.ListFilter) ([]catalog.Product, error) {
+			if filter.Offset >= len(all) {
+				return nil, nil
+			}
+			end := filter.Offset + filter.Limit
+			if end > len(all) {
+				end = len(all)
+			}
+			return all[filter.Offset:end], nil
+		},
+	}
+	h := storefront.NewProductHandler(repo, composition.NewPipeline[composition.ProductContext](), composition.NewPipeline[composition.ListingContext](), nil)
+	after := catalog.EncodeListCursor(4, 0)
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("GET", "/api/v1/products?after="+after+"&offset=-1&limit=2", nil)
+	newRouter(h).ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d body=%s (after must ignore invalid offset)", rec.Code, rec.Body.String())
+	}
+	products := parseBody(t, rec)["data"].(map[string]interface{})["products"].([]interface{})
+	if len(products) != 2 {
+		t.Fatalf("len=%d", len(products))
+	}
+}
+
 func TestCategoryHandler_Products_InvalidAfter(t *testing.T) {
 	catRepo := &mockCategoryRepo{
 		findByIDFn: func(_ context.Context, id string) (*catalog.Category, error) {

@@ -109,12 +109,7 @@ func (h *CategoryHandler) Products() http.HandlerFunc {
 			return
 		}
 
-		offset, limit, err := httpshared.ParsePagination(r)
-		if err != nil {
-			httpshared.JSONError(w, err)
-			return
-		}
-		afterOff, afterSkip, afterSet, err := parseVisibilityAfter(r)
+		offset, limit, afterOff, afterSkip, afterSet, err := parseListingPagination(r)
 		if err != nil {
 			httpshared.JSONError(w, err)
 			return

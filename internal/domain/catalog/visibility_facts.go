@@ -141,7 +141,10 @@ func FilterIDsWithFacts(
 const (
 	visibilityScanHardCap     = 10000
 	visibilityScanMinHeadroom = 2000 // sparse AutoBasis catalogs (mostly OOS)
-	visibilityScanBatchSize   = 200
+	// visibilityScanMaxBatch matches postgres ProductRepo maxListLimit (100).
+	// Requesting more silently returns a short page that must not be treated
+	// as end-of-catalog.
+	visibilityScanMaxBatch = 100
 )
 
 // VisiblePage is one page of axis-filtered products (PR-1057).
@@ -237,13 +240,7 @@ func ListVisiblePage(
 		maxScan = visibilityScanHardCap
 	}
 
-	batchSize := params.Limit * 4
-	if batchSize < visibilityScanBatchSize {
-		batchSize = visibilityScanBatchSize
-	}
-	if batchSize > 500 {
-		batchSize = 500
-	}
+	batchSize := visibilityScanMaxBatch
 
 	skipped := 0
 	scanned := 0
@@ -308,6 +305,8 @@ func ListVisiblePage(
 		}
 		dbOffset += len(batch)
 		resumeAt = dbOffset
+		// Short batch means end of table when requests stay within the
+		// repository Limit cap (visibilityScanMaxBatch == postgres maxListLimit).
 		if len(batch) < take {
 			return VisiblePage{Products: out}, nil
 		}

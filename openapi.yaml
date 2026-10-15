@@ -2424,29 +2424,6 @@ components:
         cursors return 422.
       schema:
         type: string
-    VisibilityListMeta:
-      type: object
-      description: Pagination meta for visibility-filtered product listings.
-      properties:
-        truncated:
-          type: boolean
-          description: >
-            Scan budget stopped before the page was filled; continue with
-            after when next_after is present.
-        has_more:
-          type: boolean
-          description: >
-            More repository rows may exist. May produce one trailing empty
-            page when only hidden rows remain.
-        depth_limited:
-          type: boolean
-          description: >
-            Cursor resume reached the 100000-row depth cap. next_after is
-            omitted; classic offset may still reach deeper rows until keyset
-            pagination.
-        next_after:
-          type: string
-          description: Opaque resume cursor for the after query parameter.
     ProductType:
       name: type
       in: query
@@ -2499,6 +2476,30 @@ components:
           description: Response payload (null on error)
         error:
           $ref: "#/components/schemas/ErrorBody"
+
+    VisibilityListMeta:
+      type: object
+      description: Pagination meta for visibility-filtered product listings.
+      properties:
+        truncated:
+          type: boolean
+          description: >
+            Scan budget stopped before the page was filled; continue with
+            after when next_after is present.
+        has_more:
+          type: boolean
+          description: >
+            More repository rows may exist. May produce one trailing empty
+            page when only hidden rows remain.
+        depth_limited:
+          type: boolean
+          description: >
+            Cursor resume reached the 100000-row depth cap. next_after is
+            omitted; classic offset may still reach deeper rows until keyset
+            pagination.
+        next_after:
+          type: string
+          description: Opaque resume cursor for the after query parameter.
 
     ErrorBody:
       type: object

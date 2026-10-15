@@ -229,7 +229,7 @@ Or `SHOPANDA_CATALOG_VISIBILITY_ENFORCE=true`, then restart `serve`.
 
 1. Decide whether OOS/unpriced PDPs should 404, or force display axes to `visible` (leave `purchasable` as `auto`/`hidden`) for SEO-critical SKUs.
 2. Spot-check a few OOS and unpriced products under enforce in staging.
-3. After enable, stock and price events purge `fpc:listing` as well as `product:{id}` so restocked/priced products can reappear on cached PLPs.
+3. After enable, stock and price events purge `fpc:listing` as well as `product:{id}` so restocked/priced products can reappear on cached PLPs. FPC keys include the enforce flag, so pages cached while enforce was off are not reused after the flip (no manual FPC flush required for correctness).
 
 **Deep / sparse REST listings:** `GET /api/v1/products` and category product lists return `meta.has_more`, `meta.truncated`, and (when more may exist) `meta.next_after`.
 
