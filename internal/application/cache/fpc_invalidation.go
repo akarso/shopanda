@@ -24,6 +24,11 @@ type FPCInvalidationSubscriber struct {
 	cache cache.Cache
 	log   Logger
 	obs   *FPCObserver
+	// purgeListingsOnStockPrice clears fpc:listing on stock/price events
+	// (needed when catalog.visibility.enforce is on so AutoBasis flips can
+	// reappear). Off by default — stock churn on every order must not wipe
+	// PLP caches while enforcement is disabled.
+	purgeListingsOnStockPrice bool
 }
 
 // NewFPCInvalidationSubscriber creates an FPCInvalidationSubscriber.
@@ -41,6 +46,15 @@ func NewFPCInvalidationSubscriber(c cache.Cache, log Logger) *FPCInvalidationSub
 func (s *FPCInvalidationSubscriber) WithObserver(obs *FPCObserver) *FPCInvalidationSubscriber {
 	if s != nil {
 		s.obs = obs
+	}
+	return s
+}
+
+// WithVisibilityListingPurge enables ListingTag() purge on stock/price
+// events (PR-1057). Pass catalog.visibility.enforce.
+func (s *FPCInvalidationSubscriber) WithVisibilityListingPurge(enabled bool) *FPCInvalidationSubscriber {
+	if s != nil {
+		s.purgeListingsOnStockPrice = enabled
 	}
 	return s
 }
@@ -93,6 +107,12 @@ func (s *FPCInvalidationSubscriber) HandlePriceUpserted(ctx context.Context, evt
 	if !ok {
 		return fmt.Errorf("cache.fpc_invalidation: unexpected event data type %T", evt.Data)
 	}
+	if s.purgeListingsOnStockPrice {
+		// Listing shells may omit a product that was unpriced / out of AutoBasis.
+		if err := s.deleteTag(ctx, ListingTag(), "tag", ListingTag()); err != nil {
+			return err
+		}
+	}
 	return s.deleteTag(ctx, ProductTag(data.ProductID), "product_id", data.ProductID)
 }
 
@@ -100,6 +120,11 @@ func (s *FPCInvalidationSubscriber) HandleStockUpdated(ctx context.Context, evt 
 	data, ok := evt.Data.(inventory.StockUpdatedData)
 	if !ok {
 		return fmt.Errorf("cache.fpc_invalidation: unexpected event data type %T", evt.Data)
+	}
+	if s.purgeListingsOnStockPrice {
+		if err := s.deleteTag(ctx, ListingTag(), "tag", ListingTag()); err != nil {
+			return err
+		}
 	}
 	return s.deleteTag(ctx, ProductTag(data.ProductID), "product_id", data.ProductID)
 }

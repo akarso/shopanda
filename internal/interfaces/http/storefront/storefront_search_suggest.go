@@ -50,6 +50,11 @@ func (h *StorefrontHandler) SearchSuggestFragment() http.HandlerFunc {
 				http.Error(w, "Internal Server Error", http.StatusInternalServerError)
 				return
 			}
+			suggestions, err = filterSuggestionsByVisibility(r, suggestions, h.visibilityFacts, h.visibilityOpts)
+			if err != nil {
+				http.Error(w, "Internal Server Error", http.StatusInternalServerError)
+				return
+			}
 			data.Suggestions = make([]storefrontSearchSuggestionItem, 0, len(suggestions))
 			for _, item := range suggestions {
 				data.Suggestions = append(data.Suggestions, storefrontSearchSuggestionItem{

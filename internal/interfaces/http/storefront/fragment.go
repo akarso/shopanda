@@ -115,7 +115,7 @@ func (h *StorefrontHandler) RecentlyViewedFragment() http.HandlerFunc {
 		resolved := map[string]recentlyViewedItem{}
 		if add := strings.TrimSpace(r.URL.Query().Get("add")); add != "" && len(add) <= recentlyViewedMaxIDLen && h.repo != nil {
 			p, err := h.repo.FindByID(r.Context(), add)
-			if err == nil && recentlyViewedProductOK(p) {
+			if err == nil && h.recentlyViewedVisible(r, p) {
 				h.recordRecentlyViewedID(w, r, p.ID)
 				ids = prependRecentlyViewedID(ids, p.ID)
 				resolved[p.ID] = recentlyViewedItemFromProduct(p)
@@ -123,8 +123,27 @@ func (h *StorefrontHandler) RecentlyViewedFragment() http.HandlerFunc {
 		}
 		data := recentlyViewedData{EmptyMessage: "No recently viewed products yet."}
 		if len(ids) > 0 && h.repo != nil {
+			// Skip IDs already gated via recentlyViewedVisible (the ?add= path)
+			// to avoid a second facts round trip for the same product.
+			unchecked := make([]string, 0, len(ids))
+			for _, id := range ids {
+				if _, ok := resolved[id]; !ok {
+					unchecked = append(unchecked, id)
+				}
+			}
+			allowed := h.recentlyViewedAllowedIDs(r, unchecked)
+			allow := make(map[string]struct{}, len(allowed)+len(resolved))
+			for id := range resolved {
+				allow[id] = struct{}{}
+			}
+			for _, id := range allowed {
+				allow[id] = struct{}{}
+			}
 			items := make([]recentlyViewedItem, 0, len(ids))
 			for _, id := range ids {
+				if _, ok := allow[id]; !ok {
+					continue
+				}
 				if item, ok := resolved[id]; ok {
 					items = append(items, item)
 					continue
@@ -151,6 +170,39 @@ func (h *StorefrontHandler) RecentlyViewedFragment() http.HandlerFunc {
 
 func recentlyViewedProductOK(p *catalog.Product) bool {
 	return p != nil && p.Status == catalog.StatusActive && strings.TrimSpace(p.Slug) != ""
+}
+
+func (h *StorefrontHandler) recentlyViewedVisible(r *http.Request, p *catalog.Product) bool {
+	if !recentlyViewedProductOK(p) {
+		return false
+	}
+	if h.visibilityFacts == nil {
+		return true
+	}
+	ok, err := catalog.AllowWithFacts(r.Context(), p, catalog.VisibilitySurfaceIndividually, h.visibilityFacts, h.visibilityOpts)
+	if err != nil {
+		h.log.Warn("storefront.recently_viewed.visibility_failed", map[string]interface{}{
+			"product_id": p.ID,
+			"error":      err.Error(),
+		})
+		return false
+	}
+	return ok
+}
+
+// recentlyViewedAllowedIDs batch-filters cookie IDs through VisibleIndividually.
+func (h *StorefrontHandler) recentlyViewedAllowedIDs(r *http.Request, ids []string) []string {
+	if h.visibilityFacts == nil || len(ids) == 0 {
+		return ids
+	}
+	allowed, err := catalog.FilterIDsWithFacts(r.Context(), ids, catalog.VisibilitySurfaceIndividually, h.visibilityFacts, h.visibilityOpts)
+	if err != nil {
+		h.log.Warn("storefront.recently_viewed.visibility_failed", map[string]interface{}{
+			"error": err.Error(),
+		})
+		return nil
+	}
+	return allowed
 }
 
 func recentlyViewedItemFromProduct(p *catalog.Product) recentlyViewedItem {

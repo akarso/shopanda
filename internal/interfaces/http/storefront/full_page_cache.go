@@ -463,8 +463,9 @@ func (h *StorefrontHandler) fpcLoadAttrBag(ctx context.Context, includeAdvanced 
 
 func (h *StorefrontHandler) fpcVary(r *http.Request) cacheapp.Vary {
 	v := cacheapp.Vary{
-		Language:  translation.LanguageFromContext(r.Context()),
-		AuthState: cacheapp.AuthGuest,
+		Language:          translation.LanguageFromContext(r.Context()),
+		AuthState:         cacheapp.AuthGuest,
+		VisibilityEnforce: h.visibilityFacts != nil,
 	}
 	if s := store.FromContext(r.Context()); s != nil {
 		v.Store = s.ID

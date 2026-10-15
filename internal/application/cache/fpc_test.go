@@ -38,6 +38,11 @@ func TestFPC_KeyIgnoresCustomerIdentity(t *testing.T) {
 	if cacheapp.Key(cacheapp.RoutePDP, "/products/oak-desk", "", auth) == a {
 		t.Fatal("auth_state must change the key")
 	}
+	enforceOn := v
+	enforceOn.VisibilityEnforce = true
+	if cacheapp.Key(cacheapp.RoutePDP, "/products/oak-desk", "", enforceOn) == a {
+		t.Fatal("visibility enforce must change the key")
+	}
 	otherStore := v
 	otherStore.Store = "s2"
 	if cacheapp.Key(cacheapp.RoutePDP, "/products/oak-desk", "", otherStore) == a {

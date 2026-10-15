@@ -339,6 +339,7 @@ paths:
       parameters:
         - $ref: "#/components/parameters/Offset"
         - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/VisibilityAfter"
       responses:
         "200":
           description: OK
@@ -359,7 +360,11 @@ paths:
                       updated_at: "2026-01-01T00:00:00Z"
                   blocks: []
                   filters: {}
-                  meta: {}
+                  meta:
+                    truncated: false
+                    has_more: true
+                    depth_limited: false
+                    next_after: "eyJvIjoxMH0"
                 error: null
 
   /api/v1/products/{id}:
@@ -515,6 +520,7 @@ paths:
         - $ref: "#/components/parameters/CategoryId"
         - $ref: "#/components/parameters/Offset"
         - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/VisibilityAfter"
       responses:
         "200":
           description: OK
@@ -528,6 +534,10 @@ paths:
                     - id: "p1"
                       name: Widget
                       slug: widget
+                  meta:
+                    truncated: false
+                    has_more: false
+                    depth_limited: false
                 error: null
 
   # ── Search ─────────────────────────────────────────────
@@ -2398,6 +2408,22 @@ components:
         type: integer
         default: 20
         maximum: 100
+    VisibilityAfter:
+      name: after
+      in: query
+      description: >
+        Opaque resume cursor from meta.next_after on the previous listing
+        response. When set, the offset parameter is ignored. Pass after (not
+        an advanced offset) when meta.truncated is true and next_after is
+        present. has_more may produce one trailing empty page when only
+        hidden rows remain. Cursors are position-based and can drift if
+        products are inserted or deleted between requests. Cursor resume
+        depth is capped at 100000 repository rows (classic offset is not
+        capped the same way): past that limit meta.depth_limited is true,
+        has_more is false, and next_after is omitted. Tampered or over-cap
+        cursors return 422.
+      schema:
+        type: string
     ProductType:
       name: type
       in: query
@@ -2450,6 +2476,30 @@ components:
           description: Response payload (null on error)
         error:
           $ref: "#/components/schemas/ErrorBody"
+
+    VisibilityListMeta:
+      type: object
+      description: Pagination meta for visibility-filtered product listings.
+      properties:
+        truncated:
+          type: boolean
+          description: >
+            Scan budget stopped before the page was filled; continue with
+            after when next_after is present.
+        has_more:
+          type: boolean
+          description: >
+            More repository rows may exist. May produce one trailing empty
+            page when only hidden rows remain.
+        depth_limited:
+          type: boolean
+          description: >
+            Cursor resume reached the 100000-row depth cap. next_after is
+            omitted; classic offset may still reach deeper rows until keyset
+            pagination.
+        next_after:
+          type: string
+          description: Opaque resume cursor for the after query parameter.
 
     ErrorBody:
       type: object

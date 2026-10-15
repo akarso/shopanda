@@ -24,7 +24,7 @@ func TestPublicProductVisibilityRoutes_Contract(t *testing.T) {
 		{Method: "GET", Path: "/api/v1/search", Surface: catalog.VisibilitySurfaceSearch, EnforceIn: "PR-1057"},
 		{Method: "GET", Path: "/api/v1/search/suggest", Surface: catalog.VisibilitySurfaceSearch, EnforceIn: "PR-1057"},
 		{Method: "GET", Path: "/api/v1/content-blocks/{targetType}/{targetKey}", Surface: catalog.VisibilitySurfaceCatalog, EnforceIn: "PR-1057"},
-		{Method: "GET", Path: "/sitemap.xml", Surface: catalog.VisibilitySurfaceCatalog, EnforceIn: "PR-1057"},
+		{Method: "GET", Path: "/sitemap.xml", Surface: catalog.VisibilitySurfaceIndividually, EnforceIn: "PR-1057"},
 		{Method: "GET", Path: "/{$}", Surface: catalog.VisibilitySurfaceCatalog, EnforceIn: "PR-1057"},
 		{Method: "GET", Path: "/pages/{slug}", Surface: catalog.VisibilitySurfaceCatalog, EnforceIn: "PR-1057"},
 		{Method: "GET", Path: "/products", Surface: catalog.VisibilitySurfaceCatalog, EnforceIn: "PR-1057"},
@@ -98,15 +98,15 @@ func TestPublicProductVisibilityRoutes_Contract(t *testing.T) {
 // productVisibilityWireExclusions are public routes that look product-adjacent
 // in wire_routes.go but are intentionally not axis-gated (must stay listed).
 var productVisibilityWireExclusions = map[string]string{
-	"GET /api/v1/categories":           "category tree only — no product payloads",
-	"GET /api/v1/categories/{id}":      "category entity only",
-	"GET /api/v1/pages/{slug}":         "CMS page JSON without carousel hydration (blocks are separate)",
-	"POST /api/v1/carts":               "create empty cart — no product payload",
-	"POST /cart/remove":                "line removal — no purchasability discovery",
-	"POST /fragments/cart/remove":      "fragment line removal",
-	"GET /fragments/cart-count":        "badge count only",
-	"POST /api/v1/carts/{cartId}/coupon":   "coupon apply — no product discovery",
-	"DELETE /api/v1/carts/{cartId}/coupon": "coupon remove",
+	"GET /api/v1/categories":                          "category tree only — no product payloads",
+	"GET /api/v1/categories/{id}":                     "category entity only",
+	"GET /api/v1/pages/{slug}":                        "CMS page JSON without carousel hydration (blocks are separate)",
+	"POST /api/v1/carts":                              "create empty cart — no product payload",
+	"POST /cart/remove":                               "line removal — no purchasability discovery",
+	"POST /fragments/cart/remove":                     "fragment line removal",
+	"GET /fragments/cart-count":                       "badge count only",
+	"POST /api/v1/carts/{cartId}/coupon":              "coupon apply — no product discovery",
+	"DELETE /api/v1/carts/{cartId}/coupon":            "coupon remove",
 	"DELETE /api/v1/carts/{cartId}/items/{variantId}": "line remove",
 }
 

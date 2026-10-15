@@ -867,7 +867,9 @@ func setupWorker(conn *sql.DB, cfg *config.Config, log logger.Logger, app *plugi
 		return nil, nil, nil, nil, err
 	}
 	fpcObs := cacheApp.NewFPCObserver(metricsRecorder)
-	fpcInvalidation := cacheApp.NewFPCInvalidationSubscriber(appCache, log).WithObserver(fpcObs)
+	fpcInvalidation := cacheApp.NewFPCInvalidationSubscriber(appCache, log).
+		WithObserver(fpcObs).
+		WithVisibilityListingPurge(cfg.Catalog.Visibility.Enforce)
 	jobWorker.Register(searchApp.NewReindexHandler(searchIndexRunRepo, searchProductSource, searchEngine, log).
 		WithListingCacheInvalidator(fpcInvalidation))
 
@@ -986,7 +988,10 @@ func runWorker(cfg *config.Config, log logger.Logger) error {
 	// FPCInvalidationSubscriber likewise must live on this bus (PR-1046):
 	// stock restores would otherwise leave tagged full-page entries stale
 	// until TTL while only serve's bus ran DeleteByTag.
-	cacheApp.NewFPCInvalidationSubscriber(appCache, log).WithObserver(fpcObs).Register(bus)
+	cacheApp.NewFPCInvalidationSubscriber(appCache, log).
+		WithObserver(fpcObs).
+		WithVisibilityListingPurge(cfg.Catalog.Visibility.Enforce).
+		Register(bus)
 	if reindexService, err := newWorkerReindexService(conn, cfg, log, jobQueue); err != nil {
 		log.Warn("worker.stock_sync_reindex_unavailable", map[string]interface{}{"error": err.Error()})
 	} else {

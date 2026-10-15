@@ -9,6 +9,7 @@ import (
 	httpshared "github.com/akarso/shopanda/internal/interfaces/http/shared"
 
 	reviewsApp "github.com/akarso/shopanda/internal/application/reviews"
+	"github.com/akarso/shopanda/internal/domain/catalog"
 	domainReview "github.com/akarso/shopanda/internal/domain/review"
 	"github.com/akarso/shopanda/internal/platform/apperror"
 	"github.com/akarso/shopanda/internal/platform/auth"
@@ -16,7 +17,10 @@ import (
 
 // ReviewHandler serves public product review endpoints.
 type ReviewHandler struct {
-	reviews *reviewsApp.Service
+	reviews         *reviewsApp.Service
+	products        catalog.ProductRepository
+	visibilityFacts catalog.VisibilityFactsSource
+	visibilityOpts  catalog.VisibilityOptions
 }
 
 // NewReviewHandler creates a ReviewHandler.
@@ -27,10 +31,20 @@ func NewReviewHandler(reviews *reviewsApp.Service) *ReviewHandler {
 	return &ReviewHandler{reviews: reviews}
 }
 
+// WithVisibilityGate checks VisibleIndividually on the parent product (PR-1057).
+func (h *ReviewHandler) WithVisibilityGate(products catalog.ProductRepository, facts catalog.VisibilityFactsSource) *ReviewHandler {
+	h.products = products
+	h.visibilityFacts = facts
+	return h
+}
+
 // List handles GET /api/v1/products/{id}/reviews.
 func (h *ReviewHandler) List() http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		productID := r.PathValue("id")
+		if !h.parentIndividuallyVisible(w, r, productID) {
+			return
+		}
 		offset, limit, err := httpshared.ParsePagination(r)
 		if err != nil {
 			httpshared.JSONError(w, err)
@@ -54,9 +68,48 @@ func (h *ReviewHandler) List() http.HandlerFunc {
 	}
 }
 
+func (h *ReviewHandler) parentIndividuallyVisible(w http.ResponseWriter, r *http.Request, productID string) bool {
+	return reviewParentIndividuallyVisible(w, r, h.products, h.visibilityFacts, h.visibilityOpts, productID)
+}
+
+func reviewParentIndividuallyVisible(
+	w http.ResponseWriter,
+	r *http.Request,
+	products catalog.ProductRepository,
+	facts catalog.VisibilityFactsSource,
+	opts catalog.VisibilityOptions,
+	productID string,
+) bool {
+	if products == nil || facts == nil {
+		return true
+	}
+	p, err := products.FindByID(r.Context(), productID)
+	if err != nil {
+		httpshared.JSONError(w, err)
+		return false
+	}
+	if p == nil {
+		httpshared.JSONError(w, apperror.NotFound("product not found"))
+		return false
+	}
+	ok, err := catalog.AllowWithFacts(r.Context(), p, catalog.VisibilitySurfaceIndividually, facts, opts)
+	if err != nil {
+		httpshared.JSONError(w, err)
+		return false
+	}
+	if !ok {
+		httpshared.JSONError(w, apperror.NotFound("product not found"))
+		return false
+	}
+	return true
+}
+
 // ReviewAccountHandler serves authenticated customer review endpoints.
 type ReviewAccountHandler struct {
-	reviews *reviewsApp.Service
+	reviews         *reviewsApp.Service
+	products        catalog.ProductRepository
+	visibilityFacts catalog.VisibilityFactsSource
+	visibilityOpts  catalog.VisibilityOptions
 }
 
 // NewReviewAccountHandler creates a ReviewAccountHandler.
@@ -65,6 +118,13 @@ func NewReviewAccountHandler(reviews *reviewsApp.Service) *ReviewAccountHandler 
 		panic("http: review service must not be nil")
 	}
 	return &ReviewAccountHandler{reviews: reviews}
+}
+
+// WithVisibilityGate checks VisibleIndividually on the parent product (PR-1057).
+func (h *ReviewAccountHandler) WithVisibilityGate(products catalog.ProductRepository, facts catalog.VisibilityFactsSource) *ReviewAccountHandler {
+	h.products = products
+	h.visibilityFacts = facts
+	return h
 }
 
 type submitReviewBody struct {
@@ -78,6 +138,9 @@ func (h *ReviewAccountHandler) Submit() http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		customerID := auth.IdentityFrom(r.Context()).UserID
 		productID := r.PathValue("id")
+		if !reviewParentIndividuallyVisible(w, r, h.products, h.visibilityFacts, h.visibilityOpts, productID) {
+			return
+		}
 
 		var req submitReviewBody
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {

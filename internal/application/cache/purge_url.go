@@ -166,22 +166,25 @@ func PurgeURLKeys(rawPath string, stores []StoreVary) (path string, keys []strin
 	}
 
 	languages := purgeLanguages(stores, langFromRawQuery(rawQuery))
-	keys = make([]string, 0, len(stores)*len(languages)*2)
-	seen := make(map[string]struct{}, len(stores)*len(languages)*2)
+	keys = make([]string, 0, len(stores)*len(languages)*4)
+	seen := make(map[string]struct{}, len(stores)*len(languages)*4)
 	for _, st := range stores {
 		for _, lang := range languages {
 			for _, auth := range []string{AuthGuest, AuthAuthenticated} {
-				k := Key(route, path, filtered, Vary{
-					Store:     st.ID,
-					Language:  lang,
-					Currency:  st.Currency,
-					AuthState: auth,
-				}, attrExtras...)
-				if _, ok := seen[k]; ok {
-					continue
+				for _, enforce := range []bool{false, true} {
+					k := Key(route, path, filtered, Vary{
+						Store:             st.ID,
+						Language:          lang,
+						Currency:          st.Currency,
+						AuthState:         auth,
+						VisibilityEnforce: enforce,
+					}, attrExtras...)
+					if _, ok := seen[k]; ok {
+						continue
+					}
+					seen[k] = struct{}{}
+					keys = append(keys, k)
 				}
-				seen[k] = struct{}{}
-				keys = append(keys, k)
 			}
 		}
 	}

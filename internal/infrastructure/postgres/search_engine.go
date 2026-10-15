@@ -105,7 +105,7 @@ func (e *SearchEngine) Suggest(ctx context.Context, prefix string, limit int) ([
 		limit = search.MaxSuggestLimit
 	}
 
-	const q = `SELECT name, slug FROM products WHERE name ILIKE $1 ESCAPE '\' AND status = 'active' ORDER BY name LIMIT $2`
+	const q = `SELECT id, name, slug FROM products WHERE name ILIKE $1 ESCAPE '\' AND status = 'active' ORDER BY name LIMIT $2`
 	escaped := escapeLike(prefix)
 	rows, err := e.db.QueryContext(ctx, q, escaped+"%", limit)
 	if err != nil {
@@ -115,14 +115,15 @@ func (e *SearchEngine) Suggest(ctx context.Context, prefix string, limit int) ([
 
 	var suggestions []search.Suggestion
 	for rows.Next() {
-		var name, slug string
-		if err := rows.Scan(&name, &slug); err != nil {
+		var id, name, slug string
+		if err := rows.Scan(&id, &name, &slug); err != nil {
 			return nil, fmt.Errorf("search_engine: suggest scan: %w", err)
 		}
 		suggestions = append(suggestions, search.Suggestion{
-			Text: name,
-			Type: "product",
-			URL:  "/products/" + slug,
+			Text:      name,
+			Type:      "product",
+			URL:       "/products/" + slug,
+			ProductID: id,
 		})
 	}
 	if err := rows.Err(); err != nil {

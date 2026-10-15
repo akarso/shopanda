@@ -7,6 +7,7 @@ import (
 
 	httpshared "github.com/akarso/shopanda/internal/interfaces/http/shared"
 
+	"github.com/akarso/shopanda/internal/domain/catalog"
 	"github.com/akarso/shopanda/internal/domain/search"
 	"github.com/akarso/shopanda/internal/domain/store"
 	"github.com/akarso/shopanda/internal/platform/apperror"
@@ -16,6 +17,8 @@ import (
 type SearchHandler struct {
 	engine              search.SearchEngine
 	advancedSearchAttrs AdvancedSearchAttributeLister
+	visibilityFacts     catalog.VisibilityFactsSource
+	visibilityOpts      catalog.VisibilityOptions
 }
 
 // NewSearchHandler creates a SearchHandler with the given search engine.
@@ -29,6 +32,13 @@ func NewSearchHandler(engine search.SearchEngine) *SearchHandler {
 // WithAdvancedSearchAttributes enables attr_* query params for flagged catalog attributes.
 func (h *SearchHandler) WithAdvancedSearchAttributes(lister AdvancedSearchAttributeLister) *SearchHandler {
 	h.advancedSearchAttrs = lister
+	return h
+}
+
+// WithVisibilityFacts enables query-time VisibleInSearch filtering (PR-1057)
+// until the search index carries visibility fields (PR-1079).
+func (h *SearchHandler) WithVisibilityFacts(facts catalog.VisibilityFactsSource) *SearchHandler {
+	h.visibilityFacts = facts
 	return h
 }
 
@@ -83,6 +93,11 @@ func (h *SearchHandler) Search() http.HandlerFunc {
 			httpshared.JSONError(w, err)
 			return
 		}
+		result, err = filterSearchHitsByVisibility(r, result, catalog.VisibilitySurfaceSearch, h.visibilityFacts, h.visibilityOpts)
+		if err != nil {
+			httpshared.JSONError(w, err)
+			return
+		}
 
 		httpshared.JSON(w, http.StatusOK, searchResponse(result))
 	}
@@ -117,6 +132,11 @@ func (h *SearchHandler) Suggest() http.HandlerFunc {
 		}
 
 		suggestions, err := h.engine.Suggest(r.Context(), prefix, limit)
+		if err != nil {
+			httpshared.JSONError(w, err)
+			return
+		}
+		suggestions, err = filterSuggestionsByVisibility(r, suggestions, h.visibilityFacts, h.visibilityOpts)
 		if err != nil {
 			httpshared.JSONError(w, err)
 			return

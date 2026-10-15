@@ -847,6 +847,10 @@ Naming rule, enforced by a CI unit test (`internal/platform/migrate` — runs in
 - **never rename or delete** either of those two files — their filenames are recorded verbatim in every deployed `schema_migrations` table; renaming desyncs tracking and makes Shopanda re-attempt (and fail) an already-applied migration
 - do **not** add new allowlist entries to resolve a new collision — renumber the new migration file instead; the check fails the build if a new file reuses an existing prefix, if an allowlisted filename is renamed/removed, or if a third file is added at an allowlisted prefix
 
+## Catalog visibility enforcement
+
+`catalog.visibility.enforce` (env `SHOPANDA_CATALOG_VISIBILITY_ENFORCE`) defaults to **false**. Leaving it off is the safe upgrade path after Phase 12 Track B migrations: existing products stay discoverable under mode=`auto` until you explicitly opt into AutoBasis gates. See [RUNBOOK — Catalog visibility enforcement](../../RUNBOOK.md#catalog-visibility-enforcement-pr-1057) before flipping it on in production.
+
 ## Search Index Maintenance
 
 ### Meilisearch: full reindex required after upgrading past PR-1037

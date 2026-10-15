@@ -209,6 +209,39 @@ Shopanda plugins are **compile-time registered** — there is no `.so` drop-in l
 - If PgBouncer (or similar) sits in front of PostgreSQL in **transaction-pooling mode**, set `database.query_exec_mode: exec` (or `SHOPANDA_DATABASE_QUERY_EXEC_MODE=exec`). Otherwise pgx defaults to server-side prepared statement caching, which does not survive that pooling mode — symptom: `prepared statement "..." already exists` / `does not exist` errors under load.
 - Leave unset for a direct connection to PostgreSQL — it trades away a real performance optimization and should only be set when a transaction-pooling proxy is actually in front of the database. See [DEPLOYMENT.md](docs/guides/DEPLOYMENT.md) ("Consider connection pooling").
 
+## Catalog visibility enforcement (PR-1057)
+
+Storefront axis gates (`VisibleInCatalog` / `VisibleInSearch` / `VisibleIndividually`) are **off by default**.
+
+**Enable only after a deliberate choice:**
+
+```yaml
+catalog:
+  visibility:
+    enforce: true
+```
+
+Or `SHOPANDA_CATALOG_VISIBILITY_ENFORCE=true`, then restart `serve`.
+
+**Why default off:** migration `086` set every product’s modes to `auto`. AutoBasis requires a stock row with `quantity > 0` and at least one price. With enforce on, OOS products, products with no stock row, and products with no price drop from listings, search, suggest, carousels, and the sitemap, and their PDP / variants / reviews return **404**. That is intentional AutoBasis behaviour, not a soft “hide from PLP only” rule.
+
+**Before enabling in production:**
+
+1. Decide whether OOS/unpriced PDPs should 404, or force display axes to `visible` (leave `purchasable` as `auto`/`hidden`) for SEO-critical SKUs.
+2. Spot-check a few OOS and unpriced products under enforce in staging.
+3. After enable, stock and price events purge `fpc:listing` as well as `product:{id}` so restocked/priced products can reappear on cached PLPs. FPC keys include the enforce flag, so pages cached while enforce was off are not reused after the flip (no manual FPC flush required for correctness).
+
+**Deep / sparse REST listings:** `GET /api/v1/products` and category product lists return `meta.has_more`, `meta.truncated`, and (when more may exist) `meta.next_after`.
+
+- **Always resume with `?after=<next_after>&limit=N`**. When `after` is set, `offset` is ignored. Do **not** advance `offset` by `len(products)`.
+- `truncated: true` means the scan budget stopped early (short or empty page, or mid-skip); continue with `after` — the cursor carries any remaining skip.
+- Empty `products` with `has_more: false` is end of catalog. `has_more: true` can still yield one trailing empty page when only hidden rows remain.
+- Cursor resume depth is capped at 100000 repository rows. At that limit `meta.depth_limited` is true, `has_more` is false, and `next_after` is omitted — the server never issues a cursor it would reject. Classic `offset` is not capped the same way and can still go deeper until keyset pagination lands. Tampered / over-cap `after` values return 422.
+
+Stock/price events purge `fpc:listing` only while enforce is on — every order can invalidate PLP caches. Prefer enabling enforce during a low-traffic window, or accept lower FPC hit rates until threshold-crossing invalidation lands.
+
+Long-term: keyset `(created_at, id)` or SQL-level visibility predicates (post-1057). Offset-based cursors can drift when products are inserted or deleted between requests.
+
 ## Admin product type
 
 - Product `type` is **mutable** via admin create/update (`simple` \| `virtual` \| `bundle` \| `grouped` \| `configurable` \| `downloadable`). Create may omit `type` (defaults to `simple`); update must omit the field to leave type unchanged — an explicit empty/whitespace `type` is rejected.

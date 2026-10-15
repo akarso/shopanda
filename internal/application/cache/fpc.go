@@ -66,11 +66,14 @@ var listingQueryKeys = map[string]struct{}{
 
 // Vary is the coarse cache dimension set. AuthState is guest vs
 // authenticated — never a session or customer ID.
+// VisibilityEnforce mirrors catalog.visibility.enforce so pages cached
+// with gates off are not served after enforcement is enabled (PR-1057).
 type Vary struct {
-	Store     string
-	Language  string
-	Currency  string
-	AuthState string
+	Store             string
+	Language          string
+	Currency          string
+	AuthState         string
+	VisibilityEnforce bool
 }
 
 // PageEntry is the JSON value stored under an FPC key.
@@ -115,6 +118,10 @@ func Key(routeTemplate, path, rawQuery string, v Vary, extraQueryKeys ...string)
 	if v.AuthState != AuthAuthenticated {
 		v.AuthState = AuthGuest
 	}
+	enforce := "0"
+	if v.VisibilityEnforce {
+		enforce = "1"
+	}
 	return fpcKeyPrefix + strings.Join([]string{
 		routeTemplate,
 		path,
@@ -123,6 +130,7 @@ func Key(routeTemplate, path, rawQuery string, v Vary, extraQueryKeys ...string)
 		v.Language,
 		v.Currency,
 		v.AuthState,
+		enforce,
 	}, "\x1f")
 }
 

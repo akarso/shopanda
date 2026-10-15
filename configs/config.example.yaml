@@ -148,6 +148,17 @@ media:
     enabled: false
     quality: 80
 
+# --- Catalog ------------------------------------------------------------------
+catalog:
+  visibility:
+    # PR-1057 storefront axis gates (VisibleInCatalog / Search / Individually).
+    # Default false: migration 086 left every row at mode=auto, and AutoBasis
+    # requires qty>0 + a price row — enabling without a mode backfill 404s OOS
+    # and unpriced PDPs and drops them from listings/search/sitemap.
+    # Set true (or SHOPANDA_CATALOG_VISIBILITY_ENFORCE=true) after forcing
+    # display axes to visible for SEO-critical SKUs, or accepting AutoBasis.
+    enforce: false
+
 # --- Search -------------------------------------------------------------------
 search:
   # Engine: "postgres" (default, uses built-in full-text search) or "meilisearch".

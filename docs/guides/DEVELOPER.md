@@ -933,7 +933,22 @@ Public product exposure uses **two gates**, not one:
 
 The full audited map (REST + HTML/SSR + fragments, with `EnforceIn` PR-1057 vs PR-1058) is `storefront.PublicProductVisibilityRoutes()`.
 
-`FilterProducts` is **in-memory post-fetch only**. Do not apply it after SQL `LIMIT`/`OFFSET` without a query-level predicate and recount plan in PR-1057 — page size and totals will be wrong.
+### Storefront visibility enforcement (PR-1057)
+
+Axis gates run only when `catalog.visibility.enforce` is true (`SHOPANDA_CATALOG_VISIBILITY_ENFORCE`). Default is **false**: migration 086 left modes at `auto`, and AutoBasis requires qty &gt; 0 plus a price row — enabling without a mode backfill 404s OOS/unpriced PDPs. See RUNBOOK.
+
+When enforce is on, public reads resolve axes with AutoBasis facts from `catalog.VisibilityFactsSource` (`postgres.VisibilityFactsRepo`): active status only, four modes, quantity &gt; 0, price row exists, category assignment. `HasStoreAssignment` is always `true` until a product↔store table exists. Missing snapshots deny. Nil facts (enforce off) skips the axis gate.
+
+| Helper | Use |
+| --- | --- |
+| `AllowWithFacts` | Single PDP / variant parent / review parent |
+| `FilterWithFacts` | Sitemap batch (individually surface — PDP URLs) |
+| `FilterIDsWithFacts` | Search hits, suggest `ProductID`s, CMS carousel IDs |
+| `ListVisiblePage` | REST PLP / category products — returns `VisiblePage` with opaque `NextAfter` cursor (`NextAfterCursor`); clients pass `?after=` |
+
+Listing responses include `meta.truncated`, `meta.has_more`, `meta.depth_limited`, and `meta.next_after` (when has_more). The cursor encodes DB offset plus any remaining visible skip so budget stops mid-`offset` do not jump pages. When `after` is set, query `offset` is ignored. Resume with `after`, never by bumping visible `offset`. Past 100k repository rows `depth_limited` is true and `next_after` is omitted (classic `offset` is not capped the same way).
+
+Search and suggest apply a **query-time** `VisibleInSearch` filter until PR-1079. HTML listings do **not** overfetch (page-number Offset + enlarged Limit duplicated hits). Short or **empty** HTML pages with live pagination links (index `Total`/`Facets` unchanged) are accepted until 1079. Prefer `ListVisiblePage` over post-LIMIT `FilterProducts` for paginated REST catalog listings.
 
 Admin REST (`/api/v1/admin` and `/api/v1/admin/…`) and operator paths (import/export/seed) use `catalog.WithOperatorProductReadScope` (include-non-active + bypass axis gates) so shared helpers that call `AllowProduct` stay consistent with the admin UI.
 

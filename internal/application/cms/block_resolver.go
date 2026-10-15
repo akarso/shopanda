@@ -18,12 +18,20 @@ type ResolvedContentBlock struct {
 
 // BlockResolver resolves content blocks for rendering.
 type BlockResolver struct {
-	products catalog.ProductRepository
+	products        catalog.ProductRepository
+	visibilityFacts catalog.VisibilityFactsSource
+	visibilityOpts  catalog.VisibilityOptions
 }
 
 // NewBlockResolver creates a BlockResolver.
 func NewBlockResolver(products catalog.ProductRepository) *BlockResolver {
 	return &BlockResolver{products: products}
+}
+
+// WithVisibilityFacts filters product carousels by VisibleInCatalog (PR-1057).
+func (r *BlockResolver) WithVisibilityFacts(facts catalog.VisibilityFactsSource) *BlockResolver {
+	r.visibilityFacts = facts
+	return r
 }
 
 // ResolveBlocks hydrates block configs for rendering.
@@ -63,6 +71,9 @@ func (r *BlockResolver) resolveBlock(block *domaincms.ContentBlock, products map
 		data["body"] = config["body"]
 	case domaincms.BlockTypeProductCarousel:
 		data["title"] = config["title"]
+		// Keep configured IDs for FPC product tags even when visibility
+		// filters omit them from the rendered carousel (PR-1057).
+		data["product_ids"] = stringSliceFromAny(config["product_ids"])
 		data["products"] = r.carouselProducts(config["product_ids"], products)
 	default:
 		return ResolvedContentBlock{}, fmt.Errorf("block resolver: unsupported type %q", block.BlockType())
@@ -108,7 +119,18 @@ func (r *BlockResolver) loadProducts(ctx context.Context, blocks []*domaincms.Co
 			ids[productID] = struct{}{}
 		}
 	}
+	idList := make([]string, 0, len(ids))
 	for productID := range ids {
+		idList = append(idList, productID)
+	}
+	if r.visibilityFacts != nil {
+		allowed, err := catalog.FilterIDsWithFacts(ctx, idList, catalog.VisibilitySurfaceCatalog, r.visibilityFacts, r.visibilityOpts)
+		if err != nil {
+			return nil, fmt.Errorf("block resolver: visibility: %w", err)
+		}
+		idList = allowed
+	}
+	for _, productID := range idList {
 		product, err := r.products.FindByID(ctx, productID)
 		if err != nil {
 			return nil, fmt.Errorf("block resolver: product %q: %w", productID, err)
