@@ -42,7 +42,7 @@ func PublicProductVisibilityRoutes() []ProductVisibilityRoute {
 		{Method: "GET", Path: "/api/v1/search", Surface: catalog.VisibilitySurfaceSearch, EnforceIn: pr1057, Note: "full-text search"},
 		{Method: "GET", Path: "/api/v1/search/suggest", Surface: catalog.VisibilitySurfaceSearch, EnforceIn: pr1057, Note: "suggest"},
 		{Method: "GET", Path: "/api/v1/content-blocks/{targetType}/{targetKey}", Surface: catalog.VisibilitySurfaceCatalog, EnforceIn: pr1057, Note: "CMS blocks incl. product carousels"},
-		{Method: "GET", Path: "/sitemap.xml", Surface: catalog.VisibilitySurfaceCatalog, EnforceIn: pr1057, Note: "discovery listing; requesting a PDP URL still needs individually at request time"},
+		{Method: "GET", Path: "/sitemap.xml", Surface: catalog.VisibilitySurfaceIndividually, EnforceIn: pr1057, Note: "PDP URLs — individually (not catalog); catalog-only products stay out"},
 
 		// HTML / SSR storefront (incl. carousel hosts)
 		{Method: "GET", Path: "/{$}", Surface: catalog.VisibilitySurfaceCatalog, EnforceIn: pr1057, Note: "home — product carousels via content blocks"},

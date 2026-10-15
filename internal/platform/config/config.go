@@ -41,10 +41,24 @@ type Config struct {
 	RateLimit   RateLimitConfig   `yaml:"rate_limit"`
 	Payment     PaymentConfig     `yaml:"payment"`
 	Search      SearchConfig      `yaml:"search"`
+	Catalog     CatalogConfig     `yaml:"catalog"`
 	Metrics     MetricsConfig     `yaml:"metrics"`
 	Tracing     TracingConfig     `yaml:"tracing"`
 	Dev         DevConfig         `yaml:"dev"`
 	StoreCredit StoreCreditConfig `yaml:"store_credit"`
+}
+
+// CatalogConfig holds catalog / visibility runtime options (PR-1057).
+type CatalogConfig struct {
+	Visibility CatalogVisibilityConfig `yaml:"visibility"`
+}
+
+// CatalogVisibilityConfig controls storefront axis-gate enforcement.
+// Enforce defaults to false so existing catalogs (modes=auto from migration
+// 086) do not suddenly hide OOS/unpriced products or 404 PDPs on deploy.
+// Enable after reviewing AutoBasis or forcing display axes to visible.
+type CatalogVisibilityConfig struct {
+	Enforce bool `yaml:"enforce"`
 }
 
 // StoreCreditConfig bounds how much store credit an admin can issue in a
@@ -1017,6 +1031,9 @@ func applyEnv(cfg *Config) {
 	if v := os.Getenv("SHOPANDA_MEDIA_S3_PUBLIC_ACL"); v != "" {
 		cfg.Media.S3.PublicACL = parseEnvBool(v)
 	}
+	if v := os.Getenv("SHOPANDA_CATALOG_VISIBILITY_ENFORCE"); v != "" {
+		cfg.Catalog.Visibility.Enforce = parseEnvBool(v)
+	}
 	if v := os.Getenv("SHOPANDA_SEARCH_ENGINE"); v != "" {
 		cfg.Search.Engine = v
 	}
@@ -1389,6 +1406,7 @@ func flatten(cfg *Config) map[string]string {
 	m["media.s3.public_acl"] = strconv.FormatBool(cfg.Media.S3.PublicACL)
 	m["media.webp.enabled"] = strconv.FormatBool(cfg.Media.WebP.Enabled)
 	m["media.webp.quality"] = strconv.Itoa(cfg.Media.WebP.Quality)
+	m["catalog.visibility.enforce"] = strconv.FormatBool(cfg.Catalog.Visibility.Enforce)
 	m["search.engine"] = cfg.Search.Engine
 	m["search.meilisearch.host"] = cfg.Search.Meilisearch.Host
 	m["search.meilisearch.index"] = cfg.Search.Meilisearch.Index

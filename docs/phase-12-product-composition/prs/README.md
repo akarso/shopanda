@@ -11,7 +11,7 @@
 | PR-1054 | B | done | [Enforce `Status = active` in core read paths](PR-1054.md) |
 | PR-1055 | B | done | [Four-axis visibility model](PR-1055.md) |
 | PR-1056 | B | done | [Admin vs. public/storefront API split](PR-1056.md) |
-| PR-1057 | B | planned | [Enforce visibility in storefront read paths](PR-1057.md) |
+| PR-1057 | B | done | [Enforce visibility in storefront read paths](PR-1057.md) |
 | PR-1058 | B | planned | [Cart/checkout purchasability gate + hook point](PR-1058.md) |
 | PR-1059 | B | planned | [Visibility admin GUI](PR-1059.md) |
 | PR-1060 | C | planned | [Bundle domain model](PR-1060.md) |

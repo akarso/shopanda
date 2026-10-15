@@ -16,14 +16,23 @@ import (
 
 // VariantHandler serves variant CRUD endpoints nested under a product.
 type VariantHandler struct {
-	products catalog.ProductRepository
-	variants catalog.VariantRepository
-	bus      *event.Bus
+	products        catalog.ProductRepository
+	variants        catalog.VariantRepository
+	bus             *event.Bus
+	visibilityFacts catalog.VisibilityFactsSource
+	visibilityOpts  catalog.VisibilityOptions
 }
 
 // NewVariantHandler creates a VariantHandler.
 func NewVariantHandler(products catalog.ProductRepository, variants catalog.VariantRepository, bus *event.Bus) *VariantHandler {
 	return &VariantHandler{products: products, variants: variants, bus: bus}
+}
+
+// WithVisibilityFacts enables four-axis visibility gating on public reads (PR-1057).
+// Admin paths bypass via context.
+func (h *VariantHandler) WithVisibilityFacts(facts catalog.VisibilityFactsSource) *VariantHandler {
+	h.visibilityFacts = facts
+	return h
 }
 
 // requireProduct verifies the parent product exists and returns it.
@@ -41,6 +50,17 @@ func (h *VariantHandler) requireProduct(w http.ResponseWriter, r *http.Request) 
 	if p == nil {
 		httpshared.JSONError(w, apperror.NotFound("product not found"))
 		return nil
+	}
+	if h.visibilityFacts != nil {
+		ok, err := catalog.AllowWithFacts(r.Context(), p, catalog.VisibilitySurfaceIndividually, h.visibilityFacts, h.visibilityOpts)
+		if err != nil {
+			httpshared.JSONError(w, err)
+			return nil
+		}
+		if !ok {
+			httpshared.JSONError(w, apperror.NotFound("product not found"))
+			return nil
+		}
 	}
 	return p
 }

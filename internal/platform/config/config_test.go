@@ -127,6 +127,25 @@ log:
 	}
 }
 
+func TestLoad_CatalogVisibilityEnforce(t *testing.T) {
+	withTestBaseURL(t)
+	path := writeYAML(t, `
+catalog:
+  visibility:
+    enforce: true
+`)
+	cfg, err := loadCfg(t, path)
+	if err != nil {
+		t.Fatalf("Load() error: %v", err)
+	}
+	if !cfg.Catalog.Visibility.Enforce {
+		t.Fatal("Catalog.Visibility.Enforce = false, want true from YAML")
+	}
+	if got := Get("catalog.visibility.enforce"); got != "true" {
+		t.Fatalf("Get(catalog.visibility.enforce) = %q, want true", got)
+	}
+}
+
 func TestLoad_EnvOverridesYAML(t *testing.T) {
 	withTestBaseURL(t)
 	yaml := `
@@ -2087,6 +2106,7 @@ func TestApplyEnv_CaseVariantBooleansEnableSecurityFlags(t *testing.T) {
 	t.Setenv("SHOPANDA_AUTH_LOCKOUT_ENABLED", "TRUE")
 	t.Setenv("SHOPANDA_FRONTEND_CSP_ENABLED", "True")
 	t.Setenv("SHOPANDA_RATE_LIMIT_ENABLED", "yes")
+	t.Setenv("SHOPANDA_CATALOG_VISIBILITY_ENFORCE", "YES")
 
 	cfg, err := loadCfg(t, path)
 	if err != nil {
@@ -2103,6 +2123,9 @@ func TestApplyEnv_CaseVariantBooleansEnableSecurityFlags(t *testing.T) {
 	}
 	if !cfg.RateLimit.Enabled {
 		t.Error(`RateLimit.Enabled = false, want true from "yes"`)
+	}
+	if !cfg.Catalog.Visibility.Enforce {
+		t.Error(`Catalog.Visibility.Enforce = false, want true from "YES"`)
 	}
 }
 

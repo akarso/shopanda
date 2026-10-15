@@ -201,6 +201,40 @@ func TestSitemapHandler_InactivePageExcluded(t *testing.T) {
 	}
 }
 
+func TestSitemapHandler_IndividuallyHiddenExcluded(t *testing.T) {
+	now := time.Date(2025, 6, 15, 0, 0, 0, 0, time.UTC)
+	modes := catalog.DefaultVisibilityAxes()
+	hiddenInd := modes
+	hiddenInd.Individually = catalog.VisibilityModeHidden
+	catalogOnly := modes
+	catalogOnly.Catalog = catalog.VisibilityModeHidden // still individually visible
+	products := []catalog.Product{
+		{ID: "p-ind-hidden", Name: "NoPDP", Slug: "no-pdp", Status: catalog.StatusActive, VisibilityModes: hiddenInd, UpdatedAt: now},
+		{ID: "p-ok", Name: "OK", Slug: "ok", Status: catalog.StatusActive, VisibilityModes: catalogOnly, UpdatedAt: now},
+	}
+	facts := enforceFacts{
+		"p-ind-hidden": enforceSnap(hiddenInd),
+		"p-ok":         enforceSnap(catalogOnly),
+	}
+	h := storefront.NewSitemapHandler("https://shop.test",
+		&stubSitemapProductRepo{products: products},
+		&stubSitemapCategoryRepo{},
+		&stubSitemapPageRepo{},
+	).WithVisibilityFacts(facts)
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("GET", "/sitemap.xml", nil)
+	h.Serve().ServeHTTP(rec, req)
+
+	var urlset sitemapURLSet
+	if err := xml.Unmarshal(rec.Body.Bytes(), &urlset); err != nil {
+		t.Fatalf("XML parse: %v", err)
+	}
+	if len(urlset.URLs) != 1 || urlset.URLs[0].Loc != "https://shop.test/products/ok" {
+		t.Fatalf("urls=%v, want only individually-visible product", urlset.URLs)
+	}
+}
+
 func TestSitemapHandler_ProductRepoError(t *testing.T) {
 	h := storefront.NewSitemapHandler("https://shop.test",
 		&stubSitemapProductRepo{err: context.DeadlineExceeded},

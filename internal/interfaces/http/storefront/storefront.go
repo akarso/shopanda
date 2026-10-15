@@ -73,6 +73,8 @@ type StorefrontHandler struct {
 	pages               cms.PageRepository
 	contentBlocks       cms.ContentBlockRepository
 	blockResolver       *cmsApp.BlockResolver
+	visibilityFacts     catalog.VisibilityFactsSource
+	visibilityOpts      catalog.VisibilityOptions
 	log                 logger.Logger
 	catNav              *localcache.Store[[]catalog.Category]
 	layeredNavAttrs     LayeredNavAttributeLister
@@ -291,6 +293,12 @@ func (h *StorefrontHandler) ClearCategoryNavCache() {
 		return
 	}
 	h.catNav.Clear()
+}
+
+// WithVisibilityFacts enables four-axis visibility gating on HTML/SSR reads (PR-1057).
+func (h *StorefrontHandler) WithVisibilityFacts(facts catalog.VisibilityFactsSource) *StorefrontHandler {
+	h.visibilityFacts = facts
+	return h
 }
 
 // WithCart enables storefront cart rendering and mutations using the provided
@@ -519,6 +527,17 @@ func (h *StorefrontHandler) Product() http.HandlerFunc {
 			http.Error(w, "Not Found", http.StatusNotFound)
 			return
 		}
+		if h.visibilityFacts != nil {
+			ok, err := catalog.AllowWithFacts(r.Context(), product, catalog.VisibilitySurfaceIndividually, h.visibilityFacts, h.visibilityOpts)
+			if err != nil {
+				http.Error(w, "Internal Server Error", http.StatusInternalServerError)
+				return
+			}
+			if !ok {
+				http.Error(w, "Not Found", http.StatusNotFound)
+				return
+			}
+		}
 
 		ctx := composition.NewProductContext(product)
 		ctx.Ctx = r.Context()
@@ -605,11 +624,23 @@ func (h *StorefrontHandler) renderListing(searchMode bool) http.HandlerFunc {
 		if !searchMode || params.Query != "" {
 			query := storefrontBuildSearchQuery(params, filterAttrs)
 			storefrontApplyStoreScope(&query, r)
+			// No overfetch: enlarging Limit while keeping page-number Offset
+			// duplicates hits across pages. Accept short pages until PR-1079.
 			result, err = h.search.Search(r.Context(), query)
 			if err != nil {
 				http.Error(w, "Internal Server Error", http.StatusInternalServerError)
 				return
 			}
+		}
+
+		surface := catalog.VisibilitySurfaceCatalog
+		if searchMode {
+			surface = catalog.VisibilitySurfaceSearch
+		}
+		result, err = h.filterSearchResultVisibility(r, result, surface)
+		if err != nil {
+			http.Error(w, "Internal Server Error", http.StatusInternalServerError)
+			return
 		}
 
 		ctx := composition.NewListingContext(searchProductsToCatalog(result.Products))
@@ -683,6 +714,11 @@ func (h *StorefrontHandler) renderCategory(root bool) http.HandlerFunc {
 			http.Error(w, "Internal Server Error", http.StatusInternalServerError)
 			return
 		}
+		result, err = h.filterSearchResultVisibility(r, result, catalog.VisibilitySurfaceCatalog)
+		if err != nil {
+			http.Error(w, "Internal Server Error", http.StatusInternalServerError)
+			return
+		}
 
 		ctx := composition.NewListingContext(searchProductsToCatalog(result.Products))
 		ctx.Ctx = r.Context()
@@ -709,6 +745,10 @@ func (h *StorefrontHandler) renderCategory(root bool) http.HandlerFunc {
 		page := h.buildCategoryPageData(r, layout, ctx, result, params, category, allCategories, layeredNavAttrs)
 		h.renderPage(w, "category", page)
 	}
+}
+
+func (h *StorefrontHandler) filterSearchResultVisibility(r *http.Request, result search.SearchResult, surface catalog.VisibilitySurface) (search.SearchResult, error) {
+	return filterSearchHitsByVisibility(r, result, surface, h.visibilityFacts, h.visibilityOpts)
 }
 
 type productCategoryIDReader interface {

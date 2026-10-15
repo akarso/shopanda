@@ -61,3 +61,44 @@ func TestBlockResolverResolveBlocks(t *testing.T) {
 		t.Fatalf("expected two carousel products for duplicate ids, got %+v", resolved[1].Data["products"])
 	}
 }
+
+type mapFacts map[string]catalog.VisibilitySnapshot
+
+func (m mapFacts) LoadMany(_ context.Context, ids []string) (map[string]catalog.VisibilitySnapshot, error) {
+	out := make(map[string]catalog.VisibilitySnapshot, len(ids))
+	for _, id := range ids {
+		if s, ok := m[id]; ok {
+			out[id] = s
+		}
+	}
+	return out, nil
+}
+
+func TestBlockResolver_FiltersHiddenCarouselProducts(t *testing.T) {
+	modes := catalog.DefaultVisibilityAxes()
+	hidden := modes
+	hidden.Catalog = catalog.VisibilityModeHidden
+	visible := &catalog.Product{ID: "prod-v", Name: "Visible", Slug: "v", Status: catalog.StatusActive}
+	hiddenP := &catalog.Product{ID: "prod-h", Name: "Hidden", Slug: "h", Status: catalog.StatusActive}
+	resolver := cmsApp.NewBlockResolver(blockResolverProductRepo{
+		byID: map[string]*catalog.Product{"prod-v": visible, "prod-h": hiddenP},
+	}).WithVisibilityFacts(mapFacts{
+		"prod-v": {Status: catalog.StatusActive, Modes: modes, Inputs: catalog.VisibilityInputs{QuantityPositive: true, HasPrice: true, HasStoreAssignment: true}},
+		"prod-h": {Status: catalog.StatusActive, Modes: hidden, Inputs: catalog.VisibilityInputs{QuantityPositive: true, HasPrice: true, HasStoreAssignment: true}},
+	})
+
+	carousel, _ := cms.NewContentBlock("carousel-1", "Featured", cms.BlockTypeProductCarousel, map[string]interface{}{
+		"product_ids": []string{"prod-v", "prod-h"},
+	})
+	resolved, err := resolver.ResolveBlocks(context.Background(), []*cms.ContentBlock{carousel})
+	if err != nil {
+		t.Fatal(err)
+	}
+	products, ok := resolved[0].Data["products"].([]map[string]interface{})
+	if !ok || len(products) != 1 {
+		t.Fatalf("want 1 visible carousel product, got %+v", resolved[0].Data["products"])
+	}
+	if products[0]["id"] != "prod-v" {
+		t.Fatalf("id = %v, want prod-v", products[0]["id"])
+	}
+}

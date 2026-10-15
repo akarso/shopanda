@@ -15,10 +15,12 @@ import (
 
 // ProductHandler serves product read endpoints.
 type ProductHandler struct {
-	repo catalog.ProductRepository
-	pdp  *composition.Pipeline[composition.ProductContext]
-	plp  *composition.Pipeline[composition.ListingContext]
-	ct   *translation.ContentTranslator
+	repo            catalog.ProductRepository
+	pdp             *composition.Pipeline[composition.ProductContext]
+	plp             *composition.Pipeline[composition.ListingContext]
+	ct              *translation.ContentTranslator
+	visibilityFacts catalog.VisibilityFactsSource
+	visibilityOpts  catalog.VisibilityOptions
 }
 
 // NewProductHandler creates a ProductHandler with the given dependencies.
@@ -31,6 +33,12 @@ func NewProductHandler(
 	return &ProductHandler{repo: repo, pdp: pdp, plp: plp, ct: ct}
 }
 
+// WithVisibilityFacts enables four-axis visibility gating (PR-1057).
+func (h *ProductHandler) WithVisibilityFacts(facts catalog.VisibilityFactsSource) *ProductHandler {
+	h.visibilityFacts = facts
+	return h
+}
+
 // List handles GET /api/v1/products.
 func (h *ProductHandler) List() http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
@@ -39,16 +47,36 @@ func (h *ProductHandler) List() http.HandlerFunc {
 			httpshared.JSONError(w, err)
 			return
 		}
-
-		products, err := h.repo.List(r.Context(), catalog.ListFilter{Offset: offset, Limit: limit})
+		afterOff, afterSkip, afterSet, err := parseVisibilityAfter(r)
 		if err != nil {
 			httpshared.JSONError(w, err)
 			return
 		}
 
-		ptrs := make([]*catalog.Product, len(products))
-		for i := range products {
-			ptrs[i] = &products[i]
+		page, err := catalog.ListVisiblePage(
+			r.Context(),
+			func(ctx context.Context, dbOffset, dbLimit int) ([]catalog.Product, error) {
+				return h.repo.List(ctx, catalog.ListFilter{Offset: dbOffset, Limit: dbLimit})
+			},
+			catalog.VisibilitySurfaceCatalog,
+			h.visibilityFacts,
+			h.visibilityOpts,
+			catalog.ListVisiblePageParams{
+				AfterSet:    afterSet,
+				AfterOffset: afterOff,
+				AfterSkip:   afterSkip,
+				VisibleSkip: offset,
+				Limit:       limit,
+			},
+		)
+		if err != nil {
+			httpshared.JSONError(w, err)
+			return
+		}
+
+		ptrs := make([]*catalog.Product, len(page.Products))
+		for i := range page.Products {
+			ptrs[i] = &page.Products[i]
 		}
 
 		ctx := composition.NewListingContext(ptrs)
@@ -60,6 +88,13 @@ func (h *ProductHandler) List() http.HandlerFunc {
 
 		for _, p := range ctx.Products {
 			h.overlayProductTranslation(r.Context(), p)
+		}
+
+		if ctx.Meta == nil {
+			ctx.Meta = map[string]interface{}{}
+		}
+		for k, v := range visibilityListMeta(page) {
+			ctx.Meta[k] = v
 		}
 
 		httpshared.JSON(w, http.StatusOK, listingResponse(ctx))
@@ -83,6 +118,17 @@ func (h *ProductHandler) Get() http.HandlerFunc {
 		if product == nil {
 			httpshared.JSONError(w, apperror.NotFound("product not found"))
 			return
+		}
+		if h.visibilityFacts != nil {
+			ok, err := catalog.AllowWithFacts(r.Context(), product, catalog.VisibilitySurfaceIndividually, h.visibilityFacts, h.visibilityOpts)
+			if err != nil {
+				httpshared.JSONError(w, err)
+				return
+			}
+			if !ok {
+				httpshared.JSONError(w, apperror.NotFound("product not found"))
+				return
+			}
 		}
 
 		ctx := composition.NewProductContext(product)

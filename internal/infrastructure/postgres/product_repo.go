@@ -147,7 +147,7 @@ func (r *ProductRepo) List(ctx context.Context, filter catalog.ListFilter) ([]ca
 	if len(where) > 0 {
 		q += ` WHERE ` + strings.Join(where, " AND ")
 	}
-	q += fmt.Sprintf(` ORDER BY created_at DESC LIMIT $%d OFFSET $%d`, limitArg, offsetArg)
+	q += fmt.Sprintf(` ORDER BY created_at DESC, id DESC LIMIT $%d OFFSET $%d`, limitArg, offsetArg)
 
 	var rows *sql.Rows
 	var err error

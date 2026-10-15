@@ -1,6 +1,7 @@
 package storefront
 
 import (
+	"context"
 	"net/http"
 
 	httpshared "github.com/akarso/shopanda/internal/interfaces/http/shared"
@@ -11,8 +12,10 @@ import (
 
 // CategoryHandler serves category read endpoints.
 type CategoryHandler struct {
-	categories catalog.CategoryRepository
-	products   catalog.ProductRepository
+	categories      catalog.CategoryRepository
+	products        catalog.ProductRepository
+	visibilityFacts catalog.VisibilityFactsSource
+	visibilityOpts  catalog.VisibilityOptions
 }
 
 // NewCategoryHandler creates a CategoryHandler with the given dependencies.
@@ -27,6 +30,12 @@ func NewCategoryHandler(
 		panic("CategoryHandler: products repository must not be nil")
 	}
 	return &CategoryHandler{categories: categories, products: products}
+}
+
+// WithVisibilityFacts enables four-axis visibility gating (PR-1057).
+func (h *CategoryHandler) WithVisibilityFacts(facts catalog.VisibilityFactsSource) *CategoryHandler {
+	h.visibilityFacts = facts
+	return h
 }
 
 // categoryNode is the JSON shape for a category in the tree response.
@@ -105,15 +114,36 @@ func (h *CategoryHandler) Products() http.HandlerFunc {
 			httpshared.JSONError(w, err)
 			return
 		}
+		afterOff, afterSkip, afterSet, err := parseVisibilityAfter(r)
+		if err != nil {
+			httpshared.JSONError(w, err)
+			return
+		}
 
-		products, err := h.products.FindByCategoryID(r.Context(), id, offset, limit)
+		page, err := catalog.ListVisiblePage(
+			r.Context(),
+			func(ctx context.Context, dbOffset, dbLimit int) ([]catalog.Product, error) {
+				return h.products.FindByCategoryID(ctx, id, dbOffset, dbLimit)
+			},
+			catalog.VisibilitySurfaceCatalog,
+			h.visibilityFacts,
+			h.visibilityOpts,
+			catalog.ListVisiblePageParams{
+				AfterSet:    afterSet,
+				AfterOffset: afterOff,
+				AfterSkip:   afterSkip,
+				VisibleSkip: offset,
+				Limit:       limit,
+			},
+		)
 		if err != nil {
 			httpshared.JSONError(w, err)
 			return
 		}
 
 		httpshared.JSON(w, http.StatusOK, map[string]interface{}{
-			"products": products,
+			"products": page.Products,
+			"meta":     visibilityListMeta(page),
 		})
 	}
 }

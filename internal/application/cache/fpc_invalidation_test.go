@@ -121,7 +121,10 @@ func TestFPCInvalidation_ProductPricePurgesTaggedPagesOnly(t *testing.T) {
 	_ = backend.SetWithTags(ctx, plp, cacheApp.PageEntry{HTML: "plp"}, time.Minute, cacheApp.ProductTag("p1"), cacheApp.ProductTag("p2"))
 	_ = backend.SetWithTags(ctx, other, cacheApp.PageEntry{HTML: "other"}, time.Minute, cacheApp.ProductTag("p2"))
 
-	sub := cacheApp.NewFPCInvalidationSubscriber(backend, &mockLogger{})
+	listingOnly := cacheApp.Key(cacheApp.RoutePLP, "/products?page=2", "", cacheApp.Vary{Store: "s1", Language: "en", Currency: "EUR", AuthState: cacheApp.AuthGuest})
+	_ = backend.SetWithTags(ctx, listingOnly, cacheApp.PageEntry{HTML: "listing"}, time.Minute, cacheApp.ListingTag())
+
+	sub := cacheApp.NewFPCInvalidationSubscriber(backend, &mockLogger{}).WithVisibilityListingPurge(true)
 	if err := sub.HandlePriceUpserted(ctx, event.New(pricing.EventPriceUpserted, "test", pricing.PriceUpsertedData{ProductID: "p1"})); err != nil {
 		t.Fatal(err)
 	}
@@ -132,8 +135,31 @@ func TestFPCInvalidation_ProductPricePurgesTaggedPagesOnly(t *testing.T) {
 	if _, ok := backend.entries[plp]; ok {
 		t.Fatal("PLP tagged with p1 must be purged")
 	}
+	if _, ok := backend.entries[listingOnly]; ok {
+		t.Fatal("listing shell must be purged so restocked/priced products can reappear")
+	}
 	if _, ok := backend.entries[other]; !ok {
 		t.Fatal("unrelated product page must remain")
+	}
+}
+
+func TestFPCInvalidation_PriceDoesNotPurgeListingWhenEnforceOff(t *testing.T) {
+	backend := newTagMemCache()
+	ctx := context.Background()
+	listingOnly := cacheApp.Key(cacheApp.RoutePLP, "/products?page=2", "", cacheApp.Vary{Store: "s1", Language: "en", Currency: "EUR", AuthState: cacheApp.AuthGuest})
+	_ = backend.SetWithTags(ctx, listingOnly, cacheApp.PageEntry{HTML: "listing"}, time.Minute, cacheApp.ListingTag())
+	pdp := cacheApp.Key(cacheApp.RoutePDP, "/products/widget", "", cacheApp.Vary{Store: "s1", Language: "en", Currency: "EUR", AuthState: cacheApp.AuthGuest})
+	_ = backend.SetWithTags(ctx, pdp, cacheApp.PageEntry{HTML: "pdp"}, time.Minute, cacheApp.ProductTag("p1"))
+
+	sub := cacheApp.NewFPCInvalidationSubscriber(backend, &mockLogger{}) // enforce off
+	if err := sub.HandlePriceUpserted(ctx, event.New(pricing.EventPriceUpserted, "test", pricing.PriceUpsertedData{ProductID: "p1"})); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := backend.entries[pdp]; ok {
+		t.Fatal("PDP tagged with p1 must still be purged")
+	}
+	if _, ok := backend.entries[listingOnly]; !ok {
+		t.Fatal("listing shell must remain when visibility enforce is off")
 	}
 }
 
@@ -152,11 +178,25 @@ func TestFPCInvalidation_CategoryAndPageAndStock(t *testing.T) {
 	if err := sub.HandlePageDeleted(ctx, event.New(cms.EventPageDeleted, "test", cms.PageDeletedData{PageID: "page-1"})); err != nil {
 		t.Fatal(err)
 	}
+	if _, ok := backend.entries[catKey]; ok {
+		t.Fatal("category page must be purged")
+	}
+	if _, ok := backend.entries[pageKey]; ok {
+		t.Fatal("CMS page must be purged")
+	}
+	pdp := cacheApp.Key(cacheApp.RoutePDP, "/products/x", "", cacheApp.Vary{AuthState: cacheApp.AuthGuest})
+	_ = backend.SetWithTags(ctx, pdp, cacheApp.PageEntry{HTML: "pdp"}, time.Minute, cacheApp.ProductTag("p9"))
+	listing := cacheApp.Key(cacheApp.RoutePLP, "/products", "", cacheApp.Vary{AuthState: cacheApp.AuthGuest})
+	_ = backend.SetWithTags(ctx, listing, cacheApp.PageEntry{HTML: "plp"}, time.Minute, cacheApp.ListingTag())
+	sub.WithVisibilityListingPurge(true)
 	if err := sub.HandleStockUpdated(ctx, event.New(inventory.EventStockUpdated, "test", inventory.StockUpdatedData{ProductID: "p9"})); err != nil {
 		t.Fatal(err)
 	}
-	if len(backend.entries) != 0 {
-		t.Fatalf("expected empty cache, got %#v", backend.entries)
+	if _, ok := backend.entries[pdp]; ok {
+		t.Fatal("stock update must purge product-tagged PDP")
+	}
+	if _, ok := backend.entries[listing]; ok {
+		t.Fatal("stock update must purge listing shell when enforce on")
 	}
 }
 

@@ -506,6 +506,9 @@ func TestSuggest(t *testing.T) {
 	if suggestions[0].URL != "/products/sneakers" {
 		t.Errorf("URL = %q, want /products/sneakers", suggestions[0].URL)
 	}
+	if suggestions[0].ProductID != "p-1" {
+		t.Errorf("ProductID = %q, want p-1", suggestions[0].ProductID)
+	}
 	// Verify search request had correct limit.
 	if mock.searchReq.Limit != 5 {
 		t.Errorf("searchReq.Limit = %d, want 5", mock.searchReq.Limit)
