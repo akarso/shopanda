@@ -7,9 +7,8 @@ import (
 	"testing"
 
 	cartApp "github.com/akarso/shopanda/internal/application/cart"
-	"github.com/akarso/shopanda/internal/domain/catalog"
 	domainCart "github.com/akarso/shopanda/internal/domain/cart"
-	domainext "github.com/akarso/shopanda/internal/domain/extension"
+	"github.com/akarso/shopanda/internal/domain/catalog"
 	"github.com/akarso/shopanda/internal/platform/apperror"
 )
 
@@ -97,26 +96,6 @@ func (mutableProductRepo) FindByCategoryID(context.Context, string, int, int) ([
 }
 func (mutableProductRepo) Create(context.Context, *catalog.Product) error { return nil }
 func (mutableProductRepo) Update(context.Context, *catalog.Product) error { return nil }
-
-type trackingExtWriter struct {
-	deleted []string
-	copied  int
-}
-
-func (w *trackingExtWriter) ValidateBatch(context.Context, domainext.Target, []domainext.ValueInput, bool) error {
-	return nil
-}
-func (w *trackingExtWriter) UpsertBatch(context.Context, domainext.Target, []domainext.ValueInput, string, bool) ([]domainext.Value, error) {
-	return nil, nil
-}
-func (w *trackingExtWriter) DeleteAllForTarget(_ context.Context, target domainext.Target) error {
-	w.deleted = append(w.deleted, target.ID)
-	return nil
-}
-func (w *trackingExtWriter) CopyTarget(context.Context, domainext.Target, domainext.Target, string) error {
-	w.copied++
-	return nil
-}
 
 func seedActiveLine(t *testing.T, cat *mutableCatalog, variantID, productID string) {
 	t.Helper()
@@ -220,8 +199,14 @@ func TestService_ClaimGuestCart_AssignDropsArchivedLine(t *testing.T) {
 	if len(claimed.Items) != 1 || claimed.Items[0].VariantID != "var-1" {
 		t.Fatalf("items = %+v, want only var-1", claimed.Items)
 	}
-	if len(ext.deleted) != 1 || ext.deleted[0] != guest.ID+":var-2" {
-		t.Fatalf("deleted extension targets = %v, want dropped var-2 line only", ext.deleted)
+	if len(ext.orphanPurges) != 1 {
+		t.Fatalf("orphan extension purges = %+v, want one after assign cleanup", ext.orphanPurges)
+	}
+	if ext.orphanPurges[0].cartID != guest.ID {
+		t.Fatalf("orphan purge cart = %q, want %q", ext.orphanPurges[0].cartID, guest.ID)
+	}
+	if len(ext.orphanPurges[0].keepVariantIDs) != 1 || ext.orphanPurges[0].keepVariantIDs[0] != "var-1" {
+		t.Fatalf("orphan purge keep = %v, want only var-1", ext.orphanPurges[0].keepVariantIDs)
 	}
 }
 
@@ -229,9 +214,9 @@ func TestService_ClaimGuestCart_AssignDropsArchivedLine(t *testing.T) {
 // subsequent Save (1 = next Save). Used to simulate claim Save conflict.
 type failNthSaveCartRepo struct {
 	*stubCartRepo
-	failOn   int
-	saveN    int
-	saveErr  error
+	failOn  int
+	saveN   int
+	saveErr error
 }
 
 func (r *failNthSaveCartRepo) Save(ctx context.Context, c *domainCart.Cart) error {

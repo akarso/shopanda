@@ -48,6 +48,7 @@ type extensionValueWriter interface {
 	ValidateBatch(ctx context.Context, target domainext.Target, inputs []domainext.ValueInput, canAccessPrivate bool) error
 	UpsertBatch(ctx context.Context, target domainext.Target, inputs []domainext.ValueInput, updatedBy string, canAccessPrivate bool) ([]domainext.Value, error)
 	DeleteAllForTarget(ctx context.Context, target domainext.Target) error
+	DeleteOrphanCartItemExtensions(ctx context.Context, cartID string, keepVariantIDs []string) error
 	CopyTarget(ctx context.Context, from, to domainext.Target, updatedBy string) error
 }
 
@@ -163,6 +164,9 @@ func (s *Service) ClaimGuestCart(ctx context.Context, guestCartID, customerID st
 	}
 	if guestCart.CustomerID != "" {
 		if guestCart.CustomerID == customerID {
+			if err := s.finishAssignedGuestCleanup(ctx, guestCart); err != nil {
+				return nil, err
+			}
 			return guestCart, nil
 		}
 		return nil, nil
@@ -173,6 +177,9 @@ func (s *Service) ClaimGuestCart(ctx context.Context, guestCartID, customerID st
 		return nil, fmt.Errorf("cart service: claim guest cart: find customer cart: %w", err)
 	}
 	if customerCart != nil && customerCart.MergedGuestID == guestCart.ID {
+		if err := s.finishMergedGuestCleanup(ctx, guestCart.ID); err != nil {
+			return nil, err
+		}
 		return customerCart, nil
 	}
 	if customerCart == nil {
@@ -241,6 +248,42 @@ func (s *Service) deleteGuestLineExtensions(ctx context.Context, guestCartID, va
 	return nil
 }
 
+func (s *Service) finishAssignedGuestCleanup(ctx context.Context, cart *domainCart.Cart) error {
+	if s.extensions == nil || cart == nil {
+		return nil
+	}
+	keepVariantIDs := make([]string, 0, len(cart.Items))
+	for _, item := range cart.Items {
+		keepVariantIDs = append(keepVariantIDs, item.VariantID)
+	}
+	if err := s.extensions.DeleteOrphanCartItemExtensions(ctx, cart.ID, keepVariantIDs); err != nil {
+		return fmt.Errorf("cart service: claim guest cart: purge orphan extensions: %w", err)
+	}
+	return nil
+}
+
+func (s *Service) finishMergedGuestCleanup(ctx context.Context, guestCartID string) error {
+	guestCart, err := s.carts.FindByID(ctx, guestCartID)
+	if err != nil {
+		return fmt.Errorf("cart service: claim guest cart: finish merge cleanup find guest: %w", err)
+	}
+	if guestCart == nil {
+		return nil
+	}
+	for _, item := range guestCart.Items {
+		if err := s.deleteGuestLineExtensions(ctx, guestCartID, item.VariantID); err != nil {
+			return err
+		}
+	}
+	if err := s.carts.Delete(ctx, guestCartID); err != nil {
+		if apperror.Is(err, apperror.CodeNotFound) {
+			return nil
+		}
+		return fmt.Errorf("cart service: claim guest cart: delete guest cart: %w", err)
+	}
+	return nil
+}
+
 func (s *Service) assignGuestCart(ctx context.Context, guestCart *domainCart.Cart, customerID string) (*domainCart.Cart, error) {
 	dropped, err := s.unclaimableGuestLines(ctx, guestCart)
 	if err != nil {
@@ -250,9 +293,7 @@ func (s *Service) assignGuestCart(ctx context.Context, guestCart *domainCart.Car
 	// succeeds. Extension deletes autocommit separately from cart Save — doing
 	// them earlier would leave the DB cart unchanged but wipe custom values if
 	// recalculate/Save fails (retry would then find the line without extensions).
-	droppedVariantIDs := make([]string, 0, len(dropped))
 	for variantID := range dropped {
-		droppedVariantIDs = append(droppedVariantIDs, variantID)
 		if err := guestCart.RemoveItem(variantID); err != nil {
 			return nil, apperror.Wrap(apperror.CodeValidation, "cannot drop unavailable guest cart item", err)
 		}
@@ -266,10 +307,8 @@ func (s *Service) assignGuestCart(ctx context.Context, guestCart *domainCart.Car
 	if err := s.carts.Save(ctx, guestCart); err != nil {
 		return nil, fmt.Errorf("cart service: claim guest cart: save claimed cart: %w", err)
 	}
-	for _, variantID := range droppedVariantIDs {
-		if err := s.deleteGuestLineExtensions(ctx, guestCart.ID, variantID); err != nil {
-			return nil, err
-		}
+	if err := s.finishAssignedGuestCleanup(ctx, guestCart); err != nil {
+		return nil, err
 	}
 	s.log.Info("cart.guest.claimed", map[string]interface{}{
 		"cart_id":     guestCart.ID,
@@ -287,9 +326,7 @@ func (s *Service) mergeIntoCustomerCart(ctx context.Context, guestCart, customer
 	if err != nil {
 		return nil, err
 	}
-	guestVariantIDs := make([]string, 0, len(guestCart.Items))
 	for _, item := range guestCart.Items {
-		guestVariantIDs = append(guestVariantIDs, item.VariantID)
 		if _, skip := dropped[item.VariantID]; skip {
 			continue
 		}
@@ -310,13 +347,8 @@ func (s *Service) mergeIntoCustomerCart(ctx context.Context, guestCart, customer
 	if err := s.carts.Save(ctx, customerCart); err != nil {
 		return nil, fmt.Errorf("cart service: claim guest cart: save merged cart: %w", err)
 	}
-	for _, variantID := range guestVariantIDs {
-		if err := s.deleteGuestLineExtensions(ctx, guestCart.ID, variantID); err != nil {
-			return nil, err
-		}
-	}
-	if err := s.carts.Delete(ctx, guestCart.ID); err != nil {
-		return nil, fmt.Errorf("cart service: claim guest cart: delete guest cart: %w", err)
+	if err := s.finishMergedGuestCleanup(ctx, guestCart.ID); err != nil {
+		return nil, err
 	}
 
 	s.log.Info("cart.guest.merged", map[string]interface{}{

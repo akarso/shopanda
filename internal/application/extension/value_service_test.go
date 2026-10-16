@@ -2,6 +2,8 @@ package extension_test
 
 import (
 	"context"
+	"sort"
+	"strings"
 	"testing"
 
 	extensionapp "github.com/akarso/shopanda/internal/application/extension"
@@ -64,6 +66,27 @@ func (m *memValueRepo) Delete(_ context.Context, target domainext.Target, fieldC
 	}
 	delete(m.values, key)
 	return nil
+}
+
+func (m *memValueRepo) ListTargetIDsByTypeAndIDPrefix(_ context.Context, targetType domainext.TargetType, idPrefix string) ([]string, error) {
+	prefix := strings.TrimSuffix(idPrefix, "%")
+	seen := make(map[string]struct{})
+	var out []string
+	for _, value := range m.values {
+		if value.TargetType != targetType {
+			continue
+		}
+		if !strings.HasPrefix(value.TargetID, prefix) {
+			continue
+		}
+		if _, ok := seen[value.TargetID]; ok {
+			continue
+		}
+		seen[value.TargetID] = struct{}{}
+		out = append(out, value.TargetID)
+	}
+	sort.Strings(out)
+	return out, nil
 }
 
 func registerValueField(t *testing.T, reg *extensionapp.Registry, def domainext.FieldDef) {
@@ -245,6 +268,57 @@ func TestValueService_ListFiltersPrivateUnlessAllowed(t *testing.T) {
 	}
 	if len(values) != 2 {
 		t.Fatalf("List with private = %+v", values)
+	}
+}
+
+func TestValueService_DeleteOrphanCartItemExtensions(t *testing.T) {
+	reg := extensionapp.NewRegistry()
+	registerValueField(t, reg, domainext.FieldDef{
+		Code:        "acme.gift.message",
+		Label:       "Gift message",
+		Type:        domainext.FieldTypeString,
+		Scope:       domainext.TargetCartItem,
+		StorageMode: domainext.StorageStored,
+	})
+	repo := newMemValueRepo()
+	svc := extensionapp.NewValueService(reg, repo)
+	ctx := context.Background()
+	cartID := "cart-1"
+
+	for _, spec := range []struct {
+		variantID string
+		value     string
+	}{
+		{"var-1", "keep"},
+		{"var-2", "drop"},
+	} {
+		target := domainext.CartItemTarget(cartID, spec.variantID)
+		if _, err := svc.UpsertBatch(ctx, target, []domainext.ValueInput{
+			{FieldCode: "acme.gift.message", Value: spec.value},
+		}, "guest", false); err != nil {
+			t.Fatalf("UpsertBatch %s: %v", spec.variantID, err)
+		}
+	}
+
+	if err := svc.DeleteOrphanCartItemExtensions(ctx, cartID, []string{"var-1"}); err != nil {
+		t.Fatalf("DeleteOrphanCartItemExtensions: %v", err)
+	}
+	stale, err := repo.ListByTarget(ctx, domainext.CartItemTarget(cartID, "var-2"))
+	if err != nil {
+		t.Fatalf("ListByTarget dropped: %v", err)
+	}
+	if len(stale) != 0 {
+		t.Fatalf("dropped target = %+v, want empty", stale)
+	}
+	kept, err := repo.ListByTarget(ctx, domainext.CartItemTarget(cartID, "var-1"))
+	if err != nil {
+		t.Fatalf("ListByTarget kept: %v", err)
+	}
+	if len(kept) != 1 {
+		t.Fatalf("kept target = %+v, want one row", kept)
+	}
+	if err := svc.DeleteOrphanCartItemExtensions(ctx, cartID, []string{"var-1"}); err != nil {
+		t.Fatalf("idempotent DeleteOrphanCartItemExtensions: %v", err)
 	}
 }
 

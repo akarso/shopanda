@@ -876,6 +876,12 @@ func TestService_ClaimGuestCart_DeleteFailsAfterSave_RetryDoesNotDoubleQuantitie
 	if retried.MergedGuestID != guestCart.ID {
 		t.Fatalf("MergedGuestID = %q, want %q", retried.MergedGuestID, guestCart.ID)
 	}
+	if _, err := svc.GetCart(ctx, guestCart.ID, ""); !apperror.Is(err, apperror.CodeNotFound) {
+		t.Fatalf("GetCart(guest) after retry error = %v, want not_found", err)
+	}
+	if g, _ := carts.FindByID(ctx, guestCart.ID); g != nil {
+		t.Fatal("expected guest cart deleted after successful merge retry")
+	}
 }
 
 func TestService_GetActiveCartByCustomer_NotFound(t *testing.T) {
