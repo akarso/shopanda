@@ -246,12 +246,15 @@ func (s *Service) assignGuestCart(ctx context.Context, guestCart *domainCart.Car
 	if err != nil {
 		return nil, err
 	}
+	// Drop lines in memory first; delete their extension rows only after Save
+	// succeeds. Extension deletes autocommit separately from cart Save — doing
+	// them earlier would leave the DB cart unchanged but wipe custom values if
+	// recalculate/Save fails (retry would then find the line without extensions).
+	droppedVariantIDs := make([]string, 0, len(dropped))
 	for variantID := range dropped {
+		droppedVariantIDs = append(droppedVariantIDs, variantID)
 		if err := guestCart.RemoveItem(variantID); err != nil {
 			return nil, apperror.Wrap(apperror.CodeValidation, "cannot drop unavailable guest cart item", err)
-		}
-		if err := s.deleteGuestLineExtensions(ctx, guestCart.ID, variantID); err != nil {
-			return nil, err
 		}
 	}
 	if err := guestCart.SetCustomerID(customerID); err != nil {
@@ -263,6 +266,11 @@ func (s *Service) assignGuestCart(ctx context.Context, guestCart *domainCart.Car
 	if err := s.carts.Save(ctx, guestCart); err != nil {
 		return nil, fmt.Errorf("cart service: claim guest cart: save claimed cart: %w", err)
 	}
+	for _, variantID := range droppedVariantIDs {
+		if err := s.deleteGuestLineExtensions(ctx, guestCart.ID, variantID); err != nil {
+			return nil, err
+		}
+	}
 	s.log.Info("cart.guest.claimed", map[string]interface{}{
 		"cart_id":     guestCart.ID,
 		"customer_id": customerID,
@@ -271,22 +279,24 @@ func (s *Service) assignGuestCart(ctx context.Context, guestCart *domainCart.Car
 }
 
 func (s *Service) mergeIntoCustomerCart(ctx context.Context, guestCart, customerCart *domainCart.Cart) (*domainCart.Cart, error) {
-	// Validate every guest line before copying/deleting extensions so a late
-	// failure cannot leave earlier guest targets half-migrated (PR-1054).
+	// Validate every guest line before copying extensions so a late failure
+	// cannot leave earlier guest targets half-migrated. Guest extension deletes
+	// wait until after customer cart Save so a failed Save leaves guest values
+	// intact (same ordering as assignGuestCart).
 	dropped, err := s.unclaimableGuestLines(ctx, guestCart)
 	if err != nil {
 		return nil, err
 	}
+	guestVariantIDs := make([]string, 0, len(guestCart.Items))
 	for _, item := range guestCart.Items {
-		if _, skip := dropped[item.VariantID]; !skip {
-			if err := customerCart.AddItem(item.VariantID, item.Quantity, item.UnitPrice); err != nil {
-				return nil, apperror.Wrap(apperror.CodeValidation, "cannot merge guest cart item", err)
-			}
-			if err := s.copyCartItemExtensions(ctx, guestCart.ID, customerCart.ID, item.VariantID); err != nil {
-				return nil, err
-			}
+		guestVariantIDs = append(guestVariantIDs, item.VariantID)
+		if _, skip := dropped[item.VariantID]; skip {
+			continue
 		}
-		if err := s.deleteGuestLineExtensions(ctx, guestCart.ID, item.VariantID); err != nil {
+		if err := customerCart.AddItem(item.VariantID, item.Quantity, item.UnitPrice); err != nil {
+			return nil, apperror.Wrap(apperror.CodeValidation, "cannot merge guest cart item", err)
+		}
+		if err := s.copyCartItemExtensions(ctx, guestCart.ID, customerCart.ID, item.VariantID); err != nil {
 			return nil, err
 		}
 	}
@@ -299,6 +309,11 @@ func (s *Service) mergeIntoCustomerCart(ctx context.Context, guestCart, customer
 	}
 	if err := s.carts.Save(ctx, customerCart); err != nil {
 		return nil, fmt.Errorf("cart service: claim guest cart: save merged cart: %w", err)
+	}
+	for _, variantID := range guestVariantIDs {
+		if err := s.deleteGuestLineExtensions(ctx, guestCart.ID, variantID); err != nil {
+			return nil, err
+		}
 	}
 	if err := s.carts.Delete(ctx, guestCart.ID); err != nil {
 		return nil, fmt.Errorf("cart service: claim guest cart: delete guest cart: %w", err)

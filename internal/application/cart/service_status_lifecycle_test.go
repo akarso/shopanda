@@ -8,6 +8,7 @@ import (
 
 	cartApp "github.com/akarso/shopanda/internal/application/cart"
 	"github.com/akarso/shopanda/internal/domain/catalog"
+	domainCart "github.com/akarso/shopanda/internal/domain/cart"
 	domainext "github.com/akarso/shopanda/internal/domain/extension"
 	"github.com/akarso/shopanda/internal/platform/apperror"
 )
@@ -221,6 +222,118 @@ func TestService_ClaimGuestCart_AssignDropsArchivedLine(t *testing.T) {
 	}
 	if len(ext.deleted) != 1 || ext.deleted[0] != guest.ID+":var-2" {
 		t.Fatalf("deleted extension targets = %v, want dropped var-2 line only", ext.deleted)
+	}
+}
+
+// failNthSaveCartRepo lets CreateCart/AddItem succeed, then fails the Nth
+// subsequent Save (1 = next Save). Used to simulate claim Save conflict.
+type failNthSaveCartRepo struct {
+	*stubCartRepo
+	failOn   int
+	saveN    int
+	saveErr  error
+}
+
+func (r *failNthSaveCartRepo) Save(ctx context.Context, c *domainCart.Cart) error {
+	r.saveN++
+	if r.failOn > 0 && r.saveN == r.failOn {
+		return r.saveErr
+	}
+	return r.stubCartRepo.Save(ctx, c)
+}
+
+func TestService_ClaimGuestCart_AssignSaveFails_PreservesDroppedLineExtensions(t *testing.T) {
+	cat := newMutableCatalog()
+	seedActiveLine(t, cat, "var-1", "prod-1")
+	seedActiveLine(t, cat, "var-2", "prod-later-archive")
+	inner := newStubCartRepo()
+	carts := &failNthSaveCartRepo{stubCartRepo: inner, saveErr: errors.New("save conflict")}
+	prices := newStubPriceRepo()
+	prices.set("var-1", "EUR", 1000)
+	prices.set("var-2", "EUR", 2000)
+	ext := &trackingExtWriter{}
+	svc := cartApp.NewService(carts, prices, nil, nil, mutableVariantRepo{cat}, mutableProductRepo{cat}, testPipeline(prices), testLogger(), testBus(), ext, nil)
+	ctx := context.Background()
+
+	guest, err := svc.CreateCart(ctx, "", "EUR")
+	if err != nil {
+		t.Fatalf("CreateCart: %v", err)
+	}
+	for _, vid := range []string{"var-1", "var-2"} {
+		if _, err := svc.AddItem(ctx, guest.ID, "", vid, 1, cartApp.AddItemOptions{}); err != nil {
+			t.Fatalf("AddItem %s: %v", vid, err)
+		}
+	}
+	// CreateCart + 2×AddItem = 3 saves so far; fail the next (claim) Save.
+	carts.failOn = carts.saveN + 1
+	cat.archive("prod-later-archive")
+
+	if _, err := svc.ClaimGuestCart(ctx, guest.ID, "cust-1"); err == nil {
+		t.Fatal("ClaimGuestCart: expected save error")
+	}
+	if len(ext.deleted) != 0 {
+		t.Fatalf("deleted extension targets = %v, want none when claim Save fails", ext.deleted)
+	}
+	stillGuest, err := svc.GetCart(ctx, guest.ID, "")
+	if err != nil {
+		t.Fatalf("GetCart: %v", err)
+	}
+	if stillGuest.CustomerID != "" {
+		t.Fatalf("guest claimed despite Save failure: customer=%q", stillGuest.CustomerID)
+	}
+	if stillGuest.ItemCount() != 2 {
+		t.Fatalf("guest items = %d, want 2 (dropped line must remain for retry)", stillGuest.ItemCount())
+	}
+}
+
+func TestService_ClaimGuestCart_MergeSaveFails_PreservesGuestLineExtensions(t *testing.T) {
+	cat := newMutableCatalog()
+	seedActiveLine(t, cat, "var-1", "prod-active")
+	seedActiveLine(t, cat, "var-2", "prod-later-archive")
+	inner := newStubCartRepo()
+	carts := &failNthSaveCartRepo{stubCartRepo: inner, saveErr: errors.New("save conflict")}
+	prices := newStubPriceRepo()
+	prices.set("var-1", "EUR", 1000)
+	prices.set("var-2", "EUR", 2000)
+	ext := &trackingExtWriter{}
+	svc := cartApp.NewService(carts, prices, nil, nil, mutableVariantRepo{cat}, mutableProductRepo{cat}, testPipeline(prices), testLogger(), testBus(), ext, nil)
+	ctx := context.Background()
+
+	customer, err := svc.CreateCart(ctx, "cust-1", "EUR")
+	if err != nil {
+		t.Fatalf("CreateCart customer: %v", err)
+	}
+	guest, err := svc.CreateCart(ctx, "", "EUR")
+	if err != nil {
+		t.Fatalf("CreateCart guest: %v", err)
+	}
+	for _, vid := range []string{"var-1", "var-2"} {
+		if _, err := svc.AddItem(ctx, guest.ID, "", vid, 1, cartApp.AddItemOptions{}); err != nil {
+			t.Fatalf("AddItem %s: %v", vid, err)
+		}
+	}
+	carts.failOn = carts.saveN + 1
+	cat.archive("prod-later-archive")
+
+	if _, err := svc.ClaimGuestCart(ctx, guest.ID, "cust-1"); err == nil {
+		t.Fatal("ClaimGuestCart merge: expected save error")
+	}
+	if len(ext.deleted) != 0 {
+		t.Fatalf("deleted guest extension targets = %v, want none when merge Save fails", ext.deleted)
+	}
+	stillGuest, err := svc.GetCart(ctx, guest.ID, "")
+	if err != nil {
+		t.Fatalf("GetCart guest: %v", err)
+	}
+	if stillGuest.ItemCount() != 2 {
+		t.Fatalf("guest items = %d, want 2 unchanged for retry", stillGuest.ItemCount())
+	}
+	stillCustomer, err := svc.GetCart(ctx, customer.ID, "cust-1")
+	if err != nil {
+		t.Fatalf("GetCart customer: %v", err)
+	}
+	if stillCustomer.ItemCount() != 0 {
+		t.Fatalf("customer items = %d, want 0 when merge Save fails", stillCustomer.ItemCount())
 	}
 }
 
