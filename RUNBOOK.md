@@ -225,6 +225,21 @@ Or `SHOPANDA_CATALOG_VISIBILITY_ENFORCE=true`, then restart `serve`.
 
 **Why default off:** migration `086` set every product’s modes to `auto`. AutoBasis requires a stock row with `quantity > 0` and at least one price. With enforce on, OOS products, products with no stock row, and products with no price drop from listings, search, suggest, carousels, and the sitemap, and their PDP / variants / reviews return **404**. That is intentional AutoBasis behaviour, not a soft “hide from PLP only” rule.
 
+**Cart and checkout (PR-1058):** the same flag turns on the `Purchasable` axis for cart mutations and checkout. The product `Status` check (PR-1054) applies whether enforce is on or off.
+
+| Path | Behaviour when `Purchasable` resolves false |
+| --- | --- |
+| Add to cart, quantity increase | 422 `product is not currently purchasable` |
+| Quantity decrease, remove line | Allowed, so customers can clear blocked lines |
+| Guest cart claim on login | Blocked lines are **dropped** and the rest merge; logged as `cart.guest.claim.lines_dropped` (`guest_cart_id`, `variant_ids`) |
+| Checkout (`validate_cart`) | 422 naming the first blocked variant; the order is not created |
+
+- With mode `auto`, a product that goes out of stock or loses its last price becomes non-purchasable, so existing carts holding it fail checkout until the line is removed. That includes carts already mid-checkout.
+- A product with no visibility snapshot (e.g. non-active) is denied (fail-closed).
+- A visibility-facts DB error returns 500 and aborts the claim or checkout; it never drops lines.
+- Admin API contexts bypass the axis but not the `Status` check.
+- Frequent `cart.guest.claim.lines_dropped` warnings after enabling usually mean OOS products are still sitting in guest carts. Expected; no action needed unless volume is surprising.
+
 **Before enabling in production:**
 
 1. Decide whether OOS/unpriced PDPs should 404, or force display axes to `visible` (leave `purchasable` as `auto`/`hidden`) for SEO-critical SKUs.

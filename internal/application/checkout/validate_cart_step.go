@@ -13,8 +13,10 @@ import (
 // physical shipping (before reserve/create-order so a later lookup failure
 // cannot orphan an order — PR-1050).
 type ValidateCartStep struct {
-	variants catalog.VariantRepository
-	products catalog.ProductRepository
+	variants        catalog.VariantRepository
+	products        catalog.ProductRepository
+	visibilityFacts catalog.VisibilityFactsSource
+	visibilityOpts  catalog.VisibilityOptions
 }
 
 // NewValidateCartStep creates a ValidateCartStep.
@@ -28,7 +30,37 @@ func NewValidateCartStep(variants catalog.VariantRepository, products catalog.Pr
 	return &ValidateCartStep{variants: variants, products: products}
 }
 
+// WithVisibilityFacts enables the four-axis Purchasable check on checkout.
+// Nil facts leaves the axis gate off.
+func (s *ValidateCartStep) WithVisibilityFacts(facts catalog.VisibilityFactsSource, opts catalog.VisibilityOptions) *ValidateCartStep {
+	s.visibilityFacts = facts
+	s.visibilityOpts = opts
+	return s
+}
+
 func (s *ValidateCartStep) Name() string { return "validate_cart" }
+
+// checkPurchasableAxis loads visibility facts once for every distinct product
+// in the cart and rejects the first line (in cart order) whose product is not
+// purchasable.
+func (s *ValidateCartStep) checkPurchasableAxis(ctx context.Context, cctx *Context, variants map[string]*catalog.Variant, productIDs []string) error {
+	allowed, err := catalog.FilterIDsWithFacts(ctx, productIDs, catalog.VisibilitySurfacePurchasable, s.visibilityFacts, s.visibilityOpts)
+	if err != nil {
+		return fmt.Errorf("validate_cart: purchasability: %w", err)
+	}
+	allowedSet := make(map[string]struct{}, len(allowed))
+	for _, id := range allowed {
+		allowedSet[id] = struct{}{}
+	}
+	for _, item := range cctx.Cart.Items {
+		if _, ok := allowedSet[variants[item.VariantID].ProductID]; !ok {
+			return apperror.Validation(fmt.Sprintf(
+				"validate_cart: product for variant %s is not currently purchasable", item.VariantID,
+			))
+		}
+	}
+	return nil
+}
 
 // cartVariantsMetaKey holds a map[string]*catalog.Variant (keyed by
 // VariantID) in cctx.Meta, populated by Execute below from the lookups it
@@ -70,6 +102,7 @@ func (s *ValidateCartStep) Execute(ctx context.Context, cctx *Context) error {
 
 	variants := make(map[string]*catalog.Variant, len(cctx.Cart.Items))
 	productsByID := make(map[string]*catalog.Product, len(cctx.Cart.Items))
+	productIDs := make([]string, 0, len(cctx.Cart.Items))
 	for _, item := range cctx.Cart.Items {
 		v, err := s.variants.FindByID(ctx, item.VariantID)
 		if err != nil {
@@ -85,6 +118,7 @@ func (s *ValidateCartStep) Execute(ctx context.Context, cctx *Context) error {
 				return fmt.Errorf("validate_cart: lookup product %s: %w", v.ProductID, err)
 			}
 			productsByID[v.ProductID] = p
+			productIDs = append(productIDs, v.ProductID)
 		}
 		if !catalog.ActiveForPurchase(p) {
 			return apperror.Validation(fmt.Sprintf(
@@ -92,6 +126,10 @@ func (s *ValidateCartStep) Execute(ctx context.Context, cctx *Context) error {
 			))
 		}
 		variants[item.VariantID] = v
+	}
+
+	if err := s.checkPurchasableAxis(ctx, cctx, variants, productIDs); err != nil {
+		return err
 	}
 
 	cctx.SetMeta(cartVariantsMetaKey, variants)
