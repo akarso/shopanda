@@ -201,6 +201,151 @@ func TestValidateCartStep_NonActiveProduct(t *testing.T) {
 	}
 }
 
+type checkoutPurchasableFacts map[string]catalog.VisibilitySnapshot
+
+func (m checkoutPurchasableFacts) LoadMany(_ context.Context, ids []string) (map[string]catalog.VisibilitySnapshot, error) {
+	out := make(map[string]catalog.VisibilitySnapshot, len(ids))
+	for _, id := range ids {
+		if s, ok := m[id]; ok {
+			out[id] = s
+		}
+	}
+	return out, nil
+}
+
+type countingFacts struct {
+	inner checkoutPurchasableFacts
+	calls int
+	ids   []string
+	err   error
+}
+
+func (c *countingFacts) LoadMany(ctx context.Context, ids []string) (map[string]catalog.VisibilitySnapshot, error) {
+	c.calls++
+	c.ids = append(c.ids, ids...)
+	if c.err != nil {
+		return nil, c.err
+	}
+	return c.inner.LoadMany(ctx, ids)
+}
+
+func checkoutSellableSnap() catalog.VisibilitySnapshot {
+	return catalog.VisibilitySnapshot{
+		Status: catalog.StatusActive,
+		Modes:  catalog.DefaultVisibilityAxes(),
+		Inputs: catalog.VisibilityInputs{
+			QuantityPositive:   true,
+			HasPrice:           true,
+			HasStoreAssignment: true,
+		},
+	}
+}
+
+func TestValidateCartStep_PurchasableAxis_OneLoadPerCart(t *testing.T) {
+	repo := &mockVariantRepo{variants: variantMap("v1", "v2", "v3")} // all prod-1
+	facts := &countingFacts{inner: checkoutPurchasableFacts{"prod-1": checkoutSellableSnap()}}
+	step := checkout.NewValidateCartStep(repo, &mockProductRepo047{}).
+		WithVisibilityFacts(facts, catalog.VisibilityOptions{})
+
+	cctx := checkout.NewContext("cart-1", "cust-1", "EUR")
+	cctx.Cart = cartWithItems(t, "cust-1", "v1", "v2", "v3")
+
+	if err := step.Execute(context.Background(), cctx); err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	if facts.calls != 1 {
+		t.Fatalf("LoadMany calls = %d, want 1", facts.calls)
+	}
+	if len(facts.ids) != 1 || facts.ids[0] != "prod-1" {
+		t.Fatalf("LoadMany ids = %v, want [prod-1] (deduplicated)", facts.ids)
+	}
+}
+
+func TestValidateCartStep_PurchasableAxis_MissingSnapshotFailsClosed(t *testing.T) {
+	repo := &mockVariantRepo{variants: variantMap("v1")}
+	step := checkout.NewValidateCartStep(repo, &mockProductRepo047{}).
+		WithVisibilityFacts(checkoutPurchasableFacts{}, catalog.VisibilityOptions{})
+
+	cctx := checkout.NewContext("cart-1", "cust-1", "EUR")
+	cctx.Cart = cartWithItems(t, "cust-1", "v1")
+
+	err := step.Execute(context.Background(), cctx)
+	if !apperror.Is(err, apperror.CodeValidation) || !strings.Contains(err.Error(), "not currently purchasable") {
+		t.Fatalf("err = %v, want validation not currently purchasable", err)
+	}
+}
+
+func TestValidateCartStep_PurchasableAxis_FactsErrorNotValidation(t *testing.T) {
+	repo := &mockVariantRepo{variants: variantMap("v1")}
+	facts := &countingFacts{err: errors.New("facts unavailable")}
+	step := checkout.NewValidateCartStep(repo, &mockProductRepo047{}).
+		WithVisibilityFacts(facts, catalog.VisibilityOptions{})
+
+	cctx := checkout.NewContext("cart-1", "cust-1", "EUR")
+	cctx.Cart = cartWithItems(t, "cust-1", "v1")
+
+	err := step.Execute(context.Background(), cctx)
+	if err == nil {
+		t.Fatal("expected facts error")
+	}
+	if apperror.Is(err, apperror.CodeValidation) {
+		t.Fatalf("err = %v, want internal error, not validation", err)
+	}
+}
+
+func TestValidateCartStep_PurchasableAxis_BypassContextSkipsAxis(t *testing.T) {
+	repo := &mockVariantRepo{variants: variantMap("v1")}
+	facts := &countingFacts{inner: checkoutPurchasableFacts{}}
+	step := checkout.NewValidateCartStep(repo, &mockProductRepo047{}).
+		WithVisibilityFacts(facts, catalog.VisibilityOptions{})
+
+	cctx := checkout.NewContext("cart-1", "cust-1", "EUR")
+	cctx.Cart = cartWithItems(t, "cust-1", "v1")
+
+	ctx := catalog.WithBypassProductVisibility(context.Background())
+	if err := step.Execute(ctx, cctx); err != nil {
+		t.Fatalf("Execute with bypass ctx: %v", err)
+	}
+	if facts.calls != 0 {
+		t.Fatalf("LoadMany calls = %d, want 0 under bypass", facts.calls)
+	}
+}
+
+func TestValidateCartStep_RejectsNonPurchasableAxis(t *testing.T) {
+	repo := &mockVariantRepo{variants: variantMap("v1")}
+	products := &mockProductRepo047{}
+	modes := catalog.DefaultVisibilityAxes()
+	modes.Purchasable = catalog.VisibilityModeHidden
+	facts := checkoutPurchasableFacts{
+		"prod-1": {
+			Status: catalog.StatusActive,
+			Modes:  modes,
+			Inputs: catalog.VisibilityInputs{
+				QuantityPositive:   true,
+				HasPrice:           true,
+				HasStoreAssignment: true,
+			},
+		},
+	}
+	step := checkout.NewValidateCartStep(repo, products).
+		WithVisibilityFacts(facts, catalog.VisibilityOptions{})
+
+	cctx := checkout.NewContext("cart-1", "cust-1", "EUR")
+	cctx.Cart = cartWithItems(t, "cust-1", "v1")
+
+	err := step.Execute(context.Background(), cctx)
+	if err == nil {
+		t.Fatal("expected error for non-purchasable product")
+	}
+	if !strings.Contains(err.Error(), "not currently purchasable") {
+		t.Fatalf("err = %v", err)
+	}
+	var appErr *apperror.Error
+	if !errors.As(err, &appErr) || appErr.Code != apperror.CodeValidation {
+		t.Fatalf("err = %v, want validation apperror", err)
+	}
+}
+
 func TestValidateCartStep_MissingVariant(t *testing.T) {
 	repo := &mockVariantRepo{variants: variantMap("v1")} // v2 missing
 	step := checkout.NewValidateCartStep(repo, &mockProductRepo047{})

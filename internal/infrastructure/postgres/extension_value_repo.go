@@ -143,6 +143,31 @@ func (r *ExtensionValueRepo) upsertTx(ctx context.Context, tx *sql.Tx, value dom
 	return nil
 }
 
+// ListTargetIDsByTypeAndIDPrefix returns distinct target_ids matching type and id prefix (SQL LIKE pattern).
+func (r *ExtensionValueRepo) ListTargetIDsByTypeAndIDPrefix(ctx context.Context, targetType domainext.TargetType, idPrefix string) ([]string, error) {
+	const q = `SELECT DISTINCT target_id FROM extension_values
+		WHERE target_type = $1 AND target_id LIKE $2
+		ORDER BY target_id`
+	rows, err := r.db.QueryContext(ctx, q, string(targetType), idPrefix)
+	if err != nil {
+		return nil, fmt.Errorf("extension_value_repo: list target ids by prefix: %w", err)
+	}
+	defer rows.Close()
+
+	out := make([]string, 0)
+	for rows.Next() {
+		var targetID string
+		if err := rows.Scan(&targetID); err != nil {
+			return nil, fmt.Errorf("extension_value_repo: list target ids scan: %w", err)
+		}
+		out = append(out, targetID)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("extension_value_repo: list target ids rows: %w", err)
+	}
+	return out, nil
+}
+
 // Delete removes a value row.
 func (r *ExtensionValueRepo) Delete(ctx context.Context, target domainext.Target, fieldCode string) error {
 	const q = `DELETE FROM extension_values WHERE target_type = $1 AND target_id = $2 AND field_code = $3`

@@ -7,8 +7,8 @@ import (
 	"time"
 
 	"github.com/akarso/shopanda/internal/application/hooks"
-	"github.com/akarso/shopanda/internal/domain/catalog"
 	domainCart "github.com/akarso/shopanda/internal/domain/cart"
+	"github.com/akarso/shopanda/internal/domain/catalog"
 	domainext "github.com/akarso/shopanda/internal/domain/extension"
 	"github.com/akarso/shopanda/internal/domain/pricing"
 	"github.com/akarso/shopanda/internal/domain/promotion"
@@ -29,23 +29,26 @@ type AddItemOptions struct {
 
 // Service orchestrates cart use cases.
 type Service struct {
-	carts      domainCart.CartRepository
-	prices     pricing.PriceRepository
-	promotions promotion.PromotionRepository
-	coupons    promotion.CouponRepository
-	variants   catalog.VariantRepository
-	products   catalog.ProductRepository
-	pipeline   pricing.Pipeline
-	extensions extensionValueWriter
-	hooks      *hooks.Registry
-	log        logger.Logger
-	bus        *event.Bus
+	carts           domainCart.CartRepository
+	prices          pricing.PriceRepository
+	promotions      promotion.PromotionRepository
+	coupons         promotion.CouponRepository
+	variants        catalog.VariantRepository
+	products        catalog.ProductRepository
+	visibilityFacts catalog.VisibilityFactsSource
+	visibilityOpts  catalog.VisibilityOptions
+	pipeline        pricing.Pipeline
+	extensions      extensionValueWriter
+	hooks           *hooks.Registry
+	log             logger.Logger
+	bus             *event.Bus
 }
 
 type extensionValueWriter interface {
 	ValidateBatch(ctx context.Context, target domainext.Target, inputs []domainext.ValueInput, canAccessPrivate bool) error
 	UpsertBatch(ctx context.Context, target domainext.Target, inputs []domainext.ValueInput, updatedBy string, canAccessPrivate bool) ([]domainext.Value, error)
 	DeleteAllForTarget(ctx context.Context, target domainext.Target) error
+	DeleteOrphanCartItemExtensions(ctx context.Context, cartID string, keepVariantIDs []string) error
 	CopyTarget(ctx context.Context, from, to domainext.Target, updatedBy string) error
 }
 
@@ -82,6 +85,14 @@ func NewService(
 		log:        log,
 		bus:        bus,
 	}
+}
+
+// WithVisibilityFacts enables the four-axis Purchasable check on top of
+// ActiveForPurchase. Nil facts leaves the axis gate off (catalog.visibility.enforce false).
+func (s *Service) WithVisibilityFacts(facts catalog.VisibilityFactsSource, opts catalog.VisibilityOptions) *Service {
+	s.visibilityFacts = facts
+	s.visibilityOpts = opts
+	return s
 }
 
 // CreateCart creates a new active cart with the given currency, owned by customerID.
@@ -153,6 +164,9 @@ func (s *Service) ClaimGuestCart(ctx context.Context, guestCartID, customerID st
 	}
 	if guestCart.CustomerID != "" {
 		if guestCart.CustomerID == customerID {
+			if err := s.finishAssignedGuestCleanup(ctx, guestCart); err != nil {
+				return nil, err
+			}
 			return guestCart, nil
 		}
 		return nil, nil
@@ -163,6 +177,9 @@ func (s *Service) ClaimGuestCart(ctx context.Context, guestCartID, customerID st
 		return nil, fmt.Errorf("cart service: claim guest cart: find customer cart: %w", err)
 	}
 	if customerCart != nil && customerCart.MergedGuestID == guestCart.ID {
+		if err := s.finishMergedGuestCleanup(ctx, guestCart.ID); err != nil {
+			return nil, err
+		}
 		return customerCart, nil
 	}
 	if customerCart == nil {
@@ -188,10 +205,97 @@ func (s *Service) ClaimGuestCart(ctx context.Context, guestCartID, customerID st
 	return s.mergeIntoCustomerCart(ctx, guestCart, customerCart)
 }
 
-func (s *Service) assignGuestCart(ctx context.Context, guestCart *domainCart.Cart, customerID string) (*domainCart.Cart, error) {
+// unclaimableGuestLines checks every guest line before any cart or extension
+// mutation. Lines whose variant is gone or whose product is no longer
+// purchasable are returned so the claim can drop them instead of failing:
+// a failed claim leaves the guest cookie in place and every later login
+// retries and fails again. Infrastructure errors still abort the claim.
+func (s *Service) unclaimableGuestLines(ctx context.Context, guestCart *domainCart.Cart) (map[string]struct{}, error) {
+	dropped := make(map[string]struct{})
 	for _, item := range guestCart.Items {
-		if err := s.ensureVariantPurchasable(ctx, item.VariantID); err != nil {
-			return nil, err
+		err := s.ensureVariantPurchasable(ctx, item.VariantID)
+		if err == nil {
+			continue
+		}
+		if apperror.Is(err, apperror.CodeValidation) || apperror.Is(err, apperror.CodeNotFound) {
+			dropped[item.VariantID] = struct{}{}
+			continue
+		}
+		return nil, err
+	}
+	if len(dropped) > 0 {
+		variantIDs := make([]string, 0, len(dropped))
+		for _, item := range guestCart.Items {
+			if _, ok := dropped[item.VariantID]; ok {
+				variantIDs = append(variantIDs, item.VariantID)
+			}
+		}
+		s.log.Warn("cart.guest.claim.lines_dropped", map[string]interface{}{
+			"guest_cart_id": guestCart.ID,
+			"variant_ids":   variantIDs,
+		})
+	}
+	return dropped, nil
+}
+
+func (s *Service) deleteGuestLineExtensions(ctx context.Context, guestCartID, variantID string) error {
+	if s.extensions == nil {
+		return nil
+	}
+	if err := s.extensions.DeleteAllForTarget(ctx, domainext.CartItemTarget(guestCartID, variantID)); err != nil {
+		return fmt.Errorf("cart service: claim guest cart: delete guest extensions: %w", err)
+	}
+	return nil
+}
+
+func (s *Service) finishAssignedGuestCleanup(ctx context.Context, cart *domainCart.Cart) error {
+	if s.extensions == nil || cart == nil {
+		return nil
+	}
+	keepVariantIDs := make([]string, 0, len(cart.Items))
+	for _, item := range cart.Items {
+		keepVariantIDs = append(keepVariantIDs, item.VariantID)
+	}
+	if err := s.extensions.DeleteOrphanCartItemExtensions(ctx, cart.ID, keepVariantIDs); err != nil {
+		return fmt.Errorf("cart service: claim guest cart: purge orphan extensions: %w", err)
+	}
+	return nil
+}
+
+func (s *Service) finishMergedGuestCleanup(ctx context.Context, guestCartID string) error {
+	guestCart, err := s.carts.FindByID(ctx, guestCartID)
+	if err != nil {
+		return fmt.Errorf("cart service: claim guest cart: finish merge cleanup find guest: %w", err)
+	}
+	if guestCart == nil {
+		return nil
+	}
+	for _, item := range guestCart.Items {
+		if err := s.deleteGuestLineExtensions(ctx, guestCartID, item.VariantID); err != nil {
+			return err
+		}
+	}
+	if err := s.carts.Delete(ctx, guestCartID); err != nil {
+		if apperror.Is(err, apperror.CodeNotFound) {
+			return nil
+		}
+		return fmt.Errorf("cart service: claim guest cart: delete guest cart: %w", err)
+	}
+	return nil
+}
+
+func (s *Service) assignGuestCart(ctx context.Context, guestCart *domainCart.Cart, customerID string) (*domainCart.Cart, error) {
+	dropped, err := s.unclaimableGuestLines(ctx, guestCart)
+	if err != nil {
+		return nil, err
+	}
+	// Drop lines in memory first; delete their extension rows only after Save
+	// succeeds. Extension deletes autocommit separately from cart Save — doing
+	// them earlier would leave the DB cart unchanged but wipe custom values if
+	// recalculate/Save fails (retry would then find the line without extensions).
+	for variantID := range dropped {
+		if err := guestCart.RemoveItem(variantID); err != nil {
+			return nil, apperror.Wrap(apperror.CodeValidation, "cannot drop unavailable guest cart item", err)
 		}
 	}
 	if err := guestCart.SetCustomerID(customerID); err != nil {
@@ -203,6 +307,9 @@ func (s *Service) assignGuestCart(ctx context.Context, guestCart *domainCart.Car
 	if err := s.carts.Save(ctx, guestCart); err != nil {
 		return nil, fmt.Errorf("cart service: claim guest cart: save claimed cart: %w", err)
 	}
+	if err := s.finishAssignedGuestCleanup(ctx, guestCart); err != nil {
+		return nil, err
+	}
 	s.log.Info("cart.guest.claimed", map[string]interface{}{
 		"cart_id":     guestCart.ID,
 		"customer_id": customerID,
@@ -211,25 +318,23 @@ func (s *Service) assignGuestCart(ctx context.Context, guestCart *domainCart.Car
 }
 
 func (s *Service) mergeIntoCustomerCart(ctx context.Context, guestCart, customerCart *domainCart.Cart) (*domainCart.Cart, error) {
-	// Validate every guest line before copying/deleting extensions so a late
-	// failure cannot leave earlier guest targets half-migrated (PR-1054).
-	for _, item := range guestCart.Items {
-		if err := s.ensureVariantPurchasable(ctx, item.VariantID); err != nil {
-			return nil, err
-		}
+	// Validate every guest line before copying extensions so a late failure
+	// cannot leave earlier guest targets half-migrated. Guest extension deletes
+	// wait until after customer cart Save so a failed Save leaves guest values
+	// intact (same ordering as assignGuestCart).
+	dropped, err := s.unclaimableGuestLines(ctx, guestCart)
+	if err != nil {
+		return nil, err
 	}
 	for _, item := range guestCart.Items {
+		if _, skip := dropped[item.VariantID]; skip {
+			continue
+		}
 		if err := customerCart.AddItem(item.VariantID, item.Quantity, item.UnitPrice); err != nil {
 			return nil, apperror.Wrap(apperror.CodeValidation, "cannot merge guest cart item", err)
 		}
 		if err := s.copyCartItemExtensions(ctx, guestCart.ID, customerCart.ID, item.VariantID); err != nil {
 			return nil, err
-		}
-		if s.extensions != nil {
-			guestTarget := domainext.CartItemTarget(guestCart.ID, item.VariantID)
-			if err := s.extensions.DeleteAllForTarget(ctx, guestTarget); err != nil {
-				return nil, fmt.Errorf("cart service: merge guest cart: delete guest extensions: %w", err)
-			}
 		}
 	}
 	if err := s.applyEligibleGuestCoupon(ctx, customerCart, guestCart.CouponCode); err != nil {
@@ -242,8 +347,8 @@ func (s *Service) mergeIntoCustomerCart(ctx context.Context, guestCart, customer
 	if err := s.carts.Save(ctx, customerCart); err != nil {
 		return nil, fmt.Errorf("cart service: claim guest cart: save merged cart: %w", err)
 	}
-	if err := s.carts.Delete(ctx, guestCart.ID); err != nil {
-		return nil, fmt.Errorf("cart service: claim guest cart: delete guest cart: %w", err)
+	if err := s.finishMergedGuestCleanup(ctx, guestCart.ID); err != nil {
+		return nil, err
 	}
 
 	s.log.Info("cart.guest.merged", map[string]interface{}{
@@ -291,6 +396,10 @@ func (s *Service) AddItem(ctx context.Context, cartID, customerID, variantID str
 		return nil, apperror.Forbidden("cannot modify another customer's cart")
 	}
 
+	if err := s.ensureVariantPurchasable(ctx, variantID); err != nil {
+		return nil, err
+	}
+
 	if len(opts.Extensions) > 0 {
 		if s.extensions == nil {
 			return nil, apperror.Validation("extension values are not supported")
@@ -299,10 +408,6 @@ func (s *Service) AddItem(ctx context.Context, cartID, customerID, variantID str
 		if err := s.extensions.ValidateBatch(ctx, target, opts.Extensions, false); err != nil {
 			return nil, err
 		}
-	}
-
-	if err := s.ensureVariantPurchasable(ctx, variantID); err != nil {
-		return nil, err
 	}
 
 	price, err := s.lookupPrice(ctx, variantID, c.Currency)
@@ -544,17 +649,24 @@ func (s *Service) recalculate(ctx context.Context, c *domainCart.Cart) error {
 func (s *Service) ensureVariantPurchasable(ctx context.Context, variantID string) error {
 	v, err := s.variants.FindByID(ctx, variantID)
 	if err != nil {
-		return fmt.Errorf("cart service: add item: lookup variant: %w", err)
+		return fmt.Errorf("cart service: purchasability: lookup variant: %w", err)
 	}
 	if v == nil {
 		return apperror.NotFound("variant not found")
 	}
 	p, err := s.products.FindByID(ctx, v.ProductID)
 	if err != nil {
-		return fmt.Errorf("cart service: add item: lookup product: %w", err)
+		return fmt.Errorf("cart service: purchasability: lookup product: %w", err)
 	}
 	if !catalog.ActiveForPurchase(p) {
 		return apperror.Validation("product is not available for purchase")
+	}
+	ok, err := catalog.AllowWithFacts(ctx, p, catalog.VisibilitySurfacePurchasable, s.visibilityFacts, s.visibilityOpts)
+	if err != nil {
+		return fmt.Errorf("cart service: purchasability: visibility: %w", err)
+	}
+	if !ok {
+		return apperror.Validation("product is not currently purchasable")
 	}
 	return nil
 }

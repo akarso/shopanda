@@ -14,3 +14,18 @@ func CartItemTarget(cartID, variantID string) Target {
 		ID:   CartItemTargetID(cartID, variantID),
 	}
 }
+
+// ParseCartItemTargetID splits a cart_item target_id on the first ':'.
+func ParseCartItemTargetID(targetID string) (cartID, variantID string, ok bool) {
+	targetID = strings.TrimSpace(targetID)
+	i := strings.IndexByte(targetID, ':')
+	if i <= 0 || i >= len(targetID)-1 {
+		return "", "", false
+	}
+	cartID = strings.TrimSpace(targetID[:i])
+	variantID = strings.TrimSpace(targetID[i+1:])
+	if cartID == "" || variantID == "" {
+		return "", "", false
+	}
+	return cartID, variantID, true
+}
