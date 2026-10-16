@@ -65,7 +65,9 @@ type mutableVariantRepo struct{ cat *mutableCatalog }
 func (r mutableVariantRepo) FindByID(ctx context.Context, id string) (*catalog.Variant, error) {
 	return r.cat.FindVariant(ctx, id)
 }
-func (mutableVariantRepo) FindBySKU(context.Context, string) (*catalog.Variant, error) { return nil, nil }
+func (mutableVariantRepo) FindBySKU(context.Context, string) (*catalog.Variant, error) {
+	return nil, nil
+}
 func (mutableVariantRepo) FindBySKUs(context.Context, []string) (map[string]*catalog.Variant, error) {
 	return nil, nil
 }
@@ -83,7 +85,9 @@ type mutableProductRepo struct{ cat *mutableCatalog }
 func (r mutableProductRepo) FindByID(ctx context.Context, id string) (*catalog.Product, error) {
 	return r.cat.FindProduct(ctx, id)
 }
-func (mutableProductRepo) FindBySlug(context.Context, string) (*catalog.Product, error) { return nil, nil }
+func (mutableProductRepo) FindBySlug(context.Context, string) (*catalog.Product, error) {
+	return nil, nil
+}
 func (mutableProductRepo) List(context.Context, catalog.ListFilter) ([]catalog.Product, error) {
 	return nil, nil
 }
@@ -182,12 +186,51 @@ func TestService_RemoveItem_AllowsUnavailableLine(t *testing.T) {
 	}
 }
 
-func TestService_ClaimGuestCart_AssignRejectsArchived(t *testing.T) {
+func TestService_ClaimGuestCart_AssignDropsArchivedLine(t *testing.T) {
+	cat := newMutableCatalog()
+	seedActiveLine(t, cat, "var-1", "prod-1")
+	seedActiveLine(t, cat, "var-2", "prod-later-archive")
+	carts := newStubCartRepo()
+	prices := newStubPriceRepo()
+	prices.set("var-1", "EUR", 1000)
+	prices.set("var-2", "EUR", 2000)
+	ext := &trackingExtWriter{}
+	svc := cartApp.NewService(carts, prices, nil, nil, mutableVariantRepo{cat}, mutableProductRepo{cat}, testPipeline(prices), testLogger(), testBus(), ext, nil)
+	ctx := context.Background()
+
+	guest, err := svc.CreateCart(ctx, "", "EUR")
+	if err != nil {
+		t.Fatalf("CreateCart: %v", err)
+	}
+	for _, vid := range []string{"var-1", "var-2"} {
+		if _, err := svc.AddItem(ctx, guest.ID, "", vid, 1, cartApp.AddItemOptions{}); err != nil {
+			t.Fatalf("AddItem %s: %v", vid, err)
+		}
+	}
+	cat.archive("prod-later-archive")
+
+	claimed, err := svc.ClaimGuestCart(ctx, guest.ID, "cust-1")
+	if err != nil {
+		t.Fatalf("ClaimGuestCart assign: %v", err)
+	}
+	if claimed.CustomerID != "cust-1" {
+		t.Fatalf("customer id = %q, want cust-1", claimed.CustomerID)
+	}
+	if len(claimed.Items) != 1 || claimed.Items[0].VariantID != "var-1" {
+		t.Fatalf("items = %+v, want only var-1", claimed.Items)
+	}
+	if len(ext.deleted) != 1 || ext.deleted[0] != guest.ID+":var-2" {
+		t.Fatalf("deleted extension targets = %v, want dropped var-2 line only", ext.deleted)
+	}
+}
+
+func TestService_ClaimGuestCart_InfraErrorStillFails(t *testing.T) {
 	cat := newMutableCatalog()
 	seedActiveLine(t, cat, "var-1", "prod-1")
 	carts := newStubCartRepo()
 	prices := newStubPriceRepo()
 	prices.set("var-1", "EUR", 1000)
+	facts := &erroringFacts{}
 	svc := cartApp.NewService(carts, prices, nil, nil, mutableVariantRepo{cat}, mutableProductRepo{cat}, testPipeline(prices), testLogger(), testBus(), nil, nil)
 	ctx := context.Background()
 
@@ -198,19 +241,21 @@ func TestService_ClaimGuestCart_AssignRejectsArchived(t *testing.T) {
 	if _, err := svc.AddItem(ctx, guest.ID, "", "var-1", 1, cartApp.AddItemOptions{}); err != nil {
 		t.Fatalf("AddItem: %v", err)
 	}
-	cat.archive("prod-1")
+	svc.WithVisibilityFacts(facts, catalog.VisibilityOptions{})
 
-	_, err = svc.ClaimGuestCart(ctx, guest.ID, "cust-1")
-	if err == nil {
-		t.Fatal("ClaimGuestCart assign: expected error for archived product")
+	if _, err := svc.ClaimGuestCart(ctx, guest.ID, "cust-1"); err == nil {
+		t.Fatal("ClaimGuestCart: expected facts load error to abort the claim")
 	}
-	var appErr *apperror.Error
-	if !errors.As(err, &appErr) || appErr.Code != apperror.CodeValidation {
-		t.Fatalf("err = %v, want validation", err)
+	stillGuest, err := svc.GetCart(ctx, guest.ID, "")
+	if err != nil {
+		t.Fatalf("GetCart guest: %v", err)
+	}
+	if stillGuest.CustomerID != "" || stillGuest.ItemCount() != 1 {
+		t.Fatalf("guest cart mutated on infra error: customer=%q items=%d", stillGuest.CustomerID, stillGuest.ItemCount())
 	}
 }
 
-func TestService_ClaimGuestCart_MergeValidatesBeforeExtensionMutations(t *testing.T) {
+func TestService_ClaimGuestCart_MergeDropsArchivedLine(t *testing.T) {
 	cat := newMutableCatalog()
 	seedActiveLine(t, cat, "var-1", "prod-active")
 	seedActiveLine(t, cat, "var-2", "prod-later-archive")
@@ -238,25 +283,23 @@ func TestService_ClaimGuestCart_MergeValidatesBeforeExtensionMutations(t *testin
 	}
 	cat.archive("prod-later-archive")
 
-	_, err = svc.ClaimGuestCart(ctx, guest.ID, "cust-1")
-	if err == nil {
-		t.Fatal("ClaimGuestCart merge: expected error for archived guest line")
-	}
-	if ext.copied != 0 || len(ext.deleted) != 0 {
-		t.Fatalf("extension mutations before validation fail: copied=%d deleted=%v", ext.copied, ext.deleted)
-	}
-	stillGuest, err := svc.GetCart(ctx, guest.ID, "")
+	merged, err := svc.ClaimGuestCart(ctx, guest.ID, "cust-1")
 	if err != nil {
-		t.Fatalf("GetCart guest: %v", err)
+		t.Fatalf("ClaimGuestCart merge: %v", err)
 	}
-	if stillGuest.ItemCount() != 2 {
-		t.Fatalf("guest item count = %d, want 2 (unchanged)", stillGuest.ItemCount())
+	if merged.ID != customer.ID {
+		t.Fatalf("merged cart = %q, want customer cart %q", merged.ID, customer.ID)
 	}
-	cust, err := svc.GetCart(ctx, customer.ID, "cust-1")
-	if err != nil {
-		t.Fatalf("GetCart customer: %v", err)
+	if len(merged.Items) != 1 || merged.Items[0].VariantID != "var-1" {
+		t.Fatalf("items = %+v, want only var-1", merged.Items)
 	}
-	if cust.ItemCount() != 0 {
-		t.Fatalf("customer item count = %d, want 0", cust.ItemCount())
+	if ext.copied != 1 {
+		t.Fatalf("extension copies = %d, want 1 (var-1 only)", ext.copied)
+	}
+	if len(ext.deleted) != 2 {
+		t.Fatalf("deleted guest extension targets = %v, want both guest lines", ext.deleted)
+	}
+	if _, err := svc.GetCart(ctx, guest.ID, ""); !apperror.Is(err, apperror.CodeNotFound) {
+		t.Fatalf("guest cart after merge: err = %v, want not found", err)
 	}
 }

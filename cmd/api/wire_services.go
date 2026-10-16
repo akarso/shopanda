@@ -555,12 +555,15 @@ func wireServeRuntime(cfg *config.Config, log logger.Logger, conn *sql.DB, repos
 	pricingPipeline := pricing.NewPipeline(pricingSteps...)
 
 	// Application services.
-	cartService := cartApp.NewService(repos.cartRepo, repos.priceRepo, repos.promotionRepo, repos.couponRepo, repos.variantRepo, repos.productRepo, pricingPipeline, log, bus, extensionValueService, hookRegistry)
+	visibilityOpts := catalog.VisibilityOptions{}
+	cartService := cartApp.NewService(repos.cartRepo, repos.priceRepo, repos.promotionRepo, repos.couponRepo, repos.variantRepo, repos.productRepo, pricingPipeline, log, bus, extensionValueService, hookRegistry).
+		WithVisibilityFacts(visibilityFacts, visibilityOpts)
 	storeCreditService := storecreditApp.NewService(repos.storeCreditRepo, repos.customerRepo).
 		WithMaxIssueAmount(cfg.StoreCredit.MaxIssueAmount)
 
 	// Checkout workflow.
-	validateCartStep := checkoutApp.NewValidateCartStep(repos.variantRepo, repos.productRepo)
+	validateCartStep := checkoutApp.NewValidateCartStep(repos.variantRepo, repos.productRepo).
+		WithVisibilityFacts(visibilityFacts, visibilityOpts)
 	recalculatePricingStep := checkoutApp.NewRecalculatePricingStep(pricingPipeline)
 	reserveInventoryStep := checkoutApp.NewReserveInventoryStep(repos.reservationRepo,
 		checkoutApp.WithStockEventPublishing(repos.variantRepo, bus))

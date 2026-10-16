@@ -849,7 +849,7 @@ Naming rule, enforced by a CI unit test (`internal/platform/migrate` — runs in
 
 ## Catalog visibility enforcement
 
-`catalog.visibility.enforce` (env `SHOPANDA_CATALOG_VISIBILITY_ENFORCE`) defaults to **false**. Leaving it off is the safe upgrade path after Phase 12 Track B migrations: existing products stay discoverable under mode=`auto` until you explicitly opt into AutoBasis gates. See [RUNBOOK — Catalog visibility enforcement](../../RUNBOOK.md#catalog-visibility-enforcement-pr-1057) before flipping it on in production.
+`catalog.visibility.enforce` (env `SHOPANDA_CATALOG_VISIBILITY_ENFORCE`) defaults to **false**. Leaving it off is the safe upgrade path after Phase 12 Track B migrations: existing products stay discoverable under mode=`auto` until you explicitly opt into AutoBasis gates. Enabling it also gates cart add/quantity-increase, guest-cart claim (blocked lines are dropped), and checkout on the `Purchasable` axis (PR-1058), so out-of-stock or unpriced products stop being sellable. See [RUNBOOK — Catalog visibility enforcement](../../RUNBOOK.md#catalog-visibility-enforcement-pr-1057) before flipping it on in production.
 
 ## Search Index Maintenance
 
