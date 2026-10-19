@@ -1448,14 +1448,41 @@
         typeSectionsHost._shopandaVisibilityState = state;
     }
 
-    function refreshProductVisibilityFactsAfterSave(productID, form) {
-        var host = document.getElementById("product-type-sections-host");
+    // Guard async visibility refresh after variant price save: an in-flight GET for
+    // product A must not update the form if the merchant navigated to product B.
+    function productEditPathID() {
+        var m = location.pathname.match(/^\/admin\/products\/([^/]+)$/);
+        return m ? decodeURIComponent(m[1]) : "";
+    }
+
+    function productEditSessionStillValid(expectedProductID, form, host, state) {
+        if (!expectedProductID || expectedProductID !== productEditPathID()) return false;
+        if (!form || !form.isConnected) return false;
+        if (document.getElementById("product-form") !== form) return false;
+        var liveHost = document.getElementById("product-type-sections-host");
+        if (!liveHost || liveHost !== host) return false;
+        if (liveHost._shopandaVisibilityState !== state) return false;
+        return true;
+    }
+
+    function refreshProductVisibilityFactsAfterSave(productID, form, host, state) {
+        if (!host) {
+            host = document.getElementById("product-type-sections-host");
+        }
+        if (!state && host) {
+            state = host._shopandaVisibilityState;
+        }
         var visibilityAPI = productVisibilitySectionAPI();
-        var state = host && host._shopandaVisibilityState;
-        if (!productID || !visibilityAPI || !state) {
+        if (!productID || !visibilityAPI || !state || !form) {
+            return;
+        }
+        if (!productEditSessionStillValid(productID, form, host, state)) {
             return;
         }
         api("/admin/products/" + encodeURIComponent(productID)).then(function (body) {
+            if (!productEditSessionStillValid(productID, form, host, state)) {
+                return;
+            }
             if (body && body.error) {
                 return;
             }
@@ -2380,6 +2407,10 @@
                     }
                     return;
                 }
+                var sessionProductID = productID;
+                var sessionForm = form;
+                var sessionHost = document.getElementById("product-type-sections-host");
+                var sessionState = sessionHost && sessionHost._shopandaVisibilityState;
                 api("/admin/products/" + encodeURIComponent(productID) + "/variants/" + encodeURIComponent(variantID) + "/price", {
                     method: "PUT",
                     body: JSON.stringify({ amount: Number(input.value) })
@@ -2398,7 +2429,9 @@
                     if (msg) {
                         msg.innerHTML = '<p>Price saved.</p>';
                     }
-                    refreshProductVisibilityFactsAfterSave(productID, form);
+                    if (productEditSessionStillValid(sessionProductID, sessionForm, sessionHost, sessionState)) {
+                        refreshProductVisibilityFactsAfterSave(sessionProductID, sessionForm, sessionHost, sessionState);
+                    }
                 }).catch(function () {
                     if (msg) {
                         msg.innerHTML = '<p role="alert">Save price failed.</p>';
