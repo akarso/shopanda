@@ -30,6 +30,17 @@ type VisibilityFactsSource interface {
 	LoadMany(ctx context.Context, productIDs []string) (map[string]VisibilitySnapshot, error)
 }
 
+// VisibilityFactsAdminSource loads visibility snapshots regardless of
+// product Status (PR-1059). LoadMany (above) filters to active products —
+// correct for every public-gate caller, but the admin GUI must still show
+// computed axes and AutoBasis failures for a draft/archived product (status
+// itself is one of the AutoBasis conditions it needs to explain). Admin API
+// paths already bypass the public gate (BypassProductVisibility); this is a
+// separate, narrower read capability, not a bypass of anything.
+type VisibilityFactsAdminSource interface {
+	LoadManyAnyStatus(ctx context.Context, productIDs []string) (map[string]VisibilitySnapshot, error)
+}
+
 // AllowWithFacts resolves the surface gate using a loaded snapshot.
 // Nil facts means the gate is not configured (pass). A missing snapshot
 // denies (fail-closed). Prefer the DB snapshot over the in-memory Product

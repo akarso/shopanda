@@ -73,6 +73,28 @@ func (m *mockExtensionValueRepo) Delete(_ context.Context, target domainext.Targ
 	return nil
 }
 
+// ListTargetIDsByTypeAndIDPrefix satisfies domainext.ValueRepository (added
+// by PR-1058, after this mock was written — unrelated pre-existing gap fixed
+// here only to unblock go test for this package; see PR-1059.md).
+func (m *mockExtensionValueRepo) ListTargetIDsByTypeAndIDPrefix(_ context.Context, targetType domainext.TargetType, idPrefix string) ([]string, error) {
+	seen := make(map[string]struct{})
+	out := make([]string, 0)
+	for _, value := range m.values {
+		if value.TargetType != targetType {
+			continue
+		}
+		if len(value.TargetID) < len(idPrefix) || value.TargetID[:len(idPrefix)] != idPrefix {
+			continue
+		}
+		if _, ok := seen[value.TargetID]; ok {
+			continue
+		}
+		seen[value.TargetID] = struct{}{}
+		out = append(out, value.TargetID)
+	}
+	return out, nil
+}
+
 func registerExtensionField(t *testing.T, reg *extensionapp.Registry, def domainext.FieldDef) {
 	t.Helper()
 	if err := reg.Register(def); err != nil {

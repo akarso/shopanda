@@ -397,15 +397,36 @@ func wireServeRuntime(cfg *config.Config, log logger.Logger, conn *sql.DB, repos
 
 	menuResolver := cmsApp.NewMenuResolver(repos.categoryRepo, repos.pageRepo)
 
+	// visibilityOpts is the shared, zero-value VisibilityOptions for every
+	// AutoBasis caller (public gate below, admin GUI, cart/checkout). No
+	// config key feeds RequireCategory today — see PR-1059.md.
+	visibilityOpts := catalog.VisibilityOptions{}
+
 	// Axis gates stay off until catalog.visibility.enforce (default false).
 	var visibilityFacts catalog.VisibilityFactsSource
+	var visibilityFactsRepo *postgres.VisibilityFactsRepo
 	if cfg.Catalog.Visibility.Enforce {
 		factsRepo, err := postgres.NewVisibilityFactsRepo(conn)
 		if err != nil {
 			return nil, fmt.Errorf("visibility facts: %w", err)
 		}
+		visibilityFactsRepo = factsRepo
 		visibilityFacts = factsRepo
 		log.Info("catalog.visibility.enforce_enabled", nil)
+	}
+
+	// Admin visibility facts (PR-1059): informational (the "why hidden"
+	// explanation on the product edit form), not a gate — wired unconditionally
+	// so merchants can audit modes before enabling enforce. Reuse the repo
+	// above when enforce already created one; otherwise construct a second
+	// instance (same underlying SQL, different method called per caller).
+	adminVisibilityFacts := visibilityFactsRepo
+	if adminVisibilityFacts == nil {
+		factsRepo, err := postgres.NewVisibilityFactsRepo(conn)
+		if err != nil {
+			return nil, fmt.Errorf("admin visibility facts: %w", err)
+		}
+		adminVisibilityFacts = factsRepo
 	}
 	blockResolver := cmsApp.NewBlockResolver(repos.productRepo)
 	if visibilityFacts != nil {
@@ -555,7 +576,6 @@ func wireServeRuntime(cfg *config.Config, log logger.Logger, conn *sql.DB, repos
 	pricingPipeline := pricing.NewPipeline(pricingSteps...)
 
 	// Application services.
-	visibilityOpts := catalog.VisibilityOptions{}
 	cartService := cartApp.NewService(repos.cartRepo, repos.priceRepo, repos.promotionRepo, repos.couponRepo, repos.variantRepo, repos.productRepo, pricingPipeline, log, bus, extensionValueService, hookRegistry).
 		WithVisibilityFacts(visibilityFacts, visibilityOpts)
 	storeCreditService := storecreditApp.NewService(repos.storeCreditRepo, repos.customerRepo).
@@ -648,6 +668,14 @@ func wireServeRuntime(cfg *config.Config, log logger.Logger, conn *sql.DB, repos
 	adminApp.RegisterProductSchemas(adminRegistry)
 	adminApp.RegisterPageSchemas(adminRegistry)
 
+	// Visibility axes section (PR-1059): type-agnostic — Types: nil, so it
+	// is always visible regardless of product type.
+	if err := adminApp.RegisterProductFormSection(adminRegistry, domainadmin.FormSection{
+		ID: "visibility", Title: "Visibility", Types: nil,
+	}); err != nil {
+		return nil, fmt.Errorf("register visibility form section: %w", err)
+	}
+
 	attributeStore := adminApp.NewAttributeStore(repos.configRepo)
 
 	discoveryFacetSync := newDiscoveryFacetSyncer(attributeStore, searchEngine)
@@ -679,7 +707,8 @@ func wireServeRuntime(cfg *config.Config, log logger.Logger, conn *sql.DB, repos
 	// Handlers.
 	productHandler := storefront.NewProductHandler(repos.productRepo, pdp, plp, contentTranslator).
 		WithVisibilityFacts(visibilityFacts)
-	productAdmin := admin.NewProductAdminHandlerWithAuditor(repos.productRepo, bus, sharedAuditor, log)
+	productAdmin := admin.NewProductAdminHandlerWithAuditor(repos.productRepo, bus, sharedAuditor, log).
+		WithVisibilityFacts(adminVisibilityFacts, visibilityOpts, cfg.Catalog.Visibility.Enforce)
 	productTranslationAdmin := admin.NewProductTranslationAdminHandler(repos.productRepo, repos.contentTranslationRepo, sharedAuditor, log)
 	productPriceAdmin := admin.NewProductPriceAdminHandler(repos.productRepo, repos.variantRepo, repos.priceRepo, sharedAuditor, log)
 	productPriceAdmin.SetBus(bus) // PR-1036: price edits → search index update
