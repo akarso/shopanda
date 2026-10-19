@@ -2656,15 +2656,19 @@ components:
       properties:
         catalog:
           type: string
+          nullable: true
           enum: [auto, visible, hidden]
         search:
           type: string
+          nullable: true
           enum: [auto, visible, hidden]
         individually:
           type: string
+          nullable: true
           enum: [auto, visible, hidden]
         purchasable:
           type: string
+          nullable: true
           description: >-
             "visible" here is a sellability override (force on sale), not
             display-only — see internal/domain/catalog/visibility.go.

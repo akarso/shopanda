@@ -361,13 +361,35 @@
         }
     }
 
-    // bindStatusChange wires a change
-    // listener on the main product form's "status" select so every axis
-    // badge previews the *selected* (possibly unsaved) status, not the one
-    // the page loaded with. Only meaningful for live state — a pending/
-    // create or error state has no autoBasis/status facts to recompute
-    // from. Mutates state.status in place so a later axis-mode change (via
-    // bindAxisChange/updateRowFromMode) also sees the latest selection.
+    // refreshLivePreview recomputes autoBasis/failureCodes from fresh
+    // inputFailureCodes and the form's current status (when present), then
+    // re-renders every axis badge/failure list without changing mode selects.
+    // Only meaningful for live state — pending/create and error states no-op.
+    function refreshLivePreview(doc, form, state, inputFailureCodes) {
+        if (!doc || !isLive(state)) {
+            return;
+        }
+        var status = state.status;
+        if (form && form.elements && form.elements.status) {
+            status = String(form.elements.status.value || "");
+        }
+        state.inputFailureCodes = (inputFailureCodes || []).slice();
+        state.status = status;
+        state.autoBasis = deriveAutoBasis(state.status, state.inputFailureCodes);
+        state.failureCodes = deriveFailureCodes(state.status, state.inputFailureCodes);
+        for (var i = 0; i < AXES.length; i++) {
+            var axis = AXES[i];
+            var modeEl = doc.getElementById(selectID(axis.key));
+            var mode = modeEl && modeEl.value ? modeEl.value : "auto";
+            updateRowFromMode(doc, axis, mode, state);
+        }
+    }
+
+    // bindStatusChange wires a change listener on the main product form's
+    // "status" select so every axis badge previews the *selected* (possibly
+    // unsaved) status, not the one the page loaded with. Mutates state in
+    // place so a later axis-mode change (via bindAxisChange/updateRowFromMode)
+    // also sees the latest selection.
     function bindStatusChange(doc, form, state) {
         if (!doc || !form || !form.elements || !isLive(state)) {
             return;
@@ -378,17 +400,7 @@
         }
         statusEl.setAttribute("data-visibility-status-change-bound", "1");
         statusEl.addEventListener("change", function () {
-            // Recompute autoBasis/failureCodes from the new status and unchanged
-            // inputFailureCodes (payload auto_basis/failure_codes reflect saved status only).
-            state.status = String(statusEl.value || "");
-            state.autoBasis = deriveAutoBasis(state.status, state.inputFailureCodes);
-            state.failureCodes = deriveFailureCodes(state.status, state.inputFailureCodes);
-            for (var i = 0; i < AXES.length; i++) {
-                var axis = AXES[i];
-                var modeEl = doc.getElementById(selectID(axis.key));
-                var mode = modeEl && modeEl.value ? modeEl.value : "auto";
-                updateRowFromMode(doc, axis, mode, state);
-            }
+            refreshLivePreview(doc, form, state, state.inputFailureCodes);
         });
     }
 
@@ -419,6 +431,7 @@
         collectModes: collectModes,
         bindAxisChange: bindAxisChange,
         bindStatusChange: bindStatusChange,
+        refreshLivePreview: refreshLivePreview,
         updateRowFromMode: updateRowFromMode
     };
 

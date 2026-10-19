@@ -473,6 +473,50 @@ test("bindStatusChange: no-ops without a form or without form.elements", () => {
     ui.bindStatusChange(doc, {}, state);
 });
 
+// --- refreshLivePreview (facts refresh without resetting modes) ---
+
+test("refreshLivePreview: clears no_price input failure, active + auto -> Auto — visible, failures empty, mode select unchanged", () => {
+    const { doc, badge, list, modeSelect } = makeAxisDoc("auto");
+    const form = { elements: { status: { value: "active" } } };
+    const state = makeLiveState({
+        status: "active",
+        inputFailureCodes: ["no_price"],
+        autoBasis: false,
+        failureCodes: ["no_price"]
+    });
+
+    ui.refreshLivePreview(doc, form, state, []);
+
+    assert.equal(modeSelect.value, "auto");
+    assert.deepEqual(state.inputFailureCodes, []);
+    assert.equal(state.autoBasis, true);
+    assert.deepEqual(state.failureCodes, []);
+    assert.equal(badge.textContent, "Auto — visible");
+    assert.equal(list.innerHTML, "");
+    assert.equal(list.style.display, "none");
+});
+
+test("refreshLivePreview: no-ops for null, error, and pending state", () => {
+    const { doc, badge } = makeAxisDoc("auto");
+    const form = { elements: { status: { value: "active" } } };
+    const errorState = { kind: "error", error: "x" };
+
+    ui.refreshLivePreview(doc, form, null, []);
+    ui.refreshLivePreview(doc, form, errorState, []);
+    assert.equal(badge.textContent, "");
+});
+
+test("refreshLivePreview: reads status from form when present", () => {
+    const { doc, badge } = makeAxisDoc("visible");
+    const form = { elements: { status: { value: "draft" } } };
+    const state = makeLiveState({ status: "active", inputFailureCodes: [], autoBasis: true });
+
+    ui.refreshLivePreview(doc, form, state, []);
+
+    assert.equal(state.status, "draft");
+    assert.equal(badge.textContent, "Forced visible — not live (product inactive)");
+});
+
 // --- Live status preview via input_failure_codes ---
 
 test("status preview 1: draft -> active when only status_inactive was failing — autoBasis true, badge Auto — visible, failures empty", () => {

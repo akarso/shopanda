@@ -1445,6 +1445,32 @@
         if (form) {
             api.bindStatusChange(document, form, state);
         }
+        typeSectionsHost._shopandaVisibilityState = state;
+    }
+
+    function refreshProductVisibilityFactsAfterSave(productID, form) {
+        var host = document.getElementById("product-type-sections-host");
+        var visibilityAPI = productVisibilitySectionAPI();
+        var state = host && host._shopandaVisibilityState;
+        if (!productID || !visibilityAPI || !state) {
+            return;
+        }
+        api("/admin/products/" + encodeURIComponent(productID)).then(function (body) {
+            if (body && body.error) {
+                return;
+            }
+            var data = body && body.data;
+            if (!data || !data.visibility) {
+                return;
+            }
+            var codes = data.visibility.input_failure_codes;
+            if (!Array.isArray(codes)) {
+                codes = [];
+            }
+            visibilityAPI.refreshLivePreview(document, form, state, codes);
+        }).catch(function () {
+            // Preview refresh is best-effort; price save already succeeded.
+        });
     }
 
     function setupProductTypeSectionSwitch(form, root, opts) {
@@ -2165,7 +2191,7 @@
 
         if (currency) {
             loadVariantPrices(container, productID);
-            bindVariantPriceSave(container, productID);
+            bindVariantPriceSave(container, productID, document.getElementById("product-form"));
         }
         if (hasExtensions) {
             bindVariantExtensions(container, extensionFields);
@@ -2340,7 +2366,7 @@
         }
     }
 
-    function bindVariantPriceSave(container, productID) {
+    function bindVariantPriceSave(container, productID, form) {
         var buttons = container.querySelectorAll('.variant-price-save-btn');
         for (var j = 0; j < buttons.length; j++) {
             buttons[j].addEventListener("click", function (e) {
@@ -2372,6 +2398,7 @@
                     if (msg) {
                         msg.innerHTML = '<p>Price saved.</p>';
                     }
+                    refreshProductVisibilityFactsAfterSave(productID, form);
                 }).catch(function () {
                     if (msg) {
                         msg.innerHTML = '<p role="alert">Save price failed.</p>';
