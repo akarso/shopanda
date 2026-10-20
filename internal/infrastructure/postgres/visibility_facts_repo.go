@@ -11,7 +11,9 @@ import (
 // VisibilityFactsRepo loads visibility snapshots for AutoBasis + modes (PR-1057).
 //
 // HasStoreAssignment is always true: there is no product↔store assignment table
-// yet. A future assignment model can flip the column without changing the gate API.
+// yet. A future assignment model can flip the column without changing the gate
+// API — until then, catalog.AutoBasisCodeNoStoreAssignment is reserved and
+// cannot appear in AutoBasisFailureCodes output from this repo.
 type VisibilityFactsRepo struct {
 	db *sql.DB
 }
@@ -24,8 +26,21 @@ func NewVisibilityFactsRepo(db *sql.DB) (*VisibilityFactsRepo, error) {
 	return &VisibilityFactsRepo{db: db}, nil
 }
 
-// LoadMany returns VisibilitySnapshot keyed by product ID.
+// LoadMany returns VisibilitySnapshot keyed by product ID, restricted to
+// active products — correct for every public-gate caller (PR-1057/1058).
 func (r *VisibilityFactsRepo) LoadMany(ctx context.Context, productIDs []string) (map[string]catalog.VisibilitySnapshot, error) {
+	return r.loadMany(ctx, productIDs, true)
+}
+
+// LoadManyAnyStatus returns VisibilitySnapshot keyed by product ID for every
+// status (draft/active/archived) — the admin GUI (PR-1059) needs to show
+// computed axes and AutoBasis failures for a non-active product too, since
+// Status is itself one of the AutoBasis conditions.
+func (r *VisibilityFactsRepo) LoadManyAnyStatus(ctx context.Context, productIDs []string) (map[string]catalog.VisibilitySnapshot, error) {
+	return r.loadMany(ctx, productIDs, false)
+}
+
+func (r *VisibilityFactsRepo) loadMany(ctx context.Context, productIDs []string, activeOnly bool) (map[string]catalog.VisibilitySnapshot, error) {
 	out := make(map[string]catalog.VisibilitySnapshot, len(productIDs))
 	if len(productIDs) == 0 {
 		return out, nil
@@ -47,7 +62,7 @@ func (r *VisibilityFactsRepo) LoadMany(ctx context.Context, productIDs []string)
 		return out, nil
 	}
 
-	rows, err := r.db.QueryContext(ctx, `
+	query := `
 		SELECT
 			p.id,
 			p.status,
@@ -73,8 +88,10 @@ func (r *VisibilityFactsRepo) LoadMany(ctx context.Context, productIDs []string)
 				WHERE pc.product_id = p.id
 			) AS has_category
 		FROM products p
-		WHERE p.id = ANY($1) AND p.status = 'active'
-	`, ids)
+		WHERE p.id = ANY($1)
+			AND ($2::bool = false OR p.status = 'active')`
+
+	rows, err := r.db.QueryContext(ctx, query, ids, activeOnly)
 	if err != nil {
 		return nil, fmt.Errorf("visibility facts: %w", err)
 	}

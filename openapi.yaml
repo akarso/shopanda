@@ -1191,15 +1191,15 @@ paths:
               example:
                 data:
                   products:
-                    - id: "p1"
-                      name: Widget
-                      slug: widget
-                      description: A fine widget
-                      status: active
+                    - ID: "p1"
+                      Name: Widget
+                      Slug: widget
+                      Description: A fine widget
+                      Status: active
                       Type: simple
-                      attributes: {}
-                      created_at: "2026-01-01T00:00:00Z"
-                      updated_at: "2026-01-01T00:00:00Z"
+                      Attributes: {}
+                      CreatedAt: "2026-01-01T00:00:00Z"
+                      UpdatedAt: "2026-01-01T00:00:00Z"
                 error: null
         "401":
           $ref: "#/components/responses/Unauthorized"
@@ -1232,15 +1232,20 @@ paths:
               example:
                 data:
                   product:
-                    id: "p1"
-                    name: Widget
-                    slug: widget
-                    description: A fine widget
-                    status: draft
+                    ID: "p1"
+                    Name: Widget
+                    Slug: widget
+                    Description: A fine widget
+                    Status: draft
                     Type: simple
-                    attributes: {}
-                    created_at: "2026-01-01T00:00:00Z"
-                    updated_at: "2026-01-01T00:00:00Z"
+                    VisibilityModes:
+                      Catalog: auto
+                      Search: auto
+                      Individually: auto
+                      Purchasable: auto
+                    Attributes: {}
+                    CreatedAt: "2026-01-01T00:00:00Z"
+                    UpdatedAt: "2026-01-01T00:00:00Z"
                 error: null
         "401":
           $ref: "#/components/responses/Unauthorized"
@@ -1250,6 +1255,91 @@ paths:
           $ref: "#/components/responses/Validation"
 
   /api/v1/admin/products/{id}:
+    get:
+      operationId: adminGetProduct
+      tags: ["Admin: Products"]
+      summary: Get a product (admin)
+      description: >-
+        Includes `category_ids` and, when the server has
+        `ProductAdminHandler.WithVisibilityFacts` wired (PR-1059 CR — true in
+        this deployment), a `visibility` object explaining the four
+        VisibilityAxes against AutoBasis facts (status/stock/price/store/
+        category). `visibility` is omitted only when facts are not wired at
+        all (`WithVisibilityFacts` not called). Both a transient facts-load
+        error and a missing snapshot (`VisibilityFactsRepo`'s facts query
+        joins live product/variant/stock/price rows — there is no
+        asynchronous "first refresh" step, so the only way `FindByID` above
+        finds the product but the facts query does not is a concurrent
+        delete between the two reads) instead set `visibility_error` and
+        still return the product with a 200 — this endpoint never 500s
+        because the informational visibility explanation failed to load.
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/ProductId"
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AdminProductGetResponse"
+              example:
+                data:
+                  product:
+                    ID: "p1"
+                    Name: Widget
+                    Slug: widget
+                    Description: A fine widget
+                    Status: draft
+                    Type: simple
+                    VisibilityModes:
+                      Catalog: visible
+                      Search: auto
+                      Individually: auto
+                      Purchasable: auto
+                    Attributes: {}
+                    CreatedAt: "2026-01-01T00:00:00Z"
+                    UpdatedAt: "2026-01-01T00:00:00Z"
+                  category_ids: []
+                  visibility:
+                    enforced: true
+                    status: draft
+                    auto_basis: false
+                    failure_codes: [status_inactive]
+                    input_failure_codes: []
+                    axes:
+                      catalog:
+                        mode: visible
+                        override: true
+                        resolved: true
+                        effective: false
+                        failure_codes: []
+                      search:
+                        mode: auto
+                        override: false
+                        resolved: false
+                        effective: false
+                        failure_codes: [status_inactive]
+                      individually:
+                        mode: auto
+                        override: false
+                        resolved: false
+                        effective: false
+                        failure_codes: [status_inactive]
+                      purchasable:
+                        mode: auto
+                        override: false
+                        resolved: false
+                        effective: false
+                        failure_codes: [status_inactive]
+                error: null
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
     put:
       operationId: adminUpdateProduct
       tags: ["Admin: Products"]
@@ -2544,6 +2634,163 @@ components:
           type: string
           format: password
 
+    VisibilityModesInput:
+      type: object
+      description: >-
+        Partial per-axis visibility override modes (PR-1055/PR-1059 CR). No
+        property is required — every axis is independently optional on both
+        create and update. "auto" resolves the axis from AutoBasis
+        (status/quantity/price/store/category facts); "visible"/"hidden"
+        force the axis regardless of those facts. An omitted axis keeps its
+        current/default value: on create, DefaultVisibilityAxes() (all auto)
+        for that axis; on update, the product's existing mode for that axis
+        (merge, not replace — sending only `{"catalog":"hidden"}` changes
+        catalog alone and leaves search/individually/purchasable untouched).
+        Omit the whole object to leave every axis at its current/default
+        value. Any present-but-invalid mode value is rejected with 422. An
+        explicit JSON `null` for one axis (e.g. `{"catalog": null}`) is
+        treated the same as omitting that axis entirely — it keeps the
+        stored/default mode, not an error — because each axis unmarshals
+        into a `*string` and JSON `null` leaves that pointer `nil`, exactly
+        like a key that was never sent.
+      properties:
+        catalog:
+          type: string
+          nullable: true
+          enum: [auto, visible, hidden]
+        search:
+          type: string
+          nullable: true
+          enum: [auto, visible, hidden]
+        individually:
+          type: string
+          nullable: true
+          enum: [auto, visible, hidden]
+        purchasable:
+          type: string
+          nullable: true
+          description: >-
+            "visible" here is a sellability override (force on sale), not
+            display-only — see internal/domain/catalog/visibility.go.
+          enum: [auto, visible, hidden]
+
+    VisibilityAxisExplanation:
+      type: object
+      description: >-
+        How one visibility axis resolved (PR-1059 CR) — mirrors
+        catalog.AxisExplanation. "resolved" is the domain-level ResolveAxis
+        result (ignores product status); "effective" is the public-gate
+        EffectiveAxis result (storefront truth — always false for a
+        non-active product, even when the mode is forced visible).
+        `failure_codes` is only populated when `mode` is "auto" and
+        `auto_basis` (on the parent AdminProductVisibility object) is false;
+        a forced axis has nothing to explain.
+      properties:
+        mode:
+          type: string
+          enum: [auto, visible, hidden]
+        override:
+          type: boolean
+          description: True when mode is not "auto" (a merchant override).
+        resolved:
+          type: boolean
+        effective:
+          type: boolean
+        failure_codes:
+          type: array
+          items:
+            type: string
+            enum: [status_inactive, no_stock, no_price, no_store_assignment, no_category]
+
+    AdminProductVisibility:
+      type: object
+      description: >-
+        The `visibility` object on `GET /api/v1/admin/products/{id}`
+        (PR-1059 CR). Informational only — never a gate. `enforced` mirrors
+        `catalog.visibility.enforce` (whether the public axis gate is
+        actually live); when false, `effective` on each axis still reports
+        what *would* happen if enforce were on. `failure_codes` is the
+        top-level AutoBasisFailureCodes list for the product's **saved**
+        status (status → stock → price → store → category, in check order);
+        `axes.<name>.failure_codes` repeats the same list only for axes
+        currently in "auto" mode with `auto_basis` false. `input_failure_codes`
+        (PR-1059 CR round 3) is `catalog.AutoBasisInputFailureCodes` — the
+        same list with `status_inactive` always excluded (stock → price →
+        store → category only). The admin SPA uses `input_failure_codes` as
+        the source of truth for a *live* status preview: when the form's
+        status select changes (before saving), it recomputes `auto_basis`/
+        `failure_codes` client-side from `{selected status, input_failure_codes}`
+        instead of re-fetching this payload, since `input_failure_codes`
+        never changes with the form's status — only the saved product's
+        underlying stock/price/store/category facts do.
+      properties:
+        enforced:
+          type: boolean
+        status:
+          type: string
+          enum: [draft, active, archived]
+        auto_basis:
+          type: boolean
+        failure_codes:
+          type: array
+          items:
+            type: string
+            enum: [status_inactive, no_stock, no_price, no_store_assignment, no_category]
+        input_failure_codes:
+          type: array
+          description: >-
+            failure_codes with status_inactive always excluded — see this
+            schema's description.
+          items:
+            type: string
+            enum: [no_stock, no_price, no_store_assignment, no_category]
+        axes:
+          type: object
+          properties:
+            catalog:
+              $ref: "#/components/schemas/VisibilityAxisExplanation"
+            search:
+              $ref: "#/components/schemas/VisibilityAxisExplanation"
+            individually:
+              $ref: "#/components/schemas/VisibilityAxisExplanation"
+            purchasable:
+              $ref: "#/components/schemas/VisibilityAxisExplanation"
+
+    AdminProductGetData:
+      type: object
+      description: >-
+        `data` payload for `GET /api/v1/admin/products/{id}` (PR-1059 CR).
+      properties:
+        product:
+          type: object
+          description: >-
+            `catalog.Product`, Go-serialized with no JSON tags — field names
+            are the exported Go struct field names verbatim (PascalCase: `ID`,
+            `Name`, `Slug`, `Description`, `Status`, `Type`,
+            `VisibilityModes`, `Attributes`, `CreatedAt`, `UpdatedAt`), not
+            the snake_case used by the rest of this response's `data` keys.
+        category_ids:
+          type: array
+          items:
+            type: string
+        visibility:
+          $ref: "#/components/schemas/AdminProductVisibility"
+        visibility_error:
+          type: string
+          description: >-
+            Set instead of `visibility` when the visibility-facts read
+            failed or the snapshot was missing (see this operation's
+            description). The product itself is still returned with a 200.
+
+    AdminProductGetResponse:
+      type: object
+      description: Envelope specialized with AdminProductGetData's typed `data`.
+      properties:
+        data:
+          $ref: "#/components/schemas/AdminProductGetData"
+        error:
+          $ref: "#/components/schemas/ErrorBody"
+
     CreateProductRequest:
       type: object
       required: [name, slug, description]
@@ -2558,6 +2805,8 @@ components:
           type: string
           description: Product taxonomy; omit to default to simple.
           enum: [simple, virtual, bundle, grouped, configurable, downloadable]
+        visibility_modes:
+          $ref: "#/components/schemas/VisibilityModesInput"
         attributes:
           type: object
           additionalProperties: true
@@ -2577,6 +2826,8 @@ components:
         type:
           type: string
           enum: [simple, virtual, bundle, grouped, configurable, downloadable]
+        visibility_modes:
+          $ref: "#/components/schemas/VisibilityModesInput"
         attributes:
           type: object
           additionalProperties: true

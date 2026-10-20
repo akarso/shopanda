@@ -1286,8 +1286,12 @@
             var schema = results[0] && results[0].data && results[0].data.form;
             var product = null;
             var translations = {};
+            var visibilityPayload = null;
+            var visibilityError = null;
             if (productID) {
                 product = normalizeProduct(results[1] && results[1].data && results[1].data.product);
+                visibilityPayload = results[1] && results[1].data && results[1].data.visibility;
+                visibilityError = results[1] && results[1].data && results[1].data.visibility_error;
                 if (activeScope.language && results[2] && results[2].data && results[2].data.entries) {
                     translations = results[2].data.entries;
                 }
@@ -1307,6 +1311,7 @@
 
             if (typeSectionsHost) {
                 typeSectionsHost.innerHTML = renderProductTypeSections(schema.sections || []);
+                setupProductVisibilitySection(typeSectionsHost, product, visibilityPayload, visibilityError, form);
             }
             setupProductTypeSectionSwitch(form, container, {
                 confirmOnChange: !!productID,
@@ -1407,6 +1412,92 @@
                 "</section>";
         }
         return html;
+    }
+
+    // Product visibility section (PR-1059) — helpers in product_visibility_section.js.
+    // Unlike other type-scoped sections, "visibility" is registered with empty
+    // Types (type-agnostic — see product_schema.go), is always visible, and is
+    // the one deliberate exception to "sections use their own save APIs": its
+    // four mode selects are picked up by collectProductPayload below, because
+    // VisibilityModes is a core Product field, not auxiliary section data.
+    function productVisibilitySectionAPI() {
+        return (typeof ShopandaProductVisibilitySection !== "undefined") ? ShopandaProductVisibilitySection : null;
+    }
+
+    function setupProductVisibilitySection(typeSectionsHost, product, visibilityPayload, visibilityError, form) {
+        var api = productVisibilitySectionAPI();
+        if (!api || !typeSectionsHost) {
+            return;
+        }
+        var body = typeSectionsHost.querySelector('[data-product-type-section-body="visibility"]');
+        if (!body) {
+            // Section not registered on this deployment (schema out of sync); skip.
+            return;
+        }
+        var modes = api.modesFromProduct(product);
+        var state = api.stateFromVisibilityPayload(visibilityPayload, visibilityError);
+        body.innerHTML = api.renderSectionHTML(modes, state);
+        api.bindAxisChange(document, state);
+        // Status freshness (PR-1059 CR): re-render badges/failures using the
+        // form's *selected* status (not the persisted one) whenever it
+        // changes, so a merchant previewing a status change before saving
+        // sees the correct outcome immediately.
+        if (form) {
+            api.bindStatusChange(document, form, state);
+        }
+        typeSectionsHost._shopandaVisibilityState = state;
+    }
+
+    // Guard async visibility refresh after variant price save: an in-flight GET for
+    // product A must not update the form if the merchant navigated to product B.
+    function productEditPathID() {
+        var m = location.pathname.match(/^\/admin\/products\/([^/]+)$/);
+        return m ? decodeURIComponent(m[1]) : "";
+    }
+
+    function productEditSessionStillValid(expectedProductID, form, host, state) {
+        if (!expectedProductID || expectedProductID !== productEditPathID()) return false;
+        if (!form || !form.isConnected) return false;
+        if (document.getElementById("product-form") !== form) return false;
+        var liveHost = document.getElementById("product-type-sections-host");
+        if (!liveHost || liveHost !== host) return false;
+        if (liveHost._shopandaVisibilityState !== state) return false;
+        return true;
+    }
+
+    function refreshProductVisibilityFactsAfterSave(productID, form, host, state) {
+        if (!host) {
+            host = document.getElementById("product-type-sections-host");
+        }
+        if (!state && host) {
+            state = host._shopandaVisibilityState;
+        }
+        var visibilityAPI = productVisibilitySectionAPI();
+        if (!productID || !visibilityAPI || !state || !form) {
+            return;
+        }
+        if (!productEditSessionStillValid(productID, form, host, state)) {
+            return;
+        }
+        api("/admin/products/" + encodeURIComponent(productID)).then(function (body) {
+            if (!productEditSessionStillValid(productID, form, host, state)) {
+                return;
+            }
+            if (body && body.error) {
+                return;
+            }
+            var data = body && body.data;
+            if (!data || !data.visibility) {
+                return;
+            }
+            var codes = data.visibility.input_failure_codes;
+            if (!Array.isArray(codes)) {
+                codes = [];
+            }
+            visibilityAPI.refreshLivePreview(document, form, state, codes);
+        }).catch(function () {
+            // Preview refresh is best-effort; price save already succeeded.
+        });
     }
 
     function setupProductTypeSectionSwitch(form, root, opts) {
@@ -1905,6 +1996,12 @@
         if (Object.keys(payload.attributes).length === 0) {
             delete payload.attributes;
         }
+        // Visibility selects render into #product-type-sections-host, a sibling
+        // of #product-form (not a descendant) — see setupProductVisibilitySection.
+        var visibilityAPI = productVisibilitySectionAPI();
+        if (visibilityAPI && document.getElementById(visibilityAPI.selectID(visibilityAPI.AXES[0].key))) {
+            payload.visibility_modes = visibilityAPI.collectModes(document);
+        }
         return payload;
     }
 
@@ -2121,7 +2218,7 @@
 
         if (currency) {
             loadVariantPrices(container, productID);
-            bindVariantPriceSave(container, productID);
+            bindVariantPriceSave(container, productID, document.getElementById("product-form"));
         }
         if (hasExtensions) {
             bindVariantExtensions(container, extensionFields);
@@ -2296,7 +2393,7 @@
         }
     }
 
-    function bindVariantPriceSave(container, productID) {
+    function bindVariantPriceSave(container, productID, form) {
         var buttons = container.querySelectorAll('.variant-price-save-btn');
         for (var j = 0; j < buttons.length; j++) {
             buttons[j].addEventListener("click", function (e) {
@@ -2310,6 +2407,10 @@
                     }
                     return;
                 }
+                var sessionProductID = productID;
+                var sessionForm = form;
+                var sessionHost = document.getElementById("product-type-sections-host");
+                var sessionState = sessionHost && sessionHost._shopandaVisibilityState;
                 api("/admin/products/" + encodeURIComponent(productID) + "/variants/" + encodeURIComponent(variantID) + "/price", {
                     method: "PUT",
                     body: JSON.stringify({ amount: Number(input.value) })
@@ -2327,6 +2428,9 @@
                     }
                     if (msg) {
                         msg.innerHTML = '<p>Price saved.</p>';
+                    }
+                    if (productEditSessionStillValid(sessionProductID, sessionForm, sessionHost, sessionState)) {
+                        refreshProductVisibilityFactsAfterSave(sessionProductID, sessionForm, sessionHost, sessionState);
                     }
                 }).catch(function () {
                     if (msg) {
@@ -2360,6 +2464,7 @@
             type: pick(raw, "type", "Type") || "simple",
             status: pick(raw, "status", "Status"),
             attributes: pick(raw, "attributes", "Attributes") || {},
+            visibilityModes: pick(raw, "visibility_modes", "VisibilityModes") || {},
             created_at: pick(raw, "created_at", "CreatedAt"),
             updated_at: pick(raw, "updated_at", "UpdatedAt")
         };

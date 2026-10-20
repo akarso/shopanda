@@ -94,7 +94,7 @@ Each PR is tagged **`[oss]`** unless noted.
 | PR-1056 | Admin vs. public/storefront API split | Formalize the boundary: admin API continues to see every product regardless of computed/overridden visibility (as today); a new public/storefront-read boundary (REST) enforces all four axes consistently. Audit every existing storefront-facing route for which axis it should be checking (PDP → `VisibleIndividually`, category listing → `VisibleInCatalog`, cart `AddItem` → `Purchasable`) and centralize the filtering logic in one place rather than reimplementing it per handler. |
 | PR-1057 | Enforce visibility in storefront read paths | Apply PR-1056's boundary to product listing, PDP, category listing, and sitemap generation (which already partially does this via `Status`) — consistently, not just where it happened to already exist. |
 | PR-1058 | Cart/checkout purchasability gate + hook point | **done.** `cart.Service.AddItem` (and qty-increase / guest merge / checkout `ValidateCartStep`) rejects a non-`Purchasable` product/variant with a clear `apperror` (not just "no price found," today's incidental gate). Reuses the existing `HookCartAddItemBefore`/`HookCartValidate` plugin hook points (already wired into `AddItem`) as the extension seam Track D's "not purchasable until assigned" rule and any future plugin-driven purchasability rule build on. See [`prs/PR-1058.md`](prs/PR-1058.md). |
-| PR-1059 | Visibility admin GUI | Per-axis toggle + override-mode indicator (computed vs. forced) on the product edit form; a visible "why is this hidden" explanation surfaced next to the toggle when the computed default is what's driving a `hidden` state, so merchants don't have to guess which of the four conditions failed. |
+| PR-1059 | Visibility admin GUI | **done.** Per-axis toggle + override-mode indicator (computed vs. forced) on the product edit form; a visible "why is this hidden" explanation surfaced next to the toggle when the computed default is what's driving a `hidden` state, so merchants don't have to guess which of the four conditions failed. See [`prs/PR-1059.md`](prs/PR-1059.md). |
 
 ---
 
@@ -209,7 +209,7 @@ Each PR is tagged **`[oss]`** unless noted.
 | 1053 | A | done |
 | 1054 | B | done |
 | 1055 | B | done |
-| 1056–1059 | B | planned |
+| 1056–1059 | B | done |
 | 1060–1066 | C | planned |
 | 1067–1073 | D | planned |
 | 1074–1078 | E | planned |
@@ -225,4 +225,4 @@ PR specs: [`prs/`](prs/).
 | --- | --- | --- |
 | Phase 10 | Platform excellence (quality / security / ops / architecture) | Shipped (PR-1000–1026; PR-1003 the only open item, unrelated to this phase) |
 | Phase 11 | Jobs, search & cache — admin reachability + full-page cache | Shipped (PR-1027–1049 under phase-11 docs — not the same as Phase 12 PR-1048/1049) |
-| **Phase 12** | Product types & composition | **In progress** (PR-1048–1057 done; Track B PR-1058 next; numbering collides with Phase 11 — disambiguate by phase folder) |
+| **Phase 12** | Product types & composition | **In progress** (PR-1048–1059 done — Track B complete; Track C PR-1060 next; numbering collides with Phase 11 — disambiguate by phase folder) |
