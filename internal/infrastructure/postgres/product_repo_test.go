@@ -45,8 +45,23 @@ func ensureProductsTable(t *testing.T, db *sql.DB) {
 		t.Fatalf("run migrations: %v", err)
 	}
 	t.Cleanup(func() {
-		db.Exec("DELETE FROM products")
+		deleteAllProducts(t, db)
 	})
+}
+
+// deleteAllProducts removes bundle links before products. Component FKs are
+// ON DELETE RESTRICT, so a product delete fails while a link still points at it.
+func deleteAllProducts(t *testing.T, db *sql.DB) {
+	t.Helper()
+	mustExec(t, db, "DELETE FROM bundle_components")
+	mustExec(t, db, "DELETE FROM products")
+}
+
+// deleteProductByID removes bundle links that reference productID, then the product row.
+func deleteProductByID(t *testing.T, db *sql.DB, productID string) {
+	t.Helper()
+	mustExec(t, db, "DELETE FROM bundle_components WHERE bundle_product_id = $1 OR component_product_id = $1", productID)
+	mustExec(t, db, "DELETE FROM products WHERE id = $1", productID)
 }
 
 func mustExec(t *testing.T, db *sql.DB, q string, args ...any) {
@@ -67,6 +82,60 @@ func mustNewProduct(t *testing.T, name, slug string) catalog.Product {
 
 func productRepoAdminCtx() context.Context {
 	return catalog.WithOperatorProductReadScope(context.Background())
+}
+
+func TestProductRepo_LockForUpdate_RequiresTx(t *testing.T) {
+	db, err := sql.Open("pgx", "postgres://invalid/invalid")
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	t.Cleanup(func() { db.Close() })
+	repo, err := postgres.NewProductRepo(db)
+	if err != nil {
+		t.Fatalf("NewProductRepo: %v", err)
+	}
+	_, err = repo.LockForUpdate(context.Background(), id.New())
+	if err == nil || !strings.Contains(err.Error(), "transaction required") {
+		t.Fatalf("LockForUpdate = %v, want transaction required", err)
+	}
+}
+
+func TestProductRepo_LockForUpdate(t *testing.T) {
+	db := testDB(t)
+	ensureProductsTable(t, db)
+	repo, err := postgres.NewProductRepo(db)
+	if err != nil {
+		t.Fatalf("NewProductRepo: %v", err)
+	}
+	ctx := productRepoAdminCtx()
+	p := mustNewProduct(t, "Draft Lock", "draft-lock")
+	p.Type = catalog.TypeVirtual
+	p.Status = catalog.StatusDraft
+	if err := repo.Create(ctx, &p); err != nil {
+		t.Fatalf("create: %v", err)
+	}
+
+	tx, err := db.BeginTx(ctx, nil)
+	if err != nil {
+		t.Fatalf("BeginTx: %v", err)
+	}
+	defer tx.Rollback()
+
+	bound, ok := repo.WithTx(tx).(*postgres.ProductRepo)
+	if !ok {
+		t.Fatalf("WithTx returned %T", repo.WithTx(tx))
+	}
+	got, err := bound.LockForUpdate(ctx, p.ID)
+	if err != nil {
+		t.Fatalf("LockForUpdate: %v", err)
+	}
+	if got != catalog.TypeVirtual {
+		t.Fatalf("type = %q, want virtual", got)
+	}
+	_, err = bound.LockForUpdate(ctx, id.New())
+	if !apperror.Is(err, apperror.CodeNotFound) {
+		t.Fatalf("missing lock = %v, want not found", err)
+	}
 }
 
 func TestProductRepo_CreateAndFindByID(t *testing.T) {
@@ -220,7 +289,7 @@ func TestProductRepo_List(t *testing.T) {
 func TestProductRepo_List_FilterByType(t *testing.T) {
 	db := testDB(t)
 	ensureProductsTable(t, db)
-	mustExec(t, db, "DELETE FROM products")
+	deleteAllProducts(t, db)
 	repo, err := postgres.NewProductRepo(db)
 	if err != nil {
 		t.Fatalf("NewProductRepo: %v", err)

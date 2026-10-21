@@ -27,7 +27,7 @@ func TestVisibilityFactsRepo_LoadManyAnyStatus_IncludesNonActive(t *testing.T) {
 	if err := prodRepo.Create(ctx, &prod); err != nil {
 		t.Fatalf("create product: %v", err)
 	}
-	t.Cleanup(func() { mustExec(t, db, "DELETE FROM products WHERE id = $1", prod.ID) })
+	t.Cleanup(func() { deleteProductByID(t, db, prod.ID) })
 
 	variantRepo, err := postgres.NewVariantRepo(db)
 	if err != nil {
@@ -132,7 +132,7 @@ func TestVisibilityFactsRepo_LoadManyAnyStatus_ActiveProductAllPass(t *testing.T
 	if err := prodRepo.Create(ctx, &prod); err != nil {
 		t.Fatalf("create product: %v", err)
 	}
-	t.Cleanup(func() { mustExec(t, db, "DELETE FROM products WHERE id = $1", prod.ID) })
+	t.Cleanup(func() { deleteProductByID(t, db, prod.ID) })
 	prod.Status = catalog.StatusActive
 	if err := prodRepo.Update(ctx, &prod); err != nil {
 		t.Fatalf("activate product: %v", err)
@@ -236,7 +236,7 @@ func TestVisibilityFactsRepo_LoadManyAnyStatus_DraftForcedVisibleNotEffective(t 
 	if err := prodRepo.Create(ctx, &prod); err != nil {
 		t.Fatalf("create product: %v", err)
 	}
-	t.Cleanup(func() { mustExec(t, db, "DELETE FROM products WHERE id = $1", prod.ID) })
+	t.Cleanup(func() { deleteProductByID(t, db, prod.ID) })
 
 	factsRepo, err := postgres.NewVisibilityFactsRepo(db)
 	if err != nil {

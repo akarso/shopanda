@@ -25,11 +25,11 @@ See [`ROADMAP.md`](ROADMAP.md) for the full track breakdown, sequencing, and PR 
 
 ## Status
 
-**In progress.** PR-1048–1059 are done — Track B (visibility & purchasability) is complete, through the admin GUI. Next: Track C (PR-1060, bundle domain model). Track F (search/GraphQL closeout) has a hard dependency on Phase 11 Track B (search indexing), which has already shipped.
+**In progress.** PR-1048–1060 are done — Track B (visibility & purchasability) is complete; Track C has started with the bundle domain model (PR-1060). Next: PR-1061 (grouped domain model). Track F (search/GraphQL closeout) has a hard dependency on Phase 11 Track B (search indexing), which has already shipped.
 
 ## Relationship
 
 | Phase | Focus | Status |
 | --- | --- | --- |
 | Phase 11 | Jobs, search & cache — admin reachability + full-page cache | Shipped (PR-1027–1049 under `docs/phase-11-jobs-search-cache/prs/` — different work from Phase 12’s PR-1048/1049) |
-| **Phase 12** | Product types & composition — type model, visibility, bundle/grouped, linked products & assignment, downloadable | **In progress** (PR-1048–1059 done — Track B complete; ids collide with Phase 11 — use phase folder) |
+| **Phase 12** | Product types & composition — type model, visibility, bundle/grouped, linked products & assignment, downloadable | **In progress** (PR-1048–1060 done — Track C started; ids collide with Phase 11 — use phase folder) |

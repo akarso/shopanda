@@ -2,7 +2,10 @@ package admin
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"net/http"
 	"strings"
 
@@ -18,12 +21,41 @@ import (
 	"github.com/akarso/shopanda/internal/platform/logger"
 )
 
+type bundleComponentTypeGuard interface {
+	CountByBundleID(ctx context.Context, bundleProductID string) (int, error)
+	CountByComponentID(ctx context.Context, componentProductID string) (int, error)
+}
+
+// txStarter begins database transactions. *sql.DB implements it.
+type txStarter interface {
+	BeginTx(ctx context.Context, opts *sql.TxOptions) (*sql.Tx, error)
+}
+
+// txProductRepo is a product repository that can bind to a transaction.
+type txProductRepo interface {
+	catalog.ProductRepository
+	WithTx(tx *sql.Tx) catalog.ProductRepository
+}
+
+// lockingProductRepo is a transaction-bound product repository that can lock a row.
+type lockingProductRepo interface {
+	catalog.ProductRepository
+	LockForUpdate(ctx context.Context, id string) (catalog.Type, error)
+}
+
+// txBundleComponentRepo is a bundle component repository that can bind to a transaction.
+type txBundleComponentRepo interface {
+	WithTx(tx *sql.Tx) catalog.BundleComponentRepository
+}
+
 // ProductAdminHandler serves product write endpoints.
 type ProductAdminHandler struct {
-	repo    catalog.ProductRepository
-	bus     *event.Bus
-	auditor *admin.Auditor
-	log     logger.Logger
+	repo             catalog.ProductRepository
+	bundleComponents bundleComponentTypeGuard
+	txStarter        txStarter
+	bus              *event.Bus
+	auditor          *admin.Auditor
+	log              logger.Logger
 
 	// facts + opts + enforced back the "visibility" payload on Get. Nil facts
 	// (the default — WithVisibilityFacts not called) omits the
@@ -95,6 +127,50 @@ func (h *ProductAdminHandler) WithVisibilityFacts(facts catalog.VisibilityFactsA
 	h.opts = opts
 	h.enforced = enforced
 	return h
+}
+
+// WithBundleComponents wires bundle composition counts for product type-change guards (PR-1060).
+// The field stays optional: updates that do not change type succeed when it is nil.
+// A type change with a nil guard fails closed.
+func (h *ProductAdminHandler) WithBundleComponents(components bundleComponentTypeGuard) *ProductAdminHandler {
+	h.bundleComponents = components
+	return h
+}
+
+// WithTxStarter wires the transaction beginner used when a product type change
+// must lock the product row. *sql.DB satisfies this. A type change with a nil
+// starter fails closed.
+func (h *ProductAdminHandler) WithTxStarter(starter txStarter) *ProductAdminHandler {
+	h.txStarter = starter
+	return h
+}
+
+func (h *ProductAdminHandler) validateProductTypeChange(ctx context.Context, components bundleComponentTypeGuard, productID string, oldType, newType catalog.Type) error {
+	if oldType == newType {
+		return nil
+	}
+	if components == nil {
+		return apperror.Internal("product admin: bundle component repository is not configured")
+	}
+	if oldType == catalog.TypeBundle && newType != catalog.TypeBundle {
+		n, err := components.CountByBundleID(ctx, productID)
+		if err != nil {
+			return fmt.Errorf("product admin: count bundle components: %w", err)
+		}
+		if n > 0 {
+			return apperror.Validation("cannot change type: product has bundle components")
+		}
+	}
+	if newType.IsValid() && !newType.IsBundleComponentLeafType() {
+		n, err := components.CountByComponentID(ctx, productID)
+		if err != nil {
+			return fmt.Errorf("product admin: count bundle component usage: %w", err)
+		}
+		if n > 0 {
+			return apperror.Validation("cannot change type: product is used as a bundle component")
+		}
+	}
+	return nil
 }
 
 func (h *ProductAdminHandler) getAdminID(r *http.Request) string {
@@ -545,6 +621,112 @@ func (h *ProductAdminHandler) Create() http.HandlerFunc {
 }
 
 // Update handles PUT /api/v1/admin/products/{id}.
+func adminAuditMessage(err error) string {
+	var appErr *apperror.Error
+	if errors.As(err, &appErr) && appErr.Message != "" {
+		return appErr.Message
+	}
+	return err.Error()
+}
+
+func applyProductScalarPatch(product *catalog.Product, req updateProductRequest) error {
+	if req.Name != nil {
+		if *req.Name == "" {
+			return apperror.Validation("name must not be empty")
+		}
+		product.Name = *req.Name
+	}
+	if req.Slug != nil {
+		if *req.Slug == "" {
+			return apperror.Validation("slug must not be empty")
+		}
+		product.Slug = *req.Slug
+	}
+	if req.Description != nil {
+		product.Description = *req.Description
+	}
+	if req.Status != nil {
+		s := catalog.Status(*req.Status)
+		if !s.IsValid() {
+			return apperror.Validation("invalid status")
+		}
+		product.Status = s
+	}
+	return nil
+}
+
+func applyProductVisibilityAndAttributes(product *catalog.Product, req updateProductRequest) (before, after catalog.VisibilityAxes, changed bool, err error) {
+	before = product.VisibilityModes
+	after, err = mergeVisibilityModes(product.VisibilityModes, req.VisibilityModes)
+	if err != nil {
+		return catalog.VisibilityAxes{}, catalog.VisibilityAxes{}, false, err
+	}
+	product.VisibilityModes = after
+	changed = req.VisibilityModes != nil && before != after
+	if req.Attributes != nil {
+		product.Attributes = req.Attributes
+	}
+	return before, after, changed, nil
+}
+
+// updateProductWithTypeLock locks the product row, validates the type change
+// against that locked type, then writes every patched field in the same transaction.
+func (h *ProductAdminHandler) updateProductWithTypeLock(ctx context.Context, product *catalog.Product, req updateProductRequest, newType catalog.Type) (before, after catalog.VisibilityAxes, changed bool, err error) {
+	if h.txStarter == nil {
+		return catalog.VisibilityAxes{}, catalog.VisibilityAxes{}, false, apperror.Internal("product admin: transaction starter is not configured")
+	}
+	tx, err := h.txStarter.BeginTx(ctx, nil)
+	if err != nil {
+		return catalog.VisibilityAxes{}, catalog.VisibilityAxes{}, false, fmt.Errorf("product admin: begin tx: %w", err)
+	}
+	defer tx.Rollback()
+
+	txProducts, ok := h.repo.(txProductRepo)
+	if !ok {
+		return catalog.VisibilityAxes{}, catalog.VisibilityAxes{}, false, fmt.Errorf("product admin: product repository does not support transactions")
+	}
+	boundProducts := txProducts.WithTx(tx)
+	locker, ok := boundProducts.(lockingProductRepo)
+	if !ok {
+		return catalog.VisibilityAxes{}, catalog.VisibilityAxes{}, false, fmt.Errorf("product admin: product repository does not support row locks")
+	}
+	oldType, err := locker.LockForUpdate(ctx, product.ID)
+	if err != nil {
+		if apperror.Is(err, apperror.CodeNotFound) {
+			return catalog.VisibilityAxes{}, catalog.VisibilityAxes{}, false, err
+		}
+		return catalog.VisibilityAxes{}, catalog.VisibilityAxes{}, false, fmt.Errorf("product admin: lock product: %w", err)
+	}
+
+	components := h.bundleComponents
+	if h.bundleComponents != nil {
+		txComponents, ok := h.bundleComponents.(txBundleComponentRepo)
+		if !ok {
+			return catalog.VisibilityAxes{}, catalog.VisibilityAxes{}, false, fmt.Errorf("product admin: bundle component repository does not support transactions")
+		}
+		components = txComponents.WithTx(tx)
+	}
+	if err := h.validateProductTypeChange(ctx, components, product.ID, oldType, newType); err != nil {
+		return catalog.VisibilityAxes{}, catalog.VisibilityAxes{}, false, err
+	}
+
+	product.Type = newType
+	before, after, changed, err = applyProductVisibilityAndAttributes(product, req)
+	if err != nil {
+		return catalog.VisibilityAxes{}, catalog.VisibilityAxes{}, false, apperror.Validation(err.Error())
+	}
+	if err := product.Validate(); err != nil {
+		return catalog.VisibilityAxes{}, catalog.VisibilityAxes{}, false, apperror.Validation(err.Error())
+	}
+	if err := locker.Update(ctx, product); err != nil {
+		return catalog.VisibilityAxes{}, catalog.VisibilityAxes{}, false, err
+	}
+	if err := tx.Commit(); err != nil {
+		return catalog.VisibilityAxes{}, catalog.VisibilityAxes{}, false, fmt.Errorf("product admin: commit: %w", err)
+	}
+	return before, after, changed, nil
+}
+
 func (h *ProductAdminHandler) Update() http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		pid := r.PathValue("id")
@@ -605,58 +787,21 @@ func (h *ProductAdminHandler) Update() http.HandlerFunc {
 			return
 		}
 
-		if req.Name != nil {
-			if *req.Name == "" {
-				h.auditor.LogAction(r.Context(), admin.AuditEntry{
-					AdminID:      adminID,
-					Action:       admin.AuditProductUpdate,
-					ResourceType: "product",
-					ResourceID:   pid,
-					Result:       "error",
-					Error:        "name must not be empty",
-					Details:      productAdminScopeDetailsFromRequest(r),
-				})
-				httpshared.JSONError(w, apperror.Validation("name must not be empty"))
-				return
-			}
-			product.Name = *req.Name
+		if err := applyProductScalarPatch(product, req); err != nil {
+			h.auditor.LogAction(r.Context(), admin.AuditEntry{
+				AdminID:      adminID,
+				Action:       admin.AuditProductUpdate,
+				ResourceType: "product",
+				ResourceID:   pid,
+				Result:       "error",
+				Error:        adminAuditMessage(err),
+				Details:      productAdminScopeDetailsFromRequest(r),
+			})
+			httpshared.JSONError(w, err)
+			return
 		}
-		if req.Slug != nil {
-			if *req.Slug == "" {
-				h.auditor.LogAction(r.Context(), admin.AuditEntry{
-					AdminID:      adminID,
-					Action:       admin.AuditProductUpdate,
-					ResourceType: "product",
-					ResourceID:   pid,
-					Result:       "error",
-					Error:        "slug must not be empty",
-					Details:      productAdminScopeDetailsFromRequest(r),
-				})
-				httpshared.JSONError(w, apperror.Validation("slug must not be empty"))
-				return
-			}
-			product.Slug = *req.Slug
-		}
-		if req.Description != nil {
-			product.Description = *req.Description
-		}
-		if req.Status != nil {
-			s := catalog.Status(*req.Status)
-			if !s.IsValid() {
-				h.auditor.LogAction(r.Context(), admin.AuditEntry{
-					AdminID:      adminID,
-					Action:       admin.AuditProductUpdate,
-					ResourceType: "product",
-					ResourceID:   pid,
-					Result:       "error",
-					Error:        "invalid status",
-					Details:      productAdminScopeDetailsFromRequest(r),
-				})
-				httpshared.JSONError(w, apperror.Validation("invalid status"))
-				return
-			}
-			product.Status = s
-		}
+
+		var newType *catalog.Type
 		if req.Type != nil {
 			rawType := strings.TrimSpace(*req.Type)
 			if rawType == "" {
@@ -672,58 +817,74 @@ func (h *ProductAdminHandler) Update() http.HandlerFunc {
 				httpshared.JSONError(w, apperror.Validation("type must not be empty"))
 				return
 			}
-			product.Type = catalog.Type(rawType)
-		}
-		// Omitted VisibilityModes (or an omitted axis within it) leaves the
-		// product's existing modes untouched for that axis; present axes
-		// merge on top. Invalid mode values are caught here. Audit
-		// before/after only when the merged result differs from the stored modes.
-		modesBefore := product.VisibilityModes
-		modes, err := mergeVisibilityModes(product.VisibilityModes, req.VisibilityModes)
-		if err != nil {
-			h.auditor.LogAction(r.Context(), admin.AuditEntry{
-				AdminID:      adminID,
-				Action:       admin.AuditProductUpdate,
-				ResourceType: "product",
-				ResourceID:   pid,
-				Result:       "error",
-				Error:        err.Error(),
-				Details:      productAdminScopeDetailsFromRequest(r),
-			})
-			httpshared.JSONError(w, apperror.Validation(err.Error()))
-			return
-		}
-		product.VisibilityModes = modes
-		visibilityModesChanged := req.VisibilityModes != nil && modesBefore != modes
-		if req.Attributes != nil {
-			product.Attributes = req.Attributes
-		}
-		if err := product.Validate(); err != nil {
-			h.auditor.LogAction(r.Context(), admin.AuditEntry{
-				AdminID:      adminID,
-				Action:       admin.AuditProductUpdate,
-				ResourceType: "product",
-				ResourceID:   pid,
-				Result:       "error",
-				Error:        err.Error(),
-				Details:      productAdminScopeDetailsFromRequest(r),
-			})
-			httpshared.JSONError(w, apperror.Validation(err.Error()))
-			return
+			parsed := catalog.Type(rawType)
+			newType = &parsed
 		}
 
-		if err := h.repo.Update(r.Context(), product); err != nil {
-			h.auditor.LogAction(r.Context(), admin.AuditEntry{
-				AdminID:      adminID,
-				Action:       admin.AuditProductUpdate,
-				ResourceType: "product",
-				ResourceID:   pid,
-				Result:       "error",
-				Error:        err.Error(),
-				Details:      productAdminScopeDetailsFromRequest(r),
-			})
-			httpshared.JSONError(w, err)
-			return
+		var modesBefore, modes catalog.VisibilityAxes
+		visibilityModesChanged := false
+		typeChanges := newType != nil && *newType != product.Type
+		if typeChanges {
+			var err error
+			modesBefore, modes, visibilityModesChanged, err = h.updateProductWithTypeLock(r.Context(), product, req, *newType)
+			if err != nil {
+				h.auditor.LogAction(r.Context(), admin.AuditEntry{
+					AdminID:      adminID,
+					Action:       admin.AuditProductUpdate,
+					ResourceType: "product",
+					ResourceID:   pid,
+					Result:       "error",
+					Error:        err.Error(),
+					Details:      productAdminScopeDetailsFromRequest(r),
+				})
+				httpshared.JSONError(w, err)
+				return
+			}
+		} else {
+			if newType != nil {
+				product.Type = *newType
+			}
+			var err error
+			modesBefore, modes, visibilityModesChanged, err = applyProductVisibilityAndAttributes(product, req)
+			if err != nil {
+				h.auditor.LogAction(r.Context(), admin.AuditEntry{
+					AdminID:      adminID,
+					Action:       admin.AuditProductUpdate,
+					ResourceType: "product",
+					ResourceID:   pid,
+					Result:       "error",
+					Error:        err.Error(),
+					Details:      productAdminScopeDetailsFromRequest(r),
+				})
+				httpshared.JSONError(w, apperror.Validation(err.Error()))
+				return
+			}
+			if err := product.Validate(); err != nil {
+				h.auditor.LogAction(r.Context(), admin.AuditEntry{
+					AdminID:      adminID,
+					Action:       admin.AuditProductUpdate,
+					ResourceType: "product",
+					ResourceID:   pid,
+					Result:       "error",
+					Error:        err.Error(),
+					Details:      productAdminScopeDetailsFromRequest(r),
+				})
+				httpshared.JSONError(w, apperror.Validation(err.Error()))
+				return
+			}
+			if err := h.repo.Update(r.Context(), product); err != nil {
+				h.auditor.LogAction(r.Context(), admin.AuditEntry{
+					AdminID:      adminID,
+					Action:       admin.AuditProductUpdate,
+					ResourceType: "product",
+					ResourceID:   pid,
+					Result:       "error",
+					Error:        err.Error(),
+					Details:      productAdminScopeDetailsFromRequest(r),
+				})
+				httpshared.JSONError(w, err)
+				return
+			}
 		}
 
 		successDetails := productAdminScopeDetailsFromRequest(r)

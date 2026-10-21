@@ -48,6 +48,26 @@ func (r *ProductRepo) WithTx(tx *sql.Tx) catalog.ProductRepository {
 	return &ProductRepo{db: r.db, tx: tx}
 }
 
+// LockForUpdate locks the product row and returns its type.
+// The repo must be bound to a transaction via WithTx. The read does not filter
+// on status, so draft and archived products lock the same way as active ones.
+// Returns NotFound when no row exists.
+func (r *ProductRepo) LockForUpdate(ctx context.Context, id string) (catalog.Type, error) {
+	if r.tx == nil {
+		return "", fmt.Errorf("product_repo: lock for update: transaction required")
+	}
+	const q = `SELECT type FROM products WHERE id = $1 FOR UPDATE`
+	var raw string
+	err := r.tx.QueryRowContext(ctx, q, id).Scan(&raw)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", apperror.NotFound("product not found")
+	}
+	if err != nil {
+		return "", fmt.Errorf("product_repo: lock for update: %w", err)
+	}
+	return catalog.Type(raw), nil
+}
+
 func productReadIncludeNonActive(ctx context.Context, filter catalog.ListFilter) bool {
 	return filter.IncludeNonActive || catalog.IncludeNonActiveProducts(ctx)
 }

@@ -29,6 +29,7 @@ type serveRepos struct {
 	zoneRepo                   *postgres.ZoneRepo
 	categoryRepo               *postgres.CategoryRepo
 	collectionRepo             *postgres.CollectionRepo
+	bundleComponentRepo        *postgres.BundleComponentRepo
 	taxRateRepo                *postgres.TaxRateRepo
 	promotionRepo              *postgres.PromotionRepo
 	couponRepo                 *postgres.CouponRepo
@@ -141,6 +142,14 @@ func openServeRepos(conn *sql.DB) (*serveRepos, error) {
 		return nil, wrapRepoOpen("collectionRepo", err)
 	}
 	// collectionRepo: opened at serve start; HTTP handlers not wired yet.
+
+	repos.bundleComponentRepo, err = postgres.NewBundleComponentRepo(conn)
+	if err != nil {
+		return nil, wrapRepoOpen("bundleComponentRepo", err)
+	}
+	// bundleComponentRepo: opened at serve start. wire_services passes it to
+	// ProductAdminHandler.WithBundleComponents for type-change guards.
+	// Bundle admin HTTP remains PR-1066.
 
 	repos.taxRateRepo, err = postgres.NewTaxRateRepo(conn)
 	if err != nil {

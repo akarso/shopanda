@@ -442,6 +442,7 @@ func TestSearchEngine_Search_PopulatesPriceAvailabilityAndCreatedAt(t *testing.T
 			"DELETE FROM prices",
 			"DELETE FROM product_categories",
 			"DELETE FROM variants",
+			"DELETE FROM bundle_components",
 			"DELETE FROM products",
 		} {
 			if _, err := db.Exec(stmt); err != nil {
