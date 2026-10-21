@@ -61,6 +61,12 @@ func (s *JSONLDProductStep) Apply(ctx *ProductContext) error {
 }
 
 func (s *JSONLDProductStep) buildOffer(ctx *ProductContext) map[string]interface{} {
+	// A dynamic bundle has no sellable stored price until ResolveUnitPrice
+	// feeds this step. Skip the Offer entirely, including a stock-only Offer.
+	if ctx.Product.PricingMode == catalog.PricingModeDynamic {
+		return nil
+	}
+
 	variants, err := s.variants.ListByProductID(ctx.Ctx, ctx.Product.ID, 0, 1)
 	if err != nil || len(variants) == 0 {
 		return nil

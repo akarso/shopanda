@@ -16,7 +16,7 @@
 | PR-1059 | B | done | [Visibility admin GUI](PR-1059.md) |
 | PR-1060 | C | done | [Bundle domain model](PR-1060.md) |
 | PR-1061 | C | done | [Grouped domain model](PR-1061.md) |
-| PR-1062 | C | planned | [Bundle/grouped pricing rollup](PR-1062.md) |
+| PR-1062 | C | done | [Bundle/grouped pricing rollup](PR-1062.md) |
 | PR-1063 | C | planned | [Stock rollup per type](PR-1063.md) |
 | PR-1064 | C | planned | [Order line explosion + returns integration](PR-1064.md) |
 | PR-1065 | C | planned | [Omnibus/VAT per component line](PR-1065.md) |

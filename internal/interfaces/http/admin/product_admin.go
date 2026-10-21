@@ -14,6 +14,7 @@ import (
 	"github.com/akarso/shopanda/internal/application/admin"
 	"github.com/akarso/shopanda/internal/domain/catalog"
 	"github.com/akarso/shopanda/internal/domain/identity"
+	"github.com/akarso/shopanda/internal/domain/pricing"
 	"github.com/akarso/shopanda/internal/platform/apperror"
 	"github.com/akarso/shopanda/internal/platform/auth"
 	"github.com/akarso/shopanda/internal/platform/event"
@@ -40,7 +41,7 @@ type txProductRepo interface {
 // lockingProductRepo is a transaction-bound product repository that can lock a row.
 type lockingProductRepo interface {
 	catalog.ProductRepository
-	LockForUpdate(ctx context.Context, id string) (catalog.Type, error)
+	LockTypeAndPricingMode(ctx context.Context, id string) (catalog.Type, catalog.PricingMode, error)
 }
 
 // txBundleComponentRepo is a bundle component repository that can bind to a transaction.
@@ -64,6 +65,8 @@ type ProductAdminHandler struct {
 	repo             catalog.ProductRepository
 	bundleComponents bundleComponentTypeGuard
 	groupedMembers   groupedMemberTypeGuard
+	variants         catalog.VariantRepository
+	prices           pricing.PriceRepository
 	txStarter        txStarter
 	bus              *event.Bus
 	auditor          *admin.Auditor
@@ -159,10 +162,56 @@ func (h *ProductAdminHandler) WithGroupedMembers(members groupedMemberTypeGuard)
 
 // WithTxStarter wires the transaction beginner used when a product type change
 // must lock the product row. *sql.DB satisfies this. A type change with a nil
-// starter fails closed.
+// starter fails closed. A pricing_mode patch also takes that lock so the mode
+// is applied against the locked type and pricing_mode.
 func (h *ProductAdminHandler) WithTxStarter(starter txStarter) *ProductAdminHandler {
 	h.txStarter = starter
 	return h
+}
+
+// WithVariantPrices wires the reads that reject dynamic pricing while a
+// variant of the product still has a stored price row. Nil repos fail closed
+// when a write would persist dynamic mode. cmd/api always sets both.
+func (h *ProductAdminHandler) WithVariantPrices(variants catalog.VariantRepository, prices pricing.PriceRepository) *ProductAdminHandler {
+	h.variants = variants
+	h.prices = prices
+	return h
+}
+
+const ownPriceVariantPage = 100
+
+func (h *ProductAdminHandler) rejectDynamicOwnPrices(ctx context.Context, product *catalog.Product) error {
+	if product == nil || product.Type != catalog.TypeBundle || product.PricingMode != catalog.PricingModeDynamic {
+		return nil
+	}
+	if h.variants == nil || h.prices == nil {
+		return apperror.Internal("product admin: variant price check is not configured")
+	}
+	// An empty id has no price rows. A new product id lists zero variants
+	// and returns nil once the repositories above are wired.
+	if strings.TrimSpace(product.ID) == "" {
+		return nil
+	}
+	offset := 0
+	for {
+		variants, err := h.variants.ListByProductID(ctx, product.ID, offset, ownPriceVariantPage)
+		if err != nil {
+			return fmt.Errorf("product admin: list variants: %w", err)
+		}
+		for _, variant := range variants {
+			rows, err := h.prices.ListByVariantID(ctx, variant.ID)
+			if err != nil {
+				return fmt.Errorf("product admin: list prices: %w", err)
+			}
+			if len(rows) > 0 {
+				return apperror.Validation(catalog.DynamicBundleOwnPricesMessage)
+			}
+		}
+		if len(variants) < ownPriceVariantPage {
+			return nil
+		}
+		offset += ownPriceVariantPage
+	}
 }
 
 func (h *ProductAdminHandler) validateProductTypeChange(ctx context.Context, components bundleComponentTypeGuard, members groupedMemberTypeGuard, productID string, oldType, newType catalog.Type) error {
@@ -544,6 +593,7 @@ type createProductRequest struct {
 	Slug            string                  `json:"slug"`
 	Description     string                  `json:"description"`
 	Type            string                  `json:"type"`
+	PricingMode     *string                 `json:"pricing_mode"`
 	VisibilityModes *visibilityModesRequest `json:"visibility_modes"`
 	Attributes      map[string]interface{}  `json:"attributes"`
 }
@@ -555,6 +605,7 @@ type updateProductRequest struct {
 	Description     *string                 `json:"description"`
 	Status          *string                 `json:"status"`
 	Type            *string                 `json:"type"`
+	PricingMode     *string                 `json:"pricing_mode"`
 	VisibilityModes *visibilityModesRequest `json:"visibility_modes"`
 	Attributes      map[string]interface{}  `json:"attributes"`
 }
@@ -596,6 +647,18 @@ func (h *ProductAdminHandler) Create() http.HandlerFunc {
 		if rawType := strings.TrimSpace(req.Type); rawType != "" {
 			product.Type = catalog.Type(rawType)
 		}
+		if err := applyCreatePricingMode(&product, req); err != nil {
+			h.auditor.LogAction(r.Context(), admin.AuditEntry{
+				AdminID:      adminID,
+				Action:       admin.AuditProductCreate,
+				ResourceType: "product",
+				Result:       "error",
+				Error:        err.Error(),
+				Details:      details,
+			})
+			httpshared.JSONError(w, err)
+			return
+		}
 		// Omitted VisibilityModes (or an omitted axis within it) keeps
 		// NewProduct's DefaultVisibilityAxes() (auto) for that axis; present
 		// axes merge on top. Invalid mode values are caught here.
@@ -615,6 +678,18 @@ func (h *ProductAdminHandler) Create() http.HandlerFunc {
 		product.VisibilityModes = modes
 		if req.Attributes != nil {
 			product.Attributes = req.Attributes
+		}
+		if err := h.rejectDynamicOwnPrices(r.Context(), &product); err != nil {
+			h.auditor.LogAction(r.Context(), admin.AuditEntry{
+				AdminID:      adminID,
+				Action:       admin.AuditProductCreate,
+				ResourceType: "product",
+				Result:       "error",
+				Error:        adminAuditMessage(err),
+				Details:      details,
+			})
+			httpshared.JSONError(w, err)
+			return
 		}
 		if err := product.Validate(); err != nil {
 			h.auditor.LogAction(r.Context(), admin.AuditEntry{
@@ -674,6 +749,28 @@ func adminAuditMessage(err error) string {
 	return err.Error()
 }
 
+func applyCreatePricingMode(product *catalog.Product, req createProductRequest) error {
+	raw := ""
+	if req.PricingMode != nil {
+		raw = *req.PricingMode
+	}
+	if err := product.ApplyPricingMode(raw, req.PricingMode != nil); err != nil {
+		return apperror.Validation(err.Error())
+	}
+	return nil
+}
+
+func applyPricingModePatch(product *catalog.Product, req updateProductRequest) error {
+	raw := ""
+	if req.PricingMode != nil {
+		raw = *req.PricingMode
+	}
+	if err := product.ApplyPricingMode(raw, req.PricingMode != nil); err != nil {
+		return apperror.Validation(err.Error())
+	}
+	return nil
+}
+
 func applyProductScalarPatch(product *catalog.Product, req updateProductRequest) error {
 	if req.Name != nil {
 		if *req.Name == "" {
@@ -714,11 +811,12 @@ func applyProductVisibilityAndAttributes(product *catalog.Product, req updatePro
 	return before, after, changed, nil
 }
 
-// updateProductWithTypeLock locks the product row, validates the type change
-// against that locked type, then writes every patched field in the same transaction.
-// Callers use it whenever the payload includes type, including when that value
-// matches the earlier FindByID. The locked row is the type that counts.
-func (h *ProductAdminHandler) updateProductWithTypeLock(ctx context.Context, product *catalog.Product, req updateProductRequest, newType catalog.Type) (before, after catalog.VisibilityAxes, changed bool, err error) {
+// updateProductWithTypeLock locks the product row, validates an optional type
+// change against that locked type, then writes every patched field in the same
+// transaction. Callers use it whenever the payload includes type or pricing_mode.
+// newType nil keeps the locked type. The locked row's pricing_mode is re-read
+// before ApplyPricingMode.
+func (h *ProductAdminHandler) updateProductWithTypeLock(ctx context.Context, product *catalog.Product, req updateProductRequest, newType *catalog.Type) (before, after catalog.VisibilityAxes, changed bool, err error) {
 	if h.txStarter == nil {
 		return catalog.VisibilityAxes{}, catalog.VisibilityAxes{}, false, apperror.Internal("product admin: transaction starter is not configured")
 	}
@@ -737,13 +835,16 @@ func (h *ProductAdminHandler) updateProductWithTypeLock(ctx context.Context, pro
 	if !ok {
 		return catalog.VisibilityAxes{}, catalog.VisibilityAxes{}, false, fmt.Errorf("product admin: product repository does not support row locks")
 	}
-	oldType, err := locker.LockForUpdate(ctx, product.ID)
+	oldType, lockedMode, err := locker.LockTypeAndPricingMode(ctx, product.ID)
 	if err != nil {
 		if apperror.Is(err, apperror.CodeNotFound) {
 			return catalog.VisibilityAxes{}, catalog.VisibilityAxes{}, false, err
 		}
 		return catalog.VisibilityAxes{}, catalog.VisibilityAxes{}, false, fmt.Errorf("product admin: lock product: %w", err)
 	}
+	// Omitted pricing_mode defaults use the locked row, not the earlier FindByID.
+	product.Type = oldType
+	product.PricingMode = lockedMode
 
 	components := h.bundleComponents
 	if h.bundleComponents != nil {
@@ -761,11 +862,18 @@ func (h *ProductAdminHandler) updateProductWithTypeLock(ctx context.Context, pro
 		}
 		members = txMembers.WithTx(tx)
 	}
-	if err := h.validateProductTypeChange(ctx, components, members, product.ID, oldType, newType); err != nil {
+	if newType != nil {
+		if err := h.validateProductTypeChange(ctx, components, members, product.ID, oldType, *newType); err != nil {
+			return catalog.VisibilityAxes{}, catalog.VisibilityAxes{}, false, err
+		}
+		product.Type = *newType
+	}
+	if err := applyPricingModePatch(product, req); err != nil {
 		return catalog.VisibilityAxes{}, catalog.VisibilityAxes{}, false, err
 	}
-
-	product.Type = newType
+	if err := h.rejectDynamicOwnPrices(ctx, product); err != nil {
+		return catalog.VisibilityAxes{}, catalog.VisibilityAxes{}, false, err
+	}
 	before, after, changed, err = applyProductVisibilityAndAttributes(product, req)
 	if err != nil {
 		return catalog.VisibilityAxes{}, catalog.VisibilityAxes{}, false, apperror.Validation(err.Error())
@@ -878,11 +986,12 @@ func (h *ProductAdminHandler) Update() http.HandlerFunc {
 
 		var modesBefore, modes catalog.VisibilityAxes
 		visibilityModesChanged := false
-		// Lock whenever type is present. Comparing only to the pre-lock FindByID
-		// would skip the guard when that read is stale and the payload repeats it.
-		if newType != nil {
+		// Lock whenever type or pricing_mode is present. Comparing type only to
+		// the pre-lock FindByID would skip the guard when that read is stale.
+		// A pricing_mode patch with no type still re-reads the locked mode.
+		if newType != nil || req.PricingMode != nil {
 			var err error
-			modesBefore, modes, visibilityModesChanged, err = h.updateProductWithTypeLock(r.Context(), product, req, *newType)
+			modesBefore, modes, visibilityModesChanged, err = h.updateProductWithTypeLock(r.Context(), product, req, newType)
 			if err != nil {
 				h.auditor.LogAction(r.Context(), admin.AuditEntry{
 					AdminID:      adminID,
@@ -897,6 +1006,19 @@ func (h *ProductAdminHandler) Update() http.HandlerFunc {
 				return
 			}
 		} else {
+			if err := applyPricingModePatch(product, req); err != nil {
+				h.auditor.LogAction(r.Context(), admin.AuditEntry{
+					AdminID:      adminID,
+					Action:       admin.AuditProductUpdate,
+					ResourceType: "product",
+					ResourceID:   pid,
+					Result:       "error",
+					Error:        adminAuditMessage(err),
+					Details:      productAdminScopeDetailsFromRequest(r),
+				})
+				httpshared.JSONError(w, err)
+				return
+			}
 			var err error
 			modesBefore, modes, visibilityModesChanged, err = applyProductVisibilityAndAttributes(product, req)
 			if err != nil {

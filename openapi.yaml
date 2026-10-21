@@ -2766,7 +2766,7 @@ components:
           description: >-
             `catalog.Product`, Go-serialized with no JSON tags — field names
             are the exported Go struct field names verbatim (PascalCase: `ID`,
-            `Name`, `Slug`, `Description`, `Status`, `Type`,
+            `Name`, `Slug`, `Description`, `Status`, `Type`, `PricingMode`,
             `VisibilityModes`, `Attributes`, `CreatedAt`, `UpdatedAt`), not
             the snake_case used by the rest of this response's `data` keys.
         category_ids:
@@ -2805,6 +2805,15 @@ components:
           type: string
           description: Product taxonomy; omit to default to simple.
           enum: [simple, virtual, bundle, grouped, configurable, downloadable]
+        pricing_mode:
+          type: string
+          description: >-
+            Bundle price source. `fixed` uses the bundle's own price row.
+            `dynamic` sums required component prices when the product is priced
+            and is stored only for `type=bundle`. Omit to default to `fixed`.
+            Sending `dynamic` for any other type is rejected with 422.
+            An unknown token is rejected.
+          enum: [fixed, dynamic]
         visibility_modes:
           $ref: "#/components/schemas/VisibilityModesInput"
         attributes:
@@ -2826,6 +2835,14 @@ components:
         type:
           type: string
           enum: [simple, virtual, bundle, grouped, configurable, downloadable]
+        pricing_mode:
+          type: string
+          description: >-
+            Same values as create. Omitted on a bundle keeps the mode read
+            from the locked row. Changing `type` off `bundle` while omitting
+            this field stores `fixed`. Sending `dynamic` for a non-bundle is
+            rejected with 422.
+          enum: [fixed, dynamic]
         visibility_modes:
           $ref: "#/components/schemas/VisibilityModesInput"
         attributes:

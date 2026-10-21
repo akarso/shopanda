@@ -124,7 +124,7 @@ func cartTestLogger() logger.Logger {
 
 func cartTestPipeline(prices pricing.PriceRepository) pricing.Pipeline {
 	return pricing.NewPipeline(
-		appPricing.NewBasePriceStep(prices),
+		appPricing.NewBasePriceStepLegacy(prices),
 		pricing.NewFinalizeStep(),
 	)
 }
@@ -144,7 +144,7 @@ func cartSetup() (*stubCartRepo, *stubPriceRepo, *storefront.CartHandler, *http.
 	prices := newStubPriceRepo()
 	bus := event.NewBus(cartTestLogger())
 	vr, pr := cartApp.PermissiveCatalogRepos()
-	svc := cartApp.NewService(carts, prices, nil, nil, vr, pr, cartTestPipeline(prices), cartTestLogger(), bus, nil, nil)
+	svc := cartApp.NewService(carts, prices, nil, nil, vr, pr, cartApp.EmptyBundleComponents(), cartTestPipeline(prices), cartTestLogger(), bus, nil, nil)
 	h := storefront.NewCartHandler(svc, nil)
 	return carts, prices, h, newCartRouter(h)
 }
@@ -223,7 +223,7 @@ func cartExtensionSetup(t *testing.T) (*stubCartRepo, *stubPriceRepo, *storefron
 	values := extensionapp.NewValueService(reg, newCartTestExtensionValueRepo())
 	bus := event.NewBus(cartTestLogger())
 	vr, pr := cartApp.PermissiveCatalogRepos()
-	svc := cartApp.NewService(carts, prices, nil, nil, vr, pr, cartTestPipeline(prices), cartTestLogger(), bus, values, nil)
+	svc := cartApp.NewService(carts, prices, nil, nil, vr, pr, cartApp.EmptyBundleComponents(), cartTestPipeline(prices), cartTestLogger(), bus, values, nil)
 	h := storefront.NewCartHandler(svc, values)
 	return carts, prices, h, newCartRouter(h)
 }
@@ -345,7 +345,7 @@ func cartSetupWithCatalog(vr catalog.VariantRepository, pr catalog.ProductReposi
 	carts := newStubCartRepo()
 	prices := newStubPriceRepo()
 	bus := event.NewBus(cartTestLogger())
-	svc := cartApp.NewService(carts, prices, nil, nil, vr, pr, cartTestPipeline(prices), cartTestLogger(), bus, nil, nil)
+	svc := cartApp.NewService(carts, prices, nil, nil, vr, pr, cartApp.EmptyBundleComponents(), cartTestPipeline(prices), cartTestLogger(), bus, nil, nil)
 	h := storefront.NewCartHandler(svc, nil)
 	return carts, prices, newCartRouter(h)
 }
@@ -773,7 +773,7 @@ func cartSetupWithHooks(reg *hooks.Registry) (*stubCartRepo, *stubPriceRepo, *st
 	prices := newStubPriceRepo()
 	bus := event.NewBus(cartTestLogger())
 	vr, pr := cartApp.PermissiveCatalogRepos()
-	svc := cartApp.NewService(carts, prices, nil, nil, vr, pr, cartTestPipeline(prices), cartTestLogger(), bus, nil, reg)
+	svc := cartApp.NewService(carts, prices, nil, nil, vr, pr, cartApp.EmptyBundleComponents(), cartTestPipeline(prices), cartTestLogger(), bus, nil, reg)
 	h := storefront.NewCartHandler(svc, nil)
 	return carts, prices, h, newCartRouter(h)
 }

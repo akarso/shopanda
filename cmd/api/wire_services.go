@@ -553,8 +553,17 @@ func wireServeRuntime(cfg *config.Config, log logger.Logger, conn *sql.DB, repos
 	if err != nil {
 		return nil, fmt.Errorf("tax calculator: %w", err)
 	}
+	unitPrices := appPricing.UnitPriceSources{
+		Prices:     repos.priceRepo,
+		Variants:   repos.variantRepo,
+		Products:   repos.productRepo,
+		Components: repos.bundleComponentRepo,
+	}
+	if unitPrices.Prices == nil || unitPrices.Variants == nil || unitPrices.Products == nil || unitPrices.Components == nil {
+		return nil, fmt.Errorf("pricing: catalog-aware base price requires prices, variants, products, and bundle components")
+	}
 	corePricingSteps := []pricing.PricingStep{
-		appPricing.NewBasePriceStep(repos.priceRepo),
+		appPricing.NewBasePriceStep(unitPrices),
 		appPricing.NewCatalogPromotionStep(repos.promotionRepo, repos.couponRepo, promotionEvaluators),
 		appPricing.NewCartPromotionStep(repos.promotionRepo, repos.couponRepo, promotionEvaluators),
 		appPricing.NewTaxStep(taxCalculator),
@@ -581,7 +590,7 @@ func wireServeRuntime(cfg *config.Config, log logger.Logger, conn *sql.DB, repos
 	pricingPipeline := pricing.NewPipeline(pricingSteps...)
 
 	// Application services.
-	cartService := cartApp.NewService(repos.cartRepo, repos.priceRepo, repos.promotionRepo, repos.couponRepo, repos.variantRepo, repos.productRepo, pricingPipeline, log, bus, extensionValueService, hookRegistry).
+	cartService := cartApp.NewService(repos.cartRepo, repos.priceRepo, repos.promotionRepo, repos.couponRepo, repos.variantRepo, repos.productRepo, repos.bundleComponentRepo, pricingPipeline, log, bus, extensionValueService, hookRegistry).
 		WithVisibilityFacts(visibilityFacts, visibilityOpts)
 	storeCreditService := storecreditApp.NewService(repos.storeCreditRepo, repos.customerRepo).
 		WithMaxIssueAmount(cfg.StoreCredit.MaxIssueAmount)
@@ -716,10 +725,12 @@ func wireServeRuntime(cfg *config.Config, log logger.Logger, conn *sql.DB, repos
 		WithVisibilityFacts(adminVisibilityFacts, visibilityOpts, cfg.Catalog.Visibility.Enforce).
 		WithBundleComponents(repos.bundleComponentRepo).
 		WithGroupedMembers(repos.groupedMemberRepo).
+		WithVariantPrices(repos.variantRepo, repos.priceRepo).
 		WithTxStarter(conn)
 	productTranslationAdmin := admin.NewProductTranslationAdminHandler(repos.productRepo, repos.contentTranslationRepo, sharedAuditor, log)
 	productPriceAdmin := admin.NewProductPriceAdminHandler(repos.productRepo, repos.variantRepo, repos.priceRepo, sharedAuditor, log)
 	productPriceAdmin.SetBus(bus) // PR-1036: price edits → search index update
+	productPriceAdmin.WithTxStarter(conn)
 	variantHandler := storefront.NewVariantHandler(repos.productRepo, repos.variantRepo, bus).
 		WithVisibilityFacts(visibilityFacts)
 	cartHandler := storefront.NewCartHandler(cartService, extensionValueService)

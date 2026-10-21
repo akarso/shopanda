@@ -337,3 +337,31 @@ func TestJSONLDProductStep_NoOffer_WhenAllLookupsFail(t *testing.T) {
 		t.Error("expected no offers when both price and stock lookups fail")
 	}
 }
+
+func TestJSONLDProductStep_DynamicSkipsStoredPrice(t *testing.T) {
+	prod := catalog.Product{
+		ID: "p1", Name: "Kit", Slug: "kit",
+		Type: catalog.TypeBundle, PricingMode: catalog.PricingModeDynamic,
+	}
+	v, err := catalog.NewVariant("v1", "p1", "SKU-1")
+	if err != nil {
+		t.Fatalf("variant: %v", err)
+	}
+	stock, err := inventory.NewStockEntry("v1", 3)
+	if err != nil {
+		t.Fatalf("stock: %v", err)
+	}
+	s := composition.NewJSONLDProductStep(
+		&mockVariantRepo{variants: []catalog.Variant{v}},
+		&mockPriceRepo{price: &pricing.Price{ID: "pr", VariantID: "v1", Amount: shared.MustNewMoney(1000, "EUR")}},
+		&mockStockRepo{entry: stock},
+	)
+	ctx := composition.NewProductContext(&prod)
+	if err := s.Apply(ctx); err != nil {
+		t.Fatalf("Apply: %v", err)
+	}
+	ld := ctx.Blocks[0].Data["jsonld"].(map[string]interface{})
+	if ld["offers"] != nil {
+		t.Fatal("dynamic bundle emitted an offer before ResolveUnitPrice")
+	}
+}

@@ -48,9 +48,13 @@ func (s *ListingPriceIndicationStep) Apply(ctx *ListingContext) error {
 
 	productIDs := make([]string, 0, len(ctx.Products))
 	for _, product := range ctx.Products {
-		if product != nil {
-			productIDs = append(productIDs, product.ID)
+		if product == nil || product.PricingMode == catalog.PricingModeDynamic {
+			continue
 		}
+		productIDs = append(productIDs, product.ID)
+	}
+	if len(productIDs) == 0 {
+		return nil
 	}
 	indications, err := buildListingPriceIndicationsBatch(ctx.Ctx, s.variants, s.prices, s.history, productIDs, ctx.StoreID, ctx.Currency)
 	if err != nil {

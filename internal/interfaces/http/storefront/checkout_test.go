@@ -379,7 +379,7 @@ func checkoutBuild(creditRepo *stubCheckoutStoreCreditRepo, withPayment bool) (*
 	bus := event.NewBus(log)
 
 	pipeline := pricing.NewPipeline(
-		appPricing.NewBasePriceStep(prices),
+		appPricing.NewBasePriceStepLegacy(prices),
 		pricing.NewFinalizeStep(),
 	)
 

@@ -264,7 +264,7 @@ func (s *goldTierPricingStep) Apply(_ context.Context, pctx *domainpricing.Prici
 
 func testPipelineWithGoldTier(prices domainpricing.PriceRepository) domainpricing.Pipeline {
 	return domainpricing.NewPipeline(
-		appPricing.NewBasePriceStep(prices),
+		appPricing.NewBasePriceStepLegacy(prices),
 		&goldTierPricingStep{},
 		domainpricing.NewFinalizeStep(),
 	)
@@ -275,7 +275,7 @@ func newCartServiceWithHooksAndPipeline(reg *hooks.Registry, pipeline domainpric
 	prices := newStubPriceRepo()
 	prices.set("var-1", "EUR", 1000)
 	vr, pr := cartApp.PermissiveCatalogRepos()
-	return cartApp.NewService(carts, prices, nil, nil, vr, pr, pipeline, testLogger(), testBus(), nil, reg)
+	return cartApp.NewService(carts, prices, nil, nil, vr, pr, cartApp.EmptyBundleComponents(), pipeline, testLogger(), testBus(), nil, reg)
 }
 
 func newCartServiceWithHooks(reg *hooks.Registry) *cartApp.Service {

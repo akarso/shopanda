@@ -2,6 +2,7 @@ package postgres_test
 
 import (
 	"context"
+	"fmt"
 	"testing"
 
 	"github.com/akarso/shopanda/internal/domain/catalog"
@@ -272,4 +273,317 @@ func TestVisibilityFactsRepo_LoadManyAnyStatus_DraftForcedVisibleNotEffective(t 
 	if catalog.EffectiveAxis(snap.Modes.Catalog, snap.Status, auto) {
 		t.Fatal("EffectiveAxis must be false for a draft product even when forced visible")
 	}
+}
+
+func TestVisibilityFactsRepo_DynamicBundleHasPriceFromRequiredComponents(t *testing.T) {
+	db := testDB(t)
+	ensureProductsTable(t, db)
+	ctx := context.Background()
+
+	prodRepo, err := postgres.NewProductRepo(db)
+	if err != nil {
+		t.Fatalf("NewProductRepo: %v", err)
+	}
+	variantRepo, err := postgres.NewVariantRepo(db)
+	if err != nil {
+		t.Fatalf("NewVariantRepo: %v", err)
+	}
+	priceRepo, err := postgres.NewPriceRepo(db)
+	if err != nil {
+		t.Fatalf("NewPriceRepo: %v", err)
+	}
+	componentRepo, err := postgres.NewBundleComponentRepo(db)
+	if err != nil {
+		t.Fatalf("NewBundleComponentRepo: %v", err)
+	}
+	factsRepo, err := postgres.NewVisibilityFactsRepo(db)
+	if err != nil {
+		t.Fatalf("NewVisibilityFactsRepo: %v", err)
+	}
+
+	bundle := mustNewProduct(t, "Dynamic Kit", "dyn-kit-"+id.New()[:8])
+	bundle.Type = catalog.TypeBundle
+	bundle.PricingMode = catalog.PricingModeDynamic
+	bundle.Status = catalog.StatusActive
+	if err := prodRepo.Create(ctx, &bundle); err != nil {
+		t.Fatalf("create bundle: %v", err)
+	}
+
+	component := mustNewProduct(t, "Piece", "piece-"+id.New()[:8])
+	component.Status = catalog.StatusActive
+	if err := prodRepo.Create(ctx, &component); err != nil {
+		t.Fatalf("create component: %v", err)
+	}
+	variant := mustNewVariant(t, component.ID, "SKU-PIECE-"+id.New()[:8])
+	if err := variantRepo.Create(ctx, &variant); err != nil {
+		t.Fatalf("create variant: %v", err)
+	}
+	zero, err := pricing.NewPrice(id.New(), variant.ID, "", shared.MustNewMoney(0, "EUR"))
+	if err != nil {
+		t.Fatalf("NewPrice: %v", err)
+	}
+	if err := priceRepo.Upsert(ctx, &zero); err != nil {
+		t.Fatalf("upsert 0: %v", err)
+	}
+	link, err := catalog.NewBundleComponent(bundle.ID, component.ID, 1)
+	if err != nil {
+		t.Fatalf("NewBundleComponent: %v", err)
+	}
+	if err := componentRepo.Upsert(ctx, link); err != nil {
+		t.Fatalf("upsert component: %v", err)
+	}
+
+	snap, err := factsRepo.LoadMany(ctx, []string{bundle.ID})
+	if err != nil {
+		t.Fatalf("LoadMany: %v", err)
+	}
+	got, ok := snap[bundle.ID]
+	if !ok {
+		t.Fatal("dynamic bundle missing from facts")
+	}
+	if !got.Inputs.HasPrice {
+		t.Fatal("HasPrice = false, want true (required component amount 0 still counts)")
+	}
+
+	fixed := mustNewProduct(t, "Fixed Kit", "fix-kit-"+id.New()[:8])
+	fixed.Type = catalog.TypeBundle
+	fixed.PricingMode = catalog.PricingModeFixed
+	fixed.Status = catalog.StatusActive
+	if err := prodRepo.Create(ctx, &fixed); err != nil {
+		t.Fatalf("create fixed bundle: %v", err)
+	}
+	fixedLink, err := catalog.NewBundleComponent(fixed.ID, component.ID, 1)
+	if err != nil {
+		t.Fatalf("fixed link: %v", err)
+	}
+	if err := componentRepo.Upsert(ctx, fixedLink); err != nil {
+		t.Fatalf("upsert fixed link: %v", err)
+	}
+	fixedSnap, err := factsRepo.LoadMany(ctx, []string{fixed.ID})
+	if err != nil {
+		t.Fatalf("LoadMany fixed: %v", err)
+	}
+	if fixedSnap[fixed.ID].Inputs.HasPrice {
+		t.Fatal("fixed bundle HasPrice = true without its own price row")
+	}
+}
+
+func TestVisibilityFactsRepo_DynamicBundleHasPriceFailClosed(t *testing.T) {
+	db := testDB(t)
+	ensureProductsTable(t, db)
+	ctx := context.Background()
+
+	prodRepo, err := postgres.NewProductRepo(db)
+	if err != nil {
+		t.Fatalf("NewProductRepo: %v", err)
+	}
+	variantRepo, err := postgres.NewVariantRepo(db)
+	if err != nil {
+		t.Fatalf("NewVariantRepo: %v", err)
+	}
+	priceRepo, err := postgres.NewPriceRepo(db)
+	if err != nil {
+		t.Fatalf("NewPriceRepo: %v", err)
+	}
+	componentRepo, err := postgres.NewBundleComponentRepo(db)
+	if err != nil {
+		t.Fatalf("NewBundleComponentRepo: %v", err)
+	}
+	factsRepo, err := postgres.NewVisibilityFactsRepo(db)
+	if err != nil {
+		t.Fatalf("NewVisibilityFactsRepo: %v", err)
+	}
+
+	hasPrice := func(t *testing.T, productID string) bool {
+		t.Helper()
+		snap, err := factsRepo.LoadMany(ctx, []string{productID})
+		if err != nil {
+			t.Fatalf("LoadMany: %v", err)
+		}
+		got, ok := snap[productID]
+		if !ok {
+			t.Fatalf("product %s missing from facts", productID)
+		}
+		return got.Inputs.HasPrice
+	}
+	newBundle := func(t *testing.T, slug string) catalog.Product {
+		t.Helper()
+		bundle := mustNewProduct(t, "Dynamic Kit", slug)
+		bundle.Type = catalog.TypeBundle
+		bundle.PricingMode = catalog.PricingModeDynamic
+		bundle.Status = catalog.StatusActive
+		if err := prodRepo.Create(ctx, &bundle); err != nil {
+			t.Fatalf("create bundle: %v", err)
+		}
+		return bundle
+	}
+	link := func(t *testing.T, bundleID, componentID string) {
+		t.Helper()
+		row, err := catalog.NewBundleComponent(bundleID, componentID, 1)
+		if err != nil {
+			t.Fatalf("NewBundleComponent: %v", err)
+		}
+		if err := componentRepo.Upsert(ctx, row); err != nil {
+			t.Fatalf("upsert component: %v", err)
+		}
+	}
+
+	t.Run("store-only USD", func(t *testing.T) {
+		bundle := newBundle(t, "dyn-store-"+id.New()[:8])
+		component := mustNewProduct(t, "Piece", "piece-store-"+id.New()[:8])
+		component.Status = catalog.StatusActive
+		if err := prodRepo.Create(ctx, &component); err != nil {
+			t.Fatalf("create component: %v", err)
+		}
+		variant := mustNewVariant(t, component.ID, "SKU-STORE-"+id.New()[:8])
+		if err := variantRepo.Create(ctx, &variant); err != nil {
+			t.Fatalf("create variant: %v", err)
+		}
+		storeOnly, err := pricing.NewPrice(id.New(), variant.ID, "store-us", shared.MustNewMoney(100, "USD"))
+		if err != nil {
+			t.Fatalf("NewPrice: %v", err)
+		}
+		if err := priceRepo.Upsert(ctx, &storeOnly); err != nil {
+			t.Fatalf("upsert store price: %v", err)
+		}
+		link(t, bundle.ID, component.ID)
+		if hasPrice(t, bundle.ID) {
+			t.Fatal("HasPrice = true, want false for a store-only USD price")
+		}
+
+		globalUSD, err := pricing.NewPrice(id.New(), variant.ID, "", shared.MustNewMoney(100, "USD"))
+		if err != nil {
+			t.Fatalf("NewPrice global: %v", err)
+		}
+		if err := priceRepo.Upsert(ctx, &globalUSD); err != nil {
+			t.Fatalf("upsert global USD: %v", err)
+		}
+		if !hasPrice(t, bundle.ID) {
+			t.Fatal("HasPrice = false, want true for a global USD row (currency-agnostic)")
+		}
+	})
+
+	t.Run("two variants", func(t *testing.T) {
+		bundle := newBundle(t, "dyn-multi-"+id.New()[:8])
+		component := mustNewProduct(t, "Piece", "piece-multi-"+id.New()[:8])
+		component.Status = catalog.StatusActive
+		if err := prodRepo.Create(ctx, &component); err != nil {
+			t.Fatalf("create component: %v", err)
+		}
+		for _, sku := range []string{"SKU-A-", "SKU-B-"} {
+			variant := mustNewVariant(t, component.ID, sku+id.New()[:8])
+			if err := variantRepo.Create(ctx, &variant); err != nil {
+				t.Fatalf("create variant: %v", err)
+			}
+			row, err := pricing.NewPrice(id.New(), variant.ID, "", shared.MustNewMoney(10, "EUR"))
+			if err != nil {
+				t.Fatalf("NewPrice: %v", err)
+			}
+			if err := priceRepo.Upsert(ctx, &row); err != nil {
+				t.Fatalf("upsert: %v", err)
+			}
+		}
+		link(t, bundle.ID, component.ID)
+		if hasPrice(t, bundle.ID) {
+			t.Fatal("HasPrice = true, want false when a required component has two variants")
+		}
+	})
+
+	t.Run("archived component", func(t *testing.T) {
+		bundle := newBundle(t, "dyn-arch-"+id.New()[:8])
+		component := mustNewProduct(t, "Piece", "piece-arch-"+id.New()[:8])
+		component.Status = catalog.StatusArchived
+		if err := prodRepo.Create(ctx, &component); err != nil {
+			t.Fatalf("create component: %v", err)
+		}
+		variant := mustNewVariant(t, component.ID, "SKU-ARCH-"+id.New()[:8])
+		if err := variantRepo.Create(ctx, &variant); err != nil {
+			t.Fatalf("create variant: %v", err)
+		}
+		row, err := pricing.NewPrice(id.New(), variant.ID, "", shared.MustNewMoney(10, "EUR"))
+		if err != nil {
+			t.Fatalf("NewPrice: %v", err)
+		}
+		if err := priceRepo.Upsert(ctx, &row); err != nil {
+			t.Fatalf("upsert: %v", err)
+		}
+		link(t, bundle.ID, component.ID)
+		if hasPrice(t, bundle.ID) {
+			t.Fatal("HasPrice = true, want false for an archived required component")
+		}
+	})
+
+	t.Run("non-leaf component", func(t *testing.T) {
+		bundle := newBundle(t, "dyn-leaf-"+id.New()[:8])
+		component := mustNewProduct(t, "Group", "piece-group-"+id.New()[:8])
+		component.Type = catalog.TypeGrouped
+		component.Status = catalog.StatusActive
+		if err := prodRepo.Create(ctx, &component); err != nil {
+			t.Fatalf("create component: %v", err)
+		}
+		variant := mustNewVariant(t, component.ID, "SKU-GROUP-"+id.New()[:8])
+		if err := variantRepo.Create(ctx, &variant); err != nil {
+			t.Fatalf("create variant: %v", err)
+		}
+		row, err := pricing.NewPrice(id.New(), variant.ID, "", shared.MustNewMoney(10, "EUR"))
+		if err != nil {
+			t.Fatalf("NewPrice: %v", err)
+		}
+		if err := priceRepo.Upsert(ctx, &row); err != nil {
+			t.Fatalf("upsert: %v", err)
+		}
+		link(t, bundle.ID, component.ID)
+		if hasPrice(t, bundle.ID) {
+			t.Fatal("HasPrice = true, want false for a non-leaf required component")
+		}
+	})
+
+	t.Run("grouped parent", func(t *testing.T) {
+		group := mustNewProduct(t, "Group", "group-price-"+id.New()[:8])
+		group.Type = catalog.TypeGrouped
+		group.Status = catalog.StatusActive
+		if err := prodRepo.Create(ctx, &group); err != nil {
+			t.Fatalf("create group: %v", err)
+		}
+		variant := mustNewVariant(t, group.ID, "SKU-GPARENT-"+id.New()[:8])
+		if err := variantRepo.Create(ctx, &variant); err != nil {
+			t.Fatalf("create variant: %v", err)
+		}
+		row, err := pricing.NewPrice(id.New(), variant.ID, "", shared.MustNewMoney(10, "EUR"))
+		if err != nil {
+			t.Fatalf("NewPrice: %v", err)
+		}
+		if err := priceRepo.Upsert(ctx, &row); err != nil {
+			t.Fatalf("upsert: %v", err)
+		}
+		if hasPrice(t, group.ID) {
+			t.Fatal("HasPrice = true, want false for a grouped parent with a leftover price")
+		}
+	})
+
+	t.Run("more than max required components", func(t *testing.T) {
+		bundle := newBundle(t, "dyn-cap-"+id.New()[:8])
+		for i := 0; i < catalog.MaxBundleRequiredComponents+1; i++ {
+			component := mustNewProduct(t, "Piece", fmt.Sprintf("piece-cap-%s-%d", id.New()[:8], i))
+			component.Status = catalog.StatusActive
+			if err := prodRepo.Create(ctx, &component); err != nil {
+				t.Fatalf("create component: %v", err)
+			}
+			variant := mustNewVariant(t, component.ID, fmt.Sprintf("SKU-CAP-%s-%d", id.New()[:8], i))
+			if err := variantRepo.Create(ctx, &variant); err != nil {
+				t.Fatalf("create variant: %v", err)
+			}
+			row, err := pricing.NewPrice(id.New(), variant.ID, "", shared.MustNewMoney(10, "EUR"))
+			if err != nil {
+				t.Fatalf("NewPrice: %v", err)
+			}
+			if err := priceRepo.Upsert(ctx, &row); err != nil {
+				t.Fatalf("upsert: %v", err)
+			}
+			link(t, bundle.ID, component.ID)
+		}
+		if hasPrice(t, bundle.ID) {
+			t.Fatal("HasPrice = true, want false when required components exceed the cap")
+		}
+	})
 }

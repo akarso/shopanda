@@ -51,6 +51,24 @@ func TestPriceIndicationStep_NilProduct(t *testing.T) {
 	}
 }
 
+func TestPriceIndicationStep_SkipsDynamicStoredPrice(t *testing.T) {
+	prod := catalog.Product{ID: "p1", Name: "Kit", Type: catalog.TypeBundle, PricingMode: catalog.PricingModeDynamic}
+	current := &pricing.Price{ID: "pr1", VariantID: "v1", Amount: shared.MustNewMoney(2999, "EUR")}
+	s := composition.NewPriceIndicationStep(
+		&mockVariantRepo{variants: []catalog.Variant{{ID: "v1", ProductID: "p1"}}},
+		&mockPriceRepo{price: current},
+		&mockPriceHistoryRepo{},
+		nil,
+	)
+	ctx := composition.NewProductContext(&prod)
+	if err := s.Apply(ctx); err != nil {
+		t.Fatalf("Apply: %v", err)
+	}
+	if len(ctx.Blocks) != 0 {
+		t.Fatal("dynamic bundle emitted a stored price indication")
+	}
+}
+
 func TestPriceIndicationStep_NoVariants(t *testing.T) {
 	prod := catalog.Product{ID: "p1", Name: "Widget"}
 	s := composition.NewPriceIndicationStep(

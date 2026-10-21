@@ -43,6 +43,7 @@ type txHistoryRepo interface {
 // PriceImporter imports prices from CSV.
 type PriceImporter struct {
 	variants  catalog.VariantRepository
+	products  catalog.ProductRepository
 	prices    pricing.PriceRepository
 	history   pricing.PriceHistoryRepository
 	txStarter TxStarter
@@ -65,6 +66,13 @@ func (imp *PriceImporter) WithRowHooks(registry *importctx.Registry) *PriceImpor
 	return imp
 }
 
+// WithProducts rejects price rows for grouped parents and dynamic bundles.
+// Import returns an error when this was not set.
+func (imp *PriceImporter) WithProducts(products catalog.ProductRepository) *PriceImporter {
+	imp.products = products
+	return imp
+}
+
 // Import reads CSV rows from r and upserts prices.
 //
 // Required columns: sku, currency, amount.
@@ -73,6 +81,9 @@ func (imp *PriceImporter) WithRowHooks(registry *importctx.Registry) *PriceImpor
 // for that variant+currency+store tuple. Amount is in the smallest currency
 // unit (e.g. cents).
 func (imp *PriceImporter) Import(ctx context.Context, r io.Reader) (*PriceResult, error) {
+	if imp.products == nil {
+		return nil, fmt.Errorf("price import: product repository is required")
+	}
 	reader := csv.NewReader(r)
 	reader.TrimLeadingSpace = true
 
@@ -156,6 +167,25 @@ func (imp *PriceImporter) Import(ctx context.Context, r io.Reader) (*PriceResult
 		}
 		if variant == nil {
 			result.Errors = append(result.Errors, fmt.Sprintf("line %d: unknown sku %q", lineNum, sku))
+			result.Skipped++
+			continue
+		}
+		product, err := imp.products.FindByID(catalog.WithOperatorProductReadScope(ctx), variant.ProductID)
+		if err != nil {
+			return nil, fmt.Errorf("price import: find product for sku %q: %w", sku, err)
+		}
+		if product == nil {
+			result.Errors = append(result.Errors, fmt.Sprintf("line %d: product not found for sku %q", lineNum, sku))
+			result.Skipped++
+			continue
+		}
+		if product.Type == catalog.TypeGrouped {
+			result.Errors = append(result.Errors, fmt.Sprintf("line %d: %s", lineNum, catalog.GroupedPriceRejectedMessage))
+			result.Skipped++
+			continue
+		}
+		if product.Type == catalog.TypeBundle && product.PricingMode == catalog.PricingModeDynamic {
+			result.Errors = append(result.Errors, fmt.Sprintf("line %d: %s", lineNum, catalog.DynamicBundlePriceRejectedMessage))
 			result.Skipped++
 			continue
 		}

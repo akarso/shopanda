@@ -204,7 +204,7 @@ func testPaymentRegistry(providers ...payment.Provider) *payment.ProviderRegistr
 func newStorefrontCheckoutService(carts *storefrontCartRepoStub, prices *storefrontPriceRepoStub, products catalog.ProductRepository, variants catalog.VariantRepository) (*checkoutApp.Service, shipping.Provider, *payment.ProviderRegistry, *storefrontCheckoutOrderRepoStub, *storefrontCheckoutShipmentRepoStub) {
 	log := logger.NewWithWriter(io.Discard, "error")
 	bus := event.NewBus(log)
-	pipeline := pricing.NewPipeline(appPricing.NewBasePriceStep(prices), pricing.NewFinalizeStep())
+	pipeline := pricing.NewPipeline(appPricing.NewBasePriceStepLegacy(prices), pricing.NewFinalizeStep())
 	orders := &storefrontCheckoutOrderRepoStub{}
 	shipments := &storefrontCheckoutShipmentRepoStub{}
 	payments := &storefrontCheckoutPaymentRepoStub{}
