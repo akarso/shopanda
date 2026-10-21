@@ -82,6 +82,7 @@ C4Component
             Component(reindexHandler, "ReindexHandler", "Go", "Handles search.reindex jobs: scans ProductSource in batches, indexes via SearchEngine, updates search_index_runs progress incrementally")
             Component(reindexReconcileHandler, "ReconcileHandler", "Go", "Handles search.reindex.reconcile jobs: sweeps search_index_runs stuck processing past a staleness threshold, corrects any whose underlying job already reached a terminal status")
             Component(productSchemaRegistration, "ProductSchemaRegistration", "Go", "Registers product form and grid schemas with admin registry")
+            Component(bundleService, "BundleService", "Go", "Bundle composition (PR-1060): list, add, and remove component links. Components must be leaf types (simple, virtual, downloadable). ProductAdminHandler counts rows for type-change guards and fails closed when the repo is unwired.")
         }
 
         Boundary(infrastructure, "Infrastructure Layer (Adapters)") {
@@ -227,6 +228,8 @@ C4Component
     Rel(configSeeder, seedRegistry, "Registered as seeder")
     Rel(catalogSeeder, seedRegistry, "Registered as seeder")
     Rel(productSchemaRegistration, adminRegistry, "Registers product form + grid")
+    Rel(bundleService, postgresRepos, "Reads products and writes bundle_components")
+    Rel(productAdmin, postgresRepos, "Type-change guard counts bundle_components")
     Rel(categoryHandler, postgresRepos, "Category + product queries")
     Rel(storefrontHandler, localCacheStore, "Caches category tree (L1, 45s TTL); evicts on catalog.EventCategory{Created,Updated,Deleted} not sourced from category-assignment changes")
     Rel(eventBus, localCacheStore, "Synchronous eviction on a subscribed domain event (catalog.EventCategory*)")

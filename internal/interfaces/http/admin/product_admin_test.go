@@ -30,7 +30,7 @@ import (
 
 type mockAdminProductRepo struct {
 	findByIDFn                 func(ctx context.Context, id string) (*catalog.Product, error)
-	listFn func(ctx context.Context, filter catalog.ListFilter) ([]catalog.Product, error)
+	listFn                     func(ctx context.Context, filter catalog.ListFilter) ([]catalog.Product, error)
 	createFn                   func(ctx context.Context, p *catalog.Product) error
 	updateFn                   func(ctx context.Context, p *catalog.Product) error
 	listCategoryIDsByProductFn func(ctx context.Context, productID string) ([]string, error)
@@ -81,6 +81,33 @@ func (m *mockAdminProductRepo) FindByCategoryID(_ context.Context, _ string, _, 
 	return nil, nil
 }
 func (m *mockAdminProductRepo) WithTx(_ *sql.Tx) catalog.ProductRepository { return m }
+
+type mockBundleComponentGuard struct {
+	bundleCount    int
+	componentCount int
+}
+
+var _ catalog.BundleComponentRepository = (*mockBundleComponentGuard)(nil)
+
+func (m *mockBundleComponentGuard) ListByBundleID(context.Context, string) ([]catalog.BundleComponent, error) {
+	return []catalog.BundleComponent{}, nil
+}
+
+func (m *mockBundleComponentGuard) CountByBundleID(context.Context, string) (int, error) {
+	return m.bundleCount, nil
+}
+
+func (m *mockBundleComponentGuard) CountByComponentID(context.Context, string) (int, error) {
+	return m.componentCount, nil
+}
+
+func (m *mockBundleComponentGuard) Upsert(context.Context, *catalog.BundleComponent) error {
+	return nil
+}
+
+func (m *mockBundleComponentGuard) Remove(context.Context, string, string) error {
+	return nil
+}
 
 func (m *mockAdminProductRepoWithoutCategoryLookup) FindByID(ctx context.Context, id string) (*catalog.Product, error) {
 	if m.findByIDFn != nil {
@@ -1035,7 +1062,8 @@ func TestProductAdminHandler_Update_Type(t *testing.T) {
 			return nil
 		},
 	}
-	h := admin.NewProductAdminHandler(repo, testAdminBus())
+	h := admin.NewProductAdminHandler(repo, testAdminBus()).
+		WithBundleComponents(&mockBundleComponentGuard{})
 
 	body := jsonBody(t, map[string]interface{}{"type": "downloadable"})
 	rec := httptest.NewRecorder()
@@ -1047,6 +1075,149 @@ func TestProductAdminHandler_Update_Type(t *testing.T) {
 	}
 	if updated == nil || updated.Type != catalog.TypeDownloadable {
 		t.Fatalf("type = %#v, want downloadable", updated)
+	}
+}
+
+func TestProductAdminHandler_Update_TypeChangeBundleWithComponentsRejected(t *testing.T) {
+	repo := &mockAdminProductRepo{
+		findByIDFn: func(_ context.Context, id string) (*catalog.Product, error) {
+			return &catalog.Product{
+				ID: id, Name: "Kit", Slug: "kit", Status: catalog.StatusDraft, Type: catalog.TypeBundle,
+				VisibilityModes: catalog.DefaultVisibilityAxes(),
+			}, nil
+		},
+		updateFn: func(_ context.Context, _ *catalog.Product) error {
+			t.Fatal("Update must not run")
+			return nil
+		},
+	}
+	h := admin.NewProductAdminHandler(repo, testAdminBus()).
+		WithBundleComponents(&mockBundleComponentGuard{bundleCount: 2})
+
+	body := jsonBody(t, map[string]interface{}{"type": "simple"})
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("PUT", "/api/v1/admin/products/p1", body)
+	newAdminRouter(h).ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("status = %d, want 422; body: %s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "product has bundle components") {
+		t.Fatalf("body = %s", rec.Body.String())
+	}
+}
+
+func TestProductAdminHandler_Update_TypeChangeUsedAsComponentRejected(t *testing.T) {
+	repo := &mockAdminProductRepo{
+		findByIDFn: func(_ context.Context, id string) (*catalog.Product, error) {
+			return &catalog.Product{
+				ID: id, Name: "Part", Slug: "part", Status: catalog.StatusDraft, Type: catalog.TypeSimple,
+				VisibilityModes: catalog.DefaultVisibilityAxes(),
+			}, nil
+		},
+		updateFn: func(_ context.Context, _ *catalog.Product) error {
+			t.Fatal("Update must not run")
+			return nil
+		},
+	}
+	h := admin.NewProductAdminHandler(repo, testAdminBus()).
+		WithBundleComponents(&mockBundleComponentGuard{componentCount: 1})
+
+	body := jsonBody(t, map[string]interface{}{"type": "grouped"})
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("PUT", "/api/v1/admin/products/p1", body)
+	newAdminRouter(h).ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("status = %d, want 422; body: %s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "used as a bundle component") {
+		t.Fatalf("body = %s", rec.Body.String())
+	}
+}
+
+func TestProductAdminHandler_Update_TypeChangeBundleWithZeroComponentsAllowed(t *testing.T) {
+	var updated *catalog.Product
+	repo := &mockAdminProductRepo{
+		findByIDFn: func(_ context.Context, id string) (*catalog.Product, error) {
+			return &catalog.Product{
+				ID: id, Name: "Kit", Slug: "kit", Status: catalog.StatusDraft, Type: catalog.TypeBundle,
+				VisibilityModes: catalog.DefaultVisibilityAxes(),
+			}, nil
+		},
+		updateFn: func(_ context.Context, p *catalog.Product) error {
+			updated = p
+			return nil
+		},
+	}
+	h := admin.NewProductAdminHandler(repo, testAdminBus()).
+		WithBundleComponents(&mockBundleComponentGuard{})
+
+	body := jsonBody(t, map[string]interface{}{"type": "simple"})
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("PUT", "/api/v1/admin/products/p1", body)
+	newAdminRouter(h).ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body: %s", rec.Code, rec.Body.String())
+	}
+	if updated == nil || updated.Type != catalog.TypeSimple {
+		t.Fatalf("type = %#v, want simple", updated)
+	}
+}
+
+func TestProductAdminHandler_Update_TypeChangeLeafToLeafWhileUsedAsComponentAllowed(t *testing.T) {
+	var updated *catalog.Product
+	repo := &mockAdminProductRepo{
+		findByIDFn: func(_ context.Context, id string) (*catalog.Product, error) {
+			return &catalog.Product{
+				ID: id, Name: "Part", Slug: "part", Status: catalog.StatusDraft, Type: catalog.TypeSimple,
+				VisibilityModes: catalog.DefaultVisibilityAxes(),
+			}, nil
+		},
+		updateFn: func(_ context.Context, p *catalog.Product) error {
+			updated = p
+			return nil
+		},
+	}
+	h := admin.NewProductAdminHandler(repo, testAdminBus()).
+		WithBundleComponents(&mockBundleComponentGuard{componentCount: 1})
+
+	body := jsonBody(t, map[string]interface{}{"type": "virtual"})
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("PUT", "/api/v1/admin/products/p1", body)
+	newAdminRouter(h).ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body: %s", rec.Code, rec.Body.String())
+	}
+	if updated == nil || updated.Type != catalog.TypeVirtual {
+		t.Fatalf("type = %#v, want virtual", updated)
+	}
+}
+
+func TestProductAdminHandler_Update_TypeChangeWithoutBundleRepoFailsClosed(t *testing.T) {
+	repo := &mockAdminProductRepo{
+		findByIDFn: func(_ context.Context, id string) (*catalog.Product, error) {
+			return &catalog.Product{
+				ID: id, Name: "Widget", Slug: "widget", Status: catalog.StatusDraft, Type: catalog.TypeSimple,
+				VisibilityModes: catalog.DefaultVisibilityAxes(),
+			}, nil
+		},
+		updateFn: func(_ context.Context, _ *catalog.Product) error {
+			t.Fatal("Update must not run when the bundle repo is unwired")
+			return nil
+		},
+	}
+	h := admin.NewProductAdminHandler(repo, testAdminBus())
+
+	body := jsonBody(t, map[string]interface{}{"type": "virtual"})
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("PUT", "/api/v1/admin/products/p1", body)
+	newAdminRouter(h).ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("status = %d, want 500; body: %s", rec.Code, rec.Body.String())
 	}
 }
 
@@ -1091,7 +1262,8 @@ func TestProductAdminHandler_Update_EmptyTypeRejected(t *testing.T) {
 			return nil
 		},
 	}
-	h := admin.NewProductAdminHandler(repo, testAdminBus())
+	h := admin.NewProductAdminHandler(repo, testAdminBus()).
+		WithBundleComponents(&mockBundleComponentGuard{})
 
 	body := jsonBody(t, map[string]interface{}{"type": "  "})
 	rec := httptest.NewRecorder()
@@ -1116,7 +1288,8 @@ func TestProductAdminHandler_Update_RequestInvalidType(t *testing.T) {
 			return nil
 		},
 	}
-	h := admin.NewProductAdminHandler(repo, testAdminBus())
+	h := admin.NewProductAdminHandler(repo, testAdminBus()).
+		WithBundleComponents(&mockBundleComponentGuard{})
 
 	body := jsonBody(t, map[string]interface{}{"type": "kit"})
 	rec := httptest.NewRecorder()

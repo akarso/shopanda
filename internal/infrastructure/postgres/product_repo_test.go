@@ -45,8 +45,23 @@ func ensureProductsTable(t *testing.T, db *sql.DB) {
 		t.Fatalf("run migrations: %v", err)
 	}
 	t.Cleanup(func() {
-		db.Exec("DELETE FROM products")
+		deleteAllProducts(t, db)
 	})
+}
+
+// deleteAllProducts removes bundle links before products. Component FKs are
+// ON DELETE RESTRICT, so a product delete fails while a link still points at it.
+func deleteAllProducts(t *testing.T, db *sql.DB) {
+	t.Helper()
+	mustExec(t, db, "DELETE FROM bundle_components")
+	mustExec(t, db, "DELETE FROM products")
+}
+
+// deleteProductByID removes bundle links that reference productID, then the product row.
+func deleteProductByID(t *testing.T, db *sql.DB, productID string) {
+	t.Helper()
+	mustExec(t, db, "DELETE FROM bundle_components WHERE bundle_product_id = $1 OR component_product_id = $1", productID)
+	mustExec(t, db, "DELETE FROM products WHERE id = $1", productID)
 }
 
 func mustExec(t *testing.T, db *sql.DB, q string, args ...any) {
@@ -220,7 +235,7 @@ func TestProductRepo_List(t *testing.T) {
 func TestProductRepo_List_FilterByType(t *testing.T) {
 	db := testDB(t)
 	ensureProductsTable(t, db)
-	mustExec(t, db, "DELETE FROM products")
+	deleteAllProducts(t, db)
 	repo, err := postgres.NewProductRepo(db)
 	if err != nil {
 		t.Fatalf("NewProductRepo: %v", err)

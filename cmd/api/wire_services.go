@@ -21,6 +21,7 @@ import (
 	authApp "github.com/akarso/shopanda/internal/application/auth"
 	cacheApp "github.com/akarso/shopanda/internal/application/cache"
 	cartApp "github.com/akarso/shopanda/internal/application/cart"
+	catalogApp "github.com/akarso/shopanda/internal/application/catalog"
 	checkoutApp "github.com/akarso/shopanda/internal/application/checkout"
 	cmsApp "github.com/akarso/shopanda/internal/application/cms"
 	"github.com/akarso/shopanda/internal/application/composition"
@@ -113,6 +114,7 @@ type serveRuntime struct {
 	returnService         *returnsApp.Service
 	extensionValueService *extensionApp.ValueService
 	setupService          *setupApp.Service
+	bundleService         *catalogApp.BundleService
 
 	menuResolver    *cmsApp.MenuResolver
 	blockResolver   *cmsApp.BlockResolver
@@ -511,6 +513,7 @@ func wireServeRuntime(cfg *config.Config, log logger.Logger, conn *sql.DB, repos
 	baseURL := cfg.Server.PublicBaseURL
 
 	// Composition pipelines (core SEO steps + plugin steps).
+	bundleService := catalogApp.NewBundleService(repos.productRepo, repos.bundleComponentRepo)
 	reviewService := reviewsApp.NewService(repos.reviewRepo, repos.productRepo)
 	pdp := composition.NewPipeline[composition.ProductContext]()
 	pdp.AddStep(composition.ProductMetaStep{})
@@ -708,7 +711,8 @@ func wireServeRuntime(cfg *config.Config, log logger.Logger, conn *sql.DB, repos
 	productHandler := storefront.NewProductHandler(repos.productRepo, pdp, plp, contentTranslator).
 		WithVisibilityFacts(visibilityFacts)
 	productAdmin := admin.NewProductAdminHandlerWithAuditor(repos.productRepo, bus, sharedAuditor, log).
-		WithVisibilityFacts(adminVisibilityFacts, visibilityOpts, cfg.Catalog.Visibility.Enforce)
+		WithVisibilityFacts(adminVisibilityFacts, visibilityOpts, cfg.Catalog.Visibility.Enforce).
+		WithBundleComponents(repos.bundleComponentRepo)
 	productTranslationAdmin := admin.NewProductTranslationAdminHandler(repos.productRepo, repos.contentTranslationRepo, sharedAuditor, log)
 	productPriceAdmin := admin.NewProductPriceAdminHandler(repos.productRepo, repos.variantRepo, repos.priceRepo, sharedAuditor, log)
 	productPriceAdmin.SetBus(bus) // PR-1036: price edits → search index update
@@ -923,6 +927,7 @@ func wireServeRuntime(cfg *config.Config, log logger.Logger, conn *sql.DB, repos
 		returnService:                  returnService,
 		extensionValueService:          extensionValueService,
 		setupService:                   setupService,
+		bundleService:                  bundleService,
 		menuResolver:                   menuResolver,
 		blockResolver:                  blockResolver,
 		visibilityFacts:                visibilityFacts,

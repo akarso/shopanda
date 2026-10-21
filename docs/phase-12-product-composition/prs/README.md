@@ -14,7 +14,7 @@
 | PR-1057 | B | done | [Enforce visibility in storefront read paths](PR-1057.md) |
 | PR-1058 | B | done | [Cart/checkout purchasability gate + hook point](PR-1058.md) |
 | PR-1059 | B | done | [Visibility admin GUI](PR-1059.md) |
-| PR-1060 | C | planned | [Bundle domain model](PR-1060.md) |
+| PR-1060 | C | done | [Bundle domain model](PR-1060.md) |
 | PR-1061 | C | planned | [Grouped domain model](PR-1061.md) |
 | PR-1062 | C | planned | [Bundle/grouped pricing rollup](PR-1062.md) |
 | PR-1063 | C | planned | [Stock rollup per type](PR-1063.md) |

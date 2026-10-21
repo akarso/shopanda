@@ -303,6 +303,15 @@ classDiagram
         +ListProductIDs(ctx, collID) []string
     }
 
+    class BundleComponentRepository {
+        <<interface>>
+        +ListByBundleID(ctx, bundleID) []BundleComponent
+        +CountByBundleID(ctx, bundleID) int
+        +CountByComponentID(ctx, componentID) int
+        +Upsert(ctx, component) error
+        +Remove(ctx, bundleID, componentID) error
+    }
+
     class PricingStep {
         <<interface>>
         +Name() string
@@ -390,6 +399,9 @@ classDiagram
         -db *sql.DB
     }
     class PostgresCollectionRepo {
+        -db *sql.DB
+    }
+    class PostgresBundleComponentRepo {
         -db *sql.DB
     }
     class ManualPayProvider {
@@ -635,6 +647,7 @@ classDiagram
     OrderRepository <|.. PostgresOrderRepo : implements
     CategoryRepository <|.. PostgresCategoryRepo : implements
     CollectionRepository <|.. PostgresCollectionRepo : implements
+    BundleComponentRepository <|.. PostgresBundleComponentRepo : implements
     SearchEngine <|.. PostgresSearchEngine : implements
     Queue <|.. JobQueue : implements
     Scheduler <|.. CronScheduler : implements

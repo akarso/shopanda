@@ -3,6 +3,7 @@ package admin
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"strings"
 
@@ -18,12 +19,18 @@ import (
 	"github.com/akarso/shopanda/internal/platform/logger"
 )
 
+type bundleComponentTypeGuard interface {
+	CountByBundleID(ctx context.Context, bundleProductID string) (int, error)
+	CountByComponentID(ctx context.Context, componentProductID string) (int, error)
+}
+
 // ProductAdminHandler serves product write endpoints.
 type ProductAdminHandler struct {
-	repo    catalog.ProductRepository
-	bus     *event.Bus
-	auditor *admin.Auditor
-	log     logger.Logger
+	repo             catalog.ProductRepository
+	bundleComponents bundleComponentTypeGuard
+	bus              *event.Bus
+	auditor          *admin.Auditor
+	log              logger.Logger
 
 	// facts + opts + enforced back the "visibility" payload on Get. Nil facts
 	// (the default — WithVisibilityFacts not called) omits the
@@ -95,6 +102,42 @@ func (h *ProductAdminHandler) WithVisibilityFacts(facts catalog.VisibilityFactsA
 	h.opts = opts
 	h.enforced = enforced
 	return h
+}
+
+// WithBundleComponents wires bundle composition counts for product type-change guards (PR-1060).
+// The field stays optional: updates that do not change type succeed when it is nil.
+// A type change with a nil guard fails closed.
+func (h *ProductAdminHandler) WithBundleComponents(components bundleComponentTypeGuard) *ProductAdminHandler {
+	h.bundleComponents = components
+	return h
+}
+
+func (h *ProductAdminHandler) validateProductTypeChange(ctx context.Context, productID string, oldType, newType catalog.Type) error {
+	if oldType == newType {
+		return nil
+	}
+	if h.bundleComponents == nil {
+		return apperror.Internal("product admin: bundle component repository is not configured")
+	}
+	if oldType == catalog.TypeBundle && newType != catalog.TypeBundle {
+		n, err := h.bundleComponents.CountByBundleID(ctx, productID)
+		if err != nil {
+			return fmt.Errorf("product admin: count bundle components: %w", err)
+		}
+		if n > 0 {
+			return apperror.Validation("cannot change type: product has bundle components")
+		}
+	}
+	if newType.IsValid() && !newType.IsBundleComponentLeafType() {
+		n, err := h.bundleComponents.CountByComponentID(ctx, productID)
+		if err != nil {
+			return fmt.Errorf("product admin: count bundle component usage: %w", err)
+		}
+		if n > 0 {
+			return apperror.Validation("cannot change type: product is used as a bundle component")
+		}
+	}
+	return nil
 }
 
 func (h *ProductAdminHandler) getAdminID(r *http.Request) string {
@@ -672,7 +715,21 @@ func (h *ProductAdminHandler) Update() http.HandlerFunc {
 				httpshared.JSONError(w, apperror.Validation("type must not be empty"))
 				return
 			}
-			product.Type = catalog.Type(rawType)
+			newType := catalog.Type(rawType)
+			if err := h.validateProductTypeChange(r.Context(), pid, product.Type, newType); err != nil {
+				h.auditor.LogAction(r.Context(), admin.AuditEntry{
+					AdminID:      adminID,
+					Action:       admin.AuditProductUpdate,
+					ResourceType: "product",
+					ResourceID:   pid,
+					Result:       "error",
+					Error:        err.Error(),
+					Details:      productAdminScopeDetailsFromRequest(r),
+				})
+				httpshared.JSONError(w, err)
+				return
+			}
+			product.Type = newType
 		}
 		// Omitted VisibilityModes (or an omitted axis within it) leaves the
 		// product's existing modes untouched for that axis; present axes

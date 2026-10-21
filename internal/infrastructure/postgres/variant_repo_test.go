@@ -20,8 +20,8 @@ func ensureVariantsTable(t *testing.T, db *sql.DB) {
 		t.Fatalf("run migrations: %v", err)
 	}
 	t.Cleanup(func() {
-		db.Exec("DELETE FROM variants")
-		db.Exec("DELETE FROM products")
+		mustExec(t, db, "DELETE FROM variants")
+		deleteAllProducts(t, db)
 	})
 }
 
