@@ -127,8 +127,8 @@ func TestBundleService_Add_LocksBeforeUpsert(t *testing.T) {
 	var calls []string
 	products := &stubProductRepo{
 		byID: map[string]*catalog.Product{
-			"zzz": {ID: "zzz", Type: catalog.TypeBundle},
-			"aaa": {ID: "aaa", Type: catalog.TypeSimple},
+			"zzz": {ID: "zzz", Type: catalog.TypeBundle, Status: catalog.StatusActive},
+			"aaa": {ID: "aaa", Type: catalog.TypeSimple, Status: catalog.StatusActive},
 		},
 		calls: &calls,
 	}
@@ -155,8 +155,8 @@ func TestBundleService_Add_LocksBeforeUpsert(t *testing.T) {
 
 func TestBundleService_Add_ValidComposition(t *testing.T) {
 	products := &stubProductRepo{byID: map[string]*catalog.Product{
-		"b1": {ID: "b1", Type: catalog.TypeBundle},
-		"c1": {ID: "c1", Type: catalog.TypeSimple},
+		"b1": {ID: "b1", Type: catalog.TypeBundle, Status: catalog.StatusActive},
+		"c1": {ID: "c1", Type: catalog.TypeSimple, Status: catalog.StatusActive},
 	}}
 	components := &stubBundleComponentRepo{}
 	svc := newBundleService(products, components)
@@ -179,8 +179,8 @@ func TestBundleService_Add_ValidComposition(t *testing.T) {
 
 func TestBundleService_Add_TrimsIDs(t *testing.T) {
 	products := &stubProductRepo{byID: map[string]*catalog.Product{
-		"b1": {ID: "b1", Type: catalog.TypeBundle},
-		"c1": {ID: "c1", Type: catalog.TypeSimple},
+		"b1": {ID: "b1", Type: catalog.TypeBundle, Status: catalog.StatusActive},
+		"c1": {ID: "c1", Type: catalog.TypeSimple, Status: catalog.StatusActive},
 	}}
 	components := &stubBundleComponentRepo{}
 	svc := newBundleService(products, components)
@@ -224,7 +224,7 @@ func TestBundleService_Add_ProductNotFound(t *testing.T) {
 
 func TestBundleService_Add_MissingComponent(t *testing.T) {
 	products := &stubProductRepo{byID: map[string]*catalog.Product{
-		"b1": {ID: "b1", Type: catalog.TypeBundle},
+		"b1": {ID: "b1", Type: catalog.TypeBundle, Status: catalog.StatusActive},
 	}}
 	svc := newBundleService(products, &stubBundleComponentRepo{})
 
@@ -237,8 +237,8 @@ func TestBundleService_Add_MissingComponent(t *testing.T) {
 
 func TestBundleService_Add_InvalidComposition(t *testing.T) {
 	products := &stubProductRepo{byID: map[string]*catalog.Product{
-		"b1": {ID: "b1", Type: catalog.TypeSimple},
-		"c1": {ID: "c1", Type: catalog.TypeSimple},
+		"b1": {ID: "b1", Type: catalog.TypeSimple, Status: catalog.StatusActive},
+		"c1": {ID: "c1", Type: catalog.TypeSimple, Status: catalog.StatusActive},
 	}}
 	svc := newBundleService(products, &stubBundleComponentRepo{})
 
@@ -251,8 +251,8 @@ func TestBundleService_Add_InvalidComposition(t *testing.T) {
 
 func TestBundleService_Add_RejectsGroupedComponent(t *testing.T) {
 	products := &stubProductRepo{byID: map[string]*catalog.Product{
-		"b1": {ID: "b1", Type: catalog.TypeBundle},
-		"g1": {ID: "g1", Type: catalog.TypeGrouped},
+		"b1": {ID: "b1", Type: catalog.TypeBundle, Status: catalog.StatusActive},
+		"g1": {ID: "g1", Type: catalog.TypeGrouped, Status: catalog.StatusActive},
 	}}
 	svc := newBundleService(products, &stubBundleComponentRepo{})
 
@@ -265,8 +265,8 @@ func TestBundleService_Add_RejectsGroupedComponent(t *testing.T) {
 
 func TestBundleService_Add_RejectsConfigurableComponent(t *testing.T) {
 	products := &stubProductRepo{byID: map[string]*catalog.Product{
-		"b1": {ID: "b1", Type: catalog.TypeBundle},
-		"x1": {ID: "x1", Type: catalog.TypeConfigurable},
+		"b1": {ID: "b1", Type: catalog.TypeBundle, Status: catalog.StatusActive},
+		"x1": {ID: "x1", Type: catalog.TypeConfigurable, Status: catalog.StatusActive},
 	}}
 	svc := newBundleService(products, &stubBundleComponentRepo{})
 
@@ -279,8 +279,8 @@ func TestBundleService_Add_RejectsConfigurableComponent(t *testing.T) {
 
 func TestBundleService_Add_RejectsNestedBundle(t *testing.T) {
 	products := &stubProductRepo{byID: map[string]*catalog.Product{
-		"b1": {ID: "b1", Type: catalog.TypeBundle},
-		"b2": {ID: "b2", Type: catalog.TypeBundle},
+		"b1": {ID: "b1", Type: catalog.TypeBundle, Status: catalog.StatusActive},
+		"b2": {ID: "b2", Type: catalog.TypeBundle, Status: catalog.StatusActive},
 	}}
 	svc := newBundleService(products, &stubBundleComponentRepo{})
 
@@ -304,7 +304,7 @@ func TestBundleService_List_ForwardsBundleID(t *testing.T) {
 	want := []catalog.BundleComponent{{BundleProductID: "b1", ComponentProductID: "c1", Quantity: 1}}
 	components := &stubBundleComponentRepo{list: want}
 	products := &stubProductRepo{byID: map[string]*catalog.Product{
-		"b1": {ID: "b1", Type: catalog.TypeBundle},
+		"b1": {ID: "b1", Type: catalog.TypeBundle, Status: catalog.StatusActive},
 	}}
 	svc := newBundleService(products, components)
 
@@ -331,7 +331,7 @@ func TestBundleService_List_NotFound(t *testing.T) {
 
 func TestBundleService_List_NotBundle(t *testing.T) {
 	products := &stubProductRepo{byID: map[string]*catalog.Product{
-		"p1": {ID: "p1", Type: catalog.TypeSimple},
+		"p1": {ID: "p1", Type: catalog.TypeSimple, Status: catalog.StatusActive},
 	}}
 	svc := newBundleService(products, &stubBundleComponentRepo{})
 
@@ -343,7 +343,7 @@ func TestBundleService_List_NotBundle(t *testing.T) {
 
 func TestBundleService_List_EmptySlice(t *testing.T) {
 	products := &stubProductRepo{byID: map[string]*catalog.Product{
-		"b1": {ID: "b1", Type: catalog.TypeBundle},
+		"b1": {ID: "b1", Type: catalog.TypeBundle, Status: catalog.StatusActive},
 	}}
 	components := &stubBundleComponentRepo{list: []catalog.BundleComponent{}}
 	svc := newBundleService(products, components)
@@ -379,5 +379,61 @@ func TestBundleService_Remove_NotFound(t *testing.T) {
 	err := svc.Remove(context.Background(), "b1", "c1")
 	if !apperror.Is(err, apperror.CodeNotFound) {
 		t.Fatalf("Remove = %v, want not found", err)
+	}
+}
+
+func TestBundleService_List_TrimsID(t *testing.T) {
+	products := &stubProductRepo{byID: map[string]*catalog.Product{
+		"b1": {ID: "b1", Type: catalog.TypeBundle, Status: catalog.StatusActive},
+	}}
+	components := &stubBundleComponentRepo{}
+	svc := newBundleService(products, components)
+
+	if _, err := svc.List(context.Background(), "  b1  "); err != nil {
+		t.Fatalf("List: %v", err)
+	}
+	if components.listBundleID != "b1" {
+		t.Fatalf("listBundleID = %q, want b1", components.listBundleID)
+	}
+}
+
+func TestBundleService_Remove_TrimsIDs(t *testing.T) {
+	components := &stubBundleComponentRepo{}
+	svc := newBundleService(&stubProductRepo{}, components)
+
+	if err := svc.Remove(context.Background(), " b1 ", " c1 "); err != nil {
+		t.Fatalf("Remove: %v", err)
+	}
+	if components.removed.bundleID != "b1" || components.removed.componentID != "c1" {
+		t.Fatalf("removed = %+v", components.removed)
+	}
+}
+
+func TestBundleService_Add_DraftBundleRequiresOperatorScope(t *testing.T) {
+	products := &stubProductRepo{byID: map[string]*catalog.Product{
+		"b1": {ID: "b1", Type: catalog.TypeBundle, Status: catalog.StatusDraft},
+		"c1": {ID: "c1", Type: catalog.TypeSimple, Status: catalog.StatusActive},
+	}}
+	components := &stubBundleComponentRepo{}
+	svc := newBundleService(products, components)
+	c, err := catalog.NewBundleComponent("b1", "c1", 1)
+	if err != nil {
+		t.Fatalf("NewBundleComponent: %v", err)
+	}
+
+	err = svc.Add(context.Background(), c)
+	if !apperror.Is(err, apperror.CodeNotFound) {
+		t.Fatalf("Add without scope = %v, want not found", err)
+	}
+	if components.upsert != nil {
+		t.Fatal("upsert must not run without operator scope")
+	}
+
+	ctx := catalog.WithOperatorProductReadScope(context.Background())
+	if err := svc.Add(ctx, c); err != nil {
+		t.Fatalf("Add with operator scope: %v", err)
+	}
+	if components.upsert == nil {
+		t.Fatal("expected upsert with operator scope")
 	}
 }

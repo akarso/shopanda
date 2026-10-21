@@ -312,6 +312,15 @@ classDiagram
         +Remove(ctx, bundleID, componentID) error
     }
 
+    class GroupedMemberRepository {
+        <<interface>>
+        +ListByGroupID(ctx, groupID) []GroupedMember
+        +CountByGroupID(ctx, groupID) int
+        +CountByMemberID(ctx, memberID) int
+        +Insert(ctx, member) error
+        +Remove(ctx, groupID, memberID) error
+    }
+
     class PricingStep {
         <<interface>>
         +Name() string
@@ -407,6 +416,11 @@ classDiagram
         -db *sql.DB
         -tx *sql.Tx
         +WithTx(tx) BundleComponentRepository
+    }
+    class PostgresGroupedMemberRepo {
+        -db *sql.DB
+        -tx *sql.Tx
+        +WithTx(tx) GroupedMemberRepository
     }
     class ManualPayProvider {
     }
@@ -652,6 +666,7 @@ classDiagram
     CategoryRepository <|.. PostgresCategoryRepo : implements
     CollectionRepository <|.. PostgresCollectionRepo : implements
     BundleComponentRepository <|.. PostgresBundleComponentRepo : implements
+    GroupedMemberRepository <|.. PostgresGroupedMemberRepo : implements
     SearchEngine <|.. PostgresSearchEngine : implements
     Queue <|.. JobQueue : implements
     Scheduler <|.. CronScheduler : implements

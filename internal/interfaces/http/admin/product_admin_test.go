@@ -165,6 +165,37 @@ func (m *mockBundleComponentGuard) WithTx(_ *sql.Tx) catalog.BundleComponentRepo
 	return m
 }
 
+type mockGroupedMemberGuard struct {
+	groupCount  int
+	memberCount int
+}
+
+var _ catalog.GroupedMemberRepository = (*mockGroupedMemberGuard)(nil)
+
+func (m *mockGroupedMemberGuard) ListByGroupID(context.Context, string) ([]catalog.GroupedMember, error) {
+	return []catalog.GroupedMember{}, nil
+}
+
+func (m *mockGroupedMemberGuard) CountByGroupID(context.Context, string) (int, error) {
+	return m.groupCount, nil
+}
+
+func (m *mockGroupedMemberGuard) CountByMemberID(context.Context, string) (int, error) {
+	return m.memberCount, nil
+}
+
+func (m *mockGroupedMemberGuard) Insert(context.Context, *catalog.GroupedMember) error {
+	return nil
+}
+
+func (m *mockGroupedMemberGuard) Remove(context.Context, string, string) error {
+	return nil
+}
+
+func (m *mockGroupedMemberGuard) WithTx(_ *sql.Tx) catalog.GroupedMemberRepository {
+	return m
+}
+
 func (m *mockAdminProductRepoWithoutCategoryLookup) FindByID(ctx context.Context, id string) (*catalog.Product, error) {
 	if m.findByIDFn != nil {
 		return m.findByIDFn(ctx, id)
@@ -1120,6 +1151,7 @@ func TestProductAdminHandler_Update_Type(t *testing.T) {
 	}
 	h := admin.NewProductAdminHandler(repo, testAdminBus()).
 		WithBundleComponents(&mockBundleComponentGuard{}).
+		WithGroupedMembers(&mockGroupedMemberGuard{}).
 		WithTxStarter(adminFakeTxDBConn())
 
 	body := jsonBody(t, map[string]interface{}{"type": "downloadable"})
@@ -1150,6 +1182,7 @@ func TestProductAdminHandler_Update_TypeChangeBundleWithComponentsRejected(t *te
 	}
 	h := admin.NewProductAdminHandler(repo, testAdminBus()).
 		WithBundleComponents(&mockBundleComponentGuard{bundleCount: 2}).
+		WithGroupedMembers(&mockGroupedMemberGuard{}).
 		WithTxStarter(adminFakeTxDBConn())
 
 	body := jsonBody(t, map[string]interface{}{"type": "simple"})
@@ -1180,6 +1213,7 @@ func TestProductAdminHandler_Update_TypeChangeUsedAsComponentRejected(t *testing
 	}
 	h := admin.NewProductAdminHandler(repo, testAdminBus()).
 		WithBundleComponents(&mockBundleComponentGuard{componentCount: 1}).
+		WithGroupedMembers(&mockGroupedMemberGuard{}).
 		WithTxStarter(adminFakeTxDBConn())
 
 	body := jsonBody(t, map[string]interface{}{"type": "grouped"})
@@ -1191,6 +1225,108 @@ func TestProductAdminHandler_Update_TypeChangeUsedAsComponentRejected(t *testing
 		t.Fatalf("status = %d, want 422; body: %s", rec.Code, rec.Body.String())
 	}
 	if !strings.Contains(rec.Body.String(), "used as a bundle component") {
+		t.Fatalf("body = %s", rec.Body.String())
+	}
+}
+
+func TestProductAdminHandler_Update_TypeChangeUsesLockedGroupedType(t *testing.T) {
+	repo := &mockAdminProductRepo{
+		findByIDFn: func(_ context.Context, id string) (*catalog.Product, error) {
+			return &catalog.Product{
+				ID: id, Name: "Set", Slug: "set", Status: catalog.StatusDraft, Type: catalog.TypeSimple,
+				VisibilityModes: catalog.DefaultVisibilityAxes(),
+			}, nil
+		},
+		lockForUpdateFn: func(context.Context, string) (catalog.Type, error) {
+			return catalog.TypeGrouped, nil
+		},
+		updateFn: func(_ context.Context, _ *catalog.Product) error {
+			t.Fatal("Update must not run")
+			return nil
+		},
+	}
+	h := admin.NewProductAdminHandler(repo, testAdminBus()).
+		WithBundleComponents(&mockBundleComponentGuard{}).
+		WithGroupedMembers(&mockGroupedMemberGuard{groupCount: 2}).
+		WithTxStarter(adminFakeTxDBConn())
+
+	body := jsonBody(t, map[string]interface{}{"type": "simple"})
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("PUT", "/api/v1/admin/products/p1", body)
+	newAdminRouter(h).ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("status = %d, want 422; body: %s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "product has grouped members") {
+		t.Fatalf("body = %s", rec.Body.String())
+	}
+}
+
+func TestProductAdminHandler_Update_TypeChangeIllicitGroupedRowsRejected(t *testing.T) {
+	repo := &mockAdminProductRepo{
+		findByIDFn: func(_ context.Context, id string) (*catalog.Product, error) {
+			return &catalog.Product{
+				ID: id, Name: "Set", Slug: "set", Status: catalog.StatusDraft, Type: catalog.TypeSimple,
+				VisibilityModes: catalog.DefaultVisibilityAxes(),
+			}, nil
+		},
+		lockForUpdateFn: func(context.Context, string) (catalog.Type, error) {
+			return catalog.TypeSimple, nil
+		},
+		updateFn: func(_ context.Context, _ *catalog.Product) error {
+			t.Fatal("Update must not run")
+			return nil
+		},
+	}
+	h := admin.NewProductAdminHandler(repo, testAdminBus()).
+		WithBundleComponents(&mockBundleComponentGuard{}).
+		WithGroupedMembers(&mockGroupedMemberGuard{groupCount: 1}).
+		WithTxStarter(adminFakeTxDBConn())
+
+	body := jsonBody(t, map[string]interface{}{"type": "virtual"})
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("PUT", "/api/v1/admin/products/p1", body)
+	newAdminRouter(h).ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("status = %d, want 422; body: %s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "product has grouped members") {
+		t.Fatalf("body = %s", rec.Body.String())
+	}
+}
+
+func TestProductAdminHandler_Update_TypeChangeIllicitBundleRowsRejected(t *testing.T) {
+	repo := &mockAdminProductRepo{
+		findByIDFn: func(_ context.Context, id string) (*catalog.Product, error) {
+			return &catalog.Product{
+				ID: id, Name: "Kit", Slug: "kit", Status: catalog.StatusDraft, Type: catalog.TypeSimple,
+				VisibilityModes: catalog.DefaultVisibilityAxes(),
+			}, nil
+		},
+		lockForUpdateFn: func(context.Context, string) (catalog.Type, error) {
+			return catalog.TypeSimple, nil
+		},
+		updateFn: func(_ context.Context, _ *catalog.Product) error {
+			t.Fatal("Update must not run")
+			return nil
+		},
+	}
+	h := admin.NewProductAdminHandler(repo, testAdminBus()).
+		WithBundleComponents(&mockBundleComponentGuard{bundleCount: 2}).
+		WithGroupedMembers(&mockGroupedMemberGuard{}).
+		WithTxStarter(adminFakeTxDBConn())
+
+	body := jsonBody(t, map[string]interface{}{"type": "virtual"})
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("PUT", "/api/v1/admin/products/p1", body)
+	newAdminRouter(h).ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("status = %d, want 422; body: %s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "product has bundle components") {
 		t.Fatalf("body = %s", rec.Body.String())
 	}
 }
@@ -1213,6 +1349,7 @@ func TestProductAdminHandler_Update_TypeChangeUsesLockedType(t *testing.T) {
 	}
 	h := admin.NewProductAdminHandler(repo, testAdminBus()).
 		WithBundleComponents(&mockBundleComponentGuard{bundleCount: 2}).
+		WithGroupedMembers(&mockGroupedMemberGuard{}).
 		WithTxStarter(adminFakeTxDBConn())
 
 	body := jsonBody(t, map[string]interface{}{"type": "grouped"})
@@ -1244,6 +1381,7 @@ func TestProductAdminHandler_Update_TypeChangeBundleWithZeroComponentsAllowed(t 
 	}
 	h := admin.NewProductAdminHandler(repo, testAdminBus()).
 		WithBundleComponents(&mockBundleComponentGuard{}).
+		WithGroupedMembers(&mockGroupedMemberGuard{}).
 		WithTxStarter(adminFakeTxDBConn())
 
 	body := jsonBody(t, map[string]interface{}{"type": "simple"})
@@ -1275,6 +1413,7 @@ func TestProductAdminHandler_Update_TypeChangeLeafToLeafWhileUsedAsComponentAllo
 	}
 	h := admin.NewProductAdminHandler(repo, testAdminBus()).
 		WithBundleComponents(&mockBundleComponentGuard{componentCount: 1}).
+		WithGroupedMembers(&mockGroupedMemberGuard{}).
 		WithTxStarter(adminFakeTxDBConn())
 
 	body := jsonBody(t, map[string]interface{}{"type": "virtual"})
@@ -1313,6 +1452,159 @@ func TestProductAdminHandler_Update_TypeChangeWithoutBundleRepoFailsClosed(t *te
 
 	if rec.Code != http.StatusInternalServerError {
 		t.Fatalf("status = %d, want 500; body: %s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestProductAdminHandler_Update_TypeChangeWithoutGroupedRepoFailsClosed(t *testing.T) {
+	repo := &mockAdminProductRepo{
+		findByIDFn: func(_ context.Context, id string) (*catalog.Product, error) {
+			return &catalog.Product{
+				ID: id, Name: "Widget", Slug: "widget", Status: catalog.StatusDraft, Type: catalog.TypeSimple,
+				VisibilityModes: catalog.DefaultVisibilityAxes(),
+			}, nil
+		},
+		updateFn: func(_ context.Context, _ *catalog.Product) error {
+			t.Fatal("Update must not run when the grouped repo is unwired")
+			return nil
+		},
+	}
+	h := admin.NewProductAdminHandler(repo, testAdminBus()).
+		WithBundleComponents(&mockBundleComponentGuard{}).
+		WithTxStarter(adminFakeTxDBConn())
+
+	body := jsonBody(t, map[string]interface{}{"type": "virtual"})
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("PUT", "/api/v1/admin/products/p1", body)
+	newAdminRouter(h).ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("status = %d, want 500; body: %s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestProductAdminHandler_Update_TypeChangeGroupedWithMembersRejected(t *testing.T) {
+	repo := &mockAdminProductRepo{
+		findByIDFn: func(_ context.Context, id string) (*catalog.Product, error) {
+			return &catalog.Product{
+				ID: id, Name: "Set", Slug: "set", Status: catalog.StatusDraft, Type: catalog.TypeGrouped,
+				VisibilityModes: catalog.DefaultVisibilityAxes(),
+			}, nil
+		},
+		updateFn: func(_ context.Context, _ *catalog.Product) error {
+			t.Fatal("Update must not run")
+			return nil
+		},
+	}
+	h := admin.NewProductAdminHandler(repo, testAdminBus()).
+		WithBundleComponents(&mockBundleComponentGuard{}).
+		WithGroupedMembers(&mockGroupedMemberGuard{groupCount: 2}).
+		WithTxStarter(adminFakeTxDBConn())
+
+	body := jsonBody(t, map[string]interface{}{"type": "simple"})
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("PUT", "/api/v1/admin/products/p1", body)
+	newAdminRouter(h).ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("status = %d, want 422; body: %s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "product has grouped members") {
+		t.Fatalf("body = %s", rec.Body.String())
+	}
+}
+
+func TestProductAdminHandler_Update_TypeChangeUsedAsMemberRejected(t *testing.T) {
+	repo := &mockAdminProductRepo{
+		findByIDFn: func(_ context.Context, id string) (*catalog.Product, error) {
+			return &catalog.Product{
+				ID: id, Name: "Part", Slug: "part", Status: catalog.StatusDraft, Type: catalog.TypeSimple,
+				VisibilityModes: catalog.DefaultVisibilityAxes(),
+			}, nil
+		},
+		updateFn: func(_ context.Context, _ *catalog.Product) error {
+			t.Fatal("Update must not run")
+			return nil
+		},
+	}
+	h := admin.NewProductAdminHandler(repo, testAdminBus()).
+		WithBundleComponents(&mockBundleComponentGuard{}).
+		WithGroupedMembers(&mockGroupedMemberGuard{memberCount: 1}).
+		WithTxStarter(adminFakeTxDBConn())
+
+	body := jsonBody(t, map[string]interface{}{"type": "bundle"})
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("PUT", "/api/v1/admin/products/p1", body)
+	newAdminRouter(h).ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("status = %d, want 422; body: %s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "used as a grouped member") {
+		t.Fatalf("body = %s", rec.Body.String())
+	}
+}
+
+func TestProductAdminHandler_Update_TypeChangeGroupedWithZeroMembersAllowed(t *testing.T) {
+	var updated *catalog.Product
+	repo := &mockAdminProductRepo{
+		findByIDFn: func(_ context.Context, id string) (*catalog.Product, error) {
+			return &catalog.Product{
+				ID: id, Name: "Set", Slug: "set", Status: catalog.StatusDraft, Type: catalog.TypeGrouped,
+				VisibilityModes: catalog.DefaultVisibilityAxes(),
+			}, nil
+		},
+		updateFn: func(_ context.Context, p *catalog.Product) error {
+			updated = p
+			return nil
+		},
+	}
+	h := admin.NewProductAdminHandler(repo, testAdminBus()).
+		WithBundleComponents(&mockBundleComponentGuard{}).
+		WithGroupedMembers(&mockGroupedMemberGuard{}).
+		WithTxStarter(adminFakeTxDBConn())
+
+	body := jsonBody(t, map[string]interface{}{"type": "simple"})
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("PUT", "/api/v1/admin/products/p1", body)
+	newAdminRouter(h).ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body: %s", rec.Code, rec.Body.String())
+	}
+	if updated == nil || updated.Type != catalog.TypeSimple {
+		t.Fatalf("type = %#v, want simple", updated)
+	}
+}
+
+func TestProductAdminHandler_Update_TypeChangeLeafToLeafWhileUsedAsMemberAllowed(t *testing.T) {
+	var updated *catalog.Product
+	repo := &mockAdminProductRepo{
+		findByIDFn: func(_ context.Context, id string) (*catalog.Product, error) {
+			return &catalog.Product{
+				ID: id, Name: "Part", Slug: "part", Status: catalog.StatusDraft, Type: catalog.TypeSimple,
+				VisibilityModes: catalog.DefaultVisibilityAxes(),
+			}, nil
+		},
+		updateFn: func(_ context.Context, p *catalog.Product) error {
+			updated = p
+			return nil
+		},
+	}
+	h := admin.NewProductAdminHandler(repo, testAdminBus()).
+		WithBundleComponents(&mockBundleComponentGuard{}).
+		WithGroupedMembers(&mockGroupedMemberGuard{memberCount: 1}).
+		WithTxStarter(adminFakeTxDBConn())
+
+	body := jsonBody(t, map[string]interface{}{"type": "downloadable"})
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("PUT", "/api/v1/admin/products/p1", body)
+	newAdminRouter(h).ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body: %s", rec.Code, rec.Body.String())
+	}
+	if updated == nil || updated.Type != catalog.TypeDownloadable {
+		t.Fatalf("type = %#v, want downloadable", updated)
 	}
 }
 
@@ -1358,7 +1650,8 @@ func TestProductAdminHandler_Update_EmptyTypeRejected(t *testing.T) {
 		},
 	}
 	h := admin.NewProductAdminHandler(repo, testAdminBus()).
-		WithBundleComponents(&mockBundleComponentGuard{})
+		WithBundleComponents(&mockBundleComponentGuard{}).
+		WithGroupedMembers(&mockGroupedMemberGuard{})
 
 	body := jsonBody(t, map[string]interface{}{"type": "  "})
 	rec := httptest.NewRecorder()
@@ -1385,6 +1678,7 @@ func TestProductAdminHandler_Update_RequestInvalidType(t *testing.T) {
 	}
 	h := admin.NewProductAdminHandler(repo, testAdminBus()).
 		WithBundleComponents(&mockBundleComponentGuard{}).
+		WithGroupedMembers(&mockGroupedMemberGuard{}).
 		WithTxStarter(adminFakeTxDBConn())
 
 	body := jsonBody(t, map[string]interface{}{"type": "kit"})

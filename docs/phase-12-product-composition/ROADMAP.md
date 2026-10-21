@@ -105,7 +105,7 @@ Each PR is tagged **`[oss]`** unless noted.
 | PR | Title | Short description |
 | --- | --- | --- |
 | PR-1060 | Bundle domain model | **done.** `bundle_components` with component-side `ON DELETE RESTRICT`; leaf component types (`simple`, `virtual`, `downloadable`); `BundleService` + postgres repo; admin product type-change guard (fails closed if the repo is unwired). `Add` and type changes share `FOR UPDATE` on `products` in one transaction. Bundle admin HTTP in PR-1066. See [`prs/PR-1060.md`](prs/PR-1060.md). |
-| PR-1061 | Grouped domain model | `grouped_member(group_product_id, member_product_id)` — members are fully independent, separately priced, separately orderable products; grouping only affects how they're displayed together, never their individual purchasability. This is deliberately *not* what the card/ticket use case needs (see Track D) — grouped members have no dependency on each other or on the parent. |
+| PR-1061 | Grouped domain model | **done.** `grouped_members(group_product_id, member_product_id)` — display-only membership, both FKs `ON DELETE CASCADE` (deleting a SKU silently unlinks it; a future delete API does not 422 for membership). A member may sit in many groups. `GroupedService.Add` locks both products and follows the same active-only read scope as `List` unless the caller sets operator scope. `Remove` does not lock products. Admin type changes are row-gated (illicit rows count) and fail closed if either repo is nil — that guard is on `ProductAdminHandler`, not `GroupedService`. Grouped admin HTTP in PR-1066. See [`prs/PR-1061.md`](prs/PR-1061.md). |
 | PR-1062 | Bundle/grouped pricing rollup | Bundle: `fixed` (merchant sets one price, ignoring component prices) or `dynamic` (sum of selected components, optionally minus a bundle-level discount) — both integrate into the existing pricing pipeline (`BasePriceStep` → plugin steps → `FinalizeStep`) as a bundle-aware base-price step, not a parallel pricing path. Grouped: no parent price at all, only members are priced — matches Track A's "configurable has no direct parent price either" pattern. Depends on PR-1048 (zero-price products) for the case where a dynamic bundle's selected components sum to 0. |
 | PR-1063 | Stock rollup per type | Bundle: `fixed` stock (bundle has its own inventory row, independent of components) or `dynamic` stock (derived as the minimum available quantity across required components) — merchant-configurable per bundle, matching the pricing mode split in PR-1062. Grouped: no parent stock; availability is per-member only. |
 | PR-1064 | Order line explosion + returns integration | Per-bundle config flag: sell as one order line (default) or itemize into one order line per component (needed where tax/invoice rules require per-item granularity). Itemized bundles extend the existing Returns/RMA domain (Phase 6) to support returning a single component without touching the rest of the bundle's order lines. |
@@ -211,7 +211,8 @@ Each PR is tagged **`[oss]`** unless noted.
 | 1055 | B | done |
 | 1056–1059 | B | done |
 | 1060 | C | done |
-| 1061–1066 | C | planned |
+| 1061 | C | done |
+| 1062–1066 | C | planned |
 | 1067–1073 | D | planned |
 | 1074–1078 | E | planned |
 | 1079–1083 | F | planned |
@@ -226,4 +227,4 @@ PR specs: [`prs/`](prs/).
 | --- | --- | --- |
 | Phase 10 | Platform excellence (quality / security / ops / architecture) | Shipped (PR-1000–1026; PR-1003 the only open item, unrelated to this phase) |
 | Phase 11 | Jobs, search & cache — admin reachability + full-page cache | Shipped (PR-1027–1049 under phase-11 docs — not the same as Phase 12 PR-1048/1049) |
-| **Phase 12** | Product types & composition | **In progress** (PR-1048–1060 done — Track C started; next PR-1061 grouped domain; numbering collides with Phase 11 — disambiguate by phase folder) |
+| **Phase 12** | Product types & composition | **In progress** (PR-1048–1061 done — Track C grouped domain landed; next PR-1062 pricing rollup; numbering collides with Phase 11 — disambiguate by phase folder) |

@@ -30,6 +30,7 @@ type serveRepos struct {
 	categoryRepo               *postgres.CategoryRepo
 	collectionRepo             *postgres.CollectionRepo
 	bundleComponentRepo        *postgres.BundleComponentRepo
+	groupedMemberRepo          *postgres.GroupedMemberRepo
 	taxRateRepo                *postgres.TaxRateRepo
 	promotionRepo              *postgres.PromotionRepo
 	couponRepo                 *postgres.CouponRepo
@@ -150,6 +151,14 @@ func openServeRepos(conn *sql.DB) (*serveRepos, error) {
 	// bundleComponentRepo: opened at serve start. wire_services passes it to
 	// ProductAdminHandler.WithBundleComponents for type-change guards.
 	// Bundle admin HTTP remains PR-1066.
+
+	repos.groupedMemberRepo, err = postgres.NewGroupedMemberRepo(conn)
+	if err != nil {
+		return nil, wrapRepoOpen("groupedMemberRepo", err)
+	}
+	// groupedMemberRepo: opened at serve start. wire_services passes it to
+	// ProductAdminHandler.WithGroupedMembers for type-change guards.
+	// Grouped admin HTTP remains PR-1066.
 
 	repos.taxRateRepo, err = postgres.NewTaxRateRepo(conn)
 	if err != nil {

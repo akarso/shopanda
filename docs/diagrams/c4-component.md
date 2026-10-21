@@ -22,7 +22,7 @@ C4Component
         Boundary(interfaces, "Interfaces Layer (HTTP Handlers)") {
             Component(authHandler, "AuthHandler", "HTTP", "Register, Login, Logout, Me, PasswordReset")
             Component(productHandler, "ProductHandler", "HTTP", "List, Get products (public)")
-            Component(productAdmin, "ProductAdminHandler", "HTTP", "Create, Update products (admin)")
+            Component(productAdmin, "ProductAdminHandler", "HTTP", "Create, Update products (admin). A type change locks the product row, counts bundle and grouped rows (including illicit rows whose stored type does not match), and fails closed when a composition repo or tx starter is unwired.")
             Component(productTranslationAdmin, "ProductTranslationAdminHandler", "HTTP", "Read/write per-language product translations for active language scope (admin)")
             Component(productPriceAdmin, "ProductPriceAdminHandler", "HTTP", "Read/write store-scoped variant prices for active store+currency scope (admin)")
             Component(pageAdmin, "PageAdminHandler", "HTTP", "Create/Update/Delete CMS pages with explicit language scope and audit (admin, content.* permissions)")
@@ -82,7 +82,8 @@ C4Component
             Component(reindexHandler, "ReindexHandler", "Go", "Handles search.reindex jobs: scans ProductSource in batches, indexes via SearchEngine, updates search_index_runs progress incrementally")
             Component(reindexReconcileHandler, "ReconcileHandler", "Go", "Handles search.reindex.reconcile jobs: sweeps search_index_runs stuck processing past a staleness threshold, corrects any whose underlying job already reached a terminal status")
             Component(productSchemaRegistration, "ProductSchemaRegistration", "Go", "Registers product form and grid schemas with admin registry")
-            Component(bundleService, "BundleService", "Go", "Bundle composition (PR-1060): list, add, and remove component links. Add locks both product rows FOR UPDATE in one transaction before upsert. Components must be leaf types (simple, virtual, downloadable). ProductAdminHandler type changes take the same product lock, then count rows; it fails closed when the repo or tx starter is unwired.")
+            Component(bundleService, "BundleService", "Go", "Bundle composition (PR-1060): list, add, and remove component links. Add locks both product rows FOR UPDATE in one transaction before upsert and rejects a non-active product unless IncludeNonActiveProducts is set. Remove does not lock product rows. Components must be leaf types (simple, virtual, downloadable). ProductAdminHandler type changes take the same product lock, then count rows (including illicit rows); it fails closed when the repo or tx starter is unwired.")
+            Component(groupedService, "GroupedService", "Go", "Grouped display membership (PR-1061): list, add, and remove member links. No quantity. A member may belong to more than one group. Add locks both product rows FOR UPDATE before insert-ignore and rejects a non-active product unless IncludeNonActiveProducts is set. Remove deletes one link and does not lock product rows. Members must be leaf types (simple, virtual, downloadable) and stay independently purchasable — membership does not affect Purchasable or visibility. ValidateComposition is service-only. Fail-closed type-change guards live on ProductAdminHandler, not here.")
         }
 
         Boundary(infrastructure, "Infrastructure Layer (Adapters)") {
@@ -229,7 +230,8 @@ C4Component
     Rel(catalogSeeder, seedRegistry, "Registered as seeder")
     Rel(productSchemaRegistration, adminRegistry, "Registers product form + grid")
     Rel(bundleService, postgresRepos, "Reads products and writes bundle_components")
-    Rel(productAdmin, postgresRepos, "Type-change guard counts bundle_components")
+    Rel(groupedService, postgresRepos, "Reads products and writes grouped_members")
+    Rel(productAdmin, postgresRepos, "Type-change guard counts bundle_components and grouped_members")
     Rel(categoryHandler, postgresRepos, "Category + product queries")
     Rel(storefrontHandler, localCacheStore, "Caches category tree (L1, 45s TTL); evicts on catalog.EventCategory{Created,Updated,Deleted} not sourced from category-assignment changes")
     Rel(eventBus, localCacheStore, "Synchronous eviction on a subscribed domain event (catalog.EventCategory*)")
