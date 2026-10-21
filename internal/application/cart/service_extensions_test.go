@@ -171,7 +171,7 @@ func setupCartExtensionService(t *testing.T) (*cartApp.Service, *memCartExtensio
 	prices := newStubPriceRepo()
 	prices.set("var-1", "EUR", 1000)
 	vr, pr := cartApp.PermissiveCatalogRepos()
-	svc := cartApp.NewService(carts, prices, nil, nil, vr, pr, testPipeline(prices), testLogger(), testBus(), values, nil)
+	svc := cartApp.NewService(carts, prices, nil, nil, vr, pr, cartApp.EmptyBundleComponents(), testPipeline(prices), testLogger(), testBus(), values, nil)
 	return svc, repo
 }
 
@@ -352,7 +352,7 @@ func TestService_ClaimGuestCart_AssignDeleteFailsAfterSave_RetryPurgesOrphans(t 
 		"prod-1": {ID: "prod-1", Status: catalog.StatusActive},
 		"prod-2": {ID: "prod-2", Status: catalog.StatusActive},
 	}}
-	svc := cartApp.NewService(carts, prices, nil, nil, vr, pr, testPipeline(prices), testLogger(), testBus(), ext, nil)
+	svc := cartApp.NewService(carts, prices, nil, nil, vr, pr, cartApp.EmptyBundleComponents(), testPipeline(prices), testLogger(), testBus(), ext, nil)
 	ctx := context.Background()
 
 	guestCart, err := svc.CreateCart(ctx, "", "EUR")
@@ -427,7 +427,7 @@ func TestService_ClaimGuestCart_AssignPartialCleanupFailure_ReAddDroppedVariantW
 		"prod-1": {ID: "prod-1", Status: catalog.StatusActive},
 		"prod-2": {ID: "prod-2", Status: catalog.StatusActive},
 	}}
-	svc := cartApp.NewService(carts, prices, nil, nil, vr, pr, testPipeline(prices), testLogger(), testBus(), ext, nil)
+	svc := cartApp.NewService(carts, prices, nil, nil, vr, pr, cartApp.EmptyBundleComponents(), testPipeline(prices), testLogger(), testBus(), ext, nil)
 	ctx := context.Background()
 
 	guestCart, err := svc.CreateCart(ctx, "", "EUR")

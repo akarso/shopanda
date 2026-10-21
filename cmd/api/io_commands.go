@@ -444,6 +444,10 @@ func runImportPrices(cfg *config.Config, log logger.Logger) error {
 		if err != nil {
 			return nil, fmt.Errorf("variant repo: %w", err)
 		}
+		productRepo, err := postgres.NewProductRepo(conn)
+		if err != nil {
+			return nil, fmt.Errorf("product repo: %w", err)
+		}
 		priceRepo, err := postgres.NewPriceRepo(conn)
 		if err != nil {
 			return nil, fmt.Errorf("price repo: %w", err)
@@ -461,6 +465,7 @@ func runImportPrices(cfg *config.Config, log logger.Logger) error {
 		// invalidation), batch the search-index side first rather than just
 		// passing a real bus through.
 		result, err := importer.NewPriceImporter(variantRepo, priceRepo, priceHistoryRepo, conn, nil).
+			WithProducts(productRepo).
 			WithRowHooks(regs.Import).
 			Import(ctx, f)
 		if err != nil {

@@ -185,7 +185,7 @@ func TestProductAdminHandler_Update_WithVisibilityModes(t *testing.T) {
 			return nil
 		},
 	}
-	h := admin.NewProductAdminHandler(repo, testAdminBus())
+	h := admin.NewProductAdminHandler(repo, testAdminBus()).WithTxStarter(adminFakeTxDBConn())
 
 	body := jsonBody(t, map[string]interface{}{
 		"visibility_modes": map[string]interface{}{
@@ -238,7 +238,7 @@ func TestProductAdminHandler_Update_PartialVisibilityModesOnlyChangesGivenAxis(t
 			return nil
 		},
 	}
-	h := admin.NewProductAdminHandler(repo, testAdminBus())
+	h := admin.NewProductAdminHandler(repo, testAdminBus()).WithTxStarter(adminFakeTxDBConn())
 
 	body := jsonBody(t, map[string]interface{}{
 		"visibility_modes": map[string]interface{}{"catalog": "hidden"},
@@ -283,7 +283,7 @@ func TestProductAdminHandler_Update_OmittedVisibilityModesPreserves(t *testing.T
 			return nil
 		},
 	}
-	h := admin.NewProductAdminHandler(repo, testAdminBus())
+	h := admin.NewProductAdminHandler(repo, testAdminBus()).WithTxStarter(adminFakeTxDBConn())
 
 	body := jsonBody(t, map[string]interface{}{"name": "Renamed"})
 	rec := httptest.NewRecorder()
@@ -313,7 +313,7 @@ func TestProductAdminHandler_Update_InvalidVisibilityMode(t *testing.T) {
 			return nil
 		},
 	}
-	h := admin.NewProductAdminHandler(repo, testAdminBus())
+	h := admin.NewProductAdminHandler(repo, testAdminBus()).WithTxStarter(adminFakeTxDBConn())
 
 	body := jsonBody(t, map[string]interface{}{
 		"visibility_modes": map[string]interface{}{
@@ -699,7 +699,7 @@ func TestProductAdminHandler_Update_AuditRecordsModesBeforeAfterWhenChanged(t *t
 		updateFn: func(_ context.Context, _ *catalog.Product) error { return nil },
 	}
 	auditor, auditRepo := newRecordingAuditor()
-	h := admin.NewProductAdminHandlerWithAuditor(repo, testAdminBus(), auditor, logger.NewWithWriter(io.Discard, "error"))
+	h := admin.NewProductAdminHandlerWithAuditor(repo, testAdminBus(), auditor, logger.NewWithWriter(io.Discard, "error")).WithTxStarter(adminFakeTxDBConn())
 
 	body := jsonBody(t, map[string]interface{}{
 		"visibility_modes": map[string]interface{}{"catalog": "hidden"},
@@ -761,7 +761,7 @@ func TestProductAdminHandler_Update_AuditOmitsModesBeforeAfterWhenResentIdentica
 		updateFn: func(_ context.Context, _ *catalog.Product) error { return nil },
 	}
 	auditor, auditRepo := newRecordingAuditor()
-	h := admin.NewProductAdminHandlerWithAuditor(repo, testAdminBus(), auditor, logger.NewWithWriter(io.Discard, "error"))
+	h := admin.NewProductAdminHandlerWithAuditor(repo, testAdminBus(), auditor, logger.NewWithWriter(io.Discard, "error")).WithTxStarter(adminFakeTxDBConn())
 
 	// Resend all four axes identical to what is already stored — the admin
 	// GUI's save always sends visibility_modes (collectModes reads every

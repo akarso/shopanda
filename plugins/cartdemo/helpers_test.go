@@ -117,7 +117,7 @@ func testBus() *event.Bus {
 
 func testPipeline(prices pricing.PriceRepository) pricing.Pipeline {
 	return pricing.NewPipeline(
-		appPricing.NewBasePriceStep(prices),
+		appPricing.NewBasePriceStepLegacy(prices),
 		pricing.NewFinalizeStep(),
 	)
 }
@@ -134,7 +134,7 @@ func (s *noopPricingStep) Apply(_ context.Context, _ *pricing.PricingContext) er
 
 func buildCartDemoPipeline(prices pricing.PriceRepository, app *plugin.App) pricing.Pipeline {
 	core := []pricing.PricingStep{
-		appPricing.NewBasePriceStep(prices),
+		appPricing.NewBasePriceStepLegacy(prices),
 		&noopPricingStep{name: "catalog_promotions"},
 		&noopPricingStep{name: "cart_promotions"},
 		pricing.NewFinalizeStep(),
@@ -159,7 +159,7 @@ func newCartServiceWithHooks(t *testing.T, hookReg *hooks.Registry) (*cartApp.Se
 	carts := newStubCartRepo()
 	prices := newStubPriceRepo()
 	vr, pr := cartApp.PermissiveCatalogRepos()
-	svc := cartApp.NewService(carts, prices, nil, nil, vr, pr, testPipeline(prices), testLogger(), testBus(), nil, hookReg)
+	svc := cartApp.NewService(carts, prices, nil, nil, vr, pr, cartApp.EmptyBundleComponents(), testPipeline(prices), testLogger(), testBus(), nil, hookReg)
 	return svc, prices
 }
 
@@ -169,6 +169,6 @@ func newCartServiceWithHooksAndPluginSteps(t *testing.T, hookReg *hooks.Registry
 	prices := newStubPriceRepo()
 	pipeline := buildCartDemoPipeline(prices, app)
 	vr, pr := cartApp.PermissiveCatalogRepos()
-	svc := cartApp.NewService(carts, prices, nil, nil, vr, pr, pipeline, testLogger(), testBus(), nil, hookReg)
+	svc := cartApp.NewService(carts, prices, nil, nil, vr, pr, cartApp.EmptyBundleComponents(), pipeline, testLogger(), testBus(), nil, hookReg)
 	return svc, prices
 }

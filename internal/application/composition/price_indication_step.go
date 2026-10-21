@@ -39,6 +39,10 @@ func (s *PriceIndicationStep) Apply(ctx *ProductContext) error {
 	if ctx == nil || ctx.Product == nil {
 		return nil
 	}
+	// Dynamic bundles have no stored display price until ResolveUnitPrice is wired here.
+	if ctx.Product.PricingMode == catalog.PricingModeDynamic {
+		return nil
+	}
 
 	enabled, err := domainlegal.OmnibusEnabled(ctx.Ctx, s.config, ctx.StoreID)
 	if err != nil {

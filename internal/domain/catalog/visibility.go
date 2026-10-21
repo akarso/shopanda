@@ -82,9 +82,17 @@ type Visibility struct {
 // VisibilityInputs are request/catalog facts AutoBasis uses when an axis is auto.
 // Status is not a field here — Product.Visibility always uses the receiver's Status.
 //
-// HasPrice means any price row exists for the product (including amount 0; see
-// PR-1048). HasStoreAssignment means assigned to ≥ 1 store/view in the catalog
-// (not “current request store”); request-scoped store/currency checks belong in
+// HasPrice means a price row exists for the product (including amount 0; see
+// PR-1048). A dynamic bundle is the exception: HasPrice is true only when
+// every required component is an active leaf with exactly one variant and a
+// global price row (store_id empty), and the required count is between 1 and
+// MaxBundleRequiredComponents. The bool is currency-agnostic until facts are
+// store- and currency-scoped. Listing uses that coarse flag. The sell path
+// calls ResolveUnitPrice with the request currency, so a global row in
+// another currency cannot make AddItem succeed. A grouped parent is never
+// HasPrice. VisibilityFactsRepo computes that. AutoBasis still only reads the bool.
+// HasStoreAssignment means assigned to ≥ 1 store/view in the catalog (not
+// “current request store”); request-scoped store/currency checks belong in
 // later enforcement PRs if needed.
 type VisibilityInputs struct {
 	QuantityPositive   bool

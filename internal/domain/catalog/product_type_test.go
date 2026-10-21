@@ -106,3 +106,87 @@ func TestAllTypesMatchMigrationCheck(t *testing.T) {
 		}
 	}
 }
+
+func TestPricingMode_ValidateAndApply(t *testing.T) {
+	t.Parallel()
+
+	p, err := catalog.NewProduct("p1", "Widget", "widget")
+	if err != nil {
+		t.Fatalf("NewProduct: %v", err)
+	}
+	if p.PricingMode != catalog.PricingModeFixed {
+		t.Fatalf("default mode = %q, want fixed", p.PricingMode)
+	}
+
+	p.Type = catalog.TypeBundle
+	if err := p.ApplyPricingMode("dynamic", true); err != nil {
+		t.Fatalf("bundle dynamic: %v", err)
+	}
+	if err := p.Validate(); err != nil {
+		t.Fatalf("bundle dynamic validate: %v", err)
+	}
+
+	p.Type = catalog.TypeSimple
+	if err := p.ApplyPricingMode("dynamic", true); err == nil || !strings.Contains(err.Error(), "bundle") {
+		t.Fatalf("dynamic on simple = %v, want bundle-only rejection", err)
+	}
+	if p.PricingMode != catalog.PricingModeDynamic {
+		t.Fatalf("rejected apply changed mode to %q", p.PricingMode)
+	}
+
+	p.Type = catalog.TypeBundle
+	p.PricingMode = catalog.PricingModeDynamic
+	p.Type = catalog.TypeGrouped
+	if err := p.ApplyPricingMode("", false); err != nil {
+		t.Fatalf("omit mode on grouped: %v", err)
+	}
+	if p.PricingMode != catalog.PricingModeFixed {
+		t.Fatalf("grouped mode = %q, want fixed", p.PricingMode)
+	}
+
+	p.PricingMode = catalog.PricingModeDynamic
+	p.Type = catalog.TypeSimple
+	if err := p.Validate(); err == nil || !strings.Contains(err.Error(), "bundle") {
+		t.Fatalf("dynamic simple validate = %v, want bundle-only error", err)
+	}
+
+	if err := p.ApplyPricingMode("nope", true); err == nil || !strings.Contains(err.Error(), `"nope"`) {
+		t.Fatalf("invalid mode = %v", err)
+	}
+}
+
+func TestAllPricingModesMatchMigrationCheck(t *testing.T) {
+	t.Parallel()
+
+	_, thisFile, _, ok := runtime.Caller(0)
+	if !ok {
+		t.Fatal("runtime.Caller failed")
+	}
+	migrationPath := filepath.Join(filepath.Dir(thisFile), "../../../migrations/090_add_products_pricing_mode.sql")
+	content, err := os.ReadFile(migrationPath)
+	if err != nil {
+		t.Fatalf("read migration: %v", err)
+	}
+	re := regexp.MustCompile(`(?s)CHECK\s*\(\s*pricing_mode\s+IN\s*\((.*?)\)\s*\)`)
+	m := re.FindSubmatch(content)
+	if m == nil {
+		t.Fatal("products_pricing_mode_check IN (...) not found")
+	}
+	quoted := regexp.MustCompile(`'([^']+)'`).FindAllStringSubmatch(string(m[1]), -1)
+	fromSQL := make(map[string]struct{}, len(quoted))
+	for _, q := range quoted {
+		fromSQL[q[1]] = struct{}{}
+	}
+	fromDomain := make(map[string]struct{}, len(catalog.AllPricingModes()))
+	for _, mode := range catalog.AllPricingModes() {
+		fromDomain[string(mode)] = struct{}{}
+	}
+	if len(fromSQL) != len(fromDomain) {
+		t.Fatalf("CHECK has %d values, AllPricingModes has %d", len(fromSQL), len(fromDomain))
+	}
+	for v := range fromDomain {
+		if _, ok := fromSQL[v]; !ok {
+			t.Errorf("AllPricingModes value %q missing from migration CHECK", v)
+		}
+	}
+}

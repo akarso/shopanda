@@ -32,6 +32,8 @@ func ListByProductIDsFromList(
 }
 
 // FindByVariantsCurrencyAndStoreFromFind loops FindByVariantCurrencyAndStore for test mocks.
+// A non-empty storeID falls back to the global row (store_id ""), matching
+// PriceRepository.FindByVariantsCurrencyAndStore and FindByVariantCurrencyAndStore.
 func FindByVariantsCurrencyAndStoreFromFind(
 	ctx context.Context,
 	findFn func(context.Context, string, string, string) (*pricing.Price, error),
@@ -46,6 +48,12 @@ func FindByVariantsCurrencyAndStoreFromFind(
 		price, err := findFn(ctx, variantID, currency, storeID)
 		if err != nil {
 			return nil, err
+		}
+		if price == nil && storeID != "" {
+			price, err = findFn(ctx, variantID, currency, "")
+			if err != nil {
+				return nil, err
+			}
 		}
 		if price != nil {
 			out[variantID] = price

@@ -2,10 +2,13 @@ package admin_test
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/akarso/shopanda/internal/testutil"
@@ -70,6 +73,7 @@ type scopedPriceRepo struct {
 	upserts   []pricing.Price
 	findErr   error
 	upsertErr error
+	txBound   bool
 }
 
 func newScopedPriceRepo() *scopedPriceRepo {
@@ -103,7 +107,15 @@ func (s *scopedPriceRepo) List(_ context.Context, _, _ int) ([]pricing.Price, er
 	return nil, nil
 }
 
+func (s *scopedPriceRepo) WithTx(_ *sql.Tx) pricing.PriceRepository {
+	s.txBound = true
+	return s
+}
+
 func (s *scopedPriceRepo) Upsert(_ context.Context, p *pricing.Price) error {
+	if !s.txBound {
+		return fmt.Errorf("price upsert outside transaction")
+	}
 	if s.upsertErr != nil {
 		return s.upsertErr
 	}
@@ -316,7 +328,8 @@ func TestProductPriceAdmin_Get_ReturnsStoreScopedPrice(t *testing.T) {
 	p, _ := pricing.NewPrice("price-1", "v1", "store-eu", money)
 	priceRepo.prices[priceStubKey("v1", "EUR", "store-eu")] = p
 	sink := &auditSink{}
-	h := admin.NewProductPriceAdminHandler(productExistsRepo("p1"), seededVariantRepo(), priceRepo, adminapp.NewAuditor(sink), logger.NewWithWriter(io.Discard, "info"))
+	h := admin.NewProductPriceAdminHandler(productExistsRepo("p1"), seededVariantRepo(), priceRepo, adminapp.NewAuditor(sink), logger.NewWithWriter(io.Discard, "info")).
+		WithTxStarter(adminFakeTxDBConn())
 
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest("GET", "/api/v1/admin/products/p1/variants/v1/price", nil)
@@ -432,6 +445,95 @@ func TestProductPriceAdmin_Get_VariantNotFoundForProduct(t *testing.T) {
 	}
 }
 
+func TestProductPriceAdmin_Update_RejectsGroupedParent(t *testing.T) {
+	priceRepo := newScopedPriceRepo()
+	products := &mockAdminProductRepo{
+		findByIDFn: func(_ context.Context, pid string) (*catalog.Product, error) {
+			if pid != "p1" {
+				return nil, nil
+			}
+			return &catalog.Product{ID: "p1", Status: catalog.StatusActive, Type: catalog.TypeGrouped, PricingMode: catalog.PricingModeFixed}, nil
+		},
+	}
+	h := admin.NewProductPriceAdminHandler(products, seededVariantRepo(), priceRepo, adminapp.NewAuditor(&auditSink{}), logger.NewWithWriter(io.Discard, "info")).
+		WithTxStarter(adminFakeTxDBConn())
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("PUT", "/api/v1/admin/products/p1/variants/v1/price", jsonBody(t, map[string]interface{}{"amount": 2500}))
+	req = withAdminFullScope(req, "admin-1", "store-eu", "en", "EUR")
+	newPriceAdminMux(h).ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("status = %d, want %d; body: %s", rec.Code, http.StatusUnprocessableEntity, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "grouped") {
+		t.Fatalf("body = %s, want grouped", rec.Body.String())
+	}
+	if len(priceRepo.upserts) != 0 {
+		t.Fatalf("upserts = %d, want 0", len(priceRepo.upserts))
+	}
+}
+
+func TestProductPriceAdmin_Update_RejectsDynamicBundle(t *testing.T) {
+	priceRepo := newScopedPriceRepo()
+	products := &mockAdminProductRepo{
+		findByIDFn: func(_ context.Context, pid string) (*catalog.Product, error) {
+			if pid != "p1" {
+				return nil, nil
+			}
+			return &catalog.Product{ID: "p1", Status: catalog.StatusActive, Type: catalog.TypeBundle, PricingMode: catalog.PricingModeDynamic}, nil
+		},
+	}
+	h := admin.NewProductPriceAdminHandler(products, seededVariantRepo(), priceRepo, adminapp.NewAuditor(&auditSink{}), logger.NewWithWriter(io.Discard, "info")).
+		WithTxStarter(adminFakeTxDBConn())
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("PUT", "/api/v1/admin/products/p1/variants/v1/price", jsonBody(t, map[string]interface{}{"amount": 2500}))
+	req = withAdminFullScope(req, "admin-1", "store-eu", "en", "EUR")
+	newPriceAdminMux(h).ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("status = %d, want %d; body: %s", rec.Code, http.StatusUnprocessableEntity, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "dynamic") {
+		t.Fatalf("body = %s, want dynamic", rec.Body.String())
+	}
+	if len(priceRepo.upserts) != 0 {
+		t.Fatalf("upserts = %d, want 0", len(priceRepo.upserts))
+	}
+}
+
+func TestProductPriceAdmin_Update_UsesLockedTypeAndPricingMode(t *testing.T) {
+	priceRepo := newScopedPriceRepo()
+	products := &mockAdminProductRepo{
+		lockedType:        catalog.TypeBundle,
+		lockedPricingMode: catalog.PricingModeDynamic,
+		findByIDFn: func(_ context.Context, pid string) (*catalog.Product, error) {
+			return &catalog.Product{
+				ID: pid, Status: catalog.StatusActive,
+				Type: catalog.TypeSimple, PricingMode: catalog.PricingModeFixed,
+			}, nil
+		},
+	}
+	h := admin.NewProductPriceAdminHandler(products, seededVariantRepo(), priceRepo, adminapp.NewAuditor(&auditSink{}), logger.NewWithWriter(io.Discard, "info")).
+		WithTxStarter(adminFakeTxDBConn())
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("PUT", "/api/v1/admin/products/p1/variants/v1/price", jsonBody(t, map[string]interface{}{"amount": 2500}))
+	req = withAdminFullScope(req, "admin-1", "store-eu", "en", "EUR")
+	newPriceAdminMux(h).ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("status = %d, want 422; body: %s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "dynamic") {
+		t.Fatalf("body = %s, want locked dynamic rejection", rec.Body.String())
+	}
+	if len(priceRepo.upserts) != 0 {
+		t.Fatalf("upserts = %d, want 0", len(priceRepo.upserts))
+	}
+}
+
 func TestProductPriceAdmin_Update_WritesOnlyActiveStoreScope(t *testing.T) {
 	priceRepo := newScopedPriceRepo()
 	// Pre-existing global price must remain untouched after a store-scoped write.
@@ -439,7 +541,8 @@ func TestProductPriceAdmin_Update_WritesOnlyActiveStoreScope(t *testing.T) {
 	globalPrice, _ := pricing.NewPrice("price-global", "v1", "", globalMoney)
 	priceRepo.prices[priceStubKey("v1", "EUR", "")] = globalPrice
 	sink := &auditSink{}
-	h := admin.NewProductPriceAdminHandler(productExistsRepo("p1"), seededVariantRepo(), priceRepo, adminapp.NewAuditor(sink), logger.NewWithWriter(io.Discard, "info"))
+	h := admin.NewProductPriceAdminHandler(productExistsRepo("p1"), seededVariantRepo(), priceRepo, adminapp.NewAuditor(sink), logger.NewWithWriter(io.Discard, "info")).
+		WithTxStarter(adminFakeTxDBConn())
 
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest("PUT", "/api/v1/admin/products/p1/variants/v1/price", jsonBody(t, map[string]interface{}{"amount": 2500}))
@@ -464,7 +567,8 @@ func TestProductPriceAdmin_Update_WritesOnlyActiveStoreScope(t *testing.T) {
 
 func TestProductPriceAdmin_Update_AllowsZeroAmount(t *testing.T) {
 	priceRepo := newScopedPriceRepo()
-	h := admin.NewProductPriceAdminHandler(productExistsRepo("p1"), seededVariantRepo(), priceRepo, adminapp.NewAuditor(&auditSink{}), logger.NewWithWriter(io.Discard, "info"))
+	h := admin.NewProductPriceAdminHandler(productExistsRepo("p1"), seededVariantRepo(), priceRepo, adminapp.NewAuditor(&auditSink{}), logger.NewWithWriter(io.Discard, "info")).
+		WithTxStarter(adminFakeTxDBConn())
 
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest("PUT", "/api/v1/admin/products/p1/variants/v1/price", jsonBody(t, map[string]interface{}{"amount": 0}))
@@ -488,7 +592,8 @@ func TestProductPriceAdmin_Update_AllowsZeroAmount(t *testing.T) {
 // picks it up — previously only the bulk price importer published this
 // event, so editing a price through the admin UI never reached the index.
 func TestProductPriceAdmin_Update_EmitsPriceUpsertedEvent(t *testing.T) {
-	h := admin.NewProductPriceAdminHandler(productExistsRepo("p1"), seededVariantRepo(), newScopedPriceRepo(), adminapp.NewAuditor(&auditSink{}), logger.NewWithWriter(io.Discard, "info"))
+	h := admin.NewProductPriceAdminHandler(productExistsRepo("p1"), seededVariantRepo(), newScopedPriceRepo(), adminapp.NewAuditor(&auditSink{}), logger.NewWithWriter(io.Discard, "info")).
+		WithTxStarter(adminFakeTxDBConn())
 	bus := event.NewBus(logger.NewWithWriter(io.Discard, "error"))
 	h.SetBus(bus)
 

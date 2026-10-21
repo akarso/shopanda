@@ -3,18 +3,59 @@ package importer_test
 import (
 	"context"
 	"database/sql"
+	"database/sql/driver"
 	"fmt"
-	"github.com/akarso/shopanda/internal/testutil"
 	"strings"
+	"sync"
 	"testing"
 	"time"
+
+	"github.com/akarso/shopanda/internal/testutil"
 
 	"github.com/akarso/shopanda/internal/application/importer"
 	"github.com/akarso/shopanda/internal/domain/catalog"
 	"github.com/akarso/shopanda/internal/domain/pricing"
 	"github.com/akarso/shopanda/internal/domain/shared"
+	"github.com/akarso/shopanda/internal/platform/apperror"
 	"github.com/akarso/shopanda/internal/platform/event"
 )
+
+func init() {
+	sql.Register("shopanda-price-import-fake-tx", priceImportFakeTxDriver{})
+}
+
+type priceImportFakeTxDriver struct{}
+
+func (priceImportFakeTxDriver) Open(string) (driver.Conn, error) {
+	return priceImportFakeTxConn{}, nil
+}
+
+type priceImportFakeTxConn struct{}
+
+func (priceImportFakeTxConn) Prepare(string) (driver.Stmt, error) { return nil, driver.ErrSkip }
+func (priceImportFakeTxConn) Close() error                        { return nil }
+func (priceImportFakeTxConn) Begin() (driver.Tx, error)           { return priceImportFakeTx{}, nil }
+
+type priceImportFakeTx struct{}
+
+func (priceImportFakeTx) Commit() error   { return nil }
+func (priceImportFakeTx) Rollback() error { return nil }
+
+var (
+	priceImportFakeTxOnce sync.Once
+	priceImportFakeTxDB   *sql.DB
+)
+
+func priceImportFakeTxDBConn() *sql.DB {
+	priceImportFakeTxOnce.Do(func() {
+		db, err := sql.Open("shopanda-price-import-fake-tx", "")
+		if err != nil {
+			panic(err)
+		}
+		priceImportFakeTxDB = db
+	})
+	return priceImportFakeTxDB
+}
 
 // --- price test mocks ---
 
@@ -91,6 +132,8 @@ func (m *mockPriceRepoForImport) Upsert(_ context.Context, p *pricing.Price) err
 	return nil
 }
 
+func (m *mockPriceRepoForImport) WithTx(*sql.Tx) pricing.PriceRepository { return m }
+
 func priceVariants() *mockVariantRepoForPrice {
 	return &mockVariantRepoForPrice{
 		variants: map[string]*catalog.Variant{
@@ -105,7 +148,7 @@ func priceVariants() *mockVariantRepoForPrice {
 func TestPriceImport_Basic(t *testing.T) {
 	variants := priceVariants()
 	prices := newMockPriceRepoForImport()
-	imp := importer.NewPriceImporter(variants, prices, nil, nil, nil)
+	imp := newTestPriceImporter(variants, prices, nil, nil, nil)
 
 	input := "sku,currency,amount\nSKU-001,EUR,1999\nSKU-001,USD,2199\nSKU-002,EUR,999\n"
 	result, err := imp.Import(context.Background(), strings.NewReader(input))
@@ -135,7 +178,7 @@ func TestPriceImport_Basic(t *testing.T) {
 func TestPriceImport_MissingColumns(t *testing.T) {
 	variants := priceVariants()
 	prices := newMockPriceRepoForImport()
-	imp := importer.NewPriceImporter(variants, prices, nil, nil, nil)
+	imp := newTestPriceImporter(variants, prices, nil, nil, nil)
 
 	input := "sku,amount\nSKU-001,1999\n"
 	_, err := imp.Import(context.Background(), strings.NewReader(input))
@@ -147,7 +190,7 @@ func TestPriceImport_MissingColumns(t *testing.T) {
 func TestPriceImport_EmptySKU(t *testing.T) {
 	variants := priceVariants()
 	prices := newMockPriceRepoForImport()
-	imp := importer.NewPriceImporter(variants, prices, nil, nil, nil)
+	imp := newTestPriceImporter(variants, prices, nil, nil, nil)
 
 	input := "sku,currency,amount\n,EUR,1999\n"
 	result, err := imp.Import(context.Background(), strings.NewReader(input))
@@ -168,7 +211,7 @@ func TestPriceImport_EmptySKU(t *testing.T) {
 func TestPriceImport_InvalidCurrency(t *testing.T) {
 	variants := priceVariants()
 	prices := newMockPriceRepoForImport()
-	imp := importer.NewPriceImporter(variants, prices, nil, nil, nil)
+	imp := newTestPriceImporter(variants, prices, nil, nil, nil)
 
 	input := "sku,currency,amount\nSKU-001,euro,1999\n"
 	result, err := imp.Import(context.Background(), strings.NewReader(input))
@@ -186,7 +229,7 @@ func TestPriceImport_InvalidCurrency(t *testing.T) {
 func TestPriceImport_InvalidAmount(t *testing.T) {
 	variants := priceVariants()
 	prices := newMockPriceRepoForImport()
-	imp := importer.NewPriceImporter(variants, prices, nil, nil, nil)
+	imp := newTestPriceImporter(variants, prices, nil, nil, nil)
 
 	input := "sku,currency,amount\nSKU-001,EUR,abc\n"
 	result, err := imp.Import(context.Background(), strings.NewReader(input))
@@ -204,7 +247,7 @@ func TestPriceImport_InvalidAmount(t *testing.T) {
 func TestPriceImport_NegativeAmount(t *testing.T) {
 	variants := priceVariants()
 	prices := newMockPriceRepoForImport()
-	imp := importer.NewPriceImporter(variants, prices, nil, nil, nil)
+	imp := newTestPriceImporter(variants, prices, nil, nil, nil)
 
 	input := "sku,currency,amount\nSKU-001,EUR,-100\n"
 	result, err := imp.Import(context.Background(), strings.NewReader(input))
@@ -225,7 +268,7 @@ func TestPriceImport_ZeroAmount(t *testing.T) {
 	history := &mockPriceHistoryRepoForImport{}
 	// Production always wires history (cmd/api/io_commands.go); nil history
 	// would skip NewPriceSnapshot and hide DB/domain failures.
-	imp := importer.NewPriceImporter(variants, prices, history, nil, nil)
+	imp := newTestPriceImporter(variants, prices, history, nil, nil)
 
 	input := "sku,currency,amount\nSKU-001,EUR,0\n"
 	result, err := imp.Import(context.Background(), strings.NewReader(input))
@@ -253,7 +296,7 @@ func TestPriceImport_ZeroAmount(t *testing.T) {
 func TestPriceImport_UnknownSKU(t *testing.T) {
 	variants := priceVariants()
 	prices := newMockPriceRepoForImport()
-	imp := importer.NewPriceImporter(variants, prices, nil, nil, nil)
+	imp := newTestPriceImporter(variants, prices, nil, nil, nil)
 
 	input := "sku,currency,amount\nNONEXIST,EUR,1999\n"
 	result, err := imp.Import(context.Background(), strings.NewReader(input))
@@ -275,7 +318,7 @@ func TestPriceImport_Update(t *testing.T) {
 	existing, _ := pricing.NewPrice("existing-id", "v1", "", shared.MustNewMoney(1000, "EUR"))
 	prices.prices["v1:EUR:"] = &existing
 
-	imp := importer.NewPriceImporter(variants, prices, nil, nil, nil)
+	imp := newTestPriceImporter(variants, prices, nil, nil, nil)
 
 	input := "sku,currency,amount\nSKU-001,EUR,2500\n"
 	result, err := imp.Import(context.Background(), strings.NewReader(input))
@@ -299,7 +342,7 @@ func TestPriceImport_UpsertError(t *testing.T) {
 	variants := priceVariants()
 	prices := newMockPriceRepoForImport()
 	prices.upsertErr = fmt.Errorf("db down")
-	imp := importer.NewPriceImporter(variants, prices, nil, nil, nil)
+	imp := newTestPriceImporter(variants, prices, nil, nil, nil)
 
 	input := "sku,currency,amount\nSKU-001,EUR,1999\n"
 	_, err := imp.Import(context.Background(), strings.NewReader(input))
@@ -311,7 +354,7 @@ func TestPriceImport_UpsertError(t *testing.T) {
 func TestPriceImport_CurrencyNormalization(t *testing.T) {
 	variants := priceVariants()
 	prices := newMockPriceRepoForImport()
-	imp := importer.NewPriceImporter(variants, prices, nil, nil, nil)
+	imp := newTestPriceImporter(variants, prices, nil, nil, nil)
 
 	// lowercase currency should be uppercased.
 	input := "sku,currency,amount\nSKU-001,eur,1999\n"
@@ -331,7 +374,7 @@ func TestPriceImport_CurrencyNormalization(t *testing.T) {
 func TestPriceImport_BOMHeader(t *testing.T) {
 	variants := priceVariants()
 	prices := newMockPriceRepoForImport()
-	imp := importer.NewPriceImporter(variants, prices, nil, nil, nil)
+	imp := newTestPriceImporter(variants, prices, nil, nil, nil)
 
 	// UTF-8 BOM (\xEF\xBB\xBF) before first column header, as exported by
 	// Excel and some spreadsheet applications.
@@ -356,7 +399,7 @@ func TestPriceImport_SKUCaching(t *testing.T) {
 		},
 	}
 	prices := newMockPriceRepoForImport()
-	imp := importer.NewPriceImporter(variants, prices, nil, nil, nil)
+	imp := newTestPriceImporter(variants, prices, nil, nil, nil)
 
 	input := "sku,currency,amount\nSKU-001,EUR,1999\nSKU-001,USD,2199\nSKU-001,GBP,2499\n"
 	result, err := imp.Import(context.Background(), strings.NewReader(input))
@@ -430,12 +473,14 @@ func (m *mockPriceHistoryRepoForImport) LowestSinceByVariants(ctx context.Contex
 	return testutil.LowestSinceByVariantsFromLowest(ctx, m.LowestSince, variantIDs, currency, storeID, since)
 }
 
+func (m *mockPriceHistoryRepoForImport) WithTx(*sql.Tx) pricing.PriceHistoryRepository { return m }
+
 // --- history tests ---
 func TestPriceImport_RecordsHistory(t *testing.T) {
 	variants := priceVariants()
 	prices := newMockPriceRepoForImport()
 	history := &mockPriceHistoryRepoForImport{}
-	imp := importer.NewPriceImporter(variants, prices, history, nil, nil)
+	imp := newTestPriceImporter(variants, prices, history, nil, nil)
 
 	input := "sku,currency,amount\nSKU-001,EUR,1999\nSKU-002,EUR,999\n"
 	result, err := imp.Import(context.Background(), strings.NewReader(input))
@@ -460,7 +505,7 @@ func TestPriceImport_RecordHistoryError(t *testing.T) {
 	variants := priceVariants()
 	prices := newMockPriceRepoForImport()
 	history := &mockPriceHistoryRepoForImport{err: fmt.Errorf("history db down")}
-	imp := importer.NewPriceImporter(variants, prices, history, nil, nil)
+	imp := newTestPriceImporter(variants, prices, history, nil, nil)
 
 	input := "sku,currency,amount\nSKU-001,EUR,1999\n"
 	_, err := imp.Import(context.Background(), strings.NewReader(input))
@@ -489,7 +534,7 @@ func TestPriceImport_PublishesEvent(t *testing.T) {
 		return nil
 	})
 
-	imp := importer.NewPriceImporter(variants, prices, nil, nil, bus)
+	imp := newTestPriceImporter(variants, prices, nil, nil, bus)
 
 	input := "sku,currency,amount\nSKU-001,EUR,1999\n"
 	result, err := imp.Import(context.Background(), strings.NewReader(input))
@@ -511,6 +556,234 @@ func TestPriceImport_PublishesEvent(t *testing.T) {
 	if received[0].Amount != 1999 {
 		t.Errorf("event Amount = %d, want 1999", received[0].Amount)
 	}
+}
+
+type priceImportProducts struct {
+	products map[string]*catalog.Product
+}
+
+func (m priceImportProducts) FindByID(_ context.Context, id string) (*catalog.Product, error) {
+	return m.products[id], nil
+}
+func (priceImportProducts) FindBySlug(context.Context, string) (*catalog.Product, error) {
+	return nil, nil
+}
+func (priceImportProducts) List(context.Context, catalog.ListFilter) ([]catalog.Product, error) {
+	return nil, nil
+}
+func (priceImportProducts) FindByCategoryID(context.Context, string, int, int) ([]catalog.Product, error) {
+	return nil, nil
+}
+func (priceImportProducts) Create(context.Context, *catalog.Product) error { return nil }
+func (priceImportProducts) Update(context.Context, *catalog.Product) error { return nil }
+func (m priceImportProducts) WithTx(*sql.Tx) catalog.ProductRepository     { return m }
+func (m priceImportProducts) LockTypeAndPricingMode(_ context.Context, id string) (catalog.Type, catalog.PricingMode, error) {
+	p := m.products[id]
+	if p == nil {
+		return "", "", apperror.NotFound("product not found")
+	}
+	mode := p.PricingMode
+	if mode == "" {
+		mode = catalog.PricingModeFixed
+	}
+	return p.Type, mode, nil
+}
+
+type permissivePriceImportProducts struct{}
+
+func (permissivePriceImportProducts) FindByID(_ context.Context, id string) (*catalog.Product, error) {
+	return &catalog.Product{ID: id, Type: catalog.TypeSimple, Status: catalog.StatusActive, PricingMode: catalog.PricingModeFixed}, nil
+}
+func (permissivePriceImportProducts) FindBySlug(context.Context, string) (*catalog.Product, error) {
+	return nil, nil
+}
+func (permissivePriceImportProducts) List(context.Context, catalog.ListFilter) ([]catalog.Product, error) {
+	return nil, nil
+}
+func (permissivePriceImportProducts) FindByCategoryID(context.Context, string, int, int) ([]catalog.Product, error) {
+	return nil, nil
+}
+func (permissivePriceImportProducts) Create(context.Context, *catalog.Product) error { return nil }
+func (permissivePriceImportProducts) Update(context.Context, *catalog.Product) error { return nil }
+func (permissivePriceImportProducts) WithTx(*sql.Tx) catalog.ProductRepository {
+	return permissivePriceImportProducts{}
+}
+func (permissivePriceImportProducts) LockTypeAndPricingMode(context.Context, string) (catalog.Type, catalog.PricingMode, error) {
+	return catalog.TypeSimple, catalog.PricingModeFixed, nil
+}
+
+func newTestPriceImporter(variants catalog.VariantRepository, prices pricing.PriceRepository, history pricing.PriceHistoryRepository, tx importer.TxStarter, bus *event.Bus) *importer.PriceImporter {
+	if tx == nil {
+		tx = priceImportFakeTxDBConn()
+	}
+	return importer.NewPriceImporter(variants, prices, history, tx, bus).WithProducts(permissivePriceImportProducts{})
+}
+
+func TestPriceImport_RequiresProducts(t *testing.T) {
+	imp := importer.NewPriceImporter(priceVariants(), newMockPriceRepoForImport(), nil, nil, nil)
+	_, err := imp.Import(context.Background(), strings.NewReader("sku,currency,amount\nSKU-001,EUR,1\n"))
+	if err == nil || !strings.Contains(err.Error(), "product repository is required") {
+		t.Fatalf("err = %v, want product repository required", err)
+	}
+}
+
+func TestPriceImport_RejectsGroupedParent(t *testing.T) {
+	variants := &mockVariantRepoForPrice{
+		variants: map[string]*catalog.Variant{
+			"SKU-GROUP":  {ID: "vg", SKU: "SKU-GROUP", ProductID: "group"},
+			"SKU-SIMPLE": {ID: "vs", SKU: "SKU-SIMPLE", ProductID: "simple"},
+		},
+	}
+	products := priceImportProducts{products: map[string]*catalog.Product{
+		"group":  {ID: "group", Type: catalog.TypeGrouped, Status: catalog.StatusDraft},
+		"simple": {ID: "simple", Type: catalog.TypeSimple, Status: catalog.StatusActive},
+	}}
+	prices := newMockPriceRepoForImport()
+	imp := newTestPriceImporter(variants, prices, nil, nil, nil).WithProducts(products)
+
+	input := "sku,currency,amount\nSKU-GROUP,EUR,100\nSKU-SIMPLE,EUR,200\n"
+	result, err := imp.Import(context.Background(), strings.NewReader(input))
+	if err != nil {
+		t.Fatalf("Import: %v", err)
+	}
+	if result.Created != 1 || result.Skipped != 1 {
+		t.Fatalf("created=%d skipped=%d, want 1/1; errors=%v", result.Created, result.Skipped, result.Errors)
+	}
+	if len(result.Errors) != 1 || !strings.Contains(result.Errors[0], "grouped") {
+		t.Fatalf("errors = %v, want grouped", result.Errors)
+	}
+	if _, ok := prices.prices["vg:EUR:"]; ok {
+		t.Fatal("grouped sku was priced")
+	}
+	if prices.prices["vs:EUR:"] == nil {
+		t.Fatal("simple sku was not priced")
+	}
+}
+
+func TestPriceImport_RejectsDynamicBundle(t *testing.T) {
+	variants := &mockVariantRepoForPrice{
+		variants: map[string]*catalog.Variant{
+			"SKU-DYN":    {ID: "vd", SKU: "SKU-DYN", ProductID: "bundle"},
+			"SKU-SIMPLE": {ID: "vs", SKU: "SKU-SIMPLE", ProductID: "simple"},
+		},
+	}
+	products := priceImportProducts{products: map[string]*catalog.Product{
+		"bundle": {ID: "bundle", Type: catalog.TypeBundle, PricingMode: catalog.PricingModeDynamic, Status: catalog.StatusActive},
+		"simple": {ID: "simple", Type: catalog.TypeSimple, Status: catalog.StatusActive},
+	}}
+	prices := newMockPriceRepoForImport()
+	imp := newTestPriceImporter(variants, prices, nil, nil, nil).WithProducts(products)
+
+	input := "sku,currency,amount\nSKU-DYN,EUR,100\nSKU-SIMPLE,EUR,200\n"
+	result, err := imp.Import(context.Background(), strings.NewReader(input))
+	if err != nil {
+		t.Fatalf("Import: %v", err)
+	}
+	if result.Created != 1 || result.Skipped != 1 {
+		t.Fatalf("created=%d skipped=%d, want 1/1; errors=%v", result.Created, result.Skipped, result.Errors)
+	}
+	if len(result.Errors) != 1 || !strings.Contains(result.Errors[0], "dynamic") {
+		t.Fatalf("errors = %v, want dynamic", result.Errors)
+	}
+	if _, ok := prices.prices["vd:EUR:"]; ok {
+		t.Fatal("dynamic bundle sku was priced")
+	}
+	if prices.prices["vs:EUR:"] == nil {
+		t.Fatal("simple sku was not priced")
+	}
+}
+
+type orderLockProducts struct {
+	found      *catalog.Product
+	lockedType catalog.Type
+	lockedMode catalog.PricingMode
+	order      *[]string
+}
+
+func (m *orderLockProducts) FindByID(context.Context, string) (*catalog.Product, error) {
+	return m.found, nil
+}
+func (m *orderLockProducts) FindBySlug(context.Context, string) (*catalog.Product, error) {
+	return nil, nil
+}
+func (m *orderLockProducts) List(context.Context, catalog.ListFilter) ([]catalog.Product, error) {
+	return nil, nil
+}
+func (m *orderLockProducts) FindByCategoryID(context.Context, string, int, int) ([]catalog.Product, error) {
+	return nil, nil
+}
+func (m *orderLockProducts) Create(context.Context, *catalog.Product) error { return nil }
+func (m *orderLockProducts) Update(context.Context, *catalog.Product) error { return nil }
+func (m *orderLockProducts) WithTx(*sql.Tx) catalog.ProductRepository       { return m }
+func (m *orderLockProducts) LockTypeAndPricingMode(context.Context, string) (catalog.Type, catalog.PricingMode, error) {
+	*m.order = append(*m.order, "lock")
+	return m.lockedType, m.lockedMode, nil
+}
+
+type orderPriceRepo struct {
+	*mockPriceRepoForImport
+	order *[]string
+}
+
+func (m orderPriceRepo) WithTx(*sql.Tx) pricing.PriceRepository { return m }
+func (m orderPriceRepo) Upsert(ctx context.Context, p *pricing.Price) error {
+	*m.order = append(*m.order, "upsert")
+	return m.mockPriceRepoForImport.Upsert(ctx, p)
+}
+
+func TestPriceImport_LockBeforeWriteRechecksMode(t *testing.T) {
+	variants := &mockVariantRepoForPrice{
+		variants: map[string]*catalog.Variant{
+			"SKU-001": {ID: "v1", SKU: "SKU-001", ProductID: "p1"},
+		},
+	}
+	found := &catalog.Product{
+		ID: "p1", Type: catalog.TypeBundle, PricingMode: catalog.PricingModeFixed, Status: catalog.StatusActive,
+	}
+
+	t.Run("locked dynamic rejects stale fixed read", func(t *testing.T) {
+		var order []string
+		prices := orderPriceRepo{mockPriceRepoForImport: newMockPriceRepoForImport(), order: &order}
+		products := &orderLockProducts{
+			found: found, lockedType: catalog.TypeBundle, lockedMode: catalog.PricingModeDynamic, order: &order,
+		}
+		imp := newTestPriceImporter(variants, prices, nil, nil, nil).WithProducts(products)
+		result, err := imp.Import(context.Background(), strings.NewReader("sku,currency,amount\nSKU-001,EUR,100\n"))
+		if err != nil {
+			t.Fatalf("Import: %v", err)
+		}
+		if result.Created != 0 || result.Skipped != 1 {
+			t.Fatalf("created=%d skipped=%d, want 0/1; errors=%v", result.Created, result.Skipped, result.Errors)
+		}
+		if len(result.Errors) != 1 || !strings.Contains(result.Errors[0], "dynamic") {
+			t.Fatalf("errors = %v, want dynamic", result.Errors)
+		}
+		if len(prices.prices) != 0 {
+			t.Fatalf("prices written = %v", prices.prices)
+		}
+		if strings.Join(order, ",") != "lock" {
+			t.Fatalf("order = %v, want lock and no upsert", order)
+		}
+	})
+
+	t.Run("lock precedes upsert", func(t *testing.T) {
+		var order []string
+		prices := orderPriceRepo{mockPriceRepoForImport: newMockPriceRepoForImport(), order: &order}
+		products := &orderLockProducts{
+			found: found, lockedType: catalog.TypeSimple, lockedMode: catalog.PricingModeFixed, order: &order,
+		}
+		imp := newTestPriceImporter(variants, prices, nil, nil, nil).WithProducts(products)
+		result, err := imp.Import(context.Background(), strings.NewReader("sku,currency,amount\nSKU-001,EUR,100\n"))
+		if err != nil {
+			t.Fatalf("Import: %v", err)
+		}
+		if result.Created != 1 {
+			t.Fatalf("created=%d, want 1; errors=%v", result.Created, result.Errors)
+		}
+		if strings.Join(order, ",") != "lock,upsert" {
+			t.Fatalf("order = %v, want lock then upsert", order)
+		}
+	})
 }
 
 type noopLogger struct{}

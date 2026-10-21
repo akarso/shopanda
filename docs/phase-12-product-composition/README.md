@@ -25,12 +25,12 @@ See [`ROADMAP.md`](ROADMAP.md) for the full track breakdown, sequencing, and PR 
 
 ## Status
 
-**In progress.** PR-1048–1061 are done — Track B (visibility & purchasability) is complete; Track C has the bundle domain model (PR-1060) and the grouped domain model (PR-1061). Next: PR-1062 (bundle/grouped pricing rollup). Track F (search/GraphQL closeout) has a hard dependency on Phase 11 Track B (search indexing), which has already shipped.
+**In progress.** PR-1048–1062 are done — Track B (visibility & purchasability) is complete; Track C has bundle and grouped domain models plus pricing rollup (fixed vs dynamic bundle price, grouped parents not priced). Next: PR-1063 (stock rollup per type). Track F (search/GraphQL closeout) has a hard dependency on Phase 11 Track B (search indexing), which has already shipped.
 
 ## Relationship
 
 | Phase | Focus | Status |
 | --- | --- | --- |
 | Phase 11 | Jobs, search & cache — admin reachability + full-page cache | Shipped (PR-1027–1049 under `docs/phase-11-jobs-search-cache/prs/` — different work from Phase 12’s PR-1048/1049) |
-| **Phase 12** | Product types & composition — type model, visibility, bundle/grouped, linked products & assignment, downloadable | **In progress** (PR-1048–1061 done — grouped domain landed; ids collide with Phase 11 — use phase folder) |
+| **Phase 12** | Product types & composition — type model, visibility, bundle/grouped, linked products & assignment, downloadable | **In progress** (PR-1048–1062 done — pricing rollup landed; ids collide with Phase 11 — use phase folder) |
 | Phase 13 | Plugin-owned migrations + on-demand sync jobs | Planned — [phase-13-plugin-runtime](../phase-13-plugin-runtime/README.md); independent of this phase; finish before a real merchant site |

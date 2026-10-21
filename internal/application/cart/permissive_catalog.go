@@ -60,3 +60,26 @@ func (permissiveProductRepo) FindByCategoryID(context.Context, string, int, int)
 func (permissiveProductRepo) Create(context.Context, *catalog.Product) error { return nil }
 
 func (permissiveProductRepo) Update(context.Context, *catalog.Product) error { return nil }
+
+// EmptyBundleComponents is a bundle-component repository with no rows.
+// Cart tests and demo plugins pass it to NewService, which requires a non-nil
+// component source even when the scenario never prices a dynamic bundle.
+func EmptyBundleComponents() catalog.BundleComponentRepository {
+	return emptyBundleComponents{}
+}
+
+type emptyBundleComponents struct{}
+
+func (emptyBundleComponents) ListByBundleID(context.Context, string) ([]catalog.BundleComponent, error) {
+	return nil, nil
+}
+
+func (emptyBundleComponents) CountByBundleID(context.Context, string) (int, error) { return 0, nil }
+
+func (emptyBundleComponents) CountByComponentID(context.Context, string) (int, error) {
+	return 0, nil
+}
+
+func (emptyBundleComponents) Upsert(context.Context, *catalog.BundleComponent) error { return nil }
+
+func (emptyBundleComponents) Remove(context.Context, string, string) error { return nil }

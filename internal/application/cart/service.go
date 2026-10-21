@@ -2,11 +2,13 @@ package cart
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
 
 	"github.com/akarso/shopanda/internal/application/hooks"
+	appPricing "github.com/akarso/shopanda/internal/application/pricing"
 	domainCart "github.com/akarso/shopanda/internal/domain/cart"
 	"github.com/akarso/shopanda/internal/domain/catalog"
 	domainext "github.com/akarso/shopanda/internal/domain/extension"
@@ -35,6 +37,7 @@ type Service struct {
 	coupons         promotion.CouponRepository
 	variants        catalog.VariantRepository
 	products        catalog.ProductRepository
+	unitPrices      appPricing.UnitPriceSources
 	visibilityFacts catalog.VisibilityFactsSource
 	visibilityOpts  catalog.VisibilityOptions
 	pipeline        pricing.Pipeline
@@ -53,6 +56,9 @@ type extensionValueWriter interface {
 }
 
 // NewService creates a cart application service.
+// components is required: dynamic bundle prices are resolved from it, and a
+// nil source would let production forget the rollup. prices, variants, and
+// products are required for the same reason.
 func NewService(
 	carts domainCart.CartRepository,
 	prices pricing.PriceRepository,
@@ -60,17 +66,15 @@ func NewService(
 	coupons promotion.CouponRepository,
 	variants catalog.VariantRepository,
 	products catalog.ProductRepository,
+	components catalog.BundleComponentRepository,
 	pipeline pricing.Pipeline,
 	log logger.Logger,
 	bus *event.Bus,
 	extensions extensionValueWriter,
 	hookRegistry *hooks.Registry,
 ) *Service {
-	if variants == nil {
-		panic("cart: variants must not be nil")
-	}
-	if products == nil {
-		panic("cart: products must not be nil")
+	if prices == nil || variants == nil || products == nil || components == nil {
+		panic("cart: unit price sources require prices, variants, products, and bundle components")
 	}
 	return &Service{
 		carts:      carts,
@@ -79,6 +83,12 @@ func NewService(
 		coupons:    coupons,
 		variants:   variants,
 		products:   products,
+		unitPrices: appPricing.UnitPriceSources{
+			Prices:     prices,
+			Variants:   variants,
+			Products:   products,
+			Components: components,
+		},
 		pipeline:   pipeline,
 		extensions: extensions,
 		hooks:      hookRegistry,
@@ -93,6 +103,10 @@ func (s *Service) WithVisibilityFacts(facts catalog.VisibilityFactsSource, opts 
 	s.visibilityFacts = facts
 	s.visibilityOpts = opts
 	return s
+}
+
+func (s *Service) priceSources() appPricing.UnitPriceSources {
+	return s.unitPrices
 }
 
 // CreateCart creates a new active cart with the given currency, owned by customerID.
@@ -213,7 +227,7 @@ func (s *Service) ClaimGuestCart(ctx context.Context, guestCartID, customerID st
 func (s *Service) unclaimableGuestLines(ctx context.Context, guestCart *domainCart.Cart) (map[string]struct{}, error) {
 	dropped := make(map[string]struct{})
 	for _, item := range guestCart.Items {
-		err := s.ensureVariantPurchasable(ctx, item.VariantID)
+		err := s.ensureVariantPurchasable(ctx, item.VariantID, guestCart.Currency)
 		if err == nil {
 			continue
 		}
@@ -385,6 +399,7 @@ func (s *Service) applyEligibleGuestCoupon(ctx context.Context, customerCart *do
 
 // AddItem adds an item to the cart and recalculates pricing.
 func (s *Service) AddItem(ctx context.Context, cartID, customerID, variantID string, quantity int, opts AddItemOptions) (*domainCart.Cart, error) {
+	ctx = appPricing.WithUnitPriceCache(ctx)
 	c, err := s.carts.FindByID(ctx, cartID)
 	if err != nil {
 		return nil, fmt.Errorf("cart service: add item: find: %w", err)
@@ -396,7 +411,7 @@ func (s *Service) AddItem(ctx context.Context, cartID, customerID, variantID str
 		return nil, apperror.Forbidden("cannot modify another customer's cart")
 	}
 
-	if err := s.ensureVariantPurchasable(ctx, variantID); err != nil {
+	if err := s.ensureVariantPurchasable(ctx, variantID, c.Currency); err != nil {
 		return nil, err
 	}
 
@@ -486,7 +501,7 @@ func (s *Service) UpdateItemQuantity(ctx context.Context, cartID, customerID, va
 		}
 	}
 	if quantity > currentQty {
-		if err := s.ensureVariantPurchasable(ctx, variantID); err != nil {
+		if err := s.ensureVariantPurchasable(ctx, variantID, c.Currency); err != nil {
 			return nil, err
 		}
 	}
@@ -576,6 +591,7 @@ func (s *Service) RemoveItem(ctx context.Context, cartID, customerID, variantID 
 // recalculate runs the pricing pipeline over the cart's items and writes
 // the computed prices back onto the cart.
 func (s *Service) recalculate(ctx context.Context, c *domainCart.Cart) error {
+	ctx = appPricing.WithUnitPriceCache(ctx)
 	if len(c.Items) == 0 {
 		return nil
 	}
@@ -629,7 +645,10 @@ func (s *Service) recalculate(ctx context.Context, c *domainCart.Cart) error {
 		}
 	}
 
-	if err := s.pipeline.Execute(ctx, &pctx); err != nil {
+	// Existing lines are repriced even after the product is archived. Add and
+	// quantity increases still use the active-only scope in ensureVariantPurchasable.
+	priceCtx := catalog.WithIncludeNonActiveProducts(ctx)
+	if err := s.pipeline.Execute(priceCtx, &pctx); err != nil {
 		return fmt.Errorf("cart service: pricing pipeline: %w", err)
 	}
 
@@ -646,7 +665,7 @@ func (s *Service) recalculate(ctx context.Context, c *domainCart.Cart) error {
 	return nil
 }
 
-func (s *Service) ensureVariantPurchasable(ctx context.Context, variantID string) error {
+func (s *Service) ensureVariantPurchasable(ctx context.Context, variantID, currency string) error {
 	v, err := s.variants.FindByID(ctx, variantID)
 	if err != nil {
 		return fmt.Errorf("cart service: purchasability: lookup variant: %w", err)
@@ -661,6 +680,19 @@ func (s *Service) ensureVariantPurchasable(ctx context.Context, variantID string
 	if !catalog.ActiveForPurchase(p) {
 		return apperror.Validation("product is not available for purchase")
 	}
+	if p.Type == catalog.TypeGrouped {
+		return apperror.Validation(catalog.GroupedNotPurchasableMessage)
+	}
+	// Listing HasPrice is a global-row flag. A dynamic bundle can be sellable
+	// from a store-scoped component price that flag never sees. Other purchasable
+	// axes still apply; the price gate is ResolveUnitPrice in the cart currency
+	// and store.
+	if p.Type == catalog.TypeBundle && p.PricingMode == catalog.PricingModeDynamic {
+		if err := s.allowDynamicBundlePurchase(ctx, p); err != nil {
+			return err
+		}
+		return s.requireDynamicBundlePrice(ctx, variantID, currency)
+	}
 	ok, err := catalog.AllowWithFacts(ctx, p, catalog.VisibilitySurfacePurchasable, s.visibilityFacts, s.visibilityOpts)
 	if err != nil {
 		return fmt.Errorf("cart service: purchasability: visibility: %w", err)
@@ -671,30 +703,69 @@ func (s *Service) ensureVariantPurchasable(ctx context.Context, variantID string
 	return nil
 }
 
-// lookupPrice fetches the base price for a variant in the cart's currency,
-// scoped to the current store when available.
+// allowDynamicBundlePurchase applies the purchasable axis without the listing
+// HasPrice bit. Status, stock, store assignment, category, and a forced hidden
+// mode still deny. A forced visible mode still allows the axis; ResolveUnitPrice
+// remains the price gate.
+func (s *Service) allowDynamicBundlePurchase(ctx context.Context, p *catalog.Product) error {
+	if catalog.BypassProductVisibility(ctx) || s.visibilityFacts == nil {
+		return nil
+	}
+	m, err := s.visibilityFacts.LoadMany(ctx, []string{p.ID})
+	if err != nil {
+		return fmt.Errorf("cart service: purchasability: visibility: %w", err)
+	}
+	snap, ok := m[p.ID]
+	if !ok {
+		return apperror.Validation("product is not currently purchasable")
+	}
+	inputs := snap.Inputs
+	inputs.HasPrice = true
+	if !snap.Modes.Resolve(snap.Status, inputs, s.visibilityOpts).Purchasable {
+		return apperror.Validation("product is not currently purchasable")
+	}
+	return nil
+}
+
+func (s *Service) requireDynamicBundlePrice(ctx context.Context, variantID, currency string) error {
+	var storeID string
+	if st := store.FromContext(ctx); st != nil {
+		storeID = st.ID
+	}
+	_, err := appPricing.ResolveUnitPrice(ctx, s.priceSources(), variantID, currency, storeID)
+	if err == nil {
+		return nil
+	}
+	if appPricing.IsMissingUnitPrice(err) || apperror.Is(err, apperror.CodeValidation) || apperror.Is(err, apperror.CodeNotFound) {
+		var appErr *apperror.Error
+		if errors.As(err, &appErr) && appErr.Message != "" {
+			return apperror.Validation(appErr.Message)
+		}
+		return apperror.Validation(err.Error())
+	}
+	return fmt.Errorf("cart service: purchasability: dynamic bundle price: %w", err)
+}
+
+// lookupPrice fetches the unit price for a variant in the cart's currency,
+// scoped to the current store when available. It uses the same resolver as
+// BasePriceStep so a dynamic bundle sum cannot disagree with recalculate.
 func (s *Service) lookupPrice(ctx context.Context, variantID, currency string) (shared.Money, error) {
 	var storeID string
 	if st := store.FromContext(ctx); st != nil {
 		storeID = st.ID
 	}
-	p, err := s.prices.FindByVariantCurrencyAndStore(ctx, variantID, currency, storeID)
+	amount, err := appPricing.ResolveUnitPrice(ctx, s.priceSources(), variantID, currency, storeID)
 	if err != nil {
+		if appPricing.IsMissingUnitPrice(err) {
+			return shared.Money{}, apperror.Validation(err.Error())
+		}
+		var appErr *apperror.Error
+		if errors.As(err, &appErr) {
+			return shared.Money{}, err
+		}
 		return shared.Money{}, fmt.Errorf("cart service: lookup price: %w", err)
 	}
-	// Fall back to global price when store-scoped price not found.
-	if p == nil && storeID != "" {
-		p, err = s.prices.FindByVariantCurrencyAndStore(ctx, variantID, currency, "")
-		if err != nil {
-			return shared.Money{}, fmt.Errorf("cart service: lookup price (fallback): %w", err)
-		}
-	}
-	if p == nil {
-		return shared.Money{}, apperror.Validation(
-			fmt.Sprintf("no price for variant %s in %s", variantID, currency),
-		)
-	}
-	return p.Amount, nil
+	return amount, nil
 }
 
 // ApplyCoupon validates a coupon code, associates it with the cart, and

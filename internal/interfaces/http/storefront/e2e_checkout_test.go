@@ -181,12 +181,12 @@ func setupE2ECheckout(t *testing.T, seed func(variants *e2eVariantRepo, prices *
 	}
 
 	pipeline := pricing.NewPipeline(
-		appPricing.NewBasePriceStep(prices),
+		appPricing.NewBasePriceStepLegacy(prices),
 		pricing.NewFinalizeStep(),
 	)
 
 	cartVR, cartPR := cartApp.PermissiveCatalogRepos()
-	cartSvc := cartApp.NewService(carts, prices, nil, nil, cartVR, cartPR, pipeline, log, bus, nil, nil)
+	cartSvc := cartApp.NewService(carts, prices, nil, nil, cartVR, cartPR, cartApp.EmptyBundleComponents(), pipeline, log, bus, nil, nil)
 	cartHandler := storefront.NewCartHandler(cartSvc, nil)
 
 	validateStep := checkoutApp.NewValidateCartStep(variants, &mockStorefrontRepo{})

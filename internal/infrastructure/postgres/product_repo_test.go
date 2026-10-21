@@ -136,6 +136,13 @@ func TestProductRepo_LockForUpdate(t *testing.T) {
 	if got != catalog.TypeVirtual {
 		t.Fatalf("type = %q, want virtual", got)
 	}
+	gotType, gotMode, err := bound.LockTypeAndPricingMode(ctx, p.ID)
+	if err != nil {
+		t.Fatalf("LockTypeAndPricingMode: %v", err)
+	}
+	if gotType != catalog.TypeVirtual || gotMode != catalog.PricingModeFixed {
+		t.Fatalf("locked type/mode = %q/%q, want virtual/fixed", gotType, gotMode)
+	}
 	_, err = bound.LockForUpdate(ctx, id.New())
 	if !apperror.Is(err, apperror.CodeNotFound) {
 		t.Fatalf("missing lock = %v, want not found", err)
