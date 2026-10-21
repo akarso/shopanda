@@ -3,18 +3,59 @@ package importer_test
 import (
 	"context"
 	"database/sql"
+	"database/sql/driver"
 	"fmt"
-	"github.com/akarso/shopanda/internal/testutil"
 	"strings"
+	"sync"
 	"testing"
 	"time"
+
+	"github.com/akarso/shopanda/internal/testutil"
 
 	"github.com/akarso/shopanda/internal/application/importer"
 	"github.com/akarso/shopanda/internal/domain/catalog"
 	"github.com/akarso/shopanda/internal/domain/pricing"
 	"github.com/akarso/shopanda/internal/domain/shared"
+	"github.com/akarso/shopanda/internal/platform/apperror"
 	"github.com/akarso/shopanda/internal/platform/event"
 )
+
+func init() {
+	sql.Register("shopanda-price-import-fake-tx", priceImportFakeTxDriver{})
+}
+
+type priceImportFakeTxDriver struct{}
+
+func (priceImportFakeTxDriver) Open(string) (driver.Conn, error) {
+	return priceImportFakeTxConn{}, nil
+}
+
+type priceImportFakeTxConn struct{}
+
+func (priceImportFakeTxConn) Prepare(string) (driver.Stmt, error) { return nil, driver.ErrSkip }
+func (priceImportFakeTxConn) Close() error                        { return nil }
+func (priceImportFakeTxConn) Begin() (driver.Tx, error)           { return priceImportFakeTx{}, nil }
+
+type priceImportFakeTx struct{}
+
+func (priceImportFakeTx) Commit() error   { return nil }
+func (priceImportFakeTx) Rollback() error { return nil }
+
+var (
+	priceImportFakeTxOnce sync.Once
+	priceImportFakeTxDB   *sql.DB
+)
+
+func priceImportFakeTxDBConn() *sql.DB {
+	priceImportFakeTxOnce.Do(func() {
+		db, err := sql.Open("shopanda-price-import-fake-tx", "")
+		if err != nil {
+			panic(err)
+		}
+		priceImportFakeTxDB = db
+	})
+	return priceImportFakeTxDB
+}
 
 // --- price test mocks ---
 
@@ -90,6 +131,8 @@ func (m *mockPriceRepoForImport) Upsert(_ context.Context, p *pricing.Price) err
 	m.prices[key] = p
 	return nil
 }
+
+func (m *mockPriceRepoForImport) WithTx(*sql.Tx) pricing.PriceRepository { return m }
 
 func priceVariants() *mockVariantRepoForPrice {
 	return &mockVariantRepoForPrice{
@@ -430,6 +473,8 @@ func (m *mockPriceHistoryRepoForImport) LowestSinceByVariants(ctx context.Contex
 	return testutil.LowestSinceByVariantsFromLowest(ctx, m.LowestSince, variantIDs, currency, storeID, since)
 }
 
+func (m *mockPriceHistoryRepoForImport) WithTx(*sql.Tx) pricing.PriceHistoryRepository { return m }
+
 // --- history tests ---
 func TestPriceImport_RecordsHistory(t *testing.T) {
 	variants := priceVariants()
@@ -531,6 +576,18 @@ func (priceImportProducts) FindByCategoryID(context.Context, string, int, int) (
 }
 func (priceImportProducts) Create(context.Context, *catalog.Product) error { return nil }
 func (priceImportProducts) Update(context.Context, *catalog.Product) error { return nil }
+func (m priceImportProducts) WithTx(*sql.Tx) catalog.ProductRepository     { return m }
+func (m priceImportProducts) LockTypeAndPricingMode(_ context.Context, id string) (catalog.Type, catalog.PricingMode, error) {
+	p := m.products[id]
+	if p == nil {
+		return "", "", apperror.NotFound("product not found")
+	}
+	mode := p.PricingMode
+	if mode == "" {
+		mode = catalog.PricingModeFixed
+	}
+	return p.Type, mode, nil
+}
 
 type permissivePriceImportProducts struct{}
 
@@ -548,8 +605,17 @@ func (permissivePriceImportProducts) FindByCategoryID(context.Context, string, i
 }
 func (permissivePriceImportProducts) Create(context.Context, *catalog.Product) error { return nil }
 func (permissivePriceImportProducts) Update(context.Context, *catalog.Product) error { return nil }
+func (permissivePriceImportProducts) WithTx(*sql.Tx) catalog.ProductRepository {
+	return permissivePriceImportProducts{}
+}
+func (permissivePriceImportProducts) LockTypeAndPricingMode(context.Context, string) (catalog.Type, catalog.PricingMode, error) {
+	return catalog.TypeSimple, catalog.PricingModeFixed, nil
+}
 
 func newTestPriceImporter(variants catalog.VariantRepository, prices pricing.PriceRepository, history pricing.PriceHistoryRepository, tx importer.TxStarter, bus *event.Bus) *importer.PriceImporter {
+	if tx == nil {
+		tx = priceImportFakeTxDBConn()
+	}
 	return importer.NewPriceImporter(variants, prices, history, tx, bus).WithProducts(permissivePriceImportProducts{})
 }
 
@@ -625,6 +691,99 @@ func TestPriceImport_RejectsDynamicBundle(t *testing.T) {
 	if prices.prices["vs:EUR:"] == nil {
 		t.Fatal("simple sku was not priced")
 	}
+}
+
+type orderLockProducts struct {
+	found      *catalog.Product
+	lockedType catalog.Type
+	lockedMode catalog.PricingMode
+	order      *[]string
+}
+
+func (m *orderLockProducts) FindByID(context.Context, string) (*catalog.Product, error) {
+	return m.found, nil
+}
+func (m *orderLockProducts) FindBySlug(context.Context, string) (*catalog.Product, error) {
+	return nil, nil
+}
+func (m *orderLockProducts) List(context.Context, catalog.ListFilter) ([]catalog.Product, error) {
+	return nil, nil
+}
+func (m *orderLockProducts) FindByCategoryID(context.Context, string, int, int) ([]catalog.Product, error) {
+	return nil, nil
+}
+func (m *orderLockProducts) Create(context.Context, *catalog.Product) error { return nil }
+func (m *orderLockProducts) Update(context.Context, *catalog.Product) error { return nil }
+func (m *orderLockProducts) WithTx(*sql.Tx) catalog.ProductRepository       { return m }
+func (m *orderLockProducts) LockTypeAndPricingMode(context.Context, string) (catalog.Type, catalog.PricingMode, error) {
+	*m.order = append(*m.order, "lock")
+	return m.lockedType, m.lockedMode, nil
+}
+
+type orderPriceRepo struct {
+	*mockPriceRepoForImport
+	order *[]string
+}
+
+func (m orderPriceRepo) WithTx(*sql.Tx) pricing.PriceRepository { return m }
+func (m orderPriceRepo) Upsert(ctx context.Context, p *pricing.Price) error {
+	*m.order = append(*m.order, "upsert")
+	return m.mockPriceRepoForImport.Upsert(ctx, p)
+}
+
+func TestPriceImport_LockBeforeWriteRechecksMode(t *testing.T) {
+	variants := &mockVariantRepoForPrice{
+		variants: map[string]*catalog.Variant{
+			"SKU-001": {ID: "v1", SKU: "SKU-001", ProductID: "p1"},
+		},
+	}
+	found := &catalog.Product{
+		ID: "p1", Type: catalog.TypeBundle, PricingMode: catalog.PricingModeFixed, Status: catalog.StatusActive,
+	}
+
+	t.Run("locked dynamic rejects stale fixed read", func(t *testing.T) {
+		var order []string
+		prices := orderPriceRepo{mockPriceRepoForImport: newMockPriceRepoForImport(), order: &order}
+		products := &orderLockProducts{
+			found: found, lockedType: catalog.TypeBundle, lockedMode: catalog.PricingModeDynamic, order: &order,
+		}
+		imp := newTestPriceImporter(variants, prices, nil, nil, nil).WithProducts(products)
+		result, err := imp.Import(context.Background(), strings.NewReader("sku,currency,amount\nSKU-001,EUR,100\n"))
+		if err != nil {
+			t.Fatalf("Import: %v", err)
+		}
+		if result.Created != 0 || result.Skipped != 1 {
+			t.Fatalf("created=%d skipped=%d, want 0/1; errors=%v", result.Created, result.Skipped, result.Errors)
+		}
+		if len(result.Errors) != 1 || !strings.Contains(result.Errors[0], "dynamic") {
+			t.Fatalf("errors = %v, want dynamic", result.Errors)
+		}
+		if len(prices.prices) != 0 {
+			t.Fatalf("prices written = %v", prices.prices)
+		}
+		if strings.Join(order, ",") != "lock" {
+			t.Fatalf("order = %v, want lock and no upsert", order)
+		}
+	})
+
+	t.Run("lock precedes upsert", func(t *testing.T) {
+		var order []string
+		prices := orderPriceRepo{mockPriceRepoForImport: newMockPriceRepoForImport(), order: &order}
+		products := &orderLockProducts{
+			found: found, lockedType: catalog.TypeSimple, lockedMode: catalog.PricingModeFixed, order: &order,
+		}
+		imp := newTestPriceImporter(variants, prices, nil, nil, nil).WithProducts(products)
+		result, err := imp.Import(context.Background(), strings.NewReader("sku,currency,amount\nSKU-001,EUR,100\n"))
+		if err != nil {
+			t.Fatalf("Import: %v", err)
+		}
+		if result.Created != 1 {
+			t.Fatalf("created=%d, want 1; errors=%v", result.Created, result.Errors)
+		}
+		if strings.Join(order, ",") != "lock,upsert" {
+			t.Fatalf("order = %v, want lock then upsert", order)
+		}
+	})
 }
 
 type noopLogger struct{}

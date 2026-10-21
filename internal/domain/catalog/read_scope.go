@@ -6,8 +6,9 @@ type productReadScopeKey struct{}
 type productVisibilityBypassKey struct{}
 
 // WithIncludeNonActiveProducts marks ctx so product repository reads include
-// draft and archived rows. Storefront and cart callers omit this; admin API
-// requests and export jobs set it explicitly (PR-1054).
+// draft and archived rows. Storefront callers omit this. Admin API requests,
+// export jobs, and cart reprice of lines already in the cart set it (PR-1054).
+// Add and quantity-increase purchasability checks do not.
 func WithIncludeNonActiveProducts(ctx context.Context) context.Context {
 	return context.WithValue(ctx, productReadScopeKey{}, true)
 }

@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/csv"
+	"errors"
 	"fmt"
 	"io"
 	"strconv"
@@ -13,6 +14,7 @@ import (
 	"github.com/akarso/shopanda/internal/domain/catalog"
 	"github.com/akarso/shopanda/internal/domain/pricing"
 	"github.com/akarso/shopanda/internal/domain/shared"
+	"github.com/akarso/shopanda/internal/platform/apperror"
 	"github.com/akarso/shopanda/internal/platform/event"
 	"github.com/akarso/shopanda/internal/platform/id"
 )
@@ -39,6 +41,20 @@ type txHistoryRepo interface {
 	pricing.PriceHistoryRepository
 	WithTx(tx *sql.Tx) pricing.PriceHistoryRepository
 }
+
+// lockingProductRepo locks type and pricing_mode on the transaction-bound repo.
+type lockingProductRepo interface {
+	catalog.ProductRepository
+	LockTypeAndPricingMode(ctx context.Context, id string) (catalog.Type, catalog.PricingMode, error)
+}
+
+// rowRejectError is a per-row validation failure. Import records it and
+// continues. It is not an infrastructure failure.
+type rowRejectError struct {
+	msg string
+}
+
+func (e *rowRejectError) Error() string { return e.msg }
 
 // PriceImporter imports prices from CSV.
 type PriceImporter struct {
@@ -220,7 +236,13 @@ func (imp *PriceImporter) Import(ctx context.Context, r io.Reader) (*PriceResult
 			continue
 		}
 
-		if err := imp.upsertWithHistory(ctx, &p); err != nil {
+		if err := imp.upsertWithHistory(ctx, &p, variant.ProductID); err != nil {
+			var rejected *rowRejectError
+			if errors.As(err, &rejected) {
+				result.Errors = append(result.Errors, fmt.Sprintf("line %d: %s", lineNum, rejected.Error()))
+				result.Skipped++
+				continue
+			}
 			return nil, fmt.Errorf("price import: sku %q currency %s: %w", sku, currency, err)
 		}
 
@@ -245,53 +267,64 @@ func (imp *PriceImporter) Import(ctx context.Context, r io.Reader) (*PriceResult
 	return result, nil
 }
 
-// upsertWithHistory writes the price and records a history snapshot atomically
-// when a TxStarter and tx-capable repos are available. Falls back to sequential
-// writes otherwise.
-func (imp *PriceImporter) upsertWithHistory(ctx context.Context, p *pricing.Price) error {
-	if imp.history == nil {
-		return imp.prices.Upsert(ctx, p)
+// upsertWithHistory locks the product row and writes the price (and history,
+// when configured) on that same transaction. Grouped and dynamic bundles are
+// rejected from the locked type and pricing_mode, matching admin price PUT.
+func (imp *PriceImporter) upsertWithHistory(ctx context.Context, p *pricing.Price, productID string) error {
+	if imp.txStarter == nil {
+		return fmt.Errorf("transaction starter is required")
 	}
-
-	snap, err := pricing.NewPriceSnapshot(id.New(), p.VariantID, p.StoreID, p.Amount)
-	if err != nil {
-		return fmt.Errorf("snapshot: %w", err)
+	txProducts, ok := imp.products.(txProductRepo)
+	if !ok {
+		return fmt.Errorf("product repository does not support transactions")
 	}
-
-	if imp.txStarter != nil {
-		txP, ok1 := imp.prices.(txPriceRepo)
-		txH, ok2 := imp.history.(txHistoryRepo)
-		if ok1 && ok2 {
-			return imp.upsertInTx(ctx, txP, txH, p, &snap)
+	txPrices, ok := imp.prices.(txPriceRepo)
+	if !ok {
+		return fmt.Errorf("price repository does not support transactions")
+	}
+	var txHistory txHistoryRepo
+	if imp.history != nil {
+		txHistory, ok = imp.history.(txHistoryRepo)
+		if !ok {
+			return fmt.Errorf("price history repository does not support transactions")
 		}
 	}
 
-	// Fallback: sequential writes.
-	if err := imp.prices.Upsert(ctx, p); err != nil {
-		return fmt.Errorf("upsert: %w", err)
-	}
-	if err := imp.history.Record(ctx, &snap); err != nil {
-		return fmt.Errorf("record history: %w", err)
-	}
-	return nil
-}
-
-func (imp *PriceImporter) upsertInTx(ctx context.Context, txP txPriceRepo, txH txHistoryRepo, p *pricing.Price, snap *pricing.PriceSnapshot) error {
 	tx, err := imp.txStarter.BeginTx(ctx, nil)
 	if err != nil {
 		return fmt.Errorf("begin tx: %w", err)
 	}
+	defer tx.Rollback()
 
-	priceRepo := txP.WithTx(tx)
-	historyRepo := txH.WithTx(tx)
+	locker, ok := txProducts.WithTx(tx).(lockingProductRepo)
+	if !ok {
+		return fmt.Errorf("product repository does not support row locks")
+	}
+	productType, pricingMode, err := locker.LockTypeAndPricingMode(ctx, productID)
+	if err != nil {
+		if apperror.Is(err, apperror.CodeNotFound) {
+			return err
+		}
+		return fmt.Errorf("lock product: %w", err)
+	}
+	if productType == catalog.TypeGrouped {
+		return &rowRejectError{msg: catalog.GroupedPriceRejectedMessage}
+	}
+	if productType == catalog.TypeBundle && pricingMode == catalog.PricingModeDynamic {
+		return &rowRejectError{msg: catalog.DynamicBundlePriceRejectedMessage}
+	}
 
-	if err := priceRepo.Upsert(ctx, p); err != nil {
-		tx.Rollback()
+	if err := txPrices.WithTx(tx).Upsert(ctx, p); err != nil {
 		return fmt.Errorf("upsert: %w", err)
 	}
-	if err := historyRepo.Record(ctx, snap); err != nil {
-		tx.Rollback()
-		return fmt.Errorf("record history: %w", err)
+	if txHistory != nil {
+		snap, err := pricing.NewPriceSnapshot(id.New(), p.VariantID, p.StoreID, p.Amount)
+		if err != nil {
+			return fmt.Errorf("snapshot: %w", err)
+		}
+		if err := txHistory.WithTx(tx).Record(ctx, &snap); err != nil {
+			return fmt.Errorf("record history: %w", err)
+		}
 	}
 	if err := tx.Commit(); err != nil {
 		return fmt.Errorf("commit: %w", err)

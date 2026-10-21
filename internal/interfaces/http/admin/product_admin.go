@@ -160,10 +160,9 @@ func (h *ProductAdminHandler) WithGroupedMembers(members groupedMemberTypeGuard)
 	return h
 }
 
-// WithTxStarter wires the transaction beginner used when a product type change
-// must lock the product row. *sql.DB satisfies this. A type change with a nil
-// starter fails closed. A pricing_mode patch also takes that lock so the mode
-// is applied against the locked type and pricing_mode.
+// WithTxStarter wires the transaction beginner used for every product update
+// that persists. *sql.DB satisfies this. The update locks the row and re-reads
+// type and pricing_mode before writing, so a nil starter fails closed.
 func (h *ProductAdminHandler) WithTxStarter(starter txStarter) *ProductAdminHandler {
 	h.txStarter = starter
 	return h
@@ -813,9 +812,9 @@ func applyProductVisibilityAndAttributes(product *catalog.Product, req updatePro
 
 // updateProductWithTypeLock locks the product row, validates an optional type
 // change against that locked type, then writes every patched field in the same
-// transaction. Callers use it whenever the payload includes type or pricing_mode.
-// newType nil keeps the locked type. The locked row's pricing_mode is re-read
-// before ApplyPricingMode.
+// transaction. Every persisting product update uses it, including a name-only
+// edit. newType nil keeps the locked type. Omitted pricing_mode keeps the
+// locked row's mode; ApplyPricingMode does not see the earlier FindByID.
 func (h *ProductAdminHandler) updateProductWithTypeLock(ctx context.Context, product *catalog.Product, req updateProductRequest, newType *catalog.Type) (before, after catalog.VisibilityAxes, changed bool, err error) {
 	if h.txStarter == nil {
 		return catalog.VisibilityAxes{}, catalog.VisibilityAxes{}, false, apperror.Internal("product admin: transaction starter is not configured")
@@ -871,8 +870,13 @@ func (h *ProductAdminHandler) updateProductWithTypeLock(ctx context.Context, pro
 	if err := applyPricingModePatch(product, req); err != nil {
 		return catalog.VisibilityAxes{}, catalog.VisibilityAxes{}, false, err
 	}
-	if err := h.rejectDynamicOwnPrices(ctx, product); err != nil {
-		return catalog.VisibilityAxes{}, catalog.VisibilityAxes{}, false, err
+	// Own-price rejection applies when this request changes type or mode.
+	// A name-only edit must keep the locked mode and must not fail closed
+	// because variant price repos are unwired.
+	if newType != nil || req.PricingMode != nil {
+		if err := h.rejectDynamicOwnPrices(ctx, product); err != nil {
+			return catalog.VisibilityAxes{}, catalog.VisibilityAxes{}, false, err
+		}
 	}
 	before, after, changed, err = applyProductVisibilityAndAttributes(product, req)
 	if err != nil {
@@ -986,80 +990,22 @@ func (h *ProductAdminHandler) Update() http.HandlerFunc {
 
 		var modesBefore, modes catalog.VisibilityAxes
 		visibilityModesChanged := false
-		// Lock whenever type or pricing_mode is present. Comparing type only to
-		// the pre-lock FindByID would skip the guard when that read is stale.
-		// A pricing_mode patch with no type still re-reads the locked mode.
-		if newType != nil || req.PricingMode != nil {
-			var err error
-			modesBefore, modes, visibilityModesChanged, err = h.updateProductWithTypeLock(r.Context(), product, req, newType)
-			if err != nil {
-				h.auditor.LogAction(r.Context(), admin.AuditEntry{
-					AdminID:      adminID,
-					Action:       admin.AuditProductUpdate,
-					ResourceType: "product",
-					ResourceID:   pid,
-					Result:       "error",
-					Error:        err.Error(),
-					Details:      productAdminScopeDetailsFromRequest(r),
-				})
-				httpshared.JSONError(w, err)
-				return
-			}
-		} else {
-			if err := applyPricingModePatch(product, req); err != nil {
-				h.auditor.LogAction(r.Context(), admin.AuditEntry{
-					AdminID:      adminID,
-					Action:       admin.AuditProductUpdate,
-					ResourceType: "product",
-					ResourceID:   pid,
-					Result:       "error",
-					Error:        adminAuditMessage(err),
-					Details:      productAdminScopeDetailsFromRequest(r),
-				})
-				httpshared.JSONError(w, err)
-				return
-			}
-			var err error
-			modesBefore, modes, visibilityModesChanged, err = applyProductVisibilityAndAttributes(product, req)
-			if err != nil {
-				h.auditor.LogAction(r.Context(), admin.AuditEntry{
-					AdminID:      adminID,
-					Action:       admin.AuditProductUpdate,
-					ResourceType: "product",
-					ResourceID:   pid,
-					Result:       "error",
-					Error:        err.Error(),
-					Details:      productAdminScopeDetailsFromRequest(r),
-				})
-				httpshared.JSONError(w, apperror.Validation(err.Error()))
-				return
-			}
-			if err := product.Validate(); err != nil {
-				h.auditor.LogAction(r.Context(), admin.AuditEntry{
-					AdminID:      adminID,
-					Action:       admin.AuditProductUpdate,
-					ResourceType: "product",
-					ResourceID:   pid,
-					Result:       "error",
-					Error:        err.Error(),
-					Details:      productAdminScopeDetailsFromRequest(r),
-				})
-				httpshared.JSONError(w, apperror.Validation(err.Error()))
-				return
-			}
-			if err := h.repo.Update(r.Context(), product); err != nil {
-				h.auditor.LogAction(r.Context(), admin.AuditEntry{
-					AdminID:      adminID,
-					Action:       admin.AuditProductUpdate,
-					ResourceType: "product",
-					ResourceID:   pid,
-					Result:       "error",
-					Error:        err.Error(),
-					Details:      productAdminScopeDetailsFromRequest(r),
-				})
-				httpshared.JSONError(w, err)
-				return
-			}
+		// Always lock before persisting. An omitted type and pricing_mode must
+		// be taken from the locked row. Writing the earlier FindByID snapshot
+		// would clobber a concurrent switch to dynamic.
+		modesBefore, modes, visibilityModesChanged, err = h.updateProductWithTypeLock(r.Context(), product, req, newType)
+		if err != nil {
+			h.auditor.LogAction(r.Context(), admin.AuditEntry{
+				AdminID:      adminID,
+				Action:       admin.AuditProductUpdate,
+				ResourceType: "product",
+				ResourceID:   pid,
+				Result:       "error",
+				Error:        err.Error(),
+				Details:      productAdminScopeDetailsFromRequest(r),
+			})
+			httpshared.JSONError(w, err)
+			return
 		}
 
 		successDetails := productAdminScopeDetailsFromRequest(r)

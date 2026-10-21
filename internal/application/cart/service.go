@@ -645,7 +645,10 @@ func (s *Service) recalculate(ctx context.Context, c *domainCart.Cart) error {
 		}
 	}
 
-	if err := s.pipeline.Execute(ctx, &pctx); err != nil {
+	// Existing lines are repriced even after the product is archived. Add and
+	// quantity increases still use the active-only scope in ensureVariantPurchasable.
+	priceCtx := catalog.WithIncludeNonActiveProducts(ctx)
+	if err := s.pipeline.Execute(priceCtx, &pctx); err != nil {
 		return fmt.Errorf("cart service: pricing pipeline: %w", err)
 	}
 
@@ -680,6 +683,16 @@ func (s *Service) ensureVariantPurchasable(ctx context.Context, variantID, curre
 	if p.Type == catalog.TypeGrouped {
 		return apperror.Validation(catalog.GroupedNotPurchasableMessage)
 	}
+	// Listing HasPrice is a global-row flag. A dynamic bundle can be sellable
+	// from a store-scoped component price that flag never sees. Other purchasable
+	// axes still apply; the price gate is ResolveUnitPrice in the cart currency
+	// and store.
+	if p.Type == catalog.TypeBundle && p.PricingMode == catalog.PricingModeDynamic {
+		if err := s.allowDynamicBundlePurchase(ctx, p); err != nil {
+			return err
+		}
+		return s.requireDynamicBundlePrice(ctx, variantID, currency)
+	}
 	ok, err := catalog.AllowWithFacts(ctx, p, catalog.VisibilitySurfacePurchasable, s.visibilityFacts, s.visibilityOpts)
 	if err != nil {
 		return fmt.Errorf("cart service: purchasability: visibility: %w", err)
@@ -687,12 +700,29 @@ func (s *Service) ensureVariantPurchasable(ctx context.Context, variantID, curre
 	if !ok {
 		return apperror.Validation("product is not currently purchasable")
 	}
-	// HasPrice is currency-agnostic. A dynamic bundle must resolve in the
-	// cart currency (store, then global) or AddItem is a validation failure.
-	if p.Type == catalog.TypeBundle && p.PricingMode == catalog.PricingModeDynamic {
-		if err := s.requireDynamicBundlePrice(ctx, variantID, currency); err != nil {
-			return err
-		}
+	return nil
+}
+
+// allowDynamicBundlePurchase applies the purchasable axis without the listing
+// HasPrice bit. Status, stock, store assignment, category, and a forced hidden
+// mode still deny. A forced visible mode still allows the axis; ResolveUnitPrice
+// remains the price gate.
+func (s *Service) allowDynamicBundlePurchase(ctx context.Context, p *catalog.Product) error {
+	if catalog.BypassProductVisibility(ctx) || s.visibilityFacts == nil {
+		return nil
+	}
+	m, err := s.visibilityFacts.LoadMany(ctx, []string{p.ID})
+	if err != nil {
+		return fmt.Errorf("cart service: purchasability: visibility: %w", err)
+	}
+	snap, ok := m[p.ID]
+	if !ok {
+		return apperror.Validation("product is not currently purchasable")
+	}
+	inputs := snap.Inputs
+	inputs.HasPrice = true
+	if !snap.Modes.Resolve(snap.Status, inputs, s.visibilityOpts).Purchasable {
+		return apperror.Validation("product is not currently purchasable")
 	}
 	return nil
 }

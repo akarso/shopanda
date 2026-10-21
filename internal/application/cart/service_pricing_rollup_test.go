@@ -9,6 +9,7 @@ import (
 	appPricing "github.com/akarso/shopanda/internal/application/pricing"
 	"github.com/akarso/shopanda/internal/domain/catalog"
 	"github.com/akarso/shopanda/internal/domain/pricing"
+	"github.com/akarso/shopanda/internal/domain/store"
 	"github.com/akarso/shopanda/internal/platform/apperror"
 )
 
@@ -67,12 +68,16 @@ func (cartRollupVariants) Create(context.Context, *catalog.Variant) error { retu
 func (cartRollupVariants) Update(context.Context, *catalog.Variant) error { return nil }
 
 type cartRollupProducts struct {
-	products map[string]*catalog.Product
+	products      map[string]*catalog.Product
+	hideNonActive bool
 }
 
-func (r cartRollupProducts) FindByID(_ context.Context, id string) (*catalog.Product, error) {
+func (r cartRollupProducts) FindByID(ctx context.Context, id string) (*catalog.Product, error) {
 	p, ok := r.products[id]
 	if !ok {
+		return nil, nil
+	}
+	if r.hideNonActive && p.Status != catalog.StatusActive && !catalog.IncludeNonActiveProducts(ctx) {
 		return nil, nil
 	}
 	cp := *p
@@ -324,6 +329,115 @@ func TestService_AddItem_DynamicMultiVariantComponent(t *testing.T) {
 	_, err = svc.AddItem(context.Background(), cart.ID, "", "bundle-v", 1, cartApp.AddItemOptions{})
 	if err == nil || !strings.Contains(err.Error(), "exactly one variant") {
 		t.Fatalf("err = %v, want exactly one variant", err)
+	}
+}
+
+func TestService_Recalculate_ArchivedLine(t *testing.T) {
+	prices := newStubPriceRepo()
+	prices.set("arch-v", "EUR", 1500)
+	prices.set("live-v", "EUR", 800)
+	variants := map[string]catalog.Variant{
+		"arch-v": {ID: "arch-v", ProductID: "arch"},
+		"live-v": {ID: "live-v", ProductID: "live"},
+	}
+	products := map[string]*catalog.Product{
+		"arch": rollupProduct("arch", catalog.TypeSimple, catalog.PricingModeFixed),
+		"live": rollupProduct("live", catalog.TypeSimple, catalog.PricingModeFixed),
+	}
+	pr := cartRollupProducts{products: products, hideNonActive: true}
+	vr := cartRollupVariants{variants: variants}
+	cr := cartRollupComponents{}
+	src := appPricing.UnitPriceSources{Prices: prices, Variants: vr, Products: pr, Components: cr}
+	pipeline := pricing.NewPipeline(
+		appPricing.NewBasePriceStep(src),
+		pricing.NewFinalizeStep(),
+	)
+	svc := cartApp.NewService(newStubCartRepo(), prices, nil, nil, vr, pr, cr, pipeline, testLogger(), testBus(), nil, nil)
+	ctx := context.Background()
+
+	cart, err := svc.CreateCart(ctx, "", "EUR")
+	if err != nil {
+		t.Fatalf("CreateCart: %v", err)
+	}
+	if _, err := svc.AddItem(ctx, cart.ID, "", "arch-v", 2, cartApp.AddItemOptions{}); err != nil {
+		t.Fatalf("AddItem archived-to-be: %v", err)
+	}
+	if _, err := svc.AddItem(ctx, cart.ID, "", "live-v", 1, cartApp.AddItemOptions{}); err != nil {
+		t.Fatalf("AddItem live: %v", err)
+	}
+	products["arch"].Status = catalog.StatusArchived
+
+	if _, err := svc.AddItem(ctx, cart.ID, "", "arch-v", 1, cartApp.AddItemOptions{}); err == nil {
+		t.Fatal("AddItem increase after archive succeeded")
+	}
+
+	decreased, err := svc.UpdateItemQuantity(ctx, cart.ID, "", "arch-v", 1)
+	if err != nil {
+		t.Fatalf("decrease archived line: %v", err)
+	}
+	if len(decreased.Items) != 2 {
+		t.Fatalf("items after decrease = %+v, want both lines", decreased.Items)
+	}
+	for _, item := range decreased.Items {
+		if item.VariantID == "arch-v" && (item.Quantity != 1 || item.UnitPrice.Amount() != 1500) {
+			t.Fatalf("archived line = %+v, want qty 1 price 1500", item)
+		}
+	}
+
+	removed, err := svc.RemoveItem(ctx, cart.ID, "", "live-v")
+	if err != nil {
+		t.Fatalf("remove other line: %v", err)
+	}
+	if len(removed.Items) != 1 || removed.Items[0].VariantID != "arch-v" || removed.Items[0].UnitPrice.Amount() != 1500 {
+		t.Fatalf("items after remove = %+v, want archived line at 1500", removed.Items)
+	}
+}
+
+func TestService_AddItem_DynamicBundleStoreOnlyPrice(t *testing.T) {
+	prices := newStubPriceRepo()
+	prices.setWithStore("comp-v", "EUR", "store-1", 640)
+	variants := map[string]catalog.Variant{
+		"bundle-v": {ID: "bundle-v", ProductID: "bundle"},
+		"comp-v":   {ID: "comp-v", ProductID: "comp"},
+	}
+	products := map[string]*catalog.Product{
+		"bundle": rollupProduct("bundle", catalog.TypeBundle, catalog.PricingModeDynamic),
+		"comp":   rollupProduct("comp", catalog.TypeSimple, catalog.PricingModeFixed),
+	}
+	components := []catalog.BundleComponent{{
+		BundleProductID: "bundle", ComponentProductID: "comp", Quantity: 1, Required: true,
+	}}
+	svc := newRollupService(prices, variants, products, components)
+	noGlobalPrice := sellableSnap(catalog.DefaultVisibilityAxes())
+	noGlobalPrice.Inputs.HasPrice = false
+	facts := purchasableFacts{
+		"bundle": noGlobalPrice,
+		"comp":   sellableSnap(catalog.DefaultVisibilityAxes()),
+	}
+	svc = svc.WithVisibilityFacts(facts, catalog.VisibilityOptions{})
+
+	ctx := store.WithStore(context.Background(), &store.Store{ID: "store-1"})
+	cart, err := svc.CreateCart(ctx, "", "EUR")
+	if err != nil {
+		t.Fatalf("CreateCart: %v", err)
+	}
+	got, err := svc.AddItem(ctx, cart.ID, "", "bundle-v", 1, cartApp.AddItemOptions{})
+	if err != nil {
+		t.Fatalf("AddItem store-only component price: %v", err)
+	}
+	if len(got.Items) != 1 || got.Items[0].UnitPrice.Amount() != 640 {
+		t.Fatalf("item = %+v, want unit price 640", got.Items)
+	}
+
+	outOfStock := noGlobalPrice
+	outOfStock.Inputs.QuantityPositive = false
+	facts["bundle"] = outOfStock
+	cart2, err := svc.CreateCart(ctx, "", "EUR")
+	if err != nil {
+		t.Fatalf("CreateCart: %v", err)
+	}
+	if _, err := svc.AddItem(ctx, cart2.ID, "", "bundle-v", 1, cartApp.AddItemOptions{}); err == nil {
+		t.Fatal("AddItem succeeded without stock")
 	}
 }
 

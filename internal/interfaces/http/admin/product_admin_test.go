@@ -839,6 +839,43 @@ func TestProductAdminHandler_Update_DynamicOnSimpleRejected(t *testing.T) {
 	}
 }
 
+func TestProductAdminHandler_Update_OmittedModeKeepsLockedPricingMode(t *testing.T) {
+	existing := &catalog.Product{
+		ID: "p1", Name: "Kit", Slug: "kit", Status: catalog.StatusDraft,
+		Type: catalog.TypeBundle, PricingMode: catalog.PricingModeFixed,
+		VisibilityModes: catalog.DefaultVisibilityAxes(),
+	}
+	var updated *catalog.Product
+	repo := &mockAdminProductRepo{
+		lockedPricingMode: catalog.PricingModeDynamic,
+		findByIDFn: func(_ context.Context, id string) (*catalog.Product, error) {
+			cp := *existing
+			return &cp, nil
+		},
+		updateFn: func(_ context.Context, p *catalog.Product) error {
+			updated = p
+			return nil
+		},
+	}
+	h := admin.NewProductAdminHandler(repo, testAdminBus()).
+		WithTxStarter(adminFakeTxDBConn())
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("PUT", "/api/v1/admin/products/p1", jsonBody(t, map[string]interface{}{"name": "Renamed"}))
+	newAdminRouter(h).ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body: %s", rec.Code, rec.Body.String())
+	}
+	if updated == nil || updated.PricingMode != catalog.PricingModeDynamic {
+		t.Fatalf("mode = %+v, want locked dynamic", updated)
+	}
+	if updated.Name != "Renamed" {
+		t.Fatalf("name = %q, want Renamed", updated.Name)
+	}
+	if updated.Type != catalog.TypeBundle {
+		t.Fatalf("type = %q, want bundle", updated.Type)
+	}
+}
+
 func TestProductAdminHandler_Update_TypeChangeUsesLockedPricingMode(t *testing.T) {
 	existing := &catalog.Product{
 		ID: "p1", Name: "Kit", Slug: "kit", Status: catalog.StatusDraft,
@@ -1445,7 +1482,7 @@ func TestProductAdminHandler_Update_OK(t *testing.T) {
 			return nil
 		},
 	}
-	h := admin.NewProductAdminHandler(repo, testAdminBus())
+	h := admin.NewProductAdminHandler(repo, testAdminBus()).WithTxStarter(adminFakeTxDBConn())
 
 	body := jsonBody(t, map[string]interface{}{
 		"name":        "Updated Widget",
@@ -1964,7 +2001,7 @@ func TestProductAdminHandler_Update_OmitTypePreserves(t *testing.T) {
 			return nil
 		},
 	}
-	h := admin.NewProductAdminHandler(repo, testAdminBus())
+	h := admin.NewProductAdminHandler(repo, testAdminBus()).WithTxStarter(adminFakeTxDBConn())
 
 	body := jsonBody(t, map[string]interface{}{"name": "Renamed"})
 	rec := httptest.NewRecorder()
@@ -2079,7 +2116,7 @@ func TestProductAdminHandler_Update_InvalidType(t *testing.T) {
 			}, nil
 		},
 	}
-	h := admin.NewProductAdminHandlerWithAuditor(repo, testAdminBus(), adminapp.NewAuditor(sink), logger.NewWithWriter(io.Discard, "info"))
+	h := admin.NewProductAdminHandlerWithAuditor(repo, testAdminBus(), adminapp.NewAuditor(sink), logger.NewWithWriter(io.Discard, "info")).WithTxStarter(adminFakeTxDBConn())
 
 	body := jsonBody(t, map[string]interface{}{"description": "x"})
 	rec := httptest.NewRecorder()
@@ -2180,7 +2217,7 @@ func TestProductAdminHandler_Update_PartialUpdate(t *testing.T) {
 			return nil
 		},
 	}
-	h := admin.NewProductAdminHandler(repo, testAdminBus())
+	h := admin.NewProductAdminHandler(repo, testAdminBus()).WithTxStarter(adminFakeTxDBConn())
 
 	// Only update description — name, slug, status stay the same.
 	body := jsonBody(t, map[string]interface{}{"description": "new desc"})
@@ -2217,7 +2254,7 @@ func TestProductAdminHandler_Update_RepoError(t *testing.T) {
 			return apperror.Internal("db down")
 		},
 	}
-	h := admin.NewProductAdminHandler(repo, testAdminBus())
+	h := admin.NewProductAdminHandler(repo, testAdminBus()).WithTxStarter(adminFakeTxDBConn())
 
 	body := jsonBody(t, map[string]interface{}{"name": "X"})
 	rec := httptest.NewRecorder()
@@ -2242,7 +2279,7 @@ func TestProductAdminHandler_Update_AuditIncludesScopeContext(t *testing.T) {
 		},
 	}
 	sink := &auditSink{}
-	h := admin.NewProductAdminHandlerWithAuditor(repo, testAdminBus(), adminapp.NewAuditor(sink), logger.NewWithWriter(io.Discard, "info"))
+	h := admin.NewProductAdminHandlerWithAuditor(repo, testAdminBus(), adminapp.NewAuditor(sink), logger.NewWithWriter(io.Discard, "info")).WithTxStarter(adminFakeTxDBConn())
 
 	body := jsonBody(t, map[string]interface{}{"status": "active"})
 	rec := httptest.NewRecorder()
@@ -2288,7 +2325,7 @@ func TestProductAdminHandler_Update_AuditFailureIncludesError(t *testing.T) {
 		},
 	}
 	sink := &auditSink{}
-	h := admin.NewProductAdminHandlerWithAuditor(repo, testAdminBus(), adminapp.NewAuditor(sink), logger.NewWithWriter(io.Discard, "info"))
+	h := admin.NewProductAdminHandlerWithAuditor(repo, testAdminBus(), adminapp.NewAuditor(sink), logger.NewWithWriter(io.Discard, "info")).WithTxStarter(adminFakeTxDBConn())
 
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest("PUT", "/api/v1/admin/products/p1", bytes.NewReader([]byte("bad")))
@@ -2342,7 +2379,7 @@ func TestProductAdminHandler_Update_AuditOmitsPartialScopeContext(t *testing.T) 
 		},
 	}
 	sink := &auditSink{}
-	h := admin.NewProductAdminHandlerWithAuditor(repo, testAdminBus(), adminapp.NewAuditor(sink), logger.NewWithWriter(io.Discard, "info"))
+	h := admin.NewProductAdminHandlerWithAuditor(repo, testAdminBus(), adminapp.NewAuditor(sink), logger.NewWithWriter(io.Discard, "info")).WithTxStarter(adminFakeTxDBConn())
 
 	body := jsonBody(t, map[string]interface{}{"status": "active"})
 	rec := httptest.NewRecorder()
@@ -2396,7 +2433,7 @@ func TestProductAdminHandler_Update_AuditFailureOmitsPartialScopeContext(t *test
 		},
 	}
 	sink := &auditSink{}
-	h := admin.NewProductAdminHandlerWithAuditor(repo, testAdminBus(), adminapp.NewAuditor(sink), logger.NewWithWriter(io.Discard, "info"))
+	h := admin.NewProductAdminHandlerWithAuditor(repo, testAdminBus(), adminapp.NewAuditor(sink), logger.NewWithWriter(io.Discard, "info")).WithTxStarter(adminFakeTxDBConn())
 
 	body := jsonBody(t, map[string]interface{}{"status": "invalid"})
 	rec := httptest.NewRecorder()
@@ -2499,7 +2536,7 @@ func TestProductAdminHandler_Update_EmitsEvent(t *testing.T) {
 		return nil
 	})
 
-	h := admin.NewProductAdminHandler(repo, bus)
+	h := admin.NewProductAdminHandler(repo, bus).WithTxStarter(adminFakeTxDBConn())
 	body := jsonBody(t, map[string]interface{}{"name": "New Name"})
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest("PUT", "/api/v1/admin/products/p1", body)
