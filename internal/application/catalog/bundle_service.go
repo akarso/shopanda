@@ -2,28 +2,59 @@ package catalog
 
 import (
 	"context"
+	"database/sql"
 	"fmt"
+	"sort"
 	"strings"
 
 	"github.com/akarso/shopanda/internal/domain/catalog"
 	"github.com/akarso/shopanda/internal/platform/apperror"
 )
 
+// TxStarter begins database transactions. *sql.DB implements it.
+type TxStarter interface {
+	BeginTx(ctx context.Context, opts *sql.TxOptions) (*sql.Tx, error)
+}
+
+// txProductRepo is a ProductRepository that can bind to a transaction.
+type txProductRepo interface {
+	catalog.ProductRepository
+	WithTx(tx *sql.Tx) catalog.ProductRepository
+}
+
+// lockingProductRepo is a transaction-bound product repository that can lock a row.
+type lockingProductRepo interface {
+	catalog.ProductRepository
+	LockForUpdate(ctx context.Context, id string) (catalog.Type, error)
+}
+
+// txBundleComponentRepo is a BundleComponentRepository that can bind to a transaction.
+type txBundleComponentRepo interface {
+	catalog.BundleComponentRepository
+	WithTx(tx *sql.Tx) catalog.BundleComponentRepository
+}
+
 // BundleService manages bundle product composition.
 type BundleService struct {
 	products   catalog.ProductRepository
 	components catalog.BundleComponentRepository
+	txStarter  TxStarter
 }
 
 // NewBundleService creates a bundle composition service.
-func NewBundleService(products catalog.ProductRepository, components catalog.BundleComponentRepository) *BundleService {
+// txStarter is required so Add can lock both product rows in the same
+// transaction as the component upsert. Pass *sql.DB from process wiring.
+func NewBundleService(products catalog.ProductRepository, components catalog.BundleComponentRepository, txStarter TxStarter) *BundleService {
 	if products == nil {
 		panic("catalog.NewBundleService: nil products repository")
 	}
 	if components == nil {
 		panic("catalog.NewBundleService: nil components repository")
 	}
-	return &BundleService{products: products, components: components}
+	if txStarter == nil {
+		panic("catalog.NewBundleService: nil tx starter")
+	}
+	return &BundleService{products: products, components: components, txStarter: txStarter}
 }
 
 // List returns all components for a bundle product.
@@ -58,19 +89,47 @@ func (s *BundleService) Add(ctx context.Context, c *catalog.BundleComponent) err
 	if err := c.Validate(); err != nil {
 		return apperror.Validation(err.Error())
 	}
-	bundle, err := s.loadProduct(ctx, c.BundleProductID)
+
+	tx, err := s.txStarter.BeginTx(ctx, nil)
 	if err != nil {
-		return err
+		return fmt.Errorf("bundle: begin tx: %w", err)
 	}
-	component, err := s.loadProduct(ctx, c.ComponentProductID)
-	if err != nil {
-		return err
+	defer tx.Rollback()
+
+	txProducts, okProducts := s.products.(txProductRepo)
+	txComponents, okComponents := s.components.(txBundleComponentRepo)
+	if !okProducts || !okComponents {
+		return fmt.Errorf("bundle: repositories do not support transactions")
 	}
-	if err := c.ValidateComposition(bundle.Type, component.Type); err != nil {
+	productRepo := txProducts.WithTx(tx)
+	componentRepo := txComponents.WithTx(tx)
+	locker, ok := productRepo.(lockingProductRepo)
+	if !ok {
+		return fmt.Errorf("bundle: product repository does not support row locks")
+	}
+
+	// Lock in sorted id order so Add and a concurrent type change cannot deadlock.
+	ids := []string{c.BundleProductID, c.ComponentProductID}
+	sort.Strings(ids)
+	locked := make(map[string]catalog.Type, len(ids))
+	for _, id := range ids {
+		typ, err := locker.LockForUpdate(ctx, id)
+		if err != nil {
+			if apperror.Is(err, apperror.CodeNotFound) {
+				return err
+			}
+			return fmt.Errorf("bundle: lock product: %w", err)
+		}
+		locked[id] = typ
+	}
+	if err := c.ValidateComposition(locked[c.BundleProductID], locked[c.ComponentProductID]); err != nil {
 		return apperror.Validation(err.Error())
 	}
-	if err := s.components.Upsert(ctx, c); err != nil {
+	if err := componentRepo.Upsert(ctx, c); err != nil {
 		return fmt.Errorf("bundle: upsert component: %w", err)
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("bundle: commit: %w", err)
 	}
 	return nil
 }

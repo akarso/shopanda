@@ -17,6 +17,14 @@ var _ catalog.BundleComponentRepository = (*BundleComponentRepo)(nil)
 // BundleComponentRepo implements catalog.BundleComponentRepository using PostgreSQL.
 type BundleComponentRepo struct {
 	db *sql.DB
+	tx *sql.Tx
+}
+
+// bundleQueryer is the subset of *sql.DB and *sql.Tx used by this repo.
+type bundleQueryer interface {
+	QueryContext(ctx context.Context, query string, args ...interface{}) (*sql.Rows, error)
+	QueryRowContext(ctx context.Context, query string, args ...interface{}) *sql.Row
+	ExecContext(ctx context.Context, query string, args ...interface{}) (sql.Result, error)
 }
 
 // NewBundleComponentRepo returns a new BundleComponentRepo backed by db.
@@ -25,6 +33,18 @@ func NewBundleComponentRepo(db *sql.DB) (*BundleComponentRepo, error) {
 		return nil, fmt.Errorf("NewBundleComponentRepo: nil *sql.DB")
 	}
 	return &BundleComponentRepo{db: db}, nil
+}
+
+// WithTx returns a repo bound to the given transaction.
+func (r *BundleComponentRepo) WithTx(tx *sql.Tx) catalog.BundleComponentRepository {
+	return &BundleComponentRepo{db: r.db, tx: tx}
+}
+
+func (r *BundleComponentRepo) queryer() bundleQueryer {
+	if r.tx != nil {
+		return r.tx
+	}
+	return r.db
 }
 
 func mapBundleComponentExecError(err error) error {
@@ -58,7 +78,7 @@ func (r *BundleComponentRepo) ListByBundleID(ctx context.Context, bundleProductI
 		WHERE bundle_product_id = $1
 		ORDER BY created_at ASC, component_product_id ASC`
 
-	rows, err := r.db.QueryContext(ctx, q, bundleProductID)
+	rows, err := r.queryer().QueryContext(ctx, q, bundleProductID)
 	if err != nil {
 		if mapped := mapBundleComponentExecError(err); mapped != err {
 			return nil, mapped
@@ -94,7 +114,7 @@ func (r *BundleComponentRepo) CountByBundleID(ctx context.Context, bundleProduct
 	}
 	const q = `SELECT COUNT(*) FROM bundle_components WHERE bundle_product_id = $1`
 	var n int
-	if err := r.db.QueryRowContext(ctx, q, bundleProductID).Scan(&n); err != nil {
+	if err := r.queryer().QueryRowContext(ctx, q, bundleProductID).Scan(&n); err != nil {
 		if mapped := mapBundleComponentExecError(err); mapped != err {
 			return 0, mapped
 		}
@@ -110,7 +130,7 @@ func (r *BundleComponentRepo) CountByComponentID(ctx context.Context, componentP
 	}
 	const q = `SELECT COUNT(*) FROM bundle_components WHERE component_product_id = $1`
 	var n int
-	if err := r.db.QueryRowContext(ctx, q, componentProductID).Scan(&n); err != nil {
+	if err := r.queryer().QueryRowContext(ctx, q, componentProductID).Scan(&n); err != nil {
 		if mapped := mapBundleComponentExecError(err); mapped != err {
 			return 0, mapped
 		}
@@ -133,7 +153,7 @@ func (r *BundleComponentRepo) Upsert(ctx context.Context, c *catalog.BundleCompo
 		SET quantity = EXCLUDED.quantity,
 		    required = EXCLUDED.required`
 
-	_, err := r.db.ExecContext(ctx, q,
+	_, err := r.queryer().ExecContext(ctx, q,
 		c.BundleProductID,
 		c.ComponentProductID,
 		c.Quantity,
@@ -159,7 +179,7 @@ func (r *BundleComponentRepo) Remove(ctx context.Context, bundleProductID, compo
 	const q = `DELETE FROM bundle_components
 		WHERE bundle_product_id = $1 AND component_product_id = $2`
 
-	res, err := r.db.ExecContext(ctx, q, bundleProductID, componentProductID)
+	res, err := r.queryer().ExecContext(ctx, q, bundleProductID, componentProductID)
 	if err != nil {
 		if mapped := mapBundleComponentExecError(err); mapped != err {
 			return mapped

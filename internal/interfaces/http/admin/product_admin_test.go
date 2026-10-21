@@ -4,12 +4,14 @@ import (
 	"bytes"
 	"context"
 	"database/sql"
+	"database/sql/driver"
 	"encoding/json"
 	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/akarso/shopanda/internal/interfaces/http/admin"
@@ -26,6 +28,41 @@ import (
 	storefront "github.com/akarso/shopanda/internal/interfaces/http/storefront"
 )
 
+func init() {
+	sql.Register("shopanda-admin-fake-tx", adminFakeTxDriver{})
+}
+
+type adminFakeTxDriver struct{}
+
+func (adminFakeTxDriver) Open(string) (driver.Conn, error) { return adminFakeTxConn{}, nil }
+
+type adminFakeTxConn struct{}
+
+func (adminFakeTxConn) Prepare(string) (driver.Stmt, error) { return nil, driver.ErrSkip }
+func (adminFakeTxConn) Close() error                        { return nil }
+func (adminFakeTxConn) Begin() (driver.Tx, error)           { return adminFakeTx{}, nil }
+
+type adminFakeTx struct{}
+
+func (adminFakeTx) Commit() error   { return nil }
+func (adminFakeTx) Rollback() error { return nil }
+
+var (
+	adminFakeTxOnce sync.Once
+	adminFakeTxDB   *sql.DB
+)
+
+func adminFakeTxDBConn() *sql.DB {
+	adminFakeTxOnce.Do(func() {
+		db, err := sql.Open("shopanda-admin-fake-tx", "")
+		if err != nil {
+			panic(err)
+		}
+		adminFakeTxDB = db
+	})
+	return adminFakeTxDB
+}
+
 // --- mock for admin tests ---
 
 type mockAdminProductRepo struct {
@@ -34,6 +71,7 @@ type mockAdminProductRepo struct {
 	createFn                   func(ctx context.Context, p *catalog.Product) error
 	updateFn                   func(ctx context.Context, p *catalog.Product) error
 	listCategoryIDsByProductFn func(ctx context.Context, productID string) ([]string, error)
+	lockForUpdateFn            func(ctx context.Context, id string) (catalog.Type, error)
 }
 
 type mockAdminProductRepoWithoutCategoryLookup struct {
@@ -82,6 +120,20 @@ func (m *mockAdminProductRepo) FindByCategoryID(_ context.Context, _ string, _, 
 }
 func (m *mockAdminProductRepo) WithTx(_ *sql.Tx) catalog.ProductRepository { return m }
 
+func (m *mockAdminProductRepo) LockForUpdate(ctx context.Context, id string) (catalog.Type, error) {
+	if m.lockForUpdateFn != nil {
+		return m.lockForUpdateFn(ctx, id)
+	}
+	p, err := m.FindByID(ctx, id)
+	if err != nil {
+		return "", err
+	}
+	if p == nil {
+		return "", apperror.NotFound("product not found")
+	}
+	return p.Type, nil
+}
+
 type mockBundleComponentGuard struct {
 	bundleCount    int
 	componentCount int
@@ -107,6 +159,10 @@ func (m *mockBundleComponentGuard) Upsert(context.Context, *catalog.BundleCompon
 
 func (m *mockBundleComponentGuard) Remove(context.Context, string, string) error {
 	return nil
+}
+
+func (m *mockBundleComponentGuard) WithTx(_ *sql.Tx) catalog.BundleComponentRepository {
+	return m
 }
 
 func (m *mockAdminProductRepoWithoutCategoryLookup) FindByID(ctx context.Context, id string) (*catalog.Product, error) {
@@ -1063,7 +1119,8 @@ func TestProductAdminHandler_Update_Type(t *testing.T) {
 		},
 	}
 	h := admin.NewProductAdminHandler(repo, testAdminBus()).
-		WithBundleComponents(&mockBundleComponentGuard{})
+		WithBundleComponents(&mockBundleComponentGuard{}).
+		WithTxStarter(adminFakeTxDBConn())
 
 	body := jsonBody(t, map[string]interface{}{"type": "downloadable"})
 	rec := httptest.NewRecorder()
@@ -1092,7 +1149,8 @@ func TestProductAdminHandler_Update_TypeChangeBundleWithComponentsRejected(t *te
 		},
 	}
 	h := admin.NewProductAdminHandler(repo, testAdminBus()).
-		WithBundleComponents(&mockBundleComponentGuard{bundleCount: 2})
+		WithBundleComponents(&mockBundleComponentGuard{bundleCount: 2}).
+		WithTxStarter(adminFakeTxDBConn())
 
 	body := jsonBody(t, map[string]interface{}{"type": "simple"})
 	rec := httptest.NewRecorder()
@@ -1121,7 +1179,8 @@ func TestProductAdminHandler_Update_TypeChangeUsedAsComponentRejected(t *testing
 		},
 	}
 	h := admin.NewProductAdminHandler(repo, testAdminBus()).
-		WithBundleComponents(&mockBundleComponentGuard{componentCount: 1})
+		WithBundleComponents(&mockBundleComponentGuard{componentCount: 1}).
+		WithTxStarter(adminFakeTxDBConn())
 
 	body := jsonBody(t, map[string]interface{}{"type": "grouped"})
 	rec := httptest.NewRecorder()
@@ -1132,6 +1191,39 @@ func TestProductAdminHandler_Update_TypeChangeUsedAsComponentRejected(t *testing
 		t.Fatalf("status = %d, want 422; body: %s", rec.Code, rec.Body.String())
 	}
 	if !strings.Contains(rec.Body.String(), "used as a bundle component") {
+		t.Fatalf("body = %s", rec.Body.String())
+	}
+}
+
+func TestProductAdminHandler_Update_TypeChangeUsesLockedType(t *testing.T) {
+	repo := &mockAdminProductRepo{
+		findByIDFn: func(_ context.Context, id string) (*catalog.Product, error) {
+			return &catalog.Product{
+				ID: id, Name: "Part", Slug: "part", Status: catalog.StatusDraft, Type: catalog.TypeSimple,
+				VisibilityModes: catalog.DefaultVisibilityAxes(),
+			}, nil
+		},
+		lockForUpdateFn: func(context.Context, string) (catalog.Type, error) {
+			return catalog.TypeBundle, nil
+		},
+		updateFn: func(_ context.Context, _ *catalog.Product) error {
+			t.Fatal("Update must not run")
+			return nil
+		},
+	}
+	h := admin.NewProductAdminHandler(repo, testAdminBus()).
+		WithBundleComponents(&mockBundleComponentGuard{bundleCount: 2}).
+		WithTxStarter(adminFakeTxDBConn())
+
+	body := jsonBody(t, map[string]interface{}{"type": "grouped"})
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("PUT", "/api/v1/admin/products/p1", body)
+	newAdminRouter(h).ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("status = %d, want 422; body: %s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "product has bundle components") {
 		t.Fatalf("body = %s", rec.Body.String())
 	}
 }
@@ -1151,7 +1243,8 @@ func TestProductAdminHandler_Update_TypeChangeBundleWithZeroComponentsAllowed(t 
 		},
 	}
 	h := admin.NewProductAdminHandler(repo, testAdminBus()).
-		WithBundleComponents(&mockBundleComponentGuard{})
+		WithBundleComponents(&mockBundleComponentGuard{}).
+		WithTxStarter(adminFakeTxDBConn())
 
 	body := jsonBody(t, map[string]interface{}{"type": "simple"})
 	rec := httptest.NewRecorder()
@@ -1181,7 +1274,8 @@ func TestProductAdminHandler_Update_TypeChangeLeafToLeafWhileUsedAsComponentAllo
 		},
 	}
 	h := admin.NewProductAdminHandler(repo, testAdminBus()).
-		WithBundleComponents(&mockBundleComponentGuard{componentCount: 1})
+		WithBundleComponents(&mockBundleComponentGuard{componentCount: 1}).
+		WithTxStarter(adminFakeTxDBConn())
 
 	body := jsonBody(t, map[string]interface{}{"type": "virtual"})
 	rec := httptest.NewRecorder()
@@ -1209,7 +1303,8 @@ func TestProductAdminHandler_Update_TypeChangeWithoutBundleRepoFailsClosed(t *te
 			return nil
 		},
 	}
-	h := admin.NewProductAdminHandler(repo, testAdminBus())
+	h := admin.NewProductAdminHandler(repo, testAdminBus()).
+		WithTxStarter(adminFakeTxDBConn())
 
 	body := jsonBody(t, map[string]interface{}{"type": "virtual"})
 	rec := httptest.NewRecorder()
@@ -1289,7 +1384,8 @@ func TestProductAdminHandler_Update_RequestInvalidType(t *testing.T) {
 		},
 	}
 	h := admin.NewProductAdminHandler(repo, testAdminBus()).
-		WithBundleComponents(&mockBundleComponentGuard{})
+		WithBundleComponents(&mockBundleComponentGuard{}).
+		WithTxStarter(adminFakeTxDBConn())
 
 	body := jsonBody(t, map[string]interface{}{"type": "kit"})
 	rec := httptest.NewRecorder()

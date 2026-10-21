@@ -513,7 +513,7 @@ func wireServeRuntime(cfg *config.Config, log logger.Logger, conn *sql.DB, repos
 	baseURL := cfg.Server.PublicBaseURL
 
 	// Composition pipelines (core SEO steps + plugin steps).
-	bundleService := catalogApp.NewBundleService(repos.productRepo, repos.bundleComponentRepo)
+	bundleService := catalogApp.NewBundleService(repos.productRepo, repos.bundleComponentRepo, conn)
 	reviewService := reviewsApp.NewService(repos.reviewRepo, repos.productRepo)
 	pdp := composition.NewPipeline[composition.ProductContext]()
 	pdp.AddStep(composition.ProductMetaStep{})
@@ -712,7 +712,8 @@ func wireServeRuntime(cfg *config.Config, log logger.Logger, conn *sql.DB, repos
 		WithVisibilityFacts(visibilityFacts)
 	productAdmin := admin.NewProductAdminHandlerWithAuditor(repos.productRepo, bus, sharedAuditor, log).
 		WithVisibilityFacts(adminVisibilityFacts, visibilityOpts, cfg.Catalog.Visibility.Enforce).
-		WithBundleComponents(repos.bundleComponentRepo)
+		WithBundleComponents(repos.bundleComponentRepo).
+		WithTxStarter(conn)
 	productTranslationAdmin := admin.NewProductTranslationAdminHandler(repos.productRepo, repos.contentTranslationRepo, sharedAuditor, log)
 	productPriceAdmin := admin.NewProductPriceAdminHandler(repos.productRepo, repos.variantRepo, repos.priceRepo, sharedAuditor, log)
 	productPriceAdmin.SetBus(bus) // PR-1036: price edits → search index update

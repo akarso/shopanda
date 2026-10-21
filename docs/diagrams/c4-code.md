@@ -388,6 +388,8 @@ classDiagram
 
     class PostgresProductRepo {
         -db *sql.DB
+        -tx *sql.Tx
+        +LockForUpdate(ctx, id) Type
     }
     class PostgresCartRepo {
         -db *sql.DB
@@ -403,6 +405,8 @@ classDiagram
     }
     class PostgresBundleComponentRepo {
         -db *sql.DB
+        -tx *sql.Tx
+        +WithTx(tx) BundleComponentRepository
     }
     class ManualPayProvider {
     }

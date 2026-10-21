@@ -82,7 +82,7 @@ C4Component
             Component(reindexHandler, "ReindexHandler", "Go", "Handles search.reindex jobs: scans ProductSource in batches, indexes via SearchEngine, updates search_index_runs progress incrementally")
             Component(reindexReconcileHandler, "ReconcileHandler", "Go", "Handles search.reindex.reconcile jobs: sweeps search_index_runs stuck processing past a staleness threshold, corrects any whose underlying job already reached a terminal status")
             Component(productSchemaRegistration, "ProductSchemaRegistration", "Go", "Registers product form and grid schemas with admin registry")
-            Component(bundleService, "BundleService", "Go", "Bundle composition (PR-1060): list, add, and remove component links. Components must be leaf types (simple, virtual, downloadable). ProductAdminHandler counts rows for type-change guards and fails closed when the repo is unwired.")
+            Component(bundleService, "BundleService", "Go", "Bundle composition (PR-1060): list, add, and remove component links. Add locks both product rows FOR UPDATE in one transaction before upsert. Components must be leaf types (simple, virtual, downloadable). ProductAdminHandler type changes take the same product lock, then count rows; it fails closed when the repo or tx starter is unwired.")
         }
 
         Boundary(infrastructure, "Infrastructure Layer (Adapters)") {

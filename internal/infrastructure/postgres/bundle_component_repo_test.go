@@ -25,6 +25,72 @@ func distinctOrderedUUIDs(t *testing.T) (low, high string) {
 	return b, a
 }
 
+func TestBundleComponentRepo_WithTx_RollbackInvisible(t *testing.T) {
+	db := testDB(t)
+	ensureProductsTable(t, db)
+	mustExec(t, db, "DELETE FROM bundle_components")
+	t.Cleanup(func() { mustExec(t, db, "DELETE FROM bundle_components") })
+
+	productRepo, err := postgres.NewProductRepo(db)
+	if err != nil {
+		t.Fatalf("NewProductRepo: %v", err)
+	}
+	repo, err := postgres.NewBundleComponentRepo(db)
+	if err != nil {
+		t.Fatalf("NewBundleComponentRepo: %v", err)
+	}
+	ctx := productRepoAdminCtx()
+	bundle := mustNewProduct(t, "Tx Bundle", "tx-bundle")
+	bundle.Type = catalog.TypeBundle
+	if err := productRepo.Create(ctx, &bundle); err != nil {
+		t.Fatalf("create bundle: %v", err)
+	}
+	component := mustNewProduct(t, "Tx Mug", "tx-mug")
+	if err := productRepo.Create(ctx, &component); err != nil {
+		t.Fatalf("create component: %v", err)
+	}
+	link, err := catalog.NewBundleComponent(bundle.ID, component.ID, 2)
+	if err != nil {
+		t.Fatalf("NewBundleComponent: %v", err)
+	}
+
+	tx, err := db.BeginTx(ctx, nil)
+	if err != nil {
+		t.Fatalf("BeginTx: %v", err)
+	}
+	if err := repo.WithTx(tx).Upsert(ctx, link); err != nil {
+		t.Fatalf("Upsert in tx: %v", err)
+	}
+	if err := tx.Rollback(); err != nil {
+		t.Fatalf("Rollback: %v", err)
+	}
+	list, err := repo.ListByBundleID(ctx, bundle.ID)
+	if err != nil {
+		t.Fatalf("ListByBundleID: %v", err)
+	}
+	if len(list) != 0 {
+		t.Fatalf("rolled-back upsert visible: %+v", list)
+	}
+
+	tx, err = db.BeginTx(ctx, nil)
+	if err != nil {
+		t.Fatalf("BeginTx: %v", err)
+	}
+	if err := repo.WithTx(tx).Upsert(ctx, link); err != nil {
+		t.Fatalf("Upsert in tx: %v", err)
+	}
+	if err := tx.Commit(); err != nil {
+		t.Fatalf("Commit: %v", err)
+	}
+	list, err = repo.ListByBundleID(ctx, bundle.ID)
+	if err != nil {
+		t.Fatalf("ListByBundleID after commit: %v", err)
+	}
+	if len(list) != 1 || list[0].Quantity != 2 {
+		t.Fatalf("committed list = %+v", list)
+	}
+}
+
 func TestBundleComponentRepo_NilDB(t *testing.T) {
 	_, err := postgres.NewBundleComponentRepo(nil)
 	if err == nil {
