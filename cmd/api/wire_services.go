@@ -115,6 +115,7 @@ type serveRuntime struct {
 	extensionValueService *extensionApp.ValueService
 	setupService          *setupApp.Service
 	bundleService         *catalogApp.BundleService
+	groupedService        *catalogApp.GroupedService
 
 	menuResolver    *cmsApp.MenuResolver
 	blockResolver   *cmsApp.BlockResolver
@@ -514,6 +515,7 @@ func wireServeRuntime(cfg *config.Config, log logger.Logger, conn *sql.DB, repos
 
 	// Composition pipelines (core SEO steps + plugin steps).
 	bundleService := catalogApp.NewBundleService(repos.productRepo, repos.bundleComponentRepo, conn)
+	groupedService := catalogApp.NewGroupedService(repos.productRepo, repos.groupedMemberRepo, conn)
 	reviewService := reviewsApp.NewService(repos.reviewRepo, repos.productRepo)
 	pdp := composition.NewPipeline[composition.ProductContext]()
 	pdp.AddStep(composition.ProductMetaStep{})
@@ -713,6 +715,7 @@ func wireServeRuntime(cfg *config.Config, log logger.Logger, conn *sql.DB, repos
 	productAdmin := admin.NewProductAdminHandlerWithAuditor(repos.productRepo, bus, sharedAuditor, log).
 		WithVisibilityFacts(adminVisibilityFacts, visibilityOpts, cfg.Catalog.Visibility.Enforce).
 		WithBundleComponents(repos.bundleComponentRepo).
+		WithGroupedMembers(repos.groupedMemberRepo).
 		WithTxStarter(conn)
 	productTranslationAdmin := admin.NewProductTranslationAdminHandler(repos.productRepo, repos.contentTranslationRepo, sharedAuditor, log)
 	productPriceAdmin := admin.NewProductPriceAdminHandler(repos.productRepo, repos.variantRepo, repos.priceRepo, sharedAuditor, log)
@@ -929,6 +932,7 @@ func wireServeRuntime(cfg *config.Config, log logger.Logger, conn *sql.DB, repos
 		extensionValueService:          extensionValueService,
 		setupService:                   setupService,
 		bundleService:                  bundleService,
+		groupedService:                 groupedService,
 		menuResolver:                   menuResolver,
 		blockResolver:                  blockResolver,
 		visibilityFacts:                visibilityFacts,

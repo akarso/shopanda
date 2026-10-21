@@ -49,18 +49,22 @@ func ensureProductsTable(t *testing.T, db *sql.DB) {
 	})
 }
 
-// deleteAllProducts removes bundle links before products. Component FKs are
-// ON DELETE RESTRICT, so a product delete fails while a link still points at it.
+// deleteAllProducts removes composition links before products. Bundle component
+// FKs are ON DELETE RESTRICT, so a product delete fails while a link still
+// points at it. Grouped membership FKs cascade, but rows are removed first so
+// cleanup does not depend on that.
 func deleteAllProducts(t *testing.T, db *sql.DB) {
 	t.Helper()
 	mustExec(t, db, "DELETE FROM bundle_components")
+	mustExec(t, db, "DELETE FROM grouped_members")
 	mustExec(t, db, "DELETE FROM products")
 }
 
-// deleteProductByID removes bundle links that reference productID, then the product row.
+// deleteProductByID removes composition links that reference productID, then the product row.
 func deleteProductByID(t *testing.T, db *sql.DB, productID string) {
 	t.Helper()
 	mustExec(t, db, "DELETE FROM bundle_components WHERE bundle_product_id = $1 OR component_product_id = $1", productID)
+	mustExec(t, db, "DELETE FROM grouped_members WHERE group_product_id = $1 OR member_product_id = $1", productID)
 	mustExec(t, db, "DELETE FROM products WHERE id = $1", productID)
 }
 

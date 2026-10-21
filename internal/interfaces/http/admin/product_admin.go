@@ -48,10 +48,22 @@ type txBundleComponentRepo interface {
 	WithTx(tx *sql.Tx) catalog.BundleComponentRepository
 }
 
+type groupedMemberTypeGuard interface {
+	CountByGroupID(ctx context.Context, groupProductID string) (int, error)
+	CountByMemberID(ctx context.Context, memberProductID string) (int, error)
+}
+
+// txGroupedMemberRepo is a grouped member repository that can bind to a transaction.
+// WithTx is implemented on the postgres adapter only.
+type txGroupedMemberRepo interface {
+	WithTx(tx *sql.Tx) catalog.GroupedMemberRepository
+}
+
 // ProductAdminHandler serves product write endpoints.
 type ProductAdminHandler struct {
 	repo             catalog.ProductRepository
 	bundleComponents bundleComponentTypeGuard
+	groupedMembers   groupedMemberTypeGuard
 	txStarter        txStarter
 	bus              *event.Bus
 	auditor          *admin.Auditor
@@ -137,6 +149,14 @@ func (h *ProductAdminHandler) WithBundleComponents(components bundleComponentTyp
 	return h
 }
 
+// WithGroupedMembers wires grouped membership counts for product type-change guards (PR-1061).
+// The field stays optional: updates that do not change type succeed when it is nil.
+// A type change with a nil guard fails closed. Membership counts do not affect Purchasable or visibility.
+func (h *ProductAdminHandler) WithGroupedMembers(members groupedMemberTypeGuard) *ProductAdminHandler {
+	h.groupedMembers = members
+	return h
+}
+
 // WithTxStarter wires the transaction beginner used when a product type change
 // must lock the product row. *sql.DB satisfies this. A type change with a nil
 // starter fails closed.
@@ -145,14 +165,19 @@ func (h *ProductAdminHandler) WithTxStarter(starter txStarter) *ProductAdminHand
 	return h
 }
 
-func (h *ProductAdminHandler) validateProductTypeChange(ctx context.Context, components bundleComponentTypeGuard, productID string, oldType, newType catalog.Type) error {
+func (h *ProductAdminHandler) validateProductTypeChange(ctx context.Context, components bundleComponentTypeGuard, members groupedMemberTypeGuard, productID string, oldType, newType catalog.Type) error {
 	if oldType == newType {
 		return nil
 	}
 	if components == nil {
 		return apperror.Internal("product admin: bundle component repository is not configured")
 	}
-	if oldType == catalog.TypeBundle && newType != catalog.TypeBundle {
+	if members == nil {
+		return apperror.Internal("product admin: grouped member repository is not configured")
+	}
+	// Row-gated: illicit component rows block a non-bundle target even when the
+	// locked type is not bundle (the stored type can be wrong).
+	if newType != catalog.TypeBundle {
 		n, err := components.CountByBundleID(ctx, productID)
 		if err != nil {
 			return fmt.Errorf("product admin: count bundle components: %w", err)
@@ -168,6 +193,26 @@ func (h *ProductAdminHandler) validateProductTypeChange(ctx context.Context, com
 		}
 		if n > 0 {
 			return apperror.Validation("cannot change type: product is used as a bundle component")
+		}
+	}
+	// Same rule for grouped membership. CountByGroupID > 0 blocks any target
+	// other than grouped, including when the locked type was never grouped.
+	if newType != catalog.TypeGrouped {
+		n, err := members.CountByGroupID(ctx, productID)
+		if err != nil {
+			return fmt.Errorf("product admin: count grouped members: %w", err)
+		}
+		if n > 0 {
+			return apperror.Validation("cannot change type: product has grouped members")
+		}
+	}
+	if newType.IsValid() && !newType.IsGroupedMemberLeafType() {
+		n, err := members.CountByMemberID(ctx, productID)
+		if err != nil {
+			return fmt.Errorf("product admin: count grouped member usage: %w", err)
+		}
+		if n > 0 {
+			return apperror.Validation("cannot change type: product is used as a grouped member")
 		}
 	}
 	return nil
@@ -671,6 +716,8 @@ func applyProductVisibilityAndAttributes(product *catalog.Product, req updatePro
 
 // updateProductWithTypeLock locks the product row, validates the type change
 // against that locked type, then writes every patched field in the same transaction.
+// Callers use it whenever the payload includes type, including when that value
+// matches the earlier FindByID. The locked row is the type that counts.
 func (h *ProductAdminHandler) updateProductWithTypeLock(ctx context.Context, product *catalog.Product, req updateProductRequest, newType catalog.Type) (before, after catalog.VisibilityAxes, changed bool, err error) {
 	if h.txStarter == nil {
 		return catalog.VisibilityAxes{}, catalog.VisibilityAxes{}, false, apperror.Internal("product admin: transaction starter is not configured")
@@ -706,7 +753,15 @@ func (h *ProductAdminHandler) updateProductWithTypeLock(ctx context.Context, pro
 		}
 		components = txComponents.WithTx(tx)
 	}
-	if err := h.validateProductTypeChange(ctx, components, product.ID, oldType, newType); err != nil {
+	members := h.groupedMembers
+	if h.groupedMembers != nil {
+		txMembers, ok := h.groupedMembers.(txGroupedMemberRepo)
+		if !ok {
+			return catalog.VisibilityAxes{}, catalog.VisibilityAxes{}, false, fmt.Errorf("product admin: grouped member repository does not support transactions")
+		}
+		members = txMembers.WithTx(tx)
+	}
+	if err := h.validateProductTypeChange(ctx, components, members, product.ID, oldType, newType); err != nil {
 		return catalog.VisibilityAxes{}, catalog.VisibilityAxes{}, false, err
 	}
 
@@ -823,8 +878,9 @@ func (h *ProductAdminHandler) Update() http.HandlerFunc {
 
 		var modesBefore, modes catalog.VisibilityAxes
 		visibilityModesChanged := false
-		typeChanges := newType != nil && *newType != product.Type
-		if typeChanges {
+		// Lock whenever type is present. Comparing only to the pre-lock FindByID
+		// would skip the guard when that read is stale and the payload repeats it.
+		if newType != nil {
 			var err error
 			modesBefore, modes, visibilityModesChanged, err = h.updateProductWithTypeLock(r.Context(), product, req, *newType)
 			if err != nil {
@@ -841,9 +897,6 @@ func (h *ProductAdminHandler) Update() http.HandlerFunc {
 				return
 			}
 		} else {
-			if newType != nil {
-				product.Type = *newType
-			}
 			var err error
 			modesBefore, modes, visibilityModesChanged, err = applyProductVisibilityAndAttributes(product, req)
 			if err != nil {
