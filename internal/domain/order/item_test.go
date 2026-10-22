@@ -26,6 +26,9 @@ func TestNewItem_Success(t *testing.T) {
 	if item.Quantity != 3 {
 		t.Errorf("Quantity = %d, want 3", item.Quantity)
 	}
+	if !item.Restockable {
+		t.Error("Restockable = false, want true (physical default)")
+	}
 }
 
 func TestNewItem_EmptyVariantID(t *testing.T) {

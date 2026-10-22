@@ -1,6 +1,14 @@
 package returns
 
-import "context"
+import (
+	"context"
+	"errors"
+)
+
+// ErrAlreadyRestocked is returned when a restock update matches no row
+// because restocked_at is already set. The caller rolls the transaction
+// back and treats the receive as an idempotent success.
+var ErrAlreadyRestocked = errors.New("return: already restocked")
 
 // Repository defines persistence for return requests.
 type Repository interface {

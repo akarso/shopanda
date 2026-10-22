@@ -219,7 +219,7 @@ func newStorefrontCheckoutService(carts *storefrontCartRepoStub, prices *storefr
 		checkoutApp.NewValidateCartStep(variants, products, cartApp.EmptyBundleComponents(), cartApp.PermissiveStock()),
 		checkoutApp.NewRecalculatePricingStep(pipeline),
 		checkoutApp.NewReserveInventoryStep(&storefrontCheckoutReservationRepoStub{}, products, variants, cartApp.EmptyBundleComponents()),
-		checkoutApp.NewCreateOrderStep(orders, variants, nil, nil),
+		checkoutApp.NewCreateOrderStep(orders, variants, nil, nil, products, cartApp.EmptyBundleComponents(), prices),
 		checkoutApp.NewSelectShippingStep(shippingReg, shipments),
 		checkoutApp.NewInitiatePaymentStep(payRegistry, payments),
 	}, bus, log)

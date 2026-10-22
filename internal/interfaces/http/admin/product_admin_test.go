@@ -139,23 +139,25 @@ func (m *mockAdminProductRepo) LockForUpdate(ctx context.Context, id string) (ca
 	return p.Type, nil
 }
 
-func (m *mockAdminProductRepo) LockTypeAndModes(ctx context.Context, id string) (catalog.Type, catalog.PricingMode, catalog.StockMode, error) {
+func (m *mockAdminProductRepo) LockTypeAndModes(ctx context.Context, id string) (catalog.Type, catalog.PricingMode, catalog.StockMode, bool, error) {
 	typ, err := m.LockForUpdate(ctx, id)
 	if err != nil {
-		return "", "", "", err
+		return "", "", "", false, err
 	}
 	if m.lockedType != "" {
 		typ = m.lockedType
 	}
 	product, err := m.FindByID(ctx, id)
 	if err != nil {
-		return "", "", "", err
+		return "", "", "", false, err
 	}
 	pricing := catalog.PricingMode("")
 	stock := catalog.StockMode("")
+	explode := false
 	if product != nil {
 		pricing = product.PricingMode
 		stock = product.StockMode
+		explode = product.ExplodeOrderLines
 	}
 	if m.lockedPricingMode != "" {
 		pricing = m.lockedPricingMode
@@ -163,7 +165,7 @@ func (m *mockAdminProductRepo) LockTypeAndModes(ctx context.Context, id string) 
 	if m.lockedStockMode != "" {
 		stock = m.lockedStockMode
 	}
-	return typ, pricing, stock, nil
+	return typ, pricing, stock, explode, nil
 }
 
 type mockBundleComponentGuard struct {

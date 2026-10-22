@@ -104,7 +104,7 @@ func TestCreateOrderStep_SnapshotsCartItemExtensions(t *testing.T) {
 	extRepo := newMemSnapshotValueRepo()
 	values := extensionapp.NewValueService(reg, extRepo)
 
-	step := checkout.NewCreateOrderStep(orderRepo, variantRepo, nil, values)
+	step := checkout.NewCreateOrderStep(orderRepo, variantRepo, nil, values, idleProducts(), idleComponents(), idlePrices())
 
 	cctx := checkout.NewContext("cart-1", "cust-1", "EUR")
 	attachCreateOrderInput(cctx)

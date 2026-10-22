@@ -2,7 +2,9 @@ package postgres_test
 
 import (
 	"context"
+	"errors"
 	"testing"
+	"time"
 
 	domainReturns "github.com/akarso/shopanda/internal/domain/returns"
 	"github.com/akarso/shopanda/internal/domain/shared"
@@ -99,5 +101,105 @@ func TestReturnRepo_FindByID_NotFound(t *testing.T) {
 	}
 	if got != nil {
 		t.Fatal("expected nil")
+	}
+}
+
+func TestReturnRepo_LockForRestock_SecondUpdateAlreadyRestocked(t *testing.T) {
+	db := testDB(t)
+	ensureProductsTable(t, db)
+	mustExec(t, db, "DELETE FROM order_return_items")
+	mustExec(t, db, "DELETE FROM order_returns")
+	t.Cleanup(func() {
+		mustExec(t, db, "DELETE FROM order_return_items")
+		mustExec(t, db, "DELETE FROM order_returns")
+		mustExec(t, db, "DELETE FROM order_items")
+		mustExec(t, db, "DELETE FROM orders")
+	})
+
+	orderRepo, err := postgres.NewOrderRepo(db)
+	if err != nil {
+		t.Fatalf("NewOrderRepo: %v", err)
+	}
+	repo, err := postgres.NewReturnRepo(db)
+	if err != nil {
+		t.Fatalf("NewReturnRepo: %v", err)
+	}
+	ctx := context.Background()
+
+	ord := mustNewOrder(t, "cust-1", "EUR")
+	if err := ord.Confirm(); err != nil {
+		t.Fatalf("Confirm: %v", err)
+	}
+	if err := ord.MarkPaid(); err != nil {
+		t.Fatalf("MarkPaid: %v", err)
+	}
+	if err := orderRepo.Save(ctx, &ord); err != nil {
+		t.Fatalf("Save order: %v", err)
+	}
+
+	item, err := domainReturns.NewItem("var-1", "SKU-001", "Test Product", 1, shared.MustNewMoney(1000, "EUR"))
+	if err != nil {
+		t.Fatalf("NewItem: %v", err)
+	}
+	ret, err := domainReturns.NewReturn(id.New(), ord.ID, ord.CustomerID, "damaged", "EUR", []domainReturns.Item{item})
+	if err != nil {
+		t.Fatalf("NewReturn: %v", err)
+	}
+	if err := ret.Approve(); err != nil {
+		t.Fatalf("Approve: %v", err)
+	}
+	if err := repo.Save(ctx, &ret); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+
+	tx, err := db.BeginTx(ctx, nil)
+	if err != nil {
+		t.Fatalf("BeginTx: %v", err)
+	}
+	bound, ok := repo.WithTx(tx).(*postgres.ReturnRepo)
+	if !ok {
+		t.Fatal("WithTx did not return *ReturnRepo")
+	}
+	locked, err := bound.LockForRestock(ctx, ret.ID)
+	if err != nil {
+		t.Fatalf("LockForRestock: %v", err)
+	}
+	if locked == nil || locked.RestockedAt != nil {
+		t.Fatalf("locked = %+v, want unrestocked return", locked)
+	}
+	if err := locked.MarkReceived(); err != nil {
+		t.Fatalf("MarkReceived: %v", err)
+	}
+	if err := bound.Update(ctx, locked); err != nil {
+		t.Fatalf("Update: %v", err)
+	}
+	if err := locked.RecordRestocked(time.Now().UTC()); err != nil {
+		t.Fatalf("RecordRestocked: %v", err)
+	}
+	if err := bound.UpdateIfUnrestocked(ctx, locked); err != nil {
+		t.Fatalf("UpdateIfUnrestocked: %v", err)
+	}
+	if err := tx.Commit(); err != nil {
+		t.Fatalf("Commit: %v", err)
+	}
+
+	tx2, err := db.BeginTx(ctx, nil)
+	if err != nil {
+		t.Fatalf("BeginTx 2: %v", err)
+	}
+	defer tx2.Rollback()
+	bound2, ok := repo.WithTx(tx2).(*postgres.ReturnRepo)
+	if !ok {
+		t.Fatal("WithTx did not return *ReturnRepo")
+	}
+	locked2, err := bound2.LockForRestock(ctx, ret.ID)
+	if err != nil {
+		t.Fatalf("LockForRestock 2: %v", err)
+	}
+	if locked2 == nil || locked2.RestockedAt == nil {
+		t.Fatal("second lock should see restocked_at")
+	}
+	if err := bound2.UpdateIfUnrestocked(ctx, locked2); !errors.Is(err, domainReturns.ErrAlreadyRestocked) {
+		t.Fatalf("UpdateIfUnrestocked = %v, want ErrAlreadyRestocked", err)
 	}
 }

@@ -577,10 +577,10 @@ func (priceImportProducts) FindByCategoryID(context.Context, string, int, int) (
 func (priceImportProducts) Create(context.Context, *catalog.Product) error { return nil }
 func (priceImportProducts) Update(context.Context, *catalog.Product) error { return nil }
 func (m priceImportProducts) WithTx(*sql.Tx) catalog.ProductRepository     { return m }
-func (m priceImportProducts) LockTypeAndModes(_ context.Context, id string) (catalog.Type, catalog.PricingMode, catalog.StockMode, error) {
+func (m priceImportProducts) LockTypeAndModes(_ context.Context, id string) (catalog.Type, catalog.PricingMode, catalog.StockMode, bool, error) {
 	p := m.products[id]
 	if p == nil {
-		return "", "", "", apperror.NotFound("product not found")
+		return "", "", "", false, apperror.NotFound("product not found")
 	}
 	mode := p.PricingMode
 	if mode == "" {
@@ -590,7 +590,7 @@ func (m priceImportProducts) LockTypeAndModes(_ context.Context, id string) (cat
 	if stock == "" {
 		stock = catalog.StockModeFixed
 	}
-	return p.Type, mode, stock, nil
+	return p.Type, mode, stock, p.ExplodeOrderLines, nil
 }
 
 type permissivePriceImportProducts struct{}
@@ -612,8 +612,8 @@ func (permissivePriceImportProducts) Update(context.Context, *catalog.Product) e
 func (permissivePriceImportProducts) WithTx(*sql.Tx) catalog.ProductRepository {
 	return permissivePriceImportProducts{}
 }
-func (permissivePriceImportProducts) LockTypeAndModes(context.Context, string) (catalog.Type, catalog.PricingMode, catalog.StockMode, error) {
-	return catalog.TypeSimple, catalog.PricingModeFixed, catalog.StockModeFixed, nil
+func (permissivePriceImportProducts) LockTypeAndModes(context.Context, string) (catalog.Type, catalog.PricingMode, catalog.StockMode, bool, error) {
+	return catalog.TypeSimple, catalog.PricingModeFixed, catalog.StockModeFixed, false, nil
 }
 
 func newTestPriceImporter(variants catalog.VariantRepository, prices pricing.PriceRepository, history pricing.PriceHistoryRepository, tx importer.TxStarter, bus *event.Bus) *importer.PriceImporter {
@@ -719,9 +719,9 @@ func (m *orderLockProducts) FindByCategoryID(context.Context, string, int, int) 
 func (m *orderLockProducts) Create(context.Context, *catalog.Product) error { return nil }
 func (m *orderLockProducts) Update(context.Context, *catalog.Product) error { return nil }
 func (m *orderLockProducts) WithTx(*sql.Tx) catalog.ProductRepository       { return m }
-func (m *orderLockProducts) LockTypeAndModes(context.Context, string) (catalog.Type, catalog.PricingMode, catalog.StockMode, error) {
+func (m *orderLockProducts) LockTypeAndModes(context.Context, string) (catalog.Type, catalog.PricingMode, catalog.StockMode, bool, error) {
 	*m.order = append(*m.order, "lock")
-	return m.lockedType, m.lockedMode, catalog.StockModeFixed, nil
+	return m.lockedType, m.lockedMode, catalog.StockModeFixed, false, nil
 }
 
 type orderPriceRepo struct {

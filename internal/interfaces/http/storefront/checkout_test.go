@@ -25,6 +25,7 @@ import (
 	"github.com/akarso/shopanda/internal/domain/shared"
 	credit "github.com/akarso/shopanda/internal/domain/storecredit"
 	storefront "github.com/akarso/shopanda/internal/interfaces/http/storefront"
+	"github.com/akarso/shopanda/internal/platform/apperror"
 	"github.com/akarso/shopanda/internal/platform/auth/testhelper"
 	"github.com/akarso/shopanda/internal/platform/event"
 	"github.com/akarso/shopanda/internal/platform/id"
@@ -104,8 +105,24 @@ func (r *stubCheckoutVariantRepo) FindBySKU(_ context.Context, _ string) (*catal
 func (r *stubCheckoutVariantRepo) FindBySKUs(_ context.Context, _ []string) (map[string]*catalog.Variant, error) {
 	return map[string]*catalog.Variant{}, nil
 }
-func (r *stubCheckoutVariantRepo) ListByProductID(_ context.Context, _ string, _, _ int) ([]catalog.Variant, error) {
-	return nil, nil
+func (r *stubCheckoutVariantRepo) ListByProductID(_ context.Context, productID string, offset, limit int) ([]catalog.Variant, error) {
+	all := make([]catalog.Variant, 0, len(r.variants))
+	for _, v := range r.variants {
+		if v != nil && v.ProductID == productID {
+			all = append(all, *v)
+		}
+	}
+	if offset < 0 {
+		offset = 0
+	}
+	if offset >= len(all) {
+		return []catalog.Variant{}, nil
+	}
+	all = all[offset:]
+	if limit > 0 && limit < len(all) {
+		all = all[:limit]
+	}
+	return all, nil
 }
 func (r *stubCheckoutVariantRepo) ListByProductIDs(ctx context.Context, productIDs []string, limitPerProduct int) (map[string][]catalog.Variant, error) {
 	return testutil.ListByProductIDsFromList(ctx, r.ListByProductID, productIDs, limitPerProduct)
@@ -119,12 +136,21 @@ func (r *stubCheckoutVariantRepo) WithTx(_ *sql.Tx) catalog.VariantRepository {
 
 // stubCheckoutReservationRepo ────────────────────────────────────────────
 
-type stubCheckoutReservationRepo struct{}
+type stubCheckoutReservationRepo struct {
+	reserved []string
+	released []string
+}
 
-func (r *stubCheckoutReservationRepo) Reserve(_ context.Context, _ *inventory.Reservation) error {
+func (r *stubCheckoutReservationRepo) Reserve(_ context.Context, res *inventory.Reservation) error {
+	if res != nil {
+		r.reserved = append(r.reserved, res.ID)
+	}
 	return nil
 }
-func (r *stubCheckoutReservationRepo) Release(_ context.Context, _ string) error { return nil }
+func (r *stubCheckoutReservationRepo) Release(_ context.Context, id string) error {
+	r.released = append(r.released, id)
+	return nil
+}
 func (r *stubCheckoutReservationRepo) Confirm(_ context.Context, _ string) error { return nil }
 func (r *stubCheckoutReservationRepo) FindByID(_ context.Context, _ string) (*inventory.Reservation, error) {
 	return nil, nil
@@ -387,7 +413,7 @@ func checkoutBuild(creditRepo *stubCheckoutStoreCreditRepo, withPayment bool) (*
 	validateStep := checkoutApp.NewValidateCartStep(variants, &mockStorefrontRepo{}, cartApp.EmptyBundleComponents(), cartApp.PermissiveStock())
 	pricingStep := checkoutApp.NewRecalculatePricingStep(pipeline)
 	reserveStep := checkoutApp.NewReserveInventoryStep(reservations, &mockStorefrontRepo{}, variants, cartApp.EmptyBundleComponents())
-	createOrderStep := checkoutApp.NewCreateOrderStep(orders, variants, creditSvc, nil)
+	createOrderStep := checkoutApp.NewCreateOrderStep(orders, variants, creditSvc, nil, &mockStorefrontRepo{}, cartApp.EmptyBundleComponents(), prices)
 
 	steps := []checkoutApp.Step{
 		validateStep,
@@ -740,5 +766,129 @@ func TestCheckoutHandler_StartCheckout_FullStoreCreditZeroPayable(t *testing.T) 
 	}
 	if credits.balanceFor("cust-1", "EUR") != 2000 {
 		t.Errorf("balance cust-1/EUR = %d, want 2000", credits.balanceFor("cust-1", "EUR"))
+	}
+}
+
+// stubCheckoutBundleComponents is a one-bundle component list for checkout HTTP tests.
+type stubCheckoutBundleComponents struct {
+	rows []catalog.BundleComponent
+}
+
+func (s stubCheckoutBundleComponents) ListByBundleID(_ context.Context, bundleProductID string) ([]catalog.BundleComponent, error) {
+	out := make([]catalog.BundleComponent, 0)
+	for _, row := range s.rows {
+		if row.BundleProductID == bundleProductID {
+			out = append(out, row)
+		}
+	}
+	return out, nil
+}
+
+func (stubCheckoutBundleComponents) CountByBundleID(context.Context, string) (int, error) {
+	return 0, nil
+}
+func (stubCheckoutBundleComponents) CountByComponentID(context.Context, string) (int, error) {
+	return 0, nil
+}
+func (stubCheckoutBundleComponents) Upsert(context.Context, *catalog.BundleComponent) error {
+	return nil
+}
+func (stubCheckoutBundleComponents) Remove(context.Context, string, string) error { return nil }
+
+// TestCheckoutHandler_StartCheckout_ExplodeValidationReleasesReservations
+// drives POST /api/v1/checkout through the same workflow the handler uses.
+// The bundle explodes, the component total does not match the priced cart
+// line, and the reservation taken before that failure is released.
+func TestCheckoutHandler_StartCheckout_ExplodeValidationReleasesReservations(t *testing.T) {
+	carts := newStubCheckoutCartRepo()
+	variants := newStubCheckoutVariantRepo()
+	prices := newStubCheckoutPriceRepo()
+	reservations := &stubCheckoutReservationRepo{}
+	orders := &stubCheckoutOrderRepo{}
+	products := &mockStorefrontRepo{
+		findByIDFn: func(_ context.Context, id string) (*catalog.Product, error) {
+			switch id {
+			case "prod-bundle":
+				return &catalog.Product{
+					ID:                "prod-bundle",
+					Status:            catalog.StatusActive,
+					Type:              catalog.TypeBundle,
+					PricingMode:       catalog.PricingModeDynamic,
+					StockMode:         catalog.StockModeDynamic,
+					ExplodeOrderLines: true,
+				}, nil
+			case "prod-leaf":
+				return &catalog.Product{
+					ID:          "prod-leaf",
+					Status:      catalog.StatusActive,
+					Type:        catalog.TypeSimple,
+					PricingMode: catalog.PricingModeFixed,
+					StockMode:   catalog.StockModeFixed,
+				}, nil
+			default:
+				return nil, nil
+			}
+		},
+	}
+	link, err := catalog.NewBundleComponent("prod-bundle", "prod-leaf", 1)
+	if err != nil {
+		t.Fatalf("component: %v", err)
+	}
+	components := stubCheckoutBundleComponents{rows: []catalog.BundleComponent{*link}}
+
+	cartID := id.New()
+	c, _ := cart.NewCart(cartID, "EUR")
+	_ = c.SetCustomerID("cust-1")
+	_ = c.AddItem("var-bundle", 2, shared.MustNewMoney(1000, "EUR"))
+	carts.Save(context.Background(), &c)
+	variants.set("var-bundle", "prod-bundle", "SKU-BUNDLE", "Bundle")
+	variants.set("var-leaf", "prod-leaf", "SKU-LEAF", "Leaf")
+	// Legacy base price keeps the cart line at 1000. The leaf is 400, so the
+	// exploded total (800) does not match the priced line (2000).
+	prices.set("var-bundle", "EUR", 1000)
+	prices.set("var-leaf", "EUR", 400)
+
+	log := checkoutTestLogger()
+	bus := event.NewBus(log)
+	pipeline := pricing.NewPipeline(
+		appPricing.NewBasePriceStepLegacy(prices),
+		pricing.NewFinalizeStep(),
+	)
+	steps := []checkoutApp.Step{
+		checkoutApp.NewValidateCartStep(variants, products, components, cartApp.PermissiveStock()),
+		checkoutApp.NewRecalculatePricingStep(pipeline),
+		checkoutApp.NewReserveInventoryStep(reservations, products, variants, components),
+		checkoutApp.NewCreateOrderStep(orders, variants, nil, nil, products, components, prices).
+			WithReservations(reservations),
+	}
+	svc := checkoutApp.NewService(carts, checkoutApp.NewWorkflow(steps, bus, log), log)
+	mux := http.NewServeMux()
+	mux.Handle("POST /api/v1/checkout", storefront.NewCheckoutHandler(svc, nil).StartCheckout())
+
+	body := `{"cart_id":"` + cartID + `","address":` + checkoutAddressJSON() + `}`
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("POST", "/api/v1/checkout", strings.NewReader(body))
+	req = testhelper.CustomerRequest(req, "cust-1")
+	mux.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("status = %d, want %d; body: %s", rec.Code, http.StatusUnprocessableEntity, rec.Body.String())
+	}
+	resp := parseCheckoutBody(t, rec)
+	errBody, ok := resp["error"].(map[string]interface{})
+	if !ok {
+		t.Fatalf("error body = %#v", resp["error"])
+	}
+	if errBody["message"] != checkoutApp.OrderLinesCouldNotBeCreatedMessage {
+		t.Fatalf("message = %v, want %q; body: %s", errBody["message"], checkoutApp.OrderLinesCouldNotBeCreatedMessage, rec.Body.String())
+	}
+	if errBody["code"] != string(apperror.CodeValidation) {
+		t.Fatalf("code = %v, want %q", errBody["code"], apperror.CodeValidation)
+	}
+	if orders.saved != nil {
+		t.Fatal("order was saved after explode validation failed")
+	}
+	if len(reservations.reserved) != 1 || len(reservations.released) != 1 || reservations.released[0] != reservations.reserved[0] {
+		t.Fatalf("reserved = %v released = %v, want the one reservation released", reservations.reserved, reservations.released)
 	}
 }
