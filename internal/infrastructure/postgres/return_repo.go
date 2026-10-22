@@ -227,16 +227,21 @@ func (r *ReturnRepo) queryReturnsWithItems(ctx context.Context, q string, args .
 	return list, nil
 }
 
-// Update persists status transitions and timestamps.
+// Update persists a status transition only while the row is still in
+// StoredStatus. restocked_at and refunded_at keep a value that is already
+// stored, so a stale transition cannot clear them.
 func (r *ReturnRepo) Update(ctx context.Context, ret *domainReturns.Return) error {
 	if ret == nil {
 		return fmt.Errorf("return_repo: update: return must not be nil")
 	}
 	const q = `UPDATE order_returns
-		SET status = $1, restocked_at = $2, refunded_at = $3, updated_at = $4
-		WHERE id = $5`
+		SET status = $1,
+			restocked_at = COALESCE(restocked_at, $2),
+			refunded_at = COALESCE(refunded_at, $3),
+			updated_at = $4
+		WHERE id = $5 AND status = $6`
 	result, err := r.exec(ctx, q,
-		string(ret.Status()), nullTime(ret.RestockedAt), nullTime(ret.RefundedAt), ret.UpdatedAt, ret.ID,
+		string(ret.Status()), nullTime(ret.RestockedAt), nullTime(ret.RefundedAt), ret.UpdatedAt, ret.ID, string(ret.StoredStatus()),
 	)
 	if err != nil {
 		return fmt.Errorf("return_repo: update: %w", err)
@@ -246,8 +251,17 @@ func (r *ReturnRepo) Update(ctx context.Context, ret *domainReturns.Return) erro
 		return fmt.Errorf("return_repo: update rows: %w", err)
 	}
 	if n == 0 {
-		return fmt.Errorf("return_repo: update: not found")
+		var one int
+		err := r.queryRow(ctx, `SELECT 1 FROM order_returns WHERE id = $1`, ret.ID).Scan(&one)
+		if errors.Is(err, sql.ErrNoRows) {
+			return fmt.Errorf("return_repo: update: not found")
+		}
+		if err != nil {
+			return fmt.Errorf("return_repo: update status: %w", err)
+		}
+		return domainReturns.ErrStatusConflict
 	}
+	ret.AcceptStoredStatus()
 	return nil
 }
 
@@ -262,7 +276,10 @@ func (r *ReturnRepo) UpdateIfUnrestocked(ctx context.Context, ret *domainReturns
 		return fmt.Errorf("return_repo: update restock: transaction required")
 	}
 	const q = `UPDATE order_returns
-		SET status = $1, restocked_at = $2, refunded_at = $3, updated_at = $4
+		SET status = $1,
+			restocked_at = COALESCE(restocked_at, $2),
+			refunded_at = COALESCE(refunded_at, $3),
+			updated_at = $4
 		WHERE id = $5 AND restocked_at IS NULL`
 	result, err := r.tx.ExecContext(ctx, q,
 		string(ret.Status()), nullTime(ret.RestockedAt), nullTime(ret.RefundedAt), ret.UpdatedAt, ret.ID,
@@ -324,6 +341,13 @@ func (r *ReturnRepo) loadItemsBatch(ctx context.Context, returnIDs []string) (ma
 		return nil, fmt.Errorf("return_repo: item rows: %w", err)
 	}
 	return out, nil
+}
+
+func (r *ReturnRepo) queryRow(ctx context.Context, q string, args ...interface{}) *sql.Row {
+	if r.tx != nil {
+		return r.tx.QueryRowContext(ctx, q, args...)
+	}
+	return r.db.QueryRowContext(ctx, q, args...)
 }
 
 func (r *ReturnRepo) query(ctx context.Context, q string, args ...interface{}) (*sql.Rows, error) {

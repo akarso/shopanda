@@ -40,17 +40,21 @@ func (s Status) IsTerminal() bool {
 
 // Return is a return merchandise authorization linked to an order.
 type Return struct {
-	ID          string
-	OrderID     string
-	CustomerID  string
-	Reason      string
-	status      Status
-	Currency    string
-	items       []Item
-	RestockedAt *time.Time
-	RefundedAt  *time.Time
-	CreatedAt   time.Time
-	UpdatedAt   time.Time
+	ID         string
+	OrderID    string
+	CustomerID string
+	Reason     string
+	status     Status
+	// storedStatus is the status last loaded or last successfully written.
+	// Transitions change status and leave storedStatus in place so Update
+	// can require the row to still be in that state.
+	storedStatus Status
+	Currency     string
+	items        []Item
+	RestockedAt  *time.Time
+	RefundedAt   *time.Time
+	CreatedAt    time.Time
+	UpdatedAt    time.Time
 }
 
 // NewReturn creates a return in requested status.
@@ -86,15 +90,16 @@ func NewReturn(id, orderID, customerID, reason, currency string, items []Item) (
 
 	now := time.Now().UTC()
 	return Return{
-		ID:         id,
-		OrderID:    orderID,
-		CustomerID: customerID,
-		Reason:     reason,
-		status:     StatusRequested,
-		Currency:   currency,
-		items:      cp,
-		CreatedAt:  now,
-		UpdatedAt:  now,
+		ID:           id,
+		OrderID:      orderID,
+		CustomerID:   customerID,
+		Reason:       reason,
+		status:       StatusRequested,
+		storedStatus: StatusRequested,
+		Currency:     currency,
+		items:        cp,
+		CreatedAt:    now,
+		UpdatedAt:    now,
 	}, nil
 }
 
@@ -108,6 +113,22 @@ func (r Return) Items() []Item {
 // Status returns the current return status.
 func (r Return) Status() Status {
 	return r.status
+}
+
+// StoredStatus is the status last read from persistence, or the status of a
+// return that has not been saved yet. Approve, Reject, Cancel, MarkReceived,
+// and MarkRefunded do not change it.
+func (r Return) StoredStatus() Status {
+	return r.storedStatus
+}
+
+// AcceptStoredStatus records that persistence now has Status. Call it only
+// after a successful status write.
+func (r *Return) AcceptStoredStatus() {
+	if r == nil {
+		return
+	}
+	r.storedStatus = r.status
 }
 
 // TotalAmount sums line totals for refund/restock calculations.
@@ -209,6 +230,7 @@ func (r *Return) SetStatusFromDB(s string) error {
 		return errors.New("return: invalid status from db: " + s)
 	}
 	r.status = status
+	r.storedStatus = status
 	return nil
 }
 

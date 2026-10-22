@@ -177,8 +177,8 @@ func (s *Service) Approve(ctx context.Context, returnID string) (*domainReturns.
 	if err := ret.Approve(); err != nil {
 		return nil, apperror.Validation(err.Error())
 	}
-	if err := s.returns.Update(ctx, ret); err != nil {
-		return nil, fmt.Errorf("returns: approve update: %w", err)
+	if err := persistReturnUpdate(s.returns.Update(ctx, ret), "approve"); err != nil {
+		return nil, err
 	}
 	s.publish(ctx, domainReturns.EventReturnApproved, *ret)
 	return ret, nil
@@ -193,8 +193,8 @@ func (s *Service) Reject(ctx context.Context, returnID string) (*domainReturns.R
 	if err := ret.Reject(); err != nil {
 		return nil, apperror.Validation(err.Error())
 	}
-	if err := s.returns.Update(ctx, ret); err != nil {
-		return nil, fmt.Errorf("returns: reject update: %w", err)
+	if err := persistReturnUpdate(s.returns.Update(ctx, ret), "reject"); err != nil {
+		return nil, err
 	}
 	s.publish(ctx, domainReturns.EventReturnRejected, *ret)
 	return ret, nil
@@ -209,8 +209,8 @@ func (s *Service) Cancel(ctx context.Context, returnID string) (*domainReturns.R
 	if err := ret.Cancel(); err != nil {
 		return nil, apperror.Validation(err.Error())
 	}
-	if err := s.returns.Update(ctx, ret); err != nil {
-		return nil, fmt.Errorf("returns: cancel update: %w", err)
+	if err := persistReturnUpdate(s.returns.Update(ctx, ret), "cancel"); err != nil {
+		return nil, err
 	}
 	s.publish(ctx, domainReturns.EventReturnCancelled, *ret)
 	return ret, nil
@@ -315,8 +315,8 @@ func (s *Service) Receive(ctx context.Context, returnID string) (*domainReturns.
 		if err := locked.MarkReceived(); err != nil {
 			return nil, apperror.Validation(err.Error())
 		}
-		if err := boundReturns.Update(ctx, locked); err != nil {
-			return nil, fmt.Errorf("returns: receive update: %w", err)
+		if err := persistReturnUpdate(boundReturns.Update(ctx, locked), "receive"); err != nil {
+			return nil, err
 		}
 	}
 
@@ -393,8 +393,8 @@ func (s *Service) Refund(ctx context.Context, returnID string) (*domainReturns.R
 	if err := ret.MarkRefunded(now); err != nil {
 		return nil, apperror.Validation(err.Error())
 	}
-	if err := s.returns.Update(ctx, ret); err != nil {
-		return nil, fmt.Errorf("returns: refund update: %w", err)
+	if err := persistReturnUpdate(s.returns.Update(ctx, ret), "refund"); err != nil {
+		return nil, err
 	}
 
 	if s.refunder != nil && p.ProviderRef != "" {
@@ -533,6 +533,18 @@ func (s *Service) assertOrderCustomer(ctx context.Context, orderID, customerID s
 		return apperror.Forbidden("order not found")
 	}
 	return nil
+}
+
+// persistReturnUpdate maps a lost status check to a conflict. Other update
+// failures stay wrapped with op so the caller can see which transition failed.
+func persistReturnUpdate(err error, op string) error {
+	if err == nil {
+		return nil
+	}
+	if errors.Is(err, domainReturns.ErrStatusConflict) {
+		return apperror.Conflict("return status changed")
+	}
+	return fmt.Errorf("returns: %s update: %w", op, err)
 }
 
 func (s *Service) loadReturn(ctx context.Context, returnID string) (*domainReturns.Return, error) {

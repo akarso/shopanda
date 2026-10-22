@@ -2874,9 +2874,11 @@ components:
           type: boolean
           description: >-
             Same rule as create. Omitted on a bundle keeps the flag read from
-            the locked row. Changing `type` off `bundle` while omitting this
-            field stores false. Sending true without both dynamic modes is
-            rejected with 422.
+            the locked row while the product remains a bundle with both
+            pricing_mode and stock_mode dynamic. Omitting the field stores
+            false when `type` changes off `bundle`, or when a pricing_mode or
+            stock_mode change leaves the bundle ineligible to explode. Sending
+            true without both dynamic modes is rejected with 422.
         visibility_modes:
           $ref: "#/components/schemas/VisibilityModesInput"
         attributes:
