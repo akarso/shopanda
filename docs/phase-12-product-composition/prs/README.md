@@ -18,7 +18,7 @@
 | PR-1061 | C | done | [Grouped domain model](PR-1061.md) |
 | PR-1062 | C | done | [Bundle/grouped pricing rollup](PR-1062.md) |
 | PR-1063 | C | done | [Stock rollup per type](PR-1063.md) |
-| PR-1064 | C | planned | [Order line explosion + returns integration](PR-1064.md) |
+| PR-1064 | C | done | [Order line explosion + returns integration](PR-1064.md) |
 | PR-1065 | C | planned | [Omnibus/VAT per component line](PR-1065.md) |
 | PR-1066 | C | planned | [Bundle/grouped admin API + CSV + GUI](PR-1066.md) |
 | PR-1067 | D | planned | [`LinkedProduct` catalog eligibility](PR-1067.md) |

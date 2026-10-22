@@ -97,7 +97,7 @@ func (fixedInventoryProduct) FindByCategoryID(context.Context, string, int, int)
 func (fixedInventoryProduct) Create(context.Context, *catalog.Product) error { return nil }
 func (fixedInventoryProduct) Update(context.Context, *catalog.Product) error { return nil }
 func (f fixedInventoryProduct) WithTx(*sql.Tx) catalog.ProductRepository     { return f }
-func (f fixedInventoryProduct) LockTypeAndModes(_ context.Context, id string) (catalog.Type, catalog.PricingMode, catalog.StockMode, error) {
+func (f fixedInventoryProduct) LockTypeAndModes(_ context.Context, id string) (catalog.Type, catalog.PricingMode, catalog.StockMode, bool, error) {
 	p := f.resolved(id)
 	typ := p.Type
 	pricing := p.PricingMode
@@ -114,7 +114,7 @@ func (f fixedInventoryProduct) LockTypeAndModes(_ context.Context, id string) (c
 	if stock == "" {
 		stock = catalog.StockModeFixed
 	}
-	return typ, pricing, stock, nil
+	return typ, pricing, stock, p.ExplodeOrderLines, nil
 }
 
 func newAdjustHandler(stock inventory.StockRepository, variants catalog.VariantRepository, products fixedInventoryProduct) *admin.InventoryAdminHandler {

@@ -2767,8 +2767,8 @@ components:
             `catalog.Product`, Go-serialized with no JSON tags — field names
             are the exported Go struct field names verbatim (PascalCase: `ID`,
             `Name`, `Slug`, `Description`, `Status`, `Type`, `PricingMode`,
-            `StockMode`, `VisibilityModes`, `Attributes`, `CreatedAt`,
-            `UpdatedAt`), not
+            `StockMode`, `ExplodeOrderLines`, `VisibilityModes`, `Attributes`,
+            `CreatedAt`, `UpdatedAt`), not
             the snake_case used by the rest of this response's `data` keys.
         category_ids:
           type: array
@@ -2825,6 +2825,14 @@ components:
             any other type is rejected with 422. An unknown token is rejected.
             Grouped parents have no parent stock.
           enum: [fixed, dynamic]
+        explode_order_lines:
+          type: boolean
+          description: >-
+            When true, checkout writes one order line per required component
+            and drops the bundle parent line. Allowed only when `type` is
+            `bundle` and both `pricing_mode` and `stock_mode` are `dynamic`.
+            Omit to default to false. Sending true for any other combination
+            is rejected with 422.
         visibility_modes:
           $ref: "#/components/schemas/VisibilityModesInput"
         attributes:
@@ -2862,6 +2870,15 @@ components:
             this field stores `fixed`. Sending `dynamic` for a non-bundle is
             rejected with 422.
           enum: [fixed, dynamic]
+        explode_order_lines:
+          type: boolean
+          description: >-
+            Same rule as create. Omitted on a bundle keeps the flag read from
+            the locked row while the product remains a bundle with both
+            pricing_mode and stock_mode dynamic. Omitting the field stores
+            false when `type` changes off `bundle`, or when a pricing_mode or
+            stock_mode change leaves the bundle ineligible to explode. Sending
+            true without both dynamic modes is rejected with 422.
         visibility_modes:
           $ref: "#/components/schemas/VisibilityModesInput"
         attributes:

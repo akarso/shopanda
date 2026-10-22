@@ -2,7 +2,11 @@ package returns
 
 import (
 	"context"
+	"database/sql"
+	"errors"
 	"fmt"
+	"math"
+	"sort"
 	"time"
 
 	"github.com/akarso/shopanda/internal/domain/catalog"
@@ -17,16 +21,54 @@ import (
 	"github.com/akarso/shopanda/internal/platform/logger"
 )
 
+// TxStarter begins the transaction that commits MarkReceived, restock, and
+// RestockedAt together. *sql.DB satisfies it.
+type TxStarter interface {
+	BeginTx(ctx context.Context, opts *sql.TxOptions) (*sql.Tx, error)
+}
+
+type txReturnRepo interface {
+	domainReturns.Repository
+	WithTx(tx *sql.Tx) domainReturns.Repository
+}
+
+type txStockRepo interface {
+	inventory.StockRepository
+	WithTx(tx *sql.Tx) inventory.StockRepository
+}
+
+type lockingStockRepo interface {
+	GetStockForUpdate(ctx context.Context, variantID string) (inventory.StockEntry, error)
+}
+
+// restockReturnRepo locks the return row and records restock only while
+// restocked_at is null. Both methods run on the transaction-bound repo.
+type restockReturnRepo interface {
+	LockForRestock(ctx context.Context, id string) (*domainReturns.Return, error)
+	UpdateIfUnrestocked(ctx context.Context, ret *domainReturns.Return) error
+}
+
 // Service orchestrates the return (RMA) workflow.
 type Service struct {
-	returns  domainReturns.Repository
-	orders   order.OrderRepository
-	stock    inventory.StockRepository
-	variants catalog.VariantRepository
-	payments payment.PaymentRepository
-	refunder payment.Refunder
-	bus      *event.Bus
-	log      logger.Logger
+	returns   domainReturns.Repository
+	orders    order.OrderRepository
+	stock     inventory.StockRepository
+	variants  catalog.VariantRepository
+	payments  payment.PaymentRepository
+	refunder  payment.Refunder
+	bus       *event.Bus
+	log       logger.Logger
+	txStarter TxStarter
+}
+
+// WithTxStarter wires the transaction used by Receive. Without it, Receive
+// fails closed before any status or stock write.
+func (s *Service) WithTxStarter(starter TxStarter) *Service {
+	if s == nil {
+		return nil
+	}
+	s.txStarter = starter
+	return s
 }
 
 // NewService creates a return workflow service.
@@ -135,8 +177,8 @@ func (s *Service) Approve(ctx context.Context, returnID string) (*domainReturns.
 	if err := ret.Approve(); err != nil {
 		return nil, apperror.Validation(err.Error())
 	}
-	if err := s.returns.Update(ctx, ret); err != nil {
-		return nil, fmt.Errorf("returns: approve update: %w", err)
+	if err := persistReturnUpdate(s.returns.Update(ctx, ret), "approve"); err != nil {
+		return nil, err
 	}
 	s.publish(ctx, domainReturns.EventReturnApproved, *ret)
 	return ret, nil
@@ -151,8 +193,8 @@ func (s *Service) Reject(ctx context.Context, returnID string) (*domainReturns.R
 	if err := ret.Reject(); err != nil {
 		return nil, apperror.Validation(err.Error())
 	}
-	if err := s.returns.Update(ctx, ret); err != nil {
-		return nil, fmt.Errorf("returns: reject update: %w", err)
+	if err := persistReturnUpdate(s.returns.Update(ctx, ret), "reject"); err != nil {
+		return nil, err
 	}
 	s.publish(ctx, domainReturns.EventReturnRejected, *ret)
 	return ret, nil
@@ -167,14 +209,30 @@ func (s *Service) Cancel(ctx context.Context, returnID string) (*domainReturns.R
 	if err := ret.Cancel(); err != nil {
 		return nil, apperror.Validation(err.Error())
 	}
-	if err := s.returns.Update(ctx, ret); err != nil {
-		return nil, fmt.Errorf("returns: cancel update: %w", err)
+	if err := persistReturnUpdate(s.returns.Update(ctx, ret), "cancel"); err != nil {
+		return nil, err
 	}
 	s.publish(ctx, domainReturns.EventReturnCancelled, *ret)
 	return ret, nil
 }
 
 // Receive transitions approved → received and restocks inventory.
+//
+// Classification uses the order line's Restockable snapshot and runs before
+// the transaction so a missing order line fails with no MarkReceived and no
+// SetStock. Inside the transaction the return row is locked FOR UPDATE. If
+// RestockedAt is already set, the transaction rolls back and Receive returns
+// success without adding stock. Otherwise MarkReceived (when still approved),
+// every GetStockForUpdate + SetStock, and RecordRestocked commit together.
+// The restock update matches only while restocked_at IS NULL. Zero rows means
+// another writer won: this transaction rolls back and Receive returns the
+// stored return as an idempotent success.
+//
+// A row already stored as received with RestockedAt nil (the previous
+// non-transactional Receive could stop between those writes) still restocks
+// inside the same transaction and then sets RestockedAt. Do not retry those
+// legacy rows if stock was already incremented: this path cannot see which
+// lines the old Receive wrote. New failures do not land in that state.
 func (s *Service) Receive(ctx context.Context, returnID string) (*domainReturns.Return, error) {
 	ret, err := s.loadReturn(ctx, returnID)
 	if err != nil {
@@ -183,39 +241,131 @@ func (s *Service) Receive(ctx context.Context, returnID string) (*domainReturns.
 	if ret.RestockedAt != nil {
 		return ret, nil
 	}
-
-	now := time.Now().UTC()
-	if ret.Status() == domainReturns.StatusApproved {
-		if err := ret.MarkReceived(); err != nil {
-			return nil, apperror.Validation(err.Error())
-		}
-		if err := s.returns.Update(ctx, ret); err != nil {
-			return nil, fmt.Errorf("returns: receive update: %w", err)
-		}
-	} else if ret.Status() != domainReturns.StatusReceived {
+	if ret.Status() != domainReturns.StatusApproved && ret.Status() != domainReturns.StatusReceived {
 		return nil, apperror.Validation("return is not in a receivable state")
 	}
 
+	ord, err := s.orders.FindByID(ctx, ret.OrderID)
+	if err != nil {
+		return nil, fmt.Errorf("returns: find order: %w", err)
+	}
+	if ord == nil {
+		return nil, apperror.NotFound("order not found")
+	}
+	orderItems := indexOrderItems(ord.Items())
+	targets := make([]domainReturns.Item, 0, len(ret.Items()))
 	for _, item := range ret.Items() {
-		entry, err := s.stock.GetStock(ctx, item.VariantID)
+		line, ok := orderItems[item.VariantID]
+		if !ok {
+			return nil, apperror.Wrap(apperror.CodeValidation, "return line is not on the order", fmt.Errorf("variant %s", item.VariantID))
+		}
+		if line.Restockable {
+			targets = append(targets, item)
+		}
+	}
+	sort.Slice(targets, func(i, j int) bool {
+		return targets[i].VariantID < targets[j].VariantID
+	})
+
+	if s.txStarter == nil {
+		return nil, apperror.Internal("returns: transaction starter is required")
+	}
+	txReturns, ok := s.returns.(txReturnRepo)
+	if !ok {
+		return nil, apperror.Internal("returns: return repository does not support transactions")
+	}
+	txStock, ok := s.stock.(txStockRepo)
+	if !ok {
+		return nil, apperror.Internal("returns: stock repository does not support transactions")
+	}
+
+	tx, err := s.txStarter.BeginTx(ctx, nil)
+	if err != nil {
+		return nil, fmt.Errorf("returns: begin tx: %w", err)
+	}
+	defer tx.Rollback()
+
+	boundReturns := txReturns.WithTx(tx)
+	returnLocker, ok := boundReturns.(restockReturnRepo)
+	if !ok {
+		return nil, apperror.Internal("returns: return repository does not support restock locks")
+	}
+	boundStock := txStock.WithTx(tx)
+	stockLocker, ok := boundStock.(lockingStockRepo)
+	if !ok {
+		return nil, apperror.Internal("returns: stock repository does not support row locks")
+	}
+
+	locked, err := returnLocker.LockForRestock(ctx, ret.ID)
+	if err != nil {
+		return nil, fmt.Errorf("returns: lock return: %w", err)
+	}
+	if locked == nil {
+		return nil, apperror.NotFound("return not found")
+	}
+	if locked.RestockedAt != nil {
+		return locked, nil
+	}
+	if locked.Status() != domainReturns.StatusApproved && locked.Status() != domainReturns.StatusReceived {
+		return nil, apperror.Validation("return is not in a receivable state")
+	}
+
+	now := time.Now().UTC()
+	if locked.Status() == domainReturns.StatusApproved {
+		if err := locked.MarkReceived(); err != nil {
+			return nil, apperror.Validation(err.Error())
+		}
+		if err := persistReturnUpdate(boundReturns.Update(ctx, locked), "receive"); err != nil {
+			return nil, err
+		}
+	}
+
+	type restocked struct {
+		variantID string
+		onHand    int
+		delta     int
+	}
+	events := make([]restocked, 0, len(targets))
+	for _, item := range targets {
+		entry, err := stockLocker.GetStockForUpdate(ctx, item.VariantID)
 		if err != nil {
 			return nil, fmt.Errorf("returns: get stock: %w", err)
 		}
-		entry.Quantity += item.Quantity
-		entry.UpdatedAt = now
-		if err := s.stock.SetStock(ctx, &entry); err != nil {
+		next, err := addRestockQty(entry.Quantity, item.Quantity)
+		if err != nil {
 			return nil, fmt.Errorf("returns: restock: %w", err)
 		}
-		s.publishStockUpdated(ctx, item.VariantID, entry.Quantity, item.Quantity)
+		entry.Quantity = next
+		entry.UpdatedAt = now
+		if err := boundStock.SetStock(ctx, &entry); err != nil {
+			return nil, fmt.Errorf("returns: restock: %w", err)
+		}
+		events = append(events, restocked{variantID: item.VariantID, onHand: entry.Quantity, delta: item.Quantity})
 	}
-	if err := ret.RecordRestocked(now); err != nil {
+	if err := locked.RecordRestocked(now); err != nil {
 		return nil, apperror.Validation(err.Error())
 	}
-	if err := s.returns.Update(ctx, ret); err != nil {
+	if err := returnLocker.UpdateIfUnrestocked(ctx, locked); err != nil {
+		if errors.Is(err, domainReturns.ErrAlreadyRestocked) {
+			fresh, ferr := s.returns.FindByID(ctx, ret.ID)
+			if ferr != nil {
+				return nil, fmt.Errorf("returns: reload restocked: %w", ferr)
+			}
+			if fresh == nil {
+				return nil, apperror.NotFound("return not found")
+			}
+			return fresh, nil
+		}
 		return nil, fmt.Errorf("returns: receive restock update: %w", err)
 	}
-	s.publish(ctx, domainReturns.EventReturnReceived, *ret)
-	return ret, nil
+	if err := tx.Commit(); err != nil {
+		return nil, fmt.Errorf("returns: receive commit: %w", err)
+	}
+	for _, ev := range events {
+		s.publishStockUpdated(ctx, ev.variantID, ev.onHand, ev.delta)
+	}
+	s.publish(ctx, domainReturns.EventReturnReceived, *locked)
+	return locked, nil
 }
 
 // Refund transitions received → refunded and issues a provider refund when configured.
@@ -243,8 +393,8 @@ func (s *Service) Refund(ctx context.Context, returnID string) (*domainReturns.R
 	if err := ret.MarkRefunded(now); err != nil {
 		return nil, apperror.Validation(err.Error())
 	}
-	if err := s.returns.Update(ctx, ret); err != nil {
-		return nil, fmt.Errorf("returns: refund update: %w", err)
+	if err := persistReturnUpdate(s.returns.Update(ctx, ret), "refund"); err != nil {
+		return nil, err
 	}
 
 	if s.refunder != nil && p.ProviderRef != "" {
@@ -385,6 +535,18 @@ func (s *Service) assertOrderCustomer(ctx context.Context, orderID, customerID s
 	return nil
 }
 
+// persistReturnUpdate maps a lost status check to a conflict. Other update
+// failures stay wrapped with op so the caller can see which transition failed.
+func persistReturnUpdate(err error, op string) error {
+	if err == nil {
+		return nil
+	}
+	if errors.Is(err, domainReturns.ErrStatusConflict) {
+		return apperror.Conflict("return status changed")
+	}
+	return fmt.Errorf("returns: %s update: %w", op, err)
+}
+
 func (s *Service) loadReturn(ctx context.Context, returnID string) (*domainReturns.Return, error) {
 	if returnID == "" {
 		return nil, apperror.Validation("return id must not be empty")
@@ -475,6 +637,18 @@ func (s *Service) publish(ctx context.Context, name string, ret domainReturns.Re
 			"error":     err.Error(),
 		})
 	}
+}
+
+// addRestockQty adds a returned quantity onto on-hand stock. Both values are
+// non-negative; a sum past MaxInt is an error so Receive does not wrap.
+func addRestockQty(onHand, add int) (int, error) {
+	if onHand < 0 || add < 1 {
+		return 0, fmt.Errorf("quantity must be positive")
+	}
+	if onHand > math.MaxInt-add {
+		return 0, fmt.Errorf("quantity overflow")
+	}
+	return onHand + add, nil
 }
 
 // publishStockUpdated publishes inventory.EventStockUpdated for one

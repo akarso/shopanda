@@ -45,7 +45,7 @@ type txHistoryRepo interface {
 // lockingProductRepo locks type and pricing_mode on the transaction-bound repo.
 type lockingProductRepo interface {
 	catalog.ProductRepository
-	LockTypeAndModes(ctx context.Context, id string) (catalog.Type, catalog.PricingMode, catalog.StockMode, error)
+	LockTypeAndModes(ctx context.Context, id string) (catalog.Type, catalog.PricingMode, catalog.StockMode, bool, error)
 }
 
 // rowRejectError is a per-row validation failure. Import records it and
@@ -300,7 +300,7 @@ func (imp *PriceImporter) upsertWithHistory(ctx context.Context, p *pricing.Pric
 	if !ok {
 		return fmt.Errorf("product repository does not support row locks")
 	}
-	productType, pricingMode, _, err := locker.LockTypeAndModes(ctx, productID)
+	productType, pricingMode, _, _, err := locker.LockTypeAndModes(ctx, productID)
 	if err != nil {
 		if apperror.Is(err, apperror.CodeNotFound) {
 			return err

@@ -601,8 +601,10 @@ func wireServeRuntime(cfg *config.Config, log logger.Logger, conn *sql.DB, repos
 		WithVisibilityFacts(visibilityFacts, visibilityOpts)
 	recalculatePricingStep := checkoutApp.NewRecalculatePricingStep(pricingPipeline)
 	reserveInventoryStep := checkoutApp.NewReserveInventoryStep(repos.reservationRepo, repos.productRepo, repos.variantRepo, repos.bundleComponentRepo,
-		checkoutApp.WithStockEventPublishing(bus))
-	createOrderStep := checkoutApp.NewCreateOrderStep(repos.orderRepo, repos.variantRepo, storeCreditService, extensionValueService)
+		checkoutApp.WithStockEventPublishing(bus), checkoutApp.WithLogger(log))
+	createOrderStep := checkoutApp.NewCreateOrderStep(repos.orderRepo, repos.variantRepo, storeCreditService, extensionValueService, repos.productRepo, repos.bundleComponentRepo, repos.priceRepo).
+		WithReservations(repos.reservationRepo).
+		WithStockEventPublishing(bus, log)
 	selectShippingStep := checkoutApp.NewSelectShippingStep(shippingReg, repos.shippingRepo)
 	initiatePaymentStep := checkoutApp.NewInitiatePaymentStep(payRegistry, repos.paymentRepo)
 	checkoutSteps := []checkoutApp.Step{
@@ -774,7 +776,8 @@ func wireServeRuntime(cfg *config.Config, log logger.Logger, conn *sql.DB, repos
 		log.Info("payment.refund_handler_enabled", nil)
 	}
 
-	returnService := returnsApp.NewService(repos.returnRepo, repos.orderRepo, repos.stockRepo, repos.variantRepo, repos.paymentRepo, stripeRefunder, bus, log)
+	returnService := returnsApp.NewService(repos.returnRepo, repos.orderRepo, repos.stockRepo, repos.variantRepo, repos.paymentRepo, stripeRefunder, bus, log).
+		WithTxStarter(conn)
 	returnAdmin := admin.NewReturnAdminHandler(returnService, sharedAuditor)
 	returnAccount := storefront.NewReturnAccountHandler(returnService)
 	reviewHandler := storefront.NewReviewHandler(reviewService).

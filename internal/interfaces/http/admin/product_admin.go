@@ -42,7 +42,7 @@ type txProductRepo interface {
 // lockingProductRepo is a transaction-bound product repository that can lock a row.
 type lockingProductRepo interface {
 	catalog.ProductRepository
-	LockTypeAndModes(ctx context.Context, id string) (catalog.Type, catalog.PricingMode, catalog.StockMode, error)
+	LockTypeAndModes(ctx context.Context, id string) (catalog.Type, catalog.PricingMode, catalog.StockMode, bool, error)
 }
 
 // txBundleComponentRepo is a bundle component repository that can bind to a transaction.
@@ -669,27 +669,29 @@ func visibilityModesMap(axes catalog.VisibilityAxes) map[string]string {
 
 // createProductRequest is the JSON body for creating a product.
 type createProductRequest struct {
-	Name            string                  `json:"name"`
-	Slug            string                  `json:"slug"`
-	Description     string                  `json:"description"`
-	Type            string                  `json:"type"`
-	PricingMode     *string                 `json:"pricing_mode"`
-	StockMode       *string                 `json:"stock_mode"`
-	VisibilityModes *visibilityModesRequest `json:"visibility_modes"`
-	Attributes      map[string]interface{}  `json:"attributes"`
+	Name              string                  `json:"name"`
+	Slug              string                  `json:"slug"`
+	Description       string                  `json:"description"`
+	Type              string                  `json:"type"`
+	PricingMode       *string                 `json:"pricing_mode"`
+	StockMode         *string                 `json:"stock_mode"`
+	ExplodeOrderLines *bool                   `json:"explode_order_lines"`
+	VisibilityModes   *visibilityModesRequest `json:"visibility_modes"`
+	Attributes        map[string]interface{}  `json:"attributes"`
 }
 
 // updateProductRequest is the JSON body for updating a product.
 type updateProductRequest struct {
-	Name            *string                 `json:"name"`
-	Slug            *string                 `json:"slug"`
-	Description     *string                 `json:"description"`
-	Status          *string                 `json:"status"`
-	Type            *string                 `json:"type"`
-	PricingMode     *string                 `json:"pricing_mode"`
-	StockMode       *string                 `json:"stock_mode"`
-	VisibilityModes *visibilityModesRequest `json:"visibility_modes"`
-	Attributes      map[string]interface{}  `json:"attributes"`
+	Name              *string                 `json:"name"`
+	Slug              *string                 `json:"slug"`
+	Description       *string                 `json:"description"`
+	Status            *string                 `json:"status"`
+	Type              *string                 `json:"type"`
+	PricingMode       *string                 `json:"pricing_mode"`
+	StockMode         *string                 `json:"stock_mode"`
+	ExplodeOrderLines *bool                   `json:"explode_order_lines"`
+	VisibilityModes   *visibilityModesRequest `json:"visibility_modes"`
+	Attributes        map[string]interface{}  `json:"attributes"`
 }
 
 // Create handles POST /api/v1/admin/products.
@@ -742,6 +744,18 @@ func (h *ProductAdminHandler) Create() http.HandlerFunc {
 			return
 		}
 		if err := applyCreateStockMode(&product, req); err != nil {
+			h.auditor.LogAction(r.Context(), admin.AuditEntry{
+				AdminID:      adminID,
+				Action:       admin.AuditProductCreate,
+				ResourceType: "product",
+				Result:       "error",
+				Error:        err.Error(),
+				Details:      details,
+			})
+			httpshared.JSONError(w, err)
+			return
+		}
+		if err := applyCreateExplodeOrderLines(&product, req); err != nil {
 			h.auditor.LogAction(r.Context(), admin.AuditEntry{
 				AdminID:      adminID,
 				Action:       admin.AuditProductCreate,
@@ -899,6 +913,28 @@ func applyStockModePatch(product *catalog.Product, req updateProductRequest) err
 	return nil
 }
 
+func applyCreateExplodeOrderLines(product *catalog.Product, req createProductRequest) error {
+	value := false
+	if req.ExplodeOrderLines != nil {
+		value = *req.ExplodeOrderLines
+	}
+	if err := product.ApplyExplodeOrderLines(value, req.ExplodeOrderLines != nil); err != nil {
+		return apperror.Validation(err.Error())
+	}
+	return nil
+}
+
+func applyExplodeOrderLinesPatch(product *catalog.Product, req updateProductRequest) error {
+	value := false
+	if req.ExplodeOrderLines != nil {
+		value = *req.ExplodeOrderLines
+	}
+	if err := product.ApplyExplodeOrderLines(value, req.ExplodeOrderLines != nil); err != nil {
+		return apperror.Validation(err.Error())
+	}
+	return nil
+}
+
 func applyProductScalarPatch(product *catalog.Product, req updateProductRequest) error {
 	if req.Name != nil {
 		if *req.Name == "" {
@@ -943,8 +979,10 @@ func applyProductVisibilityAndAttributes(product *catalog.Product, req updatePro
 // change against that locked type, then writes every patched field in the same
 // transaction. Every persisting product update uses it, including a name-only
 // edit. newType nil keeps the locked type. Omitted pricing_mode and stock_mode
-// keep the locked row's modes; ApplyPricingMode and ApplyStockMode do not see
-// the earlier FindByID.
+// keep the locked row. An omitted explode_order_lines keeps the locked flag
+// only while the product is still allowed to explode; otherwise it is stored
+// false. ApplyPricingMode, ApplyStockMode, and ApplyExplodeOrderLines do not
+// see the earlier FindByID.
 func (h *ProductAdminHandler) updateProductWithTypeLock(ctx context.Context, product *catalog.Product, req updateProductRequest, newType *catalog.Type) (before, after catalog.VisibilityAxes, changed bool, err error) {
 	if h.txStarter == nil {
 		return catalog.VisibilityAxes{}, catalog.VisibilityAxes{}, false, apperror.Internal("product admin: transaction starter is not configured")
@@ -964,17 +1002,18 @@ func (h *ProductAdminHandler) updateProductWithTypeLock(ctx context.Context, pro
 	if !ok {
 		return catalog.VisibilityAxes{}, catalog.VisibilityAxes{}, false, fmt.Errorf("product admin: product repository does not support row locks")
 	}
-	oldType, lockedPricing, lockedStock, err := locker.LockTypeAndModes(ctx, product.ID)
+	oldType, lockedPricing, lockedStock, lockedExplode, err := locker.LockTypeAndModes(ctx, product.ID)
 	if err != nil {
 		if apperror.Is(err, apperror.CodeNotFound) {
 			return catalog.VisibilityAxes{}, catalog.VisibilityAxes{}, false, err
 		}
 		return catalog.VisibilityAxes{}, catalog.VisibilityAxes{}, false, fmt.Errorf("product admin: lock product: %w", err)
 	}
-	// Omitted pricing_mode and stock_mode defaults use the locked row, not the earlier FindByID.
+	// Omitted pricing_mode, stock_mode, and explode_order_lines defaults use the locked row, not the earlier FindByID.
 	product.Type = oldType
 	product.PricingMode = lockedPricing
 	product.StockMode = lockedStock
+	product.ExplodeOrderLines = lockedExplode
 
 	components := h.bundleComponents
 	if h.bundleComponents != nil {
@@ -1002,6 +1041,9 @@ func (h *ProductAdminHandler) updateProductWithTypeLock(ctx context.Context, pro
 		return catalog.VisibilityAxes{}, catalog.VisibilityAxes{}, false, err
 	}
 	if err := applyStockModePatch(product, req); err != nil {
+		return catalog.VisibilityAxes{}, catalog.VisibilityAxes{}, false, err
+	}
+	if err := applyExplodeOrderLinesPatch(product, req); err != nil {
 		return catalog.VisibilityAxes{}, catalog.VisibilityAxes{}, false, err
 	}
 	// Own-price rejection applies when this request changes type or mode.
@@ -1134,8 +1176,10 @@ func (h *ProductAdminHandler) Update() http.HandlerFunc {
 		var modesBefore, modes catalog.VisibilityAxes
 		visibilityModesChanged := false
 		// Always lock before persisting. An omitted type, pricing_mode, and
-		// stock_mode must be taken from the locked row. Writing the earlier
-		// FindByID snapshot would clobber a concurrent switch to dynamic.
+		// stock_mode are taken from the locked row. An omitted explode flag is
+		// cleared when the locked type and the patched modes are no longer
+		// allowed to explode. Writing the earlier FindByID snapshot would
+		// clobber a concurrent switch.
 		modesBefore, modes, visibilityModesChanged, err = h.updateProductWithTypeLock(r.Context(), product, req, newType)
 		if err != nil {
 			h.auditor.LogAction(r.Context(), admin.AuditEntry{

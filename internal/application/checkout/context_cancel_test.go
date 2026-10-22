@@ -321,7 +321,7 @@ func TestCreateOrderStep_SnapshotIgnoresCanceledRequestContext(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	orders := &cancelAfterSaveOrderRepo{cancel: cancel}
 	snap := &trackingSnapshotter{}
-	step := checkout.NewCreateOrderStep(orders, &mockVariantRepo037{variants: variantMap037("v1")}, nil, snap)
+	step := checkout.NewCreateOrderStep(orders, &mockVariantRepo037{variants: variantMap037("v1")}, nil, snap, idleProducts(), idleComponents(), idlePrices())
 
 	cctx := checkout.NewContext("cart-1", "cust-1", "EUR")
 	attachCreateOrderInput(cctx)

@@ -310,8 +310,8 @@ func (r *OrderRepo) Save(ctx context.Context, o *order.Order) error {
 
 	items := o.Items()
 	if len(items) > 0 {
-		const insertItem = `INSERT INTO order_items (order_id, variant_id, sku, name, quantity, unit_price, currency, created_at)
-			VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`
+		const insertItem = `INSERT INTO order_items (order_id, variant_id, sku, name, quantity, unit_price, currency, restockable, created_at)
+			VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`
 		stmt, err := tx.PrepareContext(ctx, insertItem)
 		if err != nil {
 			return fmt.Errorf("order_repo: prepare item insert: %w", err)
@@ -321,7 +321,7 @@ func (r *OrderRepo) Save(ctx context.Context, o *order.Order) error {
 			item := &items[i]
 			_, err = stmt.ExecContext(ctx,
 				o.ID, item.VariantID, item.SKU, item.Name, item.Quantity,
-				item.UnitPrice.Amount(), item.UnitPrice.Currency(),
+				item.UnitPrice.Amount(), item.UnitPrice.Currency(), item.Restockable,
 				item.CreatedAt,
 			)
 			if err != nil {
@@ -408,7 +408,7 @@ func (r *OrderRepo) LinkToCustomerByContactEmail(ctx context.Context, contactEma
 
 // loadItems fetches all items for a single order, ordered by created_at.
 func (r *OrderRepo) loadItems(ctx context.Context, orderID string) ([]order.Item, error) {
-	const q = `SELECT variant_id, sku, name, quantity, unit_price, currency, created_at
+	const q = `SELECT variant_id, sku, name, quantity, unit_price, currency, restockable, created_at
 		FROM order_items WHERE order_id = $1
 		ORDER BY created_at`
 	rows, err := r.db.QueryContext(ctx, q, orderID)
@@ -421,7 +421,7 @@ func (r *OrderRepo) loadItems(ctx context.Context, orderID string) ([]order.Item
 
 // loadItemsBatch fetches items for multiple orders in a single query.
 func (r *OrderRepo) loadItemsBatch(ctx context.Context, orderIDs []string) (map[string][]order.Item, error) {
-	const q = `SELECT order_id, variant_id, sku, name, quantity, unit_price, currency, created_at
+	const q = `SELECT order_id, variant_id, sku, name, quantity, unit_price, currency, restockable, created_at
 		FROM order_items WHERE order_id = ANY($1)
 		ORDER BY order_id, created_at`
 	rows, err := r.db.QueryContext(ctx, q, orderIDs)
@@ -436,8 +436,9 @@ func (r *OrderRepo) loadItemsBatch(ctx context.Context, orderIDs []string) (map[
 		var quantity int
 		var priceAmount int64
 		var priceCurrency string
+		var restockable bool
 		var createdAt time.Time
-		if err := rows.Scan(&orderID, &variantID, &sku, &name, &quantity, &priceAmount, &priceCurrency, &createdAt); err != nil {
+		if err := rows.Scan(&orderID, &variantID, &sku, &name, &quantity, &priceAmount, &priceCurrency, &restockable, &createdAt); err != nil {
 			return nil, fmt.Errorf("order_repo: scan batch item: %w", err)
 		}
 		unitPrice, err := shared.NewMoney(priceAmount, priceCurrency)
@@ -448,12 +449,13 @@ func (r *OrderRepo) loadItemsBatch(ctx context.Context, orderIDs []string) (map[
 		// validated on write and we must preserve the stored CreatedAt.
 		// SetItemsFromDB validates the total on the caller side.
 		result[orderID] = append(result[orderID], order.Item{
-			VariantID: variantID,
-			SKU:       sku,
-			Name:      name,
-			Quantity:  quantity,
-			UnitPrice: unitPrice,
-			CreatedAt: createdAt,
+			VariantID:   variantID,
+			SKU:         sku,
+			Name:        name,
+			Quantity:    quantity,
+			UnitPrice:   unitPrice,
+			Restockable: restockable,
+			CreatedAt:   createdAt,
 		})
 	}
 	if err := rows.Err(); err != nil {
@@ -470,8 +472,9 @@ func (r *OrderRepo) scanItems(rows *sql.Rows) ([]order.Item, error) {
 		var quantity int
 		var priceAmount int64
 		var priceCurrency string
+		var restockable bool
 		var createdAt time.Time
-		if err := rows.Scan(&variantID, &sku, &name, &quantity, &priceAmount, &priceCurrency, &createdAt); err != nil {
+		if err := rows.Scan(&variantID, &sku, &name, &quantity, &priceAmount, &priceCurrency, &restockable, &createdAt); err != nil {
 			return nil, fmt.Errorf("order_repo: scan item: %w", err)
 		}
 		unitPrice, err := shared.NewMoney(priceAmount, priceCurrency)
@@ -480,12 +483,13 @@ func (r *OrderRepo) scanItems(rows *sql.Rows) ([]order.Item, error) {
 		}
 		// Construct Item directly — see loadItemsBatch comment for rationale.
 		items = append(items, order.Item{
-			VariantID: variantID,
-			SKU:       sku,
-			Name:      name,
-			Quantity:  quantity,
-			UnitPrice: unitPrice,
-			CreatedAt: createdAt,
+			VariantID:   variantID,
+			SKU:         sku,
+			Name:        name,
+			Quantity:    quantity,
+			UnitPrice:   unitPrice,
+			Restockable: restockable,
+			CreatedAt:   createdAt,
 		})
 	}
 	if err := rows.Err(); err != nil {

@@ -235,6 +235,15 @@ func bundleCustomerPriceError(detail string) error {
 	return catalogapp.BundleCustomerError(apperror.Validation(detail))
 }
 
+// LookupComponentPrices loads store-then-global stored prices for variantIDs.
+// It does not roll a dynamic bundle up from its components. Exploded order
+// lines are simple, virtual, or downloadable, so the stored row is the unit
+// price. FindByVariantsCurrencyAndStore is one round trip; a non-empty store
+// still falls back per missing variant to the global row.
+func LookupComponentPrices(ctx context.Context, prices domain.PriceRepository, variantIDs []string, currency, storeID string) (map[string]*domain.Price, error) {
+	return lookupComponentPrices(ctx, prices, variantIDs, currency, storeID)
+}
+
 // lookupComponentPrices loads component variant prices with the same
 // store-then-global rule as lookupStoredUnitPrice. FindByVariantsCurrencyAndStore
 // is required to fall back itself; any variant still missing after that call
