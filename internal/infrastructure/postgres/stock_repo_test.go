@@ -3,6 +3,7 @@ package postgres_test
 import (
 	"context"
 	"database/sql"
+	"strings"
 	"testing"
 
 	"github.com/akarso/shopanda/internal/domain/inventory"
@@ -31,6 +32,22 @@ func seedVariant(t *testing.T, db *sql.DB) string {
 		t.Fatalf("seed variant: %v", err)
 	}
 	return v.ID
+}
+
+func TestStockRepo_GetStockForUpdate_RequiresTransaction(t *testing.T) {
+	db, err := sql.Open("pgx", "")
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	t.Cleanup(func() { db.Close() })
+	repo, err := postgres.NewStockRepo(db)
+	if err != nil {
+		t.Fatalf("NewStockRepo: %v", err)
+	}
+	_, err = repo.GetStockForUpdate(context.Background(), "v1")
+	if err == nil || !strings.Contains(err.Error(), "transaction required") {
+		t.Fatalf("err = %v, want transaction required", err)
+	}
 }
 
 func TestStockRepo_GetStock_NoRecord(t *testing.T) {

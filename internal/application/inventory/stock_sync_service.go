@@ -2,6 +2,7 @@ package inventory
 
 import (
 	"context"
+	"database/sql"
 	"fmt"
 	"sort"
 	"strings"
@@ -31,11 +32,38 @@ type stockSyncProductLister interface {
 	ListByIDs(ctx context.Context, ids []string) (map[string]*catalog.Product, error)
 }
 
+// stockSyncTxStarter begins the transaction that locks a product row and
+// writes its stock. *sql.DB implements it.
+type stockSyncTxStarter interface {
+	BeginTx(ctx context.Context, opts *sql.TxOptions) (*sql.Tx, error)
+}
+
+type stockSyncTxProducts interface {
+	WithTx(tx *sql.Tx) catalog.ProductRepository
+}
+
+type stockSyncLockingProducts interface {
+	catalog.ProductRepository
+	LockTypeAndModes(ctx context.Context, id string) (catalog.Type, catalog.PricingMode, catalog.StockMode, error)
+}
+
+type stockSyncTxStock interface {
+	inventory.StockRepository
+	WithTx(tx *sql.Tx) inventory.StockRepository
+}
+
+type stockSyncCandidate struct {
+	sku     string
+	variant *catalog.Variant
+	qty     int
+}
+
 // StockSyncService upserts warehouse stock levels by variant SKU.
 type StockSyncService struct {
-	variants catalog.VariantRepository
-	products stockSyncProducts
-	stock    inventory.StockRepository
+	variants  catalog.VariantRepository
+	products  stockSyncProducts
+	stock     inventory.StockRepository
+	txStarter stockSyncTxStarter
 
 	// reindex is optional — see SetReindexService.
 	reindex *searchApp.ReindexService
@@ -57,6 +85,14 @@ func NewStockSyncService(variants catalog.VariantRepository, stock inventory.Sto
 // SKU needs that lookup, and when the product row is missing.
 func (s *StockSyncService) WithProducts(products stockSyncProducts) *StockSyncService {
 	s.products = products
+	return s
+}
+
+// WithTxStarter wires the transaction beginner for the product-row lock and
+// the stock write. UpsertBySKU fails closed when this is unset and a row is
+// ready to write. *sql.DB satisfies stockSyncTxStarter.
+func (s *StockSyncService) WithTxStarter(starter stockSyncTxStarter) *StockSyncService {
+	s.txStarter = starter
 	return s
 }
 
@@ -134,11 +170,6 @@ func (s *StockSyncService) UpsertBySKU(ctx context.Context, updates []extapi.Sto
 		}
 	}
 
-	type stockSyncCandidate struct {
-		sku     string
-		variant *catalog.Variant
-		qty     int
-	}
 	candidates := make([]stockSyncCandidate, 0, len(validBySKU))
 	for _, sku := range uniqueSKUs {
 		variant := variantsBySKU[sku]
@@ -162,8 +193,7 @@ func (s *StockSyncService) UpsertBySKU(ctx context.Context, updates []extapi.Sto
 		return result, err
 	}
 
-	entries := make([]inventory.StockEntry, 0, len(candidates))
-	entryProductIDs := make([]string, 0, len(candidates))
+	writable := make([]stockSyncCandidate, 0, len(candidates))
 	for _, candidate := range candidates {
 		product := productsByID[candidate.variant.ProductID]
 		if product == nil {
@@ -174,30 +204,112 @@ func (s *StockSyncService) UpsertBySKU(ctx context.Context, updates []extapi.Sto
 			result.RejectedSKUs = append(result.RejectedSKUs, candidate.sku)
 			continue
 		}
-
-		entry, entryErr := inventory.NewStockEntry(candidate.variant.ID, candidate.qty)
-		if entryErr != nil {
+		if _, entryErr := inventory.NewStockEntry(candidate.variant.ID, candidate.qty); entryErr != nil {
 			return result, apperror.Validation(entryErr.Error())
 		}
-		entries = append(entries, entry)
-		entryProductIDs = append(entryProductIDs, candidate.variant.ProductID)
+		writable = append(writable, candidate)
 	}
 
-	for i := 0; i < len(entries); i += stockSyncChunkSize {
+	for i := 0; i < len(writable); i += stockSyncChunkSize {
 		end := i + stockSyncChunkSize
-		if end > len(entries) {
-			end = len(entries)
+		if end > len(writable) {
+			end = len(writable)
 		}
-		if setErr := s.stock.SetStocks(ctx, entries[i:end]); setErr != nil {
-			return result, fmt.Errorf("stock sync: set stock batch: %w", setErr)
+		updated, rejected, touched, writeErr := s.writeStockChunk(ctx, writable[i:end])
+		if writeErr != nil {
+			return result, writeErr
 		}
-		for _, productID := range entryProductIDs[i:end] {
+		result.Updated += updated
+		result.Skipped += len(rejected)
+		result.RejectedSKUs = append(result.RejectedSKUs, rejected...)
+		for _, productID := range touched {
 			touchedProductIDs[productID] = struct{}{}
 		}
-		result.Updated += end - i
 	}
 
 	return result, nil
+}
+
+// writeStockChunk locks each product row and writes the chunk's stock on
+// that same transaction. A bundle that is dynamic under the lock is skipped.
+// Lock order is product id, then variant id, then the stock write.
+func (s *StockSyncService) writeStockChunk(ctx context.Context, chunk []stockSyncCandidate) (updated int, rejected []string, touched []string, err error) {
+	if len(chunk) == 0 {
+		return 0, nil, nil, nil
+	}
+	if s.txStarter == nil {
+		return 0, nil, nil, fmt.Errorf("stock sync: transaction starter is required")
+	}
+	if s.products == nil {
+		return 0, nil, nil, fmt.Errorf("stock sync: product repository is required")
+	}
+	txProducts, ok := s.products.(stockSyncTxProducts)
+	if !ok {
+		return 0, nil, nil, fmt.Errorf("stock sync: product repository does not support transactions")
+	}
+	txStock, ok := s.stock.(stockSyncTxStock)
+	if !ok {
+		return 0, nil, nil, fmt.Errorf("stock sync: stock repository does not support transactions")
+	}
+
+	tx, err := s.txStarter.BeginTx(ctx, nil)
+	if err != nil {
+		return 0, nil, nil, fmt.Errorf("stock sync: begin tx: %w", err)
+	}
+	defer tx.Rollback()
+
+	locker, ok := txProducts.WithTx(tx).(stockSyncLockingProducts)
+	if !ok {
+		return 0, nil, nil, fmt.Errorf("stock sync: product repository does not support row locks")
+	}
+	boundStock := txStock.WithTx(tx)
+
+	ordered := append([]stockSyncCandidate(nil), chunk...)
+	sort.Slice(ordered, func(i, j int) bool {
+		if ordered[i].variant.ProductID != ordered[j].variant.ProductID {
+			return ordered[i].variant.ProductID < ordered[j].variant.ProductID
+		}
+		return ordered[i].variant.ID < ordered[j].variant.ID
+	})
+
+	dynamic := make(map[string]bool, len(ordered))
+	for _, candidate := range ordered {
+		productID := candidate.variant.ProductID
+		if _, seen := dynamic[productID]; seen {
+			continue
+		}
+		productType, _, stockMode, lockErr := locker.LockTypeAndModes(ctx, productID)
+		if lockErr != nil {
+			if apperror.Is(lockErr, apperror.CodeNotFound) {
+				return 0, nil, nil, fmt.Errorf("stock sync: product %s for sku %q not found", productID, candidate.sku)
+			}
+			return 0, nil, nil, fmt.Errorf("stock sync: lock product %s: %w", productID, lockErr)
+		}
+		dynamic[productID] = productType == catalog.TypeBundle && stockMode == catalog.StockModeDynamic
+	}
+
+	entries := make([]inventory.StockEntry, 0, len(ordered))
+	for _, candidate := range ordered {
+		if dynamic[candidate.variant.ProductID] {
+			rejected = append(rejected, candidate.sku)
+			continue
+		}
+		entry, entryErr := inventory.NewStockEntry(candidate.variant.ID, candidate.qty)
+		if entryErr != nil {
+			return 0, nil, nil, apperror.Validation(entryErr.Error())
+		}
+		entries = append(entries, entry)
+		touched = append(touched, candidate.variant.ProductID)
+	}
+	if len(entries) > 0 {
+		if setErr := boundStock.SetStocks(ctx, entries); setErr != nil {
+			return 0, nil, nil, fmt.Errorf("stock sync: set stock batch: %w", setErr)
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		return 0, nil, nil, fmt.Errorf("stock sync: commit: %w", err)
+	}
+	return len(entries), rejected, touched, nil
 }
 
 // productsByID loads every product a known SKU points at. A nil repository

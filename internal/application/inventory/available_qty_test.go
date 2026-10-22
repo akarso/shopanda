@@ -181,6 +181,42 @@ func TestRejectQtyAboveAvailable_KeepsMessageAndHidesEmptyErrorText(t *testing.T
 	})
 }
 
+func TestRejectQtyAboveAvailable_PreservesInfrastructureErrors(t *testing.T) {
+	base := appinventory.AvailableQtySources{
+		Stock: qtyStock{},
+		Variants: qtyVariants{variants: map[string]catalog.Variant{
+			"v": {ID: "v", ProductID: "p"},
+		}},
+	}
+
+	t.Run("plain error", func(t *testing.T) {
+		src := base
+		src.Products = qtyErrProducts{err: fmt.Errorf("stock connection reset")}
+		err := appinventory.RejectQtyAboveAvailable(context.Background(), src, "p", "v", 1)
+		if err == nil {
+			t.Fatal("expected error")
+		}
+		if apperror.Is(err, apperror.CodeValidation) || apperror.Is(err, apperror.CodeNotFound) {
+			t.Fatalf("err = %v, want infrastructure error unchanged", err)
+		}
+		if !strings.Contains(err.Error(), "stock connection reset") {
+			t.Fatalf("err = %v, want the original text", err)
+		}
+	})
+
+	t.Run("internal", func(t *testing.T) {
+		src := base
+		src.Products = qtyErrProducts{err: apperror.Internal("db down")}
+		err := appinventory.RejectQtyAboveAvailable(context.Background(), src, "p", "v", 1)
+		if !apperror.Is(err, apperror.CodeInternal) {
+			t.Fatalf("err = %v, want CodeInternal", err)
+		}
+		if apperror.Is(err, apperror.CodeValidation) || apperror.Is(err, apperror.CodeNotFound) {
+			t.Fatalf("err = %v, want Is false for validation and not-found", err)
+		}
+	})
+}
+
 type qtyErrProducts struct {
 	err error
 }

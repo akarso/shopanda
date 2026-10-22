@@ -28,9 +28,12 @@ type AvailableQtySources struct {
 // "quantity must be positive". A leaf-walk failure that already uses
 // catalog.BundleCannotBeReservedMessage is returned unchanged. A validation
 // or not-found error keeps its Message when that text is set. An empty
-// Message is wrapped as "available quantity" with the original error on
-// Unwrap, so err.Error() is not copied onto Message. Cart add and checkout
-// ValidateCartStep both call this so the two gates cannot drift.
+// Message on those codes is wrapped as "available quantity" with the
+// original error on Unwrap, so err.Error() is not copied onto Message.
+// Any other error (stock or repository infrastructure, including Internal)
+// is returned unchanged so a guest-cart claim aborts instead of dropping
+// the line. Cart add and checkout ValidateCartStep both call this so the
+// two gates cannot drift.
 func RejectQtyAboveAvailable(ctx context.Context, src AvailableQtySources, productID, variantID string, lineQty int) error {
 	if lineQty < 1 {
 		return apperror.Validation("quantity must be positive")
@@ -41,11 +44,13 @@ func RejectQtyAboveAvailable(ctx context.Context, src AvailableQtySources, produ
 		if errors.As(err, &appErr) && appErr.Message == catalog.BundleCannotBeReservedMessage {
 			return err
 		}
-		if (apperror.Is(err, apperror.CodeValidation) || apperror.Is(err, apperror.CodeNotFound)) &&
-			errors.As(err, &appErr) && appErr.Message != "" {
-			return apperror.Validation(appErr.Message)
+		if apperror.Is(err, apperror.CodeValidation) || apperror.Is(err, apperror.CodeNotFound) {
+			if errors.As(err, &appErr) && appErr.Message != "" {
+				return apperror.Validation(appErr.Message)
+			}
+			return apperror.Wrap(apperror.CodeValidation, "available quantity", err)
 		}
-		return apperror.Wrap(apperror.CodeValidation, "available quantity", err)
+		return err
 	}
 	if lineQty > available {
 		return apperror.Validation(fmt.Sprintf("only %d available", available))

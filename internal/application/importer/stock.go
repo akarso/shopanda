@@ -2,7 +2,9 @@ package importer
 
 import (
 	"context"
+	"database/sql"
 	"encoding/csv"
+	"errors"
 	"fmt"
 	"io"
 	"strconv"
@@ -13,6 +15,7 @@ import (
 	searchApp "github.com/akarso/shopanda/internal/application/search"
 	"github.com/akarso/shopanda/internal/domain/catalog"
 	"github.com/akarso/shopanda/internal/domain/inventory"
+	"github.com/akarso/shopanda/internal/platform/apperror"
 )
 
 // reindexTriggerTimeout bounds the post-commit ReindexService.Trigger call
@@ -27,12 +30,19 @@ type StockResult struct {
 	RowErrors []importctx.ImportError
 }
 
+// txStockRepo binds a stock write to the import transaction.
+type txStockRepo interface {
+	inventory.StockRepository
+	WithTx(tx *sql.Tx) inventory.StockRepository
+}
+
 // StockImporter imports stock quantities from CSV.
 type StockImporter struct {
-	variants catalog.VariantRepository
-	products catalog.ProductRepository
-	stock    inventory.StockRepository
-	rowHooks *RowHookRunner
+	variants  catalog.VariantRepository
+	products  catalog.ProductRepository
+	stock     inventory.StockRepository
+	txStarter TxStarter
+	rowHooks  *RowHookRunner
 
 	// reindex is optional — see WithReindex.
 	reindex *searchApp.ReindexService
@@ -43,14 +53,23 @@ func NewStockImporter(variants catalog.VariantRepository, stock inventory.StockR
 	return &StockImporter{variants: variants, stock: stock}
 }
 
-// WithRowHooks wires import row hooks invoked after header validation and before persist.
 // WithProducts rejects rows that would write stock onto a dynamic bundle.
-// Left unset, Import does not perform that check.
+// The mode is read with LockTypeAndModes in the same transaction as SetStock.
+// Import fails closed when this was not set and a row is ready to write.
 func (imp *StockImporter) WithProducts(products catalog.ProductRepository) *StockImporter {
 	imp.products = products
 	return imp
 }
 
+// WithTxStarter wires the transaction beginner for that lock and write.
+// Import fails closed when this was not set and a row is ready to write.
+// *sql.DB satisfies TxStarter.
+func (imp *StockImporter) WithTxStarter(starter TxStarter) *StockImporter {
+	imp.txStarter = starter
+	return imp
+}
+
+// WithRowHooks wires import row hooks invoked after header validation and before persist.
 func (imp *StockImporter) WithRowHooks(registry *importctx.Registry) *StockImporter {
 	imp.rowHooks = NewRowHookRunner(registry)
 	return imp
@@ -164,21 +183,17 @@ func (imp *StockImporter) Import(ctx context.Context, r io.Reader) (result *Stoc
 			continue
 		}
 
-		rejected, err := imp.dynamicBundleStockRejected(ctx, variant.ProductID)
-		if err != nil {
-			return nil, err
-		}
-		if rejected {
-			result.Errors = append(result.Errors, fmt.Sprintf("line %d: %s", lineNum, catalog.DynamicBundleStockRejectedMessage))
-			result.Skipped++
-			continue
-		}
-
 		entry, err := inventory.NewStockEntry(variant.ID, qty)
 		if err != nil {
 			return nil, fmt.Errorf("stock import: new stock entry: %w", err)
 		}
-		if err := imp.stock.SetStock(ctx, &entry); err != nil {
+		if err := imp.setStockUnderLock(ctx, variant.ProductID, &entry); err != nil {
+			var rejected *rowRejectError
+			if errors.As(err, &rejected) {
+				result.Errors = append(result.Errors, fmt.Sprintf("line %d: %s", lineNum, rejected.Error()))
+				result.Skipped++
+				continue
+			}
 			return nil, fmt.Errorf("stock import: set stock for sku %q: %w", sku, err)
 		}
 		result.Updated++
@@ -188,18 +203,52 @@ func (imp *StockImporter) Import(ctx context.Context, r io.Reader) (result *Stoc
 	return result, nil
 }
 
-func (imp *StockImporter) dynamicBundleStockRejected(ctx context.Context, productID string) (bool, error) {
+// setStockUnderLock locks the product row and writes stock on that same
+// transaction. A dynamic bundle is a per-row skip. A missing transaction
+// starter, product repository, or row lock fails the import.
+func (imp *StockImporter) setStockUnderLock(ctx context.Context, productID string, entry *inventory.StockEntry) error {
+	if imp.txStarter == nil {
+		return fmt.Errorf("stock import: transaction starter is required")
+	}
 	if imp.products == nil {
-		return false, nil
+		return fmt.Errorf("stock import: product repository is required")
 	}
-	product, err := imp.products.FindByID(catalog.WithOperatorProductReadScope(ctx), productID)
+	txProducts, ok := imp.products.(txProductRepo)
+	if !ok {
+		return fmt.Errorf("stock import: product repository does not support transactions")
+	}
+	txStock, ok := imp.stock.(txStockRepo)
+	if !ok {
+		return fmt.Errorf("stock import: stock repository does not support transactions")
+	}
+
+	tx, err := imp.txStarter.BeginTx(ctx, nil)
 	if err != nil {
-		return false, fmt.Errorf("stock import: find product %s: %w", productID, err)
+		return fmt.Errorf("begin tx: %w", err)
 	}
-	if product == nil {
-		return false, nil
+	defer tx.Rollback()
+
+	locker, ok := txProducts.WithTx(tx).(lockingProductRepo)
+	if !ok {
+		return fmt.Errorf("stock import: product repository does not support row locks")
 	}
-	return product.Type == catalog.TypeBundle && product.StockMode == catalog.StockModeDynamic, nil
+	productType, _, stockMode, err := locker.LockTypeAndModes(ctx, productID)
+	if err != nil {
+		if apperror.Is(err, apperror.CodeNotFound) {
+			return err
+		}
+		return fmt.Errorf("lock product: %w", err)
+	}
+	if productType == catalog.TypeBundle && stockMode == catalog.StockModeDynamic {
+		return &rowRejectError{msg: catalog.DynamicBundleStockRejectedMessage}
+	}
+	if err := txStock.WithTx(tx).SetStock(ctx, entry); err != nil {
+		return fmt.Errorf("set stock: %w", err)
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("commit: %w", err)
+	}
+	return nil
 }
 
 // triggerReindex fires a single scoped reindex covering every product

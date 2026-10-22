@@ -2,10 +2,13 @@ package inventory
 
 import (
 	"context"
+	"database/sql"
+	"database/sql/driver"
 	"errors"
 	"fmt"
 	"sort"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -14,10 +17,46 @@ import (
 	"github.com/akarso/shopanda/internal/domain/inventory"
 	domainjobs "github.com/akarso/shopanda/internal/domain/jobs"
 	domainsearch "github.com/akarso/shopanda/internal/domain/search"
+	"github.com/akarso/shopanda/internal/platform/apperror"
 	"github.com/akarso/shopanda/internal/platform/id"
 	"github.com/akarso/shopanda/internal/platform/logger"
 	"github.com/akarso/shopanda/pkg/extapi"
 )
+
+func init() {
+	sql.Register("shopanda-stock-sync-fake-tx", stockSyncFakeTxDriver{})
+}
+
+type stockSyncFakeTxDriver struct{}
+
+func (stockSyncFakeTxDriver) Open(string) (driver.Conn, error) { return stockSyncFakeTxConn{}, nil }
+
+type stockSyncFakeTxConn struct{}
+
+func (stockSyncFakeTxConn) Prepare(string) (driver.Stmt, error) { return nil, driver.ErrSkip }
+func (stockSyncFakeTxConn) Close() error                        { return nil }
+func (stockSyncFakeTxConn) Begin() (driver.Tx, error)           { return stockSyncFakeTx{}, nil }
+
+type stockSyncFakeTx struct{}
+
+func (stockSyncFakeTx) Commit() error   { return nil }
+func (stockSyncFakeTx) Rollback() error { return nil }
+
+var (
+	stockSyncFakeTxOnce sync.Once
+	stockSyncFakeTxDB   *sql.DB
+)
+
+func stockSyncFakeTxDBConn() *sql.DB {
+	stockSyncFakeTxOnce.Do(func() {
+		db, err := sql.Open("shopanda-stock-sync-fake-tx", "")
+		if err != nil {
+			panic(err)
+		}
+		stockSyncFakeTxDB = db
+	})
+	return stockSyncFakeTxDB
+}
 
 // --- minimal ReindexService fakes: just enough to construct a real
 // *searchApp.ReindexService and observe what it enqueues, for the
@@ -162,11 +201,15 @@ func (r *stockSyncStockRepo) ListInventory(context.Context, int, int, string) ([
 func (r *stockSyncStockRepo) GetInventoryItem(context.Context, string) (inventory.InventoryListItem, error) {
 	return inventory.InventoryListItem{}, nil
 }
+func (r *stockSyncStockRepo) WithTx(*sql.Tx) inventory.StockRepository { return r }
 
 // stockSyncProductRepo is permissive unless byID is set. A set map returns
 // only those rows (a missing id is a missing product).
 type stockSyncProductRepo struct {
 	byID map[string]*catalog.Product
+	// lockOverride replaces the locked row for an id. FindByID still uses byID,
+	// so a test can show a stale read losing to LockTypeAndModes.
+	lockOverride map[string]*catalog.Product
 }
 
 func (r stockSyncProductRepo) FindByID(_ context.Context, id string) (*catalog.Product, error) {
@@ -178,9 +221,43 @@ func (r stockSyncProductRepo) FindByID(_ context.Context, id string) (*catalog.P
 	}
 	return &catalog.Product{ID: id, Type: catalog.TypeSimple, Status: catalog.StatusActive, StockMode: catalog.StockModeFixed}, nil
 }
+func (stockSyncProductRepo) FindBySlug(context.Context, string) (*catalog.Product, error) {
+	return nil, nil
+}
+func (stockSyncProductRepo) List(context.Context, catalog.ListFilter) ([]catalog.Product, error) {
+	return nil, nil
+}
+func (stockSyncProductRepo) FindByCategoryID(context.Context, string, int, int) ([]catalog.Product, error) {
+	return nil, nil
+}
+func (stockSyncProductRepo) Create(context.Context, *catalog.Product) error { return nil }
+func (stockSyncProductRepo) Update(context.Context, *catalog.Product) error { return nil }
+func (r stockSyncProductRepo) WithTx(*sql.Tx) catalog.ProductRepository     { return r }
+func (r stockSyncProductRepo) LockTypeAndModes(_ context.Context, id string) (catalog.Type, catalog.PricingMode, catalog.StockMode, error) {
+	if r.lockOverride != nil {
+		if p, ok := r.lockOverride[id]; ok {
+			if p == nil {
+				return "", "", "", apperror.NotFound("product not found")
+			}
+			return p.Type, catalog.PricingModeFixed, p.StockMode, nil
+		}
+	}
+	p, err := r.FindByID(context.Background(), id)
+	if err != nil {
+		return "", "", "", err
+	}
+	if p == nil {
+		return "", "", "", apperror.NotFound("product not found")
+	}
+	mode := p.StockMode
+	if mode == "" {
+		mode = catalog.StockModeFixed
+	}
+	return p.Type, catalog.PricingModeFixed, mode, nil
+}
 
 func newTestStockSync(variants *stockSyncVariantRepo, stock *stockSyncStockRepo) *StockSyncService {
-	return NewStockSyncService(variants, stock).WithProducts(stockSyncProductRepo{})
+	return NewStockSyncService(variants, stock).WithProducts(stockSyncProductRepo{}).WithTxStarter(stockSyncFakeTxDBConn())
 }
 
 func TestStockSyncService_UpsertBySKU(t *testing.T) {
@@ -376,7 +453,7 @@ func TestStockSyncService_UpsertBySKU_RejectsDynamicBundle(t *testing.T) {
 
 	t.Run("dynamic bundle is skipped without an error and the simple sku is stored", func(t *testing.T) {
 		stock := &stockSyncStockRepo{entries: make(map[string]inventory.StockEntry)}
-		svc := NewStockSyncService(variants, stock).WithProducts(products)
+		svc := NewStockSyncService(variants, stock).WithProducts(products).WithTxStarter(stockSyncFakeTxDBConn())
 		result, err := svc.UpsertBySKU(context.Background(), []extapi.StockLevelUpdate{
 			{SKU: "SKU-SIMPLE", Quantity: 4},
 			{SKU: "SKU-BUNDLE", Quantity: 9},
@@ -426,4 +503,42 @@ func TestStockSyncService_UpsertBySKU_RejectsDynamicBundle(t *testing.T) {
 			t.Fatalf("stock = %+v, want no writes", stock.entries)
 		}
 	})
+}
+
+func TestStockSyncService_UpsertBySKU_LockSeesDynamicMode(t *testing.T) {
+	variants := &stockSyncVariantRepo{bySKU: map[string]*catalog.Variant{
+		"SKU-SIMPLE": {ID: "simple-v", SKU: "SKU-SIMPLE", ProductID: "simple"},
+		"SKU-BUNDLE": {ID: "bundle-v", SKU: "SKU-BUNDLE", ProductID: "bundle"},
+	}}
+	products := stockSyncProductRepo{
+		byID: map[string]*catalog.Product{
+			"simple": {ID: "simple", Type: catalog.TypeSimple, Status: catalog.StatusActive, StockMode: catalog.StockModeFixed},
+			"bundle": {ID: "bundle", Type: catalog.TypeBundle, Status: catalog.StatusActive, StockMode: catalog.StockModeFixed},
+		},
+		lockOverride: map[string]*catalog.Product{
+			"bundle": {ID: "bundle", Type: catalog.TypeBundle, StockMode: catalog.StockModeDynamic},
+		},
+	}
+	stock := &stockSyncStockRepo{entries: make(map[string]inventory.StockEntry)}
+	svc := NewStockSyncService(variants, stock).WithProducts(products).WithTxStarter(stockSyncFakeTxDBConn())
+
+	result, err := svc.UpsertBySKU(context.Background(), []extapi.StockLevelUpdate{
+		{SKU: "SKU-SIMPLE", Quantity: 4},
+		{SKU: "SKU-BUNDLE", Quantity: 9},
+	})
+	if err != nil {
+		t.Fatalf("UpsertBySKU: %v", err)
+	}
+	if _, wrote := stock.entries["bundle-v"]; wrote {
+		t.Fatalf("dynamic bundle stock = %+v, want no row", stock.entries["bundle-v"])
+	}
+	if stock.entries["simple-v"].Quantity != 4 {
+		t.Fatalf("simple stock = %+v, want quantity 4", stock.entries["simple-v"])
+	}
+	if result.Updated != 1 || result.Skipped != 1 {
+		t.Fatalf("result = %+v, want Updated=1 Skipped=1", result)
+	}
+	if len(result.RejectedSKUs) != 1 || result.RejectedSKUs[0] != "SKU-BUNDLE" {
+		t.Fatalf("RejectedSKUs = %v, want [SKU-BUNDLE]", result.RejectedSKUs)
+	}
 }

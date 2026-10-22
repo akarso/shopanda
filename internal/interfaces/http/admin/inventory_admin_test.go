@@ -64,15 +64,61 @@ func (m *mockStockRepo) GetInventoryItem(ctx context.Context, variantID string) 
 	return inventory.InventoryListItem{VariantID: variantID}, nil
 }
 
+func (m *mockStockRepo) WithTx(*sql.Tx) inventory.StockRepository { return m }
+
 type fixedInventoryProduct struct {
-	product *catalog.Product
+	product   *catalog.Product
+	lockType  catalog.Type
+	lockStock catalog.StockMode
+}
+
+func (f fixedInventoryProduct) resolved(id string) *catalog.Product {
+	if f.product != nil {
+		return f.product
+	}
+	return &catalog.Product{
+		ID: id, Type: catalog.TypeSimple, Status: catalog.StatusActive,
+		PricingMode: catalog.PricingModeFixed, StockMode: catalog.StockModeFixed,
+	}
 }
 
 func (f fixedInventoryProduct) FindByID(_ context.Context, id string) (*catalog.Product, error) {
-	if f.product != nil {
-		return f.product, nil
+	return f.resolved(id), nil
+}
+func (fixedInventoryProduct) FindBySlug(context.Context, string) (*catalog.Product, error) {
+	return nil, nil
+}
+func (fixedInventoryProduct) List(context.Context, catalog.ListFilter) ([]catalog.Product, error) {
+	return nil, nil
+}
+func (fixedInventoryProduct) FindByCategoryID(context.Context, string, int, int) ([]catalog.Product, error) {
+	return nil, nil
+}
+func (fixedInventoryProduct) Create(context.Context, *catalog.Product) error { return nil }
+func (fixedInventoryProduct) Update(context.Context, *catalog.Product) error { return nil }
+func (f fixedInventoryProduct) WithTx(*sql.Tx) catalog.ProductRepository     { return f }
+func (f fixedInventoryProduct) LockTypeAndModes(_ context.Context, id string) (catalog.Type, catalog.PricingMode, catalog.StockMode, error) {
+	p := f.resolved(id)
+	typ := p.Type
+	pricing := p.PricingMode
+	stock := p.StockMode
+	if f.lockType != "" {
+		typ = f.lockType
 	}
-	return &catalog.Product{ID: id, Type: catalog.TypeSimple, Status: catalog.StatusActive, StockMode: catalog.StockModeFixed}, nil
+	if f.lockStock != "" {
+		stock = f.lockStock
+	}
+	if pricing == "" {
+		pricing = catalog.PricingModeFixed
+	}
+	if stock == "" {
+		stock = catalog.StockModeFixed
+	}
+	return typ, pricing, stock, nil
+}
+
+func newAdjustHandler(stock inventory.StockRepository, variants catalog.VariantRepository, products fixedInventoryProduct) *admin.InventoryAdminHandler {
+	return admin.NewInventoryAdminHandler(stock, variants).WithProducts(products).WithTxStarter(adminFakeTxDBConn())
 }
 
 type mockVariantRepoForInventory struct {
@@ -185,7 +231,7 @@ func TestInventoryAdminHandler_Adjust(t *testing.T) {
 			return &catalog.Variant{ID: id, ProductID: "p1", SKU: "SKU-1", Name: "Red"}, nil
 		},
 	}
-	h := admin.NewInventoryAdminHandler(stock, variants).WithProducts(fixedInventoryProduct{})
+	h := newAdjustHandler(stock, variants, fixedInventoryProduct{})
 
 	body, _ := json.Marshal(map[string]interface{}{"quantity": 12})
 	rec := httptest.NewRecorder()
@@ -232,7 +278,7 @@ func TestInventoryAdminHandler_Adjust_EmitsStockUpdatedEvent(t *testing.T) {
 			return &catalog.Variant{ID: id, ProductID: "p1", SKU: "SKU-1", Name: "Red"}, nil
 		},
 	}
-	h := admin.NewInventoryAdminHandler(stock, variants).WithProducts(fixedInventoryProduct{})
+	h := newAdjustHandler(stock, variants, fixedInventoryProduct{})
 	bus := testAdminBus()
 	h.SetBus(bus)
 
@@ -280,7 +326,7 @@ func TestInventoryAdminHandler_Adjust_NoBusNoEvent(t *testing.T) {
 			return &catalog.Variant{ID: id, ProductID: "p1", SKU: "SKU-1", Name: "Red"}, nil
 		},
 	}
-	h := admin.NewInventoryAdminHandler(stock, variants).WithProducts(fixedInventoryProduct{})
+	h := newAdjustHandler(stock, variants, fixedInventoryProduct{})
 
 	body, _ := json.Marshal(map[string]interface{}{"quantity": 12})
 	rec := httptest.NewRecorder()
@@ -303,7 +349,7 @@ func TestInventoryAdminHandler_AdjustNegativeRejected(t *testing.T) {
 			return &catalog.Variant{ID: id, ProductID: "p1", SKU: "SKU-1"}, nil
 		},
 	}
-	h := admin.NewInventoryAdminHandler(stock, variants).WithProducts(fixedInventoryProduct{})
+	h := newAdjustHandler(stock, variants, fixedInventoryProduct{})
 
 	body, _ := json.Marshal(map[string]interface{}{"quantity": -1})
 	rec := httptest.NewRecorder()
@@ -325,8 +371,37 @@ func TestInventoryAdminHandler_Adjust_RejectsDynamicBundleStock(t *testing.T) {
 			return &catalog.Variant{ID: id, ProductID: "bundle", SKU: "SKU-B"}, nil
 		},
 	}
-	h := admin.NewInventoryAdminHandler(stock, variants).WithProducts(fixedInventoryProduct{
+	h := newAdjustHandler(stock, variants, fixedInventoryProduct{
 		product: &catalog.Product{ID: "bundle", Type: catalog.TypeBundle, StockMode: catalog.StockModeDynamic, Status: catalog.StatusActive},
+	})
+	body, _ := json.Marshal(map[string]interface{}{"quantity": 5})
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("PUT", "/api/v1/admin/inventory/bundle-v", bytes.NewReader(body))
+	newInventoryAdminRouter(h).ServeHTTP(rec, req)
+	if rec.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("status = %d, want 422; body: %s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "cannot have their own stock") {
+		t.Fatalf("body = %s, want dynamic stock rejection", rec.Body.String())
+	}
+	if stock.setStockCalls != 0 {
+		t.Fatalf("SetStock calls = %d, want 0", stock.setStockCalls)
+	}
+}
+
+func TestInventoryAdminHandler_Adjust_RejectsLockedDynamicMode(t *testing.T) {
+	stock := &mockStockRepo{}
+	variants := &mockVariantRepoForInventory{
+		findByIDFn: func(_ context.Context, id string) (*catalog.Variant, error) {
+			return &catalog.Variant{ID: id, ProductID: "bundle", SKU: "SKU-B"}, nil
+		},
+	}
+	// FindByID is a stale fixed row. The locked mode is dynamic, and that
+	// is the read Adjust must honor.
+	h := newAdjustHandler(stock, variants, fixedInventoryProduct{
+		product:   &catalog.Product{ID: "bundle", Type: catalog.TypeSimple, StockMode: catalog.StockModeFixed, Status: catalog.StatusActive},
+		lockType:  catalog.TypeBundle,
+		lockStock: catalog.StockModeDynamic,
 	})
 	body, _ := json.Marshal(map[string]interface{}{"quantity": 5})
 	rec := httptest.NewRecorder()

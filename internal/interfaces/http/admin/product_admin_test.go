@@ -915,6 +915,7 @@ func (adminOwnStock) ListInventory(context.Context, int, int, string) ([]invento
 func (adminOwnStock) GetInventoryItem(context.Context, string) (inventory.InventoryListItem, error) {
 	return inventory.InventoryListItem{}, nil
 }
+func (m adminOwnStock) WithTx(*sql.Tx) inventory.StockRepository { return m }
 
 func TestProductAdminHandler_Update_DynamicRejectsOwnStock(t *testing.T) {
 	existing := &catalog.Product{
@@ -964,6 +965,102 @@ func TestProductAdminHandler_Update_DynamicRejectsOwnStock(t *testing.T) {
 	}
 	if updated == nil || updated.StockMode != catalog.StockModeDynamic {
 		t.Fatalf("updated = %+v, want dynamic stock", updated)
+	}
+}
+
+// txVisibleStock reports quantity 0 on the unbound connection and the
+// in-transaction quantity only from GetStockForUpdate. A mode flip that
+// reads stock outside the product-update transaction would allow dynamic.
+type txVisibleStock struct {
+	inTx         int
+	forUpdateHit int
+}
+
+func (txVisibleStock) GetStock(context.Context, string) (inventory.StockEntry, error) {
+	return inventory.StockEntry{Quantity: 0}, nil
+}
+func (txVisibleStock) SetStock(context.Context, *inventory.StockEntry) error   { return nil }
+func (txVisibleStock) SetStocks(context.Context, []inventory.StockEntry) error { return nil }
+func (txVisibleStock) ListStock(context.Context, int, int) ([]inventory.StockEntry, error) {
+	return nil, nil
+}
+func (txVisibleStock) ListInventory(context.Context, int, int, string) ([]inventory.InventoryListItem, error) {
+	return nil, nil
+}
+func (txVisibleStock) GetInventoryItem(context.Context, string) (inventory.InventoryListItem, error) {
+	return inventory.InventoryListItem{}, nil
+}
+func (s *txVisibleStock) WithTx(tx *sql.Tx) inventory.StockRepository {
+	if tx == nil {
+		return s
+	}
+	return &txVisibleStockBound{src: s}
+}
+
+type txVisibleStockBound struct {
+	src *txVisibleStock
+}
+
+func (b *txVisibleStockBound) GetStock(context.Context, string) (inventory.StockEntry, error) {
+	return inventory.StockEntry{Quantity: 0}, nil
+}
+func (b *txVisibleStockBound) GetStockForUpdate(context.Context, string) (inventory.StockEntry, error) {
+	b.src.forUpdateHit++
+	return inventory.StockEntry{Quantity: b.src.inTx}, nil
+}
+func (txVisibleStockBound) SetStock(context.Context, *inventory.StockEntry) error { return nil }
+func (txVisibleStockBound) SetStocks(context.Context, []inventory.StockEntry) error {
+	return nil
+}
+func (txVisibleStockBound) ListStock(context.Context, int, int) ([]inventory.StockEntry, error) {
+	return nil, nil
+}
+func (txVisibleStockBound) ListInventory(context.Context, int, int, string) ([]inventory.InventoryListItem, error) {
+	return nil, nil
+}
+func (txVisibleStockBound) GetInventoryItem(context.Context, string) (inventory.InventoryListItem, error) {
+	return inventory.InventoryListItem{}, nil
+}
+
+func TestProductAdminHandler_Update_DynamicOwnStockReadsTxQuantity(t *testing.T) {
+	existing := &catalog.Product{
+		ID: "p1", Name: "Kit", Slug: "kit", Status: catalog.StatusDraft,
+		Type: catalog.TypeBundle, PricingMode: catalog.PricingModeFixed, StockMode: catalog.StockModeFixed,
+		VisibilityModes: catalog.DefaultVisibilityAxes(),
+	}
+	var updated *catalog.Product
+	repo := &mockAdminProductRepo{
+		findByIDFn: func(_ context.Context, id string) (*catalog.Product, error) {
+			cp := *existing
+			return &cp, nil
+		},
+		updateFn: func(_ context.Context, p *catalog.Product) error {
+			updated = p
+			return nil
+		},
+	}
+	stock := &txVisibleStock{inTx: 4}
+	h := admin.NewProductAdminHandler(repo, testAdminBus()).
+		WithBundleComponents(&mockBundleComponentGuard{}).
+		WithGroupedMembers(&mockGroupedMemberGuard{}).
+		WithTxStarter(adminFakeTxDBConn()).
+		WithVariantPrices(adminOwnPriceVariants{variants: []catalog.Variant{{ID: "v1", ProductID: "p1"}}}, adminOwnPrices{}).
+		WithVariantStock(stock)
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("PUT", "/api/v1/admin/products/p1", jsonBody(t, map[string]interface{}{"stock_mode": "dynamic"}))
+	newAdminRouter(h).ServeHTTP(rec, req)
+	if rec.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("status = %d, want 422; body: %s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "remove bundle stock") {
+		t.Fatalf("body = %s, want own-stock rejection from the transaction quantity", rec.Body.String())
+	}
+	if updated != nil {
+		t.Fatalf("updated = %+v, want no write while the locked stock row is positive", updated)
+	}
+	if stock.forUpdateHit != 1 {
+		t.Fatalf("GetStockForUpdate calls = %d, want 1", stock.forUpdateHit)
 	}
 }
 
@@ -1163,6 +1260,7 @@ func (adminOwnPriceVariants) ListByProductIDs(context.Context, []string, int) (m
 }
 func (adminOwnPriceVariants) Create(context.Context, *catalog.Variant) error { return nil }
 func (adminOwnPriceVariants) Update(context.Context, *catalog.Variant) error { return nil }
+func (m adminOwnPriceVariants) WithTx(*sql.Tx) catalog.VariantRepository     { return m }
 
 type adminOwnPrices struct {
 	rows map[string][]pricing.Price

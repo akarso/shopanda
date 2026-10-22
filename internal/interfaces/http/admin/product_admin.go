@@ -224,10 +224,14 @@ func (h *ProductAdminHandler) rejectDynamicOwnPrices(ctx context.Context, produc
 }
 
 func (h *ProductAdminHandler) rejectDynamicOwnStock(ctx context.Context, product *catalog.Product) error {
+	return h.rejectDynamicOwnStockOn(ctx, product, h.variants, h.stock)
+}
+
+func (h *ProductAdminHandler) rejectDynamicOwnStockOn(ctx context.Context, product *catalog.Product, variants catalog.VariantRepository, stock inventory.StockRepository) error {
 	if product == nil || product.Type != catalog.TypeBundle || product.StockMode != catalog.StockModeDynamic {
 		return nil
 	}
-	if h.variants == nil || h.stock == nil {
+	if variants == nil || stock == nil {
 		return apperror.Internal("product admin: variant stock check is not configured")
 	}
 	if strings.TrimSpace(product.ID) == "" {
@@ -235,12 +239,12 @@ func (h *ProductAdminHandler) rejectDynamicOwnStock(ctx context.Context, product
 	}
 	offset := 0
 	for {
-		variants, err := h.variants.ListByProductID(ctx, product.ID, offset, ownPriceVariantPage)
+		page, err := variants.ListByProductID(ctx, product.ID, offset, ownPriceVariantPage)
 		if err != nil {
 			return fmt.Errorf("product admin: list variants: %w", err)
 		}
-		for _, variant := range variants {
-			entry, err := h.stock.GetStock(ctx, variant.ID)
+		for _, variant := range page {
+			entry, err := readVariantStock(ctx, stock, variant.ID)
 			if err != nil {
 				return fmt.Errorf("product admin: get stock: %w", err)
 			}
@@ -248,11 +252,46 @@ func (h *ProductAdminHandler) rejectDynamicOwnStock(ctx context.Context, product
 				return apperror.Validation(catalog.DynamicBundleOwnStockMessage)
 			}
 		}
-		if len(variants) < ownPriceVariantPage {
+		if len(page) < ownPriceVariantPage {
 			return nil
 		}
 		offset += ownPriceVariantPage
 	}
+}
+
+// readVariantStock prefers SELECT … FOR UPDATE on a transaction-bound stock
+// repo so a concurrent adjust cannot commit a quantity between this check
+// and the product update.
+func readVariantStock(ctx context.Context, stock inventory.StockRepository, variantID string) (inventory.StockEntry, error) {
+	type stockForUpdate interface {
+		GetStockForUpdate(ctx context.Context, variantID string) (inventory.StockEntry, error)
+	}
+	if locked, ok := stock.(stockForUpdate); ok {
+		return locked.GetStockForUpdate(ctx, variantID)
+	}
+	return stock.GetStock(ctx, variantID)
+}
+
+func bindVariantStock(tx *sql.Tx, variants catalog.VariantRepository, stock inventory.StockRepository) (catalog.VariantRepository, inventory.StockRepository, error) {
+	if variants != nil {
+		txVariants, ok := variants.(interface {
+			WithTx(tx *sql.Tx) catalog.VariantRepository
+		})
+		if !ok {
+			return nil, nil, fmt.Errorf("product admin: variant repository does not support transactions")
+		}
+		variants = txVariants.WithTx(tx)
+	}
+	if stock != nil {
+		txStock, ok := stock.(interface {
+			WithTx(tx *sql.Tx) inventory.StockRepository
+		})
+		if !ok {
+			return nil, nil, fmt.Errorf("product admin: stock repository does not support transactions")
+		}
+		stock = txStock.WithTx(tx)
+	}
+	return variants, stock, nil
 }
 
 func (h *ProductAdminHandler) validateProductTypeChange(ctx context.Context, components bundleComponentTypeGuard, members groupedMemberTypeGuard, productID string, oldType, newType catalog.Type) error {
@@ -974,7 +1013,11 @@ func (h *ProductAdminHandler) updateProductWithTypeLock(ctx context.Context, pro
 		}
 	}
 	if newType != nil || req.StockMode != nil {
-		if err := h.rejectDynamicOwnStock(ctx, product); err != nil {
+		variants, stock, err := bindVariantStock(tx, h.variants, h.stock)
+		if err != nil {
+			return catalog.VisibilityAxes{}, catalog.VisibilityAxes{}, false, err
+		}
+		if err := h.rejectDynamicOwnStockOn(ctx, product, variants, stock); err != nil {
 			return catalog.VisibilityAxes{}, catalog.VisibilityAxes{}, false, err
 		}
 	}

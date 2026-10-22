@@ -17,6 +17,7 @@ var _ inventory.StockRepository = (*StockRepo)(nil)
 // StockRepo implements inventory.StockRepository using PostgreSQL.
 type StockRepo struct {
 	db *sql.DB
+	tx *sql.Tx
 }
 
 // NewStockRepo returns a new StockRepo backed by db.
@@ -27,16 +28,38 @@ func NewStockRepo(db *sql.DB) (*StockRepo, error) {
 	return &StockRepo{db: db}, nil
 }
 
+// WithTx returns a repo bound to the given transaction.
+func (r *StockRepo) WithTx(tx *sql.Tx) inventory.StockRepository {
+	return &StockRepo{db: r.db, tx: tx}
+}
+
 // GetStock returns the stock entry for a variant.
 // Returns a zero-quantity entry when no record exists.
 func (r *StockRepo) GetStock(ctx context.Context, variantID string) (inventory.StockEntry, error) {
+	return r.getStock(ctx, variantID, false)
+}
+
+// GetStockForUpdate locks the stock row and returns its quantity.
+// The repo must be bound to a transaction via WithTx. A missing row is a
+// zero-quantity entry, matching GetStock; that absence is not locked.
+func (r *StockRepo) GetStockForUpdate(ctx context.Context, variantID string) (inventory.StockEntry, error) {
+	if r.tx == nil {
+		return inventory.StockEntry{}, fmt.Errorf("stock_repo: get stock for update: transaction required")
+	}
+	return r.getStock(ctx, variantID, true)
+}
+
+func (r *StockRepo) getStock(ctx context.Context, variantID string, forUpdate bool) (inventory.StockEntry, error) {
 	if variantID == "" {
 		return inventory.StockEntry{}, fmt.Errorf("stock_repo: get stock: empty variantID")
 	}
-	const q = `SELECT variant_id, quantity, updated_at FROM stock WHERE variant_id = $1`
+	q := `SELECT variant_id, quantity, updated_at FROM stock WHERE variant_id = $1`
+	if forUpdate {
+		q += ` FOR UPDATE`
+	}
 
 	var s inventory.StockEntry
-	err := r.db.QueryRowContext(ctx, q, variantID).Scan(
+	err := r.queryRow(ctx, q, variantID).Scan(
 		&s.VariantID, &s.Quantity, &s.UpdatedAt,
 	)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -63,7 +86,7 @@ func (r *StockRepo) SetStock(ctx context.Context, entry *inventory.StockEntry) e
 		SET quantity = EXCLUDED.quantity,
 		    updated_at = EXCLUDED.updated_at`
 
-	_, err := r.db.ExecContext(ctx, q,
+	_, err := r.exec(ctx, q,
 		entry.VariantID, entry.Quantity, entry.UpdatedAt,
 	)
 	if err != nil {
@@ -99,7 +122,7 @@ func (r *StockRepo) SetStocks(ctx context.Context, entries []inventory.StockEntr
 		SET quantity = EXCLUDED.quantity,
 		    updated_at = EXCLUDED.updated_at`
 
-	_, err := r.db.ExecContext(ctx, q, variantIDs, quantities, updatedAts)
+	_, err := r.exec(ctx, q, variantIDs, quantities, updatedAts)
 	if err != nil {
 		return fmt.Errorf("stock_repo: set stocks: %w", err)
 	}
@@ -120,7 +143,7 @@ func (r *StockRepo) ListStock(ctx context.Context, offset, limit int) ([]invento
 
 	const q = `SELECT variant_id, quantity, updated_at FROM stock ORDER BY variant_id LIMIT $1 OFFSET $2`
 
-	rows, err := r.db.QueryContext(ctx, q, limit, offset)
+	rows, err := r.query(ctx, q, limit, offset)
 	if err != nil {
 		return nil, fmt.Errorf("stock_repo: list stock: %w", err)
 	}
@@ -184,7 +207,7 @@ func (r *StockRepo) ListInventory(ctx context.Context, offset, limit int, search
 		ORDER BY v.sku
 		LIMIT $1 OFFSET $2`
 
-	rows, err := r.db.QueryContext(ctx, q, limit, offset, search, pattern)
+	rows, err := r.query(ctx, q, limit, offset, search, pattern)
 	if err != nil {
 		return nil, fmt.Errorf("stock_repo: list inventory: %w", err)
 	}
@@ -257,7 +280,7 @@ func (r *StockRepo) GetInventoryItem(ctx context.Context, variantID string) (inv
 		) reserved ON TRUE
 		WHERE v.id = $1`
 
-	row := r.db.QueryRowContext(ctx, q, variantID)
+	row := r.queryRow(ctx, q, variantID)
 	item, err := scanInventoryListItem(row)
 	if errors.Is(err, sql.ErrNoRows) {
 		return inventory.InventoryListItem{}, fmt.Errorf("stock_repo: variant %q not found", variantID)
@@ -266,4 +289,25 @@ func (r *StockRepo) GetInventoryItem(ctx context.Context, variantID string) (inv
 		return inventory.InventoryListItem{}, fmt.Errorf("stock_repo: get inventory item: %w", err)
 	}
 	return item, nil
+}
+
+func (r *StockRepo) queryRow(ctx context.Context, q string, args ...interface{}) *sql.Row {
+	if r.tx != nil {
+		return r.tx.QueryRowContext(ctx, q, args...)
+	}
+	return r.db.QueryRowContext(ctx, q, args...)
+}
+
+func (r *StockRepo) query(ctx context.Context, q string, args ...interface{}) (*sql.Rows, error) {
+	if r.tx != nil {
+		return r.tx.QueryContext(ctx, q, args...)
+	}
+	return r.db.QueryContext(ctx, q, args...)
+}
+
+func (r *StockRepo) exec(ctx context.Context, q string, args ...interface{}) (sql.Result, error) {
+	if r.tx != nil {
+		return r.tx.ExecContext(ctx, q, args...)
+	}
+	return r.db.ExecContext(ctx, q, args...)
 }

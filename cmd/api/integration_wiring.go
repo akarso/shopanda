@@ -17,11 +17,14 @@ import (
 // setup sequence (wireServeRuntime does — see its own call site) can
 // still wire it in via SetReindexService (PR-1049), without having to
 // reorder construction so ReindexService exists before this is called.
-func wireIntegrationStockSyncer(app *plugin.App, variants catalog.VariantRepository, products catalog.ProductRepository, stock inventory.StockRepository) *inventoryApp.StockSyncService {
+func wireIntegrationStockSyncer(app *plugin.App, variants catalog.VariantRepository, products catalog.ProductRepository, stock inventory.StockRepository, db *sql.DB) *inventoryApp.StockSyncService {
 	if products == nil {
 		panic("integration stock syncer: products must not be nil")
 	}
-	svc := inventoryApp.NewStockSyncService(variants, stock).WithProducts(products)
+	if db == nil {
+		panic("integration stock syncer: db must not be nil")
+	}
+	svc := inventoryApp.NewStockSyncService(variants, stock).WithProducts(products).WithTxStarter(db)
 	app.SetIntegrationStockSyncer(plugin.NewIntegrationStockSyncer(svc))
 	return svc
 }
@@ -39,5 +42,5 @@ func wireIntegrationStockSyncerFromDB(conn *sql.DB, app *plugin.App) (*inventory
 	if err != nil {
 		return nil, fmt.Errorf("integration stock syncer product repo: %w", err)
 	}
-	return wireIntegrationStockSyncer(app, variantRepo, productRepo, stockRepo), nil
+	return wireIntegrationStockSyncer(app, variantRepo, productRepo, stockRepo, conn), nil
 }
