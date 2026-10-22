@@ -216,9 +216,9 @@ func newStorefrontCheckoutService(carts *storefrontCartRepoStub, prices *storefr
 		products = &mockStorefrontRepo{}
 	}
 	workflow := checkoutApp.NewWorkflow([]checkoutApp.Step{
-		checkoutApp.NewValidateCartStep(variants, products),
+		checkoutApp.NewValidateCartStep(variants, products, cartApp.EmptyBundleComponents(), cartApp.PermissiveStock()),
 		checkoutApp.NewRecalculatePricingStep(pipeline),
-		checkoutApp.NewReserveInventoryStep(&storefrontCheckoutReservationRepoStub{}),
+		checkoutApp.NewReserveInventoryStep(&storefrontCheckoutReservationRepoStub{}, products, variants, cartApp.EmptyBundleComponents()),
 		checkoutApp.NewCreateOrderStep(orders, variants, nil, nil),
 		checkoutApp.NewSelectShippingStep(shippingReg, shipments),
 		checkoutApp.NewInitiatePaymentStep(payRegistry, payments),

@@ -39,10 +39,11 @@ func NewStockSyncHandler(client *sdkhttp.Client, syncer extapi.IntegrationStockS
 		}
 
 		fields := map[string]interface{}{
-			"job_id":       job.JobID,
-			"updated":      result.Updated,
-			"skipped":      result.Skipped,
-			"unknown_skus": len(result.UnknownSKUs),
+			"job_id":        job.JobID,
+			"updated":       result.Updated,
+			"skipped":       result.Skipped,
+			"unknown_skus":  len(result.UnknownSKUs),
+			"rejected_skus": len(result.RejectedSKUs),
 		}
 		if job.Logger != nil {
 			job.Logger.Info("warehousedemo stock sync complete", fields)

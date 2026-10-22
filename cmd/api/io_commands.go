@@ -117,7 +117,11 @@ func runImportStock(cfg *config.Config, log logger.Logger) error {
 		if err != nil {
 			return nil, fmt.Errorf("stock repo: %w", err)
 		}
-		imp := importer.NewStockImporter(variantRepo, stockRepo).WithRowHooks(regs.Import)
+		productRepo, err := postgres.NewProductRepo(conn)
+		if err != nil {
+			return nil, fmt.Errorf("product repo: %w", err)
+		}
+		imp := importer.NewStockImporter(variantRepo, stockRepo).WithProducts(productRepo).WithRowHooks(regs.Import)
 		// PR-1049: batch-trigger a scoped reindex for every product this
 		// import touches (see StockImporter.WithReindex's own doc comment
 		// for why this is one call after the whole import, not one per

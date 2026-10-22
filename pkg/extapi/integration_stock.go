@@ -27,6 +27,10 @@ type StockSyncResult struct {
 	Updated     int      `json:"updated"`
 	Skipped     int      `json:"skipped"`
 	UnknownSKUs []string `json:"unknown_skus,omitempty"`
+	// RejectedSKUs are known SKUs that were not written because the product
+	// cannot hold its own stock (a dynamic bundle). They are also counted in
+	// Skipped. UpsertBySKU does not fail the batch for these rows.
+	RejectedSKUs []string `json:"rejected_skus,omitempty"`
 }
 
 // IntegrationStockSyncer upserts absolute stock levels by SKU for outbound warehouse sync.

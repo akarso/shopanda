@@ -5,11 +5,14 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"math"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/akarso/shopanda/internal/testutil"
 
+	cartApp "github.com/akarso/shopanda/internal/application/cart"
 	"github.com/akarso/shopanda/internal/application/checkout"
 	"github.com/akarso/shopanda/internal/domain/cart"
 	"github.com/akarso/shopanda/internal/domain/catalog"
@@ -17,6 +20,7 @@ import (
 	"github.com/akarso/shopanda/internal/domain/order"
 	"github.com/akarso/shopanda/internal/domain/pricing"
 	"github.com/akarso/shopanda/internal/domain/shared"
+	"github.com/akarso/shopanda/internal/platform/apperror"
 	"github.com/akarso/shopanda/internal/platform/event"
 	"github.com/akarso/shopanda/internal/platform/id"
 	"github.com/akarso/shopanda/internal/platform/logger"
@@ -109,6 +113,11 @@ func (r *mockOrderRepo) ListPaidTaxSnapshots(_ context.Context, _, _ time.Time) 
 // Helpers
 // ============================================================
 
+func newPermissiveReserveStep(reservations inventory.ReservationRepository, opts ...checkout.ReserveOption) *checkout.ReserveInventoryStep {
+	variants, products := cartApp.PermissiveCatalogRepos()
+	return checkout.NewReserveInventoryStep(reservations, products, variants, cartApp.EmptyBundleComponents(), opts...)
+}
+
 func cartWithItems037(t *testing.T, customerID string, variantIDs ...string) *cart.Cart {
 	t.Helper()
 	c, err := cart.NewCart(id.New(), "EUR")
@@ -158,7 +167,7 @@ func pricingContext037(t *testing.T, variantIDs ...string) *pricing.PricingConte
 // ============================================================
 
 func TestReserveInventoryStep_Name(t *testing.T) {
-	step := checkout.NewReserveInventoryStep(&mockReservationRepo{})
+	step := newPermissiveReserveStep(&mockReservationRepo{})
 	if step.Name() != "reserve_inventory" {
 		t.Errorf("Name() = %q, want reserve_inventory", step.Name())
 	}
@@ -166,7 +175,7 @@ func TestReserveInventoryStep_Name(t *testing.T) {
 
 func TestReserveInventoryStep_Success(t *testing.T) {
 	repo := &mockReservationRepo{}
-	step := checkout.NewReserveInventoryStep(repo)
+	step := newPermissiveReserveStep(repo)
 
 	cctx := checkout.NewContext("cart-1", "cust-1", "EUR")
 	cctx.Cart = cartWithItems037(t, "cust-1", "v1", "v2")
@@ -207,7 +216,7 @@ func TestReserveInventoryStep_Success(t *testing.T) {
 
 func TestReserveInventoryStep_InsufficientStock(t *testing.T) {
 	repo := &mockReservationRepo{err: errors.New("insufficient stock")}
-	step := checkout.NewReserveInventoryStep(repo)
+	step := newPermissiveReserveStep(repo)
 
 	cctx := checkout.NewContext("cart-1", "cust-1", "EUR")
 	cctx.Cart = cartWithItems037(t, "cust-1", "v1")
@@ -222,7 +231,7 @@ func TestReserveInventoryStep_InsufficientStock(t *testing.T) {
 }
 
 func TestReserveInventoryStep_NilCart(t *testing.T) {
-	step := checkout.NewReserveInventoryStep(&mockReservationRepo{})
+	step := newPermissiveReserveStep(&mockReservationRepo{})
 
 	cctx := checkout.NewContext("cart-1", "cust-1", "EUR")
 
@@ -234,7 +243,7 @@ func TestReserveInventoryStep_NilCart(t *testing.T) {
 
 func TestReserveInventoryStep_Idempotent(t *testing.T) {
 	repo := &mockReservationRepo{}
-	step := checkout.NewReserveInventoryStep(repo)
+	step := newPermissiveReserveStep(repo)
 
 	cctx := checkout.NewContext("cart-1", "cust-1", "EUR")
 	cctx.Cart = cartWithItems037(t, "cust-1", "v1")
@@ -256,7 +265,7 @@ func TestReserveInventoryStep_Idempotent(t *testing.T) {
 
 func TestReserveInventoryStep_NilContext(t *testing.T) {
 	repo := &mockReservationRepo{}
-	step := checkout.NewReserveInventoryStep(repo)
+	step := newPermissiveReserveStep(repo)
 
 	err := step.Execute(context.Background(), nil)
 	if err == nil {
@@ -272,7 +281,7 @@ func TestReserveInventoryStep_PartialFailureRollback(t *testing.T) {
 		err:        errors.New("insufficient stock"),
 		failAfterN: 1, // first Reserve succeeds, second fails
 	}
-	step := checkout.NewReserveInventoryStep(repo)
+	step := newPermissiveReserveStep(repo)
 
 	cctx := checkout.NewContext("cart-1", "cust-1", "EUR")
 	cctx.Cart = cartWithItems037(t, "cust-1", "v1", "v2")
@@ -297,7 +306,7 @@ func TestReserveInventoryStep_PartialFailureRollback(t *testing.T) {
 
 func TestReserveInventoryStep_EmptyCart(t *testing.T) {
 	repo := &mockReservationRepo{}
-	step := checkout.NewReserveInventoryStep(repo)
+	step := newPermissiveReserveStep(repo)
 
 	c, err := cart.NewCart(id.New(), "EUR")
 	if err != nil {
@@ -330,7 +339,7 @@ func TestReserveInventoryStep_EmitsStockUpdatedEvent(t *testing.T) {
 	repo := &mockReservationRepo{}
 	variants := &mockVariantRepo037{variants: variantMap037("v1", "v2")}
 	bus := event.NewBus(logger.New("error"))
-	step := checkout.NewReserveInventoryStep(repo, checkout.WithStockEventPublishing(variants, bus))
+	step := checkout.NewReserveInventoryStep(repo, &mockProductRepo047{}, variants, cartApp.EmptyBundleComponents(), checkout.WithStockEventPublishing(bus))
 
 	var captured []event.Event
 	bus.On(inventory.EventStockUpdated, func(_ context.Context, evt event.Event) error {
@@ -365,7 +374,7 @@ func TestReserveInventoryStep_EmitsStockUpdatedEvent(t *testing.T) {
 // InventoryAdminHandler's own SetBus-optional convention.
 func TestReserveInventoryStep_NoBusNoEvent(t *testing.T) {
 	repo := &mockReservationRepo{}
-	step := checkout.NewReserveInventoryStep(repo)
+	step := newPermissiveReserveStep(repo)
 
 	cctx := checkout.NewContext("cart-1", "cust-1", "EUR")
 	cctx.Cart = cartWithItems037(t, "cust-1", "v1")
@@ -378,13 +387,411 @@ func TestReserveInventoryStep_NoBusNoEvent(t *testing.T) {
 	}
 }
 
-func TestWithStockEventPublishing_NilVariantsPanics(t *testing.T) {
+func TestNewReserveInventoryStep_NilVariantsPanics(t *testing.T) {
 	defer func() {
 		if recover() == nil {
 			t.Fatal("expected panic for nil variants repository")
 		}
 	}()
-	checkout.NewReserveInventoryStep(&mockReservationRepo{}, checkout.WithStockEventPublishing(nil, event.NewBus(logger.New("error"))))
+	_, products := cartApp.PermissiveCatalogRepos()
+	checkout.NewReserveInventoryStep(&mockReservationRepo{}, products, nil, cartApp.EmptyBundleComponents())
+}
+
+func TestWithStockEventPublishing_NilBusPanics(t *testing.T) {
+	defer func() {
+		if recover() == nil {
+			t.Fatal("expected panic for nil bus")
+		}
+	}()
+	variants, products := cartApp.PermissiveCatalogRepos()
+	checkout.NewReserveInventoryStep(&mockReservationRepo{}, products, variants, cartApp.EmptyBundleComponents(), checkout.WithStockEventPublishing(nil))
+}
+
+type reserveComponentRepo struct {
+	rows []catalog.BundleComponent
+}
+
+func (r reserveComponentRepo) ListByBundleID(_ context.Context, bundleProductID string) ([]catalog.BundleComponent, error) {
+	out := make([]catalog.BundleComponent, 0)
+	for _, row := range r.rows {
+		if row.BundleProductID == bundleProductID {
+			out = append(out, row)
+		}
+	}
+	return out, nil
+}
+func (reserveComponentRepo) CountByBundleID(context.Context, string) (int, error) { return 0, nil }
+func (reserveComponentRepo) CountByComponentID(context.Context, string) (int, error) {
+	return 0, nil
+}
+func (reserveComponentRepo) Upsert(context.Context, *catalog.BundleComponent) error { return nil }
+func (reserveComponentRepo) Remove(context.Context, string, string) error           { return nil }
+
+func TestReserveInventoryStep_DynamicBundleReservesComponents(t *testing.T) {
+	repo := &mockReservationRepo{}
+	variants := &mockVariantRepo037{variants: map[string]*catalog.Variant{
+		"bundle-v": {ID: "bundle-v", ProductID: "bundle", SKU: "SKU-BUNDLE"},
+		"a-v":      {ID: "a-v", ProductID: "a", SKU: "SKU-A"},
+		"b-v":      {ID: "b-v", ProductID: "b", SKU: "SKU-B"},
+		"opt-v":    {ID: "opt-v", ProductID: "opt", SKU: "SKU-OPT"},
+	}}
+	products := &mockProductRepo047{products: map[string]*catalog.Product{
+		"bundle": {ID: "bundle", Type: catalog.TypeBundle, StockMode: catalog.StockModeDynamic, Status: catalog.StatusActive},
+		"a":      {ID: "a", Type: catalog.TypeSimple, Status: catalog.StatusActive},
+		"b":      {ID: "b", Type: catalog.TypeSimple, Status: catalog.StatusActive},
+		"opt":    {ID: "opt", Type: catalog.TypeSimple, Status: catalog.StatusActive},
+	}}
+	components := reserveComponentRepo{rows: []catalog.BundleComponent{
+		{BundleProductID: "bundle", ComponentProductID: "a", Quantity: 2, Required: true},
+		{BundleProductID: "bundle", ComponentProductID: "b", Quantity: 1, Required: true},
+		{BundleProductID: "bundle", ComponentProductID: "opt", Quantity: 5, Required: false},
+	}}
+	step := checkout.NewReserveInventoryStep(repo, products, variants, components)
+
+	cctx := checkout.NewContext("cart-1", "cust-1", "EUR")
+	cctx.Cart = cartWithItems037(t, "cust-1", "bundle-v")
+	if err := step.Execute(context.Background(), cctx); err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	if len(repo.reserved) != 2 {
+		t.Fatalf("reserved = %+v, want 2 component reservations", repo.reserved)
+	}
+	got := map[string]int{}
+	for _, res := range repo.reserved {
+		got[res.VariantID] = res.Quantity
+	}
+	if got["a-v"] != 4 || got["b-v"] != 2 {
+		t.Fatalf("reserved quantities = %v, want a-v=4 (2*2) and b-v=2 (1*2)", got)
+	}
+	if _, ok := got["bundle-v"]; ok {
+		t.Fatal("reserved the bundle variant")
+	}
+	if _, ok := got["opt-v"]; ok {
+		t.Fatal("reserved an optional component")
+	}
+}
+
+func TestReserveInventoryStep_DynamicBundleSkipsDigitalLeaves(t *testing.T) {
+	t.Run("mixed simple and virtual reserves only the simple leaf", func(t *testing.T) {
+		repo := &mockReservationRepo{}
+		variants := &mockVariantRepo037{variants: map[string]*catalog.Variant{
+			"bundle-v":  {ID: "bundle-v", ProductID: "bundle", SKU: "SKU-BUNDLE"},
+			"simple-v":  {ID: "simple-v", ProductID: "simple", SKU: "SKU-SIMPLE"},
+			"virtual-v": {ID: "virtual-v", ProductID: "virtual", SKU: "SKU-VIRTUAL"},
+		}}
+		products := &mockProductRepo047{products: map[string]*catalog.Product{
+			"bundle":  {ID: "bundle", Type: catalog.TypeBundle, StockMode: catalog.StockModeDynamic, Status: catalog.StatusActive},
+			"simple":  {ID: "simple", Type: catalog.TypeSimple, Status: catalog.StatusActive},
+			"virtual": {ID: "virtual", Type: catalog.TypeVirtual, Status: catalog.StatusActive},
+		}}
+		components := reserveComponentRepo{rows: []catalog.BundleComponent{
+			{BundleProductID: "bundle", ComponentProductID: "simple", Quantity: 2, Required: true},
+			{BundleProductID: "bundle", ComponentProductID: "virtual", Quantity: 9, Required: true},
+		}}
+		step := checkout.NewReserveInventoryStep(repo, products, variants, components)
+		cctx := checkout.NewContext("cart-1", "cust-1", "EUR")
+		cctx.Cart = cartWithItems037(t, "cust-1", "bundle-v")
+		cctx.Cart.Items[0].Quantity = 3
+		if err := step.Execute(context.Background(), cctx); err != nil {
+			t.Fatalf("Execute: %v", err)
+		}
+		if len(repo.reserved) != 1 {
+			t.Fatalf("reserved = %+v, want only the simple leaf", repo.reserved)
+		}
+		if repo.reserved[0].VariantID != "simple-v" || repo.reserved[0].Quantity != 6 {
+			t.Fatalf("reserved = %+v, want simple-v quantity 6 (2*3); virtual has no target", repo.reserved[0])
+		}
+		ids, _ := cctx.GetMeta("reservations")
+		if got, ok := ids.([]string); !ok || len(got) != 1 {
+			t.Fatalf("reservations = %#v, want one id", ids)
+		}
+	})
+
+	t.Run("virtual-only required set reserves nothing", func(t *testing.T) {
+		repo := &mockReservationRepo{}
+		variants := &mockVariantRepo037{variants: map[string]*catalog.Variant{
+			"bundle-v":  {ID: "bundle-v", ProductID: "bundle", SKU: "SKU-BUNDLE"},
+			"virtual-v": {ID: "virtual-v", ProductID: "virtual", SKU: "SKU-VIRTUAL"},
+		}}
+		products := &mockProductRepo047{products: map[string]*catalog.Product{
+			"bundle":  {ID: "bundle", Type: catalog.TypeBundle, StockMode: catalog.StockModeDynamic, Status: catalog.StatusActive},
+			"virtual": {ID: "virtual", Type: catalog.TypeVirtual, Status: catalog.StatusActive},
+		}}
+		components := reserveComponentRepo{rows: []catalog.BundleComponent{
+			{BundleProductID: "bundle", ComponentProductID: "virtual", Quantity: 4, Required: true},
+		}}
+		step := checkout.NewReserveInventoryStep(repo, products, variants, components)
+		cctx := checkout.NewContext("cart-1", "cust-1", "EUR")
+		cctx.Cart = cartWithItems037(t, "cust-1", "bundle-v")
+		if err := step.Execute(context.Background(), cctx); err != nil {
+			t.Fatalf("Execute: %v", err)
+		}
+		if len(repo.reserved) != 0 {
+			t.Fatalf("reserved = %+v, want no reservations for a digital-only required set", repo.reserved)
+		}
+		ids, ok := cctx.GetMeta("reservations")
+		got, isSlice := ids.([]string)
+		if !ok || !isSlice || len(got) != 0 {
+			t.Fatalf("reservations = %#v, want an empty list", ids)
+		}
+		reserved, ok := cctx.GetMeta("reserved")
+		if !ok || reserved != true {
+			t.Fatalf("reserved meta = %#v, want true", reserved)
+		}
+	})
+
+	t.Run("downloadable-only required set reserves nothing", func(t *testing.T) {
+		repo := &mockReservationRepo{}
+		variants := &mockVariantRepo037{variants: map[string]*catalog.Variant{
+			"bundle-v":       {ID: "bundle-v", ProductID: "bundle", SKU: "SKU-BUNDLE"},
+			"downloadable-v": {ID: "downloadable-v", ProductID: "downloadable", SKU: "SKU-DL"},
+		}}
+		products := &mockProductRepo047{products: map[string]*catalog.Product{
+			"bundle":       {ID: "bundle", Type: catalog.TypeBundle, StockMode: catalog.StockModeDynamic, Status: catalog.StatusActive},
+			"downloadable": {ID: "downloadable", Type: catalog.TypeDownloadable, Status: catalog.StatusActive},
+		}}
+		components := reserveComponentRepo{rows: []catalog.BundleComponent{
+			{BundleProductID: "bundle", ComponentProductID: "downloadable", Quantity: 4, Required: true},
+		}}
+		step := checkout.NewReserveInventoryStep(repo, products, variants, components)
+		cctx := checkout.NewContext("cart-1", "cust-1", "EUR")
+		cctx.Cart = cartWithItems037(t, "cust-1", "bundle-v")
+		if err := step.Execute(context.Background(), cctx); err != nil {
+			t.Fatalf("Execute: %v", err)
+		}
+		if len(repo.reserved) != 0 {
+			t.Fatalf("reserved = %+v, want no reservations for a downloadable-only required set", repo.reserved)
+		}
+		ids, ok := cctx.GetMeta("reservations")
+		got, isSlice := ids.([]string)
+		if !ok || !isSlice || len(got) != 0 {
+			t.Fatalf("reservations = %#v, want an empty list", ids)
+		}
+		reserved, ok := cctx.GetMeta("reserved")
+		if !ok || reserved != true {
+			t.Fatalf("reserved meta = %#v, want true", reserved)
+		}
+	})
+}
+
+func TestReserveInventoryStep_FixedBundleReservesOwnVariant(t *testing.T) {
+	repo := &mockReservationRepo{}
+	variants := &mockVariantRepo037{variants: map[string]*catalog.Variant{
+		"bundle-v": {ID: "bundle-v", ProductID: "bundle", SKU: "SKU-BUNDLE"},
+		"a-v":      {ID: "a-v", ProductID: "a", SKU: "SKU-A"},
+	}}
+	products := &mockProductRepo047{products: map[string]*catalog.Product{
+		"bundle": {ID: "bundle", Type: catalog.TypeBundle, StockMode: catalog.StockModeFixed, Status: catalog.StatusActive},
+		"a":      {ID: "a", Type: catalog.TypeSimple, Status: catalog.StatusActive},
+	}}
+	components := reserveComponentRepo{rows: []catalog.BundleComponent{
+		{BundleProductID: "bundle", ComponentProductID: "a", Quantity: 3, Required: true},
+	}}
+	step := checkout.NewReserveInventoryStep(repo, products, variants, components)
+
+	cctx := checkout.NewContext("cart-1", "cust-1", "EUR")
+	cctx.Cart = cartWithItems037(t, "cust-1", "bundle-v")
+	if err := step.Execute(context.Background(), cctx); err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	if len(repo.reserved) != 1 {
+		t.Fatalf("reserved = %+v, want one reservation of the bundle variant", repo.reserved)
+	}
+	if repo.reserved[0].VariantID != "bundle-v" || repo.reserved[0].Quantity != 2 {
+		t.Fatalf("reserved = %+v, want bundle-v quantity 2", repo.reserved[0])
+	}
+}
+
+func assertBundleCannotBeReserved(t *testing.T, err error, inner string) {
+	t.Helper()
+	if err == nil {
+		t.Fatal("expected reserve error")
+	}
+	var appErr *apperror.Error
+	if !errors.As(err, &appErr) || appErr.Message != "bundle cannot be reserved" {
+		t.Fatalf("err = %v, want customer message %q", err, "bundle cannot be reserved")
+	}
+	if inner != "" && !strings.Contains(err.Error(), inner) {
+		t.Fatalf("err = %v, want wrapped detail %q", err, inner)
+	}
+}
+
+func TestReserveInventoryStep_DynamicBundleTargetFailures(t *testing.T) {
+	bundleVariant := &catalog.Variant{ID: "bundle-v", ProductID: "bundle", SKU: "SKU-BUNDLE"}
+	oneLeaf := &mockVariantRepo037{variants: map[string]*catalog.Variant{
+		"bundle-v": bundleVariant,
+		"a-v":      {ID: "a-v", ProductID: "a", SKU: "SKU-A"},
+	}}
+	twoLeaves := &mockVariantRepo037{variants: map[string]*catalog.Variant{
+		"bundle-v": bundleVariant,
+		"a-v":      {ID: "a-v", ProductID: "a", SKU: "SKU-A"},
+		"a-v2":     {ID: "a-v2", ProductID: "a", SKU: "SKU-A2"},
+	}}
+
+	cases := []struct {
+		name       string
+		variants   *mockVariantRepo037
+		products   map[string]*catalog.Product
+		components []catalog.BundleComponent
+		lineQty    int
+		inner      string
+	}{
+		{
+			name:     "empty required",
+			variants: oneLeaf,
+			products: map[string]*catalog.Product{
+				"bundle": {ID: "bundle", Type: catalog.TypeBundle, StockMode: catalog.StockModeDynamic, Status: catalog.StatusActive},
+				"opt":    {ID: "opt", Type: catalog.TypeSimple, Status: catalog.StatusActive},
+			},
+			components: []catalog.BundleComponent{
+				{BundleProductID: "bundle", ComponentProductID: "opt", Quantity: 1, Required: false},
+			},
+			inner: "no required components",
+		},
+		{
+			name:     "inactive",
+			variants: oneLeaf,
+			products: map[string]*catalog.Product{
+				"bundle": {ID: "bundle", Type: catalog.TypeBundle, StockMode: catalog.StockModeDynamic, Status: catalog.StatusActive},
+				"a":      {ID: "a", Type: catalog.TypeSimple, Status: catalog.StatusArchived},
+			},
+			components: []catalog.BundleComponent{
+				{BundleProductID: "bundle", ComponentProductID: "a", Quantity: 1, Required: true},
+			},
+			inner: "not active",
+		},
+		{
+			name:     "non-leaf",
+			variants: oneLeaf,
+			products: map[string]*catalog.Product{
+				"bundle": {ID: "bundle", Type: catalog.TypeBundle, StockMode: catalog.StockModeDynamic, Status: catalog.StatusActive},
+				"a":      {ID: "a", Type: catalog.TypeConfigurable, Status: catalog.StatusActive},
+			},
+			components: []catalog.BundleComponent{
+				{BundleProductID: "bundle", ComponentProductID: "a", Quantity: 1, Required: true},
+			},
+			inner: "simple, virtual, or downloadable",
+		},
+		{
+			name:     "multi-variant",
+			variants: twoLeaves,
+			products: map[string]*catalog.Product{
+				"bundle": {ID: "bundle", Type: catalog.TypeBundle, StockMode: catalog.StockModeDynamic, Status: catalog.StatusActive},
+				"a":      {ID: "a", Type: catalog.TypeSimple, Status: catalog.StatusActive},
+			},
+			components: []catalog.BundleComponent{
+				{BundleProductID: "bundle", ComponentProductID: "a", Quantity: 1, Required: true},
+			},
+			inner: "exactly one variant",
+		},
+		{
+			name:     "qty overflow",
+			variants: oneLeaf,
+			products: map[string]*catalog.Product{
+				"bundle": {ID: "bundle", Type: catalog.TypeBundle, StockMode: catalog.StockModeDynamic, Status: catalog.StatusActive},
+				"a":      {ID: "a", Type: catalog.TypeSimple, Status: catalog.StatusActive},
+			},
+			components: []catalog.BundleComponent{
+				{BundleProductID: "bundle", ComponentProductID: "a", Quantity: 2, Required: true},
+			},
+			lineQty: math.MaxInt,
+			inner:   "reserve quantity is invalid",
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			repo := &mockReservationRepo{}
+			step := checkout.NewReserveInventoryStep(repo, &mockProductRepo047{products: tc.products}, tc.variants, reserveComponentRepo{rows: tc.components})
+			cctx := checkout.NewContext("cart-1", "cust-1", "EUR")
+			cctx.Cart = cartWithItems037(t, "cust-1", "bundle-v")
+			if tc.lineQty != 0 {
+				cctx.Cart.Items[0].Quantity = tc.lineQty
+			}
+			err := step.Execute(context.Background(), cctx)
+			assertBundleCannotBeReserved(t, err, tc.inner)
+			if len(repo.reserved) != 0 || len(repo.released) != 0 {
+				t.Fatalf("reserved=%d released=%d, want no reservations", len(repo.reserved), len(repo.released))
+			}
+		})
+	}
+}
+
+func TestReserveInventoryStep_DynamicBundleMidReserveReleasesPrior(t *testing.T) {
+	repo := &mockReservationRepo{err: apperror.New(apperror.CodeConflict, "insufficient stock"), failAfterN: 1}
+	variants := &mockVariantRepo037{variants: map[string]*catalog.Variant{
+		"bundle-v": {ID: "bundle-v", ProductID: "bundle", SKU: "SKU-BUNDLE"},
+		"a-v":      {ID: "a-v", ProductID: "a", SKU: "SKU-A"},
+		"b-v":      {ID: "b-v", ProductID: "b", SKU: "SKU-B"},
+	}}
+	products := &mockProductRepo047{products: map[string]*catalog.Product{
+		"bundle": {ID: "bundle", Type: catalog.TypeBundle, StockMode: catalog.StockModeDynamic, Status: catalog.StatusActive},
+		"a":      {ID: "a", Type: catalog.TypeSimple, Status: catalog.StatusActive},
+		"b":      {ID: "b", Type: catalog.TypeSimple, Status: catalog.StatusActive},
+	}}
+	components := reserveComponentRepo{rows: []catalog.BundleComponent{
+		{BundleProductID: "bundle", ComponentProductID: "a", Quantity: 1, Required: true},
+		{BundleProductID: "bundle", ComponentProductID: "b", Quantity: 1, Required: true},
+	}}
+	step := checkout.NewReserveInventoryStep(repo, products, variants, components)
+	cctx := checkout.NewContext("cart-1", "cust-1", "EUR")
+	cctx.Cart = cartWithItems037(t, "cust-1", "bundle-v")
+	err := step.Execute(context.Background(), cctx)
+	assertBundleCannotBeReserved(t, err, "insufficient stock")
+	var appErr *apperror.Error
+	if !errors.As(err, &appErr) || strings.Contains(appErr.Message, "a-v") || strings.Contains(appErr.Message, "b-v") {
+		t.Fatalf("message = %q, want %q without a variant id", appErr.Message, "bundle cannot be reserved")
+	}
+	if len(repo.reserved) != 1 {
+		t.Fatalf("reserved = %+v, want the first component only", repo.reserved)
+	}
+	if len(repo.released) != 1 || repo.released[0] != repo.reserved[0].ID {
+		t.Fatalf("released = %v, want the first reservation %s", repo.released, repo.reserved[0].ID)
+	}
+}
+
+func TestReserveInventoryStep_DynamicBundlePublishesParentProduct(t *testing.T) {
+	repo := &mockReservationRepo{}
+	variants := &mockVariantRepo037{variants: map[string]*catalog.Variant{
+		"bundle-v": {ID: "bundle-v", ProductID: "bundle", SKU: "SKU-BUNDLE"},
+		"a-v":      {ID: "a-v", ProductID: "a", SKU: "SKU-A"},
+	}}
+	products := &mockProductRepo047{products: map[string]*catalog.Product{
+		"bundle": {ID: "bundle", Type: catalog.TypeBundle, StockMode: catalog.StockModeDynamic, Status: catalog.StatusActive},
+		"a":      {ID: "a", Type: catalog.TypeSimple, Status: catalog.StatusActive},
+	}}
+	components := reserveComponentRepo{rows: []catalog.BundleComponent{
+		{BundleProductID: "bundle", ComponentProductID: "a", Quantity: 1, Required: true},
+	}}
+	bus := event.NewBus(logger.New("error"))
+	step := checkout.NewReserveInventoryStep(repo, products, variants, components, checkout.WithStockEventPublishing(bus))
+	var productIDs []string
+	bus.On(inventory.EventStockUpdated, func(_ context.Context, evt event.Event) error {
+		data, ok := evt.Data.(inventory.StockUpdatedData)
+		if !ok {
+			t.Fatalf("data type %T", evt.Data)
+		}
+		productIDs = append(productIDs, data.ProductID)
+		return nil
+	})
+	cctx := checkout.NewContext("cart-1", "cust-1", "EUR")
+	cctx.Cart = cartWithItems037(t, "cust-1", "bundle-v")
+	if err := step.Execute(context.Background(), cctx); err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	seenParent := false
+	seenComponent := false
+	for _, id := range productIDs {
+		if id == "bundle" {
+			seenParent = true
+		}
+		if id == "a" {
+			seenComponent = true
+		}
+	}
+	if !seenParent || !seenComponent {
+		t.Fatalf("product ids = %v, want component a and parent bundle", productIDs)
+	}
 }
 
 // TestReserveInventoryStep_RollbackEmitsStockUpdatedEvent pins that a
@@ -400,7 +807,7 @@ func TestReserveInventoryStep_RollbackEmitsStockUpdatedEvent(t *testing.T) {
 	}
 	variants := &mockVariantRepo037{variants: variantMap037("v1", "v2")}
 	bus := event.NewBus(logger.New("error"))
-	step := checkout.NewReserveInventoryStep(repo, checkout.WithStockEventPublishing(variants, bus))
+	step := checkout.NewReserveInventoryStep(repo, &mockProductRepo047{}, variants, cartApp.EmptyBundleComponents(), checkout.WithStockEventPublishing(bus))
 
 	var captured []event.Event
 	bus.On(inventory.EventStockUpdated, func(_ context.Context, evt event.Event) error {
@@ -442,9 +849,9 @@ func TestReserveInventoryStep_RollbackEmitsStockUpdatedEvent(t *testing.T) {
 func TestReserveInventoryStep_ReusesValidateCartStepResolvedVariant(t *testing.T) {
 	repo := &mockReservationRepo{}
 	variants := &mockVariantRepo037{variants: variantMap037("v1")}
-	validateStep := checkout.NewValidateCartStep(variants, &mockProductRepo047{})
+	validateStep := newValidateCartStep(variants, &mockProductRepo047{})
 	bus := event.NewBus(logger.New("error"))
-	reserveStep := checkout.NewReserveInventoryStep(repo, checkout.WithStockEventPublishing(variants, bus))
+	reserveStep := checkout.NewReserveInventoryStep(repo, &mockProductRepo047{}, variants, cartApp.EmptyBundleComponents(), checkout.WithStockEventPublishing(bus))
 
 	var captured []event.Event
 	bus.On(inventory.EventStockUpdated, func(_ context.Context, evt event.Event) error {
@@ -824,8 +1231,21 @@ func (r *mockVariantRepo037) FindBySKUs(_ context.Context, skus []string) (map[s
 	}
 	return out, nil
 }
-func (r *mockVariantRepo037) ListByProductID(_ context.Context, _ string, _, _ int) ([]catalog.Variant, error) {
-	return nil, nil
+func (r *mockVariantRepo037) ListByProductID(_ context.Context, productID string, _, limit int) ([]catalog.Variant, error) {
+	if r.err != nil {
+		return nil, r.err
+	}
+	out := make([]catalog.Variant, 0)
+	for _, v := range r.variants {
+		if v == nil || v.ProductID != productID {
+			continue
+		}
+		out = append(out, *v)
+		if limit > 0 && len(out) >= limit {
+			break
+		}
+	}
+	return out, nil
 }
 func (r *mockVariantRepo037) ListByProductIDs(ctx context.Context, productIDs []string, limitPerProduct int) (map[string][]catalog.Variant, error) {
 	return testutil.ListByProductIDsFromList(ctx, r.ListByProductID, productIDs, limitPerProduct)

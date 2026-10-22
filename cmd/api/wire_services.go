@@ -259,7 +259,7 @@ func wireServeRuntime(cfg *config.Config, log logger.Logger, conn *sql.DB, repos
 	pluginApp.SetIntegrationIdempotencyStore(repos.integrationIdempotencyRepo)
 	orderStatusService := orderApp.NewStatusService(repos.orderRepo)
 	pluginApp.SetIntegrationOrderStatusUpdater(plugin.NewIntegrationOrderStatusUpdater(orderStatusService))
-	stockSyncSvc := wireIntegrationStockSyncer(pluginApp, repos.variantRepo, repos.stockRepo)
+	stockSyncSvc := wireIntegrationStockSyncer(pluginApp, repos.variantRepo, repos.productRepo, repos.stockRepo)
 	permReg := preparePermissionRegistry(pluginApp)
 	summary := registry.InitAll(pluginApp)
 	sealPermissionRegistry(pluginApp) // serve: freeze + BindRuntime for HTTP auth/catalog
@@ -519,7 +519,8 @@ func wireServeRuntime(cfg *config.Config, log logger.Logger, conn *sql.DB, repos
 	reviewService := reviewsApp.NewService(repos.reviewRepo, repos.productRepo)
 	pdp := composition.NewPipeline[composition.ProductContext]()
 	pdp.AddStep(composition.ProductMetaStep{})
-	pdp.AddStep(composition.NewJSONLDProductStep(repos.variantRepo, repos.priceRepo, repos.stockRepo))
+	pdp.AddStep(composition.NewJSONLDProductStep(repos.variantRepo, repos.priceRepo, repos.stockRepo).
+		WithBundleStockRollup(repos.productRepo, repos.bundleComponentRepo))
 	pdp.AddStep(composition.NewCanonicalURLStep(baseURL))
 	pdp.AddStep(composition.NewPriceIndicationStep(repos.variantRepo, repos.priceRepo, repos.priceHistoryRepo, repos.configRepo))
 	pdp.AddStep(composition.NewWeeeStep(repos.configRepo))
@@ -590,17 +591,17 @@ func wireServeRuntime(cfg *config.Config, log logger.Logger, conn *sql.DB, repos
 	pricingPipeline := pricing.NewPipeline(pricingSteps...)
 
 	// Application services.
-	cartService := cartApp.NewService(repos.cartRepo, repos.priceRepo, repos.promotionRepo, repos.couponRepo, repos.variantRepo, repos.productRepo, repos.bundleComponentRepo, pricingPipeline, log, bus, extensionValueService, hookRegistry).
+	cartService := cartApp.NewService(repos.cartRepo, repos.priceRepo, repos.promotionRepo, repos.couponRepo, repos.variantRepo, repos.productRepo, repos.bundleComponentRepo, repos.stockRepo, pricingPipeline, log, bus, extensionValueService, hookRegistry).
 		WithVisibilityFacts(visibilityFacts, visibilityOpts)
 	storeCreditService := storecreditApp.NewService(repos.storeCreditRepo, repos.customerRepo).
 		WithMaxIssueAmount(cfg.StoreCredit.MaxIssueAmount)
 
 	// Checkout workflow.
-	validateCartStep := checkoutApp.NewValidateCartStep(repos.variantRepo, repos.productRepo).
+	validateCartStep := checkoutApp.NewValidateCartStep(repos.variantRepo, repos.productRepo, repos.bundleComponentRepo, repos.stockRepo).
 		WithVisibilityFacts(visibilityFacts, visibilityOpts)
 	recalculatePricingStep := checkoutApp.NewRecalculatePricingStep(pricingPipeline)
-	reserveInventoryStep := checkoutApp.NewReserveInventoryStep(repos.reservationRepo,
-		checkoutApp.WithStockEventPublishing(repos.variantRepo, bus))
+	reserveInventoryStep := checkoutApp.NewReserveInventoryStep(repos.reservationRepo, repos.productRepo, repos.variantRepo, repos.bundleComponentRepo,
+		checkoutApp.WithStockEventPublishing(bus))
 	createOrderStep := checkoutApp.NewCreateOrderStep(repos.orderRepo, repos.variantRepo, storeCreditService, extensionValueService)
 	selectShippingStep := checkoutApp.NewSelectShippingStep(shippingReg, repos.shippingRepo)
 	initiatePaymentStep := checkoutApp.NewInitiatePaymentStep(payRegistry, repos.paymentRepo)
@@ -726,6 +727,7 @@ func wireServeRuntime(cfg *config.Config, log logger.Logger, conn *sql.DB, repos
 		WithBundleComponents(repos.bundleComponentRepo).
 		WithGroupedMembers(repos.groupedMemberRepo).
 		WithVariantPrices(repos.variantRepo, repos.priceRepo).
+		WithVariantStock(repos.stockRepo).
 		WithTxStarter(conn)
 	productTranslationAdmin := admin.NewProductTranslationAdminHandler(repos.productRepo, repos.contentTranslationRepo, sharedAuditor, log)
 	productPriceAdmin := admin.NewProductPriceAdminHandler(repos.productRepo, repos.variantRepo, repos.priceRepo, sharedAuditor, log)
@@ -855,7 +857,8 @@ func wireServeRuntime(cfg *config.Config, log logger.Logger, conn *sql.DB, repos
 	extensionSlotAdmin := admin.NewExtensionSlotAdminHandler(slotRegistry)
 	portSnapshot := portsapp.BuildSnapshot(pluginApp, cfg)
 	extensionPortAdmin := admin.NewExtensionPortAdminHandler(portSnapshot)
-	inventoryAdmin := admin.NewInventoryAdminHandlerWithAuditor(repos.stockRepo, repos.variantRepo, sharedAuditor)
+	inventoryAdmin := admin.NewInventoryAdminHandlerWithAuditor(repos.stockRepo, repos.variantRepo, sharedAuditor).
+		WithProducts(repos.productRepo)
 	inventoryAdmin.SetBus(bus) // PR-1036: stock adjustment → search index update
 	storeAdmin := admin.NewStoreAdminHandlerWithAuditor(repos.storeRepo, bus, sharedAuditor)
 	auditLogAdmin := admin.NewAuditLogAdminHandler(repos.auditLogRepo, sharedAuditor)

@@ -33,6 +33,10 @@ func (storefrontFormTestValueRepo) Delete(_ context.Context, _ domainext.Target,
 	return apperror.NotFound("extension value not found")
 }
 
+func (storefrontFormTestValueRepo) ListTargetIDsByTypeAndIDPrefix(context.Context, domainext.TargetType, string) ([]string, error) {
+	return nil, nil
+}
+
 func TestStorefrontExtensionFormNameRoundTrip(t *testing.T) {
 	cases := []string{
 		"acme.gift.message",

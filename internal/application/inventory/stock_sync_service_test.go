@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"sort"
+	"strings"
 	"testing"
 	"time"
 
@@ -162,12 +163,32 @@ func (r *stockSyncStockRepo) GetInventoryItem(context.Context, string) (inventor
 	return inventory.InventoryListItem{}, nil
 }
 
+// stockSyncProductRepo is permissive unless byID is set. A set map returns
+// only those rows (a missing id is a missing product).
+type stockSyncProductRepo struct {
+	byID map[string]*catalog.Product
+}
+
+func (r stockSyncProductRepo) FindByID(_ context.Context, id string) (*catalog.Product, error) {
+	if r.byID != nil {
+		return r.byID[id], nil
+	}
+	if id == "" {
+		return nil, nil
+	}
+	return &catalog.Product{ID: id, Type: catalog.TypeSimple, Status: catalog.StatusActive, StockMode: catalog.StockModeFixed}, nil
+}
+
+func newTestStockSync(variants *stockSyncVariantRepo, stock *stockSyncStockRepo) *StockSyncService {
+	return NewStockSyncService(variants, stock).WithProducts(stockSyncProductRepo{})
+}
+
 func TestStockSyncService_UpsertBySKU(t *testing.T) {
 	variants := &stockSyncVariantRepo{bySKU: map[string]*catalog.Variant{
-		"SKU-1": {ID: "var-1", SKU: "SKU-1"},
+		"SKU-1": {ID: "var-1", SKU: "SKU-1", ProductID: "p1"},
 	}}
 	stock := &stockSyncStockRepo{entries: make(map[string]inventory.StockEntry)}
-	svc := NewStockSyncService(variants, stock)
+	svc := newTestStockSync(variants, stock)
 
 	result, err := svc.UpsertBySKU(context.Background(), []extapi.StockLevelUpdate{
 		{SKU: "SKU-1", Quantity: 10},
@@ -188,10 +209,10 @@ func TestStockSyncService_UpsertBySKU(t *testing.T) {
 
 func TestStockSyncService_UpsertBySKU_DeduplicatesLatestQuantity(t *testing.T) {
 	variants := &stockSyncVariantRepo{bySKU: map[string]*catalog.Variant{
-		"SKU-1": {ID: "var-1", SKU: "SKU-1"},
+		"SKU-1": {ID: "var-1", SKU: "SKU-1", ProductID: "p1"},
 	}}
 	stock := &stockSyncStockRepo{entries: make(map[string]inventory.StockEntry)}
-	svc := NewStockSyncService(variants, stock)
+	svc := newTestStockSync(variants, stock)
 
 	result, err := svc.UpsertBySKU(context.Background(), []extapi.StockLevelUpdate{
 		{SKU: "SKU-1", Quantity: 10},
@@ -221,7 +242,7 @@ func TestStockSyncService_UpsertBySKU_TriggersOneBatchedReindex(t *testing.T) {
 		"SKU-3": {ID: "var-3", SKU: "SKU-3", ProductID: p2},
 	}}
 	stock := &stockSyncStockRepo{entries: make(map[string]inventory.StockEntry)}
-	svc := NewStockSyncService(variants, stock)
+	svc := newTestStockSync(variants, stock)
 	queue := &stockSyncFakeQueue{}
 	svc.SetReindexService(newTestReindexService(t, queue))
 
@@ -262,7 +283,7 @@ func TestStockSyncService_UpsertBySKU_NilReindexServiceIsNoop(t *testing.T) {
 		"SKU-1": {ID: "var-1", SKU: "SKU-1", ProductID: "p1"},
 	}}
 	stock := &stockSyncStockRepo{entries: make(map[string]inventory.StockEntry)}
-	svc := NewStockSyncService(variants, stock)
+	svc := newTestStockSync(variants, stock)
 
 	result, err := svc.UpsertBySKU(context.Background(), []extapi.StockLevelUpdate{
 		{SKU: "SKU-1", Quantity: 10},
@@ -299,7 +320,7 @@ func TestStockSyncService_UpsertBySKU_ReindexesProductsCommittedBeforeALaterChun
 	}
 	variants := &stockSyncVariantRepo{bySKU: bySKU}
 	stock := &stockSyncStockRepo{entries: make(map[string]inventory.StockEntry), failOnSetStocksCall: 2}
-	svc := NewStockSyncService(variants, stock)
+	svc := newTestStockSync(variants, stock)
 	queue := &stockSyncFakeQueue{}
 	svc.SetReindexService(newTestReindexService(t, queue))
 
@@ -329,7 +350,7 @@ func TestStockSyncService_UpsertBySKU_TriggerErrorIsReturned(t *testing.T) {
 		"SKU-1": {ID: "var-1", SKU: "SKU-1", ProductID: p1},
 	}}
 	stock := &stockSyncStockRepo{entries: make(map[string]inventory.StockEntry)}
-	svc := NewStockSyncService(variants, stock)
+	svc := newTestStockSync(variants, stock)
 	queueErr := errors.New("queue down")
 	queue := &stockSyncFakeQueue{err: queueErr}
 	svc.SetReindexService(newTestReindexService(t, queue))
@@ -340,4 +361,69 @@ func TestStockSyncService_UpsertBySKU_TriggerErrorIsReturned(t *testing.T) {
 	if !errors.Is(err, queueErr) {
 		t.Fatalf("err = %v, want queue down wrapped from Trigger", err)
 	}
+}
+
+func TestStockSyncService_UpsertBySKU_RejectsDynamicBundle(t *testing.T) {
+	variants := &stockSyncVariantRepo{bySKU: map[string]*catalog.Variant{
+		"SKU-SIMPLE": {ID: "simple-v", SKU: "SKU-SIMPLE", ProductID: "simple"},
+		"SKU-BUNDLE": {ID: "bundle-v", SKU: "SKU-BUNDLE", ProductID: "bundle"},
+		"SKU-GONE":   {ID: "gone-v", SKU: "SKU-GONE", ProductID: "missing"},
+	}}
+	products := stockSyncProductRepo{byID: map[string]*catalog.Product{
+		"simple": {ID: "simple", Type: catalog.TypeSimple, Status: catalog.StatusActive, StockMode: catalog.StockModeFixed},
+		"bundle": {ID: "bundle", Type: catalog.TypeBundle, Status: catalog.StatusActive, StockMode: catalog.StockModeDynamic},
+	}}
+
+	t.Run("dynamic bundle is skipped without an error and the simple sku is stored", func(t *testing.T) {
+		stock := &stockSyncStockRepo{entries: make(map[string]inventory.StockEntry)}
+		svc := NewStockSyncService(variants, stock).WithProducts(products)
+		result, err := svc.UpsertBySKU(context.Background(), []extapi.StockLevelUpdate{
+			{SKU: "SKU-SIMPLE", Quantity: 4},
+			{SKU: "SKU-BUNDLE", Quantity: 9},
+		})
+		if err != nil {
+			t.Fatalf("UpsertBySKU: %v, want nil so an ERP retry does not loop", err)
+		}
+		if _, wrote := stock.entries["bundle-v"]; wrote {
+			t.Fatalf("dynamic bundle stock = %+v, want no row", stock.entries["bundle-v"])
+		}
+		if stock.entries["simple-v"].Quantity != 4 {
+			t.Fatalf("simple stock = %+v, want quantity 4", stock.entries["simple-v"])
+		}
+		if result.Updated != 1 || result.Skipped != 1 {
+			t.Fatalf("result = %+v, want Updated=1 Skipped=1", result)
+		}
+		if len(result.RejectedSKUs) != 1 || result.RejectedSKUs[0] != "SKU-BUNDLE" {
+			t.Fatalf("RejectedSKUs = %v, want [SKU-BUNDLE]", result.RejectedSKUs)
+		}
+	})
+
+	t.Run("missing product fails closed before any write", func(t *testing.T) {
+		stock := &stockSyncStockRepo{entries: make(map[string]inventory.StockEntry)}
+		svc := NewStockSyncService(variants, stock).WithProducts(products)
+		_, err := svc.UpsertBySKU(context.Background(), []extapi.StockLevelUpdate{
+			{SKU: "SKU-SIMPLE", Quantity: 4},
+			{SKU: "SKU-GONE", Quantity: 2},
+		})
+		if err == nil || !strings.Contains(err.Error(), "not found") {
+			t.Fatalf("err = %v, want product not found", err)
+		}
+		if len(stock.entries) != 0 {
+			t.Fatalf("stock = %+v, want no writes when a product lookup is missing", stock.entries)
+		}
+	})
+
+	t.Run("nil product repository fails closed", func(t *testing.T) {
+		stock := &stockSyncStockRepo{entries: make(map[string]inventory.StockEntry)}
+		svc := NewStockSyncService(variants, stock)
+		_, err := svc.UpsertBySKU(context.Background(), []extapi.StockLevelUpdate{
+			{SKU: "SKU-SIMPLE", Quantity: 4},
+		})
+		if err == nil || !strings.Contains(err.Error(), "product repository is required") {
+			t.Fatalf("err = %v, want a missing repository error", err)
+		}
+		if len(stock.entries) != 0 {
+			t.Fatalf("stock = %+v, want no writes", stock.entries)
+		}
+	})
 }

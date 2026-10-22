@@ -136,12 +136,12 @@ func TestProductRepo_LockForUpdate(t *testing.T) {
 	if got != catalog.TypeVirtual {
 		t.Fatalf("type = %q, want virtual", got)
 	}
-	gotType, gotMode, err := bound.LockTypeAndPricingMode(ctx, p.ID)
+	gotType, gotMode, gotStock, err := bound.LockTypeAndModes(ctx, p.ID)
 	if err != nil {
-		t.Fatalf("LockTypeAndPricingMode: %v", err)
+		t.Fatalf("LockTypeAndModes: %v", err)
 	}
-	if gotType != catalog.TypeVirtual || gotMode != catalog.PricingModeFixed {
-		t.Fatalf("locked type/mode = %q/%q, want virtual/fixed", gotType, gotMode)
+	if gotType != catalog.TypeVirtual || gotMode != catalog.PricingModeFixed || gotStock != catalog.StockModeFixed {
+		t.Fatalf("locked type/pricing/stock = %q/%q/%q, want virtual/fixed/fixed", gotType, gotMode, gotStock)
 	}
 	_, err = bound.LockForUpdate(ctx, id.New())
 	if !apperror.Is(err, apperror.CodeNotFound) {

@@ -101,12 +101,19 @@ func (m *mockPriceRepo) Upsert(_ context.Context, _ *pricing.Price) error { retu
 
 type mockStockRepo struct {
 	entry       inventory.StockEntry
+	byVariant   map[string]inventory.StockEntry
 	err         error
 	capturedCtx context.Context
 }
 
-func (m *mockStockRepo) GetStock(ctx context.Context, _ string) (inventory.StockEntry, error) {
+func (m *mockStockRepo) GetStock(ctx context.Context, variantID string) (inventory.StockEntry, error) {
 	m.capturedCtx = ctx
+	if m.byVariant != nil {
+		if entry, ok := m.byVariant[variantID]; ok {
+			return entry, m.err
+		}
+		return inventory.StockEntry{}, m.err
+	}
 	return m.entry, m.err
 }
 func (m *mockStockRepo) SetStock(_ context.Context, _ *inventory.StockEntry) error   { return nil }
@@ -363,5 +370,171 @@ func TestJSONLDProductStep_DynamicSkipsStoredPrice(t *testing.T) {
 	ld := ctx.Blocks[0].Data["jsonld"].(map[string]interface{})
 	if ld["offers"] != nil {
 		t.Fatal("dynamic bundle emitted an offer before ResolveUnitPrice")
+	}
+}
+
+type jsonLDProducts struct {
+	products map[string]*catalog.Product
+}
+
+func (m jsonLDProducts) FindByID(_ context.Context, id string) (*catalog.Product, error) {
+	return m.products[id], nil
+}
+func (jsonLDProducts) FindBySlug(context.Context, string) (*catalog.Product, error) { return nil, nil }
+func (jsonLDProducts) List(context.Context, catalog.ListFilter) ([]catalog.Product, error) {
+	return nil, nil
+}
+func (jsonLDProducts) FindByCategoryID(context.Context, string, int, int) ([]catalog.Product, error) {
+	return nil, nil
+}
+func (jsonLDProducts) Create(context.Context, *catalog.Product) error { return nil }
+func (jsonLDProducts) Update(context.Context, *catalog.Product) error { return nil }
+
+type jsonLDComponents struct {
+	rows []catalog.BundleComponent
+}
+
+func (m jsonLDComponents) ListByBundleID(_ context.Context, bundleProductID string) ([]catalog.BundleComponent, error) {
+	out := make([]catalog.BundleComponent, 0)
+	for _, row := range m.rows {
+		if row.BundleProductID == bundleProductID {
+			out = append(out, row)
+		}
+	}
+	return out, nil
+}
+func (jsonLDComponents) CountByBundleID(context.Context, string) (int, error) { return 0, nil }
+func (jsonLDComponents) CountByComponentID(context.Context, string) (int, error) {
+	return 0, nil
+}
+func (jsonLDComponents) Upsert(context.Context, *catalog.BundleComponent) error { return nil }
+func (jsonLDComponents) Remove(context.Context, string, string) error           { return nil }
+
+func TestJSONLDProductStep_DynamicStockInStockFromRollup(t *testing.T) {
+	bundleVar, err := catalog.NewVariant("bundle-v", "bundle", "SKU-B")
+	if err != nil {
+		t.Fatal(err)
+	}
+	compVar, err := catalog.NewVariant("comp-v", "comp", "SKU-C")
+	if err != nil {
+		t.Fatal(err)
+	}
+	own, err := inventory.NewStockEntry("bundle-v", 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	compStock, err := inventory.NewStockEntry("comp-v", 4)
+	if err != nil {
+		t.Fatal(err)
+	}
+	products := jsonLDProducts{products: map[string]*catalog.Product{
+		"bundle": {ID: "bundle", Type: catalog.TypeBundle, PricingMode: catalog.PricingModeFixed, StockMode: catalog.StockModeDynamic, Status: catalog.StatusActive},
+		"comp":   {ID: "comp", Type: catalog.TypeSimple, Status: catalog.StatusActive},
+	}}
+	components := jsonLDComponents{rows: []catalog.BundleComponent{
+		{BundleProductID: "bundle", ComponentProductID: "comp", Quantity: 2, Required: true},
+		{BundleProductID: "bundle", ComponentProductID: "opt", Quantity: 9, Required: false},
+	}}
+	s := composition.NewJSONLDProductStep(
+		&mockVariantRepo{variants: []catalog.Variant{bundleVar, compVar}},
+		&mockPriceRepo{price: &pricing.Price{ID: "pr", VariantID: "bundle-v", Amount: shared.MustNewMoney(2500, "EUR")}},
+		&mockStockRepo{byVariant: map[string]inventory.StockEntry{"bundle-v": own, "comp-v": compStock}},
+	).WithBundleStockRollup(products, components)
+
+	prod := catalog.Product{
+		ID: "bundle", Name: "Kit", Slug: "kit",
+		Type: catalog.TypeBundle, PricingMode: catalog.PricingModeFixed, StockMode: catalog.StockModeDynamic,
+	}
+	ctx := composition.NewProductContext(&prod)
+	if err := s.Apply(ctx); err != nil {
+		t.Fatalf("Apply: %v", err)
+	}
+	ld := ctx.Blocks[0].Data["jsonld"].(map[string]interface{})
+	offers, ok := ld["offers"].(map[string]interface{})
+	if !ok {
+		t.Fatal("expected an offer for a fixed-price dynamic-stock bundle")
+	}
+	if offers["availability"] != "https://schema.org/InStock" {
+		t.Fatalf("availability = %v, want InStock from component rollup (bundle stock is 0)", offers["availability"])
+	}
+
+	short, err := inventory.NewStockEntry("comp-v", 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s = composition.NewJSONLDProductStep(
+		&mockVariantRepo{variants: []catalog.Variant{bundleVar, compVar}},
+		&mockPriceRepo{price: &pricing.Price{ID: "pr", VariantID: "bundle-v", Amount: shared.MustNewMoney(2500, "EUR")}},
+		&mockStockRepo{byVariant: map[string]inventory.StockEntry{"bundle-v": own, "comp-v": short}},
+	).WithBundleStockRollup(products, components)
+	ctx = composition.NewProductContext(&prod)
+	if err := s.Apply(ctx); err != nil {
+		t.Fatalf("Apply short: %v", err)
+	}
+	offers = ctx.Blocks[0].Data["jsonld"].(map[string]interface{})["offers"].(map[string]interface{})
+	if offers["availability"] != "https://schema.org/OutOfStock" {
+		t.Fatalf("availability = %v, want OutOfStock when floor(stock/quantity) is 0", offers["availability"])
+	}
+
+	pricedDynamic := prod
+	pricedDynamic.PricingMode = catalog.PricingModeDynamic
+	s = composition.NewJSONLDProductStep(
+		&mockVariantRepo{variants: []catalog.Variant{bundleVar, compVar}},
+		&mockPriceRepo{price: &pricing.Price{ID: "pr", VariantID: "bundle-v", Amount: shared.MustNewMoney(2500, "EUR")}},
+		&mockStockRepo{byVariant: map[string]inventory.StockEntry{"bundle-v": own, "comp-v": compStock}},
+	).WithBundleStockRollup(products, components)
+	ctx = composition.NewProductContext(&pricedDynamic)
+	if err := s.Apply(ctx); err != nil {
+		t.Fatalf("Apply dynamic price: %v", err)
+	}
+	ld = ctx.Blocks[0].Data["jsonld"].(map[string]interface{})
+	if ld["offers"] != nil {
+		t.Fatal("dynamic pricing still emitted an offer")
+	}
+}
+
+func TestJSONLDProductStep_DynamicStockIgnoresStuffedMeta(t *testing.T) {
+	bundleVar, err := catalog.NewVariant("bundle-v", "bundle", "SKU-B")
+	if err != nil {
+		t.Fatal(err)
+	}
+	compVar, err := catalog.NewVariant("comp-v", "comp", "SKU-C")
+	if err != nil {
+		t.Fatal(err)
+	}
+	own, err := inventory.NewStockEntry("bundle-v", 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	compStock, err := inventory.NewStockEntry("comp-v", 4)
+	if err != nil {
+		t.Fatal(err)
+	}
+	products := jsonLDProducts{products: map[string]*catalog.Product{
+		"bundle": {ID: "bundle", Type: catalog.TypeBundle, PricingMode: catalog.PricingModeFixed, StockMode: catalog.StockModeDynamic, Status: catalog.StatusActive},
+		"comp":   {ID: "comp", Type: catalog.TypeSimple, Status: catalog.StatusActive},
+	}}
+	components := jsonLDComponents{rows: []catalog.BundleComponent{
+		{BundleProductID: "bundle", ComponentProductID: "comp", Quantity: 2, Required: true},
+	}}
+	s := composition.NewJSONLDProductStep(
+		&mockVariantRepo{variants: []catalog.Variant{bundleVar, compVar}},
+		&mockPriceRepo{price: &pricing.Price{ID: "pr", VariantID: "bundle-v", Amount: shared.MustNewMoney(2500, "EUR")}},
+		&mockStockRepo{byVariant: map[string]inventory.StockEntry{"bundle-v": own, "comp-v": compStock}},
+	).WithBundleStockRollup(products, components)
+
+	prod := catalog.Product{
+		ID: "bundle", Name: "Kit", Slug: "kit",
+		Type: catalog.TypeBundle, PricingMode: catalog.PricingModeFixed, StockMode: catalog.StockModeDynamic,
+	}
+	ctx := composition.NewProductContext(&prod)
+	ctx.Meta["quantity_positive"] = false
+	ctx.Meta["visibility_inputs"] = catalog.VisibilityInputs{QuantityPositive: false}
+	if err := s.Apply(ctx); err != nil {
+		t.Fatalf("Apply: %v", err)
+	}
+	offers := ctx.Blocks[0].Data["jsonld"].(map[string]interface{})["offers"].(map[string]interface{})
+	if offers["availability"] != "https://schema.org/InStock" {
+		t.Fatalf("availability = %v, want InStock from ResolveAvailableQty; stuffed Meta is not a fact source", offers["availability"])
 	}
 }

@@ -243,8 +243,12 @@ func TestStorefrontCheckoutErrorMessage_SanitizesServerErrors(t *testing.T) {
 
 func TestStorefrontCheckoutErrorMessage_PreservesClientErrors(t *testing.T) {
 	err := apperror.Validation("Select a shipping method to continue.")
-	if got := storefrontCheckoutErrorMessage(err); got != err.Error() {
-		t.Fatalf("storefrontCheckoutErrorMessage() = %q, want %q", got, err.Error())
+	if got := storefrontCheckoutErrorMessage(err); got != "Select a shipping method to continue." {
+		t.Fatalf("storefrontCheckoutErrorMessage() = %q, want the customer message", got)
+	}
+	wrapped := apperror.Wrap(apperror.CodeValidation, "bundle cannot be reserved", apperror.New(apperror.CodeConflict, "insufficient stock"))
+	if got := storefrontCheckoutErrorMessage(wrapped); got != "bundle cannot be reserved" {
+		t.Fatalf("storefrontCheckoutErrorMessage() = %q, want the outer customer message", got)
 	}
 }
 

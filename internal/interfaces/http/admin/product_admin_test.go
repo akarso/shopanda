@@ -19,6 +19,7 @@ import (
 	adminapp "github.com/akarso/shopanda/internal/application/admin"
 	"github.com/akarso/shopanda/internal/domain/catalog"
 	"github.com/akarso/shopanda/internal/domain/identity"
+	"github.com/akarso/shopanda/internal/domain/inventory"
 	"github.com/akarso/shopanda/internal/domain/pricing"
 	"github.com/akarso/shopanda/internal/domain/rbac"
 	"github.com/akarso/shopanda/internal/platform/apperror"
@@ -75,6 +76,7 @@ type mockAdminProductRepo struct {
 	lockForUpdateFn            func(ctx context.Context, id string) (catalog.Type, error)
 	lockedType                 catalog.Type
 	lockedPricingMode          catalog.PricingMode
+	lockedStockMode            catalog.StockMode
 }
 
 type mockAdminProductRepoWithoutCategoryLookup struct {
@@ -137,25 +139,31 @@ func (m *mockAdminProductRepo) LockForUpdate(ctx context.Context, id string) (ca
 	return p.Type, nil
 }
 
-func (m *mockAdminProductRepo) LockTypeAndPricingMode(ctx context.Context, id string) (catalog.Type, catalog.PricingMode, error) {
+func (m *mockAdminProductRepo) LockTypeAndModes(ctx context.Context, id string) (catalog.Type, catalog.PricingMode, catalog.StockMode, error) {
 	typ, err := m.LockForUpdate(ctx, id)
 	if err != nil {
-		return "", "", err
+		return "", "", "", err
 	}
 	if m.lockedType != "" {
 		typ = m.lockedType
 	}
-	if m.lockedPricingMode != "" {
-		return typ, m.lockedPricingMode, nil
-	}
 	product, err := m.FindByID(ctx, id)
 	if err != nil {
-		return "", "", err
+		return "", "", "", err
 	}
-	if product == nil {
-		return typ, "", nil
+	pricing := catalog.PricingMode("")
+	stock := catalog.StockMode("")
+	if product != nil {
+		pricing = product.PricingMode
+		stock = product.StockMode
 	}
-	return typ, product.PricingMode, nil
+	if m.lockedPricingMode != "" {
+		pricing = m.lockedPricingMode
+	}
+	if m.lockedStockMode != "" {
+		stock = m.lockedStockMode
+	}
+	return typ, pricing, stock, nil
 }
 
 type mockBundleComponentGuard struct {
@@ -777,6 +785,185 @@ func TestProductAdminHandler_Create_PricingMode(t *testing.T) {
 	}
 	if !strings.Contains(rec.Body.String(), "bundle") {
 		t.Fatalf("body = %s, want bundle-only rejection", rec.Body.String())
+	}
+}
+
+func TestProductAdminHandler_Create_StockMode(t *testing.T) {
+	var created *catalog.Product
+	repo := &mockAdminProductRepo{
+		createFn: func(_ context.Context, p *catalog.Product) error {
+			created = p
+			return nil
+		},
+	}
+	h := admin.NewProductAdminHandler(repo, testAdminBus()).
+		WithVariantPrices(adminOwnPriceVariants{}, adminOwnPrices{}).
+		WithVariantStock(adminOwnStock{})
+
+	body := jsonBody(t, map[string]interface{}{
+		"name":       "Kit",
+		"slug":       "kit",
+		"type":       "bundle",
+		"stock_mode": "dynamic",
+	})
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("POST", "/api/v1/admin/products", body)
+	newAdminRouter(h).ServeHTTP(rec, req)
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("status = %d, want %d; body: %s", rec.Code, http.StatusCreated, rec.Body.String())
+	}
+	if created == nil || created.StockMode != catalog.StockModeDynamic || created.Type != catalog.TypeBundle {
+		t.Fatalf("created = %+v, want bundle/dynamic stock", created)
+	}
+
+	body = jsonBody(t, map[string]interface{}{
+		"name":       "Plain",
+		"slug":       "plain",
+		"type":       "simple",
+		"stock_mode": "dynamic",
+	})
+	rec = httptest.NewRecorder()
+	req = httptest.NewRequest("POST", "/api/v1/admin/products", body)
+	newAdminRouter(h).ServeHTTP(rec, req)
+	if rec.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("status = %d, want 422; body: %s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "bundle") {
+		t.Fatalf("body = %s, want bundle-only rejection", rec.Body.String())
+	}
+}
+
+func TestProductAdminHandler_Update_OmittedStockModeKeepsLocked(t *testing.T) {
+	existing := &catalog.Product{
+		ID: "p1", Name: "Kit", Slug: "kit", Status: catalog.StatusDraft,
+		Type: catalog.TypeBundle, PricingMode: catalog.PricingModeFixed, StockMode: catalog.StockModeFixed,
+		VisibilityModes: catalog.DefaultVisibilityAxes(),
+	}
+	var updated *catalog.Product
+	repo := &mockAdminProductRepo{
+		lockedStockMode: catalog.StockModeDynamic,
+		findByIDFn: func(_ context.Context, id string) (*catalog.Product, error) {
+			cp := *existing
+			return &cp, nil
+		},
+		updateFn: func(_ context.Context, p *catalog.Product) error {
+			updated = p
+			return nil
+		},
+	}
+	h := admin.NewProductAdminHandler(repo, testAdminBus()).
+		WithTxStarter(adminFakeTxDBConn())
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("PUT", "/api/v1/admin/products/p1", jsonBody(t, map[string]interface{}{"name": "Renamed"}))
+	newAdminRouter(h).ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body: %s", rec.Code, rec.Body.String())
+	}
+	if updated == nil || updated.StockMode != catalog.StockModeDynamic {
+		t.Fatalf("stock mode = %+v, want locked dynamic", updated)
+	}
+}
+
+func TestProductAdminHandler_Update_TypeChangeOffBundleOmitsStockMode(t *testing.T) {
+	existing := &catalog.Product{
+		ID: "p1", Name: "Kit", Slug: "kit", Status: catalog.StatusDraft,
+		Type: catalog.TypeBundle, PricingMode: catalog.PricingModeFixed, StockMode: catalog.StockModeDynamic,
+		VisibilityModes: catalog.DefaultVisibilityAxes(),
+	}
+	var updated *catalog.Product
+	repo := &mockAdminProductRepo{
+		lockedStockMode: catalog.StockModeDynamic,
+		findByIDFn: func(_ context.Context, id string) (*catalog.Product, error) {
+			cp := *existing
+			return &cp, nil
+		},
+		updateFn: func(_ context.Context, p *catalog.Product) error {
+			updated = p
+			return nil
+		},
+	}
+	h := admin.NewProductAdminHandler(repo, testAdminBus()).
+		WithBundleComponents(&mockBundleComponentGuard{}).
+		WithGroupedMembers(&mockGroupedMemberGuard{}).
+		WithTxStarter(adminFakeTxDBConn())
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("PUT", "/api/v1/admin/products/p1", jsonBody(t, map[string]interface{}{"type": "simple"}))
+	newAdminRouter(h).ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body: %s", rec.Code, rec.Body.String())
+	}
+	if updated == nil || updated.Type != catalog.TypeSimple || updated.StockMode != catalog.StockModeFixed {
+		t.Fatalf("updated = %+v, want simple with stock mode fixed", updated)
+	}
+}
+
+type adminOwnStock struct {
+	qty map[string]int
+}
+
+func (m adminOwnStock) GetStock(_ context.Context, variantID string) (inventory.StockEntry, error) {
+	return inventory.StockEntry{VariantID: variantID, Quantity: m.qty[variantID]}, nil
+}
+func (adminOwnStock) SetStock(context.Context, *inventory.StockEntry) error   { return nil }
+func (adminOwnStock) SetStocks(context.Context, []inventory.StockEntry) error { return nil }
+func (adminOwnStock) ListStock(context.Context, int, int) ([]inventory.StockEntry, error) {
+	return nil, nil
+}
+func (adminOwnStock) ListInventory(context.Context, int, int, string) ([]inventory.InventoryListItem, error) {
+	return nil, nil
+}
+func (adminOwnStock) GetInventoryItem(context.Context, string) (inventory.InventoryListItem, error) {
+	return inventory.InventoryListItem{}, nil
+}
+
+func TestProductAdminHandler_Update_DynamicRejectsOwnStock(t *testing.T) {
+	existing := &catalog.Product{
+		ID: "p1", Name: "Kit", Slug: "kit", Status: catalog.StatusDraft,
+		Type: catalog.TypeBundle, PricingMode: catalog.PricingModeFixed, StockMode: catalog.StockModeFixed,
+		VisibilityModes: catalog.DefaultVisibilityAxes(),
+	}
+	var updated *catalog.Product
+	repo := &mockAdminProductRepo{
+		findByIDFn: func(_ context.Context, id string) (*catalog.Product, error) {
+			cp := *existing
+			return &cp, nil
+		},
+		updateFn: func(_ context.Context, p *catalog.Product) error {
+			updated = p
+			return nil
+		},
+	}
+	stock := adminOwnStock{qty: map[string]int{"v1": 4}}
+	h := admin.NewProductAdminHandler(repo, testAdminBus()).
+		WithBundleComponents(&mockBundleComponentGuard{}).
+		WithGroupedMembers(&mockGroupedMemberGuard{}).
+		WithTxStarter(adminFakeTxDBConn()).
+		WithVariantPrices(adminOwnPriceVariants{variants: []catalog.Variant{{ID: "v1", ProductID: "p1"}}}, adminOwnPrices{}).
+		WithVariantStock(stock)
+
+	body := map[string]interface{}{"stock_mode": "dynamic"}
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("PUT", "/api/v1/admin/products/p1", jsonBody(t, body))
+	newAdminRouter(h).ServeHTTP(rec, req)
+	if rec.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("status = %d, want 422; body: %s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "remove bundle stock") {
+		t.Fatalf("body = %s, want own-stock rejection", rec.Body.String())
+	}
+	if updated != nil {
+		t.Fatalf("updated = %+v, want no write while stock exists", updated)
+	}
+
+	stock.qty["v1"] = 0
+	rec = httptest.NewRecorder()
+	req = httptest.NewRequest("PUT", "/api/v1/admin/products/p1", jsonBody(t, body))
+	newAdminRouter(h).ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status after clearing stock = %d, body: %s", rec.Code, rec.Body.String())
+	}
+	if updated == nil || updated.StockMode != catalog.StockModeDynamic {
+		t.Fatalf("updated = %+v, want dynamic stock", updated)
 	}
 }
 

@@ -109,7 +109,7 @@ func TestService_UpdateItemQuantity_RejectsIncreaseAfterArchive(t *testing.T) {
 	carts := newStubCartRepo()
 	prices := newStubPriceRepo()
 	prices.set("var-1", "EUR", 1000)
-	svc := cartApp.NewService(carts, prices, nil, nil, mutableVariantRepo{cat}, mutableProductRepo{cat}, cartApp.EmptyBundleComponents(), testPipeline(prices), testLogger(), testBus(), nil, nil)
+	svc := cartApp.NewService(carts, prices, nil, nil, mutableVariantRepo{cat}, mutableProductRepo{cat}, cartApp.EmptyBundleComponents(), cartApp.PermissiveStock(), testPipeline(prices), testLogger(), testBus(), nil, nil)
 	ctx := context.Background()
 
 	c, err := svc.CreateCart(ctx, "cust-1", "EUR")
@@ -145,7 +145,7 @@ func TestService_RemoveItem_AllowsUnavailableLine(t *testing.T) {
 	carts := newStubCartRepo()
 	prices := newStubPriceRepo()
 	prices.set("var-1", "EUR", 1000)
-	svc := cartApp.NewService(carts, prices, nil, nil, mutableVariantRepo{cat}, mutableProductRepo{cat}, cartApp.EmptyBundleComponents(), testPipeline(prices), testLogger(), testBus(), nil, nil)
+	svc := cartApp.NewService(carts, prices, nil, nil, mutableVariantRepo{cat}, mutableProductRepo{cat}, cartApp.EmptyBundleComponents(), cartApp.PermissiveStock(), testPipeline(prices), testLogger(), testBus(), nil, nil)
 	ctx := context.Background()
 
 	c, err := svc.CreateCart(ctx, "cust-1", "EUR")
@@ -175,7 +175,7 @@ func TestService_ClaimGuestCart_AssignDropsArchivedLine(t *testing.T) {
 	prices.set("var-1", "EUR", 1000)
 	prices.set("var-2", "EUR", 2000)
 	ext := &trackingExtWriter{}
-	svc := cartApp.NewService(carts, prices, nil, nil, mutableVariantRepo{cat}, mutableProductRepo{cat}, cartApp.EmptyBundleComponents(), testPipeline(prices), testLogger(), testBus(), ext, nil)
+	svc := cartApp.NewService(carts, prices, nil, nil, mutableVariantRepo{cat}, mutableProductRepo{cat}, cartApp.EmptyBundleComponents(), cartApp.PermissiveStock(), testPipeline(prices), testLogger(), testBus(), ext, nil)
 	ctx := context.Background()
 
 	guest, err := svc.CreateCart(ctx, "", "EUR")
@@ -237,7 +237,7 @@ func TestService_ClaimGuestCart_AssignSaveFails_PreservesDroppedLineExtensions(t
 	prices.set("var-1", "EUR", 1000)
 	prices.set("var-2", "EUR", 2000)
 	ext := &trackingExtWriter{}
-	svc := cartApp.NewService(carts, prices, nil, nil, mutableVariantRepo{cat}, mutableProductRepo{cat}, cartApp.EmptyBundleComponents(), testPipeline(prices), testLogger(), testBus(), ext, nil)
+	svc := cartApp.NewService(carts, prices, nil, nil, mutableVariantRepo{cat}, mutableProductRepo{cat}, cartApp.EmptyBundleComponents(), cartApp.PermissiveStock(), testPipeline(prices), testLogger(), testBus(), ext, nil)
 	ctx := context.Background()
 
 	guest, err := svc.CreateCart(ctx, "", "EUR")
@@ -281,7 +281,7 @@ func TestService_ClaimGuestCart_MergeSaveFails_PreservesGuestLineExtensions(t *t
 	prices.set("var-1", "EUR", 1000)
 	prices.set("var-2", "EUR", 2000)
 	ext := &trackingExtWriter{}
-	svc := cartApp.NewService(carts, prices, nil, nil, mutableVariantRepo{cat}, mutableProductRepo{cat}, cartApp.EmptyBundleComponents(), testPipeline(prices), testLogger(), testBus(), ext, nil)
+	svc := cartApp.NewService(carts, prices, nil, nil, mutableVariantRepo{cat}, mutableProductRepo{cat}, cartApp.EmptyBundleComponents(), cartApp.PermissiveStock(), testPipeline(prices), testLogger(), testBus(), ext, nil)
 	ctx := context.Background()
 
 	customer, err := svc.CreateCart(ctx, "cust-1", "EUR")
@@ -329,7 +329,7 @@ func TestService_ClaimGuestCart_InfraErrorStillFails(t *testing.T) {
 	prices := newStubPriceRepo()
 	prices.set("var-1", "EUR", 1000)
 	facts := &erroringFacts{}
-	svc := cartApp.NewService(carts, prices, nil, nil, mutableVariantRepo{cat}, mutableProductRepo{cat}, cartApp.EmptyBundleComponents(), testPipeline(prices), testLogger(), testBus(), nil, nil)
+	svc := cartApp.NewService(carts, prices, nil, nil, mutableVariantRepo{cat}, mutableProductRepo{cat}, cartApp.EmptyBundleComponents(), cartApp.PermissiveStock(), testPipeline(prices), testLogger(), testBus(), nil, nil)
 	ctx := context.Background()
 
 	guest, err := svc.CreateCart(ctx, "", "EUR")
@@ -362,7 +362,7 @@ func TestService_ClaimGuestCart_MergeDropsArchivedLine(t *testing.T) {
 	prices.set("var-1", "EUR", 1000)
 	prices.set("var-2", "EUR", 2000)
 	ext := &trackingExtWriter{}
-	svc := cartApp.NewService(carts, prices, nil, nil, mutableVariantRepo{cat}, mutableProductRepo{cat}, cartApp.EmptyBundleComponents(), testPipeline(prices), testLogger(), testBus(), ext, nil)
+	svc := cartApp.NewService(carts, prices, nil, nil, mutableVariantRepo{cat}, mutableProductRepo{cat}, cartApp.EmptyBundleComponents(), cartApp.PermissiveStock(), testPipeline(prices), testLogger(), testBus(), ext, nil)
 	ctx := context.Background()
 
 	customer, err := svc.CreateCart(ctx, "cust-1", "EUR")

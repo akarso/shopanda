@@ -30,6 +30,7 @@ type StockResult struct {
 // StockImporter imports stock quantities from CSV.
 type StockImporter struct {
 	variants catalog.VariantRepository
+	products catalog.ProductRepository
 	stock    inventory.StockRepository
 	rowHooks *RowHookRunner
 
@@ -43,6 +44,13 @@ func NewStockImporter(variants catalog.VariantRepository, stock inventory.StockR
 }
 
 // WithRowHooks wires import row hooks invoked after header validation and before persist.
+// WithProducts rejects rows that would write stock onto a dynamic bundle.
+// Left unset, Import does not perform that check.
+func (imp *StockImporter) WithProducts(products catalog.ProductRepository) *StockImporter {
+	imp.products = products
+	return imp
+}
+
 func (imp *StockImporter) WithRowHooks(registry *importctx.Registry) *StockImporter {
 	imp.rowHooks = NewRowHookRunner(registry)
 	return imp
@@ -156,6 +164,16 @@ func (imp *StockImporter) Import(ctx context.Context, r io.Reader) (result *Stoc
 			continue
 		}
 
+		rejected, err := imp.dynamicBundleStockRejected(ctx, variant.ProductID)
+		if err != nil {
+			return nil, err
+		}
+		if rejected {
+			result.Errors = append(result.Errors, fmt.Sprintf("line %d: %s", lineNum, catalog.DynamicBundleStockRejectedMessage))
+			result.Skipped++
+			continue
+		}
+
 		entry, err := inventory.NewStockEntry(variant.ID, qty)
 		if err != nil {
 			return nil, fmt.Errorf("stock import: new stock entry: %w", err)
@@ -168,6 +186,20 @@ func (imp *StockImporter) Import(ctx context.Context, r io.Reader) (result *Stoc
 	}
 
 	return result, nil
+}
+
+func (imp *StockImporter) dynamicBundleStockRejected(ctx context.Context, productID string) (bool, error) {
+	if imp.products == nil {
+		return false, nil
+	}
+	product, err := imp.products.FindByID(catalog.WithOperatorProductReadScope(ctx), productID)
+	if err != nil {
+		return false, fmt.Errorf("stock import: find product %s: %w", productID, err)
+	}
+	if product == nil {
+		return false, nil
+	}
+	return product.Type == catalog.TypeBundle && product.StockMode == catalog.StockModeDynamic, nil
 }
 
 // triggerReindex fires a single scoped reindex covering every product

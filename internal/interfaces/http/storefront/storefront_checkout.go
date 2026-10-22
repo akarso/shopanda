@@ -2,6 +2,7 @@ package storefront
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/mail"
@@ -824,6 +825,19 @@ func storefrontCheckoutErrorMessage(err error) string {
 	}
 	if storefrontCheckoutErrorStatus(err) >= http.StatusInternalServerError {
 		return "Sorry, something went wrong. Please try again later."
+	}
+	return customerErrorText(err)
+}
+
+// customerErrorText is the string shown to a shopper. apperror.Message is
+// that string; Error() keeps wrapped detail for logs.
+func customerErrorText(err error) string {
+	if err == nil {
+		return ""
+	}
+	var appErr *apperror.Error
+	if errors.As(err, &appErr) && appErr.Message != "" {
+		return appErr.Message
 	}
 	return err.Error()
 }

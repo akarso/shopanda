@@ -203,7 +203,7 @@ func (h *StorefrontHandler) AddToCart() http.HandlerFunc {
 					"quantity":    quantity,
 				})
 			}
-			http.Error(w, err.Error(), status)
+			http.Error(w, customerErrorText(err), status)
 			return
 		}
 		h.writeCartMutationResponse(w, r, strings.TrimSpace(r.FormValue("redirect_to")), false, false)
@@ -248,7 +248,7 @@ func (h *StorefrontHandler) UpdateCart() http.HandlerFunc {
 					"quantity":    quantity,
 				})
 			}
-			http.Error(w, err.Error(), status)
+			http.Error(w, customerErrorText(err), status)
 			return
 		}
 		h.writeCartMutationResponse(w, r, "/cart", true, true)
@@ -291,7 +291,7 @@ func (h *StorefrontHandler) RemoveCartItem() http.HandlerFunc {
 					"variant_id":  variantID,
 				})
 			}
-			http.Error(w, err.Error(), status)
+			http.Error(w, customerErrorText(err), status)
 			return
 		}
 		h.writeCartMutationResponse(w, r, "/cart", true, true)

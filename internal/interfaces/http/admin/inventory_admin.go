@@ -1,6 +1,7 @@
 package admin
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"strings"
@@ -17,9 +18,14 @@ import (
 )
 
 // InventoryAdminHandler serves inventory admin endpoints.
+type inventoryProductLookup interface {
+	FindByID(ctx context.Context, id string) (*catalog.Product, error)
+}
+
 type InventoryAdminHandler struct {
 	stock    inventory.StockRepository
 	variants catalog.VariantRepository
+	products inventoryProductLookup
 	auditor  *admin.Auditor
 	bus      *event.Bus // optional; nil (the default) skips publishing — see SetBus.
 }
@@ -51,6 +57,16 @@ func NewInventoryAdminHandlerWithAuditor(stock inventory.StockRepository, varian
 // unchanged.
 func (h *InventoryAdminHandler) SetBus(bus *event.Bus) {
 	h.bus = bus
+}
+
+// WithProducts wires the product read that rejects stock writes on a dynamic
+// bundle. Nil panics. Adjust fails closed when this was not called.
+func (h *InventoryAdminHandler) WithProducts(products inventoryProductLookup) *InventoryAdminHandler {
+	if products == nil {
+		panic("InventoryAdminHandler: products must not be nil")
+	}
+	h.products = products
+	return h
 }
 
 type adjustStockRequest struct {
@@ -87,6 +103,23 @@ func (h *InventoryAdminHandler) audit(r *http.Request, action admin.AuditAction,
 		Result:       result,
 		Error:        errMsg,
 	})
+}
+
+func (h *InventoryAdminHandler) rejectDynamicBundleStock(ctx context.Context, productID string) error {
+	if h.products == nil {
+		return apperror.Internal("inventory admin: product repository is not configured")
+	}
+	product, err := h.products.FindByID(catalog.WithOperatorProductReadScope(ctx), productID)
+	if err != nil {
+		return err
+	}
+	if product == nil {
+		return apperror.NotFound("product not found")
+	}
+	if product.Type == catalog.TypeBundle && product.StockMode == catalog.StockModeDynamic {
+		return apperror.Validation(catalog.DynamicBundleStockRejectedMessage)
+	}
+	return nil
 }
 
 func toInventoryItemResponse(item inventory.InventoryListItem) adminInventoryItemResponse {
@@ -182,6 +215,11 @@ func (h *InventoryAdminHandler) Adjust() http.HandlerFunc {
 			verr := apperror.NotFound("variant not found")
 			h.audit(r, admin.AuditStockUpdate, variantID, nil, verr)
 			httpshared.JSONError(w, verr)
+			return
+		}
+		if err := h.rejectDynamicBundleStock(r.Context(), variant.ProductID); err != nil {
+			h.audit(r, admin.AuditStockUpdate, variantID, nil, err)
+			httpshared.JSONError(w, err)
 			return
 		}
 
