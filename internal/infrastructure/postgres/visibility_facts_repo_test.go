@@ -587,3 +587,203 @@ func TestVisibilityFactsRepo_DynamicBundleHasPriceFailClosed(t *testing.T) {
 		}
 	})
 }
+
+func TestVisibilityFactsRepo_DynamicStockQuantityPositive(t *testing.T) {
+	db := testDB(t)
+	ensureProductsTable(t, db)
+	ctx := context.Background()
+
+	prodRepo, err := postgres.NewProductRepo(db)
+	if err != nil {
+		t.Fatalf("NewProductRepo: %v", err)
+	}
+	variantRepo, err := postgres.NewVariantRepo(db)
+	if err != nil {
+		t.Fatalf("NewVariantRepo: %v", err)
+	}
+	stockRepo, err := postgres.NewStockRepo(db)
+	if err != nil {
+		t.Fatalf("NewStockRepo: %v", err)
+	}
+	componentRepo, err := postgres.NewBundleComponentRepo(db)
+	if err != nil {
+		t.Fatalf("NewBundleComponentRepo: %v", err)
+	}
+	factsRepo, err := postgres.NewVisibilityFactsRepo(db)
+	if err != nil {
+		t.Fatalf("NewVisibilityFactsRepo: %v", err)
+	}
+
+	qtyPositive := func(t *testing.T, productID string) bool {
+		t.Helper()
+		snap, err := factsRepo.LoadMany(ctx, []string{productID})
+		if err != nil {
+			t.Fatalf("LoadMany: %v", err)
+		}
+		got, ok := snap[productID]
+		if !ok {
+			t.Fatalf("product %s missing from facts", productID)
+		}
+		return got.Inputs.QuantityPositive
+	}
+	setStock := func(t *testing.T, variantID string, qty int) {
+		t.Helper()
+		entry, err := inventory.NewStockEntry(variantID, qty)
+		if err != nil {
+			t.Fatalf("NewStockEntry: %v", err)
+		}
+		if err := stockRepo.SetStock(ctx, &entry); err != nil {
+			t.Fatalf("SetStock: %v", err)
+		}
+	}
+	newLeaf := func(t *testing.T, slug string) (catalog.Product, catalog.Variant) {
+		t.Helper()
+		component := mustNewProduct(t, "Piece", slug)
+		component.Status = catalog.StatusActive
+		if err := prodRepo.Create(ctx, &component); err != nil {
+			t.Fatalf("create component: %v", err)
+		}
+		variant := mustNewVariant(t, component.ID, "SKU-"+id.New()[:8])
+		if err := variantRepo.Create(ctx, &variant); err != nil {
+			t.Fatalf("create variant: %v", err)
+		}
+		return component, variant
+	}
+	newBundle := func(t *testing.T, slug string, mode catalog.StockMode) catalog.Product {
+		t.Helper()
+		bundle := mustNewProduct(t, "Kit", slug)
+		bundle.Type = catalog.TypeBundle
+		bundle.StockMode = mode
+		bundle.Status = catalog.StatusActive
+		if err := prodRepo.Create(ctx, &bundle); err != nil {
+			t.Fatalf("create bundle: %v", err)
+		}
+		bundleVariant := mustNewVariant(t, bundle.ID, "SKU-B-"+id.New()[:8])
+		if err := variantRepo.Create(ctx, &bundleVariant); err != nil {
+			t.Fatalf("create bundle variant: %v", err)
+		}
+		setStock(t, bundleVariant.ID, 0)
+		return bundle
+	}
+	link := func(t *testing.T, bundleID, componentID string, qty int, required bool) {
+		t.Helper()
+		row, err := catalog.NewBundleComponent(bundleID, componentID, qty)
+		if err != nil {
+			t.Fatalf("NewBundleComponent: %v", err)
+		}
+		row.Required = required
+		if err := componentRepo.Upsert(ctx, row); err != nil {
+			t.Fatalf("upsert component: %v", err)
+		}
+	}
+
+	t.Run("component stock covers required quantity when bundle stock is zero", func(t *testing.T) {
+		bundle := newBundle(t, "dyn-stock-"+id.New()[:8], catalog.StockModeDynamic)
+		required, requiredVar := newLeaf(t, "piece-req-"+id.New()[:8])
+		optional, optionalVar := newLeaf(t, "piece-opt-"+id.New()[:8])
+		setStock(t, requiredVar.ID, 4)
+		setStock(t, optionalVar.ID, 0)
+		link(t, bundle.ID, required.ID, 2, true)
+		link(t, bundle.ID, optional.ID, 1, false)
+		if !qtyPositive(t, bundle.ID) {
+			t.Fatal("QuantityPositive = false, want true from required component stock (bundle own stock is 0; optional is ignored)")
+		}
+	})
+
+	t.Run("floor of stock over required quantity is zero", func(t *testing.T) {
+		bundle := newBundle(t, "dyn-floor-"+id.New()[:8], catalog.StockModeDynamic)
+		required, requiredVar := newLeaf(t, "piece-floor-"+id.New()[:8])
+		setStock(t, requiredVar.ID, 1)
+		link(t, bundle.ID, required.ID, 2, true)
+		if qtyPositive(t, bundle.ID) {
+			t.Fatal("QuantityPositive = true, want false when floor(stock/quantity) is 0")
+		}
+	})
+
+	t.Run("fixed bundle uses its own stock", func(t *testing.T) {
+		bundle := newBundle(t, "fix-stock-"+id.New()[:8], catalog.StockModeFixed)
+		required, requiredVar := newLeaf(t, "piece-fix-"+id.New()[:8])
+		setStock(t, requiredVar.ID, 10)
+		link(t, bundle.ID, required.ID, 1, true)
+		if qtyPositive(t, bundle.ID) {
+			t.Fatal("QuantityPositive = true, want false when the fixed bundle's own stock is 0")
+		}
+	})
+
+	t.Run("two variants fail closed", func(t *testing.T) {
+		bundle := newBundle(t, "dyn-multi-"+id.New()[:8], catalog.StockModeDynamic)
+		required, requiredVar := newLeaf(t, "piece-multi-"+id.New()[:8])
+		setStock(t, requiredVar.ID, 5)
+		extra := mustNewVariant(t, required.ID, "SKU-X-"+id.New()[:8])
+		if err := variantRepo.Create(ctx, &extra); err != nil {
+			t.Fatalf("create extra variant: %v", err)
+		}
+		setStock(t, extra.ID, 5)
+		link(t, bundle.ID, required.ID, 1, true)
+		if qtyPositive(t, bundle.ID) {
+			t.Fatal("QuantityPositive = true, want false when a required component has two variants")
+		}
+	})
+
+	t.Run("grouped parent is never in stock", func(t *testing.T) {
+		group := mustNewProduct(t, "Group", "group-stock-"+id.New()[:8])
+		group.Type = catalog.TypeGrouped
+		group.Status = catalog.StatusActive
+		if err := prodRepo.Create(ctx, &group); err != nil {
+			t.Fatalf("create group: %v", err)
+		}
+		variant := mustNewVariant(t, group.ID, "SKU-G-"+id.New()[:8])
+		if err := variantRepo.Create(ctx, &variant); err != nil {
+			t.Fatalf("create variant: %v", err)
+		}
+		setStock(t, variant.ID, 9)
+		if qtyPositive(t, group.ID) {
+			t.Fatal("QuantityPositive = true, want false for a grouped parent")
+		}
+	})
+
+	t.Run("archived required component fails closed", func(t *testing.T) {
+		bundle := newBundle(t, "dyn-arch-"+id.New()[:8], catalog.StockModeDynamic)
+		component := mustNewProduct(t, "Piece", "piece-arch-"+id.New()[:8])
+		component.Status = catalog.StatusArchived
+		if err := prodRepo.Create(ctx, &component); err != nil {
+			t.Fatalf("create component: %v", err)
+		}
+		variant := mustNewVariant(t, component.ID, "SKU-A-"+id.New()[:8])
+		if err := variantRepo.Create(ctx, &variant); err != nil {
+			t.Fatalf("create variant: %v", err)
+		}
+		setStock(t, variant.ID, 5)
+		link(t, bundle.ID, component.ID, 1, true)
+		if qtyPositive(t, bundle.ID) {
+			t.Fatal("QuantityPositive = true, want false for an archived required component")
+		}
+	})
+
+	t.Run("virtual required component needs no stock row", func(t *testing.T) {
+		bundle := newBundle(t, "dyn-virt-"+id.New()[:8], catalog.StockModeDynamic)
+		component := mustNewProduct(t, "Download", "piece-virt-"+id.New()[:8])
+		component.Status = catalog.StatusActive
+		component.Type = catalog.TypeVirtual
+		if err := prodRepo.Create(ctx, &component); err != nil {
+			t.Fatalf("create component: %v", err)
+		}
+		variant := mustNewVariant(t, component.ID, "SKU-V-"+id.New()[:8])
+		if err := variantRepo.Create(ctx, &variant); err != nil {
+			t.Fatalf("create variant: %v", err)
+		}
+		link(t, bundle.ID, component.ID, 1, true)
+		if !qtyPositive(t, bundle.ID) {
+			t.Fatal("QuantityPositive = false, want true for a virtual required component with no stock row")
+		}
+	})
+
+	t.Run("simple required component without stock is not positive", func(t *testing.T) {
+		bundle := newBundle(t, "dyn-nostock-"+id.New()[:8], catalog.StockModeDynamic)
+		required, _ := newLeaf(t, "piece-nostock-"+id.New()[:8])
+		link(t, bundle.ID, required.ID, 1, true)
+		if qtyPositive(t, bundle.ID) {
+			t.Fatal("QuantityPositive = true, want false when a simple required component has no stock row")
+		}
+	})
+}

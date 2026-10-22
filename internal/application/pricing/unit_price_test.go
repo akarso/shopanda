@@ -2,6 +2,8 @@ package pricing_test
 
 import (
 	"context"
+	"errors"
+	"math"
 	"strings"
 	"testing"
 
@@ -495,5 +497,79 @@ func TestResolveUnitPrice_CachesForTheRequest(t *testing.T) {
 	}
 	if variants.finds != 1 {
 		t.Fatalf("variant reads = %d, want 1", variants.finds)
+	}
+}
+
+func TestResolveUnitPrice_DynamicMulOverflowHidesComponentID(t *testing.T) {
+	const componentProductID = "comp-product-secret"
+	prices := makeMockRepo(mockEntry{"comp-v", "EUR", math.MaxInt64 / 2, ""})
+	src := dynamicComponentSources(prices, componentProductID, 3)
+	_, err := pricing.ResolveUnitPrice(context.Background(), src, "bundle-v", "EUR", "")
+	assertBundlePriceMessageHidesComponent(t, err, componentProductID)
+}
+
+func TestResolveUnitPrice_DynamicCurrencyMismatchHidesComponentID(t *testing.T) {
+	const componentProductID = "comp-product-secret"
+	prices := makeMockRepo()
+	prices.prices["comp-v"] = map[priceKey]*domain.Price{
+		{Currency: "EUR", StoreID: ""}: {
+			ID:        "price-comp-v",
+			VariantID: "comp-v",
+			Amount:    shared.MustNewMoney(100, "USD"),
+		},
+	}
+	src := dynamicComponentSources(prices, componentProductID, 1)
+	_, err := pricing.ResolveUnitPrice(context.Background(), src, "bundle-v", "EUR", "")
+	assertBundlePriceMessageHidesComponent(t, err, componentProductID)
+}
+
+func TestResolveUnitPrice_DynamicPriceRepoErrorOmitsBundleID(t *testing.T) {
+	const bundleProductID = "bundle-product-secret"
+	prices := makeMockRepo(mockEntry{"comp-v", "EUR", 10, ""})
+	prices.err = errors.New("db down")
+	src := sources(prices, map[string]catalog.Variant{
+		"bundle-v": {ID: "bundle-v", ProductID: bundleProductID},
+		"comp-v":   {ID: "comp-v", ProductID: "comp"},
+	}, map[string]*catalog.Product{
+		bundleProductID: activeProduct(bundleProductID, catalog.TypeBundle, catalog.PricingModeDynamic),
+		"comp":          activeProduct("comp", catalog.TypeSimple, catalog.PricingModeFixed),
+	}, []catalog.BundleComponent{{
+		BundleProductID: bundleProductID, ComponentProductID: "comp", Quantity: 1, Required: true,
+	}})
+	_, err := pricing.ResolveUnitPrice(context.Background(), src, "bundle-v", "EUR", "")
+	if err == nil {
+		t.Fatal("expected price repository error")
+	}
+	if strings.Contains(err.Error(), bundleProductID) {
+		t.Fatalf("err = %v, want bundle id kept off the error text", err)
+	}
+	if !strings.Contains(err.Error(), "bundle prices") {
+		t.Fatalf("err = %v, want bundle prices wrap", err)
+	}
+}
+
+func dynamicComponentSources(prices *mockPriceRepo, componentProductID string, quantity int) pricing.UnitPriceSources {
+	return sources(prices, map[string]catalog.Variant{
+		"bundle-v": {ID: "bundle-v", ProductID: "bundle"},
+		"comp-v":   {ID: "comp-v", ProductID: componentProductID},
+	}, map[string]*catalog.Product{
+		"bundle":           activeProduct("bundle", catalog.TypeBundle, catalog.PricingModeDynamic),
+		componentProductID: activeProduct(componentProductID, catalog.TypeSimple, catalog.PricingModeFixed),
+	}, []catalog.BundleComponent{{
+		BundleProductID: "bundle", ComponentProductID: componentProductID, Quantity: quantity, Required: true,
+	}})
+}
+
+func assertBundlePriceMessageHidesComponent(t *testing.T, err error, componentProductID string) {
+	t.Helper()
+	var appErr *apperror.Error
+	if !errors.As(err, &appErr) || appErr.Message != catalog.BundleCannotBeReservedMessage {
+		t.Fatalf("err = %v, want customer message %q", err, catalog.BundleCannotBeReservedMessage)
+	}
+	if strings.Contains(appErr.Message, componentProductID) {
+		t.Fatalf("message = %q, want component product id kept out of Message", appErr.Message)
+	}
+	if !strings.Contains(err.Error(), componentProductID) {
+		t.Fatalf("err = %v, want component id on the wrapped detail", err)
 	}
 }

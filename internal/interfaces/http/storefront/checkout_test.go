@@ -13,6 +13,7 @@ import (
 
 	"github.com/akarso/shopanda/internal/testutil"
 
+	cartApp "github.com/akarso/shopanda/internal/application/cart"
 	checkoutApp "github.com/akarso/shopanda/internal/application/checkout"
 	"github.com/akarso/shopanda/internal/domain/cart"
 	"github.com/akarso/shopanda/internal/domain/catalog"
@@ -383,9 +384,9 @@ func checkoutBuild(creditRepo *stubCheckoutStoreCreditRepo, withPayment bool) (*
 		pricing.NewFinalizeStep(),
 	)
 
-	validateStep := checkoutApp.NewValidateCartStep(variants, &mockStorefrontRepo{})
+	validateStep := checkoutApp.NewValidateCartStep(variants, &mockStorefrontRepo{}, cartApp.EmptyBundleComponents(), cartApp.PermissiveStock())
 	pricingStep := checkoutApp.NewRecalculatePricingStep(pipeline)
-	reserveStep := checkoutApp.NewReserveInventoryStep(reservations)
+	reserveStep := checkoutApp.NewReserveInventoryStep(reservations, &mockStorefrontRepo{}, variants, cartApp.EmptyBundleComponents())
 	createOrderStep := checkoutApp.NewCreateOrderStep(orders, variants, creditSvc, nil)
 
 	steps := []checkoutApp.Step{

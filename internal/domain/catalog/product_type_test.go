@@ -155,6 +155,54 @@ func TestPricingMode_ValidateAndApply(t *testing.T) {
 	}
 }
 
+func TestStockMode_ValidateAndApply(t *testing.T) {
+	t.Parallel()
+
+	p, err := catalog.NewProduct("p1", "Widget", "widget")
+	if err != nil {
+		t.Fatalf("NewProduct: %v", err)
+	}
+	if p.StockMode != catalog.StockModeFixed {
+		t.Fatalf("default mode = %q, want fixed", p.StockMode)
+	}
+
+	p.Type = catalog.TypeBundle
+	if err := p.ApplyStockMode("dynamic", true); err != nil {
+		t.Fatalf("bundle dynamic: %v", err)
+	}
+	if err := p.Validate(); err != nil {
+		t.Fatalf("bundle dynamic validate: %v", err)
+	}
+
+	p.Type = catalog.TypeSimple
+	if err := p.ApplyStockMode("dynamic", true); err == nil || !strings.Contains(err.Error(), "bundle") {
+		t.Fatalf("dynamic on simple = %v, want bundle-only rejection", err)
+	}
+	if p.StockMode != catalog.StockModeDynamic {
+		t.Fatalf("rejected apply changed mode to %q", p.StockMode)
+	}
+
+	p.Type = catalog.TypeBundle
+	p.StockMode = catalog.StockModeDynamic
+	p.Type = catalog.TypeGrouped
+	if err := p.ApplyStockMode("", false); err != nil {
+		t.Fatalf("omit mode on grouped: %v", err)
+	}
+	if p.StockMode != catalog.StockModeFixed {
+		t.Fatalf("grouped mode = %q, want fixed", p.StockMode)
+	}
+
+	p.StockMode = catalog.StockModeDynamic
+	p.Type = catalog.TypeSimple
+	if err := p.Validate(); err == nil || !strings.Contains(err.Error(), "bundle") {
+		t.Fatalf("dynamic simple validate = %v, want bundle-only error", err)
+	}
+
+	if err := p.ApplyStockMode("nope", true); err == nil || !strings.Contains(err.Error(), `"nope"`) {
+		t.Fatalf("invalid mode = %v", err)
+	}
+}
+
 func TestAllPricingModesMatchMigrationCheck(t *testing.T) {
 	t.Parallel()
 
@@ -187,6 +235,42 @@ func TestAllPricingModesMatchMigrationCheck(t *testing.T) {
 	for v := range fromDomain {
 		if _, ok := fromSQL[v]; !ok {
 			t.Errorf("AllPricingModes value %q missing from migration CHECK", v)
+		}
+	}
+}
+
+func TestAllStockModesMatchMigrationCheck(t *testing.T) {
+	t.Parallel()
+
+	_, thisFile, _, ok := runtime.Caller(0)
+	if !ok {
+		t.Fatal("runtime.Caller failed")
+	}
+	migrationPath := filepath.Join(filepath.Dir(thisFile), "../../../migrations/092_add_products_stock_mode.sql")
+	content, err := os.ReadFile(migrationPath)
+	if err != nil {
+		t.Fatalf("read migration: %v", err)
+	}
+	re := regexp.MustCompile(`(?s)CHECK\s*\(\s*stock_mode\s+IN\s*\((.*?)\)\s*\)`)
+	m := re.FindSubmatch(content)
+	if m == nil {
+		t.Fatal("products_stock_mode_check IN (...) not found")
+	}
+	quoted := regexp.MustCompile(`'([^']+)'`).FindAllStringSubmatch(string(m[1]), -1)
+	fromSQL := make(map[string]struct{}, len(quoted))
+	for _, q := range quoted {
+		fromSQL[q[1]] = struct{}{}
+	}
+	fromDomain := make(map[string]struct{}, len(catalog.AllStockModes()))
+	for _, mode := range catalog.AllStockModes() {
+		fromDomain[string(mode)] = struct{}{}
+	}
+	if len(fromSQL) != len(fromDomain) {
+		t.Fatalf("CHECK has %d values, AllStockModes has %d", len(fromSQL), len(fromDomain))
+	}
+	for v := range fromDomain {
+		if _, ok := fromSQL[v]; !ok {
+			t.Errorf("AllStockModes value %q missing from migration CHECK", v)
 		}
 	}
 }

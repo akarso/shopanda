@@ -2,8 +2,10 @@ package cart
 
 import (
 	"context"
+	"math"
 
 	"github.com/akarso/shopanda/internal/domain/catalog"
+	"github.com/akarso/shopanda/internal/domain/inventory"
 )
 
 // PermissiveCatalogRepos returns variant and product repositories that treat
@@ -83,3 +85,32 @@ func (emptyBundleComponents) CountByComponentID(context.Context, string) (int, e
 func (emptyBundleComponents) Upsert(context.Context, *catalog.BundleComponent) error { return nil }
 
 func (emptyBundleComponents) Remove(context.Context, string, string) error { return nil }
+
+// PermissiveStock reports a very large on-hand quantity for every variant.
+// Cart tests and demo plugins pass it to NewService, which requires a non-nil
+// stock repository even when the scenario does not model inventory.
+func PermissiveStock() inventory.StockRepository {
+	return permissiveStock{}
+}
+
+type permissiveStock struct{}
+
+func (permissiveStock) GetStock(_ context.Context, variantID string) (inventory.StockEntry, error) {
+	return inventory.StockEntry{VariantID: variantID, Quantity: math.MaxInt32}, nil
+}
+
+func (permissiveStock) SetStock(context.Context, *inventory.StockEntry) error { return nil }
+
+func (permissiveStock) SetStocks(context.Context, []inventory.StockEntry) error { return nil }
+
+func (permissiveStock) ListStock(context.Context, int, int) ([]inventory.StockEntry, error) {
+	return nil, nil
+}
+
+func (permissiveStock) ListInventory(context.Context, int, int, string) ([]inventory.InventoryListItem, error) {
+	return nil, nil
+}
+
+func (permissiveStock) GetInventoryItem(context.Context, string) (inventory.InventoryListItem, error) {
+	return inventory.InventoryListItem{}, nil
+}

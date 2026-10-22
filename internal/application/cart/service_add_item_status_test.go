@@ -74,7 +74,7 @@ func TestService_AddItem_RejectsArchivedProduct(t *testing.T) {
 	prices.set("var-1", "EUR", 1000)
 	vr := addItemVariantStub{variant: &catalog.Variant{ID: "var-1", ProductID: "prod-arch"}}
 	pr := addItemProductStub{product: &catalog.Product{ID: "prod-arch", Status: catalog.StatusArchived}}
-	svc := cartApp.NewService(carts, prices, nil, nil, vr, pr, cartApp.EmptyBundleComponents(), testPipeline(prices), testLogger(), testBus(), nil, nil)
+	svc := cartApp.NewService(carts, prices, nil, nil, vr, pr, cartApp.EmptyBundleComponents(), cartApp.PermissiveStock(), testPipeline(prices), testLogger(), testBus(), nil, nil)
 
 	c, err := svc.CreateCart(context.Background(), "", "EUR")
 	if err != nil {
@@ -96,7 +96,7 @@ func TestService_AddItem_RejectsNonActiveProduct(t *testing.T) {
 	prices.set("var-1", "EUR", 1000)
 	vr := addItemVariantStub{variant: &catalog.Variant{ID: "var-1", ProductID: "prod-draft"}}
 	pr := addItemProductStub{product: &catalog.Product{ID: "prod-draft", Status: catalog.StatusDraft}}
-	svc := cartApp.NewService(carts, prices, nil, nil, vr, pr, cartApp.EmptyBundleComponents(), testPipeline(prices), testLogger(), testBus(), nil, nil)
+	svc := cartApp.NewService(carts, prices, nil, nil, vr, pr, cartApp.EmptyBundleComponents(), cartApp.PermissiveStock(), testPipeline(prices), testLogger(), testBus(), nil, nil)
 
 	c, err := svc.CreateCart(context.Background(), "", "EUR")
 	if err != nil {

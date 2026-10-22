@@ -571,3 +571,199 @@ func TestSearchEngine_Search_PopulatesPriceAvailabilityAndCreatedAt(t *testing.T
 		t.Error("InStock = true after reservations consume all stock, want false")
 	}
 }
+
+func TestSearchEngine_Search_DynamicBundleInStockFromComponents(t *testing.T) {
+	db := testDB(t)
+	ensureProductsTable(t, db)
+	t.Cleanup(func() {
+		for _, stmt := range []string{
+			"DELETE FROM reservations",
+			"DELETE FROM stock",
+			"DELETE FROM prices",
+			"DELETE FROM product_categories",
+			"DELETE FROM variants",
+			"DELETE FROM bundle_components",
+			"DELETE FROM grouped_members",
+			"DELETE FROM products",
+		} {
+			if _, err := db.Exec(stmt); err != nil {
+				t.Fatalf("cleanup failed for %q: %v", stmt, err)
+			}
+		}
+	})
+
+	engine, err := postgres.NewSearchEngine(db)
+	if err != nil {
+		t.Fatalf("NewSearchEngine: %v", err)
+	}
+	ctx := context.Background()
+	productRepo, err := postgres.NewProductRepo(db)
+	if err != nil {
+		t.Fatalf("NewProductRepo: %v", err)
+	}
+	variantRepo, err := postgres.NewVariantRepo(db)
+	if err != nil {
+		t.Fatalf("NewVariantRepo: %v", err)
+	}
+	stockRepo, err := postgres.NewStockRepo(db)
+	if err != nil {
+		t.Fatalf("NewStockRepo: %v", err)
+	}
+	componentRepo, err := postgres.NewBundleComponentRepo(db)
+	if err != nil {
+		t.Fatalf("NewBundleComponentRepo: %v", err)
+	}
+
+	bundle := mustNewProduct(t, "Dynamic Kit", "dynamic-kit-"+id.New()[:8])
+	bundle.Type = catalog.TypeBundle
+	bundle.StockMode = catalog.StockModeDynamic
+	bundle.Status = catalog.StatusActive
+	bundle.Description = "dynamic kit rollup coverage"
+	if err := productRepo.Create(ctx, &bundle); err != nil {
+		t.Fatalf("Create bundle: %v", err)
+	}
+	if err := productRepo.Update(ctx, &bundle); err != nil {
+		t.Fatalf("Update bundle: %v", err)
+	}
+	bundleVariant := mustNewVariant(t, bundle.ID, "SKU-DK-"+id.New()[:8])
+	if err := variantRepo.Create(ctx, &bundleVariant); err != nil {
+		t.Fatalf("Create bundle variant: %v", err)
+	}
+	own, err := inventory.NewStockEntry(bundleVariant.ID, 0)
+	if err != nil {
+		t.Fatalf("NewStockEntry bundle: %v", err)
+	}
+	if err := stockRepo.SetStock(ctx, &own); err != nil {
+		t.Fatalf("SetStock bundle: %v", err)
+	}
+
+	component := mustNewProduct(t, "Piece", "dynamic-piece-"+id.New()[:8])
+	component.Status = catalog.StatusActive
+	if err := productRepo.Create(ctx, &component); err != nil {
+		t.Fatalf("Create component: %v", err)
+	}
+	componentVariant := mustNewVariant(t, component.ID, "SKU-DP-"+id.New()[:8])
+	if err := variantRepo.Create(ctx, &componentVariant); err != nil {
+		t.Fatalf("Create component variant: %v", err)
+	}
+	compStock, err := inventory.NewStockEntry(componentVariant.ID, 4)
+	if err != nil {
+		t.Fatalf("NewStockEntry component: %v", err)
+	}
+	if err := stockRepo.SetStock(ctx, &compStock); err != nil {
+		t.Fatalf("SetStock component: %v", err)
+	}
+	link, err := catalog.NewBundleComponent(bundle.ID, component.ID, 2)
+	if err != nil {
+		t.Fatalf("NewBundleComponent: %v", err)
+	}
+	if err := componentRepo.Upsert(ctx, link); err != nil {
+		t.Fatalf("Upsert component: %v", err)
+	}
+
+	result, err := engine.Search(ctx, search.SearchQuery{Text: "rollup coverage"})
+	if err != nil {
+		t.Fatalf("Search: %v", err)
+	}
+	if len(result.Products) != 1 {
+		t.Fatalf("len(Products) = %d, want 1", len(result.Products))
+	}
+	if !result.Products[0].InStock {
+		t.Fatal("InStock = false, want true when required components cover the bundle and the bundle's own stock is 0")
+	}
+}
+
+func TestSearchEngine_Search_DynamicBundleVirtualComponentInStock(t *testing.T) {
+	db := testDB(t)
+	ensureProductsTable(t, db)
+	t.Cleanup(func() {
+		for _, stmt := range []string{
+			"DELETE FROM reservations",
+			"DELETE FROM stock",
+			"DELETE FROM prices",
+			"DELETE FROM product_categories",
+			"DELETE FROM variants",
+			"DELETE FROM bundle_components",
+			"DELETE FROM grouped_members",
+			"DELETE FROM products",
+		} {
+			if _, err := db.Exec(stmt); err != nil {
+				t.Fatalf("cleanup failed for %q: %v", stmt, err)
+			}
+		}
+	})
+
+	engine, err := postgres.NewSearchEngine(db)
+	if err != nil {
+		t.Fatalf("NewSearchEngine: %v", err)
+	}
+	ctx := context.Background()
+	productRepo, err := postgres.NewProductRepo(db)
+	if err != nil {
+		t.Fatalf("NewProductRepo: %v", err)
+	}
+	variantRepo, err := postgres.NewVariantRepo(db)
+	if err != nil {
+		t.Fatalf("NewVariantRepo: %v", err)
+	}
+	stockRepo, err := postgres.NewStockRepo(db)
+	if err != nil {
+		t.Fatalf("NewStockRepo: %v", err)
+	}
+	componentRepo, err := postgres.NewBundleComponentRepo(db)
+	if err != nil {
+		t.Fatalf("NewBundleComponentRepo: %v", err)
+	}
+
+	bundle := mustNewProduct(t, "Virtual Kit", "virtual-kit-"+id.New()[:8])
+	bundle.Type = catalog.TypeBundle
+	bundle.StockMode = catalog.StockModeDynamic
+	bundle.Status = catalog.StatusActive
+	bundle.Description = "virtual leaf rollup coverage"
+	if err := productRepo.Create(ctx, &bundle); err != nil {
+		t.Fatalf("Create bundle: %v", err)
+	}
+	if err := productRepo.Update(ctx, &bundle); err != nil {
+		t.Fatalf("Update bundle: %v", err)
+	}
+	bundleVariant := mustNewVariant(t, bundle.ID, "SKU-VK-"+id.New()[:8])
+	if err := variantRepo.Create(ctx, &bundleVariant); err != nil {
+		t.Fatalf("Create bundle variant: %v", err)
+	}
+	own, err := inventory.NewStockEntry(bundleVariant.ID, 0)
+	if err != nil {
+		t.Fatalf("NewStockEntry bundle: %v", err)
+	}
+	if err := stockRepo.SetStock(ctx, &own); err != nil {
+		t.Fatalf("SetStock bundle: %v", err)
+	}
+
+	component := mustNewProduct(t, "Download", "virtual-piece-"+id.New()[:8])
+	component.Type = catalog.TypeVirtual
+	component.Status = catalog.StatusActive
+	if err := productRepo.Create(ctx, &component); err != nil {
+		t.Fatalf("Create component: %v", err)
+	}
+	componentVariant := mustNewVariant(t, component.ID, "SKU-VV-"+id.New()[:8])
+	if err := variantRepo.Create(ctx, &componentVariant); err != nil {
+		t.Fatalf("Create component variant: %v", err)
+	}
+	link, err := catalog.NewBundleComponent(bundle.ID, component.ID, 1)
+	if err != nil {
+		t.Fatalf("NewBundleComponent: %v", err)
+	}
+	if err := componentRepo.Upsert(ctx, link); err != nil {
+		t.Fatalf("Upsert component: %v", err)
+	}
+
+	result, err := engine.Search(ctx, search.SearchQuery{Text: "virtual leaf rollup"})
+	if err != nil {
+		t.Fatalf("Search: %v", err)
+	}
+	if len(result.Products) != 1 {
+		t.Fatalf("len(Products) = %d, want 1", len(result.Products))
+	}
+	if !result.Products[0].InStock {
+		t.Fatal("InStock = false, want true for a virtual required component with no stock row")
+	}
+}

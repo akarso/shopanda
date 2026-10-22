@@ -144,7 +144,7 @@ func cartSetup() (*stubCartRepo, *stubPriceRepo, *storefront.CartHandler, *http.
 	prices := newStubPriceRepo()
 	bus := event.NewBus(cartTestLogger())
 	vr, pr := cartApp.PermissiveCatalogRepos()
-	svc := cartApp.NewService(carts, prices, nil, nil, vr, pr, cartApp.EmptyBundleComponents(), cartTestPipeline(prices), cartTestLogger(), bus, nil, nil)
+	svc := cartApp.NewService(carts, prices, nil, nil, vr, pr, cartApp.EmptyBundleComponents(), cartApp.PermissiveStock(), cartTestPipeline(prices), cartTestLogger(), bus, nil, nil)
 	h := storefront.NewCartHandler(svc, nil)
 	return carts, prices, h, newCartRouter(h)
 }
@@ -197,6 +197,23 @@ func (m *cartTestExtensionValueRepo) UpsertBatch(_ context.Context, values []dom
 	return nil
 }
 
+func (m *cartTestExtensionValueRepo) ListTargetIDsByTypeAndIDPrefix(_ context.Context, targetType domainext.TargetType, idPrefix string) ([]string, error) {
+	prefix := strings.TrimSuffix(idPrefix, "%")
+	seen := make(map[string]struct{})
+	var out []string
+	for _, value := range m.values {
+		if value.TargetType != targetType || !strings.HasPrefix(value.TargetID, prefix) {
+			continue
+		}
+		if _, ok := seen[value.TargetID]; ok {
+			continue
+		}
+		seen[value.TargetID] = struct{}{}
+		out = append(out, value.TargetID)
+	}
+	return out, nil
+}
+
 func (m *cartTestExtensionValueRepo) Delete(_ context.Context, target domainext.Target, fieldCode string) error {
 	key := cartTestExtKey(target, fieldCode)
 	if _, ok := m.values[key]; !ok {
@@ -223,7 +240,7 @@ func cartExtensionSetup(t *testing.T) (*stubCartRepo, *stubPriceRepo, *storefron
 	values := extensionapp.NewValueService(reg, newCartTestExtensionValueRepo())
 	bus := event.NewBus(cartTestLogger())
 	vr, pr := cartApp.PermissiveCatalogRepos()
-	svc := cartApp.NewService(carts, prices, nil, nil, vr, pr, cartApp.EmptyBundleComponents(), cartTestPipeline(prices), cartTestLogger(), bus, values, nil)
+	svc := cartApp.NewService(carts, prices, nil, nil, vr, pr, cartApp.EmptyBundleComponents(), cartApp.PermissiveStock(), cartTestPipeline(prices), cartTestLogger(), bus, values, nil)
 	h := storefront.NewCartHandler(svc, values)
 	return carts, prices, h, newCartRouter(h)
 }
@@ -345,7 +362,7 @@ func cartSetupWithCatalog(vr catalog.VariantRepository, pr catalog.ProductReposi
 	carts := newStubCartRepo()
 	prices := newStubPriceRepo()
 	bus := event.NewBus(cartTestLogger())
-	svc := cartApp.NewService(carts, prices, nil, nil, vr, pr, cartApp.EmptyBundleComponents(), cartTestPipeline(prices), cartTestLogger(), bus, nil, nil)
+	svc := cartApp.NewService(carts, prices, nil, nil, vr, pr, cartApp.EmptyBundleComponents(), cartApp.PermissiveStock(), cartTestPipeline(prices), cartTestLogger(), bus, nil, nil)
 	h := storefront.NewCartHandler(svc, nil)
 	return carts, prices, newCartRouter(h)
 }
@@ -773,7 +790,7 @@ func cartSetupWithHooks(reg *hooks.Registry) (*stubCartRepo, *stubPriceRepo, *st
 	prices := newStubPriceRepo()
 	bus := event.NewBus(cartTestLogger())
 	vr, pr := cartApp.PermissiveCatalogRepos()
-	svc := cartApp.NewService(carts, prices, nil, nil, vr, pr, cartApp.EmptyBundleComponents(), cartTestPipeline(prices), cartTestLogger(), bus, nil, reg)
+	svc := cartApp.NewService(carts, prices, nil, nil, vr, pr, cartApp.EmptyBundleComponents(), cartApp.PermissiveStock(), cartTestPipeline(prices), cartTestLogger(), bus, nil, reg)
 	h := storefront.NewCartHandler(svc, nil)
 	return carts, prices, h, newCartRouter(h)
 }

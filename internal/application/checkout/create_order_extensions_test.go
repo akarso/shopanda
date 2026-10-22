@@ -2,6 +2,8 @@ package checkout_test
 
 import (
 	"context"
+	"sort"
+	"strings"
 	"testing"
 
 	"github.com/akarso/shopanda/internal/application/checkout"
@@ -56,6 +58,24 @@ func (m *memSnapshotValueRepo) UpsertBatch(_ context.Context, values []domainext
 		}
 	}
 	return nil
+}
+
+func (m *memSnapshotValueRepo) ListTargetIDsByTypeAndIDPrefix(_ context.Context, targetType domainext.TargetType, idPrefix string) ([]string, error) {
+	prefix := strings.TrimSuffix(idPrefix, "%")
+	seen := make(map[string]struct{})
+	var out []string
+	for _, value := range m.values {
+		if value.TargetType != targetType || !strings.HasPrefix(value.TargetID, prefix) {
+			continue
+		}
+		if _, ok := seen[value.TargetID]; ok {
+			continue
+		}
+		seen[value.TargetID] = struct{}{}
+		out = append(out, value.TargetID)
+	}
+	sort.Strings(out)
+	return out, nil
 }
 
 func (m *memSnapshotValueRepo) Delete(_ context.Context, target domainext.Target, fieldCode string) error {

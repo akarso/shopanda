@@ -6,16 +6,12 @@ import (
 	"fmt"
 	"sync"
 
+	catalogapp "github.com/akarso/shopanda/internal/application/catalog"
 	"github.com/akarso/shopanda/internal/domain/catalog"
 	domain "github.com/akarso/shopanda/internal/domain/pricing"
 	"github.com/akarso/shopanda/internal/domain/shared"
 	"github.com/akarso/shopanda/internal/platform/apperror"
 )
-
-// componentVariantProbe is how many variants we load to decide that a dynamic
-// component has exactly one. Two is enough to reject a multi-variant component
-// without paging the whole catalog.
-const componentVariantProbe = 2
 
 // UnitPriceSources are the reads ResolveUnitPrice needs.
 // Production BasePriceStep and the cart share one value of this struct.
@@ -29,14 +25,30 @@ type UnitPriceSources struct {
 	Components catalog.BundleComponentRepository
 }
 
+// PriceNotAvailableMessage is the customer-facing text when a non-bundle
+// variant has no stored price. It does not name the variant.
+const PriceNotAvailableMessage = "price is not available"
+
 // MissingUnitPriceError means no store-scoped or global price row exists.
+// ProductType is set when ResolveUnitPrice already loaded the product.
+// hasProductType is false for the legacy stored lookup, which has no product.
 type MissingUnitPriceError struct {
-	VariantID string
-	Currency  string
+	VariantID      string
+	Currency       string
+	ProductType    catalog.Type
+	hasProductType bool
 }
 
 func (e *MissingUnitPriceError) Error() string {
 	return fmt.Sprintf("no price for variant %s in %s", e.VariantID, e.Currency)
+}
+
+// KnownProductType reports the product type when the resolver loaded it.
+func (e *MissingUnitPriceError) KnownProductType() (catalog.Type, bool) {
+	if e == nil || !e.hasProductType {
+		return "", false
+	}
+	return e.ProductType, true
 }
 
 // IsMissingUnitPrice reports a missing stored price row.
@@ -161,107 +173,66 @@ func resolveUnitPriceUncached(ctx context.Context, src UnitPriceSources, variant
 	case product.Type == catalog.TypeBundle && product.PricingMode == catalog.PricingModeDynamic:
 		return resolveDynamicBundleUnitPrice(ctx, src, product.ID, currency, storeID)
 	default:
-		return lookupStoredUnitPrice(ctx, src.Prices, variantID, currency, storeID)
+		amount, err := lookupStoredUnitPrice(ctx, src.Prices, variantID, currency, storeID)
+		var missing *MissingUnitPriceError
+		if errors.As(err, &missing) && missing != nil {
+			missing.ProductType = product.Type
+			missing.hasProductType = true
+		}
+		return amount, err
 	}
 }
 
 func resolveDynamicBundleUnitPrice(ctx context.Context, src UnitPriceSources, bundleProductID, currency, storeID string) (shared.Money, error) {
-	if src.Components == nil {
-		return shared.Money{}, apperror.Validation("bundle component repository is required")
-	}
-	components, err := src.Components.ListByBundleID(ctx, bundleProductID)
+	leaves, err := catalogapp.RequiredLeafVariants(ctx, src.Products, src.Variants, src.Components, bundleProductID)
 	if err != nil {
-		return shared.Money{}, fmt.Errorf("bundle %s components: %w", bundleProductID, err)
+		return shared.Money{}, err
 	}
-
-	required := make([]catalog.BundleComponent, 0)
-	for _, component := range components {
-		if !component.Required {
-			continue
-		}
-		if component.Quantity < 1 {
-			return shared.Money{}, apperror.Validation(fmt.Sprintf("dynamic bundle component %s has invalid quantity", component.ComponentProductID))
-		}
-		required = append(required, component)
-	}
-	if len(required) == 0 {
-		return shared.Money{}, apperror.Validation(fmt.Sprintf("dynamic bundle %s has no required components", bundleProductID))
-	}
-	if len(required) > catalog.MaxBundleRequiredComponents {
-		return shared.Money{}, apperror.Validation(fmt.Sprintf(
-			"dynamic bundle %s has %d required components; the maximum is %d",
-			bundleProductID, len(required), catalog.MaxBundleRequiredComponents,
-		))
-	}
-
-	loadCtx := ctx
-	if !catalog.IncludeNonActiveProducts(ctx) {
-		loadCtx = catalog.WithIncludeNonActiveProducts(ctx)
-	}
-	allowInactive := catalog.IncludeNonActiveProducts(ctx)
-	productIDs := make([]string, len(required))
-	for i, component := range required {
-		productIDs[i] = component.ComponentProductID
-		product, err := src.Products.FindByID(loadCtx, component.ComponentProductID)
-		if err != nil {
-			return shared.Money{}, fmt.Errorf("bundle component %s: %w", component.ComponentProductID, err)
-		}
-		if product == nil {
-			return shared.Money{}, apperror.Validation(fmt.Sprintf("dynamic bundle component %s was not found", component.ComponentProductID))
-		}
-		if !allowInactive && product.Status != catalog.StatusActive {
-			return shared.Money{}, apperror.Validation(fmt.Sprintf("dynamic bundle component %s is not active", component.ComponentProductID))
-		}
-		if !product.Type.IsBundleComponentLeafType() {
-			return shared.Money{}, apperror.Validation(fmt.Sprintf(
-				"dynamic bundle component %s must be a simple, virtual, or downloadable product",
-				component.ComponentProductID,
-			))
-		}
-	}
-
-	variantsByProduct, err := src.Variants.ListByProductIDs(ctx, productIDs, componentVariantProbe)
-	if err != nil {
-		return shared.Money{}, fmt.Errorf("bundle %s component variants: %w", bundleProductID, err)
-	}
-	variantIDs := make([]string, len(required))
-	for i, component := range required {
-		variants := variantsByProduct[component.ComponentProductID]
-		if len(variants) != 1 {
-			return shared.Money{}, apperror.Validation(fmt.Sprintf(
-				"dynamic bundle component %s must have exactly one variant",
-				component.ComponentProductID,
-			))
-		}
-		variantIDs[i] = variants[0].ID
+	variantIDs := make([]string, len(leaves))
+	for i, leaf := range leaves {
+		variantIDs[i] = leaf.Variant.ID
 	}
 
 	priced, err := lookupComponentPrices(ctx, src.Prices, variantIDs, currency, storeID)
 	if err != nil {
-		return shared.Money{}, fmt.Errorf("bundle %s prices: %w", bundleProductID, err)
+		// Internal read. Leave the bundle id off Error() so a copied log line
+		// does not show it to a customer.
+		return shared.Money{}, fmt.Errorf("bundle prices: %w", err)
 	}
 	total, err := shared.NewMoney(0, currency)
 	if err != nil {
-		return shared.Money{}, apperror.Validation(fmt.Sprintf("bundle %s currency: %v", bundleProductID, err))
+		return shared.Money{}, bundleCustomerPriceError(fmt.Sprintf("bundle %s currency: %v", bundleProductID, err))
 	}
-	for i, component := range required {
+	for i, leaf := range leaves {
 		price := priced[variantIDs[i]]
 		if price == nil {
-			return shared.Money{}, apperror.Validation(fmt.Sprintf(
+			return shared.Money{}, bundleCustomerPriceError(fmt.Sprintf(
 				"dynamic bundle component %s has no price in %s",
-				component.ComponentProductID, currency,
+				leaf.Component.ComponentProductID, currency,
 			))
 		}
-		line, err := price.Amount.MulChecked(int64(component.Quantity))
+		if price.Amount.Currency() != currency {
+			return shared.Money{}, bundleCustomerPriceError(fmt.Sprintf(
+				"bundle component %s currency %s does not match %s",
+				leaf.Component.ComponentProductID, price.Amount.Currency(), currency,
+			))
+		}
+		line, err := price.Amount.MulChecked(int64(leaf.Component.Quantity))
 		if err != nil {
-			return shared.Money{}, apperror.Validation(fmt.Sprintf("bundle component %s: %v", component.ComponentProductID, err))
+			return shared.Money{}, bundleCustomerPriceError(fmt.Sprintf("bundle component %s: %v", leaf.Component.ComponentProductID, err))
 		}
 		total, err = total.AddChecked(line)
 		if err != nil {
-			return shared.Money{}, apperror.Validation(fmt.Sprintf("bundle %s: %v", bundleProductID, err))
+			return shared.Money{}, bundleCustomerPriceError(fmt.Sprintf("bundle %s: %v", bundleProductID, err))
 		}
 	}
 	return total, nil
+}
+
+// bundleCustomerPriceError hides a component or bundle id behind
+// catalog.BundleCannotBeReservedMessage. The formatted detail stays on Unwrap.
+func bundleCustomerPriceError(detail string) error {
+	return catalogapp.BundleCustomerError(apperror.Validation(detail))
 }
 
 // lookupComponentPrices loads component variant prices with the same

@@ -21,6 +21,17 @@ import (
 // global EUR row cannot make a USD add succeed. Fixed products use their own
 // price row. Grouped parents are never HasPrice, even with a stale row (PR-1062).
 //
+// QuantityPositive for a dynamic-stock bundle is true only when the required
+// set is non-empty, at most catalog.MaxBundleRequiredComponents, and every
+// required component is an active leaf with exactly one variant. A simple
+// leaf must have floor(stock.quantity / component.quantity) greater than 0.
+// Virtual and downloadable leaves pass without a stock row. Optional
+// components are ignored. The bundle's own stock row does not count. A missing
+// simple stock row, a non-leaf, an inactive component, or more than one
+// variant fails closed. Grouped parents are never QuantityPositive. Fixed
+// products use their own variant stock (PR-1063). Search in_stock uses the
+// same dynamic expression (dynamicBundleQuantityPositiveSQL).
+//
 // HasStoreAssignment is always true: there is no product↔store assignment table
 // yet. A future assignment model can flip the column without changing the gate
 // API — until then, catalog.AutoBasisCodeNoStoreAssignment is reserved and
@@ -81,12 +92,18 @@ func (r *VisibilityFactsRepo) loadMany(ctx context.Context, productIDs []string,
 			p.visibility_search_mode,
 			p.visibility_individually_mode,
 			p.visibility_purchasable_mode,
-			EXISTS (
-				SELECT 1
-				FROM variants v
-				JOIN stock s ON s.variant_id = v.id
-				WHERE v.product_id = p.id AND s.quantity > 0
-			) AS quantity_positive,
+			CASE
+				WHEN p.type = 'grouped' THEN FALSE
+				WHEN p.type = 'bundle' AND p.stock_mode = 'dynamic' THEN
+					%s
+				ELSE
+					EXISTS (
+						SELECT 1
+						FROM variants v
+						JOIN stock s ON s.variant_id = v.id
+						WHERE v.product_id = p.id AND s.quantity > 0
+					)
+			END AS quantity_positive,
 			CASE
 				WHEN p.type = 'grouped' THEN FALSE
 				WHEN p.type = 'bundle' AND p.pricing_mode = 'dynamic' THEN
@@ -124,7 +141,7 @@ func (r *VisibilityFactsRepo) loadMany(ctx context.Context, productIDs []string,
 			) AS has_category
 		FROM products p
 		WHERE p.id = ANY($1)
-			AND ($2::bool = false OR p.status = 'active')`, catalog.MaxBundleRequiredComponents)
+			AND ($2::bool = false OR p.status = 'active')`, dynamicBundleQuantityPositiveSQL("p.id"), catalog.MaxBundleRequiredComponents)
 
 	rows, err := r.db.QueryContext(ctx, query, ids, activeOnly)
 	if err != nil {

@@ -42,7 +42,7 @@ func TestService_AddItem_FactsError_NotValidation(t *testing.T) {
 	prices.set("var-1", "EUR", 1000)
 	vr := addItemVariantStub{variant: &catalog.Variant{ID: "var-1", ProductID: "prod-1"}}
 	pr := addItemProductStub{product: &catalog.Product{ID: "prod-1", Status: catalog.StatusActive}}
-	svc := cartApp.NewService(carts, prices, nil, nil, vr, pr, cartApp.EmptyBundleComponents(), testPipeline(prices), testLogger(), testBus(), nil, nil).
+	svc := cartApp.NewService(carts, prices, nil, nil, vr, pr, cartApp.EmptyBundleComponents(), cartApp.PermissiveStock(), testPipeline(prices), testLogger(), testBus(), nil, nil).
 		WithVisibilityFacts(erroringFacts{}, catalog.VisibilityOptions{})
 
 	c, err := svc.CreateCart(context.Background(), "", "EUR")
@@ -65,7 +65,7 @@ func TestService_HiddenAxis_DecreaseAndRemoveStillAllowed(t *testing.T) {
 	vr := addItemVariantStub{variant: &catalog.Variant{ID: "var-1", ProductID: "prod-1"}}
 	pr := addItemProductStub{product: &catalog.Product{ID: "prod-1", Status: catalog.StatusActive}}
 	facts := purchasableFacts{"prod-1": sellableSnap(catalog.DefaultVisibilityAxes())}
-	svc := cartApp.NewService(carts, prices, nil, nil, vr, pr, cartApp.EmptyBundleComponents(), testPipeline(prices), testLogger(), testBus(), nil, nil).
+	svc := cartApp.NewService(carts, prices, nil, nil, vr, pr, cartApp.EmptyBundleComponents(), cartApp.PermissiveStock(), testPipeline(prices), testLogger(), testBus(), nil, nil).
 		WithVisibilityFacts(facts, catalog.VisibilityOptions{})
 	ctx := context.Background()
 
@@ -104,7 +104,7 @@ func TestService_ClaimGuestCart_MergeDropsOutOfStockLine(t *testing.T) {
 		"prod-1": sellableSnap(catalog.DefaultVisibilityAxes()),
 		"prod-2": sellableSnap(catalog.DefaultVisibilityAxes()),
 	}
-	svc := cartApp.NewService(carts, prices, nil, nil, mutableVariantRepo{cat}, mutableProductRepo{cat}, cartApp.EmptyBundleComponents(), testPipeline(prices), testLogger(), testBus(), nil, nil).
+	svc := cartApp.NewService(carts, prices, nil, nil, mutableVariantRepo{cat}, mutableProductRepo{cat}, cartApp.EmptyBundleComponents(), cartApp.PermissiveStock(), testPipeline(prices), testLogger(), testBus(), nil, nil).
 		WithVisibilityFacts(facts, catalog.VisibilityOptions{})
 	ctx := context.Background()
 
@@ -157,7 +157,7 @@ func TestService_AddItem_RejectsNonPurchasableAxis(t *testing.T) {
 	modes.Purchasable = catalog.VisibilityModeHidden
 	facts := purchasableFacts{"prod-1": sellableSnap(modes)}
 
-	svc := cartApp.NewService(carts, prices, nil, nil, vr, pr, cartApp.EmptyBundleComponents(), testPipeline(prices), testLogger(), testBus(), nil, nil).
+	svc := cartApp.NewService(carts, prices, nil, nil, vr, pr, cartApp.EmptyBundleComponents(), cartApp.PermissiveStock(), testPipeline(prices), testLogger(), testBus(), nil, nil).
 		WithVisibilityFacts(facts, catalog.VisibilityOptions{})
 
 	c, err := svc.CreateCart(context.Background(), "", "EUR")
@@ -188,7 +188,7 @@ func TestService_AddItem_AllowsPurchasableAxis(t *testing.T) {
 	pr := addItemProductStub{product: &catalog.Product{ID: "prod-1", Status: catalog.StatusActive}}
 	facts := purchasableFacts{"prod-1": sellableSnap(catalog.DefaultVisibilityAxes())}
 
-	svc := cartApp.NewService(carts, prices, nil, nil, vr, pr, cartApp.EmptyBundleComponents(), testPipeline(prices), testLogger(), testBus(), nil, nil).
+	svc := cartApp.NewService(carts, prices, nil, nil, vr, pr, cartApp.EmptyBundleComponents(), cartApp.PermissiveStock(), testPipeline(prices), testLogger(), testBus(), nil, nil).
 		WithVisibilityFacts(facts, catalog.VisibilityOptions{})
 
 	c, err := svc.CreateCart(context.Background(), "", "EUR")
@@ -212,7 +212,7 @@ func TestService_AddItem_MissingVisibilitySnapshot_FailClosed(t *testing.T) {
 	pr := addItemProductStub{product: &catalog.Product{ID: "prod-1", Status: catalog.StatusActive}}
 	facts := purchasableFacts{} // active product, but no snapshot → deny
 
-	svc := cartApp.NewService(carts, prices, nil, nil, vr, pr, cartApp.EmptyBundleComponents(), testPipeline(prices), testLogger(), testBus(), nil, nil).
+	svc := cartApp.NewService(carts, prices, nil, nil, vr, pr, cartApp.EmptyBundleComponents(), cartApp.PermissiveStock(), testPipeline(prices), testLogger(), testBus(), nil, nil).
 		WithVisibilityFacts(facts, catalog.VisibilityOptions{})
 
 	c, err := svc.CreateCart(context.Background(), "", "EUR")
@@ -236,7 +236,7 @@ func TestService_AddItem_NilFacts_StatusOnly(t *testing.T) {
 	vr := addItemVariantStub{variant: &catalog.Variant{ID: "var-1", ProductID: "prod-1"}}
 	pr := addItemProductStub{product: &catalog.Product{ID: "prod-1", Status: catalog.StatusActive}}
 
-	svc := cartApp.NewService(carts, prices, nil, nil, vr, pr, cartApp.EmptyBundleComponents(), testPipeline(prices), testLogger(), testBus(), nil, nil).
+	svc := cartApp.NewService(carts, prices, nil, nil, vr, pr, cartApp.EmptyBundleComponents(), cartApp.PermissiveStock(), testPipeline(prices), testLogger(), testBus(), nil, nil).
 		WithVisibilityFacts(nil, catalog.VisibilityOptions{})
 
 	c, err := svc.CreateCart(context.Background(), "", "EUR")
@@ -257,7 +257,7 @@ func TestService_UpdateItemQuantity_RejectsNonPurchasableOnIncrease(t *testing.T
 	modes := catalog.DefaultVisibilityAxes()
 	facts := purchasableFacts{"prod-1": sellableSnap(modes)}
 
-	svc := cartApp.NewService(carts, prices, nil, nil, vr, pr, cartApp.EmptyBundleComponents(), testPipeline(prices), testLogger(), testBus(), nil, nil).
+	svc := cartApp.NewService(carts, prices, nil, nil, vr, pr, cartApp.EmptyBundleComponents(), cartApp.PermissiveStock(), testPipeline(prices), testLogger(), testBus(), nil, nil).
 		WithVisibilityFacts(facts, catalog.VisibilityOptions{})
 
 	c, err := svc.CreateCart(context.Background(), "", "EUR")
@@ -292,7 +292,7 @@ func TestService_AddItem_PurchasableBeforeExtensions(t *testing.T) {
 
 	// extensions writer nil + non-empty Extensions: if gate ran after extension
 	// validation, error would be "extension values are not supported".
-	svc := cartApp.NewService(carts, prices, nil, nil, vr, pr, cartApp.EmptyBundleComponents(), testPipeline(prices), testLogger(), testBus(), nil, nil).
+	svc := cartApp.NewService(carts, prices, nil, nil, vr, pr, cartApp.EmptyBundleComponents(), cartApp.PermissiveStock(), testPipeline(prices), testLogger(), testBus(), nil, nil).
 		WithVisibilityFacts(facts, catalog.VisibilityOptions{})
 
 	c, err := svc.CreateCart(context.Background(), "", "EUR")

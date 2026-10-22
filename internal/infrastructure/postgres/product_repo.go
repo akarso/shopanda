@@ -17,11 +17,11 @@ import (
 const maxListLimit = 100
 
 // productSelectColumns is the column list for product scans (keep in sync with scanProduct).
-const productSelectColumns = `id, name, slug, description, status, type, pricing_mode,
+const productSelectColumns = `id, name, slug, description, status, type, pricing_mode, stock_mode,
 		visibility_catalog_mode, visibility_search_mode, visibility_individually_mode, visibility_purchasable_mode,
 		attributes, created_at, updated_at`
 
-const productSelectColumnsPrefixed = `p.id, p.name, p.slug, p.description, p.status, p.type, p.pricing_mode,
+const productSelectColumnsPrefixed = `p.id, p.name, p.slug, p.description, p.status, p.type, p.pricing_mode, p.stock_mode,
 		p.visibility_catalog_mode, p.visibility_search_mode, p.visibility_individually_mode, p.visibility_purchasable_mode,
 		p.attributes, p.created_at, p.updated_at`
 
@@ -53,28 +53,28 @@ func (r *ProductRepo) WithTx(tx *sql.Tx) catalog.ProductRepository {
 // on status, so draft and archived products lock the same way as active ones.
 // Returns NotFound when no row exists.
 func (r *ProductRepo) LockForUpdate(ctx context.Context, id string) (catalog.Type, error) {
-	typ, _, err := r.LockTypeAndPricingMode(ctx, id)
+	typ, _, _, err := r.LockTypeAndModes(ctx, id)
 	return typ, err
 }
 
-// LockTypeAndPricingMode locks the product row and returns the type and
-// pricing_mode stored on that row. Type-change updates must read pricing_mode
-// here before applying an omitted-mode default, so a stale FindByID cannot
-// keep or drop dynamic.
-func (r *ProductRepo) LockTypeAndPricingMode(ctx context.Context, id string) (catalog.Type, catalog.PricingMode, error) {
+// LockTypeAndModes locks the product row and returns the type,
+// pricing_mode, and stock_mode stored on that row. Type-change updates must
+// read both modes here before applying an omitted-mode default, so a stale
+// FindByID cannot keep or drop dynamic.
+func (r *ProductRepo) LockTypeAndModes(ctx context.Context, id string) (catalog.Type, catalog.PricingMode, catalog.StockMode, error) {
 	if r.tx == nil {
-		return "", "", fmt.Errorf("product_repo: lock for update: transaction required")
+		return "", "", "", fmt.Errorf("product_repo: lock for update: transaction required")
 	}
-	const q = `SELECT type, pricing_mode FROM products WHERE id = $1 FOR UPDATE`
-	var rawType, rawMode string
-	err := r.tx.QueryRowContext(ctx, q, id).Scan(&rawType, &rawMode)
+	const q = `SELECT type, pricing_mode, stock_mode FROM products WHERE id = $1 FOR UPDATE`
+	var rawType, rawPricing, rawStock string
+	err := r.tx.QueryRowContext(ctx, q, id).Scan(&rawType, &rawPricing, &rawStock)
 	if errors.Is(err, sql.ErrNoRows) {
-		return "", "", apperror.NotFound("product not found")
+		return "", "", "", apperror.NotFound("product not found")
 	}
 	if err != nil {
-		return "", "", fmt.Errorf("product_repo: lock for update: %w", err)
+		return "", "", "", fmt.Errorf("product_repo: lock for update: %w", err)
 	}
-	return catalog.Type(rawType), catalog.PricingMode(rawMode), nil
+	return catalog.Type(rawType), catalog.PricingMode(rawPricing), catalog.StockMode(rawStock), nil
 }
 
 func productReadIncludeNonActive(ctx context.Context, filter catalog.ListFilter) bool {
@@ -108,6 +108,62 @@ func (r *ProductRepo) FindByID(ctx context.Context, id string) (*catalog.Product
 		return nil, fmt.Errorf("product_repo: find by id: %w", err)
 	}
 	return p, nil
+}
+
+// ListByIDs returns products keyed by ID. Missing IDs are omitted. Empty ids
+// returns an empty map. Non-active products are omitted unless ctx opts in,
+// matching FindByID. RequiredLeafVariants uses this so a dynamic bundle does
+// not load each component with its own query.
+func (r *ProductRepo) ListByIDs(ctx context.Context, ids []string) (map[string]*catalog.Product, error) {
+	out := make(map[string]*catalog.Product)
+	if len(ids) == 0 {
+		return out, nil
+	}
+	seen := make(map[string]struct{}, len(ids))
+	unique := make([]string, 0, len(ids))
+	for _, id := range ids {
+		if id == "" {
+			continue
+		}
+		if _, ok := seen[id]; ok {
+			continue
+		}
+		seen[id] = struct{}{}
+		unique = append(unique, id)
+	}
+	if len(unique) == 0 {
+		return out, nil
+	}
+	q := `SELECT ` + productSelectColumns + ` FROM products WHERE id = ANY($1)`
+	args := []any{unique}
+	if !catalog.IncludeNonActiveProducts(ctx) {
+		q += ` AND status = $2`
+		args = append(args, string(catalog.StatusActive))
+	}
+	var (
+		rows *sql.Rows
+		err  error
+	)
+	if r.tx != nil {
+		rows, err = r.tx.QueryContext(ctx, q, args...)
+	} else {
+		rows, err = r.db.QueryContext(ctx, q, args...)
+	}
+	if err != nil {
+		return nil, fmt.Errorf("product_repo: list by ids: %w", err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		p, err := r.scanProduct(rows)
+		if err != nil {
+			return nil, fmt.Errorf("product_repo: list by ids scan: %w", err)
+		}
+		out[p.ID] = p
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("product_repo: list by ids: %w", err)
+	}
+	return out, nil
 }
 
 // FindBySlug returns a product by its slug.
@@ -215,10 +271,10 @@ func (r *ProductRepo) Create(ctx context.Context, p *catalog.Product) error {
 	}
 
 	const q = `INSERT INTO products (
-		id, name, slug, description, status, type, pricing_mode,
+		id, name, slug, description, status, type, pricing_mode, stock_mode,
 		visibility_catalog_mode, visibility_search_mode, visibility_individually_mode, visibility_purchasable_mode,
 		attributes, created_at, updated_at
-	) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)`
+	) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)`
 
 	var execer interface {
 		ExecContext(context.Context, string, ...interface{}) (sql.Result, error)
@@ -229,7 +285,7 @@ func (r *ProductRepo) Create(ctx context.Context, p *catalog.Product) error {
 		execer = r.db
 	}
 	_, err = execer.ExecContext(ctx, q,
-		p.ID, p.Name, p.Slug, p.Description, string(p.Status), string(p.Type), string(p.PricingMode),
+		p.ID, p.Name, p.Slug, p.Description, string(p.Status), string(p.Type), string(p.PricingMode), string(p.StockMode),
 		string(p.VisibilityModes.Catalog), string(p.VisibilityModes.Search),
 		string(p.VisibilityModes.Individually), string(p.VisibilityModes.Purchasable),
 		attrs, p.CreatedAt, p.UpdatedAt,
@@ -244,6 +300,8 @@ func (r *ProductRepo) Create(ctx context.Context, p *catalog.Product) error {
 				return apperror.Validation(catalog.InvalidTypeMessage(p.Type))
 			case pgErr.Code == "23514" && pgErr.ConstraintName == "products_pricing_mode_check":
 				return apperror.Validation(catalog.InvalidPricingModeMessage(p.PricingMode))
+			case pgErr.Code == "23514" && pgErr.ConstraintName == "products_stock_mode_check":
+				return apperror.Validation(catalog.InvalidStockModeMessage(p.StockMode))
 			case pgErr.Code == "23514" && pgErr.ConstraintName == "products_visibility_modes_check":
 				return apperror.Validation(visibilityModesValidationMessage(p.VisibilityModes))
 			}
@@ -266,11 +324,11 @@ func (r *ProductRepo) Update(ctx context.Context, p *catalog.Product) error {
 	updatedAt := time.Now().UTC()
 
 	const q = `UPDATE products
-		SET name = $1, slug = $2, description = $3, status = $4, type = $5, pricing_mode = $6,
-			visibility_catalog_mode = $7, visibility_search_mode = $8,
-			visibility_individually_mode = $9, visibility_purchasable_mode = $10,
-			attributes = $11, updated_at = $12
-		WHERE id = $13`
+		SET name = $1, slug = $2, description = $3, status = $4, type = $5, pricing_mode = $6, stock_mode = $7,
+			visibility_catalog_mode = $8, visibility_search_mode = $9,
+			visibility_individually_mode = $10, visibility_purchasable_mode = $11,
+			attributes = $12, updated_at = $13
+		WHERE id = $14`
 
 	var execer interface {
 		ExecContext(context.Context, string, ...interface{}) (sql.Result, error)
@@ -281,7 +339,7 @@ func (r *ProductRepo) Update(ctx context.Context, p *catalog.Product) error {
 		execer = r.db
 	}
 	result, err := execer.ExecContext(ctx, q,
-		p.Name, p.Slug, p.Description, string(p.Status), string(p.Type), string(p.PricingMode),
+		p.Name, p.Slug, p.Description, string(p.Status), string(p.Type), string(p.PricingMode), string(p.StockMode),
 		string(p.VisibilityModes.Catalog), string(p.VisibilityModes.Search),
 		string(p.VisibilityModes.Individually), string(p.VisibilityModes.Purchasable),
 		attrs, updatedAt, p.ID,
@@ -294,6 +352,8 @@ func (r *ProductRepo) Update(ctx context.Context, p *catalog.Product) error {
 				return apperror.Validation(catalog.InvalidTypeMessage(p.Type))
 			case "products_pricing_mode_check":
 				return apperror.Validation(catalog.InvalidPricingModeMessage(p.PricingMode))
+			case "products_stock_mode_check":
+				return apperror.Validation(catalog.InvalidStockModeMessage(p.StockMode))
 			case "products_visibility_modes_check":
 				return apperror.Validation(visibilityModesValidationMessage(p.VisibilityModes))
 			}
@@ -342,12 +402,13 @@ func (r *ProductRepo) scanProduct(s scanner) (*catalog.Product, error) {
 	var status string
 	var productType string
 	var pricingMode string
+	var stockMode string
 	var catalogMode, searchMode, individuallyMode, purchasableMode string
 	var attrsJSON []byte
 
 	err := s.Scan(
 		&p.ID, &p.Name, &p.Slug, &p.Description,
-		&status, &productType, &pricingMode,
+		&status, &productType, &pricingMode, &stockMode,
 		&catalogMode, &searchMode, &individuallyMode, &purchasableMode,
 		&attrsJSON, &p.CreatedAt, &p.UpdatedAt,
 	)
@@ -358,6 +419,7 @@ func (r *ProductRepo) scanProduct(s scanner) (*catalog.Product, error) {
 	p.Status = catalog.Status(status)
 	p.Type = catalog.Type(productType)
 	p.PricingMode = catalog.PricingMode(pricingMode)
+	p.StockMode = catalog.StockMode(stockMode)
 	p.VisibilityModes = catalog.VisibilityAxes{
 		Catalog:      catalog.VisibilityMode(catalogMode),
 		Search:       catalog.VisibilityMode(searchMode),
