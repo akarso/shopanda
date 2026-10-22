@@ -125,7 +125,10 @@ func (s *CreateOrderStep) Name() string { return "create_order" }
 // Execute creates an order with items sourced from the pricing snapshot.
 // Sets cctx.Order and stores order ID in Meta["created_order_id"].
 // A failure before that id is stored releases Meta["reservations"] when
-// reserve_inventory set Meta["reserved"] and a reservation repository is wired.
+// reserve_inventory set Meta["reserved"] or left holds in meta. A release
+// that succeeds clears Meta["reserved"]. A release that fails clears it
+// too and keeps only the holds that are still active, so the context does
+// not treat that reservation as valid.
 func (s *CreateOrderStep) Execute(ctx context.Context, cctx *Context) (err error) {
 	defer func() {
 		if err != nil {
@@ -275,7 +278,8 @@ func pricingStoreID(cctx *Context, pctx *pricing.PricingContext) string {
 // parent line was exploded. A bundle with ExplodeOrderLines writes one line
 // per required leaf and drops the parent. Every other row stays one line at
 // the pricing snapshot unit price. Exploded line totals must equal the cart
-// line total. Leaf unit prices come from one batch of stored component prices.
+// line total before included tax is removed from PricingItem.Total. Leaf
+// unit prices come from one batch of stored component prices.
 func (s *CreateOrderStep) linesForCartItem(ctx context.Context, cctx *Context, ci cart.Item, pi pricing.PricingItem, storeID string) ([]order.Item, bool, error) {
 	v := cartVariantFromMeta(cctx, ci.VariantID)
 	if v == nil {
@@ -306,6 +310,12 @@ func (s *CreateOrderStep) linesForCartItem(ctx context.Context, cctx *Context, c
 			return nil, false, orderLinesValidation(fmt.Sprintf("item %s: %v", ci.VariantID, err))
 		}
 		oi.Restockable = orderLineRestockable(product.Type)
+		// Dynamic stock is reserved on the leaves. The parent line must not
+		// be restocked on return. Fixed-stock bundles and every other type
+		// keep orderLineRestockable.
+		if product.Type == catalog.TypeBundle && product.StockMode == catalog.StockModeDynamic {
+			oi.Restockable = false
+		}
 		return []order.Item{oi}, false, nil
 	}
 	if product.PricingMode != catalog.PricingModeDynamic || product.StockMode != catalog.StockModeDynamic {
@@ -371,10 +381,37 @@ func (s *CreateOrderStep) linesForCartItem(ctx context.Context, cctx *Context, c
 			return nil, false, orderLinesValidation(fmt.Sprintf("exploded total %s: %v", ci.VariantID, err))
 		}
 	}
-	if !sum.Equal(pi.Total) {
+	expected, err := explodedCompareTotal(pi)
+	if err != nil {
+		return nil, false, orderLinesValidation(fmt.Sprintf("exploded total %s: %v", ci.VariantID, err))
+	}
+	if !sum.Equal(expected) {
 		return nil, false, orderLinesValidation(fmt.Sprintf("exploded total for variant %s does not match cart line total", ci.VariantID))
 	}
 	return merged, true, nil
+}
+
+// explodedCompareTotal is the amount leaf catalog prices must match.
+// Inclusive tax subtracts the included amount from PricingItem.Total and
+// leaves the shelf price in place. Adding those adjustments back restores
+// the pre-tax total the component prices sum to. Exclusive tax does not
+// change Total, so the comparison stays on PricingItem.Total.
+func explodedCompareTotal(pi pricing.PricingItem) (shared.Money, error) {
+	total := pi.Total
+	for _, adj := range pi.Adjustments {
+		if adj.Type != pricing.AdjustmentTax || !adj.Included {
+			continue
+		}
+		if adj.Amount.Currency() != total.Currency() {
+			return shared.Money{}, fmt.Errorf("included tax currency mismatch")
+		}
+		next, err := total.AddChecked(adj.Amount)
+		if err != nil {
+			return shared.Money{}, err
+		}
+		total = next
+	}
+	return total, nil
 }
 
 func orderLineRestockable(productType catalog.Type) bool {
@@ -544,6 +581,8 @@ func (s *CreateOrderStep) dynamicBundleReservedQty(ctx context.Context, bundlePr
 // Release uses the same publish path as ReserveInventoryStep: a failed
 // Release is logged, and a successful one publishes EventStockUpdated for
 // the variant and the dynamic-bundle parent when the hold recorded one.
+// Holds still listed after a failed release are released again even when
+// Meta["reserved"] is already false.
 func (s *CreateOrderStep) releaseReservations(ctx context.Context, cctx *Context) {
 	if s == nil || s.reservations == nil || cctx == nil {
 		return
@@ -553,18 +592,14 @@ func (s *CreateOrderStep) releaseReservations(ctx context.Context, cctx *Context
 			return
 		}
 	}
-	reserved, ok := cctx.GetMeta("reserved")
-	if !ok {
-		return
-	}
-	flag, isBool := reserved.(bool)
-	if !isBool || !flag {
-		return
-	}
 	holds := reservationHoldsFromMeta(cctx)
-	if holds == nil {
+	if len(holds) == 0 {
+		if !reservedMetaTrue(cctx) {
+			return
+		}
 		rawIDs, ok := cctx.GetMeta("reservations")
 		if !ok {
+			noteReservationRelease(cctx, nil)
 			return
 		}
 		ids, ok := rawIDs.([]string)
@@ -579,7 +614,8 @@ func (s *CreateOrderStep) releaseReservations(ctx context.Context, cctx *Context
 			holds[i] = ReservationHold{ID: id}
 		}
 	}
-	releaseCheckoutHolds(ctx, compensateTimeout, s.reservations, s.variants, s.bus, s.log, cctx, holds, "checkout.create_order")
+	failed := releaseCheckoutHolds(ctx, compensateTimeout, s.reservations, s.variants, s.bus, s.log, cctx, holds, "checkout.create_order")
+	noteReservationRelease(cctx, failed)
 }
 
 func reservationHoldsFromMeta(cctx *Context) []ReservationHold {

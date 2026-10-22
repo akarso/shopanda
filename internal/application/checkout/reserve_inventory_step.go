@@ -146,6 +146,10 @@ type heldReserve struct {
 // Execute reserves inventory for each cart item.
 // Stores reservation IDs in Meta["reservations"] and the held quantities in
 // Meta[ReservedVariantQtyMeta].
+// Meta["reserved"] is true only while those holds are still the active set.
+// CreateOrderStep clears it after a release. A later Execute does not treat
+// a released or partially released set as a valid reservation: holds still
+// listed in meta are released before this attempt reserves again.
 // A dynamic-stock bundle reserves each required simple component for
 // component.quantity * line quantity and does not reserve the bundle variant.
 // Virtual and downloadable required leaves are skipped. A digital-only
@@ -159,6 +163,9 @@ func (s *ReserveInventoryStep) Execute(ctx context.Context, cctx *Context) error
 		if b, isBool := v.(bool); isBool && b {
 			return nil // idempotency
 		}
+	}
+	if err := s.releaseStaleHolds(ctx, cctx); err != nil {
+		return err
 	}
 
 	if cctx.Cart == nil {
@@ -236,7 +243,25 @@ func (s *ReserveInventoryStep) releaseReserved(ctx context.Context, cctx *Contex
 			BundleProductID: held.bundleProductID,
 		}
 	}
-	releaseCheckoutHolds(ctx, reserveTimeout, s.reservations, s.variants, s.bus, s.log, cctx, holds, "checkout.reserve_inventory")
+	failed := releaseCheckoutHolds(ctx, reserveTimeout, s.reservations, s.variants, s.bus, s.log, cctx, holds, "checkout.reserve_inventory")
+	noteReservationRelease(cctx, failed)
+}
+
+// releaseStaleHolds releases holds left in meta by an earlier attempt whose
+// reservation is no longer valid (Meta["reserved"] is not true). A hold that
+// fails to release stays listed and stops this attempt, so Reserve is not
+// called on top of stock that is still held.
+func (s *ReserveInventoryStep) releaseStaleHolds(ctx context.Context, cctx *Context) error {
+	holds := reservationHoldsFromMeta(cctx)
+	if len(holds) == 0 {
+		return nil
+	}
+	failed := releaseCheckoutHolds(ctx, reserveTimeout, s.reservations, s.variants, s.bus, s.log, cctx, holds, "checkout.reserve_inventory")
+	noteReservationRelease(cctx, failed)
+	if len(failed) > 0 {
+		return fmt.Errorf("reserve_inventory: %d reservations from the previous attempt are still held", len(failed))
+	}
+	return nil
 }
 
 func (s *ReserveInventoryStep) reserveTargets(ctx context.Context, cctx *Context, item cart.Item) ([]reserveTarget, error) {
@@ -355,7 +380,8 @@ func (s *ReserveInventoryStep) publishParentStockUpdated(ctx context.Context, pr
 // success publishes EventStockUpdated for the variant and, when the hold
 // came from a dynamic bundle, one parent rollup event. A hold with an empty
 // variant id or a zero quantity is still released and does not publish that
-// variant event. CreateOrderStep and ReserveInventoryStep share this path.
+// variant event. The returned holds are the ones Release did not clear.
+// CreateOrderStep and ReserveInventoryStep share this path.
 func releaseCheckoutHolds(
 	ctx context.Context,
 	timeout time.Duration,
@@ -366,10 +392,11 @@ func releaseCheckoutHolds(
 	cctx *Context,
 	holds []ReservationHold,
 	source string,
-) {
+) []ReservationHold {
 	if reservations == nil || len(holds) == 0 {
-		return
+		return nil
 	}
+	var failed []ReservationHold
 	parents := make(map[string]struct{})
 	for _, hold := range holds {
 		if hold.ID == "" {
@@ -378,6 +405,7 @@ func releaseCheckoutHolds(
 		rlctx, cancel := detachedTimeout(ctx, timeout)
 		releaseErr := reservations.Release(rlctx, hold.ID)
 		if releaseErr != nil {
+			failed = append(failed, hold)
 			if log != nil {
 				log.Warn("checkout: release reservation failed", map[string]interface{}{
 					"reservation_id": hold.ID,
@@ -400,13 +428,70 @@ func releaseCheckoutHolds(
 		cancel()
 	}
 	if len(parents) == 0 {
-		return
+		return failed
 	}
 	pctx, pcancel := detachedTimeout(ctx, timeout)
 	defer pcancel()
 	for productID := range parents {
 		publishCheckoutParentStockUpdated(pctx, bus, productID, source)
 	}
+	return failed
+}
+
+// noteReservationRelease records which holds are still active after
+// releaseCheckoutHolds. Meta["reserved"] means the cart's reservation is
+// valid and ReserveInventoryStep may skip. A successful release clears that
+// flag and the hold lists. A failed release is not left in that valid state:
+// the flag is cleared and only the holds Release did not clear stay listed,
+// so a later attempt can release them instead of treating them as the
+// cart's active reservation.
+func noteReservationRelease(cctx *Context, failed []ReservationHold) {
+	if cctx == nil {
+		return
+	}
+	// In-step rollback runs before ReserveInventoryStep publishes meta.
+	// Do not create a reserved flag for an attempt that never stored one,
+	// unless this context already lists holds from an earlier attempt.
+	if !reservedMetaTrue(cctx) && len(reservationHoldsFromMeta(cctx)) == 0 {
+		return
+	}
+	if len(failed) == 0 {
+		cctx.SetMeta("reserved", false)
+		cctx.SetMeta("reservations", []string{})
+		cctx.SetMeta(ReservationHoldsMeta, []ReservationHold{})
+		cctx.SetMeta(ReservedVariantQtyMeta, map[string]int{})
+		return
+	}
+	ids := make([]string, 0, len(failed))
+	qty := make(map[string]int)
+	for _, hold := range failed {
+		if hold.ID != "" {
+			ids = append(ids, hold.ID)
+		}
+		if hold.VariantID != "" && hold.Quantity != 0 {
+			qty[hold.VariantID] += hold.Quantity
+		}
+	}
+	cctx.SetMeta("reserved", false)
+	cctx.SetMeta("reservations", ids)
+	cctx.SetMeta(ReservationHoldsMeta, append([]ReservationHold(nil), failed...))
+	// Fallback holds built from a raw reservation id have no variant. Leave
+	// the quantity map already stored by ReserveInventoryStep in place.
+	if len(qty) > 0 {
+		cctx.SetMeta(ReservedVariantQtyMeta, qty)
+	}
+}
+
+func reservedMetaTrue(cctx *Context) bool {
+	if cctx == nil {
+		return false
+	}
+	raw, ok := cctx.GetMeta("reserved")
+	if !ok {
+		return false
+	}
+	flag, isBool := raw.(bool)
+	return isBool && flag
 }
 
 func publishCheckoutStockUpdated(ctx context.Context, cctx *Context, variants catalog.VariantRepository, bus *event.Bus, variantID string, delta int, source string) {

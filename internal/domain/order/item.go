@@ -17,8 +17,9 @@ type Item struct {
 	UnitPrice shared.Money
 	// Restockable is snapshotted when the line is created. NewItem defaults
 	// it to true, the physical case. Virtual and downloadable products (the
-	// cart parent or an exploded leaf) are set false by checkout. Receive
-	// trusts this flag and does not re-read the live product type.
+	// cart parent or an exploded leaf) are set false by checkout, as is a
+	// non-exploded dynamic-stock bundle parent (stock was reserved on the
+	// leaves). Receive trusts this flag and does not re-read the live product.
 	Restockable bool
 	CreatedAt   time.Time
 }

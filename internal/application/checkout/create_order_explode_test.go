@@ -72,6 +72,22 @@ func TestCreateOrderStep_ExplodeFalseKeepsParentLine(t *testing.T) {
 	if len(items) != 1 || items[0].VariantID != "vb" || items[0].Quantity != 2 || items[0].UnitPrice.Amount() != 1000 {
 		t.Fatalf("items = %+v, want one parent line vb qty 2 at 1000", items)
 	}
+	if items[0].Restockable {
+		t.Fatal("dynamic-stock bundle parent was restockable")
+	}
+}
+
+func TestCreateOrderStep_FixedStockBundleStaysRestockable(t *testing.T) {
+	products, variants, components, prices := explodeBundleCatalog(t, false, catalog.PricingModeFixed, catalog.StockModeFixed)
+	step := checkout.NewCreateOrderStep(&mockOrderRepo{}, variants, nil, nil, products, components, prices)
+	cctx := explodeCheckout(t, "vb", 1, 1000)
+	if err := step.Execute(context.Background(), cctx); err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	items := cctx.Order.Items()
+	if len(items) != 1 || items[0].VariantID != "vb" || !items[0].Restockable {
+		t.Fatalf("items = %+v, want one restockable parent line", items)
+	}
 }
 
 func TestCreateOrderStep_ExplodeDynamicWritesLeafLines(t *testing.T) {
@@ -125,6 +141,55 @@ func TestCreateOrderStep_ExplodeRejectsTotalMismatch(t *testing.T) {
 	cctx := explodeCheckout(t, "vb", 2, 900)
 	err := step.Execute(context.Background(), cctx)
 	assertOrderLinesValidation(t, err, "does not match cart line total")
+}
+
+func TestCreateOrderStep_ExplodeInclusiveTaxMatchesPreTaxTotal(t *testing.T) {
+	products, variants, components, prices := explodeBundleCatalog(t, true, catalog.PricingModeDynamic, catalog.StockModeDynamic)
+	step := checkout.NewCreateOrderStep(&mockOrderRepo{}, variants, nil, nil, products, components, prices)
+	// Component rollup is 2000. Inclusive tax has already reduced Total to net.
+	cctx := explodeCheckout(t, "vb", 2, 1000)
+	raw, _ := cctx.GetMeta("pricing")
+	pctx := raw.(*pricing.PricingContext)
+	tax, err := shared.NewMoney(200, "EUR")
+	if err != nil {
+		t.Fatalf("tax: %v", err)
+	}
+	adj, err := pricing.NewAdjustment(pricing.AdjustmentTax, "tax.DE.standard", tax)
+	if err != nil {
+		t.Fatalf("adjustment: %v", err)
+	}
+	adj.Included = true
+	pctx.Items[0].Total = pctx.Items[0].Total.Sub(tax)
+	pctx.Items[0].Adjustments = append(pctx.Items[0].Adjustments, adj)
+	if err := step.Execute(context.Background(), cctx); err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	if cctx.Order.TotalAmount.Amount() != 2000 {
+		t.Fatalf("order total = %d, want 2000 catalog rollup", cctx.Order.TotalAmount.Amount())
+	}
+}
+
+func TestCreateOrderStep_ExplodeExclusiveTaxStillUsesItemTotal(t *testing.T) {
+	products, variants, components, prices := explodeBundleCatalog(t, true, catalog.PricingModeDynamic, catalog.StockModeDynamic)
+	step := checkout.NewCreateOrderStep(&mockOrderRepo{}, variants, nil, nil, products, components, prices)
+	cctx := explodeCheckout(t, "vb", 2, 1000)
+	raw, _ := cctx.GetMeta("pricing")
+	pctx := raw.(*pricing.PricingContext)
+	tax, err := shared.NewMoney(200, "EUR")
+	if err != nil {
+		t.Fatalf("tax: %v", err)
+	}
+	adj, err := pricing.NewAdjustment(pricing.AdjustmentTax, "tax.DE.standard", tax)
+	if err != nil {
+		t.Fatalf("adjustment: %v", err)
+	}
+	pctx.Items[0].Adjustments = append(pctx.Items[0].Adjustments, adj)
+	if err := step.Execute(context.Background(), cctx); err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	if cctx.Order.TotalAmount.Amount() != 2000 {
+		t.Fatalf("order total = %d, want 2000", cctx.Order.TotalAmount.Amount())
+	}
 }
 
 func TestCreateOrderStep_ExplodeRejectsFixedModes(t *testing.T) {
@@ -505,6 +570,9 @@ func TestCreateOrderStep_ReleasePublishesStockAndLogsFailure(t *testing.T) {
 	if len(deltas) != 1 || deltas[0] != 4 {
 		t.Fatalf("deltas = %v, want [4]", deltas)
 	}
+	if reserved, _ := cctx.GetMeta("reserved"); reserved != false {
+		t.Fatalf("reserved = %#v, want false after release", reserved)
+	}
 
 	reservations.releaseErr = errors.New("release down")
 	reservations.released = nil
@@ -526,6 +594,14 @@ func TestCreateOrderStep_ReleasePublishesStockAndLogsFailure(t *testing.T) {
 	}
 	if !strings.Contains(logBuf.String(), "checkout: release reservation failed") {
 		t.Fatalf("log = %q, want release failure", logBuf.String())
+	}
+	if reserved, _ := cctx.GetMeta("reserved"); reserved != false {
+		t.Fatalf("reserved = %#v, want false after a failed release", reserved)
+	}
+	rawHolds, _ := cctx.GetMeta(checkout.ReservationHoldsMeta)
+	holds, _ := rawHolds.([]checkout.ReservationHold)
+	if len(holds) != 1 || holds[0].ID != "res-va" {
+		t.Fatalf("holds = %+v, want the hold release did not clear", holds)
 	}
 }
 
@@ -668,6 +744,9 @@ func TestCreateOrderStep_ReservedSetMatchesWhatReserveHeld(t *testing.T) {
 		}
 		if _, ok := byID["vc"]; ok {
 			t.Fatal("non-exploded bundle was itemized")
+		}
+		if byID["b2"].Restockable {
+			t.Fatal("non-exploded dynamic bundle parent was restockable")
 		}
 	})
 
