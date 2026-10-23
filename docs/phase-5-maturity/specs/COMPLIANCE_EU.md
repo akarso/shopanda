@@ -26,9 +26,12 @@ This document maps **common EU merchant obligations** to Shopanda's current capa
 
 **Current implementation:**
 
-- `price_history` records snapshots on price changes
-- `pricing.PriceHistoryRepository.LowestSince` queries the minimum in a window
-- `composition.PriceIndicationStep` enriches PDP/PLP responses with lowest-prior price data
+- `price_history` records a snapshot when a catalog price changes: CSV price import and admin price PUT (same transaction as the upsert). Checkout does not `Record` at sale time.
+- History starts at the next CSV import or admin price PUT. Older admin edits are not backfilled.
+- `pricing.PriceHistoryRepository.LowestSince` queries the minimum in a window for that variant, currency, and store
+- `composition.PriceIndicationStep` (PDP) and `ListingPriceIndicationStep` (PLP) add a lowest-prior block when that history is below the current price and `legal.omnibus_enabled` is on
+- A **dynamic kit headline** has no Omnibus block. The displayed sum is not one SKU's prior-30-day price. `explode_order_lines` does not change this.
+- A **fixed kit** PDP/PLP uses the parent variant's history. A **leaf or component** PDP/PLP uses that variant's own history.
 
 **Phase 5 (PR-530):**
 

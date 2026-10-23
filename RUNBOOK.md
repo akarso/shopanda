@@ -481,5 +481,13 @@ The grace/cancel split is **hardcoded**, not configurable: remainder is `min(Dra
 ## Common references
 
 - [EU compliance fields](docs/phase-5-maturity/specs/COMPLIANCE_EU.md) — Omnibus, WEEE, EPR, GPSR
+- Omnibus reads catalog `price_history` for the SKU on the page. Exploding a kit onto order lines does not change that, and checkout does not `Record`. History starts at the next CSV import or admin price PUT. Older admin edits are not backfilled.
+
+| Surface | History used |
+| --- | --- |
+| Fixed kit PDP/PLP | Parent variant's `price_history` |
+| Dynamic kit PDP/PLP | No block (the headline sum is not one SKU's prior-30-day price) |
+| Leaf / component PDP/PLP | That variant's `price_history` |
+| Admin price PUT and CSV price import | Append a snapshot for the variant just written. PUT fails closed if the history repo is unwired. |
 - [Runtime modes](docs/phase-4-refactoring/specs/RUNTIME_MODES.md) — `serve`, `worker`, `scheduler`, `app dev`
 - [Commercial B2B module](docs/COMMERCIAL.md) — license-gated `plugins/b2b`
