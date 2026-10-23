@@ -42,8 +42,9 @@ func NewBundleComponentImporter(products catalog.ProductRepository, bundles *cat
 	return &BundleComponentImporter{products: products, bundles: bundles}
 }
 
-// Import resolves slugs with FindBySlug and upserts each row. It does not
-// delete links that are absent from the file.
+// Import resolves slugs with FindBySlug and upserts each row. A lookup error
+// is recorded as line N and the import continues. It does not delete links
+// that are absent from the file.
 func (imp *BundleComponentImporter) Import(ctx context.Context, r io.Reader) (*CompositionResult, error) {
 	if imp.products == nil || imp.bundles == nil {
 		return nil, fmt.Errorf("bundle component import: product repository and bundle service are required")
@@ -100,7 +101,9 @@ func (imp *BundleComponentImporter) Import(ctx context.Context, r io.Reader) (*C
 		}
 		parent, err := cachedProductBySlug(ctx, imp.products, cache, parentSlug)
 		if err != nil {
-			return nil, fmt.Errorf("bundle component import: find parent slug %q: %w", parentSlug, err)
+			result.Errors = append(result.Errors, fmt.Sprintf("line %d: find parent slug %q: %v", lineNum, parentSlug, err))
+			result.Skipped++
+			continue
 		}
 		if parent == nil {
 			result.Errors = append(result.Errors, fmt.Sprintf("line %d: unknown parent slug %q", lineNum, parentSlug))
@@ -109,7 +112,9 @@ func (imp *BundleComponentImporter) Import(ctx context.Context, r io.Reader) (*C
 		}
 		component, err := cachedProductBySlug(ctx, imp.products, cache, componentSlug)
 		if err != nil {
-			return nil, fmt.Errorf("bundle component import: find component slug %q: %w", componentSlug, err)
+			result.Errors = append(result.Errors, fmt.Sprintf("line %d: find component slug %q: %v", lineNum, componentSlug, err))
+			result.Skipped++
+			continue
 		}
 		if component == nil {
 			result.Errors = append(result.Errors, fmt.Sprintf("line %d: unknown component slug %q", lineNum, componentSlug))
@@ -151,8 +156,9 @@ func NewGroupedMemberImporter(products catalog.ProductRepository, grouped *catal
 	return &GroupedMemberImporter{products: products, grouped: grouped}
 }
 
-// Import resolves slugs with FindBySlug and inserts each row. It does not
-// delete members that are absent from the file.
+// Import resolves slugs with FindBySlug and inserts each row. A lookup error
+// is recorded as line N and the import continues. It does not delete members
+// that are absent from the file.
 func (imp *GroupedMemberImporter) Import(ctx context.Context, r io.Reader) (*CompositionResult, error) {
 	if imp.products == nil || imp.grouped == nil {
 		return nil, fmt.Errorf("grouped member import: product repository and grouped service are required")
@@ -196,7 +202,9 @@ func (imp *GroupedMemberImporter) Import(ctx context.Context, r io.Reader) (*Com
 		}
 		parent, err := cachedProductBySlug(ctx, imp.products, cache, parentSlug)
 		if err != nil {
-			return nil, fmt.Errorf("grouped member import: find parent slug %q: %w", parentSlug, err)
+			result.Errors = append(result.Errors, fmt.Sprintf("line %d: find parent slug %q: %v", lineNum, parentSlug, err))
+			result.Skipped++
+			continue
 		}
 		if parent == nil {
 			result.Errors = append(result.Errors, fmt.Sprintf("line %d: unknown parent slug %q", lineNum, parentSlug))
@@ -205,7 +213,9 @@ func (imp *GroupedMemberImporter) Import(ctx context.Context, r io.Reader) (*Com
 		}
 		member, err := cachedProductBySlug(ctx, imp.products, cache, memberSlug)
 		if err != nil {
-			return nil, fmt.Errorf("grouped member import: find member slug %q: %w", memberSlug, err)
+			result.Errors = append(result.Errors, fmt.Sprintf("line %d: find member slug %q: %v", lineNum, memberSlug, err))
+			result.Skipped++
+			continue
 		}
 		if member == nil {
 			result.Errors = append(result.Errors, fmt.Sprintf("line %d: unknown member slug %q", lineNum, memberSlug))

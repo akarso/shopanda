@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"database/sql/driver"
+	"errors"
 	"strconv"
 	"strings"
 	"sync"
@@ -52,7 +53,8 @@ func compositionTxStarter() *sql.DB {
 
 type compositionProductRepo struct {
 	catalog.ProductRepository
-	bySlug map[string]*catalog.Product
+	bySlug  map[string]*catalog.Product
+	slugErr map[string]error
 }
 
 func (r *compositionProductRepo) FindByID(_ context.Context, id string) (*catalog.Product, error) {
@@ -64,6 +66,9 @@ func (r *compositionProductRepo) FindByID(_ context.Context, id string) (*catalo
 	return nil, nil
 }
 func (r *compositionProductRepo) FindBySlug(_ context.Context, slug string) (*catalog.Product, error) {
+	if err, ok := r.slugErr[slug]; ok {
+		return nil, err
+	}
 	if r.bySlug == nil {
 		return nil, nil
 	}
@@ -255,6 +260,60 @@ func TestBundleComponentImport_FiftyFirstRequired(t *testing.T) {
 	}
 	if len(result.Errors) != 1 || !strings.Contains(result.Errors[0], "line 2:") || !strings.Contains(result.Errors[0], "maximum is 50") {
 		t.Fatalf("errors = %v", result.Errors)
+	}
+}
+
+func TestCompositionImport_FindBySlugErrorContinues(t *testing.T) {
+	products := &compositionProductRepo{
+		bySlug: map[string]*catalog.Product{
+			"kit":    {ID: "b1", Slug: "kit", Type: catalog.TypeBundle, Status: catalog.StatusActive},
+			"leaf":   {ID: "c1", Slug: "leaf", Type: catalog.TypeSimple, Status: catalog.StatusActive},
+			"group":  {ID: "g1", Slug: "group", Type: catalog.TypeGrouped, Status: catalog.StatusActive},
+			"member": {ID: "m1", Slug: "member", Type: catalog.TypeVirtual, Status: catalog.StatusActive},
+		},
+		slugErr: map[string]error{"missing-db": errors.New("db down")},
+	}
+	components := &compositionBundleRepo{}
+	bundles := importer.NewBundleComponentImporter(products, catalogApp.NewBundleService(products, components, compositionTxStarter()))
+	bundleCSV := "parent_slug,component_slug,quantity,required\n" +
+		"missing-db,leaf,1,true\n" +
+		"kit,missing-db,1,true\n" +
+		"kit,leaf,2,true\n"
+	bundleResult, err := bundles.Import(context.Background(), strings.NewReader(bundleCSV))
+	if err != nil {
+		t.Fatalf("bundle Import: %v", err)
+	}
+	if bundleResult.Added != 1 || bundleResult.Skipped != 2 {
+		t.Fatalf("bundle result = %+v", bundleResult)
+	}
+	if len(components.links) != 1 || components.links[0].Quantity != 2 {
+		t.Fatalf("bundle links = %+v", components.links)
+	}
+	bundleJoined := strings.Join(bundleResult.Errors, "\n")
+	for _, want := range []string{
+		`line 2: find parent slug "missing-db"`,
+		`line 3: find component slug "missing-db"`,
+	} {
+		if !strings.Contains(bundleJoined, want) {
+			t.Fatalf("bundle errors = %v, want %q", bundleResult.Errors, want)
+		}
+	}
+
+	members := &compositionGroupedRepo{}
+	grouped := importer.NewGroupedMemberImporter(products, catalogApp.NewGroupedService(products, members, compositionTxStarter()))
+	groupedCSV := "parent_slug,member_slug\nmissing-db,member\ngroup,member\n"
+	groupedResult, err := grouped.Import(context.Background(), strings.NewReader(groupedCSV))
+	if err != nil {
+		t.Fatalf("grouped Import: %v", err)
+	}
+	if groupedResult.Added != 1 || groupedResult.Skipped != 1 {
+		t.Fatalf("grouped result = %+v", groupedResult)
+	}
+	if len(members.links) != 1 || members.links[0].MemberProductID != "m1" {
+		t.Fatalf("grouped links = %+v", members.links)
+	}
+	if len(groupedResult.Errors) != 1 || !strings.Contains(groupedResult.Errors[0], `line 2: find parent slug "missing-db"`) {
+		t.Fatalf("grouped errors = %v", groupedResult.Errors)
 	}
 }
 

@@ -1338,6 +1338,9 @@
                         }
                         return;
                     }
+                    var typeEl = form.elements.type;
+                    var savedType = typeEl && typeEl.value ? String(typeEl.value) : "simple";
+                    bindCompositionPicker(typeSectionsHost, productID, savedType);
                     saveProductTranslations(productID, activeScope, schema.fields, form, msg);
                 }).catch(function () {
                     msg.innerHTML = '<p role="alert">Save failed.</p>';
@@ -1457,34 +1460,63 @@
     // section and are merged by collectProductPayload only when type is bundle.
     // Component and member pickers save through their own routes and render
     // only after the product exists (same moment as the variant panel).
+    // List routes reject the other parent type, so only the saved type's picker
+    // starts. A later successful save starts the picker for the type just saved.
+    function bindCompositionPicker(typeSectionsHost, productID, productType) {
+        var sectionAPI = productCompositionSectionAPI();
+        if (!sectionAPI || !typeSectionsHost || !productID) {
+            return;
+        }
+        var opts = {
+            productID: productID,
+            api: api,
+            canWrite: userHasPermission("products.write")
+        };
+        if (productType === "bundle") {
+            var bundleBody = typeSectionsHost.querySelector('[data-product-type-section-body="bundle"]');
+            if (bundleBody) {
+                sectionAPI.bindBundlePicker(bundleBody, opts);
+            }
+            return;
+        }
+        if (productType === "grouped") {
+            var groupedBody = typeSectionsHost.querySelector('[data-product-type-section-body="grouped"]');
+            if (groupedBody) {
+                sectionAPI.bindGroupedPicker(groupedBody, opts);
+            }
+        }
+    }
+
     function setupProductCompositionSections(typeSectionsHost, product, productID, form) {
         var sectionAPI = productCompositionSectionAPI();
         if (!sectionAPI || !typeSectionsHost) {
             return;
         }
         var modes = sectionAPI.modesFromProduct(product);
+        var savedType = product && product.type ? String(product.type) : "simple";
         var bundleBody = typeSectionsHost.querySelector('[data-product-type-section-body="bundle"]');
         if (bundleBody) {
             bundleBody.innerHTML = sectionAPI.renderBundleSectionHTML(modes, !!productID);
             sectionAPI.bindBundleModes(bundleBody);
-            if (productID) {
-                sectionAPI.bindBundlePicker(bundleBody, {
-                    productID: productID,
-                    api: api,
-                    canWrite: userHasPermission("products.write")
-                });
+            if (productID && savedType !== "bundle") {
+                var bundleHost = bundleBody.querySelector("[data-bundle-picker]");
+                if (bundleHost) {
+                    bundleHost.innerHTML = '<p class="settings-scope-note">Save the product as a bundle to add components.</p>';
+                }
             }
         }
         var groupedBody = typeSectionsHost.querySelector('[data-product-type-section-body="grouped"]');
         if (groupedBody) {
             groupedBody.innerHTML = sectionAPI.renderGroupedSectionHTML(!!productID);
-            if (productID) {
-                sectionAPI.bindGroupedPicker(groupedBody, {
-                    productID: productID,
-                    api: api,
-                    canWrite: userHasPermission("products.write")
-                });
+            if (productID && savedType !== "grouped") {
+                var groupedHost = groupedBody.querySelector("[data-grouped-picker]");
+                if (groupedHost) {
+                    groupedHost.innerHTML = '<p class="settings-scope-note">Save the product as grouped to add members.</p>';
+                }
             }
+        }
+        if (productID) {
+            bindCompositionPicker(typeSectionsHost, productID, savedType);
         }
         if (form) {
             form._shopandaCompositionBound = true;

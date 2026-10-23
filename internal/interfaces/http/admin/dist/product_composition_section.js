@@ -6,8 +6,8 @@
 (function (root) {
     var LEAF_TYPES = ["simple", "virtual", "downloadable"];
     var LEAF_PAGE_LIMIT = 100;
-    // Stop paging when an API keeps returning a full page. One page per click
-    // is the normal path; this caps a recursive walk.
+    // Caps loadLeafType when it walks pages itself and every page is full.
+    // Load more calls loadLeafProducts once per click and stops only on a short page.
     var LEAF_MAX_PAGES = 50;
     var SECTION_BUNDLE = "bundle";
     var SECTION_GROUPED = "grouped";
@@ -397,8 +397,7 @@
             cache = createLeafCache();
         }
         return Promise.all(LEAF_TYPES.map(function (type) {
-            if (cache.done[type] || cache.pages[type] >= LEAF_MAX_PAGES) {
-                cache.done[type] = true;
+            if (cache.done[type]) {
                 return Promise.resolve(null);
             }
             var offset = cache.offset[type];
@@ -418,7 +417,7 @@
                 cache.byType[update.type] = bucket;
                 cache.pages[update.type] += 1;
                 cache.offset[update.type] = update.offset + update.page.length;
-                if (update.page.length < LEAF_PAGE_LIMIT || cache.pages[update.type] >= LEAF_MAX_PAGES) {
+                if (update.page.length < LEAF_PAGE_LIMIT) {
                     cache.done[update.type] = true;
                 }
             }
@@ -485,6 +484,10 @@
         if (!host || !opts.productID || typeof opts.api !== "function") {
             return;
         }
+        if (host.getAttribute("data-composition-picker-bound") === "1") {
+            return;
+        }
+        host.setAttribute("data-composition-picker-bound", "1");
         var leaves = openLeafSession(opts.api, opts.productID);
         var componentRows = [];
         var state = { products: [], assigned: {}, search: "", canWrite: !!opts.canWrite, hasMore: false };
@@ -535,6 +538,25 @@
                 return;
             }
             btn.addEventListener("click", onLoadMore);
+        }
+        function syncComponentRow(id, quantity, required) {
+            var key = String(id);
+            var found = false;
+            for (var i = 0; i < componentRows.length; i++) {
+                var row = componentRows[i];
+                if (row && String(row.component_product_id) === key) {
+                    row.quantity = quantity;
+                    row.required = required;
+                    found = true;
+                }
+            }
+            if (!found) {
+                componentRows.push({
+                    component_product_id: key,
+                    quantity: quantity,
+                    required: required
+                });
+            }
         }
         function applyLoaded(loaded) {
             var merged = productsWithAssigned(loaded, opts.productID, componentRows, function (row) {
@@ -605,6 +627,8 @@
                     return showFailure(body);
                 }
                 state.assigned[id].quantity = req.body.quantity;
+                state.assigned[id].required = req.body.required;
+                syncComponentRow(id, req.body.quantity, req.body.required);
                 setMessage("Component saved", false);
             }).catch(function () {
                 return showFailure(null);
@@ -622,7 +646,9 @@
                 if (body && body.error) {
                     return showFailure(body);
                 }
+                state.assigned[id].quantity = req.body.quantity;
                 state.assigned[id].required = req.body.required;
+                syncComponentRow(id, req.body.quantity, req.body.required);
                 setMessage("Component saved", false);
             }).catch(function () {
                 return showFailure(null);
@@ -655,6 +681,10 @@
         if (!host || !opts.productID || typeof opts.api !== "function") {
             return;
         }
+        if (host.getAttribute("data-composition-picker-bound") === "1") {
+            return;
+        }
+        host.setAttribute("data-composition-picker-bound", "1");
         var leaves = openLeafSession(opts.api, opts.productID);
         var memberRows = [];
         var state = { products: [], assigned: {}, search: "", canWrite: !!opts.canWrite, hasMore: false };

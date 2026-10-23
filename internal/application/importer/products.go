@@ -214,26 +214,27 @@ func (imp *ProductImporter) Import(ctx context.Context, r io.Reader) (*Result, e
 			failedLines[row.lineNum] = struct{}{}
 			continue
 		}
+		rowFailed := false
 		if row.productType != "" {
 			typ := catalog.Type(row.productType)
 			if !typ.IsValid() {
 				result.Errors = append(result.Errors, fmt.Sprintf("line %d: %s", row.lineNum, catalog.InvalidTypeMessage(typ)))
-				result.Skipped++
-				failedLines[row.lineNum] = struct{}{}
+				rowFailed = true
 			}
 		}
 		if row.pricingMode != "" && !catalog.PricingMode(row.pricingMode).IsValid() {
 			result.Errors = append(result.Errors, fmt.Sprintf("line %d: %s", row.lineNum, catalog.InvalidPricingModeMessage(catalog.PricingMode(row.pricingMode))))
-			result.Skipped++
-			failedLines[row.lineNum] = struct{}{}
+			rowFailed = true
 		}
 		if row.stockMode != "" && !catalog.StockMode(row.stockMode).IsValid() {
 			result.Errors = append(result.Errors, fmt.Sprintf("line %d: %s", row.lineNum, catalog.InvalidStockModeMessage(catalog.StockMode(row.stockMode))))
-			result.Skipped++
-			failedLines[row.lineNum] = struct{}{}
+			rowFailed = true
 		}
 		if !row.explodeOK {
 			result.Errors = append(result.Errors, fmt.Sprintf("line %d: invalid explode_order_lines %q", row.lineNum, row.explodeRaw))
+			rowFailed = true
+		}
+		if rowFailed {
 			result.Skipped++
 			failedLines[row.lineNum] = struct{}{}
 		}

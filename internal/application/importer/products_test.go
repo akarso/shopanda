@@ -1354,3 +1354,30 @@ Widget,widget,SKU-1,simple,fixed,red
 		t.Fatalf("pricing_mode stored as attribute: %#v", attrs)
 	}
 }
+
+func TestImport_InvalidModeFieldsSkipRowOnce(t *testing.T) {
+	csv := `name,slug,sku,type,pricing_mode,stock_mode,explode_order_lines
+Widget,widget,SKU-1,nope,bogus,nope,maybe
+`
+	prodRepo := &mockProductRepo{}
+	varRepo := &mockVariantRepo{}
+	imp := importer.NewProductImporter(prodRepo, varRepo, nil)
+	result, err := imp.Import(context.Background(), strings.NewReader(csv))
+	if err != nil {
+		t.Fatalf("Import: %v", err)
+	}
+	if result.Products != 0 || result.Variants != 0 || len(prodRepo.products) != 0 {
+		t.Fatalf("want no create, result=%+v", result)
+	}
+	if result.Skipped != 1 {
+		t.Fatalf("Skipped = %d, want 1; errors=%v", result.Skipped, result.Errors)
+	}
+	if len(result.Errors) != 4 {
+		t.Fatalf("len(Errors) = %d, want 4 (type, pricing_mode, stock_mode, explode); errors=%v", len(result.Errors), result.Errors)
+	}
+	for _, errText := range result.Errors {
+		if !strings.Contains(errText, "line 2:") {
+			t.Fatalf("error %q, want line 2", errText)
+		}
+	}
+}

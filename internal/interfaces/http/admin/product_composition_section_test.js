@@ -228,19 +228,27 @@ test("loadLeafType stops after LEAF_MAX_PAGES when every page is full", async ()
     assert.equal(products.length, ui.LEAF_MAX_PAGES * ui.LEAF_PAGE_LIMIT);
 });
 
-test("loadLeafProducts does not request past the max page cap", async () => {
+test("loadLeafProducts continues past the recursive cap until a short page", async () => {
     const cache = ui.createLeafCache();
     cache.done.virtual = true;
     cache.done.downloadable = true;
     let calls = 0;
     const api = async function () {
         calls++;
-        return { data: { products: fullPage("m" + calls + "-") } };
+        if (calls <= ui.LEAF_MAX_PAGES + 1) {
+            return { data: { products: fullPage("m" + calls + "-") } };
+        }
+        return { data: { products: [{ ID: "tail", Name: "Tail", Slug: "tail", Type: "simple" }] } };
     };
-    for (let i = 0; i < ui.LEAF_MAX_PAGES + 3; i++) {
-        await ui.loadLeafProducts(api, "parent", cache);
+    let last;
+    for (let i = 0; i < ui.LEAF_MAX_PAGES + 2; i++) {
+        last = await ui.loadLeafProducts(api, "parent", cache);
     }
-    assert.equal(calls, ui.LEAF_MAX_PAGES);
+    assert.equal(calls, ui.LEAF_MAX_PAGES + 2);
+    assert.equal(last.some(function (p) { return p.id === "tail"; }), true);
+    const again = await ui.loadLeafProducts(api, "parent", cache);
+    assert.equal(calls, ui.LEAF_MAX_PAGES + 2);
+    assert.equal(again.length, last.length);
 });
 
 test("productsWithAssigned keeps one row when the same member is listed twice", () => {
@@ -501,6 +509,67 @@ test("bundle picker load more appends the next page and reload reuses cached lea
     const leafCalls = calls.filter(function (line) { return line.indexOf("/admin/products?") !== -1; });
     assert.equal(leafCalls.length, 4, "reload after a toggle must not walk leaf types again");
     assert.ok(leafCalls.some(function (line) { return line.indexOf("offset=100") !== -1; }));
+});
+
+test("bundle qty and required edits survive load more", async () => {
+    installPickerDOM();
+    const root = document.createElement("div");
+    const host = document.createElement("div");
+    host.setAttribute("data-bundle-picker", "");
+    root.appendChild(host);
+    const calls = [];
+    const api = async function (url, options) {
+        const method = options && options.method ? options.method : "GET";
+        calls.push(method + " " + url);
+        if (String(url).indexOf("bundle-components") !== -1) {
+            if (method === "POST") {
+                return { data: { component: { component_product_id: "keep" } } };
+            }
+            return {
+                data: {
+                    components: [
+                        { component_product_id: "keep", name: "Keep", slug: "keep", type: "virtual", quantity: 1, required: true }
+                    ]
+                }
+            };
+        }
+        const parsed = new URL(url, "http://local");
+        const type = parsed.searchParams.get("type");
+        const offset = Number(parsed.searchParams.get("offset") || "0");
+        if (type !== "simple") {
+            return { data: { products: [] } };
+        }
+        if (offset === 0) {
+            return { data: { products: fullPage("s") } };
+        }
+        return { data: { products: [{ ID: "s100", Name: "Past", Slug: "past", Type: "simple" }] } };
+    };
+    function posts() {
+        return calls.filter(function (line) { return line.indexOf("POST ") === 0; }).length;
+    }
+    ui.bindBundlePicker(root, { productID: "parent", api: api, canWrite: true });
+    const qty = await waitFor(function () { return host.querySelector('[data-bundle-qty="keep"]'); });
+    assert.ok(qty, "assigned component qty should render");
+    assert.equal(qty.value, "1");
+    qty.value = "4";
+    qty.dispatchEvent({ type: "change", target: qty });
+    await waitFor(function () { return posts() >= 1; });
+    await new Promise(function (resolve) { setImmediate(resolve); });
+    const required = host.querySelector('[data-bundle-required="keep"]');
+    required.checked = false;
+    required.dispatchEvent({ type: "change", target: required });
+    await waitFor(function () { return posts() >= 2; });
+    await new Promise(function (resolve) { setImmediate(resolve); });
+    const more = host.querySelector("[data-bundle-load-more]");
+    assert.ok(more, "load more should still be available");
+    more.dispatchEvent({ type: "click" });
+    const savedQty = await waitFor(function () {
+        const el = host.querySelector('[data-bundle-qty="keep"]');
+        return el && el.value === "4" ? el : null;
+    });
+    assert.ok(savedQty, "load more should keep the saved quantity");
+    const savedRequired = host.querySelector('[data-bundle-required="keep"]');
+    assert.equal(savedRequired.checked, false);
 });
 
 test("grouped picker shows a failure when save throws and does not duplicate an assigned member", async () => {
