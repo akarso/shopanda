@@ -1338,8 +1338,11 @@
                         }
                         return;
                     }
-                    var typeEl = form.elements.type;
-                    var savedType = typeEl && typeEl.value ? String(typeEl.value) : "simple";
+                    // payload.type is the type sent with this request. The type
+                    // selector can change while the save is still pending, and
+                    // starting the wrong picker marks it bound even when the
+                    // list route rejects the type that was actually saved.
+                    var savedType = payload && payload.type ? String(payload.type) : "simple";
                     bindCompositionPicker(typeSectionsHost, productID, savedType);
                     saveProductTranslations(productID, activeScope, schema.fields, form, msg);
                 }).catch(function () {

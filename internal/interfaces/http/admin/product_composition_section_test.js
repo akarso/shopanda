@@ -632,3 +632,16 @@ test("grouped picker shows a failure when save throws and does not duplicate an 
     });
     assert.ok(saved);
 });
+
+test("product save callback starts the picker for the submitted type", () => {
+    const fs = require("fs");
+    const path = require("path");
+    const src = fs.readFileSync(path.join(__dirname, "dist/admin.js"), "utf8");
+    const start = src.indexOf('form.addEventListener("submit"');
+    const end = src.indexOf("function productTypeSectionsAPI", start);
+    assert.ok(start >= 0 && end > start, "product form submit handler should be present");
+    const chunk = src.slice(start, end);
+    assert.match(chunk, /var savedType = payload && payload\.type \? String\(payload\.type\) : "simple"/);
+    assert.match(chunk, /bindCompositionPicker\(typeSectionsHost, productID, savedType\)/);
+    assert.doesNotMatch(chunk, /form\.elements\.type/);
+});
