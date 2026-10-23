@@ -190,6 +190,7 @@ Recommended order: **A (800–802)** → **B (810–814)** and **C (820–823)**
 | **Mail sender port** | SendGrid, Postmark | Stretch in Track F |
 | **Admin integration UI** | View inbound idempotency keys, replay | Merchant-facing; lower priority |
 | **Phase 7 backlog** | Extension field admin grid, variant scopes | Unchanged |
+| **Plugin-owned schema + on-demand sync** | Namespaced `RunPluginFS`; `manual` `RegisterSyncJob` enqueue | Scheduled as [Phase 13](../phase-13-plugin-runtime/ROADMAP.md) |
 
 ---
 

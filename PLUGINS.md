@@ -261,6 +261,7 @@ Plugin settings (string, int, bool) can be registered with `RegisterConfig` and 
 - [Developer Guide](docs/guides/DEVELOPER.md) — architecture, examples, API usage
 - [Integrator Platform spec](docs/phase-8-integrator-platform/specs/INTEGRATOR_PLATFORM.md) — cart/pricing, CSV import hooks, ERP integration (Phase 8)
 - [Phase 8 Roadmap](docs/phase-8-integrator-platform/ROADMAP.md) — integrator platform PR plan
+- [Phase 13 Roadmap](docs/phase-13-plugin-runtime/ROADMAP.md) — plugin-owned migrations + on-demand sync jobs (planned, site-ready gate)
 - [Example external plugin](plugins/example/README.md) — pricing step, event listener, permission
 - [Promotion rule reference plugin](plugins/promodemo/README.md) — custom catalog promotion JSON rule types (PR-862)
 - [Commercial licensing](docs/COMMERCIAL.md) — OSS vs B2B module boundary
